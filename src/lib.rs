@@ -405,6 +405,8 @@ pub mod generation;
 pub mod ir_shape;
 pub mod loop_shape;
 pub mod native_bind;
+// @PLN205 — the prebuilt parts loft ships beside its binary (`[native] component`).
+pub mod components;
 pub mod native_build;
 pub mod op_layout;
 pub mod op_sets;
@@ -459,13 +461,11 @@ pub mod startup_cache;
 #[cfg(any(feature = "registry", feature = "remote-store"))]
 pub(crate) mod tls;
 pub mod wasm_debug;
-// @PLN203 — the natives behind the web library (`[native] in_binary = true`): the browser
-// page's, the byte helpers every target shares, and the host's.
+// The natives behind the web library in a browser page, and the byte helpers it shares with the
+// in-browser interpreter; on a host they are the `net` component (`src/c/components/net.c`).
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))]
 pub mod web_browser;
 pub mod web_bytes;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod web_client;
 // @PLAN12 phase 3.5a (2026-05-24) — re-export `extensions::native_call`
 // at the crate root so generated native code can write
 // `use loft::native_call;` without coupling to the extensions module.

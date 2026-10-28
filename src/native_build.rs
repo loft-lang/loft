@@ -148,11 +148,30 @@ pub fn browser_target() -> bool {
     BROWSER_TARGET.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// The host native library a `use`d package registers — none for a browser build, which
-/// never loads one ([`browser_target`]); otherwise [`resolve_native_lib`].
+/// Set for a run the C backend compiles with no way back to the interpreter (`--emit-c`, an
+/// explicit `--native-c`): the C links a package's `[c] shim` and the components, never its
+/// Rust cdylib, so building one is a full cargo build of code the run never loads — a
+/// `use graphics` spent over 25 minutes in winit and glutin before a word of C.
+pub(crate) static C_TARGET: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Mark this run as a C build, before anything resolves a package.
+pub fn set_c_target() {
+    C_TARGET.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Is this run a C build?  Then no host native library is built or registered.
+#[must_use]
+pub fn c_target() -> bool {
+    C_TARGET.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The host native library a `use`d package registers — none for a browser build or a C
+/// build, which never load one ([`browser_target`], [`c_target`]); otherwise
+/// [`resolve_native_lib`].
 #[must_use]
 pub fn host_native_lib(pkg_dir: &str, stem: &str) -> Option<String> {
-    if browser_target() {
+    if browser_target() || c_target() {
         return None;
     }
     resolve_native_lib(pkg_dir, stem)
@@ -170,13 +189,26 @@ pub fn resolve_native_lib(pkg_dir: &str, stem: &str) -> Option<String> {
     if let Some(prebuilt) = prebuilt_native_lib(pkg_dir, stem) {
         return Some(prebuilt);
     }
+    // A component is never built where it is used (@PLN205): missing is missing.
+    if component_of(pkg_dir).is_some() {
+        return None;
+    }
     auto_build_native(pkg_dir, stem)
+}
+
+/// The component a package's natives are (`[native] component`), if they are one.
+pub(crate) fn component_of(pkg_dir: &str) -> Option<String> {
+    crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml")).and_then(|m| m.native_component)
 }
 
 /// The native library a package ships PREBUILT for this host, never a build: what
 /// [`resolve_native_lib`] tries first, and all the C backend links (@PLN205).
 #[must_use]
 pub fn prebuilt_native_lib(pkg_dir: &str, stem: &str) -> Option<String> {
+    // A package whose natives are a component loft ships (@PLN205) has no library of its own.
+    if let Some(name) = component_of(pkg_dir) {
+        return crate::components::path(&name);
+    }
     let filename = platform_lib_name(stem);
     // @PLN21 Phase 1 — a precompiled cdylib shipped for THIS host triple wins
     // over a source build (the "no rustc to use a library" path).  A cdylib

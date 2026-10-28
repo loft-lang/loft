@@ -75,6 +75,7 @@ conditional one (each is one fix line), and the concept door they open onto.
 | `text-index-char-bound` | warning | An index walks `0..len(text)` (characters) but reads bytes — silent on ASCII, wrong elsewhere. | Iterate `for c in text`, or walk bytes with `0..size(text)`. | M C · `@F97` |
 | `index-bounds-other-vector` | warning | A loop bounded by `len()` of one vector indexes a different one — typed non-null, reads null on overrun. Opt-in (`LOFT_LINT_STRICT_INDEX`). | Bound the loop by the vector it indexes. | C · `@F6` |
 | `function-complexity` | advice | A function's control-flow complexity passed the nudge, naming its deepest nesting line. | Lift the innermost part into its own function. | C · `@F16` |
+| `tail-call-not-jumped` | warning | A function calls itself in tail position, but its frame cannot be reused by a jump (`(R-TailSelf)`, @C155) — an argument for a store-held parameter that makes a value or names a local the jump releases, a text or `&` parameter handed anything but itself, a parameter the body rebinds, a `&` local, a tuple or closure result, a generator, a `parallel` block or a closure in the body — so the call stays an ordinary call, which stops at 10 000 frames. It gates under the tier rule's second clause: a slow construct with a cure, which no published library could hold (every shape was a compile error before). Quiet where the call jumps and where it is not in tail position. | Write the recursion as a loop (`while`), or pass a part of a parameter; to keep a call on purpose, bind its value first (`r = f(…); r`). | C · `@F16` |
 | `too-many-parameters` | advice | A function takes many required parameters — every caller has to get them all right, in order. Silent on a `#c` binding, whose parameter list is the C function's: a struct cannot cross that boundary and a default does not change the declared C arity, so both cures are impossible there. | Group the ones that travel together into a struct, or give the optional ones defaults. | C C · `@F12` `@F17` |
 | `trailing-boolean-parameters` | advice | A function ends with booleans, so a call reads `f(…, true, false)`. | Give them defaults so callers pass only what they change. | M · `@F17` |
 | `omitted-field-zero` | advice | A struct literal names some fields and leaves another out, so that one takes its type's zero and nothing in the declaration chose it. Quiet on a field with a declared default, a nullable field, and a bare `S {}` — each of those says what it means. | Declare the field's default on the type, or write it at this literal. | C C · `@F12` |
@@ -83,6 +84,7 @@ conditional one (each is one fix line), and the concept door they open onto.
 | `variant-field-unchecked` | warning | A struct-enum field access names a field only SOME variants declare. The tag IS checked (loft#980): on any other variant the read answers null and the write is ignored — but the type does not advertise that null, and an ignored write is a lost write, which is why this gates. Where the receiver is not a place the guard would evaluate it twice, so that access stays unchecked and the message says so. Quiet when EVERY variant declares the field (one shared slot — the case @C89 promises works) and for a synthetic `__nullable<S>`. | Reach the payload per-variant with `match` or `is`, whose bindings are scoped to the arm. | C C · `@F29` |
 | `linked-group-double-fill` | advice | One struct literal gives records to two members of a linked collection group — two routes to a single record set, so both end up holding everything. Quiet when a member is written `[]` (which is how every group is constructed) and when only one member is filled. | Give each field its own element type, or fill the group through one member. | C C · `@F7` |
 | `linked-group-apart` | advice | A linked collection group's members are declared APART — an unrelated field sits between them, in a struct or a struct-enum variant (`{ entities: vector<E>, tick: integer, spawn_index: hash<E[id]> }`). The group is one record set either way; adjacency is the signal, because the idiom is written together while a group nobody intended is two fields added at different times. Quiet on adjacent members, on a pair with no keyed member, and on a library's struct (a consumer cannot rearrange it). | Give one field its own element type, or declare them next to each other. | C C · `@F7` |
+| `linked-group-same-key` | advice | Two members of one linked collection group are the same kind over the same key (`{ terrains: hash<Kind[kd]>, things: hash<Kind[kd]> }`). They are one record set, so the second holds exactly what the first holds: almost always two tables meant to be separate that share an element type. Fires adjacent or apart; quiet on a different key, a different kind, a vector beside an index, and different element types. | Give one field its own element type, or remove the second: it answers what the first does. | C C · `@F7` |
 | `needless-reference-parameter` | warning | A `&` on a tuple parameter that is never written. | Drop the `&`. | M · `@F21` |
 | `needless-const-parameter` | warning | `const` on a primitive parameter that is never modified. | Drop the `const`. | M · `@F18` |
 | `const-to-plain-parameter` | error | A `const` value (or a view of one) is passed to a record or collection parameter that is not declared `const` — of a declared function, of a function reference's type, or of a builtin's callback (the elements of a `const` collection); a plain heap parameter names the caller's value, so the callee could write it. | Declare the parameter `const` if the callee only reads it (`fn(const T)` for a function type), or pass a local copy (@C124). | M · `@F18` |
@@ -698,6 +700,10 @@ nothing at the literal says so. Quiet on a member written `[]`, which is how eve
 constructed, and quiet when only one member is filled — those are the deliberate uses.
 `advice`, not `warning`: the result IS what the language documents, so ignoring it cannot
 produce a result the language did not promise; what is wrong is the author's model) ·
+`LOFT_NO_GROUP_SAME_KEY` (`linked-group-same-key` ADVICE: two members of one linked group of
+the same kind over the same key — the case `linked-group-apart` cannot see, because two
+separate tables are usually declared side by side.  `advice` for the reason the group lints
+share: the group is what the language documents) ·
 `LOFT_NO_GROUP_APART` (`linked-group-apart` ADVICE, the DECLARATION-side half of the same
 question: a linked group whose members are declared APART, with an unrelated field between
 them — `{ entities: vector<E>, tick: integer, spawn_index: hash<E[id]> }`. The declaration is
@@ -778,9 +784,18 @@ warning no `@EXPECT_WARNING` claims fails the file, and by `--check`, where any 
 the check.  A plain run prints its warnings and runs.
 
 **The rule for choosing: a diagnostic gates if and only if ignoring it can produce a
-wrong result.** A lost write, `len(text)` indexed as bytes, a nullable reaching a
-non-null slot — those gate. A deprecation, a perf note, a preferred spelling — those
-advise.
+wrong result** — or it is a **slow construct the libraries must not ship**. A lost write,
+`len(text)` indexed as bytes, a nullable reaching a non-null slot — those gate. A
+deprecation, a perf note, a preferred spelling — those advise.
+
+The second clause is narrow on purpose.  A diagnostic gates for its COST only when all
+three hold: the compiler cannot remove the cost; the message names a cure that takes it
+to zero; and no published library can hold the shape when the diagnostic is introduced —
+the shape was refused until then, or a revalidation of the libraries measures no hit.  The
+third keeps the promise the split exists for: a new gate never fails a library over code
+it did not touch.  `tail-call-not-jumped` is the case: each shape it reports was a compile
+error before.  `avoidable-copy` does not qualify — its shapes were always legal — so it
+advises.
 
 The split is not a convenience. With one tier the compatibility doctrine contradicted
 itself: `revalidate-libs.yml` states that a new deprecation must not fail an

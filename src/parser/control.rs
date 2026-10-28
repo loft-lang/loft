@@ -1288,6 +1288,34 @@ impl Parser {
                     self.math_sign_proven.push((v, sg));
                 }
             }
+            // `@FR-N-Guard` — an `assert` proves its condition on the fall-through: a failed
+            // assert halts, and it is checked in every build.  So it feeds the same four
+            // families as the guard clause above, from the condition's THEN side.
+            if let Some(test) = self.assert_condition(&n) {
+                let test = test.clone();
+                if let Some((v, true)) = self.narrowing_from_condition(&test)
+                    && !self.narrowed_non_null.contains(&v)
+                {
+                    self.narrowed_non_null.push(v);
+                }
+                let caps = std::collections::HashMap::new();
+                for pair in crate::parser::operators::collect_guard_pairs(&test, &self.data, &caps)
+                {
+                    if !self.index_bounded.contains(&pair) {
+                        self.index_bounded.push(pair);
+                    }
+                }
+                if let Some((v, true)) = self.divisor_proof_from_condition(&test)
+                    && !self.divisor_nonzero.contains(&v)
+                {
+                    self.divisor_nonzero.push(v);
+                }
+                if let Some((v, sg, true)) = self.math_sign_proof_from_condition(&test)
+                    && !self.math_sign_proven.iter().any(|(slot, _)| *slot == v)
+                {
+                    self.math_sign_proven.push((v, sg));
+                }
+            }
             if let Value::Insert(ls) = n {
                 let spliced = !ls.is_empty();
                 Self::move_insert_elements(&mut l, ls);
@@ -5235,6 +5263,28 @@ impl Parser {
     /// Returns `(var, non_null_in_then)`: `v != null` / `if v` (truthy) narrow `v` in the
     /// THEN branch (`true`); `v == null` narrows `v` in the ELSE branch (`false`). The null
     /// side of a comparison is any `OpConv*FromNull()` (the parser's typed-null lowering).
+    /// `@FR-N-Guard` — the condition an `assert` statement proves on its fall-through, in either
+    /// lowering [`Parser::parse_call_diagnostic`] gives it: a call to `n_assert`, or the
+    /// `"assert"` block that tests the condition before building a message.  `None` for any
+    /// other statement.
+    fn assert_condition<'v>(&self, n: &'v Value) -> Option<&'v Value> {
+        match n.unspan() {
+            Value::Call(d, args) if *d == self.data.def_nr("n_assert") => args.first(),
+            Value::Block(bl) if bl.name == "assert" => match bl.operators.as_slice() {
+                [only] => match only.unspan() {
+                    Value::If(test, _, _) => Some(test),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// `@FR-N-Guard` — the null fact a condition proves: `Some((v, p))` says that where the
+    /// test evaluates to `p`, the variable `v` is present.  The fallback is `None`, because a
+    /// shape not named here (a compound condition, a comparison with anything but the null
+    /// literal) proves nothing, and the callers then narrow nothing.
     pub(crate) fn narrowing_from_condition(&self, test: &Value) -> Option<(u16, bool)> {
         // `if v` BEFORE the boolean conversion is materialised — the same truthy test as the
         // `OpConvBoolFrom*` arm below, just earlier in the pipeline.  PASS 1 leaves the
@@ -5274,13 +5324,18 @@ impl Parser {
                 return Some((v, name.starts_with("OpNe")));
             }
         }
-        // `s != null` on a heap value is its null test under `OpNot`: negated, the test
-        // proves the var non-null in the THEN branch.
+        // A NEGATED test proves what its operand proves, on the other side: "the test is `p`
+        // proves `v` present" is the same statement as "the negation is `!p` proves it".  So
+        // one arm reads every negation — `s != null` on a heap value (its null test under
+        // `OpNot`), `if !v` (#585, the guard clause `if !v { return }`: the fall-through is
+        // where `v` is truthy), and the plain enum's `c != null`, which lowers to the DOUBLE
+        // negation `OpNot(OpNot(OpConvBoolFromEnum(c)))` and which a reader of only the
+        // single-negation shapes left un-narrowed (X18, `@FR-N-Guard`).
         if name == "OpNot"
             && args.len() == 1
-            && let Some(v) = self.heap_null_test(&args[0])
+            && let Some((v, polarity)) = self.narrowing_from_condition(&args[0])
         {
-            return Some((v, true));
+            return Some((v, !polarity));
         }
         // `if v` (truthy) — a bare nullable read converted to boolean → non-null in THEN.
         if name.starts_with("OpConvBoolFrom")
@@ -5288,23 +5343,6 @@ impl Parser {
             && let Value::Var(v) = args[0].unspan()
         {
             return Some((*v, true));
-        }
-        // `if !v` — negated truthy: `!v` is the null/falsy test, so `v` is non-null on the
-        // ELSE side (where `v` is truthy). This is the guard-clause condition `if !v { return }`
-        // (#585): the THEN branch is the null case, and the fall-through (else) proves `v`
-        // non-null. Mirrors `v == null` → non-null-in-ELSE.
-        if name == "OpNot"
-            && args.len() == 1
-            && let Value::Call(inner_op, inner_args) = args[0].unspan()
-            && self
-                .data
-                .def(*inner_op)
-                .name()
-                .starts_with("OpConvBoolFrom")
-            && inner_args.len() == 1
-            && let Value::Var(v) = inner_args[0].unspan()
-        {
-            return Some((*v, false));
         }
         None
     }
@@ -7180,11 +7218,7 @@ impl Parser {
                     });
                 }
             }
-            if self.lexer.peek_token("}") {
-                self.lexer.has_token(","); // optional trailing comma
-            } else {
-                self.lexer.token(","); // comma required between arms
-            }
+            self.match_arm_separator();
         }
 
         self.lexer.token("}");
@@ -7421,6 +7455,16 @@ impl Parser {
     /// carve-outs it already applies to `else`.  A BARE arm (`1 => x`) has no block tail,
     /// so the same conversion is asked here through the same `convert_admitting` /
     /// `validate_convert` pair, and the carve-outs are restated in the same order.
+    /// `@FR-M-Sep` — the separator after a match arm: a comma, which may be left out before the
+    /// closing `}` and after an arm whose body is a block (`=> { … }`), as in Rust.
+    fn match_arm_separator(&mut self) {
+        if self.lexer.peek_token("}") || self.arm_body_was_block {
+            self.lexer.has_token(",");
+        } else {
+            self.lexer.token(",");
+        }
+    }
+
     fn parse_match_arm_body(&mut self, expected: &Type, arm_code: &mut Value) -> Type {
         // A bare `null` arm, told from the SOURCE token; a block arm reports through
         // `block_tail_null_literal`, read in `parse_match_arm_body_inner`.
@@ -7447,6 +7491,9 @@ impl Parser {
         }
         self.vars.restore_write_state(&arm_write_state);
         self.end_pattern_arm();
+        // `@FR-M-Sep` — a body written as a block needs no comma after it.  Set last, so a
+        // `match` nested in this body cannot leave its own arm's answer behind.
+        self.arm_body_was_block = block_arm;
         tp
     }
 
@@ -11506,11 +11553,7 @@ impl Parser {
                 }
                 break;
             }
-            if self.lexer.peek_token("}") {
-                self.lexer.has_token(","); // optional trailing comma
-            } else {
-                self.lexer.token(","); // comma required between arms
-            }
+            self.match_arm_separator();
         }
         self.lexer.token("}");
 

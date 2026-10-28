@@ -201,7 +201,7 @@ static uint32_t loft_h_slots_in(uint32_t words, uint32_t sb) {
     return words * 2;
 }
 
-static loft_hhdr loft_h_hdr(loft_store_t *s, uint32_t claim) {
+LOFT_HOT_INLINE loft_hhdr loft_h_hdr(loft_store_t *s, uint32_t claim) {
     loft_hhdr h;
     uint32_t words = loft_rec_words(s, claim);
     uint32_t flags = loft_u32(s, claim, LOFT_H_STRIDE_FLD);
@@ -233,7 +233,7 @@ static int loft_h_is_inline(loft_store_t *s, uint32_t claim) {
     return (loft_u32(s, claim, LOFT_H_STRIDE_FLD) & LOFT_H_INLINE) != 0;
 }
 
-static uint32_t loft_h_slot_bytes(loft_store_t *s, uint32_t claim) {
+LOFT_HOT_INLINE uint32_t loft_h_slot_bytes(loft_store_t *s, uint32_t claim) {
     return (loft_u32(s, claim, LOFT_H_STRIDE_FLD) & LOFT_H_TAGGED) ? 8 : LOFT_H_SLOT_BYTES;
 }
 
@@ -252,12 +252,12 @@ static uint32_t loft_h_inline_words(uint32_t count, uint32_t stride) {
 
 static uint32_t loft_h_ent0(uint32_t count) { return LOFT_H_BUCKET0 + count * 8; }
 
-static void loft_h_put_slot(loft_store_t *s, uint32_t claim, uint32_t sb, uint32_t at, uint32_t index, uint32_t tag) {
+LOFT_HOT_INLINE void loft_h_put_slot(loft_store_t *s, uint32_t claim, uint32_t sb, uint32_t at, uint32_t index, uint32_t tag) {
     loft_set_u32(s, claim, LOFT_H_BUCKET0 + at * sb, index);
     if (sb == 8) loft_set_u32(s, claim, LOFT_H_BUCKET0 + at * 8 + 4, tag);
 }
 
-static int loft_h_tag_differs(loft_store_t *s, uint32_t claim, uint32_t sb, uint32_t at, uint32_t want) {
+LOFT_HOT_INLINE int loft_h_tag_differs(loft_store_t *s, uint32_t claim, uint32_t sb, uint32_t at, uint32_t want) {
     return sb == 8 && loft_u32(s, claim, LOFT_H_BUCKET0 + at * 8 + 4) != want;
 }
 
@@ -294,7 +294,7 @@ static void loft_h_write_seed(loft_store_t *s, uint32_t claim, uint64_t seed) {
 /* hash::Entries: where a slot's entry lives. */
 typedef struct { uint16_t store_nr; uint32_t stride, dir, cap; int inl; uint32_t claim, ent0; } loft_hents;
 
-static loft_hents loft_h_entries(loft_store_t *s, uint32_t claim, uint16_t store_nr) {
+LOFT_HOT_INLINE loft_hents loft_h_entries(loft_store_t *s, uint32_t claim, uint16_t store_nr) {
     loft_hents e;
     loft_hhdr h = loft_h_hdr(s, claim);
     e.store_nr = store_nr;
@@ -312,7 +312,7 @@ static loft_hents loft_h_entries(loft_store_t *s, uint32_t claim, uint16_t store
     return e;
 }
 
-static void loft_h_at(const loft_hents *e, loft_store_t *s, uint32_t slot, uint32_t *rec, uint32_t *pos) {
+LOFT_HOT_INLINE void loft_h_at(const loft_hents *e, loft_store_t *s, uint32_t slot, uint32_t *rec, uint32_t *pos) {
     uint32_t k, off;
     if (e->stride == 0 || (slot & LOFT_H_SLOT_RECORD)) {
         *rec = slot & ~LOFT_H_SLOT_RECORD;
@@ -328,7 +328,7 @@ static void loft_h_at(const loft_hents *e, loft_store_t *s, uint32_t slot, uint3
     *pos = off;
 }
 
-static void loft_h_at_bucket(const loft_hents *e, loft_store_t *s, uint32_t slot, uint32_t at, uint32_t *rec, uint32_t *pos) {
+LOFT_HOT_INLINE void loft_h_at_bucket(const loft_hents *e, loft_store_t *s, uint32_t slot, uint32_t at, uint32_t *rec, uint32_t *pos) {
     if (e->inl) {
         *rec = e->claim;
         *pos = e->ent0 + at * e->stride;
@@ -337,7 +337,7 @@ static void loft_h_at_bucket(const loft_hents *e, loft_store_t *s, uint32_t slot
     }
 }
 
-static loft_ref loft_h_entry(const loft_hents *e, loft_store_t *s, uint32_t slot) {
+LOFT_HOT_INLINE loft_ref loft_h_entry(const loft_hents *e, loft_store_t *s, uint32_t slot) {
     loft_ref r;
     r.store_nr = e->store_nr;
     loft_h_at(e, s, slot, &r.rec, &r.pos);
@@ -765,8 +765,10 @@ static loft_ref loft_h_find_i64(loft_ref c, const loft_key *keys, int64_t key) {
 }
 
 /* `@FR-R-TypedKeyed`'s compound clause (hash::find_ints): two to four 8-byte integer key parts,
- * hashed as the general entry hashes them and compared part by part in place. */
-static loft_ref loft_h_find_ints(loft_ref c, const loft_key *keys, int n, const int64_t *ks) {
+ * hashed as the general entry hashes them and compared part by part in place.  Inline with its
+ * header readers: the part count is a constant at every call, so the compare unrolls and the
+ * header decodes once (GCC kept the whole lookup out of line, -13 % on `reload_and_record`). */
+LOFT_HOT_INLINE loft_ref loft_h_find_ints(loft_ref c, const loft_key *keys, int n, const int64_t *ks) {
     if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
     loft_store_t *s = loft_store_of(c);
     uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
@@ -836,8 +838,11 @@ static loft_ref loft_h_entry_ints(loft_ref c, const loft_key *keys, int n, const
     if (bucket == 0 || s->read_only) return loft_ref_null();
     loft_ref e;
     if (ents.inl) {
-        uint32_t iat;
-        claim = loft_h_inline_slot_for(c, claim, tag, &iat);
+        /* The probe ended on the bucket the inline walk would choose from the same home, unless
+         * the table must grow first. */
+        uint32_t iat = (bucket - LOFT_H_BUCKET0) / 8;
+        uint32_t used = loft_u32(s, claim, LOFT_H_INLINE_LEN_FLD) + loft_u32(s, claim, LOFT_AR_FREE_FLD);
+        if (loft_h_is_full(used, count)) claim = loft_h_inline_slot_for(c, claim, tag, &iat);
         e = loft_h_inline_file(s, c.store_nr, claim, iat, tag, 1);
         for (int k = 0; k < n; k++) memcpy(loft_at(s, e.rec, e.pos + keys[k].pos), &ks[k], 8);
         return e;
@@ -846,6 +851,62 @@ static loft_ref loft_h_entry_ints(loft_ref c, const loft_key *keys, int n, const
     uint32_t index = loft_ar_alloc_at(s, claim, ents.stride, c.rec, &e.rec, &e.pos);
     for (int k = 0; k < n; k++) memcpy(loft_at(s, e.rec, e.pos + keys[k].pos), &ks[k], 8);
     loft_h_add_at(c, e, bucket, index, tag, keys, n);
+    return e;
+}
+
+/* `@FR-R-KeyedEntry`'s text clause (hash::entry_str): `loft_h_entry_ints` for a hash whose ONE
+ * key is a text — the entry already under `key`, or a fresh one with its key text written and
+ * filed where the walk ended.  The digest and the compare are `loft_h_find_text`'s.  A key that
+ * views this store is copied first: filing claims, and a claim may move the store's bytes. */
+static loft_ref loft_h_entry_text(loft_ref c, const loft_key *keys, loft_str key) {
+    loft_store_t *s = loft_store_of(c);
+    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
+    if (claim == 0 || loft_rec_words(s, claim) <= LOFT_H_RESERVED) return loft_ref_null();
+    loft_hents ents = loft_h_entries(s, claim, c.store_nr);
+    if (ents.stride == 0) return loft_ref_null();
+    uint32_t count = loft_h_hdr(s, claim).count, sb = loft_h_slot_bytes(s, claim), kpos = keys[0].pos;
+    loft_kv kv = loft_kv_text(key);
+    uint64_t hv = loft_kv_digest(&kv, 1, loft_h_read_seed(s, claim));
+    uint32_t tag = (uint32_t) hv, at = loft_h_home(hv, count), bucket = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t slot = loft_u32(s, claim, LOFT_H_BUCKET0 + at * sb);
+        if (slot == 0) {
+            bucket = LOFT_H_BUCKET0 + at * sb;
+            break;
+        }
+        if (!(ents.inl && slot == LOFT_H_TOMB) && !loft_h_tag_differs(s, claim, sb, at, tag)) {
+            loft_ref e;
+            e.store_nr = c.store_nr;
+            loft_h_at_bucket(&ents, s, slot, at, &e.rec, &e.pos);
+            if (e.rec != 0) {
+                loft_str have = loft_store_str(s, loft_u32(s, e.rec, e.pos + kpos));
+                if (have.len == key.len && (key.len == 0 || memcmp(have.p, key.p, key.len) == 0)) return e;
+            }
+        }
+        if (++at >= count) at = 0;
+    }
+    if (bucket == 0 || s->read_only) return loft_ref_null();
+    loft_text own = { 0, 0, 0 };
+    if (key.len && key.p >= (const char *) s->buf && key.p < (const char *) s->buf + (size_t) s->size * 8) {
+        own = loft_text_own(key);
+        key = loft_view(&own);
+    }
+    loft_ref e;
+    if (ents.inl) {
+        /* The probe ended on the bucket the inline walk would choose from the same home, unless
+         * the table must grow first. */
+        uint32_t iat = (bucket - LOFT_H_BUCKET0) / 8;
+        uint32_t used = loft_u32(s, claim, LOFT_H_INLINE_LEN_FLD) + loft_u32(s, claim, LOFT_AR_FREE_FLD);
+        if (loft_h_is_full(used, count)) claim = loft_h_inline_slot_for(c, claim, tag, &iat);
+        e = loft_h_inline_file(s, c.store_nr, claim, iat, tag, 1);
+        loft_set_text(e, kpos, key);
+    } else {
+        e.store_nr = c.store_nr;
+        uint32_t index = loft_ar_alloc_at(s, claim, ents.stride, c.rec, &e.rec, &e.pos);
+        loft_set_text(e, kpos, key);
+        loft_h_add_at(c, e, bucket, index, tag, keys, 1);
+    }
+    loft_text_free(&own);
     return e;
 }
 
@@ -1121,6 +1182,113 @@ static void loft_hkey_sort(loft_hkey *a, size_t n, int nk, int depth) {
     }
 }
 
+/* A key that keeps its order as ONE unsigned 64-bit value, with its entry's place: the sort's
+ * item where the key packs (`loft_hkey_pack`), a single compare per step and 16 bytes moved. */
+typedef struct { uint64_t k; uint32_t pos; } loft_hk1;
+
+static void loft_hk1_sift(loft_hk1 *a, size_t root, size_t n) {
+    for (;;) {
+        size_t c = root * 2 + 1;
+        if (c >= n) return;
+        if (c + 1 < n && a[c].k < a[c + 1].k) c++;
+        if (!(a[root].k < a[c].k)) return;
+        loft_hk1 t = a[root]; a[root] = a[c]; a[c] = t;
+        root = c;
+    }
+}
+
+/* `loft_hkey_sort` over packed keys: the same introsort. */
+static void loft_hk1_sort(loft_hk1 *a, size_t n, int depth) {
+    while (n > 16) {
+        if (depth-- == 0) {
+            for (size_t i = n / 2; i-- > 0;) loft_hk1_sift(a, i, n);
+            for (size_t e = n - 1; e > 0; e--) {
+                loft_hk1 t = a[0]; a[0] = a[e]; a[e] = t;
+                loft_hk1_sift(a, 0, e);
+            }
+            return;
+        }
+        size_t mid = n / 2;
+        if (a[mid].k < a[0].k) { loft_hk1 t = a[mid]; a[mid] = a[0]; a[0] = t; }
+        if (a[n - 1].k < a[0].k) { loft_hk1 t = a[n - 1]; a[n - 1] = a[0]; a[0] = t; }
+        if (a[n - 1].k < a[mid].k) { loft_hk1 t = a[n - 1]; a[n - 1] = a[mid]; a[mid] = t; }
+        uint64_t pivot = a[mid].k;
+        size_t i = 0, j = n - 1;
+        for (;;) {
+            while (a[i].k < pivot) i++;
+            while (pivot < a[j].k) j--;
+            if (i >= j) break;
+            loft_hk1 t = a[i]; a[i] = a[j]; a[j] = t;
+            i++;
+            j--;
+        }
+        size_t left = j + 1;
+        if (left < n - left) {
+            loft_hk1_sort(a, left, depth);
+            a += left;
+            n -= left;
+        } else {
+            loft_hk1_sort(a + left, n - left, depth);
+            n = left;
+        }
+    }
+    for (size_t i = 1; i < n; i++) {
+        loft_hk1 t = a[i];
+        size_t j = i;
+        while (j > 0 && t.k < a[j - 1].k) { a[j] = a[j - 1]; j--; }
+        a[j] = t;
+    }
+}
+
+/* `@FR-Col-Order`'s key-ordered hash walk: `loft_hk1_sort`'s answer for `n` packed keys by a
+ * least-significant-digit radix sort over the bytes that differ between them (a two-part key
+ * of small coordinates differs in two of eight), stable and without a data-dependent branch —
+ * or 0 where the histograms would cost more than they save, the caller then sorting by
+ * comparison.  The keys of a hash are distinct, so every ascending order of them is the one
+ * order.  `tmp` holds `n` items; the answer is `a` or `tmp`. */
+static loft_hk1 *loft_hk1_radix(loft_hk1 *a, loft_hk1 *tmp, size_t n) {
+    if (n < 2) return a;
+    uint64_t diff = 0;
+    for (size_t i = 1; i < n; i++) diff |= a[i].k ^ a[0].k;
+    int bytes[8], passes = 0;
+    for (int b = 0; b < 8; b++)
+        if ((diff >> (8 * b)) & 0xFF) bytes[passes++] = b;
+    if (passes == 0) return a;
+    if ((size_t) passes * 256 > n) return 0;
+    uint32_t count[8][256];
+    memset(count, 0, sizeof count[0] * (size_t) passes);
+    for (size_t i = 0; i < n; i++)
+        for (int p = 0; p < passes; p++) count[p][(a[i].k >> (8 * bytes[p])) & 0xFF]++;
+    loft_hk1 *from = a, *into = tmp;
+    for (int p = 0; p < passes; p++) {
+        uint32_t at = 0;
+        for (int d = 0; d < 256; d++) {
+            uint32_t c = count[p][d];
+            count[p][d] = at;
+            at += c;
+        }
+        int sh = 8 * bytes[p];
+        for (size_t i = 0; i < n; i++) into[count[p][(from[i].k >> sh) & 0xFF]++] = from[i];
+        loft_hk1 *t = from; from = into; into = t;
+    }
+    return from;
+}
+
+/* The key parts of `p` as one unsigned value in the same order — one part with its sign bit
+ * flipped, two parts that each fit 32 bits flipped the same way and packed high and low — or 0
+ * where they do not (a third part, a wider value, a null, which sorts first as INT64_MIN). */
+static int loft_hkey_pack(const loft_hkey *p, int nk, uint64_t *out) {
+    if (nk == 1) {
+        *out = (uint64_t) p->k[0] ^ UINT64_C(0x8000000000000000);
+        return 1;
+    }
+    if (nk == 2 && p->k[0] >= INT32_MIN && p->k[0] <= INT32_MAX && p->k[1] >= INT32_MIN && p->k[1] <= INT32_MAX) {
+        *out = (uint64_t) ((uint32_t) p->k[0] ^ 0x80000000u) << 32 | (uint64_t) ((uint32_t) p->k[1] ^ 0x80000000u);
+        return 1;
+    }
+    return 0;
+}
+
 static loft_ref *loft_hash_sorted_inline(loft_ref c, const loft_key *keys, int nk, uint32_t *n) {
     if (nk < 1 || nk > 4 || c.store_nr == 0xFFFF || c.rec == 0) return 0;
     for (int i = 0; i < nk; i++) {
@@ -1141,20 +1309,37 @@ static loft_ref *loft_hash_sorted_inline(loft_ref c, const loft_key *keys, int n
         loft_hkey *p = &pairs[live++];
         p->pos = e0 + at * h.stride;
         for (int i = 0; i < nk; i++) {
-            int64_t v = loft_key_get(s, claim, p->pos, &keys[i]).i;
+            /* An `integer` or `long` part is the 8 bytes where the key lies. */
+            int t = keys[i].type < 0 ? -keys[i].type : keys[i].type;
+            int64_t v;
+            if (t == 1 || t == 2) memcpy(&v, loft_at(s, claim, p->pos + keys[i].pos), 8);
+            else v = loft_key_get(s, claim, p->pos, &keys[i]).i;
             p->k[i] = keys[i].type < 0 ? ~v : v;
         }
     }
     int depth = 2;
     for (uint32_t m = live; m > 1; m >>= 1) depth += 2;
-    loft_hkey_sort(pairs, live, nk, depth);
     loft_ref *out = (loft_ref *) malloc(((size_t) live + 1) * 2 * sizeof *out);
     if (!out) { fputs("loft: out of memory\n", stderr); abort(); }
+    loft_hk1 *one = nk <= 2 ? (loft_hk1 *) malloc(((size_t) live + 1) * sizeof *one) : 0;
+    int packed = one != 0;
+    for (uint32_t i = 0; i < live && packed; i++) {
+        packed = loft_hkey_pack(&pairs[i], nk, &one[i].k);
+        one[i].pos = pairs[i].pos;
+    }
+    /* Once packed, `pairs` is free: it holds `count + 1` items of more than twice the size. */
+    loft_hk1 *sorted = packed ? loft_hk1_radix(one, (loft_hk1 *) (void *) pairs, live) : 0;
+    if (packed && !sorted) {
+        loft_hk1_sort(one, live, depth);
+        sorted = one;
+    }
+    if (!packed) loft_hkey_sort(pairs, live, nk, depth);
     for (uint32_t i = 0; i < live; i++) {
         out[i].store_nr = c.store_nr;
         out[i].rec = claim;
-        out[i].pos = pairs[i].pos;
+        out[i].pos = packed ? sorted[i].pos : pairs[i].pos;
     }
+    free(one);
     free(pairs);
     *n = live;
     return out;

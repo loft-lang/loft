@@ -29,124 +29,6 @@
 
 #define LOFT_BOOL_NULL 255
 
-typedef struct { const char *p; size_t len; } loft_str;
-typedef struct { char *p; size_t len; size_t cap; } loft_text;
-
-
-static loft_str loft_lit(const char *p, size_t len) {
-    loft_str s;
-    s.p = p;
-    s.len = len;
-    return s;
-}
-
-static loft_str loft_view(const loft_text *t) {
-    return loft_lit(t->p ? t->p : "", t->len);
-}
-
-/* The null text: the one byte "\0". */
-static loft_str loft_null_text(void) {
-    static const char zero[1] = { 0 };
-    return loft_lit(zero, 1);
-}
-
-static int loft_str_is_null(loft_str s) {
-    return s.len == 1 && s.p[0] == 0;
-}
-
-static void loft_reserve(loft_text *t, size_t extra) {
-    size_t need = t->len + extra;
-    if (need <= t->cap) return;
-    size_t cap = t->cap ? t->cap * 2 : 16;
-    while (cap < need) cap *= 2;
-    char *p = (char *) realloc(t->p, cap);
-    if (!p) { fputs("loft: out of memory\n", stderr); abort(); }
-    t->p = p;
-    t->cap = cap;
-}
-
-static void loft_push_slow(loft_text *t, const char *p, size_t n) {
-    if (n == 0) return;
-    if (t->p && p >= t->p && p < t->p + t->cap) {
-        /* Appending a part of itself: the buffer may move, so copy the part first. */
-        char *copy = (char *) malloc(n);
-        if (!copy) { fputs("loft: out of memory\n", stderr); abort(); }
-        memcpy(copy, p, n);
-        loft_reserve(t, n);
-        memcpy(t->p + t->len, copy, n);
-        free(copy);
-    } else {
-        loft_reserve(t, n);
-        memcpy(t->p + t->len, p, n);
-    }
-    t->len += n;
-}
-
-/* The append every text build runs per piece: in place while the buffer has room and the piece
- * is not a part of the buffer itself, the growth and the self-append out of line. */
-LOFT_HOT_INLINE void loft_push(loft_text *t, const char *p, size_t n) {
-    if (n == 0) return;
-    if (LOFT_LIKELY(t->len + n <= t->cap) && (p < t->p || p >= t->p + t->cap)) {
-        memcpy(t->p + t->len, p, n);
-        t->len += n;
-        return;
-    }
-    loft_push_slow(t, p, n);
-}
-
-static void loft_push_char(loft_text *t, char c) {
-    loft_push(t, &c, 1);
-}
-
-static void loft_text_append(loft_text *t, loft_str s) {
-    loft_push(t, s.p, s.len);
-}
-
-/* OpAppendText (ops::append_text): a null text stays null, a null source makes it null. */
-static void loft_text_concat(loft_text *t, loft_str s) {
-    if (loft_str_is_null(loft_view(t))) return;
-    if (loft_str_is_null(s)) {
-        t->len = 0;
-        loft_push_char(t, 0);
-        return;
-    }
-    loft_text_append(t, s);
-}
-
-static void loft_text_set(loft_text *t, loft_str s) {
-    if (t->p && s.p == t->p && s.len == t->len) return;
-    if (t->p && s.p >= t->p && s.p < t->p + t->cap) {
-        memmove(t->p, s.p, s.len);
-        t->len = s.len;
-        return;
-    }
-    t->len = 0;
-    loft_push(t, s.p, s.len);
-}
-
-static loft_text loft_text_own(loft_str s) {
-    loft_text t = { 0, 0, 0 };
-    loft_push(&t, s.p, s.len);
-    return t;
-}
-
-/* A text as a NUL-terminated C string the caller frees: what a `#c` binding's `const char *`
- * parameter receives (`c_call`'s `TextPointer`). */
-static char *loft_cstr_own(loft_str s) {
-    char *c = (char *) malloc(s.len + 1);
-    if (!c) { fputs("loft: out of memory\n", stderr); abort(); }
-    if (s.len) memcpy(c, s.p, s.len);
-    c[s.len] = 0;
-    return c;
-}
-
-static void loft_text_free(loft_text *t) {
-    free(t->p);
-    t->p = 0;
-    t->len = 0;
-    t->cap = 0;
-}
-
 static double loft_usage_pct(uint64_t a, uint64_t b) {
     return b == 0 ? 0.0 : 100.0 * (double) a / (double) b;
 }
@@ -508,16 +390,38 @@ static void loft_eprint(loft_str s) {
  * constant operand the portable check folds to one compare, cheaper still.  Addition and
  * subtraction keep the portable comparison: an overflow builtin hides the operands' ranges
  * from the optimiser (measured on clang: a masked accumulator's loop ran 2.7x slower). */
+/* `@FR-R-GuardedChain`'s guard arithmetic: the magnitude bound of a chain, each step clearing
+ * `*ok` where it does not fit (`checked_add`, `checked_mul`, `checked_abs` — the last fails on the
+ * null sentinel, which has no absolute value).  The value after a failure is never read. */
+static int64_t loft_gc_abs(int64_t a, int *ok) {
+    if (a == LOFT_NULL) { *ok = 0; return 0; }
+    return a < 0 ? -a : a;
+}
+static int64_t loft_gc_add(int64_t a, int64_t b, int *ok) {
+    int64_t r;
+    if (LOFT_ADD_OVF(a, b, &r)) { *ok = 0; return 0; }
+    return r;
+}
+static int64_t loft_gc_mul(int64_t a, int64_t b, int *ok) {
+    int64_t r;
+    if (LOFT_MUL_OVF(a, b, &r)) { *ok = 0; return 0; }
+    return r;
+}
+static int64_t loft_gc_max(int64_t a, int64_t b) { return a > b ? a : b; }
+
+/* The checked `+` and `-`: null in, null out, and null where the result does not fit — the
+ * compiler's overflow builtin (`LOFT_ADD_OVF`), which both GCC and Clang lower to one flag test,
+ * where Clang kept the spelled-out range comparisons as compares and branches. */
 LOFT_HOT_INLINE int64_t loft_add(int64_t a, int64_t b) {
+    int64_t r;
     if (a == LOFT_NULL || b == LOFT_NULL) return LOFT_NULL;
-    if ((b > 0 && a > INT64_MAX - b) || (b < 0 && a < INT64_MIN - b)) return LOFT_NULL;
-    return a + b;
+    return LOFT_ADD_OVF(a, b, &r) ? LOFT_NULL : r;
 }
 
 LOFT_HOT_INLINE int64_t loft_sub(int64_t a, int64_t b) {
+    int64_t r;
     if (a == LOFT_NULL || b == LOFT_NULL) return LOFT_NULL;
-    if ((b < 0 && a > INT64_MAX + b) || (b > 0 && a < INT64_MIN + b)) return LOFT_NULL;
-    return a - b;
+    return LOFT_SUB_OVF(a, b, &r) ? LOFT_NULL : r;
 }
 
 LOFT_HOT_INLINE int64_t loft_mul(int64_t a, int64_t b) {
@@ -1451,6 +1355,48 @@ LOFT_HOT_INLINE int64_t loft_get_int(loft_ref r, uint32_t fld) {
     return v;
 }
 
+/* `@FR-R-RecPtr`: the address of record view `r`'s first byte, held for a block that grows no
+ * store — 0 for the null record, where every read through it answers its getter's sentinel and
+ * every write is skipped, as `loft_get_*` / `loft_set_*` do — and whether its store is locked,
+ * which a write through it reports as `loft_set_*`'s write check does. */
+LOFT_HOT_INLINE uint8_t *loft_rec_ptr(loft_ref r) {
+    return r.rec == 0 ? 0 : loft_at(loft_store_of(r), r.rec, r.pos);
+}
+LOFT_HOT_INLINE int loft_rec_locked(loft_ref r) { return r.rec != 0 && loft_store_of(r)->read_only; }
+LOFT_HOT_INLINE int64_t loft_pa_i64(const uint8_t *p, uint32_t off) {
+    int64_t v;
+    if (!p) return LOFT_NULL;
+    memcpy(&v, p + off, 8);
+    return v;
+}
+LOFT_HOT_INLINE double loft_pa_f64(const uint8_t *p, uint32_t off) {
+    double v;
+    if (!p) return (double) NAN;
+    memcpy(&v, p + off, 8);
+    return v;
+}
+LOFT_HOT_INLINE float loft_pa_f32(const uint8_t *p, uint32_t off) {
+    float v;
+    if (!p) return (float) NAN;
+    memcpy(&v, p + off, 4);
+    return v;
+}
+LOFT_HOT_INLINE uint8_t loft_pa_bool(const uint8_t *p, uint32_t off) { return p ? p[off] : LOFT_BOOL_NULL; }
+LOFT_HOT_INLINE void loft_pa_set(uint8_t *p, int locked, uint32_t off, const void *v, size_t n) {
+    if (!p) return;
+    if (LOFT_UNLIKELY(locked)) loft_locked_write();
+    memcpy(p + off, v, n);
+}
+
+/* The bytes of record `r` for a run of scalar field writes (`@FR-R-ValueRecord`'s copy into a
+ * place): `loft_set_int`'s null test and write check once, and one address — 0 for the null
+ * record, which every write of the run skips as each setter would. */
+static uint8_t *loft_rec_w(loft_ref r) {
+    if (r.rec == 0) return 0;
+    LOFT_WRITE_CHECK(loft_store_of(r));
+    return loft_at(loft_store_of(r), r.rec, r.pos);
+}
+
 LOFT_HOT_INLINE void loft_set_int(loft_ref r, uint32_t fld, int64_t v) {
     if (r.rec == 0) return;
     LOFT_WRITE_CHECK(loft_store_of(r));
@@ -1471,15 +1417,30 @@ static int32_t loft_i32_of(int64_t v) {
     return v == LOFT_NULL ? INT32_MIN : (int32_t) (uint32_t) (uint64_t) v;
 }
 
+/* Each narrow read is decoded once, by `loft_dec_*` at a field's non-null address; the null
+ * record is tested once on each path in: by `loft_get_*` on the reference, by `loft_pa_*` on a
+ * held record's address (`@FR-R-RecPtr`, the null address answering null). */
+LOFT_HOT_INLINE int64_t loft_dec_byte(const uint8_t *q, int64_t min) { return q[0] + min; }
+LOFT_HOT_INLINE int64_t loft_dec_byte_nullable(const uint8_t *q, int64_t min) {
+    return q[0] == 255 ? LOFT_NULL : q[0] + min;
+}
+
+LOFT_HOT_INLINE int64_t loft_pa_byte(const uint8_t *p, uint32_t fld, int64_t min) {
+    return p ? loft_dec_byte(p + fld, min) : LOFT_NULL;
+}
+
 static int64_t loft_get_byte(loft_ref r, uint32_t fld, int64_t min) {
     if (r.rec == 0) return LOFT_NULL;
-    return *loft_at(loft_store_of(r), r.rec, r.pos + fld) + min;
+    return loft_dec_byte(loft_at(loft_store_of(r), r.rec, r.pos + fld), min);
+}
+
+LOFT_HOT_INLINE int64_t loft_pa_byte_nullable(const uint8_t *p, uint32_t fld, int64_t min) {
+    return p ? loft_dec_byte_nullable(p + fld, min) : LOFT_NULL;
 }
 
 static int64_t loft_get_byte_nullable(loft_ref r, uint32_t fld, int64_t min) {
     if (r.rec == 0) return LOFT_NULL;
-    uint8_t raw = *loft_at(loft_store_of(r), r.rec, r.pos + fld);
-    return raw == 255 ? LOFT_NULL : raw + min;
+    return loft_dec_byte_nullable(loft_at(loft_store_of(r), r.rec, r.pos + fld), min);
 }
 
 static uint8_t loft_byte_raw(int64_t min, int64_t val);
@@ -1498,11 +1459,19 @@ static void loft_set_byte_nullable(loft_ref r, uint32_t fld, int64_t min, int64_
     *loft_at(loft_store_of(r), r.rec, r.pos + fld) = loft_byte_raw(min, x);
 }
 
+LOFT_HOT_INLINE int64_t loft_dec_short(const uint8_t *q, int64_t min) {
+    uint16_t raw;
+    memcpy(&raw, q, 2);
+    return raw == 0 ? LOFT_NULL : raw + min - 1;
+}
+
+LOFT_HOT_INLINE int64_t loft_pa_short(const uint8_t *p, uint32_t fld, int64_t min) {
+    return p ? loft_dec_short(p + fld, min) : LOFT_NULL;
+}
+
 static int64_t loft_get_short(loft_ref r, uint32_t fld, int64_t min) {
     if (r.rec == 0) return LOFT_NULL;
-    uint16_t raw;
-    memcpy(&raw, loft_at(loft_store_of(r), r.rec, r.pos + fld), 2);
-    return raw == 0 ? LOFT_NULL : raw + min - 1;
+    return loft_dec_short(loft_at(loft_store_of(r), r.rec, r.pos + fld), min);
 }
 
 static void loft_set_short(loft_ref r, uint32_t fld, int64_t min, int64_t v) {
@@ -1515,11 +1484,19 @@ static void loft_set_short(loft_ref r, uint32_t fld, int64_t min, int64_t v) {
     memcpy(loft_at(loft_store_of(r), r.rec, r.pos + fld), &raw, 2);
 }
 
+LOFT_HOT_INLINE int64_t loft_dec_short_raw(const uint8_t *q, int64_t min) {
+    uint16_t raw;
+    memcpy(&raw, q, 2);
+    return raw + min;
+}
+
+LOFT_HOT_INLINE int64_t loft_pa_short_raw(const uint8_t *p, uint32_t fld, int64_t min) {
+    return p ? loft_dec_short_raw(p + fld, min) : LOFT_NULL;
+}
+
 static int64_t loft_get_short_raw(loft_ref r, uint32_t fld, int64_t min) {
     if (r.rec == 0) return LOFT_NULL;
-    uint16_t raw;
-    memcpy(&raw, loft_at(loft_store_of(r), r.rec, r.pos + fld), 2);
-    return raw + min;
+    return loft_dec_short_raw(loft_at(loft_store_of(r), r.rec, r.pos + fld), min);
 }
 
 static void loft_set_short_raw(loft_ref r, uint32_t fld, int64_t min, int64_t v) {
@@ -1533,24 +1510,49 @@ static void loft_set_short_raw(loft_ref r, uint32_t fld, int64_t min, int64_t v)
     memcpy(loft_at(loft_store_of(r), r.rec, r.pos + fld), &raw, 2);
 }
 
+LOFT_HOT_INLINE int64_t loft_dec_int4(const uint8_t *q) {
+    int32_t x;
+    memcpy(&x, q, 4);
+    return x == INT32_MIN ? LOFT_NULL : x;
+}
+
+LOFT_HOT_INLINE int64_t loft_pa_int4(const uint8_t *p, uint32_t fld) { return p ? loft_dec_int4(p + fld) : LOFT_NULL; }
+
 static int64_t loft_get_int4(loft_ref r, uint32_t fld) {
     if (r.rec == 0) return LOFT_NULL;
-    int32_t x;
-    memcpy(&x, loft_at(loft_store_of(r), r.rec, r.pos + fld), 4);
-    return x == INT32_MIN ? LOFT_NULL : x;
+    return loft_dec_int4(loft_at(loft_store_of(r), r.rec, r.pos + fld));
 }
 
 /* OpGetInt4Raw / OpGetInt4Full / OpSetInt4Raw: an unsigned 4-byte field — the Raw form keeps
  * 0xFFFFFFFF for null, the Full form reserves nothing. */
+LOFT_HOT_INLINE int64_t loft_dec_int4_raw(const uint8_t *q) {
+    uint32_t x;
+    memcpy(&x, q, 4);
+    return x == 0xFFFFFFFFu ? LOFT_NULL : (int64_t) x;
+}
+
+LOFT_HOT_INLINE int64_t loft_pa_int4_raw(const uint8_t *p, uint32_t fld) {
+    return p ? loft_dec_int4_raw(p + fld) : LOFT_NULL;
+}
+
 static int64_t loft_get_int4_raw(loft_ref r, uint32_t fld) {
     if (r.rec == 0) return LOFT_NULL;
-    uint32_t x = loft_u32(loft_store_of(r), r.rec, r.pos + fld);
-    return x == 0xFFFFFFFFu ? LOFT_NULL : (int64_t) x;
+    return loft_dec_int4_raw(loft_at(loft_store_of(r), r.rec, r.pos + fld));
+}
+
+LOFT_HOT_INLINE int64_t loft_dec_int4_full(const uint8_t *q) {
+    uint32_t x;
+    memcpy(&x, q, 4);
+    return (int64_t) x;
+}
+
+LOFT_HOT_INLINE int64_t loft_pa_int4_full(const uint8_t *p, uint32_t fld) {
+    return p ? loft_dec_int4_full(p + fld) : LOFT_NULL;
 }
 
 static int64_t loft_get_int4_full(loft_ref r, uint32_t fld) {
     if (r.rec == 0) return LOFT_NULL;
-    return (int64_t) loft_u32(loft_store_of(r), r.rec, r.pos + fld);
+    return loft_dec_int4_full(loft_at(loft_store_of(r), r.rec, r.pos + fld));
 }
 
 static void loft_set_int4_raw(loft_ref r, uint32_t fld, int64_t v) {
@@ -1930,7 +1932,9 @@ static uint8_t loft_enum_of_text(const char *const *names, size_t n, loft_str t)
     return 0;
 }
 
-/* OpGetEnum: 0 for the null reference, the stored byte otherwise. */
+/* OpGetEnum: 0 for the null reference (the null address), the stored byte otherwise. */
+LOFT_HOT_INLINE uint8_t loft_pa_enum(const uint8_t *p, uint32_t fld) { return p ? p[fld] : 0; }
+
 static uint8_t loft_get_enum(loft_ref r, uint32_t fld) {
     if (r.rec == 0) return 0;
     return *loft_at(loft_store_of(r), r.rec, r.pos + fld);
@@ -2361,7 +2365,10 @@ static void loft_vec_reserve(loft_ref v, int64_t count, uint32_t size) {
     uint32_t words = loft_vec_cap_words(count < 11 ? 11 : (uint32_t) count, size);
     uint32_t r = loft_collection_rec(s, v.rec, v.pos);
     if (r == 0) {
-        r = loft_claim(s, words);
+        /* Not zeroed (`@FR-H-Claim`: a payload holds whatever the block held): an element past
+         * the length is read by nothing, and every push writes its slot before the length
+         * takes it in.  The length word is the one byte range a reader reads. */
+        r = loft_st_claim(s, words);
         loft_set_u32(s, v.rec, v.pos, r);
         loft_set_u32(s, r, 4, 0);
         return;
@@ -2438,6 +2445,16 @@ LOFT_COLD static loft_win loft_win_grow(loft_win w, loft_ref v, uint32_t size, u
     return loft_win_of(v, size);
 }
 
+/* The slow path of a push in place: the window grown through a COPY, so the caller's window never
+ * has its address handed to a call — Clang then keeps its fields in registers across the loop,
+ * where `*w = loft_win_grow(*w, …)` (a 24-byte struct passed and returned through memory) kept
+ * the whole window on the stack and reloaded it at every push. */
+LOFT_HOT_INLINE void loft_win_grow_into(loft_win *w, loft_ref v, uint32_t size, uint64_t bits) {
+    loft_win t = *w;
+    t = loft_win_grow(t, v, size, bits);
+    *w = t;
+}
+
 /* A push through the window: one comparison, one store and a bump while it fits (the element's
  * bytes as the ordinary push writes them, encoded by the caller), the growth arm otherwise. */
 LOFT_HOT_INLINE void loft_win_put8(loft_win *w, loft_ref v, uint64_t bits) {
@@ -2445,7 +2462,7 @@ LOFT_HOT_INLINE void loft_win_put8(loft_win *w, loft_ref v, uint64_t bits) {
         memcpy(w->base + (size_t) w->len * 8, &bits, 8);
         w->len++;
     } else {
-        *w = loft_win_grow(*w, v, 8, bits);
+        loft_win_grow_into(w, v, 8, bits);
     }
 }
 
@@ -2454,7 +2471,7 @@ LOFT_HOT_INLINE void loft_win_put4(loft_win *w, loft_ref v, uint32_t bits) {
         memcpy(w->base + (size_t) w->len * 4, &bits, 4);
         w->len++;
     } else {
-        *w = loft_win_grow(*w, v, 4, bits);
+        loft_win_grow_into(w, v, 4, bits);
     }
 }
 
@@ -2463,7 +2480,7 @@ LOFT_HOT_INLINE void loft_win_put1(loft_win *w, loft_ref v, uint8_t bits) {
         w->base[w->len] = bits;
         w->len++;
     } else {
-        *w = loft_win_grow(*w, v, 1, bits);
+        loft_win_grow_into(w, v, 1, bits);
     }
 }
 
@@ -2826,6 +2843,15 @@ static void loft_vec_clear_release(const loft_tdesc *T, uint32_t loft_ntypes, lo
     /* A local bound to a view: the clear drops it, and the store is an ordinary empty one. */
     if (loft_st_is_foreign(s)) { loft_st_release_foreign(s); return; }
 #endif
+    /* A vector already empty — no block, or a block of length 0 — has nothing to release, and its
+     * clear is nothing (`v = []` on a vector that holds nothing).  An absent slot still takes the
+     * clear, which makes it the empty vector. */
+    uint32_t cur = loft_u32(s, v.rec, v.pos);
+    if (cur == 0) return;
+    if (cur != 0xFFFFFFFFu) {
+        uint32_t r0 = loft_collection_rec(s, v.rec, v.pos);
+        if (r0 != 0 && loft_u32(s, r0, 4) == 0) return;
+    }
     if (v.rec == 1) {
         uint16_t kt = s->known;
         int one_field = kt < loft_ntypes && T[kt].kind == LOFT_T_STRUCT && T[kt].n == 1;
@@ -3495,10 +3521,6 @@ static void loft_format_float(loft_text *s, double val, int64_t width, int64_t p
  * `loft_show{tp}` per type a program renders; these are the parts every type shares. */
 typedef void (*loft_show_fn)(loft_text *s, loft_ref r, int fmt, int ind);
 
-static void loft_push_cstr(loft_text *s, const char *p) {
-    loft_push(s, p, strlen(p));
-}
-
 static void loft_push_i64(loft_text *s, int64_t v) {
     char buf[24];
     int n = 0;
@@ -3788,16 +3810,6 @@ static loft_ref loft_arguments(void) {
 
 /* ticks(): microseconds since the program started, monotonic; LOFT_FAKE_TICKS_US pins it. */
 static int64_t loft_start_us = -1;
-
-static int64_t loft_now_us(void) {
-#if defined(LOFT_POSIX)
-    struct timespec t;
-    clock_gettime(CLOCK_MONOTONIC, &t);
-    return (int64_t) t.tv_sec * 1000000 + t.tv_nsec / 1000;
-#else
-    return (int64_t) ((double) clock() * 1000000.0 / CLOCKS_PER_SEC);
-#endif
-}
 
 static int64_t loft_ticks(void) {
     static int fake_read = 0;
@@ -4518,49 +4530,6 @@ static int64_t loft_vector_sum_int(loft_ref v, int64_t acc) {
         acc = loft_add(acc, x);
     }
     return acc;
-}
-
-/* Is `p[0..n)` well-formed UTF-8, as Rust's `String::from_utf8` asks? */
-static int loft_utf8_valid(const unsigned char *p, size_t n) {
-    size_t i = 0;
-    while (i < n) {
-        unsigned char c = p[i];
-        size_t len;
-        uint32_t cp, min;
-        if (c < 0x80) { i++; continue; }
-        if (c >= 0xC2 && c <= 0xDF) { len = 2; cp = c & 0x1F; min = 0x80; }
-        else if (c >= 0xE0 && c <= 0xEF) { len = 3; cp = c & 0x0F; min = 0x800; }
-        else if (c >= 0xF0 && c <= 0xF4) { len = 4; cp = c & 0x07; min = 0x10000; }
-        else return 0;
-        if (i + len > n) return 0;
-        for (size_t k = 1; k < len; k++) {
-            if ((p[i + k] & 0xC0) != 0x80) return 0;
-            cp = (cp << 6) | (p[i + k] & 0x3F);
-        }
-        if (cp < min || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) return 0;
-        i += len;
-    }
-    return 1;
-}
-
-/* `String::from_utf8_lossy` over bytes that may hold a NUL: an invalid byte is U+FFFD. */
-static void loft_push_lossy(loft_text *t, const char *c, size_t n) {
-    const unsigned char *p = (const unsigned char *) c;
-    if (loft_utf8_valid(p, n)) {
-        loft_push(t, c, n);
-        return;
-    }
-    for (size_t i = 0; i < n;) {
-        size_t len = p[i] < 0x80 ? 1 : (p[i] >= 0xC2 && p[i] <= 0xDF) ? 2
-                   : (p[i] >= 0xE0 && p[i] <= 0xEF) ? 3 : (p[i] >= 0xF0 && p[i] <= 0xF4) ? 4 : 0;
-        if (len && i + len <= n && loft_utf8_valid(p + i, len)) {
-            loft_push(t, c + i, len);
-            i += len;
-        } else {
-            loft_push(t, "\xEF\xBF\xBD", 3);
-            i++;
-        }
-    }
 }
 
 /* A `char *` a `#c` binding returns, as `c_call` reads it: NULL is the null text, the bytes end

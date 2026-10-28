@@ -2592,6 +2592,22 @@ pub fn push_value_cast(rust_type: &str, bias: bool) -> &'static str {
     }
 }
 
+/// The element an unbiased fused push stores, from its VALUE spelled `val` (an `i64` for every
+/// integer kind): an `i32` keeps the integer null as `i32::MIN` (`OpPushInt4`), a `u32` is the
+/// value `as u32` (`OpPushCharacter`), a `u8` kind takes [`push_value_cast`], and every other
+/// kind's value already is its element.  The push fill stores `n` of these, so it spells its
+/// value here; the per-element push (`HoistedPushEmitter`) writes the same arms in line.
+#[must_use]
+pub fn push_element(rust_type: &str, val: &str) -> String {
+    match rust_type {
+        "i32" => format!(
+            "{{ let __v: i64 = ({val}); if __v == i64::MIN {{ i32::MIN }} else {{ __v as i32 }} }}"
+        ),
+        "u32" => format!("({val}) as u32"),
+        _ => format!("({val}){}", push_value_cast(rust_type, false)),
+    }
+}
+
 /// `@FR-R-PushFill`'s repeat-literal clause — the lowering of `[c, c, …, c]` / `[c; n]` into a
 /// vector: `{ OpPreAllocVector(p, n, w); OpPush<K>(p, c) }` then `OpAppendCopy(p, n, tp)`, the
 /// template pushed once and copied `n - 1` times.  When `c` is a literal of an unbiased

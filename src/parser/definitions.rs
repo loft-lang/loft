@@ -960,6 +960,7 @@ impl Parser {
                 // fixed for one container kind over.
                 self.link_shared_nullable_views(v_nr);
                 self.advise_group_apart(v_nr, &field_at);
+                self.advise_group_same_key(v_nr, &field_at);
             } else if self.first_pass {
                 self.data
                     .set_returned(v_nr, Type::Enum(d_nr, false, crate::data::Deps::none()));
@@ -3630,12 +3631,12 @@ impl Parser {
             // `@FR-R-TailSelf` (@C155) — a self-call in tail position is a jump that reuses the
             // frame.  Where this frame cannot be reused — a parameter or local held in a store,
             // a `&` parameter, a heap result, a generator, a `parallel` block or a closure in
-            // the body — the program is refused HERE, on the source shape, and never left a
-            // call: a call that stops at `MAX_CALL_DEPTH` holds for small inputs and fails for
-            // large ones, which is the wrong answer to ship silently.  The predicate is the
-            // pass's own (`tail_frame::admit_frame`), so what compiles is what the pass makes a
-            // jump.
-            if !self.data.definitions[ctx].is_operator() {
+            // the body — the call stays an ordinary call and is WARNED here, on the source
+            // shape: a call that stops at `MAX_CALL_DEPTH` holds for small inputs and fails for
+            // large ones, so it is never left a call silently, and the warning gates a
+            // library's CI.  The predicate is the pass's own (`tail_frame::admit_frame`), so
+            // what is warned is exactly what the pass leaves a call.
+            if !self.data.definitions[ctx].is_operator() && !crate::tail_frame::off() {
                 let def = &self.data.definitions[ctx];
                 let refused =
                     crate::tail_frame::tail_calls(&def.code, self.context, &self.vars, &self.data)
@@ -3656,15 +3657,35 @@ impl Parser {
                 if let Some((at, why)) = refused {
                     let fn_name = def.name().trim_start_matches("n_").to_string();
                     let msg = format!(
-                        "`{fn_name}` calls itself in tail position, where a self-call is a jump \
-                         that reuses the frame — but this frame cannot be reused: {why}.  Left \
-                         a call it would stop at 10 000 frames, so write the recursion as a \
-                         loop (`while`), or keep that value outside the frame"
+                        "`{fn_name}` calls itself in tail position, but this call stays an \
+                         ordinary call, which stops at 10 000 frames: {why}.  Write the \
+                         recursion as a loop (`while`), or keep that value outside the frame"
                     );
                     match at {
-                        Some(pos) => diagnostic_at!(self.lexer, &pos, Level::Error, "{msg}"),
-                        None => diagnostic!(self.lexer, Level::Error, "{msg}"),
+                        Some(pos) => diagnostic_at!(
+                            self.lexer,
+                            &pos,
+                            Level::Warning,
+                            code = "tail-call-not-jumped",
+                            "{msg}"
+                        ),
+                        None => diagnostic!(
+                            self.lexer,
+                            Level::Warning,
+                            code = "tail-call-not-jumped",
+                            "{msg}"
+                        ),
                     }
+                    self.lexer.fix_last(crate::diagnostics::Fix {
+                        kind: crate::diagnostics::FixKind::Conditional,
+                        title: format!("keep it an ordinary call on purpose: bind its value first, `r = {fn_name}(…); r`"),
+                        condition: Some(
+                            "the recursion stays well under 10 000 frames for every input it is given".to_string(),
+                        ),
+                        edit: None,
+                        concept: "functions",
+                        concept_ref: "@F16",
+                    });
                 }
             }
             // P246 follow-up — UPPER_CASE locals without `const`
@@ -4636,15 +4657,25 @@ impl Parser {
     ) -> Option<Type> {
         // @PLN204 — under the 32-bit regime a plain `integer` is an `i32` and a plain
         // `float` a `single`; `i64` / `f64` name the 64-bit forms there and everywhere.
+        // `integer limit(…)` names its own range, and `limit` follows `integer` only.
         let type_name = if self.data.width32() {
             match type_name {
-                "integer" => "i32",
+                "integer"
+                    if !matches!(&self.lexer.peek().has,
+                        crate::lexer::LexItem::Identifier(n) if n == "limit") =>
+                {
+                    "i32"
+                }
                 "float" => "single",
                 other => other,
             }
         } else {
             type_name
         };
+        // @PLN204 — `i64` is the wide template (`IntegerSpec::i64`), in every file.
+        if type_name == "i64" {
+            return Some(Type::Integer(crate::narrow::IntegerSpec::i64()));
+        }
         // Phase 2c round 10c: `long` has been removed as a user-facing
         // type.  Callers now use `integer` everywhere; if anyone still
         // writes `long` it parses as an unknown identifier and fails
@@ -6175,6 +6206,7 @@ impl Parser {
         }
         self.link_shared_nullable_views(d_nr);
         self.advise_group_apart(d_nr, &field_at);
+        self.advise_group_same_key(d_nr, &field_at);
         // #91: check for circular init dependencies (second pass, all fields known).
         if !self.first_pass {
             self.check_circular_init(&init_deps);
@@ -6378,6 +6410,101 @@ impl Parser {
             if let Some(t) = rewritten {
                 self.data.definitions[d_nr as usize].attributes[a].typedef =
                     if nullable_field { Type::optional(t) } else { t };
+            }
+        }
+    }
+
+    /// The kind and key a keyed collection field is written with — what two members of one
+    /// linked group must share to index the same records the same way.  `index` is left out:
+    /// a second same-key `index` is refused outright (`reject_duplicate_index`, @C113).
+    fn same_key_signature(tp: &Type) -> Option<(&'static str, String)> {
+        let spell = |keys: &[(String, bool)]| {
+            keys.iter()
+                .map(|(k, asc)| if *asc { k.clone() } else { format!("-{k}") })
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        match tp.base() {
+            Type::Hash(_, keys, _) => Some(("hash", keys.join(","))),
+            Type::Sorted(_, keys, _) => Some(("sorted", spell(keys))),
+            Type::Radix(_, keys, _) => Some(("spatial", keys.join(","))),
+            Type::Trie(_, key, _) => Some(("trie", key.clone())),
+            _ => None,
+        }
+    }
+
+    /// Advise when two members of one linked collection group are the SAME kind over the same
+    /// key (loft#2216) — @FR-Col-Group made legible where the group cannot be meant.
+    ///
+    /// Two collections over one element type in one struct are one record set, so a second
+    /// `hash<E[k]>` beside the first holds exactly the records the first holds, under the
+    /// same key: it answers nothing the first does not.  The group is legal and the language
+    /// keeps it (a test may want two routes); what such a pair almost always is, though, is
+    /// two tables meant to be separate that happen to share an element type — and adjacency,
+    /// `advise_group_apart`'s signal, says nothing about that, because two tables are usually
+    /// declared side by side.  Advice, as the group lints are: an intended group is never
+    /// wrong.  The line points at the later member.
+    fn advise_group_same_key(&mut self, d_nr: u32, field_at: &[(String, crate::lexer::Position)]) {
+        if self.default || self.first_pass || !crate::keys::group_same_key_lint_enabled() {
+            return;
+        }
+        for (elem, members) in self.collection_groups(d_nr) {
+            for (j, later) in members.iter().enumerate() {
+                let Some(sig) = Self::same_key_signature(&self.data.attr_type(d_nr, later.a_nr))
+                else {
+                    continue;
+                };
+                let Some(earlier) = members[..j].iter().find(|m| {
+                    Self::same_key_signature(&self.data.attr_type(d_nr, m.a_nr)).as_ref()
+                        == Some(&sig)
+                }) else {
+                    continue;
+                };
+                let Some((_, at)) = field_at.iter().find(|(nm, _)| *nm == later.name) else {
+                    continue;
+                };
+                let elem_name = self.data.def(elem).name.clone();
+                let elem_name = elem_name
+                    .strip_prefix("__nullable<")
+                    .and_then(|n| n.strip_suffix('>'))
+                    .unwrap_or(&elem_name)
+                    .to_string();
+                let shown = format!("{}<{elem_name}[{}]>", sig.0, sig.1);
+                diagnostic_at!(
+                    self.lexer,
+                    at,
+                    Level::Advice,
+                    code = "linked-group-same-key",
+                    "`{}` and `{}` are both `{shown}` in one struct, so they are one record set \
+                     — two collections over one element type in one struct are two routes to \
+                     the same records — and `{}` holds exactly what `{}` holds",
+                    later.name,
+                    earlier.name,
+                    later.name,
+                    earlier.name
+                );
+                self.lexer.fix_last(crate::diagnostics::Fix {
+                    kind: crate::diagnostics::FixKind::Conditional,
+                    title: format!(
+                        "give `{}` its own element type so the two tables stay apart",
+                        later.name
+                    ),
+                    condition: Some("they were meant to be separate tables".to_string()),
+                    edit: None,
+                    concept: "keyed collections",
+                    concept_ref: "@F7",
+                });
+                self.lexer.fix_last(crate::diagnostics::Fix {
+                    kind: crate::diagnostics::FixKind::Conditional,
+                    title: format!(
+                        "remove `{}`: it answers what `{}` does",
+                        later.name, earlier.name
+                    ),
+                    condition: Some("a second route to the same records was meant".to_string()),
+                    edit: None,
+                    concept: "keyed collections",
+                    concept_ref: "@F7",
+                });
             }
         }
     }

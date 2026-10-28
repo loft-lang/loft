@@ -1,0 +1,49 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The lowering of a function's IR tree into ops (@PLN91 S1.1).  The images are the ones
+// `tests/selfhost.rs` emits of `selfhost/kernels/*.loft`, in `LOFT_SELFHOST_KERNELS`.
+use load;
+use lower;
+
+fn kernel(name: text) -> ir::Bundle {
+  b = load::load("{env_variable("LOFT_SELFHOST_KERNELS")}/{name}.store");
+  assert(b != null, "the {name} kernel's image opens");
+  b
+}
+
+// One line per op, `code a b`.
+fn render(ops: vector<lower::Op>) -> text {
+  out = "";
+  for op in ops {
+    out += "{op.code} {op.a} {op.b}\n";
+  }
+  out
+}
+
+fn test_fib_lowers_to_a_flat_stack_program() {
+  b = kernel("fib");
+  fib = lower::find(b, "n_fib");
+  assert(fib >= 0, "the image has fib");
+  l = lower::lower(b, fib);
+  assert(l.refused == "", "refused: {l.refused}");
+  expected = `
+Load 0 0
+PushInt 1 0
+Le 0 0
+JumpIfFalse 6 0
+Load 0 0
+Jump 15 0
+Load 0 0
+PushInt 1 0
+Sub 0 0
+Call {fib} 1
+Load 0 0
+PushInt 2 0
+Sub 0 0
+Call {fib} 1
+Add 0 0
+Ret 0 0
+`;
+  assert(render(l.ops) == "{expected}\n", "fib's ops:\n{render(l.ops)}");
+}

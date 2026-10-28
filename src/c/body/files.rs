@@ -37,7 +37,7 @@ impl FnWriter<'_> {
             .get(tp as usize)
             .map_or_else(|| format!("#{tp}"), |t| t.name.clone());
         let f = self.cx.deliver_type(tp);
-        let (tag, val) = self.two("OpDeliver", &[tag.clone(), val.clone()], ind)?;
+        let (tag, val) = self.two("OpDeliver", &[tag, val], ind)?;
         Ok(E::new(
             format!(
                 "loft_deliver({}, {}, {f}, {})",
@@ -69,7 +69,7 @@ impl FnWriter<'_> {
             // `expose` / `release` off the browser (`Stores::expose_value`): the value's store
             // locked read-only while the host holds it, and unlocked.
             ("OpExpose" | "OpRelease", [tag, val, _]) => {
-                let (tag, val) = self.two(name, &[tag.clone(), val.clone()], ind)?;
+                let (tag, val) = self.two(name, &[tag, val], ind)?;
                 Ok(Some(E::new(
                     format!(
                         "((void) ({}), loft_set_store_lock({}, {}))",
@@ -209,9 +209,14 @@ impl FnWriter<'_> {
             return Ok(false);
         }
         let c = format!("fc{}", self.decls.len() + 1);
+        // The buffer stays put; its position `{c}p` is a local only inlined reads reach (`loft_fpos`).
         self.decls.push(format!("loft_fcur {c};"));
+        self.decls.push(format!("loft_fpos {c}p;"));
         let file = self.expr(&Value::Var(f), ind)?;
-        self.line(ind, &format!("loft_fcur_hold(&{c}, {});", as_ref(file)?));
+        self.line(
+            ind,
+            &format!("{c}p = loft_fcur_hold(&{c}, {});", as_ref(file)?),
+        );
         crate::rewrite_census::fired("R-FileHold", 1);
         // The loop takes the next index in `loops` once `loop_stmt` pushes it.
         self.file_holds.push((f, c, self.loops.len()));
@@ -297,11 +302,14 @@ impl FnWriter<'_> {
             let name = self.var(var);
             self.line(
                 ind,
-                &format!("loft_fcur_read(&{c}, {w}, {}, &{name});", i32::from(signed)),
+                &format!(
+                    "loft_fcur_read(&{c}, &{c}p, {w}, {}, &{name});",
+                    i32::from(signed)
+                ),
             );
             return Ok(E::new("(void) 0", K::Void));
         }
-        let (file, count) = self.two("OpReadFile", &[f.clone(), n.clone()], ind)?;
+        let (file, count) = self.two("OpReadFile", &[f, n], ind)?;
         let (fr, nr) = (self.temp(CType::Ref), self.temp(CType::Int));
         self.line(ind, &format!("{fr} = {};", as_ref(file)?));
         self.line(ind, &format!("{nr} = {};", as_int(count)?));

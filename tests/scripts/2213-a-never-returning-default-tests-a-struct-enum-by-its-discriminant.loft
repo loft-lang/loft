@@ -1,0 +1,86 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2213 — `@FR-N-Coal`: `e ?? d` answers `e` when it is present, whatever `d` is.  A default
+// that never returns (`return`, `break`, `continue`, `panic`, `exit`) shares one lowering, which
+// asked "is it present" of its own and read a STRUCT-ENUM's record reference as a plain enum's
+// byte: the absent side for a present value on the interpreter, uncompilable Rust on native.
+// It now asks the one home the value default asks.
+//
+// What each cell is for:
+//   * `ret_present` / `ret_unit` — a variant with fields and the unit variant, both present,
+//     through `?? return`.
+//   * `ret_absent` — an out-of-range read still takes the default.
+//   * `brk` / `cont` — the loop forms, over a vector whose middle read is out of range.
+//   * `pan` — `?? panic` on a present value answers the value.
+//   * `boolean` — `false` is present (its own null test, unchanged).
+// Expected, by hand: `NdBlock {items:[]}`, `NdNull {}`, `absent`, 2 (the two present of
+// three), 2 (the loop skips the absent one), 4, and `false`.
+// @falsified-at: 6f31a726b — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
+//   CHANNEL: exit — on the control native refuses the program at rustc (E0605); the
+//   interpreter's first wrong cell is `ret_present` (`absent`), read by hand.
+//   WITNESS: interpret answers `absent` for `ret_present`; native `non-primitive cast:
+//   loft::keys::DbRef as u8`.
+//   HOLDS: leak, panic and refusals are equal on both trees; every value cell is hand-computed.
+
+enum Nd { NdNull, NdInt { n: integer }, NdBlock { items: vector<Nd> } }
+
+fn ret_present() -> text {
+  v: vector<Nd> = [NdBlock { items: [] }];
+  x = v[0] ?? return "absent";
+  "{x}"
+}
+
+fn ret_unit() -> text {
+  v: vector<Nd> = [NdNull];
+  x = v[0] ?? return "absent";
+  "{x}"
+}
+
+fn ret_absent() -> text {
+  v: vector<Nd> = [];
+  x = v[0] ?? return "absent";
+  "{x}"
+}
+
+fn brk() -> integer {
+  v: vector<Nd> = [NdInt { n: 1 }, NdInt { n: 2 }];
+  seen = 0;
+  for i in 0..3 {
+    x = v[i] ?? break;
+    if x is NdInt { seen += 1; }
+  }
+  seen
+}
+
+fn cont() -> integer {
+  v: vector<Nd> = [NdInt { n: 1 }, NdInt { n: 2 }];
+  seen = 0;
+  for i in [0, 5, 1] {
+    x = v[i] ?? continue;
+    if x is NdInt { seen += 1; }
+  }
+  seen
+}
+
+fn pan() -> integer {
+  v: vector<Nd> = [NdInt { n: 4 }];
+  x = v[0] ?? panic("taken although present");
+  match x { NdInt { n } => n, _ => -1 }
+}
+
+fn boolean_cell() -> text {
+  v: vector<boolean> = [false];
+  x = v[0] ?? return "absent";
+  "{x}"
+}
+
+fn main() {
+  assert(ret_present() == "NdBlock {{items:[]}}", "ret_present: {ret_present()}");
+  assert(ret_unit() == "NdNull {{}}", "ret_unit: {ret_unit()}");
+  assert(ret_absent() == "absent", "ret_absent: {ret_absent()}");
+  assert(brk() == 2, "brk: {brk()}");
+  assert(cont() == 2, "cont: {cont()}");
+  assert(pan() == 4, "pan: {pan()}");
+  assert(boolean_cell() == "false", "boolean: {boolean_cell()}");
+}

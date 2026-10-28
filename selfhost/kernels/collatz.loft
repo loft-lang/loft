@@ -1,0 +1,37 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// S1 kernel: the core of bench/04_collatz — `for`, `break`, `%` and `/`.
+fn collatz_len(start: integer) -> integer {
+  cur = start;
+  steps = 1;
+  for _ in 0..10000000 {
+    if cur == 1 { break; }
+    if cur % 2 == 0 { cur = cur / 2; }
+    else { cur = 3 * cur + 1; }
+    steps += 1;
+  }
+  steps
+}
+
+fn longest(lo: integer, limit: integer) -> integer {
+  max_steps = 0;
+  max_n = 0;
+  for col_i in lo..limit {
+    s = collatz_len(col_i);
+    if s > max_steps {
+      max_steps = s;
+      max_n = col_i;
+    }
+  }
+  max_n * 1000 + max_steps
+}
+
+// The Rust interpreter's side of the S1.4 measurement: the answer and the call's own time in
+// microseconds, start-up excluded.  The loft interpreter runs `longest` from the image instead.
+fn main() {
+  t0 = ticks();
+  r = longest(1, 100000);
+  us = ticks() - t0;
+  println("{r} {us}");
+}

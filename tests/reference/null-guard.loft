@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT.md § A null test that leaves proves the value is there — `(N-Guard)`: after a
+// test that stops the code when a value is absent, the value reads as present.
+
+fn shout(s: text) -> text {
+  "{s}!"
+}
+
+fn describe(s: text?) -> text {
+  if s == null { return "nobody"; }   // the absent case has left
+  shout(s)                            // s reads as text here
+}
+
+fn greet(name: text?) -> text {
+  assert(name != null, "a name");     // a failed assert stops the program
+  shout(name)                         // name reads as text here
+}
+
+fn test_a_null_test_that_leaves_narrows() {
+  assert(describe("ada") == "ada!", "present");
+  assert(describe(null) == "nobody", "absent");
+  assert(greet("loft") == "loft!", "asserted present");
+}

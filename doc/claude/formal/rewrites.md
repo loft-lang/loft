@@ -1315,7 +1315,11 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  reference (`r == null`, `r != s`) or an in-place scalar set
                  (R-InPlace; a kind the address does not serve keeps its store
                  write, to the same bytes): a mint into it, a copy into it, a
-                 free — and reads, writes or hands r at least once.  A binding to null (a buffer's pre-init,
+                 free — and reads, writes or hands r at least once.  THE LAST-USE
+                 CLAUSE: the remainder ends at the last statement that reads or
+                 writes a field of r through the address; what follows takes the
+                 reference, not the address — an appended element's finish, which
+                 may grow the store the element lives in, among it.  A binding to null (a buffer's pre-init,
                  minted later) is never a view.  A NULLABLE view — `e = v[i]`
                  without `?`, the loop variable of `for e in v`, whose null is the
                  loop's end signal — is admitted as its inner record: the null
@@ -1437,7 +1441,17 @@ clause alone, `vector::rec_text`, guard
 `arguments/parse`, whose option search compares each option's long name, 22.09 → 18.64 ms
 native alone, −15.6 %);
 falsifier `LOFT_HOIST_VERIFY=1` (`vector::rec_get` re-derives the address and re-reads
-the store at every use); trace `LOFT_TRACE_RECPTR=1`.  Sites: `hoist::record_view_ptr`,
+the store at every use); trace `LOFT_TRACE_RECPTR=1`.  In the C, the basic clause (a scalar
+read or in-place write of a bound view, through inline sub-records), the last-use clause and
+the parameter clause (`FnWriter::bind_param_ptrs`, a parameter used at least twice, as on
+native — `build_vis` −12 % / −8.5 % instructions under GCC / Clang, `build_walls` −6.5 % /
+−7.8 %): `FnWriter::bind_record_ptr` and `FnWriter::rec_ptr_access` over `loft_rec_ptr` / `loft_pa_*`,
+the lock flag taken only where the block writes through the view.  An enum, byte, short or
+4-byte field is read through the address by the decoder its store getter uses (`loft_dec_*`),
+so the two reads cannot disagree; a value record copied into an inline sub-record of the view
+is written at the address plus the sub-record's offset, and counts as a use of it; the
+last-use clause is what binds a minted element, whose field writes precede the finish (`enum_match` −11 % under both compilers, `mesh_emit` −33 %
+under Clang); trace `LOFT_TRACE_RECPTR=1` there too.  Sites: `hoist::record_view_ptr`,
 `Output::bind_record_ptr`, `Output::rec_ptr_read` (the twin input),
 `ops::vector_ops::emit_hoisted_scalar_or_default` and `FusedElementWriteEmitter`
 (the read and the write), `Output::output_record_tuple` and
@@ -2168,7 +2182,11 @@ the guard and freed after BOTH arms, or the plain arm neither sees it nor frees 
 (`ops::range_verify` at every admitted operator).  Cells `tests/scripts/157-guarded-chain.loft`
 c1–c6, pins `tests/guarded_chain.rs`.  Sites: `Output::chain_fast_path`,
 `Output::in_plain_chain`, `hoist::nested_counted_loops`, `hoist::written_vars`, the chain
-arm in `ops::int_arith`, the loop hook in `emit.rs`.
+arm in `ops::int_arith`, the loop hook in `emit.rs`; in the C, `FnWriter::chain_guard` and
+`FnWriter::chain_operator` (`src/c/body/chain.rs`), the guard's bounds spelled with
+`loft_gc_*`.  The C writes an innermost loop twice only when its body calls no loft function:
+a doubled body with a call doubles what the C compiler inlines there, and crawler `vis` lost
+36 % instructions that way under GCC, so such a loop branches per operator instead.
 
 ### A `for` statement runs fast under a fault flag, and as written when it faults
 
@@ -2703,7 +2721,10 @@ reads the destination, which is the one decline the rule needs.
 **BUILT** (`Parser::format_append_in_place`, `LOFT_NO_FORMAT_APPEND`; the
 guard `tests/scripts/a-format-appended-to-a-text-is-written-into-it.loft` and the pin
 `tests/format_append.rs`).
-The stdlib's own `char_slice` takes it too.
+The stdlib's own `char_slice` takes it too.  The C also applies it where the parser left the
+work text — `x = x + "{e}"` is lowered as an append of the format without the rewrite — in
+`FnWriter::format_into_dest` (`LOFT_NO_FORMAT_INTO`): crawler `char_roundtrip` −28 %
+instructions.
 
 ### An emptied text keeps its buffer
 
@@ -3001,7 +3022,7 @@ rooted at it, and a loop whose only growth was such a vector grows no store.
 
 **BUILT** (`generation::apart_value::plan` the gate, `generation::apart_emit` the twins, the
 regions and the boundary, runtime `codegen_runtime::ap_get_f64` / `ap_get_f64_or_null` /
-`ap_set_f64` / `ap_store_f64`; instance 3: `generation::apart_vector::roles` the gate, runtime
+`ap_set_f64` / `ap_store_f64`; instance 3: `lower::apart_vector::roles` the gate, runtime
 `codegen_runtime::ApVec`; instance 4: `generation::apart_records::plan` the gate,
 `generation::apart_records_emit` the owners, the `__apr` twins and the boundary, runtime
 `codegen_runtime::AprVec`, `Stores::apart_write_fresh` and `Stores::rotate_from_parts`;
@@ -3011,7 +3032,18 @@ instance 4, `LOFT_TRACE_APART=1`).  Instance 4 measured on dryopea `truncate_to`
 µs inlined the boundary with the layout's constants; the built form asks the element type's
 plan at run time.  Instance 4's guard `tests/scripts/158-apart-records.loft`, its pins
 `tests/apart_records.rs`; like instance 2 it is made only where no live tier ships
-(`--ship`).  Not admitted yet: an
+(`--ship`).  The C takes instances 2, 3 and 4 from the same plans, in every C build (it has no
+live tier), and declares no apart value as a record — `expr` answers its C value, so a mention
+no clause rewrote is a C type error, never a wrong value.  Instance 2 (`c::body::apart_value`):
+a `loft_ap_<T>` struct of `double[N]` fields; an `__apv` twin answers it through `loft_apo` and
+takes record parameters as `const` pointers; a region's `return` is `loft_ap_store`, the
+constructor's steps into the function's buffer.  Instance 3 (`c::body::apart`): a `loft_apvec`
+of 64 inline elements and a spill the frame frees with its texts; only the paths rooted at an
+apart value lose their headers and windows (`mesh_emit` −4 % / −6 % instructions under GCC /
+Clang).  Instance 4: each field a `loft_text` byte buffer, an `__apr` twin taking them, and
+the boundaries `loft_apart_write_fresh` and `loft_rotate_from_parts` (`truncate_to` −72 %
+under GCC, −70 % under Clang).  The C's elements answer what its store path answers: an
+index out of range reads null and writes nothing, without the report native's makes.  Not admitted yet: an
 element or a field of another type, `len(v)` spelled through the stdlib wrapper, a twin's
 text or record-of-another-type parameter, `return g(…)` forwarded through a hidden buffer.
 Guards `tests/scripts/a-record-of-fixed-vectors-travels-as-a-value.loft` (`@falsify-tier:
@@ -3909,10 +3941,18 @@ line in `Output::output_function`'s prelude.
                  field of the buffer it is handed — every mint of it covers and
                  every `return` of it follows one in its own block — since the
                  answer is then `e` itself, and the fresh copy writes every byte
-                 of `e` otherwise.  `db_vars`
+                 of `e` otherwise.  A STRUCT-ENUM element is covered where the
+                 group writes every field position of EVERY variant, no two
+                 variants putting fields of different widths at one position:
+                 whichever variant the literal builds, no byte any variant's field
+                 reads is left to the prefill.  `db_vars`
                  is keyed by the local (every `OpDatabase` site must cover);
                  `mint_tps` by the element type (every mint group in the function
-                 must).  The interpreter keeps the prefill and is the oracle.
+                 must).  The interpreter keeps the prefill and is the oracle.  In
+                 the C, `FnWriter::mint_complete` reads the same proof and
+                 `fresh_null_arm` writes the field type's default image for a null
+                 source, the null arm above — the plain copy and a value record's
+                 absent arm alike.
 
   (R-ElemFirst)  a local vector consumed EXACTLY ONCE as a record-literal field of
                  an append (`out += [R { f: v, … }]`) is built INSIDE the appended
@@ -4131,6 +4171,19 @@ line in `Output::output_function`'s prelude.
                  `1993-a-nullable-record-parameter-crosses-as-its-fields.loft`,
                  `1994-a-null-stored-into-a-dense-record-slot-reads-back-null.loft` and
                  `1997-a-copy-of-a-dense-slot-that-holds-null-is-null.loft`.
+                 The C's POINTER clause: a tuple parameter of three or more members
+                 that the body only READS — every mention a field or sub-record read,
+                 a presence test, a copy's source, a release (nothing, for a tuple), a
+                 bind to another variable or a by-value argument — arrives as
+                 `const loft_tupN *` and is read through it, the caller handing the
+                 address of its own struct where the argument is a variable no other
+                 argument of the call names, else of a temporary.  A struct over two
+                 words otherwise crosses on the stack, written field by field and read
+                 back wide, at every layer of a call chain.  A function with an `__apv`
+                 twin keeps its tuples by value.  `Cx::vr_ptr_params` decides it once
+                 for the signature, every call and every variant; switch
+                 `LOFT_NO_VR_PTR=1`; guard
+                 `a-read-only-record-parameter-reads-the-callers-value-at-the-call.loft`.
 
   (R-Cold)       a runtime helper on the per-element fast path — an element read or
                  write through a holder, a length, a bounds test, a fault note, a
@@ -5443,14 +5496,15 @@ each inlined call, each decline and each reduction below.
                  scope pass hands to the `return` — the `&text` buffer, the return buffer,
                  the `__ret_N` temporary, the join's two-step `tmp = E; x = tmp` — which the
                  final arm writes, while the jump's path writes nothing (a `Set` on such a
-                 place would release what it holds).  REFUSED (@C155), at the call — and
-                 for a generic at each INSTANCE — naming the variable and the cure: a tail
+                 place would release what it holds).  An ORDINARY CALL, with
+                 `warning[tail-call-not-jumped]` (@C155) at the call — and for a generic at
+                 each INSTANCE — naming the variable, the cost and the cure: a tail
                  self-call in a frame the jump cannot reuse — an argument that MAKES a
                  value (a call, a literal, an operator result) or names a local the jump
                  releases, a text or `&` parameter handed anything but itself, a parameter
                  the body REBINDS (the frame then owns its store), a `&` local, a result of
                  another kind (a tuple, a closure), a generator, a `parallel` block or a
-                 closure in the body.  It is never left a call.  A self-call whose value is
+                 closure in the body.  It is never left a call silently.  A self-call whose value is
                  bound to a local before it is returned (`r = f(…); r`) is not in tail
                  position: a call.  Two readers of a body learn the loop: `(O-Oracle)` reads
                  the jump's pointer writes as definitions (a parameter swapped there is one
@@ -5473,16 +5527,16 @@ that follow the `__ret_N` temporary or the void body's last statement — after 
 are read.  A parameter held in a store is a pointer the frame never owned, so a tail
 call that passes it through — itself, a sibling parameter, a projection of one — rebinds the
 pointer exactly as the call would, and a swap of two such parameters is two pointer moves.
-What is refused is what a call does not do either: an argument the frame MAKES (a call's
+What stays a call is what a call does not do either: an argument the frame MAKES (a call's
 result, a literal, an operator result) would have to be handed into the frame's ownership; a
 local as the argument is released by the jump under its own pointer; a parameter the body
 rebinds (`(F-ParamRebind)`) holds a store this frame owns, which the epilogue frees after the
 temporary read it; a text parameter handed another text has no pointer move (a text's
-assignment owns), so a swap of two text parameters (`pick<text>`) is refused where `pick<S>`
-jumps — the one clause left (loft-lang/plans#202 P5b).  Those shapes are REFUSED rather than
-left a call (@C155): the refusal in the parser — for a generic at each instance, since the
-template cannot decide a type variable — and the pass share `tail_frame::admit_frame`, so a
-program that compiles is one whose tail self-calls all jump; `r = f(…); r` is the spelling that
+assignment owns), so a swap of two text parameters (`pick<text>`) stays a call where `pick<S>`
+jumps — the one clause left (loft-lang/plans#202 P5b).  Those shapes stay ordinary calls and
+are WARNED (@C155): the warning in the parser — for a generic at each instance, since the
+template cannot decide a type variable — and the pass share `tail_frame::admit_frame`, so every
+tail self-call that compiles without the warning jumps; `r = f(…); r` is the spelling that
 keeps a call on purpose.  A result held in a store needs no runtime check: the scope pass already
 delivers it through a place the final arm writes (`___acc_N = E`, `__retbuf`, `__ret_N`, the
 join's `tmp = E; x = tmp`), so the jump's arm writes nothing and the caller reads what the call

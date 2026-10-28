@@ -1,8 +1,10 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! The web library's natives, which live in loft (`[native] in_binary = true`;
-//! `src/web_client.rs`, `src/c/loft_web.h`), answer the same on every backend.  The program
+//! The web library's natives, loft's `net` component (`[native] component = "net"`;
+//! `src/c/components/net.c` over `src/c/loft_web.h`, built by `loft-components`), answer the same
+//! on every backend: the interpreter calls its bridges, the Rust writer and the C backend its
+//! typed symbols.  The program
 //! reaches them through `tests/fixtures/web_natives`, their declarations word for word, against a
 //! local server whose answers fix every expected line in advance: a body carrying a NUL and a
 //! 0xff byte, a header, a request body and header echoed, a 404 with its body, a refused port, a
@@ -106,6 +108,28 @@ fn scratch(tag: &str) -> PathBuf {
     d
 }
 
+/// Build the component where a `loft` beside `loft-components` finds it (`<binary>/../components`),
+/// as `make components` does; the guard then exercises that default lookup, not an override.
+fn build_component() {
+    let loft = Path::new(env!("CARGO_BIN_EXE_loft"));
+    let out = loft
+        .parent()
+        .and_then(Path::parent)
+        .expect("the binary's directory")
+        .join("components");
+    let built = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft-components"))
+        .arg("--out")
+        .arg(&out)
+        .arg("net")
+        .output()
+        .expect("loft-components runs");
+    assert!(
+        built.status.success(),
+        "loft-components net:\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+}
+
 fn run(backend: &str, dir: &Path, port: u16) -> (String, String) {
     let file = dir.join("web.loft");
     fa::write(&file, PROGRAM).expect("write the program");
@@ -117,6 +141,7 @@ fn run(backend: &str, dir: &Path, port: u16) -> (String, String) {
         .arg(&fixtures)
         .arg(&file)
         .current_dir(dir)
+        .env_remove("LOFT_COMPONENTS")
         .env("LOFT_TIMEOUT", "120")
         .env("WN_BASE", format!("http://127.0.0.1:{port}"))
         .env("WN_WS", format!("ws://127.0.0.1:{port}"))
@@ -128,18 +153,18 @@ fn run(backend: &str, dir: &Path, port: u16) -> (String, String) {
     )
 }
 
-/// The backends the natives are carried on: the interpreter, the Rust writer, and the C
-/// runtime where it has its POSIX host layer (Windows is @PLN203 C8's).
-fn backends() -> Vec<&'static str> {
-    let mut b = vec!["--interpret", "--native-rust"];
-    if loft::platform::c_runtime_posix_host() {
-        b.push("--native-c");
-    }
-    b
+/// The backends the component is called from.
+fn backends() -> [&'static str; 3] {
+    ["--interpret", "--native-rust", "--native-c"]
 }
 
 #[test]
 fn the_web_natives_answer_the_same_on_every_backend() {
+    if !loft::platform::c_runtime_posix_host() {
+        // The component needs the C runtime's POSIX host layer (@PLN203 C8 is Windows').
+        return;
+    }
+    build_component();
     for backend in backends() {
         let dir = scratch(&backend[2..]);
         let (port, seen) = web_server::start();

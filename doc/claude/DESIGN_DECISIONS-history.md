@@ -5066,6 +5066,25 @@ other's sample range.  The fill was never these routines' cost; what the decisio
 rule — no byte nobody wrote is read or leaves the process — made checkable (Miri,
 `Store::raw_bytes`).
 
+## C155 — A tail self-call the frame cannot jump stays a call with a warning, never silently
+
+Decided first as a REFUSAL, with `(R-TailSelf)`'s local, parameter and result clauses
+(loft-lang/plans#202 P5a/P5b): where the frame could not be reused the program was refused at the
+call, *"never left a call"*, because a call that stops at `MAX_CALL_DEPTH` holds for small inputs
+and fails for large ones, and a compile-time refusal was the one-way door loft could still add
+before the freeze; dropping it as a clause landed was to cost nothing.
+
+Amended 2026-10-28 by the owner, from @PLN91 S1.1b (the IR lowering's tree walks were refused):
+*"what I want is that if the language can correctly and efficiently implement something like
+this it should do that.  But if there are situations where we certainly walk out of heap space
+of stores we will error during compilation"*; then *"default to copying the data than creating
+many stores … the code layer can then try to reduce the copies again"*; and on the slow shapes
+that remain, *"I still want a warning … because I do not want these slow constructs inside our
+libraries"*, also for the tail calls left a call.  So the refusal became
+`warning[tail-call-not-jumped]` (step T2), the copy clause is the plan's T4–T6, and a refusal is
+kept for a function that certainly never ends (T3).  The tier rule gained its second clause the
+same day for this warning.
+
 ## C156 — Every float-text conversion rounds correctly, an exact tie to the even digit
 
 Decided 2026-10-26 by the owner — *"I like the most scientific correct path"*, with a less

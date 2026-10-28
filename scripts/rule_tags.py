@@ -90,7 +90,9 @@ SRC = os.path.join(ROOT, "src")
 DEFAULT = os.path.join(ROOT, "default")
 CITE_DIRS = (os.environ["CITE_DIRS"].split(":")
              if os.environ.get("CITE_DIRS") else [SRC, DEFAULT])
-CITE_EXTS = os.environ.get("CITE_EXTS", ".rs,.loft").split(",")
+# `.h` is the C backend's runtime (`src/c/*.h`): code the C emitter pastes into every program,
+# whose rule citations a `.rs`-only scan read as absent.
+CITE_EXTS = os.environ.get("CITE_EXTS", ".rs,.loft,.h").split(",")
 
 # `coverage`'s second tier and the contract-1 MINIMUM THRESHOLDS it reports against.  These
 # are floors, not targets: the owner's informed estimate of the least coverage that could earn

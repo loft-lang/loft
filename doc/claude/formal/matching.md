@@ -40,6 +40,9 @@ variant `V { f₁, … }`, or the wildcard `_`.
                 where k is the SMALLEST index whose patₖ matches v, and binds is patₖ's bindings.
   (M-Expr)    match is an EXPRESSION: every arm body bᵢ has the match's result type, and the
               selected arm's value is the whole match's value (feeds directly into `r = match …`).
+  (M-Sep)     arms are separated by `,`.  The comma may be left out before the closing `}` and
+              after an arm whose body is a block (`pat => { … }`), as in Rust; after an arm
+              whose body is an expression it is required, whatever that expression contains.
 ```
 
 **In words.** `match` first reduces the scrutinee to a value, then picks the **first** arm (top to

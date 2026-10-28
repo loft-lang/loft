@@ -2403,6 +2403,7 @@ fn the_c_hash_table_files_every_entry_where_hash_does() {
     let mut c = String::new();
     for part in [
         include_str!("../src/c/loft_cc.h"),
+        include_str!("../src/c/loft_text.h"),
         include_str!("../src/c/loft_store.h"),
         include_str!("../src/c/loft_rt.h"),
         include_str!("../src/c/loft_keys.h"),
@@ -2689,6 +2690,7 @@ fn the_c_index_files_every_record_where_btree_does() {
     let mut c = String::new();
     for part in [
         include_str!("../src/c/loft_cc.h"),
+        include_str!("../src/c/loft_text.h"),
         include_str!("../src/c/loft_store.h"),
         include_str!("../src/c/loft_rt.h"),
         include_str!("../src/c/loft_keys.h"),
@@ -2991,6 +2993,7 @@ fn the_c_trees_place_every_record_where_radix_tree_does() {
     let mut c = String::new();
     for part in [
         include_str!("../src/c/loft_cc.h"),
+        include_str!("../src/c/loft_text.h"),
         include_str!("../src/c/loft_store.h"),
         include_str!("../src/c/loft_rt.h"),
         include_str!("../src/c/loft_keys.h"),
@@ -3617,6 +3620,7 @@ fn the_c_reads_json_as_json_rs_does() {
     let mut c = String::from("#define LOFT_JSON 1\n");
     for part in [
         include_str!("../src/c/loft_cc.h"),
+        include_str!("../src/c/loft_text.h"),
         include_str!("../src/c/loft_store.h"),
         include_str!("../src/c/loft_rt.h"),
         include_str!("../src/c/loft_json.h"),
@@ -4598,8 +4602,9 @@ fn run_asan(
     )
 }
 
-/// Faults that end a test inside frames holding texts, for the leak check below: a 10 000-deep
-/// recursion (the hold stack grows), a tuple's texts, and a lazy driver's CONTAINED fault, twenty
+/// Faults that end a test inside frames holding texts, for the leak check below: a 2 000-deep
+/// recursion (the hold stack grows past its first 64 frames five times — deeper outgrows an 8 MB
+/// stack under AddressSanitizer with gcc 15, two C frames a level), a tuple's texts, and a lazy driver's CONTAINED fault, twenty
 /// times, under a caller whose own text must survive each one.  Beside them a passing test whose
 /// generic loop moves a callback's `(integer, text)` into one local per pass: on the build before
 /// the fix every pass but the last left the old tuple's text allocated.
@@ -4615,7 +4620,7 @@ fn down(n: integer) -> text {
 
 // @EXPECT_FAIL: bottom level 0
 fn test_a_deep_recursion_halts() {
-  x = down(10000);
+  x = down(2000);
   assert(len(x) > 0, "never");
 }
 
@@ -5335,14 +5340,105 @@ fn main() {
 }
 "#;
     let c = both_answer("width32_loop", src, "6 null\n");
-    // The body that holds the loop (the frame-keeping wrapper, where there is one, only calls it).
+    // The body that holds the loop (the frame-keeping wrapper, where there is one, only calls
+    // it).  A parameter and a result cross 64-bit; the body's locals are 32-bit.
     let body = c
-        .split("static int32_t n_sum_to")
+        .split("n_sum_to")
         .skip(1)
         .find(|b| b.contains("for (;;)"))
         .and_then(|b| b.split("\n}\n").next())
-        .unwrap_or_else(|| panic!("sum_to returning int32_t, with its loop, in:\n{c}"));
-    assert!(body.contains("int32_t v0_n"), "a 32-bit parameter:\n{body}");
+        .unwrap_or_else(|| panic!("sum_to with its loop in:\n{c}"));
+    assert!(
+        body.contains("int32_t v1_t"),
+        "a 32-bit accumulator:\n{body}"
+    );
+    assert!(
+        body.contains("int32_t v3_i_index"),
+        "a 32-bit loop index:\n{body}"
+    );
     assert!(body.contains("loft_add32(v1_t, "), "a 32-bit sum:\n{body}");
-    assert!(!body.contains("int64_t"), "no 64-bit local:\n{body}");
+}
+
+/// A C build never builds a library's Rust native crate: the C links `[c] shim`s and loft's
+/// components only, and the cargo build of a crate it would never load cost a `use graphics`
+/// over 25 minutes before a word of C (`native_build::c_target`).  The library's crate here
+/// cannot compile; without the rule `--emit-c` still tries, leaving `native-auto/` behind.
+#[test]
+fn a_c_build_builds_no_rust_native_crate() {
+    let dir = scratch("c_target_no_crate");
+    let lib = dir.join("libs/rustlib");
+    fa::create_dir_all(lib.join("src")).expect("lib dir");
+    fa::create_dir_all(lib.join("native/src")).expect("crate dir");
+    fa::write(
+        lib.join("loft.toml"),
+        "[package]\nname = \"rustlib\"\nversion = \"0.1.0\"\nloft = \">=2026.10.0\"\n\n\
+         [library]\nentry = \"src/rustlib.loft\"\n\n[native]\ncrate = \"rustlib-native\"\n",
+    )
+    .expect("manifest");
+    fa::write(
+        lib.join("src/rustlib.loft"),
+        "pub fn twice(x: integer) -> integer { x * 2 }\n",
+    )
+    .expect("library");
+    fa::write(
+        lib.join("native/Cargo.toml"),
+        "[package]\nname = \"rustlib-native\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\
+         [lib]\ncrate-type = [\"cdylib\"]\n",
+    )
+    .expect("crate manifest");
+    fa::write(lib.join("native/src/lib.rs"), "this is not rust\n").expect("crate source");
+    let prog = dir.join("p.loft");
+    fa::write(
+        &prog,
+        "use rustlib;\nfn main() { println(\"{rustlib::twice(21)}\"); }\n",
+    )
+    .expect("program");
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--emit-c")
+        .arg(dir.join("p.c"))
+        .arg("--lib")
+        .arg(dir.join("libs"))
+        .arg(&prog)
+        .current_dir(&dir)
+        .env("LOFT_NO_CACHE", "1")
+        .env("LOFT_TIMEOUT", "300")
+        .output()
+        .expect("loft runs");
+    assert!(
+        out.status.success(),
+        "--emit-c:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        fa::read_to_string(dir.join("p.c")).is_ok_and(|c| c.contains("INT64_C(42)")),
+        "the C carries the library's answer (`twice(21)`, folded)"
+    );
+    assert!(
+        !fa::exists(lib.join("native-auto")),
+        "a C build started a cargo build of the library's Rust crate"
+    );
+    // Run as well: the library path the program starts with is resolved without a build.
+    if have_cc() && loft::platform::c_runtime_posix_host() {
+        let run = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+            .arg("--native-c")
+            .arg("--lib")
+            .arg(dir.join("libs"))
+            .arg(&prog)
+            .current_dir(&dir)
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_TIMEOUT", "300")
+            .output()
+            .expect("loft runs");
+        let err = String::from_utf8_lossy(&run.stderr);
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout),
+            "42\n",
+            "--native-c:\n{err}"
+        );
+        assert!(
+            !err.contains("building native library"),
+            "--native-c started a cargo build of the library's Rust crate:\n{err}"
+        );
+    }
+    let _ = fa::remove_dir_all(&dir);
 }

@@ -100,3 +100,5 @@ bench/portal/c_profile.py	--help
 bench/portal/local.py	--help
 bench/portal/hand_price_c.sh	--help
 scripts/image_probe.py	--help
+selfhost/bench/measure.py	--help
+selfhost/cover/census.py	--help

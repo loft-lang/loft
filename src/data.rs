@@ -3913,11 +3913,15 @@ pub fn is_null_sentinel_detach(
     // still owns.  The displacement free fired here regardless, and on the adoption shape it
     // freed the store the binding had just taken: the scope-end hook then read freed memory.
     // A closure record local assigned the sentinel is `@FR-L-CapKeep`'s hand-over: the record
-    // it held is now the fn-ref's that still names it (loft#1636).
+    // it held is now the fn-ref's that still names it (loft#1636).  So is a `??` temp's: the
+    // scope scan disarms `__ncc_N` once it has handed the store the temp held to a closure's
+    // owner slot (`Scopes::owner_slot_handoff`, loft#2210); the parser frees that temp itself
+    // before every reassignment and never writes it the bare sentinel.
     let name = function.name(var);
     (crate::variables::owns_literal_backing_store(name)
         || name.starts_with("__ref_")
         || name.starts_with("__rref_")
+        || name.starts_with("__ncc_")
         || name.starts_with("___clos_"))
         && matches!(value.unspan(), Value::Call(nr, args)
             if args.is_empty() && data.def(*nr).name() == "OpNullRefSentinel")
@@ -6635,13 +6639,6 @@ impl Data {
     #[must_use]
     pub fn width32(&self) -> bool {
         self.width32_source(self.source)
-    }
-
-    /// @PLN204 — does any source of this program parse under the 32-bit regime?  A program
-    /// with none holds every integer as the interpreter does, in 64 bits.
-    #[must_use]
-    pub fn any_width32(&self) -> bool {
-        !self.width32_sources.is_empty()
     }
 
     /// @PLN204 — was function `d`'s body written under the 32-bit regime?  A generic

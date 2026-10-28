@@ -22,8 +22,8 @@ pub use crate::c_libs::{load_c_library, try_dlsym_pub};
 // Finding or building a package's native library lives in `native_build` (core),
 // because the parser resolves it on `use`; these are the paths callers name here.
 pub use crate::native_build::{
-    auto_build_native, browser_target, host_native_lib, native_target_root, platform_lib_name,
-    resolve_native_lib, set_browser_target,
+    auto_build_native, browser_target, c_target, host_native_lib, native_target_root,
+    platform_lib_name, resolve_native_lib, set_browser_target, set_c_target,
 };
 use crate::native_build::{build_deps_hint, native_crate_newer_than};
 /// Load all pending native extension libraries.
@@ -773,6 +773,12 @@ mod bridgeless_report_tests {
 #[cfg(feature = "native-extensions")]
 fn report_unresolved_natives(data: &crate::data::Data, unresolved: &[String]) {
     use std::collections::BTreeMap;
+    // A C build loads no host library by design (`native_build::c_target`): its natives are
+    // the `[c] shim`'s, and a Rust native the program calls is refused by the C backend
+    // itself, naming the function.  There is nothing here to rebuild.
+    if crate::native_build::c_target() {
+        return;
+    }
     // A package with no native part at all never registered one, so the symbol→crate map
     // cannot name it; the library that DECLARED the function can (`qualified_type_name`'s
     // most-qualified rule), and naming it is the difference between a cure and a guess.
@@ -792,6 +798,15 @@ fn report_unresolved_natives(data: &crate::data::Data, unresolved: &[String]) {
             .unwrap_or_else(|| "<unknown library>".to_string());
         by_crate.entry(krate).or_default().push(sym.as_str());
     }
+    // A package whose natives are a component loft ships (@PLN205): nothing to rebuild, the
+    // component is not installed.
+    let component = |krate: &str| -> Option<String> {
+        let (_, pkg_dir) = data
+            .native_packages
+            .iter()
+            .find(|(c, _)| c.replace('-', "_") == krate.replace('-', "_"))?;
+        crate::native_build::component_of(pkg_dir)
+    };
     for (krate, mut syms) in by_crate {
         syms.sort_unstable();
         let shown = syms.iter().take(6).copied().collect::<Vec<_>>().join(", ");
@@ -801,6 +816,15 @@ fn report_unresolved_natives(data: &crate::data::Data, unresolved: &[String]) {
         } else {
             String::new()
         };
+        if let Some(name) = component(&krate) {
+            eprintln!(
+                "loft: {} — {n} #native function(s) are unavailable ({shown}{more_txt}), and a \
+                 program that calls one does not start.",
+                crate::components::missing(&name),
+                n = syms.len(),
+            );
+            continue;
+        }
         eprintln!(
             "loft: native library '{krate}' did not load — {n} of its #native function(s) are \
              unavailable ({shown}{more_txt}), and a program that calls one does not start. Its cdylib is missing or \
@@ -958,6 +982,25 @@ pub fn resolve_native_impl_symbols(data: &mut crate::data::Data) {
 
 #[cfg(not(feature = "native-extensions"))]
 pub fn resolve_native_impl_symbols(_data: &mut crate::data::Data) {}
+
+/// Load the hand-written native libraries `paths` and resolve which function implements each
+/// `#native` symbol ([`resolve_native_impl_symbols`]) BEFORE a library's loft code is compiled
+/// into its shared library: that code calls another package's natives, and without the
+/// resolution it links the `#native` string literally.  graphics maps `loft_save_png` to
+/// `n_save_png(store, …, LoftRef)` while its raw `loft_save_png` takes a pointer and a count,
+/// so drawing's compiled `render_file` called the raw one with the typed arguments and wrote no
+/// PNG on `--interpret` (`--native` resolves first and was right).  Loading is idempotent
+/// (`c_libs::load_one`), so the later `load_all` of the same paths costs nothing.
+#[cfg(feature = "native-extensions")]
+pub fn preload_native_libs(data: &mut crate::data::Data, paths: &[String]) {
+    for path in paths {
+        crate::c_libs::load_one(path);
+    }
+    resolve_native_impl_symbols(data);
+}
+
+#[cfg(not(feature = "native-extensions"))]
+pub fn preload_native_libs(_data: &mut crate::data::Data, _paths: &[String]) {}
 
 #[cfg(all(test, feature = "native-extensions"))]
 mod impl_symbol_tests {

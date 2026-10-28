@@ -953,61 +953,66 @@ static uint64_t loft_take(const uint8_t *d, int n, int le) {
  * the handle and the byte order, read once when the hold begins — and gives them back when
  * the loop is left.  Nothing held (no open handle yet, no position, a format that is not
  * read) is a read through the record, after which the hold is taken again. */
+/* The held cursor's position — `#next`, the last read's start (`#index`), and the buffered
+ * bytes `[at, end)` — with the handle and byte order.  A local the reads reach only through
+ * inlined code: the cold refill is handed the handle and `next` and answers the new `[at, end)`
+ * in two registers (`loft_fbuf`), so neither the position nor its address crosses a call and
+ * the compiler keeps every field in a register.  `nr` is -1 where nothing is held. */
+typedef struct { int64_t next, at, end, last; int32_t nr; int le; } loft_fpos;
+typedef struct { int64_t at, end; } loft_fbuf;
+
+/* The held File's record and the bytes of the file from `at` on: a read is served from here and
+ * a miss refills it with one `fread`, as native's handle reads through its buffer.  The stream
+ * itself stands at `end` (`loft_files_at`), so a read through the record after the loop seeks
+ * to its `#next`. */
 typedef struct {
     loft_ref f;
-    int32_t nr;
-    int le;
-    int64_t last, next;
-    /* The bytes of the file from `at` on, `have` of them: a read is served from here and a
-     * miss refills it with one `fread`, as native's handle reads through its buffer.  The
-     * stream itself stands at `at + have` (`loft_files_at`), so a read through the record
-     * after the loop seeks to its `#next`. */
-    int64_t at;
-    uint32_t have;
     uint8_t buf[4096];
 } loft_fcur;
 
-static void loft_fcur_take(loft_fcur *c) {
-    c->nr = -1;
-    if (c->f.store_nr == 0xFFFF || c->f.rec == 0) return;
+static loft_fpos loft_fcur_take(loft_fcur *c) {
+    loft_fpos p = { 0, 0, 0, 0, -1, 0 };
+    if (c->f.store_nr == 0xFFFF || c->f.rec == 0) return p;
     uint8_t format = loft_file_format(c->f);
     int32_t h;
     memcpy(&h, loft_at(loft_store_of(c->f), c->f.rec, c->f.pos + 28), 4);
     int64_t next = loft_file_long(c->f, 16);
     if (h < 0 || h >= loft_nfiles || !loft_files[h] || next == LOFT_NULL
-        || (format != 1 && format != 2 && format != 3 && format != 5)) return;
+        || (format != 1 && format != 2 && format != 3 && format != 5)) return p;
     /* A copy of the record may have moved the shared handle: the hold reads from THIS
      * record's `#next`, and nothing in the loop moves the handle after this. */
     if (loft_files_at[h] != next) {
-        if (fseek(loft_files[h], (long) next, SEEK_SET) != 0) return;
+        if (fseek(loft_files[h], (long) next, SEEK_SET) != 0) return p;
         loft_files_at[h] = next;
     }
-    c->le = format == 2;
-    c->last = loft_file_long(c->f, 8);
-    c->next = next;
-    c->at = next;
-    c->have = 0;
-    c->nr = h;
+    p.le = format == 2;
+    p.last = loft_file_long(c->f, 8);
+    p.next = next;
+    p.at = next;
+    p.end = next;
+    p.nr = h;
+    return p;
 }
 
-/* Refill the cursor's buffer from `next`: the stream is moved there when it stands elsewhere. */
-LOFT_COLD static void loft_fcur_fill(loft_fcur *c) {
-    FILE *h = loft_files[c->nr];
-    if (loft_files_at[c->nr] != c->next && fseek(h, (long) c->next, SEEK_SET) != 0) {
-        loft_files_at[c->nr] = -1;
-        c->have = 0;
-        return;
+/* Refill the cursor's buffer from `next`: the stream is moved there when it stands elsewhere.
+ * Answers the bytes the buffer now holds, `[at, end)`. */
+LOFT_COLD static loft_fbuf loft_fcur_fill(loft_fcur *c, int32_t nr, int64_t next) {
+    loft_fbuf sp = { next, next };
+    FILE *h = loft_files[nr];
+    if (loft_files_at[nr] != next && fseek(h, (long) next, SEEK_SET) != 0) {
+        loft_files_at[nr] = -1;
+        return sp;
     }
     size_t got = fread(c->buf, 1, sizeof c->buf, h);
-    c->at = c->next;
-    c->have = (uint32_t) got;
+    sp.end = next + (int64_t) got;
     /* The stream moved by what it read, whatever the read answers. */
-    loft_files_at[c->nr] = ferror(h) ? -1 : c->next + (int64_t) got;
+    loft_files_at[nr] = ferror(h) ? -1 : sp.end;
+    return sp;
 }
 
-static void loft_fcur_hold(loft_fcur *c, loft_ref f) {
+static loft_fpos loft_fcur_hold(loft_fcur *c, loft_ref f) {
     c->f = f;
-    loft_fcur_take(c);
+    return loft_fcur_take(c);
 }
 
 /* `w` bytes in the File's order as an integer, sign-extended from `w` bytes when `sgn`. */
@@ -1018,35 +1023,39 @@ LOFT_HOT_INLINE int64_t loft_fcur_decode(const uint8_t *b, int w, int sgn, int l
 }
 
 /* A read with nothing held: through the record, which is then looked at again. */
-LOFT_COLD static void loft_fcur_through(loft_fcur *c, int w, int sgn, int64_t *val) {
+LOFT_COLD static loft_fpos loft_fcur_through(loft_fcur *c, int w, int sgn, int64_t *val) {
     uint8_t b[8];
     uint8_t *d;
     int64_t got = loft_read_file_in(c->f, w, 0, w, b, sizeof b, &d);
     if (got == w) *val = loft_fcur_decode(d, w, sgn, loft_file_le(c->f));
     if (d != b) free(d);
-    loft_fcur_take(c);
+    return loft_fcur_take(c);
 }
 
 /* A fixed-width integer read: `w` bytes, sign-extended when `sgn`; a short read leaves `*val`
  * as it was and the cursor where it stood, as a read through the record does.  Inline, so
  * the width is a constant at each call and the decode unrolls. */
-LOFT_HOT_INLINE void loft_fcur_read(loft_fcur *c, int w, int sgn, int64_t *val) {
-    if (c->nr < 0) {
-        loft_fcur_through(c, w, sgn, val);
+LOFT_HOT_INLINE void loft_fcur_read(loft_fcur *c, loft_fpos *p, int w, int sgn, int64_t *val) {
+    if (p->nr < 0) {
+        *p = loft_fcur_through(c, w, sgn, val);
         return;
     }
-    c->last = c->next;
-    if (c->next < c->at || c->next + w > c->at + (int64_t) c->have) loft_fcur_fill(c);
-    if (c->next >= c->at && c->next + w <= c->at + (int64_t) c->have) {
-        *val = loft_fcur_decode(c->buf + (c->next - c->at), w, sgn, c->le);
-        c->next += w;
+    p->last = p->next;
+    if (LOFT_UNLIKELY(p->next < p->at || p->next + w > p->end)) {
+        loft_fbuf sp = loft_fcur_fill(c, p->nr, p->next);
+        p->at = sp.at;
+        p->end = sp.end;
+    }
+    if (p->next >= p->at && p->next + w <= p->end) {
+        *val = loft_fcur_decode(c->buf + (p->next - p->at), w, sgn, p->le);
+        p->next += w;
     }
 }
 
-static void loft_fcur_release(loft_fcur *c) {
-    if (c->nr < 0) return;
-    loft_file_set_long(c->f, 8, c->last);
-    loft_file_set_long(c->f, 16, c->next);
+static void loft_fcur_release(loft_fcur *c, loft_fpos p) {
+    if (p.nr < 0) return;
+    loft_file_set_long(c->f, 8, p.last);
+    loft_file_set_long(c->f, 16, p.next);
 }
 
 static uint32_t loft_bits32(float g) { uint32_t u; memcpy(&u, &g, 4); return u; }

@@ -29,10 +29,11 @@ pub mod extensions {
     #[cfg(feature = "registry")]
     pub use crate::extensions::prebuild_installed_natives;
     pub use crate::extensions::{
-        auto_build_native, auto_build_native_target, browser_target, current_lib_idx, load_all,
-        native_target_root, platform_lib_name, reachable_unimplemented_natives,
-        resolve_native_impl_symbols, resolve_native_lib, set_browser_target, wire_native_fns,
-        wire_native_fns_for, wire_shared_native_fns,
+        auto_build_native, auto_build_native_target, browser_target, c_target, current_lib_idx,
+        load_all, native_target_root, platform_lib_name, preload_native_libs,
+        reachable_unimplemented_natives, resolve_native_impl_symbols, resolve_native_lib,
+        set_browser_target, set_c_target, wire_native_fns, wire_native_fns_for,
+        wire_shared_native_fns,
     };
 }
 

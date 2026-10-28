@@ -168,6 +168,13 @@ value), a nullable hole into a non-null parameter warns, and a `lit` that does n
 
 ### New
 
+**A recursion that cannot become a loop compiles, with a warning.**  A function that ends by
+calling itself becomes a loop, so it runs to any depth.  Where that cannot be done — it passes a
+fresh value on, say — loft refused the program.  It now compiles: the call stays an ordinary
+call, which stops at 10 000 frames, and `warning[tail-call-not-jumped]` says so, with how to
+make it a loop.  Being a warning, it fails a library's CI, so the libraries stay free of it;
+binding the value first, `r = f(…); r`, keeps an ordinary call on purpose.
+
 **`#package` lets a file share its internals with the files around it.**  Everything a file
 declares stays private to it unless it says `pub`; a file that is part of something bigger now
 starts with `#package`, and the files of its own directory and of the directory directly above
@@ -175,6 +182,12 @@ it (the code that builds on it) may then use its private functions, types, field
 and import them, as if they were `pub`.  A package's tests are part of it: anything inside its
 `tests/` sees what its `src/` shares.  Nothing further away sees anything new, and a `pub use`
 still passes on only what is `pub`.
+
+**`assert(x != null, …)` proves `x` is there, as `if x == null { return; }` already did.**  A
+failed assert stops the program, so after it the value reads as present for the rest of the block:
+a test no longer warns that a nullable value reaches a non-null parameter right after asserting
+it is not null.  It proves an index in bounds, a divisor non-zero and a square root's operand
+non-negative the same way.
 
 **`loft --emit-image out.store prog.loft` writes a program's compiled IR and runs nothing.**
 The image is the one the startup cache keeps for the program, with its `.dschema` sidecar
@@ -340,6 +353,38 @@ web service checks a server against the bundled roots and the machine's own stor
 git do.
 
 ### Bug fixes
+
+**`e ?? return`, `?? break`, `?? panic(…)` keep a present struct-enum value.**  With a
+default that leaves (`return`, `break`, `continue`, `panic`, `exit`), a value of an enum whose
+variants carry fields was taken as absent: the function returned its default, and `--native`
+did not compile the program.  It is now tested as a value default's `??` tests it.
+
+**A package's test reaches the package's module, not a test named after it.**  With
+`src/load.loft` and its test `tests/load.loft`, another test's `use load;` bound the test file, so
+every `load::` name was unknown.  It now binds `src/load.loft`.
+
+**`if c != null` narrows a nullable plain enum.**  Inside the branch `c` is its enum type, as a
+record or an integer is after the same test; it used to stay nullable, and passing it on gave a
+warning about a nullable value.
+
+**`x?` on a record from another module falls back to that record's default.**  Where the
+value is absent, `x?` gives its type's default, `S {}` with every field at its default.  For a
+record declared in another module it gave `null` instead, with no message, and beside a local
+record of the same name it was refused.  It now builds the record's own default wherever the
+record was declared.
+
+**A recursive walk over an enum's payload runs to any depth.**  A function that ends by calling
+itself on a part of its enum parameter — `walk(a, inner[0])` through a `match` binding, or
+`walk(a, n.inner[0])` — was refused as a frame that could not be reused, although a part of a
+parameter is exactly what a tail call may pass on.  It now becomes a loop, like the same walk
+over a struct.  And a tail self-call in a nested `match` arm whose binding came from another
+binding was accepted but then left an ordinary call, so it stopped at 10 000 frames: it is a
+loop now too.
+
+**A `match` arm whose body is a block needs no comma after it.**  `A { v } => { r = v; }` on one
+line and the next arm on the following one was refused with "Expect token ,", while Rust takes
+it and the loft reference showed it that way.  An arm whose body is an expression still needs
+its comma.
 
 **A cache directory loft cannot write no longer stops your program.**  With a read-only
 `~/.cache` (a sandbox, a container, a shared machine) every run that had to parse ended in an

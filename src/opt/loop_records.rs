@@ -83,13 +83,16 @@ pub(crate) fn is_scalar(tp: &Type) -> bool {
     )
 }
 
-/// Do the statements FOLLOWING index `at` in `ops` cover every field position of `tp`
-/// with contiguous `OpSet*`s on `target` (@PLN157 § V-y)?  Coverage is by BYTE OFFSET
+/// `@FR-R-CompleteWrite` — do the statements FOLLOWING index `at` in `ops` cover every field
+/// position of `tp` with contiguous `OpSet*`s on `target` (@PLN157 § V-y)?  Coverage is by BYTE OFFSET
 /// against the schema's field list, the variant tag included (its field sits at
 /// position 0 and the literal's `OpSetEnum` writes it).  A field the run never reaches
 /// — a nested struct arriving by `OpCopyRecord`, a vector field bound by an append —
 /// leaves the group incomplete, and the prefill stays: the check can only DECLINE the
-/// elision, never miscompile it.
+/// elision, never miscompile it.  A struct-ENUM element is covered where the group writes
+/// every field position of every variant (`variant_union`): whichever variant the literal
+/// builds, no byte a variant's field reads is left to the prefill.
+#[expect(clippy::too_many_lines)]
 pub(crate) fn group_covers_type(
     ops: &[Value],
     at: usize,
@@ -102,10 +105,17 @@ pub(crate) fn group_covers_type(
     if (tp as usize) >= stores.types.len() {
         return false;
     }
-    let (crate::database::Parts::Struct(fields) | crate::database::Parts::EnumValue(_, fields)) =
-        &stores.types[tp as usize].parts
-    else {
-        return false;
+    let union;
+    let fields: &[crate::database::Field] = match &stores.types[tp as usize].parts {
+        crate::database::Parts::Struct(f) | crate::database::Parts::EnumValue(_, f) => f,
+        crate::database::Parts::Enum(variants) => match variant_union(stores, variants) {
+            Some(u) => {
+                union = u;
+                &union
+            }
+            None => return false,
+        },
+        _ => return false,
     };
     if fields.is_empty() {
         return false;
@@ -113,6 +123,7 @@ pub(crate) fn group_covers_type(
     let mut written: HashSet<u16> = HashSet::new();
     // An inline record field written member by member: field position → member positions.
     let mut members: HashMap<u16, HashSet<u16>> = HashMap::new();
+    let mut stop: Option<&Value> = None;
     for stmt in ops.iter().skip(at) {
         match stmt.unspan() {
             Value::Line(_) => {}
@@ -166,9 +177,11 @@ pub(crate) fn group_covers_type(
                 let (Some(Value::Int(off)), Some(Value::Int(n))) =
                     (f.get(1).map(Value::unspan), args.get(2).map(Value::unspan))
                 else {
+                    stop = Some(stmt);
                     break;
                 };
                 let (Ok(off), Ok(n)) = (u16::try_from(*off), u16::try_from(*n)) else {
+                    stop = Some(stmt);
                     break;
                 };
                 let sub = n & crate::keys::COPY_TP_MASK;
@@ -178,6 +191,7 @@ pub(crate) fn group_covers_type(
                         && !fresh.contains_key(&(args.as_ptr() as usize)))
                     || (stores.owns_heap(sub) && n & crate::keys::COPY_FRESH_DEST == 0)
                 {
+                    stop = Some(stmt);
                     break;
                 }
                 written.insert(off);
@@ -200,13 +214,17 @@ pub(crate) fn group_covers_type(
                 {
                     members.entry(off).or_default().insert(m);
                 } else {
+                    stop = Some(stmt);
                     break;
                 }
             }
-            _ => break,
+            _ => {
+                stop = Some(stmt);
+                break;
+            }
         }
     }
-    fields.iter().all(|f| {
+    let covered = |f: &crate::database::Field| {
         written.contains(&f.position)
             || members.get(&f.position).is_some_and(|m| {
                 let sub = f.content as usize;
@@ -215,7 +233,50 @@ pub(crate) fn group_covers_type(
                         crate::database::Parts::Struct(sf)
                             if !sf.is_empty() && sf.iter().all(|x| m.contains(&x.position)))
             })
-    })
+    };
+    let all = fields.iter().all(covered);
+    // `LOFT_TRACE_COMPLETE_WRITE=1`: a group that leaves a field to the prefill names it, and
+    // the statement its scan stopped at.
+    if !all && std::env::var("LOFT_TRACE_COMPLETE_WRITE").is_ok_and(|v| v != "0") {
+        let missing: Vec<&str> = fields
+            .iter()
+            .filter(|f| !covered(f))
+            .map(|f| f.name.as_str())
+            .collect();
+        let mut at_stmt = stop.map_or_else(|| "the block's end".to_string(), |v| format!("{v:?}"));
+        at_stmt.truncate(300);
+        eprintln!(
+            "complete-write: type {} leaves {missing:?} to the prefill; stopped at {at_stmt}",
+            stores.types[tp as usize].name
+        );
+    }
+    all
+}
+
+/// `@FR-R-CompleteWrite`'s struct-enum condition: the fields of every variant of a struct-enum,
+/// one per position — the positions a covering
+/// group must write — or `None` where two variants put fields of different widths at one
+/// position (a write of the narrower would leave bytes of the wider to the prefill).
+fn variant_union(
+    stores: &Stores,
+    variants: &[(u16, String)],
+) -> Option<Vec<crate::database::Field>> {
+    let mut out: Vec<crate::database::Field> = Vec::new();
+    for (vt, _) in variants {
+        let Some(crate::database::Parts::EnumValue(_, fields)) =
+            stores.types.get(*vt as usize).map(|t| &t.parts)
+        else {
+            continue;
+        };
+        for f in fields {
+            match out.iter().find(|u| u.position == f.position) {
+                Some(u) if stores.size(u.content) != stores.size(f.content) => return None,
+                Some(_) => {}
+                None => out.push(f.clone()),
+            }
+        }
+    }
+    Some(out)
 }
 
 pub(crate) fn refillable_plain(stores: &Stores, tp: u16) -> bool {

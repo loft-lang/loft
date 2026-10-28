@@ -578,6 +578,9 @@ pub struct Parser {
     /// the arms are joined and read once at the end, because "the running result is void" and
     /// "an arm was void" are different facts: the result starts void before any arm.
     pub(crate) match_void_arm: bool,
+    /// `@FR-M-Sep` — whether the match arm just parsed had a block body (`=> { … }`), after
+    /// which the separating comma may be left out.  Set by `parse_match_arm_body`.
+    pub(crate) arm_body_was_block: bool,
     /// @PLN87 B-Ref-AnnotationOnly — true while the parser is positioned at the HEAD
     /// of a place where `&` may legally appear: the whole right-hand side of a plain
     /// `=` binding, or the start of a statement (where the D-bind-7 guard reports a
@@ -1101,7 +1104,7 @@ pub struct Parser {
     applied_imports: Vec<PendingImport>,
     /// @PLN204 — the sources whose regime (`Data::width32`) is settled, so a file resumed
     /// after a `use` keeps the `#width` it began with.
-    width_decided: std::collections::BTreeSet<u16>,
+    pub(crate) width_decided: std::collections::BTreeSet<u16>,
     /// `DefType::Unknown` stubs collected by `actual_types_deferred`
     /// during each `parse_file` run.  Resolved (or finally reported) by
     /// `resolve_deferred_unknowns` after all files in the recursion have
@@ -1945,6 +1948,7 @@ impl Parser {
             lit_shape_refused: None,
             arms_of_statement_construct: false,
             match_void_arm: false,
+            arm_body_was_block: false,
             amp_head: AmpHead::default(),
             amp_identity: None,
             eq_rhs_at: None,
@@ -2333,26 +2337,10 @@ impl Parser {
     /// `use` re-enters here mid-file, so the default is only taken for a source not decided yet.
     pub(super) fn parse_file_directives(&mut self, entry: bool) {
         let src = self.data.source;
-        if src != crate::data::STD_SOURCE && !self.width_decided.contains(&src) {
-            self.width_decided.insert(src);
-            self.data.set_width32(src, crate::keys::width32_all());
-        }
+        self.width_header();
         while self.lexer.has_token("#") {
             match self.lexer.has_identifier().as_deref() {
-                Some("width") => {
-                    let bits = self.lexer.has_integer();
-                    match bits {
-                        Some(32) => self.data.set_width32(src, src != crate::data::STD_SOURCE),
-                        Some(64) => self.data.set_width32(src, false),
-                        _ => diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "Unknown width '#width {}' (expected '#width 32' or '#width 64')",
-                            bits.map_or_else(String::new, |b| b.to_string())
-                        ),
-                    }
-                    let _ = self.lexer.has_token(";");
-                }
+                Some("width") => self.width_directive(src),
                 Some("package") => {
                     let file = self.lexer.pos().file;
                     self.data.note_package_file(&file);

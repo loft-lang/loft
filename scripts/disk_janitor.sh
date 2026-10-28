@@ -24,7 +24,7 @@
 #
 # Per checkout (every git worktree of ~/workspace/loft, and every ~/workspace/loft* checkout):
 #   1. `cargo sweep --time 3` — artefacts no build used in 3 days (--time 1 under LOW_GB) —
-#      then `cargo sweep --maxsize` down to the newest TARGET_KEEP_GB (100) by last use: a
+#      then `cargo sweep --maxsize` down to the newest TARGET_KEEP_GB (70) by last use: a
 #      feature or flag change rebuilds every test binary under a new hash, and the superseded
 #      set is as recent as the build that replaced it, so no age rule reaches it (measured
 #      2026-10-20: 175 GB of superseded test binaries in one checkout's target/debug/deps
@@ -58,7 +58,7 @@ set -u
 LOW_GB=${LOFT_JANITOR_LOW_GB:-50}
 CRIT_GB=${LOFT_JANITOR_CRIT_GB:-15}
 EVERY_MIN=${LOFT_JANITOR_EVERY_MIN:-60}
-TARGET_KEEP_GB=${LOFT_JANITOR_TARGET_KEEP_GB:-100}
+TARGET_KEEP_GB=${LOFT_JANITOR_TARGET_KEEP_GB:-70}
 WORKSPACE=${LOFT_JANITOR_WORKSPACE:-$HOME/workspace}
 STATE="$HOME/.cache/loft-janitor"
 mode=run; force=0; dry=0; background=0

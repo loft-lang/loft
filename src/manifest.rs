@@ -243,6 +243,11 @@ pub struct Manifest {
     /// compile + its warning) and the extraction-hygiene gate (the symbols
     /// are sanctioned in `src/**`).  One mark, every consumer.
     pub native_in_binary: bool,
+    /// @PLN205 — `[native] component = "<name>"`: this library's `#native` symbols are those
+    /// of a component loft ships beside its binary (`components`), not of a library of its
+    /// own.  It stands for `[library] native = "loft_<name>"` with the C-ABI link a
+    /// `[native] crate` marks, so every reader of those two sees it as a native library.
+    pub native_component: Option<String>,
     /// @PLN21 Phase 2 — `[native] runtime-libs = "libGL.so.1, libasound.so.2"`:
     /// the system shared libraries this package's cdylib needs at RUNTIME (its
     /// `dlopen` NEEDED set beyond libc).  Turns a load failure into an actionable
@@ -562,6 +567,14 @@ fn parse_manifest(content: &str, filename: &str) -> Manifest {
             message,
         });
     }
+    // `[native] component = "<name>"` stands for the native library it names and the C-ABI
+    // link, so every reader of `native` and `native_crate` treats the package as native.
+    if let Some(name) = m.native_component.clone() {
+        m.native
+            .get_or_insert_with(|| crate::components::stem(&name));
+        m.native_crate
+            .get_or_insert_with(|| format!("loft-{name}-component"));
+    }
     m
 }
 
@@ -803,6 +816,7 @@ fn apply_kv(m: &mut Manifest, section: &str, key: &str, value: &MValue) {
         ("dependencies", _) => m.dependencies.push((key.to_string(), value.scalar())),
         ("native", "crate") => m.native_crate = Some(value.scalar()),
         ("native", "in_binary") => m.native_in_binary = value.is_true(),
+        ("native", "component") => m.native_component = Some(value.scalar()),
         ("c", "libs") => m.c_libs = split_list(&value.scalar()),
         ("c", "optional-libs") => m.c_optional_libs = split_list(&value.scalar()),
         ("c", "shim") => m.c_shim = split_list(&value.scalar()),

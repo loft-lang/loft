@@ -2051,7 +2051,10 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
     fn is_index_arith_op(&self, op: u32) -> bool {
         matches!(
             self.data.def(op).name.as_str(),
-            "OpAddInt"
+            // @PLN204 — the 32-bit regime's narrowing of such an expression: its value, or
+            // null, which faults as any out-of-range index does.
+            "OpNarrow32"
+                | "OpAddInt"
                 | "OpMinInt"
                 | "OpMulInt"
                 | "OpDivInt"

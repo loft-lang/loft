@@ -432,13 +432,13 @@ pub fn library_stem(file: &str) -> String {
 }
 
 /// The C compiler to drive: `CC` when set, else `cc`.
-fn cc_program() -> String {
+pub(crate) fn cc_program() -> String {
     std::env::var("CC").unwrap_or_else(|_| "cc".to_string())
 }
 
 /// A short identity for the compiler, folded into the artifact key. Its own
 /// version banner, or the program name when it will not report one.
-fn cc_identity() -> String {
+pub(crate) fn cc_identity() -> String {
     // Asked once per process: every artefact lookup keys on it, and a static link asks for
     // the shim and its archive several times.
     static IDENTITY: std::sync::OnceLock<String> = std::sync::OnceLock::new();

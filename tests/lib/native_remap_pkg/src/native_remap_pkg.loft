@@ -23,3 +23,12 @@ pub fn remap_answer() -> integer;
 // answers -2000.
 pub fn remap_sum(data: vector<integer>) -> integer;
 #native "loft_remap_sum"
+
+// A loft function of the library that calls a remapped native.  A program that `use`s this
+// package runs it from the library's shared library (`--interpret` compiles a `use`d
+// library's loft code), which must link the registered implementation too: drawing's
+// `render_file` calls graphics' `save_png` this way.  Correct answer twice the sum; through
+// the decoy, -4000.
+pub fn remap_sum_twice(data: vector<integer>) -> integer {
+  remap_sum(data) * 2
+}

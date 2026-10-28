@@ -5,7 +5,8 @@
  * cached archive and names it on a `link:` line, and `LOFT_HTTPS` says it is there.  A unit built
  * without it (a host whose compiler could not build it, `LOFT_TLS_UNAVAILABLE` saying why, or a
  * target with no sockets) answers an `https://` URL with that reason.  Pasted into a unit that
- * fetches over a URL (`LOFT_NET`, `LOFT_ENGINE`, `LOFT_WEB`). */
+ * fetches over a URL (`LOFT_NET`, `LOFT_ENGINE`), and compiled into the `net` component
+ * (`LOFT_WEB`, `src/c/components/net.c`). */
 #if defined(LOFT_POSIX_HOST) && (defined(LOFT_NET) || defined(LOFT_ENGINE) || defined(LOFT_WEB))
 #include <ctype.h>
 #include <errno.h>

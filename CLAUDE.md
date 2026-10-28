@@ -439,10 +439,12 @@ src/main.rs            CLI; loads default/ then user file
    too often. But NOT PRing serialises through joins, which is the cost above. So a PR is cheap
    exactly when it merges promptly and expensive when it sits — which makes "keep the PR
    mergeable and land it promptly" (rule 5) the load-bearing half, not an aside.
-4. **A running PR is never interrupted: nothing is pushed to it** — not a fix for its own red,
-   not even one that unblocks a red required check.  Every fix goes on the branch stacked on it
-   (`<host>-pr<N>-next`, rule 5), which the owner merges in time together with other work; do
-   not offer to push it onto the PR.  More work — a batch of fixes, a docs pass, a sibling's
+4. **A running PR is never interrupted: nothing is pushed to it while its run is in flight** —
+   not a fix for its own red, not even one that unblocks a red required check.  Every fix goes on
+   the branch stacked on it (`<host>-pr<N>-next`, rule 5), checked by its own probe; once the
+   run has FINISHED, the fixes for its red steps are pushed to the PR together
+   ([DEVELOPMENT.md § The PR cycle](doc/claude/DEVELOPMENT.md#the-pr-cycle)).  Anything else
+   — a batch of new fixes, a docs pass, a sibling's
    follow-up chain — is likewise a NEW PR on that stacked branch, however ready or related.  Every push dilutes the PR's checks:
    the run that counts is the last one, and when it fails nobody can tell which added piece broke
    it, so the failure is never seen for what it is.
@@ -628,7 +630,9 @@ machine — one manifest line, consumers unchanged; **the four rules for writing
 be placed** (a `pub fn` must not BE a native; answer a value, not a cursor; closures do not
 cross; a returned VIEW cannot be placed) ·
 [LOGGER.md](doc/claude/LOGGER.md) · [WASM.md](doc/claude/WASM.md) · [HTML_EXPORT.md](doc/claude/HTML_EXPORT.md) ·
-[BROWSER_INTEROP.md](doc/claude/BROWSER_INTEROP.md) · [GALLERY_CI.md](doc/claude/GALLERY_CI.md) (the two browser
+[BROWSER_INTEROP.md](doc/claude/BROWSER_INTEROP.md) · [TANMATSU.md](doc/claude/TANMATSU.md) the
+handheld loft builds for as 32-bit C · [HARDWARE_BACKENDS.md](doc/claude/HARDWARE_BACKENDS.md) adding a
+device: one loft API, platform sections only in a library's C · [GALLERY_CI.md](doc/claude/GALLERY_CI.md) (the two browser
 artefacts that go stale independently, and the gate that catches it) · [WINDOWS.md](doc/claude/WINDOWS.md) / [WINDOWS_SESSION.md](doc/claude/WINDOWS_SESSION.md).
 
 **Networked runs:** `LOFT_NET_PROFILE=1|trace` reports socket operations by **margin**
@@ -770,7 +774,9 @@ extra type. Full API: [RUNNING_TESTS.md § LogConfig](doc/claude/RUNNING_TESTS.m
 `warning` GATES a library's CI (`LOFT_DENY_WARNINGS=1`);
 `advice` never does and has no deny switch. The rule: **a diagnostic gates if and only if
 ignoring it can produce a wrong result** — lost writes, char/byte index confusion,
-null-into-non-null gate; deprecations, perf notes and spellings advise. The split exists
+null-into-non-null gate; deprecations, perf notes and spellings advise — except a slow
+construct the libraries must not ship, when the cure removes the cost and no published library
+can hold the shape yet (`tail-call-not-jumped`; DIAGNOSTICS.md § Diagnostic tiers). The split exists
 because one tier made the compat doctrine self-contradictory: `not null` is a deliberate
 no-op kept parseable so unrepublished libs load, yet it hard-failed those libs' own CI.
 Renders as `advice:`, LSP severity Hint; `@EXPECT_WARNING` and `Test::advice()` match it.

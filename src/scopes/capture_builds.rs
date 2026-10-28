@@ -663,7 +663,7 @@ fn join_arm_stores(rhs: &Value, function: &Function, data: &Data) -> Vec<u16> {
     // A branch arm beside a `??` is an arm too (`if … { f() ?? [] } else { [7] }`): the two
     // spellings of a join union, and one arm on its own is no join at all.
     let mut arms = construction_work_refs(rhs, function, data);
-    branch_arm_stores(rhs, &mut arms);
+    branch_arm_stores(rhs, function, &mut arms);
     let branch = arms.len() > 1;
     for a in arms {
         if (branch || !out.is_empty()) && !out.contains(&a) {
@@ -675,16 +675,32 @@ fn join_arm_stores(rhs: &Value, function: &Function, data: &Data) -> Vec<u16> {
 
 /// The stores the arms of a value branch name — each arm block's own result deps, through
 /// nested branches — for the arms [`construction_work_refs`] does not list (a collection
-/// literal is built into a `__vdb_N`, not a record work-ref).
-fn branch_arm_stores(v: &Value, out: &mut Vec<u16>) {
+/// literal is built into a `__vdb_N`, not a record work-ref) — and an arm that is a compiler
+/// temp OWNING its store: a record `??`'s present arm is `__ncc_N`, which holds the call's
+/// result itself (loft#2210).
+fn branch_arm_stores(v: &Value, function: &Function, out: &mut Vec<u16>) {
     match v.unspan() {
         Value::If(_, t, e) => {
-            branch_arm_stores(t, out);
-            branch_arm_stores(e, out);
+            branch_arm_stores(t, function, out);
+            branch_arm_stores(e, function, out);
+        }
+        // @FR-O-Proxy asks free — an arm the frame owns is handed to the capturing closure,
+        // which then releases it instead of the frame; @FR-O-Override's never-free veto
+        // answers first.
+        Value::Var(x)
+            if function.name(*x).starts_with("__")
+                && !function.is_argument(*x)
+                && !function.is_skip_free(*x)
+                && function.tp(*x).depend().is_empty()
+                && function.tp(*x).base().heap_def_nr().is_some() =>
+        {
+            if !out.contains(x) {
+                out.push(*x);
+            }
         }
         Value::Block(bl) => {
             if let Some(tail @ Value::If(..)) = bl.operators.last().map(Value::unspan) {
-                branch_arm_stores(tail, out);
+                branch_arm_stores(tail, function, out);
             } else {
                 for d in bl.result.depend() {
                     if !out.contains(&d) {

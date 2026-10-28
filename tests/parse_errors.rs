@@ -6002,3 +6002,70 @@ fn a_local_hiding_a_function_is_named_where_the_function_was_expected() {
     code!("fn apply(f: fn(integer) -> integer, v: integer) -> integer { f(v) }\nfn test() -> integer { nothing = 7; apply(nothing, 21) }")
         .error("expected fn(integer) -> integer, got integer on argument 1 of call to apply at a_local_hiding_a_function_is_named_where_the_function_was_expected:2:43");
 }
+
+/// `@FR-M-Sep` (@PLN91 S1.1a, X14) — a comma separates match arms, and after an arm whose body
+/// is a block it may be left out, as in Rust: on the enum path and the scalar path alike.
+#[test]
+fn a_block_bodied_match_arm_needs_no_comma() {
+    code!(
+        "enum Arm { A { v: integer }, B { w: integer }, C }
+fn f(e: Arm) -> integer {
+  r = 0;
+  match e {
+    A { v } => { r = v; }
+    B { w } => { r = w; }
+    _ => { }
+  }
+  r
+}
+fn g(x: integer) -> integer {
+  r = 0;
+  match x {
+    1 => { r = 10; }
+    3 => { r = 30; }
+    _ => { }
+  }
+  r
+}
+fn nested(e: Arm) -> integer {
+  r = 0;
+  match e {
+    A { v } => { r = match v { 3 => 7, _ => 0 }; }
+    _ => { }
+  }
+  r
+}"
+    )
+    .expr("f(A { v: 3 }) * 1000 + g(3) * 10 + nested(A { v: 3 })")
+    .result(Value::Int(3307));
+}
+
+/// `@FR-M-Sep` — an arm whose body is an expression still needs its comma, also when that
+/// expression is a `match` whose own last arm is a block.
+#[test]
+fn an_expression_bodied_match_arm_still_needs_its_comma() {
+    code!(
+        "enum Arm { A { v: integer }, B { w: integer }, C }
+fn f(e: Arm) -> integer {
+  r = 0;
+  match e {
+    A { v } => r = v
+    _ => { }
+  }
+  r
+}"
+    )
+    .error("Expect token , at an_expression_bodied_match_arm_still_needs_its_comma:5:21");
+    code!(
+        "enum Arm { A { v: integer }, B { w: integer }, C }
+fn f(e: Arm) -> integer {
+  r = 0;
+  match e {
+    A { v } => r = match v { 3 => { 7 } _ => { 0 } }
+    _ => { }
+  }
+  r
+}"
+    )
+    .error("Expect token , at an_expression_bodied_match_arm_still_needs_its_comma:5:53");
+}

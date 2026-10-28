@@ -40,6 +40,21 @@ It holds four constraints:
    `doc/claude/formal/` chapter and cites them by tag.  It is measured by the language
    suite's cells, which are filed under those same rules (§ Reusing the formal rules).
 
+**The order of the goals (owner, 2026-10-28).**  First full coverage: every test and program
+the repository defines (the corpus, `tests/scripts`, the language suite's cells) gives
+`--interpret`'s result.  Speed is measured from S1 on and reported (S1.4's 3× line), never a
+gate.  **Start-up on par with the Rust interpreter is a goal for later, not a blocker**: the
+analysis of how the Rust interpreter makes its start-up fast (the compiled stdlib, the
+program cache) is recorded when it is done, and a start-up step is planned only after
+coverage.
+
+**No dependency on the rustc side (owner, 2026-10-28).**  loft is to lose its rustc
+dependency eventually, so the interpreter may depend on the C runtime's implementation — the
+operators and natives as the C backend compiles them — but never on loft's Rust code: no
+`#rust` native added for its sake, no routine that exists only in the Rust interpreter.  Its
+reference semantics are then the C runtime's; where they differ from `--interpret`, the C
+backend's own sweep (`scripts/c_sweep.py`) is what reports it.
+
 ## The dogfood rule (governs every step)
 
 This project exists to find out what loft is like for its hardest consumer, a language
@@ -183,6 +198,34 @@ that is a deviation found, and it is fixed in Rust under the dogfood rule.  So t
 interpreter becomes a second, independent oracle for the formal definition, and that is
 worth having on its own.
 
+## Reusing the stdlib (owner, 2026-10-28)
+
+**The stdlib is reused as much as possible**, because every function the interpreter runs from
+its IR is one it cannot disagree with the compiler about.  The program image already holds
+every definition of `default/*.loft`, compiled to the same IR as the program, so:
+
+- **A stdlib function written in loft runs from the image**, as any user function does, and
+  is never written again in the interpreter.  The lowering decides a call as the Rust
+  interpreter's bytecode generator does, in its order (`src/state/codegen.rs`, a call of a
+  definition): an operator (`Op` and a capital) is its op; a definition with a native symbol
+  is a native; one with a loft body is called, even when it also carries a `#rust` template,
+  which is for native code generation only; anything else is a native by name.  A method
+  (`t_<len><Type>_<name>`) is no exception.
+- **Only what has no loft body is written here**: the operators, as loft's own operator in
+  `run.loft`, and the natives, each calling loft's own function of that name (`natives.loft`,
+  S6).  Those two tables are the whole of the interpreter's own semantics; they grow only by
+  a definition the stdlib cannot give in loft.
+- **Moving a native into loft is the preferred cure** when the interpreter would otherwise
+  need a hand-written body for it and the loft version is as fast — the language gains the
+  function, and the interpreter loses a place to differ.
+
+**Built (2026-10-28):** `lower.loft`'s `call` follows that order (`is_operator`, the native
+symbol, `has_body`).  `selfhost/kernels/stdlib.loft`: `clamp` (which calls `min` and `max`)
+and `floor_mod` run from their stdlib IR — 5, 27 and 12 for `-5`, `12` and `4`, both backends —
+and `abs`, a loft body over `OpAbsInt`, is refused by name at the operator.  Writing `has_body`
+found loft#2213 (a never-returning `??` default read a struct-enum as absent), fixed on main's
+behalf first.
+
 ## Direction (not a design)
 
 Constraints already known, which each step's design must respect.  They are not decided
@@ -219,561 +262,397 @@ cannot quietly shrink.
 
 ## Steps
 
-### S0.1 — the bundle carries its layout sidecar (fixes X1) — BUILT 2026-10-27
+Phase S0 (the bundle opens in loft: S0.1 to S0.3d) is built; each step's design and its
+design→code note are in [1b-s0.md](1b-s0.md).
 
-**What.**  `save_bundle` writes a `.dschema` sidecar beside the bundle, as every other
-store writer does, so `store_load` can check the file against the type it is read through
-(`@FR-L-Sound`) instead of refusing it as a bare image.
+Phase S1 (scalars, control flow, calls, the speed check: S1, S1.1–S1.4, S1.1a, X16–X18) is
+built; its steps are in [1b-s1.md](1b-s1.md).  S1.1b's open steps follow below.
 
-**Code points.**
-- `src/ir_store.rs:809` `save_bundle`: after `materialize_bundle`, compute the root's
-  layout identity and stage the sidecar beside `tmp`; rename the sidecar together with the
-  bundle (the store first, the sidecar after, as the program cache's manifest is written
-  last, `src/startup_cache.rs:463`).
-- `src/schema_sidecar.rs:103` `LayoutIdentity::of_store(stores, slot, tp)` and `:336`
-  `stage_beside`: existing, reused unchanged.
-- `src/data_store.rs:400` (`IR_ROOT_REC`), `:487–489` (`BUNDLE_DATA`, `BUNDLE_TYPES`): the
-  root the identity is computed for, the `Bundle` type of the IR schema.  To find while
-  building: the type number of `Bundle` in the schema `data_store` registers.
-- The refusal it removes: `src/database/allocation.rs:7105` (`BARE_IMAGE`), reached from
-  `load_path` `:5350` through `schema_gate_ok`.
+### S1 closed; S2.1 — the coverage census, and a `main` that returns nothing — BUILT 2026-10-28
 
-**Failure paths to cover.**
-1. The sidecar is written but the identity is computed from the wrong root type: then
-   `store_load` refuses with a layout mismatch instead of "bare". The test reads through
-   `Bundle`.
-2. The Rust IR schema and `ir.loft` compiled by loft lay `Bundle` out differently: the
-   identities differ, and the load is refused naming the type. **This is the falsification
-   the step exists for**: "the same types" is then a claim that does not hold, and the
-   drift is fixed in the generator, not worked around.
-3. A crash between the two renames leaves a bundle without a sidecar: it is refused as
-   bare (the state before this step), never read unchecked.
-4. The startup cache's warm load (`ir_read::open_bundle`) must ignore the sidecar: it is
-   unchanged and must stay byte-identical. Covered by `ir_schema_roundtrip`.
+**S1 is closed**: its gate holds (the kernels answer as `--interpret` does) and its speed is
+measured and reported (S1.4; the owner: not a gate).  S1.1b T3 and T4 stay queued as the
+language fixes S1 found.  **S2** carries text, floats and format strings; its gate is the
+suite chapters `operational`, `calls` and `formatting` (123 cells).
 
-**Tests.**  A Rust test beside `ir_read`'s bundle round-trip (`src/ir_read.rs:2134`):
-`save_bundle` to a temp path, assert the sidecar exists and its verdict against a fresh
-`Stores` holding the IR schema is raw-safe.  `cargo test --release --test
-ir_schema_roundtrip` stays green.  The loft-side guard waits for S0.2, which gives a test
-a stable bundle path.
+**S2.1 makes "more tests" a number.**  Every later step is chosen from its output, by yield.
+- **`selfhost/cover/run_program.loft`**: loads an image and runs its `n_main` with no
+  arguments; a refusal goes to stderr as `refused: <reason>` with exit 3, an interpreter
+  fault (a `panic`) keeps loft's own exit.  Compiled once (`--native-c --ship --out`) and run
+  per program.
+- **`selfhost/cover/census.py`**: over `tests/scripts/*.loft` and the language suite's cells
+  (`LOFT_SUITE_DIR`), skipping what is not a plain run — `@EXPECT_ERROR`, `@EXPECT_FAIL`,
+  `@ARGS`, a file with no `main` — for each: `--emit-image`, then `loft --interpret` for the
+  expected stdout and exit, then the runner.  Each program is `pass` (stdout and exit equal),
+  `refused` (with its reason), `wrong` (ran, answered differently) or `crash`.  It prints the
+  counts and the refusal reasons ranked by how many programs each blocks, and keeps the rows
+  in a TSV under `target/` (local, not committed; the plan records the counts per step).
+  `--chapter` narrows to suite chapters, `--jobs` runs in parallel.
+- **A function that returns nothing** (a `void` result): its body is lowered as statements,
+  then `PushNull` and `Ret`, so every function leaves exactly one value; a call to one in
+  statement position is followed by `Pop`, as any dropped value is.
 
-**Not in this step:** a CLI flag to write a bundle at a chosen path (S0.2, designed after
-this lands); the loft loader `selfhost/src/interp/load.loft` (S0.3).
+**Code points:** `selfhost/src/lower.loft` (the result type decides value or statements),
+`selfhost/cover/` (new).
 
-**Built — what changed from the design.**  This is a step in the Rust tree, so it measures
-the design rather than loft.  The test is
-`ir_read::tests::a_saved_bundle_carries_the_layout_ir_loft_declares`.
-- **Failure path 2 was wrong as written.**  A changed layout is not refused: `load_path`
-  CONVERTS it (`load_upgraded`, `src/database/allocation.rs:~5361`).  So a drift between
-  `ir.loft` and the Rust schema would have been converted silently.  The test therefore
-  requires the verdict `Match` for both sides, not "the load succeeds".
-- **The identity comes from a `Stores` of its own** (`register_ir_schema`,
-  `src/ir_schema_gen.rs:238`, whose `IrSchemaIds::bundle` is the root).  So the image's
-  bytes cannot change (failure path 4).  The write follows `@FR-S-Pair` exactly: stage the
-  sidecar, rename the image, then rename the sidecar.
-- **The sidecar staging name is fixed** (`<path>.dschema.tmp`, `src/schema_sidecar.rs:
-  stage_to`), not per-process.  The C runtime and the guard `tests/scripts/2173-…` depend
-  on it, so it stays.  For the bundle it is harmless: two processes saving one program
-  write identical text, and any failure leaves the bundle refused, never read unchecked.
-- **`Parser::parse` answers "no diagnostic at all"** (`src/parser/passes.rs:158`
-  `self.diagnostics.is_empty()`), so an advice made it return false.  The test's first
-  falsification failed at its "does not compile" assertion and never reached the layout
-  comparison.  The test now asserts no error-level diagnostic.
-- **Falsified:** a field added to `Bundle` in `ir.loft` fails the test at the layout
-  assertion (`Changed(LayoutDiff { changed: ["Bundle"] })`); the restored file passes.
-- **End to end:** a loft program declaring `ir.loft`'s types `store_load`s a bundle the
-  rebuilt binary wrote (`fn twice` + `fn main`) and reads its 845 definitions, `n_twice`
-  and `n_main` among them.  So the root is where `store_load` places it.
-- **A consequence the design missed: eviction.**  Every program bundle and stdlib image in
-  the startup cache now has a sidecar, and neither eviction removed it
-  (`src/cache.rs: prune_dir`'s `remove_pair`, `prune_stdlib_dir`).  Both now remove it,
-  naming it through `schema_sidecar::dschema_path`, and their tests
-  (`prune_dir_evicts_oldest_over_budget`, `stdlib_images_keep_the_newest_and_nothing_else`)
-  assert that an evicted bundle's sidecar goes with it and a kept one's stays.
-- **Learned for later steps:** the cached image is taken after `scopes::check` AND after
-  `compile::close_program` (`src/main.rs:~10236`).  So "the same IR" is the IR after the
-  program-level rewrites too.  This matters for ownership.md's identical-IR boundary.
-- **Not run:** `ir_schema_roundtrip`, which the design named.  It never calls
-  `save_bundle`, so it could not move.
+**Cases:** the census runs over the whole corpus and classifies every program; a program the
+interpreter carries end to end (a void `main` over integers, no output) passes; one printing
+is refused naming `n_println` or the format op — the first rows of the S2 worklist.
 
-### S0.2 — `loft --emit-image <out.store> prog.loft` — BUILT 2026-10-27
+**Design → code.**
+- As designed.  The gate chapters (`operational`, `calls`, `formatting`): **48 of their 123
+  cells are plain runs, 0 pass, 48 refused** — 41 first by a text literal (`NdText`), 2 by
+  `OpNullRefSentinel`, then one each by a float null, a boolean literal and three more texts.
+- **The census misses most of the suite**: a cell is mostly `fn test_…` functions, which
+  `loft --tests` runs one by one, not a `main`.  The runner should run them the same way
+  (every zero-argument function the file declares, an assert's failure being that cell's
+  failure), or two thirds of the gate stays invisible.  Folded into S2.2.
+- The whole-corpus baseline follows in the next commit's note.
 
-**What.**  A command that writes a program's IMAGE (the bundle exactly as the startup cache
-saves it, with its S0.1 sidecar) to a path the caller names, and runs nothing.  It is how a
-test, the loft-suite `selfhost` mode and the loft interpreter get the IR of any program.
-@PLN205 names the same artefact as the input of a backend that is a separate part, so this
-is its first spelling.  The name follows `--emit-c <out.c>`.
+### S2.2 — texts and floats: a stack per kind; the format operators reachable — DESIGNED 2026-10-28
 
-**Code points.**
-- `src/main.rs:~7621` (beside `emit_c`): `let mut emit_image: Option<String>`; `:~7793`
-  (beside the `--emit-c` arm): parse `--emit-image <path>`, `native_mode = false`, as
-  `--emit-c` does.
-- `src/main.rs:~10213–10236`, the program cache's save point: under `--emit-image` the run
-  reaches the same state the cache saves (cold parse, `scopes::check`, `close_program`
-  under the same openness), then calls `ir_store::save_bundle(&p.data,
-  &p.database.types, out)` and exits 0.  The program cache is neither read nor written in
-  that run, so the image is always a fresh parse and the user's cache is untouched.
-- `src/main.rs: print_help` (`:~230`, beside `--native-emit`): one line.
-- `src/ir_store.rs: save_bundle`: reused as S0.1 left it.
-- Under a build without the `mmap` feature (the wasm build), `save_bundle` does not exist:
-  the flag is refused naming why.
+**Found by S2.1:** 900 of the 1 025 plain programs stop first at a text, nearly all at the
+empty work text a formatted string is built in.
 
-**Failure paths.**
-1. **The image is not the cache's image** (taken before `close_program`, or under another
-   openness): the "same IR" claim then means two different things.  The test compares the
-   emitted image byte for byte with the bundle the cache writes for the same program, in a
-   cache directory of its own (`XDG_CACHE_HOME`, `src/cache.rs: cache_base_dir`).
-2. **A program with errors**: the diagnostics print as for a run, the exit is non-zero,
-   and no file is written.
-3. **A path that cannot be written**: exit 1 naming the path, and nothing partial is left
-   (`save_bundle` writes through a temp file and renames).
-4. **The program runs anyway**, for example because a later mode switch overrides the
-   flag: the test's program prints, and the test asserts that stdout is empty.
-5. **`--emit-image` without a path**: refused, as `--emit-c` without one is.
+**A stack per kind.**  The IR is typed (every op is one type's: `OpAddInt`, `OpAddFloat`,
+`OpAppendText`), so the run loop keeps one stack per KIND, each holding loft values of that
+kind, null included: `I` (`vector<integer?>`: integer, long, boolean, character, a plain enum —
+the S1 stack), `F` (`vector<float?>`: float, single) and `T` (`vector<text?>`).  Everything
+else (references, collections, tuples) stays refused until S3.
+- **The lowering gives every node its kind**: a literal by its variant, a variable by its
+  `type_def`, a call by the definition's `returned`, a block by its `result`, an `if` by its
+  branches.  Each variable gets a slot in its kind's frame; a frame's size is three counts,
+  and a function's parameters fill the first slots of their kinds, in order.
+- **Ops carry the kind**: `Load`/`Store`/`Pop`/`Ret` per kind; a float or text constant is
+  an index into the `Lowering`'s own constant tables (an op's operands are integers); a call
+  takes its arguments from the kinds' stacks and leaves its value on its result's.
+- **The float and text operators run as loft's own**: `x + y` on floats, `t1 + t2` on texts,
+  the comparisons, the conversions by `as`.  A text-WRITING operator names its destination
+  variable: `OpAppendText`/`OpAppendCharacter` append to that slot, `OpClearText`/
+  `OpFreeText` empty it.
 
-**Tests.**  A Rust test beside `tests/c_emit.rs` (`tests/emit_image.rs`) that runs the built
-binary:
-- path 1: the emitted image is byte-identical to the cache's, its sidecar exists, exit 0;
-- path 2: an erroring program exits non-zero and writes no file;
-- path 3: an unwritable path exits 1 and leaves nothing;
-- path 4: stdout is empty.
+**The format operators (owner, 2026-10-28: option 1).**  `OpFormatInt`/`Float`/`Single`/`Text`
+have no loft spelling: a format spec is static (F-Spec), and their radix, fill, precision,
+sign and direction arrive as runtime values.  The interpreter reaches them through stdlib
+wrappers whose bodies call the operator itself, so it runs the C runtime's own formatting.
+Two compiler changes make the wrappers possible:
+- inside the stdlib, an operator's `pos` parameter accepts a `&text` variable, given the
+  operator's stack form as the bytecode generator already picks it for `OpAppendText`;
+- **open (asked):** the format parameters the Rust interpreter takes as bytecode IMMEDIATES
+  (`radix`, `token`, `plus`, `note`, `dir`, `precision` are `const`) — its `add_const` writes
+  nothing for a runtime value, which desynchronises the stream, and every stdlib body is
+  compiled — become runtime operands.
 
-Then the loft-side guard can exist: `tests/scripts/` cannot run a second process, so it
-belongs to S0.3, whose loader reads an image the test harness emits.
+**Cases** (both backends, hand-computed): a text literal, `+` on texts, `+=` of a text and a
+character, a float sum and comparison, a call returning a text and one taking a float, a
+null text and a null float propagating; the census before and after; the S1 tests unchanged.
 
-**Not in this step:** the loader in loft (S0.3).
+**Design → code (first part, 2026-10-28).**
+- Built: the stacks per kind; float, single and text operators as loft's own; the text
+  writers on a slot or through a reference; and **`&text`** (`KTextRef`), which the design had
+  not foreseen: a function that answers a text gets a hidden `&text` return buffer from the
+  scope pass, and its caller hands it a stack reference (`OpCreateStack(__work_c1)`).  A
+  `&text` variable holds the absolute index of the text it refers to, on the integer stack;
+  reading it reads that text, storing and the stack forms of the writers write through it.
+  Hidden parameters count as parameters, since the caller's arguments hold them.
+- **A format with the plain `"{v}"` spec runs now**: the lowering checks its operands are the
+  ones the parser gives a plain hole (`OpFormatInt(w, v, 10, 0, 32, false, false, 2)`,
+  `OpFormatFloat`/`Single(w, v, 0, -1, 32, false, 2)`, `OpFormatText(w, v, 0, 2, 32)`) and the
+  run loop appends `"{v}"`, which compiles to that operator with those operands.  Any other
+  spec waits for the wrappers.
+- A refusal now names its function, and an uncarried variable its type.
+- The probe program (a text-returning call, `+=` of a text and a character, float and single
+  arithmetic, a null text, a formatted boolean) prints what `--interpret` prints.  The gate
+  chapters, first blockers: records (`TyReference`) 27, `n_assert` 7, `TyOptional` 3,
+  `TyEnum` 2, `TyVector` 2, format specs 3 — records are S3's, `n_assert` is the first
+  native.
 
-**Built — what changed from the design.**  The tests are in `tests/arc_e_program_cache.rs`
-(`emit_image_writes_the_cache_image_and_runs_nothing`,
-`emit_image_refuses_without_leaving_a_file`), next to the program cache they compare with.
-- **Failure path 3 met a bug on `main`: X11.**  `Store::open` panics on a file it cannot
-  create (`src/store.rs: open_mapped`).  The startup cache calls `save_bundle` on every cold
-  run, so a read-only cache directory crashed every such run with an internal compiler
-  error, and a warm load from one did too.  Fixed first, under the dogfood rule:
-  - `Store::try_open` (a file that cannot be created, opened or sized is an `io::Error`);
-  - `open_read_surface` returns `io::Result`;
-  - `adopt_read_surface` (`src/ir_read.rs`), the one home of the three loaders, makes it
-    their cache miss;
-  - `save_bundle` and `save_data` propagate it.
+**Design → code (second part).**
+- **The first native, `n_assert`**, runs as loft's own `assert`, handed the program's file and
+  line (explicit arguments are accepted), so a failure exits 1 after the program's stdout as
+  under `--interpret`.  Natives are one table (`native_index`); `n_env_variable` is the second.
+- Unary minus, boolean `==`/`!=`, a text's `len` and `size`, and a dropped value (`NdDrop`).
+- **Two wrong answers found and fixed**, both the interpreter's: `'\0' as integer` must be null
+  (loft's NUL convention, `OpConvIntFromCharacter`), which the identity had made 0 — now loft's
+  own `as character?` then `as integer?`; and a hidden parameter (a generic's text return
+  buffer) is created after the locals, so slots went to variables in index order and its
+  argument landed in another slot — parameters now take their slots first.
+- **The census: 1 025 plain programs, 16 pass, 0 wrong, 0 crash.**  The first blockers are now
+  almost all values that live in the store: records 663, vectors 117, struct enums 52,
+  hashes 33, tuples 17, function values 16, iterators 14, sorted 7 — S3 and S4 — then
+  `OpRangeDefault` 10 (three constant operands), `OpConvIntFromEnum` 4, `OpDivIntNullable` 3.
 
-  `open` keeps panicking for callers that treat it as a broken invariant.  The matrix:
-  - C1 read-only cache dir: was exit 101, now runs.
-  - C2 read-only cache base: was exit 101, now runs.
-  - C3 `--native`: runs.
-  - C4 warm load from a read-only cache: was exit 101, now a miss and a cold parse.
-  - C4b writable warm: still a hit.
-  - C6 user store builtins: never reach `Store::open`.
+### SU1 — `store_load` maps the image instead of copying it — DESIGNED 2026-10-28
 
-  Guard: `a_read_only_cache_is_a_miss_never_a_crash` (C1, C2, C4; skipped under root, where
-  permissions do not bind).  Left as it is: a read-only cache is never USED warm, because
-  the read surface maps the file read-write.  That is slower, not wrong.
-- **"The program cache is neither read nor written" holds; the standard library's image is
-  another cache.**  The first run of the test asserted the whole cache directory was
-  untouched, and failed: the stdlib image (one per build, shared by every program) was
-  written.  The `--interpret` run the image is compared with uses it too, so the assertion
-  was narrowed to `program-*` files.
-- **Falsified:** without `close_program` the emitted image differs from the cache's image,
-  so the byte comparison is not vacuous.
-- `CHANGELOG.md`: the flag under New, the read-only cache under Bug fixes.
+**Why now (owner, 2026-10-28):** the store's file format IS its memory format, so a store
+image can be used where it lies: mapping it costs no algorithm, and start-up then costs the
+pages a run touches.  For loft code that is guaranteed: a loft program works on store records
+directly, so a mapped image IS its data.  The Rust interpreter is the harder case — its
+routines work on Rust structures, so its program cache decodes the mapped bundle into `Data`
+(`ir_read.rs::read_data`), and leaving the bodies in the map answered wrong (loft#2012).  The
+loft interpreter reads the program image with `store_load`, and so does every loft program
+that ships a dataset.  Measured by S1.4's `load us` column, before and
+after.
 
-### S0.3a — `#package`: a file shows its internals to its directory and the one above — BUILT 2026-10-27 (catalogue entry at the merge)
+**What happens today** (`src/database/allocation.rs::load_path`, `src/store.rs::Store::load`):
+the file is read into a buffer (`image_bytes`), copied again into the store's word-aligned
+allocation, and its recorded-words header cleared.  Two copies of the whole image per load.
 
-**Why here.**  S0.3 met X2: under C140 every type and field is private to its FILE, so a loft
-program split over several files pays `pub` on everything it shares between them (167 items
-for `ir.loft` alone).  The owner's ruling (2026-10-27): the file-local default stays, because
-an author should think about what escapes a file; a file that is part of something bigger
-says so, and position decides the group.  No `loft.toml` is involved.  A language fix found
-by the dogfood work, built before the work continues.
+**Where it lands (owner, 2026-10-28: no rustc dependency).**  The interpreter ships through
+the C backend, whose runtime reads the image with an `fread` loop into a buffer it then adopts
+(`src/c/loft_image.h`, `store_load`).  So the mapping is built in the C runtime FIRST — POSIX
+`mmap(MAP_PRIVATE)`, a copy-on-write view on Windows — and the Rust runtime's
+`Store::load` follows only to keep `--interpret` level with it.
 
-Privacy here is not about hiding information.  It is about ENFORCING THE RIGHT ABSTRACTIONS
-(owner): code above a layer must go through that layer's surface.  So the question is never
-"who may know this?" but "which code composes this?".
+**The change** (the same in both runtimes; the Rust names below): where the build maps files
+(the `mmap` feature: not wasm), `Store::load` maps the image **copy-on-write**
+(`memmap::MmapOptions::map_copy`, private) instead:
+- **The promise of `store_load` is kept as written**: "writes after it stay in memory" — a
+  written page is the process's own copy, and the file never changes.  The header clear is
+  such a write.
+- **The first growth moves the store to the heap**: a private mapping cannot grow, so
+  `resize_store` allocates, copies the mapped words, drops the mapping, and goes on as a heap
+  store.  Drop releases the mapping, never a heap free of a mapped pointer.
+- **The precondition**: the file is not truncated in place while mapped (a read past the end
+  of a mapping is a SIGBUS).  loft's own writers replace a file by rename
+  (`persist_copy`'s `.tmp` + `rename`), which leaves a live mapping on the old file; a
+  foreign writer that truncates is outside the rule.
+- **`(S-Mapped)` widens** (`formal/structures.md`): besides the runtime's own files, an IMAGE
+  loaded by `store_load` may be mapped copy-on-write; what a program reads is unchanged
+  (`(S-Paged-Same)`, the whole-image load's answers), and the file is never written.
+- **A switch to bisect by**: `LOFT_NO_MAPPED_LOAD=1` keeps the copy (BOTH_BACKEND_SWITCHES.md).
+- The memory ceiling counts the mapped size as today's copy does, so a limit run answers the
+  same.
 
-**The rule.**  One sentence, from which every case follows:
+**Code points:** `src/c/loft_image.h` (`store_load`: map instead of `fread`, the first growth
+copies), then `src/store.rs` (`Store::load`, a private-mapping backing beside `file`,
+`resize_store`, `Drop`), `src/database/allocation.rs::load_path` (unchanged in shape),
+`doc/claude/formal/structures.md` (S-Mapped), BOTH_BACKEND_SWITCHES.md.
 
-> A file whose directives include `#package` reads, to every other file in its own
-> directory and in the directory directly above it, as if every item it declares and every
-> field of those items were `pub`.  To any other file it reads as C140 says.
+**Cases** (both backends, `LOFT_STRICT_STORES=1`, `LOFT_POISON=1`): the whole store-persist
+and paged-load corpus through it; a write after load answers in memory and leaves the file's
+bytes unchanged; a growth after load keeps every record; a `store_persist_copy` over the
+mapped file while it is loaded leaves the loaded values as they were; the switch restores the
+copy; S1.4's load column before and after.
+
+**After it, SU2**: the loft interpreter keeps its lowered ops in a store of its own beside the
+image, mapped at start-up the same way — functions are named by their global definition
+number inside one image, so nothing needs relocating.
+
+### S1.1b — a tail self-call jumps wherever it can, and warns where it cannot (fixes X15) — DESIGNED 2026-10-28
+
+**Found by S1.1.**  `lower.loft` walks the IR tree by recursion, and its tail self-calls are
+refused under @C155: `NdSpan { inner } => expr(l, b, inner[0]?)` (`lower.loft:90`, and
+`statement` at `:141`).  C155 refuses a tail self-call whose frame the jump cannot reuse,
+because left a call it might stop at 10 000 frames.  That refuses what MIGHT fail, while the
+same walk written as `r = expr(…); r` compiles with the same bound.
+
+**The owner's rules for this step:**
+1. When the language can implement a construct correctly and efficiently, it does.  A
+   compile error is only for a program that CERTAINLY fails: it never ends, or it certainly
+   runs out of store memory.
+2. The SEMANTIC layer copies data rather than keep many stores alive; the CODE layer removes
+   the copies again where it can prove them unneeded (@C122: the contract is the semantics).
+3. A slow construct that stays in the code — a real copy, a tail self-call left a call — is a
+   `warning`, so that the libraries do not ship it.  The reason is circumstantial (library
+   CI), so it is written as its own clause of the tier rule (DIAGNOSTICS.md § Diagnostic
+   tiers), not folded into "ignoring it can produce a wrong result".
+
+**Measured** (probes on `--interpret` and `--native`, `target/debug/loft` of this branch):
+
+| argument for `n: N` | its IR | refused because | what it is |
+|---|---|---|---|
+| `n.inner[0]` | the field read sits under the variant check `if n is Wrap then n else OpNullRefSentinel()` | `borrows_from_params` does not look through that `if` | a part of `n` |
+| `inner[0]` | `inner` is the match binding `_mv_inner_1["n"] = OpGetField(n, …)`, never released | every local reads as one the jump releases | a part of `n` |
+| `inner[0]?` | on a missing element `?` builds a default `N` in `__ref_1`, which the frame frees at its exit | a fresh value | fresh on one arm, a part of `n` on the other |
+
+Two facts the design rests on: today's call keeps a fresh argument's store until the CALLER's
+function exits (`__ref_p2_1` lives to `main`'s end), so a recursion holds every one until it
+unwinds; and a `reference<T>` field points across stores (`w.r` sees a later write to `a`, on
+both backends), so a fresh value can point into an older store.  The IR types hold no
+`reference` field (`selfhost/src/ir.loft`).
+
+**The semantic rule.**  At a tail self-call each store-held parameter is rebound:
+- to the argument itself, when it lives in a CALLER's store (the parameter, a sibling, a
+  part of one — `n.inner[0]`, a match binding of one);
+- otherwise (a fresh value, the `?` default, a part of a value the frame made) to a COPY of
+  it in the parameter's own store, which the loop owns and frees at every exit.
+Then every other store the frame owns is released, after all the arguments are read.
+
+**The invariant:** after every jump each parameter points into a caller's store or into the
+one store the loop owns for it.  The frame owns nothing else, so the memory a tail recursion
+holds is bounded by its arguments, never by its depth.
+
+**The code layer removes the copy** with one runtime rule, and only in a function whose tail
+calls need it: of the stores the jump would release (its locals' and the old parameter
+stores'), each one a new argument LIVES IN is kept — handed to that parameter's slot, once
+when two parameters share it — and the rest are freed.  A fresh whole value, a whole local,
+the `?` default and a part of the parameter's own store then cost no copy at all.  What is
+left to copy is a value that may POINT into a store the jump releases: an argument whose type
+holds a `reference`, and a body that stores a parameter's pointer through another parameter
+(`a.r = n`).  Those copy (the `tail-call-copy` warning) or, until that clause is built, stay
+a call (the `tail-call-not-jumped` warning).
+
+**Steps** (each designed in full when the one before it lands):
+- **T1 — the sharing fix (X15; Contract: settled).**  BUILT (below).
+- **T2 — a frame the jump cannot reuse is an ordinary call, with a warning.**  BUILT.  @C155's
+  refusal becomes `warning[tail-call-not-jumped]`, naming the reason and the cure; the tier
+  rule gains its library clause; the error-message case 63 and the suite cell
+  `R-TailSelf/a-tail-self-call-the-frame-cannot-jump-is-refused` move from the error to the
+  warning (the cell is a loft-suite change beside the PR).  S1.1 compiles from here.
+- **T3 — a function that certainly never ends is refused.**  `error[endless-recursion]`: no
+  path through the body leaves without first calling itself.  The `i1058_*` runtime tests
+  that overflow on purpose (`runaway1058`, `spin1058`) take a base case that never fires.
+- **T4 — the owned jump.**  The runtime rule above, with exit frees at every `return`; the
+  first clause takes scalar, void and text results.  The `?` default and fresh arguments
+  jump; `walk(n.inner[0])` on an owned `n` keeps its one store.
+- **T5 — a store-held result** delivered from an owned store: handed to the caller.
+- **T6 — the copy with a sharing map** for arguments that hold a `reference`, with
+  `warning[tail-call-copy]`; and the pointer-storing body.
+- **T7 — store reuse** (two stores per parameter, cleared rather than claimed), only if the
+  T4 measurement shows the claim/free per step.
+
+**Cases, written before building** (hand-computed, value + leak, both backends, under
+`LOFT_STRICT_STORES=1` and `LOFT_POISON=1`; the harness must fail with the step reverted):
+1. `walk(make())` then `walk(n.inner[0])`: one store, freed at the exit (T4).
+2. A fresh argument every step, `count(S { x: n.x - 1 })` to 10⁶: flat memory, exact value (T4).
+3. `inner[0]?` with the element present on some steps and missing on others (T4).
+4. Two parameters in one owned store, `walk(n.left, n.right)` on a fresh `n`: freed once (T4).
+5. A swap of an owned and a borrowed parameter (T4).
+6. Each shape still declined: an ordinary call, the right value, the warning (T2).
+7. A body with no path that returns: the compile error (T3).
+8. The three spellings of the table, and a part through two levels (`n.inner[0].inner[0]`)
+   and through a nested match binding: jump, right value (T1).
+
+#### T1 — the sharing fix (fixes X15, loft#2207; and loft#2208) — BUILT 2026-10-28
+
+**What.**  `borrows_from_params` (`src/tail_frame.rs`), the one predicate the refusal and the
+rewrite share, also accepts as a part of a parameter:
+- `if c then P else OpNullRefSentinel()` with `P` a part of a parameter — the variant check
+  a field read of an enum parameter lowers to (either arm may be the sentinel);
+- a local whose every write is null or a part of a parameter and which no release names —
+  the match payload binding (`_mv_<name>_N`).
+Both shapes are what `(R-TailSelf)` already promises ("a projection rooted at one"), so no
+rule text changes: this closes a deviation from it.  With them:
+- the refusal in `definitions.rs` reads `tail_frame::off()`, as its doc and the generic
+  path (`generics.rs`) already do, so `LOFT_NO_TAIL_SELF=1` keeps the calls;
+- the refusal's cure names the match binding too.
+
+**Code points:** `src/tail_frame.rs` (`borrows_from_params`, a helper for the binding),
+`src/parser/definitions.rs` (the `off()` test).
+
+**Verification:** case 8 as a Rust test on both backends, at a depth (20 000) past the frame
+limit so a call cannot pass; `inner[0]?` still refused (T2 changes that); falsified with the
+two new arms removed; `make rewrite-census` (admissions may only rise); the parser and
+codegen subjects.
+
+**Design → code.**
+- As designed: `part_of_params` reads the three spellings of a part (a projection op, the
+  variant check, a binding), following a binding to its writes at most four levels deep;
+  `binds_a_part` asks `op_writes_variable`, split out of `writes_variable`, so a local any op
+  claims, frees or re-points is not a part.  The refusal reads `off()`.
+- **Found: loft#2208, on `main` too.**  Case 8's binding of a binding (`two_levels`) was
+  admitted and then left a CALL: the scope pass wraps such an arm in an `Insert` (a block's
+  second spelling, `_mv_deeper_1 = null` before the `if`), which both the finder
+  (`Finder::value`) and the rewrite (`opt::tail_self::value`) read as no tail.  `main` shows
+  it with a struct parameter, where the parser admits the call.  Fixed at both walks.  What
+  stays unguarded: nothing compares the parser's admitted calls with the pass's jumps, so a
+  third spelling would again be silent.
+- Guards: `tests/scripts/2207-…` (the three spellings and `grow`, 20 001 levels, 20 006 each)
+  and `tests/scripts/2208-…` (20 005), both backends, `LOFT_STRICT_STORES=1`, `LOFT_POISON=1`,
+  no leaked store.
+
+#### T2 — a frame the jump cannot reuse is an ordinary call, with a warning — BUILT 2026-10-28
+
+**What.**  The two refusal sites keep their predicate and change their level: `definitions.rs`
+(pass two) and `generics.rs` (`refuse_instance_tail`, per instance) emit
+`warning[tail-call-not-jumped]` where they emitted an error.  The rewrite already declines such
+a frame without a word (`opt::tail_self`, the census's `declined`), so the call stays a call:
+nothing else changes in what is emitted.  The message keeps the reason and the cure and states
+the cost:
 
 ```
-#package
-struct Frame { pc: integer, base: integer }   // run.loft, lower.loft, … beside it see pc
-fn step(f: Frame) -> integer { f.pc + 1 }     // and may call step, build a Frame, match it
+warning[tail-call-not-jumped]: `build` calls itself in tail position, but this call stays an
+ordinary call, which stops at 10 000 frames: parameter `acc` (a `text`) can only be passed
+through as itself here.  Write the recursion as a loop (`while`), or keep that value outside
+the frame
 ```
 
-Consequences, each a case of that sentence rather than a rule of its own:
-- **One-sided consent.**  The file that shows its internals says so; a file that reads them
-  says nothing.  A directory may mix: `run.loft` and `lower.loft` say `#package`, while
-  `store.loft` leaves it off and keeps its internals behind its `pub` functions.
-- **Its directory and one up (owner, 2026-10-27).**  Deeper directories hold the more
-  detailed algorithms and data structures, and the level above composes them, so a detail
-  shows its internals to its own directory and to its direct composer: `interp/store/arena.loft`
-  to `interp/store/` and to `interp/run.loft`.  Not further up, so each layer is open to the
-  one that builds on it and walled from everything beyond; and never down, because a detail
-  needing its composer's internals would be a cycle in the design.  A published library is
-  `<pkg>/src/*.loft`, whose parent `<pkg>/` holds no code, so the extra level grants nothing
-  there.  A flat file vendored into a project's `lib/` shows its internals to the project root,
-  which is acceptable: the reason is the abstraction, not secrecy, and vendored code already
-  sits in its consumer's tree.
-- **Membership is location, never route.**  Whether a file was reached by `use`, `--lib` or
-  the registry does not matter; what decides is where it is.  A library's files share with
-  each other, while its consumers, in other directories, see its `pub` surface as before.
-- **Imports follow.**  To a directory mate, a `#package` file's items are `pub`, so a glob
-  `use a;` binds them bare and a selective `use a::helper` binds one.  Two mates exporting
-  the same name collide exactly as two libraries' `pub` names do (the existing rule).
-- **It only relaxes.**  A program that compiles today compiles unchanged; only refusals
-  between directory mates disappear.  So it is compatible (COMPATIBILITY.md).
-- **`api_surface` is unchanged.**  `#package` grants nothing outside those two
-  directories, so a library's published surface (`pub_visible`) is the same.  Below,
-  "a mate" means a file in the directory or the one above.
+- **The tier.**  DIAGNOSTICS.md § Diagnostic tiers gains its second clause: a diagnostic may
+  also gate when it reports a cost the compiler cannot remove, names a cure that takes it to
+  zero, and no published library can hold the shape when it is introduced (here: every shape
+  was a compile error until now).  CLAUDE.md's summary of the tiers says the same in a line.
+- **The register.**  @C155 reads "stays an ordinary call, with the warning; refused only when
+  it certainly fails" (DESIGN_DECISIONS_FAILURE.md, its index line in DESIGN_DECISIONS.md), the
+  old text moving to DESIGN_DECISIONS-history.md; `(R-TailSelf)` and its "In words" say the
+  same where they say REFUSED.
+- **The code.**  A row in DIAGNOSTICS.md; the code and a trigger in `tests/e1_code_set.rs`.
+  The cure stays inline: there is no mechanical edit to offer.
 
-**Code points.**
-- `src/parser/mod.rs:~2320`, the directive loop beside `#cwd` and `#link`: `Some("package")`
-  records the file; the unknown-directive message lists `#package` too.
-- `src/data.rs`, beside `is_name_only` (`:~12757`): the ONE home of the question.
-  - `package_files: HashSet<…>` holds the canonical paths of the files that said
-    `#package`, filled in pass 1, read in pass 2.
-  - `Data::shares_internals(owner_file, user_file) -> bool` answers: owner said `#package`,
-    and the user's canonical directory is the owner's, or the owner's parent.  Cite
-    `@FR-F-Package`.
-  - `source_files` (`:5728`) gives a library source's file.
-- The four refusal sites, each of which has its own copy of "same source or same file"
-  today, gain `|| shares_internals(owner, here)`:
-  - `src/parser/visibility.rs: check_visibility` (`:~80`): fields, literals, variants,
-    patterns, keys;
-  - `refuse_unpublished_method` (`:~171`): `.m()` and `lib::m`;
-  - `refuse_building_a_name_only_type` (`:~214`);
-  - `Data::qualified_refusal` (`src/data.rs:~12786`), which gets the user's file from its
-    callers `parser/definitions.rs:4651` and `parser/objects.rs:649`.
-- Imports: `Data::exported`, `exported_names` and `passes_on` (`src/data.rs:12724–12752`)
-  judge per library and do not know the importer.  They get the importing source, so the
-  bindings at `:12408`, `:12474`, `:12617`, `:12699` and `:12715` admit a mate's items.
-- Docs, see sub-step 4.
+**Code points:** `src/parser/definitions.rs`, `src/parser/generics.rs` (the function becomes
+`warn_instance_tail`), `tests/e1_code_set.rs`, `tests/error_messages/cases/63_…` (renamed
+`…_warns`, its baseline re-captured with `UPDATE_GOLDEN=1`), DIAGNOSTICS.md, CLAUDE.md, the
+register, `formal/rewrites.md`; in loft-suite, `R-TailSelf/a-tail-self-call-the-frame-cannot-
+jump-is-refused` becomes `…-warns` (`@EXPECT_WARNING`) and the line in
+`a-self-call-outside-tail-position-stays-a-call` that points at it.
 
-**Failure paths (the matrix).**  Axes: directive (present / absent) × place (same directory,
-the parent, the grandparent, a subdirectory, a sibling directory) × access (field read, field write,
-literal, variant build, variant match, `lib::fn`, method, a name-only type built, glob
-import bare, selective import) × direction (the declaring file has it / the reading file
-has it).
-1. **Only the declaring file's directive counts**: B reading A's internals, where only B
-   says `#package`, is refused.
-2. **The parent is admitted; the grandparent, a subdirectory and a sibling directory are
-   refused** (`src/sub/x.loft` reading `src/a.loft` is downward; `src/b/y.loft` reading
-   `src/a/x.loft` is a sibling).
-3. **Path spelling**: `./a.loft`, an absolute path and a symlinked directory name the same
-   directory (canonical parents); two directories with the same last name do not.
-4. **A collision through glob imports** from two mates reports as two libraries' names do.
-5. **The warm cache**: removing `#package` changes the file's hash, so the next run parses
-   and refuses again, never a stale admission.
-6. **The census** (`LOFT_TRACE_VISIBILITY=1`, `scripts/pub_census.sh`) stops listing a
-   mate's use, because it reads the same check.
-7. **The stdlib and registry libraries** carry no `#package`: unchanged.
+**Cases** (hand-computed):
+- The suite cell's six functions, now run: `swap(1, Rec 1, Rec 2).n` 2, `swap(1, "a", "b")`
+  `b`, `fresh_arg(2, "")` 2, `literal_arg([1], 2)` 1, `local_arg([1], 2)` 1,
+  `rebound(Rec 0, 3)` 3 — `2 b 2 1 1 3`, each with its warning.
+- The cost, stated: `fresh_arg(20000, "")` halts at the frame limit on both backends.
+- `walk(a, inner[0]?)` (the lowering's shape) compiles with the warning and answers right
+  at a small depth; S1.1 compiles from here.
+- Falsified: the control (the T1 commit) refuses each, so the `expect` channel moves.
 
-**Sub-steps** (each small, tested and pushed before the next):
-1. **Built** (`e9667b46d`).  The directive is parsed and recorded; `shares_internals` with
-   unit tests (same directory, subdirectory, parent, unrelated, no directive, spelling
-   variants).  No behaviour change yet; the unknown-directive message names `#package`.
-   Revised with the parent level: the parent cell is admitted, and the grandparent and a
-   sibling are refused.
-2. **Built.**  The four refusal sites consult it.  Matrix cells 1–3 and 6 for every access
-   kind, in `tests/pub_visibility.rs`, beside C140's own cells.  **Found while building:** a
-   file a `use` switches into never passed the directive loop (the lexer switches mid-parse,
-   `Parser::switch_to_dep`), so a used file's `#package` was a syntax error.  The loop is now
-   `Parser::parse_file_directives(entry)`, also run after the switch.  In a used file only
-   `#package` is admitted: `#cwd` and `#link` set how the whole program runs, and are refused
-   there naming where they belong (they were "unexpected '#'" before; no corpus or registry
-   file says either in a used file).
-3. **Built.**  Imports.  One question for all four binding paths (`import_all`, `import_name` and their
-   `_overwrite` twins, `src/data.rs`): `Data::importable(key, lib, into) -> Option<(def,
-   passes_on)>`, which is `exported` widened by `shares_internals` against the importer's file
-   (`source_files[into]`).  `importable_names` serves the glob form.  A shared item binds
-   with `passes_on == false` even under `pub use`, so a mate cannot carry another file's
-   internals out of the two directories.  The diagnostic helpers that ask `exported` to find
-   a cure (which library publishes a name) keep asking the public surface.  Cells:
-   - a glob `use units;` binds a private function and type bare;
-   - a selective `use units::(secret)` binds one, and `use units::(twice)` binds a method;
-   - two mates exporting one name collide as two libraries' names do (cell 4);
-   - **no leak through `pub use`**: a file two levels up that imports a mate which wrote
-     `pub use units::*;` reaches only `units`' `pub` items.
+**Design → code.**
+- As designed, plus a conditional `--explain` fix the code-set gate asks of every code: *keep
+  it an ordinary call on purpose: bind its value first, `r = f(…); r`*, needing *the recursion
+  stays well under 10 000 frames for every input it is given* (`@F16`).
+- Case 63 also lost the unrelated `println` type error it carried, so it renders the warning
+  alone (exit 0, `3`).
+- The suite change is the loft-suite branch `91-self-host` (03d1f13, from the pinned
+  6fbddfa); `tests/loft-suite.pin` names it.  A local run that walks the suite needs
+  `LOFT_SUITE_DIR` at that checkout: `../loft-suite` holds the old refusal cell.
+- Measured: the cell `2 b 2 1 1 3` with its five warnings and all six `R-TailSelf` cells on
+  both backends (`make suite`); `fresh_arg(20000)` halts at the frame limit; `inner[0]?`
+  compiles with the warning and answers 7.  The control (main 6f31a726b) fails the cell as
+  parse errors.
 
-   **Built — what changed from the design.**
-   - **The `passes_on == false` flag was a duplicate.**  Falsifying the no-leak cell by
-     removing it changed nothing.  Whether a binding re-exports is `Data::passes_on`'s, and it
-     is judged on the DEFINITION (`pub_visible`), so a private item never passes on through
-     `pub use` whatever its binding says.  The flag was removed: `importable` answers only
-     whether a name can be imported, and the one rule for re-export stays where it was.  The
-     cell is falsified on the path that can leak instead: with `shared_with` ignoring the
-     importer, the far program reaches `secret` and prints 42.
-   - **A confounded negative.**  The "two levels up" import cell first read a private field
-     too, so `check_visibility` refused it whatever the import did; under the same mutation
-     it still passed.  It now calls a bare private function only, and fails under the
-     mutation.
-   - Tests: `package_items_import_bare_for_a_mate`, `package_names_collide_as_pub_names_do`
-     (the same refusal as two `pub` names, compared line for line),
-     `package_internals_do_not_pass_on_through_pub_use`.
-4. **Built**, but for the catalogue entry.  The documentation.
-   - `formal/calls.md`: `(F-Visible)` names `(F-Package)`, a new rule holding the sentence
-     above.
-   - `DESIGN_DECISIONS_SYNTAX.md` C140: the owner's ruling of 2026-10-27, recorded.
-   - `LOFT_DECLARATIONS.md` § visibility, and `LOFT_DESIGN.md` beside `#cwd`/`#link`.
-   - `CHANGELOG.md` New, and the `loft-write` skill.
-   - The `@F47` catalogue entry (library imports / modules; C140 named `@F2`, which is `??`,
-     and now names `@F47`): edit the features issue, then `make features-fetch && make
-     features-gen`.  **Deferred to the merge**: the tracker is shared by every branch, so
-     editing it now would hand `main`'s next `features-fetch` the documentation of a feature
-     only this branch has.
-   - A `tests/reference` snippet: not needed.  `LOFT_DECLARATIONS.md`'s example is short
-     and inline, and the cells in `tests/pub_visibility.rs` carry the behaviour.
+#### T3 — a function that certainly never ends is refused — DESIGNED 2026-10-28
 
-**Not in this step:** sharing downward, beyond one level up, or across sibling directories.
-Each can be widened later if a real program asks for it; a widening is a relaxation.
+**What.**  `error[endless-recursion]` at the function's name: every way through its body
+calls itself before it can finish, so no input lets it end — the one case the owner's rule
+keeps a compile error for.  The answer must be CERTAIN, so the predicate only says yes where
+nothing before the self-call could leave:
 
-### S0.3b — a file never `use`s itself (fixes X12) — BUILT 2026-10-27
+- a self-call is certain; so is any operator or call one of whose ARGUMENTS is (they are all
+  evaluated first);
+- a block is certain when one of its operators is and none before it could leave;
+- `if c { a } else { b }` is certain when `c` is, or both `a` and `b` are;
+- an assignment or a `return` is certain when its value is;
+- everything else is not: a loop (it may run no turn), and any operator that could LEAVE —
+  a `return`, a `break` out, or a call of anything but a plain operator (a user function or
+  `assert` may halt, and a halt ends the program).
 
-**Found by S0.3.**  `selfhost/tests/load.loft` says `use load;` and every `load::…` read
-*"Unknown function"*: the import bound the TEST FILE itself.  It is on `main` (2026.10.0), and
-it breaks the layout PACKAGES.md documents (`tests/draw.loft` testing module `draw`).
+So `fn f(n) { f(n) }`, `fn g(n) -> integer { 1 + g(n + 1) }` and an `if` whose both arms
+recurse are refused; a base case, an `assert` before the call, a call of another function
+before it, or the call inside a loop are not.  Generic functions are asked per instance,
+where the warning of T2 is asked.
 
-**Cause.**  loft#976's rule says a bare `use <module>` inside a package binds the package's
-own `src/<module>.loft`.  The code that finds that file, `Parser::own_module_path`
-(`src/parser/imports.rs:822`), looks beside the CURRENT FILE (`<dir>/<id>.loft`,
-`<dir>/lib/<id>.loft`): right for a file in `src/`, but from `tests/load.loft` the first
-candidate is the file itself.  A file is never its own module, and the rule's home is
-`src/`.
+**What it changes.**  Programs that halt at the frame limit on purpose become refused:
+the `runtime_errors.rs` guards of loft#1058 (`spin1058`, `runaway1058`-shaped
+`1 + f(…)`) take a base case that never fires (`if n < -1 { return 0 }`), keeping what they
+measure; the other overflow guards (`deep`, `rec1058`, oracle 32) have base cases already.
 
-**Fix.**  `own_module_path` never answers the current file, and after the two
-current-directory candidates it asks the package root's `src/<id>.loft`.  The root comes
-from `resolution_scope::project_root`, the one home of "the package a file is in", which the
-same `use` code already asks (`src/parser/mod.rs:~2465`).  The order keeps a file in `src/`
-exactly as it is.
+**Code points:** the predicate in `src/tail_frame.rs` beside `tail_calls` (it walks the same
+shapes), the refusal in `src/parser/definitions.rs` and `src/parser/generics.rs` beside T2's
+warning; a row in DIAGNOSTICS.md, the code in `tests/e1_code_set.rs` (no mechanical fix: a
+`FIX_BLOCKED` row naming that a base case is the author's), an error-message case.
 
-**Matrix (measured on `main` before the fix):**
-- M1 `pkg/tests/load.loft` says `use load;`, with `src/load.loft` present: the bug.  Must bind
-  `src/load.loft`.
-- M2 `pkg/tests/loader.loft` says `use load;`: works today through the flat library route.
-  Must keep working, now through the own-module route.
-- M3 `pkg/src/other.loft` says `use load;` for a sibling: works.  Unchanged.
-- M4 a script outside any package, named like the `--lib` library it uses: works (the
-  advice names the clash, the library wins).  Untouched: no package, no own-module rule.
-- M5 `pkg/tests/pkg.loft` says `use pkg;`, the package's own name: works through the
-  special case beside the rule.  Unchanged.
-
-**Tests.**  `tests/module_name_clash.rs`, beside loft#976's cells: M1 and M2 as `loft test`
-runs of a package; M3 and M5 stay covered by the cells there.  The selfhost package's own
-test then runs as S0.3 designed it.
-
-**Built.**  As designed; one cell, `a_test_named_after_its_module_binds_the_module_not_itself`
-(M1 and M2, parsed in process like loft#976's cells rather than through `loft test`, which
-reaches the same `use` code).  Falsified: without the "never the current file" filter M1
-fails again.  The module-clash suite (21) is green.
-
-### S0.3c — a package's tests see what `#package` shares — BUILT 2026-10-27
-
-**Owner's ruling (2026-10-27): tests are part of the package.**  Under S0.3a a package's
-`tests/` sits beside `src/`, so it was neither the shared directory nor the one above, and a
-test of an internal step (lowering, say) could only reach it by making it `pub` for every
-consumer.
-
-**The rule** (an addition to `(F-Package)`'s sentence, still purely positional):
-
-> A file anywhere inside a directory named `tests` (that directory or below it) reads
-> `#package` sharing as if it sat in the `src` directory beside that `tests`.
-
-So `pkg/tests/lower.loft` and `pkg/tests/lowering/if.loft` both see what `pkg/src/lower.loft`
-shares (`src/` is its directory) and what `pkg/src/interp/x.loft` shares (`src/` is the one
-above).  The subtree is included because tests are not a layer (owner): nothing composes on
-top of a test, so depth inside `tests/` walls nothing off.  Among the `src/` modules the
-layering is unchanged.  Nothing depends on a
-`loft.toml`: `src/` and `tests/` are the package layout PACKAGES.md already fixes, and a
-directory that only happens to be called `tests` gains something only when a `src/` beside
-it holds a `#package` file.
-
-**Code point.**  `Data::shares_internals` (`src/data.rs`), the one home: before comparing
-places, a user directory inside a `tests` directory (the nearest ancestor so named, itself
-included) is replaced by that directory's sibling `src`.  The
-imports (`shared_with`) and the four refusal sites follow, because they ask it.
-
-**Matrix.**
-- `pkg/tests/t.loft` reading `pkg/src/a.loft` (`#package`): admitted.
-- `pkg/tests/t.loft` reading `pkg/src/interp/x.loft` (`#package`): admitted (one up).
-- `pkg/tests/sub/t.loft` reading `pkg/src/a.loft`: admitted (the subtree of `tests`).
-- `pkg/src/tests/t.loft` reading `pkg/src/a.loft`: refused (a `tests` INSIDE `src` is a
-  subdirectory of `src`, and its sibling `src` does not exist).
-- `other/tests/t.loft` reading `pkg/src/a.loft`: refused (another package's tests).
-- `pkg/tests/t.loft` reading `pkg/src/a.loft` without `#package`: refused (C140).
-- End to end: `tests/pub_visibility.rs` builds and reads a private item from `pkg/tests/`.
-
-**Docs.**  `(F-Package)` gains the clause, plus C140's ruling, `LOFT_DECLARATIONS.md`, the
-`loft-write` skill and the CHANGELOG entry.
-
-**Built — what changed from the design.**  The mapping is applied IN ADDITION to the plain
-comparison, never instead of it: a `#package` helper inside `tests/` must still share with
-the tests beside it (cell `a test helper shares with tests`), and replacing the user's place
-outright would have hidden it.  Tests: `data::package_tests::package_tests_read_as_their_src`
-(the subtree, one up from `src/interp`, `src/tests` refused, another package's tests refused,
-the helper) and `pub_visibility::package_tests_see_what_src_shares` (end to end from
-`pkg/tests/lowering/`, a consumer refused).  Falsified: without the mapping the end-to-end cell
-fails.
-
-### S0.3 — the bundle opens in loft — BUILT 2026-10-27
-
-**What.**  The first loft code of the strand: a `selfhost` package whose module `load` opens
-an image (S0.2) as the IR's own records and answers questions about it.  It is the first
-step that measures loft.  The design below is written the way the problem reads; the
-design→code note after the build records where loft made it read otherwise.
-
-```loft
-// selfhost/src/load.loft — as the reasoning goes
-use ir;
-
-// The image at `path`, or null when it is missing, written under another layout, or not
-// an image at all (store_load refuses each, naming why).
-pub fn load(path: text) -> ir::Bundle? {
-  b = ir::Bundle {};
-  if !store_load(b, path) { return null; }
-  b
-}
-
-// The definition the compiler named `name` (`n_main` for `fn main`), or null.
-pub fn definition(b: ir::Bundle, name: text) -> ir::Definition? {
-  for d in b.data.definitions { if d.name == name { return d; } }
-  null
-}
-
-// How many definitions the image holds: the stdlib's and the program's.
-pub fn definitions(b: ir::Bundle) -> integer { len(b.data.definitions) }
-```
-
-```loft
-// selfhost/tests/load.loft — the loader seen from outside, through its pub surface
-use load;
-
-fn test_an_image_opens_as_the_ir() {
-  b = load::load(env_variable("LOFT_SELFHOST_IMAGE"));
-  assert(b != null, "the image opens");
-  assert(load::definitions(b) > 800, "the stdlib and the program: {load::definitions(b)}");
-  assert(load::definition(b, "n_twice") != null, "the program's own function is there");
-  assert(load::definition(b, "n_nowhere") == null, "a name the program lacks is not");
-}
-```
-
-**Code points** (revised 2026-10-27, after S0.3a and two probes).
-- `selfhost/loft.toml`, `selfhost/src/load.loft`, `selfhost/tests/load.loft`: new.
-- `selfhost/src/ir.loft`: the IR vocabulary, moved from `tools/ir_schema/ir.loft` (decision 1),
-  with `#package` as its first line (S0.3a), so `load.loft` beside it reads every type and
-  field.  Its `fn main` goes: measured, the generator emits the committed schema byte for
-  byte without it, and with `#package` too.  So no driver file is needed.  The `@FTR-078`
-  worked-example tag above that `main` moves to the file's head (it describes the whole
-  vocabulary), and `make examples-index` re-points `examples-index.tsv`.
-- The generator follows the file: `scripts/ir_schema_check.sh` (`SRC`), the Makefile's
-  `ir-schema-check`/`ir-schema-regen` help text, `tools/ir_schema/README.md`, the header
-  `extract.py` writes into `src/ir_schema_gen.rs` (regenerated with `--fix`; only the
-  header line may change), the doc comments that name the old path (`src/data.rs`,
-  `src/ir_store.rs`, `tests/doc_hygiene.rs`), and the S0.1 test's path
-  (`src/ir_read.rs: a_saved_bundle_carries_the_layout_ir_loft_declares`).
-- **Tests go through `load`'s `pub` surface.**  `selfhost/tests/` is a sibling of `src/`, so
-  it is not a mate of `ir.loft` (S0.3a).  That is the right abstraction for a test of the
-  loader: `pub fn load(path) -> Bundle?`, `pub fn definition(b, name) -> Definition?` and
-  `pub fn definitions(b) -> integer` are what it offers, and `Bundle` and `Definition`
-  are name-only outside the package.
-- `tests/selfhost.rs` (new binary; the selfhost suite will grow into it): emits an image of
-  a two-function program with `loft --emit-image`, then runs `loft test` in `selfhost/` with
-  the image's path in `LOFT_SELFHOST_IMAGE`, which the loft test reads with
-  `env_variable`.
-
-**Failure paths.**
-1. `store_load` into a `Bundle {}` literal places the root elsewhere than S0.1's probe
-   (which declared the types in the same file): definitions read empty.  The test asserts
-   the count and two names.
-2. An image of another layout (an older build): `load` answers null, and the refusal
-   names the type.  Test: an image whose sidecar's `Bundle` row is edited.
-3. Not an image (any other file): null.
-4. `pub` changes a layout after all: the S0.1 test fails (it compares the sidecar with
-   `ir.loft` compiled by loft).
-
-**Owner decisions.**
-1. **`ir.loft`'s home.**  Decided (owner, 2026-10-27): move it into `selfhost/src/` as its
-   one home, and point the generator at it.  The alternative is a `path` dependency on
-   `tools/ir_schema/`, which leaves the vocabulary in a tools directory while it becomes
-   the core.
-2. **X2, `pub` on 167 items** (C140: privacy is per FILE; there is no package scope).
-   First decided "pay it"; then the owner designed the cure, `#package` (S0.3a), built
-   first.
-
-**Built — design → code** (the first step that measures loft).
-- **Transcribed directly:** the loader's three functions read as designed, and the package
-  layout, `use ir;`, the record types and `store_load` into a `Bundle` all worked first time.
-  With `#package` (S0.3a) the vocabulary file needs one line where it would have needed 167
-  `pub`.
-- **Three gaps, each fixed in loft first or put to the owner** (the dogfood rule):
-  - X2, per-file privacy: owner's cure `#package` (S0.3a) and its tests clause (S0.3c).
-  - X12: a test named after its module bound itself.  Fixed (S0.3b).
-  - X13: `assert(b != null, …)` does not narrow `b`, so every later use of `b` in the test
-    warns that a `Bundle?` reaches a non-null parameter.  `if b == null { return; }`,
-    `if b != null { … }`, `?? return` and `?? panic(…)` all narrow.  A failed `assert` halts
-    (`operational.md`), so narrowing after it would be sound; but `types.md` writes no
-    null-test narrowing rule at all (the discharges listed are `??`, `?`, `match`), so the
-    working guard narrowing is itself unwritten.  An owner question; the test keeps the
-    natural `assert` spelling, warnings and all, until it is answered.
-- **Not from loft:** the `@FTR-078` worked-example tag indexes functions only, so the
-  vocabulary keeps one small function, `empty_bundle`, which the loader uses for its root.
-- **Generator:** the moved file, with `#package` and without `main`, generates the committed
-  schema byte for byte (`scripts/ir_schema_check.sh`); only the generated header names the
-  new path.
-- Tests: `tests/selfhost.rs` (emit an image, run the package's `loft test`: 2 passed), the
-  S0.1 layout test on the new path, the schema drift gate.
-
-### S0.3d — `assert` narrows like a guard clause; the rule written down (fixes X13) — DESIGNED, not built
-
-**Owner's ruling (2026-10-27):** one rule, `(N-Guard)` in `formal/types.md`.  A test whose
-failing side cannot continue proves its fact for the rest of the block, and `assert` is such
-a test.
-
-**Why it is sound.**
-- A failed `assert` halts (`operational.md`: "the only runtime halts are the explicit
-  `panic`/`assert`").
-- `assert` is checked in every build: the compiler's own refusal of `debug_assert` says so,
-  and `debug_assert` is the reserved companion a release would elide.  So `debug_assert`
-  must NOT narrow when it is built.
-- The one exception is `LOFT_DEV_SOFT_HALT`, an opt-in debugging switch that turns raises
-  into log-and-continue.  There a null flows on into the non-null slot, which is exactly
-  what the warning describes today; the rule states it.
-
-**The one home, already there.**  `src/parser/control.rs:~1233`, the block loop's guard-clause
-flow narrowing.  After `if <test> { <diverges> }` with no `else`, it records what holds on
-the fall-through, across four families:
-- non-null names (`narrowing_from_condition`, the ELSE side);
-- in-bounds index pairs (`collect_guard_pairs_negated`);
-- non-zero divisors (`divisor_proof_from_condition`);
-- math signs (`math_sign_proof_from_condition`).
-
-`assert(test)` is the same statement with the opposite polarity: on the fall-through `test`
-HOLDS.  So the loop gains one step.  When the statement is an assert, the same four families
-are fed from its condition's THEN side: `narrowing_from_condition` returning `true`,
-`collect_guard_pairs`, and the divisor and math proofs' `true` side.  One predicate,
-`assert_condition(&n)`, recognises both of the assert's lowered forms in
-`Parser::parse_call_diagnostic` (`src/parser/control.rs:~21138`): a call to `n_assert`, or
-the `"assert"` block holding `if test { pass } else { fail }` for a built message.
-
-**Matrix** (each cell on both backends; the typing is front-end, the values are run):
-1. `assert(b != null, "m")`, then `b` into a non-null parameter: no warning, right value.
-2. The same with a built message (`"m {x}"`, the block form): narrowed too.
-3. `assert(b == null)`: not narrowed (the use still warns).
-4. `assert(b != null)`, then `b = mk(0)`: the narrowing ends (inherited, as measured for the
-   guard clause).
-5. An `assert` inside an inner block narrows that block only.
-6. The twins: `assert(i < len(v))` then `v[i]`; `assert(d != 0)` then `a / d`;
-   `assert(x >= 0.0)` then `sqrt(x)`: each reads as its guard-clause spelling does.
-7. A failing `assert` still halts, with its own message, before the narrowed use.
-8. `selfhost/tests/load.loft` compiles without its three warnings.
-
-**Docs.**
-- `formal/types.md`: `(N-Guard)` among the eliminations, naming both forms and the soft-halt
-  caveat.  The guard clause is written down for the first time.
-- `LOFT_CONTROL.md` or the null section of `LOFT.md`, wherever narrowing is described for
-  users.
-- The `loft-write` skill.
-- The CHANGELOG.
+**Cases**: the three refused shapes; the five kept ones; a deeper certain one
+(`{ x = f(n); x }`); a function reached only through another (mutual recursion: not asked —
+the rule is about one function's own body).
 
 ## The language for this job
 
@@ -798,7 +677,7 @@ the `"assert"` block holding `if test { pass } else { fail }` for a built messag
 
 | id | what | kind | proposal |
 |---|---|---|---|
-| **X1** | `store_load` refuses the program bundle: *"it has no layout sidecar (`.dschema`) beside it"*. The bundle carries its own schema (`Bundle.types`), but `ir_store::save_bundle` writes no sidecar, so loft cannot read the compiler's own output | **bug — fixed in S0.1** | `save_bundle` writes the sidecar (§ Steps, S0.1) |
+| **X1** | `store_load` refuses the program bundle: *"it has no layout sidecar (`.dschema`) beside it"*. The bundle carries its own schema (`Bundle.types`), but `ir_store::save_bundle` writes no sidecar, so loft cannot read the compiler's own output | **bug — fixed in S0.1** | `save_bundle` writes the sidecar ([1b-s0.md](1b-s0.md) § S0.1) |
 | **X2** | `ir.loft` used as a library: every type and every field is private to its FILE (@C140; no package scope), so `use ir; ir::Bundle` is refused | **language fix — S0.3a** | measured: 167 `pub` (25 types, 142 fields) before another file of the same package reads one field.  The owner's cure: `#package` shows a file's internals to its own directory (S0.3a), and the file-local default stays |
 | **X3** | a generic type alias does not parse: `type Env<T> = hash<B<T>[name]>;` → *"Expect token ;"* | friction | generic aliases, OCaml's `type 'a env = …` |
 | **X4** | `hash<(integer, text)>` → *"tuple element types only allowed on vector / iterator"* | friction | tuple elements, and tuple keys, in keyed collections (OCaml `(int * string, v) Hashtbl.t`); memo tables keyed by (definition, type) want it (bar B2) |
@@ -808,9 +687,15 @@ the `"assert"` block holding `if test { pass } else { fail }` for a built messag
 | **X8** | no conversion between `float` and its bits (none in `default/*.loft`) | friction (to confirm in S1) | `to_bits`/`from_bits` for `float` and `single`; needed by an arena that stores floats in integer words |
 | **X9** | no `in` operator and no set of scalars (@PLN179 015); `{4 in ks}` fails as *"Formatter error"* | friction; the message is a wrong-error finding of its own | `contains` serves; the message should say there is no `in` |
 | **X10** | capturing closures cannot sit in a collection (@C116); no local recursive `fn` (@C63) | by design — costed | not expected to bite: the dispatch table holds plain fn-refs |
-| **X11** | a read-only cache directory crashed every cold run, and every warm load from it, with an internal compiler error (`Store::open` panics) | **bug — fixed in S0.2** | `Store::try_open`; a read surface that cannot be opened is a miss (§ Steps, S0.2) |
-| **X12** | inside a package, a file named like one of its modules (`tests/load.loft`) gets ITSELF for `use load;`, so every name reads "Unknown function" (on `main`) | **bug — fixed in S0.3b** | `own_module_path` never answers the current file, and asks the package's `src/` (§ Steps, S0.3b) |
-| **X13** | `assert(x != null, …)` does not narrow `x`; the other null tests (`if … return`, `if != null`, `?? return`, `?? panic`) do, and `types.md` writes none of them as a rule | rule gap — S0.3d | owner: `(N-Guard)`, the guard narrowing written as a rule with `assert` as one of its guards (§ Steps, S0.3d) |
+| **X11** | a read-only cache directory crashed every cold run, and every warm load from it, with an internal compiler error (`Store::open` panics) | **bug — fixed in S0.2** | `Store::try_open`; a read surface that cannot be opened is a miss ([1b-s0.md](1b-s0.md) § S0.2) |
+| **X12** | inside a package, a file named like one of its modules (`tests/load.loft`) gets ITSELF for `use load;`, so every name reads "Unknown function" (on `main`) | **bug — fixed in S0.3b** | `own_module_path` never answers the current file, and asks the package's `src/` ([1b-s0.md](1b-s0.md) § S0.3b) |
+| **X13** | `assert(x != null, …)` does not narrow `x`; the other null tests (`if … return`, `if != null`, `?? return`, `?? panic`) do, and `types.md` writes none of them as a rule | rule gap — fixed in S0.3d | owner: `(N-Guard)`, the guard narrowing written as a rule with `assert` as one of its guards ([1b-s0.md](1b-s0.md) § S0.3d) |
+| **X14** | a block-bodied match arm demands a comma (`NdIf { … } => { … }` then the next arm), while Rust and the `LOFT_CONTROL.md` example leave it out | **bug — fixed in S1.1a** | the comma is optional after a block body ([1b-s1.md](1b-s1.md) § S1.1a) |
+| **X15** | a tail self-call on a part of an enum parameter is refused under @C155: `walk(n.inner[0])`, and `walk(inner[0])` through the match binding, though `(R-TailSelf)` admits a projection of a parameter (on `main`) | **bug — fixed in S1.1b T1** | the predicate sees the variant check and the binding as parts of the parameter; the owner's rules for the rest (§ Steps, S1.1b) |
+| **X16** | inside a package, a test file binds a SIBLING test file named like a module (`tests/lower.loft`'s `use load;` gets `tests/load.loft`), on `main` (loft#2212) | **bug — fixed** | from the package's `tests/` subtree, `own_module_path` asks `src/<id>.loft` first ([1b-s1.md](1b-s1.md) § X16–X18) |
+| **X17** | `x?` of a record from ANOTHER module falls back to `null`, with no diagnostic (on `main`, loft#2209); under `#package` the same shape is refused as a default of type `unknown`, and beside a same-named local record as `Item` not assignable to `Item` | **bug, silent-wrong — fixed ([1b-s1.md](1b-s1.md) § X16–X18)** | `build_default` pins the record's name to its definition for the sub-parse, and a sub-parse that builds anything else is `None`, reported |
+| **X18** | a nullable plain enum is not narrowed by `if x != null` (on `main`, loft#2211): its test lowers to a double negation | **bug — fixed** | `narrowing_from_condition` reads any negation as its operand's proof on the other side ([1b-s1.md](1b-s1.md) § X16–X18) |
+| **X19** | an element read is `τ?` even where the index is in range by construction, so an interpreter's frame restore and op fetch each take `?? panic(…)`; left out, the nullability spreads to every counter restored from them (37 warnings from three reads) | friction — costed (S1.2) | the discharge is honest (a missing frame is a bug); a read the bounds guard proves in range could be `τ`, as `(N-Domain)` already proves the index |
 
 ### New constructs taken from OCaml's type expressions
 
@@ -845,8 +730,8 @@ absence.
    schema generator then reads it there).  Recommended: yes; a copy would drift.
 3. **X7 against the A5 refusal**: by-value recursive fields laid out as a box are the
    proposal; A5's refusal was about the by-value LAYOUT, which this keeps out.
-4. **The P-perf bar**: ~1.5× of the Rust interpreter as @PLN91 states, measured on the
-   loft interpreter compiled `--native-release` (the shipped tier).
+4. **The P-perf bar**: answered for S1 (owner, 2026-10-28) — not a gate; over 3× on the C
+   backend, the performance stream is told ([1b-s1.md](1b-s1.md) § S1.4).
 5. **A label for the findings**: `hit-by:loft` with `Found-via: @PLN91 1b`, or a label of
    its own so the dogfood yield can be counted.
 6. **`--mode selfhost` in loft-suite** is a change to that repository (a suite PR beside

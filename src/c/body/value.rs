@@ -243,6 +243,15 @@ impl FnWriter<'_> {
             },
         };
         let key = self.vr_local(root).ok_or("a copy from no value local")?;
+        // `@FR-R-RecPtr`: an inline sub-record of a view whose address the block holds is written
+        // at that address and the sub-record's offset (`bind_record_ptr` counts the copy).
+        let held = crate::opt::body_writes::sub_record(data, dst).and_then(|(r, off, _)| {
+            self.rec_ptrs
+                .iter()
+                .rev()
+                .find(|(v, _, _)| *v == r)
+                .map(|(_, pa, pl)| (pa.clone(), pl.clone(), off))
+        });
         let dst = self.expr(dst, ind)?;
         let d = self.temp(CType::Ref);
         self.line(ind, &format!("{d} = {};", as_ref(dst)?));
@@ -259,21 +268,24 @@ impl FnWriter<'_> {
                     | (u8::from(self.cx.swap_safe(tp)) << 1)
                     | (u8::from(raw & crate::keys::COPY_FRESH_DEST != 0) << 2);
                 self.line(ind, &format!("if ({p} == 1) {{"));
-                self.vr_write_fields(key, &d, &s, base, end, ind + 1)?;
+                self.vr_write_fields(key, &d, &s, base, end, held.as_ref(), ind + 1)?;
                 self.line(ind, "} else {");
-                self.line(
-                    ind + 1,
-                    &format!("loft_copy_record(loft_types, {tp}, loft_ref_null(), {d}, {flags});"),
-                );
+                // A copy into a field of an element being built writes its default instead.
+                let null_arm = self.fresh_null_arm(args, &d).unwrap_or_else(|| {
+                    format!("loft_copy_record(loft_types, {tp}, loft_ref_null(), {d}, {flags});")
+                });
+                self.line(ind + 1, &null_arm);
                 self.line(ind, "}");
             }
-            None => self.vr_write_fields(key, &d, &s, base, end, ind)?,
+            None => self.vr_write_fields(key, &d, &s, base, end, held.as_ref(), ind)?,
         }
         Ok(Some(E::new("((void) 0)", K::Void)))
     }
 
     /// Write struct `s` of layout `key` into record `d`: each field at its offset less `base`,
     /// the fields from `base` up to `end`.
+    /// `held` is the address, lock flag and offset of `d` where a bound view's address serves it.
+    #[allow(clippy::too_many_arguments)]
     fn vr_write_fields(
         &mut self,
         key: u16,
@@ -281,9 +293,45 @@ impl FnWriter<'_> {
         s: &str,
         base: i64,
         end: i64,
+        held: Option<&(String, String, i64)>,
         ind: usize,
     ) -> Result<(), String> {
         let layout = self.vr_layout(key)?;
+        // Scalar fields only: the destination resolved once (`loft_rec_w`) and each field
+        // written through it, where every setter would repeat the null test, the write check
+        // and the address.  A view part claims, which may move the store, so its layout keeps
+        // the setters.
+        let fields: Vec<(usize, i64, &str)> = layout
+            .fields
+            .iter()
+            .enumerate()
+            .filter(|(_, (off, _))| *off >= base && *off < end)
+            .map(|(i, (off, rt))| (i, *off - base, *rt))
+            .collect();
+        if fields.len() >= 2
+            && !fields
+                .iter()
+                .any(|(_, _, rt)| crate::opt::value_records::layout::is_view_part(rt))
+        {
+            let at = match held {
+                // As `loft_rec_w`: a locked store is reported, the write then made.
+                Some((pa, pl, off)) => format!(
+                    "{pa} ? ((LOFT_UNLIKELY({pl}) ? loft_locked_write() : (void) 0), {pa} + {off}) : (uint8_t *) 0"
+                ),
+                None => format!("loft_rec_w({d})"),
+            };
+            self.line(ind, &format!("{{ uint8_t *loft_w = {at}; if (loft_w) {{"));
+            for (i, at, rt) in fields {
+                let w = match rt {
+                    "f32" => format!("memcpy(loft_w + {at}, &{s}.f{i}, 4);"),
+                    "bool" => format!("loft_w[{at}] = (uint8_t) {s}.f{i};"),
+                    _ => format!("memcpy(loft_w + {at}, &{s}.f{i}, 8);"),
+                };
+                self.line(ind + 1, &w);
+            }
+            self.line(ind, "} }");
+            return Ok(());
+        }
         for (i, (off, rt)) in layout.fields.iter().enumerate() {
             if *off < base || *off >= end {
                 continue;
@@ -484,16 +532,21 @@ impl FnWriter<'_> {
         let r = self.expr(src, ind)?;
         let rt = self.temp(CType::Ref);
         self.line(ind, &format!("{rt} = {};", as_ref(r)?));
+        // The record's address taken once (`@FR-R-RecPtr`'s reading of a whole record): every
+        // scalar field is one load through it, the null record's address null and each reader
+        // answering its null, as the getter would.  A view part keeps its reference.
+        // A block-local, so a generator's frame needs no slot for it.
+        let pt = "loft_vp";
         let mut parts = Vec::new();
         for (off, kind) in &layout.fields {
             parts.push(match *kind {
                 k if crate::opt::value_records::layout::is_view_part(k) => {
                     format!("loft_field({rt}, {off})")
                 }
-                "f64" => format!("loft_get_float({rt}, {off})"),
-                "f32" => format!("loft_get_single({rt}, {off})"),
-                "bool" => format!("loft_get_bool({rt}, {off})"),
-                _ => format!("loft_get_int({rt}, {off})"),
+                "f64" => format!("loft_pa_f64({pt}, {off})"),
+                "f32" => format!("loft_pa_f32({pt}, {off})"),
+                "bool" => format!("loft_pa_bool({pt}, {off})"),
+                _ => format!("loft_pa_i64({pt}, {off})"),
             });
         }
         if layout.nullable {
@@ -501,7 +554,11 @@ impl FnWriter<'_> {
         }
         self.line(
             ind,
-            &format!("{target} = ({}) {{ {} }};", held(c), parts.join(", ")),
+            &format!(
+                "{{ const uint8_t *{pt} = loft_rec_ptr({rt}); {target} = ({}) {{ {} }}; }}",
+                held(c),
+                parts.join(", ")
+            ),
         );
         Ok(())
     }
@@ -835,19 +892,51 @@ impl FnWriter<'_> {
         args: &[Value],
         values: Vec<usize>,
         dropped: Option<usize>,
-        tuple_params: &[(usize, u16)],
+        tuple_params: &[(usize, u16, bool)],
         xs: &mut [String],
         ind: usize,
     ) -> Result<Vec<usize>, String> {
-        for (i, key) in tuple_params {
-            if let Some(a) = args.get(*i) {
-                xs[*i] = self.vr_arg(a, *key, ind)?;
+        for &(i, key, ptr) in tuple_params {
+            if let Some(a) = args.get(i) {
+                let x = self.vr_arg(a, key, ind)?;
+                xs[i] = if ptr {
+                    self.vr_arg_address(args, i, &x, key, ind)?
+                } else {
+                    x
+                };
             }
         }
         Ok(values
             .into_iter()
-            .filter(|i| dropped != Some(*i) && !tuple_params.iter().any(|(t, _)| t == i))
+            .filter(|i| dropped != Some(*i) && !tuple_params.iter().any(|(t, _, _)| t == i))
             .collect())
+    }
+
+    /// The address a pointer-passed value record goes to its callee as (`Cx::vr_ptr_params`):
+    /// the caller's own variable where the argument is one no other argument of the call names
+    /// (the callee only reads it, and nothing the call runs can reach a C local but through an
+    /// argument), else a temporary holding the struct `x`.
+    fn vr_arg_address(
+        &mut self,
+        args: &[Value],
+        i: usize,
+        x: &str,
+        key: u16,
+        ind: usize,
+    ) -> Result<String, String> {
+        if let Value::Var(v) = args[i].unspan()
+            && x == self.var(*v)
+            && !args
+                .iter()
+                .enumerate()
+                .any(|(j, o)| j != i && o.any_node(&mut |n| matches!(n, Value::Var(w) if w == v)))
+        {
+            return Ok(format!("&{x}"));
+        }
+        let c = self.vr_shape(key)?;
+        let t = self.temp(c);
+        self.line(ind, &format!("{t} = {x};"));
+        Ok(format!("&{t}"))
     }
 
     /// The buffer of a FORWARD call: the site `forward_sites` names — by its node, or, where
@@ -888,7 +977,7 @@ impl FnWriter<'_> {
                 "if (!({b}.store_nr != 0xFFFF && {b}.rec != 0)) loft_database_typed(&{b}, {size}, {tp});"
             ),
         );
-        self.vr_write_fields(callee_key, &b, &t, 0, i64::MAX, ind)?;
+        self.vr_write_fields(callee_key, &b, &t, 0, i64::MAX, None, ind)?;
         Ok(E::new(b, K::Ref))
     }
 }

@@ -81,8 +81,9 @@ const FORBIDDEN_LIBRARY_SYMBOLS_MANUAL: &[(&str, &str)] = &[
     ("n_rand_indices", "loft-libs-core/random/native"),
     // web — NOT pinned: since web 0.5.0 its natives live in loft (`[native] in_binary = true`,
     // owner 2026-10-27: no library keeps a Rust crate, and the networking libraries' natives are
-    // loft's own — `src/web_client.rs`, `src/web_browser.rs`, `src/web_bytes.rs`,
-    // `src/c/loft_web.h`), so their symbols are sanctioned in `src/**` as `lib/process`'s are.
+    // loft's own — the `net` component (`src/c/components/net.c`, `src/c/loft_web.h`) and the
+    // browser's `src/web_browser.rs`, `src/web_bytes.rs`), so their symbols are sanctioned in
+    // `src/**` as `lib/process`'s are.
     // graphics (56) — drained in @PLAN12 Phase 5b (2026-05-31).
     // Stage B removed `lib/graphics/` from the monorepo; graphics is now
     // resolved exclusively through the loft package registry

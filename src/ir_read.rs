@@ -663,6 +663,18 @@ pub fn image_round_trip(data: &Data, stores: &Stores) -> std::io::Result<(Data, 
     Ok((data, fresh))
 }
 
+/// A build without file-backed stores has no bundle to write the image to.
+///
+/// # Errors
+/// Always: the image needs the `mmap` feature.
+#[cfg(not(feature = "mmap"))]
+pub fn image_round_trip(_data: &Data, _stores: &Stores) -> std::io::Result<(Data, Stores)> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "this build has no file-backed stores (the mmap feature)",
+    ))
+}
+
 /// Rebuild one native [`Definition`] from a store `Definition` record.
 ///
 /// `attr_names` is re-derived from the restored attribute list (a derived

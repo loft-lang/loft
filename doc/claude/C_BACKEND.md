@@ -171,10 +171,11 @@ never seen, a listing is empty and the directory operations answer `Other`.
 
 ## The model
 
-**Shapes.**  Every loft value has one C shape (`CType`): `int32_t` for an integer whose type
-fits 32 bits (null `LOFT_NULL32`; widened where the runtime takes `int64_t`, and computed in
-32 bits where both operands are — [WIDTH32.md § The C backend](WIDTH32.md#the-c-backend),
-`LOFT_NO_C_INT32=1` turns it off), `int64_t` for every other integer
+**Shapes.**  Every loft value has one C shape (`CType`): `int32_t` for a local whose type
+fits 32 bits in a body written under the 32-bit regime (null `LOFT_NULL32`; widened where the
+runtime takes `int64_t`, and computed in 32 bits where both operands are —
+[WIDTH32.md § The C backend](WIDTH32.md#the-c-backend), `LOFT_NO_C_INT32=1` turns it off),
+`int64_t` for every other integer
 (null `LOFT_NULL`, a narrow range is enforced by `OpRangeDefault` and by the field setters),
 `uint8_t` for a boolean (255 null) and a plain enum (255 null), `double` / `float` (NaN null),
 `uint32_t` for a character (0 null), `loft_text` for an owned text and `loft_str` for a view,
@@ -538,7 +539,11 @@ call into an opened library finds its symbol once (`loft_c_bound_sym`).  This is
 ships its native part without a Rust crate: ANSI C beside its loft, one source for all three
 backends.  A `#native` function — a Rust cdylib's — is NOT reached: the C answers every call
 with the interpreter's unloaded-library panic, so a library a C program needs is one whose
-native part is a `[c] shim`.
+native part is a `[c] shim`, a prebuilt C library or a component.  A C build therefore never
+builds a Rust cdylib (`native_build::c_target`, set for `--emit-c` and an explicit
+`--native-c`; guard `a_c_build_builds_no_rust_native_crate`).  A default run that the C
+backend refuses falls back to the interpreter, which loads them, so `LOFT_NATIVE_BACKEND=c`
+alone does not set it.
 
 **The libraries inside loft's binary.**  A `#native` of an `in_binary` library (`[native]
 in_binary = true`: its natives live in loft's own binary, `native::FUNCTIONS`) is a call into
@@ -546,9 +551,10 @@ the C runtime when the runtime carries it (`in_binary_native` in `mod.rs`), and 
 by name when it does not — never the "not loaded" stub, which the interpreter cannot give for a
 native of its own binary.  `loft_process.h` carries `lib/process` (`process_run`: one `poll`
 drains every pipe, a child leads its own process group, the timeout stops the tree) and
-`lib/git` (`git_query`); `loft_web.h` carries the web library's natives (the HTTP client and a
-WebSocket client over the runtime's client connection, the pack builder; `src/web_client.rs` is
-the interpreter's twin, `tests/web_natives.rs` the guard).  `loft_engine.h` carries `lib/engine_host`'s kernel: the listener and
+`lib/git` (`git_query`).  The web library's natives are not the runtime's: they are the `net`
+component (`loft_web.h` and the HTTP client compiled into `libloft_net` by
+`src/c/component.rs`), which a C unit calls through the loft-ffi ABI as it calls any prebuilt
+library (`tests/web_natives.rs` the guard).  `loft_engine.h` carries `lib/engine_host`'s kernel: the listener and
 the connector over WebSockets, the UDP state-sync channel, the events, ticks and `post`, the
 `D!:` debug channel answering as a build with no live tier, and `http_fetch` on a worker thread
 over the runtime's HTTP client (above).  Not carried, so refused by name: the

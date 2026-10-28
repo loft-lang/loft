@@ -1,0 +1,770 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A function's IR tree lowered once into a flat list of ops, which `run.loft` executes with one
+// loop and explicit stacks (@PLN91 S1, S2).  Flat rather than a recursive walk: the call-frame
+// limit and the interpreter's speed both ask for it.
+//
+// A stack machine with one stack per KIND of value (S2.2): integers (with booleans,
+// characters and plain enums), floats (with singles) and texts.  An expression leaves one value
+// on its kind's stack, a statement leaves none.  Each IR variable has a slot in its kind's part
+// of the frame.  An operator lowers to an op of its own, which `run.loft` executes as loft's
+// own operator, so its overflow and null are the language's by definition.  What the
+// interpreter does not carry yet is refused by name, never guessed.
+use ir;
+
+// What kind of value a node, a variable or a result is, and so which stack holds it.
+enum Kind {
+  KInt,
+  KFloat,
+  KSingle,
+  KText,
+  KTextRef,
+  KNone,
+  KOther,
+}
+
+enum Code {
+  PushInt,
+  Load,
+  Store,
+  Pop,
+  Jump,
+  JumpIfFalse,
+  Call,
+  Ret,
+  Add,
+  Sub,
+  Mul,
+  Div,
+  Rem,
+  Eq,
+  Ne,
+  Lt,
+  Le,
+  Gt,
+  Ge,
+  BitAnd,
+  BitOr,
+  BitXor,
+  Not,
+  NonNull,
+  PushNull,
+  PushFloat,
+  PushText,
+  ToFloat,
+  ToInt,
+  ToChar,
+  TextFromBool,
+  Append,
+  AppendChar,
+  Clear,
+  Print,
+  RefOf,
+  Round,
+  Nop,
+  Format,
+  Native,
+  FromChar,
+  Neg,
+  LenText,
+  SizeText,
+}
+
+// One op: `kind` is the kind of value it works on; `a` is a value, a slot, a jump target, a
+// callee's definition number or an index into the function's constants; `b` is a call's
+// argument count.
+struct Op {
+  code: Code,
+  kind: Kind,
+  a: integer,
+  b: integer,
+}
+
+// A function's ops, or the first construct it holds that the interpreter does not carry.  The
+// frame has a part per kind: `slots_*` slots, the first `params_*` of them the caller's
+// arguments; each variable's kind and its slot in that part are `var_kind` and `var_slot`.
+// Float and text constants are kept in `floats` and `texts`, named by index.  While lowering,
+// `depth` is how many values the ops so far leave on the stacks, and the open loops are a
+// stack: each one's first op and the depth at its start, and every `break` still to be pointed
+// at the end of the loop it leaves (`brk_loop` the loop's level, `brk_at` the op).
+struct Lowering {
+  ops: vector<Op>,
+  refused: text,
+  refused_in: text,
+  var_type: vector<text>,
+  result: Kind,
+  slots_int: integer,
+  slots_float: integer,
+  slots_text: integer,
+  params_int: integer,
+  params_float: integer,
+  params_text: integer,
+  var_kind: vector<Kind>,
+  var_slot: vector<integer>,
+  floats: vector<float>,
+  texts: vector<text>,
+  depth: integer,
+  loop_start: vector<integer>,
+  loop_depth: vector<integer>,
+  brk_loop: vector<integer>,
+  brk_at: vector<integer>,
+}
+
+// A lowering with nothing in it: what a function not yet lowered holds.
+pub fn empty() -> Lowering {
+  Lowering {
+    ops: [],
+    refused: "",
+    refused_in: "",
+    var_type: [],
+    result: KNone,
+    slots_int: 0,
+    slots_float: 0,
+    slots_text: 0,
+    params_int: 0,
+    params_float: 0,
+    params_text: 0,
+    var_kind: [],
+    var_slot: [],
+    floats: [],
+    texts: [],
+    depth: 0,
+    loop_start: [],
+    loop_depth: [],
+    brk_loop: [],
+    brk_at: [],
+  }
+}
+
+// The kind of a value of type `t`.
+fn kind_of_type(t: ir::TypeT) -> Kind {
+  match t {
+    TyInteger { spec: _ } => KInt,
+    TyBoolean => KInt,
+    TyCharacter => KInt,
+    TyEnum { n: _, is_ref, dep: _ } => if is_ref { KOther } else { KInt },
+    TyFloat => KFloat,
+    TySingle => KSingle,
+    TyText { dep: _ } => KText,
+    TyRefVar { inner } => if kind_of_types(inner) == KText { Kind.KTextRef } else { Kind.KOther },
+    TyVoid => KNone,
+    TyNull => KNone,
+    TyNever => KNone,
+    TyOptional { inner } => kind_of_types(inner),
+    TyRewritten { inner } => kind_of_types(inner),
+    _ => KOther,
+  }
+}
+
+// The kind of a box-of-one type, as the IR stores a child type.
+fn kind_of_types(ts: vector<ir::TypeT>) -> Kind {
+  if len(ts) == 0 {
+    return Kind.KNone;
+  }
+  kind_of_type(ts[0] ?? panic("a non-empty type vector"))
+}
+
+// The kind of the value expression `n` leaves; `KNone` for one that leaves none, or a null
+// whose kind the place it goes to decides.
+fn kind_of(l: Lowering, b: ir::Bundle, n: ir::Node) -> Kind {
+  match n {
+    NdInt { n: _ } => KInt,
+    NdLong { n: _ } => KInt,
+    NdBoolean { b: _ } => KInt,
+    NdEnum { ord: _, tp: _ } => KInt,
+    NdFloat { f: _ } => KFloat,
+    NdSingle { f: _ } => KSingle,
+    NdText { s: _ } => KText,
+    NdVar { n: var } => {
+      // Reading a `&text` variable reads the text it refers to.
+      k = l.var_kind[var] ?? KOther;
+      if k == KTextRef { KText } else { k }
+    }
+    NdSpan { inner } => kind_of(l, b, inner[0]?),
+    NdBlock { block } => kind_of_types(block[0]?.result),
+    NdIf { cond: _, t, f } => {
+      k = kind_of(l, b, t[0]?);
+      if k == KNone { kind_of(l, b, f[0]?) } else { k }
+    }
+    NdCall { def_nr, args: _ } => kind_of_types(b.data.definitions[def_nr]?.returned),
+    _ => KNone,
+  }
+}
+
+// The stack a kind's values are on: a single is carried as a float, and rounded by its ops; a
+// `&text` is the absolute index of the text it refers to, an integer.
+fn stack_of(k: Kind) -> Kind {
+  if k == KSingle { KFloat } else if k == KTextRef { KInt } else { k }
+}
+
+// The op an operator definition lowers to — its code and the kind it works on — or null for
+// one the interpreter does not carry.  The text-WRITING operators (`OpAppendText` …) are not
+// here: they name a destination variable, see `writer_code`.
+fn operator_op(name: text) -> Op? {
+  int_ops = [
+    ("OpAdd", Code.Add), ("OpMin", Code.Sub), ("OpMul", Code.Mul), ("OpDiv", Code.Div),
+    ("OpRem", Code.Rem), ("OpEq", Code.Eq), ("OpNe", Code.Ne), ("OpLt", Code.Lt),
+    ("OpLe", Code.Le), ("OpGt", Code.Gt), ("OpGe", Code.Ge)
+  ];
+  for (stem, code) in int_ops {
+    if name == "{stem}Int" || name == "{stem}Long" {
+      return Op { code: code, kind: KInt, a: 0, b: 0 };
+    }
+    if name == "{stem}Float" {
+      return Op { code: code, kind: KFloat, a: 0, b: 0 };
+    }
+    if name == "{stem}Single" {
+      return Op { code: code, kind: KSingle, a: 0, b: 0 };
+    }
+    if name == "{stem}Text" && code != Add && code != Sub && code != Mul && code != Div && code != Rem {
+      return Op { code: code, kind: KText, a: 0, b: 0 };
+    }
+  }
+  match name {
+    "OpMinSingleInt" => Op { code: Neg, kind: KInt, a: 0, b: 0 },
+    "OpMinSingleFloat" => Op { code: Neg, kind: KFloat, a: 0, b: 0 },
+    "OpMinSingleSingle" => Op { code: Neg, kind: KSingle, a: 0, b: 0 },
+    "OpEqBool" => Op { code: Eq, kind: KInt, a: 0, b: 0 },
+    "OpNeBool" => Op { code: Ne, kind: KInt, a: 0, b: 0 },
+    "OpLengthText" => Op { code: LenText, kind: KText, a: 0, b: 0 },
+    "OpSizeText" => Op { code: SizeText, kind: KText, a: 0, b: 0 },
+    "OpLandInt" => Op { code: BitAnd, kind: KInt, a: 0, b: 0 },
+    "OpLorInt" => Op { code: BitOr, kind: KInt, a: 0, b: 0 },
+    "OpEorInt" => Op { code: BitXor, kind: KInt, a: 0, b: 0 },
+    "OpNot" => Op { code: Not, kind: KInt, a: 0, b: 0 },
+    "OpConvBoolFromInt" => Op { code: NonNull, kind: KInt, a: 0, b: 0 },
+    "OpConvBoolFromCharacter" => Op { code: NonNull, kind: KInt, a: 1, b: 0 },
+    "OpConvBoolFromFloat" => Op { code: NonNull, kind: KFloat, a: 0, b: 0 },
+    "OpConvBoolFromSingle" => Op { code: NonNull, kind: KFloat, a: 0, b: 0 },
+    "OpConvBoolFromText" => Op { code: NonNull, kind: KText, a: 0, b: 0 },
+    "OpConvIntFromNull" => Op { code: PushNull, kind: KInt, a: 0, b: 0 },
+    "OpConvBoolFromNull" => Op { code: PushNull, kind: KInt, a: 0, b: 0 },
+    "OpConvFloatFromNull" => Op { code: PushNull, kind: KFloat, a: 0, b: 0 },
+    "OpConvSingleFromNull" => Op { code: PushNull, kind: KFloat, a: 0, b: 0 },
+    "OpConvTextFromNull" => Op { code: PushNull, kind: KText, a: 0, b: 0 },
+    "OpConvFloatFromInt" => Op { code: ToFloat, kind: KFloat, a: 0, b: 0 },
+    "OpConvSingleFromInt" => Op { code: ToFloat, kind: KSingle, a: 0, b: 0 },
+    "OpConvIntFromFloat" => Op { code: ToInt, kind: KFloat, a: 0, b: 0 },
+    "OpConvIntFromSingle" => Op { code: ToInt, kind: KSingle, a: 0, b: 0 },
+    "OpConvCharacterFromInt" => Op { code: ToChar, kind: KInt, a: 0, b: 0 },
+    "OpConvFloatFromSingle" => Op { code: Nop, kind: KFloat, a: 0, b: 0 },
+    "OpConvSingleFromFloat" => Op { code: Round, kind: KSingle, a: 0, b: 0 },
+    "OpConvIntFromCharacter" => Op { code: FromChar, kind: KInt, a: 0, b: 0 },
+    "OpCastTextFromBool" => Op { code: TextFromBool, kind: KText, a: 0, b: 0 },
+    "OpPrint" => Op { code: Print, kind: KText, a: 0, b: 0 },
+    _ => null,
+  }
+}
+
+// The text-writing operators: the code and the arguments after the destination variable.
+fn writer_code(name: text) -> Code? {
+  match name {
+    "OpAppendText" => Append,
+    "OpAppendCharacter" => AppendChar,
+    "OpClearText" => Clear,
+    "OpFreeText" => Clear,
+    "OpAppendStackText" => Append,
+    "OpAppendStackCharacter" => AppendChar,
+    "OpClearStackText" => Clear,
+    _ => null,
+  }
+}
+
+// The constant an operand node is, as the parser writes the format operators' operands: an
+// integer, or a boolean as 1 / 0; null for anything computed.
+fn constant(n: ir::Node) -> integer? {
+  match n {
+    NdInt { n: v } => v,
+    NdBoolean { b: v } => if v { 1 } else { 0 },
+    NdSpan { inner } => constant(inner[0]?),
+    _ => null,
+  }
+}
+
+// The format operators, with the operands after the value that a plain `"{v}"` gives them:
+// a format with exactly those is what loft's own interpolation of a value of that kind
+// compiles to, so the run loop appends `"{v}"` and runs the same operator.  Any other spec
+// waits for the stdlib wrappers that reach the operator itself (S2.2, owner: option 1).
+fn format_defaults(name: text) -> vector<integer> {
+  match name {
+    "OpFormatInt" => [10, 0, 32, 0, 0, 2],
+    "OpFormatStackInt" => [10, 0, 32, 0, 0, 2],
+    "OpFormatFloat" => [0, -1, 32, 0, 2],
+    "OpFormatStackFloat" => [0, -1, 32, 0, 2],
+    "OpFormatSingle" => [0, -1, 32, 0, 2],
+    "OpFormatStackSingle" => [0, -1, 32, 0, 2],
+    "OpFormatText" => [0, 2, 32],
+    "OpFormatStackText" => [0, 2, 32],
+    _ => [],
+  }
+}
+
+// The kind of value a format operator formats.
+fn format_kind(name: text) -> Kind {
+  if name.contains("Float") {
+    Kind.KFloat
+  } else if name.contains("Single") {
+    Kind.KSingle
+  } else if name.contains("Text") {
+    Kind.KText
+  } else {
+    Kind.KInt
+  }
+}
+
+// How many values `code` adds to the stacks (negative: takes); a call takes its `b` arguments
+// and leaves its value.
+fn effect(code: Code, b: integer) -> integer {
+  match code {
+    PushInt => 1,
+    PushFloat => 1,
+    PushText => 1,
+    PushNull => 1,
+    Load => 1,
+    Store => -1,
+    Pop => -1,
+    Jump => 0,
+    JumpIfFalse => -1,
+    Call => 1 - b,
+    Ret => -1,
+    Not => 0,
+    NonNull => 0,
+    ToFloat => 0,
+    ToInt => 0,
+    ToChar => 0,
+    TextFromBool => 0,
+    Append => -1,
+    AppendChar => -1,
+    Clear => 0,
+    Print => -1,
+    RefOf => 1,
+    Round => 0,
+    Nop => 0,
+    Format => -1,
+    FromChar => 0,
+    Neg => 0,
+    LenText => 0,
+    SizeText => 0,
+    _ => -1,
+  }
+}
+
+fn emit(l: Lowering, code: Code, kind: Kind, a: integer, b: integer) {
+  l.ops += [Op { code: code, kind: kind, a: a, b: b }];
+  if code == Native {
+    // A native takes its `b` arguments and leaves a value unless its result is nothing.
+    l.depth += if kind == KNone { -b } else { 1 - b };
+  } else {
+    l.depth += effect(code, b);
+  }
+}
+
+// The natives the interpreter carries, by the index a `Native` op names: each runs as loft's
+// own function of that name (`run.loft`), so its behaviour is the stdlib's.
+fn native_index(name: text) -> integer {
+  match name {
+    "n_assert" => 0,
+    "n_env_variable" => 1,
+    _ => -1,
+  }
+}
+
+// The level of the loop `n` loops out from the innermost, or -1 when there is none.
+fn loop_level(l: Lowering, n: integer) -> integer {
+  len(l.loop_start) - 1 - n
+}
+
+fn refuse(l: Lowering, what: text) {
+  if l.refused == "" {
+    l.refused = what;
+  }
+}
+
+// The kind variable `var` is stored as: a `&text` keeps its kind, for the ops that write
+// through it.
+fn var_kind(l: Lowering, var: integer) -> Kind {
+  l.var_kind[var] ?? KOther
+}
+
+// Variable `var`'s slot in its kind's part of the frame, or refused when its kind is not
+// carried yet.
+fn slot_of(l: Lowering, var: integer) -> integer {
+  k = l.var_kind[var] ?? KOther;
+  if k == KOther || k == KNone {
+    refuse(l, "a variable of a kind the interpreter does not carry yet: {l.var_type[var] ?? "?"}");
+    return 0;
+  }
+  l.var_slot[var] ?? 0
+}
+
+// `n`, an expression whose value goes where a `k` is expected: a bare null takes that kind,
+// and a `&text` variable handed to a `&text` parameter is handed on as the reference itself.
+fn value(l: Lowering, b: ir::Bundle, n: ir::Node, k: Kind) {
+  if n is NdNull {
+    emit(l, PushNull, stack_of(k), 0, 0);
+    return;
+  }
+  if k == KTextRef {
+    match n {
+      NdVar { n: var } => {
+        if var_kind(l, var) == KTextRef {
+          emit(l, Load, KInt, slot_of(l, var), 0);
+          return;
+        }
+      }
+      _ => {}
+    }
+  }
+  expr(l, b, n);
+}
+
+// `n`, an expression: its ops leave its value on its kind's stack.
+fn expr(l: Lowering, b: ir::Bundle, n: ir::Node) {
+  match n {
+    NdInt { n: v } => emit(l, PushInt, KInt, v, 0),
+    NdLong { n: v } => emit(l, PushInt, KInt, v, 0),
+    NdBoolean { b: v } => emit(l, PushInt, KInt, if v { 1 } else { 0 }, 0),
+    NdEnum { ord, tp: _ } => emit(l, PushInt, KInt, ord, 0),
+    NdFloat { f } => {
+      l.floats += [f];
+      emit(l, PushFloat, KFloat, len(l.floats) - 1, 0);
+    }
+    NdSingle { f } => {
+      l.floats += [f as float];
+      emit(l, PushFloat, KFloat, len(l.floats) - 1, 0);
+    }
+    NdText { s } => {
+      l.texts += [s];
+      emit(l, PushText, KText, len(l.texts) - 1, 0);
+    }
+    NdNull => emit(l, PushNull, KInt, 0, 0),
+    NdVar { n: var } => {
+      slot = slot_of(l, var);
+      k = var_kind(l, var);
+      // A `&text` reads the text it refers to (`Load` of kind `KTextRef`).
+      emit(l, Load, if k == KTextRef { KTextRef } else { stack_of(k) }, slot, 0);
+    }
+    NdSpan { inner } => expr(l, b, inner[0]?),
+    NdBlock { block } => block_value(l, b, block[0]?),
+    NdIf { cond, t, f } => {
+      k = kind_of(l, b, n);
+      expr(l, b, cond[0]?);
+      to_else = len(l.ops);
+      emit(l, JumpIfFalse, KInt, 0, 0);
+      at_branch = l.depth;
+      value(l, b, t[0]?, k);
+      to_end = len(l.ops);
+      emit(l, Jump, KInt, 0, 0);
+      l.ops[to_else].a = len(l.ops);
+      // The else-side runs from where the then-side started, not from where it ended.
+      l.depth = at_branch;
+      value(l, b, f[0]?, k);
+      l.ops[to_end].a = len(l.ops);
+    }
+    NdCall { def_nr, args } => call(l, b, def_nr, args),
+    NdReturn { inner } => {
+      value(l, b, inner[0]?, l.result);
+      emit(l, Ret, stack_of(l.result), 0, 0);
+    }
+    _ => refuse(l, "an expression the interpreter does not carry: {n}"),
+  }
+}
+
+// Is `name` an operator: `Op` and then a capital, as `Definition::is_operator` reads it?
+fn is_operator(name: text) -> boolean {
+  name.starts_with("Op") && len(name) > 2 && name[2..3] >= "A" && name[2..3] <= "Z"
+}
+
+// Does `d` have a body written in loft?  A definition with no code is a native.
+fn has_body(d: ir::Definition) -> boolean {
+  if len(d.code) == 0 {
+    return false;
+  }
+  first = d.code[0] ?? panic("a non-empty code vector");
+  !(first is NdNull)
+}
+
+// The kinds of `d`'s parameters, in order — a hidden one too (the `&text` return buffer of a
+// function that answers a text): the caller's argument list holds it.
+fn param_kinds(d: ir::Definition) -> vector<Kind> {
+  kinds: vector<Kind> = [];
+  for a in d.attributes {
+    kinds += [kind_of_types(a.typedef)];
+  }
+  kinds
+}
+
+// A call: its arguments, left to right, then what the Rust interpreter's bytecode generator
+// makes of the callee (`src/state/codegen.rs`, the call of a definition), in its order — so
+// the loft interpreter runs exactly the stdlib bodies the Rust one runs, from the same IR:
+//   an operator is its op; a definition with a native symbol is a native; a definition with
+//   a loft body is CALLED, even when it also has a `#rust` template (that is for native code
+//   generation, not the interpreter); anything else is a native by name.
+// The stdlib's own loft functions are therefore never written again here: only operators and
+// natives are.  A text-WRITING operator's first argument is the variable it writes, not a
+// value.
+fn call(l: Lowering, b: ir::Bundle, def_nr: integer, args: vector<ir::Node>) {
+  d = b.data.definitions[def_nr]?;
+  kinds = param_kinds(d);
+  writer = if is_operator(d.name) { writer_code(d.name) } else { null };
+  if writer != null {
+    first = args[0] ?? panic("a text-writing operator names its destination");
+    dest = 0;
+    dest_kind = Kind.KText;
+    match first {
+      NdVar { n: var } => {
+        dest = slot_of(l, var);
+        dest_kind = var_kind(l, var);
+      }
+      _ => { refuse(l, "a text-writing operator on a destination that is not a variable"); }
+    }
+    for i in 1..len(args) {
+      value(l, b, args[i]?, kinds[i] ?? KOther);
+    }
+    // A `&text` destination is written through: its slot holds the text's index.
+    emit(l, writer, dest_kind, dest, 0);
+    return;
+  }
+  // A format operator: carried where its spec is the plain `"{v}"` one (`format_defaults`).
+  defaults = format_defaults(d.name);
+  if len(defaults) > 0 {
+    first = args[0] ?? panic("a format operator names its destination");
+    dest = 0;
+    dest_kind = Kind.KText;
+    match first {
+      NdVar { n: var } => {
+        dest = slot_of(l, var);
+        dest_kind = var_kind(l, var);
+      }
+      _ => refuse(l, "a format operator on a destination that is not a variable"),
+    }
+    for i in 0..len(defaults) {
+      if constant(args[i + 2] ?? NdNull) != defaults[i] {
+        refuse(l, "a format spec the interpreter does not carry yet: {d.name}");
+        return;
+      }
+    }
+    k = format_kind(d.name);
+    value(l, b, args[1]?, k);
+    // The op's kind is the destination's (`KText` or `KTextRef`); `b` carries the value's.
+    emit(l, Format, dest_kind, dest, 0);
+    l.ops[len(l.ops) - 1].b = if k == KFloat { 1 } else if k == KSingle { 2 } else if k == KText { 3 } else { 0 };
+    return;
+  }
+  // `OpCreateStack(v)`: a reference to text variable `v`, to hand to a `&text` parameter.
+  if d.name == "OpCreateStack" {
+    match args[0] ?? panic("OpCreateStack names a variable") {
+      NdVar { n: var } => {
+        if var_kind(l, var) == KText {
+          emit(l, RefOf, KText, slot_of(l, var), 0);
+        } else if var_kind(l, var) == KTextRef {
+          emit(l, Load, KInt, slot_of(l, var), 0);
+        } else {
+          refuse(l, "a reference to a variable that is not a text");
+        }
+      }
+      _ => refuse(l, "a reference to something that is not a variable"),
+    }
+    return;
+  }
+  for i in 0..len(args) {
+    value(l, b, args[i]?, kinds[i] ?? KOther);
+  }
+  if is_operator(d.name) {
+    op = operator_op(d.name);
+    if op != null {
+      emit(l, op.code, op.kind, op.a, 0);
+    } else {
+      refuse(l, "an operator the interpreter does not carry: {d.name}");
+    }
+  } else if d.native != "" || !has_body(d) {
+    idx = native_index(d.name);
+    if idx >= 0 {
+      emit(l, Native, kind_of_types(d.returned), idx, len(args));
+    } else {
+      refuse(l, "a native the interpreter does not carry: {d.name}");
+    }
+  } else {
+    emit(l, Call, KInt, def_nr, len(args));
+  }
+}
+
+// A block as an expression: every operator but the last is a statement, the last its value.
+fn block_value(l: Lowering, b: ir::Bundle, blk: ir::Block) {
+  last = len(blk.operators) - 1;
+  for i in 0..last {
+    statement(l, b, blk.operators[i]?);
+  }
+  value(l, b, blk.operators[last]?, kind_of_types(blk.result));
+}
+
+// A block as a statement: every operator a statement.
+fn block_statement(l: Lowering, b: ir::Bundle, blk: ir::Block) {
+  for op in blk.operators {
+    statement(l, b, op);
+  }
+}
+
+// A jump out of the loop `n` levels out, to its end (`is_break`) or its start: refused where
+// it would leave values on the stack, which only a loop inside an operand could do.
+fn leave_loop(l: Lowering, n: integer, is_break: boolean) {
+  level = loop_level(l, n);
+  if level < 0 {
+    refuse(l, "a break or continue outside a loop");
+    return;
+  }
+  if l.depth != l.loop_depth[level] {
+    refuse(l, "a break or continue with values pending, which S1 does not carry");
+    return;
+  }
+  if is_break {
+    l.brk_loop += [level];
+    l.brk_at += [len(l.ops)];
+    emit(l, Jump, KInt, 0, 0);
+  } else {
+    emit(l, Jump, KInt, l.loop_start[level] ?? panic("an open loop"), 0);
+  }
+}
+
+// `n`, a statement: its ops leave the stacks as they found them.
+fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
+  match n {
+    NdLine { n: _ } => {},
+    NdNull => {},
+    NdSpan { inner } => statement(l, b, inner[0]?),
+    NdReturn { inner } => expr(l, b, n),
+    NdSet { var, inner } => {
+      k = var_kind(l, var);
+      slot = slot_of(l, var);
+      // A `&text` is written through (`Store` of kind `KTextRef`): its value is a text.
+      value(l, b, inner[0]?, if k == KTextRef { KText } else { k });
+      emit(l, Store, if k == KTextRef { KTextRef } else { stack_of(k) }, slot, 0);
+    }
+    NdBlock { block } => block_statement(l, b, block[0]?),
+    NdIf { cond, t, f } => {
+      expr(l, b, cond[0]?);
+      to_else = len(l.ops);
+      emit(l, JumpIfFalse, KInt, 0, 0);
+      statement(l, b, t[0]?);
+      else_side = f[0]?;
+      if else_side is NdNull {
+        l.ops[to_else].a = len(l.ops);
+      } else {
+        to_end = len(l.ops);
+        emit(l, Jump, KInt, 0, 0);
+        l.ops[to_else].a = len(l.ops);
+        statement(l, b, else_side);
+        l.ops[to_end].a = len(l.ops);
+      }
+    }
+    NdLoop { block } => {
+      level = len(l.loop_start);
+      l.loop_start += [len(l.ops)];
+      l.loop_depth += [l.depth];
+      block_statement(l, b, block[0]?);
+      emit(l, Jump, KInt, l.loop_start[level] ?? panic("an open loop"), 0);
+      end = len(l.ops);
+      for i in 0..len(l.brk_at) {
+        if l.brk_loop[i] == level {
+          l.ops[l.brk_at[i] ?? panic("a break site")].a = end;
+          l.brk_loop[i] = -1;
+        }
+      }
+      l.loop_start.remove(level);
+      l.loop_depth.remove(level);
+    }
+    NdDrop { inner } => {
+      // A value computed for its effect and dropped.
+      before = l.depth;
+      expr(l, b, inner[0]?);
+      if l.depth > before {
+        emit(l, Pop, stack_of(kind_of(l, b, inner[0]?)), 0, 0);
+      }
+    }
+    NdBreak { n: out } => leave_loop(l, out, true),
+    NdContinue { n: out } => leave_loop(l, out, false),
+    NdCall { def_nr, args: _ } => {
+      before = l.depth;
+      expr(l, b, n);
+      // A call that leaves a value drops it; a text-writing operator or `OpPrint` leaves none.
+      if l.depth > before {
+        emit(l, Pop, stack_of(kind_of(l, b, n)), 0, 0);
+      }
+    }
+    _ => refuse(l, "a statement the interpreter does not carry: {n}"),
+  }
+}
+
+// The ops of definition `def_nr`'s body.
+pub fn lower(b: ir::Bundle, def_nr: integer) -> Lowering {
+  d = b.data.definitions[def_nr]?;
+  l = empty();
+  l.result = kind_of_types(d.returned);
+  // Each variable gets the next slot of its kind.  The parameters take theirs FIRST, in order,
+  // so they fill the slots the caller's arguments land in — a hidden one too (a text result's
+  // return buffer), which the scope pass creates after the locals, at a higher number.
+  for v in d.variables.variables {
+    l.var_kind += [kind_of_types(v.type_def)];
+    l.var_slot += [0];
+    shown = "{v.type_def[0] ?? ir::TypeT.TyVoid}";
+    l.var_type += [shown.split(' ')[0] ?? shown];
+  }
+  for pass in 0..2 {
+    for v in d.variables.variables {
+      if v.argument != (pass == 0) {
+        continue;
+      }
+      k = stack_of(kind_of_types(v.type_def));
+      if k == KInt {
+        l.var_slot[v#index] = l.slots_int;
+        l.slots_int += 1;
+      } else if k == KFloat {
+        l.var_slot[v#index] = l.slots_float;
+        l.slots_float += 1;
+      } else if k == KText {
+        l.var_slot[v#index] = l.slots_text;
+        l.slots_text += 1;
+      }
+    }
+  }
+  for pk in param_kinds(d) {
+    s = stack_of(pk);
+    if s == KInt {
+      l.params_int += 1;
+    } else if s == KFloat {
+      l.params_float += 1;
+    } else if s == KText {
+      l.params_text += 1;
+    } else {
+      refuse(l, "a parameter of a kind the interpreter does not carry yet");
+    }
+  }
+  if l.result == KTextRef {
+    l.result = KText;
+  }
+  if l.result == KNone {
+    statement(l, b, d.code[0]?);
+    emit(l, PushNull, KInt, 0, 0);
+    emit(l, Ret, KInt, 0, 0);
+  } else if l.result == KOther {
+    refuse(l, "a result of a kind the interpreter does not carry yet");
+  } else {
+    expr(l, b, d.code[0]?);
+  }
+  if l.refused != "" {
+    l.refused_in = d.name;
+  }
+  l
+}
+
+// The definition number of the function the compiler named `name`, or -1.
+pub fn find(b: ir::Bundle, name: text) -> integer {
+  for d in b.data.definitions {
+    if d.name == name {
+      return d#index;
+    }
+  }
+  -1
+}

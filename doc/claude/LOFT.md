@@ -666,6 +666,33 @@ into a non-null slot with a real default (`x ?? 0`), or keep the slot `τ?`.
 materialises the result into a temporary variable so the expression is evaluated exactly once.
 Simple variable reads skip the temporary since they have no side effects.
 
+### A null test that leaves proves the value is there
+
+After a test that stops the code when a value is absent, the value reads as present for the
+rest of the block, with no `??` needed (`formal/types.md` `(N-Guard)`):
+
+<!-- from tests/reference/null-guard.loft -->
+```loft
+fn shout(s: text) -> text {
+  "{s}!"
+}
+
+fn describe(s: text?) -> text {
+  if s == null { return "nobody"; }   // the absent case has left
+  shout(s)                            // s reads as text here
+}
+
+fn greet(name: text?) -> text {
+  assert(name != null, "a name");     // a failed assert stops the program
+  shout(name)                         // name reads as text here
+}
+```
+
+The test must be about one name (`v != null`, `if v`, or `v == null` on its failing side), and the
+proof lasts until the block ends or the name is assigned again.  The same tests also prove an
+index in bounds (`assert(i < len(v))` before `v[i]`), a divisor non-zero and a square root's
+operand non-negative.
+
 ### The `x?` operator (default-fallback) — @PLN116
 
 Postfix `x?` discharges a nullable `x: T?` to `T` by falling back to `T`'s **default** when

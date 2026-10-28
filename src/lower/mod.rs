@@ -9,6 +9,7 @@
 //! Nothing here writes target text, names the Rust writer, or names the interpreter.
 pub mod apart_records;
 pub mod apart_value;
+pub mod apart_vector;
 pub mod decode_structure;
 pub mod decode_structure_scan;
 pub mod decode_view;

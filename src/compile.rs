@@ -302,11 +302,6 @@ fn register_natives(state: &mut State) {
     {
         state.static_fn(name, *implement);
     }
-    // The web library's natives (`[native] in_binary = true`, `web_client`).
-    #[cfg(not(target_arch = "wasm32"))]
-    for (name, implement) in crate::web_client::FUNCTIONS {
-        state.static_fn(name, *implement);
-    }
     // TTT v3.5 — register the lib/web natives in the wasm-pack
     // interpreter so `use web` programs run in the browser without a
     // cdylib (which the browser can't load).

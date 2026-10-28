@@ -503,6 +503,9 @@ fn value(v: Value, pos: Pos, epi: &[Value], depth: usize, cx: &mut Cx) -> Value 
             }
             Value::Block(b)
         }
+        // The `Insert` the scope pass splices around an arm: `Finder::value` reads it as a
+        // block, so it is rewritten as one (loft#2208).
+        Value::Insert(items) => Value::Insert(block(items, Some(pos), epi, depth, cx)),
         Value::Return(e) => value(*e, Pos::Return, &[], depth, cx),
         mut other => {
             statement(&mut other, epi, depth, cx);

@@ -1256,3 +1256,68 @@ fn a_test_named_after_its_module_binds_the_module_not_itself() {
         );
     }
 }
+
+/// loft#2212 (@PLN91 X16) — X12's sibling: a test file is never a module of its package, so
+/// `use load;` in `tests/lower.loft` binds `src/load.loft` even beside `tests/load.loft` (the
+/// test OF load).  `own_module_path` asked the test's own directory first.  The cells hold the
+/// boundary too: a helper with no module of its name in `src/` is still found beside the test,
+/// and a test one directory deeper binds `src/` the same way.  On main 6f31a726b `s1` and `s3`
+/// read `Unknown function hello`; `s2` passed there and holds that the reorder keeps it.
+#[test]
+fn a_test_binds_the_packages_module_not_a_sibling_test_of_its_name() {
+    for (cell, test_file, used, want) in [
+        ("s1", "tests/lower.loft", "load", "load::hello() == 3"),
+        (
+            "s2",
+            "tests/uses_helper.loft",
+            "helper",
+            "helper::helped() == 41",
+        ),
+        ("s3", "tests/sub/deep.loft", "load", "load::hello() == 3"),
+    ] {
+        let root = std::env::temp_dir().join(format!("loft_x16_{cell}_{}", std::process::id()));
+        let _ = fa::remove_dir_all(&root);
+        let pkg = root.join("modpkg");
+        fa::create_dir_all(pkg.join("src")).expect("mkdir src");
+        fa::create_dir_all(pkg.join("tests/sub")).expect("mkdir tests");
+        fa::write(
+            pkg.join("loft.toml"),
+            "[package]\nname = \"modpkg\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        fa::write(
+            pkg.join("src/load.loft"),
+            "pub fn hello() -> integer { 3 }\n",
+        )
+        .unwrap();
+        // The test OF load, named after it: it must not stand in for the module.
+        fa::write(
+            pkg.join("tests/load.loft"),
+            "use load;\nfn main() { assert(load::hello() == 3, \"the test of load\"); }\n",
+        )
+        .unwrap();
+        fa::write(
+            pkg.join("tests/helper.loft"),
+            "pub fn helped() -> integer { 41 }\n",
+        )
+        .unwrap();
+        let test = pkg.join(test_file);
+        fa::write(
+            &test,
+            format!("use {used};\nfn main() {{ assert({want}, \"{cell}\"); }}\n"),
+        )
+        .unwrap();
+
+        let mut p = Parser::new();
+        p.parse_dir("default", true, true).unwrap();
+        p.parse(&test.to_string_lossy(), false);
+        let level = p.diagnostics.level();
+        let lines = p.diagnostics.lines().to_vec();
+        let _ = fa::remove_dir_all(&root);
+
+        assert!(
+            level < Level::Error,
+            "[{cell}] `use {used};` in {test_file} must bind the package's module: {lines:?}"
+        );
+    }
+}

@@ -33,10 +33,35 @@ What L1 owes from it:
   callbacks are wired, the answer conversion is not);
 - the "did not load" refusals still tell the user to rebuild with `cargo`.
 
-**L0b — under way.**  `LOFT_EMIT_FROM_IMAGE=1` makes `--emit-c` write from the image
+**L1.1 — the component loader.**  `[native] component = "<name>"` names a library loft ships
+(`src/components.rs`: `LOFT_COMPONENTS`, `<binary>/../lib/loft/components/`,
+`<binary>/../components/`, then `components/` in each directory a compiled program searches);
+the manifest reads it as the native library `loft_<name>` with the C-ABI link, so the three
+backends resolve it through `native_build::prebuilt_native_lib` as they resolve a package's own
+`prebuilt/<triple>/`, and a missing one is never built — each backend refuses naming the
+component and where it looked.  Guard: `tests/ffi_c_library.rs`
+(`a_component_answers_on_every_backend`, `a_missing_component_is_refused_by_name`).  Still owed
+from L0a: the C unit binding by search order, the cargo advice in the refusals of a package's
+own library.
+
+**L1.2 — `libloft_net`.**  `src/c/components/net.c` over the runtime's `loft_web.h`,
+`loft_https.h` and the TLS archive, built by the `loft-components` tool (`src/c/component.rs`;
+`make components` → `target/components/`, `make install` → `<prefix>/lib/loft/components/`):
+a 215 KB library exporting the 22 `n_*` symbols and the two registrations, nothing else,
+rebuilt only when its sources, the compiler or the loft-ffi ABI change.  The in-binary path is
+gone: `src/web_client.rs`, the interpreter's registration, the Rust runtime's typed twins and
+the C writer's `loft_web_*` map.  A browser page keeps its own (`web_browser.rs`, the
+`runtime_abi::BROWSER_RUNTIME_FNS` rows the writer reads only for that target).  Guard:
+`tests/web_natives.rs` (fixture `[native] component = "net"`), which builds the component with
+`loft-components` first, so CI needs no step of its own.  Not on Windows: the C runtime's
+host layer there is @PLN203 C8's, so the web library stays on its Rust crate (web 0.4.5) until
+the component builds there — L1.4 waits for it.
+
+**L0b — answered yes.**  `LOFT_EMIT_FROM_IMAGE=1` makes `--emit-c` write from the image
 (`ir_read::image_round_trip`); `scripts/image_probe.py` compares that with the C written from
-memory over every program.  First 300 programs: 260 identical, 28 refused alike, 12 differing,
-all in constants:
+memory over every program.  Over all 2893 programs (CI, linux-probe run 40595296631): 2525
+byte-identical, 368 refused alike, none differing.  The first sample's 12 differences were all
+in constants, and both causes are fixed:
 - the image carries no built constants (the compile pass built them, in the interpreter's
   layer).  The builder moved to `const_literal::build_const_vectors`, which the image reader
   now calls too;
@@ -182,6 +207,18 @@ Each phase runs the old path beside the new one and compares exactly before the 
 
 L0a and L0b come first because each can kill its half of the design for the price of a probe.
 L1 needs only L0a.  L3 and L4 need @PLN200 B4's crates.
+
+## L1 — `libloft_net`, cut into steps
+
+What L0a settled: a component is a shared library behind `loft_ffi.h`, loaded or linked by
+symbol on every backend.  L1 makes the first one and moves `web` and `server` onto it.
+
+| step | change | check |
+|---|---|---|
+| L1.1 | the component loader: `[native] component = "net"` in a package's manifest names a library loft ships, found beside the executable (`<exe>/../lib/loft/<version>/`, and `target/components/<triple>/` for a development build); the three backends resolve it as they resolve `prebuilt/<triple>/`.  `make components` builds it, never `loft` itself.  Also takes L0a's follow-ups: the marker line, the C unit binding by search order instead of an absolute path, the refusals that name `cargo` | `tests/ffi_c_library.rs` with the fixture's library as a component; a missing component refused by name on all three |
+| L1.2 | `libloft_net` holds `web`'s natives — `loft_web.h` and `loft_https.h` compiled as they are over `loft_cc.h` + `loft_text.h` (the text core, moved out of `loft_rt.h` for this), with `tls/loft_tls.c` and BearSSL inside, every symbol hidden but the 22 typed `n_*` exports and the two registrations; built by `make components`, and CI builds it before the tests — and in the same step the in-binary path goes (`web_client.rs`, the interpreter's `web` registration, the Rust runtime's typed twins, the C writer's in-binary map and `LOFT_WEB` in a unit).  One step, because wherever a symbol exists both ways the in-binary one wins on every backend, so the two cannot run side by side: the comparison is the guard's hand-fixed lines before and after | `tests/web_natives.rs` (12 lines, the pong, both close frames) on three backends through the component; web's own suite on its testbed with `[native] component = "net"` |
+| L1.3 | `server`'s natives in it, from the parked port (`refs/keep/firewall02-server-in-binary-wip`: the C half, BearSSL's server files, the guard and its test PKI) | `tests/server_natives.rs` on three backends |
+| L1.4 | the web and server packages declare the component (loft-libs-net, a PR per library), once a loft release ships it | web's and server's own suites on their testbeds |
 
 ## Open questions
 

@@ -3907,25 +3907,14 @@ impl Parser {
         // { tmp = lhs; if (tmp == null) { <exit>; }; tmp }
         let tmp = self.create_unique("ncr", lhs_type);
         let set_tmp = v_set(tmp, code.clone());
-        let is_null = if self.is_type_var_operand(lhs_type) {
-            // `T` has no null test yet, so ask the one home and negate its
-            // answer.  Inside a template that call stamps the deferral marker, which the
-            // monomorph answers; for a concrete type this branch never runs, so the two
-            // arms below keep emitting exactly what they always did.
-            let not_null = self.coalesce_not_null(&Value::Var(tmp), lhs_type);
-            self.cl("OpNot", &[not_null])
-        } else if matches!(lhs_type, Type::Boolean) {
-            // @PLN17: a boolean is null iff its byte is the 255 sentinel — a raw
-            // `tmp == null` compare, NOT truthiness (which would treat `false` as
-            // missing).  `false ?? return` keeps `false`; `null ?? return` returns.
-            let null_b = self.cl("OpConvBoolFromNull", &[]);
-            self.cl("OpEqBool", &[Value::Var(tmp), null_b])
-        } else {
-            let mut null_check = Value::Var(tmp);
-            self.convert(&mut null_check, lhs_type, &Type::Boolean);
-            // Negate: true when null (i.e. when the boolean conversion is false).
-            self.cl("OpNot", &[null_check])
-        };
+        // `@FR-N-Coal` — "is it present" has ONE home, the one the value-default `??` asks:
+        // a struct-enum by its discriminant, a record by its reference, a tuple by its
+        // members, a boolean by its 255 sentinel (`false ?? return` keeps `false`), a type
+        // variable deferred to the monomorph.  A boolean conversion of its own here read a
+        // struct-enum's record reference as a plain enum's byte: the absent side taken for
+        // a present value on the interpreter, uncompilable Rust on native (loft#2213).
+        let not_null = self.coalesce_not_null(&Value::Var(tmp), lhs_type);
+        let is_null = self.cl("OpNot", &[not_null]);
         let if_ret = v_if(is_null, ret_stmt, Value::Null);
         *code = v_block(
             vec![set_tmp, if_ret, Value::Var(tmp)],
@@ -4960,11 +4949,26 @@ impl Parser {
             // has a default).  Parsed from the synthetic `S {}` source so it reuses
             // `parse_object`'s construction AND its work-ref ownership / freeing (a
             // hand-rolled `OpDatabase` + `object_init` mismanages the store free — #306).
+            //
+            // The sub-parse is SOURCE text read in the CALLING file, where the bare name may
+            // name nothing (a record declared in another module) or another module's record of
+            // the same name.  So the spelling is pinned to THIS definition for the sub-parse, as
+            // the type-variable arm above pins a placeholder.  A sub-parse that still builds
+            // something else is no default of this record: `None`, which the caller reports,
+            // never a default typed as the record (it ran on a lexer whose diagnostics are
+            // dropped, so a failure there would otherwise be silent — loft#2209).
             Type::Reference(d_nr, _)
                 if self.data.def_type(*d_nr) == crate::data::DefType::Struct =>
             {
-                let name = self.data.def(*d_nr).name().to_string();
-                Some(self.subparse_default(&format!("{name} {{}}"), tp))
+                let d_nr = *d_nr;
+                let name = self.data.def(d_nr).name().to_string();
+                let saved = std::mem::replace(&mut self.cur_type_vars, vec![(name.clone(), d_nr)]);
+                let (v, t) = self.subparse_default(&format!("{name} {{}}"), tp);
+                self.cur_type_vars = saved;
+                if !self.first_pass && !matches!(t.base(), Type::Reference(r, _) if *r == d_nr) {
+                    return None;
+                }
+                Some((v, t))
             }
             // A struct-enum VARIANT defaults like a record (`(D-Rec)`): the variant with every
             // field defaulted, the value `emit_variant_value` builds for an enum's first variant.

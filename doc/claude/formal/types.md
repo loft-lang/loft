@@ -179,7 +179,8 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
   (N-Cast?)    Γ ⊢ (e as τ?) ⇒ τ?    the CHECKED cast — value if it fits, else null.  Always
                legal; NEVER yields an out-of-range value.  (`b as u8? ⇒ u8?`.)
 
-  elimination (discharge — REQUIRED; there is NO  τ? ⤳ τ)
+  elimination (discharge — REQUIRED; there is NO implicit  τ? ⤳ τ: a value leaves `τ?` by
+  `??`, `?` or `match`, and a variable reads as `τ` where a guard proved it, (N-Guard))
   (N-Coal)     Γ ⊢ e ⇒ τ?,  Γ ⊢ d ⇐ τ                ⟹   Γ ⊢ (e ?? d) ⇒ τ
   (N-Default)  Γ ⊢ e ⇒ τ?,  has_default(τ)           ⟹   Γ ⊢ e? ⇒ τ            (@PLN116)
                the TYPE's default discharges:  e?  ≡  e ?? construct_default(τ).
@@ -189,6 +190,20 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
                ONE write applies it implicitly, by design: `c += [ … ]` on an ABSENT nullable
                collection instantiates the empty collection first — collections.md
                (Col-Insert-Absent).  Every other position keeps the explicit discharge.
+  (N-Guard)    a TEST whose failing side cannot continue proves its fact for the rest of the
+               block, so a variable `v: τ?` it proves present reads as `τ` there:
+                 · `if t { S }` with no `else`, where S cannot fall through (it ends in
+                   `return`, `break`, `continue` or a halt), proves ¬t after it;
+                 · `assert(t, …)` proves t after it: a failed assert HALTS (operational.md)
+                   and `assert` is checked in every build.  (`debug_assert`, which a release
+                   would elide, proves nothing.)
+               A test of one name proves it: `v != null`, a truthy `v`, or `v == null` /
+               `!v` on the side where it fails; a compound condition proves nothing.  The same
+               tests feed the other facts a guard proves — an index in bounds, a divisor not
+               zero, a math operand's sign (`(N-Domain)`) — with the same polarity.  The
+               proof ends at the block's `}` and at any write to `v`.  Under
+               `LOFT_DEV_SOFT_HALT` (opt-in log-and-continue for debugging) a failed assert
+               continues, and the null it did not stop flows on as an un-narrowed one would.
   (N-Match)    match e { null ⇒ …,  x: _ ⇒ …(x:τ)… }   eliminates τ?, binds the τ arm.
                `x: _` binds at every τ (matching.md (P-Cap) at the arm root); the bare
                `x ⇒` spells it only where no variant or struct name can stand in the arm —

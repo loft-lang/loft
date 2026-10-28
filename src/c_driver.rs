@@ -592,6 +592,38 @@ pub(crate) fn build(
 mod tests {
     use super::*;
 
+    /// The page's script closes every string on the line that opens it (loft#2204): a string
+    /// split by a real newline is a JavaScript syntax error, and the page then runs nothing.
+    /// `native_c_html_page_runs_its_program` sees it in node, but only where clang, wasm-ld
+    /// and node are installed; this needs none of them.
+    #[test]
+    fn the_page_script_closes_every_string_on_its_line() {
+        let page = html_page("t", b"");
+        let script = page
+            .split("<script id=\"loft-run\">")
+            .nth(1)
+            .and_then(|s| s.split("</script>").next())
+            .expect("the page has its script");
+        for (n, line) in script.lines().enumerate() {
+            let mut quotes = 0u32;
+            let mut chars = line.chars();
+            while let Some(c) = chars.next() {
+                match c {
+                    '\\' => {
+                        chars.next();
+                    }
+                    '"' => quotes += 1,
+                    _ => {}
+                }
+            }
+            assert!(
+                quotes.is_multiple_of(2),
+                "script line {}: an unclosed string: {line}",
+                n + 1
+            );
+        }
+    }
+
     #[test]
     fn link_lines_are_read_exactly() {
         let c = "/* `[c] shim` of package p, 2 sources */\n/* link: /a/b.a */\nint x;\n\

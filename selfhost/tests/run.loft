@@ -1,0 +1,91 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The run loop (@PLN91 S1.2) against values computed outside this code: the Fibonacci numbers,
+// and `fib(25)` as `loft --interpret` prints it for `kernels/fib.loft`.
+use load;
+use lower;
+use run;
+
+fn kernel(name: text) -> ir::Bundle {
+  b = load::load("{env_variable("LOFT_SELFHOST_KERNELS")}/{name}.store");
+  assert(b != null, "the {name} kernel's image opens");
+  b
+}
+
+fn test_fib_answers_what_the_interpreter_answers() {
+  b = kernel("fib");
+  fib = lower::find(b, "n_fib");
+  assert(fib >= 0, "the image has fib");
+  got = "";
+  for n in 0..11 {
+    o = run::run(b, fib, [n]);
+    assert(o.refused == "", "fib({n}) refused: {o.refused}");
+    got += "{o.value} ";
+  }
+  assert(got == "0 1 1 2 3 5 8 13 21 34 55 ", "fib(0..10): {got}");
+  o = run::run(b, fib, [25]);
+  assert(o.value == 75025, "fib(25): {o.value} {o.refused}");
+}
+
+fn test_an_entry_given_the_wrong_arguments_is_refused() {
+  b = kernel("fib");
+  fib = lower::find(b, "n_fib");
+  o = run::run(b, fib, []);
+  assert(o.refused == "the entry takes 1 arguments, given 0", "refused: {o.refused}");
+}
+
+fn test_a_function_the_lowering_refuses_is_named_not_run() {
+  b = kernel("fib");
+  main = lower::find(b, "n_main");
+  assert(main >= 0, "the image has main");
+  o = run::run(b, main, []);
+  assert(o.refused != "", "main formats text, which S1 does not carry: {o.value}");
+}
+
+// One kernel's entry, run with `args`; the values are computed outside this code (Python, and
+// `loft --interpret` for the two large ones).
+fn ran(kernel_name: text, entry: text, args: vector<integer>) -> integer? {
+  b = kernel(kernel_name);
+  d = lower::find(b, entry);
+  assert(d >= 0, "the image has {entry}");
+  o = run::run(b, d, args);
+  assert(o.refused == "", "{entry} refused: {o.refused}");
+  o.value
+}
+
+fn test_a_counted_loop_with_bit_operators_runs() {
+  assert(ran("mix", "n_mix", [10, 1]) == 41, "mix(10, 1)");
+  assert(ran("mix", "n_mix", [5000000, 1]) == 6495169, "mix(5000000, 1)");
+}
+
+fn test_a_loop_with_break_remainder_and_division_runs() {
+  assert(ran("collatz", "n_collatz_len", [9]) == 20, "collatz_len(9)");
+  assert(ran("collatz", "n_collatz_len", [27]) == 112, "collatz_len(27)");
+  assert(ran("collatz", "n_longest", [1, 10]) == 9020, "longest(1, 10)");
+  // 1..10000, not the benchmark's 1..100000: that one takes ~110 s under `--interpret`, at the
+  // test runner's 120 s deadline (`bench/measure.py` still runs it).
+  assert(ran("collatz", "n_longest", [1, 10000]) == 6171262, "longest(1, 10000)");
+}
+
+fn test_a_break_with_a_value_pending_is_refused() {
+  b = kernel("pending");
+  d = lower::find(b, "n_pending");
+  o = run::run(b, d, [10]);
+  assert(o.refused == "a break or continue with values pending, which S1 does not carry", "refused: {o.refused}");
+}
+
+fn test_the_stdlibs_own_loft_functions_run_from_the_image() {
+  // clamp(n, 0, 10) + floor_mod(n, 7) + max(n, 3), by hand: -5 -> 0 + 2 + 3, 12 -> 10 + 5 + 12,
+  // 4 -> 4 + 4 + 4.
+  assert(ran("stdlib", "n_use_stdlib", [-5]) == 5, "use_stdlib(-5)");
+  assert(ran("stdlib", "n_use_stdlib", [12]) == 27, "use_stdlib(12)");
+  assert(ran("stdlib", "n_use_stdlib", [4]) == 12, "use_stdlib(4)");
+}
+
+fn test_an_operator_s1_does_not_carry_is_refused_by_name() {
+  b = kernel("stdlib");
+  d = lower::find(b, "n_uses_abs");
+  o = run::run(b, d, [-3]);
+  assert(o.refused == "an operator the interpreter does not carry: OpAbsInt", "refused: {o.refused}");
+}

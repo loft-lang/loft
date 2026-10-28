@@ -291,6 +291,14 @@ const CODES: &[(&str, &str)] = &[
     // The members are declared APART — `tick` sits between them — which is the shape whose
     // author was probably not thinking of the two as one record set.  Written together they
     // are the idiom and stay quiet.
+    // loft#2216 — two members of one group of the same kind over the same key: one record set
+    // that answers twice what it answers once.
+    (
+        "linked-group-same-key",
+        "struct E { k: integer }\n\
+         struct S { a: hash<E[k]>, b: hash<E[k]> }\n\
+         fn main() { s = S { }; s.a += [E { k: 1 }]; print(\"{len(s.b)}\"); }",
+    ),
     (
         "linked-group-apart",
         "struct E { k: integer }\n\
@@ -307,6 +315,13 @@ const CODES: &[(&str, &str)] = &[
          fn main() { w = W1397 { st: Holder { inner: P1397 { a: 1 } }, t: \"w\" };\n\
            g = match w.st { Holder{inner} => { w.st = Empty { z: 0 }; inner.a }, _ => -1 };\n\
            print(\"{g}\"); }",
+    ),
+    // @C155 — a text parameter handed anything but itself: the frame cannot be reused, so the
+    // tail self-call stays an ordinary call, which stops at 10 000 frames.
+    (
+        "tail-call-not-jumped",
+        "fn build(n: integer, acc: text) -> integer { if n == 0 { len(acc) } else { build(n - 1, acc + \"x\") } }\n\
+         fn main() { print(\"{build(3, \"\")}\"); }",
     ),
     // loft#980 — `n` is declared by `Named` only, and the value is an `Anon`; nothing
     // between the two checks the tag, so the read answers `Anon`'s bytes.

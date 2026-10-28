@@ -368,6 +368,21 @@ Three things make it reliable, and the first two need nothing from the person:
    `--subject <name>` and single `cargo test --test <name>` runs, and read `df -h /`
    before each — the allowance never grows back except by deleting.
 
+**One build configuration per checkout.**  `CARGO_INCREMENTAL` is part of cargo's profile
+hash, so a test binary built with it on and the same one built with it off are two files.
+`find_problems.sh` and `make` build with it off (`scripts/sccache_env.sh`); a bare `cargo
+test`, or a nextest command lifted out of `find_problems.sh` and run by hand, builds with it
+on, and the first such run in a checkout writes a second copy of every test binary it selects
+— about 65 GB for the whole set, beside the incremental cache it adds.  So a test run that
+builds in `target/debug` either goes through `find_problems.sh` or sources
+`scripts/sccache_env.sh` first; `cargo build --bin loft` alone may stay incremental, the edit
+loop it is for being one binary.  The same holds for a feature flag: a one-off variant build
+(`--no-default-features`, `--all-features`, debug assertions) gets its own `--target-dir`,
+deleted after.  A test's scratch belongs under `/var/tmp/loft-test-scratch-<tag>` (what
+`find_problems.sh` sets `TMPDIR` to), which the janitor sweeps — never in `target/`.  The
+janitor's per-checkout cap (`TARGET_KEEP_GB`, `scripts/disk_janitor.sh`) catches a second set
+only above it.
+
 ### When the local gate is unreliable, run the same gate on GitHub (2026-09-08)
 
 A local `make ci` is one process tree on a shared laptop.  On 2026-09-08 the waiter for

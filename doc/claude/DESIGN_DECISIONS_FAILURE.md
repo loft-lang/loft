@@ -158,28 +158,32 @@ and its vector form at the whole-value writes, the accessor's lowering
 `loft-suite/attic/scripts/a-vector-errors-read-answers-for-its-own-parse.loft`.
 **Catalogue:** reads C80 (a value read never raises: the errors are asked, not thrown).
 
-## C155 — A tail self-call the frame cannot jump is refused, never left a call
+## C155 — A tail self-call the frame cannot jump stays a call with a warning, never silently
 
 **Decision.** A self-call in tail position is a jump that reuses the frame (`(R-TailSelf)`,
 [formal/rewrites.md](formal/rewrites.md)).  Where the frame cannot be reused — an argument that
 makes a fresh value or names a local for a store-held parameter, a text or `&` parameter handed
 anything but itself, a parameter the body rebinds, a `&` local, a result of a kind the scope pass
 delivers through no place (a tuple, a closure), a generator, a `parallel` block or a closure in
-the body — the program is refused at the call, and a generic at each instance, naming the
-variable and the cure
-(write the recursion as a loop, or bind the call's value to a local before returning it when a
-call is meant).
-The call is never left standing to stop at `MAX_CALL_DEPTH`.  **Why.** A recursion that works
-for small inputs and overflows at ten thousand frames is a wrong answer that arrives late, and
-a compile-time refusal is the one-way door loft may still add before the freeze
-([COMPATIBILITY.md § The error surface is one-directional](COMPATIBILITY.md)); dropping it
-later, as a clause lands (the text, record and vector results did), costs nothing.  The refusal
-and the pass share one predicate (`tail_frame::admit_frame`), so what compiles is exactly what
-jumps.
-**Holds at:** `@C155` — the refusal in `src/parser/definitions.rs` (pass two, beside the
+the body — the call stays an ordinary call and `warning[tail-call-not-jumped]` says so at the
+call (for a generic, at each instance), naming the variable, the cost (it stops at 10 000
+frames) and the cure: write the recursion as a loop, pass a part of a parameter, or bind the
+call's value to a local before returning it when a call is meant.  A compile error is kept for a
+program that certainly fails.
+**Why.** When the language can implement a construct correctly and efficiently, it does; a
+refusal is only for a program that certainly fails, and a call that stops at 10 000 frames
+fails only for some inputs, the same bound an ordinary recursion has.  It is never left a call
+SILENTLY, because a recursion that works for small inputs and overflows at ten thousand frames
+is a wrong answer that arrives late; and the warning gates a library's CI, so the libraries
+ship without the slow shape (DIAGNOSTICS.md § Diagnostic tiers, its second clause).  The warning
+and the pass share one predicate (`tail_frame::admit_frame`), so what is warned is exactly what
+stays a call.  Each clause the jump gains (the copy of a fresh argument, @PLN91 S1.1b) removes a
+shape from the warning.
+**Holds at:** `@C155` — the warning in `src/parser/definitions.rs` (pass two, beside the
 per-function lints) and per instance in `src/parser/generics.rs`, `admit_frame` and
 `declared_params` in `src/tail_frame.rs`; guards:
-`tests/error_messages/cases/63_a_tail_self_call_the_frame_cannot_jump_is_refused.loft`, and in
-loft-suite `rules/rewrites/R-TailSelf/a-tail-self-call-the-frame-cannot-jump-is-refused.loft`.
+`tests/error_messages/cases/63_a_tail_self_call_the_frame_cannot_jump_warns.loft`,
+`tests/e1_code_set.rs` (`tail-call-not-jumped`), and in loft-suite
+`rules/rewrites/R-TailSelf/a-tail-self-call-the-frame-cannot-jump-warns.loft`.
 **Catalogue:** `formal/rewrites.md` `(R-TailSelf)` · `formal/calls.md` `(F-ParamHeap)`,
 `(F-ParamRebind)` · COMPATIBILITY.md § The error surface is one-directional

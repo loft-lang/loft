@@ -889,6 +889,18 @@ pub fn group_apart_lint_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_GROUP_APART"))
 }
 
+/// loft#2216 — `advice[linked-group-same-key]`: two members of one linked collection group
+/// (@FR-Col-Group) of the same kind over the same key.  They hold the same records the same
+/// way, so the pair is almost always two tables meant to be separate that share an element
+/// type.  Advice, because an intended group is never wrong.
+///
+/// **Default ON**; `LOFT_NO_GROUP_SAME_KEY` opts out. One cached env read.
+#[must_use]
+pub fn group_same_key_lint_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_GROUP_SAME_KEY"))
+}
+
 /// loft#940 — a library's free function that no bare call can reach.
 ///
 /// A call `f(x, …)` resolves the METHOD spelling `t_<type-of-x>_f` before the free `n_f`

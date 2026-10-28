@@ -15,7 +15,6 @@ mod apart_emit;
 pub use crate::lower::apart_records;
 mod apart_records_emit;
 pub use crate::lower::apart_value;
-pub mod apart_vector;
 pub mod append_twin;
 mod calls;
 mod coroutine;
@@ -3958,12 +3957,12 @@ impl Output<'_> {
         self.indent(w)?;
         writeln!(
             w,
-            "let __pf_{} = stores.push_fill::<{}, {verify}>(&mut {hdr}, &({vec}), {}_u32, {count}, ({val}){}); //@PLN157 § V-am push fill",
+            "let __pf_{} = stores.push_fill::<{}, {verify}>(&mut {hdr}, &({vec}), {}_u32, {count}, {}); //@PLN157 § V-am push fill",
             lp.scope,
             p.rust_type,
             p.size,
             // The fill runs only unbiased (`push_loop` declines a biased one).
-            hoist::push_value_cast(p.rust_type, false)
+            hoist::push_element(p.rust_type, &val)
         )?;
         Ok(true)
     }
@@ -11433,7 +11432,9 @@ extern crate loft;"
         // would shadow the real implementation.  Plan 09 phase 01
         // consolidated the hardcoded list into the registry in
         // `src/codegen_runtime.rs::CODEGEN_RUNTIME_FNS`.
-        if *def.code() == Value::Null && crate::runtime_abi::is_codegen_runtime_fn(def.name()) {
+        if *def.code() == Value::Null
+            && crate::runtime_abi::is_codegen_runtime_fn_on(def.name(), self.wasm_browser)
+        {
             return Ok(());
         }
         // N8b.1: generator functions (returning iterator<T>) are emitted as state machines.

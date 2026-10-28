@@ -434,16 +434,18 @@ pub struct AutoNative<'a> {
 
 /// loft#1684 — the context a cold run decides its auto-native marks under: whether `use`d
 /// libraries may build native at all (`LOFT_NO_NATIVE_LIBS`), whether their build is forced
-/// to fail (`LOFT_FORCE_NATIVE_BUILD_FAIL`), and whether this is an `--html` build (which
-/// skips a `[wasm.bridge]` library's cdylib).  Persisted in the manifest and compared on a
+/// to fail (`LOFT_FORCE_NATIVE_BUILD_FAIL`), whether this is an `--html` build (which
+/// skips a `[wasm.bridge]` library's cdylib), and whether it is a C build (which skips every
+/// host cdylib, [`crate::native_build::c_target`]).  Persisted in the manifest and compared on a
 /// warm load, so a bundle is only replayed under the context that marked it.
 #[must_use]
 pub fn native_lib_context(html: bool, open_world: bool) -> String {
     format!(
-        "nolibs={} forcefail={} html={} open={}",
+        "nolibs={} forcefail={} html={} c={} open={}",
         u8::from(std::env::var_os("LOFT_NO_NATIVE_LIBS").is_some()),
         u8::from(std::env::var_os("LOFT_FORCE_NATIVE_BUILD_FAIL").is_some()),
         u8::from(html),
+        u8::from(crate::native_build::c_target()),
         u8::from(open_world)
     )
 }
