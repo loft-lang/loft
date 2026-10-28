@@ -166,3 +166,11 @@ fn test_a_bind_from_a_borrowing_call_is_refused_not_aliased() {
   o = run::run(b, lower::find(b, "n_kept"), [4]);
   assert(o.refused == "a record bound from a call whose result may be a view: n_keep", "refused: {o.refused} (value {o.value})");
 }
+
+// Every field width through its own runtime routine (u8, i16, i32, character, boolean, float,
+// single) and a record embedded in another, written and read through `OpGetField`.
+fn test_every_field_width_and_an_embedded_record_run() {
+  assert(ran_clean("n_wide", 5) == 145, "wide(5)");
+  assert(ran_clean("n_wide", -5) == -1, "wide(-5)");
+  assert(ran_clean("n_floats", 3) == 45, "floats(3)");
+}

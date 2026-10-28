@@ -162,6 +162,57 @@ pub fn refill_text(store: integer, rec: integer, pos: integer, fld: integer, val
   c_refill_text(store, rec, pos, fld, val ?? "", val == null);
 }
 
+fn c_get_w(which: integer, store: integer, rec: integer, pos: integer, fld: integer, min: integer) -> integer;
+#c "loft_crt_get_w" "int64_t(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_set_w(which: integer, store: integer, rec: integer, pos: integer, fld: integer, min: integer, v: integer, is_null: boolean);
+#c "loft_crt_set_w" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_get_float(store: integer, rec: integer, pos: integer, fld: integer, single: boolean) -> float;
+#c "loft_crt_get_float" "double(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_set_float(store: integer, rec: integer, pos: integer, fld: integer, val: vector<float>, is_null: boolean, single: boolean);
+#c "loft_crt_set_float" "void(int64_t, int64_t, int64_t, int64_t, const double*, int64_t, int64_t, int64_t)"
+
+fn c_field_pos(store: integer, rec: integer, pos: integer, fld: integer) -> integer;
+#c "loft_crt_field_pos" "int64_t(int64_t, int64_t, int64_t, int64_t)"
+
+// The field widths besides the 8-byte integer, by the operator that reads or writes them (each
+// calls that operator's own runtime routine, `shim/crt.c`).  `min` is a narrow integer's
+// minimum, the operator's operand; the other widths ignore it.
+pub W_INT4 = 0;
+pub W_BYTE = 1;
+pub W_BYTE_NULLABLE = 2;
+pub W_SHORT = 3;
+pub W_SHORT_RAW = 4;
+pub W_CHARACTER = 5;
+pub W_BOOLEAN = 6;
+
+// A field of width `which` at byte `fld`: an integer, a character's code point (0 for null) or
+// a boolean (1, 0 or null).
+pub fn get_w(which: integer, store: integer, rec: integer, pos: integer, fld: integer, min: integer) -> integer? {
+  c_get_w(which, store, rec, pos, fld, min)
+}
+
+pub fn set_w(which: integer, store: integer, rec: integer, pos: integer, fld: integer, min: integer, v: integer?) {
+  c_set_w(which, store, rec, pos, fld, min, v ?? 0, v == null);
+}
+
+// `OpGetFloat`, or with `single` `OpGetSingle` (widened): null for NaN.
+pub fn get_float(store: integer, rec: integer, pos: integer, fld: integer, single: boolean) -> float? {
+  c_get_float(store, rec, pos, fld, single)
+}
+
+pub fn set_float(store: integer, rec: integer, pos: integer, fld: integer, v: float?, single: boolean) {
+  c_set_float(store, rec, pos, fld, [v ?? 0.0], v == null, single);
+}
+
+// `OpGetField`: the position of the record embedded at byte `fld` (`loft_field`); its store and
+// record are the host's own.
+pub fn field_pos(store: integer, rec: integer, pos: integer, fld: integer) -> integer {
+  c_field_pos(store, rec, pos, fld)
+}
+
 // How many of the shim's stores are live.
 pub fn live_stores() -> integer {
   c_live_stores()

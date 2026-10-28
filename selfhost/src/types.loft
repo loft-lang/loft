@@ -117,6 +117,62 @@ fn fields_own(b: ir::Bundle, fields: vector<ir::DbField>, seen: vector<integer>)
   owns
 }
 
+// May a value of `tp` move to another store whole (`@FR-H-SwapIn`)?  Not when its tree holds a
+// stored reference, which could name the store it moves from.  `Cx::swap_safe`
+// (`src/c/mod.rs`): a field with a `reference<T>` target or a `DbRef` part says no; a type met
+// again on the way says yes, as there.
+pub fn swap_safe(b: ir::Bundle, tp: integer) -> boolean {
+  seen: vector<integer> = [];
+  swap_from(b, tp, seen)
+}
+
+fn swap_from(b: ir::Bundle, tp: integer, seen: vector<integer>) -> boolean {
+  for s in seen {
+    if s == tp {
+      return true;
+    }
+  }
+  seen += [tp];
+  p = parts(b, tp);
+  if p == null {
+    return false;
+  }
+  match p {
+    PtStruct { fields } => fields_swap(b, fields, seen),
+    PtEnumValue { value: _, fields } => fields_swap(b, fields, seen),
+    PtEnum { values } => {
+      safe = true;
+      for v in values {
+        if v.nr != 65535 && !swap_from(b, v.nr, seen) {
+          safe = false;
+        }
+      }
+      safe
+    }
+    PtVector { content } => swap_from(b, content, seen),
+    PtArray { content } => swap_from(b, content, seen),
+    PtSorted { content, keys: _ } => swap_from(b, content, seen),
+    PtOrdered { content, keys: _ } => swap_from(b, content, seen),
+    PtHash { content, fields: _ } => swap_from(b, content, seen),
+    PtIndex { content, keys: _ } => swap_from(b, content, seen),
+    PtRadix { content, fields: _ } => swap_from(b, content, seen),
+    PtTrie { content, key: _ } => swap_from(b, content, seen),
+    PtChildRec { content } => swap_from(b, content, seen),
+    PtDbRef => false,
+    _ => true,
+  }
+}
+
+fn fields_swap(b: ir::Bundle, fields: vector<ir::DbField>, seen: vector<integer>) -> boolean {
+  safe = true;
+  for f in fields {
+    if f.target != 65535 || !swap_from(b, f.content, seen) {
+      safe = false;
+    }
+  }
+  safe
+}
+
 // The owner of field `i`'s linked group — the member whose `other_indexes` does not start with
 // the view marker 65535 — or -1 outside a group.  `group_owner` (`src/c/mod.rs`).
 fn group_owner(fields: vector<ir::DbField>, i: integer) -> integer {

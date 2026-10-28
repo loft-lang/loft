@@ -195,3 +195,41 @@ fn test_a_bind_copy_is_a_record_of_its_own() {
   crt::free_var(q);
   assert(crt::live_stores() == before, "both stores freed");
 }
+
+// The other field widths, each through its own runtime routine: a value round-trips, and a null
+// where the width has one.  A byte and a short are stored biased by their minimum.
+fn test_every_field_width_round_trips() {
+  r = crt::null_ref();
+  crt::database(r, 48, 100);
+  s = r[0] ?? 0;
+  rec = r[1] ?? 0;
+  pos = r[2] ?? 0;
+  n: integer? = null;
+  crt::set_w(crt::W_INT4, s, rec, pos, 0, 0, -123456);
+  assert(crt::get_w(crt::W_INT4, s, rec, pos, 0, 0) == -123456, "int4: {crt::get_w(crt::W_INT4, s, rec, pos, 0, 0)}");
+  crt::set_w(crt::W_INT4, s, rec, pos, 0, 0, n);
+  assert(crt::get_w(crt::W_INT4, s, rec, pos, 0, 0) == null, "int4 null");
+  crt::set_w(crt::W_BYTE, s, rec, pos, 4, -10, 100);
+  assert(crt::get_w(crt::W_BYTE, s, rec, pos, 4, -10) == 100, "byte biased by -10");
+  crt::set_w(crt::W_BYTE_NULLABLE, s, rec, pos, 5, 0, 7);
+  assert(crt::get_w(crt::W_BYTE_NULLABLE, s, rec, pos, 5, 0) == 7, "nullable byte");
+  crt::set_w(crt::W_BYTE_NULLABLE, s, rec, pos, 5, 0, n);
+  assert(crt::get_w(crt::W_BYTE_NULLABLE, s, rec, pos, 5, 0) == null, "nullable byte null");
+  crt::set_w(crt::W_SHORT, s, rec, pos, 6, -1000, 30000);
+  assert(crt::get_w(crt::W_SHORT, s, rec, pos, 6, -1000) == 30000, "short biased by -1000");
+  crt::set_w(crt::W_CHARACTER, s, rec, pos, 8, 0, 233);
+  assert(crt::get_w(crt::W_CHARACTER, s, rec, pos, 8, 0) == 233, "character é");
+  crt::set_w(crt::W_BOOLEAN, s, rec, pos, 12, 0, 1);
+  assert(crt::get_w(crt::W_BOOLEAN, s, rec, pos, 12, 0) == 1, "boolean true");
+  crt::set_w(crt::W_BOOLEAN, s, rec, pos, 12, 0, n);
+  assert(crt::get_w(crt::W_BOOLEAN, s, rec, pos, 12, 0) == null, "boolean null");
+  crt::set_float(s, rec, pos, 16, 2.5, false);
+  assert(crt::get_float(s, rec, pos, 16, false) == 2.5, "float");
+  crt::set_float(s, rec, pos, 24, 0.1, true);
+  assert(crt::get_float(s, rec, pos, 24, true) == (0.1 as single) as float, "single, widened");
+  f: float? = null;
+  crt::set_float(s, rec, pos, 16, f, false);
+  assert(crt::get_float(s, rec, pos, 16, false) == null, "float null");
+  assert(crt::field_pos(s, rec, pos, 32) == pos + 32, "an embedded record's position");
+  crt::free_var(r);
+}

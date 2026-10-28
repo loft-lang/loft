@@ -131,6 +131,70 @@ void loft_crt_refill_text(int64_t store, int64_t rec, int64_t pos, int64_t fld, 
     loft_refill_text(loft_crt_ref(store, rec, pos), (uint32_t) fld, v);
 }
 
+/* The other field widths, by the operator's `which` (the loft side's `crt::W_*`), each calling
+ * that operator's own runtime routine as the C generator emits it: 0 OpGetInt4/OpSetInt4,
+ * 1 OpGetByte/OpSetByte, 2 the Nullable byte, 3 OpGetShort/OpSetShort, 4 the Raw short,
+ * 5 OpGetCharacter/OpSetCharacter, 6 OpGetBoolean/OpSetBoolean.  `min` is the narrow integer's
+ * minimum (unused by the others).  A null crosses as `is_null`: the int64 null for the integer
+ * widths, code 0 for a character, LOFT_BOOL_NULL for a boolean — the values a C program's
+ * operands carry.  A read answers the int64 null for a null boolean. */
+int64_t loft_crt_get_w(int64_t which, int64_t store, int64_t rec, int64_t pos, int64_t fld,
+                       int64_t min) {
+    loft_ref r = loft_crt_ref(store, rec, pos);
+    uint32_t f = (uint32_t) fld;
+    switch (which) {
+    case 0: return loft_get_int4(r, f);
+    case 1: return loft_get_byte(r, f, min);
+    case 2: return loft_get_byte_nullable(r, f, min);
+    case 3: return loft_get_short(r, f, min);
+    case 4: return loft_get_short_raw(r, f, min);
+    case 5: return (int64_t) loft_get_char(r, f);
+    case 6: {
+        uint8_t b = loft_get_bool(r, f);
+        return b == LOFT_BOOL_NULL ? LOFT_NULL : (int64_t) b;
+    }
+    default: return LOFT_NULL;
+    }
+}
+
+void loft_crt_set_w(int64_t which, int64_t store, int64_t rec, int64_t pos, int64_t fld,
+                    int64_t min, int64_t v, int64_t is_null) {
+    loft_ref r = loft_crt_ref(store, rec, pos);
+    uint32_t f = (uint32_t) fld;
+    int64_t x = is_null ? LOFT_NULL : v;
+    switch (which) {
+    case 0: loft_set_int4(r, f, x); break;
+    case 1: loft_set_byte_v(r, f, min, x); break;
+    case 2: loft_set_byte_nullable(r, f, min, x); break;
+    case 3: loft_set_short(r, f, min, x); break;
+    case 4: loft_set_short_raw(r, f, min, x); break;
+    case 5: loft_set_char(r, f, is_null ? 0u : (uint32_t) v); break;
+    case 6: loft_set_byte(r, f, is_null ? LOFT_BOOL_NULL : (uint8_t) v); break;
+    default: break;
+    }
+}
+
+/* OpGetFloat and OpGetSingle (`single` 1): NaN is the null either way. */
+double loft_crt_get_float(int64_t store, int64_t rec, int64_t pos, int64_t fld, int64_t single) {
+    loft_ref r = loft_crt_ref(store, rec, pos);
+    return single ? (double) loft_get_single(r, (uint32_t) fld) : loft_get_float(r, (uint32_t) fld);
+}
+
+/* OpSetFloat and OpSetSingle: the value is `val[0]`, a float argument being a vector of one. */
+void loft_crt_set_float(int64_t store, int64_t rec, int64_t pos, int64_t fld, const double *val,
+                        int64_t n, int64_t is_null, int64_t single) {
+    loft_ref r = loft_crt_ref(store, rec, pos);
+    double v = is_null || n < 1 ? (double) NAN : val[0];
+    if (single) loft_set_single(r, (uint32_t) fld, (float) v);
+    else loft_set_float(r, (uint32_t) fld, v);
+}
+
+/* OpGetField: the reference to an embedded record, `loft_field` — the position moved past the
+ * field's offset.  Answers the new position; the store and record are the host's. */
+int64_t loft_crt_field_pos(int64_t store, int64_t rec, int64_t pos, int64_t fld) {
+    return (int64_t) loft_field(loft_crt_ref(store, rec, pos), (uint32_t) fld).pos;
+}
+
 /* How many stores are live: what a probe reads to see a free took effect. */
 int64_t loft_crt_live_stores(void) {
     int64_t n = 0;

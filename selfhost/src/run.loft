@@ -576,6 +576,53 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         put_int(ints, sp_int, bit((ints[sp_int + 1] ?? 0) != 0));
         sp_int += 1;
       }
+      GetW => {
+        mn = 0;
+        if op.b >= 1 && op.b <= 4 {
+          sp_int -= 1;
+          mn = ints[sp_int] ?? 0;
+        }
+        sp_int -= 3;
+        put_int(ints, sp_int, crt::get_w(op.b, ints[sp_int] ?? 65535, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, mn));
+        sp_int += 1;
+      }
+      SetW => {
+        sp_int -= 1;
+        v = ints[sp_int];
+        mn = 0;
+        if op.b >= 1 && op.b <= 4 {
+          sp_int -= 1;
+          mn = ints[sp_int] ?? 0;
+        }
+        sp_int -= 3;
+        crt::set_w(op.b, ints[sp_int] ?? 65535, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, mn, v);
+      }
+      GetFloat => {
+        sp_int -= 3;
+        put_float(floats, sp_float, crt::get_float(ints[sp_int] ?? 65535, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, op.b == 1));
+        sp_float += 1;
+      }
+      SetFloat => {
+        sp_float -= 1;
+        sp_int -= 3;
+        crt::set_float(ints[sp_int] ?? 65535, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, floats[sp_float], op.b == 1);
+      }
+      // `OpGetField`: the host's store and record, the position past the field (`loft_field`).
+      FieldRef => {
+        ints[sp_int - 1] = crt::field_pos(ints[sp_int - 3] ?? 65535, ints[sp_int - 2] ?? 0, ints[sp_int - 1] ?? 0, op.a);
+      }
+      CopyRecord => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 6;
+        crt::copy_record(
+          ints[sp_int] ?? 65535, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0,
+          ints[sp_int + 3] ?? 65535, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0,
+          op.a, op.b
+        );
+      }
       BindCopy => {
         if !table_loaded {
           load_table(b);

@@ -15,6 +15,7 @@
 // own operator, so its overflow and null are the language's by definition.  What the
 // interpreter does not carry yet is refused by name, never guessed.
 use ir;
+use types;
 
 // What kind of value a node, a variable or a result is, and so which stack holds it.
 enum Kind {
@@ -88,6 +89,12 @@ enum Code {
   RefIsNull,
   RefBool,
   BindCopy,
+  GetW,
+  SetW,
+  GetFloat,
+  SetFloat,
+  FieldRef,
+  CopyRecord,
 }
 
 // One op: `kind` is the kind of value it works on; `a` is a value, a slot, a jump target, a
@@ -399,6 +406,13 @@ fn effect(code: Code, b: integer) -> integer {
     RefIsNull => 0,
     RefBool => 0,
     BindCopy => -1,
+    // A narrow width's minimum is an operand on the integer stack (`width_has_min`).
+    GetW => if width_has_min(b) { -1 } else { 0 },
+    SetW => if width_has_min(b) { -3 } else { -2 },
+    GetFloat => 0,
+    SetFloat => -2,
+    FieldRef => 0,
+    CopyRecord => -2,
     _ => -1,
   }
 }
@@ -579,6 +593,46 @@ fn mintable(l: Lowering, b: ir::Bundle, tp: integer) {
   }
 }
 
+// The field width a get or set operator names, as `crt::W_*` numbers it, or -1.  A float and a
+// single go through `crt::get_float` instead (`float_width`).
+fn width_of(name: text) -> integer {
+  match name {
+    "OpGetInt4" => 0,
+    "OpSetInt4" => 0,
+    "OpGetByte" => 1,
+    "OpSetByte" => 1,
+    "OpGetByteNullable" => 2,
+    "OpSetByteNullable" => 2,
+    "OpGetShort" => 3,
+    "OpSetShort" => 3,
+    "OpGetShortRaw" => 4,
+    "OpSetShortRaw" => 4,
+    // The C generator reads a full short as a raw one (`loft_get_short_raw`).
+    "OpGetShortFull" => 4,
+    "OpGetCharacter" => 5,
+    "OpSetCharacter" => 5,
+    "OpGetBoolean" => 6,
+    "OpSetBoolean" => 6,
+    _ => -1,
+  }
+}
+
+// Does width `w` take the narrow integer's minimum as an operand?
+fn width_has_min(w: integer) -> boolean {
+  w >= 1 && w <= 4
+}
+
+// 0 for `OpGetFloat`/`OpSetFloat`, 1 for the single pair, -1 for any other operator.
+fn float_width(name: text) -> integer {
+  if name == "OpGetFloat" || name == "OpSetFloat" {
+    0
+  } else if name == "OpGetSingle" || name == "OpSetSingle" {
+    1
+  } else {
+    -1
+  }
+}
+
 // The store operators of S3's first slice (1b-s3.md), each to the op that calls its `crt`
 // routine: true when `name` is one.  A field operand is the IR's literal byte offset, passed on
 // unchanged; an operator that writes a VARIABLE (`OpDatabase`, `OpFreeRef` of one,
@@ -627,6 +681,50 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
       value(l, b, args[2] ?? panic("and its value"), KText);
       emit(l, if name == "OpSetText" { SetText } else { RefillText }, KText, fld, 0);
     }
+  } else if width_of(name) >= 0 {
+    // A field of another width: the record, the field, a narrow integer's minimum, and for a
+    // write the value; the width is the operator's.
+    w = width_of(name);
+    value(l, b, args[0] ?? panic("a field operator names its record"), KRef);
+    fld = literal(l, args[1] ?? panic("and its field"));
+    next = 2;
+    if width_has_min(w) {
+      value(l, b, args[2] ?? panic("and its minimum"), KInt);
+      next = 3;
+    }
+    if name.starts_with("OpSet") {
+      value(l, b, args[next] ?? panic("and its value"), KInt);
+      emit(l, SetW, KInt, fld, w);
+    } else {
+      emit(l, GetW, KInt, fld, w);
+    }
+  } else if float_width(name) >= 0 {
+    single = float_width(name);
+    value(l, b, args[0] ?? panic("a field operator names its record"), KRef);
+    fld = literal(l, args[1] ?? panic("and its field"));
+    if name.starts_with("OpSet") {
+      value(l, b, args[2] ?? panic("and its value"), if single == 1 { KSingle } else { KFloat });
+      emit(l, SetFloat, KFloat, fld, single);
+    } else {
+      emit(l, GetFloat, KFloat, fld, single);
+    }
+  } else if name == "OpCopyRecord" {
+    // `OpCopyRecord(src, dst, tp)`: the type's low bits, and the flags the C generator derives
+    // from it — the source freed (0x8000), the type swap-safe, the destination fresh (0x4000).
+    value(l, b, args[0] ?? panic("OpCopyRecord names its source"), KRef);
+    value(l, b, args[1] ?? panic("and its destination"), KRef);
+    raw = literal(l, args[2] ?? panic("and its type"));
+    tp = raw & 16383;
+    flags = (if raw & 32768 != 0 { 1 } else { 0 })
+      + (if types::swap_safe(b, tp) { 2 } else { 0 })
+      + (if raw & 16384 != 0 { 4 } else { 0 });
+    emit(l, CopyRecord, KRef, tp, flags);
+  } else if name == "OpNullRefSentinel" {
+    emit(l, PushNull, KRef, 0, 0);
+  } else if name == "OpGetField" {
+    // The record embedded at a field: the host's reference, its position moved past the field.
+    value(l, b, args[0] ?? panic("OpGetField names its record"), KRef);
+    emit(l, FieldRef, KRef, literal(l, args[1] ?? panic("and its field")), 0);
   } else if name == "OpRefIsNull" || name == "OpConvBoolFromRef" {
     value(l, b, args[0] ?? panic("a null test names its reference"), KRef);
     emit(l, if name == "OpRefIsNull" { RefIsNull } else { RefBool }, KRef, 0, 0);
@@ -668,6 +766,43 @@ fn copies_as(b: ir::Bundle, dst: integer, src: integer) -> boolean {
   }
   // DefType::EnumValue is ordinal 4 (`src/data.rs`).
   (ss.def_type == 4 && ss.parent == dst) || (ds.def_type == 4 && ds.parent == src)
+}
+
+// The dependencies a reference type declares, through a nullability marker.
+fn deps_of(ts: vector<ir::TypeT>) -> vector<integer> {
+  t = ts[0];
+  if t == null {
+    return [];
+  }
+  match t {
+    TyReference { n: _, dep } => dep,
+    TyOptional { inner } => {
+      match inner[0] ?? panic("a nullable type has its base") {
+        TyReference { n: _, dep } => dep,
+        _ => [],
+      }
+    }
+    _ => [],
+  }
+}
+
+// Is `n` a chain of field reads that ends in a variable — a projection of a container
+// variable, as `projection_container_var` finds one for the field reads this slice carries?
+fn projects_a_variable(b: ir::Bundle, n: ir::Node) -> boolean {
+  at = unspan(n);
+  while true {
+    match at {
+      NdVar { n: _ } => { return true; }
+      NdCall { def_nr, args } => {
+        if (b.data.definitions[def_nr] ?? panic("a called definition")).name != "OpGetField" {
+          return false;
+        }
+        at = unspan(args[0] ?? panic("OpGetField names its record"));
+      }
+      _ => { return false; }
+    }
+  }
+  false
 }
 
 // `Definition::return_adopts_fresh_store`: the result declares no dependency, or only the
@@ -734,6 +869,19 @@ fn bind(l: Lowering, b: ir::Bundle, var: integer, node: ir::Node) {
     }
     NdCall { def_nr: f, args: _ } => {
       fd = b.data.definitions[f]?;
+      // `element_copy`: an owning variable — no dependency, no owner witness — bound to a
+      // projection of a container variable copies the record out; one with a dependency views
+      // it (`(B-View)`).
+      if fd.name == "OpGetField" && projects_a_variable(b, x) && len(deps_of(v.type_def)) == 0 && v.owner_witness == 65535 {
+        d = record_of(v.type_def);
+        if d < 0 {
+          refuse(l, "a projection bound to a variable that is not a record: {v.name}");
+          return;
+        }
+        value(l, b, x, KRef);
+        emit(l, BindCopy, KRef, slot, b.data.definitions[d]?.known_type);
+        return;
+      }
       if has_body(fd) && !is_operator(fd.name) && !v.view_elided && !adopts_fresh(fd) {
         refuse(l, "a record bound from a call whose result may be a view: {fd.name}");
         return;
