@@ -89,10 +89,9 @@ impl E {
     }
 }
 
-/// The expression kind that reads a held value of shape `c`.
-/// Is `n` a record copy into an inline sub-record of view `r` (`OpCopyRecord(_, OpGetField(r,
-/// off, Sub), _)`)?  A value-record copy writes it through `r`'s address (`vr_copy`), so it is
-/// a write through the address and a use of it.
+/// `@FR-R-RecPtr` — is `n` a record copy into an inline sub-record of view `r`
+/// (`OpCopyRecord(_, OpGetField(r, off, Sub), _)`)?  A value-record copy writes it through
+/// `r`'s address (`vr_copy`), so it is a write through the address and a use of it.
 fn copy_into_sub(data: &crate::data::Data, n: &Value, r: u16) -> bool {
     matches!(n, Value::Call(d, a) if (*d as usize) < data.definitions.len()
         && data.def(*d).name() == "OpCopyRecord"
@@ -105,6 +104,7 @@ fn no_field_view() -> bool {
     crate::env_once!(std::env::var("LOFT_NO_FIELD_VIEW").is_ok_and(|v| v != "0"))
 }
 
+/// The expression kind that reads a held value of shape `c`.
 fn kind_of(c: CType) -> K {
     match c {
         CType::Int => K::Int,
@@ -571,6 +571,7 @@ impl<'a> FnWriter<'a> {
                 self.tab_alias.insert(*a, *v);
             }
         }
+        self.bind_param_ptrs(code);
         if self.ret == CType::Void {
             self.stmt(code, 1)?;
             self.epilogue(1);
@@ -1302,7 +1303,8 @@ impl<'a> FnWriter<'a> {
         }
     }
 
-    /// `@C137`'s fresh-field arm (loft#2044), as native's `OpCopyRecordEmitter::fresh_field`: a
+    /// `@FR-R-CompleteWrite`'s null arm — `@C137`'s fresh-field arm (loft#2044), as native's
+    /// `OpCopyRecordEmitter::fresh_field`: a
     /// record copy into a field of an element a literal group is building writes, for a null
     /// source, the field type's default — what the prefill would have left there — so the
     /// element needs no prefill.  The C statement for a null `src` into `dst`, or `None` for a
@@ -1683,6 +1685,79 @@ impl<'a> FnWriter<'a> {
             i += 1;
         }
         Ok(())
+    }
+
+    /// `@FR-R-RecPtr`'s PARAMETER CLAUSE: a plain-record parameter is a view the caller fixed
+    /// before the first statement, so the body is its remainder (`hoist::param_view_ptr`,
+    /// native's verdict); one read or written at least twice takes its address at entry, as
+    /// native does.  A value record, a `&` link and a generator's parameter are never bound.
+    fn bind_param_ptrs(&mut self, code: &Value) {
+        if self.gen_elem.is_some()
+            || crate::env_once!(std::env::var("LOFT_NO_RECORD_PTR").is_ok_and(|v| v != "0"))
+        {
+            return;
+        }
+        let Value::Block(b) = code.unspan() else {
+            return;
+        };
+        let stmts = &b.operators;
+        let data = self.cx.data;
+        let trace = crate::env_once!(std::env::var("LOFT_TRACE_RECPTR").is_ok_and(|v| v != "0"));
+        for p in self.vars.arguments() {
+            if self.shapes.get(p as usize) != Some(&CType::Ref)
+                || self.links[p as usize]
+                || self.vr_local(p).is_some()
+                || crate::opt::hoist::scalar_field_uses(stmts, p, data, &[]) < 2
+            {
+                continue;
+            }
+            let mut cache = std::mem::take(&mut self.hoist_cache);
+            let verdict = {
+                let facts = self.store_facts();
+                crate::opt::hoist::param_view_ptr(
+                    stmts,
+                    p,
+                    data,
+                    self.cx.stores,
+                    self.d,
+                    &mut cache,
+                    true,
+                    &std::collections::HashSet::new(),
+                    facts.as_ref(),
+                    None,
+                )
+            };
+            self.hoist_cache = cache;
+            if let Err(why) = verdict {
+                if trace && why != "not a plain record" {
+                    eprintln!("recptr: {} declines parameter {}: {why}", data.def(self.d).name(), self.vars.name(p));
+                }
+                continue;
+            }
+            let n = self.decls.len();
+            let (pa, pl) = (format!("loft_pa{p}_{n}"), format!("loft_pl{p}_{n}"));
+            self.decls.push(format!("uint8_t *{pa} = 0;"));
+            self.decls.push(format!("int {pl} = 0;"));
+            let v = self.var(p);
+            self.line(1, &format!("{pa} = loft_rec_ptr({v});"));
+            let writes = stmts.iter().any(|op| {
+                op.any_node(&mut |n| {
+                    matches!(n, Value::Call(d, a) if (*d as usize) < data.definitions.len()
+                        && matches!(data.def(*d).name(), "OpSetInt" | "OpSetFloat" | "OpSetSingle" | "OpSetEnum")
+                        && a.len() == 3
+                        && crate::opt::body_writes::view_field(data, &a[0], &a[1]).is_some_and(|(root, _)| root == p))
+                        || copy_into_sub(data, n, p)
+                })
+            });
+            if writes {
+                self.line(1, &format!("{pl} = loft_rec_locked({v});"));
+            }
+            if trace {
+                eprintln!("recptr: {} parameter {} bound", data.def(self.d).name(), self.vars.name(p));
+            }
+            crate::rewrite_census::fired("R-RecPtr/param", 1);
+            self.rec_ptrs.push((p, pa, pl));
+        }
     }
 
     /// `@FR-R-RecPtr` — after statement `at` binds a plain record VIEW whose address the rest of

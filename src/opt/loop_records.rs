@@ -83,8 +83,8 @@ pub(crate) fn is_scalar(tp: &Type) -> bool {
     )
 }
 
-/// Do the statements FOLLOWING index `at` in `ops` cover every field position of `tp`
-/// with contiguous `OpSet*`s on `target` (@PLN157 § V-y)?  Coverage is by BYTE OFFSET
+/// `@FR-R-CompleteWrite` — do the statements FOLLOWING index `at` in `ops` cover every field
+/// position of `tp` with contiguous `OpSet*`s on `target` (@PLN157 § V-y)?  Coverage is by BYTE OFFSET
 /// against the schema's field list, the variant tag included (its field sits at
 /// position 0 and the literal's `OpSetEnum` writes it).  A field the run never reaches
 /// — a nested struct arriving by `OpCopyRecord`, a vector field bound by an append —
@@ -252,7 +252,8 @@ pub(crate) fn group_covers_type(
     all
 }
 
-/// The fields of every variant of a struct-enum, one per position — the positions a covering
+/// `@FR-R-CompleteWrite`'s struct-enum condition: the fields of every variant of a struct-enum,
+/// one per position — the positions a covering
 /// group must write — or `None` where two variants put fields of different widths at one
 /// position (a write of the narrower would leave bytes of the wider to the prefill).
 fn variant_union(stores: &Stores, variants: &[(u16, String)]) -> Option<Vec<crate::database::Field>> {

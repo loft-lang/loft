@@ -201,7 +201,7 @@ static uint32_t loft_h_slots_in(uint32_t words, uint32_t sb) {
     return words * 2;
 }
 
-static loft_hhdr loft_h_hdr(loft_store_t *s, uint32_t claim) {
+LOFT_HOT_INLINE loft_hhdr loft_h_hdr(loft_store_t *s, uint32_t claim) {
     loft_hhdr h;
     uint32_t words = loft_rec_words(s, claim);
     uint32_t flags = loft_u32(s, claim, LOFT_H_STRIDE_FLD);
@@ -233,7 +233,7 @@ static int loft_h_is_inline(loft_store_t *s, uint32_t claim) {
     return (loft_u32(s, claim, LOFT_H_STRIDE_FLD) & LOFT_H_INLINE) != 0;
 }
 
-static uint32_t loft_h_slot_bytes(loft_store_t *s, uint32_t claim) {
+LOFT_HOT_INLINE uint32_t loft_h_slot_bytes(loft_store_t *s, uint32_t claim) {
     return (loft_u32(s, claim, LOFT_H_STRIDE_FLD) & LOFT_H_TAGGED) ? 8 : LOFT_H_SLOT_BYTES;
 }
 
@@ -257,7 +257,7 @@ LOFT_HOT_INLINE void loft_h_put_slot(loft_store_t *s, uint32_t claim, uint32_t s
     if (sb == 8) loft_set_u32(s, claim, LOFT_H_BUCKET0 + at * 8 + 4, tag);
 }
 
-static int loft_h_tag_differs(loft_store_t *s, uint32_t claim, uint32_t sb, uint32_t at, uint32_t want) {
+LOFT_HOT_INLINE int loft_h_tag_differs(loft_store_t *s, uint32_t claim, uint32_t sb, uint32_t at, uint32_t want) {
     return sb == 8 && loft_u32(s, claim, LOFT_H_BUCKET0 + at * 8 + 4) != want;
 }
 
@@ -328,7 +328,7 @@ LOFT_HOT_INLINE void loft_h_at(const loft_hents *e, loft_store_t *s, uint32_t sl
     *pos = off;
 }
 
-static void loft_h_at_bucket(const loft_hents *e, loft_store_t *s, uint32_t slot, uint32_t at, uint32_t *rec, uint32_t *pos) {
+LOFT_HOT_INLINE void loft_h_at_bucket(const loft_hents *e, loft_store_t *s, uint32_t slot, uint32_t at, uint32_t *rec, uint32_t *pos) {
     if (e->inl) {
         *rec = e->claim;
         *pos = e->ent0 + at * e->stride;
@@ -765,8 +765,10 @@ static loft_ref loft_h_find_i64(loft_ref c, const loft_key *keys, int64_t key) {
 }
 
 /* `@FR-R-TypedKeyed`'s compound clause (hash::find_ints): two to four 8-byte integer key parts,
- * hashed as the general entry hashes them and compared part by part in place. */
-static loft_ref loft_h_find_ints(loft_ref c, const loft_key *keys, int n, const int64_t *ks) {
+ * hashed as the general entry hashes them and compared part by part in place.  Inline with its
+ * header readers: the part count is a constant at every call, so the compare unrolls and the
+ * header decodes once (GCC kept the whole lookup out of line, -13 % on `reload_and_record`). */
+LOFT_HOT_INLINE loft_ref loft_h_find_ints(loft_ref c, const loft_key *keys, int n, const int64_t *ks) {
     if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
     loft_store_t *s = loft_store_of(c);
     uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
@@ -1238,11 +1240,12 @@ static void loft_hk1_sort(loft_hk1 *a, size_t n, int depth) {
     }
 }
 
-/* `loft_hk1_sort`'s answer for `n` packed keys by a least-significant-digit radix sort over the
- * bytes that differ between them (a two-part key of small coordinates differs in two of
- * eight), stable and without a data-dependent branch — or 0 where the histograms would cost more than they save, the caller
- * then sorting by comparison.  The keys of a hash are distinct, so every ascending order of
- * them is the one order.  `tmp` holds `n` items; the answer is `a` or `tmp`. */
+/* `@FR-Col-Order`'s key-ordered hash walk: `loft_hk1_sort`'s answer for `n` packed keys by a
+ * least-significant-digit radix sort over the bytes that differ between them (a two-part key
+ * of small coordinates differs in two of eight), stable and without a data-dependent branch —
+ * or 0 where the histograms would cost more than they save, the caller then sorting by
+ * comparison.  The keys of a hash are distinct, so every ascending order of them is the one
+ * order.  `tmp` holds `n` items; the answer is `a` or `tmp`. */
 static loft_hk1 *loft_hk1_radix(loft_hk1 *a, loft_hk1 *tmp, size_t n) {
     if (n < 2) return a;
     uint64_t diff = 0;

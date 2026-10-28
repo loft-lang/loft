@@ -1442,8 +1442,10 @@ clause alone, `vector::rec_text`, guard
 native alone, −15.6 %);
 falsifier `LOFT_HOIST_VERIFY=1` (`vector::rec_get` re-derives the address and re-reads
 the store at every use); trace `LOFT_TRACE_RECPTR=1`.  In the C, the basic clause (a scalar
-read or in-place write of a bound view, through inline sub-records) and the last-use clause:
-`FnWriter::bind_record_ptr` and `FnWriter::rec_ptr_access` over `loft_rec_ptr` / `loft_pa_*`,
+read or in-place write of a bound view, through inline sub-records), the last-use clause and
+the parameter clause (`FnWriter::bind_param_ptrs`, a parameter used at least twice, as on
+native — `build_vis` −12 % / −8.5 % instructions under GCC / Clang, `build_walls` −6.5 % /
+−7.8 %): `FnWriter::bind_record_ptr` and `FnWriter::rec_ptr_access` over `loft_rec_ptr` / `loft_pa_*`,
 the lock flag taken only where the block writes through the view.  An enum, byte, short or
 4-byte field is read through the address by the decoder its store getter uses (`loft_dec_*`),
 so the two reads cannot disagree; a value record copied into an inline sub-record of the view
