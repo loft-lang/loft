@@ -20,6 +20,7 @@ Performance comparison across five targets: Python, loft interpreter, loft nativ
 | 10 | sort | Insertion sort of 3,000 integers, built and sorted per op |
 | 11 | par | Parallel for-loop, 100K elements × 50-iter Newton's sqrt |
 | 12 | drawing | Drawing hot loops: seeded hash (100K calls) + brush-lock raster (~22K px), output hashes asserted — the loft#1426 / @PLN157 workload; per-routine ratios gated by `scripts/native_ratio.sh` against `ratio_oracle.tsv` |
+| 20 | interpreter | The @PLN91 self-host's bytecode interpreter loop (a `match` on a plain enum per op, `Op` records in a vector, a `vector<integer?>` stack written through a helper) running its kernels: `fib(20)`, `mix(50000)`, `longest(1, 300)` |
 
 Each workload above is ONE OP.  A program runs its op `--n` times and reports the time per
 op, so the numbers do not depend on how long a run was.

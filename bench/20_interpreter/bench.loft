@@ -1,0 +1,273 @@
+// Benchmark 20: a bytecode interpreter written in loft (consumer: @PLN91's self-host, `selfhost/src/run.loft`)
+//
+// The loop is the self-host interpreter's own run loop, kept as it is written there: one
+// `while true` over `match op.code` on a plain 25-variant enum, each op an `Op { code, a, b }`
+// record fetched as `ops[pc] ?? panic(…)`, a value stack `vector<integer?>` pushed through
+// `put` (overwrite below the length, append at it), and the call frames in three
+// `vector<integer>`.  The programs are its kernels (`selfhost/kernels/`), assembled here in the
+// lowering's encoding instead of loaded from a program image, so the bench is self-contained.
+// Rows: `interp_fib` runs fib(20) (21,891 calls), `interp_mix` runs mix(50000, salt) (the
+// bench/02 loop), `interp_collatz` runs longest(1, 300) (calls, `%`, `/`, a `break`).
+// The timed loop runs `--n` ops, each on an input that differs by the repetition number — in
+// VALUE, never in the amount of work — and folds every result into `sink`.  The `hash` column is
+// one canonical op's result: every lane must print the same one.
+enum Code {
+  PushInt,
+  Load,
+  Store,
+  Pop,
+  Jump,
+  JumpIfFalse,
+  Call,
+  Ret,
+  Add,
+  Sub,
+  Mul,
+  Div,
+  Rem,
+  Eq,
+  Ne,
+  Lt,
+  Le,
+  Gt,
+  Ge,
+  BitAnd,
+  BitOr,
+  BitXor,
+  Not,
+  NonNull,
+  PushNull,
+}
+
+// One op: `a` is a value, a slot, a jump target or a callee's program number; `b` is a call's
+// argument count.
+struct Op {
+  code: Code,
+  a: integer,
+  b: integer,
+}
+
+// A function's ops; `slots` is the frame's size, `params` how many of them the caller fills.
+struct Prog {
+  ops: vector<Op>,
+  slots: integer,
+  params: integer,
+}
+
+// `v` pushed at `sp`: overwritten below the length, appended at it.
+fn put(stack: vector<integer?>, sp: integer, v: integer?) {
+  if sp < len(stack) {
+    stack[sp] = v;
+  } else {
+    stack += [v];
+  }
+}
+
+// Program `entry` called with `args`: its result.
+fn run(progs: vector<Prog>, entry: integer, args: vector<integer>) -> integer? {
+  first = progs[entry] ?? panic("no such program");
+  stack: vector<integer?> = [];
+  sp = 0;
+  for a in args {
+    put(stack, sp, a);
+    sp += 1;
+  }
+  for _ in len(args)..first.slots {
+    put(stack, sp, 0);
+    sp += 1;
+  }
+  f_def: vector<integer> = [];
+  f_pc: vector<integer> = [];
+  f_base: vector<integer> = [];
+  fp = 0;
+  def = entry;
+  pc = 0;
+  base = 0;
+  ops = first.ops;
+  while true {
+    op = ops[pc] ?? panic("every path ends in `Ret`, so `pc` stays inside the ops");
+    pc += 1;
+    match op.code {
+      PushInt => { put(stack, sp, op.a); sp += 1; },
+      Load => { put(stack, sp, stack[base + op.a]); sp += 1; },
+      Store => { sp -= 1; stack[base + op.a] = stack[sp]; },
+      Pop => { sp -= 1; },
+      Jump => { pc = op.a; },
+      JumpIfFalse => {
+        sp -= 1;
+        if stack[sp] == 0 {
+          pc = op.a;
+        }
+      },
+      Call => {
+        callee = op.a;
+        callee_prog = progs[callee] ?? panic("no such callee");
+        if fp < len(f_def) {
+          f_def[fp] = def;
+          f_pc[fp] = pc;
+          f_base[fp] = base;
+        } else {
+          f_def += [def];
+          f_pc += [pc];
+          f_base += [base];
+        }
+        fp += 1;
+        def = callee;
+        pc = 0;
+        base = sp - op.b;
+        for _ in op.b..callee_prog.slots {
+          put(stack, sp, 0);
+          sp += 1;
+        }
+        ops = callee_prog.ops;
+      },
+      Ret => {
+        sp -= 1;
+        v = stack[sp];
+        if fp == 0 {
+          return v;
+        }
+        sp = base;
+        fp -= 1;
+        def = f_def[fp] ?? panic("a saved frame");
+        pc = f_pc[fp] ?? panic("a saved frame");
+        base = f_base[fp] ?? panic("a saved frame");
+        ops = progs[def].ops;
+        put(stack, sp, v);
+        sp += 1;
+      },
+      PushNull => { put(stack, sp, null); sp += 1; },
+      Not => { stack[sp - 1] = if stack[sp - 1] == 1 { 0 } else { 1 }; },
+      NonNull => { stack[sp - 1] = if stack[sp - 1] != null { 1 } else { 0 }; },
+      _ => {
+        sp -= 1;
+        y = stack[sp];
+        sp -= 1;
+        x = stack[sp];
+        r = match op.code {
+          Add => x + y,
+          Sub => x - y,
+          Mul => x * y,
+          Div => x / y,
+          Rem => x % y,
+          BitAnd => x & y,
+          BitOr => x | y,
+          BitXor => x ^ y,
+          Eq => if x == y { 1 } else { 0 },
+          Ne => if x != y { 1 } else { 0 },
+          Lt => if x < y { 1 } else { 0 },
+          Le => if x <= y { 1 } else { 0 },
+          Gt => if x > y { 1 } else { 0 },
+          Ge => if x >= y { 1 } else { 0 },
+          _ => 0,
+        };
+        put(stack, sp, r);
+        sp += 1;
+      }
+    }
+  }
+  null
+}
+
+fn op(code: Code, a: integer, b: integer) -> Op { Op { code: code, a: a, b: b } }
+
+// The kernels, in the lowering's encoding.  Program numbers: 0 fib, 1 mix, 2 collatz_len,
+// 3 longest.
+fn programs() -> vector<Prog> {
+  // fib(n): if n <= 1 { n } else { fib(n - 1) + fib(n - 2) } — slot 0 n
+  fib: vector<Op> = [
+    op(Load, 0, 0), op(PushInt, 1, 0), op(Le, 0, 0), op(JumpIfFalse, 6, 0),
+    op(Load, 0, 0), op(Ret, 0, 0),
+    op(Load, 0, 0), op(PushInt, 1, 0), op(Sub, 0, 0), op(Call, 0, 1),
+    op(Load, 0, 0), op(PushInt, 2, 0), op(Sub, 0, 0), op(Call, 0, 1),
+    op(Add, 0, 0), op(Ret, 0, 0)];
+  // mix(count, salt): acc = salt; for i in 0..count { acc = ((acc ^ i) + (i & 7)) & 16777215 }
+  // — slots 0 count, 1 salt, 2 acc, 3 i
+  mix: vector<Op> = [
+    op(Load, 1, 0), op(Store, 2, 0), op(PushInt, 0, 0), op(Store, 3, 0),
+    op(Load, 3, 0), op(Load, 0, 0), op(Lt, 0, 0), op(JumpIfFalse, 23, 0),
+    op(Load, 2, 0), op(Load, 3, 0), op(BitXor, 0, 0),
+    op(Load, 3, 0), op(PushInt, 7, 0), op(BitAnd, 0, 0),
+    op(Add, 0, 0), op(PushInt, 16777215, 0), op(BitAnd, 0, 0), op(Store, 2, 0),
+    op(Load, 3, 0), op(PushInt, 1, 0), op(Add, 0, 0), op(Store, 3, 0), op(Jump, 4, 0),
+    op(Load, 2, 0), op(Ret, 0, 0)];
+  // collatz_len(start): cur = start; steps = 1; for _ in 0..10000000 { if cur == 1 { break }
+  // if cur % 2 == 0 { cur = cur / 2 } else { cur = 3 * cur + 1 }; steps += 1 }; steps
+  // — slots 0 start, 1 cur, 2 steps, 3 the loop counter
+  collatz: vector<Op> = [
+    op(Load, 0, 0), op(Store, 1, 0), op(PushInt, 1, 0), op(Store, 2, 0),
+    op(PushInt, 0, 0), op(Store, 3, 0),
+    op(Load, 3, 0), op(PushInt, 10000000, 0), op(Lt, 0, 0), op(JumpIfFalse, 41, 0),
+    op(Load, 1, 0), op(PushInt, 1, 0), op(Eq, 0, 0), op(JumpIfFalse, 15, 0), op(Jump, 41, 0),
+    op(Load, 1, 0), op(PushInt, 2, 0), op(Rem, 0, 0), op(PushInt, 0, 0), op(Eq, 0, 0),
+    op(JumpIfFalse, 26, 0),
+    op(Load, 1, 0), op(PushInt, 2, 0), op(Div, 0, 0), op(Store, 1, 0), op(Jump, 32, 0),
+    op(PushInt, 3, 0), op(Load, 1, 0), op(Mul, 0, 0), op(PushInt, 1, 0), op(Add, 0, 0),
+    op(Store, 1, 0),
+    op(Load, 2, 0), op(PushInt, 1, 0), op(Add, 0, 0), op(Store, 2, 0),
+    op(Load, 3, 0), op(PushInt, 1, 0), op(Add, 0, 0), op(Store, 3, 0), op(Jump, 6, 0),
+    op(Load, 2, 0), op(Ret, 0, 0)];
+  // longest(lo, limit): for col_i in lo..limit { s = collatz_len(col_i); if s > max_steps {
+  // max_steps = s; max_n = col_i } }; max_n * 1000 + max_steps
+  // — slots 0 lo, 1 limit, 2 max_steps, 3 max_n, 4 col_i, 5 s
+  longest: vector<Op> = [
+    op(PushInt, 0, 0), op(Store, 2, 0), op(PushInt, 0, 0), op(Store, 3, 0),
+    op(Load, 0, 0), op(Store, 4, 0),
+    op(Load, 4, 0), op(Load, 1, 0), op(Lt, 0, 0), op(JumpIfFalse, 26, 0),
+    op(Load, 4, 0), op(Call, 2, 1), op(Store, 5, 0),
+    op(Load, 5, 0), op(Load, 2, 0), op(Gt, 0, 0), op(JumpIfFalse, 21, 0),
+    op(Load, 5, 0), op(Store, 2, 0), op(Load, 4, 0), op(Store, 3, 0),
+    op(Load, 4, 0), op(PushInt, 1, 0), op(Add, 0, 0), op(Store, 4, 0), op(Jump, 6, 0),
+    op(Load, 3, 0), op(PushInt, 1000, 0), op(Mul, 0, 0), op(Load, 2, 0), op(Add, 0, 0),
+    op(Ret, 0, 0)];
+  [Prog { ops: fib, slots: 1, params: 1 }, Prog { ops: mix, slots: 4, params: 2 },
+   Prog { ops: collatz, slots: 4, params: 1 }, Prog { ops: longest, slots: 6, params: 2 }]
+}
+
+fn interp_fib(progs: vector<Prog>, salt: integer) -> integer { (run(progs, 0, [20]) ?? 0) + salt }
+
+fn interp_mix(progs: vector<Prog>, salt: integer) -> integer { run(progs, 1, [50000, salt]) ?? 0 }
+
+fn interp_collatz(progs: vector<Prog>, salt: integer) -> integer {
+  (run(progs, 3, [1, 300]) ?? 0) + salt
+}
+
+/// `--n N`: how many ops the timed loop runs (the harness calibrates it per lane).
+fn arg_n(dflt: integer) -> integer {
+  an_args = arguments();
+  an_n = dflt;
+  an_i = 0;
+  while an_i < len(an_args) {
+    if an_args[an_i]? == "--n" && an_i + 1 < len(an_args) {
+      an_n = (an_args[an_i + 1]? as integer?)?;
+      an_i += 1;
+    }
+    an_i += 1;
+  }
+  if an_n < 2 { an_n = 2; }
+  an_n
+}
+
+/// One measured routine, in the row format every lane prints (bench/README.md).
+fn row(name: text, iters: integer, us: integer, items: integer, result: integer) {
+  rw_ns = ((us * 1000) / iters) ?? 0;
+  rw_it = (((us * 1000) as float) / ((iters * items) as float)) ?? 0.0;
+  println("{name}\t{iters}\t{us}\t{rw_ns}\t{items}\t{rw_it:.3}\t{result:x}");
+}
+
+fn main() {
+  n = arg_n(20);
+  progs = programs();
+  println("routine\titers\tus\tns_op\tpx\tns_px\thash");
+  sink = 0;
+  t0 = ticks();
+  for r in 0..n { sink += interp_fib(progs, r & 1); }
+  row("interp_fib", n, ticks() - t0, 21891, interp_fib(progs, 0));
+  t0 = ticks();
+  for r in 0..n { sink += interp_mix(progs, r); }
+  row("interp_mix", n, ticks() - t0, 50000, interp_mix(progs, 1));
+  t0 = ticks();
+  for r in 0..n { sink += interp_collatz(progs, r & 1); }
+  row("interp_collatz", n, ticks() - t0, 299, interp_collatz(progs, 0));
+  println("time: sink={sink}");
+}
