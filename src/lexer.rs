@@ -2583,9 +2583,9 @@ impl Lexer {
                     )
                 } else {
                     format!(
-                        "`{val}{bad}`: an integer literal takes no suffix but `l` — its width comes \
-                         from where it goes: write `{val} as {bad}`, or give the binding the type \
-                         (`x: {bad} = {val}`)"
+                        "`{val}{bad}`: an integer literal takes no suffix — its width comes from \
+                         where it goes: write `{val} as {bad}`, or give the binding the type \
+                         (`x: {bad} = {val}`); `l` is the one suffix, for a 64-bit literal"
                     )
                 };
                 self.err(Level::Error, &msg);
