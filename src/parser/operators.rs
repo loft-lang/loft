@@ -3907,25 +3907,14 @@ impl Parser {
         // { tmp = lhs; if (tmp == null) { <exit>; }; tmp }
         let tmp = self.create_unique("ncr", lhs_type);
         let set_tmp = v_set(tmp, code.clone());
-        let is_null = if self.is_type_var_operand(lhs_type) {
-            // `T` has no null test yet, so ask the one home and negate its
-            // answer.  Inside a template that call stamps the deferral marker, which the
-            // monomorph answers; for a concrete type this branch never runs, so the two
-            // arms below keep emitting exactly what they always did.
-            let not_null = self.coalesce_not_null(&Value::Var(tmp), lhs_type);
-            self.cl("OpNot", &[not_null])
-        } else if matches!(lhs_type, Type::Boolean) {
-            // @PLN17: a boolean is null iff its byte is the 255 sentinel — a raw
-            // `tmp == null` compare, NOT truthiness (which would treat `false` as
-            // missing).  `false ?? return` keeps `false`; `null ?? return` returns.
-            let null_b = self.cl("OpConvBoolFromNull", &[]);
-            self.cl("OpEqBool", &[Value::Var(tmp), null_b])
-        } else {
-            let mut null_check = Value::Var(tmp);
-            self.convert(&mut null_check, lhs_type, &Type::Boolean);
-            // Negate: true when null (i.e. when the boolean conversion is false).
-            self.cl("OpNot", &[null_check])
-        };
+        // `@FR-N-Coal` — "is it present" has ONE home, the one the value-default `??` asks:
+        // a struct-enum by its discriminant, a record by its reference, a tuple by its
+        // members, a boolean by its 255 sentinel (`false ?? return` keeps `false`), a type
+        // variable deferred to the monomorph.  A boolean conversion of its own here read a
+        // struct-enum's record reference as a plain enum's byte: the absent side taken for
+        // a present value on the interpreter, uncompilable Rust on native (loft#2213).
+        let not_null = self.coalesce_not_null(&Value::Var(tmp), lhs_type);
+        let is_null = self.cl("OpNot", &[not_null]);
         let if_ret = v_if(is_null, ret_stmt, Value::Null);
         *code = v_block(
             vec![set_tmp, if_ret, Value::Var(tmp)],

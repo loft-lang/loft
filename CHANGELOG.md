@@ -354,6 +354,11 @@ git do.
 
 ### Bug fixes
 
+**`e ?? return`, `?? break`, `?? panic(…)` keep a present struct-enum value.**  With a
+default that leaves (`return`, `break`, `continue`, `panic`, `exit`), a value of an enum whose
+variants carry fields was taken as absent: the function returned its default, and `--native`
+did not compile the program.  It is now tested as a value default's `??` tests it.
+
 **A package's test reaches the package's module, not a test named after it.**  With
 `src/load.loft` and its test `tests/load.loft`, another test's `use load;` bound the test file, so
 every `load::` name was unknown.  It now binds `src/load.loft`.
