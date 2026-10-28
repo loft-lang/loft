@@ -12,27 +12,26 @@ and is not made here.
 
 **Reachable, on the SHIP lanes, both compilers — with margin first.**
 
-| lane | median | worst (row) | over 3× |
-|---|---|---|---|
-| gcc ship (`cship`) | 1.42× | 2.93× (`slope_path_with_undo`) | 0 |
-| clang ship | 1.42× | 2.70× (`par`) | 0 |
-| gcc checked (`c`) | 1.52× | 3.30× (`slope_path_with_undo`) | 1 |
-| clang checked | 1.65× | 3.26× (`enum_match`) | 2 |
+| lane | median | worst (row) | over 3× | over 2.7× |
+|---|---|---|---|---|
+| gcc ship (`cship`) | 1.37× | 2.92× (`slope_path_with_undo`) | 0 | 2 (`slope_path_with_undo`, `map_json` 2.78×) |
+| clang ship | 1.33× | 2.74× (`par`) | 0 | 1 (`par`) |
+| gcc checked (`c`) | 1.45× | 3.31× (`slope_path_with_undo`) | 1 | 3 |
+| clang checked | 1.58× | 2.96× (`binary_read`) | 0 | 7 |
 
-(`python3 bench/stats.py --lanes rust,c,cship [--cc clang]`, 79 routines, 2026-10-28 09:00,
-before the batch below.)  Since that run: `truncate_to` −70 % / −72 % (gcc / clang),
-`enum_match` −11 %, `binary_read` −11 % (clang), `build_vis` −12 % / −8.5 % and `build_walls`
-−6.5 % / −7.8 % (instructions), `reload_and_record` −13 % (gcc).
+(`python3 bench/stats.py --lanes rust,c,cship [--cc clang]`, 79 routines, commit `1bbf92e5c`
+on `origin/main`, box held quiet.)
 
 **The bar needs margin to be reliable.** `stats.py` repeats within a few percent, but a compiler
 upgrade or a layout shift moves single rows by 5–10 %.  With the worst ship rows at 2.93× and
 2.80×, a 3× bar would flap.  The bar can be declared once a full measurement shows **every ship
-row at or under about 2.7× on both compilers**.  The checked lanes keep 3× as a goal, not a bug
+row at or under about 2.7× on both compilers** — three ship cells stand above that line now, all
+three named in the order below.  The checked lanes keep 3× as a goal, not a bug
 bar: their extra over ship is the cost of the guarantees, which is optimised, not filed.
 
 ## What is left, in order
 
-1. **`slope_path_with_undo`** (gcc ship 2.93×, gcc checked ≈ 3.2×).  Per path step the C runs
+1. **`slope_path_with_undo`** (gcc ship 2.92×, gcc checked 3.31×; clang 2.36× / 2.75×).  Per path step the C runs
    ≈ 1,350 instructions against Rust's ≈ 430 (four chunk walks, two seven-field hex reads, one
    write, one 11-field append — the same work).  The checks are ≈ 5 % of it (priced: plain
    arithmetic in the map helpers saves 5 % gcc, 3 % clang).  The rest is store access spread over
@@ -40,14 +39,14 @@ bar: their extra over ship is the cost of the guarantees, which is optimised, no
    hex through the store.  Taking the walked element's address from the header was priced and
    is SLOWER in the C (the compilers already hoist the buffer pointer).  The next lever is
    structural: the map helpers' chunk walks.
-2. **`map_json`** (2.80× on both gcc lanes).  Generic runtime JSON (`loft_json.h`), not emitted
+2. **`map_json`** (2.78× gcc ship, 2.81× gcc checked; clang ≈ 2.45×).  Generic runtime JSON (`loft_json.h`), not emitted
    code: the lexer `loft_jl_token` 17 %, `loft_pr_struct` 12 %, `loft_jp_validate` 8.4 % (every
    string is validated after the lexer already scanned it — skippable for a string with no
    backslash and no control byte, the only bytes the validator acts on), `loft_jl_quoted` 6 %,
    a heap text per token (keys included: `malloc` / `free` / `loft_jv_free` ≈ 6 %), and
    `strlen` of every field name while writing (`loft_show_name`, ≈ 8 %).  Plain runtime C, no
    rule work — the lowest-risk margin of the three.
-3. **`par` / `par_reduce`** (2.6–2.75× ship; clang checked 2.86×).  `par_reduce`'s checked cost
+3. **`par` / `par_reduce`** (`par` 2.62× gcc, 2.74× clang ship; `par_reduce` clang checked 2.89×).  `par_reduce`'s checked cost
    is a hash-mixing loop, `h = (h * K + c) & M; h = h ^ (h >> 13)`, 48 times per element: `h` is
    loop-carried, so no static proof applies.  A guard testing `h ∈ [0, M]` once at the loop's
    entry would make the loop plain — an extension of `@FR-R-GuardedChain` (a loop-carried masked
