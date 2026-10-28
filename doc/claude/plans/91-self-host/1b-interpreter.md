@@ -86,7 +86,8 @@ implementation.  So the usual "work around it and move on" is not allowed here:
 **This strand matters only if it reaches its goals, so a good design beats a quick build.**
 Stopping to ask the owner a design question is welcome here, not a delay to avoid.  Ask it in
 prose, with a recommendation and its reasons, so the answer can be discussed rather than
-picked from a fixed list.  `#package` (S0.3a) is the example: the question about a package
+picked from a fixed list, and always with a short code example of the cases it decides, each
+line commented with what happens today and under the proposal.  `#package` (S0.3a) is the example: the question about a package
 level grew, over three answers, into a rule none of the first options held.
 
 What does not need asking: a design the formal rules (`doc/claude/formal/`) or a recorded
@@ -721,7 +722,7 @@ the rule is about one function's own body).
 | **X17** | `x?` of a record from ANOTHER module falls back to `null`, with no diagnostic (on `main`, loft#2209); under `#package` the same shape is refused as a default of type `unknown`, and beside a same-named local record as `Item` not assignable to `Item` | **bug, silent-wrong — fixed ([1b-s1.md](1b-s1.md) § X16–X18)** | `build_default` pins the record's name to its definition for the sub-parse, and a sub-parse that builds anything else is `None`, reported |
 | **X18** | a nullable plain enum is not narrowed by `if x != null` (on `main`, loft#2211): its test lowers to a double negation | **bug — fixed** | `narrowing_from_condition` reads any negation as its operand's proof on the other side ([1b-s1.md](1b-s1.md) § X16–X18) |
 | **X19** | an element read is `τ?` even where the index is in range by construction, so an interpreter's frame restore and op fetch each take `?? panic(…)`; left out, the nullability spreads to every counter restored from them (37 warnings from three reads) | **by design — costed** (S1.2) | the discharge is honest (a missing frame is a bug); a read the bounds guard proves in range could be `τ`, as `(N-Domain)` already proves the index |
-| **X20** | a bare variant name is refused as a branch of an `if` assigned to an untyped local (`h = if c { Red } else { Blue }`: *"bare variant 'Red' has no type here"*), while `h = Red`, a typed local, a `return`, a comparison and a match arm all resolve it; the lowering writes `Kind.KNone` in such places | friction — asked | type the `if` from its branches when every branch is a variant of one enum, as `h = Red` is typed |
+| **X20** | a bare variant name is refused as a branch of an `if` assigned to an untyped local (`h = if c { Red } else { Blue }`: *"bare variant 'Red' has no type here"*), while a typed local, a `return`, a comparison and a match arm resolve it; the lowering wrote `Kind.KNone` in such places | **language — fixed, @C157** | owner: a name is refused only when two definitions own it and nothing in its context picks one; a sole owner resolves, and an `if` or `match` arm takes the enum its sibling arms name |
 | **X21** | the run loop's `prog = progs[def] ?? panic(…)` on a call and on a return copies the whole `Lowering` record each time (`(B-Copy)`: a record local is bound by value, and nothing proves the one write into `progs` misses the element `prog` names); loft-13 measured `loft_copy_claims` at 46 % of `run_kernel`'s time on fib under `--native-c --ship`, which is most of the 20× against the Rust interpreter | friction — measured; with the owner (loft-13's memory-model proposal: a read-only copy stays a view until its source is written) | the code stays as written (the readable-code ruling); a binding of `progs[def].ops` alone is held in place and would show the gap |
 
 ### New constructs taken from OCaml's type expressions

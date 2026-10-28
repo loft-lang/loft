@@ -7627,7 +7627,12 @@ impl Parser {
     /// statement `match` whose arms yield nothing — the same "expect nothing" an `else if`
     /// chain passes down for a `Void` then arm.
     fn match_result_unsettled(result_type: &Type) -> bool {
-        matches!(result_type.base(), Type::Void | Type::Null | Type::Never)
+        // `Unknown`: an arm the first pass could not type yet — a bare variant two enums own
+        // (@C157) — so the arms after it settle the match, as an `if`'s else arm settles it.
+        matches!(
+            result_type.base(),
+            Type::Void | Type::Null | Type::Never | Type::Unknown(_)
+        )
     }
 
     /// Give every `null` arm of a value-producing match chain the result type's typed null.

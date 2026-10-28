@@ -151,7 +151,7 @@ fn kind_of_type(t: ir::TypeT) -> Kind {
     TyFloat => KFloat,
     TySingle => KSingle,
     TyText { dep: _ } => KText,
-    TyRefVar { inner } => if kind_of_types(inner) == KText { Kind.KTextRef } else { Kind.KOther },
+    TyRefVar { inner } => if kind_of_types(inner) == KText { KTextRef } else { KOther },
     TyVoid => KNone,
     TyNull => KNone,
     TyNever => KNone,
@@ -164,7 +164,7 @@ fn kind_of_type(t: ir::TypeT) -> Kind {
 // The kind of a box-of-one type, as the IR stores a child type.
 fn kind_of_types(ts: vector<ir::TypeT>) -> Kind {
   if len(ts) == 0 {
-    return Kind.KNone;
+    return KNone;
   }
   kind_of_type(ts[0] ?? panic("a non-empty type vector"))
 }
@@ -207,9 +207,9 @@ fn stack_of(k: Kind) -> Kind {
 // here: they name a destination variable, see `writer_code`.
 fn operator_op(name: text) -> Op? {
   int_ops = [
-    ("OpAdd", Code.Add), ("OpMin", Code.Sub), ("OpMul", Code.Mul), ("OpDiv", Code.Div),
-    ("OpRem", Code.Rem), ("OpEq", Code.Eq), ("OpNe", Code.Ne), ("OpLt", Code.Lt),
-    ("OpLe", Code.Le), ("OpGt", Code.Gt), ("OpGe", Code.Ge)
+    ("OpAdd", Add), ("OpMin", Sub), ("OpMul", Mul), ("OpDiv", Div),
+    ("OpRem", Rem), ("OpEq", Eq), ("OpNe", Ne), ("OpLt", Lt),
+    ("OpLe", Le), ("OpGt", Gt), ("OpGe", Ge)
   ];
   for (stem, code) in int_ops {
     if name == "{stem}Int" || name == "{stem}Long" {
@@ -315,13 +315,13 @@ fn is_format(name: text) -> boolean {
 // The kind of value a format operator formats.
 fn format_kind(name: text) -> Kind {
   if name.contains("Float") {
-    Kind.KFloat
+    KFloat
   } else if name.contains("Single") {
-    Kind.KSingle
+    KSingle
   } else if name.contains("Text") {
-    Kind.KText
+    KText
   } else {
-    Kind.KInt
+    KInt
   }
 }
 
@@ -526,7 +526,7 @@ fn call(l: Lowering, b: ir::Bundle, def_nr: integer, args: vector<ir::Node>) {
   if writer != null {
     first = args[0] ?? panic("a text-writing operator names its destination");
     dest = 0;
-    dest_kind = Kind.KText;
+    dest_kind = KText;
     match first {
       NdVar { n: var } => {
         dest = slot_of(l, var);
@@ -546,7 +546,7 @@ fn call(l: Lowering, b: ir::Bundle, def_nr: integer, args: vector<ir::Node>) {
   if is_format(d.name) {
     first = args[0] ?? panic("a format operator names its destination");
     dest = 0;
-    dest_kind = Kind.KText;
+    dest_kind = KText;
     match first {
       NdVar { n: var } => {
         dest = slot_of(l, var);

@@ -83,6 +83,7 @@ a guard that does not exercise it — is its line in
 - [C126](DESIGN_DECISIONS_SYNTAX.md#c126--a-generics-type-variables-are-unrestricted-a-keyed-collection-stays-a-record-set) — a generic's type variables are unrestricted; a keyed collection stays a record set
 - [C140](DESIGN_DECISIONS_SYNTAX.md#c140--private-by-default-pub-is-consent-fields-literals-and-variants) — private by default, `pub` is consent: fields, literals and variants
 - [C149](DESIGN_DECISIONS_SYNTAX.md#c149--one-structural-limit-300-for-every-count-a-program-has--a-functions-variables-included) — one structural limit, 300, for every count a program has — a function's variables included
+- [C157](DESIGN_DECISIONS_SYNTAX.md#c157--a-name-is-refused-only-when-two-definitions-own-it-and-nothing-in-its-context-picks-one) — a name is refused only when two definitions own it and nothing in its context picks one
 
 ## Collections — [DESIGN_DECISIONS_COLLECTIONS.md](DESIGN_DECISIONS_COLLECTIONS.md)
 

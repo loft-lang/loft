@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @ARGS: --lib tests/lib
+//
+// A bare variant of an enum this file imports with `use enumlib::*;` is that enum's variant when
+// no other visible enum owns the name (@C157): in a vector literal, bound to an untyped local, and
+// as the arms of an `if` and a `match`.  The enum that is NOT visible, through a bare
+// `use enumlib;`, still asks for the import: c98-a-bare-variant-through-a-bare-use-names-the-import.loft.
+//
+// Expected, by hand: `[Yay, Boo]` holds one `Boo`; `Pending` is `Status.Pending`; the `if` and
+// the `match` on 1 give `Boo`.
+//
+// @falsified-at: 6f31a726b — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: the exit — on the control every cell is refused at compile time ("bare variant
+//   'Yay' has no type here"), so nothing runs.
+//   WITNESS: that refusal, at the first bare variant.
+//   ARMED: nothing.
+//   HOLDS: values, leak and panic — the control never runs, so only the exit can move.
+use enumlib::*;
+
+fn test_a_vector_of_bare_variants_takes_their_enum() {
+  n = 0;
+  for s in [Yay, Boo] {
+    if s == Status.Boo { n += 1; }
+  }
+  assert(n == 1, "one Boo in [Yay, Boo]: {n}");
+}
+
+fn test_a_bound_bare_variant_takes_its_enum() {
+  s = Pending;
+  assert(s == Status.Pending, "Pending is Status's");
+}
+
+fn test_the_arms_of_an_if_and_a_match_take_their_enum() {
+  k = 1;
+  a = if k == 0 { Yay } else { Boo };
+  b = match k { 0 => Yay, _ => Boo };
+  assert(a == Status.Boo, "the if: {a}");
+  assert(b == Status.Boo, "the match: {b}");
+}

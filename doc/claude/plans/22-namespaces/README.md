@@ -37,6 +37,9 @@ adding a second enum with that variant name can never silently re-point an exist
 bare assignment (the friction the owner asked to eliminate).  The variant name
 stays usable as a TYPE / constructor (`Circle { … }`, `s: Circle`,
 `fn f(self: Circle)`), so struct-variant construction is unaffected.
+**Superseded 2026-10-28 by @C157:** a bare variant one visible enum owns resolves with no
+context, and a shared one takes the enum its `if`/`match` sibling arms name; a later enum still
+never re-points a line — it makes the name ambiguous, which is refused.
 
 This SUPERSEDES an interim "ambiguity-tracking" build (which preserved no-context
 *unique* `s = Idle`) — the owner chose the stricter rule on 2026-06-14.

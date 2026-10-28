@@ -16,6 +16,12 @@
 //
 // @falsified-at: 6f31a726b — interpret exit 1 -> 0, interpret 1 assertion failures -> 0; native
 // INERT (expected for a backend-divergence guard — only `--interpret` read the wide slot).
+//   CHANNEL: the assertion and the exit — on the control `labs` echoes a boolean or enum with the
+//   slot's earlier bytes above it, so the `got` line differs and the assert fails.
+//   WITNESS: `got` beside its expected line in the assertion message.
+//   ARMED: nothing.
+//   HOLDS: native, which passes `(int64_t) a` and never read the slot; the integer cell, which
+//   was always read whole; no store, so leak and panic cannot move.
 
 enum Hue { Red, Green, Blue }
 

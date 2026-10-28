@@ -456,11 +456,19 @@ enum Color { Red, Green }
 enum Light { Red, Amber }
 ```
 
-A bare variant used as a **value** resolves from its type context — a `match`
-subject, a typed declaration (`c: Color = Red`), a comparison (`c == Red`), a
-function argument, a return position, or a struct-field type/default. With no
-context, qualify it: `Color.Red` (or `Color::Red`). Defining a *new untyped
-variable* directly from a bare variant is a deliberate error:
+A bare variant used as a **value** is the variant of the one enum that owns that name.
+Where two enums own it, the context picks one: a `match` subject, a typed declaration
+(`c: Color = Red`), a comparison (`c == Red`), a function argument, a return position, a
+struct-field type or default, or the other arms of the same `if` or `match`:
+
+<!-- from tests/reference/enum-variants.loft -->
+```loft
+g = Green;          // ok — only Color has Green
+r = if n == 0 { Red } else { Amber };   // ok — Amber is Light's, so this Red is too
+m = match n { 0 => Red, _ => Green };   // ok — Green is Color's
+```
+
+With nothing to pick one, a shared name is an error that names the qualification to write:
 
 <!-- from tests/reference/enum-variants-refused.loft -->
 ```loft
@@ -475,10 +483,10 @@ x = Color.Red;      // ok
 c: Color = Red;     // ok — the declared type supplies the context
 ```
 
-This keeps a later `enum Light { Red, … }` from silently re-pointing an existing
-bare assignment. The variant name remains usable as a **type / constructor**
-(`Circle { … }`, `s: Circle`, `fn f(self: Circle)`), so struct-variant
-construction is unaffected.
+A later enum that shares a name never changes what an existing line means: it makes the bare
+name ambiguous, and the line is refused until it says which enum (@C157). The variant name
+remains usable as a **type / constructor** (`Circle { … }`, `s: Circle`, `fn f(self: Circle)`),
+so struct-variant construction is unaffected.
 
 
 ## File structure

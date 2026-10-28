@@ -343,3 +343,23 @@ Decided 2026-10-12 (owner) — [record](DESIGN_DECISIONS-history.md#c149--one-st
 count itself) — under lowered limits per commit, and at 300 and 64 KiB in `tests/limits_full/`,
 nightly.
 **Catalogue:** [LOFT.md § Limits](LOFT.md#limits) · [COMPATIBILITY.md](COMPATIBILITY.md) (the consumer function it refuses).
+
+## C157 — a name is refused only when two definitions own it and nothing in its context picks one
+
+**Decision.** A bare variant (`Red`) used as a value is the variant of the one enum the file can
+see that owns the name: its own enums, what it imports with `use lib::*` or `use lib::(…)`, and
+the stdlib's.  It needs no type context.  Where two visible enums own the name, the context picks
+one — a declared type, a comparison, an argument, a return position, a field, or the other arms
+of the same `if` or `match` (`if c { Red } else { Amber }`, `Amber` only `Light`'s, is a `Light`).
+With nothing to pick one it is refused, `ambiguous variant 'Red' (a variant of Color, Light)`.
+An instance of a generic enum (`Slot<integer>`) never qualifies alone: its `T` comes only from
+the context.  **Why.** A rule that refuses a name nobody else owns makes an author qualify what
+cannot be misread.  The reason for that refusal — a later enum must not change what an existing
+line means — holds without it: a second owner turns the bare name into a refusal, never into the
+other enum's value.
+
+**Revisit when.** A library adding a variant name breaks consumers often enough that qualifying
+every bare variant is the cheaper rule.  Decided 2026-10-28 (owner) — [record](DESIGN_DECISIONS-history.md#c157--a-name-is-refused-only-when-two-definitions-own-it-and-nothing-in-its-context-picks-one).
+**Holds at:** `tests/reference/enum-variants.loft` (one owner, sibling arms of an `if` and a
+`match`), `tests/reference/enum-variants-refused.loft` (two owners, no context).
+**Catalogue:** [LOFT_DECLARATIONS.md § Enum-scoped variants](LOFT_DECLARATIONS.md#enum-scoped-variants-pln22).

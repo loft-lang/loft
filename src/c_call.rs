@@ -393,7 +393,9 @@ fn dispatch(stores: &mut crate::database::Stores, stack: &mut crate::keys::DbRef
             // (loft#2217).  The value then widens to the C slot the way `--native`'s
             // `(int64_t) a` cast widens it.
             CArg::Scalar => {
-                let v = match loft {
+                // A `#c` parameter is never nullable (its binding refuses one); `.base()` keeps this
+                // the shape test every other site asks (@FR-N-Shape).
+                let v = match loft.base() {
                     crate::data::Type::Boolean | crate::data::Type::Enum(_, false, _) => {
                         u64::from(stores.get::<u8>(stack))
                     }
