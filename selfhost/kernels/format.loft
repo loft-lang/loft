@@ -1,0 +1,37 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// S2.2 probe: format specs beyond the plain `"{v}"`, one per kind and per operand, each
+// against its rendering written out by hand.  `formats(n)` answers how many held, so a cell
+// that renders wrong shows in the count as well as in its assertion.
+fn check(got: text, want: text) -> integer {
+  assert(got == want, "rendered '{got}', expected '{want}'");
+  if got == want { 1 } else { 0 }
+}
+
+fn formats(n: integer) -> integer {
+  f = 3.14159;
+  s = 2.5 as single;
+  t = "ab";
+  missing: integer? = null;
+  c = 0;
+  c += check("{n:06x}", "00002a");
+  c += check("{n:+>5}", "  +42");
+  c += check("{n:#x}", "0x2a");
+  c += check("{n:b}", "101010");
+  c += check("{n:<4}|", "42  |");
+  c += check("{n:^6}|", "  42  |");
+  c += check("{missing:4}|", "null|");
+  c += check("{f:.2}", "3.14");
+  c += check("{f:+8.1}", "    +3.1");
+  c += check("{f:<7.3}|", "3.142  |");
+  c += check("{s:.3}", "2.500");
+  c += check("{t:>5}", "   ab");
+  c += check("{t:*<6}", "ab****");
+  c += check("{t:^6}|", "  ab  |");
+  c
+}
+
+fn main() {
+  println("{formats(42)}");
+}

@@ -251,6 +251,7 @@ fn operator_op(name: text) -> Op? {
     "OpConvCharacterFromInt" => Op { code: ToChar, kind: KInt, a: 0, b: 0 },
     "OpConvFloatFromSingle" => Op { code: Nop, kind: KFloat, a: 0, b: 0 },
     "OpConvSingleFromFloat" => Op { code: Round, kind: KSingle, a: 0, b: 0 },
+    "OpCastSingleFromFloat" => Op { code: Round, kind: KSingle, a: 0, b: 0 },
     "OpConvIntFromCharacter" => Op { code: FromChar, kind: KInt, a: 0, b: 0 },
     "OpCastTextFromBool" => Op { code: TextFromBool, kind: KText, a: 0, b: 0 },
     "OpPrint" => Op { code: Print, kind: KText, a: 0, b: 0 },
@@ -272,32 +273,27 @@ fn writer_code(name: text) -> Code? {
   }
 }
 
-// The constant an operand node is, as the parser writes the format operators' operands: an
-// integer, or a boolean as 1 / 0; null for anything computed.
-fn constant(n: ir::Node) -> integer? {
-  match n {
-    NdInt { n: v } => v,
-    NdBoolean { b: v } => if v { 1 } else { 0 },
-    NdSpan { inner } => constant(inner[0]?),
-    _ => null,
-  }
+// How many operands a format operator takes after the value, by the kind code the `Format` op
+// carries in `b` (0 int, 1 float, 2 single, 3 text): `OpFormatInt`'s radix, width, token,
+// plus, note and dir; `OpFormatFloat`'s and `OpFormatSingle`'s width, precision, token, plus
+// and dir; `OpFormatText`'s width, dir and token.  The run loop hands them, in this order, to
+// the C runtime's routine for that kind (`crt`), so every spec renders as a C program's does.
+fn format_operands(code: integer) -> integer {
+  if code == 0 { 6 } else if code == 3 { 3 } else { 5 }
 }
 
-// The format operators, with the operands after the value that a plain `"{v}"` gives them:
-// a format with exactly those is what loft's own interpolation of a value of that kind
-// compiles to, so the run loop appends `"{v}"` and runs the same operator.  Any other spec
-// waits for the stdlib wrappers that reach the operator itself (S2.2, owner: option 1).
-fn format_defaults(name: text) -> vector<integer> {
+// Is `name` one of the format operators the `Format` op carries?
+fn is_format(name: text) -> boolean {
   match name {
-    "OpFormatInt" => [10, 0, 32, 0, 0, 2],
-    "OpFormatStackInt" => [10, 0, 32, 0, 0, 2],
-    "OpFormatFloat" => [0, -1, 32, 0, 2],
-    "OpFormatStackFloat" => [0, -1, 32, 0, 2],
-    "OpFormatSingle" => [0, -1, 32, 0, 2],
-    "OpFormatStackSingle" => [0, -1, 32, 0, 2],
-    "OpFormatText" => [0, 2, 32],
-    "OpFormatStackText" => [0, 2, 32],
-    _ => [],
+    "OpFormatInt" => true,
+    "OpFormatStackInt" => true,
+    "OpFormatFloat" => true,
+    "OpFormatStackFloat" => true,
+    "OpFormatSingle" => true,
+    "OpFormatStackSingle" => true,
+    "OpFormatText" => true,
+    "OpFormatStackText" => true,
+    _ => false,
   }
 }
 
@@ -342,7 +338,7 @@ fn effect(code: Code, b: integer) -> integer {
     RefOf => 1,
     Round => 0,
     Nop => 0,
-    Format => -1,
+    Format => -1 - format_operands(b),
     FromChar => 0,
     Neg => 0,
     LenText => 0,
@@ -527,9 +523,9 @@ fn call(l: Lowering, b: ir::Bundle, def_nr: integer, args: vector<ir::Node>) {
     emit(l, writer, dest_kind, dest, 0);
     return;
   }
-  // A format operator: carried where its spec is the plain `"{v}"` one (`format_defaults`).
-  defaults = format_defaults(d.name);
-  if len(defaults) > 0 {
+  // A format operator: the value, then its operands as ordinary values (a boolean as 1 or 0),
+  // then one `Format` op whose kind is the destination's and whose `b` is the value's kind.
+  if is_format(d.name) {
     first = args[0] ?? panic("a format operator names its destination");
     dest = 0;
     dest_kind = Kind.KText;
@@ -540,17 +536,16 @@ fn call(l: Lowering, b: ir::Bundle, def_nr: integer, args: vector<ir::Node>) {
       }
       _ => refuse(l, "a format operator on a destination that is not a variable"),
     }
-    for i in 0..len(defaults) {
-      if constant(args[i + 2] ?? NdNull) != defaults[i] {
-        refuse(l, "a format spec the interpreter does not carry yet: {d.name}");
-        return;
-      }
-    }
     k = format_kind(d.name);
-    value(l, b, args[1]?, k);
-    // The op's kind is the destination's (`KText` or `KTextRef`); `b` carries the value's.
-    emit(l, Format, dest_kind, dest, 0);
-    l.ops[len(l.ops) - 1].b = if k == KFloat { 1 } else if k == KSingle { 2 } else if k == KText { 3 } else { 0 };
+    code = if k == KFloat { 1 } else if k == KSingle { 2 } else if k == KText { 3 } else { 0 };
+    if len(args) != 2 + format_operands(code) {
+      refuse(l, "{d.name} with {len(args)} arguments");
+      return;
+    }
+    for i in 1..len(args) {
+      value(l, b, args[i]?, kinds[i] ?? KOther);
+    }
+    emit(l, Format, dest_kind, dest, code);
     return;
   }
   // `OpCreateStack(v)`: a reference to text variable `v`, to hand to a `&text` parameter.

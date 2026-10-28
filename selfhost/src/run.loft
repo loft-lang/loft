@@ -9,6 +9,7 @@
 // `refused`, by name, never as a guessed value.
 use ir;
 use lower;
+use crt;
 
 // The entry's result — a loft integer, so null when the program answers null — or the first
 // thing the interpreter does not carry.
@@ -326,27 +327,40 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
           sp_text += 1;
         }
       }
-      // A format with the plain spec: the value appended as loft's own `"{v}"` renders it,
-      // which compiles to the same format operator with the same operands (`lower.loft`).
+      // A format: the C runtime's routine for the value's kind renders it with the operands
+      // the IR gives the format operator (`crt`), so every spec is rendered as a C program
+      // renders it.  The operands are on the int stack, the last on top; an integer value sits
+      // under them there, a float or text value on its own stack.
       Format => {
         at = if op.kind == KTextRef { ints[base_int + op.a] ?? panic("a bound reference") } else { base_text + op.a };
         piece = "";
-        if op.b == 1 {
-          sp_float -= 1;
-          v = floats[sp_float];
-          piece = "{v}";
-        } else if op.b == 2 {
-          sp_float -= 1;
-          v = floats[sp_float] as single?;
-          piece = "{v}";
+        if op.b == 0 {
+          sp_int -= 7;
+          piece = crt::format_int(
+            ints[sp_int],
+            ints[sp_int + 1] ?? 10,
+            ints[sp_int + 2] ?? 0,
+            ints[sp_int + 3] ?? 32,
+            ints[sp_int + 4] == 1,
+            ints[sp_int + 5] == 1,
+            ints[sp_int + 6] ?? 2
+          );
         } else if op.b == 3 {
+          sp_int -= 3;
           sp_text -= 1;
-          v = texts[sp_text];
-          piece = "{v}";
+          piece = crt::format_text(texts[sp_text], ints[sp_int] ?? 0, ints[sp_int + 1] ?? 2, ints[sp_int + 2] ?? 32);
         } else {
-          sp_int -= 1;
-          v = ints[sp_int];
-          piece = "{v}";
+          sp_int -= 5;
+          sp_float -= 1;
+          piece = crt::format_float(
+            floats[sp_float],
+            ints[sp_int] ?? 0,
+            ints[sp_int + 1] ?? -1,
+            ints[sp_int + 2] ?? 32,
+            ints[sp_int + 3] == 1,
+            ints[sp_int + 4] ?? 2,
+            op.b == 2
+          );
         }
         texts[at] = (texts[at] ?? "") + piece;
       }

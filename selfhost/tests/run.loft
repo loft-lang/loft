@@ -89,3 +89,8 @@ fn test_an_operator_s1_does_not_carry_is_refused_by_name() {
   o = run::run(b, d, [-3]);
   assert(o.refused == "an operator the interpreter does not carry: OpAbsInt", "refused: {o.refused}");
 }
+
+fn test_every_format_spec_renders_through_the_c_runtime() {
+  // 14 cells, each checked by hand inside the kernel (`kernels/format.loft`).
+  assert(ran("format", "n_formats", [42]) == 14, "formats(42)");
+}
