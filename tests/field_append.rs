@@ -109,8 +109,8 @@ const BARE: &[(&str, usize, usize, usize, usize)] = &[
     ("n_build", 0, 0, 0, 2), // an enum element built by a call: its full-size copy writes it all
     ("n_rd", 1, 0, 0, 0),    // the decoder's element, built in place by the destination twin
     ("n_rd__d", 1, 0, 0, 0), // … and inside the twin itself
-    ("n_b4", 1, 0, 0, 0),    // 30 appends through two growth steps
-    ("n_b5", 3, 0, 3, 0),    // the literal's three; `Nd { kids: [...] }` is a variant's field
+    ("n_b4", 0, 0, 0, 1),    // 30 appends through two growth steps, each a full-size copy
+    ("n_b5", 0, 0, 3, 3),    // the literal's three, minted apart and copied in at full size
     ("n_b7", 0, 0, 1, 0),    // a `sorted` collection is no plain vector: the template stands
 ];
 
