@@ -1472,7 +1472,18 @@ the lock flag taken only where the block writes through the view.  An enum, byte
 so the two reads cannot disagree; a value record copied into an inline sub-record of the view
 is written at the address plus the sub-record's offset, and counts as a use of it; the
 last-use clause is what binds a minted element, whose field writes precede the finish (`enum_match` −11 % under both compilers, `mesh_emit` −33 %
-under Clang); trace `LOFT_TRACE_RECPTR=1` there too.  Sites: `hoist::record_view_ptr`,
+under Clang); trace `LOFT_TRACE_RECPTR=1` there too.  The C's APART-CALL clause
+(`apart_calls`, applied to the remainder before the verdict): a call to a loft function whose
+every store-naming argument is proven apart from the view's store (`StoreFacts::distinct`) —
+the view itself not among them, a scalar field read of any record passing a number — is
+judged by its arguments alone, since a callee reaches only the stores its arguments name; a
+release (`OpFreeRef`, `OpFreeRefIfDistinct`) of a store apart from the view's is dropped the
+same way.  A view read while a helper appends to another collection keeps its address (bench
+20's `op` beside `put(stack, sp, op.a)`: −5.5 % cycles under Clang).  A helper that grows the
+view's own container disturbs it (`@FR-B-Disturb`, the view is a copy); one that grows a
+SIBLING vector in the same store is not apart and declines.  Switch `LOFT_NO_APART_CALL=1`;
+guard `loft-suite/rules/rewrites/R-RecPtr/a-view-keeps-its-address-across-a-helper-that-grows-another-store.loft`
+(its sibling cell differs when every argument is taken as apart).  Sites: `hoist::record_view_ptr`,
 `Output::bind_record_ptr`, `Output::rec_ptr_read` (the twin input),
 `ops::vector_ops::emit_hoisted_scalar_or_default` and `FusedElementWriteEmitter`
 (the read and the write), `Output::output_record_tuple` and

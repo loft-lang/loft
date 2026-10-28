@@ -377,6 +377,80 @@ fn borrowed_texts(cx: &Cx, d: u32) -> Vec<bool> {
 }
 
 /// Is `x` a text the view form of a borrowed bind writes with no temporary (`borrowed_texts`)?
+/// `@FR-R-RecPtr`'s apart-call clause (C): the statements after a view's binding at `at`, each
+/// call to a loft function that cannot reach the view's store replaced by its arguments — a
+/// callee reaches only the stores its arguments name, so where every store-naming variable
+/// those mention is proven apart from `r`'s (`StoreFacts::distinct`) and `r` is not one of
+/// them, nothing the call runs grows or frees `r`'s store, and the arguments stay to be judged
+/// themselves.  A scalar field read in an argument passes a number, not its record's store.  A
+/// release (`OpFreeRef`, `OpFreeRefIfDistinct`) of a store apart from `r`'s is dropped the same
+/// way: it frees nothing `r` names.  A helper appending to another collection
+/// (`put(stack, sp, op.a)`) then no longer costs the loop's record views their address.
+/// `LOFT_NO_APART_CALL=1` keeps every call.
+fn apart_calls(
+    data: &crate::data::Data,
+    facts: Option<&crate::opt::push_window::StoreFacts>,
+    r: u16,
+    ops: &[Value],
+    at: usize,
+) -> Vec<Value> {
+    let Some(facts) = facts
+        .filter(|_| !crate::env_once!(std::env::var("LOFT_NO_APART_CALL").is_ok_and(|v| v != "0")))
+    else {
+        return ops.to_vec();
+    };
+    let vars = facts.vars;
+    let names_store = |v: u16| {
+        (v as usize) < vars.var_count()
+            && (crate::data::is_dbref(vars.tp(v).base())
+                || matches!(vars.tp(v).base(), crate::data::Type::RefVar(_)))
+    };
+    // Every store-naming variable a mentions is proven apart from `r`'s store; a scalar field
+    // read of any record — `op.a` handed to a helper — passes a number, not its store.
+    fn mentions_apart(x: &Value, data: &crate::data::Data, ok: &dyn Fn(u16) -> bool) -> bool {
+        match x.unspan() {
+            Value::Var(v) => ok(*v),
+            Value::Call(g, a)
+                if (*g as usize) < data.definitions.len()
+                    && crate::opt::loop_records::SCALAR_GETTERS.contains(&data.def(*g).name())
+                    && matches!(a.first().map(Value::unspan), Some(Value::Var(_))) =>
+            {
+                a[1..].iter().all(|y| mentions_apart(y, data, ok))
+            }
+            other => {
+                let mut all = true;
+                other.for_each_child(&mut |c| all &= mentions_apart(c, data, ok));
+                all
+            }
+        }
+    }
+    let var_apart = |v: u16| v != r && (!names_store(v) || facts.distinct(r, v));
+    let apart = |args: &[Value]| args.iter().all(|a| mentions_apart(a, data, &var_apart));
+    ops.iter()
+        .enumerate()
+        .map(|(i, op)| {
+            let mut o = op.clone();
+            if i > at {
+                o.map_nodes(&mut |n| {
+                    if let Value::Call(g, args) = n
+                        && (*g as usize) < data.definitions.len()
+                        && apart(args)
+                    {
+                        let def = data.def(*g);
+                        if *def.code() != Value::Null && !def.name().starts_with("Op") {
+                            *n = Value::Insert(std::mem::take(args));
+                        } else if matches!(def.name(), "OpFreeRef" | "OpFreeRefIfDistinct") {
+                            // A release in a store apart from `r`'s frees nothing `r` names.
+                            *n = Value::Null;
+                        }
+                    }
+                });
+            }
+            o
+        })
+        .collect()
+}
+
 /// Per variable of `d`: whether it is a value-record parameter passed by pointer
 /// (`Cx::vr_ptr_params`).
 fn vr_ptr_flags(cx: &Cx, d: u32) -> Vec<bool> {
@@ -1919,8 +1993,9 @@ impl<'a> FnWriter<'a> {
         let mut cache = std::mem::take(&mut self.hoist_cache);
         let verdict = {
             let facts = self.store_facts();
+            let remainder = apart_calls(data, facts.as_ref(), r, &ops[..=last], at);
             crate::opt::hoist::record_view_ptr(
-                &ops[..=last],
+                &remainder,
                 at,
                 self.cx.data,
                 self.cx.stores,
