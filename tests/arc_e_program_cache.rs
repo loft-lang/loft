@@ -1058,10 +1058,6 @@ fn every_binary_of_one_build_shares_one_stdlib_image() {
 /// Make `dir` and everything under it read-only (`writable == false`) or writable again.  On
 /// Unix that removes (adds) the write bits; a Windows directory ignores the flag, which
 /// `permissions_bind` reports, and the cells are skipped there as they are under root.
-#[expect(
-    clippy::permissions_set_readonly_false,
-    reason = "a scratch directory made writable again so the test can remove it"
-)]
 fn set_writable(dir: &std::path::Path, writable: bool) {
     let mut stack = vec![dir.to_path_buf()];
     while let Some(p) = stack.pop() {
