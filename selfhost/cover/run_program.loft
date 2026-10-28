@@ -23,7 +23,7 @@ fn main() {
   }
   o = run::run(b, entry, []);
   if o.refused != "" {
-    eprintln("refused: {o.refused}");
+    eprintln("refused: {o.refused} — in {o.refused_in}");
     exit(3);
   }
 }

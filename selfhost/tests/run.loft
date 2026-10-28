@@ -85,5 +85,5 @@ fn test_an_operator_s1_does_not_carry_is_refused_by_name() {
   b = kernel("stdlib");
   d = lower::find(b, "n_uses_abs");
   o = run::run(b, d, [-3]);
-  assert(o.refused == "an operator S1 does not carry: OpAbsInt", "refused: {o.refused}");
+  assert(o.refused == "an operator the interpreter does not carry: OpAbsInt", "refused: {o.refused}");
 }

@@ -55,7 +55,7 @@ def one(path, loft, runner, tmp, env, root):
     ecode, eout, _ = run([loft, "--interpret"] + libs + [path], env, 300)
     acode, aout, aerr = run([runner, img], env, 300)
     if acode == 3 and "refused: " in aerr:
-        reason = aerr.split("refused: ", 1)[1].strip().splitlines()[0]
+        reason = aerr.split("refused: ", 1)[1].strip().splitlines()[0].split(" — in ")[0]
         return path, "refused", re.sub(r"\b\d+\b", "N", reason)[:160]
     if acode == ecode and aout == eout:
         return path, "pass", ""

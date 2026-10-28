@@ -2,23 +2,25 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// The run loop (@PLN91 S1.2): the ops `lower.loft` makes, executed by one loop over two
-// explicit stacks, so a deep recursion in the program is never a deep recursion here.  An
-// operator is loft's own operator, so its overflow and null are the language's.  What S1 does
-// not carry is answered as `refused`, by name, never as a guessed value.
+// The run loop (@PLN91 S1.2, S2.2): the ops `lower.loft` makes, executed by one loop over
+// explicit stacks — one per kind of value, as `lower.loft` sorts them — so a deep recursion in
+// the program is never a deep recursion here.  An operator is loft's own operator, so its
+// overflow and null are the language's.  What the interpreter does not carry is answered as
+// `refused`, by name, never as a guessed value.
 use ir;
 use lower;
 
 // The entry's result — a loft integer, so null when the program answers null — or the first
-// thing S1 does not carry.
+// thing the interpreter does not carry.
 pub struct Outcome {
   pub value: integer?,
   pub refused: text,
+  pub refused_in: text,
 }
 
-// `v` pushed at `sp`: overwritten below the length, appended at it.  The program's values are
-// loft integers, null included, so the stack holds `integer?`.
-fn put(stack: vector<integer?>, sp: integer, v: integer?) {
+// A value pushed at `sp` on its kind's stack: overwritten below the length, appended at it.
+// The program's values are loft values of their kind, null included.
+fn put_int(stack: vector<integer?>, sp: integer, v: integer?) {
   if sp < len(stack) {
     stack[sp] = v;
   } else {
@@ -26,63 +28,132 @@ fn put(stack: vector<integer?>, sp: integer, v: integer?) {
   }
 }
 
-// Definition `entry` called with `args`.
+fn put_float(stack: vector<float?>, sp: integer, v: float?) {
+  if sp < len(stack) {
+    stack[sp] = v;
+  } else {
+    stack += [v];
+  }
+}
+
+fn put_text(stack: vector<text?>, sp: integer, v: text?) {
+  if sp < len(stack) {
+    stack[sp] = v;
+  } else {
+    stack += [v];
+  }
+}
+
+// A boolean as the integer stack carries it: 1 or 0.
+fn bit(c: boolean) -> integer {
+  if c { 1 } else { 0 }
+}
+
+// Definition `entry` called with the integer `args`.
 pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
   progs: vector<lower::Lowering> = [];
   lowered: vector<boolean> = [];
   for _ in 0..len(b.data.definitions) {
-    progs += [lower::Lowering {
-      ops: [],
-      refused: "",
-      slots: 0,
-      params: 0,
-      depth: 0,
-      loop_start: [],
-      loop_depth: [],
-      brk_loop: [],
-      brk_at: [],
-    }];
+    progs += [lower::empty()];
     lowered += [false];
   }
   first = lower::lower(b, entry);
   if first.refused != "" {
-    return Outcome { value: 0, refused: first.refused };
+    return Outcome { value: 0, refused: first.refused, refused_in: first.refused_in };
   }
-  if first.params != len(args) {
-    return Outcome { value: 0, refused: "the entry takes {first.params} arguments, given {len(args)}" };
+  given = first.params_int + first.params_float + first.params_text;
+  if given != len(args) || first.params_int != len(args) {
+    return Outcome {
+      value: 0,
+      refused: "the entry takes {given} arguments, given {len(args)}",
+      refused_in: "",
+    };
   }
   progs[entry] = first;
   lowered[entry] = true;
-  stack: vector<integer?> = [];
-  sp = 0;
+  ints: vector<integer?> = [];
+  floats: vector<float?> = [];
+  texts: vector<text?> = [];
+  sp_int = 0;
+  sp_float = 0;
+  sp_text = 0;
   for a in args {
-    put(stack, sp, a);
-    sp += 1;
+    put_int(ints, sp_int, a);
+    sp_int += 1;
   }
-  for _ in len(args)..first.slots {
-    put(stack, sp, 0);
-    sp += 1;
+  for _ in len(args)..first.slots_int {
+    put_int(ints, sp_int, null);
+    sp_int += 1;
   }
+  for _ in 0..first.slots_float {
+    put_float(floats, sp_float, null);
+    sp_float += 1;
+  }
+  for _ in 0..first.slots_text {
+    put_text(texts, sp_text, null);
+    sp_text += 1;
+  }
+  // The saved frames: the caller's definition, its next op, and its three bases.
   f_def: vector<integer> = [];
   f_pc: vector<integer> = [];
-  f_base: vector<integer> = [];
+  f_int: vector<integer> = [];
+  f_float: vector<integer> = [];
+  f_text: vector<integer> = [];
   fp = 0;
   def = entry;
   pc = 0;
-  base = 0;
-  ops = progs[entry].ops;
+  base_int = 0;
+  base_float = 0;
+  base_text = 0;
+  prog = progs[entry] ?? panic("lowered above");
   while true {
-    op = ops[pc] ?? panic("the lowering ends every path in `Ret`, so `pc` stays inside the ops");
+    op = prog.ops[pc] ?? panic("the lowering ends every path in `Ret`, so `pc` stays inside the ops");
     pc += 1;
     match op.code {
-      PushInt => { put(stack, sp, op.a); sp += 1; }
-      Load => { put(stack, sp, stack[base + op.a]); sp += 1; }
-      Store => { sp -= 1; stack[base + op.a] = stack[sp]; }
-      Pop => { sp -= 1; }
+      PushInt => { put_int(ints, sp_int, op.a); sp_int += 1; }
+      PushFloat => { put_float(floats, sp_float, prog.floats[op.a]); sp_float += 1; }
+      PushText => { put_text(texts, sp_text, prog.texts[op.a]); sp_text += 1; }
+      PushNull => {
+        match op.kind {
+          KFloat => { put_float(floats, sp_float, null); sp_float += 1; }
+          KText => { put_text(texts, sp_text, null); sp_text += 1; }
+          _ => { put_int(ints, sp_int, null); sp_int += 1; }
+        }
+      }
+      Load => {
+        match op.kind {
+          KFloat => { put_float(floats, sp_float, floats[base_float + op.a]); sp_float += 1; }
+          KText => { put_text(texts, sp_text, texts[base_text + op.a]); sp_text += 1; }
+          // A `&text` reads the text whose index its slot holds.
+          KTextRef => {
+            put_text(texts, sp_text, texts[ints[base_int + op.a] ?? panic("a bound reference")]);
+            sp_text += 1;
+          }
+          _ => { put_int(ints, sp_int, ints[base_int + op.a]); sp_int += 1; }
+        }
+      }
+      Store => {
+        match op.kind {
+          KFloat => { sp_float -= 1; floats[base_float + op.a] = floats[sp_float]; }
+          KText => { sp_text -= 1; texts[base_text + op.a] = texts[sp_text]; }
+          KTextRef => {
+            sp_text -= 1;
+            texts[ints[base_int + op.a] ?? panic("a bound reference")] = texts[sp_text];
+          }
+          _ => { sp_int -= 1; ints[base_int + op.a] = ints[sp_int]; }
+        }
+      }
+      Pop => {
+        match op.kind {
+          KFloat => { sp_float -= 1; }
+          KText => { sp_text -= 1; }
+          _ => { sp_int -= 1; }
+        }
+      }
       Jump => { pc = op.a; }
       JumpIfFalse => {
-        sp -= 1;
-        if stack[sp] == 0 {
+        sp_int -= 1;
+        if ints[sp_int] != 1 {
           pc = op.a;
         }
       }
@@ -94,74 +165,253 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         }
         callee_prog = progs[callee] ?? panic("lowered above");
         if callee_prog.refused != "" {
-          return Outcome { value: 0, refused: callee_prog.refused };
+          return Outcome { value: 0, refused: callee_prog.refused, refused_in: callee_prog.refused_in };
         }
         if fp < len(f_def) {
           f_def[fp] = def;
           f_pc[fp] = pc;
-          f_base[fp] = base;
+          f_int[fp] = base_int;
+          f_float[fp] = base_float;
+          f_text[fp] = base_text;
         } else {
           f_def += [def];
           f_pc += [pc];
-          f_base += [base];
+          f_int += [base_int];
+          f_float += [base_float];
+          f_text += [base_text];
         }
         fp += 1;
         def = callee;
         pc = 0;
-        base = sp - op.b;
-        for _ in op.b..callee_prog.slots {
-          put(stack, sp, 0);
-          sp += 1;
+        // The arguments are the top values of their kinds' stacks: each part of the frame
+        // starts where they do, and the rest of its slots start null.
+        base_int = sp_int - callee_prog.params_int;
+        base_float = sp_float - callee_prog.params_float;
+        base_text = sp_text - callee_prog.params_text;
+        for _ in callee_prog.params_int..callee_prog.slots_int {
+          put_int(ints, sp_int, null);
+          sp_int += 1;
         }
-        ops = callee_prog.ops;
+        for _ in callee_prog.params_float..callee_prog.slots_float {
+          put_float(floats, sp_float, null);
+          sp_float += 1;
+        }
+        for _ in callee_prog.params_text..callee_prog.slots_text {
+          put_text(texts, sp_text, null);
+          sp_text += 1;
+        }
+        prog = callee_prog;
       }
       Ret => {
-        sp -= 1;
-        v = stack[sp];
-        if fp == 0 {
-          return Outcome { value: v, refused: "" };
+        // The value is taken from its kind's stack before the frame goes.
+        vi: integer? = null;
+        vf: float? = null;
+        vt: text? = null;
+        match op.kind {
+          KFloat => { sp_float -= 1; vf = floats[sp_float]; }
+          KText => { sp_text -= 1; vt = texts[sp_text]; }
+          _ => { sp_int -= 1; vi = ints[sp_int]; }
         }
-        sp = base;
+        if fp == 0 {
+          return Outcome { value: vi, refused: "", refused_in: "" };
+        }
+        sp_int = base_int;
+        sp_float = base_float;
+        sp_text = base_text;
         fp -= 1;
         // Every frame below the top was saved by the call that entered the one above it.
         def = f_def[fp] ?? panic("a saved frame");
         pc = f_pc[fp] ?? panic("a saved frame");
-        base = f_base[fp] ?? panic("a saved frame");
-        ops = progs[def].ops;
-        put(stack, sp, v);
-        sp += 1;
+        base_int = f_int[fp] ?? panic("a saved frame");
+        base_float = f_float[fp] ?? panic("a saved frame");
+        base_text = f_text[fp] ?? panic("a saved frame");
+        prog = progs[def] ?? panic("a lowered caller");
+        match op.kind {
+          KFloat => { put_float(floats, sp_float, vf); sp_float += 1; }
+          KText => { put_text(texts, sp_text, vt); sp_text += 1; }
+          _ => { put_int(ints, sp_int, vi); sp_int += 1; }
+        }
       }
-      PushNull => { put(stack, sp, null); sp += 1; }
-      // `OpNot` is `v != 1` and `OpConvBoolFromInt` is `v != null`, as the stdlib writes them;
-      // a boolean is 1 or 0 on this stack.
-      Not => { stack[sp - 1] = if stack[sp - 1] == 1 { 0 } else { 1 }; }
-      NonNull => { stack[sp - 1] = if stack[sp - 1] != null { 1 } else { 0 }; }
+      // `OpNot` is `v != 1` as the stdlib writes it, a boolean being 1 or 0 on this stack.
+      Not => { ints[sp_int - 1] = if ints[sp_int - 1] == 1 { 0 } else { 1 }; }
+      // A value's truth, as loft's own `if v` tests it: `OpConvBoolFromInt` and its siblings.
+      NonNull => {
+        match op.kind {
+          KFloat => {
+            sp_float -= 1;
+            f = floats[sp_float];
+            put_int(ints, sp_int, bit(if f { true } else { false }));
+            sp_int += 1;
+          }
+          KText => {
+            sp_text -= 1;
+            t = texts[sp_text];
+            put_int(ints, sp_int, bit(if t { true } else { false }));
+            sp_int += 1;
+          }
+          _ => {
+            v = ints[sp_int - 1];
+            if op.a == 1 {
+              // A character is its code point here, and its null is '\0' (code 0).
+              ints[sp_int - 1] = bit(v != null && v != 0);
+            } else {
+              ints[sp_int - 1] = bit(v != null);
+            }
+          }
+        }
+      }
+      ToFloat => {
+        sp_int -= 1;
+        i = ints[sp_int];
+        f = if op.kind == KSingle { (i as single?) as float? } else { i as float? };
+        put_float(floats, sp_float, f);
+        sp_float += 1;
+      }
+      ToInt => {
+        sp_float -= 1;
+        f = floats[sp_float];
+        i = if op.kind == KSingle { (f as single?) as integer? } else { f as integer? };
+        put_int(ints, sp_int, i);
+        sp_int += 1;
+      }
+      // `OpConvCharacterFromInt`: null and a code point that is no character become '\0'.
+      ToChar => {
+        v = ints[sp_int - 1];
+        ints[sp_int - 1] = if v == null { 0 } else { ((v as character?) as integer?) ?? 0 };
+      }
+      TextFromBool => {
+        sp_int -= 1;
+        v = ints[sp_int];
+        t = if v == null { null } else { (v == 1) as text };
+        put_text(texts, sp_text, t);
+        sp_text += 1;
+      }
+      // A text-writing op's destination: a text slot of this frame, or through a `&text`.
+      Append => {
+        at = if op.kind == KTextRef { ints[base_int + op.a] ?? panic("a bound reference") } else { base_text + op.a };
+        sp_text -= 1;
+        texts[at] = (texts[at] ?? "") + (texts[sp_text] ?? "");
+      }
+      AppendChar => {
+        at = if op.kind == KTextRef { ints[base_int + op.a] ?? panic("a bound reference") } else { base_text + op.a };
+        sp_int -= 1;
+        c = ints[sp_int] as character?;
+        t = texts[at] ?? "";
+        if c != null {
+          t += c;
+        }
+        texts[at] = t;
+      }
+      Clear => {
+        at = if op.kind == KTextRef { ints[base_int + op.a] ?? panic("a bound reference") } else { base_text + op.a };
+        texts[at] = "";
+      }
+      // A format with the plain spec: the value appended as loft's own `"{v}"` renders it,
+      // which compiles to the same format operator with the same operands (`lower.loft`).
+      Format => {
+        at = if op.kind == KTextRef { ints[base_int + op.a] ?? panic("a bound reference") } else { base_text + op.a };
+        piece = "";
+        if op.b == 1 {
+          sp_float -= 1;
+          v = floats[sp_float];
+          piece = "{v}";
+        } else if op.b == 2 {
+          sp_float -= 1;
+          v = floats[sp_float] as single?;
+          piece = "{v}";
+        } else if op.b == 3 {
+          sp_text -= 1;
+          v = texts[sp_text];
+          piece = "{v}";
+        } else {
+          sp_int -= 1;
+          v = ints[sp_int];
+          piece = "{v}";
+        }
+        texts[at] = (texts[at] ?? "") + piece;
+      }
+      // A single is carried as a float: widening it is the value itself, narrowing a float
+      // rounds it as loft's own `as single` does.
+      Nop => {}
+      Round => { floats[sp_float - 1] = (floats[sp_float - 1] as single?) as float?; }
+      // A reference to a text slot of this frame: its absolute index on the text stack.
+      RefOf => { put_int(ints, sp_int, base_text + op.a); sp_int += 1; }
+      Print => {
+        sp_text -= 1;
+        print(texts[sp_text] ?? "");
+      }
       _ => {
-        sp -= 1;
-        y = stack[sp];
-        sp -= 1;
-        x = stack[sp];
-        r = match op.code {
-          Add => x + y,
-          Sub => x - y,
-          Mul => x * y,
-          Div => x / y,
-          Rem => x % y,
-          BitAnd => x & y,
-          BitOr => x | y,
-          BitXor => x ^ y,
-          Eq => if x == y { 1 } else { 0 },
-          Ne => if x != y { 1 } else { 0 },
-          Lt => if x < y { 1 } else { 0 },
-          Le => if x <= y { 1 } else { 0 },
-          Gt => if x > y { 1 } else { 0 },
-          Ge => if x >= y { 1 } else { 0 },
-          _ => 0,
-        };
-        put(stack, sp, r);
-        sp += 1;
+        match op.kind {
+          KFloat => {
+            sp_float -= 1;
+            y = floats[sp_float];
+            sp_float -= 1;
+            x = floats[sp_float];
+            if op.code == Add || op.code == Sub || op.code == Mul || op.code == Div || op.code == Rem {
+              r = match op.code { Add => x + y, Sub => x - y, Mul => x * y, Div => x / y, _ => x % y };
+              put_float(floats, sp_float, r);
+              sp_float += 1;
+            } else {
+              put_int(ints, sp_int, bit(match op.code {
+                Eq => x == y, Ne => x != y, Lt => x < y, Le => x <= y, Gt => x > y, _ => x >= y
+              }));
+              sp_int += 1;
+            }
+          }
+          KSingle => {
+            sp_float -= 1;
+            y = floats[sp_float] as single?;
+            sp_float -= 1;
+            x = floats[sp_float] as single?;
+            if op.code == Add || op.code == Sub || op.code == Mul || op.code == Div || op.code == Rem {
+              r = match op.code { Add => x + y, Sub => x - y, Mul => x * y, Div => x / y, _ => x % y };
+              put_float(floats, sp_float, r as float?);
+              sp_float += 1;
+            } else {
+              put_int(ints, sp_int, bit(match op.code {
+                Eq => x == y, Ne => x != y, Lt => x < y, Le => x <= y, Gt => x > y, _ => x >= y
+              }));
+              sp_int += 1;
+            }
+          }
+          KText => {
+            sp_text -= 1;
+            y = texts[sp_text];
+            sp_text -= 1;
+            x = texts[sp_text];
+            put_int(ints, sp_int, bit(match op.code {
+              Eq => x == y, Ne => x != y, Lt => x < y, Le => x <= y, Gt => x > y, _ => x >= y
+            }));
+            sp_int += 1;
+          }
+          _ => {
+            sp_int -= 1;
+            y = ints[sp_int];
+            sp_int -= 1;
+            x = ints[sp_int];
+            r = match op.code {
+              Add => x + y,
+              Sub => x - y,
+              Mul => x * y,
+              Div => x / y,
+              Rem => x % y,
+              BitAnd => x & y,
+              BitOr => x | y,
+              BitXor => x ^ y,
+              Eq => bit(x == y),
+              Ne => bit(x != y),
+              Lt => bit(x < y),
+              Le => bit(x <= y),
+              Gt => bit(x > y),
+              Ge => bit(x >= y),
+              _ => 0,
+            };
+            put_int(ints, sp_int, r);
+            sp_int += 1;
+          }
+        }
       }
     }
   }
-  Outcome { value: 0, refused: "the program ran off its last op" }
+  Outcome { value: 0, refused: "the program ran off its last op", refused_in: "" }
 }

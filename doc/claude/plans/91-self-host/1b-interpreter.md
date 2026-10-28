@@ -347,6 +347,26 @@ Two compiler changes make the wrappers possible:
 character, a float sum and comparison, a call returning a text and one taking a float, a
 null text and a null float propagating; the census before and after; the S1 tests unchanged.
 
+**Design → code (first part, 2026-10-28).**
+- Built: the stacks per kind; float, single and text operators as loft's own; the text
+  writers on a slot or through a reference; and **`&text`** (`KTextRef`), which the design had
+  not foreseen: a function that answers a text gets a hidden `&text` return buffer from the
+  scope pass, and its caller hands it a stack reference (`OpCreateStack(__work_c1)`).  A
+  `&text` variable holds the absolute index of the text it refers to, on the integer stack;
+  reading it reads that text, storing and the stack forms of the writers write through it.
+  Hidden parameters count as parameters, since the caller's arguments hold them.
+- **A format with the plain `"{v}"` spec runs now**: the lowering checks its operands are the
+  ones the parser gives a plain hole (`OpFormatInt(w, v, 10, 0, 32, false, false, 2)`,
+  `OpFormatFloat`/`Single(w, v, 0, -1, 32, false, 2)`, `OpFormatText(w, v, 0, 2, 32)`) and the
+  run loop appends `"{v}"`, which compiles to that operator with those operands.  Any other
+  spec waits for the wrappers.
+- A refusal now names its function, and an uncarried variable its type.
+- The probe program (a text-returning call, `+=` of a text and a character, float and single
+  arithmetic, a null text, a formatted boolean) prints what `--interpret` prints.  The gate
+  chapters, first blockers: records (`TyReference`) 27, `n_assert` 7, `TyOptional` 3,
+  `TyEnum` 2, `TyVector` 2, format specs 3 — records are S3's, `n_assert` is the first
+  native.
+
 ### SU1 — `store_load` maps the image instead of copying it — DESIGNED 2026-10-28
 
 **Why now (owner, 2026-10-28):** the store's file format IS its memory format, so a store
