@@ -48,6 +48,13 @@ analysis of how the Rust interpreter makes its start-up fast (the compiled stdli
 program cache) is recorded when it is done, and a start-up step is planned only after
 coverage.
 
+**No dependency on the rustc side (owner, 2026-10-28).**  loft is to lose its rustc
+dependency eventually, so the interpreter may depend on the C runtime's implementation — the
+operators and natives as the C backend compiles them — but never on loft's Rust code: no
+`#rust` native added for its sake, no routine that exists only in the Rust interpreter.  Its
+reference semantics are then the C runtime's; where they differ from `--interpret`, the C
+backend's own sweep (`scripts/c_sweep.py`) is what reports it.
+
 ## The dogfood rule (governs every step)
 
 This project exists to find out what loft is like for its hardest consumer, a language
@@ -318,8 +325,15 @@ after.
 the file is read into a buffer (`image_bytes`), copied again into the store's word-aligned
 allocation, and its recorded-words header cleared.  Two copies of the whole image per load.
 
-**The change.**  Where the build maps files (the `mmap` feature: not wasm), `Store::load`
-maps the image **copy-on-write** (`memmap::MmapOptions::map_copy`, private) instead:
+**Where it lands (owner, 2026-10-28: no rustc dependency).**  The interpreter ships through
+the C backend, whose runtime reads the image with an `fread` loop into a buffer it then adopts
+(`src/c/loft_image.h`, `store_load`).  So the mapping is built in the C runtime FIRST — POSIX
+`mmap(MAP_PRIVATE)`, a copy-on-write view on Windows — and the Rust runtime's
+`Store::load` follows only to keep `--interpret` level with it.
+
+**The change** (the same in both runtimes; the Rust names below): where the build maps files
+(the `mmap` feature: not wasm), `Store::load` maps the image **copy-on-write**
+(`memmap::MmapOptions::map_copy`, private) instead:
 - **The promise of `store_load` is kept as written**: "writes after it stay in memory" — a
   written page is the process's own copy, and the file never changes.  The header clear is
   such a write.
@@ -337,7 +351,8 @@ maps the image **copy-on-write** (`memmap::MmapOptions::map_copy`, private) inst
 - The memory ceiling counts the mapped size as today's copy does, so a limit run answers the
   same.
 
-**Code points:** `src/store.rs` (`Store::load`, a private-mapping backing beside `file`,
+**Code points:** `src/c/loft_image.h` (`store_load`: map instead of `fread`, the first growth
+copies), then `src/store.rs` (`Store::load`, a private-mapping backing beside `file`,
 `resize_store`, `Drop`), `src/database/allocation.rs::load_path` (unchanged in shape),
 `doc/claude/formal/structures.md` (S-Mapped), BOTH_BACKEND_SWITCHES.md.
 
