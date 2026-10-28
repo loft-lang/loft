@@ -90,6 +90,16 @@ impl E {
 }
 
 /// The expression kind that reads a held value of shape `c`.
+/// Is `n` a record copy into an inline sub-record of view `r` (`OpCopyRecord(_, OpGetField(r,
+/// off, Sub), _)`)?  A value-record copy writes it through `r`'s address (`vr_copy`), so it is
+/// a write through the address and a use of it.
+fn copy_into_sub(data: &crate::data::Data, n: &Value, r: u16) -> bool {
+    matches!(n, Value::Call(d, a) if (*d as usize) < data.definitions.len()
+        && data.def(*d).name() == "OpCopyRecord"
+        && a.len() == 3
+        && crate::opt::body_writes::sub_record(data, &a[1]).is_some_and(|(root, _, _)| root == r))
+}
+
 /// `LOFT_NO_FIELD_VIEW=1`: every text field operand is copied (`text_reads`).
 fn no_field_view() -> bool {
     crate::env_once!(std::env::var("LOFT_NO_FIELD_VIEW").is_ok_and(|v| v != "0"))
@@ -242,6 +252,10 @@ pub(crate) struct FnWriter<'a> {
     /// function writes completely, so the default image copied into a fresh element writes
     /// nothing that survives; computed on first use.
     complete_mints: Option<std::collections::HashSet<u16>>,
+    /// The record copies into a field of an element a literal group builds, by argument slice,
+    /// with the field's type (`CompleteWrites::fresh_fields`): their null arm writes the
+    /// field's default (`fresh_null_arm`); computed with `complete_mints`.
+    fresh_fields: std::collections::HashMap<usize, u16>,
     /// `@FR-R-FileHold` (`lower::file_hold::held_file`, native's gate): the files the enclosing
     /// loops read through a held cursor, each with its `loft_fcur` and the index in `loops` of
     /// the loop that holds it.
@@ -447,6 +461,7 @@ impl<'a> FnWriter<'a> {
                 crate::opt::char_walk::char_walks(cx.data, d)
             },
             complete_mints: None,
+            fresh_fields: std::collections::HashMap::new(),
             decls: Vec::new(),
             frees_old_tuple: false,
             // A parameter arrives bound: its first `Set` is a rebind.
@@ -1260,24 +1275,43 @@ impl<'a> FnWriter<'a> {
 
     /// `@FR-R-CompleteWrite` — does every mint of element type `tp` in this function write it
     /// completely?  Then the default image a fresh element is filled with writes nothing that
-    /// survives, and the copy is left out, as native calls `OpNewRecordNP`.  A function with a
-    /// record copy into a field of a fresh element keeps every fill: a null source leaves that
-    /// field what the fill wrote (loft#2044).
+    /// survives, and the copy is left out, as native calls `OpNewRecordNP`.  A record copy into
+    /// a field of such an element writes that field's default for a null source
+    /// (`fresh_null_arm`, loft#2044), so the group covers the field either way.
     fn mint_complete(&mut self, tp: u16) -> bool {
         if std::env::var("LOFT_NO_COMPLETE_WRITE").is_ok_and(|v| v != "0") {
             return false;
         }
-        if self.complete_mints.is_none() {
-            let c = crate::opt::ret_adopt::complete_writes(self.cx.data, self.cx.stores, self.d);
-            self.complete_mints = Some(if c.fresh_fields.is_empty() {
-                c.mint_tps
-            } else {
-                std::collections::HashSet::new()
-            });
-        }
+        self.complete_writes_once();
         self.complete_mints
             .as_ref()
             .is_some_and(|m| m.contains(&tp))
+    }
+
+    /// Is the copy with these arguments one into a field of an element being built?
+    fn is_fresh_field_copy(&mut self, args: &[Value]) -> bool {
+        self.complete_writes_once();
+        self.fresh_fields.contains_key(&(args.as_ptr() as usize))
+    }
+
+    fn complete_writes_once(&mut self) {
+        if self.complete_mints.is_none() {
+            let c = crate::opt::ret_adopt::complete_writes(self.cx.data, self.cx.stores, self.d);
+            self.fresh_fields = c.fresh_fields;
+            self.complete_mints = Some(c.mint_tps);
+        }
+    }
+
+    /// `@C137`'s fresh-field arm (loft#2044), as native's `OpCopyRecordEmitter::fresh_field`: a
+    /// record copy into a field of an element a literal group is building writes, for a null
+    /// source, the field type's default — what the prefill would have left there — so the
+    /// element needs no prefill.  The C statement for a null `src` into `dst`, or `None` for a
+    /// copy that is no such field's.
+    fn fresh_null_arm(&mut self, args: &[Value], dst: &str) -> Option<String> {
+        self.complete_writes_once();
+        let sub = *self.fresh_fields.get(&(args.as_ptr() as usize))?;
+        let (image, n) = self.cx.default_image(sub);
+        Some(format!("loft_fill({dst}, {image}, {n});"))
     }
 
     /// A push, or its pre-allocation, onto a path an enclosing loop holds a window on: the
@@ -1684,6 +1718,7 @@ impl<'a> FnWriter<'a> {
                     && a.len() >= 2
                     && { let nm = data.def(*d).name(); nm.starts_with("OpGet") || nm.starts_with("OpSet") }
                     && crate::opt::body_writes::view_field(data, &a[0], &a[1]).is_some_and(|(root, _)| root == r))
+                    || copy_into_sub(data, n, r)
             })
         };
         let Some(last) = ops.iter().rposition(field_use).filter(|&l| l > at) else {
@@ -1735,6 +1770,7 @@ impl<'a> FnWriter<'a> {
                     && matches!(data.def(*d).name(), "OpSetInt" | "OpSetFloat" | "OpSetSingle" | "OpSetEnum")
                     && a.len() == 3
                     && crate::opt::body_writes::view_field(data, &a[0], &a[1]).is_some_and(|(root, _)| root == r))
+                    || copy_into_sub(data, n, r)
             })
         });
         if writes {
@@ -5275,14 +5311,18 @@ impl<'a> FnWriter<'a> {
                     | (u8::from(self.cx.swap_safe(tp)) << 1)
                     | (u8::from(raw & crate::keys::COPY_FRESH_DEST != 0) << 2);
                 let (src, dst) = self.two(name, &[src, dst], ind)?;
-                Ok(E::new(
-                    format!(
-                        "loft_copy_record(loft_types, {tp}, {}, {}, {free})",
-                        as_ref(src)?,
-                        as_ref(dst)?
-                    ),
-                    K::Void,
-                ))
+                let (src, dst) = (as_ref(src)?, as_ref(dst)?);
+                let copy = format!("loft_copy_record(loft_types, {tp}, {src}, {dst}, {free})");
+                // A copy into a field of an element being built: its null arm is the default.
+                if self.is_fresh_field_copy(args) {
+                    let (s, d) = (self.temp(CType::Ref), self.temp(CType::Ref));
+                    let null_arm = self.fresh_null_arm(args, &d).ok_or("a fresh field without its type")?;
+                    self.line(ind, &format!("{s} = {src};"));
+                    self.line(ind, &format!("{d} = {dst};"));
+                    self.line(ind, &format!("if ({s}.store_nr == 0xFFFF) {{ {null_arm} }} else {{ loft_copy_record(loft_types, {tp}, {s}, {d}, {free}); }}"));
+                    return Ok(E::new("((void) 0)", K::Void));
+                }
+                Ok(E::new(copy, K::Void))
             }
             ("OpMoveRecord" | "OpMoveField", [src, dst, tp]) => {
                 self.move_op(name, src, dst, tp, ind)

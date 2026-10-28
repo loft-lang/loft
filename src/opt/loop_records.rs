@@ -122,6 +122,7 @@ pub(crate) fn group_covers_type(
     let mut written: HashSet<u16> = HashSet::new();
     // An inline record field written member by member: field position → member positions.
     let mut members: HashMap<u16, HashSet<u16>> = HashMap::new();
+    let mut stop: Option<&Value> = None;
     for stmt in ops.iter().skip(at) {
         match stmt.unspan() {
             Value::Line(_) => {}
@@ -175,9 +176,11 @@ pub(crate) fn group_covers_type(
                 let (Some(Value::Int(off)), Some(Value::Int(n))) =
                     (f.get(1).map(Value::unspan), args.get(2).map(Value::unspan))
                 else {
+                    stop = Some(stmt);
                     break;
                 };
                 let (Ok(off), Ok(n)) = (u16::try_from(*off), u16::try_from(*n)) else {
+                    stop = Some(stmt);
                     break;
                 };
                 let sub = n & crate::keys::COPY_TP_MASK;
@@ -187,6 +190,7 @@ pub(crate) fn group_covers_type(
                         && !fresh.contains_key(&(args.as_ptr() as usize)))
                     || (stores.owns_heap(sub) && n & crate::keys::COPY_FRESH_DEST == 0)
                 {
+                    stop = Some(stmt);
                     break;
                 }
                 written.insert(off);
@@ -209,13 +213,17 @@ pub(crate) fn group_covers_type(
                 {
                     members.entry(off).or_default().insert(m);
                 } else {
+                    stop = Some(stmt);
                     break;
                 }
             }
-            _ => break,
+            _ => {
+                stop = Some(stmt);
+                break;
+            }
         }
     }
-    fields.iter().all(|f| {
+    let covered = |f: &crate::database::Field| {
         written.contains(&f.position)
             || members.get(&f.position).is_some_and(|m| {
                 let sub = f.content as usize;
@@ -224,7 +232,24 @@ pub(crate) fn group_covers_type(
                         crate::database::Parts::Struct(sf)
                             if !sf.is_empty() && sf.iter().all(|x| m.contains(&x.position)))
             })
-    })
+    };
+    let all = fields.iter().all(covered);
+    // `LOFT_TRACE_COMPLETE_WRITE=1`: a group that leaves a field to the prefill names it, and
+    // the statement its scan stopped at.
+    if !all && std::env::var("LOFT_TRACE_COMPLETE_WRITE").is_ok_and(|v| v != "0") {
+        let missing: Vec<&str> = fields
+            .iter()
+            .filter(|f| !covered(f))
+            .map(|f| f.name.as_str())
+            .collect();
+        let mut at_stmt = stop.map_or_else(|| "the block's end".to_string(), |v| format!("{v:?}"));
+        at_stmt.truncate(300);
+        eprintln!(
+            "complete-write: type {} leaves {missing:?} to the prefill; stopped at {at_stmt}",
+            stores.types[tp as usize].name
+        );
+    }
+    all
 }
 
 /// The fields of every variant of a struct-enum, one per position — the positions a covering

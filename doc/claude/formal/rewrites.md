@@ -1446,8 +1446,9 @@ read or in-place write of a bound view, through inline sub-records) and the last
 `FnWriter::bind_record_ptr` and `FnWriter::rec_ptr_access` over `loft_rec_ptr` / `loft_pa_*`,
 the lock flag taken only where the block writes through the view.  An enum, byte, short or
 4-byte field is read through the address by the decoder its store getter uses (`loft_dec_*`),
-so the two reads cannot disagree; the last-use clause is what binds a minted element, whose
-field writes precede the finish (`enum_match` −11 % under both compilers, `mesh_emit` −33 %
+so the two reads cannot disagree; a value record copied into an inline sub-record of the view
+is written at the address plus the sub-record's offset, and counts as a use of it; the
+last-use clause is what binds a minted element, whose field writes precede the finish (`enum_match` −11 % under both compilers, `mesh_emit` −33 %
 under Clang); trace `LOFT_TRACE_RECPTR=1` there too.  Sites: `hoist::record_view_ptr`,
 `Output::bind_record_ptr`, `Output::rec_ptr_read` (the twin input),
 `ops::vector_ops::emit_hoisted_scalar_or_default` and `FusedElementWriteEmitter`
@@ -3934,7 +3935,11 @@ line in `Output::output_function`'s prelude.
                  reads is left to the prefill.  `db_vars`
                  is keyed by the local (every `OpDatabase` site must cover);
                  `mint_tps` by the element type (every mint group in the function
-                 must).  The interpreter keeps the prefill and is the oracle.
+                 must).  The interpreter keeps the prefill and is the oracle.  In
+                 the C, `FnWriter::mint_complete` reads the same proof and
+                 `fresh_null_arm` writes the field type's default image for a null
+                 source, the null arm above — the plain copy and a value record's
+                 absent arm alike.
 
   (R-ElemFirst)  a local vector consumed EXACTLY ONCE as a record-literal field of
                  an append (`out += [R { f: v, … }]`) is built INSIDE the appended

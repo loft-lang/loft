@@ -243,6 +243,15 @@ impl FnWriter<'_> {
             },
         };
         let key = self.vr_local(root).ok_or("a copy from no value local")?;
+        // `@FR-R-RecPtr`: an inline sub-record of a view whose address the block holds is written
+        // at that address and the sub-record's offset (`bind_record_ptr` counts the copy).
+        let held = crate::opt::body_writes::sub_record(data, dst).and_then(|(r, off, _)| {
+            self.rec_ptrs
+                .iter()
+                .rev()
+                .find(|(v, _, _)| *v == r)
+                .map(|(_, pa, pl)| (pa.clone(), pl.clone(), off))
+        });
         let dst = self.expr(dst, ind)?;
         let d = self.temp(CType::Ref);
         self.line(ind, &format!("{d} = {};", as_ref(dst)?));
@@ -259,21 +268,24 @@ impl FnWriter<'_> {
                     | (u8::from(self.cx.swap_safe(tp)) << 1)
                     | (u8::from(raw & crate::keys::COPY_FRESH_DEST != 0) << 2);
                 self.line(ind, &format!("if ({p} == 1) {{"));
-                self.vr_write_fields(key, &d, &s, base, end, ind + 1)?;
+                self.vr_write_fields(key, &d, &s, base, end, held.as_ref(), ind + 1)?;
                 self.line(ind, "} else {");
-                self.line(
-                    ind + 1,
-                    &format!("loft_copy_record(loft_types, {tp}, loft_ref_null(), {d}, {flags});"),
-                );
+                // A copy into a field of an element being built writes its default instead.
+                let null_arm = self.fresh_null_arm(args, &d).unwrap_or_else(|| {
+                    format!("loft_copy_record(loft_types, {tp}, loft_ref_null(), {d}, {flags});")
+                });
+                self.line(ind + 1, &null_arm);
                 self.line(ind, "}");
             }
-            None => self.vr_write_fields(key, &d, &s, base, end, ind)?,
+            None => self.vr_write_fields(key, &d, &s, base, end, held.as_ref(), ind)?,
         }
         Ok(Some(E::new("((void) 0)", K::Void)))
     }
 
     /// Write struct `s` of layout `key` into record `d`: each field at its offset less `base`,
     /// the fields from `base` up to `end`.
+    /// `held` is the address, lock flag and offset of `d` where a bound view's address serves it.
+    #[allow(clippy::too_many_arguments)]
     fn vr_write_fields(
         &mut self,
         key: u16,
@@ -281,6 +293,7 @@ impl FnWriter<'_> {
         s: &str,
         base: i64,
         end: i64,
+        held: Option<&(String, String, i64)>,
         ind: usize,
     ) -> Result<(), String> {
         let layout = self.vr_layout(key)?;
@@ -300,10 +313,14 @@ impl FnWriter<'_> {
                 .iter()
                 .any(|(_, _, rt)| crate::opt::value_records::layout::is_view_part(rt))
         {
-            self.line(
-                ind,
-                &format!("{{ uint8_t *loft_w = loft_rec_w({d}); if (loft_w) {{"),
-            );
+            let at = match held {
+                // As `loft_rec_w`: a locked store is reported, the write then made.
+                Some((pa, pl, off)) => format!(
+                    "{pa} ? ((LOFT_UNLIKELY({pl}) ? loft_locked_write() : (void) 0), {pa} + {off}) : (uint8_t *) 0"
+                ),
+                None => format!("loft_rec_w({d})"),
+            };
+            self.line(ind, &format!("{{ uint8_t *loft_w = {at}; if (loft_w) {{"));
             for (i, at, rt) in fields {
                 let w = match rt {
                     "f32" => format!("memcpy(loft_w + {at}, &{s}.f{i}, 4);"),
@@ -919,7 +936,7 @@ impl FnWriter<'_> {
                 "if (!({b}.store_nr != 0xFFFF && {b}.rec != 0)) loft_database_typed(&{b}, {size}, {tp});"
             ),
         );
-        self.vr_write_fields(callee_key, &b, &t, 0, i64::MAX, ind)?;
+        self.vr_write_fields(callee_key, &b, &t, 0, i64::MAX, None, ind)?;
         Ok(E::new(b, K::Ref))
     }
 }
