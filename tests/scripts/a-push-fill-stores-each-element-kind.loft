@@ -1,0 +1,70 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-PushFill` — a counted loop that pushes one invariant value is ONE fill on `--native`,
+// and the fill stores the element each kind's own push would: an `i32` value (a parameter or a
+// negative literal) as an `i32`, a boolean as its byte, and the integer kind unchanged.  Each
+// cell's value is hand-computed in its comment; the interpreter and `--native` must answer it.
+//
+// @falsified-at: hand-measured (control: the installed main build, 2026-10-28) — `--native`
+// refuses the program: the fill passed an `i64` value to `push_fill::<i32>` (rustc E0308), so
+// any program with c1 or c2 failed to build.  The other cells held there.
+
+fn fill_i32(n: integer, x: i32) -> vector<i32> {
+  ls: vector<i32> = [];
+  for _ in 0..n { ls += [x]; }
+  ls
+}
+
+fn fill_i32_lit(n: integer) -> vector<i32> {
+  ls: vector<i32> = [];
+  for _ in 0..n { ls += [-7]; }
+  ls
+}
+
+fn fill_n(n: integer, x: i32?) -> vector<i32?> {
+  ls: vector<i32?> = [];
+  for _ in 0..n { ls += [x]; }
+  ls
+}
+
+fn fill_int(n: integer, x: integer) -> vector<integer> {
+  ls: vector<integer> = [];
+  for _ in 0..n { ls += [x]; }
+  ls
+}
+
+fn fill_bool(n: integer) -> vector<boolean> {
+  ls: vector<boolean> = [];
+  for _ in 0..n { ls += [true]; }
+  ls
+}
+
+fn fill_char(n: integer) -> vector<character> {
+  ls: vector<character> = [];
+  for _ in 0..n { ls += ['q']; }
+  ls
+}
+
+fn total(v: const vector<i32>) -> integer {
+  t = 0;
+  for x in v { t += x; }
+  t
+}
+
+fn main() {
+  a = fill_i32(5, 123456);
+  assert(len(a) == 5 && total(a) == 617280 && a[4] == 123456, "c1 an i32 parameter, 5 times");
+  b = fill_i32_lit(3);
+  assert(len(b) == 3 && total(b) == -21 && b[0] == -7, "c2 a negative i32 literal");
+  c = fill_int(4, 5000000000);
+  assert(len(c) == 4 && c[3] == 5000000000, "c3 the integer kind keeps 64 bits");
+  d = fill_bool(3);
+  assert(len(d) == 3 && d[2], "c4 a boolean");
+  e = fill_char(2);
+  assert(len(e) == 2 && e[1] == 'q', "c5 a character");
+  f = fill_i32(0, 9);
+  assert(len(f) == 0, "c6 no trips, no elements");
+  g = fill_n(2, null);
+  assert(len(g) == 2 && !g[1], "c7 a null i32 stays null");
+}
