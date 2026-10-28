@@ -168,15 +168,14 @@ fn test() {}"
 // shaped to discourage.
 
 /// Every row of the cross-language alias table suggests the right loft type.
-/// @C103 — `int`/`str`/`bool` are suggested, never legal.
+/// @C103 — `int`/`str`/`bool` are suggested, never legal.  (`i64` and `f64` are legal names,
+/// the 64-bit forms of WIDTH32.md, so they are not rows.)
 #[test]
 fn t03_cross_language_type_aliases_suggest() {
     code!(
         "fn a(x: int) -> integer { 1 }
-fn b(x: i64) -> integer { 1 }
 fn c(x: u64) -> integer { 1 }
 fn d(x: long) -> integer { 1 }
-fn e(x: f64) -> integer { 1 }
 fn g(x: double) -> integer { 1 }
 fn h(x: f32) -> integer { 1 }
 fn i(x: str) -> integer { 1 }
@@ -186,16 +185,14 @@ fn l(x: char) -> integer { 1 }
 fn test() {}"
     )
     .error("Undefined type int — did you mean 'integer'? at t03_cross_language_type_aliases_suggest:1:13")
-    .error("Undefined type i64 — did you mean 'integer'? at t03_cross_language_type_aliases_suggest:2:13")
-    .error("Undefined type u64 — did you mean 'integer'? at t03_cross_language_type_aliases_suggest:3:13")
-    .error("Undefined type long — did you mean 'integer'? at t03_cross_language_type_aliases_suggest:4:14")
-    .error("Undefined type f64 — did you mean 'float'? at t03_cross_language_type_aliases_suggest:5:13")
-    .error("Undefined type double — did you mean 'float'? at t03_cross_language_type_aliases_suggest:6:16")
-    .error("Undefined type f32 — did you mean 'single'? at t03_cross_language_type_aliases_suggest:7:13")
-    .error("Undefined type str — did you mean 'text'? at t03_cross_language_type_aliases_suggest:8:13")
-    .error("Undefined type string — did you mean 'text'? at t03_cross_language_type_aliases_suggest:9:16")
-    .error("Undefined type bool — did you mean 'boolean'? at t03_cross_language_type_aliases_suggest:10:14")
-    .error("Undefined type char — did you mean 'character'? at t03_cross_language_type_aliases_suggest:11:14");
+    .error("Undefined type u64 — did you mean 'integer'? at t03_cross_language_type_aliases_suggest:2:13")
+    .error("Undefined type long — did you mean 'integer'? at t03_cross_language_type_aliases_suggest:3:14")
+    .error("Undefined type double — did you mean 'float'? at t03_cross_language_type_aliases_suggest:4:16")
+    .error("Undefined type f32 — did you mean 'single'? at t03_cross_language_type_aliases_suggest:5:13")
+    .error("Undefined type str — did you mean 'text'? at t03_cross_language_type_aliases_suggest:6:13")
+    .error("Undefined type string — did you mean 'text'? at t03_cross_language_type_aliases_suggest:7:16")
+    .error("Undefined type bool — did you mean 'boolean'? at t03_cross_language_type_aliases_suggest:8:14")
+    .error("Undefined type char — did you mean 'character'? at t03_cross_language_type_aliases_suggest:9:14");
 }
 
 /// The alias table did not cost the edit-distance path: a mistyped BUILTIN now
@@ -2861,8 +2858,9 @@ fn single_refusals_name_the_f_suffix() {
 #[test]
 fn a_bad_numeric_suffix_names_the_suffix_set() {
     code!("fn test() { x = 1.5s; }").error(
-        "`s` is not a numeric suffix; write `f` for a `single` literal (`1.5f`) — a bare \
-         decimal literal is a `float` at a_bad_numeric_suffix_names_the_suffix_set:1:21",
+        "`s` is not a numeric suffix; write `f` for a `single` literal (`1.5f`) or `d` for a \
+         `float` (`1.5d`) — a bare decimal literal is a `float`, and a `single` in a `#width 32` \
+         file at a_bad_numeric_suffix_names_the_suffix_set:1:21",
     );
 }
 

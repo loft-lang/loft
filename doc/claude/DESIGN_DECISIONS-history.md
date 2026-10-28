@@ -111,6 +111,8 @@ alternatives considered are in `DISCUSSION.md` alongside.
 
 ## C54.D — Rust-style numeric literal suffixes
 
+**2026-10-27 — `l` and `d` added** (owner, @PLN204): *"234l as long … 12.5f as doubles"*.  `f` kept its meaning (`single`) and `d` took the double, because `1.0f` is a single in every library the regime compiles; width suffixes (`34u8`) stay declined.
+
 **Catalogue:** @F4 (width integers), @F5 (type conversions — `as`).
 
 **Question.** Should loft accept `34u8`, `4948u32`, `100i32` as
@@ -2873,6 +2875,8 @@ and `loft new --native` lists it first in its next steps, since `native/` is a R
 One text, `native_lib::NO_RUSTC`, says it in all three.
 
 ## C103 — `int` / `str` / `bool` are suggested, never legal (no cross-language type aliases)
+
+**2026-10-27 — `i64` and `f64` become legal** (owner, @PLN204): the Tanmatsu's 32-bit regime makes `integer` an `i32` and `float` a `single` in a `#width 32` file, and *"i64 is the long variant when really needed in the code"*.  The other names stay suggestions.
 
 ### Context
 

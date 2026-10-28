@@ -13,8 +13,11 @@ trade-offs and the evidence in [DESIGN_DECISIONS-history.md](DESIGN_DECISIONS-hi
 
 ## C54.D — Rust-style numeric literal suffixes
 
-**Decision.** No literal suffixes (`34u8`, `100i32`); the width comes from the binding or
-parameter type, or from `34 as u8`.  **Why.** Context typing already covers every common case;
+**Decision.** No width suffixes (`34u8`, `100i32`); the width comes from the binding or
+parameter type, or from `34 as u8`.  The one integer suffix is `l` (`123l`, an `i64`) and the
+decimal ones are `f` (`single`) and `d` (`float`): the 32-bit regime makes a plain literal 32-bit
+and a program on a 32-bit target needs a 64-bit literal without a binding (@PLN204,
+[WIDTH32.md](WIDTH32.md)).  **Why.** Context typing already covers every common case;
 suffixes would add lexer ambiguity and put the intent on the literal instead of the binding.
 
 **Revisit when.** A real program needs a literal-size distinction `as <T>` cannot express
@@ -145,9 +148,11 @@ Decided 2026-07-15 — [record](DESIGN_DECISIONS-history.md#c94--integer--trunca
 
 ## C103 — `int` / `str` / `bool` are suggested, never legal (no cross-language type aliases)
 
-**Decision.** `int`, `str`, `string`, `bool`, `i64`, `u64`, `f64`, `f32`, `char`, `double` and
-`long` stay undefined; the error names the loft type (`data::builtin_type_alias`, a table, since
-edit distance cannot reach these).  **Why.** Full-word type names mean fewer acronyms for a
+**Decision.** `int`, `str`, `string`, `bool`, `u64`, `f32`, `char`, `double` and `long` stay
+undefined; the error names the loft type (`data::builtin_type_alias`, a table, since edit
+distance cannot reach these).  `i64` and `f64` are legal: they are the 64-bit spellings a
+`#width 32` file needs, where `integer` is an `i32` and `float` a `single` (@PLN204,
+[WIDTH32.md](WIDTH32.md)); elsewhere they are `integer` and `float`, `i64::MIN` still the null.  **Why.** Full-word type names mean fewer acronyms for a
 newcomer and a small nudge against annotations inference makes pointless; an alias is permanent
 surface after contract 1; and the lookalikes are not identities (`integer` excludes `i64::MIN`, the
 null sentinel), which a suggestion tolerates and an alias would make silent.

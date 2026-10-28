@@ -2488,7 +2488,7 @@ impl Lexer {
                 self.err(
                     Level::Error,
                     &format!(
-                        "`{bad}` is not a numeric suffix; write `f` for a `single` literal (`1.5f`) or `d` for a 64-bit `float` (`1.5d`)"
+                        "`{bad}` is not a numeric suffix; write `f` for a `single` literal (`1.5f`) or `d` for a `float` (`1.5d`) — a bare decimal literal is a `float`, and a `single` in a `#width 32` file"
                     ),
                 );
             }
