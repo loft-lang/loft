@@ -4602,8 +4602,9 @@ fn run_asan(
     )
 }
 
-/// Faults that end a test inside frames holding texts, for the leak check below: a 10 000-deep
-/// recursion (the hold stack grows), a tuple's texts, and a lazy driver's CONTAINED fault, twenty
+/// Faults that end a test inside frames holding texts, for the leak check below: a 2 000-deep
+/// recursion (the hold stack grows past its first 64 frames five times — deeper outgrows an 8 MB
+/// stack under AddressSanitizer with gcc 15, two C frames a level), a tuple's texts, and a lazy driver's CONTAINED fault, twenty
 /// times, under a caller whose own text must survive each one.  Beside them a passing test whose
 /// generic loop moves a callback's `(integer, text)` into one local per pass: on the build before
 /// the fix every pass but the last left the old tuple's text allocated.
@@ -4619,7 +4620,7 @@ fn down(n: integer) -> text {
 
 // @EXPECT_FAIL: bottom level 0
 fn test_a_deep_recursion_halts() {
-  x = down(10000);
+  x = down(2000);
   assert(len(x) > 0, "never");
 }
 
