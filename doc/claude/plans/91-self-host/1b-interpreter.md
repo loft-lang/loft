@@ -271,12 +271,119 @@ integer it returns.  Both must print the same number, or the times do not compar
   user function, `NdReturn`, `NdLine`) lowers to ops, and a test compares the ops against a
   hand-written list.  Code points: `selfhost/src/lower.loft` (new),
   `selfhost/tests/lower.loft` (new; under S0.3c it may read `Op`).  First, the join of
-  `45bb2708b`.
+  `45bb2708b`.  Its four design→code findings are X15–X18; X15 is S1.1b.
 - **S1.2 — the run loop**: `fib(25)` answers what `--interpret` answers.
 - **S1.3 — loops**: `NdLoop`, `NdBreak`, `NdSet` and the iterator form a `for` lowers to,
   for `mix` and `collatz_len`.
 - **S1.4 — the measurement**: best of five wall times per kernel, both sides, numbers in
   this section, and the gate read against them.
+
+### S1.1b — a tail self-call jumps wherever it can, and warns where it cannot (fixes X15) — DESIGNED 2026-10-28
+
+**Found by S1.1.**  `lower.loft` walks the IR tree by recursion, and its tail self-calls are
+refused under @C155: `NdSpan { inner } => expr(l, b, inner[0]?)` (`lower.loft:90`, and
+`statement` at `:141`).  C155 refuses a tail self-call whose frame the jump cannot reuse,
+because left a call it might stop at 10 000 frames.  That refuses what MIGHT fail, while the
+same walk written as `r = expr(…); r` compiles with the same bound.
+
+**The owner's rules for this step:**
+1. When the language can implement a construct correctly and efficiently, it does.  A
+   compile error is only for a program that CERTAINLY fails: it never ends, or it certainly
+   runs out of store memory.
+2. The SEMANTIC layer copies data rather than keep many stores alive; the CODE layer removes
+   the copies again where it can prove them unneeded (@C122: the contract is the semantics).
+3. A slow construct that stays in the code — a real copy, a tail self-call left a call — is a
+   `warning`, so that the libraries do not ship it.  The reason is circumstantial (library
+   CI), so it is written as its own clause of the tier rule (DIAGNOSTICS.md § Diagnostic
+   tiers), not folded into "ignoring it can produce a wrong result".
+
+**Measured** (probes on `--interpret` and `--native`, `target/debug/loft` of this branch):
+
+| argument for `n: N` | its IR | refused because | what it is |
+|---|---|---|---|
+| `n.inner[0]` | the field read sits under the variant check `if n is Wrap then n else OpNullRefSentinel()` | `borrows_from_params` does not look through that `if` | a part of `n` |
+| `inner[0]` | `inner` is the match binding `_mv_inner_1["n"] = OpGetField(n, …)`, never released | every local reads as one the jump releases | a part of `n` |
+| `inner[0]?` | on a missing element `?` builds a default `N` in `__ref_1`, which the frame frees at its exit | a fresh value | fresh on one arm, a part of `n` on the other |
+
+Two facts the design rests on: today's call keeps a fresh argument's store until the CALLER's
+function exits (`__ref_p2_1` lives to `main`'s end), so a recursion holds every one until it
+unwinds; and a `reference<T>` field points across stores (`w.r` sees a later write to `a`, on
+both backends), so a fresh value can point into an older store.  The IR types hold no
+`reference` field (`selfhost/src/ir.loft`).
+
+**The semantic rule.**  At a tail self-call each store-held parameter is rebound:
+- to the argument itself, when it lives in a CALLER's store (the parameter, a sibling, a
+  part of one — `n.inner[0]`, a match binding of one);
+- otherwise (a fresh value, the `?` default, a part of a value the frame made) to a COPY of
+  it in the parameter's own store, which the loop owns and frees at every exit.
+Then every other store the frame owns is released, after all the arguments are read.
+
+**The invariant:** after every jump each parameter points into a caller's store or into the
+one store the loop owns for it.  The frame owns nothing else, so the memory a tail recursion
+holds is bounded by its arguments, never by its depth.
+
+**The code layer removes the copy** with one runtime rule, and only in a function whose tail
+calls need it: of the stores the jump would release (its locals' and the old parameter
+stores'), each one a new argument LIVES IN is kept — handed to that parameter's slot, once
+when two parameters share it — and the rest are freed.  A fresh whole value, a whole local,
+the `?` default and a part of the parameter's own store then cost no copy at all.  What is
+left to copy is a value that may POINT into a store the jump releases: an argument whose type
+holds a `reference`, and a body that stores a parameter's pointer through another parameter
+(`a.r = n`).  Those copy (the `tail-call-copy` warning) or, until that clause is built, stay
+a call (the `tail-call-not-jumped` warning).
+
+**Steps** (each designed in full when the one before it lands):
+- **T1 — the sharing fix (X15; Contract: settled).**  Designed below.
+- **T2 — a frame the jump cannot reuse is an ordinary call, with a warning.**  @C155's
+  refusal becomes `warning[tail-call-not-jumped]`, naming the reason and the cure; the tier
+  rule gains its library clause; the error-message case 63 and the suite cell
+  `R-TailSelf/a-tail-self-call-the-frame-cannot-jump-is-refused` move from the error to the
+  warning (the cell is a loft-suite change beside the PR).  S1.1 compiles from here.
+- **T3 — a function that certainly never ends is refused.**  `error[endless-recursion]`: no
+  path through the body leaves without first calling itself.  The `i1058_*` runtime tests
+  that overflow on purpose (`runaway1058`, `spin1058`) take a base case that never fires.
+- **T4 — the owned jump.**  The runtime rule above, with exit frees at every `return`; the
+  first clause takes scalar, void and text results.  The `?` default and fresh arguments
+  jump; `walk(n.inner[0])` on an owned `n` keeps its one store.
+- **T5 — a store-held result** delivered from an owned store: handed to the caller.
+- **T6 — the copy with a sharing map** for arguments that hold a `reference`, with
+  `warning[tail-call-copy]`; and the pointer-storing body.
+- **T7 — store reuse** (two stores per parameter, cleared rather than claimed), only if the
+  T4 measurement shows the claim/free per step.
+
+**Cases, written before building** (hand-computed, value + leak, both backends, under
+`LOFT_STRICT_STORES=1` and `LOFT_POISON=1`; the harness must fail with the step reverted):
+1. `walk(make())` then `walk(n.inner[0])`: one store, freed at the exit (T4).
+2. A fresh argument every step, `count(S { x: n.x - 1 })` to 10⁶: flat memory, exact value (T4).
+3. `inner[0]?` with the element present on some steps and missing on others (T4).
+4. Two parameters in one owned store, `walk(n.left, n.right)` on a fresh `n`: freed once (T4).
+5. A swap of an owned and a borrowed parameter (T4).
+6. Each shape still declined: an ordinary call, the right value, the warning (T2).
+7. A body with no path that returns: the compile error (T3).
+8. The three spellings of the table, and a part through two levels (`n.inner[0].inner[0]`)
+   and through a nested match binding: jump, right value (T1).
+
+#### T1 — the sharing fix (fixes X15) — DESIGNED
+
+**What.**  `borrows_from_params` (`src/tail_frame.rs`), the one predicate the refusal and the
+rewrite share, also accepts as a part of a parameter:
+- `if c then P else OpNullRefSentinel()` with `P` a part of a parameter — the variant check
+  a field read of an enum parameter lowers to (either arm may be the sentinel);
+- a local whose every write is null or a part of a parameter and which no release names —
+  the match payload binding (`_mv_<name>_N`).
+Both shapes are what `(R-TailSelf)` already promises ("a projection rooted at one"), so no
+rule text changes: this closes a deviation from it.  With them:
+- the refusal in `definitions.rs` reads `tail_frame::off()`, as its doc and the generic
+  path (`generics.rs`) already do, so `LOFT_NO_TAIL_SELF=1` keeps the calls;
+- the refusal's cure names the match binding too.
+
+**Code points:** `src/tail_frame.rs` (`borrows_from_params`, a helper for the binding),
+`src/parser/definitions.rs` (the `off()` test).
+
+**Verification:** case 8 as a Rust test on both backends, at a depth (20 000) past the frame
+limit so a call cannot pass; `inner[0]?` still refused (T2 changes that); falsified with the
+two new arms removed; `make rewrite-census` (admissions may only rise); the parser and
+codegen subjects.
 
 ### S1.1a — a block-bodied match arm needs no comma (fixes X14) — BUILT 2026-10-28
 
@@ -350,6 +457,10 @@ stdlib's `E`), so the two drivers disagree on one program.  To check before a fi
 | **X12** | inside a package, a file named like one of its modules (`tests/load.loft`) gets ITSELF for `use load;`, so every name reads "Unknown function" (on `main`) | **bug — fixed in S0.3b** | `own_module_path` never answers the current file, and asks the package's `src/` ([1b-s0.md](1b-s0.md) § S0.3b) |
 | **X13** | `assert(x != null, …)` does not narrow `x`; the other null tests (`if … return`, `if != null`, `?? return`, `?? panic`) do, and `types.md` writes none of them as a rule | rule gap — fixed in S0.3d | owner: `(N-Guard)`, the guard narrowing written as a rule with `assert` as one of its guards ([1b-s0.md](1b-s0.md) § S0.3d) |
 | **X14** | a block-bodied match arm demands a comma (`NdIf { … } => { … }` then the next arm), while Rust and the `LOFT_CONTROL.md` example leave it out | **bug — fixed in S1.1a** | the comma is optional after a block body (§ Steps, S1.1a) |
+| **X15** | a tail self-call on a part of an enum parameter is refused under @C155: `walk(n.inner[0])`, and `walk(inner[0])` through the match binding, though `(R-TailSelf)` admits a projection of a parameter (on `main`) | **bug — S1.1b T1** | the predicate sees the variant check and the binding as parts of the parameter; the owner's rules for the rest (§ Steps, S1.1b) |
+| **X16** | a test file still binds a sibling test file named like the module (X12's case from `tests/`, on `main`) | bug — to measure | — |
+| **X17** | `x?` of a record shared through `#package` fails (a gap in S0.3a) | bug — to measure | — |
+| **X18** | a nullable plain enum is not narrowed by `if x != null` (on `main`) | bug — to measure | — |
 
 ### New constructs taken from OCaml's type expressions
 
