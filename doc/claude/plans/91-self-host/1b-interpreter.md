@@ -408,6 +408,20 @@ null text and a null float propagating; the census before and after; the S1 test
   loft's own `t[a..b]`, which is that operator), and the casts by their `OpCast…` names.
   **The census: 1 018 programs, 27 pass, 0 wrong, 0 crash**; what is left is the store's.
 
+### S3 — the store: the C runtime's own stores, through `crt` — DIRECTION (owner, 2026-10-28)
+
+**Ruling.** The running program's records, vectors and texts live in the C runtime's own stores,
+reached through `selfhost/crt`: *"the C runtime is already debugged and optimized. Doing it again
+would be a waste."*  A heap written in loft (a `vector<integer>` of words) was the alternative,
+and it is declined: it is a second store model, and every claim, free, vector growth and text in
+a record would be a place to disagree with the real one.  So `OpGetInt(p, 0)` calls a `crt`
+routine that calls the runtime's own accessor, a record has the layout the image's type table
+gives, and the interpreter's loft code stays readable because the storage is C.
+
+**Open for the paper design** (to the owner before any building): how a reference (store,
+record, position) crosses a `#c` call, which passes scalars; the list of `crt` routines, each one
+the runtime already defines; and the census cells the first slice carries (records, then vectors).
+
 ### SU1 — `store_load` maps the image instead of copying it — DESIGNED 2026-10-28
 
 **Why now (owner, 2026-10-28):** the store's file format IS its memory format, so a store
