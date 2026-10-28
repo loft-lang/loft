@@ -1312,6 +1312,22 @@ impl Parser {
                      regime — write `{nr}l` for a 64-bit literal, or give the binding the type \
                      (`x: i64 = {nr}`)"
                 );
+                self.lexer.fix_last(crate::diagnostics::Fix {
+                    kind: crate::diagnostics::FixKind::Mechanical,
+                    title: format!("write `{nr}l`, a 64-bit literal"),
+                    condition: None,
+                    edit: None,
+                    concept: "integer width",
+                    concept_ref: "@F4",
+                });
+                self.lexer.fix_last(crate::diagnostics::Fix {
+                    kind: crate::diagnostics::FixKind::Conditional,
+                    title: format!("give the binding the type `i64`: `x: i64 = {nr}`"),
+                    condition: Some("the value is meant to stay 64-bit".to_string()),
+                    edit: None,
+                    concept: "integer width",
+                    concept_ref: "@F4",
+                });
             }
             *val = Value::Long(nr as i64);
             crate::data::I64.clone()
