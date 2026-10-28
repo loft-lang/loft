@@ -72,3 +72,18 @@ fn test_a_break_with_a_value_pending_is_refused() {
   o = run::run(b, d, [10]);
   assert(o.refused == "a break or continue with values pending, which S1 does not carry", "refused: {o.refused}");
 }
+
+fn test_the_stdlibs_own_loft_functions_run_from_the_image() {
+  // clamp(n, 0, 10) + floor_mod(n, 7) + max(n, 3), by hand: -5 -> 0 + 2 + 3, 12 -> 10 + 5 + 12,
+  // 4 -> 4 + 4 + 4.
+  assert(ran("stdlib", "n_use_stdlib", [-5]) == 5, "use_stdlib(-5)");
+  assert(ran("stdlib", "n_use_stdlib", [12]) == 27, "use_stdlib(12)");
+  assert(ran("stdlib", "n_use_stdlib", [4]) == 12, "use_stdlib(4)");
+}
+
+fn test_an_operator_s1_does_not_carry_is_refused_by_name() {
+  b = kernel("stdlib");
+  d = lower::find(b, "n_uses_abs");
+  o = run::run(b, d, [-3]);
+  assert(o.refused == "an operator S1 does not carry: OpAbsInt", "refused: {o.refused}");
+}

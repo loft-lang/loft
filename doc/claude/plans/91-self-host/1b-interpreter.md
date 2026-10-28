@@ -212,6 +212,13 @@ every definition of `default/*.loft`, compiled to the same IR as the program, so
   need a hand-written body for it and the loft version is as fast — the language gains the
   function, and the interpreter loses a place to differ.
 
+**Built (2026-10-28):** `lower.loft`'s `call` follows that order (`is_operator`, the native
+symbol, `has_body`).  `selfhost/kernels/stdlib.loft`: `clamp` (which calls `min` and `max`)
+and `floor_mod` run from their stdlib IR — 5, 27 and 12 for `-5`, `12` and `4`, both backends —
+and `abs`, a loft body over `OpAbsInt`, is refused by name at the operator.  Writing `has_body`
+found loft#2213 (a never-returning `??` default read a struct-enum as absent), fixed on main's
+behalf first.
+
 ## Direction (not a design)
 
 Constraints already known, which each step's design must respect.  They are not decided

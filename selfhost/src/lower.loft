@@ -154,19 +154,44 @@ fn expr(l: Lowering, b: ir::Bundle, n: ir::Node) {
   }
 }
 
-// A call: its arguments, left to right, then the operator's op or a call of the definition.
+// Is `name` an operator: `Op` and then a capital, as `Definition::is_operator` reads it?
+fn is_operator(name: text) -> boolean {
+  name.starts_with("Op") && len(name) > 2 && name[2..3] >= "A" && name[2..3] <= "Z"
+}
+
+// Does `d` have a body written in loft?  A definition with no code is a native.
+fn has_body(d: ir::Definition) -> boolean {
+  if len(d.code) == 0 {
+    return false;
+  }
+  first = d.code[0] ?? panic("a non-empty code vector");
+  !(first is NdNull)
+}
+
+// A call: its arguments, left to right, then what the Rust interpreter's bytecode generator
+// makes of the callee (`src/state/codegen.rs`, the call of a definition), in its order — so
+// the loft interpreter runs exactly the stdlib bodies the Rust one runs, from the same IR:
+//   an operator is its op; a definition with a native symbol is a native; a definition with
+//   a loft body is CALLED, even when it also has a `#rust` template (that is for native code
+//   generation, not the interpreter); anything else is a native by name.
+// The stdlib's own loft functions are therefore never written again here: only operators and
+// natives are, and S1 carries the integer operators and no natives yet.
 fn call(l: Lowering, b: ir::Bundle, def_nr: integer, args: vector<ir::Node>) {
   for arg in args {
     expr(l, b, arg);
   }
   d = b.data.definitions[def_nr]?;
-  code = operator_code(d.name);
-  if code != null {
-    emit(l, code, 0, 0);
-  } else if d.name.starts_with("n_") {
-    emit(l, Call, def_nr, len(args));
+  if is_operator(d.name) {
+    code = operator_code(d.name);
+    if code != null {
+      emit(l, code, 0, 0);
+    } else {
+      refuse(l, "an operator S1 does not carry: {d.name}");
+    }
+  } else if d.native != "" || !has_body(d) {
+    refuse(l, "a native S1 does not carry: {d.name}");
   } else {
-    refuse(l, "an operator S1 does not carry: {d.name}");
+    emit(l, Call, def_nr, len(args));
   }
 }
 
