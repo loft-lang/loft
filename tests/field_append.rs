@@ -106,7 +106,7 @@ const BARE: &[(&str, usize, usize, usize, usize)] = &[
     // and its literal writes every field (`@FR-R-CompleteWrite`'s buffer clause), so it is
     // appended neither prefilled nor zero-filled
     ("n_b1", 0, 0, 0, 1),
-    ("n_build", 2, 0, 0, 0), // an enum element built by a call, in the loop and the copy beside it
+    ("n_build", 0, 0, 0, 2), // an enum element built by a call: its full-size copy writes it all
     ("n_rd", 1, 0, 0, 0),    // the decoder's element, built in place by the destination twin
     ("n_rd__d", 1, 0, 0, 0), // … and inside the twin itself
     ("n_b4", 1, 0, 0, 0),    // 30 appends through two growth steps
