@@ -32,6 +32,19 @@ fn formats(n: integer) -> integer {
   c
 }
 
+// Text slices (`OpGetTextSub`) of "héllo", whose `é` is bytes 1 and 2: a bound inside it
+// snaps to the character, a negative bound counts bytes from the end.
+fn slices(n: integer) -> integer {
+  t = "héllo";
+  c = 0;
+  c += check(t[n..], "éllo");
+  c += check(t[..n], "hé");
+  c += check(t[1..=n], "é");
+  c += check(t[-n..], "lo");
+  c += check(t[n + 1..n + 3], "ll");
+  c
+}
+
 fn main() {
-  println("{formats(42)}");
+  println("{formats(42)} {slices(2)}");
 }

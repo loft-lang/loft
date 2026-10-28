@@ -55,6 +55,17 @@ fn abs_of(v: integer?) -> integer? {
   if v == null { null } else { v.abs() }
 }
 
+// Loft's own `abs` of a float; null stays null.
+fn abs_float(v: float?) -> float? {
+  if v == null { null } else { v.abs() }
+}
+
+// `t[from..till]`, which compiles to `OpGetTextSub(t, from, till)`: a negative bound counts
+// from the end, a null `till` takes the one character at `from`.
+fn sub_text(t: text?, from: integer?, till: integer?) -> text? {
+  t[from..till]
+}
+
 // `OpRangeDefault`, the value a narrow integer takes: null stays null unless a default is
 // given, a value inside `lo..=hi` stays, any other takes the default.
 fn range_default(v: integer?, lo: integer?, hi: integer?, dflt: integer?) -> integer? {
@@ -378,7 +389,19 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         }
         texts[at] = (texts[at] ?? "") + piece;
       }
-      Abs => { ints[sp_int - 1] = abs_of(ints[sp_int - 1]); }
+      // A single is carried as a float, and its absolute value is exact in either.
+      Abs => {
+        if op.kind == KInt {
+          ints[sp_int - 1] = abs_of(ints[sp_int - 1]);
+        } else {
+          floats[sp_float - 1] = abs_float(floats[sp_float - 1]);
+        }
+      }
+      // `t[from..till]`: loft's own slice, which is this operator with these operands.
+      SubText => {
+        sp_int -= 2;
+        texts[sp_text - 1] = sub_text(texts[sp_text - 1], ints[sp_int], ints[sp_int + 1]);
+      }
       RangeDefault => {
         sp_int -= 3;
         ints[sp_int - 1] = range_default(ints[sp_int - 1], ints[sp_int], ints[sp_int + 1], ints[sp_int + 2]);

@@ -72,6 +72,7 @@ enum Code {
   SizeText,
   Abs,
   RangeDefault,
+  SubText,
 }
 
 // One op: `kind` is the kind of value it works on; `a` is a value, a slot, a jump target, a
@@ -227,9 +228,12 @@ fn operator_op(name: text) -> Op? {
   match name {
     "OpMinSingleInt" => Op { code: Neg, kind: KInt, a: 0, b: 0 },
     "OpAbsInt" => Op { code: Abs, kind: KInt, a: 0, b: 0 },
-    // Equal to `OpDivInt` for every pair: both answer null for a null operand or a zero
-    // divisor, and no other pair overflows, since the one that would divides null.
+    // Equal to `OpDivInt` and `OpRemInt` for every pair: both answer null for a null operand
+    // or a zero divisor, and no other pair overflows, since the one that would divides null.
     "OpDivIntNullable" => Op { code: Div, kind: KInt, a: 0, b: 0 },
+    "OpRemIntNullable" => Op { code: Rem, kind: KInt, a: 0, b: 0 },
+    "OpAbsFloat" => Op { code: Abs, kind: KFloat, a: 0, b: 0 },
+    "OpAbsSingle" => Op { code: Abs, kind: KSingle, a: 0, b: 0 },
     // A plain enum is its number on the integer stack, and its null is null.
     "OpConvIntFromEnum" => Op { code: Nop, kind: KInt, a: 0, b: 0 },
     // A value entering a narrow integer: its operands `lo`, `hi` and the default follow it.
@@ -240,6 +244,7 @@ fn operator_op(name: text) -> Op? {
     "OpNeBool" => Op { code: Ne, kind: KInt, a: 0, b: 0 },
     "OpLengthText" => Op { code: LenText, kind: KText, a: 0, b: 0 },
     "OpSizeText" => Op { code: SizeText, kind: KText, a: 0, b: 0 },
+    "OpGetTextSub" => Op { code: SubText, kind: KText, a: 0, b: 0 },
     "OpLandInt" => Op { code: BitAnd, kind: KInt, a: 0, b: 0 },
     "OpLorInt" => Op { code: BitOr, kind: KInt, a: 0, b: 0 },
     "OpEorInt" => Op { code: BitXor, kind: KInt, a: 0, b: 0 },
@@ -256,11 +261,10 @@ fn operator_op(name: text) -> Op? {
     "OpConvTextFromNull" => Op { code: PushNull, kind: KText, a: 0, b: 0 },
     "OpConvFloatFromInt" => Op { code: ToFloat, kind: KFloat, a: 0, b: 0 },
     "OpConvSingleFromInt" => Op { code: ToFloat, kind: KSingle, a: 0, b: 0 },
-    "OpConvIntFromFloat" => Op { code: ToInt, kind: KFloat, a: 0, b: 0 },
-    "OpConvIntFromSingle" => Op { code: ToInt, kind: KSingle, a: 0, b: 0 },
+    "OpCastIntFromFloat" => Op { code: ToInt, kind: KFloat, a: 0, b: 0 },
+    "OpCastIntFromSingle" => Op { code: ToInt, kind: KSingle, a: 0, b: 0 },
     "OpConvCharacterFromInt" => Op { code: ToChar, kind: KInt, a: 0, b: 0 },
     "OpConvFloatFromSingle" => Op { code: Nop, kind: KFloat, a: 0, b: 0 },
-    "OpConvSingleFromFloat" => Op { code: Round, kind: KSingle, a: 0, b: 0 },
     "OpCastSingleFromFloat" => Op { code: Round, kind: KSingle, a: 0, b: 0 },
     "OpConvIntFromCharacter" => Op { code: FromChar, kind: KInt, a: 0, b: 0 },
     "OpCastTextFromBool" => Op { code: TextFromBool, kind: KText, a: 0, b: 0 },
@@ -353,6 +357,7 @@ fn effect(code: Code, b: integer) -> integer {
     Neg => 0,
     Abs => 0,
     RangeDefault => -3,
+    SubText => -2,
     LenText => 0,
     SizeText => 0,
     _ => -1,
