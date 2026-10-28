@@ -21,8 +21,8 @@
 
 use super::{E, FnWriter, K, as_bool, as_float, as_int};
 use crate::data::Value;
-use crate::lower::apart_vector;
 use crate::lower::apart_records::{Enc, RecLayout};
+use crate::lower::apart_vector;
 
 impl FnWriter<'_> {
     /// Take the plan's roles for this body: its owners and their push groups' elements, or —
