@@ -43,3 +43,135 @@ int64_t loft_crt_format_text(char *out, int64_t cap, const char *val, int64_t is
     loft_format_text(&t, v, width, (int) dir, (uint8_t) token);
     return loft_crt_out(&t, out, cap);
 }
+
+/* ── The store (@PLN91 S3): the interpreted program's records live in this shim's own copy of
+ * the C runtime's stores.  A reference crosses `#c` as its three parts (store, rec, pos), and
+ * a routine that answers one writes them into the caller's three-integer vector.  Each
+ * function marshals and calls one runtime routine; none derives a layout. */
+
+static loft_ref loft_crt_ref(int64_t store, int64_t rec, int64_t pos) {
+    loft_ref r;
+    r.store_nr = (uint16_t) store;
+    r.rec = (uint32_t) rec;
+    r.pos = (uint32_t) pos;
+    return r;
+}
+
+static void loft_crt_put_ref(int64_t *out, int64_t n, loft_ref r) {
+    if (n < 3) return;
+    out[0] = r.store_nr;
+    out[1] = r.rec;
+    out[2] = r.pos;
+}
+
+/* OpDatabase of a record type: a fresh store whose root is a zeroed record of `bytes`. */
+int64_t loft_crt_database(int64_t *out, int64_t n, int64_t bytes, int64_t tp) {
+    loft_ref r = loft_ref_null();
+    loft_database_typed(&r, (uint32_t) bytes, (uint16_t) tp);
+    loft_crt_put_ref(out, n, r);
+    return 0;
+}
+
+void loft_crt_free_ref(int64_t store, int64_t rec, int64_t pos) {
+    loft_free_ref(loft_crt_ref(store, rec, pos));
+}
+
+int64_t loft_crt_get_int(int64_t store, int64_t rec, int64_t pos, int64_t fld) {
+    return loft_get_int(loft_crt_ref(store, rec, pos), (uint32_t) fld);
+}
+
+void loft_crt_set_int(int64_t store, int64_t rec, int64_t pos, int64_t fld, int64_t v,
+                      int64_t is_null) {
+    loft_set_int(loft_crt_ref(store, rec, pos), (uint32_t) fld, is_null ? LOFT_NULL : v);
+}
+
+/* OpGetText: the text copied into the caller's buffer; answers its length in bytes, -1 for
+ * null, and writes nothing when the length exceeds `cap`. */
+int64_t loft_crt_get_text(char *out, int64_t cap, int64_t store, int64_t rec, int64_t pos,
+                          int64_t fld) {
+    loft_str v = loft_get_text(loft_crt_ref(store, rec, pos), (uint32_t) fld);
+    if (loft_str_is_null(v)) return -1;
+    int64_t len = (int64_t) v.len;
+    if (len <= cap && len > 0) memcpy(out, v.p, (size_t) len);
+    return len;
+}
+
+void loft_crt_set_text(int64_t store, int64_t rec, int64_t pos, int64_t fld, const char *val,
+                       int64_t is_null) {
+    loft_str v = is_null ? loft_null_text() : loft_lit(val, strlen(val));
+    loft_set_text(loft_crt_ref(store, rec, pos), (uint32_t) fld, v);
+}
+
+/* How many stores are live: what a probe reads to see a free took effect. */
+int64_t loft_crt_live_stores(void) {
+    int64_t n = 0;
+    for (uint32_t i = 0; i < loft_nstores; i++) n += loft_stores[i].live ? 1 : 0;
+    return n;
+}
+
+/* P2: one part of a reference after the trip through `loft_ref`, to show none is cut. */
+int64_t loft_crt_ref_part(int64_t store, int64_t rec, int64_t pos, int64_t which) {
+    loft_ref r = loft_crt_ref(store, rec, pos);
+    return which == 0 ? (int64_t) r.store_nr : which == 1 ? (int64_t) r.rec : (int64_t) r.pos;
+}
+
+/* ── The type table (@PLN91 S3, question 2): the rows the interpreter derives in loft from the
+ * image's schema, copied into the runtime's own descriptor structs.  Marshalling only: each
+ * number lands where `copy_table` would have written it, and no value is computed here.
+ *   row:  tp, kind, size, elem, n_fields, owns_heap, linked,
+ *         then per field: pos, type, view, hidden, group
+ * Answers how many types were loaded, or -1 for rows that do not parse. */
+static loft_tdesc *loft_crt_types = 0;
+static uint32_t loft_crt_ntypes = 0;
+
+static void loft_crt_drop_types(void) {
+    for (uint32_t i = 0; i < loft_crt_ntypes; i++) free((void *) loft_crt_types[i].fields);
+    free(loft_crt_types);
+    loft_crt_types = 0;
+    loft_crt_ntypes = 0;
+}
+
+int64_t loft_crt_load_types(const int64_t *rows, int64_t n, int64_t ntypes) {
+    loft_crt_drop_types();
+    if (ntypes < 1 || ntypes > 0xFFFF) return -1;
+    loft_crt_types = (loft_tdesc *) calloc((size_t) ntypes, sizeof(loft_tdesc));
+    if (!loft_crt_types) return -1;
+    loft_crt_ntypes = (uint32_t) ntypes;
+    int64_t at = 0, loaded = 0;
+    while (at + 7 <= n) {
+        int64_t tp = rows[at], nf = rows[at + 4];
+        if (tp < 0 || tp >= ntypes || nf < 0 || at + 7 + nf * 5 > n) return -1;
+        loft_tdesc *d = &loft_crt_types[tp];
+        d->kind = (uint8_t) rows[at + 1];
+        d->size = (uint16_t) rows[at + 2];
+        d->elem = (uint16_t) rows[at + 3];
+        d->n = (uint16_t) nf;
+        d->owns_heap = (uint8_t) rows[at + 5];
+        d->linked = (uint8_t) rows[at + 6];
+        if (nf > 0) {
+            loft_fld *f = (loft_fld *) calloc((size_t) nf, sizeof(loft_fld));
+            if (!f) return -1;
+            for (int64_t i = 0; i < nf; i++) {
+                const int64_t *r = &rows[at + 7 + i * 5];
+                f[i].pos = (uint16_t) r[0];
+                f[i].type = (uint16_t) r[1];
+                f[i].view = (uint8_t) r[2];
+                f[i].hidden = (uint8_t) r[3];
+                f[i].group = (uint16_t) r[4];
+            }
+            d->fields = f;
+        }
+        at += 7 + nf * 5;
+        loaded++;
+    }
+    return at == n ? loaded : -1;
+}
+
+/* OpCopyRecord: the record at `src` copied into `dst`, the claims it owns copied with it, by the
+ * table loaded above. */
+void loft_crt_copy_record(int64_t s_store, int64_t s_rec, int64_t s_pos, int64_t d_store,
+                          int64_t d_rec, int64_t d_pos, int64_t tp, int64_t flags) {
+    if (!loft_crt_types || tp < 0 || (uint32_t) tp >= loft_crt_ntypes) return;
+    loft_copy_record(loft_crt_types, (uint16_t) tp, loft_crt_ref(s_store, s_rec, s_pos),
+                     loft_crt_ref(d_store, d_rec, d_pos), (int) flags);
+}

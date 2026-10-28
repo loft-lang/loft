@@ -1,0 +1,138 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 S3 probes P1, P2 and P4 (doc/claude/plans/91-self-host/1b-s3.md): a record of the C
+// runtime's stores claimed, written, read and freed through `crt`; a reference's three parts at
+// their edges; and the shim's stores apart from the program's own.  Values by hand beside each.
+use crt;
+
+struct Held { n: integer, label: text }
+
+// P1: a 24-byte record (an integer at 0, an integer at 8, a text at 16) of type 100.
+fn test_a_record_is_claimed_written_read_and_freed() {
+  before = crt::live_stores();
+  r: vector<integer> = [0, 0, 0];
+  crt::database(r, 24, 100);
+  s = r[0] ?? -1;
+  rec = r[1] ?? -1;
+  pos = r[2] ?? -1;
+  assert(rec > 0, "a record was claimed: {r}");
+  assert(pos == 8, "a root record starts at byte 8: {pos}");
+  assert(crt::live_stores() == before + 1, "one store more: {crt::live_stores()}");
+  assert(crt::get_int(s, rec, pos, 0) == 0, "a fresh record reads zero");
+  crt::set_int(s, rec, pos, 0, 41);
+  crt::set_int(s, rec, pos, 8, -7);
+  assert(crt::get_int(s, rec, pos, 0) == 41, "field 0: 41");
+  assert(crt::get_int(s, rec, pos, 8) == -7, "field 8: -7");
+  n: integer? = null;
+  crt::set_int(s, rec, pos, 8, n);
+  assert(crt::get_int(s, rec, pos, 8) == null, "field 8 written null reads null");
+  assert(crt::get_text(s, rec, pos, 16) == null, "an unset text reads null");
+  crt::set_text(s, rec, pos, 16, "héllo");
+  assert(crt::get_text(s, rec, pos, 16) == "héllo", "the text: {crt::get_text(s, rec, pos, 16)}");
+  long = "";
+  for _ in 0..10 {
+    long += "abcdefghij";
+  }
+  crt::set_text(s, rec, pos, 16, long);
+  assert(crt::get_text(s, rec, pos, 16) == long, "a 100-byte text round-trips");
+  crt::free_ref(s, rec, pos);
+  assert(crt::live_stores() == before, "the store is gone again: {crt::live_stores()}");
+}
+
+// P1, the null reference: a read answers null, a write is dropped.
+fn test_the_null_reference_reads_null_and_drops_a_write() {
+  crt::set_int(65535, 0, 0, 0, 5);
+  assert(crt::get_int(65535, 0, 0, 0) == null, "null reference reads null");
+  assert(crt::get_text(65535, 0, 0, 0) == null, "and its text reads null");
+}
+
+// P2: each part survives the trip through `loft_ref` at its edge — store 65535 (u16), rec
+// 2^32 - 1 (u32), pos 2^32 - 1, and pos 70000, past 16 bits.
+fn test_a_reference_crosses_as_its_three_parts() {
+  assert(crt::ref_part(65535, 1, 2, 0) == 65535, "store u16 max");
+  assert(crt::ref_part(3, 4294967295, 2, 1) == 4294967295, "rec u32 max");
+  assert(crt::ref_part(3, 1, 4294967295, 2) == 4294967295, "pos u32 max");
+  assert(crt::ref_part(3, 1, 70000, 2) == 70000, "pos past 16 bits");
+}
+
+// P4: the program's own records are not the shim's stores.  A program record is made before
+// and kept across the shim's claims and frees; the shim counts only its own stores.
+fn test_the_shims_stores_are_apart_from_the_programs() {
+  keep = Held { n: 7, label: "kept" };
+  others = [Held { n: 1, label: "a" }, Held { n: 2, label: "b" }];
+  before = crt::live_stores();
+  assert(before == 0, "the shim's stores hold none of the program's records: {before}");
+  refs: vector<integer> = [];
+  for _ in 0..5 {
+    r: vector<integer> = [0, 0, 0];
+    crt::database(r, 16, 101);
+    crt::set_int(r[0] ?? 0, r[1] ?? 0, r[2] ?? 0, 0, 99);
+    refs += r;
+  }
+  assert(crt::live_stores() == 5, "five shim stores: {crt::live_stores()}");
+  for i in 0..5 {
+    crt::free_ref(refs[i * 3] ?? 0, refs[i * 3 + 1] ?? 0, refs[i * 3 + 2] ?? 0);
+  }
+  assert(crt::live_stores() == 0, "all freed: {crt::live_stores()}");
+  assert(keep.n == 7 and keep.label == "kept", "the program's record is untouched");
+  assert(others[1].n == 2 and others[0].label == "a", "and so are its vector's records");
+}
+
+// P3 rows: type 100 is a 24-byte struct — integers at 0 and 8, a text (type 5) at 16 — and type 5
+// is a text.  `owns_heap` is the value under test: 1 is the right answer for a struct holding a
+// text, 0 the wrong one.
+fn rows(owns_heap: integer) -> vector<integer> {
+  [
+    5, 1, 4, 0, 0, 0, 0,
+    100, 2, 24, 0, 3, owns_heap, 0,
+      0, 0, 0, 0, 0,
+      8, 0, 0, 0, 0,
+      16, 5, 0, 0, 0
+  ]
+}
+
+fn fresh(tp: integer) -> vector<integer> {
+  r: vector<integer> = [0, 0, 0];
+  crt::database(r, 24, tp);
+  r
+}
+
+// P3: with the right row, `loft_copy_record` copies the text into a claim of the copy's own
+// store, and the copy reads it after the source's store is freed.
+fn test_a_copy_owns_its_text_by_the_loaded_row() {
+  assert(crt::load_types(rows(1), 101) == 2, "two types loaded");
+  p = fresh(100);
+  q = fresh(100);
+  crt::set_int(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0, 0, 3);
+  crt::set_text(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0, 16, "héllo");
+  crt::copy_record(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0, q[0] ?? 0, q[1] ?? 0, q[2] ?? 0, 100, 4);
+  crt::free_ref(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0);
+  assert(crt::get_int(q[0] ?? 0, q[1] ?? 0, q[2] ?? 0, 0) == 3, "the integer came with the bytes");
+  got = crt::get_text(q[0] ?? 0, q[1] ?? 0, q[2] ?? 0, 16);
+  assert(got == "héllo", "the copy's own text: {got}");
+  crt::free_ref(q[0] ?? 0, q[1] ?? 0, q[2] ?? 0);
+  assert(crt::live_stores() == 0, "both stores freed");
+}
+
+// P3's control: with `owns_heap` 0 the copy takes the bytes only, so its text slot names a claim
+// of the SOURCE store and does not read the source's text in its own.  The row is what decides.
+// The text is one no other cell writes: a freed store's slot is reused with its buffer, so the
+// copy's slot may hold an earlier cell's text, never this one.
+fn test_a_wrong_row_loses_the_text() {
+  assert(crt::load_types(rows(0), 101) == 2, "two types loaded");
+  p = fresh(100);
+  q = fresh(100);
+  crt::set_text(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0, 16, "only-the-control-writes-this");
+  crt::copy_record(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0, q[0] ?? 0, q[1] ?? 0, q[2] ?? 0, 100, 4);
+  got = crt::get_text(q[0] ?? 0, q[1] ?? 0, q[2] ?? 0, 16);
+  assert(got != "only-the-control-writes-this", "without owns_heap the copy does not own the text: {got}");
+  crt::free_ref(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0);
+  crt::free_ref(q[0] ?? 0, q[1] ?? 0, q[2] ?? 0);
+}
+
+// Rows that do not parse are refused, not half-loaded.
+fn test_malformed_rows_are_refused() {
+  assert(crt::load_types([100, 2, 24, 0, 3, 1, 0, 0, 0], 101) == -1, "a field list cut short");
+  assert(crt::load_types([200, 2, 24, 0, 0, 0, 0], 101) == -1, "a type number past the table");
+}

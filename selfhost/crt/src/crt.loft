@@ -54,3 +54,98 @@ pub fn format_text(val: text?, width: integer, dir: integer, token: integer) -> 
   }
   text_from_byte_range(buf, 0, n)
 }
+
+// ── The store (@PLN91 S3) ────────────────────────────────────────────────────────────────
+// The interpreted program's records live in the shim's own copy of the C runtime's stores.  A
+// reference is its three parts — store, rec, pos — and a routine that answers one writes them
+// into `out`, a vector of three integers.
+
+fn c_database(out: vector<integer>, bytes: integer, tp: integer) -> integer;
+#c "loft_crt_database" "int64_t(int64_t*, int64_t, int64_t, int64_t)"
+
+fn c_free_ref(store: integer, rec: integer, pos: integer);
+#c "loft_crt_free_ref" "void(int64_t, int64_t, int64_t)"
+
+fn c_get_int(store: integer, rec: integer, pos: integer, fld: integer) -> integer;
+#c "loft_crt_get_int" "int64_t(int64_t, int64_t, int64_t, int64_t)"
+
+fn c_set_int(store: integer, rec: integer, pos: integer, fld: integer, v: integer, is_null: boolean);
+#c "loft_crt_set_int" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_get_text(out: vector<u8>, store: integer, rec: integer, pos: integer, fld: integer) -> integer;
+#c "loft_crt_get_text" "int64_t(char*, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_set_text(store: integer, rec: integer, pos: integer, fld: integer, val: text, is_null: boolean);
+#c "loft_crt_set_text" "void(int64_t, int64_t, int64_t, int64_t, const char*, int64_t)"
+
+fn c_live_stores() -> integer;
+#c "loft_crt_live_stores" "int64_t()"
+
+fn c_ref_part(store: integer, rec: integer, pos: integer, which: integer) -> integer;
+#c "loft_crt_ref_part" "int64_t(int64_t, int64_t, int64_t, int64_t)"
+
+// A fresh record of `bytes` of type `tp`, in a store of its own: `OpDatabase`.  Its reference is
+// written into `out[0..3]`.
+pub fn database(out: vector<integer>, bytes: integer, tp: integer) {
+  c_database(out, bytes, tp);
+}
+
+// `OpFreeRef`: the record's whole store goes.
+pub fn free_ref(store: integer, rec: integer, pos: integer) {
+  c_free_ref(store, rec, pos);
+}
+
+// `OpGetInt` and `OpSetInt`: the 8-byte integer at byte `fld` of the record.
+pub fn get_int(store: integer, rec: integer, pos: integer, fld: integer) -> integer? {
+  c_get_int(store, rec, pos, fld)
+}
+
+pub fn set_int(store: integer, rec: integer, pos: integer, fld: integer, v: integer?) {
+  c_set_int(store, rec, pos, fld, v ?? 0, v == null);
+}
+
+// `OpGetText` and `OpSetText`: the text at byte `fld` of the record.
+pub fn get_text(store: integer, rec: integer, pos: integer, fld: integer) -> text? {
+  buf = room(64);
+  n = c_get_text(buf, store, rec, pos, fld);
+  if n < 0 {
+    return null;
+  }
+  if n > len(buf) {
+    buf = room(n);
+    n = c_get_text(buf, store, rec, pos, fld);
+  }
+  text_from_byte_range(buf, 0, n)
+}
+
+pub fn set_text(store: integer, rec: integer, pos: integer, fld: integer, val: text?) {
+  c_set_text(store, rec, pos, fld, val ?? "", val == null);
+}
+
+// How many of the shim's stores are live.
+pub fn live_stores() -> integer {
+  c_live_stores()
+}
+
+// Part `which` (0 store, 1 rec, 2 pos) of a reference after its trip through the runtime's own
+// reference type.
+pub fn ref_part(store: integer, rec: integer, pos: integer, which: integer) -> integer {
+  c_ref_part(store, rec, pos, which)
+}
+
+fn c_load_types(rows: vector<integer>, ntypes: integer) -> integer;
+#c "loft_crt_load_types" "int64_t(const int64_t*, int64_t, int64_t)"
+
+fn c_copy_record(s_store: integer, s_rec: integer, s_pos: integer, d_store: integer, d_rec: integer, d_pos: integer, tp: integer, flags: integer);
+#c "loft_crt_copy_record" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+// The runtime's type table, from flat rows (`shim/crt.c` names their layout): how many types
+// were loaded, or -1 for rows that do not parse.
+pub fn load_types(rows: vector<integer>, ntypes: integer) -> integer {
+  c_load_types(rows, ntypes)
+}
+
+// `OpCopyRecord`: the record at `src` copied into `dst` with the claims it owns.
+pub fn copy_record(s_store: integer, s_rec: integer, s_pos: integer, d_store: integer, d_rec: integer, d_pos: integer, tp: integer, flags: integer) {
+  c_copy_record(s_store, s_rec, s_pos, d_store, d_rec, d_pos, tp, flags);
+}
