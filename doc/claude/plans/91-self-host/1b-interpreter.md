@@ -311,6 +311,51 @@ integer it returns.  Both must print the same number, or the times do not compar
 - **S1.4 — the measurement**: best of five wall times per kernel, both sides, numbers in
   this section, and the gate read against them.
 
+### SU1 — `store_load` maps the image instead of copying it — DESIGNED 2026-10-28
+
+**Why now (owner, 2026-10-28):** the store's file format IS its memory format, so a store
+image can be used where it lies: mapping it costs no algorithm, and start-up then costs the
+pages a run touches.  The loft interpreter reads the program image with `store_load`, and so
+does every loft program that ships a dataset.  Measured by S1.4's `load us` column, before and
+after.
+
+**What happens today** (`src/database/allocation.rs::load_path`, `src/store.rs::Store::load`):
+the file is read into a buffer (`image_bytes`), copied again into the store's word-aligned
+allocation, and its recorded-words header cleared.  Two copies of the whole image per load.
+
+**The change.**  Where the build maps files (the `mmap` feature: not wasm), `Store::load`
+maps the image **copy-on-write** (`memmap::MmapOptions::map_copy`, private) instead:
+- **The promise of `store_load` is kept as written**: "writes after it stay in memory" — a
+  written page is the process's own copy, and the file never changes.  The header clear is
+  such a write.
+- **The first growth moves the store to the heap**: a private mapping cannot grow, so
+  `resize_store` allocates, copies the mapped words, drops the mapping, and goes on as a heap
+  store.  Drop releases the mapping, never a heap free of a mapped pointer.
+- **The precondition**: the file is not truncated in place while mapped (a read past the end
+  of a mapping is a SIGBUS).  loft's own writers replace a file by rename
+  (`persist_copy`'s `.tmp` + `rename`), which leaves a live mapping on the old file; a
+  foreign writer that truncates is outside the rule.
+- **`(S-Mapped)` widens** (`formal/structures.md`): besides the runtime's own files, an IMAGE
+  loaded by `store_load` may be mapped copy-on-write; what a program reads is unchanged
+  (`(S-Paged-Same)`, the whole-image load's answers), and the file is never written.
+- **A switch to bisect by**: `LOFT_NO_MAPPED_LOAD=1` keeps the copy (BOTH_BACKEND_SWITCHES.md).
+- The memory ceiling counts the mapped size as today's copy does, so a limit run answers the
+  same.
+
+**Code points:** `src/store.rs` (`Store::load`, a private-mapping backing beside `file`,
+`resize_store`, `Drop`), `src/database/allocation.rs::load_path` (unchanged in shape),
+`doc/claude/formal/structures.md` (S-Mapped), BOTH_BACKEND_SWITCHES.md.
+
+**Cases** (both backends, `LOFT_STRICT_STORES=1`, `LOFT_POISON=1`): the whole store-persist
+and paged-load corpus through it; a write after load answers in memory and leaves the file's
+bytes unchanged; a growth after load keeps every record; a `store_persist_copy` over the
+mapped file while it is loaded leaves the loaded values as they were; the switch restores the
+copy; S1.4's load column before and after.
+
+**After it, SU2**: the loft interpreter keeps its lowered ops in a store of its own beside the
+image, mapped at start-up the same way — functions are named by their global definition
+number inside one image, so nothing needs relocating.
+
 ### S1.4 — the measurement: the loft interpreter against the Rust one — DESIGNED 2026-10-28
 
 **The owner's ruling (2026-10-28):** measure first, before T3 and T4.  Parity is not a gate:
