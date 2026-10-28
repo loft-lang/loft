@@ -1,5 +1,5 @@
 diff --git b/src/lexer.rs a/src/lexer.rs
-index 72ed532aa..8a60f20bf 100644
+index b6beddff5..8a60f20bf 100644
 --- b/src/lexer.rs
 +++ a/src/lexer.rs
 @@ -2564,32 +2564,6 @@ impl Lexer {
@@ -25,9 +25,9 @@ index 72ed532aa..8a60f20bf 100644
 -                    )
 -                } else {
 -                    format!(
--                        "`{val}{bad}`: an integer literal takes no suffix but `l` — its width comes \
--                         from where it goes: write `{val} as {bad}`, or give the binding the type \
--                         (`x: {bad} = {val}`)"
+-                        "`{val}{bad}`: an integer literal takes no suffix — its width comes from \
+-                         where it goes: write `{val} as {bad}`, or give the binding the type \
+-                         (`x: {bad} = {val}`); `l` is the one suffix, for a 64-bit literal"
 -                    )
 -                };
 -                self.err(Level::Error, &msg);
