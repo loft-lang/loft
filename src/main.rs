@@ -9752,6 +9752,12 @@ fn main() {
     if html_out.is_some() {
         loft::interp::extensions::set_browser_target();
     }
+    // A C build with no fallback skips every host cdylib.  A default run that the C backend
+    // refuses falls back to the interpreter (`native_fallback_reason`), which needs them, so
+    // `LOFT_NATIVE_BACKEND=c` alone does not set it.
+    if emit_c.is_some() || (native_c && native_requested) {
+        loft::interp::extensions::set_c_target();
+    }
     // #358 — a warm hit returns the def-table index where user definitions
     // start; the cold path derives it from the post-stdlib def count below.
     let warm_user_start = if program_cache_on && !p.sandbox_is_active() {
@@ -10033,9 +10039,13 @@ fn main() {
     let native_required = std::env::var("LOFT_REQUIRE_NATIVE")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
-    // A browser build compiles every library into the page's wasm: a default-native host
-    // cdylib would be built and never linked (`extensions::browser_target`).
-    let mut pending_native = if native_libs_off || loft::interp::extensions::browser_target() {
+    // A browser build compiles every library into the page's wasm, and a C build links each
+    // package's `[c] shim`: a default-native host cdylib would be built and never linked
+    // (`extensions::browser_target`, `extensions::c_target`).
+    let mut pending_native = if native_libs_off
+        || loft::interp::extensions::browser_target()
+        || loft::interp::extensions::c_target()
+    {
         p.pending_native_compile.clear();
         Vec::new()
     } else {

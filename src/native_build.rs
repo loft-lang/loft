@@ -148,11 +148,30 @@ pub fn browser_target() -> bool {
     BROWSER_TARGET.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// The host native library a `use`d package registers — none for a browser build, which
-/// never loads one ([`browser_target`]); otherwise [`resolve_native_lib`].
+/// Set for a run the C backend compiles with no way back to the interpreter (`--emit-c`, an
+/// explicit `--native-c`): the C links a package's `[c] shim` and the components, never its
+/// Rust cdylib, so building one is a full cargo build of code the run never loads — a
+/// `use graphics` spent over 25 minutes in winit and glutin before a word of C.
+pub(crate) static C_TARGET: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Mark this run as a C build, before anything resolves a package.
+pub fn set_c_target() {
+    C_TARGET.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Is this run a C build?  Then no host native library is built or registered.
+#[must_use]
+pub fn c_target() -> bool {
+    C_TARGET.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The host native library a `use`d package registers — none for a browser build or a C
+/// build, which never load one ([`browser_target`], [`c_target`]); otherwise
+/// [`resolve_native_lib`].
 #[must_use]
 pub fn host_native_lib(pkg_dir: &str, stem: &str) -> Option<String> {
-    if browser_target() {
+    if browser_target() || c_target() {
         return None;
     }
     resolve_native_lib(pkg_dir, stem)

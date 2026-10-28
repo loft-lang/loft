@@ -538,7 +538,11 @@ call into an opened library finds its symbol once (`loft_c_bound_sym`).  This is
 ships its native part without a Rust crate: ANSI C beside its loft, one source for all three
 backends.  A `#native` function — a Rust cdylib's — is NOT reached: the C answers every call
 with the interpreter's unloaded-library panic, so a library a C program needs is one whose
-native part is a `[c] shim`.
+native part is a `[c] shim`, a prebuilt C library or a component.  A C build therefore never
+builds a Rust cdylib (`native_build::c_target`, set for `--emit-c` and an explicit
+`--native-c`; guard `a_c_build_builds_no_rust_native_crate`).  A default run that the C
+backend refuses falls back to the interpreter, which loads them, so `LOFT_NATIVE_BACKEND=c`
+alone does not set it.
 
 **The libraries inside loft's binary.**  A `#native` of an `in_binary` library (`[native]
 in_binary = true`: its natives live in loft's own binary, `native::FUNCTIONS`) is a call into

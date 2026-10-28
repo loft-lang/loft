@@ -5350,3 +5350,87 @@ fn main() {
     assert!(body.contains("loft_add32(v1_t, "), "a 32-bit sum:\n{body}");
     assert!(!body.contains("int64_t"), "no 64-bit local:\n{body}");
 }
+
+/// A C build never builds a library's Rust native crate: the C links `[c] shim`s and loft's
+/// components only, and the cargo build of a crate it would never load cost a `use graphics`
+/// over 25 minutes before a word of C (`native_build::c_target`).  The library's crate here
+/// cannot compile; without the rule `--emit-c` still tries, leaving `native-auto/` behind.
+#[test]
+fn a_c_build_builds_no_rust_native_crate() {
+    let dir = scratch("c_target_no_crate");
+    let lib = dir.join("libs/rustlib");
+    fa::create_dir_all(lib.join("src")).expect("lib dir");
+    fa::create_dir_all(lib.join("native/src")).expect("crate dir");
+    fa::write(
+        lib.join("loft.toml"),
+        "[package]\nname = \"rustlib\"\nversion = \"0.1.0\"\nloft = \">=2026.10.0\"\n\n\
+         [library]\nentry = \"src/rustlib.loft\"\n\n[native]\ncrate = \"rustlib-native\"\n",
+    )
+    .expect("manifest");
+    fa::write(
+        lib.join("src/rustlib.loft"),
+        "pub fn twice(x: integer) -> integer { x * 2 }\n",
+    )
+    .expect("library");
+    fa::write(
+        lib.join("native/Cargo.toml"),
+        "[package]\nname = \"rustlib-native\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\
+         [lib]\ncrate-type = [\"cdylib\"]\n",
+    )
+    .expect("crate manifest");
+    fa::write(lib.join("native/src/lib.rs"), "this is not rust\n").expect("crate source");
+    let prog = dir.join("p.loft");
+    fa::write(
+        &prog,
+        "use rustlib;\nfn main() { println(\"{rustlib::twice(21)}\"); }\n",
+    )
+    .expect("program");
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--emit-c")
+        .arg(dir.join("p.c"))
+        .arg("--lib")
+        .arg(dir.join("libs"))
+        .arg(&prog)
+        .current_dir(&dir)
+        .env("LOFT_NO_CACHE", "1")
+        .env("LOFT_TIMEOUT", "300")
+        .output()
+        .expect("loft runs");
+    assert!(
+        out.status.success(),
+        "--emit-c:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        fa::read_to_string(dir.join("p.c")).is_ok_and(|c| c.contains("INT64_C(42)")),
+        "the C carries the library's answer (`twice(21)`, folded)"
+    );
+    assert!(
+        !fa::exists(lib.join("native-auto")),
+        "a C build started a cargo build of the library's Rust crate"
+    );
+    // Run as well: the library path the program starts with is resolved without a build.
+    if have_cc() && loft::platform::c_runtime_posix_host() {
+        let run = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+            .arg("--native-c")
+            .arg("--lib")
+            .arg(dir.join("libs"))
+            .arg(&prog)
+            .current_dir(&dir)
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_TIMEOUT", "300")
+            .output()
+            .expect("loft runs");
+        let err = String::from_utf8_lossy(&run.stderr);
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout),
+            "42\n",
+            "--native-c:\n{err}"
+        );
+        assert!(
+            !err.contains("building native library"),
+            "--native-c started a cargo build of the library's Rust crate:\n{err}"
+        );
+    }
+    let _ = fa::remove_dir_all(&dir);
+}

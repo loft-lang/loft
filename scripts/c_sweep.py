@@ -264,7 +264,9 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
         elif mode in CROSS:
             code, _, err = run(CROSS[mode] + [c] + shim_sources + ["-o", exe, "-lm"], 300)
         else:
-            code, _, err = run(CC + flags + (ASAN if asan else []) + [c, "-o", exe, "-lm"] + links, 120)
+            # `-lm` after the shim archives, as the driver links them: a static archive's
+            # math calls (an OGG decoder's `cos`) resolve only against a library named after it.
+            code, _, err = run(CC + flags + (ASAN if asan else []) + [c, "-o", exe] + links + ["-lm"], 120)
         if code != 0:
             first = err.decode(errors="replace").strip().split("\n")[0]
             return path, "cc-error", f"[{mode}] {first}", None, times

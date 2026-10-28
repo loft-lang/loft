@@ -22,8 +22,8 @@ pub use crate::c_libs::{load_c_library, try_dlsym_pub};
 // Finding or building a package's native library lives in `native_build` (core),
 // because the parser resolves it on `use`; these are the paths callers name here.
 pub use crate::native_build::{
-    auto_build_native, browser_target, host_native_lib, native_target_root, platform_lib_name,
-    resolve_native_lib, set_browser_target,
+    auto_build_native, browser_target, c_target, host_native_lib, native_target_root,
+    platform_lib_name, resolve_native_lib, set_browser_target, set_c_target,
 };
 use crate::native_build::{build_deps_hint, native_crate_newer_than};
 /// Load all pending native extension libraries.
@@ -773,6 +773,12 @@ mod bridgeless_report_tests {
 #[cfg(feature = "native-extensions")]
 fn report_unresolved_natives(data: &crate::data::Data, unresolved: &[String]) {
     use std::collections::BTreeMap;
+    // A C build loads no host library by design (`native_build::c_target`): its natives are
+    // the `[c] shim`'s, and a Rust native the program calls is refused by the C backend
+    // itself, naming the function.  There is nothing here to rebuild.
+    if crate::native_build::c_target() {
+        return;
+    }
     // A package with no native part at all never registered one, so the symbol→crate map
     // cannot name it; the library that DECLARED the function can (`qualified_type_name`'s
     // most-qualified rule), and naming it is the difference between a cure and a guess.
