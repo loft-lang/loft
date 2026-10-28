@@ -14,12 +14,77 @@ use types;
 
 // The entry's result — a loft integer, so null when the program answers null — or the first
 // thing the interpreter does not carry.  `stores_left` is the leak check: how many of the C
-// runtime's stores the run left live, zero when the IR's frees freed every record it made.
+// runtime's stores the run left live.  `swept` is how many stores a return released because
+// the frame still owned them: the frees the IR did not place (1b-s3.md § Ownership at run time).
 pub struct Outcome {
   pub value: integer?,
   pub refused: text,
   pub refused_in: text,
   pub stores_left: integer,
+  pub swept: integer,
+}
+
+// The owner table, `(O-Owner)` held at run time (1b-s3.md § Ownership at run time): per store of
+// the C runtime, the absolute integer-stack slot of the variable that owns it, `IN_FLIGHT - d`
+// for a returned value frame `d` holds and has not bound, or `NOBODY`.  Every op that creates,
+// binds, frees or returns a record reads and updates it, and no store is released except
+// through it, so a bind's choice and the frees cannot disagree.  `held` lists the stores with
+// an owner, so a return looks only at those.
+struct Owners {
+  owner: vector<integer>,
+  held: vector<integer>,
+  swept: integer,
+}
+
+NOBODY = -1;
+IN_FLIGHT = -10;
+NULL_STORE = 65535;
+
+fn owner_of(t: Owners, s: integer) -> integer {
+  if s < 0 || s >= len(t.owner) { NOBODY } else { t.owner[s] ?? NOBODY }
+}
+
+// Store `s` owned by `who` from here on.
+fn claim(t: Owners, s: integer, who: integer) {
+  if s < 0 || s == NULL_STORE {
+    return;
+  }
+  while len(t.owner) <= s {
+    t.owner += [NOBODY];
+  }
+  if (t.owner[s] ?? NOBODY) == NOBODY {
+    t.held += [s];
+  }
+  t.owner[s] = who;
+}
+
+// Store `s` owned by nobody: it was released, or handed to the runtime to release.
+fn disown(t: Owners, s: integer) {
+  if owner_of(t, s) == NOBODY {
+    return;
+  }
+  t.owner[s] = NOBODY;
+  for h in t.held {
+    if h == s {
+      t.held.remove(h#index);
+      return;
+    }
+  }
+}
+
+// Store `s` released through the runtime, and its entry with it.
+fn release(t: Owners, s: integer) {
+  crt::free_ref(s, 0, 0);
+  disown(t, s);
+}
+
+// Every store a run still owns, released: the end of the entry, or a refusal mid-run.
+fn release_all(t: Owners) {
+  while len(t.held) > 0 {
+    s = t.held[len(t.held) - 1] ?? NULL_STORE;
+    release(t, s);
+    t.swept += 1;
+  }
 }
 
 // A value pushed at `sp` on its kind's stack: overwritten below the length, appended at it.
@@ -117,7 +182,7 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
   }
   first = lower::lower(b, entry);
   if first.refused != "" {
-    return Outcome { value: 0, refused: first.refused, refused_in: first.refused_in, stores_left: 0 };
+    return Outcome { value: 0, refused: first.refused, refused_in: first.refused_in, stores_left: 0, swept: 0 };
   }
   given = first.params_int + first.params_float + first.params_text;
   if given != len(args) || first.params_int != len(args) {
@@ -126,12 +191,14 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
       refused: "the entry takes {given} arguments, given {len(args)}",
       refused_in: "",
       stores_left: 0,
+      swept: 0,
     };
   }
   progs[entry] = first;
   lowered[entry] = true;
   stores_before = crt::live_stores();
   table_loaded = false;
+  own = Owners { owner: [], held: [], swept: 0 };
   io: vector<integer> = [65535, 0, 0];
   ints: vector<integer?> = [];
   floats: vector<float?> = [];
@@ -248,11 +315,13 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         }
         callee_prog = progs[callee] ?? panic("lowered above");
         if callee_prog.refused != "" {
+          release_all(own);
           return Outcome {
             value: 0,
             refused: callee_prog.refused,
             refused_in: callee_prog.refused_in,
             stores_left: crt::live_stores() - stores_before,
+            swept: own.swept,
           };
         }
         if fp < len(f_def) {
@@ -309,7 +378,34 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
           _ => { sp_int -= 1; vi = ints[sp_int]; }
         }
         if fp == 0 {
-          return Outcome { value: vi, refused: "", refused_in: "", stores_left: crt::live_stores() - stores_before };
+          release_all(own);
+          return Outcome {
+            value: vi,
+            refused: "",
+            refused_in: "",
+            stores_left: crt::live_stores() - stores_before,
+            swept: own.swept,
+          };
+        }
+        // The sweep: a store this frame's variables own, or a value it holds in flight, is
+        // released — except the returned one, which the caller now holds in flight (O-Move).
+        if len(own.held) > 0 {
+          returned = if op.kind == KRef { vi ?? NULL_STORE } else { NULL_STORE };
+          gone: vector<integer> = [];
+          for st in own.held {
+            o = owner_of(own, st);
+            if o >= base_int || o == IN_FLIGHT - fp {
+              if st == returned {
+                own.owner[st] = IN_FLIGHT - (fp - 1);
+              } else {
+                gone += [st];
+              }
+            }
+          }
+          for st in gone {
+            release(own, st);
+            own.swept += 1;
+          }
         }
         sp_int = base_int;
         sp_float = base_float;
@@ -516,29 +612,52 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
       // The store (S3): each op calls the C runtime's routine of its operator through `crt`.
       // A reference is three integers, the store part under the record and the position.
       // An op that writes a variable hands its three parts over and writes back what the
-      // routine left there.
+      // routine left there.  Who owns a store is the owner table's, and only it releases one.
       Database => {
+        // A store the variable owns is made again in place; any other variable gets a store
+        // of its own, so a store it only views is never cleared under its owner.
         at = base_int + op.a;
         ref_in(io, ints, at);
+        if owner_of(own, io[0] ?? NULL_STORE) != at {
+          io[0] = NULL_STORE;
+          io[1] = 0;
+          io[2] = 0;
+        }
         crt::database(io, (b.types[op.b] ?? panic("a type the lowering checked")).size, op.b);
         ref_out(io, ints, at);
+        claim(own, io[0] ?? NULL_STORE, at);
       }
+      // `OpFreeRef(v)`: released when `v` owns its store; `v` is reset either way, as the
+      // runtime's `loft_free_var` resets it.
       FreeVar => {
         at = base_int + op.a;
-        ref_in(io, ints, at);
-        crt::free_var(io);
-        ref_out(io, ints, at);
+        st = ints[at] ?? NULL_STORE;
+        if st != NULL_STORE {
+          if owner_of(own, st) == at {
+            release(own, st);
+          }
+          ints[at] = NULL_STORE;
+        }
       }
+      // `OpFreeRef` of a value: a store a variable owns is that variable's to release.
       FreeRef => {
         sp_int -= 3;
-        crt::free_ref(ints[sp_int] ?? 65535, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0);
+        st = ints[sp_int] ?? NULL_STORE;
+        if st != NULL_STORE && owner_of(own, st) < 0 {
+          release(own, st);
+        }
       }
+      // `OpFreeRefIfDistinct(v, w)`: as `OpFreeRef(v)`, unless `v` names `w`'s store.
       FreeVarDistinct => {
         sp_int -= 3;
         at = base_int + op.a;
-        ref_in(io, ints, at);
-        crt::free_var_distinct(io, ints[sp_int] ?? 65535, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0);
-        ref_out(io, ints, at);
+        st = ints[at] ?? NULL_STORE;
+        if st != NULL_STORE && st != (ints[sp_int] ?? NULL_STORE) {
+          if owner_of(own, st) == at {
+            release(own, st);
+          }
+          ints[at] = NULL_STORE;
+        }
       }
       GetInt => {
         sp_int -= 3;
@@ -622,17 +741,63 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
           ints[sp_int + 3] ?? 65535, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0,
           op.a, op.b
         );
+        // A copy that frees its source (flag 1) released the source's store in the runtime.
+        if op.b & 1 != 0 {
+          disown(own, ints[sp_int] ?? NULL_STORE);
+        }
       }
-      BindCopy => {
+      ClearRecord => {
         if !table_loaded {
           load_table(b);
           table_loaded = true;
         }
         sp_int -= 3;
+        crt::clear(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a);
+      }
+      // `v = x` (`lower::bind`): ADOPT a value this frame holds in flight or nobody owns;
+      // otherwise COPY (the mode says so) or bind a VIEW.  A store `v` owned and no longer
+      // names is released.  A copy refills the store `v` owns in place, or mints one.
+      Bind => {
+        mode = op.b % 4;
+        tp = op.b / 4;
+        sp_int -= 3;
+        rs = ints[sp_int] ?? NULL_STORE;
+        rr = ints[sp_int + 1] ?? 0;
+        rp = ints[sp_int + 2] ?? 0;
         at = base_int + op.a;
-        ref_in(io, ints, at);
-        crt::bind_copy(io, op.b, ints[sp_int] ?? 65535, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0);
-        ref_out(io, ints, at);
+        old = ints[at] ?? NULL_STORE;
+        owned_old = old != NULL_STORE && owner_of(own, old) == at;
+        ro = owner_of(own, rs);
+        adopt = rs != NULL_STORE && (ro == NOBODY || ro == IN_FLIGHT - fp);
+        if !adopt && rs != NULL_STORE && rr != 0 && mode != lower::BIND_PLAIN {
+          if !table_loaded {
+            load_table(b);
+            table_loaded = true;
+          }
+          if owned_old && old != rs {
+            ref_in(io, ints, at);
+          } else {
+            io[0] = NULL_STORE;
+            io[1] = 0;
+            io[2] = 0;
+          }
+          crt::bind_copy(io, tp, rs, rr, rp);
+          if owned_old && old == rs {
+            release(own, old);
+          }
+          ref_out(io, ints, at);
+          claim(own, io[0] ?? NULL_STORE, at);
+        } else {
+          if owned_old && old != rs {
+            release(own, old);
+          }
+          ints[at] = rs;
+          ints[at + 1] = rr;
+          ints[at + 2] = rp;
+          if adopt {
+            claim(own, rs, at);
+          }
+        }
       }
       _ => {
         match op.kind {
@@ -707,5 +872,5 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
       }
     }
   }
-  Outcome { value: 0, refused: "the program ran off its last op", refused_in: "", stores_left: 0 }
+  Outcome { value: 0, refused: "the program ran off its last op", refused_in: "", stores_left: 0, swept: 0 }
 }

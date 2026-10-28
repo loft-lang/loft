@@ -223,6 +223,10 @@ fn test_every_field_width_round_trips() {
   assert(crt::get_w(crt::W_BOOLEAN, s, rec, pos, 12, 0) == 1, "boolean true");
   crt::set_w(crt::W_BOOLEAN, s, rec, pos, 12, 0, n);
   assert(crt::get_w(crt::W_BOOLEAN, s, rec, pos, 12, 0) == null, "boolean null");
+  crt::set_w(crt::W_ENUM, s, rec, pos, 13, 0, 2);
+  assert(crt::get_w(crt::W_ENUM, s, rec, pos, 13, 0) == 2, "enum");
+  crt::set_w(crt::W_ENUM, s, rec, pos, 13, 0, n);
+  assert(crt::get_w(crt::W_ENUM, s, rec, pos, 13, 0) == null, "enum null");
   crt::set_float(s, rec, pos, 16, 2.5, false);
   assert(crt::get_float(s, rec, pos, 16, false) == 2.5, "float");
   crt::set_float(s, rec, pos, 24, 0.1, true);

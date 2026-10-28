@@ -104,6 +104,72 @@ fn floats(n: integer) -> integer {
   (w.f * 10.0) as integer + (w.g * 100.0) as integer + w.h.k + len(w.h.label)
 }
 
+// Ownership at run time (1b-s3.md): one owner table decides each bind and every free.
+
+// A rebind releases the store it displaces.  rebound(5) = 100 + 5 + 1 + 2 = 108.
+fn rebound(n: integer) -> integer {
+  p = make(n, 1);
+  s = p.y;
+  p = make(n + 1, 2);
+  s += p.y;
+  p = Point { x: 100, y: 0, name: "r" };
+  p.x + n + s
+}
+
+// A record bound in every pass of a loop: one store per pass, each released.
+// looped(10) = 0 + 1 + … + 9 = 45.
+fn looped(n: integer) -> integer {
+  s = 0;
+  for i in 0..n {
+    p = make(i, 0);
+    s += p.x;
+  }
+  s
+}
+
+// A call's record read and never bound, and one handed straight to another call.
+// unbound(4) = make(4, 0).x + mixed-style read of make(4, 2) through pick: 4 + (-1) = 3.
+fn unbound(n: integer) -> integer {
+  make(n, 0).x + pick(make(n, 2))
+}
+
+// A parameter rebound to a record of its own leaves the caller's alone.
+// reset_kept(3) = p.x * 10 + reset(p) = 30 + (9 - 3) = 36.
+fn reset(p: Point) -> integer {
+  was = p.x;
+  p = make(9, 9);
+  p.x - was
+}
+
+fn reset_kept(n: integer) -> integer {
+  p = make(n, 0);
+  r = reset(p);
+  p.x * 10 + r
+}
+
+// A copy of a borrowing call's result, then the source changed: each keeps its own.
+// borrowed(6) = c.x * 100 + src.x = 600 + 50 = 650.
+fn borrowed(n: integer) -> integer {
+  src = make(n, 0);
+  c = keep(src);
+  src.x = 50;
+  c.x * 100 + src.x
+}
+
+// Built into a local and returned, as the stdlib's `file()` is written: the local is promoted
+// onto the hidden return buffer, and the caller's bind adopts the store the call minted.
+// promoted(4) = 4 + 1 + len("f") = 6.
+fn built_local(n: integer) -> Point {
+  result = Point { x: n, y: 0, name: "f" };
+  result.y = 1;
+  result
+}
+
+fn promoted(n: integer) -> integer {
+  p = built_local(n);
+  p.x + p.y + len(p.name)
+}
+
 fn main() {
-  println("{built(3)} {shifted(4)} {copied(4)} {named(5)} {texts_apart(1)} {mixed(10)} {matched(1)} {matched(5)} {kept(4)} {wide(5)} {wide(-5)} {floats(3)}");
+  println("{built(3)} {shifted(4)} {copied(4)} {named(5)} {texts_apart(1)} {mixed(10)} {matched(1)} {matched(5)} {kept(4)} {wide(5)} {wide(-5)} {floats(3)} {rebound(5)} {looped(10)} {unbound(4)} {reset_kept(3)} {borrowed(6)} {promoted(4)}");
 }

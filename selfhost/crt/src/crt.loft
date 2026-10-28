@@ -187,9 +187,10 @@ pub W_SHORT = 3;
 pub W_SHORT_RAW = 4;
 pub W_CHARACTER = 5;
 pub W_BOOLEAN = 6;
+pub W_ENUM = 7;
 
-// A field of width `which` at byte `fld`: an integer, a character's code point (0 for null) or
-// a boolean (1, 0 or null).
+// A field of width `which` at byte `fld`: an integer, a character's code point (0 for null), a
+// boolean (1, 0 or null) or a plain enum's number (null for null).
 pub fn get_w(which: integer, store: integer, rec: integer, pos: integer, fld: integer, min: integer) -> integer? {
   c_get_w(which, store, rec, pos, fld, min)
 }
@@ -229,6 +230,15 @@ fn c_load_types(rows: vector<integer>, ntypes: integer) -> integer;
 
 fn c_copy_record(s_store: integer, s_rec: integer, s_pos: integer, d_store: integer, d_rec: integer, d_pos: integer, tp: integer, flags: integer);
 #c "loft_crt_copy_record" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_clear(store: integer, rec: integer, pos: integer, tp: integer);
+#c "loft_crt_clear" "void(int64_t, int64_t, int64_t, int64_t)"
+
+// `OpClear(r, tp)` without its pool reset: the claims the record of type `tp` owns released, by
+// the loaded table, so its store takes a new value in place.
+pub fn clear(store: integer, rec: integer, pos: integer, tp: integer) {
+  c_clear(store, rec, pos, tp);
+}
 
 // The runtime's type table, from flat rows (`shim/crt.c` names their layout): how many types
 // were loaded, or -1 for rows that do not parse.

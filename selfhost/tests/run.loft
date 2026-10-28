@@ -129,6 +129,7 @@ fn ran_clean(entry: text, arg: integer) -> integer? {
   o = run::run(b, d, [arg]);
   assert(o.refused == "", "{entry} refused: {o.refused} in {o.refused_in}");
   assert(o.stores_left == 0, "{entry}({arg}) left {o.stores_left} stores live");
+  assert(o.swept == 0, "{entry}({arg}): the return swept {o.swept} stores the IR did not free");
   o.value
 }
 
@@ -159,12 +160,25 @@ fn test_a_match_block_frees_after_its_value() {
   assert(ran_clean("n_matched", 5) == -1, "matched(5)");
 }
 
-// A record bound from a call whose result may be a view of an argument is refused by name — the
-// bind reaches the lowering inside a source span, and read past it — never run as an alias.
-fn test_a_bind_from_a_borrowing_call_is_refused_not_aliased() {
-  b = kernel("structs");
-  o = run::run(b, lower::find(b, "n_kept"), [4]);
-  assert(o.refused == "a record bound from a call whose result may be a view: n_keep", "refused: {o.refused} (value {o.value})");
+// A record bound from a call whose result borrows its argument is COPIED (`(O-Move)`), as the
+// owner table decides at run time: the write through the result leaves the argument alone.
+// The bind reaches the lowering inside a source span, and is read past it.
+fn test_a_bind_from_a_borrowing_call_copies() {
+  assert(ran_clean("n_kept", 4) == 4, "kept(4)");
+  assert(ran_clean("n_borrowed", 6) == 650, "borrowed(6)");
+}
+
+// Ownership at run time (1b-s3.md): rebinds release what they displace, a loop holds one store
+// per pass, an unbound call result and one handed to another call are released, a parameter
+// rebound leaves the caller's record alone, and a local promoted onto the return buffer (the
+// way `file()` is written) is adopted.  Each
+// leaves no store live and nothing for the sweep: the IR's frees and the table agree.
+fn test_the_owner_table_binds_and_frees_as_one() {
+  assert(ran_clean("n_rebound", 5) == 108, "rebound(5)");
+  assert(ran_clean("n_looped", 10) == 45, "looped(10)");
+  assert(ran_clean("n_unbound", 4) == 3, "unbound(4)");
+  assert(ran_clean("n_reset_kept", 3) == 36, "reset_kept(3)");
+  assert(ran_clean("n_promoted", 4) == 6, "promoted(4)");
 }
 
 // Every field width through its own runtime routine (u8, i16, i32, character, boolean, float,

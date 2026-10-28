@@ -134,10 +134,12 @@ void loft_crt_refill_text(int64_t store, int64_t rec, int64_t pos, int64_t fld, 
 /* The other field widths, by the operator's `which` (the loft side's `crt::W_*`), each calling
  * that operator's own runtime routine as the C generator emits it: 0 OpGetInt4/OpSetInt4,
  * 1 OpGetByte/OpSetByte, 2 the Nullable byte, 3 OpGetShort/OpSetShort, 4 the Raw short,
- * 5 OpGetCharacter/OpSetCharacter, 6 OpGetBoolean/OpSetBoolean.  `min` is the narrow integer's
+ * 5 OpGetCharacter/OpSetCharacter, 6 OpGetBoolean/OpSetBoolean, 7 OpGetEnum/OpSetEnum (a plain
+ * enum's byte, 255 its null).  `min` is the narrow integer's
  * minimum (unused by the others).  A null crosses as `is_null`: the int64 null for the integer
- * widths, code 0 for a character, LOFT_BOOL_NULL for a boolean — the values a C program's
- * operands carry.  A read answers the int64 null for a null boolean. */
+ * widths, code 0 for a character, LOFT_BOOL_NULL for a boolean, 255 for an enum — the values a C
+ * program's operands carry.  A read answers the int64 null for a null boolean or enum, as
+ * OpConvIntFromEnum reads 255. */
 int64_t loft_crt_get_w(int64_t which, int64_t store, int64_t rec, int64_t pos, int64_t fld,
                        int64_t min) {
     loft_ref r = loft_crt_ref(store, rec, pos);
@@ -152,6 +154,10 @@ int64_t loft_crt_get_w(int64_t which, int64_t store, int64_t rec, int64_t pos, i
     case 6: {
         uint8_t b = loft_get_bool(r, f);
         return b == LOFT_BOOL_NULL ? LOFT_NULL : (int64_t) b;
+    }
+    case 7: {
+        uint8_t e = loft_get_enum(r, f);
+        return e == 255 ? LOFT_NULL : (int64_t) e;
     }
     default: return LOFT_NULL;
     }
@@ -170,6 +176,7 @@ void loft_crt_set_w(int64_t which, int64_t store, int64_t rec, int64_t pos, int6
     case 4: loft_set_short_raw(r, f, min, x); break;
     case 5: loft_set_char(r, f, is_null ? 0u : (uint32_t) v); break;
     case 6: loft_set_byte(r, f, is_null ? LOFT_BOOL_NULL : (uint8_t) v); break;
+    case 7: loft_set_byte(r, f, is_null ? (uint8_t) 255 : (uint8_t) v); break;
     default: break;
     }
 }
@@ -258,6 +265,14 @@ int64_t loft_crt_load_types(const int64_t *rows, int64_t n, int64_t ntypes) {
         loaded++;
     }
     return at == n ? loaded : -1;
+}
+
+/* OpClear without its pool reset (as `LOFT_NO_POOL_RESET` runs it, values unchanged by
+ * (R-Switch)): the claims the record owns released, by the table loaded above, so the store
+ * can take a new value in place. */
+void loft_crt_clear(int64_t store, int64_t rec, int64_t pos, int64_t tp) {
+    if (!loft_crt_types || tp < 0 || (uint32_t) tp >= loft_crt_ntypes) return;
+    loft_remove_claims(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos));
 }
 
 /* A record variable bound to a copy of another (`loft_bind_copy`, the C generator's
