@@ -345,14 +345,13 @@ impl IntegerSpec {
         }
     }
 
-    /// @PLN204 — `i64`: the full `integer`, its 8-byte width FORCED.  The forced width is
-    /// what tells a 64-bit value a file asked for apart from a plain `integer`, which is
-    /// 64-bit only outside the 32-bit regime ([`Self::is_width32`]).
+    /// @PLN204 — `i64` and an `l` literal: the WIDE template ([`Self::wide`], the type a
+    /// literal past `i32` already has).  Its `u32::MAX` bound is what tells a 64-bit value a
+    /// file asked for apart from a plain `integer`, which is 64-bit only outside the 32-bit
+    /// regime ([`Self::is_width32`]).  Not a forced width: a forced width means a NARROW alias
+    /// to every reader of `forced_size`.
     pub fn i64() -> Self {
-        IntegerSpec {
-            forced_size: NonZeroU8::new(8),
-            ..Self::wide()
-        }
+        Self::wide()
     }
 
     /// @PLN204 — does a value of this type fit 32 bits by its declaration: a forced width

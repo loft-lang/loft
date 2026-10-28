@@ -13,11 +13,51 @@
 //! lands in back to 64 bits.  A value that does not fit reads null, as an overflow does.  A
 //! callee that NEEDS 64 bits says so with `i64` / `f64`, and those stay wide.
 
-use super::{Parser, Type, Value};
+use super::{Level, Parser, Type, Value, diagnostic_format};
 
 impl Parser {
+    /// The regime of the file the lexer has just begun: under `LOFT_WIDTH=32` every source
+    /// but the stdlib, unless the file's first line is `#width 64`; elsewhere only a file
+    /// whose first line is `#width 32`.  Decided once per source, so a file resumed after a
+    /// `use` keeps it.  The `#width` line is consumed; any other `#` line is left in place.
+    pub(crate) fn width_header(&mut self) {
+        let src = self.data.source;
+        if src != crate::data::STD_SOURCE && !self.width_decided.contains(&src) {
+            self.width_decided.insert(src);
+            self.data.set_width32(src, crate::keys::width32_all());
+        }
+        if !self.lexer.peek_token("#") {
+            return;
+        }
+        let back = self.lexer.link();
+        self.lexer.has_token("#");
+        if self.lexer.has_identifier().as_deref() != Some("width") {
+            self.lexer.revert(back);
+            return;
+        }
+        self.width_directive(src);
+    }
+
+    /// The rest of a `#width` line, its `#width` read: `32` puts source `src` under the
+    /// regime, `64` keeps it out.
+    pub(crate) fn width_directive(&mut self, src: u16) {
+        let bits = self.lexer.has_integer();
+        match bits {
+            Some(32) => self.data.set_width32(src, src != crate::data::STD_SOURCE),
+            Some(64) => self.data.set_width32(src, false),
+            _ => diagnostic!(
+                self.lexer,
+                Level::Error,
+                "Unknown width '#width {}' (expected '#width 32' or '#width 64')",
+                bits.map_or_else(String::new, |b| b.to_string())
+            ),
+        }
+        let _ = self.lexer.has_token(";");
+    }
+
     /// The type a call answers in the file being parsed: under the 32-bit regime, an integer
-    /// (not `i64` or `u32`) or a plain `float` from a callee declared in a 64-bit file is
+    /// inside the `i32` range by its type (not `i64` or `u32`) or a plain `float` from a callee
+    /// whose body is 64-bit ([`crate::data::Data::body_width32`]) is
     /// narrowed to 32 bits here, and `code` wrapped in the conversion.  Anything else is `tp`
     /// unchanged.
     pub(crate) fn width32_call_result(&mut self, code: &mut Value, tp: Type) -> Type {
@@ -33,13 +73,11 @@ impl Parser {
         }
         let optional = matches!(tp, Type::Optional(_));
         let (op, narrow) = match tp.base() {
-            // Every integer but an `i64` (asked for) and a `u32` (whose upper half no `i32`
-            // holds).  A 32-bit type is narrowed too: a 64-bit file computes it in 64 bits —
-            // a generic `sum<T>` over a `vector<i32>` answers a `T` past the `i32` range —
-            // and keeps that type.
-            Type::Integer(spec)
-                if spec.forced_size.map(std::num::NonZeroU8::get) != Some(8)
-                    && !(spec.forced_size.is_some() && spec.max > i64::from(i32::MAX)) =>
+            // Every integer but an `i64` (asked for: the wide template) and a `u32` (whose
+            // upper half no `i32` holds) — neither has its upper bound inside `i32`.  A 32-bit
+            // type is narrowed too: a 64-bit file computes it in 64 bits — a generic `sum<T>`
+            // over a `vector<i32>` answers a `T` past the `i32` range — and keeps that type.
+            Type::Integer(spec) if spec.max <= i64::from(i32::MAX) =>
             {
                 let narrow = if spec.is_width32() {
                     tp.base().clone()

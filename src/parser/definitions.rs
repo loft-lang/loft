@@ -4645,6 +4645,10 @@ impl Parser {
         } else {
             type_name
         };
+        // @PLN204 — `i64` is the wide template (`IntegerSpec::i64`), in every file.
+        if type_name == "i64" {
+            return Some(Type::Integer(crate::narrow::IntegerSpec::i64()));
+        }
         // Phase 2c round 10c: `long` has been removed as a user-facing
         // type.  Callers now use `integer` everywhere; if anyone still
         // writes `long` it parses as an unknown identifier and fails

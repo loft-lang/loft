@@ -1101,7 +1101,7 @@ pub struct Parser {
     applied_imports: Vec<PendingImport>,
     /// @PLN204 — the sources whose regime (`Data::width32`) is settled, so a file resumed
     /// after a `use` keeps the `#width` it began with.
-    width_decided: std::collections::BTreeSet<u16>,
+    pub(crate) width_decided: std::collections::BTreeSet<u16>,
     /// `DefType::Unknown` stubs collected by `actual_types_deferred`
     /// during each `parse_file` run.  Resolved (or finally reported) by
     /// `resolve_deferred_unknowns` after all files in the recursion have
@@ -2333,26 +2333,10 @@ impl Parser {
     /// `use` re-enters here mid-file, so the default is only taken for a source not decided yet.
     pub(super) fn parse_file_directives(&mut self, entry: bool) {
         let src = self.data.source;
-        if src != crate::data::STD_SOURCE && !self.width_decided.contains(&src) {
-            self.width_decided.insert(src);
-            self.data.set_width32(src, crate::keys::width32_all());
-        }
+        self.width_header();
         while self.lexer.has_token("#") {
             match self.lexer.has_identifier().as_deref() {
-                Some("width") => {
-                    let bits = self.lexer.has_integer();
-                    match bits {
-                        Some(32) => self.data.set_width32(src, src != crate::data::STD_SOURCE),
-                        Some(64) => self.data.set_width32(src, false),
-                        _ => diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "Unknown width '#width {}' (expected '#width 32' or '#width 64')",
-                            bits.map_or_else(String::new, |b| b.to_string())
-                        ),
-                    }
-                    let _ = self.lexer.has_token(";");
-                }
+                Some("width") => self.width_directive(src),
                 Some("package") => {
                     let file = self.lexer.pos().file;
                     self.data.note_package_file(&file);

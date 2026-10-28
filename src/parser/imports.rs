@@ -64,7 +64,7 @@ impl Parser {
             self.parsed_sources.push(f.to_string());
         }
         self.lexer.switch(f);
-        // A used file's own directives: only `#package` applies to it (`@FR-F-Package`).
+        // A used file's own directives: `#package` (`@FR-F-Package`) and `#width` (@PLN204).
         self.parse_file_directives(false);
     }
 

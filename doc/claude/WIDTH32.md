@@ -42,8 +42,10 @@ another name.
   `i32` range reads null, as a 64-bit overflow does (C85).  The parser writes this as
   `OpNarrow32` around the operation.
 - An operand of type `i64` makes the operation 64-bit.  That is the one way to widen.
-- A call into a 64-bit file answers a plain `integer` or `float`, which is narrowed where the
-  call returns.  A value that does not fit reads null.  A stdlib function whose answer needs
+- A call into a 64-bit file has its integer answer (any but `i64` and `u32`) and a plain
+  `float` answer narrowed where the call returns.  A value that does not fit reads null.  A
+  generic instance counts as its template's file: `sum` over a `vector<i32>` runs the
+  stdlib's 64-bit body, so its answer is narrowed too.  A stdlib function whose answer needs
   64 bits declares `i64` and is not narrowed: `now()`, `ticks()`, `mtime()`, a file's
   `position()`, `JsonValue.as_long()`.
 - The two arms of an `if` that are both 32-bit join to a 32-bit value.
@@ -71,5 +73,9 @@ a C-only wrong answer.
   edges and run on the interpreter, `--native` and `--native-c`.
 - `scripts/c_sweep.py` with and without `LOFT_NO_C_INT32=1` compares the C backend's
   32-bit and 64-bit forms over the corpus.
+- `scripts/c_sweep.py --m32` builds the C as 32-bit x86 (`gcc -m32`) and `--riscv32` as 32-bit
+  RISC-V Linux (`zig cc -target riscv32-linux-musl`, run under `qemu-riscv32`): the target's
+  ISA and its ILP32 C, against the interpreter.  The tools: `sudo apt install qemu-user
+  gcc-multilib` and `sudo snap install zig --classic --beta`.
 - `LOFT_WIDTH=32 scripts/revalidate_libs_local.sh` runs every published library's tests under
   the regime.
