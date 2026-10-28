@@ -54,6 +54,10 @@ fn the_selfhost_tests_pass_on_an_emitted_image() {
     fa::create_dir_all(&kernels).expect("kernel images");
     for entry in fa::read_dir(root().join("selfhost/kernels")).expect("selfhost/kernels") {
         let source = entry.os_spelling();
+        // Only the kernels: a run beside them leaves a `.loft/` cache directory there.
+        if fa::extension(&source).as_deref() != Some("loft") {
+            continue;
+        }
         let Some(stem) = fa::file_stem(&source) else {
             continue;
         };

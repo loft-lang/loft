@@ -63,7 +63,9 @@ fn test_a_loop_with_break_remainder_and_division_runs() {
   assert(ran("collatz", "n_collatz_len", [9]) == 20, "collatz_len(9)");
   assert(ran("collatz", "n_collatz_len", [27]) == 112, "collatz_len(27)");
   assert(ran("collatz", "n_longest", [1, 10]) == 9020, "longest(1, 10)");
-  assert(ran("collatz", "n_longest", [1, 100000]) == 77031351, "longest(1, 100000)");
+  // 1..10000, not the benchmark's 1..100000: that one takes ~110 s under `--interpret`, at the
+  // test runner's 120 s deadline (`bench/measure.py` still runs it).
+  assert(ran("collatz", "n_longest", [1, 10000]) == 6171262, "longest(1, 10000)");
 }
 
 fn test_a_break_with_a_value_pending_is_refused() {
