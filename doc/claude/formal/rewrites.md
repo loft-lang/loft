@@ -1437,7 +1437,10 @@ clause alone, `vector::rec_text`, guard
 `arguments/parse`, whose option search compares each option's long name, 22.09 → 18.64 ms
 native alone, −15.6 %);
 falsifier `LOFT_HOIST_VERIFY=1` (`vector::rec_get` re-derives the address and re-reads
-the store at every use); trace `LOFT_TRACE_RECPTR=1`.  Sites: `hoist::record_view_ptr`,
+the store at every use); trace `LOFT_TRACE_RECPTR=1`.  In the C, the basic clause (a scalar
+read or in-place write of a bound view, through inline sub-records): `FnWriter::bind_record_ptr`
+and `FnWriter::rec_ptr_access` over `loft_rec_ptr` / `loft_pa_*`, the lock flag taken only
+where the block writes through the view.  Sites: `hoist::record_view_ptr`,
 `Output::bind_record_ptr`, `Output::rec_ptr_read` (the twin input),
 `ops::vector_ops::emit_hoisted_scalar_or_default` and `FusedElementWriteEmitter`
 (the read and the write), `Output::output_record_tuple` and

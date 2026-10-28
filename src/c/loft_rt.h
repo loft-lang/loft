@@ -1355,6 +1355,38 @@ LOFT_HOT_INLINE int64_t loft_get_int(loft_ref r, uint32_t fld) {
     return v;
 }
 
+/* `@FR-R-RecPtr`: the address of record view `r`'s first byte, held for a block that grows no
+ * store — 0 for the null record, where every read through it answers its getter's sentinel and
+ * every write is skipped, as `loft_get_*` / `loft_set_*` do — and whether its store is locked,
+ * which a write through it reports as `loft_set_*`'s write check does. */
+LOFT_HOT_INLINE uint8_t *loft_rec_ptr(loft_ref r) {
+    return r.rec == 0 ? 0 : loft_at(loft_store_of(r), r.rec, r.pos);
+}
+LOFT_HOT_INLINE int loft_rec_locked(loft_ref r) { return r.rec != 0 && loft_store_of(r)->read_only; }
+LOFT_HOT_INLINE int64_t loft_pa_i64(const uint8_t *p, uint32_t off) {
+    int64_t v;
+    if (!p) return LOFT_NULL;
+    memcpy(&v, p + off, 8);
+    return v;
+}
+LOFT_HOT_INLINE double loft_pa_f64(const uint8_t *p, uint32_t off) {
+    double v;
+    if (!p) return (double) NAN;
+    memcpy(&v, p + off, 8);
+    return v;
+}
+LOFT_HOT_INLINE float loft_pa_f32(const uint8_t *p, uint32_t off) {
+    float v;
+    if (!p) return (float) NAN;
+    memcpy(&v, p + off, 4);
+    return v;
+}
+LOFT_HOT_INLINE void loft_pa_set(uint8_t *p, int locked, uint32_t off, const void *v, size_t n) {
+    if (!p) return;
+    if (LOFT_UNLIKELY(locked)) loft_locked_write();
+    memcpy(p + off, v, n);
+}
+
 /* The bytes of record `r` for a run of scalar field writes (`@FR-R-ValueRecord`'s copy into a
  * place): `loft_set_int`'s null test and write check once, and one address — 0 for the null
  * record, which every write of the run skips as each setter would. */

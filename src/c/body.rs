@@ -163,6 +163,9 @@ pub(crate) struct FnWriter<'a> {
     plain_chains: Vec<(std::collections::HashSet<usize>, Option<String>)>,
     /// The guards written so far, which numbers each one's flag.
     chain_guards: u32,
+    /// `@FR-R-RecPtr` — the record views whose address the enclosing blocks hold: the view,
+    /// the address local and its store's lock flag, innermost last.
+    rec_ptrs: Vec<(u16, String, String)>,
     /// The record push headers each enclosing loop binds (`loft_ph`, `@FR-R-PushRec`): the
     /// path, the header and the element size, innermost last.
     push_heads: Vec<Vec<(crate::opt::writes::PathKey, String, u32)>>,
@@ -400,6 +403,7 @@ impl<'a> FnWriter<'a> {
             nk_call: None,
             plain_chains: Vec::new(),
             chain_guards: 0,
+            rec_ptrs: Vec::new(),
             scalars: Vec::new(),
             hoist_cache: std::collections::HashMap::new(),
             placed: crate::opt::hoist::placed_locals(def.code(), cx.data),
@@ -1613,6 +1617,13 @@ impl<'a> FnWriter<'a> {
     /// A block's statements in order; a run of them a rewrite emits whole (`keyed_entry_site`)
     /// is taken together.
     fn stmts(&mut self, ops: &[Value], ind: usize) -> Result<(), String> {
+        let held = self.rec_ptrs.len();
+        let r = self.stmts_in(ops, ind);
+        self.rec_ptrs.truncate(held);
+        r
+    }
+
+    fn stmts_in(&mut self, ops: &[Value], ind: usize) -> Result<(), String> {
         let mut i = 0;
         while i < ops.len() {
             if let Some(last) = self.rotate_site(ops, i, ind)? {
@@ -1624,9 +1635,135 @@ impl<'a> FnWriter<'a> {
                 continue;
             }
             self.stmt(&ops[i], ind)?;
+            self.bind_record_ptr(ops, i, ind);
             i += 1;
         }
         Ok(())
+    }
+
+    /// `@FR-R-RecPtr` — after statement `at` binds a plain record VIEW whose address the rest of
+    /// the block may share (`hoist::record_view_ptr`, native's verdict: the remainder grows no
+    /// store, frees no record before a use and never rebinds the view), take the address once;
+    /// the view's scalar field reads and in-place writes then go through it (`rec_ptr_access`).
+    /// A value-record local is a struct, not a place, and is never bound.
+    /// `LOFT_NO_RECORD_PTR=1` keeps every access a store resolution.
+    fn bind_record_ptr(&mut self, ops: &[Value], at: usize, ind: usize) {
+        if self.gen_elem.is_some()
+            || self.nk_skip.is_some()
+            || crate::env_once!(std::env::var("LOFT_NO_RECORD_PTR").is_ok_and(|v| v != "0"))
+        {
+            return;
+        }
+        let Some(Value::Set(r, _)) = ops.get(at).map(Value::unspan) else {
+            return;
+        };
+        let r = *r;
+        if self.vr_local(r).is_some()
+            || self.rec_ptrs.iter().any(|(v, _, _)| *v == r)
+            || self.shapes.get(r as usize) != Some(&CType::Ref)
+        {
+            return;
+        }
+        let mut cache = std::mem::take(&mut self.hoist_cache);
+        let verdict = {
+            let facts = self.store_facts();
+            crate::opt::hoist::record_view_ptr(
+                ops,
+                at,
+                self.cx.data,
+                self.cx.stores,
+                self.d,
+                &mut cache,
+                true,
+                &std::collections::HashSet::new(),
+                facts.as_ref(),
+                None,
+                false,
+            )
+        };
+        self.hoist_cache = cache;
+        if verdict.is_err() {
+            return;
+        }
+        let n = self.decls.len();
+        let (pa, pl) = (format!("loft_pa{r}_{n}"), format!("loft_pl{r}_{n}"));
+        self.decls.push(format!("uint8_t *{pa} = 0;"));
+        self.decls.push(format!("int {pl} = 0;"));
+        let v = self.var(r);
+        self.line(ind, &format!("{pa} = loft_rec_ptr({v});"));
+        // The lock flag only matters to a write through the address.
+        let data = self.cx.data;
+        let writes = ops[at + 1..].iter().any(|op| {
+            op.any_node(&mut |n| {
+                matches!(n, Value::Call(d, a) if (*d as usize) < data.definitions.len()
+                    && matches!(data.def(*d).name(), "OpSetInt" | "OpSetFloat" | "OpSetSingle" | "OpSetEnum")
+                    && a.len() == 3
+                    && crate::opt::body_writes::view_field(data, &a[0], &a[1]).is_some_and(|(root, _)| root == r))
+            })
+        });
+        if writes {
+            self.line(ind, &format!("{pl} = loft_rec_locked({v});"));
+        }
+        crate::rewrite_census::fired("R-RecPtr", 1);
+        self.rec_ptrs.push((r, pa, pl));
+    }
+
+    /// A scalar field read or in-place write of a record view whose address an enclosing block
+    /// holds (`bind_record_ptr`), through that address; `None` for any other access.
+    fn rec_ptr_access(
+        &mut self,
+        name: &str,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<Option<E>, String> {
+        let (getter, base, fld) = match (name, args) {
+            ("OpGetInt" | "OpGetFloat" | "OpGetSingle", [base, fld]) => (true, base, fld),
+            ("OpSetInt" | "OpSetFloat" | "OpSetSingle" | "OpSetEnum", [base, fld, _]) => {
+                (false, base, fld)
+            }
+            _ => return Ok(None),
+        };
+        let Some((root, off)) = crate::opt::body_writes::view_field(self.cx.data, base, fld) else {
+            return Ok(None);
+        };
+        let Some((_, pa, pl)) = self
+            .rec_ptrs
+            .iter()
+            .rev()
+            .find(|(v, _, _)| *v == root)
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        let Ok(off) = u32::try_from(off) else {
+            return Ok(None);
+        };
+        if getter {
+            let (f, k) = match name {
+                "OpGetInt" => ("loft_pa_i64", K::Int),
+                "OpGetFloat" => ("loft_pa_f64", K::Float),
+                _ => ("loft_pa_f32", K::Single),
+            };
+            return Ok(Some(E::new(format!("{f}({pa}, {off})"), k)));
+        }
+        let val = self.expr(&args[2], ind)?;
+        let (ty, val) = match name {
+            "OpSetInt" => ("int64_t", as_int(val)?),
+            "OpSetFloat" => ("double", as_float(val)?),
+            "OpSetSingle" => ("float", as_single(val)?),
+            _ => ("uint8_t", as_enum(val)?),
+        };
+        let t = self.temp(match name {
+            "OpSetInt" => CType::Int,
+            "OpSetFloat" => CType::Float,
+            "OpSetSingle" => CType::Single,
+            _ => CType::Enum,
+        });
+        self.line(ind, &format!("{t} = ({ty}) ({val});"));
+        Ok(Some(E::new(
+            format!("loft_pa_set({pa}, {pl}, {off}, &{t}, sizeof({ty}))"),
+            K::Void,
+        )))
     }
 
     /// `@FR-R-HandOver`'s rotate clause (native's `Output::output_rotate_site`): when the vector
@@ -4004,6 +4141,11 @@ impl<'a> FnWriter<'a> {
             && let Some((local, c)) = self.held_scalar(&key)
         {
             return Ok(E::new(local, kind_of(c)));
+        }
+        if !self.rec_ptrs.is_empty()
+            && let Some(e) = self.rec_ptr_access(name, args, ind)?
+        {
+            return Ok(e);
         }
         if !self.lazy.is_empty()
             && let Some(e) = self.lazy_split_op(name, args)
