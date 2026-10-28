@@ -60,7 +60,12 @@ impl Parser {
     /// is narrowed there (`OpNarrow32`, null when it does not fit) rather than refused.  An
     /// `i64` or `u32` source, and a target narrower than `i32`, keep the refusal.  Answers
     /// whether `code` was wrapped.
-    pub(crate) fn width32_narrow_store(&mut self, code: &mut Value, source: &Type, target: &Type) -> bool {
+    pub(crate) fn width32_narrow_store(
+        &mut self,
+        code: &mut Value,
+        source: &Type,
+        target: &Type,
+    ) -> bool {
         if !self.data.width32() {
             return false;
         }
@@ -103,8 +108,7 @@ impl Parser {
             // upper half no `i32` holds) — neither has its upper bound inside `i32`.  A 32-bit
             // type is narrowed too: a 64-bit file computes it in 64 bits — a generic `sum<T>`
             // over a `vector<i32>` answers a `T` past the `i32` range — and keeps that type.
-            Type::Integer(spec) if spec.max <= i64::from(i32::MAX) =>
-            {
+            Type::Integer(spec) if spec.max <= i64::from(i32::MAX) => {
                 let narrow = if spec.is_width32() {
                     tp.base().clone()
                 } else {

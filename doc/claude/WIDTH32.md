@@ -67,13 +67,15 @@ for the C build on the device.
 
 ## The C backend
 
-The C backend holds every integer whose type fits 32 bits (`i32`, `u8`, `u16`, `i16`, `i8`,
-a `limit` range inside `i32`) as `int32_t`, null `LOFT_NULL32`.  This applies to every
-program, regime or not.  A 32-bit operation is written in 32 bits (`loft_add32`,
-`loft_sub32`, `loft_mul32`, `loft_div32`, `loft_rem32` in `src/c/loft_rt.h`), and two 32-bit
-values compare in 32 bits.  The C runtime itself is written in `int64_t`, so a 32-bit value
-passed to it is widened (`loft_w64`) and a 64-bit value stored into a 32-bit local is
-narrowed (`loft_n32`), each keeping null as null.
+The C backend holds a LOCAL as `int32_t` (null `LOFT_NULL32`) when its type fits 32 bits (`i32`,
+`u8`, `u16`, `i16`, `i8`, a `limit` range inside `i32`) and its function's body was written under
+the regime (`Data::body_width32`).  There every value is narrowed before it is held, so it fits.
+A 64-bit body's `i32` local keeps the wide value it was given, as the interpreter's 8-byte slot
+does, so it stays `int64_t`; and a parameter, a result, a tuple member and a function type stay
+`int64_t` in every program, so two bodies meet through `loft_w64` / `loft_n32`, which keep null
+as null.  A 32-bit operation is written in 32 bits (`loft_add32`, `loft_sub32`, `loft_mul32`,
+`loft_div32`, `loft_rem32` in `src/c/loft_rt.h`), and two 32-bit values compare in 32 bits.  The
+C runtime itself is written in `int64_t`, so a 32-bit value passed to it is widened.
 
 `LOFT_NO_C_INT32=1` holds every integer as `int64_t` again.  It is the first bisect step for
 a C-only wrong answer.

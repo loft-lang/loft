@@ -6641,13 +6641,6 @@ impl Data {
         self.width32_source(self.source)
     }
 
-    /// @PLN204 — does any source of this program parse under the 32-bit regime?  A program
-    /// with none holds every integer as the interpreter does, in 64 bits.
-    #[must_use]
-    pub fn any_width32(&self) -> bool {
-        !self.width32_sources.is_empty()
-    }
-
     /// @PLN204 — was function `d`'s body written under the 32-bit regime?  A generic
     /// instance answers for its template, whose source it does not share.
     #[must_use]

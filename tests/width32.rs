@@ -23,7 +23,8 @@ fn run(name: &str, lib: &str, main: &str, width: Option<&str>) -> String {
     let _ = fa::remove_dir_all(&dir);
     write(&dir.join("lib").join("wlib.loft"), lib);
     write(&dir.join("main.loft"), main);
-    let mut cmd = loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--interpret")
         .arg("--lib")
         .arg(dir.join("lib"))

@@ -5339,16 +5339,23 @@ fn main() {
 }
 "#;
     let c = both_answer("width32_loop", src, "6 null\n");
-    // The body that holds the loop (the frame-keeping wrapper, where there is one, only calls it).
+    // The body that holds the loop (the frame-keeping wrapper, where there is one, only calls
+    // it).  A parameter and a result cross 64-bit; the body's locals are 32-bit.
     let body = c
-        .split("static int32_t n_sum_to")
+        .split("n_sum_to")
         .skip(1)
         .find(|b| b.contains("for (;;)"))
         .and_then(|b| b.split("\n}\n").next())
-        .unwrap_or_else(|| panic!("sum_to returning int32_t, with its loop, in:\n{c}"));
-    assert!(body.contains("int32_t v0_n"), "a 32-bit parameter:\n{body}");
+        .unwrap_or_else(|| panic!("sum_to with its loop in:\n{c}"));
+    assert!(
+        body.contains("int32_t v1_t"),
+        "a 32-bit accumulator:\n{body}"
+    );
+    assert!(
+        body.contains("int32_t v3_i_index"),
+        "a 32-bit loop index:\n{body}"
+    );
     assert!(body.contains("loft_add32(v1_t, "), "a 32-bit sum:\n{body}");
-    assert!(!body.contains("int64_t"), "no 64-bit local:\n{body}");
 }
 
 /// A C build never builds a library's Rust native crate: the C links `[c] shim`s and loft's

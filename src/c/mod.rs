@@ -558,19 +558,28 @@ impl<'a> Cx<'a> {
         (format!("loft_dflt{tp}"), size)
     }
 
+    /// @PLN204 — the shape a LOCAL of type `tp` is held in, in a function whose body is
+    /// `body32` (written under the 32-bit regime, `Data::body_width32`): `int32_t` for an
+    /// integer whose type fits 32 bits, because there every value is narrowed before it is
+    /// held (`OpNarrow32`, a narrowed call result, `loft_n32` where a 64-bit value is stored).
+    /// Everywhere else [`Self::ctype`]: a 64-bit body's `i32` local keeps the wide value it was
+    /// given, as the interpreter's 8-byte slot does (`931b-i32-accepted-forms-run`), and a
+    /// parameter, a result, a tuple member and a function type stay 64-bit, so two bodies of
+    /// different regimes meet through `loft_w64` / `loft_n32`, which keep null as null.
+    pub(crate) fn local_ctype(&self, tp: &Type, body32: bool) -> Option<CType> {
+        match tp.base() {
+            Type::Integer(spec) if body32 && spec.is_width32() && !no_c_int32() => {
+                Some(CType::Int32)
+            }
+            _ => self.ctype(tp),
+        }
+    }
+
     /// The C shape of `tp`, nullable or not — a null is held in the same shape — or `None`.
     pub(crate) fn ctype(&self, tp: &Type) -> Option<CType> {
         match tp.base() {
             // A narrow integer is held as a plain one: its range is enforced where a value
-            // enters it (`OpRangeDefault`) and where a field stores it.  `int32_t` is the 32-bit
-            // regime's: only there is every value narrowed before it is held (`OpNarrow32`).  In a
-            // 64-bit program an `i32` local or parameter keeps the wide value it was given, as
-            // the interpreter's 8-byte slot does (`931b-i32-accepted-forms-run`).
-            Type::Integer(spec)
-                if spec.is_width32() && self.data.any_width32() && !no_c_int32() =>
-            {
-                Some(CType::Int32)
-            }
+            // enters it (`OpRangeDefault`) and where a field stores it.
             Type::Integer(_) => Some(CType::Int),
             Type::Boolean => Some(CType::Bool),
             Type::Float => Some(CType::Float),
@@ -1992,6 +2001,7 @@ fn variable_shapes(
     cx: &Cx,
     vars: &crate::variables::Function,
     args: &[u16],
+    body32: bool,
 ) -> Result<Vec<CType>, String> {
     let mut shapes = Vec::with_capacity(vars.count() as usize);
     for v in 0..vars.count() {
@@ -2013,7 +2023,12 @@ fn variable_shapes(
             shapes.push(CType::Int);
             continue;
         }
-        let c = cx.ctype(tp).filter(|c| *c != CType::Void).ok_or_else(|| {
+        let shape = if args.contains(&v) {
+            cx.ctype(tp)
+        } else {
+            cx.local_ctype(tp, body32)
+        };
+        let c = shape.filter(|c| *c != CType::Void).ok_or_else(|| {
             let what = if args.contains(&v) {
                 "parameter"
             } else {
@@ -2079,7 +2094,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     if args.len() != def.attributes().len() {
         return Err("parameters that do not match their arguments".into());
     }
-    let mut shapes = variable_shapes(cx, vars, &args)?;
+    let mut shapes = variable_shapes(cx, vars, &args, data.body_width32(d))?;
     let dropped = vr_shapes(cx, d, vr_key, &mut shapes);
     let params: Vec<String> = args
         .iter()

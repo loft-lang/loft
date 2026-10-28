@@ -171,10 +171,11 @@ never seen, a listing is empty and the directory operations answer `Other`.
 
 ## The model
 
-**Shapes.**  Every loft value has one C shape (`CType`): `int32_t` for an integer whose type
-fits 32 bits (null `LOFT_NULL32`; widened where the runtime takes `int64_t`, and computed in
-32 bits where both operands are — [WIDTH32.md § The C backend](WIDTH32.md#the-c-backend),
-`LOFT_NO_C_INT32=1` turns it off), `int64_t` for every other integer
+**Shapes.**  Every loft value has one C shape (`CType`): `int32_t` for a local whose type
+fits 32 bits in a body written under the 32-bit regime (null `LOFT_NULL32`; widened where the
+runtime takes `int64_t`, and computed in 32 bits where both operands are —
+[WIDTH32.md § The C backend](WIDTH32.md#the-c-backend), `LOFT_NO_C_INT32=1` turns it off),
+`int64_t` for every other integer
 (null `LOFT_NULL`, a narrow range is enforced by `OpRangeDefault` and by the field setters),
 `uint8_t` for a boolean (255 null) and a plain enum (255 null), `double` / `float` (NaN null),
 `uint32_t` for a character (0 null), `loft_text` for an owned text and `loft_str` for a view,
