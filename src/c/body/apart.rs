@@ -3,7 +3,7 @@
 // @I68 — Native Rust generator: a second compiled target, C
 
 //! `@FR-R-Apart` instances 3 and 4 in the C.  Instance 3: a `vector<float>` local that never
-//! leaves its function (`generation::apart_vector::roles`, native's gate) is a `loft_apvec` —
+//! leaves its function (`lower::apart_vector::roles`, native's gate) is a `loft_apvec` —
 //! 64 elements inline, a spill beyond — and its companions (the store it was minted into, a work
 //! buffer's saved value) emit nothing.  Instance 4: a record of RECORD VECTORS built in a frame and handed to
 //! the functions that copy it into a collection is held as one byte buffer per field
@@ -21,7 +21,7 @@
 
 use super::{E, FnWriter, K, as_bool, as_float, as_int};
 use crate::data::Value;
-use crate::generation::apart_vector;
+use crate::lower::apart_vector;
 use crate::lower::apart_records::{Enc, RecLayout};
 
 impl FnWriter<'_> {

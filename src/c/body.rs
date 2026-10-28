@@ -268,7 +268,7 @@ pub(crate) struct FnWriter<'a> {
     apr: crate::lower::apart_records::RecRoles,
     apr_plan: Option<std::rc::Rc<crate::lower::apart_records::RecPlan>>,
     /// `@FR-R-Apart` instance 3: this body's apart `vector<float>` locals and their companions.
-    apv: crate::generation::apart_vector::VecRoles,
+    apv: crate::lower::apart_vector::VecRoles,
     /// `@FR-R-Apart` instance 2: this body's apart and dead records of fixed-length float
     /// vectors (its twin's, or its region's), whether it is an `__apv` twin, the program's plan
     /// and the function's return buffer (`apart_value.rs`).
@@ -499,7 +499,7 @@ impl<'a> FnWriter<'a> {
             fresh_fields: std::collections::HashMap::new(),
             apr: crate::lower::apart_records::RecRoles::default(),
             apr_plan: None,
-            apv: crate::generation::apart_vector::VecRoles::default(),
+            apv: crate::lower::apart_vector::VecRoles::default(),
             av: crate::lower::apart_value::Roles::default(),
             av_twin: false,
             av_plan: None,

@@ -746,7 +746,7 @@ impl super::Output<'_> {
                 .regions
                 .get(&d_nr)
                 .is_some_and(|r| r.profitable)
-            && super::apart_vector::roles(self.data, d_nr).is_none_or(|v| v.is_empty())
+            && crate::lower::apart_vector::roles(self.data, d_nr).is_none_or(|v| v.is_empty())
             && super::apart_records::roles(self.data, &self.plan.apr, d_nr, false).is_empty()
             && (self.switches.element_first_disabled || {
                 let ef = super::hoist::element_first(

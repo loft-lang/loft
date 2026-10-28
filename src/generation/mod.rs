@@ -15,7 +15,6 @@ mod apart_emit;
 pub use crate::lower::apart_records;
 mod apart_records_emit;
 pub use crate::lower::apart_value;
-pub mod apart_vector;
 pub mod append_twin;
 mod calls;
 mod coroutine;

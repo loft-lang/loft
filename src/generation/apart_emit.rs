@@ -15,9 +15,9 @@
 use std::io::Write;
 
 use super::apart_value::{self, ApLayout, Construction, Elem, Roles};
-use super::apart_vector::{self, VecRoles};
 use super::{Output, sanitize};
 use crate::data::Value;
+use crate::lower::apart_vector::{self, VecRoles};
 
 /// How a twin's signature takes one parameter ([`Output::apart_twin_param`]).
 pub enum TwinParam {

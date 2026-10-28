@@ -3022,7 +3022,7 @@ rooted at it, and a loop whose only growth was such a vector grows no store.
 
 **BUILT** (`generation::apart_value::plan` the gate, `generation::apart_emit` the twins, the
 regions and the boundary, runtime `codegen_runtime::ap_get_f64` / `ap_get_f64_or_null` /
-`ap_set_f64` / `ap_store_f64`; instance 3: `generation::apart_vector::roles` the gate, runtime
+`ap_set_f64` / `ap_store_f64`; instance 3: `lower::apart_vector::roles` the gate, runtime
 `codegen_runtime::ApVec`; instance 4: `generation::apart_records::plan` the gate,
 `generation::apart_records_emit` the owners, the `__apr` twins and the boundary, runtime
 `codegen_runtime::AprVec`, `Stores::apart_write_fresh` and `Stores::rotate_from_parts`;
