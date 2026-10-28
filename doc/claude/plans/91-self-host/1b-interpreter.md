@@ -271,7 +271,11 @@ integer it returns.  Both must print the same number, or the times do not compar
   user function, `NdReturn`, `NdLine`) lowers to ops, and a test compares the ops against a
   hand-written list.  Code points: `selfhost/src/lower.loft` (new),
   `selfhost/tests/lower.loft` (new; under S0.3c it may read `Op`).  First, the join of
-  `45bb2708b`.  Its four design→code findings are X15–X18; X15 is S1.1b.
+  `45bb2708b`.  Its four design→code findings are X15–X18; X15 is S1.1b.  **BUILT
+  2026-10-28:** with X15 (S1.1b T1, T2) and X16–X18 fixed, `fib` lowers to the hand-written
+  list on both backends (`tests/selfhost.rs`, and `loft test --native` in `selfhost/`).  The
+  two `NdSpan` arms (`inner[0]?`) still draw `warning[tail-call-not-jumped]` until S1.1b T4
+  makes a fresh argument jump; the IR's spans are shallow, so the call is correct meanwhile.
 - **S1.2 — the run loop**: `fib(25)` answers what `--interpret` answers.
 - **S1.3 — loops**: `NdLoop`, `NdBreak`, `NdSet` and the iterator form a `for` lowers to,
   for `mix` and `collatz_len`.
