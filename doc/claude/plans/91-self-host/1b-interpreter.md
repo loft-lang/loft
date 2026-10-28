@@ -367,6 +367,21 @@ null text and a null float propagating; the census before and after; the S1 test
   `TyEnum` 2, `TyVector` 2, format specs 3 — records are S3's, `n_assert` is the first
   native.
 
+**Design → code (second part).**
+- **The first native, `n_assert`**, runs as loft's own `assert`, handed the program's file and
+  line (explicit arguments are accepted), so a failure exits 1 after the program's stdout as
+  under `--interpret`.  Natives are one table (`native_index`); `n_env_variable` is the second.
+- Unary minus, boolean `==`/`!=`, a text's `len` and `size`, and a dropped value (`NdDrop`).
+- **Two wrong answers found and fixed**, both the interpreter's: `'\0' as integer` must be null
+  (loft's NUL convention, `OpConvIntFromCharacter`), which the identity had made 0 — now loft's
+  own `as character?` then `as integer?`; and a hidden parameter (a generic's text return
+  buffer) is created after the locals, so slots went to variables in index order and its
+  argument landed in another slot — parameters now take their slots first.
+- **The census: 1 025 plain programs, 16 pass, 0 wrong, 0 crash.**  The first blockers are now
+  almost all values that live in the store: records 663, vectors 117, struct enums 52,
+  hashes 33, tuples 17, function values 16, iterators 14, sorted 7 — S3 and S4 — then
+  `OpRangeDefault` 10 (three constant operands), `OpConvIntFromEnum` 4, `OpDivIntNullable` 3.
+
 ### SU1 — `store_load` maps the image instead of copying it — DESIGNED 2026-10-28
 
 **Why now (owner, 2026-10-28):** the store's file format IS its memory format, so a store

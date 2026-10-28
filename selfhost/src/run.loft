@@ -306,6 +306,26 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         at = if op.kind == KTextRef { ints[base_int + op.a] ?? panic("a bound reference") } else { base_text + op.a };
         texts[at] = "";
       }
+      // A native the interpreter carries, as loft's own function of that name; its arguments
+      // are on their kinds' stacks, the last one on top.
+      Native => {
+        if op.a == 0 {
+          // `assert(test, message, file, line)`: the file and line are the program's.
+          sp_int -= 1;
+          line = ints[sp_int];
+          sp_text -= 1;
+          file = texts[sp_text];
+          sp_text -= 1;
+          message = texts[sp_text];
+          sp_int -= 1;
+          test = ints[sp_int];
+          assert(test == 1, message ?? "", file ?? "", line ?? 0);
+        } else if op.a == 1 {
+          sp_text -= 1;
+          put_text(texts, sp_text, env_variable(texts[sp_text] ?? ""));
+          sp_text += 1;
+        }
+      }
       // A format with the plain spec: the value appended as loft's own `"{v}"` renders it,
       // which compiles to the same format operator with the same operands (`lower.loft`).
       Format => {
@@ -330,6 +350,27 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         }
         texts[at] = (texts[at] ?? "") + piece;
       }
+      Neg => {
+        match op.kind {
+          KFloat => { floats[sp_float - 1] = -floats[sp_float - 1]; }
+          KSingle => { floats[sp_float - 1] = (-(floats[sp_float - 1] as single?)) as float?; }
+          _ => { ints[sp_int - 1] = -ints[sp_int - 1]; }
+        }
+      }
+      // A text's length in characters and its size in bytes: loft's own `len` and `size`.
+      LenText => {
+        sp_text -= 1;
+        put_int(ints, sp_int, len(texts[sp_text] ?? ""));
+        sp_int += 1;
+      }
+      SizeText => {
+        sp_text -= 1;
+        put_int(ints, sp_int, size(texts[sp_text] ?? ""));
+        sp_int += 1;
+      }
+      // `OpConvIntFromCharacter`: '\0' reads as null (loft's NUL convention), any other
+      // character as its code point — loft's own `as integer` of the character.
+      FromChar => { ints[sp_int - 1] = (ints[sp_int - 1] as character?) as integer?; }
       // A single is carried as a float: widening it is the value itself, narrowing a float
       // rounds it as loft's own `as single` does.
       Nop => {}

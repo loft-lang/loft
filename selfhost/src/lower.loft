@@ -65,6 +65,11 @@ enum Code {
   Round,
   Nop,
   Format,
+  Native,
+  FromChar,
+  Neg,
+  LenText,
+  SizeText,
 }
 
 // One op: `kind` is the kind of value it works on; `a` is a value, a slot, a jump target, a
@@ -218,6 +223,13 @@ fn operator_op(name: text) -> Op? {
     }
   }
   match name {
+    "OpMinSingleInt" => Op { code: Neg, kind: KInt, a: 0, b: 0 },
+    "OpMinSingleFloat" => Op { code: Neg, kind: KFloat, a: 0, b: 0 },
+    "OpMinSingleSingle" => Op { code: Neg, kind: KSingle, a: 0, b: 0 },
+    "OpEqBool" => Op { code: Eq, kind: KInt, a: 0, b: 0 },
+    "OpNeBool" => Op { code: Ne, kind: KInt, a: 0, b: 0 },
+    "OpLengthText" => Op { code: LenText, kind: KText, a: 0, b: 0 },
+    "OpSizeText" => Op { code: SizeText, kind: KText, a: 0, b: 0 },
     "OpLandInt" => Op { code: BitAnd, kind: KInt, a: 0, b: 0 },
     "OpLorInt" => Op { code: BitOr, kind: KInt, a: 0, b: 0 },
     "OpEorInt" => Op { code: BitXor, kind: KInt, a: 0, b: 0 },
@@ -239,7 +251,7 @@ fn operator_op(name: text) -> Op? {
     "OpConvCharacterFromInt" => Op { code: ToChar, kind: KInt, a: 0, b: 0 },
     "OpConvFloatFromSingle" => Op { code: Nop, kind: KFloat, a: 0, b: 0 },
     "OpConvSingleFromFloat" => Op { code: Round, kind: KSingle, a: 0, b: 0 },
-    "OpConvIntFromCharacter" => Op { code: Nop, kind: KInt, a: 0, b: 0 },
+    "OpConvIntFromCharacter" => Op { code: FromChar, kind: KInt, a: 0, b: 0 },
     "OpCastTextFromBool" => Op { code: TextFromBool, kind: KText, a: 0, b: 0 },
     "OpPrint" => Op { code: Print, kind: KText, a: 0, b: 0 },
     _ => null,
@@ -331,13 +343,32 @@ fn effect(code: Code, b: integer) -> integer {
     Round => 0,
     Nop => 0,
     Format => -1,
+    FromChar => 0,
+    Neg => 0,
+    LenText => 0,
+    SizeText => 0,
     _ => -1,
   }
 }
 
 fn emit(l: Lowering, code: Code, kind: Kind, a: integer, b: integer) {
   l.ops += [Op { code: code, kind: kind, a: a, b: b }];
-  l.depth += effect(code, b);
+  if code == Native {
+    // A native takes its `b` arguments and leaves a value unless its result is nothing.
+    l.depth += if kind == KNone { -b } else { 1 - b };
+  } else {
+    l.depth += effect(code, b);
+  }
+}
+
+// The natives the interpreter carries, by the index a `Native` op names: each runs as loft's
+// own function of that name (`run.loft`), so its behaviour is the stdlib's.
+fn native_index(name: text) -> integer {
+  match name {
+    "n_assert" => 0,
+    "n_env_variable" => 1,
+    _ => -1,
+  }
 }
 
 // The level of the loop `n` loops out from the innermost, or -1 when there is none.
@@ -549,7 +580,12 @@ fn call(l: Lowering, b: ir::Bundle, def_nr: integer, args: vector<ir::Node>) {
       refuse(l, "an operator the interpreter does not carry: {d.name}");
     }
   } else if d.native != "" || !has_body(d) {
-    refuse(l, "a native the interpreter does not carry: {d.name}");
+    idx = native_index(d.name);
+    if idx >= 0 {
+      emit(l, Native, kind_of_types(d.returned), idx, len(args));
+    } else {
+      refuse(l, "a native the interpreter does not carry: {d.name}");
+    }
   } else {
     emit(l, Call, KInt, def_nr, len(args));
   }
@@ -639,6 +675,14 @@ fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
       l.loop_start.remove(level);
       l.loop_depth.remove(level);
     }
+    NdDrop { inner } => {
+      // A value computed for its effect and dropped.
+      before = l.depth;
+      expr(l, b, inner[0]?);
+      if l.depth > before {
+        emit(l, Pop, stack_of(kind_of(l, b, inner[0]?)), 0, 0);
+      }
+    }
     NdBreak { n: out } => leave_loop(l, out, true),
     NdContinue { n: out } => leave_loop(l, out, false),
     NdCall { def_nr, args: _ } => {
@@ -658,26 +702,32 @@ pub fn lower(b: ir::Bundle, def_nr: integer) -> Lowering {
   d = b.data.definitions[def_nr]?;
   l = empty();
   l.result = kind_of_types(d.returned);
-  // Each variable gets the next slot of its kind; the parameters come first, in order, so
-  // they fill the first slots the caller's arguments land in.
+  // Each variable gets the next slot of its kind.  The parameters take theirs FIRST, in order,
+  // so they fill the slots the caller's arguments land in — a hidden one too (a text result's
+  // return buffer), which the scope pass creates after the locals, at a higher number.
   for v in d.variables.variables {
-    k = stack_of(kind_of_types(v.type_def));
-    slot = 0;
-    if k == KInt {
-      slot = l.slots_int;
-      l.slots_int += 1;
-    } else if k == KFloat {
-      slot = l.slots_float;
-      l.slots_float += 1;
-    } else if k == KText {
-      slot = l.slots_text;
-      l.slots_text += 1;
-    }
     l.var_kind += [kind_of_types(v.type_def)];
-    l.var_slot += [slot];
-    // The type's variant name, for a refusal the census can group.
+    l.var_slot += [0];
     shown = "{v.type_def[0] ?? ir::TypeT.TyVoid}";
     l.var_type += [shown.split(' ')[0] ?? shown];
+  }
+  for pass in 0..2 {
+    for v in d.variables.variables {
+      if v.argument != (pass == 0) {
+        continue;
+      }
+      k = stack_of(kind_of_types(v.type_def));
+      if k == KInt {
+        l.var_slot[v#index] = l.slots_int;
+        l.slots_int += 1;
+      } else if k == KFloat {
+        l.var_slot[v#index] = l.slots_float;
+        l.slots_float += 1;
+      } else if k == KText {
+        l.var_slot[v#index] = l.slots_text;
+        l.slots_text += 1;
+      }
+    }
   }
   for pk in param_kinds(d) {
     s = stack_of(pk);
