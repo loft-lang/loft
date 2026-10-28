@@ -494,6 +494,9 @@ pub struct Lexer {
     /// Whether `"…"` literals accept JSON string escapes (`\/`, `\uXXXX` + surrogate
     /// pairs).  See [`LexConfig::json_strings`].
     json_strings: bool,
+    /// Whether a number takes the 64-bit literal suffixes `l` / `d`.  See
+    /// [`LexConfig::wide_suffixes`].
+    wide_suffixes: bool,
     /// @PLN109 — set by [`json_unicode_escape`](Self::json_unicode_escape) when an
     /// unpaired `\uXXXX` high surrogate had to over-read past its 4th hex digit (to
     /// look for a low surrogate that was not there), leaving the char iterator one
@@ -654,6 +657,11 @@ pub struct LexConfig {
     /// a JSON validator).  Off for all normal loft / config lexing, so loft source
     /// string semantics are unchanged.
     pub json_strings: bool,
+    /// @PLN204 — when true (loft source), `123l` and `2.5d` are the 64-bit literals the
+    /// 32-bit regime needs.  Off for JSON and configs, whose numbers take no suffix: there a
+    /// letter after a number stays the next token, so `1.5d` in JSON is refused at the `d`,
+    /// as every reader of it (the C runtime's included) refuses it.
+    pub wide_suffixes: bool,
 }
 
 impl Default for LexConfig {
@@ -666,6 +674,7 @@ impl Default for LexConfig {
             comment: "//",
             interpolate_strings: true,
             json_strings: false,
+            wide_suffixes: true,
         }
     }
 }
@@ -684,6 +693,7 @@ impl LexConfig {
             comment,
             interpolate_strings: false,
             json_strings: false,
+            wide_suffixes: false,
         }
     }
 
@@ -709,6 +719,7 @@ impl LexConfig {
             comment: "",
             interpolate_strings: false,
             json_strings: true,
+            wide_suffixes: false,
         }
     }
 }
@@ -805,6 +816,7 @@ impl Default for Lexer {
             comment: cfg.comment,
             interpolate_strings: cfg.interpolate_strings,
             json_strings: cfg.json_strings,
+            wide_suffixes: cfg.wide_suffixes,
             json_over_read: false,
             mode: Mode::Code,
             in_format_expr: false,
@@ -881,6 +893,7 @@ impl Lexer {
             comment: config.comment,
             interpolate_strings: config.interpolate_strings,
             json_strings: config.json_strings,
+            wide_suffixes: config.wide_suffixes,
             json_over_read: false,
             mode: Mode::Code,
             in_format_expr: false,
@@ -2500,7 +2513,9 @@ impl Lexer {
                     self.err(Level::Error, "Problem parsing single float");
                     self.put(LexItem::Single(0.0), pos)
                 }
-            } else if let Some('d') = self.iter.peek() {
+            } else if self.wide_suffixes
+                && let Some('d') = self.iter.peek()
+            {
                 self.next_char();
                 if let Ok(r) = val.parse::<f64>() {
                     self.put(LexItem::Double(r), pos)
@@ -2547,7 +2562,8 @@ impl Lexer {
             // @PLN204 — `l` is the one suffix an integer literal takes: 64-bit in a file under
             // the 32-bit regime, where a plain literal is an `i32`.  No format spec is `l`
             // (`d b o x X e j`), so it is read inside a `{…}` hole too.
-            if let Some('l') = self.iter.peek()
+            if self.wide_suffixes
+                && let Some('l') = self.iter.peek()
                 && !self
                     .iter
                     .rest()
