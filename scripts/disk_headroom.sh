@@ -14,7 +14,7 @@
 #                                           (RUN_BOUNDS.md § Scratch hygiene), nothing newer
 #   2. cargo's incremental caches           target/*/incremental — costs a rebuild's time
 #   2b. superseded cargo artefacts           `cargo sweep --maxsize` down to the newest
-#                                           KEEP_GB (100, LOFT_TARGET_KEEP_GB) by last use:
+#                                           KEEP_GB (70, LOFT_TARGET_KEEP_GB) by last use:
 #                                           a feature or flag change leaves a whole set of
 #                                           test binaries under old hashes, as recent as
 #                                           their replacements — costs a rebuild only if
@@ -68,7 +68,7 @@ if [ "$(free_gb)" -lt "$min_gb" ]; then
 fi
 if [ "$(free_gb)" -lt "$min_gb" ] && cargo sweep --version >/dev/null 2>&1; then
   # 2b. superseded artefacts: everything past the newest KEEP_GB of target/, by last use.
-  cargo sweep --maxsize "${LOFT_TARGET_KEEP_GB:-100}GB" >/dev/null 2>&1
+  cargo sweep --maxsize "${LOFT_TARGET_KEEP_GB:-70}GB" >/dev/null 2>&1
   steps+=("superseded cargo artefacts swept")
 fi
 if [ "$(free_gb)" -lt "$min_gb" ] && [ -d "$scratch" ]; then
