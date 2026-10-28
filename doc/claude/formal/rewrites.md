@@ -4219,34 +4219,46 @@ line in `Output::output_function`'s prelude.
 
   (R-DeferredCopy) (C) a record local bound by a COPY under (B-Copy) — a whole-value bind
                  from a variable that is itself a VIEW (`prog = callee_prog`) — that the
-                 function only READS takes the copy where it could first be observed
-                 instead of at the bind.  The bind takes the source's reference and raises
-                 a flag; before each statement that may write a store not proven apart from
-                 the source's (`call_writes_store` says the operator or callee writes at
-                 all; `StoreFacts::distinct` says the store it writes differs), the copy is
-                 taken if the flag is still up.  Nothing changed the source between the
-                 bind and that statement, so the values are the copy's — (B-Copy) holds,
-                 later.  Required: an owner witness (`@FR-O-Witness`, it records whether
-                 the local owns its copy, so a deferred view is never released); every
-                 mention of the local and of each reference derived from it (`op =
-                 prog.ops[pc]`) a read (`reads_only`: a bind, a read operator's base, the
-                 witness's bookkeeping); no text borrowed from it; a type whose records
-                 the remap follows (structs, struct-enum variants, plain vectors).  At the
-                 copy point each derived reference moves to the same position in the copy
-                 (`loft_dc_remap`) and each address held for one is derived again
-                 (`@FR-R-RecPtr`); no header is held for a path rooted at either.  The
-                 cost is one flag test per possibly-writing statement; the copy happens
-                 only when such a statement runs while the local still views its source —
-                 in an interpreter's call loop, once per function lowered instead of once
-                 per call (the self-host's `run`: −58 % instructions on fib(25) when
-                 priced by hand).  A static rule: no registry of views and no per-write
-                 work elsewhere.  OPT-IN (`LOFT_DEFERRED_COPY=1`): under GCC, the remap of
-                 a derived view at a copy point inside a hot loop slows that loop even
-                 where the point never runs (the self-host's `mix` +30 %); trace
-                 `LOFT_TRACE_DEFERRED_COPY=1`; guard
-                 `loft-suite/rules/binding/B-Copy/a-deferred-copy-keeps-the-value-it-was-bound-to-whatever-the-source-does.loft`
-                 (four of its five cells fail with the copy point removed, and the
-                 overwrite cell with the remap removed).
+                 function only READS is bound by a MOVE, and the copy is taken where it
+                 could first be observed.  The bind takes the source's reference and raises
+                 the local's flag; the local then views the source's place, and the copy is
+                 owed only if that place changes while the flag is up.  Before each
+                 statement that may write a store not proven apart from the source's
+                 (`call_writes_store` says the operator or callee writes at all;
+                 `StoreFacts::distinct`, or two owners this activation created, says the
+                 store or the records it writes differ), a GUARD takes the copy:
+                 INDEX GUARD where every deferred bind's source is an element view `V[e]`
+                 (a `??` discharge allowed, no projection) and the statement writes a path
+                 rooted at `V[k]` — a setter's first operand, `OpCopyRecord`'s second, the
+                 root the outermost `OpGetVector` over a pure path, `k` a variable or a
+                 literal: the copy is taken when the flag is up and `V[k]` resolves to the
+                 element the local views (`loft_dc_is_elem`: positions, so a negative index
+                 counts from the end as `get_vector` does).  Single ownership makes it exact:
+                 a write rooted at another element changes no record a view of this one
+                 reaches, and a growth, removal or rebind of `V` is a write no index names.
+                 FLAG FALLBACK for every other such statement: the copy is taken when the
+                 flag is up.  A source released under `COPY_FREE_SOURCE` is a callee's
+                 fresh temporary and writes nothing the local views.  Nothing changed the
+                 place between the bind and the guard, so the values are the copy's:
+                 the copy (B-Copy) owes holds, later.  Any other bind of the local lowers the flag: a view
+                 bind must still see writes to its place (B-Disturb).  Required: an owner
+                 witness (`@FR-O-Witness`, it records whether the local owns its copy, so a
+                 deferred view is never released); every mention of the local and of each
+                 reference derived from it (`op = prog.ops[pc]`) a read (`reads_only`); no
+                 text borrowed from it; a type whose records the remap follows (structs,
+                 struct-enum variants, plain vectors).  At the copy point each derived
+                 reference LIVE after it (`lease::Frame`'s per-path liveness) moves to the
+                 same position in the copy (`loft_dc_remap`), each address held for one is
+                 derived again (`@FR-R-RecPtr`), and a point after which the local and its
+                 views are dead is not emitted; no header is held for a path rooted at
+                 either.  A static rule: one flag per local, no registry of views.  The copy
+                 happens once per changed place instead of once per bind — in an
+                 interpreter's call loop, once per function lowered instead of once per call
+                 (the self-host's fib(25): GCC 151 → 71 ms, Clang 92 → 36 ms).  OPT-IN
+                 (`LOFT_DEFERRED_COPY=1`) until the live-view remap is measured on GCC's hot
+                 loops; trace `LOFT_TRACE_DEFERRED_COPY=1`; design
+                 `bench/portal/analysis/deferred-copy.md`; guard
+                 `loft-suite/rules/binding/B-Copy/a-deferred-copy-keeps-the-value-it-was-bound-to-whatever-the-source-does.loft`.
 
   (R-Inline)     a loft function the C writes in at most twelve statements is declared
                  `static inline`, its frame wrapper with it.  The hint changes no
