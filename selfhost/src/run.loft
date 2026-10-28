@@ -10,13 +10,16 @@
 use ir;
 use lower;
 use crt;
+use types;
 
 // The entry's result — a loft integer, so null when the program answers null — or the first
-// thing the interpreter does not carry.
+// thing the interpreter does not carry.  `stores_left` is the leak check: how many of the C
+// runtime's stores the run left live, zero when the IR's frees freed every record it made.
 pub struct Outcome {
   pub value: integer?,
   pub refused: text,
   pub refused_in: text,
+  pub stores_left: integer,
 }
 
 // A value pushed at `sp` on its kind's stack: overwritten below the length, appended at it.
@@ -75,6 +78,35 @@ fn range_default(v: integer?, lo: integer?, hi: integer?, dflt: integer?) -> int
   if v >= lo && v <= hi { v } else { dflt }
 }
 
+// The three parts of the reference at `at` on the integer stack, into `io` for a `crt` routine
+// that writes a variable; a slot not yet written reads as the null reference.
+fn ref_in(io: vector<integer>, ints: vector<integer?>, at: integer) {
+  io[0] = ints[at] ?? 65535;
+  io[1] = ints[at + 1] ?? 0;
+  io[2] = ints[at + 2] ?? 0;
+}
+
+// What the routine left in `io`, back into the variable at `at`.
+fn ref_out(io: vector<integer>, ints: vector<integer?>, at: integer) {
+  ints[at] = io[0];
+  ints[at + 1] = io[1];
+  ints[at + 2] = io[2];
+}
+
+// The C runtime's type table for this image (1b-s3.md question 2), derived in loft: one row per
+// type of the image's schema.
+fn load_table(b: ir::Bundle) {
+  rows: vector<types::Row> = [];
+  for tp in 0..len(b.types) {
+    t = b.types[tp] ?? panic("a type in range");
+    if len(t.parts) > 0 {
+      rows += [types::row(b, tp)];
+    }
+  }
+  n = crt::load_types(types::flat(rows), len(b.types));
+  assert(n == len(rows), "the type table loads: {n} rows of {len(rows)}");
+}
+
 // Definition `entry` called with the integer `args`.
 pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
   progs: vector<lower::Lowering> = [];
@@ -85,7 +117,7 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
   }
   first = lower::lower(b, entry);
   if first.refused != "" {
-    return Outcome { value: 0, refused: first.refused, refused_in: first.refused_in };
+    return Outcome { value: 0, refused: first.refused, refused_in: first.refused_in, stores_left: 0 };
   }
   given = first.params_int + first.params_float + first.params_text;
   if given != len(args) || first.params_int != len(args) {
@@ -93,10 +125,14 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
       value: 0,
       refused: "the entry takes {given} arguments, given {len(args)}",
       refused_in: "",
+      stores_left: 0,
     };
   }
   progs[entry] = first;
   lowered[entry] = true;
+  stores_before = crt::live_stores();
+  table_loaded = false;
+  io: vector<integer> = [65535, 0, 0];
   ints: vector<integer?> = [];
   floats: vector<float?> = [];
   texts: vector<text?> = [];
@@ -143,6 +179,12 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         match op.kind {
           KFloat => { put_float(floats, sp_float, null); sp_float += 1; }
           KText => { put_text(texts, sp_text, null); sp_text += 1; }
+          KRef => {
+            put_int(ints, sp_int, 65535);
+            put_int(ints, sp_int + 1, 0);
+            put_int(ints, sp_int + 2, 0);
+            sp_int += 3;
+          }
           _ => { put_int(ints, sp_int, null); sp_int += 1; }
         }
       }
@@ -155,6 +197,13 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
             put_text(texts, sp_text, texts[ints[base_int + op.a] ?? panic("a bound reference")]);
             sp_text += 1;
           }
+          KRef => {
+            at = base_int + op.a;
+            put_int(ints, sp_int, ints[at]);
+            put_int(ints, sp_int + 1, ints[at + 1]);
+            put_int(ints, sp_int + 2, ints[at + 2]);
+            sp_int += 3;
+          }
           _ => { put_int(ints, sp_int, ints[base_int + op.a]); sp_int += 1; }
         }
       }
@@ -166,6 +215,13 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
             sp_text -= 1;
             texts[ints[base_int + op.a] ?? panic("a bound reference")] = texts[sp_text];
           }
+          KRef => {
+            sp_int -= 3;
+            at = base_int + op.a;
+            ints[at] = ints[sp_int];
+            ints[at + 1] = ints[sp_int + 1];
+            ints[at + 2] = ints[sp_int + 2];
+          }
           _ => { sp_int -= 1; ints[base_int + op.a] = ints[sp_int]; }
         }
       }
@@ -173,6 +229,7 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         match op.kind {
           KFloat => { sp_float -= 1; }
           KText => { sp_text -= 1; }
+          KRef => { sp_int -= 3; }
           _ => { sp_int -= 1; }
         }
       }
@@ -191,7 +248,12 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         }
         callee_prog = progs[callee] ?? panic("lowered above");
         if callee_prog.refused != "" {
-          return Outcome { value: 0, refused: callee_prog.refused, refused_in: callee_prog.refused_in };
+          return Outcome {
+            value: 0,
+            refused: callee_prog.refused,
+            refused_in: callee_prog.refused_in,
+            stores_left: crt::live_stores() - stores_before,
+          };
         }
         if fp < len(f_def) {
           f_def[fp] = def;
@@ -233,13 +295,21 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         vi: integer? = null;
         vf: float? = null;
         vt: text? = null;
+        vr1: integer? = null;
+        vr2: integer? = null;
         match op.kind {
           KFloat => { sp_float -= 1; vf = floats[sp_float]; }
           KText => { sp_text -= 1; vt = texts[sp_text]; }
+          KRef => {
+            sp_int -= 3;
+            vi = ints[sp_int];
+            vr1 = ints[sp_int + 1];
+            vr2 = ints[sp_int + 2];
+          }
           _ => { sp_int -= 1; vi = ints[sp_int]; }
         }
         if fp == 0 {
-          return Outcome { value: vi, refused: "", refused_in: "" };
+          return Outcome { value: vi, refused: "", refused_in: "", stores_left: crt::live_stores() - stores_before };
         }
         sp_int = base_int;
         sp_float = base_float;
@@ -255,6 +325,12 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         match op.kind {
           KFloat => { put_float(floats, sp_float, vf); sp_float += 1; }
           KText => { put_text(texts, sp_text, vt); sp_text += 1; }
+          KRef => {
+            put_int(ints, sp_int, vi);
+            put_int(ints, sp_int + 1, vr1);
+            put_int(ints, sp_int + 2, vr2);
+            sp_int += 3;
+          }
           _ => { put_int(ints, sp_int, vi); sp_int += 1; }
         }
       }
@@ -437,6 +513,80 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         sp_text -= 1;
         print(texts[sp_text] ?? "");
       }
+      // The store (S3): each op calls the C runtime's routine of its operator through `crt`.
+      // A reference is three integers, the store part under the record and the position.
+      // An op that writes a variable hands its three parts over and writes back what the
+      // routine left there.
+      Database => {
+        at = base_int + op.a;
+        ref_in(io, ints, at);
+        crt::database(io, (b.types[op.b] ?? panic("a type the lowering checked")).size, op.b);
+        ref_out(io, ints, at);
+      }
+      FreeVar => {
+        at = base_int + op.a;
+        ref_in(io, ints, at);
+        crt::free_var(io);
+        ref_out(io, ints, at);
+      }
+      FreeRef => {
+        sp_int -= 3;
+        crt::free_ref(ints[sp_int] ?? 65535, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0);
+      }
+      FreeVarDistinct => {
+        sp_int -= 3;
+        at = base_int + op.a;
+        ref_in(io, ints, at);
+        crt::free_var_distinct(io, ints[sp_int] ?? 65535, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0);
+        ref_out(io, ints, at);
+      }
+      GetInt => {
+        sp_int -= 3;
+        v = crt::get_int(ints[sp_int] ?? 65535, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a);
+        put_int(ints, sp_int, v);
+        sp_int += 1;
+      }
+      SetInt => {
+        sp_int -= 4;
+        crt::set_int(ints[sp_int] ?? 65535, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, ints[sp_int + 3]);
+      }
+      GetText => {
+        sp_int -= 3;
+        put_text(texts, sp_text, crt::get_text(ints[sp_int] ?? 65535, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a));
+        sp_text += 1;
+      }
+      SetText => {
+        sp_int -= 3;
+        sp_text -= 1;
+        crt::set_text(ints[sp_int] ?? 65535, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, texts[sp_text]);
+      }
+      RefillText => {
+        sp_int -= 3;
+        sp_text -= 1;
+        crt::refill_text(ints[sp_int] ?? 65535, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, texts[sp_text]);
+      }
+      // The null tests, as the C generator writes them: no store, and no record.
+      RefIsNull => {
+        sp_int -= 3;
+        put_int(ints, sp_int, bit((ints[sp_int] ?? 65535) == 65535));
+        sp_int += 1;
+      }
+      RefBool => {
+        sp_int -= 3;
+        put_int(ints, sp_int, bit((ints[sp_int + 1] ?? 0) != 0));
+        sp_int += 1;
+      }
+      BindCopy => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 3;
+        at = base_int + op.a;
+        ref_in(io, ints, at);
+        crt::bind_copy(io, op.b, ints[sp_int] ?? 65535, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0);
+        ref_out(io, ints, at);
+      }
       _ => {
         match op.kind {
           KFloat => {
@@ -510,5 +660,5 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
       }
     }
   }
-  Outcome { value: 0, refused: "the program ran off its last op", refused_in: "" }
+  Outcome { value: 0, refused: "the program ran off its last op", refused_in: "", stores_left: 0 }
 }

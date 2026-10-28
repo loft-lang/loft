@@ -64,12 +64,34 @@ static void loft_crt_put_ref(int64_t *out, int64_t n, loft_ref r) {
     out[2] = r.pos;
 }
 
-/* OpDatabase of a record type: a fresh store whose root is a zeroed record of `bytes`. */
-int64_t loft_crt_database(int64_t *out, int64_t n, int64_t bytes, int64_t tp) {
-    loft_ref r = loft_ref_null();
+/* The variable a routine writes: its three parts in `io`, read before and written after. */
+static loft_ref loft_crt_get_ref(const int64_t *io, int64_t n) {
+    return n < 3 ? loft_ref_null() : loft_crt_ref(io[0], io[1], io[2]);
+}
+
+/* OpDatabase of a record type, on the variable in `io`: a store it already names is cleared and
+ * made again in place, any other variable gets a fresh store; the root is a zeroed record of
+ * `bytes`. */
+int64_t loft_crt_database(int64_t *io, int64_t n, int64_t bytes, int64_t tp) {
+    loft_ref r = loft_crt_get_ref(io, n);
     loft_database_typed(&r, (uint32_t) bytes, (uint16_t) tp);
-    loft_crt_put_ref(out, n, r);
+    loft_crt_put_ref(io, n, r);
     return 0;
+}
+
+/* OpFreeRef of a variable: its store released, the variable reset to the sentinel. */
+void loft_crt_free_var(int64_t *io, int64_t n) {
+    loft_ref r = loft_crt_get_ref(io, n);
+    loft_free_var(&r);
+    loft_crt_put_ref(io, n, r);
+}
+
+/* OpFreeRefIfDistinct of a variable: released and reset unless it names the witness's store. */
+void loft_crt_free_var_distinct(int64_t *io, int64_t n, int64_t w_store, int64_t w_rec,
+                                int64_t w_pos) {
+    loft_ref r = loft_crt_get_ref(io, n);
+    loft_free_var_distinct(&r, loft_crt_ref(w_store, w_rec, w_pos));
+    loft_crt_put_ref(io, n, r);
 }
 
 void loft_crt_free_ref(int64_t store, int64_t rec, int64_t pos) {
@@ -100,6 +122,13 @@ void loft_crt_set_text(int64_t store, int64_t rec, int64_t pos, int64_t fld, con
                        int64_t is_null) {
     loft_str v = is_null ? loft_null_text() : loft_lit(val, strlen(val));
     loft_set_text(loft_crt_ref(store, rec, pos), (uint32_t) fld, v);
+}
+
+/* OpSetTextReplace: the text field refilled in place where its claim has room. */
+void loft_crt_refill_text(int64_t store, int64_t rec, int64_t pos, int64_t fld, const char *val,
+                          int64_t is_null) {
+    loft_str v = is_null ? loft_null_text() : loft_lit(val, strlen(val));
+    loft_refill_text(loft_crt_ref(store, rec, pos), (uint32_t) fld, v);
 }
 
 /* How many stores are live: what a probe reads to see a free took effect. */
@@ -165,6 +194,17 @@ int64_t loft_crt_load_types(const int64_t *rows, int64_t n, int64_t ntypes) {
         loaded++;
     }
     return at == n ? loaded : -1;
+}
+
+/* A record variable bound to a copy of another (`loft_bind_copy`, the C generator's
+ * `whole_value_bind`): the variable in `io` gets a store of its own holding `src`'s record and
+ * the claims it owns, by the table loaded above. */
+void loft_crt_bind_copy(int64_t *io, int64_t n, int64_t tp, int64_t s_store, int64_t s_rec,
+                        int64_t s_pos) {
+    if (!loft_crt_types || tp < 0 || (uint32_t) tp >= loft_crt_ntypes) return;
+    loft_ref r = loft_crt_get_ref(io, n);
+    loft_bind_copy(loft_crt_types, (uint16_t) tp, &r, loft_crt_ref(s_store, s_rec, s_pos));
+    loft_crt_put_ref(io, n, r);
 }
 
 /* OpCopyRecord: the record at `src` copied into `dst`, the claims it owns copied with it, by the

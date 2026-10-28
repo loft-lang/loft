@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// S3's first slice: records of integers and texts, in the C runtime's stores.  Each entry takes
+// an integer and answers one, so the loft interpreter runs it from the image; the values are
+// worked out by hand beside each.
+struct Point { x: integer, y: integer, name: text }
+
+fn make(x: integer, y: integer) -> Point {
+  Point { x: x, y: y, name: "pt" }
+}
+
+fn shift(p: Point, d: integer) {
+  p.x += d;
+}
+
+// A struct built and read: n + 2n.  built(3) = 9.
+fn built(n: integer) -> integer {
+  p = Point { x: n, y: n * 2, name: "a" };
+  p.x + p.y
+}
+
+// A field written through a parameter: n + 5.  shifted(4) = 9.
+fn shifted(n: integer) -> integer {
+  p = Point { x: n, y: 0, name: "s" };
+  shift(p, 5);
+  p.x
+}
+
+// A copy that diverges from its source: p keeps n, q takes 100.  copied(4) = 4100.
+fn copied(n: integer) -> integer {
+  p = Point { x: n, y: 1, name: "a" };
+  q = p;
+  q.x = 100;
+  p.x * 1000 + q.x
+}
+
+// A text field set and read, on a record a function returned: "pt-" and n's digits.
+// named(5) = len("pt-5") = 4, named(123) = 6.
+fn named(n: integer) -> integer {
+  p = make(n, 3);
+  p.name = "{p.name}-{n}";
+  len(p.name)
+}
+
+// A copy's text is its own: q's rename leaves p's.  len("ab") * 10 + len("changed") = 27.
+fn texts_apart(n: integer) -> integer {
+  p = Point { x: n, y: 1, name: "ab" };
+  q = p;
+  q.name = "changed";
+  len(p.name) * 10 + len(q.name)
+}
+
+// The integer and text fields together: x + y + len(name).  mixed(10) = 10 + 3 + len("pt") = 15.
+fn mixed(n: integer) -> integer {
+  p = make(n, 3);
+  p.x + p.y + len(p.name)
+}
+
+fn main() {
+  println("{built(3)} {shifted(4)} {copied(4)} {named(5)} {texts_apart(1)} {mixed(10)}");
+}

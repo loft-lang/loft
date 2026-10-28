@@ -118,3 +118,36 @@ fn test_every_format_spec_renders_through_the_c_runtime() {
   // 5 cells, each checked by hand inside the kernel.
   assert(ran("format", "n_slices", [2]) == 5, "slices(2)");
 }
+
+// S3's first slice: records of integers and texts in the C runtime's stores (1b-s3.md).  Each
+// value is worked out by hand in `kernels/structs.loft`, and each run must leave none of the
+// runtime's stores live: the IR's frees free every record the run made.
+fn ran_clean(entry: text, arg: integer) -> integer? {
+  b = kernel("structs");
+  d = lower::find(b, entry);
+  assert(d >= 0, "the image has {entry}");
+  o = run::run(b, d, [arg]);
+  assert(o.refused == "", "{entry} refused: {o.refused} in {o.refused_in}");
+  assert(o.stores_left == 0, "{entry}({arg}) left {o.stores_left} stores live");
+  o.value
+}
+
+fn test_a_struct_is_built_read_and_freed() {
+  assert(ran_clean("n_built", 3) == 9, "built(3)");
+  assert(ran_clean("n_built", -4) == -12, "built(-4)");
+}
+
+fn test_a_field_written_through_a_parameter_is_seen_by_the_caller() {
+  assert(ran_clean("n_shifted", 4) == 9, "shifted(4)");
+}
+
+fn test_a_copy_diverges_from_its_source() {
+  assert(ran_clean("n_copied", 4) == 4100, "copied(4)");
+  assert(ran_clean("n_texts_apart", 1) == 27, "texts_apart(1): the copy's text is its own");
+}
+
+fn test_a_record_returned_by_a_function_has_its_text_set_and_read() {
+  assert(ran_clean("n_named", 5) == 4, "named(5)");
+  assert(ran_clean("n_named", 123) == 6, "named(123)");
+  assert(ran_clean("n_mixed", 10) == 15, "mixed(10)");
+}

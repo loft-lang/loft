@@ -11,7 +11,7 @@ struct Held { n: integer, label: text }
 // P1: a 24-byte record (an integer at 0, an integer at 8, a text at 16) of type 100.
 fn test_a_record_is_claimed_written_read_and_freed() {
   before = crt::live_stores();
-  r: vector<integer> = [0, 0, 0];
+  r = crt::null_ref();
   crt::database(r, 24, 100);
   s = r[0] ?? -1;
   rec = r[1] ?? -1;
@@ -65,7 +65,7 @@ fn test_the_shims_stores_are_apart_from_the_programs() {
   assert(before == 0, "the shim's stores hold none of the program's records: {before}");
   refs: vector<integer> = [];
   for _ in 0..5 {
-    r: vector<integer> = [0, 0, 0];
+    r = crt::null_ref();
     crt::database(r, 16, 101);
     crt::set_int(r[0] ?? 0, r[1] ?? 0, r[2] ?? 0, 0, 99);
     refs += r;
@@ -93,7 +93,7 @@ fn rows(owns_heap: integer) -> vector<integer> {
 }
 
 fn fresh(tp: integer) -> vector<integer> {
-  r: vector<integer> = [0, 0, 0];
+  r = crt::null_ref();
   crt::database(r, 24, tp);
   r
 }
@@ -135,4 +135,63 @@ fn test_a_wrong_row_loses_the_text() {
 fn test_malformed_rows_are_refused() {
   assert(crt::load_types([100, 2, 24, 0, 3, 1, 0, 0, 0], 101) == -1, "a field list cut short");
   assert(crt::load_types([200, 2, 24, 0, 0, 0, 0], 101) == -1, "a type number past the table");
+}
+
+// `OpDatabase` on a variable that already names a store makes that store again in place: the
+// same store number, the old field gone, no store more.
+fn test_a_database_on_a_live_variable_clears_its_own_store() {
+  r = crt::null_ref();
+  crt::database(r, 24, 100);
+  first = r[0] ?? -1;
+  crt::set_int(r[0] ?? 0, r[1] ?? 0, r[2] ?? 0, 0, 77);
+  live = crt::live_stores();
+  crt::database(r, 24, 100);
+  assert(r[0] == first, "the same store again: {first} then {r[0]}");
+  assert(crt::live_stores() == live, "no store more: {crt::live_stores()} after {live}");
+  assert(crt::get_int(r[0] ?? 0, r[1] ?? 0, r[2] ?? 0, 0) == 0, "the record is zeroed again");
+  crt::free_var(r);
+  assert(r[0] == 65535, "a freed variable names no store: {r}");
+  assert(crt::live_stores() == live - 1, "its store is gone");
+  crt::free_var(r);
+  assert(crt::live_stores() == live - 1, "a second free of the variable is a no-op");
+}
+
+// `OpFreeRefIfDistinct(v, w)`: kept when `w` names v's store, freed and reset when not.
+fn test_a_distinct_free_keeps_the_witness_store() {
+  before = crt::live_stores();
+  v = crt::null_ref();
+  crt::database(v, 24, 100);
+  crt::free_var_distinct(v, v[0] ?? 0, v[1] ?? 0, v[2] ?? 0);
+  assert(v[0] != 65535 && crt::live_stores() == before + 1, "kept: the witness is its store");
+  w = crt::null_ref();
+  crt::database(w, 24, 100);
+  crt::free_var_distinct(v, w[0] ?? 0, w[1] ?? 0, w[2] ?? 0);
+  assert(v[0] == 65535, "freed and reset: {v}");
+  assert(crt::live_stores() == before + 1, "only w's store is left");
+  crt::free_var(w);
+  assert(crt::live_stores() == before, "and it goes too");
+}
+
+// `loft_bind_copy` with the right row: a store of the copy's own, the integer and the text
+// copied, and the two records independent afterwards.  A refill of the copy's text leaves the
+// source's.
+fn test_a_bind_copy_is_a_record_of_its_own() {
+  assert(crt::load_types(rows(1), 101) == 2, "two types loaded");
+  before = crt::live_stores();
+  p = fresh(100);
+  crt::set_int(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0, 0, 12);
+  crt::set_text(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0, 16, "source");
+  q = crt::null_ref();
+  crt::bind_copy(q, 100, p[0] ?? 0, p[1] ?? 0, p[2] ?? 0);
+  assert(q[0] != p[0] && q[0] != 65535, "a store of its own: {q} beside {p}");
+  assert(crt::live_stores() == before + 2, "two stores");
+  crt::set_int(q[0] ?? 0, q[1] ?? 0, q[2] ?? 0, 0, 13);
+  crt::refill_text(q[0] ?? 0, q[1] ?? 0, q[2] ?? 0, 16, "copy");
+  assert(crt::get_int(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0, 0) == 12, "the source's integer is its own");
+  assert(crt::get_text(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0, 16) == "source", "and its text");
+  crt::free_var(p);
+  assert(crt::get_text(q[0] ?? 0, q[1] ?? 0, q[2] ?? 0, 16) == "copy", "the copy reads its text after the source is gone");
+  assert(crt::get_int(q[0] ?? 0, q[1] ?? 0, q[2] ?? 0, 0) == 13, "and its integer");
+  crt::free_var(q);
+  assert(crt::live_stores() == before, "both stores freed");
 }

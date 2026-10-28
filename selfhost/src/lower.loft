@@ -7,7 +7,9 @@
 // limit and the interpreter's speed both ask for it.
 //
 // A stack machine with one stack per KIND of value (S2.2): integers (with booleans,
-// characters and plain enums), floats (with singles) and texts.  An expression leaves one value
+// characters and plain enums), floats (with singles) and texts.  A reference to a record (S3)
+// is three integers — its store, record and position in the C runtime's stores — in three
+// adjacent slots of the integer stack.  An expression leaves one value
 // on its kind's stack, a statement leaves none.  Each IR variable has a slot in its kind's part
 // of the frame.  An operator lowers to an op of its own, which `run.loft` executes as loft's
 // own operator, so its overflow and null are the language's by definition.  What the
@@ -21,6 +23,7 @@ enum Kind {
   KSingle,
   KText,
   KTextRef,
+  KRef,
   KNone,
   KOther,
 }
@@ -73,11 +76,24 @@ enum Code {
   Abs,
   RangeDefault,
   SubText,
+  Database,
+  FreeVar,
+  FreeRef,
+  FreeVarDistinct,
+  GetInt,
+  SetInt,
+  GetText,
+  SetText,
+  RefillText,
+  RefIsNull,
+  RefBool,
+  BindCopy,
 }
 
 // One op: `kind` is the kind of value it works on; `a` is a value, a slot, a jump target, a
 // callee's definition number or an index into the function's constants; `b` is a call's
-// argument count.
+// argument count.  A store op's `a` is a field's byte offset or the slot of the variable it
+// writes, its `b` a type number.
 struct Op {
   code: Code,
   kind: Kind,
@@ -113,6 +129,8 @@ struct Lowering {
   loop_depth: vector<integer>,
   brk_loop: vector<integer>,
   brk_at: vector<integer>,
+  bound: vector<boolean>,
+  def_nr: integer,
 }
 
 // A lowering with nothing in it: what a function not yet lowered holds.
@@ -138,6 +156,8 @@ pub fn empty() -> Lowering {
     loop_depth: [],
     brk_loop: [],
     brk_at: [],
+    bound: [],
+    def_nr: -1,
   }
 }
 
@@ -152,6 +172,7 @@ fn kind_of_type(t: ir::TypeT) -> Kind {
     TySingle => KSingle,
     TyText { dep: _ } => KText,
     TyRefVar { inner } => if kind_of_types(inner) == KText { KTextRef } else { KOther },
+    TyReference { n: _, dep: _ } => KRef,
     TyVoid => KNone,
     TyNull => KNone,
     TyNever => KNone,
@@ -197,9 +218,15 @@ fn kind_of(l: Lowering, b: ir::Bundle, n: ir::Node) -> Kind {
 }
 
 // The stack a kind's values are on: a single is carried as a float, and rounded by its ops; a
-// `&text` is the absolute index of the text it refers to, an integer.
+// `&text` is the absolute index of the text it refers to, an integer.  A reference keeps its
+// kind: it is three integers on the integer stack, and every op that moves one moves three.
 fn stack_of(k: Kind) -> Kind {
   if k == KSingle { KFloat } else if k == KTextRef { KInt } else { k }
+}
+
+// How many integer slots a value of kind `k` takes: three for a reference, else one.
+fn int_width(k: Kind) -> integer {
+  if k == KRef { 3 } else { 1 }
 }
 
 // The op an operator definition lowers to — its code and the kind it works on — or null for
@@ -361,6 +388,17 @@ fn effect(code: Code, b: integer) -> integer {
     SubText => -2,
     LenText => 0,
     SizeText => 0,
+    Database => 0,
+    FreeVar => 0,
+    FreeVarDistinct => -1,
+    GetInt => 0,
+    GetText => 0,
+    SetInt => -2,
+    SetText => -2,
+    RefillText => -2,
+    RefIsNull => 0,
+    RefBool => 0,
+    BindCopy => -1,
     _ => -1,
   }
 }
@@ -486,6 +524,213 @@ fn expr(l: Lowering, b: ir::Bundle, n: ir::Node) {
   }
 }
 
+// An integer the IR writes as a literal operand — a field's byte offset, a type number — or
+// refused when it is not one.
+fn literal(l: Lowering, n: ir::Node) -> integer {
+  match n {
+    NdInt { n: v } => v,
+    NdLong { n: v } => v,
+    _ => {
+      refuse(l, "a store operand that is not a literal: {n}");
+      0
+    }
+  }
+}
+
+// The slot of the record variable an operator writes (`OpDatabase(v, tp)`), or refused when
+// the operand is not one.
+fn ref_var_slot(l: Lowering, n: ir::Node) -> integer {
+  match n {
+    NdVar { n: var } => {
+      if var_kind(l, var) == KRef {
+        return slot_of(l, var);
+      }
+    }
+    _ => {}
+  }
+  refuse(l, "a store operator on something that is not a record variable: {n}");
+  0
+}
+
+// Type `tp` as `OpDatabase` mints it: a struct, whose size the runtime reads from the image's
+// schema.  A variant (minted at its enum's size), a collection and the rest are later slices.
+fn mintable(l: Lowering, b: ir::Bundle, tp: integer) {
+  t = b.types[tp];
+  if t == null {
+    refuse(l, "a store of type {tp}, which the image does not have");
+    return;
+  }
+  p = t.parts[0];
+  if !(p is PtStruct) {
+    refuse(l, "a store of a type the interpreter does not carry yet: {t.name}");
+  }
+}
+
+// The store operators of S3's first slice (1b-s3.md), each to the op that calls its `crt`
+// routine: true when `name` is one.  A field operand is the IR's literal byte offset, passed on
+// unchanged; an operator that writes a VARIABLE (`OpDatabase`, `OpFreeRef` of one,
+// `OpFreeRefIfDistinct`) names its slot, because the runtime routine changes the variable.
+fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) -> boolean {
+  if name == "OpDatabase" {
+    slot = ref_var_slot(l, args[0] ?? panic("OpDatabase names its variable"));
+    tp = literal(l, args[1] ?? panic("OpDatabase names its type"));
+    mintable(l, b, tp);
+    emit(l, Database, KRef, slot, tp);
+  } else if name == "OpFreeRef" {
+    target = args[0] ?? panic("OpFreeRef names its reference");
+    freed_var = false;
+    match target {
+      NdVar { n: var } => {
+        if var_kind(l, var) == KRef {
+          emit(l, FreeVar, KRef, slot_of(l, var), 0);
+          freed_var = true;
+        }
+      }
+      _ => {}
+    }
+    if !freed_var {
+      value(l, b, target, KRef);
+      emit(l, FreeRef, KRef, 0, 0);
+    }
+  } else if name == "OpFreeRefIfDistinct" {
+    slot = ref_var_slot(l, args[0] ?? panic("OpFreeRefIfDistinct names its variable"));
+    value(l, b, args[1] ?? panic("and its witness"), KRef);
+    emit(l, FreeVarDistinct, KRef, slot, 0);
+  } else if name == "OpGetInt" || name == "OpGetText" {
+    value(l, b, args[0] ?? panic("a field read names its record"), KRef);
+    fld = literal(l, args[1] ?? panic("and its field"));
+    if name == "OpGetInt" {
+      emit(l, GetInt, KInt, fld, 0);
+    } else {
+      emit(l, GetText, KText, fld, 0);
+    }
+  } else if name == "OpSetInt" || name == "OpSetText" || name == "OpSetTextReplace" {
+    value(l, b, args[0] ?? panic("a field write names its record"), KRef);
+    fld = literal(l, args[1] ?? panic("and its field"));
+    if name == "OpSetInt" {
+      value(l, b, args[2] ?? panic("and its value"), KInt);
+      emit(l, SetInt, KInt, fld, 0);
+    } else {
+      value(l, b, args[2] ?? panic("and its value"), KText);
+      emit(l, if name == "OpSetText" { SetText } else { RefillText }, KText, fld, 0);
+    }
+  } else if name == "OpRefIsNull" || name == "OpConvBoolFromRef" {
+    value(l, b, args[0] ?? panic("a null test names its reference"), KRef);
+    emit(l, if name == "OpRefIsNull" { RefIsNull } else { RefBool }, KRef, 0, 0);
+  } else {
+    return false;
+  }
+  true
+}
+
+// The record definition a reference type names, through a nullability marker; -1 for another
+// type.
+fn record_of(ts: vector<ir::TypeT>) -> integer {
+  t = ts[0];
+  if t == null {
+    return -1;
+  }
+  match t {
+    TyReference { n, dep: _ } => n,
+    TyOptional { inner } => {
+      match inner[0] ?? panic("a nullable type has its base") {
+        TyReference { n, dep: _ } => n,
+        _ => -1,
+      }
+    }
+    _ => -1,
+  }
+}
+
+// `Data::copies_as`: a record copies into a variable of its own definition, and a variant and
+// its enum into each other.
+fn copies_as(b: ir::Bundle, dst: integer, src: integer) -> boolean {
+  if dst == src {
+    return true;
+  }
+  ds = b.data.definitions[dst];
+  ss = b.data.definitions[src];
+  if ds == null || ss == null {
+    return false;
+  }
+  // DefType::EnumValue is ordinal 4 (`src/data.rs`).
+  (ss.def_type == 4 && ss.parent == dst) || (ds.def_type == 4 && ds.parent == src)
+}
+
+// `Definition::return_adopts_fresh_store`: the result declares no dependency, or only the
+// one-buffer marker, so a caller adopts the store it hands back.
+fn adopts_fresh(d: ir::Definition) -> boolean {
+  t = d.returned[0];
+  if t == null {
+    return false;
+  }
+  deps: vector<integer> = [];
+  match t {
+    TyReference { n: _, dep } => { deps = dep; }
+    TyOptional { inner } => {
+      match inner[0] ?? panic("a nullable type has its base") {
+        TyReference { n: _, dep } => { deps = dep; }
+        _ => { return false; }
+      }
+    }
+    _ => { return false; }
+  }
+  len(deps) == 0 || (len(deps) == 1 && deps[0] == 65535)
+}
+
+// `v = x` for a record variable `v`, as the C generator's `set_stmt` binds it, for the arms the
+// image decides (1b-s3.md § The first slice — the build): a null, a copy of another record
+// variable, a store a call hands over, and a plain value.  A rebind, a parameter and a call
+// whose result may be a view of an argument need the ownership summaries, and are refused.
+fn bind(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
+  first = !(l.bound[var] ?? false);
+  l.bound[var] = true;
+  slot = slot_of(l, var);
+  v = b.data.definitions[l.def_nr]?.variables.variables[var]?;
+  if x is NdNull {
+    emit(l, PushNull, KRef, 0, 0);
+    emit(l, Store, KRef, slot, 0);
+    return;
+  }
+  if v.argument {
+    refuse(l, "a record parameter bound again: {v.name}");
+    return;
+  }
+  if !first {
+    refuse(l, "a record variable bound again: {v.name}");
+    return;
+  }
+  match x {
+    NdVar { n: src } => {
+      // `whole_value_bind`: the source's record copied into a store of the variable's own,
+      // unless the variable is an overwritten view (`Function::is_overwritten_view`).
+      d = record_of(v.type_def);
+      sd = if var_kind(l, src) == KRef { record_of(b.data.definitions[l.def_nr]?.variables.variables[src]?.type_def) } else { -1 };
+      overwritten = v.skip_free && (v.name.starts_with("_mv_") || v.name.starts_with("__ncc_"));
+      if d >= 0 && sd >= 0 && copies_as(b, d, sd) && !overwritten {
+        if v.owner_witness != 65535 {
+          // `fresh_unless_owned`: a witnessed local's slot may hold a view; the copy mints.
+          emit(l, PushNull, KRef, 0, 0);
+          emit(l, Store, KRef, slot, 0);
+        }
+        emit(l, Load, KRef, slot_of(l, src), 0);
+        emit(l, BindCopy, KRef, slot, b.data.definitions[d]?.known_type);
+        return;
+      }
+    }
+    NdCall { def_nr: f, args: _ } => {
+      fd = b.data.definitions[f]?;
+      if has_body(fd) && !is_operator(fd.name) && !v.view_elided && !adopts_fresh(fd) {
+        refuse(l, "a record bound from a call whose result may be a view: {fd.name}");
+        return;
+      }
+    }
+    _ => {}
+  }
+  value(l, b, x, KRef);
+  emit(l, Store, KRef, slot, 0);
+}
+
 // Is `name` an operator: `Op` and then a capital, as `Definition::is_operator` reads it?
 fn is_operator(name: text) -> boolean {
   name.starts_with("Op") && len(name) > 2 && name[2..3] >= "A" && name[2..3] <= "Z"
@@ -582,6 +827,9 @@ fn call(l: Lowering, b: ir::Bundle, def_nr: integer, args: vector<ir::Node>) {
     }
     return;
   }
+  if is_operator(d.name) && store_call(l, b, d.name, args) {
+    return;
+  }
   for i in 0..len(args) {
     value(l, b, args[i]?, kinds[i] ?? KOther);
   }
@@ -650,6 +898,10 @@ fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
     NdReturn { inner } => expr(l, b, n),
     NdSet { var, inner } => {
       k = var_kind(l, var);
+      if k == KRef {
+        bind(l, b, var, inner[0]?);
+        return;
+      }
       slot = slot_of(l, var);
       // A `&text` is written through (`Store` of kind `KTextRef`): its value is a text.
       value(l, b, inner[0]?, if k == KTextRef { KText } else { k });
@@ -714,6 +966,7 @@ fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
 pub fn lower(b: ir::Bundle, def_nr: integer) -> Lowering {
   d = b.data.definitions[def_nr]?;
   l = empty();
+  l.def_nr = def_nr;
   l.result = kind_of_types(d.returned);
   // Each variable gets the next slot of its kind.  The parameters take theirs FIRST, in order,
   // so they fill the slots the caller's arguments land in — a hidden one too (a text result's
@@ -721,6 +974,7 @@ pub fn lower(b: ir::Bundle, def_nr: integer) -> Lowering {
   for v in d.variables.variables {
     l.var_kind += [kind_of_types(v.type_def)];
     l.var_slot += [0];
+    l.bound += [false];
     shown = "{v.type_def[0] ?? ir::TypeT.TyVoid}";
     l.var_type += [shown.split(' ')[0] ?? shown];
   }
@@ -730,9 +984,9 @@ pub fn lower(b: ir::Bundle, def_nr: integer) -> Lowering {
         continue;
       }
       k = stack_of(kind_of_types(v.type_def));
-      if k == KInt {
+      if k == KInt || k == KRef {
         l.var_slot[v#index] = l.slots_int;
-        l.slots_int += 1;
+        l.slots_int += int_width(k);
       } else if k == KFloat {
         l.var_slot[v#index] = l.slots_float;
         l.slots_float += 1;
@@ -744,8 +998,8 @@ pub fn lower(b: ir::Bundle, def_nr: integer) -> Lowering {
   }
   for pk in param_kinds(d) {
     s = stack_of(pk);
-    if s == KInt {
-      l.params_int += 1;
+    if s == KInt || s == KRef {
+      l.params_int += int_width(s);
     } else if s == KFloat {
       l.params_float += 1;
     } else if s == KText {

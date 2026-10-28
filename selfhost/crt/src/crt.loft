@@ -84,15 +84,50 @@ fn c_live_stores() -> integer;
 fn c_ref_part(store: integer, rec: integer, pos: integer, which: integer) -> integer;
 #c "loft_crt_ref_part" "int64_t(int64_t, int64_t, int64_t, int64_t)"
 
-// A fresh record of `bytes` of type `tp`, in a store of its own: `OpDatabase`.  Its reference is
-// written into `out[0..3]`.
-pub fn database(out: vector<integer>, bytes: integer, tp: integer) {
-  c_database(out, bytes, tp);
+fn c_free_var(io: vector<integer>);
+#c "loft_crt_free_var" "void(int64_t*, int64_t)"
+
+fn c_free_var_distinct(io: vector<integer>, w_store: integer, w_rec: integer, w_pos: integer);
+#c "loft_crt_free_var_distinct" "void(int64_t*, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_refill_text(store: integer, rec: integer, pos: integer, fld: integer, val: text, is_null: boolean);
+#c "loft_crt_refill_text" "void(int64_t, int64_t, int64_t, int64_t, const char*, int64_t)"
+
+fn c_bind_copy(io: vector<integer>, tp: integer, s_store: integer, s_rec: integer, s_pos: integer);
+#c "loft_crt_bind_copy" "void(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+// The null reference, as a variable's three parts: the sentinel `loft_ref_null()` writes.
+pub fn null_ref() -> vector<integer> {
+  [65535, 0, 0]
+}
+
+// `OpDatabase` on the variable whose reference is `io[0..3]`: a store it already names is made
+// again in place, a null one gets a fresh store; either way the root is a zeroed record of
+// `bytes` of type `tp`, and its reference is written back into `io`.
+pub fn database(io: vector<integer>, bytes: integer, tp: integer) {
+  c_database(io, bytes, tp);
 }
 
 // `OpFreeRef`: the record's whole store goes.
 pub fn free_ref(store: integer, rec: integer, pos: integer) {
   c_free_ref(store, rec, pos);
+}
+
+// `OpFreeRef` of the variable in `io`: its store goes and the variable reads null afterwards.
+pub fn free_var(io: vector<integer>) {
+  c_free_var(io);
+}
+
+// `OpFreeRefIfDistinct(v, w)` of the variable in `io`: freed and reset unless it names `w`'s
+// store.
+pub fn free_var_distinct(io: vector<integer>, w_store: integer, w_rec: integer, w_pos: integer) {
+  c_free_var_distinct(io, w_store, w_rec, w_pos);
+}
+
+// The variable in `io` bound to a copy of the record at `src`, of type `tp`, with the claims it
+// owns (the loaded table says which): `loft_bind_copy`.
+pub fn bind_copy(io: vector<integer>, tp: integer, s_store: integer, s_rec: integer, s_pos: integer) {
+  c_bind_copy(io, tp, s_store, s_rec, s_pos);
 }
 
 // `OpGetInt` and `OpSetInt`: the 8-byte integer at byte `fld` of the record.
@@ -120,6 +155,11 @@ pub fn get_text(store: integer, rec: integer, pos: integer, fld: integer) -> tex
 
 pub fn set_text(store: integer, rec: integer, pos: integer, fld: integer, val: text?) {
   c_set_text(store, rec, pos, fld, val ?? "", val == null);
+}
+
+// `OpSetTextReplace`: the text field refilled in place where its claim has room.
+pub fn refill_text(store: integer, rec: integer, pos: integer, fld: integer, val: text?) {
+  c_refill_text(store, rec, pos, fld, val ?? "", val == null);
 }
 
 // How many of the shim's stores are live.
