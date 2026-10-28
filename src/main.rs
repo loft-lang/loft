@@ -9118,6 +9118,10 @@ fn main() {
                     if !pending.iter().any(|d| d == &pkg_str) {
                         pending.push(pkg_str.clone());
                     }
+                    // The natives it calls resolved to their implementations first, as the
+                    // run path does (`extensions::preload_native_libs`).
+                    let hand_written = p.pending_native_libs.clone();
+                    loft::interp::extensions::preload_native_libs(&mut p.data, &hand_written);
                     match loft::native_artifact::cached_or_build_shared_cdylib(
                         &p.data,
                         &p.database,
@@ -10074,6 +10078,14 @@ fn main() {
     // `OpStaticCall` to a missing bridge → the compile.rs panic stub.  Under
     // `--native` these functions compile into the whole-program binary anyway, so
     // excluding them from the cdylib loop costs nothing there.
+    //
+    // The hand-written native libraries load first, so a library compiled below links the
+    // function each `#native` symbol is implemented by (`extensions::preload_native_libs`).
+    if !pending_native.is_empty() {
+        let mut hand_written = p.pending_native_libs.clone();
+        hand_written.extend(native_lib_paths.iter().cloned());
+        extensions::preload_native_libs(&mut p.data, &hand_written);
+    }
     for pkg_dir in &pending_native {
         if file_access::is_under(&abs_file, pkg_dir) {
             continue;

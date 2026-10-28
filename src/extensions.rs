@@ -983,6 +983,25 @@ pub fn resolve_native_impl_symbols(data: &mut crate::data::Data) {
 #[cfg(not(feature = "native-extensions"))]
 pub fn resolve_native_impl_symbols(_data: &mut crate::data::Data) {}
 
+/// Load the hand-written native libraries `paths` and resolve which function implements each
+/// `#native` symbol ([`resolve_native_impl_symbols`]) BEFORE a library's loft code is compiled
+/// into its shared library: that code calls another package's natives, and without the
+/// resolution it links the `#native` string literally.  graphics maps `loft_save_png` to
+/// `n_save_png(store, …, LoftRef)` while its raw `loft_save_png` takes a pointer and a count,
+/// so drawing's compiled `render_file` called the raw one with the typed arguments and wrote no
+/// PNG on `--interpret` (`--native` resolves first and was right).  Loading is idempotent
+/// (`c_libs::load_one`), so the later `load_all` of the same paths costs nothing.
+#[cfg(feature = "native-extensions")]
+pub fn preload_native_libs(data: &mut crate::data::Data, paths: &[String]) {
+    for path in paths {
+        crate::c_libs::load_one(path);
+    }
+    resolve_native_impl_symbols(data);
+}
+
+#[cfg(not(feature = "native-extensions"))]
+pub fn preload_native_libs(_data: &mut crate::data::Data, _paths: &[String]) {}
+
 #[cfg(all(test, feature = "native-extensions"))]
 mod impl_symbol_tests {
     use super::impl_symbol_for;

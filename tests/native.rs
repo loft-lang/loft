@@ -5502,6 +5502,54 @@ fn remapped_native_symbol_resolves_to_its_implementation_on_both_backends() -> s
     Ok(())
 }
 
+/// loft#907, the compiled-library path: a library's OWN loft code calling a remapped native
+/// links the implementation too.  `--interpret` compiles a `use`d library's loft code into a
+/// shared library, and that build ran before the implementations were read off the loaded
+/// cdylib, so it linked the `#native` string literally: drawing's guide, calling graphics'
+/// `save_png` from `render_file`, wrote no PNG on `--interpret` and did on `--native`
+/// (`extensions::preload_native_libs`).  `remap_sum_twice` answers -4000 through the decoy.
+#[test]
+fn a_compiled_library_links_a_remapped_native_to_its_implementation() -> std::io::Result<()> {
+    let _guard = native_suite_lock()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    if find_loft_rlib().is_none() {
+        println!(
+            "a_compiled_library_links_a_remapped_native_to_its_implementation: \
+             skipped (no libloft.rlib / rustc)"
+        );
+        return Ok(());
+    }
+    let lib_root = fa::try_plain_canonical(Path::new("tests/lib"))
+        .unwrap_or_else(|| Path::new("tests/lib").to_path_buf());
+    let dir = std::env::temp_dir().join(format!("loft_remap_compiled_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir)?;
+    let prog = dir.join("p.loft");
+    fa::write(
+        &prog,
+        "use native_remap_pkg;\nfn main() {\n  println(\"{native_remap_pkg::remap_sum_twice([10, 20, 12])} {native_remap_pkg::remap_answer()}\");\n}\n",
+    )?;
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--interpret")
+        .arg("--lib")
+        .arg(&lib_root)
+        .arg(&prog)
+        .current_dir(&dir)
+        .env("LOFT_TIMEOUT", "600")
+        .output()?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let _ = fa::remove_dir_all(&dir);
+    assert_eq!(
+        stdout.trim(),
+        "84 7",
+        "the library's compiled code reached the decoy under the `#native` name (-4000) or \
+         did not run:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    Ok(())
+}
+
 /// The imaging fixture's PNG round-trip — a `[native] crate` package whose
 /// `#native` functions (`load_png`/`save_png`) do STORE-MUTATING file I/O via
 /// raw `std::fs`.  Guards two things at once: (1) the store-mutating C-ABI path
