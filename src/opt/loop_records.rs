@@ -89,7 +89,9 @@ pub(crate) fn is_scalar(tp: &Type) -> bool {
 /// position 0 and the literal's `OpSetEnum` writes it).  A field the run never reaches
 /// — a nested struct arriving by `OpCopyRecord`, a vector field bound by an append —
 /// leaves the group incomplete, and the prefill stays: the check can only DECLINE the
-/// elision, never miscompile it.
+/// elision, never miscompile it.  A struct-ENUM element is covered where the group writes
+/// every field position of every variant (`variant_union`): whichever variant the literal
+/// builds, no byte a variant's field reads is left to the prefill.
 pub(crate) fn group_covers_type(
     ops: &[Value],
     at: usize,
@@ -102,10 +104,17 @@ pub(crate) fn group_covers_type(
     if (tp as usize) >= stores.types.len() {
         return false;
     }
-    let (crate::database::Parts::Struct(fields) | crate::database::Parts::EnumValue(_, fields)) =
-        &stores.types[tp as usize].parts
-    else {
-        return false;
+    let union;
+    let fields: &[crate::database::Field] = match &stores.types[tp as usize].parts {
+        crate::database::Parts::Struct(f) | crate::database::Parts::EnumValue(_, f) => f,
+        crate::database::Parts::Enum(variants) => match variant_union(stores, variants) {
+            Some(u) => {
+                union = u;
+                &union
+            }
+            None => return false,
+        },
+        _ => return false,
     };
     if fields.is_empty() {
         return false;
@@ -216,6 +225,28 @@ pub(crate) fn group_covers_type(
                             if !sf.is_empty() && sf.iter().all(|x| m.contains(&x.position)))
             })
     })
+}
+
+/// The fields of every variant of a struct-enum, one per position — the positions a covering
+/// group must write — or `None` where two variants put fields of different widths at one
+/// position (a write of the narrower would leave bytes of the wider to the prefill).
+fn variant_union(stores: &Stores, variants: &[(u16, String)]) -> Option<Vec<crate::database::Field>> {
+    let mut out: Vec<crate::database::Field> = Vec::new();
+    for (vt, _) in variants {
+        let Some(crate::database::Parts::EnumValue(_, fields)) =
+            stores.types.get(*vt as usize).map(|t| &t.parts)
+        else {
+            continue;
+        };
+        for f in fields {
+            match out.iter().find(|u| u.position == f.position) {
+                Some(u) if stores.size(u.content) != stores.size(f.content) => return None,
+                Some(_) => {}
+                None => out.push(f.clone()),
+            }
+        }
+    }
+    Some(out)
 }
 
 pub(crate) fn refillable_plain(stores: &Stores, tp: u16) -> bool {

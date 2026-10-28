@@ -1416,15 +1416,30 @@ static int32_t loft_i32_of(int64_t v) {
     return v == LOFT_NULL ? INT32_MIN : (int32_t) (uint32_t) (uint64_t) v;
 }
 
+/* Each narrow read is decoded once, by `loft_dec_*` at a field's non-null address; the null
+ * record is tested once on each path in: by `loft_get_*` on the reference, by `loft_pa_*` on a
+ * held record's address (`@FR-R-RecPtr`, the null address answering null). */
+LOFT_HOT_INLINE int64_t loft_dec_byte(const uint8_t *q, int64_t min) { return q[0] + min; }
+LOFT_HOT_INLINE int64_t loft_dec_byte_nullable(const uint8_t *q, int64_t min) {
+    return q[0] == 255 ? LOFT_NULL : q[0] + min;
+}
+
+LOFT_HOT_INLINE int64_t loft_pa_byte(const uint8_t *p, uint32_t fld, int64_t min) {
+    return p ? loft_dec_byte(p + fld, min) : LOFT_NULL;
+}
+
 static int64_t loft_get_byte(loft_ref r, uint32_t fld, int64_t min) {
     if (r.rec == 0) return LOFT_NULL;
-    return *loft_at(loft_store_of(r), r.rec, r.pos + fld) + min;
+    return loft_dec_byte(loft_at(loft_store_of(r), r.rec, r.pos + fld), min);
+}
+
+LOFT_HOT_INLINE int64_t loft_pa_byte_nullable(const uint8_t *p, uint32_t fld, int64_t min) {
+    return p ? loft_dec_byte_nullable(p + fld, min) : LOFT_NULL;
 }
 
 static int64_t loft_get_byte_nullable(loft_ref r, uint32_t fld, int64_t min) {
     if (r.rec == 0) return LOFT_NULL;
-    uint8_t raw = *loft_at(loft_store_of(r), r.rec, r.pos + fld);
-    return raw == 255 ? LOFT_NULL : raw + min;
+    return loft_dec_byte_nullable(loft_at(loft_store_of(r), r.rec, r.pos + fld), min);
 }
 
 static uint8_t loft_byte_raw(int64_t min, int64_t val);
@@ -1443,11 +1458,19 @@ static void loft_set_byte_nullable(loft_ref r, uint32_t fld, int64_t min, int64_
     *loft_at(loft_store_of(r), r.rec, r.pos + fld) = loft_byte_raw(min, x);
 }
 
+LOFT_HOT_INLINE int64_t loft_dec_short(const uint8_t *q, int64_t min) {
+    uint16_t raw;
+    memcpy(&raw, q, 2);
+    return raw == 0 ? LOFT_NULL : raw + min - 1;
+}
+
+LOFT_HOT_INLINE int64_t loft_pa_short(const uint8_t *p, uint32_t fld, int64_t min) {
+    return p ? loft_dec_short(p + fld, min) : LOFT_NULL;
+}
+
 static int64_t loft_get_short(loft_ref r, uint32_t fld, int64_t min) {
     if (r.rec == 0) return LOFT_NULL;
-    uint16_t raw;
-    memcpy(&raw, loft_at(loft_store_of(r), r.rec, r.pos + fld), 2);
-    return raw == 0 ? LOFT_NULL : raw + min - 1;
+    return loft_dec_short(loft_at(loft_store_of(r), r.rec, r.pos + fld), min);
 }
 
 static void loft_set_short(loft_ref r, uint32_t fld, int64_t min, int64_t v) {
@@ -1460,11 +1483,19 @@ static void loft_set_short(loft_ref r, uint32_t fld, int64_t min, int64_t v) {
     memcpy(loft_at(loft_store_of(r), r.rec, r.pos + fld), &raw, 2);
 }
 
+LOFT_HOT_INLINE int64_t loft_dec_short_raw(const uint8_t *q, int64_t min) {
+    uint16_t raw;
+    memcpy(&raw, q, 2);
+    return raw + min;
+}
+
+LOFT_HOT_INLINE int64_t loft_pa_short_raw(const uint8_t *p, uint32_t fld, int64_t min) {
+    return p ? loft_dec_short_raw(p + fld, min) : LOFT_NULL;
+}
+
 static int64_t loft_get_short_raw(loft_ref r, uint32_t fld, int64_t min) {
     if (r.rec == 0) return LOFT_NULL;
-    uint16_t raw;
-    memcpy(&raw, loft_at(loft_store_of(r), r.rec, r.pos + fld), 2);
-    return raw + min;
+    return loft_dec_short_raw(loft_at(loft_store_of(r), r.rec, r.pos + fld), min);
 }
 
 static void loft_set_short_raw(loft_ref r, uint32_t fld, int64_t min, int64_t v) {
@@ -1478,24 +1509,49 @@ static void loft_set_short_raw(loft_ref r, uint32_t fld, int64_t min, int64_t v)
     memcpy(loft_at(loft_store_of(r), r.rec, r.pos + fld), &raw, 2);
 }
 
+LOFT_HOT_INLINE int64_t loft_dec_int4(const uint8_t *q) {
+    int32_t x;
+    memcpy(&x, q, 4);
+    return x == INT32_MIN ? LOFT_NULL : x;
+}
+
+LOFT_HOT_INLINE int64_t loft_pa_int4(const uint8_t *p, uint32_t fld) { return p ? loft_dec_int4(p + fld) : LOFT_NULL; }
+
 static int64_t loft_get_int4(loft_ref r, uint32_t fld) {
     if (r.rec == 0) return LOFT_NULL;
-    int32_t x;
-    memcpy(&x, loft_at(loft_store_of(r), r.rec, r.pos + fld), 4);
-    return x == INT32_MIN ? LOFT_NULL : x;
+    return loft_dec_int4(loft_at(loft_store_of(r), r.rec, r.pos + fld));
 }
 
 /* OpGetInt4Raw / OpGetInt4Full / OpSetInt4Raw: an unsigned 4-byte field — the Raw form keeps
  * 0xFFFFFFFF for null, the Full form reserves nothing. */
+LOFT_HOT_INLINE int64_t loft_dec_int4_raw(const uint8_t *q) {
+    uint32_t x;
+    memcpy(&x, q, 4);
+    return x == 0xFFFFFFFFu ? LOFT_NULL : (int64_t) x;
+}
+
+LOFT_HOT_INLINE int64_t loft_pa_int4_raw(const uint8_t *p, uint32_t fld) {
+    return p ? loft_dec_int4_raw(p + fld) : LOFT_NULL;
+}
+
 static int64_t loft_get_int4_raw(loft_ref r, uint32_t fld) {
     if (r.rec == 0) return LOFT_NULL;
-    uint32_t x = loft_u32(loft_store_of(r), r.rec, r.pos + fld);
-    return x == 0xFFFFFFFFu ? LOFT_NULL : (int64_t) x;
+    return loft_dec_int4_raw(loft_at(loft_store_of(r), r.rec, r.pos + fld));
+}
+
+LOFT_HOT_INLINE int64_t loft_dec_int4_full(const uint8_t *q) {
+    uint32_t x;
+    memcpy(&x, q, 4);
+    return (int64_t) x;
+}
+
+LOFT_HOT_INLINE int64_t loft_pa_int4_full(const uint8_t *p, uint32_t fld) {
+    return p ? loft_dec_int4_full(p + fld) : LOFT_NULL;
 }
 
 static int64_t loft_get_int4_full(loft_ref r, uint32_t fld) {
     if (r.rec == 0) return LOFT_NULL;
-    return (int64_t) loft_u32(loft_store_of(r), r.rec, r.pos + fld);
+    return loft_dec_int4_full(loft_at(loft_store_of(r), r.rec, r.pos + fld));
 }
 
 static void loft_set_int4_raw(loft_ref r, uint32_t fld, int64_t v) {
@@ -1875,7 +1931,9 @@ static uint8_t loft_enum_of_text(const char *const *names, size_t n, loft_str t)
     return 0;
 }
 
-/* OpGetEnum: 0 for the null reference, the stored byte otherwise. */
+/* OpGetEnum: 0 for the null reference (the null address), the stored byte otherwise. */
+LOFT_HOT_INLINE uint8_t loft_pa_enum(const uint8_t *p, uint32_t fld) { return p ? p[fld] : 0; }
+
 static uint8_t loft_get_enum(loft_ref r, uint32_t fld) {
     if (r.rec == 0) return 0;
     return *loft_at(loft_store_of(r), r.rec, r.pos + fld);
@@ -2306,7 +2364,10 @@ static void loft_vec_reserve(loft_ref v, int64_t count, uint32_t size) {
     uint32_t words = loft_vec_cap_words(count < 11 ? 11 : (uint32_t) count, size);
     uint32_t r = loft_collection_rec(s, v.rec, v.pos);
     if (r == 0) {
-        r = loft_claim(s, words);
+        /* Not zeroed (`@FR-H-Claim`: a payload holds whatever the block held): an element past
+         * the length is read by nothing, and every push writes its slot before the length
+         * takes it in.  The length word is the one byte range a reader reads. */
+        r = loft_st_claim(s, words);
         loft_set_u32(s, v.rec, v.pos, r);
         loft_set_u32(s, r, 4, 0);
         return;

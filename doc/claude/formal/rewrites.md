@@ -1315,7 +1315,11 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  reference (`r == null`, `r != s`) or an in-place scalar set
                  (R-InPlace; a kind the address does not serve keeps its store
                  write, to the same bytes): a mint into it, a copy into it, a
-                 free — and reads, writes or hands r at least once.  A binding to null (a buffer's pre-init,
+                 free — and reads, writes or hands r at least once.  THE LAST-USE
+                 CLAUSE: the remainder ends at the last statement that reads or
+                 writes a field of r through the address; what follows takes the
+                 reference, not the address — an appended element's finish, which
+                 may grow the store the element lives in, among it.  A binding to null (a buffer's pre-init,
                  minted later) is never a view.  A NULLABLE view — `e = v[i]`
                  without `?`, the loop variable of `for e in v`, whose null is the
                  loop's end signal — is admitted as its inner record: the null
@@ -1438,9 +1442,13 @@ clause alone, `vector::rec_text`, guard
 native alone, −15.6 %);
 falsifier `LOFT_HOIST_VERIFY=1` (`vector::rec_get` re-derives the address and re-reads
 the store at every use); trace `LOFT_TRACE_RECPTR=1`.  In the C, the basic clause (a scalar
-read or in-place write of a bound view, through inline sub-records): `FnWriter::bind_record_ptr`
-and `FnWriter::rec_ptr_access` over `loft_rec_ptr` / `loft_pa_*`, the lock flag taken only
-where the block writes through the view.  Sites: `hoist::record_view_ptr`,
+read or in-place write of a bound view, through inline sub-records) and the last-use clause:
+`FnWriter::bind_record_ptr` and `FnWriter::rec_ptr_access` over `loft_rec_ptr` / `loft_pa_*`,
+the lock flag taken only where the block writes through the view.  An enum, byte, short or
+4-byte field is read through the address by the decoder its store getter uses (`loft_dec_*`),
+so the two reads cannot disagree; the last-use clause is what binds a minted element, whose
+field writes precede the finish (`enum_match` −11 % under both compilers, `mesh_emit` −33 %
+under Clang); trace `LOFT_TRACE_RECPTR=1` there too.  Sites: `hoist::record_view_ptr`,
 `Output::bind_record_ptr`, `Output::rec_ptr_read` (the twin input),
 `ops::vector_ops::emit_hoisted_scalar_or_default` and `FusedElementWriteEmitter`
 (the read and the write), `Output::output_record_tuple` and
@@ -3919,7 +3927,11 @@ line in `Output::output_function`'s prelude.
                  field of the buffer it is handed — every mint of it covers and
                  every `return` of it follows one in its own block — since the
                  answer is then `e` itself, and the fresh copy writes every byte
-                 of `e` otherwise.  `db_vars`
+                 of `e` otherwise.  A STRUCT-ENUM element is covered where the
+                 group writes every field position of EVERY variant, no two
+                 variants putting fields of different widths at one position:
+                 whichever variant the literal builds, no byte any variant's field
+                 reads is left to the prefill.  `db_vars`
                  is keyed by the local (every `OpDatabase` site must cover);
                  `mint_tps` by the element type (every mint group in the function
                  must).  The interpreter keeps the prefill and is the oracle.

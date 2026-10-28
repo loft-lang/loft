@@ -650,7 +650,7 @@ impl<'a> FnWriter<'a> {
             .map(|(_, c, _)| c.clone())
             .collect();
         for c in gone {
-            self.line(ind, &format!("loft_fcur_release(&{c});"));
+            self.line(ind, &format!("loft_fcur_release(&{c}, {c}p);"));
         }
     }
 
@@ -1674,11 +1674,26 @@ impl<'a> FnWriter<'a> {
         {
             return;
         }
+        // The address serves the view's field reads and writes alone (`rec_ptr_access`), so
+        // only the statements up to the last of them are judged: what follows — an append's
+        // finish, which may grow the store the element lives in — takes the reference.
+        let data = self.cx.data;
+        let field_use = |op: &Value| {
+            op.any_node(&mut |n| {
+                matches!(n, Value::Call(d, a) if (*d as usize) < data.definitions.len()
+                    && a.len() >= 2
+                    && { let nm = data.def(*d).name(); nm.starts_with("OpGet") || nm.starts_with("OpSet") }
+                    && crate::opt::body_writes::view_field(data, &a[0], &a[1]).is_some_and(|(root, _)| root == r))
+            })
+        };
+        let Some(last) = ops.iter().rposition(field_use).filter(|&l| l > at) else {
+            return;
+        };
         let mut cache = std::mem::take(&mut self.hoist_cache);
         let verdict = {
             let facts = self.store_facts();
             crate::opt::hoist::record_view_ptr(
-                ops,
+                &ops[..=last],
                 at,
                 self.cx.data,
                 self.cx.stores,
@@ -1692,8 +1707,19 @@ impl<'a> FnWriter<'a> {
             )
         };
         self.hoist_cache = cache;
-        if verdict.is_err() {
+        let trace = crate::env_once!(std::env::var("LOFT_TRACE_RECPTR").is_ok_and(|v| v != "0"));
+        if let Err(why) = verdict {
+            if trace {
+                eprintln!(
+                    "recptr: {} {} declined: {why}",
+                    self.cx.data.def(self.d).name(),
+                    self.vars.name(r)
+                );
+            }
             return;
+        }
+        if trace {
+            eprintln!("recptr: {} {} bound", self.cx.data.def(self.d).name(), self.vars.name(r));
         }
         let n = self.decls.len();
         let (pa, pl) = (format!("loft_pa{r}_{n}"), format!("loft_pl{r}_{n}"));
@@ -1727,7 +1753,16 @@ impl<'a> FnWriter<'a> {
         ind: usize,
     ) -> Result<Option<E>, String> {
         let (getter, base, fld) = match (name, args) {
-            ("OpGetInt" | "OpGetFloat" | "OpGetSingle", [base, fld]) => (true, base, fld),
+            (
+                "OpGetInt" | "OpGetFloat" | "OpGetSingle" | "OpGetEnum" | "OpGetInt4"
+                | "OpGetInt4Raw" | "OpGetInt4Full",
+                [base, fld],
+            )
+            | (
+                "OpGetByte" | "OpGetByteNullable" | "OpGetShort" | "OpGetShortRaw"
+                | "OpGetShortFull",
+                [base, fld, _],
+            ) => (true, base, fld),
             ("OpSetInt" | "OpSetFloat" | "OpSetSingle" | "OpSetEnum", [base, fld, _]) => {
                 (false, base, fld)
             }
@@ -1749,11 +1784,24 @@ impl<'a> FnWriter<'a> {
             return Ok(None);
         };
         if getter {
+            // A narrow read's encoding is decoded by the reader its store getter uses.
             let (f, k) = match name {
                 "OpGetInt" => ("loft_pa_i64", K::Int),
                 "OpGetFloat" => ("loft_pa_f64", K::Float),
-                _ => ("loft_pa_f32", K::Single),
+                "OpGetSingle" => ("loft_pa_f32", K::Single),
+                "OpGetEnum" => ("loft_pa_enum", K::Enum),
+                "OpGetInt4" => ("loft_pa_int4", K::Int),
+                "OpGetInt4Raw" => ("loft_pa_int4_raw", K::Int),
+                "OpGetInt4Full" => ("loft_pa_int4_full", K::Int),
+                "OpGetByte" => ("loft_pa_byte", K::Int),
+                "OpGetByteNullable" => ("loft_pa_byte_nullable", K::Int),
+                "OpGetShort" => ("loft_pa_short", K::Int),
+                _ => ("loft_pa_short_raw", K::Int),
             };
+            if args.len() == 3 {
+                let min = c_long(Self::literal(&args[2], "minimum")?);
+                return Ok(Some(E::new(format!("{f}({pa}, {off}, {min})"), k)));
+            }
             return Ok(Some(E::new(format!("{f}({pa}, {off})"), k)));
         }
         let val = self.expr(&args[2], ind)?;
@@ -2054,7 +2102,7 @@ impl<'a> FnWriter<'a> {
         if held_file {
             // The loop's own end; its other exits gave the cursor back where they leave.
             let (_, c, _) = self.file_holds.pop().expect("the cursor this loop holds");
-            self.line(ind, &format!("loft_fcur_release(&{c});"));
+            self.line(ind, &format!("loft_fcur_release(&{c}, {c}p);"));
         }
         Ok(())
     }
