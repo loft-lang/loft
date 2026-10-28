@@ -4636,9 +4636,15 @@ impl Parser {
     ) -> Option<Type> {
         // @PLN204 — under the 32-bit regime a plain `integer` is an `i32` and a plain
         // `float` a `single`; `i64` / `f64` name the 64-bit forms there and everywhere.
+        // `integer limit(…)` names its own range, and `limit` follows `integer` only.
         let type_name = if self.data.width32() {
             match type_name {
-                "integer" => "i32",
+                "integer"
+                    if !matches!(&self.lexer.peek().has,
+                        crate::lexer::LexItem::Identifier(n) if n == "limit") =>
+                {
+                    "i32"
+                }
                 "float" => "single",
                 other => other,
             }

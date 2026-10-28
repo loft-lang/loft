@@ -55,6 +55,32 @@ impl Parser {
         let _ = self.lexer.has_token(";");
     }
 
+    /// Under the 32-bit regime, a plain `integer` — a width nobody chose: an element's
+    /// `#index`, a 64-bit file's field — stored into a slot that holds the whole `i32` range
+    /// is narrowed there (`OpNarrow32`, null when it does not fit) rather than refused.  An
+    /// `i64` or `u32` source, and a target narrower than `i32`, keep the refusal.  Answers
+    /// whether `code` was wrapped.
+    pub(crate) fn width32_narrow_store(&mut self, code: &mut Value, source: &Type, target: &Type) -> bool {
+        if !self.data.width32() {
+            return false;
+        }
+        let (Type::Integer(src), Type::Integer(dst)) = (source.base(), target.base()) else {
+            return false;
+        };
+        if src.max > i64::from(i32::MAX)
+            || !dst.is_width32()
+            || i64::from(dst.min) > i64::from(i32::MIN) + 1
+            || dst.max < i64::from(i32::MAX)
+        {
+            return false;
+        }
+        if !matches!(code.unspan(), Value::Call(d, _) if self.data.def(*d).name() == "OpNarrow32") {
+            let inner = std::mem::replace(code, Value::Null);
+            *code = self.cl("OpNarrow32", &[inner]);
+        }
+        true
+    }
+
     /// The type a call answers in the file being parsed: under the 32-bit regime, an integer
     /// inside the `i32` range by its type (not `i64` or `u32`) or a plain `float` from a callee
     /// whose body is 64-bit ([`crate::data::Data::body_width32`]) is
@@ -92,12 +118,25 @@ impl Parser {
             Type::Float => ("OpCastSingleFromFloat", Type::Single),
             _ => return tp,
         };
-        let inner = std::mem::replace(code, Value::Null);
-        *code = self.cl(op, &[inner]);
-        if optional {
+        let narrow = if optional {
             Type::optional(narrow)
         } else {
             narrow
+        };
+        // A COUNT — a collection's `len`, a text's `size` — is typed 32-bit without the
+        // conversion: no collection past `i32::MAX` elements fits a 32-bit address space, and
+        // the shape `len(v)` is what the index proofs read (`if i < len(v) { v[i] }`).
+        if op == "OpNarrow32" && Self::is_count_fn(self.data.def(d).name()) {
+            return narrow;
         }
+        let inner = std::mem::replace(code, Value::Null);
+        *code = self.cl(op, &[inner]);
+        narrow
+    }
+
+    /// A function answering how many elements, characters or bytes something holds.
+    fn is_count_fn(name: &str) -> bool {
+        matches!(name, "n_len" | "n_size")
+            || (name.starts_with("t_") && (name.ends_with("_len") || name.ends_with("_size")))
     }
 }

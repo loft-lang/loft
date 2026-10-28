@@ -385,7 +385,11 @@ impl Parser {
             Self::is_narrowing_int(is_type, should)
         } else {
             Self::is_narrowing_int_store(is_type, should)
-        } && !self.is_null_source(code);
+        } && !self.is_null_source(code)
+            // @PLN204 — a plain `integer` into an `i32` under the 32-bit regime is narrowed.
+            && (self.first_pass
+                || self.in_explicit_cast
+                || !self.width32_narrow_store(code, is_type, should));
         // A value that may not fit a narrow slot is refused where the author can choose (@C127).
         if !discharged && !self.first_pass && narrows && !self.int_value_fits(code, should) {
             let src = self.narrow_source_name(code, is_type);

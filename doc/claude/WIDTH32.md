@@ -49,6 +49,17 @@ another name.
   64 bits declares `i64` and is not narrowed: `now()`, `ticks()`, `mtime()`, a file's
   `position()`, `JsonValue.as_long()`.
 - The two arms of an `if` that are both 32-bit join to a 32-bit value.
+- A plain `integer` that is not a call (an element's `#index`, a field of a 64-bit file's
+  struct) stored into an `i32` is narrowed there, null when it does not fit.  A target
+  narrower than `i32` (`u8`, a `limit`) still refuses it, as everywhere.
+- A count — a collection's `len`, a text's `size` — is an `i32`.  A collection past `i32::MAX`
+  elements is outside the regime: it does not fit a 32-bit address space.
+
+**Binary files take the value's width.**  `f += x` on a `LittleEndian` / `BigEndian` file
+writes as many bytes as `x`'s type holds, so under the regime a plain `integer` writes 4 bytes
+and a plain `float` writes a 4-byte `single`.  A file format a library shares with 64-bit
+programs spells each width at the write (`as i64`, `as f64`, `as i32`), as `hex_field`'s
+fixture test shows when it does not.
 
 A program under the regime answers the same on every backend and every processor: the width
 is in the source, not in the target.  So the interpreter on an ordinary CPU is the oracle

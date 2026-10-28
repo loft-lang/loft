@@ -10527,7 +10527,10 @@ use a separate collection or add after the loop"
         if self.range_guard_inside_discharge(code, store_tp) {
             return true;
         }
-        if Self::is_narrowing_int_store(s_type, store_tp) {
+        if Self::is_narrowing_int_store(s_type, store_tp)
+            // @PLN204 — a plain `integer` into an `i32` under the 32-bit regime is narrowed.
+            && !self.width32_narrow_store(code, s_type, store_tp)
+        {
             let dst = self.int_type_name(store_tp);
             if !self.int_value_fits(code, store_tp) {
                 // Refused where the author can choose what an unfitting value becomes (@C127).
@@ -11043,6 +11046,16 @@ use a separate collection or add after the loop"
         // value in range) but it would report the same out-of-range write twice.
         if let Value::Call(d, _) = code.unspan()
             && self.data.def(*d).name() == "OpRangeDefault"
+        {
+            return;
+        }
+        // @PLN204 — a 32-bit operation's result is already inside the whole `i32` range, null
+        // its default: a guard for that range has nothing to check.
+        if let Value::Call(d, _) = code.unspan()
+            && self.data.def(*d).name() == "OpNarrow32"
+            && lo <= i64::from(i32::MIN) + 1
+            && hi >= i64::from(i32::MAX)
+            && dflt == i64::MIN
         {
             return;
         }
