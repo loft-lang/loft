@@ -1249,47 +1249,11 @@ impl FnWriter<'_> {
         } else {
             None
         };
-        // The staged part: each field write's operands, in program order, into temporaries;
-        // a statement computing one runs where it stood.
-        let mut writes: Vec<(String, Vec<Value>)> = Vec::new();
-        for op in &site.body {
-            match op.unspan() {
-                Value::Call(d, a)
-                    if data.def(*d).name().starts_with("OpSet")
-                        && matches!(a.first().map(Value::unspan), Some(Value::Var(b)) if *b == site.buf) =>
-                {
-                    let mut staged = vec![Value::Null];
-                    for x in &a[1..] {
-                        if crate::lower::keyed_place::constant(x) {
-                            staged.push(x.clone());
-                            continue;
-                        }
-                        let e = self.expr(x, ind)?;
-                        let Some(c) = super::shape_of_kind(e.kind) else {
-                            return Err(
-                                "a keyed literal's field value of no stageable shape".into()
-                            );
-                        };
-                        let t = self.temp(c);
-                        self.line(ind, &format!("{t} = {};", super::as_shape(e, c)?));
-                        self.raw.insert(t.clone(), super::kind_of(c));
-                        staged.push(Value::RawExpr(t));
-                    }
-                    let key_write = entry_keys.as_ref().is_some_and(|k| {
-                        matches!(a.get(1).map(Value::unspan), Some(Value::Int(o))
-                            if u16::try_from(*o).is_ok_and(|o| k.contains(&o)))
-                    });
-                    if !key_write {
-                        writes.push((data.def(*d).name().to_string(), staged));
-                    }
-                }
-                _ => self.stmt(op, ind)?,
-            }
-        }
+        let writes = self.stage_literal_writes(&site, entry_keys.as_deref(), ind)?;
         self.flush(ind);
-        let coll = self.expr(site.coll, ind)?;
+        let container = self.expr(site.coll, ind)?;
         let ct = self.temp(CType::Ref);
-        self.line(ind, &format!("{ct} = {};", as_ref(coll)?));
+        self.line(ind, &format!("{ct} = {};", as_ref(container)?));
         let (keys, nk) = self.cx.keys_of(site.tp);
         if entry_keys.is_some() {
             let mut parts = Vec::new();
@@ -1349,6 +1313,57 @@ impl FnWriter<'_> {
         );
         crate::rewrite_census::fired("R-InPlaceLiteral", 1);
         Ok(Some(E::new("((void) 0)", K::Void)))
+    }
+
+    /// The staged part of a keyed literal written in place (`keyed_in_place`): each field
+    /// write's operands, in program order, into temporaries — a statement computing one runs
+    /// where it stood — and the writes of the subscript's own key fields dropped.
+    fn stage_literal_writes(
+        &mut self,
+        site: &crate::lower::keyed_place::Site<'_>,
+        entry_keys: Option<&[u16]>,
+        ind: usize,
+    ) -> Result<Vec<(String, Vec<Value>)>, String> {
+        let data = self.cx.data;
+        let mut writes: Vec<(String, Vec<Value>)> = Vec::new();
+        for op in &site.body {
+            match op.unspan() {
+                Value::Call(op_nr, operands)
+                    if data.def(*op_nr).name().starts_with("OpSet")
+                        && matches!(operands.first().map(Value::unspan), Some(Value::Var(b)) if *b == site.buf) =>
+                {
+                    let mut staged = vec![Value::Null];
+                    for operand in &operands[1..] {
+                        if crate::lower::keyed_place::constant(operand) {
+                            staged.push(operand.clone());
+                            continue;
+                        }
+                        let value = self.expr(operand, ind)?;
+                        let Some(shape) = super::shape_of_kind(value.kind) else {
+                            return Err(
+                                "a keyed literal's field value of no stageable shape".into()
+                            );
+                        };
+                        let temp = self.temp(shape);
+                        self.line(
+                            ind,
+                            &format!("{temp} = {};", super::as_shape(value, shape)?),
+                        );
+                        self.raw.insert(temp.clone(), super::kind_of(shape));
+                        staged.push(Value::RawExpr(temp));
+                    }
+                    let key_write = entry_keys.is_some_and(|keys| {
+                        matches!(operands.get(1).map(Value::unspan), Some(Value::Int(o))
+                            if u16::try_from(*o).is_ok_and(|o| keys.contains(&o)))
+                    });
+                    if !key_write {
+                        writes.push((data.def(*op_nr).name().to_string(), staged));
+                    }
+                }
+                _ => self.stmt(op, ind)?,
+            }
+        }
+        Ok(writes)
     }
 
     /// `OpGetRecord(data, tp, n, keys…)`: the element under the key, or null.

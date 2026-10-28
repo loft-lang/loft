@@ -2548,11 +2548,18 @@ impl Lexer {
             // the 32-bit regime, where a plain literal is an `i32`.  No format spec is `l`
             // (`d b o x X e j`), so it is read inside a `{…}` hole too.
             if let Some('l') = self.iter.peek()
-                && !self.iter.rest().nth(1).is_some_and(|n| n.is_ascii_alphanumeric() || n == '_')
+                && !self
+                    .iter
+                    .rest()
+                    .nth(1)
+                    .is_some_and(|n| n.is_ascii_alphanumeric() || n == '_')
             {
                 self.next_char();
                 if r > i64::MAX as u64 {
-                    self.err(Level::Error, "Integer literal out of range (exceeds i64::MAX)");
+                    self.err(
+                        Level::Error,
+                        "Integer literal out of range (exceeds i64::MAX)",
+                    );
                     return self.put(LexItem::Wide(0), pos);
                 }
                 return self.put(LexItem::Wide(r), pos);
@@ -2571,7 +2578,9 @@ impl Lexer {
                     }
                 }
                 let msg = if bad == "f" || bad == "d" {
-                    format!("`{val}{bad}`: a float literal needs a decimal point — write `{val}.0{bad}`")
+                    format!(
+                        "`{val}{bad}`: a float literal needs a decimal point — write `{val}.0{bad}`"
+                    )
                 } else {
                     format!(
                         "`{val}{bad}`: an integer literal takes no suffix but `l` — its width comes \

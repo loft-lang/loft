@@ -15289,9 +15289,8 @@ mod package_tests {
             data.shares_internals(&a, &dotted_up),
             "`..` names the same parent"
         );
-        #[cfg(unix)]
-        {
-            fa::symlink(root.join("top/dir"), root.join("top/link")).unwrap();
+        // A link the OS refuses to make (Windows without the symlink privilege) has no cell.
+        if fa::symlink(root.join("top/dir"), root.join("top/link")).is_ok() {
             assert!(
                 data.shares_internals(&path("top/link/a.loft"), &path("top/dir/b.loft")),
                 "a symlinked directory is the directory it names"

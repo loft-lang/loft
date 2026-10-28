@@ -1658,7 +1658,10 @@ impl Parser {
         };
         // @PLN204 — `a ⊕= b` under the 32-bit regime is the 32-bit operation `a ⊕ b` is.
         let regime32 = self.data.width32()
-            && matches!(op, "+" | "-" | "*" | "/" | "%" | "&" | "|" | "^" | "<<" | ">>")
+            && matches!(
+                op,
+                "+" | "-" | "*" | "/" | "%" | "&" | "|" | "^" | "<<" | ">>"
+            )
             && Self::width32_int(f_type)
             && Self::width32_int(src_tp);
         let mut code = Value::Null;

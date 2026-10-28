@@ -99,3 +99,4 @@ bench/portal/ab.py	--help
 bench/portal/c_profile.py	--help
 bench/portal/local.py	--help
 bench/portal/hand_price_c.sh	--help
+scripts/image_probe.py	--help

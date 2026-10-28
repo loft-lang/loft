@@ -33,19 +33,19 @@ fn is_copy(v: &Value) -> bool {
 /// lifted a temporary into it that is freed before the call (`__lift = parse_errors_of(u); …;
 /// OpFreeRef(__lift)`): then the view's source dies first, and the copy is what holds it.
 fn view_of<'a>(v: &'a Value, data: &Data) -> Option<&'a Value> {
-    let Value::Block(b) = v.unspan() else {
+    let Value::Block(block) = v.unspan() else {
         return None;
     };
-    let [Value::Set(w, _), append, Value::Var(r)] = b.operators.as_slice() else {
+    let [Value::Set(work, _), append, Value::Var(result)] = block.operators.as_slice() else {
         return None;
     };
     match append.unspan() {
-        Value::Call(op, a)
-            if w == r
+        Value::Call(op, operands)
+            if work == result
                 && data.def(*op).name() == "OpAppendText"
-                && matches!(a.first().map(Value::unspan), Some(Value::Var(x)) if x == w) =>
+                && matches!(operands.first().map(Value::unspan), Some(Value::Var(x)) if x == work) =>
         {
-            a.get(1)
+            operands.get(1)
         }
         _ => None,
     }

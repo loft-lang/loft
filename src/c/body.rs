@@ -2733,6 +2733,10 @@ impl<'a> FnWriter<'a> {
     }
 
     /// Emit the statements `v` needs and put its value in `target`, of shape `c`.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "past the bar where the 32-bit arms met the value-record arms on a join; the split is release work (M-file-split)"
+    )]
     fn assign(&mut self, v: &Value, target: &str, c: CType, ind: usize) -> Result<(), String> {
         if self.vr.is_some() && self.vr_assign(v, target, c, ind)? {
             return Ok(());
@@ -3333,15 +3337,15 @@ impl<'a> FnWriter<'a> {
     /// Operand `i` of `args`, evaluated in order: a value a later operand may change is held
     /// in a temporary.
     fn arg(&mut self, args: &[Value], i: usize, ind: usize) -> Result<E, String> {
-        let a = &args[i];
-        let e = self.expr(a, ind)?;
-        let later_writes = args[i + 1..].iter().any(|b| self.may_write(b));
-        if later_writes && matches!(a.unspan(), Value::Var(_)) && e.kind == K::View {
-            let t = self.temp(CType::Text);
-            self.line(ind, &format!("loft_text_set(&{t}, {});", e.code));
-            return Ok(self.held(t, CType::Text));
+        let operand = &args[i];
+        let value = self.expr(operand, ind)?;
+        let later_writes = args[i + 1..].iter().any(|later| self.may_write(later));
+        if later_writes && matches!(operand.unspan(), Value::Var(_)) && value.kind == K::View {
+            let temp = self.temp(CType::Text);
+            self.line(ind, &format!("loft_text_set(&{temp}, {});", value.code));
+            return Ok(self.held(temp, CType::Text));
         }
-        let simple = match a.unspan() {
+        let simple = match operand.unspan() {
             Value::Var(_) => !later_writes,
             Value::Int(_) | Value::Long(_) | Value::Boolean(_) | Value::Text(_) => true,
             _ => false,
@@ -3349,26 +3353,26 @@ impl<'a> FnWriter<'a> {
         // A temporary is already stable — and a second one would share the texts a tuple
         // temporary owns, which the epilogue frees through each.
         if simple
-            || matches!(e.kind, K::View | K::Void)
-            || self.temps.iter().any(|(t, _)| *t == e.code)
+            || matches!(value.kind, K::View | K::Void)
+            || self.temps.iter().any(|(t, _)| *t == value.code)
         {
-            return Ok(e);
+            return Ok(value);
         }
-        let (c, code) = match e.kind {
-            K::Int => (CType::Int, e.code),
-            K::Int32 => (CType::Int32, e.code),
-            K::Ref => (CType::Ref, e.code),
-            K::Tup(id) => (CType::Tuple(id), e.code),
-            K::Enum => (CType::Enum, e.code),
-            K::Float => (CType::Float, e.code),
-            K::Single => (CType::Single, e.code),
-            K::Char => (CType::Char, e.code),
-            K::Fn => (CType::Fn, e.code),
-            _ => (CType::Bool, as_bool(e)?),
+        let (shape, code) = match value.kind {
+            K::Int => (CType::Int, value.code),
+            K::Int32 => (CType::Int32, value.code),
+            K::Ref => (CType::Ref, value.code),
+            K::Tup(id) => (CType::Tuple(id), value.code),
+            K::Enum => (CType::Enum, value.code),
+            K::Float => (CType::Float, value.code),
+            K::Single => (CType::Single, value.code),
+            K::Char => (CType::Char, value.code),
+            K::Fn => (CType::Fn, value.code),
+            _ => (CType::Bool, as_bool(value)?),
         };
-        let t = self.temp(c);
-        self.line(ind, &format!("{t} = {code};"));
-        Ok(E::new(t, kind_of(c)))
+        let temp = self.temp(shape);
+        self.line(ind, &format!("{temp} = {code};"));
+        Ok(E::new(temp, kind_of(shape)))
     }
 
     /// May evaluating `v` write a variable?  A statement, a block or a call that is not a
@@ -3429,6 +3433,10 @@ impl<'a> FnWriter<'a> {
         self.operator(cx.data.def(d).name(), args, ind)
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "past the bar where the 32-bit arms met the value-record arms on a join; the split is release work (M-file-split)"
+    )]
     fn call(&mut self, d: u32, args: &[Value], ind: usize) -> Result<E, String> {
         let cx = self.cx;
         if is_operator(cx.data, d) {
@@ -3806,6 +3814,10 @@ impl<'a> FnWriter<'a> {
         Ok((a, b))
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "past the bar where the 32-bit arms met the value-record arms on a join; the split is release work (M-file-split)"
+    )]
     fn operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
         // The text writes through a `&` parameter: the C names the caller's text the same way.
         let name = match name {
@@ -3931,18 +3943,18 @@ impl<'a> FnWriter<'a> {
     /// answers the same: the 64-bit operation of two `int32_t` values cannot overflow, so
     /// narrowing its result is exactly the 32-bit operation's overflow check.
     fn narrow32(&mut self, x: &Value, ind: usize) -> Result<E, String> {
-        if let Value::Int(i) = x.unspan()
-            && *i != i32::MIN
+        if let Value::Int(lit) = x.unspan()
+            && *lit != i32::MIN
             && !super::no_c_int32()
         {
-            return Ok(E::new(format!("INT32_C({i})"), K::Int32));
+            return Ok(E::new(format!("INT32_C({lit})"), K::Int32));
         }
-        if let Value::Call(d, args) = x.unspan()
+        if let Value::Call(op_nr, args) = x.unspan()
             && args.len() == 2
-            && is_operator(self.cx.data, *d)
+            && is_operator(self.cx.data, *op_nr)
         {
-            let name = self.cx.data.def(*d).name();
-            let f = match name {
+            let name = self.cx.data.def(*op_nr).name();
+            let op32 = match name {
                 "OpAddInt" | "OpAddIntNullable" => Some("loft_add32"),
                 "OpMinInt" | "OpMinIntNullable" => Some("loft_sub32"),
                 "OpMulInt" | "OpMulIntNullable" => Some("loft_mul32"),
@@ -3950,16 +3962,16 @@ impl<'a> FnWriter<'a> {
                 "OpRemInt" | "OpRemIntNullable" => Some("loft_rem32"),
                 _ => None,
             };
-            if let Some(f) = f
+            if let Some(op32) = op32
                 && !super::no_c_int32()
             {
                 let (a, b) = self.two32(name, args, ind)?;
                 if a.kind == K::Int32 && b.kind == K::Int32 {
-                    return Ok(E::new(format!("{f}({}, {})", a.code, b.code), K::Int32));
+                    return Ok(E::new(format!("{op32}({}, {})", a.code, b.code), K::Int32));
                 }
-                let w = &f[..f.len() - 2];
+                let wide = &op32[..op32.len() - 2];
                 return Ok(E::new(
-                    format!("loft_n32({w}({}, {}))", as_int(a)?, as_int(b)?),
+                    format!("loft_n32({wide}({}, {}))", as_int(a)?, as_int(b)?),
                     K::Int32,
                 ));
             }

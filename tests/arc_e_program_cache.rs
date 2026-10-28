@@ -1055,11 +1055,14 @@ fn every_binary_of_one_build_shares_one_stdlib_image() {
     let _ = fa::remove_dir_all(&root);
 }
 
-/// Make `dir` and everything under it read-only (`writable == false`) or writable again.
-#[cfg(unix)]
+/// Make `dir` and everything under it read-only (`writable == false`) or writable again.  On
+/// Unix that removes (adds) the write bits; a Windows directory ignores the flag, which
+/// `permissions_bind` reports, and the cells are skipped there as they are under root.
+#[expect(
+    clippy::permissions_set_readonly_false,
+    reason = "a scratch directory made writable again so the test can remove it"
+)]
 fn set_writable(dir: &std::path::Path, writable: bool) {
-    use std::os::unix::fs::PermissionsExt as _;
-    let mode = if writable { 0o755 } else { 0o555 };
     let mut stack = vec![dir.to_path_buf()];
     while let Some(p) = stack.pop() {
         if fa::is_dir(&p) {
@@ -1069,17 +1072,15 @@ fn set_writable(dir: &std::path::Path, writable: bool) {
                     .iter()
                     .map(fa::PathText::os_spelling),
             );
-            fa::set_permissions(&p, std::fs::Permissions::from_mode(mode)).unwrap();
-        } else {
-            let file_mode = if writable { 0o644 } else { 0o444 };
-            fa::set_permissions(&p, std::fs::Permissions::from_mode(file_mode)).unwrap();
         }
+        let mut perms = fa::metadata(&p).unwrap().permissions();
+        perms.set_readonly(!writable);
+        fa::set_permissions(&p, perms).unwrap();
     }
 }
 
 /// Does a read-only directory still accept a write?  Under root it does, and the
 /// permission cells below then measure nothing.
-#[cfg(unix)]
 fn permissions_bind(dir: &std::path::Path) -> bool {
     let probe = dir.join("probe");
     let bound = fa::write(&probe, b"x").is_err();
@@ -1090,7 +1091,6 @@ fn permissions_bind(dir: &std::path::Path) -> bool {
 /// The startup cache is an optimisation: a cache directory the process cannot write, or
 /// one it can read but not open for writing, is a MISS, and the program runs from a fresh
 /// parse.  Before, each of these cells ended in an internal compiler error (exit 101).
-#[cfg(unix)]
 #[test]
 fn a_read_only_cache_is_a_miss_never_a_crash() {
     let pid = std::process::id();

@@ -56,6 +56,10 @@ impl Parser {
         };
         let inner = std::mem::replace(code, Value::Null);
         *code = self.cl(op, &[inner]);
-        if optional { Type::optional(narrow) } else { narrow }
+        if optional {
+            Type::optional(narrow)
+        } else {
+            narrow
+        }
     }
 }
