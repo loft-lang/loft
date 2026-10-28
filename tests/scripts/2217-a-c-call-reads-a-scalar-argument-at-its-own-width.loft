@@ -13,6 +13,9 @@
 //   * `c` — a character from a text: one, two and three UTF-8 bytes.
 //   * `big` — an integer, which was always read right, as the control.
 // Expected, by hand: 0 0 1, 1 2 3, 65 233 8364, 123456789012.
+//
+// @falsified-at: 6f31a726b — interpret exit 1 -> 0, interpret 1 assertion failures -> 0; native
+// INERT (expected for a backend-divergence guard — only `--interpret` read the wide slot).
 
 enum Hue { Red, Green, Blue }
 
