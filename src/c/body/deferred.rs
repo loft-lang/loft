@@ -23,8 +23,8 @@
 //! one of them (`@FR-R-RecPtr`) — only the views read after the point (`lease::Frame::read_after`),
 //! and no point is emitted where the local and its views are not read again.  A text borrowed
 //! from the local declines it.
-//! Opt-in (`LOFT_DEFERRED_COPY=1`) while a derived view's remap costs GCC's hot loops;
-//! `LOFT_TRACE_DEFERRED_COPY=1` names each admission, decline and copy point.
+//! `LOFT_NO_DEFERRED_COPY=1` copies at every bind again; `LOFT_TRACE_DEFERRED_COPY=1` names each
+//! admission, decline and copy point, and why each view is or is not moved.
 use super::FnWriter;
 use crate::data::{Type, Value};
 use std::collections::{HashMap, HashSet};
@@ -112,9 +112,7 @@ impl FnWriter<'_> {
     /// The deferred locals of this function (`@FR-R-DeferredCopy`).
     pub(super) fn deferred_plan(&self) -> DeferredCopies {
         let mut out = DeferredCopies::default();
-        // Opt-in for now: under GCC, a derived view's remap at a copy point inside a hot loop
-        // (`op = loft_dc_remap(…)`) slows that loop even when the point never runs.
-        if !crate::env_once!(std::env::var("LOFT_DEFERRED_COPY").is_ok_and(|v| v != "0"))
+        if crate::env_once!(std::env::var("LOFT_NO_DEFERRED_COPY").is_ok_and(|v| v != "0"))
             || self.gen_elem.is_some()
         {
             return out;
@@ -226,7 +224,9 @@ impl FnWriter<'_> {
         if Self::dc_trace() {
             match elem {
                 Some((v, _)) => eprintln!("deferred-copy:   index guard on {}", vars.name(v)),
-                None => eprintln!("deferred-copy:   flag only: a source is not a whole element"),
+                None => eprintln!(
+                    "deferred-copy:   flag only: a source is not a whole element of a vector the function owns or is given"
+                ),
             }
         }
         Some(DcVar {
@@ -297,7 +297,15 @@ impl FnWriter<'_> {
             found = Some(e);
         }
         let (v, _) = found?;
-        let owner = vars.is_argument(v) || vars.tp(v).depend().is_empty();
+        // An owner depends on nothing but its own store witness (`__vdb_N`, a local vector's);
+        // a dependency on any other variable makes `V` a view, which could name a vector
+        // inside an element.
+        let owner = vars.is_argument(v)
+            || vars
+                .tp(v)
+                .depend()
+                .iter()
+                .all(|d| *d == v || vars.name(*d).starts_with("__vdb"));
         (owner
             && !vars.is_captured(v)
             && self.shapes.get(v as usize) == Some(&super::CType::Ref)
@@ -507,7 +515,21 @@ impl FnWriter<'_> {
             let dv = &self.dc.vars[&x];
             let refs: HashSet<u16> = dv.derived.iter().copied().chain([x]).collect();
             let here = s.any_node(&mut |n| matches!(n, Value::Var(v) if refs.contains(v)));
-            let read = |v: u16| here || frame.read_after(s, v) != Some(false);
+            let read = |v: u16| {
+                let after = frame.read_after(s, v);
+                if Self::dc_trace() && !here {
+                    let at = match after {
+                        None => "unreached".to_string(),
+                        Some(None) => "not read".to_string(),
+                        Some(Some(l)) => format!("read at line {l}"),
+                    };
+                    eprintln!(
+                        "deferred-copy:     {} after the point: {at}",
+                        self.vars.name(v)
+                    );
+                }
+                here || after != Some(None)
+            };
             let moved: Vec<u16> = dv.derived.iter().copied().filter(|d| read(*d)).collect();
             if !read(x) && moved.is_empty() {
                 if Self::dc_trace() {

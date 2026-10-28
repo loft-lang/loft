@@ -4254,9 +4254,10 @@ line in `Output::output_function`'s prelude.
                  either.  A static rule: one flag per local, no registry of views.  The copy
                  happens once per changed place instead of once per bind — in an
                  interpreter's call loop, once per function lowered instead of once per call
-                 (the self-host's fib(25): GCC 151 → 71 ms, Clang 92 → 36 ms).  OPT-IN
-                 (`LOFT_DEFERRED_COPY=1`) until the live-view remap is measured on GCC's hot
-                 loops; trace `LOFT_TRACE_DEFERRED_COPY=1`; design
+                 — and in the self-host's `run` not at all, since `prog` is bound again
+                 before its old value is read on every path (fib(25): GCC 150 → 47 ms,
+                 Clang 90 → 31 ms; `mix` and `collatz` within 1 %).  Switch
+                 `LOFT_NO_DEFERRED_COPY=1`; trace `LOFT_TRACE_DEFERRED_COPY=1`; design
                  `bench/portal/analysis/deferred-copy.md`; guard
                  `loft-suite/rules/binding/B-Copy/a-deferred-copy-keeps-the-value-it-was-bound-to-whatever-the-source-does.loft`.
 

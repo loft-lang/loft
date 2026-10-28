@@ -351,6 +351,15 @@ pub(super) struct ViewWalk<'a> {
     /// statements on one source line.  One slot, not a set: a statement replaces one
     /// collection local, and the front end's allocation pin counts every walk.
     rebound: Option<u16>,
+    /// The lowest frame a rebind has ended an open view in since the innermost loop began
+    /// (`usize::MAX`: none).  A body that ends a view owned OUTSIDE the loop starts its next
+    /// turn from a different state than its first, so the loop walks it again.
+    ended_below: usize,
+    /// The variables that are an open view on one path and not on another — an `if` arm
+    /// rebound one by copy, or bound one as a view, and the other arm did not.  A view taken
+    /// THROUGH such a variable names its root and the variable's own place too: on the path
+    /// where the variable holds its own store, reassigning it releases what the view reads.
+    maybe_own: HashSet<u16>,
 }
 
 impl ViewWalk<'_> {
@@ -385,6 +394,8 @@ impl ViewWalk<'_> {
             database,
             line: start_line,
             rebound: None,
+            ended_below: usize::MAX,
+            maybe_own: HashSet::default(),
         };
         walk.walk_block(std::slice::from_ref(code));
         walk.out
@@ -418,19 +429,26 @@ impl ViewWalk<'_> {
                 // use inside it on the next iteration. Shaking before the body is walked is
                 // what makes a view held from OUTSIDE the loop and used at the top of the
                 // body come out live across a removal at the bottom of it.
+                let floor = self.open.len();
+                let outer_ended = std::mem::replace(&mut self.ended_below, usize::MAX);
                 self.disturb(stmt);
                 self.scoped(&b.operators);
                 // The BACK EDGE. The shake above could only reach views that already existed;
                 // a view the body itself binds is disturbed by the same statements one turn
                 // later, and nothing had seen it yet. So shake again and re-walk — the second
-                // pass is what supplies the USE that condemns it (loft#1184). One extra pass
-                // reaches the fixpoint: it binds exactly the views the first pass bound, so a
-                // third would read the same state.
+                // pass is what supplies the USE that condemns it (loft#1184).  The body walks
+                // again, too, when its first turn ENDED a view owned outside the loop: `prog`
+                // viewed `ps` on the way in and holds its own copy from the second turn on, so
+                // `o = prog.ops[0]` names `ps` the first time and `prog` every time after —
+                // and only the second naming is shaken when `prog` is reassigned.  One extra
+                // pass reaches the fixpoint: it starts from the state the back edge carries,
+                // and a third would start from the same one.
                 let before: HashSet<u16> = self.shaken.keys().copied().collect();
                 self.disturb(stmt);
-                if self.shaken.keys().any(|v| !before.contains(v)) {
+                if self.shaken.keys().any(|v| !before.contains(v)) || self.ended_below < floor {
                     self.scoped(&b.operators);
                 }
+                self.ended_below = outer_ended.min(self.ended_below);
             }
             Value::If(cond, t, e) => {
                 // The condition is evaluated before either branch and is not part of one.
@@ -445,6 +463,8 @@ impl ViewWalk<'_> {
                 let keys_before = self.view_keys.clone();
                 let depth_before = self.view_depth.clone();
                 let index_before = self.view_index.clone();
+                let own_before = self.maybe_own.clone();
+                let mut owns: [HashSet<u16>; 2] = Default::default();
                 // Two arms, two slots: an `if` is walked in every function of every program,
                 // the standard library's included, so its bookkeeping allocates nothing.
                 let mut indices: [HashMap<u16, (u32, i32)>; 2] = Default::default();
@@ -456,6 +476,7 @@ impl ViewWalk<'_> {
                     self.view_keys.clone_from(&keys_before);
                     self.view_depth.clone_from(&depth_before);
                     self.view_index.clone_from(&index_before);
+                    self.maybe_own.clone_from(&own_before);
                     match branch {
                         Value::Block(b) => self.scoped(&b.operators),
                         Value::Insert(ops) => self.scoped(ops),
@@ -476,9 +497,21 @@ impl ViewWalk<'_> {
                     ));
                     depths[arm] = std::mem::take(&mut self.view_depth);
                     indices[arm] = std::mem::take(&mut self.view_index);
+                    owns[arm] = std::mem::take(&mut self.maybe_own);
                 }
                 let (e_open, e_shaken, e_keys) = ends.pop().expect("an else arm");
                 let (mut open, mut shaken, t_keys) = ends.pop().expect("a then arm");
+                // A view open at the end of one arm and not the other is a view on one path only.
+                let [t_own, e_own] = owns;
+                self.maybe_own = t_own;
+                self.maybe_own.extend(e_own);
+                for (view, _, _) in open.iter().flatten().chain(e_open.iter().flatten()) {
+                    let in_t = open.iter().flatten().any(|(w, _, _)| w == view);
+                    let in_e = e_open.iter().flatten().any(|(w, _, _)| w == view);
+                    if in_t != in_e {
+                        self.maybe_own.insert(*view);
+                    }
+                }
                 for (frame, extra) in open.iter_mut().zip(e_open) {
                     for item in extra {
                         if !frame.contains(&item) {
@@ -764,8 +797,13 @@ impl ViewWalk<'_> {
                 return;
             }
             self.shaken.remove(v);
-            for frame in &mut self.open {
+            self.maybe_own.remove(v);
+            for (i, frame) in self.open.iter_mut().enumerate() {
+                let held = frame.len();
                 frame.retain(|(view, _, _)| view != v);
+                if frame.len() != held {
+                    self.ended_below = self.ended_below.min(i);
+                }
             }
             // Re-read per bind, exactly as `view_keys` is: a slot rebound from an element
             // read must not keep an earlier bind's whole-container answer (loft#1543).
@@ -928,8 +966,14 @@ impl ViewWalk<'_> {
                 let mut deepest: Option<u8> = None;
                 let mut index = crate::use_analysis::root_element_index(self.data, rhs);
                 for ((container, field), elems) in places {
+                    let mut owned_hops = Vec::new();
                     let ((container, field), outer, outer_index) =
-                        self.resolve_view_root(container, field);
+                        self.resolve_view_root(container, field, &mut owned_hops);
+                    for (hop, hop_field) in owned_hops {
+                        if !self.open[idx].contains(&(*v, hop, hop_field)) {
+                            self.open[idx].push((*v, hop, hop_field));
+                        }
+                    }
                     let d = elems.saturating_add(outer);
                     deepest = Some(deepest.map_or(d, |m| m.max(d)));
                     if let Some(i) = outer_index {
@@ -966,6 +1010,7 @@ impl ViewWalk<'_> {
         &self,
         mut container: u16,
         mut field: u32,
+        owned_hops: &mut Vec<(u16, u32)>,
     ) -> ((u16, u32), u8, Option<Option<(u32, i32)>>) {
         let mut depth: u8 = 0;
         // The root index belongs to the FIRST element view followed, whose own entry is
@@ -988,6 +1033,11 @@ impl ViewWalk<'_> {
             // is only inside a container the author can reassign.
             if outer == container || self.function.is_compiler_generated(outer) {
                 return ((container, field), depth, index);
+            }
+            // A container that is a view on some paths only also names its OWN place: on the
+            // other paths it holds its store, and reassigning it ends what was read through it.
+            if self.maybe_own.contains(&container) {
+                owned_hops.push((container, field));
             }
             // Through a view that read no element (`t = o.inner`) the field runs ADD, as they
             // do inside one expression — `t.a` is the slot `off_inner + off_a` of `o` — so the

@@ -319,14 +319,16 @@ impl<'a> Frame<'a> {
         Lease::Move
     }
 
-    /// Is `var`'s value — or a view of it — read after `site` on some path?  `None` where the
-    /// pass does not reach `site`, a node the body does not hold; a caller treats that as read.
+    /// Is `var`'s value — or a view of it — read after `site` on some path?  `Some(None)` when
+    /// no path reads it, `Some(Some(line))` naming the source line of a read, and `None` where
+    /// the pass does not reach `site` (a node the body does not hold), which a caller treats
+    /// as read.
     #[must_use]
-    pub fn read_after(&self, site: &Value, var: u16) -> Option<bool> {
+    pub fn read_after(&self, site: &Value, var: u16) -> Option<Option<u32>> {
         match self.live_after(site, var) {
             AtSite::Unreached => None,
-            AtSite::Dead => Some(false),
-            AtSite::Live(_) => Some(true),
+            AtSite::Dead => Some(None),
+            AtSite::Live(line) => Some(Some(line)),
         }
     }
 
@@ -587,13 +589,24 @@ impl<'a> Frame<'a> {
         })
     }
 
-    /// `var` and every variable that views it, directly or through another view.
+    /// `var` and every variable that views it, directly or through another view.  A variable
+    /// of a scalar type holds a value read out of the record, never a view of it: `a = op.a`
+    /// reads `op` once, and a later read of `a` is not a read of `op`.
     fn readers_of(&self, var: u16) -> HashSet<u16> {
         let mut out = HashSet::from([var]);
         loop {
             let before = out.len();
             for (w, values) in &self.assignments {
-                if out.contains(w) {
+                if out.contains(w)
+                    || matches!(
+                        self.func.tp(*w),
+                        Type::Integer(_)
+                            | Type::Boolean
+                            | Type::Float
+                            | Type::Single
+                            | Type::Character
+                    )
+                {
                     continue;
                 }
                 let views = values.iter().any(|leaf| match *leaf {
