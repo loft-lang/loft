@@ -1238,6 +1238,39 @@ static void loft_hk1_sort(loft_hk1 *a, size_t n, int depth) {
     }
 }
 
+/* `loft_hk1_sort`'s answer for `n` packed keys by a least-significant-digit radix sort over the
+ * bytes that differ between them (a two-part key of small coordinates differs in two of
+ * eight), stable and without a data-dependent branch — or 0 where the histograms would cost more than they save, the caller
+ * then sorting by comparison.  The keys of a hash are distinct, so every ascending order of
+ * them is the one order.  `tmp` holds `n` items; the answer is `a` or `tmp`. */
+static loft_hk1 *loft_hk1_radix(loft_hk1 *a, loft_hk1 *tmp, size_t n) {
+    if (n < 2) return a;
+    uint64_t diff = 0;
+    for (size_t i = 1; i < n; i++) diff |= a[i].k ^ a[0].k;
+    int bytes[8], passes = 0;
+    for (int b = 0; b < 8; b++)
+        if ((diff >> (8 * b)) & 0xFF) bytes[passes++] = b;
+    if (passes == 0) return a;
+    if ((size_t) passes * 256 > n) return 0;
+    uint32_t count[8][256];
+    memset(count, 0, sizeof count[0] * (size_t) passes);
+    for (size_t i = 0; i < n; i++)
+        for (int p = 0; p < passes; p++) count[p][(a[i].k >> (8 * bytes[p])) & 0xFF]++;
+    loft_hk1 *from = a, *into = tmp;
+    for (int p = 0; p < passes; p++) {
+        uint32_t at = 0;
+        for (int d = 0; d < 256; d++) {
+            uint32_t c = count[p][d];
+            count[p][d] = at;
+            at += c;
+        }
+        int sh = 8 * bytes[p];
+        for (size_t i = 0; i < n; i++) into[count[p][(from[i].k >> sh) & 0xFF]++] = from[i];
+        loft_hk1 *t = from; from = into; into = t;
+    }
+    return from;
+}
+
 /* The key parts of `p` as one unsigned value in the same order — one part with its sign bit
  * flipped, two parts that each fit 32 bits flipped the same way and packed high and low — or 0
  * where they do not (a third part, a wider value, a null, which sorts first as INT64_MIN). */
@@ -1291,12 +1324,17 @@ static loft_ref *loft_hash_sorted_inline(loft_ref c, const loft_key *keys, int n
         packed = loft_hkey_pack(&pairs[i], nk, &one[i].k);
         one[i].pos = pairs[i].pos;
     }
-    if (packed) loft_hk1_sort(one, live, depth);
-    else loft_hkey_sort(pairs, live, nk, depth);
+    /* Once packed, `pairs` is free: it holds `count + 1` items of more than twice the size. */
+    loft_hk1 *sorted = packed ? loft_hk1_radix(one, (loft_hk1 *) (void *) pairs, live) : 0;
+    if (packed && !sorted) {
+        loft_hk1_sort(one, live, depth);
+        sorted = one;
+    }
+    if (!packed) loft_hkey_sort(pairs, live, nk, depth);
     for (uint32_t i = 0; i < live; i++) {
         out[i].store_nr = c.store_nr;
         out[i].rec = claim;
-        out[i].pos = packed ? one[i].pos : pairs[i].pos;
+        out[i].pos = packed ? sorted[i].pos : pairs[i].pos;
     }
     free(one);
     free(pairs);
