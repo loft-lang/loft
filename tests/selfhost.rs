@@ -73,6 +73,23 @@ fn the_selfhost_tests_pass_on_an_emitted_image() {
             "emit-image {stem}: {}",
             String::from_utf8_lossy(&emitted.stderr)
         );
+        // The C generator's type table for the same program: the oracle the loft-derived
+        // table is compared with (@PLN91 S3, `selfhost/tests/types.loft`).
+        let c = tmp.join(format!("{stem}.c"));
+        let emitted_c = loft::platform::process::harness_command(loft())
+            .arg("--emit-c")
+            .arg(&c)
+            .arg(&source)
+            .env("LOFT_NO_CACHE", "1")
+            .output()
+            .expect("run loft --emit-c");
+        assert!(
+            emitted_c.status.success(),
+            "emit-c {stem}: {}",
+            String::from_utf8_lossy(&emitted_c.stderr)
+        );
+        let table = c_type_table(&fa::read_to_string(&c).expect("the emitted C"));
+        fa::write(kernels.join(format!("{stem}.ctypes")), table).expect("the C type table");
     }
 
     let tested = loft::platform::process::harness_command(loft())
@@ -91,4 +108,57 @@ fn the_selfhost_tests_pass_on_an_emitted_image() {
         tested.status.success() && out.contains("passed") && !out.contains("FAIL"),
         "selfhost tests:\n{out}\n{err}"
     );
+}
+
+
+/// The rows of the `loft_types` table in an emitted C program, one line per type in the form
+/// `selfhost/src/types.loft`'s `render` writes: `tp kind size elem n owns_heap linked`, then each
+/// field as `pos,type,view,hidden,group`.  Keys are left out: the loft side does not derive them
+/// yet.
+fn c_type_table(c: &str) -> String {
+    const KINDS: [&str; 12] = [
+        "SCALAR", "TEXT", "STRUCT", "VECTOR", "ENUM", "CHILD", "HASH", "INDEX", "ORDERED", "RADIX",
+        "TRIE", "DBREF",
+    ];
+    let numbers = |text: &str| -> Vec<String> {
+        text.split(|ch: char| ch == '{' || ch == '}' || ch == ',')
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(str::to_string)
+            .collect()
+    };
+    let mut fields: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut rows = Vec::new();
+    for line in c.lines() {
+        if let Some(rest) = line.strip_prefix("static const loft_fld ")
+            && let Some((name, list)) = rest.split_once("[] = ")
+        {
+            let n = numbers(list.trim_end_matches(';'));
+            let per: Vec<String> = n.chunks(5).map(|f| f.join(",")).collect();
+            fields.insert(name.to_string(), per);
+            continue;
+        }
+        let t = line.trim_start();
+        if let Some(rest) = t.strip_prefix('[')
+            && let Some((tp, body)) = rest.split_once("] = {")
+            && body.contains("LOFT_T_")
+        {
+            let parts = numbers(body.trim_end_matches(','));
+            let kind = parts[0].trim_start_matches("LOFT_T_");
+            let kind = KINDS.iter().position(|k| *k == kind).expect("a known kind");
+            let mut out = format!(
+                "{tp} {kind} {} {} {} {} {}",
+                parts[1], parts[2], parts[3], parts[6], parts[9]
+            );
+            if let Some(list) = fields.get(&parts[4]) {
+                let n: usize = parts[3].parse().unwrap_or(0);
+                for f in list.iter().take(n) {
+                    out.push(' ');
+                    out.push_str(f);
+                }
+            }
+            rows.push(out);
+        }
+    }
+    rows.join("\n")
 }

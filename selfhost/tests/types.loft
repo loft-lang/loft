@@ -1,0 +1,33 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 S3 probe P5, and the guard it starts (doc/claude/plans/91-self-host/1b-s3.md): the type
+// table derived in loft from a program's image (`types.loft`) equals the one the C generator
+// writes for the same program, row by row.  The harness writes the C generator's rows beside
+// each kernel's image (`<kernel>.ctypes`, tests/selfhost.rs).
+use load;
+use types;
+
+fn compare_tables(kernel: text) -> integer {
+  dir = env_variable("LOFT_SELFHOST_KERNELS") ?? "";
+  b = load::load("{dir}/{kernel}.store");
+  assert(b != null, "the {kernel} image opens");
+  expected = file("{dir}/{kernel}.ctypes").lines();
+  n = 0;
+  for line in expected {
+    if line == "" {
+      continue;
+    }
+    tp = (line.split(' ')[0] ?? "") as integer? ?? -1;
+    got = types::render(types::row(b, tp));
+    assert(got == line, "{kernel} type {tp}:\n  loft: {got}\n  C:    {line}");
+    n += 1;
+  }
+  n
+}
+
+fn test_the_loft_type_table_equals_the_c_generators() {
+  // The records kernel's table: integer, text, the discriminant byte, a vector of texts,
+  // Point, Line and the two record variants of Shape — seven or more rows, each equal.
+  assert(compare_tables("records") >= 7, "the records kernel's rows were compared");
+}

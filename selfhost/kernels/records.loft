@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// S3 probe P5: records the C generator writes a type table for — a struct with a text, a
+// struct holding structs, a vector of texts and a nullable text, and a struct enum — each
+// copied, so every type is in the table.  `selfhost/tests/types.loft` derives the same rows
+// in loft from this program's image and compares them.
+struct Point { x: integer, y: integer, name: text }
+struct Line { a: Point, b: Point, tags: vector<text>, note: text? }
+enum Shape { Empty, Dot { p: Point }, Segment { l: Line } }
+
+fn main() {
+  p = Point { x: 1, y: 2, name: "p" };
+  q = p;
+  l = Line { a: p, b: q, tags: ["t"], note: null };
+  m = l;
+  s = Dot { p: p };
+  t = s;
+  e = Segment { l: m };
+  f = e;
+  println("{q.x} {len(m.tags)} {t is Dot} {f is Segment}");
+}
