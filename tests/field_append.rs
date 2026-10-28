@@ -106,12 +106,19 @@ const BARE: &[(&str, usize, usize, usize, usize)] = &[
     // and its literal writes every field (`@FR-R-CompleteWrite`'s buffer clause), so it is
     // appended neither prefilled nor zero-filled
     ("n_b1", 0, 0, 0, 1),
-    ("n_build", 0, 0, 0, 2), // an enum element built by a call: its full-size copy writes it all
-    ("n_rd", 1, 0, 0, 0),    // the decoder's element, built in place by the destination twin
+    // a struct-enum element built by a call, in the loop and the copy beside it: the callee's
+    // literal writes every field position of every variant (`@FR-R-CompleteWrite`'s enum
+    // clause, `variant_union`), so like `n_b1` it is appended unfilled
+    ("n_build", 0, 0, 0, 2),
+    ("n_rd", 1, 0, 0, 0), // the decoder's element, built in place by the destination twin
     ("n_rd__d", 1, 0, 0, 0), // … and inside the twin itself
-    ("n_b4", 0, 0, 0, 1),    // 30 appends through two growth steps, each a full-size copy
-    ("n_b5", 0, 0, 3, 3),    // the literal's three, minted apart and copied in at full size
-    ("n_b7", 0, 0, 1, 0),    // a `sorted` collection is no plain vector: the template stands
+    ("n_b4", 0, 0, 0, 1), // 30 appends of `build`'s struct-enum through two growth steps
+    // the literal's three; `Nd { kids: [...] }` is a variant's field.  Every variant's every
+    // field is written by the literal and each heap copy goes to a fresh destination, so the
+    // appends are unfilled (`@FR-R-CompleteWrite`'s enum clause); the stale slot past the
+    // cleared length is overwritten whole, never released (valgrind- and ASan-clean)
+    ("n_b5", 0, 0, 3, 3),
+    ("n_b7", 0, 0, 1, 0), // a `sorted` collection is no plain vector: the template stands
 ];
 
 fn bare_counts(rust: &str) -> HashMap<String, (usize, usize, usize, usize)> {
