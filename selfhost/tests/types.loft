@@ -4,7 +4,8 @@
 // @PLN91 S3 probe P5, and the guard it starts (doc/claude/plans/91-self-host/1b-s3.md): the type
 // table derived in loft from a program's image (`types.loft`) equals the one the C generator
 // writes for the same program, row by row.  The harness writes the C generator's rows beside
-// each kernel's image (`<kernel>.ctypes`, tests/selfhost.rs).
+// each kernel's image (`<kernel>.ctypes`, tests/selfhost.rs).  P6 does the same for the default
+// images `OpNewRecord` fills an element with (`<kernel>.cdflt`).
 use load;
 use types;
 
@@ -30,4 +31,36 @@ fn test_the_loft_type_table_equals_the_c_generators() {
   // The records kernel's table: integer, text, the discriminant byte, a vector of texts,
   // Point, Line and the two record variants of Shape — seven or more rows, each equal.
   assert(compare_tables("records") >= 7, "the records kernel's rows were compared");
+}
+
+// P6: each default image the C generator writes for a kernel equals `types::default_image` of
+// the same type, byte by byte.  A zero-size type's C array holds one 0.
+fn compare_images(kernel: text) -> integer {
+  dir = env_variable("LOFT_SELFHOST_KERNELS") ?? "";
+  b = load::load("{dir}/{kernel}.store");
+  assert(b != null, "the {kernel} image opens");
+  n = 0;
+  for line in file("{dir}/{kernel}.cdflt").lines() {
+    if line == "" {
+      continue;
+    }
+    parts = line.split(' ');
+    tp = (parts[0] ?? "") as integer? ?? -1;
+    got = types::default_image(b, tp);
+    shown = "{tp}";
+    for x in got {
+      shown += " {x as integer}";
+    }
+    if len(got) == 0 {
+      shown += " 0";
+    }
+    assert(shown == line, "{kernel} default image of type {tp}:\n  loft: {shown}\n  C:    {line}");
+    n += 1;
+  }
+  n
+}
+
+fn test_the_loft_default_images_equal_the_c_generators() {
+  // Text, `Item` (all zero) and `Opt` (a null in every nullable field).
+  assert(compare_images("vectors") >= 3, "the vectors kernel's default images were compared");
 }

@@ -96,6 +96,14 @@ enum Code {
   FieldRef,
   CopyRecord,
   ClearRecord,
+  VecLen,
+  VecGet,
+  VecPrealloc,
+  VecPush,
+  VecPushFloat,
+  VecNew,
+  VecFinish,
+  VecClear,
 }
 
 // One op: `kind` is the kind of value it works on; `a` is a value, a slot, a jump target, a
@@ -137,6 +145,7 @@ struct Lowering {
   loop_depth: vector<integer>,
   brk_loop: vector<integer>,
   brk_at: vector<integer>,
+  bound: vector<boolean>,
   def_nr: integer,
 }
 
@@ -163,6 +172,7 @@ pub fn empty() -> Lowering {
     loop_depth: [],
     brk_loop: [],
     brk_at: [],
+    bound: [],
     def_nr: -1,
   }
 }
@@ -179,6 +189,7 @@ fn kind_of_type(t: ir::TypeT) -> Kind {
     TyText { dep: _ } => KText,
     TyRefVar { inner } => if kind_of_types(inner) == KText { KTextRef } else { KOther },
     TyReference { n: _, dep: _ } => KRef,
+    TyVector { inner: _, dep: _ } => KRef,
     TyVoid => KNone,
     TyNull => KNone,
     TyNever => KNone,
@@ -413,6 +424,15 @@ fn effect(code: Code, b: integer) -> integer {
     FieldRef => 0,
     CopyRecord => -2,
     ClearRecord => -1,
+    VecLen => 0,
+    VecGet => -1,
+    VecPrealloc => -1,
+    // A byte push takes its minimum as an operand too.
+    VecPush => if b == 3 { -3 } else { -2 },
+    VecPushFloat => -2,
+    VecNew => 0,
+    VecFinish => -2,
+    VecClear => -1,
     _ => -1,
   }
 }
@@ -635,6 +655,31 @@ fn float_width(name: text) -> integer {
   }
 }
 
+// The scalar pushes, as `crt::P_*` numbers them, or -1.
+fn push_of(name: text) -> integer {
+  match name {
+    "OpPushInt" => 0,
+    "OpPushInt4" => 1,
+    "OpPushCharacter" => 2,
+    "OpPushByte" => 3,
+    "OpPushEnum" => 4,
+    "OpPushBoolean" => 5,
+    _ => -1,
+  }
+}
+
+// The element type of `tp` when it is a plain vector, else -1.
+fn vector_element(b: ir::Bundle, tp: integer) -> integer {
+  t = b.types[tp];
+  if t == null {
+    return -1;
+  }
+  match t.parts[0] ?? panic("a type has its parts") {
+    PtVector { content } => content,
+    _ => -1,
+  }
+}
+
 // The store operators of S3's first slice (1b-s3.md), each to the op that calls its `crt`
 // routine: true when `name` is one.  A field operand is the IR's literal byte offset, passed on
 // unchanged; an operator that writes a VARIABLE (`OpDatabase`, `OpFreeRef` of one,
@@ -721,6 +766,71 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
       + (if types::swap_safe(b, tp) { 2 } else { 0 })
       + (if raw & 16384 != 0 { 4 } else { 0 });
     emit(l, CopyRecord, KRef, tp, flags);
+  } else if name == "OpLengthVector" {
+    value(l, b, args[0] ?? panic("OpLengthVector names its vector"), KRef);
+    emit(l, VecLen, KInt, 0, 0);
+  } else if name == "OpGetVector" || name == "OpGetVectorNullable" {
+    value(l, b, args[0] ?? panic("an element read names its vector"), KRef);
+    size = literal(l, args[1] ?? panic("and its element size"));
+    value(l, b, args[2] ?? panic("and its index"), KInt);
+    emit(l, VecGet, KRef, size, 0);
+  } else if name == "OpPreAllocVector" {
+    value(l, b, args[0] ?? panic("OpPreAllocVector names its vector"), KRef);
+    emit(l, VecPrealloc, KRef, literal(l, args[1] ?? panic("and a count")), literal(l, args[2] ?? panic("and a size")));
+  } else if push_of(name) >= 0 {
+    // A push of a scalar: the vector, a byte's minimum, the value.
+    which = push_of(name);
+    value(l, b, args[0] ?? panic("a push names its vector"), KRef);
+    if which == 3 {
+      value(l, b, args[1] ?? panic("a byte push names its minimum"), KInt);
+    }
+    value(l, b, args[len(args) - 1] ?? panic("and its value"), KInt);
+    emit(l, VecPush, KInt, 0, which);
+  } else if name == "OpPushFloat" || name == "OpPushSingle" {
+    value(l, b, args[0] ?? panic("a push names its vector"), KRef);
+    value(l, b, args[1] ?? panic("and its value"), if name == "OpPushSingle" { KSingle } else { KFloat });
+    emit(l, VecPushFloat, KFloat, 0, if name == "OpPushSingle" { 1 } else { 0 });
+  } else if name == "OpNewRecord" || name == "OpFinishRecord" {
+    // A record added to a plain vector: appended (and filled with its type's defaults), then
+    // counted.  A keyed collection's record is the hash slice's.
+    // `record_collection`: the collection is the parent itself (field 65535), or the parent
+    // struct's field `fld`, read at its position (`loft_field`) when it is a plain vector with
+    // no linked siblings.
+    last = len(args) - 1;
+    ptp = literal(l, args[last - 1] ?? panic("a record add names its collection type"));
+    fld = literal(l, args[last] ?? panic("and its field"));
+    vtp = ptp;
+    at = -1;
+    if fld != 65535 {
+      match (b.types[ptp] ?? panic("a type")).parts[0] ?? panic("a type has its parts") {
+        PtStruct { fields } => {
+          f = fields[fld] ?? panic("a field of the parent");
+          if len(f.other_indexes) == 0 {
+            vtp = f.content;
+            at = f.position;
+          }
+        }
+        _ => {}
+      }
+    }
+    elem = vector_element(b, vtp);
+    if (fld != 65535 && at < 0) || elem < 0 {
+      refuse(l, "a record added to a collection that is not a plain vector: {(b.types[vtp] ?? panic("a type")).name}");
+      return true;
+    }
+    value(l, b, args[0] ?? panic("a record add names its vector"), KRef);
+    if at >= 0 {
+      emit(l, FieldRef, KRef, at, 0);
+    }
+    if name == "OpNewRecord" {
+      emit(l, VecNew, KRef, elem, (b.types[elem] ?? panic("an element type")).size);
+    } else {
+      value(l, b, args[1] ?? panic("OpFinishRecord names its record"), KRef);
+      emit(l, VecFinish, KRef, 0, 0);
+    }
+  } else if name == "OpClearVector" {
+    value(l, b, args[0] ?? panic("OpClearVector names its vector"), KRef);
+    emit(l, VecClear, KRef, 0, 0);
   } else if name == "OpClear" {
     // A buffer emptied for reuse: its claims released (the pool reset is an optimisation,
     // `LOFT_NO_POOL_RESET`, values unchanged).  Who owns the store does not change.
@@ -787,7 +897,96 @@ fn copies_as(b: ir::Bundle, dst: integer, src: integer) -> boolean {
   (ss.def_type == 4 && ss.parent == dst) || (ds.def_type == 4 && ds.parent == src)
 }
 
-// The dependencies a reference type declares, through a nullability marker.
+// Does a value of type `ts` take three integer slots — a reference to a record or a vector?
+pub fn is_ref_kind(ts: vector<ir::TypeT>) -> boolean {
+  kind_of_types(ts) == KRef
+}
+
+// Is `ts` a vector type, through a nullability marker?
+fn is_vector(ts: vector<ir::TypeT>) -> boolean {
+  t = ts[0];
+  if t == null {
+    return false;
+  }
+  match t {
+    TyVector { inner: _, dep: _ } => true,
+    TyOptional { inner } => {
+      match inner[0] ?? panic("a nullable type has its base") {
+        TyVector { inner: _, dep: _ } => true,
+        _ => false,
+      }
+    }
+    _ => false,
+  }
+}
+
+// The known type of a vector's element type, or -1: a record or plain enum by its definition, a
+// base type by its number (`integer` 0, `long` 1, `single` 2, `float` 3, `boolean` 4, `text` 5,
+// `character` 6).  A narrow integer has a type of its own and is not resolved here.
+fn element_type(b: ir::Bundle, t: ir::TypeT) -> integer {
+  match t {
+    TyReference { n, dep: _ } => (b.data.definitions[n] ?? panic("a record")).known_type,
+    TyEnum { n, is_ref: _, dep: _ } => (b.data.definitions[n] ?? panic("an enum")).known_type,
+    TyInteger { spec } => if spec.min == -2147483647 && spec.max == 2147483647 && spec.forced_size == 0 { 0 } else { -1 },
+    TySingle => 2,
+    TyFloat => 3,
+    TyBoolean => 4,
+    TyText { dep: _ } => 5,
+    TyCharacter => 6,
+    _ => -1,
+  }
+}
+
+// The `main_vector<T>` wrapper of vector type `ts` (`Data::owned_vector_type`): the struct whose
+// one field is the plain vector of `T`.  Found by that shape in the image's schema; -1 when
+// there is none.
+pub fn main_vector_of(b: ir::Bundle, ts: vector<ir::TypeT>) -> integer {
+  t = ts[0];
+  if t == null {
+    return -1;
+  }
+  inner: vector<ir::TypeT> = [];
+  match t {
+    TyVector { inner: i, dep: _ } => { inner = i; }
+    TyOptional { inner: o } => {
+      match o[0] ?? panic("a nullable type has its base") {
+        TyVector { inner: i, dep: _ } => { inner = i; }
+        _ => { return -1; }
+      }
+    }
+    _ => { return -1; }
+  }
+  elem = element_type(b, inner[0] ?? panic("a vector names its element"));
+  if elem < 0 {
+    return -1;
+  }
+  for w in b.types {
+    if !w.name.starts_with("main_vector<") {
+      continue;
+    }
+    match w.parts[0] ?? panic("a type has its parts") {
+      PtStruct { fields } => {
+        if len(fields) == 1 && vector_element(b, (fields[0] ?? panic("one field")).content) == elem {
+          return w#index;
+        }
+      }
+      _ => {}
+    }
+  }
+  -1
+}
+
+// Is variable `var` of definition `d` one the compiler builds in place (`inline_ref_vars`)?
+fn is_inline_ref(b: ir::Bundle, d: integer, var: integer) -> boolean {
+  for r in (b.data.definitions[d] ?? panic("a definition")).variables.inline_refs {
+    if r == var {
+      return true;
+    }
+  }
+  false
+}
+
+// The dependencies a reference or vector type declares, through a nullability marker.
 fn deps_of(ts: vector<ir::TypeT>) -> vector<integer> {
   t = ts[0];
   if t == null {
@@ -795,9 +994,11 @@ fn deps_of(ts: vector<ir::TypeT>) -> vector<integer> {
   }
   match t {
     TyReference { n: _, dep } => dep,
+    TyVector { inner: _, dep } => dep,
     TyOptional { inner } => {
       match inner[0] ?? panic("a nullable type has its base") {
         TyReference { n: _, dep } => dep,
+        TyVector { inner: _, dep } => dep,
         _ => [],
       }
     }
@@ -813,7 +1014,9 @@ fn projects_a_variable(b: ir::Bundle, n: ir::Node) -> boolean {
     match at {
       NdVar { n: _ } => { return true; }
       NdCall { def_nr, args } => {
-        if (b.data.definitions[def_nr] ?? panic("a called definition")).name != "OpGetField" {
+        // `is_projection_op`: a field read and the non-nullable element reads.
+        name = (b.data.definitions[def_nr] ?? panic("a called definition")).name;
+        if name != "OpGetField" && name != "OpGetVector" && name != "OpVectorRef" && name != "OpGetRecord" {
           return false;
         }
         at = unspan(args[0] ?? panic("OpGetField names its record"));
@@ -840,6 +1043,33 @@ fn bind(l: Lowering, b: ir::Bundle, var: integer, node: ir::Node) {
   x = unspan(node);
   slot = slot_of(l, var);
   v = b.data.definitions[l.def_nr]?.variables.variables[var]?;
+  if is_vector(v.type_def) {
+    // A vector bind is a view (no copy arm names a vector); the one exception is the null bind
+    // of a vector that owns its store, which mints a `main_vector<T>` (`owned_vector_null`).
+    owns = len(deps_of(v.type_def)) == 0 && !v.skip_free && !is_inline_ref(b, l.def_nr, var);
+    first = !(l.bound[var] ?? false);
+    l.bound[var] = true;
+    // A lazy buffer (`@FR-O-LazyBuffer`) keeps the sentinel at its first bind; a later null bind
+    // — the scope pass guards it with `OpRefIsNull` — is its mint.
+    if x is NdNull && (if v.lazy_buffer { !first } else { owns }) {
+      // The variable gets a `main_vector<T>` store of its own, its (empty) vector at offset 0:
+      // `OpDatabase` on it, as `loft_database_typed` mints one.
+      w = main_vector_of(b, v.type_def);
+      if w < 0 {
+        refuse(l, "an owned vector whose wrapper type the image does not name: {v.name}");
+        return;
+      }
+      emit(l, Database, KRef, slot, w);
+      return;
+    }
+    if x is NdNull {
+      emit(l, PushNull, KRef, 0, 0);
+    } else {
+      value(l, b, x, KRef);
+    }
+    emit(l, Bind, KRef, slot, BIND_PLAIN);
+    return;
+  }
   d = record_of(v.type_def);
   tp = if d >= 0 { b.data.definitions[d]?.known_type } else { 0 };
   mode = BIND_PLAIN;
@@ -855,7 +1085,7 @@ fn bind(l: Lowering, b: ir::Bundle, var: integer, node: ir::Node) {
     }
     NdCall { def_nr: f, args: _ } => {
       fd = b.data.definitions[f]?;
-      if fd.name == "OpGetField" && projects_a_variable(b, x) && len(deps_of(v.type_def)) == 0 && v.owner_witness == 65535 {
+      if (fd.name == "OpGetField" || fd.name == "OpGetVector" || fd.name == "OpVectorRef" || fd.name == "OpGetRecord") && projects_a_variable(b, x) && len(deps_of(v.type_def)) == 0 && v.owner_witness == 65535 {
         // `element_copy`: an owning variable — no dependency, no owner witness — bound to a
         // projection of a container variable copies the record out; one with a dependency
         // views it (`(B-View)`).
@@ -1168,6 +1398,7 @@ pub fn lower(b: ir::Bundle, def_nr: integer) -> Lowering {
   for v in d.variables.variables {
     l.var_kind += [kind_of_types(v.type_def)];
     l.var_slot += [0];
+    l.bound += [false];
     shown = "{v.type_def[0] ?? ir::TypeT.TyVoid}";
     l.var_type += [shown.split(' ')[0] ?? shown];
   }

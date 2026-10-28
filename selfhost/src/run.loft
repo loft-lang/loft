@@ -37,6 +37,9 @@ struct Owners {
 }
 
 NOBODY = -1;
+// The owner of what the entry's caller hands in (a hidden buffer): released after the run, by
+// the caller, so not by the entry's sweep.
+ENTRY_CALLER = -5;
 IN_FLIGHT = -10;
 NULL_STORE = 65535;
 
@@ -78,8 +81,18 @@ fn release(t: Owners, s: integer) {
   disown(t, s);
 }
 
-// Every store a run still owns, released: the end of the entry, or a refusal mid-run.
+// Every store a run still owns, released: the end of the entry, or a refusal mid-run.  The
+// entry caller's buffers are its own frees, not the sweep's.
 fn release_all(t: Owners) {
+  mine: vector<integer> = [];
+  for h in t.held {
+    if owner_of(t, h) == ENTRY_CALLER {
+      mine += [h];
+    }
+  }
+  for h in mine {
+    release(t, h);
+  }
   while len(t.held) > 0 {
     s = t.held[len(t.held) - 1] ?? NULL_STORE;
     release(t, s);
@@ -184,11 +197,23 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
   if first.refused != "" {
     return Outcome { value: 0, refused: first.refused, refused_in: first.refused_in, stores_left: 0, swept: 0 };
   }
-  given = first.params_int + first.params_float + first.params_text;
-  if given != len(args) || first.params_int != len(args) {
+  // The entry's visible parameters are the given integers; a hidden one after them (a buffer
+  // the compiler added) starts null, as a caller with no buffer to offer passes it.
+  visible = 0;
+  hidden_after = true;
+  for a in (b.data.definitions[entry] ?? panic("the entry")).attributes {
+    if a.hidden {
+      continue;
+    }
+    if visible < a#index {
+      hidden_after = false;
+    }
+    visible += 1;
+  }
+  if visible != len(args) || !hidden_after || first.params_float + first.params_text != 0 {
     return Outcome {
       value: 0,
-      refused: "the entry takes {given} arguments, given {len(args)}",
+      refused: "the entry takes {visible} arguments, given {len(args)}",
       refused_in: "",
       stores_left: 0,
       swept: 0,
@@ -199,6 +224,9 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
   stores_before = crt::live_stores();
   table_loaded = false;
   own = Owners { owner: [], held: [], swept: 0 };
+  // Each element type's default image, derived once a run (`types::default_image`).
+  images: vector<vector<u8>> = [];
+  imaged: vector<boolean> = [];
   io: vector<integer> = [65535, 0, 0];
   ints: vector<integer?> = [];
   floats: vector<float?> = [];
@@ -213,6 +241,22 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
   for _ in len(args)..first.slots_int {
     put_int(ints, sp_int, null);
     sp_int += 1;
+  }
+  // A hidden vector buffer is handed in as a caller hands it: minted before the call
+  // (`owned_vector_null`) and released after it, owned by the caller (`ENTRY_CALLER`).
+  at = len(args);
+  for a in (b.data.definitions[entry] ?? panic("the entry")).attributes {
+    if !a.hidden {
+      continue;
+    }
+    w = lower::main_vector_of(b, a.typedef);
+    if w >= 0 {
+      ref_in(io, ints, at);
+      crt::database(io, (b.types[w] ?? panic("a wrapper type")).size, w);
+      ref_out(io, ints, at);
+      claim(own, io[0] ?? NULL_STORE, ENTRY_CALLER);
+    }
+    at += if lower::is_ref_kind(a.typedef) { 3 } else { 1 };
   }
   for _ in 0..first.slots_float {
     put_float(floats, sp_float, null);
@@ -745,6 +789,67 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         if op.b & 1 != 0 {
           disown(own, ints[sp_int] ?? NULL_STORE);
         }
+      }
+      // Vectors (S3's second slice): a vector is the reference to its field, an element a
+      // reference into the same store, so neither changes who owns the store.
+      VecLen => {
+        sp_int -= 3;
+        put_int(ints, sp_int, crt::vec_len(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0));
+        sp_int += 1;
+      }
+      VecGet => {
+        sp_int -= 4;
+        crt::vec_get(io, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, ints[sp_int + 3]);
+        ref_out(io, ints, sp_int);
+        sp_int += 3;
+      }
+      VecPrealloc => {
+        sp_int -= 3;
+        crt::vec_prealloc(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, op.b);
+      }
+      VecPush => {
+        sp_int -= 1;
+        v = ints[sp_int];
+        mn = 0;
+        if op.b == crt::P_BYTE {
+          sp_int -= 1;
+          mn = ints[sp_int] ?? 0;
+        }
+        sp_int -= 3;
+        crt::vec_push(op.b, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, mn, v);
+      }
+      VecPushFloat => {
+        sp_float -= 1;
+        sp_int -= 3;
+        crt::vec_push_float(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, floats[sp_float], op.b == 1);
+      }
+      // `OpNewRecord`: the element appended, then filled with its type's default image.
+      VecNew => {
+        while len(imaged) <= op.a {
+          images += [[]];
+          imaged += [false];
+        }
+        if !imaged[op.a] {
+          images[op.a] = types::default_image(b, op.a);
+          imaged[op.a] = true;
+        }
+        sp_int -= 3;
+        crt::vec_append(io, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b);
+        crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, images[op.a] ?? panic("derived above"));
+        ref_out(io, ints, sp_int);
+        sp_int += 3;
+      }
+      VecFinish => {
+        sp_int -= 6;
+        crt::vec_finish(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0);
+      }
+      VecClear => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 3;
+        crt::vec_clear(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0);
       }
       ClearRecord => {
         if !table_loaded {

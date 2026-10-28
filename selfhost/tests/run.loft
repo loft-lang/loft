@@ -123,7 +123,12 @@ fn test_every_format_spec_renders_through_the_c_runtime() {
 // value is worked out by hand in `kernels/structs.loft`, and each run must leave none of the
 // runtime's stores live: the IR's frees free every record the run made.
 fn ran_clean(entry: text, arg: integer) -> integer? {
-  b = kernel("structs");
+  return ran_in("structs", entry, arg);
+}
+
+// `entry(arg)` of kernel `name`, which must leave no store live and nothing for the sweep.
+fn ran_in(name: text, entry: text, arg: integer) -> integer? {
+  b = kernel(name);
   d = lower::find(b, entry);
   assert(d >= 0, "the image has {entry}");
   o = run::run(b, d, [arg]);
@@ -187,4 +192,31 @@ fn test_every_field_width_and_an_embedded_record_run() {
   assert(ran_clean("n_wide", 5) == 145, "wide(5)");
   assert(ran_clean("n_wide", -5) == -1, "wide(-5)");
   assert(ran_clean("n_floats", 3) == 45, "floats(3)");
+}
+
+// S3's second slice: vectors (1b-s3.md § The second slice), each value by hand in
+// `kernels/vectors.loft`: integers pushed, walked and indexed; records added in a loop with
+// their type's default image; texts; a struct holding vectors, returned; a vector passed to a
+// function; an element written through; a vector cleared and refilled, and an empty one.  An
+// entry with a hidden vector buffer is handed one, as its caller would hand it.
+fn test_vectors_build_walk_index_and_clear() {
+  assert(ran_in("vectors", "n_ints", 4) == 412, "ints(4)");
+  assert(ran_in("vectors", "n_records", 4) == 7, "records(4)");
+  assert(ran_in("vectors", "n_texts", 5) == 32, "texts(5)");
+  assert(ran_in("vectors", "n_bagged", 2) == 16, "bagged(2)");
+  assert(ran_in("vectors", "n_passed", 3) == 33, "passed(3)");
+  assert(ran_in("vectors", "n_through", 4) == 42, "through(4)");
+  assert(ran_in("vectors", "n_refilled", 7) == 107, "refilled(7)");
+  assert(ran_in("vectors", "n_defaults", 5) == 65, "defaults(5): omitted nullable fields read null");
+}
+
+// A kernel's whole `main`, as the census runs a program: it prints what `loft --interpret`
+// prints (the harness compares nothing here; the census does), and leaves nothing behind.
+fn test_the_kernels_mains_run_whole() {
+  for name in ["structs", "vectors"] {
+    b = kernel(name);
+    o = run::run(b, lower::find(b, "n_main"), []);
+    assert(o.refused == "", "{name} main refused: {o.refused} in {o.refused_in}");
+    assert(o.stores_left == 0 && o.swept == 0, "{name} main: {o.stores_left} left, {o.swept} swept");
+  }
 }

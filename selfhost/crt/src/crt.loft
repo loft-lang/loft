@@ -250,3 +250,94 @@ pub fn load_types(rows: vector<integer>, ntypes: integer) -> integer {
 pub fn copy_record(s_store: integer, s_rec: integer, s_pos: integer, d_store: integer, d_rec: integer, d_pos: integer, tp: integer, flags: integer) {
   c_copy_record(s_store, s_rec, s_pos, d_store, d_rec, d_pos, tp, flags);
 }
+
+// ── Vectors (@PLN91 S3, the second slice) ──────────────────────────────────────────────────
+// A vector is the reference to the field that holds it, an element a reference into the same
+// store; each routine calls its operator's own runtime routine (`shim/crt.c`).
+
+fn c_vec_len(store: integer, rec: integer, pos: integer) -> integer;
+#c "loft_crt_vec_len" "int64_t(int64_t, int64_t, int64_t)"
+
+fn c_vec_get(out: vector<integer>, store: integer, rec: integer, pos: integer, size: integer, idx: integer) -> integer;
+#c "loft_crt_vec_get" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_vec_prealloc(store: integer, rec: integer, pos: integer, count: integer, size: integer);
+#c "loft_crt_vec_prealloc" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_vec_push(which: integer, store: integer, rec: integer, pos: integer, min: integer, v: integer, is_null: boolean);
+#c "loft_crt_vec_push" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_vec_push_float(store: integer, rec: integer, pos: integer, val: vector<float>, is_null: boolean, single: boolean);
+#c "loft_crt_vec_push_float" "void(int64_t, int64_t, int64_t, const double*, int64_t, int64_t, int64_t)"
+
+fn c_vec_append(out: vector<integer>, store: integer, rec: integer, pos: integer, size: integer) -> integer;
+#c "loft_crt_vec_append" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_fill(store: integer, rec: integer, pos: integer, image: vector<u8>);
+#c "loft_crt_fill" "void(int64_t, int64_t, int64_t, const uint8_t*, int64_t)"
+
+fn c_vec_finish(store: integer, rec: integer, pos: integer);
+#c "loft_crt_vec_finish" "void(int64_t, int64_t, int64_t)"
+
+fn c_vec_clear(store: integer, rec: integer, pos: integer);
+#c "loft_crt_vec_clear" "void(int64_t, int64_t, int64_t)"
+
+// The pushes besides a float's, by the operator (`P_*`), as `vec_push` takes them.
+pub P_INT = 0;
+pub P_INT4 = 1;
+pub P_CHARACTER = 2;
+pub P_BYTE = 3;
+pub P_ENUM = 4;
+pub P_BOOLEAN = 5;
+
+// `OpLengthVector`.
+pub fn vec_len(store: integer, rec: integer, pos: integer) -> integer {
+  c_vec_len(store, rec, pos)
+}
+
+// `OpGetVector`: the element at `idx` of `size` bytes, into `out[0..3]`; the null reference
+// past either end, and for a null index (the int64 null a C program passes lies past both).
+pub fn vec_get(out: vector<integer>, store: integer, rec: integer, pos: integer, size: integer, idx: integer?) {
+  if idx == null {
+    out[0] = 65535;
+    out[1] = 0;
+    out[2] = 0;
+    return;
+  }
+  c_vec_get(out, store, rec, pos, size, idx);
+}
+
+// `OpPreAllocVector`: room for `count` more elements of `size` bytes.
+pub fn vec_prealloc(store: integer, rec: integer, pos: integer, count: integer, size: integer) {
+  c_vec_prealloc(store, rec, pos, count, size);
+}
+
+// A push by operator `which` (`P_*`); `min` is a byte's minimum.
+pub fn vec_push(which: integer, store: integer, rec: integer, pos: integer, min: integer, v: integer?) {
+  c_vec_push(which, store, rec, pos, min, v ?? 0, v == null);
+}
+
+// `OpPushFloat`, or with `single` `OpPushSingle`.
+pub fn vec_push_float(store: integer, rec: integer, pos: integer, v: float?, single: boolean) {
+  c_vec_push_float(store, rec, pos, [v ?? 0.0], v == null, single);
+}
+
+// `OpNewRecord` on a vector: a new element of `size` bytes at its end, into `out[0..3]`.
+pub fn vec_append(out: vector<integer>, store: integer, rec: integer, pos: integer, size: integer) {
+  c_vec_append(out, store, rec, pos, size);
+}
+
+// A fresh element's bytes: the type's default image (`types::default_image`).
+pub fn fill(store: integer, rec: integer, pos: integer, image: vector<u8>) {
+  c_fill(store, rec, pos, image);
+}
+
+// `OpFinishRecord` on a vector.
+pub fn vec_finish(store: integer, rec: integer, pos: integer) {
+  c_vec_finish(store, rec, pos);
+}
+
+// `OpClearVector`: emptied, the claims its elements own released (the table must be loaded).
+pub fn vec_clear(store: integer, rec: integer, pos: integer) {
+  c_vec_clear(store, rec, pos);
+}

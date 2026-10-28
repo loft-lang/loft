@@ -302,3 +302,86 @@ pub fn flat(rows: vector<Row>) -> vector<integer> {
   }
   out
 }
+
+// The bytes a fresh record of `tp` holds before its literal runs: `Stores::set_default_value`'s
+// walk with `Absent::Prefill` (`src/database/structures.rs`), as the C generator captures it
+// into `loft_dflt{tp}` for `OpNewRecord`.  Most slots default to zero, so the walk writes only
+// the others: an integer's and a float's null, a nullable boolean's 255, a narrow integer's
+// null code (or a non-null short's `0 - min + 1`), and a variant's type tag.  The selfhost
+// tests compare this with the C generator's image, byte by byte.
+pub fn default_image(b: ir::Bundle, tp: integer) -> vector<u8> {
+  t = schema(b, tp) ?? panic("a type of this image");
+  out: vector<u8> = [for _ in 0..t.size { 0 as u8 }];
+  default_into(b, tp, true, out, 0);
+  out
+}
+
+// `bytes`, already in little-endian order, written from byte `at` of `out`.
+fn put_bytes(out: vector<u8>, at: integer, bytes: vector<integer>) {
+  for x in bytes {
+    if at + x#index < len(out) {
+      out[at + x#index] = (x & 255) as u8;
+    }
+  }
+}
+
+fn default_into(b: ir::Bundle, tp: integer, nullable: boolean, out: vector<u8>, at: integer) {
+  if tp == 65535 {
+    return;
+  }
+  if tp <= 6 {
+    if nullable {
+      if tp == 0 || tp == 1 {
+        put_bytes(out, at, [0, 0, 0, 0, 0, 0, 0, 128]);
+      } else if tp == 2 {
+        put_bytes(out, at, [0, 0, 192, 127]);
+      } else if tp == 3 {
+        put_bytes(out, at, [0, 0, 0, 0, 0, 0, 248, 127]);
+      } else if tp == 4 {
+        put_bytes(out, at, [255]);
+      }
+    }
+    return;
+  }
+  p = parts(b, tp);
+  if p == null {
+    return;
+  }
+  match p {
+    PtByte { start: _, nullable: null_code } => {
+      if null_code { put_bytes(out, at, [255]); }
+    }
+    PtShort { start: _, nullable: null_code } => {
+      if !null_code { put_bytes(out, at, [1, 0]); }
+    }
+    PtShortRaw { start: _, nullable: null_code } => {
+      if null_code { put_bytes(out, at, [255, 255]); }
+    }
+    PtInt { start: _, nullable: null_code } => {
+      if null_code { put_bytes(out, at, [0, 0, 0, 128]); }
+    }
+    PtIntRaw { start: _, nullable: null_code } => {
+      if null_code { put_bytes(out, at, [255, 255, 255, 255]); }
+    }
+    PtStruct { fields } => fields_into(b, tp, fields, out, at),
+    PtEnumValue { value: _, fields } => fields_into(b, tp, fields, out, at),
+    PtEnum { values: _ } => {
+      // `@FR-D-Json`: a non-null `JsonValue` defaults to its `JNull` tag, 1.
+      if !nullable && (schema(b, tp) ?? panic("in range")).name == "JsonValue" {
+        put_bytes(out, at, [1]);
+      }
+    }
+    _ => {}
+  }
+}
+
+fn fields_into(b: ir::Bundle, tp: integer, fields: vector<ir::DbField>, out: vector<u8>, at: integer) {
+  for f in fields {
+    if f.name == "type" && f.position == 0 {
+      // The type tag, a short with minimum 0: `tp - 0 + 1`.
+      put_bytes(out, at, [(tp + 1) & 255, (tp + 1) >> 8]);
+    } else {
+      default_into(b, f.content, f.nullable, out, at + f.position);
+    }
+  }
+}

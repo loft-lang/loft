@@ -202,6 +202,72 @@ int64_t loft_crt_field_pos(int64_t store, int64_t rec, int64_t pos, int64_t fld)
     return (int64_t) loft_field(loft_crt_ref(store, rec, pos), (uint32_t) fld).pos;
 }
 
+/* ── Vectors (@PLN91 S3, the second slice): a vector is the reference to the field that holds
+ * it; an element is a reference into the same store.  Each routine calls the operator's own
+ * runtime routine. */
+
+/* OpLengthVector. */
+int64_t loft_crt_vec_len(int64_t store, int64_t rec, int64_t pos) {
+    return loft_vec_len(loft_crt_ref(store, rec, pos));
+}
+
+/* OpGetVector and OpGetVectorNullable: the element at `idx` (negative from the end), or the null
+ * reference past either end, written into `out`. */
+int64_t loft_crt_vec_get(int64_t *out, int64_t n, int64_t store, int64_t rec, int64_t pos,
+                         int64_t size, int64_t idx) {
+    loft_crt_put_ref(out, n, loft_vec_get(loft_crt_ref(store, rec, pos), (uint32_t) size, idx));
+    return 0;
+}
+
+/* OpPreAllocVector: room for `count` more elements of `size` bytes. */
+void loft_crt_vec_prealloc(int64_t store, int64_t rec, int64_t pos, int64_t count, int64_t size) {
+    loft_vec_prealloc(loft_crt_ref(store, rec, pos), (uint32_t) count, (uint32_t) size);
+}
+
+/* The pushes, by `which` (the loft side's `crt::P_*`): 0 OpPushInt, 1 OpPushInt4, 2 OpPushCharacter,
+ * 3 OpPushByte (biased by `min`), 4 OpPushEnum, 5 OpPushBoolean.  A null crosses as `is_null`:
+ * the int64 null, code 0, or 255 for an enum or a boolean, as a C program's operand carries it. */
+void loft_crt_vec_push(int64_t which, int64_t store, int64_t rec, int64_t pos, int64_t min,
+                       int64_t v, int64_t is_null) {
+    loft_ref r = loft_crt_ref(store, rec, pos);
+    int64_t x = is_null ? LOFT_NULL : v;
+    switch (which) {
+    case 0: loft_vec_push_int(r, x); break;
+    case 1: loft_vec_push_int4(r, x); break;
+    case 2: loft_vec_push_char(r, is_null ? 0u : (uint32_t) v); break;
+    case 3: loft_vec_push_byte(r, loft_byte_raw(min, x)); break;
+    case 4:
+    case 5: loft_vec_push_byte(r, is_null ? (uint8_t) 255 : (uint8_t) v); break;
+    default: break;
+    }
+}
+
+/* OpPushFloat and OpPushSingle (`single` 1): the value is `val[0]`. */
+void loft_crt_vec_push_float(int64_t store, int64_t rec, int64_t pos, const double *val,
+                             int64_t n, int64_t is_null, int64_t single) {
+    loft_ref r = loft_crt_ref(store, rec, pos);
+    double v = is_null || n < 1 ? (double) NAN : val[0];
+    if (single) loft_vec_push_single(r, (float) v);
+    else loft_vec_push_float(r, v);
+}
+
+/* OpNewRecord on a vector: a new element of `size` bytes at its end, written into `out`. */
+int64_t loft_crt_vec_append(int64_t *out, int64_t n, int64_t store, int64_t rec, int64_t pos,
+                            int64_t size) {
+    loft_crt_put_ref(out, n, loft_vec_append(loft_crt_ref(store, rec, pos), (uint32_t) size));
+    return 0;
+}
+
+/* The bytes a fresh element holds before its literal runs: the type's default image. */
+void loft_crt_fill(int64_t store, int64_t rec, int64_t pos, const uint8_t *image, int64_t n) {
+    loft_fill(loft_crt_ref(store, rec, pos), image, (uint32_t) n);
+}
+
+/* OpFinishRecord on a vector: the appended element counts. */
+void loft_crt_vec_finish(int64_t store, int64_t rec, int64_t pos) {
+    loft_vec_finish(loft_crt_ref(store, rec, pos));
+}
+
 /* How many stores are live: what a probe reads to see a free took effect. */
 int64_t loft_crt_live_stores(void) {
     int64_t n = 0;
@@ -293,4 +359,10 @@ void loft_crt_copy_record(int64_t s_store, int64_t s_rec, int64_t s_pos, int64_t
     if (!loft_crt_types || tp < 0 || (uint32_t) tp >= loft_crt_ntypes) return;
     loft_copy_record(loft_crt_types, (uint16_t) tp, loft_crt_ref(s_store, s_rec, s_pos),
                      loft_crt_ref(d_store, d_rec, d_pos), (int) flags);
+}
+
+/* OpClearVector: emptied, the claims its elements own released, by the loaded table. */
+void loft_crt_vec_clear(int64_t store, int64_t rec, int64_t pos) {
+    if (!loft_crt_types) return;
+    loft_vec_clear_release(loft_crt_types, loft_crt_ntypes, loft_crt_ref(store, rec, pos));
 }
