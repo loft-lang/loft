@@ -2705,8 +2705,27 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
             params.join(", ")
         }
     );
-    let msg = format!(
-        "native function {} not loaded. Either (a) its library's native cdylib is missing or \
+    let component = cx
+        .data
+        .native_symbol_crates
+        .get(def.native())
+        .and_then(|krate| {
+            cx.data
+                .native_packages
+                .iter()
+                .find(|(c, _)| c.replace('-', "_") == *krate)
+        })
+        .and_then(|(_, pkg_dir)| crate::native_build::component_of(pkg_dir));
+    let msg = if let Some(name) = component {
+        // A component is installed beside loft, never rebuilt (@PLN205).
+        format!(
+            "native function {}: {}",
+            def.native(),
+            crate::components::missing(&name)
+        )
+    } else {
+        format!(
+            "native function {} not loaded. Either (a) its library's native cdylib is missing or \
          stale — commonly built against a different libloft.rlib; rebuild with `make \
          rebuild-native-cdylibs`, or `cargo build --release` in the library's `native/` dir — or \
          (b) a freed store was read and its poisoned contents were used as the call index, in \
@@ -2714,8 +2733,9 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
          apart: if the run is green with LOFT_POISON unset, or an earlier line reports a `BUG` \
          refusal of a store free / a strict-store violation, it is (b) — re-run with `LOFT_STRICT_STORES=1` to \
          name the access and the free.",
-        def.native()
-    );
+            def.native()
+        )
+    };
     let mut out = String::new();
     for i in 0..params.len() {
         let _ = writeln!(out, "    (void) a{i};");

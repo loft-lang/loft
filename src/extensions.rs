@@ -792,6 +792,15 @@ fn report_unresolved_natives(data: &crate::data::Data, unresolved: &[String]) {
             .unwrap_or_else(|| "<unknown library>".to_string());
         by_crate.entry(krate).or_default().push(sym.as_str());
     }
+    // A package whose natives are a component loft ships (@PLN205): nothing to rebuild, the
+    // component is not installed.
+    let component = |krate: &str| -> Option<String> {
+        let (_, pkg_dir) = data
+            .native_packages
+            .iter()
+            .find(|(c, _)| c.replace('-', "_") == krate.replace('-', "_"))?;
+        crate::native_build::component_of(pkg_dir)
+    };
     for (krate, mut syms) in by_crate {
         syms.sort_unstable();
         let shown = syms.iter().take(6).copied().collect::<Vec<_>>().join(", ");
@@ -801,6 +810,15 @@ fn report_unresolved_natives(data: &crate::data::Data, unresolved: &[String]) {
         } else {
             String::new()
         };
+        if let Some(name) = component(&krate) {
+            eprintln!(
+                "loft: {} — {n} #native function(s) are unavailable ({shown}{more_txt}), and a \
+                 program that calls one does not start.",
+                crate::components::missing(&name),
+                n = syms.len(),
+            );
+            continue;
+        }
         eprintln!(
             "loft: native library '{krate}' did not load — {n} of its #native function(s) are \
              unavailable ({shown}{more_txt}), and a program that calls one does not start. Its cdylib is missing or \

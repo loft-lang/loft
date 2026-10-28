@@ -170,13 +170,26 @@ pub fn resolve_native_lib(pkg_dir: &str, stem: &str) -> Option<String> {
     if let Some(prebuilt) = prebuilt_native_lib(pkg_dir, stem) {
         return Some(prebuilt);
     }
+    // A component is never built where it is used (@PLN205): missing is missing.
+    if component_of(pkg_dir).is_some() {
+        return None;
+    }
     auto_build_native(pkg_dir, stem)
+}
+
+/// The component a package's natives are (`[native] component`), if they are one.
+pub(crate) fn component_of(pkg_dir: &str) -> Option<String> {
+    crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml")).and_then(|m| m.native_component)
 }
 
 /// The native library a package ships PREBUILT for this host, never a build: what
 /// [`resolve_native_lib`] tries first, and all the C backend links (@PLN205).
 #[must_use]
 pub fn prebuilt_native_lib(pkg_dir: &str, stem: &str) -> Option<String> {
+    // A package whose natives are a component loft ships (@PLN205) has no library of its own.
+    if let Some(name) = component_of(pkg_dir) {
+        return crate::components::path(&name);
+    }
     let filename = platform_lib_name(stem);
     // @PLN21 Phase 1 — a precompiled cdylib shipped for THIS host triple wins
     // over a source build (the "no rustc to use a library" path).  A cdylib

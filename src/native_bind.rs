@@ -124,7 +124,7 @@ pub fn unbound(symbol: &str, libs: &'static [Library]) -> ! {
 
 /// The directories searched, in order, each with whether it may hold a library flat (beside
 /// the binary) or only in a `<package>-<version>/` subdirectory.
-fn search_dirs() -> Vec<(PathBuf, bool)> {
+pub(crate) fn search_dirs() -> Vec<(PathBuf, bool)> {
     let mut dirs = Vec::new();
     if let Some(list) = std::env::var_os("LOFT_LIB_PATH") {
         for d in std::env::split_paths(&list) {

@@ -405,6 +405,8 @@ pub mod generation;
 pub mod ir_shape;
 pub mod loop_shape;
 pub mod native_bind;
+// @PLN205 — the prebuilt parts loft ships beside its binary (`[native] component`).
+pub mod components;
 pub mod native_build;
 pub mod op_layout;
 pub mod op_sets;

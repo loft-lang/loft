@@ -33,6 +33,17 @@ What L1 owes from it:
   callbacks are wired, the answer conversion is not);
 - the "did not load" refusals still tell the user to rebuild with `cargo`.
 
+**L1.1 — the component loader.**  `[native] component = "<name>"` names a library loft ships
+(`src/components.rs`: `LOFT_COMPONENTS`, `<binary>/../lib/loft/components/`,
+`<binary>/../components/`, then `components/` in each directory a compiled program searches);
+the manifest reads it as the native library `loft_<name>` with the C-ABI link, so the three
+backends resolve it through `native_build::prebuilt_native_lib` as they resolve a package's own
+`prebuilt/<triple>/`, and a missing one is never built — each backend refuses naming the
+component and where it looked.  Guard: `tests/ffi_c_library.rs`
+(`a_component_answers_on_every_backend`, `a_missing_component_is_refused_by_name`).  Still owed
+from L0a: `make components`, the C unit binding by search order, the cargo advice in the
+refusals of a package's own library.
+
 **L0b — answered yes.**  `LOFT_EMIT_FROM_IMAGE=1` makes `--emit-c` write from the image
 (`ir_read::image_round_trip`); `scripts/image_probe.py` compares that with the C written from
 memory over every program.  Over all 2893 programs (CI, linux-probe run 40595296631): 2525
