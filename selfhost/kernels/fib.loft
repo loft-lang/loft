@@ -6,6 +6,11 @@ fn fib(n: integer) -> integer {
   if n <= 1 { n } else { fib(n - 1) + fib(n - 2) }
 }
 
+// The Rust interpreter's side of the S1.4 measurement: the answer and the call's own time in
+// microseconds, start-up excluded.  The loft interpreter runs `fib` from the image instead.
 fn main() {
-  println("{fib(30)}");
+  t0 = ticks();
+  r = fib(30);
+  us = ticks() - t0;
+  println("{r} {us}");
 }

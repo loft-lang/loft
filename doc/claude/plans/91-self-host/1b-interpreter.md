@@ -282,6 +282,26 @@ integer it returns.  Both must print the same number, or the times do not compar
 - **S1.4 — the measurement**: best of five wall times per kernel, both sides, numbers in
   this section, and the gate read against them.
 
+### S1.4 — the measurement: the loft interpreter against the Rust one — DESIGNED 2026-10-28
+
+**The owner's ruling (2026-10-28):** measure first, before T3 and T4.  Parity is not a gate:
+the strand goes on whatever the number.  But where the loft interpreter, compiled through the
+C backend, is more than **3×** slower than the Rust interpreter on a kernel, the performance
+stream (the C-backend agent) is told, with the row.  This settles open question 4 for S1.
+
+**How.**  `python3 selfhost/bench/measure.py` (best of five per side, on a quiet box):
+- **Rust side:** `loft --interpret kernels/<k>.loft`; the kernel's `main` times its own call
+  with `ticks()` and prints the answer and the microseconds, so start-up is left out.
+- **Loft side:** the same kernel's program image (`--emit-image`) run by
+  `selfhost/bench/run_kernel.loft`, compiled `--native-c --ship` (the C backend as it ships);
+  it times the run apart from the image load and prints both.
+- The two answers must agree (`fib(30)` 832 040, `mix(5000000, 1)` 6 495 169,
+  `longest(1, 100000)` 77 031 351) or the row is not a measurement; a row over 3× says so.
+- First on `main`'s C backend; the C-perf join, when it comes, is measured again beside it.
+
+**Code points:** `selfhost/kernels/*.loft` (`main` times its call), `selfhost/bench/run_kernel.loft`
+and `selfhost/bench/measure.py` (new).
+
 ### S1.3 — loops: `mix` and `collatz_len` lower and run — BUILT 2026-10-28
 
 **What the IR is.**  A `for i in a..b` reaches the bundle as a block holding a `loop`: the
@@ -741,8 +761,8 @@ absence.
    schema generator then reads it there).  Recommended: yes; a copy would drift.
 3. **X7 against the A5 refusal**: by-value recursive fields laid out as a box are the
    proposal; A5's refusal was about the by-value LAYOUT, which this keeps out.
-4. **The P-perf bar**: ~1.5× of the Rust interpreter as @PLN91 states, measured on the
-   loft interpreter compiled `--native-release` (the shipped tier).
+4. **The P-perf bar**: answered for S1 (owner, 2026-10-28) — not a gate; over 3× on the C
+   backend, the performance stream is told (§ Steps, S1.4).
 5. **A label for the findings**: `hit-by:loft` with `Found-via: @PLN91 1b`, or a label of
    its own so the dogfood yield can be counted.
 6. **`--mode selfhost` in loft-suite** is a change to that repository (a suite PR beside

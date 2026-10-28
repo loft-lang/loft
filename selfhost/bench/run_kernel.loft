@@ -1,0 +1,37 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The loft interpreter's side of the S1.4 measurement: `run_kernel <image> <entry> <int>…`
+// loads the program image, runs `<entry>` with the integer arguments, and prints the answer,
+// the microseconds the run took, and those the load took — the run alone is what compares
+// with the kernel's own `main` under `loft --interpret`.
+use load;
+use lower;
+use run;
+
+fn main() {
+  a = arguments();
+  if len(a) < 2 {
+    println("usage: run_kernel <image> <entry> <int>…");
+    return;
+  }
+  ints: vector<integer> = [];
+  for i in 2..len(a) {
+    ints += [((a[i] ?? "") as integer?) ?? 0];
+  }
+  t0 = ticks();
+  b = load::load(a[0] ?? "");
+  if b == null {
+    println("no image at {a[0] ?? ""}");
+    return;
+  }
+  t1 = ticks();
+  entry = lower::find(b, a[1] ?? "");
+  o = run::run(b, entry, ints);
+  t2 = ticks();
+  if o.refused != "" {
+    println("refused: {o.refused}");
+    return;
+  }
+  println("{o.value} {t2 - t1} {t1 - t0}");
+}
