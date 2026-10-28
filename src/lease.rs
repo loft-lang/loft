@@ -599,7 +599,7 @@ impl<'a> Frame<'a> {
             for (w, values) in &self.assignments {
                 if out.contains(w)
                     || matches!(
-                        self.func.tp(*w),
+                        self.func.tp(*w).base(),
                         Type::Integer(_)
                             | Type::Boolean
                             | Type::Float
