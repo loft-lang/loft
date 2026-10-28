@@ -168,6 +168,13 @@ value), a nullable hole into a non-null parameter warns, and a `lit` that does n
 
 ### New
 
+**A recursion that cannot become a loop compiles, with a warning.**  A function that ends by
+calling itself becomes a loop, so it runs to any depth.  Where that cannot be done — it passes a
+fresh value on, say — loft refused the program.  It now compiles: the call stays an ordinary
+call, which stops at 10 000 frames, and `warning[tail-call-not-jumped]` says so, with how to
+make it a loop.  Being a warning, it fails a library's CI, so the libraries stay free of it;
+binding the value first, `r = f(…); r`, keeps an ordinary call on purpose.
+
 **`#package` lets a file share its internals with the files around it.**  Everything a file
 declares stays private to it unless it says `pub`; a file that is part of something bigger now
 starts with `#package`, and the files of its own directory and of the directory directly above

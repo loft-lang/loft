@@ -308,6 +308,13 @@ const CODES: &[(&str, &str)] = &[
            g = match w.st { Holder{inner} => { w.st = Empty { z: 0 }; inner.a }, _ => -1 };\n\
            print(\"{g}\"); }",
     ),
+    // @C155 — a text parameter handed anything but itself: the frame cannot be reused, so the
+    // tail self-call stays an ordinary call, which stops at 10 000 frames.
+    (
+        "tail-call-not-jumped",
+        "fn build(n: integer, acc: text) -> integer { if n == 0 { len(acc) } else { build(n - 1, acc + \"x\") } }\n\
+         fn main() { print(\"{build(3, \"\")}\"); }",
+    ),
     // loft#980 — `n` is declared by `Named` only, and the value is an `Anon`; nothing
     // between the two checks the tag, so the read answers `Anon`'s bytes.
     (

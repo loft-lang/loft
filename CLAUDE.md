@@ -774,7 +774,9 @@ extra type. Full API: [RUNNING_TESTS.md § LogConfig](doc/claude/RUNNING_TESTS.m
 `warning` GATES a library's CI (`LOFT_DENY_WARNINGS=1`);
 `advice` never does and has no deny switch. The rule: **a diagnostic gates if and only if
 ignoring it can produce a wrong result** — lost writes, char/byte index confusion,
-null-into-non-null gate; deprecations, perf notes and spellings advise. The split exists
+null-into-non-null gate; deprecations, perf notes and spellings advise — except a slow
+construct the libraries must not ship, when the cure removes the cost and no published library
+can hold the shape yet (`tail-call-not-jumped`; DIAGNOSTICS.md § Diagnostic tiers). The split exists
 because one tier made the compat doctrine self-contradictory: `not null` is a deliberate
 no-op kept parseable so unrepublished libs load, yet it hard-failed those libs' own CI.
 Renders as `advice:`, LSP severity Hint; `@EXPECT_WARNING` and `Test::advice()` match it.

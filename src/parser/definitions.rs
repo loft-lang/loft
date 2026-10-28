@@ -3630,11 +3630,11 @@ impl Parser {
             // `@FR-R-TailSelf` (@C155) — a self-call in tail position is a jump that reuses the
             // frame.  Where this frame cannot be reused — a parameter or local held in a store,
             // a `&` parameter, a heap result, a generator, a `parallel` block or a closure in
-            // the body — the program is refused HERE, on the source shape, and never left a
-            // call: a call that stops at `MAX_CALL_DEPTH` holds for small inputs and fails for
-            // large ones, which is the wrong answer to ship silently.  The predicate is the
-            // pass's own (`tail_frame::admit_frame`), so what compiles is what the pass makes a
-            // jump.
+            // the body — the call stays an ordinary call and is WARNED here, on the source
+            // shape: a call that stops at `MAX_CALL_DEPTH` holds for small inputs and fails for
+            // large ones, so it is never left a call silently, and the warning gates a
+            // library's CI.  The predicate is the pass's own (`tail_frame::admit_frame`), so
+            // what is warned is exactly what the pass leaves a call.
             if !self.data.definitions[ctx].is_operator() && !crate::tail_frame::off() {
                 let def = &self.data.definitions[ctx];
                 let refused =
@@ -3656,15 +3656,35 @@ impl Parser {
                 if let Some((at, why)) = refused {
                     let fn_name = def.name().trim_start_matches("n_").to_string();
                     let msg = format!(
-                        "`{fn_name}` calls itself in tail position, where a self-call is a jump \
-                         that reuses the frame — but this frame cannot be reused: {why}.  Left \
-                         a call it would stop at 10 000 frames, so write the recursion as a \
-                         loop (`while`), or keep that value outside the frame"
+                        "`{fn_name}` calls itself in tail position, but this call stays an \
+                         ordinary call, which stops at 10 000 frames: {why}.  Write the \
+                         recursion as a loop (`while`), or keep that value outside the frame"
                     );
                     match at {
-                        Some(pos) => diagnostic_at!(self.lexer, &pos, Level::Error, "{msg}"),
-                        None => diagnostic!(self.lexer, Level::Error, "{msg}"),
+                        Some(pos) => diagnostic_at!(
+                            self.lexer,
+                            &pos,
+                            Level::Warning,
+                            code = "tail-call-not-jumped",
+                            "{msg}"
+                        ),
+                        None => diagnostic!(
+                            self.lexer,
+                            Level::Warning,
+                            code = "tail-call-not-jumped",
+                            "{msg}"
+                        ),
                     }
+                    self.lexer.fix_last(crate::diagnostics::Fix {
+                        kind: crate::diagnostics::FixKind::Conditional,
+                        title: format!("keep it an ordinary call on purpose: bind its value first, `r = {fn_name}(…); r`"),
+                        condition: Some(
+                            "the recursion stays well under 10 000 frames for every input it is given".to_string(),
+                        ),
+                        edit: None,
+                        concept: "functions",
+                        concept_ref: "@F16",
+                    });
                 }
             }
             // P246 follow-up — UPPER_CASE locals without `const`

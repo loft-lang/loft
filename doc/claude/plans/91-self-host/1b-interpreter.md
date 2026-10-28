@@ -340,7 +340,7 @@ a call (the `tail-call-not-jumped` warning).
 
 **Steps** (each designed in full when the one before it lands):
 - **T1 — the sharing fix (X15; Contract: settled).**  BUILT (below).
-- **T2 — a frame the jump cannot reuse is an ordinary call, with a warning.**  @C155's
+- **T2 — a frame the jump cannot reuse is an ordinary call, with a warning.**  BUILT.  @C155's
   refusal becomes `warning[tail-call-not-jumped]`, naming the reason and the cure; the tier
   rule gains its library clause; the error-message case 63 and the suite cell
   `R-TailSelf/a-tail-self-call-the-frame-cannot-jump-is-refused` move from the error to the
@@ -407,7 +407,7 @@ codegen subjects.
   and `tests/scripts/2208-…` (20 005), both backends, `LOFT_STRICT_STORES=1`, `LOFT_POISON=1`,
   no leaked store.
 
-#### T2 — a frame the jump cannot reuse is an ordinary call, with a warning — DESIGNED
+#### T2 — a frame the jump cannot reuse is an ordinary call, with a warning — BUILT 2026-10-28
 
 **What.**  The two refusal sites keep their predicate and change their level: `definitions.rs`
 (pass two) and `generics.rs` (`refuse_instance_tail`, per instance) emit
@@ -449,6 +449,20 @@ jump-is-refused` becomes `…-warns` (`@EXPECT_WARNING`) and the line in
 - `walk(a, inner[0]?)` (the lowering's shape) compiles with the warning and answers right
   at a small depth; S1.1 compiles from here.
 - Falsified: the control (the T1 commit) refuses each, so the `expect` channel moves.
+
+**Design → code.**
+- As designed, plus a conditional `--explain` fix the code-set gate asks of every code: *keep
+  it an ordinary call on purpose: bind its value first, `r = f(…); r`*, needing *the recursion
+  stays well under 10 000 frames for every input it is given* (`@F16`).
+- Case 63 also lost the unrelated `println` type error it carried, so it renders the warning
+  alone (exit 0, `3`).
+- The suite change is the loft-suite branch `91-self-host` (03d1f13, from the pinned
+  6fbddfa); `tests/loft-suite.pin` names it.  A local run that walks the suite needs
+  `LOFT_SUITE_DIR` at that checkout: `../loft-suite` holds the old refusal cell.
+- Measured: the cell `2 b 2 1 1 3` with its five warnings and all six `R-TailSelf` cells on
+  both backends (`make suite`); `fresh_arg(20000)` halts at the frame limit; `inner[0]?`
+  compiles with the warning and answers 7.  The control (main 6f31a726b) fails the cell as
+  parse errors.
 
 ### S1.1a — a block-bodied match arm needs no comma (fixes X14) — BUILT 2026-10-28
 

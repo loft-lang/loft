@@ -75,6 +75,7 @@ conditional one (each is one fix line), and the concept door they open onto.
 | `text-index-char-bound` | warning | An index walks `0..len(text)` (characters) but reads bytes — silent on ASCII, wrong elsewhere. | Iterate `for c in text`, or walk bytes with `0..size(text)`. | M C · `@F97` |
 | `index-bounds-other-vector` | warning | A loop bounded by `len()` of one vector indexes a different one — typed non-null, reads null on overrun. Opt-in (`LOFT_LINT_STRICT_INDEX`). | Bound the loop by the vector it indexes. | C · `@F6` |
 | `function-complexity` | advice | A function's control-flow complexity passed the nudge, naming its deepest nesting line. | Lift the innermost part into its own function. | C · `@F16` |
+| `tail-call-not-jumped` | warning | A function calls itself in tail position, but its frame cannot be reused by a jump (`(R-TailSelf)`, @C155) — an argument for a store-held parameter that makes a value or names a local the jump releases, a text or `&` parameter handed anything but itself, a parameter the body rebinds, a `&` local, a tuple or closure result, a generator, a `parallel` block or a closure in the body — so the call stays an ordinary call, which stops at 10 000 frames. It gates under the tier rule's second clause: a slow construct with a cure, which no published library could hold (every shape was a compile error before). Quiet where the call jumps and where it is not in tail position. | Write the recursion as a loop (`while`), or pass a part of a parameter; to keep a call on purpose, bind its value first (`r = f(…); r`). | C · `@F16` |
 | `too-many-parameters` | advice | A function takes many required parameters — every caller has to get them all right, in order. Silent on a `#c` binding, whose parameter list is the C function's: a struct cannot cross that boundary and a default does not change the declared C arity, so both cures are impossible there. | Group the ones that travel together into a struct, or give the optional ones defaults. | C C · `@F12` `@F17` |
 | `trailing-boolean-parameters` | advice | A function ends with booleans, so a call reads `f(…, true, false)`. | Give them defaults so callers pass only what they change. | M · `@F17` |
 | `omitted-field-zero` | advice | A struct literal names some fields and leaves another out, so that one takes its type's zero and nothing in the declaration chose it. Quiet on a field with a declared default, a nullable field, and a bare `S {}` — each of those says what it means. | Declare the field's default on the type, or write it at this literal. | C C · `@F12` |
@@ -778,9 +779,18 @@ warning no `@EXPECT_WARNING` claims fails the file, and by `--check`, where any 
 the check.  A plain run prints its warnings and runs.
 
 **The rule for choosing: a diagnostic gates if and only if ignoring it can produce a
-wrong result.** A lost write, `len(text)` indexed as bytes, a nullable reaching a
-non-null slot — those gate. A deprecation, a perf note, a preferred spelling — those
-advise.
+wrong result** — or it is a **slow construct the libraries must not ship**. A lost write,
+`len(text)` indexed as bytes, a nullable reaching a non-null slot — those gate. A
+deprecation, a perf note, a preferred spelling — those advise.
+
+The second clause is narrow on purpose.  A diagnostic gates for its COST only when all
+three hold: the compiler cannot remove the cost; the message names a cure that takes it
+to zero; and no published library can hold the shape when the diagnostic is introduced —
+the shape was refused until then, or a revalidation of the libraries measures no hit.  The
+third keeps the promise the split exists for: a new gate never fails a library over code
+it did not touch.  `tail-call-not-jumped` is the case: each shape it reports was a compile
+error before.  `avoidable-copy` does not qualify — its shapes were always legal — so it
+advises.
 
 The split is not a convenience. With one tier the compatibility doctrine contradicted
 itself: `revalidate-libs.yml` states that a new deprecation must not fail an

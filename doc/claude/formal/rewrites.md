@@ -5443,14 +5443,15 @@ each inlined call, each decline and each reduction below.
                  scope pass hands to the `return` — the `&text` buffer, the return buffer,
                  the `__ret_N` temporary, the join's two-step `tmp = E; x = tmp` — which the
                  final arm writes, while the jump's path writes nothing (a `Set` on such a
-                 place would release what it holds).  REFUSED (@C155), at the call — and
-                 for a generic at each INSTANCE — naming the variable and the cure: a tail
+                 place would release what it holds).  An ORDINARY CALL, with
+                 `warning[tail-call-not-jumped]` (@C155) at the call — and for a generic at
+                 each INSTANCE — naming the variable, the cost and the cure: a tail
                  self-call in a frame the jump cannot reuse — an argument that MAKES a
                  value (a call, a literal, an operator result) or names a local the jump
                  releases, a text or `&` parameter handed anything but itself, a parameter
                  the body REBINDS (the frame then owns its store), a `&` local, a result of
                  another kind (a tuple, a closure), a generator, a `parallel` block or a
-                 closure in the body.  It is never left a call.  A self-call whose value is
+                 closure in the body.  It is never left a call silently.  A self-call whose value is
                  bound to a local before it is returned (`r = f(…); r`) is not in tail
                  position: a call.  Two readers of a body learn the loop: `(O-Oracle)` reads
                  the jump's pointer writes as definitions (a parameter swapped there is one
@@ -5473,16 +5474,16 @@ that follow the `__ret_N` temporary or the void body's last statement — after 
 are read.  A parameter held in a store is a pointer the frame never owned, so a tail
 call that passes it through — itself, a sibling parameter, a projection of one — rebinds the
 pointer exactly as the call would, and a swap of two such parameters is two pointer moves.
-What is refused is what a call does not do either: an argument the frame MAKES (a call's
+What stays a call is what a call does not do either: an argument the frame MAKES (a call's
 result, a literal, an operator result) would have to be handed into the frame's ownership; a
 local as the argument is released by the jump under its own pointer; a parameter the body
 rebinds (`(F-ParamRebind)`) holds a store this frame owns, which the epilogue frees after the
 temporary read it; a text parameter handed another text has no pointer move (a text's
-assignment owns), so a swap of two text parameters (`pick<text>`) is refused where `pick<S>`
-jumps — the one clause left (loft-lang/plans#202 P5b).  Those shapes are REFUSED rather than
-left a call (@C155): the refusal in the parser — for a generic at each instance, since the
-template cannot decide a type variable — and the pass share `tail_frame::admit_frame`, so a
-program that compiles is one whose tail self-calls all jump; `r = f(…); r` is the spelling that
+assignment owns), so a swap of two text parameters (`pick<text>`) stays a call where `pick<S>`
+jumps — the one clause left (loft-lang/plans#202 P5b).  Those shapes stay ordinary calls and
+are WARNED (@C155): the warning in the parser — for a generic at each instance, since the
+template cannot decide a type variable — and the pass share `tail_frame::admit_frame`, so every
+tail self-call that compiles without the warning jumps; `r = f(…); r` is the spelling that
 keeps a call on purpose.  A result held in a store needs no runtime check: the scope pass already
 delivers it through a place the final arm writes (`___acc_N = E`, `__retbuf`, `__ret_N`, the
 join's `tmp = E; x = tmp`), so the jump's arm writes nothing and the caller reads what the call

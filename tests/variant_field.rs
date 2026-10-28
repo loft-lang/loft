@@ -200,7 +200,7 @@ fn a_root_capture_inside_its_arm_is_settled() {
         "capture",
         "enum Shape { Circle { r: integer }, Rect { w: integer, h: integer } }\n\
          fn main() {\n\
-           s = Shape.Circle { r: 1 };\n\
+           s = Shape::Circle { r: 1 };\n\
            match s {\n\
              w: Circle { r } => { w.r = 10; }\n\
              _ => {}\n\
@@ -217,8 +217,10 @@ fn a_root_capture_inside_its_arm_is_settled() {
         !out.contains("w#1"),
         "a diagnostic names the spelled binding:\n{out}"
     );
+    // The printed LINE, not any `10`: a program that does not compile echoes `w.r = 10` under
+    // its caret, which a bare `contains` passed on.
     assert!(
-        out.contains("10"),
+        out.lines().any(|l| l == "10"),
         "the write through the capture lands:\n{out}"
     );
 }
