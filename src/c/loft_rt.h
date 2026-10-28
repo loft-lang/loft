@@ -29,13 +29,6 @@
 
 #define LOFT_BOOL_NULL 255
 
-static void loft_text_free(loft_text *t) {
-    free(t->p);
-    t->p = 0;
-    t->len = 0;
-    t->cap = 0;
-}
-
 static double loft_usage_pct(uint64_t a, uint64_t b) {
     return b == 0 ? 0.0 : 100.0 * (double) a / (double) b;
 }

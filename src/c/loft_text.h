@@ -100,6 +100,13 @@ static void loft_text_set(loft_text *t, loft_str s) {
     loft_push(t, s.p, s.len);
 }
 
+static void loft_text_free(loft_text *t) {
+    free(t->p);
+    t->p = 0;
+    t->len = 0;
+    t->cap = 0;
+}
+
 static loft_text loft_text_own(loft_str s) {
     loft_text t = { 0, 0, 0 };
     loft_push(&t, s.p, s.len);
