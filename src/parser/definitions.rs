@@ -3635,7 +3635,7 @@ impl Parser {
             // large ones, which is the wrong answer to ship silently.  The predicate is the
             // pass's own (`tail_frame::admit_frame`), so what compiles is what the pass makes a
             // jump.
-            if !self.data.definitions[ctx].is_operator() {
+            if !self.data.definitions[ctx].is_operator() && !crate::tail_frame::off() {
                 let def = &self.data.definitions[ctx];
                 let refused =
                     crate::tail_frame::tail_calls(&def.code, self.context, &self.vars, &self.data)

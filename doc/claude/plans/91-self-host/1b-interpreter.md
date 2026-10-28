@@ -236,6 +236,12 @@ measured on the smallest interpreter that runs real kernels, before any more of 
   The full default-mode sweep over all 2,883 programs was clean at `891bbeed6`, and the
   targeted sweeps cover its WIP commit; the full four-mode sweep of the tip was not finished.
   **Consequence (CLAUDE.md branch rule 5):** this branch now merges after `laptop-c-perf`.
+  **The joined tree carries two red checks of that branch's own**, measured here on
+  2026-10-28 and left to its stream (its later commits rework the same files): clippy's
+  `similar_names` in `src/c/body.rs` (3) and `src/c/body/keyed.rs` (5), both variants; and
+  `c_emit::a_halted_c_test_releases_the_texts_its_frames_hold`, whose `down(10000)` (no tail
+  call) overflows the stack under AddressSanitizer before it reaches its assert.  The next
+  join re-measures both.
 - **The build.**  The interpreter is compiled `loft --native-c --ship`: C, gcc, `-O3`.  gcc
   because its checked lane is the better one today (median 1.57× of the Rust twins, against
   clang's 1.74×).  Never `LOFT_RELEASE_PASS_PROBE`, which is a measurement probe and not a
@@ -333,7 +339,7 @@ holds a `reference`, and a body that stores a parameter's pointer through anothe
 a call (the `tail-call-not-jumped` warning).
 
 **Steps** (each designed in full when the one before it lands):
-- **T1 — the sharing fix (X15; Contract: settled).**  Designed below.
+- **T1 — the sharing fix (X15; Contract: settled).**  BUILT (below).
 - **T2 — a frame the jump cannot reuse is an ordinary call, with a warning.**  @C155's
   refusal becomes `warning[tail-call-not-jumped]`, naming the reason and the cure; the tier
   rule gains its library clause; the error-message case 63 and the suite cell
@@ -363,7 +369,7 @@ a call (the `tail-call-not-jumped` warning).
 8. The three spellings of the table, and a part through two levels (`n.inner[0].inner[0]`)
    and through a nested match binding: jump, right value (T1).
 
-#### T1 — the sharing fix (fixes X15) — DESIGNED
+#### T1 — the sharing fix (fixes X15, loft#2207; and loft#2208) — BUILT 2026-10-28
 
 **What.**  `borrows_from_params` (`src/tail_frame.rs`), the one predicate the refusal and the
 rewrite share, also accepts as a part of a parameter:
@@ -384,6 +390,65 @@ rule text changes: this closes a deviation from it.  With them:
 limit so a call cannot pass; `inner[0]?` still refused (T2 changes that); falsified with the
 two new arms removed; `make rewrite-census` (admissions may only rise); the parser and
 codegen subjects.
+
+**Design → code.**
+- As designed: `part_of_params` reads the three spellings of a part (a projection op, the
+  variant check, a binding), following a binding to its writes at most four levels deep;
+  `binds_a_part` asks `op_writes_variable`, split out of `writes_variable`, so a local any op
+  claims, frees or re-points is not a part.  The refusal reads `off()`.
+- **Found: loft#2208, on `main` too.**  Case 8's binding of a binding (`two_levels`) was
+  admitted and then left a CALL: the scope pass wraps such an arm in an `Insert` (a block's
+  second spelling, `_mv_deeper_1 = null` before the `if`), which both the finder
+  (`Finder::value`) and the rewrite (`opt::tail_self::value`) read as no tail.  `main` shows
+  it with a struct parameter, where the parser admits the call.  Fixed at both walks.  What
+  stays unguarded: nothing compares the parser's admitted calls with the pass's jumps, so a
+  third spelling would again be silent.
+- Guards: `tests/scripts/2207-…` (the three spellings and `grow`, 20 001 levels, 20 006 each)
+  and `tests/scripts/2208-…` (20 005), both backends, `LOFT_STRICT_STORES=1`, `LOFT_POISON=1`,
+  no leaked store.
+
+#### T2 — a frame the jump cannot reuse is an ordinary call, with a warning — DESIGNED
+
+**What.**  The two refusal sites keep their predicate and change their level: `definitions.rs`
+(pass two) and `generics.rs` (`refuse_instance_tail`, per instance) emit
+`warning[tail-call-not-jumped]` where they emitted an error.  The rewrite already declines such
+a frame without a word (`opt::tail_self`, the census's `declined`), so the call stays a call:
+nothing else changes in what is emitted.  The message keeps the reason and the cure and states
+the cost:
+
+```
+warning[tail-call-not-jumped]: `build` calls itself in tail position, but this call stays an
+ordinary call, which stops at 10 000 frames: parameter `acc` (a `text`) can only be passed
+through as itself here.  Write the recursion as a loop (`while`), or keep that value outside
+the frame
+```
+
+- **The tier.**  DIAGNOSTICS.md § Diagnostic tiers gains its second clause: a diagnostic may
+  also gate when it reports a cost the compiler cannot remove, names a cure that takes it to
+  zero, and no published library can hold the shape when it is introduced (here: every shape
+  was a compile error until now).  CLAUDE.md's summary of the tiers says the same in a line.
+- **The register.**  @C155 reads "stays an ordinary call, with the warning; refused only when
+  it certainly fails" (DESIGN_DECISIONS_FAILURE.md, its index line in DESIGN_DECISIONS.md), the
+  old text moving to DESIGN_DECISIONS-history.md; `(R-TailSelf)` and its "In words" say the
+  same where they say REFUSED.
+- **The code.**  A row in DIAGNOSTICS.md; the code and a trigger in `tests/e1_code_set.rs`.
+  The cure stays inline: there is no mechanical edit to offer.
+
+**Code points:** `src/parser/definitions.rs`, `src/parser/generics.rs` (the function becomes
+`warn_instance_tail`), `tests/e1_code_set.rs`, `tests/error_messages/cases/63_…` (renamed
+`…_warns`, its baseline re-captured with `UPDATE_GOLDEN=1`), DIAGNOSTICS.md, CLAUDE.md, the
+register, `formal/rewrites.md`; in loft-suite, `R-TailSelf/a-tail-self-call-the-frame-cannot-
+jump-is-refused` becomes `…-warns` (`@EXPECT_WARNING`) and the line in
+`a-self-call-outside-tail-position-stays-a-call` that points at it.
+
+**Cases** (hand-computed):
+- The suite cell's six functions, now run: `swap(1, Rec 1, Rec 2).n` 2, `swap(1, "a", "b")`
+  `b`, `fresh_arg(2, "")` 2, `literal_arg([1], 2)` 1, `local_arg([1], 2)` 1,
+  `rebound(Rec 0, 3)` 3 — `2 b 2 1 1 3`, each with its warning.
+- The cost, stated: `fresh_arg(20000, "")` halts at the frame limit on both backends.
+- `walk(a, inner[0]?)` (the lowering's shape) compiles with the warning and answers right
+  at a small depth; S1.1 compiles from here.
+- Falsified: the control (the T1 commit) refuses each, so the `expect` channel moves.
 
 ### S1.1a — a block-bodied match arm needs no comma (fixes X14) — BUILT 2026-10-28
 
@@ -457,7 +522,7 @@ stdlib's `E`), so the two drivers disagree on one program.  To check before a fi
 | **X12** | inside a package, a file named like one of its modules (`tests/load.loft`) gets ITSELF for `use load;`, so every name reads "Unknown function" (on `main`) | **bug — fixed in S0.3b** | `own_module_path` never answers the current file, and asks the package's `src/` ([1b-s0.md](1b-s0.md) § S0.3b) |
 | **X13** | `assert(x != null, …)` does not narrow `x`; the other null tests (`if … return`, `if != null`, `?? return`, `?? panic`) do, and `types.md` writes none of them as a rule | rule gap — fixed in S0.3d | owner: `(N-Guard)`, the guard narrowing written as a rule with `assert` as one of its guards ([1b-s0.md](1b-s0.md) § S0.3d) |
 | **X14** | a block-bodied match arm demands a comma (`NdIf { … } => { … }` then the next arm), while Rust and the `LOFT_CONTROL.md` example leave it out | **bug — fixed in S1.1a** | the comma is optional after a block body (§ Steps, S1.1a) |
-| **X15** | a tail self-call on a part of an enum parameter is refused under @C155: `walk(n.inner[0])`, and `walk(inner[0])` through the match binding, though `(R-TailSelf)` admits a projection of a parameter (on `main`) | **bug — S1.1b T1** | the predicate sees the variant check and the binding as parts of the parameter; the owner's rules for the rest (§ Steps, S1.1b) |
+| **X15** | a tail self-call on a part of an enum parameter is refused under @C155: `walk(n.inner[0])`, and `walk(inner[0])` through the match binding, though `(R-TailSelf)` admits a projection of a parameter (on `main`) | **bug — fixed in S1.1b T1** | the predicate sees the variant check and the binding as parts of the parameter; the owner's rules for the rest (§ Steps, S1.1b) |
 | **X16** | a test file still binds a sibling test file named like the module (X12's case from `tests/`, on `main`) | bug — to measure | — |
 | **X17** | `x?` of a record shared through `#package` fails (a gap in S0.3a) | bug — to measure | — |
 | **X18** | a nullable plain enum is not narrowed by `if x != null` (on `main`) | bug — to measure | — |

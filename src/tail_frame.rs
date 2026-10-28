@@ -91,12 +91,12 @@ pub(crate) fn admit_frame(
                     tp.source_name(data)
                 ));
             }
-            if !borrows_from_params(arg, params, data) {
+            if !borrows_from_params(arg, params, code, data) {
                 return Err(format!(
                     "the call's argument for parameter `{}` (a `{}`) makes a value this frame \
                      would have to own — a fresh value, or a local the jump releases — where a \
                      call only shares; pass the parameter itself or a part of it (`{0}`, \
-                     `{0}.field`, `{0}[i]`)",
+                     `{0}.field`, `{0}[i]`, a `match` binding of one)",
                     vars.name(p),
                     tp.source_name(data)
                 ));
@@ -139,8 +139,13 @@ pub(crate) fn admit_frame(
 /// write (`OpSetInt(p, …)`) is a mutation through the pointer, which `(F-ParamGrow)` allows,
 /// and is not one of these.
 fn writes_variable(code: &Value, v: u16, data: &Data) -> bool {
+    code.any_node(&mut |n| matches!(n, Value::Set(x, _) if *x == v))
+        || op_writes_variable(code, v, data)
+}
+
+/// `writes_variable` without the `Set`s: an op that takes the variable as its destination.
+fn op_writes_variable(code: &Value, v: u16, data: &Data) -> bool {
     code.any_node(&mut |n| match n {
-        Value::Set(x, _) => *x == v,
         Value::Call(op, items) if !items.is_empty() => {
             let name = data.def(*op).name();
             matches!(items[0].unspan(), Value::Var(x) if *x == v)
@@ -156,20 +161,64 @@ fn writes_variable(code: &Value, v: u16, data: &Data) -> bool {
     })
 }
 
-/// Is `arg` a pointer the frame does not own: a parameter, or a projection (a field, an
-/// element, a reference read) rooted at one?  Anything else — a call's result, a literal, an
-/// operator's result, a local — is a value the frame makes or releases, which a call never
-/// hands over into the callee's ownership either.
-fn borrows_from_params(arg: &Value, params: &[u16], data: &Data) -> bool {
+/// Is `arg` a pointer the frame does not own: a parameter, or a part of one (`@FR-R-TailSelf`'s
+/// "projection rooted at one")?  A part has three spellings: a projection op (a field, an
+/// element, a reference read) on a part; the variant check a field read of an ENUM lowers to,
+/// `if <tag test> P else OpNullRefSentinel()`, whose other arm is the null pointer and owns
+/// nothing; and a local every write of which is a part, which is how a `match` payload binding
+/// (`_mv_<name>_N = OpGetField(p, …)`) holds one.  Anything else — a call's result, a literal,
+/// an operator's result, any other local — is a value the frame makes or releases, which a
+/// call never hands over into the callee's ownership either, so the fallback answers no.
+fn borrows_from_params(arg: &Value, params: &[u16], code: &Value, data: &Data) -> bool {
+    part_of_params(arg, params, code, data, 0)
+}
+
+/// `borrows_from_params` at binding depth `depth`: a local is followed to its writes at most
+/// a few levels deep (a binding of a binding), which also ends a local written from itself.
+fn part_of_params(arg: &Value, params: &[u16], code: &Value, data: &Data, depth: u8) -> bool {
     match arg.unspan() {
-        Value::Var(q) => params.contains(q),
+        Value::Var(q) if params.contains(q) => true,
+        Value::Var(q) => depth < 4 && binds_a_part(*q, params, code, data, depth + 1),
         Value::Call(op, items) if !items.is_empty() => {
             let name = data.def(*op).name();
             (crate::use_analysis::is_projection_op(data, *op) || name == "OpGetDbRef")
-                && borrows_from_params(&items[0], params, data)
+                && part_of_params(&items[0], params, code, data, depth)
+        }
+        Value::If(_, a, b) => {
+            let sentinel_a = is_null_ref_sentinel(a, data);
+            let sentinel_b = is_null_ref_sentinel(b, data);
+            !(sentinel_a && sentinel_b)
+                && (sentinel_a || part_of_params(a, params, code, data, depth))
+                && (sentinel_b || part_of_params(b, params, code, data, depth))
         }
         _ => false,
     }
+}
+
+fn is_null_ref_sentinel(v: &Value, data: &Data) -> bool {
+    matches!(v.unspan(), Value::Call(op, items)
+        if items.is_empty() && data.def(*op).name() == "OpNullRefSentinel")
+}
+
+/// Is local `q` a part of a parameter wherever it is read: written only by `Set`s whose value
+/// is null or a part, and by no op (a store claim, a free, a raw pointer write)?  An op that
+/// writes it makes it a store this frame owns or releases, so the answer is no.
+fn binds_a_part(q: u16, params: &[u16], code: &Value, data: &Data, depth: u8) -> bool {
+    if op_writes_variable(code, q, data) {
+        return false;
+    }
+    let mut parts = true;
+    code.any_node(&mut |n| {
+        if let Value::Set(x, e) = n
+            && *x == q
+            && !matches!(e.unspan(), Value::Null)
+            && !part_of_params(e, params, code, data, depth)
+        {
+            parts = false;
+        }
+        false
+    });
+    parts
 }
 
 /// Is `v` a release the scope pass emits at a scope's end — a free, a clear, a closure drop —
@@ -419,6 +468,9 @@ impl Finder<'_> {
                 self.value(b, at, out);
             }
             Value::Block(_) => self.block(v, true, at, out),
+            // A block's second spelling: the scope pass splices a hoisted declaration in front
+            // of an arm (`_mv_deeper_1 = null; if …`), and its last operator is the value.
+            Value::Insert(items) => self.ops(items, true, at, out),
             Value::Return(e) => self.value(e, at, out),
             other => self.statement(other, at, out),
         }

@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2208 — a tail self-call the parser admits is a jump (`@FR-R-TailSelf`, @C155: never
+// left a call), also when it stands in a nested `match` arm whose binding is a binding of a
+// binding (`deeper`, of `ks`).  The scope pass hoists that binding's declaration and wraps the
+// arm in an `Insert`, a block's second spelling, and both the tail-call finder and the rewrite
+// must read it as a block.  The walk runs 20 001 levels deep, past the 10 000-frame limit, so a
+// call left standing halts.
+//
+// Expected, by hand: 20 000 `Go` nodes count 1 each, `len(deeper)` is 0 on every one, and
+// the leaf adds 5, so 20 005.
+// @falsified-at: c3ea8977d — control: stack overflow after 10 000 frames of `walk` on both
+//   backends (exit channel); here 20005 on both
+
+enum K { Stop { v: integer }, Go { ks: vector<K> } }
+struct S { k: K, kids: vector<S> }
+struct Acc { total: integer }
+
+fn grow(n: S, d: integer) {
+  if d == 0 { n.k = Stop { v: 5 }; return; }
+  n.kids += [S { k: Go { ks: [Go { ks: [] }] }, kids: [] }];
+  grow(n.kids[0], d - 1)
+}
+
+fn walk(a: Acc, n: S) {
+  match n.k {
+    Stop { v } => a.total += v,
+    Go { ks } => {
+      a.total += 1;
+      match ks[0] {
+        Stop { v: last } => a.total += last,
+        Go { ks: deeper } => { a.total += len(deeper); walk(a, n.kids[0]) },
+      }
+    },
+  }
+}
+
+fn main() {
+  t = S { k: Go { ks: [Go { ks: [] }] }, kids: [] };
+  grow(t, 20000);
+  a = Acc { total: 0 };
+  walk(a, t);
+  assert(a.total == 20005, "walk: {a.total}");
+}

@@ -347,6 +347,14 @@ git do.
 
 ### Bug fixes
 
+**A recursive walk over an enum's payload runs to any depth.**  A function that ends by calling
+itself on a part of its enum parameter — `walk(a, inner[0])` through a `match` binding, or
+`walk(a, n.inner[0])` — was refused as a frame that could not be reused, although a part of a
+parameter is exactly what a tail call may pass on.  It now becomes a loop, like the same walk
+over a struct.  And a tail self-call in a nested `match` arm whose binding came from another
+binding was accepted but then left an ordinary call, so it stopped at 10 000 frames: it is a
+loop now too.
+
 **A `match` arm whose body is a block needs no comma after it.**  `A { v } => { r = v; }` on one
 line and the next arm on the following one was refused with "Expect token ,", while Rust takes
 it and the loft reference showed it that way.  An arm whose body is an expression still needs

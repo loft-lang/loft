@@ -1,0 +1,74 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2207 — `@FR-R-TailSelf` admits a tail self-call whose argument is a PART of a
+// parameter, and an enum parameter has two spellings of a part the predicate must see: the
+// variant check a field read lowers to (`n.inner[0]`), and the `match` payload binding
+// (`inner[0]`, a local every write of which is a part).  Each walk below runs 20 001 levels
+// deep, past the 10 000-frame limit, so a call left standing halts and only a jump answers.
+//
+// What each cell is for:
+//   * `grow`       — the tree is built by a tail walk through the binding, in place.
+//   * `by_binding` — the binding spelling: `walk(a, inner[0])`.
+//   * `by_field`   — the variant-check spelling: `walk(a, n.inner[0])`.
+//   * `two_levels` — a binding of a binding (`deeper`, bound inside the arm of `inner[0]`),
+//                    which also puts the call inside the `Insert` the scope pass splices
+//                    around that arm (loft#2208).
+// Expected, by hand: 20 001 `Wrap` nodes count 1 each and the leaf adds 5, so 20 006.
+// @falsified-at: c3ea8977d — the control refuses every cell at compile time (C155, exit 1);
+//   by hand on VALUES: control `walk` refused on both backends, here 20006 ×3 on both
+
+enum N { Leaf { v: integer }, Wrap { inner: vector<N> } }
+struct Acc { total: integer }
+
+fn grow(n: N, d: integer) {
+  match n {
+    Wrap { inner } => {
+      if d == 0 { inner += [Leaf { v: 5 }]; return; }
+      inner += [Wrap { inner: [] }];
+      grow(inner[0], d - 1)
+    },
+    Leaf { v } => {},
+  }
+}
+
+fn by_binding(a: Acc, n: N) {
+  match n {
+    Leaf { v } => a.total += v,
+    Wrap { inner } => { a.total += 1; by_binding(a, inner[0]) },
+  }
+}
+
+fn by_field(a: Acc, n: N) {
+  match n {
+    Leaf { v } => a.total += v,
+    Wrap { inner } => { a.total += 1; by_field(a, n.inner[0]) },
+  }
+}
+
+fn two_levels(a: Acc, n: N) {
+  match n {
+    Leaf { v } => a.total += v,
+    Wrap { inner } => {
+      a.total += 1;
+      match inner[0] {
+        Leaf { v } => a.total += v,
+        Wrap { inner: deeper } => { a.total += 1; two_levels(a, deeper[0]) },
+      }
+    },
+  }
+}
+
+fn main() {
+  t = Wrap { inner: [] };
+  grow(t, 20000);
+  a = Acc { total: 0 };
+  by_binding(a, t);
+  assert(a.total == 20006, "by_binding: {a.total}");
+  b = Acc { total: 0 };
+  by_field(b, t);
+  assert(b.total == 20006, "by_field: {b.total}");
+  c = Acc { total: 0 };
+  two_levels(c, t);
+  assert(c.total == 20006, "two_levels: {c.total}");
+}
