@@ -1,8 +1,8 @@
 diff --git a/src/data.rs b/src/data.rs
-index 132a6e970..a0d8019df 100644
+index 7bd992aed..81688a010 100644
 --- a/src/data.rs
 +++ b/src/data.rs
-@@ -12963,66 +12963,6 @@
+@@ -12879,75 +12879,6 @@ impl Data {
          set.contains(&d_nr)
      }
  
@@ -16,7 +16,13 @@ index 132a6e970..a0d8019df 100644
 -    /// carries the one-edit cure: the owner's own qualifier for a name `lib` merely imported,
 -    /// or `pub` on `lib`'s side for an item it keeps private.
 -    #[must_use]
--    pub fn qualified_refusal(&self, lib_source: u16, lib: &str, name: &str) -> Option<String> {
+-    pub fn qualified_refusal(
+-        &self,
+-        lib_source: u16,
+-        lib: &str,
+-        name: &str,
+-        user_file: &str,
+-    ) -> Option<String> {
 -        if lib_source == u16::MAX || lib_source == STD_SOURCE {
 -            return None;
 -        }
@@ -55,7 +61,10 @@ index 132a6e970..a0d8019df 100644
 -                    ),
 -                });
 -            }
--            if !self.definitions[d as usize].pub_visible {
+-            // `@FR-F-Package` — a mate of a `#package` file reads its items as `pub`.
+-            if !self.definitions[d as usize].pub_visible
+-                && !self.shares_internals(&self.definitions[d as usize].position.file, user_file)
+-            {
 -                return Some(format!(
 -                    "`{name}` is not `pub` in `{lib}`, so `{lib}::{name}` cannot reach it: a \
 -                     library's surface is its `pub` items.\n  fix: `{lib}` declares it `pub`, \
@@ -70,17 +79,22 @@ index 132a6e970..a0d8019df 100644
          self.private_imports
              .get(&source)
 diff --git a/src/parser/definitions.rs b/src/parser/definitions.rs
-index 722f5086f..37680d743 100644
+index 5bb3336f6..0a2ae904c 100644
 --- a/src/parser/definitions.rs
 +++ b/src/parser/definitions.rs
-@@ -4478,13 +4478,6 @@
+@@ -4656,18 +4656,6 @@ impl Parser {
              if let Some(name) = self.lexer.has_identifier() {
                  let source = self.data.get_source(type_name);
                  let nr = self.data.source_nr(source, &name);
 -                // loft#1848 — `lib::Type` reaches only what `use lib::*` would.
 -                if source != u16::MAX
 -                    && source != self.data.source
--                    && let Some(msg) = self.data.qualified_refusal(source, type_name, &name)
+-                    && let Some(msg) = self.data.qualified_refusal(
+-                        source,
+-                        type_name,
+-                        &name,
+-                        &self.lexer.pos().file,
+-                    )
 -                {
 -                    diagnostic!(self.lexer, Level::Error, "{msg}");
 -                }
@@ -88,17 +102,19 @@ index 722f5086f..37680d743 100644
                      qualified = Some((source, name));
                  }
 diff --git a/src/parser/objects.rs b/src/parser/objects.rs
-index 0d8896f89..aefe7597f 100644
+index 1bea4c17c..6df96d757 100644
 --- a/src/parser/objects.rs
 +++ b/src/parser/objects.rs
-@@ -511,13 +511,6 @@
+@@ -643,15 +643,6 @@ impl Parser {
              }
              if let Some((id, id_pos)) = self.lexer.has_identifier_pos() {
                  call_pos = id_pos;
 -                // loft#1848 — `lib::name` reaches only what `use lib::*` would.
 -                if source != u16::MAX
 -                    && source != self.data.source
--                    && let Some(msg) = self.data.qualified_refusal(source, name, &id)
+-                    && let Some(msg) =
+-                        self.data
+-                            .qualified_refusal(source, name, &id, &self.lexer.pos().file)
 -                {
 -                    diagnostic!(self.lexer, Level::Error, "{msg}");
 -                }
