@@ -183,6 +183,27 @@ that is a deviation found, and it is fixed in Rust under the dogfood rule.  So t
 interpreter becomes a second, independent oracle for the formal definition, and that is
 worth having on its own.
 
+## Reusing the stdlib (owner, 2026-10-28)
+
+**The stdlib is reused as much as possible**, because every function the interpreter runs from
+its IR is one it cannot disagree with the compiler about.  The program image already holds
+every definition of `default/*.loft`, compiled to the same IR as the program, so:
+
+- **A stdlib function written in loft runs from the image**, as any user function does, and
+  is never written again in the interpreter.  The lowering decides a call as the Rust
+  interpreter's bytecode generator does, in its order (`src/state/codegen.rs`, a call of a
+  definition): an operator (`Op` and a capital) is its op; a definition with a native symbol
+  is a native; one with a loft body is called, even when it also carries a `#rust` template,
+  which is for native code generation only; anything else is a native by name.  A method
+  (`t_<len><Type>_<name>`) is no exception.
+- **Only what has no loft body is written here**: the operators, as loft's own operator in
+  `run.loft`, and the natives, each calling loft's own function of that name (`natives.loft`,
+  S6).  Those two tables are the whole of the interpreter's own semantics; they grow only by
+  a definition the stdlib cannot give in loft.
+- **Moving a native into loft is the preferred cure** when the interpreter would otherwise
+  need a hand-written body for it and the loft version is as fast — the language gains the
+  function, and the interpreter loses a place to differ.
+
 ## Direction (not a design)
 
 Constraints already known, which each step's design must respect.  They are not decided
