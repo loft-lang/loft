@@ -1,10 +1,10 @@
 diff --git b/src/lexer.rs a/src/lexer.rs
-index b6beddff5..8a60f20bf 100644
+index 265a7c855..0a4b4db37 100644
 --- b/src/lexer.rs
 +++ a/src/lexer.rs
-@@ -2564,32 +2564,6 @@ impl Lexer {
-                 }
-                 return self.put(LexItem::Wide(r), pos);
+@@ -2571,32 +2571,6 @@ impl Lexer {
+             if self.wide_suffix(r, pos) {
+                 return;
              }
 -            if !self.in_format_expr
 -                && let Some(&c) = self.iter.peek()
@@ -36,7 +36,7 @@ index b6beddff5..8a60f20bf 100644
          } else {
              self.err(Level::Error, "Problem parsing number");
 diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
-index 5bb3336f6..52149ca0e 100644
+index ae95a6449..bb3650ec3 100644
 --- b/src/parser/definitions.rs
 +++ a/src/parser/definitions.rs
 @@ -793,32 +793,6 @@ impl Parser {
@@ -72,7 +72,7 @@ index 5bb3336f6..52149ca0e 100644
              let v_nr = if self.first_pass {
                  // A forward reference may already have left a stub under this name:
                  // `Circle{ r: 2 }` written ABOVE `enum Shape { Circle { r: integer } }`
-@@ -5590,25 +5564,6 @@ impl Parser {
+@@ -5621,25 +5595,6 @@ impl Parser {
      }
  
      pub(crate) fn parse_fields(&mut self, directions: bool, result: &mut Vec<(String, bool)>) {
