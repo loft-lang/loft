@@ -5029,6 +5029,15 @@ impl Definition {
                 .operators
                 .last()
                 .is_none_or(|tail| Self::site_is_fresh(tail, vars, buf, null_ref, self_nr)),
+            // An `Insert` in tail position yields its last element, as a block does.  It is how
+            // loft#2179 spells a returned parameter's copy (`Insert([Set(__ret_param, d),
+            // Var(__ret_param)])`, `@FR-F-Ret`): read as an unknown shape, a `match` whose arms
+            // return the parameter was "not proven fresh" and its inline result was lifted by
+            // nobody — one leaked record per call, where the concrete twin is lifted and freed
+            // (`@FR-G-Mono`, loft#2206).
+            Value::Insert(ops) => ops
+                .last()
+                .is_none_or(|tail| Self::site_is_fresh(tail, vars, buf, null_ref, self_nr)),
             // A call THROUGH A FN-REF reaches the `_` arm below and answers "not proven",
             // and that is the honest answer HERE: the target is a runtime value, so this
             // body cannot read the callee's fact.  It is readable one frame up, where the

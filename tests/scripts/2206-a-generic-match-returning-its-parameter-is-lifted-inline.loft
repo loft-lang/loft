@@ -1,0 +1,60 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A GENERIC MATCH RETURNING ITS PARAMETER IS LIFTED WHEN USED INLINE (`@FR-F-Ret`, `@FR-G-Mono`,
+// loft#2206).  An instance whose return declares no dep hands back a store it owns, so each arm
+// that returns the record parameter copies it (loft#2179) — and a caller that reads the result
+// inline (`get(p, h).n`) must lift that copy into a temporary it frees, as it does for the
+// concrete twin.  The `match` tail's arms end in the copy's `Insert`, which the freshness proof
+// did not read, so the copy was lifted by nobody: one leaked record per call.  The cells vary
+// the argument (a local, a literal), the use (inline, bound) and the body (`match`, `if`), and
+// each checks the answer AND that the caller's own record still holds.
+//
+// @ARMED: LOFT_POISON=1
+//
+// @falsified-at: 6184655a5 — main leaks one record per inline call: "1 stores not freed at
+//   program exit: kt=101 P2206×52" (1 + 1 + the loop's 50), on the interpreter; native the same.
+// CHANNEL: the corpus runner's leak gate (`wrap.rs` Part B: a store not freed at exit fails the file).
+// ARMED: `LOFT_POISON=1`, so a lift that freed the caller's own record reads the scribble.
+// WITNESS: `p.n` after the calls — the argument the instance copied is untouched.
+// HOLDS: `the_bound_result_owns_its_copy`, clean before the fix too.
+
+struct P2206 { n: integer }
+enum Pick2206 { Full { v: integer }, Hole }
+
+fn by_match2206<T>(d: T, s: Pick2206) -> T { match s { Full { v } => d, Hole => d } }
+fn by_if2206<T>(d: T, s: Pick2206) -> T { if s == Pick2206.Hole { d } else { d } }
+
+fn test_an_inline_result_of_a_local_argument() {
+  h = Pick2206.Hole;
+  p = P2206 { n: 41 };
+  assert(by_match2206(p, h).n == 41, "inline match: {by_match2206(p, h).n}");
+  assert(p.n == 41, "the argument holds: {p.n}");
+}
+
+fn test_an_inline_result_of_a_literal_argument() {
+  h = Full { v: 3 };
+  assert(by_match2206(P2206 { n: 77 }, h).n == 77, "literal");
+}
+
+fn test_an_inline_result_in_a_loop() {
+  h = Pick2206.Hole;
+  p = P2206 { n: 5 };
+  s = 0;
+  for _i in 0..50 { s += by_match2206(p, h).n; }
+  assert(s == 250, "loop sum {s}");
+}
+
+fn test_the_bound_result_owns_its_copy() {
+  h = Pick2206.Hole;
+  p = P2206 { n: 9 };
+  r = by_match2206(p, h);
+  r.n = 10;
+  assert(r.n == 10 && p.n == 9, "the copy is the caller's own: {r.n} {p.n}");
+}
+
+fn test_an_if_body_inline() {
+  h = Pick2206.Hole;
+  p = P2206 { n: 12 };
+  assert(by_if2206(p, h).n == 12, "if");
+}
