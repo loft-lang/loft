@@ -1381,6 +1381,7 @@ LOFT_HOT_INLINE float loft_pa_f32(const uint8_t *p, uint32_t off) {
     memcpy(&v, p + off, 4);
     return v;
 }
+LOFT_HOT_INLINE uint8_t loft_pa_bool(const uint8_t *p, uint32_t off) { return p ? p[off] : LOFT_BOOL_NULL; }
 LOFT_HOT_INLINE void loft_pa_set(uint8_t *p, int locked, uint32_t off, const void *v, size_t n) {
     if (!p) return;
     if (LOFT_UNLIKELY(locked)) loft_locked_write();

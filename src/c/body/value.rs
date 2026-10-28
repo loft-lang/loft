@@ -532,16 +532,21 @@ impl FnWriter<'_> {
         let r = self.expr(src, ind)?;
         let rt = self.temp(CType::Ref);
         self.line(ind, &format!("{rt} = {};", as_ref(r)?));
+        // The record's address taken once (`@FR-R-RecPtr`'s reading of a whole record): every
+        // scalar field is one load through it, the null record's address null and each reader
+        // answering its null, as the getter would.  A view part keeps its reference.
+        // A block-local, so a generator's frame needs no slot for it.
+        let pt = "loft_vp";
         let mut parts = Vec::new();
         for (off, kind) in &layout.fields {
             parts.push(match *kind {
                 k if crate::opt::value_records::layout::is_view_part(k) => {
                     format!("loft_field({rt}, {off})")
                 }
-                "f64" => format!("loft_get_float({rt}, {off})"),
-                "f32" => format!("loft_get_single({rt}, {off})"),
-                "bool" => format!("loft_get_bool({rt}, {off})"),
-                _ => format!("loft_get_int({rt}, {off})"),
+                "f64" => format!("loft_pa_f64({pt}, {off})"),
+                "f32" => format!("loft_pa_f32({pt}, {off})"),
+                "bool" => format!("loft_pa_bool({pt}, {off})"),
+                _ => format!("loft_pa_i64({pt}, {off})"),
             });
         }
         if layout.nullable {
@@ -549,7 +554,11 @@ impl FnWriter<'_> {
         }
         self.line(
             ind,
-            &format!("{target} = ({}) {{ {} }};", held(c), parts.join(", ")),
+            &format!(
+                "{{ const uint8_t *{pt} = loft_rec_ptr({rt}); {target} = ({}) {{ {} }}; }}",
+                held(c),
+                parts.join(", ")
+            ),
         );
         Ok(())
     }
