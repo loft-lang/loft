@@ -960,6 +960,7 @@ impl Parser {
                 // fixed for one container kind over.
                 self.link_shared_nullable_views(v_nr);
                 self.advise_group_apart(v_nr, &field_at);
+                self.advise_group_same_key(v_nr, &field_at);
             } else if self.first_pass {
                 self.data
                     .set_returned(v_nr, Type::Enum(d_nr, false, crate::data::Deps::none()));
@@ -6205,6 +6206,7 @@ impl Parser {
         }
         self.link_shared_nullable_views(d_nr);
         self.advise_group_apart(d_nr, &field_at);
+        self.advise_group_same_key(d_nr, &field_at);
         // #91: check for circular init dependencies (second pass, all fields known).
         if !self.first_pass {
             self.check_circular_init(&init_deps);
@@ -6408,6 +6410,101 @@ impl Parser {
             if let Some(t) = rewritten {
                 self.data.definitions[d_nr as usize].attributes[a].typedef =
                     if nullable_field { Type::optional(t) } else { t };
+            }
+        }
+    }
+
+    /// The kind and key a keyed collection field is written with — what two members of one
+    /// linked group must share to index the same records the same way.  `index` is left out:
+    /// a second same-key `index` is refused outright (`reject_duplicate_index`, @C113).
+    fn same_key_signature(tp: &Type) -> Option<(&'static str, String)> {
+        let spell = |keys: &[(String, bool)]| {
+            keys.iter()
+                .map(|(k, asc)| if *asc { k.clone() } else { format!("-{k}") })
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        match tp.base() {
+            Type::Hash(_, keys, _) => Some(("hash", keys.join(","))),
+            Type::Sorted(_, keys, _) => Some(("sorted", spell(keys))),
+            Type::Radix(_, keys, _) => Some(("spatial", keys.join(","))),
+            Type::Trie(_, key, _) => Some(("trie", key.clone())),
+            _ => None,
+        }
+    }
+
+    /// Advise when two members of one linked collection group are the SAME kind over the same
+    /// key (loft#2216) — @FR-Col-Group made legible where the group cannot be meant.
+    ///
+    /// Two collections over one element type in one struct are one record set, so a second
+    /// `hash<E[k]>` beside the first holds exactly the records the first holds, under the
+    /// same key: it answers nothing the first does not.  The group is legal and the language
+    /// keeps it (a test may want two routes); what such a pair almost always is, though, is
+    /// two tables meant to be separate that happen to share an element type — and adjacency,
+    /// `advise_group_apart`'s signal, says nothing about that, because two tables are usually
+    /// declared side by side.  Advice, as the group lints are: an intended group is never
+    /// wrong.  The line points at the later member.
+    fn advise_group_same_key(&mut self, d_nr: u32, field_at: &[(String, crate::lexer::Position)]) {
+        if self.default || self.first_pass || !crate::keys::group_same_key_lint_enabled() {
+            return;
+        }
+        for (elem, members) in self.collection_groups(d_nr) {
+            for (j, later) in members.iter().enumerate() {
+                let Some(sig) = Self::same_key_signature(&self.data.attr_type(d_nr, later.a_nr))
+                else {
+                    continue;
+                };
+                let Some(earlier) = members[..j].iter().find(|m| {
+                    Self::same_key_signature(&self.data.attr_type(d_nr, m.a_nr)).as_ref()
+                        == Some(&sig)
+                }) else {
+                    continue;
+                };
+                let Some((_, at)) = field_at.iter().find(|(nm, _)| *nm == later.name) else {
+                    continue;
+                };
+                let elem_name = self.data.def(elem).name.clone();
+                let elem_name = elem_name
+                    .strip_prefix("__nullable<")
+                    .and_then(|n| n.strip_suffix('>'))
+                    .unwrap_or(&elem_name)
+                    .to_string();
+                let shown = format!("{}<{elem_name}[{}]>", sig.0, sig.1);
+                diagnostic_at!(
+                    self.lexer,
+                    at,
+                    Level::Advice,
+                    code = "linked-group-same-key",
+                    "`{}` and `{}` are both `{shown}` in one struct, so they are one record set \
+                     — two collections over one element type in one struct are two routes to \
+                     the same records — and `{}` holds exactly what `{}` holds",
+                    later.name,
+                    earlier.name,
+                    later.name,
+                    earlier.name
+                );
+                self.lexer.fix_last(crate::diagnostics::Fix {
+                    kind: crate::diagnostics::FixKind::Conditional,
+                    title: format!(
+                        "give `{}` its own element type so the two tables stay apart",
+                        later.name
+                    ),
+                    condition: Some("they were meant to be separate tables".to_string()),
+                    edit: None,
+                    concept: "keyed collections",
+                    concept_ref: "@F7",
+                });
+                self.lexer.fix_last(crate::diagnostics::Fix {
+                    kind: crate::diagnostics::FixKind::Conditional,
+                    title: format!(
+                        "remove `{}`: it answers what `{}` does",
+                        later.name, earlier.name
+                    ),
+                    condition: Some("a second route to the same records was meant".to_string()),
+                    edit: None,
+                    concept: "keyed collections",
+                    concept_ref: "@F7",
+                });
             }
         }
     }

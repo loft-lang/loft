@@ -291,6 +291,14 @@ const CODES: &[(&str, &str)] = &[
     // The members are declared APART — `tick` sits between them — which is the shape whose
     // author was probably not thinking of the two as one record set.  Written together they
     // are the idiom and stay quiet.
+    // loft#2216 — two members of one group of the same kind over the same key: one record set
+    // that answers twice what it answers once.
+    (
+        "linked-group-same-key",
+        "struct E { k: integer }\n\
+         struct S { a: hash<E[k]>, b: hash<E[k]> }\n\
+         fn main() { s = S { }; s.a += [E { k: 1 }]; print(\"{len(s.b)}\"); }",
+    ),
     (
         "linked-group-apart",
         "struct E { k: integer }\n\

@@ -178,3 +178,114 @@ fn the_opt_out_silences_it() {
         "LOFT_NO_GROUP_APART did not silence it; stderr={err}"
     );
 }
+
+// ── `advice[linked-group-same-key]` (loft#2216) ─────────────────────────────────────────────
+//
+// Two members of one group of the SAME kind over the SAME key hold the same records the same
+// way.  Adjacent or apart makes no difference here: two tables meant to be separate are
+// usually declared side by side, which is exactly where `linked-group-apart` stays quiet.
+
+const SAME: &str = "advice[linked-group-same-key]";
+
+fn same_key_of(name: &str, fields: &str) -> String {
+    diagnostics_of(
+        &format!("same_{name}"),
+        &body(&format!("{fields}, tick: integer")),
+    )
+}
+
+#[test]
+fn same_key_fires_on_two_same_kind_same_key_members() {
+    for (name, fields, shown) in [
+        (
+            "hash",
+            "a: hash<Ga[k]>, b: hash<Ga[k]>",
+            "both `hash<Ga[k]>`",
+        ),
+        (
+            "sorted",
+            "a: sorted<Ga[k]>, b: sorted<Ga[k]>",
+            "both `sorted<Ga[k]>`",
+        ),
+        ("q", "a: hash<Ga[k]>?, b: hash<Ga[k]>", "both `hash<Ga[k]>`"),
+        (
+            "trie",
+            "a: trie<Ga[n]>, b: trie<Ga[n]>",
+            "both `trie<Ga[n]>`",
+        ),
+        (
+            "three",
+            "a: hash<Ga[k]>, v: vector<Ga>, b: hash<Ga[k]>",
+            "both `hash<Ga[k]>`",
+        ),
+    ] {
+        let err = same_key_of(name, fields);
+        assert!(err.contains(SAME), "silent on {fields}; stderr={err}");
+        assert!(
+            err.contains("`b` and `a` are") && err.contains(shown),
+            "expected the later member named with the type ({shown}) for {fields}; stderr={err}"
+        );
+    }
+}
+
+#[test]
+fn same_key_reaches_a_struct_enum_variant() {
+    let err = diagnostics_of(
+        "same_variant",
+        &format!(
+            "{ELEM}enum GaH {{ GaOnly {{ a: hash<Ga[k]>, b: hash<Ga[k]>, tick: integer }} }}\n\
+             fn main() {{ v: GaH = GaOnly {{ a: [], b: [], tick: 1 }}; print(\"{{v.tick}}\"); }}\n"
+        ),
+    );
+    assert!(
+        err.contains(SAME) && err.contains("`b` and `a` are"),
+        "stderr={err}"
+    );
+}
+
+#[test]
+fn same_key_is_quiet_on_the_real_index_shapes() {
+    // A group meant as several routes: different keys, different kinds (an ordered `sorted`
+    // beside a `hash`), a vector with its index, and collections over different types.
+    for (name, fields) in [
+        ("keys", "a: hash<Ga[k]>, b: hash<Ga[n]>"),
+        ("kinds", "a: hash<Ga[k]>, b: sorted<Ga[k]>"),
+        ("vector", "a: vector<Ga>, b: hash<Ga[k]>"),
+        ("order", "a: sorted<Ga[k]>, b: sorted<Ga[-k]>"),
+    ] {
+        let err = same_key_of(name, fields);
+        assert!(!err.contains(SAME), "fired on {fields}; stderr={err}");
+    }
+    let err = diagnostics_of(
+        "same_types",
+        &format!(
+            "struct GaOther {{ k: integer }}\n\
+             {ELEM}struct GaS {{ a: hash<Ga[k]>, b: hash<GaOther[k]>, tick: integer }}\n\
+             fn main() {{ s = GaS {{ }}; print(\"{{s.tick}}\"); }}\n"
+        ),
+    );
+    assert!(
+        !err.contains(SAME),
+        "fired on two element types; stderr={err}"
+    );
+}
+
+#[test]
+fn same_key_opt_out_silences_it() {
+    let dir = std::env::temp_dir().join("loft_group_apart_lint");
+    fa::create_dir_all(&dir).expect("probe dir");
+    let path = dir.join("same_optout.loft");
+    fa::write(&path, body("a: hash<Ga[k]>, b: hash<Ga[k]>, tick: integer")).expect("write probe");
+    let out = loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+        .arg("--interpret")
+        .arg(&path)
+        .env("LOFT_NO_CACHE", "1")
+        .env("LOFT_NO_GROUP_SAME_KEY", "1")
+        .output()
+        .expect("spawn loft");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !err.contains(SAME),
+        "LOFT_NO_GROUP_SAME_KEY did not silence it; stderr={err}"
+    );
+}

@@ -587,6 +587,13 @@ Every one of them **failed silently** — the pairing was never refused, a secon
 collection was built instead, and `len` of the empty view is a legal value.  That is the shape
 to test for: a group's failure mode is not an error, it is a zero.
 
+**A group nobody meant is legal, so the compiler can only advise, and it does so where the group
+is decidable: at the declaration.**  `advice[linked-group-apart]` names members declared with an
+unrelated field between them; `advice[linked-group-same-key]` names two members of the same kind
+over the same key, which hold the same records the same way and so are almost always two
+separate tables that happen to share an element type.  The cure for either, when the tables were
+meant apart, is a separate element type for one of them ([DIAGNOSTICS.md](../DIAGNOSTICS.md)).
+
 **The demonstration, on real data, in one line of arithmetic.**  `tools/indexer/src/scan.loft`
 declared its distinct-tag set and its distinct-link-target set over ONE element type, so they
 were one set.  `make index` over this repo reported
