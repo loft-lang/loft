@@ -4238,7 +4238,9 @@ line in `Output::output_function`'s prelude.
                  reaches, and a growth, removal or rebind of `V` is a write no index names.
                  FLAG FALLBACK for every other such statement: the copy is taken when the
                  flag is up.  A source released under `COPY_FREE_SOURCE` is a callee's
-                 fresh temporary and writes nothing the local views.  Nothing changed the
+                 fresh temporary and writes nothing the local views; a buffer that holds the
+                 null reference at every mention (a callee's `__ref_N`, which it mints into)
+                 names no store that exists, so a call handed one writes none of them.  Nothing changed the
                  place between the bind and the guard, so the values are the copy's:
                  the copy (B-Copy) owes holds, later.  Any other bind of the local lowers the flag: a view
                  bind must still see writes to its place (B-Disturb).  Required: an owner

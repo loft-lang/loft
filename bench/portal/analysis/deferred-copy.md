@@ -98,18 +98,46 @@ keeps its gain (gcc 151 → 71 ms, clang 92 → 36 ms).  That is what turns the 
 
 ## What the self-host gets
 
-Five copy points are emitted in `run` today, all flag tests:
+Five copy points were emitted in `run`, all flag tests.  Under this design there are none:
 
-| point | before | form under this design |
+| point | before | now |
 |---|---|---|
-| 1 | `n_lower(b, callee, __ref_3)` | flag fallback (`b`, `__ref_3` not proven apart from `progs`) |
-| 2 | `OpCopyRecord(__lift_2, progs[callee], …)` | index guard on `progs[callee]` |
-| 3–5 | the `Outcome` writes of three `return`s | flag fallback; `x` is dead after them, which `dead_after` should already have seen (step 1 finds why not) |
+| 1 | `n_lower(b, callee, __ref_3)` | no point: `prog` is bound again (`prog = callee_prog`) before its old value is read on every path, and so are its views |
+| 2 | `OpCopyRecord(__lift_2, progs[callee], …)` | index guard on `progs` admitted; no point, for the same reason |
+| 3–5 | the `Outcome` writes of three `return`s | no point: nothing is read after a `return` |
 
-Point 1 still comes first, so the copy is still taken once per function lowered, as it is
-today.  The gains on this shape come from the views no longer remapped and the return points
-dropped.  The index guard is what keeps a write to ANOTHER element from copying.  On the
-self-host that waits on point 1 being proven apart, which is a `StoreFacts` question for later.
+Two precisions in the rule's own apart test made the cells' first point disappear as well: a
+buffer that is null at every mention (`__ref_N`, which a callee mints into) names no store
+that exists, and a scalar read out of a record (`callee = op.a`) is not a view of it, so it
+does not keep `op` live (`lease::Frame::readers_of`).
+
+## Built (2026-10-28)
+
+Measured on the real self-host interpreter (`target-exp/wt-merge`), `-O3`, pinned to one
+core, the minimum of five runs:
+
+| kernel | gcc off → on | clang off → on |
+|---|---|---|
+| fib(25) | 149.9 → 47.2 ms (−69 %) | 90.1 → 30.9 ms (−66 %) |
+| mix(500000, 1) | 157.4 → 158.8 ms (+0.9 %) | 85.2 → 84.1 ms |
+| collatz(1, 20000) | 821.6 → 823.3 ms (+0.2 %) | 450.0 → 443.5 ms |
+
+Every answer agrees with the rule off.  The prediction held: with no view remapped on the hot
+path, `mix` and `collatz` are within noise under gcc, and fib gained more than the flag form
+did (−53 %), because no copy point is left at all.
+
+Falsified by mutation, each on the cells named: the guard never firing fails overwrite, from
+the end, field write, index moves, carried view and source live; a raw-integer compare fails
+from the end alone; no view moved fails overwrite, from the end and carried view; a root taken
+at the nested element fails field write (1145).  Dropping a point when only a view of the local
+is read cannot fail any cell, because the language never produces that shape: a local rebound
+while a view of it is read later makes the view its own copy at its bind (`(B-View)`).
+
+Found on the way, fixed beside it: the view walk (`src/scopes/view_walk.rs`) missed that
+materialisation in a LOOP when the local VIEWS its container on the way in and holds its own
+copy from the second pass on — both backends then read a released record, right by luck on a
+plain run and the poison pattern under `LOFT_POISON=1`.  Guard:
+`tests/scripts/a-view-taken-through-a-local-that-copies-on-a-later-pass-materialises.loft`.
 
 ## Not in this design
 
@@ -129,12 +157,13 @@ build it guards (`mk(i) = P { ops: [Op{i,1}, Op{i,2}, Op{i,3}], k: 10 * i }`):
 |---|---|---|---|
 | other element | `prog = copy of ps[1]; ps[2] = mk(7)` → `prog.k * 100 + ps[2].k` | 1070 | never on values; it checks that skipping the copy is right |
 | from the end | `prog = copy of ps[2]; op = prog.ops[1]; ps[-1] = mk(7)` → `prog.k*100 + op.a*10 + op.b` | 2022 | the guard compares raw integers |
-| field write | `prog = copy of ps[1]; ps[1].k = 55; ps[1].ops[0].a = 9` → `prog.k*100 + prog.ops[0].a*10 + ps[1].k` | 1065 | the root is taken at the wrong `OpGetVector` |
+| field write | `prog = copy of ps[1]; ps[1].ops[0].a = 9; ps[1].k = 55` → `prog.k*100 + prog.ops[0].a*10 + ps[1].k` | 1065 | the root is taken at the wrong `OpGetVector` (the nested write comes first, so it alone must take the copy) |
 | index moves | `i = 1; prog = copy of ps[i]; i = 2; ps[i] = mk(7); i = 1; ps[i] = mk(8)` → `prog.k` | 10 | the index is captured at the bind |
 | carried view | `prog = copy of ps[1]; op = prog.ops[0]`; loop n=2: `sum += op.a*10 + op.b + prog.k; if step == 0 { ps[1] = mk(9) }` | 42 | liveness misses the loop's back edge |
 | source live | `prog = callee; ps[1] = mk(7)` → `prog.k * 100 + callee.k` | 1070 | the guard materialises the source too, or skips `x` |
+| outlives | `prog = copy of ps[1]; o = prog.ops[2]; ps[1] = mk(7); prog = ps[0]` → `o.a*10 + o.b + prog.k` | 13 | never on the copy point: `(B-View)` makes `o` its own copy, since `prog` is rebound while `o` is read |
 
-## Steps
+## Steps (all built 2026-10-28)
 
 1. **Liveness of the derived views** (`dc_materialise`): remap a derived view only where
    `lease::Frame` says it is live after the point; drop the point where `x` and every view
