@@ -230,18 +230,12 @@ is viable, ~3× stops strand 1b (and leaves 1a, the compiler, untouched).  The a
 measured on the smallest interpreter that runs real kernels, before any more of it is built.
 
 **Built through the best compiler on this machine (owner, 2026-10-28).**
-- **The base.**  The other agent's C-backend performance branch, `origin/laptop-c-perf` at
-  `45bb2708b` (19 commits on the same `origin/main`), is joined into this branch: a merge,
-  clean, 20 files, almost all `src/c/`.  Its author: a sound base with no known-bad C output.
-  The full default-mode sweep over all 2,883 programs was clean at `891bbeed6`, and the
-  targeted sweeps cover its WIP commit; the full four-mode sweep of the tip was not finished.
-  **Consequence (CLAUDE.md branch rule 5):** this branch now merges after `laptop-c-perf`.
-  **The joined tree carries two red checks of that branch's own**, measured here on
-  2026-10-28 and left to its stream (its later commits rework the same files): clippy's
-  `similar_names` in `src/c/body.rs` (3) and `src/c/body/keyed.rs` (5), both variants; and
-  `c_emit::a_halted_c_test_releases_the_texts_its_frames_hold`, whose `down(10000)` (no tail
-  call) overflows the stack under AddressSanitizer before it reaches its assert.  The next
-  join re-measures both.
+- **The base.**  `origin/main`.  The other agent's C-backend performance branch
+  (`origin/laptop-c-perf`) was joined here at `45bb2708b` for S1 and the join DROPPED at the
+  rebase onto `main` a5703bf91 (2026-10-28): that squash (#2205) carries this branch's S0 and
+  the C-perf commits through `f8343fa6c`, and S1.1–S1.3 need nothing of the eight after it.
+  S1.4, the measurement, joins C-perf again, or waits for its next merge; until then this
+  branch merges independently of it.
 - **The build.**  The interpreter is compiled `loft --native-c --ship`: C, gcc, `-O3`.  gcc
   because its checked lane is the better one today (median 1.57× of the Rust twins, against
   clang's 1.74×).  Never `LOFT_RELEASE_PASS_PROBE`, which is a measurement probe and not a
