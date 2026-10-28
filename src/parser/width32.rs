@@ -159,8 +159,10 @@ impl Parser {
             return None;
         }
         let (op, to) = match (actual.base(), param.base()) {
-            (Type::Integer(src), Type::Integer(dst))
-                if src.max > i64::from(i32::MAX)
+            // A plain `integer` reports the 32-bit bounds while it holds 64 bits (loft#2113), so
+            // whether the store narrows is `is_narrowing_int_store`'s answer, not the bounds'.
+            (Type::Integer(_), Type::Integer(dst))
+                if Self::is_narrowing_int_store(actual.base(), param.base())
                     && dst.is_width32()
                     && i64::from(dst.min) <= i64::from(i32::MIN) + 1
                     && dst.max >= i64::from(i32::MAX) =>

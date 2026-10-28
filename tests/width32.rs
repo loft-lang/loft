@@ -104,3 +104,33 @@ fn main() {
 ";
     assert_eq!(run("opt-in", lib, main, None), "null 2147483648\n");
 }
+
+/// A 64-bit program calls into a `#width 32` library with the values it has.  An `integer`
+/// variable for a 32-bit parameter is narrowed at the call (21 doubles to 42; 5000000000 does
+/// not fit and reads null), a `float` for a `single` is rounded (3.0 / 2 = 1.5), a method's
+/// argument and an `a | 1` expression (21) go the same way, and an `i64` parameter keeps all
+/// 64 bits.  The library's `0xFF000000l` is a 64-bit literal: 4278190080.
+#[test]
+fn a_64_bit_caller_narrows_its_arguments_into_a_32_bit_library() {
+    let lib = "#width 32
+pub struct Box { pub v: integer }
+pub fn twice(x: integer) -> integer { x * 2 }
+pub fn half(x: float) -> float { x / 2.0 }
+pub fn get(self: const Box, k: integer) -> integer { self.v + k }
+pub fn keep(x: i64) -> i64 { x }
+pub fn alpha() -> i64 { 0xFF000000l }
+";
+    let main = "use wlib;
+fn big() -> integer { 21 }
+fn huge() -> integer { 5000000000 }
+fn main() {
+  a = big();
+  b = wlib::Box { v: 1 };
+  println(\"{wlib::twice(a)} {wlib::twice(huge())} {wlib::half(3.0)} {b.get(a)} {wlib::twice(a | 1)} {wlib::keep(huge())} {wlib::alpha()}\");
+}
+";
+    assert_eq!(
+        run("boundary", lib, main, None),
+        "42 null 1.5 22 42 5000000000 4278190080\n"
+    );
+}

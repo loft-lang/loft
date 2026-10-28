@@ -630,7 +630,9 @@ machine — one manifest line, consumers unchanged; **the four rules for writing
 be placed** (a `pub fn` must not BE a native; answer a value, not a cursor; closures do not
 cross; a returned VIEW cannot be placed) ·
 [LOGGER.md](doc/claude/LOGGER.md) · [WASM.md](doc/claude/WASM.md) · [HTML_EXPORT.md](doc/claude/HTML_EXPORT.md) ·
-[BROWSER_INTEROP.md](doc/claude/BROWSER_INTEROP.md) · [GALLERY_CI.md](doc/claude/GALLERY_CI.md) (the two browser
+[BROWSER_INTEROP.md](doc/claude/BROWSER_INTEROP.md) · [TANMATSU.md](doc/claude/TANMATSU.md) the
+handheld loft builds for as 32-bit C · [HARDWARE_BACKENDS.md](doc/claude/HARDWARE_BACKENDS.md) adding a
+device: one loft API, platform sections only in a library's C · [GALLERY_CI.md](doc/claude/GALLERY_CI.md) (the two browser
 artefacts that go stale independently, and the gate that catches it) · [WINDOWS.md](doc/claude/WINDOWS.md) / [WINDOWS_SESSION.md](doc/claude/WINDOWS_SESSION.md).
 
 **Networked runs:** `LOFT_NET_PROFILE=1|trace` reports socket operations by **margin**

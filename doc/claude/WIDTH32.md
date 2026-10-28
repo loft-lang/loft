@@ -28,7 +28,7 @@ The standard library (`default/*.loft`) is never under the regime.
 | `float` | `single` |
 | `123` | an `i32` literal; a literal that does not fit is an error that names `123l` |
 | `2.5` | a `single` literal |
-| `i64`, `123l` | the 64-bit integer |
+| `i64`, `123l`, `0xFF000000l` | the 64-bit integer (`l` on a decimal, `0x`, `0b` or `0o` literal) |
 | `f64`, `2.5d` | the 64-bit float |
 | `2.5f` | a `single`, as everywhere |
 
@@ -48,6 +48,12 @@ another name.
   stdlib's 64-bit body, so its answer is narrowed too.  A stdlib function whose answer needs
   64 bits declares `i64` and is not narrowed: `now()`, `ticks()`, `mtime()`, a file's
   `position()`, `JsonValue.as_long()`.
+- The other way round, a 64-bit file calling a function whose body is under the regime: an
+  `integer` argument for a parameter the regime made 32-bit is narrowed at the call, and a
+  `float` argument for a `single` one is rounded.  A value that does not fit reads null.  So a
+  library goes under the regime without its 64-bit callers changing a line.  A parameter the
+  library declares `i64` or `f64` takes the value as it is: declare a colour, a hash or a
+  timestamp parameter that way.
 - The two arms of an `if` that are both 32-bit join to a 32-bit value.
 - A plain `integer` that is not a call (an element's `#index`, a field of a 64-bit file's
   struct) stored into an `i32` is narrowed there, null when it does not fit.  A target

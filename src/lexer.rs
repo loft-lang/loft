@@ -2536,7 +2536,9 @@ impl Lexer {
                 self.err(Level::Error, "Problem parsing hex number");
                 0
             };
-            self.ret_number(res, pos, false)
+            if !self.wide_suffix(res, pos) {
+                self.ret_number(res, pos, false);
+            }
         } else if let Some(short) = val.strip_prefix("0b") {
             let res = if let Some(r) = bin_parse(short) {
                 r
@@ -2544,7 +2546,9 @@ impl Lexer {
                 self.err(Level::Error, "Problem parsing binary number");
                 0
             };
-            self.ret_number(res, pos, false)
+            if !self.wide_suffix(res, pos) {
+                self.ret_number(res, pos, false);
+            }
         } else if let Some(short) = val.strip_prefix("0o") {
             let res = if let Some(r) = oct_parse(short) {
                 r
@@ -2552,7 +2556,9 @@ impl Lexer {
                 self.err(Level::Error, "Problem parsing octal number");
                 0
             };
-            self.ret_number(res, pos, false)
+            if !self.wide_suffix(res, pos) {
+                self.ret_number(res, pos, false);
+            }
         } else if let Ok(r) = val.parse::<u64>() {
             // An integer literal takes no suffix (@C54.D): its width comes from the binding
             // or parameter type, or from `as`.  A letter glued to one (`34u8`) is named here,
@@ -2562,23 +2568,8 @@ impl Lexer {
             // @PLN204 — `l` is the one suffix an integer literal takes: 64-bit in a file under
             // the 32-bit regime, where a plain literal is an `i32`.  No format spec is `l`
             // (`d b o x X e j`), so it is read inside a `{…}` hole too.
-            if self.wide_suffixes
-                && let Some('l') = self.iter.peek()
-                && !self
-                    .iter
-                    .rest()
-                    .nth(1)
-                    .is_some_and(|n| n.is_ascii_alphanumeric() || n == '_')
-            {
-                self.next_char();
-                if r > i64::MAX as u64 {
-                    self.err(
-                        Level::Error,
-                        "Integer literal out of range (exceeds i64::MAX)",
-                    );
-                    return self.put(LexItem::Wide(0), pos);
-                }
-                return self.put(LexItem::Wide(r), pos);
+            if self.wide_suffix(r, pos) {
+                return;
             }
             if !self.in_format_expr
                 && let Some(&c) = self.iter.peek()
@@ -2611,6 +2602,34 @@ impl Lexer {
             self.err(Level::Error, "Problem parsing number");
             self.ret_number(0, pos, false)
         }
+    }
+
+    /// @PLN204 — `l` after an integer literal (decimal, `0x`, `0b`, `0o`) makes it 64-bit in a
+    /// file under the 32-bit regime, where a plain literal is an `i32`: `4294967295l`,
+    /// `0xFF000000l`.  Not when the `l` begins a longer word.  Answers whether it was there,
+    /// the literal then put as `LexItem::Wide`.
+    fn wide_suffix(&mut self, r: u64, pos: Position) -> bool {
+        if !self.wide_suffixes
+            || self.iter.peek() != Some(&'l')
+            || self
+                .iter
+                .rest()
+                .nth(1)
+                .is_some_and(|n| n.is_ascii_alphanumeric() || n == '_')
+        {
+            return false;
+        }
+        self.next_char();
+        if r > i64::MAX as u64 {
+            self.err(
+                Level::Error,
+                "Integer literal out of range (exceeds i64::MAX)",
+            );
+            self.put(LexItem::Wide(0), pos);
+        } else {
+            self.put(LexItem::Wide(r), pos);
+        }
+        true
     }
 
     fn ret_number(&mut self, r: u64, p: Position, start_zero: bool) {
