@@ -182,6 +182,16 @@ pub(crate) fn body_blocks_hoist(
 pub(crate) fn vector_candidates(body: &Block, data: &Data, def_nr: u32) -> Vec<(PathKey, Value)> {
     let vars = data.def(def_nr).variables();
     let rebound = rebound_vars(body, data, vars);
+    let mut found = indexed_vectors(body, data, def_nr);
+    found.retain(|(p, _)| !rebound.contains(&p.0));
+    found
+}
+
+/// The vector paths `body` indexes through an element address, in the order they appear,
+/// rebound roots included (`vector_candidates` filters those; `@FR-R-Header`'s rebind clause
+/// asks about them itself).
+pub(crate) fn indexed_vectors(body: &Block, data: &Data, def_nr: u32) -> Vec<(PathKey, Value)> {
+    let vars = data.def(def_nr).variables();
     let mut found: Vec<(PathKey, Value)> = Vec::new();
     for op in &body.operators {
         op.any_node(&mut |n| {
@@ -202,6 +212,5 @@ pub(crate) fn vector_candidates(body: &Block, data: &Data, def_nr: u32) -> Vec<(
             false
         });
     }
-    found.retain(|(p, _)| !rebound.contains(&p.0));
     found
 }

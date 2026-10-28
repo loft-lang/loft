@@ -1040,10 +1040,35 @@ impl<'a> FnWriter<'a> {
             None,
             facts.as_ref(),
         );
+        // `@FR-R-Header`'s rebind clause: a bare vector the loop rebinds by navigating, held
+        // apart and derived again after each rebind (`refresh_rebound_header`).
+        let mut v = v;
+        let rebound = crate::opt::hoist::rebound_apart_headers(
+            b,
+            self.cx.data,
+            self.d,
+            facts.as_ref(),
+            &mut cache,
+            None,
+        );
+        // Held alone — as the apart clause holds its own — the stores they live in grow
+        // nowhere in the loop, so each carries its base; beside a verdict that holds other
+        // paths the base is that verdict's to judge (`kept_bases`).
+        let alone = v.vectors.is_empty()
+            && v.pushes.is_empty()
+            && v.mint_pushes.is_empty()
+            && v.scalars.is_empty();
+        for (path, expr) in rebound {
+            if !v.vectors.iter().any(|(p, _)| *p == path) {
+                v.vectors.push((path, expr));
+            }
+        }
+        if alone && !v.vectors.is_empty() {
+            v.growth_free = true;
+        }
         self.hoist_cache = cache;
         // `@FR-R-Apart`: a path rooted at a value held apart names no record, so it takes no
         // header, base, push header or held scalar; the loop's other paths keep theirs.
-        let mut v = v;
         if self.apr_any() {
             v.vectors.retain(|(p, _)| !self.apr_holds(p.0));
             v.pushes.retain(|(p, _)| !self.apr_holds(p.0));
@@ -2230,6 +2255,11 @@ impl<'a> FnWriter<'a> {
             return Ok(());
         }
         let r = self.stmt_kind(v, ind);
+        if r.is_ok()
+            && let Value::Set(var, _) = v.unspan()
+        {
+            self.refresh_rebound_header(*var, ind);
+        }
         // `LOFT_C_WHERE=1`: a refusal names the innermost statement it came from, on stderr.
         if let Err(why) = &r
             && !self.where_told
@@ -2248,6 +2278,23 @@ impl<'a> FnWriter<'a> {
             );
         }
         r
+    }
+
+    /// `@FR-R-Header`'s rebind clause: after `var` is rebound, every header an enclosing loop
+    /// holds for it as a bare variable is derived again — element base included — so it
+    /// describes the vector `var` names now (`hoist::rebound_apart_headers`).
+    fn refresh_rebound_header(&mut self, var: u16, ind: usize) {
+        let held: Vec<String> = self
+            .headers
+            .iter()
+            .flat_map(|f| f.iter())
+            .filter(|(p, _, _)| p.0 == var && p.1.is_empty())
+            .map(|(_, h, _)| h.clone())
+            .collect();
+        for h in held {
+            let v = self.var(var);
+            self.line(ind, &format!("{h} = loft_vh_of({v});"));
+        }
     }
 
     /// A loop: its held vectors and its push window before it, the window closed after —

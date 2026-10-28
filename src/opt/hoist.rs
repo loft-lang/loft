@@ -67,7 +67,7 @@ pub use crate::opt::loop_records::{
 pub(crate) use crate::opt::loop_records::{group_covers_type, is_scalar, is_var, refillable_plain};
 
 pub use crate::opt::header::hoistable_vectors;
-pub(crate) use crate::opt::header::{body_blocks_hoist, vector_candidates};
+pub(crate) use crate::opt::header::{body_blocks_hoist, indexed_vectors, vector_candidates};
 
 /// The operators that only COMPARE a reference — its record number, or the whole `DbRef` —
 /// and read no store: a view tested against null (`v != null`, or the handle test
@@ -715,6 +715,101 @@ fn apart_hoist(
         vectors,
         ..LoopHoist::default()
     }
+}
+
+/// `@FR-R-Header`'s rebind clause — asked by the C alone, which re-derives the header after
+/// every rebind of its root (`FnWriter::refresh_rebound_header`): of the bare vector variables
+/// `body` REBINDS, the ones the apart clause would keep were they not rebound.  The store
+/// reasoning covers every bind already — a variable's owner is read off its type's
+/// dependencies, which name what any of its binds may view — so after a rebind the header is
+/// derived again from a vector in the same proven-apart store.  Only a rebind that NAVIGATES
+/// (`v = x.f`, `v = w[i].f`: no mint, no call) is admitted; a variable the loop pushes to or
+/// writes in place is no candidate (the apart clause keeps read-only vectors).
+pub(crate) fn rebound_apart_headers(
+    body: &Block,
+    data: &Data,
+    def_nr: u32,
+    facts: Option<&StoreFacts>,
+    cache: &mut HashMap<u32, bool>,
+    owned: Option<&HoistOwned>,
+) -> Vec<(PathKey, Value)> {
+    let Some(facts) = facts.filter(|_| crate::keys::apart_headers_enabled()) else {
+        return Vec::new();
+    };
+    if crate::env_once!(std::env::var("LOFT_NO_REBOUND_HEADER").is_ok_and(|v| v != "0")) {
+        return Vec::new();
+    }
+    let vars = data.def(def_nr).variables();
+    let rebound = super::body_writes::rebound_vars(body, data, vars);
+    let navigates = |v: u16| {
+        let mut ok = true;
+        for op in &body.operators {
+            op.any_node(&mut |n| {
+                match n {
+                    Value::Set(x, rhs) if *x == v => {
+                        ok &= !rhs.any_node(&mut |m| match m {
+                            Value::Call(d, _) => !matches!(
+                                data.def(*d).name(),
+                                "OpGetField" | "OpGetVector" | "OpGetVectorNullable"
+                            ),
+                            Value::Block(_) | Value::If(..) | Value::Loop(_) => true,
+                            _ => false,
+                        });
+                    }
+                    Value::TuplePut(x, _, _) if *x == v => ok = false,
+                    _ => {}
+                }
+                !ok
+            });
+        }
+        ok
+    };
+    let trace = std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok();
+    let candidates: Vec<(PathKey, Value)> = indexed_vectors(body, data, def_nr)
+        .into_iter()
+        .filter(|(p, _)| {
+            let keep = p.1.is_empty() && rebound.contains(&p.0) && navigates(p.0);
+            if trace && p.1.is_empty() && rebound.contains(&p.0) {
+                eprintln!(
+                    "hoist: {} loop {} rebound {}: {}",
+                    data.def(def_nr).name(),
+                    body.scope,
+                    vars.name(p.0),
+                    if keep {
+                        "a candidate"
+                    } else {
+                        "rebound by more than navigation"
+                    }
+                );
+            }
+            keep
+        })
+        .collect();
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+    let kept = super::apart::apart_headers(
+        body,
+        data,
+        facts,
+        &|t| work_buffer_arg(data, def_nr, t),
+        candidates,
+        super::apart::Callees {
+            cache,
+            owned,
+            code: data.def(def_nr).code(),
+        },
+    );
+    if trace {
+        eprintln!(
+            "hoist: {} loop {} rebind clause keeps {:?}",
+            data.def(def_nr).name(),
+            body.scope,
+            kept.iter().map(|(p, _)| vars.name(p.0)).collect::<Vec<_>>()
+        );
+    }
+    crate::rewrite_census::fired("R-Header/rebind", kept.len());
+    kept
 }
 
 /// The vector headers and the record scalars `body` may derive once up front.

@@ -604,7 +604,28 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  R-Alias's versioned copy tested at run time.  A field projection
                  read in place is a read of its base, and an argument handed to a
                  loft callee that writes no store and answers no reference is a
-                 read.  Two arguments are never proven apart.
+                 read.  Two arguments are never proven apart.  A SCALAR variable —
+                 a number, a boolean, a character, a plain enum's byte — names no
+                 store, whatever its type's deps record about where it was read
+                 from (`match op.code` reads a byte out of the vector), so its
+                 mentions are never judged.  A dep chain that forks ends where
+                 every branch ends, when they all end at one variable (`ops` bound
+                 to `first.ops` and to `callee.ops`, both views of `progs`).
+  (R-Header), the apart clause's REBIND half (C): a BARE vector variable the
+                 loop REBINDS still holds its header under the apart clause when
+                 every rebind NAVIGATES (`v = x.f`, `v = w[i].f`: no mint, no call
+                 and no block in the bound value) and the loop only reads it; the
+                 store reasoning above already covers every bind, because the owner
+                 is read off the variable's deps, which name what any of its binds
+                 may view.  The header — record, length, element base — is derived
+                 again right after each rebind (`FnWriter::refresh_rebound_header`),
+                 so it always describes the vector the variable names now; a verify
+                 build checks it against a fresh one at every use (`LOFT_PROVED`).
+                 An interpreter switching between functions' code is the shape
+                 (bench 20: -17 % cycles under Clang).  Switch
+                 `LOFT_NO_REBOUND_HEADER=1`; guard
+                 `a-vector-the-loop-rebinds-is-read-through-the-header-of-what-it-names-now.loft`
+                 (fails all three cells with the re-derivation left out).
 ```
 
 **The apart clause, in words.**  The gate answers for a loop, and one statement it cannot
