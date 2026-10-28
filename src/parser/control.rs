@@ -411,6 +411,21 @@ fn is_block_divergent(ops: &[Value]) -> bool {
         .any(|v| matches!(v, Value::Return(_) | Value::Break(_) | Value::Continue(_)))
 }
 
+/// Is `v` a call of a builtin that HALTS — `exit` or `panic`, the defaults `??` already reads
+/// as never returning (`operators.rs`, `(C-Never)`)?  One list for both readers, so a guard
+/// and a coalesce cannot disagree about which calls end the program.
+pub(crate) fn is_halt_call(data: &crate::data::Data, v: &Value) -> bool {
+    matches!(v.unspan(), Value::Call(d, _) if matches!(data.def(*d).name(), "n_exit" | "n_panic"))
+}
+
+/// `@FR-N-Guard` — can the body of a guard clause NOT fall through: it ends in `return`,
+/// `break` or `continue`, or in a halt ([`is_halt_call`]).  Only the guard's narrowing asks
+/// this; a block's TAIL conversion keeps asking [`is_block_divergent`], where a halt still
+/// has a tail of its own.
+fn guard_cannot_fall_through(data: &crate::data::Data, ops: &[Value]) -> bool {
+    is_block_divergent(ops) || ops.iter().any(|v| is_halt_call(data, v))
+}
+
 /// Collected match arm data for enum/struct-enum match expressions.
 struct EnumArm {
     /// Discriminants for this arm — Vec allows or-patterns (multiple variants per arm).
@@ -1243,7 +1258,7 @@ impl Parser {
             if let Value::If(test, true_code, false_code) = n.unspan()
                 && matches!(false_code.unspan(), Value::Null)
                 && let Value::Block(bl) = true_code.unspan()
-                && is_block_divergent(&bl.operators)
+                && guard_cannot_fall_through(&self.data, &bl.operators)
                 && let Some((v, false)) = self.narrowing_from_condition(test)
                 && !self.narrowed_non_null.contains(&v)
             {
@@ -1259,7 +1274,7 @@ impl Parser {
             if let Value::If(test, true_code, false_code) = n.unspan()
                 && matches!(false_code.unspan(), Value::Null)
                 && let Value::Block(bl) = true_code.unspan()
-                && is_block_divergent(&bl.operators)
+                && guard_cannot_fall_through(&self.data, &bl.operators)
             {
                 let caps = std::collections::HashMap::new();
                 for pair in
