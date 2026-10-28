@@ -524,10 +524,23 @@ fn expr(l: Lowering, b: ir::Bundle, n: ir::Node) {
   }
 }
 
+// `n` without the source spans around it (`Value::unspan`): a node whose SHAPE decides what
+// it lowers to is read through them, as the generators read it.
+fn unspan(n: ir::Node) -> ir::Node {
+  at = n;
+  while at is NdSpan {
+    match at {
+      NdSpan { inner } => { at = inner[0] ?? panic("a span holds its node"); }
+      _ => {}
+    }
+  }
+  at
+}
+
 // An integer the IR writes as a literal operand — a field's byte offset, a type number — or
 // refused when it is not one.
 fn literal(l: Lowering, n: ir::Node) -> integer {
-  match n {
+  match unspan(n) {
     NdInt { n: v } => v,
     NdLong { n: v } => v,
     _ => {
@@ -540,7 +553,7 @@ fn literal(l: Lowering, n: ir::Node) -> integer {
 // The slot of the record variable an operator writes (`OpDatabase(v, tp)`), or refused when
 // the operand is not one.
 fn ref_var_slot(l: Lowering, n: ir::Node) -> integer {
-  match n {
+  match unspan(n) {
     NdVar { n: var } => {
       if var_kind(l, var) == KRef {
         return slot_of(l, var);
@@ -577,7 +590,7 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     mintable(l, b, tp);
     emit(l, Database, KRef, slot, tp);
   } else if name == "OpFreeRef" {
-    target = args[0] ?? panic("OpFreeRef names its reference");
+    target = unspan(args[0] ?? panic("OpFreeRef names its reference"));
     freed_var = false;
     match target {
       NdVar { n: var } => {
@@ -682,7 +695,8 @@ fn adopts_fresh(d: ir::Definition) -> boolean {
 // image decides (1b-s3.md § The first slice — the build): a null, a copy of another record
 // variable, a store a call hands over, and a plain value.  A rebind, a parameter and a call
 // whose result may be a view of an argument need the ownership summaries, and are refused.
-fn bind(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
+fn bind(l: Lowering, b: ir::Bundle, var: integer, node: ir::Node) {
+  x = unspan(node);
   first = !(l.bound[var] ?? false);
   l.bound[var] = true;
   slot = slot_of(l, var);
@@ -852,13 +866,45 @@ fn call(l: Lowering, b: ir::Bundle, def_nr: integer, args: vector<ir::Node>) {
   }
 }
 
-// A block as an expression: every operator but the last is a statement, the last its value.
+// Does `n` release something — a free, a drop cascade, or the guarded release `if <holds>
+// <release> else null` — as the C generator's `is_free` reads it?
+fn is_free(b: ir::Bundle, n: ir::Node) -> boolean {
+  match unspan(n) {
+    NdCall { def_nr, args: _ } => {
+      name = (b.data.definitions[def_nr] ?? panic("a called definition")).name;
+      name.starts_with("OpFree")
+        || name == "OpDropFnRef"
+        || (name.starts_with("t_") && (name.ends_with("_OpDrop") || name.ends_with("_OpDropAll")))
+        || name == "n_set_store_lock"
+    }
+    NdIf { cond: _, t, f } => unspan(f[0] ?? panic("an else side")) is NdNull && is_free(b, t[0] ?? panic("a then side")),
+    _ => false,
+  }
+}
+
+// A block as an expression.  Its value is the last operator that is neither a line, a `Set`
+// nor a free (`assign_seq`, `src/c/body.rs`): the operators before it are statements, and the
+// frees after it run once the value is taken, as they run under it on the bytecode's stack.
 fn block_value(l: Lowering, b: ir::Bundle, blk: ir::Block) {
-  last = len(blk.operators) - 1;
-  for i in 0..last {
+  at = len(blk.operators) - 1;
+  while at >= 0 {
+    o = unspan(blk.operators[at] ?? panic("in range"));
+    if !(o is NdLine) && !(o is NdSet) && !is_free(b, o) {
+      break;
+    }
+    at -= 1;
+  }
+  if at < 0 {
+    refuse(l, "a value block with no value");
+    return;
+  }
+  for i in 0..at {
     statement(l, b, blk.operators[i]?);
   }
-  value(l, b, blk.operators[last]?, kind_of_types(blk.result));
+  value(l, b, blk.operators[at]?, kind_of_types(blk.result));
+  for i in at + 1..len(blk.operators) {
+    statement(l, b, blk.operators[i]?);
+  }
 }
 
 // A block as a statement: every operator a statement.

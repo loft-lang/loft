@@ -151,3 +151,18 @@ fn test_a_record_returned_by_a_function_has_its_text_set_and_read() {
   assert(ran_clean("n_named", 123) == 6, "named(123)");
   assert(ran_clean("n_mixed", 10) == 15, "mixed(10)");
 }
+
+// A value block whose frees follow its value (a struct match binding a text): the value is the
+// last operator that is not a free, as the C generator takes it.
+fn test_a_match_block_frees_after_its_value() {
+  assert(ran_clean("n_matched", 1) == 3, "matched(1)");
+  assert(ran_clean("n_matched", 5) == -1, "matched(5)");
+}
+
+// A record bound from a call whose result may be a view of an argument is refused by name — the
+// bind reaches the lowering inside a source span, and read past it — never run as an alias.
+fn test_a_bind_from_a_borrowing_call_is_refused_not_aliased() {
+  b = kernel("structs");
+  o = run::run(b, lower::find(b, "n_kept"), [4]);
+  assert(o.refused == "a record bound from a call whose result may be a view: n_keep", "refused: {o.refused} (value {o.value})");
+}

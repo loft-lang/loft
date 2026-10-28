@@ -57,6 +57,31 @@ fn mixed(n: integer) -> integer {
   p.x + p.y + len(p.name)
 }
 
+// A struct match that binds a text field: the match block's value is the `if`, and the bound
+// text's free comes after it.  matched(1) = len("abc") = 3, matched(5) = -1.
+fn pick(p: Point) -> integer {
+  match p { Point { x: (1 | 2), name } => len(name), _ => -1 }
+}
+
+fn matched(n: integer) -> integer {
+  p = Point { x: n, y: 0, name: "abc" };
+  pick(p)
+}
+
+// A call whose result borrows its argument: the caller copies (`(O-Move)`), so the write through
+// `c` leaves `src` alone.  kept(4) = 4.  The first slice refuses this bind by name — deciding it
+// needs the callee's ownership summary — and must never run it as an alias (which answers 99).
+fn keep(p: Point) -> Point {
+  p
+}
+
+fn kept(n: integer) -> integer {
+  src = Point { x: n, y: 0, name: "k" };
+  c = keep(src);
+  c.x = 99;
+  src.x
+}
+
 fn main() {
-  println("{built(3)} {shifted(4)} {copied(4)} {named(5)} {texts_apart(1)} {mixed(10)}");
+  println("{built(3)} {shifted(4)} {copied(4)} {named(5)} {texts_apart(1)} {mixed(10)} {matched(1)} {matched(5)} {kept(4)}");
 }
