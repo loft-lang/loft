@@ -6651,6 +6651,17 @@ impl Data {
         !self.wide_instances.contains(&d) && self.width32_source(self.def(d).source)
     }
 
+    /// @PLN204 — the sources under the 32-bit regime and the instances minted from a 64-bit
+    /// template: parse-time state the IR bundle does not carry, so the program cache's
+    /// manifest writes it and a warm load replays it (`startup_cache`).
+    #[must_use]
+    pub fn width32_state(&self) -> (Vec<u16>, Vec<u32>) {
+        (
+            self.width32_sources.iter().copied().collect(),
+            self.wide_instances.iter().copied().collect(),
+        )
+    }
+
     /// @PLN204 — instance `d` was minted from a template in a 64-bit source.
     pub fn mark_wide_instance(&mut self, d: u32) {
         self.wide_instances.insert(d);

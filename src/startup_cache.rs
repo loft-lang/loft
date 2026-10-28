@@ -181,6 +181,11 @@ struct ManifestState {
     wasm_bridge_routes: Vec<(String, String, String)>,
     wasm_bridge_packages: Vec<(String, String)>,
     wasm_bridge_host_js: Vec<String>,
+    /// @PLN204 — `w32src <source>` / `wideinst <def>`: the 32-bit regime's sources and the
+    /// instances of 64-bit templates (`Data::width32_state`).  A warm load without them read
+    /// every file as 64-bit, and the C of a `#width 32` program lost its `int32_t`.
+    width32_sources: Vec<u16>,
+    wide_instances: Vec<u32>,
 }
 
 #[cfg(feature = "mmap")]
@@ -358,6 +363,16 @@ fn manifest_state(manifest: &std::path::Path, stdlib_key: &str) -> Option<Manife
         wasm_bridge_host_js.push(rest.to_string());
         next = lines.next();
     }
+    let mut width32_sources = Vec::new();
+    while let Some(rest) = next.and_then(|l| l.strip_prefix("w32src ")) {
+        width32_sources.push(rest.parse().ok()?);
+        next = lines.next();
+    }
+    let mut wide_instances = Vec::new();
+    while let Some(rest) = next.and_then(|l| l.strip_prefix("wideinst ")) {
+        wide_instances.push(rest.parse().ok()?);
+        next = lines.next();
+    }
     // Remaining lines: `<hexhash> <path>` for every parsed source.
     let mut any = false;
     let mut cur = next;
@@ -384,6 +399,8 @@ fn manifest_state(manifest: &std::path::Path, stdlib_key: &str) -> Option<Manife
         wasm_bridge_routes,
         wasm_bridge_packages,
         wasm_bridge_host_js,
+        width32_sources,
+        wide_instances,
     })
 }
 
@@ -596,6 +613,12 @@ pub fn warm_load_program(
     }
     p.data.wasm_bridge_packages = state.wasm_bridge_packages;
     p.data.wasm_bridge_host_js_files = state.wasm_bridge_host_js;
+    for src in state.width32_sources {
+        p.data.set_width32(src, true);
+    }
+    for d in state.wide_instances {
+        p.data.mark_wide_instance(d);
+    }
     if crate::keys::env_set("LOFT_TRACE_WARM") {
         eprintln!("[warm] hit: {}", bundle.display());
     }
@@ -742,6 +765,13 @@ pub fn save_program(
     }
     for host_js in &p.data.wasm_bridge_host_js_files {
         let _ = writeln!(lines, "wbhostjs {host_js}");
+    }
+    let (width32_sources, wide_instances) = p.data.width32_state();
+    for src in width32_sources {
+        let _ = writeln!(lines, "w32src {src}");
+    }
+    for d in wide_instances {
+        let _ = writeln!(lines, "wideinst {d}");
     }
     for path in &paths {
         let Some(h) = crate::cache::file_hash(path) else {
@@ -1034,10 +1064,19 @@ mod ncrate_manifest_tests {
             ("wbroute n_x foo bridge_x\n", false),
             ("wbpkg foo /pkgs/foo\n", false),
             ("wbhostjs /pkgs/foo/host.js\n", false),
+            ("w32src 3\n", true),
+            ("wideinst 1200\n", true),
         ] {
-            let after_actx = ["alib ", "wbroute ", "wbpkg ", "wbhostjs "]
-                .iter()
-                .any(|p| header.starts_with(p));
+            let after_actx = [
+                "alib ",
+                "wbroute ",
+                "wbpkg ",
+                "wbhostjs ",
+                "w32src ",
+                "wideinst ",
+            ]
+            .iter()
+            .any(|p| header.starts_with(p));
             let (before, after) = if after_actx {
                 ("", header)
             } else {
