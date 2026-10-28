@@ -166,6 +166,9 @@ pub(crate) struct FnWriter<'a> {
     /// `@FR-R-RecPtr` — the record views whose address the enclosing blocks hold: the view,
     /// the address local and its store's lock flag, innermost last.
     rec_ptrs: Vec<(u16, String, String)>,
+    /// A formatted value's work text written straight into the text it is appended to
+    /// (`format_into_dest`): the work variable and the destination's C name.
+    work_alias: Option<(u16, String)>,
     /// The record push headers each enclosing loop binds (`loft_ph`, `@FR-R-PushRec`): the
     /// path, the header and the element size, innermost last.
     push_heads: Vec<Vec<(crate::opt::writes::PathKey, String, u32)>>,
@@ -404,6 +407,7 @@ impl<'a> FnWriter<'a> {
             plain_chains: Vec::new(),
             chain_guards: 0,
             rec_ptrs: Vec::new(),
+            work_alias: None,
             scalars: Vec::new(),
             hoist_cache: std::collections::HashMap::new(),
             placed: crate::opt::hoist::placed_locals(def.code(), cx.data),
@@ -1764,6 +1768,91 @@ impl<'a> FnWriter<'a> {
             format!("loft_pa_set({pa}, {pl}, {off}, &{t}, sizeof({ty}))"),
             K::Void,
         )))
+    }
+
+    /// `@FR-R-FormatAppend` at emission: `dest += { w = ""; <writes into w>; w }`, where every
+    /// statement after the clear is a format-family write into `w` (an `OpFormat…` or
+    /// `OpAppend…` with `w` as its target) that names neither `w` elsewhere nor the
+    /// destination, is the same writes made to `dest` directly — what appending the work text
+    /// afterwards leaves.  The parser applies the rule to `x += "…"`; this takes the shapes it
+    /// leaves, `big = big + "{ch}"` among them.  `None` for any other value.
+    /// `LOFT_NO_FORMAT_INTO=1` keeps the work text.
+    fn format_into_dest(
+        &mut self,
+        dest: &Value,
+        val: &Value,
+        ind: usize,
+    ) -> Result<Option<E>, String> {
+        if crate::env_once!(std::env::var("LOFT_NO_FORMAT_INTO").is_ok_and(|v| v != "0")) {
+            return Ok(None);
+        }
+        let Value::Block(b) = val.unspan() else {
+            return Ok(None);
+        };
+        let ops: Vec<&Value> = b
+            .operators
+            .iter()
+            .filter(|o| !matches!(o.unspan(), Value::Line(_)))
+            .collect();
+        let [clear, writes @ .., last] = &ops[..] else {
+            return Ok(None);
+        };
+        let Value::Var(w) = last.unspan() else {
+            return Ok(None);
+        };
+        let w = *w;
+        if !matches!(clear.unspan(), Value::Set(x, t) if *x == w && matches!(t.unspan(), Value::Text(s) if s.is_empty()))
+            || writes.is_empty()
+            || self.shapes.get(w as usize) != Some(&CType::Text)
+        {
+            return Ok(None);
+        }
+        let data = self.cx.data;
+        let mut dest_vars: Vec<u16> = Vec::new();
+        dest.walk(&mut |n| {
+            if let Value::Var(x) = n.unspan() {
+                dest_vars.push(*x);
+            }
+        });
+        if dest_vars.contains(&w) {
+            return Ok(None);
+        }
+        let ok = writes.iter().all(|op| {
+            let Value::Call(d, args) = op.unspan() else {
+                return false;
+            };
+            let name = if (*d as usize) < data.definitions.len() {
+                data.def(*d).name()
+            } else {
+                return false;
+            };
+            if !(name.starts_with("OpFormat") || name.starts_with("OpAppend"))
+                || !matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == w)
+            {
+                return false;
+            }
+            let mut clean = true;
+            for a in &args[1..] {
+                a.walk(&mut |n| {
+                    if let Value::Var(x) = n.unspan()
+                        && (*x == w || dest_vars.contains(x))
+                    {
+                        clean = false;
+                    }
+                });
+            }
+            clean
+        });
+        if !ok {
+            return Ok(None);
+        }
+        let target = self.text_dest(dest)?;
+        self.work_alias = Some((w, target));
+        let r = writes.iter().try_for_each(|op| self.stmt(op, ind));
+        self.work_alias = None;
+        r?;
+        crate::rewrite_census::fired("R-FormatAppend/c", 1);
+        Ok(Some(E::new("((void) 0)", K::Void)))
     }
 
     /// `@FR-R-HandOver`'s rotate clause (native's `Output::output_rotate_site`): when the vector
@@ -3558,6 +3647,11 @@ impl<'a> FnWriter<'a> {
     /// The name of the text local `v` an operator writes into.
     fn text_dest(&self, v: &Value) -> Result<String, String> {
         match v.unspan() {
+            Value::Var(var) if self.work_alias.as_ref().is_some_and(|(w, _)| w == var) => Ok(self
+                .work_alias
+                .as_ref()
+                .map(|(_, d)| d.clone())
+                .unwrap_or_default()),
             Value::Var(var) if self.text_held(*var) => Ok(self.var(*var)),
             Value::TupleGet(var, i)
                 if matches!(self.shapes[*var as usize], CType::Tuple(id)
@@ -4472,6 +4566,9 @@ impl<'a> FnWriter<'a> {
                 let [dest, val] = args else {
                     return Err("OpAppendText without two operands".into());
                 };
+                if let Some(e) = self.format_into_dest(dest, val, ind)? {
+                    return Ok(e);
+                }
                 let dest = self.text_dest(dest)?;
                 // A formatted value — `{ __work = ""; …; __work }` — is appended from its work
                 // buffer itself, as native's `append_text(&mut big, &__work)` borrows it: the

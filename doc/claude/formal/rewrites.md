@@ -2710,7 +2710,10 @@ reads the destination, which is the one decline the rule needs.
 **BUILT** (`Parser::format_append_in_place`, `LOFT_NO_FORMAT_APPEND`; the
 guard `tests/scripts/a-format-appended-to-a-text-is-written-into-it.loft` and the pin
 `tests/format_append.rs`).
-The stdlib's own `char_slice` takes it too.
+The stdlib's own `char_slice` takes it too.  The C also applies it where the parser left the
+work text — `x = x + "{e}"` is lowered as an append of the format without the rewrite — in
+`FnWriter::format_into_dest` (`LOFT_NO_FORMAT_INTO`): crawler `char_roundtrip` −28 %
+instructions.
 
 ### An emptied text keeps its buffer
 
