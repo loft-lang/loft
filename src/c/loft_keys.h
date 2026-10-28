@@ -162,7 +162,7 @@ typedef struct { uint64_t v0, v1, v2, v3, tail; uint64_t length; uint32_t ntail;
 
 #define LOFT_ROTL(x, b) (((x) << (b)) | ((x) >> (64 - (b))))
 
-static void loft_sip_round(loft_sip *h) {
+LOFT_HOT_INLINE void loft_sip_round(loft_sip *h) {
     h->v0 += h->v1;
     h->v2 += h->v3;
     h->v1 = LOFT_ROTL(h->v1, 13);
@@ -179,7 +179,7 @@ static void loft_sip_round(loft_sip *h) {
     h->v2 = LOFT_ROTL(h->v2, 32);
 }
 
-static void loft_sip_init(loft_sip *h) {
+LOFT_HOT_INLINE void loft_sip_init(loft_sip *h) {
     h->v0 = UINT64_C(0x736f6d6570736575);
     h->v1 = UINT64_C(0x646f72616e646f6d);
     h->v2 = UINT64_C(0x6c7967656e657261);
@@ -196,7 +196,7 @@ static uint64_t loft_sip_le(const uint8_t *buf, uint32_t len) {
     return out;
 }
 
-static void loft_sip_word(loft_sip *h, uint64_t mi) {
+LOFT_HOT_INLINE void loft_sip_word(loft_sip *h, uint64_t mi) {
     h->v3 ^= mi;
     loft_sip_round(h);
     h->v0 ^= mi;
@@ -238,7 +238,7 @@ static void loft_sip_str(loft_sip *h, loft_str s) {
     loft_sip_write(h, &end, 1);
 }
 
-static uint64_t loft_sip_finish(const loft_sip *in) {
+LOFT_HOT_INLINE uint64_t loft_sip_finish(const loft_sip *in) {
     loft_sip h = *in;
     uint64_t b = ((h.length & 0xff) << 56) | h.tail;
     loft_sip_word(&h, b);
@@ -265,7 +265,7 @@ static void loft_sip_kv(loft_sip *h, loft_kv k) {
 /* keys::key_hash of the one integer key `[key]` under `seed`: the seed's word and the key's, then
  * the finish for sixteen bytes — what the general digest computes for `loft_kv_int(key)`,
  * unrolled (`@FR-R-TypedKeyed`'s digest). */
-static uint64_t loft_digest_i64(uint64_t seed, int64_t key) {
+LOFT_HOT_INLINE uint64_t loft_digest_i64(uint64_t seed, int64_t key) {
     loft_sip h;
     uint8_t b[8];
     loft_sip_init(&h);
@@ -281,7 +281,7 @@ static uint64_t loft_digest_i64(uint64_t seed, int64_t key) {
 
 /* keys::ints_hash: the digest of `n` integer key parts — the seed's word and one per part, no
  * tail, the finish for their bytes (`@FR-R-TypedKeyed`'s compound clause). */
-static uint64_t loft_digest_ints(uint64_t seed, const int64_t *ks, int n) {
+LOFT_HOT_INLINE uint64_t loft_digest_ints(uint64_t seed, const int64_t *ks, int n) {
     loft_sip h;
     uint8_t b[8];
     loft_sip_init(&h);
@@ -298,7 +298,7 @@ static uint64_t loft_digest_ints(uint64_t seed, const int64_t *ks, int n) {
 }
 
 /* A little-endian word of eight bytes, as `loft_sip_le` builds one. */
-static uint64_t loft_sip_le8(const uint8_t *b) {
+LOFT_HOT_INLINE uint64_t loft_sip_le8(const uint8_t *b) {
     return (uint64_t) b[0] | (uint64_t) b[1] << 8 | (uint64_t) b[2] << 16 | (uint64_t) b[3] << 24 |
            (uint64_t) b[4] << 32 | (uint64_t) b[5] << 40 | (uint64_t) b[6] << 48 | (uint64_t) b[7] << 56;
 }
