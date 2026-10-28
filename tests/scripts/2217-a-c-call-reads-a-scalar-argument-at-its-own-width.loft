@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2217 — a `#c` binding receives each scalar argument as its loft value, widened to the C
+// slot the way `--native`'s `(int64_t) a` widens it.  A boolean and a plain enum fill one byte
+// of their stack slot and a character four; the interpreter read all eight, so C saw the value
+// plus whatever the slot held before.  `labs` echoes what C received.
+//
+// What each cell is for:
+//   * `b` — a COMPUTED boolean (`v == null`), whose slot above the byte is not zero: false,
+//     false, true.
+//   * `h` — a plain enum chosen at run time: loft numbers its values from 1.
+//   * `c` — a character from a text: one, two and three UTF-8 bytes.
+//   * `big` — an integer, which was always read right, as the control.
+// Expected, by hand: 0 0 1, 1 2 3, 65 233 8364, 123456789012.
+
+enum Hue { Red, Green, Blue }
+
+fn c_labs_bool(b: boolean) -> integer;
+#c "labs" "long(long)"
+fn c_labs_hue(h: Hue) -> integer;
+#c "labs" "long(long)"
+fn c_labs_char(c: character) -> integer;
+#c "labs" "long(long)"
+fn c_labs(x: integer) -> integer;
+#c "labs" "long(long)"
+
+fn b(v: integer?) -> integer {
+  c_labs_bool(v == null)
+}
+
+fn h(v: integer) -> integer {
+  hue = if v == 0 { Hue.Red } else if v == 1 { Hue.Green } else { Hue.Blue };
+  c_labs_hue(hue)
+}
+
+fn c(v: text) -> integer {
+  c_labs_char(v[0])
+}
+
+fn main() {
+  got = "{b(-7)} {b(7)} {b(null)} | {h(0)} {h(1)} {h(2)} | {c("A")} {c("é")} {c("€")} | {c_labs(-123456789012)}";
+  assert(got == "0 0 1 | 1 2 3 | 65 233 8364 | 123456789012", "got {got}");
+}
