@@ -189,6 +189,9 @@ hex_terrain	terrain_fbm	float-kernel	library:hex_terrain	per octave four integer
 19_stdlib_par	par_reduce	parallel	stdlib	per-element integer work gathered, then summed
 19_stdlib_par	par_text	parallel	stdlib	per-element text formatting, texts gathered
 19_stdlib_par	par_small	parallel	stdlib	many small par regions: the fixed cost of one region
+20_interpreter	interp_fib	call	consumer:selfhost	the @PLN91 interpreter's run loop running fib(20): 21,891 interpreted calls, each pushing and popping three frame vectors
+20_interpreter	interp_mix	int-loop	consumer:selfhost	the same loop running mix(50000): ~1.15M interpreted ops of a loop-carried bit mix
+20_interpreter	interp_collatz	call	consumer:selfhost	the same loop running longest(1, 300): calls, `%`, `/` and a `break` per Collatz step
 hex_body	rig_world_frame3	float-kernel	library:hex_body	TWELVE parallel float vectors allocated per call to carry a Rodrigues + 3x3 matmul chain
 hex_body	bone_shape_has	call	library:hex_body	the whole chain re-walked on EVERY point query
 hex_body	rig_read	text-scan	library:hex_body	every word helper re-splits the line: a 12-field bone line is split ~15 times
