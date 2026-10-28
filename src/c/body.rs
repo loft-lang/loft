@@ -140,6 +140,9 @@ pub(crate) struct FnWriter<'a> {
     /// Which parameters are `&` links: a pointer to the caller's variable, read and written
     /// through (`(*v)`), as the bytecode reads and writes through the stack reference.
     links: Vec<bool>,
+    /// Which value-record parameters arrive as `const loft_tupN *` (`Cx::vr_ptr_params`,
+    /// `@FR-R-ValueRecord`'s pointer clause): read through (`(*v)`), never written.
+    vr_ptr: Vec<bool>,
     /// Which `&` locals link a STORE place (`c = &v[1]`, `f = &o.x`): every bind names an
     /// element or a field, never a variable.  Held as the place's `loft_ref`; a read or a
     /// write goes through the place's own operator, as the bytecode's `OpGetInt`/`OpSetInt`
@@ -374,6 +377,20 @@ fn borrowed_texts(cx: &Cx, d: u32) -> Vec<bool> {
 }
 
 /// Is `x` a text the view form of a borrowed bind writes with no temporary (`borrowed_texts`)?
+/// Per variable of `d`: whether it is a value-record parameter passed by pointer
+/// (`Cx::vr_ptr_params`).
+fn vr_ptr_flags(cx: &Cx, d: u32) -> Vec<bool> {
+    let vars = cx.data.def(d).variables();
+    let args = vars.arguments();
+    let mut p = vec![false; vars.count() as usize];
+    for &i in cx.vr_ptr_params(d).iter() {
+        if let Some(&a) = args.get(i) {
+            p[a as usize] = true;
+        }
+    }
+    p
+}
+
 fn view_bind(cx: &Cx, vars: &Function, borrowed: &[bool], x: &Value) -> bool {
     match x.unspan() {
         Value::Block(bl) => bl
@@ -416,6 +433,7 @@ impl<'a> FnWriter<'a> {
             links: (0..def.variables().count())
                 .map(|v| matches!(def.variables().tp(v).base(), crate::data::Type::RefVar(_)))
                 .collect(),
+            vr_ptr: vr_ptr_flags(cx, d),
             // A store instance's text parameter (`n_app@st1`, `parser/store_text.rs`) is a
             // store link: the IR reads and writes it as the field it names.
             store_links: {
@@ -649,7 +667,7 @@ impl<'a> FnWriter<'a> {
 
     fn var(&self, v: u16) -> String {
         let name = var_name(self.vars.name(v), v);
-        if self.links[v as usize] {
+        if self.links[v as usize] || self.vr_ptr[v as usize] {
             format!("(*{name})")
         } else {
             name
@@ -4168,6 +4186,11 @@ impl<'a> FnWriter<'a> {
         // evaluated in order.
         let mut xs = vec![String::new(); args.len()];
         let (values, places) = self.link_args(d, args, &shapes, &mut xs, ind)?;
+        let ptr = cx.vr_ptr_params(d);
+        let tuple_params: Vec<(usize, u16, bool)> = tuple_params
+            .into_iter()
+            .map(|(i, key)| (i, key, ptr.contains(&i)))
+            .collect();
         let values = self.vr_args(args, values, dropped, &tuple_params, &mut xs, ind)?;
         // A callee that runs no store write reads a text argument as a text VALUE op
         // does (`@FR-F-ParamText`) — unless a store place goes to a `&` parameter, which its twin writes.

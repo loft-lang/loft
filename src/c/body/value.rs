@@ -892,19 +892,51 @@ impl FnWriter<'_> {
         args: &[Value],
         values: Vec<usize>,
         dropped: Option<usize>,
-        tuple_params: &[(usize, u16)],
+        tuple_params: &[(usize, u16, bool)],
         xs: &mut [String],
         ind: usize,
     ) -> Result<Vec<usize>, String> {
-        for (i, key) in tuple_params {
-            if let Some(a) = args.get(*i) {
-                xs[*i] = self.vr_arg(a, *key, ind)?;
+        for &(i, key, ptr) in tuple_params {
+            if let Some(a) = args.get(i) {
+                let x = self.vr_arg(a, key, ind)?;
+                xs[i] = if ptr {
+                    self.vr_arg_address(args, i, &x, key, ind)?
+                } else {
+                    x
+                };
             }
         }
         Ok(values
             .into_iter()
-            .filter(|i| dropped != Some(*i) && !tuple_params.iter().any(|(t, _)| t == i))
+            .filter(|i| dropped != Some(*i) && !tuple_params.iter().any(|(t, _, _)| t == i))
             .collect())
+    }
+
+    /// The address a pointer-passed value record goes to its callee as (`Cx::vr_ptr_params`):
+    /// the caller's own variable where the argument is one no other argument of the call names
+    /// (the callee only reads it, and nothing the call runs can reach a C local but through an
+    /// argument), else a temporary holding the struct `x`.
+    fn vr_arg_address(
+        &mut self,
+        args: &[Value],
+        i: usize,
+        x: &str,
+        key: u16,
+        ind: usize,
+    ) -> Result<String, String> {
+        if let Value::Var(v) = args[i].unspan()
+            && x == self.var(*v)
+            && !args
+                .iter()
+                .enumerate()
+                .any(|(j, o)| j != i && o.any_node(&mut |n| matches!(n, Value::Var(w) if w == v)))
+        {
+            return Ok(format!("&{x}"));
+        }
+        let c = self.vr_shape(key)?;
+        let t = self.temp(c);
+        self.line(ind, &format!("{t} = {x};"));
+        Ok(format!("&{t}"))
     }
 
     /// The buffer of a FORWARD call: the site `forward_sites` names — by its node, or, where

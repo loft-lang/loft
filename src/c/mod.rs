@@ -226,6 +226,8 @@ pub(crate) struct Cx<'a> {
     /// `LOFT_NO_VALUE_RECORD=1` and for a program whose plan holds a form the C does not
     /// write (`Cx::value_records`).
     vr: std::cell::OnceCell<std::rc::Rc<crate::opt::value_records::layout::ValueRecords>>,
+    /// `vr_ptr_params`'s answers, per function.
+    vr_ptr: std::cell::RefCell<std::collections::HashMap<u32, std::rc::Rc<Vec<usize>>>>,
     apr: std::cell::OnceCell<std::rc::Rc<crate::lower::apart_records::RecPlan>>,
     ap2: std::cell::OnceCell<std::rc::Rc<crate::lower::apart_value::ApartPlan>>,
 }
@@ -307,6 +309,7 @@ impl<'a> Cx<'a> {
             switches: crate::lower::switches::Switches::from_env(),
             hoist_memo: std::cell::RefCell::new(HoistMemo::default()),
             vr: std::cell::OnceCell::new(),
+            vr_ptr: std::cell::RefCell::new(std::collections::HashMap::new()),
             apr: std::cell::OnceCell::new(),
             ap2: std::cell::OnceCell::new(),
         }
@@ -1180,6 +1183,50 @@ impl Cx<'_> {
     /// Does a call to `d` run no store write?  Then a text argument may view the store it was
     /// read from (`@FR-F-ParamText`, `FnWriter::text_reads`): nothing the call runs can move
     /// or rewrite its bytes.  The verdict the hoist holds a vector's base across a call on.
+    /// `@FR-R-ValueRecord`'s pointer clause: the parameter positions of `d` at which a value
+    /// record arrives as `const loft_tupN *` instead of by value — a struct of three or more
+    /// members the body only READS (`vr_param_read_only`), so the callee reads the caller's
+    /// struct where it is and nothing is copied onto the stack at the call.  Every variant of
+    /// `d` and every call to it ask this one place, so they agree.  `LOFT_NO_VR_PTR=1` passes
+    /// every value record by value again.
+    pub(crate) fn vr_ptr_params(&self, d: u32) -> std::rc::Rc<Vec<usize>> {
+        if let Some(known) = self.vr_ptr.borrow().get(&d) {
+            return known.clone();
+        }
+        let mut out = Vec::new();
+        let off = crate::env_once!(std::env::var("LOFT_NO_VR_PTR").is_ok_and(|v| v != "0"));
+        let vr = self.value_records();
+        // An `__apv` twin's call site writes its own arguments (`av_twin_call`): such a
+        // function keeps every value record by value, in every variant.
+        let apv = self.ap2_plan().twins.contains_key(&d);
+        if !off
+            && !apv
+            && let Some(params) = vr.params.get(&d)
+        {
+            let def = self.data.def(d);
+            let vars = def.variables();
+            let args = vars.arguments();
+            for (&i, &key) in params {
+                let Some(CType::Tuple(id)) = self.vr_ctype(key) else {
+                    continue;
+                };
+                let Some(&a) = args.get(i) else {
+                    continue;
+                };
+                if self.tuple_shapes(id).len() >= 3
+                    && !matches!(vars.tp(a).base(), Type::RefVar(_))
+                    && vr_param_read_only(self.data, def.code(), a)
+                {
+                    out.push(i);
+                }
+            }
+        }
+        out.sort_unstable();
+        let out = std::rc::Rc::new(out);
+        self.vr_ptr.borrow_mut().insert(d, out.clone());
+        out
+    }
+
     pub(crate) fn call_keeps_stores(&self, d: u32) -> bool {
         let memo = &mut *self.hoist_memo.borrow_mut();
         let mut active = std::collections::HashSet::new();
@@ -2126,6 +2173,57 @@ fn variable_shapes(
     Ok(shapes)
 }
 
+/// Whether `body` only READS value-record parameter `a`: every mention of it is a field read,
+/// a sub-record read, a presence test, a copy's source, a release (a tuple holds no store, so
+/// it is nothing), a whole-value bind to another variable or a by-value argument of a user
+/// function.  An allow-list: a mention of any other kind — a rebind, a field write, a copy
+/// into it, a `&` argument, an operator not listed — answers false, and the parameter stays
+/// by value (`Cx::vr_ptr_params`, `@FR-R-ValueRecord`).
+fn vr_param_read_only(data: &crate::data::Data, body: &Value, a: u16) -> bool {
+    let is_a = |v: &Value| matches!(v.unspan(), Value::Var(x) if *x == a);
+    let mentions = |v: &Value| v.any_node(&mut |n| matches!(n, Value::Var(x) if *x == a));
+    let mut ok = true;
+    body.any_node(&mut |n| {
+        match n {
+            Value::Set(v, _) | Value::TuplePut(v, _, _) if *v == a => ok = false,
+            Value::Call(op, args) if (*op as usize) < data.definitions.len() => {
+                let def = data.def(*op);
+                let name = def.name();
+                for (i, x) in args.iter().enumerate() {
+                    let writes_into =
+                        (name.starts_with("OpSet") && i == 0) || (name == "OpCopyRecord" && i == 1);
+                    if writes_into && mentions(x) {
+                        ok = false;
+                    } else if is_a(x) {
+                        let read = crate::opt::loop_records::SCALAR_GETTERS.contains(&name)
+                            || matches!(
+                                name,
+                                "OpGetField"
+                                    | "OpConvBoolFromRef"
+                                    | "OpRefIsNull"
+                                    | "OpFreeRef"
+                                    | "OpFreeRefIfDistinct"
+                                    | "OpClear"
+                            )
+                            || (name == "OpCopyRecord" && i == 0)
+                            || (!name.starts_with("Op")
+                                && def
+                                    .attributes()
+                                    .get(i)
+                                    .is_some_and(|p| !matches!(p.typedef.base(), Type::RefVar(_))));
+                        if !read {
+                            ok = false;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        !ok
+    });
+    ok
+}
+
 /// The signature and the body of function `d`.
 #[expect(clippy::too_many_lines)]
 fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
@@ -2208,6 +2306,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
                 .1,
         )
     };
+    let vr_ptr = cx.vr_ptr_params(d);
     let params: Vec<String> = args
         .iter()
         .enumerate()
@@ -2225,6 +2324,8 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
                 format!("loft_ref {name}")
             } else if matches!(vars.tp(a).base(), Type::RefVar(_)) {
                 format!("{} *{name}", held(c))
+            } else if vr_ptr.contains(&i) {
+                format!("const {} *{name}", passed(c))
             } else {
                 format!("{} {name}", passed(c))
             }

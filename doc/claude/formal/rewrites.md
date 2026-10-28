@@ -4171,6 +4171,19 @@ line in `Output::output_function`'s prelude.
                  `1993-a-nullable-record-parameter-crosses-as-its-fields.loft`,
                  `1994-a-null-stored-into-a-dense-record-slot-reads-back-null.loft` and
                  `1997-a-copy-of-a-dense-slot-that-holds-null-is-null.loft`.
+                 The C's POINTER clause: a tuple parameter of three or more members
+                 that the body only READS — every mention a field or sub-record read,
+                 a presence test, a copy's source, a release (nothing, for a tuple), a
+                 bind to another variable or a by-value argument — arrives as
+                 `const loft_tupN *` and is read through it, the caller handing the
+                 address of its own struct where the argument is a variable no other
+                 argument of the call names, else of a temporary.  A struct over two
+                 words otherwise crosses on the stack, written field by field and read
+                 back wide, at every layer of a call chain.  A function with an `__apv`
+                 twin keeps its tuples by value.  `Cx::vr_ptr_params` decides it once
+                 for the signature, every call and every variant; switch
+                 `LOFT_NO_VR_PTR=1`; guard
+                 `a-read-only-record-parameter-reads-the-callers-value-at-the-call.loft`.
 
   (R-Cold)       a runtime helper on the per-element fast path — an element read or
                  write through a holder, a length, a bounds test, a fault note, a
