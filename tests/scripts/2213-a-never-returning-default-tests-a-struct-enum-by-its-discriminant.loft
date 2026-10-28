@@ -16,7 +16,7 @@
 //   * `boolean` — `false` is present (its own null test, unchanged).
 // Expected, by hand: `NdBlock {items:[]}`, `NdNull {}`, `absent`, 2 (the two present of
 // three), 2 (the loop skips the absent one), 4, and `false`.
-// @falsified-at: 6f31a726b — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-at: 6f31a726b — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
 //   CHANNEL: exit — on the control native refuses the program at rustc (E0605); the
 //   interpreter's first wrong cell is `ret_present` (`absent`), read by hand.
 //   WITNESS: interpret answers `absent` for `ret_present`; native `non-primitive cast:
