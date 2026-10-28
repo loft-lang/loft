@@ -318,6 +318,37 @@ integer it returns.  Both must print the same number, or the times do not compar
 - **S1.4 — the measurement**: best of five wall times per kernel, both sides, numbers in
   this section, and the gate read against them.
 
+### S1 closed; S2.1 — the coverage census, and a `main` that returns nothing — DESIGNED 2026-10-28
+
+**S1 is closed**: its gate holds (the kernels answer as `--interpret` does) and its speed is
+measured and reported (S1.4; the owner: not a gate).  S1.1b T3 and T4 stay queued as the
+language fixes S1 found.  **S2** carries text, floats and format strings; its gate is the
+suite chapters `operational`, `calls` and `formatting` (123 cells).
+
+**S2.1 makes "more tests" a number.**  Every later step is chosen from its output, by yield.
+- **`selfhost/cover/run_program.loft`**: loads an image and runs its `n_main` with no
+  arguments; a refusal goes to stderr as `refused: <reason>` with exit 3, an interpreter
+  fault (a `panic`) keeps loft's own exit.  Compiled once (`--native-c --ship --out`) and run
+  per program.
+- **`selfhost/cover/census.py`**: over `tests/scripts/*.loft` and the language suite's cells
+  (`LOFT_SUITE_DIR`), skipping what is not a plain run — `@EXPECT_ERROR`, `@EXPECT_FAIL`,
+  `@ARGS`, a file with no `main` — for each: `--emit-image`, then `loft --interpret` for the
+  expected stdout and exit, then the runner.  Each program is `pass` (stdout and exit equal),
+  `refused` (with its reason), `wrong` (ran, answered differently) or `crash`.  It prints the
+  counts and the refusal reasons ranked by how many programs each blocks, and keeps the rows
+  in a TSV under `target/` (local, not committed; the plan records the counts per step).
+  `--chapter` narrows to suite chapters, `--jobs` runs in parallel.
+- **A function that returns nothing** (a `void` result): its body is lowered as statements,
+  then `PushNull` and `Ret`, so every function leaves exactly one value; a call to one in
+  statement position is followed by `Pop`, as any dropped value is.
+
+**Code points:** `selfhost/src/lower.loft` (the result type decides value or statements),
+`selfhost/cover/` (new).
+
+**Cases:** the census runs over the whole corpus and classifies every program; a program the
+interpreter carries end to end (a void `main` over integers, no output) passes; one printing
+is refused naming `n_println` or the format op — the first rows of the S2 worklist.
+
 ### SU1 — `store_load` maps the image instead of copying it — DESIGNED 2026-10-28
 
 **Why now (owner, 2026-10-28):** the store's file format IS its memory format, so a store
