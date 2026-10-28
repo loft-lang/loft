@@ -35,7 +35,7 @@ static void loft_group_finish(const loft_tdesc *T, uint16_t elem, int held, int 
 /* A new entry of an index (Stores::record_new): a record of its own in the collection's store,
  * naming at byte 4 the record that holds the collection, filed by `finish` once its fields are
  * written. */
-static loft_ref loft_entry_new(loft_ref c, uint32_t size) {
+LOFT_HOT_INLINE loft_ref loft_entry_new(loft_ref c, uint32_t size) {
     if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
     loft_ref e;
     e.store_nr = c.store_nr;

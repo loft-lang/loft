@@ -102,7 +102,7 @@ impl FnWriter<'_> {
                 ))
             }
             ("OpAppendTextBytes", [v, t, lo, hi]) => {
-                let es = self.args(&[v.clone(), t.clone(), lo.clone(), hi.clone()], ind)?;
+                let es = self.args(&[v, t, lo, hi], ind)?;
                 let [v, t, lo, hi] = <[E; 4]>::try_from(es)
                     .map_err(|_| "a byte append without four operands".to_string())?;
                 Ok(E::new(
@@ -175,7 +175,7 @@ impl FnWriter<'_> {
             }
             ("OpReserveVector", [v, count, size]) => {
                 let size = Self::literal(size, "element size")?;
-                let (v, count) = self.two(name, &[(*v).clone(), (*count).clone()], ind)?;
+                let (v, count) = self.two(name, &[v, count], ind)?;
                 Ok(E::new(
                     format!(
                         "loft_vec_reserve({}, {}, {size})",
@@ -189,7 +189,7 @@ impl FnWriter<'_> {
                 let size = Self::literal(size, "element size")?;
                 let tp = u16::try_from(Self::literal(tp, "element type")?)
                     .map_err(|_| "an element type out of range")?;
-                let (v, index) = self.two(name, &[(*v).clone(), (*index).clone()], ind)?;
+                let (v, index) = self.two(name, &[v, index], ind)?;
                 let (image, n) = self.cx.default_image(tp);
                 let t = self.temp(CType::Ref);
                 // A linked element is a record of its own, its slot the record's id.
@@ -218,7 +218,7 @@ impl FnWriter<'_> {
                     return Err("a kept range of elements that own records".into());
                 }
                 let size = self.cx.stores.size(tp);
-                let es = self.args(&[(*v).clone(), (*lo).clone(), (*hi).clone()], ind)?;
+                let es = self.args(&[v, lo, hi], ind)?;
                 let [v, lo, hi] = <[E; 3]>::try_from(es)
                     .map_err(|_| "a kept range without three operands".to_string())?;
                 Ok(E::new(

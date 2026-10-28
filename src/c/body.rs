@@ -16,6 +16,7 @@ mod misc;
 mod par;
 mod value;
 
+use std::borrow::Borrow;
 use super::{CType, Cx, c_name, held, is_operator, type_word};
 use crate::data::{Block, Value};
 use crate::variables::Function;
@@ -89,6 +90,11 @@ impl E {
 }
 
 /// The expression kind that reads a held value of shape `c`.
+/// `LOFT_NO_FIELD_VIEW=1`: every text field operand is copied (`text_reads`).
+fn no_field_view() -> bool {
+    crate::env_once!(std::env::var("LOFT_NO_FIELD_VIEW").is_ok_and(|v| v != "0"))
+}
+
 fn kind_of(c: CType) -> K {
     match c {
         CType::Int => K::Int,
@@ -1479,7 +1485,7 @@ impl<'a> FnWriter<'a> {
                 };
                 let size = Self::literal(&size, "element size")?;
                 let fld = Self::literal(fld, "field")?;
-                let (index, value) = self.two(name, &[idx, val.clone()], ind)?;
+                let (index, value) = self.two(name, &[&idx, val], ind)?;
                 let (f, value) = if name == "OpSetInt" {
                     ("loft_vh_set_int", as_int(value)?)
                 } else {
@@ -3675,7 +3681,7 @@ impl<'a> FnWriter<'a> {
     ///
     /// A variable is read in place unless a later operand may write it (@FR-E-Left: an
     /// operand is read before a later operand writes) — then it is read into a temporary too.
-    fn args(&mut self, args: &[Value], ind: usize) -> Result<Vec<E>, String> {
+    fn args<V: Borrow<Value>>(&mut self, args: &[V], ind: usize) -> Result<Vec<E>, String> {
         (0..args.len()).map(|i| self.arg(args, i, ind)).collect()
     }
 
@@ -3685,32 +3691,49 @@ impl<'a> FnWriter<'a> {
     /// native's `&str` operand is, not a copy: nothing between the read and the op can grow,
     /// free or rewrite that store.
     /// `LOFT_NO_FIELD_VIEW=1` copies every such field again.
-    fn text_reads(&mut self, args: &[Value], ind: usize) -> Result<Vec<E>, String> {
-        static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        let off = *OFF.get_or_init(|| std::env::var("LOFT_NO_FIELD_VIEW").is_ok_and(|v| v != "0"));
-        let data = self.cx.data;
+    fn text_reads<V: Borrow<Value>>(&mut self, args: &[V], ind: usize) -> Result<Vec<E>, String> {
+        let off = no_field_view();
         (0..args.len())
             .map(|i| {
-                let field = !off
-                    && matches!(args[i].unspan(), Value::Call(d, xs)
-                    if xs.len() == 2 && data.def(*d).name() == "OpGetText");
-                if !field || args[i + 1..].iter().any(|b| self.may_write(b)) {
-                    return self.arg(args, i, ind);
-                }
-                self.field_view = true;
-                let e = self.expr(&args[i], ind);
-                self.field_view = false;
-                e
+                let later_writes = args[i + 1..].iter().any(|b| self.may_write(b.borrow()));
+                self.text_read(args[i].borrow(), later_writes, off, ind)
             })
             .collect()
     }
 
+    /// One operand of `text_reads`: `later_writes` says whether an operand after it may write.
+    fn text_read(
+        &mut self,
+        a: &Value,
+        later_writes: bool,
+        off: bool,
+        ind: usize,
+    ) -> Result<E, String> {
+        let data = self.cx.data;
+        let field = !off
+            && matches!(a.unspan(), Value::Call(d, xs)
+            if xs.len() == 2 && data.def(*d).name() == "OpGetText");
+        if !field || later_writes {
+            return self.arg_with(a, later_writes, ind);
+        }
+        self.field_view = true;
+        let e = self.expr(a, ind);
+        self.field_view = false;
+        e
+    }
+
     /// Operand `i` of `args`, evaluated in order: a value a later operand may change is held
     /// in a temporary.
-    fn arg(&mut self, args: &[Value], i: usize, ind: usize) -> Result<E, String> {
-        let operand = &args[i];
+    fn arg<V: Borrow<Value>>(&mut self, args: &[V], i: usize, ind: usize) -> Result<E, String> {
+        let later_writes = args[i + 1..].iter().any(|later| self.may_write(later.borrow()));
+        self.arg_with(args[i].borrow(), later_writes, ind)
+    }
+
+    /// Operand `operand`, evaluated as `arg` does; `later_writes` says whether an operand after
+    /// it may write.  The operand is the IR node itself, never a copy: a rewrite keyed on a
+    /// node's address (`@FR-R-GuardedChain`'s admitted operators) must meet the node it admitted.
+    fn arg_with(&mut self, operand: &Value, later_writes: bool, ind: usize) -> Result<E, String> {
         let value = self.expr(operand, ind)?;
-        let later_writes = args[i + 1..].iter().any(|later| self.may_write(later));
         if later_writes && matches!(operand.unspan(), Value::Var(_)) && value.kind == K::View {
             let temp = self.temp(CType::Text);
             self.line(ind, &format!("loft_text_set(&{temp}, {});", value.code));
@@ -3975,13 +3998,14 @@ impl<'a> FnWriter<'a> {
                 _ => rest.push(i),
             }
         }
-        let vals: Vec<Value> = rest.iter().map(|&i| args[i].clone()).collect();
-        let es = if reads {
-            self.text_reads(&vals, ind)?
-        } else {
-            self.args(&vals, ind)?
-        };
-        for (e, &i) in es.into_iter().zip(&rest) {
+        let off = no_field_view();
+        for (k, &i) in rest.iter().enumerate() {
+            let later_writes = rest[k + 1..].iter().any(|&j| self.may_write(&args[j]));
+            let e = if reads {
+                self.text_read(&args[i], later_writes, off, ind)?
+            } else {
+                self.arg_with(&args[i], later_writes, ind)?
+            };
             xs[i] = as_shape(e, shapes[i])?;
         }
         Ok(())
@@ -4170,20 +4194,20 @@ impl<'a> FnWriter<'a> {
         Ok(format!("&{}", self.var(v)))
     }
 
-    fn one(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
+    fn one<V: Borrow<Value>>(&mut self, name: &str, args: &[V], ind: usize) -> Result<E, String> {
         let es = self.args(args, ind)?;
         let [a] = <[E; 1]>::try_from(es).map_err(|_| format!("{name} without one operand"))?;
         Ok(a)
     }
 
     /// `two` for a text VALUE op: its text field operands read in place (`text_reads`).
-    fn text_two(&mut self, name: &str, args: &[Value], ind: usize) -> Result<(E, E), String> {
+    fn text_two<V: Borrow<Value>>(&mut self, name: &str, args: &[V], ind: usize) -> Result<(E, E), String> {
         let es = self.text_reads(args, ind)?;
         let [a, b] = <[E; 2]>::try_from(es).map_err(|_| format!("{name} without two operands"))?;
         Ok((a, b))
     }
 
-    fn two(&mut self, name: &str, args: &[Value], ind: usize) -> Result<(E, E), String> {
+    fn two<V: Borrow<Value>>(&mut self, name: &str, args: &[V], ind: usize) -> Result<(E, E), String> {
         let es = self.args(args, ind)?;
         let [a, b] = <[E; 2]>::try_from(es).map_err(|_| format!("{name} without two operands"))?;
         Ok((a, b))
@@ -4604,7 +4628,7 @@ impl<'a> FnWriter<'a> {
                 let (Value::Int(dir), Value::Int(token)) = (dir.unspan(), token.unspan()) else {
                     return Err("OpFormatText with a computed format".into());
                 };
-                let (val, width) = self.text_two(name, &[(*val).clone(), (*width).clone()], ind)?;
+                let (val, width) = self.text_two(name, &[val, width], ind)?;
                 Ok(E::new(
                     format!(
                         "loft_format_text(&{dest}, {}, {}, {dir}, {token})",
@@ -4680,7 +4704,7 @@ impl<'a> FnWriter<'a> {
         else {
             return Err(format!("{name} with a computed format"));
         };
-        let (val, width) = self.two(name, &[(*val).clone(), (*width).clone()], ind)?;
+        let (val, width) = self.two(name, &[val, width], ind)?;
         Ok(E::new(
             format!(
                 "loft_format_long(&{dest}, {}, {radix}, {}, {token}, {}, {}, {dir})",
@@ -5025,7 +5049,7 @@ impl<'a> FnWriter<'a> {
             }
             ("OpMathFunc2Float" | "OpMathFunc2Single", [id, a, b]) => {
                 let id = Self::literal(id, "math function")?;
-                let (a, b) = self.two(name, &[(*a).clone(), (*b).clone()], ind)?;
+                let (a, b) = self.two(name, &[a, b], ind)?;
                 Ok(if name.ends_with("Single") {
                     E::new(
                         format!("loft_math2s({id}, {}, {})", as_single(a)?, as_single(b)?),
@@ -5046,10 +5070,10 @@ impl<'a> FnWriter<'a> {
                 };
                 let es = self.args(
                     &[
-                        (*val).clone(),
-                        (*width).clone(),
-                        (*prec).clone(),
-                        (*dir).clone(),
+                        val,
+                        width,
+                        prec,
+                        dir,
                     ],
                     ind,
                 )?;
@@ -5183,7 +5207,7 @@ impl<'a> FnWriter<'a> {
             }
             ("OpSetInt" | "OpSetInt4", [r, fld, val]) => {
                 let fld = Self::literal(fld, "field")?;
-                let (r, val) = self.two(name, &[(*r).clone(), (*val).clone()], ind)?;
+                let (r, val) = self.two(name, &[r, val], ind)?;
                 let f = if name == "OpSetInt" {
                     "loft_set_int"
                 } else {
@@ -5202,7 +5226,7 @@ impl<'a> FnWriter<'a> {
                 let free = u8::from(raw & crate::keys::COPY_FREE_SOURCE != 0)
                     | (u8::from(self.cx.swap_safe(tp)) << 1)
                     | (u8::from(raw & crate::keys::COPY_FRESH_DEST != 0) << 2);
-                let (src, dst) = self.two(name, &[(*src).clone(), (*dst).clone()], ind)?;
+                let (src, dst) = self.two(name, &[src, dst], ind)?;
                 Ok(E::new(
                     format!(
                         "loft_copy_record(loft_types, {tp}, {}, {}, {free})",
@@ -5246,7 +5270,7 @@ impl<'a> FnWriter<'a> {
             .and_then(|t| self.cx.root_type(&t, self.cx.data.def(self.d).source()))
             .and_then(|kt| self.cx.stores.root_vector_element_of(kt))
             .is_some_and(|elem| elem != tp);
-        let (holder, home) = self.two(name, &[holder.clone(), home.clone()], ind)?;
+        let (holder, home) = self.two(name, &[holder, home], ind)?;
         Ok(E::new(
             format!(
                 "loft_evacuate(loft_types, {tp}, {}, {fld}, {}, {size}, {image}, {n}, {})",
@@ -5271,7 +5295,7 @@ impl<'a> FnWriter<'a> {
         let tp = Self::literal(tp, "type")?;
         let tp = u16::try_from(tp).map_err(|_| "a type number out of range".to_string())?;
         let tp = self.copyable(tp)?;
-        let (src, dst) = self.two(name, &[src.clone(), dst.clone()], ind)?;
+        let (src, dst) = self.two(name, &[src, dst], ind)?;
         let f = if name == "OpMoveRecord" {
             "loft_move_record_out"
         } else {
@@ -5297,7 +5321,7 @@ impl<'a> FnWriter<'a> {
             .map_err(|_| "an element type out of range")?;
         let linked = self.cx.stores.is_linked(tp);
         self.cx.copy_type(tp)?;
-        let (v, other) = self.two(name, &[v.clone(), other.clone()], ind)?;
+        let (v, other) = self.two(name, &[v, other], ind)?;
         let (v, other) = (as_ref(v)?, as_ref(other)?);
         Ok(if name == "OpPrependVector" {
             E::new(
@@ -5338,7 +5362,7 @@ impl<'a> FnWriter<'a> {
             }
             ("OpSetDbRef", [r, fld, x]) => {
                 let fld = Self::literal(fld, "field")?;
-                let (r, x) = self.two(name, &[(*r).clone(), (*x).clone()], ind)?;
+                let (r, x) = self.two(name, &[r, x], ind)?;
                 Ok(E::new(
                     format!("loft_set_dbref({}, {fld}, {})", as_ref(r)?, as_ref(x)?),
                     K::Void,
@@ -5436,7 +5460,7 @@ impl<'a> FnWriter<'a> {
             }
             ("OpSetEnum", [r, fld, val]) => {
                 let fld = Self::literal(fld, "field")?;
-                let (r, val) = self.two(name, &[(*r).clone(), (*val).clone()], ind)?;
+                let (r, val) = self.two(name, &[r, val], ind)?;
                 Ok(E::new(
                     format!("loft_set_byte({}, {fld}, {})", as_ref(r)?, as_enum(val)?),
                     K::Void,
@@ -5469,7 +5493,7 @@ impl<'a> FnWriter<'a> {
             }
             ("OpSetText" | "OpSetTextReplace", [r, fld, val]) => {
                 let fld = Self::literal(fld, "field")?;
-                let (r, val) = self.two(name, &[(*r).clone(), (*val).clone()], ind)?;
+                let (r, val) = self.two(name, &[r, val], ind)?;
                 let f = if name == "OpSetText" {
                     "loft_set_text"
                 } else {
@@ -5492,7 +5516,7 @@ impl<'a> FnWriter<'a> {
             }
             ("OpSetFloat" | "OpSetSingle", [r, fld, val]) => {
                 let fld = Self::literal(fld, "field")?;
-                let (r, val) = self.two(name, &[(*r).clone(), (*val).clone()], ind)?;
+                let (r, val) = self.two(name, &[r, val], ind)?;
                 let (f, v) = if name == "OpSetFloat" {
                     ("loft_set_float", as_float(val)?)
                 } else {
@@ -5501,14 +5525,14 @@ impl<'a> FnWriter<'a> {
                 Ok(E::new(format!("{f}({}, {fld}, {v})", as_ref(r)?), K::Void))
             }
             ("OpPushBoolean", [v, val]) => {
-                let (v, val) = self.two(name, &[(*v).clone(), (*val).clone()], ind)?;
+                let (v, val) = self.two(name, &[v, val], ind)?;
                 Ok(E::new(
                     format!("loft_vec_push_byte({}, {})", as_ref(v)?, as_bool(val)?),
                     K::Void,
                 ))
             }
             ("OpPushFloat" | "OpPushSingle", [v, val]) => {
-                let (v, val) = self.two(name, &[(*v).clone(), (*val).clone()], ind)?;
+                let (v, val) = self.two(name, &[v, val], ind)?;
                 let (f, x) = if name == "OpPushFloat" {
                     ("loft_vec_push_float", as_float(val)?)
                 } else {
@@ -5554,7 +5578,7 @@ impl<'a> FnWriter<'a> {
                     "OpSetShort" => "loft_set_short",
                     _ => "loft_set_short_raw",
                 };
-                let (r, val) = self.two(name, &[(*r).clone(), (*val).clone()], ind)?;
+                let (r, val) = self.two(name, &[r, val], ind)?;
                 Ok(E::new(
                     format!(
                         "{f}({}, {fld}, {}, {})",
@@ -5577,14 +5601,14 @@ impl<'a> FnWriter<'a> {
             }
             ("OpSetInt4Raw", [r, fld, val]) => {
                 let fld = Self::literal(fld, "field")?;
-                let (r, val) = self.two(name, &[(*r).clone(), (*val).clone()], ind)?;
+                let (r, val) = self.two(name, &[r, val], ind)?;
                 Ok(E::new(
                     format!("loft_set_int4_raw({}, {fld}, {})", as_ref(r)?, as_int(val)?),
                     K::Void,
                 ))
             }
             ("OpPushInt4", [v, val]) => {
-                let (v, val) = self.two(name, &[(*v).clone(), (*val).clone()], ind)?;
+                let (v, val) = self.two(name, &[v, val], ind)?;
                 Ok(E::new(
                     format!("loft_vec_push_int4({}, {})", as_ref(v)?, as_int(val)?),
                     K::Void,
@@ -5749,14 +5773,14 @@ impl<'a> FnWriter<'a> {
                 ))
             }
             ("OpPushEnum", [v, val]) => {
-                let (v, val) = self.two(name, &[(*v).clone(), (*val).clone()], ind)?;
+                let (v, val) = self.two(name, &[v, val], ind)?;
                 Ok(E::new(
                     format!("loft_vec_push_byte({}, {})", as_ref(v)?, as_enum(val)?),
                     K::Void,
                 ))
             }
             ("OpPushInt", [v, val]) => {
-                let (v, val) = self.two(name, &[(*v).clone(), (*val).clone()], ind)?;
+                let (v, val) = self.two(name, &[v, val], ind)?;
                 Ok(E::new(
                     format!("loft_vec_push_int({}, {})", as_ref(v)?, as_int(val)?),
                     K::Void,
@@ -5764,7 +5788,7 @@ impl<'a> FnWriter<'a> {
             }
             ("OpGetVector" | "OpGetVectorNullable", [v, size, idx]) => {
                 let size = Self::literal(size, "element size")?;
-                let (v, idx) = self.two(name, &[(*v).clone(), (*idx).clone()], ind)?;
+                let (v, idx) = self.two(name, &[v, idx], ind)?;
                 Ok(E::new(
                     format!("loft_vec_get({}, {size}, {})", as_ref(v)?, as_int(idx)?),
                     K::Ref,
@@ -5818,14 +5842,14 @@ impl<'a> FnWriter<'a> {
             }
             ("OpSetCharacter", [r, fld, c]) => {
                 let fld = Self::literal(fld, "field")?;
-                let (r, c) = self.two(name, &[(*r).clone(), (*c).clone()], ind)?;
+                let (r, c) = self.two(name, &[r, c], ind)?;
                 Ok(E::new(
                     format!("loft_set_char({}, {fld}, {})", as_ref(r)?, as_char(c)?),
                     K::Void,
                 ))
             }
             ("OpPushCharacter", [v, c]) => {
-                let (v, c) = self.two(name, &[(*v).clone(), (*c).clone()], ind)?;
+                let (v, c) = self.two(name, &[v, c], ind)?;
                 Ok(E::new(
                     format!("loft_vec_push_char({}, {})", as_ref(v)?, as_char(c)?),
                     K::Void,
@@ -5860,7 +5884,7 @@ impl<'a> FnWriter<'a> {
         }
         let size = self.cx.stores.size(tp);
         let es = self.args(
-            &[(*v).clone(), (*src).clone(), (*lo).clone(), (*hi).clone()],
+            &[v, src, lo, hi],
             ind,
         )?;
         let [v, src, lo, hi] =
@@ -5881,7 +5905,7 @@ impl<'a> FnWriter<'a> {
     fn remove_linked(&mut self, tp: u16, v: &Value, idx: &Value, ind: usize) -> Result<E, String> {
         self.cx.name_types();
         self.cx.describe_type(tp);
-        let (v, idx) = self.two("OpRemoveVector", &[v.clone(), idx.clone()], ind)?;
+        let (v, idx) = self.two("OpRemoveVector", &[v, idx], ind)?;
         Ok(E::new(
             format!(
                 "loft_vec_remove_linked(loft_types, {tp}, {}, {})",
@@ -5909,7 +5933,7 @@ impl<'a> FnWriter<'a> {
             return Err("an adopted vector of linked records".into());
         }
         self.cx.copy_type(tp)?;
-        let (v, other) = self.two(name, &[v.clone(), other.clone()], ind)?;
+        let (v, other) = self.two(name, &[v, other], ind)?;
         Ok(E::new(
             format!(
                 "loft_vec_adopt(loft_types, {tp}, {}, {})",
@@ -5938,7 +5962,7 @@ impl<'a> FnWriter<'a> {
                     "loft_vec_replace"
                 };
                 self.cx.copy_type(tp)?;
-                let (v, other) = self.two(name, &[(*v).clone(), (*other).clone()], ind)?;
+                let (v, other) = self.two(name, &[v, other], ind)?;
                 Ok(E::new(
                     format!("{f}(loft_types, {tp}, {}, {})", as_ref(v)?, as_ref(other)?),
                     K::Void,
@@ -5953,7 +5977,7 @@ impl<'a> FnWriter<'a> {
                     return self.remove_linked(tp, v, idx, ind);
                 }
                 let size = self.cx.stores.size(tp);
-                let (v, idx) = self.two(name, &[(*v).clone(), (*idx).clone()], ind)?;
+                let (v, idx) = self.two(name, &[v, idx], ind)?;
                 // An element owning heap releases it first, as `remove_vector_at` does.
                 if self.cx.stores.type_owns_heap(tp) {
                     self.cx.name_types();
@@ -5980,7 +6004,7 @@ impl<'a> FnWriter<'a> {
                     return Err("a repeat of a linked element type".into());
                 }
                 self.cx.copy_type(ctp)?;
-                let (v, count) = self.two(name, &[(*v).clone(), (*count).clone()], ind)?;
+                let (v, count) = self.two(name, &[v, count], ind)?;
                 Ok(E::new(
                     format!(
                         "loft_vec_append_copy(loft_types, {ctp}, {}, {})",
@@ -6011,7 +6035,7 @@ impl<'a> FnWriter<'a> {
                     "loft_move_vector"
                 };
                 self.cx.copy_type(tp)?;
-                let (dst, src) = self.two(name, &[(*dst).clone(), (*src).clone()], ind)?;
+                let (dst, src) = self.two(name, &[dst, src], ind)?;
                 Ok(E::new(
                     format!("{f}(loft_types, {tp}, {}, {})", as_ref(dst)?, as_ref(src)?),
                     K::Void,
@@ -6026,7 +6050,7 @@ impl<'a> FnWriter<'a> {
                 } else {
                     self.cx.stores.size(tp)
                 };
-                let es = self.args(&[(*v).clone(), (*lo).clone(), (*hi).clone()], ind)?;
+                let es = self.args(&[v, lo, hi], ind)?;
                 let [v, lo, hi] = <[E; 3]>::try_from(es)
                     .map_err(|_| "a range without three operands".to_string())?;
                 Ok(E::new(
@@ -6077,7 +6101,7 @@ impl<'a> FnWriter<'a> {
             }
             ("OpSetBoolean", [r, fld, val]) => {
                 let fld = Self::literal(fld, "field")?;
-                let (r, val) = self.two(name, &[(*r).clone(), (*val).clone()], ind)?;
+                let (r, val) = self.two(name, &[r, val], ind)?;
                 Ok(E::new(
                     format!("loft_set_byte({}, {fld}, {})", as_ref(r)?, as_bool(val)?),
                     K::Void,
@@ -6085,7 +6109,7 @@ impl<'a> FnWriter<'a> {
             }
             ("OpPushByte", [v, min, val]) => {
                 let min = Self::literal(min, "byte minimum")?;
-                let (v, val) = self.two(name, &[(*v).clone(), (*val).clone()], ind)?;
+                let (v, val) = self.two(name, &[v, val], ind)?;
                 Ok(E::new(
                     format!(
                         "loft_vec_push_byte({}, loft_byte_raw({min}, {}))",

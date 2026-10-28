@@ -181,7 +181,7 @@ impl FnWriter<'_> {
                     .map_err(|_| "a field number out of range".to_string())?;
                 self.group_parent_plain(ptp)?;
                 let siblings = self.cx.group_siblings(ptp, fld);
-                let (data, rec) = self.two(name, &[data.clone(), rec.clone()], ind)?;
+                let (data, rec) = self.two(name, &[data, rec], ind)?;
                 if siblings.is_empty() {
                     return Ok(Some(E::new("(void) 0", K::Void)));
                 }
@@ -282,8 +282,8 @@ impl FnWriter<'_> {
                 let tp = u16::try_from(Self::literal(tp, "type")?)
                     .map_err(|_| "a type number out of range".to_string())?;
                 let (keys, n) = self.cx.keys_of(tp);
-                let mut all = vec![r.clone()];
-                all.extend(rest.iter().cloned());
+                let mut all: Vec<&Value> = vec![r];
+                all.extend(rest.iter());
                 let mut es = self.args(&all, ind)?.into_iter();
                 let r = as_ref(es.next().ok_or("a slice without its collection")?)?;
                 let ints = es.map(as_int).collect::<Result<Vec<_>, _>>()?;
@@ -351,8 +351,8 @@ impl FnWriter<'_> {
             self.cx.name_types();
         }
         let sc = self.cx.sidecar_of(tp);
-        let mut all = vec![r.clone(), url.clone()];
-        all.extend(rest.iter().cloned());
+        let mut all: Vec<&Value> = vec![r, url];
+        all.extend(rest.iter());
         let es = self.args(&all, ind)?;
         let mut es = es.into_iter();
         let r = as_ref(es.next().ok_or("a URL load without its value")?)?;
@@ -395,7 +395,7 @@ impl FnWriter<'_> {
                 )))
             }
             ("n_store_lazy_fail", [local, why]) => {
-                let (r, why) = self.two(name, &[local.clone(), why.clone()], ind)?;
+                let (r, why) = self.two(name, &[local, why], ind)?;
                 Ok(Some(E::new(
                     format!("loft_lazy_fail({}, {})", as_ref(r)?, as_view(why)?),
                     K::Void,
@@ -404,14 +404,14 @@ impl FnWriter<'_> {
             // A database's explicit fetches (`lazy_query`, `lazy_range`), run by the runtime's
             // sqlite source.
             ("n_store_lazy_query", [local, condition]) => {
-                let (r, c) = self.two(name, &[local.clone(), condition.clone()], ind)?;
+                let (r, c) = self.two(name, &[local, condition], ind)?;
                 Ok(Some(E::new(
                     format!("loft_lazy_query({}, {})", as_ref(r)?, as_view(c)?),
                     K::Int,
                 )))
             }
             ("n_store_lazy_range", [local, lo, hi]) => {
-                let es = self.args(&[local.clone(), lo.clone(), hi.clone()], ind)?;
+                let es = self.args(&[local, lo, hi], ind)?;
                 let [r, lo, hi] = <[E; 3]>::try_from(es)
                     .map_err(|_| "a range fetch without its three operands".to_string())?;
                 Ok(Some(E::new(
@@ -452,7 +452,7 @@ impl FnWriter<'_> {
                 self.cx.copy_type(tp)?;
                 self.cx.name_types();
                 let sc = self.cx.sidecar_of(tp);
-                let (r, path) = self.two(name, &[r.clone(), path.clone()], ind)?;
+                let (r, path) = self.two(name, &[r, path], ind)?;
                 Ok(Some(E::new(
                     format!(
                         "(uint8_t) loft_image_write(loft_types, loft_ntypes, {}, {}, {sc})",
@@ -474,7 +474,7 @@ impl FnWriter<'_> {
                     self.cx.name_types();
                 }
                 let sc = self.cx.sidecar_of(tp);
-                let (r, path) = self.two(name, &[r.clone(), path.clone()], ind)?;
+                let (r, path) = self.two(name, &[r, path], ind)?;
                 Ok(Some(E::new(
                     format!(
                         "(uint8_t) loft_image_load({}, {}, {sc}, {})",
@@ -705,7 +705,7 @@ impl FnWriter<'_> {
             ),
         };
         let plan = self.sql_plan(own)?;
-        let (r, source) = self.two("n_store_bind_lazy", &[local.clone(), source.clone()], ind)?;
+        let (r, source) = self.two("n_store_bind_lazy", &[local, source], ind)?;
         Ok(E::new(
             format!(
                 "loft_lazy_bind_coll({}, {}, {fetch}, {element}, {unservable}, {plan})",
@@ -808,8 +808,8 @@ impl FnWriter<'_> {
             kind,
             ..
         } = &plan;
-        let mut all = vec![local.clone()];
-        all.extend(rest.iter().cloned());
+        let mut all: Vec<&Value> = vec![local];
+        all.extend(rest.iter());
         let mut es = self.args(&all, ind)?.into_iter();
         let mut next = || es.next().ok_or(format!("{name} without its operands"));
         let local = as_ref(next()?)?;
@@ -999,7 +999,7 @@ impl FnWriter<'_> {
                 let tp = raw & 0x7FFF;
                 self.keyed_of(tp)?;
                 self.cx.copy_type(tp)?;
-                let (src, dest) = self.two(name, &[src.clone(), dest.clone()], ind)?;
+                let (src, dest) = self.two(name, &[src, dest], ind)?;
                 Ok(Some(E::new(
                     format!(
                         "loft_replace_keyed(loft_types, {tp}, {}, {}, {})",
@@ -1094,7 +1094,7 @@ impl FnWriter<'_> {
         self.keyed_of(tp)?;
         self.cx.name_types();
         self.cx.describe_type(tp);
-        let (h, count) = self.two("OpReserveHash", &[h.clone(), count.clone()], ind)?;
+        let (h, count) = self.two("OpReserveHash", &[h, count], ind)?;
         Ok(E::new(
             format!(
                 "loft_hash_reserve(loft_types, {tp}, {}, {})",
@@ -1178,8 +1178,8 @@ impl FnWriter<'_> {
         if vals.len() > types.len() || types.len() > 8 {
             return Err("a keyed write with more values than keys".into());
         }
-        let mut all = vec![coll.clone(), value.clone()];
-        all.extend(vals.iter().cloned());
+        let mut all: Vec<&Value> = vec![coll, value];
+        all.extend(vals.iter());
         let mut es = self.args(&all, ind)?.into_iter();
         let coll = as_ref(es.next().ok_or("a keyed write without its collection")?)?;
         let value = as_ref(es.next().ok_or("a keyed write without its value")?)?;
@@ -1502,8 +1502,8 @@ impl FnWriter<'_> {
         if vals.len() > types.len() {
             return Err("a lookup with more values than keys".into());
         }
-        let mut all = vec![data.clone()];
-        all.extend(vals.iter().cloned());
+        let mut all: Vec<&Value> = vec![data];
+        all.extend(vals.iter());
         let mut es = self.args(&all, ind)?.into_iter();
         let data = as_ref(es.next().ok_or("a lookup without its collection")?)?;
         let values = es
@@ -1608,9 +1608,9 @@ impl FnWriter<'_> {
         if from.len() > keys.len() || till.len() > keys.len() {
             return Err("a walk bound with more values than keys".into());
         }
-        let mut all = vec![data.clone()];
-        all.extend(from.iter().cloned());
-        all.extend(till.iter().cloned());
+        let mut all: Vec<&Value> = vec![data];
+        all.extend(from.iter());
+        all.extend(till.iter());
         let mut es = self.args(&all, ind)?.into_iter();
         let data = as_ref(es.next().ok_or("a walk without its collection")?)?;
         let mut values = Vec::new();
@@ -1656,7 +1656,7 @@ impl FnWriter<'_> {
         let raw = raw & !crate::database::CLEAR_KEYED_VIEW;
         let (kind, elem, size) = self.keyed_of(raw)?;
         let (keys, nk) = self.cx.keys_of(raw);
-        let (data, rec) = self.two("OpHashRemove", &[data.clone(), rec.clone()], ind)?;
+        let (data, rec) = self.two("OpHashRemove", &[data, rec], ind)?;
         let (data, rec) = (as_ref(data)?, as_ref(rec)?);
         // What the element owns is released (`remove_owned`): its type is in the table.
         self.cx.name_types();

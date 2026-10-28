@@ -447,7 +447,7 @@ impl FnWriter<'_> {
             return Err("a par fold whose function is not fold(integer, integer)".into());
         }
         let f = c_name(self.cx.data, d);
-        let es = self.args(&[input.clone(), init.clone(), threads.clone()], ind)?;
+        let es = self.args(&[input, init, threads], ind)?;
         let [input, init, threads] =
             <[E; 3]>::try_from(es).map_err(|_| "a par fold without its operands".to_string())?;
         let (input, init, threads) = (as_ref(input)?, as_int(init)?, as_int(threads)?);

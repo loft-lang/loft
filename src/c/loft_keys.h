@@ -43,7 +43,7 @@ static loft_kv loft_kv_text(loft_str s) {
 }
 
 /* keys::compare_key's reads: the value of key part `k` of the element at (rec, pos). */
-static loft_kv loft_key_get(loft_store_t *s, uint32_t rec, uint32_t pos, const loft_key *k) {
+LOFT_HOT_INLINE loft_kv loft_key_get(loft_store_t *s, uint32_t rec, uint32_t pos, const loft_key *k) {
     uint32_t at = pos + k->pos;
     int t = k->type < 0 ? -k->type : k->type;
     switch (t) {

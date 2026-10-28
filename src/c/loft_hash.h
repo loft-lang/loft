@@ -252,7 +252,7 @@ static uint32_t loft_h_inline_words(uint32_t count, uint32_t stride) {
 
 static uint32_t loft_h_ent0(uint32_t count) { return LOFT_H_BUCKET0 + count * 8; }
 
-static void loft_h_put_slot(loft_store_t *s, uint32_t claim, uint32_t sb, uint32_t at, uint32_t index, uint32_t tag) {
+LOFT_HOT_INLINE void loft_h_put_slot(loft_store_t *s, uint32_t claim, uint32_t sb, uint32_t at, uint32_t index, uint32_t tag) {
     loft_set_u32(s, claim, LOFT_H_BUCKET0 + at * sb, index);
     if (sb == 8) loft_set_u32(s, claim, LOFT_H_BUCKET0 + at * 8 + 4, tag);
 }
@@ -294,7 +294,7 @@ static void loft_h_write_seed(loft_store_t *s, uint32_t claim, uint64_t seed) {
 /* hash::Entries: where a slot's entry lives. */
 typedef struct { uint16_t store_nr; uint32_t stride, dir, cap; int inl; uint32_t claim, ent0; } loft_hents;
 
-static loft_hents loft_h_entries(loft_store_t *s, uint32_t claim, uint16_t store_nr) {
+LOFT_HOT_INLINE loft_hents loft_h_entries(loft_store_t *s, uint32_t claim, uint16_t store_nr) {
     loft_hents e;
     loft_hhdr h = loft_h_hdr(s, claim);
     e.store_nr = store_nr;
@@ -312,7 +312,7 @@ static loft_hents loft_h_entries(loft_store_t *s, uint32_t claim, uint16_t store
     return e;
 }
 
-static void loft_h_at(const loft_hents *e, loft_store_t *s, uint32_t slot, uint32_t *rec, uint32_t *pos) {
+LOFT_HOT_INLINE void loft_h_at(const loft_hents *e, loft_store_t *s, uint32_t slot, uint32_t *rec, uint32_t *pos) {
     uint32_t k, off;
     if (e->stride == 0 || (slot & LOFT_H_SLOT_RECORD)) {
         *rec = slot & ~LOFT_H_SLOT_RECORD;
@@ -337,7 +337,7 @@ static void loft_h_at_bucket(const loft_hents *e, loft_store_t *s, uint32_t slot
     }
 }
 
-static loft_ref loft_h_entry(const loft_hents *e, loft_store_t *s, uint32_t slot) {
+LOFT_HOT_INLINE loft_ref loft_h_entry(const loft_hents *e, loft_store_t *s, uint32_t slot) {
     loft_ref r;
     r.store_nr = e->store_nr;
     loft_h_at(e, s, slot, &r.rec, &r.pos);

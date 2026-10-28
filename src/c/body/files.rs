@@ -37,7 +37,7 @@ impl FnWriter<'_> {
             .get(tp as usize)
             .map_or_else(|| format!("#{tp}"), |t| t.name.clone());
         let f = self.cx.deliver_type(tp);
-        let (tag, val) = self.two("OpDeliver", &[tag.clone(), val.clone()], ind)?;
+        let (tag, val) = self.two("OpDeliver", &[tag, val], ind)?;
         Ok(E::new(
             format!(
                 "loft_deliver({}, {}, {f}, {})",
@@ -69,7 +69,7 @@ impl FnWriter<'_> {
             // `expose` / `release` off the browser (`Stores::expose_value`): the value's store
             // locked read-only while the host holds it, and unlocked.
             ("OpExpose" | "OpRelease", [tag, val, _]) => {
-                let (tag, val) = self.two(name, &[tag.clone(), val.clone()], ind)?;
+                let (tag, val) = self.two(name, &[tag, val], ind)?;
                 Ok(Some(E::new(
                     format!(
                         "((void) ({}), loft_set_store_lock({}, {}))",
@@ -301,7 +301,7 @@ impl FnWriter<'_> {
             );
             return Ok(E::new("(void) 0", K::Void));
         }
-        let (file, count) = self.two("OpReadFile", &[f.clone(), n.clone()], ind)?;
+        let (file, count) = self.two("OpReadFile", &[f, n], ind)?;
         let (fr, nr) = (self.temp(CType::Ref), self.temp(CType::Int));
         self.line(ind, &format!("{fr} = {};", as_ref(file)?));
         self.line(ind, &format!("{nr} = {};", as_int(count)?));
