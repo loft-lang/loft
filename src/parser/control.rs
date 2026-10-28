@@ -5281,6 +5281,10 @@ impl Parser {
         }
     }
 
+    /// `@FR-N-Guard` — the null fact a condition proves: `Some((v, p))` says that where the
+    /// test evaluates to `p`, the variable `v` is present.  The fallback is `None`, because a
+    /// shape not named here (a compound condition, a comparison with anything but the null
+    /// literal) proves nothing, and the callers then narrow nothing.
     pub(crate) fn narrowing_from_condition(&self, test: &Value) -> Option<(u16, bool)> {
         // `if v` BEFORE the boolean conversion is materialised — the same truthy test as the
         // `OpConvBoolFrom*` arm below, just earlier in the pipeline.  PASS 1 leaves the
@@ -5320,13 +5324,18 @@ impl Parser {
                 return Some((v, name.starts_with("OpNe")));
             }
         }
-        // `s != null` on a heap value is its null test under `OpNot`: negated, the test
-        // proves the var non-null in the THEN branch.
+        // A NEGATED test proves what its operand proves, on the other side: "the test is `p`
+        // proves `v` present" is the same statement as "the negation is `!p` proves it".  So
+        // one arm reads every negation — `s != null` on a heap value (its null test under
+        // `OpNot`), `if !v` (#585, the guard clause `if !v { return }`: the fall-through is
+        // where `v` is truthy), and the plain enum's `c != null`, which lowers to the DOUBLE
+        // negation `OpNot(OpNot(OpConvBoolFromEnum(c)))` and which a reader of only the
+        // single-negation shapes left un-narrowed (X18, `@FR-N-Guard`).
         if name == "OpNot"
             && args.len() == 1
-            && let Some(v) = self.heap_null_test(&args[0])
+            && let Some((v, polarity)) = self.narrowing_from_condition(&args[0])
         {
-            return Some((v, true));
+            return Some((v, !polarity));
         }
         // `if v` (truthy) — a bare nullable read converted to boolean → non-null in THEN.
         if name.starts_with("OpConvBoolFrom")
@@ -5334,23 +5343,6 @@ impl Parser {
             && let Value::Var(v) = args[0].unspan()
         {
             return Some((*v, true));
-        }
-        // `if !v` — negated truthy: `!v` is the null/falsy test, so `v` is non-null on the
-        // ELSE side (where `v` is truthy). This is the guard-clause condition `if !v { return }`
-        // (#585): the THEN branch is the null case, and the fall-through (else) proves `v`
-        // non-null. Mirrors `v == null` → non-null-in-ELSE.
-        if name == "OpNot"
-            && args.len() == 1
-            && let Value::Call(inner_op, inner_args) = args[0].unspan()
-            && self
-                .data
-                .def(*inner_op)
-                .name()
-                .starts_with("OpConvBoolFrom")
-            && inner_args.len() == 1
-            && let Value::Var(v) = inner_args[0].unspan()
-        {
-            return Some((*v, false));
         }
         None
     }

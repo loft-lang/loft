@@ -832,10 +832,22 @@ impl Parser {
             format!("{cur_dir}{sep}lib{sep}{id}.loft"),
         ];
         // loft#976's home of a package's modules is its root's `src/`: a file outside it
-        // (`tests/`) finds the module there.
+        // (`tests/`) finds the module there.  From inside the package's `tests/` subtree it
+        // is asked FIRST: a test file is never a module of the package, so `tests/load.loft`
+        // beside `tests/lower.loft` must not stand in for `src/load.loft` — the sibling twin of
+        // X12 below, where the test file stood in for itself (X16).  A helper with no module of
+        // its name in `src/` is still found beside the test.
         if let Some(root) = crate::resolution_scope::project_root(&cur_script) {
             let in_src = root.join("src").join(format!("{id}.loft"));
-            candidates.push(in_src.to_string_lossy().into_owned());
+            let in_src = in_src.to_string_lossy().into_owned();
+            let tests =
+                crate::file_access::plain_canonical_str(&root.join("tests").to_string_lossy());
+            let here_dir = crate::file_access::plain_canonical_str(&cur_dir);
+            if std::path::Path::new(&here_dir).starts_with(&tests) {
+                candidates.insert(0, in_src);
+            } else {
+                candidates.push(in_src);
+            }
         }
         // A file is never its own module (X12): from `tests/<id>.loft` the first candidate
         // would be the test file itself.

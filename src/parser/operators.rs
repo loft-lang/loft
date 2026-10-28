@@ -4960,11 +4960,26 @@ impl Parser {
             // has a default).  Parsed from the synthetic `S {}` source so it reuses
             // `parse_object`'s construction AND its work-ref ownership / freeing (a
             // hand-rolled `OpDatabase` + `object_init` mismanages the store free — #306).
+            //
+            // The sub-parse is SOURCE text read in the CALLING file, where the bare name may
+            // name nothing (a record declared in another module) or another module's record of
+            // the same name.  So the spelling is pinned to THIS definition for the sub-parse, as
+            // the type-variable arm above pins a placeholder.  A sub-parse that still builds
+            // something else is no default of this record: `None`, which the caller reports,
+            // never a default typed as the record (it ran on a lexer whose diagnostics are
+            // dropped, so a failure there would otherwise be silent — loft#2209).
             Type::Reference(d_nr, _)
                 if self.data.def_type(*d_nr) == crate::data::DefType::Struct =>
             {
-                let name = self.data.def(*d_nr).name().to_string();
-                Some(self.subparse_default(&format!("{name} {{}}"), tp))
+                let d_nr = *d_nr;
+                let name = self.data.def(d_nr).name().to_string();
+                let saved = std::mem::replace(&mut self.cur_type_vars, vec![(name.clone(), d_nr)]);
+                let (v, t) = self.subparse_default(&format!("{name} {{}}"), tp);
+                self.cur_type_vars = saved;
+                if !self.first_pass && !matches!(t.base(), Type::Reference(r, _) if *r == d_nr) {
+                    return None;
+                }
+                Some((v, t))
             }
             // A struct-enum VARIANT defaults like a record (`(D-Rec)`): the variant with every
             // field defaulted, the value `emit_variant_value` builds for an enum's first variant.

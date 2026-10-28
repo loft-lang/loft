@@ -319,6 +319,70 @@ fn an_assert_narrows_like_a_guard_clause_native() {
     assert_narrows("--native");
 }
 
+// ── `@FR-N-Guard`: a nullable PLAIN enum narrows as a record or an integer does (loft#2211) ──
+//
+// On a plain enum `c != null` lowers to the double negation `OpNot(OpNot(OpConvBoolFromEnum(c)))`,
+// which no single-negation reading saw, so the branch kept `Code?` and the call warned.  A negated
+// test proves what its operand proves on the other side, and the cells cover both sides and the
+// guard clause.  The boundary is the guard's: the side where the test proves NULL, and a compound
+// condition, still warn.  Scored by hand against main 6f31a726b: `e_ne` warns there (the defect);
+// `e_eq_else`, `e_guard` and `e_not_guard` were already narrowed through the single-negation arms
+// this one replaced, and hold that the general arm keeps them.
+
+const E_PRELUDE: &str = "enum Code { Add, Sub }\n\
+fn pick(n: text) -> Code? { if n == \"a\" { Add } else if n == \"s\" { Sub } else { null } }\n\
+fn use_code(c: Code) -> integer { if c == Add { 1 } else { 2 } }\n";
+const E_NE: &str =
+    "fn f(n: text) -> integer { c = pick(n); if c != null { use_code(c) } else { 0 } }\n";
+const E_EQ_ELSE: &str =
+    "fn f(n: text) -> integer { c = pick(n); if c == null { 0 } else { use_code(c) } }\n";
+const E_GUARD: &str =
+    "fn f(n: text) -> integer { c = pick(n); if c == null { return 0; } use_code(c) }\n";
+const E_NOT_GUARD: &str =
+    "fn f(n: text) -> integer { c = pick(n); if !c { return 0; } use_code(c) }\n";
+const EW_NULL_SIDE: &str =
+    "fn f(n: text) -> integer { c = pick(n); if c == null { use_code(c) } else { 0 } }\n";
+const EW_COMPOUND: &str = "fn f(n: text) -> integer { c = pick(n); if c != null && len(n) > 0 { use_code(c) } else { 0 } }\n";
+const E_MAIN: &str = "fn main() { print(\"x={f(\"s\")} {f(\"a\")} {f(\"q\")}\"); }\n";
+
+fn enum_narrows(backend: &str) {
+    for (body, tag) in [
+        (E_NE, "e_ne"),
+        (E_EQ_ELSE, "e_eq_else"),
+        (E_GUARD, "e_guard"),
+        (E_NOT_GUARD, "e_not_guard"),
+    ] {
+        let src = format!("{E_PRELUDE}{body}{E_MAIN}");
+        let (ok, warns, out) = run(&src, backend, true, &format!("{tag}_{backend}"));
+        assert!(
+            ok && out == "x=2 1 0",
+            "[{backend}] `{tag}` must compile and answer Sub 2, Add 1, absent 0: {out}"
+        );
+        assert_eq!(
+            warns, 0,
+            "[{backend}] `{tag}`: the test proves `c` present there"
+        );
+    }
+    for (body, tag) in [(EW_NULL_SIDE, "ew_null_side"), (EW_COMPOUND, "ew_compound")] {
+        let src = format!("{E_PRELUDE}{body}{E_MAIN}");
+        let (_, warns, _) = run(&src, backend, true, &format!("{tag}_{backend}"));
+        assert_eq!(
+            warns, 1,
+            "[{backend}] `{tag}`: `c` may still be null here — the warning must still fire"
+        );
+    }
+}
+
+#[test]
+fn a_nullable_plain_enum_narrows_like_a_record_interpret() {
+    enum_narrows("--interpret");
+}
+
+#[test]
+fn a_nullable_plain_enum_narrows_like_a_record_native() {
+    enum_narrows("--native");
+}
+
 /// `@FR-N-Guard` — the same assert feeds the guard clause's three other families: an index it
 /// bounds, a divisor it proves non-zero, an operand it proves non-negative.  Each reads exactly
 /// as its guard-clause spelling: no diagnostic, the same value.

@@ -354,6 +354,20 @@ git do.
 
 ### Bug fixes
 
+**A package's test reaches the package's module, not a test named after it.**  With
+`src/load.loft` and its test `tests/load.loft`, another test's `use load;` bound the test file, so
+every `load::` name was unknown.  It now binds `src/load.loft`.
+
+**`if c != null` narrows a nullable plain enum.**  Inside the branch `c` is its enum type, as a
+record or an integer is after the same test; it used to stay nullable, and passing it on gave a
+warning about a nullable value.
+
+**`x?` on a record from another module falls back to that record's default.**  Where the
+value is absent, `x?` gives its type's default, `S {}` with every field at its default.  For a
+record declared in another module it gave `null` instead, with no message, and beside a local
+record of the same name it was refused.  It now builds the record's own default wherever the
+record was declared.
+
 **A recursive walk over an enum's payload runs to any depth.**  A function that ends by calling
 itself on a part of its enum parameter — `walk(a, inner[0])` through a `match` binding, or
 `walk(a, n.inner[0])` — was refused as a frame that could not be reused, although a part of a

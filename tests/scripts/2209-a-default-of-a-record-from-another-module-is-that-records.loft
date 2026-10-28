@@ -1,0 +1,43 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @ARGS: --lib tests/lib
+// loft#2209 — `x?` falls back to the default of `x`'s OWN type (`@FR-N-Default`: a record is
+// `S {}`, every field at its default), also when that record is declared in another module.
+// The default is built from the definition, not from its name read in this file: here the
+// bare name `Item` would name nothing for `default2209::Item`, and this file declares an `Item`
+// of its own.
+//
+// What each cell is for:
+//   * `other`  — the other module's record, with declared defaults and a record nested from
+//                a third module: `5 dflt 11`, never a `null` or this file's `Item`.
+//   * `mine`   — this file's own `Item` still defaults to itself: 99.
+//   * `enum`   — a struct enum from another module defaults to its first variant: `hit 3`.
+//   * `hidden` — a record that is not `pub`, reached through the functions that publish it:
+//                its default holds the declared 42.
+// @falsified-at: 6f31a726b — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — the control refuses `other` (its default is this file's `Item`:
+//   "`??` default of type `Item` is not assignable to `Item`").
+//   WITNESS: without this file's own `Item` the control answers `null` for `other.n`, with
+//   no diagnostic (the issue's repro).
+//   HOLDS: leak, panic and refusals are equal on both trees.
+
+use default2209;
+
+struct Item { other: integer = 99 }
+
+fn main() {
+  items: vector<default2209::Item> = [];
+  d = items[0]?;
+  assert("{d.n} {d.tag} {d.deep.d}" == "5 dflt 11", "other: {d.n} {d.tag} {d.deep.d}");
+  mine: vector<Item> = [];
+  m = mine[0]?;
+  assert(m.other == 99, "mine: {m.other}");
+  evs: vector<default2209::Ev2209> = [];
+  e = evs[0]?;
+  got = match e { Hit { pts } => "hit {pts}", Miss { why } => "miss {why}" };
+  assert(got == "hit 3", "enum: {got}");
+  hs = default2209::hidden_list();
+  h = hs[3]?;
+  assert(default2209::hidden_h(h) == 42, "hidden: {default2209::hidden_h(h)}");
+}

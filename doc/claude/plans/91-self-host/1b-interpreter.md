@@ -464,6 +464,44 @@ jump-is-refused` becomes `…-warns` (`@EXPECT_WARNING`) and the line in
   compiles with the warning and answers 7.  The control (main 6f31a726b) fails the cell as
   parse errors.
 
+### X16–X18 — a test's module, a record's default, an enum's narrowing (fix loft#2212, loft#2209, loft#2211) — BUILT 2026-10-28
+
+**X16.**  `tests/lower.loft`'s `use load;` bound `tests/load.loft`, the test OF load: X12 only
+stopped a file binding itself.  From inside the package's `tests/` subtree `own_module_path` now
+asks `src/<id>.loft` first; a helper with no module of its name is still found beside the test.
+Cases (both backends, `--tests` and `loft test`): a sibling, the test named after its module, a
+helper, a test one level deeper, a module chain through `src/`, and a script outside any package —
+all pass.  Guard: `module_name_clash::a_test_binds_the_packages_module_not_a_sibling_test_of_its_name`.
+
+
+**Found by S1.1** (`b.data.definitions[def_nr]?` in `lower.loft`), measured wider than filed:
+`x?` on a record declared in another module answers `null` on `main`, silently, where the
+same code in one file answers the record's default.  The record arm of `build_default`
+(`src/parser/operators.rs`) builds `S {}` by sub-parsing the text `Item {}` in the CALLING
+file, on a lexer whose diagnostics are dropped: there the bare name names nothing (a `null`
+default), this file's own `Item` (refused as `Item` not assignable to `Item`), or, under
+`#package`, an `unknown`.
+
+**What.**  The spelling is pinned to the definition for the sub-parse (`cur_type_vars`, as
+the type-variable arm already pins a placeholder), and a sub-parse that builds anything but
+that record answers `None`, which the caller reports — never a default typed as the record.
+
+**Cases** (hand-computed, both backends, `LOFT_STRICT_STORES=1`, no leak): another module's
+record with declared defaults and a record nested from a third module, `5 dflt 11`; this
+file's own same-named `Item`, 99; a struct enum from another module, its first variant
+`hit 3`; a record that is not `pub`, reached through the functions that publish it, 42.
+Guard: `tests/scripts/2209-…` with `tests/lib/default2209*.loft`.
+
+**X18.**  `if c != null` left a nullable plain enum `Code?` (the lowering's
+`operator_code(name)`), so passing it on warned.  On a plain enum the test lowers to
+`OpNot(OpNot(OpConvBoolFromEnum(c)))`, and `narrowing_from_condition` read only a single
+negation (a heap null test, `!v`).  One arm now reads any negation: "the test is `p` proves
+`v`" is the statement "the negation is `!p` proves `v`", so it is sound for every arm below
+it, and it replaces the two single-negation arms.  Cases (both backends): `!=`, `==` with the
+use in `else`, the guard clause in both spellings — `2 1 0`, no warning; the null side and a
+compound condition still warn.  Guard: `tests/callarg_nstore.rs`
+(`a_nullable_plain_enum_narrows_like_a_record_*`); on main only `!=` warned.
+
 ### S1.1a — a block-bodied match arm needs no comma (fixes X14) — BUILT 2026-10-28
 
 **Found by S1.1.**  The lowering's `match` wrote block arms the way the reasoning (and
@@ -537,9 +575,9 @@ stdlib's `E`), so the two drivers disagree on one program.  To check before a fi
 | **X13** | `assert(x != null, …)` does not narrow `x`; the other null tests (`if … return`, `if != null`, `?? return`, `?? panic`) do, and `types.md` writes none of them as a rule | rule gap — fixed in S0.3d | owner: `(N-Guard)`, the guard narrowing written as a rule with `assert` as one of its guards ([1b-s0.md](1b-s0.md) § S0.3d) |
 | **X14** | a block-bodied match arm demands a comma (`NdIf { … } => { … }` then the next arm), while Rust and the `LOFT_CONTROL.md` example leave it out | **bug — fixed in S1.1a** | the comma is optional after a block body (§ Steps, S1.1a) |
 | **X15** | a tail self-call on a part of an enum parameter is refused under @C155: `walk(n.inner[0])`, and `walk(inner[0])` through the match binding, though `(R-TailSelf)` admits a projection of a parameter (on `main`) | **bug — fixed in S1.1b T1** | the predicate sees the variant check and the binding as parts of the parameter; the owner's rules for the rest (§ Steps, S1.1b) |
-| **X16** | a test file still binds a sibling test file named like the module (X12's case from `tests/`, on `main`) | bug — to measure | — |
-| **X17** | `x?` of a record shared through `#package` fails (a gap in S0.3a) | bug — to measure | — |
-| **X18** | a nullable plain enum is not narrowed by `if x != null` (on `main`) | bug — to measure | — |
+| **X16** | inside a package, a test file binds a SIBLING test file named like a module (`tests/lower.loft`'s `use load;` gets `tests/load.loft`), on `main` (loft#2212) | **bug — fixed** | from the package's `tests/` subtree, `own_module_path` asks `src/<id>.loft` first (§ Steps, X16–X18) |
+| **X17** | `x?` of a record from ANOTHER module falls back to `null`, with no diagnostic (on `main`, loft#2209); under `#package` the same shape is refused as a default of type `unknown`, and beside a same-named local record as `Item` not assignable to `Item` | **bug, silent-wrong — fixed (§ Steps, X17)** | `build_default` pins the record's name to its definition for the sub-parse, and a sub-parse that builds anything else is `None`, reported |
+| **X18** | a nullable plain enum is not narrowed by `if x != null` (on `main`, loft#2211): its test lowers to a double negation | **bug — fixed** | `narrowing_from_condition` reads any negation as its operand's proof on the other side (§ Steps, X17 and X18) |
 
 ### New constructs taken from OCaml's type expressions
 

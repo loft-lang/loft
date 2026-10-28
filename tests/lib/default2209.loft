@@ -1,0 +1,12 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2209 — records whose `x?` default the program builds from another module: a record
+// with declared field defaults and a nested record from a third module, a struct enum, and a
+// record that is not `pub` (reached only through the functions that publish it).
+use default2209_inner;
+pub struct Item { pub n: integer = 5, pub tag: text = "dflt", pub deep: default2209_inner::Deep2209 }
+pub enum Ev2209 { Hit { pub pts: integer = 3 }, Miss { pub why: text } }
+struct Hidden2209 { h: integer = 42 }
+pub fn hidden_list() -> vector<Hidden2209> { [Hidden2209 { h: 1 }] }
+pub fn hidden_h(x: Hidden2209) -> integer { x.h }
