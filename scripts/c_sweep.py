@@ -64,7 +64,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 LOFT = os.environ.get("LOFT_BIN") or str(ROOT / "target" / "release" / "loft")
-CC = ["cc", "-std=c99", "-O1", "-DLOFT_CALL_CHAIN", "-pthread"] + (["-ldl"] if sys.platform.startswith("linux") else [])
+# The host's C compiler as the driver picks it (`c_driver::cc_program`): LOFT_CC, else CC, else cc.
+HOST_CC = os.environ.get("LOFT_CC") or os.environ.get("CC") or "cc"
+CC = [HOST_CC, "-std=c99", "-O1", "-DLOFT_CALL_CHAIN", "-pthread"] + (["-ldl"] if sys.platform.startswith("linux") else [])
 MODES = {
     "strict": ["-DLOFT_STRICT", "-pedantic", "-Werror"],
     "default": ["-w"],
@@ -125,7 +127,8 @@ HAS_MAIN = re.compile(r"^\s*(pub\s+)?fn\s+main\s*\(", re.M)
 
 
 def corpus() -> list[str]:
-    r = subprocess.run([str(ROOT / "scripts" / "corpus_files.sh")], capture_output=True,
+    # Through bash: Windows runs no `.sh` by itself.
+    r = subprocess.run(["bash", str(ROOT / "scripts" / "corpus_files.sh")], capture_output=True,
                        text=True, cwd=ROOT)
     return [l for l in r.stdout.split("\n") if l.strip()]
 
