@@ -203,6 +203,10 @@ struct WasmToolchain {
     sysroot: Option<String>,
     ld: Option<String>,
     triple: &'static str,
+    /// Whether a small program linked under `triple`: a clang with no wasm target (Apple's)
+    /// or no WASI libc links under neither, and is a toolchain to install, said before the
+    /// program's own C is compiled.
+    links: bool,
 }
 
 /// Measured on each runner's packages (C10): Debian's wasi-libc lays its headers out for
@@ -269,16 +273,17 @@ fn wasm_toolchain() -> &'static WasmToolchain {
             let _ = fa::remove_file(&probe_out);
             linked
         };
-        let triple = if reaches("wasm32-wasip1") {
-            "wasm32-wasip1"
+        let (triple, links) = if reaches("wasm32-wasip1") {
+            ("wasm32-wasip1", true)
         } else {
-            "wasm32-wasi"
+            ("wasm32-wasi", reaches("wasm32-wasi"))
         };
         WasmToolchain {
             cc,
             sysroot,
             ld,
             triple,
+            links,
         }
     })
 }
@@ -301,6 +306,13 @@ pub(crate) fn build_wasm(
 ) -> Result<(), String> {
     let tc = wasm_toolchain();
     let cc = tc.cc.clone();
+    if !tc.links {
+        return Err(format!(
+            "--native-wasm: the wasm32 toolchain is incomplete — `{cc}` links a small WASI \
+             program under neither wasm32-wasip1 nor wasm32-wasi; {}",
+            loft::platform::c_wasm_toolchain_cure()
+        ));
+    }
     let scratch = loft::platform::scratch_dir();
     let src = scratch.join(format!("loft_wasm_c_{}.c", std::process::id()));
     fa::write(&src, c).map_err(|e| format!("cannot write {}: {e}", src.display()))?;

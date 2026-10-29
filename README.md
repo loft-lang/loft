@@ -84,7 +84,8 @@ interprets instead — that is normal, not a fault to fix. `--interpret` asks fo
 interpreter directly and needs nothing but the bundle. `--native-c` compiles through C with
 the C compiler already on your machine and no Rust — the C runtime is inside the binary (on
 Debian/Ubuntu `build-essential`; for `--native-wasm` add `clang lld wasi-libc
-libclang-rt-dev-wasm32`). Keep `bin/` and `default/` together:
+libclang-rt-dev-wasm32`, and `binaryen` for `--html`; macOS and Windows lists are on the
+[install page](doc/install.html#native-c)). Keep `bin/` and `default/` together:
 the binary loads the standard library from `<binary-dir>/../default`.
 
 Two things worth knowing about daily builds. **GitHub requires you to be signed in to

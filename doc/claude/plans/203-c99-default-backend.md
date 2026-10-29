@@ -132,6 +132,13 @@ The browser half, one contract with the Rust writer's page rather than a page of
    embed and font page suites run each page-building test on both writers; `par` in a C page
    runs its rows in order, as the Rust page does without cross-origin isolation.
 
+The C toolchain is found the same way on every host (`c_driver::wasm_toolchain`): the first
+WASI triple a small program links under — Debian's layout answers to `wasm32-wasi`, wasi-sdk's
+and Homebrew's to `wasm32-wasip1` — Homebrew's LLVM before Apple's clang, and a clang with no
+wasm target refused as a toolchain to install before the program is compiled.  C10's macOS
+and Windows lists were measured on their runners (`macos-probe` / `windows-probe` with `run`)
+and are on the install page.
+
 Open in C6: threads in a C page (wasip1-threads and a Worker-backed spawn — speed only); a
 library native with only a Rust crate under `--native-wasm`, where the Rust writer
 cross-builds the crate and the C, by design, links none — the library needs a C native part,

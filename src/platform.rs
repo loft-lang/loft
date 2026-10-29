@@ -1768,6 +1768,20 @@ pub fn c_host_toolchain_cure() -> &'static str {
     }
 }
 
+/// How to install `wasm-opt` (binaryen), which a page that yields a frame needs for asyncify —
+/// what the `--html` driver says when it is missing, per host (C10, measured on each runner).
+#[must_use]
+pub fn wasm_opt_cure() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "`brew install binaryen`"
+    } else if cfg!(windows) {
+        "put binaryen's `bin` on PATH (github.com/WebAssembly/binaryen/releases, the \
+         x86_64-windows archive)"
+    } else {
+        "`apt install binaryen` on Debian/Ubuntu, binaryen from your distribution elsewhere"
+    }
+}
+
 /// What to install so the C backend can build a wasm32 module: clang, `wasm-ld`, the WASI
 /// sysroot and the wasm32 compiler-rt builtins, said for this host (@PLN203 C10).
 #[must_use]
@@ -1778,6 +1792,10 @@ pub fn c_wasm_toolchain_cure() -> &'static str {
     } else if cfg!(target_os = "macos") {
         "install Homebrew's LLVM, lld and WASI libc (`brew install llvm lld wasi-libc \
          wasi-runtimes`) — Apple's clang has no wasm target — or name a clang in LOFT_WASM_CC"
+    } else if cfg!(windows) {
+        "download wasi-sdk (github.com/WebAssembly/wasi-sdk/releases, the x86_64-windows archive) \
+         and name its clang in LOFT_WASM_CC (`<wasi-sdk>/bin/clang.exe`) — the LLVM installer's \
+         clang has no WASI libc"
     } else {
         "install LLVM's clang and lld with a WASI sysroot and the wasm32 compiler-rt, or name \
          a clang in LOFT_WASM_CC"

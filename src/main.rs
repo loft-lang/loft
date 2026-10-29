@@ -11443,9 +11443,8 @@ fn main() {
                  package) is not installed.\n  \
                  Without it this game page will FREEZE the browser tab \
                  (it locks up and never draws).\n  \
-                 Install it and rebuild before publishing — e.g. `apt \
-                 install binaryen`, or run `make doctor` for the command \
-                 for your system."
+                 Install it and rebuild before publishing: {}.",
+                loft::platform::wasm_opt_cure()
             );
             wasm_path
         };
