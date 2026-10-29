@@ -386,6 +386,7 @@ impl<'a> Cx<'a> {
             .get_or_init(|| {
                 use crate::opt::value_records::layout as vl;
                 let vr = crate::opt::value_records::value_records(self.data, self.stores, false);
+                crate::rewrite_census::fired("R-ValueRecord", vr.fns.len());
                 let views = vr
                     .types
                     .values()

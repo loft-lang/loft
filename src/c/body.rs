@@ -730,6 +730,15 @@ impl<'a> FnWriter<'a> {
     /// The function's C body, and how many statements it holds — its own lines, without the
     /// declarations, the blank lines and the frame-site bookkeeping (`small_function`).
     pub(crate) fn write(mut self) -> Result<(String, usize), String> {
+        // The rewrite census (`LOFT_REWRITE_CENSUS`), per function as the native writer counts:
+        // the analyses this body reads were settled when it was set up.
+        {
+            use crate::rewrite_census::fired;
+            fired("R-TextBorrow", self.borrowed.iter().filter(|b| **b).count());
+            fired("R-CharWalk", self.char_walks.len());
+            fired("R-RetAdopt", usize::from(self.adopt.is_some()));
+        }
+        self.complete_writes_once();
         let code = self.code;
         self.dc = self.deferred_plan();
         let mut flags: Vec<u16> = self.dc.vars.keys().copied().collect();
@@ -1012,6 +1021,19 @@ impl<'a> FnWriter<'a> {
                 }
                 frame.push((path, h, base));
             }
+        }
+        {
+            use crate::rewrite_census::fired;
+            fired("R-Header", frame.len());
+            fired("R-Base", frame.iter().filter(|(_, _, b)| *b).count());
+            fired(
+                "R-Kept",
+                frame
+                    .iter()
+                    .filter(|(_, h, _)| self.grown_headers.contains(h))
+                    .count(),
+            );
+            fired("R-Scalar", held_scalars.len());
         }
         self.headers.push(frame);
         self.scalars.push(held_scalars);
@@ -1595,6 +1617,7 @@ impl<'a> FnWriter<'a> {
     fn complete_writes_once(&mut self) {
         if self.complete_mints.is_none() {
             let c = crate::opt::ret_adopt::complete_writes(self.cx.data, self.cx.stores, self.d);
+            crate::rewrite_census::fired("R-CompleteWrite", c.db_vars.len() + c.mint_tps.len());
             self.fresh_fields = c.fresh_fields;
             self.complete_mints = Some(c.mint_tps);
         }
@@ -3347,6 +3370,7 @@ impl<'a> FnWriter<'a> {
                 // destination where the store allows; a fn-ref call's result may be a store it
                 // borrowed, and a type whose tree holds a stored reference keeps the copy.
                 if matches!(x.unspan(), Value::Call(..)) && self.cx.swap_safe(bytes) {
+                    crate::rewrite_census::fired("H-SwapRebind", 1);
                     self.line(
                         ind,
                         &format!(
@@ -4535,6 +4559,7 @@ impl<'a> FnWriter<'a> {
             xs.push(format!("&{h}"));
             self.kh_passed.insert(h);
             mask |= super::KH_BIT;
+            crate::rewrite_census::fired("R-KeptTwin", 1);
         }
         // `@FR-R-Inputs`: a callee whose every header input this body holds takes them.
         if mask & super::KH_BIT == 0
