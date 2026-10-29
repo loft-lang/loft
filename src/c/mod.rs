@@ -1934,7 +1934,12 @@ fn unit_defines(
     cx: &Cx,
     reached: &std::collections::HashSet<u32>,
 ) -> (String, bool, bool) {
-    let mut out = String::new();
+    // The call-depth cap both other backends enforce (`limits::MAX_CALL_DEPTH`), stated here so
+    // the runtime cannot hold a copy of the number that drifts from it.
+    let mut out = format!(
+        "#define LOFT_MAX_CALL_DEPTH {}\n",
+        crate::limits::MAX_CALL_DEPTH
+    );
     if reached.iter().any(|&d| data.def(d).name() == "n_file_map") {
         out.push_str("#define LOFT_FOREIGN 1\n");
     }
@@ -3002,9 +3007,10 @@ fn framed(cx: &Cx, d: u32, name: &str, params: &str, ret: CType, body: &str) -> 
         def.name().to_string()
     };
     let push = format!(
-        "    loft_frame_push({}, {});\n",
+        "    loft_frame_push({}, {}, {});\n",
         body::c_string(&frame_name),
-        body::c_string(&def.position().file)
+        body::c_string(&def.position().file),
+        def.position().line
     );
     // The body names the texts it holds (`LOFT_HOLD`); the frame drops them on its return.
     let push = format!("{push}    LOFT_HOLD_MARK(hm);\n");

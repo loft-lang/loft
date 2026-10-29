@@ -611,6 +611,26 @@ static void loft_locked_write(void) {
     exit(1);
 }
 
+/* The call stack ran past `LOFT_MAX_CALL_DEPTH` (`RuntimeError::stack_overflow`): the program
+ * stops as a failed assertion stops it, at `line` of `file`. */
+#ifdef LOFT_MAX_CALL_DEPTH
+static void loft_stack_overflow(const char *file, uint32_t line) {
+    char msg[96];
+    int n = snprintf(msg, sizeof msg, "call stack overflow \xe2\x80\x94 exceeded %d stack frames",
+                     (int) LOFT_MAX_CALL_DEPTH);
+    fflush(stdout);
+    fputs("error: ", stderr);
+    fwrite(msg, 1, (size_t) n, stderr);
+    fputc('\n', stderr);
+    if (!loft_in_test) loft_fault_where(loft_lit(file, strlen(file)), line);
+    loft_fail_msg.len = 0;
+    loft_push(&loft_fail_msg, msg, (size_t) n);
+    if (loft_in_test) { LOFT_RELEASE_HELD(0); longjmp(loft_test_jmp, 1); }
+    fflush(stdout);
+    exit(1);
+}
+#endif
+
 /* `stack_trace()` reads the frames, so a unit that reaches it keeps them in every build; any
  * other unit keeps them where the build asks for the call chain a fault prints
  * (`-DLOFT_CALL_CHAIN`, the semantics tier) and compiles the pushes away where it does not. */
@@ -620,11 +640,23 @@ static void loft_locked_write(void) {
 #ifdef LOFT_CALL_CHAIN
 /* The frames the program is running (call_frames.rs, `cr_call_push`): each function's name and
  * file, and the line it is calling from (`cr_call_site`), outermost first. */
-typedef struct { const char *fn, *file; uint32_t site; } loft_frame;
+typedef struct { const char *fn, *file; uint32_t site, decl; } loft_frame;
 static LOFT_TLS loft_frame *loft_frames = 0;
 static LOFT_TLS size_t loft_nframes = 0, loft_capframes = 0;
+#ifdef LOFT_MAX_CALL_DEPTH
+static void loft_stack_overflow(const char *file, uint32_t line);
+#endif
 
-static void loft_frame_push(const char *fn, const char *file) {
+static void loft_frame_push(const char *fn, const char *file, uint32_t decl) {
+#ifdef LOFT_MAX_CALL_DEPTH
+    /* The call-depth cap (`call_frames::cr_call_push`): checked BEFORE the push, so a refused
+     * call never runs, and reported at the declaration of the function that is running — the
+     * frame below — as the interpreter's `State::fn_call` reports it (loft#1058). */
+    if (loft_nframes >= LOFT_MAX_CALL_DEPTH) {
+        const loft_frame *below = loft_nframes ? &loft_frames[loft_nframes - 1] : 0;
+        loft_stack_overflow(below ? below->file : file, below ? below->decl : decl);
+    }
+#endif
     if (loft_nframes == loft_capframes) {
         loft_capframes = loft_capframes ? loft_capframes * 2 : 64;
         loft_frames = (loft_frame *) realloc(loft_frames, loft_capframes * sizeof *loft_frames);
@@ -633,6 +665,7 @@ static void loft_frame_push(const char *fn, const char *file) {
     loft_frames[loft_nframes].fn = fn;
     loft_frames[loft_nframes].file = file;
     loft_frames[loft_nframes].site = 0;
+    loft_frames[loft_nframes].decl = decl;
     loft_nframes++;
 }
 
@@ -647,7 +680,7 @@ static void loft_frame_site(uint32_t line) {
 #define LOFT_FRAMES_RESET() (loft_nframes = 0)
 #else
 #define LOFT_FRAMES_RESET() ((void) 0)
-#define loft_frame_push(fn, file) ((void) 0)
+#define loft_frame_push(fn, file, decl) ((void) 0)
 #define loft_frame_pop() ((void) 0)
 #define loft_frame_site(line) ((void) 0)
 #endif
