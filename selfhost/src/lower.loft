@@ -874,7 +874,13 @@ fn record_of(ts: vector<ir::TypeT>) -> integer {
   match t {
     TyReference { n, dep: _ } => n,
     TyEnum { n, is_ref, dep: _ } => if is_ref { n } else { -1 },
-    TyOptional { inner } => record_of(inner),
+    TyOptional { inner } => {
+      match inner[0] ?? panic("a nullable type has its base") {
+        TyReference { n, dep: _ } => n,
+        TyEnum { n, is_ref, dep: _ } => if is_ref { n } else { -1 },
+        _ => -1,
+      }
+    }
     _ => -1,
   }
 }
@@ -994,7 +1000,14 @@ fn deps_of(ts: vector<ir::TypeT>) -> vector<integer> {
     TyReference { n: _, dep } => dep,
     TyVector { inner: _, dep } => dep,
     TyEnum { n: _, is_ref: _, dep } => dep,
-    TyOptional { inner } => deps_of(inner),
+    TyOptional { inner } => {
+      match inner[0] ?? panic("a nullable type has its base") {
+        TyReference { n: _, dep } => dep,
+        TyVector { inner: _, dep } => dep,
+        TyEnum { n: _, is_ref: _, dep } => dep,
+        _ => [],
+      }
+    }
     _ => [],
   }
 }

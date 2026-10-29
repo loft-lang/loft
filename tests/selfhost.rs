@@ -96,8 +96,11 @@ fn the_selfhost_tests_pass_on_an_emitted_image() {
         let table = c_type_table(&emitted_source);
         fa::write(kernels.join(format!("{stem}.ctypes")), table).expect("the C type table");
         // And its default images (P6): what `OpNewRecord` fills an element with.
-        fa::write(kernels.join(format!("{stem}.cdflt")), c_default_images(&emitted_source))
-            .expect("the C default images");
+        fa::write(
+            kernels.join(format!("{stem}.cdflt")),
+            c_default_images(&emitted_source),
+        )
+        .expect("the C default images");
     }
 
     let tested = loft::platform::process::harness_command(loft())
@@ -117,7 +120,6 @@ fn the_selfhost_tests_pass_on_an_emitted_image() {
         "selfhost tests:\n{out}\n{err}"
     );
 }
-
 
 /// The default images in an emitted C program (`static const uint8_t loft_dflt{tp}[n] = { … };`),
 /// one line per type: `tp`, then its bytes — the form `selfhost/tests/types.loft` compares with
@@ -162,7 +164,8 @@ fn c_type_table(c: &str) -> String {
             .map(str::to_string)
             .collect()
     };
-    let mut fields: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut fields: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
     let mut variants: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
     let mut rows = Vec::new();
