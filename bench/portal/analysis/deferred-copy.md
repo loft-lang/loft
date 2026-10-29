@@ -155,6 +155,27 @@ view ITSELF is read again (`lease::Frame::read_itself_after`); the local still c
 views' reads.  Fixed: mix 1.021, collatz 1.004 (gcc), 1.023 / 1.014 (clang); fib 0.293 / 0.335.
 The ~2 % left is the eight live `op` remaps; proving `b` apart would remove them (0.986).
 
+loft-91 measured the fix through `measure.py` (`--native-c --ship`): gcc matched, clang still
+read mix 1.068, collatz 1.040.  The ship path emits WITHOUT `LOFT_RELEASE_PASS_PROBE`, the C
+priced above; on that C under clang the points themselves cost what the `op` remaps did not
+(all points removed: 0.977 / 0.960).  So the points had to go, which is an apart question:
+- `progs` is placed in the caller's return-buffer store by `(R-ExitVector)` (admitted with no
+  move — it is never returned).  Declining that admission removed the points but dropped
+  `R-ExitVector`, `R-DecodeView`, `R-TextRun`, `R-Header`, `R-Base` and `R-Range` across eleven
+  benches (`scripts/rewrite_census.py`), so the placement stays.
+- A plain argument (`b`) whose record type reaches no `reference<τ>` field owns a tree
+  disjoint from records this activation placed or minted.  Building that clause found a
+  SOUNDNESS hole in what had shipped: `distinct` called a fresh store apart from an argument
+  whose pointer field pointed into it (`h.link = &ps[1]; poke(h)` read 55 for 10 on C).  A
+  value whose type reaches a pointer is now apart from nothing (guard cell `linked`).  The
+  loop-header hoist was probed on the same shape and declines it (a growth through a pointer
+  path is not admitted).
+- The promoted work buffer (`__ref_15`) and a destination temporary (`__ref_4 = images[t]…`)
+  got their own clauses.
+
+`run` now has no copy point at all.  `measure.py`'s path, on/off: gcc fib 0.295, mix 1.009,
+collatz 0.990; clang fib 0.335, mix 0.977, collatz 0.959.
+
 ## Not in this design
 
 - **A dead OWNER source.**  `x = s` where `s` owns its record and is dead after is a move that

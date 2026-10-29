@@ -389,6 +389,77 @@ impl FnWriter<'_> {
         Some(derived)
     }
 
+    /// Is `v` apart from every source of `dv` — can no write through it change a record the
+    /// deferred local reads?  `owns` are the deferred locals, their views and witnesses, which
+    /// are only ever read.
+    fn dc_apart(
+        &self,
+        v: u16,
+        dv: &DcVar,
+        facts: &crate::opt::hoist::StoreFacts<'_>,
+        owns: &HashSet<u16>,
+    ) -> bool {
+        let data = self.cx.data;
+        let vars = self.vars;
+        // A copy is disturbed by a change to its source's RECORDS, never by the store's buffer
+        // moving (a reference is store, record and position, not an address).  So besides
+        // `distinct`, two owners this activation created — minted, or placed in a host's store
+        // (`(R-Place)`) — own disjoint records whichever store they share: a write through one
+        // changes no record of the other.
+        let own_here = |w: u16| facts.fresh(w) || facts.placed.contains(&w);
+        let records_apart = |t: u16, v: u16| {
+            facts
+                .terminal(v)
+                .is_some_and(|tv| tv != t && own_here(t) && own_here(tv))
+        };
+        // A plain argument owns a tree of records the caller built: when nothing in that tree
+        // is a stored pointer, a write through it reaches none of the records this activation
+        // minted or placed, whichever store they share (single ownership).  A hidden buffer
+        // is left out: its store can be cleared whole, and placed records live in it.
+        let attrs = data.def(self.d).attributes();
+        let arg_tree = |tv: u16| {
+            vars.is_argument(tv)
+                && vars
+                    .arguments()
+                    .iter()
+                    .position(|&a| a == tv)
+                    .and_then(|i| attrs.get(i))
+                    .is_some_and(|a| !a.hidden)
+                && matches!(
+                    vars.tp(tv).base(),
+                    Type::Reference(_, d) if !d.is_pointer_marker()
+                )
+                && !reaches_pointer(data, vars.tp(tv), &mut HashSet::new())
+        };
+        if owns.contains(&v)
+            || self.dc.null_only.contains(&v)
+            || (v as usize) >= vars.var_count()
+            || !(crate::data::is_dbref(vars.tp(v).base())
+                || matches!(vars.tp(v).base(), Type::RefVar(_)))
+        {
+            return true;
+        }
+        // A stored pointer (`reference<τ>`) can name a record in ANY store, so a write
+        // through a value that reaches one is apart from nothing: two stores being
+        // different does not keep it out of the source's records.
+        if reaches_pointer(data, vars.tp(v), &mut HashSet::new()) {
+            return false;
+        }
+        // A compiler temporary bound only as a path off a variable (`__ref_4 =
+        // images[t].pixels`, a call's destination) is a place in that variable's records.
+        let w = path_root(self.code, data, vars, v).unwrap_or(v);
+        // A promoted work buffer is a store the caller mints for this call alone: apart
+        // from every source not placed in it.
+        let work = crate::opt::push_window::work_buffer_arg(data, self.d, v);
+        dv.sources.iter().all(|t| {
+            *t != v
+                && (facts.distinct(*t, w)
+                    || records_apart(*t, w)
+                    || (own_here(*t) && facts.terminal(w).is_some_and(arg_tree))
+                    || (work && !placed_in(self.code, data, *t, v)))
+        })
+    }
+
     /// Whether statement `s` may write a store not proven apart from `dv`'s sources' — the
     /// point its copy must be taken before.  A read operator writes nothing; any other operator
     /// or call writes at most the stores its operands name (a scalar field read passes a
@@ -407,28 +478,7 @@ impl FnWriter<'_> {
             .iter()
             .flat_map(|(x, d)| d.derived.iter().copied().chain([*x, d.own]))
             .collect();
-        // A copy is disturbed by a change to its source's RECORDS, never by the store's buffer
-        // moving (a reference is store, record and position, not an address).  So besides
-        // `distinct`, two owners this activation created — minted, or placed in a host's store
-        // (`(R-Place)`) — own disjoint records whichever store they share: a write through one
-        // changes no record of the other.
-        let own_here = |w: u16| facts.fresh(w) || facts.placed.contains(&w);
-        let records_apart = |t: u16, v: u16| {
-            facts
-                .terminal(v)
-                .is_some_and(|tv| tv != t && own_here(t) && own_here(tv))
-        };
-        let apart = |v: u16| {
-            owns.contains(&v)
-                || self.dc.null_only.contains(&v)
-                || (v as usize) >= vars.var_count()
-                || !(crate::data::is_dbref(vars.tp(v).base())
-                    || matches!(vars.tp(v).base(), Type::RefVar(_)))
-                || dv
-                    .sources
-                    .iter()
-                    .all(|t| *t != v && (facts.distinct(*t, v) || records_apart(*t, v)))
-        };
+        let apart = |v: u16| self.dc_apart(v, dv, &facts, &owns);
         let mut flag = false;
         let mut ks: Vec<Value> = Vec::new();
         let memo = self.dc.writes.clone();
@@ -995,4 +1045,109 @@ fn int_constant(data: &crate::data::Data, k: &Value) -> Option<i32> {
         }
         _ => None,
     }
+}
+
+/// Can a value of type `tp` reach a stored pointer — a `reference<τ>` field — through its own
+/// fields, elements, keyed records or variants?  Such a value may name a record in any store.
+/// A shape this walk does not know answers yes.
+fn reaches_pointer(data: &crate::data::Data, tp: &Type, seen: &mut HashSet<u32>) -> bool {
+    use crate::data::DefType;
+    let record = |d: u32, seen: &mut HashSet<u32>| -> bool {
+        if !seen.insert(d) {
+            return false;
+        }
+        match data.def_type(d) {
+            DefType::Struct | DefType::EnumValue => {
+                (0..data.attributes(d)).any(|a| reaches_pointer(data, &data.attr_type(d, a), seen))
+            }
+            _ => true,
+        }
+    };
+    match tp.base() {
+        Type::Integer(_)
+        | Type::Boolean
+        | Type::Float
+        | Type::Single
+        | Type::Character
+        | Type::Text(_)
+        | Type::Null
+        | Type::Void => false,
+        Type::Enum(_, false, _) => false,
+        Type::Enum(e, true, _) => {
+            if !seen.insert(*e) {
+                return false;
+            }
+            let variants: Vec<u32> = data
+                .children_of(*e)
+                .filter(|c| data.def_type(*c) == DefType::EnumValue)
+                .collect();
+            variants.into_iter().any(|v| record(v, seen))
+        }
+        Type::Reference(d, deps) => deps.is_pointer_marker() || record(*d, seen),
+        Type::Vector(e, _) => reaches_pointer(data, e, seen),
+        Type::Hash(d, _, _)
+        | Type::Sorted(d, _, _)
+        | Type::Index(d, _, _)
+        | Type::Radix(d, _, _)
+        | Type::Trie(d, _, _) => record(*d, seen),
+        Type::Tuple(ts) => ts.iter().any(|t| reaches_pointer(data, t, seen)),
+        Type::RefVar(inner) => reaches_pointer(data, inner, seen),
+        _ => true,
+    }
+}
+
+/// The variable `v` is a place in, when `v` is a compiler temporary every bind of which is
+/// `null` or a field or element path off ONE other variable (`OpGetField` / `OpGetVector`
+/// chains).  `None` for anything else.
+fn path_root(
+    code: &Value,
+    data: &crate::data::Data,
+    vars: &crate::variables::Function,
+    v: u16,
+) -> Option<u16> {
+    fn root(n: &Value, data: &crate::data::Data) -> Option<u16> {
+        match n.unspan() {
+            Value::Var(r) => Some(*r),
+            Value::Call(op, args)
+                if (*op as usize) < data.definitions.len()
+                    && matches!(
+                        data.def(*op).name(),
+                        "OpGetField" | "OpGetVector" | "OpGetVectorNullable"
+                    ) =>
+            {
+                root(args.first()?, data)
+            }
+            _ => None,
+        }
+    }
+    if !vars.is_compiler_generated(v) || vars.is_argument(v) {
+        return None;
+    }
+    let mut found: Option<u16> = None;
+    let mut bad = false;
+    code.any_node(&mut |n| {
+        if let Value::Set(t, rhs) = n
+            && *t == v
+            && !matches!(rhs.unspan(), Value::Null)
+        {
+            match root(rhs, data) {
+                Some(r) if r != v && found.is_none_or(|f| f == r) => found = Some(r),
+                _ => bad = true,
+            }
+        }
+        bad
+    });
+    if bad { None } else { found }
+}
+
+/// Is source `t` a record `(R-Place)` claimed in the store of `host` (`t = OpPlaceRecord(host,
+/// …)`)?
+fn placed_in(code: &Value, data: &crate::data::Data, t: u16, host: u16) -> bool {
+    code.any_node(&mut |n| {
+        matches!(n, Value::Set(x, rhs) if *x == t
+            && matches!(rhs.unspan(), Value::Call(op, args)
+                if (*op as usize) < data.definitions.len()
+                    && data.def(*op).name() == "OpPlaceRecord"
+                    && matches!(args.first().map(Value::unspan), Some(Value::Var(h)) if *h == host)))
+    })
 }

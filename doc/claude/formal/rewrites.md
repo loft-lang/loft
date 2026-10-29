@@ -4240,7 +4240,16 @@ line in `Output::output_function`'s prelude.
                  flag is up.  A source released under `COPY_FREE_SOURCE` is a callee's
                  fresh temporary and writes nothing the local views; a buffer that holds the
                  null reference at every mention (a callee's `__ref_N`, which it mints into)
-                 names no store that exists, so a call handed one writes none of them.  Nothing changed the
+                 names no store that exists, so a call handed one writes none of them.
+                 A value whose type reaches a stored pointer (`reference<τ>`) is apart
+                 from nothing — a pointer names a record in any store, so two stores
+                 being different does not keep it out of the source.  A plain argument
+                 whose record type reaches no pointer owns a tree the caller built,
+                 disjoint from every record this activation minted or placed (single
+                 ownership); a hidden buffer is left out, as its store can be cleared
+                 whole.  A promoted work buffer is apart from every source not placed in
+                 it, and a compiler temporary bound only as a path off a variable (a
+                 call's destination) is judged as that variable.  Nothing changed the
                  place between the bind and the guard, so the values are the copy's:
                  the copy (B-Copy) owes holds, later.  Any other bind of the local lowers the flag: a view
                  bind must still see writes to its place (B-Disturb).  Required: an owner
