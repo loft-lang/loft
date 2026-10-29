@@ -75,6 +75,15 @@ fn disown(t: Owners, s: integer) {
   }
 }
 
+// Does the frame whose integer slots start at `base` (at depth `depth`) own store `s` — one of
+// its variables, or a value it holds in flight?  An IR free may name a store by any variable
+// of the frame that views it (a vector's field names its wrapper's store); it never releases
+// a store a caller owns.
+fn frame_owns(t: Owners, s: integer, base: integer, depth: integer) -> boolean {
+  o = owner_of(t, s);
+  o >= base || o == IN_FLIGHT - depth
+}
+
 // Store `s` released through the runtime, and its entry with it.
 fn release(t: Owners, s: integer) {
   crt::free_ref(s, 0, 0);
@@ -671,23 +680,23 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         ref_out(io, ints, at);
         claim(own, io[0] ?? NULL_STORE, at);
       }
-      // `OpFreeRef(v)`: released when `v` owns its store; `v` is reset either way, as the
-      // runtime's `loft_free_var` resets it.
+      // `OpFreeRef(v)`: released when this frame owns `v`'s store; `v` is reset either way, as
+      // the runtime's `loft_free_var` resets it.
       FreeVar => {
         at = base_int + op.a;
         st = ints[at] ?? NULL_STORE;
         if st != NULL_STORE {
-          if owner_of(own, st) == at {
+          if frame_owns(own, st, base_int, fp) {
             release(own, st);
           }
           ints[at] = NULL_STORE;
         }
       }
-      // `OpFreeRef` of a value: a store a variable owns is that variable's to release.
+      // `OpFreeRef` of a value: released when this frame owns it, or nobody does.
       FreeRef => {
         sp_int -= 3;
         st = ints[sp_int] ?? NULL_STORE;
-        if st != NULL_STORE && owner_of(own, st) < 0 {
+        if st != NULL_STORE && (owner_of(own, st) == NOBODY || frame_owns(own, st, base_int, fp)) {
           release(own, st);
         }
       }
@@ -697,7 +706,7 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         at = base_int + op.a;
         st = ints[at] ?? NULL_STORE;
         if st != NULL_STORE && st != (ints[sp_int] ?? NULL_STORE) {
-          if owner_of(own, st) == at {
+          if frame_owns(own, st, base_int, fp) {
             release(own, st);
           }
           ints[at] = NULL_STORE;

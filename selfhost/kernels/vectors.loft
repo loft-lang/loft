@@ -103,6 +103,24 @@ fn defaults(n: integer) -> integer {
   s
 }
 
+// A parameter rebound to a vector of its own: the callee's store is freed through the view
+// that names it (the IR frees `p`, its wrapper owns the store), the caller's stays.
+// rebind([x, x]) = len 3 * 10 + 7 = 37; the caller's vector keeps len 2 and sum 2x.
+// rebound_param(5) = 37 * 1000 + 200 + 10 = 37210.
+fn rebind(p: vector<integer>) -> integer {
+  p = [7, 8];
+  p += [9];
+  len(p) * 10 + p[0]
+}
+
+fn rebound_param(x: integer) -> integer {
+  v: vector<integer> = [];
+  v += [x];
+  v += [x];
+  r = rebind(v);
+  r * 1000 + len(v) * 100 + total(v)
+}
+
 fn main() {
-  println("{ints(4)} {records(4)} {texts(5)} {bagged(2)} {passed(3)} {through(4)} {refilled(7)} {defaults(5)}");
+  println("{ints(4)} {records(4)} {texts(5)} {bagged(2)} {passed(3)} {through(4)} {refilled(7)} {defaults(5)} {rebound_param(5)}");
 }

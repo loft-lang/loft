@@ -122,13 +122,9 @@ fn test_every_format_spec_renders_through_the_c_runtime() {
 // S3's first slice: records of integers and texts in the C runtime's stores (1b-s3.md).  Each
 // value is worked out by hand in `kernels/structs.loft`, and each run must leave none of the
 // runtime's stores live: the IR's frees free every record the run made.
-fn ran_clean(entry: text, arg: integer) -> integer? {
-  return ran_in("structs", entry, arg);
-}
-
-// `entry(arg)` of kernel `name`, which must leave no store live and nothing for the sweep.
-fn ran_in(name: text, entry: text, arg: integer) -> integer? {
-  b = kernel(name);
+// `entry(arg)` of the kernel image `b`, which must leave no store live and nothing for the
+// sweep.  A test loads its kernel once and runs every entry of it: an image is megabytes.
+fn ran_clean(b: ir::Bundle, entry: text, arg: integer) -> integer? {
   d = lower::find(b, entry);
   assert(d >= 0, "the image has {entry}");
   o = run::run(b, d, [arg]);
@@ -139,38 +135,44 @@ fn ran_in(name: text, entry: text, arg: integer) -> integer? {
 }
 
 fn test_a_struct_is_built_read_and_freed() {
-  assert(ran_clean("n_built", 3) == 9, "built(3)");
-  assert(ran_clean("n_built", -4) == -12, "built(-4)");
+  st = kernel("structs");
+  assert(ran_clean(st, "n_built", 3) == 9, "built(3)");
+  assert(ran_clean(st, "n_built", -4) == -12, "built(-4)");
 }
 
 fn test_a_field_written_through_a_parameter_is_seen_by_the_caller() {
-  assert(ran_clean("n_shifted", 4) == 9, "shifted(4)");
+  st = kernel("structs");
+  assert(ran_clean(st, "n_shifted", 4) == 9, "shifted(4)");
 }
 
 fn test_a_copy_diverges_from_its_source() {
-  assert(ran_clean("n_copied", 4) == 4100, "copied(4)");
-  assert(ran_clean("n_texts_apart", 1) == 27, "texts_apart(1): the copy's text is its own");
+  st = kernel("structs");
+  assert(ran_clean(st, "n_copied", 4) == 4100, "copied(4)");
+  assert(ran_clean(st, "n_texts_apart", 1) == 27, "texts_apart(1): the copy's text is its own");
 }
 
 fn test_a_record_returned_by_a_function_has_its_text_set_and_read() {
-  assert(ran_clean("n_named", 5) == 4, "named(5)");
-  assert(ran_clean("n_named", 123) == 6, "named(123)");
-  assert(ran_clean("n_mixed", 10) == 15, "mixed(10)");
+  st = kernel("structs");
+  assert(ran_clean(st, "n_named", 5) == 4, "named(5)");
+  assert(ran_clean(st, "n_named", 123) == 6, "named(123)");
+  assert(ran_clean(st, "n_mixed", 10) == 15, "mixed(10)");
 }
 
 // A value block whose frees follow its value (a struct match binding a text): the value is the
 // last operator that is not a free, as the C generator takes it.
 fn test_a_match_block_frees_after_its_value() {
-  assert(ran_clean("n_matched", 1) == 3, "matched(1)");
-  assert(ran_clean("n_matched", 5) == -1, "matched(5)");
+  st = kernel("structs");
+  assert(ran_clean(st, "n_matched", 1) == 3, "matched(1)");
+  assert(ran_clean(st, "n_matched", 5) == -1, "matched(5)");
 }
 
 // A record bound from a call whose result borrows its argument is COPIED (`(O-Move)`), as the
 // owner table decides at run time: the write through the result leaves the argument alone.
 // The bind reaches the lowering inside a source span, and is read past it.
 fn test_a_bind_from_a_borrowing_call_copies() {
-  assert(ran_clean("n_kept", 4) == 4, "kept(4)");
-  assert(ran_clean("n_borrowed", 6) == 650, "borrowed(6)");
+  st = kernel("structs");
+  assert(ran_clean(st, "n_kept", 4) == 4, "kept(4)");
+  assert(ran_clean(st, "n_borrowed", 6) == 650, "borrowed(6)");
 }
 
 // Ownership at run time (1b-s3.md): rebinds release what they displace, a loop holds one store
@@ -179,19 +181,21 @@ fn test_a_bind_from_a_borrowing_call_copies() {
 // way `file()` is written) is adopted.  Each
 // leaves no store live and nothing for the sweep: the IR's frees and the table agree.
 fn test_the_owner_table_binds_and_frees_as_one() {
-  assert(ran_clean("n_rebound", 5) == 108, "rebound(5)");
-  assert(ran_clean("n_looped", 10) == 45, "looped(10)");
-  assert(ran_clean("n_unbound", 4) == 3, "unbound(4)");
-  assert(ran_clean("n_reset_kept", 3) == 36, "reset_kept(3)");
-  assert(ran_clean("n_promoted", 4) == 6, "promoted(4)");
+  st = kernel("structs");
+  assert(ran_clean(st, "n_rebound", 5) == 108, "rebound(5)");
+  assert(ran_clean(st, "n_looped", 10) == 45, "looped(10)");
+  assert(ran_clean(st, "n_unbound", 4) == 3, "unbound(4)");
+  assert(ran_clean(st, "n_reset_kept", 3) == 36, "reset_kept(3)");
+  assert(ran_clean(st, "n_promoted", 4) == 6, "promoted(4)");
 }
 
 // Every field width through its own runtime routine (u8, i16, i32, character, boolean, float,
 // single) and a record embedded in another, written and read through `OpGetField`.
 fn test_every_field_width_and_an_embedded_record_run() {
-  assert(ran_clean("n_wide", 5) == 145, "wide(5)");
-  assert(ran_clean("n_wide", -5) == -1, "wide(-5)");
-  assert(ran_clean("n_floats", 3) == 45, "floats(3)");
+  st = kernel("structs");
+  assert(ran_clean(st, "n_wide", 5) == 145, "wide(5)");
+  assert(ran_clean(st, "n_wide", -5) == -1, "wide(-5)");
+  assert(ran_clean(st, "n_floats", 3) == 45, "floats(3)");
 }
 
 // S3's second slice: vectors (1b-s3.md § The second slice), each value by hand in
@@ -200,14 +204,18 @@ fn test_every_field_width_and_an_embedded_record_run() {
 // function; an element written through; a vector cleared and refilled, and an empty one.  An
 // entry with a hidden vector buffer is handed one, as its caller would hand it.
 fn test_vectors_build_walk_index_and_clear() {
-  assert(ran_in("vectors", "n_ints", 4) == 412, "ints(4)");
-  assert(ran_in("vectors", "n_records", 4) == 7, "records(4)");
-  assert(ran_in("vectors", "n_texts", 5) == 32, "texts(5)");
-  assert(ran_in("vectors", "n_bagged", 2) == 16, "bagged(2)");
-  assert(ran_in("vectors", "n_passed", 3) == 33, "passed(3)");
-  assert(ran_in("vectors", "n_through", 4) == 42, "through(4)");
-  assert(ran_in("vectors", "n_refilled", 7) == 107, "refilled(7)");
-  assert(ran_in("vectors", "n_defaults", 5) == 65, "defaults(5): omitted nullable fields read null");
+  v = kernel("vectors");
+  assert(ran_clean(v, "n_ints", 4) == 412, "ints(4)");
+  assert(ran_clean(v, "n_records", 4) == 7, "records(4)");
+  assert(ran_clean(v, "n_texts", 5) == 32, "texts(5)");
+  assert(ran_clean(v, "n_bagged", 2) == 16, "bagged(2)");
+  assert(ran_clean(v, "n_passed", 3) == 33, "passed(3)");
+  assert(ran_clean(v, "n_through", 4) == 42, "through(4)");
+  assert(ran_clean(v, "n_refilled", 7) == 107, "refilled(7)");
+  assert(ran_clean(v, "n_defaults", 5) == 65, "defaults(5): omitted nullable fields read null");
+  // The IR frees the callee's store through `p`, a view of its wrapper: a free acts on what the
+  // FRAME owns, so nothing is left for the sweep, and the caller's vector is untouched.
+  assert(ran_clean(v, "n_rebound_param", 5) == 37210, "rebound_param(5)");
 }
 
 // A kernel's whole `main`, as the census runs a program: it prints what `loft --interpret`
