@@ -2092,8 +2092,8 @@ impl Store {
     /// one `claim_block` would have produced, because the split rule is the same and the
     /// remainder is the only node either way.  Declines (answering `None`) for anything
     /// that is not exactly that shape — a tree with two nodes, a single free block that is
-    /// not the tail, a tail the split rule would claim whole, or a remainder too small for
-    /// the tree (`MIN_FREE_TREE`, which `fl_insert` would leave out) — so every other claim
+    /// not the tail, or a remainder too small for the tree (`MIN_FREE_TREE`, which
+    /// `fl_insert` would leave out) — so every other claim
     /// takes the path it always took.  Measured on the drawing pass: the free-tree walks
     /// were 9 % of the `fronds` row (@PLN157).
     fn bump_tail(&mut self, size: u32) -> Option<u32> {
@@ -2103,10 +2103,7 @@ impl Store {
         }
         let block_size = -(self.read::<i32>(root, 0));
         let req_size = size as i32;
-        if block_size <= req_size * 4 / 3
-            || block_size - req_size < MIN_FREE_TREE
-            || root + block_size as u32 != self.size
-        {
+        if block_size - req_size < MIN_FREE_TREE || root + block_size as u32 != self.size {
             return None;
         }
         let pos = root;
@@ -2143,7 +2140,7 @@ impl Store {
         }
         let req = size as i32;
         let block = self.fl_size(pos);
-        if block <= req * 4 / 3 || block - req < MIN_FREE_TREE {
+        if block - req < MIN_FREE_TREE {
             return None;
         }
         self.write(pos, 0, req);
@@ -2158,12 +2155,13 @@ impl Store {
         Some(pos)
     }
 
-    /// Mark `pos` as claimed (splitting if the block is much larger than `size`).
+    /// Mark `pos` as claimed: the record takes EXACTLY `size` words and the rest of the block,
+    /// however small, is a free block behind it (`@FR-H-Exact`).
     fn claim_block(&mut self, pos: u32, size: u32) -> u32 {
         let req_size = size as i32;
         let block_size = -(self.read::<i32>(pos, 0));
         assert!(block_size >= req_size, "Claimed block too small at {pos}");
-        if block_size > req_size * 4 / 3 {
+        if block_size > req_size {
             self.write(pos, 0, req_size);
             let new_free = pos + size;
             self.set_free_header(new_free, block_size - req_size);
@@ -7055,14 +7053,20 @@ mod tests {
                 "the remainder's header spans exactly the rest of the store"
             );
             // A remainder the tree would not track declines the bump: the claim takes the
-            // tree path and the block whole, leaving no free root — as it always did.
+            // tree path, and still takes exactly its size (`@FR-H-Exact`) — the one word
+            // behind it is a free block nothing tracks, neither tree node nor wilderness.
             let left = store.size - tail;
             let d = store.claim(left - 1);
             assert_eq!(d, tail);
             assert_eq!(
                 store.read::<i32>(d, 0) as u32,
-                left,
-                "a block not much larger than the request is claimed whole"
+                left - 1,
+                "the record takes exactly the words it asked for"
+            );
+            assert_eq!(
+                store.read::<i32>(d + left - 1, 0),
+                -1,
+                "a one-word free block"
             );
             assert_eq!(store.free_root, 0, "nothing is left to track");
             assert_eq!(store.wild, 0, "nor to hold as the wilderness");

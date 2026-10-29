@@ -26,9 +26,11 @@ names its measurement.
 ## The store
 
 A store is one growable buffer of 8-byte words holding records, plus the bookkeeping that
-claims, frees, grows, parks and locks them.  The bytes are the same on both sides — header
-words, record sizes, content — which is why a store image moves between backends.  The
-bookkeeping is the shared core below.
+claims, frees, grows, parks and locks them.  The buffer is the loft file layout, defined in
+[formal/structures.md](formal/structures.md) `S-Live`: every block's bytes — a record's header,
+a free block's header, footer and tree links, a parked block's links, a tombstone — are the
+same on both sides and in a mapped file.  The bookkeeping kept BESIDE the buffer (`S-Side`) is
+the shared core below.
 
 | Concept | Interpreter (`Store`) | C runtime (`loft_store_t`) | State |
 |---|---|---|---|
@@ -97,7 +99,6 @@ from P0b (what the C runtime lacks).  State: **open**, **fixing** (on the branch
 
 | # | Divergence | State |
 |---|---|---|
-| D6 | equality through a `reference<T>` to a removed record: the interpreter follows the raw slot, C reads null (`@FR-H-Removed` says C is right) | closed — the interpreter reads through `get_db_ref` (`tests/scripts/a-reference-to-a-removed-record-compares-as-null.loft`) |
 | D7b | `loft_swap_in` exchanges locked or foreign stores | fixing — laptop-c-perf |
 | D7c | `loft_reset_pool_root` re-mints a locked, file-backed or foreign store | fixing — laptop-c-perf |
 | D8 | the swap-in gate is narrower in C (walk scratch, constant, lazy binding), and refuses a protected destination where Rust tests the source | open |
@@ -115,7 +116,6 @@ from P0b (what the C runtime lacks).  State: **open**, **fixing** (on the branch
 
 | # | Divergence | State |
 |---|---|---|
-| D10 | a locked write ends a production run in C; the interpreter discards it and continues | open |
 | D11 | no `WriteDropped` diagnostic in C for a write through a null holder | open |
 | D12 | the FFI claim callback zeroes in C and not in the interpreter | open — decided by D17 |
 
@@ -136,7 +136,6 @@ from P0b (what the C runtime lacks).  State: **open**, **fixing** (on the branch
 |---|---|---|
 | D19a | `loft_st_init` resets `claimed_end` and `needs_coalesce`; the interpreter does not | open — is the interpreter's stale value intended? |
 | D19b | the allocator's switches are hard-wired in C | P0b |
-| D19c | no store-memory ceiling on C test runs | closed — the runner hands its ceiling to a compiled child, both writers (`the_default_ceiling_reaches_a_compiled_test`) |
 | D19d | `loft_claim_grow` does not check for u32 overflow | open |
 | D19e | NaN and ±0 sort in different orders | open |
 | D19f | clear-release skips the store reset on an already-empty vector | open |
