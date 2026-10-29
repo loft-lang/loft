@@ -998,16 +998,17 @@ impl Scopes<'_> {
         // the inner-scope pairing applies to it: the block's diverging exit runs before `v` is
         // bound, so the buffer's own free there cannot be guarded by `v`.
         let branch = matches!(unspanned_value, Value::If(_, _, _));
-        let arm_calls = if branch {
+        let arm_calls = if !record_shaped
+            || publishes_through_ref
+            || !crate::keys::join_buffer_witness_enabled()
+        {
+            Vec::new()
+        } else if branch {
             tail_calls(unspanned_value)
         } else {
             coalesce_tail_calls(unspanned_value)
         };
-        if record_shaped
-            && !publishes_through_ref
-            && crate::keys::join_buffer_witness_enabled()
-            && !arm_calls.is_empty()
-        {
+        if !arm_calls.is_empty() {
             let v_scope = self.var_scope.get(&v).copied().unwrap_or(u16::MAX);
             for call in arm_calls {
                 let Value::Call(fn_nr, args) = call else {
