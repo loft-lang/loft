@@ -331,6 +331,32 @@ jobs:
               exit 0 ;;
           esac
 
+      # The same suite through the C backend (@PLN203), under the same verdict policy as the
+      # native step above.  A library whose native part is a Rust crate (`[native]` in its
+      # manifest) cannot run there — a C build loads no Rust crate — so it is reported, not
+      # failed.
+      - name: Native C — ${{ matrix.name }}
+        working-directory: lib/${{ matrix.sub }}
+        run: |
+          set -uo pipefail
+          if grep -q '^\[native\]' loft.toml; then
+            echo "::notice title=${{ matrix.name }} C backend::not run — its native part is a Rust crate, which a C build does not load"
+            exit 0
+          fi
+          policy="$(python3 "$GITHUB_WORKSPACE/loft-src/scripts/revalidate_matrix.py" --native-policy loft.toml)"
+          if LOFT_TIMEOUT=240 loft --native-c --tests tests; then
+            echo "✅ ${{ matrix.name }} — C-backend suite green against this loft ($policy)"
+            exit 0
+          fi
+          case "$policy" in
+            gate)
+              echo "::error title=${{ matrix.name }} C-backend break::the suite failed through the C backend and the manifest declares no [native] build-deps"
+              exit 1 ;;
+            *)
+              echo "::warning title=${{ matrix.name }} C backend (best-effort)::the C-backend suite failed; the manifest declares build-deps (${policy#best-effort?}) this runner may lack"
+              exit 0 ;;
+          esac
+
       # RELEASE-READY — one pass, and it is RED when that pass warned.
       #
       # ⚠ ONE pass.  This used to take two readings of the same question — the published
