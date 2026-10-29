@@ -5417,11 +5417,14 @@ impl<'a> FnWriter<'a> {
         ind: usize,
     ) -> Result<Option<E>, String> {
         let e = match (name, args) {
-            // A function variable's scope-exit free reads its definition number as a
-            // reference and releases nothing: its closure record is freed through its own.
-            ("OpFreeRef", [Value::Var(v)]) if self.shapes[*v as usize] == CType::Fn => {
-                Ok(E::new("(void) 0", K::Void))
-            }
+            // A function variable's scope-exit free releases its closure record, as native's
+            // does (`var_f.1`): a closure handed back by its defining function has no other
+            // release.  One built here is also freed through its own record variable first,
+            // and a store already free stays as it is (`loft_free_ref`).
+            ("OpFreeRef", [Value::Var(v)]) if self.shapes[*v as usize] == CType::Fn => Ok(E::new(
+                format!("loft_free_var(&{}.clos)", self.var(*v)),
+                K::Void,
+            )),
             // A variable's free resets it to the sentinel, as native's does: the next pass's
             // pre-build free of it is then a no-op instead of a release of a reused slot.
             ("OpFreeRef", [Value::Var(v)]) if self.shapes[*v as usize] == CType::Ref => {
