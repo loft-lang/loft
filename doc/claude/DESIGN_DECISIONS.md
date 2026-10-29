@@ -134,3 +134,4 @@ a guard that does not exercise it — is its line in
 - [C138](DESIGN_DECISIONS_PLATFORM.md#c138--every-scalar-in-a-store-sits-on-its-natural-boundary-the-bytecode-stays-byte-packed) — Every scalar in a store sits on its natural boundary; the bytecode stays byte-packed
 - [C144](DESIGN_DECISIONS_PLATFORM.md#c144--a-nullable-value-record-carries-a-presence-word-an-absent-one-holds-its-fields-nulls) — A nullable value record carries a presence word; an absent one holds its fields' nulls
 - [C153](DESIGN_DECISIONS_PLATFORM.md#c153--what-the-interpreter-can-use-lives-in-opt-a-compiled-targets-decisions-in-lower-a-backend-only-spells) — What the interpreter can use lives in `opt`, a compiled target's decisions in `lower`; a backend only spells
+- [C157](DESIGN_DECISIONS_PLATFORM.md#c157--a-library-declares-no-c-compile-or-link-flags-its-c-reaches-the-system-by-dlopen) — A library declares no C compile or link flags; its C reaches the system by `dlopen`

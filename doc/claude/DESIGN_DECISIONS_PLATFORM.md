@@ -368,3 +368,25 @@ cannot win back.  Decided 2026-10-23 (@PLN200) — [record](DESIGN_DECISIONS-his
 [INTERMEDIATE.md § The interpreter's contract](INTERMEDIATE.md#the-interpreters-contract);
 guard `tests/extraction_hygiene.rs` `library_modules_keep_their_layers`.
 **Catalogue:** @I64 (the bytecode compiler, whose analyses `opt` holds).
+
+## C157 — A library declares no C compile or link flags; its C reaches the system by `dlopen`
+
+**Decision.** A package's `[c]` section names its shim sources and the C libraries it binds
+(`shim`, `libs`, `optional-libs`); it carries no `cflags`, `ldflags` or per-platform section.
+A shim compiles with loft's fixed flags (`c_shim.rs`), configures itself with `#if` on the
+platform macros, includes its vendored code by a path relative to the source, and opens a
+system library at run time with `dlopen` rather than linking it.
+**Why.** Surveyed 2026-10-29: no published package needs a flag.  The seven that ship a shim
+(crypto with 49 vendored BearSSL and Monocypher files, random, regex, audio, input, screen,
+imaging) all build on the fixed flags — `screen` reaches X11 through `dlopen`, so it builds
+wherever a C compiler exists and fails only when its first function is called.  None of the 46
+registry packages declares `[c] libs` or `optional-libs`, and the Rust-crate libraries (graphics,
+server, ssh, web) state their system libraries in `[native] runtime-libs`.  A flags mechanism
+would have no consumer to be designed against.
+**Revisit when.** A library must link a system library it cannot `dlopen` — a macOS framework,
+a static-only vendor archive, a header found only through `pkg-config`.  The shape priced then:
+`[c] cflags` applied to that package's shim sources alone (in the shim's cache key), `[c] ldflags`
+appended to the final link on lines of their own (not `/* link: */`, whose inputs are files),
+and `[c.<os>]` sections adding to the base.  Decided 2026-10-29.
+**Holds at:** `@C157` — `src/manifest.rs` (the `[c]` keys), `src/c_shim.rs` (the fixed flags).
+
