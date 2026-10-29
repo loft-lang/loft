@@ -6494,7 +6494,13 @@ impl Parser {
             // `OpRefIsNull` is well defined for any heap subject, and on one that cannot be
             // absent the arm is simply never taken, exactly like an unreachable `_`.
             let heap_null_subject = is_struct && !synth_null_elem;
-            if valid_enum && (synth_null_elem || heap_null_subject) && self.lexer.has_token("null")
+            // A plain VALUE enum spells absence in its disc byte (0 or 255), which no variant
+            // takes, so its `null` arm asks `null_test` too and a variant arm never matches a
+            // null.  Without it the arm-head parser read `null` as a variant name (loft#2230).
+            let value_null_subject = !is_struct && !synth_null_elem;
+            if valid_enum
+                && (synth_null_elem || heap_null_subject || value_null_subject)
+                && self.lexer.has_token("null")
             {
                 self.expect_match_arm_arrow();
                 let mut arm_body = Value::Null;
@@ -6537,7 +6543,7 @@ impl Parser {
                 // The inline element reads discriminant 0; the heap subject asks its own
                 // sentinel, and covers no variant — an absent subject is not a variant of
                 // anything, which is why exhaustiveness is untouched for it.
-                let (discs, cond) = if heap_null_subject {
+                let (discs, cond) = if heap_null_subject || value_null_subject {
                     // `null_test` is the one home for "is this absent?": a struct-enum
                     // subject bound from an `E` slot is a sub-reference whose absence is its
                     // discriminant, which the bare sentinel test called present, so the
