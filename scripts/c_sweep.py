@@ -127,10 +127,14 @@ HAS_MAIN = re.compile(r"^\s*(pub\s+)?fn\s+main\s*\(", re.M)
 
 
 def corpus() -> list[str]:
-    # Through bash: Windows runs no `.sh` by itself.
-    r = subprocess.run(["bash", str(ROOT / "scripts" / "corpus_files.sh")], capture_output=True,
-                       text=True, cwd=ROOT)
-    return [l for l in r.stdout.split("\n") if l.strip()]
+    # `corpus.py`, the Python twin of `corpus_files.sh`: Windows resolves a bare `bash` to
+    # System32's WSL launcher first, whose UTF-16 answer is no list of files.  Sorted whole,
+    # as the shell list's `LC_ALL=C sort`.
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from corpus import corpus_files
+    # Each path relative to the root, the suite's as `../loft-suite/…` — the shell list's.
+    from corpus import rel
+    return sorted(rel(p).replace(os.sep, "/") for p in corpus_files())
 
 
 # The interpreter is the oracle, and the slowest of the runs: a program near a minute on it
