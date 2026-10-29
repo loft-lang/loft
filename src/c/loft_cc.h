@@ -65,9 +65,11 @@
 #endif
 
 /* A file's modification time in nanoseconds from a `struct stat` (a lazy source's pin): Darwin
- * names the fraction `st_mtimensec` under POSIX, the others `st_mtim`. */
+ * names it `st_mtimespec` under `_DARWIN_C_SOURCE`, which the layer above always asks for on an
+ * Apple host (its `st_mtimensec` is the strict-POSIX spelling, hidden then), the others
+ * `st_mtim`. */
 #if defined(LOFT_POSIX) && defined(__APPLE__)
-#define LOFT_ST_MTIME_NS(st) ((uint64_t) (st).st_mtime * 1000000000u + (uint64_t) (st).st_mtimensec)
+#define LOFT_ST_MTIME_NS(st) ((uint64_t) (st).st_mtimespec.tv_sec * 1000000000u + (uint64_t) (st).st_mtimespec.tv_nsec)
 #elif defined(LOFT_POSIX)
 #define LOFT_ST_MTIME_NS(st) ((uint64_t) (st).st_mtim.tv_sec * 1000000000u + (uint64_t) (st).st_mtim.tv_nsec)
 #endif
