@@ -1484,6 +1484,12 @@ static int loft_ref_by_place(const void *a, const void *b) {
     return x->e.pos < y->e.pos ? -1 : x->e.pos > y->e.pos;
 }
 
+static int loft_lref_by_place(const void *a, const void *b) {
+    const loft_ref *x = (const loft_ref *) a, *y = (const loft_ref *) b;
+    if (x->rec != y->rec) return x->rec < y->rec ? -1 : 1;
+    return x->pos < y->pos ? -1 : x->pos > y->pos;
+}
+
 static void loft_hash_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, loft_ref to) {
     const loft_tdesc *d = &T[tp];
     loft_store_t *fs = loft_store_of(from);
@@ -1501,12 +1507,25 @@ static void loft_hash_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref fro
     if (!inl && kept) qsort(all, kept, sizeof *all, loft_ref_by_place);
     loft_hash_reserve(T, tp, to, kept);
     uint32_t size = T[d->elem].size;
+    /* A LINKED entry is a record of its own, and claims made in the source's order need not
+     * ascend: the allocator puts each where it fits best (`@FR-H-Exact`).  So every record is
+     * claimed before any is filled, and the source's i-th entry goes into the i-th lowest —
+     * one type's records are one size (`@FR-Col-Unordered`, `copy_claims_hash_body`). */
+    int linked = T[d->elem].linked;
+    loft_ref *recs = 0;
+    if (linked && kept) {
+        recs = (loft_ref *) malloc((size_t) kept * sizeof *recs);
+        if (!recs) { fputs("loft: out of memory\n", stderr); abort(); }
+        for (uint32_t i = 0; i < kept; i++) recs[i] = loft_hash_entry(to, size, 1);
+        qsort(recs, kept, sizeof *recs, loft_lref_by_place);
+    }
     for (uint32_t i = 0; i < kept; i++) {
-        loft_ref e = loft_hash_entry(to, size, T[d->elem].linked);
+        loft_ref e = linked ? recs[i] : loft_hash_entry(to, size, 0);
         loft_copy_bytes(e, 0, all[i].e, 0, size);
         loft_copy_claims(T, d->elem, all[i].e, e);
         (void) loft_h_add(to, e, d->keys, d->nk);
     }
+    free(recs);
     free(all);
 }
 

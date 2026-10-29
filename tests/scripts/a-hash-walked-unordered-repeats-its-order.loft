@@ -17,6 +17,9 @@
 struct E { k: integer, v: integer }
 struct H { h: hash<E[k]> }
 struct S { s: sorted<E[k]> }
+struct T { k: integer, name: text }
+struct ST { s: sorted<T[k]> }
+struct HT { h: hash<T[k]> }
 
 fn walk(hh: const H) -> text {
   t = "";
@@ -37,6 +40,18 @@ fn filled() -> H {
   hh
 }
 
+fn walk_t(hh: const HT) -> text {
+  t = "";
+  for e in unordered(hh.h) { t += "{e.k}:{e.name},"; }
+  t
+}
+
+fn filled_t() -> HT {
+  hh = HT { h: [] };
+  for i in 0..64 { hh.h += [T { k: (i * 37) % 64, name: "n{i}" }]; }
+  hh
+}
+
 fn main() {
   a = filled();
   b = filled();
@@ -52,6 +67,13 @@ fn main() {
   for i in 0..64 { if i % 3 == 0 { d.h[i] = null } }
   d.h = a.h;
   assert(walk(d) == walk(a) && len(d.h) == 64, "u2b {walk(d)}");
+  // u2c — the same with entries that own a text: the copy claims each entry's text after its
+  // record, between the entries, and the records still stand in the source's order.
+  ta = filled_t();
+  td = filled_t();
+  for i in 0..64 { if i % 3 == 0 { td.h[i] = null } }
+  td.h = ta.h;
+  assert(walk_t(td) == walk_t(ta) && len(td.h) == 64 && td.h[5].name == "n33", "u2c {walk_t(td)}");
   // u3 — the walk skips the key sort: the scrambled fill does not come back in key order.
   assert(walk(a) != ordered(a), "u3 {walk(a)}");
   // u4 — every entry once: 64 visits, keys summing to 0 + … + 63 = 2016, values the same.
