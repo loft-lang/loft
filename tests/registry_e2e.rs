@@ -1413,12 +1413,13 @@ fn a_released_library_artifact_runs_compiled_without_rustc() {
     // under that environment (a distribution's own `rustc` in `/usr/bin`) cannot run them.
     let probe_home = tmp.join("probe_home");
     fa::create_dir_all(&probe_home).unwrap();
-    let reachable = without_rust_toolchain(&mut std::process::Command::new("/bin/sh"))
-        .args(["-c", "rustc --version"])
-        .current_dir(&probe_home)
-        .env("HOME", &probe_home)
-        .output()
-        .is_ok_and(|o| o.status.success());
+    let reachable =
+        without_rust_toolchain(&mut loft::platform::process::harness_command("/bin/sh"))
+            .args(["-c", "rustc --version"])
+            .current_dir(&probe_home)
+            .env("HOME", &probe_home)
+            .output()
+            .is_ok_and(|o| o.status.success());
     if reachable {
         eprintln!(
             "skip: a rustc answers on /usr/bin:/bin, so the no-toolchain runs cannot be staged"
