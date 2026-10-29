@@ -831,9 +831,16 @@ static uint32_t loft_claim_best_fit(loft_store_t *s, uint32_t size) {
     return loft_claim_block(s, found, size);
 }
 
+/* `Store::bump_wild`: the claim cut off the wilderness's front.  `@FR-H-WildFirst`: the
+ * wilderness serves the claims it can hold before the free tree is asked; built with
+ * -DLOFT_NO_WILD_FIRST it serves one only while the tree is empty (the tree-order layout). */
 static uint32_t loft_bump_wild(loft_store_t *s, uint32_t size) {
     uint32_t pos = s->wild;
+#ifdef LOFT_NO_WILD_FIRST
     if (pos == 0 || s->free_root != 0) return 0;
+#else
+    if (pos == 0) return 0;
+#endif
     int32_t req = (int32_t) size;
     int32_t block = loft_fl_size(s, pos);
     if (block <= req * 4 / 3 || block - req < LOFT_MIN_FREE_TREE) return 0;

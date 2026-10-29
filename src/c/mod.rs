@@ -267,6 +267,13 @@ pub(crate) const APV_BIT: u64 = 1 << 60;
 /// caller's header is current when the call returns (`opt::apart::kept_growth_param`).
 pub(crate) const KH_BIT: u64 = 1 << 59;
 
+/// The bits of a `__nn` twin (`@FR-R-NonSentinelParam`'s twin clause), one per parameter from
+/// bit 32: the function written again with those parameters seeded as non-sentinel, called by
+/// a call site whose arguments prove them where the program-wide fact cannot (another caller
+/// passes a value that may be null).
+pub(crate) const NN_SHIFT: u32 = 32;
+pub(crate) const NN_MASK: u64 = ((1u64 << 26) - 1) << NN_SHIFT;
+
 /// The record collections beside a plain vector the C carries; each layout is described in
 /// `loft_keyed.h`.  An `array` and an `ordered` are the forms a vector and a sorted take when
 /// their element type is shared (`@FR-Col-Group`, a stored reference).  A `spatial` and a
@@ -1152,9 +1159,15 @@ pub(crate) fn type_word(tp: &Type) -> String {
 /// — `--native`'s `_st` twins.  Mask 0 is the function itself.
 /// An `__inv` twin ([`INV_BIT`]) adds `__inv` after the place mask's name.
 pub(crate) fn twin_name(data: &Data, d: u32, mask: u64) -> String {
-    let places = mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT & !KH_BIT;
+    let places = mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT & !KH_BIT & !NN_MASK;
     let inv = if mask & INV_BIT == 0 { "" } else { "__inv" };
     let kh = if mask & KH_BIT == 0 { "" } else { "__kh" };
+    let nn_bits = (mask & NN_MASK) >> NN_SHIFT;
+    let kh = if nn_bits == 0 {
+        kh.to_string()
+    } else {
+        format!("{kh}__nn{nn_bits:x}")
+    };
     let nk = if mask & NK_BIT == 0 { "" } else { "__nk" };
     let apr = if mask & APR_BIT == 0 { "" } else { "__apr" };
     let apv = if mask & APV_BIT == 0 { "" } else { "__apv" };
@@ -2271,7 +2284,7 @@ fn small_function(statements: usize) -> bool {
 #[expect(clippy::too_many_lines)]
 fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     let data = cx.data;
-    let places = mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT & !KH_BIT;
+    let places = mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT & !KH_BIT & !NN_MASK;
     let def = data.def(d);
     // A `#c` binding (@PLN24): the C function itself, called by its declared signature.
     if def.code() == &Value::Null && !def.c_sig.is_empty() {
@@ -2426,6 +2439,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         .places(places)
         .inputs(inputs)
         .kept_growth(kept)
+        .nn_seed(mask)
         .nokeep(mask & NK_BIT != 0)?
         .apart(mask & APR_BIT != 0)
         .apart_value(mask & APV_BIT != 0)

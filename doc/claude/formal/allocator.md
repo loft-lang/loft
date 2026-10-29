@@ -47,11 +47,30 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                  best-fit take weighs it against the smallest fitting node by the
                  tree's own (size, position) order — the wilderness has the highest
                  position of any free block, so a node of equal size precedes it.
-                 The block every claim takes, and so the store's layout, is therefore
-                 the one the tree alone would give; what changes is that a claim from
-                 the tail and a delete into it cost no tree delete, insert or
-                 rebalance.  At most one wilderness exists, it never overlaps a claim,
+                 Under the tree order (`H-WildFirst` off) the block every claim takes,
+                 and so the store's layout, is therefore the one the tree alone would
+                 give; what changes is that a claim from the tail and a delete into it
+                 cost no tree delete, insert or rebalance.  At most one wilderness exists, it never overlaps a claim,
                  and the open walk (and every re-tiling) re-derives it.
+  (H-WildFirst)  inside one store that keeps a wilderness, a claim of n words that the
+                 wilderness holds with room to spare — b > 4n/3 and b − n at least the
+                 tree's minimum — is cut off the wilderness's FRONT even while the free
+                 tree holds blocks; the remainder stays the wilderness.  The tree is
+                 asked only for a claim the wilderness cannot hold this way.  No value
+                 changes (a claim's bytes are undefined, H-Claim); the layout does:
+                 holes the tree holds are reused once the tail no longer serves, and
+                 the store report describes that layout.  The store still grows no
+                 sooner than every free block that could hold the claim is out of
+                 reach.  The reason is the claim's cost: a store whose vectors and
+                 tables have grown frees their old blocks into the same store, and
+                 under the tree order every later small claim then walks the tree
+                 (118 instructions each on `grouped_fill_find`, −8 % with this rule).
+                 Both backends hold it (`Store::bump_wild`, `loft_bump_wild`); switch
+                 `LOFT_NO_WILD_FIRST=1` (interpreter and native) and
+                 `-DLOFT_NO_WILD_FIRST` (C).  Pin
+                 `the_wilderness_first_claim_keeps_every_block_whole` (src/store.rs):
+                 tiling, the wilderness invariant, every live record's payload intact,
+                 the footprint within twice the tree order's.
   (H-Carve)      inside one store, a best-fit claim of n words from a tree node of b
                  words with b − n ≥ n puts the (b − n)-word remainder IN THE NODE'S
                  PLACE — the node's links, its color, its parent's pointer — instead of

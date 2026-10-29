@@ -530,6 +530,27 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  the escape question, the proof's and this rule's), the emitter's
                  `begin_vector_hoist` and `emit_invariant_use`.
 
+  (R-NonSentinelParam) a scalar PARAMETER (integer or float) of a loft function
+                 holds a non-sentinel value on entry when the function is never a
+                 function VALUE (an `FnRef`, or its number handed to a function-typed
+                 parameter), has at least one direct call, never rebinds or lends the
+                 parameter, and EVERY direct call in the program passes an argument
+                 the non-sentinel proof accepts.  The fact is a greatest fixpoint over
+                 the whole program: every candidate is assumed, each round re-reads
+                 every call site under the assumption and drops a parameter one site
+                 does not prove, until nothing drops; at the fixpoint each remaining
+                 parameter is handed a proven value by every call, each proof resting
+                 only on parameters that are themselves proven, so by induction on the
+                 call depth it holds one on entry.  It seeds the proof for the body
+                 (`non_sentinel_vars`), so `v % 32` on such a parameter ranges and is
+                 the plain operator.  Under the release-pass probe the proof also
+                 closes over the integer `+ - *` of proven operands: they WRAP, so the
+                 result is the sentinel only after an overflow, which is a fault, and
+                 the probe's contract already lets the values after a fault differ
+                 (C120); the checked build does not close (`1246-…` pins that an
+                 overflow reads as null there).  A miss costs the plain operator,
+                 never a value.  Switch `LOFT_NO_NN_PARAMS=1`; site
+                 `non_sentinel::proven_params`.
   (R-Header)     in a loop body that writes no store, a vector reached by a PURE
                  PATH P — a variable, or const-offset fields over one — has one
                  header (store, record, length) for the whole loop: the emitter
@@ -652,6 +673,19 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  `a-vector-the-loop-grows-is-read-through-the-header-derived-after-each-growth.loft`
                  (four of its six cells fail with the refresh left out; the other two
                  are loops earlier clauses already hold).
+                 THE KEPT-TWIN CLAUSE: a call that hands such a vector to a loft
+                 function whose one vector parameter the growth walk admits over the
+                 function's WHOLE body — every other parameter a scalar or a text, no
+                 reference answered, no `yield`, `par`, `CallRef` or function value
+                 (`apart::kept_growth_param`) — calls its `__kh` twin with the header
+                 by POINTER (`loft_vh *khp`).  The twin reads and writes through
+                 `(*khp)` and derives it again after each of its own growth
+                 statements, so the caller's header is current when the call returns
+                 and no refresh follows the call.  A callee that only reads keeps the
+                 read-only `__inv` twin.  Bench 20 (`put` on the interpreter's value
+                 stack): −27.5 % instructions under gcc, −17.6 % under clang.  Switch
+                 `LOFT_NO_KEPT_GROWTH=1`; the same guard fails its four cells with only
+                 the twin's refresh left out.
 ```
 
 **The apart clause, in words.**  The gate answers for a loop, and one statement it cannot

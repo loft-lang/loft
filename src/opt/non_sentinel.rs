@@ -102,11 +102,29 @@ pub fn non_sentinel(data: &Data, vars: &HashMap<u16, bool>, v: &Value) -> bool {
                 (non_negative_literal(&args[1]) && non_sentinel(data, vars, &args[0]))
                     || (non_negative_literal(&args[0]) && non_sentinel(data, vars, &args[1]))
             }
+            // `a % k` for a literal k other than 0 and -1 lies strictly between -|k| and |k|,
+            // and `a / k` for a literal |k| >= 2 at most halves `a`'s magnitude, so neither can
+            // be `i64::MIN` when `a` is proven.  Both lanes: neither can overflow.
+            "OpRemInt" if args.len() == 2 => {
+                matches!(args[1].unspan(), Value::Int(k) if *k != 0 && *k != -1)
+                    && non_sentinel(data, vars, &args[0])
+            }
+            "OpDivInt" if args.len() == 2 => {
+                matches!(args[1].unspan(), Value::Int(k) if k.unsigned_abs() >= 2)
+                    && non_sentinel(data, vars, &args[0])
+            }
             // `a >> k` for a literal k in 1..=63 halves the magnitude at
             // least once, so the result can never reach `i64::MIN`.
             "OpSRightInt" if args.len() == 2 => {
                 matches!(args[1].unspan(), Value::Int(k) if (1..64).contains(k))
                     && non_sentinel(data, vars, &args[0])
+            }
+            // The release-pass probe (`LOFT_RELEASE_PASS_PROBE`, generation time) wraps
+            // `+`, `-`, `*`: a wrapped result of two proven operands is the sentinel only
+            // after an overflow, a fault, and the probe's contract already lets the values
+            // after a fault differ (C120).  So under the probe the integer family closes.
+            "OpAddInt" | "OpMinInt" | "OpMulInt" if args.len() == 2 && probe_closes() => {
+                non_sentinel(data, vars, &args[0]) && non_sentinel(data, vars, &args[1])
             }
             // @C120 — the non-null proof does not close over `+`, `-`, `*`.
             // NOT closed, deliberately: `+`/`-`/`*` mint the sentinel on
@@ -136,6 +154,194 @@ thread_local! {
 /// Called by [`super::begin_program`].
 pub(crate) fn begin_generation() {
     RETURNS.with(|m| m.borrow_mut().clear());
+    PARAMS.with(|m| *m.borrow_mut() = ParamState::Unknown);
+}
+
+/// Is the release-pass probe on (generation time)?  Its integer `+ - *` wrap.
+fn probe_closes() -> bool {
+    crate::env_once!(std::env::var("LOFT_RELEASE_PASS_PROBE").is_ok_and(|v| v != "0"))
+}
+
+/// Where the program-wide parameter facts stand ([`proven_params`]).
+enum ParamState {
+    Unknown,
+    /// Being computed: the current assumption, read by every query until it settles.
+    Computing(std::rc::Rc<HashMap<u32, Vec<bool>>>),
+    Known(std::rc::Rc<HashMap<u32, Vec<bool>>>),
+}
+
+thread_local! {
+    static PARAMS: std::cell::RefCell<ParamState> = const { std::cell::RefCell::new(ParamState::Unknown) };
+}
+
+/// `@FR-R-NonSentinelParam` — the parameters, per function, that hold a non-sentinel value on
+/// entry: a scalar parameter (integer or float) of a loft function that is never used as a
+/// function VALUE (an `FnRef`, or its number handed to a function-typed parameter) and that has
+/// at least one direct call, where EVERY direct call in the program passes an argument proven
+/// non-sentinel.  The answer is a greatest fixpoint: every candidate is assumed proven, each
+/// round re-reads every call site under the current assumption and drops a parameter one call
+/// site does not prove, until nothing drops.  At the fixpoint every remaining parameter is
+/// handed a proven value by every call, each proof resting only on parameters that are
+/// themselves proven, so by induction on the call depth each holds a non-sentinel value on
+/// entry.  A miss costs the plain operator, never a value.  `LOFT_NO_NN_PARAMS=1` proves none.
+fn proven_params(data: &Data) -> std::rc::Rc<HashMap<u32, Vec<bool>>> {
+    let state = PARAMS.with(|m| match &*m.borrow() {
+        ParamState::Known(k) | ParamState::Computing(k) => Some(k.clone()),
+        ParamState::Unknown => None,
+    });
+    if let Some(k) = state {
+        return k;
+    }
+    if crate::env_once!(std::env::var("LOFT_NO_NN_PARAMS").is_ok_and(|v| v != "0")) {
+        let k = std::rc::Rc::new(HashMap::new());
+        PARAMS.with(|m| *m.borrow_mut() = ParamState::Known(k.clone()));
+        return k;
+    }
+    use crate::data::Type;
+    // Functions used as values: their callers are not all visible.
+    let mut values: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    let mut called: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    let n = data.definitions.len();
+    for d in 0..n as u32 {
+        let def = data.def(d);
+        if !matches!(def.code(), Value::Block(_)) {
+            continue;
+        }
+        def.code().walk(&mut |v| match v {
+            Value::FnRef(f, _, _) => {
+                values.insert(f.unsigned_abs());
+            }
+            Value::Call(f, args) if (*f as usize) < n => {
+                called.insert(*f);
+                let attrs = data.def(*f).attributes();
+                for (i, a) in args.iter().enumerate() {
+                    if let Value::Int(g) = a.unspan()
+                        && attrs
+                            .get(i)
+                            .is_some_and(|at| matches!(at.typedef.base(), Type::Function(..)))
+                    {
+                        values.insert(g.unsigned_abs());
+                    }
+                }
+            }
+            _ => {}
+        });
+    }
+    let mut assumed: HashMap<u32, Vec<bool>> = HashMap::new();
+    for d in 0..n as u32 {
+        if values.contains(&d) || !called.contains(&d) {
+            continue;
+        }
+        if let Some(flags) = candidate_params(data, d) {
+            assumed.insert(d, flags);
+        }
+    }
+    loop {
+        PARAMS.with(|m| *m.borrow_mut() = ParamState::Computing(std::rc::Rc::new(assumed.clone())));
+        RETURNS.with(|m| m.borrow_mut().clear());
+        let mut changed = false;
+        for c in 0..n as u32 {
+            let def = data.def(c);
+            if !matches!(def.code(), Value::Block(_)) {
+                continue;
+            }
+            let mut sites: Vec<(u32, Vec<Value>)> = Vec::new();
+            def.code().walk(&mut |v| {
+                if let Value::Call(f, args) = v
+                    && assumed.contains_key(f)
+                {
+                    sites.push((*f, args.clone()));
+                }
+            });
+            if sites.is_empty() {
+                continue;
+            }
+            let facts = non_sentinel_vars(data, def.variables(), def.code());
+            for (f, args) in sites {
+                let flags = assumed.get_mut(&f).expect("a candidate");
+                for (i, flag) in flags.iter_mut().enumerate() {
+                    if *flag && !args.get(i).is_some_and(|a| non_sentinel(data, &facts, a)) {
+                        *flag = false;
+                        changed = true;
+                        if crate::env_once!(std::env::var("LOFT_TRACE_NN_PARAMS").is_ok()) {
+                            eprintln!(
+                                "nn-params: {} parameter {i} dropped by a call in {}: {:?}",
+                                data.def(f).name(),
+                                def.name(),
+                                args.get(i).map(Value::unspan)
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    RETURNS.with(|m| m.borrow_mut().clear());
+    assumed.retain(|_, f| f.iter().any(|x| *x));
+    crate::rewrite_census::fired(
+        "R-NonSentinelParam",
+        assumed
+            .values()
+            .map(|f| f.iter().filter(|x| **x).count())
+            .sum(),
+    );
+    let k = std::rc::Rc::new(assumed);
+    PARAMS.with(|m| *m.borrow_mut() = ParamState::Known(k.clone()));
+    k
+}
+
+/// The parameters of `d` the non-sentinel proof may seed: a scalar (integer or float)
+/// parameter of a loft body that the body never rebinds and never lends (by reference, to a
+/// function value, …) — so it holds what its caller passed for the whole call.  `None` when
+/// there is none.  Shared by the program-wide fact ([`proven_params`]) and a call site's
+/// specialised twin, which seeds the ones its arguments prove.
+pub(crate) fn candidate_params(data: &Data, d: u32) -> Option<Vec<bool>> {
+    use crate::data::Type;
+    let def = data.def(d);
+    if !matches!(def.code(), Value::Block(_)) {
+        return None;
+    }
+    let vars = def.variables();
+    let mut escaped: std::collections::HashSet<u16> = std::collections::HashSet::new();
+    collect_escapes(data, def.code(), &mut escaped);
+    let flags: Vec<bool> = def
+        .attributes()
+        .iter()
+        .enumerate()
+        .map(|(i, a)| {
+            let Ok(p) = u16::try_from(i) else {
+                return false;
+            };
+            matches!(a.typedef, Type::Integer(..) | Type::Float | Type::Single)
+                && (p as usize) < vars.var_count()
+                && vars.is_argument(p)
+                && !escaped.contains(&p)
+                // a parameter the body rebinds holds what it is given only until then
+                && !assigned_in(def.code(), p)
+        })
+        .collect();
+    flags.iter().any(|f| *f).then_some(flags)
+}
+
+/// The program-wide proven parameters of `d` (`@FR-R-NonSentinelParam`), if any.
+pub(crate) fn proven_param_flags(data: &Data, d: u32) -> Option<Vec<bool>> {
+    proven_params(data).get(&d).cloned()
+}
+
+/// Does `code` assign variable `p` anywhere?
+fn assigned_in(code: &Value, p: u16) -> bool {
+    let mut hit = false;
+    code.walk(&mut |v| {
+        if let Value::Set(x, _) = v
+            && *x == p
+        {
+            hit = true;
+        }
+    });
+    hit
 }
 
 /// Does the user function `d_nr` answer a non-sentinel value on EVERY exit?  Its body's
@@ -233,6 +439,19 @@ pub fn non_sentinel_vars(
     function: &crate::variables::Function,
     code: &Value,
 ) -> HashMap<u16, bool> {
+    non_sentinel_vars_seeded(data, function, code, &[])
+}
+
+/// [`non_sentinel_vars`] with `extra` parameters seeded as proven: the parameters a call
+/// site's arguments prove, for the specialised twin that call site calls
+/// (`@FR-R-NonSentinelParam`'s twin clause).  Each must be one [`candidate_params`] admits.
+#[must_use]
+pub fn non_sentinel_vars_seeded(
+    data: &Data,
+    function: &crate::variables::Function,
+    code: &Value,
+    extra: &[u16],
+) -> HashMap<u16, bool> {
     let mut escaped: std::collections::HashSet<u16> = std::collections::HashSet::new();
     collect_escapes(data, code, &mut escaped);
     let mut vars: HashMap<u16, bool> = HashMap::new();
@@ -245,6 +464,20 @@ pub fn non_sentinel_vars(
     // (`hoist::range_counters`), so the two cannot disagree about what a range is.
     seed_range_counters(data, code, &mut vars);
     seed_iteration_indexes(data, code, &escaped, &mut vars);
+    for p in extra {
+        vars.insert(*p, true);
+    }
+    // `@FR-R-NonSentinelParam`: the parameters every call proves (`proven_params`).
+    let d = data.def_nr(&function.name);
+    if (d as usize) < data.definitions.len() && std::ptr::eq(data.def(d).variables(), function) {
+        if let Some(flags) = proven_params(data).get(&d) {
+            for (i, f) in flags.iter().enumerate() {
+                if *f && let Ok(p) = u16::try_from(i) {
+                    vars.insert(p, true);
+                }
+            }
+        }
+    }
     loop {
         let mut round: HashMap<u16, bool> = HashMap::new();
         scan_sets(code, data, &vars, &mut round);

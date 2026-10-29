@@ -174,6 +174,8 @@ pub(crate) struct FnWriter<'a> {
     /// The grown headers the statement being emitted handed to a `__kh` twin, which kept them
     /// current: the refresh after it skips them.
     kh_passed: std::collections::HashSet<String>,
+    /// A `__nn` twin: the parameters its caller's arguments prove (`super::NN_MASK`).
+    nn_seed: Vec<u16>,
     /// The record scalars each enclosing loop reads once before it (`@FR-R-Scalar`): the
     /// `(variable, field offset)` key, the local holding it and its shape, innermost last.
     scalars: Vec<Vec<(crate::opt::hoist::ScalarKey, String, CType)>>,
@@ -548,6 +550,7 @@ impl<'a> FnWriter<'a> {
             grown_headers: std::collections::HashSet::new(),
             pending_grown: Vec::new(),
             kh_passed: std::collections::HashSet::new(),
+            nn_seed: Vec::new(),
             push_heads: Vec::new(),
             vr: value::VrFn::of(cx, d).map(Box::new),
             widening: None,
@@ -685,6 +688,13 @@ impl<'a> FnWriter<'a> {
         if on {
             self.grown_headers.insert("(*khp)".to_string());
         }
+        self
+    }
+
+    /// A `__nn` twin (`super::NN_MASK`): its proof seeds the parameters the mask names.
+    pub(crate) fn nn_seed(mut self, mask: u64) -> Self {
+        let bits = (mask & super::NN_MASK) >> super::NN_SHIFT;
+        self.nn_seed = (0..26u16).filter(|i| bits & (1 << i) != 0).collect();
         self
     }
 
@@ -4489,6 +4499,15 @@ impl<'a> FnWriter<'a> {
             self.nk_call = None;
             mask |= super::NK_BIT;
         }
+        // `@FR-R-NonSentinelParam`'s twin clause: the parameters this call's arguments prove
+        // beyond the program-wide fact go to a `__nn` twin that seeds them.
+        if super::native_c(def.name()).is_none() && args.len() <= 26 && !self.apr_twin_call(d, args)
+        {
+            let bits = self.nn_twin_bits(d, args);
+            if bits != 0 {
+                mask |= bits << super::NN_SHIFT;
+            }
+        }
         // `@FR-R-Apart` instance 4: an apart value handed over goes to the callee's `__apr` twin,
         // which takes it as its buffers (`expr` answered them at that argument).
         if self.apr_twin_call(d, args) {
@@ -4517,6 +4536,66 @@ impl<'a> FnWriter<'a> {
             }
             c => E::new(call, kind_of(c)),
         })
+    }
+
+    /// `@FR-R-NonSentinelParam`'s twin clause: the bit set of `d`'s parameters this call's
+    /// arguments prove non-sentinel — under this function's own facts, a `__nn` twin's seed
+    /// included — that the program-wide fact does not.  Only for a callee where the seed can
+    /// buy a plain operator: one that divides or takes a remainder by a literal, itself or in a
+    /// function it calls directly.  0 under `LOFT_NO_NN_TWINS=1`.
+    fn nn_twin_bits(&mut self, d: u32, args: &[Value]) -> u64 {
+        if crate::env_once!(std::env::var("LOFT_NO_NN_TWINS").is_ok_and(|v| v != "0")) {
+            return 0;
+        }
+        let data = self.cx.data;
+        let Some(cand) = crate::opt::non_sentinel::candidate_params(data, d) else {
+            return 0;
+        };
+        let divides = |f: u32| {
+            let mut hit = false;
+            data.def(f).code().walk(&mut |v| {
+                if let Value::Call(op, a) = v
+                    && (*op as usize) < data.definitions.len()
+                    && matches!(data.def(*op).name(), "OpRemInt" | "OpDivInt")
+                    && matches!(a.get(1).map(Value::unspan), Some(Value::Int(_)))
+                {
+                    hit = true;
+                }
+            });
+            hit
+        };
+        let worth = divides(d) || {
+            let mut hit = false;
+            data.def(d).code().walk(&mut |v| {
+                if !hit
+                    && let Value::Call(f, _) = v
+                    && (*f as usize) < data.definitions.len()
+                    && matches!(data.def(*f).code(), Value::Block(_))
+                    && divides(*f)
+                {
+                    hit = true;
+                }
+            });
+            hit
+        };
+        if !worth {
+            return 0;
+        }
+        let global = crate::opt::non_sentinel::proven_param_flags(data, d).unwrap_or_default();
+        let facts = self.nn_facts();
+        let mut bits = 0u64;
+        for (i, a) in args.iter().enumerate().take(26) {
+            if cand.get(i).copied().unwrap_or(false)
+                && !global.get(i).copied().unwrap_or(false)
+                && crate::opt::non_sentinel::non_sentinel(data, &facts.0, a)
+            {
+                bits |= 1 << i;
+            }
+        }
+        if bits != 0 {
+            crate::rewrite_census::fired("R-NonSentinelParam/twin", 1);
+        }
+        bits
     }
 
     /// The grown header (with its base) an enclosing frame holds for the vector argument of
@@ -5056,14 +5135,33 @@ impl<'a> FnWriter<'a> {
         if crate::env_once!(std::env::var("LOFT_NO_RANGE_ARITH").is_ok_and(|v| v != "0")) {
             return Ok(None);
         }
-        let facts = if let Some(f) = &self.range_facts {
+        let facts = self.nn_facts();
+        if crate::opt::range::op_range(self.cx.data, &facts.0, &facts.1, name, args, 0).is_none() {
+            return Ok(None);
+        }
+        self.range_plain(form, name, args, ind)
+    }
+
+    /// This function's non-sentinel and range facts (`non_sentinel_vars`, `range_vars`), a
+    /// `__nn` twin's seeded parameters included; computed once.
+    fn nn_facts(
+        &mut self,
+    ) -> std::rc::Rc<(
+        std::collections::HashMap<u16, bool>,
+        crate::opt::range::Ranges,
+    )> {
+        if let Some(f) = &self.range_facts {
             f.clone()
         } else {
             {
                 let data = self.cx.data;
                 let def = data.def(self.d);
-                let nn =
-                    crate::opt::non_sentinel::non_sentinel_vars(data, def.variables(), def.code());
+                let nn = crate::opt::non_sentinel::non_sentinel_vars_seeded(
+                    data,
+                    def.variables(),
+                    def.code(),
+                    &self.nn_seed,
+                );
                 let rv = crate::opt::range::range_vars(
                     data,
                     def.variables(),
@@ -5076,10 +5174,17 @@ impl<'a> FnWriter<'a> {
                 self.range_facts = Some(f.clone());
                 f
             }
-        };
-        if crate::opt::range::op_range(self.cx.data, &facts.0, &facts.1, name, args, 0).is_none() {
-            return Ok(None);
         }
+    }
+
+    /// The plain C operator for `name` over `args`, which `op_range` proved fault-free.
+    fn range_plain(
+        &mut self,
+        form: &str,
+        name: &str,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<Option<E>, String> {
         crate::rewrite_census::fired("R-Range", 1);
         if form == "wrapping_neg" {
             let a = self.one(name, args, ind)?;
