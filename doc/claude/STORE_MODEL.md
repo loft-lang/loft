@@ -97,7 +97,7 @@ from P0b (what the C runtime lacks).  State: **open**, **fixing** (on the branch
 
 | # | Divergence | State |
 |---|---|---|
-| D6 | equality through a `reference<T>` to a removed record: the interpreter follows the raw slot, C reads null (`@FR-H-Removed` says C is right) | open — the interpreter moves |
+| D6 | equality through a `reference<T>` to a removed record: the interpreter follows the raw slot, C reads null (`@FR-H-Removed` says C is right) | closed — the interpreter reads through `get_db_ref` (`tests/scripts/a-reference-to-a-removed-record-compares-as-null.loft`) |
 | D7b | `loft_swap_in` exchanges locked or foreign stores | fixing — laptop-c-perf |
 | D7c | `loft_reset_pool_root` re-mints a locked, file-backed or foreign store | fixing — laptop-c-perf |
 | D8 | the swap-in gate is narrower in C (walk scratch, constant, lazy binding), and refuses a protected destination where Rust tests the source | open |

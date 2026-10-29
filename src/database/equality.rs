@@ -253,15 +253,9 @@ impl Stores {
         target: u16,
         seen: &mut Vec<(DbRef, DbRef, u16)>,
     ) -> bool {
-        let read = |r: &DbRef| {
-            let s = self.store(r);
-            DbRef {
-                store_nr: s.get_u32_raw(r.rec, r.pos) as u16,
-                rec: s.get_u32_raw(r.rec, r.pos + 4),
-                pos: s.get_u32_raw(r.rec, r.pos + 8),
-            }
-        };
-        let (ra, rb) = (read(fa), read(fb));
+        // `@FR-H-Removed`: a reference to a removed record reads null, here as at every other
+        // read, so it equals a null reference and any other reference to a removed record.
+        let (ra, rb) = (self.get_db_ref(fa, 0), self.get_db_ref(fb, 0));
         if ra.rec == 0 || rb.rec == 0 {
             return ra.rec == 0 && rb.rec == 0;
         }

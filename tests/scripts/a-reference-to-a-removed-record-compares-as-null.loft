@@ -1,0 +1,78 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A REFERENCE TO A REMOVED RECORD COMPARES AS NULL (`@FR-H-Removed`, @PLN206 D6).  A stored
+// reference whose record was removed reads null, and it formats as null; equality reads it
+// the same way, so a holder of such a reference equals a holder of null and a holder of any
+// other removed record, and differs from a holder of a live record.  The cells vary how the
+// record went (a vector removal, a hash removal by key), where the holder is compared (alone,
+// as a field of an outer record, as elements of a vector) and the order of the operands.
+//
+// @falsified-at: 6184655a5 — interpret exit 1 -> 0, interpret 4 assertion failures -> 0, native exit 1 -> 0, native 8 assertion failures -> 0
+//   Every removed-against-null and removed-against-removed pair answered `false` there,
+//   because equality read the raw slot; `--native-c` passed all six: C was already right.
+// CHANNEL: the asserts.
+// WITNESS: `test_a_removed_reference_equals_null` — `gone == none` is false before the fix.
+// HOLDS: `test_a_removed_reference_differs_from_a_live_one` and
+//   `test_a_live_reference_compares_by_value` — clean before the fix too.
+
+struct P6 { k: integer, v: integer }
+struct Bag6 { items: vector<P6> }
+struct Keyed6 { items: hash<P6[k]> }
+struct Holder6 { r: reference<P6>? }
+struct Outer6 { tag: integer, h: Holder6 }
+
+fn test_a_removed_reference_equals_null() {
+  b = Bag6 { items: [P6 { k: 1, v: 11 }, P6 { k: 2, v: 22 }, P6 { k: 3, v: 33 }] };
+  gone = Holder6 { r: b.items[1] };
+  none = Holder6 { r: null };
+  b.items.remove(1);
+  assert("{gone}" == "{{r:null}}", "formatted {gone}");
+  assert(gone == none, "removed == null");
+  assert(none == gone, "null == removed");
+}
+
+fn test_two_removed_references_are_equal() {
+  b = Bag6 { items: [P6 { k: 1, v: 11 }, P6 { k: 2, v: 22 }, P6 { k: 3, v: 33 }] };
+  g1 = Holder6 { r: b.items[1] };
+  g2 = Holder6 { r: b.items[2] };
+  b.items.remove(2);
+  b.items.remove(1);
+  assert(g1 == g2, "two removed records, both null");
+}
+
+fn test_a_removed_reference_differs_from_a_live_one() {
+  b = Bag6 { items: [P6 { k: 1, v: 11 }, P6 { k: 2, v: 22 }] };
+  gone = Holder6 { r: b.items[1] };
+  live = Holder6 { r: b.items[0] };
+  b.items.remove(1);
+  assert(!(gone == live), "removed != live");
+  assert(!(live == gone), "live != removed");
+}
+
+fn test_a_hash_removal_compares_as_null() {
+  m = Keyed6 { items: [P6 { k: 5, v: 55 }, P6 { k: 6, v: 66 }] };
+  gone = Holder6 { r: m.items[6] };
+  m.items[6] = null;
+  assert(gone == Holder6 { r: null }, "hash: removed == null");
+}
+
+fn test_the_holder_as_a_field_and_as_elements() {
+  b = Bag6 { items: [P6 { k: 1, v: 11 }, P6 { k: 2, v: 22 }] };
+  o1 = Outer6 { tag: 7, h: Holder6 { r: b.items[1] } };
+  o2 = Outer6 { tag: 7, h: Holder6 { r: null } };
+  vs1: vector<Holder6> = [Holder6 { r: b.items[1] }, Holder6 { r: b.items[0] }];
+  vs2: vector<Holder6> = [Holder6 { r: null }, Holder6 { r: b.items[0] }];
+  b.items.remove(1);
+  assert(o1 == o2, "field: removed == null");
+  assert(vs1 == vs2, "elements: removed == null, live == live");
+}
+
+fn test_a_live_reference_compares_by_value() {
+  b = Bag6 { items: [P6 { k: 1, v: 11 }, P6 { k: 2, v: 11 }] };
+  h1 = Holder6 { r: b.items[0] };
+  h2 = Holder6 { r: b.items[1] };
+  h3 = Holder6 { r: b.items[0] };
+  assert(h1 == h3, "the same record");
+  assert(!(h1 == Holder6 { r: null }), "live != null");
+}
