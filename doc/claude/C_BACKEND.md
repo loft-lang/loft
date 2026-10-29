@@ -587,3 +587,34 @@ sockets (wasm) or whose compiler could not build the TLS client; SQLite where th
 `libsqlite3`.  Refused at emit time: a link re-pointed to a narrow or a text store place,
 and a par row of a tuple holding a reference — each by name.  Not
 refused and not carried: a `#native` function (above).
+
+### What switching to C loses (@PLN206 P0b)
+
+The capabilities the interpreter's runtime has and the C runtime does not, each with what it
+is for (**R**eliability, **E**fficiency, **O**bservability), what C already has in its
+place, and the proposed verdict: **port** it to C, **covered** (the C equivalent named, and one
+falsifying cell owed that shows it catches what the original catches), or **drop** (loft does
+not need it, with the reason).  A verdict stays *proposed* until its check is done; the rustc
+path is not removed while a **port** row is open.  The store rows are also numbered in
+[STORE_MODEL.md](STORE_MODEL.md).
+
+| Capability (interpreter switch) | For | C has | Proposed verdict | Check owed |
+|---|---|---|---|---|
+| use-after-free generations (`LOFT_UAF`, `LOFT_UAF_GEN`) | R | `LOFT_POISON`, the ASan lane | **port** — poison does not catch a stale reference into a store that was freed and REUSED | a cell where a reused store is read through a stale ref |
+| frame-slot verification (`LOFT_VERIFY_STACK`) | R | the C stack; the MemorySanitizer lane | covered | an uninitialised-slot cell MSan flags on C |
+| keyed-structure verifiers (`LOFT_KEYED_VERIFY`, `LOFT_KEY_LIST_VERIFY`) | R | — | **port** | a corrupted-index cell |
+| prefill elision verifier (`LOFT_PREFILL_VERIFY`) | R | `LOFT_POISON_CLAIM` | covered | the field_append cells under `LOFT_POISON_CLAIM` (they pass on C) |
+| whole-world and copy checks (`LOFT_CHECK_WORLD`, `LOFT_COPY_CHECK`) | R | — | **port** | one cell each |
+| zero-on-claim switch (`LOFT_ZERO_CLAIM`) | R | always zeroes today (D17) | covered once D17 lands: `LOFT_POISON_CLAIM` is the falsifier | D17's sweep |
+| schema-id strictness (`LOFT_STRICT_SCHEMA_IDS`) | R | type tables written once, no replay | drop — the replay it guards does not exist in a C unit | confirm C emits no init replay |
+| the store-memory ceiling (`LOFT_STORE_LIMIT`, every test run) | R | `LOFT_MEMORY_LIMIT` | **port** the test-run default (D19c) | a runaway-length cell stops at the ceiling on C |
+| store watch, lock backtrace (`LOFT_WATCH_STORE`, `LOFT_LOCK_BT`) | O | — | **port** when a C defect needs it; drop otherwise | — |
+| store log, tags, leak sites, allocation report (`LOFT_STORE_LOG`, `LOFT_STORE_TAG`, `LOFT_LEAK_SITES`, `LOFT_ALLOC_REPORT`) | O | `LOFT_ALLOC_TRACE`, `LOFT_NATIVE_LEAK_CHECK` | **port** `LOFT_LEAK_SITES` (a leak's site is what fixing it needs); the rest drop | a leak cell names its site on C |
+| allocator policy switches (`LOFT_NO_WILDERNESS`, `NO_PARK`, `NO_LAZY_FREE`, `NO_TOMBSTONE`, `NO_SLOT_REUSE`, `NO_CARVE_IN_PLACE`, `NO_FREE_FOOTER`, …) | E | each policy always on, or absent (D19b, D25) | **port** the bisect switches for the policies C applies; a policy C lacks is a D row | the performance agent's P1 rows |
+| the live debugger (`loft debug`, `--rpc`) | O | — | **port** — needs a design (frames, values and stepping in a C unit) | — |
+| live reload / live dispatch | E | — | open — owner decision | — |
+| the profilers (`make profile`, `LOFT_NATIVE_CHECKPOINTS`) | E | `c_profile` | covered for time; open for heap by line | `make profile-corpus` on C |
+| wasm and browser targets (`--native-wasm`, `--html`, built through rustc) | — | C to wasm through clang (@PLN203) | covered by @PLN203 | @PLN203's browser lane |
+| the ship and lean tiers (`--ship`, `--lean`) | E | the `cship` lane | covered | the perf portal's `cship` column |
+| native rewrites the C writer does not apply yet | E | the C writer's own `R-` rules | open — `make rewrite-census` on both writers names the gap | the census, per rule |
+| mmap-backed stores | E | — | **port** (decided, D23) | D23's probe |
