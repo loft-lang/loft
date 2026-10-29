@@ -6304,9 +6304,11 @@ impl Parser {
         // @PLN187 — this match's subject and arm facts; a nested match keeps its own.
         let outer_subject = std::mem::take(&mut self.match_subject);
         let outer_arm_facts = std::mem::take(&mut self.match_arm_facts);
+        let outer_root = std::mem::replace(&mut self.match_subject_root, u16::MAX);
         let r = self.parse_match_inner(code);
         let arm_facts = std::mem::replace(&mut self.match_arm_facts, outer_arm_facts);
         self.match_subject = outer_subject;
+        self.match_subject_root = outer_root;
         if !matches!(r.base(), Type::Void | Type::Null | Type::Never) {
             self.settle_join(&arm_facts);
         } else if self.abstract_on() {
@@ -6352,6 +6354,7 @@ impl Parser {
         // does not recognise: `match Vn { rs: 7 } { … }` dispatched nowhere on pass 1, typed the
         // match `void`, and a local bound to it refused pass 2's real type.
         let mut subject_type = self.expression(&mut subject).unrewritten();
+        self.match_subject_root = self.subject_place_root(&subject);
         // @PLN187 — a tuple subject is inspected position by position, by its patterns; any
         // other abstract subject is read by the match itself.
         let subject_fact = std::mem::take(&mut self.operand_fact);
@@ -11041,8 +11044,10 @@ impl Parser {
     /// Parse an optional `if <expr>` guard clause.
     fn parse_optional_guard(&mut self) -> Option<Value> {
         if self.lexer.has_token("if") {
+            let at = *self.lexer.pos();
             let mut guard_code = Value::Null;
             let guard_type = self.expression(&mut guard_code);
+            self.record_guard(&guard_code, at);
             if !self.first_pass && guard_type != Type::Boolean {
                 diagnostic!(
                     self.lexer,
@@ -11525,8 +11530,10 @@ impl Parser {
 
             // parse optional guard clause.
             let mut guard_opt = if self.lexer.has_token("if") {
+                let at = *self.lexer.pos();
                 let mut guard_code = Value::Null;
                 let guard_type = self.expression(&mut guard_code);
+                self.record_guard(&guard_code, at);
                 if !self.first_pass && guard_type != Type::Boolean {
                     diagnostic!(
                         self.lexer,
@@ -12300,8 +12307,10 @@ impl Parser {
             // Parse the optional guard.  Captures bound by the pattern above are in scope
             // for it, and `chain_pattern_arms` assigns them before the guard runs.
             let mut guard_opt = if self.lexer.has_token("if") {
+                let at = *self.lexer.pos();
                 let mut guard = Value::Null;
                 let gt = self.expression(&mut guard);
+                self.record_guard(&guard, at);
                 if !self.first_pass && gt != Type::Boolean {
                     self.convert(&mut guard, &gt, &Type::Boolean);
                 }
@@ -13528,8 +13537,10 @@ impl Parser {
             // (TUPLES.md § Grammar).  Element bindings are in scope for it, and
             // `chain_pattern_arms` assigns them before the guard runs.
             let guard_opt = if self.lexer.has_token("if") {
+                let at = *self.lexer.pos();
                 let mut g = Value::Null;
                 let gt = self.expression(&mut g);
+                self.record_guard(&g, at);
                 if !self.first_pass && gt != Type::Boolean {
                     diagnostic!(
                         self.lexer,
@@ -24063,6 +24074,93 @@ impl<'a> ViewWalk<'a> {
                 }
             }
             _ => {}
+        }
+    }
+}
+
+/// `@FR-M-Fixed` — one guard of a `match`, recorded on pass 2 and judged once every body is
+/// final: whether it can write the subject depends on what its callees write, and a callee
+/// defined after the match has only its pass-1 body while the match is parsed.
+pub(crate) struct GuardCheck {
+    def_nr: u32,
+    guard: Value,
+    root: u16,
+    at: crate::lexer::Position,
+}
+
+impl Parser {
+    /// The variable at the root of `subject` when the subject is a PLACE — a variable, or a
+    /// field or element read of one — else `u16::MAX`: a computed subject is held in a
+    /// temporary, which no guard can name.
+    fn subject_place_root(&self, subject: &Value) -> u16 {
+        match subject.unspan() {
+            Value::Var(v) => *v,
+            Value::Call(d, args)
+                if !args.is_empty()
+                    && (*d as usize) < self.data.definitions.len()
+                    && (self.data.def(*d).name().starts_with("OpGet")
+                        || crate::use_analysis::is_projection_op(&self.data, *d)) =>
+            {
+                self.subject_place_root(&args[0])
+            }
+            _ => u16::MAX,
+        }
+    }
+
+    /// Record guard `guard` of the enclosing match, parsed at `at`, for `check_match_guards`.
+    fn record_guard(&mut self, guard: &Value, at: crate::lexer::Position) {
+        if self.first_pass || self.match_subject_root == u16::MAX {
+            return;
+        }
+        self.guard_checks.push(GuardCheck {
+            def_nr: self.context,
+            guard: guard.clone(),
+            root: self.match_subject_root,
+            at,
+        });
+    }
+
+    /// `@FR-M-Fixed` — refuse every recorded guard that can write its match's subject: one
+    /// that writes the subject's root variable, or a view whose dependencies lead to it
+    /// (`find_written_vars`, the one home of which variables a piece of code writes — a `Set`,
+    /// a `&` argument, a write operator's target, a callee that writes the parameter).
+    pub(crate) fn check_match_guards(&mut self) {
+        let checks = std::mem::take(&mut self.guard_checks);
+        let mut cache = crate::fxhash::FxHashMap::default();
+        for g in checks {
+            if (g.def_nr as usize) >= self.data.definitions.len() {
+                continue;
+            }
+            let vars = self.data.def(g.def_nr).variables();
+            let mut written = crate::fxhash::FxHashSet::default();
+            crate::parser::find_written_vars(&g.guard, &self.data, vars, &mut written, &mut cache);
+            let reaches_root = |w: u16| {
+                let mut seen = vec![w];
+                let mut at = 0;
+                while at < seen.len() {
+                    if seen[at] == g.root {
+                        return true;
+                    }
+                    for d in vars.tp(seen[at]).depend() {
+                        if !seen.contains(&d) {
+                            seen.push(d);
+                        }
+                    }
+                    at += 1;
+                }
+                false
+            };
+            if written.iter().any(|&w| reaches_root(w)) {
+                let name = vars.name(g.root).to_string();
+                diagnostic_at!(
+                    self.lexer,
+                    &g.at,
+                    Level::Error,
+                    "a match guard cannot change '{name}', the value being matched: the arms \
+                     after it would test something else.  Change '{name}' in the arm's body, \
+                     after the tests, or match on a copy"
+                );
+            }
         }
     }
 }
