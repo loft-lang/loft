@@ -5837,3 +5837,63 @@ fn main() {
   delete(p);
 }
 ";
+
+/// A library whose native part is only a Rust crate has no implementation in a C build, which
+/// never links one (`native_build::c_target`): its native halts the program when called, as
+/// the interpreter's unloaded native does — and says so, naming the library and the two ways
+/// on, rather than the interpreter's "cdylib missing or stale / a poisoned call index" reading,
+/// which a call the C makes by name cannot be (@PLN203 C6: what `--native-wasm` and a host C
+/// build both meet with a Rust-crate library such as graphics).
+#[test]
+fn a_rust_crate_native_is_named_as_such_on_the_c() {
+    if !have_cc() {
+        eprintln!("skipped: no C compiler");
+        return;
+    }
+    let dir = scratch("rustcrate");
+    let lib = dir.join("libs/rustlib");
+    fa::create_dir_all(lib.join("src")).expect("the library directory");
+    fa::create_dir_all(lib.join("native/src")).expect("the crate directory");
+    fa::write(
+        lib.join("loft.toml"),
+        "[package]\nname = \"rustlib\"\nversion = \"0.1.0\"\nloft = \">=0.8\"\n\n\
+         [library]\nentry = \"src/rustlib.loft\"\nnative = \"loft_rustlib\"\n\n\
+         [native]\ncrate = \"loft-rustlib\"\n",
+    )
+    .expect("write the manifest");
+    fa::write(
+        lib.join("src/rustlib.loft"),
+        "pub fn twice(x: integer) -> integer;\n#native \"n_rustlib_twice\"\n",
+    )
+    .expect("write the library");
+    fa::write(
+        lib.join("native/Cargo.toml"),
+        "[package]\nname = \"loft-rustlib\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\
+         [lib]\nname = \"loft_rustlib\"\ncrate-type = [\"cdylib\"]\n",
+    )
+    .expect("write the crate manifest");
+    fa::write(lib.join("native/src/lib.rs"), "").expect("write the crate");
+    let file = dir.join("p.loft");
+    fa::write(
+        &file,
+        "use rustlib;\nfn main() { println(\"{rustlib::twice(21)}\"); }\n",
+    )
+    .expect("write the program");
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .args(["--native-c", "--no-warnings", "--lib"])
+        .arg(dir.join("libs"))
+        .arg(&file)
+        .env("LOFT_TIMEOUT", "120")
+        .output()
+        .expect("run loft --native-c");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "the call halts the program\n{err}");
+    assert!(
+        err.contains("has only a Rust native part") && err.contains("(rustlib)"),
+        "the halt names the library and why\n{err}"
+    );
+    assert!(
+        !err.contains("cargo") && !err.contains("poisoned"),
+        "no advice that does not apply to a C build\n{err}"
+    );
+}

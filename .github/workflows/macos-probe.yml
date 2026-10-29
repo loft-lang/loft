@@ -39,6 +39,13 @@ on:
       filter:
         description: 'nextest filter for the corpus leg'
         default: 'binary(native) and test(native_scripts)'
+      # As windows-probe's: some macOS questions are a SHELL's answer, not a test result —
+      # which packages give a toolchain, what a command prints.  Set, it builds `loft` alone,
+      # runs this instead of the corpus legs, and `target/release/loft` is on hand.
+      run:
+        description: 'bash to run on the macOS runner after `cargo build --release --bin loft`. Runs INSTEAD of the corpus legs.'
+        required: false
+        default: ''
   push:
     branches: [macos-probe]
 
@@ -73,9 +80,28 @@ jobs:
           echo "uname: $(uname -sm)"
           sw_vers || true
 
+      - name: Build loft (the shell probe)
+        if: inputs.run != ''
+        run: cargo build --release --bin loft
+
+      - name: Run the requested shell
+        if: inputs.run != ''
+        shell: bash
+        env:
+          PROBE: ${{ inputs.run }}
+        run: |
+          echo "--- probe ---"
+          echo "$PROBE"
+          echo "-------------"
+          # A probe is usually several questions; one dead command must not end the run.
+          set +e
+          bash -c "$PROBE"
+          echo "probe exit: $?"
+
       # ci.yml's own keys, verbatim — the point is to restore what the gate restores, including
       # the bare `-corpus-` fallback that makes a foreign cache eligible.
       - name: Restore the native-corpus binary cache (as ci.yml does)
+        if: inputs.run == ''
         uses: actions/cache/restore@v4
         with:
           path: target/loft-native-cache
@@ -85,6 +111,7 @@ jobs:
             ${{ runner.os }}-corpus-
 
       - name: What the restore actually brought in
+        if: inputs.run == ''
         run: |
           d=target/loft-native-cache
           if [ -d "$d" ]; then
@@ -96,13 +123,16 @@ jobs:
           fi
 
       - name: Install cargo-nextest
+        if: inputs.run == ''
         run: cargo nextest --version >/dev/null 2>&1 || cargo install cargo-nextest --locked
 
       - name: Build (shared by both legs)
+        if: inputs.run == ''
         run: cargo build --release --all-targets
 
       # ── Leg 1: WITH the restored cache — the gate's own condition ───────────
       - name: corpus (cached)
+        if: inputs.run == ''
         id: cached
         continue-on-error: true
         run: |
@@ -110,14 +140,16 @@ jobs:
           cargo nextest run --profile ci --no-fail-fast -E "$FILTER" 2>&1 | tee /tmp/cached.log
 
       - name: corpus (cached) — what failed
-        if: always()
+        if: always() && inputs.run == ''
         run: scripts/probe_leg_report.sh /tmp/cached.log cached
 
       # ── Leg 2: the SAME build with the cache removed ────────────────────────
       - name: Drop the native cache
+        if: inputs.run == ''
         run: rm -rf target/loft-native-cache && mkdir -p target/loft-native-cache
 
       - name: corpus (clean)
+        if: inputs.run == ''
         id: clean
         continue-on-error: true
         run: |
@@ -125,12 +157,12 @@ jobs:
           cargo nextest run --profile ci --no-fail-fast -E "$FILTER" 2>&1 | tee /tmp/clean.log
 
       - name: corpus (clean) — what failed
-        if: always()
+        if: always() && inputs.run == ''
         run: scripts/probe_leg_report.sh /tmp/clean.log clean
 
       # ── The verdict, as one table nobody has to click through for ───────────
       - name: Verdict
-        if: always()
+        if: always() && inputs.run == ''
         run: |
           c=$(cat /tmp/cached.count 2>/dev/null || echo '?'); co=$(cat /tmp/cached.outcome 2>/dev/null || echo 'UNKNOWN')
           n=$(cat /tmp/clean.count  2>/dev/null || echo '?'); no=$(cat /tmp/clean.outcome  2>/dev/null || echo 'UNKNOWN')
@@ -179,7 +211,7 @@ jobs:
           cat "$GITHUB_STEP_SUMMARY"
 
       - name: Upload both logs
-        if: always()
+        if: always() && inputs.run == ''
         uses: actions/upload-artifact@v4
         with:
           name: macos-probe-logs

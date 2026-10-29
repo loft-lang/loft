@@ -3426,18 +3426,27 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
                 .find(|(c, _)| c.replace('-', "_") == *krate)
         })
         .and_then(|(name, pkg_dir)| crate::native_build::unbuildable_native_reason(pkg_dir, name));
+    // Any other native is a Rust crate's, which a C build never links (`native_build::c_target`):
+    // the interpreter's "cdylib missing or stale / a poisoned call index" reading does not apply
+    // to a call the C makes by name, so the message says what does.
+    let library = cx.data.native_symbol_crates.get(def.native()).map_or_else(
+        || "its library".to_string(),
+        |krate| {
+            cx.data
+                .native_packages
+                .iter()
+                .find(|(c, _)| c.replace('-', "_") == *krate)
+                .map_or_else(|| krate.clone(), |(_, pkg_dir)| package_identity(pkg_dir).0)
+        },
+    );
     let msg = if let Some(why) = unbuildable {
         format!("native function {}: {why}", def.native())
     } else {
         format!(
-            "native function {} not loaded. Either (a) its library's native cdylib is missing or \
-         stale — commonly built against a different libloft.rlib; rebuild with `make \
-         rebuild-native-cdylibs`, or `cargo build --release` in the library's `native/` dir — or \
-         (b) a freed store was read and its poisoned contents were used as the call index, in \
-         which case the real fault is a store lifetime bug that happened EARLIER. Tell them \
-         apart: if the run is green with LOFT_POISON unset, or an earlier line reports a `BUG` \
-         refusal of a store free / a strict-store violation, it is (b) — re-run with `LOFT_STRICT_STORES=1` to \
-         name the access and the free.",
+            "native function {} is not in this build: its library ({library}) has only a Rust \
+             native part, which the C backend does not link.  Run it with --native-rust or \
+             --interpret, or give the library a C native part (a `[c] shim`, a prebuilt C \
+             library, or a component).",
             def.native()
         )
     };

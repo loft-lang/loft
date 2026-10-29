@@ -2622,11 +2622,11 @@ fn main() {
 }
 
 /// The page cells on a module the C backend wrote (@PLN203 C6): hello, an arithmetic loop, a
-/// vector walk, the page filesystem and its cursor print what the Rust writer's page prints —
+/// vector walk, the page filesystem and its cursor, `par` print what the Rust writer's page prints —
 /// through the WASI layer (`doc/loft-wasi.js`) over the same page filesystem.
 #[test]
 fn the_c_page_answers_what_the_rust_page_answers() {
-    let cells: [(&str, &str, &[&str]); 5] = [
+    let cells: [(&str, &str, &[&str]); 6] = [
         (
             "hello",
             "fn main() { println(\"hello from loft\"); }\n",
@@ -2644,6 +2644,13 @@ fn the_c_page_answers_what_the_rust_page_answers() {
         ),
         ("page_fs", PAGE_FS_SRC, PAGE_FS_WANT),
         ("cursor", CURSOR_SRC, CURSOR_WANT),
+        // `par` in a page runs its rows in order, as the Rust writer's page does when the
+        // browser is not cross-origin isolated: Σx² over 1..=10 = 385.
+        (
+            "par",
+            "fn sq(x: integer) -> integer { x * x }\nfn label(x: integer) -> text { \"<{x}>\" }\nfn main() {\n  s = 0;\n  for x in 1..11 par(r = sq(x), 4) { s += r; }\n  t = \"\";\n  for x in 1..4 par(r = label(x), 2) { t += r; }\n  println(\"sum={s} text={t}\");\n}\n",
+            &["sum=385 text=<1><2><3>"],
+        ),
     ];
     for (name, src, want) in cells {
         let Some((stdout, stderr, ok)) = run_c_html_wasm(name, src) else {

@@ -99,8 +99,9 @@ fn pick_free_port() -> Option<u16> {
     Some(port)
 }
 
-/// Build the program to `--html` and return its path, or `None` to skip.
-fn build_html(_root: &Path) -> Option<PathBuf> {
+/// Build the program to `--html` with `backend` (`--native-rust` or `--native-c`) and return
+/// its path, or `None` to skip.
+fn build_html(backend: &str) -> Option<PathBuf> {
     let loft_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft_bin) {
         eprintln!("SKIP: target/release/loft not built (run `cargo build --release` first)");
@@ -110,7 +111,7 @@ fn build_html(_root: &Path) -> Option<PathBuf> {
     // its own isolated wasm runtime rlib on stale/missing, so a stale or
     // wasm-bindgen-stomped rlib can no longer reach this path.
 
-    let tmp = std::env::temp_dir().join("loft_html_asyncify_resume");
+    let tmp = std::env::temp_dir().join(format!("loft_html_asyncify_resume{backend}"));
     let _ = fa::remove_dir_all(&tmp);
     fa::create_dir_all(&tmp).expect("create per-test dir");
     let src = tmp.join("main.loft");
@@ -121,7 +122,7 @@ fn build_html(_root: &Path) -> Option<PathBuf> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let out = loft::platform::process::harness_command(&loft_bin)
-        .args(["--native-rust", "--html", html.to_str().unwrap()])
+        .args([backend, "--html", html.to_str().unwrap()])
         .arg(src.to_str().unwrap())
         .output()
         .expect("invoke loft --html");
@@ -191,10 +192,33 @@ fn html_asyncify_program_resumes_to_completion() {
         return;
     }
     let root = repo_root();
-    let Some(html) = build_html(&root) else {
+    let Some(html) = build_html("--native-rust") else {
         return;
     };
     assert_resumes(&root, &html, None); // visible — requestAnimationFrame
     assert_resumes(&root, &html, Some("--hidden")); // hidden  — MessageChannel pump
     assert_resumes(&root, &html, Some("--stalled-raf")); // visible, no frames — the fallback
+}
+
+/// The same three legs on a page whose module the C backend wrote (@PLN203 C6): the module is
+/// asyncified by the same `wasm-opt` pass and drives the same controller, from a unit built
+/// without setjmp (`LOFT_NO_JUMPS`).
+// @speed 0.8
+#[test]
+fn the_c_page_resumes_to_completion() {
+    if !any_chrome() {
+        eprintln!("SKIP: no chrome binary in PATH");
+        return;
+    }
+    if which("node").is_none() || which("clang").is_none() || which("wasm-ld").is_none() {
+        eprintln!("SKIP: needs node, clang and wasm-ld");
+        return;
+    }
+    let root = repo_root();
+    let Some(html) = build_html("--native-c") else {
+        return;
+    };
+    assert_resumes(&root, &html, None);
+    assert_resumes(&root, &html, Some("--hidden"));
+    assert_resumes(&root, &html, Some("--stalled-raf"));
 }
