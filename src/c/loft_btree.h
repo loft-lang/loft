@@ -77,7 +77,9 @@ static loft_bt_slot loft_bt_slot_of(loft_store_t *s, uint32_t a, uint32_t n, uin
     loft_bt_slot v;
     v.part = loft_bt_part(s, a, n, i);
     v.rec = loft_bt_rec(s, a, n, i);
-    v.child = loft_bt_child(s, a, n, i);
+    /* A leaf's child words are never written (a node grown into a resized arena holds what the
+     * allocator left there), so only an internal node's is read. */
+    v.child = loft_bt_is_leaf(s, a, n) ? 0 : loft_bt_child(s, a, n, i);
     return v;
 }
 

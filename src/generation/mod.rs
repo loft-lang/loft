@@ -13134,6 +13134,10 @@ extern crate loft;"
         }
 
         let needs_ret_cast = matches!(def.returned().base(), Type::Integer(_));
+        // `loft_ffi::widen_i32`: a NARROW answer's null is `i32::MIN` at the C-ABI, which a
+        // plain widening turns into an ordinary negative number (the C backend's
+        // `library_native` maps it the same way).
+        let narrow_ret = matches!(def.returned().base(), Type::Integer(s) if s.forced_size.is_some());
         // @PLN17: external Rust fns use `bool`; loft's boolean storage form is u8.
         // Wrap a boolean return `(call) as u8`; boolean args coerce `u8 -> bool` below.
         let needs_bool_ret = matches!(def.returned().base(), Type::Boolean);
@@ -13145,7 +13149,9 @@ extern crate loft;"
         // original P244 fix borrowed a `Str` from `stores.scratch`; N2 retired
         // the scratch hop (owned, freed at scope end — no program-lifetime leak).
         let needs_text_wrap = matches!(def.returned().base(), Type::Text(_));
-        if needs_ret_cast || needs_bool_ret {
+        if narrow_ret {
+            write!(w, "  {{ let __r = unsafe {{ {qualified_symbol}(")?;
+        } else if needs_ret_cast || needs_bool_ret {
             write!(w, "  (unsafe {{ {qualified_symbol}(")?;
         } else if needs_text_wrap {
             // No type annotation: lib/server (and other native sub-crates)
@@ -13270,7 +13276,12 @@ extern crate loft;"
                 }
             }
         }
-        if needs_ret_cast {
+        if narrow_ret {
+            write!(
+                w,
+                ") }}; if __r as i64 == i64::from(i32::MIN) {{ i64::MIN }} else {{ __r as i64 }} }}"
+            )?;
+        } else if needs_ret_cast {
             write!(w, ") }}) as i64")?;
         } else if needs_bool_ret {
             write!(w, ") }}) as u8")?; // @PLN17: external bool -> loft u8 storage form

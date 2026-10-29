@@ -2804,6 +2804,8 @@ struct FfiArgs {
     args: Vec<String>,
     prep: String,
     store_arg: Option<usize>,
+    /// Every heap argument in declaration order, with whether it is a vector.
+    heap: Vec<(usize, bool)>,
 }
 
 fn ffi_args(cx: &Cx, d: u32) -> Result<FfiArgs, String> {
@@ -2812,10 +2814,12 @@ fn ffi_args(cx: &Cx, d: u32) -> Result<FfiArgs, String> {
     let mut ffi_args: Vec<String> = Vec::new();
     let mut prep = String::new();
     let mut store_arg: Option<usize> = None;
+    let mut heap = Vec::new();
     for (i, a) in def.attributes().iter().enumerate() {
         let tp = a.typedef.base();
         if tp.heap_dep().is_some() {
             store_arg.get_or_insert(i);
+            heap.push((i, matches!(tp, Type::Vector(_, _))));
             ffi_params.push("loft_ffi_ref".into());
             if matches!(tp, Type::Vector(_, _)) {
                 let _ = writeln!(
@@ -2916,6 +2920,7 @@ fn library_native(
         args: mut ffi_args,
         prep,
         store_arg,
+        heap,
     } = ffi_args(cx, d)?;
     let ffi_ret = ffi_return_ctype(def)?;
     let heap_answer = ffi_ret == "loft_ffi_ref";
@@ -2923,9 +2928,14 @@ fn library_native(
     // The store handed over: the first heap argument's, else — for a heap answer — one minted
     // for the answer, as the interpreter's bridge mints it (`Stores::bridge_args`).
     let minted = store_arg.is_none() && heap_answer;
+    let post = foreign_vector_args(&heap, heap_answer, &mut prep);
     if let Some(i) = store_arg {
         ffi_params.insert(0, "loft_ffi_store".into());
-        ffi_args.insert(0, format!("loft_ffi_store_of(a{i}.store_nr)"));
+        if post.is_empty() {
+            ffi_args.insert(0, format!("loft_ffi_store_of(a{i}.store_nr)"));
+        } else {
+            ffi_args.insert(0, "loft_ffi_store_of(pin)".into());
+        }
     } else if minted {
         prep.push_str("    uint16_t ns = (uint16_t) loft_store_new();\n");
         ffi_params.insert(0, "loft_ffi_store".into());
@@ -2970,9 +2980,11 @@ fn library_native(
     match def.returned().base() {
         Type::Void => {
             let _ = writeln!(body, "    {call};");
+            body.push_str(&post);
         }
         Type::Text(_) => {
             let _ = writeln!(body, "    loft_ffi_str t = {call};");
+            body.push_str(&post);
             let _ = writeln!(
                 body,
                 "    return loft_text_own(loft_lit(t.ptr ? (const char *) t.ptr : \"\", t.len));"
@@ -2982,6 +2994,7 @@ fn library_native(
         // `codegen_runtime::from_loft_ref` / `from_loft_record` make.
         tp if heap_answer => {
             let _ = writeln!(body, "    loft_ffi_ref r = {call};");
+            body.push_str(&post);
             if minted {
                 // No answer: the store minted for it goes.
                 let _ = writeln!(
@@ -2996,11 +3009,84 @@ fn library_native(
             };
             let _ = writeln!(body, "    return {convert}(r);");
         }
-        _ => {
+        // `loft_ffi::widen_i32`: a narrow answer's null is `INT32_MIN`, which a plain widening
+        // would turn into an ordinary negative number.
+        Type::Integer(_) if ffi_ret == "int32_t" && ret == CType::Int => {
+            let _ = writeln!(body, "    int32_t r = {call};");
+            body.push_str(&post);
+            let _ = writeln!(body, "    return r == INT32_MIN ? LOFT_NULL : (int64_t) r;");
+        }
+        _ if post.is_empty() => {
             let _ = writeln!(body, "    return {call};");
+        }
+        _ => {
+            let _ = writeln!(body, "    {ffi_ret} r = {call};");
+            body.push_str(&post);
+            let _ = writeln!(body, "    return r;");
         }
     }
     Ok((sig, body))
+}
+
+/// `Stores::bridge_args` for a library call: the library reads every vector argument through
+/// the ONE store it is handed (`ptr + rec * 8`), so a foreign vector — a `file_map`, whose bytes
+/// are in no store — is copied into a record of that store for the call, in one block, and never
+/// pins it: the first other heap argument does, or a store is minted (`pin`).  Writes the
+/// statements before the call into `prep` and answers the ones after it
+/// (`bridge_args_done`): a copy the library changed is a write the program could not make,
+/// refused as one; then the copies go, or the minted store whole when no heap answer lives in
+/// it.  Empty — no `pin`, the plain call — when no argument is a vector.
+fn foreign_vector_args(heap: &[(usize, bool)], heap_answer: bool, prep: &mut String) -> String {
+    let mut post = String::new();
+    let vec_args: Vec<usize> = heap.iter().filter(|(_, v)| *v).map(|(i, _)| *i).collect();
+    if vec_args.is_empty() {
+        return post;
+    }
+    let _ = writeln!(prep, "    uint32_t pin = UINT32_MAX; int pminted = 0;");
+    for (i, is_vec) in heap {
+        let guard = if *is_vec {
+            format!(" && !loft_ffi_is_foreign(a{i})")
+        } else {
+            String::new()
+        };
+        let _ = writeln!(prep, "    if (pin == UINT32_MAX{guard}) pin = a{i}.store_nr;");
+    }
+    let _ = writeln!(
+        prep,
+        "    if (pin == UINT32_MAX) {{ pin = loft_store_new(); pminted = 1; }}"
+    );
+    for i in &vec_args {
+        let _ = writeln!(
+            prep,
+            "    uint32_t cp{i} = loft_ffi_is_foreign(a{i}) ? loft_ffi_copy_in(pin, a{i}) : 0;"
+        );
+        let _ = writeln!(
+            prep,
+            "    if (cp{i}) r{i} = (loft_ffi_ref) {{ (uint16_t) pin, cp{i}, 0 }};"
+        );
+    }
+    let _ = writeln!(post, "    int changed = 0;");
+    for i in &vec_args {
+        let _ = writeln!(
+            post,
+            "    if (cp{i}) changed |= loft_ffi_copy_changed(a{i}, pin, cp{i});"
+        );
+    }
+    if heap_answer {
+        let _ = writeln!(post, "    if (!loft_stores[pin].read_only) {{");
+    } else {
+        let _ = writeln!(
+            post,
+            "    if (pminted) loft_free_ref((loft_ref) {{ (uint16_t) pin, 1, 0 }});"
+        );
+        let _ = writeln!(post, "    else if (!loft_stores[pin].read_only) {{");
+    }
+    for i in &vec_args {
+        let _ = writeln!(post, "        if (cp{i}) loft_st_delete(&loft_stores[pin], cp{i});");
+    }
+    let _ = writeln!(post, "    }}");
+    let _ = writeln!(post, "    if (changed) loft_locked_write();");
+    post
 }
 
 /// An `in_binary` native the runtime carries: a body that hands its arguments on.

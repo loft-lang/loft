@@ -42,6 +42,37 @@ static loft_ffi_store loft_ffi_store_of(uint16_t nr) {
     return f;
 }
 
+/* `Stores::bridge_args` for a foreign vector argument (a `file_map`): its bytes are copied into
+ * a vector record of the store the library is handed, in one block, and that record is what
+ * the library reads.  Only a unit that maps a file has a foreign store. */
+#ifdef LOFT_FOREIGN
+static int loft_ffi_is_foreign(loft_ref a) {
+    return a.rec != 0 && a.store_nr < loft_nstores && loft_st_is_foreign(&loft_stores[a.store_nr]);
+}
+
+static uint32_t loft_ffi_copy_in(uint32_t pin, loft_ref a) {
+    loft_fspan sp = loft_stores[a.store_nr].foreign.span;
+    size_t bytes = (size_t) sp.len * sp.elem;
+    loft_store_t *d = &loft_stores[pin];
+    uint32_t rec = loft_st_claim(d, (uint32_t) ((bytes + 15) / 8));
+    loft_st_set_u32(d, rec, 4, sp.len);
+    if (bytes) memcpy(d->buf + (size_t) rec * 8 + 8, sp.base, bytes);
+    return rec;
+}
+
+/* `Stores::bridge_args_done`: whether the library wrote through the copy — its length or a byte. */
+static int loft_ffi_copy_changed(loft_ref a, uint32_t pin, uint32_t rec) {
+    loft_fspan sp = loft_stores[a.store_nr].foreign.span;
+    loft_store_t *d = &loft_stores[pin];
+    return loft_st_u32(d, rec, 4) != sp.len
+        || (sp.len && memcmp(d->buf + (size_t) rec * 8 + 8, sp.base, (size_t) sp.len * sp.elem) != 0);
+}
+#else
+#define loft_ffi_is_foreign(a) 0
+#define loft_ffi_copy_in(pin, a) 0u
+#define loft_ffi_copy_changed(a, pin, rec) 0
+#endif
+
 /* A heap answer as loft holds it (`codegen_runtime::from_loft_ref` / `from_loft_record`): a
  * vector behind a one-word header whose slot at +4 names its data record, a record as it is. */
 static loft_ref loft_ffi_vector_answer(loft_ffi_ref r) {

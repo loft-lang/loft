@@ -175,3 +175,71 @@ fn a_write_into_a_bridge_answer_is_refused_at_compile_time_with_the_copy_advice(
         }
     }
 }
+
+/// A library answering a NARROW integer (`i32` at the C-ABI) answers its null as `i32::MIN`;
+/// every backend must read it as null, as the interpreter's bridge (`loft_ffi::widen_i32`)
+/// does.  The rustc backend used to widen it plainly: `b` read -2147483648, not null.
+const NARROW_NULL: &str = "\
+use native_pkg::*;
+fn main() {
+  a = ext_narrow(21);
+  b = ext_narrow(-1);
+  println(\"a={a} b={b} b-null={!b} sum={a + (b ?? 1000)}\");
+}
+";
+
+/// A MAPPED file handed to a library (`Stores::bridge_args`): the library reads a vector
+/// through the one store it is handed, so the foreign bytes are copied into a record of that
+/// store for the call.  The C backend handed the foreign record id itself, which the library
+/// read out of bounds (the program died with no output).  c1: the mapped vector alone (a store
+/// is minted); c2: a foreign answer from it; c3: an owned vector beside it; c4: many calls.
+const MAPPED_ARGUMENT: &str = "\
+use native_pkg::*;
+fn show(v: const vector<u8>) -> text { s = \"\"; for b in v { s += \"{b},\"; } s }
+fn main() {
+  f = \"mapped_arg_{ticks()}.tmp\";
+  src: vector<u8> = [10, 20, 30, 40, 250];
+  assert(write_bytes(f, src), \"write\");
+  m = file_map(f) ?? [];
+  r1 = ext_reverse_owned(m);
+  r2 = ext_reverse_foreign(m);
+  r3 = ext_reverse_owned(src);
+  println(\"c1 {show(r1)} {len(r1)} c2 {show(r2)} {len(r2)} c3 {show(r3)} m {show(m)} {len(m)}\");
+  for i in 0..300 { r = ext_reverse_owned(m); assert(len(r) == 5 && r[0] == 250, \"c4 {i}\"); }
+  println(\"c4 ok\");
+  delete(f);
+}
+";
+
+/// The fixture is a Rust crate, which a C build never loads (`native_build::c_target`); the C
+/// half of both cells runs against a C library in `tests/ffi_c_library.rs`.
+#[test]
+fn a_narrow_null_answer_and_a_mapped_argument_cross_a_library_call_on_every_backend() {
+    if !fixture_built() {
+        return;
+    }
+    for backend in ["--interpret", "--native-rust"] {
+        let (ok, out, all) = run("narrow", backend, NARROW_NULL, true, &[]);
+        assert!(
+            ok && out.contains("a=42 b=null b-null=true sum=1042"),
+            "{backend}: a narrow null must read as null:\n{all}"
+        );
+        for (tag, envs) in [
+            ("mapped", vec![]),
+            ("mapped_poison", vec![("LOFT_POISON", "1")]),
+            ("mapped_leak", vec![("LOFT_STORES", "warn")]),
+        ] {
+            let (ok, out, all) = run(tag, backend, MAPPED_ARGUMENT, true, &envs);
+            assert!(
+                ok && out.contains(
+                    "c1 250,40,30,20,10, 5 c2 250,40,30,20,10, 5 c3 250,40,30,20,10, m 10,20,30,40,250, 5"
+                ) && out.contains("c4 ok"),
+                "{backend} {tag}: a mapped argument must reach the library whole:\n{all}"
+            );
+            assert!(
+                !all.to_lowercase().contains("leak"),
+                "{backend} {tag}: the copies must be released:\n{all}"
+            );
+        }
+    }
+}

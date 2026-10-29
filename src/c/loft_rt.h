@@ -1368,6 +1368,7 @@ static loft_ref loft_const_store(const uint32_t *words, uint32_t n) {
     memcpy(s->buf, words, (size_t) n * 8);
     loft_st_resync(s);
     s->pinned = 1;
+    s->read_only = 1; /* `Store::lock_constant`: constant data is read-only, as on the interpreter */
     loft_ref r = { (uint16_t) nr, 1, 8 };
     return r;
 }
@@ -3003,7 +3004,10 @@ static void loft_vec_add(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_ref 
     uint32_t o_rec = loft_u32(loft_store_of(o), o.rec, o.pos);
     uint32_t d_rec = loft_collection_rec(s, v.rec, v.pos);
     int same_vec = v.store_nr == o.store_nr && o_rec != 0 && loft_u32(s, v.rec, v.pos) == o_rec;
-    if (size != 0 && !T[tp].owns_heap && d_rec != 0 && !(v.store_nr == o.store_nr && d_rec == o_rec)) {
+    /* A foreign destination has no claimed header to read (`append_block_fits` refuses it); it is
+     * locked, so the append below refuses the write. */
+    if (size != 0 && !T[tp].owns_heap && d_rec != 0 && d_rec != LOFT_FOREIGN_REC
+        && !(v.store_nr == o.store_nr && d_rec == o_rec)) {
         int32_t claimed = loft_st_i32(s, d_rec, 0);
         uint32_t len = loft_u32(s, d_rec, 4);
         uint32_t cap = (uint32_t) (((uint64_t) (claimed > 0 ? claimed : 0) * 8 - 8) / size);
@@ -3098,12 +3102,16 @@ static void loft_vec_reverse(loft_ref v, uint32_t size) {
     if (n < 2) return;
     loft_store_t *s = loft_store_of(v);
     uint8_t *base = loft_at(s, loft_collection_rec(s, v.rec, v.pos), 8);
+    /* An element of any width, swapped through a 64-byte window a piece at a time. */
     uint8_t tmp[64];
-    if (size > sizeof tmp) return;
     for (int64_t lo = 0, hi = n - 1; lo < hi; lo++, hi--) {
-        memcpy(tmp, base + lo * size, size);
-        memcpy(base + lo * size, base + hi * size, size);
-        memcpy(base + hi * size, tmp, size);
+        uint8_t *x = base + lo * size, *y = base + hi * size;
+        for (uint32_t o = 0; o < size; o += (uint32_t) sizeof tmp) {
+            uint32_t k = size - o < (uint32_t) sizeof tmp ? size - o : (uint32_t) sizeof tmp;
+            memcpy(tmp, x + o, k);
+            memcpy(x + o, y + o, k);
+            memcpy(y + o, tmp, k);
+        }
     }
 }
 
