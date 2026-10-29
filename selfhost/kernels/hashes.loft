@@ -97,6 +97,18 @@ fn copied(n: integer) -> integer {
   (if w1 { w1.n } else { -1 }) * 10 + len(b2.counts) + len(b.counts) * 0
 }
 
+struct Ek { k: integer }
+
+// A link to a hash local, rebound to a literal: the null bind that starts the literal remakes the
+// store the link names, so the elements land in `n` (`keyed_null`).  linked(7): n holds 2 and 3,
+// the link names the same hash: 2 * 100 + 2 = 202.
+fn linked(n: integer) -> integer {
+  h: hash<Ek[k]> = [Ek { k: n }];
+  c = &h;
+  c = [Ek { k: 2 }, Ek { k: 3 }];
+  len(h) * 100 + len(c)
+}
+
 fn main() {
-  println("{counted(5)} {counted(2)} {replaced(5)} {replaced(2)} {intkey(4)} {intkey(3)} {compound(7)} {nested(5)} {copied(4)}");
+  println("{counted(5)} {counted(2)} {replaced(5)} {replaced(2)} {intkey(4)} {intkey(3)} {compound(7)} {nested(5)} {copied(4)} {linked(7)}");
 }

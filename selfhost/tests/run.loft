@@ -253,6 +253,8 @@ fn test_hashes_build_find_and_copy() {
   assert(ran_clean(h, "n_compound", 7) == 3057, "compound(7)");
   assert(ran_clean(h, "n_nested", 5) == 2, "nested(5)");
   assert(ran_clean(h, "n_copied", 4) == 13, "copied(4): the copy's elements are its own");
+  // census 2026-10-29: a link's null bind remade a store of its own, so `h` kept its old element.
+  assert(ran_clean(h, "n_linked", 7) == 202, "linked(7): a hash link writes through");
 }
 
 // A kernel's whole `main`, as the census runs a program: it prints what `loft --interpret`

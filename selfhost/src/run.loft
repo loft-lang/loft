@@ -680,6 +680,19 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         ref_out(io, ints, at);
         claim(own, io[0] ?? NULL_STORE, at);
       }
+      // A keyed local bound to null (`keyed_null`): the store the variable names is remade in
+      // place, whoever owns it — a link writes through to its target — and a variable naming
+      // none gets a fresh store it owns.
+      KeyedNull => {
+        at = base_int + op.a;
+        ref_in(io, ints, at);
+        fresh = (io[0] ?? NULL_STORE) == NULL_STORE;
+        crt::database(io, (b.types[op.b] ?? panic("a type the lowering checked")).size, op.b);
+        ref_out(io, ints, at);
+        if fresh {
+          claim(own, io[0] ?? NULL_STORE, at);
+        }
+      }
       // `OpFreeRef(v)`: released when this frame owns `v`'s store; `v` is reset either way, as
       // the runtime's `loft_free_var` resets it.
       FreeVar => {

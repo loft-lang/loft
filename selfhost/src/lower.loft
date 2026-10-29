@@ -109,6 +109,7 @@ enum Code {
   KeyPart,
   HashFind,
   HashLen,
+  KeyedNull,
 }
 
 // One op: `kind` is the kind of value it works on; `a` is a value, a slot, a jump target, a
@@ -447,6 +448,7 @@ fn effect(code: Code, b: integer) -> integer {
     KeyPart => -1,
     HashFind => 0,
     HashLen => 0,
+    KeyedNull => 0,
     _ => -1,
   }
 }
@@ -1189,16 +1191,18 @@ fn bind(l: Lowering, b: ir::Bundle, var: integer, node: ir::Node) {
   slot = slot_of(l, var);
   v = b.data.definitions[l.def_nr]?.variables.variables[var]?;
   if is_hash(v.type_def) {
-    // A hash local bound to null gets a store of its own minted AS the collection type, unless
-    // it borrows one (`keyed_null`, `src/c/body.rs`); a later null bind empties it in place,
-    // which `OpDatabase` on a store the variable owns does.  Any other bind is a view.
+    // A hash local bound to null is minted AS the collection type, unless it is built in place
+    // or an overwritten view (`keyed_null`, `src/c/body.rs`): `loft_database_typed` on the
+    // variable, which remakes IN PLACE whatever store it names — a link's too, which is how
+    // `c = &n; c = [ … ]` writes through to `n` — and mints one when it names none.  Any other
+    // bind is a view.
     if x is NdNull && !is_inline_ref(b, l.def_nr, var) && !is_overwritten_view(v) {
       ht = hash_type_of(b, v.type_def);
       if ht < 0 {
         refuse(l, "a hash whose collection type the image does not name: {v.name}");
         return;
       }
-      emit(l, Database, KRef, slot, ht);
+      emit(l, KeyedNull, KRef, slot, ht);
       return;
     }
     if x is NdNull {
