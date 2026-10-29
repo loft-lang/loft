@@ -352,6 +352,18 @@ fn test_a_record_answer_holding_its_arguments_text_owns_it() {
   assert(m.n == "zz", "the answer took the write: {m.n}");
 }
 
+fn worker_rev(i: integer) -> integer {
+  v: vector<u8> = [i & 255, 2];
+  r = ffi_c_library::rev(v);
+  r.len() + r[0] + v[0]
+}
+
+fn test_a_par_worker_owns_its_answer() {
+  t = 0;
+  for i in 0..100 par(n = worker_rev(i), 4) { t += n; }
+  assert(t == 5450, "100 × (3 + 2) + (0 + … + 99): {t}");
+}
+
 fn test_a_thousand_calls_and_an_answer_passed_straight_on() {
   v: vector<u8> = [1, 2, 3];
   t = 0;
