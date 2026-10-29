@@ -4027,13 +4027,41 @@ impl Store {
             );
         }
         // Everything past the image is free space, in one block. `init` writes
-        // the same negative-header form for a whole fresh store.
-        if words < self.size {
-            self.set_free_header(words, (self.size - words) as i32);
+        // the same negative-header form for a whole fresh store.  The prefix ends after
+        // its last claimed block, but a FREE block before that point can run past it: an
+        // empty store's prefix is its first two words, and word one heads the free block
+        // spanning the SENDER's whole capacity.  This buffer can be shorter than that
+        // capacity (it took the size of an earlier, smaller image), so such a block is
+        // re-headed here as the start of the tail; left as sent, the free-tree rebuild
+        // re-foots it past this store's end.
+        let tail = self.image_tail(words);
+        if tail < self.size {
+            self.set_free_header(tail, (self.size - tail) as i32);
         }
         self.free_root = 0;
         self.fl_rebuild();
         self.claims_rebuild();
+    }
+
+    /// Where the free tail of an adopted image of `words` words starts: the image's end, or
+    /// the start of a free block in it that runs past that end (`adopt_image`).  A claimed
+    /// block that runs past the end, or a zero header, stops the walk where it is; the image
+    /// is malformed there, which `validate_structure` refuses.
+    fn image_tail(&self, words: u32) -> u32 {
+        let end = words.min(self.size);
+        let mut pos = PRIMARY;
+        while pos < end {
+            let header = self.read::<i32>(pos, 0);
+            let size = header.unsigned_abs();
+            if size == 0 {
+                return end;
+            }
+            if pos + size > end {
+                return if header < 0 { pos } else { end };
+            }
+            pos += size;
+        }
+        end
     }
 
     /// Rebuild `claims` from the arena, for a store whose records arrived as an IMAGE
@@ -6555,6 +6583,40 @@ mod tests {
         assert_eq!(store.wild, e, "folded into the wilderness");
         assert_eq!(store.dead_words, 10, "not counted as dead");
         assert_eq!(store.claim(9), e, "the next claim takes it back");
+    }
+
+    /// @PLN119 arc E — an EMPTY store's image is its first two words, and word one heads
+    /// the free block spanning the sender's whole capacity.  Adopted by a store SHORTER
+    /// than that capacity (one that took the size of an earlier, smaller image), the block
+    /// is re-headed as the tail of the receiver: before, the free-tree rebuild re-footed it
+    /// past the receiver's end (the `placement_remote` large-value crossing, once claims
+    /// stopped over-granting).
+    #[test]
+    fn an_empty_image_from_a_larger_store_adopts_into_a_smaller_one() {
+        let sender = Store::new(4096);
+        let words = 2usize;
+        let image = unsafe { std::slice::from_raw_parts(sender.base_ptr(), words * 8) }.to_vec();
+        assert_eq!(
+            sender.read::<i32>(1, 0),
+            -(sender.capacity_words() as i32 - 1),
+            "word one heads the sender's whole free space"
+        );
+        let mut receiver = Store::new(1024);
+        receiver.free = false;
+        assert!(receiver.capacity_words() < sender.capacity_words());
+        let r = receiver.claim(3);
+        receiver.set_u32_raw(r, 4, 77);
+        receiver.adopt_image(&image);
+        let usage = receiver.usage();
+        assert!(usage.walk_complete, "the block chain tiles the receiver");
+        assert_eq!(usage.claimed_words, 0, "nothing is claimed");
+        assert_eq!(
+            receiver.read::<i32>(1, 0),
+            -(receiver.capacity_words() as i32 - 1),
+            "one free block, the receiver's own size"
+        );
+        let c = receiver.claim(5);
+        assert_eq!(c, 1, "and it hands out its first word again");
     }
 
     /// `@FR-H-LazyFree` — below the floor the store GROWS rather than sweeps: a small
