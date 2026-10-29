@@ -422,7 +422,8 @@ gives, and the interpreter's loft code stays readable because the storage is C.
 reference crosses a `#c` call, where the type table comes from, the first slice and its probes.
 **The first slice is built** (records of every field width, texts, embedded records, copies),
 with ownership decided at run time by one owner table (owner, 2026-10-28; 1b-s3.md § Ownership
-at run time): **the census: 1 026 programs, 60 pass, 0 leak, 0 wrong, 0 crash, none swept.**
+at run time), and so is the second, vectors: **the census: 1 026 programs, 117 pass, 0 leak,
+0 wrong, 0 crash, none swept.**
 
 ### SU1 — `store_load` maps the image instead of copying it — DESIGNED 2026-10-28
 
