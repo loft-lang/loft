@@ -25,6 +25,7 @@ closed it.  Numbers are kept: a closed number is never reused.
 
 | # | Divergence | Closed |
 |---|---|---|
-| D6 | equality through a `reference<T>` to a removed record: the interpreter follows the raw slot, C reads null (`@FR-H-Removed` says C is right) | closed — 2efb8bb18: the interpreter reads through `get_db_ref` (`tests/scripts/a-reference-to-a-removed-record-compares-as-null.loft`) |
-| D10 | a locked write ends a production run in C; the interpreter discards it and continues | closed — bb47cc284: C discards it whole and logs it (`@FR-H-WriteLocked-Whole`); the walk-removal hang it exposed on all three backends is loft#2235 (`a_locked_write_in_production_is_discarded_on_every_backend`) |
-| D19c | no store-memory ceiling on C test runs | closed — fb6c26abc: the runner hands its ceiling to a compiled child, both writers (`the_default_ceiling_reaches_a_compiled_test`) |
+| D6 | equality through a `reference<T>` to a removed record: the interpreter follows the raw slot, C reads null (`@FR-H-Removed` says C is right) | closed — 45b7351db: the interpreter reads through `get_db_ref` (`tests/scripts/a-reference-to-a-removed-record-compares-as-null.loft`) |
+| D10 | a locked write ends a production run in C; the interpreter discards it and continues | closed — fd362d502: C discards it whole and logs it (`@FR-H-WriteLocked-Whole`); the walk-removal hang it exposed on all three backends is loft#2235 (`a_locked_write_in_production_is_discarded_on_every_backend`) |
+| D19c | no store-memory ceiling on C test runs | closed — 5e2c18a18: the runner hands its ceiling to a compiled child, both writers (`the_default_ceiling_reaches_a_compiled_test`) |
+| D19e | NaN and ±0 sort in different orders | closed — 6cf5db2ca (loft#2236): both were wrong — a null (a NaN) landed anywhere, a null text after `""`.  Both now sort as `<` orders (`@FR-E-NullArg`, null first) and stably, so the zeros keep their order (`tests/scripts/sort-places-null-first-and-keeps-equal-floats-in-order.loft`); the keyed-collection half is loft#2237 |
