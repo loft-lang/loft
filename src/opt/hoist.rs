@@ -812,6 +812,58 @@ pub(crate) fn rebound_apart_headers(
     kept
 }
 
+/// `@FR-R-Header`'s growth half — asked by the C alone, which derives the header again after
+/// every statement that grows its vector (`FnWriter::refresh_grown_header`): of the bare
+/// vector variables `body` reads through an element address and never rebinds, the ones whose
+/// store this activation owns alone and that the loop GROWS only through statements of its own
+/// level that `apart::growth_args` recognises (`apart::grown_headers`).  An interpreter's value
+/// stack, pushed through a helper and read every op, is the shape (bench 20's `put`).
+pub(crate) fn grown_apart_headers(
+    body: &Block,
+    data: &Data,
+    def_nr: u32,
+    facts: Option<&StoreFacts>,
+    cache: &mut HashMap<u32, bool>,
+    owned: Option<&HoistOwned>,
+) -> Vec<(PathKey, Value)> {
+    let Some(facts) = facts.filter(|_| crate::keys::apart_headers_enabled()) else {
+        return Vec::new();
+    };
+    if crate::env_once!(std::env::var("LOFT_NO_GROWN_HEADER").is_ok_and(|v| v != "0")) {
+        return Vec::new();
+    }
+    let vars = data.def(def_nr).variables();
+    let rebound = super::body_writes::rebound_vars(body, data, vars);
+    let candidates: Vec<(PathKey, Value)> = indexed_vectors(body, data, def_nr)
+        .into_iter()
+        .filter(|(p, _)| p.1.is_empty() && !rebound.contains(&p.0))
+        .collect();
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+    let kept = super::apart::grown_headers(
+        body,
+        data,
+        facts,
+        &|t| work_buffer_arg(data, def_nr, t),
+        candidates,
+        super::apart::Callees {
+            cache,
+            owned,
+            code: data.def(def_nr).code(),
+        },
+    );
+    if std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok() {
+        eprintln!(
+            "hoist: {} loop {} growth clause keeps {:?}",
+            data.def(def_nr).name(),
+            body.scope,
+            kept.iter().map(|(p, _)| vars.name(p.0)).collect::<Vec<_>>()
+        );
+    }
+    kept
+}
+
 /// The vector headers and the record scalars `body` may derive once up front.
 ///
 /// The gate is [`hoistable_vectors`]' gate; a body it declines hoists nothing.  Under it

@@ -166,6 +166,11 @@ pub(crate) struct FnWriter<'a> {
     /// with whether its element base stays valid for the loop's extent (`@FR-R-Base`: the
     /// loop grows no store).  An `__inv` twin starts with its inputs as one frame.
     headers: Vec<Vec<(crate::opt::writes::PathKey, String, bool)>>,
+    /// `@FR-R-Header`'s growth half: the held headers derived again after every statement
+    /// that grows their vector (`refresh_grown_header`), and the paths the verdict just
+    /// admitted under it, which `hold_vectors` binds.
+    grown_headers: std::collections::HashSet<String>,
+    pending_grown: Vec<crate::opt::writes::PathKey>,
     /// The record scalars each enclosing loop reads once before it (`@FR-R-Scalar`): the
     /// `(variable, field offset)` key, the local holding it and its shape, innermost last.
     scalars: Vec<Vec<(crate::opt::hoist::ScalarKey, String, CType)>>,
@@ -537,6 +542,8 @@ impl<'a> FnWriter<'a> {
             loops: Vec::new(),
             labels: 0,
             headers: Vec::new(),
+            grown_headers: std::collections::HashSet::new(),
+            pending_grown: Vec::new(),
             push_heads: Vec::new(),
             vr: value::VrFn::of(cx, d).map(Box::new),
             widening: None,
@@ -942,6 +949,9 @@ impl<'a> FnWriter<'a> {
                 self.decls
                     .push(format!("loft_vh {h} = {{ 0xFFFF, 0, 0, 0 }};"));
                 self.line(ind, &format!("{h} = loft_vh_of({});", as_ref(e)?));
+                if self.pending_grown.contains(&path) {
+                    self.grown_headers.insert(h.clone());
+                }
                 frame.push((path, h, base));
             }
         }
@@ -1160,6 +1170,31 @@ impl<'a> FnWriter<'a> {
         if alone && !v.vectors.is_empty() {
             v.growth_free = true;
         }
+        // `@FR-R-Header`'s growth half: in a loop that holds nothing but apart headers, a bare
+        // vector this activation owns alone that the loop grows through statements of its own
+        // level, held with its base and derived again after each (`refresh_grown_header`).
+        let mut pending = Vec::new();
+        if v.pushes.is_empty()
+            && v.mint_pushes.is_empty()
+            && v.scalars.is_empty()
+            && (v.vectors.is_empty() || v.growth_free)
+        {
+            let grown = crate::opt::hoist::grown_apart_headers(
+                b,
+                self.cx.data,
+                self.d,
+                facts.as_ref(),
+                &mut cache,
+                None,
+            );
+            for (path, expr) in grown {
+                if !v.vectors.iter().any(|(p, _)| *p == path) {
+                    pending.push(path.clone());
+                    v.vectors.push((path, expr));
+                    v.growth_free = true;
+                }
+            }
+        }
         self.hoist_cache = cache;
         // `@FR-R-Apart`: a path rooted at a value held apart names no record, so it takes no
         // header, base, push header or held scalar; the loop's other paths keep theirs.
@@ -1176,6 +1211,7 @@ impl<'a> FnWriter<'a> {
             v.mint_pushes.retain(|(p, _)| !self.apr_holds(p.0));
             v.scalars.retain(|(k, _)| !self.apr_holds(k.0));
         }
+        self.pending_grown = pending;
         Some(v)
     }
 
@@ -1877,14 +1913,23 @@ impl<'a> FnWriter<'a> {
         while i < ops.len() {
             // `@FR-R-Apart` instance 2: a construction run builds its value as a whole.
             if let Some(next) = self.av_construction(ops, i, ind)? {
+                ops[i..next]
+                    .iter()
+                    .for_each(|o| self.refresh_grown_header(o, ind));
                 i = next;
                 continue;
             }
             if let Some(last) = self.rotate_site(ops, i, ind)? {
+                ops[i..=last]
+                    .iter()
+                    .for_each(|o| self.refresh_grown_header(o, ind));
                 i = last + 1;
                 continue;
             }
             if let Some(last) = self.keyed_entry_site(ops, i, ind)? {
+                ops[i..=last]
+                    .iter()
+                    .for_each(|o| self.refresh_grown_header(o, ind));
                 i = last + 1;
                 continue;
             }
@@ -2371,6 +2416,10 @@ impl<'a> FnWriter<'a> {
             self.refresh_rebound_header(*var, ind);
             self.dc_after(v, ind);
         }
+        // A span is emitted as the statement it wraps, which refreshes for itself.
+        if r.is_ok() && !matches!(v, Value::Span(_)) {
+            self.refresh_grown_header(v, ind);
+        }
         // `LOFT_C_WHERE=1`: a refusal names the innermost statement it came from, on stderr.
         if let Err(why) = &r
             && !self.where_told
@@ -2405,6 +2454,31 @@ impl<'a> FnWriter<'a> {
         for h in held {
             let v = self.var(var);
             self.line(ind, &format!("{h} = loft_vh_of({v});"));
+        }
+    }
+
+    /// `@FR-R-Header`'s growth half: after statement `op` — when it is one `apart::growth_args`
+    /// recognises — every grown header held for a variable it names is derived again, element
+    /// base included, so the reads after it see the vector's record, length and memory now.
+    fn refresh_grown_header(&mut self, op: &Value, ind: usize) {
+        if self.grown_headers.is_empty() {
+            return;
+        }
+        let Some(xs) = crate::opt::apart::growth_args(op, self.cx.data) else {
+            return;
+        };
+        for x in xs {
+            let held: Vec<String> = self
+                .headers
+                .iter()
+                .flat_map(|f| f.iter())
+                .filter(|(p, h, _)| p.0 == x && p.1.is_empty() && self.grown_headers.contains(h))
+                .map(|(_, h, _)| h.clone())
+                .collect();
+            for h in held {
+                let v = self.var(x);
+                self.line(ind, &format!("{h} = loft_vh_of({v});"));
+            }
         }
     }
 
