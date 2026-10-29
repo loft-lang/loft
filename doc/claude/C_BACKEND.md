@@ -171,6 +171,9 @@ never seen, a listing is empty and the directory operations answer `Other`.
 
 ## The model
 
+The C runtime's stores are the standard of [STORE_MODEL.md](STORE_MODEL.md) (@PLN206): one
+model for both runtimes, its open divergences numbered there.
+
 **Shapes.**  Every loft value has one C shape (`CType`): `int32_t` for a local whose type
 fits 32 bits in a body written under the 32-bit regime (null `LOFT_NULL32`; widened where the
 runtime takes `int64_t`, and computed in 32 bits where both operands are —

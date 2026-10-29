@@ -39,6 +39,9 @@ The runtime data layer is split across multiple source files that together imple
 
 ## Store — Raw Heap Allocator (`src/store.rs`)
 
+The store model both runtimes implement, and where the interpreter and the C runtime still
+differ, is [STORE_MODEL.md](STORE_MODEL.md) (@PLN206).
+
 See `src/store.rs` module docs for memory layout, signed size headers, and
 free-block allocation.  See `src/keys.rs` module docs for `DbRef`, `Str`,
 `Key`, and `Content` types.
