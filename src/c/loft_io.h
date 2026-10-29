@@ -420,6 +420,9 @@ static uint8_t *loft_files_ro = 0;
  * touched it since: a read starting there needs no seek (`loft_read_file`). */
 static int64_t *loft_files_at = 0;
 static char **loft_files_path = 0;
+/* `LoftFile::leases`: the `File` records naming each handle — one at the open, one more per
+ * copy; the handle closes when the last of them dies (`@FR-H-Handle`). */
+static uint32_t *loft_files_leases = 0;
 static int32_t loft_nfiles = 0;
 
 /* `file open error: {e}` (state/io.rs, codegen_runtime): the error as Rust's `io::Error` shows
@@ -435,9 +438,12 @@ static int32_t loft_file_handle_add(FILE *h, int ro, const char *path) {
     uint8_t *r = (uint8_t *) realloc(loft_files_ro, (size_t) (loft_nfiles + 1));
     int64_t *a = (int64_t *) realloc(loft_files_at, (size_t) (loft_nfiles + 1) * sizeof *a);
     char **ps = (char **) realloc(loft_files_path, (size_t) (loft_nfiles + 1) * sizeof *ps);
+    uint32_t *ls = (uint32_t *) realloc(loft_files_leases, (size_t) (loft_nfiles + 1) * sizeof *ls);
     size_t len = strlen(path);
     char *copy = (char *) malloc(len + 1);
-    if (!n || !r || !a || !ps || !copy) { fputs("loft: out of memory\n", stderr); abort(); }
+    if (!n || !r || !a || !ps || !ls || !copy) { fputs("loft: out of memory\n", stderr); abort(); }
+    loft_files_leases = ls;
+    loft_files_leases[loft_nfiles] = 1;
     memcpy(copy, path, len + 1);
     loft_files = n;
     loft_files_ro = r;
@@ -448,6 +454,46 @@ static int32_t loft_file_handle_add(FILE *h, int ro, const char *path) {
     loft_files_at[loft_nfiles] = -1;
     loft_files_path[loft_nfiles] = copy;
     return loft_nfiles++;
+}
+
+/* `Stores::lease_if_file`: a copy of a `File` record names the same handle — one lease more. */
+static void loft_file_lease(loft_ref f) {
+    int32_t h;
+    memcpy(&h, loft_at(loft_store_of(f), f.rec, f.pos + 28), 4);
+    if (h >= 0 && h < loft_nfiles && loft_files[h]) loft_files_leases[h]++;
+}
+
+/* `Stores::release_file_handle`: a `File` record is gone — its lease returned, the handle closed
+ * at the last one.  The record is DETACHED (its handle reads null), so a second walk over the
+ * same bytes returns nothing twice. */
+static void loft_file_release(loft_ref f) {
+    loft_store_t *s = loft_store_of(f);
+    int32_t h, none = INT32_MIN;
+    memcpy(&h, loft_at(s, f.rec, f.pos + 28), 4);
+    if (h == INT32_MIN) return;
+    memcpy(loft_at(s, f.rec, f.pos + 28), &none, 4);
+    if (h < 0 || h >= loft_nfiles || !loft_files[h]) return;
+    if (loft_files_leases[h] > 0 && --loft_files_leases[h] == 0) {
+        fclose(loft_files[h]);
+        loft_files[h] = 0;
+        loft_files_at[h] = -1;
+    }
+}
+
+/* `Stores::release_file_leases`: the store `nr` is being freed — every `File` its records hold,
+ * reached from its root through the type the root names, returns its lease.  Walked only when a
+ * file was ever opened and the root's type can hold one; the store dies, so the walk is the
+ * owned-claims release (its locks no longer matter). */
+static void loft_remove_claims_mode(const loft_tdesc *T, uint16_t tp, loft_ref r, int borrowed);
+
+static void loft_release_file_leases(uint16_t nr) {
+    if (loft_nfiles == 0 || !loft_T) return;
+    loft_store_t *s = &loft_stores[nr];
+    uint16_t tp = s->known;
+    if (tp >= loft_T_n || !loft_T[tp].file || s->size < 3 || loft_u32(s, 1, 4) != tp) return;
+    loft_ref root = { nr, 1, 8 };
+    s->read_only = 0;
+    loft_remove_claims_mode(loft_T, tp, root, 0);
 }
 
 /* The open handle of `f` and its number (-1 for none), keeping the stream's read position. */

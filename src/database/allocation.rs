@@ -1601,7 +1601,7 @@ impl Stores {
     }
 
     /// Can a value of `tp` hold a `File` record — the type itself, or a member at any depth?
-    pub(super) fn type_holds_file(&self, tp: u16) -> bool {
+    pub(crate) fn type_holds_file(&self, tp: u16) -> bool {
         match self
             .types
             .get(tp as usize)

@@ -812,3 +812,13 @@ static void loft_lazy_fail(loft_ref coll, loft_str why) {
 }
 
 #endif
+
+/* `Stores::swap_stores_in_as`: no swap while a walk scratch is live (it names its source by
+ * store) or a lazy binding or a lazy refusal is recorded (each names a collection by store). */
+static int loft_swap_blocked(void) {
+    return loft_nscratches != 0
+#ifdef LOFT_LAZY
+        || loft_nlazy != 0 || loft_nlazy_errs != 0
+#endif
+        ;
+}

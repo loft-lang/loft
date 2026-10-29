@@ -1189,11 +1189,17 @@ static void loft_database_typed(loft_ref *var, uint32_t bytes, uint16_t tp) {
 
 /* OpDatabase of a vector wrapper (`main_vector<T>`, Stores::mint_at_place, @FR-R-Place): a
  * buffer that is a PLACE — a collection field of another record, not the wrapper's own store
- * — stays where it is with its collection emptied, so the literal builds where it lives;
+ * — stays where it is with its collection released and emptied, so the literal builds where it lives;
  * the ordinary mint would clear the store the place lives in. */
-static void loft_database_wrapper(loft_ref *var, uint32_t bytes, uint16_t tp) {
+/* The type descriptor is defined further down; a pointer to it is all this needs. */
+struct loft_tdesc_s;
+static void loft_remove_claims(const struct loft_tdesc_s *T, uint16_t tp, loft_ref r);
+
+static void loft_database_wrapper(const struct loft_tdesc_s *T, loft_ref *var, uint32_t bytes, uint16_t tp) {
     if (var->store_nr != 0xFFFF && var->rec != 0 && var->store_nr < loft_nstores
         && !(var->rec == 1 && loft_stores[var->store_nr].known == tp)) {
+        /* The collection the place held is released, then its handle emptied. */
+        loft_remove_claims(T, tp, *var);
         loft_set_u32(&loft_stores[var->store_nr], var->rec, var->pos, 0);
         return;
     }
@@ -1222,6 +1228,10 @@ static LOFT_TLS uint32_t loft_nevacs = 0, loft_evac_cap = 0;
 /* OpFreeRef: the whole store goes, everything the root owned with it. */
 static void loft_gen_free(loft_ref g);
 
+/* `Stores::release_file_leases` (loft_io.h): a store that is freed returns the leases its
+ * records hold. */
+static void loft_release_file_leases(uint16_t nr);
+
 static void loft_free_ref(loft_ref r) {
     if (r.store_nr == 0xFFFE) {
         loft_gen_free(r);
@@ -1241,6 +1251,7 @@ static void loft_free_ref(loft_ref r) {
         if (loft_evacs[i].old.store_nr == r.store_nr) loft_evacs[i] = loft_evacs[--loft_nevacs];
         else i++;
     }
+    loft_release_file_leases(r.store_nr);
     s->live = 0;
     LOFT_TRACE("F %llu\n", (unsigned long long) s->serial);
 #ifdef LOFT_FOREIGN
@@ -2142,7 +2153,7 @@ typedef struct { int8_t type; uint16_t pos; int32_t start; } loft_key;
  * file), whether it is hidden (`#`-named), and the group it is in — 1 + the field number of the
  * group's owner (the member that holds the records), 0 for none. */
 typedef struct { uint16_t pos; uint16_t type; uint8_t view; uint8_t hidden; uint16_t group; } loft_fld;
-typedef struct {
+typedef struct loft_tdesc_s {
     uint8_t kind;
     uint16_t size;             /* the type's bytes */
     uint16_t elem;             /* a vector's element type, a child record's content type */
@@ -2153,7 +2164,17 @@ typedef struct {
     const loft_key *keys;      /* a keyed collection's key parts */
     uint8_t nk;
     uint8_t linked;            /* Type::linked: a sibling or a stored reference names it by record */
+    uint8_t file;              /* `@FR-H-Handle`: 2 a `File` record, 1 a type that can hold one */
 } loft_tdesc;
+
+/* The program's type table, bound at start (`loft_bind_tables`) for what a store's FREE walks:
+ * the `File` leases its records hold.  0 in a runtime built without a unit. */
+static const loft_tdesc *loft_T = 0;
+static uint32_t loft_T_n = 0;
+/* `@FR-H-Handle` (loft_io.h): a `File` record's lease on its OS handle, taken by a copy and
+ * returned by a record's death; the handle closes at the last return. */
+static void loft_file_lease(loft_ref f);
+static void loft_file_release(loft_ref f);
 
 /* The hash's, the index's and the trees' halves of a copy and a release (loft_hash.h,
  * loft_btree.h, loft_radix.h). */
@@ -2181,21 +2202,25 @@ static void loft_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, lo
     loft_store_t *fs = loft_store_of(from);
     switch (d->kind) {
     case LOFT_T_TEXT: {
+        /* The text's block claimed, then its bytes copied straight from the source: the source
+         * is re-resolved by its record number after the claim, which may have moved its store's
+         * buffer when the two are one store. */
         uint32_t cur = loft_u32(fs, from.rec, from.pos);
         if (cur == 0) { loft_set_u32(loft_store_of(to), to.rec, to.pos, 0); return; }
-        loft_text tmp = loft_text_own(loft_store_str(fs, cur));
+        uint32_t len = loft_u32(fs, cur, 4);
         loft_store_t *ts = loft_store_of(to);
-        uint32_t srec = loft_st_claim(ts, (uint32_t) ((tmp.len + 15) / 8));
-        loft_set_u32(ts, srec, 4, (uint32_t) tmp.len);
-        if (tmp.len) memcpy(loft_at(ts, srec, 8), tmp.p, tmp.len);
+        uint32_t srec = loft_st_claim(ts, (uint32_t) (((uint64_t) len + 15) / 8));
+        loft_set_u32(ts, srec, 4, len);
+        if (len) memcpy(loft_at(ts, srec, 8), loft_at(loft_store_of(from), cur, 8), len);
         loft_set_u32(ts, to.rec, to.pos, srec);
-        loft_text_free(&tmp);
         return;
     }
     case LOFT_T_STRUCT: {
         /* `@FR-R-FlatCopy` (Stores::copy_struct_fields): a record that owns no heap is its bytes,
          * which came with the block copy — no field has a claim to copy. */
         if (!d->owns_heap) return;
+        /* `Stores::lease_if_file`: the copy names the same OS handle, one more lease on it. */
+        if (d->file == 2) loft_file_lease(to);
         /* `copy_struct_fields` (@FR-Col-Group): a view member of a linked group holds the
          * records its owner holds — copied as a collection of its own it would hold copies a
          * write through the owner does not reach — so it starts empty and is indexed over the
@@ -2307,12 +2332,21 @@ static void loft_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, lo
  * to another's, both minted as `tp`, where the destination holds nothing but its root, MOVES
  * the source's content into the destination store instead of copying it.  The caller vouches
  * that `tp`'s tree holds no stored reference, which could name the source store. */
+static int loft_swap_blocked(void);
+
 static int loft_swap_in(uint16_t tp, loft_ref src, loft_ref dst) {
     if (src.store_nr == dst.store_nr || src.store_nr >= loft_nstores || dst.store_nr >= loft_nstores) return 0;
     if (src.rec != 1 || src.pos != 8 || dst.rec != 1 || dst.pos != 8) return 0;
     loft_store_t *a = &loft_stores[src.store_nr], *b = &loft_stores[dst.store_nr];
     if (!a->live || !b->live || a->known != tp || b->known != tp || a->pinned || b->pinned) return 0;
-    if (a->protect || b->protect || a->nplaced || b->nplaced) return 0;
+    /* `Store::content_swappable`: neither store locked (a lock is the slot's, and would move
+     * with the content) nor serving foreign bytes; only the RELEASED store's protection
+     * refuses (`free_protect_depth`), a protected destination takes the content. */
+    if (a->read_only || b->read_only || a->protect || a->nplaced || b->nplaced) return 0;
+#ifdef LOFT_FOREIGN
+    if (loft_st_is_foreign(a) || loft_st_is_foreign(b)) return 0;
+#endif
+    if (loft_swap_blocked()) return 0;
     if (a->frame_holds || b->frame_holds) return 0;
     if (!loft_st_holds_only_root(b)) return 0;
     /* `Store::swap_contents`: the content moves, each slot keeps its serial. */
@@ -2724,17 +2758,19 @@ static int loft_vec_remove(loft_ref v, uint32_t size, int64_t index) {
 
 /* OpReplaceVector (Stores::vector_replace): `v = o` for a vector — an absent source leaves
  * the destination absent, the same vector is left alone, anything else is cleared and
- * refilled with deep copies of the source's elements. */
+ * refilled with deep copies of the source's elements.  The clear RELEASES what the old
+ * elements own (`@FR-H-ClearRelease`): the destination may be a live vector. */
 static void loft_vec_add(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_ref o);
+static void loft_vec_clear_release_body(const loft_tdesc *T, uint32_t loft_ntypes, loft_ref v);
 
-static void loft_vec_replace(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_ref o) {
+static void loft_vec_replace(const loft_tdesc *T, uint32_t nt, uint16_t tp, loft_ref v, loft_ref o) {
 #ifdef LOFT_PARSE
     loft_perrs_deliver_vector(o, v, 1);
 #endif
     int absent = o.store_nr == 0xFFFF
         || (o.rec != 0 && o.pos != 0 && loft_u32(loft_store_of(o), o.rec, o.pos) == 0xFFFFFFFFu);
     if (absent) {
-        loft_vec_clear(v);
+        loft_vec_clear_release_body(T, nt, v);
         if (v.store_nr != 0xFFFF && v.rec != 0 && v.pos != 0) loft_set_u32(loft_store_of(v), v.rec, v.pos, 0xFFFFFFFFu);
         return;
     }
@@ -2742,7 +2778,7 @@ static void loft_vec_replace(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_
         uint32_t dr = loft_u32(loft_store_of(v), v.rec, v.pos);
         if (dr != 0 && dr == loft_u32(loft_store_of(o), o.rec, o.pos)) return;
     }
-    loft_vec_clear(v);
+    loft_vec_clear_release_body(T, nt, v);
     loft_vec_add(T, tp, v, o);
 }
 
@@ -2800,6 +2836,8 @@ static void loft_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r);
 static void loft_remove_claims_mode(const loft_tdesc *T, uint16_t tp, loft_ref r, int borrowed) {
     if (r.store_nr == 0xFFFF || r.rec == 0) return;
     const loft_tdesc *d = &T[tp];
+    /* `Stores::release_file_handle`: a `File` record that dies returns its lease. */
+    if (d->file == 2 && !borrowed) loft_file_release(r);
     /* `@FR-R-FlatCopy`: a record that owns no heap holds no claim to release. */
     if (d->kind == LOFT_T_STRUCT && !d->owns_heap) return;
     loft_store_t *s = loft_store_of(r);
@@ -3217,21 +3255,35 @@ static void loft_append_text_bytes(loft_ref v, loft_str t, int64_t lo, int64_t h
 }
 
 /* OpKeepVectorRange (Stores::keep_vector_range): only the elements [lo, hi) stay, moved to the
- * front; a range outside the vector leaves it as it was.  `size` 0 is a linked element: its
- * slot is a record number, and the records dropped are removed. */
-static void loft_keep_vector_range(loft_ref v, uint32_t size, int64_t lo, int64_t hi) {
+ * front; a range outside the vector leaves it as it was.  What each dropped element owns is
+ * released first, front and back (a linked element's record removed with it), before anything
+ * moves.  `size` 0 is a linked element: its slot is a record number. */
+static void loft_keep_vector_range(const loft_tdesc *T, uint16_t tp, loft_ref v, uint32_t size, int64_t lo, int64_t hi) {
     if (v.store_nr == 0xFFFF || v.rec == 0 || lo < 0 || hi < lo || lo == LOFT_NULL || hi == LOFT_NULL) return;
     loft_store_t *s = loft_store_of(v);
     uint32_t r = loft_collection_rec(s, v.rec, v.pos);
     if (r == 0 || hi > (int64_t) loft_u32(s, r, 4)) return;
+    uint32_t len = loft_u32(s, r, 4);
     if (size == 0) {
-        uint32_t len = loft_u32(s, r, 4);
         for (uint32_t i = 0; i < len; i++) {
             if ((int64_t) i >= lo && (int64_t) i < hi) continue;
             uint32_t rec = loft_u32(s, r, 8 + i * 4);
-            if (rec != 0) loft_remove_record(s, rec);
+            if (rec == 0) continue;
+            loft_ref elem = { v.store_nr, rec, 8 };
+            loft_remove_claims(T, tp, elem);
+            loft_remove_record(loft_store_of(v), rec);
         }
         size = 4;
+        s = loft_store_of(v);
+        r = loft_collection_rec(s, v.rec, v.pos);
+    } else if (T[tp].owns_heap) {
+        for (uint32_t i = 0; i < len; i++) {
+            if ((int64_t) i >= lo && (int64_t) i < hi) continue;
+            loft_ref elem = { v.store_nr, r, 8 + i * size };
+            loft_remove_claims(T, tp, elem);
+        }
+        s = loft_store_of(v);
+        r = loft_collection_rec(s, v.rec, v.pos);
     }
     uint32_t kept = (uint32_t) (hi - lo);
     if (lo > 0 && kept > 0) memmove(loft_at(s, r, 8), loft_at(s, r, 8 + (uint32_t) lo * size), (size_t) kept * size);
@@ -4919,6 +4971,11 @@ static int loft_reset_pool_root(loft_ref r, uint16_t tp, uint32_t size, const ui
     if (r.store_nr == 0xFFFF || r.rec != 1 || r.pos != 8 || r.store_nr >= loft_nstores) return 0;
     loft_store_t *s = &loft_stores[r.store_nr];
     if (!s->live || s->pinned || s->known != tp || s->frame_holds) return 0;
+    /* A locked store is not re-minted, nor one serving foreign bytes: the caller walks. */
+    if (s->read_only) return 0;
+#ifdef LOFT_FOREIGN
+    if (loft_st_is_foreign(s)) return 0;
+#endif
     loft_database_typed(&r, size, tp);
     loft_fill(r, image, n);
     return 1;

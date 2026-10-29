@@ -5447,3 +5447,130 @@ fn a_c_build_builds_no_rust_native_crate() {
     }
     let _ = fa::remove_dir_all(&dir);
 }
+
+/// What the C releases where the interpreter does, measured as BOUNDED growth: each program runs
+/// a release path many times, built as C and run under a cap that a per-iteration leak crosses
+/// and the released program stays far under (measured: ~2 MB resident against the cap's 32 MB
+/// of address space, 64 descriptors).  KEEP: `@FR-R-Compact`'s in-place truncation, whose
+/// dropped elements' texts and vectors were never released (`loft_keep_vector_range`); WRAP: a
+/// returned vector literal minted into a field (`@FR-R-Place`), whose old collection was never
+/// released (`loft_database_wrapper`); FILE: a `File` record that dies without a close returns
+/// its lease and its handle closes (`@FR-H-Handle`), while a copy keeps its handle open.  Each
+/// ran out of memory or descriptors on the build before.
+#[cfg(unix)]
+#[test]
+fn a_released_path_stays_bounded_where_it_used_to_leak() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("bounded");
+    for (name, src, limit, expect) in [
+        ("keep", KEEP_BOUNDED, "ulimit -v 32768", "keep 1200000 2\n"),
+        (
+            "wrap",
+            WRAP_BOUNDED,
+            "ulimit -v 32768",
+            "wrap 80000200000\n",
+        ),
+        ("file", FILE_BOUNDED, "ulimit -n 64", "file 1400 a=7 c=9\n"),
+    ] {
+        let file = dir.join(format!("{name}.loft"));
+        let c = dir.join(format!("{name}.c"));
+        let exe = dir.join(name);
+        fa::write(&file, src).expect("write program");
+        let emit = loft::platform::process::harness_command(loft)
+            .arg("--emit-c")
+            .arg(&c)
+            .arg(&file)
+            .output()
+            .expect("run loft --emit-c");
+        assert!(
+            emit.status.success(),
+            "{name}: emit: {}",
+            String::from_utf8_lossy(&emit.stderr)
+        );
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O2", "-w", "-pthread", "-o"])
+            .arg(&exe)
+            .arg(&c)
+            .args(["-lm", "-ldl"])
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "{name}: cc: {}",
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let run = loft::platform::process::harness_command("sh")
+            .arg("-c")
+            .arg(format!("{limit}; exec \"$0\"",))
+            .arg(&exe)
+            .current_dir(&dir)
+            .output()
+            .expect("run the program");
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout),
+            expect,
+            "{name} under `{limit}`: {}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+    }
+    let _ = fa::remove_dir_all(&dir);
+}
+
+const KEEP_BOUNDED: &str = "struct Stroke { pts: vector<integer>, name: text }
+struct H { entries: vector<Stroke>, cursor: integer }
+fn main() {
+  h = H { entries: [], cursor: 0 };
+  total = 0;
+  for k in 0..400000 {
+    for j in 0..4 { h.entries += [Stroke { pts: [k, j, k + j, 1, 2, 3, 4, 5], name: \"stroke number {k} {j} with a longer name\" }]; }
+    c = 2;
+    t: vector<Stroke> = [];
+    for i in 0..c { t += [h.entries[i]?]; }
+    h.entries = t;
+    total += len(h.entries) + (h.entries[1]?.pts[2] ?? 0);
+  }
+  println(\"keep {total} {len(h.entries)}\");
+}
+";
+
+const WRAP_BOUNDED: &str = "struct S { name: text, xs: vector<integer> }
+struct H { v: vector<S>, n: integer }
+fn mk(k: integer) -> vector<S> { [S { name: \"made {k} with a long enough name to claim\", xs: [k, 1, 2, 3, 4, 5, 6, 7] }] }
+fn main() {
+  h = H { v: [], n: 0 };
+  total = 0;
+  for k in 0..400000 {
+    h.v = mk(k);
+    total += len(h.v) + (h.v[0]?.xs[0] ?? 0);
+  }
+  println(\"wrap {total}\");
+}
+";
+
+const FILE_BOUNDED: &str = "fn read_one(p: text) -> integer {
+  f = file(p);
+  f#format = LittleEndian;
+  x = f#read(4) as i32;
+  x ?? -1
+}
+fn main() {
+  p = \"leakfile_{ticks()}.bin\";
+  b: vector<u8> = [7, 0, 0, 0, 9, 0, 0, 0];
+  assert(write_bytes(p, b), \"write\");
+  total = 0;
+  for k in 0..200 { total += read_one(p); }
+  // a copy keeps the handle alive after the original dies
+  g = file(p);
+  g#format = LittleEndian;
+  a = g#read(4) as i32;
+  h = g;
+  g = file(p);
+  c = h#read(4) as i32;
+  println(\"file {total} a={a ?? -1} c={c ?? -1}\");
+  delete(p);
+}
+";

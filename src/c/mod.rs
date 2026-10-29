@@ -986,8 +986,14 @@ impl<'a> Cx<'a> {
             } else {
                 "0, 0".into()
             };
+            // `@FR-H-Handle`: 2 for the `File` record, 1 for a type that can hold one.
+            let file = if t.name == "File" {
+                2
+            } else {
+                u8::from(self.stores.type_holds_file(tp))
+            };
             let row = format!(
-                "{}, {}, {keys}, {} }}",
+                "{}, {}, {keys}, {}, {file} }}",
                 row.strip_suffix(" }").unwrap_or(&row),
                 u8::from(self.stores.type_owns_heap(tp)),
                 u8::from(self.stores.is_linked(tp))
@@ -1629,7 +1635,8 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
          loft_cl = loft_clibs;\n    loft_ncl = loft_nclibs;\n    loft_cls = loft_clibsyms;\n    \
          loft_col = loft_coptlibs;\n    loft_ncol = loft_ncoptlibs;\n    \
          loft_cbl = loft_cboundlibs;\n    loft_ncbl = loft_ncboundlibs;\n    \
-         loft_fault_logger = loft_log_production_fault;\n",
+         loft_fault_logger = loft_log_production_fault;\n    \
+         loft_T = loft_types;\n    loft_T_n = loft_ntypes;\n",
     );
     if cx.lazy.get() {
         out.push_str(&lazy_driver_table(&cx, drivers)?);

@@ -260,7 +260,7 @@ impl Cx<'_> {
         if let Some(tp) = vec_tp {
             let _ = write!(
                 out,
-                " loft_ref hb = loft_ref_null(); loft_database_wrapper(&hb, {}, {tp});",
+                " loft_ref hb = loft_ref_null(); loft_database_wrapper(loft_types, &hb, {}, {tp});",
                 self.stores.size(tp)
             );
         }

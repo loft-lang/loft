@@ -5904,8 +5904,10 @@ impl<'a> FnWriter<'a> {
                 self.cx.describe_type(tp);
                 let var = self.var(*v);
                 if self.cx.stores.is_vector_wrapper(tp) {
+                    // A place's old collection is released through the wrapper's descriptor.
+                    self.cx.copy_type(tp)?;
                     return Ok(E::new(
-                        format!("loft_database_wrapper(&{var}, {size}, {tp})"),
+                        format!("loft_database_wrapper(loft_types, &{var}, {size}, {tp})"),
                         K::Void,
                     ));
                 }
@@ -6696,8 +6698,18 @@ impl<'a> FnWriter<'a> {
                 };
                 self.cx.copy_type(tp)?;
                 let (v, other) = self.two(name, &[v, other], ind)?;
+                // The plain vector's clear releases through the type table (`loft_ntypes`).
+                let nt = if f == "loft_vec_replace" {
+                    "loft_ntypes, "
+                } else {
+                    ""
+                };
                 Ok(E::new(
-                    format!("{f}(loft_types, {tp}, {}, {})", as_ref(v)?, as_ref(other)?),
+                    format!(
+                        "{f}(loft_types, {nt}{tp}, {}, {})",
+                        as_ref(v)?,
+                        as_ref(other)?
+                    ),
                     K::Void,
                 ))
             }
@@ -6783,12 +6795,14 @@ impl<'a> FnWriter<'a> {
                 } else {
                     self.cx.stores.size(tp)
                 };
+                // What a dropped element owns is released through its type's descriptor.
+                self.cx.copy_type(tp)?;
                 let es = self.args(&[v, lo, hi], ind)?;
                 let [v, lo, hi] = <[E; 3]>::try_from(es)
                     .map_err(|_| "a range without three operands".to_string())?;
                 Ok(E::new(
                     format!(
-                        "loft_keep_vector_range({}, {size}, {}, {})",
+                        "loft_keep_vector_range(loft_types, {tp}, {}, {size}, {}, {})",
                         as_ref(v)?,
                         as_int(lo)?,
                         as_int(hi)?
