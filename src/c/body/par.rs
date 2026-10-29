@@ -253,6 +253,21 @@ impl FnWriter<'_> {
         for w in &buffers {
             self.line(ind + 2, &format!("loft_text_free(&{w});"));
         }
+        // The buffer made for a vector answer predates the call's snapshot, so the answer it
+        // holds reads as pre-existing: it is the row's own store when the answer is in it, and
+        // nobody's otherwise (native's `cr_fnref_buf`).  A discarded answer leaves it nobody's.
+        for b in &vec_buffers {
+            if name == "n_parallel_discard" {
+                self.line(ind + 2, &format!("loft_free_ref({b});"));
+            } else {
+                self.line(
+                    ind + 2,
+                    &format!(
+                        "if (loft_b[loft_i].r.store_nr == {b}.store_nr) loft_b[loft_i].adopted = 1; else loft_free_ref({b});"
+                    ),
+                );
+            }
+        }
         self.line(ind + 1, "}");
         self.line(ind, "}");
         Ok(E::new(
