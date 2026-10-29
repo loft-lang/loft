@@ -291,6 +291,13 @@ impl Stores {
                 self.determine_keys_for(usize::from(*id));
             }
         }
+        // loft#2237 — a keyed collection the image stored in the old key order renders its old
+        // line; it is walked, and the converter files its entries again in this build's order.
+        for id in &closure.old_order {
+            if let Some(b) = ids.get(id) {
+                self.types[usize::from(*b)].key_order = super::types::KeyOrder::Before;
+            }
+        }
         // The rows must BE the old layout: re-rendered, they give back the old dump of the
         // root's closure, line for line.
         let written = closure.render_dump();

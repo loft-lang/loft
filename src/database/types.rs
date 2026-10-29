@@ -2807,6 +2807,23 @@ impl Stores {
         seen
     }
 
+    /// The key order a stored `sorted` / `ordered` / `index` follows, as its dump suffix
+    /// ([`crate::placement::KEY_ORDER`], loft#2237): present when a key field is a `float`,
+    /// `single` or `text`, whose null orders first since then; empty otherwise, so an
+    /// integer-keyed line is the line it always was.
+    fn key_order_tag(&self, kt: u16) -> &'static str {
+        let t = &self.types[kt as usize];
+        if t.key_order == KeyOrder::NullFirst
+            && t.keys
+                .iter()
+                .any(|k| crate::placement::key_orders(k.type_nr))
+        {
+            crate::placement::KEY_ORDER
+        } else {
+            ""
+        }
+    }
+
     fn render_layout_parts(&self, kt: u16) -> String {
         let name = |k: u16| self.layout_type_name(k);
         match &self.types[kt as usize].parts {
@@ -2858,16 +2875,18 @@ impl Stores {
             Parts::Array(e) => format!("array<{}>(elem_size={})", name(*e), self.size(*e)),
             Parts::Sorted(e, keys) => {
                 format!(
-                    "sorted<{}>(keys={keys:?},elem_size={})",
+                    "sorted<{}>(keys={keys:?},elem_size={}{})",
                     name(*e),
-                    self.size(*e)
+                    self.size(*e),
+                    self.key_order_tag(kt)
                 )
             }
             Parts::Ordered(e, keys) => {
                 format!(
-                    "ordered<{}>(keys={keys:?},elem_size={})",
+                    "ordered<{}>(keys={keys:?},elem_size={}{})",
                     name(*e),
-                    self.size(*e)
+                    self.size(*e),
+                    self.key_order_tag(kt)
                 )
             }
             Parts::Hash(e, keys) => {
@@ -2880,10 +2899,11 @@ impl Stores {
             }
             Parts::Index(e, keys) => {
                 format!(
-                    "index<{}>(keys={keys:?},elem_size={}{})",
+                    "index<{}>(keys={keys:?},elem_size={}{}{})",
                     name(*e),
                     self.size(*e),
-                    crate::placement::tag(crate::placement::INDEX)
+                    crate::placement::tag(crate::placement::INDEX),
+                    self.key_order_tag(kt)
                 )
             }
             Parts::Radix(e, keys) => {
@@ -3593,6 +3613,23 @@ pub struct Type {
     pub(super) heap_slots: HeapSlots,
     pub(super) plain_vectors: PlainVectors,
     pub(super) release_plan: ReleasePlan,
+    /// loft#2237 — the key order this row's keyed collection was written in.
+    /// [`KeyOrder::Before`] only on a row an UPGRADE built to read an image written before
+    /// [`crate::placement::KEY_ORDER`]: it renders its old line (no key-order suffix), so the
+    /// rows re-render the image's dump exactly.  The image is only WALKED through it, never
+    /// searched; the converter files each entry again in this build's order.
+    pub(super) key_order: KeyOrder,
+}
+
+/// The key order a keyed collection's stored entries follow (loft#2237, [`Type`]'s
+/// `key_order`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum KeyOrder {
+    /// This build's: a null key first, as `<` places it (`@FR-E-NullArg`).
+    #[default]
+    NullFirst,
+    /// An image written before loft#2237, read by an upgrade.
+    Before,
 }
 
 impl Type {
@@ -3652,6 +3689,7 @@ impl Type {
             heap_slots: HeapSlots::default(),
             plain_vectors: PlainVectors::default(),
             release_plan: ReleasePlan::default(),
+            key_order: KeyOrder::NullFirst,
         }
     }
 
@@ -3728,6 +3766,7 @@ impl Type {
             heap_slots: HeapSlots::default(),
             plain_vectors: PlainVectors::default(),
             release_plan: ReleasePlan::default(),
+            key_order: KeyOrder::NullFirst,
         }
     }
 
@@ -3749,6 +3788,7 @@ impl Type {
             heap_slots: HeapSlots::default(),
             plain_vectors: PlainVectors::default(),
             release_plan: ReleasePlan::default(),
+            key_order: KeyOrder::NullFirst,
         }
     }
 

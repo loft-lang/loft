@@ -89,9 +89,11 @@ LOFT_HOT_INLINE loft_kv loft_key_get(loft_store_t *s, uint32_t rec, uint32_t pos
 }
 
 /* `total_cmp` as an unsigned order: a negative value's bits reversed, a positive one's above
- * every negative.  A zero of either sign is the one key 0 (@FR-E-Eq-Key). */
+ * every negative.  A zero of either sign is the one key 0 (@FR-E-Eq-Key), and the null (a
+ * NaN) is 0, below every value (`@FR-E-NullArg`, loft#2237: `keys::float_cmp`). */
 static uint64_t loft_total64(double d) {
     uint64_t u;
+    if (d != d) return 0;
     if (d == 0.0) d = 0.0;
     memcpy(&u, &d, 8);
     return (u >> 63) ? ~u : u | (UINT64_C(1) << 63);
@@ -99,6 +101,7 @@ static uint64_t loft_total64(double d) {
 
 static uint32_t loft_total32(float g) {
     uint32_t u;
+    if (g != g) return 0;
     if (g == 0.0f) g = 0.0f;
     memcpy(&u, &g, 4);
     return (u >> 31) ? ~u : u | (UINT32_C(1) << 31);
@@ -115,6 +118,9 @@ static int loft_kv_cmp(loft_kv a, loft_kv b) {
         return x < y ? -1 : x > y;
     }
     case LOFT_KV_TEXT: {
+        /* A null text before every text, `""` included (`keys::text_key_cmp`). */
+        int an = loft_str_is_null(a.s), bn = loft_str_is_null(b.s);
+        if (an || bn) return an == bn ? 0 : an ? -1 : 1;
         size_t n = a.s.len < b.s.len ? a.s.len : b.s.len;
         int c = n ? memcmp(a.s.p, b.s.p, n) : 0;
         if (c != 0) return c < 0 ? -1 : 1;

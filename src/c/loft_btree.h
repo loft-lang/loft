@@ -137,8 +137,10 @@ static void loft_bt_set_prefix(loft_store_t *s, uint32_t a, uint32_t n, uint32_t
 
 /* ── key parts ── */
 
+/* `float_part`: the null (a NaN) below every value (`@FR-E-NullArg`, loft#2237). */
 static int64_t loft_bt_float_part(double v) {
     int64_t b;
+    if (v != v) return INT64_MIN;
     if (v == 0.0) v = 0.0;
     memcpy(&b, &v, 8);
     return b ^ (int64_t) ((uint64_t) (b >> 63) >> 1);
@@ -146,6 +148,7 @@ static int64_t loft_bt_float_part(double v) {
 
 static int64_t loft_bt_single_part(float v) {
     int32_t b;
+    if (v != v) return INT32_MIN;
     if (v == 0.0f) v = 0.0f;
     memcpy(&b, &v, 4);
     return (int64_t) (b ^ (int32_t) ((uint32_t) (b >> 31) >> 1));

@@ -177,6 +177,27 @@ pub fn read_as_own(dump: &str) -> std::borrow::Cow<'_, str> {
 /// laid out as nodes, so it must REFUSE rather than answer.
 pub const INDEX: &str = "2";
 
+/// The KEY ORDER a `sorted`, `ordered` or `index` keyed by a `float`, `single` or `text`
+/// field stores its entries in, as the suffix its line in `Stores::layout_dump` carries.
+///
+/// `@FR-E-NullArg` places a null at the LOW extreme of every ordered type; the key
+/// comparison (`keys::compare`, the B-tree's parts) put a null `float` / `single` above
+/// every value and a null `text` after `""` until loft#2237.  Entries stand in that order
+/// in a saved image, and a lookup binary-searches it, so an image written under the old
+/// order and searched under the new one answers a present key as absent.  The suffix
+/// makes such a collection's layout identity differ from an old image's, so a whole-image
+/// load CONVERTS the old image — `UpgradeMap` rebuilds a keyed collection element by
+/// element, through this build's comparison — and a paged load refuses it (owner,
+/// 2026-10-29).  An integer key always ordered its null first, so its line, and every
+/// identity recorded for it, is unchanged.
+pub const KEY_ORDER: &str = ",order=1";
+
+/// Does a key of type number `type_nr` (`keys::Key::type_nr`) order by [`KEY_ORDER`]?
+#[must_use]
+pub fn key_orders(type_nr: i8) -> bool {
+    matches!(type_nr.unsigned_abs(), 3 | 4 | 6)
+}
+
 /// `spatial<T[k]>` — the radix/Morton tree in `crate::radix_db`.
 pub const RADIX: &str = "1";
 
@@ -190,9 +211,8 @@ pub const TRIE: &str = "1";
 ///
 /// `sorted` / `ordered` deliberately have no token. Their placement is not an algorithm
 /// a reader has to reproduce: entries sit in key order and a reader re-derives that by
-/// COMPARING keys it can already read. A change to the comparison order would be a
-/// change to `keys::compare`, which reorders every kind at once and is a wider break
-/// than this per-kind mechanism describes.
+/// COMPARING keys it can already read. A change to the comparison order is a change to
+/// `keys::compare`, which no per-kind token describes: it is [`KEY_ORDER`]'s.
 #[must_use]
 pub fn tag(token: &str) -> String {
     if token == BASELINE {

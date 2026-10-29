@@ -494,6 +494,8 @@ fn type_from(p: &Parsed) -> Result<Type, SchemaDecodeError> {
         heap_slots: super::types::HeapSlots::default(),
         plain_vectors: super::types::PlainVectors::default(),
         release_plan: super::types::ReleasePlan::default(),
+        // Only an upgrade's own rows hold an old key order, and none is snapshotted.
+        key_order: super::types::KeyOrder::NullFirst,
     })
 }
 

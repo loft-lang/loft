@@ -70,6 +70,7 @@ impl LayoutDesc {
             sizes: BTreeMap::new(),
             placements: BTreeMap::new(),
             linked: std::collections::BTreeSet::new(),
+            old_order: std::collections::BTreeSet::new(),
         };
         for (id, (name, size, _)) in rows.iter().enumerate() {
             desc.names.insert(id as u16, name.clone());
@@ -90,6 +91,33 @@ impl LayoutDesc {
             desc.nodes.insert(id, node);
         }
         resolve_variants(&mut desc, &ids)?;
+        // loft#2237 — a keyed line without the key-order suffix this build renders for it
+        // was written under the old order; one with it where its key takes none is no line
+        // this or any build writes.
+        let ordered = |parts: &str| parts.ends_with(&format!("{})", crate::placement::KEY_ORDER));
+        for (id, (_, _, parts)) in rows.iter().enumerate() {
+            let id = id as u16;
+            let Some(LayoutNode::Iterated(
+                Iterated::Sorted { elem, keys }
+                | Iterated::Ordered { elem, keys }
+                | Iterated::Index { elem, keys },
+            )) = desc.nodes.get(&id)
+            else {
+                continue;
+            };
+            match (desc.key_orders(*elem, keys), ordered(parts)) {
+                (true, false) => {
+                    desc.old_order.insert(id);
+                }
+                (false, true) => {
+                    return Err(format!(
+                        "`{}` carries a key order its key does not take",
+                        desc.names.get(&id).map_or("?", String::as_str)
+                    ));
+                }
+                _ => {}
+            }
+        }
         let back = desc.render_dump();
         if back != dump {
             let at = back
@@ -195,6 +223,7 @@ impl LayoutDesc {
                 .map(|(k, p)| (re(*k), p.clone()))
                 .collect(),
             linked: self.linked.iter().map(|k| re(*k)).collect(),
+            old_order: self.old_order.iter().map(|k| re(*k)).collect(),
         })
     }
 
@@ -380,6 +409,7 @@ impl LayoutDesc {
                 .map(|(k, p)| (*k, p.clone()))
                 .collect(),
             linked: self.linked.iter().copied().filter(|k| keep(k)).collect(),
+            old_order: self.old_order.iter().copied().filter(|k| keep(k)).collect(),
         }
     }
 
@@ -611,6 +641,11 @@ impl Cx<'_> {
             .and_then(|r| r.split_once(",elem_size="))
             .ok_or_else(|| self.err("missing keys"))?;
         let (keys, size_and_tag) = keys;
+        // loft#2237 — the key order rides at the end of the line; `from_dump` reads it off
+        // the line itself, and the placement below is what is left.
+        let size_and_tag = size_and_tag
+            .strip_suffix(crate::placement::KEY_ORDER)
+            .unwrap_or(size_and_tag);
         let tag = size_and_tag.split_once(',').map_or("", |(_, t)| t);
         let tag = if tag.is_empty() {
             String::new()
