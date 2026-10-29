@@ -2443,6 +2443,9 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     };
     let name = twin_name(data, d, mask);
     let sig = format!("static {} {name}({params})", held(ret));
+    // `LOFT_REWRITE_CENSUS_FN`: this body's admissions under its own name, phase `c`, so they
+    // line up with the native writer's per function.
+    let _census_body = crate::rewrite_census::InBody::enter("c", def.name());
     if let Type::Iterator(elem, _) = def.returned().base() {
         if mask != 0 {
             return Err("a generator handed a store place for a & parameter".into());
