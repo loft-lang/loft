@@ -38,13 +38,11 @@ bar: their extra over ship is the cost of the guarantees, which is optimised, no
 ## What is left, in order
 
 1. **`slope_path_with_undo`** (gcc ship 2.48×, gcc checked 3.03×; clang 2.12× / 2.69×).  Per path step the C runs
-   ≈ 1,350 instructions against Rust's ≈ 430 (four chunk walks, two seven-field hex reads, one
-   write, one 11-field append — the same work).  The checks are ≈ 5 % of it (priced: plain
-   arithmetic in the map helpers saves 5 % gcc, 3 % clang).  The rest is store access spread over
-   the helpers: each map walk re-derives the chunk vector's header and resolves each chunk and
-   hex through the store.  Taking the walked element's address from the header was priced and
-   is SLOWER in the C (the compilers already hoist the buffer pointer).  The next lever is
-   structural: the map helpers' chunk walks.
+   ≈ 1,053 instructions against Rust's ≈ 434 (four chunk walks, two seven-field hex reads, one
+   write, one 11-field append — the same work; measured 2026-10-29 on `7517d13ad`).  Store
+   addressing inside the map helpers prices at zero; the gap is `loft_rem`'s null test plus the
+   helpers staying out of line (≈ 45 %), the undo push through the store (≈ 20 %), and a
+   remainder not yet attributed — [`top5-memory.md`](top5-memory.md).
 2. **`map_json`** (2.78× gcc ship, 2.81× gcc checked; clang ≈ 2.45×).  Generic runtime JSON (`loft_json.h`), not emitted
    code: the lexer `loft_jl_token` 17 %, `loft_pr_struct` 12 %, `loft_jp_validate` 8.4 % (every
    string is validated after the lexer already scanned it — skippable for a string with no
@@ -57,7 +55,9 @@ bar: their extra over ship is the cost of the guarantees, which is optimised, no
    loop-carried, so no static proof applies.  A guard testing `h ∈ [0, M]` once at the loop's
    entry would make the loop plain — an extension of `@FR-R-GuardedChain` (a loop-carried masked
    local as a guarded leaf, `&` `^` `>>` beside `+ - *`), general for PRNG and noise loops.
-   `par`'s gap is the worker hand-off.
+   `par`'s gap is NOT the worker hand-off (under 0.4 % of its cycles): it is the NaN test the
+   source's `?` asks for per Newton step (≈ 42 %) and the row loop staying scalar where Rust runs
+   two rows per `divpd` (≈ 55 %) — [`top5-memory.md`](top5-memory.md).
 
 4. **`interp_fib`** (bench 20, the self-host interpreter's loop: clang checked 3.06×, ship 2.80×;
    gcc 2.29× / 2.24×).  Its calls go through three frame vectors and a `put` per push; gcc took
