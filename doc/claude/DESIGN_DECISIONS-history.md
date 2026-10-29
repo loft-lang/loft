@@ -5098,3 +5098,28 @@ ties-to-even through the `ryu` crate (a new dependency), or a tie fix-up beside 
 (chosen: no dependency, an integer test that rules out almost every value at once).  The
 exponent question (`1e21` printing 22 digits) was left open as its own decision.
 
+## C157 — a name is refused only when two definitions own it and nothing in its context picks one
+
+Decided 2026-10-28 by the owner, from @PLN91's friction register (X20).  The loft interpreter in
+loft wrote `Kind.KNone` where `KNone` was meant, because `h = if c { KInt } else { KFloat }` was
+refused while `h: Kind = …` was accepted.  The rule it replaced was @PLAN22's: *"a bare variant
+used to define a new untyped variable is a hard error — even when the name is currently unique —
+so that adding a second enum with that variant name can never silently re-point an existing bare
+assignment"* (`plans/22-namespaces/README.md`).
+
+**Question.** Should an `if` or `match` whose arms are bare variants of one enum pass that enum
+to its variable?  Two answers were put to the owner: resolve a name by its sole owner (a later
+enum turns the line into an ambiguity error, so a library adding a variant name can break a
+consumer), or take the type only from an arm that already has it (all-bare arms stay refused).
+
+**Ruling.** *"If two definitions exist and code doesn't supply a specific version (and it
+cannot be implied automatically from the context) that is a compiler error."*  Then: *"this rule
+should clearly not hamper your examples unless there was ambiguity beforehand"*, and *"the
+sibling solves the ambiguity"*.  So a sole owner resolves, and an `if` or `match` arm takes the
+enum its siblings name.
+
+**Built.** `Parser::sole_visible_variant_enum` (visibility: the file's own name lookup, which
+reaches its definitions, its imports and the stdlib); the first pass leaves a name two enums own
+untyped, so the construct takes its type from its other arms and the target holds it on the
+second pass; `match_result_unsettled` counts an untyped arm as unsettled, as an `if` already did.
+

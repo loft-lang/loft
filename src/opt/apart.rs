@@ -127,8 +127,20 @@ impl ApartWalk<'_, '_> {
         // handle on the store (`@FR-R-TextBorrow`'s text-value clause): nothing writes or
         // moves a record through it.  A `&text` link is a `RefVar` and is not this.
         let vars = self.facts.vars;
+        // A text, and a SCALAR — a number, a boolean, a character, a plain enum's byte — names
+        // no store, whatever its type's deps record about where it was read from (a `match` on
+        // `op.code` carries the vector the op came from).
         if (x as usize) < vars.var_count()
-            && matches!(vars.tp(x).base(), crate::data::Type::Text(_))
+            && matches!(
+                vars.tp(x).base(),
+                crate::data::Type::Text(_)
+                    | crate::data::Type::Integer(_)
+                    | crate::data::Type::Boolean
+                    | crate::data::Type::Float
+                    | crate::data::Type::Single
+                    | crate::data::Type::Character
+                    | crate::data::Type::Enum(_, false, _)
+            )
         {
             return;
         }

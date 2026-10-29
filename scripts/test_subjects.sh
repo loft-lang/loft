@@ -90,13 +90,13 @@ subject_patterns() {
     (lsp)       echo '~lsp ~dap ~debugger ~repl' ;;
     (sql)       echo '~lazy_sql ~sql' ;;
     (docs)      echo '~compiled_stdlib ~doc ~features ~index_hygiene ~comment ~viewer ~check_line ~expectation ~function_coverage ~typst' ;;
-    (host)      echo '~engine_host ~host_ ~multiplayer ~serve ~rpc ~mock ~audio ~crystal ~live_world =web_natives' ;;
+    (host)      echo '~engine_host ~host_ ~multiplayer ~serve ~rpc ~mock ~audio ~crystal ~live_world =web_natives =server_natives' ;;
     # @PLN184 Track W — the platform-sensitive set: `windows_rules` runs the file scripts under
     # the emulated Windows host itself; the rest are the file, directory and process families.
     (winrules)  echo '=windows_rules =fs_symlink =binary_io_matrix =scalar_file_read =lib_process =process_tree =windows_probe =sweep_ignored' ;;
     # @PLN203 C8 — the C backend's own guards.  Its corpus reading is `scripts/c_sweep.py`
     # (`make c-sweep`), which no test binary runs.
-    (c)         echo '=c_emit =c_https =web_natives' ;;
+    (c)         echo '=c_emit =c_https =web_natives =server_natives' ;;
     (*)        return 1 ;;
   esac
 }
@@ -131,7 +131,7 @@ subject_paths() {
     (lsp)      echo '^src/lsp\.rs|^src/lsp/|^src/bin/loft-lsp\.rs' ;;
     (sql)      echo '^src/database/sql_|^src/database/lazy\.rs' ;;
     (docs)     echo '^doc/|^default/.*\.loft$|\.md$' ;;
-    (host)     echo '^src/engine_host\.rs|^src/host\.rs|^src/rpc\.rs|^src/serve\.rs|^src/c/components/|^src/c/loft_web\.h' ;;
+    (host)     echo '^src/engine_host\.rs|^src/host\.rs|^src/rpc\.rs|^src/serve\.rs|^src/c/components/|^src/c/loft_web\.h|^src/c/loft_server\.h' ;;
     (winrules) echo '^src/file_access/|^src/platform\.rs|^src/database/io\.rs|^src/database/loft_file\.rs|^src/state/io\.rs|^src/png_store\.rs' ;;
     (c)        echo '^src/c/|^src/c_driver\.rs|^scripts/c_sweep\.py' ;;
     (*)        return 1 ;;

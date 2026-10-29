@@ -9,3 +9,6 @@
 name    = "selfhost"
 version = "0.0.0"
 loft    = ">=0.8"
+
+[dependencies]
+crt = { path = "crt" }

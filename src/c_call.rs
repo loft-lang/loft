@@ -314,6 +314,25 @@ pub fn register(state: &mut crate::state::State, data: &crate::data::Data) {
         .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(table);
 }
 
+/// A scalar `#c` argument popped at its loft type's own width: a boolean or a plain enum fills
+/// one byte of its stack slot and a character four, and the rest of the slot is not part of the
+/// value — reading eight bytes handed C a `false` as 256 (loft#2217).  The value widens to the C
+/// slot the way `--native`'s `(int64_t) a` cast widens it.  Read through `.base()`, the shape
+/// test every site asks (@FR-N-Shape), though a `#c` binding refuses a `τ?` parameter.
+fn pop_scalar(
+    stores: &mut crate::database::Stores,
+    stack: &mut crate::keys::DbRef,
+    loft: &crate::data::Type,
+) -> u64 {
+    match loft.base() {
+        crate::data::Type::Boolean | crate::data::Type::Enum(_, false, _) => {
+            u64::from(stores.get::<u8>(stack))
+        }
+        crate::data::Type::Character => u64::from(stores.get::<u32>(stack)),
+        _ => stores.get::<i64>(stack) as u64,
+    }
+}
+
 /// Make one `#c` call: pop the loft arguments, marshal them into `u64` slots,
 /// call through the trampoline, bring the return back at its declared width.
 ///
@@ -340,7 +359,12 @@ fn dispatch(stores: &mut crate::database::Stores, stack: &mut crate::keys::DbRef
     // first NUL, so the copy is what makes the two the same thing.
     let mut owned: Vec<Vec<u8>> = Vec::new();
     let mut slots: Vec<u64> = Vec::with_capacity(binding.sig.params.len());
-    for arg in binding.arg_plan.iter().rev() {
+    for (arg, loft) in binding
+        .arg_plan
+        .iter()
+        .zip(binding.loft_params.iter())
+        .rev()
+    {
         match arg {
             CArg::TextPointer => {
                 let s = stores.get::<Str>(stack);
@@ -382,9 +406,7 @@ fn dispatch(stores: &mut crate::database::Stores, stack: &mut crate::keys::DbRef
                 }
                 slots.push(ptr);
             }
-            CArg::Scalar => {
-                slots.push(stores.get::<i64>(stack) as u64);
-            }
+            CArg::Scalar => slots.push(pop_scalar(stores, stack, loft)),
         }
     }
     slots.reverse();

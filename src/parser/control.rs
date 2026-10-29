@@ -411,6 +411,21 @@ fn is_block_divergent(ops: &[Value]) -> bool {
         .any(|v| matches!(v, Value::Return(_) | Value::Break(_) | Value::Continue(_)))
 }
 
+/// Is `v` a call of a builtin that HALTS — `exit` or `panic`, the defaults `??` already reads
+/// as never returning (`operators.rs`, `(C-Never)`)?  One list for both readers, so a guard
+/// and a coalesce cannot disagree about which calls end the program.
+pub(crate) fn is_halt_call(data: &crate::data::Data, v: &Value) -> bool {
+    matches!(v.unspan(), Value::Call(d, _) if matches!(data.def(*d).name(), "n_exit" | "n_panic"))
+}
+
+/// `@FR-N-Guard` — can the body of a guard clause NOT fall through: it ends in `return`,
+/// `break` or `continue`, or in a halt ([`is_halt_call`]).  Only the guard's narrowing asks
+/// this; a block's TAIL conversion keeps asking [`is_block_divergent`], where a halt still
+/// has a tail of its own.
+fn guard_cannot_fall_through(data: &crate::data::Data, ops: &[Value]) -> bool {
+    is_block_divergent(ops) || ops.iter().any(|v| is_halt_call(data, v))
+}
+
 /// Collected match arm data for enum/struct-enum match expressions.
 struct EnumArm {
     /// Discriminants for this arm — Vec allows or-patterns (multiple variants per arm).
@@ -570,6 +585,7 @@ fn chain_pattern_arms(arms: Vec<PatternArm>, fallback: Value, result_type: &Type
             };
             continue;
         };
+        // @FR-D-match-26 — the rest is placed twice; `(M-Once)` says once.
         let rest = chain.clone();
         let mut guarded = v_if(guard, arm.code, rest);
         if !arm.bindings.is_empty() {
@@ -1243,7 +1259,7 @@ impl Parser {
             if let Value::If(test, true_code, false_code) = n.unspan()
                 && matches!(false_code.unspan(), Value::Null)
                 && let Value::Block(bl) = true_code.unspan()
-                && is_block_divergent(&bl.operators)
+                && guard_cannot_fall_through(&self.data, &bl.operators)
                 && let Some((v, false)) = self.narrowing_from_condition(test)
                 && !self.narrowed_non_null.contains(&v)
             {
@@ -1259,7 +1275,7 @@ impl Parser {
             if let Value::If(test, true_code, false_code) = n.unspan()
                 && matches!(false_code.unspan(), Value::Null)
                 && let Value::Block(bl) = true_code.unspan()
-                && is_block_divergent(&bl.operators)
+                && guard_cannot_fall_through(&self.data, &bl.operators)
             {
                 let caps = std::collections::HashMap::new();
                 for pair in
@@ -7308,6 +7324,7 @@ impl Parser {
                     cmp
                 };
                 // guarded arms nest the guard inside the pattern branch.
+                // @FR-D-match-26 — and place the rest twice; `(M-Once)` says once.
                 chain = match &arm.guard {
                     Some(guard) => {
                         let guarded = v_if(guard.clone(), arm.code.clone(), chain.clone());
@@ -7612,7 +7629,12 @@ impl Parser {
     /// statement `match` whose arms yield nothing — the same "expect nothing" an `else if`
     /// chain passes down for a `Void` then arm.
     fn match_result_unsettled(result_type: &Type) -> bool {
-        matches!(result_type.base(), Type::Void | Type::Null | Type::Never)
+        // `Unknown`: an arm the first pass could not type yet — a bare variant two enums own
+        // (@C157) — so the arms after it settle the match, as an `if`'s else arm settles it.
+        matches!(
+            result_type.base(),
+            Type::Void | Type::Null | Type::Never | Type::Unknown(_)
+        )
     }
 
     /// Give every `null` arm of a value-producing match chain the result type's typed null.
@@ -13715,6 +13737,7 @@ impl Parser {
                         || bl.name == "or_pattern")
                 {
                     let range_cond = bl.operators[0].clone();
+                    // @FR-D-match-26 — a guarded arm places the rest twice; `(M-Once)` says once.
                     chain = match guard_opt {
                         Some(guard) => {
                             let guarded = v_if(guard, arm_code, chain.clone());
@@ -13734,6 +13757,7 @@ impl Parser {
                 if cond_tp == Type::Null {
                     chain = arm_code;
                 } else {
+                    // @FR-D-match-26 — as the range arm above.
                     chain = match guard_opt {
                         Some(guard) => {
                             let guarded = v_if(guard, arm_code, chain.clone());

@@ -1,0 +1,142 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A VIEW TAKEN THROUGH A LOCAL THAT HOLDS ITS OWN COPY ON A LATER PASS MATERIALISES
+// (`@FR-B-View`, `@FR-B-Disturb`).  `o = prog.ops[0]` views the record `prog` names.  When
+// `prog` is then given a new value by a copy (`prog = callee`) while `o` is still read, the
+// copy releases the record `prog` held, and `(B-View)` gives `o` its own copy at its bind.
+// In a loop that holds from the second pass on only: `prog` VIEWS `ps[0]` on the way in and
+// holds a copy of its own after the first rebind.  So the view walk must judge the body from
+// the state the back edge carries as well as the state at entry, and a local that is a view
+// on one arm's path and its own copy on the other must be judged both ways.
+//
+// Values hand-computed (mk(i) = P { ops: [Op{i,1}, Op{i,2}, Op{i,3}], k: 10 * i }):
+//   loop:     two passes, o = prog.ops[0].b 1, prog then a copy of ps[1] (k 10) → 11 + 11 = 22
+//   nested:   two outer × two inner passes of the loop cell → 4 × 11 = 44
+//   if arm:   three passes, the rebind under `step > 0`: 1 + 0, then 1 + 10 twice → 23
+//   nullable: the loop cell with `prog: P?` → 22
+//   while:    the loop cell as a `while` → 22
+//   walk:     five passes, o = prog.ops[step % 3], prog a copy of ps[(cur + 1) % 3]:
+//             11 + 22 + 3 + 11 + 22 = 69
+// The released record reads right by luck on a plain run; LOFT_POISON=1 makes it read the
+// poison pattern, which is how this file catches the defect.
+// @ARMED: LOFT_POISON=1
+// @falsified-at: 6f31a726b — under LOFT_POISON=1: interpret exit 1 -> 0, interpret 6 assertion
+//   failures -> 0, native exit 1 -> 0, native 12 assertion failures -> 0 (plain runs pass on both)
+//   CHANNEL: assertion values — the cells read a released record.
+//   ARMED: LOFT_POISON=1; unarmed, the released record keeps its bytes and every cell passes.
+//   WITNESS: on the control every cell fails; the walk reads `null` where it should read 69,
+//   the loop cell a poison-pattern integer where it should read 22.
+//   HOLDS: exit status apart, leak and panic are equal on both trees; every assertion passes
+//   here on both backends, armed and plain.
+struct Op { a: integer, b: integer }
+struct P { ops: vector<Op>, k: integer }
+
+fn mk(i: integer) -> P { P { ops: [Op { a: i, b: 1 }, Op { a: i, b: 2 }, Op { a: i, b: 3 }], k: 10 * i } }
+
+fn mks() -> vector<P> { [mk(0), mk(1), mk(2)] }
+
+fn in_loop(ps: vector<P>) -> integer {
+  prog = ps[0] ?? panic("in range");
+  sum = 0;
+  for _ in 0..2 {
+    o = prog.ops[0] ?? panic("in range");
+    callee = ps[1] ?? panic("in range");
+    prog = callee;
+    sum += o.b + prog.k;
+  }
+  sum
+}
+
+fn nested(ps: vector<P>) -> integer {
+  prog = ps[0] ?? panic("in range");
+  sum = 0;
+  for _ in 0..2 {
+    for _ in 0..2 {
+      o = prog.ops[0] ?? panic("in range");
+      callee = ps[1] ?? panic("in range");
+      prog = callee;
+      sum += o.b + prog.k;
+    }
+  }
+  sum
+}
+
+fn in_arm(ps: vector<P>) -> integer {
+  prog = ps[0] ?? panic("in range");
+  sum = 0;
+  for step in 0..3 {
+    o = prog.ops[0] ?? panic("in range");
+    if step > 0 {
+      callee = ps[1] ?? panic("in range");
+      prog = callee;
+    }
+    sum += o.b + prog.k;
+  }
+  sum
+}
+
+fn nullable(ps: vector<P>) -> integer {
+  prog: P? = ps[0];
+  sum = 0;
+  for _ in 0..2 {
+    o = prog.ops[0] ?? panic("in range");
+    callee = ps[1] ?? panic("in range");
+    prog = callee;
+    sum += o.b + prog.k;
+  }
+  sum
+}
+
+fn in_while(ps: vector<P>) -> integer {
+  prog = ps[0] ?? panic("in range");
+  sum = 0;
+  step = 0;
+  while step < 2 {
+    o = prog.ops[0] ?? panic("in range");
+    callee = ps[1] ?? panic("in range");
+    prog = callee;
+    sum += o.b + prog.k;
+    step += 1;
+  }
+  sum
+}
+
+fn walk(ps: vector<P>, n: integer) -> integer {
+  prog = ps[0] ?? panic("in range");
+  cur = 0;
+  sum = 0;
+  for step in 0..n {
+    o = prog.ops[step % 3] ?? panic("in range");
+    next = (cur + 1) % 3;
+    callee = ps[next] ?? panic("in range");
+    prog = callee;
+    sum += o.b + prog.k;
+    cur = next;
+  }
+  sum
+}
+
+fn test_a_loop() {
+  assert(in_loop(mks()) == 22, "loop {in_loop(mks())}");
+}
+
+fn test_nested_loops() {
+  assert(nested(mks()) == 44, "nested {nested(mks())}");
+}
+
+fn test_a_rebind_under_an_if_in_the_loop() {
+  assert(in_arm(mks()) == 23, "if arm {in_arm(mks())}");
+}
+
+fn test_a_nullable_local() {
+  assert(nullable(mks()) == 22, "nullable {nullable(mks())}");
+}
+
+fn test_a_while_loop() {
+  assert(in_while(mks()) == 22, "while {in_while(mks())}");
+}
+
+fn test_a_walk_over_three_elements() {
+  assert(walk(mks(), 5) == 69, "walk {walk(mks(), 5)}");
+}

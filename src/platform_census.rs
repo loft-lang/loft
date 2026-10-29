@@ -54,10 +54,15 @@ const PLATFORM_WORDS: &[&str] = &[
 ];
 
 /// A path inside a directory of generated output — a test run's `.loft/` cache (native code
-/// loft emitted), a build's `target/`, a package manager's `node_modules/` — is no source.
+/// loft emitted), a build directory (`target/`, or any `target*/` beside it such as a scratch
+/// `target-exp/`), a package manager's `node_modules/` — is no source.  Only the DIRECTORIES
+/// are asked: `index/target_surface.json` is a source file.
 fn generated(rel: &str) -> bool {
-    rel.split('/')
-        .any(|c| matches!(c, ".loft" | "target" | "node_modules"))
+    let mut parts: Vec<&str> = rel.split('/').collect();
+    parts.pop();
+    parts
+        .iter()
+        .any(|c| matches!(*c, ".loft" | "node_modules") || c.starts_with("target"))
 }
 
 /// Is `word` at `at` in `code` a whole word (`unix`, not `unix_time`)?
@@ -242,6 +247,7 @@ fn the_census_sees_a_gate_and_nothing_else() {
     assert!(!line_gates("let unix_time = now();"));
     assert!(!line_gates("cfg(unix_like_feature)"));
     assert!(generated("tests/scripts/.loft/emitted.rs") && generated("tests/x/target/y.rs"));
+    assert!(generated("target-exp/wt-merge/bench/a.py") && !generated("index/target_surface.json"));
     assert!(!generated("tests/scripts/loft_x.rs"));
 }
 

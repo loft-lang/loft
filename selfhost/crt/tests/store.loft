@@ -1,0 +1,337 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 S3 probes P1, P2 and P4 (doc/claude/plans/91-self-host/1b-s3.md): a record of the C
+// runtime's stores claimed, written, read and freed through `crt`; a reference's three parts at
+// their edges; and the shim's stores apart from the program's own.  Values by hand beside each.
+use crt;
+
+struct Held { n: integer, label: text }
+
+// P1: a 24-byte record (an integer at 0, an integer at 8, a text at 16) of type 100.
+fn test_a_record_is_claimed_written_read_and_freed() {
+  before = crt::live_stores();
+  r = crt::null_ref();
+  crt::database(r, 24, 100);
+  s = r[0] ?? -1;
+  rec = r[1] ?? -1;
+  pos = r[2] ?? -1;
+  assert(rec > 0, "a record was claimed: {r}");
+  assert(pos == 8, "a root record starts at byte 8: {pos}");
+  assert(crt::live_stores() == before + 1, "one store more: {crt::live_stores()}");
+  assert(crt::get_int(s, rec, pos, 0) == 0, "a fresh record reads zero");
+  crt::set_int(s, rec, pos, 0, 41);
+  crt::set_int(s, rec, pos, 8, -7);
+  assert(crt::get_int(s, rec, pos, 0) == 41, "field 0: 41");
+  assert(crt::get_int(s, rec, pos, 8) == -7, "field 8: -7");
+  n: integer? = null;
+  crt::set_int(s, rec, pos, 8, n);
+  assert(crt::get_int(s, rec, pos, 8) == null, "field 8 written null reads null");
+  assert(crt::get_text(s, rec, pos, 16) == null, "an unset text reads null");
+  crt::set_text(s, rec, pos, 16, "héllo");
+  assert(crt::get_text(s, rec, pos, 16) == "héllo", "the text: {crt::get_text(s, rec, pos, 16)}");
+  long = "";
+  for _ in 0..10 {
+    long += "abcdefghij";
+  }
+  crt::set_text(s, rec, pos, 16, long);
+  assert(crt::get_text(s, rec, pos, 16) == long, "a 100-byte text round-trips");
+  crt::free_ref(s, rec, pos);
+  assert(crt::live_stores() == before, "the store is gone again: {crt::live_stores()}");
+}
+
+// P1, the null reference: a read answers null, a write is dropped.
+fn test_the_null_reference_reads_null_and_drops_a_write() {
+  crt::set_int(65535, 0, 0, 0, 5);
+  assert(crt::get_int(65535, 0, 0, 0) == null, "null reference reads null");
+  assert(crt::get_text(65535, 0, 0, 0) == null, "and its text reads null");
+}
+
+// P2: each part survives the trip through `loft_ref` at its edge — store 65535 (u16), rec
+// 2^32 - 1 (u32), pos 2^32 - 1, and pos 70000, past 16 bits.
+fn test_a_reference_crosses_as_its_three_parts() {
+  assert(crt::ref_part(65535, 1, 2, 0) == 65535, "store u16 max");
+  assert(crt::ref_part(3, 4294967295, 2, 1) == 4294967295, "rec u32 max");
+  assert(crt::ref_part(3, 1, 4294967295, 2) == 4294967295, "pos u32 max");
+  assert(crt::ref_part(3, 1, 70000, 2) == 70000, "pos past 16 bits");
+}
+
+// P4: the program's own records are not the shim's stores.  A program record is made before
+// and kept across the shim's claims and frees; the shim counts only its own stores.
+fn test_the_shims_stores_are_apart_from_the_programs() {
+  keep = Held { n: 7, label: "kept" };
+  others = [Held { n: 1, label: "a" }, Held { n: 2, label: "b" }];
+  before = crt::live_stores();
+  assert(before == 0, "the shim's stores hold none of the program's records: {before}");
+  refs: vector<integer> = [];
+  for _ in 0..5 {
+    r = crt::null_ref();
+    crt::database(r, 16, 101);
+    crt::set_int(r[0] ?? 0, r[1] ?? 0, r[2] ?? 0, 0, 99);
+    refs += r;
+  }
+  assert(crt::live_stores() == 5, "five shim stores: {crt::live_stores()}");
+  for i in 0..5 {
+    crt::free_ref(refs[i * 3] ?? 0, refs[i * 3 + 1] ?? 0, refs[i * 3 + 2] ?? 0);
+  }
+  assert(crt::live_stores() == 0, "all freed: {crt::live_stores()}");
+  assert(keep.n == 7 and keep.label == "kept", "the program's record is untouched");
+  assert(others[1].n == 2 and others[0].label == "a", "and so are its vector's records");
+}
+
+// P3 rows: type 100 is a 24-byte struct — integers at 0 and 8, a text (type 5) at 16 — and type 5
+// is a text.  `owns_heap` is the value under test: 1 is the right answer for a struct holding a
+// text, 0 the wrong one.  Each row is `tp, kind, size, elem, n_fields, owns_heap, linked,
+// n_variants, n_keys`, its fields, its variants, its key parts.
+fn rows(owns_heap: integer) -> vector<integer> {
+  [
+    5, 1, 4, 0, 0, 0, 0, 0, 0,
+    100, 2, 24, 0, 3, owns_heap, 0, 0, 0,
+      0, 0, 0, 0, 0,
+      8, 0, 0, 0, 0,
+      16, 5, 0, 0, 0
+  ]
+}
+
+fn fresh(tp: integer) -> vector<integer> {
+  r = crt::null_ref();
+  crt::database(r, 24, tp);
+  r
+}
+
+// P3: with the right row, `loft_copy_record` copies the text into a claim of the copy's own
+// store, and the copy reads it after the source's store is freed.
+fn test_a_copy_owns_its_text_by_the_loaded_row() {
+  assert(crt::load_types(rows(1), 101) == 2, "two types loaded");
+  p = fresh(100);
+  q = fresh(100);
+  crt::set_int(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0, 0, 3);
+  crt::set_text(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0, 16, "héllo");
+  crt::copy_record(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0, q[0] ?? 0, q[1] ?? 0, q[2] ?? 0, 100, 4);
+  crt::free_ref(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0);
+  assert(crt::get_int(q[0] ?? 0, q[1] ?? 0, q[2] ?? 0, 0) == 3, "the integer came with the bytes");
+  got = crt::get_text(q[0] ?? 0, q[1] ?? 0, q[2] ?? 0, 16);
+  assert(got == "héllo", "the copy's own text: {got}");
+  crt::free_ref(q[0] ?? 0, q[1] ?? 0, q[2] ?? 0);
+  assert(crt::live_stores() == 0, "both stores freed");
+}
+
+// P3's control: with `owns_heap` 0 the copy takes the bytes only, so its text slot names a claim
+// of the SOURCE store and does not read the source's text in its own.  The row is what decides.
+// The text is one no other cell writes: a freed store's slot is reused with its buffer, so the
+// copy's slot may hold an earlier cell's text, never this one.
+fn test_a_wrong_row_loses_the_text() {
+  assert(crt::load_types(rows(0), 101) == 2, "two types loaded");
+  p = fresh(100);
+  q = fresh(100);
+  crt::set_text(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0, 16, "only-the-control-writes-this");
+  crt::copy_record(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0, q[0] ?? 0, q[1] ?? 0, q[2] ?? 0, 100, 4);
+  got = crt::get_text(q[0] ?? 0, q[1] ?? 0, q[2] ?? 0, 16);
+  assert(got != "only-the-control-writes-this", "without owns_heap the copy does not own the text: {got}");
+  crt::free_ref(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0);
+  crt::free_ref(q[0] ?? 0, q[1] ?? 0, q[2] ?? 0);
+}
+
+// Rows that do not parse are refused, not half-loaded.
+fn test_malformed_rows_are_refused() {
+  assert(crt::load_types([100, 2, 24, 0, 3, 1, 0, 0, 0, 0], 101) == -1, "a field list cut short");
+  assert(crt::load_types([100, 4, 24, 0, 0, 1, 0, 2, 0, 101], 102) == -1, "a variant list cut short");
+  assert(crt::load_types([100, 6, 4, 101, 0, 1, 0, 0, 1, 6, 8], 102) == -1, "a key list cut short");
+  assert(crt::load_types([200, 2, 24, 0, 0, 0, 0, 0, 0], 101) == -1, "a type number past the table");
+}
+
+// A struct enum's rows: type 100 is the enum (24 bytes, its variants listed), type 101 its one
+// variant, the tag byte at 0 and a text at 8.  `variants` is the value under test: the
+// runtime finds a variant's claims through it (`loft_copy_claims`, LOFT_T_ENUM).
+fn enum_rows(variants: vector<integer>) -> vector<integer> {
+  out = [5, 1, 4, 0, 0, 0, 0, 0, 0, 100, 4, 24, 0, 0, 1, 0, len(variants), 0];
+  out += variants;
+  out += [101, 2, 24, 0, 1, 1, 0, 0, 0, 8, 5, 0, 0, 0];
+  out
+}
+
+// A variant whose tag (the byte at 0) is 1, its text written, copied as its ENUM type; the copy's
+// text read once the source is freed (`free_first`), or before, as P3's control reads it.
+fn copied_variant(text_in: text, free_first: boolean) -> text? {
+  p = fresh(100);
+  q = fresh(100);
+  crt::set_w(crt::W_ENUM, p[0] ?? 0, p[1] ?? 0, p[2] ?? 0, 0, 0, 1);
+  crt::set_text(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0, 8, text_in);
+  crt::copy_record(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0, q[0] ?? 0, q[1] ?? 0, q[2] ?? 0, 100, 4);
+  if free_first {
+    crt::free_ref(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0);
+  }
+  got = crt::get_text(q[0] ?? 0, q[1] ?? 0, q[2] ?? 0, 8);
+  if !free_first {
+    crt::free_ref(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0);
+  }
+  crt::free_ref(q[0] ?? 0, q[1] ?? 0, q[2] ?? 0);
+  got
+}
+
+// With its variants loaded, a struct enum's copy owns its variant's text, and reads it after the
+// source's store is freed.
+fn test_a_struct_enum_copy_owns_its_variants_text() {
+  assert(crt::load_types(enum_rows([101]), 102) == 3, "three types loaded");
+  got = copied_variant("vårïant", true);
+  assert(got == "vårïant", "the copy's own text: {got}");
+  assert(crt::live_stores() == 0, "both stores freed");
+}
+
+// The control: without the variant list the runtime sees an enum of no variants and copies the
+// bytes only, so the copy does not hold the text in its own store.
+fn test_a_struct_enum_row_without_variants_loses_the_text() {
+  assert(crt::load_types(enum_rows([]), 102) == 3, "three types loaded");
+  got = copied_variant("only-the-enum-control-writes-this", false);
+  assert(got != "only-the-enum-control-writes-this", "without variants the copy does not own the text: {got}");
+}
+
+// `OpDatabase` on a variable that already names a store makes that store again in place: the
+// same store number, the old field gone, no store more.
+fn test_a_database_on_a_live_variable_clears_its_own_store() {
+  r = crt::null_ref();
+  crt::database(r, 24, 100);
+  first = r[0] ?? -1;
+  crt::set_int(r[0] ?? 0, r[1] ?? 0, r[2] ?? 0, 0, 77);
+  live = crt::live_stores();
+  crt::database(r, 24, 100);
+  assert(r[0] == first, "the same store again: {first} then {r[0]}");
+  assert(crt::live_stores() == live, "no store more: {crt::live_stores()} after {live}");
+  assert(crt::get_int(r[0] ?? 0, r[1] ?? 0, r[2] ?? 0, 0) == 0, "the record is zeroed again");
+  crt::free_var(r);
+  assert(r[0] == 65535, "a freed variable names no store: {r}");
+  assert(crt::live_stores() == live - 1, "its store is gone");
+  crt::free_var(r);
+  assert(crt::live_stores() == live - 1, "a second free of the variable is a no-op");
+}
+
+// `OpFreeRefIfDistinct(v, w)`: kept when `w` names v's store, freed and reset when not.
+fn test_a_distinct_free_keeps_the_witness_store() {
+  before = crt::live_stores();
+  v = crt::null_ref();
+  crt::database(v, 24, 100);
+  crt::free_var_distinct(v, v[0] ?? 0, v[1] ?? 0, v[2] ?? 0);
+  assert(v[0] != 65535 && crt::live_stores() == before + 1, "kept: the witness is its store");
+  w = crt::null_ref();
+  crt::database(w, 24, 100);
+  crt::free_var_distinct(v, w[0] ?? 0, w[1] ?? 0, w[2] ?? 0);
+  assert(v[0] == 65535, "freed and reset: {v}");
+  assert(crt::live_stores() == before + 1, "only w's store is left");
+  crt::free_var(w);
+  assert(crt::live_stores() == before, "and it goes too");
+}
+
+// `loft_bind_copy` with the right row: a store of the copy's own, the integer and the text
+// copied, and the two records independent afterwards.  A refill of the copy's text leaves the
+// source's.
+fn test_a_bind_copy_is_a_record_of_its_own() {
+  assert(crt::load_types(rows(1), 101) == 2, "two types loaded");
+  before = crt::live_stores();
+  p = fresh(100);
+  crt::set_int(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0, 0, 12);
+  crt::set_text(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0, 16, "source");
+  q = crt::null_ref();
+  crt::bind_copy(q, 100, p[0] ?? 0, p[1] ?? 0, p[2] ?? 0);
+  assert(q[0] != p[0] && q[0] != 65535, "a store of its own: {q} beside {p}");
+  assert(crt::live_stores() == before + 2, "two stores");
+  crt::set_int(q[0] ?? 0, q[1] ?? 0, q[2] ?? 0, 0, 13);
+  crt::refill_text(q[0] ?? 0, q[1] ?? 0, q[2] ?? 0, 16, "copy");
+  assert(crt::get_int(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0, 0) == 12, "the source's integer is its own");
+  assert(crt::get_text(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0, 16) == "source", "and its text");
+  crt::free_var(p);
+  assert(crt::get_text(q[0] ?? 0, q[1] ?? 0, q[2] ?? 0, 16) == "copy", "the copy reads its text after the source is gone");
+  assert(crt::get_int(q[0] ?? 0, q[1] ?? 0, q[2] ?? 0, 0) == 13, "and its integer");
+  crt::free_var(q);
+  assert(crt::live_stores() == before, "both stores freed");
+}
+
+// The other field widths, each through its own runtime routine: a value round-trips, and a null
+// where the width has one.  A byte and a short are stored biased by their minimum.
+fn test_every_field_width_round_trips() {
+  r = crt::null_ref();
+  crt::database(r, 48, 100);
+  s = r[0] ?? 0;
+  rec = r[1] ?? 0;
+  pos = r[2] ?? 0;
+  n: integer? = null;
+  crt::set_w(crt::W_INT4, s, rec, pos, 0, 0, -123456);
+  assert(crt::get_w(crt::W_INT4, s, rec, pos, 0, 0) == -123456, "int4: {crt::get_w(crt::W_INT4, s, rec, pos, 0, 0)}");
+  crt::set_w(crt::W_INT4, s, rec, pos, 0, 0, n);
+  assert(crt::get_w(crt::W_INT4, s, rec, pos, 0, 0) == null, "int4 null");
+  crt::set_w(crt::W_BYTE, s, rec, pos, 4, -10, 100);
+  assert(crt::get_w(crt::W_BYTE, s, rec, pos, 4, -10) == 100, "byte biased by -10");
+  crt::set_w(crt::W_BYTE_NULLABLE, s, rec, pos, 5, 0, 7);
+  assert(crt::get_w(crt::W_BYTE_NULLABLE, s, rec, pos, 5, 0) == 7, "nullable byte");
+  crt::set_w(crt::W_BYTE_NULLABLE, s, rec, pos, 5, 0, n);
+  assert(crt::get_w(crt::W_BYTE_NULLABLE, s, rec, pos, 5, 0) == null, "nullable byte null");
+  crt::set_w(crt::W_SHORT, s, rec, pos, 6, -1000, 30000);
+  assert(crt::get_w(crt::W_SHORT, s, rec, pos, 6, -1000) == 30000, "short biased by -1000");
+  crt::set_w(crt::W_CHARACTER, s, rec, pos, 8, 0, 233);
+  assert(crt::get_w(crt::W_CHARACTER, s, rec, pos, 8, 0) == 233, "character é");
+  crt::set_w(crt::W_BOOLEAN, s, rec, pos, 12, 0, 1);
+  assert(crt::get_w(crt::W_BOOLEAN, s, rec, pos, 12, 0) == 1, "boolean true");
+  crt::set_w(crt::W_BOOLEAN, s, rec, pos, 12, 0, n);
+  assert(crt::get_w(crt::W_BOOLEAN, s, rec, pos, 12, 0) == null, "boolean null");
+  crt::set_w(crt::W_ENUM, s, rec, pos, 13, 0, 2);
+  assert(crt::get_w(crt::W_ENUM, s, rec, pos, 13, 0) == 2, "enum");
+  crt::set_w(crt::W_ENUM, s, rec, pos, 13, 0, n);
+  assert(crt::get_w(crt::W_ENUM, s, rec, pos, 13, 0) == null, "enum null");
+  crt::set_float(s, rec, pos, 16, 2.5, false);
+  assert(crt::get_float(s, rec, pos, 16, false) == 2.5, "float");
+  crt::set_float(s, rec, pos, 24, 0.1, true);
+  assert(crt::get_float(s, rec, pos, 24, true) == (0.1 as single) as float, "single, widened");
+  f: float? = null;
+  crt::set_float(s, rec, pos, 16, f, false);
+  assert(crt::get_float(s, rec, pos, 16, false) == null, "float null");
+  assert(crt::field_pos(s, rec, pos, 32) == pos + 32, "an embedded record's position");
+  crt::free_var(r);
+}
+
+// A hash's rows: type 100 is the hash of `101` records keyed on the text at byte 8 (key part
+// `6, 8, 0`, as `loft_keys{tp}` writes it), type 101 the record (an integer at 0, the text at
+// 8).  The store's root is the hash's 4-byte table field.
+fn hash_rows() -> vector<integer> {
+  [
+    5, 1, 4, 0, 0, 0, 0, 0, 0,
+    100, 6, 4, 101, 0, 1, 0, 0, 1, 6, 8, 0,
+    101, 2, 16, 0, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 8, 5, 0, 0, 0
+  ]
+}
+
+fn add(h: vector<integer>, name: text, n: integer) {
+  e = crt::null_ref();
+  crt::hash_entry(e, h[0] ?? 0, h[1] ?? 0, h[2] ?? 0, 16, false);
+  crt::set_int(e[0] ?? 0, e[1] ?? 0, e[2] ?? 0, 0, n);
+  crt::set_text(e[0] ?? 0, e[1] ?? 0, e[2] ?? 0, 8, name);
+  crt::hash_insert(h[0] ?? 0, h[1] ?? 0, h[2] ?? 0, e[0] ?? 0, e[1] ?? 0, e[2] ?? 0, 101, 100);
+}
+
+fn find(h: vector<integer>, name: text) -> integer? {
+  crt::key_text(name);
+  r = crt::null_ref();
+  crt::hash_find(r, h[0] ?? 0, h[1] ?? 0, h[2] ?? 0, 100, 1);
+  if (r[1] ?? 0) == 0 { null } else { crt::get_int(r[0] ?? 0, r[1] ?? 0, r[2] ?? 0, 0) }
+}
+
+// Built, searched and counted through the shim with the keys the loaded row carries: an equal
+// key replaces (`@FR-Col-Insert`), a miss is null, and a find pops exactly its own parts — a
+// part pushed before it (the outer half of a nested lookup) is still there for the next find.
+fn test_a_hash_is_built_and_searched_by_its_loaded_keys() {
+  assert(crt::load_types(hash_rows(), 102) == 3, "three types loaded");
+  h = crt::null_ref();
+  crt::database(h, 4, 100);
+  add(h, "a", 1);
+  add(h, "b", 2);
+  add(h, "a", 3);
+  assert(crt::hash_len(h[0] ?? 0, h[1] ?? 0, h[2] ?? 0) == 2, "two keys");
+  assert(find(h, "a") == 3, "the replacing element: {find(h, "a")}");
+  assert(find(h, "b") == 2, "b");
+  assert(find(h, "zz") == null, "a miss reads null");
+  crt::key_text("b");
+  assert(find(h, "a") == 3, "an inner find under a pending part");
+  r = crt::null_ref();
+  crt::hash_find(r, h[0] ?? 0, h[1] ?? 0, h[2] ?? 0, 100, 1);
+  assert(crt::get_int(r[0] ?? 0, r[1] ?? 0, r[2] ?? 0, 0) == 2, "the pending part is the outer find's");
+  crt::free_ref(h[0] ?? 0, h[1] ?? 0, h[2] ?? 0);
+  assert(crt::live_stores() == 0, "the store freed");
+}

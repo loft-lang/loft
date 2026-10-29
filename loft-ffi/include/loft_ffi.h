@@ -24,7 +24,10 @@
  *                   elements from byte 8: `loft_ffi_vector_len`, `loft_ffi_vector_data`).
  * Results: `int64_t`, `double`, `float`, `uint8_t` for a boolean (0 or 1), `loft_ffi_str` for a
  * text (the bytes stay the library's until its next call on the thread; loft copies them),
- * `loft_ffi_ref` for a heap value. */
+ * `loft_ffi_ref` for a heap value, built in the store handed over and naming it
+ * (`loft_ffi_store_nr`): a vector by its data record (`loft_ffi_vector_from_bytes`), a record by
+ * the record itself, its fields from byte 8 (`loft_ffi_alloc_record`).  A call with no heap
+ * argument is handed a store of its own for the answer. */
 #ifndef LOFT_FFI_H
 #define LOFT_FFI_H
 
@@ -137,6 +140,51 @@ static inline loft_ffi_value loft_ffi_value_text(loft_ffi_str t) {
     loft_ffi_value v;
     v.tag = LOFT_FFI_TAG_TEXT;
     v.payload.text = t;
+    return v;
+}
+
+/* The store this handle names (`LoftStore::store_nr`): what a heap answer's `store_nr` is. */
+static inline uint16_t loft_ffi_store_nr(loft_ffi_store s) {
+    return (uint16_t) (uintptr_t) s.ctx.opaque;
+}
+
+/* `LoftStore::claim`: a record of `words` 8-byte words in the store; `ptr` and `size` are
+ * reloaded, since the claim may have moved the store's memory. */
+static inline uint32_t loft_ffi_store_claim(loft_ffi_store *s, uint32_t words) {
+    uint32_t rec = s->claim_fn(s->ctx, words);
+    s->reload_fn(s->ctx, &s->ptr, &s->size);
+    return rec;
+}
+
+/* `LoftStore::alloc_record`: a record of `words` words, answered as loft names a record — its
+ * fields from byte 8 (`pos`). */
+static inline loft_ffi_ref loft_ffi_alloc_record(loft_ffi_store *s, uint32_t words) {
+    loft_ffi_ref r;
+    r.rec = loft_ffi_store_claim(s, words);
+    r.store_nr = loft_ffi_store_nr(*s);
+    r.pos = 8;
+    return r;
+}
+
+/* `LoftStore::alloc_vector_from_bytes`: a vector of `count` elements of `elem_size` bytes,
+ * copied from `data` — the length at byte 4, the elements from byte 8, room for at least 11. */
+static inline loft_ffi_ref loft_ffi_vector_from_bytes(loft_ffi_store *s, uint32_t elem_size, uint32_t count,
+                                                      const void *data) {
+    uint32_t cap = count < 11 ? 11 : count;
+    loft_ffi_ref r;
+    r.rec = loft_ffi_store_claim(s, (cap * elem_size + 15) / 8);
+    r.store_nr = loft_ffi_store_nr(*s);
+    r.pos = 8;
+    memcpy(s->ptr + (size_t) r.rec * 8 + 4, &count, sizeof count);
+    if (count) memcpy(s->ptr + (size_t) r.rec * 8 + 8, data, (size_t) count * elem_size);
+    return r;
+}
+
+static inline loft_ffi_value loft_ffi_value_ref(loft_ffi_ref r) {
+    loft_ffi_value v;
+    v.payload.none = 0;
+    v.tag = LOFT_FFI_TAG_REF;
+    v.payload.r = r;
     return v;
 }
 

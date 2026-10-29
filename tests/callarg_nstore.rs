@@ -319,6 +319,60 @@ fn an_assert_narrows_like_a_guard_clause_native() {
     assert_narrows("--native");
 }
 
+// ── `@FR-N-Guard`: a guard clause that ends in a HALT narrows (loft#2214) ────────────────────
+//
+// `(N-Guard)` names a halt beside `return`, `break` and `continue` among the endings that prove a
+// guard's fact for the rest of the block; the guard read only the three.  The halts are `exit`
+// and `panic`, the list the `??` lowering reads as never returning.  A halt that sits inside a
+// nested `if` may not run, so it proves nothing.  Scored by hand against main 6f31a726b: `h_exit`,
+// `h_panic` and `h_not` warn there; `h_return` and `hw_nested` are the same on both trees.
+
+const H_PRELUDE: &str = "fn take(n: integer) -> integer { n + 1 }\n\
+fn pick(k: integer) -> integer? { if k > 0 { k } else { null } }\n";
+const H_EXIT: &str = "fn f(k: integer, deep: boolean) -> integer { v = pick(k); if v == null { exit(3); } take(v) }\n";
+const H_PANIC: &str = "fn f(k: integer, deep: boolean) -> integer { v = pick(k); if v == null { panic(\"none\"); } take(v) }\n";
+const H_NOT: &str =
+    "fn f(k: integer, deep: boolean) -> integer { v = pick(k); if !v { exit(3); } take(v) }\n";
+const H_RETURN: &str = "fn f(k: integer, deep: boolean) -> integer { v = pick(k); if v == null { return 0; } take(v) }\n";
+const HW_NESTED: &str = "fn f(k: integer, deep: boolean) -> integer { v = pick(k); if v == null { if deep { exit(3); } } take(v) }\n";
+const H_MAIN: &str = "fn main() { print(\"x={f(4, false)}\"); }\n";
+
+fn halt_narrows(backend: &str) {
+    for (body, tag) in [
+        (H_EXIT, "h_exit"),
+        (H_PANIC, "h_panic"),
+        (H_NOT, "h_not"),
+        (H_RETURN, "h_return"),
+    ] {
+        let src = format!("{H_PRELUDE}{body}{H_MAIN}");
+        let (ok, warns, out) = run(&src, backend, true, &format!("{tag}_{backend}"));
+        assert!(
+            ok && out == "x=5",
+            "[{backend}] `{tag}` must compile and answer 5: {out}"
+        );
+        assert_eq!(
+            warns, 0,
+            "[{backend}] `{tag}`: the guard cannot fall through, so `v` is present after it"
+        );
+    }
+    let src = format!("{H_PRELUDE}{HW_NESTED}{H_MAIN}");
+    let (_, warns, _) = run(&src, backend, true, &format!("hw_nested_{backend}"));
+    assert_eq!(
+        warns, 1,
+        "[{backend}] `hw_nested`: a halt in a nested `if` may not run — the warning stays"
+    );
+}
+
+#[test]
+fn a_guard_that_ends_in_a_halt_narrows_interpret() {
+    halt_narrows("--interpret");
+}
+
+#[test]
+fn a_guard_that_ends_in_a_halt_narrows_native() {
+    halt_narrows("--native");
+}
+
 // ── `@FR-N-Guard`: a nullable PLAIN enum narrows as a record or an integer does (loft#2211) ──
 //
 // On a plain enum `c != null` lowers to the double negation `OpNot(OpNot(OpConvBoolFromEnum(c)))`,

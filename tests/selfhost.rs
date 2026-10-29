@@ -73,6 +73,34 @@ fn the_selfhost_tests_pass_on_an_emitted_image() {
             "emit-image {stem}: {}",
             String::from_utf8_lossy(&emitted.stderr)
         );
+        // The C generator's type table for the same program: the oracle the loft-derived
+        // table is compared with (@PLN91 S3, `selfhost/tests/types.loft`).
+        let c = tmp.join(format!("{stem}.c"));
+        // `LOFT_NO_COMPLETE_WRITE` (values unchanged, (R-Switch)) makes the C generator fill
+        // every appended record from its default image, so each element type's image is
+        // there for P6 to compare.
+        let emitted_c = loft::platform::process::harness_command(loft())
+            .arg("--emit-c")
+            .arg(&c)
+            .arg(&source)
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_NO_COMPLETE_WRITE", "1")
+            .output()
+            .expect("run loft --emit-c");
+        assert!(
+            emitted_c.status.success(),
+            "emit-c {stem}: {}",
+            String::from_utf8_lossy(&emitted_c.stderr)
+        );
+        let emitted_source = fa::read_to_string(&c).expect("the emitted C");
+        let table = c_type_table(&emitted_source);
+        fa::write(kernels.join(format!("{stem}.ctypes")), table).expect("the C type table");
+        // And its default images (P6): what `OpNewRecord` fills an element with.
+        fa::write(
+            kernels.join(format!("{stem}.cdflt")),
+            c_default_images(&emitted_source),
+        )
+        .expect("the C default images");
     }
 
     let tested = loft::platform::process::harness_command(loft())
@@ -91,4 +119,113 @@ fn the_selfhost_tests_pass_on_an_emitted_image() {
         tested.status.success() && out.contains("passed") && !out.contains("FAIL"),
         "selfhost tests:\n{out}\n{err}"
     );
+}
+
+/// The default images in an emitted C program (`static const uint8_t loft_dflt{tp}[n] = { … };`),
+/// one line per type: `tp`, then its bytes — the form `selfhost/tests/types.loft` compares with
+/// `types::default_image`.
+fn c_default_images(c: &str) -> String {
+    let mut rows = Vec::new();
+    for line in c.lines() {
+        let Some(rest) = line.strip_prefix("static const uint8_t loft_dflt") else {
+            continue;
+        };
+        let Some((tp, rest)) = rest.split_once('[') else {
+            continue;
+        };
+        let Some((_, list)) = rest.split_once("= {") else {
+            continue;
+        };
+        let bytes: Vec<&str> = list
+            .trim_end_matches(';')
+            .trim_end_matches('}')
+            .split(',')
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .collect();
+        rows.push(format!("{tp} {}", bytes.join(" ")));
+    }
+    rows.join("\n")
+}
+
+/// The rows of the `loft_types` table in an emitted C program, one line per type in the form
+/// `selfhost/src/types.loft`'s `render` writes: `tp kind size elem n owns_heap linked`, then each
+/// field as `pos,type,view,hidden,group`, then a struct enum's variants as `variants=a,b,…`,
+/// then a keyed collection's key parts as `keys=type,pos,start;…`.
+fn c_type_table(c: &str) -> String {
+    const KINDS: [&str; 12] = [
+        "SCALAR", "TEXT", "STRUCT", "VECTOR", "ENUM", "CHILD", "HASH", "INDEX", "ORDERED", "RADIX",
+        "TRIE", "DBREF",
+    ];
+    let numbers = |text: &str| -> Vec<String> {
+        text.split(['{', '}', ','])
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(str::to_string)
+            .collect()
+    };
+    let mut fields: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    let mut variants: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    let mut keys: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut rows = Vec::new();
+    for line in c.lines() {
+        if let Some(rest) = line.strip_prefix("static const loft_key ")
+            && let Some((name, list)) = rest.split_once("[] = ")
+        {
+            let n = numbers(list.trim_end_matches(';'));
+            keys.insert(name.to_string(), n.chunks(3).map(|k| k.join(",")).collect());
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("static const uint16_t ")
+            && let Some((name, list)) = rest.split_once("[] = ")
+            && name.starts_with("loft_variants")
+        {
+            variants.insert(name.to_string(), numbers(list.trim_end_matches(';')));
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("static const loft_fld ")
+            && let Some((name, list)) = rest.split_once("[] = ")
+        {
+            let n = numbers(list.trim_end_matches(';'));
+            let per: Vec<String> = n.chunks(5).map(|f| f.join(",")).collect();
+            fields.insert(name.to_string(), per);
+            continue;
+        }
+        let t = line.trim_start();
+        if let Some(rest) = t.strip_prefix('[')
+            && let Some((tp, body)) = rest.split_once("] = {")
+            && body.contains("LOFT_T_")
+        {
+            let parts = numbers(body.trim_end_matches(','));
+            let kind = parts[0].trim_start_matches("LOFT_T_");
+            let kind = KINDS.iter().position(|k| *k == kind).expect("a known kind");
+            let mut out = format!(
+                "{tp} {kind} {} {} {} {} {}",
+                parts[1], parts[2], parts[3], parts[6], parts[9]
+            );
+            if let Some(list) = fields.get(&parts[4]) {
+                let n: usize = parts[3].parse().unwrap_or(0);
+                for f in list.iter().take(n) {
+                    out.push(' ');
+                    out.push_str(f);
+                }
+            }
+            if let Some(list) = variants.get(&parts[5])
+                && !list.is_empty()
+            {
+                out.push_str(" variants=");
+                out.push_str(&list.join(","));
+            }
+            if let Some(list) = keys.get(&parts[7])
+                && !list.is_empty()
+            {
+                out.push_str(" keys=");
+                out.push_str(&list.join(";"));
+            }
+            rows.push(out);
+        }
+    }
+    rows.join("\n")
 }

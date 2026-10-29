@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // The natives of native/ffi_c_library.c: binary text both ways, integers, a boolean, a
-// float and a vector argument.
+// float, a vector argument, and heap answers: two vectors and a record.
 
 pub fn make_bin() -> text;
 #native
@@ -18,4 +18,13 @@ pub fn is_even(a: integer) -> boolean;
 pub fn sum_bytes(v: vector<u8>) -> integer;
 #native
 pub fn half(x: float) -> float;
+#native
+
+pub struct Pair { pub a: integer, pub b: integer }
+
+pub fn iota(n: integer) -> vector<integer>;
+#native
+pub fn rev(v: vector<u8>) -> vector<u8>;
+#native
+pub fn pair(a: integer, b: integer) -> Pair;
 #native

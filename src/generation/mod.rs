@@ -15,6 +15,8 @@ mod apart_emit;
 pub use crate::lower::apart_records;
 mod apart_records_emit;
 pub use crate::lower::apart_value;
+// `@FR-R-Apart` instance 3's plan, shared with the C writer, lives below both writers.
+pub use crate::lower::apart_vector;
 pub mod append_twin;
 mod calls;
 mod coroutine;
@@ -13298,10 +13300,18 @@ extern crate loft;"
             // parameter type drive the transmute_copy inference keeps
             // `loft_ffi` invisible to the generated code.
             writeln!(w, ") }};")?;
-            write!(
-                w,
-                "  loft::codegen_runtime::from_loft_ref(stores, unsafe {{ std::mem::transmute_copy(&_lr) }})"
-            )?;
+            // A record's handle is the answer itself; a vector sits behind a header.
+            if matches!(def.returned().base(), Type::Vector(_, _)) {
+                write!(
+                    w,
+                    "  loft::codegen_runtime::from_loft_ref(stores, unsafe {{ std::mem::transmute_copy(&_lr) }})"
+                )?;
+            } else {
+                write!(
+                    w,
+                    "  loft::codegen_runtime::from_loft_record(unsafe {{ std::mem::transmute_copy(&_lr) }})"
+                )?;
+            }
         } else {
             write!(w, ") }}")?;
         }

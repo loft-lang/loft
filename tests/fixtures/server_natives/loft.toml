@@ -1,0 +1,14 @@
+# The server library's natives as the server library declares them on loft's `net` component
+# (`[native] component = "net"`), for tests/server_natives.rs: the natives are loft's own
+# (src/c/loft_server.h in src/c/components/net.c), so the guard needs only their declarations,
+# not the library.
+[package]
+name = "server_natives"
+version = "0.1.0"
+loft = ">=2026.10.0"
+
+[library]
+entry = "src/server_natives.loft"
+
+[native]
+component = "net"

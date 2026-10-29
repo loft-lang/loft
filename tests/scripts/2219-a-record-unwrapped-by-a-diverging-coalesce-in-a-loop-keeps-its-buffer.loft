@@ -1,0 +1,136 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A RECORD UNWRAPPED BY A DIVERGING `??` IN A LOOP KEEPS ITS BUFFER (`@FR-O-Buffer`, loft#2219).
+// `q = mk(i) ?? continue` binds the record the call delivered into the function's hidden
+// return buffer.  The loop-body local dies every pass, so its free must decline while it still
+// names the buffer's store, as a plain `q = mk(i)` bind's does; otherwise the next pass clears
+// and refills a store the free already released.  The cells vary the diverging arm (`return`,
+// `break`, `continue`), whether it is taken, what the pass does with the record (reads, writes,
+// pushes a copy, keeps it past the pass), and the record (a text field, a nested hash).
+//
+// @ARMED: LOFT_POISON=1
+//
+// @falsified-at: the installed main build of 2026-10-27, and main @ a5703bf91 — the second
+//   pass reads the scribble: "Store access out of bounds: rec=3735928559 … the reference is
+//   corrupt" on every cell but the two HOLDS ones; the interpreter, and both compiled
+//   backends the same under LOFT_POISON.
+// CHANNEL: the asserts (each pass's values), and the corpus runner's leak gate (`wrap.rs`
+//   Part B) for a free the pairing must not drop.
+// ARMED: `LOFT_POISON=1`, so a released store reads the scribble instead of its old bytes.
+// WITNESS: `test_a_kept_record_outlives_its_pass` — the record held past its pass is intact.
+// HOLDS: `test_one_unwrap_outside_a_loop` and `test_a_function_that_unwraps_once_per_call`,
+//   clean before the fix too.
+
+struct Q2219 { a: integer, t: text }
+struct H2219 { const id: integer, n: text }
+struct W2219 { hs: hash<H2219[id]>, name: text }
+struct L2219 { w: W2219, x: integer }
+struct F2219 { name: text, level: L2219, sx: integer }
+
+fn mq2219(n: integer) -> Q2219? { if n % 2 == 1 { return null; } Q2219 { a: n, t: "q{n}" } }
+fn mw2219(n: integer) -> W2219? {
+  if n < 0 { return null; }
+  w = W2219 { hs: [], name: "w{n}" };
+  w.hs += [H2219 { id: 1, n: "a" }];
+  w.hs += [H2219 { id: 2, n: "b" }];
+  w
+}
+fn level2219(n: integer) -> L2219 {
+  w = W2219 { hs: [], name: "w{n}" };
+  w.hs += [H2219 { id: 1, n: "a" }];
+  L2219 { w: w, x: n }
+}
+fn mf2219(n: integer) -> F2219? {
+  if n < 0 { return null; }
+  l = level2219(n);
+  l.w.hs += [H2219 { id: 2, n: "b" }];
+  F2219 { name: "f{n}", level: l, sx: 1 }
+}
+
+fn skipped2219() -> text {
+  s = "";
+  for i in 0..6 {
+    q = mq2219(i) ?? continue;
+    s += "{q.a}{q.t} ";
+  }
+  s
+}
+
+fn returned2219() -> text {
+  s = "";
+  for i in 0..3 {
+    f = mf2219(i) ?? return "none";
+    s += "{f.level.w.name}:{len(f.level.w.hs)} ";
+  }
+  s
+}
+
+fn broken2219() -> text {
+  s = "";
+  for i in 0..5 {
+    q = mq2219(i * 2) ?? break;
+    s += "{q.t} ";
+  }
+  s
+}
+
+fn test_a_skipped_pass_and_a_kept_one_alternate() {
+  assert(skipped2219() == "0q0 2q2 4q4 ", "continue: {skipped2219()}");
+}
+
+fn test_a_nested_hash_survives_every_pass() {
+  assert(returned2219() == "w0:2 w1:2 w2:2 ", "return: {returned2219()}");
+}
+
+fn test_a_break_arm_that_is_never_taken() {
+  assert(broken2219() == "q0 q2 q4 q6 q8 ", "break: {broken2219()}");
+}
+
+fn test_a_written_record_reads_back_each_pass() {
+  s = "";
+  for i in 0..6 {
+    q = mq2219(i) ?? continue;
+    q.a += 100;
+    q.t += "!";
+    s += "{q.a}{q.t} ";
+  }
+  assert(s == "100q0! 102q2! 104q4! ", "write: {s}");
+}
+
+fn test_a_pushed_copy_keeps_each_record() {
+  v: vector<Q2219> = [];
+  for i in 0..6 {
+    q = mq2219(i) ?? continue;
+    v += [q];
+  }
+  s = "";
+  for e in v { s += "{e.a}{e.t} "; }
+  assert(len(v) == 3 && s == "0q0 2q2 4q4 ", "push: {len(v)} {s}");
+}
+
+fn test_a_kept_record_outlives_its_pass() {
+  last = Q2219 { a: -1, t: "none" };
+  for i in 0..6 {
+    q = mq2219(i) ?? continue;
+    last = q;
+  }
+  assert(last.a == 4 && last.t == "q4", "kept: {last.a} {last.t}");
+}
+
+fn test_one_unwrap_outside_a_loop() {
+  q = mq2219(4) ?? return;
+  w = mw2219(1) ?? return;
+  assert(q.t == "q4" && len(w.hs) == 2, "single: {q.t} {len(w.hs)}");
+}
+
+fn once2219(i: integer) -> integer {
+  w = mw2219(i) ?? return -1;
+  len(w.hs)
+}
+
+fn test_a_function_that_unwraps_once_per_call() {
+  s = 0;
+  for i in 0..4 { s += once2219(i); }
+  assert(s == 8, "per call: {s}");
+}

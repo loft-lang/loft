@@ -162,6 +162,50 @@ pub fn build(pkg_dir: &str, sources: &[String]) -> Result<std::path::PathBuf, St
     Ok(so)
 }
 
+/// Hash every file `bytes` (the text of `file`) reaches through `#include "…"`, resolved against
+/// the including file's directory and followed transitively, each file once however its path is
+/// spelled (`seen` holds the resolved paths).  A `<…>`
+/// include is the toolchain's, which the compiler identity already keys; a quoted one that does
+/// not resolve here is left to the compiler, which reports it.
+fn hash_local_includes(
+    hasher: &mut sha2::Sha256,
+    file: &std::path::Path,
+    bytes: &[u8],
+    seen: &mut Vec<crate::file_access::PathText>,
+) {
+    use sha2::Digest;
+    let dir = file.parent().unwrap_or_else(|| std::path::Path::new("."));
+    for line in String::from_utf8_lossy(bytes).lines() {
+        let Some(rest) = line.trim_start().strip_prefix('#') else {
+            continue;
+        };
+        let Some(rest) = rest.trim_start().strip_prefix("include") else {
+            continue;
+        };
+        let Some(name) = rest
+            .trim_start()
+            .strip_prefix('"')
+            .and_then(|r| r.split('"').next())
+        else {
+            continue;
+        };
+        let header = dir.join(name);
+        let Some(resolved) = crate::file_access::canonical(&header) else {
+            continue;
+        };
+        if seen.contains(&resolved) {
+            continue;
+        }
+        let Ok(text) = crate::file_access::read(&header) else {
+            continue;
+        };
+        seen.push(resolved);
+        hasher.update(name.as_bytes());
+        hasher.update(&text);
+        hash_local_includes(hasher, &header, &text, seen);
+    }
+}
+
 /// The shim's artefact identity: its stem (`<package>_shim_<key>`, the key a hash of the
 /// sources and the compiler), its source paths, and the directory its artefacts land in.
 /// One home for it, so the shared library and the static archive of the same sources can
@@ -187,6 +231,11 @@ fn identity(
         })?;
         hasher.update(s.as_bytes());
         hasher.update(&bytes);
+        // A header the source includes is part of what it compiles to (loft#2220): without it,
+        // a change to that header alone reused the archive built from the old one.
+        let mut seen: Vec<crate::file_access::PathText> =
+            crate::file_access::canonical(&p).into_iter().collect();
+        hash_local_includes(&mut hasher, &p, &bytes, &mut seen);
         paths.push(p);
     }
 
@@ -607,4 +656,43 @@ fn wasm_cc_identity(cc: &str) -> String {
                     .to_string()
             },
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::file_access as fa;
+
+    fn stem(dir: &std::path::Path) -> String {
+        super::identity(&dir.to_string_lossy(), &["shim/s.c".to_string()])
+            .expect("identity")
+            .0
+    }
+
+    /// loft#2220 — a shim's key covers the headers its source includes with `#include "…"`,
+    /// two levels down, so a change to one alone builds a new shim; nothing changed keeps it.
+    #[test]
+    fn a_shims_key_covers_the_headers_it_includes() {
+        let dir = std::env::temp_dir().join(format!("loft_shim_key_{}", std::process::id()));
+        let _ = fa::remove_dir_all(&dir);
+        fa::create_dir_all(dir.join("shim")).expect("scratch");
+        fa::write(
+            dir.join("shim/s.c"),
+            "#include \"v.h\"\nint f(void) { return V; }\n",
+        )
+        .expect("source");
+        fa::write(dir.join("shim/v.h"), "#include \"w.h\"\n").expect("header");
+        fa::write(dir.join("shim/w.h"), "#define V 1\n").expect("nested header");
+        let first = stem(&dir);
+        assert_eq!(stem(&dir), first, "nothing changed: the same key");
+        fa::write(dir.join("shim/w.h"), "#define V 2\n").expect("nested header");
+        let second = stem(&dir);
+        assert_ne!(second, first, "a change two headers down is a new key");
+        fa::write(dir.join("shim/v.h"), "#include \"w.h\"\n#define W 1\n").expect("header");
+        assert_ne!(
+            stem(&dir),
+            second,
+            "a change to the included header is a new key"
+        );
+        let _ = fa::remove_dir_all(&dir);
+    }
 }

@@ -86,7 +86,8 @@ implementation.  So the usual "work around it and move on" is not allowed here:
 **This strand matters only if it reaches its goals, so a good design beats a quick build.**
 Stopping to ask the owner a design question is welcome here, not a delay to avoid.  Ask it in
 prose, with a recommendation and its reasons, so the answer can be discussed rather than
-picked from a fixed list.  `#package` (S0.3a) is the example: the question about a package
+picked from a fixed list, and always with a short code example of the cases it decides, each
+line commented with what happens today and under the proposal.  `#package` (S0.3a) is the example: the question about a package
 level grew, over three answers, into a rule none of the first options held.
 
 What does not need asking: a design the formal rules (`doc/claude/formal/`) or a recorded
@@ -218,6 +219,8 @@ every definition of `default/*.loft`, compiled to the same IR as the program, so
 - **Moving a native into loft is the preferred cure** when the interpreter would otherwise
   need a hand-written body for it and the loft version is as fast — the language gains the
   function, and the interpreter loses a place to differ.
+- **A routine the C runtime already defines is reached through `selfhost/crt`**, the
+  interpreter's own library (§ S2.2), never through a stdlib declaration added for it.
 
 **Built (2026-10-28):** `lower.loft`'s `call` follows that order (`is_operator`, the native
 symbol, `has_body`).  `selfhost/kernels/stdlib.loft`: `clamp` (which calls `min` and `max`)
@@ -309,7 +312,7 @@ is refused naming `n_println` or the format op — the first rows of the S2 work
   failure), or two thirds of the gate stays invisible.  Folded into S2.2.
 - The whole-corpus baseline follows in the next commit's note.
 
-### S2.2 — texts and floats: a stack per kind; the format operators reachable — DESIGNED 2026-10-28
+### S2.2 — texts and floats: a stack per kind; the format operators reachable — BUILT 2026-10-28
 
 **Found by S2.1:** 900 of the 1 025 plain programs stop first at a text, nearly all at the
 empty work text a formatted string is built in.
@@ -331,17 +334,26 @@ else (references, collections, tuples) stays refused until S3.
   variable: `OpAppendText`/`OpAppendCharacter` append to that slot, `OpClearText`/
   `OpFreeText` empty it.
 
-**The format operators (owner, 2026-10-28: option 1).**  `OpFormatInt`/`Float`/`Single`/`Text`
-have no loft spelling: a format spec is static (F-Spec), and their radix, fill, precision,
-sign and direction arrive as runtime values.  The interpreter reaches them through stdlib
-wrappers whose bodies call the operator itself, so it runs the C runtime's own formatting.
-Two compiler changes make the wrappers possible:
-- inside the stdlib, an operator's `pos` parameter accepts a `&text` variable, given the
-  operator's stack form as the bytecode generator already picks it for `OpAppendText`;
-- **open (asked):** the format parameters the Rust interpreter takes as bytecode IMMEDIATES
-  (`radix`, `token`, `plus`, `note`, `dir`, `precision` are `const`) — its `add_const` writes
-  nothing for a runtime value, which desynchronises the stream, and every stdlib body is
-  compiled — become runtime operands.
+**The format operators run through the interpreter's own library of C runtime routines
+(owner, 2026-10-28).**  `OpFormatInt`/`Float`/`Single`/`Text` have no loft spelling: a format
+spec is static (F-Spec), and their radix, fill, precision, sign and direction arrive as
+runtime values.  The C runtime already renders them (`loft_format_long`, `loft_format_float`,
+`loft_format_text`), so the interpreter calls those, through `selfhost/crt`:
+- **`crt` is a library of the interpreter's, not the stdlib's.**  Its `[c] shim`
+  (`shim/crt.c`) calls the C runtime's routines, bound by `#c`, which works on `--interpret`
+  (the shim is loaded), `--native` and `--native-c` (it is linked).  `src/c/loft_crt.h` makes
+  the runtime's headers includable by a shim, which must then be compiled at `-O1` or above.
+- **Only a routine the C runtime already defines goes into `crt`**; everything else the
+  interpreter needs is loft code.  The stdlib gains no declarations for the interpreter's
+  sake, and the compiler no changes: an operator's `const` parameters stay immediates.
+- `crt::format_int`, `format_float` and `format_text` take the format operator's operands in
+  the operator's own order and own the output buffer.  `selfhost/crt/tests/crt.loft` checks
+  each against loft's own rendering of the same spec.
+- **The lowering** pushes the value and then the operator's operands as ordinary values (a
+  boolean as 1 or 0), and emits one `Format` op whose kind is the destination's and whose `b`
+  is the value's kind: 0 integer (6 operands), 1 float and 2 single (5), 3 text (3).  **The run
+  loop** pops them (an integer value lies under its operands on the integer stack, a float or
+  text value on its own stack) and appends `crt`'s rendering.
 
 **Cases** (both backends, hand-computed): a text literal, `+` on texts, `+=` of a text and a
 character, a float sum and comparison, a call returning a text and one taking a float, a
@@ -359,7 +371,7 @@ null text and a null float propagating; the census before and after; the S1 test
   ones the parser gives a plain hole (`OpFormatInt(w, v, 10, 0, 32, false, false, 2)`,
   `OpFormatFloat`/`Single(w, v, 0, -1, 32, false, 2)`, `OpFormatText(w, v, 0, 2, 32)`) and the
   run loop appends `"{v}"`, which compiles to that operator with those operands.  Any other
-  spec waits for the wrappers.
+  spec waited for `crt` (third part).
 - A refusal now names its function, and an uncarried variable its type.
 - The probe program (a text-returning call, `+=` of a text and a character, float and single
   arithmetic, a null text, a formatted boolean) prints what `--interpret` prints.  The gate
@@ -381,6 +393,37 @@ null text and a null float propagating; the census before and after; the S1 test
   almost all values that live in the store: records 663, vectors 117, struct enums 52,
   hashes 33, tuples 17, function values 16, iterators 14, sorted 7 — S3 and S4 — then
   `OpRangeDefault` 10 (three constant operands), `OpConvIntFromEnum` 4, `OpDivIntNullable` 3.
+
+**Design → code (third part).**
+- `crt` is built as designed, green on all three backends.  Building it found loft#2217
+  (`#c` read every scalar argument as 8 bytes on `--interpret`, so a boolean, enum or
+  character reached C with stack garbage), fixed.
+- The lowering and run loop call `crt` as designed; the plain-spec check is gone.
+  `OpCastSingleFromFloat` (`x as single`) lowers to `Round`, as its conversion twin does.
+- `selfhost/kernels/format.loft`: 14 specs over the three kinds (radix, `#`, fill, `+`,
+  alignment, precision, a null integer, a single), each against a hand-written rendering.
+  The package's tests pass on `--interpret`, `--native` and `--native-c`.
+- The census's small operators: `abs` of each kind, the nullable `/` and `%` (equal to the
+  plain ones for every pair), a plain enum as its number, `OpRangeDefault`, a text slice (as
+  loft's own `t[a..b]`, which is that operator), and the casts by their `OpCast…` names.
+  **The census: 1 018 programs, 27 pass, 0 wrong, 0 crash**; what is left is the store's.
+
+### S3 — the store: the C runtime's own stores, through `crt` — DIRECTION (owner, 2026-10-28)
+
+**Ruling.** The running program's records, vectors and texts live in the C runtime's own stores,
+reached through `selfhost/crt`: *"the C runtime is already debugged and optimized. Doing it again
+would be a waste."*  A heap written in loft (a `vector<integer>` of words) was the alternative,
+and it is declined: it is a second store model, and every claim, free, vector growth and text in
+a record would be a place to disagree with the real one.  So `OpGetInt(p, 0)` calls a `crt`
+routine that calls the runtime's own accessor, a record has the layout the image's type table
+gives, and the interpreter's loft code stays readable because the storage is C.
+
+**The paper design is [1b-s3.md](1b-s3.md)**, for the owner's review: the invariant, how a
+reference crosses a `#c` call, where the type table comes from, the first slice and its probes.
+**The first slice is built** (records of every field width, texts, embedded records, copies),
+with ownership decided at run time by one owner table (owner, 2026-10-28; 1b-s3.md § Ownership
+at run time), and so is the second, vectors: **the census: 1 026 programs, 117 pass, 0 leak,
+0 wrong, 0 crash, none swept.**
 
 ### SU1 — `store_load` maps the image instead of copying it — DESIGNED 2026-10-28
 
@@ -695,7 +738,10 @@ the rule is about one function's own body).
 | **X16** | inside a package, a test file binds a SIBLING test file named like a module (`tests/lower.loft`'s `use load;` gets `tests/load.loft`), on `main` (loft#2212) | **bug — fixed** | from the package's `tests/` subtree, `own_module_path` asks `src/<id>.loft` first ([1b-s1.md](1b-s1.md) § X16–X18) |
 | **X17** | `x?` of a record from ANOTHER module falls back to `null`, with no diagnostic (on `main`, loft#2209); under `#package` the same shape is refused as a default of type `unknown`, and beside a same-named local record as `Item` not assignable to `Item` | **bug, silent-wrong — fixed ([1b-s1.md](1b-s1.md) § X16–X18)** | `build_default` pins the record's name to its definition for the sub-parse, and a sub-parse that builds anything else is `None`, reported |
 | **X18** | a nullable plain enum is not narrowed by `if x != null` (on `main`, loft#2211): its test lowers to a double negation | **bug — fixed** | `narrowing_from_condition` reads any negation as its operand's proof on the other side ([1b-s1.md](1b-s1.md) § X16–X18) |
-| **X19** | an element read is `τ?` even where the index is in range by construction, so an interpreter's frame restore and op fetch each take `?? panic(…)`; left out, the nullability spreads to every counter restored from them (37 warnings from three reads) | friction — costed (S1.2) | the discharge is honest (a missing frame is a bug); a read the bounds guard proves in range could be `τ`, as `(N-Domain)` already proves the index |
+| **X19** | an element read is `τ?` even where the index is in range by construction, so an interpreter's frame restore and op fetch each take `?? panic(…)`; left out, the nullability spreads to every counter restored from them (37 warnings from three reads) | **by design — costed** (S1.2) | the discharge is honest (a missing frame is a bug); a read the bounds guard proves in range could be `τ`, as `(N-Domain)` already proves the index |
+| **X20** | a bare variant name is refused as a branch of an `if` assigned to an untyped local (`h = if c { Red } else { Blue }`: *"bare variant 'Red' has no type here"*), while a typed local, a `return`, a comparison and a match arm resolve it; the lowering wrote `Kind.KNone` in such places | **language — fixed, @C157** | owner: a name is refused only when two definitions own it and nothing in its context picks one; a sole owner resolves, and an `if` or `match` arm takes the enum its sibling arms name |
+| **X21** | the run loop's `prog = progs[def] ?? panic(…)` on a call and on a return copies the whole `Lowering` record each time (`(B-Copy)`: a record local is bound by value, and nothing proves the one write into `progs` misses the element `prog` names); loft-13 measured `loft_copy_claims` at 46 % of `run_kernel`'s time on fib under `--native-c --ship`, which is most of the 20× against the Rust interpreter | friction — measured; **owner: 3c then 3b, built by loft-13** | the code stays as written (the readable-code ruling).  3c: a whole-value bind from a local dead after it is a move.  3b: a view a write may disturb is materialised AT that write, behind one index compare, not at the bind.  Run-time view tracking (3a) is declined: it taxes every write (C125).  `prog = &progs[def]` is the zero-cost reference to measure against |
+| **X22** | a `match` on a plain enum lowers to a chain of `OpEqInt` tests (`if c == 1 … else if c == 2 …`), so an arm costs one test per arm before it.  The run loop dispatches every op through one: S3 added ~25 store and vector arms before the arithmetic catch-all and a `KRef` arm before each inner `match op.kind`'s integer default, and the S1 tests went from 52 s to 68 s under `--interpret` (arithmetic moved first, as a measurement only: 60 s) | friction — measured; **owner 2026-10-29: an interpreter issue (the compilers convert already); guards first** | [1b-x22.md](1b-x22.md): step G, a guarded arm no longer copies the rest of the match (the IR grows ×1.6 per guard today), then step T, a table jump in the bytecode writer |
 
 ### New constructs taken from OCaml's type expressions
 

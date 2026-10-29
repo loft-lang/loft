@@ -6,7 +6,7 @@
 // @C98 — a bare `use enumlib;` brings in only the `enumlib::` qualifier, so `Status` is not
 // visible here and a bare variant of it is refused with the IMPORT cure: what is missing is
 // the name, not only a type.  The other side, an enum the file does see:
-// a-bare-variant-of-an-imported-enum-asks-for-a-type.loft.
+// a-bare-variant-of-an-imported-enum-resolves-without-a-type.loft.
 //
 // @falsified-by: tests/falsified/c98-a-bare-variant-through-a-bare-use-names-the-import.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
 //   The patch is the OVER-WIDE cure — never give a bare variant the import advice — so this

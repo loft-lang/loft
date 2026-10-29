@@ -57,6 +57,26 @@ pub(super) fn tail_calls(v: &Value) -> Vec<&Value> {
     }
 }
 
+/// loft#2219 — the call a diverging `??` block delivers: `{ t = call(…); if !t { return };
+/// t }` (`x = f() ?? return`, also `break` / `continue`) yields its temp `t`, set from the
+/// call at the block's top level, so the binding adopts what the call answered, as it does
+/// for a branch's tail call.  `None` for any other block.
+pub(super) fn coalesce_tail_calls(v: &Value) -> Vec<&Value> {
+    let Value::Block(bl) = v.unspan() else {
+        return Vec::new();
+    };
+    let Some(Value::Var(t)) = bl.operators.last().map(Value::unspan) else {
+        return Vec::new();
+    };
+    bl.operators
+        .iter()
+        .find_map(|op| match op.unspan() {
+            Value::Set(s, rhs) if s == t => Some(tail_calls(rhs)),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
 /// The locals handed to a `&` heap parameter anywhere in `ops` — `OpCreateStack(Var(v))` as a
 /// call argument whose parameter `Type::is_amp_rebindable_heap` — that the callee REASSIGNS as
 /// a whole, at any depth of forwarding (`parser::callee_param_reassigns`): a whole-value

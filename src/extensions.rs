@@ -798,14 +798,14 @@ fn report_unresolved_natives(data: &crate::data::Data, unresolved: &[String]) {
             .unwrap_or_else(|| "<unknown library>".to_string());
         by_crate.entry(krate).or_default().push(sym.as_str());
     }
-    // A package whose natives are a component loft ships (@PLN205): nothing to rebuild, the
-    // component is not installed.
-    let component = |krate: &str| -> Option<String> {
-        let (_, pkg_dir) = data
+    // A package whose native part needs no build — a component loft ships, a library shipped
+    // prebuilt per host (@PLN205) — has nothing to rebuild: say what is missing instead.
+    let unbuildable = |krate: &str| -> Option<String> {
+        let (name, pkg_dir) = data
             .native_packages
             .iter()
             .find(|(c, _)| c.replace('-', "_") == krate.replace('-', "_"))?;
-        crate::native_build::component_of(pkg_dir)
+        crate::native_build::unbuildable_native_reason(pkg_dir, name)
     };
     for (krate, mut syms) in by_crate {
         syms.sort_unstable();
@@ -816,11 +816,10 @@ fn report_unresolved_natives(data: &crate::data::Data, unresolved: &[String]) {
         } else {
             String::new()
         };
-        if let Some(name) = component(&krate) {
+        if let Some(why) = unbuildable(&krate) {
             eprintln!(
-                "loft: {} — {n} #native function(s) are unavailable ({shown}{more_txt}), and a \
+                "loft: {why} — {n} #native function(s) are unavailable ({shown}{more_txt}), and a \
                  program that calls one does not start.",
-                crate::components::missing(&name),
                 n = syms.len(),
             );
             continue;
@@ -1646,6 +1645,36 @@ mod dispatch_cache_tests {
 /// ref arg's store (or store 0), calls the bridge, and writes the tagged
 /// return back to the stack.  Replaces the ~98-arm `dispatch_call` for any
 /// symbol whose cdylib was built with `#[loft_native]`.
+/// Call a `loft_ffi::LoftBridgeFn` with `args`, `stores` installed as `CURRENT_STORES` for the
+/// call's `ffi_claim` / resize callbacks and cleared again however the call ends.
+#[cfg(feature = "native-extensions")]
+fn call_bridge(
+    stores: &mut crate::database::Stores,
+    bridge_ptr: *const (),
+    ls: LoftStore,
+    args: &[loft_ffi::LoftValue],
+) -> loft_ffi::LoftValue {
+    use loft_ffi::LoftValue;
+    struct StoresGuard;
+    impl Drop for StoresGuard {
+        fn drop(&mut self) {
+            CURRENT_STORES.with(|c| c.set(std::ptr::null_mut()));
+        }
+    }
+    let stores_ptr: *mut crate::database::Stores = stores;
+    CURRENT_STORES.with(|c| c.set(stores_ptr));
+    let _guard = StoresGuard;
+
+    let mut ret = LoftValue::VOID;
+    // SAFETY: `bridge_ptr` is a `loft_ffi::LoftBridgeFn` registered by the
+    // cdylib; the local `LoftStore` mirror is `#[repr(C)]`-identical to
+    // `loft_ffi::LoftStore`, so the ABI matches.
+    let bridge: unsafe extern "C" fn(LoftStore, *const LoftValue, usize, *mut LoftValue) =
+        unsafe { std::mem::transmute(bridge_ptr) };
+    unsafe { bridge(ls, args.as_ptr(), args.len(), std::ptr::from_mut(&mut ret)) };
+    ret
+}
+
 #[cfg(feature = "native-extensions")]
 fn dispatch_via_bridge(
     stores: &mut crate::database::Stores,
@@ -1735,24 +1764,7 @@ fn dispatch_via_bridge(
     let args = args.as_mut();
     let ls = make_loft_store(stores, store_nr, minted);
 
-    // CURRENT_STORES must be live for the bridge's ffi_claim/resize callbacks.
-    struct StoresGuard;
-    impl Drop for StoresGuard {
-        fn drop(&mut self) {
-            CURRENT_STORES.with(|c| c.set(std::ptr::null_mut()));
-        }
-    }
-    let stores_ptr: *mut crate::database::Stores = stores;
-    CURRENT_STORES.with(|c| c.set(stores_ptr));
-    let _guard = StoresGuard;
-
-    let mut ret = LoftValue::VOID;
-    // SAFETY: `bridge_ptr` is a `loft_ffi::LoftBridgeFn` registered by the
-    // cdylib; the local `LoftStore` mirror is `#[repr(C)]`-identical to
-    // `loft_ffi::LoftStore`, so the ABI matches.
-    let bridge: unsafe extern "C" fn(LoftStore, *const LoftValue, usize, *mut LoftValue) =
-        unsafe { std::mem::transmute(bridge_ptr) };
-    unsafe { bridge(ls, args.as_ptr(), args.len(), std::ptr::from_mut(&mut ret)) };
+    let ret = call_bridge(stores, bridge_ptr, ls, args);
 
     // The copies the foreign vector arguments took, and a store minted for a scalar answer.
     if let Some(call) = &call {
@@ -1769,6 +1781,14 @@ fn dispatch_via_bridge(
         LoftTag::F64 if sig.ret == Some(ArgT::F32) => stores.put::<f32>(stack, ret.as_f64() as f32),
         LoftTag::F64 => stores.put(stack, ret.as_f64()),
         LoftTag::Text => bridge_push_str(stores, stack, ret.as_text()),
+        // A record's handle is the answer itself; only a vector sits behind a header
+        // (`codegen_runtime::from_loft_record`, the compiled twin).
+        LoftTag::Ref if sig.ret == Some(ArgT::Ref) => {
+            stores.put(
+                stack,
+                crate::codegen_runtime::from_loft_record(ret.as_ref()),
+            );
+        }
         LoftTag::Ref => bridge_push_ref(stores, stack, ret.as_ref()),
     }
 }

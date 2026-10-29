@@ -117,6 +117,13 @@ fn run_html_wasm_full(
         eprintln!("SKIP: rustup target wasm32-unknown-unknown not installed");
         return None;
     }
+    // A page that yields a frame needs `--asyncify`, which only `wasm-opt` applies: built
+    // without it the page never returns from its first yield, and the run waits out the
+    // per-test limit instead of failing (the Windows runner has no binaryen).
+    if source.contains("frame_yield") && which("wasm-opt").is_none() {
+        eprintln!("SKIP: wasm-opt (binaryen) not installed — a yielding page cannot run");
+        return None;
+    }
 
     let loft_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft_bin) {

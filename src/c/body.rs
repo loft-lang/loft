@@ -11,6 +11,7 @@
 mod apart;
 mod apart_value;
 mod chain;
+mod deferred;
 mod files;
 mod generator;
 mod keyed;
@@ -140,6 +141,9 @@ pub(crate) struct FnWriter<'a> {
     /// Which parameters are `&` links: a pointer to the caller's variable, read and written
     /// through (`(*v)`), as the bytecode reads and writes through the stack reference.
     links: Vec<bool>,
+    /// The locals whose copy is deferred to the first statement that may write its source
+    /// (`@FR-R-DeferredCopy`, `deferred::deferred_plan`).
+    dc: deferred::DeferredCopies,
     /// Which value-record parameters arrive as `const loft_tupN *` (`Cx::vr_ptr_params`,
     /// `@FR-R-ValueRecord`'s pointer clause): read through (`(*v)`), never written.
     vr_ptr: Vec<bool>,
@@ -377,6 +381,85 @@ fn borrowed_texts(cx: &Cx, d: u32) -> Vec<bool> {
 }
 
 /// Is `x` a text the view form of a borrowed bind writes with no temporary (`borrowed_texts`)?
+/// `@FR-R-RecPtr`'s apart-call clause (C): the statements after a view's binding at `at`, each
+/// call to a loft function that cannot reach the view's store replaced by its arguments — a
+/// callee reaches only the stores its arguments name, so where every store-naming variable
+/// those mention is proven apart from `r`'s (`StoreFacts::distinct`) and `r` is not one of
+/// them, nothing the call runs grows or frees `r`'s store, and the arguments stay to be judged
+/// themselves.  A scalar field read in an argument passes a number, not its record's store.  A
+/// release (`OpFreeRef`, `OpFreeRefIfDistinct`) of a store apart from `r`'s is dropped the same
+/// way: it frees nothing `r` names.  A helper appending to another collection
+/// (`put(stack, sp, op.a)`) then no longer costs the loop's record views their address.
+/// `LOFT_NO_APART_CALL=1` keeps every call.
+fn apart_calls(
+    data: &crate::data::Data,
+    facts: Option<&crate::opt::push_window::StoreFacts>,
+    r: u16,
+    ops: &[Value],
+    at: usize,
+) -> Vec<Value> {
+    let Some(facts) = facts
+        .filter(|_| !crate::env_once!(std::env::var("LOFT_NO_APART_CALL").is_ok_and(|v| v != "0")))
+    else {
+        return ops.to_vec();
+    };
+    let vars = facts.vars;
+    let names_store = |v: u16| {
+        (v as usize) < vars.var_count()
+            && (crate::data::is_dbref(vars.tp(v).base())
+                || matches!(vars.tp(v).base(), crate::data::Type::RefVar(_)))
+    };
+    let var_apart = |v: u16| v != r && (!names_store(v) || facts.distinct(r, v));
+    let apart = |args: &[Value]| args.iter().all(|a| mentions_apart(a, data, &var_apart));
+    ops.iter()
+        .enumerate()
+        .map(|(i, op)| {
+            let mut o = op.clone();
+            if i > at {
+                o.map_nodes(&mut |n| {
+                    if let Value::Call(g, args) = n
+                        && (*g as usize) < data.definitions.len()
+                        && apart(args)
+                    {
+                        let def = data.def(*g);
+                        if *def.code() != Value::Null && !def.name().starts_with("Op") {
+                            *n = Value::Insert(std::mem::take(args));
+                        } else if matches!(def.name(), "OpFreeRef" | "OpFreeRefIfDistinct") {
+                            // A release in a store apart from `r`'s frees nothing `r` names.
+                            *n = Value::Null;
+                        }
+                    }
+                });
+            }
+            o
+        })
+        .collect()
+}
+
+/// Does every store-naming variable `x` mentions pass `ok`?  A scalar field read of any record —
+/// `op.a` handed to a helper — passes a number, not its store, so its record is not judged.
+pub(super) fn mentions_apart(
+    x: &Value,
+    data: &crate::data::Data,
+    ok: &dyn Fn(u16) -> bool,
+) -> bool {
+    match x.unspan() {
+        Value::Var(v) => ok(*v),
+        Value::Call(g, a)
+            if (*g as usize) < data.definitions.len()
+                && crate::opt::loop_records::SCALAR_GETTERS.contains(&data.def(*g).name())
+                && matches!(a.first().map(Value::unspan), Some(Value::Var(_))) =>
+        {
+            a[1..].iter().all(|y| mentions_apart(y, data, ok))
+        }
+        other => {
+            let mut all = true;
+            other.for_each_child(&mut |c| all &= mentions_apart(c, data, ok));
+            all
+        }
+    }
+}
+
 /// Per variable of `d`: whether it is a value-record parameter passed by pointer
 /// (`Cx::vr_ptr_params`).
 fn vr_ptr_flags(cx: &Cx, d: u32) -> Vec<bool> {
@@ -414,6 +497,7 @@ fn view_bind(cx: &Cx, vars: &Function, borrowed: &[bool], x: &Value) -> bool {
 }
 
 impl<'a> FnWriter<'a> {
+    #[expect(clippy::too_many_lines)]
     pub(crate) fn new(cx: &'a Cx<'a>, d: u32, shapes: Vec<CType>, ret: CType) -> FnWriter<'a> {
         let def = cx.data.def(d);
         FnWriter {
@@ -434,6 +518,7 @@ impl<'a> FnWriter<'a> {
                 .map(|v| matches!(def.variables().tp(v).base(), crate::data::Type::RefVar(_)))
                 .collect(),
             vr_ptr: vr_ptr_flags(cx, d),
+            dc: deferred::DeferredCopies::default(),
             // A store instance's text parameter (`n_app@st1`, `parser/store_text.rs`) is a
             // store link: the IR reads and writes it as the field it names.
             store_links: {
@@ -600,8 +685,16 @@ impl<'a> FnWriter<'a> {
     }
 
     /// The body: the locals, the temporaries and the statements.
-    pub(crate) fn write(mut self) -> Result<String, String> {
+    /// The function's C body, and how many statements it holds — its own lines, without the
+    /// declarations, the blank lines and the frame-site bookkeeping (`small_function`).
+    pub(crate) fn write(mut self) -> Result<(String, usize), String> {
         let code = self.code;
+        self.dc = self.deferred_plan();
+        let mut flags: Vec<u16> = self.dc.vars.keys().copied().collect();
+        flags.sort_unstable();
+        for x in flags {
+            self.decls.push(format!("uint8_t loft_dcv{x} = 0;"));
+        }
         // The return buffer an admitted function's signature dropped is a local nothing binds.
         if let Some(p) = self.vr.as_ref().and_then(|f| f.phantom) {
             self.params[p as usize] = false;
@@ -661,10 +754,18 @@ impl<'a> FnWriter<'a> {
         if !slots.is_empty() {
             let _ = writeln!(out, "    LOFT_HOLD({}, {});", slots.len(), slots.join(", "));
         }
+        let statements = self
+            .body
+            .lines()
+            .filter(|l| !l.trim().is_empty() && !l.contains("loft_frame_site("))
+            .count();
         out.push_str(&self.body);
-        Ok(out)
+        Ok((out, statements))
     }
 
+    /// `v`'s C spelling.  A link holds its source's ADDRESS, so every use dereferences it and
+    /// reads the source as it is at that use (`@FR-B-Ref-Read`); a read-only record parameter
+    /// passed by pointer (`Cx::vr_ptr_params`) is spelled the same way.
     fn var(&self, v: u16) -> String {
         let name = var_name(self.vars.name(v), v);
         if self.links[v as usize] || self.vr_ptr[v as usize] {
@@ -1033,10 +1134,42 @@ impl<'a> FnWriter<'a> {
             None,
             facts.as_ref(),
         );
+        // `@FR-R-Header`'s rebind clause: a bare vector the loop rebinds by navigating, held
+        // apart and derived again after each rebind (`refresh_rebound_header`).
+        let mut v = v;
+        let rebound = crate::opt::hoist::rebound_apart_headers(
+            b,
+            self.cx.data,
+            self.d,
+            facts.as_ref(),
+            &mut cache,
+            None,
+        );
+        // Held alone — as the apart clause holds its own — the stores they live in grow
+        // nowhere in the loop, so each carries its base; beside a verdict that holds other
+        // paths the base is that verdict's to judge (`kept_bases`).
+        let alone = v.vectors.is_empty()
+            && v.pushes.is_empty()
+            && v.mint_pushes.is_empty()
+            && v.scalars.is_empty();
+        for (path, expr) in rebound {
+            if !v.vectors.iter().any(|(p, _)| *p == path) {
+                v.vectors.push((path, expr));
+            }
+        }
+        if alone && !v.vectors.is_empty() {
+            v.growth_free = true;
+        }
         self.hoist_cache = cache;
         // `@FR-R-Apart`: a path rooted at a value held apart names no record, so it takes no
         // header, base, push header or held scalar; the loop's other paths keep theirs.
-        let mut v = v;
+        // `@FR-R-DeferredCopy`: a deferred local, and a view derived from one, moves to its copy
+        // at a copy point, so no header is held for a path rooted at either.
+        if !self.dc.vars.is_empty() {
+            v.vectors.retain(|(p, _)| !self.dc_root(p.0));
+            v.pushes.retain(|(p, _)| !self.dc_root(p.0));
+            v.mint_pushes.retain(|(p, _)| !self.dc_root(p.0));
+        }
         if self.apr_any() {
             v.vectors.retain(|(p, _)| !self.apr_holds(p.0));
             v.pushes.retain(|(p, _)| !self.apr_holds(p.0));
@@ -1887,8 +2020,9 @@ impl<'a> FnWriter<'a> {
         let mut cache = std::mem::take(&mut self.hoist_cache);
         let verdict = {
             let facts = self.store_facts();
+            let remainder = apart_calls(data, facts.as_ref(), r, &ops[..=last], at);
             crate::opt::hoist::record_view_ptr(
-                &ops[..=last],
+                &remainder,
                 at,
                 self.cx.data,
                 self.cx.stores,
@@ -2222,7 +2356,21 @@ impl<'a> FnWriter<'a> {
         if self.nk_skip == Some(std::ptr::from_ref(v.unspan()) as usize) {
             return Ok(());
         }
+        // `@FR-R-DeferredCopy`: a deferred bind takes the source's reference; any statement that
+        // may write a source's store takes the copies it would otherwise disturb first.
+        if let Value::Set(var, rhs) = v.unspan()
+            && self.dc_set(v, *var, rhs, ind).is_some()
+        {
+            return Ok(());
+        }
+        self.dc_before(v, ind);
         let r = self.stmt_kind(v, ind);
+        if r.is_ok()
+            && let Value::Set(var, _) = v.unspan()
+        {
+            self.refresh_rebound_header(*var, ind);
+            self.dc_after(v, ind);
+        }
         // `LOFT_C_WHERE=1`: a refusal names the innermost statement it came from, on stderr.
         if let Err(why) = &r
             && !self.where_told
@@ -2241,6 +2389,23 @@ impl<'a> FnWriter<'a> {
             );
         }
         r
+    }
+
+    /// `@FR-R-Header`'s rebind clause: after `var` is rebound, every header an enclosing loop
+    /// holds for it as a bare variable is derived again — element base included — so it
+    /// describes the vector `var` names now (`hoist::rebound_apart_headers`).
+    fn refresh_rebound_header(&mut self, var: u16, ind: usize) {
+        let held: Vec<String> = self
+            .headers
+            .iter()
+            .flat_map(|f| f.iter())
+            .filter(|(p, _, _)| p.0 == var && p.1.is_empty())
+            .map(|(_, h, _)| h.clone())
+            .collect();
+        for h in held {
+            let v = self.var(var);
+            self.line(ind, &format!("{h} = loft_vh_of({v});"));
+        }
     }
 
     /// A loop: its held vectors and its push window before it, the window closed after —
@@ -2426,6 +2591,8 @@ impl<'a> FnWriter<'a> {
             Value::If(..) if self.apv_stmt(v, ind) => Ok(()),
             Value::If(c, t, e) => {
                 let null_test = self.null_test(c);
+                // The test first; each arm inside its braces (`@FR-E-And`, `@FR-E-Or`, as in
+                // `assign_if`).
                 let c = self.expr(c, ind)?;
                 let c = as_cond(c)?;
                 self.line(ind, &format!("if ({}) {{", bare(&c)));
@@ -2631,12 +2798,14 @@ impl<'a> FnWriter<'a> {
             );
             self.line(ind, &format!("}} else {{ {name} = {r}; }}"));
             if rebind_owned {
-                let mut keep = vec![
-                    format!("{old}.store_nr != {name}.store_nr"),
-                    format!("{old}.store_nr != {w}.store_nr"),
-                ];
-                for a in crate::use_analysis::protectable_ref_args(self.cx.data, self.d, x).0 {
-                    keep.push(format!("{old}.store_nr != {}.store_nr", self.var(a)));
+                // Native's guard (`dispatch.rs`'s `_old_<v>` free, @FR-O-NoDiverge): kept only
+                // where the new value or the call's pooled buffer (`@FR-O-Buffer`) is that store.
+                // Not the base or another argument: the variable owns what it displaces, so an
+                // argument naming that store is a view of the variable itself (`f(c ?? d)`'s
+                // `__lift`), and keeping it there leaked the displaced record on every rebind.
+                let mut keep = vec![format!("{old}.store_nr != {name}.store_nr")];
+                if let Some(buf) = self.vars.displaced_buffer_witness(var, x, self.cx.data) {
+                    keep.push(format!("{old}.store_nr != {}.store_nr", self.var(buf)));
                 }
                 self.line(
                     ind,
@@ -3795,6 +3964,7 @@ impl<'a> FnWriter<'a> {
             Value::Var(var) if let Some(buf) = self.apr_buf(*var) => Ok(E::new(buf, K::Ref)),
             Value::Var(var) if self.apv_vec(*var) => Ok(E::new(format!("loft_apv{var}"), K::Ref)),
             Value::Var(var) if let Some(val) = self.av_val(*var) => Ok(E::new(val, K::Ref)),
+            // A link to a field or element reads that place at each use (`@FR-B-Ref-Read`).
             Value::Var(var) if self.store_links[*var as usize] => {
                 let read = self.link_access(*var, None)?;
                 self.expr(&read, ind)
@@ -4715,6 +4885,10 @@ impl<'a> FnWriter<'a> {
         ind: usize,
     ) -> Result<(), String> {
         let null_test = self.null_test(cond);
+        // Only the test is evaluated before the `if`; each arm's work — its call temporaries
+        // included — is emitted inside that arm's braces, so it runs only when the arm does.
+        // `a && b` and `a || b` arrive as such an `if`, which is what keeps the right operand
+        // unevaluated when the left decides (`@FR-E-And`, `@FR-E-Or`).
         let cond = self.expr(cond, ind)?;
         let cond = as_cond(cond)?;
         self.line(ind, &format!("if ({}) {{", bare(&cond)));
@@ -5417,11 +5591,14 @@ impl<'a> FnWriter<'a> {
         ind: usize,
     ) -> Result<Option<E>, String> {
         let e = match (name, args) {
-            // A function variable's scope-exit free reads its definition number as a
-            // reference and releases nothing: its closure record is freed through its own.
-            ("OpFreeRef", [Value::Var(v)]) if self.shapes[*v as usize] == CType::Fn => {
-                Ok(E::new("(void) 0", K::Void))
-            }
+            // A function variable's scope-exit free releases its closure record, as native's
+            // does (`var_f.1`): a closure handed back by its defining function has no other
+            // release.  One built here is also freed through its own record variable first,
+            // and a store already free stays as it is (`loft_free_ref`).
+            ("OpFreeRef", [Value::Var(v)]) if self.shapes[*v as usize] == CType::Fn => Ok(E::new(
+                format!("loft_free_var(&{}.clos)", self.var(*v)),
+                K::Void,
+            )),
             // A variable's free resets it to the sentinel, as native's does: the next pass's
             // pre-build free of it is then a no-op instead of a release of a reused slot.
             ("OpFreeRef", [Value::Var(v)]) if self.shapes[*v as usize] == CType::Ref => {

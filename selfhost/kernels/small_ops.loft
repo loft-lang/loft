@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// S2.2 probe: the small integer operators the census names — a plain enum as its number
+// (`OpConvIntFromEnum`), a division whose result a `??` discharges (`OpDivIntNullable`), and a
+// value entering a narrow integer (`OpRangeDefault`).  Each function answers one integer.
+enum Hue { Red, Green, Blue }
+
+fn hue_number(n: integer) -> integer {
+  h: Hue = if n == 0 { Red } else if n == 1 { Green } else { Blue };
+  h as integer
+}
+
+fn div_or(n: integer, d: integer) -> integer {
+  n / d ?? -1
+}
+
+fn rem_or(n: integer, d: integer) -> integer {
+  n % d ?? -1
+}
+
+// The absolute value of `n / 4` as a float and as a single, times 100, rounded.
+fn abs_floats(n: integer) -> integer {
+  f = n as float / 4.0;
+  s = f as single;
+  (f.abs() * 100.0) as integer + (s.abs() * 100.0) as integer
+}
+
+// A null character, then one from the code point `n`: 0 for null, else the code point.
+fn char_or_zero(n: integer) -> integer {
+  c: character? = null;
+  if n > 0 {
+    c = n as character;
+  }
+  (c as integer?) ?? 0
+}
+
+fn narrow(n: integer) -> integer {
+  b: u8 = n ?? 7;
+  b as integer
+}
+
+fn narrow_or_null(n: integer) -> integer {
+  b: u8? = n;
+  (b as integer?) ?? -1
+}
+
+fn main() {
+  println("{hue_number(0)} {hue_number(1)} {hue_number(2)} {div_or(7, 2)} {div_or(7, 0)} {rem_or(7, 3)} {rem_or(7, 0)} {abs_floats(-6)} {abs_floats(6)} {char_or_zero(0)} {char_or_zero(233)} {narrow(200)} {narrow(300)} {narrow_or_null(200)} {narrow_or_null(300)}");
+}

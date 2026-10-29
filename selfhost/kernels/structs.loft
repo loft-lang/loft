@@ -1,0 +1,175 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// S3's first slice: records of integers and texts, in the C runtime's stores.  Each entry takes
+// an integer and answers one, so the loft interpreter runs it from the image; the values are
+// worked out by hand beside each.
+struct Point { x: integer, y: integer, name: text }
+
+struct Inner { k: integer, label: text }
+struct Wide { a: u8, b: i16, c: i32, d: character, e: boolean, f: float, g: single, h: Inner }
+
+fn make(x: integer, y: integer) -> Point {
+  Point { x: x, y: y, name: "pt" }
+}
+
+fn shift(p: Point, d: integer) {
+  p.x += d;
+}
+
+// A struct built and read: n + 2n.  built(3) = 9.
+fn built(n: integer) -> integer {
+  p = Point { x: n, y: n * 2, name: "a" };
+  p.x + p.y
+}
+
+// A field written through a parameter: n + 5.  shifted(4) = 9.
+fn shifted(n: integer) -> integer {
+  p = Point { x: n, y: 0, name: "s" };
+  shift(p, 5);
+  p.x
+}
+
+// A copy that diverges from its source: p keeps n, q takes 100.  copied(4) = 4100.
+fn copied(n: integer) -> integer {
+  p = Point { x: n, y: 1, name: "a" };
+  q = p;
+  q.x = 100;
+  p.x * 1000 + q.x
+}
+
+// A text field set and read, on a record a function returned: "pt-" and n's digits.
+// named(5) = len("pt-5") = 4, named(123) = 6.
+fn named(n: integer) -> integer {
+  p = make(n, 3);
+  p.name = "{p.name}-{n}";
+  len(p.name)
+}
+
+// A copy's text is its own: q's rename leaves p's.  len("ab") * 10 + len("changed") = 27.
+fn texts_apart(n: integer) -> integer {
+  p = Point { x: n, y: 1, name: "ab" };
+  q = p;
+  q.name = "changed";
+  len(p.name) * 10 + len(q.name)
+}
+
+// The integer and text fields together: x + y + len(name).  mixed(10) = 10 + 3 + len("pt") = 15.
+fn mixed(n: integer) -> integer {
+  p = make(n, 3);
+  p.x + p.y + len(p.name)
+}
+
+// A struct match that binds a text field: the match block's value is the `if`, and the bound
+// text's free comes after it.  matched(1) = len("abc") = 3, matched(5) = -1.
+fn pick(p: Point) -> integer {
+  match p { Point { x: (1 | 2), name } => len(name), _ => -1 }
+}
+
+fn matched(n: integer) -> integer {
+  p = Point { x: n, y: 0, name: "abc" };
+  pick(p)
+}
+
+// A call whose result borrows its argument: the caller copies (`(O-Move)`), so the write through
+// `c` leaves `src` alone.  kept(4) = 4.  The first slice refuses this bind by name — deciding it
+// needs the callee's ownership summary — and must never run it as an alias (which answers 99).
+fn keep(p: Point) -> Point {
+  p
+}
+
+fn kept(n: integer) -> integer {
+  src = Point { x: n, y: 0, name: "k" };
+  c = keep(src);
+  c.x = 99;
+  src.x
+}
+
+fn wide_of(n: integer) -> Wide {
+  Wide { a: 200, b: -300, c: n ?? 0, d: 'é', e: n > 0, f: 1.5, g: 0.25 as single, h: Inner { k: 7, label: "in" } }
+}
+
+// Every field width, and a record embedded in another: a + b + c + d + h.k = 200 - 300 + n + 233
+// + 7.  wide(5) = 145; wide(-5) = -1 (the boolean field is false).
+fn wide(n: integer) -> integer {
+  w = wide_of(n);
+  if w.e { w.a as integer + w.b as integer + w.c as integer + w.d as integer + w.h.k } else { -1 }
+}
+
+// The float and single fields, and the embedded record written and its text read:
+// 1.5 * 10 + 0.25 * 100 + h.k (set to n) + len("in").  floats(3) = 15 + 25 + 3 + 2 = 45.
+fn floats(n: integer) -> integer {
+  w = wide_of(n);
+  w.h.k = n;
+  (w.f * 10.0) as integer + (w.g * 100.0) as integer + w.h.k + len(w.h.label)
+}
+
+// Ownership at run time (1b-s3.md): one owner table decides each bind and every free.
+
+// A rebind releases the store it displaces.  rebound(5) = 100 + 5 + 1 + 2 = 108.
+fn rebound(n: integer) -> integer {
+  p = make(n, 1);
+  s = p.y;
+  p = make(n + 1, 2);
+  s += p.y;
+  p = Point { x: 100, y: 0, name: "r" };
+  p.x + n + s
+}
+
+// A record bound in every pass of a loop: one store per pass, each released.
+// looped(10) = 0 + 1 + … + 9 = 45.
+fn looped(n: integer) -> integer {
+  s = 0;
+  for i in 0..n {
+    p = make(i, 0);
+    s += p.x;
+  }
+  s
+}
+
+// A call's record read and never bound, and one handed straight to another call.
+// unbound(4) = make(4, 0).x + mixed-style read of make(4, 2) through pick: 4 + (-1) = 3.
+fn unbound(n: integer) -> integer {
+  make(n, 0).x + pick(make(n, 2))
+}
+
+// A parameter rebound to a record of its own leaves the caller's alone.
+// reset_kept(3) = p.x * 10 + reset(p) = 30 + (9 - 3) = 36.
+fn reset(p: Point) -> integer {
+  was = p.x;
+  p = make(9, 9);
+  p.x - was
+}
+
+fn reset_kept(n: integer) -> integer {
+  p = make(n, 0);
+  r = reset(p);
+  p.x * 10 + r
+}
+
+// A copy of a borrowing call's result, then the source changed: each keeps its own.
+// borrowed(6) = c.x * 100 + src.x = 600 + 50 = 650.
+fn borrowed(n: integer) -> integer {
+  src = make(n, 0);
+  c = keep(src);
+  src.x = 50;
+  c.x * 100 + src.x
+}
+
+// Built into a local and returned, as the stdlib's `file()` is written: the local is promoted
+// onto the hidden return buffer, and the caller's bind adopts the store the call minted.
+// promoted(4) = 4 + 1 + len("f") = 6.
+fn built_local(n: integer) -> Point {
+  result = Point { x: n, y: 0, name: "f" };
+  result.y = 1;
+  result
+}
+
+fn promoted(n: integer) -> integer {
+  p = built_local(n);
+  p.x + p.y + len(p.name)
+}
+
+fn main() {
+  println("{built(3)} {shifted(4)} {copied(4)} {named(5)} {texts_apart(1)} {mixed(10)} {matched(1)} {matched(5)} {kept(4)} {wide(5)} {wide(-5)} {floats(3)} {rebound(5)} {looped(10)} {unbound(4)} {reset_kept(3)} {borrowed(6)} {promoted(4)}");
+}

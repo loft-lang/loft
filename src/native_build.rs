@@ -201,6 +201,43 @@ pub(crate) fn component_of(pkg_dir: &str) -> Option<String> {
     crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml")).and_then(|m| m.native_component)
 }
 
+/// Why a package whose native part needs no build has none to load on this host, for a
+/// refusal: a component loft ships that is not installed, or a library the package ships
+/// prebuilt per host that is absent for this one or built against another loft-ffi.  None for a
+/// package with a crate (`native/Cargo.toml`), whose cure is a build — the cargo advice.
+#[must_use]
+pub fn unbuildable_native_reason(pkg_dir: &str, crate_name: &str) -> Option<String> {
+    if let Some(name) = component_of(pkg_dir) {
+        return Some(crate::components::missing(&name));
+    }
+    let pkg = std::path::Path::new(pkg_dir);
+    if crate::file_access::exists(pkg.join("native").join("Cargo.toml")) {
+        return None;
+    }
+    let manifest = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"));
+    let name = manifest
+        .as_ref()
+        .and_then(|m| m.name.clone())
+        .or_else(|| crate::file_access::file_name(pkg_dir))
+        .unwrap_or_else(|| crate_name.to_string());
+    let stem = manifest
+        .and_then(|m| m.native)
+        .unwrap_or_else(|| crate_name.replace('-', "_"));
+    let triple = crate::cache::host_triple();
+    let shipped = format!("prebuilt/{triple}/{}", platform_lib_name(&stem));
+    Some(if crate::file_access::exists(pkg.join(&shipped)) {
+        format!(
+            "the native library of package `{name}` ({shipped}) was built against another \
+             loft-ffi than this loft's — install a version of `{name}` built for this loft"
+        )
+    } else {
+        format!(
+            "package `{name}` ships no native library for {triple} (looked for {shipped}) — \
+             install a version of `{name}` built for this host"
+        )
+    })
+}
+
 /// The native library a package ships PREBUILT for this host, never a build: what
 /// [`resolve_native_lib`] tries first, and all the C backend links (@PLN205).
 #[must_use]

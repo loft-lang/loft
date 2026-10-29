@@ -1,0 +1,421 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The C runtime's type table, derived from the program image's store schema (@PLN91 S3,
+// doc/claude/plans/91-self-host/1b-s3.md question 2).  The runtime reads one descriptor per type
+// (`loft_tdesc`, `src/c/loft_rt.h`) to copy a record and the claims it owns; a `--native-c`
+// program has the table compiled in, written by the C generator's `copy_table`
+// (`src/c/mod.rs`).  This is that derivation in loft, so the interpreter needs nothing of the
+// Rust side.  Each value follows its Rust home, named beside it; while that home exists, the
+// selfhost tests compare the two tables row by row.
+use ir;
+
+// The descriptor kinds, as `loft_rt.h` numbers them (`LOFT_T_*`).
+T_SCALAR = 0;
+T_TEXT = 1;
+T_STRUCT = 2;
+T_VECTOR = 3;
+T_ENUM = 4;
+T_CHILD = 5;
+T_HASH = 6;
+T_INDEX = 7;
+T_ORDERED = 8;
+T_RADIX = 9;
+T_TRIE = 10;
+T_DBREF = 11;
+
+// One field of a struct's row: its byte offset, its type, whether it is a view member of a
+// linked group (0 no, 1 a view, 2 a view over nullable elements), whether it is hidden (a
+// `#` name), and its group (the owner's index plus one, 0 outside a group).
+pub struct FieldRow {
+  pub pos: integer,
+  pub tp: integer,
+  pub view: integer,
+  pub hidden: integer,
+  pub group: integer,
+}
+
+// One key part of a keyed collection: the key field's type, its byte position and, for a
+// narrow integer, its storage start — the image's own `DbType.keys`, unchanged.
+pub struct KeyRow {
+  pub tp: integer,
+  pub pos: integer,
+  pub start: integer,
+}
+
+// One type's row.  `variants` is a struct enum's variant types, 65535 for a unit variant;
+// `keys` a keyed collection's key parts.
+pub struct Row {
+  pub tp: integer,
+  pub kind: integer,
+  pub size: integer,
+  pub elem: integer,
+  pub n: integer,
+  pub owns_heap: boolean,
+  pub linked: boolean,
+  pub fields: vector<FieldRow>,
+  pub variants: vector<integer>,
+  pub keys: vector<KeyRow>,
+}
+
+fn schema(b: ir::Bundle, tp: integer) -> ir::DbType? {
+  b.types[tp]
+}
+
+fn parts(b: ir::Bundle, tp: integer) -> ir::DbParts? {
+  t = schema(b, tp);
+  if t == null {
+    return null;
+  }
+  t.parts[0]
+}
+
+// Can a value of `tp` own a heap record?  `Stores::derive_facts`, its first answer
+// (`src/database/allocation.rs`): text is the one heap-owning base type; a struct or a variant
+// owns heap when a field does; an enum when a variant does; every collection does.  A type met
+// again on the way answers no, as there.
+pub fn owns_heap(b: ir::Bundle, tp: integer) -> boolean {
+  seen: vector<integer> = [];
+  owns_from(b, tp, seen)
+}
+
+fn owns_from(b: ir::Bundle, tp: integer, seen: vector<integer>) -> boolean {
+  p = parts(b, tp);
+  if p == null {
+    return false;
+  }
+  for s in seen {
+    if s == tp {
+      return false;
+    }
+  }
+  seen += [tp];
+  match p {
+    PtBase => tp == 5,
+    PtStruct { fields } => fields_own(b, fields, seen),
+    PtEnumValue { value: _, fields } => fields_own(b, fields, seen),
+    PtEnum { values } => {
+      owns = false;
+      for v in values {
+        if v.nr != 65535 && owns_from(b, v.nr, seen) {
+          owns = true;
+        }
+      }
+      owns
+    }
+    PtVector { content: _ } => true,
+    PtArray { content: _ } => true,
+    PtSorted { content: _, keys: _ } => true,
+    PtOrdered { content: _, keys: _ } => true,
+    PtHash { content: _, fields: _ } => true,
+    PtIndex { content: _, keys: _ } => true,
+    PtRadix { content: _, fields: _ } => true,
+    PtTrie { content: _, key: _ } => true,
+    PtChildRec { content: _ } => true,
+    _ => false,
+  }
+}
+
+fn fields_own(b: ir::Bundle, fields: vector<ir::DbField>, seen: vector<integer>) -> boolean {
+  owns = false;
+  for f in fields {
+    if owns_from(b, f.content, seen) {
+      owns = true;
+    }
+  }
+  owns
+}
+
+// May a value of `tp` move to another store whole (`@FR-H-SwapIn`)?  Not when its tree holds a
+// stored reference, which could name the store it moves from.  `Cx::swap_safe`
+// (`src/c/mod.rs`): a field with a `reference<T>` target or a `DbRef` part says no; a type met
+// again on the way says yes, as there.
+pub fn swap_safe(b: ir::Bundle, tp: integer) -> boolean {
+  seen: vector<integer> = [];
+  swap_from(b, tp, seen)
+}
+
+fn swap_from(b: ir::Bundle, tp: integer, seen: vector<integer>) -> boolean {
+  for s in seen {
+    if s == tp {
+      return true;
+    }
+  }
+  seen += [tp];
+  p = parts(b, tp);
+  if p == null {
+    return false;
+  }
+  match p {
+    PtStruct { fields } => fields_swap(b, fields, seen),
+    PtEnumValue { value: _, fields } => fields_swap(b, fields, seen),
+    PtEnum { values } => {
+      safe = true;
+      for v in values {
+        if v.nr != 65535 && !swap_from(b, v.nr, seen) {
+          safe = false;
+        }
+      }
+      safe
+    }
+    PtVector { content } => swap_from(b, content, seen),
+    PtArray { content } => swap_from(b, content, seen),
+    PtSorted { content, keys: _ } => swap_from(b, content, seen),
+    PtOrdered { content, keys: _ } => swap_from(b, content, seen),
+    PtHash { content, fields: _ } => swap_from(b, content, seen),
+    PtIndex { content, keys: _ } => swap_from(b, content, seen),
+    PtRadix { content, fields: _ } => swap_from(b, content, seen),
+    PtTrie { content, key: _ } => swap_from(b, content, seen),
+    PtChildRec { content } => swap_from(b, content, seen),
+    PtDbRef => false,
+    _ => true,
+  }
+}
+
+fn fields_swap(b: ir::Bundle, fields: vector<ir::DbField>, seen: vector<integer>) -> boolean {
+  safe = true;
+  for f in fields {
+    if f.target != 65535 || !swap_from(b, f.content, seen) {
+      safe = false;
+    }
+  }
+  safe
+}
+
+// The owner of field `i`'s linked group — the member whose `other_indexes` does not start with
+// the view marker 65535 — or -1 outside a group.  `group_owner` (`src/c/mod.rs`).
+fn group_owner(fields: vector<ir::DbField>, i: integer) -> integer {
+  others = (fields[i] ?? panic("a field of this struct")).other_indexes;
+  if len(others) == 0 {
+    return -1;
+  }
+  if (others[0] ?? 0) != 65535 {
+    return i;
+  }
+  for m in others {
+    if m != 65535 && ((fields[m] ?? panic("a group member")).other_indexes[0] ?? 0) != 65535 {
+      return m;
+    }
+  }
+  -1
+}
+
+// A struct's field rows, as `field_rows` writes them (`src/c/mod.rs`).  A view member of a
+// linked group needs `Stores::nullable_some_variant`, which reads a flag the image does not
+// carry yet (`nullable_wrapper`): its `view` is -1, so the comparison names it rather than
+// passing a guess.
+fn field_rows(fields: vector<ir::DbField>) -> vector<FieldRow> {
+  out: vector<FieldRow> = [];
+  for i in 0..len(fields) {
+    f = fields[i] ?? panic("in range");
+    o = group_owner(fields, i);
+    view = 0;
+    group = 0;
+    if o >= 0 && o != i {
+      view = -1;
+      group = o + 1;
+    } else if o >= 0 {
+      group = o + 1;
+    }
+    out += [FieldRow {
+      pos: f.position,
+      tp: f.content,
+      view: view,
+      hidden: if f.name.starts_with("#") { 1 } else { 0 },
+      group: group,
+    }];
+  }
+  out
+}
+
+// Type `tp`'s row, as `copy_table` writes it (`src/c/mod.rs`).  A keyed collection's key parts
+// are the image's own (`DbType.keys`), carried as they are.
+pub fn row(b: ir::Bundle, tp: integer) -> Row {
+  t = schema(b, tp) ?? panic("a type of this image");
+  r = Row {
+    tp: tp,
+    kind: T_SCALAR,
+    size: t.size,
+    elem: 0,
+    n: 0,
+    owns_heap: owns_heap(b, tp),
+    linked: t.linked,
+    fields: [],
+    variants: [],
+    keys: [],
+  };
+  for k in t.keys {
+    r.keys += [KeyRow { tp: k.type_nr, pos: k.position, start: k.start }];
+  }
+  match t.parts[0] ?? panic("a type has its parts") {
+    PtBase => {
+      if tp == 5 || t.name == "text" {
+        r.kind = T_TEXT;
+      }
+    }
+    PtStruct { fields } => {
+      r.kind = T_STRUCT;
+      r.n = len(fields);
+      r.fields = field_rows(fields);
+    }
+    PtEnumValue { value: _, fields } => {
+      r.kind = T_STRUCT;
+      r.n = len(fields);
+      r.fields = field_rows(fields);
+    }
+    PtVector { content } => { r.kind = T_VECTOR; r.elem = content; }
+    PtSorted { content, keys: _ } => { r.kind = T_VECTOR; r.elem = content; }
+    PtHash { content, fields: _ } => { r.kind = T_HASH; r.elem = content; }
+    PtIndex { content, keys: _ } => { r.kind = T_INDEX; r.elem = content; }
+    PtRadix { content, fields: _ } => { r.kind = T_RADIX; r.elem = content; }
+    PtTrie { content, key: _ } => { r.kind = T_TRIE; r.elem = content; }
+    PtOrdered { content, keys: _ } => { r.kind = T_ORDERED; r.elem = content; }
+    PtArray { content } => { r.kind = T_ORDERED; r.elem = content; }
+    PtChildRec { content } => { r.kind = T_CHILD; r.elem = content; }
+    PtEnum { values } => {
+      tagged = false;
+      for v in values {
+        if v.nr != 65535 {
+          tagged = true;
+        }
+      }
+      if tagged {
+        r.kind = T_ENUM;
+        r.n = len(values);
+        for v in values {
+          r.variants += [v.nr];
+        }
+      }
+    }
+    PtDbRef => { r.kind = T_DBREF; }
+    _ => {}
+  }
+  r
+}
+
+// A row as one line: `tp kind size elem n owns_heap linked`, then each field as
+// `pos,type,view,hidden,group`, then a struct enum's variants as `variants=a,b,…` — the form the
+// selfhost tests compare with the C generator's.
+pub fn render(r: Row) -> text {
+  out = "{r.tp} {r.kind} {r.size} {r.elem} {r.n} {if r.owns_heap { 1 } else { 0 }} {if r.linked { 1 } else { 0 }}";
+  for f in r.fields {
+    out += " {f.pos},{f.tp},{f.view},{f.hidden},{f.group}";
+  }
+  if len(r.variants) > 0 {
+    out += " variants=";
+    for v in r.variants {
+      out += if v#index > 0 { ",{v}" } else { "{v}" };
+    }
+  }
+  if len(r.keys) > 0 {
+    out += " keys=";
+    for k in r.keys {
+      out += if k#index > 0 { ";{k.tp},{k.pos},{k.start}" } else { "{k.tp},{k.pos},{k.start}" };
+    }
+  }
+  out
+}
+
+// The rows `crt::load_types` takes: per type `tp, kind, size, elem, n_fields, owns_heap,
+// linked, n_variants, n_keys`, then five numbers per field, the variants, and three numbers per
+// key part.  A struct enum's copy
+// and release find its payload through the variants, so a row without them copies the bytes of
+// a variant and not the claims it owns.
+pub fn flat(rows: vector<Row>) -> vector<integer> {
+  out: vector<integer> = [];
+  for r in rows {
+    out += [r.tp, r.kind, r.size, r.elem, len(r.fields), if r.owns_heap { 1 } else { 0 }, if r.linked { 1 } else { 0 }, len(r.variants), len(r.keys)];
+    for f in r.fields {
+      out += [f.pos, f.tp, f.view, f.hidden, f.group];
+    }
+    out += r.variants;
+    for k in r.keys {
+      out += [k.tp, k.pos, k.start];
+    }
+  }
+  out
+}
+
+// The bytes a fresh record of `tp` holds before its literal runs: `Stores::set_default_value`'s
+// walk with `Absent::Prefill` (`src/database/structures.rs`), as the C generator captures it
+// into `loft_dflt{tp}` for `OpNewRecord`.  Most slots default to zero, so the walk writes only
+// the others: an integer's and a float's null, a nullable boolean's 255, a narrow integer's
+// null code (or a non-null short's `0 - min + 1`), and a variant's type tag.  The selfhost
+// tests compare this with the C generator's image, byte by byte.
+pub fn default_image(b: ir::Bundle, tp: integer) -> vector<u8> {
+  t = schema(b, tp) ?? panic("a type of this image");
+  out: vector<u8> = [for _ in 0..t.size { 0 as u8 }];
+  default_into(b, tp, true, out, 0);
+  out
+}
+
+// `bytes`, already in little-endian order, written from byte `at` of `out`.
+fn put_bytes(out: vector<u8>, at: integer, bytes: vector<integer>) {
+  for x in bytes {
+    if at + x#index < len(out) {
+      out[at + x#index] = (x & 255) as u8;
+    }
+  }
+}
+
+fn default_into(b: ir::Bundle, tp: integer, nullable: boolean, out: vector<u8>, at: integer) {
+  if tp == 65535 {
+    return;
+  }
+  if tp <= 6 {
+    if nullable {
+      if tp == 0 || tp == 1 {
+        put_bytes(out, at, [0, 0, 0, 0, 0, 0, 0, 128]);
+      } else if tp == 2 {
+        put_bytes(out, at, [0, 0, 192, 127]);
+      } else if tp == 3 {
+        put_bytes(out, at, [0, 0, 0, 0, 0, 0, 248, 127]);
+      } else if tp == 4 {
+        put_bytes(out, at, [255]);
+      }
+    }
+    return;
+  }
+  p = parts(b, tp);
+  if p == null {
+    return;
+  }
+  match p {
+    PtByte { start: _, nullable: null_code } => {
+      if null_code { put_bytes(out, at, [255]); }
+    }
+    PtShort { start: _, nullable: null_code } => {
+      if !null_code { put_bytes(out, at, [1, 0]); }
+    }
+    PtShortRaw { start: _, nullable: null_code } => {
+      if null_code { put_bytes(out, at, [255, 255]); }
+    }
+    PtInt { start: _, nullable: null_code } => {
+      if null_code { put_bytes(out, at, [0, 0, 0, 128]); }
+    }
+    PtIntRaw { start: _, nullable: null_code } => {
+      if null_code { put_bytes(out, at, [255, 255, 255, 255]); }
+    }
+    PtStruct { fields } => fields_into(b, tp, fields, out, at),
+    PtEnumValue { value: _, fields } => fields_into(b, tp, fields, out, at),
+    PtEnum { values: _ } => {
+      // `@FR-D-Json`: a non-null `JsonValue` defaults to its `JNull` tag, 1.
+      if !nullable && (schema(b, tp) ?? panic("in range")).name == "JsonValue" {
+        put_bytes(out, at, [1]);
+      }
+    }
+    _ => {}
+  }
+}
+
+fn fields_into(b: ir::Bundle, tp: integer, fields: vector<ir::DbField>, out: vector<u8>, at: integer) {
+  for f in fields {
+    if f.name == "type" && f.position == 0 {
+      // The type tag, a short with minimum 0: `tp - 0 + 1`.
+      put_bytes(out, at, [(tp + 1) & 255, (tp + 1) >> 8]);
+    } else {
+      default_into(b, f.content, f.nullable, out, at + f.position);
+    }
+  }
+}

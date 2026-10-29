@@ -1,9 +1,12 @@
-/* The TLS client of loft's C runtime: BearSSL's engine (vendored under `bearssl/`, the upstream
- * the crypto library vendors its primitives from) behind four calls the unit declares.  It is
- * not part of the unit's translation unit: `src/c/tls.rs` builds it with the BearSSL sources
- * into one cached archive, linked only into a unit that fetches over a URL (`LOFT_HTTPS`).
+/* The TLS of loft's C runtime: BearSSL's engine (vendored under `bearssl/`, the upstream the
+ * crypto library vendors its primitives from) behind the calls the unit declares — a client
+ * session (`loft_tls_open`) and, for the server library's TLS listener, a server session over a
+ * certificate chain and key (`loft_tls_server_new`, `loft_tls_accept`; at the end of the file).
+ * It is not part of the unit's translation unit: `src/c/tls.rs` builds it with the BearSSL
+ * sources into one cached archive, linked only into a unit that fetches over a URL or serves
+ * TLS (`LOFT_HTTPS`).
  *
- * What it promises, as `src/tls.rs` promises it for the Rust build:
+ * What the client promises, as `src/tls.rs` promises it for the Rust build:
  *   - the certificates the machine trusts are trusted: `SSL_CERT_FILE` / `SSL_CERT_DIR` when set,
  *     else the system bundle at the first of the paths curl and OpenSSL probe;
  *   - the server's chain is always validated and its name always checked — a DNS name by
@@ -18,6 +21,7 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <poll.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -105,6 +109,46 @@ static void loft_tls_add_der(const unsigned char *der, size_t n) {
     loft_tls_ta.v[loft_tls_ta.n++] = ta;
 }
 
+/* Each object of the PEM text `p` (`n` bytes), as its name and its DER bytes; text that is not
+ * PEM, or past a malformed object, yields nothing more. */
+static void loft_tls_pem(const unsigned char *p, size_t n, void (*each)(void *, const char *, const unsigned char *, size_t),
+                         void *ctx) {
+    br_pem_decoder_context pc;
+    br_pem_decoder_init(&pc);
+    loft_tls_buf der = { 0, 0, 0 };
+    char name[128] = "";
+    size_t off = 0;
+    while (off < n) {
+        off += br_pem_decoder_push(&pc, p + off, n - off);
+        switch (br_pem_decoder_event(&pc)) {
+        case BR_PEM_BEGIN_OBJ:
+            snprintf(name, sizeof name, "%s", br_pem_decoder_name(&pc));
+            der.n = 0;
+            br_pem_decoder_setdest(&pc, loft_tls_append, &der);
+            break;
+        case BR_PEM_END_OBJ:
+            if (der.n) each(ctx, name, der.p, der.n);
+            break;
+        case BR_PEM_ERROR:
+            off = n;
+            break;
+        default:
+            break;
+        }
+    }
+    free(der.p);
+}
+
+static int loft_tls_is_cert(const char *name) {
+    return strcmp(name, "CERTIFICATE") == 0 || strcmp(name, "X509 CERTIFICATE") == 0 ||
+           strcmp(name, "TRUSTED CERTIFICATE") == 0;
+}
+
+static void loft_tls_anchor(void *ctx, const char *name, const unsigned char *der, size_t n) {
+    (void) ctx;
+    if (loft_tls_is_cert(name)) loft_tls_add_der(der, n);
+}
+
 /* Every CERTIFICATE object of a PEM file; a file that is not PEM, or an object of another kind,
  * adds nothing.  Answers whether the file could be read. */
 static int loft_tls_add_file(const char *path) {
@@ -115,34 +159,7 @@ static int loft_tls_add_file(const char *path) {
     size_t got;
     while ((got = fread(chunk, 1, sizeof chunk, f)) > 0) loft_tls_grow(&all, chunk, got);
     fclose(f);
-    br_pem_decoder_context pc;
-    br_pem_decoder_init(&pc);
-    loft_tls_buf der = { 0, 0, 0 };
-    int in_cert = 0;
-    size_t off = 0;
-    while (off < all.n) {
-        off += br_pem_decoder_push(&pc, all.p + off, all.n - off);
-        switch (br_pem_decoder_event(&pc)) {
-        case BR_PEM_BEGIN_OBJ: {
-            const char *name = br_pem_decoder_name(&pc);
-            in_cert = strcmp(name, "CERTIFICATE") == 0 || strcmp(name, "X509 CERTIFICATE") == 0 ||
-                      strcmp(name, "TRUSTED CERTIFICATE") == 0;
-            der.n = 0;
-            br_pem_decoder_setdest(&pc, in_cert ? loft_tls_append : 0, in_cert ? &der : 0);
-            break;
-        }
-        case BR_PEM_END_OBJ:
-            if (in_cert && der.n) loft_tls_add_der(der.p, der.n);
-            in_cert = 0;
-            break;
-        case BR_PEM_ERROR:
-            off = all.n;
-            break;
-        default:
-            break;
-        }
-    }
-    free(der.p);
+    loft_tls_pem(all.p, all.n, loft_tls_anchor, 0);
     free(all.p);
     return 1;
 }
@@ -316,8 +333,13 @@ static const br_x509_class loft_tls_x509_vtable = {
 
 /* ── The connection ── */
 
+/* A session of either role: a client's validates the server, a server's presents its chain. */
 struct loft_tls {
-    br_ssl_client_context sc;
+    union {
+        br_ssl_client_context c;
+        br_ssl_server_context s;
+    } u;
+    br_ssl_engine_context *eng;
     loft_tls_x509 xc;
     br_sslio_context io;
     int fd;
@@ -363,7 +385,8 @@ static void loft_tls_profile(struct loft_tls *t) {
     static const br_hash_class *const hashes[] = {
         &br_sha1_vtable, &br_sha224_vtable, &br_sha256_vtable, &br_sha384_vtable, &br_sha512_vtable,
     };
-    br_ssl_client_context *cc = &t->sc;
+    br_ssl_client_context *cc = &t->u.c;
+    t->eng = &cc->eng;
     br_x509_minimal_context *xc = &t->xc.inner;
     br_ssl_client_zero(cc);
     br_ssl_engine_set_versions(&cc->eng, BR_TLS12, BR_TLS12);
@@ -439,7 +462,7 @@ struct loft_tls *loft_tls_open(int fd, const char *host, char *err, size_t cap) 
     }
     t->fd = fd;
     loft_tls_profile(t);
-    br_ssl_engine_set_buffer(&t->sc.eng, t->iobuf, sizeof t->iobuf, 1);
+    br_ssl_engine_set_buffer(t->eng, t->iobuf, sizeof t->iobuf, 1);
     struct in6_addr a6;
     struct in_addr a4;
     const char *name = host;
@@ -452,16 +475,16 @@ struct loft_tls *loft_tls_open(int fd, const char *host, char *err, size_t cap) 
         t->xc.iplen = 16;
         name = 0;
     }
-    if (!br_ssl_client_reset(&t->sc, name, 0)) {
-        loft_tls_why(br_ssl_engine_last_error(&t->sc.eng), err, cap);
+    if (!br_ssl_client_reset(&t->u.c, name, 0)) {
+        loft_tls_why(br_ssl_engine_last_error(t->eng), err, cap);
         free(t->xc.ee.p);
         free(t);
         return 0;
     }
-    br_sslio_init(&t->io, &t->sc.eng, loft_tls_sock_read, &t->fd, loft_tls_sock_write, &t->fd);
+    br_sslio_init(&t->io, t->eng, loft_tls_sock_read, &t->fd, loft_tls_sock_write, &t->fd);
     /* The handshake runs on the first flush: it answers once the engine takes application data. */
     if (br_sslio_flush(&t->io) != 0) {
-        int code = br_ssl_engine_last_error(&t->sc.eng);
+        int code = br_ssl_engine_last_error(t->eng);
         loft_tls_why(code, err, cap);
         free(t->xc.ee.p);
         free(t);
@@ -474,7 +497,7 @@ struct loft_tls *loft_tls_open(int fd, const char *host, char *err, size_t cap) 
 long loft_tls_read(struct loft_tls *t, void *buf, size_t n) {
     int r = br_sslio_read(&t->io, buf, n);
     if (r > 0) return r;
-    int code = br_ssl_engine_last_error(&t->sc.eng);
+    int code = br_ssl_engine_last_error(t->eng);
     /* A server that closes the socket without close_notify ends the body, as HTTP/1.1 with
      * `Connection: close` lets it; any other failure is one. */
     return code == BR_ERR_OK || code == BR_ERR_IO ? 0 : -1;
@@ -485,7 +508,7 @@ long loft_tls_read(struct loft_tls *t, void *buf, size_t n) {
  * asks this before waiting on the socket, because a record already read off it is not there. */
 int loft_tls_pending(struct loft_tls *t) {
     size_t len = 0;
-    return (br_ssl_engine_current_state(&t->sc.eng) & BR_SSL_RECVAPP) && br_ssl_engine_recvapp_buf(&t->sc.eng, &len) && len > 0;
+    return (br_ssl_engine_current_state(t->eng) & BR_SSL_RECVAPP) && br_ssl_engine_recvapp_buf(t->eng, &len) && len > 0;
 }
 
 int loft_tls_write_all(struct loft_tls *t, const void *buf, size_t n) {
@@ -497,7 +520,7 @@ int loft_tls_write_all(struct loft_tls *t, const void *buf, size_t n) {
  * a server that keeps the socket open makes it). */
 void loft_tls_close(struct loft_tls *t) {
     if (!t) return;
-    br_ssl_engine_context *eng = &t->sc.eng;
+    br_ssl_engine_context *eng = t->eng;
     if (br_ssl_engine_current_state(eng) != BR_SSL_CLOSED) {
         br_ssl_engine_close(eng);
         for (int i = 0; i < 8 && (br_ssl_engine_current_state(eng) & BR_SSL_SENDREC); i++) {
@@ -510,4 +533,242 @@ void loft_tls_close(struct loft_tls *t) {
     }
     free(t->xc.ee.p);
     free(t);
+}
+
+/* ── The server's side: a certificate chain and its key, one session per accepted socket ──
+ * What `src/http_server.rs` promises with rustls: TLS 1.2 here (BearSSL has no 1.3) with the
+ * client's forward-secret suites, the key the certificate's — a pair that does not match
+ * refuses the listener, as rustls does, rather than failing every handshake later. */
+
+struct loft_tls_server {
+    br_x509_certificate *chain;
+    size_t chain_len;
+    int key_type; /* BR_KEYTYPE_RSA or BR_KEYTYPE_EC */
+    br_rsa_private_key rsa;
+    br_ec_private_key ec;
+};
+
+static void loft_tls_chain_add(void *ctx, const char *name, const unsigned char *der, size_t n) {
+    struct loft_tls_server *c = (struct loft_tls_server *) ctx;
+    if (!loft_tls_is_cert(name)) return;
+    br_x509_certificate *v = (br_x509_certificate *) realloc(c->chain, (c->chain_len + 1) * sizeof *v);
+    if (!v) return;
+    c->chain = v;
+    v[c->chain_len].data = (unsigned char *) loft_tls_dup(der, n);
+    v[c->chain_len].data_len = n;
+    c->chain_len++;
+}
+
+typedef struct {
+    struct loft_tls_server *c;
+    int found;
+} loft_tls_keyfind;
+
+/* The first private key object: PKCS#8 or the raw RSA / EC forms, copied out of the decoder. */
+static void loft_tls_key_add(void *ctx, const char *name, const unsigned char *der, size_t n) {
+    loft_tls_keyfind *k = (loft_tls_keyfind *) ctx;
+    if (k->found || (strcmp(name, "PRIVATE KEY") != 0 && strcmp(name, "RSA PRIVATE KEY") != 0 &&
+                     strcmp(name, "EC PRIVATE KEY") != 0))
+        return;
+    br_skey_decoder_context dc;
+    br_skey_decoder_init(&dc);
+    br_skey_decoder_push(&dc, der, n);
+    if (br_skey_decoder_last_error(&dc) != 0) return;
+    struct loft_tls_server *c = k->c;
+    if (br_skey_decoder_key_type(&dc) == BR_KEYTYPE_RSA) {
+        const br_rsa_private_key *r = br_skey_decoder_get_rsa(&dc);
+        c->rsa.n_bitlen = r->n_bitlen;
+        c->rsa.p = (unsigned char *) loft_tls_dup(r->p, r->plen);
+        c->rsa.plen = r->plen;
+        c->rsa.q = (unsigned char *) loft_tls_dup(r->q, r->qlen);
+        c->rsa.qlen = r->qlen;
+        c->rsa.dp = (unsigned char *) loft_tls_dup(r->dp, r->dplen);
+        c->rsa.dplen = r->dplen;
+        c->rsa.dq = (unsigned char *) loft_tls_dup(r->dq, r->dqlen);
+        c->rsa.dqlen = r->dqlen;
+        c->rsa.iq = (unsigned char *) loft_tls_dup(r->iq, r->iqlen);
+        c->rsa.iqlen = r->iqlen;
+        c->key_type = BR_KEYTYPE_RSA;
+    } else if (br_skey_decoder_key_type(&dc) == BR_KEYTYPE_EC) {
+        const br_ec_private_key *e = br_skey_decoder_get_ec(&dc);
+        c->ec.curve = e->curve;
+        c->ec.x = (unsigned char *) loft_tls_dup(e->x, e->xlen);
+        c->ec.xlen = e->xlen;
+        c->key_type = BR_KEYTYPE_EC;
+    } else {
+        return;
+    }
+    k->found = 1;
+}
+
+/* Does the key belong to the leaf certificate: the same type, and the public key it derives
+ * the one the certificate carries? */
+static int loft_tls_key_matches(const struct loft_tls_server *c) {
+    br_x509_decoder_context dc;
+    br_x509_decoder_init(&dc, 0, 0);
+    br_x509_decoder_push(&dc, c->chain[0].data, c->chain[0].data_len);
+    const br_x509_pkey *pk = br_x509_decoder_get_pkey(&dc);
+    if (!pk || (int) pk->key_type != c->key_type) return 0;
+    if (c->key_type == BR_KEYTYPE_EC) {
+        unsigned char q[BR_EC_KBUF_PUB_MAX_SIZE];
+        size_t qn = br_ec_compute_pub(br_ec_get_default(), 0, q, &c->ec);
+        return pk->key.ec.curve == c->ec.curve && qn == pk->key.ec.qlen && memcmp(q, pk->key.ec.q, qn) == 0;
+    }
+    br_rsa_compute_modulus modulus = br_rsa_compute_modulus_get_default();
+    size_t nn = modulus(0, &c->rsa);
+    unsigned char *m = (unsigned char *) malloc(nn ? nn : 1);
+    if (!m || modulus(m, &c->rsa) != nn) {
+        free(m);
+        return 0;
+    }
+    /* The certificate's modulus may carry a leading zero the computed one does not. */
+    const unsigned char *cn = pk->key.rsa.n;
+    size_t cl = pk->key.rsa.nlen;
+    while (cl > 0 && *cn == 0) cn++, cl--;
+    const unsigned char *mn = m;
+    size_t ml = nn;
+    while (ml > 0 && *mn == 0) mn++, ml--;
+    int same = cl == ml && memcmp(cn, mn, ml) == 0;
+    free(m);
+    return same;
+}
+
+void loft_tls_server_free(struct loft_tls_server *c) {
+    if (!c) return;
+    for (size_t i = 0; i < c->chain_len; i++) free(c->chain[i].data);
+    free(c->chain);
+    free(c->rsa.p);
+    free(c->rsa.q);
+    free(c->rsa.dp);
+    free(c->rsa.dq);
+    free(c->rsa.iq);
+    free(c->ec.x);
+    free(c);
+}
+
+/* The server configuration of a PEM certificate chain (leaf first) and a PEM private key; 0 with
+ * `err` saying why, in `src/http_server.rs`'s words. */
+struct loft_tls_server *loft_tls_server_new(const char *cert, size_t cert_len, const char *key, size_t key_len,
+                                            char *err, size_t cap) {
+    struct loft_tls_server *c = (struct loft_tls_server *) calloc(1, sizeof *c);
+    if (!c) {
+        snprintf(err, cap, "out of memory");
+        return 0;
+    }
+    loft_tls_pem((const unsigned char *) cert, cert_len, loft_tls_chain_add, c);
+    if (c->chain_len == 0) {
+        snprintf(err, cap, "no certificate found in the PEM cert chain");
+        loft_tls_server_free(c);
+        return 0;
+    }
+    loft_tls_keyfind k = { c, 0 };
+    loft_tls_pem((const unsigned char *) key, key_len, loft_tls_key_add, &k);
+    if (!k.found) {
+        snprintf(err, cap, "no private key found in the PEM key");
+        loft_tls_server_free(c);
+        return 0;
+    }
+    if (!loft_tls_key_matches(c)) {
+        snprintf(err, cap, "bad certificate/key pair: the private key does not match the certificate");
+        loft_tls_server_free(c);
+        return 0;
+    }
+    return c;
+}
+
+/* A server session over the accepted socket `fd`, its handshake done; 0 with `err` saying why.
+ * `fd` stays the caller's to close. */
+struct loft_tls *loft_tls_accept(int fd, const struct loft_tls_server *cfg, char *err, size_t cap) {
+    static const uint16_t ec_suites[] = {
+        BR_TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256, BR_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+        BR_TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,       BR_TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256,
+        BR_TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384,       BR_TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
+        BR_TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA,
+    };
+    static const uint16_t rsa_suites[] = {
+        BR_TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256, BR_TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+        BR_TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,       BR_TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256,
+        BR_TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384,       BR_TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
+        BR_TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+    };
+    static const br_hash_class *const hashes[] = {
+        &br_sha1_vtable, &br_sha224_vtable, &br_sha256_vtable, &br_sha384_vtable, &br_sha512_vtable,
+    };
+    struct loft_tls *t = (struct loft_tls *) calloc(1, sizeof *t);
+    if (!t) {
+        snprintf(err, cap, "out of memory");
+        return 0;
+    }
+    t->fd = fd;
+    br_ssl_server_context *sc = &t->u.s;
+    t->eng = &sc->eng;
+    br_ssl_server_zero(sc);
+    br_ssl_engine_set_versions(t->eng, BR_TLS12, BR_TLS12);
+    if (cfg->key_type == BR_KEYTYPE_EC) {
+        br_ssl_engine_set_suites(t->eng, ec_suites, sizeof ec_suites / sizeof ec_suites[0]);
+    } else {
+        br_ssl_engine_set_suites(t->eng, rsa_suites, sizeof rsa_suites / sizeof rsa_suites[0]);
+    }
+    for (int id = br_sha1_ID; id <= br_sha512_ID; id++) br_ssl_engine_set_hash(t->eng, id, hashes[id - br_sha1_ID]);
+    br_ssl_engine_set_prf_sha256(t->eng, &br_tls12_sha256_prf);
+    br_ssl_engine_set_prf_sha384(t->eng, &br_tls12_sha384_prf);
+    br_ssl_engine_set_default_aes_cbc(t->eng);
+    br_ssl_engine_set_default_aes_gcm(t->eng);
+    br_ssl_engine_set_default_chapol(t->eng);
+    br_ssl_engine_set_default_ec(t->eng);
+    if (cfg->key_type == BR_KEYTYPE_EC) {
+        br_ssl_server_set_single_ec(sc, cfg->chain, cfg->chain_len, &cfg->ec, BR_KEYTYPE_SIGN, 0, br_ec_get_default(),
+                                    br_ecdsa_sign_asn1_get_default());
+    } else {
+        br_ssl_server_set_single_rsa(sc, cfg->chain, cfg->chain_len, &cfg->rsa, BR_KEYTYPE_SIGN,
+                                     br_rsa_private_get_default(), br_rsa_pkcs1_sign_get_default());
+    }
+    br_ssl_engine_set_buffer(t->eng, t->iobuf, sizeof t->iobuf, 1);
+    if (!br_ssl_server_reset(sc)) {
+        loft_tls_why(br_ssl_engine_last_error(t->eng), err, cap);
+        free(t);
+        return 0;
+    }
+    br_sslio_init(&t->io, t->eng, loft_tls_sock_read, &t->fd, loft_tls_sock_write, &t->fd);
+    if (br_sslio_flush(&t->io) != 0) {
+        loft_tls_why(br_ssl_engine_last_error(t->eng), err, cap);
+        free(t);
+        return 0;
+    }
+    return t;
+}
+
+/* Is application data ready to read, without consuming any: 1 ready, 0 none within `ms`, -1 the
+ * session is over.  Bytes that arrive are fed to the engine as records, so the decrypted data
+ * waits in it for the next read (BearSSL cannot peek; this is its engine driven by hand).  A
+ * record begun is awaited for up to two seconds more; a non-blocking read would fail the
+ * session instead. */
+int loft_tls_poll(struct loft_tls *t, int ms) {
+    br_ssl_engine_context *eng = t->eng;
+    for (;;) {
+        unsigned st = br_ssl_engine_current_state(eng);
+        if (st == BR_SSL_CLOSED) return -1;
+        if (st & BR_SSL_SENDREC) {
+            size_t len;
+            unsigned char *rec = br_ssl_engine_sendrec_buf(eng, &len);
+            int w = loft_tls_sock_write(&t->fd, rec, len);
+            if (w <= 0) return -1;
+            br_ssl_engine_sendrec_ack(eng, (size_t) w);
+            continue;
+        }
+        if (st & BR_SSL_RECVAPP) return 1;
+        if (!(st & BR_SSL_RECVREC)) return 0;
+        struct pollfd p = { t->fd, POLLIN, 0 };
+        int r = poll(&p, 1, ms);
+        if (r < 0 && errno == EINTR) continue;
+        if (r == 0) return 0;
+        if (r < 0) return -1;
+        size_t len;
+        unsigned char *buf = br_ssl_engine_recvrec_buf(eng, &len);
+        ssize_t got = recv(t->fd, buf, len, 0);
+        if (got < 0 && errno == EINTR) continue;
+        if (got <= 0) return -1;
+        br_ssl_engine_recvrec_ack(eng, (size_t) got);
+        ms = 2000;
+    }
 }

@@ -101,7 +101,7 @@ pub fn to_loft_ref(db: DbRef) -> loft_ffi::LoftRef {
 /// internally.  Mirrors `extensions::push_loft_ref` but takes
 /// `&mut Stores` directly instead of going through the dispatch
 /// state — used by generated native code that calls cdylib
-/// functions returning store-allocated vectors/structs.
+/// functions returning a store-allocated vector (a record: [`from_loft_record`]).
 ///
 /// @PLAN12 phase 3.5a (2026-05-24).
 #[must_use]
@@ -137,6 +137,19 @@ pub fn from_loft_ref(stores: &mut Stores, r: loft_ffi::LoftRef) -> DbRef {
         pos: 4,
     }
 }
+
+/// A cdylib's record answer as loft holds it: the record itself — `rec` and the `pos` its
+/// fields start at, as `LoftStore::alloc_record` answers — where a vector answer sits behind
+/// a header ([`from_loft_ref`]).  The null ref stays null.
+#[must_use]
+pub fn from_loft_record(r: loft_ffi::LoftRef) -> DbRef {
+    DbRef {
+        store_nr: r.store_nr,
+        rec: r.rec,
+        pos: r.pos,
+    }
+}
+
 use crate::vector;
 use std::cell::{Cell, RefCell};
 #[cfg(not(host_fs))]

@@ -430,13 +430,20 @@ LOFT_HOT_INLINE int64_t loft_mul(int64_t a, int64_t b) {
         int64_t r;
         return LOFT_MUL_OVF(a, b, &r) ? LOFT_NULL : r;
     }
-    if (a > 0) {
-        if (b > 0) { if (a > INT64_MAX / b) return LOFT_NULL; }
-        else if (b < INT64_MIN / a) return LOFT_NULL;
-    } else if (a < 0) {
-        if (b > 0) { if (a < INT64_MIN / b) return LOFT_NULL; }
-        else if (b != 0 && a < INT64_MAX / b) return LOFT_NULL;
+    /* One operand is a constant: make it `b`, and every bound below divides by it, so it folds
+     * to a compare.  With the constant on the left, `INT64_MAX / b` divided by the other operand
+     * at run time — an `idiv` per multiply (`lerp_int`'s `(b - a) * i`). */
+    if (LOFT_CONSTANT(a) && !LOFT_CONSTANT(b)) {
+        int64_t t = a;
+        a = b;
+        b = t;
     }
+    if (b > 0) {
+        if (a > INT64_MAX / b || a < INT64_MIN / b) return LOFT_NULL;
+    } else if (b < -1) {
+        if (a < INT64_MAX / b || a > INT64_MIN / b) return LOFT_NULL;
+    }
+    /* b == -1 overflows only for INT64_MIN, which is null and answered above. */
     return a * b;
 }
 
@@ -611,6 +618,26 @@ static void loft_locked_write(void) {
     exit(1);
 }
 
+/* The call stack ran past `LOFT_MAX_CALL_DEPTH` (`RuntimeError::stack_overflow`): the program
+ * stops as a failed assertion stops it, at `line` of `file`. */
+#ifdef LOFT_MAX_CALL_DEPTH
+static void loft_stack_overflow(const char *file, uint32_t line) {
+    char msg[96];
+    int n = snprintf(msg, sizeof msg, "call stack overflow \xe2\x80\x94 exceeded %d stack frames",
+                     (int) LOFT_MAX_CALL_DEPTH);
+    fflush(stdout);
+    fputs("error: ", stderr);
+    fwrite(msg, 1, (size_t) n, stderr);
+    fputc('\n', stderr);
+    if (!loft_in_test) loft_fault_where(loft_lit(file, strlen(file)), line);
+    loft_fail_msg.len = 0;
+    loft_push(&loft_fail_msg, msg, (size_t) n);
+    if (loft_in_test) { LOFT_RELEASE_HELD(0); longjmp(loft_test_jmp, 1); }
+    fflush(stdout);
+    exit(1);
+}
+#endif
+
 /* `stack_trace()` reads the frames, so a unit that reaches it keeps them in every build; any
  * other unit keeps them where the build asks for the call chain a fault prints
  * (`-DLOFT_CALL_CHAIN`, the semantics tier) and compiles the pushes away where it does not. */
@@ -620,11 +647,23 @@ static void loft_locked_write(void) {
 #ifdef LOFT_CALL_CHAIN
 /* The frames the program is running (call_frames.rs, `cr_call_push`): each function's name and
  * file, and the line it is calling from (`cr_call_site`), outermost first. */
-typedef struct { const char *fn, *file; uint32_t site; } loft_frame;
+typedef struct { const char *fn, *file; uint32_t site, decl; } loft_frame;
 static LOFT_TLS loft_frame *loft_frames = 0;
 static LOFT_TLS size_t loft_nframes = 0, loft_capframes = 0;
+#ifdef LOFT_MAX_CALL_DEPTH
+static void loft_stack_overflow(const char *file, uint32_t line);
+#endif
 
-static void loft_frame_push(const char *fn, const char *file) {
+static void loft_frame_push(const char *fn, const char *file, uint32_t decl) {
+#ifdef LOFT_MAX_CALL_DEPTH
+    /* The call-depth cap (`call_frames::cr_call_push`): checked BEFORE the push, so a refused
+     * call never runs, and reported at the declaration of the function that is running — the
+     * frame below — as the interpreter's `State::fn_call` reports it (loft#1058). */
+    if (loft_nframes >= LOFT_MAX_CALL_DEPTH) {
+        const loft_frame *below = loft_nframes ? &loft_frames[loft_nframes - 1] : 0;
+        loft_stack_overflow(below ? below->file : file, below ? below->decl : decl);
+    }
+#endif
     if (loft_nframes == loft_capframes) {
         loft_capframes = loft_capframes ? loft_capframes * 2 : 64;
         loft_frames = (loft_frame *) realloc(loft_frames, loft_capframes * sizeof *loft_frames);
@@ -633,6 +672,7 @@ static void loft_frame_push(const char *fn, const char *file) {
     loft_frames[loft_nframes].fn = fn;
     loft_frames[loft_nframes].file = file;
     loft_frames[loft_nframes].site = 0;
+    loft_frames[loft_nframes].decl = decl;
     loft_nframes++;
 }
 
@@ -647,7 +687,7 @@ static void loft_frame_site(uint32_t line) {
 #define LOFT_FRAMES_RESET() (loft_nframes = 0)
 #else
 #define LOFT_FRAMES_RESET() ((void) 0)
-#define loft_frame_push(fn, file) ((void) 0)
+#define loft_frame_push(fn, file, decl) ((void) 0)
 #define loft_frame_pop() ((void) 0)
 #define loft_frame_site(line) ((void) 0)
 #endif
@@ -3139,6 +3179,71 @@ static void loft_bind_copy(const loft_tdesc *T, uint16_t tp, loft_ref *dst, loft
     loft_copy_claims(T, tp, src, *dst);
 }
 
+/* `@FR-R-DeferredCopy`'s remap: `y` — a view into the graph rooted at `from` — moved to the same
+ * position in `to`, the copy `loft_bind_copy` made of it, walking both in step as
+ * `loft_copy_claims` built `to`: the root's inline bytes, each struct field, each vector's record
+ * and its elements, a struct-enum's variant.  1 with `*out` set when `y` lies in the graph. */
+static int loft_dc_find(const loft_tdesc *T, uint16_t tp, loft_ref from, loft_ref to, loft_ref y, loft_ref *out) {
+    const loft_tdesc *d = &T[tp];
+    if (y.rec == from.rec && y.pos >= from.pos && y.pos < from.pos + d->size) {
+        out->store_nr = to.store_nr;
+        out->rec = to.rec;
+        out->pos = to.pos + (y.pos - from.pos);
+        return 1;
+    }
+    loft_store_t *fs = loft_store_of(from);
+    switch (d->kind) {
+    case LOFT_T_STRUCT:
+        for (uint16_t i = 0; i < d->n; i++) {
+            const loft_fld *f = &d->fields[i];
+            if (f->view) continue;
+            if (loft_dc_find(T, f->type, loft_field(from, f->pos), loft_field(to, f->pos), y, out)) return 1;
+        }
+        return 0;
+    case LOFT_T_ENUM: {
+        int e = (int) *loft_at(fs, from.rec, from.pos) - 1;
+        return e >= 0 && e < d->n && d->variants[e] != 0xFFFF
+            && loft_dc_find(T, d->variants[e], from, to, y, out);
+    }
+    case LOFT_T_VECTOR: {
+        uint32_t cur = loft_u32(fs, from.rec, from.pos);
+        if (cur == 0 || cur == 0xFFFFFFFFu) return 0;
+        uint32_t into = loft_u32(loft_store_of(to), to.rec, to.pos);
+        if (y.rec == cur) {
+            out->store_nr = to.store_nr;
+            out->rec = into;
+            out->pos = y.pos;
+            return 1;
+        }
+        uint16_t e = d->elem;
+        if (T[e].kind == LOFT_T_SCALAR || T[e].kind == LOFT_T_DBREF || T[e].kind == LOFT_T_TEXT) return 0;
+        uint32_t len = loft_u32(fs, cur, 4), size = T[e].size;
+        for (uint32_t i = 0; i < len; i++) {
+            loft_ref a = { from.store_nr, cur, 8 + i * size };
+            loft_ref b = { to.store_nr, into, 8 + i * size };
+            if (loft_dc_find(T, e, a, b, y, out)) return 1;
+        }
+        return 0;
+    }
+    default:
+        return 0;
+    }
+}
+
+static loft_ref loft_dc_remap(const loft_tdesc *T, uint16_t tp, loft_ref from, loft_ref to, loft_ref y) {
+    loft_ref out;
+    if (y.store_nr != from.store_nr || y.rec == 0 || from.rec == 0) return y;
+    return loft_dc_find(T, tp, from, to, y, &out) ? out : y;
+}
+
+/* `@FR-R-DeferredCopy`'s index guard: is `x` the element `k` of the vector `v` names?  `k` is
+ * resolved exactly as `loft_vec_get` resolves it (a negative index counts from the end), so the
+ * test compares positions, never the raw integers; an index outside the vector names nothing. */
+LOFT_HOT_INLINE int loft_dc_is_elem(loft_ref x, loft_ref v, uint32_t size, int64_t k) {
+    loft_ref e = loft_vec_get(v, size, k);
+    return e.rec != 0 && x.store_nr == e.store_nr && x.rec == e.rec && x.pos == e.pos;
+}
+
 /* ── Floats (src/ops.rs, the stdlib's #rust templates) ─────────────────────────────────────
  * float is a double, single a float; NaN is null.  A literal is written from its bits, so no
  * decimal round trip can change it. */
@@ -4236,6 +4341,10 @@ static void loft_arm_timeout(void) {
 #if defined(__APPLE__)
 extern int _NSGetExecutablePath(char *buf, uint32_t *size);
 #endif
+/* The handle each row of `loft_cbl` was opened as (null for a row not opened): where a library's
+ * native part finds its symbols in a shipped program (`loft_ffi_sym`). */
+static void *loft_cbl_row_handle[64];
+
 /* `native_bind::search_dirs`: LOFT_LIB_PATH's directories, the executable's, the user's
  * `.loft/lib` (LOFT_HOME, else HOME) and the system root.  The first two may hold a library
  * flat; every one may hold it in a `<package>-<version>/` directory. */
@@ -4350,6 +4459,7 @@ static void loft_c_bind_libraries(void) {
         }
         if (!h) loft_c_missing_library(l, dirs, nd, refused);
         if (loft_ncbl_handles < 64) loft_cbl_handles[loft_ncbl_handles++] = h;
+        if (i < 64) loft_cbl_row_handle[i] = h;
     }
 }
 #endif

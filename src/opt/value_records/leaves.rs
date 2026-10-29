@@ -978,8 +978,8 @@ pub(crate) fn is_presence_test(name: &str, args: &[Value], local: u16) -> bool {
 /// side of a store-identity test — but not a test whose answer turns on the path
 /// ([`identity_turns_on_path`]).  `settled`: the caller already decided the first operand's
 /// use (a copy it declines, or a source it served as a leaf read).
-pub(crate) fn release_uses(
-    body: &Value,
+pub(crate) fn release_uses<'h>(
+    holds: &dyn Fn() -> &'h HoldGraph,
     name: &str,
     args: &[Value],
     v: u16,
@@ -989,7 +989,7 @@ pub(crate) fn release_uses(
     let arg_is_v =
         |i: usize| matches!(args.get(i).map(Value::unspan), Some(Value::Var(w)) if *w == v);
     let identity = matches!(name, "OpFreeRefIfDistinct" | "OpDistinctStore");
-    if identity && identity_turns_on_path(body, args) {
+    if identity && identity_turns_on_path(holds(), args) {
         // loft#2014 — unless every other operand is a value local or a converted build:
         // then nothing is released on any path and the constant "distinct" is right.
         let others: Vec<u16> = args
@@ -1034,51 +1034,78 @@ pub(crate) fn converted_build_ref(body: &Value, objects: &HashSet<usize>, w: u16
 /// two locals one of which may hold the other (a join's result and an arm it took) the answer
 /// turns on the path, so the test is not served and both keep the record form: the constant
 /// would release the record the result hands on.
-pub(crate) fn identity_turns_on_path(body: &Value, args: &[Value]) -> bool {
+pub(crate) fn identity_turns_on_path(holds: &HoldGraph, args: &[Value]) -> bool {
     match (
         args.first().map(Value::unspan),
         args.get(1).map(Value::unspan),
     ) {
         (Some(Value::Var(lhs)), Some(Value::Var(rhs))) => {
-            may_hold(body, *lhs, *rhs) || may_hold(body, *rhs, *lhs)
+            holds.may_hold(*lhs, *rhs) || holds.may_hold(*rhs, *lhs)
         }
         _ => false,
     }
 }
 
-/// Can local `holder` hold what local `held` holds — is `held` a leaf of one of `holder`'s
-/// binds (an `if` arm, a value block's last operand), followed through the locals it names?
-pub(crate) fn may_hold(body: &Value, holder: u16, held: u16) -> bool {
-    fn leaf(node: &Value, held: u16, body: &Value, seen: &mut HashSet<u16>) -> bool {
-        match node.unspan() {
-            Value::Var(x) => *x == held || binds_hold(body, *x, held, seen),
-            Value::If(_, a, b) => leaf(a, held, body, seen) || leaf(b, held, body, seen),
-            Value::Block(bl) if !matches!(bl.result.base(), Type::Void) => bl
-                .operators
-                .last()
-                .is_some_and(|l| leaf(l, held, body, seen)),
-            Value::Insert(ops) => ops.last().is_some_and(|l| leaf(l, held, body, seen)),
-            Value::Return(x) => leaf(x, held, body, seen),
-            _ => false,
+/// Which locals each local's binds may hand on: for every `Set(w, rhs)` in a body, the locals
+/// at the leaves of `rhs` (an `if` arm, a value block's last operand, a return).  Built once
+/// per body: asking the body itself per local per test was cubic in a straight-line function
+/// of many temporaries (mesh3d's `cube` did not compile in five minutes).
+pub(crate) struct HoldGraph(HashMap<u16, Vec<u16>>);
+
+impl HoldGraph {
+    pub(crate) fn of(body: &Value) -> Self {
+        fn leaves(node: &Value, out: &mut Vec<u16>) {
+            match node.unspan() {
+                Value::Var(x) => out.push(*x),
+                Value::If(_, a, b) => {
+                    leaves(a, out);
+                    leaves(b, out);
+                }
+                Value::Block(bl) if !matches!(bl.result.base(), Type::Void) => {
+                    if let Some(l) = bl.operators.last() {
+                        leaves(l, out);
+                    }
+                }
+                Value::Insert(ops) => {
+                    if let Some(l) = ops.last() {
+                        leaves(l, out);
+                    }
+                }
+                Value::Return(x) => leaves(x, out),
+                _ => {}
+            }
         }
+        let mut edges: HashMap<u16, Vec<u16>> = HashMap::new();
+        body.any_node(&mut |n| {
+            if let Value::Set(w, rhs) = n {
+                leaves(rhs, edges.entry(*w).or_default());
+            }
+            false
+        });
+        HoldGraph(edges)
     }
-    fn binds_hold(body: &Value, v: u16, held: u16, seen: &mut HashSet<u16>) -> bool {
-        if !seen.insert(v) {
+
+    /// Can local `holder` hold what local `held` holds — is `held` a leaf of one of
+    /// `holder`'s binds, followed through the locals it names?
+    pub(crate) fn may_hold(&self, holder: u16, held: u16) -> bool {
+        if holder == held {
             return false;
         }
-        let mut found = false;
-        body.any_node(&mut |n| {
-            if let Value::Set(w, rhs) = n
-                && *w == v
-                && leaf(rhs, held, body, seen)
-            {
-                found = true;
+        let mut seen = HashSet::new();
+        let mut todo = vec![holder];
+        while let Some(v) = todo.pop() {
+            if !seen.insert(v) {
+                continue;
             }
-            found
-        });
-        found
+            for &x in self.0.get(&v).into_iter().flatten() {
+                if x == held {
+                    return true;
+                }
+                todo.push(x);
+            }
+        }
+        false
     }
-    holder != held && binds_hold(body, holder, held, &mut HashSet::new())
 }
 
 /// The uses of local `v` one call accounts that turn on the local's LAYOUT `key`: a hand-off

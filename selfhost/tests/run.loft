@@ -56,16 +56,18 @@ fn ran(kernel_name: text, entry: text, args: vector<integer>) -> integer? {
 
 fn test_a_counted_loop_with_bit_operators_runs() {
   assert(ran("mix", "n_mix", [10, 1]) == 41, "mix(10, 1)");
-  assert(ran("mix", "n_mix", [5000000, 1]) == 6495169, "mix(5000000, 1)");
+  // 500 000 passes, not the benchmark's 5 000 000: `bench/measure.py` runs that one, and this
+  // test shares one 120 s deadline with every kernel (Python computes both values).
+  assert(ran("mix", "n_mix", [500000, 1]) == 15773217, "mix(500000, 1)");
 }
 
 fn test_a_loop_with_break_remainder_and_division_runs() {
   assert(ran("collatz", "n_collatz_len", [9]) == 20, "collatz_len(9)");
   assert(ran("collatz", "n_collatz_len", [27]) == 112, "collatz_len(27)");
   assert(ran("collatz", "n_longest", [1, 10]) == 9020, "longest(1, 10)");
-  // 1..10000, not the benchmark's 1..100000: that one takes ~110 s under `--interpret`, at the
-  // test runner's 120 s deadline (`bench/measure.py` still runs it).
-  assert(ran("collatz", "n_longest", [1, 10000]) == 6171262, "longest(1, 10000)");
+  // 1..2000, not the benchmark's 1..100000: `bench/measure.py` runs that one, and this test
+  // shares one 120 s deadline with every kernel (Python computes the value).
+  assert(ran("collatz", "n_longest", [1, 2000]) == 1161182, "longest(1, 2000)");
 }
 
 fn test_a_break_with_a_value_pending_is_refused() {
@@ -83,9 +85,185 @@ fn test_the_stdlibs_own_loft_functions_run_from_the_image() {
   assert(ran("stdlib", "n_use_stdlib", [4]) == 12, "use_stdlib(4)");
 }
 
-fn test_an_operator_s1_does_not_carry_is_refused_by_name() {
+fn test_an_operator_the_interpreter_does_not_carry_is_refused_by_name() {
   b = kernel("stdlib");
-  d = lower::find(b, "n_uses_abs");
-  o = run::run(b, d, [-3]);
-  assert(o.refused == "an operator the interpreter does not carry: OpAbsInt", "refused: {o.refused}");
+  d = lower::find(b, "n_uses_pow");
+  o = run::run(b, d, [3]);
+  assert(o.refused == "an operator the interpreter does not carry: OpPowInt", "refused: {o.refused}");
+}
+
+fn test_the_small_integer_operators_answer_as_loft_does() {
+  // By hand: `abs`; a plain enum counts from 1; 7 / 0 and 7 % 0 are null, so the `??` gives
+  // -1; 300 does not fit a `u8`, so it takes the default 7, or reads null as a `u8?`.
+  assert(ran("stdlib", "n_uses_abs", [-3]) == 3, "uses_abs(-3)");
+  assert(ran("stdlib", "n_uses_abs", [4]) == 4, "uses_abs(4)");
+  assert(ran("small_ops", "n_hue_number", [0]) == 1, "hue_number(0)");
+  assert(ran("small_ops", "n_hue_number", [2]) == 3, "hue_number(2)");
+  assert(ran("small_ops", "n_div_or", [7, 2]) == 3, "div_or(7, 2)");
+  assert(ran("small_ops", "n_div_or", [7, 0]) == -1, "div_or(7, 0)");
+  assert(ran("small_ops", "n_rem_or", [7, 3]) == 1, "rem_or(7, 3)");
+  assert(ran("small_ops", "n_rem_or", [7, 0]) == -1, "rem_or(7, 0)");
+  // |-6 / 4| = 1.5, as a float and as a single, each times 100.
+  assert(ran("small_ops", "n_abs_floats", [-6]) == 300, "abs_floats(-6)");
+  assert(ran("small_ops", "n_abs_floats", [6]) == 300, "abs_floats(6)");
+  assert(ran("small_ops", "n_char_or_zero", [0]) == 0, "char_or_zero(0)");
+  assert(ran("small_ops", "n_char_or_zero", [233]) == 233, "char_or_zero(233)");
+  assert(ran("small_ops", "n_narrow", [200]) == 200, "narrow(200)");
+  assert(ran("small_ops", "n_narrow", [300]) == 7, "narrow(300)");
+  assert(ran("small_ops", "n_narrow_or_null", [200]) == 200, "narrow_or_null(200)");
+  assert(ran("small_ops", "n_narrow_or_null", [300]) == -1, "narrow_or_null(300)");
+}
+
+fn test_every_format_spec_renders_through_the_c_runtime() {
+  // 14 cells, each checked by hand inside the kernel (`kernels/format.loft`).
+  assert(ran("format", "n_formats", [42]) == 14, "formats(42)");
+  // 5 cells, each checked by hand inside the kernel.
+  assert(ran("format", "n_slices", [2]) == 5, "slices(2)");
+}
+
+// S3's first slice: records of integers and texts in the C runtime's stores (1b-s3.md).  Each
+// value is worked out by hand in `kernels/structs.loft`, and each run must leave none of the
+// runtime's stores live: the IR's frees free every record the run made.
+// `entry(arg)` of the kernel image `b`, which must leave no store live and nothing for the
+// sweep.  A test loads its kernel once and runs every entry of it: an image is megabytes.
+fn ran_clean(b: ir::Bundle, entry: text, arg: integer) -> integer? {
+  d = lower::find(b, entry);
+  assert(d >= 0, "the image has {entry}");
+  o = run::run(b, d, [arg]);
+  assert(o.refused == "", "{entry} refused: {o.refused} in {o.refused_in}");
+  assert(o.stores_left == 0, "{entry}({arg}) left {o.stores_left} stores live");
+  assert(o.swept == 0, "{entry}({arg}): the return swept {o.swept} stores the IR did not free");
+  o.value
+}
+
+fn test_a_struct_is_built_read_and_freed() {
+  st = kernel("structs");
+  assert(ran_clean(st, "n_built", 3) == 9, "built(3)");
+  assert(ran_clean(st, "n_built", -4) == -12, "built(-4)");
+}
+
+fn test_a_field_written_through_a_parameter_is_seen_by_the_caller() {
+  st = kernel("structs");
+  assert(ran_clean(st, "n_shifted", 4) == 9, "shifted(4)");
+}
+
+fn test_a_copy_diverges_from_its_source() {
+  st = kernel("structs");
+  assert(ran_clean(st, "n_copied", 4) == 4100, "copied(4)");
+  assert(ran_clean(st, "n_texts_apart", 1) == 27, "texts_apart(1): the copy's text is its own");
+}
+
+fn test_a_record_returned_by_a_function_has_its_text_set_and_read() {
+  st = kernel("structs");
+  assert(ran_clean(st, "n_named", 5) == 4, "named(5)");
+  assert(ran_clean(st, "n_named", 123) == 6, "named(123)");
+  assert(ran_clean(st, "n_mixed", 10) == 15, "mixed(10)");
+}
+
+// A value block whose frees follow its value (a struct match binding a text): the value is the
+// last operator that is not a free, as the C generator takes it.
+fn test_a_match_block_frees_after_its_value() {
+  st = kernel("structs");
+  assert(ran_clean(st, "n_matched", 1) == 3, "matched(1)");
+  assert(ran_clean(st, "n_matched", 5) == -1, "matched(5)");
+}
+
+// A record bound from a call whose result borrows its argument is COPIED (`(O-Move)`), as the
+// owner table decides at run time: the write through the result leaves the argument alone.
+// The bind reaches the lowering inside a source span, and is read past it.
+fn test_a_bind_from_a_borrowing_call_copies() {
+  st = kernel("structs");
+  assert(ran_clean(st, "n_kept", 4) == 4, "kept(4)");
+  assert(ran_clean(st, "n_borrowed", 6) == 650, "borrowed(6)");
+}
+
+// Ownership at run time (1b-s3.md): rebinds release what they displace, a loop holds one store
+// per pass, an unbound call result and one handed to another call are released, a parameter
+// rebound leaves the caller's record alone, and a local promoted onto the return buffer (the
+// way `file()` is written) is adopted.  Each
+// leaves no store live and nothing for the sweep: the IR's frees and the table agree.
+fn test_the_owner_table_binds_and_frees_as_one() {
+  st = kernel("structs");
+  assert(ran_clean(st, "n_rebound", 5) == 108, "rebound(5)");
+  assert(ran_clean(st, "n_looped", 10) == 45, "looped(10)");
+  assert(ran_clean(st, "n_unbound", 4) == 3, "unbound(4)");
+  assert(ran_clean(st, "n_reset_kept", 3) == 36, "reset_kept(3)");
+  assert(ran_clean(st, "n_promoted", 4) == 6, "promoted(4)");
+}
+
+// Every field width through its own runtime routine (u8, i16, i32, character, boolean, float,
+// single) and a record embedded in another, written and read through `OpGetField`.
+fn test_every_field_width_and_an_embedded_record_run() {
+  st = kernel("structs");
+  assert(ran_clean(st, "n_wide", 5) == 145, "wide(5)");
+  assert(ran_clean(st, "n_wide", -5) == -1, "wide(-5)");
+  assert(ran_clean(st, "n_floats", 3) == 45, "floats(3)");
+}
+
+// S3's second slice: vectors (1b-s3.md § The second slice), each value by hand in
+// `kernels/vectors.loft`: integers pushed, walked and indexed; records added in a loop with
+// their type's default image; texts; a struct holding vectors, returned; a vector passed to a
+// function; an element written through; a vector cleared and refilled, and an empty one.  An
+// entry with a hidden vector buffer is handed one, as its caller would hand it.
+fn test_vectors_build_walk_index_and_clear() {
+  v = kernel("vectors");
+  assert(ran_clean(v, "n_ints", 4) == 412, "ints(4)");
+  assert(ran_clean(v, "n_records", 4) == 7, "records(4)");
+  assert(ran_clean(v, "n_texts", 5) == 32, "texts(5)");
+  assert(ran_clean(v, "n_bagged", 2) == 16, "bagged(2)");
+  assert(ran_clean(v, "n_passed", 3) == 33, "passed(3)");
+  assert(ran_clean(v, "n_through", 4) == 42, "through(4)");
+  assert(ran_clean(v, "n_refilled", 7) == 107, "refilled(7)");
+  assert(ran_clean(v, "n_defaults", 5) == 65, "defaults(5): omitted nullable fields read null");
+  // The IR frees the callee's store through `p`, a view of its wrapper: a free acts on what the
+  // FRAME owns, so nothing is left for the sweep, and the caller's vector is untouched.
+  assert(ran_clean(v, "n_rebound_param", 5) == 37210, "rebound_param(5)");
+}
+
+// S3's third slice: struct enums (1b-s3.md § The third slice), each value by hand in
+// `kernels/enums.loft`: every arm of a match, a unit variant, a variant returned and tested with
+// `is`, a text payload copied and its source freed, a struct holding an enum field, and a vector
+// of them built from a literal, a call and a unit variant.  A copy of a `Word` owns its text only
+// because the type table hands the runtime the enum's variants.
+fn test_struct_enums_build_match_and_copy() {
+  e = kernel("enums");
+  assert(ran_clean(e, "n_arms", 7) == 26, "arms(7)");
+  assert(ran_clean(e, "n_arms", 12) == 41, "arms(12)");
+  assert(ran_clean(e, "n_picked", 3) == 3, "picked(3)");
+  assert(ran_clean(e, "n_picked", 8) == 120, "picked(8)");
+  assert(ran_clean(e, "n_copied", 4) == 21, "copied(4)");
+  assert(ran_clean(e, "n_copied", 123) == 41, "copied(123): the copy's text is its own");
+  assert(ran_clean(e, "n_held", 5) == 35, "held(5)");
+  assert(ran_clean(e, "n_listed", 3) == 72, "listed(3)");
+  assert(ran_clean(e, "n_listed", 10) == 99, "listed(10)");
+}
+
+// S3's fourth slice: hashes (1b-s3.md § The fourth slice), each value by hand in
+// `kernels/hashes.loft`: a hash field counting words (a hit updated in place, a miss added), a
+// hash local whose equal keys replace, an integer key, a compound key, a lookup whose key is
+// another lookup's field, and a struct holding a hash copied with its source freed.
+fn test_hashes_build_find_and_copy() {
+  h = kernel("hashes");
+  assert(ran_clean(h, "n_counted", 5) == 203005, "counted(5)");
+  assert(ran_clean(h, "n_counted", 2) == 102002, "counted(2)");
+  assert(ran_clean(h, "n_replaced", 5) == 3342, "replaced(5): equal keys replace");
+  assert(ran_clean(h, "n_replaced", 2) == 2010, "replaced(2)");
+  assert(ran_clean(h, "n_intkey", 4) == 420, "intkey(4)");
+  assert(ran_clean(h, "n_intkey", 3) == 300, "intkey(3)");
+  assert(ran_clean(h, "n_compound", 7) == 3057, "compound(7)");
+  assert(ran_clean(h, "n_nested", 5) == 2, "nested(5)");
+  assert(ran_clean(h, "n_copied", 4) == 13, "copied(4): the copy's elements are its own");
+  // census 2026-10-29: a link's null bind remade a store of its own, so `h` kept its old element.
+  assert(ran_clean(h, "n_linked", 7) == 202, "linked(7): a hash link writes through");
+}
+
+// A kernel's whole `main`, as the census runs a program: it prints what `loft --interpret`
+// prints (the harness compares nothing here; the census does), and leaves nothing behind.
+fn test_the_kernels_mains_run_whole() {
+  for name in ["structs", "vectors", "enums", "hashes"] {
+    b = kernel(name);
+    o = run::run(b, lower::find(b, "n_main"), []);
+    assert(o.refused == "", "{name} main refused: {o.refused} in {o.refused_in}");
+    assert(o.stores_left == 0 && o.swept == 0, "{name} main: {o.stores_left} left, {o.swept} swept");
+  }
 }

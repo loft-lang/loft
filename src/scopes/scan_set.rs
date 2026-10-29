@@ -7,7 +7,7 @@
 use super::backings::{
     bind_backing_of, construction_work_refs, delivered_work_ref, member_backing,
 };
-use super::buffers::tail_calls;
+use super::buffers::{coalesce_tail_calls, tail_calls};
 use super::capture_builds::adopted_work_refs;
 use super::disturbance::{disturbance_via, report_materialised_view};
 use super::drops::drop_hook;
@@ -54,6 +54,21 @@ fn base_container_var(value: &Value, data: &Data) -> Option<u16> {
 /// The specific keyed collection's store type — what `OpReplaceKeyed` and a keyed
 /// `OpNewRecord` dispatch on.  The same registration the parser's `keyed_known_type` makes,
 /// which is idempotent for a type the program already uses.
+/// The type of the buffer a materialised view `v` is copied into — its own collection type
+/// without the deps that made it a view — or `None` for a view that needs only its deps
+/// stripped (a record).  Read off the type's shape alone, so it can run before the scan
+/// without minting a type (`Scopes::materialise_buffers`); the bind still decides whether
+/// the copy is made.
+pub(super) fn materialise_buffer_type(function: &Function, v: u16) -> Option<Type> {
+    if keyed_payload_view(function, v) {
+        return Some(function.tp(v).without_deps());
+    }
+    if let Type::Vector(inner, _) = function.tp(v).base() {
+        return Some(Type::Vector(inner.clone(), Deps::none()));
+    }
+    None
+}
+
 fn keyed_type_id(database: &mut crate::database::Stores, data: &Data, tp: &Type) -> Option<u16> {
     let tp = tp.peel_link();
     let content = match tp {
@@ -992,13 +1007,25 @@ impl Scopes<'_> {
         // handed makes no difference here: a branch binds the arm's `DbRef` as it is, with
         // none of the copy a direct call's set lowering interposes, so `v` aliases the
         // buffer either way.
-        if record_shaped
-            && !publishes_through_ref
-            && crate::keys::join_buffer_witness_enabled()
-            && matches!(unspanned_value, Value::If(_, _, _))
+        // loft#2219 — and the block a diverging `??` lowers to (`x = f() ?? return`, `break`,
+        // `continue`) delivers its call's answer the same way: `v` adopts the temp the call
+        // was bound to, so a loop-body `v` freed every pass released the buffer's store.  Only
+        // the inner-scope pairing applies to it: the block's diverging exit runs before `v` is
+        // bound, so the buffer's own free there cannot be guarded by `v`.
+        let branch = matches!(unspanned_value, Value::If(_, _, _));
+        let arm_calls = if !record_shaped
+            || publishes_through_ref
+            || !crate::keys::join_buffer_witness_enabled()
         {
+            Vec::new()
+        } else if branch {
+            tail_calls(unspanned_value)
+        } else {
+            coalesce_tail_calls(unspanned_value)
+        };
+        if !arm_calls.is_empty() {
             let v_scope = self.var_scope.get(&v).copied().unwrap_or(u16::MAX);
-            for call in tail_calls(unspanned_value) {
+            for call in arm_calls {
                 let Value::Call(fn_nr, args) = call else {
                     continue;
                 };
@@ -1017,7 +1044,9 @@ impl Scopes<'_> {
                     }
                     let av_scope = self.var_scope.get(av).copied().unwrap_or(u16::MAX);
                     if v_scope <= av_scope && v_scope != u16::MAX {
-                        self.paired_witness.entry(*av).or_insert(v);
+                        if branch {
+                            self.paired_witness.entry(*av).or_insert(v);
+                        }
                     } else if v_scope != u16::MAX && av_scope != u16::MAX && v_scope > av_scope {
                         let buffers = self.witness_buffer.entry(v).or_default();
                         if !buffers.contains(av) {
@@ -1379,7 +1408,7 @@ impl Scopes<'_> {
             // subject no longer owns.
             if keyed_view && let Some(ktp) = keyed_type_id(self.database, data, function.tp(v)) {
                 let tp = function.tp(v).without_deps();
-                let tmp = self.new_buffer_var(function, &tp);
+                let tmp = self.materialise_buffer(function, &tp, v);
                 function.set_skip_free(v);
                 keyed_copy = Some((tmp, i32::from(ktp)));
             }
@@ -1389,7 +1418,7 @@ impl Scopes<'_> {
                     && let Some(elem) = data.vector_element_type(&inner, self.database)
                 {
                     let tp = Type::Vector(inner.clone(), Deps::none());
-                    let tmp = self.new_buffer_var(function, &tp);
+                    let tmp = self.materialise_buffer(function, &tp, v);
                     // The local NAMES the buffer; the buffer owns the store and frees it once
                     // at function exit.  Left owning, the local's own scope-exit `OpFreeRef`
                     // releases the buffer's store — harmless at function scope and fatal in a

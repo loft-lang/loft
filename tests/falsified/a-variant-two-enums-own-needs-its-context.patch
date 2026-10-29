@@ -1,0 +1,11 @@
+--- a/src/parser/objects.rs	2026-10-28 21:22:06.918742895 +0100
++++ b/src/parser/objects.rs	2026-10-28 21:22:06.971743123 +0100
+@@ -2486,7 +2486,7 @@
+                 continue;
+             }
+             if found.is_some() {
+-                return None;
++                continue;
+             }
+             found = Some(e_nr);
+         }

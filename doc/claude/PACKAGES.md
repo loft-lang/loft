@@ -193,7 +193,8 @@ crate = "native"
 # <prefix>/lib/loft/components/ (`src/components.rs` has the search order;
 # `make components` builds them in a loft tree).  Nothing is compiled when it
 # is used, and a missing component is refused by name on every backend.
-# component = "net"         # libloft_net: the web library's HTTP, TLS, WebSockets
+# component = "net"         # libloft_net: the web and server libraries' HTTP,
+#                           # TLS and WebSockets, client and server
 
 # Functions implemented in Rust.  Keys are loft function names;
 # values are Rust symbol paths.  The loft compiler verifies signatures

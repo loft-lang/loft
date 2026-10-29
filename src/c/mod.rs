@@ -206,8 +206,10 @@ pub(crate) struct Cx<'a> {
     /// The unit binds a collection to a lazy source (`store_bind_lazy`): every keyed lookup
     /// consults the binding on a miss (`loft_lazy_miss`).
     pub(crate) lazy: std::cell::Cell<bool>,
-    /// A function calls a library's prebuilt native part (`LOFT_FFI`, [`library_native`]).
-    pub(crate) ffi: std::cell::Cell<bool>,
+    /// The prebuilt native parts the unit calls ([`library_native`]), each as its package
+    /// directory and file: a unit that calls one is compiled with `LOFT_FFI`, and a shipped
+    /// program opens each at start by search order (`loft_cboundlibs`).
+    pub(crate) ffi_libs: std::cell::RefCell<std::collections::BTreeSet<(String, String)>>,
     /// The `par` sites written on threads so far, which numbers each one's body and context.
     pub(crate) par_sites: std::cell::Cell<u32>,
     /// The keyed collection types a `sqlite:` plan was written for (`loft_sqlplan{tp}`).
@@ -301,7 +303,7 @@ impl<'a> Cx<'a> {
             parse_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             frames: std::cell::Cell::new(false),
             lazy: std::cell::Cell::new(false),
-            ffi: std::cell::Cell::new(false),
+            ffi_libs: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             par_sites: std::cell::Cell::new(0),
             sql_plans: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             lazy_fetchers: std::cell::Cell::new(0),
@@ -1583,7 +1585,7 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
     out.push_str(&defines);
     out.push_str(RUNTIME);
     out.push('\n');
-    out.push_str(&c_libraries(data));
+    out.push_str(&c_libraries(data, &cx.ffi_libs.borrow()));
     out.push_str(&cx.typedefs());
     if parses {
         out.push_str(&cx.parse_table());
@@ -1684,7 +1686,7 @@ fn lazy_driver_table(
     clippy::too_many_lines,
     reason = "one pass over the declared libraries: the header, the shim's three forms, the link lines"
 )]
-fn c_libraries(data: &Data) -> String {
+fn c_libraries(data: &Data, ffi_libs: &std::collections::BTreeSet<(String, String)>) -> String {
     let mut out = String::new();
     // A required library is linked: the file the package ships, else its soname in the system
     // linker's spelling.  An optional one (`[c] optional-libs`) never is — it is
@@ -1774,21 +1776,36 @@ fn c_libraries(data: &Data) -> String {
         optional.len()
     );
     // @PLN195 — the libraries a shipped program opens at start (`loft_c_bind_libraries`): each
-    // one's package, version and file, never its directory.
-    let rows: Vec<String> = data
+    // one's package, version and file, never its directory — a package's `#c` libraries, and
+    // the prebuilt native parts the unit calls (`loft_ffi_sym` finds its symbols there).
+    let row = |pkg_dir: &str, file: String, shim: bool| {
+        let (package, version) = package_identity(pkg_dir);
+        format!(
+            "{{ {}, {}, {}, {} }}",
+            body::c_string(&package),
+            body::c_string(&version),
+            body::c_string(&file),
+            u8::from(shim)
+        )
+    };
+    let mut rows: Vec<String> = data
         .shipped_c_libraries()
         .into_iter()
         .map(|(lib, path)| {
-            let (package, version) = package_identity(&lib.pkg_dir);
-            format!(
-                "{{ {}, {}, {}, {} }}",
-                body::c_string(&package),
-                body::c_string(&version),
-                body::c_string(&crate::file_access::file_name(path.as_path()).unwrap_or_default()),
-                u8::from(!lib.shim.is_empty())
+            row(
+                &lib.pkg_dir,
+                crate::file_access::file_name(path.as_path()).unwrap_or_default(),
+                !lib.shim.is_empty(),
             )
         })
         .collect();
+    for (pkg_dir, lib) in ffi_libs {
+        rows.push(row(
+            pkg_dir,
+            crate::file_access::file_name(lib.as_str()).unwrap_or_default(),
+            false,
+        ));
+    }
     let _ = writeln!(
         out,
         "static const loft_c_boundlib loft_cboundlibs[] = {{ {} }};\n\
@@ -1990,7 +2007,7 @@ fn unit_defines(
         out.push_str("#define LOFT_ENGINE 1\n");
     }
     out.push_str(&fetch_defines(data, reached, &runtimes, cx.lazy.get()));
-    if cx.ffi.get() {
+    if !cx.ffi_libs.borrow().is_empty() {
         out.push_str("#define LOFT_FFI 1\n");
     }
     if cx.frames.get() {
@@ -2009,6 +2026,13 @@ fn unit_defines(
             at("variables")
         );
     }
+    // The call-depth cap both other backends enforce (`limits::MAX_CALL_DEPTH`), stated here so
+    // the runtime cannot hold a copy of the number that drifts from it.
+    let _ = writeln!(
+        out,
+        "#define LOFT_MAX_CALL_DEPTH {}",
+        crate::limits::MAX_CALL_DEPTH
+    );
     (out, parses, reflects)
 }
 
@@ -2224,6 +2248,18 @@ fn vr_param_read_only(data: &crate::data::Data, body: &Value, a: u16) -> bool {
     ok
 }
 
+/// `@FR-R-Inline`: a function of at most twelve statements is declared `inline`.  The hint
+/// raises the compiler's inlining budget for it, so a small helper called from a hot loop —
+/// a push through `put`, an accessor — is taken into its caller, and the caller's locals stay
+/// in registers across what was a call.  GCC left such a helper out of line and reloaded the
+/// caller's spilled state after every call (bench 20: -69 % cycles); Clang decides alone.
+/// Measured over every bench: nothing else moved beyond noise.  `LOFT_NO_INLINE_HINT=1` drops
+/// the hint.
+fn small_function(statements: usize) -> bool {
+    statements <= 12
+        && !crate::env_once!(std::env::var("LOFT_NO_INLINE_HINT").is_ok_and(|v| v != "0"))
+}
+
 /// The signature and the body of function `d`.
 #[expect(clippy::too_many_lines)]
 fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
@@ -2255,8 +2291,8 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         if let Some(runtime) = in_binary_native(def.native()) {
             return forwarded_native(cx, d, ret, runtime);
         }
-        if let Some(lib) = prebuilt_library(cx.data, def.native()) {
-            return library_native(cx, d, ret, &lib);
+        if let Some((pkg_dir, lib)) = prebuilt_library(cx.data, def.native()) {
+            return library_native(cx, d, ret, &pkg_dir, &lib);
         }
         // A native loft's own binary implements is never unloaded there: the stub would answer
         // what the interpreter never does, so a native the runtime does not carry refuses.
@@ -2370,10 +2406,18 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         .apart(mask & APR_BIT != 0)
         .apart_value(mask & APV_BIT != 0)
         .write()?;
+    let (body, statements) = body;
+    // `@FR-R-Inline`: a small function is declared `inline`, its frame wrapper with it.
+    let inline = small_function(statements);
+    let sig = if inline {
+        sig.replacen("static ", "static inline ", 1)
+    } else {
+        sig
+    };
     // Every function keeps its frame: the pushes are macros that a build without the call
     // chain (`LOFT_CALL_CHAIN`, `LOFT_FRAMES`) compiles to nothing, the wrapper then a call
     // the compiler folds into its caller.
-    Ok((sig, framed(cx, d, &name, &params, ret, &body)))
+    Ok((sig, framed(cx, d, &name, &params, ret, &body, inline)))
 }
 
 /// An `__inv` twin's header parameters, appended to `params`, and the frame its body serves
@@ -2508,8 +2552,8 @@ fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
                  memcpy(&loft_cfp, &loft_p, sizeof loft_p); }}\n    \
                  if (!loft_cfp) loft_c_missing_symbol({sym});\n\
                  #else\n    \
-                 extern {ret_text} {}({params_text});\n    \
-                 {ret_text} (*const loft_cfp)({params_text}) = {};\n\
+                 extern {ret_text} ({})({params_text});\n    \
+                 {ret_text} (*const loft_cfp)({params_text}) = ({});\n\
                  #endif",
                 sig.symbol,
                 sig.symbol,
@@ -2518,9 +2562,12 @@ fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
             format!("loft_cfp({})", args.join(", ")),
         )
     } else {
+        // The name in parentheses: a C library may also define it as a function-like macro
+        // (macOS's fortified `<string.h>` does for `memcpy`), and a parenthesised name is
+        // never expanded, so the prototype and the call name the function itself.
         (
-            format!("    extern {ret_text} {}({params_text});", sig.symbol),
-            format!("{}({})", sig.symbol, args.join(", ")),
+            format!("    extern {ret_text} ({})({params_text});", sig.symbol),
+            format!("({})({})", sig.symbol, args.join(", ")),
         )
     };
     let mut out = format!("{decl}\n{body}");
@@ -2696,8 +2743,9 @@ fn declared_params(cx: &Cx, d: u32) -> Result<Vec<String>, String> {
 
 /// The library a `#native` symbol's package ships prebuilt for this host (`prebuilt/<triple>/`,
 /// the loft-ffi C ABI): the file the interpreter loads for it too
-/// (`native_build::prebuilt_native_lib`).  None for a package without one — never a build.
-fn prebuilt_library(data: &Data, native: &str) -> Option<String> {
+/// (`native_build::prebuilt_native_lib`), with the package's directory.  None for a package
+/// without one — never a build.
+fn prebuilt_library(data: &Data, native: &str) -> Option<(String, String)> {
     let krate = data.native_symbol_crates.get(native)?;
     let (name, pkg_dir) = data
         .native_packages
@@ -2706,7 +2754,7 @@ fn prebuilt_library(data: &Data, native: &str) -> Option<String> {
     let stem = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"))
         .and_then(|m| m.native)
         .unwrap_or_else(|| name.replace('-', "_"));
-    crate::native_build::prebuilt_native_lib(pkg_dir, &stem)
+    crate::native_build::prebuilt_native_lib(pkg_dir, &stem).map(|lib| (pkg_dir.clone(), lib))
 }
 
 /// A library native's arguments as the loft-ffi ABI takes them: the typed parameters, the
@@ -2788,11 +2836,40 @@ fn ffi_args(cx: &Cx, d: u32) -> Result<FfiArgs, String> {
     })
 }
 
+/// The loft-ffi C type a library native answers with (`loft-ffi/include/loft_ffi.h`), or the
+/// refusal for an answer the ABI does not carry.
+fn ffi_return_ctype(def: &crate::data::Definition) -> Result<&'static str, String> {
+    Ok(match def.returned().base() {
+        Type::Void => "void",
+        Type::Integer(s) if s.forced_size.is_none() => "int64_t",
+        Type::Integer(_) => "int32_t",
+        Type::Float => "double",
+        Type::Single => "float",
+        Type::Boolean => "uint8_t",
+        Type::Text(_) => "loft_ffi_str",
+        // A heap answer comes back as a ref into the store handed over.
+        Type::Vector(_, _) | Type::Reference(_, _) => "loft_ffi_ref",
+        other => {
+            return Err(format!(
+                "native {} (a library answer of type {})",
+                def.original_name(),
+                type_word(other)
+            ));
+        }
+    })
+}
+
 /// A `#native` function of a package whose native part is a prebuilt library (@PLN205): a body
 /// that resolves the library's typed symbol on the first call and calls it with the loft-ffi
 /// signature (`loft-ffi/include/loft_ffi.h`): a store first when an argument or the answer is
 /// a heap value, a text as its bytes and length, a vector as its data record.
-fn library_native(cx: &Cx, d: u32, ret: CType, lib: &str) -> Result<(String, String), String> {
+fn library_native(
+    cx: &Cx,
+    d: u32,
+    ret: CType,
+    pkg_dir: &str,
+    lib: &str,
+) -> Result<(String, String), String> {
     let def = cx.data.def(d);
     let params = declared_params(cx, d)?;
     let FfiArgs {
@@ -2801,27 +2878,23 @@ fn library_native(cx: &Cx, d: u32, ret: CType, lib: &str) -> Result<(String, Str
         prep,
         store_arg,
     } = ffi_args(cx, d)?;
-    let ffi_ret = match def.returned().base() {
-        Type::Void => "void",
-        Type::Integer(s) if s.forced_size.is_none() => "int64_t",
-        Type::Integer(_) => "int32_t",
-        Type::Float => "double",
-        Type::Single => "float",
-        Type::Boolean => "uint8_t",
-        Type::Text(_) => "loft_ffi_str",
-        other => {
-            return Err(format!(
-                "native {} (a library answer of type {})",
-                def.original_name(),
-                type_word(other)
-            ));
-        }
-    };
+    let ffi_ret = ffi_return_ctype(def)?;
+    let heap_answer = ffi_ret == "loft_ffi_ref";
+    let mut prep = prep;
+    // The store handed over: the first heap argument's, else — for a heap answer — one minted
+    // for the answer, as the interpreter's bridge mints it (`Stores::bridge_args`).
+    let minted = store_arg.is_none() && heap_answer;
     if let Some(i) = store_arg {
         ffi_params.insert(0, "loft_ffi_store".into());
-        ffi_args.insert(0, format!("loft_ffi_store_of(loft_store_of(a{i}))"));
+        ffi_args.insert(0, format!("loft_ffi_store_of(a{i}.store_nr)"));
+    } else if minted {
+        prep.push_str("    uint16_t ns = (uint16_t) loft_store_new();\n");
+        ffi_params.insert(0, "loft_ffi_store".into());
+        ffi_args.insert(0, "loft_ffi_store_of(ns)".into());
     }
-    cx.ffi.set(true);
+    cx.ffi_libs
+        .borrow_mut()
+        .insert((pkg_dir.to_string(), lib.to_string()));
     let fp = format!(
         "{ffi_ret} (*)({})",
         if ffi_params.is_empty() {
@@ -2850,10 +2923,13 @@ fn library_native(cx: &Cx, d: u32, ret: CType, lib: &str) -> Result<(String, Str
             ffi_params.join(", ")
         }
     );
+    // The build's own path for a run in place; a shipped program finds the file by name among
+    // the libraries it opened at start (`loft_c_bind_libraries`).
     let _ = writeln!(
         body,
-        "    if (!fp) fp = ({fp}) loft_ffi_sym({}, {});",
+        "    if (!fp) fp = ({fp}) loft_ffi_sym({}, {}, {});",
         body::c_string(lib),
+        body::c_string(&crate::file_access::file_name(lib).unwrap_or_default()),
         body::c_string(def.native())
     );
     body.push_str(&prep);
@@ -2868,6 +2944,24 @@ fn library_native(cx: &Cx, d: u32, ret: CType, lib: &str) -> Result<(String, Str
                 body,
                 "    return loft_text_own(loft_lit(t.ptr ? (const char *) t.ptr : \"\", t.len));"
             );
+        }
+        // A vector answer behind its header, a record as it is: the conversion
+        // `codegen_runtime::from_loft_ref` / `from_loft_record` make.
+        tp if heap_answer => {
+            let _ = writeln!(body, "    loft_ffi_ref r = {call};");
+            if minted {
+                // No answer: the store minted for it goes.
+                let _ = writeln!(
+                    body,
+                    "    if (r.rec == 0 && r.pos == 0) {{ loft_ref m = {{ ns, 0, 0 }}; loft_free_ref(m); }}"
+                );
+            }
+            let convert = if matches!(tp.base(), Type::Vector(_, _)) {
+                "loft_ffi_vector_answer"
+            } else {
+                "loft_ffi_record_answer"
+            };
+            let _ = writeln!(body, "    return {convert}(r);");
         }
         _ => {
             let _ = writeln!(body, "    return {call};");
@@ -2918,7 +3012,9 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
             params.join(", ")
         }
     );
-    let component = cx
+    // A package whose native part needs no build — a component, a library shipped prebuilt per
+    // host (@PLN205) — is installed, never rebuilt: say what is missing.
+    let unbuildable = cx
         .data
         .native_symbol_crates
         .get(def.native())
@@ -2928,14 +3024,9 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
                 .iter()
                 .find(|(c, _)| c.replace('-', "_") == *krate)
         })
-        .and_then(|(_, pkg_dir)| crate::native_build::component_of(pkg_dir));
-    let msg = if let Some(name) = component {
-        // A component is installed beside loft, never rebuilt (@PLN205).
-        format!(
-            "native function {}: {}",
-            def.native(),
-            crate::components::missing(&name)
-        )
+        .and_then(|(name, pkg_dir)| crate::native_build::unbuildable_native_reason(pkg_dir, name));
+    let msg = if let Some(why) = unbuildable {
+        format!("native function {}: {why}", def.native())
     } else {
         format!(
             "native function {} not loaded. Either (a) its library's native cdylib is missing or \
@@ -2973,16 +3064,25 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
 /// A function as the unit writes it: its body becomes `<name>__fr`, and the function
 /// pushes its frame (`cr_call_push`'s name and file), calls the body and pops the frame, so
 /// every return of the body leaves the frame stack as it found it.
-fn framed(cx: &Cx, d: u32, name: &str, params: &str, ret: CType, body: &str) -> String {
+fn framed(
+    cx: &Cx,
+    d: u32,
+    name: &str,
+    params: &str,
+    ret: CType,
+    body: &str,
+    inline: bool,
+) -> String {
     let def = cx.data.def(d);
+    let storage = if inline { "static inline" } else { "static" };
     let _ = writeln!(
         cx.gen_decls.borrow_mut(),
-        "static {} {name}__fr({params});",
+        "{storage} {} {name}__fr({params});",
         held(ret)
     );
     let _ = write!(
         cx.gen_bodies.borrow_mut(),
-        "\nstatic {} {name}__fr({params}) {{\n{body}}}\n",
+        "\n{storage} {} {name}__fr({params}) {{\n{body}}}\n",
         held(ret)
     );
     let args: Vec<String> = if params == "void" {
@@ -3002,9 +3102,10 @@ fn framed(cx: &Cx, d: u32, name: &str, params: &str, ret: CType, body: &str) -> 
         def.name().to_string()
     };
     let push = format!(
-        "    loft_frame_push({}, {});\n",
+        "    loft_frame_push({}, {}, {});\n",
         body::c_string(&frame_name),
-        body::c_string(&def.position().file)
+        body::c_string(&def.position().file),
+        def.position().line
     );
     // The body names the texts it holds (`LOFT_HOLD`); the frame drops them on its return.
     let push = format!("{push}    LOFT_HOLD_MARK(hm);\n");

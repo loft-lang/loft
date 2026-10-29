@@ -604,7 +604,28 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  R-Alias's versioned copy tested at run time.  A field projection
                  read in place is a read of its base, and an argument handed to a
                  loft callee that writes no store and answers no reference is a
-                 read.  Two arguments are never proven apart.
+                 read.  Two arguments are never proven apart.  A SCALAR variable —
+                 a number, a boolean, a character, a plain enum's byte — names no
+                 store, whatever its type's deps record about where it was read
+                 from (`match op.code` reads a byte out of the vector), so its
+                 mentions are never judged.  A dep chain that forks ends where
+                 every branch ends, when they all end at one variable (`ops` bound
+                 to `first.ops` and to `callee.ops`, both views of `progs`).
+  (R-Header), the apart clause's REBIND half (C): a BARE vector variable the
+                 loop REBINDS still holds its header under the apart clause when
+                 every rebind NAVIGATES (`v = x.f`, `v = w[i].f`: no mint, no call
+                 and no block in the bound value) and the loop only reads it; the
+                 store reasoning above already covers every bind, because the owner
+                 is read off the variable's deps, which name what any of its binds
+                 may view.  The header — record, length, element base — is derived
+                 again right after each rebind (`FnWriter::refresh_rebound_header`),
+                 so it always describes the vector the variable names now; a verify
+                 build checks it against a fresh one at every use (`LOFT_PROVED`).
+                 An interpreter switching between functions' code is the shape
+                 (bench 20: -17 % cycles under Clang).  Switch
+                 `LOFT_NO_REBOUND_HEADER=1`; guard
+                 `a-vector-the-loop-rebinds-is-read-through-the-header-of-what-it-names-now.loft`
+                 (fails all three cells with the re-derivation left out).
 ```
 
 **The apart clause, in words.**  The gate answers for a loop, and one statement it cannot
@@ -1451,7 +1472,18 @@ the lock flag taken only where the block writes through the view.  An enum, byte
 so the two reads cannot disagree; a value record copied into an inline sub-record of the view
 is written at the address plus the sub-record's offset, and counts as a use of it; the
 last-use clause is what binds a minted element, whose field writes precede the finish (`enum_match` −11 % under both compilers, `mesh_emit` −33 %
-under Clang); trace `LOFT_TRACE_RECPTR=1` there too.  Sites: `hoist::record_view_ptr`,
+under Clang); trace `LOFT_TRACE_RECPTR=1` there too.  The C's APART-CALL clause
+(`apart_calls`, applied to the remainder before the verdict): a call to a loft function whose
+every store-naming argument is proven apart from the view's store (`StoreFacts::distinct`) —
+the view itself not among them, a scalar field read of any record passing a number — is
+judged by its arguments alone, since a callee reaches only the stores its arguments name; a
+release (`OpFreeRef`, `OpFreeRefIfDistinct`) of a store apart from the view's is dropped the
+same way.  A view read while a helper appends to another collection keeps its address (bench
+20's `op` beside `put(stack, sp, op.a)`: −5.5 % cycles under Clang).  A helper that grows the
+view's own container disturbs it (`@FR-B-Disturb`, the view is a copy); one that grows a
+SIBLING vector in the same store is not apart and declines.  Switch `LOFT_NO_APART_CALL=1`;
+guard `loft-suite/rules/rewrites/R-RecPtr/a-view-keeps-its-address-across-a-helper-that-grows-another-store.loft`
+(its sibling cell differs when every argument is taken as apart).  Sites: `hoist::record_view_ptr`,
 `Output::bind_record_ptr`, `Output::rec_ptr_read` (the twin input),
 `ops::vector_ops::emit_hoisted_scalar_or_default` and `FusedElementWriteEmitter`
 (the read and the write), `Output::output_record_tuple` and
@@ -4184,6 +4216,75 @@ line in `Output::output_function`'s prelude.
                  for the signature, every call and every variant; switch
                  `LOFT_NO_VR_PTR=1`; guard
                  `a-read-only-record-parameter-reads-the-callers-value-at-the-call.loft`.
+
+  (R-DeferredCopy) (C) a record local bound by a COPY under (B-Copy) — a whole-value bind
+                 from a variable that is itself a VIEW (`prog = callee_prog`) — that the
+                 function only READS is bound by a MOVE, and the copy is taken where it
+                 could first be observed.  The bind takes the source's reference and raises
+                 the local's flag; the local then views the source's place, and the copy is
+                 owed only if that place changes while the flag is up.  Before each
+                 statement that may write a store not proven apart from the source's
+                 (`call_writes_store` says the operator or callee writes at all;
+                 `StoreFacts::distinct`, or two owners this activation created, says the
+                 store or the records it writes differ), a GUARD takes the copy:
+                 INDEX GUARD where every deferred bind's source is an element view `V[e]`
+                 (a `??` discharge allowed, no projection) and the statement writes a path
+                 rooted at `V[k]` — a setter's first operand, `OpCopyRecord`'s second, the
+                 root the outermost `OpGetVector` over a pure path, `k` a variable or a
+                 literal: the copy is taken when the flag is up and `V[k]` resolves to the
+                 element the local views (`loft_dc_is_elem`: positions, so a negative index
+                 counts from the end as `get_vector` does).  Single ownership makes it exact:
+                 a write rooted at another element changes no record a view of this one
+                 reaches, and a growth, removal or rebind of `V` is a write no index names.
+                 FLAG FALLBACK for every other such statement: the copy is taken when the
+                 flag is up.  A source released under `COPY_FREE_SOURCE` is a callee's
+                 fresh temporary and writes nothing the local views; a buffer that holds the
+                 null reference at every mention (a callee's `__ref_N`, which it mints into)
+                 names no store that exists, so a call handed one writes none of them.
+                 A value whose type reaches a stored pointer (`reference<τ>`) is apart
+                 from nothing — a pointer names a record in any store, so two stores
+                 being different does not keep it out of the source.  A plain argument
+                 whose record type reaches no pointer owns a tree the caller built,
+                 disjoint from every record this activation minted or placed (single
+                 ownership); a hidden buffer is left out, as its store can be cleared
+                 whole.  A promoted work buffer is apart from every source not placed in
+                 it, and a compiler temporary bound only as a path off a variable (a
+                 call's destination) is judged as that variable.  Nothing changed the
+                 place between the bind and the guard, so the values are the copy's:
+                 the copy (B-Copy) owes holds, later.  Any other bind of the local lowers the flag: a view
+                 bind must still see writes to its place (B-Disturb).  Required: an owner
+                 witness (`@FR-O-Witness`, it records whether the local owns its copy, so a
+                 deferred view is never released); every mention of the local and of each
+                 reference derived from it (`op = prog.ops[pc]`) a read (`reads_only`); no
+                 text borrowed from it; a type whose records the remap follows (structs,
+                 struct-enum variants, plain vectors).  At the copy point each derived
+                 reference LIVE after it (`lease::Frame`'s per-path liveness) moves to the
+                 same position in the copy (`loft_dc_remap`), each address held for one is
+                 derived again (`@FR-R-RecPtr`), and a point after which the local and its
+                 views are dead is not emitted; no header is held for a path rooted at
+                 either.  A static rule: one flag per local, no registry of views.  The copy
+                 happens once per changed place instead of once per bind — in an
+                 interpreter's call loop, once per function lowered instead of once per call
+                 — and in the self-host's `run` not at all, since `prog` is bound again
+                 before its old value is read on every path (fib(25): GCC 150 → 47 ms,
+                 Clang 90 → 31 ms; `mix` and `collatz` within 1 %).  Switch
+                 `LOFT_NO_DEFERRED_COPY=1`; trace `LOFT_TRACE_DEFERRED_COPY=1`; design
+                 `bench/portal/analysis/deferred-copy.md`; guard
+                 `loft-suite/rules/binding/B-Copy/a-deferred-copy-keeps-the-value-it-was-bound-to-whatever-the-source-does.loft`.
+
+  (R-Inline)     a loft function the C writes in at most twelve statements is declared
+                 `static inline`, its frame wrapper with it.  The hint changes no
+                 observable behaviour; what it moves is the C compiler's inlining
+                 budget, so a small helper a hot loop calls — a push through an
+                 overwrite-or-append helper, an accessor — is taken into its caller,
+                 whose locals then stay in registers across what was a call.  GCC
+                 left such a helper out of line at -O3 and reloaded the caller's
+                 spilled state after every call (bench 20's interpreter loop: -69 %
+                 cycles); Clang decides without the hint.  The bound is SIZE because
+                 hinting every function moved other rows 2-3 % either way, the
+                 twelve-statement form none beyond noise.  Counted by the writer
+                 (`FnWriter::write`), declarations and frame sites excluded.
+                 Switch `LOFT_NO_INLINE_HINT=1`.
 
   (R-Cold)       a runtime helper on the per-element fast path — an element read or
                  write through a holder, a length, a bounds test, a fault note, a

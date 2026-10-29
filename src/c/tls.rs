@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @I68 — Native Rust generator: a second compiled target, C — the TLS client a unit links
 
-//! The TLS client of the C runtime (@PLN203 C5): `src/c/tls/loft_tls.c` over BearSSL's engine,
+//! The TLS of the C runtime, client and server (@PLN203 C5): `src/c/tls/loft_tls.c` over BearSSL's engine,
 //! vendored under `src/c/tls/bearssl/` from the same upstream the crypto library vendors its
-//! primitives from (BearSSL v0.6-39-g7bea48e, MIT).  The subset is the files a client of
-//! `loft_tls.c`'s profile links on any host — the union of what the linker pulls in with the
-//! 64-bit multiply, AES-NI and SSE2 code and without them — and the guard
+//! primitives from (BearSSL v0.6-39-g7bea48e, MIT).  The subset is the files `loft_tls.c`'s
+//! client and server profiles link on any host — the union of what the linker pulls in with
+//! the 64-bit multiply, AES-NI and SSE2 code and without them (read off a link map against the
+//! whole upstream tree), plus the POWER8 variants — and the guard
 //! `the_tls_sources_are_the_directory` keeps this list and the directory one set.
 //!
 //! The client is not part of a unit's translation unit: BearSSL is a library of `static` helpers
@@ -104,16 +105,30 @@ const SOURCES: &[(&str, &str)] = &[
         "ec_c25519_m64.c",
         include_str!("tls/bearssl/ec_c25519_m64.c"),
     ),
+    ("ec_default.c", include_str!("tls/bearssl/ec_default.c")),
     ("ec_p256_m31.c", include_str!("tls/bearssl/ec_p256_m31.c")),
     ("ec_p256_m64.c", include_str!("tls/bearssl/ec_p256_m64.c")),
     ("ec_prime_i31.c", include_str!("tls/bearssl/ec_prime_i31.c")),
+    ("ec_pubkey.c", include_str!("tls/bearssl/ec_pubkey.c")),
     ("ec_secp256r1.c", include_str!("tls/bearssl/ec_secp256r1.c")),
     ("ec_secp384r1.c", include_str!("tls/bearssl/ec_secp384r1.c")),
     ("ec_secp521r1.c", include_str!("tls/bearssl/ec_secp521r1.c")),
     ("ecdsa_atr.c", include_str!("tls/bearssl/ecdsa_atr.c")),
     (
+        "ecdsa_default_sign_asn1.c",
+        include_str!("tls/bearssl/ecdsa_default_sign_asn1.c"),
+    ),
+    (
         "ecdsa_i31_bits.c",
         include_str!("tls/bearssl/ecdsa_i31_bits.c"),
+    ),
+    (
+        "ecdsa_i31_sign_asn1.c",
+        include_str!("tls/bearssl/ecdsa_i31_sign_asn1.c"),
+    ),
+    (
+        "ecdsa_i31_sign_raw.c",
+        include_str!("tls/bearssl/ecdsa_i31_sign_raw.c"),
     ),
     (
         "ecdsa_i31_vrfy_asn1.c",
@@ -123,6 +138,7 @@ const SOURCES: &[(&str, &str)] = &[
         "ecdsa_i31_vrfy_raw.c",
         include_str!("tls/bearssl/ecdsa_i31_vrfy_raw.c"),
     ),
+    ("ecdsa_rta.c", include_str!("tls/bearssl/ecdsa_rta.c")),
     ("enc32be.c", include_str!("tls/bearssl/enc32be.c")),
     ("enc32le.c", include_str!("tls/bearssl/enc32le.c")),
     ("enc64be.c", include_str!("tls/bearssl/enc64be.c")),
@@ -140,14 +156,17 @@ const SOURCES: &[(&str, &str)] = &[
     ("i31_bitlen.c", include_str!("tls/bearssl/i31_bitlen.c")),
     ("i31_decmod.c", include_str!("tls/bearssl/i31_decmod.c")),
     ("i31_decode.c", include_str!("tls/bearssl/i31_decode.c")),
+    ("i31_decred.c", include_str!("tls/bearssl/i31_decred.c")),
     ("i31_encode.c", include_str!("tls/bearssl/i31_encode.c")),
     ("i31_fmont.c", include_str!("tls/bearssl/i31_fmont.c")),
     ("i31_iszero.c", include_str!("tls/bearssl/i31_iszero.c")),
     ("i31_modpow.c", include_str!("tls/bearssl/i31_modpow.c")),
     ("i31_modpow2.c", include_str!("tls/bearssl/i31_modpow2.c")),
     ("i31_montmul.c", include_str!("tls/bearssl/i31_montmul.c")),
+    ("i31_mulacc.c", include_str!("tls/bearssl/i31_mulacc.c")),
     ("i31_muladd.c", include_str!("tls/bearssl/i31_muladd.c")),
     ("i31_ninv31.c", include_str!("tls/bearssl/i31_ninv31.c")),
+    ("i31_reduce.c", include_str!("tls/bearssl/i31_reduce.c")),
     ("i31_rshift.c", include_str!("tls/bearssl/i31_rshift.c")),
     ("i31_sub.c", include_str!("tls/bearssl/i31_sub.c")),
     ("i31_tmont.c", include_str!("tls/bearssl/i31_tmont.c")),
@@ -168,26 +187,61 @@ const SOURCES: &[(&str, &str)] = &[
     ("prf_sha256.c", include_str!("tls/bearssl/prf_sha256.c")),
     ("prf_sha384.c", include_str!("tls/bearssl/prf_sha384.c")),
     (
+        "rsa_default_modulus.c",
+        include_str!("tls/bearssl/rsa_default_modulus.c"),
+    ),
+    (
+        "rsa_default_pkcs1_sign.c",
+        include_str!("tls/bearssl/rsa_default_pkcs1_sign.c"),
+    ),
+    (
         "rsa_default_pkcs1_vrfy.c",
         include_str!("tls/bearssl/rsa_default_pkcs1_vrfy.c"),
+    ),
+    (
+        "rsa_default_priv.c",
+        include_str!("tls/bearssl/rsa_default_priv.c"),
+    ),
+    (
+        "rsa_i31_modulus.c",
+        include_str!("tls/bearssl/rsa_i31_modulus.c"),
+    ),
+    (
+        "rsa_i31_pkcs1_sign.c",
+        include_str!("tls/bearssl/rsa_i31_pkcs1_sign.c"),
     ),
     (
         "rsa_i31_pkcs1_vrfy.c",
         include_str!("tls/bearssl/rsa_i31_pkcs1_vrfy.c"),
     ),
+    ("rsa_i31_priv.c", include_str!("tls/bearssl/rsa_i31_priv.c")),
     ("rsa_i31_pub.c", include_str!("tls/bearssl/rsa_i31_pub.c")),
+    (
+        "rsa_i62_pkcs1_sign.c",
+        include_str!("tls/bearssl/rsa_i62_pkcs1_sign.c"),
+    ),
     (
         "rsa_i62_pkcs1_vrfy.c",
         include_str!("tls/bearssl/rsa_i62_pkcs1_vrfy.c"),
     ),
+    ("rsa_i62_priv.c", include_str!("tls/bearssl/rsa_i62_priv.c")),
     ("rsa_i62_pub.c", include_str!("tls/bearssl/rsa_i62_pub.c")),
+    (
+        "rsa_pkcs1_sig_pad.c",
+        include_str!("tls/bearssl/rsa_pkcs1_sig_pad.c"),
+    ),
     (
         "rsa_pkcs1_sig_unpad.c",
         include_str!("tls/bearssl/rsa_pkcs1_sig_unpad.c"),
     ),
+    (
+        "rsa_ssl_decrypt.c",
+        include_str!("tls/bearssl/rsa_ssl_decrypt.c"),
+    ),
     ("sha1.c", include_str!("tls/bearssl/sha1.c")),
     ("sha2big.c", include_str!("tls/bearssl/sha2big.c")),
     ("sha2small.c", include_str!("tls/bearssl/sha2small.c")),
+    ("skey_decoder.c", include_str!("tls/bearssl/skey_decoder.c")),
     ("ssl_client.c", include_str!("tls/bearssl/ssl_client.c")),
     ("ssl_engine.c", include_str!("tls/bearssl/ssl_engine.c")),
     (
@@ -203,6 +257,10 @@ const SOURCES: &[(&str, &str)] = &[
         include_str!("tls/bearssl/ssl_engine_default_chapol.c"),
     ),
     (
+        "ssl_engine_default_ec.c",
+        include_str!("tls/bearssl/ssl_engine_default_ec.c"),
+    ),
+    (
         "ssl_engine_default_ecdsa.c",
         include_str!("tls/bearssl/ssl_engine_default_ecdsa.c"),
     ),
@@ -210,9 +268,14 @@ const SOURCES: &[(&str, &str)] = &[
         "ssl_engine_default_rsavrfy.c",
         include_str!("tls/bearssl/ssl_engine_default_rsavrfy.c"),
     ),
+    ("ssl_hashes.c", include_str!("tls/bearssl/ssl_hashes.c")),
     (
         "ssl_hs_client.c",
         include_str!("tls/bearssl/ssl_hs_client.c"),
+    ),
+    (
+        "ssl_hs_server.c",
+        include_str!("tls/bearssl/ssl_hs_server.c"),
     ),
     ("ssl_io.c", include_str!("tls/bearssl/ssl_io.c")),
     ("ssl_rec_cbc.c", include_str!("tls/bearssl/ssl_rec_cbc.c")),
@@ -221,6 +284,15 @@ const SOURCES: &[(&str, &str)] = &[
         include_str!("tls/bearssl/ssl_rec_chapol.c"),
     ),
     ("ssl_rec_gcm.c", include_str!("tls/bearssl/ssl_rec_gcm.c")),
+    (
+        "ssl_scert_single_ec.c",
+        include_str!("tls/bearssl/ssl_scert_single_ec.c"),
+    ),
+    (
+        "ssl_scert_single_rsa.c",
+        include_str!("tls/bearssl/ssl_scert_single_rsa.c"),
+    ),
+    ("ssl_server.c", include_str!("tls/bearssl/ssl_server.c")),
     ("sysrng.c", include_str!("tls/bearssl/sysrng.c")),
     ("x509_decoder.c", include_str!("tls/bearssl/x509_decoder.c")),
     ("x509_minimal.c", include_str!("tls/bearssl/x509_minimal.c")),

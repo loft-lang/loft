@@ -1040,6 +1040,9 @@ fn main() {
                 .lines()
                 .find(|l| l.starts_with("static ") && l.contains(f))
                 .unwrap_or_default();
+            // `static inline` where the function is small (`@FR-R-Inline`): the return type is
+            // what this asks.
+            let sig = sig.replacen("static inline ", "static ", 1);
             assert_eq!(sig.starts_with("static loft_tup"), structs, "{mode}: {sig}");
         }
         let mut kinds: Vec<(&str, Vec<&str>)> = vec![
@@ -4589,12 +4592,14 @@ fn run_asan(
         "{stem}: {}",
         String::from_utf8_lossy(&cc.stderr)
     );
-    let out = loft::platform::process::harness_command(&exe)
-        .current_dir(cwd)
+    let mut run = loft::platform::process::harness_command(&exe);
+    run.current_dir(cwd)
         .env("ASAN_OPTIONS", "detect_leaks=1")
-        .env_remove("LOFT_SOURCE_DIR")
-        .output()
-        .expect("run the program");
+        .env_remove("LOFT_SOURCE_DIR");
+    // `HALTS`' 10 000-deep `down` costs 1136 bytes a level under GCC 15's sanitizer (11 MiB),
+    // past the usual 8 MiB; the depth is what the guard measures, so the stack grows to fit.
+    loft::platform::process::harness_stack(&mut run, 64 << 20);
+    let out = run.output().expect("run the program");
     (
         out.status.code().unwrap_or(-1),
         String::from_utf8_lossy(&out.stdout).into_owned(),

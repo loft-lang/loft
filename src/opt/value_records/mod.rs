@@ -19,9 +19,10 @@ use crate::opt::value_records::layout::{
     tuple_param_vars, type_layout, value_record_disabled,
 };
 use crate::opt::value_records::leaves::{
-    VALUE_RECORD_GETTERS, VALUE_RECORD_SETTERS, collect_leaves, converted_build_ref, dropped_reads,
-    fnref_handoffs, fnref_site_listed, handoffs_and_presence, is_null_record, is_presence_test,
-    object_own_return, release_uses, served_reads, temp_presence_unserved, view_leaf_plan,
+    HoldGraph, VALUE_RECORD_GETTERS, VALUE_RECORD_SETTERS, collect_leaves, converted_build_ref,
+    dropped_reads, fnref_handoffs, fnref_site_listed, handoffs_and_presence, is_null_record,
+    is_presence_test, object_own_return, release_uses, served_reads, temp_presence_unserved,
+    view_leaf_plan,
 };
 use crate::opt::value_records::sites::{
     Pos, ShapeCtx, close_fnref_groups, local_surely_present, mv_block_buffer, mv_return_source,
@@ -1489,6 +1490,9 @@ pub(crate) fn local_uses_ok(
     // @PLN164 C5 — the view-field reads this local's uses may be accounted against, read
     // once: which of them stand where the field can only be READ.
     let view_reads = view_field_reads(body, v, data, view_offs);
+    // Which locals may hold which, built at the first store-identity test this walk meets.
+    let holds_cell = std::cell::OnceCell::new();
+    let holds = || holds_cell.get_or_init(|| HoldGraph::of(body));
     // Every node inside a converted `Object`, by address — the walk below is transparent
     // to `Span`, and so is this one.
     let mut in_object: HashSet<usize> = HashSet::new();
@@ -1597,7 +1601,7 @@ pub(crate) fn local_uses_ok(
                     !droppable(w)
                         && (c.locals.contains_key(&w) || converted_build_ref(body, value_objects, w))
                 };
-                accounted += release_uses(body, name, args, v, copies || src_served, &moot);
+                accounted += release_uses(&holds, name, args, v, copies || src_served, &moot);
                 // A copy FROM a sub-record of the local (`Vtx { pos: w.pos, … }`, a push of
                 // one): the tuple's range is materialised into the destination.  A bind
                 // that VIEWS the sub-record (`q = w.pos`) is no copy and is not here.

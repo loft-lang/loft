@@ -14,31 +14,35 @@ and is not made here.
 
 | lane | median | worst (row) | over 3× | over 2.7× |
 |---|---|---|---|---|
-| gcc ship (`cship`) | 1.37× | 2.92× (`slope_path_with_undo`) | 0 | 2 (`slope_path_with_undo`, `map_json` 2.78×) |
-| clang ship | 1.33× | 2.74× (`par`) | 0 | 1 (`par`) |
-| gcc checked (`c`) | 1.45× | 3.31× (`slope_path_with_undo`) | 1 | 3 |
-| clang checked | 1.58× | 2.96× (`binary_read`) | 0 | 7 |
+| gcc ship (`cship`) | 1.41× | 2.78× (`map_json`) | 0 | 1 |
+| clang ship | 1.37× | 2.80× (`interp_fib`) | 0 | 2 (`interp_fib`, `par`) |
+| gcc checked (`c`) | 1.48× | 3.03× (`slope_path_with_undo`) | 1 | 3 |
+| clang checked | 1.60× | 3.06× (`interp_fib`) | 1 | 5 |
 
-(`python3 bench/stats.py --lanes rust,c,cship [--cc clang]`, 79 routines, commit `1bbf92e5c`
-on `origin/main`, box held quiet.)
+(`python3 bench/stats.py --lanes rust,c,cship [--cc clang]`, 82 routines with bench 20's three,
+commit `02096be4a`, box held quiet.)
+
+Rows that moved for LAYOUT, not mechanism — each reproduced with its switch, the hot function's
+instructions identical across the two builds: `binary_read` (gcc ship +15.6 % with
+`@FR-R-Inline`: its read loop sits in a `.cold` section whose placement moved) and
+`binary_map` (+5.3 %, the same bench); `fibonacci` (clang +6.6 %: `n_fib` unchanged, its start
+moved from a 32- to a 16-byte boundary).  Noted with evidence, not coded around.
 
 **The bar needs margin to be reliable.** `stats.py` repeats within a few percent, but a compiler
 upgrade or a layout shift moves single rows by 5–10 %.  With the worst ship rows at 2.93× and
 2.80×, a 3× bar would flap.  The bar can be declared once a full measurement shows **every ship
-row at or under about 2.7× on both compilers** — three ship cells stand above that line now, all
-three named in the order below.  The checked lanes keep 3× as a goal, not a bug
+row at or under about 2.7× on both compilers** — three ship cells stand above that line now
+(`map_json` gcc, `interp_fib` and `par` clang).  The checked lanes keep 3× as a goal, not a bug
 bar: their extra over ship is the cost of the guarantees, which is optimised, not filed.
 
 ## What is left, in order
 
-1. **`slope_path_with_undo`** (gcc ship 2.92×, gcc checked 3.31×; clang 2.36× / 2.75×).  Per path step the C runs
-   ≈ 1,350 instructions against Rust's ≈ 430 (four chunk walks, two seven-field hex reads, one
-   write, one 11-field append — the same work).  The checks are ≈ 5 % of it (priced: plain
-   arithmetic in the map helpers saves 5 % gcc, 3 % clang).  The rest is store access spread over
-   the helpers: each map walk re-derives the chunk vector's header and resolves each chunk and
-   hex through the store.  Taking the walked element's address from the header was priced and
-   is SLOWER in the C (the compilers already hoist the buffer pointer).  The next lever is
-   structural: the map helpers' chunk walks.
+1. **`slope_path_with_undo`** (gcc ship 2.48×, gcc checked 3.03×; clang 2.12× / 2.69×).  Per path step the C runs
+   ≈ 1,053 instructions against Rust's ≈ 434 (four chunk walks, two seven-field hex reads, one
+   write, one 11-field append — the same work; measured 2026-10-29 on `7517d13ad`).  Store
+   addressing inside the map helpers prices at zero; the gap is `loft_rem`'s null test plus the
+   helpers staying out of line (≈ 45 %), the undo push through the store (≈ 20 %), and a
+   remainder not yet attributed — [`top5-memory.md`](top5-memory.md).
 2. **`map_json`** (2.78× gcc ship, 2.81× gcc checked; clang ≈ 2.45×).  Generic runtime JSON (`loft_json.h`), not emitted
    code: the lexer `loft_jl_token` 17 %, `loft_pr_struct` 12 %, `loft_jp_validate` 8.4 % (every
    string is validated after the lexer already scanned it — skippable for a string with no
@@ -51,7 +55,14 @@ bar: their extra over ship is the cost of the guarantees, which is optimised, no
    loop-carried, so no static proof applies.  A guard testing `h ∈ [0, M]` once at the loop's
    entry would make the loop plain — an extension of `@FR-R-GuardedChain` (a loop-carried masked
    local as a guarded leaf, `&` `^` `>>` beside `+ - *`), general for PRNG and noise loops.
-   `par`'s gap is the worker hand-off.
+   `par`'s gap is NOT the worker hand-off (under 0.4 % of its cycles): it is the NaN test the
+   source's `?` asks for per Newton step (≈ 42 %) and the row loop staying scalar where Rust runs
+   two rows per `divpd` (≈ 55 %) — [`top5-memory.md`](top5-memory.md).
+
+4. **`interp_fib`** (bench 20, the self-host interpreter's loop: clang checked 3.06×, ship 2.80×;
+   gcc 2.29× / 2.24×).  Its calls go through three frame vectors and a `put` per push; gcc took
+   `put` into the loop under `@FR-R-Inline` and the op fetch through a held header
+   (`@FR-R-Header`'s rebind clause).
 
 ## Measuring
 
@@ -73,4 +84,9 @@ a key had silently stayed checked); the key-ordered hash walk sorts by radix (`h
 record parameters, value-record reads, copied sub-records; struct-enum literals skip the
 prefill; reserved vector room left unzeroed; the file cursor in registers; and `@FR-R-Apart`
 instances 2, 3 and 4 ported from native (the short-lived second layout beside the store:
-`truncate_to` −70 %).  Details in the commits and in `doc/claude/formal/rewrites.md`.
+`truncate_to` −70 %).  Then: a read-only record parameter passed as a `const` pointer
+(`@FR-R-ValueRecord`), a checked multiply by a constant that no longer divides at run time, small
+functions declared `inline` (`@FR-R-Inline`), and a vector the loop rebinds kept under a header
+derived again after each rebind (`@FR-R-Header`): bench 20 −69 % (gcc) / −17 % (clang),
+`slope_path_with_undo` gcc ship 2.92× → 2.48×.  Details in the commits and in
+`doc/claude/formal/rewrites.md`.

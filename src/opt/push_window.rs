@@ -51,10 +51,17 @@ pub struct StoreFacts<'a> {
 }
 
 impl StoreFacts<'_> {
-    /// The end of `x`'s dep chain; `None` when the chain forks, loops or leaves the table.
+    /// The end of `x`'s dep chain; `None` when the chain loops, leaves the table, or forks
+    /// into branches that end at DIFFERENT variables.  A fork whose every branch ends at the
+    /// same one is that one: a variable bound on one path to `first.ops` and on another to
+    /// `callee.ops`, both views of `progs`, lives in `progs`' store whichever bind ran — a
+    /// tuple's union of two stores still answers nothing.
     pub(crate) fn terminal(&self, x: u16) -> Option<u16> {
+        self.terminal_from(x, &mut HashSet::new())
+    }
+
+    fn terminal_from(&self, x: u16, seen: &mut HashSet<u16>) -> Option<u16> {
         let mut cur = x;
-        let mut seen: HashSet<u16> = HashSet::new();
         loop {
             if cur as usize >= self.vars.var_count() || !seen.insert(cur) {
                 return None;
@@ -69,7 +76,17 @@ impl StoreFacts<'_> {
             match deps.as_slice() {
                 [] => return Some(cur),
                 [d] => cur = *d,
-                _ => return None,
+                _ => {
+                    let mut end = None;
+                    for d in deps {
+                        let t = self.terminal_from(d, &mut seen.clone())?;
+                        if end.is_some_and(|e| e != t) {
+                            return None;
+                        }
+                        end = Some(t);
+                    }
+                    return end;
+                }
             }
         }
     }

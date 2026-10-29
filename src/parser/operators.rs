@@ -4094,9 +4094,7 @@ impl Parser {
         // loop (`(C-Never)`, @FR-N-Coal's `d ⇐ τ`): the value is the subject's, and there is
         // no default type to match (@PLN179 finding 019).  The halting builtins by name, as
         // `sandbox::ABORT_OPS` lists them; `assert` returns and is not one.
-        if let Value::Call(d, _) = rhs.unspan()
-            && matches!(self.data.def(*d).name(), "n_exit" | "n_panic")
-        {
+        if crate::parser::control::is_halt_call(&self.data, &rhs) {
             let halt = std::mem::replace(&mut rhs, Value::Null);
             self.null_coalesce_exit(code, ctp, lhs_type, halt);
             return;

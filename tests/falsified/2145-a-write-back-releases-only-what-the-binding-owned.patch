@@ -1,5 +1,5 @@
 diff --git b/src/scopes.rs a/src/scopes.rs
-index ea61a9c..1a1c014 100644
+index d93bc8a68..7fab40155 100644
 --- b/src/scopes.rs
 +++ a/src/scopes.rs
 @@ -398,14 +398,6 @@ struct Scopes<'s> {
@@ -18,7 +18,7 @@ index ea61a9c..1a1c014 100644
      /// prefix (the record a rebuild is about to overwrite, loft#1388).  The rebuild's own
      /// snapshot (`displaced_drop`) skips them: one release per displaced record.
 diff --git b/src/scopes/args.rs a/src/scopes/args.rs
-index b0b92b0..699554d 100644
+index f7c56f87c..318217647 100644
 --- b/src/scopes/args.rs
 +++ a/src/scopes/args.rs
 @@ -309,21 +309,6 @@ impl Scopes<'_> {
@@ -44,11 +44,11 @@ index b0b92b0..699554d 100644
                  // Existing A5.6 hoisting: lift Set(w, Null) for owned Reference.
                  let is_a56_hoisted = Self::is_null_init_preamble(&ops, function);
 diff --git b/src/scopes/buffers.rs a/src/scopes/buffers.rs
-index 481b84b..1a8b2c7 100644
+index c13a3f61e..bd75cb73d 100644
 --- b/src/scopes/buffers.rs
 +++ a/src/scopes/buffers.rs
-@@ -57,52 +57,6 @@ pub(super) fn tail_calls(v: &Value) -> Vec<&Value> {
-     }
+@@ -77,52 +77,6 @@ pub(super) fn coalesce_tail_calls(v: &Value) -> Vec<&Value> {
+         .unwrap_or_default()
  }
  
 -/// The locals handed to a `&` heap parameter anywhere in `ops` — `OpCreateStack(Var(v))` as a
@@ -100,7 +100,7 @@ index 481b84b..1a8b2c7 100644
  #[expect(clippy::too_many_lines, reason = "inherited")]
  pub(super) fn reuse_record_buffers(
      code: &mut Value,
-@@ -135,11 +89,6 @@ pub(super) fn reuse_record_buffers(
+@@ -155,11 +109,6 @@ pub(super) fn reuse_record_buffers(
              fed_locals.entry(av).or_default().push(v);
          }
      }
@@ -112,7 +112,7 @@ index 481b84b..1a8b2c7 100644
      let db_nr = data.def_nr("OpDatabase");
      let clear_nr = data.def_nr("OpClear");
      // Emitted in variable order so identical source compiles to identical IR.
-@@ -202,20 +151,6 @@ pub(super) fn reuse_record_buffers(
+@@ -222,20 +171,6 @@ pub(super) fn reuse_record_buffers(
              decline(av, "its result local is assigned more than once");
              continue;
          }
@@ -134,7 +134,7 @@ index 481b84b..1a8b2c7 100644
              && fed_locals
                  .get(&av)
 diff --git b/src/scopes/get_free_vars.rs a/src/scopes/get_free_vars.rs
-index 4bc24e5..633bb25 100644
+index 4bc24e5b5..633bb2527 100644
 --- b/src/scopes/get_free_vars.rs
 +++ a/src/scopes/get_free_vars.rs
 @@ -196,12 +196,6 @@ impl Scopes<'_> {
@@ -174,10 +174,10 @@ index 4bc24e5..633bb25 100644
              guarded.append(&mut ls);
              ls = guarded;
 diff --git b/src/scopes/phase.rs a/src/scopes/phase.rs
-index a7cf27c..72602b4 100644
+index 25a7c6a73..0cc5f7552 100644
 --- b/src/scopes/phase.rs
 +++ a/src/scopes/phase.rs
-@@ -197,7 +197,6 @@ pub(super) fn run_scan_phase(
+@@ -198,7 +198,6 @@ pub(super) fn run_scan_phase(
          entry_witness: None,
          local_owns: HashMap::default(),
          owner_witness: HashMap::default(),
@@ -185,7 +185,7 @@ index a7cf27c..72602b4 100644
          prefix_released: Vec::new(),
          displaced_owned,
          views_to_materialise,
-@@ -305,18 +304,6 @@ pub(super) fn run_scan_phase(
+@@ -322,18 +321,6 @@ pub(super) fn run_scan_phase(
          scopes.var_order.push(w);
          scopes.owner_witness.insert(v, w);
      }
@@ -204,7 +204,7 @@ index a7cf27c..72602b4 100644
      // ⚠ @FR-N-Road (@PLN160) — this mechanism is NULLABLE BY CONSTRUCTION, and the dense
      // spelling of the same mixed-ownership local answers the identical question by STORE
      // IDENTITY (`OpFreeRefIfDistinct`, plus the `_old_` guard at the rebind).  @C90 makes the two
-@@ -505,24 +492,6 @@ pub(super) fn run_scan_phase(
+@@ -522,24 +509,6 @@ pub(super) fn run_scan_phase(
      // call and not as `null`, because a heap local's `= null` lowers to `OpInitRef` — a
      // stack-record placeholder the allocator is expected to replace — and a free of THAT is
      // the `#306` refusal.
@@ -229,7 +229,7 @@ index a7cf27c..72602b4 100644
      if !scopes.owner_witness.is_empty()
          && let Some(bl) = body_block_mut(&mut code)
      {
-@@ -932,89 +901,3 @@ pub(super) fn hidden_return_buffer_var(d_nr: u32, function: &Function, data: &Da
+@@ -949,89 +918,3 @@ pub(super) fn hidden_return_buffer_var(d_nr: u32, function: &Function, data: &Da
      let v = function.var(&name);
      (v != u16::MAX).then_some(v)
  }

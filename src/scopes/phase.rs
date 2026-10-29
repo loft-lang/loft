@@ -21,6 +21,7 @@ use super::handoff::{
 };
 #[cfg(debug_assertions)]
 use super::leak_check::{check_arg_ref_allocs, check_ref_leaks};
+use super::scan_set::materialise_buffer_type;
 #[cfg(debug_assertions)]
 use super::text_return_check::check_text_return;
 use super::tuple_members::written_tuple_members_in;
@@ -201,6 +202,7 @@ pub(super) fn run_scan_phase(
         prefix_released: Vec::new(),
         displaced_owned,
         views_to_materialise,
+        materialise_buffers: HashMap::default(),
         text_views_reported: HashSet::default(),
         fnref_target: collect_fnref_targets(orig_code, orig_vars),
         // Empty, and filled in SCAN ORDER (`Scopes::convert` arms each statement's hand-offs
@@ -232,6 +234,21 @@ pub(super) fn run_scan_phase(
     let mut function = Function::copy(orig_vars);
     for a in function.arguments() {
         scopes.var_scope.insert(a, 0);
+    }
+    // `@FR-B-Disturb`'s materialise buffers, made before the scan for the reason the witnesses
+    // below are: the scan places each exit's frees as it reaches it, so a buffer made later —
+    // at the bind — is missing from every exit before that bind (`Scopes::materialise_buffers`).
+    let mut materialised: Vec<u16> = scopes.views_to_materialise.keys().copied().collect();
+    materialised.sort_unstable();
+    for v in materialised {
+        if let Some(tp) = materialise_buffer_type(&function, v) {
+            let buffer = scopes.new_buffer_var(&mut function, &tp);
+            // The BODY's scope, which every exit frees down to (`free_vars(…, 1)`); scope 0
+            // holds the arguments, which no exit frees.  `new_buffer_var` reads it off the
+            // scan's stack, which is empty here.
+            scopes.var_scope.insert(buffer, 1);
+            scopes.materialise_buffers.insert(v, buffer);
+        }
     }
     // loft#1128 — mint the return-buffer's runtime ownership witness BEFORE the scan, so the
     // first assignment that has to maintain it already has a flag to write.  Only for a body

@@ -1,0 +1,403 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The C runtime's format routines (@PLN91 S2.2), as the loft interpreter calls them: one `#c`
+// binding per routine, into `shim/crt.c`, and a loft function per kind that owns the buffer
+// the rendering is written into.  The operands are the format operators' own (`OpFormatInt`
+// and its siblings, `default/01_code.loft`), so a format spec the IR carries is rendered by
+// the C runtime exactly as a C-backend program renders it.
+
+fn c_format_int(out: vector<u8>, val: integer, is_null: boolean, radix: integer, width: integer, token: integer, plus: boolean, note: boolean, dir: integer) -> integer;
+#c "loft_crt_format_int" "int64_t(char*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_format_float(out: vector<u8>, val: vector<float>, is_null: boolean, width: integer, precision: integer, token: integer, plus: boolean, dir: integer, single: boolean) -> integer;
+#c "loft_crt_format_float" "int64_t(char*, int64_t, const double*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_format_text(out: vector<u8>, val: text, is_null: boolean, width: integer, dir: integer, token: integer) -> integer;
+#c "loft_crt_format_text" "int64_t(char*, int64_t, const char*, int64_t, int64_t, int64_t, int64_t)"
+
+// A byte buffer of `n` zero bytes, for a routine to write into.
+fn room(n: integer) -> vector<u8> {
+  [for _ in 0..n { 0 as u8 }]
+}
+
+// `val` formatted as `OpFormatInt(_, val, radix, width, token, plus, note, dir)` formats it.
+pub fn format_int(val: integer?, radix: integer, width: integer, token: integer, plus: boolean, note: boolean, dir: integer) -> text {
+  buf = room(64);
+  n = c_format_int(buf, val ?? 0, val == null, radix, width, token, plus, note, dir);
+  if n > len(buf) {
+    buf = room(n);
+    n = c_format_int(buf, val ?? 0, val == null, radix, width, token, plus, note, dir);
+  }
+  text_from_byte_range(buf, 0, n)
+}
+
+// `val` formatted as `OpFormatFloat` (or, with `single`, `OpFormatSingle`) formats it.
+pub fn format_float(val: float?, width: integer, precision: integer, token: integer, plus: boolean, dir: integer, single: boolean) -> text {
+  v: vector<float> = [val ?? 0.0];
+  buf = room(64);
+  n = c_format_float(buf, v, val == null, width, precision, token, plus, dir, single);
+  if n > len(buf) {
+    buf = room(n);
+    n = c_format_float(buf, v, val == null, width, precision, token, plus, dir, single);
+  }
+  text_from_byte_range(buf, 0, n)
+}
+
+// `val` formatted as `OpFormatText(_, val, width, dir, token)` formats it.
+pub fn format_text(val: text?, width: integer, dir: integer, token: integer) -> text {
+  buf = room(size(val ?? "") + width + 8);
+  n = c_format_text(buf, val ?? "", val == null, width, dir, token);
+  if n > len(buf) {
+    buf = room(n);
+    n = c_format_text(buf, val ?? "", val == null, width, dir, token);
+  }
+  text_from_byte_range(buf, 0, n)
+}
+
+// ── The store (@PLN91 S3) ────────────────────────────────────────────────────────────────
+// The interpreted program's records live in the shim's own copy of the C runtime's stores.  A
+// reference is its three parts — store, rec, pos — and a routine that answers one writes them
+// into `out`, a vector of three integers.
+
+fn c_database(out: vector<integer>, bytes: integer, tp: integer) -> integer;
+#c "loft_crt_database" "int64_t(int64_t*, int64_t, int64_t, int64_t)"
+
+fn c_free_ref(store: integer, rec: integer, pos: integer);
+#c "loft_crt_free_ref" "void(int64_t, int64_t, int64_t)"
+
+fn c_get_int(store: integer, rec: integer, pos: integer, fld: integer) -> integer;
+#c "loft_crt_get_int" "int64_t(int64_t, int64_t, int64_t, int64_t)"
+
+fn c_set_int(store: integer, rec: integer, pos: integer, fld: integer, v: integer, is_null: boolean);
+#c "loft_crt_set_int" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_get_text(out: vector<u8>, store: integer, rec: integer, pos: integer, fld: integer) -> integer;
+#c "loft_crt_get_text" "int64_t(char*, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_set_text(store: integer, rec: integer, pos: integer, fld: integer, val: text, is_null: boolean);
+#c "loft_crt_set_text" "void(int64_t, int64_t, int64_t, int64_t, const char*, int64_t)"
+
+fn c_live_stores() -> integer;
+#c "loft_crt_live_stores" "int64_t()"
+
+fn c_ref_part(store: integer, rec: integer, pos: integer, which: integer) -> integer;
+#c "loft_crt_ref_part" "int64_t(int64_t, int64_t, int64_t, int64_t)"
+
+fn c_free_var(io: vector<integer>);
+#c "loft_crt_free_var" "void(int64_t*, int64_t)"
+
+fn c_free_var_distinct(io: vector<integer>, w_store: integer, w_rec: integer, w_pos: integer);
+#c "loft_crt_free_var_distinct" "void(int64_t*, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_refill_text(store: integer, rec: integer, pos: integer, fld: integer, val: text, is_null: boolean);
+#c "loft_crt_refill_text" "void(int64_t, int64_t, int64_t, int64_t, const char*, int64_t)"
+
+fn c_bind_copy(io: vector<integer>, tp: integer, s_store: integer, s_rec: integer, s_pos: integer);
+#c "loft_crt_bind_copy" "void(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+// The null reference, as a variable's three parts: the sentinel `loft_ref_null()` writes.
+pub fn null_ref() -> vector<integer> {
+  [65535, 0, 0]
+}
+
+// `OpDatabase` on the variable whose reference is `io[0..3]`: a store it already names is made
+// again in place, a null one gets a fresh store; either way the root is a zeroed record of
+// `bytes` of type `tp`, and its reference is written back into `io`.
+pub fn database(io: vector<integer>, bytes: integer, tp: integer) {
+  c_database(io, bytes, tp);
+}
+
+// `OpFreeRef`: the record's whole store goes.
+pub fn free_ref(store: integer, rec: integer, pos: integer) {
+  c_free_ref(store, rec, pos);
+}
+
+// `OpFreeRef` of the variable in `io`: its store goes and the variable reads null afterwards.
+pub fn free_var(io: vector<integer>) {
+  c_free_var(io);
+}
+
+// `OpFreeRefIfDistinct(v, w)` of the variable in `io`: freed and reset unless it names `w`'s
+// store.
+pub fn free_var_distinct(io: vector<integer>, w_store: integer, w_rec: integer, w_pos: integer) {
+  c_free_var_distinct(io, w_store, w_rec, w_pos);
+}
+
+// The variable in `io` bound to a copy of the record at `src`, of type `tp`, with the claims it
+// owns (the loaded table says which): `loft_bind_copy`.
+pub fn bind_copy(io: vector<integer>, tp: integer, s_store: integer, s_rec: integer, s_pos: integer) {
+  c_bind_copy(io, tp, s_store, s_rec, s_pos);
+}
+
+// `OpGetInt` and `OpSetInt`: the 8-byte integer at byte `fld` of the record.
+pub fn get_int(store: integer, rec: integer, pos: integer, fld: integer) -> integer? {
+  c_get_int(store, rec, pos, fld)
+}
+
+pub fn set_int(store: integer, rec: integer, pos: integer, fld: integer, v: integer?) {
+  c_set_int(store, rec, pos, fld, v ?? 0, v == null);
+}
+
+// `OpGetText` and `OpSetText`: the text at byte `fld` of the record.
+pub fn get_text(store: integer, rec: integer, pos: integer, fld: integer) -> text? {
+  buf = room(64);
+  n = c_get_text(buf, store, rec, pos, fld);
+  if n < 0 {
+    return null;
+  }
+  if n > len(buf) {
+    buf = room(n);
+    n = c_get_text(buf, store, rec, pos, fld);
+  }
+  text_from_byte_range(buf, 0, n)
+}
+
+pub fn set_text(store: integer, rec: integer, pos: integer, fld: integer, val: text?) {
+  c_set_text(store, rec, pos, fld, val ?? "", val == null);
+}
+
+// `OpSetTextReplace`: the text field refilled in place where its claim has room.
+pub fn refill_text(store: integer, rec: integer, pos: integer, fld: integer, val: text?) {
+  c_refill_text(store, rec, pos, fld, val ?? "", val == null);
+}
+
+fn c_get_w(which: integer, store: integer, rec: integer, pos: integer, fld: integer, min: integer) -> integer;
+#c "loft_crt_get_w" "int64_t(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_set_w(which: integer, store: integer, rec: integer, pos: integer, fld: integer, min: integer, v: integer, is_null: boolean);
+#c "loft_crt_set_w" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_get_float(store: integer, rec: integer, pos: integer, fld: integer, single: boolean) -> float;
+#c "loft_crt_get_float" "double(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_set_float(store: integer, rec: integer, pos: integer, fld: integer, val: vector<float>, is_null: boolean, single: boolean);
+#c "loft_crt_set_float" "void(int64_t, int64_t, int64_t, int64_t, const double*, int64_t, int64_t, int64_t)"
+
+fn c_field_pos(store: integer, rec: integer, pos: integer, fld: integer) -> integer;
+#c "loft_crt_field_pos" "int64_t(int64_t, int64_t, int64_t, int64_t)"
+
+// The field widths besides the 8-byte integer, by the operator that reads or writes them (each
+// calls that operator's own runtime routine, `shim/crt.c`).  `min` is a narrow integer's
+// minimum, the operator's operand; the other widths ignore it.
+pub W_INT4 = 0;
+pub W_BYTE = 1;
+pub W_BYTE_NULLABLE = 2;
+pub W_SHORT = 3;
+pub W_SHORT_RAW = 4;
+pub W_CHARACTER = 5;
+pub W_BOOLEAN = 6;
+pub W_ENUM = 7;
+
+// A field of width `which` at byte `fld`: an integer, a character's code point (0 for null), a
+// boolean (1, 0 or null) or a plain enum's number (null for null).
+pub fn get_w(which: integer, store: integer, rec: integer, pos: integer, fld: integer, min: integer) -> integer? {
+  c_get_w(which, store, rec, pos, fld, min)
+}
+
+pub fn set_w(which: integer, store: integer, rec: integer, pos: integer, fld: integer, min: integer, v: integer?) {
+  c_set_w(which, store, rec, pos, fld, min, v ?? 0, v == null);
+}
+
+// `OpGetFloat`, or with `single` `OpGetSingle` (widened): null for NaN.
+pub fn get_float(store: integer, rec: integer, pos: integer, fld: integer, single: boolean) -> float? {
+  c_get_float(store, rec, pos, fld, single)
+}
+
+pub fn set_float(store: integer, rec: integer, pos: integer, fld: integer, v: float?, single: boolean) {
+  c_set_float(store, rec, pos, fld, [v ?? 0.0], v == null, single);
+}
+
+// `OpGetField`: the position of the record embedded at byte `fld` (`loft_field`); its store and
+// record are the host's own.
+pub fn field_pos(store: integer, rec: integer, pos: integer, fld: integer) -> integer {
+  c_field_pos(store, rec, pos, fld)
+}
+
+// How many of the shim's stores are live.
+pub fn live_stores() -> integer {
+  c_live_stores()
+}
+
+// Part `which` (0 store, 1 rec, 2 pos) of a reference after its trip through the runtime's own
+// reference type.
+pub fn ref_part(store: integer, rec: integer, pos: integer, which: integer) -> integer {
+  c_ref_part(store, rec, pos, which)
+}
+
+fn c_load_types(rows: vector<integer>, ntypes: integer) -> integer;
+#c "loft_crt_load_types" "int64_t(const int64_t*, int64_t, int64_t)"
+
+fn c_copy_record(s_store: integer, s_rec: integer, s_pos: integer, d_store: integer, d_rec: integer, d_pos: integer, tp: integer, flags: integer);
+#c "loft_crt_copy_record" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_clear(store: integer, rec: integer, pos: integer, tp: integer);
+#c "loft_crt_clear" "void(int64_t, int64_t, int64_t, int64_t)"
+
+// `OpClear(r, tp)` without its pool reset: the claims the record of type `tp` owns released, by
+// the loaded table, so its store takes a new value in place.
+pub fn clear(store: integer, rec: integer, pos: integer, tp: integer) {
+  c_clear(store, rec, pos, tp);
+}
+
+// The runtime's type table, from flat rows (`shim/crt.c` names their layout): how many types
+// were loaded, or -1 for rows that do not parse.
+pub fn load_types(rows: vector<integer>, ntypes: integer) -> integer {
+  c_load_types(rows, ntypes)
+}
+
+// `OpCopyRecord`: the record at `src` copied into `dst` with the claims it owns.
+pub fn copy_record(s_store: integer, s_rec: integer, s_pos: integer, d_store: integer, d_rec: integer, d_pos: integer, tp: integer, flags: integer) {
+  c_copy_record(s_store, s_rec, s_pos, d_store, d_rec, d_pos, tp, flags);
+}
+
+// ── Vectors (@PLN91 S3, the second slice) ──────────────────────────────────────────────────
+// A vector is the reference to the field that holds it, an element a reference into the same
+// store; each routine calls its operator's own runtime routine (`shim/crt.c`).
+
+fn c_vec_len(store: integer, rec: integer, pos: integer) -> integer;
+#c "loft_crt_vec_len" "int64_t(int64_t, int64_t, int64_t)"
+
+fn c_vec_get(out: vector<integer>, store: integer, rec: integer, pos: integer, size: integer, idx: integer) -> integer;
+#c "loft_crt_vec_get" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_vec_prealloc(store: integer, rec: integer, pos: integer, count: integer, size: integer);
+#c "loft_crt_vec_prealloc" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_vec_push(which: integer, store: integer, rec: integer, pos: integer, min: integer, v: integer, is_null: boolean);
+#c "loft_crt_vec_push" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_vec_push_float(store: integer, rec: integer, pos: integer, val: vector<float>, is_null: boolean, single: boolean);
+#c "loft_crt_vec_push_float" "void(int64_t, int64_t, int64_t, const double*, int64_t, int64_t, int64_t)"
+
+fn c_vec_append(out: vector<integer>, store: integer, rec: integer, pos: integer, size: integer) -> integer;
+#c "loft_crt_vec_append" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_fill(store: integer, rec: integer, pos: integer, image: vector<u8>);
+#c "loft_crt_fill" "void(int64_t, int64_t, int64_t, const uint8_t*, int64_t)"
+
+fn c_vec_finish(store: integer, rec: integer, pos: integer);
+#c "loft_crt_vec_finish" "void(int64_t, int64_t, int64_t)"
+
+fn c_vec_clear(store: integer, rec: integer, pos: integer);
+#c "loft_crt_vec_clear" "void(int64_t, int64_t, int64_t)"
+
+// The pushes besides a float's, by the operator (`P_*`), as `vec_push` takes them.
+pub P_INT = 0;
+pub P_INT4 = 1;
+pub P_CHARACTER = 2;
+pub P_BYTE = 3;
+pub P_ENUM = 4;
+pub P_BOOLEAN = 5;
+
+// `OpLengthVector`.
+pub fn vec_len(store: integer, rec: integer, pos: integer) -> integer {
+  c_vec_len(store, rec, pos)
+}
+
+// `OpGetVector`: the element at `idx` of `size` bytes, into `out[0..3]`; the null reference
+// past either end, and for a null index (the int64 null a C program passes lies past both).
+pub fn vec_get(out: vector<integer>, store: integer, rec: integer, pos: integer, size: integer, idx: integer?) {
+  if idx == null {
+    out[0] = 65535;
+    out[1] = 0;
+    out[2] = 0;
+    return;
+  }
+  c_vec_get(out, store, rec, pos, size, idx);
+}
+
+// `OpPreAllocVector`: room for `count` more elements of `size` bytes.
+pub fn vec_prealloc(store: integer, rec: integer, pos: integer, count: integer, size: integer) {
+  c_vec_prealloc(store, rec, pos, count, size);
+}
+
+// A push by operator `which` (`P_*`); `min` is a byte's minimum.
+pub fn vec_push(which: integer, store: integer, rec: integer, pos: integer, min: integer, v: integer?) {
+  c_vec_push(which, store, rec, pos, min, v ?? 0, v == null);
+}
+
+// `OpPushFloat`, or with `single` `OpPushSingle`.
+pub fn vec_push_float(store: integer, rec: integer, pos: integer, v: float?, single: boolean) {
+  c_vec_push_float(store, rec, pos, [v ?? 0.0], v == null, single);
+}
+
+// `OpNewRecord` on a vector: a new element of `size` bytes at its end, into `out[0..3]`.
+pub fn vec_append(out: vector<integer>, store: integer, rec: integer, pos: integer, size: integer) {
+  c_vec_append(out, store, rec, pos, size);
+}
+
+// A fresh element's bytes: the type's default image (`types::default_image`).
+pub fn fill(store: integer, rec: integer, pos: integer, image: vector<u8>) {
+  c_fill(store, rec, pos, image);
+}
+
+// `OpFinishRecord` on a vector.
+pub fn vec_finish(store: integer, rec: integer, pos: integer) {
+  c_vec_finish(store, rec, pos);
+}
+
+// `OpClearVector`: emptied, the claims its elements own released (the table must be loaded).
+pub fn vec_clear(store: integer, rec: integer, pos: integer) {
+  c_vec_clear(store, rec, pos);
+}
+
+// Keyed collections (S3's fourth slice): a hash's routines read its key parts from the loaded
+// table, so each takes the collection's type number.  A lookup's values are pushed one part at
+// a time onto the shim's key stack, and `hash_find` takes and pops the top `n` (`shim/crt.c`).
+
+fn c_key_int(v: integer, is_null: boolean);
+#c "loft_crt_key_int" "void(int64_t, int64_t)"
+
+fn c_key_float(v: vector<float>, single: boolean);
+#c "loft_crt_key_float" "void(const double*, int64_t, int64_t)"
+
+fn c_key_text(val: text, is_null: boolean);
+#c "loft_crt_key_text" "void(const char*, int64_t)"
+
+fn c_hash_find(out: vector<integer>, store: integer, rec: integer, pos: integer, tp: integer, n: integer) -> integer;
+#c "loft_crt_hash_find" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_hash_entry(out: vector<integer>, store: integer, rec: integer, pos: integer, size: integer, linked: boolean) -> integer;
+#c "loft_crt_hash_entry" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_hash_insert(store: integer, rec: integer, pos: integer, r_store: integer, r_rec: integer, r_pos: integer, elem: integer, tp: integer);
+#c "loft_crt_hash_insert" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_hash_len(store: integer, rec: integer, pos: integer) -> integer;
+#c "loft_crt_hash_len" "int64_t(int64_t, int64_t, int64_t)"
+
+// One key part: an integer (a boolean, character or plain enum as its number), a float or a
+// single, a text.  A null part is the null a C program passes for it.
+pub fn key_int(v: integer?) {
+  c_key_int(v ?? 0, v == null);
+}
+
+pub fn key_float(v: float?, single: boolean) {
+  c_key_float([v ?? 0.0 / 0.0], single);
+}
+
+pub fn key_text(v: text?) {
+  c_key_text(v ?? "", v == null);
+}
+
+// `OpGetRecord` on a hash of type `tp`: the record keyed by the top `n` parts, into `out[0..3]`,
+// the null reference on a miss.
+pub fn hash_find(out: vector<integer>, store: integer, rec: integer, pos: integer, tp: integer, n: integer) {
+  c_hash_find(out, store, rec, pos, tp, n);
+}
+
+// `OpNewRecord` in a hash: a new entry of `size` bytes, into `out[0..3]`.
+pub fn hash_entry(out: vector<integer>, store: integer, rec: integer, pos: integer, size: integer, linked: boolean) {
+  c_hash_entry(out, store, rec, pos, size, linked);
+}
+
+// `OpFinishRecord` in a hash of type `tp` whose elements are type `elem`.
+pub fn hash_insert(store: integer, rec: integer, pos: integer, r_store: integer, r_rec: integer, r_pos: integer, elem: integer, tp: integer) {
+  c_hash_insert(store, rec, pos, r_store, r_rec, r_pos, elem, tp);
+}
+
+// `OpLengthHash`.
+pub fn hash_len(store: integer, rec: integer, pos: integer) -> integer {
+  c_hash_len(store, rec, pos)
+}

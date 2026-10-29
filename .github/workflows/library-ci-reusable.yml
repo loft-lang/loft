@@ -214,6 +214,28 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit $status
 
+      # The same suite through the C backend (@PLN203) — MANDATORY for every package (owner):
+      # a library ships on C or its CI is red.  A native part written as a Rust crate does not
+      # load in a C build, so such a package needs a `[c] shim` (PACKAGES_C_BINDING.md) to pass.
+      - name: Native C — ${{ matrix.package }}
+        working-directory: ${{ matrix.package }}
+        env:
+          LOFT_DENY_WARNINGS: ${{ hashFiles(format('{0}/.allow_warnings', matrix.package)) != '' && '0' || '1' }}
+          LOFT_STORE_GUARD: 1
+        run: |
+          set -o pipefail
+          LOFT_TIMEOUT=240 loft --native-c --tests tests 2>&1 | tee "$RUNNER_TEMP/native-c.log" && exit 0
+          status=$?
+          {
+            echo "### ❌ \`${{ matrix.package }}\` — C backend"
+            echo
+            echo '```'
+            grep -E '^[[:space:]]*(FAIL|Warning\[|error)' "$RUNNER_TEMP/native-c.log" | head -40 \
+              || echo "(no FAIL/Warning line — see the job log)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
       # ── The guide, which is a program ──────────────────────────────────────
       #
       # `docs/*.loft` is the package's getting-started guide (LIBRARY_AUTHORING § 2c):

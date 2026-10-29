@@ -11,7 +11,7 @@ backend as it ships (`--native-c --ship`), which times the run apart from the im
 Best of `--runs` per side; the two answers must agree or the row is not a measurement.  A
 ratio over 3x is printed as such — the owner's line for telling the performance stream.
 """
-import argparse, os, subprocess, sys, tempfile
+import argparse, os, shutil, subprocess, sys, tempfile
 
 KERNELS = [("fib", "n_fib", ["30"]), ("mix", "n_mix", ["5000000", "1"]),
            ("collatz", "n_longest", ["1", "100000"])]
@@ -40,6 +40,12 @@ def main():
     loft = os.path.join(root, o.loft) if not os.path.isabs(o.loft) else o.loft
     env = dict(os.environ, LOFT_NO_CACHE="1")
     tmp = tempfile.mkdtemp(prefix="loft-s14-", dir=os.environ.get("TMPDIR"))
+    try:
+        measure(o, root, loft, env, tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+def measure(o, root, loft, env, tmp):
     kdir = os.path.join(root, "selfhost", "kernels")
     driver = os.path.join(root, "selfhost", "bench", "run_kernel.loft")
     print(f"{'kernel':10} {'answer':>10} {'rust us':>10} {'loft us':>10} {'ratio':>7}  load us")

@@ -1,0 +1,69 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// The server library's native declarations, word for word (server 0.7.5, src/server.loft),
+// public so a test program reaches them directly.
+
+pub fn tcp_listen(port: integer) -> integer;
+#native
+pub fn tcp_listen_on(addr: text, port: integer) -> integer;
+#native
+pub fn tcp_listen_tls(port: integer, cert: text, key: text) -> integer;
+#native
+pub fn tcp_listen_tls_on(addr: text, port: integer, cert: text, key: text) -> integer;
+#native
+pub fn tcp_accept(handle: integer) -> boolean;
+#native
+pub fn tcp_accept_nonblocking(handle: integer) -> boolean;
+#native
+pub fn tcp_method() -> text;
+#native
+pub fn tcp_path() -> text;
+#native
+pub fn tcp_body() -> text;
+#native
+pub fn tcp_headers() -> text;
+#native
+pub fn tcp_respond(status: integer, body: text);
+#native
+pub fn tcp_respond_typed(status: integer, body: text, content_type: text);
+#native
+pub fn tcp_respond_bytes(status: integer, body: vector<u8>, content_type: text);
+#native
+pub fn tcp_respond_full(status: integer, body: text, headers: text);
+#native
+pub fn tcp_slice(body: text, off: integer, len: integer) -> text;
+#native
+pub fn tcp_close(handle: integer);
+#native
+pub fn ws_upgrade_native() -> integer;
+#native "n_ws_upgrade"
+pub fn ws_recv_native(handle: integer) -> boolean;
+#native "n_ws_recv"
+pub fn ws_message_native() -> text;
+#native "n_ws_message"
+pub fn ws_opcode_native() -> integer;
+#native "n_ws_opcode"
+pub fn ws_send_native(handle: integer, msg: text) -> boolean;
+#native "n_ws_send"
+pub fn ws_send_binary_native(handle: integer, msg: text) -> boolean;
+#native "n_ws_send_binary"
+pub fn ws_close_native(handle: integer);
+#native "n_ws_close"
+pub fn ws_accept_native(handle: integer) -> integer;
+#native "n_ws_accept_nonblocking"
+pub fn ws_clients_len_native() -> integer;
+#native "n_ws_clients_len"
+pub fn ws_client_active_native(id: integer) -> boolean;
+#native "n_ws_client_active"
+pub fn ws_next_event_native(handle: integer) -> boolean;
+#native "n_ws_next_event"
+pub fn ws_event_kind_native() -> integer;
+#native "n_ws_event_kind"
+pub fn ws_event_client_id_native() -> integer;
+#native "n_ws_event_client_id"
+pub fn ws_event_payload_native() -> text;
+#native "n_ws_event_payload"
+pub fn ws_broadcast_native(handle: integer, msg: text) -> integer;
+#native "n_ws_broadcast"
+pub fn ws_idle_sleep_ms_native(ms: integer);
+#native "n_ws_idle_sleep_ms"

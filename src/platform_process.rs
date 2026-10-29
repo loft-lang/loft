@@ -672,6 +672,38 @@ pub fn harness_command(program: impl AsRef<OsStr>) -> Command {
     cmd
 }
 
+/// Give the child a harness `cmd` will start a stack of at least `bytes`, within the hard
+/// limit and never smaller than it already has.  A program built with AddressSanitizer needs
+/// it: redzones widen every frame by an amount the compiler decides, so a recursion that fits
+/// the usual 8 MiB under one `cc` overflows under the next.  A no-op on Windows, where a
+/// stack's size is the executable's own.
+#[doc(hidden)]
+pub fn harness_stack(cmd: &mut Command, bytes: u64) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt as _;
+        let want = libc::rlim_t::try_from(bytes).unwrap_or(libc::RLIM_INFINITY);
+        // SAFETY: the closure runs in the forked child before `exec` and calls only the
+        // async-signal-safe `getrlimit` / `setrlimit`; it touches no allocator or lock.
+        unsafe {
+            cmd.pre_exec(move || {
+                let mut limit = libc::rlimit {
+                    rlim_cur: 0,
+                    rlim_max: 0,
+                };
+                let read = libc::getrlimit(libc::RLIMIT_STACK, &raw mut limit) == 0;
+                if read && limit.rlim_cur < want {
+                    limit.rlim_cur = limit.rlim_max.min(want);
+                    libc::setrlimit(libc::RLIMIT_STACK, &raw const limit);
+                }
+                Ok(())
+            });
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = (cmd, bytes);
+}
+
 /// The test this process is running, for the timing ledger: the thread's name where the test
 /// harness runs each test on a thread named after it, else the one test an `--exact`
 /// invocation names (how nextest runs a test, one per process, on the main thread).

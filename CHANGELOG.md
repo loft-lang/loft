@@ -354,6 +354,14 @@ git do.
 
 ### Bug fixes
 
+**A `boolean`, `enum` or `character` passed to a `#c` function reaches C as its value.**  Under
+the interpreter, C received the value plus whatever the argument's stack slot held before, so
+`false` could arrive as `256`.  `--native` was already correct.
+
+**A guard that ends in `exit` or `panic` narrows, as one that ends in `return` does.**  After
+`if v == null { exit(3); }` the variable is present for the rest of the block; it used to stay
+nullable, and passing it on gave a warning.
+
 **`e ?? return`, `?? break`, `?? panic(…)` keep a present struct-enum value.**  With a
 default that leaves (`return`, `break`, `continue`, `panic`, `exit`), a value of an enum whose
 variants carry fields was taken as absent: the function returned its default, and `--native`

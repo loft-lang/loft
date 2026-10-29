@@ -1,0 +1,126 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// S3's second slice: vectors in the C runtime's stores (doc/claude/plans/91-self-host/1b-s3.md).
+// Each entry takes an integer and answers one, worked out by hand beside it.  `Item` mixes the
+// field kinds whose defaults are not zero, so the default image `OpNewRecord` fills an element
+// with is compared with the C generator's (P6, `tests/types.loft`).
+struct Item { n: integer, f: float, ok: boolean, label: text, small: u8 }
+struct Bag { name: text, items: vector<Item>, counts: vector<integer> }
+struct Opt { n: integer, maybe: integer?, f: float?, ok: boolean?, small: u8?, code: i16?, half: single? }
+
+// An integer vector built, pushed, walked and indexed: 1 + 2 + 3 + n, plus len * 100, plus v[1].
+// ints(4) = 10 + 400 + 2 = 412.
+fn ints(n: integer) -> integer {
+  v = [1, 2, 3];
+  v += [n];
+  s = 0;
+  for x in v {
+    s += x;
+  }
+  s + len(v) * 100 + v[1]
+}
+
+// A vector of records built in a loop and walked: 0 + 1 + … + (n - 1), plus len(name) of the
+// first.  records(4) = 6 + len("p") = 7.
+fn records(n: integer) -> integer {
+  ps: vector<Item> = [];
+  for i in 0..n {
+    ps += [Item { n: i, f: 0.5, ok: true, label: "p", small: 3 }];
+  }
+  t = 0;
+  for p in ps {
+    t += p.n;
+  }
+  t + len(ps[0].label)
+}
+
+// A vector of texts, one formatted: len("c5") = 2, plus len(ts) * 10.  texts(5) = 2 + 30 = 32.
+fn texts(n: integer) -> integer {
+  ts = ["a", "bb"];
+  ts += ["c{n}"];
+  len(ts[2]) + len(ts) * 10
+}
+
+fn bag_of(n: integer) -> Bag {
+  b = Bag { name: "bag", items: [], counts: [n, n + 1] };
+  b.items += [Item { n: n, f: 1.5, ok: false, label: "x", small: 9 }];
+  b
+}
+
+// A struct holding vectors, returned from a function: counts n + (n + 1), items[0].n, small 9.
+// bagged(2) = 2 + 3 + 2 + 9 = 16.
+fn bagged(n: integer) -> integer {
+  b = bag_of(n);
+  b.counts[0] + b.counts[1] + b.items[0].n + b.items[0].small as integer
+}
+
+fn total(v: vector<integer>) -> integer {
+  s = 0;
+  for x in v {
+    s += x;
+  }
+  s
+}
+
+// A vector handed to a function: 10 + 20 + n.  passed(3) = 33.
+fn passed(n: integer) -> integer {
+  v = [10, 20, n];
+  total(v)
+}
+
+// An element bound and written through: the vector sees it.  through(4) = 40 + 2 = 42.
+fn through(n: integer) -> integer {
+  v = [Item { n: 1, f: 0.0, ok: true, label: "a", small: 0 }, Item { n: 2, f: 0.0, ok: true, label: "b", small: 0 }];
+  e = v[0];
+  e.n = n * 10;
+  v[0].n + v[1].n
+}
+
+// A vector cleared and filled again, and an empty one's length: [n] after the clear, so
+// len 1 and v[0] = n; plus the empty vector's 0.  refilled(7) = 1 * 100 + 7 + 0 = 107.
+fn refilled(n: integer) -> integer {
+  v = [1, 2, 3];
+  v.clear();
+  v += [n];
+  empty: vector<integer> = [];
+  len(v) * 100 + v[0] + len(empty)
+}
+
+// Nullable fields a literal leaves out read null: the element's bytes come from its type's
+// default image.  n + 10 for each of the six nulls.  defaults(5) = 65.
+fn defaults(n: integer) -> integer {
+  v: vector<Opt> = [];
+  v += [Opt { n: n }];
+  e = v[0];
+  s = e.n;
+  if e.maybe == null { s += 10; }
+  if e.f == null { s += 10; }
+  if e.ok == null { s += 10; }
+  if e.small == null { s += 10; }
+  if e.code == null { s += 10; }
+  if e.half == null { s += 10; }
+  s
+}
+
+// A parameter rebound to a vector of its own: the callee's store is freed through the view
+// that names it (the IR frees `p`, its wrapper owns the store), the caller's stays.
+// rebind([x, x]) = len 3 * 10 + 7 = 37; the caller's vector keeps len 2 and sum 2x.
+// rebound_param(5) = 37 * 1000 + 200 + 10 = 37210.
+fn rebind(p: vector<integer>) -> integer {
+  p = [7, 8];
+  p += [9];
+  len(p) * 10 + p[0]
+}
+
+fn rebound_param(x: integer) -> integer {
+  v: vector<integer> = [];
+  v += [x];
+  v += [x];
+  r = rebind(v);
+  r * 1000 + len(v) * 100 + total(v)
+}
+
+fn main() {
+  println("{ints(4)} {records(4)} {texts(5)} {bagged(2)} {passed(3)} {through(4)} {refilled(7)} {defaults(5)} {rebound_param(5)}");
+}

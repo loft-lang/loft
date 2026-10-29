@@ -1625,6 +1625,13 @@ impl Parser {
                     );
                     *code = Value::Null;
                     t = Type::Never;
+                } else if let Some(e_nr) = self.sole_visible_variant_enum(&variant_enums) {
+                    // @C157 — exactly one enum this file sees owns the name, so the name
+                    // means its variant: a name is refused only when two definitions exist
+                    // and nothing in the context picks one.  A second enum with this variant
+                    // name later makes the same line ambiguous, refused below — never silently
+                    // another enum's value.
+                    t = self.emit_variant_value(e_nr, name, code);
                 } else if let Some(&e_nr) = variant_enums.first() {
                     // Emit unconditionally (not pass-2-gated): the recovery below
                     // types the target from the variant's enum, so on the SECOND
@@ -1656,6 +1663,14 @@ impl Parser {
                             "bare variant '{name}' has no type here — qualify it as \
                              '{declared}.{name}', or give the target an enum type"
                         );
+                    } else if self.first_pass {
+                        // @C157 — a name two enums own may still be picked by its context's
+                        // other arms (`if c { Red } else { Blue }`, `Blue` only Hue's).  The first
+                        // pass leaves it untyped, so the `if` or `match` takes its type from
+                        // those arms and the target holds that type; the second pass resolves
+                        // the name against it and reaches here only when nothing picked one.
+                        *code = Value::Null;
+                        return Type::Unknown(0);
                     } else {
                         let names: Vec<String> = variant_enums
                             .iter()
@@ -2453,6 +2468,29 @@ impl Parser {
             &[file_var, var_ref, Value::Int(i32::from(db_tp))],
         );
         Value::Insert(vec![assign, write])
+    }
+
+    /// @C157 — the one enum among `variant_enums` (the enums owning a variant of some name) that
+    /// this file can name, which a bare variant with no type context then belongs to; `None`
+    /// when the file sees none of them or more than one.  An instance of a generic enum
+    /// (`Slot<integer>`) never qualifies: which `T` is meant comes only from the context.
+    fn sole_visible_variant_enum(&self, variant_enums: &[u32]) -> Option<u32> {
+        let mut found = None;
+        for &e_nr in variant_enums {
+            let name = self.data.def(e_nr).name();
+            if name.contains('<') {
+                return None;
+            }
+            // What this file's own lookup reaches: its definitions, its imports, the stdlib.
+            if self.data.def_nr(name) != e_nr {
+                continue;
+            }
+            if found.is_some() {
+                return None;
+            }
+            found = Some(e_nr);
+        }
+        found
     }
 
     /// @PLN22 Phase 1 — emit the VALUE of `enum_nr`'s variant `variant_name`,
