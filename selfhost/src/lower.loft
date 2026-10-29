@@ -104,6 +104,11 @@ enum Code {
   VecNew,
   VecFinish,
   VecClear,
+  HashNew,
+  HashInsert,
+  KeyPart,
+  HashFind,
+  HashLen,
 }
 
 // One op: `kind` is the kind of value it works on; `a` is a value, a slot, a jump target, a
@@ -191,6 +196,7 @@ fn kind_of_type(t: ir::TypeT) -> Kind {
     TyRefVar { inner } => if kind_of_types(inner) == KText { KTextRef } else { KOther },
     TyReference { n: _, dep: _ } => KRef,
     TyVector { inner: _, dep: _ } => KRef,
+    TyHash { n: _, names: _, dep: _ } => KRef,
     TyVoid => KNone,
     TyNull => KNone,
     TyNever => KNone,
@@ -434,6 +440,13 @@ fn effect(code: Code, b: integer) -> integer {
     VecNew => 0,
     VecFinish => -2,
     VecClear => -1,
+    // A hash: a new entry from its collection, an insert of an entry into it, one key part
+    // pushed onto the shim's key stack, a find (the collection in, the record out), a length.
+    HashNew => 0,
+    HashInsert => -2,
+    KeyPart => -1,
+    HashFind => 0,
+    HashLen => 0,
     _ => -1,
   }
 }
@@ -600,8 +613,9 @@ fn ref_var_slot(l: Lowering, n: ir::Node) -> integer {
   0
 }
 
-// Type `tp` as `OpDatabase` mints it: a struct, or a struct enum's variant (whose size is its
-// enum's), the size read from the image's schema.  A collection and the rest are later slices.
+// Type `tp` as `OpDatabase` mints it: a struct, a struct enum's variant (whose size is its
+// enum's), or a hash local's collection, the size read from the image's schema.  Another
+// keyed kind and the rest are later slices.
 fn mintable(l: Lowering, b: ir::Bundle, tp: integer) {
   t = b.types[tp];
   if t == null {
@@ -609,7 +623,7 @@ fn mintable(l: Lowering, b: ir::Bundle, tp: integer) {
     return;
   }
   p = t.parts[0];
-  if !(p is PtStruct) && !(p is PtEnumValue) {
+  if !(p is PtStruct) && !(p is PtEnumValue) && !(p is PtHash) {
     refuse(l, "a store of a type the interpreter does not carry yet: {t.name}");
   }
 }
@@ -665,6 +679,18 @@ fn push_of(name: text) -> integer {
     "OpPushByte" => 3,
     "OpPushEnum" => 4,
     "OpPushBoolean" => 5,
+    _ => -1,
+  }
+}
+
+// The element type of `tp` when it is a hash, else -1.
+fn hash_element(b: ir::Bundle, tp: integer) -> integer {
+  t = b.types[tp];
+  if t == null {
+    return -1;
+  }
+  match t.parts[0] ?? panic("a type has its parts") {
+    PtHash { content, fields: _ } => content,
     _ => -1,
   }
 }
@@ -815,13 +841,26 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
       }
     }
     elem = vector_element(b, vtp);
-    if (fld != 65535 && at < 0) || elem < 0 {
-      refuse(l, "a record added to a collection that is not a plain vector: {(b.types[vtp] ?? panic("a type")).name}");
+    helem = hash_element(b, vtp);
+    if (fld != 65535 && at < 0) || (elem < 0 && helem < 0) {
+      refuse(l, "a record added to a collection that is not a plain vector or a hash: {(b.types[vtp] ?? panic("a type")).name}");
       return true;
     }
-    value(l, b, args[0] ?? panic("a record add names its vector"), KRef);
+    value(l, b, args[0] ?? panic("a record add names its collection"), KRef);
     if at >= 0 {
       emit(l, FieldRef, KRef, at, 0);
+    }
+    if helem >= 0 {
+      // `keyed_new` / `keyed_finish` (`src/c/body/keyed.rs`): an entry of the hash's table,
+      // filled with the element's default image, then filed under its key.
+      et = b.types[helem] ?? panic("an element type");
+      if name == "OpNewRecord" {
+        emit(l, HashNew, KRef, helem, et.size * 2 + (if et.linked { 1 } else { 0 }));
+      } else {
+        value(l, b, args[1] ?? panic("OpFinishRecord names its record"), KRef);
+        emit(l, HashInsert, KRef, helem, vtp);
+      }
+      return true;
     }
     if name == "OpNewRecord" {
       emit(l, VecNew, KRef, elem, (b.types[elem] ?? panic("an element type")).size);
@@ -829,6 +868,42 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
       value(l, b, args[1] ?? panic("OpFinishRecord names its record"), KRef);
       emit(l, VecFinish, KRef, 0, 0);
     }
+  } else if name == "OpGetRecord" {
+    // `OpGetRecord(data, tp, n, value…)` on a hash: the collection, then each key part as its
+    // key's type converts it (`key_value`, `src/c/body/keyed.rs`), then the find.
+    tp = literal(l, args[1] ?? panic("OpGetRecord names its type"));
+    if hash_element(b, tp) < 0 {
+      refuse(l, "a lookup in a keyed collection that is not a hash: {(b.types[tp] ?? panic("a type")).name}");
+      return true;
+    }
+    keys = (b.types[tp] ?? panic("a hash type")).keys;
+    n = len(args) - 3;
+    if n > len(keys) {
+      refuse(l, "a lookup with more values than keys");
+      return true;
+    }
+    value(l, b, args[0] ?? panic("OpGetRecord names its collection"), KRef);
+    for i in 0..n {
+      kt = ((keys[i] ?? panic("a key part")).type_nr).abs();
+      arg = args[3 + i] ?? panic("a key value");
+      if kt == 3 {
+        value(l, b, arg, KSingle);
+        emit(l, KeyPart, KFloat, 0, 2);
+      } else if kt == 4 {
+        value(l, b, arg, KFloat);
+        emit(l, KeyPart, KFloat, 0, 1);
+      } else if kt == 6 {
+        value(l, b, arg, KText);
+        emit(l, KeyPart, KText, 0, 3);
+      } else {
+        value(l, b, arg, KInt);
+        emit(l, KeyPart, KInt, 0, 0);
+      }
+    }
+    emit(l, HashFind, KRef, tp, n);
+  } else if name == "OpLengthHash" {
+    value(l, b, args[0] ?? panic("OpLengthHash names its hash"), KRef);
+    emit(l, HashLen, KInt, 0, 0);
   } else if name == "OpClearVector" {
     value(l, b, args[0] ?? panic("OpClearVector names its vector"), KRef);
     emit(l, VecClear, KRef, 0, 0);
@@ -979,6 +1054,70 @@ pub fn main_vector_of(b: ir::Bundle, ts: vector<ir::TypeT>) -> integer {
   -1
 }
 
+// The schema type of a hash variable's collection, by the name `Stores::hash` gives it:
+// `hash<{content}[{key},…]>`, through a nullability marker; -1 for another type, or a hash the
+// image has no type for.
+pub fn hash_type_of(b: ir::Bundle, ts: vector<ir::TypeT>) -> integer {
+  t = ts[0];
+  if t == null {
+    return -1;
+  }
+  def = -1;
+  names: vector<ir::NameRef> = [];
+  match t {
+    TyHash { n, names: ns, dep: _ } => {
+      def = n;
+      names = ns;
+    }
+    TyOptional { inner } => {
+      match inner[0] ?? panic("a nullable type has its base") {
+        TyHash { n, names: ns, dep: _ } => {
+          def = n;
+          names = ns;
+        }
+        _ => { return -1; }
+      }
+    }
+    _ => { return -1; }
+  }
+  content = (b.data.definitions[def] ?? panic("a hash names its record")).known_type;
+  want = "hash<{(b.types[content] ?? panic("a record type")).name}[";
+  for k in names {
+    want += if k#index > 0 { ",{k.name}" } else { k.name };
+  }
+  want += "]>";
+  for w in b.types {
+    if w.name == want {
+      return w#index;
+    }
+  }
+  -1
+}
+
+// Is `ts` a hash type, through a nullability marker?
+fn is_hash(ts: vector<ir::TypeT>) -> boolean {
+  t = ts[0];
+  if t == null {
+    return false;
+  }
+  match t {
+    TyHash { n: _, names: _, dep: _ } => true,
+    TyOptional { inner } => {
+      match inner[0] ?? panic("a nullable type has its base") {
+        TyHash { n: _, names: _, dep: _ } => true,
+        _ => false,
+      }
+    }
+    _ => false,
+  }
+}
+
+// Is `v` an overwritten view (`Function::is_overwritten_view`): a never-freed match binding or
+// `??` subject that a bind fills by viewing, never by copying?
+fn is_overwritten_view(v: ir::Variable) -> boolean {
+  v.skip_free && (v.name.starts_with("_mv_") || v.name.starts_with("__ncc_"))
+}
+
 // Is variable `var` of definition `d` one the compiler builds in place (`inline_ref_vars`)?
 fn is_inline_ref(b: ir::Bundle, d: integer, var: integer) -> boolean {
   for r in (b.data.definitions[d] ?? panic("a definition")).variables.inline_refs {
@@ -1049,6 +1188,27 @@ fn bind(l: Lowering, b: ir::Bundle, var: integer, node: ir::Node) {
   x = unspan(node);
   slot = slot_of(l, var);
   v = b.data.definitions[l.def_nr]?.variables.variables[var]?;
+  if is_hash(v.type_def) {
+    // A hash local bound to null gets a store of its own minted AS the collection type, unless
+    // it borrows one (`keyed_null`, `src/c/body.rs`); a later null bind empties it in place,
+    // which `OpDatabase` on a store the variable owns does.  Any other bind is a view.
+    if x is NdNull && !is_inline_ref(b, l.def_nr, var) && !is_overwritten_view(v) {
+      ht = hash_type_of(b, v.type_def);
+      if ht < 0 {
+        refuse(l, "a hash whose collection type the image does not name: {v.name}");
+        return;
+      }
+      emit(l, Database, KRef, slot, ht);
+      return;
+    }
+    if x is NdNull {
+      emit(l, PushNull, KRef, 0, 0);
+    } else {
+      value(l, b, x, KRef);
+    }
+    emit(l, Bind, KRef, slot, BIND_PLAIN);
+    return;
+  }
   if is_vector(v.type_def) {
     // A vector bind is a view (no copy arm names a vector); the one exception is the null bind
     // of a vector that owns its store, which mints a `main_vector<T>` (`owned_vector_null`).
@@ -1084,8 +1244,7 @@ fn bind(l: Lowering, b: ir::Bundle, var: integer, node: ir::Node) {
       // `whole_value_bind`: the source's record copied into a store of the variable's own,
       // unless the variable is an overwritten view (`Function::is_overwritten_view`).
       sd = if var_kind(l, src) == KRef { record_of(b.data.definitions[l.def_nr]?.variables.variables[src]?.type_def) } else { -1 };
-      overwritten = v.skip_free && (v.name.starts_with("_mv_") || v.name.starts_with("__ncc_"));
-      if d >= 0 && sd >= 0 && copies_as(b, d, sd) && !overwritten {
+      if d >= 0 && sd >= 0 && copies_as(b, d, sd) && !is_overwritten_view(v) {
         mode = BIND_COPY;
       }
     }

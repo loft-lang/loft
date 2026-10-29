@@ -860,6 +860,65 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         sp_int -= 3;
         crt::vec_clear(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0);
       }
+      // Hashes (S3's fourth slice): a hash and its entries are records of its owner's store,
+      // so none of these changes who owns a store.  The key parts a find reads come from the
+      // loaded table, so the table is loaded first.
+      HashNew => {
+        while len(imaged) <= op.a {
+          images += [[]];
+          imaged += [false];
+        }
+        if !imaged[op.a] {
+          images[op.a] = types::default_image(b, op.a);
+          imaged[op.a] = true;
+        }
+        sp_int -= 3;
+        crt::hash_entry(io, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b / 2, op.b % 2 == 1);
+        crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, images[op.a] ?? panic("derived above"));
+        ref_out(io, ints, sp_int);
+        sp_int += 3;
+      }
+      HashInsert => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 6;
+        crt::hash_insert(
+          ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0,
+          ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0,
+          op.a, op.b
+        );
+      }
+      // One key part onto the shim's key stack, by the key's kind: 0 an integer, 1 a float, 2 a
+      // single, 3 a text.
+      KeyPart => {
+        if op.b == 3 {
+          sp_text -= 1;
+          crt::key_text(texts[sp_text]);
+        } else if op.b == 0 {
+          sp_int -= 1;
+          crt::key_int(ints[sp_int]);
+        } else {
+          sp_float -= 1;
+          crt::key_float(floats[sp_float], op.b == 2);
+        }
+      }
+      HashFind => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 3;
+        crt::hash_find(io, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, op.b);
+        ref_out(io, ints, sp_int);
+        sp_int += 3;
+      }
+      HashLen => {
+        sp_int -= 3;
+        put_int(ints, sp_int, crt::hash_len(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0));
+        sp_int += 1;
+      }
       ClearRecord => {
         if !table_loaded {
           load_table(b);

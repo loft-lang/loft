@@ -341,3 +341,63 @@ pub fn vec_finish(store: integer, rec: integer, pos: integer) {
 pub fn vec_clear(store: integer, rec: integer, pos: integer) {
   c_vec_clear(store, rec, pos);
 }
+
+// Keyed collections (S3's fourth slice): a hash's routines read its key parts from the loaded
+// table, so each takes the collection's type number.  A lookup's values are pushed one part at
+// a time onto the shim's key stack, and `hash_find` takes and pops the top `n` (`shim/crt.c`).
+
+fn c_key_int(v: integer, is_null: boolean);
+#c "loft_crt_key_int" "void(int64_t, int64_t)"
+
+fn c_key_float(v: vector<float>, single: boolean);
+#c "loft_crt_key_float" "void(const double*, int64_t, int64_t)"
+
+fn c_key_text(val: text, is_null: boolean);
+#c "loft_crt_key_text" "void(const char*, int64_t)"
+
+fn c_hash_find(out: vector<integer>, store: integer, rec: integer, pos: integer, tp: integer, n: integer) -> integer;
+#c "loft_crt_hash_find" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_hash_entry(out: vector<integer>, store: integer, rec: integer, pos: integer, size: integer, linked: boolean) -> integer;
+#c "loft_crt_hash_entry" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_hash_insert(store: integer, rec: integer, pos: integer, r_store: integer, r_rec: integer, r_pos: integer, elem: integer, tp: integer);
+#c "loft_crt_hash_insert" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_hash_len(store: integer, rec: integer, pos: integer) -> integer;
+#c "loft_crt_hash_len" "int64_t(int64_t, int64_t, int64_t)"
+
+// One key part: an integer (a boolean, character or plain enum as its number), a float or a
+// single, a text.  A null part is the null a C program passes for it.
+pub fn key_int(v: integer?) {
+  c_key_int(v ?? 0, v == null);
+}
+
+pub fn key_float(v: float?, single: boolean) {
+  c_key_float([v ?? 0.0 / 0.0], single);
+}
+
+pub fn key_text(v: text?) {
+  c_key_text(v ?? "", v == null);
+}
+
+// `OpGetRecord` on a hash of type `tp`: the record keyed by the top `n` parts, into `out[0..3]`,
+// the null reference on a miss.
+pub fn hash_find(out: vector<integer>, store: integer, rec: integer, pos: integer, tp: integer, n: integer) {
+  c_hash_find(out, store, rec, pos, tp, n);
+}
+
+// `OpNewRecord` in a hash: a new entry of `size` bytes, into `out[0..3]`.
+pub fn hash_entry(out: vector<integer>, store: integer, rec: integer, pos: integer, size: integer, linked: boolean) {
+  c_hash_entry(out, store, rec, pos, size, linked);
+}
+
+// `OpFinishRecord` in a hash of type `tp` whose elements are type `elem`.
+pub fn hash_insert(store: integer, rec: integer, pos: integer, r_store: integer, r_rec: integer, r_pos: integer, elem: integer, tp: integer) {
+  c_hash_insert(store, rec, pos, r_store, r_rec, r_pos, elem, tp);
+}
+
+// `OpLengthHash`.
+pub fn hash_len(store: integer, rec: integer, pos: integer) -> integer {
+  c_hash_len(store, rec, pos)
+}

@@ -33,6 +33,8 @@ fn test_the_loft_type_table_equals_the_c_generators() {
   assert(compare_tables("records") >= 7, "the records kernel's rows were compared");
   // `Tok`'s row lists its three variants, each compared with `loft_variants{tp}`.
   assert(compare_tables("enums") >= 5, "the enums kernel's rows were compared");
+  // The hashes' rows carry their key parts, each compared with `loft_keys{tp}`.
+  assert(compare_tables("hashes") >= 8, "the hashes kernel's rows were compared");
 }
 
 // P6: each default image the C generator writes for a kernel equals `types::default_image` of

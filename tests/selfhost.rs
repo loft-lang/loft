@@ -150,8 +150,8 @@ fn c_default_images(c: &str) -> String {
 
 /// The rows of the `loft_types` table in an emitted C program, one line per type in the form
 /// `selfhost/src/types.loft`'s `render` writes: `tp kind size elem n owns_heap linked`, then each
-/// field as `pos,type,view,hidden,group`, then a struct enum's variants as `variants=a,b,…`.
-/// Keys are left out: the loft side does not derive them yet.
+/// field as `pos,type,view,hidden,group`, then a struct enum's variants as `variants=a,b,…`,
+/// then a keyed collection's key parts as `keys=type,pos,start;…`.
 fn c_type_table(c: &str) -> String {
     const KINDS: [&str; 12] = [
         "SCALAR", "TEXT", "STRUCT", "VECTOR", "ENUM", "CHILD", "HASH", "INDEX", "ORDERED", "RADIX",
@@ -168,8 +168,17 @@ fn c_type_table(c: &str) -> String {
         std::collections::HashMap::new();
     let mut variants: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
+    let mut keys: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
     let mut rows = Vec::new();
     for line in c.lines() {
+        if let Some(rest) = line.strip_prefix("static const loft_key ")
+            && let Some((name, list)) = rest.split_once("[] = ")
+        {
+            let n = numbers(list.trim_end_matches(';'));
+            keys.insert(name.to_string(), n.chunks(3).map(|k| k.join(",")).collect());
+            continue;
+        }
         if let Some(rest) = line.strip_prefix("static const uint16_t ")
             && let Some((name, list)) = rest.split_once("[] = ")
             && name.starts_with("loft_variants")
@@ -209,6 +218,12 @@ fn c_type_table(c: &str) -> String {
             {
                 out.push_str(" variants=");
                 out.push_str(&list.join(","));
+            }
+            if let Some(list) = keys.get(&parts[7])
+                && !list.is_empty()
+            {
+                out.push_str(" keys=");
+                out.push_str(&list.join(";"));
             }
             rows.push(out);
         }

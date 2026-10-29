@@ -82,11 +82,11 @@ fn test_the_shims_stores_are_apart_from_the_programs() {
 // P3 rows: type 100 is a 24-byte struct — integers at 0 and 8, a text (type 5) at 16 — and type 5
 // is a text.  `owns_heap` is the value under test: 1 is the right answer for a struct holding a
 // text, 0 the wrong one.  Each row is `tp, kind, size, elem, n_fields, owns_heap, linked,
-// n_variants`, its fields, its variants.
+// n_variants, n_keys`, its fields, its variants, its key parts.
 fn rows(owns_heap: integer) -> vector<integer> {
   [
-    5, 1, 4, 0, 0, 0, 0, 0,
-    100, 2, 24, 0, 3, owns_heap, 0, 0,
+    5, 1, 4, 0, 0, 0, 0, 0, 0,
+    100, 2, 24, 0, 3, owns_heap, 0, 0, 0,
       0, 0, 0, 0, 0,
       8, 0, 0, 0, 0,
       16, 5, 0, 0, 0
@@ -134,18 +134,19 @@ fn test_a_wrong_row_loses_the_text() {
 
 // Rows that do not parse are refused, not half-loaded.
 fn test_malformed_rows_are_refused() {
-  assert(crt::load_types([100, 2, 24, 0, 3, 1, 0, 0, 0], 101) == -1, "a field list cut short");
-  assert(crt::load_types([100, 4, 24, 0, 0, 1, 0, 2, 101], 102) == -1, "a variant list cut short");
-  assert(crt::load_types([200, 2, 24, 0, 0, 0, 0, 0], 101) == -1, "a type number past the table");
+  assert(crt::load_types([100, 2, 24, 0, 3, 1, 0, 0, 0, 0], 101) == -1, "a field list cut short");
+  assert(crt::load_types([100, 4, 24, 0, 0, 1, 0, 2, 0, 101], 102) == -1, "a variant list cut short");
+  assert(crt::load_types([100, 6, 4, 101, 0, 1, 0, 0, 1, 6, 8], 102) == -1, "a key list cut short");
+  assert(crt::load_types([200, 2, 24, 0, 0, 0, 0, 0, 0], 101) == -1, "a type number past the table");
 }
 
 // A struct enum's rows: type 100 is the enum (24 bytes, its variants listed), type 101 its one
 // variant, the tag byte at 0 and a text at 8.  `variants` is the value under test: the
 // runtime finds a variant's claims through it (`loft_copy_claims`, LOFT_T_ENUM).
 fn enum_rows(variants: vector<integer>) -> vector<integer> {
-  out = [5, 1, 4, 0, 0, 0, 0, 0, 100, 4, 24, 0, 0, 1, 0, len(variants)];
+  out = [5, 1, 4, 0, 0, 0, 0, 0, 0, 100, 4, 24, 0, 0, 1, 0, len(variants), 0];
   out += variants;
-  out += [101, 2, 24, 0, 1, 1, 0, 0, 8, 5, 0, 0, 0];
+  out += [101, 2, 24, 0, 1, 1, 0, 0, 0, 8, 5, 0, 0, 0];
   out
 }
 
@@ -284,4 +285,53 @@ fn test_every_field_width_round_trips() {
   assert(crt::get_float(s, rec, pos, 16, false) == null, "float null");
   assert(crt::field_pos(s, rec, pos, 32) == pos + 32, "an embedded record's position");
   crt::free_var(r);
+}
+
+// A hash's rows: type 100 is the hash of `101` records keyed on the text at byte 8 (key part
+// `6, 8, 0`, as `loft_keys{tp}` writes it), type 101 the record (an integer at 0, the text at
+// 8).  The store's root is the hash's 4-byte table field.
+fn hash_rows() -> vector<integer> {
+  [
+    5, 1, 4, 0, 0, 0, 0, 0, 0,
+    100, 6, 4, 101, 0, 1, 0, 0, 1, 6, 8, 0,
+    101, 2, 16, 0, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 8, 5, 0, 0, 0
+  ]
+}
+
+fn add(h: vector<integer>, name: text, n: integer) {
+  e = crt::null_ref();
+  crt::hash_entry(e, h[0] ?? 0, h[1] ?? 0, h[2] ?? 0, 16, false);
+  crt::set_int(e[0] ?? 0, e[1] ?? 0, e[2] ?? 0, 0, n);
+  crt::set_text(e[0] ?? 0, e[1] ?? 0, e[2] ?? 0, 8, name);
+  crt::hash_insert(h[0] ?? 0, h[1] ?? 0, h[2] ?? 0, e[0] ?? 0, e[1] ?? 0, e[2] ?? 0, 101, 100);
+}
+
+fn find(h: vector<integer>, name: text) -> integer? {
+  crt::key_text(name);
+  r = crt::null_ref();
+  crt::hash_find(r, h[0] ?? 0, h[1] ?? 0, h[2] ?? 0, 100, 1);
+  if (r[1] ?? 0) == 0 { null } else { crt::get_int(r[0] ?? 0, r[1] ?? 0, r[2] ?? 0, 0) }
+}
+
+// Built, searched and counted through the shim with the keys the loaded row carries: an equal
+// key replaces (`@FR-Col-Insert`), a miss is null, and a find pops exactly its own parts — a
+// part pushed before it (the outer half of a nested lookup) is still there for the next find.
+fn test_a_hash_is_built_and_searched_by_its_loaded_keys() {
+  assert(crt::load_types(hash_rows(), 102) == 3, "three types loaded");
+  h = crt::null_ref();
+  crt::database(h, 4, 100);
+  add(h, "a", 1);
+  add(h, "b", 2);
+  add(h, "a", 3);
+  assert(crt::hash_len(h[0] ?? 0, h[1] ?? 0, h[2] ?? 0) == 2, "two keys");
+  assert(find(h, "a") == 3, "the replacing element: {find(h, "a")}");
+  assert(find(h, "b") == 2, "b");
+  assert(find(h, "zz") == null, "a miss reads null");
+  crt::key_text("b");
+  assert(find(h, "a") == 3, "an inner find under a pending part");
+  r = crt::null_ref();
+  crt::hash_find(r, h[0] ?? 0, h[1] ?? 0, h[2] ?? 0, 100, 1);
+  assert(crt::get_int(r[0] ?? 0, r[1] ?? 0, r[2] ?? 0, 0) == 2, "the pending part is the outer find's");
+  crt::free_ref(h[0] ?? 0, h[1] ?? 0, h[2] ?? 0);
+  assert(crt::live_stores() == 0, "the store freed");
 }

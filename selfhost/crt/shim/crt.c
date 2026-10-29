@@ -284,9 +284,10 @@ int64_t loft_crt_ref_part(int64_t store, int64_t rec, int64_t pos, int64_t which
 /* ── The type table (@PLN91 S3, question 2): the rows the interpreter derives in loft from the
  * image's schema, copied into the runtime's own descriptor structs.  Marshalling only: each
  * number lands where `copy_table` would have written it, and no value is computed here.
- *   row:  tp, kind, size, elem, n_fields, owns_heap, linked, n_variants,
+ *   row:  tp, kind, size, elem, n_fields, owns_heap, linked, n_variants, n_keys,
  *         then per field: pos, type, view, hidden, group,
- *         then each variant's type (a struct enum's, 0xFFFF for a unit variant)
+ *         then each variant's type (a struct enum's, 0xFFFF for a unit variant),
+ *         then per key part: type, pos, start (a keyed collection's, `DbType.keys`)
  * A struct enum's `n` is its variant count, as `copy_table` writes it.
  * Answers how many types were loaded, or -1 for rows that do not parse. */
 static loft_tdesc *loft_crt_types = 0;
@@ -296,6 +297,7 @@ static void loft_crt_drop_types(void) {
     for (uint32_t i = 0; i < loft_crt_ntypes; i++) {
         free((void *) loft_crt_types[i].fields);
         free((void *) loft_crt_types[i].variants);
+        free((void *) loft_crt_types[i].keys);
     }
     free(loft_crt_types);
     loft_crt_types = 0;
@@ -309,9 +311,11 @@ int64_t loft_crt_load_types(const int64_t *rows, int64_t n, int64_t ntypes) {
     if (!loft_crt_types) return -1;
     loft_crt_ntypes = (uint32_t) ntypes;
     int64_t at = 0, loaded = 0;
-    while (at + 8 <= n) {
-        int64_t tp = rows[at], nf = rows[at + 4], nv = rows[at + 7];
-        if (tp < 0 || tp >= ntypes || nf < 0 || nv < 0 || at + 8 + nf * 5 + nv > n) return -1;
+    while (at + 9 <= n) {
+        int64_t tp = rows[at], nf = rows[at + 4], nv = rows[at + 7], nk = rows[at + 8];
+        if (tp < 0 || tp >= ntypes || nf < 0 || nv < 0 || nk < 0 || nk > 255
+            || at + 9 + nf * 5 + nv + nk * 3 > n)
+            return -1;
         loft_tdesc *d = &loft_crt_types[tp];
         d->kind = (uint8_t) rows[at + 1];
         d->size = (uint16_t) rows[at + 2];
@@ -323,7 +327,7 @@ int64_t loft_crt_load_types(const int64_t *rows, int64_t n, int64_t ntypes) {
             loft_fld *f = (loft_fld *) calloc((size_t) nf, sizeof(loft_fld));
             if (!f) return -1;
             for (int64_t i = 0; i < nf; i++) {
-                const int64_t *r = &rows[at + 8 + i * 5];
+                const int64_t *r = &rows[at + 9 + i * 5];
                 f[i].pos = (uint16_t) r[0];
                 f[i].type = (uint16_t) r[1];
                 f[i].view = (uint8_t) r[2];
@@ -335,11 +339,23 @@ int64_t loft_crt_load_types(const int64_t *rows, int64_t n, int64_t ntypes) {
         if (nv > 0) {
             uint16_t *v = (uint16_t *) calloc((size_t) nv, sizeof(uint16_t));
             if (!v) return -1;
-            for (int64_t i = 0; i < nv; i++) v[i] = (uint16_t) rows[at + 8 + nf * 5 + i];
+            for (int64_t i = 0; i < nv; i++) v[i] = (uint16_t) rows[at + 9 + nf * 5 + i];
             d->variants = v;
             d->n = (uint16_t) nv;
         }
-        at += 8 + nf * 5 + nv;
+        if (nk > 0) {
+            loft_key *k = (loft_key *) calloc((size_t) nk, sizeof(loft_key));
+            if (!k) return -1;
+            for (int64_t i = 0; i < nk; i++) {
+                const int64_t *r = &rows[at + 9 + nf * 5 + nv + i * 3];
+                k[i].type = (int8_t) r[0];
+                k[i].pos = (uint16_t) r[1];
+                k[i].start = (int32_t) r[2];
+            }
+            d->keys = k;
+            d->nk = (uint8_t) nk;
+        }
+        at += 9 + nf * 5 + nv + nk * 3;
         loaded++;
     }
     return at == n ? loaded : -1;
@@ -377,4 +393,97 @@ void loft_crt_copy_record(int64_t s_store, int64_t s_rec, int64_t s_pos, int64_t
 void loft_crt_vec_clear(int64_t store, int64_t rec, int64_t pos) {
     if (!loft_crt_types) return;
     loft_vec_clear_release(loft_crt_types, loft_crt_ntypes, loft_crt_ref(store, rec, pos));
+}
+
+/* ── Keyed collections (@PLN91 S3, the fourth slice): the hash routines the C generator calls
+ * (`keyed_new`, `keyed_finish`, `get_record`, `OpLengthHash`), each reading its collection's key
+ * parts from the table loaded above, so the interpreter hands no pointer across.
+ *
+ * A lookup's values are pushed one part at a time onto a KEY STACK, and the find takes the top
+ * `n` parts: a key may itself be a lookup (`h[g[k].name]`), whose parts are pushed and popped
+ * before the outer one's are pushed.  A text part is copied, so it outlives the interpreter's
+ * text it came from until the find pops it. */
+#define LOFT_CRT_KEYS 256
+static loft_kv loft_crt_kv[LOFT_CRT_KEYS];
+static char *loft_crt_kv_owned[LOFT_CRT_KEYS];
+static int loft_crt_nkv = 0;
+
+static void loft_crt_key_push(loft_kv k, char *owned) {
+    if (loft_crt_nkv >= LOFT_CRT_KEYS) {
+        free(owned);
+        return;
+    }
+    loft_crt_kv[loft_crt_nkv] = k;
+    loft_crt_kv_owned[loft_crt_nkv] = owned;
+    loft_crt_nkv++;
+}
+
+void loft_crt_key_int(int64_t v, int64_t is_null) {
+    loft_crt_key_push(loft_kv_int(is_null ? LOFT_NULL : v), 0);
+}
+
+void loft_crt_key_float(const double *v, int64_t n, int64_t single) {
+    double f = n > 0 ? v[0] : 0.0;
+    loft_crt_key_push(single ? loft_kv_single((float) f) : loft_kv_float(f), 0);
+}
+
+void loft_crt_key_text(const char *val, int64_t is_null) {
+    if (is_null) {
+        loft_crt_key_push(loft_kv_text(loft_null_text()), 0);
+        return;
+    }
+    size_t len = strlen(val);
+    char *copy = (char *) malloc(len + 1);
+    if (!copy) return;
+    memcpy(copy, val, len + 1);
+    loft_crt_key_push(loft_kv_text(loft_lit(copy, len)), copy);
+}
+
+/* The top `n` parts popped, their text copies released. */
+static void loft_crt_key_pop(int64_t n) {
+    while (n-- > 0 && loft_crt_nkv > 0) {
+        loft_crt_nkv--;
+        free(loft_crt_kv_owned[loft_crt_nkv]);
+        loft_crt_kv_owned[loft_crt_nkv] = 0;
+    }
+}
+
+static int loft_crt_keyed(int64_t tp) {
+    return loft_crt_types && tp >= 0 && (uint32_t) tp < loft_crt_ntypes;
+}
+
+/* OpGetRecord on a hash of type `tp`: the record whose key is the top `n` parts, into `out`; the
+ * null reference on a miss.  The parts are popped either way. */
+int64_t loft_crt_hash_find(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos,
+                           int64_t tp, int64_t n) {
+    loft_ref r = loft_ref_null();
+    if (loft_crt_keyed(tp) && n >= 0 && n <= loft_crt_nkv)
+        r = loft_h_find(loft_crt_ref(store, rec, pos), loft_crt_types[tp].keys,
+                        &loft_crt_kv[loft_crt_nkv - n], (int) n);
+    loft_crt_key_pop(n);
+    loft_crt_put_ref(out, no, r);
+    return 0;
+}
+
+/* OpNewRecord in a hash: an entry of `size` bytes of its table, into `out`. */
+int64_t loft_crt_hash_entry(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos,
+                            int64_t size, int64_t linked) {
+    loft_crt_put_ref(out, no,
+                     loft_hash_entry(loft_crt_ref(store, rec, pos), (uint32_t) size, (int) linked));
+    return 0;
+}
+
+/* OpFinishRecord in a hash of type `tp`: the record goes to its key's place, an equal key's
+ * element replaced and released by the element type `elem`'s row. */
+void loft_crt_hash_insert(int64_t store, int64_t rec, int64_t pos, int64_t r_store, int64_t r_rec,
+                          int64_t r_pos, int64_t elem, int64_t tp) {
+    if (!loft_crt_keyed(tp) || !loft_crt_keyed(elem)) return;
+    (void) loft_hash_insert(loft_crt_types, (uint16_t) elem, loft_crt_ref(store, rec, pos),
+                            loft_crt_ref(r_store, r_rec, r_pos), loft_crt_types[tp].keys,
+                            loft_crt_types[tp].nk, 0);
+}
+
+/* OpLengthHash. */
+int64_t loft_crt_hash_len(int64_t store, int64_t rec, int64_t pos) {
+    return loft_hash_len(loft_crt_ref(store, rec, pos));
 }

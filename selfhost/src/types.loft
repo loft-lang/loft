@@ -36,7 +36,16 @@ pub struct FieldRow {
   pub group: integer,
 }
 
-// One type's row.  `variants` is a struct enum's variant types, 65535 for a unit variant.
+// One key part of a keyed collection: the key field's type, its byte position and, for a
+// narrow integer, its storage start — the image's own `DbType.keys`, unchanged.
+pub struct KeyRow {
+  pub tp: integer,
+  pub pos: integer,
+  pub start: integer,
+}
+
+// One type's row.  `variants` is a struct enum's variant types, 65535 for a unit variant;
+// `keys` a keyed collection's key parts.
 pub struct Row {
   pub tp: integer,
   pub kind: integer,
@@ -47,6 +56,7 @@ pub struct Row {
   pub linked: boolean,
   pub fields: vector<FieldRow>,
   pub variants: vector<integer>,
+  pub keys: vector<KeyRow>,
 }
 
 fn schema(b: ir::Bundle, tp: integer) -> ir::DbType? {
@@ -219,8 +229,8 @@ fn field_rows(fields: vector<ir::DbField>) -> vector<FieldRow> {
   out
 }
 
-// Type `tp`'s row, as `copy_table` writes it (`src/c/mod.rs`).  The keys of a keyed collection
-// are not derived yet: a row of one carries none, and the comparison skips its key columns.
+// Type `tp`'s row, as `copy_table` writes it (`src/c/mod.rs`).  A keyed collection's key parts
+// are the image's own (`DbType.keys`), carried as they are.
 pub fn row(b: ir::Bundle, tp: integer) -> Row {
   t = schema(b, tp) ?? panic("a type of this image");
   r = Row {
@@ -233,7 +243,11 @@ pub fn row(b: ir::Bundle, tp: integer) -> Row {
     linked: t.linked,
     fields: [],
     variants: [],
+    keys: [],
   };
+  for k in t.keys {
+    r.keys += [KeyRow { tp: k.type_nr, pos: k.position, start: k.start }];
+  }
   match t.parts[0] ?? panic("a type has its parts") {
     PtBase => {
       if tp == 5 || t.name == "text" {
@@ -294,21 +308,31 @@ pub fn render(r: Row) -> text {
       out += if v#index > 0 { ",{v}" } else { "{v}" };
     }
   }
+  if len(r.keys) > 0 {
+    out += " keys=";
+    for k in r.keys {
+      out += if k#index > 0 { ";{k.tp},{k.pos},{k.start}" } else { "{k.tp},{k.pos},{k.start}" };
+    }
+  }
   out
 }
 
 // The rows `crt::load_types` takes: per type `tp, kind, size, elem, n_fields, owns_heap,
-// linked, n_variants`, then five numbers per field, then the variants.  A struct enum's copy
+// linked, n_variants, n_keys`, then five numbers per field, the variants, and three numbers per
+// key part.  A struct enum's copy
 // and release find its payload through the variants, so a row without them copies the bytes of
 // a variant and not the claims it owns.
 pub fn flat(rows: vector<Row>) -> vector<integer> {
   out: vector<integer> = [];
   for r in rows {
-    out += [r.tp, r.kind, r.size, r.elem, len(r.fields), if r.owns_heap { 1 } else { 0 }, if r.linked { 1 } else { 0 }, len(r.variants)];
+    out += [r.tp, r.kind, r.size, r.elem, len(r.fields), if r.owns_heap { 1 } else { 0 }, if r.linked { 1 } else { 0 }, len(r.variants), len(r.keys)];
     for f in r.fields {
       out += [f.pos, f.tp, f.view, f.hidden, f.group];
     }
     out += r.variants;
+    for k in r.keys {
+      out += [k.tp, k.pos, k.start];
+    }
   }
   out
 }

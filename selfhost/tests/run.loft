@@ -236,10 +236,27 @@ fn test_struct_enums_build_match_and_copy() {
   assert(ran_clean(e, "n_listed", 10) == 99, "listed(10)");
 }
 
+// S3's fourth slice: hashes (1b-s3.md § The fourth slice), each value by hand in
+// `kernels/hashes.loft`: a hash field counting words (a hit updated in place, a miss added), a
+// hash local whose equal keys replace, an integer key, a compound key, a lookup whose key is
+// another lookup's field, and a struct holding a hash copied with its source freed.
+fn test_hashes_build_find_and_copy() {
+  h = kernel("hashes");
+  assert(ran_clean(h, "n_counted", 5) == 203005, "counted(5)");
+  assert(ran_clean(h, "n_counted", 2) == 102002, "counted(2)");
+  assert(ran_clean(h, "n_replaced", 5) == 3342, "replaced(5): equal keys replace");
+  assert(ran_clean(h, "n_replaced", 2) == 2010, "replaced(2)");
+  assert(ran_clean(h, "n_intkey", 4) == 420, "intkey(4)");
+  assert(ran_clean(h, "n_intkey", 3) == 300, "intkey(3)");
+  assert(ran_clean(h, "n_compound", 7) == 3057, "compound(7)");
+  assert(ran_clean(h, "n_nested", 5) == 2, "nested(5)");
+  assert(ran_clean(h, "n_copied", 4) == 13, "copied(4): the copy's elements are its own");
+}
+
 // A kernel's whole `main`, as the census runs a program: it prints what `loft --interpret`
 // prints (the harness compares nothing here; the census does), and leaves nothing behind.
 fn test_the_kernels_mains_run_whole() {
-  for name in ["structs", "vectors", "enums"] {
+  for name in ["structs", "vectors", "enums", "hashes"] {
     b = kernel(name);
     o = run::run(b, lower::find(b, "n_main"), []);
     assert(o.refused == "", "{name} main refused: {o.refused} in {o.refused_in}");
