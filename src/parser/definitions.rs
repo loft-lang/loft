@@ -1855,11 +1855,6 @@ impl Parser {
         }
     }
 
-    // <constant>
-    // Accepts either `NAME = expr;` or `NAME: type = expr;`. The optional
-    // type annotation is parsed (so the parser doesn't reject the form)
-    // but the inferred type from the initialiser is the source of truth.
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     /// `@FR-N-Decl` for a file-scope constant `ID: want = value`: the value converted into
     /// the declared type, with the questions a declared local's initialising store asks —
     /// a value of another collection type is refused, an integer that does not provably fit
@@ -1883,6 +1878,11 @@ impl Parser {
         want
     }
 
+    // <constant>
+    // Accepts either `NAME = expr;` or `NAME: type = expr;`.  An annotation is the
+    // constant's declared type (`constant_into_declared`); without one the initialiser's
+    // type is the constant's.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_constant(&mut self) -> bool {
         // P246 — accept the optional `const` keyword at file scope as
         // a synonym for the bare-name form (`const PI = 3.14;` ===
