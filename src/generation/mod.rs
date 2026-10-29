@@ -13137,7 +13137,8 @@ extern crate loft;"
         // `loft_ffi::widen_i32`: a NARROW answer's null is `i32::MIN` at the C-ABI, which a
         // plain widening turns into an ordinary negative number (the C backend's
         // `library_native` maps it the same way).
-        let narrow_ret = matches!(def.returned().base(), Type::Integer(s) if s.forced_size.is_some());
+        let narrow_ret =
+            matches!(def.returned().base(), Type::Integer(s) if s.forced_size.is_some());
         // @PLN17: external Rust fns use `bool`; loft's boolean storage form is u8.
         // Wrap a boolean return `(call) as u8`; boolean args coerce `u8 -> bool` below.
         let needs_bool_ret = matches!(def.returned().base(), Type::Boolean);
