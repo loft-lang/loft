@@ -5378,6 +5378,18 @@ impl State {
             self.code_add(0i32); // temp step
             return code_step;
         }
+        if let Some((of, v, c)) = tag_test_local(stack, name, &args) {
+            let at = self.code_pos;
+            let a = stack.var_pos(v);
+            stack.add_op("OpTagVCJump", self);
+            self.code_add(of);
+            self.code_add(a);
+            self.code_add(c);
+            self.vars.insert(at + 1, v);
+            let code_step = self.code_pos;
+            self.code_add(0i32); // temp step
+            return code_step;
+        }
         if let Some(f) = fused {
             let at = self.code_pos;
             let a = stack.var_pos(f.a);
@@ -6750,6 +6762,54 @@ struct FusedInt {
 /// switch the fusion's A/B runs against (both forms must print the same).
 fn fusion_enabled() -> bool {
     crate::env_once!(std::env::var_os("LOFT_NO_FUSE").is_none())
+}
+
+/// `@FR-R-Fuse`'s tag clause, which `LOFT_NO_TAG_JUMP=1` turns off alone (and `LOFT_NO_FUSE=1`
+/// with every fused op): the first bisect step for a variant test that answers differently.
+fn tag_jump_enabled() -> bool {
+    fusion_enabled() && crate::env_once!(std::env::var_os("LOFT_NO_TAG_JUMP").is_none())
+}
+
+/// A variant test of a local, `OpEqInt(OpConvIntFromEnum(t), c)` with `t` a plain-enum local
+/// or `OpGetEnum(r, 0)` of a struct-enum local `r`, as `OpTagVCJump`'s `(of, local, c)`: the
+/// test every arm of an enum `match` (and every `x is V` on a local) is lowered to.  The local
+/// is `int_local`'s kind of operand — on the stack, below its top — so the op reads it in
+/// place; any other shape keeps the unfused test.
+fn tag_test_local(stack: &Stack, name: &str, args: &[Value]) -> Option<(u8, u16, i64)> {
+    if name != "OpEqInt" || !tag_jump_enabled() {
+        return None;
+    }
+    let [tag, Value::Int(c)] = args else {
+        return None;
+    };
+    let Value::Call(conv, conv_args) = tag.unspan() else {
+        return None;
+    };
+    if stack.data.def(*conv).name() != "OpConvIntFromEnum" {
+        return None;
+    }
+    let [read] = conv_args.as_slice() else {
+        return None;
+    };
+    let (of, local) = match read.unspan() {
+        Value::Var(v) => (0, *v),
+        Value::Call(get, get_args) if stack.data.def(*get).name() == "OpGetEnum" => {
+            let [Value::Var(r), Value::Int(0)] = get_args.as_slice() else {
+                return None;
+            };
+            (1, *r)
+        }
+        _ => return None,
+    };
+    let kind_fits = match stack.function.tp(local).base() {
+        Type::Enum(_, false, _) => of == 0,
+        Type::Reference(..) | Type::Enum(_, true, _) => of == 1,
+        _ => false,
+    };
+    (kind_fits
+        && stack.function.is_stack_allocated(local)
+        && stack.function.stack(local) <= stack.position)
+        .then_some((of, local, i64::from(*c)))
 }
 
 /// Can `op(params)` be emitted as one fused integer op?  Yes when `op` is one of the integer

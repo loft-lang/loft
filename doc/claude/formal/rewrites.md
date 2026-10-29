@@ -5248,6 +5248,11 @@ instruction set.
                  because the unfused comparisons are plain `i64` compares.  An
                  ARITHMETIC operator is never mirrored: its overflow report names its
                  operands in the order written.
+                 THE TAG CLAUSE: a variant test of a local — `OpEqInt(OpConvIntFromEnum(t),
+                 c)` with `t` a plain-enum local or the tag `OpGetEnum(r, 0)` of a
+                 struct-enum local — as an `if` test is ONE compare-and-jump,
+                 `OpTagVCJump`, reading the tag as the unfused ops read it (an absent
+                 record's is 0, the null enum the integer null).
 ```
 
 **In words.** Applied by: interpreter generator (`fusable_int`, `gen_if_test`,
@@ -5257,6 +5262,10 @@ ops a round in every `for … in 0..LITERAL`.  It extends the fused compare's KI
 `GE`), not the op set.  Effect: 3 ops a round on a literal-ended loop; the `12_drawing` hash
 loop −5 to −8 % (pinned layout).  Switch `LOFT_NO_FUSE`.  Guard
 `loft-suite/rules/rewrites/R-Fuse/an-integer-operator-over-locals-runs-as-one-op.loft` (`test_literal_on_the_left`).
+The tag clause (`tag_test_local`) is what every arm of an enum `match` over a local, and every
+`x is V`, is lowered to: five or six ops a test became one, the cost an integer match already
+had (@PLN91 X22).  Switch `LOFT_NO_TAG_JUMP` (and `LOFT_NO_FUSE`).  Guard
+`tests/match_once.rs` (`each_enum_arm_is_one_tag_jump`, its control under the switch).
 
 ### A reservation the append repeats is not emitted
 

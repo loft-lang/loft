@@ -8555,6 +8555,7 @@ mod store_free_sentinel {
         "OpVecGetIntNullable",
         "OpVecSetInt",
         "OpVecEndJump",
+        "OpTagVCJump",
         // Reach a store or another frame through the `const` channel.
         "OpDatabase",
         "OpDropFnRef",
