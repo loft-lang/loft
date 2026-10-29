@@ -284,14 +284,19 @@ int64_t loft_crt_ref_part(int64_t store, int64_t rec, int64_t pos, int64_t which
 /* ── The type table (@PLN91 S3, question 2): the rows the interpreter derives in loft from the
  * image's schema, copied into the runtime's own descriptor structs.  Marshalling only: each
  * number lands where `copy_table` would have written it, and no value is computed here.
- *   row:  tp, kind, size, elem, n_fields, owns_heap, linked,
- *         then per field: pos, type, view, hidden, group
+ *   row:  tp, kind, size, elem, n_fields, owns_heap, linked, n_variants,
+ *         then per field: pos, type, view, hidden, group,
+ *         then each variant's type (a struct enum's, 0xFFFF for a unit variant)
+ * A struct enum's `n` is its variant count, as `copy_table` writes it.
  * Answers how many types were loaded, or -1 for rows that do not parse. */
 static loft_tdesc *loft_crt_types = 0;
 static uint32_t loft_crt_ntypes = 0;
 
 static void loft_crt_drop_types(void) {
-    for (uint32_t i = 0; i < loft_crt_ntypes; i++) free((void *) loft_crt_types[i].fields);
+    for (uint32_t i = 0; i < loft_crt_ntypes; i++) {
+        free((void *) loft_crt_types[i].fields);
+        free((void *) loft_crt_types[i].variants);
+    }
     free(loft_crt_types);
     loft_crt_types = 0;
     loft_crt_ntypes = 0;
@@ -304,9 +309,9 @@ int64_t loft_crt_load_types(const int64_t *rows, int64_t n, int64_t ntypes) {
     if (!loft_crt_types) return -1;
     loft_crt_ntypes = (uint32_t) ntypes;
     int64_t at = 0, loaded = 0;
-    while (at + 7 <= n) {
-        int64_t tp = rows[at], nf = rows[at + 4];
-        if (tp < 0 || tp >= ntypes || nf < 0 || at + 7 + nf * 5 > n) return -1;
+    while (at + 8 <= n) {
+        int64_t tp = rows[at], nf = rows[at + 4], nv = rows[at + 7];
+        if (tp < 0 || tp >= ntypes || nf < 0 || nv < 0 || at + 8 + nf * 5 + nv > n) return -1;
         loft_tdesc *d = &loft_crt_types[tp];
         d->kind = (uint8_t) rows[at + 1];
         d->size = (uint16_t) rows[at + 2];
@@ -318,7 +323,7 @@ int64_t loft_crt_load_types(const int64_t *rows, int64_t n, int64_t ntypes) {
             loft_fld *f = (loft_fld *) calloc((size_t) nf, sizeof(loft_fld));
             if (!f) return -1;
             for (int64_t i = 0; i < nf; i++) {
-                const int64_t *r = &rows[at + 7 + i * 5];
+                const int64_t *r = &rows[at + 8 + i * 5];
                 f[i].pos = (uint16_t) r[0];
                 f[i].type = (uint16_t) r[1];
                 f[i].view = (uint8_t) r[2];
@@ -327,7 +332,14 @@ int64_t loft_crt_load_types(const int64_t *rows, int64_t n, int64_t ntypes) {
             }
             d->fields = f;
         }
-        at += 7 + nf * 5;
+        if (nv > 0) {
+            uint16_t *v = (uint16_t *) calloc((size_t) nv, sizeof(uint16_t));
+            if (!v) return -1;
+            for (int64_t i = 0; i < nv; i++) v[i] = (uint16_t) rows[at + 8 + nf * 5 + i];
+            d->variants = v;
+            d->n = (uint16_t) nv;
+        }
+        at += 8 + nf * 5 + nv;
         loaded++;
     }
     return at == n ? loaded : -1;

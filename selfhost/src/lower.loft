@@ -183,7 +183,8 @@ fn kind_of_type(t: ir::TypeT) -> Kind {
     TyInteger { spec: _ } => KInt,
     TyBoolean => KInt,
     TyCharacter => KInt,
-    TyEnum { n: _, is_ref, dep: _ } => if is_ref { KOther } else { KInt },
+    // A struct enum is a record (`Type::heap_def_nr`); a plain one is its number.
+    TyEnum { n: _, is_ref, dep: _ } => if is_ref { KRef } else { KInt },
     TyFloat => KFloat,
     TySingle => KSingle,
     TyText { dep: _ } => KText,
@@ -599,8 +600,8 @@ fn ref_var_slot(l: Lowering, n: ir::Node) -> integer {
   0
 }
 
-// Type `tp` as `OpDatabase` mints it: a struct, whose size the runtime reads from the image's
-// schema.  A variant (minted at its enum's size), a collection and the rest are later slices.
+// Type `tp` as `OpDatabase` mints it: a struct, or a struct enum's variant (whose size is its
+// enum's), the size read from the image's schema.  A collection and the rest are later slices.
 fn mintable(l: Lowering, b: ir::Bundle, tp: integer) {
   t = b.types[tp];
   if t == null {
@@ -608,7 +609,7 @@ fn mintable(l: Lowering, b: ir::Bundle, tp: integer) {
     return;
   }
   p = t.parts[0];
-  if !(p is PtStruct) {
+  if !(p is PtStruct) && !(p is PtEnumValue) {
     refuse(l, "a store of a type the interpreter does not carry yet: {t.name}");
   }
 }
@@ -863,8 +864,8 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
   true
 }
 
-// The record definition a reference type names, through a nullability marker; -1 for another
-// type.
+// The record definition a reference or struct-enum type names (`Type::heap_def_nr`), through a
+// nullability marker; -1 for another type.
 fn record_of(ts: vector<ir::TypeT>) -> integer {
   t = ts[0];
   if t == null {
@@ -872,12 +873,8 @@ fn record_of(ts: vector<ir::TypeT>) -> integer {
   }
   match t {
     TyReference { n, dep: _ } => n,
-    TyOptional { inner } => {
-      match inner[0] ?? panic("a nullable type has its base") {
-        TyReference { n, dep: _ } => n,
-        _ => -1,
-      }
-    }
+    TyEnum { n, is_ref, dep: _ } => if is_ref { n } else { -1 },
+    TyOptional { inner } => record_of(inner),
     _ => -1,
   }
 }
@@ -986,7 +983,8 @@ fn is_inline_ref(b: ir::Bundle, d: integer, var: integer) -> boolean {
   false
 }
 
-// The dependencies a reference or vector type declares, through a nullability marker.
+// The dependencies a reference, vector or struct-enum type declares, through a nullability
+// marker.
 fn deps_of(ts: vector<ir::TypeT>) -> vector<integer> {
   t = ts[0];
   if t == null {
@@ -995,13 +993,8 @@ fn deps_of(ts: vector<ir::TypeT>) -> vector<integer> {
   match t {
     TyReference { n: _, dep } => dep,
     TyVector { inner: _, dep } => dep,
-    TyOptional { inner } => {
-      match inner[0] ?? panic("a nullable type has its base") {
-        TyReference { n: _, dep } => dep,
-        TyVector { inner: _, dep } => dep,
-        _ => [],
-      }
-    }
+    TyEnum { n: _, is_ref: _, dep } => dep,
+    TyOptional { inner } => deps_of(inner),
     _ => [],
   }
 }

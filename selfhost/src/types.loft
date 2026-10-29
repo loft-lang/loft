@@ -281,24 +281,34 @@ pub fn row(b: ir::Bundle, tp: integer) -> Row {
 }
 
 // A row as one line: `tp kind size elem n owns_heap linked`, then each field as
-// `pos,type,view,hidden,group` — the form the selfhost tests compare with the C generator's.
+// `pos,type,view,hidden,group`, then a struct enum's variants as `variants=a,b,…` — the form the
+// selfhost tests compare with the C generator's.
 pub fn render(r: Row) -> text {
   out = "{r.tp} {r.kind} {r.size} {r.elem} {r.n} {if r.owns_heap { 1 } else { 0 }} {if r.linked { 1 } else { 0 }}";
   for f in r.fields {
     out += " {f.pos},{f.tp},{f.view},{f.hidden},{f.group}";
   }
+  if len(r.variants) > 0 {
+    out += " variants=";
+    for v in r.variants {
+      out += if v#index > 0 { ",{v}" } else { "{v}" };
+    }
+  }
   out
 }
 
 // The rows `crt::load_types` takes: per type `tp, kind, size, elem, n_fields, owns_heap,
-// linked`, then five numbers per field.
+// linked, n_variants`, then five numbers per field, then the variants.  A struct enum's copy
+// and release find its payload through the variants, so a row without them copies the bytes of
+// a variant and not the claims it owns.
 pub fn flat(rows: vector<Row>) -> vector<integer> {
   out: vector<integer> = [];
   for r in rows {
-    out += [r.tp, r.kind, r.size, r.elem, len(r.fields), if r.owns_heap { 1 } else { 0 }, if r.linked { 1 } else { 0 }];
+    out += [r.tp, r.kind, r.size, r.elem, len(r.fields), if r.owns_heap { 1 } else { 0 }, if r.linked { 1 } else { 0 }, len(r.variants)];
     for f in r.fields {
       out += [f.pos, f.tp, f.view, f.hidden, f.group];
     }
+    out += r.variants;
   }
   out
 }

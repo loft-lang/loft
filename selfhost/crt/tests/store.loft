@@ -81,11 +81,12 @@ fn test_the_shims_stores_are_apart_from_the_programs() {
 
 // P3 rows: type 100 is a 24-byte struct — integers at 0 and 8, a text (type 5) at 16 — and type 5
 // is a text.  `owns_heap` is the value under test: 1 is the right answer for a struct holding a
-// text, 0 the wrong one.
+// text, 0 the wrong one.  Each row is `tp, kind, size, elem, n_fields, owns_heap, linked,
+// n_variants`, its fields, its variants.
 fn rows(owns_heap: integer) -> vector<integer> {
   [
-    5, 1, 4, 0, 0, 0, 0,
-    100, 2, 24, 0, 3, owns_heap, 0,
+    5, 1, 4, 0, 0, 0, 0, 0,
+    100, 2, 24, 0, 3, owns_heap, 0, 0,
       0, 0, 0, 0, 0,
       8, 0, 0, 0, 0,
       16, 5, 0, 0, 0
@@ -134,7 +135,54 @@ fn test_a_wrong_row_loses_the_text() {
 // Rows that do not parse are refused, not half-loaded.
 fn test_malformed_rows_are_refused() {
   assert(crt::load_types([100, 2, 24, 0, 3, 1, 0, 0, 0], 101) == -1, "a field list cut short");
-  assert(crt::load_types([200, 2, 24, 0, 0, 0, 0], 101) == -1, "a type number past the table");
+  assert(crt::load_types([100, 4, 24, 0, 0, 1, 0, 2, 101], 102) == -1, "a variant list cut short");
+  assert(crt::load_types([200, 2, 24, 0, 0, 0, 0, 0], 101) == -1, "a type number past the table");
+}
+
+// A struct enum's rows: type 100 is the enum (24 bytes, its variants listed), type 101 its one
+// variant, the tag byte at 0 and a text at 8.  `variants` is the value under test: the
+// runtime finds a variant's claims through it (`loft_copy_claims`, LOFT_T_ENUM).
+fn enum_rows(variants: vector<integer>) -> vector<integer> {
+  out = [5, 1, 4, 0, 0, 0, 0, 0, 100, 4, 24, 0, 0, 1, 0, len(variants)];
+  out += variants;
+  out += [101, 2, 24, 0, 1, 1, 0, 0, 8, 5, 0, 0, 0];
+  out
+}
+
+// A variant whose tag (the byte at 0) is 1, its text written, copied as its ENUM type; the copy's
+// text read once the source is freed (`free_first`), or before, as P3's control reads it.
+fn copied_variant(text_in: text, free_first: boolean) -> text? {
+  p = fresh(100);
+  q = fresh(100);
+  crt::set_w(crt::W_ENUM, p[0] ?? 0, p[1] ?? 0, p[2] ?? 0, 0, 0, 1);
+  crt::set_text(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0, 8, text_in);
+  crt::copy_record(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0, q[0] ?? 0, q[1] ?? 0, q[2] ?? 0, 100, 4);
+  if free_first {
+    crt::free_ref(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0);
+  }
+  got = crt::get_text(q[0] ?? 0, q[1] ?? 0, q[2] ?? 0, 8);
+  if !free_first {
+    crt::free_ref(p[0] ?? 0, p[1] ?? 0, p[2] ?? 0);
+  }
+  crt::free_ref(q[0] ?? 0, q[1] ?? 0, q[2] ?? 0);
+  got
+}
+
+// With its variants loaded, a struct enum's copy owns its variant's text, and reads it after the
+// source's store is freed.
+fn test_a_struct_enum_copy_owns_its_variants_text() {
+  assert(crt::load_types(enum_rows([101]), 102) == 3, "three types loaded");
+  got = copied_variant("vårïant", true);
+  assert(got == "vårïant", "the copy's own text: {got}");
+  assert(crt::live_stores() == 0, "both stores freed");
+}
+
+// The control: without the variant list the runtime sees an enum of no variants and copies the
+// bytes only, so the copy does not hold the text in its own store.
+fn test_a_struct_enum_row_without_variants_loses_the_text() {
+  assert(crt::load_types(enum_rows([]), 102) == 3, "three types loaded");
+  got = copied_variant("only-the-enum-control-writes-this", false);
+  assert(got != "only-the-enum-control-writes-this", "without variants the copy does not own the text: {got}");
 }
 
 // `OpDatabase` on a variable that already names a store makes that store again in place: the

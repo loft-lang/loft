@@ -148,8 +148,8 @@ fn c_default_images(c: &str) -> String {
 
 /// The rows of the `loft_types` table in an emitted C program, one line per type in the form
 /// `selfhost/src/types.loft`'s `render` writes: `tp kind size elem n owns_heap linked`, then each
-/// field as `pos,type,view,hidden,group`.  Keys are left out: the loft side does not derive them
-/// yet.
+/// field as `pos,type,view,hidden,group`, then a struct enum's variants as `variants=a,b,…`.
+/// Keys are left out: the loft side does not derive them yet.
 fn c_type_table(c: &str) -> String {
     const KINDS: [&str; 12] = [
         "SCALAR", "TEXT", "STRUCT", "VECTOR", "ENUM", "CHILD", "HASH", "INDEX", "ORDERED", "RADIX",
@@ -163,8 +163,17 @@ fn c_type_table(c: &str) -> String {
             .collect()
     };
     let mut fields: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut variants: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
     let mut rows = Vec::new();
     for line in c.lines() {
+        if let Some(rest) = line.strip_prefix("static const uint16_t ")
+            && let Some((name, list)) = rest.split_once("[] = ")
+            && name.starts_with("loft_variants")
+        {
+            variants.insert(name.to_string(), numbers(list.trim_end_matches(';')));
+            continue;
+        }
         if let Some(rest) = line.strip_prefix("static const loft_fld ")
             && let Some((name, list)) = rest.split_once("[] = ")
         {
@@ -191,6 +200,12 @@ fn c_type_table(c: &str) -> String {
                     out.push(' ');
                     out.push_str(f);
                 }
+            }
+            if let Some(list) = variants.get(&parts[5])
+                && !list.is_empty()
+            {
+                out.push_str(" variants=");
+                out.push_str(&list.join(","));
             }
             rows.push(out);
         }

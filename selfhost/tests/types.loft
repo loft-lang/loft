@@ -31,6 +31,8 @@ fn test_the_loft_type_table_equals_the_c_generators() {
   // The records kernel's table: integer, text, the discriminant byte, a vector of texts,
   // Point, Line and the two record variants of Shape — seven or more rows, each equal.
   assert(compare_tables("records") >= 7, "the records kernel's rows were compared");
+  // `Tok`'s row lists its three variants, each compared with `loft_variants{tp}`.
+  assert(compare_tables("enums") >= 5, "the enums kernel's rows were compared");
 }
 
 // P6: each default image the C generator writes for a kernel equals `types::default_image` of

@@ -218,10 +218,28 @@ fn test_vectors_build_walk_index_and_clear() {
   assert(ran_clean(v, "n_rebound_param", 5) == 37210, "rebound_param(5)");
 }
 
+// S3's third slice: struct enums (1b-s3.md § The third slice), each value by hand in
+// `kernels/enums.loft`: every arm of a match, a unit variant, a variant returned and tested with
+// `is`, a text payload copied and its source freed, a struct holding an enum field, and a vector
+// of them built from a literal, a call and a unit variant.  A copy of a `Word` owns its text only
+// because the type table hands the runtime the enum's variants.
+fn test_struct_enums_build_match_and_copy() {
+  e = kernel("enums");
+  assert(ran_clean(e, "n_arms", 7) == 26, "arms(7)");
+  assert(ran_clean(e, "n_arms", 12) == 41, "arms(12)");
+  assert(ran_clean(e, "n_picked", 3) == 3, "picked(3)");
+  assert(ran_clean(e, "n_picked", 8) == 120, "picked(8)");
+  assert(ran_clean(e, "n_copied", 4) == 21, "copied(4)");
+  assert(ran_clean(e, "n_copied", 123) == 41, "copied(123): the copy's text is its own");
+  assert(ran_clean(e, "n_held", 5) == 35, "held(5)");
+  assert(ran_clean(e, "n_listed", 3) == 72, "listed(3)");
+  assert(ran_clean(e, "n_listed", 10) == 99, "listed(10)");
+}
+
 // A kernel's whole `main`, as the census runs a program: it prints what `loft --interpret`
 // prints (the harness compares nothing here; the census does), and leaves nothing behind.
 fn test_the_kernels_mains_run_whole() {
-  for name in ["structs", "vectors"] {
+  for name in ["structs", "vectors", "enums"] {
     b = kernel(name);
     o = run::run(b, lower::find(b, "n_main"), []);
     assert(o.refused == "", "{name} main refused: {o.refused} in {o.refused_in}");
