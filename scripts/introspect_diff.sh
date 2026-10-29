@@ -49,7 +49,10 @@ one() {
 export -f one; export root; export envs
 # tests/scripts, tests/docs, examples and every program of the language suite beside the
 # tree (@PLN193) — `scripts/corpus_files.sh` is the one list.
-"$(dirname "$0")/corpus_files.sh" --root "$root" --examples | sed "s#^#$root/#" > "$work/files"
+# A path the list gives ABSOLUTE — the language suite's, when `LOFT_SUITE_DIR` names a checkout
+# outside this tree — is taken as it is; prefixing it with the root made a path that does not
+# exist, both runs wrote nothing, and `cmp` on two missing files read as a DIFFERENCE.
+"$(dirname "$0")/corpus_files.sh" --root "$root" --examples | sed "s#^\([^/]\)#$root/\1#" > "$work/files"
 m=$(wc -l < "$work/files"); n=0; k=0; e=0
 [ "$m" -gt 0 ] || { echo "introspect_diff: no corpus under '$root' (tests/scripts, tests/docs, examples) — use --root" >&2; exit 2; }
 while IFS= read -r f; do
