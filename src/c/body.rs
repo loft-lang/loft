@@ -179,6 +179,10 @@ pub(crate) struct FnWriter<'a> {
     /// The record scalars each enclosing loop reads once before it (`@FR-R-Scalar`): the
     /// `(variable, field offset)` key, the local holding it and its shape, innermost last.
     scalars: Vec<Vec<(crate::opt::hoist::ScalarKey, String, CType)>>,
+    /// `@FR-R-Invariant` — the invariant integer chains the enclosing loops memoise
+    /// (`hoist::invariant_chains`), by the address of each node that spells one: the memo's
+    /// local, and the chain its first use evaluates.
+    invariants: Vec<std::collections::HashMap<usize, std::rc::Rc<(String, Value)>>>,
     /// `@FR-R-ValueRecord`'s facts for this function (`value::VrFn`), when the plan has any.
     vr: Option<Box<value::VrFn>>,
     /// The leaf being written as its dense self inside its widening (`value::vr_assign`).
@@ -563,6 +567,7 @@ impl<'a> FnWriter<'a> {
             rec_ptrs: Vec::new(),
             work_alias: None,
             scalars: Vec::new(),
+            invariants: Vec::new(),
             hoist_cache: std::collections::HashMap::new(),
             placed: crate::opt::hoist::placed_locals(def.code(), cx.data),
             assumed: Vec::new(),
@@ -1038,6 +1043,82 @@ impl<'a> FnWriter<'a> {
         self.headers.push(frame);
         self.scalars.push(held_scalars);
         Ok(mints)
+    }
+
+    /// `@FR-R-Invariant` (@PLN157 § V-ao, rustc's `begin_vector_hoist`): each invariant integer
+    /// chain loop `b` itself spells (a nested loop's are its own) takes a memo pair — the value,
+    /// and whether its first use has evaluated it — whose flag is cleared HERE, at the loop's
+    /// prelude, so it is clear on every entry and the compiler peels the first-use test out of
+    /// the loop.  The first use evaluates the chain where it stands — the same value, the same
+    /// overflow answer — and every later use answers the memo.  A chain an enclosing frame
+    /// already memoises is its.  `LOFT_NO_INVARIANT_HOIST=1` memoises none.  Measured on the C
+    /// before porting (a checked `a * b` and `a ^ b` in a 1 000-element loop): gcc's own code
+    /// motion already hoisted them (the same 401M instructions with the memo), clang's did not
+    /// (621M -> 541M, -13 %).
+    fn hold_invariants(&mut self, b: &Block, ind: usize) {
+        let mut frame = std::collections::HashMap::new();
+        if !self.cx.switches.invariant_hoist_disabled && self.gen_elem.is_none() {
+            for ch in crate::opt::hoist::invariant_chains(b, self.cx.data, self.vars) {
+                if ch
+                    .nodes
+                    .iter()
+                    .any(|a| self.invariants.iter().any(|f| f.contains_key(a)))
+                {
+                    continue;
+                }
+                let name = format!("ia{}", self.decls.len() + 1);
+                self.decls
+                    .push(format!("int64_t {name} = LOFT_NULL; int {name}_set = 0;"));
+                self.line(ind, &format!("{name}_set = 0;"));
+                let memo = std::rc::Rc::new((name, ch.chain));
+                for a in ch.nodes {
+                    frame.insert(a, memo.clone());
+                }
+            }
+        }
+        crate::rewrite_census::fired("R-Invariant", {
+            let mut names: Vec<&String> = frame.values().map(|m| &m.0).collect();
+            names.sort();
+            names.dedup();
+            names.len()
+        });
+        self.invariants.push(frame);
+    }
+
+    /// The memo an enclosing loop keeps for the chain node `v`, if any: the node's address
+    /// (and its `Span` wrapper's) is what `hoist::invariant_chains` registered.
+    fn invariant_of(&self, v: &Value) -> Option<std::rc::Rc<(String, Value)>> {
+        let a = std::ptr::from_ref(v) as usize;
+        let b = std::ptr::from_ref(v.unspan()) as usize;
+        self.invariants
+            .iter()
+            .rev()
+            .find_map(|f| f.get(&a).or_else(|| f.get(&b)).cloned())
+    }
+
+    /// A memoised chain's use: the first use evaluates the chain where it stands — its own
+    /// temporaries inside the block, so a later use runs none of them — and records it; every
+    /// use answers the memo.  The chain is the memo's own clone, whose nodes no frame holds, so
+    /// this cannot re-enter itself.  Under `LOFT_VERIFY` every use evaluates the chain again
+    /// and the proof asserts the memo agrees — rustc's `LOFT_HOIST_VERIFY` falsifier.
+    fn invariant_use(&mut self, memo: &(String, Value), ind: usize) -> Result<E, String> {
+        let (name, chain) = memo;
+        self.line(ind, &format!("if (!{name}_set) {{"));
+        let e = self.expr(chain, ind + 1)?;
+        self.line(ind + 1, &format!("{name} = {};", as_int(e)?));
+        self.line(ind + 1, &format!("{name}_set = 1;"));
+        self.line(ind, "}");
+        self.line(ind, "#ifdef LOFT_VERIFY");
+        let fresh = self.expr(chain, ind)?;
+        self.line(
+            ind,
+            &format!(
+                "LOFT_PROVED({} == {name}, \"R-Invariant:{name}\");",
+                as_int(fresh)?
+            ),
+        );
+        self.line(ind, "#endif");
+        Ok(E::new(name.clone(), K::Int))
     }
 
     /// The local an enclosing loop holds record scalar `key` in, with its shape.
@@ -2597,6 +2678,7 @@ impl<'a> FnWriter<'a> {
 
     fn loop_copy(&mut self, b: &Block, ind: usize) -> Result<(), String> {
         let held_file = self.open_file_hold(b, ind)?;
+        self.hold_invariants(b, ind);
         let mints = self.hold_vectors(b, ind)?;
         let window = self.open_window(b, ind)?;
         self.hold_pushes(b, mints, ind)?;
@@ -2624,6 +2706,7 @@ impl<'a> FnWriter<'a> {
         self.headers.pop();
         self.push_heads.pop();
         self.scalars.pop();
+        self.invariants.pop();
         if window {
             // The loop's one exit: the counted push loop has no break, return or
             // continue of its own (`hoist::push_loop`).
@@ -4117,6 +4200,11 @@ impl<'a> FnWriter<'a> {
 
     /// A C expression for `v`'s value; the statements it needs are emitted first.
     fn expr(&mut self, v: &Value, ind: usize) -> Result<E, String> {
+        if self.invariants.iter().any(|f| !f.is_empty())
+            && let Some(memo) = self.invariant_of(v)
+        {
+            return self.invariant_use(&memo, ind);
+        }
         match v.unspan() {
             Value::RawExpr(code) if self.raw.contains_key(code) => {
                 Ok(E::new(code.clone(), self.raw[code]))
