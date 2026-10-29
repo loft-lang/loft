@@ -158,7 +158,7 @@ fn c_type_table(c: &str) -> String {
         "TRIE", "DBREF",
     ];
     let numbers = |text: &str| -> Vec<String> {
-        text.split(|ch: char| ch == '{' || ch == '}' || ch == ',')
+        text.split(['{', '}', ','])
             .map(str::trim)
             .filter(|t| !t.is_empty())
             .map(str::to_string)
