@@ -13,8 +13,38 @@ static loft_store_t *loft_ffi_ctx_store(loft_ffi_store_ctx c) {
     return &loft_stores[(uint16_t) (uintptr_t) c.opaque];
 }
 
+/* loft#2227 — the records ONE call pinned to an argument's store claims there (the answer and
+ * its scratch, never what an argument held before the call), for `loft_ffi_own_*` to delete after
+ * copying the answer out: `extensions::claim_log_*`, the interpreter's twin. */
+static int loft_ffi_log_on;
+static uint16_t loft_ffi_log_store;
+static uint32_t *loft_ffi_log_recs;
+static uint32_t loft_ffi_log_n, loft_ffi_log_cap;
+
+static void loft_ffi_log_begin(uint16_t nr) {
+    loft_ffi_log_on = 1;
+    loft_ffi_log_store = nr;
+    loft_ffi_log_n = 0;
+}
+
+static void loft_ffi_log_note(uint16_t nr, uint32_t old, uint32_t rec) {
+    if (!loft_ffi_log_on || nr != loft_ffi_log_store) return;
+    if (old) {
+        for (uint32_t i = 0; i < loft_ffi_log_n; i++)
+            if (loft_ffi_log_recs[i] == old) { loft_ffi_log_recs[i] = rec; return; }
+        return;
+    }
+    if (loft_ffi_log_n == loft_ffi_log_cap) {
+        loft_ffi_log_cap = loft_ffi_log_cap ? loft_ffi_log_cap * 2 : 16;
+        loft_ffi_log_recs = (uint32_t *) realloc(loft_ffi_log_recs, loft_ffi_log_cap * sizeof(uint32_t));
+    }
+    loft_ffi_log_recs[loft_ffi_log_n++] = rec;
+}
+
 static uint32_t loft_ffi_claim(loft_ffi_store_ctx c, uint32_t words) {
-    return loft_claim(loft_ffi_ctx_store(c), words);
+    uint32_t rec = loft_claim(loft_ffi_ctx_store(c), words);
+    loft_ffi_log_note((uint16_t) (uintptr_t) c.opaque, 0, rec);
+    return rec;
 }
 
 static void loft_ffi_reload(loft_ffi_store_ctx c, uint8_t **ptr, uint32_t *size) {
@@ -24,7 +54,9 @@ static void loft_ffi_reload(loft_ffi_store_ctx c, uint8_t **ptr, uint32_t *size)
 }
 
 static uint32_t loft_ffi_resize(loft_ffi_store_ctx c, uint32_t rec, uint32_t words) {
-    return loft_st_resize(loft_ffi_ctx_store(c), rec, words);
+    uint32_t to = loft_st_resize(loft_ffi_ctx_store(c), rec, words);
+    loft_ffi_log_note((uint16_t) (uintptr_t) c.opaque, rec, to);
+    return to;
 }
 
 /* Store `nr` as the library sees it.  A library that hands bytes over to be adopted
@@ -115,6 +147,39 @@ static void *loft_ffi_lookup(void *h, const char *sym) {
     return p ? p : loft_dl_sym(h, sym);
 }
 #endif
+
+/* The logged records go, the log closes. */
+static void loft_ffi_log_drop(uint16_t nr) {
+    for (uint32_t i = 0; i < loft_ffi_log_n; i++)
+        if (loft_ffi_log_recs[i]) loft_st_delete(&loft_stores[nr], loft_ffi_log_recs[i]);
+    loft_ffi_log_on = 0;
+    loft_ffi_log_n = 0;
+}
+
+/* loft#2227, `@FR-F-Ret` (`Stores::own_bridge_answer`) — a heap answer built in the argument's
+ * store it was pinned to, copied out into a store of its own with its element type (a vector,
+ * `loft_vec_add`) or its record type (`loft_copy_record`); then only what the call claimed is
+ * deleted, and the vector's header. */
+static loft_ref loft_ffi_own_vector(const loft_tdesc *T, uint16_t elem_tp, loft_ref h) {
+    if (h.rec == 0) { loft_ffi_log_on = 0; return h; }
+    uint16_t ns = (uint16_t) loft_store_new();
+    uint32_t root = loft_claim(&loft_stores[ns], 1);
+    loft_set_u32(&loft_stores[ns], root, 4, 0);
+    loft_ref v = { ns, root, 4 };
+    loft_vec_add(T, elem_tp, v, h);
+    loft_ffi_log_drop(h.store_nr);
+    loft_st_delete(&loft_stores[h.store_nr], h.rec);
+    return v;
+}
+
+static loft_ref loft_ffi_own_record(const loft_tdesc *T, uint16_t tp, loft_ref r) {
+    if (r.rec == 0) { loft_ffi_log_on = 0; return r; }
+    loft_ref d = { 0xFFFF, 0, 0 };
+    loft_database_typed(&d, T[tp].size, tp);
+    loft_copy_record(T, tp, r, d, 4);
+    loft_ffi_log_drop(r.store_nr);
+    return d;
+}
 
 /* Symbol `sym` of a library's native part, resolved once per call site: in a shipped program
  * (`LOFT_BIND_LIBS`) the library named `file` it opened at start by search order

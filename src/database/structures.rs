@@ -2230,6 +2230,91 @@ impl Stores {
         }
     }
 
+    /// loft#2227, `@FR-F-Ret` — a call's answer is FRESH.  A bridge call PINNED to an argument's
+    /// store (`bridge_args`) builds its heap answer in that store, because the cdylib reads its
+    /// arguments and writes its answer through the ONE store handle it is given.  Left there,
+    /// the answer is a second owner of the argument's store: the caller's temporary frees the
+    /// store, argument and all, and an answer that reuses the argument's own records (the
+    /// argument itself, a field of it, its text) aliases them.
+    ///
+    /// So the answer is copied out into a store of its own — deep, with `tp`: a vector's
+    /// ELEMENT type (`vector_add`, as `OpAppendVector` copies) or a record's own type
+    /// (`copy_claims`) — and then only the records the call CLAIMED (`claimed`, logged at the
+    /// ffi claim callbacks) are deleted from the argument's store.  A record the answer shares
+    /// with an argument predates the call, so it is copied and never deleted.  `answer` is
+    /// loft's handle: a vector's one-word header (claimed after the call, deleted here too) or
+    /// the record itself.  Anything else — a minted store, an answer elsewhere, no type —
+    /// passes through unchanged.  Call it before [`bridge_args_done`](Self::bridge_args_done),
+    /// which deletes the foreign-vector copies an identity answer may name.
+    #[must_use]
+    pub fn own_bridge_answer(
+        &mut self,
+        args: &BridgeArgs,
+        answer: DbRef,
+        is_vec: bool,
+        tp: u16,
+        claimed: &[u32],
+    ) -> DbRef {
+        if args.minted
+            || tp == u16::MAX
+            || answer.is_null()
+            || answer.rec == 0
+            || answer.store_nr != args.store_nr
+            || self.store(&answer).read_only
+        {
+            return answer;
+        }
+        let fresh = DbRef {
+            store_nr: self.null().store_nr,
+            rec: 0,
+            pos: 0,
+        };
+        let owned = if is_vec {
+            // The shape `bridge_push_ref` gives a vector answer: a one-word root, its slot at +4.
+            let root = self.claim(&fresh, 1);
+            self.store_mut(&fresh).set_u32_raw(root.rec, 4, 0);
+            let to = DbRef {
+                store_nr: fresh.store_nr,
+                rec: root.rec,
+                pos: 4,
+            };
+            self.vector_add(&to, &answer, tp);
+            to
+        } else {
+            let size = self.enum_parent_size(tp);
+            let r = self.claim(&fresh, 1 + u32::from(size).div_ceil(8));
+            self.store_mut(&r).zero_fill(r.rec);
+            self.store_mut(&r).set_u32_raw(r.rec, 4, u32::from(tp));
+            self.allocations[fresh.store_nr as usize].set_known_type(tp);
+            let to = DbRef {
+                store_nr: fresh.store_nr,
+                rec: r.rec,
+                pos: 8,
+            };
+            self.copy_block_cross_store(
+                answer.store_nr,
+                answer.rec,
+                answer.pos as isize,
+                to.store_nr,
+                to.rec,
+                8,
+                size as isize,
+            );
+            self.copy_claims(&answer, &to, tp);
+            to
+        };
+        let store = self.store_mut(&answer);
+        for &rec in claimed {
+            if rec != 0 {
+                store.delete(rec);
+            }
+        }
+        if is_vec {
+            store.delete(answer.rec);
+        }
+        owned
+    }
+
     /// The call is over.  A bridge that WROTE through a foreign vector's copy — grew it,
     /// or changed an element — wrote to bytes the program does not own, and the copy has
     /// nowhere to carry that: it is the same refusal a direct write meets, raised after

@@ -31,3 +31,15 @@ pub fn rev(v: vector<u8>) -> vector<u8>;
 #native
 pub fn pair(a: integer, b: integer) -> Pair;
 #native
+
+// Answers that share what their argument holds (loft#2227): the argument itself, a vector
+// field of a record argument, a fresh record holding its argument's text.
+pub struct Bag { pub items: vector<u8> }
+pub struct Named { pub k: integer, pub n: text }
+
+pub fn same(v: vector<u8>) -> vector<u8>;
+#native
+pub fn bag_items(b: Bag) -> vector<u8>;
+#native
+pub fn named_k(p: Named, k: integer) -> Named;
+#native

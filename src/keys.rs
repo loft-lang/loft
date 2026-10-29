@@ -3008,6 +3008,19 @@ pub fn strict_store_violation(
     }
 }
 
+/// loft#2227 — a native grew a record that predates its call, in the argument store it was
+/// pinned to: a write into an argument, which no `#native` signature licenses (a loft parameter
+/// is read-only).  The answer's copy-out deletes only what the call claimed, so this is the one
+/// shape where a record it deletes could still be an argument's: counted as a violation, so a
+/// `LOFT_STRICT_STORES` run fails on it rather than freeing silently.
+pub fn strict_store_argument_write(store_nr: u16, rec: u32) {
+    STRICT_VIOLATIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    crate::loft_eprintln!(
+        "[strict-store] A NATIVE WROTE INTO ITS ARGUMENT: store #{store_nr} rec={rec}, claimed \
+         before the call, was resized by it"
+    );
+}
+
 /// `LOFT_STRICT_STORES` given to a runtime built without the `strict-stores` feature (an
 /// installed one): its never-freed report still runs, its use-after-free test was compiled
 /// out — said once, at exit, rather than letting a clean report read as a clean run.

@@ -297,6 +297,95 @@ fn test_heap_answers() {
     }
 }
 
+/// loft#2227, `@FR-F-Ret` — a call's answer is FRESH, also when the native built it in its
+/// ARGUMENT's store (the bridge hands it that one store): the answer is its own value, the
+/// argument is untouched, and nothing the argument holds is freed with the answer.  Each cell
+/// fixes its values by hand; `LOFT_STRICT_STORES=1` names a read of a freed store on the
+/// interpreter and the Rust writer, and the C is checked by value and leak.
+#[test]
+fn an_answer_built_in_its_arguments_store_is_its_own() {
+    const TESTS: &str = r#"use ffi_c_library;
+
+fn test_rev_leaves_its_argument_and_a_minted_neighbour_be() {
+  v: vector<u8> = [3, 4];
+  for i in 0..20 {
+    r = ffi_c_library::rev(v);
+    p = ffi_c_library::pair(i, 1000 - i);
+    assert(r.len() == 3 && r[0] == 4 && r[1] == 3 && r[2] == 7, "rev {r}");
+    assert(v.len() == 2 && v[0] == 3 && v[1] == 4, "the argument {v}");
+    assert(p.a == i && p.b == 1000 - i, "pair {p.a} {p.b}");
+  }
+}
+
+fn test_the_answer_is_written_apart_from_the_argument() {
+  v: vector<u8> = [3, 4];
+  r = ffi_c_library::rev(v);
+  r += [9];
+  r[0] = 100;
+  assert("{r}" == "[100,3,7,9]", "the answer {r}");
+  assert("{v}" == "[3,4]", "the argument {v}");
+}
+
+fn test_an_answer_that_is_its_argument_is_a_copy() {
+  v: vector<u8> = [5, 6];
+  s = ffi_c_library::same(v);
+  s += [1];
+  s[0] = 50;
+  assert("{s}" == "[50,6,1]", "the answer {s}");
+  assert("{v}" == "[5,6]", "the argument {v}");
+}
+
+fn test_a_field_of_a_record_argument_is_a_copy() {
+  b = ffi_c_library::Bag { items: [1, 2, 3] };
+  it = ffi_c_library::bag_items(b);
+  it += [4];
+  assert("{it}" == "[1,2,3,4]", "the answer {it}");
+  assert("{b.items}" == "[1,2,3]", "the argument {b.items}");
+}
+
+fn test_a_record_answer_holding_its_arguments_text_owns_it() {
+  a = ffi_c_library::Named { k: 1, n: "abc" };
+  m = ffi_c_library::named_k(a, 7);
+  assert(m.k == 7 && m.n == "abc", "the answer {m.k} {m.n}");
+  m.n = "zz";
+  assert(a.k == 1 && a.n == "abc", "the argument {a.k} {a.n}");
+  assert(m.n == "zz", "the answer took the write: {m.n}");
+}
+
+fn test_a_thousand_calls_and_an_answer_passed_straight_on() {
+  v: vector<u8> = [1, 2, 3];
+  t = 0;
+  for i in 0..1000 {
+    r = ffi_c_library::rev(v);
+    t += r.len() + r[0];
+    t += ffi_c_library::sum_bytes(ffi_c_library::rev(v));
+  }
+  assert(t == 20000, "1000 × (4 + 3 + 13): {t}");
+  assert("{v}" == "[1,2,3]", "the argument {v}");
+}
+"#;
+    for backend in backends() {
+        let (libs, _) = published(&format!("own_{}", &backend[2..]), Shipped::InPackage);
+        let file = libs.join("own_test.loft");
+        fa::write(&file, TESTS).expect("write the tests");
+        let out = loft_in(&libs, &["--tests", backend], &file)
+            .env("LOFT_LEAK_CHECK", "1")
+            .env("LOFT_STRICT_STORES", "1")
+            .output()
+            .expect("loft runs");
+        let (stdout, stderr) = (
+            String::from_utf8_lossy(&out.stdout).to_string(),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        );
+        let _ = fa::remove_dir_all(&libs);
+        let bad = |t: &str| t.contains("not freed") || t.contains("USE AFTER FREE");
+        assert!(
+            out.status.success() && !bad(&stdout) && !bad(&stderr),
+            "{backend}: every answer is its own\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+}
+
 /// A program written out with `--out` carries the library beside it and finds it there by
 /// loft's search order once the package it was built from is gone — never by the path this
 /// machine built it at.

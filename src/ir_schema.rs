@@ -1082,6 +1082,7 @@ fn write_definition(out: &mut String, d: &Definition) {
     write_str(out, &d.rust);
     out.push_str(",\"native\":");
     write_str(out, &d.native);
+    let _ = write!(out, ",\"native_answer_tp\":{}", d.native_answer_tp); // loft#2227
     out.push_str(",\"cap\":"); // @PLN86
     write_str(out, &d.cap);
     out.push_str(",\"superseded\":"); // @PLN102 arc C
@@ -1396,10 +1397,11 @@ fn definition_from_parsed(p: &Parsed) -> Result<Definition, TypeDecodeError> {
         returned_not_null: as_bool(field(p, "returned_not_null")?)?,
         rust: as_str(field(p, "rust")?)?,
         native: as_str(field(p, "native")?)?,
-        cap: as_str(field(p, "cap")?)?,               // @PLN86
-        superseded: as_str(field(p, "superseded")?)?, // @PLN102 arc C
-        c_symbol: as_str(field(p, "c_symbol")?)?,     // @PLN24
-        c_sig: as_str(field(p, "c_sig")?)?,           // @PLN24
+        native_answer_tp: as_u16(field(p, "native_answer_tp")?)?, // loft#2227
+        cap: as_str(field(p, "cap")?)?,                           // @PLN86
+        superseded: as_str(field(p, "superseded")?)?,             // @PLN102 arc C
+        c_symbol: as_str(field(p, "c_symbol")?)?,                 // @PLN24
+        c_sig: as_str(field(p, "c_sig")?)?,                       // @PLN24
         op_code: as_u16(field(p, "op_code")?)?,
         known_type: as_u16(field(p, "known_type")?)?,
         pub_visible: as_bool(field(p, "pub_visible")?)?,
@@ -2428,6 +2430,7 @@ mod tests {
             returned_not_null: false,
             rust: String::new(),
             native: String::new(),
+            native_answer_tp: u16::MAX,
             cap: String::new(),
             superseded: String::new(),
             c_symbol: String::new(),
@@ -2514,6 +2517,7 @@ mod tests {
             returned_not_null: false,
             rust: String::new(),
             native: String::new(),
+            native_answer_tp: u16::MAX,
             cap: String::new(),
             superseded: String::new(),
             c_symbol: String::new(),

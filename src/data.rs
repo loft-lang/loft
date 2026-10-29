@@ -4458,6 +4458,11 @@ pub struct Definition {
     pub rust: String,
     /// Native symbol name for `#native "symbol"` extern dispatch; empty if not native.
     pub native: String,
+    /// loft#2227 — for a `#native` with a heap answer, the type id its answer is copied out
+    /// with when the native built it in an argument's store (`Stores::own_bridge_answer`): the
+    /// ELEMENT type of a vector answer, the record type of a record answer.  `u16::MAX` for
+    /// every other definition.  Set by the parser, which alone may register a type.
+    pub native_answer_tp: u16,
     /// The function's call-gate capability link — a `group#right` token written in
     /// the signature (@PLN86, e.g. `fs#read`); empty if unlinked.  The sandbox
     /// admission walk gates a TRUSTED symbol against the active profile's grants; a
@@ -7241,6 +7246,7 @@ impl Data {
             returned_fact: AliasFact::Plain,
             rust: String::new(),
             native: String::new(),
+            native_answer_tp: u16::MAX,
             cap: String::new(),
             op_code: u16::MAX,
             known_type: u16::MAX,

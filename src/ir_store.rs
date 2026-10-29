@@ -435,6 +435,11 @@ fn write_definition(stores: &mut Stores, r: &Record, d: &Definition) {
     r.set_field_str(stores, ds::DEF_SUPERSEDED, &d.superseded); // @PLN102 arc C
     r.set_field_int(stores, ds::DEF_OP_CODE, i64::from(d.op_code));
     r.set_field_int(stores, ds::DEF_KNOWN_TYPE, i64::from(d.known_type));
+    r.set_field_int(
+        stores,
+        ds::DEF_NATIVE_ANSWER_TP,
+        i64::from(d.native_answer_tp),
+    ); // loft#2227
     write_function(stores, r, ds::DEF_VARIABLES, &d.variables);
     r.set_field_bool(stores, ds::DEF_PUB_VISIBLE, d.pub_visible);
     r.set_field_bool(stores, ds::DEF_NULL_SAFE, d.null_safe); // @PLN46 W2

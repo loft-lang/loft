@@ -728,10 +728,11 @@ pub fn read_definition(stores: &Stores, r: Record, bodies: bool) -> Definition {
         returned_not_null: r.field_bool(stores, ds::DEF_RETURNED_NOT_NULL),
         rust: r.field_str(stores, ds::DEF_RUST).to_string(),
         native: r.field_str(stores, ds::DEF_NATIVE).to_string(),
-        cap: r.field_str(stores, ds::DEF_CAP).to_string(), // @PLN86
-        c_symbol: r.field_str(stores, ds::DEF_C_SYMBOL).to_string(), // @PLN24
-        c_sig: r.field_str(stores, ds::DEF_C_SIG).to_string(), // @PLN24
-        superseded: r.field_str(stores, ds::DEF_SUPERSEDED).to_string(), // @PLN102 arc C
+        native_answer_tp: r.field_int(stores, ds::DEF_NATIVE_ANSWER_TP) as u16, // loft#2227
+        cap: r.field_str(stores, ds::DEF_CAP).to_string(),                      // @PLN86
+        c_symbol: r.field_str(stores, ds::DEF_C_SYMBOL).to_string(),            // @PLN24
+        c_sig: r.field_str(stores, ds::DEF_C_SIG).to_string(),                  // @PLN24
+        superseded: r.field_str(stores, ds::DEF_SUPERSEDED).to_string(),        // @PLN102 arc C
         op_code: r.field_int(stores, ds::DEF_OP_CODE) as u16,
         known_type: r.field_int(stores, ds::DEF_KNOWN_TYPE) as u16,
         pub_visible: r.field_bool(stores, ds::DEF_PUB_VISIBLE),

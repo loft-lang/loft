@@ -13239,16 +13239,27 @@ extern crate loft;"
             // `loft_ffi` invisible to the generated code.
             writeln!(w, ") }};")?;
             // A record's handle is the answer itself; a vector sits behind a header.
-            if matches!(def.returned().base(), Type::Vector(_, _)) {
+            let is_vec = matches!(def.returned().base(), Type::Vector(_, _));
+            if is_vec {
                 write!(
                     w,
-                    "  loft::codegen_runtime::from_loft_ref(stores, unsafe {{ std::mem::transmute_copy(&_lr) }})"
+                    "  let _ans = loft::codegen_runtime::from_loft_ref(stores, unsafe {{ std::mem::transmute_copy(&_lr) }});"
                 )?;
             } else {
                 write!(
                     w,
-                    "  loft::codegen_runtime::from_loft_record(unsafe {{ std::mem::transmute_copy(&_lr) }})"
+                    "  let _ans = loft::codegen_runtime::from_loft_record(unsafe {{ std::mem::transmute_copy(&_lr) }});"
                 )?;
+            }
+            // loft#2227 — out of the argument's store it was built in (`BridgeGuard::answer`).
+            if needs_loft_store && !self.wasm_browser {
+                write!(
+                    w,
+                    "\n  _bc.answer(stores, _ans, {is_vec}, {})",
+                    self.type_lit_u16(def.native_answer_tp)
+                )?;
+            } else {
+                write!(w, "\n  _ans")?;
             }
         } else {
             write!(w, ") }}")?;

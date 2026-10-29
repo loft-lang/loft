@@ -3842,6 +3842,23 @@ impl Parser {
     // <rust> ::= { '#rust' <string> | '#iterator' <string> <string> }
     // <native> ::= '#native' <string>   (any file)
     #[expect(clippy::too_many_lines, reason = "inherited")]
+    /// loft#2227 — record the type id a `#native`'s heap answer is copied out with when the
+    /// native built it in an argument's store (`Definition::native_answer_tp`): a vector's
+    /// ELEMENT type, as `OpAppendVector` copies with it, or a record's own type.  Here because
+    /// only the parser may register a type (`vector_element_type` mints a narrow element's).
+    fn record_native_answer_type(&mut self) {
+        let returned = self.data.def(self.context).returned().clone();
+        let tp = match returned.base() {
+            Type::Vector(elm, _) => self
+                .data
+                .vector_element_type(elm, &mut self.database)
+                .unwrap_or(u16::MAX),
+            Type::Reference(d, _) | Type::Enum(d, true, _) => self.data.def(*d).known_type(),
+            _ => u16::MAX,
+        };
+        self.data.definitions[self.context as usize].native_answer_tp = tp;
+    }
+
     pub(crate) fn parse_rust(&mut self) {
         loop {
             if !self.lexer.peek_token("#") {
@@ -3889,6 +3906,7 @@ impl Parser {
                     let default_sym = self.data.def(self.context).name().to_string();
                     self.data.definitions[self.context as usize].native = default_sym;
                 }
+                self.record_native_answer_type();
             } else if self.default && id == Some("rust".to_string()) {
                 if let Some(c) = self.lexer.has_cstring() {
                     self.data.definitions[self.context as usize].rust = c;

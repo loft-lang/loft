@@ -3101,12 +3101,26 @@ fn library_native(
     // for the answer, as the interpreter's bridge mints it (`Stores::bridge_args`).
     let minted = store_arg.is_none() && heap_answer;
     let post = foreign_vector_args(&heap, heap_answer, &mut prep);
+    // loft#2227 — a heap answer pinned to an argument's store is copied out of it after the
+    // call, and only what the call claimed there is deleted (`loft_ffi_own_*`): log it.  A store
+    // minted for the call (`pminted`) is never owned, as `Stores::own_bridge_answer` skips it.
+    let owned_answer = store_arg.is_some() && heap_answer && def.native_answer_tp != u16::MAX;
+    if owned_answer {
+        cx.copy_type(def.native_answer_tp)?;
+    }
     if let Some(i) = store_arg {
         ffi_params.insert(0, "loft_ffi_store".into());
-        if post.is_empty() {
-            ffi_args.insert(0, format!("loft_ffi_store_of(a{i}.store_nr)"));
+        // The first heap argument's store, or `pin` when a vector argument may be foreign
+        // (`foreign_vector_args` chooses it then).
+        let store = if post.is_empty() {
+            format!("a{i}.store_nr")
         } else {
-            ffi_args.insert(0, "loft_ffi_store_of(pin)".into());
+            "pin".to_string()
+        };
+        ffi_args.insert(0, format!("loft_ffi_store_of({store})"));
+        if owned_answer {
+            let only = if post.is_empty() { "" } else { "if (!pminted) " };
+            prep.push_str(&format!("    {only}loft_ffi_log_begin({store});\n"));
         }
     } else if minted {
         prep.push_str("    uint16_t ns = (uint16_t) loft_store_new();\n");
@@ -3149,8 +3163,26 @@ fn library_native(
     );
     body.push_str(&prep);
     let call = format!("fp({})", ffi_args.join(", "));
-    library_answer(&mut body, def, ret, ffi_ret, &call, &post, minted);
+    let answer_store = if owned_answer {
+        AnswerStore::Owned(def.native_answer_tp)
+    } else if minted {
+        AnswerStore::Minted
+    } else {
+        AnswerStore::Given
+    };
+    library_answer(&mut body, def, ret, ffi_ret, &call, &post, answer_store);
     Ok((sig, body))
+}
+
+/// Where a library native's heap answer is built, which decides what follows the call.
+#[derive(Clone, Copy)]
+enum AnswerStore {
+    /// The store handed over is an argument's, and the answer is not copied out of it.
+    Given,
+    /// A store minted for the answer (`ns`); it goes when there is no answer.
+    Minted,
+    /// An argument's store, the answer copied out of it with this type (loft#2227).
+    Owned(u16),
 }
 
 /// The statements after a library native's call (`call`): the answer read in its C shape,
@@ -3164,7 +3196,7 @@ fn library_answer(
     ffi_ret: &str,
     call: &str,
     post: &str,
-    minted: bool,
+    answer_store: AnswerStore,
 ) {
     match def.returned().base() {
         Type::Void => {
@@ -3183,19 +3215,40 @@ fn library_answer(
         // `codegen_runtime::from_loft_ref` / `from_loft_record` make.
         tp if ffi_ret == "loft_ffi_ref" => {
             let _ = writeln!(body, "    loft_ffi_ref r = {call};");
+            let convert = if matches!(tp.base(), Type::Vector(_, _)) {
+                "loft_ffi_vector_answer"
+            } else {
+                "loft_ffi_record_answer"
+            };
+            if let AnswerStore::Owned(answer_tp) = answer_store {
+                let own = if matches!(tp.base(), Type::Vector(_, _)) {
+                    "loft_ffi_own_vector"
+                } else {
+                    "loft_ffi_own_record"
+                };
+                // Copied out BEFORE `post`, which deletes the foreign copies an identity answer
+                // may name (`Stores::own_bridge_answer` before `bridge_args_done`).
+                let minted_pin = if post.is_empty() {
+                    String::new()
+                } else {
+                    format!("pminted ? {convert}(r) : ")
+                };
+                let _ = writeln!(
+                    body,
+                    "    loft_ref v = {minted_pin}{own}(loft_types, {answer_tp}, {convert}(r));"
+                );
+                body.push_str(post);
+                let _ = writeln!(body, "    return v;");
+                return;
+            }
             body.push_str(post);
-            if minted {
+            if matches!(answer_store, AnswerStore::Minted) {
                 // No answer: the store minted for it goes.
                 let _ = writeln!(
                     body,
                     "    if (r.rec == 0 && r.pos == 0) {{ loft_ref m = {{ ns, 0, 0 }}; loft_free_ref(m); }}"
                 );
             }
-            let convert = if matches!(tp.base(), Type::Vector(_, _)) {
-                "loft_ffi_vector_answer"
-            } else {
-                "loft_ffi_record_answer"
-            };
             let _ = writeln!(body, "    return {convert}(r);");
         }
         // `loft_ffi::widen_i32`: a narrow answer's null is `INT32_MIN`, which a plain widening
