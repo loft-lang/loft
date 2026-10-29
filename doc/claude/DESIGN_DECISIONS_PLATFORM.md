@@ -369,7 +369,7 @@ cannot win back.  Decided 2026-10-23 (@PLN200) — [record](DESIGN_DECISIONS-his
 guard `tests/extraction_hygiene.rs` `library_modules_keep_their_layers`.
 **Catalogue:** @I64 (the bytecode compiler, whose analyses `opt` holds).
 
-## C157 — A library declares no C compile or link flags; its C reaches the system by `dlopen`
+## C158 — A library declares no C compile or link flags; its C reaches the system by `dlopen`
 
 **Decision.** A package's `[c]` section names its shim sources and the C libraries it binds
 (`shim`, `libs`, `optional-libs`); it carries no `cflags`, `ldflags` or per-platform section.
@@ -388,5 +388,5 @@ a static-only vendor archive, a header found only through `pkg-config`.  The sha
 `[c] cflags` applied to that package's shim sources alone (in the shim's cache key), `[c] ldflags`
 appended to the final link on lines of their own (not `/* link: */`, whose inputs are files),
 and `[c.<os>]` sections adding to the base.  Decided 2026-10-29.
-**Holds at:** `@C157` — `src/manifest.rs` (the `[c]` keys), `src/c_shim.rs` (the fixed flags).
+**Holds at:** `@C158` — `src/manifest.rs` (the `[c]` keys), `src/c_shim.rs` (the fixed flags).
 
