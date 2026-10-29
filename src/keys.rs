@@ -3779,10 +3779,12 @@ fn decorated_order(recs: &[DbRef], stores: &[Store], k: &Key) -> Option<Vec<u32>
             };
             pairs.push((v, i as u32));
         }
+        // `text_key_cmp`, the order `compare_ref` answers: a null text first (`@FR-E-NullArg`,
+        // loft#2237) — a plain `&str` sort put the `"\0"` sentinel after `""`.
         if descending {
-            pairs.sort_unstable_by(|a, b| b.0.cmp(a.0).then(a.1.cmp(&b.1)));
+            pairs.sort_unstable_by(|a, b| text_key_cmp(b.0, a.0).then(a.1.cmp(&b.1)));
         } else {
-            pairs.sort_unstable();
+            pairs.sort_unstable_by(|a, b| text_key_cmp(a.0, b.0).then(a.1.cmp(&b.1)));
         }
         return Some(pairs.into_iter().map(|(_, i)| i).collect());
     }

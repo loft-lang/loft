@@ -306,6 +306,11 @@ down (loft#1437).
                   index   → key order (its leaf chain)
                   spatial → Morton / Z-order
                   trie    → key order (lexicographic over the text key)
+                KEY order is the order `<` answers on the key (operational.md E-NullArg): a null
+                key FIRST — a `text` null before `""` — and last under a descending key, for every
+                key type.  A stored `sorted` / `index` keyed by a `float`, `single` or `text` says
+                so in its layout identity, so an image written in an earlier order is converted on
+                load (DATABASE.md § the store upgrade).
 
   (Col-Unordered)   for x in unordered(c) { … } visits every element of c exactly once, in an
                     order the program leaves to loft.  For a hash it is SLOT order: ascending

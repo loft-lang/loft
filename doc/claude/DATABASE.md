@@ -108,6 +108,7 @@ unchanged is copied raw.
 | enum variant added / removed | nothing to do / a value of the removed variant becomes null |
 | a field removed and one added in the same type | **refused** as a rename: do it in two steps (below) |
 | key of a keyed collection changed | rebuilt by insertion under the new key |
+| a `sorted` / `index` keyed by a `float`, `single` or `text` written before its null key ordered first (no `order=1` on its line, `placement::KEY_ORDER`, loft#2237) | rebuilt by insertion in this build's order; an integer key's order never moved |
 | index added over records already stored (`@FR-Col-Group`) | built by insertion |
 | an insert that would displace a record (a duplicate under a new key) | **refused**, with the count and the first key |
 | index removed | not copied; the records it shared stay with the other members |

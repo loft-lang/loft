@@ -1,18 +1,20 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// A NULL KEY ORDERS FIRST IN A SORTED OR AN INDEX (`@FR-E-NullArg`, `Col-Order`, loft#2237).  A
+// A NULL KEY ORDERS FIRST IN EVERY KEYED COLLECTION (`@FR-E-NullArg`, `@FR-Col-Order`, loft#2237).  A
 // keyed collection walks in key order, and the key order is the order `<` answers: a null
 // before every value — for a `text` key before `""` too — and a descending key reverses it, so
 // there the null comes last.  Lookups find every key, the null one included.  The cells vary
-// the key type (text, float), the kind (sorted, index), the direction, and the size (an index
-// of 301 entries spans several B-tree nodes, whose keys are packed into ordered parts).
+// the key type (text, float), the kind (sorted, index, and a hash, whose `for` walks in key
+// order through a sort of its own), the direction, and the size (an index of 301 entries
+// spans several B-tree nodes, whose keys are packed into ordered parts).
 //
-// @falsified-at: 23bc61e47 — interpret exit 1 -> 0, interpret 5 assertion failures -> 0
+// @falsified-at: 23bc61e47 — interpret exit 1 -> 0, interpret 7 assertion failures -> 0
 //   Measured by hand on a build of origin/main in a worktree (`--path` its own stdlib): the
 //   text sorted walked `3 2 4 1` and the text index `3 2 1` (the null after `""`), the float
 //   sorted `3 1 2` (the null last), the descending one `2 1 3` (the null first), and the large
-//   index started at key -150.5, not at the null.
+//   index started at key -150.5, not at the null; a hash walked `3 2 4 1` (text) and
+//   `3 1 2` (float).
 // CHANNEL: the asserts.
 // WITNESS: `test_a_null_text_key_orders_before_the_empty_text`.
 // HOLDS: `test_an_integer_key_already_ordered_its_null_first` — clean before the fix.
@@ -102,6 +104,25 @@ fn test_a_large_float_index_keeps_its_null_first() {
   }
   assert(first == 999 && count == 301 && ordered, "index walk first {first} count {count} ordered {ordered}");
   assert(f.ix[n].v == 999 && f.ix[-0.5].v == 150, "index lookups");
+}
+
+// @EXPECT_WARNING: is stored into the local `n`
+fn test_a_hash_walks_its_null_text_key_first() {
+  n: text = null;
+  h: hash<KT[k]> = [KT { k: "b", v: 1 }, KT { k: n, v: 2 }, KT { k: "", v: 3 }, KT { k: "a", v: 4 }];
+  o = "";
+  for x in h { o += "{x.v} "; }
+  assert(o == "2 3 4 1 ", "hash text walk {o}");
+  assert(h[n].v == 2 && h[""].v == 3, "hash text lookups");
+}
+
+fn test_a_hash_walks_its_null_float_key_first() {
+  n = absent_float();
+  h: hash<KF[k]> = [KF { k: 2.5, v: 1 }, KF { k: n, v: 2 }, KF { k: -1.0, v: 3 }];
+  o = "";
+  for x in h { o += "{x.v} "; }
+  assert(o == "2 3 1 ", "hash float walk {o}");
+  assert(h[n].v == 2, "hash float lookup");
 }
 
 fn test_an_integer_key_already_ordered_its_null_first() {
