@@ -14,6 +14,7 @@
 #ifndef LOFT_CRT_H
 #define LOFT_CRT_H
 #include "loft_cc.h"
+#include "loft_text.h"
 #include "loft_store.h"
 #include "loft_rt.h"
 /* The store's keyed collections (@PLN91 S3): `loft_copy_record` and the claim walks reach a
