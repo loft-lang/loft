@@ -1001,8 +1001,11 @@ static void loft_entomb(loft_store_t *s, uint32_t rec) {
 
 /* `Store::delete`. */
 static void loft_st_delete(loft_store_t *s, uint32_t rec) {
-    /* A locked store changes in no way, deletes included (`Store::delete`). */
+    /* A locked store changes in no way, deletes included (`Store::delete`).  The allocator
+     * compiled on its own (no `loft_cc.h`) has no locks. */
+#ifdef LOFT_CC_H
     if (LOFT_UNLIKELY(s->read_only)) { loft_locked_write(); return; }
+#endif
     LOFT_TRACE("D %llu %u\n", (unsigned long long) s->serial, rec);
     for (uint32_t i = 0; i < s->nplaced;) {
         if (s->placed[i] == rec) s->placed[i] = s->placed[--s->nplaced];

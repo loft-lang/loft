@@ -822,3 +822,4 @@ static int loft_swap_blocked(void) {
 #endif
         ;
 }
+static int (*loft_swap_blocked_hook)(void) = loft_swap_blocked;

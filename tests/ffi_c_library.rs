@@ -36,12 +36,25 @@ fn main() {
   println("GROW {r.len()} {r}");
   p = ffi_c_library::pair(-77, 123456789);
   println("PAIR {p.a} {p.b}");
+  println("NARROW {ffi_c_library::narrow(21)} {ffi_c_library::narrow(-1)} {!ffi_c_library::narrow(-1)}");
+  if write_bytes("mapped.bin", v) {
+    m = file_map("mapped.bin") ?? [];
+    t = 0;
+    for k in 0..200 { t += ffi_c_library::sum_bytes(m); }
+    println("MAPPED {m.len()} {ffi_c_library::sum_bytes(m)} {t}");
+    delete("mapped.bin");
+  }
 }
 "#;
 
 /// `make_bin` is `A \0 0xff B`; `wrap` puts `[` and `]` (91, 93) around its argument;
 /// `iota(n)` is `n*10+1 ..= n*10+n`; `rev` reverses and appends a 7, leaving its argument be.
-const WANT: [&str; 12] = [
+/// `narrow` doubles a non-negative and answers `INT32_MIN` — the narrow null — for a negative:
+/// every backend reads it as null (`loft_ffi::widen_i32`; the C and the Rust writer widened it
+/// to -2147483648).  A MAPPED file handed to `sum_bytes` is copied into the handed store for the
+/// call (`Stores::bridge_args`; the C handed the foreign record id, read out of bounds): 3 bytes,
+/// 1 + 2 + 250 = 253, and 200 calls 50 600, each copy released.
+const WANT: [&str; 14] = [
     "LEN 4",
     "WRAP 6 91 0 255 93",
     "ADD 42 -2",
@@ -54,6 +67,8 @@ const WANT: [&str; 12] = [
     "REV 4 [250,2,1,7] [1,2,250]",
     "GROW 5 [250,2,1,7,9]",
     "PAIR -77 123456789",
+    "NARROW 42 null true",
+    "MAPPED 3 253 50600",
 ];
 
 fn root() -> PathBuf {

@@ -496,6 +496,10 @@ static void loft_release_file_leases(uint16_t nr) {
     loft_remove_claims_mode(loft_T, tp, root, 0);
 }
 
+static void (*loft_file_lease_hook)(loft_ref f) = loft_file_lease;
+static void (*loft_file_release_hook)(loft_ref f) = loft_file_release;
+static void (*loft_release_file_leases_hook)(uint16_t nr) = loft_release_file_leases;
+
 /* The open handle of `f` and its number (-1 for none), keeping the stream's read position. */
 static FILE *loft_file_reader(loft_ref f, int32_t *nr) {
     int32_t h;

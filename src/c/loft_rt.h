@@ -1222,9 +1222,10 @@ static LOFT_TLS uint32_t loft_nevacs = 0, loft_evac_cap = 0;
 /* OpFreeRef: the whole store goes, everything the root owned with it. */
 static void loft_gen_free(loft_ref g);
 
-/* `Stores::release_file_leases` (loft_io.h): a store that is freed returns the leases its
- * records hold. */
-static void loft_release_file_leases(uint16_t nr);
+/* `Stores::release_file_leases` (loft_io.h, which sets it): a store that is freed returns the
+ * leases its records hold.  A tentative definition, so a unit without the file layer — the
+ * allocator and keyed harnesses — leaves it null. */
+static void (*loft_release_file_leases_hook)(uint16_t nr);
 
 static void loft_free_ref(loft_ref r) {
     if (r.store_nr == 0xFFFE) {
@@ -1245,7 +1246,7 @@ static void loft_free_ref(loft_ref r) {
         if (loft_evacs[i].old.store_nr == r.store_nr) loft_evacs[i] = loft_evacs[--loft_nevacs];
         else i++;
     }
-    loft_release_file_leases(r.store_nr);
+    if (loft_release_file_leases_hook) loft_release_file_leases_hook(r.store_nr);
     s->live = 0;
     LOFT_TRACE("F %llu\n", (unsigned long long) s->serial);
 #ifdef LOFT_FOREIGN
@@ -2165,10 +2166,11 @@ typedef struct loft_tdesc_s {
  * the `File` leases its records hold.  0 in a runtime built without a unit. */
 static const loft_tdesc *loft_T = 0;
 static uint32_t loft_T_n = 0;
-/* `@FR-H-Handle` (loft_io.h): a `File` record's lease on its OS handle, taken by a copy and
- * returned by a record's death; the handle closes at the last return. */
-static void loft_file_lease(loft_ref f);
-static void loft_file_release(loft_ref f);
+/* `@FR-H-Handle` (loft_io.h, which sets them): a `File` record's lease on its OS handle, taken
+ * by a copy and returned by a record's death; the handle closes at the last return.  Null in a
+ * unit without the file layer, which holds no `File`. */
+static void (*loft_file_lease_hook)(loft_ref f);
+static void (*loft_file_release_hook)(loft_ref f);
 
 /* The hash's, the index's and the trees' halves of a copy and a release (loft_hash.h,
  * loft_btree.h, loft_radix.h). */
@@ -2214,7 +2216,7 @@ static void loft_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, lo
          * which came with the block copy — no field has a claim to copy. */
         if (!d->owns_heap) return;
         /* `Stores::lease_if_file`: the copy names the same OS handle, one more lease on it. */
-        if (d->file == 2) loft_file_lease(to);
+        if (d->file == 2 && loft_file_lease_hook) loft_file_lease_hook(to);
         /* `copy_struct_fields` (@FR-Col-Group): a view member of a linked group holds the
          * records its owner holds — copied as a collection of its own it would hold copies a
          * write through the owner does not reach — so it starts empty and is indexed over the
@@ -2328,7 +2330,9 @@ static void loft_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, lo
  * to another's, both minted as `tp`, where the destination holds nothing but its root, MOVES
  * the source's content into the destination store instead of copying it.  The caller vouches
  * that `tp`'s tree holds no stored reference, which could name the source store. */
-static int loft_swap_blocked(void);
+/* `Stores::swap_stores_in_as`'s live-state gate (loft_lazy.h, which sets it): null in a unit
+ * without the walk scratches and lazy bindings it reads. */
+static int (*loft_swap_blocked_hook)(void);
 
 /* `reset_dest`: the destination must hold nothing but its root (a copy's); a keyed rebind's
  * destination is its collection's own store, whose old content leaves with the released slot. */
@@ -2344,7 +2348,7 @@ static int loft_swap_in(uint16_t tp, loft_ref src, loft_ref dst, int reset_dest)
 #ifdef LOFT_FOREIGN
     if (loft_st_is_foreign(a) || loft_st_is_foreign(b)) return 0;
 #endif
-    if (loft_swap_blocked()) return 0;
+    if (loft_swap_blocked_hook && loft_swap_blocked_hook()) return 0;
     if (a->frame_holds || b->frame_holds) return 0;
     if (reset_dest && !loft_st_holds_only_root(b)) return 0;
     /* `Store::swap_contents`: the content moves, each slot keeps its serial. */
@@ -2835,7 +2839,7 @@ static void loft_remove_claims_mode(const loft_tdesc *T, uint16_t tp, loft_ref r
     if (r.store_nr == 0xFFFF || r.rec == 0) return;
     const loft_tdesc *d = &T[tp];
     /* `Stores::release_file_handle`: a `File` record that dies returns its lease. */
-    if (d->file == 2 && !borrowed) loft_file_release(r);
+    if (d->file == 2 && !borrowed && loft_file_release_hook) loft_file_release_hook(r);
     /* `@FR-R-FlatCopy`: a record that owns no heap holds no claim to release. */
     if (d->kind == LOFT_T_STRUCT && !d->owns_heap) return;
     loft_store_t *s = loft_store_of(r);
