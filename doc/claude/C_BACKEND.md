@@ -600,13 +600,13 @@ path is not removed while a **port** row is open.  The store rows are also numbe
 
 | Capability (interpreter switch) | For | C has | Proposed verdict | Check owed |
 |---|---|---|---|---|
-| use-after-free generations (`LOFT_UAF`, `LOFT_UAF_GEN`) | R | `LOFT_POISON`, the ASan lane | **port** — poison does not catch a stale reference into a store that was freed and REUSED | a cell where a reused store is read through a stale ref |
+| use-after-free generations (`LOFT_UAF`, `LOFT_UAF_GEN`) | R | `LOFT_POISON` (a freed store's buffer is scribbled and kept), the ASan lane | **port**, as the interpreter's ground truth `LOFT_NO_SLOT_REUSE` + `LOFT_POISON` rather than the generation stamps (those ride the interpreter's operand stack, which a C unit does not have): `loft_store_make` always takes the lowest free slot, so a freed store is reused and its poison overwritten | a stale read through a freed store lands on `0xDEADBEEF` on C with no-reuse on |
 | frame-slot verification (`LOFT_VERIFY_STACK`) | R | the C stack; the MemorySanitizer lane | covered | an uninitialised-slot cell MSan flags on C |
 | keyed-structure verifiers (`LOFT_KEYED_VERIFY`, `LOFT_KEY_LIST_VERIFY`) | R | — | **port** | a corrupted-index cell |
 | prefill elision verifier (`LOFT_PREFILL_VERIFY`) | R | `LOFT_POISON_CLAIM` | covered | the field_append cells under `LOFT_POISON_CLAIM` (they pass on C) |
 | whole-world and copy checks (`LOFT_CHECK_WORLD`, `LOFT_COPY_CHECK`) | R | — | **port** | one cell each |
 | zero-on-claim switch (`LOFT_ZERO_CLAIM`) | R | always zeroes today (D17) | covered once D17 lands: `LOFT_POISON_CLAIM` is the falsifier | D17's sweep |
-| schema-id strictness (`LOFT_STRICT_SCHEMA_IDS`) | R | type tables written once, no replay | drop — the replay it guards does not exist in a C unit | confirm C emits no init replay |
+| schema-id strictness (`LOFT_STRICT_SCHEMA_IDS`) | R | the type table is a static array the emitter writes (`static const loft_tdesc loft_types[…]`) | **drop** (decided): the start-up replay it guards does not exist in a C unit | — |
 | the store-memory ceiling (`LOFT_STORE_LIMIT`, every test run) | R | `LOFT_MEMORY_LIMIT` | **port** the test-run default (D19c) | a runaway-length cell stops at the ceiling on C |
 | store watch, lock backtrace (`LOFT_WATCH_STORE`, `LOFT_LOCK_BT`) | O | — | **port** when a C defect needs it; drop otherwise | — |
 | store log, tags, leak sites, allocation report (`LOFT_STORE_LOG`, `LOFT_STORE_TAG`, `LOFT_LEAK_SITES`, `LOFT_ALLOC_REPORT`) | O | `LOFT_ALLOC_TRACE`, `LOFT_NATIVE_LEAK_CHECK` | **port** `LOFT_LEAK_SITES` (a leak's site is what fixing it needs); the rest drop | a leak cell names its site on C |
