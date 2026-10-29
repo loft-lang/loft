@@ -2989,14 +2989,31 @@ fn library_native(
     );
     body.push_str(&prep);
     let call = format!("fp({})", ffi_args.join(", "));
+    library_answer(&mut body, def, ret, ffi_ret, &call, &post, minted);
+    Ok((sig, body))
+}
+
+/// The statements after a library native's call (`call`): the answer read in its C shape,
+/// `post` run (the copies a foreign argument took going), and the loft value returned — a text
+/// owned, a heap answer behind its header (`codegen_runtime::from_loft_ref` /
+/// `from_loft_record`), a narrow integer widened with its null kept.
+fn library_answer(
+    body: &mut String,
+    def: &crate::data::Definition,
+    ret: CType,
+    ffi_ret: &str,
+    call: &str,
+    post: &str,
+    minted: bool,
+) {
     match def.returned().base() {
         Type::Void => {
             let _ = writeln!(body, "    {call};");
-            body.push_str(&post);
+            body.push_str(post);
         }
         Type::Text(_) => {
             let _ = writeln!(body, "    loft_ffi_str t = {call};");
-            body.push_str(&post);
+            body.push_str(post);
             let _ = writeln!(
                 body,
                 "    return loft_text_own(loft_lit(t.ptr ? (const char *) t.ptr : \"\", t.len));"
@@ -3004,9 +3021,9 @@ fn library_native(
         }
         // A vector answer behind its header, a record as it is: the conversion
         // `codegen_runtime::from_loft_ref` / `from_loft_record` make.
-        tp if heap_answer => {
+        tp if ffi_ret == "loft_ffi_ref" => {
             let _ = writeln!(body, "    loft_ffi_ref r = {call};");
-            body.push_str(&post);
+            body.push_str(post);
             if minted {
                 // No answer: the store minted for it goes.
                 let _ = writeln!(
@@ -3025,7 +3042,7 @@ fn library_native(
         // would turn into an ordinary negative number.
         Type::Integer(_) if ffi_ret == "int32_t" && ret == CType::Int => {
             let _ = writeln!(body, "    int32_t r = {call};");
-            body.push_str(&post);
+            body.push_str(post);
             let _ = writeln!(body, "    return r == INT32_MIN ? LOFT_NULL : (int64_t) r;");
         }
         _ if post.is_empty() => {
@@ -3033,11 +3050,10 @@ fn library_native(
         }
         _ => {
             let _ = writeln!(body, "    {ffi_ret} r = {call};");
-            body.push_str(&post);
+            body.push_str(post);
             let _ = writeln!(body, "    return r;");
         }
     }
-    Ok((sig, body))
 }
 
 /// `Stores::bridge_args` for a library call: the library reads every vector argument through
@@ -3061,7 +3077,10 @@ fn foreign_vector_args(heap: &[(usize, bool)], heap_answer: bool, prep: &mut Str
         } else {
             String::new()
         };
-        let _ = writeln!(prep, "    if (pin == UINT32_MAX{guard}) pin = a{i}.store_nr;");
+        let _ = writeln!(
+            prep,
+            "    if (pin == UINT32_MAX{guard}) pin = a{i}.store_nr;"
+        );
     }
     let _ = writeln!(
         prep,
@@ -3094,7 +3113,10 @@ fn foreign_vector_args(heap: &[(usize, bool)], heap_answer: bool, prep: &mut Str
         let _ = writeln!(post, "    else if (!loft_stores[pin].read_only) {{");
     }
     for i in &vec_args {
-        let _ = writeln!(post, "        if (cp{i}) loft_st_delete(&loft_stores[pin], cp{i});");
+        let _ = writeln!(
+            post,
+            "        if (cp{i}) loft_st_delete(&loft_stores[pin], cp{i});"
+        );
     }
     let _ = writeln!(post, "    }}");
     let _ = writeln!(post, "    if (changed) loft_locked_write();");
