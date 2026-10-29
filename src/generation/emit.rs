@@ -2811,7 +2811,7 @@ impl Output<'_> {
         {
             return self.output_code_inner(w, true_v);
         }
-        let wrap_block = matches!(test.unspan(), Value::Insert(ops) if ops.len() >= 2);
+        let wrap_block = lowers_to_statements(test);
         if wrap_block {
             write!(w, "{{")?;
         }
@@ -5028,7 +5028,7 @@ impl Output<'_> {
                     // wrong value.  A delivery into the return buffer is exactly this shape —
                     // clear, append, yield the buffer — so it arrives here whenever a block's
                     // scope frees follow its value tail.
-                    let block_braces = matches!(v.unspan(), Value::Insert(ops) if ops.len() >= 2);
+                    let block_braces = lowers_to_statements(v);
                     // loft#2075 — a value `if` whose arms both assign a local not yet declared
                     // gets that local's `let` from `pre_declare_branch_vars`, written just
                     // before the `if` — which here is INSIDE the initialiser: `let _ret = let
@@ -5202,7 +5202,12 @@ impl Output<'_> {
                     } else if wrap_result {
                         write!(w, "Str::new(")?;
                     } else if narrow_cast.is_some() {
-                        write!(w, "(")?;
+                        // `@FR-F-Block` — a tail that writes out as statements (an `Insert`: a
+                        // call's protect bracket, a hoisted binding, then the value) takes a
+                        // BLOCK inside the cast: `(stmt; let …; expr) as u8` is not Rust, `({ …; expr }) as u8`
+                        // is — a guard that calls with a `&` argument, folded into its arm's
+                        // condition (`@FR-M-Once`), reaches here as a value block's tail.
+                        write!(w, "{}", if lowers_to_statements(v) { "({" } else { "(" })?;
                     }
                     if let Some(name) = &own_text_tail {
                         write!(w, "var_{name}")?;
@@ -5240,7 +5245,8 @@ impl Output<'_> {
                     } else if wrap_result {
                         write!(w, ")")?;
                     } else if let Some(cast) = narrow_cast {
-                        write!(w, ") as {cast}")?;
+                        let close = if lowers_to_statements(v) { "})" } else { ")" };
+                        write!(w, "{close} as {cast}")?;
                     }
                     if is_return_expr {
                         writeln!(w)?;
@@ -5639,4 +5645,13 @@ fn non_finite_literal(nan: bool, positive: bool, ty: &str) -> String {
         "NEG_INFINITY"
     };
     format!("{ty}::{name}")
+}
+
+/// Does `v` write out as a SEQUENCE of statements rather than one expression — an `Insert` of
+/// two or more operators (a call's protect bracket, a hoisted binding, then the value)?  Every
+/// position that needs one expression wraps such a value in a block: a test, a `let`
+/// initialiser, a value block's tail inside a cast.  One operator writes out as itself, so it
+/// needs no block.
+fn lowers_to_statements(v: &Value) -> bool {
+    matches!(v.unspan(), Value::Insert(ops) if ops.len() >= 2)
 }
