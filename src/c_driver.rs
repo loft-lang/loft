@@ -215,22 +215,27 @@ pub(crate) fn build_wasm(
     let scratch = loft::platform::scratch_dir();
     let src = scratch.join(format!("loft_wasm_c_{}.c", std::process::id()));
     fa::write(&src, c).map_err(|e| format!("cannot write {}: {e}", src.display()))?;
+    // A unit that jumps nowhere (`LOFT_NO_JUMPS`, a page's module) is built without setjmp,
+    // so without wasm's exception handling: asyncify, which a page's frame yield needs, cannot
+    // carry it.
+    let jumps = !c.contains("#define LOFT_NO_JUMPS");
     let mut cmd = Spawn::new(Program::os(&cc));
     cmd.push_args([
         "--target=wasm32-wasi",
         "-std=c99",
         if ship { "-O3" } else { "-O2" },
         "-w",
-        "-mllvm",
-        "-wasm-enable-sjlj",
         "-D_WASI_EMULATED_PROCESS_CLOCKS",
         "-D_WASI_EMULATED_SIGNAL",
     ]);
     // setjmp in wasm's exception-handling proposal: its standard encoding for a WASI host
     // (wasmtime refuses the legacy one), the legacy one for a browser page, which every
     // current browser runs.
-    if !browser {
-        cmd.push_args(["-mllvm", "-wasm-use-legacy-eh=false"]);
+    if jumps {
+        cmd.push_args(["-mllvm", "-wasm-enable-sjlj"]);
+        if !browser {
+            cmd.push_args(["-mllvm", "-wasm-use-legacy-eh=false"]);
+        }
     }
     if !ship {
         cmd.push_arg("-DLOFT_CALL_CHAIN");
@@ -249,13 +254,11 @@ pub(crate) fn build_wasm(
     cmd.push_arg(&src);
     cmd.push_args(shim_sources);
     cmd.push_arg("-o").push_arg(out);
-    cmd.push_args([
-        "-Wl,-z,stack-size=8388608",
-        "-lm",
-        "-lsetjmp",
-        "-lwasi-emulated-process-clocks",
-        "-lwasi-emulated-signal",
-    ]);
+    cmd.push_args(["-Wl,-z,stack-size=8388608", "-lm"]);
+    if jumps {
+        cmd.push_arg("-lsetjmp");
+    }
+    cmd.push_args(["-lwasi-emulated-process-clocks", "-lwasi-emulated-signal"]);
     let ran = cmd.run(b"");
     if std::env::var_os("LOFT_KEEP_NATIVE_C").is_none() {
         let _ = fa::remove_file(&src);
@@ -295,105 +298,6 @@ pub(crate) fn build_wasm(
          backend (LOFT_KEEP_NATIVE_C=1 keeps the source).\n{}",
         said.trim_end()
     ))
-}
-
-/// `--native-c --html` (@PLN203 C6): the program's wasm32-wasi module, inline, in a page that
-/// hosts it — a small WASI layer in the page's script writes standard output and error into the
-/// page, answers the clocks, randomness and arguments, and refuses files and sockets (a page has
-/// none) — and runs it once loaded.  The exit status lands in `window.loftExit` and the title.
-pub(crate) fn html_page(title: &str, wasm: &[u8]) -> String {
-    let esc = |t: &str| {
-        t.replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
-    };
-    format!(
-        r#"<!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title}</title>
-<style>body{{font:14px ui-monospace,Menlo,Consolas,monospace;margin:16px;background:#fff;color:#111}}
-#out{{white-space:pre-wrap}}.err{{color:#b00020}}
-@media (prefers-color-scheme: dark){{body{{background:#111;color:#eee}}.err{{color:#ff8080}}}}</style></head>
-<body><pre id="out"></pre>
-<script id="loft-run">
-(async () => {{
-  const out = document.getElementById("out");
-  const write = (fd, text) => {{
-    if (!text) return;
-    if (fd === 2) {{ const s = document.createElement("span"); s.className = "err"; s.textContent = text; out.appendChild(s); }}
-    else out.appendChild(document.createTextNode(text));
-  }};
-  const bytes = Uint8Array.from(atob("{b64}"), c => c.charCodeAt(0));
-  const module = await WebAssembly.compile(bytes);
-  let memory;
-  const view = () => new DataView(memory.buffer);
-  const decs = {{ 1: new TextDecoder(), 2: new TextDecoder() }};
-  const enc = new TextEncoder();
-  const args = ["program"];
-  class Exit {{ constructor(code) {{ this.code = code; }} }}
-  const wasi = {{
-    fd_write(fd, iovs, n, written) {{
-      const v = view(); let total = 0;
-      for (let i = 0; i < n; i++) {{
-        const p = v.getUint32(iovs + 8 * i, true), l = v.getUint32(iovs + 8 * i + 4, true);
-        if (fd === 1 || fd === 2) write(fd, decs[fd].decode(new Uint8Array(memory.buffer, p, l), {{ stream: true }}));
-        total += l;
-      }}
-      v.setUint32(written, total, true);
-      return fd === 1 || fd === 2 ? 0 : 8;
-    }},
-    fd_read(fd, iovs, n, read) {{ view().setUint32(read, 0, true); return fd === 0 ? 0 : 8; }},
-    proc_exit(code) {{ throw new Exit(code); }},
-    args_sizes_get(argc, size) {{
-      const v = view(); v.setUint32(argc, args.length, true);
-      v.setUint32(size, args.reduce((s, a) => s + enc.encode(a).length + 1, 0), true); return 0;
-    }},
-    args_get(argv, buf) {{
-      const v = view(), m = new Uint8Array(memory.buffer); let at = buf;
-      args.forEach((a, i) => {{ v.setUint32(argv + 4 * i, at, true); const b = enc.encode(a); m.set(b, at); m[at + b.length] = 0; at += b.length + 1; }});
-      return 0;
-    }},
-    environ_sizes_get(c, s) {{ const v = view(); v.setUint32(c, 0, true); v.setUint32(s, 0, true); return 0; }},
-    environ_get() {{ return 0; }},
-    clock_time_get(id, precision, t) {{
-      const ns = id === 0 ? BigInt(Date.now()) * 1000000n : BigInt(Math.round(performance.now() * 1e6));
-      view().setBigUint64(t, ns, true); return 0;
-    }},
-    clock_res_get(id, r) {{ view().setBigUint64(r, 1000n, true); return 0; }},
-    random_get(p, l) {{ crypto.getRandomValues(new Uint8Array(memory.buffer, p, l)); return 0; }},
-    fd_fdstat_get(fd, st) {{
-      if (fd > 2) return 8;
-      const v = view(); v.setUint8(st, 2); v.setUint16(st + 2, 0, true);
-      v.setBigUint64(st + 8, 0n, true); v.setBigUint64(st + 16, 0n, true); return 0;
-    }},
-    fd_prestat_get() {{ return 8; }},
-    fd_prestat_dir_name() {{ return 8; }},
-    fd_close() {{ return 0; }},
-    fd_seek() {{ return 70; }},
-    sched_yield() {{ return 0; }},
-    path_open() {{ return 76; }},
-    poll_oneoff() {{ return 52; }},
-  }};
-  const imports = {{}};
-  for (const imp of WebAssembly.Module.imports(module)) {{
-    imports[imp.module] = imports[imp.module] || {{}};
-    if (imp.kind === "function")
-      imports[imp.module][imp.name] = (imp.module === "wasi_snapshot_preview1" && wasi[imp.name]) || (() => 52);
-  }}
-  const inst = await WebAssembly.instantiate(module, imports);
-  memory = inst.exports.memory;
-  let code = 0;
-  try {{ inst.exports._start(); }}
-  catch (e) {{ if (e instanceof Exit) code = e.code; else {{ write(2, String(e) + "\n"); code = 1; }} }}
-  for (const fd of [1, 2]) write(fd, decs[fd].decode());
-  if (code) document.title += " (exit " + code + ")";
-  window.loftExit = code;
-}})();
-</script></body></html>
-"#,
-        title = esc(title),
-        b64 = loft::base64::encode(wasm)
-    )
 }
 
 /// Why [`build`] made no binary: no C compiler to run at all — which a run that did not ask for
@@ -591,38 +495,6 @@ pub(crate) fn build(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The page's script closes every string on the line that opens it (loft#2204): a string
-    /// split by a real newline is a JavaScript syntax error, and the page then runs nothing.
-    /// `native_c_html_page_runs_its_program` sees it in node, but only where clang, wasm-ld
-    /// and node are installed; this needs none of them.
-    #[test]
-    fn the_page_script_closes_every_string_on_its_line() {
-        let page = html_page("t", b"");
-        let script = page
-            .split("<script id=\"loft-run\">")
-            .nth(1)
-            .and_then(|s| s.split("</script>").next())
-            .expect("the page has its script");
-        for (n, line) in script.lines().enumerate() {
-            let mut quotes = 0u32;
-            let mut chars = line.chars();
-            while let Some(c) = chars.next() {
-                match c {
-                    '\\' => {
-                        chars.next();
-                    }
-                    '"' => quotes += 1,
-                    _ => {}
-                }
-            }
-            assert!(
-                quotes.is_multiple_of(2),
-                "script line {}: an unclosed string: {line}",
-                n + 1
-            );
-        }
-    }
 
     #[test]
     fn link_lines_are_read_exactly() {

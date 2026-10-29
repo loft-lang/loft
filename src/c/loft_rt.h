@@ -19,7 +19,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef LOFT_NO_JUMPS
 #include <setjmp.h>
+#define LOFT_JMP_BUF jmp_buf
+#define LOFT_LONGJMP(b) longjmp(b, 1)
+#else
+/* A unit that runs no test and binds no lazy collection never jumps (`LOFT_NO_JUMPS`, a browser
+ * page's module): wasm has setjmp only through its exception-handling proposal, which asyncify
+ * cannot carry, so the unit holds no jump buffer at all and these sites are unreachable. */
+typedef struct { int unused; } loft_no_jmp_buf;
+#define LOFT_JMP_BUF loft_no_jmp_buf
+#define LOFT_LONGJMP(b) abort()
+#endif
 #include <errno.h>
 #include <math.h>
 #include <float.h>
@@ -517,7 +528,7 @@ LOFT_HOT_INLINE int64_t loft_wrap_rem(int64_t a, int64_t b) {
 #endif
 /* `assert`: a failed one ends the running test (the test main catches it) or, outside a
  * test, the program, with the interpreter's message on stderr and exit status 1. */
-static LOFT_TLS jmp_buf loft_test_jmp;
+static LOFT_TLS LOFT_JMP_BUF loft_test_jmp;
 static LOFT_TLS int loft_in_test = 0;
 
 /* The message of the last failed assert, for a test expected to fail with it. */
@@ -568,7 +579,7 @@ static void loft_fault_where(loft_str file, int64_t line);
 /* A fault inside a lazy driver is CONTAINED (`call_frames::in_lazy_driver`): it ends the driver,
  * not the program — `loft_lazy_miss` set the jump and records `<kind>: <message>` as the
  * collection's failure, as the interpreter's `panic_any(label: message)` does. */
-static LOFT_TLS jmp_buf *loft_lazy_jmp = 0;
+static LOFT_TLS LOFT_JMP_BUF *loft_lazy_jmp = 0;
 static LOFT_TLS loft_text loft_lazy_fault = { 0, 0, 0 };
 static void loft_lazy_contain(const char *label, loft_str message) {
     loft_lazy_fault.len = 0;
@@ -576,7 +587,7 @@ static void loft_lazy_contain(const char *label, loft_str message) {
     loft_push(&loft_lazy_fault, ": ", 2);
     loft_push(&loft_lazy_fault, message.p, message.len);
     LOFT_RELEASE_HELD(loft_lazy_held_floor);
-    longjmp(*loft_lazy_jmp, 1);
+    LOFT_LONGJMP(*loft_lazy_jmp);
 }
 
 /* A production run's fault logger (`loft_log_production_fault`), bound by a unit's `main`; null
@@ -598,7 +609,7 @@ static void loft_assert(uint8_t test, loft_str message, loft_str file, int64_t l
     loft_fail_msg.len = 0;
     loft_push(&loft_fail_msg, "assertion failed: ", 18);
     loft_push(&loft_fail_msg, message.p, message.len);
-    if (loft_in_test) { LOFT_RELEASE_HELD(0); longjmp(loft_test_jmp, 1); }
+    if (loft_in_test) { LOFT_RELEASE_HELD(0); LOFT_LONGJMP(loft_test_jmp); }
     fflush(stdout);
     exit(1);
 }
@@ -620,7 +631,7 @@ static int loft_locked_write(void) {
     fputc('\n', stderr);
     loft_fail_msg.len = 0;
     loft_push(&loft_fail_msg, msg, sizeof msg - 1);
-    if (loft_in_test) { LOFT_RELEASE_HELD(0); longjmp(loft_test_jmp, 1); }
+    if (loft_in_test) { LOFT_RELEASE_HELD(0); LOFT_LONGJMP(loft_test_jmp); }
     fflush(stdout);
     exit(1);
 }
@@ -639,7 +650,7 @@ static void loft_stack_overflow(const char *file, uint32_t line) {
     if (!loft_in_test) loft_fault_where(loft_lit(file, strlen(file)), line);
     loft_fail_msg.len = 0;
     loft_push(&loft_fail_msg, msg, (size_t) n);
-    if (loft_in_test) { LOFT_RELEASE_HELD(0); longjmp(loft_test_jmp, 1); }
+    if (loft_in_test) { LOFT_RELEASE_HELD(0); LOFT_LONGJMP(loft_test_jmp); }
     fflush(stdout);
     exit(1);
 }
@@ -764,7 +775,7 @@ static void loft_panic(loft_str message, loft_str file, int64_t line) {
     loft_fail_msg.len = 0;
     loft_push(&loft_fail_msg, "panic: ", 7);
     loft_push(&loft_fail_msg, message.p, message.len);
-    if (loft_in_test) { LOFT_RELEASE_HELD(0); longjmp(loft_test_jmp, 1); }
+    if (loft_in_test) { LOFT_RELEASE_HELD(0); LOFT_LONGJMP(loft_test_jmp); }
     fflush(stdout);
     exit(1);
 }
@@ -778,7 +789,7 @@ static void loft_exit(int64_t code) {
         loft_fail_msg.len = 0;
         loft_push(&loft_fail_msg, m, strlen(m));
         LOFT_RELEASE_HELD(0);
-        longjmp(loft_test_jmp, 1);
+        LOFT_LONGJMP(loft_test_jmp);
     }
     fflush(stdout);
     fflush(stderr);

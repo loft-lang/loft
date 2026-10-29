@@ -109,11 +109,52 @@ fn run_html_wasm_full(
     extra_args: &[&str],
     harness_rel: &str,
 ) -> Option<(String, String, bool)> {
+    run_html_page(
+        "--native-rust",
+        name,
+        source,
+        lib_dirs,
+        assets,
+        extra_args,
+        harness_rel,
+    )
+}
+
+/// [`run_html_wasm`] for a page whose module the C backend writes (`--native-c --html`,
+/// @PLN203 C6): the same page builder, the same harness, the WASI layer `doc/loft-wasi.js`.
+fn run_c_html_wasm(name: &str, source: &str) -> Option<(String, String, bool)> {
+    run_html_page(
+        "--native-c",
+        &format!("c_{name}"),
+        source,
+        &[],
+        &[],
+        &[],
+        "tools/wasm_repro.mjs",
+    )
+}
+
+/// A page built by `backend` (`--native-rust` or `--native-c`), its module run by the node
+/// harness `harness_rel`.
+fn run_html_page(
+    backend: &str,
+    name: &str,
+    source: &str,
+    lib_dirs: &[&str],
+    assets: &[PathBuf],
+    extra_args: &[&str],
+    harness_rel: &str,
+) -> Option<(String, String, bool)> {
     if which("node").is_none() {
         eprintln!("SKIP: node not installed");
         return None;
     }
-    if !wasm32_target_installed() {
+    if backend == "--native-c" {
+        if which("clang").is_none() || which("wasm-ld").is_none() {
+            eprintln!("SKIP: clang / wasm-ld not installed (the C page's toolchain)");
+            return None;
+        }
+    } else if !wasm32_target_installed() {
         eprintln!("SKIP: rustup target wasm32-unknown-unknown not installed");
         return None;
     }
@@ -163,7 +204,7 @@ fn run_html_wasm_full(
     // each other's emitted Rust or wasm output.
     let mut cmd = loft::platform::process::harness_command(&loft_bin);
     cmd.args([
-        "--native-rust",
+        backend,
         "--html",
         html.to_str().unwrap(),
         "--path",
@@ -484,22 +525,9 @@ fn q9_html_file_content_returns_empty_on_wasm() {
     );
 }
 
-/// loft#851 — a page has a filesystem, and it is the SAME one every other target
-/// answers with.
-///
-/// `--html` used to bind none: the file calls compiled, each took an inert branch
-/// and answered "absent", and `loft --html` reported success — so a rendering
-/// editor in a page could draw and could not save, and the consumer found out by
-/// GREPPING the emitted bundle for `fs_`.
-///
-/// Every expected value below is what `--interpret` and `--native` print for this
-/// exact program, so the test fails both ways: if the page loses its filesystem
-/// again, and if it grows one that answers differently from the other backends.
-/// The empty-vs-absent pair is deliberate — the two cross the bridge as the same
-/// import and are told apart only by a length sentinel.
-#[test]
-fn html_page_has_a_filesystem() {
-    let src = r#"fn main() {
+/// A program over the page filesystem and the lines it prints (loft#851), read by both writers'
+/// pages.
+const PAGE_FS_SRC: &str = r#"fn main() {
     f = file("story.txt");
     f += "hello";
     f += "-page";
@@ -519,39 +547,16 @@ fn html_page_has_a_filesystem() {
     println("empty_is_null={file("empty.txt").content() == null} absent_is_null={file("nope.txt").content() == null}");
 }
 "#;
-    let Some((stdout, stderr, ok)) = run_html_wasm("h851_page_fs", src) else {
-        return;
-    };
-    assert!(
-        ok,
-        "WASM trapped while using the page filesystem.\n{stderr}"
-    );
-    for expected in [
-        "content=hello-page size=10",
-        "bytes=3 first=7",
-        r#"dir=true list=["inner.txt"]"#,
-        "gone=false still=true",
-        "empty_is_null=false absent_is_null=true",
-    ] {
-        assert!(
-            stdout.contains(expected),
-            "expected {expected:?} from the page filesystem (loft#851)\
-             \nstdout: {stdout}\nstderr: {stderr}"
-        );
-    }
-}
+const PAGE_FS_WANT: &[&str] = &[
+    "content=hello-page size=10",
+    "bytes=3 first=7",
+    r#"dir=true list=["inner.txt"]"#,
+    "gone=false still=true",
+    "empty_is_null=false absent_is_null=true",
+];
 
-/// loft#851 — the cursor.  A page has no OS file handle, so the HOST keeps the
-/// read/write position per path; `f#next` and a sized `f#read(n)` have to mean
-/// the same thing there as they do over a real handle.
-///
-/// Worth its own test because the first round of this work passed every
-/// whole-file cell and still had the cursor wrong: `write_bytes` left the
-/// position at the end of the file, and the next `read_bytes` — which asks for
-/// the WHOLE file — started from there and answered zero bytes.
-#[test]
-fn html_page_filesystem_cursor_matches_the_other_backends() {
-    let src = r#"fn main() {
+/// The page filesystem's per-path cursor, and the lines it prints (loft#851).
+const CURSOR_SRC: &str = r#"fn main() {
     f = file("cur.txt");
     f += "abcde";
     g = file("cur.txt");
@@ -574,6 +579,57 @@ fn html_page_filesystem_cursor_matches_the_other_backends() {
     println("moved={file("moved.txt").content() ?? "<null>"} old={exists("cur.txt")}");
 }
 "#;
+const CURSOR_WANT: &[&str] = &[
+    "seek=bcd continue=e next=5",
+    "short=de",
+    "overwrite=XYcde",
+    "resize=Ok left=XY",
+    "moved=XY old=false",
+];
+
+/// loft#851 — a page has a filesystem, and it is the SAME one every other target
+/// answers with.
+///
+/// `--html` used to bind none: the file calls compiled, each took an inert branch
+/// and answered "absent", and `loft --html` reported success — so a rendering
+/// editor in a page could draw and could not save, and the consumer found out by
+/// GREPPING the emitted bundle for `fs_`.
+///
+/// Every expected value below is what `--interpret` and `--native` print for this
+/// exact program, so the test fails both ways: if the page loses its filesystem
+/// again, and if it grows one that answers differently from the other backends.
+/// The empty-vs-absent pair is deliberate — the two cross the bridge as the same
+/// import and are told apart only by a length sentinel.
+#[test]
+fn html_page_has_a_filesystem() {
+    let src = PAGE_FS_SRC;
+    let Some((stdout, stderr, ok)) = run_html_wasm("h851_page_fs", src) else {
+        return;
+    };
+    assert!(
+        ok,
+        "WASM trapped while using the page filesystem.\n{stderr}"
+    );
+    for expected in PAGE_FS_WANT {
+        assert!(
+            stdout.contains(expected),
+            "expected {expected:?} from the page filesystem (loft#851)\
+             \nstdout: {stdout}\nstderr: {stderr}"
+        );
+    }
+}
+
+/// loft#851 — the cursor.  A page has no OS file handle, so the HOST keeps the
+/// read/write position per path; `f#next` and a sized `f#read(n)` have to mean
+/// the same thing there as they do over a real handle.
+///
+/// Worth its own test because the first round of this work passed every
+/// whole-file cell and still had the cursor wrong: `write_bytes` left the
+/// position at the end of the file, and the next `read_bytes` — which asks for
+/// the WHOLE file — started from there and answered zero bytes.
+#[test]
+fn html_page_filesystem_cursor_matches_the_other_backends() {
+    let src = CURSOR_SRC;
     let Some((stdout, stderr, ok)) = run_html_wasm("h851_cursor", src) else {
         return;
     };
@@ -581,13 +637,7 @@ fn html_page_filesystem_cursor_matches_the_other_backends() {
         ok,
         "WASM trapped on the page filesystem's cursor.\n{stderr}"
     );
-    for expected in [
-        "seek=bcd continue=e next=5",
-        "short=de",
-        "overwrite=XYcde",
-        "resize=Ok left=XY",
-        "moved=XY old=false",
-    ] {
+    for expected in CURSOR_WANT {
         assert!(
             stdout.contains(expected),
             "expected {expected:?} — the page's per-path cursor must read as an \
@@ -2569,4 +2619,45 @@ fn main() {
         1,
         "the page's WebSocket answers the server's ping"
     );
+}
+
+/// The page cells on a module the C backend wrote (@PLN203 C6): hello, an arithmetic loop, a
+/// vector walk, the page filesystem and its cursor print what the Rust writer's page prints —
+/// through the WASI layer (`doc/loft-wasi.js`) over the same page filesystem.
+#[test]
+fn the_c_page_answers_what_the_rust_page_answers() {
+    let cells: [(&str, &str, &[&str]); 5] = [
+        (
+            "hello",
+            "fn main() { println(\"hello from loft\"); }\n",
+            &["hello from loft"],
+        ),
+        (
+            "arith",
+            "fn main() {\n    sum = 0;\n    for i in 0..10 { sum = sum + i; }\n    println(\"sum={sum}\");\n}\n",
+            &["sum=45"],
+        ),
+        (
+            "vec",
+            "fn main() {\n    items = [10, 20, 30];\n    total = 0;\n    for x in items { total = total + x; }\n    println(\"total={total}\");\n}\n",
+            &["total=60"],
+        ),
+        ("page_fs", PAGE_FS_SRC, PAGE_FS_WANT),
+        ("cursor", CURSOR_SRC, CURSOR_WANT),
+    ];
+    for (name, src, want) in cells {
+        let Some((stdout, stderr, ok)) = run_c_html_wasm(name, src) else {
+            return;
+        };
+        assert!(
+            ok,
+            "{name}: the C page's module trapped\nstdout: {stdout}\nstderr: {stderr}"
+        );
+        for expected in want {
+            assert!(
+                stdout.contains(expected),
+                "{name}: expected {expected:?} from the C page\nstdout: {stdout}\nstderr: {stderr}"
+            );
+        }
+    }
 }

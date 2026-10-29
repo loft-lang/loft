@@ -8065,124 +8065,37 @@ extern crate loft;"
             // the generated code can call it directly (unqualified).
             writeln!(w, "#[link(wasm_import_module = \"loft_gl\")]")?;
             writeln!(w, "unsafe extern \"C\" {{")?;
+            // Which natives the page supplies, and their signatures, are one contract with the
+            // C writer's browser module (`host_imports`, @PLN203 C6).
             let mut declared_natives = std::collections::HashSet::new();
             for d_nr in 0..data.definitions() {
-                let def = data.def(d_nr);
-                if def.native().is_empty() || declared_natives.contains(def.native()) {
+                let Some(imp) = crate::host_imports::host_import(data, d_nr, reachable) else {
+                    continue;
+                };
+                if !declared_natives.insert(imp.symbol.clone()) {
                     continue;
                 }
-                // #407 — skip the host-import extern declaration for ANY
-                // `#native` routed through `[wasm.bridge].routes`.  The local
-                // wrapper body is a call into `<crate>::<bridge_fn>` (see
-                // `output_wasm_bridge_call`), so the extern would be unused AND
-                // would collide with that wrapper's name (E0428) — exactly the
-                // blocker for a `text -> text` bridge, whose extern decl
-                // (`safe fn n_x(ptr,len) -> i32`) clashed with the loft wrapper
-                // `fn n_x(...) -> String`.  The bridge crate declares its OWN
-                // host imports, so no extern is needed at this layer.
-                if data.wasm_bridge_routes.contains_key(def.native()) {
-                    continue;
-                }
-                // @P321c browser-WASM (2026-05-29): skip the host-import
-                // declaration for store-mutating `#native` fns with NO bridge —
-                // the matching local body is a graceful Phase 1 stub (see
-                // `output_native_direct_call`), so the extern would be unused
-                // AND would collide with the local body name (E0428).
-                let stores_loft_ref =
-                    matches!(def.returned(), Type::Vector(_, _) | Type::Reference(_, _));
-                // A heap-typed arg (Reference / Vector / data-enum / sorted /
-                // hash / index / spatial) is passed as a `LoftStore` + `LoftRef`
-                // handle, exactly as the interpreter's `ArgT::Ref`/`ArgT::Vec`
-                // marshal it — NOT a raw `(ptr, count)` pair.  `heap_dep()` is the
-                // canonical set of those types (the same union the interpreter
-                // groups in `compute_sig`); reuse it so the two backends agree.
-                // D-html-vec (2026-07-04): a `vector<T>` arg IS a valid host import —
-                // it marshals as `(ptr, count)` (declared just below), which the JS glue
-                // reads as `new Float32Array(mem, ptr, count)`.  Only NON-vector heap args
-                // (Reference / keyed collections) need a LoftRef handle a host import can't
-                // take, so only those skip.  #423 broadened this to EVERY heap_dep and
-                // silently dropped gl_upload_vertices / gl_upload_canvas / gl_set_mat4 host
-                // imports → Brick Buster (and any --html WebGL program) rendered blank.
-                let has_ref_arg = def.attributes().iter().any(|a| {
-                    !a.name.starts_with("__")
-                        && a.typedef.heap_dep().is_some()
-                        && !matches!(a.typedef, Type::Vector(_, _))
-                });
-                if stores_loft_ref || has_ref_arg {
-                    continue;
-                }
-                // #623 — a REACHABLE routeless `#native` whose SYMBOL equals the
-                // loft fn's own emitted name (`n_<fn>`, i.e. a bare `#native`)
-                // gets both this host-import declaration and a local wrapper body
-                // under that one name — an unreadable rustc cascade (E0428 plus a
-                // string of E0610/E0061 against generated code, rustc's "remove
-                // the extra argument" pointing nowhere useful).  Skip the extern
-                // so exactly one diagnostic survives: the `compile_error!` the
-                // body site emits, naming the symbol, its library and the fix.
-                //
-                // Two shapes deliberately still get their declaration:
-                //   * an UNREACHABLE routeless native — unused, emits no body, and
-                //     must not reject an otherwise-valid program;
-                //   * a native whose symbol DIFFERS from the fn name
-                //     (`#native "loft_gl_swap_buffers"` on `gl_swap_buffers`) —
-                //     that is the legitimate raw host-import path the browser
-                //     shell supplies, and it never collided.
-                if reachable.contains(&d_nr)
-                    && (def.native() == def.name() || matches!(def.returned(), Type::Text(_)))
-                    && !data.wasm_bridge_routes.contains_key(def.native())
-                {
-                    continue;
-                }
-                declared_natives.insert(def.native().to_string());
-                // Build the C-ABI signature from loft parameter types.
+                use crate::host_imports::Arg;
                 use std::fmt::Write as _;
                 let mut params = String::new();
-                for attr in def.attributes() {
-                    if attr.name.starts_with("__") {
-                        continue;
-                    }
+                for (name, arg) in &imp.args {
                     if !params.is_empty() {
                         params.push_str(", ");
                     }
-                    let name = sanitize(&attr.name);
-                    match &attr.typedef {
-                        Type::Text(_) => params.push_str("ptr: *const u8, len: usize"),
-                        Type::Vector(elem_tp, _) => {
-                            let elem = Self::vector_elem_rust_type(elem_tp);
-                            let _ = write!(params, "ptr: *const {elem}, count: u32");
+                    match arg {
+                        Arg::Text => params.push_str("ptr: *const u8, len: usize"),
+                        Arg::Vector(elem) => {
+                            let _ = write!(params, "ptr: *const {}, count: u32", elem.rust());
                         }
-                        // Post-2c round 10c: wide Type::Integer (former Type::Long)
-                        // passes as i64 — range > i32::MAX can't fit in i32.
-                        Type::Integer(s) if s.is_wide() => {
-                            let _ = write!(params, "{name}: i64");
-                        }
-                        Type::Float => {
-                            let _ = write!(params, "{name}: f64");
-                        }
-                        Type::Single => {
-                            let _ = write!(params, "{name}: f32");
-                        }
-                        // @PLN17: cdylib exports use the u8 boolean storage form
-                        // (generated via rust_type); the extern decl must match.
-                        Type::Boolean => {
-                            let _ = write!(params, "{name}: u8");
-                        }
-                        _ => {
-                            let _ = write!(params, "{name}: i32");
+                        Arg::Scalar(s) => {
+                            let _ = write!(params, "{}: {}", sanitize(name), s.rust());
                         }
                     }
                 }
-                let ret = match def.returned() {
-                    Type::Void => String::new(),
-                    // Post-2c round 10c: wide Type::Integer returns as i64.
-                    Type::Integer(s) if s.is_wide() => " -> i64".to_string(),
-                    Type::Integer(_) | Type::Character => " -> i32".to_string(),
-                    Type::Float => " -> f64".to_string(),
-                    Type::Single => " -> f32".to_string(),
-                    Type::Boolean => " -> u8".to_string(), // @PLN17: u8 storage form
-                    _ => " -> i32".to_string(),
-                };
-                writeln!(w, "    safe fn {}({params}){ret};", def.native())?;
+                let ret = imp
+                    .ret
+                    .map_or_else(String::new, |r| format!(" -> {}", r.rust()));
+                writeln!(w, "    safe fn {}({params}){ret};", imp.symbol)?;
             }
             writeln!(w, "}}")?;
         } else if native_cabi {
@@ -13403,33 +13316,9 @@ extern crate loft;"
     /// Native functions that accept `vector<T>` args receive a `*const ELEM_TYPE`
     /// pointer.  This function returns the Rust type name for each loft element type.
     fn vector_elem_rust_type(tp: &Type) -> &'static str {
-        match tp {
-            Type::Single => "f32",
-            Type::Float => "f64",
-            Type::Boolean => "u8",
-            Type::Character => "u32",
-            // @P310: the FFI data-pointer element width must match the
-            // vector's STORAGE STRIDE, not its value range.  A plain
-            // `vector<integer>` carries no `forced_size`, so it is stored at
-            // the wide 8-byte stride (`byte_width() == 8`, `Type::size == 8`,
-            // `vector_append` strides 8) — even though its bounds are the
-            // signed-32 template (`is_wide() == false`).  Keying off
-            // `vector_narrow_width()` (the same predicate the vector storage +
-            // `OpGetVector`/`OpSetVector` use, `data.rs::vector_narrow_width`)
-            // gives the pointer the storage-matching width: plain integer →
-            // `i64` (matches the cdylib `vec<i64>` wrappers + `Canvas` pixel
-            // semantics), narrow aliases keep their forced width.  (i8/i16
-            // narrow vectors map to the unsigned same-width name — signedness
-            // is moot, no `#native` FFI takes a narrow-int vector today.)
-            Type::Integer(s) => match s.vector_narrow_width(false) {
-                Some(1) => "u8",
-                Some(2) => "i16",
-                Some(4) => "i32",
-                _ => "i64",
-            },
-            // Fallback for struct/enum elements: opaque bytes.
-            _ => "u8",
-        }
+        // The storage-stride width the host reads (@P310), one home with the browser
+        // imports' (`host_imports::Elem`).
+        crate::host_imports::Elem::of(tp).rust()
     }
 }
 

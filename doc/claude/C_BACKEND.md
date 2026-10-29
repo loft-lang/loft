@@ -98,6 +98,23 @@ network fetch answers that the build has no transport.  It
 needs clang, lld, wasi-libc and the wasm32 compiler-rt (Ubuntu: `clang lld wasi-libc
 libclang-rt-dev-wasm32`); a program linking a `[c] shim` archive is refused, the archive being
 built for the host.
+
+**The browser page** (`--native-c --html`, @PLN203 C6).  The C writes the module and the one
+`--html` page builder hosts it, as it hosts the Rust writer's: fonts, `[[embed]]` files, library
+`host_js`, the import stubs, `wasm-opt --asyncify`.  Three things make the module fit that page.
+A library native the page supplies is a `loft_gl` import under its symbol, with the signature the
+Rust writer declares — one contract, `src/host_imports.rs`, both writers read
+(`c::browser_import_native`); one with no import, a text or heap answer, is refused at build as
+the Rust writer refuses it.  The program starts from the exported `loft_start`
+(`c::emit_browser_program`), which runs the libc's constructors once and flushes what it
+printed, since a page never calls WASI's `_start`.  And a unit that binds no lazy collection is
+built without setjmp (`LOFT_NO_JUMPS`, `LOFT_JMP_BUF`/`LOFT_LONGJMP` in `loft_rt.h`), so without
+wasm's exception handling, which asyncify cannot carry.  The page answers the WASI libc with
+`doc/loft-wasi.js` — output into the page, clocks, randomness, and files over the page
+filesystem preopened as `/` — which `tools/wasm_repro.mjs` loads too.  Guards:
+`html_wasm::the_c_page_answers_what_the_rust_page_answers`,
+`html_gl_imports::the_c_page_imports_the_vector_argument_host_import`,
+`c_emit::native_c_html_page_runs_its_program`.
 `differ`, `cc-error`, `sanitizer` and `slow` are defects of the backend and must stay at 0; a change
 that grows `match` is measured by the sweep, by `--asan` and by `--poison` before it is
 committed.  A sanitizer cannot see inside a store — a store is one allocation — so a read of a

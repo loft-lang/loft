@@ -4719,9 +4719,10 @@ fn main() {
     assert_eq!(workers, ["4", "4", "4", "1"], "workers per par loop");
 }
 
-/// @PLN203 C6 — `--native-c --html` writes a page that hosts the program's wasm32-wasi module
-/// with a WASI layer of its own: the page's script, run here under Node with a `document` of two
-/// methods, writes what the program prints into the page and records the exit status.
+/// @PLN203 C6 — `--native-c --html` writes the one page `--html` writes, hosting the program's
+/// wasm32-wasi module on the WASI layer the page carries (`doc/loft-wasi.js`): the module, run
+/// from its exported `loft_start` by the node harness every page cell uses, prints what the
+/// program prints and ends with the status `exit` gave it.
 /// Hand-computed: Σi² over 1..=10 = 385; a text built in a loop; a hash lookup; `exit(3)`.
 /// Skipped where clang, `wasm-ld` or Node is missing.
 #[test]
@@ -4762,33 +4763,26 @@ fn native_c_html_page_runs_its_program() {
         "the page builds: {}",
         String::from_utf8_lossy(&build.stderr)
     );
-    let runner = dir.join("run.js");
-    fa::write(
-        &runner,
-        "const fs = require('fs');\n\
-         const html = fs.readFileSync(process.argv[2], 'utf8');\n\
-         const js = html.split('<script id=\"loft-run\">')[1].split('</script>')[0];\n\
-         let text = '';\n\
-         globalThis.window = globalThis;\n\
-         globalThis.document = { title: '',\n\
-           getElementById: () => ({ appendChild: (n) => { text += n.data !== undefined ? n.data : n.textContent; } }),\n\
-           createTextNode: (t) => ({ data: t }),\n\
-           createElement: () => ({ className: '', textContent: '' }) };\n\
-         eval(js);\n\
-         const t = setInterval(() => { if (window.loftExit !== undefined) { clearInterval(t);\n\
-           process.stdout.write(text + 'exit=' + window.loftExit + '\\n'); } }, 10);\n",
-    )
-    .expect("write runner");
+    let page = fa::read_to_string(&html).expect("read the page");
+    let marker = "const wasmB64=\"";
+    let at = page.find(marker).expect("the page carries its module") + marker.len();
+    let b64 = &page[at..at + page[at..].find('"').expect("the module's closing quote")];
+    let wasm = dir.join("page.wasm");
+    fa::write(&wasm, loft::base64::decode(b64)).expect("write the module");
     let out = loft::platform::process::harness_command("node")
-        .arg(&runner)
-        .arg(&html)
+        .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tools/wasm_repro.mjs"))
+        .arg(&wasm)
         .output()
         .expect("run node");
+    let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "385 0-1-2-3- seven\nexit=3\n",
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
+        "385 0-1-2-3- seven\n",
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("exited with status 3"),
+        "the page reports the program's exit status\n{stderr}"
     );
 }
 

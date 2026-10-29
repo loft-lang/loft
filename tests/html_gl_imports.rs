@@ -49,20 +49,39 @@ fn repo_root() -> PathBuf {
 // @speed 1.0
 #[test]
 fn dhtml_vector_arg_gl_host_import_is_emitted() {
-    if !which("node") {
-        eprintln!("SKIP dhtml_vector_arg_gl_host_import_is_emitted: node not installed");
-        return;
-    }
     if !wasm32_installed() {
         eprintln!(
             "SKIP dhtml_vector_arg_gl_host_import_is_emitted: wasm32-unknown-unknown target not installed"
         );
         return;
     }
+    vector_arg_import_is_emitted("--native-rust", "rust");
+}
+
+/// The same page from the C backend (@PLN203 C6): the import comes from the one contract both
+/// writers read (`host_imports`), and the module runs from its exported `loft_start` on the
+/// page's WASI layer (`doc/loft-wasi.js`).
+// @speed 1.0
+#[test]
+fn the_c_page_imports_the_vector_argument_host_import() {
+    if !which("clang") || !which("wasm-ld") {
+        eprintln!(
+            "SKIP the_c_page_imports_the_vector_argument_host_import: clang / wasm-ld not installed"
+        );
+        return;
+    }
+    vector_arg_import_is_emitted("--native-c", "c");
+}
+
+fn vector_arg_import_is_emitted(backend: &str, tag: &str) {
+    if !which("node") {
+        eprintln!("SKIP {tag}: node not installed");
+        return;
+    }
     let root = repo_root();
     let loft = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft) {
-        eprintln!("SKIP dhtml_vector_arg_gl_host_import_is_emitted: target/release/loft not built");
+        eprintln!("SKIP {tag}: target/release/loft not built");
         return;
     }
     let helper = root.join("tools/wasm_imports.mjs");
@@ -70,7 +89,7 @@ fn dhtml_vector_arg_gl_host_import_is_emitted() {
 
     // Minimal program that calls the vector-argument host import
     // `graphics::gl_upload_vertices(vector<single>, integer)`.
-    let dir = std::env::temp_dir().join("loft_html_gl_imports");
+    let dir = std::env::temp_dir().join(format!("loft_html_gl_imports_{tag}"));
     let _ = fa::remove_dir_all(&dir);
     fa::create_dir_all(&dir).expect("create tempdir");
     let src = dir.join("gl_import_probe.loft");
@@ -90,7 +109,7 @@ fn dhtml_vector_arg_gl_host_import_is_emitted() {
     .expect("write source");
 
     let out = loft::platform::process::harness_command(&loft)
-        .args(["--native-rust", "--html", html.to_str().unwrap()])
+        .args([backend, "--html", html.to_str().unwrap()])
         .arg("--path")
         .arg(format!("{}/", root.display()))
         .arg(&src)
@@ -101,8 +120,7 @@ fn dhtml_vector_arg_gl_host_import_is_emitted() {
         // not be resolved — no network on this runner. That is an environmental
         // skip, not a codegen regression.
         eprintln!(
-            "SKIP dhtml_vector_arg_gl_host_import_is_emitted: `loft --html` failed \
-             (graphics unresolved / offline?)\nstderr: {}",
+            "SKIP {tag}: `loft --html` failed (graphics unresolved / offline?)\nstderr: {}",
             String::from_utf8_lossy(&out.stderr)
         );
         return;
@@ -116,11 +134,31 @@ fn dhtml_vector_arg_gl_host_import_is_emitted() {
         .expect("invoke node wasm_imports helper");
     assert!(
         check.status.success(),
-        "the vector-argument host import `loft_gl_upload_vertices` is MISSING from the \
-         --html wasm import table — the codegen dropped/stubbed the buffer-upload call \
+        "{backend}: the vector-argument host import `loft_gl_upload_vertices` is MISSING from \
+         the --html wasm import table — the codegen dropped/stubbed the buffer-upload call \
          (D-html-vec; the #423 regression that rendered every --html WebGL page blank).\n\
          helper stdout: {}\nhelper stderr: {}",
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr),
+    );
+
+    // The module runs: the harness answers every `loft_gl` import with 0, so the page prints
+    // the vertex-array handle it got, `0`.
+    let page = fa::read_to_string(&html).expect("read the page");
+    let marker = "const wasmB64=\"";
+    let at = page.find(marker).expect("the page carries its module") + marker.len();
+    let b64 = &page[at..at + page[at..].find('"').expect("the module's closing quote")];
+    let wasm = dir.join("gl_import_probe.wasm");
+    fa::write(&wasm, loft::base64::decode(b64)).expect("write wasm");
+    let ran = loft::platform::process::harness_command("node")
+        .arg(root.join("tools/wasm_repro.mjs"))
+        .arg(&wasm)
+        .output()
+        .expect("invoke node wasm_repro");
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout),
+        "0",
+        "{backend}: the page's module prints the stubbed handle\nstderr: {}",
+        String::from_utf8_lossy(&ran.stderr)
     );
 }

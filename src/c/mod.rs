@@ -210,6 +210,10 @@ pub(crate) struct Cx<'a> {
     /// directory and file: a unit that calls one is compiled with `LOFT_FFI`, and a shipped
     /// program opens each at start by search order (`loft_cboundlibs`).
     pub(crate) ffi_libs: std::cell::RefCell<std::collections::BTreeSet<(String, String)>>,
+    /// The unit is a browser page's module (`--native-c --html`, @PLN203 C6): a library native
+    /// the page supplies is a `loft_gl` import (`host_imports`), and the program starts from
+    /// the exported `loft_start`.
+    pub(crate) browser: bool,
     /// The `par` sites written on threads so far, which numbers each one's body and context.
     pub(crate) par_sites: std::cell::Cell<u32>,
     /// The keyed collection types a `sqlite:` plan was written for (`loft_sqlplan{tp}`).
@@ -290,10 +294,11 @@ pub(crate) enum Keyed {
 }
 
 impl<'a> Cx<'a> {
-    fn new(data: &'a Data, stores: &'a Stores) -> Cx<'a> {
+    fn new(data: &'a Data, stores: &'a Stores, browser: bool) -> Cx<'a> {
         Cx {
             data,
             stores,
+            browser,
             tuples: std::cell::RefCell::new(Vec::new()),
             copy_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             described: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -1545,6 +1550,19 @@ pub fn unported_natives(data: &Data) -> Vec<String> {
 /// # Errors
 /// The first [`Refusal`], the roots' own first.
 pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, Refusal> {
+    emit_unit_for(data, stores, roots, false)
+}
+
+/// [`emit_unit`] for a browser page's module when `browser` (`Cx::browser`).
+///
+/// # Errors
+/// The first function the C backend does not carry yet.
+pub fn emit_unit_for(
+    data: &Data,
+    stores: &Stores,
+    roots: &[u32],
+    browser: bool,
+) -> Result<String, Refusal> {
     crate::opt::non_sentinel::begin_c_generation();
     // A closure's drop cascade (`OpDropFnRef`) is called through the value, never by name: each
     // lambda the program reaches brings its record's cascade along.
@@ -1575,7 +1593,7 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
         .collect();
     // The roots first, so a refusal names the function asked for before one it reaches.
     fns.sort_unstable_by_key(|d| (!roots.contains(d), *d));
-    let cx = Cx::new(data, stores);
+    let cx = Cx::new(data, stores, browser);
     cx.frames
         .set(reachable_has(data, &all, |n| n == "n_stack_trace"));
     cx.lazy
@@ -2041,6 +2059,11 @@ fn unit_defines(
         out.push_str("#define LOFT_ENGINE 1\n");
     }
     out.push_str(&fetch_defines(data, reached, &runtimes, cx.lazy.get()));
+    // A page's module jumps nowhere unless a lazy driver's fault must be contained, so it is
+    // built without wasm's exception handling, which asyncify cannot carry (`c_driver`).
+    if cx.browser && !cx.lazy.get() {
+        out.push_str("#define LOFT_NO_JUMPS 1\n");
+    }
     if !cx.ffi_libs.borrow().is_empty() {
         out.push_str("#define LOFT_FFI 1\n");
     }
@@ -2174,16 +2197,56 @@ fn emit_program_counted(
     if main >= data.definitions() {
         return emit_tests(data, stores, expected);
     }
-    if !data.def(main).attributes().is_empty() {
-        return Err(Refusal {
-            function: "main".into(),
-            why: "a main that takes arguments".into(),
-        });
-    }
+    let main = program_main(data, main)?;
     let mut out = emit_unit(data, stores, &[main])?;
     let _ = write!(
         out,
         "\nint main(int argc, char **argv) {{\n    loft_bind_tables();\n    loft_start(argc, argv);\n    {}\n    {}();\n    loft_leak_report();\n    return loft_had_fatal;\n}}\n",
+        anchor(stores),
+        c_name(data, main)
+    );
+    Ok(out)
+}
+
+/// The program's `main`, refused when it takes arguments.
+fn program_main(data: &Data, main: u32) -> Result<u32, Refusal> {
+    if data.def(main).attributes().is_empty() {
+        Ok(main)
+    } else {
+        Err(Refusal {
+            function: "main".into(),
+            why: "a main that takes arguments".into(),
+        })
+    }
+}
+
+/// C99 for a browser page's module (`--native-c --html`, @PLN203 C6): the unit as
+/// [`emit_unit_for`] writes it for the browser, and the exported `loft_start` the page's script
+/// runs it by — under asyncify, which suspends it at each frame the program yields and resumes
+/// it from the same export.  The libc's constructors run first, once: a page never calls the
+/// WASI `_start` that would; and since the program ends by returning rather than by `exit`, the
+/// export flushes what it printed itself.
+///
+/// # Errors
+/// A program without a `main` that takes nothing, or the first [`Refusal`].
+pub fn emit_browser_program(data: &Data, stores: &Stores) -> Result<String, Refusal> {
+    let main = data.def_nr("n_main");
+    if main >= data.definitions() {
+        return Err(Refusal {
+            function: "main".into(),
+            why: "a page without a main".into(),
+        });
+    }
+    let main = program_main(data, main)?;
+    let mut out = emit_unit_for(data, stores, &[main], true)?;
+    let _ = write!(
+        out,
+        "\nextern void __wasm_call_ctors(void);\n\
+         __attribute__((export_name(\"loft_start\"))) void loft_page_start(void) {{\n    \
+         static int started = 0;\n    if (!started) {{ started = 1; __wasm_call_ctors(); }}\n    \
+         loft_bind_tables();\n    loft_start(0, 0);\n    {}\n    {}();\n    loft_leak_report();\n    \
+         fflush(stdout);\n    fflush(stderr);\n}}\n\
+         int main(void) {{ return 0; }}\n",
         anchor(stores),
         c_name(data, main)
     );
@@ -2334,6 +2397,23 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
             .ok_or_else(|| format!("returns {}", type_word(def.returned())))?,
     };
     if unloaded {
+        // A page supplies a library's natives as host imports (@PLN203 C6).
+        if cx.browser
+            && let Some(imp) =
+                crate::host_imports::host_import(cx.data, d, &std::iter::once(d).collect())
+        {
+            return browser_import_native(cx, d, ret, &imp);
+        }
+        // …and a library native it has no import for cannot be called from a page: refused at
+        // build, as the Rust writer refuses it (`compile_error!` naming the function).
+        if cx.browser && cx.data.native_symbol_crates.contains_key(def.native()) {
+            return Err(format!(
+                "native {} (`#native \"{}\"` has no browser host import, so it cannot be \
+                 called from a page; avoid it on the browser target)",
+                def.original_name(),
+                def.native()
+            ));
+        }
         if let Some(runtime) = in_binary_native(def.native()) {
             return forwarded_native(cx, d, ret, runtime);
         }
@@ -3175,6 +3255,95 @@ fn foreign_vector_args(heap: &[(usize, bool)], heap_answer: bool, prep: &mut Str
     let _ = writeln!(post, "    }}");
     let _ = writeln!(post, "    if (changed) loft_locked_write();");
     post
+}
+
+/// A library native in a browser page's module: the host import the page's script supplies
+/// under the native's symbol (`host_imports`, the Rust writer's `loft_gl` block), declared once,
+/// and a body that hands it a text's bytes and length, a vector's elements and count, and each
+/// scalar in the import's width.
+fn browser_import_native(
+    cx: &Cx,
+    d: u32,
+    ret: CType,
+    imp: &crate::host_imports::HostImport,
+) -> Result<(String, String), String> {
+    use crate::host_imports::Arg;
+    let def = cx.data.def(d);
+    let params = declared_params(cx, d)?;
+    let import = format!("loft_host_{}", imp.symbol);
+    let mut decl = Vec::new();
+    let mut args = Vec::new();
+    let mut body = String::new();
+    let visible = def
+        .attributes()
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| !a.name.starts_with("__"));
+    for ((i, _), (_, arg)) in visible.zip(&imp.args) {
+        match arg {
+            Arg::Text => {
+                decl.push("const uint8_t *".to_string());
+                decl.push("uint32_t".to_string());
+                args.push(format!("(const uint8_t *) a{i}.p"));
+                args.push(format!("(uint32_t) a{i}.len"));
+            }
+            Arg::Vector(elem) => {
+                let e = elem.c();
+                decl.push(format!("const {e} *"));
+                decl.push("uint32_t".to_string());
+                let _ = writeln!(
+                    body,
+                    "    uint32_t r{i} = a{i}.rec ? loft_collection_rec(loft_store_of(a{i}), a{i}.rec, a{i}.pos) : 0;"
+                );
+                args.push(format!(
+                    "r{i} ? (const {e} *) loft_elem_base(loft_store_of(a{i}), r{i}) : 0"
+                ));
+                args.push(format!("(uint32_t) loft_vec_len(a{i})"));
+            }
+            Arg::Scalar(sc) => {
+                decl.push(sc.c().to_string());
+                args.push(if *sc == crate::host_imports::Scalar::U8 {
+                    format!("(uint8_t) (a{i} == 1)")
+                } else {
+                    format!("({}) a{i}", sc.c())
+                });
+            }
+        }
+    }
+    let ret_c = imp.ret.map_or("void", crate::host_imports::Scalar::c);
+    let _ = writeln!(
+        cx.gen_decls.borrow_mut(),
+        "__attribute__((import_module(\"loft_gl\"), import_name(\"{}\"))) {ret_c} {import}({});",
+        imp.symbol,
+        if decl.is_empty() {
+            "void".to_string()
+        } else {
+            decl.join(", ")
+        }
+    );
+    let call = format!("{import}({})", args.join(", "));
+    match imp.ret {
+        None => {
+            let _ = writeln!(body, "    {call};");
+        }
+        Some(crate::host_imports::Scalar::U8) => {
+            let _ = writeln!(body, "    return (uint8_t) ({call} != 0);");
+        }
+        Some(_) => {
+            let _ = writeln!(body, "    return ({}) {call};", held(ret));
+        }
+    }
+    let sig = format!(
+        "static {} {}({})",
+        held(ret),
+        c_name(cx.data, d),
+        if params.is_empty() {
+            "void".to_string()
+        } else {
+            params.join(", ")
+        }
+    );
+    Ok((sig, body))
 }
 
 /// An `in_binary` native the runtime carries: a body that hands its arguments on.

@@ -113,6 +113,20 @@ declares (`emit_file_header`'s `loft_gl` block), the `loft_start` export, the ht
 the threaded page (`html_embed.rs`, `html_fonts.rs`).  `c_shim::wasm_objects` and
 `src/c/wasm/` already carry a package's C into both targets.
 
+The browser half, one contract with the Rust writer's page rather than a page of its own:
+
+1. a library native the page supplies is a `loft_gl` import with the Rust writer's name and
+   signature — one home, `host_imports`, read by both writers;
+2. the module exports `loft_start` (the page's asyncify controller drives it) and runs the
+   libc's constructors itself, since a page never calls WASI's `_start`;
+3. a unit that binds no lazy collection is built without setjmp (`LOFT_NO_JUMPS`), so without
+   wasm's exception handling, which asyncify cannot carry — and goes through the same
+   `wasm-opt --asyncify` as the Rust writer's module;
+4. `--native-c --html` uses the one page builder (fonts, `[[embed]]`, library host JS, the
+   import stubs), with `doc/loft-wasi.js` answering the WASI libc — files through the page
+   filesystem still to come;
+5. acceptance: the `html_*` node cells on both writers, then Brick Buster.
+
 **C7 — performance.**  `scripts/native_ratio.sh` and `bench/stats.py` gain a C lane
 (`--emit-c` + `cc -O3 -DLOFT_SHIP_PROBE` once the ledger exists), the perf portal a column;
 the `FnPlan` families of @PLN200 B3.4 move as C's rows ask.  The bar is the Rust writer's: a
