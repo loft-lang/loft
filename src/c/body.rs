@@ -2631,12 +2631,14 @@ impl<'a> FnWriter<'a> {
             );
             self.line(ind, &format!("}} else {{ {name} = {r}; }}"));
             if rebind_owned {
-                let mut keep = vec![
-                    format!("{old}.store_nr != {name}.store_nr"),
-                    format!("{old}.store_nr != {w}.store_nr"),
-                ];
-                for a in crate::use_analysis::protectable_ref_args(self.cx.data, self.d, x).0 {
-                    keep.push(format!("{old}.store_nr != {}.store_nr", self.var(a)));
+                // Native's guard (`dispatch.rs`'s `_old_<v>` free, @FR-O-NoDiverge): kept only
+                // where the new value or the call's pooled buffer (`@FR-O-Buffer`) is that store.
+                // Not the base or another argument: the variable owns what it displaces, so an
+                // argument naming that store is a view of the variable itself (`f(c ?? d)`'s
+                // `__lift`), and keeping it there leaked the displaced record on every rebind.
+                let mut keep = vec![format!("{old}.store_nr != {name}.store_nr")];
+                if let Some(buf) = self.vars.displaced_buffer_witness(var, x, self.cx.data) {
+                    keep.push(format!("{old}.store_nr != {}.store_nr", self.var(buf)));
                 }
                 self.line(
                     ind,
