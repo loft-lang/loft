@@ -34,6 +34,12 @@
 #if defined(LOFT_POSIX_HOST) && !defined(__APPLE__)
 #define _XOPEN_SOURCE 700
 #endif
+/* Darwin's headers, asked for base POSIX, hide everything outside it — `INADDR_LOOPBACK` and
+ * `MSG_DONTWAIT` the sockets use among them; `_DARWIN_C_SOURCE` is Apple's request for the
+ * rest of its API beside POSIX. */
+#if defined(__APPLE__)
+#define _DARWIN_C_SOURCE 1
+#endif
 #endif
 #include <stdint.h>
 #include <stdio.h>

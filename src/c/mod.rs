@@ -2513,8 +2513,8 @@ fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
                  memcpy(&loft_cfp, &loft_p, sizeof loft_p); }}\n    \
                  if (!loft_cfp) loft_c_missing_symbol({sym});\n\
                  #else\n    \
-                 extern {ret_text} {}({params_text});\n    \
-                 {ret_text} (*const loft_cfp)({params_text}) = {};\n\
+                 extern {ret_text} ({})({params_text});\n    \
+                 {ret_text} (*const loft_cfp)({params_text}) = ({});\n\
                  #endif",
                 sig.symbol,
                 sig.symbol,
@@ -2523,9 +2523,12 @@ fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
             format!("loft_cfp({})", args.join(", ")),
         )
     } else {
+        // The name in parentheses: a C library may also define it as a function-like macro
+        // (macOS's fortified `<string.h>` does for `memcpy`), and a parenthesised name is
+        // never expanded, so the prototype and the call name the function itself.
         (
-            format!("    extern {ret_text} {}({params_text});", sig.symbol),
-            format!("{}({})", sig.symbol, args.join(", ")),
+            format!("    extern {ret_text} ({})({params_text});", sig.symbol),
+            format!("({})({})", sig.symbol, args.join(", ")),
         )
     };
     let mut out = format!("{decl}\n{body}");
