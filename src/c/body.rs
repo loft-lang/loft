@@ -2065,8 +2065,11 @@ impl<'a> FnWriter<'a> {
     /// is taken together.
     fn stmts(&mut self, ops: &[Value], ind: usize) -> Result<(), String> {
         let held = self.rec_ptrs.len();
+        let frames = self.headers.len();
         let r = self.stmts_in(ops, ind);
         self.rec_ptrs.truncate(held);
+        // The view headers this block bound (`@FR-R-View`) close with it.
+        self.headers.truncate(frames.min(self.headers.len()));
         r
     }
 
@@ -2097,9 +2100,68 @@ impl<'a> FnWriter<'a> {
             }
             self.stmt(&ops[i], ind)?;
             self.bind_record_ptr(ops, i, ind);
+            self.bind_view_header(ops, i, ind);
             i += 1;
         }
         Ok(())
+    }
+
+    /// `@FR-R-View` (@PLN157 § V-n, rustc's `bind_view_header`): statement `at` bound a vector
+    /// VIEW `d = &P` whose header the rest of the block may share (`hoist::view_def_header`: the
+    /// remainder writes only in place, never rebinds `d`, and indexes it) — `d` takes a header
+    /// frame for the rest of the block, so `d[i]` and `len(d)` read through it.  Where `P` is held
+    /// already (a twin's input, a loop's prelude) the header is a COPY of that holder, base and all
+    /// (`@FR-R-State`); else it is derived once here, its base valid because the remainder grows no
+    /// store.  The frame closes with the block (`stmts`).  `LOFT_NO_VIEW_HOIST=1` binds none.
+    fn bind_view_header(&mut self, ops: &[Value], at: usize, ind: usize) {
+        if self.cx.switches.view_hoist_disabled
+            || self.gen_elem.is_some()
+            || std::env::var("LOFT_NO_VECTOR_HOIST").is_ok_and(|v| v != "0")
+        {
+            return;
+        }
+        let mut cache = std::mem::take(&mut self.hoist_cache);
+        let d = crate::opt::hoist::view_def_header(
+            ops,
+            at,
+            self.cx.data,
+            self.d,
+            &mut cache,
+            !self.cx.switches.write_hoist_disabled,
+        );
+        self.hoist_cache = cache;
+        let Some(d) = d else { return };
+        let path: crate::opt::writes::PathKey = (d, Vec::new());
+        if self.held_path(&path).is_some()
+            || self.split_tabs.contains_key(&d)
+            || self.tab_alias.contains_key(&d)
+        {
+            return;
+        }
+        let Value::Set(_, rhs) = ops[at].unspan() else {
+            return;
+        };
+        let held = crate::opt::writes::vector_path(self.cx.data, rhs).and_then(|p| {
+            self.headers
+                .iter()
+                .rev()
+                .flat_map(|f| f.iter())
+                .find(|(q, _, _)| *q == p)
+                .map(|(_, h, base)| (h.clone(), *base))
+        });
+        let h = format!("h{}", self.decls.len() + 1);
+        self.decls
+            .push(format!("loft_vh {h} = {{ 0xFFFF, 0, 0, 0 }};"));
+        let base = if let Some((src, base)) = held {
+            self.line(ind, &format!("{h} = {src};"));
+            base
+        } else {
+            let var = self.var(d);
+            self.line(ind, &format!("{h} = loft_vh_of({var});"));
+            true
+        };
+        self.headers.push(vec![(path, h, base)]);
+        crate::rewrite_census::fired("R-View", 1);
     }
 
     /// `@FR-R-RecPtr`'s PARAMETER CLAUSE: a plain-record parameter is a view the caller fixed
@@ -4013,10 +4075,20 @@ impl<'a> FnWriter<'a> {
                 !matches!(o.unspan(), Value::Line(_) | Value::Set(..)) && !self.is_free(o)
             })
             .ok_or("a value block with no value")?;
-        ops[..at].iter().try_for_each(|o| self.stmt(o, ind))?;
-        self.assign(&ops[at], target, c, ind)?;
-        self.flush(ind);
-        ops[at + 1..].iter().try_for_each(|o| self.stmt(o, ind))
+        // A view the block binds before its value serves the rest of it (`@FR-R-View`), the
+        // value included; its frame closes with the block.
+        let frames = self.headers.len();
+        let r = (|| {
+            for i in 0..at {
+                self.stmt(&ops[i], ind)?;
+                self.bind_view_header(ops, i, ind);
+            }
+            self.assign(&ops[at], target, c, ind)?;
+            self.flush(ind);
+            ops[at + 1..].iter().try_for_each(|o| self.stmt(o, ind))
+        })();
+        self.headers.truncate(frames.min(self.headers.len()));
+        r
     }
 
     /// `to = from` for a value of shape `c` at two C places: a text copied, a tuple member by
