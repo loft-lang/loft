@@ -13144,8 +13144,8 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         if !missing.is_empty() {
             eprintln!(
                 "loft: this program calls {} with no implementation — its library's native code \
-                 did not load (see the note above).  Rebuild the library's native part, or stop \
-                 calling it; refusing to start rather than stop partway through.",
+                 did not load (see the note above, which says what to install or rebuild).  \
+                 Refusing to start rather than stop partway through.",
                 missing
                     .iter()
                     .map(|s| format!("`{}`", s.strip_prefix("n_").unwrap_or(s)))

@@ -24,14 +24,15 @@ use it: the interpreter loads it as it loads a Rust cdylib (the bridge ABI is on
 the Rust writer links it by its typed symbols, and the C backend now resolves each symbol on
 the first call (`library_native` in `src/c/mod.rs`, `src/c/loft_ffi_host.h`).  Guard:
 `tests/ffi_c_library.rs` (binary text both ways, integers, a boolean, a float, a vector).
-What L1 owes from it:
-- the manifest needs a `[native]` line that names no crate to mark C-ABI natives; give it a
-  name of its own (`[native] prebuilt = true` or similar);
-- the C unit names the library by its absolute path, which a program written out with `--out`
-  cannot keep: bind it at start as the Rust writer does (@PLN195);
-- the C side refuses a library native that returns a vector or record (the store's `claim`
-  callbacks are wired, the answer conversion is not);
-- the "did not load" refusals still tell the user to rebuild with `cargo`.
+Its follow-ups, done: a program written out with `--out` binds the library by loft's search
+order, beside it, rather than by the path it was built at (`loft_cboundlibs`,
+`loft_ffi_sym`); a vector or record answer converts on all three backends (a record answer
+read as garbage on the two that took it, loft#2224); `loft_ffi.h` carries the store number
+and the answer builders the Rust crate has (`loft_ffi_store_nr`, `loft_ffi_alloc_record`,
+`loft_ffi_vector_from_bytes`); and a missing or stale prebuilt library is refused naming it,
+with no `cargo` advice (`native_build::unbuildable_native_reason`).  Guards in
+`tests/ffi_c_library.rs`.  Still open: the manifest's `[native]` line that names no crate to
+mark C-ABI natives wants a name of its own (`[native] prebuilt = true` or similar).
 
 **L1.1 — the component loader.**  `[native] component = "<name>"` names a library loft ships
 (`src/components.rs`: `LOFT_COMPONENTS`, `<binary>/../lib/loft/components/`,
@@ -40,9 +41,7 @@ the manifest reads it as the native library `loft_<name>` with the C-ABI link, s
 backends resolve it through `native_build::prebuilt_native_lib` as they resolve a package's own
 `prebuilt/<triple>/`, and a missing one is never built — each backend refuses naming the
 component and where it looked.  Guard: `tests/ffi_c_library.rs`
-(`a_component_answers_on_every_backend`, `a_missing_component_is_refused_by_name`).  Still owed
-from L0a: the C unit binding by search order, the cargo advice in the refusals of a package's
-own library.
+(`a_component_answers_on_every_backend`, `a_missing_component_is_refused_by_name`).
 
 **L1.2 — `libloft_net`.**  `src/c/components/net.c` over the runtime's `loft_web.h`,
 `loft_https.h` and the TLS archive, built by the `loft-components` tool (`src/c/component.rs`;

@@ -4341,6 +4341,10 @@ static void loft_arm_timeout(void) {
 #if defined(__APPLE__)
 extern int _NSGetExecutablePath(char *buf, uint32_t *size);
 #endif
+/* The handle each row of `loft_cbl` was opened as (null for a row not opened): where a library's
+ * native part finds its symbols in a shipped program (`loft_ffi_sym`). */
+static void *loft_cbl_row_handle[64];
+
 /* `native_bind::search_dirs`: LOFT_LIB_PATH's directories, the executable's, the user's
  * `.loft/lib` (LOFT_HOME, else HOME) and the system root.  The first two may hold a library
  * flat; every one may hold it in a `<package>-<version>/` directory. */
@@ -4455,6 +4459,7 @@ static void loft_c_bind_libraries(void) {
         }
         if (!h) loft_c_missing_library(l, dirs, nd, refused);
         if (loft_ncbl_handles < 64) loft_cbl_handles[loft_ncbl_handles++] = h;
+        if (i < 64) loft_cbl_row_handle[i] = h;
     }
 }
 #endif

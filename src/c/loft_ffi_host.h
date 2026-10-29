@@ -6,27 +6,35 @@
  * into this runtime's allocator.  Pasted into a unit that calls such a native (`LOFT_FFI`);
  * POSIX hosts (Windows is @PLN203 C8's). */
 
+/* The handle's context is the store's NUMBER, as the interpreter's host sets it
+ * (`extensions::make_loft_store`): a library names the store of a heap answer by it
+ * (`loft_ffi_store_nr`), and the store table may move while the call runs. */
+static loft_store_t *loft_ffi_ctx_store(loft_ffi_store_ctx c) {
+    return &loft_stores[(uint16_t) (uintptr_t) c.opaque];
+}
+
 static uint32_t loft_ffi_claim(loft_ffi_store_ctx c, uint32_t words) {
-    return loft_claim((loft_store_t *) c.opaque, words);
+    return loft_claim(loft_ffi_ctx_store(c), words);
 }
 
 static void loft_ffi_reload(loft_ffi_store_ctx c, uint8_t **ptr, uint32_t *size) {
-    loft_store_t *s = (loft_store_t *) c.opaque;
+    loft_store_t *s = loft_ffi_ctx_store(c);
     *ptr = s->buf;
     *size = s->size;
 }
 
 static uint32_t loft_ffi_resize(loft_ffi_store_ctx c, uint32_t rec, uint32_t words) {
-    return loft_st_resize((loft_store_t *) c.opaque, rec, words);
+    return loft_st_resize(loft_ffi_ctx_store(c), rec, words);
 }
 
-/* The store `s` as the library sees it.  A library that hands bytes over to be adopted
+/* Store `nr` as the library sees it.  A library that hands bytes over to be adopted
  * (`foreign_fn`) is not carried yet: the field is null, as on a host that predates it. */
-static loft_ffi_store loft_ffi_store_of(loft_store_t *s) {
+static loft_ffi_store loft_ffi_store_of(uint16_t nr) {
+    loft_store_t *s = &loft_stores[nr];
     loft_ffi_store f;
     f.ptr = s->buf;
     f.size = s->size;
-    f.ctx.opaque = s;
+    f.ctx.opaque = (void *) (uintptr_t) nr;
     f.claim_fn = loft_ffi_claim;
     f.reload_fn = loft_ffi_reload;
     f.resize_fn = loft_ffi_resize;
@@ -34,11 +42,41 @@ static loft_ffi_store loft_ffi_store_of(loft_store_t *s) {
     return f;
 }
 
-/* Symbol `sym` of the library at `path`, opened once; a library or symbol that is not there
- * halts the program naming both, as the interpreter refuses a native whose library did not
- * load. */
-static void *loft_ffi_sym(const char *path, const char *sym) {
+/* A heap answer as loft holds it (`codegen_runtime::from_loft_ref` / `from_loft_record`): a
+ * vector behind a one-word header whose slot at +4 names its data record, a record as it is. */
+static loft_ref loft_ffi_vector_answer(loft_ffi_ref r) {
+    if (r.rec == 0 && r.pos == 0) return loft_ref_null();
+    loft_store_t *s = &loft_stores[r.store_nr];
+    uint32_t h = loft_claim(s, 1);
+    loft_set_u32(s, h, 4, r.rec);
+    loft_ref v = { r.store_nr, h, 4 };
+    return v;
+}
+
+static loft_ref loft_ffi_record_answer(loft_ffi_ref r) {
+    loft_ref v = { r.store_nr, r.rec, r.pos };
+    return v;
+}
+
+/* Symbol `sym` of a library's native part, resolved once per call site: in a shipped program
+ * (`LOFT_BIND_LIBS`) the library named `file` it opened at start by search order
+ * (`loft_c_bind_libraries`), else the library at `path`, where this build found it.  A library or
+ * symbol that is not there halts the program naming both, as the interpreter refuses a native
+ * whose library did not load. */
+static void *loft_ffi_sym(const char *path, const char *file, const char *sym) {
 #if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_BIND_LIBS)
+    for (uint32_t i = 0; i < loft_ncbl && i < 64; i++) {
+        if (!loft_cbl_row_handle[i] || strcmp(loft_cbl[i].file, file) != 0) continue;
+        void *p = dlsym(loft_cbl_row_handle[i], sym);
+        if (p) return p;
+        char m[1024];
+        snprintf(m, sizeof m, "native function %s is not available: the library does not export it", sym);
+        loft_panic(loft_lit(m, strlen(m)), loft_lit(file, strlen(file)), 0);
+        return 0;
+    }
+#endif
+    (void) file;
     void *h = dlopen(path, RTLD_NOW | RTLD_LOCAL);
     void *p = h ? dlsym(h, sym) : 0;
     if (p) return p;
@@ -48,6 +86,7 @@ static void *loft_ffi_sym(const char *path, const char *sym) {
     loft_panic(loft_lit(m, strlen(m)), loft_lit(path, strlen(path)), 0);
     return 0;
 #else
+    (void) file;
     char m[512];
     snprintf(m, sizeof m, "native function %s: this host cannot open a library's native part (%s)", sym, path);
     loft_panic(loft_lit(m, strlen(m)), loft_lit("", 0), 0);
