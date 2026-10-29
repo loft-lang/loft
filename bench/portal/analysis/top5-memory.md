@@ -188,3 +188,30 @@ All threads summed, `--n 40`, on the cores `stats.py` gives the bench:
    in the shared allocator rule on every backend at once.
 6. **`par`'s NaN test and vectorisation** — not memory-model work; it is the loop shape gcc and
    clang refuse to vectorise.
+
+## Built (2026-10-29, branch `laptop-c-perf`)
+
+| change | where | effect (instructions, same hashes) |
+|---|---|---|
+| `@FR-R-Header` growth half: a vector this frame owns alone keeps its header where the loop grows it, derived again after each growth statement | `opt::apart::grown_headers`, `FnWriter::refresh_grown_header` | bench 20's run loop holds `stack`, `f_def`, `f_pc`, `f_base`; alone it roughly breaks even (gcc −0.7 %, clang +2.3 %), because each `put` still resolves the store three times inside and the refresh follows it |
+| the kept-twin clause: a callee handed such a vector takes the header by pointer (`__kh`) and keeps it current | `opt::apart::kept_growth_param`, `KH_BIT` | bench 20 −27.5 % gcc, −17.6 % clang; `put`'s common path reads `(*khp).len` and writes through `(*khp)` |
+| JSON: a number into a numeric field read straight into its slot; the found-fields array on the stack; the field search starts after the last match | `loft_pr_into`, `loft_pr_struct` | `map_json` −10 % gcc, −15 to −18 % clang (time) |
+| `loft_vec_append`'s room-left case and `loft_vec_clear_release`'s empty case inline | `loft_rt.h` | `grouped_fill_find` −9 % gcc (time); bench 20 +3.5 % instructions under gcc — kept for the time gains, to be re-read on a quiet box |
+
+**Tried and dropped:** a record view's address taken from a held header's base
+(`h.base + pos − 8` behind a run-time record and store test, in place of `loft_rec_ptr`).
+The hand edit priced it at −16 % on `interp_fib` under clang; the general form added 37 % to
+`slope_path_with_undo`'s instructions under clang (the test per chunk-walk iteration) and gained
+nothing on bench 20 once the kept twin was built.
+
+**Not built, each a decision or a larger unit:**
+- the allocator's bump path while the free tree holds blocks (−8 % on `grouped_fill_find`):
+  it changes which block a claim takes, so it is a change to `formal/allocator.md`'s rules on
+  every backend, not a C-lane tweak;
+- `slope_path_with_undo`'s `%` null test: the ship lane keeps a literal division's null
+  semantics by rule (`LOFT_RELEASE_PASS_PROBE`), so removing it needs either a proof that the
+  operand is not null across calls (an interprocedural non-null parameter) or a change to that
+  rule;
+- `grouped_fill_find`'s typed insert (the table header read once per loop, as
+  `@FR-R-TypedKeyed` does for lookups) and the group's per-element record and id vector — store
+  format work.
