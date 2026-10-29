@@ -7,7 +7,7 @@
 use super::backings::{
     bind_backing_of, construction_work_refs, delivered_work_ref, member_backing,
 };
-use super::buffers::tail_calls;
+use super::buffers::{coalesce_tail_calls, tail_calls};
 use super::capture_builds::adopted_work_refs;
 use super::disturbance::{disturbance_via, report_materialised_view};
 use super::drops::drop_hook;
@@ -992,13 +992,24 @@ impl Scopes<'_> {
         // handed makes no difference here: a branch binds the arm's `DbRef` as it is, with
         // none of the copy a direct call's set lowering interposes, so `v` aliases the
         // buffer either way.
+        // loft#2219 — and the block a diverging `??` lowers to (`x = f() ?? return`, `break`,
+        // `continue`) delivers its call's answer the same way: `v` adopts the temp the call
+        // was bound to, so a loop-body `v` freed every pass released the buffer's store.  Only
+        // the inner-scope pairing applies to it: the block's diverging exit runs before `v` is
+        // bound, so the buffer's own free there cannot be guarded by `v`.
+        let branch = matches!(unspanned_value, Value::If(_, _, _));
+        let arm_calls = if branch {
+            tail_calls(unspanned_value)
+        } else {
+            coalesce_tail_calls(unspanned_value)
+        };
         if record_shaped
             && !publishes_through_ref
             && crate::keys::join_buffer_witness_enabled()
-            && matches!(unspanned_value, Value::If(_, _, _))
+            && !arm_calls.is_empty()
         {
             let v_scope = self.var_scope.get(&v).copied().unwrap_or(u16::MAX);
-            for call in tail_calls(unspanned_value) {
+            for call in arm_calls {
                 let Value::Call(fn_nr, args) = call else {
                     continue;
                 };
@@ -1017,7 +1028,9 @@ impl Scopes<'_> {
                     }
                     let av_scope = self.var_scope.get(av).copied().unwrap_or(u16::MAX);
                     if v_scope <= av_scope && v_scope != u16::MAX {
-                        self.paired_witness.entry(*av).or_insert(v);
+                        if branch {
+                            self.paired_witness.entry(*av).or_insert(v);
+                        }
                     } else if v_scope != u16::MAX && av_scope != u16::MAX && v_scope > av_scope {
                         let buffers = self.witness_buffer.entry(v).or_default();
                         if !buffers.contains(av) {
