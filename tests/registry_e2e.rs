@@ -1585,6 +1585,14 @@ fn a_released_library_artifact_runs_compiled_without_rustc() {
             .env("PATH", "/usr/bin:/bin")
             .env("HOME", &home)
             .env("LOFT_HOME", &home)
+            // The empty HOME is what leaves rustup without a toolchain, so nothing may
+            // point it elsewhere: `cargo test` run through the rustup proxy hands its
+            // children RUSTUP_HOME / RUSTUP_TOOLCHAIN, and a rustup that installs a
+            // toolchain on first use (1.29) downloaded the whole stable one into the empty
+            // HOME — either way the control compiled and "no Rust toolchain" did not hold.
+            .env_remove("RUSTUP_HOME")
+            .env_remove("RUSTUP_TOOLCHAIN")
+            .env("RUSTUP_AUTO_INSTALL", "0")
             .env("LOFT_NO_CACHE", "1")
             .env("LOFT_TRACE_NATIVE_GATE", "1")
             .output()
