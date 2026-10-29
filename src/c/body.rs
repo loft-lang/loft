@@ -1541,6 +1541,44 @@ impl<'a> FnWriter<'a> {
         Ok(true)
     }
 
+    /// `@FR-R-PushFill`'s HASH CLAUSE, as native's `hash_reserve`: a counted loop inserting
+    /// records into one hash local (`hoist::hash_fill_loop`) reserves its table for
+    /// `len(h) + inserts × trip count` before it runs, so the fill never rehashes on the way.
+    /// A reservation is capacity only: length, entries and order are the plain fill's.  An
+    /// absent hash, a count that does not fit and an empty range reserve nothing.
+    /// `LOFT_NO_PUSH_FILL=1` / `LOFT_NO_HASH_RESERVE=1` reserve nothing, as on native.
+    fn hash_reserve(&mut self, lp: &Block, ind: usize) -> Result<(), String> {
+        let env_on = |k: &str| std::env::var(k).is_ok_and(|v| v != "0");
+        if self.gen_elem.is_some() || env_on("LOFT_NO_PUSH_FILL") || env_on("LOFT_NO_HASH_RESERVE")
+        {
+            return Ok(());
+        }
+        let Ok((hf, hi)) = crate::opt::hoist::hash_fill_loop(lp, self.cx.data, self.cx.stores)
+        else {
+            return Ok(());
+        };
+        let hi = as_int(self.expr(hi, ind)?)?;
+        let lo = match hf.next {
+            Some(nx) => self.var(nx),
+            None => format!("loft_add({}, INT64_C(1))", self.var(hf.index)),
+        };
+        let incl = u8::from(hf.inclusive);
+        let h = self.var(hf.hash);
+        // The table row the reservation reads (its keys and element stride).
+        self.cx.name_types();
+        self.cx.describe_type(hf.tp);
+        self.flush(ind);
+        self.line(
+            ind,
+            &format!(
+                "{{ int64_t pn = loft_add(loft_sub({hi}, {lo}), INT64_C({incl})); if (pn > 0 && pn != LOFT_NULL && {h}.store_nr != 0xFFFF && {h}.rec != 0) loft_hash_reserve(loft_types, {}, {h}, loft_add(loft_hash_len({h}), loft_mul(pn, INT64_C({})))); }}",
+                hf.tp, hf.per_pass
+            ),
+        );
+        crate::rewrite_census::fired("R-PushFill/hash", 1);
+        Ok(())
+    }
+
     /// `@FR-R-PushFill`'s DEEP window clause, as native's `deep_window`: a loop whose scalar
     /// pushes, at any depth, reach ONE path no enclosing window holds, where
     /// `hoist::deep_window_ok` admits it — the root exclusive, nothing else in the body naming
@@ -2743,6 +2781,9 @@ impl<'a> FnWriter<'a> {
         self.hold_invariants(b, ind);
         let mints = self.hold_vectors(b, ind)?;
         let window = self.open_window(b, ind)?;
+        if !window {
+            self.hash_reserve(b, ind)?;
+        }
         self.hold_pushes(b, mints, ind)?;
         match self.chain_guard(b, ind)? {
             Some((guard, admitted, true)) => {
