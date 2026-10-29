@@ -76,6 +76,7 @@ import argparse
 import os
 import platform
 import re
+import shlex
 import shutil
 import statistics
 import subprocess
@@ -329,10 +330,36 @@ def build_package(pkg_dir, lanes, loft, ref_flags, times, reserve_gb):
         cmds["rust"] = [exe]
     if "interp" in lanes:
         cmds["interp"] = [loft, "--interpret", "bench/bench.loft"]
-    for lane in C_LANES:
-        if lane in lanes:
-            C_SKIPS.append((os.path.basename(pkg_dir.rstrip("/")), lane,
-                            "a library bench: its native bridges have no C build"))
+    # The C99 backend's lanes for a library's bench: emitted from the package, so its manifest
+    # resolves the libraries; a library's native part is a `[c] shim` the unit names in its
+    # `/* link: */` lines, or a loft-ffi library the unit opens itself (`-ldl`).
+    name = os.path.basename(pkg_dir.rstrip("/"))
+    for lane, env in (("c", None), ("cship", SHIP_ENV)):
+        if lane not in lanes:
+            continue
+        out = os.path.join(bench_dir, ".build")
+        os.makedirs(out, exist_ok=True)
+        csrc = os.path.join(out, f"stats_{lane}.c")
+        exe = os.path.join(out, f"stats_{lane}")
+        try:
+            run_checked([loft, "--emit-c", csrc, "bench/bench.loft"],
+                        f"{pkg_dir}: loft --emit-c ({lane})", times, f"{lane}-emit", reserve_gb,
+                        cwd=pkg_dir, **({"env": env} if env else {}))
+            with open(csrc, errors="replace") as f:
+                links = [arg for line in re.findall(r"/\* link: (.*?) \*/", f.read())
+                         for arg in shlex.split(line)]
+            run_checked([*C_CMD, "-o", exe, csrc, *links, "-lm", "-ldl", "-pthread"],
+                        f"{pkg_dir}: {C_CMD[0]} ({lane} lane)", times, f"{lane}-cc", reserve_gb)
+            cmds[lane] = [exe]
+        except BuildFailed as e:
+            lines = [l.strip() for l in str(e).splitlines() if l.strip()]
+            why = next((l for l in lines if "does not carry" in l), None) \
+                or next((l for l in lines if "error:" in l), None) \
+                or (lines[-1] if lines else str(e))
+            C_SKIPS.append((name, lane, why))
+        finally:
+            if os.path.exists(csrc):
+                os.remove(csrc)
     return cmds
 
 
