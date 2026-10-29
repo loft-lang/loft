@@ -214,6 +214,32 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit $status
 
+      # The same suite through the C backend (@PLN203), gated like the native step.  A package
+      # whose native part is a Rust crate (`[native]` in its manifest) cannot run there — a C
+      # build loads no Rust crate — so it is reported, not failed.
+      - name: Native C — ${{ matrix.package }}
+        working-directory: ${{ matrix.package }}
+        env:
+          LOFT_DENY_WARNINGS: ${{ hashFiles(format('{0}/.allow_warnings', matrix.package)) != '' && '0' || '1' }}
+          LOFT_STORE_GUARD: 1
+        run: |
+          set -o pipefail
+          if grep -q '^\[native\]' loft.toml; then
+            echo "::notice title=${{ matrix.package }} C backend::not run — its native part is a Rust crate, which a C build does not load"
+            exit 0
+          fi
+          LOFT_TIMEOUT=240 loft --native-c --tests tests 2>&1 | tee "$RUNNER_TEMP/native-c.log" && exit 0
+          status=$?
+          {
+            echo "### ❌ \`${{ matrix.package }}\` — C backend"
+            echo
+            echo '```'
+            grep -E '^[[:space:]]*(FAIL|Warning\[|error)' "$RUNNER_TEMP/native-c.log" | head -40 \
+              || echo "(no FAIL/Warning line — see the job log)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
       # ── The guide, which is a program ──────────────────────────────────────
       #
       # `docs/*.loft` is the package's getting-started guide (LIBRARY_AUTHORING § 2c):
