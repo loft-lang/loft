@@ -2239,6 +2239,7 @@ pub fn emit_browser_program(data: &Data, stores: &Stores) -> Result<String, Refu
     }
     let main = program_main(data, main)?;
     let mut out = emit_unit_for(data, stores, &[main], true)?;
+    out.push_str(ASYNCIFY_REGION);
     let _ = write!(
         out,
         "\nextern void __wasm_call_ctors(void);\n\
@@ -2252,6 +2253,30 @@ pub fn emit_browser_program(data: &Data, stores: &Stores) -> Result<String, Refu
     );
     Ok(out)
 }
+
+/// loft#950 — the asyncify save region a page's module owns, as the Rust writer's
+/// (`emit_asyncify_region`): the 8-byte control struct asyncify takes, the save area after it,
+/// and a canary after that, so an overflow is reported (`loft_asyncify_ok`) instead of
+/// overwriting the next static.  The page's controller (`doc/loft-asyncify.js`) reads where it
+/// is and how large; it never picks an address itself.
+const ASYNCIFY_REGION: &str = r#"
+#define LOFT_ASYNCIFY_SAVE 16384
+static struct __attribute__((aligned(16))) {
+    uint8_t ctrl[8];
+    uint8_t save[LOFT_ASYNCIFY_SAVE];
+    uint8_t canary[8];
+} loft_asyncify_region = { { 0 }, { 0 }, { 0x4c, 0x4f, 0x46, 0x54, 0x39, 0x35, 0x30, 0x21 } };
+__attribute__((export_name("loft_asyncify_data"))) uint32_t loft_asyncify_data(void) {
+    return (uint32_t) (uintptr_t) &loft_asyncify_region;
+}
+__attribute__((export_name("loft_asyncify_size"))) uint32_t loft_asyncify_size(void) {
+    return LOFT_ASYNCIFY_SAVE;
+}
+__attribute__((export_name("loft_asyncify_ok"))) int32_t loft_asyncify_ok(void) {
+    static const uint8_t canary[8] = { 0x4c, 0x4f, 0x46, 0x54, 0x39, 0x35, 0x30, 0x21 };
+    return memcmp(loft_asyncify_region.canary, canary, 8) == 0;
+}
+"#;
 
 /// The statement a generated `main` starts with: the directory a relative path resolves against
 /// (the program's own, as the interpreter's `Stores::resolve_path` anchors it) and whether

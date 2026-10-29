@@ -125,7 +125,10 @@ The browser half, one contract with the Rust writer's page rather than a page of
 4. `--native-c --html` uses the one page builder (fonts, `[[embed]]`, library host JS, the
    import stubs), with `doc/loft-wasi.js` answering the WASI libc — files through the page
    filesystem still to come;
-5. acceptance: the `html_*` node cells on both writers, then Brick Buster.
+5. acceptance: the `html_*` node cells on both writers, then Brick Buster — its C page passes
+   the render gate (the title screen drawn from the embedded pack, 782 colours), which needed
+   one more piece of the contract: the module reserves its own asyncify save region and
+   exports where it is (loft#950's `loft_asyncify_data` / `_size` / `_ok`).
 
 **C7 — performance.**  `scripts/native_ratio.sh` and `bench/stats.py` gain a C lane
 (`--emit-c` + `cc -O3 -DLOFT_SHIP_PROBE` once the ledger exists), the perf portal a column;

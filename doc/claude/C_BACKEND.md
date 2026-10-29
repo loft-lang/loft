@@ -107,14 +107,19 @@ Rust writer declares — one contract, `src/host_imports.rs`, both writers read
 (`c::browser_import_native`); one with no import, a text or heap answer, is refused at build as
 the Rust writer refuses it.  The program starts from the exported `loft_start`
 (`c::emit_browser_program`), which runs the libc's constructors once and flushes what it
-printed, since a page never calls WASI's `_start`.  And a unit that binds no lazy collection is
+printed, since a page never calls WASI's `_start`; beside it the unit reserves its own asyncify
+save region and exports where it is (`loft_asyncify_data` / `_size` / `_ok`, loft#950), as the
+Rust writer's does — the page's controller never picks an address.  And a unit that binds no lazy collection is
 built without setjmp (`LOFT_NO_JUMPS`, `LOFT_JMP_BUF`/`LOFT_LONGJMP` in `loft_rt.h`), so without
 wasm's exception handling, which asyncify cannot carry.  The page answers the WASI libc with
 `doc/loft-wasi.js` — output into the page, clocks, randomness, and files over the page
 filesystem preopened as `/` — which `tools/wasm_repro.mjs` loads too.  Guards:
 `html_wasm::the_c_page_answers_what_the_rust_page_answers`,
 `html_gl_imports::the_c_page_imports_the_vector_argument_host_import`,
-`c_emit::native_c_html_page_runs_its_program`.
+`c_emit::native_c_html_page_runs_its_program`, and Brick Buster's C page under the browser
+render gate (`html_render::brick_buster_c_page_renders_without_console_errors`, nightly in the
+`gallery` job after `make game` draws the pack).  CI installs clang, lld, wasi-libc and the
+wasm32 compiler-rt for these; without them each skips.
 `differ`, `cc-error`, `sanitizer` and `slow` are defects of the backend and must stay at 0; a change
 that grows `match` is measured by the sweep, by `--asan` and by `--poison` before it is
 committed.  A sanitizer cannot see inside a store — a store is one allocation — so a read of a

@@ -371,7 +371,8 @@ function decodePngRgb(pngBuf) {
   // Everything AFTER this point keeps its failure codes: once the browser answers, a bad
   // page is a real result and must stay red.
   try {
-    await waitFor(() => getJson('/json/version'));
+    // A snap-packaged chromium takes seconds to come up cold (7 s measured): give it 30.
+    await waitFor(() => getJson('/json/version'), 300);
   } catch (e) {
     console.error('SKIP: chrome is installed but never answered its debugging port ('
       + e.message + ')');
