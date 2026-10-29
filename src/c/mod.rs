@@ -2887,6 +2887,7 @@ fn ffi_args(cx: &Cx, d: u32) -> Result<FfiArgs, String> {
         args: ffi_args,
         prep,
         store_arg,
+        heap,
     })
 }
 
