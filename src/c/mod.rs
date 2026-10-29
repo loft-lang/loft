@@ -1635,9 +1635,13 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
          loft_cl = loft_clibs;\n    loft_ncl = loft_nclibs;\n    loft_cls = loft_clibsyms;\n    \
          loft_col = loft_coptlibs;\n    loft_ncol = loft_ncoptlibs;\n    \
          loft_cbl = loft_cboundlibs;\n    loft_ncbl = loft_ncboundlibs;\n    \
-         loft_fault_logger = loft_log_production_fault;\n    \
-         loft_T = loft_types;\n    loft_T_n = loft_ntypes;\n",
+         loft_fault_logger = loft_log_production_fault;\n",
     );
+    // The type table, for what a store's free walks (`@FR-H-Handle`): a unit that describes no
+    // type declares none, and the runtime's pointer stays null.
+    if out.contains("static const uint32_t loft_ntypes =") {
+        bind.push_str("    loft_T = loft_types;\n    loft_T_n = loft_ntypes;\n");
+    }
     if cx.lazy.get() {
         out.push_str(&lazy_driver_table(&cx, drivers)?);
         bind.push_str(
