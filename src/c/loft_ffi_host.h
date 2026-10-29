@@ -58,6 +58,33 @@ static loft_ref loft_ffi_record_answer(loft_ffi_ref r) {
     return v;
 }
 
+#if defined(LOFT_POSIX_HOST)
+/* One `loft_register_v1` entry checked against the name `loft_ffi_sym` asks for. */
+typedef struct { const char *want; size_t len; const void *found; } loft_ffi_reg_q;
+static void loft_ffi_reg_find(const uint8_t *name, size_t len, const void *fn, void *ctx) {
+    loft_ffi_reg_q *q = (loft_ffi_reg_q *) ctx;
+    if (!q->found && len == q->len && memcmp(name, q->want, len) == 0) q->found = fn;
+}
+
+/* The function an open library implements native `sym` with: the entry its `loft_register_v1`
+ * table registers under that name — which may be another symbol (`loft_save_png =>
+ * n_save_png`, the store-aware variant the interpreter calls too) — else the symbol of that
+ * name. */
+static void *loft_ffi_lookup(void *h, const char *sym) {
+    void *p = 0;
+    typedef void (*loft_ffi_reg_fn)(void (*)(const uint8_t *, size_t, const void *, void *), void *);
+    loft_ffi_reg_fn reg;
+    void *r = dlsym(h, "loft_register_v1");
+    memcpy(&reg, &r, sizeof reg);
+    if (r) {
+        loft_ffi_reg_q q = { sym, strlen(sym), 0 };
+        reg(loft_ffi_reg_find, &q);
+        memcpy(&p, &q.found, sizeof p);
+    }
+    return p ? p : dlsym(h, sym);
+}
+#endif
+
 /* Symbol `sym` of a library's native part, resolved once per call site: in a shipped program
  * (`LOFT_BIND_LIBS`) the library named `file` it opened at start by search order
  * (`loft_c_bind_libraries`), else the library at `path`, where this build found it.  A library or
@@ -68,7 +95,7 @@ static void *loft_ffi_sym(const char *path, const char *file, const char *sym) {
 #if defined(LOFT_BIND_LIBS)
     for (uint32_t i = 0; i < loft_ncbl && i < 64; i++) {
         if (!loft_cbl_row_handle[i] || strcmp(loft_cbl[i].file, file) != 0) continue;
-        void *p = dlsym(loft_cbl_row_handle[i], sym);
+        void *p = loft_ffi_lookup(loft_cbl_row_handle[i], sym);
         if (p) return p;
         char m[1024];
         snprintf(m, sizeof m, "native function %s is not available: the library does not export it", sym);
@@ -78,7 +105,7 @@ static void *loft_ffi_sym(const char *path, const char *file, const char *sym) {
 #endif
     (void) file;
     void *h = dlopen(path, RTLD_NOW | RTLD_LOCAL);
-    void *p = h ? dlsym(h, sym) : 0;
+    void *p = h ? loft_ffi_lookup(h, sym) : 0;
     if (p) return p;
     char m[1024];
     snprintf(m, sizeof m, "native function %s is not available: %s", sym,

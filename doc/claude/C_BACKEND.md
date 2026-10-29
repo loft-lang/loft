@@ -543,7 +543,9 @@ native part is a `[c] shim`, a prebuilt C library or a component.  A C build the
 builds a Rust cdylib (`native_build::c_target`, set for `--emit-c` and an explicit
 `--native-c`; guard `a_c_build_builds_no_rust_native_crate`).  A default run that the C
 backend refuses falls back to the interpreter, which loads them, so `LOFT_NATIVE_BACKEND=c`
-alone does not set it.
+alone does not set it.  A prebuilt library is asked for a native through its
+`loft_register_v1` table first, which may name another symbol (`loft_save_png => n_save_png`),
+then by the native's own name (`loft_ffi_lookup`).
 
 **The libraries inside loft's binary.**  A `#native` of an `in_binary` library (`[native]
 in_binary = true`: its natives live in loft's own binary, `native::FUNCTIONS`) is a call into

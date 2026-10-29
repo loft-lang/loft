@@ -2934,14 +2934,6 @@ fn library_native(
     cx.ffi_libs
         .borrow_mut()
         .insert((pkg_dir.to_string(), lib.to_string()));
-    let fp = format!(
-        "{ffi_ret} (*)({})",
-        if ffi_params.is_empty() {
-            "void".to_string()
-        } else {
-            ffi_params.join(", ")
-        }
-    );
     let sig = format!(
         "static {} {}({})",
         held(ret),
@@ -2963,10 +2955,12 @@ fn library_native(
         }
     );
     // The build's own path for a run in place; a shipped program finds the file by name among
-    // the libraries it opened at start (`loft_c_bind_libraries`).
+    // the libraries it opened at start (`loft_c_bind_libraries`).  ISO C has no conversion from
+    // an object pointer to a function pointer, so the symbol is copied into `fp` (strict C99
+    // refuses the cast; every host's ABI makes the bytes the same).
     let _ = writeln!(
         body,
-        "    if (!fp) fp = ({fp}) loft_ffi_sym({}, {}, {});",
+        "    if (!fp) {{ void *s_ = loft_ffi_sym({}, {}, {}); memcpy(&fp, &s_, sizeof fp); }}",
         body::c_string(lib),
         body::c_string(&crate::file_access::file_name(lib).unwrap_or_default()),
         body::c_string(def.native())
