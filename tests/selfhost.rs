@@ -168,8 +168,7 @@ fn c_type_table(c: &str) -> String {
         std::collections::HashMap::new();
     let mut variants: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
-    let mut keys: std::collections::HashMap<String, Vec<String>> =
-        std::collections::HashMap::new();
+    let mut keys: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
     let mut rows = Vec::new();
     for line in c.lines() {
         if let Some(rest) = line.strip_prefix("static const loft_key ")
