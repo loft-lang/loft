@@ -2691,6 +2691,21 @@ LOFT_HOT_INLINE void loft_ph_finish(loft_ph *h) {
     memcpy(loft_at(&loft_stores[h->v.store_nr], h->rec, 4), &h->len, 4);
 }
 
+/* `@FR-R-Push`: a scalar push through a held push header — the slot past the length while it
+ * fits (one bounds test), the element's encoded bytes, the length bump written to the header and
+ * the record; a growth is the runtime's own append and a fresh header (`loft_ph_grow`).  An
+ * absent or refused slot writes nothing, as the plain push. */
+#define LOFT_PH_PUT(W, T)                                                                   \
+    LOFT_HOT_INLINE void loft_ph_put##W(loft_ph *h, T bits) {                               \
+        loft_ref e = loft_ph_new(h, W);                                                     \
+        if (LOFT_UNLIKELY(e.rec == 0)) return;                                              \
+        memcpy(loft_at(&loft_stores[e.store_nr], e.rec, e.pos), &bits, W);                  \
+        loft_ph_finish(h);                                                                  \
+    }
+LOFT_PH_PUT(8, uint64_t)
+LOFT_PH_PUT(4, uint32_t)
+LOFT_PH_PUT(1, uint8_t)
+
 /* `LOFT_VERIFY`'s proof for a push header: a fresh derivation answers its record, length and room. */
 static int loft_ph_same(loft_ph h, uint32_t size) {
     loft_ph f = loft_ph_of(h.v, size);

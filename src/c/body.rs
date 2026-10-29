@@ -83,6 +83,13 @@ struct E {
     kind: K,
 }
 
+/// What a loop's verdict hands its push headers: the minted record paths and the scalar pushed
+/// paths, each with the vector operand the prelude evaluates.
+type Pushed = (
+    Vec<(crate::opt::writes::PathKey, Value)>,
+    Vec<(crate::opt::writes::PathKey, Value)>,
+);
+
 impl E {
     fn new(code: impl Into<String>, kind: K) -> E {
         E {
@@ -960,18 +967,17 @@ impl<'a> FnWriter<'a> {
     /// (`@FR-R-Base`'s growth clause, `StoreFacts`), and derives the others' base again at
     /// each access (`loft_vh_fresh`).  `LOFT_NO_VECTOR_HOIST=1` holds none; the tier switches
     /// are native's (`lower::switches`).
-    /// Answers the minted paths the verdict gives a record push header (`mint_pushes`), for
+    /// Answers the minted paths the verdict gives a record push header (`mint_pushes`) and the
+    /// scalar pushed paths it gives a push header (`pushes`, `@FR-R-Push`), for
     /// [`Self::hold_pushes`] once the loop's window is chosen.
-    fn hold_vectors(
-        &mut self,
-        b: &Block,
-        ind: usize,
-    ) -> Result<Vec<(crate::opt::writes::PathKey, Value)>, String> {
+    fn hold_vectors(&mut self, b: &Block, ind: usize) -> Result<Pushed, String> {
         let mut frame = Vec::new();
         let mut mints = Vec::new();
+        let mut pushes = Vec::new();
         let mut held_scalars = Vec::new();
         if let Some(verdict) = self.verdict(b) {
             mints.clone_from(&verdict.mint_pushes);
+            pushes.clone_from(&verdict.pushes);
             for (key, getter) in &verdict.scalars {
                 // A direct read the loop spells `getter(Var(v), fld)` is what this serves; a
                 // path scalar of a callee's input shares its key and its bytes.
@@ -1042,7 +1048,7 @@ impl<'a> FnWriter<'a> {
         }
         self.headers.push(frame);
         self.scalars.push(held_scalars);
-        Ok(mints)
+        Ok((mints, pushes))
     }
 
     /// `@FR-R-Invariant` (@PLN157 § V-ao, rustc's `begin_vector_hoist`): each invariant integer
@@ -1140,10 +1146,28 @@ impl<'a> FnWriter<'a> {
     fn hold_pushes(
         &mut self,
         b: &Block,
-        mints: Vec<(crate::opt::writes::PathKey, Value)>,
+        (mints, pushes): Pushed,
         ind: usize,
     ) -> Result<(), String> {
         let mut frame = Vec::new();
+        // `@FR-R-Push`: a scalar pushed path the verdict admits (never also one of its held
+        // vectors) keeps a push header the push itself keeps current; its size is its pushes'.
+        for (path, expr) in pushes {
+            if self.windows.iter().any(|(p, _, _, _)| *p == path) || self.push_head(&path).is_some()
+            {
+                continue;
+            }
+            let Some(size) = self.push_size(b, &path) else {
+                continue;
+            };
+            let e = self.nested(|w| w.expr(&expr, ind))?;
+            let h = format!("ph{}", self.decls.len() + 1);
+            self.decls
+                .push(format!("loft_ph {h} = {{ {{ 0xFFFF, 0, 0 }}, 0, 0, 0 }};"));
+            self.line(ind, &format!("{h} = loft_ph_of({}, {size});", as_ref(e)?));
+            crate::rewrite_census::fired("R-Push", 1);
+            frame.push((path, h, size));
+        }
         for (path, expr) in mints {
             if self.windows.iter().any(|(p, _, _, _)| *p == path) || self.push_head(&path).is_some()
             {
@@ -1162,6 +1186,29 @@ impl<'a> FnWriter<'a> {
         }
         self.push_heads.push(frame);
         Ok(())
+    }
+
+    /// The element size of the scalars loop `b` pushes onto `path`, read off its pushes — `None`
+    /// where two pushes disagree, which no admitted path does.
+    fn push_size(&self, b: &Block, path: &crate::opt::writes::PathKey) -> Option<u32> {
+        let data = self.cx.data;
+        let mut size: Option<u32> = None;
+        let mut agree = true;
+        for op in &b.operators {
+            op.any_node(&mut |n| {
+                if let Value::Call(d, args) = n
+                    && (*d as usize) < data.definitions.len()
+                    && let Some(fp) =
+                        crate::opt::writes::fused_push(data, data.def(*d).name(), args)
+                    && fp.path == *path
+                {
+                    agree &= size.is_none_or(|s| s == fp.size);
+                    size = Some(fp.size);
+                }
+                false
+            });
+        }
+        size.filter(|_| agree)
     }
 
     /// The element size of the records loop `b` mints into `path`, read off its first mint.
@@ -1221,6 +1268,43 @@ impl<'a> FnWriter<'a> {
                 .and_then(|v| crate::opt::writes::vector_path(data, v))
                 .and_then(|p| self.push_head(&p))
                 .map(|_| E::new("((void) 0)", K::Void)));
+        }
+        if let Some(fp) = crate::opt::writes::fused_push(data, name, args)
+            && let Some((h, size)) = self.push_head(&fp.path)
+            && size == fp.size
+        {
+            let val = self.expr(fp.val, ind)?;
+            let (put, bits) = match name {
+                "OpPushInt" => ("loft_ph_put8", format!("(uint64_t) {}", as_int(val)?)),
+                "OpPushFloat" => ("loft_ph_put8", format!("loft_f64_bits({})", as_float(val)?)),
+                "OpPushSingle" => (
+                    "loft_ph_put4",
+                    format!("loft_f32_bits({})", as_single(val)?),
+                ),
+                "OpPushInt4" => ("loft_ph_put4", format!("loft_i4_bits({})", as_int(val)?)),
+                "OpPushCharacter" => ("loft_ph_put4", format!("(uint32_t) {}", as_char(val)?)),
+                "OpPushBoolean" => ("loft_ph_put1", format!("(uint8_t) {}", as_bool(val)?)),
+                "OpPushEnum" => ("loft_ph_put1", format!("(uint8_t) {}", as_enum(val)?)),
+                "OpPushByte" => {
+                    let min = Self::literal(
+                        fp.bias.ok_or("a byte push without its minimum")?,
+                        "byte minimum",
+                    )?;
+                    (
+                        "loft_ph_put1",
+                        format!("loft_byte_raw({min}, {})", as_int(val)?),
+                    )
+                }
+                _ => return Ok(None),
+            };
+            let proof_at = format!("{}:{h}", data.def(self.d).original_name());
+            return Ok(Some(E::new(
+                format!(
+                    "(LOFT_PROVED(loft_ph_same({h}, {size}), {}), {put}(&{h}, {bits}))",
+                    c_string(&proof_at)
+                ),
+                K::Void,
+            )));
         }
         if !matches!(name, "OpNewRecord" | "OpFinishRecord") {
             return Ok(None);
@@ -2813,8 +2897,14 @@ impl<'a> FnWriter<'a> {
         if window {
             // The loop's one exit: the counted push loop has no break, return or
             // continue of its own (`hoist::push_loop`).
-            let (_, w, _, _) = self.windows.pop().expect("the window this loop opened");
+            let (path, w, _, _) = self.windows.pop().expect("the window this loop opened");
             self.line(ind, &format!("loft_win_sync({w});"));
+            // `@FR-R-Refresh`: an enclosing loop's push header on the same path did not see the
+            // window's reservation or its pushes — the record may have moved and the length
+            // grew — so it is derived again here, where the window gave the path back.
+            if let Some((h, size)) = self.push_head(&path) {
+                self.line(ind, &format!("{h} = loft_ph_of({h}.v, {size});"));
+            }
         }
         if held_file {
             // The loop's own end; its other exits gave the cursor back where they leave.
@@ -7132,16 +7222,26 @@ impl<'a> FnWriter<'a> {
                 };
                 // What a dropped element owns is released through its type's descriptor.
                 self.cx.copy_type(tp)?;
+                // `@FR-R-Refresh`'s keep-range clause: a push header on the path takes the
+                // clamped length (and the record the copy form may give it) at the op's own site.
+                let held = crate::opt::writes::vector_path(self.cx.data, v)
+                    .and_then(|p| self.push_head(&p));
                 let es = self.args(&[v, lo, hi], ind)?;
                 let [v, lo, hi] = <[E; 3]>::try_from(es)
                     .map_err(|_| "a range without three operands".to_string())?;
+                let keep = format!(
+                    "loft_keep_vector_range(loft_types, {tp}, {}, {size}, {}, {})",
+                    as_ref(v)?,
+                    as_int(lo)?,
+                    as_int(hi)?
+                );
                 Ok(E::new(
-                    format!(
-                        "loft_keep_vector_range(loft_types, {tp}, {}, {size}, {}, {})",
-                        as_ref(v)?,
-                        as_int(lo)?,
-                        as_int(hi)?
-                    ),
+                    match held {
+                        Some((h, hs)) => {
+                            format!("((void) ({keep}, {h} = loft_ph_of({h}.v, {hs})))")
+                        }
+                        None => keep,
+                    },
                     K::Void,
                 ))
             }
