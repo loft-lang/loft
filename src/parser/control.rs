@@ -19809,9 +19809,17 @@ impl Parser {
         // `Bind` rung below copies it — or its null — into the buffer at the exit.  A record
         // return re-mints its destination on delivery and a text local has no handle to lose,
         // so both were measured right and stay out of the rung.
+        //
+        // A `??` subject temp (`__ncc_N`) is such a local whatever its type says: it holds the
+        // subject's answer, which may be null, though the `??` lowering types it by the bare
+        // vector.  Renamed onto the buffer, `f(s) ?? d` as a function tail bound
+        // `__ncc_N = f(s, __ref_N)` into the caller's handle, so `w` answered the store it
+        // minted for `f` (one leak per call), and on a null answer the default arm wrote into
+        // the sentinel: `f(s) ?? [7, 8]` answered `[]`, or panicked on the interpreter
+        // (loft#2233).  Unrenamed it takes the same `Bind` copy as `r = f(s); r ?? d`.
         let nullable_vector_local = !is_work_ref
             && matches!(ctx.ret.ret_promo_base(), Type::Vector(_, _))
-            && self.vars.tp(v).peel_optional().1;
+            && (self.vars.tp(v).peel_optional().1 || n.starts_with("__ncc_"));
         let allow_rename = !(bound_already
             || nullable_vector_local
             || wrong_shape_for_buffer
