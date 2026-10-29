@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @F54 — Browser / WASM target (--html / --native-wasm)
 
 //! The browser host imports: which `#native` functions a page's module imports from the
 //! `loft_gl` module the page's script supplies (`doc/loft-gl-wasm.js`), and the wasm signature
