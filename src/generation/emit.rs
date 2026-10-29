@@ -2839,8 +2839,7 @@ impl Output<'_> {
         let true_arm_is_text = self
             .infer_type(IrNode::Native(true_v))
             .is_some_and(|t| matches!(t.base(), Type::Text(_)));
-        let (text_string_unify, text_unify) =
-            self.text_if_unify(true_v, false_v, true_arm_is_text);
+        let (text_string_unify, text_unify) = self.text_if_unify(true_v, false_v, true_arm_is_text);
         // @PLN17: a boolean if-expression (e.g. the `&&` / `||` lowering
         // `if a {b} else {false}`) has arms that may be `u8` (a var/call — storage
         // form) or `bool` (a literal/comparison — expression form), which don't
