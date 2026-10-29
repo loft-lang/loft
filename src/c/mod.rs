@@ -2544,7 +2544,9 @@ fn inv_inputs(
 /// shapes, and an admitted function's return buffer is no parameter: answers the attribute
 /// the signature drops.
 fn vr_shapes(cx: &Cx, d: u32, vr_key: Option<u16>, shapes: &mut [CType]) -> Option<usize> {
-    for (v, key) in &cx.vr_locals(d) {
+    let locals = cx.vr_locals(d);
+    crate::rewrite_census::fired("R-ValueLocal", locals.len());
+    for (v, key) in &locals {
         if let Some(c) = cx.vr_ctype(*key)
             && (*v as usize) < shapes.len()
         {

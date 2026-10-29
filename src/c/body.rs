@@ -6740,6 +6740,18 @@ impl<'a> FnWriter<'a> {
                 let size = self.cx.stores.size(elem);
                 let t = self.temp(CType::Ref);
                 self.line(ind, &format!("{t} = loft_vec_append({v}, {size});"));
+                // `@FR-R-FieldAppend`: the plain vector's own append, its field resolved here;
+                // a field number of `u16::MAX` is the bare clause (`v += [x]`).
+                let bare =
+                    matches!(fld.unspan(), Value::Int(f) if u16::try_from(*f) == Ok(u16::MAX));
+                crate::rewrite_census::fired(
+                    if bare {
+                        "R-FieldAppend/bare"
+                    } else {
+                        "R-FieldAppend"
+                    },
+                    1,
+                );
                 let ptp = u16::try_from(Self::literal(ptp, "type")?)
                     .map_err(|_| "a type number out of range")?;
                 if !self.mint_complete(ptp) {
