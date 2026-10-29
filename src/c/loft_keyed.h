@@ -611,7 +611,7 @@ static loft_ref loft_keyed_entry_ints(const loft_tdesc *T, uint16_t etp, loft_re
     for (int i = 0; i < nk && i < 4; i++) kv[i] = loft_kv_int(ks[i]);
     loft_ref e = loft_keyed_place_begin(T, etp, c, LOFT_KEYED_HASH, keys, nk, kv, nk);
     if (e.rec == 0) return e;
-    memset(loft_at(loft_store_of(e), e.rec, e.pos), 0, T[etp].size);
+    loft_st_fresh(loft_store_of(e), e.rec, e.pos, T[etp].size);
     loft_keyed_place_finish(T, etp, c, e, LOFT_KEYED_HASH, keys, nk, kv, nk);
     return loft_h_find_ints(c, keys, nk, ks);
 }
@@ -634,7 +634,7 @@ static loft_ref loft_keyed_entry_text(const loft_tdesc *T, uint16_t etp, loft_re
     loft_kv kv = loft_kv_text(loft_view(&own));
     loft_ref e = loft_keyed_place_begin(T, etp, c, LOFT_KEYED_HASH, keys, nk, &kv, 1);
     if (e.rec != 0) {
-        memset(loft_at(loft_store_of(e), e.rec, e.pos), 0, T[etp].size);
+        loft_st_fresh(loft_store_of(e), e.rec, e.pos, T[etp].size);
         loft_keyed_place_finish(T, etp, c, e, LOFT_KEYED_HASH, keys, nk, &kv, 1);
         e = loft_h_find_text(c, keys, loft_view(&own));
     }

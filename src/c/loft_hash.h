@@ -514,8 +514,15 @@ static uint32_t loft_h_inline_rebuild(loft_ref c, uint32_t claim, uint32_t want)
         while (loft_u32(s, grown, LOFT_H_BUCKET0 + at * 8) != 0) at = (at + 1) & mask;
         loft_set_u32(s, grown, LOFT_H_BUCKET0 + at * 8, seq);
         loft_set_u32(s, grown, LOFT_H_BUCKET0 + at * 8 + 4, tag);
-        memcpy(s->buf + (size_t) grown * 8 + new0 + at * h.stride, s->buf + (size_t) claim * 8 + old0 + i * h.stride,
-               h.stride);
+        /* The entry in 8-byte words where its stride allows: a fixed-size copy the compiler
+         * inlines, where a variable-size memcpy was a libc call per entry. */
+        uint8_t *to = s->buf + (size_t) grown * 8 + new0 + at * h.stride;
+        const uint8_t *from = s->buf + (size_t) claim * 8 + old0 + i * h.stride;
+        if ((h.stride & 7) == 0 && h.stride <= 64) {
+            for (uint32_t w = 0; w < h.stride; w += 8) memcpy(to + w, from + w, 8);
+        } else {
+            memcpy(to, from, h.stride);
+        }
     }
     loft_h_install_table(c, claim, grown);
     return grown;
@@ -548,7 +555,7 @@ static loft_ref loft_h_inline_file(loft_store_t *s, uint16_t store_nr, uint32_t 
     e.store_nr = store_nr;
     e.rec = claim;
     e.pos = loft_h_ent0(h.count) + at * h.stride;
-    if (zero) memset(s->buf + (size_t) claim * 8 + e.pos, 0, h.stride);
+    if (zero) loft_st_fresh(s, claim, e.pos, h.stride);
     return e;
 }
 

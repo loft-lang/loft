@@ -770,6 +770,16 @@ static void loft_st_poison_range(loft_store_t *s, uint32_t rec, uint32_t pos, ui
 }
 #endif
 
+/* `@C154`: bytes a caller is about to write, in a record of `s`, take no fill.  A DEFINED store
+ * (its bytes leave the process) is written whole, so it zeroes them; a poison build fills them
+ * with poison, so a reader of a byte nobody wrote is loud (c_sweep's `claim-unwritten`). */
+static void loft_st_fresh(loft_store_t *s, uint32_t rec, uint32_t pos, uint32_t len) {
+#ifdef LOFT_POISON_CLAIM
+    if (!s->defined) { loft_st_poison_range(s, rec, pos, len); return; }
+#endif
+    if (s->defined) memset(s->buf + (size_t) rec * 8 + pos, 0, len);
+}
+
 static uint32_t loft_claim_block(loft_store_t *s, uint32_t pos, uint32_t size) {
     int32_t req = (int32_t) size;
     int32_t bs = -loft_st_i32(s, pos, 0);
