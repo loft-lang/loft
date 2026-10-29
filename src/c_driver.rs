@@ -218,39 +218,21 @@ struct WasmToolchain {
 fn wasm_toolchain() -> &'static WasmToolchain {
     static TC: std::sync::OnceLock<WasmToolchain> = std::sync::OnceLock::new();
     TC.get_or_init(|| {
-        let first = |paths: &[&str]| {
-            paths
-                .iter()
-                .find(|p| fa::exists(p))
-                .map(|p| (*p).to_string())
-        };
-        let brew_llvm = cfg!(target_os = "macos")
-            .then(|| {
-                first(&[
-                    "/opt/homebrew/opt/llvm/bin/clang",
-                    "/usr/local/opt/llvm/bin/clang",
-                ])
-            })
-            .flatten();
         let named = std::env::var("LOFT_WASM_CC").ok().filter(|s| !s.is_empty());
-        let ld = (named.is_none() && brew_llvm.is_some())
-            .then(|| {
-                first(&[
-                    "/opt/homebrew/opt/lld/bin/wasm-ld",
-                    "/usr/local/opt/lld/bin/wasm-ld",
-                ])
-            })
-            .flatten();
-        let cc = named.or(brew_llvm).unwrap_or_else(|| "clang".to_string());
+        let (cc, ld) = match named {
+            Some(cc) => (cc, None),
+            None => {
+                loft::platform::host_wasm_clang().unwrap_or_else(|| ("clang".to_string(), None))
+            }
+        };
         let sysroot = std::env::var("WASI_SYSROOT")
             .ok()
             .filter(|s| !s.is_empty())
             .or_else(|| {
-                first(&[
-                    "/usr/share/wasi-sysroot",
-                    "/opt/homebrew/opt/wasi-libc/share/wasi-sysroot",
-                    "/usr/local/opt/wasi-libc/share/wasi-sysroot",
-                ])
+                loft::platform::wasi_sysroot_candidates()
+                    .iter()
+                    .find(|p| fa::exists(p))
+                    .map(|p| (*p).to_string())
             });
         // A whole link, not the headers alone: a sysroot can answer to one triple while the
         // compiler's builtins live under the other's directory (Ubuntu: headers for both,

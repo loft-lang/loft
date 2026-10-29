@@ -1768,6 +1768,43 @@ pub fn c_host_toolchain_cure() -> &'static str {
     }
 }
 
+/// A clang for wasm32 that this host keeps apart from its default `clang`, with the `wasm-ld`
+/// beside it: Homebrew's keg-only LLVM and lld on macOS, whose plain `clang` is Apple's and has
+/// no wasm target.  `None` where the default `clang` is the one to use.
+#[must_use]
+pub fn host_wasm_clang() -> Option<(String, Option<String>)> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    let first = |paths: &[&str]| {
+        paths
+            .iter()
+            .find(|p| crate::file_access::exists(p))
+            .map(|p| (*p).to_string())
+    };
+    let clang = first(&[
+        "/opt/homebrew/opt/llvm/bin/clang",
+        "/usr/local/opt/llvm/bin/clang",
+    ])?;
+    let ld = first(&[
+        "/opt/homebrew/opt/lld/bin/wasm-ld",
+        "/usr/local/opt/lld/bin/wasm-ld",
+    ]);
+    Some((clang, ld))
+}
+
+/// Where a WASI sysroot lies when `WASI_SYSROOT` names none: Debian's package, Homebrew's
+/// wasi-libc (Apple silicon and Intel prefixes).  A clang that finds its own (wasi-sdk's) needs
+/// none of these.
+#[must_use]
+pub fn wasi_sysroot_candidates() -> &'static [&'static str] {
+    &[
+        "/usr/share/wasi-sysroot",
+        "/opt/homebrew/opt/wasi-libc/share/wasi-sysroot",
+        "/usr/local/opt/wasi-libc/share/wasi-sysroot",
+    ]
+}
+
 /// How to install `wasm-opt` (binaryen), which a page that yields a frame needs for asyncify —
 /// what the `--html` driver says when it is missing, per host (C10, measured on each runner).
 #[must_use]
