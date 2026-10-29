@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator: a second compiled target, C
 //! `@FR-R-DeferredCopy` (C): a record local bound by a COPY that the function only reads
 //! takes the copy where it could first be observed instead of at the bind.
 //!

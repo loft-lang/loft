@@ -411,6 +411,35 @@ impl ViewWalk<'_> {
         }
     }
 
+    /// A `loop`: its body walked from the state at entry and again from the state its back
+    /// edge carries, when the two can differ.
+    fn walk_loop(&mut self, stmt: &Value, b: &crate::data::Block) {
+        // A loop body runs again, so a disturbance ANYWHERE inside it precedes every
+        // use inside it on the next iteration. Shaking before the body is walked is
+        // what makes a view held from OUTSIDE the loop and used at the top of the
+        // body come out live across a removal at the bottom of it.
+        let floor = self.open.len();
+        let outer_ended = std::mem::replace(&mut self.ended_below, usize::MAX);
+        self.disturb(stmt);
+        self.scoped(&b.operators);
+        // The BACK EDGE. The shake above could only reach views that already existed;
+        // a view the body itself binds is disturbed by the same statements one turn
+        // later, and nothing had seen it yet. So shake again and re-walk — the second
+        // pass is what supplies the USE that condemns it (loft#1184).  The body walks
+        // again, too, when its first turn ENDED a view owned outside the loop: `prog`
+        // viewed `ps` on the way in and holds its own copy from the second turn on, so
+        // `o = prog.ops[0]` names `ps` the first time and `prog` every time after —
+        // and only the second naming is shaken when `prog` is reassigned.  One extra
+        // pass reaches the fixpoint: it starts from the state the back edge carries,
+        // and a third would start from the same one.
+        let before: HashSet<u16> = self.shaken.keys().copied().collect();
+        self.disturb(stmt);
+        if self.shaken.keys().any(|v| !before.contains(v)) || self.ended_below < floor {
+            self.scoped(&b.operators);
+        }
+        self.ended_below = outer_ended.min(self.ended_below);
+    }
+
     /// Descend in SOURCE ORDER, because the whole point is which came first.
     ///
     /// Only the block forms listed here are descended into; anything else — a `match`, say —
@@ -424,32 +453,7 @@ impl ViewWalk<'_> {
             // its statements are siblings and a view bound there stays live here.
             Value::Insert(ops) => self.walk_block(ops),
             Value::Block(b) => self.scoped(&b.operators),
-            Value::Loop(b) => {
-                // A loop body runs again, so a disturbance ANYWHERE inside it precedes every
-                // use inside it on the next iteration. Shaking before the body is walked is
-                // what makes a view held from OUTSIDE the loop and used at the top of the
-                // body come out live across a removal at the bottom of it.
-                let floor = self.open.len();
-                let outer_ended = std::mem::replace(&mut self.ended_below, usize::MAX);
-                self.disturb(stmt);
-                self.scoped(&b.operators);
-                // The BACK EDGE. The shake above could only reach views that already existed;
-                // a view the body itself binds is disturbed by the same statements one turn
-                // later, and nothing had seen it yet. So shake again and re-walk — the second
-                // pass is what supplies the USE that condemns it (loft#1184).  The body walks
-                // again, too, when its first turn ENDED a view owned outside the loop: `prog`
-                // viewed `ps` on the way in and holds its own copy from the second turn on, so
-                // `o = prog.ops[0]` names `ps` the first time and `prog` every time after —
-                // and only the second naming is shaken when `prog` is reassigned.  One extra
-                // pass reaches the fixpoint: it starts from the state the back edge carries,
-                // and a third would start from the same one.
-                let before: HashSet<u16> = self.shaken.keys().copied().collect();
-                self.disturb(stmt);
-                if self.shaken.keys().any(|v| !before.contains(v)) || self.ended_below < floor {
-                    self.scoped(&b.operators);
-                }
-                self.ended_below = outer_ended.min(self.ended_below);
-            }
+            Value::Loop(b) => self.walk_loop(stmt, b),
             Value::If(cond, t, e) => {
                 // The condition is evaluated before either branch and is not part of one.
                 self.leaf(cond);
