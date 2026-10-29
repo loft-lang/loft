@@ -559,6 +559,14 @@ static int loft_stat(const char *path, int64_t *size) {
     if (S_ISDIR(st.st_mode)) return 4;
     if (S_ISREG(st.st_mode)) return 1;
     return 5;
+#elif defined(_WIN32)
+    /* The CRT's own stat: a directory is one, where an `fopen` probe could only fail. */
+    struct _stat64 st;
+    if (_stat64(path, &st) != 0) return 0;
+    *size = (int64_t) st.st_size;
+    if (st.st_mode & _S_IFDIR) return 4;
+    if (st.st_mode & _S_IFREG) return 1;
+    return 5;
 #else
     FILE *h = fopen(path, "rb");
     if (!h) return 0;
