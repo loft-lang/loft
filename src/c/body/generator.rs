@@ -323,6 +323,27 @@ impl FnWriter<'_> {
             .collect()
     }
 
+    /// The heap locals a generator stopped before its end still owns, which its body frees only
+    /// at its tail: `State::owned_store_locals_in_bytes`'s set — every local of a heap type, or
+    /// a generator handle, that owns its store and that no closure adopted, and every generator
+    /// handle it was handed (`(G-Hold)`); any other argument is the caller's.
+    fn abandoned_stores(&self) -> Vec<String> {
+        (0..self.shapes.len())
+            .filter(|&v| {
+                let var = v as u16;
+                let tp = self.vars.tp(var);
+                let generator = matches!(tp, crate::data::Type::Iterator(_, _));
+                !self.links[v]
+                    && self.shapes[v] == CType::Ref
+                    && (!self.params[v] || generator)
+                    && (crate::data::is_dbref(tp) || generator)
+                    && self.vars.owns_store(var)
+                    && !self.vars.is_captured(var)
+            })
+            .map(|v| super::var_name(self.vars.name(v as u16), v as u16))
+            .collect()
+    }
+
     fn write_release(&self, bodies: &mut String, fields: &[(String, String, CType, bool)]) {
         let d = self.d;
         let _ = writeln!(
@@ -342,6 +363,12 @@ impl FnWriter<'_> {
                     let _ = writeln!(bodies, "        loft_text_free(&{l});");
                 }
             }
+        }
+        for n in self.abandoned_stores() {
+            let _ = writeln!(
+                bodies,
+                "        if (fr->{n}.rec != 0) {{ loft_free_ref(fr->{n}); fr->{n} = loft_ref_null(); }}"
+            );
         }
         bodies.push_str("    }\n");
         for (_, n, c, param) in fields {
