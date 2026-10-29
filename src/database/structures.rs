@@ -58,6 +58,9 @@ pub struct BridgeArgs {
     pub minted: bool,
     pub handed: Vec<DbRef>,
     copies: Vec<(DbRef, DbRef)>,
+    /// The call works in a writable COPY of the read-only store it pinned (`bridge_args`):
+    /// freed whole by `bridge_args_done`, after the answer is copied out of it.
+    cloned: bool,
 }
 
 /// Why a field is being given its absent value — which decides what that value may COST.
@@ -2177,11 +2180,26 @@ impl Stores {
             .find(|(db, is_vec)| !foreign(self, db, *is_vec))
             .map(|(db, _)| db.store_nr);
         let any_foreign = args.iter().any(|(db, is_vec)| foreign(self, db, *is_vec));
-        let (store_nr, minted) = match pin {
+        let (mut store_nr, minted) = match pin {
             Some(nr) => (nr, false),
             None if returns_ref || any_foreign => (self.null().store_nr, true),
             None => (0, false),
         };
+        // A pinned store the call may not write — a `par` worker's borrow of its parent's
+        // (@PLN108), a locked one — cannot take a heap answer: the native's claim there was
+        // refused, and the callback answered record 0, a null answer nobody reported.  The
+        // call is handed a writable copy of the whole store instead, so every argument keeps
+        // its record numbers; `own_bridge_answer` copies the answer out of it and
+        // `bridge_args_done` frees it.
+        let cloned = returns_ref
+            && pin.is_some()
+            && self.allocations[store_nr as usize].read_only
+            && !self.allocations[store_nr as usize].is_file_backed();
+        if cloned {
+            let from = store_nr;
+            store_nr = self.clone_store_for_call(from);
+        }
+        let pinned_from = pin.unwrap_or(u16::MAX);
         let mut handed = Vec::with_capacity(args.len());
         let mut copies = Vec::new();
         for (db, is_vec) in args {
@@ -2191,7 +2209,11 @@ impl Stores {
                 None
             };
             let Some(span) = span else {
-                handed.push(*db);
+                let mut db = *db;
+                if cloned && db.store_nr == pinned_from {
+                    db.store_nr = store_nr;
+                }
+                handed.push(db);
                 continue;
             };
             // SAFETY: the span's owner keeps `len * elem_size` bytes live at `base`, and
@@ -2227,7 +2249,21 @@ impl Stores {
             minted,
             handed,
             copies,
+            cloned,
         }
+    }
+
+    /// A writable deep copy of store `from` in a store of its own (`Store::snapshot_copy`),
+    /// for ONE bridge call pinned to a read-only store; its number.
+    fn clone_store_for_call(&mut self, from: u16) -> u16 {
+        let fresh = self.null().store_nr;
+        let mut copy = self.allocations[from as usize].snapshot_copy();
+        copy.store_nr = self.allocations[fresh as usize].store_nr;
+        copy.alloc_serial = self.allocations[fresh as usize].alloc_serial;
+        copy.user_locked = false;
+        copy.lock_origin = std::borrow::Cow::Borrowed("");
+        self.allocations[fresh as usize] = copy;
+        fresh
     }
 
     /// loft#2227, `@FR-F-Ret` — a call's answer is FRESH.  A bridge call PINNED to an argument's
@@ -2341,7 +2377,7 @@ impl Stores {
             rec: 0,
             pos: 0,
         };
-        if args.minted && !returns_ref {
+        if (args.minted && !returns_ref) || args.cloned {
             self.free(&base);
         } else if !args.copies.is_empty() && !self.store(&base).read_only {
             let store = self.store_mut(&base);

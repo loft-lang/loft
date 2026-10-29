@@ -13166,9 +13166,20 @@ extern crate loft;"
                         write!(w, ", ")?;
                     }
                     first = false;
+                    // What `bridge_args` handed for it: the argument, or its place in the
+                    // writable copy of a read-only store the call was given.
+                    let arg = if needs_loft_store && !self.wasm_browser {
+                        let i = heap_args
+                            .iter()
+                            .position(|a| sanitize(&a.name) == var)
+                            .unwrap_or(0);
+                        format!("_bc.handed({i})")
+                    } else {
+                        format!("var_{var}")
+                    };
                     write!(
                         w,
-                        "unsafe {{ std::mem::transmute_copy(&loft::codegen_runtime::to_loft_ref(var_{var})) }}"
+                        "unsafe {{ std::mem::transmute_copy(&loft::codegen_runtime::to_loft_ref({arg})) }}"
                     )?;
                 }
                 Type::Integer(_) | Type::Character => {
