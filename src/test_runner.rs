@@ -302,6 +302,18 @@ fn build_test_base_inner(
     }))
 }
 
+/// Change to `dir` until the guard drops; `None`, or a directory that cannot be entered,
+/// leaves the cwd where it is.
+fn enter_dir(dir: Option<&std::path::Path>) -> CwdGuard {
+    if let Some(dir) = dir
+        && let Ok(prev) = std::env::current_dir()
+        && fa::set_current_dir(dir).is_ok()
+    {
+        return CwdGuard(Some(prev));
+    }
+    CwdGuard(None)
+}
+
 fn enter_source_dir(source_dir: &str, program_relative: bool) -> CwdGuard {
     if program_relative
         && !source_dir.is_empty()
@@ -2223,10 +2235,13 @@ pub(crate) fn run_tests(
                 }
             } else {
                 // ── Interpreter mode ──────────────────────────────────────────
-                // Anchor native file I/O at the program's source_dir for the
-                // duration of this file's tests; the guard restores the cwd
-                // afterwards so the next file's parse/compile is unaffected.
-                let _cwd = enter_source_dir(&clean_db.source_dir, clean_db.program_relative);
+                // The program is compiled, and its `#c` and native libraries opened, in
+                // the directory loft was started in — the paths the parse recorded are
+                // relative to it — and only its RUN is anchored at source_dir, the order
+                // a plain run keeps (`main.rs`, before user execution).  Compiling inside
+                // source_dir looked a `--lib` library's shim up under the test file's own
+                // directory (loft#2234).
+                let invocation_dir = std::env::current_dir().ok();
                 // loft#1865 — compile the file ONCE and fork a fresh runtime per test
                 // (`State::fork_program`).  Cloning the checked `Data` and recompiling every
                 // function per test made a file's test time quadratic in its size (≈12 ms a
@@ -2250,6 +2265,10 @@ pub(crate) fn run_tests(
                         }))
                         .ok()
                     };
+                // Anchor native file I/O at the program's source_dir for the
+                // duration of this file's tests; the guard restores the cwd
+                // afterwards so the next file's parse/compile is unaffected.
+                let _cwd = enter_source_dir(&clean_db.source_dir, clean_db.program_relative);
                 for (d_nr, fn_name) in &test_fns {
                     // The leak question is asked only of a function that returns NOTHING:
                     // a value-returning one hands its result to its caller, and this runner
@@ -2292,6 +2311,8 @@ pub(crate) fn run_tests(
                                 std::sync::Arc::clone(data),
                             )
                         } else {
+                            // Compiled where loft was started, as the shared program is.
+                            let _compile_dir = enter_dir(invocation_dir.as_deref());
                             let mut data_copy = clean_data.clone();
                             let mut state = State::new(clean_db.clone());
                             // Coverage is armed below and counts a function entered by a

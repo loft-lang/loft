@@ -4179,6 +4179,138 @@ fn loft_builds_the_ansi_c_shim_a_package_ships() -> std::io::Result<()> {
     Ok(())
 }
 
+/// loft#2234 — `--tests` opens the C libraries of a library reached through a RELATIVE
+/// `--lib`, on both backends, as a plain run does.  Two kinds: a `[c] shim` loft builds, and
+/// a library shipped beside its `loft.toml` (`[c] libs`).  Both failed on main: the test
+/// runner compiled inside the test file's directory, so a path recorded relative to where
+/// loft was started no longer resolved, and the shim's path doubled its package directory.
+/// `test_marker` holds the other half: the RUN still stands in the test file's directory,
+/// where a C `fopen("marker.txt")` finds the file beside the test.
+#[test]
+fn a_test_run_opens_a_relative_lib_librarys_c_libraries() -> std::io::Result<()> {
+    let _guard = native_suite_lock()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    if loft::platform::process::harness_command("cc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        return Ok(()); // no C compiler on this machine
+    }
+    let tree = std::env::temp_dir().join(format!("loft_2234_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&tree);
+    let manifest = |name: &str, c: &str| {
+        format!(
+            "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nloft = \">=2026.10.0\"\n\n\
+             [library]\nentry = \"src/{name}.loft\"\n\n[c]\n{c}\n"
+        )
+    };
+    let twice = tree.join("libs").join("twice");
+    fa::create_dir_all(twice.join("c"))?;
+    fa::create_dir_all(twice.join("src"))?;
+    fa::write(
+        twice.join("loft.toml"),
+        manifest("twice", "shim = \"c/twice.c\""),
+    )?;
+    fa::write(
+        twice.join("c").join("twice.c"),
+        "#include <stdint.h>\n#include <stdio.h>\n\
+         int64_t tw_twice(int64_t v);\nint64_t tw_twice(int64_t v) { return v * 2; }\n\
+         int64_t tw_marker(void);\nint64_t tw_marker(void) {\n\
+         \x20 FILE *f = fopen(\"marker.txt\", \"r\");\n\
+         \x20 if (!f) return 0;\n  fclose(f);\n  return 1;\n}\n",
+    )?;
+    fa::write(
+        twice.join("src").join("twice.loft"),
+        "fn tw_twice(v: integer) -> integer;\n#c \"tw_twice\" \"int64_t(int64_t)\"\n\
+         fn tw_marker() -> integer;\n#c \"tw_marker\" \"int64_t(void)\"\n\
+         pub fn twice(v: integer) -> integer { tw_twice(v) }\n\
+         pub fn marker() -> integer { tw_marker() }\n",
+    )?;
+    let beside = tree.join("libs").join("beside");
+    fa::create_dir_all(beside.join("src"))?;
+    fa::write(
+        beside.join("loft.toml"),
+        manifest("beside", "libs = [\"libbeside_c.so\"]"),
+    )?;
+    let c_src = tree.join("beside.c");
+    fa::write(
+        &c_src,
+        "#include <stdint.h>\nint64_t bs_three(int64_t v);\n\
+         int64_t bs_three(int64_t v) { return v * 3; }\n",
+    )?;
+    let built = loft::platform::process::harness_command("cc")
+        .args(["-shared", "-fPIC"])
+        .arg(&c_src)
+        .arg("-o")
+        .arg(beside.join("libbeside_c.so"))
+        .status()?;
+    assert!(built.success(), "cc could not build the beside library");
+    fa::write(
+        beside.join("src").join("beside.loft"),
+        "fn bs_three(v: integer) -> integer;\n#c \"bs_three\" \"int64_t(int64_t)\"\n\
+         pub fn three(v: integer) -> integer { bs_three(v) }\n",
+    )?;
+    fa::create_dir_all(tree.join("tests"))?;
+    fa::write(tree.join("tests").join("marker.txt"), "")?;
+    fa::write(
+        tree.join("tests").join("uses.loft"),
+        "use twice;\nuse beside;\n\
+         fn test_twice() { assert(twice::twice(21) == 42, \"twice\"); }\n\
+         fn test_three() { assert(beside::three(5) == 15, \"three\"); }\n\
+         fn test_marker() { assert(twice::marker() == 1, \"the run stands in tests/\"); }\n",
+    )?;
+    struct Leg {
+        name: &'static str,
+        flag: Option<&'static str>,
+        recompile: bool,
+    }
+    let mut legs = vec![
+        Leg {
+            name: "interpreter",
+            flag: None,
+            recompile: false,
+        },
+        Leg {
+            name: "per-test compile",
+            flag: None,
+            recompile: true,
+        },
+    ];
+    if find_loft_rlib().is_some() {
+        legs.push(Leg {
+            name: "native",
+            flag: Some("--native"),
+            recompile: false,
+        });
+    }
+    for Leg {
+        name: leg,
+        flag,
+        recompile,
+    } in legs
+    {
+        let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
+        cmd.current_dir(&tree)
+            .args(["--lib", "libs", "--tests", "tests/uses.loft"])
+            .args(flag);
+        if recompile {
+            cmd.env("LOFT_TEST_RECOMPILE", "1");
+        }
+        let out = cmd.output()?;
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        assert!(
+            out.status.success() && stdout.contains("3 passed"),
+            "{leg}: exited {}\nstdout={stdout}\nstderr={}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let _ = fa::remove_dir_all(&tree);
+    Ok(())
+}
+
 /// @PLN199 B2 — a loft function that calls a `#c` binding compiles into its library's
 /// cdylib: the gate used to turn the binding into an interpreted CALLEE, so every loft
 /// wrapper of a C function ran interpreted.  The cdylib is linked against no C library — its

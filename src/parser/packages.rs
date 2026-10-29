@@ -1882,8 +1882,14 @@ impl Parser {
             match crate::c_shim::build(pkg_dir, &m.c_shim) {
                 // The built library, with the sources it was built from: the C backend
                 // compiles those into the unit it writes instead of linking the library.
+                // Recorded ABSOLUTE: every reader resolves a library's name against its
+                // package (`pkg_dir.join(name)`), and the built path already starts with
+                // `pkg_dir`, so a relative one doubled it — the loader then found the shim
+                // only by a fallback relative to the cwd, which a test run moves (loft#2234).
                 Ok(so) => entries.push((
-                    so.to_string_lossy().into_owned(),
+                    crate::file_access::plain_canonical(&so)
+                        .to_string_lossy()
+                        .into_owned(),
                     m.c_shim
                         .iter()
                         .map(|s| {

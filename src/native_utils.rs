@@ -1808,7 +1808,9 @@ pub(crate) fn lib_path_env(data: &crate::data::Data) -> Option<std::ffi::OsStrin
     }
     let mut dirs: Vec<std::path::PathBuf> = Vec::new();
     for lib in package_libraries(data) {
-        if let Some(dir) = lib.parent().map(std::path::Path::to_path_buf)
+        // Absolute: the program runs from its source directory, not where loft was started,
+        // so a directory relative to the start is not one it can find (loft#2234).
+        if let Some(dir) = lib.parent().map(crate::file_access::plain_canonical)
             && !dirs.contains(&dir)
         {
             dirs.push(dir);
