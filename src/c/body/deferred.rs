@@ -208,7 +208,15 @@ impl FnWriter<'_> {
             let ends: Vec<String> = sources
                 .iter()
                 .map(|t| {
-                    let fresh = if facts.fresh(*t) { " fresh" } else { "" };
+                    let fresh = if facts.fresh(*t) {
+                        " fresh"
+                    } else if facts.placed.contains(t) {
+                        " placed"
+                    } else if facts.adopted.is_some_and(|(a, w)| *t == a || *t == w) {
+                        " adopted"
+                    } else {
+                        ""
+                    };
                     format!("{}{fresh}", vars.name(*t))
                 })
                 .collect();
@@ -458,7 +466,15 @@ impl FnWriter<'_> {
                             if let Value::Var(v) = m
                                 && !apart(*v)
                             {
-                                failing.push(vars.name(*v).to_string());
+                                let end = match facts.terminal(*v) {
+                                    Some(t) => format!(
+                                        "{}{}",
+                                        vars.name(t),
+                                        if facts.fresh(t) { " fresh" } else { "" }
+                                    ),
+                                    None => "no single end".to_string(),
+                                };
+                                failing.push(format!("{} (ends at {end})", vars.name(*v)));
                             }
                             false
                         });
@@ -515,9 +531,20 @@ impl FnWriter<'_> {
             // mentions, or one the per-path liveness finds read later (an unreached site is read).
             let dv = &self.dc.vars[&x];
             let refs: HashSet<u16> = dv.derived.iter().copied().chain([x]).collect();
-            let here = s.any_node(&mut |n| matches!(n, Value::Var(v) if refs.contains(v)));
+            // The local counts its views' reads (they read what it names); a view moved on
+            // its own counts only its own, since every view of it is moved separately.
             let read = |v: u16| {
-                let after = frame.read_after(s, v);
+                let named = if v == x {
+                    refs.clone()
+                } else {
+                    HashSet::from([v])
+                };
+                let here = s.any_node(&mut |n| matches!(n, Value::Var(w) if named.contains(w)));
+                let after = if v == x {
+                    frame.read_after(s, v)
+                } else {
+                    frame.read_itself_after(s, v)
+                };
                 if Self::dc_trace() && !here {
                     let at = match after {
                         None => "unreached".to_string(),

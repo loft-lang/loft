@@ -139,6 +139,22 @@ copy from the second pass on — both backends then read a released record, righ
 plain run and the poison pattern under `LOFT_POISON=1`.  Guard:
 `tests/scripts/a-view-taken-through-a-local-that-copies-on-a-later-pass-materialises.loft`.
 
+### Re-measured on the self-host after S3 (2026-10-29)
+
+`run.loft` after S3 (owner table, record and image ops) has ten flag points in its op arms:
+calls handed the bundle `b` (`n_load_table`, `n_default_image`, `n_database`), which cannot be
+proven apart from `progs` because `progs`'s record is placed in the caller's return-buffer
+store.  `mix` and `collatz` never run those arms, yet ran 22 % and 16 % slower under gcc
+(loft-91's `measure.py`: +19 % and +14 %).  Priced on the emitted C, each variant against the
+rule off: points removed 0.997 / 0.976; points kept without any remap 0.986 / 0.966; the
+helper cold and not inlined 1.216; the remap through a pointer 1.237; only `op`'s remaps kept
+1.019 / 1.004; only the `??` temporary's kept 1.224 / 1.165.  The cost was the remap of the
+`??` discharge temporary (`__ncr_5`), which is never read after the point: its later reads
+are `op`'s, a separate variable moved on its own.  The point now moves a view only where the
+view ITSELF is read again (`lease::Frame::read_itself_after`); the local still counts its
+views' reads.  Fixed: mix 1.021, collatz 1.004 (gcc), 1.023 / 1.014 (clang); fib 0.293 / 0.335.
+The ~2 % left is the eight live `op` remaps; proving `b` apart would remove them (0.986).
+
 ## Not in this design
 
 - **A dead OWNER source.**  `x = s` where `s` owns its record and is dead after is a move that

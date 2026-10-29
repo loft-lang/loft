@@ -332,6 +332,18 @@ impl<'a> Frame<'a> {
         }
     }
 
+    /// [`Self::read_after`] for `var` ITSELF: a read through a view of it does not count.  The
+    /// question to ask of a reference that is moved on its own — a view of it that is read
+    /// later is moved too, and its reads are its own.
+    #[must_use]
+    pub fn read_itself_after(&self, site: &Value, var: u16) -> Option<Option<u32>> {
+        match self.live_after_through(site, var, HashSet::from([var])) {
+            AtSite::Unreached => None,
+            AtSite::Dead => Some(None),
+            AtSite::Live(line) => Some(Some(line)),
+        }
+    }
+
     /// The liveness answer on copying the whole variable `var` at `site`.
     #[must_use]
     pub fn liveness_var_verdict(&self, site: &Value, var: u16) -> Lease {
@@ -626,12 +638,17 @@ impl<'a> Frame<'a> {
 
     /// Is `var`'s value used after `site` on some path?
     fn live_after(&self, site: &Value, var: u16) -> AtSite {
+        self.live_after_through(site, var, self.readers_of(var))
+    }
+
+    /// [`Self::live_after`] counting only the reads of the variables in `uses`.
+    fn live_after_through(&self, site: &Value, var: u16, uses: HashSet<u16>) -> AtSite {
         let mut pass = Pass {
             data: self.data,
             func: self.func,
             ops: self.ops,
             var,
-            uses: self.readers_of(var),
+            uses,
             target: std::ptr::from_ref(site.unspan()),
             lines: HashMap::new(),
             loops: Vec::new(),
