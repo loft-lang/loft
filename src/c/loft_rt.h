@@ -1088,18 +1088,12 @@ static uint32_t loft_store_new(void) {
     return loft_store_make(1);
 }
 
-/* A record of `words` words, its payload zeroed: the C runtime's callers build on zeroed
- * records, where `Store::claim` promises no value (`@FR-H-Claim`).  `LOFT_POISON_CLAIM` leaves
- * the claim's poison in place, so a caller that relies on the zeroing where the interpreter's
- * does not fails there. */
+/* A record of `words` words.  Its payload holds no promised value (`@FR-H-Claim`, as
+ * `Store::claim`): each caller writes the fields it reads.  `LOFT_POISON_CLAIM` fills it with
+ * poison, and MemorySanitizer over the corpus flags a read of a byte nobody wrote. */
 static uint32_t loft_claim(loft_store_t *s, uint32_t words) {
     if (words < 1) words = 1;
-    uint32_t rec = loft_st_claim(s, words);
-#ifndef LOFT_POISON_CLAIM
-    int32_t got = loft_st_i32(s, rec, 0);
-    memset(s->buf + (size_t) rec * 8 + 4, 0, (size_t) got * 8 - 4);
-#endif
-    return rec;
+    return loft_st_claim(s, words);
 }
 
 LOFT_HOT_INLINE uint8_t *loft_at(loft_store_t *s, uint32_t rec, uint32_t byte) {
@@ -2262,7 +2256,9 @@ static void loft_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, lo
             for (uint32_t i = 0; used < size && i < len; i++)
                 memset(loft_at(loft_store_of(to), into, 8 + i * size + used), 0, size - used);
         }
-        if (T[d->elem].kind == LOFT_T_SCALAR || T[d->elem].kind == LOFT_T_DBREF) return;
+        /* `@FR-R-FlatCopy`: an element that owns no heap is its bytes, which came with the
+         * block copy — no element has a claim to copy. */
+        if (!T[d->elem].owns_heap) return;
         for (uint32_t i = 0; i < len; i++) {
             loft_ref a = { from.store_nr, cur, 8 + i * size };
             loft_ref b = { to.store_nr, into, 8 + i * size };
@@ -2334,7 +2330,9 @@ static void loft_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, lo
  * that `tp`'s tree holds no stored reference, which could name the source store. */
 static int loft_swap_blocked(void);
 
-static int loft_swap_in(uint16_t tp, loft_ref src, loft_ref dst) {
+/* `reset_dest`: the destination must hold nothing but its root (a copy's); a keyed rebind's
+ * destination is its collection's own store, whose old content leaves with the released slot. */
+static int loft_swap_in(uint16_t tp, loft_ref src, loft_ref dst, int reset_dest) {
     if (src.store_nr == dst.store_nr || src.store_nr >= loft_nstores || dst.store_nr >= loft_nstores) return 0;
     if (src.rec != 1 || src.pos != 8 || dst.rec != 1 || dst.pos != 8) return 0;
     loft_store_t *a = &loft_stores[src.store_nr], *b = &loft_stores[dst.store_nr];
@@ -2348,7 +2346,7 @@ static int loft_swap_in(uint16_t tp, loft_ref src, loft_ref dst) {
 #endif
     if (loft_swap_blocked()) return 0;
     if (a->frame_holds || b->frame_holds) return 0;
-    if (!loft_st_holds_only_root(b)) return 0;
+    if (reset_dest && !loft_st_holds_only_root(b)) return 0;
     /* `Store::swap_contents`: the content moves, each slot keeps its serial. */
     loft_store_t t = *a;
     *a = *b;
@@ -2393,7 +2391,7 @@ static void loft_copy_record(const loft_tdesc *T, uint16_t tp, loft_ref src, lof
         return;
     }
 #endif
-    if (free_source && (flags & 2) && loft_swap_in(tp, src, dst)) return;
+    if (free_source && (flags & 2) && loft_swap_in(tp, src, dst, 1)) return;
 #ifdef LOFT_PARSE
     loft_perrs_deliver(src, dst, tp, 0);
 #endif
@@ -4833,20 +4831,42 @@ static loft_text loft_text_from_byte_range(loft_ref v, int64_t lo, int64_t hi) {
 }
 
 /* OpSliceVector (Stores::vector_slice): the elements [lo, hi) of `o`, clamped to it, appended to
- * `v`.  Scalar elements only. */
+ * `v` as ONE block — into the room `v` has when it fits (`append_block_fits`), else after one
+ * growth to the total, the source re-read from its slot when it shares `v`'s store (the growth
+ * may move it, and does when it IS `v`: `v += v[a..b]`).  The span lies below the source's
+ * length and the new slots above the destination's, so they never overlap.  Scalar elements
+ * only. */
 static void loft_vec_slice(loft_ref v, loft_ref o, int64_t lo, int64_t hi, uint32_t size) {
     if (v.store_nr == 0xFFFF || v.rec == 0 || o.store_nr == 0xFFFF || o.rec == 0 || o.pos == 0) return;
-    int64_t n = loft_vec_len(o);
+    int64_t n64 = loft_vec_len(o);
     if (lo < 0) lo = 0;
-    if (lo > n) lo = n;
+    if (lo > n64) lo = n64;
     if (hi < lo) hi = lo;
-    if (hi > n) hi = n;
-    for (int64_t i = lo; i < hi; i++) {
-        loft_ref e = loft_vec_append(v, size);
-        loft_ref a = { o.store_nr, loft_collection_rec(loft_store_of(o), o.rec, o.pos), 8 + (uint32_t) i * size };
-        loft_copy_bytes(e, 0, a, 0, size);
-        loft_vec_finish(v);
+    if (hi > n64) hi = n64;
+    uint32_t n = (uint32_t) (hi - lo);
+    if (n == 0 || size == 0) return;
+    uint32_t o_rec = loft_collection_rec(loft_store_of(o), o.rec, o.pos);
+    if (o_rec == 0) return;
+    uint32_t from = 8 + (uint32_t) lo * size;
+    loft_store_t *s = loft_store_of(v);
+    uint32_t d_rec = loft_collection_rec(s, v.rec, v.pos);
+    if (d_rec != 0 && d_rec != LOFT_FOREIGN_REC && !s->read_only) {
+        int32_t claimed = loft_st_i32(s, d_rec, 0);
+        uint32_t len = loft_u32(s, d_rec, 4);
+        uint64_t cap = claimed > 0 ? ((uint64_t) claimed * 8 - 8) / size : 0;
+        if ((uint64_t) len + n <= cap) {
+            loft_ref dst = { v.store_nr, d_rec, 0 }, src = { o.store_nr, o_rec, 0 };
+            loft_copy_bytes(dst, 8 + len * size, src, from, (size_t) n * size);
+            loft_set_u32(s, d_rec, 4, len + n);
+            return;
+        }
     }
+    uint32_t at = loft_vec_append(v, size).pos;
+    loft_vec_set_size(v, n, size);
+    uint32_t dest = loft_u32(loft_store_of(v), v.rec, v.pos);
+    if (v.store_nr == o.store_nr) o_rec = loft_collection_rec(loft_store_of(o), o.rec, o.pos);
+    loft_ref dst = { v.store_nr, dest, 0 }, src = { o.store_nr, o_rec, 0 };
+    loft_copy_bytes(dst, at, src, from, (size_t) n * size);
 }
 
 /* OpSliceView (Stores::vector_slice_view): `v = o[lo..hi]` bound to a local that owns its store —

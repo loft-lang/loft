@@ -416,8 +416,13 @@ static int loft_eq_keyed(loft_ref a, loft_ref b, int kind, const loft_key *keys,
 
 /* OpReplaceKeyed (State::replace_keyed): `dest = src` for a keyed collection of type `tp` — an
  * absent source leaves the destination absent, the same collection is left alone, anything
- * else is cleared and refilled with deep copies; a source the bind gives up is freed. */
-static void loft_replace_keyed(const loft_tdesc *T, uint16_t tp, loft_ref src, loft_ref dest, int free_source) {
+ * else is cleared and refilled with deep copies; a source the bind gives up is freed.  Bit 0 of
+ * `flags`: the source is given up; bit 1: the element tree holds no stored reference, so such a
+ * source's whole store may move into the destination's slot (`@FR-H-SwapIn`'s keyed clause,
+ * `Stores::try_swap_keyed`) — the old collection leaves with the released slot, where the
+ * copy rebuilt every element and bucket. */
+static void loft_replace_keyed(const loft_tdesc *T, uint16_t tp, loft_ref src, loft_ref dest, int flags) {
+    int free_source = flags & 1;
     if (src.store_nr == 0xFFFF) {
         loft_remove_claims(T, tp, dest);
         if (dest.store_nr != 0xFFFF && dest.rec != 0 && dest.pos != 0)
@@ -426,6 +431,7 @@ static void loft_replace_keyed(const loft_tdesc *T, uint16_t tp, loft_ref src, l
     }
     if (src.store_nr == dest.store_nr && src.rec == dest.rec && src.pos == dest.pos) return;
     if (dest.store_nr == 0xFFFF || dest.rec == 0) return;
+    if (free_source && (flags & 2) && loft_swap_in(tp, src, dest, 0)) return;
     loft_remove_claims(T, tp, dest);
     loft_copy_claims(T, tp, src, dest);
     if (free_source && src.store_nr != dest.store_nr && !loft_free_protected(src)) loft_free_ref(src);

@@ -15,7 +15,9 @@
                                         # excerpt and call chain (the oracle runs --no-warnings)
     scripts/c_sweep.py --poison         # the store poison modes instead: the C built with
                                         # -DLOFT_POISON / -DLOFT_POISON_CLAIM against the
-                                        # interpreter run under LOFT_POISON=1 / LOFT_POISON_CLAIM=1
+                                        # interpreter run under LOFT_POISON=1 / LOFT_POISON_CLAIM=1,
+                                        # and claim-unwritten: poisoned C claims against the
+                                        # plain interpreter (a read of a byte nobody wrote)
     scripts/c_sweep.py --wasm           # the C built for wasm32-wasi by clang and run under
                                         # wasmtime instead (LOFT_WASM_CC names another clang)
     scripts/c_sweep.py --m32            # the C built as 32-bit x86 (gcc -m32) and run natively
@@ -74,6 +76,11 @@ MODES = {
 POISON_MODES = {
     "poison": (["-DLOFT_POISON", "-w"], {"LOFT_POISON": "1"}),
     "poison-claim": (["-DLOFT_POISON_CLAIM", "-w"], {"LOFT_POISON_CLAIM": "1"}),
+    # The C runtime zeroes no claim (`@FR-H-Claim`): its claims filled with poison against the
+    # PLAIN interpreter, so a caller that reads a byte it never wrote answers the poison where
+    # the interpreter answers its own bytes.  (`poison-claim` poisons both sides, and a read of
+    # an unwritten byte then reads the same poison on each.)
+    "claim-unwritten": (["-DLOFT_POISON_CLAIM", "-w"], None),
 }
 ASAN = ["-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-fno-sanitize-recover=all"]
 # `--wasm`: the same unit for wasm32-wasi.  The runtime's recoverable faults use setjmp, which
