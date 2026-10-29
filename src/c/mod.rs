@@ -1934,12 +1934,7 @@ fn unit_defines(
     cx: &Cx,
     reached: &std::collections::HashSet<u32>,
 ) -> (String, bool, bool) {
-    // The call-depth cap both other backends enforce (`limits::MAX_CALL_DEPTH`), stated here so
-    // the runtime cannot hold a copy of the number that drifts from it.
-    let mut out = format!(
-        "#define LOFT_MAX_CALL_DEPTH {}\n",
-        crate::limits::MAX_CALL_DEPTH
-    );
+    let mut out = String::new();
     if reached.iter().any(|&d| data.def(d).name() == "n_file_map") {
         out.push_str("#define LOFT_FOREIGN 1\n");
     }
@@ -2014,6 +2009,13 @@ fn unit_defines(
             at("variables")
         );
     }
+    // The call-depth cap both other backends enforce (`limits::MAX_CALL_DEPTH`), stated here so
+    // the runtime cannot hold a copy of the number that drifts from it.
+    let _ = writeln!(
+        out,
+        "#define LOFT_MAX_CALL_DEPTH {}",
+        crate::limits::MAX_CALL_DEPTH
+    );
     (out, parses, reflects)
 }
 
