@@ -315,7 +315,8 @@ pub(crate) fn candidate_params(data: &Data, d: u32) -> Option<Vec<bool>> {
             let Ok(p) = u16::try_from(i) else {
                 return false;
             };
-            matches!(a.typedef, Type::Integer(..) | Type::Float | Type::Single)
+            // `integer?` is the optional wrapper `base()` peels; a `&` link is not.
+            matches!(a.typedef.base(), Type::Integer(..) | Type::Float | Type::Single)
                 && (p as usize) < vars.var_count()
                 && vars.is_argument(p)
                 && !escaped.contains(&p)
