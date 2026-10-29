@@ -100,7 +100,11 @@ the detail, and that place wins if the two ever differ — fix this line, not th
     produce a wrong result; library CI runs with `LOFT_DENY_WARNINGS=1`.  A diagnostic reaches
     only whoever can act on its cure.  [DIAGNOSTICS.md](DIAGNOSTICS.md)
 19. **Claim only the targets you have passed**: interpret, native, wasm and browser give one
-    answer on every claimed target.  loft-library skill § the parity gate
+    answer on every claimed target.  loft-library skill § the parity gate.  **The C backend is
+    not optional**: every library's own CI runs its suite through `--native-c`
+    (`library-ci-reusable.yml`) and is red where it fails; a native part written as a Rust
+    crate does not load in a C build, so it needs a `[c] shim`
+    ([PACKAGES_C_BINDING.md](PACKAGES_C_BINDING.md)).
 20. **Ship lean**: every cdylib is built `--ship` (`opt-level=3`,
     `codegen-units=1`), and a performance number comes from that tier only.
     [NATIVE.md](NATIVE.md) § Optimisation tiers

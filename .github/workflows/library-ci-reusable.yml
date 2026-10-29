@@ -214,9 +214,9 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit $status
 
-      # The same suite through the C backend (@PLN203), gated like the native step.  A package
-      # whose native part is a Rust crate (`[native]` in its manifest) cannot run there — a C
-      # build loads no Rust crate — so it is reported, not failed.
+      # The same suite through the C backend (@PLN203) — MANDATORY for every package (owner):
+      # a library ships on C or its CI is red.  A native part written as a Rust crate does not
+      # load in a C build, so such a package needs a `[c] shim` (PACKAGES_C_BINDING.md) to pass.
       - name: Native C — ${{ matrix.package }}
         working-directory: ${{ matrix.package }}
         env:
@@ -224,10 +224,6 @@ jobs:
           LOFT_STORE_GUARD: 1
         run: |
           set -o pipefail
-          if grep -q '^\[native\]' loft.toml; then
-            echo "::notice title=${{ matrix.package }} C backend::not run — its native part is a Rust crate, which a C build does not load"
-            exit 0
-          fi
           LOFT_TIMEOUT=240 loft --native-c --tests tests 2>&1 | tee "$RUNNER_TEMP/native-c.log" && exit 0
           status=$?
           {
