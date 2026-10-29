@@ -6,6 +6,28 @@
 > what it cost, and what closed it.  The rules doc carries the CURRENT state (how many are open,
 > and which); everything below is the record behind it.
 
+## Open
+
+* **D-match-26** *(opened 2026-10-29, OPEN)* — `(M-Once)`.  Every chain builder lowers a
+  guarded arm as `if cmp { bindings; if guard { body } else REST } else REST`, so REST — the
+  chain of every later arm — is placed twice, and each later guard copies its own REST inside
+  both copies.  Measured on main ec098768e's front end (`loft introspect`), an eight-arm
+  plain-enum match with 0 to 6 of its first arms guarded:
+
+  | guarded arms | 0 | 1 | 2 | 3 | 4 | 5 | 6 |
+  |---|---|---|---|---|---|---|---|
+  | subject tests (`OpEqInt`) in the IR | 8 | 15 | 27 | 47 | 79 | 127 | 191 |
+  | the function's bytecode ops | 62 | 114 | 204 | 356 | 604 | 988 | 1532 |
+
+  Found by the @PLN91 loft interpreter, whose run loop is one 66-arm `match`: designing a table
+  jump for it (X22) meant reading the chain a guard makes.  The sites are the enum chain's arm
+  loop (`guarded arms nest the guard inside the pattern branch`), `build_scalar_chain`'s range
+  and equality arms, and `chain_pattern_arms`, whose own comment named the copy ("The `<rest>`
+  appears twice") without counting that the copies compound.  Values are right on both
+  backends; the cost is size.  Closes with step G of
+  [plans/91-self-host/1b-x22.md](../plans/91-self-host/1b-x22.md), guarded by a linear-size
+  test falsified against the 191 above.
+
 ## Deviations carried by matching.md until 2026-10-06
 
 Opened and closed in the same change, by the `(P-Cap-Ty)` walk; the chapter's `OPEN:` line

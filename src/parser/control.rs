@@ -585,6 +585,7 @@ fn chain_pattern_arms(arms: Vec<PatternArm>, fallback: Value, result_type: &Type
             };
             continue;
         };
+        // @FR-D-match-26 — the rest is placed twice; `(M-Once)` says once.
         let rest = chain.clone();
         let mut guarded = v_if(guard, arm.code, rest);
         if !arm.bindings.is_empty() {
@@ -7323,6 +7324,7 @@ impl Parser {
                     cmp
                 };
                 // guarded arms nest the guard inside the pattern branch.
+                // @FR-D-match-26 — and place the rest twice; `(M-Once)` says once.
                 chain = match &arm.guard {
                     Some(guard) => {
                         let guarded = v_if(guard.clone(), arm.code.clone(), chain.clone());
@@ -13735,6 +13737,7 @@ impl Parser {
                         || bl.name == "or_pattern")
                 {
                     let range_cond = bl.operators[0].clone();
+                    // @FR-D-match-26 — a guarded arm places the rest twice; `(M-Once)` says once.
                     chain = match guard_opt {
                         Some(guard) => {
                             let guarded = v_if(guard, arm_code, chain.clone());
@@ -13754,6 +13757,7 @@ impl Parser {
                 if cond_tp == Type::Null {
                     chain = arm_code;
                 } else {
+                    // @FR-D-match-26 — as the range arm above.
                     chain = match guard_opt {
                         Some(guard) => {
                             let guarded = v_if(guard, arm_code, chain.clone());

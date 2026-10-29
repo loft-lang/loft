@@ -102,6 +102,27 @@ nullable-into-non-null on both backends, whatever the arms held, while the same 
 spelled as an `if` was quiet (loft#1343).  The last arm is the fallback now, as a trailing
 `_` would be.
 
+### A match is lowered once per arm
+
+```
+  (M-Once)    a match is lowered ONCE PER ARM: each arm's pattern test, its bindings, its guard
+              and its body appear once in the lowered program, so the lowered match grows
+              linearly with its source.  A failed guard reaches the next arm through control
+              flow — the guard is part of its own arm's condition, evaluated after the pattern
+              test holds and the bindings are made (P-Guard) — never through a copy of the arms
+              after it.
+```
+
+**In words.**  How big a `match` becomes after lowering is the user's cost: it is compile time,
+code size and, under the interpreter, the stretch of code a dispatch walks.  A rule about the
+lowering belongs here because the shortcut it excludes is the obvious one: placing the
+remaining arms into a failed guard's else-branch as well as the arm's own.  That copy compounds
+— every guard copies everything after it, copies included — so k guards make about 2^k copies
+of the tail.  With the guard folded into its arm's condition (`if (cmp && { bindings; guard })
+{ body } else rest`), the rest is written once, and a guard's failure is the ordinary
+fall-through to the next arm.  The bindings still run once, and only after the pattern
+test, because a `..rest` materialisation or a cursor advance cannot run twice.
+
 ---
 
 ## Rules — PEG patterns (@PLN35, SHIPPED)
@@ -289,8 +310,15 @@ is a view; `..rest` / repetition are fresh vectors); the pattern grammar + prece
 
 ## Deviations
 
-OPEN: **0** — the closed entries, `D-match-1` to `-25`, are in
-[matching-history.md](matching-history.md).  P-Alt and P-Cap hold at every pattern position: the
+OPEN: **1** — the closed entries, `D-match-1` to `-25`, are in
+[matching-history.md](matching-history.md).
+
+- **D-match-26 (OPEN, @PLN91)** — violates (M-Once): a guarded arm places the rest of the match in its
+  guard's else-branch and again in its pattern test's, in all three chain builders (the enum,
+  scalar and pattern chains of `src/parser/control.rs`), so the lowered match grows about
+  ×1.6 per guard.  The measurement is in [matching-history.md](matching-history.md); the
+  design that closes it is [plans/91-self-host/1b-x22.md](../plans/91-self-host/1b-x22.md)
+  § Step G.  P-Alt and P-Cap hold at every pattern position: the
 arm (`|` and `,` alike, over slice patterns too), a tuple subject, a tuple element, a field, a
 slice element, and the arm root's `name: pattern`.
 
