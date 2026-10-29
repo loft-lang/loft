@@ -708,6 +708,18 @@ impl<'a> FnWriter<'a> {
         self
     }
 
+    /// The record scalars an `__inv` twin takes as parameters (`@FR-R-Inputs`' scalar clause),
+    /// served as a loop's held scalars are: a read `p.f` of one names its parameter.
+    pub(crate) fn scalar_inputs(
+        mut self,
+        frame: Vec<(crate::opt::hoist::ScalarKey, String, CType)>,
+    ) -> Self {
+        if !frame.is_empty() {
+            self.scalars.push(frame);
+        }
+        self
+    }
+
     /// This function is a generator of `elem`s: written by `write_gen`.
     pub(crate) fn yielding(mut self, elem: CType) -> Self {
         self.gen_elem = Some(elem);
@@ -4529,9 +4541,9 @@ impl<'a> FnWriter<'a> {
             && super::native_c(def.name()).is_none()
             && args.len() < 64
             && !self.apr_twin_call(d, args)
-            && let Some(headers) = self.twin_headers(d, args)
+            && let Some(inputs) = self.twin_inputs(d, args, ind)?
         {
-            xs.extend(headers);
+            xs.extend(inputs);
             mask |= super::INV_BIT;
         }
         crate::rewrite_census::fired("R-Inputs", usize::from(mask & super::INV_BIT != 0));
@@ -4662,22 +4674,90 @@ impl<'a> FnWriter<'a> {
     /// `twin_call_inputs` keys them: each header input's path re-spelled over the argument —
     /// every one held by an enclosing frame, or `None`.  A header passed under growth carries
     /// a base derived at the call, valid while the callee runs, which grows no store.
-    fn twin_headers(&self, d: u32, args: &[Value]) -> Option<Vec<String>> {
-        if self.gen_elem.is_some() || self.headers.iter().all(Vec::is_empty) {
-            return None;
+    /// `@FR-R-Inputs` at a call: the arguments of `d`'s `__inv` twin — each record scalar it
+    /// reads, then each header — or `None` where the plain call stays.  Every header must be one
+    /// this body holds (the twin reads its vector through it); a scalar is the local this body
+    /// holds it in, else its read spelled over the argument.  The twin is taken when at least
+    /// one input is held, as rustc takes it (`any_held`): a twin fed only fresh reads would only
+    /// move each read to the call.
+    fn twin_inputs(
+        &mut self,
+        d: u32,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<Option<Vec<String>>, String> {
+        if self.gen_elem.is_some()
+            || (self.headers.iter().all(Vec::is_empty) && self.scalars.iter().all(Vec::is_empty))
+        {
+            return Ok(None);
         }
-        let fi = self.cx.callee_inputs(d)?;
-        if fi.headers.is_empty() {
-            return None;
+        let Some(fi) = self.cx.callee_inputs(d) else {
+            return Ok(None);
+        };
+        let mut held_any = false;
+        let mut scalar_args = Vec::new();
+        for (p, fld, getter) in &fi.scalars {
+            if super::twin_scalar_shape(self.cx, getter).is_none() {
+                continue;
+            }
+            let Some(arg) = args.get(*p as usize) else {
+                return Ok(None);
+            };
+            // A plain variable, or a sub-record path over one (`atlas.a_cv`), keyed on the root
+            // and the field's summed offset — the key a loop holds it under, as rustc keys it
+            // (`hoist::path_scalar`).  Any other argument is not a pure path: reading the
+            // field over it would evaluate it again, so the plain call stays.
+            let key = if let Value::Var(av) = arg.unspan() {
+                (*av, *fld)
+            } else if let Some((k, _)) =
+                crate::opt::hoist::path_scalar(self.cx.data, self.vars, arg, *fld)
+            {
+                k
+            } else {
+                return Ok(None);
+            };
+            if let Some((local, _)) = self.held_scalar(&key) {
+                held_any = true;
+                scalar_args.push(local);
+                continue;
+            }
+            // Not held as a value: read through the record's ADDRESS where this body holds it
+            // (`@FR-R-RecPtr`, one load — the read below takes that path), else the plain call
+            // stays, as rustc keeps it: a twin fed reads through the store would only move
+            // each read to the call.
+            if !self.rec_ptrs.iter().any(|(v, _, _)| *v == key.0) {
+                return Ok(None);
+            }
+            held_any = true;
+            // The read as the callee spells it, over the caller's pure argument path.
+            let Value::Call(g, gargs) = getter.unspan() else {
+                return Ok(None);
+            };
+            let mut over = gargs.clone();
+            over[0] = arg.clone();
+            let e = self.nested(|w| w.expr(&Value::Call(*g, over), ind))?;
+            scalar_args.push(e.code);
         }
-        let mut out = Vec::with_capacity(fi.headers.len());
+        let mut header_args = Vec::with_capacity(fi.headers.len());
         for (p, offs, _) in &fi.headers {
-            let (c, mut key) =
-                crate::opt::writes::vector_path(self.cx.data, args.get(*p as usize)?)?;
+            let Some(arg) = args.get(*p as usize) else {
+                return Ok(None);
+            };
+            let Some((c, mut key)) = crate::opt::writes::vector_path(self.cx.data, arg) else {
+                return Ok(None);
+            };
             key.extend_from_slice(offs);
-            out.push(self.held_path(&(c, key))?);
+            let Some(h) = self.held_path(&(c, key)) else {
+                return Ok(None);
+            };
+            held_any = true;
+            header_args.push(h);
         }
-        Some(out)
+        if !held_any || (scalar_args.is_empty() && header_args.is_empty()) {
+            return Ok(None);
+        }
+        scalar_args.extend(header_args);
+        Ok(Some(scalar_args))
     }
 
     /// Evaluate the arguments at `values` into `xs`, in order; a function named where a

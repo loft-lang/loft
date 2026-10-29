@@ -2156,6 +2156,18 @@ pub fn emit_program(
     stores: &Stores,
     expected: &dyn Fn(&str) -> Vec<String>,
 ) -> Result<String, Refusal> {
+    // The rewrites this unit admitted, written where `LOFT_REWRITE_CENSUS` asks, as the native
+    // writer writes its own after emitting: the census can then set the two writers side by side.
+    let out = emit_program_counted(data, stores, expected);
+    crate::rewrite_census::write();
+    out
+}
+
+fn emit_program_counted(
+    data: &Data,
+    stores: &Stores,
+    expected: &dyn Fn(&str) -> Vec<String>,
+) -> Result<String, Refusal> {
     let main = data.def_nr("n_main");
     if main >= data.definitions() {
         return emit_tests(data, stores, expected);
@@ -2406,7 +2418,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         let t = cx.ap2_ctype(*rec).ok_or("an __apv twin of no apart type")?;
         params.push(format!("{t} *loft_apo"));
     }
-    let mut inputs = inv_inputs(cx, d, mask, &mut params)?;
+    let (mut inputs, scalar_inputs) = inv_inputs(cx, d, mask, &mut params)?;
     // A `__kh` twin: the caller's header for its vector parameter, by pointer — held, with its
     // base, and derived again through the pointer after each growth (`kept`).
     let kept = mask & KH_BIT != 0;
@@ -2450,6 +2462,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     let body = body::FnWriter::new(cx, d, shapes, ret)
         .places(places)
         .inputs(inputs)
+        .scalar_inputs(scalar_inputs)
         .kept_growth(kept)
         .nn_seed(mask)
         .nokeep(mask & NK_BIT != 0)?
@@ -2470,26 +2483,60 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     Ok((sig, framed(cx, d, &name, &params, ret, &body, inline)))
 }
 
-/// An `__inv` twin's header parameters, appended to `params`, and the frame its body serves
-/// their vectors' accesses from; none for any other mask.
+/// The shape an `__inv` twin takes a scalar input in (`@FR-R-Inputs`' scalar clause): the
+/// getter's result, for the kinds a loop holds a record scalar in; `None` for any other, which
+/// the twin reads from its record as before.  Asked by the twin's signature and by its call
+/// site alike, so the two cannot disagree on which inputs cross.
+pub(crate) fn twin_scalar_shape(cx: &Cx, getter: &Value) -> Option<CType> {
+    let Value::Call(g, _) = getter.unspan() else {
+        return None;
+    };
+    let c = cx.ctype(cx.data.def(*g).returned())?;
+    matches!(
+        c,
+        CType::Int | CType::Float | CType::Single | CType::Bool | CType::Enum | CType::Char
+    )
+    .then_some(c)
+}
+
+/// An `__inv` twin's inputs, appended to `params` — first each record scalar it reads
+/// (`is{k}`, rustc's `__is_k`), then each header (`hi{k}`) — and the frames its body serves
+/// them from: the scalars as a loop's held scalars, the headers as its held headers.  None for
+/// any other mask.
+#[allow(clippy::type_complexity)]
 fn inv_inputs(
     cx: &Cx,
     d: u32,
     mask: u64,
     params: &mut Vec<String>,
-) -> Result<Vec<(crate::opt::writes::PathKey, String, bool)>, String> {
+) -> Result<
+    (
+        Vec<(crate::opt::writes::PathKey, String, bool)>,
+        Vec<(crate::opt::hoist::ScalarKey, String, CType)>,
+    ),
+    String,
+> {
     let mut inputs = Vec::new();
+    let mut scalars = Vec::new();
     if mask & INV_BIT != 0 {
         let fi = cx
             .callee_inputs(d)
-            .filter(|fi| !fi.headers.is_empty())
-            .ok_or("an __inv twin of a function with no header inputs")?;
+            .ok_or("an __inv twin of a function with no inputs")?;
+        for (k, (p, fld, getter)) in fi.scalars.iter().enumerate() {
+            if let Some(c) = twin_scalar_shape(cx, getter) {
+                params.push(format!("{} is{k}", held(c)));
+                scalars.push(((*p, *fld), format!("is{k}"), c));
+            }
+        }
         for (k, (p, offs, _)) in fi.headers.iter().enumerate() {
             params.push(format!("loft_vh hi{k}"));
             inputs.push(((*p, offs.clone()), format!("hi{k}"), true));
         }
+        if inputs.is_empty() && scalars.is_empty() {
+            return Err("an __inv twin of a function with no inputs".into());
+        }
     }
-    Ok(inputs)
+    Ok((inputs, scalars))
 }
 
 /// `@FR-R-ValueLocal` — `d`'s value locals (the tuple parameters among them) take their struct
