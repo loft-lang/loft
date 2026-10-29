@@ -286,8 +286,9 @@ fn a_value_larger_than_the_arena_crosses_a_socket() {
     let remote = run(&root, &consumer_path, Some(&server.address));
     assert_eq!(
         inproc.stdout, remote.stdout,
-        "a large value did not survive the socket\n--- inproc ---\n{}\n--- remote ---\n{}",
-        inproc.stdout, remote.stdout
+        "a large value did not survive the socket\n--- inproc ---\n{}\n--- remote ---\n{}\n\
+         --- remote stderr ---\n{}",
+        inproc.stdout, remote.stdout, remote.stderr
     );
     // The call AFTER the big one matters as much: an arena that grew must not
     // leave the next small call reading a stale length.
