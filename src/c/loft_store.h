@@ -783,7 +783,7 @@ static void loft_st_fresh(loft_store_t *s, uint32_t rec, uint32_t pos, uint32_t 
 static uint32_t loft_claim_block(loft_store_t *s, uint32_t pos, uint32_t size) {
     int32_t req = (int32_t) size;
     int32_t bs = -loft_st_i32(s, pos, 0);
-    if (bs > req * 4 / 3) {
+    if ((int64_t) bs > (int64_t) req * 4 / 3) {
         loft_st_set_i32(s, pos, 0, req);
         uint32_t nf = pos + size;
         loft_set_free_header(s, nf, bs - req);
@@ -847,7 +847,7 @@ static uint32_t loft_bump_wild(loft_store_t *s, uint32_t size) {
     if (pos == 0 || s->free_root != 0) return 0;
     int32_t req = (int32_t) size;
     int32_t block = loft_fl_size(s, pos);
-    if (block <= req * 4 / 3 || block - req < LOFT_MIN_FREE_TREE) return 0;
+    if ((int64_t) block <= (int64_t) req * 4 / 3 || block - req < LOFT_MIN_FREE_TREE) return 0;
     loft_st_set_i32(s, pos, 0, req);
     uint32_t rest = pos + size;
     loft_set_free_header(s, rest, block - req);

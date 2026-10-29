@@ -762,6 +762,12 @@ pub(crate) fn run_tests(
             if leak_check {
                 cmd.push_env("LOFT_NATIVE_LEAK_CHECK", "1");
             }
+            // The test run's store-memory ceiling reaches the compiled child too: the runner
+            // set it in this process only, and a runaway allocation in a native test is the
+            // one this ceiling exists for (RUN_BOUNDS.md).
+            if std::env::var_os("LOFT_MEMORY_LIMIT").is_none() {
+                cmd.push_env("LOFT_MEMORY_LIMIT", loft::store_budget::limit().to_string());
+            }
             let out = cmd
                 .run(b"")
                 .map_err(|e| format!("native run failed: {e}"))?;
@@ -1800,6 +1806,9 @@ pub(crate) fn run_tests(
                             // ABI's `&UnsafeCell<Stores>` parameter type is
                             // satisfied by the entry call.
                             writeln!(buf, "\nfn main() {{").unwrap();
+                            // The store-memory ceiling the runner hands down (below).
+                            writeln!(buf, "    loft::store_budget::apply_env_limit_if_set();")
+                                .unwrap();
                             writeln!(
                                 buf,
                                 "    let cell = std::cell::UnsafeCell::new(Stores::new());"
@@ -2143,6 +2152,12 @@ pub(crate) fn run_tests(
                                 run_cmd = run_cmd.stdout(std::process::Stdio::inherit());
                                 if leak_check {
                                     run_cmd.push_env("LOFT_NATIVE_LEAK_CHECK", "1");
+                                }
+                                if std::env::var_os("LOFT_MEMORY_LIMIT").is_none() {
+                                    run_cmd.push_env(
+                                        "LOFT_MEMORY_LIMIT",
+                                        loft::store_budget::limit().to_string(),
+                                    );
                                 }
                                 let out = run_cmd
                                     .run(b"")

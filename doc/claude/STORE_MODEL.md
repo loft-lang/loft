@@ -136,7 +136,7 @@ from P0b (what the C runtime lacks).  State: **open**, **fixing** (on the branch
 |---|---|---|
 | D19a | `loft_st_init` resets `claimed_end` and `needs_coalesce`; the interpreter does not | open — is the interpreter's stale value intended? |
 | D19b | the allocator's switches are hard-wired in C | P0b |
-| D19c | no store-memory ceiling on C test runs | P0b |
+| D19c | no store-memory ceiling on C test runs | closed — the runner hands its ceiling to a compiled child, both writers (`the_default_ceiling_reaches_a_compiled_test`) |
 | D19d | `loft_claim_grow` does not check for u32 overflow | open |
 | D19e | NaN and ±0 sort in different orders | open |
 | D19f | clear-release skips the store reset on an already-empty vector | open |

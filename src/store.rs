@@ -2103,7 +2103,7 @@ impl Store {
         }
         let block_size = -(self.read::<i32>(root, 0));
         let req_size = size as i32;
-        if block_size <= req_size * 4 / 3
+        if i64::from(block_size) <= i64::from(req_size) * 4 / 3
             || block_size - req_size < MIN_FREE_TREE
             || root + block_size as u32 != self.size
         {
@@ -2143,7 +2143,9 @@ impl Store {
         }
         let req = size as i32;
         let block = self.fl_size(pos);
-        if block <= req * 4 / 3 || block - req < MIN_FREE_TREE {
+        // In 64 bits: `req * 4` overflows `i32` for a claim of over half a billion words, and a
+        // wrapped bound would take the bump for a block too small to hold the claim.
+        if i64::from(block) <= i64::from(req) * 4 / 3 || block - req < MIN_FREE_TREE {
             return None;
         }
         self.write(pos, 0, req);
@@ -2163,7 +2165,7 @@ impl Store {
         let req_size = size as i32;
         let block_size = -(self.read::<i32>(pos, 0));
         assert!(block_size >= req_size, "Claimed block too small at {pos}");
-        if block_size > req_size * 4 / 3 {
+        if i64::from(block_size) > i64::from(req_size) * 4 / 3 {
             self.write(pos, 0, req_size);
             let new_free = pos + size;
             self.set_free_header(new_free, block_size - req_size);
