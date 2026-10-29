@@ -344,8 +344,18 @@ jobs:
             exit 0
           fi
           policy="$(python3 "$GITHUB_WORKSPACE/loft-src/scripts/revalidate_matrix.py" --native-policy loft.toml)"
-          if LOFT_TIMEOUT=240 loft --native-c --tests tests; then
+          if LOFT_TIMEOUT=240 loft --native-c --tests tests 2>&1 | tee "$RUNNER_TEMP/native-c.log"; then
             echo "✅ ${{ matrix.name }} — C-backend suite green against this loft ($policy)"
+            exit 0
+          fi
+          # A dependency whose native part is a Rust crate is not loaded by a C build: the C
+          # answers its call with the unloaded-library panic.  When that is every failure, it is
+          # the library's migration still to come (its own CI mandates C), not a loft break.
+          # One line per failed test function: `FAIL  <file>::<test>  —  <why>`.
+          failed="$(grep -cE '^\s*FAIL +[^ ]+::[^ ]+ +—' "$RUNNER_TEMP/native-c.log" || true)"
+          unloaded="$(grep -cE '^\s*FAIL +[^ ]+::[^ ]+ +— +panic: native function [^ ]+ not loaded' "$RUNNER_TEMP/native-c.log" || true)"
+          if [ "${failed:-0}" -gt 0 ] && [ "$failed" = "$unloaded" ]; then
+            echo "::notice title=${{ matrix.name }} C backend::$failed test(s) call a native the C build does not load (a Rust crate in this library or a dependency)"
             exit 0
           fi
           case "$policy" in
