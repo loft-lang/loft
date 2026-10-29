@@ -3839,9 +3839,6 @@ impl Parser {
         }
     }
 
-    // <rust> ::= { '#rust' <string> | '#iterator' <string> <string> }
-    // <native> ::= '#native' <string>   (any file)
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     /// loft#2227 — record the type id a `#native`'s heap answer is copied out with when the
     /// native built it in an argument's store (`Definition::native_answer_tp`): a vector's
     /// ELEMENT type, as `OpAppendVector` copies with it, or a record's own type.  Here because
@@ -3859,6 +3856,9 @@ impl Parser {
         self.data.definitions[self.context as usize].native_answer_tp = tp;
     }
 
+    // <rust> ::= { '#rust' <string> | '#iterator' <string> <string> }
+    // <native> ::= '#native' <string>   (any file)
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_rust(&mut self) {
         loop {
             if !self.lexer.peek_token("#") {

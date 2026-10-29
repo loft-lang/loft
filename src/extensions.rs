@@ -1785,23 +1785,7 @@ fn dispatch_via_bridge(
     };
     // The answer's own handle, out of the argument's store (`@FR-F-Ret`) — before
     // `bridge_args_done`, which deletes the foreign-vector copies an answer may name.
-    let answer = match ret.tag {
-        LoftTag::Ref if sig.ret == Some(ArgT::Ref) => {
-            Some(crate::codegen_runtime::from_loft_record(ret.as_ref()))
-        }
-        LoftTag::Ref => Some(bridge_ref_handle(stores, ret.as_ref())),
-        _ => None,
-    };
-    let answer = match (answer, &call) {
-        (Some(db), Some(c)) => Some(stores.own_bridge_answer(
-            c,
-            db,
-            sig.ret == Some(ArgT::Vec),
-            sig.answer_tp,
-            &claimed,
-        )),
-        (a, _) => a,
-    };
+    let answer = bridge_heap_answer(stores, call.as_ref(), sig, &ret, &claimed);
 
     // The copies the foreign vector arguments took, and a store minted for a scalar answer.
     if let Some(call) = &call {
@@ -1880,6 +1864,33 @@ fn bridge_text_result(
          position) — @PLN10 N2b coverage gap"
     );
     stores.put(stack, Str::new(""));
+}
+
+/// A bridge call's heap answer as loft holds it — a record as it is, a vector behind its header
+/// (`bridge_ref_handle`) — and, loft#2227, out of the argument's store it was built in
+/// (`Stores::own_bridge_answer`, with what the call `claimed`).  `None` for a non-heap answer.
+#[cfg(feature = "native-extensions")]
+fn bridge_heap_answer(
+    stores: &mut crate::database::Stores,
+    call: Option<&crate::database::BridgeArgs>,
+    sig: &NativeSig,
+    ret: &loft_ffi::LoftValue,
+    claimed: &[u32],
+) -> Option<crate::keys::DbRef> {
+    use loft_ffi::LoftTag;
+    let db = match ret.tag {
+        LoftTag::Ref if sig.ret == Some(ArgT::Ref) => {
+            crate::codegen_runtime::from_loft_record(ret.as_ref())
+        }
+        LoftTag::Ref => bridge_ref_handle(stores, ret.as_ref()),
+        _ => return None,
+    };
+    Some(match call {
+        Some(c) => {
+            stores.own_bridge_answer(c, db, sig.ret == Some(ArgT::Vec), sig.answer_tp, claimed)
+        }
+        None => db,
+    })
 }
 
 /// Wrap a returned `loft_ffi::LoftRef` (direct vector record) in the indirect header layout
