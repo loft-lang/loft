@@ -2834,7 +2834,13 @@ impl Output<'_> {
         }
         let b_true = matches!(true_v.unspan(), Value::Block(_));
         let b_false = matches!(false_v.unspan(), Value::Block(_));
-        let (text_string_unify, text_unify) = self.text_if_unify(true_v, false_v);
+        // @PLN102 `?? null`: a coalesce arm reports `text?` when its fallback can be null, so
+        // the text question peels `Optional` (`@FR-N-Shape`).
+        let true_arm_is_text = self
+            .infer_type(IrNode::Native(true_v))
+            .is_some_and(|t| matches!(t.base(), Type::Text(_)));
+        let (text_string_unify, text_unify) =
+            self.text_if_unify(true_v, false_v, true_arm_is_text);
         // @PLN17: a boolean if-expression (e.g. the `&&` / `||` lowering
         // `if a {b} else {false}`) has arms that may be `u8` (a var/call — storage
         // form) or `bool` (a literal/comparison — expression form), which don't
@@ -3238,7 +3244,13 @@ impl Output<'_> {
     /// `if` is not text) and it yields what they do.  `output_if_inner` emits the arms by this
     /// answer, and the argument hoist reads it (`pre_eval::yields_owned_text`) to know whether
     /// the bound value must be borrowed for a `&str` parameter — one question, one home.
-    pub(super) fn text_if_unify(&self, true_v: &Value, false_v: &Value) -> (bool, bool) {
+    /// `true_arm_is_text`: the `if` is text (`text` or `text?`), asked by the caller.
+    pub(super) fn text_if_unify(
+        &self,
+        true_v: &Value,
+        false_v: &Value,
+        true_arm_is_text: bool,
+    ) -> (bool, bool) {
         let b_true = matches!(true_v.unspan(), Value::Block(_));
         let b_false = matches!(false_v.unspan(), Value::Block(_));
         // @PLAN52 cluster VII: when the if-result is `Text`, branches can
@@ -3254,13 +3266,9 @@ impl Output<'_> {
         // dangle.  Defer to `text_string_unify` below (owned `String` for
         // both) instead.
         let text_mismatch = self.text_if_mismatched_reps(true_v, false_v);
-        // @PLN102 `?? null`: a coalesce arm now reports `text?` (`Optional(Text)`) when its
-        // fallback can be null (`v[i] ?? null`), so peel `Optional` before the text-rep check — a
-        // `text?` if-arm has the SAME `String`/`&str` unify hazard as a plain `text` one (its
-        // present-path still materialises an owned `String` while a `null` sibling arm is `&str`).
-        let true_arm_is_text = self
-            .infer_type(IrNode::Native(true_v))
-            .is_some_and(|t| matches!(t.base(), Type::Text(_)));
+        // @PLN102 `?? null`: a `text?` if-arm has the SAME `String`/`&str` unify hazard as a
+        // plain `text` one (its present-path still materialises an owned `String` while a
+        // `null` sibling arm is `&str`), which is why the caller's text question peels.
         let text_unify = !b_true
             && !b_false
             && !text_mismatch

@@ -1010,7 +1010,10 @@ impl Output<'_> {
             // they are, a borrow otherwise.  Ask the emitter's own decision, never a re-derived
             // one: a disagreement here is a `String` handed to a `&str` parameter (E0308).
             Value::If(_, t, f) => {
-                let (string, borrow) = self.text_if_unify(t, f);
+                let is_text = self
+                    .infer_type(IrNode::Native(t))
+                    .is_some_and(|tp| matches!(tp.base(), Type::Text(_)));
+                let (string, borrow) = self.text_if_unify(t, f, is_text);
                 string
                     || (!borrow
                         && self.text_arm_ends_in_text_call(t)
