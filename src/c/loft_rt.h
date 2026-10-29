@@ -2365,6 +2365,23 @@ static int loft_swap_in(uint16_t tp, loft_ref src, loft_ref dst, int reset_dest)
     return 1;
 }
 
+/* `@FR-H-SwapRebind` (Stores::try_swap_rebind, `codegen_runtime::OpRebindRecord`): the rebind
+ * `x = f(…)` whose result the bind gives up EXCHANGES the result's store into `*dst` without
+ * the reset the copy would run first — `x`'s previous tree leaves with the released slot.
+ * The emitter calls it only for a direct call whose result is given up and whose type keeps no
+ * stored reference (`Cx::swap_safe`); a destination that is not its store's typed root (a first
+ * bind, a witnessed local) declines here, and the caller resets and copies.  Answers 1 when it
+ * exchanged.  `-DLOFT_NO_SWAP_REBIND` keeps the reset and the copy. */
+static int loft_swap_rebind(uint16_t tp, loft_ref src, loft_ref *dst) {
+#ifdef LOFT_NO_SWAP_REBIND
+    (void) tp; (void) src; (void) dst;
+    return 0;
+#else
+    if (dst->store_nr == 0xFFFF || dst->rec != 1 || dst->pos != 8) return 0;
+    return loft_swap_in(tp, src, *dst, 0);
+#endif
+}
+
 static void loft_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r);
 
 /* OpCopyRecord's flags: bit 0 frees the source, bit 1 says the type may move (loft_swap_in). */
@@ -3303,7 +3320,7 @@ static void loft_bind_copy(const loft_tdesc *T, uint16_t tp, loft_ref *dst, loft
     }
     if (src.store_nr == dst->store_nr && src.rec == dst->rec && src.pos == dst->pos) return;
     if (src.store_nr == dst->store_nr) *dst = loft_ref_null();
-    loft_database(dst, T[tp].size);
+    loft_database_typed(dst, T[tp].size, tp); /* typed, as `OpDatabase(tp)`: the next rebind may exchange */
 #ifdef LOFT_PARSE
     loft_perrs_deliver(src, *dst, tp, 1);
 #endif

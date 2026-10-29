@@ -3322,10 +3322,6 @@ impl<'a> FnWriter<'a> {
             let r = self.temp(CType::Ref);
             self.line(ind, &format!("{r} = {};", as_ref(e)?));
             self.fresh_unless_owned(var, x, first, &name, ind);
-            self.line(
-                ind,
-                &format!("loft_bind_copy(loft_types, {bytes}, &{name}, {r});"),
-            );
             if frees {
                 // The stores of the call's reference arguments are protected, as the bytecode
                 // writer protects them (`protectable_ref_args`): a result that is a view into
@@ -3334,9 +3330,30 @@ impl<'a> FnWriter<'a> {
                 for a in crate::use_analysis::protectable_ref_args(self.cx.data, self.d, x).0 {
                     keep.push(format!("{r}.store_nr != {}.store_nr", self.var(a)));
                 }
+                let keep = keep.join(" && ");
+                // `@FR-H-SwapRebind`: a result the bind gives up is exchanged into the
+                // destination where the store allows; a fn-ref call's result may be a store it
+                // borrowed, and a type whose tree holds a stored reference keeps the copy.
+                if matches!(x.unspan(), Value::Call(..)) && self.cx.swap_safe(bytes) {
+                    self.line(
+                        ind,
+                        &format!(
+                            "if (!({keep} && loft_swap_rebind({bytes}, {r}, &{name}))) {{ \
+                             loft_bind_copy(loft_types, {bytes}, &{name}, {r}); \
+                             if ({keep}) loft_free_ref({r}); }}"
+                        ),
+                    );
+                } else {
+                    self.line(
+                        ind,
+                        &format!("loft_bind_copy(loft_types, {bytes}, &{name}, {r});"),
+                    );
+                    self.line(ind, &format!("if ({keep}) loft_free_ref({r});"));
+                }
+            } else {
                 self.line(
                     ind,
-                    &format!("if ({}) loft_free_ref({r});", keep.join(" && ")),
+                    &format!("loft_bind_copy(loft_types, {bytes}, &{name}, {r});"),
                 );
             }
             self.flush(ind);

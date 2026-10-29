@@ -552,11 +552,17 @@ the record it points at, not a place of the holder's.
                  slot — a file, foreign bytes, a recording, a lock, a borrow, a constant,
                  a lazy binding, the interpreter's stack — keeps the copy; a free
                  protection refuses only the side the exchange releases.
-  (H-SwapRebind) on `--native`, the rebind `x = f(…)` whose copy would follow a reset of
-                 `x`'s store is the exchange of `(H-SwapIn)` WITHOUT the reset: `x`'s
-                 previous tree moves to the released slot with the rest of `x`'s store
-                 and is freed with it, which is what the reset releases.  Every other
-                 condition is the exchange's; where one fails, the reset and the copy run.
+  (H-SwapRebind) on both compiled backends (`--native`, the C), the rebind `x = f(…)` whose
+                 copy would follow a reset of `x`'s store is the exchange of `(H-SwapIn)`
+                 WITHOUT the reset: `x`'s previous tree moves to the released slot with
+                 the rest of `x`'s store and is freed with it, which is what the reset
+                 releases.  The source is the call's own result, given up after the bind
+                 (the free-source form): not a store an argument names, not one a fn-ref
+                 call borrowed, never a pooled buffer (`(R-Reuse)` keeps its result in
+                 place and copies nothing out).  A destination that is not its store's
+                 typed root — a first bind, a witnessed local, one the copy re-mints —
+                 takes the reset and the copy.  Every other condition is the exchange's;
+                 where one fails, the reset and the copy run.
   (H-SwapKeyed)  a keyed LOCAL rebound from a call that gave its collection up (`h =
                  build(…)`, `OpReplaceKeyed`'s free-source form) is `(H-SwapRebind)`'s
                  exchange on both backends: a keyed local is a dedicated store with its
@@ -595,9 +601,16 @@ value.  The source must still be given up and must not be a store the last fn-re
 borrowed; a witnessed destination is reset as before, since its old store has to survive.
 `LOFT_NO_SWAP_REBIND=1` keeps the reset.  Site: `codegen_runtime::OpRebindRecord` over
 `Stores::try_swap_rebind`, emitted for a call-return rebind's copy arm
-(`generation/dispatch.rs`).  Guard
-`tests/scripts/a-rebind-exchanges-into-a-destination-it-does-not-reset.loft`, pin
-`tests/swap_rebind.rs`.
+(`generation/dispatch.rs`); on the C, `loft_swap_rebind` over `loft_swap_in`, emitted at the
+same bind (`c/body.rs`, the call-copy statement) and gated at compile time by the type walk
+(`Cx::swap_safe`), with `-DLOFT_NO_SWAP_REBIND` the switch.  The C's copy mints its destination
+TYPED (`loft_bind_copy` over `loft_database_typed`), as `OpDatabase(tp)` does, so the next
+rebind finds the typed root the exchange asks for.  Measured on zttext `invert` (one `Doc`
+rebound per step of a 1 000-step walk): the per-step deep copy of the whole document was 43 %
+of the routine.  Guards `tests/scripts/a-rebind-exchanges-into-a-destination-it-does-not-reset.loft`
+and `tests/scripts/a-rebind-from-a-fresh-result-moves-on-both-backends.loft` (the matrix: a
+loop, a view of the old value, a stored reference, a callee answering its argument or a view
+into one, a first bind, a fn-ref, a locked destination), pin `tests/swap_rebind.rs`.
 
 **`H-RootExtent` is what makes `H-ClearRelease`'s release affordable.** The release has to
 reach everything the cleared elements own, and it can do that two ways: walk the elements and
