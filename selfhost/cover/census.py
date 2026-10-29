@@ -16,7 +16,7 @@ passing row notes `swept N` when the interpreter's returns released stores the I
 skipped: @EXPECT_ERROR / @EXPECT_FAIL / @ARGS / @EXPECT_WARNING files, and files with no main.
 The rows go to target/selfhost-census.tsv; the summary ranks the refusals by programs blocked.
 """
-import argparse, collections, concurrent.futures as cf, os, re, subprocess, sys, tempfile
+import argparse, collections, concurrent.futures as cf, os, re, shutil, subprocess, sys, tempfile
 
 SKIP = re.compile(r"@EXPECT_ERROR|@EXPECT_FAIL|@ARGS|@EXPECT_WARNING|@SCRIPT")
 
@@ -49,7 +49,20 @@ def run(cmd, env, timeout):
         return -9, "", "timeout"
 
 def one(path, loft, runner, tmp, env, root):
-    img = os.path.join(tmp, re.sub(r"[^A-Za-z0-9]", "_", os.path.relpath(path, root))[-120:] + ".store")
+    # Each program's image is megabytes and a census runs a thousand: it goes once both
+    # runs have read it.
+    try:
+        return judge(path, loft, runner, tmp, env, root)
+    finally:
+        img = path_image(path, tmp, root)
+        if os.path.exists(img):
+            os.remove(img)
+
+def path_image(path, tmp, root):
+    return os.path.join(tmp, re.sub(r"[^A-Za-z0-9]", "_", os.path.relpath(path, root))[-120:] + ".store")
+
+def judge(path, loft, runner, tmp, env, root):
+    img = path_image(path, tmp, root)
     libs = ["--lib", os.path.join(root, "tests", "lib")]
     code, _, err = run([loft, "--emit-image", img] + libs + [path], env, 300)
     if code != 0:
@@ -81,6 +94,12 @@ def main():
     suite = os.environ.get("LOFT_SUITE_DIR", os.path.join(os.path.dirname(root), "loft-suite"))
     env = dict(os.environ, LOFT_NO_CACHE="1", LOFT_TIMEOUT="120")
     tmp = tempfile.mkdtemp(prefix="loft-census-", dir=os.environ.get("TMPDIR"))
+    try:
+        census(o, root, loft, suite, env, tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+def census(o, root, loft, suite, env, tmp):
     out = os.path.join(tmp, "runner")
     os.makedirs(out, exist_ok=True)
     code, _, err = run([loft, "--native-c", "--ship", "--out", out,
