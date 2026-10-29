@@ -1786,7 +1786,12 @@ pub(crate) fn run_tests(
                         let mut out = generation::Output::new(&native_data, &native_db);
                         // Host-native backend: C-ABI cdylib link (NATIVE_ARTIFACT_IDENTITY.md § Resolution).
                         out.native_cabi = native_utils::native_cabi_enabled();
-                        out.native_bind = out.native_cabi;
+                        // As the standalone native compile: the program binds at start every
+                        // library it does not link into itself — the packages' under a dynamic
+                        // link, and under a static one the C libraries packages ship with no
+                        // archive to link in.  Tied to `native_cabi`, a static test binary left
+                        // those libraries' `#c` symbols as undefined `extern "C"` references.
+                        out.native_bind = true;
                         // #621 — when this harness supplies the crate's `main`
                         // below, suppress the generator's own bootstrap.
                         // `output_native_reachable` emits one whenever ANY
@@ -2026,6 +2031,11 @@ pub(crate) fn run_tests(
                                 None,
                                 loft_deps.as_deref(),
                             );
+                            // And the C libraries the `#c` bindings resolve against, as the
+                            // standalone native compile links them.  Without this a STATIC
+                            // link (`LOFT_NATIVE_CABI=0`) had nothing to bind at start and
+                            // left every `#c` symbol undefined.
+                            native_utils::add_c_library_flags(&mut cmd, &native_data);
                             let rustc_start = std::time::Instant::now();
                             let compile_result = cmd.run(b"");
                             crate::platform::timing_record(
