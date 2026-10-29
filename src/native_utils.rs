@@ -666,7 +666,7 @@ fn assemble_atomics_sysroot(
             // be adopted by a fresh rlib.
             copy_sibling_rmeta(&src, &lib_dir)?;
             if let Some(meta) =
-                crate::file_access::file_name(&crate::file_access::with_extension(&src, "rmeta"))
+                crate::file_access::file_name(crate::file_access::with_extension(&src, "rmeta"))
             {
                 provided.insert(meta);
             }

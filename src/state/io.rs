@@ -1557,8 +1557,9 @@ impl State {
                 // is `cur - 1` and it has not moved, so the cursor must STAY at
                 // `cur` — the step subtracts one either way.  Rewinding forwards
                 // (`cur + 1`) revisits the element that shifted down.
-                let n = if reverse { cur } else { cur - 1 };
-                self.database.remove_vector_at(&data, tp, i64::from(cur));
+                // A refused removal (a locked vector) moved nothing, so the cursor stays.
+                let removed = self.database.remove_vector_at(&data, tp, i64::from(cur));
+                let n = if reverse || !removed { cur } else { cur - 1 };
                 // iter_var (#index) is i64 on stack post-2c.  Sign-extend n
                 // (may be −1 after remove-at-index-0) and write all 8 bytes
                 // so the high word doesn't leak a stale value into the next
@@ -1608,8 +1609,8 @@ impl State {
                     return;
                 }
                 // Same rewind rule as arm 0 — see there.
-                let n = if reverse { cur } else { cur - 1 };
-                self.database.remove_vector_at(&data, tp, i64::from(cur));
+                let removed = self.database.remove_vector_at(&data, tp, i64::from(cur));
+                let n = if reverse || !removed { cur } else { cur - 1 };
                 self.put_var(state_var - 8, n);
             }
             3 => {
@@ -1620,9 +1621,10 @@ impl State {
                     return;
                 }
                 // Same rewind rule as arm 0, one slot wide instead of one index.
-                let n = if reverse { cur } else { cur - 4 };
-                self.database
+                let removed = self
+                    .database
                     .remove_vector_at(&data, tp, i64::from((cur - 8) / 4));
+                let n = if reverse || !removed { cur } else { cur - 4 };
                 self.put_var(state_var - 8, n);
             }
             _ => panic!("Not implemented on {on}"),

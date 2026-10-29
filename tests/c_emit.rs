@@ -4400,6 +4400,152 @@ fn the_c_logs_what_the_interpreter_logs() {
     }
 }
 
+/// @PLN206 D10 — a write into a locked store (`@FR-H-WriteLocked`) in a PRODUCTION run is
+/// discarded and logged, and the program continues on the store's old bytes (`@C80`).  One
+/// cell per write the language offers on a locked record (fields, text, vectors, keyed
+/// collections, records, loop removals): every cell must leave the record exactly as built,
+/// so the expected line is the same hand-computed state for all of them, on all three
+/// backends.  A loop removal that is refused must not revisit its element (loft#2235).  A
+/// development run stops at the first such write.
+#[test]
+fn a_locked_write_in_production_is_discarded_on_every_backend() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    const OPS: &[(&str, &str)] = &[
+        ("int field", "d.n = 9;"),
+        ("float field", "d.f = 2.5;"),
+        ("text same length", "d.t = \"two\";"),
+        ("text longer", "d.t = \"a longer text\";"),
+        ("text append", "d.t += \"x\";"),
+        ("vector append", "d.xs += [4];"),
+        ("vector append many", "d.xs += [7, 8, 9];"),
+        ("vector element", "d.xs[0] = 9;"),
+        ("vector insert", "d.xs.insert(1, 7);"),
+        ("vector remove", "d.xs.remove(0);"),
+        ("vector clear", "d.xs.clear();"),
+        ("vector assign empty", "d.xs = [];"),
+        ("vector assign", "d.xs = [5, 6];"),
+        ("vector reverse", "d.us.reverse();"),
+        ("vector sort", "d.us.sort();"),
+        ("text element", "d.ts[0] = \"zz\";"),
+        ("text vector append", "d.ts += [\"q\"];"),
+        ("text vector remove", "d.ts.remove(0);"),
+        ("hash add", "d.hs += [E { k: 6, v: 60 }];"),
+        ("hash remove", "d.hs[5] = null;"),
+        ("hash field", "d.hs[5].v = 51;"),
+        ("hash field add", "d.hs[5].v += 1;"),
+        ("sorted add", "d.so += [S { k: 2, v: 20 }];"),
+        ("sorted remove", "d.so[1] = null;"),
+        ("sorted field", "d.so[1].v = 11;"),
+        ("index add", "d.ix += [X { k: 4, v: 40 }];"),
+        ("index remove", "d.ix[3] = null;"),
+        ("bytes append", "d.bs += [9];"),
+        ("bytes element", "d.bs[0] = 9;"),
+        ("records append", "d.recs += [R { k: 2, v: 20 }];"),
+        ("record element field", "d.recs[0].v = 11;"),
+        ("record element assign", "d.recs[0] = R { k: 3, v: 30 };"),
+        ("records insert", "d.recs.insert(0, R { k: 0, v: 0 });"),
+        ("records remove", "d.recs.remove(0);"),
+        ("records clear", "d.recs.clear();"),
+        ("records assign empty", "d.recs = [];"),
+        ("inner assign", "d.inner = In { m: 8 };"),
+        (
+            "inner from a variable",
+            "o = In { m: 9 };
+  d.inner = o;",
+        ),
+        ("inner field", "d.inner.m = 8;"),
+        ("slice assign", "d.xs = d.xs[0..2];"),
+        ("append a vector", "d.xs += d.us;"),
+        ("text element append", "d.ts[1] += \"c\";"),
+        ("text char append", "d.t += 'z';"),
+        ("record field add", "d.recs[0].v += 5;"),
+        ("hash replace", "d.hs += [E { k: 5, v: 55 }];"),
+        ("sorted duplicate key", "d.so += [S { k: 1, v: 99 }];"),
+        ("loop remove", "for x in d.xs { if x == 2 { x#remove; } }"),
+        ("loop remove records", "for e in d.recs { e#remove; }"),
+        ("vector of text clear", "d.ts.clear();"),
+        ("vector of text assign", "d.ts = [\"p\", \"q\", \"r\"];"),
+        ("sorted loop remove", "for e in d.so { e#remove; }"),
+        ("index loop remove", "for e in d.ix { e#remove; }"),
+        ("loop remove text", "for t in d.ts { t#remove; }"),
+    ];
+    const HEAD: &str = r#"struct In { m: integer }
+struct E { k: integer, v: integer }
+struct S { k: integer, v: integer }
+struct X { k: integer, v: integer }
+struct R { k: integer, v: integer }
+struct D { n: integer, f: float, t: text, xs: vector<integer>, us: vector<integer>, bs: vector<u8>, ts: vector<text>, hs: hash<E[k]>, so: sorted<S[k]>, ix: index<X[k]>, recs: vector<R>, inner: In }
+fn mk() -> D { D { n: 7, f: 1.5, t: "one", xs: [1, 2, 3], us: [3, 1, 2], bs: [1, 2], ts: ["a", "b"], hs: [E { k: 5, v: 50 }], so: [S { k: 1, v: 10 }], ix: [X { k: 3, v: 30 }], recs: [R { k: 1, v: 10 }], inner: In { m: 4 } } }
+fn show(d: D) -> text { "{d.n} {d.f} {d.t} {d.xs} {d.us} {d.bs} {d.ts} {len(d.hs)}:{d.hs[5].v ?? -1}:{d.hs[6].v ?? -1} {len(d.so)}:{d.so[1].v ?? -1}:{d.so[2].v ?? -1} {d.ix[3].v ?? -1}:{d.ix[4].v ?? -1} {d.recs} {d.inner.m}" }
+"#;
+    // The record as `mk` builds it, which every refused write must leave.
+    const BUILT: &str =
+        r#"7 1.5 one [1,2,3] [3,1,2] [1,2] ["a","b"] 1:50:-1 1:10:-1 30:-1 [{k:1,v:10}] 4"#;
+    let mut program = HEAD.to_string();
+    let mut calls = String::new();
+    let mut want = String::new();
+    for (i, (_, op)) in OPS.iter().enumerate() {
+        program.push_str(&format!(
+            "fn c{i}() {{\n  d = mk();\n  d#lock = true;\n  {op}\n  println(\"c{i}: {{show(d)}}\");\n}}\n"
+        ));
+        calls.push_str(&format!("  c{i}();\n"));
+        want.push_str(&format!("c{i}: {BUILT}\n"));
+    }
+    program.push_str(&format!("fn main() {{\n{calls}}}\n"));
+    let small = "struct R { a: integer, t: text }\nfn main() {\n  r = R { a: 1, t: \"one\" };\n  \
+                 r#lock = true;\n  r.t = \"two\";\n  println(\"after {r.t}\");\n}\n";
+    let loft = env!("CARGO_BIN_EXE_loft");
+    for backend in ["--interpret", "--native-rust", "--native-c"] {
+        for production in [true, false] {
+            let dir = scratch(&format!(
+                "locked{}{}",
+                backend.trim_start_matches('-'),
+                if production { "p" } else { "d" }
+            ));
+            let _ = fa::remove_file(dir.join("out.log"));
+            let conf = if production { "true" } else { "false" };
+            fa::write(
+                dir.join("log.conf"),
+                format!("[log]\nfile = out.log\nlevel = info\nproduction = {conf}\n"),
+            )
+            .expect("write log.conf");
+            let file = dir.join("p.loft");
+            let source = if production { program.as_str() } else { small };
+            fa::write(&file, source).expect("write program");
+            let out = loft::platform::process::harness_command(loft)
+                .arg(backend)
+                .arg(&file)
+                .env("LOFT_TIMEOUT", "300")
+                .output()
+                .expect("run loft");
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            if production {
+                for (i, (got, exp)) in stdout.lines().zip(want.lines()).enumerate() {
+                    assert_eq!(got, exp, "{backend}: cell {i} ({}) changed it", OPS[i].0);
+                }
+                assert_eq!(stdout, want, "{backend}: every cell runs: {stderr}");
+                assert_eq!(out.status.code(), Some(0), "{backend}: {stderr}");
+                let log = fa::read_to_string(dir.join("out.log")).unwrap_or_default();
+                assert!(
+                    log.contains("ERROR  :0  [write_to_locked_store] write to a locked store"),
+                    "{backend}'s log: {log}"
+                );
+            } else {
+                assert_eq!(stdout, "", "{backend}: development stops at the write");
+                assert_eq!(out.status.code(), Some(1), "{backend}: {stderr}");
+                assert!(
+                    stderr.contains("write to a locked store"),
+                    "{backend}: {stderr}"
+                );
+            }
+        }
+    }
+}
+
 /// @PLN203 C6 — `--native-c --native-wasm` writes the program as a wasm32-wasi module through
 /// the C and clang, and a WASI host runs it to the interpreter's answer.  The values are
 /// computed by hand: 1² + … + 10² = 385; a text built in a loop; a hash lookup.  Skipped where

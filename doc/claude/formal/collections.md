@@ -218,6 +218,9 @@ collection (`c[5] = c[30]`, `c[30] = c[30]`) is read before the collection moves
   (Col-RemoveKeyed) a KEYED kind (hash / index / sorted / spatial / trie) removes BY KEY, and every
                     other key stays reachable and unchanged — keys are not positions, so nothing
                     is renumbered.
+                    A removal a locked store discards (heap.md H-WriteLocked-Whole) removes
+                    nothing and renumbers nothing; a walk's `e#remove` that was discarded
+                    continues with the NEXT element, so the walk still visits each element once.
 ```
 *Anchor:* loft-suite/attic/scripts/200-vector-stays-dense.loft (density); measured for the keyed kinds —
 `s[30] = null` on a `sorted<Elm[key]>` leaves `s[10]` and `s[50]` intact.

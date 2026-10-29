@@ -603,10 +603,17 @@ static void loft_assert(uint8_t test, loft_str message, loft_str file, int64_t l
     exit(1);
 }
 
+/* A production run's discard of a locked write (`loft_log_locked_write`), bound by a unit's
+ * `main`; null in a runtime built without one, where every locked write halts. */
+static int (*loft_locked_logger)(void) = 0;
+
 /* `@FR-H-WriteLocked` (`RuntimeError::locked_store_write`): a development run stops at a write
- * into a store the author locked, as the interpreter does; a test fails. */
-static void loft_locked_write(void) {
+ * into a store the author locked, as the interpreter does; a test fails.  A production run
+ * discards the write, logs it, and continues on the store's old bytes
+ * (`discard_locked_write_in_production`, `@C80`): the answer is 1, and the caller skips it. */
+static int loft_locked_write(void) {
     static const char msg[] = "write to a locked store — unlock it with `#lock = false` before writing";
+    if (!loft_in_test && loft_locked_logger && loft_locked_logger()) return 1;
     fflush(stdout);
     fputs("error: ", stderr);
     fputs(msg, stderr);
@@ -1117,7 +1124,7 @@ LOFT_HOT_INLINE uint32_t loft_u32(loft_store_t *s, uint32_t rec, uint32_t byte) 
 }
 
 LOFT_HOT_INLINE void loft_set_u32(loft_store_t *s, uint32_t rec, uint32_t byte, uint32_t v) {
-    LOFT_WRITE_CHECK(s);
+    if (LOFT_WRITE_REFUSED(s)) return;
     memcpy(loft_at(s, rec, byte), &v, 4);
 }
 
@@ -1431,7 +1438,7 @@ LOFT_HOT_INLINE float loft_pa_f32(const uint8_t *p, uint32_t off) {
 LOFT_HOT_INLINE uint8_t loft_pa_bool(const uint8_t *p, uint32_t off) { return p ? p[off] : LOFT_BOOL_NULL; }
 LOFT_HOT_INLINE void loft_pa_set(uint8_t *p, int locked, uint32_t off, const void *v, size_t n) {
     if (!p) return;
-    if (LOFT_UNLIKELY(locked)) loft_locked_write();
+    if (LOFT_UNLIKELY(locked) && loft_locked_write()) return;
     memcpy(p + off, v, n);
 }
 
@@ -1440,19 +1447,19 @@ LOFT_HOT_INLINE void loft_pa_set(uint8_t *p, int locked, uint32_t off, const voi
  * record, which every write of the run skips as each setter would. */
 static uint8_t *loft_rec_w(loft_ref r) {
     if (r.rec == 0) return 0;
-    LOFT_WRITE_CHECK(loft_store_of(r));
+    if (LOFT_WRITE_REFUSED(loft_store_of(r))) return 0;
     return loft_at(loft_store_of(r), r.rec, r.pos);
 }
 
 LOFT_HOT_INLINE void loft_set_int(loft_ref r, uint32_t fld, int64_t v) {
     if (r.rec == 0) return;
-    LOFT_WRITE_CHECK(loft_store_of(r));
+    if (LOFT_WRITE_REFUSED(loft_store_of(r))) return;
     memcpy(loft_at(loft_store_of(r), r.rec, r.pos + fld), &v, 8);
 }
 
 static void loft_set_int4(loft_ref r, uint32_t fld, int64_t v) {
     if (r.rec == 0) return;
-    LOFT_WRITE_CHECK(loft_store_of(r));
+    if (LOFT_WRITE_REFUSED(loft_store_of(r))) return;
     int32_t x = v == LOFT_NULL ? INT32_MIN : (int32_t) v;
     memcpy(loft_at(loft_store_of(r), r.rec, r.pos + fld), &x, 4);
 }
@@ -1494,13 +1501,13 @@ static uint8_t loft_byte_raw(int64_t min, int64_t val);
 
 static void loft_set_byte_v(loft_ref r, uint32_t fld, int64_t min, int64_t v) {
     if (r.rec == 0) return;
-    LOFT_WRITE_CHECK(loft_store_of(r));
+    if (LOFT_WRITE_REFUSED(loft_store_of(r))) return;
     *loft_at(loft_store_of(r), r.rec, r.pos + fld) = loft_byte_raw(min, v);
 }
 
 static void loft_set_byte_nullable(loft_ref r, uint32_t fld, int64_t min, int64_t v) {
     if (r.rec == 0) return;
-    LOFT_WRITE_CHECK(loft_store_of(r));
+    if (LOFT_WRITE_REFUSED(loft_store_of(r))) return;
     int32_t x = loft_i32_of(v);
     if (!(x == INT32_MIN || ((int64_t) x >= min && (int64_t) x <= min + 255))) x = INT32_MIN;
     *loft_at(loft_store_of(r), r.rec, r.pos + fld) = loft_byte_raw(min, x);
@@ -1523,7 +1530,7 @@ static int64_t loft_get_short(loft_ref r, uint32_t fld, int64_t min) {
 
 static void loft_set_short(loft_ref r, uint32_t fld, int64_t min, int64_t v) {
     if (r.rec == 0) return;
-    LOFT_WRITE_CHECK(loft_store_of(r));
+    if (LOFT_WRITE_REFUSED(loft_store_of(r))) return;
     int32_t x = loft_i32_of(v);
     /* Null is raw 0; out of range is the type's lowest value, raw 1 (loft#984). */
     uint16_t raw = 0;
@@ -1548,7 +1555,7 @@ static int64_t loft_get_short_raw(loft_ref r, uint32_t fld, int64_t min) {
 
 static void loft_set_short_raw(loft_ref r, uint32_t fld, int64_t min, int64_t v) {
     if (r.rec == 0) return;
-    LOFT_WRITE_CHECK(loft_store_of(r));
+    if (LOFT_WRITE_REFUSED(loft_store_of(r))) return;
     int32_t x = loft_i32_of(v);
     uint16_t raw;
     if (x == INT32_MIN) raw = 0xFFFF;
@@ -1616,7 +1623,7 @@ static uint32_t loft_get_char(loft_ref r, uint32_t fld) {
 
 static void loft_set_char(loft_ref r, uint32_t fld, uint32_t c) {
     if (r.rec == 0) return;
-    LOFT_WRITE_CHECK(loft_store_of(r));
+    if (LOFT_WRITE_REFUSED(loft_store_of(r))) return;
     memcpy(loft_at(loft_store_of(r), r.rec, r.pos + fld), &c, 4);
 }
 
@@ -1722,7 +1729,7 @@ LOFT_HOT_INLINE loft_ref loft_vec_append(loft_ref v, uint32_t size) {
 static loft_ref loft_vec_append_slow(loft_ref v, uint32_t size) {
     if (v.store_nr == 0xFFFF || v.rec == 0) return loft_ref_null();
     loft_store_t *s = loft_store_of(v);
-    LOFT_WRITE_CHECK(s);
+    if (LOFT_WRITE_REFUSED(s)) return loft_ref_null();
     uint32_t r = loft_collection_rec(s, v.rec, v.pos);
     uint32_t len;
     if (r == 0) {
@@ -1764,7 +1771,7 @@ LOFT_HOT_INLINE uint8_t *loft_vec_push_slot(loft_ref v, uint32_t size) {
     int32_t claimed;
     memcpy(&claimed, loft_at(s, r, 0), 4);
     if ((uint64_t) (len + 1) * size + 8 > (uint64_t) claimed * 8) return 0;
-    LOFT_WRITE_CHECK(s);
+    if (LOFT_WRITE_REFUSED(s)) return 0;
     loft_set_u32(s, r, 4, len + 1);
     return loft_at(s, r, 8 + len * size);
 }
@@ -1807,6 +1814,7 @@ static void loft_vec_push_int(loft_ref v, int64_t x) {
  * (Stores::set_default_value, captured by the emitter as `image`). */
 static void loft_fill(loft_ref r, const uint8_t *image, uint32_t n) {
     if (r.store_nr == 0xFFFF || r.rec == 0) return;
+    if (LOFT_WRITE_REFUSED(loft_store_of(r))) return;
     memcpy(loft_at(loft_store_of(r), r.rec, r.pos), image, n);
 }
 
@@ -1993,7 +2001,7 @@ static void loft_vec_clear(loft_ref v) {
 
 static void loft_set_byte(loft_ref r, uint32_t fld, uint8_t v) {
     if (r.rec == 0) return;
-    LOFT_WRITE_CHECK(loft_store_of(r));
+    if (LOFT_WRITE_REFUSED(loft_store_of(r))) return;
     *loft_at(loft_store_of(r), r.rec, r.pos + fld) = v;
 }
 
@@ -2077,7 +2085,7 @@ static loft_str loft_get_text(loft_ref r, uint32_t fld) {
  * in that store is copied out first, because the claim may move the buffer. */
 static void loft_set_text(loft_ref r, uint32_t fld, loft_str v) {
     if (r.rec == 0) return;
-    LOFT_WRITE_CHECK(loft_store_of(r));
+    if (LOFT_WRITE_REFUSED(loft_store_of(r))) return;
     loft_store_t *s = loft_store_of(r);
     loft_text copy = { 0, 0, 0 };
     if (v.p >= (const char *) s->buf && v.p < (const char *) s->buf + (size_t) s->size * 8) {
@@ -2096,6 +2104,7 @@ static void loft_set_text(loft_ref r, uint32_t fld, loft_str v) {
 static void loft_refill_text(loft_ref r, uint32_t fld, loft_str v) {
     if (r.rec == 0) return;
     loft_store_t *s = loft_store_of(r);
+    if (LOFT_WRITE_REFUSED(s)) return;
     loft_text copy = { 0, 0, 0 };
     if (v.len && v.p >= (const char *) s->buf && v.p < (const char *) s->buf + (size_t) s->size * 8) {
         copy = loft_text_own(v);
@@ -2184,7 +2193,7 @@ static void loft_rx_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r, 
 /* Copy `n` bytes between two places that may share a buffer a claim could move. */
 static void loft_copy_bytes(loft_ref to, uint32_t to_off, loft_ref from, uint32_t from_off, size_t n) {
     if (n == 0) return;
-    LOFT_WRITE_CHECK(loft_store_of(to));
+    if (LOFT_WRITE_REFUSED(loft_store_of(to))) return;
     memmove(loft_at(loft_store_of(to), to.rec, to.pos + to_off),
             loft_at(loft_store_of(from), from.rec, from.pos + from_off), n);
 }
@@ -2776,6 +2785,7 @@ static void loft_move_field(const loft_tdesc *T, uint16_t tp, loft_ref src, loft
  * its successors move down; false for a null vector or an index outside it. */
 static int loft_vec_remove(loft_ref v, uint32_t size, int64_t index) {
     if (v.store_nr == 0xFFFF) return 0;
+    if (v.rec != 0 && LOFT_WRITE_REFUSED(loft_store_of(v))) return 0;
     int64_t len = loft_vec_len(v);
     loft_store_t *s = loft_store_of(v);
     uint32_t r = loft_collection_rec(s, v.rec, v.pos);
@@ -3173,6 +3183,7 @@ static void loft_vec_reverse(loft_ref v, uint32_t size) {
     int64_t n = loft_vec_len(v);
     if (n < 2) return;
     loft_store_t *s = loft_store_of(v);
+    if (LOFT_WRITE_REFUSED(s)) return;
     uint8_t *base = loft_at(s, loft_collection_rec(s, v.rec, v.pos), 8);
     /* An element of any width, swapped through a 64-byte window a piece at a time. */
     uint8_t tmp[64];
@@ -3237,6 +3248,7 @@ static void loft_vec_sort(loft_ref v, uint32_t size, int is_float, int is_text) 
     int64_t n = loft_vec_len(v);
     if (n < 2) return;
     loft_store_t *s = loft_store_of(v);
+    if (LOFT_WRITE_REFUSED(s)) return;
     void *base = loft_at(s, loft_collection_rec(s, v.rec, v.pos), 8);
     int (*cmp)(const void *, const void *) = 0;
     if (is_text) {
@@ -3482,7 +3494,7 @@ LOFT_HOT_INLINE double loft_get_float(loft_ref r, uint32_t fld) {
 
 LOFT_HOT_INLINE void loft_set_float(loft_ref r, uint32_t fld, double v) {
     if (r.rec == 0) return;
-    LOFT_WRITE_CHECK(loft_store_of(r));
+    if (LOFT_WRITE_REFUSED(loft_store_of(r))) return;
     memcpy(loft_at(loft_store_of(r), r.rec, r.pos + fld), &v, 8);
 }
 
@@ -3495,7 +3507,7 @@ static float loft_get_single(loft_ref r, uint32_t fld) {
 
 static void loft_set_single(loft_ref r, uint32_t fld, float v) {
     if (r.rec == 0) return;
-    LOFT_WRITE_CHECK(loft_store_of(r));
+    if (LOFT_WRITE_REFUSED(loft_store_of(r))) return;
     memcpy(loft_at(loft_store_of(r), r.rec, r.pos + fld), &v, 4);
 }
 

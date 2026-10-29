@@ -3619,8 +3619,13 @@ pub fn OpRemove<S: IterState>(
             let cur_i64 = state.get_cur_i64_plain();
             // Direction decides the rewind — see the twin in `State::remove`
             // (`src/state/io.rs`), and keep the two in step.
-            let n = if reverse { cur_i64 } else { cur_i64 - 1 };
-            stores.remove_vector_at(&data, arg as u16, cur_i64);
+            // A refused removal (a locked vector) moved nothing, so the cursor stays.
+            let removed = stores.remove_vector_at(&data, arg as u16, cur_i64);
+            let n = if reverse || !removed {
+                cur_i64
+            } else {
+                cur_i64 - 1
+            };
             state.set_cur_i64_plain(n);
         }
         1 => {
@@ -3645,8 +3650,8 @@ pub fn OpRemove<S: IterState>(
             if cur < 0 {
                 return;
             }
-            let n = if reverse { cur } else { cur - 1 };
-            stores.remove_vector_at(&data, arg as u16, i64::from(cur));
+            let removed = stores.remove_vector_at(&data, arg as u16, i64::from(cur));
+            let n = if reverse || !removed { cur } else { cur - 1 };
             state.set_cur(n);
         }
         3 => {
@@ -3659,8 +3664,8 @@ pub fn OpRemove<S: IterState>(
             }
             // Same rewind rule as arm 0 — see the twin in `State::remove`
             // (`src/state/io.rs`), and keep the two in step.
-            let n = if reverse { cur } else { cur - 4 };
-            stores.remove_vector_at(&data, arg as u16, i64::from((cur - 8) / 4));
+            let removed = stores.remove_vector_at(&data, arg as u16, i64::from((cur - 8) / 4));
+            let n = if reverse || !removed { cur } else { cur - 4 };
             state.set_cur(n);
         }
         _ => {}

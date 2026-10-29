@@ -178,6 +178,16 @@ index becomes `nullref` plus a recoverable fault rather than a silent read.
                    DEVELOPMENT run halts with the lock report and a PRODUCTION run logs the
                    write and DISCARDS it — the store keeps its bytes (@C80).  Never a silent
                    successful write.
+  (H-WriteLocked-Whole)  a discarded write is discarded WHOLE.  An operation of several
+                   store steps — a text replaced in place, a removal (the element's claims, the
+                   shift), an insert, a keyed filing, a sort, a reverse — changes nothing in a
+                   locked store, not only the step the lock was met at.  It answers what a
+                   write that did not take answers: a removal, that it removed nothing; a keyed
+                   entry filed to be written, the entry already there or the null record; a
+                   claim or a resize, a FRESH zeroed record of the size asked, in the same
+                   store, which stays locked, the program's record unchanged.  So a walk whose
+                   `#remove` was discarded goes on past the element still there (Col-Remove).
+                   The log names the first discard and then every doubling of the count.
   (H-Write-Else)  an assignment STATEMENT may end in `else { B }`: `place = v else { B }`
                    (and `place op= v else { B }`).  The place and `v` are each evaluated
                    ONCE, the write is attempted, and B runs exactly when it did NOT take —
@@ -329,7 +339,9 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                 (`(R-Alias)`'s versioned clause).
   (H-Removed)   removing a record a stored reference has named ends the record, not its
                 position: the header word stays behind outside every claim, and no claim reuses
-                it.  A stored reference to it reads null; the rest of the record is freed.
+                it.  A stored reference to it reads null, at every read — equality included,
+                so a holder of one equals a holder of null and a holder of any other removed
+                record; the rest of the record is freed (its bytes: structures.md S-Tomb).
                 Emptying a collection removes each of its records: a clear of a linked vector
                 releases them one by one, and a store minted again in place keeps the marks.
   (H-RefElem)   a reference is a struct field, never a collection's element: `vector`,

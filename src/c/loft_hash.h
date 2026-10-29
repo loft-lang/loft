@@ -1409,6 +1409,7 @@ static void loft_free_hash_entry(loft_ref c, loft_ref e, uint32_t slot) {
 static void loft_hash_remove(const loft_tdesc *T, uint16_t elem, loft_ref c, loft_ref e, const loft_key *keys, int nk,
                              int view) {
     if (e.rec == 0 || c.store_nr == 0xFFFF || c.rec == 0) return;
+    if (LOFT_WRITE_REFUSED(loft_store_of(c))) return;
     uint32_t slot = loft_hash_unlink(c, e, keys, nk);
     if (view) return;
     if (loft_hash_owns_entries(c)) {

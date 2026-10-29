@@ -37,6 +37,8 @@ static void loft_group_finish(const loft_tdesc *T, uint16_t elem, int held, int 
  * written. */
 LOFT_HOT_INLINE loft_ref loft_entry_new(loft_ref c, uint32_t size) {
     if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
+    /* A locked collection gains no entry: the null record, whose writes are skipped. */
+    if (LOFT_WRITE_REFUSED(loft_store_of(c))) return loft_ref_null();
     loft_ref e;
     e.store_nr = c.store_nr;
     e.rec = loft_claim(loft_store_of(c), 1 + (size + 7) / 8);
@@ -127,6 +129,7 @@ static loft_ref loft_seq_find(loft_ref c, uint32_t size, const loft_key *keys, i
  * is made with room for twelve and grows by `resize` to its length plus two. */
 static loft_ref loft_sorted_new(loft_ref c, uint32_t size) {
     if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
+    if (LOFT_WRITE_REFUSED(loft_store_of(c))) return loft_ref_null();
     loft_store_t *s = loft_store_of(c);
     uint32_t r = loft_collection_rec(s, c.rec, c.pos);
     loft_ref e = { c.store_nr, 0, 8 };
@@ -152,6 +155,7 @@ static loft_ref loft_sorted_new(loft_ref c, uint32_t size) {
  * already there replaces that element (latest insert wins). */
 static void loft_sorted_finish(loft_ref c, uint32_t size, const loft_key *keys, int nk) {
     if (c.store_nr == 0xFFFF || c.rec == 0) return;
+    if (LOFT_WRITE_REFUSED(loft_store_of(c))) return;
     loft_seq q = loft_seq_of(c, size);
     if (q.vrec == 0) return;
     uint32_t len = loft_u32(q.s, q.vrec, 4);
@@ -246,6 +250,7 @@ static void loft_index_remove(loft_ref c, loft_ref e) {
  * member only unlinks. */
 static void loft_ordered_remove(const loft_tdesc *T, uint16_t elem, loft_ref c, loft_ref e, int is_array, int view) {
     if (e.rec == 0 || c.store_nr == 0xFFFF || c.rec == 0) return;
+    if (LOFT_WRITE_REFUSED(loft_store_of(c))) return;
     if (view) {
         loft_index_remove(c, e);
         return;
@@ -599,6 +604,9 @@ static void loft_keyed_place_finish(const loft_tdesc *T, uint16_t etp, loft_ref 
 static loft_ref loft_keyed_entry_ints(const loft_tdesc *T, uint16_t etp, loft_ref c, const loft_key *keys, int nk,
                                       const int64_t *ks) {
     if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
+    /* A locked collection files nothing: the entry is the one already there, or the null record
+     * whose writes are skipped (`@FR-H-WriteLocked`). */
+    if (LOFT_WRITE_REFUSED(loft_store_of(c))) return loft_h_find_ints(c, keys, nk, ks);
     int live = 0;
     for (int i = 0; i < loft_nscratches && !live; i++)
         live = loft_scratches[i].source.store_nr == c.store_nr && loft_scratches[i].source.rec == c.rec &&
@@ -622,6 +630,7 @@ static loft_ref loft_keyed_entry_ints(const loft_tdesc *T, uint16_t etp, loft_re
 static loft_ref loft_keyed_entry_text(const loft_tdesc *T, uint16_t etp, loft_ref c, const loft_key *keys, int nk,
                                       loft_str key) {
     if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
+    if (LOFT_WRITE_REFUSED(loft_store_of(c))) return loft_h_find_text(c, keys, key);
     int live = 0;
     for (int i = 0; i < loft_nscratches && !live; i++)
         live = loft_scratches[i].source.store_nr == c.store_nr && loft_scratches[i].source.rec == c.rec &&
@@ -810,10 +819,7 @@ static uint32_t loft_apart_block(loft_store_t *s, uint32_t reuse, const char *by
 static void loft_apart_write_fresh(loft_ref dst, const loft_text *f, const uint32_t *slot, const uint32_t *esize, int nf) {
     if (dst.store_nr == 0xFFFF || dst.rec == 0 || dst.store_nr >= loft_nstores) return;
     loft_store_t *s = loft_store_of(dst);
-    if (s->read_only) {
-        loft_locked_write();
-        return;
-    }
+    if (LOFT_WRITE_REFUSED(s)) return;
     for (int k = 0; k < nf; k++) {
         uint32_t n = (uint32_t) (f[k].len / esize[k]);
         uint32_t b = n == 0 ? 0 : loft_apart_block(s, 0, f[k].p, f[k].len, n);
@@ -1043,12 +1049,16 @@ static int loft_vec_remove_linked(const loft_tdesc *T, uint16_t tp, loft_ref v, 
 /* OpRemoveVector (`Stores::remove_vector_at`, an inline element): the element's claims are
  * released before the shift, since the slot it is is overwritten by its successor. */
 static int loft_vec_remove_at(const loft_tdesc *T, uint16_t elem, loft_ref v, int64_t index) {
+    /* A refused removal releases nothing either: the element's claims stay with it. */
+    if (v.store_nr != 0xFFFF && v.rec != 0 && LOFT_WRITE_REFUSED(loft_store_of(v))) return 0;
     loft_ref e = loft_vec_get(v, T[elem].size, index);
     if (e.rec != 0) loft_remove_claims(T, elem, e);
     return loft_vec_remove(v, T[elem].size, index);
 }
 
 static void loft_vec_walk_remove(const loft_tdesc *T, uint16_t elem, int64_t *state, loft_ref v, int reverse) {
+    /* A refused removal leaves the cursor, so the walk moves past the element still there. */
+    if (v.store_nr != 0xFFFF && v.rec != 0 && LOFT_WRITE_REFUSED(loft_store_of(v))) return;
     loft_ref e = loft_vec_get(v, T[elem].size, *state);
     if (e.rec != 0) loft_remove_claims(T, elem, e);
     (void) loft_vec_remove(v, T[elem].size, *state);
@@ -1058,6 +1068,8 @@ static void loft_vec_walk_remove(const loft_tdesc *T, uint16_t elem, int64_t *st
 /* OpRemove in a walk over an array — a vector of a linked element type (Stores::remove_vector_at's
  * linked branch): the slot is removed, then the record it named releases its claims and goes. */
 static void loft_array_walk_remove(const loft_tdesc *T, uint16_t elem, int64_t *state, loft_ref v, int reverse) {
+    /* A refused removal leaves the cursor, so the walk moves past the element still there. */
+    if (v.store_nr != 0xFFFF && v.rec != 0 && LOFT_WRITE_REFUSED(loft_store_of(v))) return;
     loft_ref slot = loft_vec_get(v, 4, *state);
     uint32_t rec = slot.rec == 0 ? 0 : loft_u32(loft_store_of(slot), slot.rec, slot.pos);
     if (slot.rec == 0) return;
@@ -1073,6 +1085,7 @@ static void loft_array_walk_remove(const loft_tdesc *T, uint16_t elem, int64_t *
 /* OpRemove in a walk over a sorted (Stores::remove_vector_at): the element's claims released,
  * then the element removed and the walk moved on. */
 static void loft_sorted_walk_remove(const loft_tdesc *T, uint16_t elem, int64_t *state, loft_ref c, int reverse) {
+    if (c.store_nr != 0xFFFF && c.rec != 0 && LOFT_WRITE_REFUSED(loft_store_of(c))) return;
     uint32_t at, r = loft_keyed_rec(c), size = T[elem].size;
     if (r == 0 || !loft_walk_removed_at(*state, reverse, &at) || at >= loft_u32(loft_store_of(c), r, 4)) return;
     loft_ref e = { c.store_nr, r, 8 + at * size };
@@ -1090,6 +1103,7 @@ static void loft_sorted_remove_owned(const loft_tdesc *T, uint16_t elem, loft_re
 /* OpRemove in a walk over an ordered (Stores::remove_vector_at, a linked element): the slot the
  * walk visited last is unlinked, then its record's claims and the record released. */
 static void loft_ordered_walk_remove(const loft_tdesc *T, uint16_t elem, int64_t *state, loft_ref c, int reverse) {
+    if (c.store_nr != 0xFFFF && c.rec != 0 && LOFT_WRITE_REFUSED(loft_store_of(c))) return;
     uint32_t at, r = loft_keyed_rec(c);
     if (r == 0 || !loft_walk_removed_at(*state, reverse, &at) || at >= loft_u32(loft_store_of(c), r, 4)) return;
     uint32_t rec = loft_u32(loft_store_of(c), r, 8 + at * 4);

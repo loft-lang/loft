@@ -136,12 +136,13 @@ fn an_ordinary_test_run_is_not_disturbed_by_the_ceiling() {
     assert!(out.contains("1 passed"), "the test must pass.\n{out}");
 }
 
-/// A runaway test on a compiled backend: the growth the for-range reserves up front is far past
-/// the default ceiling, so the run stops at once rather than after filling memory.
+/// A runaway test on a compiled backend: the for-range reserves its 300 million elements up
+/// front, 2.2 GiB in one growth, so the run stops at once at the default 2 GiB ceiling rather
+/// than after filling memory.
 const RUNAWAY_COMPILED: &str = r#"
 fn test_runaway() {
   v: vector<integer> = [];
-  for i in 0..2000000000 { v += [i]; }
+  for i in 0..300000000 { v += [i]; }
   assert(len(v) > 0, "never reached");
 }
 "#;

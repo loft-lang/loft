@@ -178,7 +178,7 @@ length from a leak, which you would otherwise have to go and measure.
 | Mechanism | Default | How |
 |---|---|---|
 | Ordinary run | **off** | loft is unbounded by default; a real program may want the machine |
-| Under `--tests` / `loft test` | **on, 2 GiB** | a test wanting tens of GiB is a bug either way |
+| Under `--tests` / `loft test` | **on, 2 GiB** | a test wanting tens of GiB is a bug either way; the runner hands the ceiling to every compiled test it runs (`--native`, `--native-c`), whose `main` applies it |
 | Env var | — | `LOFT_MEMORY_LIMIT=<size>` — `2G`, `512M`, `64M`, or `0` to remove it |
 
 A limit that cannot be parsed is reported and the default is **kept** — a typo must never
@@ -189,7 +189,9 @@ Implementation is `src/store_budget.rs` (accounting, ceiling, report) with the a
 asserted at every site in `src/store.rs` that allocates, reallocates or frees a store buffer:
 `new`, `open`, `resize_store`, `shrink_to`, `clone_locked`, `snapshot_copy` and `Drop`.  Type
 names reach the report through `Stores::publish_type_names`, called once per run and inert when
-no ceiling is set.  Guarded by `tests/store_memory_limit.rs`.
+no ceiling is set.  The C runtime keeps its own accounting (`loft_heap_moved`, `src/c/loft_store.h`)
+with the same report.  Guarded by `tests/store_memory_limit.rs`, compiled tests on both
+writers included.
 
 **No `file:line` in the report, deliberately.**  The interpreter's span table records CALL
 SITES only, so resolving an arbitrary allocation pc through it returns the nearest span

@@ -511,6 +511,22 @@ static int loft_log_production_fault(int sev, const char *label, const char *pre
     return 1;
 }
 
+/* `discard_locked_write_in_production`: in a production run a write into a locked store is
+ * discarded and logged — at the first discard and then at every doubling of the count, so a
+ * loop writing a locked vector a million times leaves twenty lines — and the run continues.
+ * Answers 0 outside production, where the write halts. */
+static int loft_log_locked_write(void) {
+    static uint64_t discarded = 0;
+    loft_log_init();
+    if (!loft_lg.production) return 0;
+    discarded++;
+    if ((discarded & (discarded - 1)) == 0) {
+        static const char m[] = "[write_to_locked_store] write to a locked store \xe2\x80\x94 unlock it with `#lock = false` before writing";
+        loft_log_record(LOFT_SEV_ERROR, loft_lit(m, sizeof m - 1), loft_lit("", 0), 0);
+    }
+    return 1;
+}
+
 /* `LOFT_NATIVE_LEAK_CHECK` (`collect_store_leaks`, the generated Rust's leak tail): at a run's
  * end, the live stores nothing pinned or locked, by type, most first — `kt=<n> <Type>×<count>`,
  * five named and a count of the rest — as one warning the test runner reads as the verdict. */

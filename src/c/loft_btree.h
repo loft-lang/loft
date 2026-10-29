@@ -825,6 +825,7 @@ static loft_ref loft_ix_find(loft_ref data, const loft_key *keys, int nk, const 
 static loft_ref loft_ix_insert(const loft_tdesc *T, uint16_t elem, loft_ref data, loft_ref rec, const loft_key *keys,
                                int nk, int secondary) {
     if (data.store_nr == 0xFFFF || data.rec == 0 || rec.rec == 0) return loft_ref_null();
+    if (LOFT_WRITE_REFUSED(loft_store_of(data))) return loft_ref_null();
     uint32_t dup = loft_bt_add(data, rec.rec, keys, nk);
     if (dup == 0) return loft_ref_null();
     loft_ref existing = { data.store_nr, dup, 8 };
