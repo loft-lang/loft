@@ -49,8 +49,11 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                  (under MIN_FREE_TREE = 2), merged when a neighbour is freed (H-FreeFooter's
                  forward merge, or the sweep a one-word predecessor arms).  So a record's
                  size word is the size its type or its request names, never what the free
-                 block happened to hold; spare room is the collection's to ask for
-                 (collections.md Col-Capacity), not the allocator's to hand out.  Freed
+                 block happened to hold.  A resize grown in place takes exactly its new size
+                 the same way, the rest of the free neighbour left free behind it, and one
+                 that cannot grow in place is claimed anew at exactly that size; spare room
+                 is the collection's to ask for (collections.md Col-Capacity), not the
+                 allocator's to hand out.  Freed
                  blocks still merge with their free neighbours exactly as the rules below
                  say.
   (H-Wilderness) inside one store, the free block that ENDS the store (the wilderness)

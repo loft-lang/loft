@@ -126,7 +126,8 @@ static loft_ref loft_seq_find(loft_ref c, uint32_t size, const loft_key *keys, i
 
 /* vector::sorted_new: room for one more element, staged one slot past the end — the gap
  * `loft_sorted_finish` opens moves it into place — or in slot 0 of an empty sorted.  The vector
- * is made with room for twelve and grows by `resize` to its length plus two. */
+ * is made with the growth step's room for two (the element and the scratch slot) and takes the
+ * growth step again when its length plus two no longer fits (`@FR-Col-Capacity`). */
 static loft_ref loft_sorted_new(loft_ref c, uint32_t size) {
     if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
     if (LOFT_WRITE_REFUSED(loft_store_of(c))) return loft_ref_null();
@@ -134,14 +135,18 @@ static loft_ref loft_sorted_new(loft_ref c, uint32_t size) {
     uint32_t r = loft_collection_rec(s, c.rec, c.pos);
     loft_ref e = { c.store_nr, 0, 8 };
     if (r == 0) {
-        r = loft_st_claim(s, loft_vec_cap_words(12, size));
+        r = loft_st_claim(s, loft_vec_cap_words(loft_vec_grown(2, size), size));
         loft_set_u32(s, c.rec, c.pos, r);
         loft_set_u32(s, r, 4, 0);
         e.rec = r;
         return e;
     }
     uint32_t len = loft_u32(s, r, 4);
-    uint32_t nr = loft_st_resize(s, r, loft_vec_cap_words(len + 2, size));
+    /* The element and the scratch slot: the growth step only when they do not fit. */
+    int32_t claimed;
+    memcpy(&claimed, loft_at(s, r, 0), 4);
+    uint32_t nr = len + 2 > ((uint32_t) claimed * 8 - 8) / size
+        ? loft_st_resize(s, r, loft_vec_cap_words(loft_vec_grown(len + 2, size), size)) : r;
     if (nr != r) {
         loft_set_u32(s, c.rec, c.pos, nr);
         r = nr;

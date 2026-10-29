@@ -1065,13 +1065,14 @@ static uint32_t loft_st_resize_inner(loft_store_t *s, uint32_t rec, uint32_t siz
     uint32_t next = rec + (uint32_t) claim;
     if (next < s->size) {
         int32_t next_size = loft_st_i32(s, next, 0);
-        if (next_size < 0 && claim - next_size > req) {
+        if (next_size < 0 && claim - next_size >= req) {
+            /* Grown in place to EXACTLY `size`, the rest of the free block left free behind it
+             * (`@FR-H-Exact`; a growing vector's spare room is in `size`, `@FR-Col-Capacity`). */
             loft_fl_remove(s, next);
-            int32_t act = req * 7 / 4;
-            if (claim - next_size > act) {
-                uint32_t new_next = rec + (uint32_t) act;
+            if (claim - next_size > req) {
+                uint32_t new_next = rec + (uint32_t) req;
                 uint32_t new_free = (uint32_t) -next_size + next - new_next;
-                loft_st_set_i32(s, rec, 0, act);
+                loft_st_set_i32(s, rec, 0, req);
                 loft_set_free_header(s, new_next, (int32_t) new_free);
                 loft_fl_insert(s, new_next);
             } else {

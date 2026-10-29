@@ -2358,17 +2358,19 @@ impl Store {
         let next = rec + claim as u32;
         if next < self.size {
             let next_size = self.read::<i32>(next, 0);
-            if next_size < 0 && claim - next_size > req_size {
-                // The adjacent free block can cover the growth.
+            if next_size < 0 && claim - next_size >= req_size {
+                // The adjacent free block can cover the growth: the record grows to EXACTLY
+                // the size asked for, and the rest of the free block stays free behind it
+                // (`@FR-H-Exact`; the spare room a growing vector wants is in `size`,
+                // `@FR-Col-Capacity`).
                 self.fl_remove(next);
-                let act = req_size * 7 / 4;
-                let new_size = if claim - next_size > act {
-                    let new_next = rec + act as u32;
+                let new_size = if claim - next_size > req_size {
+                    let new_next = rec + req_size as u32;
                     let new_free_size = (-next_size) as u32 + next - new_next;
-                    self.write(rec, 0, act);
+                    self.write(rec, 0, req_size);
                     self.set_free_header(new_next, new_free_size as i32);
                     self.fl_insert(new_next);
-                    act
+                    req_size
                 } else {
                     self.write(rec, 0, claim - next_size);
                     claim - next_size

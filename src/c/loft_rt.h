@@ -1668,8 +1668,22 @@ LOFT_HOT_INLINE uint32_t loft_collection_rec(loft_store_t *s, uint32_t rec, uint
     return v == 0xFFFFFFFFu ? 0 : v;
 }
 
+/* `checked_vec_cap`: the header word and `count` elements of `size` bytes, in words, in 32 bits
+ * (the store does no 64-bit arithmetic).  A count past what 32 bits hold answers the largest
+ * size, which the store's growth refuses ("store offset overflow"). */
 static uint32_t loft_vec_cap_words(uint32_t count, uint32_t size) {
-    return (uint32_t) (((uint64_t) count * size + 15) / 8);
+    if (size != 0 && count > (UINT32_MAX - 15) / size) return UINT32_MAX / 8;
+    return (count * size + 15) / 8;
+}
+
+/* `@FR-Col-Capacity` (`vector::grown_elems`): the room a vector's growth step makes, for a
+ * length of `needed` — twice that, and never less than 88 bytes of elements (one at least). */
+#define LOFT_VEC_START_BYTES 88u
+static uint32_t loft_vec_grown(uint32_t needed, uint32_t size) {
+    uint32_t start = LOFT_VEC_START_BYTES / (size ? size : 1);
+    uint32_t twice = needed > UINT32_MAX / 2 ? UINT32_MAX : needed * 2;
+    if (start < 1) start = 1;
+    return twice > start ? twice : start;
 }
 
 LOFT_HOT_INLINE int64_t loft_vec_len(loft_ref v) {
@@ -1692,7 +1706,8 @@ static void loft_vec_prealloc(loft_ref v, uint32_t count, uint32_t size) {
     if (v.store_nr == 0xFFFF || v.rec == 0) return;
     loft_store_t *s = loft_store_of(v);
     if (loft_collection_rec(s, v.rec, v.pos) != 0) return;
-    uint32_t r = loft_claim(s, loft_vec_cap_words(count < 11 ? 11 : count, size));
+    /* A known count is reserved exactly (`@FR-Col-Capacity`). */
+    uint32_t r = loft_claim(s, loft_vec_cap_words(count, size));
     loft_set_u32(s, v.rec, v.pos, r);
     loft_set_u32(s, r, 4, 0);
 }
@@ -1733,7 +1748,7 @@ static loft_ref loft_vec_append_slow(loft_ref v, uint32_t size) {
     uint32_t r = loft_collection_rec(s, v.rec, v.pos);
     uint32_t len;
     if (r == 0) {
-        r = loft_claim(s, loft_vec_cap_words(11, size));
+        r = loft_claim(s, loft_vec_cap_words(loft_vec_grown(1, size), size));
         loft_set_u32(s, v.rec, v.pos, r);
         loft_set_u32(s, r, 4, 0);
         len = 0;
@@ -1743,7 +1758,7 @@ static loft_ref loft_vec_append_slow(loft_ref v, uint32_t size) {
         memcpy(&claimed, loft_at(s, r, 0), 4);
         /* `len + 1 > (claimed * 8 - 8) / size`, without the division every append paid. */
         if ((uint64_t) (len + 1) * size + 8 > (uint64_t) claimed * 8) {
-            uint32_t nr = loft_st_resize(s, r, loft_vec_cap_words((len + 1) * 2, size));
+            uint32_t nr = loft_st_resize(s, r, loft_vec_cap_words(loft_vec_grown(len + 1, size), size));
             if (nr != r) {
                 loft_set_u32(s, v.rec, v.pos, nr);
                 r = nr;
@@ -2463,15 +2478,22 @@ static loft_ref loft_vec_insert(loft_ref v, uint32_t size, int64_t index) {
     int64_t real = index < 0 ? index + len : index;
     if (real < 0 || real > len) return loft_ref_null();
     loft_store_t *s = loft_store_of(v);
+    /* Refused whole at entry (`@FR-H-WriteLocked-Whole`): with room left no resize runs, so
+     * nothing below would meet the lock before the shift. */
+    if (LOFT_WRITE_REFUSED(s)) return loft_ref_null();
     uint32_t r = loft_collection_rec(s, v.rec, v.pos);
     uint32_t nl;
     if (r == 0) {
-        r = loft_claim(s, loft_vec_cap_words(11, size));
+        r = loft_claim(s, loft_vec_cap_words(loft_vec_grown(1, size), size));
         loft_set_u32(s, v.rec, v.pos, r);
         nl = 1;
     } else {
         nl = (uint32_t) len + 1;
-        uint32_t nr = loft_st_resize(s, r, loft_vec_cap_words(nl, size));
+        /* The growth step only when the room runs out (`@FR-Col-Capacity`). */
+        int32_t claimed;
+        memcpy(&claimed, loft_at(s, r, 0), 4);
+        uint32_t nr = nl > ((uint32_t) claimed * 8 - 8) / size
+            ? loft_st_resize(s, r, loft_vec_cap_words(loft_vec_grown(nl, size), size)) : r;
         if (nr != r) {
             loft_set_u32(s, v.rec, v.pos, nr);
             r = nr;
@@ -2485,13 +2507,13 @@ static loft_ref loft_vec_insert(loft_ref v, uint32_t size, int64_t index) {
     return e;
 }
 
-/* OpReserveVector (vector::reserve_vector): room for `count` elements (at least 11), the record
- * moved if it has to grow; a negative count reserves nothing. */
+/* OpReserveVector (vector::reserve_vector): room for exactly `count` elements, the record moved
+ * if it has to grow; a negative count reserves nothing. */
 static void loft_vec_reserve(loft_ref v, int64_t count, uint32_t size) {
     if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return;
     if (count < 0 || count > (int64_t) UINT32_MAX) return;
     loft_store_t *s = loft_store_of(v);
-    uint32_t words = loft_vec_cap_words(count < 11 ? 11 : (uint32_t) count, size);
+    uint32_t words = loft_vec_cap_words((uint32_t) count, size);
     uint32_t r = loft_collection_rec(s, v.rec, v.pos);
     if (r == 0) {
         /* Not zeroed (`@FR-H-Claim`: a payload holds whatever the block held): an element past
@@ -2554,7 +2576,7 @@ static void loft_vec_reserve_more(loft_ref v, int64_t extra, uint32_t size) {
     if (r != 0 && !s->read_only) {
         int32_t claimed;
         memcpy(&claimed, loft_at(s, r, 0), 4);
-        if (claimed >= (int32_t) loft_vec_cap_words(count < 11 ? 11 : count, size)) return;
+        if (claimed >= (int32_t) loft_vec_cap_words(count, size)) return;
     }
     loft_vec_reserve(v, (int64_t) count, size);
 }
