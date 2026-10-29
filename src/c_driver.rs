@@ -28,11 +28,74 @@ pub(crate) fn c_backend_selected() -> bool {
     std::env::var("LOFT_NATIVE_BACKEND").is_ok_and(|v| v.eq_ignore_ascii_case("c"))
 }
 
-/// The C compiler: `LOFT_CC`, else `CC`, else `cc`.
+/// The C compiler: `LOFT_CC`, else `CC`, else the host's own (`platform::host_c_compiler`:
+/// `cc`, or on Windows without one the MSVC `cl` rustc's own target links with).
 pub(crate) fn cc_program() -> String {
     std::env::var("LOFT_CC")
         .or_else(|_| std::env::var("CC"))
-        .unwrap_or_else(|_| "cc".to_string())
+        .unwrap_or_else(|_| loft::platform::host_c_compiler())
+}
+
+/// A compiler's command line: gcc's (`cc`, `gcc`, `clang`) or MSVC's (`cl`, `clang-cl`), told
+/// apart by the compiler's name.  The flags are written once, in gcc's spelling, and
+/// [`msvc_args`] renders them for the other.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Dialect {
+    Gnu,
+    Msvc,
+}
+
+fn dialect(cc: &str) -> Dialect {
+    let stem = std::path::Path::new(cc)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    if stem == "cl" || stem == "clang-cl" {
+        Dialect::Msvc
+    } else {
+        Dialect::Gnu
+    }
+}
+
+/// gcc-spelled flags as `cl` takes them: C11 is the oldest standard `cl` names and holds C99's
+/// language as the unit uses it; the warning switches become `cl`'s levels; the libraries a
+/// gcc link names (`-lm`, `-pthread`, `-ldl`) are the CRT's own there, and a run path has no
+/// meaning to a PE binary.
+fn msvc_args(gnu: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for f in gnu {
+        let mapped = match f.as_str() {
+            "-std=c99" => "/std:c11",
+            "-w" => "/W0",
+            "-Wall" => "/W3",
+            "-Werror" => "/WX",
+            "-O0" => "/Od",
+            "-O1" => "/O1",
+            "-O2" | "-O3" => "/O2",
+            "-g" => "/Z7",
+            "-pthread" | "-ldl" | "-lm" | "-pedantic" => continue,
+            other if other.starts_with("-W") => continue,
+            other if let Some(def) = other.strip_prefix("-D") => {
+                out.push(format!("/D{def}"));
+                continue;
+            }
+            other => other,
+        };
+        out.push(mapped.to_string());
+    }
+    out
+}
+
+/// The compiler as a process, with the environment an MSVC `cl` needs outside a developer
+/// prompt (`platform::msvc_env`: empty for gcc's dialect, or where the prompt set it).
+fn cc_spawn(cc: &str) -> Spawn {
+    let mut s = Spawn::new(Program::os(cc));
+    if dialect(cc) == Dialect::Msvc {
+        for (k, v) in loft::platform::msvc_env() {
+            s.push_env(k, v);
+        }
+    }
+    s
 }
 
 /// The compiler flags of one build: the tier's optimisation and call chain, and the store's
@@ -176,15 +239,20 @@ pub(crate) fn cc_identity(cc: &str) -> String {
     static IDENTITY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     IDENTITY
         .get_or_init(|| {
-            Spawn::new(Program::os(cc))
-                .arg("--version")
+            // `cl` takes no `--version`: run bare, it prints its banner on stderr.
+            let msvc = dialect(cc) == Dialect::Msvc;
+            let mut probe = cc_spawn(cc);
+            if !msvc {
+                probe.push_arg("--version");
+            }
+            probe
                 .run(b"")
                 .ok()
-                .filter(|o| o.status.success())
+                .filter(|o| msvc || o.status.success())
                 .map_or_else(
                     || cc.to_string(),
                     |o| {
-                        String::from_utf8_lossy(&o.stdout)
+                        String::from_utf8_lossy(if msvc { &o.stderr } else { &o.stdout })
                             .lines()
                             .next()
                             .unwrap_or_default()
@@ -516,12 +584,26 @@ pub(crate) fn build(
     let binary = scratch.join(format!("loft_native_bin_{pid}{exe}"));
     fa::write(&src, c)
         .map_err(|e| BuildError::Rejected(format!("cannot write {}: {e}", src.display())))?;
-    let mut cmd = Spawn::new(Program::os(&cc));
-    cmd.push_args(&flags);
-    cmd.push_arg(&src).push_arg("-o").push_arg(&binary);
-    cmd.push_args(&link_args);
-    cmd.push_arg("-lm");
+    let mut cmd = cc_spawn(&cc);
+    let obj = scratch.join(format!("loft_native_obj_{pid}.obj"));
+    match dialect(&cc) {
+        Dialect::Gnu => {
+            cmd.push_args(&flags);
+            cmd.push_arg(&src).push_arg("-o").push_arg(&binary);
+            cmd.push_args(&link_args);
+            cmd.push_arg("-lm");
+        }
+        // `cl` writes its object beside the working directory unless told where.
+        Dialect::Msvc => {
+            cmd.push_arg("/nologo").push_args(msvc_args(&flags));
+            cmd.push_arg(&src);
+            cmd.push_arg(format!("/Fe:{}", binary.display()));
+            cmd.push_arg(format!("/Fo:{}", obj.display()));
+            cmd.push_args(msvc_args(&link_args));
+        }
+    }
     let out = run_cc(&mut cmd);
+    let _ = fa::remove_file(&obj);
     let keep = std::env::var_os("LOFT_KEEP_NATIVE_C").is_some();
     if !keep {
         let _ = fa::remove_file(&src);
@@ -573,6 +655,47 @@ pub(crate) fn build(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cl_compiler_takes_the_flags_in_its_own_spelling() {
+        assert_eq!(dialect("cc"), Dialect::Gnu);
+        assert_eq!(dialect("/usr/bin/clang"), Dialect::Gnu);
+        assert_eq!(dialect("cl"), Dialect::Msvc);
+        assert_eq!(dialect("C:/VS/bin/Hostx64/x64/CL.EXE"), Dialect::Msvc);
+        assert_eq!(dialect("clang-cl.exe"), Dialect::Msvc);
+        let gnu: Vec<String> = [
+            "-std=c99",
+            "-w",
+            "-O1",
+            "-DLOFT_CALL_CHAIN",
+            "-pthread",
+            "-ldl",
+            "-lm",
+            "-Wall",
+            "-Wno-unused-label",
+            "-Werror",
+            "-O3",
+            "-g",
+            "shim.lib",
+        ]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+        assert_eq!(
+            msvc_args(&gnu),
+            [
+                "/std:c11",
+                "/W0",
+                "/O1",
+                "/DLOFT_CALL_CHAIN",
+                "/W3",
+                "/WX",
+                "/O2",
+                "/Z7",
+                "shim.lib"
+            ]
+        );
+    }
 
     #[test]
     fn link_lines_are_read_exactly() {

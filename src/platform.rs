@@ -1755,6 +1755,44 @@ pub fn c_runtime_posix_host() -> bool {
     cfg!(unix)
 }
 
+/// The C compiler the C backend drives when neither `LOFT_CC` nor `CC` names one: `cc`, and on
+/// Windows without one the MSVC `cl` of the Build Tools rustc's own target links with — found
+/// as [`shim_archiver`] finds it — so a machine that built loft builds its programs.
+#[must_use]
+pub fn host_c_compiler() -> String {
+    static CC: OnceLock<String> = OnceLock::new();
+    CC.get_or_init(|| {
+        if cfg!(windows)
+            && process::Spawn::new(process::Program::os("cc"))
+                .arg("--version")
+                .run(b"")
+                .is_err()
+            && let Some(cl) = msvc_cl()
+        {
+            return cl.path.display().to_string();
+        }
+        "cc".to_string()
+    })
+    .clone()
+}
+
+/// The environment (`INCLUDE`, `LIB`, `PATH`) an MSVC `cl` needs: none inside a developer
+/// prompt, which set it, nor off Windows; else the found toolset's.
+#[must_use]
+pub fn msvc_env() -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+    if std::env::var_os("INCLUDE").is_some() {
+        return Vec::new();
+    }
+    msvc_cl().map(|cl| cl.env.clone()).unwrap_or_default()
+}
+
+/// The MSVC `cl.exe` for this host, with its environment, found once.
+fn msvc_cl() -> Option<&'static MsvcTool> {
+    static CL: OnceLock<Option<MsvcTool>> = OnceLock::new();
+    CL.get_or_init(|| find_msvc_tool(&crate::cache::host_triple(), "cl.exe"))
+        .as_ref()
+}
+
 /// What to install so the C backend can build a host program, said for this host (@PLN203
 /// C10).  Only the Debian/Ubuntu list is measured; the others name the tools, not packages.
 #[must_use]
@@ -1762,7 +1800,8 @@ pub fn c_host_toolchain_cure() -> &'static str {
     if cfg!(target_os = "macos") {
         "install the Xcode command-line tools (`xcode-select --install`)"
     } else if cfg!(windows) {
-        "install MinGW-w64 gcc, or name a compiler in LOFT_CC"
+        "install Visual Studio's Build Tools (the C++ workload, whose `cl` loft finds by \
+         itself) or MinGW-w64 gcc, or name a compiler in LOFT_CC"
     } else {
         "install one (Debian/Ubuntu: `apt install build-essential`), or name it in LOFT_CC"
     }

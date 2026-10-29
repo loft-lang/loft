@@ -67,6 +67,35 @@ LOFT = os.environ.get("LOFT_BIN") or str(ROOT / "target" / "release" / "loft")
 # The host's C compiler as the driver picks it (`c_driver::cc_program`): LOFT_CC, else CC, else cc.
 HOST_CC = os.environ.get("LOFT_CC") or os.environ.get("CC") or "cc"
 CC = [HOST_CC, "-std=c99", "-O1", "-DLOFT_CALL_CHAIN", "-pthread"] + (["-ldl"] if sys.platform.startswith("linux") else [])
+# MSVC's `cl` (or `clang-cl`), told apart by name as the driver tells it (`c_driver::dialect`):
+# the same flags in its spelling (`c_driver::msvc_args`).  Run it from a developer prompt.
+MSVC = Path(HOST_CC).stem.lower() in ("cl", "clang-cl")
+
+
+def msvc_args(gnu: list[str]) -> list[str]:
+    spelled = {"-std=c99": "/std:c11", "-w": "/W0", "-Wall": "/W3", "-Werror": "/WX",
+               "-O0": "/Od", "-O1": "/O1", "-O2": "/O2", "-O3": "/O2", "-g": "/Z7"}
+    out = []
+    for f in gnu:
+        if f in spelled:
+            out.append(spelled[f])
+        elif f in ("-pthread", "-ldl", "-lm", "-pedantic") or f.startswith("-W"):
+            continue
+        elif f.startswith("-D"):
+            out.append("/D" + f[2:])
+        else:
+            out.append(f)
+    return out
+
+
+def host_build(flags: list[str], c: str, exe: str, links: list[str]) -> list[str]:
+    """The host compiler's command for `c` into `exe`."""
+    if MSVC:
+        return [HOST_CC, "/nologo"] + msvc_args(CC[1:] + flags) + \
+            [c, f"/Fe:{exe}.exe", f"/Fo:{exe}.obj"] + msvc_args(links)
+    # `-lm` after the shim archives, as the driver links them: a static archive's math calls
+    # (an OGG decoder's `cos`) resolve only against a library named after it.
+    return CC + flags + [c, "-o", exe] + links + ["-lm"]
 MODES = {
     "strict": ["-DLOFT_STRICT", "-pedantic", "-Werror"],
     "default": ["-w"],
@@ -278,11 +307,12 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
         elif mode in CROSS:
             code, _, err = run(CROSS[mode] + [c] + shim_sources + ["-o", exe, "-lm"], 300)
         else:
-            # `-lm` after the shim archives, as the driver links them: a static archive's
-            # math calls (an OGG decoder's `cos`) resolve only against a library named after it.
-            code, _, err = run(CC + flags + (ASAN if asan else []) + [c, "-o", exe] + links + ["-lm"], 120)
+            code, out, err = run(host_build(flags + (ASAN if asan else []), c, exe, links), 120)
+            # `cl` says its errors on stdout, after a line naming the source.
+            err = err or out
         if code != 0:
-            first = err.decode(errors="replace").strip().split("\n")[0]
+            lines = [l for l in err.decode(errors="replace").strip().split("\n") if l.strip()]
+            first = next((l for l in lines if "error" in l), lines[0] if lines else "")
             return path, "cc-error", f"[{mode}] {first}", None, times
         # The program's directory, as the driver hands it to every run (`LOFT_SOURCE_DIR`).
         run_cmd = wasm_run(exe + ".wasm", src.parent, tmpdir) if mode == "wasm" else \
