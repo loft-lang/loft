@@ -626,6 +626,32 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  `LOFT_NO_REBOUND_HEADER=1`; guard
                  `a-vector-the-loop-rebinds-is-read-through-the-header-of-what-it-names-now.loft`
                  (fails all three cells with the re-derivation left out).
+  (R-Header), the apart clause's GROWTH half (C): a BARE vector variable whose
+                 store this activation owns alone (or a caller lends as a work
+                 buffer) still holds its header — record, length, element base —
+                 where the loop GROWS it, when every growth is a STATEMENT the one
+                 predicate `apart::growth_args` recognises: a vector-growing op
+                 (`OpPreAllocVector`, `OpPush*`, `OpAppendVector`) or a call to a
+                 loft function, with the vector itself as a direct argument; inside
+                 a nested loop only the call (that loop's own push window takes over
+                 an op).  Beside the reads the apart clause admits, an in-place
+                 SCALAR element write is admitted (no claim, no move, no length
+                 change), and so is a release in a block that ends in `return` (the
+                 activation's exit).  The store must be named in the loop by ONE
+                 variable, because the refresh follows the variable a growth
+                 statement names.  The emitter derives the header again right after
+                 every statement the predicate recognises
+                 (`FnWriter::refresh_grown_header`, also after a run a rewrite emits
+                 whole), so a read always sees the vector's record, length and memory
+                 as they are now; a verify build checks the header at every use
+                 (`LOFT_PROVED`).  Asked only where the loop's verdict holds nothing
+                 but apart headers.  An interpreter's value stack and frame vectors,
+                 pushed through a helper and read every op, are the shape (bench 20).
+                 Switch `LOFT_NO_GROWN_HEADER=1`; `LOFT_TRACE_GROWN=1` names the
+                 mention that declines a store; guard
+                 `a-vector-the-loop-grows-is-read-through-the-header-derived-after-each-growth.loft`
+                 (four of its six cells fail with the refresh left out; the other two
+                 are loops earlier clauses already hold).
 ```
 
 **The apart clause, in words.**  The gate answers for a loop, and one statement it cannot
