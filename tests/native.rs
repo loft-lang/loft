@@ -4311,6 +4311,99 @@ fn a_test_run_opens_a_relative_lib_librarys_c_libraries() -> std::io::Result<()>
     Ok(())
 }
 
+/// loft#2238 — an installed optional library answers `c_library_available` true on both
+/// backends and both links when its package also ships a `[c] shim`.  The symbols a package
+/// declares are attributed to its one optional library, and the shim's own were among them;
+/// a native program cannot find those by name (linked in under a static link, not yet open
+/// under a dynamic one), so it answered `false` where the interpreter answered `true`.
+/// The optional library is the host's C runtime (`platform::host_c_runtime_library`), which
+/// every host has; the absent one is the control, which must stay `false`.
+#[test]
+fn an_installed_optional_library_beside_a_shim_is_available_on_both_backends() -> std::io::Result<()>
+{
+    let _guard = native_suite_lock()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    if loft::platform::process::harness_command("cc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        return Ok(()); // no C compiler on this machine
+    }
+    let tree = std::env::temp_dir().join(format!("loft_2238_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&tree);
+    let package = |name: &str, optional: &str, shim_c: &str, loft: &str| -> std::io::Result<()> {
+        let dir = tree.join("libs").join(name);
+        fa::create_dir_all(dir.join("src"))?;
+        fa::write(
+            dir.join("loft.toml"),
+            format!(
+                "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nloft = \">=2026.10.0\"\n\n\
+                 [library]\nentry = \"src/{name}.loft\"\n\n[c]\n\
+                 optional-libs = \"{optional}\"\nshim = \"src/shim.c\"\n"
+            ),
+        )?;
+        fa::write(dir.join("src").join("shim.c"), shim_c)?;
+        fa::write(dir.join("src").join(format!("{name}.loft")), loft)
+    };
+    let crt = loft::platform::host_c_runtime_library();
+    package(
+        "withc",
+        crt,
+        "#include <stdint.h>\nint64_t wc_seven(void);\nint64_t wc_seven(void) { return 7; }\n",
+        "fn wc_seven() -> integer;\n#c \"wc_seven\" \"int64_t(void)\"\n\
+         fn c_abs(v: integer) -> integer;\n#c \"abs\" \"int(int)\"\n\
+         pub fn seven() -> integer { wc_seven() }\n\
+         pub fn absolute(v: integer) -> integer { c_abs(v) }\n",
+    )?;
+    package(
+        "absent",
+        "libloft_2238_absent.so.9",
+        "#include <stdint.h>\nint64_t ab_one(void);\nint64_t ab_one(void) { return 1; }\n",
+        "fn ab_one() -> integer;\n#c \"ab_one\" \"int64_t(void)\"\n\
+         fn ab_missing() -> integer;\n#c \"loft_2238_missing\" \"int64_t(void)\"\n\
+         pub fn one() -> integer { ab_one() }\n",
+    )?;
+    let prog = tree.join("p.loft");
+    fa::write(
+        &prog,
+        format!(
+            "use withc;\nuse absent;\nfn main() {{\n\
+             \x20 c = c_library_available(\"{crt}\");\n\
+             \x20 a = c_library_available(\"libloft_2238_absent.so.9\");\n\
+             \x20 println(\"libc {{c}} absent {{a}} one {{absent::one()}}\");\n}}\n"
+        ),
+    )?;
+    // Nothing of `withc` is called: a dynamic program binds only the packages it reaches, so
+    // its shim is not open when the question is asked — the dynamic half of the defect.  A
+    // program that calls into the package after asking binds it at start and was right.
+    let want = "libc true absent false one 1\n";
+    let mut legs = vec![("--interpret", "1"), ("--interpret", "0")];
+    if find_loft_rlib().is_some() {
+        legs.extend([("--native", "1"), ("--native", "0")]);
+    }
+    let mut wrong = Vec::new();
+    for (backend, cabi) in legs {
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+            .current_dir(&tree)
+            .args([backend, "--lib", "libs", "p.loft"])
+            .env("LOFT_NATIVE_CABI", cabi)
+            .output()?;
+        let got = String::from_utf8_lossy(&out.stdout);
+        if got != want {
+            wrong.push(format!(
+                "{backend} LOFT_NATIVE_CABI={cabi}: {got:?}, exited {}\n{}",
+                out.status,
+                String::from_utf8_lossy(&out.stderr)
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "want {want:?}:\n{}", wrong.join("\n"));
+    let _ = fa::remove_dir_all(&tree);
+    Ok(())
+}
+
 /// @PLN199 B2 — a loft function that calls a `#c` binding compiles into its library's
 /// cdylib: the gate used to turn the binding into an interpreted CALLEE, so every loft
 /// wrapper of a C function ran interpreted.  The cdylib is linked against no C library — its

@@ -1167,6 +1167,18 @@ pub fn host_lib_os() -> LibOs {
     }
 }
 
+/// The C runtime library every program on this host already has loaded, by the name a
+/// `[c] libs` / `optional-libs` entry gives it — the one library a test can declare and rely
+/// on being installed.  Each exports the standard C functions (`abs`, …).
+#[must_use]
+pub fn host_c_runtime_library() -> &'static str {
+    match host_lib_os() {
+        LibOs::Linux => "libc.so.6",
+        LibOs::Macos => "libSystem.B.dylib",
+        LibOs::Windows => "ucrtbase.dll",
+    }
+}
+
 /// The `[c]` library that is really present beside `dir`, under whichever
 /// spelling this host uses. `None` when nothing is there — a bare soname the
 /// dynamic linker resolves, or a library that is simply missing.
