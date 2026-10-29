@@ -208,7 +208,7 @@ nothing on bench 20 once the kept twin was built.
 
 | rule | effect (instructions, same answers) |
 |---|---|
-| `(H-WildFirst)`: the wilderness serves a claim it can hold before the free tree is asked, on every backend | `grouped_fill_find` 599 → 556 per element under gcc (−7.2 %), 479 → 440 under clang (−8.1 %) |
+| `(H-WildFirst)`: the wilderness serves a claim it can hold before the free tree is asked, on every backend — **REVERTED the same day** | priced −7.2 % (gcc) / −8.1 % (clang) on `grouped_fill_find`, but it broke the store's footprint (runaway growth: 100 000 hash + sorted inserts overflowed the store in CI); recorded in `formal/allocator.md` § Tried and reverted |
 | `(R-NonSentinelParam)`: a scalar parameter every direct call proves is non-null on entry (a greatest fixpoint); `%` and `/` by a literal close on both lanes, wrapping `+ - *` under the release-pass probe; the C's `__nn` twins specialise a callee for a call site whose arguments prove more | `slope_path_with_undo` 1,050 → 895 per step under gcc (−15 %), 868 → 676 under clang (−22 %); the map helpers' `%` is plain in `map_get_hex__nn6`, `map_set_hex__nne`, `map_ensure_chunk__nne` |
 
 What the parameter proof met on `slope_path_with_undo`: the program-wide fact proves the
@@ -222,6 +222,7 @@ Nullable forms keep their test (`slope_path`'s inlined `%` was one).  That is th
 contract as written, and the reason the `R-NonSentinelParam` guard's null cells run on the
 interpreter and the checked C.
 
-**Still open:** `grouped_fill_find`'s typed insert (the table header read once per loop, as
+**Still open:** `grouped_fill_find`'s allocator cost needs another form than wilderness-first
+(one that keeps small claims in the holes), and its typed insert (the table header read once per loop, as
 `@FR-R-TypedKeyed` does for lookups) and the group's per-element record and id vector — store
 format work.

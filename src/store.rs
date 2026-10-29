@@ -87,14 +87,6 @@ fn wild_bump_enabled() -> bool {
     *FLAG.get_or_init(|| !std::env::var("LOFT_NO_WILD_BUMP").is_ok_and(|v| v != "0"))
 }
 
-/// `@FR-H-WildFirst` — a claim the wilderness can hold is cut off its front even while the
-/// free tree holds blocks.  `LOFT_NO_WILD_FIRST=1` restores the tree-order layout, in which
-/// the wilderness serves a claim only when the best fit would choose it.
-fn wild_first_enabled() -> bool {
-    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *FLAG.get_or_init(|| !std::env::var("LOFT_NO_WILD_FIRST").is_ok_and(|v| v != "0"))
-}
-
 fn wilderness_enabled() -> bool {
     static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *FLAG.get_or_init(|| !std::env::var("LOFT_NO_WILDERNESS").is_ok_and(|v| v != "0"))
@@ -515,8 +507,6 @@ pub struct Store {
     wild: u32,
     /// Whether this store keeps a wilderness (`LOFT_NO_WILDERNESS`), read at construction.
     wilderness: bool,
-    /// `@FR-H-WildFirst`: the wilderness serves a claim that fits it before the tree is asked.
-    wild_first: bool,
     /// Whether a best-fit claim whose remainder is at least the request carves the taken
     /// node IN PLACE (`@FR-H-Carve`, `LOFT_NO_CARVE_IN_PLACE`), read at construction.
     carve: bool,
@@ -1237,7 +1227,6 @@ impl Store {
             free_root: 0,
             wild: 0,
             wilderness: wilderness_enabled(),
-            wild_first: wild_first_enabled(),
             carve: carve_enabled(),
             needs_coalesce: false,
             lazy: lazy_free_enabled(),
@@ -1430,7 +1419,6 @@ impl Store {
             free_root: 0,
             wild: 0,
             wilderness: wilderness_enabled(),
-            wild_first: wild_first_enabled(),
             carve: carve_enabled(),
             needs_coalesce: false,
             // A store bound to a file never enters the lazy phase: it is read,
@@ -1540,7 +1528,6 @@ impl Store {
             free_root: 0,
             wild: 0,
             wilderness: wilderness_enabled(),
-            wild_first: wild_first_enabled(),
             carve: carve_enabled(),
             needs_coalesce: false,
             // A store bound to a file never enters the lazy phase: it is read,
@@ -1663,7 +1650,6 @@ impl Store {
             free_root: 0,
             wild: 0,
             wilderness: wilderness_enabled(),
-            wild_first: wild_first_enabled(),
             carve: carve_enabled(),
             needs_coalesce: false,
             lazy: lazy_free_enabled(),
@@ -1861,8 +1847,8 @@ impl Store {
             self.fl_validate();
             return self.finish_claim(pos);
         }
-        // The same for a store that keeps a wilderness: the claims it can hold come off its
-        // front, the tree empty or not (`@FR-H-Wilderness`, `@FR-H-WildFirst`).
+        // The same for a store that keeps a wilderness: with the tree empty it is the only
+        // block the best fit could choose (`@FR-H-Wilderness`).
         if self.wilderness
             && let Some(pos) = self.bump_wild(size)
         {
@@ -2141,10 +2127,9 @@ impl Store {
         Some(pos)
     }
 
-    /// `bump_tail`'s twin for a store that keeps a wilderness (`@FR-H-Wilderness`): the claim
-    /// is carved off the wilderness's front — while the free tree is empty because it is the
-    /// only block `claim_best_fit` could choose, and with blocks in the tree because
-    /// `@FR-H-WildFirst` gives the wilderness the claims it can hold first.  Here — the block, the split and the remainder
+    /// `bump_tail`'s twin for a store that keeps a wilderness (`@FR-H-Wilderness`): while the
+    /// free tree is empty the wilderness is the only block `claim_best_fit` could choose, so
+    /// the claim is carved off its front here — the block, the split and the remainder
     /// `claim_best_fit` → `claim_block` → `fl_insert` would produce, without the tree walk
     /// and the two calls.  Only the case where `claim_block` splits and the remainder stays
     /// the wilderness; any other leaves the claim to the general path.  A store reset per
@@ -2153,7 +2138,7 @@ impl Store {
     #[inline]
     fn bump_wild(&mut self, size: u32) -> Option<u32> {
         let pos = self.wild;
-        if pos == 0 || (self.free_root != 0 && !self.wild_first) || !wild_bump_enabled() {
+        if pos == 0 || self.free_root != 0 || !wild_bump_enabled() {
             return None;
         }
         let req = size as i32;
@@ -3415,7 +3400,6 @@ impl Store {
             free_root: 0, // workers never claim/delete; no free tree needed
             wild: 0,
             wilderness: self.wilderness,
-            wild_first: self.wild_first,
             carve: self.carve,
             needs_coalesce: false,
             lazy: lazy_free_enabled(),
@@ -3487,7 +3471,6 @@ impl Store {
             free_root: self.free_root,
             wild: self.wild,
             wilderness: self.wilderness,
-            wild_first: self.wild_first,
             carve: self.carve,
             needs_coalesce: self.needs_coalesce,
             lazy: self.lazy,
@@ -3540,7 +3523,6 @@ impl Store {
             free_root: self.free_root,
             wild: self.wild,
             wilderness: self.wilderness,
-            wild_first: self.wild_first,
             carve: self.carve,
             needs_coalesce: false,
             lazy: lazy_free_enabled(),
@@ -6669,7 +6651,6 @@ mod tests {
     fn a_large_block_is_tracked_at_its_delete_even_in_the_phase() {
         let mut store = Store::new(512);
         store.free = false;
-        store.wild_first = false; // the tree's reuse is what this pins (`@FR-H-WildFirst` serves the tail first)
         let big = store.claim(100);
         let _after = store.claim(5);
         store.delete(big);
@@ -6731,7 +6712,6 @@ mod tests {
         store.park = false; // this pins its own rule; `@FR-H-Park` defers small merges
         store.free = false;
         store.lazy = false; // the exact allocator's merge, not the lazy phase
-        store.wild_first = false; // the tree's reuse is what this pins (`@FR-H-WildFirst` serves the tail first)
         let _a = store.claim(5);
         let b = store.claim(5);
         let c = store.claim(5);
@@ -6827,9 +6807,6 @@ mod tests {
     fn store_with(wilderness: bool) -> Store {
         let mut store = Store::new(64);
         store.wilderness = wilderness;
-        // The side-by-side tests pin the tree's own layout (`@FR-H-Wilderness`), which the
-        // wilderness-first claim (`@FR-H-WildFirst`) departs from by design.
-        store.wild_first = false;
         store.init();
         store.free = false;
         // The seeded side-by-side tests pin the EXACT allocator's layout across its
@@ -7190,71 +7167,6 @@ mod tests {
             }
             assert!(wild.size > 64, "seed {seed}: the sequence grew the store");
         }
-    }
-
-    /// `@FR-H-WildFirst` — the wilderness serving claims while the tree holds blocks changes
-    /// WHICH block a claim takes, never what a claim must be: on the identity test's seeded
-    /// claims, deletes and resizes, every step leaves a block chain that tiles the store, the
-    /// wilderness a free block ending it and no tree node, every live record claimed, and the
-    /// stamp written into each live record's payload intact (no claim overlaps another).  The
-    /// footprint stays within twice the tree-order store's.
-    #[test]
-    fn the_wilderness_first_claim_keeps_every_block_whole() {
-        let mut worst = 1.0f64;
-        for seed in 1..=24u64 {
-            let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
-            let mut next = move |n: u64| {
-                state ^= state << 13;
-                state ^= state >> 7;
-                state ^= state << 17;
-                state % n
-            };
-            let mut tree = store_with(true);
-            let mut first = store_with(true);
-            first.wild_first = true;
-            let mut live: Vec<(u32, u32, u32)> = Vec::new();
-            for step in 0..600u32 {
-                let op = next(10);
-                if op < 5 || live.is_empty() {
-                    let bound = if next(4) == 0 { 60 } else { 12 };
-                    let size = 1 + next(bound) as u32;
-                    let t = tree.claim(size);
-                    let f = first.claim(size);
-                    first.write(f, 4, step);
-                    live.push((t, f, step));
-                } else if op < 8 {
-                    let i = next(live.len() as u64) as usize;
-                    let (t, f, _) = live.swap_remove(i);
-                    tree.delete(t);
-                    first.delete(f);
-                } else {
-                    let i = next(live.len() as u64) as usize;
-                    let (t, f, stamp) = live[i];
-                    let grow = first.read::<i32>(f, 0) as u32 + 1 + next(8) as u32;
-                    let t2 = tree.resize(t, grow.max(tree.read::<i32>(t, 0) as u32 + 1));
-                    let f2 = first.resize(f, grow);
-                    live[i] = (t2, f2, stamp);
-                }
-                chain(&first);
-                check_wilderness(&first);
-                for (_, f, stamp) in &live {
-                    assert!(
-                        first.claims.contains(*f),
-                        "seed {seed} step {step}: {f} claimed"
-                    );
-                    assert_eq!(
-                        first.read::<u32>(*f, 4),
-                        *stamp,
-                        "seed {seed} step {step}: record {f} kept its payload"
-                    );
-                }
-            }
-            worst = worst.max(f64::from(first.size) / f64::from(tree.size));
-        }
-        assert!(
-            worst <= 2.0,
-            "the wilderness-first store grew to {worst:.2}x the tree-order one"
-        );
     }
 
     /// `@FR-H-Park` — the lists read independently: every parked block is a free block in
@@ -7721,7 +7633,6 @@ mod tests {
             store.park = false; // this pins its own rule; `@FR-H-Park` defers small merges
             store.free = false;
             store.lazy = false; // the exact allocator's merge, not the lazy phase
-            store.wild_first = false; // the tree's reuse is what this pins (`@FR-H-WildFirst` serves the tail first)
             let recs: Vec<u32> = (0..21).map(|_| store.claim(5)).collect();
             for i in (0..18).step_by(3) {
                 store.delete(recs[i]);

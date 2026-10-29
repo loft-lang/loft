@@ -47,30 +47,11 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                  best-fit take weighs it against the smallest fitting node by the
                  tree's own (size, position) order — the wilderness has the highest
                  position of any free block, so a node of equal size precedes it.
-                 Under the tree order (`H-WildFirst` off) the block every claim takes,
-                 and so the store's layout, is therefore the one the tree alone would
-                 give; what changes is that a claim from the tail and a delete into it
-                 cost no tree delete, insert or rebalance.  At most one wilderness exists, it never overlaps a claim,
+                 The block every claim takes, and so the store's layout, is therefore
+                 the one the tree alone would give; what changes is that a claim from
+                 the tail and a delete into it cost no tree delete, insert or
+                 rebalance.  At most one wilderness exists, it never overlaps a claim,
                  and the open walk (and every re-tiling) re-derives it.
-  (H-WildFirst)  inside one store that keeps a wilderness, a claim of n words that the
-                 wilderness holds with room to spare — b > 4n/3 and b − n at least the
-                 tree's minimum — is cut off the wilderness's FRONT even while the free
-                 tree holds blocks; the remainder stays the wilderness.  The tree is
-                 asked only for a claim the wilderness cannot hold this way.  No value
-                 changes (a claim's bytes are undefined, H-Claim); the layout does:
-                 holes the tree holds are reused once the tail no longer serves, and
-                 the store report describes that layout.  The store still grows no
-                 sooner than every free block that could hold the claim is out of
-                 reach.  The reason is the claim's cost: a store whose vectors and
-                 tables have grown frees their old blocks into the same store, and
-                 under the tree order every later small claim then walks the tree
-                 (118 instructions each on `grouped_fill_find`, −8 % with this rule).
-                 Both backends hold it (`Store::bump_wild`, `loft_bump_wild`); switch
-                 `LOFT_NO_WILD_FIRST=1` (interpreter and native) and
-                 `-DLOFT_NO_WILD_FIRST` (C).  Pin
-                 `the_wilderness_first_claim_keeps_every_block_whole` (src/store.rs):
-                 tiling, the wilderness invariant, every live record's payload intact,
-                 the footprint within twice the tree order's.
   (H-Carve)      inside one store, a best-fit claim of n words from a tree node of b
                  words with b − n ≥ n puts the (b − n)-word remainder IN THE NODE'S
                  PLACE — the node's links, its color, its parent's pointer — instead of
@@ -152,6 +133,20 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                  bound to a file.  `LOFT_NO_PARK=1` turns it off.
 
 ```
+
+**Tried and reverted (2026-10-29): the wilderness serving claims first.**  A claim the
+wilderness could hold was cut off its front even while the free tree held blocks — the tree
+walk (118 instructions a claim on `grouped_fill_find`, whose grown vector and table leave their
+old blocks in the tree) gone, −8 % on that routine under gcc and clang.  It broke the store's
+footprint: small claims ate the tail, so the next growth of a large vector no longer fit there,
+the store grew and left the old block as a hole that small claims never reached (they kept
+taking the new tail), and the cycle repeated.  100 000 inserts into a `hash` and a `sorted` of
+records with text names (`tests/c_https.rs`'s paged images) ran past a 60 s deadline on the
+interpreter and overflowed the store's maximum size in CI, where the tree order finishes at
+once.  Under the tree order a small claim fills a hole and the tail stays free for growth,
+which is the property `H-Wilderness` keeps.  A footprint pin built on small sizes (claims of
+1–60 words, a 64-word store) did not show it; the shape that does is a large vector growing
+by doubling beside a stream of small claims.
 
 ## Deviations
 
