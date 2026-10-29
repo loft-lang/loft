@@ -834,17 +834,19 @@ static int64_t loft_fs_delete(loft_str raw) {
     if (unlink(path) != 0) code = loft_is_dir(path) ? LOFT_FS_IS_DIRECTORY : loft_fs_code(errno);
 #else
     if (remove(path) != 0 && !(loft_close_handles_on(path) && remove(path) == 0)) {
-        code = loft_fs_code(errno);
+        /* Windows' CRT reports a directory as a permission error: asked, as POSIX's arm asks. */
+        int e = errno;
+        code = loft_is_dir(path) ? LOFT_FS_IS_DIRECTORY : loft_fs_code(e);
     }
 #endif
     free(path);
     return code;
 }
 
-/* OpMoveFile: `from` is renamed to `to`. */
+/* OpMoveFile: `from` is renamed to `to`, replacing a file there (`loft_rename`). */
 static int64_t loft_fs_move(loft_str from, loft_str to) {
     char *a = loft_resolve(from), *b = loft_resolve(to);
-    int64_t code = !a || !b ? LOFT_FS_OTHER : rename(a, b) == 0 ? LOFT_FS_OK : loft_fs_code(errno);
+    int64_t code = !a || !b ? LOFT_FS_OTHER : loft_rename(a, b) == 0 ? LOFT_FS_OK : loft_fs_code(errno);
     free(a);
     free(b);
     return code;

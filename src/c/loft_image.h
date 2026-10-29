@@ -353,7 +353,7 @@ static int loft_image_write(const loft_tdesc *T, uint32_t ntypes, loft_ref r, lo
             }
         }
         if (!ok) (void) remove(ptmp);
-        else ok = rename(ptmp, p) == 0 && rename(stmp, side) == 0;
+        else ok = loft_rename(ptmp, p) == 0 && loft_rename(stmp, side) == 0;
         free(p);
         free(ptmp);
         free(side);

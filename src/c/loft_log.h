@@ -343,10 +343,10 @@ static void loft_log_rotate(void) {
         for (i = max > 1 ? max - 2 : 0; max > 1 && i >= 1; i--) {
             snprintf(a, sizeof a, "%s/%s.%u%s", dir, stem, (unsigned) i, ext);
             snprintf(b, sizeof b, "%s/%s.%u%s", dir, stem, (unsigned) (i + 1), ext);
-            rename(a, b);
+            loft_rename(a, b);
         }
         snprintf(a, sizeof a, "%s/%s.1%s", dir, stem, ext);
-        rename(loft_lg.path, a);
+        loft_rename(loft_lg.path, a);
     }
     free(stem);
     free(dir);

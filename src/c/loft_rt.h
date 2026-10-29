@@ -4648,6 +4648,25 @@ static unsigned __stdcall loft_timeout_watch(void *arg) {
 }
 #endif
 
+/* A rename that replaces the file `to` names, as Rust's `fs::rename` — and so the interpreter —
+ * does on every host.  POSIX `rename` does; the Windows CRT's refuses an existing target, so
+ * there it is `MoveFileExA` with MOVEFILE_REPLACE_EXISTING, its failure told in `errno`. */
+#if defined(_WIN32)
+__declspec(dllimport) int __stdcall MoveFileExA(const char *from, const char *to, unsigned long flags);
+__declspec(dllimport) unsigned long __stdcall GetLastError(void);
+static int loft_rename(const char *from, const char *to) {
+    if (MoveFileExA(from, to, 1ul /* MOVEFILE_REPLACE_EXISTING */)) return 0;
+    switch (GetLastError()) {
+    case 2: case 3: errno = ENOENT; break; /* ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND */
+    case 5: case 32: errno = EACCES; break; /* ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION */
+    default: errno = EIO; break;
+    }
+    return -1;
+}
+#else
+#define loft_rename(from, to) rename(from, to)
+#endif
+
 static void loft_arm_timeout(void) {
     const char *v = getenv("LOFT_TIMEOUT");
     unsigned long secs = 0;
