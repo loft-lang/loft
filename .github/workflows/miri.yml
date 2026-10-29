@@ -773,6 +773,46 @@ jobs:
       - name: Sweep this shard
         run: python3 scripts/c_sweep.py --${{ matrix.sweep }} --shard ${{ matrix.shard }}/4
 
+  c-sweep-platforms:
+    # @nightly-class: unsound — the C backend answering other than the interpreter on macOS or Windows
+    # @PLN203 C8 — `ci.yml`'s `c-sweep` on the other two hosts and their compilers: Apple clang,
+    # MinGW-w64 gcc (all three macro modes) and MSVC `cl` (the default mode: strict C99 is the
+    # gcc legs' question, and `cl` holds no `-pedantic`).  Six shards each: measured 2026-10-30,
+    # a sixth of the corpus is ~9 min on macOS, ~26 min on MinGW, ~11 min on `cl` in one mode.
+    name: C backend sweep, ${{ matrix.leg }} (${{ matrix.shard }}/6)
+    if: github.event_name != 'pull_request'
+    runs-on: ${{ matrix.leg == 'macos' && 'macos-latest' || 'windows-latest' }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [macos, mingw, msvc]
+        shard: [0, 1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/checkout-suite
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build the release loft binary
+        shell: bash
+        run: cargo build --release --bin loft
+      - name: Sweep this shard (Apple clang)
+        if: matrix.leg == 'macos'
+        run: python3 scripts/c_sweep.py --shard ${{ matrix.shard }}/6
+      - name: Sweep this shard (MinGW-w64 gcc)
+        if: matrix.leg == 'mingw'
+        shell: bash
+        run: LOFT_CC=gcc python scripts/c_sweep.py --shard ${{ matrix.shard }}/6
+      # `cl` needs a developer prompt's environment: the newest Visual Studio's, found as
+      # vswhere finds it.
+      - name: Sweep this shard (MSVC cl)
+        if: matrix.leg == 'msvc'
+        shell: cmd
+        run: |
+          for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do call "%%i\VC\Auxiliary\Build\vcvars64.bat"
+          set LOFT_CC=cl
+          python scripts\c_sweep.py --mode default --shard ${{ matrix.shard }}/6
+
   poison-claim:
     # @windows-exempt: a platform-independent invariant sweep (unwritten claims); the corpus runs on windows-latest daily
     # @nightly-class: unsound — a read of memory nothing wrote, hidden by zero-filled claims
@@ -1629,7 +1669,7 @@ jobs:
     # list_that_reads_them` fails when they disagree, and when a job carries no
     # class at all, so a new gate cannot be added without answering the question.
     # Reclassifying is a one-word edit to the marker, and it is meant to be one.
-    needs: [miri, asan, poison, native-poison, poison-claim, stack-shadow, tsan, native-asan, valgrind, debug-asserts, c-sweep-unsound]
+    needs: [miri, asan, poison, native-poison, poison-claim, stack-shadow, tsan, native-asan, valgrind, debug-asserts, c-sweep-unsound, c-sweep-platforms]
     # Never from a PR: a pull request must not be able to open an issue on the repo.
     # Never from the release gate either: its run is evidence for a candidate, and a
     # green candidate must not auto-CLOSE an issue main's nightly opened.
@@ -1719,7 +1759,7 @@ jobs:
     # @windows-exempt: platform-free — writes an issue
     name: → tracked issue (red-steps digest)
     needs: [stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, native-poison, poison-claim, stack-shadow, tsan,
-            native-asan, valgrind, c-sweep-unsound, release-gate-sweeps, debug-asserts, audit,
+            native-asan, valgrind, c-sweep-unsound, c-sweep-platforms, release-gate-sweeps, debug-asserts, audit,
             toolchain-matrix, index-hygiene, library-health]
     if: always() && github.event_name != 'pull_request' && !inputs.from_gate && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
@@ -1736,7 +1776,7 @@ jobs:
     # @windows-exempt: platform-free — writes the daily status
     name: Daily status (the one place to look)
     needs: [stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, native-poison, poison-claim, stack-shadow, tsan,
-            native-asan, valgrind, c-sweep-unsound, release-gate-sweeps, debug-asserts, audit,
+            native-asan, valgrind, c-sweep-unsound, c-sweep-platforms, release-gate-sweeps, debug-asserts, audit,
             toolchain-matrix, index-hygiene, library-health]
     # The digest describes the default branch's nightlies, so it follows `notify`: not a
     # PR, not the release gate, and not a dispatch on another branch.
@@ -1788,7 +1828,7 @@ jobs:
             done
             echo
             echo "_Gates that FILE an issue when red — the \`@nightly-class: unsound\` set:"
-            echo "miri, asan, poison, native-poison, poison-claim, stack-shadow, tsan, native-asan, valgrind, debug-asserts, c-sweep-unsound."
+            echo "miri, asan, poison, native-poison, poison-claim, stack-shadow, tsan, native-asan, valgrind, debug-asserts, c-sweep-unsound, c-sweep-platforms."
             echo "Everything else reports here only._"
           } >> "$GITHUB_STEP_SUMMARY"
           echo "digest written to the job summary"

@@ -854,7 +854,14 @@ static int64_t loft_fs_delete(loft_str raw) {
 /* OpMoveFile: `from` is renamed to `to`, replacing a file there (`loft_rename`). */
 static int64_t loft_fs_move(loft_str from, loft_str to) {
     char *a = loft_resolve(from), *b = loft_resolve(to);
-    int64_t code = !a || !b ? LOFT_FS_OTHER : loft_rename(a, b) == 0 ? LOFT_FS_OK : loft_fs_code(errno);
+    int64_t code = LOFT_FS_OTHER;
+    if (a && b) {
+        /* Windows refuses to move a file a C stream holds open, as it refuses to delete one:
+         * this program's own handles on either path are closed and the move tried once more. */
+        int ok = loft_rename(a, b) == 0;
+        if (!ok && (loft_close_handles_on(a) | loft_close_handles_on(b))) ok = loft_rename(a, b) == 0;
+        code = ok ? LOFT_FS_OK : loft_fs_code(errno);
+    }
     free(a);
     free(b);
     return code;
@@ -939,54 +946,84 @@ static int loft_cmp_cstr(const void *a, const void *b) {
     return strcmp(*(char *const *) a, *(char *const *) b);
 }
 
+/* The names in directory `dir`, without `.` and `..`, in byte order — `*n` of them, each
+ * malloc'd — or null when it cannot be listed: POSIX's `readdir`, the Windows CRT's `_findfirst`
+ * (`io.h`), nothing elsewhere. */
+static void loft_dir_name_push(char ***names, size_t *n, size_t *cap, const char *name) {
+    if (!strcmp(name, ".") || !strcmp(name, "..")) return;
+    if (*n == *cap) {
+        *cap = *cap ? *cap * 2 : 16;
+        *names = (char **) realloc(*names, *cap * sizeof **names);
+        if (!*names) { fputs("loft: out of memory\n", stderr); abort(); }
+    }
+    size_t len = strlen(name);
+    (*names)[*n] = (char *) malloc(len + 1);
+    if (!(*names)[*n]) { fputs("loft: out of memory\n", stderr); abort(); }
+    memcpy((*names)[(*n)++], name, len + 1);
+}
+
+static char **loft_dir_names(const char *dir, size_t *n) {
+    char **names = 0;
+    size_t cap = 0;
+    *n = 0;
+#if defined(LOFT_POSIX)
+    DIR *d = opendir(dir);
+    if (!d) return 0;
+    struct dirent *e;
+    while ((e = readdir(d)) != 0) loft_dir_name_push(&names, n, &cap, e->d_name);
+    closedir(d);
+#elif defined(_WIN32)
+    size_t dl = strlen(dir);
+    char *pattern = (char *) malloc(dl + 3);
+    if (!pattern) { fputs("loft: out of memory\n", stderr); abort(); }
+    memcpy(pattern, dir, dl);
+    memcpy(pattern + dl, "/*", 3);
+    struct _finddata_t fd;
+    intptr_t h = _findfirst(pattern, &fd);
+    free(pattern);
+    if (h == -1) return loft_is_dir(dir) ? (char **) calloc(1, sizeof(char *)) : 0;
+    do loft_dir_name_push(&names, n, &cap, fd.name); while (_findnext(h, &fd) == 0);
+    _findclose(h);
+#else
+    (void) dir;
+    (void) cap;
+    return 0;
+#endif
+    if (!names) names = (char **) calloc(1, sizeof(char *));
+    if (*n > 1) qsort(names, *n, sizeof *names, loft_cmp_cstr);
+    return names;
+}
+
 /* OpGetDir (Stores::get_dir): a File record per entry of the directory, in name order, each
  * filled as `file()` fills one; `size` is a File record's.  True whenever the path is not
  * refused, whether or not it could be listed. */
 static uint8_t loft_get_dir(loft_str raw, loft_ref v, uint32_t size) {
     char *dir = loft_resolve(raw);
     if (!dir) return 0;
-#if defined(LOFT_POSIX)
-    DIR *d = opendir(dir);
-    if (d) {
-        char **names = 0;
-        size_t n = 0, cap = 0;
-        struct dirent *e;
-        while ((e = readdir(d)) != 0) {
-            if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
-            if (n == cap) {
-                cap = cap ? cap * 2 : 16;
-                names = (char **) realloc(names, cap * sizeof *names);
-                if (!names) { fputs("loft: out of memory\n", stderr); abort(); }
-            }
-            size_t dl = strlen(dir), nl = strlen(e->d_name);
-            names[n] = (char *) malloc(dl + nl + 2);
-            if (!names[n]) { fputs("loft: out of memory\n", stderr); abort(); }
-            memcpy(names[n], dir, dl);
-            names[n][dl] = '/';
-            memcpy(names[n] + dl + 1, e->d_name, nl + 1);
-            n++;
+    size_t n = 0;
+    char **names = loft_dir_names(dir, &n);
+    size_t dl = strlen(dir);
+    for (size_t i = 0; i < n; i++) {
+        size_t nl = strlen(names[i]);
+        char *full = (char *) malloc(dl + nl + 2);
+        if (!full) { fputs("loft: out of memory\n", stderr); abort(); }
+        memcpy(full, dir, dl);
+        full[dl] = '/';
+        memcpy(full + dl + 1, names[i], nl + 1);
+        loft_ref el = loft_vec_append(v, size);
+        if (el.rec != 0) {
+            loft_set_text(el, 24, loft_lit(full, strlen(full)));
+            int32_t none = INT32_MIN;
+            memcpy(loft_at(loft_store_of(el), el.rec, el.pos + 28), &none, 4);
+            loft_file_set_long(el, 8, LOFT_NULL);
+            loft_file_set_long(el, 16, LOFT_NULL);
+            loft_vec_finish(v);
+            loft_fill_file(el, full);
         }
-        closedir(d);
-        if (n > 1) qsort(names, n, sizeof *names, loft_cmp_cstr);
-        for (size_t i = 0; i < n; i++) {
-            loft_ref el = loft_vec_append(v, size);
-            if (el.rec != 0) {
-                loft_set_text(el, 24, loft_lit(names[i], strlen(names[i])));
-                int32_t none = INT32_MIN;
-                memcpy(loft_at(loft_store_of(el), el.rec, el.pos + 28), &none, 4);
-                loft_file_set_long(el, 8, LOFT_NULL);
-                loft_file_set_long(el, 16, LOFT_NULL);
-                loft_vec_finish(v);
-                loft_fill_file(el, names[i]);
-            }
-            free(names[i]);
-        }
-        free(names);
+        free(full);
+        free(names[i]);
     }
-#else
-    (void) v;
-    (void) size;
-#endif
+    free(names);
     free(dir);
     return 1;
 }
@@ -1281,26 +1318,9 @@ static loft_ref loft_list_dir(loft_str raw) {
     char *dir = loft_resolve(raw);
     if (!dir) return loft_ref_null();
     loft_ref r = loft_ref_null();
-#if defined(LOFT_POSIX)
-    DIR *d = opendir(dir);
-    if (d) {
-        char **names = 0;
-        size_t n = 0, cap = 0;
-        struct dirent *e;
-        while ((e = readdir(d)) != 0) {
-            if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
-            if (n == cap) {
-                cap = cap ? cap * 2 : 16;
-                names = (char **) realloc(names, cap * sizeof *names);
-                if (!names) { fputs("loft: out of memory\n", stderr); abort(); }
-            }
-            size_t len = strlen(e->d_name);
-            names[n] = (char *) malloc(len + 1);
-            if (!names[n]) { fputs("loft: out of memory\n", stderr); abort(); }
-            memcpy(names[n++], e->d_name, len + 1);
-        }
-        closedir(d);
-        if (n > 1) qsort(names, n, sizeof *names, loft_cmp_cstr);
+    size_t n = 0;
+    char **names = loft_dir_names(dir, &n);
+    if (names) {
         loft_database(&r, 8);
         for (size_t i = 0; i < n; i++) {
             loft_ref el = loft_vec_append(r, 4);
@@ -1310,7 +1330,6 @@ static loft_ref loft_list_dir(loft_str raw) {
         }
         free(names);
     }
-#endif
     free(dir);
     return r;
 }
@@ -1322,6 +1341,9 @@ static int64_t loft_mtime(loft_str raw) {
 #if defined(LOFT_POSIX)
     struct stat st;
     if (path && stat(path, &st) == 0 && st.st_mtime > 0) t = (int64_t) st.st_mtime;
+#elif defined(_WIN32)
+    struct _stat64 st;
+    if (path && _stat64(path, &st) == 0 && st.st_mtime > 0) t = (int64_t) st.st_mtime;
 #endif
     free(path);
     return t;
