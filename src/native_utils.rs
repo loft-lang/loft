@@ -638,6 +638,9 @@ fn assemble_atomics_sysroot(
         .join("lib");
     crate::file_access::create_dir_all(&lib_dir)?;
     let mut read_any = false;
+    // The files this build provides.  The sysroot is a pure cache of them, so anything else in
+    // `lib_dir` is a previous toolchain's (a restored CI cache, a nightly update) and goes below.
+    let mut provided: std::collections::HashSet<String> = std::collections::HashSet::new();
     for deps in dep_dirs {
         let Ok(entries) = crate::file_access::read_dir(deps) else {
             continue;
@@ -662,9 +665,15 @@ fn assemble_atomics_sysroot(
             // neighbour in the directory — so a stale `.rmeta` from another build cannot
             // be adopted by a fresh rlib.
             copy_sibling_rmeta(&src, &lib_dir)?;
+            if let Some(meta) =
+                crate::file_access::file_name(&crate::file_access::with_extension(&src, "rmeta"))
+            {
+                provided.insert(meta);
+            }
             let Some(name) = crate::file_access::file_name(&src) else {
                 continue;
             };
+            provided.insert(name.clone());
             // loft's own rlibs stay out: the link names them with `--extern` and
             // `-L dependency=`, and a third copy on the sysroot search path is how
             // rustc ends up reporting multiple candidates for one crate.
@@ -694,6 +703,19 @@ fn assemble_atomics_sysroot(
                     .map_or_else(|| "nowhere".to_string(), |d| d.display().to_string())
             ),
         ));
+    }
+    // A crate a previous toolchain built — another `libcore-<hash>` beside this one — is a
+    // second candidate for one crate, and rustc picking it failed the link with "only metadata
+    // stub found for `rlib` dependency `core`" after a nightly update (CI's cache, restored
+    // from a run on the older nightly, held it).
+    for entry in crate::file_access::read_dir(&lib_dir)? {
+        let path = entry.os_spelling();
+        let stale = crate::file_access::extension(&path)
+            .is_some_and(|e| e == "rlib" || e == "rmeta")
+            && crate::file_access::file_name(&path).is_some_and(|n| !provided.contains(&n));
+        if stale {
+            crate::file_access::remove_file(&path)?;
+        }
     }
     Ok(())
 }
