@@ -345,7 +345,7 @@ def build_package(pkg_dir, lanes, loft, ref_flags, times, reserve_gb):
             run_checked([loft, "--emit-c", csrc, "bench/bench.loft"],
                         f"{pkg_dir}: loft --emit-c ({lane})", times, f"{lane}-emit", reserve_gb,
                         cwd=pkg_dir, **({"env": env} if env else {}))
-            with open(csrc, errors="replace") as f:
+            with open(csrc, encoding="utf-8", errors="replace") as f:
                 links = [arg for line in re.findall(r"/\* link: (.*?) \*/", f.read())
                          for arg in shlex.split(line)]
             run_checked([*C_CMD, "-o", exe, csrc, *links, "-lm", "-ldl", "-pthread"],

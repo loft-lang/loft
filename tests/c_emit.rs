@@ -4101,6 +4101,105 @@ fn main() {\n\
     assert_eq!(String::from_utf8_lossy(&out.stdout), want, "the C program");
 }
 
+/// `@C158` — a library declares no C compile or link flags: a `[c]` section's `cflags` and
+/// `ldflags` reach neither its shim's compile nor the unit's link.  The package declares a flag
+/// that would stop its second shim source at `#error` and a link of a library that does not
+/// exist; the C still emits, builds and answers `9 / 2` from that source and `17 % 5` from the
+/// first.  A build that honours either key fails here, which reopens the decision.
+#[test]
+fn a_library_declares_no_c_flags_and_none_reach_the_build() {
+    if !have_cc() {
+        eprintln!("skipped: no `cc` on PATH");
+        return;
+    }
+    let fixture =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/c_abi/pkg/lcshim");
+    let dir = scratch("c158");
+    let pkg = dir.join("pkg").join("lcshim");
+    fa::create_dir_all(pkg.join("src")).expect("mkdir package");
+    for f in ["lc_shim.c", "lc_shim_two.c", "lcshim.loft"] {
+        fa::copy(fixture.join("src").join(f), pkg.join("src").join(f)).expect("copy source");
+    }
+    let shim = pkg.join("src").join("lc_shim_two.c");
+    let text = fa::read_to_string(&shim).expect("read shim");
+    fa::write(
+        &shim,
+        format!(
+            "#ifdef LOFT_C158_FLAG_REACHED\n#error a [c] cflags value reached the shim\n#endif\n{text}"
+        ),
+    )
+    .expect("write shim");
+    let toml = fa::read_to_string(fixture.join("loft.toml")).expect("read manifest");
+    assert!(
+        toml.trim_end().ends_with("lc_shim_two.c\""),
+        "the fixture's [c] section ends it"
+    );
+    fa::write(
+        pkg.join("loft.toml"),
+        format!(
+            "{toml}cflags = \"-DLOFT_C158_FLAG_REACHED\"\nldflags = \"-lloft_c158_no_such_library\"\n"
+        ),
+    )
+    .expect("write manifest");
+    let file = dir.join("flags.loft");
+    fa::write(
+        &file,
+        "use lcshim::*;\nfn main() {\n  println(\"{shim_half(9)} {shim_mod(17, 5)}\");\n}\n",
+    )
+    .expect("write program");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let c = dir.join("flags.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg("--lib")
+        .arg(dir.join("pkg"))
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "the shim builds with loft's fixed flags alone: {}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let unit = fa::read_to_string(&c).expect("read the C");
+    let links: Vec<&str> = unit
+        .lines()
+        .filter_map(|l| {
+            l.strip_prefix("/* link: ")
+                .and_then(|l| l.strip_suffix(" */"))
+        })
+        .collect();
+    assert!(
+        !unit.contains("loft_c158") && !unit.contains("LOFT_C158"),
+        "a declared flag reached the unit: {links:?}"
+    );
+    let exe = dir.join("flags");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O1"])
+        .arg(&c)
+        .arg("-o")
+        .arg(&exe)
+        .arg("-lm")
+        .args(&links)
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc rejected the unit:\n{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .output()
+        .expect("run the C program");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "4 2\n",
+        "the C program"
+    );
+    let _ = fa::remove_dir_all(&dir);
+}
+
 /// @PLN203 C1 — `loft --native-c` drives the C: it emits the program, builds it with the host's
 /// C compiler, caches the binary beside the program (`.loft/cache/native-c-<key>`) and runs it
 /// with the program's arguments and its exit status.  The run bounds reach the C binary as they
@@ -5459,12 +5558,20 @@ fn a_c_build_builds_no_rust_native_crate() {
 /// returned vector literal minted into a field (`@FR-R-Place`), whose old collection was never
 /// released (`loft_database_wrapper`); FILE: a `File` record that dies without a close returns
 /// its lease and its handle closes (`@FR-H-Handle`), while a copy keeps its handle open.  Each
-/// ran out of memory or descriptors on the build before.
-#[cfg(unix)]
+/// ran out of memory or descriptors on the build before.  The caps are a POSIX shell's
+/// `ulimit`; where no `sh` can set one the test skips, as it does without `cc`.
 #[test]
 fn a_released_path_stays_bounded_where_it_used_to_leak() {
     if !have_cc() {
         eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let can_cap = loft::platform::process::harness_command("sh")
+        .args(["-c", "ulimit -v 32768 && ulimit -n 64"])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !can_cap {
+        eprintln!("skipped: no sh that sets ulimit caps");
         return;
     }
     let loft = env!("CARGO_BIN_EXE_loft");

@@ -73,6 +73,7 @@ pub fn build(pkg_dir: &str, sources: &[String]) -> Result<std::path::PathBuf, St
     crate::file_access::create_dir_all(&stage).map_err(|e| format!("cannot create {e}"))?;
     let tmp = stage.join(&final_name);
     let mut cmd = Spawn::new(Program::os(cc_program()));
+    // `@C158`: these fixed flags are a shim's only ones — a package declares none.
     cmd.push_arg("-O2").push_arg("-fPIC").push_arg("-shared");
     // A shim must not drag its COMPILER's runtime along. A MinGW `cc` links
     // `libgcc_s_seh-1.dll` (and `libwinpthread-1.dll`) by default, so the shim
