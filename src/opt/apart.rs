@@ -689,8 +689,9 @@ pub(crate) fn kept_growth_param(data: &Data, d: u32) -> Option<usize> {
     let mut vector = None;
     for (i, a) in def.attributes().iter().enumerate() {
         let tp = &a.typedef;
+        // `base()` peels `τ?` and leaves a `&` link, so a `&vector` parameter is no match.
         match tp.base() {
-            Type::Vector(..) if !matches!(tp, Type::RefVar(_)) => {
+            Type::Vector(..) => {
                 if vector.is_some() {
                     return None;
                 }
