@@ -9831,6 +9831,19 @@ extern crate loft;"
                                  store.set_u32_raw(rec.rec, {at}, s_pos); }}"
                                 )?;
                             }
+                            crate::const_literal::ConstField::Narrow {
+                                size,
+                                min,
+                                nullable,
+                                v,
+                            } => {
+                                let set = narrow_setter(*size, *nullable);
+                                let v = narrow_literal(*v);
+                                writeln!(
+                                    w,
+                                    "            db.store_mut(&rec).{set}(rec.rec, {at}, {min}_i32, {v});"
+                                )?;
+                            }
                         }
                     }
                     writeln!(w, "            db.record_finish(&cvr, &rec, {vec_tp}, 0);")?;
@@ -13632,6 +13645,23 @@ fn rust_f64(v: f64) -> String {
     }
 }
 
+/// The store setter a pre-built narrow constant field is written with: the one the runtime
+/// operator it came from uses (`OpSetByte`/`OpSetByteNullable` → `set_byte`, `OpSetShortRaw`
+/// → `set_i16_raw`, `OpSetShort` → `set_short`).
+fn narrow_setter(size: u8, nullable: bool) -> &'static str {
+    match (size, nullable) {
+        (1, _) => "set_byte",
+        (_, false) => "set_i16_raw",
+        (_, true) => "set_short",
+    }
+}
+
+/// A pre-built narrow field's value as a Rust `i32` literal; the setters read `i32::MIN` as
+/// the null.
+fn narrow_literal(v: Option<i64>) -> String {
+    v.map_or_else(|| "i32::MIN".to_string(), |v| format!("{v}_i32"))
+}
+
 /// [`rust_f64`] for a `single`.
 fn rust_f32(v: f32) -> String {
     if v.is_finite() {
@@ -13661,6 +13691,25 @@ fn const_columns(
             if *off != first[k].0 || kind(val) != kind(&first[k].1) {
                 return None;
             }
+            // A narrow column is written with ONE width, ONE bias and ONE setter.
+            if let (
+                crate::const_literal::ConstField::Narrow {
+                    size,
+                    min,
+                    nullable,
+                    ..
+                },
+                crate::const_literal::ConstField::Narrow {
+                    size: s0,
+                    min: m0,
+                    nullable: n0,
+                    ..
+                },
+            ) = (val, &first[k].1)
+                && (size != s0 || min != m0 || nullable != n0)
+            {
+                return None;
+            }
             columns[k].1.push(val);
         }
     }
@@ -13685,6 +13734,7 @@ fn write_const_columns(
             Some(ConstField::Bool(_)) => "i32",
             Some(ConstField::Char(_)) => "u32",
             Some(ConstField::Text(_)) => "&str",
+            Some(ConstField::Narrow { .. }) => "i32",
             None => return Ok(()),
         };
         write!(w, "        static C{d_nr}_{k}: [{ty}; {count}] = [")?;
@@ -13698,6 +13748,7 @@ fn write_const_columns(
                 ConstField::Single(v) => write!(w, " {},", rust_f32(*v))?,
                 ConstField::Bool(v) => write!(w, " {}_i32,", i32::from(*v))?,
                 ConstField::Char(v) => write!(w, " {v}_u32,")?,
+                ConstField::Narrow { v, .. } => write!(w, " {},", narrow_literal(*v))?,
                 ConstField::Text(v) => {
                     let esc = v.replace('\\', "\\\\").replace('"', "\\\"");
                     write!(w, " \"{esc}\",")?;
@@ -13754,6 +13805,19 @@ fn write_const_columns(
                     "            {{ let store = db.store_mut(&rec); \
                      let s_pos = store.set_str({v}); \
                      store.set_u32_raw(rec.rec, {at}, s_pos); }}"
+                )?;
+            }
+            // `const_columns` keeps a narrow column to one width and one bias.
+            Some(ConstField::Narrow {
+                size,
+                min,
+                nullable,
+                ..
+            }) => {
+                let set = narrow_setter(*size, *nullable);
+                writeln!(
+                    w,
+                    "            db.store_mut(&rec).{set}(rec.rec, {at}, {min}_i32, {v});"
                 )?;
             }
             None => {}

@@ -10511,7 +10511,12 @@ use a separate collection or add after the loop"
     /// `(N-Reserve)` is why a tuple member is a slot at all: it names "a local, a field, an
     /// element, a parameter and a return alike", and a member is one of those in everything
     /// but that list — `layout.md` `(L-Tuple)` makes it a field.
-    fn narrow_store_checks(&mut self, code: &mut Value, store_tp: &Type, s_type: &Type) -> bool {
+    pub(crate) fn narrow_store_checks(
+        &mut self,
+        code: &mut Value,
+        store_tp: &Type,
+        s_type: &Type,
+    ) -> bool {
         if self.first_pass {
             return false;
         }
