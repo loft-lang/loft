@@ -774,8 +774,31 @@ impl<'a> FnWriter<'a> {
                 self.cx.initial(c)
             );
         }
+        // A temporary holds one expression's value between the statement that computes it and
+        // the one that reads it, so it is written whole before it is read on every path: one of
+        // a plain type takes no initial value, which the compiler could not drop in a large
+        // function (cbor's `read_value`: 116 of them, 15 % of its calls).  A temporary that owns
+        // or may contain something keeps it — a text (the exit and the statement flush free it),
+        // a function value (its closure record), a tuple (a text field is SET in place, which
+        // reads and frees the old one).  Checked by clang's flow analysis and MemorySanitizer
+        // over the corpus.
         for (t, c) in &self.temps {
-            let _ = writeln!(out, "    {} {t} = {};", held(*c), self.cx.initial(*c));
+            let plain = matches!(
+                c,
+                CType::Int
+                    | CType::Int32
+                    | CType::Bool
+                    | CType::Ref
+                    | CType::Enum
+                    | CType::Float
+                    | CType::Single
+                    | CType::Char
+            );
+            if plain {
+                let _ = writeln!(out, "    {} {t};", held(*c));
+            } else {
+                let _ = writeln!(out, "    {} {t} = {};", held(*c), self.cx.initial(*c));
+            }
         }
         for d in &self.decls {
             let _ = writeln!(out, "    {d}");
