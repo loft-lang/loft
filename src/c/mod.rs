@@ -2956,7 +2956,7 @@ fn library_native(
                     "    if (r.rec == 0 && r.pos == 0) {{ loft_ref m = {{ ns, 0, 0 }}; loft_free_ref(m); }}"
                 );
             }
-            let convert = if matches!(tp, Type::Vector(_, _)) {
+            let convert = if matches!(tp.base(), Type::Vector(_, _)) {
                 "loft_ffi_vector_answer"
             } else {
                 "loft_ffi_record_answer"
