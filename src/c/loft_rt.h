@@ -1729,7 +1729,8 @@ LOFT_HOT_INLINE loft_ref loft_vec_append(loft_ref v, uint32_t size) {
             int32_t claimed;
             memcpy(&claimed, loft_at(s, r, 0), 4);
             if ((uint64_t) (len + 1) * size + 8 <= (uint64_t) claimed * 8) {
-                LOFT_WRITE_CHECK(s);
+                /* `@FR-H-WriteLocked-Whole`: a refused push answers no slot, as the slow path. */
+                if (LOFT_WRITE_REFUSED(s)) return loft_ref_null();
                 loft_ref e;
                 e.store_nr = v.store_nr;
                 e.rec = r;
