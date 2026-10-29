@@ -1645,6 +1645,36 @@ mod dispatch_cache_tests {
 /// ref arg's store (or store 0), calls the bridge, and writes the tagged
 /// return back to the stack.  Replaces the ~98-arm `dispatch_call` for any
 /// symbol whose cdylib was built with `#[loft_native]`.
+/// Call a `loft_ffi::LoftBridgeFn` with `args`, `stores` installed as `CURRENT_STORES` for the
+/// call's `ffi_claim` / resize callbacks and cleared again however the call ends.
+#[cfg(feature = "native-extensions")]
+fn call_bridge(
+    stores: &mut crate::database::Stores,
+    bridge_ptr: *const (),
+    ls: LoftStore,
+    args: &[loft_ffi::LoftValue],
+) -> loft_ffi::LoftValue {
+    use loft_ffi::LoftValue;
+    struct StoresGuard;
+    impl Drop for StoresGuard {
+        fn drop(&mut self) {
+            CURRENT_STORES.with(|c| c.set(std::ptr::null_mut()));
+        }
+    }
+    let stores_ptr: *mut crate::database::Stores = stores;
+    CURRENT_STORES.with(|c| c.set(stores_ptr));
+    let _guard = StoresGuard;
+
+    let mut ret = LoftValue::VOID;
+    // SAFETY: `bridge_ptr` is a `loft_ffi::LoftBridgeFn` registered by the
+    // cdylib; the local `LoftStore` mirror is `#[repr(C)]`-identical to
+    // `loft_ffi::LoftStore`, so the ABI matches.
+    let bridge: unsafe extern "C" fn(LoftStore, *const LoftValue, usize, *mut LoftValue) =
+        unsafe { std::mem::transmute(bridge_ptr) };
+    unsafe { bridge(ls, args.as_ptr(), args.len(), std::ptr::from_mut(&mut ret)) };
+    ret
+}
+
 #[cfg(feature = "native-extensions")]
 fn dispatch_via_bridge(
     stores: &mut crate::database::Stores,
@@ -1734,24 +1764,7 @@ fn dispatch_via_bridge(
     let args = args.as_mut();
     let ls = make_loft_store(stores, store_nr, minted);
 
-    // CURRENT_STORES must be live for the bridge's ffi_claim/resize callbacks.
-    struct StoresGuard;
-    impl Drop for StoresGuard {
-        fn drop(&mut self) {
-            CURRENT_STORES.with(|c| c.set(std::ptr::null_mut()));
-        }
-    }
-    let stores_ptr: *mut crate::database::Stores = stores;
-    CURRENT_STORES.with(|c| c.set(stores_ptr));
-    let _guard = StoresGuard;
-
-    let mut ret = LoftValue::VOID;
-    // SAFETY: `bridge_ptr` is a `loft_ffi::LoftBridgeFn` registered by the
-    // cdylib; the local `LoftStore` mirror is `#[repr(C)]`-identical to
-    // `loft_ffi::LoftStore`, so the ABI matches.
-    let bridge: unsafe extern "C" fn(LoftStore, *const LoftValue, usize, *mut LoftValue) =
-        unsafe { std::mem::transmute(bridge_ptr) };
-    unsafe { bridge(ls, args.as_ptr(), args.len(), std::ptr::from_mut(&mut ret)) };
+    let ret = call_bridge(stores, bridge_ptr, ls, args);
 
     // The copies the foreign vector arguments took, and a store minted for a scalar answer.
     if let Some(call) = &call {

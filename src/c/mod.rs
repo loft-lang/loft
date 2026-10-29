@@ -2836,6 +2836,29 @@ fn ffi_args(cx: &Cx, d: u32) -> Result<FfiArgs, String> {
     })
 }
 
+/// The loft-ffi C type a library native answers with (`loft-ffi/include/loft_ffi.h`), or the
+/// refusal for an answer the ABI does not carry.
+fn ffi_return_ctype(def: &crate::data::Definition) -> Result<&'static str, String> {
+    Ok(match def.returned().base() {
+        Type::Void => "void",
+        Type::Integer(s) if s.forced_size.is_none() => "int64_t",
+        Type::Integer(_) => "int32_t",
+        Type::Float => "double",
+        Type::Single => "float",
+        Type::Boolean => "uint8_t",
+        Type::Text(_) => "loft_ffi_str",
+        // A heap answer comes back as a ref into the store handed over.
+        Type::Vector(_, _) | Type::Reference(_, _) => "loft_ffi_ref",
+        other => {
+            return Err(format!(
+                "native {} (a library answer of type {})",
+                def.original_name(),
+                type_word(other)
+            ));
+        }
+    })
+}
+
 /// A `#native` function of a package whose native part is a prebuilt library (@PLN205): a body
 /// that resolves the library's typed symbol on the first call and calls it with the loft-ffi
 /// signature (`loft-ffi/include/loft_ffi.h`): a store first when an argument or the answer is
@@ -2855,24 +2878,7 @@ fn library_native(
         prep,
         store_arg,
     } = ffi_args(cx, d)?;
-    let ffi_ret = match def.returned().base() {
-        Type::Void => "void",
-        Type::Integer(s) if s.forced_size.is_none() => "int64_t",
-        Type::Integer(_) => "int32_t",
-        Type::Float => "double",
-        Type::Single => "float",
-        Type::Boolean => "uint8_t",
-        Type::Text(_) => "loft_ffi_str",
-        // A heap answer comes back as a ref into the store handed over.
-        Type::Vector(_, _) | Type::Reference(_, _) => "loft_ffi_ref",
-        other => {
-            return Err(format!(
-                "native {} (a library answer of type {})",
-                def.original_name(),
-                type_word(other)
-            ));
-        }
-    };
+    let ffi_ret = ffi_return_ctype(def)?;
     let heap_answer = ffi_ret == "loft_ffi_ref";
     let mut prep = prep;
     // The store handed over: the first heap argument's, else — for a heap answer — one minted
