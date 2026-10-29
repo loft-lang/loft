@@ -549,8 +549,21 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  the probe's contract already lets the values after a fault differ
                  (C120); the checked build does not close (`1246-…` pins that an
                  overflow reads as null there).  A miss costs the plain operator,
-                 never a value.  Switch `LOFT_NO_NN_PARAMS=1`; site
-                 `non_sentinel::proven_params`.
+                 never a value.  The program-wide fact is the C backend's
+                 (`non_sentinel::begin_c_generation`): the Rust generator's
+                 ranged-call clause (`R-RangedCall`) weighs a twin's gain against the
+                 unseeded proof, and a seeded proof made those twins look gainless —
+                 measured on `game_protocol` and `assets`, where native lost its
+                 ranged copies.  The C's twin clause: a call site whose arguments
+                 prove more parameters than the program-wide fact calls a `__nn`
+                 twin that seeds them, where the callee (or a function it calls
+                 directly) divides or takes a remainder by a literal.  Switches
+                 `LOFT_NO_NN_PARAMS=1`, `LOFT_NO_NN_TWINS=1`; `LOFT_TRACE_NN_PARAMS=1`
+                 names the call site that drops a parameter; sites
+                 `non_sentinel::proven_params`, `FnWriter::nn_twin_bits`.  Guard
+                 `a-parameter-is-trusted-only-where-every-call-proves-it.loft` (three
+                 of four cells fail when every argument is trusted, or when the
+                 fixpoint never drops a parameter).
   (R-Header)     in a loop body that writes no store, a vector reached by a PURE
                  PATH P — a variable, or const-offset fields over one — has one
                  header (store, record, length) for the whole loop: the emitter

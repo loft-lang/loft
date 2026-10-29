@@ -155,6 +155,16 @@ thread_local! {
 pub(crate) fn begin_generation() {
     RETURNS.with(|m| m.borrow_mut().clear());
     PARAMS.with(|m| *m.borrow_mut() = ParamState::Unknown);
+    PARAM_PROOF.with(|p| p.set(false));
+}
+
+/// The C backend's generation start: the per-program memos cleared, and the program-wide
+/// parameter fact (`@FR-R-NonSentinelParam`) switched on.  The Rust generator leaves it off:
+/// its ranged-call clause measures a twin's gain against the unseeded proof, and the C carries
+/// no such clause, so the fact is the C's alone.
+pub(crate) fn begin_c_generation() {
+    begin_generation();
+    PARAM_PROOF.with(|p| p.set(true));
 }
 
 /// Is the release-pass probe on (generation time)?  Its integer `+ - *` wrap.
@@ -172,6 +182,8 @@ enum ParamState {
 
 thread_local! {
     static PARAMS: std::cell::RefCell<ParamState> = const { std::cell::RefCell::new(ParamState::Unknown) };
+    /// Whether the program-wide parameter fact seeds the proof (`begin_c_generation`).
+    static PARAM_PROOF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// `@FR-R-NonSentinelParam` — the parameters, per function, that hold a non-sentinel value on
@@ -184,6 +196,10 @@ thread_local! {
 /// handed a proven value by every call, each proof resting only on parameters that are
 /// themselves proven, so by induction on the call depth each holds a non-sentinel value on
 /// entry.  A miss costs the plain operator, never a value.  `LOFT_NO_NN_PARAMS=1` proves none.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the candidates, then the fixpoint over every call site, kept as one reading"
+)]
 fn proven_params(data: &Data) -> std::rc::Rc<HashMap<u32, Vec<bool>>> {
     let state = PARAMS.with(|m| match &*m.borrow() {
         ParamState::Known(k) | ParamState::Computing(k) => Some(k.clone()),
@@ -329,6 +345,9 @@ pub(crate) fn candidate_params(data: &Data, d: u32) -> Option<Vec<bool>> {
 
 /// The program-wide proven parameters of `d` (`@FR-R-NonSentinelParam`), if any.
 pub(crate) fn proven_param_flags(data: &Data, d: u32) -> Option<Vec<bool>> {
+    if !PARAM_PROOF.with(std::cell::Cell::get) {
+        return None;
+    }
     proven_params(data).get(&d).cloned()
 }
 
@@ -470,12 +489,14 @@ pub fn non_sentinel_vars_seeded(
     }
     // `@FR-R-NonSentinelParam`: the parameters every call proves (`proven_params`).
     let d = data.def_nr(&function.name);
-    if (d as usize) < data.definitions.len() && std::ptr::eq(data.def(d).variables(), function) {
-        if let Some(flags) = proven_params(data).get(&d) {
-            for (i, f) in flags.iter().enumerate() {
-                if *f && let Ok(p) = u16::try_from(i) {
-                    vars.insert(p, true);
-                }
+    if PARAM_PROOF.with(std::cell::Cell::get)
+        && (d as usize) < data.definitions.len()
+        && std::ptr::eq(data.def(d).variables(), function)
+        && let Some(flags) = proven_params(data).get(&d)
+    {
+        for (i, f) in flags.iter().enumerate() {
+            if *f && let Ok(p) = u16::try_from(i) {
+                vars.insert(p, true);
             }
         }
     }

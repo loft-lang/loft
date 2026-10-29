@@ -204,14 +204,24 @@ The hand edit priced it at −16 % on `interp_fib` under clang; the general form
 `slope_path_with_undo`'s instructions under clang (the test per chunk-walk iteration) and gained
 nothing on bench 20 once the kept twin was built.
 
-**Not built, each a decision or a larger unit:**
-- the allocator's bump path while the free tree holds blocks (−8 % on `grouped_fill_find`):
-  it changes which block a claim takes, so it is a change to `formal/allocator.md`'s rules on
-  every backend, not a C-lane tweak;
-- `slope_path_with_undo`'s `%` null test: the ship lane keeps a literal division's null
-  semantics by rule (`LOFT_RELEASE_PASS_PROBE`), so removing it needs either a proof that the
-  operand is not null across calls (an interprocedural non-null parameter) or a change to that
-  rule;
-- `grouped_fill_find`'s typed insert (the table header read once per loop, as
-  `@FR-R-TypedKeyed` does for lookups) and the group's per-element record and id vector — store
-  format work.
+**Built on the owner's rulings (2026-10-29):**
+
+| rule | effect (instructions, same answers) |
+|---|---|
+| `(H-WildFirst)`: the wilderness serves a claim it can hold before the free tree is asked, on every backend | `grouped_fill_find` 599 → 556 per element under gcc (−7.2 %), 479 → 440 under clang (−8.1 %) |
+| `(R-NonSentinelParam)`: a scalar parameter every direct call proves is non-null on entry (a greatest fixpoint); `%` and `/` by a literal close on both lanes, wrapping `+ - *` under the release-pass probe; the C's `__nn` twins specialise a callee for a call site whose arguments prove more | `slope_path_with_undo` 1,050 → 895 per step under gcc (−15 %), 868 → 676 under clang (−22 %); the map helpers' `%` is plain in `map_get_hex__nn6`, `map_set_hex__nne`, `map_ensure_chunk__nne` |
+
+What the parameter proof met on `slope_path_with_undo`: the program-wide fact proves the
+`undo_push` chain but not the map helpers, because `floor_y_at` hands `map_get_hex` fields of a
+record built from float-to-integer conversions and the undo replay hands `map_set_hex` record
+fields — both may be null.  The twins carry the proof to the call sites that have it.
+
+A finding beside it: the C probe lane maps `OpRemInt` and `OpDivInt` to the wrapping forms for any
+operand (`probe_operator`), so a null that reaches a non-Nullable `%` answers 0 there, while the
+Nullable forms keep their test (`slope_path`'s inlined `%` was one).  That is the probe's
+contract as written, and the reason the `R-NonSentinelParam` guard's null cells run on the
+interpreter and the checked C.
+
+**Still open:** `grouped_fill_find`'s typed insert (the table header read once per loop, as
+`@FR-R-TypedKeyed` does for lookups) and the group's per-element record and id vector — store
+format work.

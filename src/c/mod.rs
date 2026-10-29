@@ -1538,6 +1538,7 @@ pub fn unported_natives(data: &Data) -> Vec<String> {
 /// # Errors
 /// The first [`Refusal`], the roots' own first.
 pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, Refusal> {
+    crate::opt::non_sentinel::begin_c_generation();
     // A closure's drop cascade (`OpDropFnRef`) is called through the value, never by name: each
     // lambda the program reaches brings its record's cascade along.
     let mut all: Vec<u32> = roots.to_vec();

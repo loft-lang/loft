@@ -104,7 +104,7 @@ pub(crate) fn growth_args(stmt: &Value, data: &Data) -> Option<Vec<u16>> {
         return None;
     }
     let def = data.def(*d);
-    if !(GROWTH_OPS.contains(&def.name()) || !matches!(def.code(), Value::Null)) {
+    if !GROWTH_OPS.contains(&def.name()) && matches!(def.code(), Value::Null) {
         return None;
     }
     let vars: Vec<u16> = args
@@ -499,6 +499,10 @@ pub fn grown_headers(
     apart_headers_with(body, data, facts, lent, candidates, callees, true)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one walk, then the read-only and the growth halves' verdicts on its result"
+)]
 fn apart_headers_with(
     body: &Block,
     data: &Data,
