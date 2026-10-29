@@ -332,7 +332,7 @@ impl FnWriter<'_> {
             .filter(|&v| {
                 let var = v as u16;
                 let tp = self.vars.tp(var);
-                let generator = matches!(tp, crate::data::Type::Iterator(_, _));
+                let generator = matches!(tp.base(), crate::data::Type::Iterator(_, _));
                 !self.links[v]
                     && self.shapes[v] == CType::Ref
                     && (!self.params[v] || generator)
