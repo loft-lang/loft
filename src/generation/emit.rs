@@ -2834,51 +2834,7 @@ impl Output<'_> {
         }
         let b_true = matches!(true_v.unspan(), Value::Block(_));
         let b_false = matches!(false_v.unspan(), Value::Block(_));
-        // @PLAN52 cluster VII: when the if-result is `Text`, branches can
-        // produce `&String` (text local via Var emit's `&var_x`), `Str`
-        // (text-returning native call), or `&'static str` (literal).  These
-        // do NOT unify at the if-branch level — rustc reports E0308
-        // "expected `&String`, found `Str`".  Wrapping each non-Block
-        // branch with `&*(...)` forces a common `&str` (idempotent on
-        // `&String` and `&str`, valid on `Str` via its `Deref<Target=str>`).
-        // #534 — when the two text arms deliver mismatched Rust reps (a
-        // `String` call arm vs a `&str` literal/interpolation arm), `&*(…)`
-        // cannot unify them: borrowing an owned-`String` temporary would
-        // dangle.  Defer to `text_string_unify` below (owned `String` for
-        // both) instead.
-        let text_mismatch = self.text_if_mismatched_reps(true_v, false_v);
-        // @PLN102 `?? null`: a coalesce arm now reports `text?` (`Optional(Text)`) when its
-        // fallback can be null (`v[i] ?? null`), so peel `Optional` before the text-rep check — a
-        // `text?` if-arm has the SAME `String`/`&str` unify hazard as a plain `text` one (its
-        // present-path still materialises an owned `String` while a `null` sibling arm is `&str`).
-        let true_arm_is_text = self
-            .infer_type(IrNode::Native(true_v))
-            .is_some_and(|t| matches!(t.base(), Type::Text(_)));
-        let text_unify = !b_true
-            && !b_false
-            && !text_mismatch
-            && !matches!(false_v, Value::Null)
-            && true_arm_is_text;
-        // @P386: a text-result if-expression where any branch is a Block
-        // containing the `__ncc_*` skip_free pattern produces an OWNED
-        // `String` for that branch (via the `_ret.to_string()` block-tail
-        // materialisation in `output_block`'s trailing-void path).  The
-        // SIBLING branch typically emits a `&str` (a `STRING_NULL` typed
-        // null, an OpConvTextFromNull → `loft::state::STRING_NULL`, or a
-        // bare literal).  The two arms then fail to unify (rustc E0308
-        // "expected `&str`, found `String`").  Force each branch through
-        // `.to_string()` so both produce `String`.  This is idempotent on
-        // an already-`String` value and converts `&str` / `Str` / `&String`
-        // uniformly.  The outer text-return wrap (Return(If(…))'s scratch
-        // routing) then takes `String` via `.to_string()` push.
-        // #534 extends the trigger: also unify to `String` when the arms'
-        // reps mismatch (owned call vs borrowed literal/interp), not only for
-        // the `??` ncc pattern.
-        let text_string_unify = !text_unify
-            && (text_mismatch
-                || matches!(true_v, Value::Block(b) if self.block_contains_ncc_skip_free(b))
-                || matches!(false_v, Value::Block(b) if self.block_contains_ncc_skip_free(b)))
-            && true_arm_is_text;
+        let (text_string_unify, text_unify) = self.text_if_unify(true_v, false_v);
         // @PLN17: a boolean if-expression (e.g. the `&&` / `||` lowering
         // `if a {b} else {false}`) has arms that may be `u8` (a var/call — storage
         // form) or `bool` (a literal/comparison — expression form), which don't
@@ -3274,6 +3230,63 @@ impl Output<'_> {
                 a.hidden && matches!(a.typedef, Type::RefVar(ref t) if matches!(**t, Type::Text(_)))
             })
             .map(|a| sanitize(&a.name))
+    }
+
+    /// How a text `if`'s two arms are made ONE Rust type: `(string, borrow)` — `string` routes
+    /// both through `.to_string()`, so the `if` yields an owned `String`; `borrow` wraps each
+    /// non-block arm in `&*(…)`, so it yields `&str`.  Neither: the arms already agree (or the
+    /// `if` is not text) and it yields what they do.  `output_if_inner` emits the arms by this
+    /// answer, and the argument hoist reads it (`pre_eval::yields_owned_text`) to know whether
+    /// the bound value must be borrowed for a `&str` parameter — one question, one home.
+    pub(super) fn text_if_unify(&self, true_v: &Value, false_v: &Value) -> (bool, bool) {
+        let b_true = matches!(true_v.unspan(), Value::Block(_));
+        let b_false = matches!(false_v.unspan(), Value::Block(_));
+        // @PLAN52 cluster VII: when the if-result is `Text`, branches can
+        // produce `&String` (text local via Var emit's `&var_x`), `Str`
+        // (text-returning native call), or `&'static str` (literal).  These
+        // do NOT unify at the if-branch level — rustc reports E0308
+        // "expected `&String`, found `Str`".  Wrapping each non-Block
+        // branch with `&*(...)` forces a common `&str` (idempotent on
+        // `&String` and `&str`, valid on `Str` via its `Deref<Target=str>`).
+        // #534 — when the two text arms deliver mismatched Rust reps (a
+        // `String` call arm vs a `&str` literal/interpolation arm), `&*(…)`
+        // cannot unify them: borrowing an owned-`String` temporary would
+        // dangle.  Defer to `text_string_unify` below (owned `String` for
+        // both) instead.
+        let text_mismatch = self.text_if_mismatched_reps(true_v, false_v);
+        // @PLN102 `?? null`: a coalesce arm now reports `text?` (`Optional(Text)`) when its
+        // fallback can be null (`v[i] ?? null`), so peel `Optional` before the text-rep check — a
+        // `text?` if-arm has the SAME `String`/`&str` unify hazard as a plain `text` one (its
+        // present-path still materialises an owned `String` while a `null` sibling arm is `&str`).
+        let true_arm_is_text = self
+            .infer_type(IrNode::Native(true_v))
+            .is_some_and(|t| matches!(t.base(), Type::Text(_)));
+        let text_unify = !b_true
+            && !b_false
+            && !text_mismatch
+            && !matches!(false_v, Value::Null)
+            && true_arm_is_text;
+        // @P386: a text-result if-expression where any branch is a Block
+        // containing the `__ncc_*` skip_free pattern produces an OWNED
+        // `String` for that branch (via the `_ret.to_string()` block-tail
+        // materialisation in `output_block`'s trailing-void path).  The
+        // SIBLING branch typically emits a `&str` (a `STRING_NULL` typed
+        // null, an OpConvTextFromNull → `loft::state::STRING_NULL`, or a
+        // bare literal).  The two arms then fail to unify (rustc E0308
+        // "expected `&str`, found `String`").  Force each branch through
+        // `.to_string()` so both produce `String`.  This is idempotent on
+        // an already-`String` value and converts `&str` / `Str` / `&String`
+        // uniformly.  The outer text-return wrap (Return(If(…))'s scratch
+        // routing) then takes `String` via `.to_string()` push.
+        // #534 extends the trigger: also unify to `String` when the arms'
+        // reps mismatch (owned call vs borrowed literal/interp), not only for
+        // the `??` ncc pattern.
+        let text_string_unify = !text_unify
+            && (text_mismatch
+                || matches!(true_v, Value::Block(b) if self.block_contains_ncc_skip_free(b))
+                || matches!(false_v, Value::Block(b) if self.block_contains_ncc_skip_free(b)))
+            && true_arm_is_text;
+        (text_string_unify, text_unify)
     }
 
     /// Whether a text-typed `if`/`else` arm delivers an OWNED `String` (as
