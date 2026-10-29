@@ -3316,11 +3316,26 @@ fn framed(
     );
     // The body names the texts it holds (`LOFT_HOLD`); the frame drops them on its return.
     let push = format!("{push}    LOFT_HOLD_MARK(hm);\n");
+    // What calls through function values handed back and no bind adopted is the frame's, freed
+    // as it returns — unless it answers a heap value, which may be one of them: those go up to
+    // the caller (`FnRefBufGuard`'s `hands_up`).
+    let hands_up = matches!(
+        def.returned().base(),
+        Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
+    );
+    let (push, release) = if hands_up {
+        (push, String::new())
+    } else {
+        (
+            format!("{push}    size_t fm = loft_nfnrefs;\n"),
+            "    if (loft_nfnrefs != fm) loft_fnref_release(fm);\n".to_string(),
+        )
+    };
     if ret == CType::Void {
-        format!("{push}    {call};\n    LOFT_HOLD_BACK(hm);\n    loft_frame_pop();\n")
+        format!("{push}    {call};\n{release}    LOFT_HOLD_BACK(hm);\n    loft_frame_pop();\n")
     } else {
         format!(
-            "{push}    {} r = {call};\n    LOFT_HOLD_BACK(hm);\n    loft_frame_pop();\n    return r;\n",
+            "{push}    {} r = {call};\n{release}    LOFT_HOLD_BACK(hm);\n    loft_frame_pop();\n    return r;\n",
             held(ret)
         )
     }

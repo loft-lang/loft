@@ -1999,6 +1999,81 @@ static int loft_fnref_minted(loft_ref r, uint64_t since, loft_ref clos) {
     return loft_stores[r.store_nr].serial > since;
 }
 
+/* The stores a call through a function value handed back that no bind adopted — the buffer it
+ * delivered into, or a store it minted — each with the serial of the allocation it named
+ * (`codegen_runtime::FNREF_BUFS`, `State::release_fnref_bufs`).  The destination's static type
+ * may say it owns nothing (a local that borrows on one assignment and receives this store on
+ * another), so the FRAME holding it is its owner: a frame whose answer is no heap value frees
+ * what it holds when it ends, one that answers a heap value hands it up (`framed`). */
+typedef struct { loft_ref r; uint64_t serial; } loft_fnref_held;
+static LOFT_TLS loft_fnref_held *loft_fnrefs = 0;
+static LOFT_TLS size_t loft_nfnrefs = 0, loft_capfnrefs = 0;
+
+/* One allocation is one entry: an entry left by a store its owner already freed names the same
+ * slot as a store minted into it later, so it is replaced where it stands. */
+static void loft_fnref_hold(loft_ref r) {
+    if (r.store_nr >= loft_nstores || r.rec == 0 || !loft_stores[r.store_nr].live) return;
+    uint64_t serial = loft_stores[r.store_nr].serial;
+    for (size_t i = 0; i < loft_nfnrefs; i++) {
+        if (loft_fnrefs[i].r.store_nr == r.store_nr) {
+            loft_fnrefs[i].r = r;
+            loft_fnrefs[i].serial = serial;
+            return;
+        }
+    }
+    if (loft_nfnrefs == loft_capfnrefs) {
+        loft_capfnrefs = loft_capfnrefs ? loft_capfnrefs * 2 : 16;
+        loft_fnrefs = (loft_fnref_held *) realloc(loft_fnrefs, loft_capfnrefs * sizeof *loft_fnrefs);
+        if (!loft_fnrefs) { fputs("loft: out of memory\n", stderr); abort(); }
+    }
+    loft_fnrefs[loft_nfnrefs].r = r;
+    loft_fnrefs[loft_nfnrefs].serial = serial;
+    loft_nfnrefs++;
+}
+
+/* `cr_fnref_buf`: the buffer a dispatch arm minted is the call's answer — held by the frame —
+ * or nobody's, and released. */
+static void loft_fnref_buf(loft_ref r, loft_ref hb) {
+    if (r.store_nr != hb.store_nr) {
+        loft_free_ref(hb);
+        return;
+    }
+    loft_fnref_hold(hb);
+}
+
+/* `cr_fnref_minted`: a store the call minted is held by the frame; one that predates the call
+ * (an argument, a capture) or is the closure's own record belongs further up. */
+static void loft_fnref_mint(loft_ref r, uint64_t since, loft_ref clos) {
+    if (r.store_nr == 0xFFFF || r.rec == 0 || r.store_nr >= loft_nstores) return;
+    if (clos.store_nr != 0xFFFF && r.store_nr == clos.store_nr) return;
+    if (!loft_stores[r.store_nr].live || loft_stores[r.store_nr].serial <= since) return;
+    loft_fnref_hold(r);
+}
+
+/* `cr_fnref_adopt`: a bind that adopts the answer is its one owner; the frame lets it go. */
+static void loft_fnref_adopt(loft_ref src) {
+    for (size_t i = loft_nfnrefs; i-- > 0;) {
+        if (loft_fnrefs[i].r.store_nr == src.store_nr) {
+            /* In order: every frame's mark keeps meaning the entries above it are its own. */
+            memmove(&loft_fnrefs[i], &loft_fnrefs[i + 1], (loft_nfnrefs - i - 1) * sizeof *loft_fnrefs);
+            loft_nfnrefs--;
+            return;
+        }
+    }
+}
+
+/* `FnRefBufGuard::release`: free what the ending frame still holds above `mark` — only a store
+ * still the allocation it named, since the frame may have freed it itself and the slot be
+ * another's by now. */
+static void loft_fnref_release(size_t mark) {
+    while (loft_nfnrefs > mark) {
+        loft_fnref_held h = loft_fnrefs[--loft_nfnrefs];
+        if (h.r.store_nr < loft_nstores && loft_stores[h.r.store_nr].live
+            && loft_stores[h.r.store_nr].serial == h.serial)
+            loft_free_ref(h.r);
+    }
+}
+
 /* vector::clear_vector: an absent slot becomes the empty vector; a present one length 0. */
 static void loft_vec_clear(loft_ref v) {
     if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return;

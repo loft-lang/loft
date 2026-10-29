@@ -3883,6 +3883,8 @@ impl<'a> FnWriter<'a> {
             ind,
             &format!("if (loft_fnref_minted({src}, (uint64_t) {since}, {clos})) {{"),
         );
+        // The binding is the adopted store's one owner (`cr_fnref_adopt`).
+        self.line(ind + 1, &format!("loft_fnref_adopt({src});"));
         // A parameter's displaced store is the caller's (a promoted return buffer the caller
         // pools, `@FR-R-Reuse`): the adopt only rebinds it, as `State::bind_fn_ref_result` does.
         if !witnessed && !self.params[var as usize] {
@@ -3890,6 +3892,17 @@ impl<'a> FnWriter<'a> {
                 ind + 1,
                 &format!(
                     "if ({dst}.store_nr != 0xFFFF && {dst}.store_nr != {src}.store_nr) loft_free_ref({dst});"
+                ),
+            );
+        } else if !witnessed && let Some(w) = self.vars.entry_witness(var) {
+            // …unless it is not the caller's: a promoted return buffer's entry witness names
+            // the store the caller handed (`@FR-O-Buffer`), and any other it displaces is one
+            // this frame adopted on an earlier pass.
+            self.line(
+                ind + 1,
+                &format!(
+                    "if ({dst}.store_nr != 0xFFFF && {dst}.store_nr != {src}.store_nr && {dst}.store_nr != {}.store_nr) loft_free_ref({dst});",
+                    self.var(w)
                 ),
             );
         }
@@ -3922,7 +3935,11 @@ impl<'a> FnWriter<'a> {
         name: &str,
         ind: usize,
     ) -> Result<bool, String> {
-        if self.vars.is_argument(var)
+        // A promoted return buffer is an argument, and frees what it displaces only with its
+        // entry witness (`@FR-O-Buffer`), which keeps the caller's store: native's
+        // `owned_ref_reassign` with `_rb_w_<v>`.
+        let entry = self.vars.entry_witness(var);
+        if (self.vars.is_argument(var) && entry.is_none())
             || !matches!(
                 x.unspan(),
                 Value::Call(..)
@@ -3939,6 +3956,9 @@ impl<'a> FnWriter<'a> {
         self.line(ind, &format!("{old} = {name};"));
         self.assign(x, name, CType::Ref, ind)?;
         let mut keep = format!("{old}.store_nr != {name}.store_nr");
+        if let Some(w) = entry.filter(|_| self.vars.is_argument(var)) {
+            let _ = write!(keep, " && {old}.store_nr != {}.store_nr", self.var(w));
+        }
         if let Some(buf) = self.vars.displaced_buffer_witness(var, x, self.cx.data) {
             let _ = write!(keep, " && {old}.store_nr != {}.store_nr", self.var(buf));
         }
