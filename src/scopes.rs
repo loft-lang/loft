@@ -419,6 +419,12 @@ struct Scopes<'s> {
     /// @PLN130 F2/F8 — view bindings live across a disturbance of their container, and which
     /// disturbance it was.  See [`collect_views_to_materialise`].
     views_to_materialise: HashMap<u16, Disturbance>,
+    /// The buffer each collection view in [`Self::views_to_materialise`] is copied into, made
+    /// BEFORE the scan at the function's root scope (`phase.rs`), so every exit the scan meets
+    /// already frees it — one an earlier `match` arm returns from included.  Made at the bind
+    /// instead, an exit scanned before it never named it, and the buffer leaked once per call
+    /// whenever the copying arm came after a returning one.
+    materialise_buffers: HashMap<u16, u16>,
     /// The `text` payload views whose mirrors were dropped and already reported, so a binding
     /// written several times says so once (loft#1665).
     text_views_reported: HashSet<u16>,

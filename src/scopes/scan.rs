@@ -1040,6 +1040,15 @@ impl Scopes<'_> {
     /// (an owned vector's null-init allocates), refilled IN PLACE by the arm that reaches it,
     /// and freed once at function exit.  Homed at the function's root scope for exactly that
     /// reason: freed per iteration, it would be refilled dead.
+    /// The buffer materialised view `v` is copied into: the one made before the scan
+    /// (`Scopes::materialise_buffers`), or a new one where that pass made none.
+    pub(super) fn materialise_buffer(&mut self, function: &mut Function, tp: &Type, v: u16) -> u16 {
+        if let Some(&buffer) = self.materialise_buffers.get(&v) {
+            return buffer;
+        }
+        self.new_buffer_var(function, tp)
+    }
+
     pub(super) fn new_buffer_var(&mut self, function: &mut Function, tp: &Type) -> u16 {
         self.lift_counter += 1;
         let name = format!("__lift_{}", self.lift_counter);

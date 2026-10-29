@@ -459,6 +459,14 @@ impl ViewWalk<'_> {
                     match branch {
                         Value::Block(b) => self.scoped(&b.operators),
                         Value::Insert(ops) => self.scoped(ops),
+                        // An `else if` chain: the else side is itself an `if`, and a `match`
+                        // lowers to one, so every arm after the first sits here.  Read whole
+                        // by `leaf`, an arm's bind, its container's reassignment and a later
+                        // use were one indivisible step, and the view was never condemned —
+                        // `match at { Leaf {…} => …, Call { args } => { at = pick(args[0]);
+                        // len(args) } }` read the released store on both backends, while
+                        // the same arm written first was materialised.
+                        Value::If(_, _, _) => self.walk_stmt(branch),
                         other => self.leaf(other),
                     }
                     ends.push((

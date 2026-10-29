@@ -54,6 +54,21 @@ fn base_container_var(value: &Value, data: &Data) -> Option<u16> {
 /// The specific keyed collection's store type — what `OpReplaceKeyed` and a keyed
 /// `OpNewRecord` dispatch on.  The same registration the parser's `keyed_known_type` makes,
 /// which is idempotent for a type the program already uses.
+/// The type of the buffer a materialised view `v` is copied into — its own collection type
+/// without the deps that made it a view — or `None` for a view that needs only its deps
+/// stripped (a record).  Read off the type's shape alone, so it can run before the scan
+/// without minting a type (`Scopes::materialise_buffers`); the bind still decides whether
+/// the copy is made.
+pub(super) fn materialise_buffer_type(function: &Function, v: u16) -> Option<Type> {
+    if keyed_payload_view(function, v) {
+        return Some(function.tp(v).without_deps());
+    }
+    if let Type::Vector(inner, _) = function.tp(v).base() {
+        return Some(Type::Vector(inner.clone(), Deps::none()));
+    }
+    None
+}
+
 fn keyed_type_id(database: &mut crate::database::Stores, data: &Data, tp: &Type) -> Option<u16> {
     let tp = tp.peel_link();
     let content = match tp {
@@ -1393,7 +1408,7 @@ impl Scopes<'_> {
             // subject no longer owns.
             if keyed_view && let Some(ktp) = keyed_type_id(self.database, data, function.tp(v)) {
                 let tp = function.tp(v).without_deps();
-                let tmp = self.new_buffer_var(function, &tp);
+                let tmp = self.materialise_buffer(function, &tp, v);
                 function.set_skip_free(v);
                 keyed_copy = Some((tmp, i32::from(ktp)));
             }
@@ -1403,7 +1418,7 @@ impl Scopes<'_> {
                     && let Some(elem) = data.vector_element_type(&inner, self.database)
                 {
                     let tp = Type::Vector(inner.clone(), Deps::none());
-                    let tmp = self.new_buffer_var(function, &tp);
+                    let tmp = self.materialise_buffer(function, &tp, v);
                     // The local NAMES the buffer; the buffer owns the store and frees it once
                     // at function exit.  Left owning, the local's own scope-exit `OpFreeRef`
                     // releases the buffer's store — harmless at function scope and fatal in a
