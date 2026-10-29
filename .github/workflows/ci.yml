@@ -1408,6 +1408,10 @@ jobs:
     name: Language suite (ubuntu-latest)
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # @PLN203 — the suite's native cells compile through the C backend, as the `test` job's do:
+    # the C is what `--native` becomes, so the rules are read on it, not on the Rust writer.
+    env:
+      LOFT_NATIVE_BACKEND: c
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/checkout-suite

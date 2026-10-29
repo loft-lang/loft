@@ -36,7 +36,10 @@ python3 scripts/c_sweep.py --stderr            # stderr compared too (a fault's 
                                                #   and chain), the driver's `advice:` notes aside
 python3 scripts/c_sweep.py --shard K/N         # every N-th program from K: ci.yml's `c-sweep`
                                                #   runs four shards per PR, miri.yml the
-                                               #   --poison and --asan sweeps nightly
+                                               #   --poison and --asan sweeps nightly.  The PR's
+                                               #   Test job and its Language suite job compile
+                                               #   `--native` through the C (LOFT_NATIVE_BACKEND=c;
+                                               #   Windows's Test leg keeps the Rust writer, C8)
 make c-sweep ARGS="…"                          # the release loft built first, then the sweep
 python3 scripts/image_probe.py                 # every corpus program: the C written from the
                                                #   program IMAGE (LOFT_EMIT_FROM_IMAGE=1) against
