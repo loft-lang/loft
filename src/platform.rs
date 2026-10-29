@@ -1775,6 +1775,9 @@ pub fn c_wasm_toolchain_cure() -> &'static str {
     if cfg!(target_os = "linux") {
         "install clang, lld, the WASI libc and the wasm32 compiler-rt (Debian/Ubuntu: \
          `apt install clang lld wasi-libc libclang-rt-dev-wasm32`), or name a clang in LOFT_WASM_CC"
+    } else if cfg!(target_os = "macos") {
+        "install Homebrew's LLVM, lld and WASI libc (`brew install llvm lld wasi-libc \
+         wasi-runtimes`) — Apple's clang has no wasm target — or name a clang in LOFT_WASM_CC"
     } else {
         "install LLVM's clang and lld with a WASI sysroot and the wasm32 compiler-rt, or name \
          a clang in LOFT_WASM_CC"

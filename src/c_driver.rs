@@ -195,7 +195,95 @@ pub(crate) fn cc_identity(cc: &str) -> String {
         .clone()
 }
 
-/// `--native-wasm` through the C (@PLN203 C6): the unit built for wasm32-wasi by clang into
+/// The toolchain a wasm32 build of the C uses, found once per run: the clang, the WASI sysroot,
+/// the `wasm-ld` beside a clang whose own directory has none, and the target triple the
+/// sysroot's headers answer to.
+struct WasmToolchain {
+    cc: String,
+    sysroot: Option<String>,
+    ld: Option<String>,
+    triple: &'static str,
+}
+
+/// Measured on each runner's packages (C10): Debian's wasi-libc lays its headers out for
+/// `wasm32-wasi` (and Ubuntu's clang keeps its wasm32 builtins under that name too), wasi-sdk ≥
+/// 25 and Homebrew's wasi-libc for `wasm32-wasip1` alone — so the triple is the first one a
+/// small program links under, `wasm32-wasip1` before `wasm32-wasi`, rather than assumed.  A clang named by
+/// `LOFT_WASM_CC` wins; on macOS Homebrew's LLVM comes before Apple's clang, which has no wasm
+/// target, with Homebrew's `wasm-ld` (a keg of its own) and wasi-libc's sysroot.
+fn wasm_toolchain() -> &'static WasmToolchain {
+    static TC: std::sync::OnceLock<WasmToolchain> = std::sync::OnceLock::new();
+    TC.get_or_init(|| {
+        let first = |paths: &[&str]| {
+            paths
+                .iter()
+                .find(|p| fa::exists(p))
+                .map(|p| (*p).to_string())
+        };
+        let brew_llvm = cfg!(target_os = "macos")
+            .then(|| {
+                first(&[
+                    "/opt/homebrew/opt/llvm/bin/clang",
+                    "/usr/local/opt/llvm/bin/clang",
+                ])
+            })
+            .flatten();
+        let named = std::env::var("LOFT_WASM_CC").ok().filter(|s| !s.is_empty());
+        let ld = (named.is_none() && brew_llvm.is_some())
+            .then(|| {
+                first(&[
+                    "/opt/homebrew/opt/lld/bin/wasm-ld",
+                    "/usr/local/opt/lld/bin/wasm-ld",
+                ])
+            })
+            .flatten();
+        let cc = named.or(brew_llvm).unwrap_or_else(|| "clang".to_string());
+        let sysroot = std::env::var("WASI_SYSROOT")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                first(&[
+                    "/usr/share/wasi-sysroot",
+                    "/opt/homebrew/opt/wasi-libc/share/wasi-sysroot",
+                    "/usr/local/opt/wasi-libc/share/wasi-sysroot",
+                ])
+            });
+        // A whole link, not the headers alone: a sysroot can answer to one triple while the
+        // compiler's builtins live under the other's directory (Ubuntu: headers for both,
+        // `libclang_rt.builtins` under `lib/wasi` only).
+        let probe_out = loft::platform::scratch_dir()
+            .join(format!("loft_wasm_probe_{}.wasm", std::process::id()));
+        let reaches = |triple: &str| {
+            let mut probe = Spawn::new(Program::os(&cc));
+            probe.push_arg(format!("--target={triple}"));
+            if let Some(root) = &sysroot {
+                probe.push_arg(format!("--sysroot={root}"));
+            }
+            if let Some(ld) = &ld {
+                probe.push_arg(format!("--ld-path={ld}"));
+            }
+            probe.push_args(["-x", "c", "-", "-o"]).push_arg(&probe_out);
+            let linked = probe
+                .run(b"#include <stdio.h>\nint main(void) { puts(\"\"); return 0; }\n")
+                .is_ok_and(|r| r.status.success());
+            let _ = fa::remove_file(&probe_out);
+            linked
+        };
+        let triple = if reaches("wasm32-wasip1") {
+            "wasm32-wasip1"
+        } else {
+            "wasm32-wasi"
+        };
+        WasmToolchain {
+            cc,
+            sysroot,
+            ld,
+            triple,
+        }
+    })
+}
+
+/// `--native-wasm` through the C (@PLN203 C6): the unit built for WASI by clang into
 /// `out`, as `scripts/c_sweep.py --wasm` builds and validates it.  setjmp is wasm's
 /// exception-handling proposal in its standard encoding (a host runs it with exceptions on —
 /// `wasmtime -W exceptions=y`); `clock` and `signal` are WASI's emulation libraries; the stack
@@ -211,7 +299,8 @@ pub(crate) fn build_wasm(
     ship: bool,
     browser: bool,
 ) -> Result<(), String> {
-    let cc = std::env::var("LOFT_WASM_CC").unwrap_or_else(|_| "clang".to_string());
+    let tc = wasm_toolchain();
+    let cc = tc.cc.clone();
     let scratch = loft::platform::scratch_dir();
     let src = scratch.join(format!("loft_wasm_c_{}.c", std::process::id()));
     fa::write(&src, c).map_err(|e| format!("cannot write {}: {e}", src.display()))?;
@@ -220,8 +309,8 @@ pub(crate) fn build_wasm(
     // carry it.
     let jumps = !c.contains("#define LOFT_NO_JUMPS");
     let mut cmd = Spawn::new(Program::os(&cc));
+    cmd.push_arg(format!("--target={}", tc.triple));
     cmd.push_args([
-        "--target=wasm32-wasi",
         "-std=c99",
         if ship { "-O3" } else { "-O2" },
         "-w",
@@ -240,16 +329,11 @@ pub(crate) fn build_wasm(
     if !ship {
         cmd.push_arg("-DLOFT_CALL_CHAIN");
     }
-    // The WASI sysroot: the one `WASI_SYSROOT` names, else the system package's when it is
-    // there (a clang that does not look in it falls back to the host's headers).
-    let sysroot = std::env::var("WASI_SYSROOT")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            fa::exists("/usr/share/wasi-sysroot").then(|| "/usr/share/wasi-sysroot".to_string())
-        });
-    if let Some(root) = sysroot {
+    if let Some(root) = &tc.sysroot {
         cmd.push_arg(format!("--sysroot={root}"));
+    }
+    if let Some(ld) = &tc.ld {
+        cmd.push_arg(format!("--ld-path={ld}"));
     }
     cmd.push_arg(&src);
     cmd.push_args(shim_sources);
