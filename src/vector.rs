@@ -2627,14 +2627,41 @@ pub fn sort_text_vector(db: &DbRef, stores: &mut [Store]) {
             (off, s.to_string())
         })
         .collect();
-    entries.sort_unstable_by(|a, b| a.1.cmp(&b.1));
+    // `@FR-E-NullArg`: the order `<` answers — a null text (the sentinel `"\0"`) before every
+    // text, `""` included — asked of `<`'s own home rather than of the bytes (loft#2236).
+    entries.sort_by(|a, b| text_order(&a.1, &b.1));
     for (i, (off, _)) in entries.iter().enumerate() {
         store.set_u32_raw(v_rec, 8 + (i as u32) * 4, *off);
     }
 }
 
-/// Sort a vector of primitive elements in-place (ascending).
-/// `elem_size` is the byte size of each element (1, 2, 4, or 8).
+/// `@FR-E-NullArg` — the order of `<` on `text`, as an [`Ordering`] for a sort.
+fn text_order(a: &str, b: &str) -> Ordering {
+    if crate::ops::op_lt_text(a, b) {
+        Ordering::Less
+    } else if crate::ops::op_lt_text(b, a) {
+        Ordering::Greater
+    } else {
+        Ordering::Equal
+    }
+}
+
+/// `@FR-E-NullArg` — the order of `<` on `float` and `single`: a null (a NaN) before every
+/// value, the rest by value, so `-0.0` and `0.0` are EQUAL and a stable sort keeps their order
+/// (loft#2236).  `partial_cmp(..).unwrap_or(Greater)` was no order at all once a null was in
+/// the vector, and the sort answered whatever its comparisons happened to leave.
+fn float_order<F: PartialOrd>(a: &F, b: &F, a_null: bool, b_null: bool) -> Ordering {
+    match (a_null, b_null) {
+        (true, true) => Ordering::Equal,
+        (true, false) => Ordering::Less,
+        (false, true) => Ordering::Greater,
+        (false, false) => a.partial_cmp(b).unwrap_or(Ordering::Equal),
+    }
+}
+
+/// Sort a vector of primitive elements in-place (ascending, STABLE as `sort` promises — it is
+/// observable only for floats, whose `-0.0` and `0.0` compare equal; equal integers are one
+/// value).  `elem_size` is the byte size of each element (1, 2, 4, or 8).
 /// `is_float` must be true for floating-point types (f32 at size=4, f64 at size=8).
 pub fn sort_vector(db: &DbRef, elem_size: u16, is_float: bool, stores: &mut [Store]) {
     let len = length_vector(db, stores) as usize;
@@ -2670,7 +2697,7 @@ pub fn sort_vector(db: &DbRef, elem_size: u16, is_float: bool, stores: &mut [Sto
                 let mut vals: Vec<f32> = (0..len)
                     .map(|i| f32::from_bits(store.get_u32_raw(v_rec, 8 + (i as u32) * 4)))
                     .collect();
-                vals.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Greater));
+                vals.sort_by(|a, b| float_order(a, b, a.is_nan(), b.is_nan()));
                 for (i, &v) in vals.iter().enumerate() {
                     store.set_u32_raw(v_rec, 8 + (i as u32) * 4, v.to_bits());
                 }
@@ -2689,7 +2716,7 @@ pub fn sort_vector(db: &DbRef, elem_size: u16, is_float: bool, stores: &mut [Sto
                 let mut vals: Vec<f64> = (0..len)
                     .map(|i| store.get_float(v_rec, 8 + (i as u32) * 8))
                     .collect();
-                vals.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Greater));
+                vals.sort_by(|a, b| float_order(a, b, a.is_nan(), b.is_nan()));
                 for (i, &v) in vals.iter().enumerate() {
                     store.set_float(v_rec, 8 + (i as u32) * 8, v);
                 }

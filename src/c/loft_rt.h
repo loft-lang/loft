@@ -3240,19 +3240,61 @@ static int loft_cmp_i64(const void *a, const void *b) {
     memcpy(&y, b, 8);
     return (x > y) - (x < y);
 }
-/* `partial_cmp(..).unwrap_or(Greater)`: a NaN on either side orders after. */
-static int loft_cmp_f32(const void *a, const void *b) {
-    float x, y;
-    memcpy(&x, a, 4);
-    memcpy(&y, b, 4);
-    return x < y ? -1 : x > y ? 1 : x == y ? 0 : 1;
-}
-static int loft_cmp_f64(const void *a, const void *b) {
-    double x, y;
-    memcpy(&x, a, 8);
-    memcpy(&y, b, 8);
-    return x < y ? -1 : x > y ? 1 : x == y ? 0 : 1;
-}
+/* `@FR-E-NullArg`: a float's null (a NaN) orders below every value, and the rest by value, so
+ * `-0.0` and `0.0` compare equal.  The sort is STABLE (`sort`'s promise), so equal values — the
+ * two zeros — keep their order.  It moves the elements' BIT PATTERNS, never a float, so a null
+ * keeps its exact pattern; a float is decoded only to compare.  Below 16 elements an insertion
+ * sort with no buffer (a small vector sorted in a loop allocates nothing); above, runs of 16 by
+ * insertion and bottom-up merges through one scratch buffer.  The comparison is `<`'s own
+ * (`loft_flt`), inlined where `qsort` called one through a pointer. */
+static int loft_flt(double a, double b);
+#define LOFT_FLOAT_SORT(NAME, BITS, FLT)                                                         \
+    static inline int NAME##_lt(BITS a, BITS b) {                                                \
+        FLT x, y;                                                                                \
+        memcpy(&x, &a, sizeof x);                                                                \
+        memcpy(&y, &b, sizeof y);                                                                \
+        return loft_flt((double) x, (double) y); /* `<` itself, one home */                       \
+    }                                                                                            \
+    static void NAME##_ins(BITS *a, size_t n) {                                                  \
+        for (size_t i = 1; i < n; i++) {                                                         \
+            BITS v = a[i];                                                                       \
+            size_t j = i;                                                                        \
+            while (j > 0 && NAME##_lt(v, a[j - 1])) {                                            \
+                a[j] = a[j - 1];                                                                 \
+                j--;                                                                             \
+            }                                                                                    \
+            a[j] = v;                                                                            \
+        }                                                                                        \
+    }                                                                                            \
+    static void NAME(uint8_t *base, size_t n) {                                                  \
+        BITS small[16];                                                                          \
+        BITS *a = n <= 16 ? small : (BITS *) malloc(2 * n * sizeof(BITS));                       \
+        if (!a) { fputs("loft: out of memory\n", stderr); abort(); }                            \
+        memcpy(a, base, n * sizeof(BITS));                                                       \
+        if (n <= 16) {                                                                           \
+            NAME##_ins(a, n);                                                                    \
+        } else {                                                                                 \
+            for (size_t lo = 0; lo < n; lo += 16) NAME##_ins(a + lo, n - lo < 16 ? n - lo : 16); \
+            BITS *src = a, *dst = a + n;                                                         \
+            for (size_t w = 16; w < n; w *= 2) {                                                 \
+                for (size_t lo = 0; lo < n; lo += 2 * w) {                                       \
+                    size_t mid = lo + w < n ? lo + w : n, hi = lo + 2 * w < n ? lo + 2 * w : n;  \
+                    size_t i = lo, j = mid, k = lo;                                              \
+                    while (i < mid && j < hi) dst[k++] = NAME##_lt(src[j], src[i]) ? src[j++] : src[i++]; \
+                    while (i < mid) dst[k++] = src[i++];                                         \
+                    while (j < hi) dst[k++] = src[j++];                                          \
+                }                                                                                \
+                BITS *t = src;                                                                   \
+                src = dst;                                                                       \
+                dst = t;                                                                         \
+            }                                                                                    \
+            if (src != a) memcpy(a, src, n * sizeof(BITS));                                      \
+        }                                                                                        \
+        memcpy(base, a, n * sizeof(BITS));                                                       \
+        if (a != small) free(a);                                                                 \
+    }
+LOFT_FLOAT_SORT(loft_sort_f32, uint32_t, float)
+LOFT_FLOAT_SORT(loft_sort_f64, uint64_t, double)
 
 /* The store a text-vector sort compares in (qsort has no context). */
 static LOFT_TLS loft_store_t *loft_sort_store = 0;
@@ -3261,12 +3303,15 @@ static int loft_cmp_text_rec(const void *a, const void *b) {
     memcpy(&x, a, 4);
     memcpy(&y, b, 4);
     loft_store_t *s = loft_sort_store;
-    return loft_str_cmp(loft_store_str(s, x), loft_store_str(s, y));
+    /* `@FR-E-NullArg`: the order of `<` — a null text before every text, `""` included
+     * (loft#2236); equal texts are one value, so `qsort`'s instability is not observable. */
+    loft_str a_ = loft_store_str(s, x), b_ = loft_store_str(s, y);
+    return loft_text_lt(a_, b_) ? -1 : loft_text_lt(b_, a_) ? 1 : 0;
 }
 
 /* OpSortVector (vector::sort_vector, sort_text_vector): ascending, by the element's width and
- * kind — a text by its bytes, a float by its value with a NaN last, a byte or short by its
- * stored code. */
+ * kind — a text and a float in the order of `<` (null first, `@FR-E-NullArg`), a float stably
+ * (`loft_sort_f32`/`_f64`), a byte or short by its stored code. */
 static void loft_vec_sort(loft_ref v, uint32_t size, int is_float, int is_text) {
     int64_t n = loft_vec_len(v);
     if (n < 2) return;
@@ -3280,8 +3325,10 @@ static void loft_vec_sort(loft_ref v, uint32_t size, int is_float, int is_text) 
         size = 4;
     } else if (size == 1) cmp = loft_cmp_u8;
     else if (size == 2) cmp = loft_cmp_u16;
-    else if (size == 4) cmp = is_float ? loft_cmp_f32 : loft_cmp_i32;
-    else if (size == 8) cmp = is_float ? loft_cmp_f64 : loft_cmp_i64;
+    else if (size == 4 && is_float) { loft_sort_f32((uint8_t *) base, (size_t) n); return; }
+    else if (size == 8 && is_float) { loft_sort_f64((uint8_t *) base, (size_t) n); return; }
+    else if (size == 4) cmp = loft_cmp_i32;
+    else if (size == 8) cmp = loft_cmp_i64;
     if (cmp) qsort(base, (size_t) n, size, cmp);
 }
 
