@@ -3171,8 +3171,35 @@ static void loft_vec_sort(loft_ref v, uint32_t size, int is_float, int is_text) 
 }
 
 /* OpAppendTextBytes (Stores::append_text_bytes): the bytes [lo, hi) of `t` appended to a
- * `vector<u8>` (the caller proved 0 <= lo <= hi <= size(t)). */
+ * `vector<u8>` (the caller proved 0 <= lo <= hi <= size(t)).  Room for all of them reserved once,
+ * then one copy and one length: the byte-copy rewrite (`byte_copy.rs`) turns a loft loop into this
+ * call, so it must not be that loop again.  A text read out of the vector's own store moves with
+ * the buffer when the reservation grows it, so it is found again by its offset.  Where the room
+ * is not there after the reservation — a locked store, an absent vector — each byte takes the
+ * ordinary append, which answers those cases as before. */
 static void loft_append_text_bytes(loft_ref v, loft_str t, int64_t lo, int64_t hi) {
+    if (hi > (int64_t) t.len) hi = (int64_t) t.len;
+    if (lo >= 0 && hi > lo && v.store_nr != 0xFFFF && v.rec != 0 && v.pos != 0) {
+        uint32_t n = (uint32_t) (hi - lo);
+        loft_store_t *s = loft_store_of(v);
+        const uint8_t *src = (const uint8_t *) t.p + lo;
+        int inside = src >= s->buf && src < s->buf + (size_t) s->size * 8;
+        size_t off = inside ? (size_t) (src - s->buf) : 0;
+        loft_vec_reserve_more(v, (int64_t) n, 1);
+        s = loft_store_of(v);
+        uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+        if (r != 0 && !s->read_only) {
+            int32_t claimed;
+            memcpy(&claimed, loft_at(s, r, 0), 4);
+            uint32_t len = loft_u32(s, r, 4);
+            if (claimed > 0 && (uint64_t) len + n + 8 <= (uint64_t) claimed * 8) {
+                if (inside) src = s->buf + off;
+                memmove(loft_at(s, r, 8 + len), src, n);
+                loft_set_u32(s, r, 4, len + n);
+                return;
+            }
+        }
+    }
     for (int64_t i = lo; i < hi && i < (int64_t) t.len; i++) {
         loft_ref e = loft_vec_append(v, 1);
         if (e.rec == 0) return;
