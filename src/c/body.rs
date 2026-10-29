@@ -171,6 +171,9 @@ pub(crate) struct FnWriter<'a> {
     /// admitted under it, which `hold_vectors` binds.
     grown_headers: std::collections::HashSet<String>,
     pending_grown: Vec<crate::opt::writes::PathKey>,
+    /// The grown headers the statement being emitted handed to a `__kh` twin, which kept them
+    /// current: the refresh after it skips them.
+    kh_passed: std::collections::HashSet<String>,
     /// The record scalars each enclosing loop reads once before it (`@FR-R-Scalar`): the
     /// `(variable, field offset)` key, the local holding it and its shape, innermost last.
     scalars: Vec<Vec<(crate::opt::hoist::ScalarKey, String, CType)>>,
@@ -544,6 +547,7 @@ impl<'a> FnWriter<'a> {
             headers: Vec::new(),
             grown_headers: std::collections::HashSet::new(),
             pending_grown: Vec::new(),
+            kh_passed: std::collections::HashSet::new(),
             push_heads: Vec::new(),
             vr: value::VrFn::of(cx, d).map(Box::new),
             widening: None,
@@ -673,6 +677,15 @@ impl<'a> FnWriter<'a> {
             );
         }
         Ok(self)
+    }
+
+    /// A `__kh` twin (`super::KH_BIT`): its caller's header `(*khp)`, in the input frame, is a
+    /// grown header — derived again through the pointer after every growth statement.
+    pub(crate) fn kept_growth(mut self, on: bool) -> Self {
+        if on {
+            self.grown_headers.insert("(*khp)".to_string());
+        }
+        self
     }
 
     pub(crate) fn inputs(
@@ -2464,6 +2477,7 @@ impl<'a> FnWriter<'a> {
         if self.grown_headers.is_empty() {
             return;
         }
+        let passed = std::mem::take(&mut self.kh_passed);
         let Some(xs) = crate::opt::apart::growth_args(op, self.cx.data) else {
             return;
         };
@@ -2472,7 +2486,12 @@ impl<'a> FnWriter<'a> {
                 .headers
                 .iter()
                 .flat_map(|f| f.iter())
-                .filter(|(p, h, _)| p.0 == x && p.1.is_empty() && self.grown_headers.contains(h))
+                .filter(|(p, h, _)| {
+                    p.0 == x
+                        && p.1.is_empty()
+                        && self.grown_headers.contains(h)
+                        && !passed.contains(h)
+                })
                 .map(|(_, h, _)| h.clone())
                 .collect();
             for h in held {
@@ -4443,9 +4462,21 @@ impl<'a> FnWriter<'a> {
         if let Some(i) = dropped {
             xs.remove(i);
         }
-        // `@FR-R-Inputs`: a callee whose every header input this body holds takes them.
+        // `@FR-R-Header`'s kept-twin clause: a callee handed a vector this body holds a GROWN
+        // header for takes that header by pointer and keeps it current; no refresh follows.
         let mut mask = places;
-        if super::native_c(def.name()).is_none()
+        if places == 0
+            && super::native_c(def.name()).is_none()
+            && args.len() < 64
+            && let Some(h) = self.kept_header_arg(d, args)
+        {
+            xs.push(format!("&{h}"));
+            self.kh_passed.insert(h);
+            mask |= super::KH_BIT;
+        }
+        // `@FR-R-Inputs`: a callee whose every header input this body holds takes them.
+        if mask & super::KH_BIT == 0
+            && super::native_c(def.name()).is_none()
             && args.len() < 64
             && !self.apr_twin_call(d, args)
             && let Some(headers) = self.twin_headers(d, args)
@@ -4486,6 +4517,26 @@ impl<'a> FnWriter<'a> {
             }
             c => E::new(call, kind_of(c)),
         })
+    }
+
+    /// The grown header (with its base) an enclosing frame holds for the vector argument of
+    /// `d`'s kept-twin position (`opt::apart::kept_growth_param`), when there is one.
+    fn kept_header_arg(&self, d: u32, args: &[Value]) -> Option<String> {
+        if self.grown_headers.is_empty() || self.gen_elem.is_some() {
+            return None;
+        }
+        let k = crate::opt::apart::kept_growth_param(self.cx.data, d)?;
+        let Value::Var(x) = args.get(k)?.unspan() else {
+            return None;
+        };
+        self.headers
+            .iter()
+            .rev()
+            .flat_map(|f| f.iter())
+            .find(|(p, h, base)| {
+                p.0 == *x && p.1.is_empty() && *base && self.grown_headers.contains(h)
+            })
+            .map(|(_, h, _)| h.clone())
     }
 
     /// The headers `d`'s `__inv` twin takes for a call with `args`, as native's

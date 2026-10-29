@@ -645,3 +645,95 @@ fn apart_headers_with(
     );
     kept
 }
+
+/// `@FR-R-Header`'s growth half, the KEPT-TWIN clause (C): the parameter position of function
+/// `d`'s one vector parameter when `d` may take its caller's header for that vector by POINTER
+/// and keep it current — `d` is a loft body with no `yield`, `par`, `CallRef` or function value;
+/// every other parameter is a scalar or a text (so nothing else it is handed names a store);
+/// it answers no reference; and its body mentions the vector only as the growth walk admits:
+/// reads, in-place scalar element writes, and growth statements (`growth_args`), each of which
+/// the twin follows by deriving the header again through the pointer.  A body that never grows
+/// the vector is left to the read-only `__inv` twin.  `None` for anything else.
+pub(crate) fn kept_growth_param(data: &Data, d: u32) -> Option<usize> {
+    if crate::env_once!(std::env::var("LOFT_NO_KEPT_GROWTH").is_ok_and(|v| v != "0")) {
+        return None;
+    }
+    use crate::data::Type;
+    let def = data.def(d);
+    let Value::Block(body) = def.code() else {
+        return None;
+    };
+    if crate::data::is_dbref(def.returned()) || matches!(def.returned().base(), Type::Iterator(..))
+    {
+        return None;
+    }
+    if body.operators.iter().any(|op| {
+        op.any_node(&mut |n| {
+            matches!(
+                n,
+                Value::Yield(_)
+                    | Value::Parallel(_)
+                    | Value::CallRef(..)
+                    | Value::FnRef(..)
+                    | Value::FnRefDnr(_)
+            )
+        })
+    }) {
+        return None;
+    }
+    let vars = def.variables();
+    let mut vector = None;
+    for (i, a) in def.attributes().iter().enumerate() {
+        let tp = &a.typedef;
+        match tp.base() {
+            Type::Vector(..) if !matches!(tp, Type::RefVar(_)) => {
+                if vector.is_some() {
+                    return None;
+                }
+                vector = Some(i);
+            }
+            Type::Integer(_)
+            | Type::Float
+            | Type::Single
+            | Type::Boolean
+            | Type::Character
+            | Type::Text(_)
+            | Type::Enum(_, false, _) => {}
+            _ => return None,
+        }
+    }
+    let k = vector?;
+    let p = u16::try_from(k).ok()?;
+    if (p as usize) >= vars.var_count() || vars.is_captured(p) || !vars.is_argument(p) {
+        return None;
+    }
+    let placed = HashSet::new();
+    let facts = StoreFacts {
+        vars,
+        placed: &placed,
+        adopted: None,
+        owned: None,
+        assumed: &[],
+    };
+    let owners: HashSet<u16> = [p].into_iter().collect();
+    let mut cache = HashMap::new();
+    let mut walk = ApartWalk {
+        data,
+        facts: &facts,
+        owners: &owners,
+        tainted: HashSet::new(),
+        writers: HashSet::new(),
+        cache: &mut cache,
+        owned: None,
+        growth: true,
+        depth: 0,
+        grown: HashSet::new(),
+        names: HashMap::new(),
+    };
+    walk.list(&body.operators, Ctx::Discard);
+    let ok = !walk.tainted.contains(&p)
+        && walk.grown.contains(&p)
+        && walk.names.get(&p).is_none_or(|n| n.len() <= 1);
+    crate::rewrite_census::fired("R-Header/kept-growth", usize::from(ok));
+    ok.then_some(k)
+}

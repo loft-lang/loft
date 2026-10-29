@@ -261,6 +261,12 @@ pub(crate) const APR_BIT: u64 = 1 << 61;
 /// record parameters as values (`const loft_ap_<T> *`) and no return buffer.
 pub(crate) const APV_BIT: u64 = 1 << 60;
 
+/// The mask bit of a `__kh` twin (`@FR-R-Header`'s growth half, the kept-twin clause): the
+/// function written again taking its caller's header for its one vector parameter by pointer
+/// (`loft_vh *khp`), reading through it and deriving it again after each growth, so the
+/// caller's header is current when the call returns (`opt::apart::kept_growth_param`).
+pub(crate) const KH_BIT: u64 = 1 << 59;
+
 /// The record collections beside a plain vector the C carries; each layout is described in
 /// `loft_keyed.h`.  An `array` and an `ordered` are the forms a vector and a sorted take when
 /// their element type is shared (`@FR-Col-Group`, a stored reference).  A `spatial` and a
@@ -1146,15 +1152,16 @@ pub(crate) fn type_word(tp: &Type) -> String {
 /// — `--native`'s `_st` twins.  Mask 0 is the function itself.
 /// An `__inv` twin ([`INV_BIT`]) adds `__inv` after the place mask's name.
 pub(crate) fn twin_name(data: &Data, d: u32, mask: u64) -> String {
-    let places = mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT;
+    let places = mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT & !KH_BIT;
     let inv = if mask & INV_BIT == 0 { "" } else { "__inv" };
+    let kh = if mask & KH_BIT == 0 { "" } else { "__kh" };
     let nk = if mask & NK_BIT == 0 { "" } else { "__nk" };
     let apr = if mask & APR_BIT == 0 { "" } else { "__apr" };
     let apv = if mask & APV_BIT == 0 { "" } else { "__apv" };
     if places == 0 {
-        format!("{}{inv}{nk}{apr}{apv}", c_name(data, d))
+        format!("{}{inv}{nk}{apr}{apv}{kh}", c_name(data, d))
     } else {
-        format!("{}_pl{places}{inv}{nk}{apr}{apv}", c_name(data, d))
+        format!("{}_pl{places}{inv}{nk}{apr}{apv}{kh}", c_name(data, d))
     }
 }
 
@@ -2264,7 +2271,7 @@ fn small_function(statements: usize) -> bool {
 #[expect(clippy::too_many_lines)]
 fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     let data = cx.data;
-    let places = mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT;
+    let places = mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT & !KH_BIT;
     let def = data.def(d);
     // A `#c` binding (@PLN24): the C function itself, called by its declared signature.
     if def.code() == &Value::Null && !def.c_sig.is_empty() {
@@ -2374,7 +2381,23 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         let t = cx.ap2_ctype(*rec).ok_or("an __apv twin of no apart type")?;
         params.push(format!("{t} *loft_apo"));
     }
-    let inputs = inv_inputs(cx, d, mask, &mut params)?;
+    let mut inputs = inv_inputs(cx, d, mask, &mut params)?;
+    // A `__kh` twin: the caller's header for its vector parameter, by pointer — held, with its
+    // base, and derived again through the pointer after each growth (`kept`).
+    let kept = mask & KH_BIT != 0;
+    if kept {
+        let k = crate::opt::apart::kept_growth_param(data, d)
+            .ok_or("a __kh twin of a function that keeps no header")?;
+        params.push("loft_vh *khp".to_string());
+        inputs.push((
+            (
+                u16::try_from(k).map_err(|_| "a parameter out of range")?,
+                Vec::new(),
+            ),
+            "(*khp)".to_string(),
+            true,
+        ));
+    }
     let params = if params.is_empty() {
         "void".to_string()
     } else {
@@ -2402,6 +2425,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     let body = body::FnWriter::new(cx, d, shapes, ret)
         .places(places)
         .inputs(inputs)
+        .kept_growth(kept)
         .nokeep(mask & NK_BIT != 0)?
         .apart(mask & APR_BIT != 0)
         .apart_value(mask & APV_BIT != 0)

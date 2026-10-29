@@ -1686,7 +1686,33 @@ static void loft_vec_prealloc(loft_ref v, uint32_t count, uint32_t size) {
 /* vector_append: room for one more element of `size`; the reference to its slot.  The
  * length is not bumped: a push bumps it once its value is written (append_done), a new record
  * once it is finished (vector_finish). */
-static loft_ref loft_vec_append(loft_ref v, uint32_t size) {
+static loft_ref loft_vec_append_slow(loft_ref v, uint32_t size);
+
+/* `vector::append`: room for one more element of `size` bytes at the end, the length unchanged
+ * (`loft_vec_finish` counts it).  The common case — a block with room — inline: one store
+ * lookup the code after it can share; a first block or a growth out of line. */
+LOFT_HOT_INLINE loft_ref loft_vec_append(loft_ref v, uint32_t size) {
+    if (v.store_nr != 0xFFFF && v.rec != 0) {
+        loft_store_t *s = loft_store_of(v);
+        uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+        if (r != 0) {
+            uint32_t len = loft_u32(s, r, 4);
+            int32_t claimed;
+            memcpy(&claimed, loft_at(s, r, 0), 4);
+            if ((uint64_t) (len + 1) * size + 8 <= (uint64_t) claimed * 8) {
+                LOFT_WRITE_CHECK(s);
+                loft_ref e;
+                e.store_nr = v.store_nr;
+                e.rec = r;
+                e.pos = 8 + len * size;
+                return e;
+            }
+        }
+    }
+    return loft_vec_append_slow(v, size);
+}
+
+static loft_ref loft_vec_append_slow(loft_ref v, uint32_t size) {
     if (v.store_nr == 0xFFFF || v.rec == 0) return loft_ref_null();
     loft_store_t *s = loft_store_of(v);
     LOFT_WRITE_CHECK(s);
@@ -2876,7 +2902,24 @@ static uint32_t loft_vec_reached(loft_ref v, uint32_t size) {
  * A vector that is the whole content of its store's root record (a one-field root type) whose
  * elements own heap resets the store instead — made again with the root alone, the vector
  * pre-sized to the room it had reached — rather than walking every element. */
-static void loft_vec_clear_release(const loft_tdesc *T, uint32_t loft_ntypes, loft_ref v) {
+static void loft_vec_clear_release_body(const loft_tdesc *T, uint32_t loft_ntypes, loft_ref v);
+
+/* `v = []`: the common case — a vector already empty, which has nothing to release and whose
+ * clear is nothing — answered inline; everything else out of line. */
+LOFT_HOT_INLINE void loft_vec_clear_release(const loft_tdesc *T, uint32_t loft_ntypes, loft_ref v) {
+    if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return;
+#ifndef LOFT_FOREIGN
+    {
+        loft_store_t *s = loft_store_of(v);
+        uint32_t cur = loft_u32(s, v.rec, v.pos);
+        if (cur == 0) return;
+        if (cur != 0xFFFFFFFFu && loft_u32(s, cur, 4) == 0) return;
+    }
+#endif
+    loft_vec_clear_release_body(T, loft_ntypes, v);
+}
+
+static void loft_vec_clear_release_body(const loft_tdesc *T, uint32_t loft_ntypes, loft_ref v) {
     if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return;
     loft_store_t *s = loft_store_of(v);
 #ifdef LOFT_FOREIGN

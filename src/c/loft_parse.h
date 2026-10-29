@@ -658,19 +658,32 @@ static int loft_pr_struct(loft_pw *w, loft_jp *p, loft_werrs *errs, uint16_t tp,
     const loft_ptype *t = &w->P[tp];
     uint32_t fld = to.rec == 0 ? 0 : to.pos;
     uint32_t rec = to.rec == 0 ? loft_claim(loft_store_of(to), (t->size + 7u) / 8u) : to.rec;
-    uint8_t *found = (uint8_t *) calloc(t->n ? t->n : 1, 1);
-    if (!found) { fputs("loft: out of memory\n", stderr); abort(); }
+    /* Which fields the text gave: on the stack for an ordinary record. */
+    uint8_t found_local[64];
+    uint8_t *found = found_local;
+    if (t->n > sizeof found_local) {
+        found = (uint8_t *) calloc(t->n, 1);
+        if (!found) { fputs("loft: out of memory\n", stderr); abort(); }
+    } else {
+        memset(found_local, 0, sizeof found_local);
+    }
+    /* Members usually come in declaration order (`to_json` writes them so): the search for a
+     * name starts at the field after the last one found. */
+    uint16_t next = 0;
     int ok = 1;
     while (more) {
         loft_text name = { 0, 0, 0 };
         size_t key_at, value_at;
         if (!loft_jp_member(p, &name, &key_at, &value_at, f)) { loft_text_free(&name); ok = 0; break; }
         uint16_t hit = 0xFFFF;
-        for (uint16_t k = 0; k < t->n; k++)
+        for (uint16_t j = 0; j < t->n; j++) {
+            uint16_t k = (uint16_t) (next + j < t->n ? next + j : next + j - t->n);
             if (strlen(t->fields[k].name) == name.len && memcmp(t->fields[k].name, name.p, name.len) == 0) {
                 hit = k;
+                next = (uint16_t) (k + 1 < t->n ? k + 1 : 0);
                 break;
             }
+        }
         if (hit != 0xFFFF) {
             const loft_pfield *fd = &t->fields[hit];
             loft_ref target = to;
@@ -708,7 +721,7 @@ static int loft_pr_struct(loft_pw *w, loft_jp *p, loft_werrs *errs, uint16_t tp,
         base.pos = fld;
         loft_pw_absent_fields(w, tp, base, found);
     }
-    free(found);
+    if (found != found_local) free(found);
     return ok;
 }
 
@@ -722,6 +735,19 @@ static int loft_pr_into(loft_pw *w, loft_jp *p, loft_werrs *errs, size_t value_a
     if ((t->kind == LOFT_P_VECTOR || t->kind == LOFT_P_KEYED) && open == LOFT_OPEN_ARRAY)
         return loft_pr_array(w, p, errs, tp, t->elem, rec_tp, field, to, at, f);
     if (record && open == LOFT_OPEN_OBJECT) return loft_pr_struct(w, p, errs, tp, rec_tp, field, to, f);
+    /* A number into a numeric field: read straight into the slot through the writer the walk
+     * would reach (`loft_pw_primitive`); the number reader sets only the kind and the value,
+     * so the general value is neither cleared nor freed. */
+    if ((t->kind == LOFT_P_INT || t->kind == LOFT_P_LONG || t->kind == LOFT_P_FLOAT || t->kind == LOFT_P_SINGLE)
+        && (p->pk.kind == LOFT_JT_NUM || (p->pk.kind == LOFT_JT_TOK && p->pk.tok == '-'))) {
+        loft_jv n;
+        n.kind = LOFT_JV_NULL;
+        n.i = 0;
+        n.n = 0.0;
+        if (!loft_jp_number(p, &n, f)) return 0;
+        loft_pw_primitive(&n, t->kind, to, at, errs);
+        return 1;
+    }
     loft_jv v;
     memset(&v, 0, sizeof v);
     if (record && open == LOFT_OPEN_WORD) {
