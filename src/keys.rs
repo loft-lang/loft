@@ -1645,6 +1645,16 @@ pub fn coalesce_left_assoc() -> bool {
     *ON.get_or_init(|| env_set("LOFT_COALESCE_LEFT_ASSOC"))
 }
 
+/// `@FR-M-Once`: a guarded `match` arm folds its guard into its own condition, so the rest of
+/// the match is lowered once (`parser::control::guarded_arm`).  `LOFT_NO_GUARD_ARM=1` places
+/// the rest twice instead — once in the guard's else-branch, once in the pattern test's — the
+/// lowering that grows the match exponentially in its guards; values are the same either way,
+/// so it is the first bisect step for a guarded arm that answers differently.
+pub fn guard_arm_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_GUARD_ARM"))
+}
+
 /// loft#1600 (`@FR-H-Drop`'s scope-end clause with `@FR-B-Scope`), **DEFAULT ON**, both
 /// backends: a heap local every mention of which lies in ONE arm of an `if` is declared in that
 /// arm and released at its end, rather than pre-initialised at the `if`'s scope and released at

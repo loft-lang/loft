@@ -565,14 +565,50 @@ fn set_arm_null_typed(code: &mut Value, typed_null: &Value, result_type: &Type) 
     }
 }
 
+/// One guarded arm of a `match` chain — `pat if guard => body`, whose pattern test is `cmp` and
+/// whose captures are `bindings` — falling to `rest`, the chain of every later arm.
+///
+/// `@FR-M-Once`: the guard is part of its arm's condition, `cmp && { bindings; guard }`, so
+/// `rest` is placed ONCE and a failed guard reaches it as the ordinary fall-through
+/// (`@FR-P-Guard`).  The bindings still run once, only after `cmp` holds, and before the guard
+/// reads them — a slice arm's `..name` materialisation and a PEG cursor advance cannot run
+/// twice.  `LOFT_NO_GUARD_ARM=1` (`keys::guard_arm_enabled`) builds the copying shape instead,
+/// `if cmp { bindings; if guard { body } else rest } else rest`, whose copies compound per
+/// guard; it answers the same values, so it is the bisect switch and nothing more.
+fn guarded_arm(
+    cmp: Value,
+    bindings: Vec<Value>,
+    guard: Value,
+    body: Value,
+    rest: Value,
+    tp: &Type,
+) -> Value {
+    if !crate::keys::guard_arm_enabled() {
+        let guarded = v_if(guard, body, rest.clone());
+        let inner = if bindings.is_empty() {
+            guarded
+        } else {
+            let mut stmts = bindings;
+            stmts.push(guarded);
+            v_block(stmts, tp.clone(), "match_arm")
+        };
+        return v_if(cmp, inner, rest);
+    }
+    let condition = if bindings.is_empty() {
+        guard
+    } else {
+        let mut stmts = bindings;
+        stmts.push(guard);
+        v_block(stmts, Type::Boolean, "match_guard")
+    };
+    v_if(v_if(cmp, condition, Value::Boolean(false)), body, rest)
+}
+
 /// Assemble collected [`PatternArm`]s into the match's if-chain, last arm first.
 ///
-/// A guarded arm lowers to `if <cond> { <bindings>; if <guard> { <body> } else { <rest> } }
-/// else { <rest> }` — captures assigned once, inside the branch their pattern already
-/// selected, before the guard reads them.  The `<rest>` appears twice, as it does in the
-/// enum arm chain this mirrors; only an arm that actually carries a guard pays for it.
-/// Bindings are never duplicated: a slice arm's are a `..name` materialisation and a PEG
-/// cursor advance, neither of which survives being run twice.
+/// A guarded arm with a pattern test is [`guarded_arm`]'s, as in the enum and scalar chains; a
+/// guarded arm with none (a bare binding or `_`) is `{ <bindings>; if <guard> { <body> } else
+/// { <rest> } }`, which places the rest once already.
 fn chain_pattern_arms(arms: Vec<PatternArm>, fallback: Value, result_type: &Type) -> Value {
     // The fn-ref widening `build_scalar_chain` does for a scalar subject, for the
     // pattern subject: an enum arm yielding a non-capturing lambda is the same bare
@@ -589,17 +625,17 @@ fn chain_pattern_arms(arms: Vec<PatternArm>, fallback: Value, result_type: &Type
             };
             continue;
         };
-        // @FR-D-match-26 — the rest is placed twice; `(M-Once)` says once.
-        let rest = chain.clone();
-        let mut guarded = v_if(guard, arm.code, rest);
-        if !arm.bindings.is_empty() {
-            let mut stmts = arm.bindings;
-            stmts.push(guarded);
-            guarded = v_block(stmts, result_type.clone(), "match_arm");
-        }
-        chain = match arm.cond {
-            Some(cond) => v_if(cond, guarded, chain),
-            None => guarded,
+        chain = if let Some(cond) = arm.cond {
+            guarded_arm(cond, arm.bindings, guard, arm.code, chain, result_type)
+        } else {
+            let guarded = v_if(guard, arm.code, chain);
+            if arm.bindings.is_empty() {
+                guarded
+            } else {
+                let mut stmts = arm.bindings;
+                stmts.push(guarded);
+                v_block(stmts, result_type.clone(), "match_arm")
+            }
         };
     }
     chain
@@ -7333,20 +7369,15 @@ impl Parser {
                     }
                     cmp
                 };
-                // guarded arms nest the guard inside the pattern branch.
-                // @FR-D-match-26 — and place the rest twice; `(M-Once)` says once.
                 chain = match &arm.guard {
-                    Some(guard) => {
-                        let guarded = v_if(guard.clone(), arm.code.clone(), chain.clone());
-                        let inner = if arm.bindings.is_empty() {
-                            guarded
-                        } else {
-                            let mut stmts = arm.bindings.clone();
-                            stmts.push(guarded);
-                            v_block(stmts, arm.tp.clone(), "match_arm")
-                        };
-                        v_if(cmp, inner, chain)
-                    }
+                    Some(guard) => guarded_arm(
+                        cmp,
+                        arm.bindings.clone(),
+                        guard.clone(),
+                        arm.code.clone(),
+                        chain,
+                        &arm.tp,
+                    ),
                     None => v_if(cmp, arm.code.clone(), chain),
                 };
             }
@@ -13747,11 +13778,9 @@ impl Parser {
                         || bl.name == "or_pattern")
                 {
                     let range_cond = bl.operators[0].clone();
-                    // @FR-D-match-26 — a guarded arm places the rest twice; `(M-Once)` says once.
                     chain = match guard_opt {
                         Some(guard) => {
-                            let guarded = v_if(guard, arm_code, chain.clone());
-                            v_if(range_cond, guarded, chain)
+                            guarded_arm(range_cond, Vec::new(), guard, arm_code, chain, result_type)
                         }
                         None => v_if(range_cond, arm_code, chain),
                     };
@@ -13767,11 +13796,9 @@ impl Parser {
                 if cond_tp == Type::Null {
                     chain = arm_code;
                 } else {
-                    // @FR-D-match-26 — as the range arm above.
                     chain = match guard_opt {
                         Some(guard) => {
-                            let guarded = v_if(guard, arm_code, chain.clone());
-                            v_if(cond, guarded, chain)
+                            guarded_arm(cond, Vec::new(), guard, arm_code, chain, result_type)
                         }
                         None => v_if(cond, arm_code, chain),
                     };
