@@ -7,8 +7,15 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-Active — design written; the library branch `firewall02-graphics-c` (loft-libs-graphics) is cut
-from `origin/main` `d265125`, nothing built.  Issue: [@PLN208](https://github.com/loft-lang/plans/issues/208).
+Active on loft-libs-graphics branch `firewall02-graphics-c` (from `origin/main` `d265125`).
+Issue: [@PLN208](https://github.com/loft-lang/plans/issues/208).
+
+| Phase | State |
+|---|---|
+| G0 | Done — a `[c] shim` and `[native] crate` coexist; the shim answers on all three backends (a scratch probe, not committed) |
+| G1 | Done — `Font` in loft (`31d41be`), its metrics pinned to fontdue's (`392e212`); 1532 of 1536 comparison cells agree, the four others a symbol font where fontdue misread its Mac Roman table |
+| G2, G3 | Next — the suite is 108/108 on the interpreter and `--native`, 106/108 on the C, the two left being `save_png` and the event queue |
+| G4–G11 | Open |
 
 ## Goal
 
@@ -154,7 +161,7 @@ Each repeats G4–G6's comparisons on its own runner.
   API; the crate's notes leave with it.
 - `loft-libs-graphics/graphics/loft.toml` — `api_compatible_with`, the shim, no `[native]`.
 - loft: `PACKAGES_C_BINDING.md` gains graphics as the dlopen-a-platform-library example;
-  `LIBRARY_BRANCHES.md` lists `firewall02-graphics-c` while it is in flight.
+  `LIBRARY_BRANCHES.md` lists the branch by itself (generated nightly).
 - `CHANGELOG.md` (a library release note), the games' migration note in each game's own repo.
 
 ## See also
