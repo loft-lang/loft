@@ -1748,11 +1748,16 @@ pub fn c_thread_link_args() -> &'static [&'static str] {
 }
 
 /// The system libraries a C backend link names AFTER the program's objects (@PLN203 C8), where a
-/// gcc link resolves them: Winsock's on Windows (`loft_sock.h`; an MSVC `cl` reads it from the
-/// unit's `#pragma`), which a unit that opens no socket never pulls in.  None elsewhere.
+/// gcc link resolves them: on Windows Winsock's (`loft_sock.h`) and the certificate store's the
+/// TLS client reads (`loft_tls.c`) — an MSVC `cl` reads both from the sources' `#pragma` — which
+/// a unit that opens no socket never pulls in.  None elsewhere.
 #[must_use]
 pub fn c_system_link_libs() -> &'static [&'static str] {
-    if cfg!(windows) { &["-lws2_32"] } else { &[] }
+    if cfg!(windows) {
+        &["-lws2_32", "-lcrypt32"]
+    } else {
+        &[]
+    }
 }
 
 /// Does the C runtime have its POSIX host layer here — the sockets, processes, `mmap` and

@@ -68,7 +68,7 @@ LOFT = os.environ.get("LOFT_BIN") or str(ROOT / "target" / "release" / "loft")
 HOST_CC = os.environ.get("LOFT_CC") or os.environ.get("CC") or "cc"
 CC = [HOST_CC, "-std=c99", "-O1", "-DLOFT_CALL_CHAIN", "-pthread"] + (["-ldl"] if sys.platform.startswith("linux") else [])
 # After the objects, where a gcc link resolves it (`platform::c_system_link_libs`).
-SYSTEM_LIBS = ["-lws2_32"] if sys.platform == "win32" else []
+SYSTEM_LIBS = ["-lws2_32", "-lcrypt32"] if sys.platform == "win32" else []
 # MSVC's `cl` (or `clang-cl`), told apart by name as the driver tells it (`c_driver::dialect`):
 # the same flags in its spelling (`c_driver::msvc_args`).  Run it from a developer prompt.
 MSVC = Path(HOST_CC).stem.lower() in ("cl", "clang-cl")
