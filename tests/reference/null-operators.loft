@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PAGE: LOFT.md § The `??` operator and § The `x?` operator — absence is discharged at the
+// @PAGE: LOFT_OPERATORS.md § The `??` operator and § The `x?` operator — absence is discharged at the
 // point of use: `??` names the fallback, `?` takes the type's default, `!` takes none (@C160).
 
 struct Record { optional_field: text?, n: integer }
