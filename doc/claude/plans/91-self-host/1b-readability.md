@@ -227,6 +227,32 @@ NdSet { var: integer, inner: Node },
 NdSet { var, inner } => set(l, b, var, inner),
 ```
 
+**R-2s, against language safety (owner, 2026-10-30: "evaluate this against language safety,
+when will this model break, can we mitigate it?").**  The model is safe while three invariants
+hold; each break below is one of them failing, with what already guards it, the mitigation,
+and the cell that shows it.
+
+- **I1 — a child lives in its host's store.**  Its 4-byte number is meaningful only there.
+- **I2 — only its host ends a child** (a null write, or the host's own release), and nothing
+  reads it afterwards.
+- **I3 — no walk's depth is the data's length.**
+
+| # | where it breaks | how bad | already guarded | mitigation | cell |
+|---|---|---|---|---|---|
+| S1 | a VIEW outlives a write: `l = t.left; t.left = null` (or a reassignment that frees the old child and mints a new one) leaves `l` naming a released record — I2 | silent use-after-free; the worst | `@C86` materialises a projection when its container is reshaped; nothing yet calls an out-of-line write a reshape | (a) a non-null write overwrites the EXISTING child in place — copy the value into a fresh record, release the old child's claims, then move the fresh bytes into the old record number — so a view stays valid and sees the new value, exactly as an inline field's view does; (b) a null write is a reshape: a live view rooted at the field is materialised (the scope pass, as for a container) or the write is refused, as a reshape under a live `&` is; (c) the released child is entombed (`@FR-H-Removed`), so any remaining reference reads null, not freed bytes | the S1 lines, values by hand, `LOFT_STRICT_STORES=1` and `LOFT_POISON=1`, all three backends |
+| S2 | a long chain, `struct List { v: integer, next: List? }` of 100 000 nodes: copy (`allocation.rs:4531`), equality (`eq_walk`), format, parse, the claims validator and the C runtime's `loft_copy_claims` all recurse once per level — I3 | a stack overflow: a crash, loud | release is iterative (`remove_claims` collects `OwnedChild` in a worklist) | each walker iterates its LAST out-of-line field instead of recursing on it (a chain becomes a loop) and keeps an explicit stack for the rest; a step of its own before the default flips | a 1 000 000-node list built, copied, compared, formatted, parsed back and released, all three backends, under the 2 GiB ceiling |
+| S3 | a copy path that moves a host's bytes without the claims walk would carry a record number into a store where it names another record — I1 | silent corruption | the child counts as heap (`derive_facts`, `allocation.rs:5571`: `ChildRec → (true, true)`), so every flat-copy fast path takes the claims walk; release refuses a child outside its host's store (`owned_edge_in_store`, `refuse_owned_edge`); the `[cr-check]` validator (`allocation.rs:3296`) | under `LOFT_STRICT_STORES=1`, the read (`ref_from_child_rec`) also checks the number is a live record of the host's store; the store exchange (`@FR-H-SwapIn`) already declines a type holding one (`tree_holds_no_stored_refs` answers no) | a host copied into another store, a vector of hosts grown and moved, a placed buffer, a `par` result returned — each then read and freed |
+| S4 | an overlapping write: `t.left = t` or `t.left = t.left.left` — the value is inside what the write releases — I2 | silent use-after-free | the bytecode writer's own rule for stores (`@FR-O-Detach`: release after the value is read) | S1(a)'s order already covers it: the value is copied into a fresh record BEFORE the old child's claims go | both lines, values by hand, `LOFT_POISON=1` |
+| S5 | an out-of-line field in a KEY (a hash, sorted or index element keyed on it): the search walk panics on a `ChildRec` (`database/search.rs:220`) | a crash | none | a key field may not be out-of-line: a compile-time refusal naming the field, as other unkeyable types are | the refusal |
+| S6 | binary file I/O of a host (`f#write(t)`, `f#read`): `database/io.rs:308`, `:508` panic on a `ChildRec` | a crash | none | the arms written (the child's record follows its host in the file), or until then a compile-time refusal of binary I/O for such a type — never a run-time panic | write and read back, value equal |
+| S7 | a store merged or upgraded: a `par` worker's result, an image read back under a changed schema | silent if a number is not remapped | a copy into the parent goes through the claims walk, which claims the child afresh; a whole store adopted keeps its numbers; `upgrade.rs` knows `ChildRec` | a cell per path, before the default flips | a `par` worker building a tree; an image of a type that gains an out-of-line field |
+| S8 | a `reference<Tree>` (a LINK) to a child: the child released by a null write while the link lives | silent use-after-free | `@FR-H-Removed` reads a removed record as null (D6, closed) — if the child's release entombs it | S1(c) — the release entombs | the link read after the null write: null |
+
+What the model never does: a child is never shared (every write copies, so no cycle can be built
+from children; sharing is a link), and the 4-byte form never leaves its field (a variable always
+holds a full reference).  The steps below take S1(a)/(b)/(c) in step 5, S3's strict check and S5/S6
+in step 6, and S2 as a step of its own before the default flips.
+
 **R-2s, the steps.**  Each step lands green on its own.  Until the last-but-one the feature is
 behind an opt-in switch (`LOFT_OUT_OF_LINE=1`), so the default keeps refusing a recursive type
 exactly as today, and every step's cells run with the switch on.
@@ -255,19 +281,22 @@ exactly as today, and every step's cells run with the switch on.
    interpreter.
 5. **Write it.**  `src/parser/objects.rs`: a constructor builds the child in place with
    `OpChildRec(field, tp)` (`default/01_code.loft:1582`, `Stores::new_child_rec`,
-   `structures.rs:1633`) and fills it as a literal; an assignment of a value copies into a fresh
-   child (`OpCopyRecord`); a null assignment releases it (the `remove_claims` arm,
-   `database/allocation.rs:636`, already cascades).  The move of a fresh same-store record is a
-   later optimisation: copying first is always correct.  Cells: the write block above, values
-   and lengths by hand, `LOFT_STRICT_STORES=1`, no leak.
+   `structures.rs:1633`) and fills it as a literal.  An assignment of a value to a PRESENT child
+   overwrites it in place (S1(a)): the value copied into a fresh record, the old child's claims
+   released, the fresh bytes moved into the old record number; to an absent child it mints one.
+   A null assignment releases the child, entombed (S1(c)), and is a reshape for the views rooted
+   at the field (S1(b), the scope pass's view walk).  The move of a fresh same-store record is a
+   later optimisation: copying first is always correct.  Cells: the write block above and S1,
+   S4, S8, values and lengths by hand, `LOFT_STRICT_STORES=1`, `LOFT_POISON=1`, no leak.
 6. **The walkers.**  Follow-then-recurse with `content`'s own routine: the two format arms
    (`database/format.rs:1731`, `:2497`, today the debug shape `ChildRec(rec)`), the text parse
    (`format.rs:441`, `record_text_parse`), binary read and write (`database/io.rs:308`, `:508`,
    which panic on a `ChildRec` today), the search walk (`database/search.rs:220`).  A closure
    record keeps its own shape (its content type is a closure record's).  Equality
    (`database/equality.rs:83`), copy and release (`allocation.rs`), the image
-   (`ir_store.rs:664`, `ir_read.rs:1022`) and the descriptor already follow the child.  Cells:
-   format, JSON, parse back (`parse(format(e)) == e`), binary write and read back.
+   (`ir_store.rs:664`, `ir_read.rs:1022`) and the descriptor already follow the child.  The
+   strict read check (S3), the key refusal (S5).  Cells: format, JSON, parse back
+   (`parse(format(e)) == e`), binary write and read back (S6), S3, S5, S7.
 7. **The backends.**  `--native`: the generator already lowers the two operators for closure
    records (`src/generation/mod.rs`, `src/native.rs`); the field read and write are checked
    there.  The C: `child_record_operator` (`src/c/body/misc.rs:250`, `loft_ref_from_child_rec`,
@@ -275,6 +304,9 @@ exactly as today, and every step's cells run with the switch on.
    Cells: every cell of steps 2–6 on all three backends.
 8. **The tools.**  The debugger's value display and the LSP's hover show the field as its
    type (`Node`), never `child_rec<Node>`.
+8b. **No walk deeper than the data's nesting (S2).**  Copy, equality, format, parse, the
+   validator and the C runtime's copy iterate the last out-of-line field and keep an explicit
+   stack for the rest.  Cell: the 1 000 000-node list, all three backends.
 9. **On by default.**  The switch becomes the opt-out `LOFT_NO_OUT_OF_LINE`; `LOFT.md` gains the
    recursive types; the refusal's old cure (`use reference<T>`) is reworded to name both — a
    child (out-of-line, by value) or a link (`reference<T>`); X24 closes.
