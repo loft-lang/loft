@@ -126,6 +126,17 @@ impl Scopes<'_> {
         tp: &Type,
         to_scope: u16,
     ) -> Vec<Value> {
+        // loft#2282 — the sweep to the frame's own scope is handed the DECLARED return type (an
+        // explicit `return`, and the body block, whose result the parser set to it), and its
+        // deps number ATTRIBUTES.  Every reader below takes them as frame variables.
+        let in_frame;
+        let tp = if to_scope == 1 && self.d_nr != u32::MAX && *tp == data.def(self.d_nr).returned {
+            in_frame =
+                text_buffer_in_frame(tp, data.def(self.d_nr).attributes(), &function.arguments());
+            &in_frame
+        } else {
+            tp
+        };
         // loft#1476 — a closure record the return delivers on SOME path is exempt from the
         // frame's free on ALL of them, because `record_leaves_frame` is one static answer to a
         // per-run question.  The run that does not deliver it then leaks the record and the
@@ -1554,4 +1565,46 @@ fn sink_return_branch(tmp: u16, expr: &Value, data: &Data) -> Option<Value> {
     let mut out = expr.clone();
     sink(&mut out, tmp, data);
     Some(out)
+}
+
+/// loft#2282 — `tp`, a definition's declared return type, with a dep on its hidden TEXT
+/// buffer renumbered from the attribute index to the frame variable that buffer is.
+///
+/// `text_return` adds the `&text` buffer (`__work_1`) as an attribute after the parameters,
+/// while its variable is the local it promoted, numbered after the body's own locals.  Read as
+/// a frame number, its attribute index named a LOCAL, and the sweep took that local for the
+/// returned value — a fn-ref there was never released.  Attribute `i` is the `i`-th ARGUMENT
+/// variable in variable order; matched by position because an argument variable can be
+/// renamed.  Every other dep keeps its raw value: a declared parameter is variable `i` for
+/// attribute `i` already, and the struct return buffer has its own renumbering (`__retbuf`
+/// reaches the body as `__ref_N`).  Where arguments and attributes do not pair up one to one,
+/// nothing changes.  A tuple member keeps its own list.
+fn text_buffer_in_frame(tp: &Type, attrs: &[crate::data::Attribute], args: &[u16]) -> Type {
+    if let Type::Tuple(elems) = tp {
+        return Type::Tuple(
+            elems
+                .iter()
+                .map(|e| text_buffer_in_frame(e, attrs, args))
+                .collect(),
+        );
+    }
+    let raw = tp.depend();
+    if raw.is_empty() || attrs.len() != args.len() {
+        return tp.clone();
+    }
+    let is_text_buffer = |a: u16| {
+        attrs.get(a as usize).is_some_and(|at| {
+            at.hidden && matches!(&at.typedef, Type::RefVar(t) if matches!(t.base(), Type::Text(_)))
+        })
+    };
+    let frame: Vec<u16> = raw
+        .into_iter()
+        .map(|d| match crate::data::DepEntry::decode(d) {
+            crate::data::DepEntry::Attr(a) if a != u16::MAX && is_text_buffer(a) => {
+                args[a as usize]
+            }
+            _ => d,
+        })
+        .collect();
+    tp.with_deps(&Deps::frame(frame))
 }
