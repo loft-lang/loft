@@ -83,28 +83,52 @@ pub fn read_value(stores: &Stores, slot: Node) -> Value {
         }
         ValueType::Set => Value::Set(
             slot.field_int(stores, ds::NDSET_VAR) as u16,
-            Box::new(read_value(stores, slot.field_child(stores, ds::NDSET_INNER))),
+            Box::new(read_value(
+                stores,
+                slot.field_child(stores, ds::NDSET_INNER),
+            )),
         ),
-        ValueType::Return => Value::Return(Box::new(read_value(stores, slot.field_child(stores, ds::NDRETURN_INNER)))),
+        ValueType::Return => Value::Return(Box::new(read_value(
+            stores,
+            slot.field_child(stores, ds::NDRETURN_INNER),
+        ))),
         ValueType::If => Value::If(
             Box::new(read_value(stores, slot.field_child(stores, ds::NDIF_COND))),
             Box::new(read_value(stores, slot.field_child(stores, ds::NDIF_T))),
             Box::new(read_value(stores, slot.field_child(stores, ds::NDIF_F))),
         ),
-        ValueType::Drop => Value::Drop(Box::new(read_value(stores, slot.field_child(stores, ds::NDDROP_INNER)))),
+        ValueType::Drop => Value::Drop(Box::new(read_value(
+            stores,
+            slot.field_child(stores, ds::NDDROP_INNER),
+        ))),
         ValueType::Iter => Value::Iter(
             slot.field_int(stores, ds::NDITER_VAR) as u16,
-            Box::new(read_value(stores, slot.field_child(stores, ds::NDITER_CREATE))),
-            Box::new(read_value(stores, slot.field_child(stores, ds::NDITER_NEXT))),
-            Box::new(read_value(stores, slot.field_child(stores, ds::NDITER_INIT))),
+            Box::new(read_value(
+                stores,
+                slot.field_child(stores, ds::NDITER_CREATE),
+            )),
+            Box::new(read_value(
+                stores,
+                slot.field_child(stores, ds::NDITER_NEXT),
+            )),
+            Box::new(read_value(
+                stores,
+                slot.field_child(stores, ds::NDITER_INIT),
+            )),
         ),
         ValueType::Tuple => Value::Tuple(read_node_list(stores, slot.field_vec(ds::NDTUPLE_ITEMS))),
         ValueType::TuplePut => Value::TuplePut(
             slot.field_int(stores, ds::NDTUPLEPUT_VAR) as u16,
             slot.field_int(stores, ds::NDTUPLEPUT_IDX) as u16,
-            Box::new(read_value(stores, slot.field_child(stores, ds::NDTUPLEPUT_INNER))),
+            Box::new(read_value(
+                stores,
+                slot.field_child(stores, ds::NDTUPLEPUT_INNER),
+            )),
         ),
-        ValueType::Yield => Value::Yield(Box::new(read_value(stores, slot.field_child(stores, ds::NDYIELD_INNER)))),
+        ValueType::Yield => Value::Yield(Box::new(read_value(
+            stores,
+            slot.field_child(stores, ds::NDYIELD_INNER),
+        ))),
         ValueType::Parallel => {
             Value::Parallel(read_node_list(stores, slot.field_vec(ds::NDPARALLEL_ARMS)))
         }
@@ -165,15 +189,24 @@ pub fn read_type(stores: &Stores, slot: Record) -> Type {
             slot.field_int(stores, ds::TYREF_N) as u32,
             read_deps(stores, slot, ds::TYREF_DEP),
         ),
-        TypeKind::RefVar => Type::RefVar(Box::new(read_type(stores, slot.field_child(stores, ds::TYREFVAR_INNER)))),
+        TypeKind::RefVar => Type::RefVar(Box::new(read_type(
+            stores,
+            slot.field_child(stores, ds::TYREFVAR_INNER),
+        ))),
         TypeKind::Vector => Type::Vector(
-            Box::new(read_type(stores, slot.field_child(stores, ds::TYVECTOR_INNER))),
+            Box::new(read_type(
+                stores,
+                slot.field_child(stores, ds::TYVECTOR_INNER),
+            )),
             read_deps(stores, slot, ds::TYVECTOR_DEP),
         ),
         TypeKind::Routine => Type::Routine(slot.field_int(stores, ds::TYROUTINE_N) as u32),
         TypeKind::Iterator => Type::Iterator(
             Box::new(read_type(stores, slot.field_child(stores, ds::TYITER_STEP))),
-            Box::new(read_type(stores, slot.field_child(stores, ds::TYITER_INNER))),
+            Box::new(read_type(
+                stores,
+                slot.field_child(stores, ds::TYITER_INNER),
+            )),
         ),
         TypeKind::Sorted => Type::Sorted(
             slot.field_int(stores, ds::TYSORTED_N) as u32,
@@ -214,11 +247,17 @@ pub fn read_type(stores: &Stores, slot: Record) -> Type {
         ),
         TypeKind::Function => Type::Function(
             read_type_list(stores, slot.field_recvec(ds::TYFUNC_ARGS, ds::TYPET_STRIDE)),
-            Box::new(read_type(stores, slot.field_child(stores, ds::TYFUNC_RESULT))),
+            Box::new(read_type(
+                stores,
+                slot.field_child(stores, ds::TYFUNC_RESULT),
+            )),
             read_deps(stores, slot, ds::TYFUNC_DEP),
             crate::data::ConstParams::from_bits(slot.field_int(stores, ds::TYFUNC_CONSTS) as u32),
         ),
-        TypeKind::Rewritten => Type::Rewritten(Box::new(read_type(stores, slot.field_child(stores, ds::TYREWRITTEN_INNER)))),
+        TypeKind::Rewritten => Type::Rewritten(Box::new(read_type(
+            stores,
+            slot.field_child(stores, ds::TYREWRITTEN_INNER),
+        ))),
         TypeKind::Tuple => Type::Tuple(read_type_list(
             stores,
             slot.field_recvec(ds::TYTUPLE_ELEMS, ds::TYPET_STRIDE),
@@ -226,7 +265,10 @@ pub fn read_type(stores: &Stores, slot: Record) -> Type {
         // @PLN25 — the `τ?` marker (a box-of-one child, like RefVar). `Type::optional`
         // is the idempotent former (N-Idem); a real in-memory `Optional` never wraps
         // Never/Null, so this reconstructs the written type exactly.
-        TypeKind::Optional => Type::optional(read_type(stores, slot.field_child(stores, ds::TYOPTIONAL_INNER))),
+        TypeKind::Optional => Type::optional(read_type(
+            stores,
+            slot.field_child(stores, ds::TYOPTIONAL_INNER),
+        )),
         TypeKind::Other(d) => panic!("ir_read: unknown TypeT discriminant {d}"),
     }
 }
