@@ -91,11 +91,7 @@ fn build_server(dir: &Path) -> Option<PathBuf> {
         }
     };
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/c/tls");
-    let exe = dir.join(if cfg!(windows) {
-        "test_sshd.exe"
-    } else {
-        "test_sshd"
-    });
+    let exe = dir.join(format!("test_sshd{}", std::env::consts::EXE_SUFFIX));
     let out = loft::platform::process::harness_command(&cc)
         .arg("-std=c99")
         .arg("-O1")
