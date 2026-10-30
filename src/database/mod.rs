@@ -538,6 +538,11 @@ pub struct Stores {
     /// `json_errors()`.  Cleared on every successful `json_parse`;
     /// populated with `format!("{msg} (byte {pos})")` on parse failure.
     pub last_json_errors: Vec<String>,
+    /// `@FR-L-OutOfLine` — the child records a copy has claimed and not yet walked, and how
+    /// deep in [`Stores::copy_claims`] the copy is: the outermost call walks them as a loop,
+    /// so a chain of any length takes no stack per link.
+    pub child_copies: Vec<(DbRef, DbRef, u16)>,
+    pub child_copy_depth: u32,
     /// loft#2079 — the first non-null enum FIELD the running text parse left with no value
     /// (`Stores::write_absent_value`): `record_from_text` answers null for it.
     pub parse_unfilled: Option<String>,
@@ -805,6 +810,8 @@ impl Clone for Stores {
             bridge_text_dest: None,
             const_refs: Vec::new(),
             last_json_errors: Vec::new(),
+            child_copies: Vec::new(),
+            child_copy_depth: 0,
             parse_unfilled: None,
             parallel_ctx: None,
             par_buffer_stack: Vec::new(),
@@ -1590,6 +1597,8 @@ impl Stores {
             bridge_text_dest: None,
             const_refs: Vec::new(),
             last_json_errors: Vec::new(),
+            child_copies: Vec::new(),
+            child_copy_depth: 0,
             parse_unfilled: None,
             parallel_ctx: None,
             par_buffer_stack: Vec::new(),
