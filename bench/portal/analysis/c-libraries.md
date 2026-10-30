@@ -79,6 +79,10 @@ fields, `loft_vec_slice(field, src, lo, hi, 1)`): `check_request` −8.3 % (6.31
 other rows unchanged, same hashes.  Next: write it as a rule (with the foreign-view case) before
 building.
 
+**Tried and dropped (2026-10-30):** one push header held across `head`'s straight-line pushes
+(`buf += [b]`, one to three a call), hand-priced on cbor: `encode` −1 %, `encode_bytes` within
+noise — deriving the header costs what the pushes save.  `head`'s cost is its call and branches.
+
 ### Design: a slice that initialises a field is sliced into it
 
 **Shape.**  A record literal whose vector field is initialised by a value slice,
