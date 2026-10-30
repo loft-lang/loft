@@ -9,6 +9,46 @@ use crate::store::Store;
 use crate::vector;
 use std::fmt::{Debug, Formatter, Write as _};
 
+/// The nesting depth above which a text parse runs on a stack sized to the document
+/// ([`Stores::read_text`]): an ordinary stack carries this many levels with room to spare.
+const DEEP_TEXT_NESTING: usize = 2_000;
+/// The stack one nesting level of the text parse takes, with margin: the reader's and the
+/// walk's frames together.
+const DEEP_TEXT_FRAME: usize = 8 * 1024;
+
+/// How deep `text` nests: the most `{`/`[` open at once outside its strings.  A scan, no parse.
+fn nesting_depth(text: &str) -> usize {
+    let (mut depth, mut max, mut in_str, mut esc) = (0usize, 0usize, false, false);
+    for b in text.bytes() {
+        if in_str {
+            if esc {
+                esc = false;
+            } else if b == b'\\' {
+                esc = true;
+            } else if b == b'"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_str = true,
+            b'{' | b'[' => {
+                depth += 1;
+                max = max.max(depth);
+            }
+            b'}' | b']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    max
+}
+
+// `Stores` crosses to the deep-parse thread by `&mut`; this keeps it able to.
+const _: fn() = || {
+    fn is_send<T: Send>() {}
+    is_send::<crate::database::Stores>();
+};
+
 thread_local! {
     /// `@FR-L-OutOfLine` — the out-of-line child a record's last field holds, left for
     /// [`ShowDb::write`]'s loop: its record, its type and its indent.
@@ -505,6 +545,34 @@ impl Stores {
     /// far as its fault when this answers [`TextErr::Malformed`]; the caller that owes
     /// its program an untouched record restores it ([`Self::record_from_text`]).
     fn read_text(&mut self, text: &str, tp: u16, result: &DbRef) -> Result<(), TextErr> {
+        // `@FR-F-Render-Child` — the reader and the walk go one call deeper per nesting level,
+        // and a chain of out-of-line children nests as deep as it is long.  A document deeper
+        // than an ordinary stack carries is read on a thread whose stack is sized to it; the
+        // reader is the same, so every document reads alike (D-fmt-7).
+        let depth = nesting_depth(text);
+        if depth > DEEP_TEXT_NESTING {
+            let stack = depth.saturating_mul(DEEP_TEXT_FRAME).max(16 << 20);
+            return std::thread::scope(|scope| {
+                std::thread::Builder::new()
+                    .name("loft-deep-parse".to_string())
+                    .stack_size(stack)
+                    .spawn_scoped(scope, || self.read_text_here(text, tp, result))
+                    .map_or_else(
+                        |_| {
+                            Err(TextErr::Malformed(format!(
+                                "a document nested {depth} levels deep could not be given a \
+                                 stack to read it in"
+                            )))
+                        },
+                        |h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e)),
+                    )
+            });
+        }
+        self.read_text_here(text, tp, result)
+    }
+
+    /// [`Self::read_text`] on the current thread's stack.
+    fn read_text_here(&mut self, text: &str, tp: u16, result: &DbRef) -> Result<(), TextErr> {
         let (mut rd, value_at) = crate::json::JParser::open(text, crate::json::Dialect::Lenient);
         let mut failed = Vec::new();
         self.read_into(&mut rd, &mut failed, value_at, tp, tp, u16::MAX, result, 0)
