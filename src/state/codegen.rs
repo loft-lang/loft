@@ -7492,13 +7492,13 @@ fn note_bind(note: &str) {
 /// of the run).
 fn bind_trace_write(line: &str) {
     use std::io::Write as _;
-    static FILE: std::sync::OnceLock<Option<std::sync::Mutex<std::fs::File>>> =
-        std::sync::OnceLock::new();
+    type Sink = std::sync::Mutex<Box<dyn std::io::Write + Send>>;
+    static FILE: std::sync::OnceLock<Option<Sink>> = std::sync::OnceLock::new();
     let file = FILE.get_or_init(|| {
         let path = std::env::var("LOFT_TRACE_BIND").ok()?;
         crate::file_access::create(path.as_str())
             .ok()
-            .map(std::sync::Mutex::new)
+            .map(|f| std::sync::Mutex::new(Box::new(f) as Box<dyn std::io::Write + Send>))
     });
     if let Some(f) = file
         && let Ok(mut f) = f.lock()

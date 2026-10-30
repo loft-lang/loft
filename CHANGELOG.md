@@ -173,6 +173,14 @@ value), a nullable hole into a non-null parameter warns, and a `lit` that does n
 
 ### New
 
+**A struct or enum may hold its own type.**  `struct Tree { key: integer, left: Tree?, right:
+Tree? }` and `enum Expr { Num { v: integer }, Add { l: Expr, r: Expr } }` compile; before, both
+were refused as types that contain themselves.  The field holds a child, a value like any
+other: assigning it copies, `t.left = null` removes the subtree, and `==`, `"{t}"`, `:j` and
+`Tree.parse` treat it as a nested value.  A struct that would contain itself forever —
+`next: Node` with no `?` — is refused and told to write `Node?`.  For one node shared by two
+places, `reference<T>` is still the field to use.
+
 **A recursion that cannot become a loop compiles, with a warning.**  A function that ends by
 calling itself becomes a loop, so it runs to any depth.  Where that cannot be done — it passes a
 fresh value on, say — loft refused the program.  It now compiles: the call stays an ordinary

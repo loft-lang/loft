@@ -279,7 +279,12 @@ first, so the user's function is never called with a null `self`.
 
 ## Deviations
 
-**OPEN: 0.**
+**OPEN: 1.**
+- **D-fmt-7** — (@PLN91, to close before branch `91-self-host` merges) the text parse
+  of an out-of-line chain recurses once per nesting level: `crate::json`'s reader, its
+  `Parsed` tree's drop and `Stores::walk_parsed_into` (and the C `loft_pw_walk`), so reading
+  back a list of about 100 000 links overflows the stack, against `(F-Render-Child)`'s "no walk
+  is deeper than the data's nesting".  Removal: an explicit stack in the reader and the walk.
 
 The full register — every entry, open and closed, with its dates and issue numbers — is
 the companion [formatting-history.md](formatting-history.md).

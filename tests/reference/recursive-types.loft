@@ -1,0 +1,43 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT.md § Recursive types — a field whose type contains its host is a CHILD, stored out
+// of line and copied like any field value; sharing one node is a `reference<T>` (@C159,
+// `@FR-L-OutOfLine`, `@FR-B-OutOfLine`).  The refusal is in recursive-types-refused.loft.
+
+struct Tree {
+  key: integer,
+  left: Tree?,
+  right: Tree?,
+}
+
+enum Expr {
+  Num { v: integer },
+  Add { l: Expr, r: Expr },
+  Neg { e: Expr },
+}
+
+fn eval(e: Expr) -> integer {
+  match e {
+    Num { v } => v,
+    Add { l, r } => eval(l) + eval(r),
+    Neg { e } => -eval(e),
+  }
+}
+
+fn test_a_tree_and_an_expression() {
+  t = Tree { key: 5, left: Tree { key: 3 } };
+  e = Add { l: Num { v: 1 }, r: Neg { e: Num { v: 2 } } };
+  assert(t.left.key == 3 && !t.right, "a child, and an absent one");
+  assert(eval(e) == -1, "1 + -2");
+}
+
+fn test_a_child_is_a_value() {
+  t = Tree { key: 5, left: Tree { key: 3 } };
+  t.left = Tree { key: 4 };   // copied into t's store
+  t.right = t.left;           // a copy: the two subtrees are independent
+  t.right.key = 9;
+  t.left = null;              // the old subtree is released
+  assert(!t.left && t.right.key == 9, "independent children");
+  assert("{t}" == "{{key:5,left:null,right:{{key:9,left:null,right:null}}}}", "renders nested");
+}

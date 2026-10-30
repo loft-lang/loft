@@ -200,7 +200,6 @@ tests/falsified/a-generic-match-falls-back-to-its-variables-null.patch
 tests/falsified/a-generic-nullable-result-at-a-tuple-answers-on-every-path.patch
 tests/falsified/a-generic-reserves-at-its-elements-width.patch
 tests/falsified/a-generic-struct-declares-several-type-variables.patch
-tests/falsified/a-generic-struct-holding-itself-inline-is-refused-as-its-twin-is.patch
 tests/falsified/a-generic-struct-names-itself-regularly.patch
 tests/falsified/a-generic-struct-names-its-type-arguments.patch
 tests/falsified/a-generic-structs-field-checks-and-defaults-reach-every-instance.patch
@@ -277,7 +276,6 @@ tests/falsified/a-null-written-to-a-collection-reaches-every-name-for-it.patch
 tests/falsified/a-numeric-widening-reaches-a-local-and-a-stored-tuple.patch
 tests/falsified/an-uncovered-call-is-refused-naming-what-was-passed-and-what-is-declared.patch
 tests/falsified/an-unknown-subject-of-a-coalesce-reports-once.patch
-tests/falsified/a-pair-of-generic-structs-holding-each-other-inline-is-refused.patch
 tests/falsified/a-parameter-copy-handed-on-to-another-local-is-released-by-the-caller-only.patch
 tests/falsified/a-parameter-copy-handed-on-to-another-local-is-released-by-the-caller-only-refused.patch
 tests/falsified/a-parameter-copy-in-a-loop-body-keeps-the-release-of-every-record-it-displaces.patch

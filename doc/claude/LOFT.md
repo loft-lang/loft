@@ -270,7 +270,7 @@ store on its own line.
 | `spatial<T[x,y]>` / `spatial<T[x,y,z]>` | Spatial keyed collection, 1–3 coordinate axes, Morton/Z-order radix tree |
 | `trie<T[field]>`                   | Text-keyed collection on ONE field — exact lookup, key order, and prefix |
 | `reference<T>`                     | Reference (pointer) to a stored `T` record; assigning re-points it; the record lives as long as the store of its holder — the compiler keeps it there, and refuses the few shapes it cannot keep (a holder that is an element of a parameter's collection, two parameters naming one record) |
-| `reference<T>?`                    | The same pointer, allowed to be absent — a list terminator |
+| `reference<T>?`                    | The same pointer, allowed to be absent.  For a tree or a list that OWNS its nodes, a `T?` field is the child ([§ Recursive types](#recursive-types--a-child-or-a-link)) |
 | `iterator<T, I>`                   | Iterator yielding `T` using internal state `I`        |
 | `fn(T1, T2) -> R`                  | First-class function type                             |
 
@@ -475,6 +475,45 @@ struct Point {
     grey: integer computed(($.r + $.g + $.b) / 3)
 }
 ```
+
+### Recursive types — a child or a link
+
+A field may hold its own type: a tree, an expression, a list.  The field holds a **child**, a
+value like any other field's — no extra syntax, and the compiler stores it out of line
+because it cannot be inline (@C159, [formal/layout.md](formal/layout.md) `(L-OutOfLine)`).
+An enum's other variants end its recursion, so a variant field needs no `?`:
+
+<!-- from tests/reference/recursive-types.loft -->
+```loft
+struct Tree {
+  key: integer,
+  left: Tree?,
+  right: Tree?,
+}
+
+enum Expr {
+  Num { v: integer },
+  Add { l: Expr, r: Expr },
+  Neg { e: Expr },
+}
+```
+
+A child behaves as an inline field ([formal/binding.md](formal/binding.md) `(B-OutOfLine)`):
+a read is a view, a write copies, a null write releases the subtree, and `==`, `{t}`, `:j`
+and `Tree.parse` treat it as a nested value.  For one node in two places, use a **link**,
+`reference<T>`, which shares:
+
+<!-- from tests/reference/recursive-types.loft -->
+```loft
+t.left = Tree { key: 4 };   // copied into t's store
+t.right = t.left;           // a copy: the two subtrees are independent
+t.right.key = 9;
+t.left = null;              // the old subtree is released
+```
+
+A struct whose recursion runs through non-null fields only has no finite value, and is
+refused with `` `Bad.next: Bad` makes every Bad contain another Bad — make it `Bad?` ``
+(`(T-Recursive)`).  A cycle through a tuple member stays refused: write `reference<T>` there.
 
 ---
 

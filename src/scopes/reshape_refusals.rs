@@ -392,6 +392,13 @@ fn def_reshape_refusals(
                      `{container}` leaves that place with nothing to point at"
                 ),
             ),
+            ViewCause::Released => (
+                format!("write a value that may be null into a field of `{container}`"),
+                format!(
+                    "writing null releases the record `{view_name}` names, so a write through \
+                     `{view_name}` would no longer reach `{container}`"
+                ),
+            ),
         };
         // The REASON differs with the population, not only the way out.  The clause above
         // explains a LOST WRITE through a `&` link — true for a reference, and beside the point

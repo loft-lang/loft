@@ -8106,10 +8106,15 @@ impl Data {
                 if self.def(d).attributes[a_nr].constant {
                     continue;
                 }
-                if let Type::Reference(t, deps) = self.attr_type(d, a_nr)
+                let tp = self.attr_type(d, a_nr);
+                // A NULLABLE field can end the recursion, so it is no present path.
+                if matches!(tp, Type::Optional(_)) {
+                    continue;
+                }
+                if let Type::Reference(t, deps) = tp.base()
                     && !deps.is_pointer_marker()
                 {
-                    work.push(t);
+                    work.push(*t);
                 }
             }
         }

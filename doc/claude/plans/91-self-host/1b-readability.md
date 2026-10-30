@@ -5,8 +5,11 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # @PLN91 strand 1b — reading the ports beside their homes: three fixes, designed
 
-A child document of [1b-interpreter.md](1b-interpreter.md).  Status: **designs, for the owner's
-evaluation; nothing built.**
+A child document of [1b-interpreter.md](1b-interpreter.md).  Status: **R-2s built through step 9
+(owner, 2026-10-30: "implement our plans for the tree") — on by default, the rules in
+`formal/`, @C159, suite cells under `L-OutOfLine`, `T-Recursive`, `B-OutOfLine`,
+`F-Render-Child`; step 10 (the port) next.  R-1, R-2 (`e!`) and R-3 remain designs for the
+owner's evaluation.**
 
 ## Why (owner, 2026-10-30)
 
@@ -190,8 +193,9 @@ fn main() {
   e = Add { l: Num { v: 1 }, r: Neg { e: Num { v: 2 } } };
   println("{eval(e)}");                  // -1
   t = Tree { key: 5, left: Tree { key: 3 } };
-  if t.left {
-    println("{t.left.key}");             // 3 — the guard narrows `Tree?` to `Tree`
+  l = t.left;
+  if l {
+    println("{l.key}");                  // 3 — the guard narrows the local to `Tree`
   }
 }
 ```
@@ -210,7 +214,7 @@ SHARING one node is a link, and a link is `reference<Tree>`.  Display, compariso
 those of a nested inline value, through `Expr`'s own routines:
 
 ```loft
-println("{e}");    // Add {l:Num {v:1},r:Neg {e:Num {v:2}}}
+println("{e}");    // {l:Num {v:1},r:Neg {e:Num {v:2}}} — a top-level variant, as every one
 println("{e:j}");  // {"Add":{"l":{"Num":{"v":1}},"r":{"Neg":{"e":{"Num":{"v":2}}}}}}
 assert(e == Add { l: Num { v: 1 }, r: Neg { e: Num { v: 2 } } });   // deep, not by address
 ```
