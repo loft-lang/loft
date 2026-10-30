@@ -2023,7 +2023,10 @@ fn an_added_or_removed_child_field_upgrades() {
     let with = "struct T { k: integer, n: text, next: T? }\nstruct W { items: hash<T[k]> }\n";
     let (ok, text) = verdict(without, with, "W");
     assert!(ok, "a child added is an upgrade:\n{text}");
-    assert!(text.contains("T.next added"), "named as an added field:\n{text}");
+    assert!(
+        text.contains("T.next added"),
+        "named as an added field:\n{text}"
+    );
     let (ok, text) = verdict(with, without, "W");
     assert!(ok, "a child removed is an upgrade:\n{text}");
     assert!(text.contains("T.next"), "named as a removed field:\n{text}");
