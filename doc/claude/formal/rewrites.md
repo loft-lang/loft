@@ -4381,7 +4381,15 @@ line in `Output::output_function`'s prelude.
                  cycles); Clang decides without the hint.  The bound is SIZE because
                  hinting every function moved other rows 2-3 % either way, the
                  twelve-statement form none beyond noise.  Counted by the writer
-                 (`FnWriter::write`), declarations and frame sites excluded.
+                 (`FnWriter::write`), declarations, frame sites and the lines that
+                 only close a block or open its `else` excluded — they are no
+                 statements, and counted they kept a seven-statement accessor twin
+                 (`hexset_get__inv`) out of line with eight arguments crossing on the
+                 stack: hex_form `side_edges` −67 %, hex_place `combine_cut` −51 %,
+                 hex_field `trace` −40 %, hex_roof `roof_match` −37 % when they stopped
+                 counting (gcc ship lane, 119 library routines: 6 faster, 112 the same,
+                 hex_world `get_cell` +2.8 %).  `LOFT_INLINE_COUNT_BRACES=1` counts
+                 them again.
                  Switch `LOFT_NO_INLINE_HINT=1`.
 
   (R-Cold)       a runtime helper on the per-element fast path — an element read or
