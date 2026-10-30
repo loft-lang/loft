@@ -25,6 +25,8 @@
 //   The natural-spelling cells (p8-p11), planted on 2026-10-05: the one-expression recogniser
 //   struck leaves the values right and the pin's trace without n_check_n and n_spanned; the
 //   effect-free test struck from it fails p10 (length 3 for 4).
+//   The slice-value cell (p12), 2026-10-31: a build of 2026-10-30 whose write list did not name
+//   `OpSliceView`, the pin's trace lacks n_check_s (the parser was not effect-free).
 
 struct Pair { a: integer, b: integer }
 struct Parsed { ok: boolean, total: integer, first: integer, span: Pair }
@@ -147,7 +149,26 @@ fn p11() {
   assert(a == 3 && b == 60, "p11 got {a} {b}");
 }
 
+// p12: a parser that reads a span of its frame as a slice VALUE (`text_from_bytes(b[0..2])`,
+// how a decoder reads a key) is effect-free: the slice's record is its own.  The second
+// wrapper hands back a record field, as a decoder's value reader does
+struct Head { at: integer, t: text }
+struct Sliced { ok: boolean, head: Head }
+fn parse_s(b: vector<u8>) -> Sliced {
+  if len(b) < 2 { return Sliced { ok: false, head: Head { at: -1, t: "" } }; }
+  Sliced { ok: true, head: Head { at: 0, t: text_from_bytes(b[0..2]) } }
+}
+fn parse_s_ok(b: vector<u8>) -> boolean { p = parse_s(b); return p.ok; }
+fn parse_s_head(b: vector<u8>) -> Head { parse_s(b).head }
+fn check_s(b: vector<u8>) -> text {
+  if !parse_s_ok(b) { return "bad"; }
+  h = parse_s_head(b);
+  return "{h.t}@{h.at}";
+}
+
 fn main() {
+  // "hi!" reads its first two bytes; one byte does not parse
+  assert(check_s([104, 105, 33]) == "hi@0" && check_s([1]) == "bad", "p12 got {check_s([104, 105, 33])} {check_s([1])}");
   assert(check_n([3, 4, 5]) == 12 && check_n([]) == -100, "p8 got {check_n([3, 4, 5])} {check_n([])}");
   assert(spanned([3, 4, 5]) == 123 && spanned([]) == -100, "p9 got {spanned([3, 4, 5])} {spanned([])}");
   p10(); p11();

@@ -73,7 +73,7 @@ pub(crate) fn write_target(name: &str) -> Option<usize> {
         "OpCopyRecord" => Some(1),
         n if n.starts_with("OpSet") => Some(0),
         "OpDatabase" | "OpPreAllocVector" | "OpAppendVector" | "OpAppendCopy" | "OpNewRecord"
-        | "OpFinishRecord" | "OpSliceVector" => Some(0),
+        | "OpFinishRecord" | "OpSliceVector" | "OpSliceView" => Some(0),
         n if n.starts_with("OpPush") => Some(0),
         _ => None,
     }

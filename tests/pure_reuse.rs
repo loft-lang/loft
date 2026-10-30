@@ -26,13 +26,15 @@ const SHARED_TRACE: &[&str] = &[
     "[pure-reuse] n_c13: n_names computed once, shared",
 ];
 
-/// Every reuse the cells make, in order: the request-check shape, the two projections, and
-/// the request-check and record-field shapes in the natural spelling (`parse(v).ok`).
+/// Every reuse the cells make, in order: the request-check shape, the two projections, the
+/// request-check and record-field shapes in the natural spelling (`parse(v).ok`), and the
+/// request check over a parser that reads a slice value.
 const TRACE: &[&str] = &[
     "[pure-reuse] n_check: n_parse computed once",
     "[pure-reuse] n_p6: n_parse computed once",
     "[pure-reuse] n_check_n: n_parse computed once",
     "[pure-reuse] n_spanned: n_parse computed once",
+    "[pure-reuse] n_check_s: n_parse_s computed once",
 ];
 
 fn loft(args: &[&str], env: &[(&str, &str)]) -> (String, String, bool) {

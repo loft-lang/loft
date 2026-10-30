@@ -42,6 +42,18 @@ together, which is exactly a stack.  That settles the representation question th
 
 Hand code: `target-exp/ab/pricing/transient.c` (local); `b.c` / `d.c` / `e.c` are the patched units.
 
+### Re-priced after `(R-PureReuse)` reached the decoders (2026-10-31)
+
+Building S3 showed `(R-PureReuse)` never fired on cbor: `effect_free` declined `read_value`
+because its write list (`pure_reuse::write_target`) did not name `OpSliceView`, the operator a
+slice VALUE lowers to — a write into the slice's own fresh record, exactly as `OpSliceVector`
+(listed) is.  With it named, `check_request`'s `pa_decode_ok(frame)` and `pa_decode(frame)` are
+two projections of one `decode(frame)`, computed once: **0.584× on gcc**, same hash, from one
+operator name.  What that leaves for this rule: `check_request` now decodes ONCE, into the store,
+and reads one key — T2's case (the hand price had both decodes transient at 0.109×, so one decode
+transient is expected well under that).  T1's dead tree no longer has a site in `check_request`;
+it keeps cbor's `decode` row (`do_d.next` only) and stays the scaffolding T2 is built on.
+
 ## The one invariant
 
 **A transient value is never written after it is built, it dies before the arena mark its ROOT
