@@ -5690,7 +5690,10 @@ impl<'a> FnWriter<'a> {
         }
         // `@FR-R-NonSentinelParam`'s twin clause: the parameters this call's arguments prove
         // beyond the program-wide fact go to a `__nn` twin that seeds them.
-        if super::native_c(route).is_none() && args.len() <= 26 && !self.apr_twin_call(d, args) {
+        if super::native_c(route).is_none()
+            && args.len() <= super::NN_PARAMS
+            && !self.apr_twin_call(d, args)
+        {
             let bits = self.nn_twin_bits(d, args);
             if bits != 0 {
                 mask |= bits << super::NN_SHIFT;
@@ -5772,7 +5775,7 @@ impl<'a> FnWriter<'a> {
         let global = crate::opt::non_sentinel::proven_param_flags(data, d).unwrap_or_default();
         let facts = self.nn_facts();
         let mut bits = 0u64;
-        for (i, a) in args.iter().enumerate().take(26) {
+        for (i, a) in args.iter().enumerate().take(super::NN_PARAMS) {
             if cand.get(i).copied().unwrap_or(false)
                 && !global.get(i).copied().unwrap_or(false)
                 && crate::opt::non_sentinel::non_sentinel(data, &facts.0, a)
