@@ -160,6 +160,10 @@ pub(crate) struct Cx<'a> {
     pub(crate) data: &'a Data,
     pub(crate) stores: &'a Stores,
     tuples: std::cell::RefCell<Vec<Vec<CType>>>,
+    /// `@FR-R-Destination`'s callee shapes, by `(callee, moved field offset)`.
+    pub(crate) dest_memo: std::cell::RefCell<
+        std::collections::HashMap<(u32, i64), Option<crate::lower::destination::Shape>>,
+    >,
     /// Every type the unit's deep copies walk, by type number (`loft_types`).
     copy_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// Types the runtime reads the shape of — a store's root type, which `OpClearVector` asks
@@ -277,6 +281,11 @@ pub(crate) const KH_BIT: u64 = 1 << 59;
 /// appends land after X's own elements and the copy is gone (`opt::append_twin::eligible`).
 pub(crate) const AP_BIT: u64 = 1 << 58;
 
+/// The mask bit of a `__d` twin (`@FR-R-Destination`): the function written again with its
+/// return buffer the CALLER's fresh element — the moved field sits at the buffer's offset 0 —
+/// and its scalar fields answered as a tuple (`lower::destination::shape`).
+pub(crate) const DS_BIT: u64 = 1 << 57;
+
 /// The bits of a `__nn` twin (`@FR-R-NonSentinelParam`'s twin clause), one per parameter from
 /// bit 32: the function written again with those parameters seeded as non-sentinel, called by
 /// a call site whose arguments prove them where the program-wide fact cannot (another caller
@@ -309,6 +318,7 @@ impl<'a> Cx<'a> {
             copy_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             described: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             names_types: std::cell::Cell::new(false),
+            dest_memo: std::cell::RefCell::new(std::collections::HashMap::new()),
             enum_names: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             scratch: std::cell::RefCell::new(None),
             defaults: std::cell::RefCell::new(std::collections::BTreeMap::new()),
@@ -1207,7 +1217,8 @@ pub(crate) fn type_word(tp: &Type) -> String {
 /// — `--native`'s `_st` twins.  Mask 0 is the function itself.
 /// An `__inv` twin ([`INV_BIT`]) adds `__inv` after the place mask's name.
 pub(crate) fn twin_name(data: &Data, d: u32, mask: u64) -> String {
-    let places = mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT & !KH_BIT & !AP_BIT & !NN_MASK;
+    let places =
+        mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT & !KH_BIT & !AP_BIT & !DS_BIT & !NN_MASK;
     let inv = if mask & INV_BIT == 0 { "" } else { "__inv" };
     let kh = if mask & KH_BIT == 0 { "" } else { "__kh" };
     let nn_bits = (mask & NN_MASK) >> NN_SHIFT;
@@ -1220,10 +1231,14 @@ pub(crate) fn twin_name(data: &Data, d: u32, mask: u64) -> String {
     let apr = if mask & APR_BIT == 0 { "" } else { "__apr" };
     let apv = if mask & APV_BIT == 0 { "" } else { "__apv" };
     let ap = if mask & AP_BIT == 0 { "" } else { "__ap" };
+    let ds = if mask & DS_BIT == 0 { "" } else { "__d" };
     if places == 0 {
-        format!("{}{inv}{nk}{apr}{apv}{kh}{ap}", c_name(data, d))
+        format!("{}{inv}{nk}{apr}{apv}{kh}{ap}{ds}", c_name(data, d))
     } else {
-        format!("{}_pl{places}{inv}{nk}{apr}{apv}{kh}{ap}", c_name(data, d))
+        format!(
+            "{}_pl{places}{inv}{nk}{apr}{apv}{kh}{ap}{ds}",
+            c_name(data, d)
+        )
     }
 }
 
@@ -1307,6 +1322,17 @@ impl Cx<'_> {
             &mut memo.stores_written,
             &mut active,
             None,
+        )
+    }
+
+    /// `@FR-R-Destination`: `d`'s destination twin shape, its moved field at offset 0.
+    pub(crate) fn dest_shape(&self, d: u32) -> Option<crate::lower::destination::Shape> {
+        crate::lower::destination::shape(
+            self.data,
+            self.stores,
+            d,
+            0,
+            &mut self.dest_memo.borrow_mut(),
         )
     }
 
@@ -2426,6 +2452,16 @@ fn vr_param_read_only(data: &crate::data::Data, body: &Value, a: u16) -> bool {
 /// caller's spilled state after every call (bench 20: -69 % cycles); Clang decides alone.
 /// Measured over every bench: nothing else moved beyond noise.  `LOFT_NO_INLINE_HINT=1` drops
 /// the hint.
+/// The C shape a destination twin answers scalar field `s` in.
+pub(crate) fn dest_scalar_ctype(s: &crate::lower::destination::Scalar) -> CType {
+    match s.rust {
+        "f64" => CType::Float,
+        "f32" => CType::Single,
+        "u8" => CType::Bool,
+        _ => CType::Int,
+    }
+}
+
 fn small_function(statements: usize) -> bool {
     statements <= 12
         && !crate::env_once!(std::env::var("LOFT_NO_INLINE_HINT").is_ok_and(|v| v != "0"))
@@ -2435,7 +2471,8 @@ fn small_function(statements: usize) -> bool {
 #[expect(clippy::too_many_lines)]
 fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     let data = cx.data;
-    let places = mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT & !KH_BIT & !AP_BIT & !NN_MASK;
+    let places =
+        mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT & !KH_BIT & !AP_BIT & !DS_BIT & !NN_MASK;
     let def = data.def(d);
     // A `#c` binding (@PLN24): the C function itself, called by its declared signature.
     if def.code() == &Value::Null && !def.c_sig.is_empty() {
@@ -2509,6 +2546,15 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         Some((rec, roles, def.hidden_return_buffer_attr()))
     };
     let ret = if apv.is_some() { CType::Void } else { ret };
+    // `@FR-R-Destination` — a `__d` twin answers its scalar fields as a tuple.
+    let ret = if mask & DS_BIT == 0 {
+        ret
+    } else {
+        let shape = cx
+            .dest_shape(d)
+            .ok_or("a __d twin of a function with no destination shape")?;
+        CType::Tuple(cx.tuple_id(shape.scalars.iter().map(dest_scalar_ctype).collect()))
+    };
     let vars = def.variables();
     // The parameters are the argument variables, in number order: `ref_return` can promote a
     // local into the return buffer's place, so parameter i is not always variable i.
@@ -2616,6 +2662,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         .apart(mask & APR_BIT != 0)
         .apart_value(mask & APV_BIT != 0)
         .append_twin(mask & AP_BIT != 0)
+        .destination(mask & DS_BIT != 0)
         .write()?;
     let (body, statements) = body;
     // `@FR-R-Inline`: a small function is declared `inline`, its frame wrapper with it.

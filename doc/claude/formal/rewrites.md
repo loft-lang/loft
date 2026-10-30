@@ -6738,11 +6738,13 @@ and neither a value nor the store-level leak check sees it.  The live-reload arm
 parked interpreter call its own buffer (the element would be overrun by a whole record),
 relocates the field into e and reads the scalars back.
 
-**BUILT** (`src/generation/destination.rs` — `shape` for the callee, `site` for the chain;
-the twin's hooks in `emit.rs`, its call name in `calls.rs`, its emission and live arm in
-`mod.rs`; `LOFT_NO_DESTINATION`, `LOFT_TRACE_DESTINATION`; guard
+**BUILT** (`src/lower/destination.rs` — `shape` for the callee, `site` for the chain, read by
+both compiled writers; native's twin hooks in `emit.rs`, its call name in `calls.rs`, its
+emission and live arm in `mod.rs`; the C's `__d` twin (`DS_BIT`) answering its scalars as a
+tuple struct, `dest_scalar_set` / `dest_return` / `destination_site` in `src/c/body.rs` — cbor
+`decode` −56 % on the C ship lane; `LOFT_NO_DESTINATION`, `LOFT_TRACE_DESTINATION`; guard
 `loft-suite/rules/rewrites/R-Destination/a-call-result-moved-into-an-element-is-built-there.loft`, two patch receipts).
-Native only; the interpreter moves as before and is the reference.
+The interpreter moves as before and is the reference.
 
 ### A fn-ref whose every target answers a value record answers the tuple
 

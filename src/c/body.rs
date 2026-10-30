@@ -211,6 +211,11 @@ pub(crate) struct FnWriter<'a> {
     ap_views: std::collections::HashSet<u16>,
     ap_site: Option<(u32, usize)>,
     ap_memo: std::collections::HashMap<u32, bool>,
+    /// `@FR-R-Destination` — in a `__d` twin, the shape (its buffer is the caller's element,
+    /// its scalar fields the locals `loft_ds<k>`); the call site's rewritten call, matched by
+    /// callee and argument slice so its emission asks for the callee's twin.
+    ds: Option<crate::lower::destination::Shape>,
+    ds_site: Option<(u32, usize)>,
     nk_call: Option<u32>,
     /// `@FR-R-GuardedChain` — per guarded loop, the argument-slice addresses of its admitted
     /// chain operators, and the guard they branch on (`None` in the plain copy of an innermost
@@ -617,6 +622,8 @@ impl<'a> FnWriter<'a> {
             ap_views: std::collections::HashSet::new(),
             ap_site: None,
             ap_memo: std::collections::HashMap::new(),
+            ds: None,
+            ds_site: None,
             nk_call: None,
             plain_chains: Vec::new(),
             chain_guards: 0,
@@ -745,6 +752,17 @@ impl<'a> FnWriter<'a> {
         self
     }
 
+    /// A `__d` twin (`super::DS_BIT`, `@FR-R-Destination`): the return buffer is the caller's
+    /// fresh element, a write to one of its scalar fields is the local the twin answers, and
+    /// `return buf` answers those locals as a tuple.  The result never adopts the buffer.
+    pub(crate) fn destination(mut self, on: bool) -> Self {
+        if on {
+            self.ds = self.cx.dest_shape(self.d);
+            self.adopt = None;
+        }
+        self
+    }
+
     /// A `__nk` twin (`super::NK_BIT`): the body without its keep statement.
     pub(crate) fn nokeep(mut self, on: bool) -> Result<Self, String> {
         if on {
@@ -800,6 +818,22 @@ impl<'a> FnWriter<'a> {
         self
     }
 
+    /// `@FR-R-Inline` counts STATEMENTS: the body's lines without its frame sites and the lines
+    /// that only close a block or open its `else` (`LOFT_INLINE_COUNT_BRACES=1` counts those).
+    fn statement_count(&self) -> usize {
+        let braces =
+            crate::env_once!(std::env::var("LOFT_INLINE_COUNT_BRACES").is_ok_and(|v| v != "0"));
+        self.body
+            .lines()
+            .filter(|l| {
+                let t = l.trim();
+                !t.is_empty()
+                    && !l.contains("loft_frame_site(")
+                    && (braces || !matches!(t, "}" | "{" | "};" | "} else {"))
+            })
+            .count()
+    }
+
     /// The body: the locals, the temporaries and the statements.
     /// The function's C body, and how many statements it holds — its own lines, without the
     /// declarations, the blank lines and the frame-site bookkeeping (`small_function`).
@@ -831,6 +865,7 @@ impl<'a> FnWriter<'a> {
                 self.tab_alias.insert(*a, *v);
             }
         }
+        self.ds_decls();
         self.apr_decls();
         self.apv_decls();
         self.av_decls();
@@ -902,20 +937,7 @@ impl<'a> FnWriter<'a> {
         if !slots.is_empty() {
             let _ = writeln!(out, "    LOFT_HOLD({}, {});", slots.len(), slots.join(", "));
         }
-        // `@FR-R-Inline` counts STATEMENTS: a line that only closes a block or opens its `else`
-        // is none (`LOFT_INLINE_COUNT_BRACES=1` counts them again).
-        let braces =
-            crate::env_once!(std::env::var("LOFT_INLINE_COUNT_BRACES").is_ok_and(|v| v != "0"));
-        let statements = self
-            .body
-            .lines()
-            .filter(|l| {
-                let t = l.trim();
-                !t.is_empty()
-                    && !l.contains("loft_frame_site(")
-                    && (braces || !matches!(t, "}" | "{" | "};" | "} else {"))
-            })
-            .count();
+        let statements = self.statement_count();
         out.push_str(&self.body);
         Ok((out, statements))
     }
@@ -2284,6 +2306,10 @@ impl<'a> FnWriter<'a> {
                 i = last + 1;
                 continue;
             }
+            if let Some(last) = self.destination_site(ops, i, ind)? {
+                i = last + 1;
+                continue;
+            }
             if let Some(last) = self.keyed_entry_site(ops, i, ind)? {
                 ops[i..=last]
                     .iter()
@@ -2814,6 +2840,199 @@ impl<'a> FnWriter<'a> {
     }
 
     /// Emit `v` for its effect.
+    /// `@FR-R-Destination`'s callee half: the scalar locals a `__d` twin answers.
+    fn ds_decls(&mut self) {
+        if let Some(ds) = &self.ds {
+            for (k, sc) in ds.scalars.iter().enumerate() {
+                let c = super::dest_scalar_ctype(sc);
+                self.decls.push(format!("{} loft_ds{k} = 0;", held(c)));
+            }
+        }
+    }
+
+    /// `@FR-R-Destination`'s callee half: a write to a scalar field of the buffer, by that
+    /// field's own setter, is the twin's local — the field lies past the caller's element the
+    /// buffer stands for.
+    fn dest_scalar_set(
+        &mut self,
+        name: &str,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<Option<E>, String> {
+        let Some(ds) = &self.ds else { return Ok(None) };
+        let [base, off, val] = args else {
+            return Ok(None);
+        };
+        if !matches!(base.unspan(), Value::Var(b) if *b == ds.rb) {
+            return Ok(None);
+        }
+        let Value::Int(off) = off.unspan() else {
+            return Ok(None);
+        };
+        let Some(k) = ds
+            .scalars
+            .iter()
+            .position(|sc| sc.off == i64::from(*off) && sc.setter == name)
+        else {
+            return Ok(None);
+        };
+        let c = super::dest_scalar_ctype(&ds.scalars[k]);
+        let e = self.expr(val, ind)?;
+        let v = match c {
+            CType::Float => as_float(e)?,
+            CType::Single => as_single(e)?,
+            CType::Bool => as_bool(e)?,
+            _ => as_int(e)?,
+        };
+        Ok(Some(E::new(format!("loft_ds{k} = {v}"), K::Void)))
+    }
+
+    /// `@FR-R-Destination`'s callee half: `return buf` answers the scalar locals.
+    fn dest_return(&mut self, ind: usize) {
+        let n = self.ds.as_ref().map_or(0, |ds| ds.scalars.len());
+        let CType::Tuple(id) = self.ret else { return };
+        let r = self.temp(self.ret);
+        let parts: Vec<String> = (0..n).map(|k| format!("loft_ds{k}")).collect();
+        self.line(
+            ind,
+            &format!("{r} = (loft_tup{id}){{ {} }};", parts.join(", ")),
+        );
+        self.ret_held(&r, ind);
+    }
+
+    /// `@FR-R-Destination`'s caller half (`lower::destination::site`): the element's mint,
+    /// hoisted above the chain, then each call into its destination — the callee's `__d` twin
+    /// writing the moved field into the element and answering its scalars — and its `ok` arm
+    /// with the moves gone; the element finished only where the plain form moved every result,
+    /// and each destination filled so far released on a failing path.  `LOFT_NO_DESTINATION=1`
+    /// keeps the buffer and the move.
+    fn destination_site(
+        &mut self,
+        ops: &[Value],
+        i: usize,
+        ind: usize,
+    ) -> Result<Option<usize>, String> {
+        if !crate::lower::destination::enabled() || self.gen_elem.is_some() {
+            return Ok(None);
+        }
+        let site = {
+            let mut memo = self.cx.dest_memo.borrow_mut();
+            crate::lower::destination::site(ops, i, self.cx.data, self.cx.stores, self.d, &mut memo)
+        };
+        let Some(site) = site else { return Ok(None) };
+        for m in &site.mint {
+            self.stmt(m, ind)?;
+        }
+        let mut names: Vec<String> = Vec::new();
+        let mut filled: Vec<(Value, u16)> = Vec::new();
+        self.destination_level(&site.top, &mut names, &mut filled, ind)?;
+        Ok(Some(site.last))
+    }
+
+    /// Resolve the chain's `__ds#m#.k` placeholders to the C tuples already named.
+    fn destination_names(&mut self, v: &Value, names: &[String]) -> Value {
+        let mut v = v.clone();
+        let mut made: Vec<(String, K)> = Vec::new();
+        v.map_nodes(&mut |n| {
+            if let Value::RawExpr(e) = n
+                && e.starts_with("__ds#")
+            {
+                for (m, t) in names.iter().enumerate() {
+                    let pre = format!("__ds#{m}#.");
+                    if let Some(k) = e.strip_prefix(&pre) {
+                        *e = format!("{t}.f{k}");
+                        made.push((e.clone(), K::Int));
+                        break;
+                    }
+                }
+            }
+        });
+        for (code, _) in made {
+            let (t, k) = code.split_once(".f").unwrap_or(("", "0"));
+            let kind = self
+                .temps
+                .iter()
+                .find(|(n, _)| n == t)
+                .and_then(|(_, c)| match c {
+                    CType::Tuple(id) => k
+                        .parse::<usize>()
+                        .ok()
+                        .and_then(|i| self.cx.tuple_shapes(*id).get(i).copied()),
+                    _ => None,
+                })
+                .map_or(K::Int, kind_of);
+            self.raw.insert(code, kind);
+        }
+        v
+    }
+
+    fn destination_level(
+        &mut self,
+        level: &crate::lower::destination::Level<'_>,
+        names: &mut Vec<String>,
+        filled: &mut Vec<(Value, u16)>,
+        ind: usize,
+    ) -> Result<(), String> {
+        let mut args: Vec<Value> = level
+            .call_args
+            .iter()
+            .map(|a| self.destination_names(a, names))
+            .collect();
+        args[level.at] = level.dest.clone();
+        let call = Value::Call(level.callee, args);
+        let Value::Call(_, a) = &call else {
+            unreachable!()
+        };
+        self.ds_site = Some((level.callee, a.as_ptr() as usize));
+        let e = self.expr(&call, ind)?;
+        if self.ds_site.take().is_some() {
+            return Err(format!(
+                "@FR-R-Destination: the rewritten call of {} was written without its twin",
+                self.cx.data.def(level.callee).name()
+            ));
+        }
+        let shape = &level.shape;
+        let id = self
+            .cx
+            .tuple_id(shape.scalars.iter().map(super::dest_scalar_ctype).collect());
+        let t = self.temp(CType::Tuple(id));
+        self.line(ind, &format!("{t} = {};", e.code));
+        names.push(t.clone());
+        filled.push((level.dest.clone(), shape.vt));
+        self.line(ind, &format!("if ({t}.f{} == 1) {{", level.ok));
+        for op in &level.pre {
+            if matches!(op, Value::Line(_)) {
+                continue;
+            }
+            let op = self.destination_names(op, names);
+            self.stmt(&op, ind + 1)?;
+        }
+        if let Some(inner) = &level.inner {
+            self.destination_level(inner, names, filled, ind + 1)?;
+        }
+        for op in &level.post {
+            if matches!(op, Value::Line(_)) {
+                continue;
+            }
+            let op = self.destination_names(op, names);
+            self.stmt(&op, ind + 1)?;
+        }
+        self.line(ind, "} else {");
+        for (d, vt) in filled.clone().iter().rev() {
+            self.cx.copy_type(*vt)?;
+            let r = self.expr(d, ind + 1)?;
+            self.line(
+                ind + 1,
+                &format!("loft_remove_claims(loft_types, {vt}, {});", as_ref(r)?),
+            );
+        }
+        self.stmt(level.else_v, ind + 1)?;
+        self.line(ind, "}");
+        filled.pop();
+        names.pop();
+        Ok(())
+    }
+
     /// `@FR-R-AppendTwin` — `X += f(args)` where f has an append twin (`opt::append_twin`):
     /// written as the call of `f__ap` with X as its buffer, so f's appends land after X's
     /// elements.  `LOFT_NO_APPEND_TWIN=1` keeps the copy.
@@ -3196,6 +3415,15 @@ impl<'a> FnWriter<'a> {
             Value::Return(x) if self.gen_elem.is_some() => {
                 self.stmt(x, ind)?;
                 self.line(ind, "goto loft_gen_end;");
+                Ok(())
+            }
+            Value::Return(x)
+                if self
+                    .ds
+                    .as_ref()
+                    .is_some_and(|ds| matches!(x.unspan(), Value::Var(b) if *b == ds.rb)) =>
+            {
+                self.dest_return(ind);
                 Ok(())
             }
             Value::Return(x) => self.ret_value(Some(x), ind),
@@ -5019,6 +5247,14 @@ impl<'a> FnWriter<'a> {
         if self.append_call(d, args) {
             mask |= super::AP_BIT;
         }
+        if self
+            .ds_site
+            .is_some_and(|(c, at)| c == d && at == args.as_ptr() as usize)
+        {
+            self.ds_site = None;
+            mask |= super::DS_BIT;
+            crate::rewrite_census::fired("R-Destination", 1);
+        }
         // `@FR-R-NonSentinelParam`'s twin clause: the parameters this call's arguments prove
         // beyond the program-wide fact go to a `__nn` twin that seeds them.
         if super::native_c(def.name()).is_none() && args.len() <= 26 && !self.apr_twin_call(d, args)
@@ -5496,6 +5732,11 @@ impl<'a> FnWriter<'a> {
             "OpFormatStackDatabase" => "OpFormatDatabase",
             n => n,
         };
+        if self.ds.is_some()
+            && let Some(e) = self.dest_scalar_set(name, args, ind)?
+        {
+            return Ok(e);
+        }
         if let Some(e) = self.apr_operator(name, args, ind)? {
             return Ok(e);
         }

@@ -22,7 +22,8 @@
 //! it — counted mention by mention, so a use no form accounts for declines.  And it asks the
 //! CALLER ([`site`]): the result is read only by the `ok` test, the one move, and scalar reads,
 //! the element is minted first in the `ok` arm, and no argument of the call reaches the
-//! container.  Native only; the interpreter moves as before and is the reference.
+//! container.  Both compiled writers read it (the C's twin is `f__d`, `c::body`); the
+//! interpreter moves as before and is the reference.
 
 use crate::data::{Data, Type, Value};
 use crate::database::{Parts, Stores};
