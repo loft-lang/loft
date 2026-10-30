@@ -2439,10 +2439,6 @@ impl State {
         }
     }
 
-    /// Adjust the slot position for a first-assignment variable.
-    /// Case 1: pre-assigned above TOS → move down. Case 2: large type below TOS →
-    /// override only if no child-scope overlap (A13 guard).
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     /// Lower `Set(v, value)`.  Under `LOFT_TRACE_BIND=<file>` (the strict comparison's binds
     /// layer, doc/claude/plans/91-self-host/1b-compare.md) each bind also appends one line: the
     /// function, the variable, `first` or `re`, the arm `generate_set` took and the facts it
@@ -2460,10 +2456,18 @@ impl State {
             stack.data.def(stack.def_nr).name(),
             stack.function.name(v),
             if first { "first" } else { "re" },
-            if notes.is_empty() { "?".to_string() } else { notes.join(" ") }
+            if notes.is_empty() {
+                "?".to_string()
+            } else {
+                notes.join(" ")
+            }
         ));
     }
 
+    /// Adjust the slot position for a first-assignment variable.
+    /// Case 1: pre-assigned above TOS → move down. Case 2: large type below TOS →
+    /// override only if no child-scope overlap (A13 guard).
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn generate_set_inner(&mut self, stack: &mut Stack, v: u16, value: IrNode) {
         // @PLN11 G2/M3.15 — materialise-at-boundary.  generate_set's body is an
         // intricate store-ownership tracker (its comments flag use-after-free /
@@ -7491,8 +7495,10 @@ fn bind_trace_write(line: &str) {
     static FILE: std::sync::OnceLock<Option<std::sync::Mutex<std::fs::File>>> =
         std::sync::OnceLock::new();
     let file = FILE.get_or_init(|| {
-        let path = std::env::var_os("LOFT_TRACE_BIND")?;
-        std::fs::File::create(path).ok().map(std::sync::Mutex::new)
+        let path = std::env::var("LOFT_TRACE_BIND").ok()?;
+        crate::file_access::create(path.as_str())
+            .ok()
+            .map(std::sync::Mutex::new)
     });
     if let Some(f) = file
         && let Ok(mut f) = f.lock()
