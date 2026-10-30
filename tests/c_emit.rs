@@ -2150,6 +2150,18 @@ fn the_c_store_allocator_places_every_record_where_store_does() {
             let _ = writeln!(script, "N {rec}");
         }
     }
+    // `@FR-H-TailGrow`: a record nothing claimed follows, doubled again and again — the store
+    // grows and the record stays where it is.  The random phase above rarely leaves a record at
+    // the tail when it outgrows the room there, so the case is crossed on purpose.
+    let mut tail = store.claim(8);
+    let _ = writeln!(script, "C 8");
+    let _ = writeln!(want, "{tail}");
+    for step in 1..=12u32 {
+        let size = 8 << step;
+        let _ = writeln!(script, "R {tail} {size}");
+        tail = store.resize(tail, size);
+        let _ = writeln!(want, "{tail}");
+    }
     let _ = writeln!(want, "size {}", store.capacity_words());
     // FNV-1a over every byte: the free tree's links and colours, the parked lists' links, the
     // footers — what the chain below does not show, and what a tree that places every record
