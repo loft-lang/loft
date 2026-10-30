@@ -64,6 +64,12 @@ a row are `R-Destination`, `R-AppendTwin`, `R-RefillBuffer` and (already built) 
 
 ## Order from here
 
+The goal stays the worst rows, fixed by general optimisations with the memory model first
+([`README.md`](README.md)): next are pluginabi's three rows (15.8×, 12.1×, 6.4×, measurable
+since crypto 0.4.0), profiled and split into memory-model and other causes before anything is
+built.
+
+
 1. server `header`: re-measure after server 0.7.6 (key compared in place, loft-libs-net #33; ≈ 3.7× left by its author's count — the per-call `name.to_lowercase()` and the trimmed value's copy).
 2. Profile `forms_upto` (longer run), `fill_polygon`; `edgeset_count`'s remaining cost is the
    integer-null `+ 1` (set aside) and `eg_dir_from`'s six-way neighbour loop.

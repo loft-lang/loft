@@ -6,6 +6,15 @@ The files here say WHY, price what could be done about it, and record what was b
 the twin winning by something loft cannot say, that is the unit to price — `(Perf-Gap)` in
 `doc/claude/formal/performance.md` — and the twin stays as written.
 
+**The goal (owner, 2026-10-30): fix the WORST performers** — the routines furthest above their
+Rust twin on the C ship lane, library benches included ([`c-libraries.md`](c-libraries.md) holds
+the current ranking).  They are fixed by GENERAL optimisations only, never a rewrite fitted to one
+routine, and the MEMORY MODEL comes first: store resolutions, copies, claims and frees, buffers,
+headers and record addresses before operator-level or call-overhead levers.  So a worst row is
+profiled, its gap split into memory-model and other causes (as [`top5-memory.md`](top5-memory.md)
+does), and the general mechanism behind the largest memory-model share is built first; a gap that
+is a library's own algorithm goes to that library's stream.
+
 **Start from [`worklist.md`](worklist.md)**: every routine over the 3× bar, sorted by what is
 known about it — a priced path under the bar, a priced path that ends above it, or no price —
 with the units in build order and the file below that priced each.
