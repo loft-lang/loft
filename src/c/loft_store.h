@@ -973,6 +973,14 @@ static void loft_walk_scan(const loft_store_t *s, int32_t req, uint32_t *pos_out
 
 static uint32_t loft_claim_grow(loft_store_t *s, uint32_t size, uint32_t last, int32_t last_claim) {
     uint32_t cur = s->size;
+    /* `Store::claim_grow`'s checked add: a growth past the 32-bit word count stops the run, as the
+     * interpreter does, rather than wrapping to a smaller store that the claim then overruns. */
+    if (last_claim >= 0 && (uint64_t) s->size + size > UINT32_MAX) {
+        fflush(stdout);
+        fprintf(stderr, "loft: store size limit exceeded: %llu words (%llu bytes)\n",
+                (unsigned long long) ((uint64_t) s->size + size), (unsigned long long) (((uint64_t) s->size + size) * 8));
+        abort();
+    }
     uint32_t new_size = last_claim < 0 ? (uint32_t) ((int32_t) s->size + (int32_t) size + last_claim) : s->size + size;
     loft_resize_store(s, new_size);
     int32_t increase = (int32_t) (s->size - cur);

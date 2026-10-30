@@ -1717,6 +1717,11 @@ impl Store {
         // `@FR-H-LazyFree` — a reset store has no dead words and starts the phase again.
         self.lazy = lazy_free_enabled();
         self.dead_words = 0;
+        // Nothing is claimed and nothing waits to merge: the high-water mark the lazy sweep is
+        // measured against starts again, as `loft_st_init` starts it (STORE_MODEL.md D19a) — a
+        // stale one kept a reused store from sweeping where a fresh one sweeps.
+        self.claimed_end = 0;
+        self.needs_coalesce = false;
         self.lazy_free.clear();
         // `@FR-H-Park` — the whole store is one free block again: nothing is parked.
         self.parked.clear();

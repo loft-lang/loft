@@ -2168,36 +2168,46 @@ fn the_c_store_allocator_places_every_record_where_store_does() {
     let mut store = loft::store::Store::new_in_use_defined(100);
     let mut live: Vec<u32> = Vec::new();
     let (mut script, mut want) = (String::new(), String::new());
-    for _ in 0..6000 {
-        let pick = next(100);
-        if pick < 50 || live.is_empty() {
-            let size = match next(20) {
-                0..=11 => 1 + next(8),
-                12..=16 => 9 + next(12),
-                17..=18 => 40 + next(40),
-                _ => 150 + next(250),
-            } as u32;
-            let pos = store.claim(size);
-            live.push(pos);
-            let _ = writeln!(script, "C {size}");
-            let _ = writeln!(want, "{pos}");
-        } else if pick < 80 {
-            let rec = live.swap_remove(next(live.len() as u64) as usize);
-            store.delete(rec);
-            let _ = writeln!(script, "D {rec}");
-        } else if pick < 95 {
-            let i = next(live.len() as u64) as usize;
-            let rec = live[i];
-            let words = store.read::<i32>(rec, 0) as u32;
-            let size = words + 1 + next(u64::from(words)) as u32;
-            let pos = store.resize(rec, size);
-            live[i] = pos;
-            let _ = writeln!(script, "R {rec} {size}");
-            let _ = writeln!(want, "{pos}");
-        } else {
-            let rec = live[next(live.len() as u64) as usize];
-            store.note_referenced(rec);
-            let _ = writeln!(script, "N {rec}");
+    // Twice: the second time on the same store re-initialised (`I`), as a pooled store is made
+    // again — its high-water mark and pending merge start over on both sides (STORE_MODEL.md
+    // D19a), or the reused store sweeps later than the C's.
+    for phase in 0..2 {
+        if phase == 1 {
+            store.init();
+            live.clear();
+            let _ = writeln!(script, "I");
+        }
+        for _ in 0..6000 {
+            let pick = next(100);
+            if pick < 50 || live.is_empty() {
+                let size = match next(20) {
+                    0..=11 => 1 + next(8),
+                    12..=16 => 9 + next(12),
+                    17..=18 => 40 + next(40),
+                    _ => 150 + next(250),
+                } as u32;
+                let pos = store.claim(size);
+                live.push(pos);
+                let _ = writeln!(script, "C {size}");
+                let _ = writeln!(want, "{pos}");
+            } else if pick < 80 {
+                let rec = live.swap_remove(next(live.len() as u64) as usize);
+                store.delete(rec);
+                let _ = writeln!(script, "D {rec}");
+            } else if pick < 95 {
+                let i = next(live.len() as u64) as usize;
+                let rec = live[i];
+                let words = store.read::<i32>(rec, 0) as u32;
+                let size = words + 1 + next(u64::from(words)) as u32;
+                let pos = store.resize(rec, size);
+                live[i] = pos;
+                let _ = writeln!(script, "R {rec} {size}");
+                let _ = writeln!(want, "{pos}");
+            } else {
+                let rec = live[next(live.len() as u64) as usize];
+                store.note_referenced(rec);
+                let _ = writeln!(script, "N {rec}");
+            }
         }
     }
     // `@FR-H-TailGrow`: a record nothing claimed follows, doubled again and again — the store
@@ -2256,6 +2266,7 @@ int main(int argc, char **argv) {
         else if (op == 'D') { if (fscanf(f, "%u", &a) != 1) return 2; loft_st_delete(&s, a); }
         else if (op == 'R') { if (fscanf(f, "%u %u", &a, &b) != 2) return 2; printf("%u\n", loft_st_resize(&s, a, b)); }
         else if (op == 'N') { if (fscanf(f, "%u", &a) != 1) return 2; loft_st_note_referenced(&s, a); }
+        else if (op == 'I') loft_st_init(&s);
     }
     printf("size %u\n", s.size);
     uint64_t h = UINT64_C(0xcbf29ce484222325);
@@ -3295,6 +3306,54 @@ fn the_c_debug_build_names_loft_lines_in_its_line_table() {
         lines,
         [2, 3, 4, 7],
         "the loft lines the binary's line table holds"
+    );
+    let _ = fa::remove_dir_all(&dir);
+}
+
+/// STORE_MODEL.md D19d (@PLN206 P2) — a growth past the 32-bit word count stops the run, naming
+/// the size, as `Store::claim_grow`'s checked add does; the C (`loft_claim_grow`) wrapped to a
+/// smaller store the claim then overran.  Reachable only from a store already past 2^31 words
+/// (16 GB) — a claim is at most 2^31 words — so the cell sets that word count on a store with no
+/// buffer and grows it: the check stands before any byte is touched.  Falsified: without it
+/// the C goes on and reads the missing buffer.
+#[test]
+fn a_growth_past_the_word_count_stops_the_c() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let mut c = String::from(
+        "#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n",
+    );
+    c.push_str(include_str!("../src/c/loft_store.h"));
+    c.push_str(
+        "\nint main(void) {\n    loft_store_t s;\n    memset(&s, 0, sizeof s);\n    \
+         s.size = 0xF0000000u;\n    printf(\"grew to %u\\n\", loft_claim_grow(&s, 0x20000000u, 0, 0));\n    \
+         return 0;\n}\n",
+    );
+    let dir = scratch("grow-limit");
+    let (src, exe) = (dir.join("grow.c"), dir.join("grow"));
+    fa::write(&src, &c).expect("write C");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O1", "-w"])
+        .arg(&src)
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc: {}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .output()
+        .expect("run the cell");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success() && err.contains("store size limit exceeded: 4563402752 words"),
+        "the C grew past the word count: {}\n{err}",
+        String::from_utf8_lossy(&out.stdout)
     );
     let _ = fa::remove_dir_all(&dir);
 }
