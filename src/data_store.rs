@@ -949,6 +949,7 @@ impl Value {
     }
 
     /// A fresh, zeroed `Node` child in the out-of-line field at `off`.
+    #[must_use]
     pub fn new_child(&self, stores: &mut Stores, off: u32) -> Value {
         Value {
             rec: claim_child(stores, field_at(self.rec, off), NODE_STRIDE),
@@ -1145,6 +1146,7 @@ impl Record {
     }
 
     /// A fresh, zeroed `stride`-byte child in the out-of-line field at `off`.
+    #[must_use]
     pub fn new_child(&self, stores: &mut Stores, off: u32, stride: u32) -> Record {
         Record {
             rec: claim_child(stores, field_at(self.rec, off), stride),

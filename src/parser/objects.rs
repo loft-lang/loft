@@ -1975,7 +1975,7 @@ impl Parser {
                     let tp = self
                         .parse_type(u32::MAX, &type_name, false)
                         .unwrap_or(Type::Text(crate::data::Deps::none()));
-                    let child = matches!(&tp, Type::Reference(d_nr, _)
+                    let child = matches!(tp.base(), Type::Reference(d_nr, _)
                         if self.refuse_child_io("read_file", *d_nr));
                     if !child
                         && let Type::Reference(d_nr, _) = &tp
@@ -2432,7 +2432,7 @@ impl Parser {
         val_type: &Type,
         cast_alias: u32,
     ) -> Value {
-        if let Type::Reference(d_nr, _) = val_type
+        if let Type::Reference(d_nr, _) = val_type.base()
             && self.refuse_child_io("write_file", *d_nr)
         {
             return Value::Null;

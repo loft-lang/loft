@@ -1610,6 +1610,10 @@ impl Stores {
     /// in the same Store as the host.  Returns the null sentinel
     /// (`store_nr=u16::MAX, rec=0, pos=0`) when the rec-id is 0
     /// (non-capturing / default-init case).
+    ///
+    /// # Panics
+    /// Under `LOFT_STRICT_STORES=1`, when the field names a record that is not live in the
+    /// host's store.
     #[must_use]
     pub fn ref_from_child_rec(&self, host_field: &DbRef) -> DbRef {
         let store = keys::store(host_field, &self.allocations);
@@ -1617,14 +1621,16 @@ impl Stores {
         // `@FR-L-OutOfLine` I1 — a child lives in its host's store, so under strict stores the
         // number must name a live record there: a copy that carried it into another store, or
         // a read after the child's release, is caught here instead of reading foreign bytes.
-        if rec != 0 && crate::keys::strict_stores() && !store.is_claimed_record(rec) {
-            panic!(
-                "strict stores: the child-record field at #{}.{}+{} names record {rec}, which \
-                 is not a live record of store #{} — the child was released, or its number \
-                 left its host's store",
-                host_field.store_nr, host_field.rec, host_field.pos, host_field.store_nr
-            );
-        }
+        assert!(
+            rec == 0 || !crate::keys::strict_stores() || store.is_claimed_record(rec),
+            "strict stores: the child-record field at #{}.{}+{} names record {rec}, which \
+             is not a live record of store #{} — the child was released, or its number \
+             left its host's store",
+            host_field.store_nr,
+            host_field.rec,
+            host_field.pos,
+            host_field.store_nr
+        );
         if rec == 0 {
             DbRef::NULL
         } else {

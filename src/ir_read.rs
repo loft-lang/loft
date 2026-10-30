@@ -45,6 +45,7 @@ use std::num::NonZeroU8;
 /// If `slot`'s discriminant byte is not a known `Node` variant — only possible
 /// on a record not written by [`crate::ir_store`] (a corrupt or foreign store).
 #[must_use]
+#[expect(clippy::too_many_lines, reason = "one arm per Node variant")]
 pub fn read_value(stores: &Stores, slot: Node) -> Value {
     match slot.value_type(stores) {
         // ── leaves ───────────────────────────────────────────────────────────
@@ -166,7 +167,6 @@ pub fn read_value(stores: &Stores, slot: Node) -> Value {
 /// If `slot`'s discriminant byte is not a known `TypeT` variant — only possible
 /// on a record not written by [`crate::ir_store`] (a corrupt or foreign store).
 #[must_use]
-#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn read_type(stores: &Stores, slot: Record) -> Type {
     match type_kind(slot.discriminant(stores)) {
         TypeKind::Unknown => Type::Unknown(slot.field_int(stores, ds::TYUNKNOWN_N) as u32),

@@ -2361,11 +2361,11 @@ time	45a026419	R-Invariant	4
 time	45a026419	R-KernelSum	1
 time	45a026419	R-Leaf	146
 time	45a026419	R-LeafChain	76
-time	45a026419	R-LitDiv	35
+time	45a026419	R-LitDiv	33
 time	45a026419	R-Mint	7
 time	45a026419	R-Push	1
 time	45a026419	R-PushFill	1
-time	45a026419	R-Range	37
+time	45a026419	R-Range	39
 time	45a026419	R-RangedCall	9
 time	45a026419	R-RecPtr	1
 time	45a026419	R-RefillBuffer	1
