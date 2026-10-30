@@ -301,7 +301,8 @@ def compare(spec, exe, reports, layers, keep):
                 rcmd = [LOFT] + LIBS + ["--tests", f"{file}::{test}"]
             else:
                 rcmd = [LOFT, "--interpret"] + LIBS + [file]
-            rust = run(rcmd, {"LOFT_ALLOC_TRACE": rtrace})
+            rbinds = os.path.join(d, "rust.binds")
+            rust = run(rcmd, {"LOFT_ALLOC_TRACE": rtrace, "LOFT_TRACE_BIND": rbinds})
             lcmd = [exe, "--compare", img] + (["n_" + test] if test else [])
             loft = run(lcmd, {"LOFT_CRT_ALLOC_TRACE": ltrace})
             if loft[0] == 3 and b"refused: " in loft[2]:

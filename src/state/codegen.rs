@@ -2443,7 +2443,28 @@ impl State {
     /// Case 1: pre-assigned above TOS → move down. Case 2: large type below TOS →
     /// override only if no child-scope overlap (A13 guard).
     #[expect(clippy::too_many_lines, reason = "inherited")]
+    /// Lower `Set(v, value)`.  Under `LOFT_TRACE_BIND=<file>` (the strict comparison's binds
+    /// layer, doc/claude/plans/91-self-host/1b-compare.md) each bind also appends one line: the
+    /// function, the variable, `first` or `re`, the arm `generate_set` took and the facts it
+    /// decided on.  Off, the bytecode is unchanged.
     pub(super) fn generate_set(&mut self, stack: &mut Stack, v: u16, value: IrNode) {
+        if !bind_trace_on() {
+            return self.generate_set_inner(stack, v, value);
+        }
+        let first = !stack.function.is_stack_allocated(v);
+        BIND_NOTES.with(|n| n.borrow_mut().push(Vec::new()));
+        self.generate_set_inner(stack, v, value);
+        let notes = BIND_NOTES.with(|n| n.borrow_mut().pop().unwrap_or_default());
+        bind_trace_write(&format!(
+            "{}\t{}\t{}\t{}",
+            stack.data.def(stack.def_nr).name(),
+            stack.function.name(v),
+            if first { "first" } else { "re" },
+            if notes.is_empty() { "?".to_string() } else { notes.join(" ") }
+        ));
+    }
+
+    fn generate_set_inner(&mut self, stack: &mut Stack, v: u16, value: IrNode) {
         // @PLN11 G2/M3.15 — materialise-at-boundary.  generate_set's body is an
         // intricate store-ownership tracker (its comments flag use-after-free /
         // S1-substitution-corruption hazards); rather than thread the handle
@@ -2456,6 +2477,7 @@ impl State {
         let value = &value_owned;
         self.vars.insert(self.code_pos, v);
         if matches!(value.unspan(), Value::Block(_)) && self.emit_walk_step(stack, v) {
+            note_bind("walk-step");
             return;
         }
         // `@FR-R-LoopSlot` — a counted loop's variable placed in its range index's own slot (`slot_alias`): the
@@ -2477,11 +2499,13 @@ impl State {
             // The step writes the shared slot: from here on the debugger may show `v`.
             self.record_store_span(from, v);
             stack.function.set_stack_allocated(v);
+            note_bind("loop-slot");
             return;
         }
         // Zero-sized variables (null-typed) have no stack storage.
         if size(stack.function.tp(v), &Context::Variable) == 0 {
             stack.function.set_stack_allocated(v);
+            note_bind("zero-size");
             return;
         }
         // Plan-04 Phase 2h.3: codegen is the allocator.  For a
@@ -2504,6 +2528,7 @@ impl State {
             if crate::parser::vectors::owns_keyed_store(stack.function.tp(v))
                 && *value == Value::Null
             {
+                note_bind("B0");
                 self.gen_keyed_null(stack, v, false);
                 return;
             }
@@ -2762,6 +2787,24 @@ impl State {
                 .function
                 .displaced_buffer_witness(v, value, stack.data);
             let mut stash_old_for_post_free = false;
+            if bind_trace_on() {
+                let b2 = if owned_ref && (rhs_reads_v || rhs_is_new_record || nullable_local) {
+                    "stash"
+                } else if owned_ref && !s1_substituted {
+                    "pre"
+                } else {
+                    "none"
+                };
+                note_bind(&format!(
+                    "b2={b2} owned_ref={} s1={} reads_v={} witnessed={} entry_w={} buffer_w={}",
+                    u8::from(owned_ref),
+                    u8::from(s1_substituted),
+                    u8::from(rhs_reads_v),
+                    u8::from(witnessed),
+                    u8::from(entry_w.is_some()),
+                    u8::from(buffer_witness.is_some())
+                ));
+            }
             if owned_ref && (rhs_reads_v || rhs_is_new_record || nullable_local) {
                 let free_pos = stack.var_pos(v);
                 stack.add_op("OpVarRef", self);
@@ -2849,6 +2892,7 @@ impl State {
                 && let Type::Reference(d_nr, _) = stack.function.tp(v).clone()
             {
                 let tp_nr = stack.data.def(d_nr).known_type();
+                note_bind("R1");
                 // The DISPLACED old store is already released: this branch is reached only
                 // past the plain owned-reassign free above (`owned_ref && !s1_substituted`, not
                 // the stashed post-free), whose witnesses — the entry's, and the hidden buffer
@@ -2924,6 +2968,7 @@ impl State {
                     )
                 {
                     let tp_nr = stack.data.def(rec).known_type();
+                    note_bind("R2a");
                     let ref_size = size_of::<crate::keys::DbRef>() as u16;
                     let slot_end = stack.function.stack(v).saturating_add(ref_size);
                     if stack.position < slot_end {
@@ -3218,6 +3263,7 @@ impl State {
                     stack.add_op("OpDatabase", self);
                     self.code_add(stack.var_pos(v));
                     self.code_add(tp_nr);
+                    note_bind("R2b");
                     stack.add_op("OpCopyRefOrNull", self);
                     self.code_add(stack.var_pos(v));
                     self.code_add(tp_val as u16);
@@ -3308,6 +3354,7 @@ impl State {
                     // (`@FR-N-Store`: a dense slot can hold the null it was handed).
                     self.generate(&Value::Var(*src), stack, false);
                     self.push_copy_witness(stack, *src);
+                    note_bind("R2c");
                     stack.add_op("OpBindOrCopy", self);
                     self.code_add(stack.var_pos(v));
                     self.code_add(tp_nr);
@@ -3347,10 +3394,12 @@ impl State {
                     && !stash_old_for_post_free
                     && crate::use_analysis::projection_container_var(stack.data, value).is_some()
                 {
+                    note_bind("R2d");
                     self.gen_set_first_ref_elem_copy(stack, v, value, d_nr);
                     return;
                 }
             }
+            note_bind("R3");
             self.set_var(stack, v, value);
             if stash_old_for_post_free {
                 // #330 epilogue (fall-through path): see above.
@@ -3507,6 +3556,7 @@ impl State {
         // storage as plain `text`) — peel the marker. Else an `Optional(Text)` var fell through
         // to the scalar match below (no Text arm) and panicked "unsupported var type".
         if matches!(stack.function.tp(v).base(), Type::Text(_)) {
+            note_bind("first-text");
             self.gen_set_first_text(stack, v, value);
         } else if matches!(
             stack.function.tp(v).base(),
@@ -3520,6 +3570,7 @@ impl State {
             // trips the stack-store net (BUG #306).  User code never reaches this arm with a
             // `τ?` (a `P? = null` is parsed to `OpNullRefSentinel`); a compiler temp's
             // preamble does.
+            note_bind("F1");
             self.gen_set_first_ref_null(stack, v);
         } else if matches!(stack.function.tp(v).base(), Type::Iterator(_, _))
             && *value == Value::Null
@@ -3532,6 +3583,7 @@ impl State {
             // sentinel-inits the frame, and caught by @PLN120 A's debug assertion, which says
             // a local holding a slot must have a store span.  The sentinel write is the same
             // one a nullable collection's null-init emits.
+            note_bind("first-iter-null");
             self.gen_set_first_nullable_collection_null(stack, v);
         } else if let Type::Reference(d_nr, _) = stack.function.tp(v).clone()
             && let Value::Call(op_nr, _) = value.unspan()
@@ -3539,6 +3591,7 @@ impl State {
         {
             // The first assignment of a Reference variable being copied from another:
             // allocate a fresh store, initialize the struct record, then copy the data.
+            note_bind("F2");
             self.gen_set_first_ref_copy(stack, v, d_nr, value);
         } else if let Some(d_nr) = stack.function.tp(v).base().heap_def_nr()
             && let Value::Var(src) = value
@@ -3560,6 +3613,7 @@ impl State {
             // a nullable bind on the plain-adopt fallthrough — an ALIAS, where `@FR-B-Copy`
             // says a whole-value bind is INDEPENDENT (`c2 = ns; ns.v = 99` then read 99
             // through `c2`, loft#1319).
+            note_bind("F3");
             self.gen_set_first_ref_var_copy(stack, v, *src, d_nr);
         } else if let Some(d_nr) = stack.function.tp(v).base().heap_def_nr()
             // loft#1693 — `heap_def_nr`, native's own test (`dispatch.rs`), so a struct-ENUM
@@ -3603,6 +3657,7 @@ impl State {
             // generator allocate `_own_store_k` at the bind — so this makes the interpreter
             // act on the fact both backends already read, rather than changing the fact.
             // A binding that kept its deps is untouched and still aliases.
+            note_bind("F4");
             self.gen_set_first_ref_elem_copy(stack, v, value, d_nr);
         } else if let Type::Reference(d_nr, _) = stack.function.tp(v).clone()
             && let Value::TupleGet(_, _) = value
@@ -3633,6 +3688,7 @@ impl State {
             // clean here while the interpreter leaked.  A binding that keeps its deps
             // now aliases on BOTH backends, exactly as the undestructured read `ca = t.0`
             // already did on both.
+            note_bind("F5");
             self.gen_set_first_ref_tuple_copy(stack, v, value, d_nr);
         } else if let Some((join_d_nr, base)) = crate::use_analysis::callref_join_first_bind(
             stack.data,
@@ -3651,6 +3707,7 @@ impl State {
             // Same guard as its direct-call twin, for the same reason: `OpBindOrCopy` copies
             // when the returned store is the witness's and adopts when it is not, so the
             // scope-exit free the deps strip enables is right on both arms.
+            note_bind("F6");
             self.gen_set_first_ref_join(stack, v, value, join_d_nr, base);
         } else if let Some((join_d_nr, base)) = crate::use_analysis::nullable_join_first_bind(
             stack.data,
@@ -3673,8 +3730,10 @@ impl State {
             // no store to alias, so the guard adopts it and the local stays null.
             if base == u16::MAX {
                 // loft#1550 — a borrow of one of several arguments: copied on every run.
+                note_bind("F7-copy");
                 self.gen_set_first_ref_call_copy(stack, v, value, join_d_nr);
             } else {
+                note_bind("F7-join");
                 self.gen_set_first_ref_join(stack, v, value, join_d_nr, base);
             }
         } else if let Some(rec) = crate::use_analysis::opaque_callref_bind(
@@ -3687,6 +3746,7 @@ impl State {
             // `PutRef` it took a capture the closure handed back as an owned store, and the
             // scope-exit free released the caller's capture; `OpBindFnRefResult` copies that
             // arm and adopts the minted one (@FR-O-Unknown decides here, @FR-B-Copy).
+            note_bind("F8");
             self.gen_set_first_ref_fnref(stack, v, value, rec);
         } else if let Type::Reference(d_nr, _) | Type::Enum(d_nr, true, _) =
             crate::use_analysis::first_bind_shape(stack.function.tp(v)).clone()
@@ -3743,6 +3803,7 @@ impl State {
                     crate::use_analysis::ownership_of(stack.data, stack.def_nr, value)
                 && base != u16::MAX
             {
+                note_bind("F9a");
                 self.gen_set_first_ref_join(stack, v, value, join_d_nr, base);
             } else if stack.data.def(fn_nr).return_adopts_fresh_store()
                 || stack.function.is_view_elided(v)
@@ -3757,27 +3818,34 @@ impl State {
                 // Plan-04 Phase B.3 atomic bundle: the callee's returned
                 // DbRef is pushed onto TOS by `generate`; move it to v's
                 // slot via `OpPutRef(slot_offset)`.
+                note_bind("F9b");
                 self.generate(value, stack, false);
                 let var_pos = stack.var_pos(v);
                 stack.add_op("OpPutRef", self);
                 self.code_add(var_pos);
             } else {
+                note_bind("F9c");
                 self.gen_set_first_ref_call_copy(stack, v, value, d_nr);
             }
         } else if *value == Value::Null
             && matches!(stack.function.tp(v), Type::Optional(_))
             && matches!(stack.function.tp(v).base(), Type::Vector(_, _))
         {
+            note_bind("F10");
             self.gen_set_first_nullable_collection_null(stack, v);
         } else if matches!(stack.function.tp(v), Type::Vector(_, _)) && *value == Value::Null {
+            note_bind("F11");
             self.gen_set_first_vector_null(stack, v);
         } else if crate::parser::vectors::owns_keyed_store(stack.function.tp(v))
             && *value == Value::Null
         {
+            note_bind("F12");
             self.gen_set_first_keyed_null(stack, v);
         } else if matches!(stack.function.tp(v).base(), Type::Tuple(_)) && *value == Value::Null {
+            note_bind("first-tuple-null");
             self.gen_set_first_tuple_null(stack, v);
         } else if matches!(stack.function.tp(v), Type::Function(..)) {
+            note_bind("first-fn");
             // Plan-04 Phase B.3 atomic bundle: push the 20-byte fn-ref
             // value (8B d_nr + 12B closure DbRef) then OpPutFnRef at v's
             // slot.  `OpPutFnRef`'s stdlib signature pops a 16-byte
@@ -3807,6 +3875,7 @@ impl State {
             // already-dereferenced record ref, so every later `snap.field`
             // access (which derefs once more) would read one level too far →
             // garbage / null write.
+            note_bind("first-refvar");
             let src_pos = stack.var_pos(*src);
             stack.add_op("OpVarRef", self);
             self.code_add(src_pos);
@@ -3814,6 +3883,7 @@ impl State {
             stack.add_op("OpPutRef", self);
             self.code_add(var_pos);
         } else {
+            note_bind("F13");
             // Plan-04 Phase B.3 atomic bundle: push then OpPut* at v's
             // slot.  Mirrors `set_var`'s non-RefVar dispatch at
             // codegen.rs:2313.  `Value::Null` on a type where `generate`
@@ -4027,6 +4097,7 @@ impl State {
             && !stack.function.is_argument(src)
             && !stack.function.is_captured(src)
         {
+            note_bind("move");
             let src_pos = stack.var_pos(src);
             stack.add_op("OpVarRef", self);
             self.code_add(src_pos);
@@ -4043,6 +4114,7 @@ impl State {
             self.code_add(var_pos);
             return;
         }
+        note_bind("copy");
         let tp_nr = stack.data.def(d_nr).known_type();
         let ref_size = size_of::<crate::keys::DbRef>() as u16;
         // Bump TOS so v's slot is fully below stack.position, then emit
@@ -7386,4 +7458,45 @@ fn is_return_temp_owning_its_arms(stack: &Stack, v: u16) -> bool {
                         .is_some_and(|&a| def.attributes()[a].hidden)
             }
         })
+}
+
+// ── `LOFT_TRACE_BIND` — the strict comparison's binds layer (1b-compare.md) ──
+
+std::thread_local! {
+    /// The notes of each bind being lowered: a frame per `generate_set`, since a value's own
+    /// lowering can contain binds of its own.
+    static BIND_NOTES: std::cell::RefCell<Vec<Vec<String>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Is `LOFT_TRACE_BIND` set?
+fn bind_trace_on() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_TRACE_BIND").is_some_and(|v| !v.is_empty()))
+}
+
+/// One note on the bind being lowered: the arm it takes, or the facts it decided on.
+fn note_bind(note: &str) {
+    if bind_trace_on() {
+        BIND_NOTES.with(|n| {
+            if let Some(top) = n.borrow_mut().last_mut() {
+                top.push(note.to_string());
+            }
+        });
+    }
+}
+
+/// Append one bind's line to the file `LOFT_TRACE_BIND` names (made empty by the first write
+/// of the run).
+fn bind_trace_write(line: &str) {
+    use std::io::Write as _;
+    static FILE: std::sync::OnceLock<Option<std::sync::Mutex<std::fs::File>>> =
+        std::sync::OnceLock::new();
+    let file = FILE.get_or_init(|| {
+        let path = std::env::var_os("LOFT_TRACE_BIND")?;
+        std::fs::File::create(path).ok().map(std::sync::Mutex::new)
+    });
+    if let Some(f) = file
+        && let Ok(mut f) = f.lock()
+    {
+        let _ = writeln!(f, "{line}");
+    }
 }
