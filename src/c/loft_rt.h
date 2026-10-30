@@ -899,9 +899,18 @@ static size_t loft_utf8(uint32_t c, char *out);
  * counting from the end, `from` snapped back and `till` forward to a character boundary;
  * `till` INT32_MIN is the one character at `from`.  The bounds arrive as i64 and are taken
  * as i32, as the interpreter takes them. */
-/* Inlined with the text writes (`LOFT_TEXT_INLINE`, loft_text.h): a one-character slice
- * `s[k..k + 1]` then folds to a boundary test and a view. */
+/* Inlined with the text writes (`LOFT_TEXT_INLINE`, loft_text.h).  A one-byte slice
+ * `s[k..k + 1]` of an ASCII character answers that byte before any snapping: the general path
+ * gives the same byte, since an ASCII byte starts a character and the next byte, tested here,
+ * does not continue it.  Its length is then the constant 1, which the append after it folds
+ * on (`loft_text_concat`).  `-DLOFT_NO_SHORT_APPEND` takes the general path. */
 LOFT_TEXT_INLINE loft_str loft_text_sub(loft_str v, int64_t from64, int64_t till64) {
+#ifndef LOFT_NO_SHORT_APPEND
+    if ((uint64_t) till64 == (uint64_t) from64 + 1 && (uint64_t) from64 < v.len && from64 < INT32_MAX
+        && (unsigned char) v.p[from64] < 0x80
+        && ((uint64_t) till64 == v.len || ((unsigned char) v.p[till64] & 0xC0) != 0x80))
+        return loft_lit(v.p + from64, 1);
+#endif
     int32_t from = (int32_t) (uint32_t) (uint64_t) from64;
     int32_t till = (int32_t) (uint32_t) (uint64_t) till64;
     int32_t n = (int32_t) v.len;
@@ -1063,8 +1072,15 @@ static uint32_t loft_text_char(loft_str t, int64_t from) {
     return c;
 }
 
-/* OpAppendCharacter: the null character appends nothing. */
+/* OpAppendCharacter: the null character appends nothing.  An ASCII character into a buffer with
+ * room is one store and a length bump (`-DLOFT_NO_SHORT_APPEND` encodes and pushes it). */
 static void loft_push_code(loft_text *t, uint32_t c) {
+#ifndef LOFT_NO_SHORT_APPEND
+    if (c - 1u < 0x7Fu && t->len < t->cap) {
+        t->p[t->len++] = (char) c;
+        return;
+    }
+#endif
     char buf[4];
     size_t n = c == 0 ? 0 : loft_utf8(c, buf);
     loft_push(t, buf, n);
