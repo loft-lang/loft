@@ -404,14 +404,12 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t29, "dep", vec_dep);
     let byte_enum = db.byte(0, false);
     db.field(t30, "enum", byte_enum);
-    let vec_inner = db.vector(t7);
-    db.field(t30, "inner", vec_inner);
-    let t113 = db.vector(t7);
-    let _ = t113; // may be unused
+    let crec_inner = db.child_rec(t7);
+    db.field(t30, "inner", crec_inner);
     let byte_enum = db.byte(0, false);
     db.field(t31, "enum", byte_enum);
-    let vec_inner = db.vector(t7);
-    db.field(t31, "inner", vec_inner);
+    let crec_inner = db.child_rec(t7);
+    db.field(t31, "inner", crec_inner);
     let vec_dep = db.vector(t0);
     db.field(t31, "dep", vec_dep);
     let byte_enum = db.byte(0, false);
@@ -419,10 +417,10 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t32, "n", 0);
     let byte_enum = db.byte(0, false);
     db.field(t33, "enum", byte_enum);
-    let vec_step = db.vector(t7);
-    db.field(t33, "step", vec_step);
-    let vec_inner = db.vector(t7);
-    db.field(t33, "inner", vec_inner);
+    let crec_step = db.child_rec(t7);
+    db.field(t33, "step", crec_step);
+    let crec_inner = db.child_rec(t7);
+    db.field(t33, "inner", crec_inner);
     let byte_enum = db.byte(0, false);
     db.field(t34, "enum", byte_enum);
     db.field(t34, "n", 0);
@@ -430,8 +428,8 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t34, "keys", vec_keys);
     let vec_dep = db.vector(t0);
     db.field(t34, "dep", vec_dep);
-    let t114 = db.vector(t13);
-    let _ = t114; // may be unused
+    let t113 = db.vector(t13);
+    let _ = t113; // may be unused
     let byte_enum = db.byte(0, false);
     db.field(t35, "enum", byte_enum);
     db.field(t35, "n", 0);
@@ -446,8 +444,8 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t36, "names", vec_names);
     let vec_dep = db.vector(t0);
     db.field(t36, "dep", vec_dep);
-    let t115 = db.vector(t14);
-    let _ = t115; // may be unused
+    let t114 = db.vector(t14);
+    let _ = t114; // may be unused
     let byte_enum = db.byte(0, false);
     db.field(t37, "enum", byte_enum);
     db.field(t37, "n", 0);
@@ -459,23 +457,25 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t38, "enum", byte_enum);
     let vec_args = db.vector(t7);
     db.field(t38, "args", vec_args);
-    let vec_result = db.vector(t7);
-    db.field(t38, "result", vec_result);
+    let crec_result = db.child_rec(t7);
+    db.field(t38, "result", crec_result);
     let vec_dep = db.vector(t0);
     db.field(t38, "dep", vec_dep);
     db.field(t38, "consts", 0);
+    let t115 = db.vector(t7);
+    let _ = t115; // may be unused
     let byte_enum = db.byte(0, false);
     db.field(t39, "enum", byte_enum);
-    let vec_inner = db.vector(t7);
-    db.field(t39, "inner", vec_inner);
+    let crec_inner = db.child_rec(t7);
+    db.field(t39, "inner", crec_inner);
     let byte_enum = db.byte(0, false);
     db.field(t40, "enum", byte_enum);
     let vec_elems = db.vector(t7);
     db.field(t40, "elems", vec_elems);
     let byte_enum = db.byte(0, false);
     db.field(t41, "enum", byte_enum);
-    let vec_inner = db.vector(t7);
-    db.field(t41, "inner", vec_inner);
+    let crec_inner = db.child_rec(t7);
+    db.field(t41, "inner", crec_inner);
     let byte_enum = db.byte(0, false);
     db.field(t42, "enum", byte_enum);
     db.field(t42, "n", 0);
@@ -490,10 +490,8 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     let byte_enum = db.byte(0, false);
     db.field(t45, "enum", byte_enum);
     db.field(t45, "pos", t11);
-    let vec_inner = db.vector(t8);
-    db.field(t45, "inner", vec_inner);
-    let t116 = db.vector(t8);
-    let _ = t116; // may be unused
+    let crec_inner = db.child_rec(t8);
+    db.field(t45, "inner", crec_inner);
     let byte_enum = db.byte(0, false);
     db.field(t46, "enum", byte_enum);
     db.field(t46, "n", 0);
@@ -521,6 +519,8 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t53, "def_nr", 0);
     let vec_args = db.vector(t8);
     db.field(t53, "args", vec_args);
+    let t116 = db.vector(t8);
+    let _ = t116; // may be unused
     let byte_enum = db.byte(0, false);
     db.field(t54, "enum", byte_enum);
     db.field(t54, "var", 0);
@@ -549,12 +549,12 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     let byte_enum = db.byte(0, false);
     db.field(t59, "enum", byte_enum);
     db.field(t59, "var", 0);
-    let vec_inner = db.vector(t8);
-    db.field(t59, "inner", vec_inner);
+    let crec_inner = db.child_rec(t8);
+    db.field(t59, "inner", crec_inner);
     let byte_enum = db.byte(0, false);
     db.field(t60, "enum", byte_enum);
-    let vec_inner = db.vector(t8);
-    db.field(t60, "inner", vec_inner);
+    let crec_inner = db.child_rec(t8);
+    db.field(t60, "inner", crec_inner);
     let byte_enum = db.byte(0, false);
     db.field(t61, "enum", byte_enum);
     db.field(t61, "n", 0);
@@ -563,29 +563,29 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t62, "n", 0);
     let byte_enum = db.byte(0, false);
     db.field(t63, "enum", byte_enum);
-    let vec_cond = db.vector(t8);
-    db.field(t63, "cond", vec_cond);
-    let vec_t = db.vector(t8);
-    db.field(t63, "t", vec_t);
-    let vec_f = db.vector(t8);
-    db.field(t63, "f", vec_f);
+    let crec_cond = db.child_rec(t8);
+    db.field(t63, "cond", crec_cond);
+    let crec_t = db.child_rec(t8);
+    db.field(t63, "t", crec_t);
+    let crec_f = db.child_rec(t8);
+    db.field(t63, "f", crec_f);
     let byte_enum = db.byte(0, false);
     db.field(t64, "enum", byte_enum);
     let vec_block = db.vector(t56);
     db.field(t64, "block", vec_block);
     let byte_enum = db.byte(0, false);
     db.field(t65, "enum", byte_enum);
-    let vec_inner = db.vector(t8);
-    db.field(t65, "inner", vec_inner);
+    let crec_inner = db.child_rec(t8);
+    db.field(t65, "inner", crec_inner);
     let byte_enum = db.byte(0, false);
     db.field(t66, "enum", byte_enum);
     db.field(t66, "var", 0);
-    let vec_create = db.vector(t8);
-    db.field(t66, "create", vec_create);
-    let vec_next = db.vector(t8);
-    db.field(t66, "next", vec_next);
-    let vec_init = db.vector(t8);
-    db.field(t66, "init", vec_init);
+    let crec_create = db.child_rec(t8);
+    db.field(t66, "create", crec_create);
+    let crec_next = db.child_rec(t8);
+    db.field(t66, "next", crec_next);
+    let crec_init = db.child_rec(t8);
+    db.field(t66, "init", crec_init);
     let byte_enum = db.byte(0, false);
     db.field(t67, "enum", byte_enum);
     let vec_keys = db.vector(t12);
@@ -604,12 +604,12 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t70, "enum", byte_enum);
     db.field(t70, "var", 0);
     db.field(t70, "idx", 0);
-    let vec_inner = db.vector(t8);
-    db.field(t70, "inner", vec_inner);
+    let crec_inner = db.child_rec(t8);
+    db.field(t70, "inner", crec_inner);
     let byte_enum = db.byte(0, false);
     db.field(t71, "enum", byte_enum);
-    let vec_inner = db.vector(t8);
-    db.field(t71, "inner", vec_inner);
+    let crec_inner = db.child_rec(t8);
+    db.field(t71, "inner", crec_inner);
     let byte_enum = db.byte(0, false);
     db.field(t72, "enum", byte_enum);
     db.field(t72, "def_nr", 0);
@@ -893,9 +893,9 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t112, "types", vec_types);
     let t132 = db.vector(t111);
     let _ = t132; // may be unused
-    let vec_vector = db.vector(t7);
     let vec_vector = db.vector(t13);
     let vec_vector = db.vector(t14);
+    let vec_vector = db.vector(t7);
     let vec_vector = db.vector(t8);
     let vec_vector = db.vector(t56);
     let vec_vector = db.vector(t12);
