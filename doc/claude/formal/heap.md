@@ -891,12 +891,16 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **0**.  The entries the register closed, and how each closed, are in
+OPEN: **1**.  The entries the register closed, and how each closed, are in
 [heap-history.md](heap-history.md).
 
-No entry is open.  `tests/ownership_drop_gate.rs` gives every generated cell
-a lease verdict and ties each cell that must release once, and does not, to exactly one open
-entry.
+* **D-heap-52** — `(H-Spent)`: a struct whose only droppable is what a fn field's closure record
+  owns is not spent by a move, so `h2 = h; h.f()` compiles and the two names share the captured
+  store (loft#2283).  The move itself is decided right (`copy_moves_drop_from` hands the release
+  to `h2`); the refusal of the later read is what is missing.
+
+`tests/ownership_drop_gate.rs` gives every generated cell a lease verdict and ties each cell
+that must release once, and does not, to exactly one open entry.
 
 Writing these rules **shrinks** [operational.md](operational.md)'s D-op-1 — the heap/store
 steps it named as *"unwritten … the interpreter remains their spec"* now have a written

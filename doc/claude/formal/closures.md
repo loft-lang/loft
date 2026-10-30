@@ -121,6 +121,16 @@ available). A bare `f` (a function's name used as a value) is a first-class func
                  still holds outlives the pass.  Which name is last is a per-run fact, so it
                  is decided by store identity when a name lets go, never by which pass the
                  program text says might keep it.
+                 A fn-ref read out of a struct FIELD and kept — bound to a local, or
+                 returned — is such a copy: a record of its own (`OpCopyClosure`) that
+                 shares every capture by (L-CapHeap), so an overwrite of the field, a
+                 rebind of its host or the host's release leaves it answering from the
+                 captures it was copied with.  A store the field's record OWNS is then held
+                 by two records whose release order is a run-time fact, and the LAST of
+                 them releases it: the closure-copy share (`src/database/closure_share.rs`),
+                 the store layer's one reference count, which serves this case and no
+                 other.  A call in place (`h.f()`) reads the field's record and copies
+                 nothing.
   (L-CapOne)     among records that adopt ONE store and can COEXIST, exactly one owns it — the
                  one that leaves the frame, or the first where none does — and the rest borrow.
                  Records that cannot coexist, each built in a different arm of one branch, EACH
@@ -250,7 +260,13 @@ with the closure's environment in scope.
 
 ## Deviations
 
-**OPEN: 0.**  Every closed entry is recorded in [closures-history.md](closures-history.md).
+**OPEN: 1.**  Every closed entry is recorded in [closures-history.md](closures-history.md).
+
+* **D-clo-52** — `(L-CapOwn)`: overwriting a fn field releases a capture its frame still owns
+  when the displaced record was left behind in that frame (loft#2284).  Ownership is marked per
+  closure-record TYPE, and one fn field's record type serves every function that assigns the
+  field, so a record that leaves its frame in one function and stays behind in another cannot
+  both own and borrow.
 
 > **An `OPEN: 0` is a claim to re-measure, and this one moved four times in a day** — 0 → 1 → 2
 > → 0 → 1, each step a probe pushed one axis off what the oracle below holds fixed, and each
