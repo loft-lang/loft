@@ -422,7 +422,7 @@ pub(super) fn removed_params_map(data: &Data) -> RemovedParams {
     let mut forwards: HashMap<(u32, u16), Vec<(u32, u16)>> = HashMap::default();
     for d_nr in 0..data.definitions() {
         let def = data.def(d_nr);
-        if !def.name.starts_with("n_") {
+        if !def.is_loft_defined() {
             continue;
         }
         for k in removed_ref_params(data, d_nr) {
@@ -435,7 +435,7 @@ pub(super) fn removed_params_map(data: &Data) -> RemovedParams {
         }
         def.code.walk(&mut |v| {
             let Value::Call(callee, args) = v else { return };
-            if !data.def(*callee).name.starts_with("n_") {
+            if !data.def(*callee).is_loft_defined() {
                 return;
             }
             for (i, arg) in args.iter().enumerate() {
@@ -746,7 +746,7 @@ pub fn disturbed_params_map(
     let mut forwards: HashMap<(u32, u16), Vec<Forward>> = HashMap::default();
     for d_nr in 0..data.definitions() {
         let def = data.def(d_nr);
-        if !def.name.starts_with("n_") {
+        if !def.is_loft_defined() {
             continue;
         }
         // By reference: consuming the map runs `RawIntoIter::drop`, whose test of an
@@ -767,7 +767,7 @@ pub fn disturbed_params_map(
         let function = &def.variables;
         def.code.walk(&mut |v| {
             let Value::Call(callee, args) = v else { return };
-            if !data.def(*callee).name.starts_with("n_") {
+            if !data.def(*callee).is_loft_defined() {
                 return;
             }
             for (i, arg) in args.iter().enumerate() {

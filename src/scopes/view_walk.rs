@@ -1373,7 +1373,7 @@ fn established_stores(stmt: &Value, function: &Function, data: &Data) -> HashSet
             }
         }
         // A call that reassigns one of its `&` parameters displaces the caller's store.
-        Value::Call(d, args) if data.def(*d).name.starts_with("n_") => {
+        Value::Call(d, args) if data.def(*d).is_loft_defined() => {
             let reassigned = reassigned_ref_params(data, *d);
             for (i, arg) in args.iter().enumerate() {
                 if !u16::try_from(i).is_ok_and(|i| reassigned.contains(&i)) {
@@ -1392,7 +1392,11 @@ fn established_stores(stmt: &Value, function: &Function, data: &Data) -> HashSet
                     function.tp(*src).base(),
                     Type::Reference(_, _) | Type::Enum(_, true, _)
                 ),
-                Value::Call(f, _) => data.def(*f).name.starts_with("n_"),
+                Value::Call(f, _) => {
+                    // A native's result is established as a loft body's is; a method's too.
+                    let def = data.def(*f);
+                    def.name.starts_with("n_") || def.is_loft_defined()
+                }
                 // A struct-ENUM literal builds into a work-ref and hands the variable that
                 // block: `sh = { OpDatabase(__ref_p2_2, …); …; __ref_p2_2 }`.  The tail is
                 // the same `Var` establishment the first arm names, one wrapper out — and
