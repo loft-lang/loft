@@ -46,9 +46,8 @@ enum Dialect {
 }
 
 fn dialect(cc: &str) -> Dialect {
-    let stem = std::path::Path::new(cc)
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_ascii_lowercase())
+    let stem = fa::file_stem(cc)
+        .map(|s| s.to_ascii_lowercase())
         .unwrap_or_default();
     if stem == "cl" || stem == "clang-cl" {
         Dialect::Msvc
@@ -475,6 +474,37 @@ fn run_cc(cmd: &mut Spawn) -> std::io::Result<loft::platform::process::Ran> {
     out
 }
 
+/// The compiler's command building `src` into `binary`, in its own dialect: gcc's links the
+/// libraries after the objects, where it resolves them; `cl` is told where its object goes,
+/// which it writes into the working directory otherwise.
+fn compile_command(
+    cc: &str,
+    flags: &[String],
+    src: &std::path::Path,
+    binary: &std::path::Path,
+    obj: &std::path::Path,
+    link_args: &[String],
+) -> Spawn {
+    let mut cmd = cc_spawn(cc);
+    match dialect(cc) {
+        Dialect::Gnu => {
+            cmd.push_args(flags);
+            cmd.push_arg(src).push_arg("-o").push_arg(binary);
+            cmd.push_args(link_args);
+            cmd.push_arg("-lm");
+            cmd.push_args(loft::platform::c_system_link_libs());
+        }
+        Dialect::Msvc => {
+            cmd.push_arg("/nologo").push_args(msvc_args(flags));
+            cmd.push_arg(src);
+            cmd.push_arg(format!("/Fe:{}", binary.display()));
+            cmd.push_arg(format!("/Fo:{}", obj.display()));
+            cmd.push_args(msvc_args(link_args));
+        }
+    }
+    cmd
+}
+
 /// How the unit's `link:` inputs reach the linker, placed as [`Placement`] says: the run paths
 /// to add to the flags, and the link arguments.  `binds`: the program opens the libraries its
 /// packages ship at start, so a `bound` library is not linked and a shim is linked whole into a
@@ -588,25 +618,8 @@ pub(crate) fn build(
     let binary = scratch.join(format!("loft_native_bin_{pid}{exe}"));
     fa::write(&src, c)
         .map_err(|e| BuildError::Rejected(format!("cannot write {}: {e}", src.display())))?;
-    let mut cmd = cc_spawn(&cc);
     let obj = scratch.join(format!("loft_native_obj_{pid}.obj"));
-    match dialect(&cc) {
-        Dialect::Gnu => {
-            cmd.push_args(&flags);
-            cmd.push_arg(&src).push_arg("-o").push_arg(&binary);
-            cmd.push_args(&link_args);
-            cmd.push_arg("-lm");
-            cmd.push_args(loft::platform::c_system_link_libs());
-        }
-        // `cl` writes its object beside the working directory unless told where.
-        Dialect::Msvc => {
-            cmd.push_arg("/nologo").push_args(msvc_args(&flags));
-            cmd.push_arg(&src);
-            cmd.push_arg(format!("/Fe:{}", binary.display()));
-            cmd.push_arg(format!("/Fo:{}", obj.display()));
-            cmd.push_args(msvc_args(&link_args));
-        }
-    }
+    let mut cmd = compile_command(&cc, &flags, &src, &binary, &obj, &link_args);
     let out = run_cc(&mut cmd);
     let _ = fa::remove_file(&obj);
     let keep = std::env::var_os("LOFT_KEEP_NATIVE_C").is_some();
