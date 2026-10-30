@@ -203,6 +203,11 @@ const CODES: &[(&str, &str)] = &[
          fn main() { s = S { a: 1 }; print(\"{s.a?}\"); }",
     ),
     (
+        "redundant-present",
+        "struct S { a: u8 }\n\
+         fn main() { s = S { a: 1 }; print(\"{s.a!}\"); }",
+    ),
+    (
         "redundant-null-check",
         "struct S { a: u8 }\n\
          fn main() { s = S { a: 1 }; if s.a == null { print(\"n\") } }",
@@ -585,6 +590,10 @@ const EDIT_BLOCKED: &[(&str, &str)] = &[
     (
         "redundant-default-fallback",
         "same shape as `redundant-coalesce`: the `?` and what it defaults over are not one span at the emit site",
+    ),
+    (
+        "redundant-present",
+        "same shape as `redundant-default-fallback`: the `!` and its operand are not one span at the emit site",
     ),
     (
         "redundant-null-check",
