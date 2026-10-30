@@ -28,7 +28,6 @@ LAYERS = ["out", "alloc", "leak", "ir", "types", "schema", "ctable", "ownership"
 # The layers the loft side does not produce yet, and the step that builds each (1b-compare.md).
 NOT_YET = {
     "ownership-overlays": "after the oracle: per_iteration_frees, text_return_orphan_risk, free_before_dependent_read, return_source_freed, ref_param_publish_freed, heap_return_delivery",
-    "binds": "C-2, with 1b-s3.md B-1",
     "slots": "C-3, with 1b-frame.md F-1",
     "lifetimes": "C-3, the compute_intervals port",
     "bytecode": "C-3, with 1b-frame.md F-2",
@@ -285,6 +284,29 @@ def schema_layer(file, img, reports):
     return differ("schema", rows, loft.splitlines())
 
 
+def bind_rows(path):
+    """A `LOFT_TRACE_BIND` file as {function: [row, …]}, rows in the order they were written."""
+    by_fn = {}
+    for line in open(path, encoding="utf-8").read().splitlines():
+        by_fn.setdefault(line.split("\t", 1)[0], []).append(line)
+    return by_fn
+
+
+def binds_layer(rbinds, lbinds):
+    """The binds layer (1b-compare.md): the functions the loft side lowered, by name, each one's
+    rows in order.  The Rust bytecode writer lowers every function, the loft one those it runs."""
+    if not os.path.exists(rbinds):
+        return "MISSING rust", [f"no bind trace: {LOFT} predates LOFT_TRACE_BIND"]
+    if not os.path.exists(lbinds):
+        return "MISSING loft", ["the lowering writes no bind table yet (1b-s3.md B-1)"]
+    rust, loft = bind_rows(rbinds), bind_rows(lbinds)
+    r, l = [], []
+    for name in sorted(loft):
+        r += rust.get(name, [f"{name}\t(not lowered)"])
+        l += loft[name]
+    return differ("binds", r, l)
+
+
 def compare(spec, exe, reports, layers, keep):
     file, _, test = spec.partition("::")
     report = []
@@ -304,7 +326,8 @@ def compare(spec, exe, reports, layers, keep):
             rbinds = os.path.join(d, "rust.binds")
             rust = run(rcmd, {"LOFT_ALLOC_TRACE": rtrace, "LOFT_TRACE_BIND": rbinds})
             lcmd = [exe, "--compare", img] + (["n_" + test] if test else [])
-            loft = run(lcmd, {"LOFT_CRT_ALLOC_TRACE": ltrace})
+            lbinds = os.path.join(d, "loft.binds")
+            loft = run(lcmd, {"LOFT_CRT_ALLOC_TRACE": ltrace, "LOFT_TRACE_BIND": lbinds})
             if loft[0] == 3 and b"refused: " in loft[2]:
                 refused = text(loft[2]).split("refused: ", 1)[1].strip().splitlines()[0]
             rev = program_events(open(rtrace, encoding="utf-8")) if os.path.exists(rtrace) else None
@@ -322,6 +345,8 @@ def compare(spec, exe, reports, layers, keep):
                 v, detail = differ("alloc", rev, lev)
             elif layer == "leak":
                 v, detail = differ("leak", leaked(rev), leaked(lev))
+            elif layer == "binds":
+                v, detail = binds_layer(rbinds, lbinds)
             elif layer == "schema":
                 v, detail = schema_layer(file, img, reports)
             elif layer == "ctable":
