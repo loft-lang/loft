@@ -99,20 +99,15 @@ writing ?? 0."*
   vector<Node>) -> Node` (and `block_of`, `type_of` for the other boxes), the one place the
   image's invariant "a box holds exactly one" is discharged, with one message naming the box.
   The ports read `one(inner)` where they read `inner[0] ?? panic("a set has its value")`.
-  **The representation stays (owner's question, 2026-10-30: "our store is an internal tree, and
-  this is a line between branches — is it the right abstraction?").**  An owned single-child
-  field was weighed — the store has the part for it, `Parts::ChildRec` (P213, a 4-byte record
-  number with copy and free cascading, used today only for closure records) — and declined, on
-  what it duplicates rather than on what it would cost to serialize: an OWNED child is a tree
-  edge, which a collection already is, with its text form, JSON, equality, copy, image and C
-  runtime support; a second spelling of the same edge buys one character per read.  A LINK
-  across branches is a different thing and does serialize — as a JSON Reference,
-  `{"$ref": "#/leaves/1"}` (owner, 2026-10-30) — which is how loft's own `reference<T>` should
-  be written and is not today (loft#2268: `DbRef(2,15,8)` in `{x:j}`, invalid JSON).  loft models a tree's edges as collections — the
-  `cbor` library's `CArray { items: vector<CborValue> }`, `CMap { entries: vector<CborEntry> }`
-  have no single-child box at all — and a box-of-one is that edge with a cardinality of one;
-  `ir.loft` holds one because it mirrors Rust's `Box<Value>` for the image both sides read.  So
-  the cost is only the READ, which `e!` and the accessors remove.
+  **The representation, revisited with the owner (2026-10-30).**  The box exists because a
+  recursive child needs an indirection: inline, `inner: Node` inside `Node` has no size, and
+  the two indirections a program can write cost — `reference<Node>` a 12-byte address (the
+  stride of every node grows, as an enum takes its largest variant's size), `vector<Node>` a
+  4-byte handle read through `[0]`.  An owned single-child field as a new kind of EDGE was
+  first declined (it would duplicate what a collection is); the owner's proposal — *"an
+  abstract type that is only valid to use in combination with a given store; in almost any case
+  you already know the store where the reference came from"* — is not that, and is designed as
+  R-2s below.
 - **The table reads (81): the accessors the ports already half-have.**  `binds::def`,
   `fvar`, `fn_of` exist; every port reads definitions, variables and types through them, so the
   discharge is written once per table.
@@ -121,7 +116,36 @@ writing ?? 0."*
   both backends: if the rule's guard elision does not reach it, that is a front-end gap against
   `(N-Domain)`, filed and fixed as one, and the discharges go when it is.
 
-**Verification.**  For `e!`: suite cells under `(N-Present)` — present (the value), absent
+**R-2s — the out-of-line field (the owner's store-relative reference).**  An out-of-line struct
+field: the same VALUE semantics as an inline struct field, a different layout.
+- *Layout*: the 4-byte record number of a record in the HOST's store — `Parts::ChildRec`
+  (P213), which already compares deeply (`database/equality.rs`), copies and frees by cascade
+  (`database/allocation.rs`), round-trips the image (`ir_store.rs`, `ir_read.rs`) and exists in
+  the C runtime (`LOFT_T_CHILD`, `loft_rt.h`, `loft_image.h`); today only closure records use it.
+- *Read*: `n.inner` is the child with the host's store attached, `(store(n), rec, 8)` — a view,
+  as every struct projection is (`@C86`).  The 4-byte form never leaves the field, so a variable
+  always holds an ordinary reference: "valid only with its store" holds by construction.
+- *Write*: `n.inner = x` copies `x` into the host's store, as an inline field's assignment
+  copies; a fresh record already in that store with no other owner is moved.  A constructor
+  (`NdSet { var: 3, inner: x }`) is the same write.
+- *Copy, `==`, `{n}`, JSON, parse*: as an inline field — deep, nested, no `$ref`: a child, not a
+  link (links across stores are `reference<T>`, loft#2268).
+- *Absence*: `inner: Node?` is record number 0, which `ChildRec` already reads as null.
+- *When*: automatically, for a field whose type would contain its host by value — inline
+  layout is impossible there, so the compiler knows; no new syntax.
+- *Cost*: 4 bytes a child, the box's handle without the vector record and its length word; the
+  image shrinks.
+- *What it takes*: the rule in `formal/layout.md` and the write in the binding rules; a
+  `formatting.md` arm (today's format arm is a debug shape, `ChildRec(rec)`); the parser's field
+  read and write and the type check that admits a recursive field; `--native` codegen; the
+  debugger and LSP display; a `@C` entry for the owner.  For the port: `ir.loft` declares
+  `NdSet { var: integer, inner: Node }`, the Rust writer changes in lockstep (an image format
+  bump), and the 176 box discharges go.
+
+**Verification.**  For R-2s: suite cells under the new rule — a recursive enum built, read,
+written, copied (the copy independent), compared, formatted and parsed back, a nullable child
+absent — on the interpreter, `--native` and the C; `ir_schema_roundtrip` for the image; the
+comparison layers unchanged on the ports.  For `e!`: suite cells under `(N-Present)` — present (the value), absent
 (the halt, its message naming the expression and its line), chained (`v[i]!.f`), a reference
 and a bare enum (what `?` refuses), a statically non-null operand (the advice) — each on the
 interpreter, `--native` and the C.  For the ports: the same receipt as R-1 (every comparison
