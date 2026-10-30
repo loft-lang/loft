@@ -799,7 +799,6 @@ impl<'a> IrType<'a> {
     }
 }
 
-
 /// Diverge with a clear message when an accessor is called on the wrong variant
 /// — a codegen bug (the caller must `match kind()` first), not a data fault.
 #[cold]
