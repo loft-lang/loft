@@ -46,7 +46,7 @@ A text index's node whose parts commonly tie (a quarter of its slots) keeps the 
 
 `State::iterate` / `step` (`src/state/io.rs`) and `OpIterate` / `OpStep` (`src/codegen_runtime.rs`) keep the packed cursor `finish << 32 | cur`.  `cur` is the RECORD last yielded; `finish` is the last record to yield (0 = open bound, `u32::MAX` = done).  Both ops receive the index TYPE as `arg`.
 
-Each step finds the held record's slot again by key, because a loop body may remove records by key mid-walk.  The slot found last is kept as a per-thread HINT, taken only when that slot of the current arena still holds that record, so a stale hint costs a descent and never a wrong slot.  A walk writes nothing to the store: locked stores and `par` readers are unaffected.  `#remove` during a walk goes through `Stores::remove_during_tree_iteration`.
+Each step finds the held record's slot again by key, because a loop body may remove records by key mid-walk.  The slot found last is kept as a per-thread HINT, taken only when that slot of the current arena still holds that record, so a stale hint costs a descent and never a wrong slot (`btree::hinted`; the C runtime's twin is `loft_bt_hinted` in `src/c/loft_btree.h`, `-DLOFT_NO_WALK_HINT` descends on every step; guard `tests/scripts/an-index-walk-steps-from-its-hint-only-while-it-holds.loft`).  A walk writes nothing to the store: locked stores and `par` readers are unaffected.  `#remove` during a walk goes through `Stores::remove_during_tree_iteration`.
 
 ### Ownership and persistence
 
