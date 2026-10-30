@@ -151,3 +151,17 @@ member's `view`, which the comment said the image could not give — the wrapper
 type's NAME (`__nullable<…>` with a `…::Some` variant), so it is derived now.  Probe PC5 holds:
 an IR literal printed `i64` for `i32` is a DIFFERENT row at the right line.  Building the
 report program through the C backend found loft#2255 (a text tail's `panic` arm), fixed first.
+
+## B-2's layer — BUILT 2026-10-30 (ownership)
+
+`selfhost/src/own.loft` ports the oracle (`use_analysis.rs`: the `Own` lattice, `Ownership`'s
+classifier and its interprocedural `return_ownership` fixpoint, `ownership_of`,
+`function_defs`, and the `scopes/phase.rs` collections they read), `report.loft`'s sibling for
+`introspect --show-ownership`'s verdict lines (`reports ownership IMAGE`).  An `Own` is one
+integer (Owned -1, Unknown -2, `Borrowed{b}` = b, `Join{b}` = 65536 + b).  **Measured:** EQUAL
+on the 13 kernels, the 60-program sample, 30 programs picked for function values, `??`, `match`,
+early returns and recursion, 497 of 513 `tests/scripts` programs and 1969 of 2647 suite
+programs — the rest are programs the front end refuses by design; none DIFFERENT.  Its answers
+cover 453 `Unknown` and 1253 `Join` verdicts (223 `Join(base=?)`), so mutual recursion and
+unresolved closure calls are exercised.
+

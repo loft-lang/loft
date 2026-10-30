@@ -1,0 +1,1754 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The store-ownership ORACLE of a program image, a port of `use_analysis::ownership_of` and
+// `use_analysis::return_ownership` (`src/use_analysis.rs`) for the strict comparison
+// (doc/claude/plans/91-self-host/1b-compare.md): the same verdicts, by the same algorithm,
+// function for function, each named beside its Rust home.  `ownership_report` writes the verdict
+// lines of `loft introspect --show-ownership` (`src/introspect.rs` `fn emit_ownership`) without
+// its overlay lines.
+//
+// Environment switches are read at their DEFAULTS (nothing set): `LOFT_OWN_DECLINE` is empty, so
+// `own_declines("join")` is false and its arm of `Own::join` is not ported.
+//
+// A node is never RETURNED from a function here: a returned record is materialised into the
+// caller's buffer, a deep copy of the whole subtree.  Where the Rust hands a `&Value` back
+// (`unspan`, `fn_body_tail`, `through_null_arm`), the port matches through the span instead, and
+// the definitions the Rust CLONES (`Defs.rhs`, the early returns) are copied here too.
+use ir;
+
+// ── `Own` (src/use_analysis.rs:1874 enum Own) ──
+//
+// One integer per verdict, so a verdict compares and stores as a scalar: `Owned` and `Unknown`
+// are negative, `Borrowed { base }` is the base itself (0..=u16::MAX) and `Join { base }` is the
+// base plus JOIN_AT.  `base_of` answers the base, or -1 for none.
+const OWNED = -1;
+const UNKNOWN = -2;
+const JOIN_AT = 65536;
+// `u16::MAX`: the base the oracle cannot name.
+const MAX = 65535;
+// `u32::MAX`: a fn-ref variable naming TWO targets (`fnref_target_in`).
+const UMAX = 4294967295;
+// src/use_analysis.rs:1924 const NOT_YET — `Borrowed { base: u16::MAX - 1 }`.
+const NOT_YET = 65534;
+// src/use_analysis.rs:1902 const FIXPOINT_ROUNDS.
+const FIXPOINT_ROUNDS = 6;
+// A memo or fixpoint slot that holds nothing yet.
+const NONE = -100;
+
+fn borrowed(base: integer) -> integer {
+  base
+}
+
+fn joined(base: integer) -> integer {
+  JOIN_AT + base
+}
+
+fn is_borrowed(o: integer) -> boolean {
+  o >= 0 && o < JOIN_AT
+}
+
+fn is_join(o: integer) -> boolean {
+  o >= JOIN_AT
+}
+
+// src/use_analysis.rs:1928 fn base — the base of a `Borrowed`/`Join`, -1 for `Owned`/`Unknown`.
+fn base_of(o: integer) -> integer {
+  if is_borrowed(o) {
+    o
+  } else if is_join(o) {
+    o - JOIN_AT
+  } else {
+    -1
+  }
+}
+
+// src/use_analysis.rs:1943 fn join — the lattice join of two arms.
+fn join(a: integer, c: integer) -> integer {
+  if a == NOT_YET {
+    return c;
+  }
+  if c == NOT_YET {
+    return a;
+  }
+  if a == UNKNOWN && c == UNKNOWN {
+    return UNKNOWN;
+  }
+  // `own_declines("join")` is false at its default: no absorbing arm.
+  if a == UNKNOWN {
+    return join(OWNED, c);
+  }
+  if c == UNKNOWN {
+    return join(OWNED, a);
+  }
+  if a == OWNED && c == OWNED {
+    return OWNED;
+  }
+  if is_borrowed(a) && is_borrowed(c) {
+    if a == c {
+      return a;
+    }
+    return borrowed(MAX);
+  }
+  ba = base_of(a);
+  bc = base_of(c);
+  joined(if ba >= 0 { ba } else if bc >= 0 { bc } else { MAX })
+}
+
+// ── the program's tables: `Data::def_nr`, `Function::name` / `tp` / `is_argument` ──
+
+// `Data::def_nr`: the definition named `name`, or -1 (`u32::MAX`, which no call names).
+fn def_nr(b: ir::Bundle, name: text) -> integer {
+  for d in b.data.definitions {
+    if d.name == name {
+      return d#index;
+    }
+  }
+  -1
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  x = b.data.definitions[d];
+  if x == null { "" } else { x.name }
+}
+
+// src/variables/mod.rs:1730 fn name — `??` out of range.
+fn var_name(f: ir::Function, v: integer) -> text {
+  x = f.variables[v];
+  if x == null { "??" } else { x.name }
+}
+
+// src/variables/mod.rs:4104 fn is_argument.
+fn is_argument(f: ir::Function, v: integer) -> boolean {
+  x = f.variables[v];
+  if x == null { false } else { x.argument }
+}
+
+// src/variables/mod.rs:5502 fn is_skip_free.
+fn is_skip_free(f: ir::Function, v: integer) -> boolean {
+  x = f.variables[v];
+  if x == null { false } else { x.skip_free }
+}
+
+// The ops the oracle keys on, looked up once (`Ownership::new`, `FillOps::of`,
+// `op_sets::projection_ops`).
+struct Ops {
+  database: integer,
+  new_record: integer,
+  copy_record: integer,
+  clear_vector: integer,
+  append_vector: integer,
+  put_ref: integer,
+  set_dbref: integer,
+  get_dbref: integer,
+  null_text: integer,
+  projections: vector<integer>,
+}
+
+// src/op_sets.rs:45 fn projection_ops.
+fn projection_ops(b: ir::Bundle) -> vector<integer> {
+  out: vector<integer> = [];
+  for n in ["OpGetVector", "OpGetVectorNullable", "OpGetField", "OpVectorRef", "OpVectorRefNullable", "OpGetRecord", "OpGetDbRef"] {
+    d = def_nr(b, n);
+    if d >= 0 {
+      out += [d];
+    }
+  }
+  out
+}
+
+fn ops_of(b: ir::Bundle) -> Ops {
+  Ops {
+    database: def_nr(b, "OpDatabase"),
+    new_record: def_nr(b, "OpNewRecord"),
+    copy_record: def_nr(b, "OpCopyRecord"),
+    clear_vector: def_nr(b, "OpClearVector"),
+    append_vector: def_nr(b, "OpAppendVector"),
+    put_ref: def_nr(b, "OpPutRef"),
+    set_dbref: def_nr(b, "OpSetDbRef"),
+    get_dbref: def_nr(b, "OpGetDbRef"),
+    null_text: def_nr(b, "OpConvTextFromNull"),
+    projections: projection_ops(b),
+  }
+}
+
+fn has(v: vector<integer>, x: integer) -> boolean {
+  for y in v {
+    if y == x {
+      return true;
+    }
+  }
+  false
+}
+
+// ── `Type` questions (src/data.rs) ──
+
+// src/data.rs:2248 fn heap_dep — `.is_some()`, through `base()`: one `Optional` peeled.
+fn has_heap_dep(t: ir::TypeT) -> boolean {
+  match t {
+    TyOptional { inner } => heap_dep_bare(inner[0] ?? panic("a type")),
+    _ => heap_dep_bare(t),
+  }
+}
+
+fn heap_dep_bare(t: ir::TypeT) -> boolean {
+  match t {
+    TyReference { n: _, dep: _ } => true,
+    TyVector { inner: _, dep: _ } => true,
+    TyEnum { n: _, is_ref, dep: _ } => is_ref,
+    TySorted { n: _, keys: _, dep: _ } => true,
+    TyHash { n: _, names: _, dep: _ } => true,
+    TyIndex { n: _, keys: _, dep: _ } => true,
+    TyRadix { n: _, names: _, dep: _ } => true,
+    TyTrie { n: _, key: _, dep: _ } => true,
+    _ => false,
+  }
+}
+
+// src/data.rs:2322 fn heap_def_nr — through `base()`; -1 for `None`.
+fn heap_def_nr(t: ir::TypeT) -> integer {
+  match t {
+    TyOptional { inner } => heap_def_nr_bare(inner[0] ?? panic("a type")),
+    _ => heap_def_nr_bare(t),
+  }
+}
+
+fn heap_def_nr_bare(t: ir::TypeT) -> integer {
+  match t {
+    TyReference { n, dep: _ } => n,
+    TyEnum { n, is_ref, dep: _ } => if is_ref { n } else { -1 },
+    _ => -1,
+  }
+}
+
+// src/data.rs:1845 fn peel_link, then `heap_def_nr`: `base()`, then every `&` and `Rewritten`
+// marker peeled, each followed by its own `base()`.
+fn peel_link_heap_def_nr(t: ir::TypeT) -> integer {
+  match t {
+    TyOptional { inner } => peel_link_after_base(inner[0] ?? panic("a type")),
+    _ => peel_link_after_base(t),
+  }
+}
+
+fn peel_link_after_base(t: ir::TypeT) -> integer {
+  match t {
+    TyRefVar { inner } => peel_link_heap_def_nr(inner[0] ?? panic("a type")),
+    TyRewritten { inner } => peel_link_heap_def_nr(inner[0] ?? panic("a type")),
+    _ => heap_def_nr(t),
+  }
+}
+
+// `matches!(t.base(), Type::RefVar(_))`.
+fn base_is_ref_var(t: ir::TypeT) -> boolean {
+  match t {
+    TyOptional { inner } => is_ref_var(inner[0] ?? panic("a type")),
+    _ => is_ref_var(t),
+  }
+}
+
+fn is_ref_var(t: ir::TypeT) -> boolean {
+  match t {
+    TyRefVar { inner: _ } => true,
+    _ => false,
+  }
+}
+
+// `matches!(t.base(), Type::Function(..))`.
+fn base_is_function(t: ir::TypeT) -> boolean {
+  match t {
+    TyOptional { inner } => is_function(inner[0] ?? panic("a type")),
+    _ => is_function(t),
+  }
+}
+
+fn is_function(t: ir::TypeT) -> boolean {
+  match t {
+    TyFunction { args: _, result: _, dep: _, consts: _ } => true,
+    _ => false,
+  }
+}
+
+// src/data.rs:6032 fn is_dbref — on the type as given, no peel.
+fn is_dbref(t: ir::TypeT) -> boolean {
+  match t {
+    TyReference { n: _, dep: _ } => true,
+    TyVector { inner: _, dep: _ } => true,
+    TySorted { n: _, keys: _, dep: _ } => true,
+    TyIndex { n: _, keys: _, dep: _ } => true,
+    TyHash { n: _, names: _, dep: _ } => true,
+    TyRadix { n: _, names: _, dep: _ } => true,
+    TyTrie { n: _, key: _, dep: _ } => true,
+    TyEnum { n: _, is_ref, dep: _ } => is_ref,
+    _ => false,
+  }
+}
+
+// `is_dbref(t.base())`.
+fn base_is_dbref(t: ir::TypeT) -> boolean {
+  match t {
+    TyOptional { inner } => is_dbref(inner[0] ?? panic("a type")),
+    _ => is_dbref(t),
+  }
+}
+
+// src/data.rs:2598 fn depend — appended to `out`.
+fn depend(t: ir::TypeT, out: vector<integer>) {
+  match t {
+    TyText { dep } => append_all(out, dep),
+    TyReference { n: _, dep } => append_all(out, dep),
+    TyIndex { n: _, keys: _, dep } => append_all(out, dep),
+    TyRadix { n: _, names: _, dep } => append_all(out, dep),
+    TyTrie { n: _, key: _, dep } => append_all(out, dep),
+    TyHash { n: _, names: _, dep } => append_all(out, dep),
+    TySorted { n: _, keys: _, dep } => append_all(out, dep),
+    TyEnum { n: _, is_ref: _, dep } => append_all(out, dep),
+    TyVector { inner: _, dep } => append_all(out, dep),
+    TyFunction { args: _, result: _, dep, consts: _ } => append_all(out, dep),
+    TyRefVar { inner } => depend(inner[0], out),
+    TyOptional { inner } => depend(inner[0], out),
+    TyTuple { elems } => {
+      for e in elems {
+        ds: vector<integer> = [];
+        depend(e, ds);
+        for x in ds {
+          if !has(out, x) {
+            out += [x];
+          }
+        }
+      }
+    }
+    _ => {}
+  }
+}
+
+// `out` takes every element of `dep`, one by one: a whole-vector `+=` reads as a rebinding of
+// `out`, and that keeps `depend`'s tail calls from jumping.
+fn append_all(out: vector<integer>, dep: vector<integer>) {
+  for x in dep {
+    out += [x];
+  }
+}
+
+fn depend_of(t: ir::TypeT) -> vector<integer> {
+  out: vector<integer> = [];
+  depend(t, out);
+  out
+}
+
+fn tp_depend(f: ir::Function, v: integer) -> vector<integer> {
+  x = f.variables[v];
+  if x == null {
+    return [];
+  }
+  depend_of(x.type_def[0] ?? panic("a type"))
+}
+
+// src/data.rs:4906 fn returns_borrowed_view.
+fn returns_borrowed_view(d: ir::Definition) -> boolean {
+  for x in depend_of(d.returned[0] ?? panic("a return type")) {
+    a = d.attributes[x];
+    if a == null || !a.hidden {
+      return true;
+    }
+  }
+  false
+}
+
+// src/data.rs:13809 fn copies_as.
+fn copies_as(b: ir::Bundle, dst: integer, src: integer) -> boolean {
+  s = b.data.definitions[src] ?? panic("a definition");
+  t = b.data.definitions[dst] ?? panic("a definition");
+  dst == src || (s.def_type == 4 && s.parent == dst) || (t.def_type == 4 && t.parent == src)
+}
+
+// ── `Function` questions (src/variables/mod.rs) ──
+
+// src/variables/mod.rs:5494 fn is_overwritten_view.
+fn is_overwritten_view(f: ir::Function, v: integer) -> boolean {
+  if !is_skip_free(f, v) {
+    return false;
+  }
+  n = var_name(f, v);
+  n.starts_with("_mv_") || n.starts_with("__ncc_")
+}
+
+// src/variables/mod.rs:4077 fn record_copy_source — -1 for `None`.  `tp` of a variable out of
+// range is `Type::Null`, which answers no record.
+fn record_copy_source(b: ir::Bundle, f: ir::Function, v: integer, src: integer) -> integer {
+  if is_overwritten_view(f, v) {
+    return -1;
+  }
+  sx = f.variables[src];
+  if sx == null {
+    return -1;
+  }
+  src_tp = sx.type_def[0] ?? panic("a type");
+  src_d = -1;
+  if base_is_ref_var(src_tp) {
+    if len(tp_depend(f, v)) != 0 {
+      return -1;
+    }
+    src_d = peel_link_heap_def_nr(src_tp);
+  } else {
+    src_d = heap_def_nr(src_tp);
+  }
+  if src_d < 0 {
+    return -1;
+  }
+  vx = f.variables[v];
+  dst_d = if vx == null { -1 } else { heap_def_nr(vx.type_def[0] ?? panic("a type")) };
+  if dst_d >= 0 && !copies_as(b, dst_d, src_d) {
+    return -1;
+  }
+  src_d
+}
+
+// src/use_analysis.rs:3808 fn bind_copies.
+fn bind_copies(b: ir::Bundle, f: ir::Function, v: integer, src: integer) -> boolean {
+  vx = f.variables[v];
+  if vx == null || heap_def_nr(vx.type_def[0] ?? panic("a type")) < 0 {
+    return false;
+  }
+  record_copy_source(b, f, v, src) >= 0
+}
+
+// ── node questions, read through any `Span` (`Value::unspan`, src/data.rs:654) ──
+
+fn is_null_node(n: ir::Node) -> boolean {
+  match n {
+    NdSpan { pos: _, inner } => is_null_node(inner[0]),
+    NdNull => true,
+    _ => false,
+  }
+}
+
+fn is_line_node(n: ir::Node) -> boolean {
+  match n {
+    NdSpan { pos: _, inner } => is_line_node(inner[0]),
+    NdLine { n: _ } => true,
+    _ => false,
+  }
+}
+
+fn is_loop_node(n: ir::Node) -> boolean {
+  match n {
+    NdSpan { pos: _, inner } => is_loop_node(inner[0]),
+    NdLoop { block: _ } => true,
+    _ => false,
+  }
+}
+
+// `Value::Var(v)` → v, else -1.
+fn var_of(n: ir::Node) -> integer {
+  match n {
+    NdSpan { pos: _, inner } => var_of(inner[0]),
+    NdVar { n: v } => v,
+    _ => -1,
+  }
+}
+
+fn is_int_node(n: ir::Node) -> boolean {
+  match n {
+    NdSpan { pos: _, inner } => is_int_node(inner[0]),
+    NdInt { n: _ } => true,
+    _ => false,
+  }
+}
+
+fn int_of(n: ir::Node) -> integer {
+  match n {
+    NdSpan { pos: _, inner } => int_of(inner[0]),
+    NdInt { n: i } => i,
+    _ => 0,
+  }
+}
+
+// `Value::Set(v, _)` → v, else -1.
+fn set_var_of(n: ir::Node) -> integer {
+  match n {
+    NdSpan { pos: _, inner } => set_var_of(inner[0]),
+    NdSet { var, inner: _ } => var,
+    _ => -1,
+  }
+}
+
+// `node` with its spans peeled, appended to `out` (`.unspan().clone()`).
+fn push_unspanned(out: vector<ir::Node>, n: ir::Node) {
+  match n {
+    NdSpan { pos: _, inner } => push_unspanned(out, inner[0]),
+    _ => { out += [n]; }
+  }
+}
+
+// src/use_analysis.rs:5227 fn holds_no_store.
+fn holds_no_store(b: ir::Bundle, n: ir::Node) -> boolean {
+  match n {
+    NdSpan { pos: _, inner } => holds_no_store(b, inner[0]),
+    NdNull => true,
+    NdCall { def_nr, args } => len(args) == 0 && def_name(b, def_nr) == "OpNullRefSentinel",
+    _ => false,
+  }
+}
+
+// `Call(d, [])` with `d` named `OpNullRefSentinel` — the sentinel test of
+// `variant_check_subject` and `view_root_slots`, which is `holds_no_store` without the `Null`.
+fn is_null_sentinel(b: ir::Bundle, n: ir::Node) -> boolean {
+  match n {
+    NdSpan { pos: _, inner } => is_null_sentinel(b, inner[0]),
+    NdCall { def_nr, args } => len(args) == 0 && def_name(b, def_nr) == "OpNullRefSentinel",
+    _ => false,
+  }
+}
+
+// src/use_analysis.rs:5242 fn through_null_arm, asked "is what it delivers an `If`?".
+fn through_null_arm_is_if(b: ir::Bundle, n: ir::Node) -> boolean {
+  match n {
+    NdSpan { pos: _, inner } => through_null_arm_is_if(b, inner[0]),
+    NdIf { cond: _, t, f } => {
+      if holds_no_store(b, f[0] ?? panic("an else side")) {
+        return through_null_arm_is_if(b, t[0]);
+      }
+      if holds_no_store(b, t[0] ?? panic("a then side")) {
+        return through_null_arm_is_if(b, f[0]);
+      }
+      true
+    }
+    _ => false,
+  }
+}
+
+// ── the one child enumeration (`Value::for_each_child`, src/data.rs:679) and its walkers ──
+//
+// `walk` visits every node pre-order, its spans included, and asks `visit` what to descend
+// into: WALK_ALL, WALK_STOP or WALK_SKIP_FIRST (a call's arguments after the first).  Every
+// walker of the Rust reads through a span the way its own `unspan` does; `visit` says so per
+// mode.
+const WALK_ALL = 0;
+const WALK_STOP = 1;
+const WALK_SKIP_FIRST = 2;
+
+// The walkers, one per Rust traversal.
+// src/use_analysis.rs:2257 fn collect_defs.
+const M_DEFS = 1;
+// src/use_analysis.rs:2523 fn early_return_values (`Value::walk`).
+const M_RETURNS = 2;
+// src/scopes/phase.rs:45 fn collect_fnref_targets.
+const M_FNREF_TARGETS = 3;
+// src/scopes/phase.rs:81 fn collect_fnref_captures, and its two walks of a right-hand side.
+const M_FNREF_CAPTURES = 4;
+const M_LAST_FNREF = 5;
+const M_SET_DBREF = 6;
+// src/scopes/phase.rs:693 fn multi_assigned_in.
+const M_COUNT_SETS = 7;
+// src/use_analysis.rs:4645 fn capture_return_offsets.
+const M_CAPTURE_OFFSETS = 8;
+
+// What a walk gathers outside `Defs`.
+struct Walk {
+  // `M_RETURNS`: the early return values.
+  nodes: vector<ir::Node>,
+  // `M_SET_DBREF`: the slots; `M_COUNT_SETS`: the variables; `M_CAPTURE_OFFSETS`: the offsets.
+  a: vector<integer>,
+  // `M_SET_DBREF`: the source variables; `M_COUNT_SETS`: their counts.
+  c: vector<integer>,
+  // `M_LAST_FNREF`: the closure variable found; `M_SET_DBREF`: the one asked about.
+  target: integer,
+  // The variables of the walked function that are typed `fn` (`M_FNREF_*`), or named
+  // `__closure` (`M_CAPTURE_OFFSETS`).
+  vars: vector<integer>,
+}
+
+fn new_walk() -> Walk {
+  Walk { nodes: [], a: [], c: [], target: -1, vars: [] }
+}
+
+// `def.code`, which an image holds as a box of one; an empty box is `Value::Null`.
+fn walk_code(b: ir::Bundle, mode: integer, code: vector<ir::Node>, ops: Ops, defs: Defs, w: Walk) {
+  for n in code {
+    walk(b, mode, n, ops, defs, w);
+  }
+}
+
+fn walk(b: ir::Bundle, mode: integer, n: ir::Node, ops: Ops, defs: Defs, w: Walk) {
+  how = visit(b, mode, n, ops, defs, w);
+  if how == WALK_STOP {
+    return;
+  }
+  match n {
+    NdSpan { pos: _, inner } => walk_all(b, mode, inner, ops, defs, w),
+    NdCall { def_nr: _, args } => {
+      for x in args {
+        if how == WALK_SKIP_FIRST && x#index == 0 {
+          continue;
+        }
+        walk(b, mode, x, ops, defs, w);
+      }
+    }
+    NdCallRef { var: _, args } => walk_all(b, mode, args, ops, defs, w),
+    NdInsert { items } => walk_all(b, mode, items, ops, defs, w),
+    NdTuple { items } => walk_all(b, mode, items, ops, defs, w),
+    NdParallel { arms } => walk_all(b, mode, arms, ops, defs, w),
+    NdBlock { block } => walk_all(b, mode, (block[0] ?? panic("a block")).operators, ops, defs, w),
+    NdLoop { block } => walk_all(b, mode, (block[0] ?? panic("a loop")).operators, ops, defs, w),
+    NdSet { var: _, inner } => walk_all(b, mode, inner, ops, defs, w),
+    NdReturn { inner } => walk_all(b, mode, inner, ops, defs, w),
+    NdDrop { inner } => walk_all(b, mode, inner, ops, defs, w),
+    NdYield { inner } => walk_all(b, mode, inner, ops, defs, w),
+    NdTuplePut { var: _, idx: _, inner } => walk_all(b, mode, inner, ops, defs, w),
+    NdIf { cond, t, f } => {
+      walk_all(b, mode, cond, ops, defs, w);
+      walk_all(b, mode, t, ops, defs, w);
+      walk_all(b, mode, f, ops, defs, w);
+    }
+    NdIter { var: _, create, next, init } => {
+      walk_all(b, mode, create, ops, defs, w);
+      walk_all(b, mode, next, ops, defs, w);
+      walk_all(b, mode, init, ops, defs, w);
+    }
+    _ => {}
+  }
+}
+
+fn walk_all(b: ir::Bundle, mode: integer, ns: vector<ir::Node>, ops: Ops, defs: Defs, w: Walk) {
+  for x in ns {
+    walk(b, mode, x, ops, defs, w);
+  }
+}
+
+fn visit(b: ir::Bundle, mode: integer, n: ir::Node, ops: Ops, defs: Defs, w: Walk) -> integer {
+  if mode == M_COUNT_SETS {
+    // `count` asks `node.unspan()` and then walks the children of the node AS GIVEN, so a
+    // `Set` under a span is counted at the span and again at itself.
+    v = set_var_of(n);
+    if v >= 0 {
+      count_set(w, v);
+    }
+    return WALK_ALL;
+  }
+  match n {
+    NdSpan { pos: _, inner: _ } => WALK_ALL,
+    NdSet { var, inner } => {
+      rhs = inner[0] ?? panic("a value");
+      if mode == M_DEFS {
+        if !is_null_node(rhs) {
+          defs.rhs_var += [var];
+          push_unspanned(defs.rhs, rhs);
+        }
+      } else if mode == M_FNREF_TARGETS {
+        if has(w.vars, var) {
+          fnref_target_set(defs, var, fnref_target_in(rhs));
+        }
+      } else if mode == M_FNREF_CAPTURES {
+        if has(w.vars, var) {
+          fnref_captures_set(b, defs, var, rhs, ops);
+        }
+      }
+      WALK_ALL
+    }
+    NdCall { def_nr, args } => {
+      if mode == M_DEFS {
+        collect_call_defs(def_nr, args, ops, defs);
+      } else if mode == M_SET_DBREF {
+        collect_set_dbref(def_nr, args, ops, w);
+      } else if mode == M_CAPTURE_OFFSETS {
+        return capture_offset_of(b, def_nr, args, ops, w);
+      }
+      WALK_ALL
+    }
+    NdReturn { inner } => {
+      if mode == M_RETURNS {
+        x = inner[0] ?? panic("a value");
+        if !is_null_node(x) && !is_null_text(ops, x) {
+          push_unspanned(w.nodes, x);
+        }
+      }
+      WALK_ALL
+    }
+    NdFnRef { def_nr: _, var, t: _ } => {
+      if mode == M_LAST_FNREF {
+        w.target = var;
+      }
+      WALK_ALL
+    }
+    _ => WALK_ALL,
+  }
+}
+
+// `Call(OpConvTextFromNull, [])`: the null text a `return null` lowers to.
+fn is_null_text(ops: Ops, n: ir::Node) -> boolean {
+  match n {
+    NdSpan { pos: _, inner } => is_null_text(ops, inner[0]),
+    NdCall { def_nr, args } => def_nr == ops.null_text && len(args) == 0,
+    _ => false,
+  }
+}
+
+// src/use_analysis.rs:2257 fn collect_defs — its three `Call` arms.
+fn collect_call_defs(d: integer, args: vector<ir::Node>, ops: Ops, defs: Defs) {
+  if d == ops.database {
+    v = if len(args) > 0 { var_of(args[0] ?? panic("an argument")) } else { -1 };
+    if v >= 0 {
+      defs.db_vars += [v];
+    }
+  } else if d == ops.clear_vector || d == ops.append_vector {
+    v = if len(args) > 0 { var_of(args[0] ?? panic("an argument")) } else { -1 };
+    if v >= 0 {
+      defs.filled += [v];
+    }
+  } else if d == ops.put_ref {
+    if len(args) == 2 {
+      v = var_of(args[0] ?? panic("a destination"));
+      rhs = args[1] ?? panic("a value");
+      if v >= 0 && !is_null_node(rhs) {
+        defs.moved_var += [v];
+        push_unspanned(defs.moved, rhs);
+      }
+    }
+  }
+}
+
+// The `OpSetDbRef(clos, slot, var)` of src/scopes/phase.rs:81 fn collect_fnref_captures.
+fn collect_set_dbref(d: integer, args: vector<ir::Node>, ops: Ops, w: Walk) {
+  if d == ops.set_dbref && len(args) >= 3 {
+    a0 = args[0] ?? panic("an argument");
+    a1 = args[1] ?? panic("an argument");
+    a2 = args[2] ?? panic("an argument");
+    target = var_of(a0);
+    src = var_of(a2);
+    if target >= 0 && is_int_node(a1) && src >= 0 && target == w.target {
+      w.a += [int_of(a1)];
+      w.c += [src];
+    }
+  }
+}
+
+// The walk of src/use_analysis.rs:4645 fn capture_return_offsets, at a call.
+fn capture_offset_of(b: ir::Bundle, d: integer, args: vector<ir::Node>, ops: Ops, w: Walk) -> integer {
+  off = closure_read_call(ops, w, d, args);
+  if off != NONE {
+    if !has(w.a, off) {
+      w.a += [off];
+    }
+    return WALK_STOP;
+  }
+  callee = b.data.definitions[d] ?? panic("a definition");
+  if !base_is_dbref(callee.returned[0] ?? panic("a return type")) && len(args) > 0 && closure_read(ops, w, args[0] ?? panic("an argument")) != NONE {
+    // A capture read consumed by a non-store op: skip it, walk the rest.
+    return WALK_SKIP_FIRST;
+  }
+  WALK_ALL
+}
+
+// `closure_read` of src/use_analysis.rs:4645 fn capture_return_offsets: the offset of an
+// `OpGetDbRef(__closure, off)`, or NONE.
+fn closure_read(ops: Ops, w: Walk, n: ir::Node) -> integer {
+  match n {
+    NdSpan { pos: _, inner } => closure_read(ops, w, inner[0]),
+    NdCall { def_nr, args } => closure_read_call(ops, w, def_nr, args),
+    _ => NONE,
+  }
+}
+
+fn closure_read_call(ops: Ops, w: Walk, d: integer, args: vector<ir::Node>) -> integer {
+  if d != ops.get_dbref || len(args) < 2 {
+    return NONE;
+  }
+  base = var_of(args[0] ?? panic("an argument"));
+  a1 = args[1] ?? panic("an argument");
+  if base < 0 || !is_int_node(a1) {
+    return NONE;
+  }
+  if has(w.vars, base) { int_of(a1) } else { NONE }
+}
+
+fn count_set(w: Walk, v: integer) {
+  for x in w.a {
+    if x == v {
+      w.c[x#index] = (w.c[x#index] ?? 0) + 1;
+      return;
+    }
+  }
+  w.a += [v];
+  w.c += [1];
+}
+
+// ── `Defs` (src/use_analysis.rs:2184 struct Defs) ──
+//
+// A var's definitions in source order, flattened: `rhs[k]` defines `rhs_var[k]`.  The same for
+// `moved`; `fnref_*` is the target map and `cap_*` the capture lists, a var's slots together and
+// in slot order.
+struct Defs {
+  rhs_var: vector<integer>,
+  rhs: vector<ir::Node>,
+  db_vars: vector<integer>,
+  filled: vector<integer>,
+  moved_var: vector<integer>,
+  moved: vector<ir::Node>,
+  fnref_var: vector<integer>,
+  fnref_d: vector<integer>,
+  cap_fn: vector<integer>,
+  cap_off: vector<integer>,
+  cap_var: vector<integer>,
+  multi_assigned: vector<integer>,
+}
+
+fn new_defs() -> Defs {
+  Defs { rhs_var: [], rhs: [], db_vars: [], filled: [], moved_var: [], moved: [], fnref_var: [], fnref_d: [], cap_fn: [], cap_off: [], cap_var: [], multi_assigned: [] }
+}
+
+// src/use_analysis.rs:2257 fn collect_defs, over a whole body.
+fn collect_defs(b: ir::Bundle, code: vector<ir::Node>, ops: Ops, out: Defs) {
+  walk_code(b, M_DEFS, code, ops, out, new_walk());
+}
+
+// The variables of `f` whose type is a function (`function.tp(var).base()` is `Type::Function`).
+fn fn_vars(f: ir::Function) -> vector<integer> {
+  out: vector<integer> = [];
+  for x in f.variables {
+    if base_is_function(x.type_def[0] ?? panic("a type")) {
+      out += [x#index];
+    }
+  }
+  out
+}
+
+// src/scopes/phase.rs:45 fn collect_fnref_targets — one `Set`: the slot takes the first target
+// and turns `u32::MAX` on any disagreement.
+fn fnref_target_set(defs: Defs, var: integer, d: integer) {
+  if d < 0 {
+    return;
+  }
+  for x in defs.fnref_var {
+    if x == var {
+      i = x#index;
+      if d == UMAX || (defs.fnref_d[i] ?? 0) != d {
+        defs.fnref_d[i] = UMAX;
+      }
+      return;
+    }
+  }
+  defs.fnref_var += [var];
+  defs.fnref_d += [d];
+}
+
+// The target recorded for `var`, or -1.
+fn fnref_target(defs: Defs, var: integer) -> integer {
+  for x in defs.fnref_var {
+    if x == var {
+      return defs.fnref_d[x#index] ?? -1;
+    }
+  }
+  -1
+}
+
+// src/scopes/phase.rs:81 fn collect_fnref_captures — one `Set`: the closure variable its last
+// `FnRef` names, and the `OpSetDbRef(clos, slot, var)` writes into it, sorted by slot; a later
+// `Set` of the same variable replaces the list.
+fn fnref_captures_set(b: ir::Bundle, defs: Defs, var: integer, rhs: ir::Node, ops: Ops) {
+  wf = new_walk();
+  walk(b, M_LAST_FNREF, rhs, ops, defs, wf);
+  clos = wf.target;
+  if clos < 0 {
+    return;
+  }
+  ws = new_walk();
+  ws.target = clos;
+  walk(b, M_SET_DBREF, rhs, ops, defs, ws);
+  // `slots.sort_by_key(slot)`: stable.
+  offs: vector<integer> = [];
+  vs: vector<integer> = [];
+  for o in ws.a {
+    at = len(offs);
+    while at > 0 && (offs[at - 1] ?? 0) > o {
+      at -= 1;
+    }
+    offs.insert(at, o);
+    vs.insert(at, ws.c[o#index] ?? 0);
+  }
+  // `out.insert(var, slots)`: drop what an earlier `Set` recorded.
+  k = 0;
+  while k < len(defs.cap_fn) {
+    if (defs.cap_fn[k] ?? -1) == var {
+      defs.cap_fn.remove(k);
+      defs.cap_off.remove(k);
+      defs.cap_var.remove(k);
+    } else {
+      k += 1;
+    }
+  }
+  for o in offs {
+    defs.cap_fn += [var];
+    defs.cap_off += [o];
+    defs.cap_var += [vs[o#index] ?? 0];
+  }
+}
+
+// src/scopes/phase.rs:693 fn multi_assigned_in.
+fn multi_assigned_in(b: ir::Bundle, code: vector<ir::Node>, ops: Ops, defs: Defs) -> vector<integer> {
+  w = new_walk();
+  walk_code(b, M_COUNT_SETS, code, ops, defs, w);
+  out: vector<integer> = [];
+  for v in w.a {
+    if (w.c[v#index] ?? 0) >= 2 {
+      out += [v];
+    }
+  }
+  out
+}
+
+// src/use_analysis.rs:5186 fn function_defs.
+fn function_defs(b: ir::Bundle, d_nr: integer, ops: Ops) -> Defs {
+  defs = new_defs();
+  def = b.data.definitions[d_nr] ?? panic("a definition");
+  collect_defs(b, def.code, ops, defs);
+  wt = new_walk();
+  wt.vars = fn_vars(def.variables);
+  walk_code(b, M_FNREF_TARGETS, def.code, ops, defs, wt);
+  wc = new_walk();
+  wc.vars = fn_vars(def.variables);
+  walk_code(b, M_FNREF_CAPTURES, def.code, ops, defs, wc);
+  defs.multi_assigned = multi_assigned_in(b, def.code, ops, defs);
+  defs
+}
+
+// ── fn-ref targets (src/use_analysis.rs:2087–2178) ──
+
+// src/use_analysis.rs:2132 fn collect_yielded — what a right-hand side may evaluate to, kept as
+// the two kinds `fnref_target_in` reads: the fn-ref markers (an `FnRef` whose number is not a
+// `u32`, -1, names none) and the bare integers, each in yield order.
+fn collect_yielded(n: ir::Node, refs: vector<integer>, ints: vector<integer>) {
+  match n {
+    NdSpan { pos: _, inner } => collect_yielded(inner[0], refs, ints),
+    NdBlock { block } => yield_tail((block[0] ?? panic("a block")).operators, refs, ints),
+    NdInsert { items } => yield_tail(items, refs, ints),
+    NdIf { cond: _, t, f } => {
+      collect_yielded(t[0], refs, ints);
+      collect_yielded(f[0], refs, ints);
+    }
+    NdReturn { inner } => collect_yielded(inner[0], refs, ints),
+    NdDrop { inner } => collect_yielded(inner[0], refs, ints),
+    NdFnRef { def_nr, var: _, t: _ } => {
+      if def_nr >= 0 {
+        refs += [def_nr];
+      }
+    }
+    NdFnRefDnr { n: d } => { refs += [d]; }
+    NdInt { n: i } => { ints += [i]; }
+    _ => {}
+  }
+}
+
+// The last operator that is not a `Line`.
+fn yield_tail(ops: vector<ir::Node>, refs: vector<integer>, ints: vector<integer>) {
+  at = len(ops) - 1;
+  while at >= 0 && is_line_node(ops[at] ?? panic("an operator")) {
+    at -= 1;
+  }
+  if at >= 0 {
+    collect_yielded(ops[at] ?? panic("an operator"), refs, ints);
+  }
+}
+
+// src/use_analysis.rs:2087 fn fnref_target_in — the definition, -1 for none, UMAX for two.
+fn fnref_target_in(rhs: ir::Node) -> integer {
+  refs: vector<integer> = [];
+  ints: vector<integer> = [];
+  collect_yielded(rhs, refs, ints);
+  found = -1;
+  ambiguous = false;
+  for d in refs {
+    if found >= 0 && found != d {
+      ambiguous = true;
+    } else {
+      found = d;
+    }
+  }
+  if found < 0 && len(ints) > 0 {
+    i = ints[0] ?? -1;
+    found = if i >= 0 { i } else { -1 };
+  }
+  if ambiguous { UMAX } else { found }
+}
+
+// src/use_analysis.rs:2162 fn fnref_target_of — the target every definition agrees on, or -1.
+fn fnref_target_of(rhss: vector<ir::Node>) -> integer {
+  agreed = -1;
+  for r in rhss {
+    d = fnref_target_in(r);
+    if d < 0 {
+      continue;
+    }
+    if agreed < 0 {
+      agreed = d;
+    } else if agreed != d {
+      return -1;
+    }
+  }
+  if agreed == UMAX { -1 } else { agreed }
+}
+
+// ── the structural helpers (src/use_analysis.rs) ──
+
+// src/use_analysis.rs:3448 fn is_projection_op — the ROOT-naming list.
+fn is_projection_op(b: ir::Bundle, d: integer) -> boolean {
+  n = def_name(b, d);
+  n == "OpGetField" || n == "OpGetVector" || n == "OpVectorRef" || n == "OpGetRecord"
+}
+
+// src/use_analysis.rs:3365 fn view_root_slots — false for `None`, else the slots in `out`.
+fn view_root_slots(b: ir::Bundle, arg: ir::Node, out: vector<integer>) -> boolean {
+  match arg {
+    NdSpan { pos: _, inner } => view_root_slots(b, inner[0], out),
+    NdVar { n: v } => {
+      out += [v];
+      true
+    }
+    NdNull => true,
+    NdIf { cond: _, t, f } => view_root_slots(b, t[0], out) && view_root_slots(b, f[0], out),
+    NdBlock { block } => {
+      bl = block[0] ?? panic("a block");
+      if len(bl.operators) == 1 {
+        // Bound first: a tail call whose argument a local holds cannot jump.
+        r = view_root_slots(b, bl.operators[0] ?? panic("an operator"), out);
+        return r;
+      }
+      false
+    }
+    NdCall { def_nr, args } => {
+      if len(args) == 0 && def_name(b, def_nr) == "OpNullRefSentinel" {
+        return true;
+      }
+      if !is_projection_op(b, def_nr) || len(args) == 0 {
+        return false;
+      }
+      view_root_slots(b, args[0], out)
+    }
+    _ => false,
+  }
+}
+
+// src/use_analysis.rs:5289 fn is_synth_buffer.
+fn is_synth_buffer(name: text) -> boolean {
+  name.starts_with("__vdb") || name.starts_with("__ref") || name.starts_with("_mvcopy") || name == "__retbuf"
+}
+
+// The argument position `callee_base` arrives at: the visible attributes before it.
+fn visible_index(d: ir::Definition, callee_base: integer) -> integer {
+  r = 0;
+  for a in d.attributes {
+    if a#index >= callee_base {
+      break;
+    }
+    if !a.hidden {
+      r += 1;
+    }
+  }
+  r
+}
+
+// `Err(arg)` of `structural_arg_base`: the argument is a call only the oracle can root.
+const ARG_IS_CALL = -2;
+
+// src/use_analysis.rs:3125 fn structural_arg_base — a base, MAX for none, or ARG_IS_CALL for
+// the `Err(arg)` whose argument sits at `visible_index`.
+fn structural_arg_base(b: ir::Bundle, callee_d: integer, callee_base: integer, caller_args: vector<ir::Node>) -> integer {
+  def = b.data.definitions[callee_d] ?? panic("a definition");
+  if callee_base == MAX || callee_base >= len(def.attributes) {
+    return MAX;
+  }
+  at = def.attributes[callee_base] ?? panic("an attribute");
+  if at.hidden && !is_synth_buffer(at.name) {
+    return MAX;
+  }
+  i = visible_index(def, callee_base);
+  if i >= len(caller_args) {
+    return MAX;
+  }
+  roots: vector<integer> = [];
+  if !view_root_slots(b, caller_args[i] ?? panic("an argument"), roots) {
+    return ARG_IS_CALL;
+  }
+  if len(roots) == 1 { roots[0] ?? MAX } else { MAX }
+}
+
+// src/use_analysis.rs:3848 fn returns_one_of_several_args.
+fn returns_one_of_several_args(b: ir::Bundle, callee: integer) -> boolean {
+  if callee >= len(b.data.definitions) {
+    return false;
+  }
+  def = b.data.definitions[callee] ?? panic("a definition");
+  count = 0;
+  for x in depend_of(def.returned[0] ?? panic("a return type")) {
+    a = def.attributes[x];
+    if a != null && !a.hidden {
+      count += 1;
+    }
+  }
+  count > 1
+}
+
+// src/use_analysis.rs:3740 fn variant_check_subject — -1 for `None`.
+fn variant_check_subject(b: ir::Bundle, then_arm: ir::Node, else_arm: ir::Node) -> integer {
+  t = var_of(then_arm);
+  e = var_of(else_arm);
+  if t >= 0 && e < 0 && is_null_sentinel(b, else_arm) {
+    return t;
+  }
+  if t < 0 && e >= 0 && is_null_sentinel(b, then_arm) {
+    return e;
+  }
+  -1
+}
+
+// The `__closure` variables of a function, for `closure_read`.
+fn closure_vars(f: ir::Function) -> vector<integer> {
+  out: vector<integer> = [];
+  for x in f.variables {
+    if x.name == "__closure" {
+      out += [x#index];
+    }
+  }
+  out
+}
+
+// src/use_analysis.rs:4645 fn capture_return_offsets.
+fn capture_return_offsets(b: ir::Bundle, callee_d: integer, ops: Ops) -> vector<integer> {
+  def = b.data.definitions[callee_d] ?? panic("a definition");
+  w = new_walk();
+  w.vars = closure_vars(def.variables);
+  walk_code(b, M_CAPTURE_OFFSETS, def.code, ops, new_defs(), w);
+  w.a
+}
+
+// src/use_analysis.rs:2384 fn fn_body_tail, asked whether there is one.
+fn has_body_tail(code: vector<ir::Node>) -> boolean {
+  for n in code {
+    return tail_of_block_exists(n);
+  }
+  false
+}
+
+fn tail_of_block_exists(n: ir::Node) -> boolean {
+  match n {
+    NdSpan { pos: _, inner } => tail_of_block_exists(inner[0]),
+    NdBlock { block } => len((block[0] ?? panic("a block")).operators) > 0,
+    _ => false,
+  }
+}
+
+// ── the classifier (src/use_analysis.rs:2318 struct Ownership) ──
+
+struct St {
+  ops: Ops,
+  // `ret_memo`: a function and its class.
+  memo_d: vector<integer>,
+  memo_own: vector<integer>,
+  visiting: vector<integer>,
+  visiting_vars: vector<integer>,
+  // `frames`: the function and the class its self call answers.
+  frame_d: vector<integer>,
+  frame_own: vector<integer>,
+}
+
+// src/use_analysis.rs:2348 fn new.
+fn new_state(ops: Ops) -> St {
+  St { ops: ops, memo_d: [], memo_own: [], visiting: [], visiting_vars: [], frame_d: [], frame_own: [] }
+}
+
+fn memo_get(st: St, d: integer) -> integer {
+  for x in st.memo_d {
+    if x == d {
+      return st.memo_own[x#index] ?? NONE;
+    }
+  }
+  NONE
+}
+
+fn memo_put(st: St, d: integer, c: integer) {
+  for x in st.memo_d {
+    if x == d {
+      st.memo_own[x#index] = c;
+      return;
+    }
+  }
+  st.memo_d += [d];
+  st.memo_own += [c];
+}
+
+fn remove_value(v: vector<integer>, x: integer) {
+  for y in v {
+    if y == x {
+      v.remove(y#index);
+      return;
+    }
+  }
+}
+
+// src/use_analysis.rs:2363 fn return_ownership.
+fn return_ownership(b: ir::Bundle, st: St, d_nr: integer) -> integer {
+  m = memo_get(st, d_nr);
+  if m != NONE {
+    return m;
+  }
+  def = b.data.definitions[d_nr] ?? panic("a definition");
+  if !has_body_tail(def.code) || def.def_type != 1 {
+    c = OWNED;
+    if returns_borrowed_view(def) {
+      base = MAX;
+      for a in depend_of(def.returned[0] ?? panic("a return type")) {
+        if a < len(def.attributes) && !(def.attributes[a] ?? panic("an attribute")).hidden {
+          base = a;
+          break;
+        }
+      }
+      c = borrowed(base);
+    }
+    memo_put(st, d_nr, c);
+    return c;
+  }
+  if has(st.visiting, d_nr) {
+    n = len(st.frame_d);
+    if n > 0 && (st.frame_d[n - 1] ?? -1) == d_nr {
+      return st.frame_own[n - 1] ?? NONE;
+    }
+    return borrowed(MAX);
+  }
+  so_far = NOT_YET;
+  class = NONE;
+  for _ in 0..FIXPOINT_ROUNDS {
+    next = return_ownership_round(b, st, d_nr, so_far);
+    if next == so_far {
+      class = next;
+      break;
+    }
+    so_far = next;
+  }
+  if class == NOT_YET {
+    class = UNKNOWN;
+  } else if class == NONE {
+    class = return_ownership_round(b, st, d_nr, borrowed(MAX));
+  }
+  memo_put(st, d_nr, class);
+  class
+}
+
+// src/use_analysis.rs:2415 fn return_ownership_round.
+fn return_ownership_round(b: ir::Bundle, st: St, d_nr: integer, so_far: integer) -> integer {
+  def = b.data.definitions[d_nr] ?? panic("a definition");
+  if !has_body_tail(def.code) {
+    return UNKNOWN;
+  }
+  st.visiting += [d_nr];
+  st.frame_d += [d_nr];
+  st.frame_own += [so_far];
+  defs = new_defs();
+  collect_defs(b, def.code, st.ops, defs);
+  outer_vars = st.visiting_vars;
+  st.visiting_vars = [];
+  class = classify_tail(b, st, def.code[0] ?? panic("a body"), def.variables, defs);
+  early = early_return_values(b, st, d_nr);
+  for c in classify_sites(b, st, early, d_nr, defs) {
+    class = join(class, c);
+  }
+  st.visiting_vars = outer_vars;
+  st.frame_d.remove(len(st.frame_d) - 1);
+  st.frame_own.remove(len(st.frame_own) - 1);
+  remove_value(st.visiting, d_nr);
+  if class == NOT_YET { OWNED } else { class }
+}
+
+// The tail of a body block: a `Loop` there delivers through its `return`s alone (NOT_YET),
+// anything else is classified.
+fn classify_tail(b: ir::Bundle, st: St, code: ir::Node, func: ir::Function, defs: Defs) -> integer {
+  match code {
+    NdSpan { pos: _, inner } => classify_tail(b, st, inner[0], func, defs),
+    NdBlock { block } => {
+      ops = (block[0] ?? panic("a block")).operators;
+      tail = ops[len(ops) - 1] ?? panic("a tail");
+      if is_loop_node(tail) { NOT_YET } else { classify(b, st, tail, func, defs) }
+    }
+    // Unreachable: asked only where `has_body_tail` holds.  Not a `panic`: the C backend does
+    // not carry a `panic` arm of an integer `match`.
+    _ => UNKNOWN,
+  }
+}
+
+// src/use_analysis.rs:2491 fn early_return_ownerships — asked by the orphan predicate, not by
+// the verdicts `ownership_report` writes.
+fn early_return_ownerships(b: ir::Bundle, st: St, d_nr: integer) -> vector<integer> {
+  def = b.data.definitions[d_nr] ?? panic("a definition");
+  if def.def_type != 1 || !has_body_tail(def.code) {
+    return [];
+  }
+  returned = early_return_values(b, st, d_nr);
+  if len(returned) == 0 || has(st.visiting, d_nr) {
+    return [];
+  }
+  so_far = return_ownership(b, st, d_nr);
+  defs = new_defs();
+  collect_defs(b, def.code, st.ops, defs);
+  st.visiting += [d_nr];
+  st.frame_d += [d_nr];
+  st.frame_own += [so_far];
+  outer_vars = st.visiting_vars;
+  classes = classify_sites(b, st, returned, d_nr, defs);
+  st.visiting_vars = outer_vars;
+  st.frame_d.remove(len(st.frame_d) - 1);
+  st.frame_own.remove(len(st.frame_own) - 1);
+  remove_value(st.visiting, d_nr);
+  classes
+}
+
+// src/use_analysis.rs:2523 fn early_return_values.
+fn early_return_values(b: ir::Bundle, st: St, d_nr: integer) -> vector<ir::Node> {
+  def = b.data.definitions[d_nr] ?? panic("a definition");
+  w = new_walk();
+  walk_code(b, M_RETURNS, def.code, st.ops, new_defs(), w);
+  w.nodes
+}
+
+// src/use_analysis.rs:2539 fn classify_sites.
+fn classify_sites(b: ir::Bundle, st: St, sites: vector<ir::Node>, d_nr: integer, defs: Defs) -> vector<integer> {
+  def = b.data.definitions[d_nr] ?? panic("a definition");
+  out: vector<integer> = [];
+  for e in sites {
+    st.visiting_vars = [];
+    out += [classify(b, st, e, def.variables, defs)];
+  }
+  out
+}
+
+// src/use_analysis.rs:2554 fn classify.
+fn classify(b: ir::Bundle, st: St, node: ir::Node, func: ir::Function, defs: Defs) -> integer {
+  match node {
+    NdSpan { pos: _, inner } => classify(b, st, inner[0], func, defs),
+    NdVar { n: v } => classify_var(b, st, v, func, defs),
+    NdCall { def_nr, args } => {
+      if def_nr == st.ops.database || def_nr == st.ops.new_record {
+        OWNED
+      } else if has(st.ops.projections, def_nr) {
+        bb = borrow_base(b, st.ops, node, func, defs);
+        if bb >= 0 { borrowed(bb) } else { OWNED }
+      } else {
+        call_ownership(b, st, def_nr, args, func, defs)
+      }
+    }
+    NdIf { cond: _, t, f } => {
+      if through_null_arm_is_if(b, node) {
+        join(classify(b, st, t[0], func, defs), classify(b, st, f[0], func, defs))
+      } else {
+        classify_through_null_arm(b, st, node, func, defs)
+      }
+    }
+    NdBlock { block } => {
+      ops = (block[0] ?? panic("a block")).operators;
+      if len(ops) == 0 {
+        return OWNED;
+      }
+      // Bound first: a tail call whose argument a local holds cannot jump.
+      r = classify(b, st, ops[len(ops) - 1] ?? panic("a tail"), func, defs);
+      r
+    }
+    NdInsert { items } => {
+      if len(items) == 0 { OWNED } else { classify(b, st, items[len(items) - 1], func, defs) }
+    }
+    NdReturn { inner } => classify(b, st, inner[0], func, defs),
+    NdTupleGet { var, idx } => classify_tuple_get(var, idx, func, defs),
+    NdCallRef { var, args } => classify_call_ref(b, st, var, args, func, defs),
+    _ => OWNED,
+  }
+}
+
+// The `If` arm's other branch: classify what `through_null_arm` delivers.
+fn classify_through_null_arm(b: ir::Bundle, st: St, node: ir::Node, func: ir::Function, defs: Defs) -> integer {
+  match node {
+    NdSpan { pos: _, inner } => classify_through_null_arm(b, st, inner[0], func, defs),
+    NdIf { cond: _, t, f } => {
+      if holds_no_store(b, f[0] ?? panic("an else side")) {
+        return classify_through_null_arm(b, st, t[0], func, defs);
+      }
+      if holds_no_store(b, t[0] ?? panic("a then side")) {
+        return classify_through_null_arm(b, st, f[0], func, defs);
+      }
+      classify(b, st, node, func, defs)
+    }
+    _ => classify(b, st, node, func, defs),
+  }
+}
+
+// The `Value::Var` arm of `classify`.
+fn classify_var(b: ir::Bundle, st: St, v: integer, func: ir::Function, defs: Defs) -> integer {
+  if has(st.visiting_vars, v) {
+    // Recursion back-edge: this var appears in its OWN definition.
+    return borrowed(MAX);
+  }
+  st.visiting_vars += [v];
+  minted = has(defs.db_vars, v);
+  stored = false;
+  for x in defs.rhs_var {
+    if x == v && !holds_no_store(b, defs.rhs[x#index] ?? panic("a definition")) {
+      stored = true;
+      break;
+    }
+  }
+  class = NONE;
+  if stored {
+    bound = NONE;
+    for x in defs.rhs_var {
+      if x != v {
+        continue;
+      }
+      r = defs.rhs[x#index] ?? panic("a definition");
+      if holds_no_store(b, r) {
+        continue;
+      }
+      src = var_of(r);
+      copied = src >= 0 && bind_copies(b, func, v, src);
+      c = if (minted && src >= 0) || copied { OWNED } else { classify(b, st, r, func, defs) };
+      bound = if bound == NONE { c } else { join(bound, c) };
+    }
+    if bound == NONE {
+      bound = OWNED;
+    }
+    class = if has(defs.filled, v) || minted { join(bound, OWNED) } else { bound };
+  } else if minted {
+    class = OWNED;
+  } else if is_argument(func, v) {
+    class = borrowed(v);
+  } else if has(defs.moved_var, v) {
+    class = NOT_YET;
+  } else {
+    class = OWNED;
+  }
+  for x in defs.moved_var {
+    if x != v {
+      continue;
+    }
+    m = defs.moved[x#index] ?? panic("a definition");
+    if !holds_no_store(b, m) {
+      class = join(class, classify(b, st, m, func, defs));
+    }
+  }
+  remove_value(st.visiting_vars, v);
+  if class == NOT_YET { OWNED } else { class }
+}
+
+// The `Value::TupleGet` arm of `classify`.
+fn classify_tuple_get(base: integer, i: integer, func: ir::Function, defs: Defs) -> integer {
+  bx = func.variables[base];
+  if bx == null || !tuple_member_is_dbref(bx.type_def[0] ?? panic("a type"), i) {
+    return OWNED;
+  }
+  r = base;
+  k = -1;
+  n = 0;
+  for x in defs.rhs_var {
+    if x == base {
+      k = x#index;
+      n += 1;
+    }
+  }
+  if n == 1 {
+    src = var_of(defs.rhs[k] ?? panic("a definition"));
+    sx = func.variables[src];
+    if src >= 0 && sx != null && is_tuple(sx.type_def[0] ?? panic("a type")) {
+      r = src;
+    }
+  }
+  borrowed(r)
+}
+
+fn tuple_member_is_dbref(t: ir::TypeT, i: integer) -> boolean {
+  match t {
+    TyTuple { elems } => {
+      e = elems[i];
+      if e == null { false } else { is_dbref(e) }
+    }
+    _ => false,
+  }
+}
+
+fn is_tuple(t: ir::TypeT) -> boolean {
+  match t {
+    TyTuple { elems: _ } => true,
+    _ => false,
+  }
+}
+
+// The `Value::CallRef` arm of `classify`.
+fn classify_call_ref(b: ir::Bundle, st: St, fn_var: integer, args: vector<ir::Node>, func: ir::Function, defs: Defs) -> integer {
+  d = fnref_target(defs, fn_var);
+  if d < 0 || d == UMAX {
+    return UNKNOWN;
+  }
+  callee_own = return_ownership(b, st, d);
+  if callee_own == NOT_YET {
+    return NOT_YET;
+  }
+  if callee_own == OWNED {
+    return OWNED;
+  }
+  if callee_own == UNKNOWN {
+    return UNKNOWN;
+  }
+  callee_base = base_of(callee_own);
+  base = caller_arg_base(b, st, d, callee_base, args, func, defs);
+  if base == MAX {
+    base = closure_capture_base(b, st, d, callee_base, fn_var, defs);
+  }
+  if is_join(callee_own) && base != MAX { joined(base) } else { UNKNOWN }
+}
+
+// src/use_analysis.rs:2774 fn call_ownership.
+fn call_ownership(b: ir::Bundle, st: St, callee_d: integer, caller_args: vector<ir::Node>, func: ir::Function, defs: Defs) -> integer {
+  callee_own = return_ownership(b, st, callee_d);
+  if callee_own == NOT_YET {
+    return NOT_YET;
+  }
+  if callee_own == OWNED {
+    return OWNED;
+  }
+  if callee_own == UNKNOWN {
+    return UNKNOWN;
+  }
+  callee_base = base_of(callee_own);
+  if returns_one_of_several_args(b, callee_d) {
+    return joined(MAX);
+  }
+  base = caller_arg_base(b, st, callee_d, callee_base, caller_args, func, defs);
+  if is_join(callee_own) { joined(base) } else { borrowed(base) }
+}
+
+// src/use_analysis.rs:2830 fn caller_arg_base.
+fn caller_arg_base(b: ir::Bundle, st: St, callee_d: integer, callee_base: integer, caller_args: vector<ir::Node>, func: ir::Function, defs: Defs) -> integer {
+  s = structural_arg_base(b, callee_d, callee_base, caller_args);
+  if s != ARG_IS_CALL {
+    return s;
+  }
+  def = b.data.definitions[callee_d] ?? panic("a definition");
+  arg = caller_args[visible_index(def, callee_base)] ?? panic("an argument");
+  c = classify(b, st, arg, func, defs);
+  if is_borrowed(c) || is_join(c) { base_of(c) } else { MAX }
+}
+
+// src/use_analysis.rs:2873 fn closure_capture_base.
+fn closure_capture_base(b: ir::Bundle, st: St, callee_d: integer, callee_base: integer, fn_var: integer, defs: Defs) -> integer {
+  callee = b.data.definitions[callee_d] ?? panic("a definition");
+  if var_name(callee.variables, callee_base) != "__closure" {
+    return MAX;
+  }
+  offs: vector<integer> = [];
+  vs: vector<integer> = [];
+  for x in defs.cap_fn {
+    if x == fn_var {
+      offs += [defs.cap_off[x#index] ?? 0];
+      vs += [defs.cap_var[x#index] ?? 0];
+    }
+  }
+  offsets = capture_return_offsets(b, callee_d, st.ops);
+  var = MAX;
+  if len(vs) == 1 {
+    var = vs[0] ?? MAX;
+  } else if len(offsets) == 1 {
+    off = offsets[0] ?? 0;
+    found = false;
+    for o in offs {
+      if o == off {
+        var = vs[o#index] ?? MAX;
+        found = true;
+        break;
+      }
+    }
+    if !found {
+      return MAX;
+    }
+  } else {
+    return MAX;
+  }
+  if has(defs.multi_assigned, var) {
+    return MAX;
+  }
+  var
+}
+
+// src/use_analysis.rs:2978 fn borrow_base — -1 for `None`.
+fn borrow_base(b: ir::Bundle, ops: Ops, node: ir::Node, func: ir::Function, defs: Defs) -> integer {
+  visited: vector<integer> = [];
+  borrow_base_guarded(b, ops, node, func, defs, visited)
+}
+
+// src/use_analysis.rs:2989 fn borrow_base_guarded.
+fn borrow_base_guarded(b: ir::Bundle, ops: Ops, node: ir::Node, func: ir::Function, defs: Defs, visited: vector<integer>) -> integer {
+  match node {
+    NdSpan { pos: _, inner } => borrow_base_guarded(b, ops, inner[0], func, defs, visited),
+    NdCall { def_nr, args } => {
+      if !has(ops.projections, def_nr) {
+        return -1;
+      }
+      if len(args) == 0 {
+        return -1;
+      }
+      first = args[0] ?? panic("an argument");
+      v = var_of(first);
+      if v >= 0 {
+        return v;
+      }
+      s = if_variant_subject(b, first);
+      if s >= 0 {
+        return s;
+      }
+      // Bound first: a tail call whose argument a local holds cannot jump.
+      r = borrow_base_guarded(b, ops, first, func, defs, visited);
+      r
+    }
+    NdVar { n: v } => {
+      if has(visited, v) {
+        return -1;
+      }
+      visited += [v];
+      any = false;
+      at = len(defs.rhs_var) - 1;
+      while at >= 0 {
+        if (defs.rhs_var[at] ?? -1) == v {
+          any = true;
+          r = borrow_base_guarded(b, ops, defs.rhs[at] ?? panic("a definition"), func, defs, visited);
+          if r >= 0 {
+            return r;
+          }
+        }
+        at -= 1;
+      }
+      if any {
+        return -1;
+      }
+      vx = func.variables[v];
+      if is_argument(func, v) && vx != null && has_heap_dep(vx.type_def[0] ?? panic("a type")) {
+        return v;
+      }
+      -1
+    }
+    NdIf { cond: _, t, f } => {
+      r = borrow_base_guarded(b, ops, t[0], func, defs, visited);
+      if r >= 0 { r } else { borrow_base_guarded(b, ops, f[0], func, defs, visited) }
+    }
+    NdBlock { block } => {
+      body = (block[0] ?? panic("a block")).operators;
+      if len(body) == 0 {
+        return -1;
+      }
+      r = borrow_base_guarded(b, ops, body[len(body) - 1] ?? panic("a tail"), func, defs, visited);
+      r
+    }
+    NdReturn { inner } => borrow_base_guarded(b, ops, inner[0], func, defs, visited),
+    _ => -1,
+  }
+}
+
+// The first argument of a projection as a variant-check `If`: its subject, or -1.
+fn if_variant_subject(b: ir::Bundle, n: ir::Node) -> integer {
+  match n {
+    NdSpan { pos: _, inner } => if_variant_subject(b, inner[0]),
+    NdIf { cond: _, t, f } => variant_check_subject(b, t[0] ?? panic("a then side"), f[0] ?? panic("an else side")),
+    _ => -1,
+  }
+}
+
+// ── the public entries ──
+
+// src/use_analysis.rs:3159 fn return_ownership.
+pub fn return_ownership_of(b: ir::Bundle, ops: Ops, d_nr: integer) -> integer {
+  return_ownership(b, new_state(ops), d_nr)
+}
+
+// src/use_analysis.rs:5033 fn ownership_of.
+pub fn ownership_of(b: ir::Bundle, ops: Ops, d_nr: integer, value: ir::Node) -> integer {
+  ownership_of_with(b, ops, d_nr, value, function_defs(b, d_nr, ops))
+}
+
+// src/use_analysis.rs:5201 fn ownership_of_with.
+fn ownership_of_with(b: ir::Bundle, ops: Ops, d_nr: integer, value: ir::Node, defs: Defs) -> integer {
+  def = b.data.definitions[d_nr] ?? panic("a definition");
+  classify(b, new_state(ops), value, def.variables, defs)
+}
+
+// src/use_analysis.rs:5268 fn fmt_own.
+pub fn fmt_own(own: integer, func: ir::Function) -> text {
+  if own == OWNED {
+    return "Owned";
+  }
+  if own == UNKNOWN {
+    return "Unknown";
+  }
+  base = base_of(own);
+  name = if base == MAX { "?" } else { var_name(func, base) };
+  if is_borrowed(own) { "Borrowed(base={name})" } else { "Join(base={name})" }
+}
+
+// src/use_analysis.rs:5343 fn render_own.
+pub fn render_own(own: integer, func: ir::Function, v: integer) -> text {
+  if own == OWNED {
+    return "Owned";
+  }
+  if own == UNKNOWN {
+    return "Unknown";
+  }
+  base = base_of(own);
+  name = if base == MAX { "?" } else { var_name(func, base) };
+  if is_borrowed(own) {
+    if base == v {
+      return "Borrowed(caller-arg)";
+    }
+    if base != MAX && is_synth_buffer(var_name(func, base)) {
+      return "Owned (backing={name})";
+    }
+    return "Borrowed(base={name})";
+  }
+  "Join(base={name})"
+}
+
+// Is `file` a standard-library source: a directory named `default` on its path?
+// (`compile::is_default_file`, as `report::is_stdlib` reads it.)
+fn is_stdlib(file: text) -> boolean {
+  parts = file.split('/');
+  for p in parts {
+    if p#index < len(parts) - 1 && p == "default" {
+      return true;
+    }
+  }
+  false
+}
+
+// src/introspect.rs:789 fn emit_ownership — its verdict lines, without the overlays (the `!!`
+// lines of `per_iteration_frees`, the `⚠` lines and the `delivery:` line).
+pub fn ownership_report(b: ir::Bundle) -> text {
+  ops = ops_of(b);
+  r = "# store ownership is backend-shared (interp + native lower the same verdict)\n";
+  dashes = "";
+  for _ in 0..66 {
+    dashes += "-";
+  }
+  for d in b.data.definitions {
+    if d.def_type != 1 || !d.name.starts_with("n_") || d.name.starts_with("n___lambda_") {
+      continue;
+    }
+    if is_stdlib(d.position.file) || len(d.variables.variables) == 0 {
+      continue;
+    }
+    d_nr = d#index;
+    vars = d.variables;
+    r += "fn {d.name} -> {fmt_own(return_ownership_of(b, ops, d_nr), vars)}:\n";
+    r += "  {"#":<4} {"arg":<4} {"name":<22} ownership\n";
+    r += "  {dashes}\n";
+    for v in vars.variables {
+      arg = if v.argument { "arg" } else { "" };
+      rendered = "—  (scalar)";
+      if has_heap_dep(v.type_def[0] ?? panic("a type")) {
+        rendered = render_own(ownership_of(b, ops, d_nr, ir::NdVar { n: v#index }), vars, v#index);
+      }
+      r += "  {v#index:<4} {arg:<4} {v.name:<22} {rendered}\n";
+    }
+    r += "\n";
+  }
+  r
+}
