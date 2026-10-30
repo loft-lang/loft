@@ -294,9 +294,14 @@ pub(crate) const DS_BIT: u64 = 1 << 57;
 /// The bits of a `__nn` twin (`@FR-R-NonSentinelParam`'s twin clause), one per parameter from
 /// bit 32: the function written again with those parameters seeded as non-sentinel, called by
 /// a call site whose arguments prove them where the program-wide fact cannot (another caller
-/// passes a value that may be null).
+/// passes a value that may be null).  The first [`NN_PARAMS`] parameters can be named, so the
+/// mask ends at bit 55, below every named twin bit — one bit more and parameter 25 would read
+/// as `DS_BIT`.
 pub(crate) const NN_SHIFT: u32 = 32;
-pub(crate) const NN_MASK: u64 = ((1u64 << 26) - 1) << NN_SHIFT;
+pub(crate) const NN_PARAMS: usize = 24;
+pub(crate) const NN_MASK: u64 = ((1u64 << NN_PARAMS) - 1) << NN_SHIFT;
+const _: () =
+    assert!(NN_MASK & (DS_BIT | AP_BIT | KH_BIT | APV_BIT | APR_BIT | NK_BIT | INV_BIT) == 0);
 
 /// The record collections beside a plain vector the C carries; each layout is described in
 /// `loft_keyed.h`.  An `array` and an `ordered` are the forms a vector and a sorted take when
