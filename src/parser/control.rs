@@ -17971,7 +17971,7 @@ impl Parser {
     /// promotable value-yielding tail needs BOTH arms to yield; a guard `if c {
     /// return … }` does not, and must stay unbound so the missing-return
     /// diagnostic still fires.
-    fn arm_yields_text(arm: &Value) -> bool {
+    pub(super) fn arm_yields_text(arm: &Value) -> bool {
         match arm.unspan() {
             Value::Return(_) | Value::Break(_) | Value::Continue(_) => false,
             Value::Null => false,

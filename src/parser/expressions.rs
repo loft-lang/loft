@@ -9564,7 +9564,24 @@ use a separate collection or add after the loop"
                     self.guard_declared_range(&mut rhs, member, &rhs_tp, holds_null);
                 }
             }
-            *code = build_nested_tuple_assign(code, &lhs, rhs);
+            // A text member's copy is filled AHEAD of the write and the write reads its work
+            // text by name: as the written value the copy block moved the work text out, which
+            // native refused the second time a loop came round (E0382).  The literal reads the
+            // work text the same way through its element conversion.
+            let mut fill = None;
+            if let Value::Block(bl) = rhs.unspan()
+                && bl.name == "tuple_member_copy"
+                && matches!(bl.result.base(), Type::Text(_))
+                && let [pre, Value::Var(w)] = bl.operators.as_slice()
+            {
+                fill = Some(pre.clone());
+                rhs = Value::Var(*w);
+            }
+            let write = build_nested_tuple_assign(code, &lhs, rhs);
+            *code = match fill {
+                Some(pre) => Value::Insert(vec![pre, write]),
+                None => write,
+            };
             return Type::Void;
         }
         // T1.11b: compound assignment on a tuple LHS is not supported.

@@ -7660,14 +7660,32 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // `(opt() ?? "d", 1.5)` stored into a local left the member reading freed text
             // (loft#1740).
             let discharge_temp = matches!(val.unspan(), Value::Block(bl) if bl.name == "ncc");
-            if !borrows_a_place && !discharge_temp {
+            // A BRANCH is delivered per arm below whatever its type says: left whole it reaches
+            // native as one expression whose arms are a `String` and a `&str`.
+            let branch = matches!(val.unspan(), Value::If(..))
+                || matches!(val.unspan(), Value::Block(bl) if bl.name == "block");
+            if !borrows_a_place && !discharge_temp && !branch {
                 return None;
             }
             let w = self.vars.work_text_p2(&mut self.lexer);
-            let src = std::mem::replace(val.unspan_mut(), Value::Null);
+            let mut src = std::mem::replace(val.unspan_mut(), Value::Null);
             let owned = Type::Text(Deps::none()).depending(w);
+            // A branch delivers per ARM into the work text, as a plain bind of one does
+            // (`try_branch_text_bind`'s `push_text_arms_into`): written whole, `(if k { s } else { "zz" }, 2)` joined
+            // a `String` arm and a `&str` arm in one native expression, which rustc refused.
+            // Every arm assigns the work text whole, so no clear goes ahead of them: in a loop
+            // the previous round's member MOVED the work text, and a clear borrows it (E0382).
+            let arms = Self::if_tail_yields_text(&src)
+                || matches!(src.unspan(), Value::Block(bl) if bl.name == "block"
+                    && Self::arm_yields_text(&src));
+            let fill = if arms && !src.reads_var(w) {
+                Self::push_text_arms_into(&mut src, w, self.data.def_nr("OpCreateStack"));
+                src
+            } else {
+                v_set(w, src)
+            };
             *val.unspan_mut() = crate::data::v_block(
-                vec![v_set(w, src), Value::Var(w)],
+                vec![fill, Value::Var(w)],
                 owned.clone(),
                 "tuple_member_copy",
             );
