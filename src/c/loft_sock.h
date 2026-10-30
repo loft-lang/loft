@@ -247,6 +247,75 @@ static int loft_sock_accept(int fd) {
 #endif
 }
 
+/* `fd` bound to `a` without listening (a datagram socket, or before `listen`): 0, else -1. */
+static int loft_sock_bind(int fd, const struct sockaddr *a, socklen_t al) {
+#if defined(_WIN32)
+    return bind((SOCKET) fd, a, (int) al) == 0 ? 0 : -1;
+#else
+    return bind(fd, a, al) == 0 ? 0 : -1;
+#endif
+}
+
+/* `fd`'s own address (`getsockname`) or its peer's (`getpeername`): 0, else -1. */
+static int loft_sock_name(int fd, int peer, struct sockaddr *a, socklen_t *al) {
+#if defined(_WIN32)
+    int n = (int) *al;
+    int r = peer ? getpeername((SOCKET) fd, a, &n) : getsockname((SOCKET) fd, a, &n);
+    *al = (socklen_t) n;
+    return r == 0 ? 0 : -1;
+#else
+    return (peer ? getpeername(fd, a, al) : getsockname(fd, a, al)) == 0 ? 0 : -1;
+#endif
+}
+
+/* A datagram socket's peer fixed (`connect` on UDP: no handshake): 0, else -1. */
+static int loft_sock_connect_to(int fd, const struct sockaddr *a, socklen_t al) {
+#if defined(_WIN32)
+    return connect((SOCKET) fd, a, (int) al) == 0 ? 0 : -1;
+#else
+    return connect(fd, a, al) == 0 ? 0 : -1;
+#endif
+}
+
+/* A datagram socket whose receive does not fail on an earlier send's ICMP "port unreachable":
+ * Winsock reports one as WSAECONNRESET on the NEXT `recvfrom`, which a pump reads as "nothing
+ * waiting" and so delays the datagrams queued behind it by a whole pump; POSIX reports none on
+ * an unconnected socket. */
+static void loft_sock_udp_quiet(int fd) {
+#if defined(_WIN32)
+#ifndef SIO_UDP_CONNRESET
+#define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
+#endif
+    BOOL off = FALSE;
+    DWORD got = 0;
+    WSAIoctl((SOCKET) fd, SIO_UDP_CONNRESET, &off, sizeof off, 0, 0, &got, 0, 0);
+#else
+    (void) fd;
+#endif
+}
+
+/* One datagram to `a`: the count sent, -1 on a failure. */
+static long loft_sock_sendto(int fd, const void *buf, size_t n, const struct sockaddr *a, socklen_t al) {
+#if defined(_WIN32)
+    return (long) sendto((SOCKET) fd, (const char *) buf, (int) (n > 0x7fffffff ? 0x7fffffff : n), 0, a, (int) al);
+#else
+    return (long) sendto(fd, buf, n, 0, a, al);
+#endif
+}
+
+/* One datagram and its source: the count, -1 when none is waiting (the socket non-blocking) or
+ * on a failure. */
+static long loft_sock_recvfrom(int fd, void *buf, size_t n, struct sockaddr *a, socklen_t *al) {
+#if defined(_WIN32)
+    int fl = (int) *al;
+    long r = (long) recvfrom((SOCKET) fd, (char *) buf, (int) (n > 0x7fffffff ? 0x7fffffff : n), 0, a, &fl);
+    *al = (socklen_t) fl;
+    return r;
+#else
+    return (long) recvfrom(fd, buf, n, 0, a, al);
+#endif
+}
+
 /* Up to `n` bytes waiting on `fd`, left there: the count, 0 when the peer closed, -1 when none
  * is waiting yet, -2 on a failure.  POSIX peeks without blocking (`MSG_DONTWAIT`); Winsock has
  * no such flag, so the socket is non-blocking for the peek. */

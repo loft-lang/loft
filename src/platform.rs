@@ -1762,13 +1762,14 @@ pub fn c_thread_link_args() -> &'static [&'static str] {
 }
 
 /// The system libraries a C backend link names AFTER the program's objects (@PLN203 C8), where a
-/// gcc link resolves them: on Windows Winsock's (`loft_sock.h`) and the certificate store's the
-/// TLS client reads (`loft_tls.c`) — an MSVC `cl` reads both from the sources' `#pragma` — which
-/// a unit that opens no socket never pulls in.  None elsewhere.
+/// gcc link resolves them: on Windows Winsock's (`loft_sock.h`), the certificate store's the
+/// TLS client reads (`loft_tls.c`) and the OS random source the engine kernel's UDP cookie reads
+/// (`loft_engine.h`) — an MSVC `cl` reads each from the sources' `#pragma` — which a unit that
+/// opens no socket never pulls in.  None elsewhere.
 #[must_use]
 pub fn c_system_link_libs() -> &'static [&'static str] {
     if cfg!(windows) {
-        &["-lws2_32", "-lcrypt32"]
+        &["-lws2_32", "-lcrypt32", "-ladvapi32"]
     } else {
         &[]
     }
