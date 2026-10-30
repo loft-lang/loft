@@ -22,7 +22,8 @@ Issue: [@PLN208](https://github.com/loft-lang/plans/issues/208).
 | G7 | Done — text rasterized in loft (`e422344`): 1962 of 1962 glyphs byte-identical to fontdue 0.9.3 over three fonts and six sizes; the gold text image at 0 differing pixels, headless on the three backends; `Canvas.draw_text(Font)` and `w.text_texture` equal 0.9 over 70 cases |
 | G8 | Done — `w.load_texture(path)` through imaging (PNG only; JPEG, which no consumer reads, is dropped); a PNG drawn 1:1 equals the file on the three backends, and 0.9's `gl_load_texture` frame at 0 differing pixels.  Audio leaves graphics with the crate at G9: no consumer calls `audio_*`; a loft-libs-game `audio` library is its home when a game asks |
 | G8b | Done — the browser port (`7d03afc`; loft `22ec4f081`, `d26929886`): the shim's GL table filled from the page's `loft_gl` imports under `LOFT_BROWSER`; `browser/check.sh` passes every hand-computed scene, the frame yield and the input on the Rust writer's page and the C writer's in headless Chrome |
-| G9–G11 | Open — G9's `loft` floor must include loft `d26929886` (the page's `gg_*` imports) |
+| G9 | Done — graphics 0.10.0 and stage 0.19.0 published (loft-libs-graphics #70): the crate, 0.9's API and `render.loft` gone; stage's GL path on the objects; `Painter` and stage draw in call order whatever the depth (`Window.enabled`, `gg_draw_over`); floor 2026.10.0 = loft main, the browser pages need loft `d26929886`; a locked 0.9 consumer is held back, measured |
+| G10–G11 | Open |
 
 ## Goal
 
