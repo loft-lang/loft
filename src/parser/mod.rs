@@ -1485,6 +1485,10 @@ pub struct Parser {
     /// handle (`Parser::null_local_slot`).  Built where the bind's right side is parsed and
     /// placed before its statement by `parse_assign_op`; empty between binds.
     pub(crate) pending_link_slot: Vec<Value>,
+    /// `@FR-O-Detach` for a tuple — the snapshot an assignment's value must read instead of
+    /// the tuple it writes (`Parser::snapshot_tuple_self_read`), run as a statement of its own
+    /// ahead of the assignment by `parse_assign_op` (loft#2261).
+    pub(crate) tuple_self_snapshot: Option<Value>,
     /// loft#1003 — where the `??` default ENDED, for the `redundant-coalesce` deletion
     /// span.  Set as the default is parsed and consumed by `handle_null_coalesce`, because
     /// the notice fires before the default exists and the caller's cursor has moved past
@@ -2131,6 +2135,7 @@ impl Parser {
             pending_default_rhs: None,
             pending_default_src: None,
             pending_link_slot: Vec::new(),
+            tuple_self_snapshot: None,
             ncc_default_end: None,
             last_place_discharge: false,
             pass2_bodies: std::collections::HashSet::new(),
