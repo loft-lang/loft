@@ -3,7 +3,7 @@
 //
 // The compile-time reports of a program image for the strict comparison (1b-compare.md):
 // `reports <kind> <image>` prints one report to stdout in the Rust implementation's text.
-// Kinds: `schema`, `ir`.  Nothing runs; the image is only read.
+// Kinds: `schema`, `ir`, `types`, `ctable`.  Nothing runs; the image is only read.
 use load;
 use report;
 
@@ -20,6 +20,10 @@ fn main() {
     print(report::schema(b));
   } else if kind == "ir" {
     print(report::ir_report(b));
+  } else if kind == "types" {
+    print(report::types_report(b));
+  } else if kind == "ctable" {
+    print(report::ctable(b));
   } else {
     eprintln("an unknown report: {kind}");
     exit(2);
