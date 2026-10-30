@@ -8051,6 +8051,42 @@ impl Data {
         self.reaches_inline(target, d_nr, &mut seen)
     }
 
+    /// Does a type reachable from `from` through inline edges (embedded fields, tuple members,
+    /// enum variants) still carry a field naming an unresolved type — a forward stub?  While it
+    /// does, which of those fields are out of line (`@FR-L-OutOfLine`) is not decided.
+    #[must_use]
+    pub fn inline_graph_unresolved(&self, from: u32) -> bool {
+        let mut seen = std::collections::HashSet::new();
+        let mut work = vec![from];
+        while let Some(d) = work.pop() {
+            if !seen.insert(d) {
+                continue;
+            }
+            match self.def_type(d) {
+                DefType::Enum => work.extend(
+                    self.children_of(d)
+                        .filter(|&c| self.def_type(c) == DefType::EnumValue),
+                ),
+                DefType::Struct | DefType::EnumValue => {
+                    let mut children = Vec::new();
+                    for a_nr in 0..self.attributes(d) {
+                        if self.def(d).attributes[a_nr].constant {
+                            continue;
+                        }
+                        let tp = self.attr_type(d, a_nr);
+                        if self.names_unresolved(&tp) {
+                            return true;
+                        }
+                        Self::inline_field_defs(&tp, &mut children);
+                    }
+                    work.extend(children);
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
     /// `@FR-T-Recursive` — does every `from` hold a `goal`: is there a path from `from` to `goal`
     /// through non-null struct fields alone?  A nullable field or an enum on the way can end
     /// the recursion, so it is no such path; this is what makes a struct recursing through it
