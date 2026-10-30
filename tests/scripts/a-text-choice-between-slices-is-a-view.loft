@@ -1,0 +1,60 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-TextBorrow`'s discharge clause, its value, on the C: a text `if` whose arms are each a
+// literal, a borrowed text, or a SLICE of a literal, a borrowed text or a plain text parameter
+// is the view it picks — `out += if last { "=" } else { chars[k..k + 1] }` copied each piece into
+// a temporary text and freed it (crypto's `b64_encode`, four per three input bytes).  What can
+// go wrong is the view's bytes moving before the append reads them, or the arm NOT taken being
+// computed: each arm is written in its own branch.  Values hand-computed; text AND size.
+//
+// @falsified-at: none — the clause has no earlier C build to catch, so the receipt is a planted
+//   defect (2026-10-30) in the generated C: each choice's else branch taking the then arm's slice
+//   fails c1 ("ABBB" for "ABB="), c2 and c3.
+//   CHANNEL: an assertion.
+
+fn pick(chars: text, k: integer, last: boolean) -> text {
+  out = "";
+  out += if last { "=" } else { chars[k..k + 1] };
+  out += if k > 2 { chars[k - 1..k + 1] } else { "-" };
+  out
+}
+
+fn quads(n: integer) -> text {
+  chars = "ABCDEFGH";
+  out = "";
+  for i in 0..n {
+    out += chars[i % 8..i % 8 + 1];
+    out += if i % 3 == 0 { chars[(i + 1) % 8..(i + 1) % 8 + 1] } else { "=" };
+  }
+  out
+}
+
+// c1: a literal's slices beside a literal arm: i=0 "A" "B", i=1 "B" "=", i=2 "C" "=", i=3 "D" "E"
+fn test_slices_of_a_literal() {
+  got = quads(2);
+  assert(got == "ABB=", "c1 {got}");
+  assert(quads(4) == "ABB=C=DE", "c1 {quads(4)}");
+  assert(size(quads(4)) == 8, "c1 size");
+}
+
+// c2: slices of a text parameter, multi-byte characters snapped to their boundary
+fn test_slices_of_a_parameter() {
+  assert(pick("abcd", 1, false) == "b-", "c2a {pick("abcd", 1, false)}");
+  assert(pick("abcd", 3, false) == "dcd", "c2b {pick("abcd", 3, false)}");
+  assert(pick("abcd", 3, true) == "=cd", "c2c {pick("abcd", 3, true)}");
+  e = pick("aéz", 1, false);
+  assert(e == "é-" && size(e) == 3, "c2d {e} {size(e)}");
+}
+
+fn guarded(s: text, k: integer) -> text {
+  out = "";
+  out += if k < size(s) { s[k..k + 1] } else { "!" };
+  out
+}
+
+// c3: past the end the other arm answers; in range the slice does
+fn test_the_arm_not_taken_computes_nothing() {
+  assert(guarded("xyz", 1) == "y", "c3a {guarded("xyz", 1)}");
+  assert(guarded("xyz", 9) == "!", "c3b {guarded("xyz", 9)}");
+}
