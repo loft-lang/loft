@@ -726,7 +726,7 @@ static void loft_stack_overflow(const char *file, uint32_t line) {
 /* `stack_trace()` reads the frames, so a unit that reaches it keeps them in every build; any
  * other unit keeps them where the build asks for the call chain a fault prints
  * (`-DLOFT_CALL_CHAIN`, the semantics tier) and compiles the pushes away where it does not. */
-#if defined(LOFT_FRAMES) && !defined(LOFT_CALL_CHAIN)
+#if (defined(LOFT_FRAMES) || defined(LOFT_LEAK_SITES)) && !defined(LOFT_CALL_CHAIN)
 #define LOFT_CALL_CHAIN 1
 #endif
 #ifdef LOFT_CALL_CHAIN
@@ -1165,6 +1165,37 @@ static uint8_t loft_get_store_lock(loft_ref r) {
 
 /* `Stores::database_named`: the lowest free slot, a fresh store in it; `counted` gives it the
  * next serial, as every store the program makes. */
+/* `LOFT_LEAK_SITES` (the interpreter's leak-site report): each store remembers where it was made
+ * — the function running, its file and the line it was at (`loft_frame_site`) — so a store left
+ * at exit is named by its site, not only its type (`loft_leak_report`).  It keeps the frames
+ * (`LOFT_CALL_CHAIN`); the driver builds with it when `LOFT_LEAK_SITES` is set. */
+#ifdef LOFT_LEAK_SITES
+typedef struct { const char *fn, *file; uint32_t line; } loft_leak_site;
+static LOFT_TLS loft_leak_site *loft_sites = 0;
+static LOFT_TLS uint32_t loft_nsites = 0;
+static void loft_note_site(uint32_t nr) {
+    if (nr >= loft_nsites) {
+        uint32_t n = loft_nsites ? loft_nsites * 2 : 64;
+        if (n <= nr) n = nr + 1;
+        loft_sites = (loft_leak_site *) realloc(loft_sites, (size_t) n * sizeof *loft_sites);
+        if (!loft_sites) { fputs("loft: out of memory\n", stderr); abort(); }
+        memset(loft_sites + loft_nsites, 0, (size_t) (n - loft_nsites) * sizeof *loft_sites);
+        loft_nsites = n;
+    }
+    loft_leak_site *w = &loft_sites[nr];
+    if (loft_nframes) {
+        const loft_frame *f = &loft_frames[loft_nframes - 1];
+        w->fn = f->fn;
+        w->file = f->file;
+        w->line = f->site ? f->site : f->decl;
+    } else {
+        w->fn = 0;
+        w->file = 0;
+        w->line = 0;
+    }
+}
+#endif
+
 static uint32_t loft_store_make(int counted) {
     uint32_t nr = 0;
 #ifdef LOFT_STRICT_STORES
@@ -1198,6 +1229,9 @@ static uint32_t loft_store_make(int counted) {
         loft_nstores = n;
     }
     loft_store_t *s = &loft_stores[nr];
+#ifdef LOFT_LEAK_SITES
+    loft_note_site(nr);
+#endif
     if (!s->buf) {
         loft_heap_moved(s, 0, 100);
         s->size = 100;

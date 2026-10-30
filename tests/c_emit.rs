@@ -3045,6 +3045,101 @@ fn a_copy_check_c_build_names_a_copy_that_lost_elements() {
     let _ = fa::remove_dir_all(&dir);
 }
 
+/// @PLN206 P0b — `LOFT_LEAK_SITES` on the C: a store left at exit is named by where it was made
+/// — function, file and the line its frame was at — grouped and counted, most first, beside the
+/// leak report (`loft_note_site`, `loft_leak_report`).  A correct program leaks nothing, so the
+/// cell appends a `main` that makes three stores in a frame of its own, at two lines, and keeps
+/// them; a plain build names only their type.
+#[test]
+fn a_leak_site_c_build_names_where_a_kept_store_was_made() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("leak-sites");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let file = dir.join("p.loft");
+    fa::write(
+        &file,
+        "struct P { x: integer }\nfn main() {\n  p = P { x: 1 };\n  println(\"{p.x}\");\n}\n",
+    )
+    .expect("write program");
+    let c = dir.join("p.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "emit: {}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let unit = fa::read_to_string(&c).expect("read the C");
+    let tp: u32 = unit
+        .split("loft_database_typed(&v0_p, 8, ")
+        .nth(1)
+        .and_then(|t| t.split(')').next())
+        .and_then(|t| t.parse().ok())
+        .expect("the type of P in the unit");
+    let mut text = unit.replacen(
+        "int main(int argc, char **argv) {",
+        "static int loft_program_main(int argc, char **argv) {",
+        1,
+    );
+    let _ = write!(
+        text,
+        "\nint main(void) {{\n    loft_bind_tables();\n    loft_start(0, 0);\n    \
+         loft_frame_push(\"leaky\", \"x.loft\", 3);\n    loft_frame_site(7);\n    \
+         loft_ref a = loft_ref_null(); loft_database_typed(&a, 8, {tp});\n    \
+         loft_ref b = loft_ref_null(); loft_database_typed(&b, 8, {tp});\n    \
+         loft_frame_site(9);\n    \
+         loft_ref c = loft_ref_null(); loft_database_typed(&c, 8, {tp});\n    \
+         loft_frame_pop();\n    loft_leak_report();\n    return 0;\n}}\n"
+    );
+    let src = dir.join("leak.c");
+    fa::write(&src, &text).expect("write the cell");
+    let run = |sites: bool| -> String {
+        let exe = dir.join(if sites { "sites" } else { "plain" });
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O1", "-w"])
+            .args(sites.then_some("-DLOFT_LEAK_SITES"))
+            .arg(&src)
+            .arg("-o")
+            .arg(&exe)
+            .args(unit_links(&src))
+            .arg("-lm")
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "cc: {}",
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let out = loft::platform::process::harness_command(&exe)
+            .env("LOFT_NATIVE_LEAK_CHECK", "1")
+            .output()
+            .expect("run the cell");
+        String::from_utf8_lossy(&out.stderr).into_owned()
+    };
+    let plain = run(false);
+    assert!(
+        plain.contains("stores not freed at program exit: kt="),
+        "the plain report:\n{plain}"
+    );
+    assert!(
+        !plain.contains("[leak-site]"),
+        "a plain build names sites:\n{plain}"
+    );
+    let sites = run(true);
+    assert!(
+        sites.contains(&format!("  [leak-site] 2\u{d7} P (kt={tp}) allocated at x.loft:7 in fn leaky()\n  [leak-site] 1\u{d7} P (kt={tp}) allocated at x.loft:9 in fn leaky()")),
+        "the sites, most first:\n{sites}"
+    );
+    let _ = fa::remove_dir_all(&dir);
+}
+
 /// Stores::insert_record's hash arm, for an element that owns nothing: one walk files `e` or
 /// finds the entry under its key, which `e` replaces; a walk that cannot answer falls back to a
 /// lookup, a removal and an add.

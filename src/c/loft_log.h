@@ -596,6 +596,43 @@ static void loft_leak_report(void) {
         loft_strict_violations += total;
     }
 #endif
+#ifdef LOFT_LEAK_SITES
+    /* The interpreter's `[leak-site]` lines: the stores left, grouped by where each was made
+     * (function, file and line — a C unit has no bytecode position) and by type, most first. */
+    if (total) {
+        uint32_t *who = (uint32_t *) calloc(loft_nstores + 1, sizeof *who), *many = (uint32_t *) calloc(loft_nstores + 1, sizeof *many);
+        uint32_t ng = 0;
+        if (!who || !many) { fputs("loft: out of memory\n", stderr); abort(); }
+        for (i = 0; i < loft_nstores; i++) {
+            const loft_store_t *s = &loft_stores[i];
+            if (!s->live || s->pinned || s->read_only) continue;
+            const loft_leak_site *a = i < loft_nsites ? &loft_sites[i] : 0;
+            for (j = 0; j < ng; j++) {
+                const loft_store_t *t = &loft_stores[who[j]];
+                const loft_leak_site *b = who[j] < loft_nsites ? &loft_sites[who[j]] : 0;
+                if (t->known == s->known && (a == 0) == (b == 0) &&
+                    (a == 0 || (a->fn == b->fn && a->file == b->file && a->line == b->line)))
+                    break;
+            }
+            if (j == ng) { who[ng] = i; many[ng] = 0; ng++; }
+            many[j]++;
+        }
+        for (i = 1; i < ng; i++)
+            for (j = i; j > 0 && many[j - 1] < many[j]; j--) {
+                uint32_t a = who[j], b = many[j];
+                who[j] = who[j - 1]; many[j] = many[j - 1]; who[j - 1] = a; many[j - 1] = b;
+            }
+        for (i = 0; i < ng; i++) {
+            const loft_store_t *s = &loft_stores[who[i]];
+            const loft_leak_site *a = who[i] < loft_nsites ? &loft_sites[who[i]] : 0;
+            fprintf(stderr, "  [leak-site] %u\xc3\x97 %s (kt=%u) allocated at %s:%u in fn %s()\n", (unsigned) many[i],
+                    s->known < loft_ntn ? loft_tn[s->known] : "?", (unsigned) s->known,
+                    a && a->file ? a->file : "?", a ? (unsigned) a->line : 0u, a && a->fn ? a->fn : "?");
+        }
+        free(who);
+        free(many);
+    }
+#endif
     free(out.p);
     free(kt);
     free(count);

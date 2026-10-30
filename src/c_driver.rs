@@ -143,6 +143,11 @@ fn cc_flags(tier: Tier) -> Vec<String> {
     if env_on("LOFT_COPY_CHECK") {
         flags.push("-DLOFT_COPY_CHECK".into());
     }
+    // `LOFT_LEAK_SITES` (any value, as the interpreter reads it): a store left at exit is named
+    // by where it was made (loft_rt.h `loft_note_site`, loft_log.h's report).
+    if std::env::var_os("LOFT_LEAK_SITES").is_some() {
+        flags.push("-DLOFT_LEAK_SITES".into());
+    }
     flags
 }
 
