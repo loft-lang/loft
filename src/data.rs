@@ -8017,7 +8017,7 @@ impl Data {
         }
     }
 
-    /// `@FR-L-OutOfLine` — is field `a_nr` of `d_nr` laid out OUT OF LINE: a record number in
+    /// `@FR-L-OutOfLine`, @C159 — is field `a_nr` of `d_nr` laid out OUT OF LINE: a record number in
     /// the host's store (`Parts::ChildRec`) rather than the value's own bytes?
     ///
     /// Exactly the fields that would make their host contain itself: an embedded struct or a
@@ -8049,6 +8049,35 @@ impl Data {
         }
         let mut seen = std::collections::HashSet::new();
         self.reaches_inline(target, d_nr, &mut seen)
+    }
+
+    /// `@FR-T-Recursive` — does every `from` hold a `goal`: is there a path from `from` to `goal`
+    /// through non-null struct fields alone?  A nullable field or an enum on the way can end
+    /// the recursion, so it is no such path; this is what makes a struct recursing through it
+    /// a type with no finite value.
+    #[must_use]
+    pub fn reaches_through_present_fields(&self, from: u32, goal: u32) -> bool {
+        let mut seen = std::collections::HashSet::new();
+        let mut work = vec![from];
+        while let Some(d) = work.pop() {
+            if d == goal {
+                return true;
+            }
+            if !seen.insert(d) || self.def_type(d) != DefType::Struct {
+                continue;
+            }
+            for a_nr in 0..self.attributes(d) {
+                if self.def(d).attributes[a_nr].constant {
+                    continue;
+                }
+                if let Type::Reference(t, deps) = self.attr_type(d, a_nr)
+                    && !deps.is_pointer_marker()
+                {
+                    work.push(t);
+                }
+            }
+        }
+        false
     }
 
     /// Does definition `from` hold `goal` in its own bytes, through embedded fields, tuple

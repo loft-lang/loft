@@ -288,3 +288,28 @@ record walker `src/database/format.rs` and the storage conversions call) and its
 `number_text::tests::shortest_breaks_a_tie_to_even` and `tests/c_emit.rs`
 `float_text_rounds_ties_to_even_on_every_path`.
 **Catalogue:** `formal/formatting.md` `(F-Render)`, `(F-Spec)`.
+
+## C159 — A field that would contain its host is laid out out of line, with an inline field's values
+
+**Decision.** A struct or struct-enum field whose type contains its host — `left: Tree?` in
+`Tree`, `l: Expr` in `Expr`'s `Add` — is accepted and stored OUT OF LINE: the 4-byte number of a
+child record in the host's own store.  It has an inline field's value semantics: a read is a
+view, a write copies into the host's store (in place over a present child), a null write
+releases the subtree, and copy, `==`, `{v}`, `:j` and the text parse treat the child as a nested
+value.  No syntax marks it; the compiler knows, because inline layout is impossible there.  A
+struct recursing through a non-null field is refused (`make it τ?`); an enum's other variants
+end its recursion.  Two places sharing one node remain a `reference<T>`.
+**Why.** A tree is the shape a compiler, a parser and a scene graph are made of, and the two
+spellings a program had — a `vector<T>` of one, read through `[0] ?? panic(…)`, and a 12-byte
+`reference<T>` with link semantics — cost a discharge at every read or three times the width,
+and neither says what the program means.  `Parts::ChildRec` already copied, freed, compared and
+round-tripped a co-located record for closures, so the representation costs one new write
+operator.  Keeping the field's own type in the row lets every walker reuse that type's routine.
+**Revisit when.** A program needs a child it can MOVE between hosts without a copy — that is a
+move operator over this layout, not a different layout.
+**Holds at:** `@C159` — `./scripts/idx tag:@C159`: `Data::field_is_out_of_line` (`src/data.rs`),
+the layout (`typedef::fill_database`), the write (`Stores::set_child_rec`, C `loft_set_child_rec`);
+`formal/layout.md` `(L-OutOfLine)`, `formal/types.md` `(T-Recursive)`, `formal/binding.md`
+`(B-OutOfLine)`, `formal/formatting.md` `(F-Render-Child)`; guards in
+`loft-suite/rules/layout/L-OutOfLine/`.
+**Catalogue:** `formal/layout.md` `(L-Ref)`.

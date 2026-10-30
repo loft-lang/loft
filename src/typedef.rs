@@ -589,8 +589,13 @@ pub fn fill_all(data: &mut Data, database: &mut Stores, lexer: &mut Lexer, start
         for a_nr in 0..data.attributes(d_nr) {
             if !data.field_is_out_of_line(d_nr, a_nr)
                 || matches!(data.attr_type(d_nr, a_nr), Type::Optional(_))
-                || !matches!(data.attr_type(d_nr, a_nr).base(), Type::Reference(..))
             {
+                continue;
+            }
+            let Type::Reference(target, _) = data.attr_type(d_nr, a_nr) else {
+                continue;
+            };
+            if !data.reaches_through_present_fields(target, d_nr) {
                 continue;
             }
             found_cycle = true;
