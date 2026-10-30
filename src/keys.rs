@@ -1990,10 +1990,11 @@ pub fn text_clear_enabled() -> bool {
 /// a record copy on `--native`.
 /// `@FR-L-OutOfLine` — a struct or enum field whose type contains its host is laid out
 /// OUT OF LINE, as a child record in the host's store, instead of being refused as a type of
-/// infinite size.  `LOFT_OUT_OF_LINE=1` turns it on while the feature is landing.
+/// infinite size.  `LOFT_NO_OUT_OF_LINE=1` refuses such a type again, as a cycle — the first
+/// bisect step for a wrong value or a leak in a recursive type (BOTH_BACKEND_SWITCHES.md).
 pub fn out_of_line_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| env_set("LOFT_OUT_OF_LINE"))
+    *ON.get_or_init(|| !env_set("LOFT_NO_OUT_OF_LINE"))
 }
 
 pub fn flat_copy_enabled() -> bool {

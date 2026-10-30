@@ -224,6 +224,24 @@ The keyed refinement is [collections.md](collections.md) `(Col-Axis)`.
 own width — so a change to an element's width (e.g. the nested-vector stride, #477) is a layout
 change even though the field pointer is unchanged.
 
+```
+  (L-OutOfLine) a struct or struct-enum field whose type would contain its host — the field's
+              type reaches the host again through embedded fields, tuple members or enum
+              variants — is OUT OF LINE: the 4-byte record number of a child record in the
+              HOST's store, `Parts::ChildRec(content)`, where `content` is the row of the
+              field's own type.  Every field on such a cycle is out of line, which leaves no
+              type of infinite size.  A cycle through a tuple member has no field to hold the
+              number and stays refused.  Record 0 is absence, for `τ?` and `τ` alike.  A child
+              claims its header word and its payload, an enum's at its largest variant.
+```
+
+**In words.** `struct Tree { key: integer, left: Tree?, right: Tree? }` cannot store a `Tree`
+inside a `Tree`, so `left` and `right` hold the number of a record in the same store as the
+tree.  The field's type stays `Tree?`; only the bytes differ.  Every walker — copy, release,
+equality, rendering, the text parse — follows the number and then runs the content type's own
+routine, so a child behaves exactly as a nested value.  The decision is @C159; the write is
+binding.md `(B-OutOfLine)`.
+
 ### Structs, enums, tuples
 
 ```

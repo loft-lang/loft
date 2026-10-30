@@ -154,6 +154,16 @@ reads back to the same value.  Inside a record or a vector a null of every type 
 > with a documented document form — recorded as INCONSISTENCIES.md § 28 for the owner rather
 > than settled by the code.
 
+### An out-of-line child renders as its value
+
+```
+  (F-Render-Child) an out-of-line field (layout.md `L-OutOfLine`) renders as the value it
+              holds — the nested record or variant, or `null` — in every mode, and the text
+              parse reads that form back into a fresh child.  No walk is deeper than the data's
+              nesting: a record's LAST field's child is rendered, copied, compared and released
+              as a loop, so a list of any length takes no stack per link.
+```
+
 ### A float as text, and text as a float
 
 ```

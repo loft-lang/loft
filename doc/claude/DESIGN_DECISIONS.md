@@ -37,6 +37,7 @@ a guard that does not exercise it — is its line in
 - [C139](DESIGN_DECISIONS_VALUES.md#c139--a-tuple-is-a-record-foreign-data-is-value-const-and-never-presented-as-writable) — A tuple IS a record; foreign data is value-const and never presented as writable
 - [C143](DESIGN_DECISIONS_VALUES.md#c143--a-rendered-record-shows-its-null-fields) — A rendered record shows its null fields
 - [C156](DESIGN_DECISIONS_VALUES.md#c156--every-float-text-conversion-rounds-correctly-an-exact-tie-to-the-even-digit) — Every float-text conversion rounds correctly, an exact tie to the even digit
+- [C159](DESIGN_DECISIONS_VALUES.md#c159--a-field-that-would-contain-its-host-is-laid-out-out-of-line-with-an-inline-fields-values) — A field that would contain its host is laid out out of line, with an inline field's values
 
 ## Binding, ownership and closures — [DESIGN_DECISIONS_OWNERSHIP.md](DESIGN_DECISIONS_OWNERSHIP.md)
 

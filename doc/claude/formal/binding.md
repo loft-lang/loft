@@ -332,6 +332,26 @@ is reassigned around a live view, so B-View materialises it and says so. Pinned 
 `loft-suite/rules/binding/B-View/1184-a-view-assigned-back-onto-its-own-source.loft`, whose last two cells are the
 control — an UNDISTURBED view still aliases and still writes through, on both backends.
 
+### An out-of-line field — an inline field's values, a child record's bytes
+
+```
+  (B-OutOfLine) an out-of-line field (layout.md `L-OutOfLine`) binds as an inline field does.
+              A read `h.f` is a view of the child with the host's store attached (B-View).  A
+              write `h.f = v` copies v into the host's store: into a present child IN PLACE —
+              the child keeps its record, so a view of it reads the new value — and into a
+              fresh record where the field was absent.  The value is read before the old
+              content is released, so `h.f = h.f.g` and `h.f = h` are defined.  A write of null
+              releases the child all the way down and DISTURBS the field (B-Disturb): a view of
+              the child live across a write that may be null is copied out at its bind, and a
+              stored `reference<T>` to the child reads null after it (heap.md H-Removed).  A
+              child is never shared: one node in two places is a `reference<T>`.
+```
+
+**In words.** `t.left = Tree { key: 4 }` builds the value and copies it into `t`'s store;
+`t.right = t.left` copies again, so the two subtrees are independent; `t.left = null` releases
+the subtree.  `l = t.left` is a view: it sees later writes to `t.left`, and is copied out where
+`t.left` may become null while `l` is still used.
+
 ### `const` — the immutability axis (binding-const vs value-const, @PLN40, shipped)
 
 `&` (above) and `const` are the two orthogonal axes of a binding: `&` opts a binding

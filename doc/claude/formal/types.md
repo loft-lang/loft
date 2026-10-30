@@ -723,6 +723,20 @@ overflows *at runtime* yields **null and keeps running** (operational.md `E-Unco
               op or cast and appears in the syntax.
 ```
 
+### Recursive types
+
+```
+  (T-Recursive) a type may contain itself through a collection, a `reference<T>`, or an
+              out-of-line field (layout.md `L-OutOfLine`).  A STRUCT whose recursion runs
+              through a non-null struct field has no finite value — every one contains another —
+              and is refused at its declaration, naming the field and the cure `τ?`.  An enum's
+              other variants end its recursion, so a variant's field may recur without `?`.
+```
+
+**In words.** `struct List { v: integer, next: List? }` and `enum Expr { Num { v: integer },
+Add { l: Expr, r: Expr } }` are both well-formed; `struct Bad { next: Bad }` is refused with
+`` `Bad.next: Bad` makes every Bad contain another Bad — make it `Bad?` ``.
+
 ### Pattern captures (@PLN35, SHIPPED)
 
 > **@PLN35 · SHIPPED.** These rules were written spec-first, ahead of the code; the code
