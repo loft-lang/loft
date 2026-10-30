@@ -5502,10 +5502,12 @@ use a separate collection or add after the loop"
         if op == "="
             && var_nr != u16::MAX
             && matches!(&s_type, Type::Function(..))
-            && matches!(code, Value::Block(b) if b.name == "fn_ref_field_read")
+            && matches!(code.unspan(), Value::Block(b) if b.name == "fn_ref_field_read")
         {
             if let Some(copy) = self.fn_ref_field_copy(code) {
-                *code = copy;
+                *code.unspan_mut() = copy;
+                // Pass 1 has no layout to tell a split field by, and marked the view there.
+                self.vars.clear_skip_free(var_nr);
             } else {
                 self.vars.set_skip_free(var_nr);
             }

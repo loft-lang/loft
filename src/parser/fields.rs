@@ -2864,6 +2864,19 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         Some(Value::Block(Box::new(b)))
     }
 
+    /// `@FR-B-Copy` — a RETURNED fn-ref field read (`fn get(h: H) -> fn() { h.f }`) leaves the
+    /// frame as a copy of its closure record, as a bound one does: the caller owns the value
+    /// it is handed, and the host may be released, or its field overwritten, while the caller
+    /// still holds it.
+    pub(crate) fn copy_returned_fn_field(&mut self, v: &mut Value) {
+        if !matches!(v.unspan(), Value::Block(b) if b.name == "fn_ref_field_read") {
+            return;
+        }
+        if let Some(copy) = self.fn_ref_field_copy(v) {
+            *v.unspan_mut() = copy;
+        }
+    }
+
     /// The struct definition a fn-ref field read's HOST expression names, for
     /// [`Self::fn_ref_field_copy`]: a local or `&` parameter by its type, a nested field by
     /// the content type its `OpGetField` carries, a call by its declared return.  `None` for

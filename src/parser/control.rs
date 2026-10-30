@@ -2658,6 +2658,9 @@ impl Parser {
             if is_return && !needs_convert {
                 self.n_store_violation(t, result, "the return value", ret_at.as_ref());
             }
+            if is_return {
+                self.copy_returned_fn_field(&mut l[last]);
+            }
             let converted = if needs_convert {
                 self.lexer.to((tail_pos.line, tail_pos.pos));
                 let done = if is_return {
@@ -20770,6 +20773,7 @@ impl Parser {
             {
                 self.validate_convert("return", &t, &r_type, &expr_start.position);
             }
+            self.copy_returned_fn_field(&mut v);
             // loft#822 — `convert` can UNBOX a stored tuple into its stack spelling, and
             // `t` still names the spelling the value had BEFORE that.  The delivery
             // classification below branches on `t`'s kind: left stale it sees a

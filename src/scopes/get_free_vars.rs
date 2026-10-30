@@ -1024,7 +1024,26 @@ impl Scopes<'_> {
                 // De Morgan of `!(keep_holder && !is_fn)`, which clippy reads as non-minimal.
                 // Written this way round on purpose: the dep test leads, and the exception
                 // reads as "unless this is a kept holder that is not itself a function".
+                //
+                // `@FR-L-CapKeep` — and only a result that can HOLD a closure carries one out: a
+                // `text` or scalar result computed from `g()` holds none, so its dep on `g` is
+                // no delivery, and reading it as one left the record `g` holds unreleased
+                // (`fn t() -> text { g = mkf(4); "{g()}" }`).
+                let holds_closure = !matches!(
+                    tp.base(),
+                    Type::Text(_)
+                        | Type::Integer(_)
+                        | Type::Boolean
+                        | Type::Float
+                        | Type::Single
+                        | Type::Character
+                        | Type::Void
+                        | Type::Never
+                        | Type::Null
+                        | Type::Enum(_, false, _)
+                );
                 let dep_delivers = tp.depend().contains(&v)
+                    && holds_closure
                     && (!keep_holder || matches!(tp.base(), Type::Function(..)));
                 let leaves_frame = dep_delivers
                     || ret_carries
