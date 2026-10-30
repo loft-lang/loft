@@ -65,9 +65,17 @@ a row are `R-Destination`, `R-AppendTwin`, `R-RefillBuffer` and (already built) 
 ## Order from here
 
 The goal stays the worst rows, fixed by general optimisations with the memory model first
-([`README.md`](README.md)): next are pluginabi's three rows (15.8×, 12.1×, 6.4×, measurable
-since crypto 0.4.0), profiled and split into memory-model and other causes before anything is
-built.
+([`README.md`](README.md)).  pluginabi's three rows (measurable since crypto 0.4.0), profiled
+2026-10-30:
+
+| row | ratio | where the time is | state |
+|---|---|---|---|
+| `req_state_b64` | 15.8× | crypto's `b64_encode`: each `if … { chars[k..k + 1] } else { "=" }` piece copied into a temporary text; the result copied out of the work buffer at the return (5.4 KB a call) | **BUILT** — the slice view choice, −36 %; the return copy is the C's missing `(R-TextBorrow)` CALL clause (the caller would read the callee's work buffer as a view) |
+| `check_request` | 12.1× | cbor's `read_value` (85 %); per bytes value `CBytes { value: bytes[a..b] }` mints a STORE for the slice temporary (`loft_store_make` + `loft_bits_insert` ≈ 13 %), copies it into the field and frees it — rustc does the same | a NEW general rule to design: a vector slice whose only use is to be appended to a place is sliced into that place.  Must keep `@FR-Const-Foreign`'s view: a slice of a file-mapped vector bound to a local becomes a view of the span, which a field cannot |
+| `request` | 6.4× | crypto's `b64_decode` (70 %), per input byte: the push header's slot and length writes resolve the store (`loft_ph_new`, `loft_at`, the `memcpy`s), `byte_at`, `b64_value` | the push header holds no data pointer by design (a sibling's growth in the same store moves the memory); a base held where the loop's only growth is that header's own wants pricing |
+
+Next: price the slice-into-place rule on `check_request` and cbor `decode` by hand, then write
+it as a rule before building.
 
 
 1. server `header`: re-measure after server 0.7.6 (key compared in place, loft-libs-net #33; ≈ 3.7× left by its author's count — the per-call `name.to_lowercase()` and the trimmed value's copy).
