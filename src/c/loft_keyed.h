@@ -1468,8 +1468,11 @@ typedef void (*loft_par_body)(void *ctx, int64_t lo, int64_t hi);
 
 /* Set while a `par` runs its slices on threads: every store live before it is SHARED — read by
  * the workers through the same buffers, the caller's slice included — so nothing may grow one
- * until the workers have joined (`loft_ffi_own_*` hands a library native a copy instead). */
-static int loft_par_sharing;
+ * until the workers have joined (`loft_ffi_own_*` hands a library native a copy instead).
+ * Per thread: it covers the table of the thread running `loft_par_run`, whose workers share it.
+ * A worker's own view of those stores is marked `pinned`, which asks for the same copy, so a
+ * nested `par` in a worker counts on that worker's thread and races with no other. */
+static LOFT_TLS int loft_par_sharing;
 
 /* @PLN203 C4 tier 2 — a worker whose result is a RECORD makes it in a store of its own table.
  * `adopt(ctx, lo, hi, parent_n)` runs in the caller after that worker joined, with the worker's
