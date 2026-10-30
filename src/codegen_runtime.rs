@@ -6723,15 +6723,34 @@ pub fn main_file_or(baked: &'static str) -> &'static str {
 pub const NATIVE_MAIN_STACK: usize = 512 * 1024 * 1024;
 
 /// macOS's native `main`: the program runs on its [`NATIVE_MAIN_STACK`] thread, as everywhere,
-/// and the MAIN thread is handed to the main dispatch queue — AppKit makes and drives a window
-/// on the main thread only, so a library's window code is sent there (`dispatch_sync_f`, as
-/// graphics' C shim does).  The process ends when the program does: 0 when it returns, 1 when
-/// it panics (the hook has printed the message) — what joining the thread answered.
+/// and the MAIN thread runs its run loop — AppKit makes and drives a window on the main thread
+/// only, so a library's window code is sent to the main queue (`dispatch_sync_f`, as graphics' C
+/// shim does), which that run loop drains on the main thread.  (`dispatch_main` would not do: it
+/// exits the main thread and lets worker threads drain the queue.)  A far-off timer keeps the
+/// loop waiting rather than returning with nothing to wait on.  The process ends when the program
+/// does: 0 when it returns, 1 when it panics (the hook has printed the message) — what joining
+/// the thread answered.
 #[cfg(target_os = "macos")]
 pub fn run_beside_main_queue<F: FnOnce() + Send + 'static>(run: F) -> ! {
+    use std::ffi::c_void;
+    #[link(name = "CoreFoundation", kind = "framework")]
     unsafe extern "C" {
-        fn dispatch_main() -> !;
+        static kCFRunLoopCommonModes: *const c_void;
+        fn CFRunLoopGetMain() -> *mut c_void;
+        fn CFAbsoluteTimeGetCurrent() -> f64;
+        fn CFRunLoopTimerCreate(
+            allocator: *const c_void,
+            fire_date: f64,
+            interval: f64,
+            flags: usize,
+            order: isize,
+            callout: extern "C" fn(*mut c_void, *mut c_void),
+            context: *mut c_void,
+        ) -> *mut c_void;
+        fn CFRunLoopAddTimer(rl: *mut c_void, timer: *mut c_void, mode: *const c_void);
+        fn CFRunLoopRun();
     }
+    extern "C" fn never(_timer: *mut c_void, _info: *mut c_void) {}
     std::thread::Builder::new()
         .stack_size(NATIVE_MAIN_STACK)
         .spawn(move || {
@@ -6739,9 +6758,25 @@ pub fn run_beside_main_queue<F: FnOnce() + Send + 'static>(run: F) -> ! {
             std::process::exit(i32::from(!ok));
         })
         .expect("failed to spawn main-stack thread");
-    // SAFETY: `dispatch_main` (libdispatch, part of libSystem) parks the calling thread to run
-    // the main queue's work and never returns; the process exits from the thread above.
-    unsafe { dispatch_main() }
+    const FAR: f64 = 1.0e9; // seconds: the timer is there to be waited on, not to fire
+    // SAFETY: CoreFoundation's run-loop calls, on the main thread, with a timer it owns from here
+    // on; `CFRunLoopRun` returns only when the loop is stopped, which nothing does — the process
+    // exits from the program's thread above.
+    unsafe {
+        let timer = CFRunLoopTimerCreate(
+            std::ptr::null(),
+            CFAbsoluteTimeGetCurrent() + FAR,
+            FAR,
+            0,
+            0,
+            never,
+            std::ptr::null_mut(),
+        );
+        CFRunLoopAddTimer(CFRunLoopGetMain(), timer, kCFRunLoopCommonModes);
+        loop {
+            CFRunLoopRun();
+        }
+    }
 }
 
 // The return buffers a fn-ref dispatch arm allocated and the callee DELIVERED through,
