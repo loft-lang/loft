@@ -3126,7 +3126,10 @@ fn library_native(
             let (pn, cs) = if post.is_empty() {
                 (store.clone(), "loft_ffi_call_store(pn)")
             } else {
-                ("(uint16_t) pin".to_string(), "pminted ? pn : loft_ffi_call_store(pn)")
+                (
+                    "(uint16_t) pin".to_string(),
+                    "pminted ? pn : loft_ffi_call_store(pn)",
+                )
             };
             let _ = writeln!(select, "    uint16_t pn = {pn};\n    uint16_t cs = {cs};");
             for (j, a) in def.attributes().iter().enumerate() {
@@ -3138,7 +3141,11 @@ fn library_native(
                 let _ = writeln!(select, "    pin = cs;");
             }
             // After the copies: their records are `post`'s to delete, never the log's.
-            let only = if post.is_empty() { "" } else { "if (!pminted) " };
+            let only = if post.is_empty() {
+                ""
+            } else {
+                "if (!pminted) "
+            };
             let _ = writeln!(log, "    {only}loft_ffi_log_begin({store});");
         }
     } else if minted {
