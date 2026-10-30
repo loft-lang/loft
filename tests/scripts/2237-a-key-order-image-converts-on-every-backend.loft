@@ -1,0 +1,56 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2237, `@FR-E-NullArg` / `@FR-S-Format` — an image written before a null `text` or
+// `float` key ordered first (main @ 23bc61e4: `tests/golden/images/key-order.loft`) is converted
+// by a whole load on EVERY backend: each `sorted` and `index` is walked in this build's order —
+// the null key first — and every key, the null one included, is found.  The image holds a
+// sorted and an index over a text key and over a float key, each with a null key, `""` / a
+// negative float, and two present keys; it stored them as `2134` (text: `""` before null) and
+// `2341` (float: null last).  The C backend converts no layout by the upgrade map; it re-sorts
+// the collections an older key order wrote after the raw load (`loft_key_refile`).
+//
+// @falsified-at: 23bc61e47 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// WITNESS: the control predates loft#2237, so it reads the image as written and walks it
+//   `2134`.  The C half was measured beside it: before `loft_key_refile`, `--native-c` refused
+//   the image ("written with a different layout, and it cannot be converted").
+// CHANNEL: the VALUE (each walk and each lookup).
+// ARMED: no instrument.  Ordinary assertions on every backend.
+// HOLDS: every cell, on every backend; the image is read, never written.
+#cwd
+struct KT { k: text, v: integer }
+struct KF { f: float, v: integer }
+struct KRoot { st: sorted<KT[k]>, it: index<KT[k]>, sf: sorted<KF[f]>, xf: index<KF[f]> }
+
+fn img() -> text { "tests/golden/images/key-order-o0/root.store" }
+
+fn test_a_whole_load_walks_every_collection_null_first() {
+  r = KRoot { st: [], it: [], sf: [], xf: [] };
+  assert(store_load(r, img()), "the image loads whole");
+  s = "";
+  for e in r.st { s += "{e.v}"; }
+  s += " ";
+  for e in r.it { s += "{e.v}"; }
+  s += " ";
+  for e in r.sf { s += "{e.v}"; }
+  s += " ";
+  for e in r.xf { s += "{e.v}"; }
+  assert(s == "1234 1234 1234 1234", "walks: {s}");
+}
+
+fn test_every_key_is_found() {
+  nt: text = null;
+  nf: float = null;
+  r = KRoot { st: [], it: [], sf: [], xf: [] };
+  assert(store_load(r, img()), "the image loads whole");
+  t = "{r.st[nt].v ?? -1}{r.st[""].v ?? -1}{r.st["a"].v ?? -1}{r.st["b"].v ?? -1}";
+  t += " {r.it[nt].v ?? -1}{r.it[""].v ?? -1}{r.it["a"].v ?? -1}{r.it["b"].v ?? -1}";
+  t += " {r.sf[nf].v ?? -1}{r.sf[-1.5].v ?? -1}{r.sf[0.0].v ?? -1}{r.sf[2.5].v ?? -1}";
+  t += " {r.xf[nf].v ?? -1}{r.xf[-1.5].v ?? -1}{r.xf[0.0].v ?? -1}{r.xf[2.5].v ?? -1}";
+  assert(t == "1234 1234 1234 1234", "lookups: {t}");
+}
+
+fn main() {
+  test_a_whole_load_walks_every_collection_null_first();
+  test_every_key_is_found();
+}
