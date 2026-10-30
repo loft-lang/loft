@@ -1102,6 +1102,49 @@ fn a_copy_written_through_its_own_view_is_a_lost_write_native() {
     assert_copy_through_its_view("--native");
 }
 
+/// R-3 (`@FR-B-Copy`, `@FR-F-Ret`) — a FIELD written into a copy and never read is a lost write
+/// even when another field of the copy is read.  Pins the EXACT set of locals warned, so the
+/// silent cells — a field read back, the copy used whole, a `&` bind, a direct projection, a
+/// literal's own fields, a group's sibling member, a read in the next loop pass — are half the
+/// claim, as in the 1840 and 1864 fixtures.
+fn assert_field_of_a_copy(backend: &str) {
+    let (stdout, diag, code) = run_env(
+        backend,
+        &workspace("tests/scripts/a-field-written-into-a-copy-and-never-read-is-a-lost-write.loft"),
+        &[],
+    );
+    assert_eq!(
+        code,
+        Some(0),
+        "[{backend}] fixture did not exit 0\n{stdout}\n---\n{diag}"
+    );
+    assert!(
+        stdout.contains("field-copy ok"),
+        "[{backend}] {stdout}\n---\n{diag}"
+    );
+    let mut warned: Vec<&str> = diag
+        .lines()
+        .filter_map(|l| l.strip_prefix("warning[lost-write]: '"))
+        .filter_map(|l| l.split('\'').next())
+        .collect();
+    warned.sort_unstable();
+    assert_eq!(
+        warned,
+        ["ap_v", "cl_v", "fc_v", "ne_v", "tx_v", "vs_m"],
+        "[{backend}] the fields written into copies and never read, and nothing else\n{diag}"
+    );
+}
+
+#[test]
+fn a_field_written_into_a_copy_and_never_read_is_a_lost_write_interpret() {
+    assert_field_of_a_copy("--interpret");
+}
+
+#[test]
+fn a_field_written_into_a_copy_and_never_read_is_a_lost_write_native() {
+    assert_field_of_a_copy("--native");
+}
+
 /// loft#1871 — a parameter the callee REBINDS before writing a field writes the callee's own
 /// store (`@FR-F-ParamRebind`), so a call result handed to it loses nothing.  The literal rebind
 /// `p = S { x: … }` is itself lowered as field writes into the fresh store, and those were read
