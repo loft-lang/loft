@@ -24,7 +24,7 @@
 <h1>graphics guide</h1>
 <article>
 <p><a href="lib-graphics.html">← graphics</a> · <a href="lib-graphics-api.html">API reference</a> · <a href="lib-graphics-src.html">source</a></p>
-<p><code>graphics</code> is the surface everything else in this family draws onto: a <code>Canvas</code> of packed RGBA pixels, the primitives that mark it (rectangles, lines, circles, ellipses, béziers, triangles, sprites), PNG output, and — beyond the software canvas — the OpenGL bindings, a <code>Painter2D</code> for fixed-function 2-D over GL, sprite sheets, and audio.</p>
+<p><code>graphics</code> is the surface everything else in this family draws onto: a <code>Canvas</code> of packed RGBA pixels, the primitives that mark it (rectangles, lines, circles, ellipses, béziers, triangles), PNG output, text from a TrueType <code>Font</code>, and — beyond the software canvas — a <code>Window</code> with its OpenGL objects (shaders, meshes, textures, framebuffers), a <code>Painter</code> for 2-D at pixel positions, and sprite sheets.</p>
 <p>It is deliberately not the layer above it. <code>stage</code> holds the scene TREE you mutate and hands this package a draw list; <code>text2d</code> draws text with no font file; <code>drawing</code> renders a <code>.draw</code> scene authored as lines of text; <code>tween</code> moves properties in time. Reach for <code>graphics</code> when you want to put pixels somewhere, and for one of those when you want something to decide WHICH pixels.</p>
 <p>Everything below is the software canvas, which needs no window and no display — the same half the package's own CI can run.</p>
 <pre><code><span class="kw">use</span> graphics::*;</code></pre>
@@ -100,7 +100,7 @@
 }</code></pre>
 <h2 id="where-to-go-next">Where to go next</h2>
 <ul>
-<li><code>README.md</code> — the whole surface: the OpenGL bindings, <code>Painter2D</code>, sprite sheets, audio (one contract across desktop and browser), and the <code>math</code> / <code>mesh</code> / <code>scene</code> / <code>glb</code> modules this package also carries.</li>
+<li><code>README.md</code> — the whole surface: <code>Window</code> and its GL objects, <code>Painter</code>, <code>Sprites</code>, <code>Font</code>, the targets each is tested on, and how a 0.9 program moves to these objects.</li>
 <li><code>tests/worked-examples.loft</code> — <code>@GFX-001</code> … <code>@GFX-005</code>, the contracts a signature cannot state, each a running test rather than a snippet.</li>
 <li><code>stage</code> for a scene you mutate, <code>text2d</code> for text, <code>drawing</code> for an authored <code>.draw</code> scene, <code>imaging</code> for reading and writing image files.</li>
 </ul>
