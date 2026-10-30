@@ -1,0 +1,90 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `(R-SliceInto)` on the C — a scalar vector slice used as a VALUE converts to a temporary
+// vector in a store of its own (`Parser::materialise_slice_leaves`), filled by one slice op;
+// appended to a place (`R { f: v[a..b] }`, `x += v[a..b]`) the C now appends the slice straight
+// onto the place (`loft_vec_slice`, which appends `[lo, hi)` clamped as one block) and mints no
+// store (cbor's `CBytes { value: bytes[a..b] }`: pluginabi `check_request` −8 %).  What can go
+// wrong is the clamping, an append onto a place that already holds elements, a place that IS
+// the source, and a foreign (file-mapped) source.  Values hand-computed; value AND length.
+//
+// @falsified-at: none — the clause has no earlier C build to catch, so the receipt is a planted
+//   defect (2026-10-30) in the generated C: the rewritten slices given a lower bound of 0 fail
+//   s1 ("5 35" for "3 30"), s2, s3, s4, s1b and s7.  s5 and s6 append a slice to a local, which
+//   lowers without a temporary and so pins that the rule leaves those paths alone.
+//   CHANNEL: an assertion.
+
+struct Chunk { bytes: vector<u8>, tag: integer }
+
+fn src() -> vector<u8> {
+  v: vector<u8> = [];
+  for i in 0..10 { v += [(i * 3 + 1) as u8? ?? 0]; }   // 1 4 7 10 13 16 19 22 25 28
+  v
+}
+
+fn total(v: const vector<u8>) -> integer { s = 0; for b in v { s += b as integer; } s }
+
+// A returned literal and a variant literal are the shapes whose slice converts to a temporary.
+fn chunk(v: const vector<u8>, a: integer, b: integer) -> Chunk { return Chunk { bytes: v[a..b], tag: a }; }
+
+enum Val { VB { b: vector<u8> }, VN { n: integer } }
+fn variant(v: const vector<u8>, a: integer, b: integer) -> Val { VB { b: v[a..b] } }
+fn vlen(x: Val) -> integer { match x { VB { b } => len(b) * 1000 + total(b), VN { n } => n } }
+
+// s1: in range: 7 10 13 (elements 2..5)
+fn test_in_range() {
+  c = chunk(src(), 2, 5);
+  assert(len(c.bytes) == 3 && total(c.bytes) == 30 && (c.bytes[0] ?? 0) == 7 as u8, "s1 {len(c.bytes)} {total(c.bytes)}");
+}
+
+// s2: an empty range and a reversed one answer no elements
+fn test_empty_ranges() {
+  e = chunk(src(), 4, 4);
+  r = chunk(src(), 6, 3);
+  assert(len(e.bytes) == 0 && len(r.bytes) == 0, "s2 {len(e.bytes)} {len(r.bytes)}");
+}
+
+// s3: past the end is clamped: 25 28 (8..10 of 10)
+fn test_past_the_end() {
+  c = chunk(src(), 8, 40);
+  assert(len(c.bytes) == 2 && total(c.bytes) == 53, "s3 {len(c.bytes)} {total(c.bytes)}");
+}
+
+// s4: a negative bound counts from the end: -3.. is 22 25 28
+fn test_a_negative_bound() {
+  c = chunk(src(), -3, 10);
+  assert(len(c.bytes) == 3 && total(c.bytes) == 75, "s4 {len(c.bytes)} {total(c.bytes)}");
+}
+
+// s1b: in a variant's field: 10 13 16 19 (3..7), and clamped 19 22 25 28 (6..99)
+fn test_in_a_variant() {
+  assert(vlen(variant(src(), 3, 7)) == 4058, "s1b {vlen(variant(src(), 3, 7))}");
+  assert(vlen(variant(src(), 6, 99)) == 4094, "s1c {vlen(variant(src(), 6, 99))}");
+}
+
+// s5: appended onto a place that already holds elements: 99, then 1 4 7
+fn test_onto_existing_elements() {
+  v = src();
+  out: vector<u8> = [99 as u8];
+  out += v[0..3];
+  assert(len(out) == 4 && total(out) == 111 && (out[0] ?? 0) == 99 as u8, "s5 {len(out)} {total(out)}");
+}
+
+// s6: the place IS the source: 1 4 7 10 13 16 19 22 25 28, then 13 16 19
+fn test_the_place_is_the_source() {
+  v = src();
+  v += v[4..7];
+  assert(len(v) == 13 && total(v) == 145 + 48, "s6 {len(v)} {total(v)}");
+}
+
+// s7: a foreign (file-mapped) source into a field: a copy of bytes 1..4
+fn test_a_foreign_source() {
+  fp = "loft_slice_into_{now()}_{ticks()}.tmp";
+  assert(write_bytes(fp, src()), "write");
+  m = file_map(fp) ?? [];
+  c = chunk(m, 1, 4);
+  got = "{len(c.bytes)} {total(c.bytes)}";
+  delete(fp);
+  assert(got == "3 21", "s7 {got}");
+}

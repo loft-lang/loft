@@ -7027,6 +7027,116 @@ impl<'a> FnWriter<'a> {
 
     /// `OpAppendVector(v, other, tp)` (`Stores::vector_add`, a linked element type's records by
     /// `vector_add_array`) and `OpPrependVector` (`Stores::prepend_vector`), `tp` the element.
+    /// A vector value that is one scalar slice materialised into a temporary of its own —
+    /// `{ <bounds>; <mint the temporary>; OpSliceView(tmp, src, lo, hi, row); tmp }`, the block a
+    /// slice used as a value converts to (`Parser::materialise_slice_leaves`) — as the statements
+    /// that compute its bounds and the slice op's operands.  `None` for any other value, or when
+    /// anything but its own mint, zero, clear or bind mentions the temporary.
+    fn slice_fill<'v>(&self, other: &'v Value) -> Option<(Vec<&'v Value>, &'v [Value])> {
+        if crate::env_once!(std::env::var("LOFT_NO_SLICE_INTO").is_ok_and(|v| v != "0")) {
+            return None;
+        }
+        let Value::Block(bl) = other.unspan() else {
+            return None;
+        };
+        let (last, rest) = bl.operators.split_last()?;
+        let Value::Var(tmp) = last.unspan() else {
+            return None;
+        };
+        if !self.vars.name(*tmp).contains("__iter_vec") {
+            return None;
+        }
+        let mut owned: Vec<u16> = vec![*tmp];
+        owned.extend(self.vars.tp(*tmp).depend().iter().copied());
+        let names_owned = |v: &Value| {
+            let mut hit = false;
+            v.walk(&mut |n| {
+                if matches!(n, Value::Var(x) if owned.contains(x)) {
+                    hit = true;
+                }
+            });
+            hit
+        };
+        let mut flat: Vec<&Value> = Vec::new();
+        fn flatten<'a>(ops: &'a [Value], out: &mut Vec<&'a Value>) {
+            for op in ops {
+                match op.unspan() {
+                    Value::Insert(inner) => flatten(inner, out),
+                    _ => out.push(op),
+                }
+            }
+        }
+        flatten(rest, &mut flat);
+        let mut prelude = Vec::new();
+        let mut slice: Option<&[Value]> = None;
+        for op in flat {
+            let n = op.unspan();
+            if let Value::Call(d, args) = n {
+                let name = self.cx.data.def(*d).name();
+                if matches!(name, "OpSliceView" | "OpSliceVector")
+                    && args.len() == 5
+                    && matches!(args[0].unspan(), Value::Var(x) if x == tmp)
+                    && !args[1..].iter().any(&names_owned)
+                    && slice.is_none()
+                {
+                    slice = Some(&args[1..]);
+                    continue;
+                }
+                if matches!(
+                    name,
+                    "OpDatabase" | "OpDatabaseNP" | "OpSetInt4" | "OpClearVector"
+                ) && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if owned.contains(x))
+                    && !args[1..].iter().any(&names_owned)
+                {
+                    continue;
+                }
+            }
+            // The temporary's own setup — its store's null init and its bind to that store's
+            // field — names nothing but the temporary's variables.
+            if let Value::Set(x, val) = n
+                && owned.contains(x)
+            {
+                let mut foreign = false;
+                val.walk(&mut |m| {
+                    if matches!(m, Value::Var(y) if !owned.contains(y)) {
+                        foreign = true;
+                    }
+                });
+                if foreign || slice.is_some() {
+                    return None;
+                }
+                continue;
+            }
+            if names_owned(op) {
+                return None;
+            }
+            prelude.push(op);
+        }
+        Some((prelude, slice?))
+    }
+
+    /// `(R-SliceInto)` (C) — the slice appended straight onto `v`: the bounds' statements, then
+    /// `loft_vec_slice(v, src, lo, hi, size)`, which appends `[lo, hi)` clamped as one block —
+    /// what the temporary's fill and the append it fed did together, without its store.
+    fn slice_into(
+        &mut self,
+        v: &Value,
+        prelude: &[&Value],
+        slice: &[Value],
+        ind: usize,
+    ) -> Result<E, String> {
+        let dest = as_ref(self.expr(v, ind)?)?;
+        for op in prelude {
+            self.stmt(op, ind)?;
+        }
+        let raw = format!("({dest})");
+        self.raw.insert(raw.clone(), K::Ref);
+        let mut args = vec![Value::RawExpr(raw)];
+        args.extend(slice.iter().cloned());
+        crate::rewrite_census::fired("R-SliceInto", 1);
+        self.vec_slice(&args, ind, "loft_vec_slice")
+    }
+
     fn append_vector_op(
         &mut self,
         name: &str,
@@ -7038,6 +7148,12 @@ impl<'a> FnWriter<'a> {
         let tp = u16::try_from(Self::literal(tp, "element type")?)
             .map_err(|_| "an element type out of range")?;
         let linked = self.cx.stores.is_linked(tp);
+        if name == "OpAppendVector"
+            && !linked
+            && let Some((prelude, slice)) = self.slice_fill(other)
+        {
+            return self.slice_into(v, &prelude, slice, ind);
+        }
         self.cx.copy_type(tp)?;
         let (v, other) = self.two(name, &[v, other], ind)?;
         let (v, other) = (as_ref(v)?, as_ref(other)?);

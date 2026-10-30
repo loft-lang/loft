@@ -2757,6 +2757,31 @@ be of the callee's answer).  `LOFT_NO_C_WORK_BORROW=1` copies again.  Cells
 compile with the copy refusal off).  Sites: `hoist::own_format_work`, the format arm of
 `hoist::borrowed_store_texts`.
 
+### A slice appended to a place is sliced into it
+
+```
+  (R-SliceInto)  `OpAppendVector(P, { mint T's store; T = its field; zero; <bounds>;
+                 OpSliceView(T, src, lo, hi, row); T }, tp)` — a scalar vector slice used
+                 as a value, converted to a temporary T of its own
+                 (`Parser::materialise_slice_leaves`) and appended to a place P (a literal's
+                 field, `x += v[a..b]`) — is the bounds' statements and one
+                 `OpSliceVector(P, src, lo, hi, row)`: `[lo, hi)` clamped, appended onto P as
+                 one block.  Nothing but T's own mint, bind, zero, clear and the one slice may
+                 name T or its store; anything else declines.  T is never minted, and its
+                 scope-exit release sees the null it starts as.
+```
+
+**In words.**  The append was the only reader of T, and `loft_vec_slice` appends exactly what
+the temporary's fill and the append did together — the same clamped span, read before anything
+is written, safe when P is the source (`v += v[a..b]`: the span lies below the length).  A
+foreign source is COPIED, as the append copied the view's bytes before: P's store holds more
+than this vector, so `@FR-Const-Foreign`'s view does not apply to it.  C only (an emitter form;
+rustc's writer still fills a temporary); the interpreter runs the IR and is the reference.
+cbor's `CBytes { value: bytes[a..b] }`: pluginabi `check_request` −10 %, `req_state_b64` −4 % on
+the C ship lane.  Switch `LOFT_NO_SLICE_INTO`; cells
+`tests/scripts/a-slice-appended-to-a-place-is-sliced-into-it.loft`.  Sites: `slice_fill` /
+`slice_into` / `append_vector_op` in `src/c/body.rs`.
+
 ### A slice of a parameter is read where it lies
 
 ```
