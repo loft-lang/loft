@@ -89,6 +89,12 @@ pairing comments).  The families, and where each lives:
 
 ## Divergences
 
+**A third implementation measures both.**  The loft interpreter (@PLN91 1b) runs on the C
+runtime's routines with the Rust interpreter's operator semantics, and
+`selfhost/compare/compare.py --layers alloc` sets its store events beside the Rust
+interpreter's, event by event; a difference there is a row here (or a port defect), and its
+direction is decided as below ([plans/91-self-host/1b-reference.md](plans/91-self-host/1b-reference.md)).
+
 D1–D19 are the pairing's ranked list; their numbers are kept so the plan, the pairing and the
 fixes name a row the same way.  D20 onward come from the field-by-field comparison above and
 from P0b (what the C runtime lacks).  State: **open**, **fixing** (on the branch named), or
@@ -106,6 +112,12 @@ D18–D19j, D20–D23, D25, D29, D31 and D34 are there.
 | # | Divergence | State |
 |---|---|---|
 | D36 | a recoverable fault's Warn record (`@FR-E-Report`): the C writes none for an index out of range (`index_out_of_bounds`, `negative_index`), a value outside a field's range (`range_defaulted`), a division by zero, a cast or a shift out of range — 138 corpus programs log differently (`c_sweep.py --log`; 78 of them first at an index), so a write through an out-of-range element reports `write_dropped` in C where the interpreter reported the index | open — the reporting is D11's (`loft_fault_report`, the statement's file and line as constants); each faulting operation takes an `_at` form, its guarded `*Nullable` twin none |
+
+### Hot paths
+
+| # | Divergence | State |
+|---|---|---|
+| D36 | a returned root record holding a keyed collection: C exchanges the stores (`swap_safe`), the interpreter copies (`tree_holds_no_stored_refs`), as `(H-SwapIn)` says for "the keyed collections" though `(H-SwapKeyed)`'s reasoning admits them | open — the rule first (@PLN91 1b-reference.md E-2) |
 
 ### Edges
 
