@@ -5200,26 +5200,29 @@ impl<'a> FnWriter<'a> {
     )]
     fn call(&mut self, d: u32, args: &[Value], ind: usize) -> Result<E, String> {
         let cx = self.cx;
-        if let Some(e) = self.apr_length(cx.data.def(d).name(), args) {
+        // Every route below is keyed by the callee's name, and only a standard-library definition
+        // is answered by one: a library's function under a stdlib name keeps its own body.
+        let route = super::runtime_name(cx.data, d);
+        if let Some(e) = self.apr_length(route, args) {
             return Ok(e);
         }
         if is_operator(cx.data, d) {
             return self.call_operator(d, args, ind);
         }
         let def = cx.data.def(d);
-        if let Some(e) = self.keyed_native(def.name(), args, ind)? {
+        if let Some(e) = self.keyed_native(route, args, ind)? {
             return Ok(e);
         }
-        if let Some(e) = self.par_native(def.name(), args, ind)? {
+        if let Some(e) = self.par_native(route, args, ind)? {
             return Ok(e);
         }
-        if let Some(e) = self.unicode_native(def.name(), args, ind)? {
+        if let Some(e) = self.unicode_native(route, args, ind)? {
             return Ok(e);
         }
-        if let Some(e) = self.struct_json_native(def.name(), args, ind)? {
+        if let Some(e) = self.struct_json_native(route, args, ind)? {
             return Ok(e);
         }
-        if def.name() == "n_env_variables" {
+        if route == "n_env_variables" {
             // The element is the stdlib's `EnvVariable`, sized from this program's table.
             let size = self.cx.stores.size(self.cx.stores.name("EnvVariable"));
             return Ok(E::new(format!("loft_env_variables({size})"), K::Ref));
@@ -5252,13 +5255,13 @@ impl<'a> FnWriter<'a> {
         if shapes.len() != args.len() {
             return Err("a call whose arguments do not match its parameters".into());
         }
-        if def.name() == "t_6vector_len"
+        if route == "t_6vector_len"
             && let Some(e) = self.held_len(args, ind)?
         {
             return Ok(e);
         }
         // A native runtime function is written in `int64_t`: a 32-bit integer crosses it widened.
-        let native = super::native_c(def.name()).is_some();
+        let native = super::native_c(route).is_some();
         let (ret, shapes) = if native {
             (
                 super::native_shape(ret),
@@ -5267,7 +5270,7 @@ impl<'a> FnWriter<'a> {
         } else {
             (ret, shapes)
         };
-        let name = super::native_c(def.name()).map_or_else(|| c_name(cx.data, d), str::to_string);
+        let name = super::native_c(route).map_or_else(|| c_name(cx.data, d), str::to_string);
         // A link argument is the address of the caller's variable; the others are values,
         // evaluated in order.
         let mut xs = vec![String::new(); args.len()];
@@ -5289,7 +5292,7 @@ impl<'a> FnWriter<'a> {
         // header for takes that header by pointer and keeps it current; no refresh follows.
         let mut mask = places;
         if places == 0
-            && super::native_c(def.name()).is_none()
+            && super::native_c(route).is_none()
             && args.len() < 64
             && let Some(h) = self.kept_header_arg(d, args)
         {
@@ -5300,7 +5303,7 @@ impl<'a> FnWriter<'a> {
         }
         // `@FR-R-Inputs`: a callee whose every header input this body holds takes them.
         if mask & super::KH_BIT == 0
-            && super::native_c(def.name()).is_none()
+            && super::native_c(route).is_none()
             && args.len() < 64
             && !self.apr_twin_call(d, args)
             && let Some(inputs) = self.twin_inputs(d, args, ind)?
@@ -5326,7 +5329,7 @@ impl<'a> FnWriter<'a> {
         }
         // `@FR-R-NonSentinelParam`'s twin clause: the parameters this call's arguments prove
         // beyond the program-wide fact go to a `__nn` twin that seeds them.
-        if super::native_c(def.name()).is_none() && args.len() <= 26 && !self.apr_twin_call(d, args)
+        if super::native_c(route).is_none() && args.len() <= 26 && !self.apr_twin_call(d, args)
         {
             let bits = self.nn_twin_bits(d, args);
             if bits != 0 {
@@ -5340,7 +5343,7 @@ impl<'a> FnWriter<'a> {
         }
         let name = if mask == 0 {
             name
-        } else if super::native_c(def.name()).is_some() || args.len() > 63 {
+        } else if super::native_c(route).is_some() || args.len() > 63 {
             return Err(format!("a store place handed to a & parameter of {callee}"));
         } else {
             cx.request_twin(d, mask);

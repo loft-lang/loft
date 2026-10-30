@@ -1292,7 +1292,11 @@ impl Cx<'_> {
             let def = self.data.def(d);
             let vars = def.variables();
             let args = vars.arguments();
-            for (&i, &key) in params {
+            // In argument order: `vr_ctype` numbers a tuple type the first time it is asked, so a
+            // map's order here numbered `loft_tupN` differently from run to run.
+            let mut params: Vec<(usize, u16)> = params.iter().map(|(&i, &k)| (i, k)).collect();
+            params.sort_unstable();
+            for (i, key) in params {
                 let Some(CType::Tuple(id)) = self.vr_ctype(key) else {
                     continue;
                 };
@@ -1350,7 +1354,17 @@ pub fn c_name(data: &Data, d: u32) -> String {
     crate::opt::names::disambiguated_fn_ident(&dups, data.def(d))
 }
 
-/// The C runtime function that implements native `name` (a stored `n_…` name), if any.
+/// The name a runtime routine answers definition `d` by: its own for a standard-library
+/// definition, the empty name (which no routine answers) for any other.  A library may define a
+/// function under a standard-library name — only a program's own file is refused one — and its
+/// body is its own: routed by name, `shl::ticks()` called `loft_ticks` and answered the clock.
+pub(crate) fn runtime_name(data: &Data, d: u32) -> &str {
+    let def = data.def(d);
+    if def.is_stdlib() { def.name() } else { "" }
+}
+
+/// The C runtime function that implements native `name` (a stored `n_…` name), if any.  Asked of
+/// a definition, the name is its [`runtime_name`].
 pub(crate) fn native_c(name: &str) -> Option<&'static str> {
     match name {
         "n_assert" => Some("loft_assert"),
@@ -1599,7 +1613,7 @@ pub fn unported_natives(data: &Data) -> Vec<String> {
                 && def.code() == &Value::Null
                 && def.c_sig.is_empty()
                 && def.native().is_empty()
-                && native_c(def.name()).is_none()
+                && native_c(runtime_name(data, d)).is_none()
         })
         .map(|d| data.def(d).name().to_string())
         .collect();
@@ -1651,7 +1665,7 @@ pub fn emit_unit_for(
         .filter(|&d| {
             matches!(data.def(d).def_type(), DefType::Function)
                 && !is_operator(data, d)
-                && native_c(data.def(d).name()).is_none()
+                && native_c(runtime_name(data, d)).is_none()
         })
         .collect();
     // The roots first, so a refusal names the function asked for before one it reaches.
@@ -2168,7 +2182,7 @@ fn fetch_defines(
 ) -> String {
     let loads = lazy
         || reached.iter().any(|&d| {
-            let name = data.def(d).name();
+            let name = runtime_name(data, d);
             matches!(name, "n_store_load_url" | "n_store_load_url_trusted")
                 || native_c(name) == Some("loft_pg_load_keys")
         });
@@ -2738,13 +2752,15 @@ fn inv_inputs(
 /// shapes, and an admitted function's return buffer is no parameter: answers the attribute
 /// the signature drops.
 fn vr_shapes(cx: &Cx, d: u32, vr_key: Option<u16>, shapes: &mut [CType]) -> Option<usize> {
-    let locals = cx.vr_locals(d);
+    // In variable order: `vr_ctype` numbers a tuple type the first time it is asked.
+    let mut locals: Vec<(u16, u16)> = cx.vr_locals(d).into_iter().collect();
+    locals.sort_unstable();
     crate::rewrite_census::fired("R-ValueLocal", locals.len());
-    for (v, key) in &locals {
-        if let Some(c) = cx.vr_ctype(*key)
-            && (*v as usize) < shapes.len()
+    for (v, key) in locals {
+        if let Some(c) = cx.vr_ctype(key)
+            && (v as usize) < shapes.len()
         {
-            shapes[*v as usize] = c;
+            shapes[v as usize] = c;
         }
     }
     vr_key.and_then(|_| crate::opt::attrs::ret_buffer_attr(cx.data.def(d)))

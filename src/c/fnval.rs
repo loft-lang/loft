@@ -91,7 +91,7 @@ impl Cx<'_> {
                 }
                 // A native named as a value: its C function, called with the visible arguments.
                 if !fns.contains(&d)
-                    && let Some(c) = super::plain_native(self.data.def(d).name())
+                    && let Some(c) = super::plain_native(super::runtime_name(self.data, d))
                 {
                     let args: Vec<String> = (0..params.len()).map(|i| format!("a{i}")).collect();
                     let call = format!("{c}({})", args.join(", "));
