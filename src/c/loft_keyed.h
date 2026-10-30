@@ -942,6 +942,27 @@ static loft_ref loft_new_child_rec(const loft_tdesc *T, uint16_t tp, loft_ref f,
     return db;
 }
 
+/* OpCopyClosure (Stores::copy_closure_record, `src/database/closure_share.rs`): a fn-ref read out of
+ * a struct field and kept, as a copy of the `tp` closure record at `src` in a fresh store.  Every
+ * capture is shared; each store an OWNED slot (`owned`, the byte positions the generator listed
+ * from `Stores::owned_capture_slots`) names gains one share, so the copy and its source each
+ * release it once.  The only writer of `closure_shares` that raises it. */
+static loft_ref loft_copy_closure(const loft_tdesc *T, uint16_t tp, loft_ref src, const uint16_t *owned,
+                                  uint32_t n) {
+    if (src.store_nr == 0xFFFF || src.rec == 0) return loft_ref_null();
+    loft_ref to = loft_ref_null();
+    loft_database_typed(&to, T[tp].size, tp);
+    loft_copy_bytes(to, 0, src, 0, T[tp].size);
+    loft_copy_claims(T, tp, src, to);
+    for (uint32_t i = 0; i < n; i++) {
+        loft_ref held = loft_get_dbref(to, owned[i]);
+        if (held.store_nr != 0xFFFF && held.rec != 0 && held.store_nr < loft_nstores
+            && loft_stores[held.store_nr].live)
+            loft_stores[held.store_nr].closure_shares++;
+    }
+    return to;
+}
+
 /* Stores::vector_add_array: `v += o` of a linked element type, whose slots are record ids — each
  * element record copied into a fresh record of the destination's store, its heap deep-copied, a
  * null slot kept null. */

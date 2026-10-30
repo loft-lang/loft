@@ -67,22 +67,31 @@ impl Stores {
         self.store_mut(&to).set_u32_raw(to.rec, 4, u32::from(tp));
         self.copy_block(src, &to, size);
         self.copy_claims(src, &to, tp);
-        let owned_shape = self.dbref();
-        let owned: Vec<u16> = match &self.types[tp as usize].parts {
-            Parts::Struct(fields) => fields
-                .iter()
-                .filter(|f| f.content == owned_shape)
-                .map(|f| f.position)
-                .collect(),
-            _ => Vec::new(),
-        };
-        for pos in owned {
+        for pos in self.owned_capture_slots(tp) {
             let held = self.get_db_ref(&to, u32::from(pos));
             if held.store_nr != u16::MAX && held.rec != 0 {
                 share_with_closure_copy(self, held.store_nr);
             }
         }
         to
+    }
+
+    /// The byte positions of the capture slots a `tp` closure record OWNS (the `dbref` slot
+    /// shape) — the slots a copy shares and adds a share to.  One answer for the store layer's
+    /// copy and for the C backend, which emits the same list as a constant.
+    #[must_use]
+    pub(crate) fn owned_capture_slots(&self, tp: u16) -> Vec<u16> {
+        let Some(&owned_shape) = self.names.get(super::types::DBREF_OWNED) else {
+            return Vec::new();
+        };
+        match &self.types[tp as usize].parts {
+            Parts::Struct(fields) => fields
+                .iter()
+                .filter(|f| f.content == owned_shape)
+                .map(|f| f.position)
+                .collect(),
+            _ => Vec::new(),
+        }
     }
 
     /// The release half: `true` when the store at `store_nr` is shared with a closure copy,

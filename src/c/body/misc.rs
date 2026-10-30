@@ -278,6 +278,30 @@ impl FnWriter<'_> {
                 );
                 Ok(E::new(t, K::Ref))
             }
+            ("OpCopyClosure", [src, tp]) => {
+                let tp =
+                    u16::try_from(Self::literal(tp, "type")?).map_err(|_| "a type out of range")?;
+                self.cx.name_types();
+                self.cx.describe_type(tp);
+                let owned = self.cx.stores.owned_capture_slots(tp);
+                let list = if owned.is_empty() {
+                    "0".to_string()
+                } else {
+                    let items: Vec<String> = owned.iter().map(u16::to_string).collect();
+                    format!("(const uint16_t[]){{ {} }}", items.join(", "))
+                };
+                let src = self.expr(src, ind)?;
+                let t = self.temp(CType::Ref);
+                self.line(
+                    ind,
+                    &format!(
+                        "{t} = loft_copy_closure(loft_types, {tp}, {}, {list}, {});",
+                        as_ref(src)?,
+                        owned.len()
+                    ),
+                );
+                Ok(E::new(t, K::Ref))
+            }
             _ => Err(format!("operator {name}")),
         }
     }

@@ -1263,6 +1263,7 @@ static uint32_t loft_store_make(int counted) {
     s->protect = 0;
     s->frame_holds = 0;
     s->orphaned = 0;
+    s->closure_shares = 0;
     s->serial = 0;
     if (counted) {
         s->serial = ++loft_stores_allocated;
@@ -1449,6 +1450,12 @@ static void loft_free_ref(loft_ref r) {
      * done with it too — this free only orphans it. */
     if (s->frame_holds) {
         s->orphaned = 1;
+        return;
+    }
+    /* `Stores::release_closure_share`: a store a closure copy shares is released by the last
+     * holder — this free takes one share back (loft_store.h `closure_shares`, its one use). */
+    if (s->closure_shares) {
+        s->closure_shares--;
         return;
     }
     for (uint32_t i = 0; i < loft_nevacs;) {

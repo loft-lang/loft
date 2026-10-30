@@ -8639,6 +8639,7 @@ const OP_REF: &[&str] = &[
     "OpInsertVector",
     "OpRefFromChildRec",
     "OpChildRec",
+    "OpCopyClosure",
     "OpCoroutineRetain",
 ];
 const OP_ENUM: &[&str] = &[

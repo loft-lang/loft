@@ -229,6 +229,12 @@ typedef struct {
      * 0 for a store in memory; `map_file` is the open file (a descriptor, or a Windows handle). */
     size_t mapped;
     intptr_t map_file;
+    /* `src/database/closure_share.rs` — the closure-copy share count, the one reference count in
+     * the store layer and for that case ONLY: a fn-ref copied out of a struct field shares the
+     * stores its closure record owns, and the last holder releases them (loft#2273).  Raised by
+     * `loft_copy_closure` alone, taken back by `loft_free_ref` alone; nothing else may read or
+     * write it — find the store's owner instead. */
+    uint32_t closure_shares;
 #ifdef LOFT_FOREIGN
     /* `Store::foreign`: the bytes this store serves under `LOFT_FOREIGN_REC`; an owner of 0 for
      * every ordinary store. */

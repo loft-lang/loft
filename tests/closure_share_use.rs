@@ -21,13 +21,14 @@
 use std::fs;
 use std::path::Path;
 
-/// Every `.rs` file under `dir`, as `(path relative to the crate, contents)`.
+/// Every `.rs` and `.h` file under `dir` (the C backend's runtime carries a twin of the count),
+/// as `(path relative to the crate, contents)`.
 fn rust_files(dir: &Path, out: &mut Vec<(String, String)>) {
     for entry in fs::read_dir(dir).expect("read src") {
         let path = entry.expect("dir entry").path();
         if path.is_dir() {
             rust_files(&path, out);
-        } else if path.extension().is_some_and(|e| e == "rs") {
+        } else if path.extension().is_some_and(|e| e == "rs" || e == "h") {
             let text = fs::read_to_string(&path).expect("read source");
             let rel = path
                 .strip_prefix(env!("CARGO_MANIFEST_DIR"))
@@ -57,8 +58,12 @@ fn files_naming(needle: &str) -> Vec<String> {
 
 #[test]
 fn the_share_is_raised_in_one_file() {
+    let rust: Vec<String> = files_naming("share_with_closure_copy")
+        .into_iter()
+        .filter(|f| f.ends_with(".rs"))
+        .collect();
     assert_eq!(
-        files_naming("share_with_closure_copy"),
+        rust,
         vec!["src/database/closure_share.rs"],
         "the closure-copy share is raised outside closure_share.rs — see this file's doc"
     );
@@ -66,8 +71,12 @@ fn the_share_is_raised_in_one_file() {
 
 #[test]
 fn the_share_is_taken_back_only_by_free_named() {
+    let rust: Vec<String> = files_naming("release_closure_share")
+        .into_iter()
+        .filter(|f| f.ends_with(".rs"))
+        .collect();
     assert_eq!(
-        files_naming("release_closure_share"),
+        rust,
         vec![
             "src/database/allocation.rs",
             "src/database/closure_share.rs"
@@ -86,12 +95,44 @@ fn the_share_is_taken_back_only_by_free_named() {
 }
 
 #[test]
+fn the_c_twin_is_reached_only_at_its_three_sites() {
+    // The C runtime's `closure_shares`: declared in `loft_store.h`, reset and taken back in
+    // `loft_rt.h` (`loft_store_new`, `loft_free_ref`), raised in `loft_keyed.h`
+    // (`loft_copy_closure`, the body of `OpCopyClosure`).
+    let c: Vec<String> = files_naming("closure_shares")
+        .into_iter()
+        .filter(|f| f.starts_with("src/c/"))
+        .collect();
+    assert_eq!(
+        c,
+        vec![
+            "src/c/loft_keyed.h",
+            "src/c/loft_rt.h",
+            "src/c/loft_store.h"
+        ],
+        "the C closure-copy share count is named outside its three sites"
+    );
+    let rt = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/c/loft_rt.h"))
+        .expect("read loft_rt.h");
+    assert_eq!(
+        rt.matches("closure_shares").count(),
+        4,
+        "loft_rt.h names the share count at the reset, and at the release: its comment, one \
+         check, one decrement"
+    );
+}
+
+#[test]
 fn the_count_is_reached_only_through_its_module() {
     // The field and its type: declared in `mod.rs`, initialised at the three `Stores`
     // constructors (`mod.rs` twice, the worker stores in `allocation.rs`), read in the module.
     for needle in ["closure_shares", "ClosureShares"] {
+        let rust: Vec<String> = files_naming(needle)
+            .into_iter()
+            .filter(|f| f.ends_with(".rs"))
+            .collect();
         assert_eq!(
-            files_naming(needle),
+            rust,
             vec![
                 "src/database/allocation.rs",
                 "src/database/closure_share.rs",
