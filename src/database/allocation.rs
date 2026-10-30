@@ -4576,6 +4576,9 @@ impl Stores {
                     }
                     // Deep-copy nested heap fields (text, Reference, etc.).
                     self.copy_claims(&src_db, &new_db, content_kt);
+                    // A fn field's closure record: what it owns comes with the copy
+                    // (`@FR-B-Copy` of the host, `@FR-L-CapOne`).
+                    self.clone_owned_captures(&new_db, content_kt);
                     self.store_mut(to).set_u32_raw(to.rec, to.pos, new_rec);
                 }
             }
