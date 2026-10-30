@@ -1438,8 +1438,6 @@ static loft_text loft_user_directory(loft_str sub) {
  * macOS, else `argv[0]` — `sub` joined to it. */
 #if defined(__APPLE__)
 extern int _NSGetExecutablePath(char *buf, uint32_t *size);
-#elif defined(_WIN32)
-__declspec(dllimport) unsigned long __stdcall GetModuleFileNameA(void *module, char *buf, unsigned long size);
 #endif
 static loft_text loft_program_directory(loft_str sub) {
     char buf[4096];
@@ -1452,8 +1450,10 @@ static loft_text loft_program_directory(loft_str sub) {
     uint32_t size = sizeof buf;
     if (_NSGetExecutablePath(buf, &size) != 0) buf[0] = 0;
 #elif defined(_WIN32)
-    unsigned long n = GetModuleFileNameA(0, buf, (unsigned long) sizeof buf);
-    buf[n < sizeof buf ? n : 0] = 0;
+    /* The CRT's full path of the program (`stdlib.h`) — no Win32 declaration, which would have
+     * to agree with `windows.h`'s where a socket unit includes it. */
+    char *pg = 0;
+    if (_get_pgmptr(&pg) == 0 && pg && strlen(pg) < sizeof buf) strcpy(buf, pg);
 #endif
 #if defined(LOFT_POSIX_HOST)
     if (!buf[0] && loft_argv && loft_argv[0]) {
