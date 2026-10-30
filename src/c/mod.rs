@@ -3096,11 +3096,11 @@ fn library_native(
     } = ffi_args(cx, d)?;
     let ffi_ret = ffi_return_ctype(def)?;
     let heap_answer = ffi_ret == "loft_ffi_ref";
-    let mut prep = prep;
     // The store handed over: the first heap argument's, else — for a heap answer — one minted
     // for the answer, as the interpreter's bridge mints it (`Stores::bridge_args`).
     let minted = store_arg.is_none() && heap_answer;
-    let post = foreign_vector_args(&heap, heap_answer, &mut prep);
+    let (mut select, mut copies) = (String::new(), String::new());
+    let post = foreign_vector_args(&heap, heap_answer, &mut select, &mut copies);
     // loft#2227 — a heap answer pinned to an argument's store is copied out of it after the
     // call, and only what the call claimed there is deleted (`loft_ffi_own_*`): log it.  A store
     // minted for the call (`pminted`) is never owned, as `Stores::own_bridge_answer` skips it.
@@ -3108,6 +3108,7 @@ fn library_native(
     if owned_answer {
         cx.copy_type(def.native_answer_tp)?;
     }
+    let mut log = String::new();
     if let Some(i) = store_arg {
         ffi_params.insert(0, "loft_ffi_store".into());
         // The first heap argument's store, or `pin` when a vector argument may be foreign
@@ -3119,11 +3120,29 @@ fn library_native(
         };
         ffi_args.insert(0, format!("loft_ffi_store_of({store})"));
         if owned_answer {
+            // loft#2239 — a store a running `par` shares is never grown: the call works in a
+            // copy (`loft_ffi_call_store`), and every argument that lived in it is renamed to
+            // the copy BEFORE the arguments are read (`prep`) and the foreign copies claimed.
+            let (pn, cs) = if post.is_empty() {
+                (store.clone(), "loft_ffi_call_store(pn)")
+            } else {
+                ("(uint16_t) pin".to_string(), "pminted ? pn : loft_ffi_call_store(pn)")
+            };
+            let _ = writeln!(select, "    uint16_t pn = {pn};\n    uint16_t cs = {cs};");
+            for (j, a) in def.attributes().iter().enumerate() {
+                if a.typedef.base().heap_dep().is_some() {
+                    let _ = writeln!(select, "    if (a{j}.store_nr == pn) a{j}.store_nr = cs;");
+                }
+            }
+            if !post.is_empty() {
+                let _ = writeln!(select, "    pin = cs;");
+            }
+            // After the copies: their records are `post`'s to delete, never the log's.
             let only = if post.is_empty() { "" } else { "if (!pminted) " };
-            prep.push_str(&format!("    {only}loft_ffi_log_begin({store});\n"));
+            let _ = writeln!(log, "    {only}loft_ffi_log_begin({store});");
         }
     } else if minted {
-        prep.push_str("    uint16_t ns = (uint16_t) loft_store_new();\n");
+        log.push_str("    uint16_t ns = (uint16_t) loft_store_new();\n");
         ffi_params.insert(0, "loft_ffi_store".into());
         ffi_args.insert(0, "loft_ffi_store_of(ns)".into());
     }
@@ -3161,7 +3180,11 @@ fn library_native(
         body::c_string(&crate::file_access::file_name(lib).unwrap_or_default()),
         body::c_string(def.native())
     );
+    // The pin and its copy first, then the arguments read, the foreign copies, the log.
+    body.push_str(&select);
     body.push_str(&prep);
+    body.push_str(&copies);
+    body.push_str(&log);
     let call = format!("fp({})", ffi_args.join(", "));
     let answer_store = if owned_answer {
         AnswerStore::Owned(def.native_answer_tp)
@@ -3238,6 +3261,8 @@ fn library_answer(
                     "    loft_ref v = {minted_pin}{own}(loft_types, {answer_tp}, {convert}(r));"
                 );
                 body.push_str(post);
+                // loft#2239 — the copy of a shared store the call worked in goes.
+                let _ = writeln!(body, "    loft_ffi_drop_call_store(cs, pn);");
                 let _ = writeln!(body, "    return v;");
                 return;
             }
@@ -3272,18 +3297,24 @@ fn library_answer(
 /// `Stores::bridge_args` for a library call: the library reads every vector argument through
 /// the ONE store it is handed (`ptr + rec * 8`), so a foreign vector — a `file_map`, whose bytes
 /// are in no store — is copied into a record of that store for the call, in one block, and never
-/// pins it: the first other heap argument does, or a store is minted (`pin`).  Writes the
-/// statements before the call into `prep` and answers the ones after it
+/// pins it: the first other heap argument does, or a store is minted (`pin`).  Writes the choice
+/// of `pin` into `select` (before the arguments are read, so a copy of a shared `pin` can
+/// replace it), the copies into `prep`, and answers the statements after the call
 /// (`bridge_args_done`): a copy the library changed is a write the program could not make,
 /// refused as one; then the copies go, or the minted store whole when no heap answer lives in
 /// it.  Empty — no `pin`, the plain call — when no argument is a vector.
-fn foreign_vector_args(heap: &[(usize, bool)], heap_answer: bool, prep: &mut String) -> String {
+fn foreign_vector_args(
+    heap: &[(usize, bool)],
+    heap_answer: bool,
+    select: &mut String,
+    prep: &mut String,
+) -> String {
     let mut post = String::new();
     let vec_args: Vec<usize> = heap.iter().filter(|(_, v)| *v).map(|(i, _)| *i).collect();
     if vec_args.is_empty() {
         return post;
     }
-    let _ = writeln!(prep, "    uint32_t pin = UINT32_MAX; int pminted = 0;");
+    let _ = writeln!(select, "    uint32_t pin = UINT32_MAX; int pminted = 0;");
     for (i, is_vec) in heap {
         let guard = if *is_vec {
             format!(" && !loft_ffi_is_foreign(a{i})")
@@ -3291,12 +3322,12 @@ fn foreign_vector_args(heap: &[(usize, bool)], heap_answer: bool, prep: &mut Str
             String::new()
         };
         let _ = writeln!(
-            prep,
+            select,
             "    if (pin == UINT32_MAX{guard}) pin = a{i}.store_nr;"
         );
     }
     let _ = writeln!(
-        prep,
+        select,
         "    if (pin == UINT32_MAX) {{ pin = loft_store_new(); pminted = 1; }}"
     );
     for i in &vec_args {

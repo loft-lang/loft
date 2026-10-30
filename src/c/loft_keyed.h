@@ -1466,6 +1466,11 @@ static void loft_par_drop(int refs) {
  * `LOFT_THREADS` every slice runs here, in order: the same answer (@FR-C-Det). */
 typedef void (*loft_par_body)(void *ctx, int64_t lo, int64_t hi);
 
+/* Set while a `par` runs its slices on threads: every store live before it is SHARED — read by
+ * the workers through the same buffers, the caller's slice included — so nothing may grow one
+ * until the workers have joined (`loft_ffi_own_*` hands a library native a copy instead). */
+static int loft_par_sharing;
+
 /* @PLN203 C4 tier 2 — a worker whose result is a RECORD makes it in a store of its own table.
  * `adopt(ctx, lo, hi, parent_n)` runs in the caller after that worker joined, with the worker's
  * table current, and copies each of the rows `lo..hi` whose record lies in a store the worker
@@ -1564,6 +1569,7 @@ static void loft_par_run(int64_t n, int64_t threads, loft_par_body body, void *c
 #if defined(LOFT_THREADS)
     if (t > 1) {
         int64_t k;
+        loft_par_sharing++;
         loft_par_job *jobs = (loft_par_job *) calloc((size_t) t, sizeof *jobs);
 #if defined(_WIN32)
         void **ids = (void **) calloc((size_t) t, sizeof *ids);
@@ -1611,6 +1617,7 @@ static void loft_par_run(int64_t n, int64_t threads, loft_par_body body, void *c
             if (jobs[k].table) pthread_join(ids[k], 0);
 #endif
         }
+        loft_par_sharing--;
         /* Each worker's records copied out with its table current, one worker at a time; the
          * result store's entry travels in from the caller's table and back, so a growth of it
          * in one worker's adoption is seen by the next. */
