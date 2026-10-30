@@ -128,3 +128,38 @@ fn the_unfused_test_is_what_the_count_catches() {
         "struct enum"
     );
 }
+
+/// A guarded arm assigns its captures inside its condition (`cmp && { bindings; guard }`), and a
+/// later or-pattern arm's sub-pattern capture is one: `Rs { i: Sq { y } }` binds `y` only after
+/// `i` is `Sq`.  The scope pass pre-inits a branch's first-assigned texts before the `if`, and
+/// its walk did not look into a nested `if`'s test, so `y`'s init ran only where that test ran
+/// while its free ran at every exit.  `shared_sub(Ry { … })` matches the first pattern, never
+/// runs the test, and freed whatever text the frame of `sub` had left in the slot: SIGABRT.
+/// `3:-2:-3` and `[a]` by hand.
+#[test]
+fn a_capture_first_bound_in_a_later_arms_test_is_initialised_on_every_path() {
+    let src = "enum Sub { Sp { x: integer }, Sq { y: text } }\n\
+enum Rec { Ra { u: integer }, Rs { i: Sub, k: integer }, Ry { y: text } }\n\
+fn sub(r: Rec) -> text { match r { Ra { u }, Rs { i: Sp { x }, k } => \"{u ?? -1}:{x ?? -2}:{k ?? -3}\", _ => \"o\" } }\n\
+fn shared_sub(r: Rec) -> text { match r { Ry { y }, Rs { i: Sq { y } } => \"[{y}]\", _ => \"o\" } }\n\
+fn main() {\n  a = sub(Ra { u: 3 });\n  b = shared_sub(Ry { y: \"a\" });\n  println(\"{a} {b}\");\n}\n";
+    let dir = std::env::temp_dir().join(format!("loft_match_once_{}_init", std::process::id()));
+    let _ = loft::file_access::remove_dir_all(&dir);
+    loft::file_access::create_dir_all(&dir).expect("scratch");
+    let file = dir.join("m.loft");
+    loft::file_access::write(&file, src).expect("program");
+    let out = loft::platform::process::harness_command(loft())
+        .arg("--interpret")
+        .arg(&file)
+        .env("LOFT_NO_CACHE", "1")
+        .env("LOFT_STRICT_STORES", "1")
+        .output()
+        .expect("run loft");
+    let _ = loft::file_access::remove_dir_all(&dir);
+    assert!(
+        out.status.success(),
+        "the run ends cleanly: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "3:-2:-3 [a]\n");
+}
