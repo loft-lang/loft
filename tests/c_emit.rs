@@ -5880,17 +5880,20 @@ fn a_c_build_builds_no_rust_native_crate() {
 /// released (`loft_database_wrapper`); FILE: a `File` record that dies without a close returns
 /// its lease and its handle closes (`@FR-H-Handle`), while a copy keeps its handle open.  Each
 /// ran out of memory or descriptors on the build before.  The caps are a POSIX shell's
-/// `ulimit`; where no `sh` can set one the test skips, as it does without `cc`.
+/// `ulimit`; where no `sh` can set one the test skips, as it does without `cc` — and on Windows,
+/// whose `sh` (Git's) accepts `ulimit` but cannot apply it to a native program, so the run there
+/// would pass whatever the C leaked.
 #[test]
 fn a_released_path_stays_bounded_where_it_used_to_leak() {
     if !have_cc() {
         eprintln!("skipped: no cc on PATH");
         return;
     }
-    let can_cap = loft::platform::process::harness_command("sh")
-        .args(["-c", "ulimit -v 32768 && ulimit -n 64"])
-        .output()
-        .is_ok_and(|o| o.status.success());
+    let can_cap = !cfg!(windows)
+        && loft::platform::process::harness_command("sh")
+            .args(["-c", "ulimit -v 32768 && ulimit -n 64"])
+            .output()
+            .is_ok_and(|o| o.status.success());
     if !can_cap {
         eprintln!("skipped: no sh that sets ulimit caps");
         return;
