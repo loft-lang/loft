@@ -7496,6 +7496,13 @@ fn bind_trace_write(line: &str) {
     static FILE: std::sync::OnceLock<Option<Sink>> = std::sync::OnceLock::new();
     let file = FILE.get_or_init(|| {
         let path = std::env::var("LOFT_TRACE_BIND").ok()?;
+        // `1` is how every other trace switch is armed (tests/trace_switches.rs arms them all
+        // so): it traces to stderr rather than naming a file `1`.
+        if path == "1" {
+            return Some(std::sync::Mutex::new(
+                Box::new(std::io::stderr()) as Box<dyn std::io::Write + Send>
+            ));
+        }
         crate::file_access::create(path.as_str())
             .ok()
             .map(|f| std::sync::Mutex::new(Box::new(f) as Box<dyn std::io::Write + Send>))

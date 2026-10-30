@@ -170,7 +170,7 @@ unresolved closure calls are exercised.
 
 ## C-2 — BUILT 2026-10-30 (binds)
 
-`LOFT_TRACE_BIND=<file>` in `generate_set` (`src/state/codegen.rs`): a notes frame per set,
+`LOFT_TRACE_BIND=<file>` (`1` writes to stderr) in `generate_set` (`src/state/codegen.rs`): a notes frame per set,
 the arm each branch takes and B2's facts; off, the bytecode is byte-identical (`introspect_diff`
 2852/2852).  The loft side's table is written by `lower.loft`'s `set` (1b-s3.md B-1c) and the
 run's `write_binds`.  **Measured with B-1:** every program the interpreter runs of the kernels
