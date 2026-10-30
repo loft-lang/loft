@@ -3671,8 +3671,16 @@ fn projection_walk(
             return None;
         };
         let name = data.def(*d).name();
+        // `@FR-L-OutOfLine` — the VIEW side also reads an out-of-line field's child as a
+        // projection of its field: an element-like read (a record of its own), so a null write
+        // to the field, which releases the child, ends a view of it (`(B-Disturb)`).  The
+        // ownership side (`nullable_reads` false) keeps today's answer.
         let projects = is_projection_op(data, *d)
-            || (nullable_reads && matches!(name, "OpGetVectorNullable" | "OpVectorRefNullable"));
+            || (nullable_reads
+                && matches!(
+                    name,
+                    "OpGetVectorNullable" | "OpVectorRefNullable" | "OpRefFromChildRec"
+                ));
         if !projects {
             return None;
         }
