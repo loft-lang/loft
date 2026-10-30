@@ -18067,7 +18067,7 @@ impl Parser {
             // Delivered, it became `Set(av, panic(…))`: the interpreter stored a void result as a
             // text and crashed, native wrote `().to_string()`, and the C backend refused.
             Value::Call(d, _)
-                if *d < data.definitions() && matches!(data.def(*d).returned(), Type::Void) => {}
+                if *d < data.definitions() && matches!(data.def(*d).returned().base(), Type::Void) => {}
             leaf => {
                 let mut v = std::mem::replace(leaf, Value::Null);
                 // A `text_ref` arm ends in `OpCreateStack(buf)` — a BORROW of the
