@@ -89,6 +89,12 @@ pairing comments).  The families, and where each lives:
 
 ## Divergences
 
+**A third implementation measures both.**  The loft interpreter (@PLN91 1b) runs on the C
+runtime's routines with the Rust interpreter's operator semantics, and
+`selfhost/compare/compare.py --layers alloc` sets its store events beside the Rust
+interpreter's, event by event; a difference there is a row here (or a port defect), and its
+direction is decided as below ([plans/91-self-host/1b-reference.md](plans/91-self-host/1b-reference.md)).
+
 D1–D19 are the pairing's ranked list; their numbers are kept so the plan, the pairing and the
 fixes name a row the same way.  D20 onward come from the field-by-field comparison above and
 from P0b (what the C runtime lacks).  State: **open**, **fixing** (on the branch named), or
@@ -100,13 +106,19 @@ D18–D19f, D19h, D20–D23, D25, D29, D31 and D34 are there.
 
 | # | Divergence | State |
 |---|---|---|
-| D8 | the swap-in gate is narrower in C (walk scratch, constant, lazy binding), and refuses a protected destination where Rust tests the source | open |
+| D8 | the swap-in gate is narrower in C (walk scratch, constant, lazy binding), and refuses a protected destination where Rust tests the source | open — `(H-SwapIn)` settles protection (the released side only): C moves; the scratch gate is in no rule (@PLN91 1b-reference.md E-4) |
 
 ### Contract and diagnostics
 
 | # | Divergence | State |
 |---|---|---|
 | D11 | no `WriteDropped` diagnostic in C for a write through a null holder | open |
+
+### Hot paths
+
+| # | Divergence | State |
+|---|---|---|
+| D36 | a returned root record holding a keyed collection: C exchanges the stores (`swap_safe`), the interpreter copies (`tree_holds_no_stored_refs`), as `(H-SwapIn)` says for "the keyed collections" though `(H-SwapKeyed)`'s reasoning admits them | open — the rule first (@PLN91 1b-reference.md E-2) |
 
 ### Edges
 

@@ -53,6 +53,9 @@ It holds four constraints:
    redesigned.  This retires the run-time ownership of 1b-s3.md (2026-10-28).  The gate that
    follows from it: the loft-written bytecode equals `loft introspect`'s, byte for byte, and so
    do the stores a run makes and frees.
+   **The reference improves at its home (owner, 2026-10-30).**  What the comparison finds the
+   Rust interpreter doing inconsistently or wastefully is fixed in the Rust interpreter first,
+   and the loft interpreter follows each step ([1b-reference.md](1b-reference.md)).
 
 **The order of the goals (owner, 2026-10-28).**  First full coverage: every test and program
 the repository defines (the corpus, `tests/scripts`, the language suite's cells) gives
