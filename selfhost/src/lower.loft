@@ -671,12 +671,22 @@ fn literal(l: Lowering, n: ir::Node) -> integer {
   }
 }
 
-// Is `n` a literal element count of at most 11 (`prealloc_elide_enabled`'s bound)?
-fn small_count(n: ir::Node) -> boolean {
-  match unspan(n) {
-    NdInt { n: c } => c >= 0 && c <= 11,
-    _ => false,
+// `@FR-R-FirstClaim` (`codegen.rs` `gen_call`, `prealloc_elide_enabled`): is the reservation
+// `OpPreAllocVector(v, count, size)` exactly the append's own first claim — `count` the
+// elements `vector::grown_elems(1, size)` gives (`src/vector.rs:85`: twice the length, never
+// less than the 88-byte start room, one element at least)?  Any other count is reserved
+// exactly (`@FR-Col-Capacity`) and stays.
+fn first_claim_count(count: ir::Node, size: ir::Node) -> boolean {
+  c = match unspan(count) { NdInt { n } => n, _ => -1 };
+  sz = match unspan(size) { NdInt { n } => n, _ => -1 };
+  if c < 0 || sz < 0 {
+    return false;
   }
+  start = 88 / (if sz > 1 { sz } else { 1 });
+  if start < 1 {
+    start = 1;
+  }
+  c == (if start > 2 { start } else { 2 })
 }
 
 // The slot of the record variable an operator writes (`OpDatabase(v, tp)`), or refused when
@@ -906,9 +916,9 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     size = literal(l, args[1] ?? panic("and its element size"));
     value(l, b, args[2] ?? panic("and its index"), KInt);
     emit(l, VecGet, KRef, size, 0);
-  } else if name == "OpPreAllocVector" && (args[0] ?? panic("OpPreAllocVector names its vector")) is NdVar && small_count(args[1] ?? panic("and a count")) {
-    // `prealloc_elide_enabled` (on): a reservation of at most 11 elements into a variable is
-    // not emitted (`gen_call`, `codegen.rs:4624`).
+  } else if name == "OpPreAllocVector" && (args[0] ?? panic("OpPreAllocVector names its vector")) is NdVar && first_claim_count(args[1] ?? panic("and a count"), args[2] ?? panic("and a size")) {
+    // `@FR-R-FirstClaim` (`prealloc_elide_enabled`, on): a reservation into a variable that is
+    // exactly the append's own first claim is not emitted (`gen_call`, `codegen.rs`).
   } else if name == "OpPreAllocVector" {
     value(l, b, args[0] ?? panic("OpPreAllocVector names its vector"), KRef);
     emit(l, VecPrealloc, KRef, literal(l, args[1] ?? panic("and a count")), literal(l, args[2] ?? panic("and a size")));
