@@ -2665,7 +2665,7 @@ and the block it was judged over.  Sites: `hoist::borrowed_store_texts` (`tested
 bind in `Output::output_set`.  Guard
 `tests/scripts/a-match-binding-borrows-its-text-while-the-stores-differ.loft` (falsified under
 `LOFT_POISON=1` by a plant that drops the writer test: t3 reads the scribble), pin
-`tests/tested_text_borrow.rs`.
+`tests/tested_text_borrow.rs`.  On the C the local is a `loft_str` view with a backing text of its own (`loft_own<v>`): the bind tests each root parameter's store against the buffer's and copies into the backing text when they match (`borrowed_assign` in `src/c/body.rs`; cbor `encode_bytes` −16 % on the C ship lane).  No source shape found so far hands such a function a buffer in its parameter's store — every route to one is declined earlier — so on both backends the run-time test is the second line, not the one a cell falsifies.  `LOFT_NO_C_TESTED_BORROW=1` copies again.
 
 **The versioned clause, in words.**  `arguments`' `classify` walks `argv`, a parameter, and
 appends a token per word to its result, which a caller could hand in sharing `argv`'s store;

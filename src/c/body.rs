@@ -279,6 +279,9 @@ pub(crate) struct FnWriter<'a> {
     /// text locals a walk binds to an element it only READS, under a loop that writes no store —
     /// each a `loft_str` view of the element, as a text parameter is, never a copy.
     borrowed: Vec<bool>,
+    /// `@FR-R-TextBorrow`'s tested clause: the borrowed locals that view a parameter's text only
+    /// while each root parameter's store is not the return buffer's, with those roots.
+    tested: std::collections::HashMap<u16, Vec<u16>>,
     /// `@FR-R-CharWalk` (`opt::char_walk::char_walks`, which the interpreter and native read):
     /// this function's `for c in t` walks by loop scope — their step takes an ASCII byte without
     /// decoding it, and their null test is asked once where the loop never writes `t`.
@@ -340,13 +343,13 @@ struct WindowLoop<'b> {
 /// local or a text parameter, a literal, a text field read, a block ending in one — so
 /// admitting it never turns a carried program into a refused one.
 /// `LOFT_NO_TEXT_BORROW=1` keeps every copy, as on native.
-fn borrowed_texts(cx: &Cx, d: u32) -> Vec<bool> {
+fn borrowed_texts(cx: &Cx, d: u32) -> (Vec<bool>, std::collections::HashMap<u16, Vec<u16>>) {
     let def = cx.data.def(d);
     let vars = def.variables();
     let n = vars.count() as usize;
     let mut b = vec![false; n];
     if std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0") {
-        return b;
+        return (b, std::collections::HashMap::new());
     }
     // As native's setup: the lazy splits' and the split tables' walks need no store
     // condition — their pieces are slices of a text — and a `?` discharge of a table's
@@ -389,11 +392,28 @@ fn borrowed_texts(cx: &Cx, d: u32) -> Vec<bool> {
         } else {
             store.work.clone()
         };
+    // The tested clause: a local whose scope also writes the return buffer borrows while each
+    // root parameter's store is not the buffer's, tested at its bind, and copies into a text
+    // of its own (`loft_own<v>`) otherwise.  `LOFT_NO_C_TESTED_BORROW=1` keeps the copy.
+    let tested: std::collections::HashMap<u16, Vec<u16>> =
+        if crate::env_once!(std::env::var("LOFT_NO_C_TESTED_BORROW").is_ok_and(|v| v != "0"))
+            || crate::opt::hoist::retbuf_var(cx.data, d).is_none()
+        {
+            std::collections::HashMap::new()
+        } else {
+            store
+                .tested
+                .iter()
+                .filter(|(v, _)| !store.work.contains(v))
+                .map(|(v, r)| (*v, r.clone()))
+                .collect()
+        };
     for v in walks
         .keys()
         .copied()
         .chain(plain)
         .chain(work.iter().copied())
+        .chain(tested.keys().copied())
     {
         let i = v as usize;
         if i < n
@@ -426,7 +446,11 @@ fn borrowed_texts(cx: &Cx, d: u32) -> Vec<bool> {
             }
         }
         if !dropped {
-            return b;
+            let tested = tested
+                .into_iter()
+                .filter(|(v, _)| b.get(*v as usize).copied().unwrap_or(false))
+                .collect();
+            return (b, tested);
         }
     }
 }
@@ -571,6 +595,7 @@ impl<'a> FnWriter<'a> {
     #[expect(clippy::too_many_lines)]
     pub(crate) fn new(cx: &'a Cx<'a>, d: u32, shapes: Vec<CType>, ret: CType) -> FnWriter<'a> {
         let def = cx.data.def(d);
+        let (borrowed, tested) = borrowed_texts(cx, d);
         FnWriter {
             cx,
             d,
@@ -645,7 +670,8 @@ impl<'a> FnWriter<'a> {
             in_delivery: 0,
             windows: Vec::new(),
             file_holds: Vec::new(),
-            borrowed: borrowed_texts(cx, d),
+            borrowed,
+            tested,
             lazy: if std::env::var("LOFT_NO_LAZY_SPLIT").is_ok_and(|v| v != "0") {
                 std::collections::BTreeMap::new()
             } else {
@@ -866,6 +892,12 @@ impl<'a> FnWriter<'a> {
             }
         }
         self.ds_decls();
+        let mut owns: Vec<u16> = self.tested.keys().copied().collect();
+        owns.sort_unstable();
+        for v in owns {
+            self.decls
+                .push(format!("loft_text loft_own{v} = {{ 0, 0, 0 }};"));
+        }
         self.apr_decls();
         self.apv_decls();
         self.av_decls();
@@ -1034,6 +1066,10 @@ impl<'a> FnWriter<'a> {
                 .filter(|(_, c)| *c == CType::Text)
                 .map(|(t, _)| t.clone()),
         );
+        // A tested borrow's own text, which its copying path fills.
+        let mut owns: Vec<u16> = self.tested.keys().copied().collect();
+        owns.sort_unstable();
+        texts.extend(owns.into_iter().map(|v| format!("loft_own{v}")));
         // And the texts a tuple temporary holds.
         let tuple_temps: Vec<(String, u32)> = self
             .temps
@@ -3702,12 +3738,8 @@ impl<'a> FnWriter<'a> {
             if self.pending.len() != before {
                 return Err("a borrowed text would view a temporary".into());
             }
-            let name = self.var(var);
-            self.line(
-                ind,
-                &format!("{name} = loft_get_text({}, {fld});", as_ref(r)?),
-            );
-            return Ok(());
+            let view = format!("loft_get_text({}, {fld})", as_ref(r)?);
+            return self.borrowed_assign(var, x, &view, ind);
         }
         let before = self.pending.len();
         let e = self.expr(x, ind)?;
@@ -3715,8 +3747,45 @@ impl<'a> FnWriter<'a> {
             return Err("a borrowed text would view a temporary".into());
         }
         let view = as_view(e)?;
+        self.borrowed_assign(var, x, &view, ind)
+    }
+
+    /// A borrowed local takes its view — under `@FR-R-TextBorrow`'s tested clause only while
+    /// each root parameter's store is not the return buffer's, which the bind tests; else the
+    /// bytes are copied into the local's own text (`loft_own<v>`) and it views that.  A literal,
+    /// a null or another variable borrows as it stands.
+    fn borrowed_assign(
+        &mut self,
+        var: u16,
+        x: &Value,
+        view: &str,
+        ind: usize,
+    ) -> Result<(), String> {
         let name = self.var(var);
-        self.line(ind, &format!("{name} = {view};"));
+        let roots = self.tested.get(&var).cloned();
+        let rb = crate::opt::hoist::retbuf_var(self.cx.data, self.d);
+        let (Some(roots), Some(rb)) = (roots, rb) else {
+            self.line(ind, &format!("{name} = {view};"));
+            return Ok(());
+        };
+        if matches!(x.unspan(), Value::Text(_) | Value::Null | Value::Var(_)) {
+            self.line(ind, &format!("{name} = {view};"));
+            return Ok(());
+        }
+        let b = as_ref(self.expr(&Value::Var(rb), ind)?)?;
+        let mut tests = Vec::new();
+        for p in roots {
+            let r = as_ref(self.expr(&Value::Var(p), ind)?)?;
+            tests.push(format!("{r}.store_nr != {b}.store_nr"));
+        }
+        crate::rewrite_census::fired("R-TextBorrow/tested", 1);
+        self.line(
+            ind,
+            &format!(
+                "{{ loft_str lt = {view}; if ({}) {name} = lt; else {{ loft_text_set(&loft_own{var}, lt); {name} = loft_view(&loft_own{var}); }} }}",
+                tests.join(" && ")
+            ),
+        );
         Ok(())
     }
 
@@ -6206,8 +6275,14 @@ impl<'a> FnWriter<'a> {
                         K::Void,
                     ));
                 }
-                // A borrowed walk variable views the element: its release frees nothing.
-                if matches!(dest.unspan(), Value::Var(v) if self.borrowed[*v as usize]) {
+                // A borrowed walk variable views the element: its release frees nothing — but a
+                // tested borrow's own text, which its copying path filled.
+                if let Value::Var(v) = dest.unspan()
+                    && self.borrowed[*v as usize]
+                {
+                    if self.tested.contains_key(v) {
+                        return Ok(E::new(format!("loft_text_free(&loft_own{v})"), K::Void));
+                    }
                     return Ok(E::new("((void) 0)", K::Void));
                 }
                 let dest = self.text_dest(dest)?;
