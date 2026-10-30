@@ -1,32 +1,44 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// The coverage census's runner (@PLN91 S2.1): `run_program <image>` runs the image's `main`
-// through the loft interpreter.  A construct it does not carry yet is reported on stderr as
+// The coverage census's runner (@PLN91 S2.1): `run_program <image> [entry]` runs the image's
+// `main`, or the named function (`n_test_x` — a test function, for the strict comparison,
+// 1b-compare.md), through the loft interpreter.  Before it starts it writes the allocator
+// trace's `M` line (`LOFT_CRT_ALLOC_TRACE`), as the Rust interpreter does on entering a program.  A construct it does not carry yet is reported on stderr as
 // `refused: <reason>` with exit 3, so the census can rank what blocks the most programs.  A run
 // that leaves records of the C runtime's stores live is reported as `leak: <n>` with exit 4; one
 // whose returns swept stores the IR did not free says `swept: <n>` on stderr and runs on.
 use load;
 use lower;
 use run;
+use crt;
 
 fn main() {
   a = arguments();
-  image = a[0] ?? "";
+  // `--compare` (1b-compare.md): behave as `loft --interpret` does — no census lines, no leak
+  // exit; the comparison reads the leak from the allocator trace.
+  compare = (a[0] ?? "") == "--compare";
+  at = if compare { 1 } else { 0 };
+  image = a[at] ?? "";
   b = load::load(image);
   if b == null {
     eprintln("refused: no image at {image}");
     exit(3);
   }
-  entry = lower::find(b, "n_main");
+  name = a[at + 1] ?? "n_main";
+  entry = lower::find(b, name);
   if entry < 0 {
-    eprintln("refused: the image has no main");
+    eprintln("refused: the image has no {name}");
     exit(3);
   }
+  crt::trace_mark();
   o = run::run(b, entry, []);
   if o.refused != "" {
     eprintln("refused: {o.refused} — in {o.refused_in}");
     exit(3);
+  }
+  if compare {
+    return;
   }
   if o.swept != 0 {
     eprintln("swept: {o.swept} stores the IR did not free");

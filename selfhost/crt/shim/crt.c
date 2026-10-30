@@ -7,6 +7,11 @@
  * a flag) — and calls one routine the C runtime already defines, so a format the loft
  * interpreter renders is the C runtime's rendering.  Each answers the rendering's length in
  * bytes; when that exceeds `cap`, nothing is written and the caller asks again with room. */
+/* The allocator trace of the interpreted program's stores (@PLN91 1b-compare.md, the alloc
+ * layer): this copy of the runtime writes the event lines `LOFT_ALLOC_TRACE` writes, to the file
+ * `LOFT_CRT_ALLOC_TRACE` names, so the interpreter's own stores never mix into them. */
+#define LOFT_ALLOC_TRACE 1
+#define LOFT_ALLOC_TRACE_ENV "LOFT_CRT_ALLOC_TRACE"
 #include "../../../src/c/loft_crt.h"
 
 static int64_t loft_crt_out(loft_text *t, char *out, int64_t cap) {
@@ -570,4 +575,10 @@ int64_t loft_crt_show_leaf(char *out, int64_t cap, int64_t kind, int64_t store, 
 /* loft_vec_absent: a collection field that holds none. */
 int64_t loft_crt_vec_absent(int64_t store, int64_t rec, int64_t pos) {
     return loft_vec_absent(loft_crt_ref(store, rec, pos));
+}
+
+/* The interpreted program starts: the trace's `M` line, as the Rust interpreter writes it when
+ * it enters the program (`State::execute_argv_shared`). */
+void loft_crt_trace_mark(void) {
+    LOFT_TRACE("M\n");
 }

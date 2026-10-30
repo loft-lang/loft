@@ -281,12 +281,17 @@ static void loft_heap_moved(const loft_store_t *s, uint32_t old_words, uint32_t 
 }
 
 #ifdef LOFT_ALLOC_TRACE
-/* `LOFT_ALLOC_TRACE=<file>` — the same event lines `store_census::alloc_event` writes. */
+/* `LOFT_ALLOC_TRACE=<file>` — the same event lines `store_census::alloc_event` writes.  A unit
+ * holding a second copy of the runtime (the self-hosted interpreter's `crt` shim) names its own
+ * variable in `LOFT_ALLOC_TRACE_ENV`, so the two copies never write one file. */
+#ifndef LOFT_ALLOC_TRACE_ENV
+#define LOFT_ALLOC_TRACE_ENV "LOFT_ALLOC_TRACE"
+#endif
 static FILE *loft_trace_file(void) {
     static FILE *f = 0;
     static int opened = 0;
     if (!opened) {
-        const char *p = getenv("LOFT_ALLOC_TRACE");
+        const char *p = getenv(LOFT_ALLOC_TRACE_ENV);
         opened = 1;
         if (p && *p) f = fopen(p, "w");
         if (f) setvbuf(f, 0, _IONBF, 0);

@@ -480,3 +480,12 @@ pub fn show_leaf(kind: integer, store: integer, rec: integer, pos: integer, fmt:
 pub fn vec_absent(store: integer, rec: integer, pos: integer) -> boolean {
   c_vec_absent(store, rec, pos) != 0
 }
+
+fn c_trace_mark();
+#c "loft_crt_trace_mark" "void()"
+
+// The interpreted program starts: the allocator trace's `M` line (`LOFT_CRT_ALLOC_TRACE`), as the
+// Rust interpreter writes it when it enters the program.
+pub fn trace_mark() {
+  c_trace_mark();
+}

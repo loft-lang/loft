@@ -104,3 +104,26 @@ start; the interpreter fills it in.
   switch in the reader) shows as `DIFFERENT` at that node's function and line.
 - **PC4** — the diagnostics prefix: a program with a warning, whose Rust stderr starts with
   exactly `loft --check`'s output.
+
+## C-1 — BUILT 2026-10-30 (out, alloc, leak)
+
+`selfhost/compare/compare.py`; the runner's `--compare` mode and entry argument; the shim's own
+trace (`LOFT_CRT_ALLOC_TRACE`, `LOFT_ALLOC_TRACE_ENV` in `loft_store.h`, the C backend
+unchanged) and `crt::trace_mark` for `M`; `program_events` shared with `c_alloc_diff.py`.
+PC2 holds (a test entry's trace starts at its own `M`), PC4 holds with `--emit-image`'s stderr.
+
+**First measurement (PC1, PC3):** of eight entries, two are equal in every built layer (a hash
+walk, a test function); `06-structs.loft` is refused (`OpAppendCopy`); every interpreter kernel
+(`structs`, `vectors`, `enums`, `hashes`, `shown`) prints the same output and leaks the same,
+and makes and frees its stores differently.  The first differences fall in three groups:
+
+- **the displaced store's free comes late** (`structs`, `vectors`, `hashes`): the Rust side
+  frees it before the new store is made (`generate_set`'s B2 pre-free), the loft side after —
+  1b-s3.md § Binds and frees, B-1;
+- **a struct-enum variant is claimed at its own size** (`enums`, `shown`): the Rust `OpDatabase`
+  claims the ENUM's size (`enum_parent_size`, `io.rs:892`), the loft `Database` the variant's —
+  the same values in a different layout, an operator semantics difference to fix in B-1;
+- **a returned vector is built in a new store** (`sw1`): the Rust side fills the caller's buffer
+  store in place (`alloc_record_at`), the loft side makes another — B-1's `Database` in place.
+
+None of them shows in a printed answer or in the census.
