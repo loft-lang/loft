@@ -209,6 +209,7 @@ static int loft_http_open(loft_http *h, const char *method, const char *url, con
     struct addrinfo hints, *res = 0, *ai;
     memset(&hints, 0, sizeof hints);
     hints.ai_socktype = SOCK_STREAM;
+    loft_sock_ready();
     int gai = getaddrinfo(host, port, &hints, &res);
     if (gai != 0) {
         snprintf(err, cap, "%s: Dns Failed: %s", url, gai_strerror(gai));

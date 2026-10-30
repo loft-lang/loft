@@ -50,22 +50,23 @@
 #include <unistd.h>
 #endif
 
+/* The socket library ready for use: Winsock started — before the first name lookup or socket;
+ * a second `WSAStartup` only counts — and nothing to do under POSIX. */
+static void loft_sock_ready(void) {
 #if defined(_WIN32)
-/* Winsock is started once, before the first socket; a second `WSAStartup` only counts. */
-static void loft_sock_start(void) {
     static volatile int started = 0;
     if (started) return;
     WSADATA w;
     WSAStartup(MAKEWORD(2, 2), &w);
     started = 1;
-}
 #endif
+}
 
 /* A socket as the runtime holds it: an `int`, -1 for none.  Winsock's SOCKET is a kernel handle,
  * which fits. */
 static int loft_sock_open(int family, int type, int proto) {
 #if defined(_WIN32)
-    loft_sock_start();
+    loft_sock_ready();
     SOCKET s = socket(family, type, proto);
     return s == INVALID_SOCKET ? -1 : (int) s;
 #else
