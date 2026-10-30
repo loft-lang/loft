@@ -115,9 +115,14 @@ Set `LOFT_FMT_PRINT=1` to print the formatted text instead.
 
 ### Spacing
 
-- One space around binary and assignment operators, `->`, `=>`, `??`, `&&`, `||`.
+- One space around binary and assignment operators — the bitwise `|` `&` `^` `<<` `>>` among
+  them — and `->`, `=>`, `??`, `&&`, `||`.
+- A closure's parameter bars hug what they enclose: `|p| p * 2`, `|p, q| { … }`, `|| { … }`.  A
+  `|` where an operand starts opens them; any other `|` is the bitwise operator.
 - No space before `,` `;` `:` `)` `]`, none after `(` `[`; one space after `,` `;` `:`.
-- No space around `.` and `::`; none before `(` or `[` in a call or index.
+- No space around `.` and `::`; none before `(` or `[` in a call or index.  After a keyword an
+  operand follows (`for c in [1, 2]`, `if (x)`, `return (v)`), so the bracket is spaced; `fn(`
+  (a type) and the call-like `assert(`, `panic(`, `sizeof(` stay tight.
 - Unary `-` `+` `*` `&` (after an operator, opener, `,` `;` `:` or `return`) and `!` hug their
   operand.
 - Generic brackets are tight: `vector<T>`, `sorted<K>`, `Name<T>`; `<` after any other token is a
