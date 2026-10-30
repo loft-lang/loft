@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2255 — a function's text tail is delivered per arm into its accumulator, and an arm that
+// ends the program (`panic(…)`, a call returning nothing) must stay a statement: delivered, it
+// became `Set(acc, panic(…))`, which crashed the interpreter (a void stored as a text), made
+// native write `().to_string()` and the C backend refuse.  The panicking arm is never taken
+// here; each value is by hand.
+//
+// What each cell is for:
+//   * `scalar`  — a scalar `match` tail with a literal, a format and a panic arm: `one`, `two 2`.
+//   * `variant` — an enum `match` tail, the panic arm in the middle: `A7`, `B`.
+//   * the printed line — `one two 2`, both calls in one format, as the issue's repro.
+// @falsified-at: 23bc61e47 — native exit 1 -> 0; interpret INERT under `make falsify`
+//   CHANNEL: exit — the control's rustc refuses the program.  The interpreter's crash depends on
+//   what the misdelivered arm leaves on the stack: run directly, `loft --interpret` of this file
+//   on main exits 138 (SIGBUS); under the falsify harness the control exits 0.
+// An `if` chain tail whose `else` panics is refused at compile time, as a value `if` or
+// `match` with such an arm is; which of the two is the rule is the open question on loft#2255.
+
+enum Sh { A { n: integer }, B, C }
+
+fn scalar(x: integer) -> text {
+  match x {
+    1 => "one",
+    2 => "two {x}",
+    _ => panic("scalar {x}"),
+  }
+}
+
+fn variant(s: Sh) -> text {
+  match s {
+    A { n } => "A{n}",
+    C => panic("variant C"),
+    B => "B",
+  }
+}
+
+fn main() {
+  assert(scalar(1) == "one", "scalar: the literal arm");
+  assert(scalar(2) == "two 2", "scalar: the format arm");
+  assert(variant(A { n: 7 }) == "A7", "variant: the payload arm");
+  assert(variant(B) == "B", "variant: the arm after the panic");
+  // The issue's own shape: both calls in one formatted text — the one that crashed the
+  // interpreter (SIGBUS) on main.
+  println("{scalar(1)} {scalar(2)}");
+}

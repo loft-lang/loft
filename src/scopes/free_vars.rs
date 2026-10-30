@@ -982,11 +982,7 @@ impl Scopes<'_> {
             // frees, and return the buffer.  The buffer is one the value does not
             // READ: `"{x}-{n}"` written into `x` would clear `x` before rendering it.
             let mut delivered = expr.clone();
-            crate::parser::Parser::push_text_arms_into(
-                &mut delivered,
-                buf,
-                data.def_nr("OpCreateStack"),
-            );
+            crate::parser::Parser::push_text_arms_into(&mut delivered, buf, data);
             let mut result = Vec::with_capacity(ls.len() + 3);
             result.push(delivered);
             free_copied_text_sources(&mut result, expr, &ls, function, data);
