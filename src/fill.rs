@@ -329,6 +329,7 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     insert_vector::<false>,
     adopt_vector::<false>,
     replace_vector::<false>,
+    copy_closure::<false>,
     hash_remove::<false>,
     reserve_hash::<false>,
     size_hash::<false>,
@@ -681,6 +682,7 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     insert_vector::<true>,
     adopt_vector::<true>,
     replace_vector::<true>,
+    copy_closure::<true>,
     hash_remove::<true>,
     reserve_hash::<true>,
     size_hash::<true>,
@@ -1033,6 +1035,7 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     insert_vector_r,
     adopt_vector_r,
     replace_vector_r,
+    copy_closure_r,
     hash_remove_r,
     reserve_hash_r,
     size_hash_r,
@@ -5274,6 +5277,21 @@ fn child_rec<const F: bool>(s: &mut State) {
 fn child_rec_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     child_rec::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn copy_closure<const F: bool>(s: &mut State) {
+    let operands = s.operands(2);
+    let v_tp = operands.get::<u16>(0);
+    let v_src = s.get_stack_m::<F, DbRef>();
+    let new_value = s.database.copy_closure_record(&v_src, v_tp);
+    s.put_stack_m::<F, _>(new_value);
+}
+
+fn copy_closure_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    copy_closure::<true>(s);
     s.regs_out()
 }
 

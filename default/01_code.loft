@@ -1582,6 +1582,14 @@ fn OpRefFromChildRec(field: reference) -> reference[field];
 fn OpChildRec(field: reference, tp: const u16) -> reference[field];
 #rust"s.database.new_child_rec(&@field, @tp)"
 #impure(parent_write)
+// `@FR-B-Copy`, `@FR-L-CapOne` — a fn-ref read out of a place and KEPT (`g = h.f`, a returned
+// `h.f`) is a copy of the closure record it names: a fresh store holding a copy of the `tp`
+// record at `src`, with every store an OWNED capture slot names cloned and every BORROWED one
+// shared.  The copy is its holder's to release, through the fn-ref's own cascade.  A null
+// `src` (a fn-ref with no closure) answers null.
+fn OpCopyClosure(src: reference, tp: const u16) -> reference;
+#cold
+#rust"s.database.copy_closure_record(&@src, @tp)"
 // Get a record from a structure. This operator also reads a dynamic key from stack (not shown here)
 fn OpGetRecord(data: reference, db_tp: const u16, no_keys: const u8) -> reference[data];
 // These types should eventually become unnecessary because of the unified internal database API

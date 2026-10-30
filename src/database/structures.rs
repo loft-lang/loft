@@ -1659,6 +1659,84 @@ impl Stores {
         db
     }
 
+    /// `OpCopyClosure` — a fn-ref read out of a place (`g = h.f`) as a COPY of the closure
+    /// record it names (`@FR-B-Copy`, `@FR-L-CapKeep`): a fresh store holding a copy of the
+    /// `tp` record at `src`, independent of the place it was read from — an overwrite, rebuild
+    /// or release of that place leaves the copy as it was.
+    ///
+    /// What the record OWNS is copied with it and what it BORROWS is shared (`@FR-L-CapOne`):
+    /// an owned capture slot (the `dbref` shape) names a store only this record's cascade
+    /// releases, so two records naming it would release it twice; it is cloned, and the copy's
+    /// own cascade releases the clone.  A borrowed slot (`dbref_borrow`) names a store its
+    /// owner releases, so it stays shared, which keeps `@FR-L-CapHeap`'s mutation-through for
+    /// every store a live frame still owns.
+    pub fn copy_closure_record(&mut self, src: &DbRef, tp: u16) -> DbRef {
+        if src.store_nr == u16::MAX || src.rec == 0 || tp == u16::MAX {
+            return DbRef::NULL;
+        }
+        let to = self.fresh_root(tp);
+        self.copy_record_owning(src, &to, tp);
+        to
+    }
+
+    /// A fresh store whose root record is a default-free `tp` record, as `OpDatabase` mints
+    /// one (its type recorded for the release cascade, the type tag written).
+    fn fresh_root(&mut self, tp: u16) -> DbRef {
+        let size = u32::from(self.size(tp));
+        let db = self.null();
+        let r = self.claim(&db, 1 + size.div_ceil(8));
+        self.allocations[r.store_nr as usize].set_known_type(tp);
+        self.store_mut(&r).zero_fill(r.rec);
+        self.store_mut(&r).set_u32_raw(r.rec, 4, u32::from(tp));
+        r
+    }
+
+    /// Deep-copy the `tp` record at `src` into `to`, cloning every store an owned capture slot
+    /// names — see [`Stores::copy_closure_record`].
+    fn copy_record_owning(&mut self, src: &DbRef, to: &DbRef, tp: u16) {
+        self.copy_block(src, to, u32::from(self.size(tp)));
+        self.copy_claims(src, to, tp);
+        let owned_shape = self.dbref();
+        let owned: Vec<u16> = match &self.types[tp as usize].parts {
+            crate::database::Parts::Struct(fields) => fields
+                .iter()
+                .filter(|f| f.content == owned_shape)
+                .map(|f| f.position)
+                .collect(),
+            _ => Vec::new(),
+        };
+        for pos in owned {
+            let held = self.get_db_ref(to, u32::from(pos));
+            if held.store_nr == u16::MAX || held.rec == 0 {
+                continue;
+            }
+            let clone = self.clone_owned_store(&held);
+            self.set_db_ref(to, u32::from(pos), clone);
+        }
+    }
+
+    /// A copy of the whole store `held` names, as the same place in the copy.  An owned capture
+    /// names the root record of a store minted for it (the captured local's own `OpDatabase`),
+    /// so the root is the value; a nested closure record is copied by the same rule, recursing.
+    fn clone_owned_store(&mut self, held: &DbRef) -> DbRef {
+        let tp = self.allocations[held.store_nr as usize].known_type;
+        if tp == u16::MAX {
+            return *held;
+        }
+        let root = DbRef {
+            store_nr: held.store_nr,
+            rec: held.rec,
+            pos: 8,
+        };
+        let to = self.fresh_root(tp);
+        self.copy_record_owning(&root, &to, tp);
+        DbRef {
+            store_nr: to.store_nr,
+            rec: to.rec,
+            pos: held.pos,
+        }
+    }
+
     /// Make `db` (dest) hold `o_db` (src)'s content — the aliasing-safe vector
     /// "deliver into buffer" the return machinery needs.  When `db` and `o_db`
     /// name the SAME backing vector (the NRVO case where a returned local still

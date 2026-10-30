@@ -5495,12 +5495,20 @@ use a separate collection or add after the loop"
         // (d_nr = 0xDEADBEEF, the issue_313 cross-fn shape).  `skip_free` is
         // the established borrowed-fn-ref carrier (the vector-element read
         // path marks its `__fn_ref_tmp` the same way).
+        //
+        // `@FR-B-Copy`, `@FR-L-CapKeep` — and where the field holds a closure record, the bind
+        // is a COPY of it instead (loft#2273): the local owns its own record, released by its
+        // own scope end, and an overwrite of the field or a release of the host leaves it alone.
         if op == "="
             && var_nr != u16::MAX
             && matches!(&s_type, Type::Function(..))
             && matches!(code, Value::Block(b) if b.name == "fn_ref_field_read")
         {
-            self.vars.set_skip_free(var_nr);
+            if let Some(copy) = self.fn_ref_field_copy(code) {
+                *code = copy;
+            } else {
+                self.vars.set_skip_free(var_nr);
+            }
         }
         // loft#1585 — the same for a generator handle read out of a field or an element
         // (`h = t.g`, `h = tasks[i]`): a VIEW of a member (`(B-View)`, `(H-View-Drop)`), so

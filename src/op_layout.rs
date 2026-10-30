@@ -310,6 +310,7 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpInsertVector",
     "OpAdoptVector",
     "OpReplaceVector",
+    "OpCopyClosure",
     "OpHashRemove",
     "OpReserveHash",
     "OpSizeHash",
