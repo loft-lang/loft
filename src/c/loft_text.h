@@ -133,7 +133,19 @@ static void loft_text_append(loft_text *t, loft_str s) {
 }
 
 /* OpAppendText (ops::append_text): a null text stays null, a null source makes it null. */
-static void loft_text_concat(loft_text *t, loft_str s) {
+/* The two text writes every text statement runs are inlined, so a reset to "" or a short append
+ * is a few compares and a copy in place, not a call.  Measured over every library bench (C ship
+ * lane, gcc, 119 routines): 13 faster (slugify -16 %, render_inline -15 %, atlas_cell -16 %), 100
+ * the same, five 2-5 % slower (html_escape, patch, materialise, fill_triangle, sha256_small), and
+ * hex_neighbor +22 % from code placement alone (its function byte-identical, 16 bytes later).
+ * `-DLOFT_NO_TEXT_INLINE` keeps them out of line. */
+#ifdef LOFT_NO_TEXT_INLINE
+#define LOFT_TEXT_INLINE static
+#else
+#define LOFT_TEXT_INLINE LOFT_HOT_INLINE
+#endif
+
+LOFT_TEXT_INLINE void loft_text_concat(loft_text *t, loft_str s) {
     if (loft_str_is_null(loft_view(t))) return;
     if (loft_str_is_null(s)) {
         t->len = 0;
@@ -143,7 +155,7 @@ static void loft_text_concat(loft_text *t, loft_str s) {
     loft_text_append(t, s);
 }
 
-static void loft_text_set(loft_text *t, loft_str s) {
+LOFT_TEXT_INLINE void loft_text_set(loft_text *t, loft_str s) {
     if (t->p && s.p == t->p && s.len == t->len) return;
     if (t->p && s.p >= t->p && s.p < t->p + t->cap) {
         memmove(t->p, s.p, s.len);
