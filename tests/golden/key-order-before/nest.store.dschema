@@ -1,0 +1,20 @@
+LOFT-DSCHEMA v2
+hash=13794235730566680961
+root=World
+slot=3
+--
+@endian	little
+Box	size=16	struct{id@0:integer, s@8:ordered<KT[k]>}
+KT	size=16	struct{k@8:text, v@0:integer}
+Row	size=12	struct{name@0:text, by@4:ordered<KT[k]>, ix@8:index<KT[k]>}
+World	size=12	struct{rows@0:vector<Row>, top@4:ordered<KT[k]>, h@8:hash<Box[id]>}
+hash<Box[id]>	size=4	hash<Box>(keys=[0],elem_size=16,placement=3)
+index<KT[k]>	size=4	index<KT>(keys=[(0, true)],elem_size=16,placement=2)
+integer	size=8	base
+ordered<KT[k]>	size=4	ordered<KT>(keys=[(0, true)],elem_size=16)
+text	size=4	base
+vector<Row>	size=4	vector<Row>(elem_size=12)
+--facts--
+KT	linked
+Row.by	group=2
+Row.ix	group=65535,1

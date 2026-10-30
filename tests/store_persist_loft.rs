@@ -4044,6 +4044,7 @@ fn an_image_in_the_old_key_order_is_converted() {
         "sorted-single",
         "index-text",
         "index-float",
+        "nest",
     ];
     for name in names {
         for ext in [".store", ".store.dschema"] {
@@ -4052,12 +4053,19 @@ fn an_image_in_the_old_key_order_is_converted() {
         }
     }
     fa::copy(fixture.join("read.loft"), dir.join("read.loft")).expect("copy the reader");
+    fa::copy(fixture.join("read_nest.loft"), dir.join("read_nest.loft")).expect("copy the reader");
     let want = "sorted-text true 2 3 4 1 | 2 3 1\n\
                 sorted-float-desc true 1 3 2 | 2 3\n\
                 sorted-single true 2 3 1 | 2\n\
                 index-text true 2 3 1 | 2 3 1\n\
                 index-float true first=999 n=301 ordered=true | 999 150\n";
     let script = dir.join("read.loft");
+    // `nest`: every path the conversion walks (a vector's records, a record's sorted and index,
+    // a hash's records); keys "b", null, "", "a" hold 1..4, so this build's order reads 2 3 4 1
+    // and the null and "" lookups 2 and 3.  Its own program: see read_nest.loft.
+    let nest = dir.join("read_nest.loft");
+    let want_nest = "nest true r0:2341/2341/23/23 r1:2341/2341/23/23 r2:2341/2341/23/23 \
+                     top:2341/2 box0:2341/2 box1:2341/2\n";
     // `--native` here is the Rust-runtime build: CI points `--native` at the C backend
     // (`LOFT_NATIVE_BACKEND=c`), which converts nothing and is checked below on its own.
     for backend in ["--interpret", "--native"] {
@@ -4079,6 +4087,20 @@ fn an_image_in_the_old_key_order_is_converted() {
             want,
             "{backend}: the old images, converted"
         );
+        let out = loft::platform::process::harness_command(loft_bin())
+            .arg(backend)
+            .arg(&nest)
+            .env("LOFT_PERSIST_TEST_PATH", &dir)
+            .env_remove("LOFT_NATIVE_BACKEND")
+            .current_dir(workspace_root())
+            .output()
+            .expect("run the nested reader");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            want_nest,
+            "{backend}: the nested image, converted:\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
     // The C converts the same images (`loft_rekey_walk`, STORE_MODEL D30): a whole load of an
     // image that differs only by the key order files every entry again in this build's order.
@@ -4098,5 +4120,18 @@ fn an_image_in_the_old_key_order_is_converted() {
         String::from_utf8_lossy(&out.stdout),
         want,
         "C: the old images, converted"
+    );
+    let out = loft::platform::process::harness_command(loft_bin())
+        .arg("--native-c")
+        .arg(&nest)
+        .env("LOFT_PERSIST_TEST_PATH", &dir)
+        .current_dir(workspace_root())
+        .output()
+        .expect("run the C nested reader");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        want_nest,
+        "C: the nested image, converted:\n{}",
+        String::from_utf8_lossy(&out.stderr)
     );
 }

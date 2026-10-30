@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Reads `nest`, written in the old key order (write.loft `write_nest`), through every path a
+// whole load's conversion walks: a vector of records, a record's `sorted` and `index`, a top
+// `sorted`, and the records of a `hash`.  Its own program: an `index<KT[k]>` makes `KT` linked,
+// which stores every `sorted<KT[k]>` of this program as an `ordered` — read.loft's images then
+// differ by more than the key order.
+struct KT { k: text, v: integer }
+struct Row { name: text, by: sorted<KT[k]>, ix: index<KT[k]> }
+struct Box { id: integer, s: sorted<KT[k]> }
+struct World { rows: vector<Row>, top: sorted<KT[k]>, h: hash<Box[id]> }
+
+fn order(s: const sorted<KT[k]>) -> text { o = ""; for x in s { o += "{x.v}"; } o }
+fn iorder(s: const index<KT[k]>) -> text { o = ""; for x in s { o += "{x.v}"; } o }
+
+fn at(name: text) -> text { "{env_variable("LOFT_PERSIST_TEST_PATH")}/{name}.store" }
+
+fn main() {
+  nt: text = null;
+  w = World { rows: [], top: [], h: [] };
+  ok = store_load(w, at("nest"));
+  o = "nest {ok}";
+  for r in w.rows { o += " {r.name}:{order(r.by)}/{iorder(r.ix)}/{r.by[nt].v ?? -1}{r.by[\"\"].v ?? -1}/{r.ix[nt].v ?? -1}{r.ix[\"\"].v ?? -1}"; }
+  o += " top:{order(w.top)}/{w.top[nt].v ?? -1}";
+  for b in w.h { o += " box{b.id}:{order(b.s)}/{b.s[nt].v ?? -1}"; }
+  println(o);
+}
