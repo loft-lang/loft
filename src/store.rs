@@ -1686,6 +1686,10 @@ impl Store {
         // garbage headers (the release infinite-loop / heap-over-read hazards).
         store.validate_structure()?;
         store.fl_rebuild();
+        // Its records arrived as an image, so `claims` is rebuilt from the chain as `load` and
+        // `open` do: the old-layout conversion reads this store directly (`upgrade_store_run`),
+        // and an empty set read its root as `Unknown record 1` under debug assertions.
+        store.claims_rebuild();
         Ok(store)
     }
 
