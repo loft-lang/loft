@@ -112,7 +112,7 @@ Rust writer declares — one contract, `src/host_imports.rs`, both writers read
 the Rust writer refuses it.  The program starts from the exported `loft_start`
 (`c::emit_browser_program`), which runs the libc's constructors once and flushes what it
 printed, since a page never calls WASI's `_start`; beside it the unit reserves its own asyncify
-save region and exports where it is (`loft_asyncify_data` / `_size` / `_ok`, loft#950), as the
+save region and exports where it is (`loft_asyncify_data` / `_size` / `_ok`), as the
 Rust writer's does — the page's controller never picks an address.  And a unit that binds no lazy collection is
 built without setjmp (`LOFT_NO_JUMPS`, `LOFT_JMP_BUF`/`LOFT_LONGJMP` in `loft_rt.h`), so without
 wasm's exception handling, which asyncify cannot carry.  The page answers the WASI libc with
