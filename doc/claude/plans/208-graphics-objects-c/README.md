@@ -17,7 +17,7 @@ Issue: [@PLN208](https://github.com/loft-lang/plans/issues/208).
 | G2 | Done — `save_png` through imaging (`16818a4`); six canvases identical to 0.9's files.  It surfaced an imaging defect, fixed as imaging 0.5.1: lodepng's `auto_convert` wrote few-colour images as palettes |
 | G3 | Done — `enum Event` with public variant fields (`16818a4`).  The suite is 108/108 on the interpreter, `--native` and the C; G1–G3 and imaging 0.5.1 go to main together in loft-libs-graphics#67 |
 | G4 | Done — `Window` over X11 + GLX (`b4ed3ce`): `tests/window.loft` 3/3 on the three backends under Xvfb, the suite 111/111; `compare/window.loft` reads back 0.9's pixels for five clears |
-| G5 | In progress — `Shader` + `GpuMesh` (`3e30eb9`), render state (`35fd737`), `Texture` + `Framebuffer` + `quad` (`a15bb8c`): each with a hand-computed guard on the three backends and a 0.9 comparison at 0 differing pixels.  Left: instancing, index buffers, buffer updates, draw modes |
+| G5 | Done — `Shader` + `GpuMesh` (`3e30eb9`), render state (`35fd737`), `Texture` + `Framebuffer` + `quad` (`a15bb8c`), index lists, instancing, updates, draw modes (`d5225d6`), `Painter`, `Sprites`, `GroupMeshes` (`6561813`): each with a hand-computed guard on the three backends and a 0.9 comparison at 0 differing pixels; the suite 130/130.  `create_text_texture` moves to G7 |
 | G6–G11 | Open |
 
 ## Goal
