@@ -62,11 +62,40 @@ integer was free), never a gate.
 
 **Rule / decision.**  `(N-Index)`: `v[i]` types `τ?`, and `(N-Domain)` already elides the `?`
 when the index is PROVABLY in range — a constant, a range, a guard.  `@C89` declined Rust's
-mitigation layer (`unwrap`, `if let`) on purpose: named fields and `τ?` with `??` are to remove
-the need for it.  So a force-unwrap operator is not on the table.
+mitigation layer (`unwrap`, `if let`) — the layer TUPLE variants force; it did not decline sugar
+inside the `τ?`-with-`??` family, which already has `x?` (`(N-Default)`, @PLN116): *"`??` = the
+default YOU give, `?` = the default the TYPE gives."*  The owner (2026-10-30): *"I am not against
+syntactic sugar here, the ? operator already returns the type default instead of constantly
+writing ?? 0."*
 
-**Design, in three parts by shape:**
-- **The box-of-one (176 sites): one accessor per schema field, in `ir.loft`.**  `fn one(ns:
+**Design, in four parts — the sugar first, then the shapes that remain:**
+- **`e!` — the discharge with no default: present, or a halt that names it.**  The family's
+  third member: `??` the default you give, `?` the type's default, `!` none — it must be there.
+  - *Rule* (types.md, beside `(N-Default)`): `(N-Present)  Γ ⊢ e ⇒ τ? ⟹ Γ ⊢ e! ⇒ τ`, with
+    `e!  ≡  e ?? panic("<e> is null")`, the message the parser writes from the source text and
+    the panic carrying the position, as every panic does.  No new runtime: it IS the idiom the
+    ports spell by hand, so a production run that logs a panic and continues continues as `??
+    panic` does today.  No `has_default` side condition, so it reaches what `?` cannot: a
+    reference (`(D-NoRef)`) and a bare enum (`(D-NoEnumF)`) — the ports' `Node`, `Block` and
+    `Definition`, which is why they spell `?? panic` and not `?`.
+  - *Where `?` stays right*: absence with a sensible answer (a missing count is 0).  Where it
+    is wrong: an image invariant, a table read by its own index — a silent default there turns
+    a corrupt image into a plausible wrong answer.  `e!` is for exactly that.
+  - *Spelling*: postfix `!`, parsed where `?` is (`operators.rs`, the postfix loop at
+    `@PLN116`'s `x?`), so `v[i]!.f` chains as `x?.f` does.  The lexer's greedy `!=` keeps
+    `x != y` a comparison (`x!=y` too, as today); a discharge is never an assignment target, so
+    `e! = …` is no form.  Kotlin spells it `!!`, Swift `!`; one character matches `?`.
+  - *Diagnostics*: on a statically non-null operand, the advice that `!x` on one already gets
+    (DESIGN_DECISIONS_VALUES: *"`!x` on a statically non-null operand warns"*) — `e!` there is
+    a no-op that says the author expected a null.
+  - *Decision*: a new `@C` entry in DESIGN_DECISIONS_VALUES.md beside @PLN116, the owner's to
+    ratify; the formal rule, LOFT.md, STDLIB.md's discharge table, the formatter and the LSP
+    take it in one change, both backends and the C, with suite cells under the new rule.
+  - *Effect on the ports*: 258 discharges become `!` (or an accessor's one `!`); each message
+    the ports wrote by hand that says more than "is null" stays as `?? panic(…)`.
+- **What `!` leaves** — the three shapes below still apply, now as structure rather than noise:
+- **The box-of-one (176 sites): one accessor per schema field, in `ir.loft`** (with `!`, a
+  one-liner each, or simply `inner[0]!` at the site).  `fn one(ns:
   vector<Node>) -> Node` (and `block_of`, `type_of` for the other boxes), the one place the
   image's invariant "a box holds exactly one" is discharged, with one message naming the box.
   The ports read `one(inner)` where they read `inner[0] ?? panic("a set has its value")`.  The
@@ -80,8 +109,11 @@ the need for it.  So a force-unwrap operator is not on the table.
   both backends: if the rule's guard elision does not reach it, that is a front-end gap against
   `(N-Domain)`, filed and fixed as one, and the discharges go when it is.
 
-**Verification.**  The same receipt as R-1 (every comparison layer unchanged); the count of
-`?? panic` in the three files is reported before and after.
+**Verification.**  For `e!`: suite cells under `(N-Present)` — present (the value), absent
+(the halt, its message naming the expression and its line), chained (`v[i]!.f`), a reference
+and a bare enum (what `?` refuses), a statically non-null operand (the advice) — each on the
+interpreter, `--native` and the C.  For the ports: the same receipt as R-1 (every comparison
+layer unchanged); the count of `?? panic` in the three files is reported before and after.
 
 ## R-3 — a write into a copy: the bug the port met first
 
