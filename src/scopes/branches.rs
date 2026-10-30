@@ -59,6 +59,28 @@ fn mentions_of(node: &Value, v: u16) -> usize {
     n
 }
 
+/// Does `node` read variable `v` anywhere?
+fn reads_var(node: &Value, v: u16) -> bool {
+    if let Value::Var(w) = node.unspan()
+        && *w == v
+    {
+        return true;
+    }
+    let mut found = false;
+    node.for_each_child(&mut |c| found = found || reads_var(c, v));
+    found
+}
+
+/// The right-hand side of every `Set` of `v` inside `node`.
+fn binds_of<'a>(node: &'a Value, v: u16, out: &mut Vec<&'a Value>) {
+    if let Value::Set(w, value) = node.unspan()
+        && *w == v
+    {
+        out.push(value);
+    }
+    node.for_each_child(&mut |c| binds_of(c, v, out));
+}
+
 /// The value of `v`'s one `Set` in the two arms of an `if`, where `v` is assigned under no
 /// loop and under no other name, or `None`.  `scan_if` reads it together with
 /// `multi_assigned` (the whole body's count), so a `Some` is the variable's ONLY bind.
@@ -100,6 +122,34 @@ fn arm_bind_backing(arm: &Value, v: u16, function: &Function, data: &Data) -> Op
 }
 
 impl Scopes<'_> {
+    /// A new variable for a later binding of `ov` (`(B-Scope)`: the earlier one's scope has
+    /// ended).  The view walk ran on the body BEFORE any split and judged the NAME, so a copy it
+    /// ordered for `ov` (`(B-View)`'s materialise clause, `@FR-B-Disturb`) is the split's too:
+    /// two loops binding `e` to elements of `a` and then of `b`, where `b` grows, are one `e`
+    /// to the walk, and the copy landed on the first loop's bind only — the second kept a plain
+    /// view and read its fields after the growth moved them.  Only a split whose bind (`binds`,
+    /// its right-hand sides) READS the disturbed container takes the copy: a later `e = w[i]?`
+    /// over another container stays the view it was written as, so a write through it still
+    /// lands (`(B-View)`).  The shared buffer is safe because the two scopes never overlap.
+    pub(super) fn split_variable(
+        &mut self,
+        function: &mut Function,
+        ov: u16,
+        binds: &[&Value],
+    ) -> u16 {
+        let nv = function.copy_variable(ov);
+        if let Some(cause) = self.views_to_materialise.get(&ov).copied()
+            && binds.iter().any(|b| reads_var(b, cause.container))
+        {
+            self.views_to_materialise.insert(nv, cause);
+            if let Some(&buffer) = self.materialise_buffers.get(&ov) {
+                self.materialise_buffers.insert(nv, buffer);
+            }
+            function.materialised_views.insert(nv);
+        }
+        nv
+    }
+
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn scan_if(
         &mut self,
@@ -123,7 +173,10 @@ impl Scopes<'_> {
         self.find_split_first_vars(t_val, function, &mut splits);
         self.find_split_first_vars(f_val, function, &mut splits);
         for ov in splits {
-            let nv = function.copy_variable(ov);
+            let mut binds = Vec::new();
+            binds_of(t_val, ov, &mut binds);
+            binds_of(f_val, ov, &mut binds);
+            let nv = self.split_variable(function, ov, &binds);
             self.var_mapping.insert(ov, nv);
             pre_inits.push(nv);
         }
@@ -484,7 +537,14 @@ impl Scopes<'_> {
                     self.find_first_ref_vars(op, function, result);
                 }
             }
-            Value::If(_, t, f) => {
+            // A nested `if`'s TEST is part of this branch too: a path that skips the branch
+            // skips the test, so a name the test binds first — a guarded match arm's bindings,
+            // `if (cmp && { bindings; guard })` (`(M-Once)`) — is pre-inited here like one its
+            // arms bind.  Left out, its init landed in the test and its free at the scope's
+            // end ran on the path that never reached the test: a free of whatever the slot
+            // held (`OpFreeText`, a stale text of an earlier call).
+            Value::If(c, t, f) => {
+                self.find_first_ref_vars(c, function, result);
                 self.find_first_ref_vars(t, function, result);
                 self.find_first_ref_vars(f, function, result);
             }

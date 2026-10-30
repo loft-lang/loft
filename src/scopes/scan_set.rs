@@ -267,10 +267,12 @@ impl Scopes<'_> {
                     && copy_scope != self.scope
                     && !self.stack.contains(&copy_scope)
                 {
-                    self.var_mapping.insert(ov, function.copy_variable(ov));
+                    let nv = self.split_variable(function, ov, &[value]);
+                    self.var_mapping.insert(ov, nv);
                 }
             } else {
-                self.var_mapping.insert(ov, function.copy_variable(ov));
+                let nv = self.split_variable(function, ov, &[value]);
+                self.var_mapping.insert(ov, nv);
             }
         }
         let v = *self.var_mapping.get(&ov).unwrap_or(&ov);
