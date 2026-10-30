@@ -187,7 +187,7 @@ fn has(v: vector<integer>, x: integer) -> boolean {
 // src/data.rs:2248 fn heap_dep — `.is_some()`, through `base()`: one `Optional` peeled.
 fn has_heap_dep(t: ir::TypeT) -> boolean {
   match t {
-    TyOptional { inner } => heap_dep_bare(inner[0] ?? panic("a type")),
+    TyOptional { inner } => heap_dep_bare(inner),
     _ => heap_dep_bare(t),
   }
 }
@@ -209,7 +209,7 @@ fn heap_dep_bare(t: ir::TypeT) -> boolean {
 // src/data.rs:2322 fn heap_def_nr — through `base()`; -1 for `None`.
 fn heap_def_nr(t: ir::TypeT) -> integer {
   match t {
-    TyOptional { inner } => heap_def_nr_bare(inner[0] ?? panic("a type")),
+    TyOptional { inner } => heap_def_nr_bare(inner),
     _ => heap_def_nr_bare(t),
   }
 }
@@ -226,15 +226,15 @@ fn heap_def_nr_bare(t: ir::TypeT) -> integer {
 // marker peeled, each followed by its own `base()`.
 fn peel_link_heap_def_nr(t: ir::TypeT) -> integer {
   match t {
-    TyOptional { inner } => peel_link_after_base(inner[0] ?? panic("a type")),
+    TyOptional { inner } => peel_link_after_base(inner),
     _ => peel_link_after_base(t),
   }
 }
 
 fn peel_link_after_base(t: ir::TypeT) -> integer {
   match t {
-    TyRefVar { inner } => peel_link_heap_def_nr(inner[0] ?? panic("a type")),
-    TyRewritten { inner } => peel_link_heap_def_nr(inner[0] ?? panic("a type")),
+    TyRefVar { inner } => peel_link_heap_def_nr(inner),
+    TyRewritten { inner } => peel_link_heap_def_nr(inner),
     _ => heap_def_nr(t),
   }
 }
@@ -242,7 +242,7 @@ fn peel_link_after_base(t: ir::TypeT) -> integer {
 // `matches!(t.base(), Type::RefVar(_))`.
 fn base_is_ref_var(t: ir::TypeT) -> boolean {
   match t {
-    TyOptional { inner } => is_ref_var(inner[0] ?? panic("a type")),
+    TyOptional { inner } => is_ref_var(inner),
     _ => is_ref_var(t),
   }
 }
@@ -257,7 +257,7 @@ fn is_ref_var(t: ir::TypeT) -> boolean {
 // `matches!(t.base(), Type::Function(..))`.
 fn base_is_function(t: ir::TypeT) -> boolean {
   match t {
-    TyOptional { inner } => is_function(inner[0] ?? panic("a type")),
+    TyOptional { inner } => is_function(inner),
     _ => is_function(t),
   }
 }
@@ -287,7 +287,7 @@ fn is_dbref(t: ir::TypeT) -> boolean {
 // `is_dbref(t.base())`.
 fn base_is_dbref(t: ir::TypeT) -> boolean {
   match t {
-    TyOptional { inner } => is_dbref(inner[0] ?? panic("a type")),
+    TyOptional { inner } => is_dbref(inner),
     _ => is_dbref(t),
   }
 }
@@ -305,8 +305,8 @@ fn depend(t: ir::TypeT, out: vector<integer>) {
     TyEnum { n: _, is_ref: _, dep } => append_all(out, dep),
     TyVector { inner: _, dep } => append_all(out, dep),
     TyFunction { args: _, result: _, dep, consts: _ } => append_all(out, dep),
-    TyRefVar { inner } => depend(inner[0], out),
-    TyOptional { inner } => depend(inner[0], out),
+    TyRefVar { inner } => depend(inner, out),
+    TyOptional { inner } => depend(inner, out),
     TyTuple { elems } => {
       for e in elems {
         ds: vector<integer> = [];
@@ -417,7 +417,7 @@ fn bind_copies(b: ir::Bundle, f: ir::Function, v: integer, src: integer) -> bool
 
 fn is_null_node(n: ir::Node) -> boolean {
   match n {
-    NdSpan { pos: _, inner } => is_null_node(inner[0]),
+    NdSpan { pos: _, inner } => is_null_node(inner),
     NdNull => true,
     _ => false,
   }
@@ -425,7 +425,7 @@ fn is_null_node(n: ir::Node) -> boolean {
 
 fn is_line_node(n: ir::Node) -> boolean {
   match n {
-    NdSpan { pos: _, inner } => is_line_node(inner[0]),
+    NdSpan { pos: _, inner } => is_line_node(inner),
     NdLine { n: _ } => true,
     _ => false,
   }
@@ -433,7 +433,7 @@ fn is_line_node(n: ir::Node) -> boolean {
 
 fn is_loop_node(n: ir::Node) -> boolean {
   match n {
-    NdSpan { pos: _, inner } => is_loop_node(inner[0]),
+    NdSpan { pos: _, inner } => is_loop_node(inner),
     NdLoop { block: _ } => true,
     _ => false,
   }
@@ -442,7 +442,7 @@ fn is_loop_node(n: ir::Node) -> boolean {
 // `Value::Var(v)` → v, else -1.
 fn var_of(n: ir::Node) -> integer {
   match n {
-    NdSpan { pos: _, inner } => var_of(inner[0]),
+    NdSpan { pos: _, inner } => var_of(inner),
     NdVar { n: v } => v,
     _ => -1,
   }
@@ -450,7 +450,7 @@ fn var_of(n: ir::Node) -> integer {
 
 fn is_int_node(n: ir::Node) -> boolean {
   match n {
-    NdSpan { pos: _, inner } => is_int_node(inner[0]),
+    NdSpan { pos: _, inner } => is_int_node(inner),
     NdInt { n: _ } => true,
     _ => false,
   }
@@ -458,7 +458,7 @@ fn is_int_node(n: ir::Node) -> boolean {
 
 fn int_of(n: ir::Node) -> integer {
   match n {
-    NdSpan { pos: _, inner } => int_of(inner[0]),
+    NdSpan { pos: _, inner } => int_of(inner),
     NdInt { n: i } => i,
     _ => 0,
   }
@@ -467,7 +467,7 @@ fn int_of(n: ir::Node) -> integer {
 // `Value::Set(v, _)` → v, else -1.
 fn set_var_of(n: ir::Node) -> integer {
   match n {
-    NdSpan { pos: _, inner } => set_var_of(inner[0]),
+    NdSpan { pos: _, inner } => set_var_of(inner),
     NdSet { var, inner: _ } => var,
     _ => -1,
   }
@@ -476,7 +476,7 @@ fn set_var_of(n: ir::Node) -> integer {
 // `node` with its spans peeled, appended to `out` (`.unspan().clone()`).
 fn push_unspanned(out: vector<ir::Node>, n: ir::Node) {
   match n {
-    NdSpan { pos: _, inner } => push_unspanned(out, inner[0]),
+    NdSpan { pos: _, inner } => push_unspanned(out, inner),
     _ => { out += [n]; }
   }
 }
@@ -484,7 +484,7 @@ fn push_unspanned(out: vector<ir::Node>, n: ir::Node) {
 // src/use_analysis.rs:5227 fn holds_no_store.
 fn holds_no_store(b: ir::Bundle, n: ir::Node) -> boolean {
   match n {
-    NdSpan { pos: _, inner } => holds_no_store(b, inner[0]),
+    NdSpan { pos: _, inner } => holds_no_store(b, inner),
     NdNull => true,
     NdCall { def_nr, args } => len(args) == 0 && def_name(b, def_nr) == "OpNullRefSentinel",
     _ => false,
@@ -495,7 +495,7 @@ fn holds_no_store(b: ir::Bundle, n: ir::Node) -> boolean {
 // `variant_check_subject` and `view_root_slots`, which is `holds_no_store` without the `Null`.
 fn is_null_sentinel(b: ir::Bundle, n: ir::Node) -> boolean {
   match n {
-    NdSpan { pos: _, inner } => is_null_sentinel(b, inner[0]),
+    NdSpan { pos: _, inner } => is_null_sentinel(b, inner),
     NdCall { def_nr, args } => len(args) == 0 && def_name(b, def_nr) == "OpNullRefSentinel",
     _ => false,
   }
@@ -504,13 +504,13 @@ fn is_null_sentinel(b: ir::Bundle, n: ir::Node) -> boolean {
 // src/use_analysis.rs:5242 fn through_null_arm, asked "is what it delivers an `If`?".
 fn through_null_arm_is_if(b: ir::Bundle, n: ir::Node) -> boolean {
   match n {
-    NdSpan { pos: _, inner } => through_null_arm_is_if(b, inner[0]),
+    NdSpan { pos: _, inner } => through_null_arm_is_if(b, inner),
     NdIf { cond: _, t, f } => {
-      if holds_no_store(b, f[0] ?? panic("an else side")) {
-        return through_null_arm_is_if(b, t[0]);
+      if holds_no_store(b, f) {
+        return through_null_arm_is_if(b, t);
       }
-      if holds_no_store(b, t[0] ?? panic("a then side")) {
-        return through_null_arm_is_if(b, f[0]);
+      if holds_no_store(b, t) {
+        return through_null_arm_is_if(b, f);
       }
       true
     }
@@ -576,7 +576,7 @@ fn walk(b: ir::Bundle, mode: integer, n: ir::Node, ops: Ops, defs: Defs, w: Walk
     return;
   }
   match n {
-    NdSpan { pos: _, inner } => walk_all(b, mode, inner, ops, defs, w),
+    NdSpan { pos: _, inner } => walk(b, mode, inner, ops, defs, w),
     NdCall { def_nr: _, args } => {
       for x in args {
         if how == WALK_SKIP_FIRST && x#index == 0 {
@@ -591,20 +591,20 @@ fn walk(b: ir::Bundle, mode: integer, n: ir::Node, ops: Ops, defs: Defs, w: Walk
     NdParallel { arms } => walk_all(b, mode, arms, ops, defs, w),
     NdBlock { block } => walk_all(b, mode, (block[0] ?? panic("a block")).operators, ops, defs, w),
     NdLoop { block } => walk_all(b, mode, (block[0] ?? panic("a loop")).operators, ops, defs, w),
-    NdSet { var: _, inner } => walk_all(b, mode, inner, ops, defs, w),
-    NdReturn { inner } => walk_all(b, mode, inner, ops, defs, w),
-    NdDrop { inner } => walk_all(b, mode, inner, ops, defs, w),
-    NdYield { inner } => walk_all(b, mode, inner, ops, defs, w),
-    NdTuplePut { var: _, idx: _, inner } => walk_all(b, mode, inner, ops, defs, w),
+    NdSet { var: _, inner } => walk(b, mode, inner, ops, defs, w),
+    NdReturn { inner } => walk(b, mode, inner, ops, defs, w),
+    NdDrop { inner } => walk(b, mode, inner, ops, defs, w),
+    NdYield { inner } => walk(b, mode, inner, ops, defs, w),
+    NdTuplePut { var: _, idx: _, inner } => walk(b, mode, inner, ops, defs, w),
     NdIf { cond, t, f } => {
-      walk_all(b, mode, cond, ops, defs, w);
-      walk_all(b, mode, t, ops, defs, w);
-      walk_all(b, mode, f, ops, defs, w);
+      walk(b, mode, cond, ops, defs, w);
+      walk(b, mode, t, ops, defs, w);
+      walk(b, mode, f, ops, defs, w);
     }
     NdIter { var: _, create, next, init } => {
-      walk_all(b, mode, create, ops, defs, w);
-      walk_all(b, mode, next, ops, defs, w);
-      walk_all(b, mode, init, ops, defs, w);
+      walk(b, mode, create, ops, defs, w);
+      walk(b, mode, next, ops, defs, w);
+      walk(b, mode, init, ops, defs, w);
     }
     _ => {}
   }
@@ -629,7 +629,7 @@ fn visit(b: ir::Bundle, mode: integer, n: ir::Node, ops: Ops, defs: Defs, w: Wal
   match n {
     NdSpan { pos: _, inner: _ } => WALK_ALL,
     NdSet { var, inner } => {
-      rhs = inner[0] ?? panic("a value");
+      rhs = inner;
       if mode == M_DEFS {
         if !is_null_node(rhs) {
           defs.rhs_var += [var];
@@ -658,7 +658,7 @@ fn visit(b: ir::Bundle, mode: integer, n: ir::Node, ops: Ops, defs: Defs, w: Wal
     }
     NdReturn { inner } => {
       if mode == M_RETURNS {
-        x = inner[0] ?? panic("a value");
+        x = inner;
         if !is_null_node(x) && !is_null_text(ops, x) {
           push_unspanned(w.nodes, x);
         }
@@ -678,7 +678,7 @@ fn visit(b: ir::Bundle, mode: integer, n: ir::Node, ops: Ops, defs: Defs, w: Wal
 // `Call(OpConvTextFromNull, [])`: the null text a `return null` lowers to.
 fn is_null_text(ops: Ops, n: ir::Node) -> boolean {
   match n {
-    NdSpan { pos: _, inner } => is_null_text(ops, inner[0]),
+    NdSpan { pos: _, inner } => is_null_text(ops, inner),
     NdCall { def_nr, args } => def_nr == ops.null_text && len(args) == 0,
     _ => false,
   }
@@ -744,7 +744,7 @@ fn capture_offset_of(b: ir::Bundle, d: integer, args: vector<ir::Node>, ops: Ops
 // `OpGetDbRef(__closure, off)`, or NONE.
 fn closure_read(ops: Ops, w: Walk, n: ir::Node) -> integer {
   match n {
-    NdSpan { pos: _, inner } => closure_read(ops, w, inner[0]),
+    NdSpan { pos: _, inner } => closure_read(ops, w, inner),
     NdCall { def_nr, args } => closure_read_call(ops, w, def_nr, args),
     _ => NONE,
   }
@@ -919,15 +919,15 @@ fn function_defs(b: ir::Bundle, d_nr: integer, ops: Ops) -> Defs {
 // `u32`, -1, names none) and the bare integers, each in yield order.
 fn collect_yielded(n: ir::Node, refs: vector<integer>, ints: vector<integer>) {
   match n {
-    NdSpan { pos: _, inner } => collect_yielded(inner[0], refs, ints),
+    NdSpan { pos: _, inner } => collect_yielded(inner, refs, ints),
     NdBlock { block } => yield_tail((block[0] ?? panic("a block")).operators, refs, ints),
     NdInsert { items } => yield_tail(items, refs, ints),
     NdIf { cond: _, t, f } => {
-      collect_yielded(t[0], refs, ints);
-      collect_yielded(f[0], refs, ints);
+      collect_yielded(t, refs, ints);
+      collect_yielded(f, refs, ints);
     }
-    NdReturn { inner } => collect_yielded(inner[0], refs, ints),
-    NdDrop { inner } => collect_yielded(inner[0], refs, ints),
+    NdReturn { inner } => collect_yielded(inner, refs, ints),
+    NdDrop { inner } => collect_yielded(inner, refs, ints),
     NdFnRef { def_nr, var: _, t: _ } => {
       if def_nr >= 0 {
         refs += [def_nr];
@@ -999,13 +999,13 @@ fn is_projection_op(b: ir::Bundle, d: integer) -> boolean {
 // src/use_analysis.rs:3365 fn view_root_slots — false for `None`, else the slots in `out`.
 fn view_root_slots(b: ir::Bundle, arg: ir::Node, out: vector<integer>) -> boolean {
   match arg {
-    NdSpan { pos: _, inner } => view_root_slots(b, inner[0], out),
+    NdSpan { pos: _, inner } => view_root_slots(b, inner, out),
     NdVar { n: v } => {
       out += [v];
       true
     }
     NdNull => true,
-    NdIf { cond: _, t, f } => view_root_slots(b, t[0], out) && view_root_slots(b, f[0], out),
+    NdIf { cond: _, t, f } => view_root_slots(b, t, out) && view_root_slots(b, f, out),
     NdBlock { block } => {
       bl = block[0] ?? panic("a block");
       if len(bl.operators) == 1 {
@@ -1131,7 +1131,7 @@ fn has_body_tail(code: vector<ir::Node>) -> boolean {
 
 fn tail_of_block_exists(n: ir::Node) -> boolean {
   match n {
-    NdSpan { pos: _, inner } => tail_of_block_exists(inner[0]),
+    NdSpan { pos: _, inner } => tail_of_block_exists(inner),
     NdBlock { block } => len((block[0] ?? panic("a block")).operators) > 0,
     _ => false,
   }
@@ -1262,7 +1262,7 @@ fn return_ownership_round(b: ir::Bundle, st: St, d_nr: integer, so_far: integer)
 // anything else is classified.
 fn classify_tail(b: ir::Bundle, st: St, code: ir::Node, func: ir::Function, defs: Defs) -> integer {
   match code {
-    NdSpan { pos: _, inner } => classify_tail(b, st, inner[0], func, defs),
+    NdSpan { pos: _, inner } => classify_tail(b, st, inner, func, defs),
     NdBlock { block } => {
       ops = (block[0] ?? panic("a block")).operators;
       tail = ops[len(ops) - 1] ?? panic("a tail");
@@ -1322,7 +1322,7 @@ fn classify_sites(b: ir::Bundle, st: St, sites: vector<ir::Node>, d_nr: integer,
 // src/use_analysis.rs:2554 fn classify.
 fn classify(b: ir::Bundle, st: St, node: ir::Node, func: ir::Function, defs: Defs) -> integer {
   match node {
-    NdSpan { pos: _, inner } => classify(b, st, inner[0], func, defs),
+    NdSpan { pos: _, inner } => classify(b, st, inner, func, defs),
     NdVar { n: v } => classify_var(b, st, v, func, defs),
     NdCall { def_nr, args } => {
       if def_nr == st.ops.database || def_nr == st.ops.new_record {
@@ -1336,7 +1336,7 @@ fn classify(b: ir::Bundle, st: St, node: ir::Node, func: ir::Function, defs: Def
     }
     NdIf { cond: _, t, f } => {
       if through_null_arm_is_if(b, node) {
-        join(classify(b, st, t[0], func, defs), classify(b, st, f[0], func, defs))
+        join(classify(b, st, t, func, defs), classify(b, st, f, func, defs))
       } else {
         classify_through_null_arm(b, st, node, func, defs)
       }
@@ -1353,7 +1353,7 @@ fn classify(b: ir::Bundle, st: St, node: ir::Node, func: ir::Function, defs: Def
     NdInsert { items } => {
       if len(items) == 0 { OWNED } else { classify(b, st, items[len(items) - 1], func, defs) }
     }
-    NdReturn { inner } => classify(b, st, inner[0], func, defs),
+    NdReturn { inner } => classify(b, st, inner, func, defs),
     NdTupleGet { var, idx } => classify_tuple_get(var, idx, func, defs),
     NdCallRef { var, args } => classify_call_ref(b, st, var, args, func, defs),
     _ => OWNED,
@@ -1363,13 +1363,13 @@ fn classify(b: ir::Bundle, st: St, node: ir::Node, func: ir::Function, defs: Def
 // The `If` arm's other branch: classify what `through_null_arm` delivers.
 fn classify_through_null_arm(b: ir::Bundle, st: St, node: ir::Node, func: ir::Function, defs: Defs) -> integer {
   match node {
-    NdSpan { pos: _, inner } => classify_through_null_arm(b, st, inner[0], func, defs),
+    NdSpan { pos: _, inner } => classify_through_null_arm(b, st, inner, func, defs),
     NdIf { cond: _, t, f } => {
-      if holds_no_store(b, f[0] ?? panic("an else side")) {
-        return classify_through_null_arm(b, st, t[0], func, defs);
+      if holds_no_store(b, f) {
+        return classify_through_null_arm(b, st, t, func, defs);
       }
-      if holds_no_store(b, t[0] ?? panic("a then side")) {
-        return classify_through_null_arm(b, st, f[0], func, defs);
+      if holds_no_store(b, t) {
+        return classify_through_null_arm(b, st, f, func, defs);
       }
       classify(b, st, node, func, defs)
     }
@@ -1581,7 +1581,7 @@ fn borrow_base(b: ir::Bundle, ops: Ops, node: ir::Node, func: ir::Function, defs
 // src/use_analysis.rs:2989 fn borrow_base_guarded.
 fn borrow_base_guarded(b: ir::Bundle, ops: Ops, node: ir::Node, func: ir::Function, defs: Defs, visited: vector<integer>) -> integer {
   match node {
-    NdSpan { pos: _, inner } => borrow_base_guarded(b, ops, inner[0], func, defs, visited),
+    NdSpan { pos: _, inner } => borrow_base_guarded(b, ops, inner, func, defs, visited),
     NdCall { def_nr, args } => {
       if !has(ops.projections, def_nr) {
         return -1;
@@ -1629,8 +1629,8 @@ fn borrow_base_guarded(b: ir::Bundle, ops: Ops, node: ir::Node, func: ir::Functi
       -1
     }
     NdIf { cond: _, t, f } => {
-      r = borrow_base_guarded(b, ops, t[0], func, defs, visited);
-      if r >= 0 { r } else { borrow_base_guarded(b, ops, f[0], func, defs, visited) }
+      r = borrow_base_guarded(b, ops, t, func, defs, visited);
+      if r >= 0 { r } else { borrow_base_guarded(b, ops, f, func, defs, visited) }
     }
     NdBlock { block } => {
       body = (block[0] ?? panic("a block")).operators;
@@ -1640,7 +1640,7 @@ fn borrow_base_guarded(b: ir::Bundle, ops: Ops, node: ir::Node, func: ir::Functi
       r = borrow_base_guarded(b, ops, body[len(body) - 1] ?? panic("a tail"), func, defs, visited);
       r
     }
-    NdReturn { inner } => borrow_base_guarded(b, ops, inner[0], func, defs, visited),
+    NdReturn { inner } => borrow_base_guarded(b, ops, inner, func, defs, visited),
     _ => -1,
   }
 }
@@ -1648,8 +1648,8 @@ fn borrow_base_guarded(b: ir::Bundle, ops: Ops, node: ir::Node, func: ir::Functi
 // The first argument of a projection as a variant-check `If`: its subject, or -1.
 fn if_variant_subject(b: ir::Bundle, n: ir::Node) -> integer {
   match n {
-    NdSpan { pos: _, inner } => if_variant_subject(b, inner[0]),
-    NdIf { cond: _, t, f } => variant_check_subject(b, t[0] ?? panic("a then side"), f[0] ?? panic("an else side")),
+    NdSpan { pos: _, inner } => if_variant_subject(b, inner),
+    NdIf { cond: _, t, f } => variant_check_subject(b, t, f),
     _ => -1,
   }
 }

@@ -265,7 +265,7 @@ fn type_display(t: ir::TypeT) -> text {
   match t {
     TyInteger { spec } => integer_display(spec),
     TyVector { inner, dep } => {
-      match inner[0] ?? panic("an element") {
+      match inner {
         TyUnknown { n: _ } => "vector#{deps_debug(dep)}",
         _ => type_debug(t).to_lowercase(),
       }
@@ -311,33 +311,36 @@ fn type_debug(t: ir::TypeT) -> text {
     TyKeys => "Keys",
     TyEnum { n, is_ref, dep } => "Enum({n}, {bool_text(is_ref)}, {deps_debug(dep)})",
     TyReference { n, dep } => "Reference({n}, {deps_debug(dep)})",
-    TyRefVar { inner } => "RefVar({one_debug(inner)})",
-    TyVector { inner, dep } => "Vector({one_debug(inner)}, {deps_debug(dep)})",
+    TyRefVar { inner } => "RefVar({type_debug(inner)})",
+    TyVector { inner, dep } => "Vector({type_debug(inner)}, {deps_debug(dep)})",
     TyRoutine { n } => "Routine({n})",
-    TyIterator { step, inner } => "Iterator({one_debug(step)}, {one_debug(inner)})",
+    TyIterator { step, inner } => "Iterator({type_debug(step)}, {type_debug(inner)})",
     TySorted { n, keys, dep } => "Sorted({n}, {sort_keys_debug(keys)}, {deps_debug(dep)})",
     TyIndex { n, keys, dep } => "Index({n}, {sort_keys_debug(keys)}, {deps_debug(dep)})",
     TyRadix { n, names, dep } => "Radix({n}, {name_refs_debug(names)}, {deps_debug(dep)})",
     TyHash { n, names, dep } => "Hash({n}, {name_refs_debug(names)}, {deps_debug(dep)})",
-    TyFunction { args, result, dep, consts } => "Function({types_debug(args)}, {one_debug(result)}, {deps_debug(dep)}, ConstParams({consts}))",
-    TyRewritten { inner } => "Rewritten({one_debug(inner)})",
+    TyFunction { args, result, dep, consts } => "Function({types_debug(args)}, {type_debug(result)}, {deps_debug(dep)}, ConstParams({consts}))",
+    TyRewritten { inner } => "Rewritten({type_debug(inner)})",
     TyTuple { elems } => "Tuple({types_debug(elems)})",
-    TyOptional { inner } => "Optional({one_debug(inner)})",
+    TyOptional { inner } => "Optional({type_debug(inner)})",
     TyTrie { n, key, dep } => "Trie({n}, \"{key}\", {deps_debug(dep)})",
   }
 }
 
 // `Type::show`.
 fn type_show(b: ir::Bundle, f: ir::Function, ts: vector<ir::TypeT>) -> text {
-  t = ts[0] ?? panic("a type");
+  type_show_one(b, f, ts[0] ?? panic("a type"))
+}
+
+fn type_show_one(b: ir::Bundle, f: ir::Function, t: ir::TypeT) -> text {
   match t {
-    TyRefVar { inner } => "&{type_show(b, f, inner)}",
+    TyRefVar { inner } => "&{type_show_one(b, f, inner)}",
     TyEnum { n, is_ref, dep } => if is_ref { "ref({def_name(b, n)}){dep_var(f, dep)}" } else { def_name(b, n) },
     TyReference { n, dep } => "ref({def_name(b, n)}){dep_var(f, dep)}",
     TyVector { inner, dep } => {
-      match inner[0] ?? panic("an element") {
+      match inner {
         TyUnknown { n: _ } => "vector{dep_var(f, dep)}",
-        _ => "vector<{type_show(b, f, inner)}>{dep_var(f, dep)}",
+        _ => "vector<{type_show_one(b, f, inner)}>{dep_var(f, dep)}",
       }
     }
     TySorted { n, keys, dep } => "sorted<{def_name(b, n)},{sort_keys_debug(keys)}>{dep_var(f, dep)}",
@@ -347,7 +350,7 @@ fn type_show(b: ir::Bundle, f: ir::Function, ts: vector<ir::TypeT>) -> text {
     TyRadix { n, names, dep } => "spatial<{def_name(b, n)},{name_refs_debug(names)}>{dep_var(f, dep)}",
     TyRoutine { n } => "fn {def_name(b, n)}[{n}]",
     TyText { dep } => if len(dep) == 0 { "text" } else { "text{dep_var(f, dep)}" },
-    TyOptional { inner } => "{type_show(b, f, inner)}?",
+    TyOptional { inner } => "{type_show_one(b, f, inner)}?",
     TyTuple { elems } => {
       r = "(";
       for e in elems {
@@ -403,12 +406,15 @@ fn dep_att(d: ir::Definition, dep: vector<integer>) -> vector<text> {
 
 // `Type::argument`: a header's spelling.
 fn type_argument(b: ir::Bundle, d: ir::Definition, ts: vector<ir::TypeT>) -> text {
-  t = ts[0] ?? panic("a type");
+  type_argument_one(b, d, ts[0] ?? panic("a type"))
+}
+
+fn type_argument_one(b: ir::Bundle, d: ir::Definition, t: ir::TypeT) -> text {
   match t {
     TyReference { n, dep } => if len(dep) == 0 { def_name(b, n) } else { "{def_name(b, n)}{texts_debug(dep_att(d, dep))}" },
     TyText { dep } => if len(dep) == 0 { "text" } else { "text{texts_debug(dep_att(d, dep))}" },
-    TyOptional { inner } => "{type_argument(b, d, inner)}?",
-    _ => type_show(b, ir::Function { name: d.name, file: d.position.file, variables: [], names: [], inline_refs: [] }, ts),
+    TyOptional { inner } => "{type_argument_one(b, d, inner)}?",
+    _ => type_show_one(b, ir::Function { name: d.name, file: d.position.file, variables: [], names: [], inline_refs: [] }, t),
   }
 }
 
@@ -448,7 +454,7 @@ fn show_code(b: ir::Bundle, f: ir::Function, n: ir::Node, ind: integer, start: b
         if start {
           indent(o, ind);
         }
-        at = inner[0] ?? panic("a spanned value");
+        at = inner;
       }
       _ => { break; }
     }
@@ -496,11 +502,11 @@ fn show_node(b: ir::Bundle, f: ir::Function, n: ir::Node, ind: integer, o: &text
         x = f.variables[var] ?? panic("a variable");
         o += "{x.name}({x.scope}):{type_show(b, f, x.type_def)} = ";
       }
-      show_code(b, f, inner[0] ?? panic("a value"), ind, false, o);
+      show_code(b, f, inner, ind, false, o);
     }
     NdReturn { inner } => {
       o += "return ";
-      show_code(b, f, inner[0] ?? panic("a value"), ind, false, o);
+      show_code(b, f, inner, ind, false, o);
     }
     NdInsert { items } => {
       o += "{{ !! INSERT\n";
@@ -515,11 +521,11 @@ fn show_node(b: ir::Bundle, f: ir::Function, n: ir::Node, ind: integer, o: &text
     NdContinue { n: v } => { o += "continue({v})"; }
     NdIf { cond, t, f: e } => {
       o += "if ";
-      show_code(b, f, cond[0] ?? panic("a test"), ind, false, o);
+      show_code(b, f, cond, ind, false, o);
       o += " ";
-      show_code(b, f, t[0] ?? panic("a then side"), ind, false, o);
+      show_code(b, f, t, ind, false, o);
       o += " else ";
-      show_code(b, f, e[0] ?? panic("an else side"), ind, false, o);
+      show_code(b, f, e, ind, false, o);
     }
     NdLoop { block } => {
       lp = block[0] ?? panic("a loop");
@@ -533,7 +539,7 @@ fn show_node(b: ir::Bundle, f: ir::Function, n: ir::Node, ind: integer, o: &text
     }
     NdDrop { inner } => {
       o += "drop ";
-      show_code(b, f, inner[0] ?? panic("a value"), ind, false, o);
+      show_code(b, f, inner, ind, false, o);
     }
     NdKeys { keys } => {
       o += "&[";
@@ -559,11 +565,11 @@ fn show_node(b: ir::Bundle, f: ir::Function, n: ir::Node, ind: integer, o: &text
     NdTupleGet { var, idx } => { o += "{var_name(f, var)}.{idx}"; }
     NdTuplePut { var, idx, inner } => {
       o += "{var_name(f, var)}.{idx} = ";
-      show_code(b, f, inner[0] ?? panic("a value"), ind, false, o);
+      show_code(b, f, inner, ind, false, o);
     }
     NdYield { inner } => {
       o += "yield ";
-      show_code(b, f, inner[0] ?? panic("a value"), ind, false, o);
+      show_code(b, f, inner, ind, false, o);
     }
     NdFnRef { def_nr, var, t: _ } => { o += "FnRef({def_nr}, {var_name(f, var)})"; }
     NdFnRefDnr { n: v } => { o += "FnRefDnr({var_name(f, v)})"; }
