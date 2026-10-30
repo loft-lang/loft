@@ -173,6 +173,12 @@ value), a nullable hole into a non-null parameter warns, and a `lit` that does n
 
 ### New
 
+**A field written into a copy, and never read, is reported.**  `v = pick(f, 0)` binds a COPY of
+what `pick` returns, so `v.on = true` never reaches `f`; reading `v.name` afterwards used to
+hide that, because the copy as a whole was read.  `lost-write` now looks at each field: bind a
+live reference (`v = &f.vars[0]`) when the write is meant to land, or read the field back when
+a copy was intended.
+
 **`x!` reads a value that must be there.**  `rows[i]!`, `find(name)!.age`: the value when it
 is present, and a halt when it is absent, its message naming the expression
 (`find(name) is null`) and its line.  It is short for `x ?? panic("…")` and, unlike `x?`, needs

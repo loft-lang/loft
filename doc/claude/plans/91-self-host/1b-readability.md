@@ -10,8 +10,9 @@ A child document of [1b-interpreter.md](1b-interpreter.md).  Status: **R-2s buil
 `formal/`, @C159, suite cells under `L-OutOfLine`, `T-Recursive`, `B-OutOfLine`,
 `F-Render-Child`; step 10 (the port) built — the IR image's own children are children.
 R-2's `e!` built too (owner, 2026-10-30: "build the ! desugar for ?? panic too"): `(N-Present)`,
-@C160, and every `?? panic` of the ports is `!`.  R-1 and R-3 remain designs for the owner's
-evaluation.**
+@C160, and every `?? panic` of the ports is `!`.  R-3 built (owner, 2026-10-31: "do the
+recommendation") — `lost-write` judges each field of a copy.  R-1 remains a design for the
+owner's evaluation.**
 
 ## Why (owner, 2026-10-30)
 
@@ -332,7 +333,20 @@ and a bare enum (what `?` refuses), a statically non-null operand (the advice) �
 interpreter, `--native` and the C.  For the ports: the same receipt as R-1 (every comparison
 layer unchanged); the count of `?? panic` in the three files is reported before and after.
 
-## R-3 — a write into a copy: the bug the port met first
+## R-3 — a write into a copy: the bug the port met first — BUILT
+
+**Built.**  The rule cell answered first: `(F-Ret)` (calls.md) makes a call that returns a
+projection of its argument hand back a copy, so `v = fvar(…); v.x = …` writes the copy on both
+backends, and the cure is the lint.  `report_lost_field_writes` (`use_analysis.rs`) judges a
+struct local bound by a copy of a place — another named local, a call returning a projection
+of a named argument, a value-struct copy — field by field: a field written after the copy bind
+and read nowhere, with the copy never used whole, is a `lost-write`.  Order-insensitive for
+reads, so an under-approximation; a struct holding a `(Col-Group)` is skipped, since a write
+through one member is read through another.  Over the corpus (2 856 programs), 307 compiling
+library files and the ports: two reports, both genuine (`518-value-struct-local` wrote a copy's
+fields to show the source untouched; the cell now reads them back).  Guard
+`tests/scripts/a-field-written-into-a-copy-and-never-read-is-a-lost-write.loft`, its exact set
+in `tests/dead_code_lint.rs`.  The design below is the record.
 
 **Measured.**  The first bind-layer difference was a lost write: `v = fvar(b, d, var)` (a call
 returning a projection of its argument) and then `v.stack_allocated = true`, which reached the

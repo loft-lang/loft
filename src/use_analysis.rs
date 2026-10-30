@@ -7106,6 +7106,13 @@ pub fn warn_dead_stores(
                 continue;
             }
             let (reads, write_targets) = acc.get(i).copied().unwrap_or((0, 0));
+            // A copy that IS read can still have lost a write: the field written is not the
+            // one read (`v = f(s); v.x = 1; use(v.y)`), or an append into a field (`v.xs +=
+            // [1]`), which `write_targets` does not count.  Judged per field, below.
+            if reads > 0 {
+                report_lost_field_writes(data, def, v, def_file, diags);
+                continue;
+            }
             // The dead-store signal: mutated via an `OpSet*` (write_targets>0) but never read
             // (reads==0). A var mutated this way was read as the write BASE at parse, so `uses`
             // was >0 there and `test_used` (uses==0) stayed silent — the two lints are disjoint
@@ -7203,6 +7210,325 @@ pub fn warn_dead_stores(
                 concept_ref: "@F106",
             });
         }
+    }
+}
+
+/// `lost-write` per FIELD (`@FR-B-Copy`, `@FR-F-Ret`): a struct local bound to a COPY of a
+/// place — a place the parser marked copied, a value struct, or a call returning a projection
+/// of an argument the caller named — whose field is written and never read, while the local
+/// itself is not used whole (passed on, returned, written back, rendered).  [`warn_dead_stores`]
+/// sees such a local as read when ANOTHER field is, so this write was lost silently.
+///
+/// Order-insensitive, so an under-approximation: a field read anywhere in the body, before
+/// the write or in a later loop pass, keeps it quiet.
+fn report_lost_field_writes(
+    data: &Data,
+    def: &crate::data::Definition,
+    v: u16,
+    def_file: &str,
+    diags: &mut crate::diagnostics::Diagnostics,
+) {
+    let func = &def.variables;
+    let crate::data::Type::Reference(d, _) = func.tp(v).base() else {
+        return;
+    };
+    if !matches!(data.def(*d).def_type, DefType::Struct) || holds_a_group(data, *d) {
+        return;
+    }
+    let copies = func.copy_bound(v)
+        || is_value_struct_local(func.tp(v).base(), data)
+        || binds_a_returned_place(data, func, &def.code, v);
+    if !copies {
+        return;
+    }
+    let mut walk = FieldUses {
+        data,
+        func,
+        v,
+        copied: false,
+        projs: &data.op_sets().projections,
+        writes: &data.op_sets().write_first_arg,
+        copy_record: data.def_nr("OpCopyRecord"),
+        database: data.def_nr("OpDatabase"),
+        cur: None,
+        line: None,
+        written: Vec::new(),
+        read: HashSet::default(),
+        whole: false,
+    };
+    walk.visit(&def.code);
+    if walk.whole {
+        return;
+    }
+    let name = func.name(v);
+    let mut reported = HashSet::default();
+    for (field, at) in walk.written {
+        if walk.read.contains(&field) || !reported.insert(field) {
+            continue;
+        }
+        let (line, col) = at
+            .as_ref()
+            .map_or_else(|| func.var_source(v), |p| (p.line, p.pos));
+        let file = match &at {
+            Some(p) if !p.file.is_empty() => p.file.as_str(),
+            _ => def_file,
+        };
+        let msg = format!(
+            "'{name}' holds a COPY, and this field written into it is never read — the write \
+             is LOST. A whole-value bind copies the place it reads, and so does a call that \
+             returns one, so the write lands in the copy, not the source."
+        );
+        diags.add_at_coded(
+            crate::diagnostics::Level::Warning,
+            Some("lost-write"),
+            &msg,
+            file,
+            line,
+            col,
+        );
+        diags.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: format!("bind a live reference: `{name} = &…`"),
+            condition: Some(format!(
+                "the write is meant to reach the place `{name}` was copied from"
+            )),
+            edit: None,
+            concept: "reference",
+            concept_ref: "@F21",
+        });
+        diags.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: format!("read the field of `{name}` after the write"),
+            condition: Some(
+                "a copy WAS intended — then the written field is what should be read".to_string(),
+            ),
+            edit: None,
+            concept: "copy",
+            concept_ref: "@F106",
+        });
+    }
+}
+
+/// Is `v` bound somewhere by a copy of a place the program can still reach?
+fn binds_a_returned_place(data: &Data, func: &Function, code: &Value, v: u16) -> bool {
+    let mut found = false;
+    code.walk(&mut |n| {
+        if let Value::Set(to, rhs) = n
+            && *to == v
+            && copies_a_place(data, func, rhs, v)
+        {
+            found = true;
+        }
+    });
+    found
+}
+
+/// A bind source that copies a place the program can still reach: another named local
+/// (`w = u`, `(B-Copy)`), or a call that returns a projection of an argument the caller named
+/// ([`copies_a_reachable_place`], `(F-Ret)`).
+fn copies_a_place(data: &Data, func: &Function, rhs: &Value, v: u16) -> bool {
+    matches!(rhs.unspan(), Value::Var(x) if *x != v && !func.name(*x).starts_with('_'))
+        || copies_a_reachable_place(data, func, rhs)
+}
+
+/// Does struct `d` hold a `(Col-Group)` — two collections over one element type, several
+/// routes to one record set?  A write through one member is read through another, which a
+/// per-field view cannot see.
+fn holds_a_group(data: &Data, d: u32) -> bool {
+    let mut seen = HashSet::default();
+    data.def(d).attributes().iter().any(|a| {
+        let tp = a.typedef.base();
+        matches!(
+            tp,
+            Type::Vector(..)
+                | Type::Hash(..)
+                | Type::Index(..)
+                | Type::Sorted(..)
+                | Type::Radix(..)
+                | Type::Trie(..)
+        ) && matches!(tp.content().base(), Type::Reference(e, _) if !seen.insert(*e))
+    })
+}
+
+/// The walk behind [`report_lost_field_writes`]: each field of `v` written (with where) and
+/// read, by its byte offset in `v`'s record, and whether `v` is used whole anywhere.
+struct FieldUses<'a> {
+    data: &'a Data,
+    func: &'a Function,
+    v: u16,
+    /// `v` holds a copy of a place at this point of the walk: a write before the first copy
+    /// bind, or after a fresh one, builds a value (a literal's fields) and loses nothing.
+    copied: bool,
+    projs: &'a HashSet<u32>,
+    writes: &'a HashSet<u32>,
+    copy_record: u32,
+    /// `OpDatabase` — allocating `v`'s own record defines the copy; it reads nothing.
+    database: u32,
+    /// The nearest enclosing span and the statement line, where a write is reported.
+    cur: Option<Position>,
+    line: Option<u32>,
+    written: Vec<(i32, Option<Position>)>,
+    read: HashSet<i32>,
+    whole: bool,
+}
+
+/// What a write destination reaches of `v`: `v` itself, or a chain through its field at a
+/// byte offset.
+#[derive(Clone, Copy)]
+enum Reach {
+    Whole,
+    Field(i32),
+}
+
+impl FieldUses<'_> {
+    /// What of `v` a write destination lands in, `None` when it is not `v`'s.
+    fn base_field(&self, node: &Value) -> Option<Reach> {
+        match node.unspan() {
+            Value::Var(x) if *x == self.v => Some(Reach::Whole),
+            Value::Call(op, args) if self.projs.contains(op) && args.len() >= 2 => {
+                match self.base_field(&args[0])? {
+                    Reach::Whole => match args[1].unspan() {
+                        Value::Int(k) => Some(Reach::Field(*k)),
+                        _ => None,
+                    },
+                    field @ Reach::Field(_) => Some(field),
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// The index arguments along a destination chain, which are ordinary reads.
+    fn visit_chain_args(&mut self, node: &Value) {
+        if let Value::Call(op, args) = node.unspan()
+            && self.projs.contains(op)
+            && !args.is_empty()
+        {
+            self.visit_chain_args(&args[0]);
+            for a in &args[1..] {
+                self.visit(a);
+            }
+        }
+    }
+
+    /// Where the write being visited sits: its statement's line, with the enclosing span's
+    /// column when that span is on the same line.
+    fn here(&self) -> Option<Position> {
+        match (&self.cur, self.line) {
+            (Some(p), Some(l)) if p.line != l => Some(Position {
+                file: p.file,
+                line: l,
+                pos: 0,
+            }),
+            (Some(p), _) => Some(*p),
+            (None, Some(l)) => Some(Position {
+                file: crate::lexer::no_file(),
+                line: l,
+                pos: 0,
+            }),
+            (None, None) => None,
+        }
+    }
+
+    fn write_at(&mut self, dest: &Value, setter_field: Option<&Value>) -> bool {
+        match self.base_field(dest) {
+            Some(Reach::Field(k)) => {
+                self.visit_chain_args(dest);
+                if self.copied {
+                    self.written.push((k, self.here()));
+                }
+                true
+            }
+            Some(Reach::Whole) => {
+                if self.copied
+                    && let Some(Value::Int(k)) = setter_field.map(Value::unspan)
+                {
+                    self.written.push((*k, self.here()));
+                }
+                // A fill or bulk write of `v` itself defines the copy; it reads nothing.
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn visit(&mut self, node: &Value) {
+        match node {
+            Value::Span(b) => {
+                let saved = self.cur.replace(b.0);
+                self.visit(&b.1);
+                self.cur = saved;
+                return;
+            }
+            Value::Var(x) if *x == self.v => {
+                self.whole = true;
+                return;
+            }
+            Value::Line(l) => {
+                self.line = Some(*l);
+                return;
+            }
+            Value::Set(to, rhs) if *to == self.v => {
+                self.visit(rhs);
+                self.copied = copies_a_place(self.data, self.func, rhs, self.v);
+                return;
+            }
+            Value::Call(op, _) if releases_first_arg(self.data, *op) => return,
+            Value::Call(op, args)
+                if *op == self.database
+                    && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == self.v) =>
+            {
+                return;
+            }
+            Value::Call(op, args) if *op == self.copy_record && args.len() >= 2 => {
+                self.visit(&args[0]);
+                if matches!(args[1].unspan(), Value::Var(x) if *x == self.v) {
+                    // A value struct's copy fill (`m = w.vp`): `v` holds the copy from here.
+                    self.copied = true;
+                } else if !self.write_at(&args[1], None) {
+                    self.visit(&args[1]);
+                }
+                for a in &args[2..] {
+                    self.visit(a);
+                }
+                return;
+            }
+            Value::Call(op, args) if self.writes.contains(op) && !args.is_empty() => {
+                let setter = is_setter(*op, self.data);
+                if self.write_at(&args[0], if setter { args.get(1) } else { None }) {
+                    let skip = usize::from(
+                        setter && matches!(self.base_field(&args[0]), Some(Reach::Whole)),
+                    );
+                    for a in &args[1 + skip..] {
+                        self.visit(a);
+                    }
+                } else {
+                    for a in args {
+                        self.visit(a);
+                    }
+                }
+                return;
+            }
+            // A read of one of `v`'s fields: a getter or a projection applied to `v`.
+            Value::Call(op, args)
+                if args.len() >= 2
+                    && matches!(args[0].unspan(), Value::Var(x) if *x == self.v)
+                    && (self.projs.contains(op)
+                        || self.data.def(*op).name().starts_with("OpGet")) =>
+            {
+                if let Value::Int(k) = args[1].unspan() {
+                    self.read.insert(*k);
+                } else {
+                    self.whole = true;
+                }
+                for a in &args[1..] {
+                    self.visit(a);
+                }
+                return;
+            }
+            _ => {}
+        }
+        node.for_each_child(&mut |c| self.visit(c));
     }
 }
 
