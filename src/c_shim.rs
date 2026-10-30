@@ -537,16 +537,27 @@ fn stem_of(pkg_dir: &str) -> String {
 /// there is none.  A `#c` call then reaches the shim's symbol directly, which is what makes
 /// a `[c] shim` library a wasm library too; a declared `[c] libs` entry still has no route.
 /// Cached under `native-auto/`, keyed as [`build`] keys the shared library plus the
-/// cross-compiler's identity.
+/// cross-compiler's identity.  For a browser page (`browser`) the sources are compiled with
+/// `LOFT_BROWSER` defined, so a shim can reach the page's `loft_gl` imports there and keep a
+/// WASI module free of them; the two builds are cached apart.
 ///
 /// # Errors
 /// An unreadable source, no cross-compiler, or a compile that fails — a shim that opens a
 /// file or needs a function this library does not carry is one such failure, and the right
 /// one: the browser has no files.
-pub fn wasm_objects(pkg_dir: &str, sources: &[String]) -> Result<Vec<std::path::PathBuf>, String> {
+pub fn wasm_objects(
+    pkg_dir: &str,
+    sources: &[String],
+    browser: bool,
+) -> Result<Vec<std::path::PathBuf>, String> {
     let (stem, paths, out_dir) = identity(pkg_dir, sources)?;
     let cc = wasm_cc_program();
     let key = crate::cache::stable_hash(&[
+        if browser {
+            b"browser".as_slice()
+        } else {
+            b"wasi".as_slice()
+        },
         wasm_cc_identity(&cc).as_bytes(),
         WASM_LIBC.as_bytes(),
         WASM_STRING_H.as_bytes(),
@@ -590,7 +601,11 @@ pub fn wasm_objects(pkg_dir: &str, sources: &[String]) -> Result<Vec<std::path::
         stage.join("loft_wasm_libc.o"),
     ));
     for (src, obj) in &sources_to_build {
-        let run = Spawn::new(Program::os(&cc))
+        let mut cmd = Spawn::new(Program::os(&cc));
+        if browser {
+            cmd.push_arg("-DLOFT_BROWSER");
+        }
+        let run = cmd
             .arg("--target=wasm32-unknown-unknown")
             .arg("-ffreestanding")
             .arg("-nostdlib")
@@ -633,6 +648,13 @@ pub fn wasm_objects(pkg_dir: &str, sources: &[String]) -> Result<Vec<std::path::
             dir.display()
         ))
     }
+}
+
+/// Whether `object` is loft's wasm C library, which [`wasm_objects`] puts beside every package's
+/// own objects: a program links one copy of it.
+#[must_use]
+pub fn is_wasm_libc(object: &std::path::Path) -> bool {
+    crate::file_access::file_name(object).is_some_and(|n| n == "loft_wasm_libc.o")
 }
 
 /// The freestanding C library and headers a shim sees on a wasm target (`src/c/wasm/`).

@@ -1,0 +1,3 @@
+// Ten times the byte length of `s`, computed in C.
+pub fn shim2_len(s: text) -> integer;
+#c "lc2_len" "int64_t(const char*)"

@@ -5446,6 +5446,7 @@ fn collect_lib_dirs(args: &[String]) -> Vec<String> {
 fn wasm_shim_objects_or_exit(
     data: &loft::data::Data,
     flag: &str,
+    browser: bool,
 ) -> (
     Vec<(String, Vec<std::path::PathBuf>)>,
     Vec<(String, String)>,
@@ -5459,8 +5460,19 @@ fn wasm_shim_objects_or_exit(
         {
             continue;
         }
-        match loft::c_shim::wasm_objects(&lib.pkg_dir, &lib.shim) {
-            Ok(objs) => out.push((lib.pkg_dir.clone(), objs)),
+        match loft::c_shim::wasm_objects(&lib.pkg_dir, &lib.shim, browser) {
+            // Every package's objects carry loft's wasm C library (`loft_wasm_libc.o`), the
+            // same object each time: the program links it once, or a second shim's copy
+            // collides with the first (loft#2280).
+            Ok(mut objs) => {
+                if out
+                    .iter()
+                    .any(|(_, o)| o.iter().any(|p| loft::c_shim::is_wasm_libc(p)))
+                {
+                    objs.retain(|p| !loft::c_shim::is_wasm_libc(p));
+                }
+                out.push((lib.pkg_dir.clone(), objs));
+            }
             // Not fatal: the bindings stay refused at a REACHED call, with these words — a
             // program that never calls into the shim still builds (`{flag}` keeps the
             // refusal's reachability scope).
@@ -10703,7 +10715,7 @@ fn main() {
         let build_dir = platform::build_scratch_dir("wasm");
         let rs_path = build_dir.join("prog.rs");
         let (wasm_shim_objects, wasm_shim_failed) =
-            wasm_shim_objects_or_exit(&p.data, "--native-wasm");
+            wasm_shim_objects_or_exit(&p.data, "--native-wasm", false);
         {
             let mut f = match fa::create(&rs_path) {
                 Ok(f) => f,
@@ -10952,7 +10964,7 @@ fn main() {
         } else {
             let rs_path = build_dir.join("prog.rs");
             let (wasm_shim_objects, wasm_shim_failed) =
-                wasm_shim_objects_or_exit(&p.data, "--html");
+                wasm_shim_objects_or_exit(&p.data, "--html", true);
             // @PLN117 — does this program actually run anything in parallel?  Set
             // from the emitted reachable set below; it is what decides whether the
             // page carries loft's thread pool.
@@ -11411,7 +11423,7 @@ fn main() {
                 //     stack instead of yielding.  Its companion
                 //     `loft_host_http_range_total` is deliberately absent — it
                 //     only reports what the completed fetch already learned.
-                "--pass-arg=asyncify-imports@loft_gl.loft_gl_swap_buffers,loft_web.ws_yield,loft_io.loft_host_http_get,loft_io.loft_host_http_range",
+                "--pass-arg=asyncify-imports@loft_gl.loft_gl_swap_buffers,loft_gl.gg_present,loft_web.ws_yield,loft_io.loft_host_http_get,loft_io.loft_host_http_range",
             ])
             .push_args(debuginfo_flags)
             .push_arg("-o")

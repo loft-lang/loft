@@ -423,6 +423,11 @@ pub(crate) fn build_wasm(
     if !ship {
         cmd.push_arg("-DLOFT_CALL_CHAIN");
     }
+    // A shim built for a page sees `LOFT_BROWSER`, as `c_shim::wasm_objects` defines it for
+    // the Rust writer's page: there it can call the page's `loft_gl` imports.
+    if browser {
+        cmd.push_arg("-DLOFT_BROWSER");
+    }
     if let Some(root) = &tc.sysroot {
         cmd.push_arg(format!("--sysroot={root}"));
     }
