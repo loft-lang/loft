@@ -59,11 +59,71 @@ struct TextOracle<'a> {
 
 impl KeyOracle for TextOracle<'_> {
     fn bits(&self, store: &Store, rec: u32) -> u32 {
-        text_bytes(store, rec, self.key).len() as u32 * 8
+        tree_bytes(text_bytes(store, rec, self.key).as_bytes()).len() as u32 * 8
     }
     fn word(&self, store: &Store, rec: u32, word: u32) -> u64 {
-        bytes_word(text_bytes(store, rec, self.key).as_bytes(), word)
+        bytes_word(&tree_bytes(text_bytes(store, rec, self.key).as_bytes()), word)
     }
+}
+
+/// A key's bytes as the tree files them (`@FR-Col-Trie`): data `0x00` becomes `01 01` and
+/// data `0x01` becomes `01 02`; every other byte is itself.
+///
+/// The tree ends every key with a `00` terminator and pads with zeros, so a data `0x00`
+/// read raw is indistinguishable from the end: `"a"` and `"a\0"` composed to the same
+/// string up to the id, the shorter key answered absent and the walk put it second.  The
+/// escape keeps byte order (`00` < `01 01` < `01 02` < `02`), is prefix-free (so a key
+/// begins with a prefix exactly when its escaped form begins with the prefix's), and
+/// leaves a key holding neither byte — nearly every text key — bit-identical to placement
+/// token `1`, which is what lets a reader of an old image share this oracle for them.
+pub(crate) fn tree_bytes(b: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if !b.iter().any(|&c| c < 2) {
+        return std::borrow::Cow::Borrowed(b);
+    }
+    let mut out = Vec::with_capacity(b.len() + 4);
+    for &c in b {
+        if c < 2 {
+            out.push(1);
+            out.push(c + 1);
+        } else {
+            out.push(c);
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
+/// Is this a NULL key?  A null text reads as `STRING_NULL` (`(L-Null-Text)`), and a null key
+/// is filed in the tree's [`rt::SLOT`] instead of the tree: first in a walk, found by an
+/// exact lookup, and in no prefix slice — a null text begins with nothing (`@FR-E-NullArg`).
+fn is_null_key(b: &[u8]) -> bool {
+    b == crate::store::STRING_NULL.as_bytes()
+}
+
+/// The record in the null slot of `tree`, `0` when none (or no tree).
+fn null_rec(store: &Store, tree: u32) -> u32 {
+    if tree == 0 {
+        0
+    } else {
+        slot_rec(store.get_u32_raw(tree, rt::SLOT))
+    }
+}
+
+/// The null slot's word says its record with the high bit set ([`slot_word`]).  A tree
+/// written under placement token `1` kept its node capacity in that word — a count, high
+/// bit clear — so every reader of that word, the paged one included, sees an old tree as
+/// one without a null record and needs no token to tell.
+pub(crate) const SLOT_TAG: u32 = 0x8000_0000;
+
+/// The null record a slot word names, `0` when none.
+#[must_use]
+pub(crate) fn slot_rec(word: u32) -> u32 {
+    if word & SLOT_TAG == 0 { 0 } else { word & !SLOT_TAG }
+}
+
+/// The slot word naming `rec` (`0`: none).  A record number stays below `i32::MAX`
+/// (`Store::get_str`'s bound), so the tag never collides with one.
+fn slot_word(rec: u32) -> u32 {
+    if rec == 0 { 0 } else { rec | SLOT_TAG }
 }
 
 /// The `word`-th big-endian 8-byte chunk of `b`, zero-padded past the end.
@@ -110,6 +170,12 @@ pub fn add(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) {
         tree = rt::rtree_init(store, 0);
         store.set_u32_raw(coll.rec, coll.pos, tree);
     }
+    if is_null_key(text_bytes(store, rec.rec, key).as_bytes()) {
+        // `@FR-Col-Insert` displaced the record already under the null key before this.
+        debug_assert_eq!(null_rec(store, tree), 0, "a trie's null slot holds one record");
+        store.set_u32_raw(tree, rt::SLOT, slot_word(rec.rec));
+        return;
+    }
     let tree = rt::rtree_insert(store, tree, rec.rec, &TextOracle { key });
     store.set_u32_raw(coll.rec, coll.pos, tree);
 }
@@ -125,15 +191,20 @@ pub fn find(coll: &DbRef, stores: &[Store], keys: &[Key], key: &[Content]) -> Db
             // The probe reads bytes exactly as `TextOracle` does — via the same
             // `bytes_word`. The two reading a key differently is the classic radix
             // fault and presents as "inserted, then not found".
-            let q = probe_bytes(key);
-            let probe = |word: u32| bytes_word(q, word);
-            rt::rtree_get(
-                store,
-                tree,
-                &probe,
-                q.len() as u32 * 8,
-                &TextOracle { key: k },
-            )
+            let raw = probe_bytes(key);
+            if is_null_key(raw) {
+                null_rec(store, tree)
+            } else {
+                let q = tree_bytes(raw);
+                let probe = |word: u32| bytes_word(&q, word);
+                rt::rtree_get(
+                    store,
+                    tree,
+                    &probe,
+                    q.len() as u32 * 8,
+                    &TextOracle { key: k },
+                )
+            }
         }
         _ => 0,
     };
@@ -155,6 +226,10 @@ pub fn remove(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) -> 
     let tree = store.collection_rec(coll.rec, coll.pos);
     if tree == 0 {
         return false;
+    }
+    if rec.rec != 0 && null_rec(store, tree) == rec.rec {
+        store.set_u32_raw(tree, rt::SLOT, 0);
+        return true;
     }
     rt::rtree_remove(store, tree, rec.rec, &TextOracle { key })
 }
@@ -184,7 +259,7 @@ pub fn count(coll: &DbRef, stores: &[Store]) -> u32 {
     if tree == 0 {
         0
     } else {
-        rt::rtree_len(store, tree)
+        rt::rtree_len(store, tree) + u32::from(null_rec(store, tree) != 0)
     }
 }
 
@@ -196,6 +271,11 @@ pub fn records(coll: &DbRef, stores: &[Store]) -> Vec<u32> {
     let tree = store.collection_rec(coll.rec, coll.pos);
     let mut out = Vec::new();
     if tree != 0 {
+        // The null key orders first (`@FR-Col-Order`), so its slot is walked before the tree.
+        let null = null_rec(store, tree);
+        if null != 0 {
+            out.push(null);
+        }
         let mut it = rt::rtree_first(store, tree);
         let mut r = it.rec();
         while r != 0 {
@@ -240,12 +320,14 @@ pub fn prefix(
     if tree == 0 {
         return out;
     }
-    let probe = |word: u32| bytes_word(pre, word);
+    // The null slot is never part of a prefix slice: a null text begins with nothing.
+    let q = tree_bytes(pre);
+    let probe = |word: u32| bytes_word(&q, word);
     let mut it = rt::rtree_seek(
         store,
         tree,
         &probe,
-        pre.len() as u32 * 8,
+        q.len() as u32 * 8,
         &TextOracle { key },
     );
     let cap = limit.unwrap_or(usize::MAX);

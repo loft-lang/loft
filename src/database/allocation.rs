@@ -2496,12 +2496,18 @@ impl Stores {
     /// order** (its in-order walk is key order — Morton/Z-order for a spatial
     /// index), so `radix_db::records` already yields the records sorted: no O(n log n)
     /// key sort, just the O(n) tree walk.  The `tp` is unused for the same reason.
-    pub fn build_radix_sorted_vec(&mut self, coll: &DbRef, _tp: u16) -> DbRef {
+    pub fn build_radix_sorted_vec(&mut self, coll: &DbRef, tp: u16) -> DbRef {
         // An absent holder has no scratch — see `build_hash_sorted_vec`.
         if coll.rec == 0 {
             return DbRef::NULL;
         }
-        let recs = crate::radix_db::records(coll, &self.allocations);
+        // A trie walks through `trie_db`: its null-key record sits in a slot ahead of the
+        // tree (`@FR-Col-Trie`), which the shared tree walk does not know about.
+        let recs = if matches!(self.types[tp as usize].parts, Parts::Trie(..)) {
+            crate::trie_db::records(coll, &self.allocations)
+        } else {
+            crate::radix_db::records(coll, &self.allocations)
+        };
         self.build_rec_scratch(coll, &recs)
     }
 

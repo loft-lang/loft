@@ -160,8 +160,11 @@ pub(crate) const TOP: u32 = 4;
 pub(crate) const LEN: u32 = 8;
 /// Node high-water mark; live ids are drawn from `1..=NODES`.
 pub(crate) const NODES: u32 = 12;
-/// How many nodes the current claim can hold.
-const CAP: u32 = 16;
+/// A word the tree leaves to its KIND: a trie keeps its null-key record here
+/// (`trie_db`, `(Col-Trie)`); a spatial index leaves it `0`.  Placement token `1`
+/// stored the node capacity here, which the claim's size already says
+/// ([`node_room`]), so the word was free to take.
+pub(crate) const SLOT: u32 = 16;
 /// Head of the free-node list, `0` when empty.
 const FREE: u32 = 20;
 /// First node sits here; a multiple of 8, so nodes stay word-aligned.
@@ -790,18 +793,24 @@ pub(crate) fn cap_for_words(words: u32) -> u32 {
     (words * 8).saturating_sub(HDR) / NODE_SIZE
 }
 
+/// How many nodes the tree's current claim can hold: read off the claim, so nothing
+/// stored can disagree with it.
+fn node_room(store: &Store, tree: u32) -> u32 {
+    cap_for_words(store.record_words(tree))
+}
+
 /// Number of records in the tree.
 #[must_use]
 pub fn rtree_len(store: &Store, tree: u32) -> u32 {
     store.get_u32_raw(tree, LEN)
 }
 
-/// The tree's own footprint: its node array, room included (`CAP` nodes of `NODE_SIZE`
+/// The tree's own footprint: its node array, room included ([`node_room`] nodes of `NODE_SIZE`
 /// bytes), the header word left out — what `size` reports, allocation-local as a hash's
 /// bucket table is.
 #[must_use]
 pub fn rtree_bytes(store: &Store, tree: u32) -> u32 {
-    store.get_u32_raw(tree, CAP) * NODE_SIZE
+    node_room(store, tree) * NODE_SIZE
 }
 
 // ---------------------------------------------------------------------------
@@ -831,11 +840,10 @@ pub(crate) fn empty_collection(store: &mut Store) -> crate::keys::DbRef {
 pub fn rtree_init(store: &mut Store, initial: u32) -> u32 {
     let words = (HDR + NODE_SIZE * initial).div_ceil(8).max(HDR / 8);
     let tree = store.claim(words);
-    let cap = cap_for_words(store.record_words(tree));
     store.set_i32_raw(tree, TOP, 0);
     store.set_u32_raw(tree, LEN, 0);
     store.set_u32_raw(tree, NODES, 0);
-    store.set_u32_raw(tree, CAP, cap);
+    store.set_u32_raw(tree, SLOT, 0);
     store.set_u32_raw(tree, FREE, 0);
     tree
 }
@@ -848,10 +856,7 @@ pub fn rtree_free(store: &mut Store, tree: u32) {
 /// Grow the node array, returning the (possibly relocated) tree record id.
 fn grow(store: &mut Store, tree: u32) -> u32 {
     let words = store.record_words(tree);
-    let tree = store.resize(tree, (words * 2).max(words + 2));
-    let cap = cap_for_words(store.record_words(tree));
-    store.set_u32_raw(tree, CAP, cap);
-    tree
+    store.resize(tree, (words * 2).max(words + 2))
 }
 
 /// Take a node id from the free list, or mint a fresh one, growing if needed.
@@ -863,7 +868,7 @@ fn alloc_node(store: &mut Store, tree: u32) -> (u32, u32) {
         return (tree, free);
     }
     let used = store.get_u32_raw(tree, NODES);
-    let tree = if used >= store.get_u32_raw(tree, CAP) {
+    let tree = if used >= node_room(store, tree) {
         grow(store, tree)
     } else {
         tree
@@ -2038,7 +2043,7 @@ mod tests {
         let tree = rtree_init(&mut store, 4);
         assert_ne!(tree, host, "the tree must claim its own record");
         assert_eq!(rtree_len(&store, tree), 0);
-        assert_eq!(store.get_u32_raw(tree, CAP), 4, "room for 4 nodes");
+        assert_eq!(node_room(&store, tree), 4, "room for 4 nodes");
 
         rtree_free(&mut store, tree);
         store.delete(host);
@@ -2336,7 +2341,7 @@ mod tests {
     fn r7_growth_relocates_and_survives() {
         let mut store = Store::new_in_use(16);
         let mut tree = rtree_init(&mut store, 0);
-        assert_eq!(store.get_u32_raw(tree, CAP), 0, "no room for nodes yet");
+        assert_eq!(node_room(&store, tree), 0, "no room for nodes yet");
 
         let mut seed = 0x2222_3333_4444_5555;
         let mut expect = Vec::new();
