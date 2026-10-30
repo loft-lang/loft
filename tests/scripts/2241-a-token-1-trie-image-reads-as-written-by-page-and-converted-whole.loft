@@ -15,6 +15,8 @@
 //
 // @falsified-at: 23bc61e4 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 // CHANNEL: the VALUE (each record found or not, the walk order, the loaded counts).
+// ARMED: no instrument.  Ordinary assertions on every backend.
+// HOLDS: both cells, on every backend; the image is read, never written.
 #cwd
 struct EWord { w: text, v: integer }
 
