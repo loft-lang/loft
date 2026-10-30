@@ -593,6 +593,11 @@ pub struct Function {
     /// here: it is refused at the disturbance, never copied.  Carried like
     /// `text_payload_views`.
     pub keyed_views: std::collections::HashSet<u16>,
+    /// The VIEW bindings the scope pass materialises (`@FR-B-Disturb`: their container is
+    /// disturbed while they are in use), set where it decides so (`run_scan_phase`).  A
+    /// closure capture of one owns the copy, not the container it was bound from, so the
+    /// capture analysis (`capture_builds::bind_views_root`) reads it as no view (loft#2245).
+    pub materialised_views: std::collections::HashSet<u16>,
     /// A payload binding onto a VECTOR member of a linked group whose writes the parser spells
     /// against the ORIGIN FIELD (`Parser::resolved_group_write`, `(Col-Group)`), with the
     /// collection type the binding's own spelling passes.  The field spelling does not name the
@@ -889,6 +894,7 @@ impl Function {
             tuphold_origin: HashMap::new(),
             text_payload_views: std::collections::HashSet::new(),
             keyed_views: std::collections::HashSet::new(),
+            materialised_views: std::collections::HashSet::new(),
             group_write_views: HashMap::new(),
             tuple_backings: HashMap::new(),
             tuple_backings_seen: std::collections::HashSet::new(),
@@ -1105,6 +1111,8 @@ impl Function {
         self.text_payload_views
             .clone_from(&other.text_payload_views);
         self.keyed_views.clone_from(&other.keyed_views);
+        self.materialised_views
+            .clone_from(&other.materialised_views);
         self.group_write_views.clone_from(&other.group_write_views);
         // CARRIED for the same reason, and read by the same pass.
         self.tuple_backings.clear();
@@ -1210,6 +1218,7 @@ impl Function {
             tuphold_origin: other.tuphold_origin.clone(),
             text_payload_views: other.text_payload_views.clone(),
             keyed_views: other.keyed_views.clone(),
+            materialised_views: other.materialised_views.clone(),
             group_write_views: other.group_write_views.clone(),
             tuple_backings: other.tuple_backings.clone(),
             tuple_backings_seen: std::collections::HashSet::new(),

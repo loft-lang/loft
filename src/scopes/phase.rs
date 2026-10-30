@@ -186,7 +186,8 @@ pub(super) fn run_scan_phase(
             orig_vars.var_count(),
             data,
         ),
-        capture_build_backing: capture_build_backings(data, orig_vars, orig_code),
+        // Filled below, from the working copy that records which views are materialised.
+        capture_build_backing: crate::variables::CaptureBuilds::default(),
         closure_keep: closure_keep_set(data, orig_vars, orig_code),
         keep_build_target: None,
         lift_decl_depth: HashMap::default(),
@@ -232,6 +233,10 @@ pub(super) fn run_scan_phase(
         written_out: Vec::new(),
     };
     let mut function = Function::copy(orig_vars);
+    // loft#2245 — the materialise verdict goes on the function, where every reader of its
+    // capture builds (this pass, `witness`, `capture_adoption`, `leak_check`) finds it.
+    function.materialised_views = scopes.views_to_materialise.keys().copied().collect();
+    scopes.capture_build_backing = capture_build_backings(data, &function, orig_code);
     for a in function.arguments() {
         scopes.var_scope.insert(a, 0);
     }
