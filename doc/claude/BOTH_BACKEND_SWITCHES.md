@@ -767,6 +767,13 @@ tree are never made (`fronds` −22.5 %, 4.28× → 3.42× on x86-64) — and is
 for a wrong element or length out of a reused vector-returning call.  `LOFT_TRACE_CLEAR=1`
 prints the capacity each reset re-establishes.
 
+**`LOFT_NO_EMPTY_CLEAR_SKIP=1`** (STORE_MODEL D19f, runtime, BOTH backends) makes clearing a
+store-root vector that holds nothing reset its store again — with it off, a clear of a vector
+with no block, or a block of length zero, does nothing, as the C runtime's
+`loft_vec_clear_release` does nothing (STORE_MODEL's rule: the C model is the standard) —
+and is the A/B for the store events a reused, empty buffer makes.  `LOFT_TRACE_CLEAR=1`
+prints each reset made.
+
 **`LOFT_NO_PREFILL_IMAGE=1`** (@PLN164 C4, `@FR-R-Prefill`, runtime, BOTH backends) makes
 every record mint that is not proven complete-write prefill its defaults field by field
 again — with it off, the prefill is ONE block write of a per-type image captured from the
