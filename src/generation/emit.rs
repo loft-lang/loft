@@ -2640,10 +2640,14 @@ impl Output<'_> {
             | Type::Sorted(_, _, _)
             | Type::Hash(_, _, _)
             | Type::Index(_, _, _)
+            | Type::Radix(_, _, _)
+            | Type::Trie(_, _, _)
             | Type::Iterator(_, _)
             | Type::Enum(_, true, _) => {
                 // A generator's handle is a `DbRef` too (loft#2059: an absent fn-ref of a
-                // generator type answered `()` in its dispatch's fallback arm, E0308).
+                // generator type answered `()` in its dispatch's fallback arm, E0308), and so
+                // is a `spatial` and a `trie` (loft#2258: the same E0308 for a fn-ref that
+                // answers one).
                 // The canonical heap-ref null is `DbRef::NULL` (`keys.rs`), the
                 // ONE source every backend reads — `is_null()` keys off
                 // `store_nr == u16::MAX` and ignores `pos`, so the historical
