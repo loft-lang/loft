@@ -989,6 +989,14 @@ fn synth_nullable_struct_fields(data: &mut Data, database: &mut Stores, lexer: &
                 if !synth_nullable_target(data, struct_d) {
                     continue;
                 }
+                // `@FR-L-OutOfLine` — whether this field is out of line rather than tagged is
+                // a question about the whole inline graph, and a graph that still names a
+                // forward stub cannot answer it yet (`P<T> { q: Q<T>? }` before `Q` is
+                // declared).  Such a host's layout waits too (`layout_blocked`); the rewrite
+                // waits with it, for a later `fill_all`.
+                if data.inline_graph_unresolved(struct_d) {
+                    continue;
+                }
                 let syn = data.nullable_enum_for(lexer, struct_d);
                 if data.def(syn).known_type == u16::MAX {
                     register_enum_db(data, database, syn);
