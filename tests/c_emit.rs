@@ -1360,18 +1360,19 @@ fn main() {
             .output()
             .is_ok_and(|o| o.status.success())
     };
-    // (mode, switch, __inv calls, lines reading a fresh base, versioned loops, push headers,
-    // `scal`'s held scalars).  Under `LOFT_NO_SCALAR_HOIST` `look`'s twin keeps its plain call:
+    // (mode, switch, __inv calls, lines reading a fresh base, versioned loops, `mints`' record
+    // push headers, the scalar push headers elsewhere — `src`/`dst` in `main`, `t.b` in `grow`,
+    // `pix` in `build` (`@FR-R-Push`) — and `scal`'s held scalars).  Under `LOFT_NO_SCALAR_HOIST` `look`'s twin keeps its plain call:
     // the twin takes `s.w` as a scalar input, `build` holds no scalar for it, and reads `s`
     // only through that call, so the parameter clause binds no address to read it through
     // either — rustc's call site makes the same choice (`@FR-R-Inputs`).
-    for (mode, switch, twins, fresh, versioned, pushed, scalars) in [
-        ("held", "", 2, 3, 1, 2, 1),
-        ("no-inputs", "LOFT_NO_CALLEE_INPUTS", 0, 3, 0, 2, 1),
-        ("no-version", "LOFT_NO_DISTINCT_VERSION", 1, 3, 0, 2, 1),
-        ("no-record-push", "LOFT_NO_RECORD_PUSH", 2, 3, 1, 0, 1),
-        ("no-scalar", "LOFT_NO_SCALAR_HOIST", 1, 3, 1, 2, 0),
-        ("unheld", "LOFT_NO_VECTOR_HOIST", 0, 0, 0, 0, 0),
+    for (mode, switch, twins, fresh, versioned, pushed, scalar_pushed, scalars) in [
+        ("held", "", 2, 3, 1, 2, 4, 1),
+        ("no-inputs", "LOFT_NO_CALLEE_INPUTS", 0, 3, 0, 2, 4, 1),
+        ("no-version", "LOFT_NO_DISTINCT_VERSION", 1, 3, 0, 2, 4, 1),
+        ("no-record-push", "LOFT_NO_RECORD_PUSH", 2, 3, 1, 0, 4, 1),
+        ("no-scalar", "LOFT_NO_SCALAR_HOIST", 1, 3, 1, 2, 4, 0),
+        ("unheld", "LOFT_NO_VECTOR_HOIST", 0, 0, 0, 0, 0, 0),
     ] {
         let c = dir.join(format!("{mode}.c"));
         let mut emit = loft::platform::process::harness_command(loft);
@@ -1408,12 +1409,24 @@ fn main() {
             versioned,
             "{mode}: the loops written twice"
         );
+        let headers = body
+            .lines()
+            .filter(|l| l.contains(" = loft_ph_of("))
+            .count();
+        let mints_headers = body
+            .find("n_mints__fr(")
+            .and_then(|at| body[at..].find("{\n").map(|o| at + o))
+            .map_or(0, |at| {
+                body[at..at + body[at..].find("\n}\n").unwrap_or(0)]
+                    .lines()
+                    .filter(|l| l.contains(" = loft_ph_of("))
+                    .count()
+            });
+        assert_eq!(mints_headers, pushed, "{mode}: the record push headers");
         assert_eq!(
-            body.lines()
-                .filter(|l| l.contains(" = loft_ph_of("))
-                .count(),
-            pushed,
-            "{mode}: the record push headers"
+            headers - mints_headers,
+            scalar_pushed,
+            "{mode}: the scalar push headers"
         );
         let scal = body
             .find("n_scal__fr(")
