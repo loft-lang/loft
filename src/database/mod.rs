@@ -5,6 +5,7 @@
 #![allow(dead_code)]
 
 mod allocation;
+mod closure_share;
 pub use allocation::SLICE_UNCAPPED;
 mod descriptor;
 mod equality;
@@ -465,6 +466,9 @@ pub struct Stores {
     /// place takes a fresh one instead ([`Stores::detach_if_frame_held`]), so the frame keeps
     /// the value it was handed.  Runtime-only: `clone` starts it empty.
     pub(crate) frame_held: Vec<(u16, u32, bool)>,
+    /// loft#2273 — the closure-copy share count, and NOTHING else: see `closure_share.rs`
+    /// before touching it.  Runtime-only: `clone` starts it empty.
+    closure_shares: closure_share::ClosureShares,
     /// @PLN133 S8 — the stores created while a lazy DRIVER is running, or
     /// `None` when none is.
     ///
@@ -793,6 +797,7 @@ impl Clone for Stores {
             owed: upgrade::Owed::default(),
             upgrade_routines: self.upgrade_routines.clone(),
             frame_held: Vec::new(),
+            closure_shares: closure_share::ClosureShares::default(),
             lazy_driver_allocs: None,
             files: Vec::new(),
             max: self.max,
@@ -1578,6 +1583,7 @@ impl Stores {
             owed: upgrade::Owed::default(),
             upgrade_routines: upgrade::Routines::new(),
             frame_held: Vec::new(),
+            closure_shares: closure_share::ClosureShares::default(),
             lazy_driver_allocs: None,
             files: Vec::new(),
             max: 0,

@@ -1707,6 +1707,12 @@ impl Stores {
         if !self.frame_held.is_empty() && self.orphan_if_frame_held(db.store_nr) {
             return;
         }
+        // loft#2273 — a store a closure COPY shares with its source record is released by the
+        // last of them; this free only takes one share back.  The one use of that count:
+        // `closure_share.rs` says why there is no other.
+        if self.release_closure_share(db.store_nr) {
+            return;
+        }
         let al = db.store_nr;
         if !self.evacuated.is_empty() {
             self.evacuated.retain(|((old, _), _)| old.store_nr != al);
@@ -3127,6 +3133,7 @@ impl Stores {
             owed: super::upgrade::Owed::default(),
             upgrade_routines: self.upgrade_routines.clone(),
             frame_held: Vec::new(),
+            closure_shares: super::closure_share::ClosureShares::default(),
             lazy_driver_allocs: None,
             files: Vec::new(),
             max: (self.allocations.len() + scratch_stores) as u16,

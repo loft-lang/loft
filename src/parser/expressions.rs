@@ -5508,6 +5508,13 @@ use a separate collection or add after the loop"
                 *code.unspan_mut() = copy;
                 // Pass 1 has no layout to tell a split field by, and marked the view there.
                 self.vars.clear_skip_free(var_nr);
+                // …and the copy depends on nothing: the host's dep the read carried would make
+                // the local a view of it, which a rebind then declines to release.  Pass 1 left
+                // that dep on the slot, and a bind only ever adds deps, so the slot is cleared
+                // here as `rebuild_call_deps` clears a call result's.
+                s_type = s_type.without_deps();
+                let own = self.vars.tp(var_nr).without_deps();
+                self.vars.set_type(var_nr, own);
             } else {
                 self.vars.set_skip_free(var_nr);
             }
