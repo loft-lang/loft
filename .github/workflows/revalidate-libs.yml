@@ -353,7 +353,9 @@ jobs:
           # the library's migration still to come (its own CI mandates C), not a loft break.
           # One line per failed test function: `FAIL  <file>::<test>  —  <why>`.
           failed="$(grep -cE '^\s*FAIL +[^ ]+::[^ ]+ +—' "$RUNNER_TEMP/native-c.log" || true)"
-          unloaded="$(grep -cE '^\s*FAIL +[^ ]+::[^ ]+ +— +panic: native function [^ ]+ not loaded' "$RUNNER_TEMP/native-c.log" || true)"
+          # Both spellings of that panic: the interpreter's stub (`not loaded`) and the C build's
+          # named one for a Rust-crate library (`is not in this build: … only a Rust native part`).
+          unloaded="$(grep -cE '^\s*FAIL +[^ ]+::[^ ]+ +— +panic: native function [^ ]+ (not loaded|is not in this build)' "$RUNNER_TEMP/native-c.log" || true)"
           if [ "${failed:-0}" -gt 0 ] && [ "$failed" = "$unloaded" ]; then
             echo "::notice title=${{ matrix.name }} C backend::$failed test(s) call a native the C build does not load (a Rust crate in this library or a dependency)"
             exit 0
