@@ -2850,7 +2850,11 @@ LOFT_HOT_INLINE void loft_win_finish(loft_win *w, loft_ref v, uint32_t size) {
  * (`loft_vec_append`: claimed, doubled, refused when locked, dropped when absent) and the header
  * is derived again.  The finish writes the length back, so the store answers every other read
  * and no exit has anything to sync.  A locked store has no room, so its mints refuse as before. */
-typedef struct { loft_ref v; uint32_t rec; uint32_t len; uint32_t cap; } loft_ph;
+/* `base` is the record's address when it was derived.  Only a loop whose one growth is this
+ * header's own pushes writes through it (`@FR-R-Push`'s sole-growth clause, `loft_ph_putb*`):
+ * nothing else in such a loop moves the store's memory, and the growth step derives the whole
+ * header again. */
+typedef struct { loft_ref v; uint32_t rec; uint32_t len; uint32_t cap; uint8_t *base; } loft_ph;
 
 LOFT_HOT_INLINE loft_ph loft_ph_of(loft_ref v, uint32_t size) {
     loft_ph h;
@@ -2858,11 +2862,13 @@ LOFT_HOT_INLINE loft_ph loft_ph_of(loft_ref v, uint32_t size) {
     h.rec = 0;
     h.len = 0;
     h.cap = 0;
+    h.base = 0;
     if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return h;
     loft_store_t *s = loft_store_of(v);
     uint32_t r = loft_collection_rec(s, v.rec, v.pos);
     if (r == 0) return h;
     h.rec = r;
+    h.base = loft_at(s, r, 0);
     h.len = loft_u32(s, r, 4);
     if (s->read_only) return h;
     int32_t claimed;
@@ -2911,10 +2917,36 @@ LOFT_PH_PUT(8, uint64_t)
 LOFT_PH_PUT(4, uint32_t)
 LOFT_PH_PUT(1, uint8_t)
 
+/* `@FR-R-Push`'s sole-growth clause: the same push through the record address the header
+ * holds — a push that fits stores the element and the length at that address, without
+ * resolving the store; one that does not takes `loft_ph_put*`'s growth step, which derives
+ * the header (and its address) again.  A header with no room (absent, refused, locked) never
+ * reads the address. */
+#define LOFT_PH_PUTB(W, T)                                                                  \
+    LOFT_HOT_INLINE void loft_ph_putb##W(loft_ph *h, T bits) {                              \
+        if (LOFT_LIKELY(h->len < h->cap)) {                                                 \
+            memcpy(h->base + 8 + (size_t) h->len * W, &bits, W);                            \
+            h->len++;                                                                       \
+            memcpy(h->base + 4, &h->len, 4);                                                \
+            return;                                                                         \
+        }                                                                                   \
+        loft_ph_put##W(h, bits);                                                            \
+    }
+LOFT_PH_PUTB(8, uint64_t)
+LOFT_PH_PUTB(4, uint32_t)
+LOFT_PH_PUTB(1, uint8_t)
+
 /* `LOFT_VERIFY`'s proof for a push header: a fresh derivation answers its record, length and room. */
 static int loft_ph_same(loft_ph h, uint32_t size) {
     loft_ph f = loft_ph_of(h.v, size);
     return f.rec == h.rec && f.len == h.len && f.cap == h.cap;
+}
+
+/* `LOFT_VERIFY`'s proof for a push header that writes through its address: the address too is
+ * what a fresh derivation answers — nothing moved the store since the header was derived. */
+static int loft_phb_same(loft_ph h, uint32_t size) {
+    loft_ph f = loft_ph_of(h.v, size);
+    return loft_ph_same(h, size) && f.base == h.base;
 }
 
 /* `LOFT_VERIFY`'s proof for a windowed push: the window still describes the vector — its

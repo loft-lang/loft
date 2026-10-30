@@ -84,10 +84,12 @@ struct E {
 }
 
 /// What a loop's verdict hands its push headers: the minted record paths and the scalar pushed
-/// paths, each with the vector operand the prelude evaluates.
+/// paths, each with the vector operand the prelude evaluates, and whether the loop's one
+/// growth is its one pushed path's pushes (`hoist::LoopHoist::sole_push`).
 type Pushed = (
     Vec<(crate::opt::writes::PathKey, Value)>,
     Vec<(crate::opt::writes::PathKey, Value)>,
+    bool,
 );
 
 impl E {
@@ -230,8 +232,9 @@ pub(crate) struct FnWriter<'a> {
     /// (`format_into_dest`): the work variable and the destination's C name.
     work_alias: Option<(u16, String)>,
     /// The record push headers each enclosing loop binds (`loft_ph`, `@FR-R-PushRec`): the
-    /// path, the header and the element size, innermost last.
-    push_heads: Vec<Vec<(crate::opt::writes::PathKey, String, u32)>>,
+    /// path, the header, the element size and whether its pushes write through the record
+    /// address it holds (`@FR-R-Push`'s sole-growth clause), innermost last.
+    push_heads: Vec<Vec<(crate::opt::writes::PathKey, String, u32, bool)>>,
     /// The header gate's memo of which callees write a store.
     hoist_cache: std::collections::HashMap<u32, bool>,
     /// The locals `(R-Place)` put in another record's store (`hoist::placed_locals`), for
@@ -1104,9 +1107,11 @@ impl<'a> FnWriter<'a> {
         let mut mints = Vec::new();
         let mut pushes = Vec::new();
         let mut held_scalars = Vec::new();
+        let mut sole_push = false;
         if let Some(verdict) = self.verdict(b) {
             mints.clone_from(&verdict.mint_pushes);
             pushes.clone_from(&verdict.pushes);
+            sole_push = verdict.sole_push;
             for (key, getter) in &verdict.scalars {
                 // A direct read the loop spells `getter(Var(v), fld)` is what this serves; a
                 // path scalar of a callee's input shares its key and its bytes.
@@ -1177,7 +1182,7 @@ impl<'a> FnWriter<'a> {
         }
         self.headers.push(frame);
         self.scalars.push(held_scalars);
-        Ok((mints, pushes))
+        Ok((mints, pushes, sole_push))
     }
 
     /// `@FR-R-Invariant` (@PLN157 § V-ao, rustc's `begin_vector_hoist`): each invariant integer
@@ -1275,10 +1280,16 @@ impl<'a> FnWriter<'a> {
     fn hold_pushes(
         &mut self,
         b: &Block,
-        (mints, pushes): Pushed,
+        (mints, pushes, sole_push): Pushed,
         ind: usize,
     ) -> Result<(), String> {
         let mut frame = Vec::new();
+        // `@FR-R-Push`'s sole-growth clause: the loop's one growth is this path's pushes, so
+        // its header writes through the record address it holds.  `LOFT_NO_PUSH_BASE=1`
+        // resolves the store per push again.
+        let based = sole_push
+            && pushes.len() == 1
+            && !std::env::var("LOFT_NO_PUSH_BASE").is_ok_and(|v| v != "0");
         // `@FR-R-Push`: a scalar pushed path the verdict admits (never also one of its held
         // vectors) keeps a push header the push itself keeps current; its size is its pushes'.
         for (path, expr) in pushes {
@@ -1292,10 +1303,13 @@ impl<'a> FnWriter<'a> {
             let e = self.nested(|w| w.expr(&expr, ind))?;
             let h = format!("ph{}", self.decls.len() + 1);
             self.decls
-                .push(format!("loft_ph {h} = {{ {{ 0xFFFF, 0, 0 }}, 0, 0, 0 }};"));
+                .push(format!("loft_ph {h} = {{ {{ 0xFFFF, 0, 0 }}, 0, 0, 0, 0 }};"));
             self.line(ind, &format!("{h} = loft_ph_of({}, {size});", as_ref(e)?));
             crate::rewrite_census::fired("R-Push", 1);
-            frame.push((path, h, size));
+            if based {
+                crate::rewrite_census::fired("R-Push/sole", 1);
+            }
+            frame.push((path, h, size, based));
         }
         for (path, expr) in mints {
             if self.windows.iter().any(|(p, _, _, _)| *p == path) || self.push_head(&path).is_some()
@@ -1308,10 +1322,10 @@ impl<'a> FnWriter<'a> {
             let e = self.nested(|w| w.expr(&expr, ind))?;
             let h = format!("ph{}", self.decls.len() + 1);
             self.decls
-                .push(format!("loft_ph {h} = {{ {{ 0xFFFF, 0, 0 }}, 0, 0, 0 }};"));
+                .push(format!("loft_ph {h} = {{ {{ 0xFFFF, 0, 0 }}, 0, 0, 0, 0 }};"));
             self.line(ind, &format!("{h} = loft_ph_of({}, {size});", as_ref(e)?));
             crate::rewrite_census::fired("R-PushRec", 1);
-            frame.push((path, h, size));
+            frame.push((path, h, size, false));
         }
         self.push_heads.push(frame);
         Ok(())
@@ -1371,12 +1385,17 @@ impl<'a> FnWriter<'a> {
 
     /// The record push header an enclosing loop binds for `path`, with its element size.
     fn push_head(&self, path: &crate::opt::writes::PathKey) -> Option<(String, u32)> {
+        self.push_head_based(path).map(|(h, size, _)| (h, size))
+    }
+
+    /// [`Self::push_head`], with whether its pushes write through its record address.
+    fn push_head_based(&self, path: &crate::opt::writes::PathKey) -> Option<(String, u32, bool)> {
         self.push_heads
             .iter()
             .rev()
             .flat_map(|f| f.iter())
-            .find(|(p, _, _)| p == path)
-            .map(|(_, h, size)| (h.clone(), *size))
+            .find(|(p, _, _, _)| p == path)
+            .map(|(_, h, size, based)| (h.clone(), *size, *based))
     }
 
     /// A mint, a finish or a length of a path a record push header serves.
@@ -1399,7 +1418,7 @@ impl<'a> FnWriter<'a> {
                 .map(|_| E::new("((void) 0)", K::Void)));
         }
         if let Some(fp) = crate::opt::writes::fused_push(data, name, args)
-            && let Some((h, size)) = self.push_head(&fp.path)
+            && let Some((h, size, based)) = self.push_head_based(&fp.path)
             && size == fp.size
         {
             let val = self.expr(fp.val, ind)?;
@@ -1427,9 +1446,14 @@ impl<'a> FnWriter<'a> {
                 _ => return Ok(None),
             };
             let proof_at = format!("{}:{h}", data.def(self.d).original_name());
+            let (same, put) = if based {
+                ("loft_phb_same", put.replacen("loft_ph_put", "loft_ph_putb", 1))
+            } else {
+                ("loft_ph_same", put.to_string())
+            };
             return Ok(Some(E::new(
                 format!(
-                    "(LOFT_PROVED(loft_ph_same({h}, {size}), {}), {put}(&{h}, {bits}))",
+                    "(LOFT_PROVED({same}({h}, {size}), {}), {put}(&{h}, {bits}))",
                     c_string(&proof_at)
                 ),
                 K::Void,
