@@ -184,6 +184,12 @@ def wasm_run(wasm: str, cwd: Path, tmpdir: str) -> list[str]:
             "--env", f"LOFT_SOURCE_DIR={cwd}",
             *env, wasm]
 HAS_MAIN = re.compile(r"^\s*(pub\s+)?fn\s+main\s*\(", re.M)
+# A `#cwd` program (`loft` @PLN9) opts out of program-relative paths: it reads and writes
+# relative to the PROCESS's working directory, which the test harness sets to the workspace
+# root.  Run from the program's own directory instead, every such path missed on BOTH sides,
+# and an oracle and a C build that both fail every load scored as a match — the golden-image
+# readers among them, whose whole point is what they load.
+CWD_DIRECTIVE = re.compile(r"^\s*#cwd\b", re.M)
 
 
 def corpus() -> list[str]:
@@ -295,7 +301,7 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
     tenv = {"TMPDIR": tmpdir}
     c = os.path.join(tmp, "p.c")
     exe = os.path.join(tmp, "p")
-    code, _, err = run([LOFT, "--emit-c", c, str(src)], 60, cwd=src.parent)
+    code, _, err = run([LOFT, "--emit-c", c, str(src)], 60, cwd=src.parent)  # emit: no I/O
     if code == 2:
         return path, "refused", reason(err), None, {}
     if code != 0:
@@ -313,7 +319,9 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
         return path, "refused", "a declared C library has no wasm32 build", None, {}
     if any(m in CROSS for m in modes) and any(not l.startswith("-Wl,") for l in links if not l.endswith(".a")):
         return path, "refused", "a declared C library has no 32-bit build", None, {}
-    tests = not HAS_MAIN.search(src.read_text(encoding="utf-8", errors="replace"))
+    text = src.read_text(encoding="utf-8", errors="replace")
+    tests = not HAS_MAIN.search(text)
+    rundir = ROOT if CWD_DIRECTIVE.search(text) else src.parent
     # A program without `main` is its tests: the C runs them as `loft --tests` does,
     # and the two exit statuses say whether every test passed.
     interp = [LOFT, "--tests" if tests else "--interpret"] + \
@@ -323,12 +331,12 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
     for mode in modes:
         flags, env = {**POISON_MODES, **STRICT_MODES, **VERIFY_MODES}.get(mode, (MODES.get(mode), None))
         if env:
-            i_out, times["interp"] = timed(interp, limit(path, "interp"), cwd=src.parent,
+            i_out, times["interp"] = timed(interp, limit(path, "interp"), cwd=rundir,
                                            env={**env, **tenv})
         else:
             i_out = i_plain
         if i_out is None:
-            i_out, times["interp"] = timed(interp, limit(path, "interp"), cwd=src.parent, env=tenv)
+            i_out, times["interp"] = timed(interp, limit(path, "interp"), cwd=rundir, env=tenv)
             i_plain = i_out
         why = killed(path, "interp", i_out)
         if why:
@@ -354,7 +362,7 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
         run_cmd = wasm_run(exe + ".wasm", src.parent, tmpdir) if mode == "wasm" else \
             ["qemu-riscv32", exe] if mode == "riscv32" else [exe]
         c_out, times[mode] = timed(run_cmd,
-                                   limit(path, mode), cwd=src.parent,
+                                   limit(path, mode), cwd=rundir,
                                    env={**tenv, "LOFT_SOURCE_DIR": str(src.parent.resolve())})
         why = killed(path, mode, c_out)
         if why:
@@ -376,7 +384,7 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
             # and the pid) cannot match: when the interpreter's own second run says
             # something else, the stream is not compared.
             if not same:
-                again = run(interp, ORACLE_TIMEOUT, cwd=src.parent, env={**(env or {}), **tenv})
+                again = run(interp, ORACLE_TIMEOUT, cwd=rundir, env={**(env or {}), **tenv})
                 same = scrubbed(again[2]) != scrubbed(i_out[2])
         if same and mode == "copy-check" and \
                 (b"[copy_check]" in c_out[2]) != (b"[copy_check]" in i_out[2]):
