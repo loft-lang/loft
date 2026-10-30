@@ -1036,17 +1036,20 @@ pub enum FileUpgrade {
     },
 }
 
-/// The `.dschema` text and the image of the store file at `path`.
+/// The `.dschema` text and the image of the store file at `path`, from either filesystem —
+/// the one the layout gate read them from, so a browser page converts what native converts.
 fn read_store_file(path: &std::path::Path) -> Result<(String, Vec<u8>), String> {
     let side = crate::schema_sidecar::dschema_path(path);
-    let text = crate::file_access::read_to_string(&side).map_err(|_| {
+    let text = crate::schema_sidecar::sidecar_text(&side).ok_or_else(|| {
         format!(
             "{} has no recorded layout ({} is missing), so what it holds cannot be known",
             path.display(),
             side.display()
         )
     })?;
-    let bytes = crate::file_access::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let bytes = crate::file_access::read(path)
+        .or_else(|e| path.to_str().and_then(crate::store::image_bytes).ok_or(e))
+        .map_err(|e| e.to_string())?; // the error already names the path
     Ok((text, bytes))
 }
 

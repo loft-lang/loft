@@ -451,6 +451,15 @@ fn host_sidecar_text(_path: &Path) -> Option<String> {
     None
 }
 
+/// The sidecar's text from either filesystem: the program's, else the page's own.  The
+/// converter reads through this, so a page that `check_file` judged convertible can also
+/// open what it is converting.
+pub(crate) fn sidecar_text(path: &Path) -> Option<String> {
+    crate::file_access::read_to_string(path)
+        .ok()
+        .or_else(|| host_sidecar_text(path))
+}
+
 /// Read the `.dschema` sidecar beside `store_path` and compare it with the
 /// running program's identity `current`. A changed layout is DETECTED here —
 /// never a silent raw handoff across a layout change (the @PLN97 gap). Also the
