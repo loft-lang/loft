@@ -7190,16 +7190,25 @@ impl Stores {
     /// untyped local store has no identity to compare and passes. `path`
     /// is a local file or an `http(s)://` URL — the sidecar is read from beside
     /// it (`<path>.dschema`), over the same transport.
+    ///
+    /// `Some(trie_v1)` reads the image; `trie_v1` says its tries were written under a
+    /// placement this build reads as written (`placement::TRIE_READS`), which the reader must
+    /// be told ([`PagedReader::trie_v1`](crate::paged_reader::PagedReader::trie_v1)).
     #[cfg(paged_store)]
-    fn layout_gate_ok(&mut self, path: &str, local: &DbRef) -> bool {
+    fn layout_gate_ok(&mut self, path: &str, local: &DbRef) -> Option<bool> {
         let known_type = self.allocations[local.store_nr as usize].known_type;
         if known_type == u16::MAX {
-            return true; // untyped store — no identity to compare against
+            return Some(false); // untyped store — no identity to compare against
         }
         let current = crate::schema_sidecar::LayoutIdentity::of(self, &[known_type]);
         let verdict = crate::paged_reader::check_sidecar(path, &current, self.release());
         if verdict.is_raw_safe() {
-            return true;
+            return Some(false);
+        }
+        if let crate::schema_sidecar::SchemaVerdict::Changed(diff) = &verdict
+            && diff.trie_v1
+        {
+            return Some(true);
         }
         // A layout mismatch is a rare, important safety event — always surface it
         // so a rejected load is not silently mistaken for "key absent". Through
@@ -7217,7 +7226,7 @@ impl Stores {
             ),
         };
         self.refuse_paged(path, &reason);
-        false
+        None
     }
 
     /// @PLN97 arc G Phase 4 / 3b.7 — load the entries with integer key in
@@ -7237,15 +7246,16 @@ impl Stores {
             return 0;
         };
         let path = resolved.as_str();
-        if !self.layout_gate_ok(path, local) {
+        let Some(trie_v1) = self.layout_gate_ok(path, local) else {
             return 0;
-        }
+        };
         use crate::paged_reader::{PageSource, PagedReader};
         let Ok(source) = PageSource::open(path) else {
             self.refuse_paged(path, "it cannot be opened as a paged source");
             return 0;
         };
         let mut reader = PagedReader::new(source);
+        reader.trie_v1 = trie_v1;
         let tp = self.allocations[local.store_nr as usize].known_type;
         if tp == u16::MAX {
             self.refuse_paged(path, "the target collection's store has no recorded type");
@@ -7948,15 +7958,16 @@ impl Stores {
             return false;
         };
         let path = resolved.as_str();
-        if !self.layout_gate_ok(path, local) {
+        let Some(trie_v1) = self.layout_gate_ok(path, local) else {
             return false;
-        }
+        };
         use crate::paged_reader::{PageSource, PagedReader};
         let Ok(source) = PageSource::open(path) else {
             self.refuse_paged(path, "it cannot be opened as a paged source");
             return false;
         };
         let mut reader = PagedReader::new(source);
+        reader.trie_v1 = trie_v1;
         let root_tp = self.allocations[local.store_nr as usize].known_type;
         if root_tp == u16::MAX {
             self.refuse_paged(path, "the target collection's store has no recorded type");
@@ -8019,15 +8030,16 @@ impl Stores {
             return 0;
         };
         let path = resolved.as_str();
-        if !self.layout_gate_ok(path, local) {
+        let Some(trie_v1) = self.layout_gate_ok(path, local) else {
             return 0;
-        }
+        };
         use crate::paged_reader::{PageSource, PagedReader};
         let Ok(source) = PageSource::open(path) else {
             self.refuse_paged(path, "it cannot be opened as a paged source");
             return 0;
         };
         let mut reader = PagedReader::new(source);
+        reader.trie_v1 = trie_v1;
         let root_tp = self.allocations[local.store_nr as usize].known_type;
         if root_tp == u16::MAX {
             self.refuse_paged(path, "the target collection's store has no recorded type");
@@ -8112,15 +8124,16 @@ impl Stores {
             return 0;
         };
         let path = resolved.as_str();
-        if !self.layout_gate_ok(path, local) {
+        let Some(trie_v1) = self.layout_gate_ok(path, local) else {
             return 0;
-        }
+        };
         use crate::paged_reader::{PageSource, PagedReader};
         let Ok(source) = PageSource::open(path) else {
             self.refuse_paged(path, "it cannot be opened as a paged source");
             return 0;
         };
         let mut reader = PagedReader::new(source);
+        reader.trie_v1 = trie_v1;
         let root_tp = self.allocations[local.store_nr as usize].known_type;
         if root_tp == u16::MAX {
             self.refuse_paged(path, "the target collection's store has no recorded type");
@@ -8258,9 +8271,9 @@ impl Stores {
         key_sets: &[Vec<crate::keys::Content>],
         stats_label: &str,
     ) -> i64 {
-        if !self.layout_gate_ok(path, local) {
+        let Some(trie_v1) = self.layout_gate_ok(path, local) else {
             return 0;
-        }
+        };
         use crate::paged_reader::{PageSource, PagedReader};
         // `path` is a local file OR an `http(s)://` URL — the paged reader pulls
         // only the pages a lookup touches, from disk or over the network (#517).
@@ -8269,6 +8282,7 @@ impl Stores {
             return 0;
         };
         let mut reader = PagedReader::new(source);
+        reader.trie_v1 = trie_v1;
 
         // Schema from the LIVE type of `local` (never reverse-engineered bytes).
         // `known_type` roots the collection directly (annotated local) OR the

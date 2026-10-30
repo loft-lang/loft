@@ -345,9 +345,11 @@ impl Deriver<'_> {
         };
         // A keyed collection this build lays out differently cannot even be walked — unless it
         // is a hash under a placement this build reads as written (@C152).
-        let readable = |token: &str| {
-            matches!(on, LayoutNode::Iterated(Iterated::Hash { .. }))
-                && crate::placement::hash_reads(token)
+        // A trie under an older placement is walked key-free and filed again (loft#2241).
+        let readable = |token: &str| match on {
+            LayoutNode::Iterated(Iterated::Hash { .. }) => crate::placement::hash_reads(token),
+            LayoutNode::Iterated(Iterated::Trie { .. }) => crate::placement::trie_reads(token),
+            _ => false,
         };
         if let Some(token) = self.old.placements.get(&old)
             && !readable(token)

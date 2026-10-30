@@ -227,6 +227,11 @@ pub struct LayoutDiff {
     pub dropped: Vec<String>,
     /// Type names in both whose storage layout differs (a reshape).
     pub changed: Vec<String>,
+    /// loft#2241 — the layouts agree once each `trie` written under a placement this build
+    /// reads ([`crate::placement::TRIE_READS`]) is read as this build's.  A whole-image load
+    /// still converts such a store; a paged reader reads it as written, under the old key
+    /// reading.
+    pub trie_v1: bool,
 }
 
 /// The reload/persistence handoff decision, comparing a stored identity (OLD,
@@ -277,7 +282,11 @@ pub fn classify(old: &LayoutIdentity, new: &LayoutIdentity) -> Handoff {
             .collect()
     };
     let (o, n) = (index(&old.dump), index(&new.dump));
-    let mut diff = LayoutDiff::default();
+    let mut diff = LayoutDiff {
+        trie_v1: crate::placement::trie_read_as_own(&read) == new.dump
+            && (old.schema.is_empty() || new.schema.is_empty() || old.schema == new.schema),
+        ..LayoutDiff::default()
+    };
     for (name, row) in &n {
         match o.get(name) {
             None => diff.added.push(name.clone()),

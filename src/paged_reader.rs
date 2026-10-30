@@ -525,6 +525,10 @@ pub fn check_sidecar(
 /// small cache over a huge store is fine — it just fetches more. Correctness is
 /// **independent of residency** (the `capacity == 1` test proves it).
 pub struct PagedReader<P: PageProvider> {
+    /// loft#2241 — the image's tries were written under placement token `1`: their keys are
+    /// read raw (no `0x00`/`0x01` escape) and a null key was filed in the tree, as that
+    /// writer did, so the image reads exactly as it was written.  Set by the layout gate.
+    pub trie_v1: bool,
     provider: P,
     page_size: usize,
     /// `page_idx -> page bytes` (always `page_size` long; the last page is
@@ -607,6 +611,7 @@ impl<P: PageProvider> PagedReader<P> {
     /// exceed it (loft#785).
     pub fn with_config(provider: P, page_size: usize, capacity: usize) -> Self {
         Self {
+            trie_v1: false,
             provider,
             page_size: page_size.max(1),
             pages: std::collections::HashMap::new(),
@@ -1405,6 +1410,9 @@ struct PagedTrie<'a, P: PageProvider> {
     /// one record's key, and the prefix walk then compares that same key again, so
     /// without this every 8 bytes of comparison costs a string-record read.
     cached: Option<(u32, Vec<u8>)>,
+    /// The image's tries were written under placement token `1` ([`PagedReader::trie_v1`]):
+    /// keys read raw, no null slot.
+    v1: bool,
 }
 
 impl<'a, P: PageProvider> PagedTrie<'a, P> {
@@ -1412,6 +1420,7 @@ impl<'a, P: PageProvider> PagedTrie<'a, P> {
     /// 4-byte claim slot a resident trie keeps its tree id in.
     fn open(reader: &'a mut PagedReader<P>, root_rec: u32, root_pos: u32, key_pos: u32) -> Self {
         let (tree, nodes) = tree_at(reader, root_rec, root_pos);
+        let v1 = reader.trie_v1;
         Self {
             reader,
             tree,
@@ -1419,6 +1428,27 @@ impl<'a, P: PageProvider> PagedTrie<'a, P> {
             nodes,
             fuel: 0,
             cached: None,
+            v1,
+        }
+    }
+
+    /// A key's bytes as this image's tree files them: escaped (`trie_db::tree_bytes`), or raw
+    /// for a token-`1` image.
+    fn filed<'b>(&self, b: &'b [u8]) -> std::borrow::Cow<'b, [u8]> {
+        if self.v1 {
+            std::borrow::Cow::Borrowed(b)
+        } else {
+            crate::trie_db::tree_bytes(b)
+        }
+    }
+
+    /// The record in the null slot, `0` when none — always `0` for a token-`1` image, whose
+    /// slot word was the node capacity (`trie_db::slot_rec` reads it as none regardless).
+    fn null_rec(&mut self) -> u32 {
+        if self.v1 || self.tree == 0 {
+            0
+        } else {
+            crate::trie_db::slot_rec(self.reader.u32_at(self.tree, crate::radix_tree::SLOT))
         }
     }
 
@@ -1472,10 +1502,22 @@ impl<P: PageProvider> crate::radix_tree::TreeNodes for PagedTrie<'_, P> {
 
 impl<P: PageProvider> crate::radix_tree::TreeKeys for PagedTrie<'_, P> {
     fn rec_bits(&mut self, rec: u32) -> u32 {
-        self.key_bytes(rec).len() as u32 * 8
+        let v1 = self.v1;
+        let b = self.key_bytes(rec);
+        if v1 {
+            b.len() as u32 * 8
+        } else {
+            crate::trie_db::tree_bytes(b).len() as u32 * 8
+        }
     }
     fn rec_word(&mut self, rec: u32, word: u32) -> u64 {
-        crate::trie_db::bytes_word(self.key_bytes(rec), word)
+        let v1 = self.v1;
+        let b = self.key_bytes(rec);
+        if v1 {
+            crate::trie_db::bytes_word(b, word)
+        } else {
+            crate::trie_db::bytes_word(&crate::trie_db::tree_bytes(b), word)
+        }
     }
 }
 
@@ -1511,8 +1553,13 @@ pub fn trie_find_rec<P: PageProvider>(
     if src.tree == 0 {
         return 0;
     }
-    let q = key.as_bytes();
-    let probe = |w: u32| crate::trie_db::bytes_word(q, w);
+    // A null key is filed in the slot ahead of the tree (`@FR-Col-Trie`), never in it.
+    if !src.v1 && key.as_bytes() == crate::store::STRING_NULL.as_bytes() {
+        return src.null_rec();
+    }
+    let raw = key.as_bytes().to_vec();
+    let q = src.filed(&raw).into_owned();
+    let probe = |w: u32| crate::trie_db::bytes_word(&q, w);
     let probe_bits = q.len() as u32 * 8;
     let (it, d) = crate::radix_tree::seek_gen(&mut src, &probe, probe_bits);
     let rec = it.rec();
@@ -1523,7 +1570,7 @@ pub fn trie_find_rec<P: PageProvider>(
     // whole length does not exclude a LONGER stored key (`"ab"` against `"abc"`),
     // and equal lengths alone say nothing about the bits.
     let matched = d.is_none_or(|d| d >= probe_bits);
-    if matched && src.key_bytes(rec).len() as u32 * 8 == probe_bits {
+    if matched && src.key_bytes(rec) == raw.as_slice() {
         rec
     } else {
         0
@@ -1563,9 +1610,11 @@ pub fn trie_prefix_recs<P: PageProvider>(
     if cap == 0 {
         return out;
     }
+    // The null slot is in no prefix slice: a null text begins with nothing.
     let q = pre.as_bytes();
-    let probe = |w: u32| crate::trie_db::bytes_word(q, w);
-    let (mut it, _) = crate::radix_tree::seek_gen(&mut src, &probe, q.len() as u32 * 8);
+    let filed = src.filed(q).into_owned();
+    let probe = |w: u32| crate::trie_db::bytes_word(&filed, w);
+    let (mut it, _) = crate::radix_tree::seek_gen(&mut src, &probe, filed.len() as u32 * 8);
     let mut rec = it.rec();
     while rec != 0 && out.len() < cap {
         if !src.key_bytes(rec).starts_with(q) {
