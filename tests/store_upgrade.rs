@@ -2013,3 +2013,18 @@ fn loft_package_records_an_applications_baseline() {
     );
     let _ = loft::file_access::remove_dir_all(&dir);
 }
+
+/// `@FR-L-OutOfLine` (@C159, S7) — a stored type that gains a field of its own type takes it
+/// absent (a child record number 0), and one that loses it drops the subtree with it; neither
+/// is a rename or a changed kind.
+#[test]
+fn an_added_or_removed_child_field_upgrades() {
+    let without = "struct T { k: integer, n: text }\nstruct W { items: hash<T[k]> }\n";
+    let with = "struct T { k: integer, n: text, next: T? }\nstruct W { items: hash<T[k]> }\n";
+    let (ok, text) = verdict(without, with, "W");
+    assert!(ok, "a child added is an upgrade:\n{text}");
+    assert!(text.contains("T.next added"), "named as an added field:\n{text}");
+    let (ok, text) = verdict(with, without, "W");
+    assert!(ok, "a child removed is an upgrade:\n{text}");
+    assert!(text.contains("T.next"), "named as a removed field:\n{text}");
+}
