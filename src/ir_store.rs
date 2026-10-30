@@ -55,6 +55,20 @@ fn type_child(stores: &mut Stores, slot: &Record, off: u32, ty: &Type) {
     materialize_type(stores, slot.field_recvec(off, ds::TYPET_STRIDE), ty);
 }
 
+/// Write a `Box<Type>` that is a `TypeT`'s own child into the out-of-line field at `off`
+/// (`@FR-L-OutOfLine`): a child record in the slot's store.
+fn type_child_rec(stores: &mut Stores, slot: &Record, off: u32, ty: &Type) {
+    let child = slot.new_child(stores, off, ds::TYPET_STRIDE);
+    write_type(stores, &child, ty);
+}
+
+/// Write a `Box<Value>` that is a `Node`'s own child into the out-of-line field at `off`
+/// (`@FR-L-OutOfLine`): a child record in the node's store.
+fn node_child_rec(stores: &mut Stores, slot: &Node, off: u32, v: &Value) {
+    let child = slot.new_child(stores, off);
+    write_into(stores, &child, v);
+}
+
 /// Write a `Vec<Type>` as N elements of the `vector<TypeT>` at `off`.
 fn type_list(stores: &mut Stores, slot: &Record, off: u32, tys: &[Type]) {
     let v = slot.field_recvec(off, ds::TYPET_STRIDE);
@@ -100,7 +114,7 @@ fn write_type(stores: &mut Stores, slot: &Record, ty: &Type) {
         // keeps the marker.
         Type::Optional(inner) => {
             slot.set_discriminant(stores, ds::TY_OPTIONAL);
-            type_child(stores, slot, ds::TYOPTIONAL_INNER, inner);
+            type_child_rec(stores, slot, ds::TYOPTIONAL_INNER, inner);
         }
         Type::Unknown(n) => {
             slot.set_discriminant(stores, ds::TY_UNKNOWN);
@@ -140,11 +154,11 @@ fn write_type(stores: &mut Stores, slot: &Record, ty: &Type) {
         }
         Type::RefVar(inner) => {
             slot.set_discriminant(stores, ds::TY_REF_VAR);
-            type_child(stores, slot, ds::TYREFVAR_INNER, inner);
+            type_child_rec(stores, slot, ds::TYREFVAR_INNER, inner);
         }
         Type::Vector(inner, dep) => {
             slot.set_discriminant(stores, ds::TY_VECTOR);
-            type_child(stores, slot, ds::TYVECTOR_INNER, inner);
+            type_child_rec(stores, slot, ds::TYVECTOR_INNER, inner);
             dep_list(stores, slot, ds::TYVECTOR_DEP, dep);
         }
         Type::Routine(n) => {
@@ -153,8 +167,8 @@ fn write_type(stores: &mut Stores, slot: &Record, ty: &Type) {
         }
         Type::Iterator(step, inner) => {
             slot.set_discriminant(stores, ds::TY_ITERATOR);
-            type_child(stores, slot, ds::TYITER_STEP, step);
-            type_child(stores, slot, ds::TYITER_INNER, inner);
+            type_child_rec(stores, slot, ds::TYITER_STEP, step);
+            type_child_rec(stores, slot, ds::TYITER_INNER, inner);
         }
         Type::Sorted(n, keys, dep) => {
             slot.set_discriminant(stores, ds::TY_SORTED);
@@ -189,13 +203,13 @@ fn write_type(stores: &mut Stores, slot: &Record, ty: &Type) {
         Type::Function(args, result, dep, consts) => {
             slot.set_discriminant(stores, ds::TY_FUNCTION);
             type_list(stores, slot, ds::TYFUNC_ARGS, args);
-            type_child(stores, slot, ds::TYFUNC_RESULT, result);
+            type_child_rec(stores, slot, ds::TYFUNC_RESULT, result);
             dep_list(stores, slot, ds::TYFUNC_DEP, dep);
             slot.set_field_int(stores, ds::TYFUNC_CONSTS, i64::from(consts.bits()));
         }
         Type::Rewritten(inner) => {
             slot.set_discriminant(stores, ds::TY_REWRITTEN);
-            type_child(stores, slot, ds::TYREWRITTEN_INNER, inner);
+            type_child_rec(stores, slot, ds::TYREWRITTEN_INNER, inner);
         }
         Type::Tuple(elems) => {
             slot.set_discriminant(stores, ds::TY_TUPLE);
@@ -944,28 +958,28 @@ fn write_into(stores: &mut Stores, slot: &Node, v: &Value) {
         Value::Set(var, inner) => {
             slot.set_discriminant(stores, ds::DISC_SET);
             slot.set_field_int(stores, ds::NDSET_VAR, i64::from(*var));
-            materialize_node(stores, slot.field_vec(ds::NDSET_INNER), inner);
+            node_child_rec(stores, slot, ds::NDSET_INNER, inner);
         }
         Value::Return(inner) => {
             slot.set_discriminant(stores, ds::DISC_RETURN);
-            materialize_node(stores, slot.field_vec(ds::NDRETURN_INNER), inner);
+            node_child_rec(stores, slot, ds::NDRETURN_INNER, inner);
         }
         Value::If(cond, t, f) => {
             slot.set_discriminant(stores, ds::DISC_IF);
-            materialize_node(stores, slot.field_vec(ds::NDIF_COND), cond);
-            materialize_node(stores, slot.field_vec(ds::NDIF_T), t);
-            materialize_node(stores, slot.field_vec(ds::NDIF_F), f);
+            node_child_rec(stores, slot, ds::NDIF_COND, cond);
+            node_child_rec(stores, slot, ds::NDIF_T, t);
+            node_child_rec(stores, slot, ds::NDIF_F, f);
         }
         Value::Drop(inner) => {
             slot.set_discriminant(stores, ds::DISC_DROP);
-            materialize_node(stores, slot.field_vec(ds::NDDROP_INNER), inner);
+            node_child_rec(stores, slot, ds::NDDROP_INNER, inner);
         }
         Value::Iter(var, create, next, init) => {
             slot.set_discriminant(stores, ds::DISC_ITER);
             slot.set_field_int(stores, ds::NDITER_VAR, i64::from(*var));
-            materialize_node(stores, slot.field_vec(ds::NDITER_CREATE), create);
-            materialize_node(stores, slot.field_vec(ds::NDITER_NEXT), next);
-            materialize_node(stores, slot.field_vec(ds::NDITER_INIT), init);
+            node_child_rec(stores, slot, ds::NDITER_CREATE, create);
+            node_child_rec(stores, slot, ds::NDITER_NEXT, next);
+            node_child_rec(stores, slot, ds::NDITER_INIT, init);
         }
         Value::Tuple(items) => {
             slot.set_discriminant(stores, ds::DISC_TUPLE);
@@ -975,11 +989,11 @@ fn write_into(stores: &mut Stores, slot: &Node, v: &Value) {
             slot.set_discriminant(stores, ds::DISC_TUPLE_PUT);
             slot.set_field_int(stores, ds::NDTUPLEPUT_VAR, i64::from(*var));
             slot.set_field_int(stores, ds::NDTUPLEPUT_IDX, i64::from(*idx));
-            materialize_node(stores, slot.field_vec(ds::NDTUPLEPUT_INNER), inner);
+            node_child_rec(stores, slot, ds::NDTUPLEPUT_INNER, inner);
         }
         Value::Yield(inner) => {
             slot.set_discriminant(stores, ds::DISC_YIELD);
-            materialize_node(stores, slot.field_vec(ds::NDYIELD_INNER), inner);
+            node_child_rec(stores, slot, ds::NDYIELD_INNER, inner);
         }
         Value::Parallel(arms) => {
             slot.set_discriminant(stores, ds::DISC_PARALLEL);
@@ -995,7 +1009,7 @@ fn write_into(stores: &mut Stores, slot: &Node, v: &Value) {
             slot.set_field_int(stores, ds::SPAN_POS_LINE, i64::from(position.line));
             slot.set_field_int(stores, ds::SPAN_POS_POS, i64::from(position.pos));
             slot.set_field_str(stores, ds::SPAN_POS_FILE, position.file.as_str());
-            materialize_node(stores, slot.field_vec(ds::NDSPAN_INNER), inner);
+            node_child_rec(stores, slot, ds::NDSPAN_INNER, inner);
         }
         // ── vector of a non-Node struct ───────────────────────────────────────
         Value::Keys(keys) => {
@@ -1188,17 +1202,17 @@ mod tests {
         let if_node = root.get(0, &stores);
         assert_eq!(if_node.value_type(&stores), ValueType::If);
 
-        let cond = if_node.field_vec(ds::NDIF_COND).get(0, &stores);
+        let cond = if_node.field_child(&stores, ds::NDIF_COND);
         assert_eq!(cond.int_value(&stores), 1);
 
-        let then = if_node.field_vec(ds::NDIF_T).get(0, &stores);
+        let then = if_node.field_child(&stores, ds::NDIF_T);
         assert_eq!(then.value_type(&stores), ValueType::Return);
-        let ret_inner = then.field_vec(ds::NDRETURN_INNER).get(0, &stores);
+        let ret_inner = then.field_child(&stores, ds::NDRETURN_INNER);
         assert_eq!(ret_inner.int_value(&stores), 2);
 
-        let els = if_node.field_vec(ds::NDIF_F).get(0, &stores);
+        let els = if_node.field_child(&stores, ds::NDIF_F);
         assert_eq!(els.value_type(&stores), ValueType::Drop);
-        let drop_inner = els.field_vec(ds::NDDROP_INNER).get(0, &stores);
+        let drop_inner = els.field_child(&stores, ds::NDDROP_INNER);
         assert_eq!(drop_inner.int_value(&stores), 3);
     }
 
@@ -1228,8 +1242,7 @@ mod tests {
         assert_eq!(set.value_type(&stores), ValueType::Set);
         assert_eq!(set.field_int(&stores, ds::NDSET_VAR), 9);
         assert_eq!(
-            set.field_vec(ds::NDSET_INNER)
-                .get(0, &stores)
+            set.field_child(&stores, ds::NDSET_INNER)
                 .field_int(&stores, ds::NDLONG_N),
             42
         );
@@ -1245,20 +1258,17 @@ mod tests {
         assert_eq!(iter.value_type(&stores), ValueType::Iter);
         assert_eq!(iter.field_int(&stores, ds::NDITER_VAR), 5);
         assert_eq!(
-            iter.field_vec(ds::NDITER_CREATE)
-                .get(0, &stores)
+            iter.field_child(&stores, ds::NDITER_CREATE)
                 .int_value(&stores),
             10
         );
         assert_eq!(
-            iter.field_vec(ds::NDITER_NEXT)
-                .get(0, &stores)
+            iter.field_child(&stores, ds::NDITER_NEXT)
                 .int_value(&stores),
             11
         );
         assert_eq!(
-            iter.field_vec(ds::NDITER_INIT)
-                .get(0, &stores)
+            iter.field_child(&stores, ds::NDITER_INIT)
                 .int_value(&stores),
             12
         );
@@ -1311,8 +1321,7 @@ mod tests {
         assert_eq!(span.field_int(&stores, ds::SPAN_POS_POS), 3);
         assert_eq!(span.field_str(&stores, ds::SPAN_POS_FILE), "f.loft");
         assert_eq!(
-            span.field_vec(ds::NDSPAN_INNER)
-                .get(0, &stores)
+            span.field_child(&stores, ds::NDSPAN_INNER)
                 .int_value(&stores),
             7
         );
@@ -1499,17 +1508,15 @@ mod tests {
         assert_eq!(tdep.get(0, &stores).field_int(&stores, 0), 1);
         assert_eq!(tdep.get(1, &stores).field_int(&stores, 0), 2);
 
-        // result: box-of-one vector<TypeT> holding the Vector type.
-        let result = f.field_recvec(ds::TYFUNC_RESULT, ds::TYPET_STRIDE);
-        assert_eq!(result.len(&stores), 1);
-        let vec_ty = result.get(0, &stores);
+        // result: a child TypeT (`@FR-L-OutOfLine`) holding the Vector type.
+        let vec_ty = f.field_child(&stores, ds::TYFUNC_RESULT);
         assert_eq!(
             ds::type_kind(vec_ty.discriminant(&stores)),
             TypeKind::Vector
         );
-        let inner = vec_ty.field_recvec(ds::TYVECTOR_INNER, ds::TYPET_STRIDE);
+        let inner = vec_ty.field_child(&stores, ds::TYVECTOR_INNER);
         assert_eq!(
-            ds::type_kind(inner.get(0, &stores).discriminant(&stores)),
+            ds::type_kind(inner.discriminant(&stores)),
             TypeKind::Boolean
         );
         let vdep = vec_ty.field_recvec(ds::TYVECTOR_DEP, ds::INT_STRIDE);

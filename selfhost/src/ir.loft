@@ -12,7 +12,7 @@
 // vector/field registrations) plus the read/write record patterns.
 //
 // Mapping from the native Rust IR (src/data.rs) to loft types:
-//   Box<Self>            -> reference<Self>      (cycle-breaker, per Type docs)
+//   Box<Self>            -> Self                 (a child, out of line: @FR-L-OutOfLine)
 //   Vec<Self>            -> vector<Self>
 //   u8/u16/u32/i32/i64   -> integer             (width tuning is later; layout probe)
 //   bool                 -> boolean
@@ -82,21 +82,21 @@ enum TypeT {
   TyKeys,
   TyEnum { n: integer, is_ref: boolean, dep: vector<integer> },
   TyReference { n: integer, dep: vector<integer> },
-  TyRefVar { inner: vector<TypeT> },
-  TyVector { inner: vector<TypeT>, dep: vector<integer> },
+  TyRefVar { inner: TypeT },
+  TyVector { inner: TypeT, dep: vector<integer> },
   TyRoutine { n: integer },
-  TyIterator { step: vector<TypeT>, inner: vector<TypeT> },
+  TyIterator { step: TypeT, inner: TypeT },
   TySorted { n: integer, keys: vector<SortKey>, dep: vector<integer> },
   TyIndex { n: integer, keys: vector<SortKey>, dep: vector<integer> },
   TyRadix { n: integer, names: vector<NameRef>, dep: vector<integer> },
   TyHash { n: integer, names: vector<NameRef>, dep: vector<integer> },
-  TyFunction { args: vector<TypeT>, result: vector<TypeT>, dep: vector<integer>, consts: integer },
-  TyRewritten { inner: vector<TypeT> },
+  TyFunction { args: vector<TypeT>, result: TypeT, dep: vector<integer>, consts: integer },
+  TyRewritten { inner: TypeT },
   TyTuple { elems: vector<TypeT> },
-  // @PLN25 — the `τ?` nullability marker. A box-of-one child like TyRefVar; the
-  // runtime layout is the base's (sentinel storage), but the marker is persisted
-  // so a nullable type survives the store round-trip (its N-Store contract).
-  TyOptional { inner: vector<TypeT> },
+  // @PLN25 — the `τ?` nullability marker, a child like TyRefVar's; the runtime layout
+  // is the base's (sentinel storage), but the marker is persisted so a nullable type
+  // survives the store round-trip (its N-Store contract).
+  TyOptional { inner: TypeT },
   // `trie<T[k]>` — ONE text key, so the key is a plain `text` rather than the
   // `vector<NameRef>` the multi-key kinds carry.  APPENDED, not slotted next to
   // TyRadix: the discriminant is its POSITION here, so inserting in the middle
@@ -110,7 +110,7 @@ enum TypeT {
 enum Node {
   NdNull,
   NdLine { n: integer },
-  NdSpan { pos: Position, inner: vector<Node> },
+  NdSpan { pos: Position, inner: Node },
   NdInt { n: integer },
   NdEnum { ord: integer, tp: integer },
   NdBoolean { b: boolean },
@@ -130,19 +130,19 @@ enum Node {
   NdBlock { block: vector<Block> },
   NdInsert { items: vector<Node> },
   NdVar { n: integer },
-  NdSet { var: integer, inner: vector<Node> },
-  NdReturn { inner: vector<Node> },
+  NdSet { var: integer, inner: Node },
+  NdReturn { inner: Node },
   NdBreak { n: integer },
   NdContinue { n: integer },
-  NdIf { cond: vector<Node>, t: vector<Node>, f: vector<Node> },
+  NdIf { cond: Node, t: Node, f: Node },
   NdLoop { block: vector<Block> },   // box-of-one, as NdBlock
-  NdDrop { inner: vector<Node> },
-  NdIter { var: integer, create: vector<Node>, next: vector<Node>, init: vector<Node> },
+  NdDrop { inner: Node },
+  NdIter { var: integer, create: Node, next: Node, init: Node },
   NdKeys { keys: vector<Key> },
   NdTuple { items: vector<Node> },
   NdTupleGet { var: integer, idx: integer },
-  NdTuplePut { var: integer, idx: integer, inner: vector<Node> },
-  NdYield { inner: vector<Node> },
+  NdTuplePut { var: integer, idx: integer, inner: Node },
+  NdYield { inner: Node },
   NdFnRef { def_nr: integer, var: integer, t: vector<TypeT> },
   NdFnRefDnr { n: integer },
   NdParallel { arms: vector<Node> },
