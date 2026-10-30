@@ -334,6 +334,67 @@ table for the rows this reaches (pluginabi, cbor); placement-only regressions re
 tree (`(R-Place)`, `(R-InPlaceLiteral)`), instead of declining the site: `req_state_b64` and
 `request` (`bytes_to_base64(value)`).  Designed after S11's table.
 
+## T2 first (2026-10-31) — the integration, from the settled IR
+
+**Order changed.**  After `(R-PureReuse)` reached the decoders, `check_request` decodes once and
+reads the tree for one key, so T1 has no site left in it; T2 is built first and T1 (cbor's
+`decode` row) after, on T2's machinery.  Profile of `check_request` after the reuse (gcc ship,
+1 128 samples): the store tree's records and claims ≈ 20 %, copies ≈ 21 %, store addressing
+≈ 10 %, the decoder's own code ≈ 20 % — no hot spot; the tree is the cost.
+
+**The ops, read off the settled IR** (`loft introspect`, the cell's decoder and the reuse probe):
+
+| where | settled IR | `__tr` form |
+|---|---|---|
+| exit of `read_value` | `if (…OpRefIsNull(rb)…) null else OpDatabase(rb, Dec)` | `r = (lt_Dec){0}` |
+| | `OpSetInt4(rb, 0, 0)` (the prefill of the value field) | nothing: zeroed |
+| | `OpCopyRecord({EnumUnitLit: OpDatabase(t, V); OpSetEnum(t, 0, k); t}, OpGetField(rb, 0, CV), CV)` | `r.value = (lt_CV){ .tag = k }` |
+| | `OpSetInt(rb, 16, x)`, `OpSetBoolean(rb, 24, b)` | `r.next = x`, `r.ok = b` |
+| | `OpSetInt(OpGetField(rb, 0, CV), 8, a)`, `OpSetEnum(…, 0, k)`, `OpSetBoolean(…, 7, b)` | `r.value.i8 = a`, `.tag = k`, `.b7 = b` |
+| | `OpSetText(OpGetField(rb, 0, CV), 4, { w = n_text_from_bytes({slice}); … })` | `r.value.t4` = the view, empty when not UTF-8 |
+| | `OpAppendVector(OpGetField(OpGetField(rb, 0, CV), 4, V), {slice of bytes})` | `r.value.v4` = the byte view |
+| | `OpMoveVector(OpGetField(…, 4, V), items, CV)` | `r.value.v4 = items` |
+| | `return rb` | `return r` |
+| array / map arm | `items = OpGetField(__vdb, 0, V)` (a vector built in its own store) | `lt_vec items` in the arena |
+| | `__ref_5 = OpPlaceRecord(items, Dec)`; `sub = n_read_value(…, __ref_5)` | `sub = n_read_value__tr(…)` — the placement is dead |
+| | `OpPreAllocVector(items, 1, sz)`; `e = OpNewRecord(items, T, …)`; `OpMoveField(src, e, CV)`; `OpFinishRecord(items, e, …)` | `lt_vec_push(&items) = src` |
+| | `OpGetBoolean(sub, 24)`, `OpGetInt(sub, 16)`, `kv = OpGetField(kd, 0, CV)` | `sub.ok`, `sub.next`, `kv = kd.value` |
+| `decode` (forwarder) | `d = n_read_value(…, __ref_1)`; reads; a CNull-exit build into `__ref_p2_1`; `return d` | the same under the table; `d` is the phantom buffer |
+| `pa_decode` | `{return_source: …; __ret_root = n_decode(…); {return_field_handover: return OpGetField(__ret_root, 0, CV)}}` | `return n_decode__tr(…).value` |
+| `pa_get` (reader of `m`) | `OpGetEnum(m, 0)`; `_mv_entries = OpGetField(m, 4, V)`; `OpLengthVector`; `e = OpGetVectorNullable(v, 32, i)`; `OpGetText(OpGetField(e, 0, CV), 4)` | `m->tag`; `m->v4`; `.n`; `&v.p[i]`; `e->key.t4` |
+| | `{materialized_view_return: OpDatabase(rb); OpCopyRecord(OpGetField(e, 16, CV), rb, CV); return rb}` | `return e->value` (a struct copy: nothing writes the tree) |
+| `pa_text` (reader) | `subj = n_pa_get(m, key, __ref_1)`; `OpGetEnum(subj, 0)`; `OpGetText(subj, 4)` | `subj = n_pa_get__tr(m, key)`; `subj.tag`; `subj.t4` |
+| site (`check_request` after reuse) | `_reuse_5 = n_decode(f, buf)`; `OpGetBoolean(_reuse_5, 24)`; `n_pa_text(OpGetField(_reuse_5, 0, CV), …)` | `lt_ta_mark`; `_reuse_5 = n_decode__tr(f)`; `.ok`; `n_pa_text__tr(&_reuse_5.value, …)`; `lt_ta_back` at the root's exits |
+| everywhere | `OpFreeRef`, `OpFreeRefIfDistinct`, `OpClear`, `OpFreeText` of a transient | nothing |
+
+**The struct of a type is derived from its store layout, never hand-listed**: one member per
+distinct `(offset, kind)` of the type and, for a struct-enum, of every variant (they overlap in
+the store, so `t4` serves `CText.value` and `v4` the three vector payloads), named by offset.  An
+op on a transient value then maps by `(type, offset)` — the same key every getter and setter
+already carries — so the table above is a handful of generic arms, not one per op site.
+
+**Where it plugs in.**  `FnWriter` gets a `tr: Option<TrFn>` beside `vr: Option<VrFn>`, and a
+`tr_operator(name, args)` beside `vr_operator` (`src/c/body/value.rs:115`) that answers the ops on
+a transient variable — the same pattern, consulted first.  `TrFn` carries the twin's transient
+variables with their types, the phantom buffer, and the parameters taken by pointer; it is built
+from `opt::transient`'s plan, which is computed once per program (`Cx::transient()`, cached like
+`Cx::value_records`, `src/c/mod.rs:403`).  A twin is written by `function(cx, d, mask)` with
+`TR_BIT`, its signature returning the struct and taking each transient parameter as
+`const lt_T *`.  An op on a transient variable that no arm answers is an `Err`, and an `Err` in a
+twin declines the twin, so its callers keep the store form — the allow-list is the writer itself.
+
+Steps, replacing S6–S10's order (each one commit, verified as before):
+- **S6** the arena (`loft_ta_*`, `loft_rt.h`) and the struct derivation (`lt_<T>` from the store
+  layout), declared, unused — byte-identical program code;
+- **S7** `opt/transient.rs`: the producers, forwarders, readers and root sites, as one removing
+  fixpoint over the settled IR, printed under `LOFT_TRACE_TRANSIENT=1`; expected for pluginabi:
+  producers `read_value`, `decode`, `pa_decode`; readers `pa_get(m)`, `pa_text(m)`; root site
+  `check_request`'s `_reuse_5`;
+- **S8** the twins and the site, with texts and bytes COPIED into the arena (no source proof yet);
+  cells 1–9 both backends, `check_request` measured;
+- **S9** the views (texts and bytes of the frame, the source proved unwritten);
+- **S10** re-measure on both compilers; then T1 on this machinery.
+
 ## Not in this design
 
 - A twin for a producer whose result one site keeps and another reads: both forms are emitted,
