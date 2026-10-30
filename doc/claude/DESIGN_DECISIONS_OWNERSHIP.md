@@ -210,6 +210,15 @@ wrong: which values live on the stack is the compiler's to prove (`(R-Apart)`), 
 decision in the program.  A model that grows a second object kind puts that choice back on
 the programmer, becomes hard to reason about and so impossible to verify.
 
+**Clarified 2026-10-30 (owner):** *"We cannot change the store itself, but we can introduce
+short lived objects as long as the end result is the same."*  A SHORT-LIVED object the compiler
+introduces outside the store — a value tree held in registers or on the stack, a view of bytes
+that live elsewhere — is admitted, as `(R-Apart)` and `(R-ValueRecord)` already hold values
+outside it, provided the program cannot tell: it has no identity or release a program observes,
+and a value that reaches a store record is materialised there as the store value it always was
+(`formal/ownership.md` `(O-SliceView)`, `formal/rewrites.md` `(R-Transient)`).  What stays
+forbidden is changing the store itself or adding a second kind of STORE object.
+
 **Revisit when.** Temporaries that cannot be removed or reused cost more than a few percent,
 measured on the release binary with `perf`.  Decided 2026-09-17 — [record](DESIGN_DECISIONS-history.md#c125--the-store-model-stays-simple-performance-work-removes-objects-it-does-not-add-a-second-kind-of-object).
 **Holds at:** `@C125` — the rule `(O-One-Kind)` in [formal/ownership.md](formal/ownership.md); guard `layout_golden.rs::every_heap_value_is_carried_as_a_dbref`
