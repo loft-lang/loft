@@ -508,14 +508,15 @@ the record it points at, not a place of the holder's.
                  that never dies, unbounded in the call count.  The release arm is
                  gated on the SHAPE and the ELEMENT TYPE, both read from the
                  layout: the store's root record is a one-field `main_vector<T>`
-                 wrapper (what `OpDatabase` mints — asking the shape, never a byte
-                 offset, is what keeps the two backends together: the field sits at
-                 8 on `--native` and 12 on the interpreter) and the element type
-                 OWNS HEAP.  A no-heap element pays exactly the old reset — for a
-                 field vector the emitter decides that from `OpGetField`'s vector
-                 type, since asking the layout at run time searched the record's
-                 fields per clear; a field
-                 vector, a user-struct root and a placed buffer (never record 1)
+                 wrapper (what `OpDatabase` mints) and the element type OWNS HEAP.
+                 The wrapper's one field is at ONE position, `pos 8`, on every
+                 backend and through every DbRef that names it — a vector local's
+                 own mint, a buffer bound through `OpGetField(…, 0)`, a callee's
+                 refill — so a clear reads the vector a fill wrote.  A no-heap
+                 element pays exactly the old reset — for a field vector the
+                 emitter decides that from `OpGetField`'s vector type, since asking
+                 the layout at run time searched the record's fields per clear; a
+                 field vector, a user-struct root and a placed buffer (never record 1)
                  keep it too.  Values are unaffected either way — this is a leak
                  rule, not a semantics rule.  The release is ONE STORE RESET, not a
                  walk: the shape above says the vector owns the store's whole

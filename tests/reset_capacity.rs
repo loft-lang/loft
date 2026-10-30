@@ -173,3 +173,72 @@ fn an_empty_vector_clears_without_a_store_reset() {
          against {caps:?}"
     );
 }
+
+// ── One wrapper position (`@FR-H-ClearRelease`) ──
+//
+// A caller's return buffer is minted by the null-init of a vector local, and the callee
+// refills it through `OpDatabase` and `OpGetField(…, 0)`.  Both name the wrapper's one field at
+// `pos 8`, so the callee's entry clear reads the vector the previous call left and its reset
+// carries that vector's capacity.  With the null-init at a second position (`pos 12`, measured
+// on main @ c3122aa5a) every clear read an empty field, and every reset fell back to the fresh
+// minimum whatever the previous call had grown to.
+const ONE_POSITION_PROGRAM: &str = "struct Leg { a: integer, name: text }
+
+fn legs(n: integer, seed: integer) -> vector<Leg> {
+  out: vector<Leg> = [];
+  for i in 0..n {
+    out += [Leg { a: seed + i, name: \"l{seed + i}\" }];
+  }
+  return out;
+}
+
+fn main() {
+  t = 0;
+  for k in 1..5 {
+    v = legs(k, k * 10);
+    t += len(v) * 100 + (v[k - 1].a ?? 0);
+  }
+  assert(t == 1106, \"t = {t}\");
+  println(\"one-position ok\");
+}
+";
+
+#[test]
+fn a_buffer_is_cleared_where_its_callee_filled_it() {
+    let dir = std::env::temp_dir().join(format!("loft_one_position_{}", std::process::id()));
+    loft::file_access::create_dir_all(&dir).expect("scratch directory");
+    let file = dir.join("one_position.loft");
+    loft::file_access::write(&file, ONE_POSITION_PROGRAM).expect("write the program");
+    let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
+    cmd.arg("--interpret")
+        .arg(&file)
+        .env("LOFT_TRACE_CLEAR", "1")
+        .env("LOFT_STRICT_STORES", "1")
+        .env("LOFT_TIMEOUT", "120");
+    let out = cmd.output().expect("spawn loft --interpret");
+    let _ = loft::file_access::remove_dir_all(&dir);
+    let out = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.contains("one-position ok"),
+        "the program passes — got:\n{out}"
+    );
+    let positions: Vec<&str> = out
+        .lines()
+        .filter(|l| l.starts_with("[clear] store=") && l.contains(" rec=1 "))
+        .filter_map(|l| l.split(" pos=").nth(1)?.split(' ').next())
+        .collect();
+    assert!(
+        !positions.is_empty() && positions.iter().all(|&p| p == "8"),
+        "every clear of the buffer names the wrapper's field at pos 8 — got {positions:?}:\n{out}"
+    );
+    let caps = reset_caps(&out);
+    assert!(
+        caps.len() >= 2 && caps.windows(2).any(|w| w[0] != w[1]),
+        "each reset carries the capacity the previous call reached, so they differ as the \
+         calls grow — re-established capacities were {caps:?}"
+    );
+}

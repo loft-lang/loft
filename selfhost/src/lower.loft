@@ -1944,11 +1944,8 @@ fn vector_null(l: Lowering, b: ir::Bundle, var: integer) {
 }
 
 // `gen_owned_vector_store` (`codegen.rs:2178`): the variable's own `main_vector<T>` store,
-// the vector's handle at byte 4 of its root zeroed, and the variable pointing at that handle —
-// the interpreter's wrapper position, `pos` 12, four bytes past the wrapper's field (8), which
-// a buffer reached through `OpGetField(…, 0)` names instead.  The two meet in a reused buffer:
-// a fill through one and a clear through the other (`clear_vector_release`, which then
-// re-establishes no capacity).
+// the variable left at the wrapper's one field (`pos` 8, where `OpDatabase` puts it and
+// `OpGetField(…, 0)` names it, `(H-ClearRelease)`), and that field zeroed.
 fn owned_vector(l: Lowering, b: ir::Bundle, var: integer) {
   w = main_vector_of(b, fvar(b, l.def_nr, var).type_def);
   if w < 0 {
@@ -1959,10 +1956,7 @@ fn owned_vector(l: Lowering, b: ir::Bundle, var: integer) {
   emit(l, Database, KRef, slot, w);
   emit(l, Load, KRef, slot, 0);
   emit(l, PushInt, KInt, 0, 0);
-  emit(l, SetW, KInt, 4, width_of("OpSetInt4"));
-  emit(l, Load, KRef, slot, 0);
-  emit(l, FieldRef, KRef, 4, 0);
-  emit(l, Store, KRef, slot, 0);
+  emit(l, SetW, KInt, 0, width_of("OpSetInt4"));
 }
 
 // `gen_keyed_null` (`codegen.rs:2264`): a keyed local bound to null is minted AS its
