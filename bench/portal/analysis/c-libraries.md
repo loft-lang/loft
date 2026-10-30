@@ -74,8 +74,10 @@ The goal stays the worst rows, fixed by general optimisations with the memory mo
 | `check_request` | 12.1× | cbor's `read_value` (85 %); per bytes value `CBytes { value: bytes[a..b] }` mints a STORE for the slice temporary (`loft_store_make` + `loft_bits_insert` ≈ 13 %), copies it into the field and frees it — rustc does the same | a NEW general rule to design: a vector slice whose only use is to be appended to a place is sliced into that place.  Must keep `@FR-Const-Foreign`'s view: a slice of a file-mapped vector bound to a local becomes a view of the span, which a field cannot |
 | `request` | 6.4× | crypto's `b64_decode` (70 %), per input byte: the push header's slot and length writes resolve the store (`loft_ph_new`, `loft_at`, the `memcpy`s), `byte_at`, `b64_value` | the push header holds no data pointer by design (a sibling's growth in the same store moves the memory); a base held where the loop's only growth is that header's own wants pricing |
 
-Next: price the slice-into-place rule on `check_request` and cbor `decode` by hand, then write
-it as a rule before building.
+Hand-priced 2026-10-30 (the emitted C with the two slice temporaries sliced straight into their
+fields, `loft_vec_slice(field, src, lo, hi, 1)`): `check_request` −8.3 % (6.31 → 5.78 ms), the
+other rows unchanged, same hashes.  Next: write it as a rule (with the foreign-view case) before
+building.
 
 
 1. server `header`: re-measure after server 0.7.6 (key compared in place, loft-libs-net #33; ≈ 3.7× left by its author's count — the per-call `name.to_lowercase()` and the trimmed value's copy).
