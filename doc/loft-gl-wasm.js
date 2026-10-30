@@ -290,6 +290,234 @@ function buildLoftImports(canvas, output, getMem, asyncCtrl) {
 
   let shouldClose = false, _fsQuad = null;
 
+  // ── graphics 0.10 (@PLN208): the window and GL calls of its `[c] shim` ─────────────────
+  // A page built with `--html` compiles graphics' C shim with `LOFT_BROWSER`, and that shim
+  // imports these by name: four window calls and one per GL entry point it uses, each of the
+  // GL signature (integer names, pointers into the module's memory).  GL objects are numbered
+  // here — one table for every kind, 0 for none — and the shim keeps every other piece of
+  // state itself, exactly as on the desktop.  Input arrives as events in 0.9's codes.
+  function ggImports() {
+    const objs = [null], locs = [], shaderType = new Map(), queue = [];
+    let open = false;
+    const mem = () => getMem().buffer;
+    const dv = () => new DataView(mem());
+    const add = (o) => { objs.push(o); return objs.length - 1; };
+    const get = (id) => objs[id] || null;
+    function cstr(ptr) {
+      const b = new Uint8Array(mem());
+      let end = ptr;
+      while (b[end] !== 0) end++;
+      return decoder.decode(b.subarray(ptr, end));
+    }
+    function writeLog(text, max, lenPtr, bufPtr) {
+      const bytes = new TextEncoder().encode(text).subarray(0, Math.max(0, max - 1));
+      const b = new Uint8Array(mem());
+      if (bufPtr && max > 0) { b.set(bytes, bufPtr); b[bufPtr + bytes.length] = 0; }
+      if (lenPtr) dv().setInt32(lenPtr, bytes.length, true);
+    }
+    function gen(n, ptr, make) {
+      const d = dv();
+      for (let i = 0; i < n; i++) d.setUint32(ptr + 4 * i, add(make()), true);
+    }
+    function drop(n, ptr, del) {
+      const d = dv();
+      for (let i = 0; i < n; i++) {
+        const id = d.getUint32(ptr + 4 * i, true);
+        const o = get(id);
+        if (o) { del(o); objs[id] = null; }
+      }
+    }
+    // The desktop key table (graphics' KEY_*): the logical key, ASCII lower-cased; named keys
+    // by name; -1 for one the table has no code for.
+    const NAMED = { Enter: 13, Escape: 27, Tab: 9, Backspace: 8, ArrowUp: 128, ArrowDown: 129,
+      ArrowLeft: 130, ArrowRight: 131, Shift: 132, Control: 133, Delete: 147, Insert: 148,
+      Home: 149, End: 150, PageUp: 151, PageDown: 152 };
+    const TYPED = { Enter: '\r', Backspace: '\b', Escape: '\x1b', Tab: '\t', Delete: '\x7f' };
+    const MOD = { Shift: 1, Control: 2, Alt: 4, Meta: 8 };
+    function keyCode(k) {
+      if (k.length === 1) {
+        const c = k.charCodeAt(0);
+        if (c >= 128) return -1;
+        return c >= 65 && c <= 90 ? c + 32 : c;
+      }
+      if (NAMED[k] !== undefined) return NAMED[k];
+      const f = /^F([1-9]|1[0-2])$/.exec(k);
+      return f ? 134 + Number(f[1]) : -1;
+    }
+    // The modifiers BEFORE the event, as X reports them: pressing Shift reports no Shift.
+    function mods(e, down) {
+      let m = (e.shiftKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.altKey ? 4 : 0) | (e.metaKey ? 8 : 0);
+      const own = MOD[e.key] || 0;
+      return down ? m & ~own : m | own;
+    }
+    function point(e) {
+      const r = canvas.getBoundingClientRect();
+      const sx = r.width > 0 ? canvas.width / r.width : 1;
+      const sy = r.height > 0 ? canvas.height / r.height : 1;
+      return [Math.trunc((e.clientX - r.left) * sx), Math.trunc((e.clientY - r.top) * sy)];
+    }
+    const BUTTON = [1, 4, 2];
+    canvas.addEventListener('keydown', (e) => {
+      if (!open) return;
+      queue.push({ tag: 1, v: [keyCode(e.key), mods(e, true), e.repeat ? 1 : 0] });
+      let t = e.key.length === 1 ? e.key : TYPED[e.key];
+      if (t && e.ctrlKey && /^[a-z]$/i.test(t)) t = String.fromCharCode(t.charCodeAt(0) & 0x1f);
+      if (t) queue.push({ tag: 3, text: t });
+    });
+    canvas.addEventListener('keyup', (e) => {
+      if (open) queue.push({ tag: 2, v: [keyCode(e.key), mods(e, false)] });
+    });
+    canvas.addEventListener('mousedown', (e) => {
+      if (open && BUTTON[e.button]) queue.push({ tag: 4, v: [BUTTON[e.button], ...point(e)] });
+    });
+    canvas.addEventListener('mouseup', (e) => {
+      if (open && BUTTON[e.button]) queue.push({ tag: 5, v: [BUTTON[e.button], ...point(e)] });
+    });
+    canvas.addEventListener('mousemove', (e) => { if (open) queue.push({ tag: 6, v: point(e) }); });
+    canvas.addEventListener('wheel', (e) => {
+      if (open && e.deltaY !== 0) queue.push({ tag: 7, v: [e.deltaY < 0 ? 1 : -1, ...point(e)] });
+    });
+    const ok = (gl ? 1 : 0);
+    return {
+      gg_js_open(w, h, fullscreen) {
+        if (!gl) return 0;
+        dpr = window.devicePixelRatio || 1;
+        if (fullscreen) { w = window.innerWidth; h = window.innerHeight; }
+        canvas.width = toDevice(w); canvas.height = toDevice(h);
+        canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+        canvas.style.display = 'block';
+        output.style.display = 'none';
+        open = true;
+        return ok;
+      },
+      gg_js_size(which) { return which === 0 ? canvas.width : canvas.height; },
+      gg_present() {
+        gl.flush();
+        if (asyncCtrl && asyncCtrl.ac) asyncCtrl.ac.suspend();
+      },
+      gg_js_event(outPtr, textPtr, cap) {
+        const ev = queue.shift();
+        if (!ev) return 0;
+        const d = dv();
+        if (ev.tag === 3) {
+          const bytes = new TextEncoder().encode(ev.text).subarray(0, cap);
+          new Uint8Array(mem()).set(bytes, textPtr);
+          d.setInt32(outPtr, bytes.length, true);
+        } else {
+          for (let i = 0; i < 5; i++) d.setInt32(outPtr + 4 * i, ev.v[i] | 0, true);
+        }
+        return ev.tag;
+      },
+      gg_glClearColor(r, g, b, a) { gl.clearColor(r, g, b, a); },
+      gg_glClear(m) { gl.clear(m); },
+      gg_glColorMask(r, g, b, a) { gl.colorMask(!!r, !!g, !!b, !!a); },
+      gg_glViewport(x, y, w, h) { gl.viewport(x, y, w, h); },
+      gg_glEnable(c) { gl.enable(c); },
+      gg_glDisable(c) { gl.disable(c); },
+      gg_glReadBuffer(m) { gl.readBuffer(m); },
+      gg_glDrawBuffer(m) { gl.drawBuffers([m]); },
+      gg_glPixelStorei(p, v) { gl.pixelStorei(p, v); },
+      gg_glReadPixels(x, y, w, h, format, type, ptr) {
+        gl.readPixels(x, y, w, h, format, type, new Uint8Array(mem(), ptr, w * h * 4));
+      },
+      gg_glCreateShader(type) { const id = add(gl.createShader(type)); shaderType.set(id, type); return id; },
+      gg_glShaderSource(sh, count, strings, lengths) {
+        const d = dv();
+        let src = '';
+        for (let i = 0; i < count; i++) {
+          const p = d.getUint32(strings + 4 * i, true);
+          const n = lengths ? d.getInt32(lengths + 4 * i, true) : -1;
+          src += n < 0 ? cstr(p) : readStr(p, n);
+        }
+        gl.shaderSource(get(sh), translateShader(src, shaderType.get(sh) === gl.FRAGMENT_SHADER));
+      },
+      gg_glCompileShader(sh) { gl.compileShader(get(sh)); },
+      gg_glGetShaderiv(sh, pname, out) {
+        const v = pname === 0x8B84 ? (gl.getShaderInfoLog(get(sh)) || '').length + 1
+                                   : (gl.getShaderParameter(get(sh), pname) ? 1 : 0);
+        dv().setInt32(out, v, true);
+      },
+      gg_glGetShaderInfoLog(sh, max, lenPtr, buf) { writeLog(gl.getShaderInfoLog(get(sh)) || '', max, lenPtr, buf); },
+      gg_glDeleteShader(sh) { const o = get(sh); if (o) { gl.deleteShader(o); objs[sh] = null; shaderType.delete(sh); } },
+      gg_glCreateProgram() { return add(gl.createProgram()); },
+      gg_glAttachShader(p, sh) { gl.attachShader(get(p), get(sh)); },
+      gg_glLinkProgram(p) { gl.linkProgram(get(p)); },
+      gg_glGetProgramiv(p, pname, out) {
+        const v = pname === 0x8B84 ? (gl.getProgramInfoLog(get(p)) || '').length + 1
+                                   : (gl.getProgramParameter(get(p), pname) ? 1 : 0);
+        dv().setInt32(out, v, true);
+      },
+      gg_glGetProgramInfoLog(p, max, lenPtr, buf) { writeLog(gl.getProgramInfoLog(get(p)) || '', max, lenPtr, buf); },
+      gg_glDeleteProgram(p) { const o = get(p); if (o) { gl.deleteProgram(o); objs[p] = null; } },
+      gg_glUseProgram(p) { gl.useProgram(get(p)); },
+      gg_glGetUniformLocation(p, namePtr) {
+        const loc = gl.getUniformLocation(get(p), cstr(namePtr));
+        if (!loc) return -1;
+        locs.push(loc);
+        return locs.length - 1;
+      },
+      gg_glUniform1f(at, x) { gl.uniform1f(locs[at], x); },
+      gg_glUniform2f(at, x, y) { gl.uniform2f(locs[at], x, y); },
+      gg_glUniform3f(at, x, y, z) { gl.uniform3f(locs[at], x, y, z); },
+      gg_glUniform4f(at, x, y, z, w) { gl.uniform4f(locs[at], x, y, z, w); },
+      gg_glUniform1i(at, v) { gl.uniform1i(locs[at], v); },
+      gg_glUniformMatrix4fv(at, count, transpose, ptr) {
+        gl.uniformMatrix4fv(locs[at], !!transpose, new Float32Array(mem(), ptr, 16 * count));
+      },
+      gg_glGenVertexArrays(n, ptr) { gen(n, ptr, () => gl.createVertexArray()); },
+      gg_glBindVertexArray(id) { gl.bindVertexArray(get(id)); },
+      gg_glDeleteVertexArrays(n, ptr) { drop(n, ptr, (o) => gl.deleteVertexArray(o)); },
+      gg_glGenBuffers(n, ptr) { gen(n, ptr, () => gl.createBuffer()); },
+      gg_glBindBuffer(target, id) { gl.bindBuffer(target, get(id)); },
+      gg_glBufferData(target, size, ptr, usage) {
+        if (ptr) gl.bufferData(target, new Uint8Array(mem(), ptr, size), usage);
+        else gl.bufferData(target, size, usage);
+      },
+      gg_glDeleteBuffers(n, ptr) { drop(n, ptr, (o) => gl.deleteBuffer(o)); },
+      gg_glVertexAttribPointer(i, size, type, norm, stride, offset) {
+        gl.vertexAttribPointer(i, size, type, !!norm, stride, offset);
+      },
+      gg_glEnableVertexAttribArray(i) { gl.enableVertexAttribArray(i); },
+      gg_glVertexAttribDivisor(i, d) { gl.vertexAttribDivisor(i, d); },
+      gg_glDrawArrays(mode, first, count) { gl.drawArrays(mode, first, count); },
+      gg_glDrawElements(mode, count, type, offset) { gl.drawElements(mode, count, type, offset); },
+      gg_glDrawArraysInstanced(mode, first, count, n) { gl.drawArraysInstanced(mode, first, count, n); },
+      gg_glDrawElementsInstanced(mode, count, type, offset, n) {
+        gl.drawElementsInstanced(mode, count, type, offset, n);
+      },
+      gg_glBlendFunc(s, d) { gl.blendFunc(s, d); },
+      gg_glCullFace(f) { gl.cullFace(f); },
+      gg_glDepthMask(m) { gl.depthMask(!!m); },
+      gg_glScissor(x, y, w, h) { gl.scissor(x, y, w, h); },
+      gg_glFinish() { gl.finish(); },
+      gg_glLineWidth(w) { gl.lineWidth(w); },
+      // WebGL has no point size state: a shader that draws points writes gl_PointSize.
+      gg_glPointSize(_s) {},
+      gg_glGenTextures(n, ptr) { gen(n, ptr, () => gl.createTexture()); },
+      gg_glBindTexture(target, id) { gl.bindTexture(target, get(id)); },
+      gg_glTexImage2D(target, level, internal, w, h, border, format, type, ptr) {
+        // WebGL2 takes a float depth texture only by its sized format.
+        if (internal === gl.DEPTH_COMPONENT && type === gl.FLOAT) internal = gl.DEPTH_COMPONENT32F;
+        const data = !ptr ? null : type === gl.FLOAT ? new Float32Array(mem(), ptr, w * h)
+                                                     : new Uint8Array(mem(), ptr, w * h * 4);
+        gl.texImage2D(target, level, internal, w, h, border, format, type, data);
+      },
+      gg_glTexSubImage2D(target, level, x, y, w, h, format, type, ptr) {
+        gl.texSubImage2D(target, level, x, y, w, h, format, type, new Uint8Array(mem(), ptr, w * h * 4));
+      },
+      gg_glTexParameteri(target, pname, v) { gl.texParameteri(target, pname, v); },
+      gg_glDeleteTextures(n, ptr) { drop(n, ptr, (o) => gl.deleteTexture(o)); },
+      gg_glGenerateMipmap(target) { gl.generateMipmap(target); },
+      gg_glActiveTexture(unit) { gl.activeTexture(unit); },
+      gg_glGenFramebuffers(n, ptr) { gen(n, ptr, () => gl.createFramebuffer()); },
+      gg_glBindFramebuffer(target, id) { gl.bindFramebuffer(target, get(id)); },
+      gg_glFramebufferTexture2D(target, att, textarget, id, level) {
+        gl.framebufferTexture2D(target, att, textarget, get(id), level);
+      },
+      gg_glDeleteFramebuffers(n, ptr) { drop(n, ptr, (o) => gl.deleteFramebuffer(o)); },
+    };
+  }
+
   // Defensive Number coercion at the WASM-import boundary.  loft's
   // `integer` is i64 since the phase-2c migration; wasm-bindgen's
   // automatic i64 → JsValue path produces BigInt, which silently
@@ -907,6 +1135,7 @@ function buildLoftImports(canvas, output, getMem, asyncCtrl) {
           return 0;
         } catch(e) { return -1; }
       },
+      ...ggImports(),
     }),   // ← close coerceArgs() for loft_gl
     env: {}
   };

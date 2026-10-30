@@ -433,7 +433,16 @@ into the module (`c_shim::wasm_objects`, cached under `native-auto/`).  The bind
 a package are declared as typed externs at **wasm32's widths** (ILP32: `long` is 32 bits)
 and called directly, exactly as `--native` calls them.  So a library whose native part is a
 `[c] shim` of pure computation — `random`, `regex`, `crypto` — is a wasm and a browser
-library with no bridge crate, from the one C source.  `LOFT_WASM_CC` names another
+library with no bridge crate, from the one C source.  A program links one copy of loft's
+small C library however many shims it carries (loft#2280).
+
+**A shim built for a browser page sees `LOFT_BROWSER` defined** (the Rust writer's page and
+the C writer's alike; a `--native-wasm` module never), and there it may call the page's
+`loft_gl` imports — `__attribute__((import_module("loft_gl"), import_name("…")))` — which
+`doc/loft-gl-wasm.js` supplies: the engine's render service (BROWSER_INTEROP.md § The one
+invariant), not a library's own JavaScript.  graphics 0.10 is the user: its shim's GL
+function table is filled from `gg_gl*` imports (one per GL entry point, of the GL
+signature) on a page, and through GLX on Linux.  `LOFT_WASM_CC` names another
 compiler than `clang`; `gcc` has no wasm backend.
 
 What the shim may use there is the C the small library carries: `<string.h>`, `<stdlib.h>`,
