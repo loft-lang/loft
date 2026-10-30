@@ -2,7 +2,7 @@
  * image) ───────────────────────────────────────────────────────────────────────────────────────
  * `net::fetch_bytes`, `fetch_range` and `fetch_size` for a C build: a `file://` URL is read from
  * the filesystem, an `http://` or `https://` one goes through the runtime's HTTP client
- * (`loft_https.h`: a POSIX socket, TLS over it for https).  `integrity::verify_sha256` pins an
+ * (`loft_https.h`: a socket of `loft_sock.h`, TLS over it for https).  `integrity::verify_sha256` pins an
  * image's bytes.  Pasted only into a unit that loads over a URL or pages an image (`LOFT_NET`). */
 #ifdef LOFT_NET
 
@@ -40,7 +40,7 @@ static int loft_fetch_file(const char *path, loft_bytes *out, char *err, size_t 
     return 1;
 }
 
-#ifdef LOFT_POSIX_HOST
+#ifdef LOFT_SOCKETS
 /* One GET of `http[s]://host[:port]/path`: the 2xx body, a chunked one decoded. */
 static int loft_fetch_http(const char *url, loft_bytes *out, char *err, size_t cap) {
     loft_http h;
@@ -76,7 +76,7 @@ static int loft_fetch_http(const char *url, loft_bytes *out, char *err, size_t c
  * The count (short at the end of the file), else -1 with `err` saying why. */
 static long loft_net_range(const char *url, uint64_t off, uint8_t *buf, size_t len, char *err, size_t cap) {
     if (len == 0) return 0;
-#ifdef LOFT_POSIX_HOST
+#ifdef LOFT_SOCKETS
     char range[96], why[1024];
     snprintf(range, sizeof range, "Range: bytes=%llu-%llu\r\n", (unsigned long long) off,
              (unsigned long long) (off + len - 1));
@@ -116,7 +116,7 @@ static long loft_net_range(const char *url, uint64_t off, uint8_t *buf, size_t l
  * `Content-Range`, else its `Content-Length`; 1, else 0 with `err` saying why.  The body is not
  * read, so a server that ignores the range does not send the file for nothing. */
 static int loft_net_size(const char *url, uint64_t *size, char *err, size_t cap) {
-#ifdef LOFT_POSIX_HOST
+#ifdef LOFT_SOCKETS
     char why[1024];
     loft_http h;
     if (!loft_http_open(&h, "GET", url, "Range: bytes=0-0\r\n", "", 5, why, sizeof why)) {
@@ -159,7 +159,7 @@ static int loft_fetch(const char *url, loft_bytes *out, char *err, size_t cap) {
     out->n = 0;
     loft_fetch_absent = 0;
     if (strncmp(url, "file://", 7) == 0) return loft_fetch_file(url + 7, out, err, cap);
-#ifdef LOFT_POSIX_HOST
+#ifdef LOFT_SOCKETS
     if (strncmp(url, "http://", 7) == 0 || strncmp(url, "https://", 8) == 0) return loft_fetch_http(url, out, err, cap);
 #endif
     snprintf(err, cap, "this build has no HTTP transport, so it cannot fetch %s — a store it carries reads with "

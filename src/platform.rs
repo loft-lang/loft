@@ -1747,6 +1747,14 @@ pub fn c_thread_link_args() -> &'static [&'static str] {
     }
 }
 
+/// The system libraries a C backend link names AFTER the program's objects (@PLN203 C8), where a
+/// gcc link resolves them: Winsock's on Windows (`loft_sock.h`; an MSVC `cl` reads it from the
+/// unit's `#pragma`), which a unit that opens no socket never pulls in.  None elsewhere.
+#[must_use]
+pub fn c_system_link_libs() -> &'static [&'static str] {
+    if cfg!(windows) { &["-lws2_32"] } else { &[] }
+}
+
 /// Does the C runtime have its POSIX host layer here — the sockets, processes, `mmap` and
 /// `realpath` `src/c/loft_cc.h` puts under `LOFT_POSIX_HOST` (@PLN203)?  Not on Windows, until
 /// C8 gives those parts their Windows form.

@@ -12,6 +12,7 @@
 #define LOFT_HTTPS 1
 #define LOFT_WEB 1
 #define LOFT_SERVER 1
+#include "loft_sock.h"
 #include "loft_https.h"
 #include "loft_web.h"
 #include "loft_server.h"

@@ -79,6 +79,10 @@ fn msvc_args(gnu: &[String]) -> Vec<String> {
                 out.push(format!("/D{def}"));
                 continue;
             }
+            other if let Some(lib) = other.strip_prefix("-l") => {
+                out.push(format!("{lib}.lib"));
+                continue;
+            }
             other => other,
         };
         out.push(mapped.to_string());
@@ -592,6 +596,7 @@ pub(crate) fn build(
             cmd.push_arg(&src).push_arg("-o").push_arg(&binary);
             cmd.push_args(&link_args);
             cmd.push_arg("-lm");
+            cmd.push_args(loft::platform::c_system_link_libs());
         }
         // `cl` writes its object beside the working directory unless told where.
         Dialect::Msvc => {

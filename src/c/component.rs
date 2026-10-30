@@ -23,6 +23,7 @@ const NET: &[(&str, &str)] = &[
     ("net.c", include_str!("components/net.c")),
     ("loft_cc.h", include_str!("loft_cc.h")),
     ("loft_text.h", include_str!("loft_text.h")),
+    ("loft_sock.h", include_str!("loft_sock.h")),
     ("loft_https.h", include_str!("loft_https.h")),
     ("loft_web.h", include_str!("loft_web.h")),
     ("loft_server.h", include_str!("loft_server.h")),

@@ -7,16 +7,9 @@
  * target with no sockets) answers an `https://` URL with that reason.  Pasted into a unit that
  * fetches over a URL (`LOFT_NET`, `LOFT_ENGINE`), and compiled into the `net` component
  * (`LOFT_WEB`, `src/c/components/net.c`). */
-#if defined(LOFT_POSIX_HOST) && (defined(LOFT_NET) || defined(LOFT_ENGINE) || defined(LOFT_WEB))
+#if defined(LOFT_SOCKETS) && (defined(LOFT_NET) || defined(LOFT_ENGINE) || defined(LOFT_WEB))
 #include <ctype.h>
 #include <errno.h>
-#include <fcntl.h>
-#include <netdb.h>
-#include <poll.h>
-#include <strings.h>
-#include <sys/socket.h>
-#include <sys/time.h>
-#include <unistd.h>
 
 #ifdef LOFT_HTTPS
 struct loft_tls;
@@ -56,9 +49,9 @@ static long loft_stream_read(loft_stream *s, void *buf, size_t n) {
     if (s->tls) return loft_tls_read((struct loft_tls *) s->tls, buf, n);
 #endif
     for (;;) {
-        ssize_t r = recv(s->fd, buf, n, 0);
-        if (r < 0 && errno == EINTR) continue;
-        return r < 0 ? -1 : (long) r;
+        long r = loft_sock_recv(s->fd, buf, n, 0);
+        if (r < 0 && loft_sock_interrupted()) continue;
+        return r < 0 ? -1 : r;
     }
 }
 
@@ -70,11 +63,11 @@ static int loft_stream_write_all(loft_stream *s, const void *p, size_t n) {
     const char *c = (const char *) p;
     while (n > 0) {
 #if defined(MSG_NOSIGNAL)
-        ssize_t w = send(s->fd, c, n, MSG_NOSIGNAL);
+        long w = loft_sock_send(s->fd, c, n, MSG_NOSIGNAL);
 #else
-        ssize_t w = send(s->fd, c, n, 0);
+        long w = loft_sock_send(s->fd, c, n, 0);
 #endif
-        if (w < 0 && errno == EINTR) continue;
+        if (w < 0 && loft_sock_interrupted()) continue;
         if (w <= 0) return 0;
         c += w;
         n -= (size_t) w;
@@ -100,40 +93,14 @@ static void loft_stream_close(loft_stream *s) {
     if (s->tls) loft_tls_close((struct loft_tls *) s->tls);
 #endif
     s->tls = 0;
-    if (s->fd >= 0) close(s->fd);
+    if (s->fd >= 0) loft_sock_close(s->fd);
     s->fd = -1;
 }
 
-/* ── Socket mechanics ── */
-
-static void loft_sock_cloexec(int fd) {
-    fcntl(fd, F_SETFD, fcntl(fd, F_GETFD) | FD_CLOEXEC);
-}
-
-static void loft_sock_blocking(int fd, int on) {
-    int fl = fcntl(fd, F_GETFL);
-    fcntl(fd, F_SETFL, on ? (fl & ~O_NONBLOCK) : (fl | O_NONBLOCK));
-}
+/* ── Socket mechanics: `loft_sock.h` ── */
 
 static void loft_sock_timeout(int fd, int64_t ms) {
-    struct timeval tv = { (time_t) (ms / 1000), (long) ((ms % 1000) * 1000) };
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
-}
-
-/* Connect within `ms`: 1 when the TCP handshake completed. */
-static int loft_sock_connect_within(int fd, const struct sockaddr *a, socklen_t al, int64_t ms) {
-    loft_sock_blocking(fd, 0);
-    int r = connect(fd, a, al);
-    if (r != 0 && errno != EINPROGRESS) return 0;
-    if (r != 0) {
-        struct pollfd p = { fd, POLLOUT, 0 };
-        if (poll(&p, 1, (int) ms) <= 0) return 0;
-        int err = 0;
-        socklen_t el = sizeof err;
-        if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &el) != 0 || err != 0) return 0;
-    }
-    loft_sock_blocking(fd, 1);
-    return 1;
+    loft_sock_timeout_opt(fd, SO_RCVTIMEO, ms);
 }
 
 /* ── HTTP/1.1 ── */
@@ -249,15 +216,13 @@ static int loft_http_open(loft_http *h, const char *method, const char *url, con
     }
     int fd = -1, e = 0;
     for (ai = res; ai && fd < 0; ai = ai->ai_next) {
-        fd = socket(ai->ai_family, SOCK_STREAM, 0);
+        fd = loft_sock_open(ai->ai_family, SOCK_STREAM, 0);
         if (fd < 0) continue;
         loft_sock_cloexec(fd);
         if (!loft_sock_connect_within(fd, ai->ai_addr, (socklen_t) ai->ai_addrlen, 30000)) {
-            int se = 0;
-            socklen_t el = sizeof se;
-            getsockopt(fd, SOL_SOCKET, SO_ERROR, &se, &el);
-            e = se ? se : errno;
-            close(fd);
+            int se = loft_sock_pending_error(fd);
+            e = se > 0 ? se : loft_sock_error();
+            loft_sock_close(fd);
             fd = -1;
         }
     }
@@ -268,8 +233,7 @@ static int loft_http_open(loft_http *h, const char *method, const char *url, con
         return 0;
     }
     loft_sock_timeout(fd, 30000);
-    struct timeval tv = { 30, 0 };
-    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+    loft_sock_timeout_opt(fd, SO_SNDTIMEO, 30000);
     h->st.fd = fd;
     if (tls) {
         char why[768];

@@ -55,6 +55,7 @@ const RUNTIME: &str = concat!(
     include_str!("loft_io.h"),
     include_str!("loft_log.h"),
     include_str!("loft_lazy.h"),
+    include_str!("loft_sock.h"),
     include_str!("loft_https.h"),
     include_str!("loft_net.h"),
     include_str!("loft_process.h"),

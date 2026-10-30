@@ -67,6 +67,8 @@ LOFT = os.environ.get("LOFT_BIN") or str(ROOT / "target" / "release" / "loft")
 # The host's C compiler as the driver picks it (`c_driver::cc_program`): LOFT_CC, else CC, else cc.
 HOST_CC = os.environ.get("LOFT_CC") or os.environ.get("CC") or "cc"
 CC = [HOST_CC, "-std=c99", "-O1", "-DLOFT_CALL_CHAIN", "-pthread"] + (["-ldl"] if sys.platform.startswith("linux") else [])
+# After the objects, where a gcc link resolves it (`platform::c_system_link_libs`).
+SYSTEM_LIBS = ["-lws2_32"] if sys.platform == "win32" else []
 # MSVC's `cl` (or `clang-cl`), told apart by name as the driver tells it (`c_driver::dialect`):
 # the same flags in its spelling (`c_driver::msvc_args`).  Run it from a developer prompt.
 MSVC = Path(HOST_CC).stem.lower() in ("cl", "clang-cl")
@@ -83,6 +85,8 @@ def msvc_args(gnu: list[str]) -> list[str]:
             continue
         elif f.startswith("-D"):
             out.append("/D" + f[2:])
+        elif f.startswith("-l"):
+            out.append(f[2:] + ".lib")
         else:
             out.append(f)
     return out
@@ -95,7 +99,7 @@ def host_build(flags: list[str], c: str, exe: str, links: list[str]) -> list[str
             [c, f"/Fe:{exe}.exe", f"/Fo:{exe}.obj"] + msvc_args(links)
     # `-lm` after the shim archives, as the driver links them: a static archive's math calls
     # (an OGG decoder's `cos`) resolve only against a library named after it.
-    return CC + flags + [c, "-o", exe] + links + ["-lm"]
+    return CC + flags + [c, "-o", exe] + links + ["-lm"] + SYSTEM_LIBS
 MODES = {
     "strict": ["-DLOFT_STRICT", "-pedantic", "-Werror"],
     "default": ["-w"],
