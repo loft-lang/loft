@@ -1,8 +1,8 @@
-diff --git a/src/generation/append_twin.rs b/src/generation/append_twin.rs
-index e7001b5de..4ab407f44 100644
---- a/src/generation/append_twin.rs
-+++ b/src/generation/append_twin.rs
-@@ -126,17 +126,6 @@ impl Scan<'_> {
+diff --git a/src/opt/append_twin.rs b/src/opt/append_twin.rs
+index 1f9250e6e..f05e5cee5 100644
+--- a/src/opt/append_twin.rs
++++ b/src/opt/append_twin.rs
+@@ -112,17 +112,6 @@ impl Scan<'_> {
                      // `__ret_tail_N = OpConstRef(…)` of `return NAMES` — carries that store
                      // out as the result, and a twin's caller never reads the result: the
                      // destination would miss the exit's value.
@@ -20,7 +20,7 @@ index e7001b5de..4ab407f44 100644
                      self.scan(rhs, Pos::Flow)
                  } else {
                      self.scan(rhs, Pos::Operand)
-@@ -155,16 +144,7 @@ impl Scan<'_> {
+@@ -141,16 +130,7 @@ impl Scan<'_> {
                  self.scan(c, Pos::Operand) && self.scan(t, pos) && self.scan(e, pos)
              }
              // Every exit answers the buffer: the twin's caller ignores the answer.
@@ -38,7 +38,7 @@ index e7001b5de..4ab407f44 100644
              Value::Drop(r) => self.scan(r, Pos::Operand),
              Value::CallRef(..) | Value::Parallel(_) | Value::Yield(_) => false,
              other => {
-@@ -322,7 +302,7 @@ pub fn eligible(data: &Data, d_nr: u32, memo: &mut HashMap<u32, bool>) -> bool {
+@@ -311,7 +291,7 @@ pub fn eligible(data: &Data, d_nr: u32, memo: &mut HashMap<u32, bool>) -> bool {
      if !tail_ok {
          scan.why = Some("the body's tail answers another store".to_string());
      }
