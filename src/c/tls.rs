@@ -9,6 +9,8 @@
 //! the 64-bit multiply, AES-NI and SSE2 code and without them (read off a link map against the
 //! whole upstream tree), plus the POWER8 variants — and the guard
 //! `the_tls_sources_are_the_directory` keeps this list and the directory one set.
+//! `tls/loft_ssh.c`, the SSH client of the `net` component (`src/c/loft_ssh.h`), is built into
+//! the same archive: it uses only primitives this subset already carries, and Ed25519 of its own.
 //!
 //! The client is not part of a unit's translation unit: BearSSL is a library of `static` helpers
 //! across files, and compiling it into every unit that fetches a URL would cost seconds a build.
@@ -22,6 +24,7 @@ use std::sync::OnceLock;
 /// are found beside them by their `#include "…"`.
 const SOURCES: &[(&str, &str)] = &[
     ("loft_tls.c", include_str!("tls/loft_tls.c")),
+    ("loft_ssh.c", include_str!("tls/loft_ssh.c")),
     // The vendored BearSSL subset, one entry per file of `tls/bearssl/`.
     ("aes_ct.c", include_str!("tls/bearssl/aes_ct.c")),
     ("aes_ct64.c", include_str!("tls/bearssl/aes_ct64.c")),
@@ -385,7 +388,7 @@ mod tests {
         let mut listed: Vec<String> = SOURCES
             .iter()
             .map(|(n, _)| (*n).to_string())
-            .filter(|n| n != "loft_tls.c")
+            .filter(|n| n != "loft_tls.c" && n != "loft_ssh.c")
             .collect();
         listed.sort();
         assert_eq!(listed, on_disk);
