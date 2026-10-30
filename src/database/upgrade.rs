@@ -300,9 +300,14 @@ impl Stores {
         }
         // The rows must BE the old layout: re-rendered, they give back the old dump of the
         // root's closure, line for line.
+        // A `hash` written under a placement this build reads as written (@C152,
+        // `placement::HASH_READS`) is this build's row, as `classify` reads it: an image that
+        // converts for another reason — a key order (loft#2237) — must not be refused for the
+        // token of a table it reads unchanged.
         let written = closure.render_dump();
+        let written = crate::placement::read_as_own(&written);
         let rebuilt = self.layout_dump(&[ids[&root]]);
-        if written != rebuilt {
+        if *written != rebuilt {
             let at = written
                 .lines()
                 .zip(rebuilt.lines())
