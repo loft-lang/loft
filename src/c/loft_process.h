@@ -7,7 +7,8 @@
  * process group of its own, so a stop, a timeout and (Linux, `PR_SET_PDEATHSIG`) this program's
  * end reach everything it started; the terminal's signals and `SIGTERM` are passed on to every
  * group this program holds.  `lib/git`'s native (`git_query`) runs git through the same
- * spawn.  Compiled in for a unit that reaches either (LOFT_PROCESS). */
+ * spawn.  On Windows the same rules hold over a job object per child and pipes the pump peeks
+ * (@PLN203 C8).  Compiled in for a unit that reaches either (LOFT_PROCESS). */
 #ifdef LOFT_PROCESS
 #include <ctype.h>
 #if defined(LOFT_POSIX_HOST)
@@ -22,6 +23,22 @@
 #if defined(__linux__)
 #include <sys/prctl.h>
 #endif
+#elif defined(_WIN32)
+/* `windows.h` after every runtime header that names `near` or `far`: only comments and strings
+ * from here on, and generated names carry a prefix. */
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN 1
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX 1
+#endif
+#include <windows.h>
+#include <direct.h>
+#include <io.h>
+#endif
+/* A host this program can start another on: POSIX, or Windows (@PLN203 C8). */
+#if defined(LOFT_POSIX_HOST) || defined(_WIN32)
+#define LOFT_PROC_HOST 1
 #endif
 
 static const char loft_proc_malformed[] =
@@ -132,10 +149,18 @@ static void loft_proc_track(pid_t group, int on) {
 
 /* A started child: its id (which names its group) and the pipes this program holds, -1 for one
  * it does not. */
-typedef struct { pid_t pid; int in, out, err; } loft_child;
+typedef pid_t loft_pid;
+typedef struct { loft_pid pid; int in, out, err; } loft_child;
 
 static void loft_proc_cloexec(int fd) {
     fcntl(fd, F_SETFD, fcntl(fd, F_GETFD) | FD_CLOEXEC);
+}
+
+static void loft_proc_close(int fd) { close(fd); }
+static void loft_proc_mkdir(const char *dir) { mkdir(dir, 0777); }
+static void loft_proc_nap(int64_t us) {
+    struct timespec ts = { (time_t) (us / 1000000), (long) (us % 1000000) * 1000 };
+    nanosleep(&ts, 0);
 }
 
 /* Start `argv` in a group of its own: stdin a pipe when `pin` (else empty), stdout and stderr
@@ -255,9 +280,7 @@ static int loft_child_wait(pid_t pid, int64_t ms) {
         if (loft_child_exited(pid, 0)) return 1;
         int64_t now = loft_now_us();
         if (now >= until) return 0;
-        int64_t nap = step < until - now ? step : until - now;
-        struct timespec ts = { (time_t) (nap / 1000000), (long) (nap % 1000000) * 1000 };
-        nanosleep(&ts, 0);
+        loft_proc_nap(step < until - now ? step : until - now);
         step = step * 2 < 20000 ? step * 2 : 20000;
     }
 }
@@ -315,6 +338,283 @@ static int loft_child_pump(loft_child *c, loft_text *out, loft_text *err, const 
     return c->out >= 0 || c->err >= 0 || c->in >= 0;
 }
 
+#elif defined(_WIN32)
+/* ── The child on Windows (platform_process.rs `os`, Windows) ──
+ * A child is assigned to a job object of its own, created with KILL_ON_JOB_CLOSE: everything it
+ * starts joins the job, a stop ends the whole job, and when this program ends the OS closes the
+ * job and ends what is left.  It stays in the console's group, so the terminal's Ctrl-C reaches
+ * it as it reaches this program.  Windows pipes cannot be polled: the pump asks each output pipe
+ * what is waiting (`PeekNamedPipe`), napping between rounds when nothing moved, and the input is
+ * written by a thread of its own.  A pipe is held as a CRT descriptor; the bytes go through
+ * its handle (`_get_osfhandle`), never the CRT's text translation. */
+typedef int loft_pid; /* 1 + the child's row in `loft_win_children`; 0 for none */
+typedef struct { HANDLE proc, job; } loft_win_child;
+static loft_win_child loft_win_children[256];
+typedef struct { loft_pid pid; int in, out, err; } loft_child;
+
+static void loft_proc_close(int fd) { _close(fd); }
+static void loft_proc_mkdir(const char *dir) { _mkdir(dir); }
+static void loft_proc_nap(int64_t us) { Sleep((DWORD) ((us + 999) / 1000)); }
+static void loft_proc_track(loft_pid pid, int on) {
+    (void) pid;
+    (void) on;
+}
+
+static loft_win_child *loft_win_child_of(loft_pid pid) {
+    return pid >= 1 && pid <= 256 && loft_win_children[pid - 1].proc ? &loft_win_children[pid - 1] : 0;
+}
+
+/* One argument as the MSVC runtime's parser reads it back — `std::process`'s own quoting: quoted
+ * when empty or holding a space or tab, a quote escaped, the backslashes before one doubled. */
+static void loft_win_quote(loft_text *cmd, const char *arg) {
+    int quote = !*arg || strchr(arg, ' ') || strchr(arg, '\t');
+    if (quote) loft_push_char(cmd, '"');
+    size_t backslashes = 0;
+    for (const char *p = arg; *p; p++) {
+        if (*p == '\\') {
+            backslashes++;
+        } else {
+            if (*p == '"')
+                for (size_t i = 0; i <= backslashes; i++) loft_push_char(cmd, '\\');
+            backslashes = 0;
+        }
+        loft_push_char(cmd, *p);
+    }
+    if (quote) {
+        for (size_t i = 0; i < backslashes; i++) loft_push_char(cmd, '\\');
+        loft_push_char(cmd, '"');
+    }
+}
+
+/* `{program}: {the OS's message} (os error N)`, as Rust's `io::Error` says it. */
+static void loft_win_error(loft_text *why, const char *program, DWORD e) {
+    char msg[512];
+    DWORD n = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, 0, e, 0, msg,
+                             (DWORD) sizeof msg, 0);
+    while (n > 0 && (msg[n - 1] == '\r' || msg[n - 1] == '\n' || msg[n - 1] == ' ')) n--;
+    msg[n] = 0;
+    char tail[48];
+    snprintf(tail, sizeof tail, " (os error %lu)", (unsigned long) e);
+    loft_push_cstr(why, program);
+    loft_push_cstr(why, ": ");
+    loft_push_cstr(why, n ? msg : "unknown error");
+    loft_push_cstr(why, tail);
+}
+
+/* This program's own stream `which` as a handle the child inherits. */
+static HANDLE loft_win_inherit(DWORD which) {
+    HANDLE h = GetStdHandle(which), dup = 0;
+    if (!h || h == INVALID_HANDLE_VALUE) return 0;
+    if (!DuplicateHandle(GetCurrentProcess(), h, GetCurrentProcess(), &dup, 0, TRUE, DUPLICATE_SAME_ACCESS)) return 0;
+    return dup;
+}
+
+static int loft_spawn(char **argv, const size_t *lens, size_t n, int pin, int pout, int perr, loft_child *c,
+                      loft_text *why) {
+    for (size_t i = 0; i < n; i++) {
+        if (strlen(argv[i]) != lens[i]) {
+            loft_push_cstr(why, argv[0]);
+            loft_push_cstr(why, ": nul byte found in provided data");
+            return 0;
+        }
+    }
+    size_t slot = 0;
+    while (slot < 256 && loft_win_children[slot].proc) slot++;
+    if (slot == 256) {
+        loft_push_cstr(why, argv[0]);
+        loft_push_cstr(why, ": too many programs running at once");
+        return 0;
+    }
+    SECURITY_ATTRIBUTES sa;
+    memset(&sa, 0, sizeof sa);
+    sa.nLength = sizeof sa;
+    sa.bInheritHandle = TRUE;
+    HANDLE in_r = 0, in_w = 0, out_r = 0, out_w = 0, err_r = 0, err_w = 0;
+    int ok = (!pin || CreatePipe(&in_r, &in_w, &sa, 0)) && (!pout || CreatePipe(&out_r, &out_w, &sa, 0)) &&
+             (!perr || CreatePipe(&err_r, &err_w, &sa, 0));
+    HANDLE child_in = pin ? in_r : CreateFileA("NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
+                                               OPEN_EXISTING, 0, 0);
+    HANDLE child_out = pout ? out_w : loft_win_inherit(STD_OUTPUT_HANDLE);
+    HANDLE child_err = perr ? err_w : loft_win_inherit(STD_ERROR_HANDLE);
+    /* The ends this program keeps are not the child's. */
+    if (in_w) SetHandleInformation(in_w, HANDLE_FLAG_INHERIT, 0);
+    if (out_r) SetHandleInformation(out_r, HANDLE_FLAG_INHERIT, 0);
+    if (err_r) SetHandleInformation(err_r, HANDLE_FLAG_INHERIT, 0);
+    loft_text cmd = { 0, 0, 0 };
+    for (size_t i = 0; i < n; i++) {
+        if (i) loft_push_char(&cmd, ' ');
+        loft_win_quote(&cmd, argv[i]);
+    }
+    loft_push_char(&cmd, 0);
+    /* Whatever this program wrote reaches its stream before the child's output does. */
+    fflush(0);
+    /* The command line as UTF-16, as `std::process` hands it over: through the ANSI call a
+     * word's UTF-8 would reach the child in the code page's reading. */
+    int wn = MultiByteToWideChar(CP_UTF8, 0, cmd.p, -1, 0, 0);
+    wchar_t *wcmd = wn > 0 ? (wchar_t *) malloc((size_t) wn * sizeof *wcmd) : 0;
+    if (wcmd) MultiByteToWideChar(CP_UTF8, 0, cmd.p, -1, wcmd, wn);
+    STARTUPINFOW si;
+    PROCESS_INFORMATION pi;
+    memset(&si, 0, sizeof si);
+    memset(&pi, 0, sizeof pi);
+    si.cb = sizeof si;
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = child_in;
+    si.hStdOutput = child_out;
+    si.hStdError = child_err;
+    DWORD e = 0;
+    if (!wcmd) ok = 0;
+    if (ok && !CreateProcessW(0, wcmd, 0, 0, TRUE, 0, 0, 0, &si, &pi)) ok = 0;
+    if (!ok) e = wcmd ? GetLastError() : ERROR_NOT_ENOUGH_MEMORY;
+    free(wcmd);
+    free(cmd.p);
+    HANDLE child_ends[3] = { child_in, child_out, child_err };
+    for (int i = 0; i < 3; i++)
+        if (child_ends[i] && child_ends[i] != INVALID_HANDLE_VALUE) CloseHandle(child_ends[i]);
+    if (!ok) {
+        HANDLE mine[3] = { in_w, out_r, err_r };
+        for (int i = 0; i < 3; i++)
+            if (mine[i]) CloseHandle(mine[i]);
+        loft_win_error(why, argv[0], e);
+        return 0;
+    }
+    CloseHandle(pi.hThread);
+    HANDLE job = CreateJobObjectA(0, 0);
+    if (job) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION li;
+        memset(&li, 0, sizeof li);
+        li.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
+        if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, &li, sizeof li) ||
+            !AssignProcessToJobObject(job, pi.hProcess)) {
+            CloseHandle(job);
+            job = 0;
+        }
+    }
+    loft_win_children[slot].proc = pi.hProcess;
+    loft_win_children[slot].job = job;
+    c->pid = (loft_pid) slot + 1;
+    c->in = pin ? _open_osfhandle((intptr_t) in_w, 0) : -1;
+    c->out = pout ? _open_osfhandle((intptr_t) out_r, 0) : -1;
+    c->err = perr ? _open_osfhandle((intptr_t) err_r, 0) : -1;
+    return 1;
+}
+
+static int loft_child_exited(loft_pid pid, int block) {
+    loft_win_child *w = loft_win_child_of(pid);
+    return !w || WaitForSingleObject(w->proc, block ? INFINITE : 0) == WAIT_OBJECT_0;
+}
+
+/* `exit_code`, with `own_code`'s reading: a code an MSYS/Cygwin program a signal ended gives
+ * (`n << 8`) reads as the `128 + n` it answers on Unix. */
+static int64_t loft_child_reap(loft_pid pid) {
+    loft_win_child *w = loft_win_child_of(pid);
+    if (!w) return -1;
+    WaitForSingleObject(w->proc, INFINITE);
+    DWORD code = 0;
+    int64_t r = GetExitCodeProcess(w->proc, &code) ? (int64_t) (int32_t) code : -1;
+    CloseHandle(w->proc);
+    if (w->job) CloseHandle(w->job);
+    w->proc = 0;
+    w->job = 0;
+    if (r > 0 && (r & 0xff) == 0 && (r >> 8) >= 1 && (r >> 8) <= 64) r = 128 + (r >> 8);
+    return r;
+}
+
+static int loft_child_wait(loft_pid pid, int64_t ms) {
+    loft_win_child *w = loft_win_child_of(pid);
+    return !w || WaitForSingleObject(w->proc, ms < 0 ? 0 : (DWORD) ms) == WAIT_OBJECT_0;
+}
+
+/* `stop_tree`: the job ended at once with the code a stop reads as on Unix (`128 + SIGTERM`). */
+static int64_t loft_child_stop(loft_pid pid) {
+    loft_win_child *w = loft_win_child_of(pid);
+    if (!w) return -1;
+    if (w->job) TerminateJobObject(w->job, 143);
+    else TerminateProcess(w->proc, 143);
+    return loft_child_reap(pid);
+}
+
+/* The input a writer thread owns: its pipe and a copy of the bytes. */
+typedef struct { int fd; size_t n; char p[1]; } loft_win_feed;
+
+static DWORD WINAPI loft_win_feed_run(LPVOID arg) {
+    loft_win_feed *f = (loft_win_feed *) arg;
+    HANDLE h = (HANDLE) _get_osfhandle(f->fd);
+    size_t at = 0;
+    while (at < f->n) {
+        DWORD w = 0;
+        size_t left = f->n - at;
+        if (!WriteFile(h, f->p + at, (DWORD) (left < (1u << 20) ? left : (1u << 20)), &w, 0) || !w) break;
+        at += w;
+    }
+    _close(f->fd);
+    free(f);
+    return 0;
+}
+
+/* One round over the child's pipes, as the POSIX pump's: each output read into its text (its end
+ * closes it), the input fed as far as the pipe takes it (closed once all of it is in, or the child
+ * closed its end).  `ms` -1 waits until something moves.  Answers whether any pipe is still open. */
+static int loft_child_pump(loft_child *c, loft_text *out, loft_text *err, const char *in, size_t inlen,
+                           size_t *fed, int ms) {
+    int64_t until = ms < 0 ? -1 : loft_now_us() + (int64_t) ms * 1000, step = 500;
+    char buf[65536];
+    for (;;) {
+        if (c->out < 0 && c->err < 0 && c->in < 0) return 0;
+        int moved = 0;
+        int *ends[2] = { &c->out, &c->err };
+        loft_text *into[2] = { out, err };
+        for (int k = 0; k < 2; k++) {
+            if (*ends[k] < 0) continue;
+            HANDLE h = (HANDLE) _get_osfhandle(*ends[k]);
+            DWORD avail = 0, got = 0;
+            if (!PeekNamedPipe(h, 0, 0, 0, &avail, 0)) {
+                _close(*ends[k]);
+                *ends[k] = -1;
+                moved = 1;
+                continue;
+            }
+            if (!avail) continue;
+            if (ReadFile(h, buf, avail < sizeof buf ? avail : (DWORD) sizeof buf, &got, 0) && got) {
+                if (into[k]) loft_push(into[k], buf, (size_t) got);
+            } else {
+                _close(*ends[k]);
+                *ends[k] = -1;
+            }
+            moved = 1;
+        }
+        /* The input goes to a thread of its own, as `std::process` gives it one: it writes a
+         * copy of what is left, blocking, and closes the pipe — a child that exits without
+         * reading closes its end, which ends the thread.  The pump only reads. */
+        if (c->in >= 0) {
+            size_t left = inlen - *fed;
+            loft_win_feed *f = (loft_win_feed *) malloc(sizeof *f + (left ? left : 1));
+            if (!f) { fputs("loft: out of memory\n", stderr); abort(); }
+            f->fd = c->in;
+            f->n = left;
+            if (left) memcpy(f->p, in + *fed, left);
+            HANDLE t = CreateThread(0, 0, loft_win_feed_run, f, 0, 0);
+            if (t) {
+                CloseHandle(t);
+            } else {
+                _close(f->fd);
+                free(f);
+            }
+            *fed = inlen;
+            c->in = -1;
+            moved = 1;
+        }
+        if (moved) break;
+        int64_t now = loft_now_us();
+        if (until >= 0 && now >= until) break;
+        loft_proc_nap(until >= 0 && until - now < step ? until - now : step);
+        step = step * 2 < 10000 ? step * 2 : 10000;
+    }
+    return c->out >= 0 || c->err >= 0 || c->in >= 0;
+}
+#endif
+
+#if defined(LOFT_PROC_HOST)
 /* `run_live`: run to completion with `input` on stdin, both streams collected; with `limit_ms`
  * >= 0 a child still running then is stopped with its tree and the code is -2. */
 static void loft_run_live(loft_words *w, const char *in, size_t inlen, int64_t limit_ms, loft_proc_answer *a) {
@@ -385,17 +685,16 @@ static int loft_rec_cmp(const void *a, const void *b) {
 static char **loft_rec_entries(const char *dir, size_t *n) {
     *n = 0;
     char **out = 0;
-    DIR *d = opendir(dir);
-    if (!d) return 0;
-    struct dirent *e;
-    while ((e = readdir(d)) != 0) {
-        if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) continue;
-        size_t len = strlen(dir) + strlen(e->d_name) + 2;
+    size_t nn = 0;
+    char **names = loft_dir_names(dir, &nn);
+    if (!names) return 0;
+    for (size_t i = 0; i < nn; i++) {
+        size_t len = strlen(dir) + strlen(names[i]) + 2;
         char *p = (char *) malloc(len);
         if (!p) { fputs("loft: out of memory\n", stderr); abort(); }
-        snprintf(p, len, "%s/%s", dir, e->d_name);
-        struct stat st;
-        if (stat(p, &st) != 0 || !S_ISDIR(st.st_mode)) {
+        snprintf(p, len, "%s/%s", dir, names[i]);
+        free(names[i]);
+        if (!loft_is_dir(p)) {
             free(p);
             continue;
         }
@@ -403,7 +702,7 @@ static char **loft_rec_entries(const char *dir, size_t *n) {
         if (!out) { fputs("loft: out of memory\n", stderr); abort(); }
         out[(*n)++] = p;
     }
-    closedir(d);
+    free(names);
     if (*n) qsort(out, *n, sizeof *out, loft_rec_cmp);
     return out;
 }
@@ -509,7 +808,7 @@ static void loft_rec_record(loft_words *w, const char *in, size_t inlen, const l
         free(key.p);
         return;
     }
-    mkdir(dir, 0777);
+    loft_proc_mkdir(dir);
     size_t n = 0;
     char **all = loft_rec_entries(dir, &n);
     for (size_t i = 0; i < n; i++) free(all[i]);
@@ -518,7 +817,7 @@ static void loft_rec_record(loft_words *w, const char *in, size_t inlen, const l
     const char *program = slash ? slash + 1 : w->v[0];
     char entry[8192];
     snprintf(entry, sizeof entry, "%s/%03zu-%s", dir, n + 1, *program ? program : "program");
-    mkdir(entry, 0777);
+    loft_proc_mkdir(entry);
     char code[32];
     snprintf(code, sizeof code, "%lld\n", (long long) a->code);
     loft_rec_write(entry, "argv", key.p, key.len);
@@ -542,7 +841,7 @@ static void loft_run_until(loft_words *w, const char *in, size_t inlen, int64_t 
 
 /* ── Started programs and line cursors, by the handle the library holds ── */
 
-typedef struct { int64_t h; pid_t pid; } loft_started;
+typedef struct { int64_t h; loft_pid pid; } loft_started;
 static loft_started *loft_started_tab = 0;
 static size_t loft_nstarted = 0;
 static int64_t loft_next_started = 1;
@@ -621,7 +920,7 @@ static void loft_cursor_finish(loft_cursor *k, int stop) {
     k->finished = 1;
     int *chosen = k->err ? &k->c.err : &k->c.out;
     if (*chosen >= 0) {
-        close(*chosen);
+        loft_proc_close(*chosen);
         *chosen = -1;
     }
     if (stop) k->code = loft_child_stop(k->c.pid);
@@ -698,7 +997,7 @@ static void loft_proc_start(loft_words *w, loft_proc_answer *a) {
 }
 #endif
 
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_PROC_HOST)
 /* ── lib/git (src/git_query.rs): a closed vocabulary of questions, each one's argv built here —
  * what the caller supplies is values (a ref, a path, a count), never options or a subcommand. ── */
 
@@ -721,10 +1020,14 @@ static int loft_git_run(const char *dir, char **words, size_t nwords, loft_text 
     size_t fed = 0;
     while (loft_child_pump(&c, out, &err, "", 0, &fed, -1)) {}
     free(err.p);
+#if defined(LOFT_POSIX_HOST)
     loft_proc_track(c.pid, 0);
     int status = 0;
     while (waitpid(c.pid, &status, 0) < 0 && errno == EINTR) {}
     *code = WIFEXITED(status) ? WEXITSTATUS(status) : -2;
+#else
+    *code = loft_child_reap(c.pid);
+#endif
     return 1;
 }
 
@@ -796,7 +1099,11 @@ static int64_t loft_git_query(int64_t kind, loft_str a, loft_str b, int64_t n, l
                     loft_push_cstr(out, sd);
                 } else {
                     char cwd[4096];
+#if defined(_WIN32)
+                    loft_push_cstr(out, _getcwd(cwd, (int) sizeof cwd) ? cwd : "the working directory");
+#else
                     loft_push_cstr(out, getcwd(cwd, sizeof cwd) ? cwd : "the working directory");
+#endif
                 }
             }
             free(o.p);
@@ -838,7 +1145,19 @@ static void loft_proc_control(const char *op, size_t oplen, loft_words *w, loft_
         /* PathText::program on this host: a name no platform takes refuses the path; the
          * child is handed its normal form. */
         loft_str raw = w->n ? loft_lit(w->v[0], w->len[0]) : loft_lit("", 0);
-        for (size_t i = 0; i < raw.len;) {
+        size_t first = 0;
+#if defined(_WIN32)
+        /* A drive or a share is the path's prefix, not a name. */
+        {
+            char *pfx = (char *) malloc(raw.len + 1);
+            if (!pfx) { fputs("loft: out of memory\n", stderr); abort(); }
+            size_t plen = 0;
+            int rooted = 0;
+            first = loft_win_prefix(raw, pfx, &plen, &rooted);
+            free(pfx);
+        }
+#endif
+        for (size_t i = first; i < raw.len;) {
             size_t s = i;
             while (i < raw.len && raw.p[i] != '/' && raw.p[i] != '\\') i++;
             size_t why_len = 0;
@@ -860,7 +1179,7 @@ static void loft_proc_control(const char *op, size_t oplen, loft_words *w, loft_
         free(norm);
         return;
     }
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_PROC_HOST)
     if (LOFT_OP("start")) {
         loft_proc_start(w, a);
     } else if (LOFT_OP("run")) {
@@ -942,7 +1261,7 @@ static int64_t loft_process_run(loft_str argv, loft_str input, loft_text *out, l
             loft_proc_say(&a, -1, 0, loft_proc_malformed);
         }
     } else if (loft_words_decode(argv.p, argv.len, &w)) {
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_PROC_HOST)
         loft_run_until(&w, input.p, input.len, -1, &a);
 #else
         loft_proc_say(&a, -1, 0, "process: this build cannot start a program");

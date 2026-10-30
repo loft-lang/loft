@@ -77,7 +77,9 @@ static loft_bt_slot loft_bt_slot_of(loft_store_t *s, uint32_t a, uint32_t n, uin
     loft_bt_slot v;
     v.part = loft_bt_part(s, a, n, i);
     v.rec = loft_bt_rec(s, a, n, i);
-    v.child = loft_bt_child(s, a, n, i);
+    /* A leaf's child words are never written (a node grown into a resized arena holds what the
+     * allocator left there), so only an internal node's is read. */
+    v.child = loft_bt_is_leaf(s, a, n) ? 0 : loft_bt_child(s, a, n, i);
     return v;
 }
 
@@ -135,8 +137,10 @@ static void loft_bt_set_prefix(loft_store_t *s, uint32_t a, uint32_t n, uint32_t
 
 /* ── key parts ── */
 
+/* `float_part`: the null (a NaN) below every value (`@FR-E-NullArg`, loft#2237). */
 static int64_t loft_bt_float_part(double v) {
     int64_t b;
+    if (v != v) return INT64_MIN;
     if (v == 0.0) v = 0.0;
     memcpy(&b, &v, 8);
     return b ^ (int64_t) ((uint64_t) (b >> 63) >> 1);
@@ -144,6 +148,7 @@ static int64_t loft_bt_float_part(double v) {
 
 static int64_t loft_bt_single_part(float v) {
     int32_t b;
+    if (v != v) return INT32_MIN;
     if (v == 0.0f) v = 0.0f;
     memcpy(&b, &v, 4);
     return (int64_t) (b ^ (int32_t) ((uint32_t) (b >> 31) >> 1));
@@ -823,6 +828,7 @@ static loft_ref loft_ix_find(loft_ref data, const loft_key *keys, int nk, const 
 static loft_ref loft_ix_insert(const loft_tdesc *T, uint16_t elem, loft_ref data, loft_ref rec, const loft_key *keys,
                                int nk, int secondary) {
     if (data.store_nr == 0xFFFF || data.rec == 0 || rec.rec == 0) return loft_ref_null();
+    if (LOFT_WRITE_REFUSED(loft_store_of(data))) return loft_ref_null();
     uint32_t dup = loft_bt_add(data, rec.rec, keys, nk);
     if (dup == 0) return loft_ref_null();
     loft_ref existing = { data.store_nr, dup, 8 };

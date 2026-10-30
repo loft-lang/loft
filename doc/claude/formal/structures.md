@@ -13,6 +13,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > find a value in an image it did not write:
 >
 > - the **frame and the image** — what `store_persist_copy` writes, and what is free to differ;
+> - the **live buffer** — the loft file layout: every block's bytes as a store holds them in
+>   memory, in a mapped file and under either runtime, and what lives beside the buffer;
 > - the **sidecar and the format identity** — how a reader knows which rules an image was
 >   written under, and what it does when they are not its own;
 > - the **keyed structures** — the hash table and its arena, the index's B+tree, the spatial
@@ -29,9 +31,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 >
 > [collections.md](collections.md)'s `Col-Bucket`, `Col-Tag`, `Col-Inline` and `Col-Layouts`
 > state the hash's layouts as BEHAVIOUR (a probe compares the tag first; layouts live side by
-> side); the rules here give their bytes.  [allocator.md](allocator.md)'s rules are the
-> opposite case: they decide where a block lands, no reader relies on it, and an image carries
-> none of their state.
+> side); the rules here give their bytes.  [allocator.md](allocator.md)'s rules decide where
+> a block LANDS, which no reader relies on and an image does not carry; the bytes each kind of
+> block holds are here (`S-Live`), because a live buffer and a mapped file carry them.
 
 ## Notation
 
@@ -83,6 +85,62 @@ word, the value at word 1, and a chain of blocks a reader can walk without an in
 allocator's bookkeeping stays home; a reader rebuilds what it needs.  Because the writer
 chooses where blocks go, two images of the same value can differ byte for byte and still be
 equally correct — what must agree is what a lookup finds, not where it was put.
+
+### The live buffer — the loft file layout
+
+```
+  (S-Live)    a store's BUFFER is the loft file layout: the S-Frame chain together with the
+              bytes of every block's STATE — claimed (S-Block), free (S-Free), parked (S-Park),
+              a tombstone (S-Tomb).  It is the same bytes in memory, in a file a store is bound
+              to (S-Mapped), and under either runtime: the interpreter's store (src/store.rs)
+              and the C runtime's (src/c/loft_store.h) write the same bytes for the same steps,
+              so either may read or continue a buffer the other wrote.  Where a block LANDS is
+              allocator.md's choice and may change; the bytes a block of each state holds may
+              not, short of a format change (S-Format).  An image is a rebuilt copy (S-Image)
+              and relies on S-Block and S-Free only.
+  (S-Block)   a CLAIMED block of n words: i32 +n at @0.  Its payload is the record's content,
+              laid out as its type (layout.md) from @8; the half-word @4 belongs to its kind —
+              a vector's, a sorted's, an ordered's and an array's length (S-Vector), a text's
+              byte length, a keyed collection's entry record the number of its collection's
+              record — and is content where the kind gives it none.  n is exactly the words
+              the record's claim asked for (allocator.md H-Exact); a vector's or a text's
+              spare room is room its own growth asked for (collections.md Col-Capacity).  A
+              TEXT record holds its length at @4 (u32) and its UTF-8 bytes from @8; the
+              bytes past len are not content.  A claim promises no value in
+              its payload (heap.md H-Claim).
+  (S-Free)    a FREE block of n words: i32 −n at @0, and −n again in the HIGH half of its last
+              word (allocator.md H-FreeFooter; a one-word free block's footer shares its
+              header's word, at @4).  A free block of at least two words that the free tree
+              holds (MIN_FREE_TREE = 2) keeps the tree's links in its first payload word: the
+              LEFT child's block number at @4 (u32) and the RIGHT child's at @8 (u31), with the
+              node's color — red — in bit 31 of @8.  A link of 0 is no child.  The block that
+              ends the store (the wilderness, H-Wilderness) and a block freed during the lazy
+              phase (H-LazyFree) hold the header and footer and no links a reader may follow.
+  (S-Park)    a PARKED block (allocator.md H-Park, 2 to 16 words): a free block (S-Free's
+              header and footer) whose @4 holds the PREVIOUS block of its size's list and @8 the
+              NEXT, as u32 block numbers, 0 ending the list — the half-words a tree node keeps
+              its links in.  A reader that does not keep the lists reads it as a free block.
+  (S-Tomb)    a TOMBSTONE (heap.md H-Removed): a removed record a stored reference named
+              becomes a claimed block of ONE word — i32 +1 at @0, 0 at @4 — and the rest of its
+              words a free block behind it.  It is claimed by its header and named by no
+              collection; what marks it removed is the runtime's removal set (S-Side).
+  (S-Side)    what the buffer does NOT hold is the runtime's, kept beside it and re-derived
+              from the chain when a buffer is opened or adopted: the claim set (every block
+              with a positive header), the free tree's root and the wilderness (rebuilt from
+              the free blocks), the parked lists' heads and the parked set (empty — a parked
+              block reads as free), the lazy phase's record (restarted), the referenced and
+              removed sets, which of its bytes were written, and its lock.  A runtime handing a
+              live store to the other (@PLN206's hosted unit) hands these with it; a file
+              carries none of them.
+```
+
+**In words.** A store is one buffer, and the buffer is the file: what a program builds in memory,
+what a mapped file holds and what the other runtime reads are the same bytes. Each block says
+what it is in its first word: positive is a record, negative is free, and a free block's first
+payload word holds the free tree's links. Everything the allocator knows beyond that — which
+blocks are claimed, where the tree's root is, which blocks wait on a parked list — is kept beside
+the buffer and can be rebuilt by walking it. That is the line a second runtime has to respect:
+it may place blocks differently, but it must write each kind of block the same way.
 
 ### The sidecar and the format identity
 
@@ -302,6 +360,14 @@ computes differently from the resident store becomes a lookup that silently answ
   (cuts inside a word, inside a block and on a block boundary, three backends);
   `tests/lazy_source_not_an_image.rs` (the
   signature, a truncated file); `src/store.rs` `from_bytes` cases.
+- **`S-Live` / `S-Block` / `S-Free` / `S-Park` / `S-Tomb`** — `tests/c_emit.rs`
+  `the_c_store_allocator_places_every_record_where_store_does`: one seeded run of claims,
+  deletes, resizes and referenced-record marks through `Store` and through the C allocator, the
+  WHOLE buffer compared after it (headers, footers, tree links, parked links, a tombstone);
+  `src/store.rs`'s `tree_in_order`, `chain`, `check_wilderness` and `check_parked` re-derive
+  the side state from the bytes after every step (allocator.md § Conformance).  `S-Side` is
+  `Store::resync_allocator` — the walk `open` does, and the one a side runs when the other
+  hands it a mapped store — rebuilding the free tree and the claim set from the chain.
 - **`S-Sidecar` / `S-Gate`** — `src/schema_sidecar.rs` unit tests (identical, changed, an endian
   flip, a garbage sidecar refused, the v2 round trip); `tests/layout_golden.rs`
   `schema_sidecar_identity_end_to_end`; `tests/scripts/store_load_layout_gate*.loft`.

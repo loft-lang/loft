@@ -6,9 +6,9 @@
 > what it cost, and what closed it.  The rules doc carries the CURRENT state (how many are open,
 > and which); everything below is the record behind it.
 
-## Open
+## Deviations carried by matching.md until 2026-10-29
 
-* **D-match-26** *(opened 2026-10-29, OPEN)* — `(M-Once)`.  Every chain builder lowers a
+* **D-match-26** *(opened 2026-10-29, CLOSED 2026-10-29)* — `(M-Once)`.  Every chain builder lowers a
   guarded arm as `if cmp { bindings; if guard { body } else REST } else REST`, so REST — the
   chain of every later arm — is placed twice, and each later guard copies its own REST inside
   both copies.  Measured on main ec098768e's front end (`loft introspect`), an eight-arm
@@ -24,9 +24,14 @@
   loop (`guarded arms nest the guard inside the pattern branch`), `build_scalar_chain`'s range
   and equality arms, and `chain_pattern_arms`, whose own comment named the copy ("The `<rest>`
   appears twice") without counting that the copies compound.  Values are right on both
-  backends; the cost is size.  Closes with step G of
-  [plans/91-self-host/1b-x22.md](../plans/91-self-host/1b-x22.md), guarded by a linear-size
-  test falsified against the 191 above.
+  backends; the cost is size.  **Fix** (step G of
+  [plans/91-self-host/1b-x22.md](../plans/91-self-host/1b-x22.md)): the three builders call one
+  `guarded_arm`, which writes `if (cmp && { bindings; guard }) { body } else REST`, so REST is
+  placed once; `LOFT_NO_GUARD_ARM=1` builds the copying shape for bisecting.  After: 8 subject
+  tests at every guard count, the bytecode 62 → 86 ops over 0 to 6 guards.  Guards
+  `tests/match_once.rs` (the size; 191 on the switch) and
+  `loft-suite/rules/matching/M-Once/a-guarded-arm-falls-to-the-next-arm-without-a-copy.loft`
+  (the values, both backends, strict stores).
 
 ## Deviations carried by matching.md until 2026-10-06
 

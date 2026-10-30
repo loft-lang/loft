@@ -37,11 +37,17 @@ A lane that "wins" by computing less has measured nothing.
 
 ```
   (Perf-Weight)  every public routine of the stdlib and of a shipped library,
-                 measured per release on a fixed workload, keeps its native
+                 measured per release on a fixed workload, keeps its compiled
                  time within the stated bar of a reference implementation in
                  an industry-standard language (pure Rust; C# admissible).
-                 The `--native` bar is 3× the reference for each routine, and
-                 the MEDIAN over every judged routine is held at 2×.
+                 The compiled target is the C backend (@PLN203): the bar is
+                 read on its SHIP lane (`cship`, the release-pass probe) under
+                 gcc AND under clang, each compiler on its own — 3× the
+                 reference for each routine, and the MEDIAN over every judged
+                 routine held at 2×.  The checked C lane is reported beside it;
+                 its extra over ship is the cost of the guarantees, optimised
+                 and never a defect of this rule.  The Rust generator
+                 (`--native`) is no longer judged (it is being shelved).
                  Drift against a previous loft release satisfies nothing here.
                  RELEASE CLAUSE: the stable release is held to 5× per routine.  A
                  routine between 3× and 5× still fails the bar and stays a defect
@@ -199,10 +205,13 @@ different matter and `(Perf-Like)`'s.
 OPEN: **1**
 
 - **D-perf-2 (OPEN, [#1743](https://github.com/loft-lang/loft/issues/1743), @PLN158) — not resolvable in a release** (owner's ruling) —
-  violates (Perf-Weight): the shipped routines as a POPULATION are over both bars.  The bar spans
-  every public routine of the stdlib and of every shipped library, and the routines over it fall
-  into mechanism classes whose cures are engine work measured in cycles (@PLN158, the native
-  optimisation stream), so no single release can close it; each routine that crosses the bar is
+  violates (Perf-Weight): the shipped routines as a POPULATION are over both bars.  Judged on
+  the C lanes (owner's ruling): the population is judged on the C ship lane under gcc and clang
+  (`bench/stats.py --lanes rust,c,cship [--cc clang]` with every library bench, which builds its C
+  lanes).  The bar spans every public routine of the stdlib and of every shipped
+  library, and the routines over it fall into mechanism classes whose cures are engine work
+  measured in cycles (@PLN158; the C stream, `bench/portal/analysis/c-3x-bar.md`), so no single
+  release can close it; each routine that crosses the bar is
   fixed on its own, and the release reads the position instead (`M-perf-pass`, `make
   perf-portal`, [PERF_PORTAL.md](../PERF_PORTAL.md)).  The entry closes when the portal's
   population meets both bars; `drawing`, the first library judged, already does (D-perf-1, in

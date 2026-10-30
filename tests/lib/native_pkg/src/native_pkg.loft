@@ -67,3 +67,7 @@ pub fn ext_maybe(x: integer) -> integer?;
 // the C-ABI; beyond-i32 and negative values must not truncate.
 pub fn ext_echo(x: integer) -> integer;
 #native "loft_ext_echo"
+
+// Pattern 12: a NARROW integer answer — its null (`i32::MIN` at the C-ABI) reads as null.
+pub fn ext_narrow(x: i32) -> i32;
+#native "loft_ext_narrow"

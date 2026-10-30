@@ -242,6 +242,7 @@ impl Parser {
             self.emit_not_null_hints();
             // @PLN130 F9 (loft#779) — the whole world is parsed here, so a callee's body can
             // be asked whether it removes from a `&` parameter.
+            self.check_match_guards();
             self.check_reshape_under_reference();
             self.synth_drop_cascades();
             self.check_layout_baseline();
@@ -1439,6 +1440,7 @@ impl Parser {
             self.check_subrule_wellformedness();
             self.after_pass2();
             if !default {
+                self.check_match_guards();
                 self.check_reshape_under_reference();
                 self.synth_drop_cascades();
             }
@@ -1489,6 +1491,7 @@ impl Parser {
             self.check_subrule_wellformedness();
             self.after_pass2();
             if !default {
+                self.check_match_guards();
                 self.check_reshape_under_reference();
                 self.synth_drop_cascades();
             }
@@ -1941,6 +1944,7 @@ impl Parser {
         self.check_subrule_wellformedness();
         self.after_pass2();
         // @PLN130 F9 (loft#779) — see `parse`.
+        self.check_match_guards();
         self.check_reshape_under_reference();
         self.synth_drop_cascades();
         // An editor's compile of a save (`loft --serve`) against the game it runs.
@@ -2005,6 +2009,7 @@ impl Parser {
         self.resolve_deferred_unknowns();
         self.after_pass2();
         // @PLN130 F9 (loft#779) — see `parse`.
+        self.check_match_guards();
         self.check_reshape_under_reference();
         self.synth_drop_cascades();
         self.diagnostics.fill(self.lexer.diagnostics());

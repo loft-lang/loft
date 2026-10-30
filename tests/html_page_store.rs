@@ -225,3 +225,173 @@ fn a_browser_page_reads_a_store_out_of_its_own_filesystem() {
          above proves nothing if this one does not hold.\n{bare}"
     );
 }
+
+/// The page's python, once chrome, node, python3 and the loft binary are all present;
+/// `None` (with the SKIP reason printed) otherwise.
+fn page_prerequisites() -> Option<PathBuf> {
+    if any_of(&["google-chrome", "chromium", "chromium-browser", "chrome"]).is_none() {
+        eprintln!("SKIP: no chrome binary in PATH");
+        return None;
+    }
+    if which("node").is_none() {
+        eprintln!("SKIP: node not installed");
+        return None;
+    }
+    let Some(py) = which("python3").or_else(|| which("python")) else {
+        eprintln!("SKIP: python3 not installed");
+        return None;
+    };
+    if !fa::exists(PathBuf::from(env!("CARGO_BIN_EXE_loft"))) {
+        eprintln!("SKIP: target/release/loft not built");
+        return None;
+    }
+    Some(py)
+}
+
+/// `page` with `files` handed to its own filesystem (`globalThis.loftBaseFS`).
+fn seed_page(page: &str, files: &[(&str, Vec<u8>)]) -> String {
+    let entries: Vec<String> = files
+        .iter()
+        .map(|(name, bytes)| {
+            format!(
+                "\"/{name}\":Uint8Array.from(atob(\"{}\"),c=>c.charCodeAt(0))",
+                loft::base64::encode(bytes)
+            )
+        })
+        .collect();
+    let seed = format!(
+        "<script>globalThis.loftBaseFS={{{}}};</script>\n",
+        entries.join(",")
+    );
+    page.replacen("<script>", &format!("{seed}<script>"), 1)
+}
+
+/// `@FR-L-Sound` — a page converts a store written under an OLDER layout, as native does.
+///
+/// The layout gate reads the sidecar from the page's filesystem and answers "convert"; the
+/// converter must then open the same two files there.  It read them from the program's
+/// filesystem only, so every page refused the conversion its gate had just approved — the
+/// gallery's sprite pack loaded natively and not in the browser (loft#2237's key order made
+/// it an older layout).  The control is the same page without the image: still a refusal.
+// @speed 30.0
+#[test]
+fn a_browser_page_converts_a_store_written_under_an_older_layout() {
+    let Some(py) = page_prerequisites() else {
+        return;
+    };
+    let loft = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
+    let dir = std::env::temp_dir().join("loft_html_page_store_old");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("create tempdir");
+
+    // The writer's `Rec` has no `r_m`; the reader's has.  So the image is an older layout
+    // for the reader, and its load converts: `r_n` keeps 7, `r_m` is filled with 0.
+    fa::write(
+        dir.join("writer.loft"),
+        "struct Rec { r_key: text, r_n: integer }\n\
+         fn main() {\n\
+         \x20 h: hash<Rec[r_key]> = [];\n\
+         \x20 h[\"a\"] = Rec { r_key: \"a\", r_n: 7 };\n\
+         \x20 println(\"persist={store_persist_copy(h, \\\"old.store\\\")}\");\n\
+         }\n",
+    )
+    .expect("write writer");
+    let reader = dir.join("reader.loft");
+    fa::write(
+        &reader,
+        "struct Rec { r_key: text, r_n: integer, r_m: integer }\n\
+         fn main() {\n\
+         \x20 q: hash<Rec[r_key]> = [];\n\
+         \x20 ok = store_load(q, \"old.store\");\n\
+         \x20 r = q[\"a\"];\n\
+         \x20 println(\"load={ok} read={r != null} n={r.r_n} m={r.r_m}\");\n\
+         }\n",
+    )
+    .expect("write reader");
+
+    let made = loft::platform::process::harness_command(&loft)
+        .arg("--interpret")
+        .arg(dir.join("writer.loft"))
+        .current_dir(&dir)
+        .output()
+        .expect("invoke loft");
+    assert!(
+        fa::exists(dir.join("old.store")) && fa::exists(dir.join("old.store.dschema")),
+        "the older-layout fixture was not written: {}",
+        String::from_utf8_lossy(&made.stdout)
+    );
+    // The native answer is the oracle the page must give.
+    let native = loft::platform::process::harness_command(&loft)
+        .arg("--interpret")
+        .arg(&reader)
+        .current_dir(&dir)
+        .output()
+        .expect("invoke loft");
+    let native = String::from_utf8_lossy(&native.stdout).to_string();
+    assert!(
+        native.contains("load=true read=true n=7 m=0"),
+        "the native control did not convert the older layout: {native}"
+    );
+
+    let html = dir.join("reader.html");
+    let built = loft::platform::process::harness_command(&loft)
+        .args([
+            "--native-rust",
+            "--html",
+            html.to_str().expect("utf-8 path"),
+        ])
+        .arg(&reader)
+        .current_dir(&dir)
+        .output()
+        .expect("invoke loft --html");
+    if !built.status.success() || !fa::exists(&html) {
+        eprintln!(
+            "SKIP: `loft --html` failed (no wasm toolchain?)\nstderr: {}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        return;
+    }
+    let page = fa::read_to_string(&html).expect("read page");
+    let image = fa::read(dir.join("old.store")).expect("read store");
+    let side = fa::read(dir.join("old.store.dschema")).expect("read sidecar");
+    let carried = seed_page(
+        &page,
+        &[("old.store", image), ("old.store.dschema", side.clone())],
+    );
+    // The control: the sidecar alone.  The gate still judges the layout older, and with no
+    // image to convert the load must refuse rather than answer an empty success.
+    let sidecar_only = seed_page(&page, &[("old.store.dschema", side)]);
+    fa::write(dir.join("carried.html"), &carried).expect("write carried page");
+    fa::write(dir.join("sidecar_only.html"), &sidecar_only).expect("write control page");
+
+    let Some(port) = pick_free_port() else {
+        eprintln!("SKIP: could not pick a free TCP port");
+        return;
+    };
+    let Some(server) = spawn_server(&py, &dir, port) else {
+        eprintln!("SKIP: failed to start python http.server");
+        return;
+    };
+    let _guard = ServerGuard(server);
+    let converted = page_output(
+        &format!("http://127.0.0.1:{port}/carried.html"),
+        port.wrapping_add(1),
+    );
+    let refused = page_output(
+        &format!("http://127.0.0.1:{port}/sidecar_only.html"),
+        port.wrapping_add(2),
+    );
+    if converted.contains("SKIP:") || refused.contains("SKIP:") {
+        eprintln!("SKIP: the page harness did not observe a page\n{converted}\n{refused}");
+        return;
+    }
+    assert!(
+        converted.contains("load=true read=true n=7 m=0"),
+        "a page carrying a store written under an older layout did not convert it as native \
+         did ({native}) — the converter cannot read the page's own filesystem.\n{converted}"
+    );
+    assert!(
+        refused.contains("load=false") && refused.contains("read=false"),
+        "a page with no image reported a converted load.\n{refused}"
+    );
+}

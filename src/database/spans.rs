@@ -688,10 +688,11 @@ fn one_tile_footprint_is_the_blocks_it_owns() {
     });
     assert_eq!(l.lo.len(), 1, "one tile");
 
-    // Three steps and one road fit the minimum claim, so no vector ever relocates and
-    // the tile's whole cost is exactly three blocks.
-    let steps = (11u32 * 12 + 15) / 8; // `checked_vec_cap(11, 12)` — header included
-    let roads = (11u32 * 6 + 15) / 8;
+    // Three steps and one road fit the START room (`@FR-Col-Capacity`), so no vector ever
+    // relocates and the tile's whole cost is exactly three blocks.
+    let start = |size: u32| (crate::vector::grown_elems(1, size) * size + 15) / 8;
+    let steps = start(12); // header included
+    let roads = start(6);
     let slot = shape.stride.div_ceil(8);
     assert_eq!(
         l.live[0],

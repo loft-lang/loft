@@ -285,6 +285,10 @@ enum RetPromotion {
     /// lowering the single-named-local shape already uses and which loft#1078's own
     /// leak fix proved out.
     SkipJoinArm,
+    /// `@FR-N-Shape` — a lambda's nullable vector tail when the lambda has no buffer yet:
+    /// growing would make that local the buffer argument.  Nothing is emitted; the
+    /// between-passes sweep reserves `__retbuf` and pass 2 BINDS the local into it.
+    AwaitReservedBuffer,
     /// Vector / struct-Enum returns on LAMBDAS still grow the arity in place:
     /// a lambda is defined at its literal site and invoked via CallRef, so no
     /// earlier caller can hold a short arg list.  PASS-1 growth on a plain fn
@@ -561,14 +565,50 @@ fn set_arm_null_typed(code: &mut Value, typed_null: &Value, result_type: &Type) 
     }
 }
 
+/// One guarded arm of a `match` chain — `pat if guard => body`, whose pattern test is `cmp` and
+/// whose captures are `bindings` — falling to `rest`, the chain of every later arm.
+///
+/// `@FR-M-Once`: the guard is part of its arm's condition, `cmp && { bindings; guard }`, so
+/// `rest` is placed ONCE and a failed guard reaches it as the ordinary fall-through
+/// (`@FR-P-Guard`).  The bindings still run once, only after `cmp` holds, and before the guard
+/// reads them — a slice arm's `..name` materialisation and a PEG cursor advance cannot run
+/// twice.  `LOFT_NO_GUARD_ARM=1` (`keys::guard_arm_enabled`) builds the copying shape instead,
+/// `if cmp { bindings; if guard { body } else rest } else rest`, whose copies compound per
+/// guard; it answers the same values, so it is the bisect switch and nothing more.
+fn guarded_arm(
+    cmp: Value,
+    bindings: Vec<Value>,
+    guard: Value,
+    body: Value,
+    rest: Value,
+    tp: &Type,
+) -> Value {
+    if !crate::keys::guard_arm_enabled() {
+        let guarded = v_if(guard, body, rest.clone());
+        let inner = if bindings.is_empty() {
+            guarded
+        } else {
+            let mut stmts = bindings;
+            stmts.push(guarded);
+            v_block(stmts, tp.clone(), "match_arm")
+        };
+        return v_if(cmp, inner, rest);
+    }
+    let condition = if bindings.is_empty() {
+        guard
+    } else {
+        let mut stmts = bindings;
+        stmts.push(guard);
+        v_block(stmts, Type::Boolean, "match_guard")
+    };
+    v_if(v_if(cmp, condition, Value::Boolean(false)), body, rest)
+}
+
 /// Assemble collected [`PatternArm`]s into the match's if-chain, last arm first.
 ///
-/// A guarded arm lowers to `if <cond> { <bindings>; if <guard> { <body> } else { <rest> } }
-/// else { <rest> }` — captures assigned once, inside the branch their pattern already
-/// selected, before the guard reads them.  The `<rest>` appears twice, as it does in the
-/// enum arm chain this mirrors; only an arm that actually carries a guard pays for it.
-/// Bindings are never duplicated: a slice arm's are a `..name` materialisation and a PEG
-/// cursor advance, neither of which survives being run twice.
+/// A guarded arm with a pattern test is [`guarded_arm`]'s, as in the enum and scalar chains; a
+/// guarded arm with none (a bare binding or `_`) is `{ <bindings>; if <guard> { <body> } else
+/// { <rest> } }`, which places the rest once already.
 fn chain_pattern_arms(arms: Vec<PatternArm>, fallback: Value, result_type: &Type) -> Value {
     // The fn-ref widening `build_scalar_chain` does for a scalar subject, for the
     // pattern subject: an enum arm yielding a non-capturing lambda is the same bare
@@ -585,17 +625,17 @@ fn chain_pattern_arms(arms: Vec<PatternArm>, fallback: Value, result_type: &Type
             };
             continue;
         };
-        // @FR-D-match-26 — the rest is placed twice; `(M-Once)` says once.
-        let rest = chain.clone();
-        let mut guarded = v_if(guard, arm.code, rest);
-        if !arm.bindings.is_empty() {
-            let mut stmts = arm.bindings;
-            stmts.push(guarded);
-            guarded = v_block(stmts, result_type.clone(), "match_arm");
-        }
-        chain = match arm.cond {
-            Some(cond) => v_if(cond, guarded, chain),
-            None => guarded,
+        chain = if let Some(cond) = arm.cond {
+            guarded_arm(cond, arm.bindings, guard, arm.code, chain, result_type)
+        } else {
+            let guarded = v_if(guard, arm.code, chain);
+            if arm.bindings.is_empty() {
+                guarded
+            } else {
+                let mut stmts = arm.bindings;
+                stmts.push(guarded);
+                v_block(stmts, result_type.clone(), "match_arm")
+            }
         };
     }
     chain
@@ -6264,9 +6304,11 @@ impl Parser {
         // @PLN187 — this match's subject and arm facts; a nested match keeps its own.
         let outer_subject = std::mem::take(&mut self.match_subject);
         let outer_arm_facts = std::mem::take(&mut self.match_arm_facts);
+        let outer_root = std::mem::replace(&mut self.match_subject_root, u16::MAX);
         let r = self.parse_match_inner(code);
         let arm_facts = std::mem::replace(&mut self.match_arm_facts, outer_arm_facts);
         self.match_subject = outer_subject;
+        self.match_subject_root = outer_root;
         if !matches!(r.base(), Type::Void | Type::Null | Type::Never) {
             self.settle_join(&arm_facts);
         } else if self.abstract_on() {
@@ -6312,6 +6354,7 @@ impl Parser {
         // does not recognise: `match Vn { rs: 7 } { … }` dispatched nowhere on pass 1, typed the
         // match `void`, and a local bound to it refused pass 2's real type.
         let mut subject_type = self.expression(&mut subject).unrewritten();
+        self.match_subject_root = self.subject_place_root(&subject);
         // @PLN187 — a tuple subject is inspected position by position, by its patterns; any
         // other abstract subject is read by the match itself.
         let subject_fact = std::mem::take(&mut self.operand_fact);
@@ -6494,7 +6537,13 @@ impl Parser {
             // `OpRefIsNull` is well defined for any heap subject, and on one that cannot be
             // absent the arm is simply never taken, exactly like an unreachable `_`.
             let heap_null_subject = is_struct && !synth_null_elem;
-            if valid_enum && (synth_null_elem || heap_null_subject) && self.lexer.has_token("null")
+            // A plain VALUE enum spells absence in its disc byte (0 or 255), which no variant
+            // takes, so its `null` arm asks `null_test` too and a variant arm never matches a
+            // null.  Without it the arm-head parser read `null` as a variant name (loft#2230).
+            let value_null_subject = !is_struct && !synth_null_elem;
+            if valid_enum
+                && (synth_null_elem || heap_null_subject || value_null_subject)
+                && self.lexer.has_token("null")
             {
                 self.expect_match_arm_arrow();
                 let mut arm_body = Value::Null;
@@ -6537,7 +6586,7 @@ impl Parser {
                 // The inline element reads discriminant 0; the heap subject asks its own
                 // sentinel, and covers no variant — an absent subject is not a variant of
                 // anything, which is why exhaustiveness is untouched for it.
-                let (discs, cond) = if heap_null_subject {
+                let (discs, cond) = if heap_null_subject || value_null_subject {
                     // `null_test` is the one home for "is this absent?": a struct-enum
                     // subject bound from an `E` slot is a sub-reference whose absence is its
                     // discriminant, which the bare sentinel test called present, so the
@@ -7323,20 +7372,15 @@ impl Parser {
                     }
                     cmp
                 };
-                // guarded arms nest the guard inside the pattern branch.
-                // @FR-D-match-26 — and place the rest twice; `(M-Once)` says once.
                 chain = match &arm.guard {
-                    Some(guard) => {
-                        let guarded = v_if(guard.clone(), arm.code.clone(), chain.clone());
-                        let inner = if arm.bindings.is_empty() {
-                            guarded
-                        } else {
-                            let mut stmts = arm.bindings.clone();
-                            stmts.push(guarded);
-                            v_block(stmts, arm.tp.clone(), "match_arm")
-                        };
-                        v_if(cmp, inner, chain)
-                    }
+                    Some(guard) => guarded_arm(
+                        cmp,
+                        arm.bindings.clone(),
+                        guard.clone(),
+                        arm.code.clone(),
+                        chain,
+                        &arm.tp,
+                    ),
                     None => v_if(cmp, arm.code.clone(), chain),
                 };
             }
@@ -11000,8 +11044,10 @@ impl Parser {
     /// Parse an optional `if <expr>` guard clause.
     fn parse_optional_guard(&mut self) -> Option<Value> {
         if self.lexer.has_token("if") {
+            let at = *self.lexer.pos();
             let mut guard_code = Value::Null;
             let guard_type = self.expression(&mut guard_code);
+            self.record_guard(&guard_code, at);
             if !self.first_pass && guard_type != Type::Boolean {
                 diagnostic!(
                     self.lexer,
@@ -11484,8 +11530,10 @@ impl Parser {
 
             // parse optional guard clause.
             let mut guard_opt = if self.lexer.has_token("if") {
+                let at = *self.lexer.pos();
                 let mut guard_code = Value::Null;
                 let guard_type = self.expression(&mut guard_code);
+                self.record_guard(&guard_code, at);
                 if !self.first_pass && guard_type != Type::Boolean {
                     diagnostic!(
                         self.lexer,
@@ -12259,8 +12307,10 @@ impl Parser {
             // Parse the optional guard.  Captures bound by the pattern above are in scope
             // for it, and `chain_pattern_arms` assigns them before the guard runs.
             let mut guard_opt = if self.lexer.has_token("if") {
+                let at = *self.lexer.pos();
                 let mut guard = Value::Null;
                 let gt = self.expression(&mut guard);
+                self.record_guard(&guard, at);
                 if !self.first_pass && gt != Type::Boolean {
                     self.convert(&mut guard, &gt, &Type::Boolean);
                 }
@@ -13487,8 +13537,10 @@ impl Parser {
             // (TUPLES.md § Grammar).  Element bindings are in scope for it, and
             // `chain_pattern_arms` assigns them before the guard runs.
             let guard_opt = if self.lexer.has_token("if") {
+                let at = *self.lexer.pos();
                 let mut g = Value::Null;
                 let gt = self.expression(&mut g);
+                self.record_guard(&g, at);
                 if !self.first_pass && gt != Type::Boolean {
                     diagnostic!(
                         self.lexer,
@@ -13737,11 +13789,9 @@ impl Parser {
                         || bl.name == "or_pattern")
                 {
                     let range_cond = bl.operators[0].clone();
-                    // @FR-D-match-26 — a guarded arm places the rest twice; `(M-Once)` says once.
                     chain = match guard_opt {
                         Some(guard) => {
-                            let guarded = v_if(guard, arm_code, chain.clone());
-                            v_if(range_cond, guarded, chain)
+                            guarded_arm(range_cond, Vec::new(), guard, arm_code, chain, result_type)
                         }
                         None => v_if(range_cond, arm_code, chain),
                     };
@@ -13757,11 +13807,9 @@ impl Parser {
                 if cond_tp == Type::Null {
                     chain = arm_code;
                 } else {
-                    // @FR-D-match-26 — as the range arm above.
                     chain = match guard_opt {
                         Some(guard) => {
-                            let guarded = v_if(guard, arm_code, chain.clone());
-                            v_if(cond, guarded, chain)
+                            guarded_arm(cond, Vec::new(), guard, arm_code, chain, result_type)
                         }
                         None => v_if(cond, arm_code, chain),
                     };
@@ -19803,9 +19851,17 @@ impl Parser {
         // `Bind` rung below copies it — or its null — into the buffer at the exit.  A record
         // return re-mints its destination on delivery and a text local has no handle to lose,
         // so both were measured right and stay out of the rung.
+        //
+        // A `??` subject temp (`__ncc_N`) is such a local whatever its type says: it holds the
+        // subject's answer, which may be null, though the `??` lowering types it by the bare
+        // vector.  Renamed onto the buffer, `f(s) ?? d` as a function tail bound
+        // `__ncc_N = f(s, __ref_N)` into the caller's handle, so `w` answered the store it
+        // minted for `f` (one leak per call), and on a null answer the default arm wrote into
+        // the sentinel: `f(s) ?? [7, 8]` answered `[]`, or panicked on the interpreter
+        // (loft#2233).  Unrenamed it takes the same `Bind` copy as `r = f(s); r ?? d`.
         let nullable_vector_local = !is_work_ref
             && matches!(ctx.ret.ret_promo_base(), Type::Vector(_, _))
-            && self.vars.tp(v).peel_optional().1;
+            && (self.vars.tp(v).peel_optional().1 || n.starts_with("__ncc_"));
         let allow_rename = !(bound_already
             || nullable_vector_local
             || wrong_shape_for_buffer
@@ -19886,6 +19942,11 @@ impl Parser {
                 // (which would re-alias the freed subject).
                 substitute: is_work_ref && !a1b_site,
             };
+        }
+        // loft#2233's twin in a lambda: with no buffer to bind to, `Grow` would make the
+        // nullable local itself the buffer argument — the rename the rung above refused.
+        if nullable_vector_local && !ctx.is_plain_fn && self.return_buffer().is_none() {
+            return RetPromotion::AwaitReservedBuffer;
         }
         RetPromotion::Grow
     }
@@ -20196,7 +20257,8 @@ impl Parser {
                     | RetPromotion::MergeOnly
                     | RetPromotion::SkipInnerRef
                     | RetPromotion::SkipCaptured
-                    | RetPromotion::SkipJoinArm => {}
+                    | RetPromotion::SkipJoinArm
+                    | RetPromotion::AwaitReservedBuffer => {}
                     // loft#974 — a shape that carries its own delivery takes the borrow
                     // fact and nothing else: no buffer rename, no bind, no arity growth.
                     // Every leg below rewrites where the value LIVES, and this return
@@ -24012,6 +24074,93 @@ impl<'a> ViewWalk<'a> {
                 }
             }
             _ => {}
+        }
+    }
+}
+
+/// `@FR-M-Fixed` — one guard of a `match`, recorded on pass 2 and judged once every body is
+/// final: whether it can write the subject depends on what its callees write, and a callee
+/// defined after the match has only its pass-1 body while the match is parsed.
+pub(crate) struct GuardCheck {
+    def_nr: u32,
+    guard: Value,
+    root: u16,
+    at: crate::lexer::Position,
+}
+
+impl Parser {
+    /// The variable at the root of `subject` when the subject is a PLACE — a variable, or a
+    /// field or element read of one — else `u16::MAX`: a computed subject is held in a
+    /// temporary, which no guard can name.
+    fn subject_place_root(&self, subject: &Value) -> u16 {
+        match subject.unspan() {
+            Value::Var(v) => *v,
+            Value::Call(d, args)
+                if !args.is_empty()
+                    && (*d as usize) < self.data.definitions.len()
+                    && (self.data.def(*d).name().starts_with("OpGet")
+                        || crate::use_analysis::is_projection_op(&self.data, *d)) =>
+            {
+                self.subject_place_root(&args[0])
+            }
+            _ => u16::MAX,
+        }
+    }
+
+    /// Record guard `guard` of the enclosing match, parsed at `at`, for `check_match_guards`.
+    fn record_guard(&mut self, guard: &Value, at: crate::lexer::Position) {
+        if self.first_pass || self.match_subject_root == u16::MAX {
+            return;
+        }
+        self.guard_checks.push(GuardCheck {
+            def_nr: self.context,
+            guard: guard.clone(),
+            root: self.match_subject_root,
+            at,
+        });
+    }
+
+    /// `@FR-M-Fixed` — refuse every recorded guard that can write its match's subject: one
+    /// that writes the subject's root variable, or a view whose dependencies lead to it
+    /// (`find_written_vars`, the one home of which variables a piece of code writes — a `Set`,
+    /// a `&` argument, a write operator's target, a callee that writes the parameter).
+    pub(crate) fn check_match_guards(&mut self) {
+        let checks = std::mem::take(&mut self.guard_checks);
+        let mut cache = crate::fxhash::FxHashMap::default();
+        for g in checks {
+            if (g.def_nr as usize) >= self.data.definitions.len() {
+                continue;
+            }
+            let vars = self.data.def(g.def_nr).variables();
+            let mut written = crate::fxhash::FxHashSet::default();
+            crate::parser::find_written_vars(&g.guard, &self.data, vars, &mut written, &mut cache);
+            let reaches_root = |w: u16| {
+                let mut seen = vec![w];
+                let mut at = 0;
+                while at < seen.len() {
+                    if seen[at] == g.root {
+                        return true;
+                    }
+                    for d in vars.tp(seen[at]).depend() {
+                        if !seen.contains(&d) {
+                            seen.push(d);
+                        }
+                    }
+                    at += 1;
+                }
+                false
+            };
+            if written.iter().any(|&w| reaches_root(w)) {
+                let name = vars.name(g.root).to_string();
+                diagnostic_at!(
+                    self.lexer,
+                    &g.at,
+                    Level::Error,
+                    "a match guard cannot change '{name}', the value being matched: the arms \
+                     after it would test something else.  Change '{name}' in the arm's body, \
+                     after the tests, or match on a copy"
+                );
+            }
         }
     }
 }

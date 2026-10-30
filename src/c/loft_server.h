@@ -7,10 +7,10 @@
  * both on one port without blocking: a connection that asks to upgrade becomes a client, any
  * other request is parked for the handler to answer.  A TLS listener takes a PEM certificate
  * chain and key and completes each handshake as it accepts; a certificate it cannot use
- * refuses the listener, never a fallback to cleartext.  Per-thread state, POSIX hosts; never
+ * refuses the listener, never a fallback to cleartext.  Per-thread state; the sockets are
+ * `loft_sock.h`'s (POSIX or Winsock); never
  * pasted into a unit (`LOFT_SERVER` is the component's).  Guard: `tests/server_natives.rs`. */
-#if defined(LOFT_SERVER) && defined(LOFT_POSIX_HOST)
-#include <netinet/in.h>
+#if defined(LOFT_SERVER) && defined(LOFT_SOCKETS)
 
 #ifdef LOFT_HTTPS
 struct loft_tls_server;
@@ -211,25 +211,25 @@ static int64_t loft_srv_bind(const char *addr, size_t an, int64_t port, void *tl
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_PASSIVE | AI_NUMERICSERV;
+    loft_sock_ready();
     int gai = getaddrinfo(host, service, &hints, &res);
     int fd = -1, why = 0;
     if (gai != 0) {
         fprintf(stderr, "loft_tcp_listen: cannot bind %s: %s\n", at, gai_strerror(gai));
     } else {
         for (struct addrinfo *a = res; a && fd < 0; a = a->ai_next) {
-            int s = socket(a->ai_family, a->ai_socktype, a->ai_protocol);
+            int s = loft_sock_open(a->ai_family, a->ai_socktype, a->ai_protocol);
             if (s < 0) {
-                why = errno;
+                why = loft_sock_error();
                 continue;
             }
             loft_sock_cloexec(s);
-            int one = 1;
-            setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
-            if (bind(s, a->ai_addr, a->ai_addrlen) == 0 && listen(s, 128) == 0) {
+            loft_sock_listener_addr(s);
+            if (loft_sock_bind_listen(s, a->ai_addr, (size_t) a->ai_addrlen, 128) == 0) {
                 fd = s;
             } else {
-                why = errno;
-                close(s);
+                why = loft_sock_error();
+                loft_sock_close(s);
             }
         }
         freeaddrinfo(res);
@@ -277,10 +277,10 @@ static int loft_srv_accept(int64_t h, int nonblocking, loft_stream *out) {
     loft_sock_blocking(l->fd, !nonblocking);
     int fd;
     for (;;) {
-        fd = accept(l->fd, 0, 0);
+        fd = loft_sock_accept(l->fd);
         if (fd >= 0) break;
-        if (errno == EINTR) continue;
-        return errno == EAGAIN || errno == EWOULDBLOCK ? 0 : -1;
+        if (loft_sock_interrupted()) continue;
+        return loft_sock_would_block() ? 0 : -1;
     }
     loft_sock_cloexec(fd);
     loft_sock_blocking(fd, 1);
@@ -294,7 +294,7 @@ static int loft_srv_accept(int64_t h, int nonblocking, loft_stream *out) {
         loft_sock_timeout(fd, 10000);
         out->tls = loft_tls_accept(fd, (const struct loft_tls_server *) l->tls, err, sizeof err);
         if (!out->tls) {
-            close(fd);
+            loft_sock_close(fd);
             out->fd = -1;
             return -1;
         }
@@ -325,7 +325,7 @@ static uint8_t loft_srv_tcp_accept(int64_t h, int nonblocking) {
 static void loft_srv_tcp_close(int64_t h) {
     loft_srv_listener *l = loft_srv_listener_at(h);
     if (!l) return;
-    close(l->fd);
+    loft_sock_close(l->fd);
     l->fd = -1;
 #ifdef LOFT_HTTPS
     loft_tls_server_free((struct loft_tls_server *) l->tls);
@@ -536,13 +536,10 @@ static int loft_srv_probe(loft_stream *c) {
     if (c->tls) return loft_tls_poll((struct loft_tls *) c->tls, 0);
 #endif
     uint8_t hdr[2];
-    for (;;) {
-        ssize_t r = recv(c->fd, hdr, 2, MSG_PEEK | MSG_DONTWAIT);
-        if (r < 0 && errno == EINTR) continue;
-        if (r == 0) return -1;
-        if (r < 0) return errno == EAGAIN || errno == EWOULDBLOCK ? 0 : -1;
-        return r >= 2 ? 1 : 0;
-    }
+    long r = loft_sock_peek(c->fd, hdr, 2);
+    if (r == 0 || r == -2) return -1;
+    if (r < 0) return 0;
+    return r >= 2 ? 1 : 0;
 }
 
 /* What a poll of client `c` found: 0 nothing, 1 a message (into the event payload), 2 gone. */
@@ -618,11 +615,7 @@ static int64_t loft_srv_ws_broadcast(loft_str msg) {
     return sent;
 }
 
-static void loft_srv_sleep_ms(int64_t ms) {
-    if (ms <= 0) return;
-    struct timespec ts = { (time_t) (ms / 1000), (long) ((ms % 1000) * 1000000) };
-    while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {}
-}
+static void loft_srv_sleep_ms(int64_t ms) { loft_sock_nap(ms); }
 
 static int64_t loft_srv_clients_len(void) { return (int64_t) loft_srv_nclients; }
 static uint8_t loft_srv_client_active(int64_t id) { return loft_srv_client(id) != 0; }

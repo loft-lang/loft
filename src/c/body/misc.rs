@@ -218,16 +218,26 @@ impl FnWriter<'_> {
                     return Err("a kept range of elements that own records".into());
                 }
                 let size = self.cx.stores.size(tp);
+                // `@FR-R-Refresh`'s keep-range clause: a push header on the path takes the
+                // clamped length at the op's own site.
+                let held = crate::opt::writes::vector_path(self.cx.data, v)
+                    .and_then(|p| self.push_head(&p));
                 let es = self.args(&[v, lo, hi], ind)?;
                 let [v, lo, hi] = <[E; 3]>::try_from(es)
                     .map_err(|_| "a kept range without three operands".to_string())?;
+                let keep = format!(
+                    "loft_vec_keep_range({}, {}, {}, {size})",
+                    as_ref(v)?,
+                    as_int(lo)?,
+                    as_int(hi)?
+                );
                 Ok(E::new(
-                    format!(
-                        "loft_vec_keep_range({}, {}, {}, {size})",
-                        as_ref(v)?,
-                        as_int(lo)?,
-                        as_int(hi)?
-                    ),
+                    match held {
+                        Some((h, hs)) => {
+                            format!("((void) ({keep}, {h} = loft_ph_of({h}.v, {hs})))")
+                        }
+                        None => keep,
+                    },
                     K::Void,
                 ))
             }

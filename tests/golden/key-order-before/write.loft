@@ -1,0 +1,29 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Wrote the images beside it, ONCE, with a build of origin/main 23bc61e47 — the last key order
+// before loft#2237, in which a null `float` / `single` key sorted above every value and a null
+// `text` key after `""`.  Their sidecars carry no `order=1`.  `read.loft` reads them with every
+// later build (tests/store_persist_loft.rs `an_image_in_the_old_key_order_is_converted`); a
+// committed image is never written again.
+struct KT { k: text, v: integer }
+struct KF { k: float, v: integer }
+struct KS { k: single, v: integer }
+fn main() {
+  nt: text = null;
+  nf: float = null;
+  ns: single = null;
+  st: sorted<KT[k]> = [KT { k: "b", v: 1 }, KT { k: nt, v: 2 }, KT { k: "", v: 3 }, KT { k: "a", v: 4 }];
+  assert(store_persist_copy(st, "sorted-text.store"), "sorted-text");
+  sd: sorted<KF[-k]> = [KF { k: 2.5, v: 1 }, KF { k: nf, v: 2 }, KF { k: -1.0, v: 3 }];
+  assert(store_persist_copy(sd, "sorted-float-desc.store"), "sorted-float-desc");
+  ss: sorted<KS[k]> = [KS { k: 0.5f, v: 1 }, KS { k: ns, v: 2 }, KS { k: -3.0f, v: 3 }];
+  assert(store_persist_copy(ss, "sorted-single.store"), "sorted-single");
+  it: index<KT[k]> = [KT { k: "q", v: 1 }, KT { k: nt, v: 2 }, KT { k: "", v: 3 }];
+  assert(store_persist_copy(it, "index-text.store"), "index-text");
+  ix: index<KF[k]> = [];
+  for i in 0..300 { ix += [KF { k: (i * 37 % 300) as float - 150.5, v: i }]; }
+  ix += [KF { k: nf, v: 999 }];
+  assert(store_persist_copy(ix, "index-float.store"), "index-float");
+  println("written");
+}

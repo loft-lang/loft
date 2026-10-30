@@ -1239,6 +1239,21 @@ impl ViewWalk<'_> {
         if self.shaken.is_empty() {
             return;
         }
+        // A view a closure CAPTURED is used wherever that closure runs — after this statement,
+        // after the function returns — and none of those reads is a statement of this walk.
+        // So a shaken captured view is condemned at once: the binding is materialised at the
+        // bind and the closure holds its own copy, which is what `y = vs[1]` means (@C86).
+        // Waiting for a visible use left the closure reading the old block once a growth had
+        // moved it (loft#2245).
+        let captured: Vec<(u16, Disturbance)> = self
+            .shaken
+            .iter()
+            .filter(|(v, _)| self.function.is_captured(**v))
+            .map(|(v, d)| (*v, *d))
+            .collect();
+        for (v, d) in captured {
+            record_cause(&mut self.out, v, d);
+        }
         let mut used: Vec<u16> = Vec::new();
         stmt.walk(&mut |v| {
             if let Value::Var(x) = v {

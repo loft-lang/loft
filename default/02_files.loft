@@ -1194,6 +1194,13 @@ fn OpVecEndJump(vec: const u16, idx: const u16, step: const i32);
 // `write_dropped` report (`DbRef::NULL_REPORTED`, @FR-E-Report), because the arm is the report.
 fn OpNullReported() -> reference;
 #rust"DbRef::NULL_REPORTED"
+// `@FR-R-Fuse`'s tag clause — a variant test of a local as one compare-and-jump: jump unless
+// the tag is `c`.  `of` 0 reads a plain-enum local (`OpEqInt(OpConvIntFromEnum(a), c)`), `of` 1
+// the tag of the record a struct-enum local names (`OpEqInt(OpConvIntFromEnum(OpGetEnum(a, 0)),
+// c)`), each as the unfused ops read it (`State::local_tag`).  `step` last, patched by `gen_if`
+// like every compare-and-jump.  Declared last, so it renumbers no earlier operator.
+fn OpTagVCJump(of: const u8, a: const u16, c: const integer, step: const i32);
+#rust"if s.local_tag(@of, @a) != @c {{ s.code_pos = (i64::from(s.code_pos) + i64::from(@step)) as u32; }}"
 
 // --- Path helpers ---
 

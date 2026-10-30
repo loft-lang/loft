@@ -4024,3 +4024,82 @@ fn every_hash_layout_lives_beside_the_others_in_one_store() {
         }
     }
 }
+
+/// loft#2237 — an image a build wrote in the key order before `@FR-E-NullArg` reached keyed
+/// collections (a null `float` / `single` key above every value, a null `text` key after `""`)
+/// is CONVERTED by a whole-image load: its sidecar carries no `order=1`
+/// (`placement::KEY_ORDER`), so its layout identity differs, and the store upgrade files every
+/// entry again in this build's order.  The images in `tests/golden/key-order-before/` were
+/// written once by a build of origin/main 23bc61e47 and are never written again; the expected
+/// lines are hand-derived from `write.loft` (main itself reads them as `3 2 4 1`, `2 1 3`,
+/// `3 1 2`, `3 2 1` and first=0).  The C runtime converts no store of another layout and
+/// refuses each by name (C_BACKEND.md § Store images) — loud, never the old order.
+#[test]
+fn an_image_in_the_old_key_order_is_converted() {
+    let fixture = workspace_root().join("tests/golden/key-order-before");
+    let dir = scratch("key_order_before");
+    let names = [
+        "sorted-text",
+        "sorted-float-desc",
+        "sorted-single",
+        "index-text",
+        "index-float",
+    ];
+    for name in names {
+        for ext in [".store", ".store.dschema"] {
+            let f = format!("{name}{ext}");
+            fa::copy(fixture.join(&f), dir.join(&f)).expect("copy the fixture");
+        }
+    }
+    fa::copy(fixture.join("read.loft"), dir.join("read.loft")).expect("copy the reader");
+    let want = "sorted-text true 2 3 4 1 | 2 3 1\n\
+                sorted-float-desc true 1 3 2 | 2 3\n\
+                sorted-single true 2 3 1 | 2\n\
+                index-text true 2 3 1 | 2 3 1\n\
+                index-float true first=999 n=301 ordered=true | 999 150\n";
+    let script = dir.join("read.loft");
+    // `--native` here is the Rust-runtime build: CI points `--native` at the C backend
+    // (`LOFT_NATIVE_BACKEND=c`), which converts nothing and is checked below on its own.
+    for backend in ["--interpret", "--native"] {
+        let out = loft::platform::process::harness_command(loft_bin())
+            .arg(backend)
+            .arg(&script)
+            .env("LOFT_PERSIST_TEST_PATH", &dir)
+            .env_remove("LOFT_NATIVE_BACKEND")
+            .current_dir(workspace_root())
+            .output()
+            .expect("run the reader");
+        assert!(
+            out.status.success(),
+            "{backend}: the reader ran:\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            want,
+            "{backend}: the old images, converted"
+        );
+    }
+    let out = loft::platform::process::harness_command(loft_bin())
+        .arg("--native-c")
+        .arg(&script)
+        .env("LOFT_PERSIST_TEST_PATH", &dir)
+        .current_dir(workspace_root())
+        .output()
+        .expect("run the C reader");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    for name in names {
+        assert!(
+            stdout.contains(&format!("{name} false")),
+            "C: {name} is not read in the old order:\n{stdout}"
+        );
+        assert!(
+            stderr.contains(&format!(
+                "refusing {}",
+                dir.join(format!("{name}.store")).display()
+            )) || stderr.contains(&format!("refusing {name}.store")),
+            "C: {name} is refused by name:\n{stderr}"
+        );
+    }
+}

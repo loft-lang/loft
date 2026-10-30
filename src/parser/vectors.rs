@@ -3772,6 +3772,16 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // The loop iterates THIS temp, so its identity is load-bearing: materialising it
             // would walk a copy while the body's `#remove` empties the original.
             self.vars.set_iteration_source(vec_var);
+            // `create_unique` hands pass 2 the temp pass 1 minted, with pass 1's TYPE, and a
+            // source's deps can exist only on pass 2: a lambda's capture read
+            // (`[for x in ys …]` over a captured `ys`) is typed `vector["__closure"]` there.
+            // Without them the temp reads as an OWNER and scope analysis frees it — the
+            // capture's store, on the first call — so every later reader of `ys` met a freed
+            // store (empty on the interpreter, garbage on native).  The `for` loop has always
+            // re-typed its temp here (`collections.rs`); the comprehension now does too.
+            if !self.first_pass {
+                self.vars.set_type(vec_var, in_type.clone());
+            }
             in_type = in_type.depending(vec_var);
             fill = v_set(vec_var, expr);
             expr = Value::Var(vec_var);

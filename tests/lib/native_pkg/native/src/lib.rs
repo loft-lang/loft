@@ -225,6 +225,14 @@ pub extern "C" fn n_ext_echo(x: i64) -> i64 {
     x
 }
 
+// Pattern 12: a NARROW integer answer — `i32` at the C-ABI, where the null is
+// `i32::MIN`; a caller that only widens reads it as an ordinary negative number.
+#[loft_native]
+#[unsafe(no_mangle)]
+pub extern "C" fn n_ext_narrow(x: i32) -> i32 {
+    if x < 0 { i32::MIN } else { x * 2 }
+}
+
 // ── Registration ─────────────────────────────────────────────────────
 // The loft decls bind `#native "loft_ext_*"`, so register the raw `n_ext_*`
 // symbols under those names (`loft_register_v1`, for the dlsym-priority and
@@ -246,9 +254,11 @@ loft_ffi::loft_register! {
     loft_ext_make_box => n_ext_make_box,
     loft_ext_maybe => n_ext_maybe,
     loft_ext_echo => n_ext_echo,
+    loft_ext_narrow => n_ext_narrow,
 }
 
 loft_ffi::loft_register_bridges! {
+    "loft_ext_narrow" => n_ext_narrow__loft_bridge,
     "loft_ext_add_one" => n_ext_add_one__loft_bridge,
     "loft_ext_vec_sum" => n_ext_vec_sum__loft_bridge,
     "loft_ext_vec_sum_f32" => n_ext_vec_sum_f32__loft_bridge,

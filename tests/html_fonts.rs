@@ -402,16 +402,14 @@ fn the_boot_await_holds_the_program_until_a_slow_font_has_arrived() {
 /// The two browser gates above run the emitted strings, not the emitted PAGE — so on
 /// their own they would stay green with the driver never calling either function, or
 /// calling them into the wrong shell.  This one builds the page and reads it.
-// @speed 20.0
-#[test]
-fn a_declared_font_reaches_the_emitted_page() {
+fn a_declared_font_reaches_the_emitted_page_on(backend: &str) {
     let root = repo_root();
     let loft = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft) {
         eprintln!("SKIP a_declared_font_reaches_the_emitted_page: target/release/loft not built");
         return;
     }
-    let base = std::env::temp_dir().join("loft_html_fonts_emit");
+    let base = std::env::temp_dir().join(format!("loft_html_fonts_emit{backend}"));
     let _ = fa::remove_dir_all(&base);
     let dir = base.join("app");
     let lib = base.join("fontlib");
@@ -454,11 +452,7 @@ fn a_declared_font_reaches_the_emitted_page() {
 
     let html = dir.join("fontgame.html");
     let out = loft::platform::process::harness_command(&loft)
-        .args([
-            "--native-rust",
-            "--html",
-            html.to_str().expect("utf-8 path"),
-        ])
+        .args([backend, "--html", html.to_str().expect("utf-8 path")])
         .arg("--lib")
         .arg(root.join("tests/fixtures/libs"))
         .arg(dir.join("src/fontgame.loft"))
@@ -466,7 +460,15 @@ fn a_declared_font_reaches_the_emitted_page() {
         .expect("invoke loft --html");
     if !out.status.success() || !fa::exists(&html) {
         // No wasm32 rlib / no rustc / no toolchain is an environmental skip, the
-        // same one `tests/html_gl_imports.rs` takes.
+        // same one `tests/html_gl_imports.rs` takes.  On the C leg only a missing
+        // toolchain is: anything else is the C backend refusing the program.
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            backend != "--native-c"
+                || err.contains("needs clang")
+                || err.contains("toolchain is incomplete"),
+            "the C page did not build:\n{err}"
+        );
         eprintln!(
             "SKIP a_declared_font_reaches_the_emitted_page: `loft --html` failed\nstderr: {}",
             String::from_utf8_lossy(&out.stderr)
@@ -509,12 +511,23 @@ fn a_declared_font_reaches_the_emitted_page() {
     );
 }
 
+// @speed 20.0
+#[test]
+fn a_declared_font_reaches_the_emitted_page() {
+    a_declared_font_reaches_the_emitted_page_on("--native-rust");
+}
+
+/// [`a_declared_font_reaches_the_emitted_page`] on a page whose module the C backend wrote (@PLN203 C6).
+// @speed 20.0
+#[test]
+fn a_declared_font_reaches_the_emitted_page_on_the_c() {
+    a_declared_font_reaches_the_emitted_page_on("--native-c");
+}
+
 /// A family that drifts from the name the program passes is refused, and refused
 /// BEFORE the build — a manifest that cannot produce a working page should not cost
 /// a wasm compile first.
-// @speed 2.0
-#[test]
-fn a_drifting_family_is_refused_before_the_build() {
+fn a_drifting_family_is_refused_before_the_build_on(backend: &str) {
     let root = repo_root();
     let loft = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft) {
@@ -523,7 +536,7 @@ fn a_drifting_family_is_refused_before_the_build() {
         );
         return;
     }
-    let dir = std::env::temp_dir().join("loft_html_fonts_drift");
+    let dir = std::env::temp_dir().join(format!("loft_html_fonts_drift{backend}"));
     let _ = fa::remove_dir_all(&dir);
     fa::create_dir_all(dir.join("src")).expect("create package");
     fa::write(
@@ -545,11 +558,7 @@ fn a_drifting_family_is_refused_before_the_build() {
 
     let html = dir.join("driftgame.html");
     let out = loft::platform::process::harness_command(&loft)
-        .args([
-            "--native-rust",
-            "--html",
-            html.to_str().expect("utf-8 path"),
-        ])
+        .args([backend, "--html", html.to_str().expect("utf-8 path")])
         .arg("--lib")
         .arg(root.join("tests/fixtures/libs"))
         .arg(dir.join("src/driftgame.loft"))
@@ -565,4 +574,17 @@ fn a_drifting_family_is_refused_before_the_build() {
         "the refusal does not name the drift it found:\n{err}"
     );
     assert!(!fa::exists(&html), "a refused build still wrote a page");
+}
+
+// @speed 2.0
+#[test]
+fn a_drifting_family_is_refused_before_the_build() {
+    a_drifting_family_is_refused_before_the_build_on("--native-rust");
+}
+
+/// [`a_drifting_family_is_refused_before_the_build`] on a page whose module the C backend wrote (@PLN203 C6).
+// @speed 2.0
+#[test]
+fn a_drifting_family_is_refused_before_the_build_on_the_c() {
+    a_drifting_family_is_refused_before_the_build_on("--native-c");
 }

@@ -18,7 +18,7 @@ index d93bc8a68..7fab40155 100644
      /// prefix (the record a rebuild is about to overwrite, loft#1388).  The rebuild's own
      /// snapshot (`displaced_drop`) skips them: one release per displaced record.
 diff --git b/src/scopes/args.rs a/src/scopes/args.rs
-index f7c56f87c..318217647 100644
+index f7c56f87c..4ed0902c0 100644
 --- b/src/scopes/args.rs
 +++ a/src/scopes/args.rs
 @@ -309,21 +309,6 @@ impl Scopes<'_> {
@@ -43,6 +43,14 @@ index f7c56f87c..318217647 100644
              if let Value::Insert(ops) = scanned {
                  // Existing A5.6 hoisting: lift Set(w, Null) for owned Reference.
                  let is_a56_hoisted = Self::is_null_init_preamble(&ops, function);
+@@ -680,7 +665,6 @@ impl Scopes<'_> {
+                     .is_some_and(|at| at.typedef.is_amp_rebindable_heap())
+                 || function.is_argument(*v)
+                 || function.rebind_orig(*v).is_some()
+-                || self.view_rebind.contains_key(v)
+                 // @FR-O-Proxy asks free — a free follows (the snapshot's release after the
+                 // call), so the local must own its store: empty deps, and @FR-O-Override's
+                 // never-free flag vetoes it.
 diff --git b/src/scopes/buffers.rs a/src/scopes/buffers.rs
 index c13a3f61e..bd75cb73d 100644
 --- b/src/scopes/buffers.rs

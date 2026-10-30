@@ -246,15 +246,24 @@ struct Slot {
     child: u32,
 }
 
-/// The order-preserving bits of a float, as `f64::total_cmp` orders them after the
-/// `-0.0 → 0.0` normalisation `keys::float_cmp` applies (@FR-E-Eq-Key).
+/// The order-preserving bits of a float, as `keys::float_cmp` orders them: `f64::total_cmp`
+/// after the `-0.0 → 0.0` normalisation (@FR-E-Eq-Key), and the null below every value
+/// (`@FR-E-NullArg`, loft#2237) — `i64::MIN`, which only a negative NaN would map to, and a
+/// NaN is only ever the null.
 fn float_part(v: f64) -> i64 {
+    if v.is_nan() {
+        return i64::MIN;
+    }
     let v = if v == 0.0 { 0.0 } else { v };
     let b = v.to_bits() as i64;
     b ^ ((((b >> 63) as u64) >> 1) as i64)
 }
 
+/// [`float_part`] of a `single`: the null below every value, `i32::MIN` widened.
 fn single_part(v: f32) -> i64 {
+    if v.is_nan() {
+        return i64::from(i32::MIN);
+    }
     let v = if v == 0.0 { 0.0 } else { v };
     let b = v.to_bits() as i32;
     i64::from(b ^ ((((b >> 31) as u32) >> 1) as i32))

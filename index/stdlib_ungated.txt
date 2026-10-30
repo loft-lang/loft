@@ -302,6 +302,7 @@ OpStaticCall
 OpStep
 OpStoreLive
 OpStoreTag
+OpTagVCJump
 OpTextCharacter
 OpTextCharacterNullable
 OpTextEndJump

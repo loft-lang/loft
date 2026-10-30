@@ -133,7 +133,8 @@ let exitCode = 0;
   // page that does not reach the marker is a real result and must stay red.
   let tab;
   try {
-    await waitFor(() => getJson('/json/version'));
+    // A snap-packaged chromium takes seconds to come up cold (7 s measured): give it 30.
+    await waitFor(() => getJson('/json/version'), 300);
     tab = await waitFor(async () => {
       const tabs = await getJson('/json');
       return tabs.find(t => t.type === 'page');

@@ -256,11 +256,22 @@ impl Cx<'_> {
         for w in &buffers {
             let _ = write!(out, " loft_text {w} = {{ 0, 0, 0 }};");
         }
+        // A heap answer the call minted, or the buffer it delivered into, is held by the
+        // calling frame until a bind adopts it (`cr_fnref_minted`, `cr_fnref_buf`; the
+        // snapshot is taken before the buffer is made, as `__vc_seq` is).
+        let heap_answer = ret == CType::Ref
+            && matches!(
+                def.returned().base(),
+                Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
+            );
+        if heap_answer {
+            out.push_str(" uint64_t sn = loft_stores_allocated;");
+        }
         let vec_tp = vec_buf.filter(|_| uses_vec_buf && ret == CType::Ref);
         if let Some(tp) = vec_tp {
             let _ = write!(
                 out,
-                " loft_ref hb = loft_ref_null(); loft_database_wrapper(&hb, {}, {tp});",
+                " loft_ref hb = loft_ref_null(); loft_database_wrapper(loft_types, &hb, {}, {tp});",
                 self.stores.size(tp)
             );
         }
@@ -270,7 +281,10 @@ impl Cx<'_> {
             let _ = write!(out, " {} r = {call};", held(ret));
         }
         if vec_tp.is_some() {
-            out.push_str(" if (r.store_nr != hb.store_nr) loft_free_ref(hb);");
+            out.push_str(" loft_fnref_buf(r, hb);");
+        }
+        if heap_answer {
+            out.push_str(" loft_fnref_mint(r, sn, f.clos);");
         }
         for w in &buffers {
             let _ = write!(out, " loft_text_free(&{w});");

@@ -75,15 +75,22 @@ fn have_cc() -> bool {
         .is_ok_and(|o| o.status.success())
 }
 
-/// The inputs a unit names on its `/* link: … */` lines (an archive it is built with — a
-/// `[c] shim`, the TLS client of a unit that fetches over a URL or pages an image), as
-/// `c_driver::link_inputs` reads them.
+/// What a gcc link of the unit needs beyond the program, in the driver's order: the inputs the
+/// unit names on its `/* link: … */` lines (an archive it is built with — a `[c] shim`, the TLS
+/// client of a unit that fetches over a URL or pages an image), as `c_driver::link_inputs`
+/// reads them, then the host's system libraries those archives call (Winsock and the
+/// certificate store on Windows; none elsewhere).
 fn unit_links(c_src: &std::path::Path) -> Vec<String> {
     fa::read_to_string(c_src)
         .expect("read the C")
         .lines()
         .filter_map(|l| l.strip_prefix("/* link: ")?.strip_suffix(" */"))
         .map(str::to_string)
+        .chain(
+            loft::platform::c_system_link_libs()
+                .iter()
+                .map(|l| (*l).to_string()),
+        )
         .collect()
 }
 
@@ -1360,15 +1367,19 @@ fn main() {
             .output()
             .is_ok_and(|o| o.status.success())
     };
-    // (mode, switch, __inv calls, lines reading a fresh base, versioned loops, push headers,
-    // `scal`'s held scalars)
-    for (mode, switch, twins, fresh, versioned, pushed, scalars) in [
-        ("held", "", 2, 3, 1, 2, 1),
-        ("no-inputs", "LOFT_NO_CALLEE_INPUTS", 0, 3, 0, 2, 1),
-        ("no-version", "LOFT_NO_DISTINCT_VERSION", 1, 3, 0, 2, 1),
-        ("no-record-push", "LOFT_NO_RECORD_PUSH", 2, 3, 1, 0, 1),
-        ("no-scalar", "LOFT_NO_SCALAR_HOIST", 2, 3, 1, 2, 0),
-        ("unheld", "LOFT_NO_VECTOR_HOIST", 0, 0, 0, 0, 0),
+    // (mode, switch, __inv calls, lines reading a fresh base, versioned loops, `mints`' record
+    // push headers, the scalar push headers elsewhere — `src`/`dst` in `main`, `t.b` in `grow`,
+    // `pix` in `build` (`@FR-R-Push`) — and `scal`'s held scalars).  Under `LOFT_NO_SCALAR_HOIST` `look`'s twin keeps its plain call:
+    // the twin takes `s.w` as a scalar input, `build` holds no scalar for it, and reads `s`
+    // only through that call, so the parameter clause binds no address to read it through
+    // either — rustc's call site makes the same choice (`@FR-R-Inputs`).
+    for (mode, switch, twins, fresh, versioned, pushed, scalar_pushed, scalars) in [
+        ("held", "", 2, 3, 1, 2, 4, 1),
+        ("no-inputs", "LOFT_NO_CALLEE_INPUTS", 0, 3, 0, 2, 4, 1),
+        ("no-version", "LOFT_NO_DISTINCT_VERSION", 1, 3, 0, 2, 4, 1),
+        ("no-record-push", "LOFT_NO_RECORD_PUSH", 2, 3, 1, 0, 4, 1),
+        ("no-scalar", "LOFT_NO_SCALAR_HOIST", 1, 3, 1, 2, 4, 0),
+        ("unheld", "LOFT_NO_VECTOR_HOIST", 0, 0, 0, 0, 0, 0),
     ] {
         let c = dir.join(format!("{mode}.c"));
         let mut emit = loft::platform::process::harness_command(loft);
@@ -1405,12 +1416,24 @@ fn main() {
             versioned,
             "{mode}: the loops written twice"
         );
+        let headers = body
+            .lines()
+            .filter(|l| l.contains(" = loft_ph_of("))
+            .count();
+        let mints_headers = body
+            .find("n_mints__fr(")
+            .and_then(|at| body[at..].find("{\n").map(|o| at + o))
+            .map_or(0, |at| {
+                body[at..at + body[at..].find("\n}\n").unwrap_or(0)]
+                    .lines()
+                    .filter(|l| l.contains(" = loft_ph_of("))
+                    .count()
+            });
+        assert_eq!(mints_headers, pushed, "{mode}: the record push headers");
         assert_eq!(
-            body.lines()
-                .filter(|l| l.contains(" = loft_ph_of("))
-                .count(),
-            pushed,
-            "{mode}: the record push headers"
+            headers - mints_headers,
+            scalar_pushed,
+            "{mode}: the scalar push headers"
         );
         let scal = body
             .find("n_scal__fr(")
@@ -4098,6 +4121,105 @@ fn main() {\n\
     assert_eq!(String::from_utf8_lossy(&out.stdout), want, "the C program");
 }
 
+/// `@C158` — a library declares no C compile or link flags: a `[c]` section's `cflags` and
+/// `ldflags` reach neither its shim's compile nor the unit's link.  The package declares a flag
+/// that would stop its second shim source at `#error` and a link of a library that does not
+/// exist; the C still emits, builds and answers `9 / 2` from that source and `17 % 5` from the
+/// first.  A build that honours either key fails here, which reopens the decision.
+#[test]
+fn a_library_declares_no_c_flags_and_none_reach_the_build() {
+    if !have_cc() {
+        eprintln!("skipped: no `cc` on PATH");
+        return;
+    }
+    let fixture =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/c_abi/pkg/lcshim");
+    let dir = scratch("c158");
+    let pkg = dir.join("pkg").join("lcshim");
+    fa::create_dir_all(pkg.join("src")).expect("mkdir package");
+    for f in ["lc_shim.c", "lc_shim_two.c", "lcshim.loft"] {
+        fa::copy(fixture.join("src").join(f), pkg.join("src").join(f)).expect("copy source");
+    }
+    let shim = pkg.join("src").join("lc_shim_two.c");
+    let text = fa::read_to_string(&shim).expect("read shim");
+    fa::write(
+        &shim,
+        format!(
+            "#ifdef LOFT_C158_FLAG_REACHED\n#error a [c] cflags value reached the shim\n#endif\n{text}"
+        ),
+    )
+    .expect("write shim");
+    let toml = fa::read_to_string(fixture.join("loft.toml")).expect("read manifest");
+    assert!(
+        toml.trim_end().ends_with("lc_shim_two.c\""),
+        "the fixture's [c] section ends it"
+    );
+    fa::write(
+        pkg.join("loft.toml"),
+        format!(
+            "{toml}cflags = \"-DLOFT_C158_FLAG_REACHED\"\nldflags = \"-lloft_c158_no_such_library\"\n"
+        ),
+    )
+    .expect("write manifest");
+    let file = dir.join("flags.loft");
+    fa::write(
+        &file,
+        "use lcshim::*;\nfn main() {\n  println(\"{shim_half(9)} {shim_mod(17, 5)}\");\n}\n",
+    )
+    .expect("write program");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let c = dir.join("flags.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg("--lib")
+        .arg(dir.join("pkg"))
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "the shim builds with loft's fixed flags alone: {}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let unit = fa::read_to_string(&c).expect("read the C");
+    let links: Vec<&str> = unit
+        .lines()
+        .filter_map(|l| {
+            l.strip_prefix("/* link: ")
+                .and_then(|l| l.strip_suffix(" */"))
+        })
+        .collect();
+    assert!(
+        !unit.contains("loft_c158") && !unit.contains("LOFT_C158"),
+        "a declared flag reached the unit: {links:?}"
+    );
+    let exe = dir.join("flags");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O1"])
+        .arg(&c)
+        .arg("-o")
+        .arg(&exe)
+        .arg("-lm")
+        .args(&links)
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc rejected the unit:\n{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .output()
+        .expect("run the C program");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "4 2\n",
+        "the C program"
+    );
+    let _ = fa::remove_dir_all(&dir);
+}
+
 /// @PLN203 C1 — `loft --native-c` drives the C: it emits the program, builds it with the host's
 /// C compiler, caches the binary beside the program (`.loft/cache/native-c-<key>`) and runs it
 /// with the program's arguments and its exit status.  The run bounds reach the C binary as they
@@ -4285,6 +4407,152 @@ fn the_c_logs_what_the_interpreter_logs() {
     }
 }
 
+/// @PLN206 D10 — a write into a locked store (`@FR-H-WriteLocked`) in a PRODUCTION run is
+/// discarded and logged, and the program continues on the store's old bytes (`@C80`).  One
+/// cell per write the language offers on a locked record (fields, text, vectors, keyed
+/// collections, records, loop removals): every cell must leave the record exactly as built,
+/// so the expected line is the same hand-computed state for all of them, on all three
+/// backends.  A loop removal that is refused must not revisit its element (loft#2235).  A
+/// development run stops at the first such write.
+#[test]
+fn a_locked_write_in_production_is_discarded_on_every_backend() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    const OPS: &[(&str, &str)] = &[
+        ("int field", "d.n = 9;"),
+        ("float field", "d.f = 2.5;"),
+        ("text same length", "d.t = \"two\";"),
+        ("text longer", "d.t = \"a longer text\";"),
+        ("text append", "d.t += \"x\";"),
+        ("vector append", "d.xs += [4];"),
+        ("vector append many", "d.xs += [7, 8, 9];"),
+        ("vector element", "d.xs[0] = 9;"),
+        ("vector insert", "d.xs.insert(1, 7);"),
+        ("vector remove", "d.xs.remove(0);"),
+        ("vector clear", "d.xs.clear();"),
+        ("vector assign empty", "d.xs = [];"),
+        ("vector assign", "d.xs = [5, 6];"),
+        ("vector reverse", "d.us.reverse();"),
+        ("vector sort", "d.us.sort();"),
+        ("text element", "d.ts[0] = \"zz\";"),
+        ("text vector append", "d.ts += [\"q\"];"),
+        ("text vector remove", "d.ts.remove(0);"),
+        ("hash add", "d.hs += [E { k: 6, v: 60 }];"),
+        ("hash remove", "d.hs[5] = null;"),
+        ("hash field", "d.hs[5].v = 51;"),
+        ("hash field add", "d.hs[5].v += 1;"),
+        ("sorted add", "d.so += [S { k: 2, v: 20 }];"),
+        ("sorted remove", "d.so[1] = null;"),
+        ("sorted field", "d.so[1].v = 11;"),
+        ("index add", "d.ix += [X { k: 4, v: 40 }];"),
+        ("index remove", "d.ix[3] = null;"),
+        ("bytes append", "d.bs += [9];"),
+        ("bytes element", "d.bs[0] = 9;"),
+        ("records append", "d.recs += [R { k: 2, v: 20 }];"),
+        ("record element field", "d.recs[0].v = 11;"),
+        ("record element assign", "d.recs[0] = R { k: 3, v: 30 };"),
+        ("records insert", "d.recs.insert(0, R { k: 0, v: 0 });"),
+        ("records remove", "d.recs.remove(0);"),
+        ("records clear", "d.recs.clear();"),
+        ("records assign empty", "d.recs = [];"),
+        ("inner assign", "d.inner = In { m: 8 };"),
+        (
+            "inner from a variable",
+            "o = In { m: 9 };
+  d.inner = o;",
+        ),
+        ("inner field", "d.inner.m = 8;"),
+        ("slice assign", "d.xs = d.xs[0..2];"),
+        ("append a vector", "d.xs += d.us;"),
+        ("text element append", "d.ts[1] += \"c\";"),
+        ("text char append", "d.t += 'z';"),
+        ("record field add", "d.recs[0].v += 5;"),
+        ("hash replace", "d.hs += [E { k: 5, v: 55 }];"),
+        ("sorted duplicate key", "d.so += [S { k: 1, v: 99 }];"),
+        ("loop remove", "for x in d.xs { if x == 2 { x#remove; } }"),
+        ("loop remove records", "for e in d.recs { e#remove; }"),
+        ("vector of text clear", "d.ts.clear();"),
+        ("vector of text assign", "d.ts = [\"p\", \"q\", \"r\"];"),
+        ("sorted loop remove", "for e in d.so { e#remove; }"),
+        ("index loop remove", "for e in d.ix { e#remove; }"),
+        ("loop remove text", "for t in d.ts { t#remove; }"),
+    ];
+    const HEAD: &str = r#"struct In { m: integer }
+struct E { k: integer, v: integer }
+struct S { k: integer, v: integer }
+struct X { k: integer, v: integer }
+struct R { k: integer, v: integer }
+struct D { n: integer, f: float, t: text, xs: vector<integer>, us: vector<integer>, bs: vector<u8>, ts: vector<text>, hs: hash<E[k]>, so: sorted<S[k]>, ix: index<X[k]>, recs: vector<R>, inner: In }
+fn mk() -> D { D { n: 7, f: 1.5, t: "one", xs: [1, 2, 3], us: [3, 1, 2], bs: [1, 2], ts: ["a", "b"], hs: [E { k: 5, v: 50 }], so: [S { k: 1, v: 10 }], ix: [X { k: 3, v: 30 }], recs: [R { k: 1, v: 10 }], inner: In { m: 4 } } }
+fn show(d: D) -> text { "{d.n} {d.f} {d.t} {d.xs} {d.us} {d.bs} {d.ts} {len(d.hs)}:{d.hs[5].v ?? -1}:{d.hs[6].v ?? -1} {len(d.so)}:{d.so[1].v ?? -1}:{d.so[2].v ?? -1} {d.ix[3].v ?? -1}:{d.ix[4].v ?? -1} {d.recs} {d.inner.m}" }
+"#;
+    // The record as `mk` builds it, which every refused write must leave.
+    const BUILT: &str =
+        r#"7 1.5 one [1,2,3] [3,1,2] [1,2] ["a","b"] 1:50:-1 1:10:-1 30:-1 [{k:1,v:10}] 4"#;
+    let mut program = HEAD.to_string();
+    let mut calls = String::new();
+    let mut want = String::new();
+    for (i, (_, op)) in OPS.iter().enumerate() {
+        program.push_str(&format!(
+            "fn c{i}() {{\n  d = mk();\n  d#lock = true;\n  {op}\n  println(\"c{i}: {{show(d)}}\");\n}}\n"
+        ));
+        calls.push_str(&format!("  c{i}();\n"));
+        want.push_str(&format!("c{i}: {BUILT}\n"));
+    }
+    program.push_str(&format!("fn main() {{\n{calls}}}\n"));
+    let small = "struct R { a: integer, t: text }\nfn main() {\n  r = R { a: 1, t: \"one\" };\n  \
+                 r#lock = true;\n  r.t = \"two\";\n  println(\"after {r.t}\");\n}\n";
+    let loft = env!("CARGO_BIN_EXE_loft");
+    for backend in ["--interpret", "--native-rust", "--native-c"] {
+        for production in [true, false] {
+            let dir = scratch(&format!(
+                "locked{}{}",
+                backend.trim_start_matches('-'),
+                if production { "p" } else { "d" }
+            ));
+            let _ = fa::remove_file(dir.join("out.log"));
+            let conf = if production { "true" } else { "false" };
+            fa::write(
+                dir.join("log.conf"),
+                format!("[log]\nfile = out.log\nlevel = info\nproduction = {conf}\n"),
+            )
+            .expect("write log.conf");
+            let file = dir.join("p.loft");
+            let source = if production { program.as_str() } else { small };
+            fa::write(&file, source).expect("write program");
+            let out = loft::platform::process::harness_command(loft)
+                .arg(backend)
+                .arg(&file)
+                .env("LOFT_TIMEOUT", "300")
+                .output()
+                .expect("run loft");
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            if production {
+                for (i, (got, exp)) in stdout.lines().zip(want.lines()).enumerate() {
+                    assert_eq!(got, exp, "{backend}: cell {i} ({}) changed it", OPS[i].0);
+                }
+                assert_eq!(stdout, want, "{backend}: every cell runs: {stderr}");
+                assert_eq!(out.status.code(), Some(0), "{backend}: {stderr}");
+                let log = fa::read_to_string(dir.join("out.log")).unwrap_or_default();
+                assert!(
+                    log.contains("ERROR  :0  [write_to_locked_store] write to a locked store"),
+                    "{backend}'s log: {log}"
+                );
+            } else {
+                assert_eq!(stdout, "", "{backend}: development stops at the write");
+                assert_eq!(out.status.code(), Some(1), "{backend}: {stderr}");
+                assert!(
+                    stderr.contains("write to a locked store"),
+                    "{backend}: {stderr}"
+                );
+            }
+        }
+    }
+}
+
 /// @PLN203 C6 — `--native-c --native-wasm` writes the program as a wasm32-wasi module through
 /// the C and clang, and a WASI host runs it to the interpreter's answer.  The values are
 /// computed by hand: 1² + … + 10² = 385; a text built in a loop; a hash lookup.  Skipped where
@@ -4458,9 +4726,10 @@ fn main() {
     assert_eq!(workers, ["4", "4", "4", "1"], "workers per par loop");
 }
 
-/// @PLN203 C6 — `--native-c --html` writes a page that hosts the program's wasm32-wasi module
-/// with a WASI layer of its own: the page's script, run here under Node with a `document` of two
-/// methods, writes what the program prints into the page and records the exit status.
+/// @PLN203 C6 — `--native-c --html` writes the one page `--html` writes, hosting the program's
+/// wasm32-wasi module on the WASI layer the page carries (`doc/loft-wasi.js`): the module, run
+/// from its exported `loft_start` by the node harness every page cell uses, prints what the
+/// program prints and ends with the status `exit` gave it.
 /// Hand-computed: Σi² over 1..=10 = 385; a text built in a loop; a hash lookup; `exit(3)`.
 /// Skipped where clang, `wasm-ld` or Node is missing.
 #[test]
@@ -4501,33 +4770,26 @@ fn native_c_html_page_runs_its_program() {
         "the page builds: {}",
         String::from_utf8_lossy(&build.stderr)
     );
-    let runner = dir.join("run.js");
-    fa::write(
-        &runner,
-        "const fs = require('fs');\n\
-         const html = fs.readFileSync(process.argv[2], 'utf8');\n\
-         const js = html.split('<script id=\"loft-run\">')[1].split('</script>')[0];\n\
-         let text = '';\n\
-         globalThis.window = globalThis;\n\
-         globalThis.document = { title: '',\n\
-           getElementById: () => ({ appendChild: (n) => { text += n.data !== undefined ? n.data : n.textContent; } }),\n\
-           createTextNode: (t) => ({ data: t }),\n\
-           createElement: () => ({ className: '', textContent: '' }) };\n\
-         eval(js);\n\
-         const t = setInterval(() => { if (window.loftExit !== undefined) { clearInterval(t);\n\
-           process.stdout.write(text + 'exit=' + window.loftExit + '\\n'); } }, 10);\n",
-    )
-    .expect("write runner");
+    let page = fa::read_to_string(&html).expect("read the page");
+    let marker = "const wasmB64=\"";
+    let at = page.find(marker).expect("the page carries its module") + marker.len();
+    let b64 = &page[at..at + page[at..].find('"').expect("the module's closing quote")];
+    let wasm = dir.join("page.wasm");
+    fa::write(&wasm, loft::base64::decode(b64)).expect("write the module");
     let out = loft::platform::process::harness_command("node")
-        .arg(&runner)
-        .arg(&html)
+        .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tools/wasm_repro.mjs"))
+        .arg(&wasm)
         .output()
         .expect("run node");
+    let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "385 0-1-2-3- seven\nexit=3\n",
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
+        "385 0-1-2-3- seven\n",
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("exited with status 3"),
+        "the page reports the program's exit status\n{stderr}"
     );
 }
 
@@ -4808,8 +5070,8 @@ fn in_binary_natives_run_on_the_c_or_refuse_by_name() {
 fn the_engine_host_kernel_serves_the_same_on_the_c_and_the_interpreter() {
     use std::io::{Read, Write};
     use std::time::{Duration, Instant};
-    if !have_cc() || !loft::platform::c_runtime_posix_host() {
-        eprintln!("skipped: no cc on PATH, or not a POSIX host");
+    if !have_cc() || !loft::platform::c_runtime_has_sockets() {
+        eprintln!("skipped: no cc on PATH, or a host without sockets");
         return;
     }
     let loft = env!("CARGO_BIN_EXE_loft");
@@ -4939,6 +5201,152 @@ fn the_engine_host_kernel_serves_the_same_on_the_c_and_the_interpreter() {
                 "engine_host: listening on ws://0.0.0.0:{port}/ (tick every 5000 us)"
             )),
             "{backend}: the listen line"
+        );
+    }
+}
+
+/// @PLN203 C8 — the connector half of `lib/engine_host`'s kernel (`loft_engine.h`): a listener
+/// and a `run_client` seat, both loft programs on the same backend, every line written out by
+/// hand.  The seat's frames are masked (RFC 6455 requires it of a client); its `7:pose` is a
+/// declared sync kind, which reaches the listener over the WebSocket or, once the cookie's UDP
+/// path is acked, as a datagram — the echo is the same either way; `http_fetch` to a port
+/// nothing serves completes as a kind-3 event with a negative status, and the seat says `bye`
+/// and stops in the same breath.  The `bye` must arrive: a seat that left its socket to the OS
+/// was reset on Windows, which discards what the listener had not read yet.  The listener then
+/// sees a kind-2 disconnect of cid 0 and stops.
+#[test]
+fn an_engine_host_seat_talks_to_its_listener_on_the_c_and_the_interpreter() {
+    use std::time::{Duration, Instant};
+    if !have_cc() || !loft::platform::c_runtime_has_sockets() {
+        eprintln!("skipped: no cc on PATH, or a host without sockets");
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("lib");
+    for backend in ["--native-c", "--interpret"] {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .and_then(|l| l.local_addr())
+            .map(|a| a.port())
+            .expect("a free port");
+        let dir = scratch(&format!("seat{}", &backend[2..]));
+        let file = dir.join("pair.loft");
+        fa::write(
+            &file,
+            "use engine_host;\nfn main() {\n  role = env_variable(\"ROLE\") ?? \"server\";\n  \
+             port = (env_variable(\"PORT\") ?? \"0\") as integer ?? 0;\n  \
+             engine_host::sync_class(7);\n  if role == \"client\" {\n    \
+             engine_host::run_client(engine_host::default_host(), port, 5000,\n      \
+             fn(ev: engine_host::Event) {\n        \
+             if ev.kind == 0 { engine_host::client_send(\"ping\"); }\n        \
+             if ev.kind == 1 {\n          println(\"client got {ev.payload}\");\n          \
+             if ev.payload == \"echo:ping\" { engine_host::client_send(\"7:pose\"); }\n          \
+             if ev.payload == \"echo:7:pose\" { engine_host::http_fetch(\"GET\", \"http://127.0.0.1:1/x\", \"\", \"\"); }\n        \
+             }\n        \
+             if ev.kind == 3 { println(\"fetch {ev.status < 0}\"); engine_host::client_send(\"bye\"); engine_host::client_stop(); }\n      \
+             },\n      fn() {});\n    return;\n  }\n  \
+             engine_host::run(port, 5000,\n    fn(ev: engine_host::Event) {\n      \
+             if ev.kind == 0 { engine_host::send(ev.cid, \"hello {ev.cid}\"); }\n      \
+             if ev.kind == 1 && ev.payload == \"bye\" { println(\"server got bye\"); }\n      \
+             if ev.kind == 1 && ev.payload != \"bye\" { engine_host::broadcast(\"echo:{ev.payload}\"); }\n      \
+             if ev.kind == 2 { println(\"server saw disconnect {ev.cid}\"); engine_host::stop(); }\n    \
+             },\n    \
+             fn() {});\n}\n",
+        )
+        .expect("write program");
+        let start = |role: &str| {
+            loft::platform::process::harness_command(loft)
+                .arg(backend)
+                .arg("--lib")
+                .arg(&lib)
+                .arg(&file)
+                .env("ROLE", role)
+                .env("PORT", port.to_string())
+                .env("LOFT_TIMEOUT", "120")
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("start loft")
+        };
+        let mut server = start("server");
+        // The C build compiles first: wait for the listener (a probe connection that never
+        // upgrades is dropped without an event, so the seat still gets cid 0).
+        let deadline = Instant::now() + Duration::from_secs(90);
+        while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
+            if Instant::now() > deadline || server.try_wait().ok().flatten().is_some() {
+                let _ = server.kill();
+                let out = server.wait_with_output().expect("listener output");
+                panic!(
+                    "{backend}: the listener never listened\n{}{}",
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let seat = start("client").wait_with_output().expect("seat output");
+        let listener = server.wait_with_output().expect("listener output");
+        assert!(
+            seat.status.success(),
+            "{backend}: the seat's exit {:?}\n{}",
+            seat.status,
+            String::from_utf8_lossy(&seat.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&seat.stdout),
+            "client got hello 0\nclient got echo:ping\nclient got echo:7:pose\nfetch true\n",
+            "{backend}: the seat's lines\n{}",
+            String::from_utf8_lossy(&seat.stderr)
+        );
+        assert!(
+            listener.status.success(),
+            "{backend}: the listener's exit {:?}\n{}",
+            listener.status,
+            String::from_utf8_lossy(&listener.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&listener.stdout),
+            format!(
+                "engine_host: listening on ws://0.0.0.0:{port}/ (tick every 5000 us)\n\
+                 server got bye\nserver saw disconnect 0\n"
+            ),
+            "{backend}: the listener's lines\n{}",
+            String::from_utf8_lossy(&listener.stderr)
+        );
+    }
+}
+
+/// @PLN203 C8 — the clocks read at the interpreter's resolution on every host: `now()` in
+/// milliseconds of wall time, `ticks()` in microseconds of a monotonic clock.  The program spins
+/// until each changes and prints whether the step was below 50 ms; the C on Windows read `now()`
+/// from `time()`, whole seconds, so its step was 1000 ms and a timing test under load read a
+/// few hundred milliseconds as a full second (`lib/process`' `lines.loft`).
+#[test]
+fn the_clocks_read_milliseconds_on_the_c_and_the_interpreter() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("clocks");
+    let file = dir.join("clocks.loft");
+    fa::write(
+        &file,
+        "fn main() {\n  a = now();\n  b = a;\n  while b == a { b = now(); }\n  \
+         t = ticks();\n  u = t;\n  while u == t { u = ticks(); }\n  \
+         println(\"now step {b - a < 50} ticks step {u - t < 50000}\");\n}\n",
+    )
+    .expect("write program");
+    for backend in ["--native-c", "--interpret"] {
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+            .arg(backend)
+            .arg(&file)
+            .env("LOFT_TIMEOUT", "60")
+            .output()
+            .expect("run loft");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "now step true ticks step true\n",
+            "{backend}: {}",
+            String::from_utf8_lossy(&out.stderr)
         );
     }
 }
@@ -5446,4 +5854,199 @@ fn a_c_build_builds_no_rust_native_crate() {
         );
     }
     let _ = fa::remove_dir_all(&dir);
+}
+
+/// What the C releases where the interpreter does, measured as BOUNDED growth: each program runs
+/// a release path many times, built as C and run under a cap that a per-iteration leak crosses
+/// and the released program stays far under (measured: ~2 MB resident against the cap's 32 MB
+/// of address space, 64 descriptors).  KEEP: `@FR-R-Compact`'s in-place truncation, whose
+/// dropped elements' texts and vectors were never released (`loft_keep_vector_range`); WRAP: a
+/// returned vector literal minted into a field (`@FR-R-Place`), whose old collection was never
+/// released (`loft_database_wrapper`); FILE: a `File` record that dies without a close returns
+/// its lease and its handle closes (`@FR-H-Handle`), while a copy keeps its handle open.  Each
+/// ran out of memory or descriptors on the build before.  The caps are a POSIX shell's
+/// `ulimit`; where no `sh` can set one the test skips, as it does without `cc`.
+#[test]
+fn a_released_path_stays_bounded_where_it_used_to_leak() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let can_cap = loft::platform::process::harness_command("sh")
+        .args(["-c", "ulimit -v 32768 && ulimit -n 64"])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !can_cap {
+        eprintln!("skipped: no sh that sets ulimit caps");
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("bounded");
+    for (name, src, limit, expect) in [
+        ("keep", KEEP_BOUNDED, "ulimit -v 32768", "keep 1200000 2\n"),
+        (
+            "wrap",
+            WRAP_BOUNDED,
+            "ulimit -v 32768",
+            "wrap 80000200000\n",
+        ),
+        ("file", FILE_BOUNDED, "ulimit -n 64", "file 1400 a=7 c=9\n"),
+    ] {
+        let file = dir.join(format!("{name}.loft"));
+        let c = dir.join(format!("{name}.c"));
+        let exe = dir.join(name);
+        fa::write(&file, src).expect("write program");
+        let emit = loft::platform::process::harness_command(loft)
+            .arg("--emit-c")
+            .arg(&c)
+            .arg(&file)
+            .output()
+            .expect("run loft --emit-c");
+        assert!(
+            emit.status.success(),
+            "{name}: emit: {}",
+            String::from_utf8_lossy(&emit.stderr)
+        );
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O2", "-w", "-pthread", "-o"])
+            .arg(&exe)
+            .arg(&c)
+            .args(["-lm", "-ldl"])
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "{name}: cc: {}",
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let run = loft::platform::process::harness_command("sh")
+            .arg("-c")
+            .arg(format!("{limit}; exec \"$0\"",))
+            .arg(&exe)
+            .current_dir(&dir)
+            .output()
+            .expect("run the program");
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout),
+            expect,
+            "{name} under `{limit}`: {}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+    }
+    let _ = fa::remove_dir_all(&dir);
+}
+
+const KEEP_BOUNDED: &str = "struct Stroke { pts: vector<integer>, name: text }
+struct H { entries: vector<Stroke>, cursor: integer }
+fn main() {
+  h = H { entries: [], cursor: 0 };
+  total = 0;
+  for k in 0..400000 {
+    for j in 0..4 { h.entries += [Stroke { pts: [k, j, k + j, 1, 2, 3, 4, 5], name: \"stroke number {k} {j} with a longer name\" }]; }
+    c = 2;
+    t: vector<Stroke> = [];
+    for i in 0..c { t += [h.entries[i]?]; }
+    h.entries = t;
+    total += len(h.entries) + (h.entries[1]?.pts[2] ?? 0);
+  }
+  println(\"keep {total} {len(h.entries)}\");
+}
+";
+
+const WRAP_BOUNDED: &str = "struct S { name: text, xs: vector<integer> }
+struct H { v: vector<S>, n: integer }
+fn mk(k: integer) -> vector<S> { [S { name: \"made {k} with a long enough name to claim\", xs: [k, 1, 2, 3, 4, 5, 6, 7] }] }
+fn main() {
+  h = H { v: [], n: 0 };
+  total = 0;
+  for k in 0..400000 {
+    h.v = mk(k);
+    total += len(h.v) + (h.v[0]?.xs[0] ?? 0);
+  }
+  println(\"wrap {total}\");
+}
+";
+
+const FILE_BOUNDED: &str = "fn read_one(p: text) -> integer {
+  f = file(p);
+  f#format = LittleEndian;
+  x = f#read(4) as i32;
+  x ?? -1
+}
+fn main() {
+  p = \"leakfile_{ticks()}.bin\";
+  b: vector<u8> = [7, 0, 0, 0, 9, 0, 0, 0];
+  assert(write_bytes(p, b), \"write\");
+  total = 0;
+  for k in 0..200 { total += read_one(p); }
+  // a copy keeps the handle alive after the original dies
+  g = file(p);
+  g#format = LittleEndian;
+  a = g#read(4) as i32;
+  h = g;
+  g = file(p);
+  c = h#read(4) as i32;
+  println(\"file {total} a={a ?? -1} c={c ?? -1}\");
+  delete(p);
+}
+";
+
+/// A library whose native part is only a Rust crate has no implementation in a C build, which
+/// never links one (`native_build::c_target`): its native halts the program when called, as
+/// the interpreter's unloaded native does — and says so, naming the library and the two ways
+/// on, rather than the interpreter's "cdylib missing or stale / a poisoned call index" reading,
+/// which a call the C makes by name cannot be (@PLN203 C6: what `--native-wasm` and a host C
+/// build both meet with a Rust-crate library such as graphics).
+#[test]
+fn a_rust_crate_native_is_named_as_such_on_the_c() {
+    if !have_cc() {
+        eprintln!("skipped: no C compiler");
+        return;
+    }
+    let dir = scratch("rustcrate");
+    let lib = dir.join("libs/rustlib");
+    fa::create_dir_all(lib.join("src")).expect("the library directory");
+    fa::create_dir_all(lib.join("native/src")).expect("the crate directory");
+    fa::write(
+        lib.join("loft.toml"),
+        "[package]\nname = \"rustlib\"\nversion = \"0.1.0\"\nloft = \">=0.8\"\n\n\
+         [library]\nentry = \"src/rustlib.loft\"\nnative = \"loft_rustlib\"\n\n\
+         [native]\ncrate = \"loft-rustlib\"\n",
+    )
+    .expect("write the manifest");
+    fa::write(
+        lib.join("src/rustlib.loft"),
+        "pub fn twice(x: integer) -> integer;\n#native \"n_rustlib_twice\"\n",
+    )
+    .expect("write the library");
+    fa::write(
+        lib.join("native/Cargo.toml"),
+        "[package]\nname = \"loft-rustlib\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\
+         [lib]\nname = \"loft_rustlib\"\ncrate-type = [\"cdylib\"]\n",
+    )
+    .expect("write the crate manifest");
+    fa::write(lib.join("native/src/lib.rs"), "").expect("write the crate");
+    let file = dir.join("p.loft");
+    fa::write(
+        &file,
+        "use rustlib;\nfn main() { println(\"{rustlib::twice(21)}\"); }\n",
+    )
+    .expect("write the program");
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .args(["--native-c", "--no-warnings", "--lib"])
+        .arg(dir.join("libs"))
+        .arg(&file)
+        .env("LOFT_TIMEOUT", "120")
+        .output()
+        .expect("run loft --native-c");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "the call halts the program\n{err}");
+    assert!(
+        err.contains("has only a Rust native part") && err.contains("(rustlib)"),
+        "the halt names the library and why\n{err}"
+    );
+    assert!(
+        !err.contains("cargo") && !err.contains("poisoned"),
+        "no advice that does not apply to a C build\n{err}"
+    );
 }

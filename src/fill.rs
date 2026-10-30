@@ -284,6 +284,7 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     vec_set_int::<false>,
     vec_end_jump::<false>,
     null_reported::<false>,
+    tag_v_c_jump::<false>,
     cast_text_from_bool::<false>,
     range_default::<false>,
     narrow32::<false>,
@@ -635,6 +636,7 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     vec_set_int::<true>,
     vec_end_jump::<true>,
     null_reported::<true>,
+    tag_v_c_jump::<true>,
     cast_text_from_bool::<true>,
     range_default::<true>,
     narrow32::<true>,
@@ -986,6 +988,7 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     vec_set_int_r,
     vec_end_jump_r,
     null_reported_r,
+    tag_v_c_jump_r,
     cast_text_from_bool_r,
     range_default_r,
     narrow32_r,
@@ -6794,6 +6797,24 @@ fn null_reported<const F: bool>(s: &mut State) {
 fn null_reported_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     null_reported::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn tag_v_c_jump<const F: bool>(s: &mut State) {
+    let operands = s.operands(15);
+    let v_of = operands.get::<u8>(0);
+    let v_a = operands.get::<u16>(1);
+    let v_c = operands.get::<i64>(3);
+    let v_step = operands.get::<i32>(11);
+    if s.local_tag(v_of, v_a) != v_c {
+        s.code_pos = (i64::from(s.code_pos) + i64::from(v_step)) as u32;
+    }
+}
+
+fn tag_v_c_jump_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    tag_v_c_jump::<true>(s);
     s.regs_out()
 }
 

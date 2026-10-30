@@ -218,6 +218,9 @@ collection (`c[5] = c[30]`, `c[30] = c[30]`) is read before the collection moves
   (Col-RemoveKeyed) a KEYED kind (hash / index / sorted / spatial / trie) removes BY KEY, and every
                     other key stays reachable and unchanged — keys are not positions, so nothing
                     is renumbered.
+                    A removal a locked store discards (heap.md H-WriteLocked-Whole) removes
+                    nothing and renumbers nothing; a walk's `e#remove` that was discarded
+                    continues with the NEXT element, so the walk still visits each element once.
 ```
 *Anchor:* loft-suite/attic/scripts/200-vector-stays-dense.loft (density); measured for the keyed kinds —
 `s[30] = null` on a `sorted<Elm[key]>` leaves `s[10]` and `s[50]` intact.
@@ -303,6 +306,11 @@ down (loft#1437).
                   index   → key order (its leaf chain)
                   spatial → Morton / Z-order
                   trie    → key order (lexicographic over the text key)
+                KEY order is the order `<` answers on the key (operational.md E-NullArg): a null
+                key FIRST — a `text` null before `""` — and last under a descending key, for every
+                key type.  A stored `sorted` / `index` keyed by a `float`, `single` or `text` says
+                so in its layout identity, so an image written in an earlier order is converted on
+                load (DATABASE.md § the store upgrade).
 
   (Col-Unordered)   for x in unordered(c) { … } visits every element of c exactly once, in an
                     order the program leaves to loft.  For a hash it is SLOT order: ascending
@@ -487,6 +495,24 @@ tests/scripts/48b-spatial-slice.loft (the asserted box/open/cap slices). CAVEATS
                 its own structure (a hash's buckets, an index's node arena) in the same store; addressed by
                 DbRef.  (Layout/format ⟶ layout.md; steps ⟶ heap.md.)
   (Col-Copy)    a keyed whole-value bind COPIES (g = h; g += … leaves len(h)) — heap.md H-Copy for keyed.
+  (Col-Capacity) a vector's room — the elements its record has space for beyond its length — is
+                room its OWN growth asked for; the allocator gives exactly what is asked, in place
+                or moved alike (allocator.md H-Exact).  A vector with no room, or none left for the
+                length it must hold, takes the GROWTH STEP: room for twice that length, and never
+                less than the START room of 88 bytes of elements, one element at the least (eleven
+                8-byte elements).  The one step serves an append, a run of bytes, an insert and a
+                sorted or ordered insert (which counts the scratch slot beside the new element).
+                A KNOWN count — a literal bound whole, a reservation (`reserve`, a range's), a vector
+                made from bytes — is reserved EXACTLY, and a growth past it takes the growth step (a
+                literal written into a record's field is pushed element by element and so takes the
+                growth step).  A clear
+                KEEPS the room: the length goes to 0 and the record stays, so a loop that refills
+                the vector with about as many elements claims nothing; a vector that is its store's
+                root is cleared by resetting the whole store in one step and made again with the
+                room it had reached.  A smaller reservation never shrinks the room.  A text has no
+                room of its own: a stored text is written over its block when it fits and claimed
+                again at exactly its size when it does not.  Room is never observable — length,
+                indexing, copies and images read only the length.
   (Col-Bucket)  (@C146) a hash table's bucket count is a POWER OF TWO: it is created at 16, grows by
                 doubling and is reserved to the next power of two past the load trigger.  A key's home
                 bucket is `digest mod count` on every table — written now, written before, rounded up
@@ -527,6 +553,9 @@ tests/scripts/48b-spatial-slice.loft (the asserted box/open/cap slices). CAVEATS
 ```
 *Anchors:* DATABASE.md:693,:704; VERIFICATION.md heap.md "H-Copy (keyed)" (oracle `16`); `src/hash.rs` `STRIDE_FLD` flags `TAGGED`/`INLINE`;
 (Col-Layouts) `tests/store_persist_loft.rs` `every_hash_layout_lives_beside_the_others_in_one_store`.
+(Col-Capacity) `src/vector.rs` `capacity_policy_tests` (the start room per element size, the
+growth step on append and on insert, exact reservations, a smaller reservation keeping the room),
+`vector::grown_elems` and its C twin `loft_vec_grown` the one home of the step.
 
 ### 1.9 The linked GROUP — `Col-Group` (cross-link [DATABASE.md § Clearing one member](../DATABASE.md))
 

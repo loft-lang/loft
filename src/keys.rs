@@ -484,21 +484,44 @@ impl DbRef {
     }
 }
 
-/// `@FR-E-Eq-Key`, @C91 — a float key's order: `total_cmp`, which is total over the null NaN,
-/// with the sign of zero dropped first, so two keys are one entry exactly when `==` answers
-/// true, and `0.0 == -0.0` does.  `total_cmp` alone orders `-0.0` before `0.0`, which kept them as
-/// two entries of one `hash` / `sorted` / `index`.
+/// `@FR-E-Eq-Key`, @C91 — a float key's order: `total_cmp`, with the sign of zero dropped
+/// first, so two keys are one entry exactly when `==` answers true, and `0.0 == -0.0` does.
+/// `total_cmp` alone orders `-0.0` before `0.0`, which kept them as two entries of one `hash` /
+/// `sorted` / `index`.  And `@FR-E-NullArg`: the null (the reserved NaN) orders BELOW every
+/// value, as `<` places it — `total_cmp` put it above (loft#2237; a collection that stores
+/// this order says so in its layout, `placement::KEY_ORDER`).
 #[inline]
 fn single_cmp(v1: f32, v2: f32) -> Ordering {
     let zero = |v: f32| if v == 0.0 { 0.0 } else { v };
-    zero(v1).total_cmp(&zero(v2))
+    match (v1.is_nan(), v2.is_nan()) {
+        (false, false) => zero(v1).total_cmp(&zero(v2)),
+        (n1, n2) => n2.cmp(&n1),
+    }
 }
 
-/// See [`single_cmp`] (`@FR-E-Eq-Key`).
+/// See [`single_cmp`] (`@FR-E-Eq-Key`, `@FR-E-NullArg`).
 #[inline]
 fn float_cmp(v1: f64, v2: f64) -> Ordering {
     let zero = |v: f64| if v == 0.0 { 0.0 } else { v };
-    zero(v1).total_cmp(&zero(v2))
+    match (v1.is_nan(), v2.is_nan()) {
+        (false, false) => zero(v1).total_cmp(&zero(v2)),
+        (n1, n2) => n2.cmp(&n1),
+    }
+}
+
+/// `@FR-E-NullArg` — a text key's order: the order `<` answers on text
+/// (`ops::op_lt_text`), a null text (the sentinel `"\0"`) before every text, `""` included;
+/// a byte compare put it after `""` (loft#2237).
+#[inline]
+fn text_key_cmp(a: &str, b: &str) -> Ordering {
+    let (an, bn) = (
+        a == crate::store::STRING_NULL,
+        b == crate::store::STRING_NULL,
+    );
+    if an || bn {
+        return bn.cmp(&an);
+    }
+    a.cmp(b)
 }
 
 /// Use-after-free detector (`LOFT_UAF=1`).  When on, `free_named` records each
@@ -1374,6 +1397,17 @@ pub fn retbuf_hoist_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_RETBUF_HOIST"))
 }
 
+/// `(R-InPlace)`'s exit clause — the releases a `return` runs on its way out do not decline
+/// a loop's hoist — **DEFAULT ON** (`writes::exit_tail_frees`).  Opt OUT with
+/// `LOFT_NO_EXIT_RELEASE` (read at generation time, both compiled backends): such a release
+/// blocks every holder of the loop again, the first bisect step for a wrong value out of a
+/// loop that returns from inside; `LOFT_HOIST_VERIFY=1` / `LOFT_VERIFY` are the falsifiers.
+#[must_use]
+pub fn exit_release_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_EXIT_RELEASE"))
+}
+
 /// A counted loop's variable shares its range index's slot on the interpreter, so the copy
 /// from the index at the top of every round is not emitted — **DEFAULT ON**
 /// (`slot_alias::range_slot_aliases`).  Opt OUT with `LOFT_NO_LOOP_VAR_ALIAS` (read at slot
@@ -1620,6 +1654,16 @@ pub fn no_chain_arm_sink() -> bool {
 pub fn coalesce_left_assoc() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| env_set("LOFT_COALESCE_LEFT_ASSOC"))
+}
+
+/// `@FR-M-Once`: a guarded `match` arm folds its guard into its own condition, so the rest of
+/// the match is lowered once (`parser::control::guarded_arm`).  `LOFT_NO_GUARD_ARM=1` places
+/// the rest twice instead — once in the guard's else-branch, once in the pattern test's — the
+/// lowering that grows the match exponentially in its guards; values are the same either way,
+/// so it is the first bisect step for a guarded arm that answers differently.
+pub fn guard_arm_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_GUARD_ARM"))
 }
 
 /// loft#1600 (`@FR-H-Drop`'s scope-end clause with `@FR-B-Scope`), **DEFAULT ON**, both
@@ -2985,6 +3029,19 @@ pub fn strict_store_violation(
     }
 }
 
+/// loft#2227 — a native grew a record that predates its call, in the argument store it was
+/// pinned to: a write into an argument, which no `#native` signature licenses (a loft parameter
+/// is read-only).  The answer's copy-out deletes only what the call claimed, so this is the one
+/// shape where a record it deletes could still be an argument's: counted as a violation, so a
+/// `LOFT_STRICT_STORES` run fails on it rather than freeing silently.
+pub fn strict_store_argument_write(store_nr: u16, rec: u32) {
+    STRICT_VIOLATIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    crate::loft_eprintln!(
+        "[strict-store] A NATIVE WROTE INTO ITS ARGUMENT: store #{store_nr} rec={rec}, claimed \
+         before the call, was resized by it"
+    );
+}
+
 /// `LOFT_STRICT_STORES` given to a runtime built without the `strict-stores` feature (an
 /// installed one): its never-freed report still runs, its use-after-free test was compiled
 /// out — said once, at exit, rather than letting a clean report read as a clean run.
@@ -3353,9 +3410,10 @@ fn compare_key(k: &Content, record: &DbRef, stores: &[Store], key: &Key, pos: u3
         (Content::Long(v), 2) => v.cmp(&s.get_long(record.rec, record.pos + pos)),
         (Content::Single(v), 3) => single_cmp(*v, s.get_single(record.rec, record.pos + pos)),
         (Content::Float(v), 4) => float_cmp(*v, s.get_float(record.rec, record.pos + pos)),
-        (Content::Str(v), 6) => v
-            .str()
-            .cmp(s.get_str(s.get_u32_raw(record.rec, record.pos + pos))),
+        (Content::Str(v), 6) => text_key_cmp(
+            v.str(),
+            s.get_str(s.get_u32_raw(record.rec, record.pos + pos)),
+        ),
         // Narrow integer keys — match hash_ref / get_key.
         (Content::Long(v), 8) => v.cmp(&i64::from(s.get_i32_raw(record.rec, record.pos + pos))),
         (Content::Long(v), 12) => v.cmp(&i64::from(s.get_u32_raw(record.rec, record.pos + pos))),
@@ -3490,7 +3548,7 @@ impl FastKey<'_> {
             FastKey::ShortRaw(pos, start, v) => {
                 v.cmp(&i64::from(s.get_short_full(rec, base + pos, *start)))
             }
-            FastKey::Str(pos, v) => (*v).cmp(s.get_str(s.get_u32_raw(rec, base + pos))),
+            FastKey::Str(pos, v) => text_key_cmp(v, s.get_str(s.get_u32_raw(rec, base + pos))),
         }
     }
 }
@@ -3755,10 +3813,12 @@ fn decorated_order(recs: &[DbRef], stores: &[Store], k: &Key) -> Option<Vec<u32>
             };
             pairs.push((v, i as u32));
         }
+        // `text_key_cmp`, the order `compare_ref` answers: a null text first (`@FR-E-NullArg`,
+        // loft#2237) — a plain `&str` sort put the `"\0"` sentinel after `""`.
         if descending {
-            pairs.sort_unstable_by(|a, b| b.0.cmp(a.0).then(a.1.cmp(&b.1)));
+            pairs.sort_unstable_by(|a, b| text_key_cmp(b.0, a.0).then(a.1.cmp(&b.1)));
         } else {
-            pairs.sort_unstable();
+            pairs.sort_unstable_by(|a, b| text_key_cmp(a.0, b.0).then(a.1.cmp(&b.1)));
         }
         return Some(pairs.into_iter().map(|(_, i)| i).collect());
     }
@@ -3856,9 +3916,10 @@ fn compare_ref(r1: &DbRef, r2: &DbRef, stores: &[Store], key: &Key, p1: u32, p2:
         2 => s.get_long(r1.rec, p1).cmp(&s.get_long(r2.rec, p2)),
         3 => single_cmp(s.get_single(r1.rec, p1), s.get_single(r2.rec, p2)),
         4 => float_cmp(s.get_float(r1.rec, p1), s.get_float(r2.rec, p2)),
-        6 => s
-            .get_str(s.get_u32_raw(r1.rec, p1))
-            .cmp(s.get_str(s.get_u32_raw(r2.rec, p2))),
+        6 => text_key_cmp(
+            s.get_str(s.get_u32_raw(r1.rec, p1)),
+            s.get_str(s.get_u32_raw(r2.rec, p2)),
+        ),
         8 => s.get_i32_raw(r1.rec, p1).cmp(&s.get_i32_raw(r2.rec, p2)),
         // The unsigned 4-byte encoding must ORDER unsigned too: compared as `i32`,
         // every key at or above 2147483648 sorts below every key below it.

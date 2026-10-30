@@ -459,3 +459,83 @@ impl Drop for ServerGuard<'_> {
         let _ = self.0.wait();
     }
 }
+
+/// Brick Buster's page with its module written by the C backend (@PLN203 C6): built here into a
+/// scratch directory with `--native-c --html` — clang, no cargo, so none of the race that keeps
+/// the Rust page's gate from building its own — and held to the same render gate: no console
+/// error, at least 20 colours on the canvas, and the sprite pack read (no fallback note).  It
+/// waits 15 s rather than 6: it builds its own page first, on a box that may be loaded.
+/// Measured 2026-10-29: 782 colours, the title screen drawn from the pack.  Needs the pack
+/// `make game` (`brick-buster-pack`) draws, clang and `wasm-ld`, node and a chrome.
+#[test]
+fn brick_buster_c_page_renders_without_console_errors() {
+    let Some(_chrome) = any_of(&["google-chrome", "chromium", "chromium-browser", "chrome"]) else {
+        eprintln!("SKIP: no chrome binary in PATH");
+        return;
+    };
+    if which("node").is_none() || which("clang").is_none() || which("wasm-ld").is_none() {
+        eprintln!("SKIP: needs node, clang and wasm-ld");
+        return;
+    }
+    let root = repo_root();
+    let game = root.join("tools/brick-buster");
+    if !fa::exists(game.join("assets/bb.blobs.store")) {
+        eprintln!("SKIP: the sprite pack is not drawn — run `make brick-buster-pack` first");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("loft_bb_c_page_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("a scratch directory");
+    let page = dir.join("brick-buster.html");
+    let built = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .args(["--native-c", "--html"])
+        .arg(&page)
+        .arg("25-brick-buster.loft")
+        .current_dir(&game)
+        .env("LOFT_TIMEOUT", "1200")
+        .output()
+        .expect("run loft --native-c --html");
+    if !built.status.success() {
+        let err = String::from_utf8_lossy(&built.stderr);
+        if err.contains("toolchain is incomplete") {
+            eprintln!("SKIP: no WASI sysroot for clang");
+            return;
+        }
+        panic!("the C page builds:\n{err}");
+    }
+    let Some(port) = pick_free_port() else {
+        eprintln!("SKIP: could not pick a free TCP port");
+        return;
+    };
+    let Some(mut server) = spawn_dir_server(&dir, port) else {
+        eprintln!("SKIP: failed to start python http.server");
+        return;
+    };
+    let _server_guard = ServerGuard(&mut server);
+    let url = format!("http://127.0.0.1:{port}/brick-buster.html");
+    let out = loft::platform::process::harness_command("node")
+        .arg(root.join("tools/html_render_check.mjs"))
+        .arg(&url)
+        .args(["--wait-ms", "15000"])
+        .args(["--port", &port.wrapping_add(1).to_string()])
+        .args(["--canvas", "#c"])
+        .args(["--canvas-min-colors", "20"])
+        .args([
+            "--assert",
+            "!(document.getElementById('out')||{}).textContent\
+             ?.includes('sprite pack')",
+        ])
+        .output()
+        .expect("invoke node harness");
+    let _ = fa::remove_dir_all(&dir);
+    if out.status.code() == Some(2) {
+        eprintln!("SKIP: {}", String::from_utf8_lossy(&out.stderr));
+        return;
+    }
+    assert!(
+        out.status.success(),
+        "Brick Buster's C page failed the render gate.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

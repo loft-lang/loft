@@ -1,0 +1,95 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2225 — a text `if` whose one arm calls a text function and whose other arm is anything
+// else (a parameter, a local, a literal, an interpolation) answers one text wherever its value
+// goes.  `--native` gives a call arm a `Str` and every other arm a borrow; the emitter made the
+// two one type only for a call against a LITERAL (#552), and an `if` handed to a call as an
+// ARGUMENT was bound to a `_pre_N` and passed as it stood — an owned value to a `&str`
+// parameter.  The interpreter answered every cell; `--native` would not compile the program.
+//
+// What each cell is for:
+//   * `call_vs_param`, `param_vs_call` — the game's status line: `char_slice` against the
+//     parameter it cuts, in both arm orders, as a call argument.
+//   * `call_vs_local` — the same with a local text, emitted `&var_x` rather than `var_x`.
+//   * `call_vs_literal` — #552's pair, which unified its arms but still passed the owned
+//     result as it stood.
+//   * `call_vs_call` — two call arms agree (`Str`), and the argument still has to be borrowed.
+//   * `call_vs_interp` — an interpolation arm, a work-buffer borrow.
+//   * `into_native_op` — the `if` as an argument to a stdlib operation (`len`), not a user fn.
+//   * `appended` — the issue's own repro: a struct-enum literal argument in the call arm, the
+//     `if` appended with `+=`.
+//   * `param_vs_literal` — two borrowed arms, which always compiled: the control.
+// Expected, by hand: abc ab; abc ab; abc ab; abc short; abc ab; abc ab!; 3 2; "ab c"; ab short.
+//
+// @falsified-at: 6184655a5 — native exit 1 -> 0; interpret INERT (expected for a
+// backend-divergence guard — only one side can move).
+//   CHANNEL: the native exit — on the control rustc refuses the program (E0308), so nothing runs.
+//   WITNESS: the `error[E0308]: 'if' and 'else' have incompatible types` the native run prints.
+//   ARMED: nothing.
+//   HOLDS: the interpreter, which answered every cell before the fix; the control cell
+//   (`param_vs_literal`), whose two borrowed arms always compiled.
+
+enum T { W { s: text }, N { v: integer } }
+
+fn echo(s: text) -> text { "[{s}]" }
+
+fn call_vs_param(left: text, room: integer) -> text {
+  echo(if len(left) > room { left.char_slice(0, room) } else { left })
+}
+
+fn param_vs_call(left: text, room: integer) -> text {
+  echo(if len(left) <= room { left } else { left.char_slice(0, room) })
+}
+
+fn call_vs_local(w: text, room: integer) -> text {
+  left = "{w}";
+  echo(if len(left) > room { left.char_slice(0, room) } else { left })
+}
+
+fn call_vs_literal(left: text, room: integer) -> text {
+  echo(if len(left) > room { left.char_slice(0, room) } else { "short" })
+}
+
+fn call_vs_call(left: text, room: integer) -> text {
+  echo(if len(left) > room { left.char_slice(0, room) } else { left.char_slice(0, len(left)) })
+}
+
+fn call_vs_interp(left: text, room: integer) -> text {
+  echo(if len(left) > room { left.char_slice(0, room) } else { "{left}!" })
+}
+
+fn into_native_op(left: text, room: integer) -> integer {
+  len(if len(left) > room { left.char_slice(0, room) } else { left })
+}
+
+fn tw(t: T) -> text {
+  match t {
+    W { s } => s,
+    _ => "n",
+  }
+}
+
+fn appended() -> text {
+  out = "";
+  for s in ["ab", "c"] {
+    out += if out == "" { tw(W { s: s }) } else { " " + tw(W { s: s }) };
+  }
+  out
+}
+
+fn param_vs_literal(left: text, room: integer) -> text {
+  echo(if len(left) <= room { left } else { "short" })
+}
+
+fn main() {
+  assert(call_vs_param("abcdef", 3) == "[abc]" && call_vs_param("ab", 3) == "[ab]", "call vs param");
+  assert(param_vs_call("abcdef", 3) == "[abc]" && param_vs_call("ab", 3) == "[ab]", "param vs call");
+  assert(call_vs_local("abcdef", 3) == "[abc]" && call_vs_local("ab", 3) == "[ab]", "call vs local");
+  assert(call_vs_literal("abcdef", 3) == "[abc]" && call_vs_literal("ab", 3) == "[short]", "call vs literal");
+  assert(call_vs_call("abcdef", 3) == "[abc]" && call_vs_call("ab", 3) == "[ab]", "call vs call");
+  assert(call_vs_interp("abcdef", 3) == "[abc]" && call_vs_interp("ab", 3) == "[ab!]", "call vs interpolation");
+  assert(into_native_op("abcdef", 3) == 3 && into_native_op("ab", 3) == 2, "into a native op");
+  assert(appended() == "ab c", "appended: {appended()}");
+  assert(param_vs_literal("ab", 3) == "[ab]" && param_vs_literal("abcdef", 3) == "[short]", "the control");
+}

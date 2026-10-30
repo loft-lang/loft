@@ -159,6 +159,17 @@ fn tmpdir(name: &str) -> PathBuf {
     p
 }
 
+/// Run `cmd` where no Rust toolchain can be found: `PATH` cut to the system directories, and
+/// rustup's own selection removed.  A test runs under cargo, and cargo started through a rustup
+/// proxy hands every child `RUSTUP_TOOLCHAIN` and `RUSTUP_HOME`; with those set, a rustup shim
+/// in `/usr/bin` (Ubuntu's `rustup` package puts one there) answers `rustc --version` from any
+/// directory, so the `PATH` cut alone hid nothing on such a machine.
+fn without_rust_toolchain(cmd: &mut std::process::Command) -> &mut std::process::Command {
+    cmd.env("PATH", "/usr/bin:/bin")
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .env_remove("RUSTUP_HOME")
+}
+
 fn write_file(path: &Path, content: &str) {
     if let Some(parent) = path.parent() {
         fa::create_dir_all(parent).unwrap();
@@ -1398,6 +1409,24 @@ fn a_released_library_artifact_runs_compiled_without_rustc() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let loft_bin = env!("CARGO_BIN_EXE_loft");
     let tmp = tmpdir("g2c_artifact");
+    // The consumer's runs must find no toolchain; a machine where one is still reachable
+    // under that environment (a distribution's own `rustc` in `/usr/bin`) cannot run them.
+    let probe_home = tmp.join("probe_home");
+    fa::create_dir_all(&probe_home).unwrap();
+    let reachable =
+        without_rust_toolchain(&mut loft::platform::process::harness_command("/bin/sh"))
+            .args(["-c", "rustc --version"])
+            .current_dir(&probe_home)
+            .env("HOME", &probe_home)
+            .output()
+            .is_ok_and(|o| o.status.success());
+    if reachable {
+        eprintln!(
+            "skip: a rustc answers on /usr/bin:/bin, so the no-toolchain runs cannot be staged"
+        );
+        let _ = fa::remove_dir_all(&tmp);
+        return;
+    }
     let package = |name: &str, version: &str, deps: &str, body: &str| {
         let src = tmp.join("src").join(name);
         write_file(
@@ -1579,12 +1608,19 @@ fn a_released_library_artifact_runs_compiled_without_rustc() {
             .count()
     };
     let run = || -> (bool, String, String) {
-        let out = loft::platform::process::harness_command(loft_bin)
+        let out = without_rust_toolchain(&mut loft::platform::process::harness_command(loft_bin))
             .args(["--interpret", "src/main.loft"])
             .current_dir(&project)
-            .env("PATH", "/usr/bin:/bin")
             .env("HOME", &home)
             .env("LOFT_HOME", &home)
+            // The empty HOME is what leaves rustup without a toolchain, so nothing may
+            // point it elsewhere: `cargo test` run through the rustup proxy hands its
+            // children RUSTUP_HOME / RUSTUP_TOOLCHAIN, and a rustup that installs a
+            // toolchain on first use (1.29) downloaded the whole stable one into the empty
+            // HOME — either way the control compiled and "no Rust toolchain" did not hold.
+            .env_remove("RUSTUP_HOME")
+            .env_remove("RUSTUP_TOOLCHAIN")
+            .env("RUSTUP_AUTO_INSTALL", "0")
             .env("LOFT_NO_CACHE", "1")
             .env("LOFT_TRACE_NATIVE_GATE", "1")
             .output()
@@ -1655,10 +1691,9 @@ fn a_released_library_artifact_runs_compiled_without_rustc() {
             "{}",
             String::from_utf8_lossy(&installed.stderr)
         );
-        loft::platform::process::harness_command(loft_bin)
+        without_rust_toolchain(&mut loft::platform::process::harness_command(loft_bin))
             .args(["--interpret", "src/main.loft"])
             .current_dir(&project)
-            .env("PATH", "/usr/bin:/bin")
             .env("HOME", run_home)
             .env("LOFT_HOME", run_home)
             .env("LOFT_NO_CACHE", "1")

@@ -1,0 +1,84 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A CAPTURED ELEMENT VIEW IS COPIED WHEN ITS CONTAINER MOVES (`@FR-B-View`, `@FR-B-Disturb`,
+// loft#2245).  `y = vs[1]` binds a struct element as a VIEW; when the container is disturbed
+// while the view is in use, the binding materialises its own copy at the bind.  A closure that
+// captured `y` uses it wherever the closure runs — after the disturbance, after the function
+// returns — so a disturbance after the capture copies `y`, and the closure answers the element
+// as it was bound.  The cells vary the disturbance (a growth that moves the block at every fill
+// level, a removal that renumbers, a hash growing past its table), whether the closure leaves
+// the function or is called in it, and the undisturbed control, which keeps its view.
+//
+// @falsified-at: 23bc61e47 — interpret exit 1 -> 0, interpret 4 assertion failures -> 0
+//   Measured by hand on a build of origin/main in a worktree: a growth that moved the block
+//   (the vector exactly full) answered null, a removal answered the next element (300), a
+//   hash growth answered null; the same-frame cell failed with the leaving one.
+// CHANNEL: the asserts.
+// WITNESS: `test_a_growth_that_moves_the_block`.
+// HOLDS: `test_an_undisturbed_capture_keeps_its_view` — clean before the fix.
+
+struct S { v: integer, w: vector<integer> }
+struct K { k: integer, v: integer }
+
+fn grown(k: integer) -> fn() -> integer {
+  vs: vector<S> = [];
+  for i in 0..k { vs += [S { v: 1 + i, w: [1, 2] }]; }
+  y = vs[1];
+  f = fn() -> integer { y.v * 100 + len(y.w) };
+  vs += [S { v: 60, w: [] }];
+  f
+}
+
+fn test_a_growth_that_moves_the_block() {
+  // Every fill level from a fresh vector to past its second growth: some appends fit, the
+  // ones at a full block move it, and every one must leave the closure reading 2 * 100 + 2.
+  for k in 2..40 {
+    f = grown(k);
+    assert(f() == 202, "k={k}: got {f()}");
+  }
+}
+
+fn test_a_closure_called_in_the_same_frame() {
+  for k in 2..30 {
+    vs: vector<S> = [];
+    for i in 0..k { vs += [S { v: 1 + i, w: [1, 2] }]; }
+    y = vs[1];
+    f = fn() -> integer { y.v * 100 + len(y.w) };
+    vs += [S { v: 60, w: [] }];
+    assert(f() == 202, "k={k}: got {f()}");
+  }
+}
+
+fn removed() -> fn() -> integer {
+  vs = [S { v: 1, w: [1] }, S { v: 2, w: [1, 2] }, S { v: 3, w: [] }];
+  y = vs[1];
+  f = fn() -> integer { y.v * 100 + len(y.w) };
+  vs.remove(0);
+  f
+}
+
+fn test_a_removal_that_renumbers() {
+  f = removed();
+  assert(f() == 202, "got {f()}");
+}
+
+fn keyed() -> fn() -> integer {
+  h: hash<K[k]> = [K { k: 1, v: 10 }, K { k: 2, v: 20 }];
+  y = h[2];
+  f = fn() -> integer { y.v };
+  for i in 3..200 { h += [K { k: i, v: i }]; }
+  f
+}
+
+fn test_a_hash_that_grows() {
+  f = keyed();
+  assert(f() == 20, "got {f()}");
+}
+
+fn test_an_undisturbed_capture_keeps_its_view() {
+  vs = [S { v: 1, w: [1] }, S { v: 2, w: [1, 2] }];
+  y = vs[1];
+  f = fn() -> integer { y.v * 100 + len(y.w) };
+  assert(f() == 202, "got {f()}");
+}

@@ -88,13 +88,14 @@ cat myprogram.rs</code></pre>
 <h3 id="native-c">Compiling through C</h3>
 <p><code>--native-c</code> writes your program as C and builds it with the C compiler already on your machine, so it needs no Rust at all: the C runtime is inside the <code>loft</code> binary. It answers what the interpreter answers; it is on its way to becoming what <code>--native</code> means. What each target needs:</p>
 <table>
-<thead><tr><th>target</th><th>needs</th><th>Debian / Ubuntu</th></tr></thead>
+<thead><tr><th>target</th><th>needs</th><th>Debian / Ubuntu</th><th>macOS</th><th>Windows</th></tr></thead>
 <tbody>
-<tr><td><code>--native-c</code></td><td>a C compiler (<code>cc</code>, or the one <code>LOFT_CC</code> names)</td><td><code>apt install build-essential</code></td></tr>
-<tr><td><code>--native-c --native-wasm</code></td><td>clang, lld, the WASI libc and the wasm32 compiler-rt (or the clang <code>LOFT_WASM_CC</code> names)</td><td><code>apt install clang lld wasi-libc libclang-rt-dev-wasm32</code></td></tr>
+<tr><td><code>--native-c</code></td><td>a C compiler (<code>cc</code>, or the one <code>LOFT_CC</code> names)</td><td><code>apt install build-essential</code></td><td><code>xcode-select --install</code></td><td>MinGW-w64 gcc</td></tr>
+<tr><td><code>--native-c --native-wasm</code></td><td>clang, lld, the WASI libc and the wasm32 compiler-rt (or the clang <code>LOFT_WASM_CC</code> names)</td><td><code>apt install clang lld wasi-libc libclang-rt-dev-wasm32</code></td><td><code>brew install llvm lld wasi-libc wasi-runtimes</code> — found without settings; Apple's own clang has no wasm target</td><td><a href="https://github.com/WebAssembly/wasi-sdk/releases">wasi-sdk</a> (the x86_64-windows archive), with <code>LOFT_WASM_CC=&lt;wasi-sdk&gt;/bin/clang.exe</code></td></tr>
+<tr><td><code>--native-c --html</code></td><td>the wasm toolchain above, and binaryen's <code>wasm-opt</code> for a page that draws frames</td><td>… and <code>apt install binaryen</code></td><td>… and <code>brew install binaryen</code></td><td>… and <a href="https://github.com/WebAssembly/binaryen/releases">binaryen</a>'s <code>bin</code> on <code>PATH</code></td></tr>
 </tbody>
 </table>
-<p>On macOS the Xcode command-line tools (<code>xcode-select --install</code>) give the C compiler; on Windows, MinGW-w64 gcc. When a tool is missing, loft says which and what to install.</p>
+<p>When a tool is missing, loft says which and what to install on the machine it runs on.</p>
 
 <h2 id="standard-library">Standard library</h2>
 <p>The standard library is a set of <code>.loft</code> files bundled alongside the loft binary. They are loaded automatically before your program runs — you do not need any <code>import</code> or <code>use</code> statement to call <code>println</code>, <code>assert</code>, or any other built-in function.</p>

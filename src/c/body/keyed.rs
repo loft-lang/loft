@@ -1005,7 +1005,8 @@ impl FnWriter<'_> {
                         "loft_replace_keyed(loft_types, {tp}, {}, {}, {})",
                         as_ref(src)?,
                         as_ref(dest)?,
-                        i32::from(raw & 0x8000 != 0)
+                        // Bit 1: the element tree may move whole (`@FR-H-SwapIn`).
+                        i32::from(raw & 0x8000 != 0) | (i32::from(self.cx.swap_safe(tp)) << 1)
                     ),
                     K::Void,
                 )))

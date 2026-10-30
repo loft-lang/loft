@@ -7,27 +7,16 @@
  * and (for a keyed kind) entity.  Both roles share one queue and one conflation machinery: the
  * listener (`run`) and the connector (`run_client`, or a transportless local kernel).  The
  * `D!:` debug control channel answers as a build with no live tier does.  `http_fetch` returns at
- * once and completes as a kind-3 event, its request on a worker thread.  POSIX hosts; elsewhere
- * the kernel cannot listen or connect.  Compiled in for a unit that reaches a kernel native
- * (LOFT_ENGINE). */
+ * once and completes as a kind-3 event, its request on a worker thread.  Every host with sockets
+ * (`loft_sock.h`: POSIX and Windows); elsewhere the kernel cannot listen or connect.  Compiled in
+ * for a unit that reaches a kernel native (LOFT_ENGINE). */
 #ifdef LOFT_ENGINE
 #include <ctype.h>
-#if defined(LOFT_POSIX_HOST)
-#include <arpa/inet.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <poll.h>
-#include <strings.h>
-#include <sys/socket.h>
-#include <sys/time.h>
-#include <unistd.h>
-#if !defined(LOFT_NO_THREADS) && !defined(LOFT_STRICT)
+#if defined(LOFT_SOCKETS) && !defined(LOFT_NO_THREADS) && !defined(LOFT_STRICT)
+#if !defined(_WIN32)
 #include <pthread.h>
-#define LOFT_EH_THREADS 1
 #endif
+#define LOFT_EH_THREADS 1
 #endif
 
 #define LOFT_EH_UDP_TIMEOUT_US 3000000
@@ -223,14 +212,22 @@ typedef struct { int64_t id, status; loft_text body; } loft_eh_done;
 static loft_eh_done *loft_eh_dones = 0;
 static size_t loft_eh_ndone = 0;
 static int64_t loft_eh_http_next = 1;
-#if defined(LOFT_EH_THREADS)
+/* The lock between a worker parking its completion and the pump draining them. */
+#if defined(LOFT_EH_THREADS) && defined(_WIN32)
+static SRWLOCK loft_eh_done_lock = SRWLOCK_INIT;
+#define LOFT_EH_LOCK() AcquireSRWLockExclusive(&loft_eh_done_lock)
+#define LOFT_EH_UNLOCK() ReleaseSRWLockExclusive(&loft_eh_done_lock)
+#elif defined(LOFT_EH_THREADS)
 static pthread_mutex_t loft_eh_done_lock = PTHREAD_MUTEX_INITIALIZER;
+#define LOFT_EH_LOCK() pthread_mutex_lock(&loft_eh_done_lock)
+#define LOFT_EH_UNLOCK() pthread_mutex_unlock(&loft_eh_done_lock)
+#else
+#define LOFT_EH_LOCK() ((void) 0)
+#define LOFT_EH_UNLOCK() ((void) 0)
 #endif
 
 static void loft_eh_park(int64_t id, int64_t status, const char *body, size_t n) {
-#if defined(LOFT_EH_THREADS)
-    pthread_mutex_lock(&loft_eh_done_lock);
-#endif
+    LOFT_EH_LOCK();
     loft_eh_dones = (loft_eh_done *) realloc(loft_eh_dones, (loft_eh_ndone + 1) * sizeof *loft_eh_dones);
     if (!loft_eh_dones) { fputs("loft: out of memory\n", stderr); abort(); }
     loft_eh_done *d = &loft_eh_dones[loft_eh_ndone++];
@@ -239,38 +236,32 @@ static void loft_eh_park(int64_t id, int64_t status, const char *body, size_t n)
     d->body.p = 0;
     d->body.len = d->body.cap = 0;
     loft_push(&d->body, body, n);
-#if defined(LOFT_EH_THREADS)
-    pthread_mutex_unlock(&loft_eh_done_lock);
-#endif
+    LOFT_EH_UNLOCK();
 }
 
 static void loft_eh_drain_http(loft_eh_queue *q) {
-#if defined(LOFT_EH_THREADS)
-    pthread_mutex_lock(&loft_eh_done_lock);
-#endif
+    LOFT_EH_LOCK();
     for (size_t i = 0; i < loft_eh_ndone; i++) {
         loft_eh_push(q, loft_eh_dones[i].id, 3, loft_eh_dones[i].status, loft_eh_dones[i].body.p,
                      loft_eh_dones[i].body.len);
         free(loft_eh_dones[i].body.p);
     }
     loft_eh_ndone = 0;
-#if defined(LOFT_EH_THREADS)
-    pthread_mutex_unlock(&loft_eh_done_lock);
-#endif
+    LOFT_EH_UNLOCK();
 }
 
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_SOCKETS)
 /* ── Socket mechanics ── */
 
 /* Every byte of `p`, or 0. */
 static int loft_eh_write_all(int fd, const char *p, size_t n) {
     while (n > 0) {
 #if defined(MSG_NOSIGNAL)
-        ssize_t w = send(fd, p, n, MSG_NOSIGNAL);
+        long w = loft_sock_send(fd, p, n, MSG_NOSIGNAL);
 #else
-        ssize_t w = send(fd, p, n, 0);
+        long w = loft_sock_send(fd, p, n, 0);
 #endif
-        if (w < 0 && errno == EINTR) continue;
+        if (w < 0 && loft_sock_interrupted()) continue;
         if (w <= 0) return 0;
         p += w;
         n -= (size_t) w;
@@ -282,8 +273,8 @@ static int loft_eh_write_all(int fd, const char *p, size_t n) {
 static int loft_eh_read_exact(int fd, void *buf, size_t n) {
     uint8_t *p = (uint8_t *) buf;
     while (n > 0) {
-        ssize_t r = recv(fd, p, n, 0);
-        if (r < 0 && errno == EINTR) continue;
+        long r = loft_sock_recv(fd, p, n, 0);
+        if (r < 0 && loft_sock_interrupted()) continue;
         if (r <= 0) return 0;
         p += r;
         n -= (size_t) r;
@@ -296,8 +287,8 @@ static int loft_eh_read_exact(int fd, void *buf, size_t n) {
 static int loft_eh_read_head(int fd, loft_text *head) {
     while (head->len < 4 || memcmp(head->p + head->len - 4, "\r\n\r\n", 4) != 0) {
         char b;
-        ssize_t r = recv(fd, &b, 1, 0);
-        if (r < 0 && errno == EINTR) continue;
+        long r = loft_sock_recv(fd, &b, 1, 0);
+        if (r < 0 && loft_sock_interrupted()) continue;
         if (r != 1) return 0;
         loft_push(head, &b, 1);
         if (head->len > 16 * 1024) return 0;
@@ -374,9 +365,9 @@ static int loft_eh_write_frame(int fd, uint8_t opcode, const char *p, size_t n, 
  * short read timeout.  0 none, 1 a text frame (into `out`), 2 closed. */
 static int loft_eh_read_frame(int fd, loft_text *out) {
     uint8_t hdr[2];
-    ssize_t peeked = recv(fd, hdr, 2, MSG_PEEK | MSG_DONTWAIT);
-    if (peeked == 0) return 2;
-    if (peeked < 0) return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR ? 0 : 2;
+    long peeked = loft_sock_peek(fd, hdr, 2);
+    if (peeked == 0 || peeked == -2) return 2;
+    if (peeked < 0) return 0;
     if (peeked < 2) return 0;
     if (!loft_eh_read_exact(fd, hdr, 2)) return 2;
     uint8_t opcode = hdr[0] & 0x0F;
@@ -417,22 +408,30 @@ static int loft_eh_read_frame(int fd, loft_text *out) {
 }
 
 /* A socket bound on 0.0.0.0:`port` for a hand-over: close-on-exec, SO_REUSEADDR (TCP) and
- * SO_REUSEPORT, so a swap's new build binds while the old one serves.  -1 on failure. */
+ * SO_REUSEPORT, so a swap's new build binds while the old one serves.  Windows has no shared
+ * port (`platform::bind_tcp_handover` binds plainly there): its listener is exclusive, as the
+ * runtime's other listeners are.  -1 on failure. */
 static int loft_eh_bind(int64_t port, int type) {
-    int fd = socket(AF_INET, type, 0);
+    int fd = loft_sock_open(AF_INET, type, 0);
     if (fd < 0) return -1;
     loft_sock_cloexec(fd);
-    int one = 1;
-    if (type == SOCK_STREAM) setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+#if defined(_WIN32)
+    if (type == SOCK_STREAM) loft_sock_listener_addr(fd);
+#else
+    if (type == SOCK_STREAM) loft_sock_flag(fd, SOL_SOCKET, SO_REUSEADDR, 1);
 #if defined(SO_REUSEPORT)
-    setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof one);
+    loft_sock_flag(fd, SOL_SOCKET, SO_REUSEPORT, 1);
 #endif
+#endif
+    if (type == SOCK_DGRAM) loft_sock_udp_quiet(fd);
     struct sockaddr_in a;
     memset(&a, 0, sizeof a);
     a.sin_family = AF_INET;
     a.sin_port = htons((uint16_t) port);
-    if (bind(fd, (struct sockaddr *) &a, sizeof a) != 0 || (type == SOCK_STREAM && listen(fd, 128) != 0)) {
-        close(fd);
+    int bound = type == SOCK_STREAM ? loft_sock_bind_listen(fd, (struct sockaddr *) &a, sizeof a, 128)
+                                    : loft_sock_bind(fd, (struct sockaddr *) &a, sizeof a);
+    if (bound != 0) {
+        loft_sock_close(fd);
         return -1;
     }
     loft_sock_blocking(fd, 0);
@@ -446,15 +445,29 @@ static int loft_eh_same_addr(const struct sockaddr_storage *a, socklen_t al, con
 
 /* 16 hex characters from the OS's random source, the clock and `cid`: spoof-resistant on a LAN,
  * not cryptographic (the cookie the Rust kernel mints from a seeded hasher). */
+#if defined(_WIN32)
+/* `RtlGenRandom`, as `ntsecapi.h` declares it (that header wants types `windows.h` lacks). */
+BOOLEAN WINAPI SystemFunction036(PVOID buffer, ULONG length);
+#if defined(_MSC_VER)
+#pragma comment(lib, "advapi32.lib")
+#endif
+#endif
+
 static void loft_eh_cookie(size_t cid, char out[17]) {
     uint64_t x = 0;
+#if defined(_WIN32)
+    if (!SystemFunction036(&x, (ULONG) sizeof x)) x = 0;
+    uint64_t pid = (uint64_t) GetCurrentProcessId();
+#else
     int fd = open("/dev/urandom", O_RDONLY);
     if (fd >= 0) {
-        ssize_t r = read(fd, &x, sizeof x);
+        long r = (long) read(fd, &x, sizeof x);
         (void) r;
         close(fd);
     }
-    x ^= (uint64_t) loft_now_us() * 0x9E3779B97F4A7C15ull ^ (uint64_t) cid * 0xBF58476D1CE4E5B9ull ^ (uint64_t) getpid();
+    uint64_t pid = (uint64_t) getpid();
+#endif
+    x ^= (uint64_t) loft_now_us() * 0x9E3779B97F4A7C15ull ^ (uint64_t) cid * 0xBF58476D1CE4E5B9ull ^ pid;
     x ^= x >> 31;
     snprintf(out, 17, "%016llx", (unsigned long long) x);
 }
@@ -592,8 +605,40 @@ static void loft_eh_trim(const char **p, size_t *n) {
     while (*n && isspace((unsigned char) (*p)[*n - 1])) (*n)--;
 }
 
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_SOCKETS)
 static void loft_ehk_disconnect(size_t cid);
+
+/* Every socket either role still holds, closed when the program exits — as the Rust kernel's
+ * sockets close when its state drops.  A socket the process leaves open is closed by the OS, and
+ * Windows closes it with a reset, which discards whatever the peer had not read yet: a seat's
+ * last message before `client_stop` never reached its listener.  A plain close sends it, then
+ * the FIN. */
+static void loft_eh_close_fd(int *fd) {
+    if (*fd >= 0) loft_sock_close(*fd);
+    *fd = -1;
+}
+
+/* Only a role that is up: the other's descriptors are still the static's zeros, and 0 is stdin. */
+static void loft_eh_close_all(void) {
+    if (loft_ehk.up) {
+        loft_eh_close_fd(&loft_ehk.listener);
+        loft_eh_close_fd(&loft_ehk.udp);
+        for (size_t i = 0; i < loft_ehk.nconns; i++) loft_eh_close_fd(&loft_ehk.conns[i].fd);
+    }
+    if (loft_ehc.up) {
+        loft_eh_close_fd(&loft_ehc.conn);
+        loft_eh_close_fd(&loft_ehc.udp);
+        loft_eh_close_fd(&loft_ehc.ctl);
+        for (size_t i = 0; i < loft_ehc.nctl; i++) loft_eh_close_fd(&loft_ehc.ctl_conns[i]);
+    }
+}
+
+static void loft_eh_close_at_exit(void) {
+    static int armed = 0;
+    if (armed) return;
+    armed = 1;
+    atexit(loft_eh_close_all);
+}
 
 /* `deliver`: a sync-class message rides a seq-stamped datagram when the client's UDP path is
  * bound; everything else, and every client without one, gets a WS frame.  A failed WS write
@@ -618,7 +663,7 @@ static int loft_ehk_deliver(size_t cid, const char *msg, size_t n, int sync) {
                         d.len, LOFT_EH_UDP_MAX);
             }
         } else {
-            ok = sendto(loft_ehk.udp, d.p, d.len, 0, (struct sockaddr *) &c->addr, c->alen) >= 0;
+            ok = loft_sock_sendto(loft_ehk.udp, d.p, d.len, (struct sockaddr *) &c->addr, c->alen) >= 0;
         }
         free(d.p);
         return ok;
@@ -632,7 +677,7 @@ static int loft_ehk_deliver(size_t cid, const char *msg, size_t n, int sync) {
 }
 
 static void loft_ehk_disconnect(size_t cid) {
-    close(loft_ehk.conns[cid].fd);
+    loft_sock_close(loft_ehk.conns[cid].fd);
     loft_eh_conn_reset(&loft_ehk.conns[cid]);
     loft_eh_push(&loft_ehk.events, (int64_t) cid, 2, 0, "", 0);
 }
@@ -640,7 +685,7 @@ static void loft_ehk_disconnect(size_t cid) {
 static int loft_eh_loopback(int fd) {
     struct sockaddr_storage a;
     socklen_t al = sizeof a;
-    if (getpeername(fd, (struct sockaddr *) &a, &al) != 0) return 0;
+    if (loft_sock_name(fd, 1, (struct sockaddr *) &a, &al) != 0) return 0;
     if (a.ss_family == AF_INET) return (ntohl(((struct sockaddr_in *) &a)->sin_addr.s_addr) >> 24) == 127;
     if (a.ss_family == AF_INET6) {
         const struct in6_addr *x = &((struct sockaddr_in6 *) &a)->sin6_addr;
@@ -726,7 +771,7 @@ static void loft_ehk_pump_udp(void) {
     for (;;) {
         struct sockaddr_storage from;
         socklen_t fl = sizeof from;
-        ssize_t len = recvfrom(loft_ehk.udp, buf, sizeof buf, MSG_DONTWAIT, (struct sockaddr *) &from, &fl);
+        long len = loft_sock_recvfrom(loft_ehk.udp, buf, sizeof buf, (struct sockaddr *) &from, &fl);
         if (len < 0) break;
         if (!loft_utf8_valid((const unsigned char *) buf, (size_t) len)) continue;
         if (len >= 2 && buf[0] == 'H' && buf[1] == ':') {
@@ -742,7 +787,7 @@ static void loft_ehk_pump_udp(void) {
                         c->last_seen = now;
                         char ack[32];
                         int an = snprintf(ack, sizeof ack, "A:%zu", i);
-                        sendto(loft_ehk.udp, ack, (size_t) an, 0, (struct sockaddr *) &from, fl);
+                        loft_sock_sendto(loft_ehk.udp, ack, (size_t) an, (struct sockaddr *) &from, fl);
                     }
                     break;
                 }
@@ -768,16 +813,20 @@ static void loft_ehk_pump_udp(void) {
 /* ── The listener natives ── */
 
 static uint8_t loft_kernel_listen(int64_t port, int64_t tick_us) {
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_SOCKETS)
     int fd = loft_eh_bind(port, SOCK_STREAM);
     if (fd < 0) return 0;
     int udp = loft_eh_bind(port, SOCK_DGRAM);
-    if (udp < 0) fprintf(stderr, "engine_host: UDP bind on %lld failed (%s); state-sync rides WS\n", (long long) port, strerror(errno));
+    if (udp < 0) {
+        int why = loft_sock_error();
+        fprintf(stderr, "engine_host: UDP bind on %lld failed (%s (os error %d)); state-sync rides WS\n", (long long) port,
+                strerror(why), why);
+    }
     if (loft_ehk.up) {
-        if (loft_ehk.listener >= 0) close(loft_ehk.listener);
-        if (loft_ehk.udp >= 0) close(loft_ehk.udp);
+        if (loft_ehk.listener >= 0) loft_sock_close(loft_ehk.listener);
+        if (loft_ehk.udp >= 0) loft_sock_close(loft_ehk.udp);
         for (size_t i = 0; i < loft_ehk.nconns; i++) {
-            if (loft_ehk.conns[i].fd >= 0) close(loft_ehk.conns[i].fd);
+            if (loft_ehk.conns[i].fd >= 0) loft_sock_close(loft_ehk.conns[i].fd);
             loft_eh_conn_reset(&loft_ehk.conns[i]);
             free(loft_ehk.conns[i].debug_name);
         }
@@ -786,6 +835,7 @@ static uint8_t loft_kernel_listen(int64_t port, int64_t tick_us) {
     free(loft_ehk.conns);
     loft_ehk.conns = 0;
     loft_ehk.nconns = 0;
+    loft_eh_close_at_exit();
     loft_ehk.up = 1;
     loft_ehk.alive = 1;
     loft_ehk.listener = fd;
@@ -819,9 +869,9 @@ static int64_t loft_kernel_pump(void) {
     if (!loft_ehk.up) return 0;
     loft_eh_drain_http(&loft_ehk.events);
     int64_t added = 0;
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_SOCKETS)
     for (;;) {
-        int fd = accept(loft_ehk.listener, 0, 0);
+        int fd = loft_sock_accept(loft_ehk.listener);
         if (fd < 0) break;
         loft_sock_cloexec(fd);
         size_t cid = 0;
@@ -829,7 +879,7 @@ static int64_t loft_kernel_pump(void) {
         char cookie[17] = { 0 };
         if (loft_ehk.udp >= 0) loft_eh_cookie(cid, cookie);
         if (!loft_eh_ws_upgrade(fd, cookie)) {
-            close(fd);
+            loft_sock_close(fd);
             continue;
         }
         if (cid == loft_ehk.nconns) {
@@ -900,7 +950,7 @@ static uint8_t loft_kernel_tick_due(void) {
 }
 
 static uint8_t loft_kernel_send(int64_t cid, loft_str msg) {
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_SOCKETS)
     if (!loft_ehk.up || cid < 0) return 0;
     return (uint8_t) loft_ehk_deliver((size_t) cid, msg.p, msg.len, loft_eh_is_sync(msg.p, msg.len));
 #else
@@ -912,7 +962,7 @@ static uint8_t loft_kernel_send(int64_t cid, loft_str msg) {
 
 static int64_t loft_kernel_broadcast(loft_str msg) {
     int64_t sent = 0;
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_SOCKETS)
     if (!loft_ehk.up) return 0;
     int sync = loft_eh_is_sync(msg.p, msg.len);
     for (size_t cid = 0; cid < loft_ehk.nconns; cid++)
@@ -923,10 +973,32 @@ static int64_t loft_kernel_broadcast(loft_str msg) {
     return sent;
 }
 
+/* Sleep `us`.  Windows' `Sleep` counts whole milliseconds on a ~15.6 ms clock, which would round
+ * a tick's sub-frame wait to a frame or to a spin; a high-resolution waitable timer (Windows 10
+ * 1803+, what `std::thread::sleep` uses) keeps it, and `Sleep` rounded UP is the fallback. */
 static void loft_eh_sleep_us(int64_t us) {
     if (us <= 0) return;
+#if defined(_WIN32)
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
+    static HANDLE timer = 0;
+    static int tried = 0;
+    if (!tried) {
+        tried = 1;
+        timer = CreateWaitableTimerExW(0, 0, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    }
+    LARGE_INTEGER due;
+    due.QuadPart = -(LONGLONG) us * 10;
+    if (timer && SetWaitableTimer(timer, &due, 0, 0, 0, FALSE)) {
+        WaitForSingleObject(timer, INFINITE);
+    } else {
+        Sleep((DWORD) ((us + 999) / 1000));
+    }
+#else
     struct timespec ts = { (time_t) (us / 1000000), (long) (us % 1000000) * 1000 };
     while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {}
+#endif
 }
 
 /* Sleep up to `max_us`, never past the next tick boundary. */
@@ -975,7 +1047,7 @@ static void loft_kernel_sync_class_keyed(int64_t id) { loft_eh_sync_declare(id, 
  * in the datagram seq space for a bound peer (`S:<seq>:` — it conflates there), plain for one
  * that is not. */
 static uint8_t loft_kernel_keyframe(int64_t cid, loft_str msg) {
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_SOCKETS)
     if (!loft_ehk.up || cid < 0 || (size_t) cid >= loft_ehk.nconns) return 0;
     loft_eh_conn *c = &loft_ehk.conns[cid];
     loft_text wire = { 0, 0, 0 };
@@ -1027,12 +1099,12 @@ static loft_text loft_kernel_sync_payload(void) {
 
 /* ── The connector natives ── */
 
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_SOCKETS)
 /* The client's loopback debug-control listener, announced on stdout; -1 unless
  * LOFT_DEBUG_CONTROL=1. */
 static int loft_ehc_ctl_listener(void) {
     if (!loft_eh_debug_on()) return -1;
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    int fd = loft_sock_open(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) return -1;
     loft_sock_cloexec(fd);
     struct sockaddr_in a;
@@ -1040,9 +1112,9 @@ static int loft_ehc_ctl_listener(void) {
     a.sin_family = AF_INET;
     a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     socklen_t al = sizeof a;
-    if (bind(fd, (struct sockaddr *) &a, sizeof a) != 0 || listen(fd, 128) != 0 ||
-        getsockname(fd, (struct sockaddr *) &a, &al) != 0) {
-        close(fd);
+    if (loft_sock_bind_listen(fd, (struct sockaddr *) &a, sizeof a, 128) != 0 ||
+        loft_sock_name(fd, 0, (struct sockaddr *) &a, &al) != 0) {
+        loft_sock_close(fd);
         return -1;
     }
     loft_sock_blocking(fd, 0);
@@ -1055,11 +1127,11 @@ static int loft_ehc_ctl_listener(void) {
 static void loft_ehc_pump_ctl(void) {
     if (loft_ehc.ctl < 0) return;
     for (;;) {
-        int fd = accept(loft_ehc.ctl, 0, 0);
+        int fd = loft_sock_accept(loft_ehc.ctl);
         if (fd < 0) break;
         loft_sock_cloexec(fd);
         if (!loft_eh_ws_upgrade(fd, "")) {
-            close(fd);
+            loft_sock_close(fd);
             continue;
         }
         size_t i = 0;
@@ -1081,7 +1153,7 @@ static void loft_ehc_pump_ctl(void) {
             }
             if (got == 2) {
                 free(msg.p);
-                close(loft_ehc.ctl_conns[i]);
+                loft_sock_close(loft_ehc.ctl_conns[i]);
                 loft_ehc.ctl_conns[i] = -1;
                 break;
             }
@@ -1104,13 +1176,13 @@ static void loft_ehc_pump_ctl(void) {
 #endif
 
 static void loft_ehc_reset(int64_t tick_us) {
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_SOCKETS)
     if (loft_ehc.up) {
-        if (loft_ehc.conn >= 0) close(loft_ehc.conn);
-        if (loft_ehc.udp >= 0) close(loft_ehc.udp);
-        if (loft_ehc.ctl >= 0) close(loft_ehc.ctl);
+        if (loft_ehc.conn >= 0) loft_sock_close(loft_ehc.conn);
+        if (loft_ehc.udp >= 0) loft_sock_close(loft_ehc.udp);
+        if (loft_ehc.ctl >= 0) loft_sock_close(loft_ehc.ctl);
         for (size_t i = 0; i < loft_ehc.nctl; i++)
-            if (loft_ehc.ctl_conns[i] >= 0) close(loft_ehc.ctl_conns[i]);
+            if (loft_ehc.ctl_conns[i] >= 0) loft_sock_close(loft_ehc.ctl_conns[i]);
     }
 #endif
     free(loft_ehc.ctl_conns);
@@ -1118,6 +1190,9 @@ static void loft_ehc_reset(int64_t tick_us) {
     loft_ehc.nctl = 0;
     loft_eh_queue_free(&loft_ehc.events);
     loft_eh_slots_free(&loft_ehc.slots);
+#if defined(LOFT_SOCKETS)
+    loft_eh_close_at_exit();
+#endif
     loft_ehc.up = 1;
     loft_ehc.alive = 1;
     loft_ehc.conn = loft_ehc.udp = loft_ehc.ctl = -1;
@@ -1150,7 +1225,7 @@ static void loft_eh_touch_ready(const char *what, int say) {
  * endpoint without a server. */
 static uint8_t loft_kernel_local(int64_t tick_us) {
     loft_ehc_reset(tick_us);
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_SOCKETS)
     loft_ehc.ctl = loft_ehc_ctl_listener();
 #endif
     loft_eh_touch_ready("connected", 0);
@@ -1161,10 +1236,11 @@ static uint8_t loft_kernel_local(int64_t tick_us) {
  * sample key (anti-cache, not auth), take the `X-Loft-UDP` cookie, prepare the UDP socket.  A
  * kind-0 event marks the connect, as the listener's does. */
 static uint8_t loft_kernel_connect(loft_str host, int64_t port, int64_t tick_us) {
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_SOCKETS)
     char *h = loft_cstr_own(host), ps[16];
     snprintf(ps, sizeof ps, "%u", (unsigned) (uint16_t) port);
     struct addrinfo hints, *res = 0;
+    loft_sock_ready();
     memset(&hints, 0, sizeof hints);
     hints.ai_socktype = SOCK_STREAM;
     if (getaddrinfo(h, ps, &hints, &res) != 0 || !res) {
@@ -1179,11 +1255,11 @@ static uint8_t loft_kernel_connect(loft_str host, int64_t port, int64_t tick_us)
     int64_t deadline = loft_now_us() + 5000000;
     int fd = -1;
     for (;;) {
-        fd = socket(family, SOCK_STREAM, 0);
+        fd = loft_sock_open(family, SOCK_STREAM, 0);
         if (fd >= 0) {
             loft_sock_cloexec(fd);
             if (loft_sock_connect_within(fd, (struct sockaddr *) &addr, al, 3000)) break;
-            close(fd);
+            loft_sock_close(fd);
             fd = -1;
         }
         if (loft_now_us() >= deadline) {
@@ -1202,13 +1278,13 @@ static uint8_t loft_kernel_connect(loft_str host, int64_t port, int64_t tick_us)
     loft_text head = { 0, 0, 0 };
     if (n <= 0 || (size_t) n >= sizeof req || !loft_eh_write_all(fd, req, (size_t) n) || !loft_eh_read_head(fd, &head)) {
         free(head.p);
-        close(fd);
+        loft_sock_close(fd);
         return 0;
     }
     loft_push(&head, "", 1);
     if (!strstr(head.p, " 101 ")) {
         free(head.p);
-        close(fd);
+        loft_sock_close(fd);
         return 0;
     }
     head.len--;
@@ -1222,14 +1298,15 @@ static uint8_t loft_kernel_connect(loft_str host, int64_t port, int64_t tick_us)
     loft_ehc.conn = fd;
     memcpy(loft_ehc.cookie, cookie, sizeof cookie);
     if (cookie[0]) {
-        int u = socket(family, SOCK_DGRAM, 0);
+        int u = loft_sock_open(family, SOCK_DGRAM, 0);
         if (u >= 0) {
             loft_sock_cloexec(u);
-            if (connect(u, (struct sockaddr *) &addr, al) == 0) {
+            loft_sock_udp_quiet(u);
+            if (loft_sock_connect_to(u, (struct sockaddr *) &addr, al) == 0) {
                 loft_sock_blocking(u, 0);
                 loft_ehc.udp = u;
             } else {
-                close(u);
+                loft_sock_close(u);
             }
         }
     }
@@ -1258,11 +1335,11 @@ static void loft_ehc_lost(void) {
 static int64_t loft_kernel_client_pump(void) {
     if (!loft_ehc.up) return 0;
     int64_t added = 0;
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_SOCKETS)
     loft_ehc_pump_ctl();
 #endif
     loft_eh_drain_http(&loft_ehc.events);
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_SOCKETS)
     while (loft_ehc.alive && loft_ehc.conn >= 0) {
         loft_text msg = { 0, 0, 0 };
         int got = loft_eh_read_frame(loft_ehc.conn, &msg);
@@ -1299,7 +1376,7 @@ static int64_t loft_kernel_client_pump(void) {
         }
         char buf[2048];
         for (;;) {
-            ssize_t len = recv(loft_ehc.udp, buf, sizeof buf, MSG_DONTWAIT);
+            long len = loft_sock_recv(loft_ehc.udp, buf, sizeof buf, 0);
             if (len < 0) break;
             if (!loft_utf8_valid((const unsigned char *) buf, (size_t) len)) continue;
             int64_t seq;
@@ -1316,11 +1393,11 @@ static int64_t loft_kernel_client_pump(void) {
         if (!loft_ehc.udp_bound && loft_ehc.cookie[0] && now - loft_ehc.last_hello > LOFT_EH_HELLO_US) {
             char hello[80];
             int hn = snprintf(hello, sizeof hello, "H:%s", loft_ehc.cookie);
-            send(loft_ehc.udp, hello, (size_t) hn, 0);
+            loft_sock_send(loft_ehc.udp, hello, (size_t) hn, 0);
             loft_ehc.last_hello = now;
         }
         if (loft_ehc.udp_bound && now - loft_ehc.last_keepalive > LOFT_EH_KEEPALIVE_US) {
-            send(loft_ehc.udp, "K:", 2, 0);
+            loft_sock_send(loft_ehc.udp, "K:", 2, 0);
             loft_ehc.last_keepalive = now;
         }
     }
@@ -1357,14 +1434,14 @@ static uint8_t loft_kernel_client_send(loft_str msg) {
     if (!loft_ehc.up || !loft_ehc.alive) return 0;
     int sync = loft_eh_is_sync(msg.p, msg.len);
     if (sync) loft_ehc.out_seq += 1;
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_SOCKETS)
     if (sync && loft_ehc.udp_bound && loft_ehc.udp >= 0) {
         loft_text d = { 0, 0, 0 };
         char seq[32];
         snprintf(seq, sizeof seq, "S:%lld:", (long long) loft_ehc.out_seq);
         loft_push_cstr(&d, seq);
         loft_push(&d, msg.p, msg.len);
-        uint8_t ok = d.len <= LOFT_EH_UDP_MAX && send(loft_ehc.udp, d.p, d.len, 0) >= 0;
+        uint8_t ok = d.len <= LOFT_EH_UDP_MAX && loft_sock_send(loft_ehc.udp, d.p, d.len, 0) >= 0;
         free(d.p);
         return ok;
     }
@@ -1422,7 +1499,7 @@ static uint8_t loft_live_flip(loft_str name, uint8_t on) {
 
 /* ── `http_fetch` ── */
 
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_SOCKETS)
 typedef struct { int64_t id; char *method, *url, *body, *headers; } loft_eh_req;
 
 /* One HTTP/1.1 exchange on `url` over the runtime's client (`loft_https.h`): the status and the
@@ -1467,8 +1544,7 @@ static int64_t loft_eh_http(const char *method, const char *url, const char *bod
     return status;
 }
 
-static void *loft_eh_http_worker(void *arg) {
-    loft_eh_req *q = (loft_eh_req *) arg;
+static void loft_eh_http_run(loft_eh_req *q) {
     loft_text body = { 0, 0, 0 };
     int64_t status = loft_eh_http(q->method, q->url, q->body, q->headers, &body, 5);
     loft_eh_park(q->id, status, body.p, body.len);
@@ -1478,15 +1554,26 @@ static void *loft_eh_http_worker(void *arg) {
     free(q->body);
     free(q->headers);
     free(q);
+}
+
+#if defined(_WIN32)
+static DWORD WINAPI loft_eh_http_worker(LPVOID arg) {
+    loft_eh_http_run((loft_eh_req *) arg);
     return 0;
 }
+#else
+static void *loft_eh_http_worker(void *arg) {
+    loft_eh_http_run((loft_eh_req *) arg);
+    return 0;
+}
+#endif
 #endif
 
 /* `http_fetch(method, url, body, headers) -> integer`: the request id at once; the completion a
  * kind-3 event (cid = the id, status = the HTTP status or negative, payload = the body). */
 static int64_t loft_kernel_http_fetch(loft_str method, loft_str url, loft_str body, loft_str headers) {
     int64_t id = loft_eh_http_next++;
-#if defined(LOFT_POSIX_HOST) && defined(LOFT_EH_THREADS)
+#if defined(LOFT_SOCKETS) && defined(LOFT_EH_THREADS)
     loft_eh_req *q = (loft_eh_req *) malloc(sizeof *q);
     if (!q) { fputs("loft: out of memory\n", stderr); abort(); }
     q->id = id;
@@ -1494,11 +1581,20 @@ static int64_t loft_kernel_http_fetch(loft_str method, loft_str url, loft_str bo
     q->url = loft_cstr_own(url);
     q->body = loft_cstr_own(body);
     q->headers = loft_cstr_own(headers);
+    /* Detached: the worker parks its completion and ends; nobody joins it. */
+#if defined(_WIN32)
+    HANDLE t = CreateThread(0, 0, loft_eh_http_worker, q, 0, 0);
+    int started = t != 0;
+    if (t) CloseHandle(t);
+#else
     pthread_t t;
     pthread_attr_t at;
     pthread_attr_init(&at);
     pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
-    if (pthread_create(&t, &at, loft_eh_http_worker, q) != 0) {
+    int started = pthread_create(&t, &at, loft_eh_http_worker, q) == 0;
+    pthread_attr_destroy(&at);
+#endif
+    if (!started) {
         static const char why[] = "cannot start the request's worker thread";
         loft_eh_park(id, -1, why, sizeof why - 1);
         free(q->method);
@@ -1507,7 +1603,6 @@ static int64_t loft_kernel_http_fetch(loft_str method, loft_str url, loft_str bo
         free(q->headers);
         free(q);
     }
-    pthread_attr_destroy(&at);
 #else
     (void) method;
     (void) url;

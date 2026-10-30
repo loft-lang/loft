@@ -102,6 +102,25 @@ nullable-into-non-null on both backends, whatever the arms held, while the same 
 spelled as an `if` was quiet (loft#1343).  The last arm is the fallback now, as a trailing
 `_` would be.
 
+### The subject holds still while the arms are tested
+
+```
+  (M-Fixed)   while a match's arms are TESTED — every pattern test, binding and guard before
+              the selected arm's body starts — the subject is not written.  A guard that can
+              write it is a STATIC ERROR: one that assigns the subject or a place inside it,
+              hands it (or a place inside it) to a `&` parameter, or hands it to a parameter
+              its callee writes through.  The SELECTED arm's body may write the subject; the
+              tests are over by then.
+```
+
+**In words.**  A reader of a `match` may assume the subject is tested and not modified: each
+arm is tried against the value the match started with.  A guard that changes the subject makes
+the remaining arms test something else — what they test then depends on how the match is
+lowered — so the language refuses it, as rustc refuses a guard that mutably borrows its
+scrutinee.  The cure is to move the change into the arm's body, or to test a copy.  The
+subject is the place the match reads (a variable, or a field or element of one); a computed
+subject is held in a temporary no guard can name.
+
 ### A match is lowered once per arm
 
 ```
@@ -310,15 +329,8 @@ is a view; `..rest` / repetition are fresh vectors); the pattern grammar + prece
 
 ## Deviations
 
-OPEN: **1** — the closed entries, `D-match-1` to `-25`, are in
-[matching-history.md](matching-history.md).
-
-- **D-match-26 (OPEN, @PLN91)** — violates (M-Once): a guarded arm places the rest of the match in its
-  guard's else-branch and again in its pattern test's, in all three chain builders (the enum,
-  scalar and pattern chains of `src/parser/control.rs`), so the lowered match grows about
-  ×1.6 per guard.  The measurement is in [matching-history.md](matching-history.md); the
-  design that closes it is [plans/91-self-host/1b-x22.md](../plans/91-self-host/1b-x22.md)
-  § Step G.  P-Alt and P-Cap hold at every pattern position: the
+OPEN: **0** — the closed entries, `D-match-1` to `-26`, are in
+[matching-history.md](matching-history.md).  P-Alt and P-Cap hold at every pattern position: the
 arm (`|` and `,` alike, over slice patterns too), a tuple subject, a tuple element, a field, a
 slice element, and the arm root's `name: pattern`.
 
@@ -359,6 +371,16 @@ follows `(P-Seq)` as a prefix reading of it.
   does not compile ("missing: A"), and `match c { _ if x => 1 }` does not compile ("missing: A, B");
   a false guard moves selection to the next arm with no binding left behind (`P-Guard`,
   `P-Atomic`).
+- **The subject holds still while the arms are tested (`M-Fixed`)** — a guard that rebinds
+  the subject through a `&`, hands it to a callee that writes it, writes a view a pattern bound,
+  or writes the record a field subject reads is refused; a guard that reads the subject, a body
+  that writes it after the tests, a nested match and a guard writing a copy are admitted
+  (`loft-suite/rules/matching/M-Fixed/`, both files).
+- **A match is lowered once per arm (`M-Once`)** — an eight-arm match lowers to eight subject
+  tests whether 0 or 6 of its arms carry a guard (`tests/match_once.rs`, which reads 191 on the
+  copying lowering `LOFT_NO_GUARD_ARM=1` builds), and the guarded arms answer what the rules
+  say for a scalar, text, record and `..rest` binding and over every subject of the eight-arm
+  match (`loft-suite/rules/matching/M-Once/a-guarded-arm-falls-to-the-next-arm-without-a-copy.loft`).
 - **Scalar fall-through is null (`M-Total`)** — `match n { 1 => 10, 2 => 20 }` with `n = 9` is
   `null`, and the match's type is nullable; no error, no fault — and the `match-scalar-hole`
   advice at the match (`LOFT_NO_SCALAR_HOLE` keeps a deliberate hole quiet).

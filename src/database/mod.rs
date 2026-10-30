@@ -2955,10 +2955,12 @@ impl Stores {
                 // runs the growth ladder once per buffer rather than once per call.
                 // Each rung of that ladder frees a block into the store, and one freed
                 // block takes every later claim off `bump_tail` and into the free tree.
+                // Switched off, the fresh vector's room instead: the START room its first push
+                // would take (`@FR-Col-Capacity`, `vector::grown_elems`).
                 let reached = if crate::keys::reset_capacity_enabled() {
                     crate::vector::reached_capacity(db, elem_size, &self.allocations)
                 } else {
-                    0
+                    crate::vector::grown_elems(1, elem_size)
                 };
                 {
                     let store = &mut self.allocations[db.store_nr as usize];

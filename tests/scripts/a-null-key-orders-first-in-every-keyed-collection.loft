@@ -1,0 +1,134 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A NULL KEY ORDERS FIRST IN EVERY KEYED COLLECTION (`@FR-E-NullArg`, `@FR-Col-Order`, loft#2237).  A
+// keyed collection walks in key order, and the key order is the order `<` answers: a null
+// before every value — for a `text` key before `""` too — and a descending key reverses it, so
+// there the null comes last.  Lookups find every key, the null one included.  The cells vary
+// the key type (text, float), the kind (sorted, index, and a hash, whose `for` walks in key
+// order through a sort of its own), the direction, and the size (an index of 301 entries
+// spans several B-tree nodes, whose keys are packed into ordered parts).
+//
+// @falsified-at: 23bc61e47 — interpret exit 1 -> 0, interpret 7 assertion failures -> 0
+//   Measured by hand on a build of origin/main in a worktree (`--path` its own stdlib): the
+//   text sorted walked `3 2 4 1` and the text index `3 2 1` (the null after `""`), the float
+//   sorted `3 1 2` (the null last), the descending one `2 1 3` (the null first), and the large
+//   index started at key -150.5, not at the null; a hash walked `3 2 4 1` (text) and
+//   `3 1 2` (float).
+// CHANNEL: the asserts.
+// WITNESS: `test_a_null_text_key_orders_before_the_empty_text`.
+// HOLDS: `test_an_integer_key_already_ordered_its_null_first` — clean before the fix.
+
+struct KT { k: text, v: integer }
+struct KF { k: float, v: integer }
+struct KI { k: integer, v: integer }
+struct Texts { st: sorted<KT[k]>, it: index<KT[k]> }
+struct Floats { sf: sorted<KF[k]>, ix: index<KF[k]> }
+struct Down { sd: sorted<KF[-k]> }
+struct Ints { si: sorted<KI[k]> }
+
+// @EXPECT_WARNING: is stored into the local `n`
+fn absent_float() -> float {
+  n: float = null;
+  n
+}
+
+// @EXPECT_WARNING: is stored into the local `n`
+fn absent_integer() -> integer {
+  n: integer = null;
+  n
+}
+
+// @EXPECT_WARNING: is stored into the local `n`
+fn test_a_null_text_key_orders_before_the_empty_text() {
+  n: text = null;
+  t = Texts {
+    st: [KT { k: "b", v: 1 }, KT { k: n, v: 2 }, KT { k: "", v: 3 }, KT { k: "a", v: 4 }],
+    it: [],
+  };
+  o = "";
+  for x in t.st { o += "{x.v} "; }
+  assert(o == "2 3 4 1 ", "sorted text walk {o}");
+  assert(t.st[n].v == 2 && t.st[""].v == 3 && t.st["a"].v == 4 && t.st["b"].v == 1, "sorted text lookups");
+  assert(t.st["zz"] == null, "an absent key reads null");
+}
+
+// @EXPECT_WARNING: is stored into the local `n`
+fn test_a_null_text_key_orders_first_in_an_index() {
+  n: text = null;
+  t = Texts { st: [], it: [KT { k: "q", v: 1 }, KT { k: n, v: 2 }, KT { k: "", v: 3 }] };
+  o = "";
+  for x in t.it { o += "{x.v} "; }
+  assert(o == "2 3 1 ", "index text walk {o}");
+  assert(t.it[n].v == 2 && t.it[""].v == 3 && t.it["q"].v == 1, "index text lookups");
+}
+
+fn test_a_null_float_key_orders_first() {
+  n = absent_float();
+  f = Floats { sf: [KF { k: 2.5, v: 1 }, KF { k: n, v: 2 }, KF { k: -1.0, v: 3 }], ix: [] };
+  o = "";
+  for x in f.sf { o += "{x.v} "; }
+  assert(o == "2 3 1 ", "sorted float walk {o}");
+  assert(f.sf[n].v == 2 && f.sf[-1.0].v == 3, "sorted float lookups");
+}
+
+fn test_a_descending_key_puts_its_null_last() {
+  n = absent_float();
+  d = Down { sd: [KF { k: 2.5, v: 1 }, KF { k: n, v: 2 }, KF { k: -1.0, v: 3 }] };
+  o = "";
+  for x in d.sd { o += "{x.v} "; }
+  assert(o == "1 3 2 ", "descending walk {o}");
+  assert(d.sd[n].v == 2, "descending null lookup");
+}
+
+fn test_a_large_float_index_keeps_its_null_first() {
+  // 300 keys (i * 37 mod 300) - 150.5, every one distinct, then the null: the walk starts at
+  // the null and ascends; -0.5 is i = 150 (37 * 150 = 5550 = 18 * 300 + 150).
+  n = absent_float();
+  f = Floats { sf: [], ix: [] };
+  for i in 0..300 { f.ix += [KF { k: (i * 37 % 300) as float - 150.5, v: i }]; }
+  f.ix += [KF { k: n, v: 999 }];
+  first = -1;
+  count = 0;
+  ordered = true;
+  prev = -1000.0;
+  seen = false;
+  for x in f.ix {
+    if count == 0 { first = x.v; }
+    count += 1;
+    if x.k != null {
+      if seen && x.k < prev { ordered = false; }
+      prev = x.k;
+      seen = true;
+    }
+  }
+  assert(first == 999 && count == 301 && ordered, "index walk first {first} count {count} ordered {ordered}");
+  assert(f.ix[n].v == 999 && f.ix[-0.5].v == 150, "index lookups");
+}
+
+// @EXPECT_WARNING: is stored into the local `n`
+fn test_a_hash_walks_its_null_text_key_first() {
+  n: text = null;
+  h: hash<KT[k]> = [KT { k: "b", v: 1 }, KT { k: n, v: 2 }, KT { k: "", v: 3 }, KT { k: "a", v: 4 }];
+  o = "";
+  for x in h { o += "{x.v} "; }
+  assert(o == "2 3 4 1 ", "hash text walk {o}");
+  assert(h[n].v == 2 && h[""].v == 3, "hash text lookups");
+}
+
+fn test_a_hash_walks_its_null_float_key_first() {
+  n = absent_float();
+  h: hash<KF[k]> = [KF { k: 2.5, v: 1 }, KF { k: n, v: 2 }, KF { k: -1.0, v: 3 }];
+  o = "";
+  for x in h { o += "{x.v} "; }
+  assert(o == "2 3 1 ", "hash float walk {o}");
+  assert(h[n].v == 2, "hash float lookup");
+}
+
+fn test_an_integer_key_already_ordered_its_null_first() {
+  n = absent_integer();
+  i = Ints { si: [KI { k: 5, v: 1 }, KI { k: n, v: 2 }, KI { k: -3, v: 3 }] };
+  o = "";
+  for x in i.si { o += "{x.v} "; }
+  assert(o == "2 3 1 ", "integer walk {o}");
+}

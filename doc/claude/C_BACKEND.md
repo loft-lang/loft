@@ -36,12 +36,19 @@ python3 scripts/c_sweep.py --stderr            # stderr compared too (a fault's 
                                                #   and chain), the driver's `advice:` notes aside
 python3 scripts/c_sweep.py --shard K/N         # every N-th program from K: ci.yml's `c-sweep`
                                                #   runs four shards per PR, miri.yml the
-                                               #   --poison and --asan sweeps nightly
+                                               #   --poison and --asan sweeps nightly.  The PR's
+                                               #   Test job and its Language suite job compile
+                                               #   `--native` through the C (LOFT_NATIVE_BACKEND=c,
+                                               #   on every leg)
 make c-sweep ARGS="…"                          # the release loft built first, then the sweep
 python3 scripts/image_probe.py                 # every corpus program: the C written from the
                                                #   program IMAGE (LOFT_EMIT_FROM_IMAGE=1) against
                                                #   the C written from memory, byte for byte (@PLN205)
-./scripts/find_problems.sh --subject c         # the C backend's guards (c_emit, c_https)
+./scripts/find_problems.sh --subject c         # the C backend's guards (c_emit, c_https) —
+                                               #   run it before pushing a writer change as
+                                               #   well as the sweep: c_emit COUNTS emitted
+                                               #   constructs, and a new holder or twin moves
+                                               #   a count while every output still matches
 python3 scripts/c_sweep.py --wasm              # the C built for wasm32-wasi, run under wasmtime
 python3 scripts/c_sweep.py --no-limit          # no kill at three times the last sweep's time
 LOFT_C_WHERE=1 loft --emit-c out.c prog.loft   # a refusal also prints the statement it met
@@ -95,6 +102,28 @@ network fetch answers that the build has no transport.  It
 needs clang, lld, wasi-libc and the wasm32 compiler-rt (Ubuntu: `clang lld wasi-libc
 libclang-rt-dev-wasm32`); a program linking a `[c] shim` archive is refused, the archive being
 built for the host.
+
+**The browser page** (`--native-c --html`, @PLN203 C6).  The C writes the module and the one
+`--html` page builder hosts it, as it hosts the Rust writer's: fonts, `[[embed]]` files, library
+`host_js`, the import stubs, `wasm-opt --asyncify`.  Three things make the module fit that page.
+A library native the page supplies is a `loft_gl` import under its symbol, with the signature the
+Rust writer declares — one contract, `src/host_imports.rs`, both writers read
+(`c::browser_import_native`); one with no import, a text or heap answer, is refused at build as
+the Rust writer refuses it.  The program starts from the exported `loft_start`
+(`c::emit_browser_program`), which runs the libc's constructors once and flushes what it
+printed, since a page never calls WASI's `_start`; beside it the unit reserves its own asyncify
+save region and exports where it is (`loft_asyncify_data` / `_size` / `_ok`), as the
+Rust writer's does — the page's controller never picks an address.  And a unit that binds no lazy collection is
+built without setjmp (`LOFT_NO_JUMPS`, `LOFT_JMP_BUF`/`LOFT_LONGJMP` in `loft_rt.h`), so without
+wasm's exception handling, which asyncify cannot carry.  The page answers the WASI libc with
+`doc/loft-wasi.js` — output into the page, clocks, randomness, and files over the page
+filesystem preopened as `/` — which `tools/wasm_repro.mjs` loads too.  Guards:
+`html_wasm::the_c_page_answers_what_the_rust_page_answers`,
+`html_gl_imports::the_c_page_imports_the_vector_argument_host_import`,
+`c_emit::native_c_html_page_runs_its_program`, and Brick Buster's C page under the browser
+render gate (`html_render::brick_buster_c_page_renders_without_console_errors`, nightly in the
+`gallery` job after `make game` draws the pack).  CI installs clang, lld, wasi-libc and the
+wasm32 compiler-rt for these; without them each skips.
 `differ`, `cc-error`, `sanitizer` and `slow` are defects of the backend and must stay at 0; a change
 that grows `match` is measured by the sweep, by `--asan` and by `--poison` before it is
 committed.  A sanitizer cannot see inside a store — a store is one allocation — so a read of a
@@ -170,6 +199,9 @@ against ISO C99 alone: the clock is `clock()`, a file is what `fopen` opens, a d
 never seen, a listing is empty and the directory operations answer `Other`.
 
 ## The model
+
+The C runtime's stores are the standard of [STORE_MODEL.md](STORE_MODEL.md) (@PLN206): one
+model for both runtimes, its open divergences numbered there.
 
 **Shapes.**  Every loft value has one C shape (`CType`): `int32_t` for a local whose type
 fits 32 bits in a body written under the 32-bit regime (null `LOFT_NULL32`; widened where the
@@ -543,7 +575,9 @@ native part is a `[c] shim`, a prebuilt C library or a component.  A C build the
 builds a Rust cdylib (`native_build::c_target`, set for `--emit-c` and an explicit
 `--native-c`; guard `a_c_build_builds_no_rust_native_crate`).  A default run that the C
 backend refuses falls back to the interpreter, which loads them, so `LOFT_NATIVE_BACKEND=c`
-alone does not set it.
+alone does not set it.  A prebuilt library is asked for a native through its
+`loft_register_v1` table first, which may name another symbol (`loft_save_png => n_save_png`),
+then by the native's own name (`loft_ffi_lookup`).
 
 **The libraries inside loft's binary.**  A `#native` of an `in_binary` library (`[native]
 in_binary = true`: its natives live in loft's own binary, `native::FUNCTIONS`) is a call into
@@ -561,7 +595,11 @@ over the runtime's HTTP client (above).  Not carried, so refused by name: the
 build swap and the background rebuild (`swap_world`, `swap_start`, `rebuild_*`).  The live tier
 — a flip, a live edit, a breakpoint's eval — runs the interpreter inside the program, which a C
 build has not got: a C program's swap step serves and `live_flip` answers false, and the edit
-loop runs interpreted.  All of it POSIX hosts.
+loop runs interpreted.  All of it on every host with sockets (`loft_sock.h`: POSIX and
+Windows); a Windows listener does not share its port, as `platform::bind_tcp_handover` binds
+there.  The kernel closes its sockets at exit, as the Rust kernel's drop does: Windows resets a
+socket a process leaves open, discarding what the peer had not read
+(`tests/c_emit.rs` `an_engine_host_seat_talks_to_its_listener_on_the_c_and_the_interpreter`).
 
 **`deliver`.**  `deliver(tag, value)` prints the loopback host's line: the value's bytes as
 `read_via_descriptor` reads them through its layout, as hex, or the refusal of the first
@@ -582,3 +620,34 @@ sockets (wasm) or whose compiler could not build the TLS client; SQLite where th
 `libsqlite3`.  Refused at emit time: a link re-pointed to a narrow or a text store place,
 and a par row of a tuple holding a reference — each by name.  Not
 refused and not carried: a `#native` function (above).
+
+### What switching to C loses (@PLN206 P0b)
+
+The capabilities the interpreter's runtime has and the C runtime does not, each with what it
+is for (**R**eliability, **E**fficiency, **O**bservability), what C already has in its
+place, and the proposed verdict: **port** it to C, **covered** (the C equivalent named, and one
+falsifying cell owed that shows it catches what the original catches), or **drop** (loft does
+not need it, with the reason).  A verdict stays *proposed* until its check is done; the rustc
+path is not removed while a **port** row is open.  The store rows are also numbered in
+[STORE_MODEL.md](STORE_MODEL.md).
+
+| Capability (interpreter switch) | For | C has | Proposed verdict | Check owed |
+|---|---|---|---|---|
+| use-after-free generations (`LOFT_UAF`, `LOFT_UAF_GEN`) | R | `LOFT_POISON` (a freed store's buffer is scribbled and kept), the ASan lane | **port**, as the interpreter's ground truth `LOFT_NO_SLOT_REUSE` + `LOFT_POISON` rather than the generation stamps (those ride the interpreter's operand stack, which a C unit does not have): `loft_store_make` always takes the lowest free slot, so a freed store is reused and its poison overwritten | a stale read through a freed store lands on `0xDEADBEEF` on C with no-reuse on |
+| frame-slot verification (`LOFT_VERIFY_STACK`) | R | the C stack; the MemorySanitizer lane | covered | an uninitialised-slot cell MSan flags on C |
+| keyed-structure verifiers (`LOFT_KEYED_VERIFY`, `LOFT_KEY_LIST_VERIFY`) | R | — | **port** | a corrupted-index cell |
+| prefill elision verifier (`LOFT_PREFILL_VERIFY`) | R | `LOFT_POISON_CLAIM` | covered | the field_append cells under `LOFT_POISON_CLAIM` (they pass on C) |
+| whole-world and copy checks (`LOFT_CHECK_WORLD`, `LOFT_COPY_CHECK`) | R | — | **port** | one cell each |
+| zero-on-claim switch (`LOFT_ZERO_CLAIM`) | R | always zeroes today (D17) | covered once D17 lands: `LOFT_POISON_CLAIM` is the falsifier | D17's sweep |
+| schema-id strictness (`LOFT_STRICT_SCHEMA_IDS`) | R | the type table is a static array the emitter writes (`static const loft_tdesc loft_types[…]`) | **drop** (decided): the start-up replay it guards does not exist in a C unit | — |
+| the store-memory ceiling (`LOFT_STORE_LIMIT`, every test run) | R | `LOFT_MEMORY_LIMIT` | **ported** (D19c): the runner hands its test ceiling to every compiled child, both writers | `tests/store_memory_limit.rs` `the_default_ceiling_reaches_a_compiled_test` |
+| store watch, lock backtrace (`LOFT_WATCH_STORE`, `LOFT_LOCK_BT`) | O | — | **port** when a C defect needs it; drop otherwise | — |
+| store log, tags, leak sites, allocation report (`LOFT_STORE_LOG`, `LOFT_STORE_TAG`, `LOFT_LEAK_SITES`, `LOFT_ALLOC_REPORT`) | O | `LOFT_ALLOC_TRACE`, `LOFT_NATIVE_LEAK_CHECK` | **port** `LOFT_LEAK_SITES` (a leak's site is what fixing it needs); the rest drop | a leak cell names its site on C |
+| allocator policy switches (`LOFT_NO_WILDERNESS`, `NO_PARK`, `NO_LAZY_FREE`, `NO_TOMBSTONE`, `NO_SLOT_REUSE`, `NO_CARVE_IN_PLACE`, `NO_FREE_FOOTER`, …) | E | each policy always on, or absent (D19b, D25) | **port** the bisect switches for the policies C applies; a policy C lacks is a D row | the performance agent's P1 rows |
+| the live debugger (`loft debug`, `--rpc`) | O | — | **port** — needs a design (frames, values and stepping in a C unit) | — |
+| live reload / live dispatch | E | — | open — owner decision | — |
+| the profilers (`make profile`, `LOFT_NATIVE_CHECKPOINTS`) | E | `c_profile` | covered for time; open for heap by line | `make profile-corpus` on C |
+| wasm and browser targets (`--native-wasm`, `--html`, built through rustc) | — | C to wasm through clang (@PLN203) | covered by @PLN203 | @PLN203's browser lane |
+| the ship and lean tiers (`--ship`, `--lean`) | E | the `cship` lane | covered | the perf portal's `cship` column |
+| native rewrites the C writer does not apply yet | E | the C writer's own `R-` rules | open — `make rewrite-census` on both writers names the gap | the census, per rule |
+| mmap-backed stores | E | — | **port** (decided, D23) | D23's probe |

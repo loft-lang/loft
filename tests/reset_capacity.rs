@@ -18,6 +18,8 @@
 use std::path::PathBuf;
 
 const SHAPE: &str = "tests/scripts/157-reset-capacity.loft";
+/// The START room of `@FR-Col-Capacity` for the shape's 8-byte elements: 88 bytes, eleven
+/// elements — what a fresh vector's first push takes (`vector::grown_elems(1, 8)`).
 const MINIMUM: u32 = 11;
 
 fn run(unit_off: bool) -> String {

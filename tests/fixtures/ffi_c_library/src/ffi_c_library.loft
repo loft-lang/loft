@@ -15,9 +15,12 @@ pub fn add(a: integer, b: integer) -> integer;
 #native
 pub fn is_even(a: integer) -> boolean;
 #native
-pub fn sum_bytes(v: vector<u8>) -> integer;
+pub fn sum_bytes(v: const vector<u8>) -> integer;
 #native
 pub fn half(x: float) -> float;
+#native
+// A NARROW answer: `i32` at the C ABI, its null `INT32_MIN`.
+pub fn narrow(x: i32) -> i32;
 #native
 
 pub struct Pair { pub a: integer, pub b: integer }
@@ -26,5 +29,19 @@ pub fn iota(n: integer) -> vector<integer>;
 #native
 pub fn rev(v: vector<u8>) -> vector<u8>;
 #native
+pub fn cat(a: const vector<u8>, b: vector<u8>) -> vector<u8>;
+#native
 pub fn pair(a: integer, b: integer) -> Pair;
+#native
+
+// Answers that share what their argument holds (loft#2227): the argument itself, a vector
+// field of a record argument, a fresh record holding its argument's text.
+pub struct Bag { pub items: vector<u8> }
+pub struct Named { pub k: integer, pub n: text }
+
+pub fn same(v: vector<u8>) -> vector<u8>;
+#native
+pub fn bag_items(b: Bag) -> vector<u8>;
+#native
+pub fn named_k(p: Named, k: integer) -> Named;
 #native

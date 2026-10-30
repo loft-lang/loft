@@ -191,6 +191,9 @@ struct LoftStore {
 struct NativeSig {
     params: Vec<ArgT>,
     ret: Option<ArgT>,
+    /// `Definition::native_answer_tp` — what a heap answer pinned to an argument's store is
+    /// copied out with (loft#2227).
+    answer_tp: u16,
 }
 
 /// Side table: library index → (the generated bridge, signature), resolved ONCE by
@@ -353,7 +356,11 @@ fn compute_sig(data: &crate::data::Data, d_nr: u32) -> Option<NativeSig> {
         Type::Vector(_, _) => Some(ArgT::Vec),
         _ => return None,
     };
-    Some(NativeSig { params, ret })
+    Some(NativeSig {
+        params,
+        ret,
+        answer_tp: def.native_answer_tp,
+    })
 }
 
 /// The `ArgT` mapping for one marshalled loft type (shared-bridge param or
@@ -1764,7 +1771,21 @@ fn dispatch_via_bridge(
     let args = args.as_mut();
     let ls = make_loft_store(stores, store_nr, minted);
 
+    // loft#2227 — a heap answer built in an argument's store is copied out of it below, and
+    // only what this call claimed there is deleted: log it.
+    let pinned_answer = returns_ref && call.as_ref().is_some_and(|c| !c.minted);
+    if pinned_answer {
+        claim_log_begin(store_nr);
+    }
     let ret = call_bridge(stores, bridge_ptr, ls, args);
+    let claimed = if pinned_answer {
+        claim_log_end()
+    } else {
+        Vec::new()
+    };
+    // The answer's own handle, out of the argument's store (`@FR-F-Ret`) — before
+    // `bridge_args_done`, which deletes the foreign-vector copies an answer may name.
+    let answer = bridge_heap_answer(stores, call.as_ref(), sig, &ret, &claimed);
 
     // The copies the foreign vector arguments took, and a store minted for a scalar answer.
     if let Some(call) = &call {
@@ -1772,6 +1793,10 @@ fn dispatch_via_bridge(
     }
 
     // Write the tagged return to the stack (mirrors dispatch_call's returns).
+    if let Some(db) = answer {
+        stores.put(stack, db);
+        return;
+    }
     match ret.tag {
         LoftTag::Void => {}
         // The bridge already widened i32 returns (i32::MIN → i64::MIN).
@@ -1781,15 +1806,8 @@ fn dispatch_via_bridge(
         LoftTag::F64 if sig.ret == Some(ArgT::F32) => stores.put::<f32>(stack, ret.as_f64() as f32),
         LoftTag::F64 => stores.put(stack, ret.as_f64()),
         LoftTag::Text => bridge_push_str(stores, stack, ret.as_text()),
-        // A record's handle is the answer itself; only a vector sits behind a header
-        // (`codegen_runtime::from_loft_record`, the compiled twin).
-        LoftTag::Ref if sig.ret == Some(ArgT::Ref) => {
-            stores.put(
-                stack,
-                crate::codegen_runtime::from_loft_record(ret.as_ref()),
-            );
-        }
-        LoftTag::Ref => bridge_push_ref(stores, stack, ret.as_ref()),
+        // A heap answer was written above (`answer`).
+        LoftTag::Ref => {}
     }
 }
 
@@ -1848,15 +1866,41 @@ fn bridge_text_result(
     stores.put(stack, Str::new(""));
 }
 
-/// Wrap a returned `loft_ffi::LoftRef` (direct vector record) in the indirect
-/// header layout the interpreter expects, and push it (mirror of
-/// `dispatch_call`'s nested `push_loft_ref`, for the bridge path).
+/// A bridge call's heap answer as loft holds it — a record as it is, a vector behind its header
+/// (`bridge_ref_handle`) — and, loft#2227, out of the argument's store it was built in
+/// (`Stores::own_bridge_answer`, with what the call `claimed`).  `None` for a non-heap answer.
 #[cfg(feature = "native-extensions")]
-fn bridge_push_ref(
+fn bridge_heap_answer(
     stores: &mut crate::database::Stores,
-    stack: &mut crate::keys::DbRef,
+    call: Option<&crate::database::BridgeArgs>,
+    sig: &NativeSig,
+    ret: &loft_ffi::LoftValue,
+    claimed: &[u32],
+) -> Option<crate::keys::DbRef> {
+    use loft_ffi::LoftTag;
+    let db = match ret.tag {
+        LoftTag::Ref if sig.ret == Some(ArgT::Ref) => {
+            crate::codegen_runtime::from_loft_record(ret.as_ref())
+        }
+        LoftTag::Ref => bridge_ref_handle(stores, ret.as_ref()),
+        _ => return None,
+    };
+    Some(match call {
+        Some(c) => {
+            stores.own_bridge_answer(c, db, sig.ret == Some(ArgT::Vec), sig.answer_tp, claimed)
+        }
+        None => db,
+    })
+}
+
+/// Wrap a returned `loft_ffi::LoftRef` (direct vector record) in the indirect header layout
+/// the interpreter expects (mirror of `dispatch_call`'s nested `push_loft_ref`, for the bridge
+/// path).  A record's handle is the answer itself (`codegen_runtime::from_loft_record`).
+#[cfg(feature = "native-extensions")]
+fn bridge_ref_handle(
+    stores: &mut crate::database::Stores,
     r: loft_ffi::LoftRef,
-) {
+) -> crate::keys::DbRef {
     let base = crate::keys::DbRef {
         store_nr: r.store_nr,
         rec: 0,
@@ -1867,24 +1911,19 @@ fn bridge_push_ref(
     if crate::store::Store::is_foreign_rec(r.rec)
         && let Some((rec, pos)) = stores.store(&base).foreign_handle()
     {
-        stores.put(
-            stack,
-            crate::keys::DbRef {
-                store_nr: r.store_nr,
-                rec,
-                pos,
-            },
-        );
-        return;
+        return crate::keys::DbRef {
+            store_nr: r.store_nr,
+            rec,
+            pos,
+        };
     }
     let header = stores.claim(&base, 1);
     stores.store_mut(&base).set_u32_raw(header.rec, 4, r.rec);
-    let dbref = crate::keys::DbRef {
+    crate::keys::DbRef {
         store_nr: r.store_nr,
         rec: header.rec,
         pos: 4,
-    };
-    stores.put(stack, dbref);
+    }
 }
 
 // ── Store callback infrastructure for FFI allocation ─────────────────────
@@ -1900,6 +1939,52 @@ std::thread_local! {
         const { std::cell::Cell::new(std::ptr::null_mut()) };
 }
 
+// loft#2227 — the records ONE bridge call pinned to an argument's store claims there: the
+// answer and its scratch, never anything an argument held before the call.  Armed by the
+// call's set-up only when its answer is a heap value built in that store; read back by
+// `Stores::own_bridge_answer`, which deletes exactly these after copying the answer out.
+// Ungated like `CURRENT_STORES`: compiled code's callbacks (`native_call`) write it too.
+std::thread_local! {
+    static CLAIM_LOG: std::cell::RefCell<Option<(u16, Vec<u32>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Start logging the claims made in store `store_nr` until [`claim_log_end`].
+pub(crate) fn claim_log_begin(store_nr: u16) {
+    CLAIM_LOG.with(|l| *l.borrow_mut() = Some((store_nr, Vec::new())));
+}
+
+/// Stop logging and hand back what was claimed (empty when nothing was armed).
+pub(crate) fn claim_log_end() -> Vec<u32> {
+    CLAIM_LOG.with(|l| {
+        l.borrow_mut()
+            .take()
+            .map(|(_, recs)| recs)
+            .unwrap_or_default()
+    })
+}
+
+/// A claim of `rec` in `store_nr`, or the resize of `old` into `rec`: a resize moves a record
+/// the call claimed to its new number, and one it did not claim (an argument's) stays out.
+fn claim_log_note(store_nr: u16, old: Option<u32>, rec: u32) {
+    CLAIM_LOG.with(|l| {
+        if let Some((nr, recs)) = l.borrow_mut().as_mut()
+            && *nr == store_nr
+        {
+            match old {
+                None => recs.push(rec),
+                Some(o) => {
+                    if let Some(at) = recs.iter().position(|&r| r == o) {
+                        recs[at] = rec;
+                    } else if crate::keys::strict_stores() {
+                        crate::keys::strict_store_argument_write(store_nr, o);
+                    }
+                }
+            }
+        }
+    });
+}
+
 /// C-ABI callback: allocate `words` 8-byte words in the store identified by ctx.
 /// Returns the new record number. May reallocate the store buffer.
 /// Returns 0 if the allocation panics (caught to prevent UB at the C-ABI boundary).
@@ -1910,7 +1995,9 @@ unsafe extern "C" fn ffi_claim(ctx: LoftStoreCtx, words: u32) -> u32 {
         CURRENT_STORES.with(|c| {
             let stores = unsafe { &mut *c.get() };
             let store = &mut stores.allocations[store_nr as usize];
-            store.claim(words)
+            let rec = store.claim(words);
+            claim_log_note(store_nr, None, rec);
+            rec
         })
     }))
     .unwrap_or(0)
@@ -1926,7 +2013,9 @@ unsafe extern "C" fn ffi_resize(ctx: LoftStoreCtx, rec: u32, words: u32) -> u32 
         CURRENT_STORES.with(|c| {
             let stores = unsafe { &mut *c.get() };
             let store = &mut stores.allocations[store_nr as usize];
-            store.resize(rec, words)
+            let to = store.resize(rec, words);
+            claim_log_note(store_nr, Some(rec), to);
+            to
         })
     }))
     .unwrap_or(rec)
@@ -2197,7 +2286,9 @@ pub mod native_call {
             super::CURRENT_STORES.with(|c| {
                 let stores = unsafe { &mut *c.get() };
                 let store = &mut stores.allocations[store_nr as usize];
-                store.claim(words)
+                let rec = store.claim(words);
+                super::claim_log_note(store_nr, None, rec);
+                rec
             })
         }))
         .unwrap_or(0)
@@ -2209,7 +2300,9 @@ pub mod native_call {
             super::CURRENT_STORES.with(|c| {
                 let stores = unsafe { &mut *c.get() };
                 let store = &mut stores.allocations[store_nr as usize];
-                store.resize(rec, words)
+                let to = store.resize(rec, words);
+                super::claim_log_note(store_nr, Some(rec), to);
+                to
             })
         }))
         .unwrap_or(rec)
@@ -2304,10 +2397,36 @@ pub mod native_call {
             args: &[(crate::keys::DbRef, bool)],
             returns_ref: bool,
         ) -> Self {
+            let args = stores.bridge_args(args, returns_ref);
+            // loft#2227 — a heap answer pinned to an argument's store: log what the call
+            // claims there, for [`Self::answer`].
+            if returns_ref && !args.minted {
+                super::claim_log_begin(args.store_nr);
+            }
             Self {
                 cell,
-                args: Some(stores.bridge_args(args, returns_ref)),
+                args: Some(args),
                 returns_ref,
+            }
+        }
+
+        /// loft#2227, `@FR-F-Ret` — the call's heap answer as its own value: out of the
+        /// argument's store it was built in, when it was (`Stores::own_bridge_answer`).
+        /// `tp` is the definition's `native_answer_tp`.
+        #[must_use]
+        pub fn answer(
+            &self,
+            stores: &mut Stores,
+            db: crate::keys::DbRef,
+            is_vec: bool,
+            tp: u16,
+        ) -> crate::keys::DbRef {
+            let claimed = super::claim_log_end();
+            match &self.args {
+                Some(args) if self.returns_ref => {
+                    stores.own_bridge_answer(args, db, is_vec, tp, &claimed)
+                }
+                _ => db,
             }
         }
 
@@ -2339,6 +2458,8 @@ pub mod native_call {
     impl Drop for BridgeGuard<'_> {
         fn drop(&mut self) {
             if let Some(args) = self.args.take() {
+                // An answer never asked for (`Self::answer`) leaves no log armed behind.
+                let _ = super::claim_log_end();
                 // SAFETY: generated code holds no other live borrow of the stores across a
                 // local's drop (the same cell discipline `FnRefBufGuard` relies on).
                 let stores = unsafe { &mut *self.cell.get() };

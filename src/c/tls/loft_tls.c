@@ -16,19 +16,64 @@
  *     BearSSL has no TLS 1.3, so a server that speaks only 1.3 refuses the handshake.
  * Unlike the Rust build there are no bundled roots: a machine with no trust store refuses every
  * server, saying where it looked. */
+/* The host: POSIX, or Windows (@PLN203 C8) — Winsock's sockets, the CRT's directory scan, a
+ * one-time initialisation of its own, and the system certificate store `rustls-native-certs`
+ * reads there (`ROOT`).  The OS is named only in this block. */
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN 1
+#define NOMINMAX 1
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <wincrypt.h>
+#include <io.h>
+#if defined(_MSC_VER)
+#pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "crypt32.lib")
+#endif
+#else
 #define _POSIX_C_SOURCE 200809L
-#include "bearssl.h"
-
 #include <dirent.h>
-#include <errno.h>
 #include <poll.h>
 #include <pthread.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#endif
+#include "bearssl.h"
+
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
 #include <sys/stat.h>
-#include <arpa/inet.h>
+
+#if defined(_WIN32)
+#define LOFT_TLS_DIR_SEP ";"
+static long loft_tls_recv(int fd, void *b, size_t n) { return recv((SOCKET) fd, (char *) b, (int) n, 0); }
+static long loft_tls_send(int fd, const void *b, size_t n, int f) { return send((SOCKET) fd, (const char *) b, (int) n, f); }
+static int loft_tls_interrupted(void) { return WSAGetLastError() == WSAEINTR; }
+/* Readable within `ms`: 1, 0 on a timeout, -1 on a failure. */
+static int loft_tls_wait(int fd, int ms) {
+    WSAPOLLFD p = { (SOCKET) fd, POLLIN, 0 };
+    return WSAPoll(&p, 1, ms);
+}
+static int loft_tls_is_file(const char *path) {
+    struct _stat64 st;
+    return _stat64(path, &st) == 0 && (st.st_mode & _S_IFREG);
+}
+#else
+#define LOFT_TLS_DIR_SEP ":"
+static long loft_tls_recv(int fd, void *b, size_t n) { return (long) recv(fd, b, n, 0); }
+static long loft_tls_send(int fd, const void *b, size_t n, int f) { return (long) send(fd, b, n, f); }
+static int loft_tls_interrupted(void) { return errno == EINTR; }
+static int loft_tls_wait(int fd, int ms) {
+    struct pollfd p = { fd, POLLIN, 0 };
+    return poll(&p, 1, ms);
+}
+static int loft_tls_is_file(const char *path) {
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISREG(st.st_mode);
+}
+#endif
 
 /* ── The trust store ── */
 
@@ -38,7 +83,6 @@ typedef struct {
 } loft_tls_anchors;
 
 static loft_tls_anchors loft_tls_ta;
-static pthread_once_t loft_tls_once = PTHREAD_ONCE_INIT;
 static char loft_tls_where[512];
 
 typedef struct {
@@ -164,19 +208,43 @@ static int loft_tls_add_file(const char *path) {
     return 1;
 }
 
+static void loft_tls_add_entry(const char *dir, const char *name) {
+    if (name[0] == '.') return;
+    char path[4096];
+    snprintf(path, sizeof path, "%s/%s", dir, name);
+    if (loft_tls_is_file(path)) loft_tls_add_file(path);
+}
+
 static void loft_tls_add_dir(const char *dir) {
+#if defined(_WIN32)
+    char pattern[4096];
+    snprintf(pattern, sizeof pattern, "%s/*", dir);
+    struct _finddata_t fd;
+    intptr_t h = _findfirst(pattern, &fd);
+    if (h == -1) return;
+    do loft_tls_add_entry(dir, fd.name); while (_findnext(h, &fd) == 0);
+    _findclose(h);
+#else
     DIR *d = opendir(dir);
     if (!d) return;
     struct dirent *e;
-    while ((e = readdir(d)) != 0) {
-        if (e->d_name[0] == '.') continue;
-        char path[4096];
-        snprintf(path, sizeof path, "%s/%s", dir, e->d_name);
-        struct stat st;
-        if (stat(path, &st) == 0 && S_ISREG(st.st_mode)) loft_tls_add_file(path);
-    }
+    while ((e = readdir(d)) != 0) loft_tls_add_entry(dir, e->d_name);
     closedir(d);
+#endif
 }
+
+#if defined(_WIN32)
+/* The certificates of the user's `ROOT` system store — what `rustls-native-certs` reads on
+ * Windows.  Answers whether the store could be opened. */
+static int loft_tls_add_system_store(void) {
+    HCERTSTORE st = CertOpenSystemStoreA(0, "ROOT");
+    if (!st) return 0;
+    PCCERT_CONTEXT c = 0;
+    while ((c = CertEnumCertificatesInStore(st, c)) != 0) loft_tls_add_der(c->pbCertEncoded, (size_t) c->cbCertEncoded);
+    CertCloseStore(st, 0);
+    return 1;
+}
+#endif
 
 /* `rustls-native-certs` reads the store the same way: the environment's when it names one
  * (and then only that), else the system bundle. */
@@ -187,13 +255,27 @@ static void loft_tls_load(void) {
                  dir ? dir : "");
         if (file && *file) loft_tls_add_file(file);
         if (dir && *dir) {
-            /* OpenSSL's separator: several directories, `:`-separated. */
-            char *copy = strdup(dir), *save = 0;
-            for (char *p = copy ? strtok_r(copy, ":", &save) : 0; p; p = strtok_r(0, ":", &save)) loft_tls_add_dir(p);
-            free(copy);
+            /* OpenSSL's separator: several directories, `:`-separated (`;` on Windows). */
+            size_t dl = strlen(dir);
+            char *copy = (char *) malloc(dl + 1);
+            if (copy) {
+                memcpy(copy, dir, dl + 1);
+                for (char *p = copy; *p;) {
+                    size_t k = strcspn(p, LOFT_TLS_DIR_SEP);
+                    char *next = p + k + (p[k] ? 1 : 0);
+                    p[k] = 0;
+                    if (*p) loft_tls_add_dir(p);
+                    p = next;
+                }
+                free(copy);
+            }
         }
         return;
     }
+#if defined(_WIN32)
+    snprintf(loft_tls_where, sizeof loft_tls_where, "the Windows certificate store (ROOT; SSL_CERT_FILE names a bundle)");
+    loft_tls_add_system_store();
+#else
     static const char *const bundles[] = {
         "/etc/ssl/certs/ca-certificates.crt",                /* Debian, Ubuntu, Arch, Gentoo */
         "/etc/pki/tls/certs/ca-bundle.crt",                  /* Fedora, RHEL */
@@ -210,7 +292,24 @@ static void loft_tls_load(void) {
         if (loft_tls_add_file(bundles[i]) && loft_tls_ta.n) return;
     }
     loft_tls_add_dir("/etc/ssl/certs");
+#endif
 }
+
+/* The trust store is read once, on the first session, by whichever thread opens it. */
+#if defined(_WIN32)
+static INIT_ONCE loft_tls_once = INIT_ONCE_STATIC_INIT;
+static BOOL CALLBACK loft_tls_load_once(PINIT_ONCE once, PVOID param, PVOID *ctx) {
+    (void) once;
+    (void) param;
+    (void) ctx;
+    loft_tls_load();
+    return TRUE;
+}
+static void loft_tls_ready(void) { InitOnceExecuteOnce(&loft_tls_once, loft_tls_load_once, 0, 0); }
+#else
+static pthread_once_t loft_tls_once = PTHREAD_ONCE_INIT;
+static void loft_tls_ready(void) { pthread_once(&loft_tls_once, loft_tls_load); }
+#endif
 
 /* ── An IP address is checked against the certificate's iPAddress names ──
  * BearSSL's minimal X.509 engine matches a DNS name only.  For a host written as an address the
@@ -349,9 +448,9 @@ struct loft_tls {
 static int loft_tls_sock_read(void *ctx, unsigned char *buf, size_t len) {
     int fd = *(int *) ctx;
     for (;;) {
-        ssize_t r = recv(fd, buf, len, 0);
+        long r = loft_tls_recv(fd, buf, len);
         if (r > 0) return (int) r;
-        if (r < 0 && errno == EINTR) continue;
+        if (r < 0 && loft_tls_interrupted()) continue;
         return -1;
     }
 }
@@ -364,9 +463,9 @@ static int loft_tls_sock_write(void *ctx, const unsigned char *buf, size_t len) 
     int flags = 0;
 #endif
     for (;;) {
-        ssize_t w = send(fd, buf, len, flags);
+        long w = loft_tls_send(fd, buf, len, flags);
         if (w > 0) return (int) w;
-        if (w < 0 && errno == EINTR) continue;
+        if (w < 0 && loft_tls_interrupted()) continue;
         return -1;
     }
 }
@@ -449,7 +548,7 @@ static void loft_tls_why(int code, char *err, size_t cap) {
 /* A TLS session over the connected socket `fd`, its handshake done, the server's certificate
  * validated for `host`; 0 with `err` saying why.  `fd` stays the caller's to close. */
 struct loft_tls *loft_tls_open(int fd, const char *host, char *err, size_t cap) {
-    pthread_once(&loft_tls_once, loft_tls_load);
+    loft_tls_ready();
     if (loft_tls_ta.n == 0) {
         snprintf(err, cap, "no trusted certificates were found in %s — install the system's CA certificates "
                  "(ca-certificates) or set SSL_CERT_FILE", loft_tls_where);
@@ -758,15 +857,14 @@ int loft_tls_poll(struct loft_tls *t, int ms) {
         }
         if (st & BR_SSL_RECVAPP) return 1;
         if (!(st & BR_SSL_RECVREC)) return 0;
-        struct pollfd p = { t->fd, POLLIN, 0 };
-        int r = poll(&p, 1, ms);
-        if (r < 0 && errno == EINTR) continue;
+        int r = loft_tls_wait(t->fd, ms);
+        if (r < 0 && loft_tls_interrupted()) continue;
         if (r == 0) return 0;
         if (r < 0) return -1;
         size_t len;
         unsigned char *buf = br_ssl_engine_recvrec_buf(eng, &len);
-        ssize_t got = recv(t->fd, buf, len, 0);
-        if (got < 0 && errno == EINTR) continue;
+        long got = loft_tls_recv(t->fd, buf, len);
+        if (got < 0 && loft_tls_interrupted()) continue;
         if (got <= 0) return -1;
         br_ssl_engine_recvrec_ack(eng, (size_t) got);
         ms = 2000;

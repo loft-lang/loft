@@ -4,9 +4,9 @@
  * reconnecting with backoff.  A response body, a binary frame and the
  * pack buffer are bytes carried in a `text` (the library reads them with `byte_at`), so they are
  * copied as bytes.  Per-thread.  Never pasted into a unit: the component defines `LOFT_WEB`
- * (`c::component`); POSIX hosts. */
+ * (`c::component`); the sockets are `loft_sock.h`'s. */
 #ifdef LOFT_WEB
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_SOCKETS)
 #include <time.h>
 
 static LOFT_TLS loft_text loft_web_body;
@@ -130,12 +130,7 @@ static loft_text loft_web_pack_take(void) {
 static int64_t loft_web_byte_at(int64_t idx, loft_str t) {
     return idx < 0 || (uint64_t) idx >= t.len ? -1 : (int64_t) (unsigned char) t.p[idx];
 }
-static void loft_web_sleep_ms(int64_t ms) {
-    if (ms <= 0) return;
-    struct timespec ts = { (time_t) (ms / 1000), (long) ((ms % 1000) * 1000000) };
-    while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {
-    }
-}
+static void loft_web_sleep_ms(int64_t ms) { loft_sock_nap(ms); }
 static void loft_web_frame_yield(void) {}
 
 /* ── The WebSocket client ── */
@@ -252,14 +247,15 @@ static int loft_web_open(const char *url, loft_stream *out) {
     struct addrinfo hints, *res = 0;
     memset(&hints, 0, sizeof hints);
     hints.ai_socktype = SOCK_STREAM;
+    loft_sock_ready();
     if (getaddrinfo(host, port, &hints, &res) != 0) return 0;
     int live = 0;
     for (struct addrinfo *ai = res; ai && !live; ai = ai->ai_next) {
-        int fd = socket(ai->ai_family, SOCK_STREAM, 0);
+        int fd = loft_sock_open(ai->ai_family, SOCK_STREAM, 0);
         if (fd < 0) continue;
         loft_sock_cloexec(fd);
         if (!loft_sock_connect_within(fd, ai->ai_addr, (socklen_t) ai->ai_addrlen, 2000)) {
-            close(fd);
+            loft_sock_close(fd);
             continue;
         }
         /* A peer that accepts but never answers the upgrade fails the attempt within 2 s. */
@@ -336,8 +332,8 @@ static int loft_web_readable(loft_web_conn *c, int ms) {
 #ifdef LOFT_HTTPS
     if (c->st.tls && loft_tls_pending((struct loft_tls *) c->st.tls)) return 1;
 #endif
-    struct pollfd p = { c->st.fd, POLLIN, 0 };
-    return poll(&p, 1, ms) > 0;
+    loft_pollfd p = { c->st.fd, POLLIN, 0 };
+    return loft_sock_poll(&p, 1, ms) > 0;
 }
 
 /* One frame off a live session: a text or binary frame is the answer (kept for

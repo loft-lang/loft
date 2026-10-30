@@ -530,6 +530,40 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  the escape question, the proof's and this rule's), the emitter's
                  `begin_vector_hoist` and `emit_invariant_use`.
 
+  (R-NonSentinelParam) a scalar PARAMETER (integer or float) of a loft function
+                 holds a non-sentinel value on entry when the function is never a
+                 function VALUE (an `FnRef`, or its number handed to a function-typed
+                 parameter), has at least one direct call, never rebinds or lends the
+                 parameter, and EVERY direct call in the program passes an argument
+                 the non-sentinel proof accepts.  The fact is a greatest fixpoint over
+                 the whole program: every candidate is assumed, each round re-reads
+                 every call site under the assumption and drops a parameter one site
+                 does not prove, until nothing drops; at the fixpoint each remaining
+                 parameter is handed a proven value by every call, each proof resting
+                 only on parameters that are themselves proven, so by induction on the
+                 call depth it holds one on entry.  It seeds the proof for the body
+                 (`non_sentinel_vars`), so `v % 32` on such a parameter ranges and is
+                 the plain operator.  Under the release-pass probe the proof also
+                 closes over the integer `+ - *` of proven operands: they WRAP, so the
+                 result is the sentinel only after an overflow, which is a fault, and
+                 the probe's contract already lets the values after a fault differ
+                 (C120); the checked build does not close (`1246-…` pins that an
+                 overflow reads as null there).  A miss costs the plain operator,
+                 never a value.  The program-wide fact is the C backend's
+                 (`non_sentinel::begin_c_generation`): the Rust generator's
+                 ranged-call clause (`R-RangedCall`) weighs a twin's gain against the
+                 unseeded proof, and a seeded proof made those twins look gainless —
+                 measured on `game_protocol` and `assets`, where native lost its
+                 ranged copies.  The C's twin clause: a call site whose arguments
+                 prove more parameters than the program-wide fact calls a `__nn`
+                 twin that seeds them, where the callee (or a function it calls
+                 directly) divides or takes a remainder by a literal.  Switches
+                 `LOFT_NO_NN_PARAMS=1`, `LOFT_NO_NN_TWINS=1`; `LOFT_TRACE_NN_PARAMS=1`
+                 names the call site that drops a parameter; sites
+                 `non_sentinel::proven_params`, `FnWriter::nn_twin_bits`.  Guard
+                 `a-parameter-is-trusted-only-where-every-call-proves-it.loft` (three
+                 of four cells fail when every argument is trusted, or when the
+                 fixpoint never drops a parameter).
   (R-Header)     in a loop body that writes no store, a vector reached by a PURE
                  PATH P — a variable, or const-offset fields over one — has one
                  header (store, record, length) for the whole loop: the emitter
@@ -626,6 +660,45 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  `LOFT_NO_REBOUND_HEADER=1`; guard
                  `a-vector-the-loop-rebinds-is-read-through-the-header-of-what-it-names-now.loft`
                  (fails all three cells with the re-derivation left out).
+  (R-Header), the apart clause's GROWTH half (C): a BARE vector variable whose
+                 store this activation owns alone (or a caller lends as a work
+                 buffer) still holds its header — record, length, element base —
+                 where the loop GROWS it, when every growth is a STATEMENT the one
+                 predicate `apart::growth_args` recognises: a vector-growing op
+                 (`OpPreAllocVector`, `OpPush*`, `OpAppendVector`) or a call to a
+                 loft function, with the vector itself as a direct argument; inside
+                 a nested loop only the call (that loop's own push window takes over
+                 an op).  Beside the reads the apart clause admits, an in-place
+                 SCALAR element write is admitted (no claim, no move, no length
+                 change), and so is a release in a block that ends in `return` (the
+                 activation's exit).  The store must be named in the loop by ONE
+                 variable, because the refresh follows the variable a growth
+                 statement names.  The emitter derives the header again right after
+                 every statement the predicate recognises
+                 (`FnWriter::refresh_grown_header`, also after a run a rewrite emits
+                 whole), so a read always sees the vector's record, length and memory
+                 as they are now; a verify build checks the header at every use
+                 (`LOFT_PROVED`).  Asked only where the loop's verdict holds nothing
+                 but apart headers.  An interpreter's value stack and frame vectors,
+                 pushed through a helper and read every op, are the shape (bench 20).
+                 Switch `LOFT_NO_GROWN_HEADER=1`; `LOFT_TRACE_GROWN=1` names the
+                 mention that declines a store; guard
+                 `a-vector-the-loop-grows-is-read-through-the-header-derived-after-each-growth.loft`
+                 (four of its six cells fail with the refresh left out; the other two
+                 are loops earlier clauses already hold).
+                 THE KEPT-TWIN CLAUSE: a call that hands such a vector to a loft
+                 function whose one vector parameter the growth walk admits over the
+                 function's WHOLE body — every other parameter a scalar or a text, no
+                 reference answered, no `yield`, `par`, `CallRef` or function value
+                 (`apart::kept_growth_param`) — calls its `__kh` twin with the header
+                 by POINTER (`loft_vh *khp`).  The twin reads and writes through
+                 `(*khp)` and derives it again after each of its own growth
+                 statements, so the caller's header is current when the call returns
+                 and no refresh follows the call.  A callee that only reads keeps the
+                 read-only `__inv` twin.  Bench 20 (`put` on the interpreter's value
+                 stack): −27.5 % instructions under gcc, −17.6 % under clang.  Switch
+                 `LOFT_NO_KEPT_GROWTH=1`; the same guard fails its four cells with only
+                 the twin's refresh left out.
 ```
 
 **The apart clause, in words.**  The gate answers for a loop, and one statement it cannot
@@ -1153,7 +1226,13 @@ rebind — an early `return` inside the loop — parks too), and `Stores::park_o
                  no heap (`f(rows[i])` for `fn f(p: &(integer, integer))`) writes
                  nothing — through it a callee writes scalars in place or rebinds
                  the local, and its own summary judges those writes; a heap-owning
-                 record's link stays a writer.
+                 record's link stays a writer.  THE EXIT CLAUSE: the releases a
+                 `return` runs on its way out — the frees between its computed answer
+                 and the `return` of a variable or a constant — are on the list where
+                 each frees a store the frame owns (a local's, or an argument's only
+                 against a local snapshot of the store it was handed): after them
+                 control leaves the frame, so no holder is read again, and nothing a
+                 caller holds is released.  A `break` is no exit.
 ```
 
 **In words.** @PLN157 P4a.  Aliasing is free for headers under this rule — an
@@ -1226,6 +1305,20 @@ while `c3b`, where the copy is the loop's ONLY whole-type write, answers `195 1 
 now 40)"*.  Switch `LOFT_NO_COPY_IN_PLACE`.  Cells `tests/scripts/158-copy-in-place.loft`,
 pins `tests/copy_in_place.rs`.  Sites: `hoist::in_place_copy`, `hoist::blocks_header_hoist`,
 `hoist::body_writes`, `hoist::view_extent_verdict`.
+
+**The exit clause**.  A loop that returns from inside — a decoder's `if bad { return null; }`
+— frees the frame's vectors on that path, the one it pushes among them, and the free was a
+store writer, so the loop held nothing: crypto's `b64_decode` pushed every input byte through
+the store (`base64_to_bytes` 15x its Rust twin on the C ship lane; −71 % with the clause).  The
+frees run after the answer is computed and before the frame leaves, so no holder the loop
+derived is read after them, and every holder kind the gate admits is current at any point of
+the body (a push header writes the length to the record at each push; a push WINDOW, which
+keeps it in registers, has its own gate and refuses a loop with a `return`).  The ownership
+test keeps the clause sound where the gate summarises a CALLEE for a caller's loop: a free of
+an argument the frame was handed is never admitted, and `OpFreeRefIfDistinct(arg, snapshot)`
+frees only a store the frame replaced it with.  Switch `LOFT_NO_EXIT_RELEASE`; cells
+`tests/scripts/a-loop-that-returns-from-inside-keeps-its-holders.loft` c1–c8.  Sites:
+`writes::exit_tail_frees`, `writes::blocks_header_hoist`.
 
 **The read clause**.  `OpReadFile(f, OpCreateStack(t), n, tp)` with a
 scalar `t` sets `t` and the File record's `#next` and `#pos` (and its handle number on the
@@ -5175,6 +5268,11 @@ instruction set.
                  because the unfused comparisons are plain `i64` compares.  An
                  ARITHMETIC operator is never mirrored: its overflow report names its
                  operands in the order written.
+                 THE TAG CLAUSE: a variant test of a local — `OpEqInt(OpConvIntFromEnum(t),
+                 c)` with `t` a plain-enum local or the tag `OpGetEnum(r, 0)` of a
+                 struct-enum local — as an `if` test is ONE compare-and-jump,
+                 `OpTagVCJump`, reading the tag as the unfused ops read it (an absent
+                 record's is 0, the null enum the integer null).
 ```
 
 **In words.** Applied by: interpreter generator (`fusable_int`, `gen_if_test`,
@@ -5184,6 +5282,10 @@ ops a round in every `for … in 0..LITERAL`.  It extends the fused compare's KI
 `GE`), not the op set.  Effect: 3 ops a round on a literal-ended loop; the `12_drawing` hash
 loop −5 to −8 % (pinned layout).  Switch `LOFT_NO_FUSE`.  Guard
 `loft-suite/rules/rewrites/R-Fuse/an-integer-operator-over-locals-runs-as-one-op.loft` (`test_literal_on_the_left`).
+The tag clause (`tag_test_local`) is what every arm of an enum `match` over a local, and every
+`x is V`, is lowered to: five or six ops a test became one, the cost an integer match already
+had (@PLN91 X22).  Switch `LOFT_NO_TAG_JUMP` (and `LOFT_NO_FUSE`).  Guard
+`tests/match_once.rs` (`each_enum_arm_is_one_tag_jump`, its control under the switch).
 
 ### A reservation the append repeats is not emitted
 

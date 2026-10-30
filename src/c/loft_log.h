@@ -273,6 +273,8 @@ static uint32_t loft_log_clock(char *out) {
     struct timespec t;
     clock_gettime(CLOCK_REALTIME, &t);
     ms = (int64_t) t.tv_sec * 1000 + t.tv_nsec / 1000000;
+#elif defined(_WIN32)
+    ms = loft_win_wall_ms();
 #else
     ms = (int64_t) time(0) * 1000;
 #endif
@@ -343,10 +345,10 @@ static void loft_log_rotate(void) {
         for (i = max > 1 ? max - 2 : 0; max > 1 && i >= 1; i--) {
             snprintf(a, sizeof a, "%s/%s.%u%s", dir, stem, (unsigned) i, ext);
             snprintf(b, sizeof b, "%s/%s.%u%s", dir, stem, (unsigned) (i + 1), ext);
-            rename(a, b);
+            loft_rename(a, b);
         }
         snprintf(a, sizeof a, "%s/%s.1%s", dir, stem, ext);
-        rename(loft_lg.path, a);
+        loft_rename(loft_lg.path, a);
     }
     free(stem);
     free(dir);
@@ -508,6 +510,22 @@ static int loft_log_production_fault(int sev, const char *label, const char *pre
     loft_log_record(sev, loft_lit(m.p, m.len), file, line);
     free(m.p);
     loft_had_fatal = 1;
+    return 1;
+}
+
+/* `discard_locked_write_in_production`: in a production run a write into a locked store is
+ * discarded and logged — at the first discard and then at every doubling of the count, so a
+ * loop writing a locked vector a million times leaves twenty lines — and the run continues.
+ * Answers 0 outside production, where the write halts. */
+static int loft_log_locked_write(void) {
+    static uint64_t discarded = 0;
+    loft_log_init();
+    if (!loft_lg.production) return 0;
+    discarded++;
+    if ((discarded & (discarded - 1)) == 0) {
+        static const char m[] = "[write_to_locked_store] write to a locked store \xe2\x80\x94 unlock it with `#lock = false` before writing";
+        loft_log_record(LOFT_SEV_ERROR, loft_lit(m, sizeof m - 1), loft_lit("", 0), 0);
+    }
     return 1;
 }
 

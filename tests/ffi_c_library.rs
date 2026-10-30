@@ -36,12 +36,31 @@ fn main() {
   println("GROW {r.len()} {r}");
   p = ffi_c_library::pair(-77, 123456789);
   println("PAIR {p.a} {p.b}");
+  println("NARROW {ffi_c_library::narrow(21)} {ffi_c_library::narrow(-1)} {!ffi_c_library::narrow(-1)}");
+  if write_bytes("mapped.bin", v) {
+    m = file_map("mapped.bin") ?? [];
+    t = 0;
+    for k in 0..200 { t += ffi_c_library::sum_bytes(m); }
+    println("MAPPED {m.len()} {ffi_c_library::sum_bytes(m)} {t}");
+    mc = 0;
+    for k in 0..100 { mc += ffi_c_library::cat(m, v).len(); }
+    println("MCAT {ffi_c_library::cat(m, v)} {m} {v} {mc}");
+    delete("mapped.bin");
+  }
 }
 "#;
 
 /// `make_bin` is `A \0 0xff B`; `wrap` puts `[` and `]` (91, 93) around its argument;
 /// `iota(n)` is `n*10+1 ..= n*10+n`; `rev` reverses and appends a 7, leaving its argument be.
-const WANT: [&str; 12] = [
+/// `narrow` doubles a non-negative and answers `INT32_MIN` — the narrow null — for a negative:
+/// every backend reads it as null (`loft_ffi::widen_i32`; the C and the Rust writer widened it
+/// to -2147483648).  A MAPPED file handed to `sum_bytes` is copied into the handed store for the
+/// call (`Stores::bridge_args`; the C handed the foreign record id, read out of bounds): 3 bytes,
+/// 1 + 2 + 250 = 253, and 200 calls 50 600, each copy released.  `cat(m, v)` hands the
+/// library the mapped bytes copied into `v`'s store and copies the answer out of that store
+/// (loft#2227 beside the mapped copy): `[1,2,250,1,2,250]`, both arguments as they were, 100
+/// calls 600.
+const WANT: [&str; 15] = [
     "LEN 4",
     "WRAP 6 91 0 255 93",
     "ADD 42 -2",
@@ -54,6 +73,9 @@ const WANT: [&str; 12] = [
     "REV 4 [250,2,1,7] [1,2,250]",
     "GROW 5 [250,2,1,7,9]",
     "PAIR -77 123456789",
+    "NARROW 42 null true",
+    "MAPPED 3 253 50600",
+    "MCAT [1,2,250,1,2,250] [1,2,250] [1,2,250] 600",
 ];
 
 fn root() -> PathBuf {
@@ -278,6 +300,197 @@ fn test_heap_answers() {
         assert!(
             out.status.success() && !stderr.contains("not freed") && !stdout.contains("not freed"),
             "{backend}: the heap answers pass and leak nothing\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+}
+
+/// loft#2227, `@FR-F-Ret` — a call's answer is FRESH, also when the native built it in its
+/// ARGUMENT's store (the bridge hands it that one store): the answer is its own value, the
+/// argument is untouched, and nothing the argument holds is freed with the answer.  Each cell
+/// fixes its values by hand; `LOFT_STRICT_STORES=1` names a read of a freed store on the
+/// interpreter and the Rust writer, and the C is checked by value and leak.
+#[test]
+fn an_answer_built_in_its_arguments_store_is_its_own() {
+    const TESTS: &str = r#"use ffi_c_library;
+
+fn test_rev_leaves_its_argument_and_a_minted_neighbour_be() {
+  v: vector<u8> = [3, 4];
+  for i in 0..20 {
+    r = ffi_c_library::rev(v);
+    p = ffi_c_library::pair(i, 1000 - i);
+    assert(r.len() == 3 && r[0] == 4 && r[1] == 3 && r[2] == 7, "rev {r}");
+    assert(v.len() == 2 && v[0] == 3 && v[1] == 4, "the argument {v}");
+    assert(p.a == i && p.b == 1000 - i, "pair {p.a} {p.b}");
+  }
+}
+
+fn test_the_answer_is_written_apart_from_the_argument() {
+  v: vector<u8> = [3, 4];
+  r = ffi_c_library::rev(v);
+  r += [9];
+  r[0] = 100;
+  assert("{r}" == "[100,3,7,9]", "the answer {r}");
+  assert("{v}" == "[3,4]", "the argument {v}");
+}
+
+fn test_an_answer_that_is_its_argument_is_a_copy() {
+  v: vector<u8> = [5, 6];
+  s = ffi_c_library::same(v);
+  s += [1];
+  s[0] = 50;
+  assert("{s}" == "[50,6,1]", "the answer {s}");
+  assert("{v}" == "[5,6]", "the argument {v}");
+}
+
+fn test_a_field_of_a_record_argument_is_a_copy() {
+  b = ffi_c_library::Bag { items: [1, 2, 3] };
+  it = ffi_c_library::bag_items(b);
+  it += [4];
+  assert("{it}" == "[1,2,3,4]", "the answer {it}");
+  assert("{b.items}" == "[1,2,3]", "the argument {b.items}");
+}
+
+fn test_a_record_answer_holding_its_arguments_text_owns_it() {
+  a = ffi_c_library::Named { k: 1, n: "abc" };
+  m = ffi_c_library::named_k(a, 7);
+  assert(m.k == 7 && m.n == "abc", "the answer {m.k} {m.n}");
+  m.n = "zz";
+  assert(a.k == 1 && a.n == "abc", "the argument {a.k} {a.n}");
+  assert(m.n == "zz", "the answer took the write: {m.n}");
+}
+
+fn worker_rev(i: integer) -> integer {
+  v: vector<u8> = [i & 255, 2];
+  r = ffi_c_library::rev(v);
+  r.len() + r[0] + v[0]
+}
+
+fn test_a_par_worker_owns_its_answer() {
+  t = 0;
+  for i in 0..100 par(n = worker_rev(i), 4) { t += n; }
+  assert(t == 5450, "100 × (3 + 2) + (0 + … + 99): {t}");
+}
+
+fn test_a_thousand_calls_and_an_answer_passed_straight_on() {
+  v: vector<u8> = [1, 2, 3];
+  t = 0;
+  for i in 0..1000 {
+    r = ffi_c_library::rev(v);
+    t += r.len() + r[0];
+    t += ffi_c_library::sum_bytes(ffi_c_library::rev(v));
+  }
+  assert(t == 20000, "1000 × (4 + 3 + 13): {t}");
+  assert("{v}" == "[1,2,3]", "the argument {v}");
+}
+"#;
+    for backend in backends() {
+        let (libs, _) = published(&format!("own_{}", &backend[2..]), Shipped::InPackage);
+        let file = libs.join("own_test.loft");
+        fa::write(&file, TESTS).expect("write the tests");
+        let out = loft_in(&libs, &["--tests", backend], &file)
+            .env("LOFT_LEAK_CHECK", "1")
+            .env("LOFT_STRICT_STORES", "1")
+            .output()
+            .expect("loft runs");
+        let (stdout, stderr) = (
+            String::from_utf8_lossy(&out.stdout).to_string(),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        );
+        let _ = fa::remove_dir_all(&libs);
+        let bad = |t: &str| t.contains("not freed") || t.contains("USE AFTER FREE");
+        assert!(
+            out.status.success() && !bad(&stdout) && !bad(&stderr),
+            "{backend}: every answer is its own\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+}
+
+/// A `par` worker holds its parent's stores READ-ONLY (@PLN108), and a native called there on
+/// the parent's data is pinned to that store (`Stores::bridge_args`): its answer cannot be built
+/// in it.  The call is handed a writable copy of the store instead, its answer is copied out
+/// (loft#2227's `own_bridge_answer`), and the copy goes — so the worker answers, the parent is
+/// unchanged, and nothing is left behind.  Values by hand, on every backend.
+#[test]
+fn a_native_called_on_a_parents_data_in_a_par_worker_answers() {
+    const TESTS: &str = r#"use ffi_c_library;
+
+fn head_of_rev(x: vector<u8>) -> integer {
+  r = ffi_c_library::rev(x);
+  r.len() * 1000 + r[0]
+}
+
+fn items_of(b: ffi_c_library::Bag) -> integer {
+  it = ffi_c_library::bag_items(b);
+  it.len() * 1000 + it[0]
+}
+
+fn renamed(p: ffi_c_library::Named) -> integer {
+  m = ffi_c_library::named_k(p, p.k + 10);
+  m.k * 100 + len(m.n)
+}
+
+fn summed(x: vector<u8>) -> integer {
+  ffi_c_library::sum_bytes(x)
+}
+
+fn test_a_parents_vector() {
+  vv: vector<vector<u8>> = [[1, 2], [3, 4, 5], [6]];
+  t = 0;
+  for x in vv par(n = head_of_rev(x), 2) { t += n; }
+  assert(t == 9013, "3002 + 4005 + 2006: {t}");
+  assert("{vv}" == "[[1,2],[3,4,5],[6]]", "the parent {vv}");
+}
+
+fn test_a_parents_record_answering_its_field() {
+  bags = [ffi_c_library::Bag { items: [1, 2] }, ffi_c_library::Bag { items: [3, 4, 5] }];
+  t = 0;
+  for b in bags par(n = items_of(b), 2) { t += n; }
+  assert(t == 5004, "2001 + 3003: {t}");
+  assert("{bags[1].items}" == "[3,4,5]", "the parent {bags[1].items}");
+}
+
+fn test_a_parents_record_holding_text() {
+  ps = [ffi_c_library::Named { k: 1, n: "ab" }, ffi_c_library::Named { k: 2, n: "cde" }];
+  t = 0;
+  for p in ps par(n = renamed(p), 2) { t += n; }
+  assert(t == 2305, "1102 + 1203: {t}");
+  assert(ps[0].k == 1 && ps[0].n == "ab" && ps[1].n == "cde", "the parent {ps[0].k} {ps[0].n} {ps[1].n}");
+}
+
+fn test_a_scalar_answer_needs_no_copy() {
+  vv: vector<vector<u8>> = [[1, 2], [3, 4, 5], [6]];
+  t = 0;
+  for x in vv par(n = summed(x), 2) { t += n; }
+  assert(t == 21, "3 + 12 + 6: {t}");
+}
+
+fn test_many_rounds_leave_nothing_behind() {
+  vv: vector<vector<u8>> = [[1, 2], [3, 4, 5], [6]];
+  t = 0;
+  for round in 0..50 {
+    for x in vv par(n = head_of_rev(x), 3) { t += n; }
+  }
+  assert(t == 50 * 9013, "50 rounds of 9013: {t}");
+}
+"#;
+    for backend in backends() {
+        let (libs, _) = published(&format!("par_{}", &backend[2..]), Shipped::InPackage);
+        let file = libs.join("par_test.loft");
+        fa::write(&file, TESTS).expect("write the tests");
+        let out = loft_in(&libs, &["--tests", backend], &file)
+            .env("LOFT_LEAK_CHECK", "1")
+            .env("LOFT_STRICT_STORES", "1")
+            .output()
+            .expect("loft runs");
+        let (stdout, stderr) = (
+            String::from_utf8_lossy(&out.stdout).to_string(),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        );
+        let _ = fa::remove_dir_all(&libs);
+        let bad = |t: &str| t.contains("not freed") || t.contains("USE AFTER FREE");
+        assert!(
+            out.status.success() && !bad(&stdout) && !bad(&stderr),
+            "{backend}: a worker's native answers on its parent's data\nstdout:\n{stdout}\nstderr:\n{stderr}"
         );
     }
 }

@@ -1,0 +1,121 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-H-SwapRebind` on the C backend — the rebind `x = f(…)` of a record from a result the bind
+// gives up exchanges the result's store into `x` (`loft_swap_rebind`), where the C deep-copied
+// the whole value out of a fresh store and freed it (zttext `invert`: −18 %).  The exchange is
+// gated by native's own conditions: a direct call, a type whose tree keeps no stored reference,
+// a source that is neither the destination nor an argument's store, a destination that is its
+// store's typed root.  What can go wrong is the old value surviving into the new one, a view of
+// the old value changing, or an exchange of a value that was not the call's to give.  Every cell
+// checks the value AND the length; values hand-computed.
+//
+// @falsified-at: none — the rule has no earlier C build to catch, so the receipt is planted
+//   defects (2026-10-29) in the generated C: `loft_swap_rebind` answering 1 without exchanging
+//   fails c10 ("d 0 - - 0" for "d+1+2+0+4+5+0+7+8+0 9 i1 i0 27") and leaves "Doc×9" behind; an
+//   exchange that keeps the released store instead of freeing it answers right and leaves
+//   "1 stores not freed … Doc×9" under LOFT_NATIVE_LEAK_CHECK=1.  c1 is ADOPTED (`step` returns
+//   the local it built), not copied, so it never reaches the exchange; c10 is the join that does.
+//   CHANNEL: an assertion (c10) and the native leak report.
+
+struct Doc { name: text, items: vector<text>, n: integer }
+struct Holder { d: Doc, tag: integer }
+struct Linked { label: text, other: reference<Doc> }
+
+fn step(d: Doc, i: integer) -> Doc {
+  out = Doc { name: "{d.name}+{i}", items: [], n: d.n + i };
+  for it in d.items { out.items += [it]; }
+  out.items += ["i{i}"];
+  out
+}
+fn same(d: Doc) -> Doc { d }
+fn pick_step(d: Doc, i: integer) -> Doc {
+  if i % 3 == 0 { return d; }
+  if i % 3 == 1 { return step(d, i); }
+  return step(step(d, i), 0);
+}
+fn inner(h: Holder) -> Doc { h.d }
+fn relink(l: Linked, i: integer) -> Linked { Linked { label: "{l.label}{i}", other: l.other } }
+
+// c1: the rebind in a loop: n = 1+2+3+4+5, items i1..i5
+fn test_a_rebind_in_a_loop_takes_each_new_value() {
+  cur = Doc { name: "d", items: [], n: 0 };
+  for i in 1..6 { cur = step(cur, i); }
+  got = "{cur.name} {len(cur.items)} {cur.items[0] ?? "-"} {cur.items[4] ?? "-"} {cur.n}";
+  assert(got == "d+1+2+3+4+5 5 i1 i5 15", "c1 {got}");
+}
+
+// c2: a copy of the old value's items keeps them after the rebind
+fn test_a_copy_of_the_old_value_keeps_it() {
+  cur = Doc { name: "v", items: ["a", "b"], n: 1 };
+  old_items = cur.items;
+  cur = step(cur, 7);
+  got = "{len(old_items)} {old_items[0] ?? "-"} {len(cur.items)} {cur.items[2] ?? "-"}";
+  assert(got == "2 a 3 i7", "c2 {got}");
+}
+
+// c3: a type whose tree holds a stored reference keeps the copy
+fn test_a_stored_reference_keeps_the_copy() {
+  target = Doc { name: "t", items: [], n: 9 };
+  l = Linked { label: "l", other: target };
+  for i in 1..4 { l = relink(l, i); }
+  assert("{l.label} {l.other.n}" == "l123 9", "c3 {l.label} {l.other.n}");
+}
+
+// c4: a callee answering its own argument has nothing to exchange
+fn test_a_callee_answering_its_argument() {
+  cur = Doc { name: "s", items: ["x"], n: 3 };
+  for i in 0..3 { cur = same(cur); }
+  assert("{cur.name} {len(cur.items)} {cur.n}" == "s 1 3", "c4 {cur.name} {len(cur.items)} {cur.n}");
+}
+
+// c5: a callee answering a view into an argument: the argument keeps its value
+fn test_a_view_into_an_argument_is_not_given_up() {
+  h = Holder { d: Doc { name: "h", items: ["p", "q"], n: 4 }, tag: 1 };
+  cur = Doc { name: "c", items: [], n: 0 };
+  cur = inner(h);
+  cur.n = cur.n + 1;
+  got = "{cur.name} {cur.n} {h.d.n} {len(h.d.items)}";
+  assert(got == "h 5 4 2", "c5 {got}");
+}
+
+// c6: a first bind from a call, then a rebind
+fn test_a_first_bind_then_a_rebind() {
+  cur = step(Doc { name: "f", items: [], n: 0 }, 2);
+  cur = step(cur, 3);
+  assert("{cur.name} {len(cur.items)} {cur.n}" == "f+2+3 2 5", "c6 {cur.name} {len(cur.items)} {cur.n}");
+}
+
+// c7: through a fn-ref, which keeps the copy
+fn test_a_fn_ref_rebind() {
+  f = step;
+  cur = Doc { name: "r", items: [], n: 0 };
+  for i in 1..4 { cur = f(cur, i); }
+  assert("{cur.name} {len(cur.items)} {cur.n}" == "r+1+2+3 3 6", "c7 {cur.name} {len(cur.items)} {cur.n}");
+}
+
+// c8: a locked destination: the rebind gives the new, unlocked value on both backends
+fn test_a_locked_destination() {
+  cur = Doc { name: "k", items: [], n: 0 };
+  cur#lock = true;
+  cur = step(cur, 1);
+  assert("{cur.name} {cur.n} {get_store_lock(cur)}" == "k+1 1 false", "c8 {cur.name} {cur.n}");
+}
+
+// c9: 300 rebinds of a growing value: items 300, n = 300*301/2
+fn test_many_rebinds_of_a_growing_value() {
+  cur = Doc { name: "", items: [], n: 0 };
+  for i in 1..301 { cur = step(cur, i); }
+  got = "{len(cur.items)} {cur.items[299] ?? "-"} {cur.n}";
+  assert(got == "300 i300 45150", "c9 {got}");
+}
+
+// c10: a join result — a fresh document on two arms, the argument itself on the third (zttext's
+// `apply_op`): the copy that remains, and the exchange's case.  n = 1+2+0+4+5+0+7+8+0 = 27,
+// items i1 i2 i0 i4 i5 i0 i7 i8 i0
+fn test_a_join_result_rebind_takes_each_new_value() {
+  cur = Doc { name: "d", items: [], n: 0 };
+  for i in 1..10 { cur = pick_step(cur, i); }
+  got = "{cur.name} {len(cur.items)} {cur.items[0] ?? "-"} {cur.items[8] ?? "-"} {cur.n}";
+  assert(got == "d+1+2+0+4+5+0+7+8+0 9 i1 i0 27", "c10 {got}");
+}

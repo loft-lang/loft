@@ -3723,6 +3723,27 @@ impl State {
         self.get_var_checked(pos)
     }
 
+    /// The variant tag `OpTagVCJump` tests, as an integer: `of` 0 reads the plain-enum local
+    /// at `pos` (`OpVarEnum`), `of` 1 the tag at field 0 of the record the reference local at
+    /// `pos` names (`OpGetEnum`: 0 for an absent record, 255 for a negative read).  The byte
+    /// converts as `OpConvIntFromEnum` converts it, the null enum 255 to the integer null.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    pub fn local_tag(&mut self, of: u8, pos: u16) -> i64 {
+        let tag = if of == 0 {
+            self.get_var::<u8>(pos)
+        } else {
+            let db = self.get_var::<DbRef>(pos);
+            if db.rec == 0 {
+                0
+            } else {
+                let r = self.database.store(&db).get_byte(db.rec, db.pos, 0);
+                if r < 0 { 255 } else { r as u8 }
+            }
+        };
+        if tag == 255 { i64::MIN } else { i64::from(tag) }
+    }
+
     /// [`Self::get_var`] with every instrument's hook, for a run that arms one.
     #[cold]
     #[inline(never)]

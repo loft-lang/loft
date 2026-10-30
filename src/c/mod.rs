@@ -55,6 +55,7 @@ const RUNTIME: &str = concat!(
     include_str!("loft_io.h"),
     include_str!("loft_log.h"),
     include_str!("loft_lazy.h"),
+    include_str!("loft_sock.h"),
     include_str!("loft_https.h"),
     include_str!("loft_net.h"),
     include_str!("loft_process.h"),
@@ -210,6 +211,10 @@ pub(crate) struct Cx<'a> {
     /// directory and file: a unit that calls one is compiled with `LOFT_FFI`, and a shipped
     /// program opens each at start by search order (`loft_cboundlibs`).
     pub(crate) ffi_libs: std::cell::RefCell<std::collections::BTreeSet<(String, String)>>,
+    /// The unit is a browser page's module (`--native-c --html`, @PLN203 C6): a library native
+    /// the page supplies is a `loft_gl` import (`host_imports`), and the program starts from
+    /// the exported `loft_start`.
+    pub(crate) browser: bool,
     /// The `par` sites written on threads so far, which numbers each one's body and context.
     pub(crate) par_sites: std::cell::Cell<u32>,
     /// The keyed collection types a `sqlite:` plan was written for (`loft_sqlplan{tp}`).
@@ -261,6 +266,19 @@ pub(crate) const APR_BIT: u64 = 1 << 61;
 /// record parameters as values (`const loft_ap_<T> *`) and no return buffer.
 pub(crate) const APV_BIT: u64 = 1 << 60;
 
+/// The mask bit of a `__kh` twin (`@FR-R-Header`'s growth half, the kept-twin clause): the
+/// function written again taking its caller's header for its one vector parameter by pointer
+/// (`loft_vh *khp`), reading through it and deriving it again after each growth, so the
+/// caller's header is current when the call returns (`opt::apart::kept_growth_param`).
+pub(crate) const KH_BIT: u64 = 1 << 59;
+
+/// The bits of a `__nn` twin (`@FR-R-NonSentinelParam`'s twin clause), one per parameter from
+/// bit 32: the function written again with those parameters seeded as non-sentinel, called by
+/// a call site whose arguments prove them where the program-wide fact cannot (another caller
+/// passes a value that may be null).
+pub(crate) const NN_SHIFT: u32 = 32;
+pub(crate) const NN_MASK: u64 = ((1u64 << 26) - 1) << NN_SHIFT;
+
 /// The record collections beside a plain vector the C carries; each layout is described in
 /// `loft_keyed.h`.  An `array` and an `ordered` are the forms a vector and a sorted take when
 /// their element type is shared (`@FR-Col-Group`, a stored reference).  A `spatial` and a
@@ -277,10 +295,11 @@ pub(crate) enum Keyed {
 }
 
 impl<'a> Cx<'a> {
-    fn new(data: &'a Data, stores: &'a Stores) -> Cx<'a> {
+    fn new(data: &'a Data, stores: &'a Stores, browser: bool) -> Cx<'a> {
         Cx {
             data,
             stores,
+            browser,
             tuples: std::cell::RefCell::new(Vec::new()),
             copy_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             described: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -373,6 +392,7 @@ impl<'a> Cx<'a> {
             .get_or_init(|| {
                 use crate::opt::value_records::layout as vl;
                 let vr = crate::opt::value_records::value_records(self.data, self.stores, false);
+                crate::rewrite_census::fired("R-ValueRecord", vr.fns.len());
                 let views = vr
                     .types
                     .values()
@@ -973,8 +993,14 @@ impl<'a> Cx<'a> {
             } else {
                 "0, 0".into()
             };
+            // `@FR-H-Handle`: 2 for the `File` record, 1 for a type that can hold one.
+            let file = if t.name == "File" {
+                2
+            } else {
+                u8::from(self.stores.type_holds_file(tp))
+            };
             let row = format!(
-                "{}, {}, {keys}, {} }}",
+                "{}, {}, {keys}, {}, {file} }}",
                 row.strip_suffix(" }").unwrap_or(&row),
                 u8::from(self.stores.type_owns_heap(tp)),
                 u8::from(self.stores.is_linked(tp))
@@ -1146,15 +1172,22 @@ pub(crate) fn type_word(tp: &Type) -> String {
 /// — `--native`'s `_st` twins.  Mask 0 is the function itself.
 /// An `__inv` twin ([`INV_BIT`]) adds `__inv` after the place mask's name.
 pub(crate) fn twin_name(data: &Data, d: u32, mask: u64) -> String {
-    let places = mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT;
+    let places = mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT & !KH_BIT & !NN_MASK;
     let inv = if mask & INV_BIT == 0 { "" } else { "__inv" };
+    let kh = if mask & KH_BIT == 0 { "" } else { "__kh" };
+    let nn_bits = (mask & NN_MASK) >> NN_SHIFT;
+    let kh = if nn_bits == 0 {
+        kh.to_string()
+    } else {
+        format!("{kh}__nn{nn_bits:x}")
+    };
     let nk = if mask & NK_BIT == 0 { "" } else { "__nk" };
     let apr = if mask & APR_BIT == 0 { "" } else { "__apr" };
     let apv = if mask & APV_BIT == 0 { "" } else { "__apv" };
     if places == 0 {
-        format!("{}{inv}{nk}{apr}{apv}", c_name(data, d))
+        format!("{}{inv}{nk}{apr}{apv}{kh}", c_name(data, d))
     } else {
-        format!("{}_pl{places}{inv}{nk}{apr}{apv}", c_name(data, d))
+        format!("{}_pl{places}{inv}{nk}{apr}{apv}{kh}", c_name(data, d))
     }
 }
 
@@ -1518,6 +1551,20 @@ pub fn unported_natives(data: &Data) -> Vec<String> {
 /// # Errors
 /// The first [`Refusal`], the roots' own first.
 pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, Refusal> {
+    emit_unit_for(data, stores, roots, false)
+}
+
+/// [`emit_unit`] for a browser page's module when `browser` (`Cx::browser`).
+///
+/// # Errors
+/// The first function the C backend does not carry yet.
+pub fn emit_unit_for(
+    data: &Data,
+    stores: &Stores,
+    roots: &[u32],
+    browser: bool,
+) -> Result<String, Refusal> {
+    crate::opt::non_sentinel::begin_c_generation();
     // A closure's drop cascade (`OpDropFnRef`) is called through the value, never by name: each
     // lambda the program reaches brings its record's cascade along.
     let mut all: Vec<u32> = roots.to_vec();
@@ -1547,7 +1594,7 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
         .collect();
     // The roots first, so a refusal names the function asked for before one it reaches.
     fns.sort_unstable_by_key(|d| (!roots.contains(d), *d));
-    let cx = Cx::new(data, stores);
+    let cx = Cx::new(data, stores, browser);
     cx.frames
         .set(reachable_has(data, &all, |n| n == "n_stack_trace"));
     cx.lazy
@@ -1608,8 +1655,14 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
          loft_cl = loft_clibs;\n    loft_ncl = loft_nclibs;\n    loft_cls = loft_clibsyms;\n    \
          loft_col = loft_coptlibs;\n    loft_ncol = loft_ncoptlibs;\n    \
          loft_cbl = loft_cboundlibs;\n    loft_ncbl = loft_ncboundlibs;\n    \
-         loft_fault_logger = loft_log_production_fault;\n",
+         loft_fault_logger = loft_log_production_fault;\n    \
+         loft_locked_logger = loft_log_locked_write;\n",
     );
+    // The type table, for what a store's free walks (`@FR-H-Handle`): a unit that describes no
+    // type declares none, and the runtime's pointer stays null.
+    if out.contains("static const uint32_t loft_ntypes =") {
+        bind.push_str("    loft_T = loft_types;\n    loft_T_n = loft_ntypes;\n");
+    }
     if cx.lazy.get() {
         out.push_str(&lazy_driver_table(&cx, drivers)?);
         bind.push_str(
@@ -1673,8 +1726,8 @@ fn lazy_driver_table(
 }
 
 /// The `[c]` libraries the program's packages declare, as the unit carries them: a `[c] shim` is
-/// built into its static archive by `cc` + `ar` (`c_shim::cc_archive`; off Windows the same
-/// artefact a `--static` program links) and named in a `/* link: <path> */` line for whoever
+/// built into its static archive for the compiler that links the unit (`c_shim::cc_archive`;
+/// off Windows the same artefact a `--static` program links) and named in a `/* link: <path> */` line for whoever
 /// compiles the unit, its sources in `/* shim-source: <path> */` lines for a wasm32 build.  A
 /// shim is never a part of the unit's own translation unit: its sources may carry `static`
 /// names of their own (the vendored BearSSL does), and a binding declares its callee by the
@@ -1873,8 +1926,8 @@ fn c_libraries(data: &Data, ffi_libs: &std::collections::BTreeSet<(String, Strin
                 lib.name, lib.pkg_dir
             );
         } else if let Ok(archive) = crate::c_shim::cc_archive(&lib.pkg_dir, &lib.shim) {
-            // Archived by `cc` + `ar` whatever the host's static-link archiver is: `cc` links
-            // this unit, and MinGW's `ld` cannot read an MSVC archive.  The sources are named
+            // Archived for the compiler that links this unit (`c_shim::cc_archive`), whatever
+            // the host's static-link archiver for rustc is.  The sources are named
             // too, for a wasm32 build, which compiles them instead of linking the host archive.
             // A package with optional libraries reaches its shim through `dlsym`, so the
             // archive is linked whole — nothing references its symbols directly.
@@ -2007,6 +2060,11 @@ fn unit_defines(
         out.push_str("#define LOFT_ENGINE 1\n");
     }
     out.push_str(&fetch_defines(data, reached, &runtimes, cx.lazy.get()));
+    // A page's module jumps nowhere unless a lazy driver's fault must be contained, so it is
+    // built without wasm's exception handling, which asyncify cannot carry (`c_driver`).
+    if cx.browser && !cx.lazy.get() {
+        out.push_str("#define LOFT_NO_JUMPS 1\n");
+    }
     if !cx.ffi_libs.borrow().is_empty() {
         out.push_str("#define LOFT_FFI 1\n");
     }
@@ -2124,16 +2182,23 @@ pub fn emit_program(
     stores: &Stores,
     expected: &dyn Fn(&str) -> Vec<String>,
 ) -> Result<String, Refusal> {
+    // The rewrites this unit admitted, written where `LOFT_REWRITE_CENSUS` asks, as the native
+    // writer writes its own after emitting: the census can then set the two writers side by side.
+    let out = emit_program_counted(data, stores, expected);
+    crate::rewrite_census::write();
+    out
+}
+
+fn emit_program_counted(
+    data: &Data,
+    stores: &Stores,
+    expected: &dyn Fn(&str) -> Vec<String>,
+) -> Result<String, Refusal> {
     let main = data.def_nr("n_main");
     if main >= data.definitions() {
         return emit_tests(data, stores, expected);
     }
-    if !data.def(main).attributes().is_empty() {
-        return Err(Refusal {
-            function: "main".into(),
-            why: "a main that takes arguments".into(),
-        });
-    }
+    let main = program_main(data, main)?;
     let mut out = emit_unit(data, stores, &[main])?;
     let _ = write!(
         out,
@@ -2143,6 +2208,76 @@ pub fn emit_program(
     );
     Ok(out)
 }
+
+/// The program's `main`, refused when it takes arguments.
+fn program_main(data: &Data, main: u32) -> Result<u32, Refusal> {
+    if data.def(main).attributes().is_empty() {
+        Ok(main)
+    } else {
+        Err(Refusal {
+            function: "main".into(),
+            why: "a main that takes arguments".into(),
+        })
+    }
+}
+
+/// C99 for a browser page's module (`--native-c --html`, @PLN203 C6): the unit as
+/// [`emit_unit_for`] writes it for the browser, and the exported `loft_start` the page's script
+/// runs it by — under asyncify, which suspends it at each frame the program yields and resumes
+/// it from the same export.  The libc's constructors run first, once: a page never calls the
+/// WASI `_start` that would; and since the program ends by returning rather than by `exit`, the
+/// export flushes what it printed itself.
+///
+/// # Errors
+/// A program without a `main` that takes nothing, or the first [`Refusal`].
+pub fn emit_browser_program(data: &Data, stores: &Stores) -> Result<String, Refusal> {
+    let main = data.def_nr("n_main");
+    if main >= data.definitions() {
+        return Err(Refusal {
+            function: "main".into(),
+            why: "a page without a main".into(),
+        });
+    }
+    let main = program_main(data, main)?;
+    let mut out = emit_unit_for(data, stores, &[main], true)?;
+    out.push_str(ASYNCIFY_REGION);
+    let _ = write!(
+        out,
+        "\nextern void __wasm_call_ctors(void);\n\
+         __attribute__((export_name(\"loft_start\"))) void loft_page_start(void) {{\n    \
+         static int started = 0;\n    if (!started) {{ started = 1; __wasm_call_ctors(); }}\n    \
+         loft_bind_tables();\n    loft_start(0, 0);\n    {}\n    {}();\n    loft_leak_report();\n    \
+         fflush(stdout);\n    fflush(stderr);\n}}\n\
+         int main(void) {{ return 0; }}\n",
+        anchor(stores),
+        c_name(data, main)
+    );
+    Ok(out)
+}
+
+/// loft#950 — the asyncify save region a page's module owns, as the Rust writer's
+/// (`emit_asyncify_region`): the 8-byte control struct asyncify takes, the save area after it,
+/// and a canary after that, so an overflow is reported (`loft_asyncify_ok`) instead of
+/// overwriting the next static.  The page's controller (`doc/loft-asyncify.js`) reads where it
+/// is and how large; it never picks an address itself.
+const ASYNCIFY_REGION: &str = r#"
+#define LOFT_ASYNCIFY_SAVE 16384
+static struct __attribute__((aligned(16))) {
+    uint8_t ctrl[8];
+    uint8_t save[LOFT_ASYNCIFY_SAVE];
+    uint8_t canary[8];
+} loft_asyncify_region = { { 0 }, { 0 }, { 0x4c, 0x4f, 0x46, 0x54, 0x39, 0x35, 0x30, 0x21 } };
+__attribute__((export_name("loft_asyncify_data"))) uint32_t loft_asyncify_data(void) {
+    return (uint32_t) (uintptr_t) &loft_asyncify_region;
+}
+__attribute__((export_name("loft_asyncify_size"))) uint32_t loft_asyncify_size(void) {
+    return LOFT_ASYNCIFY_SAVE;
+}
+__attribute__((export_name("loft_asyncify_ok"))) int32_t loft_asyncify_ok(void) {
+    static const uint8_t canary[8] = { 0x4c, 0x4f, 0x46, 0x54, 0x39, 0x35, 0x30, 0x21 };
+    return memcmp(loft_asyncify_region.canary, canary, 8) == 0;
+}
+"#;
 
 /// The statement a generated `main` starts with: the directory a relative path resolves against
 /// (the program's own, as the interpreter's `Stores::resolve_path` anchors it) and whether
@@ -2264,7 +2399,7 @@ fn small_function(statements: usize) -> bool {
 #[expect(clippy::too_many_lines)]
 fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     let data = cx.data;
-    let places = mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT;
+    let places = mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT & !KH_BIT & !NN_MASK;
     let def = data.def(d);
     // A `#c` binding (@PLN24): the C function itself, called by its declared signature.
     if def.code() == &Value::Null && !def.c_sig.is_empty() {
@@ -2288,6 +2423,23 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
             .ok_or_else(|| format!("returns {}", type_word(def.returned())))?,
     };
     if unloaded {
+        // A page supplies a library's natives as host imports (@PLN203 C6).
+        if cx.browser
+            && let Some(imp) =
+                crate::host_imports::host_import(cx.data, d, &std::iter::once(d).collect())
+        {
+            return browser_import_native(cx, d, ret, &imp);
+        }
+        // …and a library native it has no import for cannot be called from a page: refused at
+        // build, as the Rust writer refuses it (`compile_error!` naming the function).
+        if cx.browser && cx.data.native_symbol_crates.contains_key(def.native()) {
+            return Err(format!(
+                "native {} (`#native \"{}\"` has no browser host import, so it cannot be \
+                 called from a page; avoid it on the browser target)",
+                def.original_name(),
+                def.native()
+            ));
+        }
         if let Some(runtime) = in_binary_native(def.native()) {
             return forwarded_native(cx, d, ret, runtime);
         }
@@ -2374,7 +2526,23 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         let t = cx.ap2_ctype(*rec).ok_or("an __apv twin of no apart type")?;
         params.push(format!("{t} *loft_apo"));
     }
-    let inputs = inv_inputs(cx, d, mask, &mut params)?;
+    let (mut inputs, scalar_inputs) = inv_inputs(cx, d, mask, &mut params)?;
+    // A `__kh` twin: the caller's header for its vector parameter, by pointer — held, with its
+    // base, and derived again through the pointer after each growth (`kept`).
+    let kept = mask & KH_BIT != 0;
+    if kept {
+        let k = crate::opt::apart::kept_growth_param(data, d)
+            .ok_or("a __kh twin of a function that keeps no header")?;
+        params.push("loft_vh *khp".to_string());
+        inputs.push((
+            (
+                u16::try_from(k).map_err(|_| "a parameter out of range")?,
+                Vec::new(),
+            ),
+            "(*khp)".to_string(),
+            true,
+        ));
+    }
     let params = if params.is_empty() {
         "void".to_string()
     } else {
@@ -2382,6 +2550,9 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     };
     let name = twin_name(data, d, mask);
     let sig = format!("static {} {name}({params})", held(ret));
+    // `LOFT_REWRITE_CENSUS_FN`: this body's admissions under its own name, phase `c`, so they
+    // line up with the native writer's per function.
+    let _census_body = crate::rewrite_census::InBody::enter("c", def.name());
     if let Type::Iterator(elem, _) = def.returned().base() {
         if mask != 0 {
             return Err("a generator handed a store place for a & parameter".into());
@@ -2402,6 +2573,9 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     let body = body::FnWriter::new(cx, d, shapes, ret)
         .places(places)
         .inputs(inputs)
+        .scalar_inputs(scalar_inputs)
+        .kept_growth(kept)
+        .nn_seed(mask)
         .nokeep(mask & NK_BIT != 0)?
         .apart(mask & APR_BIT != 0)
         .apart_value(mask & APV_BIT != 0)
@@ -2420,33 +2594,69 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     Ok((sig, framed(cx, d, &name, &params, ret, &body, inline)))
 }
 
-/// An `__inv` twin's header parameters, appended to `params`, and the frame its body serves
-/// their vectors' accesses from; none for any other mask.
+/// The shape an `__inv` twin takes a scalar input in (`@FR-R-Inputs`' scalar clause): the
+/// getter's result, for the kinds a loop holds a record scalar in; `None` for any other, which
+/// the twin reads from its record as before.  Asked by the twin's signature and by its call
+/// site alike, so the two cannot disagree on which inputs cross.
+pub(crate) fn twin_scalar_shape(cx: &Cx, getter: &Value) -> Option<CType> {
+    let Value::Call(g, _) = getter.unspan() else {
+        return None;
+    };
+    let c = cx.ctype(cx.data.def(*g).returned())?;
+    matches!(
+        c,
+        CType::Int | CType::Float | CType::Single | CType::Bool | CType::Enum | CType::Char
+    )
+    .then_some(c)
+}
+
+/// An `__inv` twin's inputs, appended to `params` — first each record scalar it reads
+/// (`is{k}`, rustc's `__is_k`), then each header (`hi{k}`) — and the frames its body serves
+/// them from: the scalars as a loop's held scalars, the headers as its held headers.  None for
+/// any other mask.
+#[allow(clippy::type_complexity)]
 fn inv_inputs(
     cx: &Cx,
     d: u32,
     mask: u64,
     params: &mut Vec<String>,
-) -> Result<Vec<(crate::opt::writes::PathKey, String, bool)>, String> {
+) -> Result<
+    (
+        Vec<(crate::opt::writes::PathKey, String, bool)>,
+        Vec<(crate::opt::hoist::ScalarKey, String, CType)>,
+    ),
+    String,
+> {
     let mut inputs = Vec::new();
+    let mut scalars = Vec::new();
     if mask & INV_BIT != 0 {
         let fi = cx
             .callee_inputs(d)
-            .filter(|fi| !fi.headers.is_empty())
-            .ok_or("an __inv twin of a function with no header inputs")?;
+            .ok_or("an __inv twin of a function with no inputs")?;
+        for (k, (p, fld, getter)) in fi.scalars.iter().enumerate() {
+            if let Some(c) = twin_scalar_shape(cx, getter) {
+                params.push(format!("{} is{k}", held(c)));
+                scalars.push(((*p, *fld), format!("is{k}"), c));
+            }
+        }
         for (k, (p, offs, _)) in fi.headers.iter().enumerate() {
             params.push(format!("loft_vh hi{k}"));
             inputs.push(((*p, offs.clone()), format!("hi{k}"), true));
         }
+        if inputs.is_empty() && scalars.is_empty() {
+            return Err("an __inv twin of a function with no inputs".into());
+        }
     }
-    Ok(inputs)
+    Ok((inputs, scalars))
 }
 
 /// `@FR-R-ValueLocal` — `d`'s value locals (the tuple parameters among them) take their struct
 /// shapes, and an admitted function's return buffer is no parameter: answers the attribute
 /// the signature drops.
 fn vr_shapes(cx: &Cx, d: u32, vr_key: Option<u16>, shapes: &mut [CType]) -> Option<usize> {
-    for (v, key) in &cx.vr_locals(d) {
+    let locals = cx.vr_locals(d);
+    crate::rewrite_census::fired("R-ValueLocal", locals.len());
+    for (v, key) in &locals {
         if let Some(c) = cx.vr_ctype(*key)
             && (*v as usize) < shapes.len()
         {
@@ -2765,6 +2975,8 @@ struct FfiArgs {
     args: Vec<String>,
     prep: String,
     store_arg: Option<usize>,
+    /// Every heap argument in declaration order, with whether it is a vector.
+    heap: Vec<(usize, bool)>,
 }
 
 fn ffi_args(cx: &Cx, d: u32) -> Result<FfiArgs, String> {
@@ -2773,10 +2985,12 @@ fn ffi_args(cx: &Cx, d: u32) -> Result<FfiArgs, String> {
     let mut ffi_args: Vec<String> = Vec::new();
     let mut prep = String::new();
     let mut store_arg: Option<usize> = None;
+    let mut heap = Vec::new();
     for (i, a) in def.attributes().iter().enumerate() {
         let tp = a.typedef.base();
         if tp.heap_dep().is_some() {
             store_arg.get_or_insert(i);
+            heap.push((i, matches!(tp, Type::Vector(_, _))));
             ffi_params.push("loft_ffi_ref".into());
             if matches!(tp, Type::Vector(_, _)) {
                 let _ = writeln!(
@@ -2833,6 +3047,7 @@ fn ffi_args(cx: &Cx, d: u32) -> Result<FfiArgs, String> {
         args: ffi_args,
         prep,
         store_arg,
+        heap,
     })
 }
 
@@ -2877,32 +3092,51 @@ fn library_native(
         args: mut ffi_args,
         prep,
         store_arg,
+        heap,
     } = ffi_args(cx, d)?;
     let ffi_ret = ffi_return_ctype(def)?;
     let heap_answer = ffi_ret == "loft_ffi_ref";
-    let mut prep = prep;
     // The store handed over: the first heap argument's, else — for a heap answer — one minted
     // for the answer, as the interpreter's bridge mints it (`Stores::bridge_args`).
     let minted = store_arg.is_none() && heap_answer;
+    let (mut select, mut copies) = (String::new(), String::new());
+    let post = foreign_vector_args(&heap, heap_answer, &mut select, &mut copies);
+    // loft#2227 — a heap answer pinned to an argument's store is copied out of it after the
+    // call, and only what the call claimed there is deleted (`loft_ffi_own_*`): log it.  A store
+    // minted for the call (`pminted`) is never owned, as `Stores::own_bridge_answer` skips it.
+    let owned_answer = store_arg.is_some() && heap_answer && def.native_answer_tp != u16::MAX;
+    if owned_answer {
+        cx.copy_type(def.native_answer_tp)?;
+    }
+    let mut log = String::new();
     if let Some(i) = store_arg {
         ffi_params.insert(0, "loft_ffi_store".into());
-        ffi_args.insert(0, format!("loft_ffi_store_of(a{i}.store_nr)"));
+        // The first heap argument's store, or `pin` when a vector argument may be foreign
+        // (`foreign_vector_args` chooses it then).
+        let store = if post.is_empty() {
+            format!("a{i}.store_nr")
+        } else {
+            "pin".to_string()
+        };
+        ffi_args.insert(0, format!("loft_ffi_store_of({store})"));
+        if owned_answer {
+            call_store_copy(def, &store, post.is_empty(), &mut select);
+            // After the copies: their records are `post`'s to delete, never the log's.
+            let only = if post.is_empty() {
+                ""
+            } else {
+                "if (!pminted) "
+            };
+            let _ = writeln!(log, "    {only}loft_ffi_log_begin({store});");
+        }
     } else if minted {
-        prep.push_str("    uint16_t ns = (uint16_t) loft_store_new();\n");
+        log.push_str("    uint16_t ns = (uint16_t) loft_store_new();\n");
         ffi_params.insert(0, "loft_ffi_store".into());
         ffi_args.insert(0, "loft_ffi_store_of(ns)".into());
     }
     cx.ffi_libs
         .borrow_mut()
         .insert((pkg_dir.to_string(), lib.to_string()));
-    let fp = format!(
-        "{ffi_ret} (*)({})",
-        if ffi_params.is_empty() {
-            "void".to_string()
-        } else {
-            ffi_params.join(", ")
-        }
-    );
     let sig = format!(
         "static {} {}({})",
         held(ret),
@@ -2924,22 +3158,90 @@ fn library_native(
         }
     );
     // The build's own path for a run in place; a shipped program finds the file by name among
-    // the libraries it opened at start (`loft_c_bind_libraries`).
+    // the libraries it opened at start (`loft_c_bind_libraries`).  ISO C has no conversion from
+    // an object pointer to a function pointer, so the symbol is copied into `fp` (strict C99
+    // refuses the cast; every host's ABI makes the bytes the same).
     let _ = writeln!(
         body,
-        "    if (!fp) fp = ({fp}) loft_ffi_sym({}, {}, {});",
+        "    if (!fp) {{ void *s_ = loft_ffi_sym({}, {}, {}); memcpy(&fp, &s_, sizeof fp); }}",
         body::c_string(lib),
         body::c_string(&crate::file_access::file_name(lib).unwrap_or_default()),
         body::c_string(def.native())
     );
+    // The pin and its copy first, then the arguments read, the foreign copies, the log.
+    body.push_str(&select);
     body.push_str(&prep);
+    body.push_str(&copies);
+    body.push_str(&log);
     let call = format!("fp({})", ffi_args.join(", "));
+    let answer_store = if owned_answer {
+        AnswerStore::Owned(def.native_answer_tp)
+    } else if minted {
+        AnswerStore::Minted
+    } else {
+        AnswerStore::Given
+    };
+    library_answer(&mut body, def, ret, ffi_ret, &call, &post, answer_store);
+    Ok((sig, body))
+}
+
+/// loft#2239 — a store a running `par` shares is never grown: a library call that builds its
+/// answer in `store` works in a copy of it (`loft_ffi_call_store`), and every argument that
+/// lived there is renamed to the copy BEFORE the arguments are read and the foreign copies
+/// claimed.  With foreign vector arguments (`!plain`) `store` is the `pin` chosen at run time,
+/// and a `pin` minted for the call is its own already.  Writes `pn` and `cs` into `select`.
+fn call_store_copy(def: &crate::data::Definition, store: &str, plain: bool, select: &mut String) {
+    let (pn, cs) = if plain {
+        (store.to_string(), "loft_ffi_call_store(pn)")
+    } else {
+        (
+            "(uint16_t) pin".to_string(),
+            "pminted ? pn : loft_ffi_call_store(pn)",
+        )
+    };
+    let _ = writeln!(select, "    uint16_t pn = {pn};\n    uint16_t cs = {cs};");
+    for (j, a) in def.attributes().iter().enumerate() {
+        if a.typedef.base().heap_dep().is_some() {
+            let _ = writeln!(select, "    if (a{j}.store_nr == pn) a{j}.store_nr = cs;");
+        }
+    }
+    if !plain {
+        let _ = writeln!(select, "    pin = cs;");
+    }
+}
+
+/// Where a library native's heap answer is built, which decides what follows the call.
+#[derive(Clone, Copy)]
+enum AnswerStore {
+    /// The store handed over is an argument's, and the answer is not copied out of it.
+    Given,
+    /// A store minted for the answer (`ns`); it goes when there is no answer.
+    Minted,
+    /// An argument's store, the answer copied out of it with this type (loft#2227).
+    Owned(u16),
+}
+
+/// The statements after a library native's call (`call`): the answer read in its C shape,
+/// `post` run (the copies a foreign argument took going), and the loft value returned — a text
+/// owned, a heap answer behind its header (`codegen_runtime::from_loft_ref` /
+/// `from_loft_record`), a narrow integer widened with its null kept.
+fn library_answer(
+    body: &mut String,
+    def: &crate::data::Definition,
+    ret: CType,
+    ffi_ret: &str,
+    call: &str,
+    post: &str,
+    answer_store: AnswerStore,
+) {
     match def.returned().base() {
         Type::Void => {
             let _ = writeln!(body, "    {call};");
+            body.push_str(post);
         }
         Type::Text(_) => {
             let _ = writeln!(body, "    loft_ffi_str t = {call};");
+            body.push_str(post);
             let _ = writeln!(
                 body,
                 "    return loft_text_own(loft_lit(t.ptr ? (const char *) t.ptr : \"\", t.len));"
@@ -2947,26 +3249,223 @@ fn library_native(
         }
         // A vector answer behind its header, a record as it is: the conversion
         // `codegen_runtime::from_loft_ref` / `from_loft_record` make.
-        tp if heap_answer => {
+        tp if ffi_ret == "loft_ffi_ref" => {
             let _ = writeln!(body, "    loft_ffi_ref r = {call};");
-            if minted {
+            let convert = if matches!(tp.base(), Type::Vector(_, _)) {
+                "loft_ffi_vector_answer"
+            } else {
+                "loft_ffi_record_answer"
+            };
+            if let AnswerStore::Owned(answer_tp) = answer_store {
+                let own = if matches!(tp.base(), Type::Vector(_, _)) {
+                    "loft_ffi_own_vector"
+                } else {
+                    "loft_ffi_own_record"
+                };
+                // Copied out BEFORE `post`, which deletes the foreign copies an identity answer
+                // may name (`Stores::own_bridge_answer` before `bridge_args_done`).
+                let minted_pin = if post.is_empty() {
+                    String::new()
+                } else {
+                    format!("pminted ? {convert}(r) : ")
+                };
+                let _ = writeln!(
+                    body,
+                    "    loft_ref v = {minted_pin}{own}(loft_types, {answer_tp}, {convert}(r));"
+                );
+                body.push_str(post);
+                // loft#2239 — the copy of a shared store the call worked in goes.
+                let _ = writeln!(body, "    loft_ffi_drop_call_store(cs, pn);");
+                let _ = writeln!(body, "    return v;");
+                return;
+            }
+            body.push_str(post);
+            if matches!(answer_store, AnswerStore::Minted) {
                 // No answer: the store minted for it goes.
                 let _ = writeln!(
                     body,
                     "    if (r.rec == 0 && r.pos == 0) {{ loft_ref m = {{ ns, 0, 0 }}; loft_free_ref(m); }}"
                 );
             }
-            let convert = if matches!(tp.base(), Type::Vector(_, _)) {
-                "loft_ffi_vector_answer"
-            } else {
-                "loft_ffi_record_answer"
-            };
             let _ = writeln!(body, "    return {convert}(r);");
         }
-        _ => {
+        // `loft_ffi::widen_i32`: a narrow answer's null is `INT32_MIN`, which a plain widening
+        // would turn into an ordinary negative number.
+        Type::Integer(_) if ffi_ret == "int32_t" && ret == CType::Int => {
+            let _ = writeln!(body, "    int32_t r = {call};");
+            body.push_str(post);
+            let _ = writeln!(body, "    return r == INT32_MIN ? LOFT_NULL : (int64_t) r;");
+        }
+        _ if post.is_empty() => {
             let _ = writeln!(body, "    return {call};");
         }
+        _ => {
+            let _ = writeln!(body, "    {ffi_ret} r = {call};");
+            body.push_str(post);
+            let _ = writeln!(body, "    return r;");
+        }
     }
+}
+
+/// `Stores::bridge_args` for a library call: the library reads every vector argument through
+/// the ONE store it is handed (`ptr + rec * 8`), so a foreign vector — a `file_map`, whose bytes
+/// are in no store — is copied into a record of that store for the call, in one block, and never
+/// pins it: the first other heap argument does, or a store is minted (`pin`).  Writes the choice
+/// of `pin` into `select` (before the arguments are read, so a copy of a shared `pin` can
+/// replace it), the copies into `prep`, and answers the statements after the call
+/// (`bridge_args_done`): a copy the library changed is a write the program could not make,
+/// refused as one; then the copies go, or the minted store whole when no heap answer lives in
+/// it.  Empty — no `pin`, the plain call — when no argument is a vector.
+fn foreign_vector_args(
+    heap: &[(usize, bool)],
+    heap_answer: bool,
+    select: &mut String,
+    prep: &mut String,
+) -> String {
+    let mut post = String::new();
+    let vec_args: Vec<usize> = heap.iter().filter(|(_, v)| *v).map(|(i, _)| *i).collect();
+    if vec_args.is_empty() {
+        return post;
+    }
+    let _ = writeln!(select, "    uint32_t pin = UINT32_MAX; int pminted = 0;");
+    for (i, is_vec) in heap {
+        let guard = if *is_vec {
+            format!(" && !loft_ffi_is_foreign(a{i})")
+        } else {
+            String::new()
+        };
+        let _ = writeln!(
+            select,
+            "    if (pin == UINT32_MAX{guard}) pin = a{i}.store_nr;"
+        );
+    }
+    let _ = writeln!(
+        select,
+        "    if (pin == UINT32_MAX) {{ pin = loft_store_new(); pminted = 1; }}"
+    );
+    for i in &vec_args {
+        let _ = writeln!(
+            prep,
+            "    uint32_t cp{i} = loft_ffi_is_foreign(a{i}) ? loft_ffi_copy_in(pin, a{i}) : 0;"
+        );
+        let _ = writeln!(
+            prep,
+            "    if (cp{i}) r{i} = (loft_ffi_ref) {{ (uint16_t) pin, cp{i}, 0 }};"
+        );
+    }
+    let _ = writeln!(post, "    int changed = 0;");
+    for i in &vec_args {
+        let _ = writeln!(
+            post,
+            "    if (cp{i}) changed |= loft_ffi_copy_changed(a{i}, pin, cp{i});"
+        );
+    }
+    if heap_answer {
+        let _ = writeln!(post, "    if (!loft_stores[pin].read_only) {{");
+    } else {
+        let _ = writeln!(
+            post,
+            "    if (pminted) loft_free_ref((loft_ref) {{ (uint16_t) pin, 1, 0 }});"
+        );
+        let _ = writeln!(post, "    else if (!loft_stores[pin].read_only) {{");
+    }
+    for i in &vec_args {
+        let _ = writeln!(
+            post,
+            "        if (cp{i}) loft_st_delete(&loft_stores[pin], cp{i});"
+        );
+    }
+    let _ = writeln!(post, "    }}");
+    let _ = writeln!(post, "    if (changed) loft_locked_write();");
+    post
+}
+
+/// A library native in a browser page's module: the host import the page's script supplies
+/// under the native's symbol (`host_imports`, the Rust writer's `loft_gl` block), declared once,
+/// and a body that hands it a text's bytes and length, a vector's elements and count, and each
+/// scalar in the import's width.
+fn browser_import_native(
+    cx: &Cx,
+    d: u32,
+    ret: CType,
+    imp: &crate::host_imports::HostImport,
+) -> Result<(String, String), String> {
+    use crate::host_imports::Arg;
+    let def = cx.data.def(d);
+    let params = declared_params(cx, d)?;
+    let import = format!("loft_host_{}", imp.symbol);
+    let mut decl = Vec::new();
+    let mut args = Vec::new();
+    let mut body = String::new();
+    let visible = def
+        .attributes()
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| !a.name.starts_with("__"));
+    for ((i, _), (_, arg)) in visible.zip(&imp.args) {
+        match arg {
+            Arg::Text => {
+                decl.push("const uint8_t *".to_string());
+                decl.push("uint32_t".to_string());
+                args.push(format!("(const uint8_t *) a{i}.p"));
+                args.push(format!("(uint32_t) a{i}.len"));
+            }
+            Arg::Vector(elem) => {
+                let e = elem.c();
+                decl.push(format!("const {e} *"));
+                decl.push("uint32_t".to_string());
+                let _ = writeln!(
+                    body,
+                    "    uint32_t r{i} = a{i}.rec ? loft_collection_rec(loft_store_of(a{i}), a{i}.rec, a{i}.pos) : 0;"
+                );
+                args.push(format!(
+                    "r{i} ? (const {e} *) loft_elem_base(loft_store_of(a{i}), r{i}) : 0"
+                ));
+                args.push(format!("(uint32_t) loft_vec_len(a{i})"));
+            }
+            Arg::Scalar(sc) => {
+                decl.push(sc.c().to_string());
+                args.push(if *sc == crate::host_imports::Scalar::U8 {
+                    format!("(uint8_t) (a{i} == 1)")
+                } else {
+                    format!("({}) a{i}", sc.c())
+                });
+            }
+        }
+    }
+    let ret_c = imp.ret.map_or("void", crate::host_imports::Scalar::c);
+    let _ = writeln!(
+        cx.gen_decls.borrow_mut(),
+        "__attribute__((import_module(\"loft_gl\"), import_name(\"{}\"))) {ret_c} {import}({});",
+        imp.symbol,
+        if decl.is_empty() {
+            "void".to_string()
+        } else {
+            decl.join(", ")
+        }
+    );
+    let call = format!("{import}({})", args.join(", "));
+    match imp.ret {
+        None => {
+            let _ = writeln!(body, "    {call};");
+        }
+        Some(crate::host_imports::Scalar::U8) => {
+            let _ = writeln!(body, "    return (uint8_t) ({call} != 0);");
+        }
+        Some(_) => {
+            let _ = writeln!(body, "    return ({}) {call};", held(ret));
+        }
+    }
+    let sig = format!(
+        "static {} {}({})",
+        held(ret),
+        c_name(cx.data, d),
+        if params.is_empty() {
+            "void".to_string()
+        } else {
+            params.join(", ")
+        }
+    );
     Ok((sig, body))
 }
 
@@ -3025,18 +3524,27 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
                 .find(|(c, _)| c.replace('-', "_") == *krate)
         })
         .and_then(|(name, pkg_dir)| crate::native_build::unbuildable_native_reason(pkg_dir, name));
+    // Any other native is a Rust crate's, which a C build never links (`native_build::c_target`):
+    // the interpreter's "cdylib missing or stale / a poisoned call index" reading does not apply
+    // to a call the C makes by name, so the message says what does.
+    let library = cx.data.native_symbol_crates.get(def.native()).map_or_else(
+        || "its library".to_string(),
+        |krate| {
+            cx.data
+                .native_packages
+                .iter()
+                .find(|(c, _)| c.replace('-', "_") == *krate)
+                .map_or_else(|| krate.clone(), |(_, pkg_dir)| package_identity(pkg_dir).0)
+        },
+    );
     let msg = if let Some(why) = unbuildable {
         format!("native function {}: {why}", def.native())
     } else {
         format!(
-            "native function {} not loaded. Either (a) its library's native cdylib is missing or \
-         stale — commonly built against a different libloft.rlib; rebuild with `make \
-         rebuild-native-cdylibs`, or `cargo build --release` in the library's `native/` dir — or \
-         (b) a freed store was read and its poisoned contents were used as the call index, in \
-         which case the real fault is a store lifetime bug that happened EARLIER. Tell them \
-         apart: if the run is green with LOFT_POISON unset, or an earlier line reports a `BUG` \
-         refusal of a store free / a strict-store violation, it is (b) — re-run with `LOFT_STRICT_STORES=1` to \
-         name the access and the free.",
+            "native function {} is not in this build: its library ({library}) has only a Rust \
+             native part, which the C backend does not link.  Run it with --native-rust or \
+             --interpret, or give the library a C native part (a `[c] shim`, a prebuilt C \
+             library, or a component).",
             def.native()
         )
     };
@@ -3109,11 +3617,26 @@ fn framed(
     );
     // The body names the texts it holds (`LOFT_HOLD`); the frame drops them on its return.
     let push = format!("{push}    LOFT_HOLD_MARK(hm);\n");
+    // What calls through function values handed back and no bind adopted is the frame's, freed
+    // as it returns — unless it answers a heap value, which may be one of them: those go up to
+    // the caller (`FnRefBufGuard`'s `hands_up`).
+    let hands_up = matches!(
+        def.returned().base(),
+        Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
+    );
+    let (push, release) = if hands_up {
+        (push, String::new())
+    } else {
+        (
+            format!("{push}    size_t fm = loft_nfnrefs;\n"),
+            "    if (loft_nfnrefs != fm) loft_fnref_release(fm);\n".to_string(),
+        )
+    };
     if ret == CType::Void {
-        format!("{push}    {call};\n    LOFT_HOLD_BACK(hm);\n    loft_frame_pop();\n")
+        format!("{push}    {call};\n{release}    LOFT_HOLD_BACK(hm);\n    loft_frame_pop();\n")
     } else {
         format!(
-            "{push}    {} r = {call};\n    LOFT_HOLD_BACK(hm);\n    loft_frame_pop();\n    return r;\n",
+            "{push}    {} r = {call};\n{release}    LOFT_HOLD_BACK(hm);\n    loft_frame_pop();\n    return r;\n",
             held(ret)
         )
     }

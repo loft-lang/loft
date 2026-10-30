@@ -454,6 +454,11 @@ pub struct Parser {
     pub(crate) match_subject: crate::data::AliasFact,
     /// @PLN187 — the facts the arms of the enclosing `match` yielded.
     pub(crate) match_arm_facts: Vec<crate::data::AliasFact>,
+    /// `@FR-M-Fixed` — the variable at the root of the enclosing `match`'s subject place
+    /// (`u16::MAX` for a computed subject, which no guard can name), and every guard pass 2
+    /// parsed, to be judged once every body is final (`check_match_guards`).
+    pub(crate) match_subject_root: u16,
+    pub(crate) guard_checks: Vec<control::GuardCheck>,
     /// @PLN187 — the receiver fact of the method step being parsed (`parse_part` sets it).
     pub(crate) method_receiver: crate::data::AliasFact,
     /// @PLN187 — the positional and named argument facts of the method call being parsed.
@@ -1924,6 +1929,8 @@ impl Parser {
             lambda_result: crate::data::AliasFact::Plain,
             match_subject: crate::data::AliasFact::Plain,
             match_arm_facts: Vec::new(),
+            match_subject_root: u16::MAX,
+            guard_checks: Vec::new(),
             pending_key_facts: Vec::new(),
             comprehension_fact: None,
             method_receiver: crate::data::AliasFact::Plain,

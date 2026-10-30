@@ -289,6 +289,7 @@ struct Definition {
   operator_form: boolean, // @PLN182 written `operator`: what an operator form on its `self` type reaches
   returned_fact: text, // @PLN187 where the declared result names a `type` alias; "" = nowhere
   returned_const: boolean, // @FR-Const-Foreign `-> const T`: the producer's data is value-const
+  native_answer_tp: integer, // loft#2227 a #native heap answer's copy-out type id; 65535 = none
 }
 
 // One retained import (src/data.rs::AppliedImport).  `rebuild_indices` can

@@ -25,6 +25,7 @@ loft_ffi_str n_wrap(const uint8_t *p, size_t n) {
 }
 int64_t n_byte(const uint8_t *p, size_t n, int64_t i) { return i >= 0 && (size_t) i < n ? p[i] : -1; }
 int64_t n_add(int64_t a, int64_t b) { return a + b; }
+int32_t n_narrow(int32_t x) { return x < 0 ? INT32_MIN : x * 2; }
 uint8_t n_is_even(int64_t a) { return a % 2 == 0; }
 int64_t n_sum_bytes(loft_ffi_store s, loft_ffi_ref v) {
     uint32_t n = loft_ffi_vector_len(s, v);
@@ -52,10 +53,42 @@ loft_ffi_ref n_rev(loft_ffi_store s, loft_ffi_ref a) {
     b[n] = 7;
     return loft_ffi_vector_from_bytes(&s, 1, n + 1, b);
 }
+/* `a` then `b`, each cut at 255 bytes: `a` may be a mapped file, which the bridge copies into
+ * the store the call is handed (loft#2227 beside the foreign copy). */
+loft_ffi_ref n_cat(loft_ffi_store s, loft_ffi_ref a, loft_ffi_ref b) {
+    uint8_t buf[510];
+    uint32_t na = loft_ffi_vector_len(s, a), nb = loft_ffi_vector_len(s, b);
+    if (na > 255) na = 255;
+    if (nb > 255) nb = 255;
+    if (na) memcpy(buf, loft_ffi_vector_data(s, a), na);
+    if (nb) memcpy(buf + na, loft_ffi_vector_data(s, b), nb);
+    return loft_ffi_vector_from_bytes(&s, 1, na + nb, buf);
+}
 loft_ffi_ref n_pair(loft_ffi_store s, int64_t a, int64_t b) {
     loft_ffi_ref r = loft_ffi_alloc_record(&s, 3);
     memcpy(s.ptr + (size_t) r.rec * 8 + r.pos, &a, 8);
     memcpy(s.ptr + (size_t) r.rec * 8 + r.pos + 8, &b, 8);
+    return r;
+}
+
+/* Answers that SHARE what their argument holds (loft#2227): the argument itself, a vector field
+ * of a record argument, and a fresh record that takes over its argument's text. */
+loft_ffi_ref n_same(loft_ffi_store s, loft_ffi_ref a) { (void) s; return a; }
+loft_ffi_ref n_bag_items(loft_ffi_store s, loft_ffi_ref b) {
+    loft_ffi_ref r;
+    uint32_t vrec;
+    memcpy(&vrec, s.ptr + (size_t) b.rec * 8 + b.pos, sizeof vrec);
+    r.store_nr = b.store_nr;
+    r.rec = vrec;
+    r.pos = 8;
+    return r;
+}
+loft_ffi_ref n_named_k(loft_ffi_store s, loft_ffi_ref p, int64_t k) {
+    uint32_t text_rec;
+    memcpy(&text_rec, s.ptr + (size_t) p.rec * 8 + p.pos + 8, sizeof text_rec);
+    loft_ffi_ref r = loft_ffi_alloc_record(&s, 3);
+    memcpy(s.ptr + (size_t) r.rec * 8 + r.pos, &k, 8);
+    memcpy(s.ptr + (size_t) r.rec * 8 + r.pos + 8, &text_rec, sizeof text_rec);
     return r;
 }
 
@@ -68,21 +101,35 @@ static void b_byte(loft_ffi_store s, const loft_ffi_value *a, size_t n, loft_ffi
 static void b_add(loft_ffi_store s, const loft_ffi_value *a, size_t n, loft_ffi_value *r) { (void) s; (void) n; *r = loft_ffi_value_i64(n_add(a[0].payload.i, a[1].payload.i)); }
 static void b_is_even(loft_ffi_store s, const loft_ffi_value *a, size_t n, loft_ffi_value *r) { (void) s; (void) n; *r = loft_ffi_value_bool(n_is_even(a[0].payload.i)); }
 static void b_sum_bytes(loft_ffi_store s, const loft_ffi_value *a, size_t n, loft_ffi_value *r) { (void) n; *r = loft_ffi_value_i64(n_sum_bytes(s, a[0].payload.r)); }
+static void b_narrow(loft_ffi_store s, const loft_ffi_value *a, size_t n, loft_ffi_value *r) {
+    (void) s; (void) n;
+    int32_t v = n_narrow((int32_t) a[0].payload.i);
+    *r = loft_ffi_value_i64(v == INT32_MIN ? INT64_MIN : (int64_t) v); /* loft_ffi::widen_i32 */
+}
 static void b_half(loft_ffi_store s, const loft_ffi_value *a, size_t n, loft_ffi_value *r) { (void) s; (void) n; *r = loft_ffi_value_f64(n_half(a[0].payload.f)); }
 static void b_iota(loft_ffi_store s, const loft_ffi_value *a, size_t n, loft_ffi_value *r) { (void) n; *r = loft_ffi_value_ref(n_iota(s, a[0].payload.i)); }
 static void b_rev(loft_ffi_store s, const loft_ffi_value *a, size_t n, loft_ffi_value *r) { (void) n; *r = loft_ffi_value_ref(n_rev(s, a[0].payload.r)); }
+static void b_cat(loft_ffi_store s, const loft_ffi_value *a, size_t n, loft_ffi_value *r) { (void) n; *r = loft_ffi_value_ref(n_cat(s, a[0].payload.r, a[1].payload.r)); }
 static void b_pair(loft_ffi_store s, const loft_ffi_value *a, size_t n, loft_ffi_value *r) { (void) n; *r = loft_ffi_value_ref(n_pair(s, a[0].payload.i, a[1].payload.i)); }
+
+static void b_same(loft_ffi_store s, const loft_ffi_value *a, size_t n, loft_ffi_value *r) { (void) n; *r = loft_ffi_value_ref(n_same(s, a[0].payload.r)); }
+static void b_bag_items(loft_ffi_store s, const loft_ffi_value *a, size_t n, loft_ffi_value *r) { (void) n; *r = loft_ffi_value_ref(n_bag_items(s, a[0].payload.r)); }
+static void b_named_k(loft_ffi_store s, const loft_ffi_value *a, size_t n, loft_ffi_value *r) { (void) n; *r = loft_ffi_value_ref(n_named_k(s, a[0].payload.r, a[1].payload.i)); }
 
 #define REG(cb, ctx, name, fn) cb((const uint8_t *) name, sizeof name - 1, (const void *) fn, ctx)
 void loft_register_v1(loft_ffi_register_cb cb, void *ctx) {
     REG(cb, ctx, "n_make_bin", n_make_bin); REG(cb, ctx, "n_text_len", n_text_len); REG(cb, ctx, "n_wrap", n_wrap);
     REG(cb, ctx, "n_byte", n_byte); REG(cb, ctx, "n_add", n_add); REG(cb, ctx, "n_is_even", n_is_even);
-    REG(cb, ctx, "n_sum_bytes", n_sum_bytes); REG(cb, ctx, "n_half", n_half);
+    REG(cb, ctx, "n_sum_bytes", n_sum_bytes); REG(cb, ctx, "n_half", n_half); REG(cb, ctx, "n_narrow", n_narrow);
     REG(cb, ctx, "n_iota", n_iota); REG(cb, ctx, "n_rev", n_rev); REG(cb, ctx, "n_pair", n_pair);
+    REG(cb, ctx, "n_cat", n_cat);
+    REG(cb, ctx, "n_same", n_same); REG(cb, ctx, "n_bag_items", n_bag_items); REG(cb, ctx, "n_named_k", n_named_k);
 }
 void loft_register_bridges_v1(loft_ffi_register_cb cb, void *ctx) {
     REG(cb, ctx, "n_make_bin", b_make_bin); REG(cb, ctx, "n_text_len", b_text_len); REG(cb, ctx, "n_wrap", b_wrap);
     REG(cb, ctx, "n_byte", b_byte); REG(cb, ctx, "n_add", b_add); REG(cb, ctx, "n_is_even", b_is_even);
-    REG(cb, ctx, "n_sum_bytes", b_sum_bytes); REG(cb, ctx, "n_half", b_half);
+    REG(cb, ctx, "n_sum_bytes", b_sum_bytes); REG(cb, ctx, "n_half", b_half); REG(cb, ctx, "n_narrow", b_narrow);
     REG(cb, ctx, "n_iota", b_iota); REG(cb, ctx, "n_rev", b_rev); REG(cb, ctx, "n_pair", b_pair);
+    REG(cb, ctx, "n_cat", b_cat);
+    REG(cb, ctx, "n_same", b_same); REG(cb, ctx, "n_bag_items", b_bag_items); REG(cb, ctx, "n_named_k", b_named_k);
 }

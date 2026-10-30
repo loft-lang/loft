@@ -36,6 +36,16 @@ pub enum ConstField {
     Char(u32),
     /// `text`, stored in the element's own store and referenced by record number.
     Text(String),
+    /// A narrow integer (`u8`, `i16`, `u16`, …): `size` bytes holding `v` against the bias
+    /// `min`, written as the setter it came from writes it — `OpSetByte` / `OpSetShortRaw`,
+    /// or for a NULLABLE element `OpSetByteNullable` / `OpSetShort`, whose `v: None` is the
+    /// null (loft#2240 — a constant declared at a narrow element type is built at it).
+    Narrow {
+        size: u8,
+        min: i32,
+        nullable: bool,
+        v: Option<i64>,
+    },
 }
 
 /// One ELEMENT of a vector constant: each literal field write it makes, as
@@ -82,6 +92,53 @@ pub fn extract_literal_values_public(
 #[must_use]
 pub fn const_vector_blocker(code: &Value, data: &Data) -> Option<String> {
     extract_literal_values_public(code, data).err()
+}
+
+/// A narrow integer field written by `setter` with bias `min`, folded to the literal the store
+/// can write, or `None` for a value only known at run time, one outside the width, or a null
+/// for an element that cannot hold one.
+fn fold_narrow_field(setter: &str, min: &IrNode, v: &IrNode, data: &Data) -> Option<ConstField> {
+    let (size, nullable): (u8, bool) = match setter {
+        "OpSetByte" => (1, false),
+        "OpSetShortRaw" => (2, false),
+        "OpSetByteNullable" => (1, true),
+        "OpSetShort" => (2, true),
+        _ => return None,
+    };
+    let Value::Int(min) = min.to_owned_value().unspan().clone() else {
+        return None;
+    };
+    let owned = v.to_owned_value();
+    let is_null = match owned.unspan() {
+        Value::Null => true,
+        Value::Call(d, args) => args.is_empty() && data.def(*d).name() == "OpConvIntFromNull",
+        _ => false,
+    };
+    if is_null {
+        return nullable.then_some(ConstField::Narrow {
+            size,
+            min,
+            nullable,
+            v: None,
+        });
+    }
+    let v = match crate::const_eval::const_eval(owned.unspan(), data)? {
+        Value::Int(n) => i64::from(n),
+        Value::Long(n) => n,
+        _ => return None,
+    };
+    // The width's codes from `min` up, less the one a nullable element keeps for its null.
+    // The setter's `min` is already the lowest value a NULLABLE element can hold (an `i16?`
+    // passes `-32767`), so the reserved code is always the top of the range here.
+    let hi = i64::from(min) + if size == 1 { 255 } else { 65535 } - i64::from(nullable);
+    (i64::from(min)..=hi)
+        .contains(&v)
+        .then_some(ConstField::Narrow {
+            size,
+            min,
+            nullable,
+            v: Some(v),
+        })
 }
 
 /// A constant element's value, folded to the literal the store can write, or `None` when
@@ -184,10 +241,11 @@ pub(crate) fn extract_literal_values(
             .find(|(_, push)| *push == name)
         {
             let args = op.call_args();
-            let field = if args.len() == 2 {
-                fold_const_field(setter, &args.get(1), data)
-            } else {
-                None
+            let field = match args.len() {
+                2 => fold_const_field(setter, &args.get(1), data),
+                // A narrow push carries its bias: `OpPushByte(vector, min, val)`.
+                3 => fold_narrow_field(setter, &args.get(1), &args.get(2), data),
+                _ => None,
             };
             let Some(field) = field else {
                 return Err(
@@ -217,11 +275,17 @@ pub(crate) fn extract_literal_values(
         let Value::Int(offset) = args.get(1).to_owned_value() else {
             return Err("an element field written at a computed offset".to_string());
         };
-        let Some(field) = fold_const_field(&name, &args.get(2), data) else {
+        // A narrow setter carries its bias before the value: `(record, offset, min, val)`.
+        let field = if args.len() == 4 {
+            fold_narrow_field(&name, &args.get(2), &args.get(3), data)
+        } else {
+            fold_const_field(&name, &args.get(2), data)
+        };
+        let Some(field) = field else {
             // Two shapes reach here and one message covers both, because the cure is the
             // same: a value the fold cannot reduce (a call, a field read), and a field
             // whose kind the store cannot be handed through this operator (a reference,
-            // an enum payload, a narrow biased integer).
+            // an enum payload, a nullable narrow integer).
             return Err(
                 "an element value that is only known at run time, or a field of a kind a \
                  constant cannot hold"
@@ -344,6 +408,22 @@ pub fn build_const_vectors(
                         let store = stores.store_mut(&rec);
                         let s_pos = store.set_str(v);
                         store.set_u32_raw(rec.rec, at, s_pos);
+                    }
+                    ConstField::Narrow {
+                        size,
+                        min,
+                        nullable,
+                        v,
+                    } => {
+                        // `fold_narrow_field` admitted only a value inside the width, and a
+                        // null only for a nullable element; `i32::MIN` is the setters' null.
+                        let v = v.map_or(i32::MIN, |v| i32::try_from(v).unwrap_or(i32::MIN));
+                        let store = stores.store_mut(&rec);
+                        match (size, nullable) {
+                            (1, _) => store.set_byte(rec.rec, at, *min, v),
+                            (_, false) => store.set_i16_raw(rec.rec, at, *min, v),
+                            (_, true) => store.set_short(rec.rec, at, *min, v),
+                        };
                     }
                 }
             }

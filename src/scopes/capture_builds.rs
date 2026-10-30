@@ -879,7 +879,10 @@ fn bind_views_root(function: &Function, v: u16, rhs: &Value, root: u16) -> bool 
     // `@FR-N-Shape` — through `base()`, because "is this destination a `&` LINK" is a shape
     // question and a `&τ?` links exactly as its dense twin does.
     let dest = function.tp(v).base();
+    // A view the scope pass MATERIALISES owns its copy: a capture of it names that copy, not
+    // the container it was bound from (loft#2245).
     root != v
+        && !function.materialised_views.contains(&v)
         && !function.is_argument(root)
         && (!rhs_is_a_bare_local_read(rhs) || matches!(dest, Type::RefVar(_)))
 }

@@ -10835,43 +10835,6 @@ fn main() {
         } else {
             html_path.clone()
         };
-        // @PLN203 C6 — through the C: the program's wasm32-wasi module in a page that hosts it.
-        if native_c {
-            let ann =
-                test_runner::parse_annotations(&fa::read_to_string(&abs_file).unwrap_or_default());
-            let expected = |name: &str| ann.expected_failure(name);
-            let c = match loft::c::emit_program(&p.data, &state.database, &expected) {
-                Ok(c) => c,
-                Err(r) => {
-                    eprintln!("loft: the C backend does not carry this program yet: {r}");
-                    std::process::exit(2);
-                }
-            };
-            let shim_sources: Vec<String> = p
-                .data
-                .c_libraries
-                .iter()
-                .flat_map(|l| l.shim.iter().cloned())
-                .collect();
-            let wasm = platform::build_scratch_dir("html-c").join("prog.wasm");
-            if let Err(e) = c_driver::build_wasm(&c, &wasm, &shim_sources, ship_build, true) {
-                eprintln!("loft: {e}");
-                std::process::exit(1);
-            }
-            let bytes = fa::read(&wasm).unwrap_or_default();
-            let title = fa::file_stem(&abs_file).unwrap_or_else(|| "loft".to_string());
-            let page = c_driver::html_page(&title, &bytes);
-            if let Err(e) = fa::write(&html_path, &page) {
-                eprintln!("loft: cannot write {html_path}: {e}");
-                std::process::exit(1);
-            }
-            println!(
-                "wrote {html_path} ({} KB, WASM {} KB)",
-                page.len() / 1024,
-                bytes.len() / 1024
-            );
-            return;
-        }
         // @PLN146 F5 — the fonts this page has to carry, decided BEFORE the build:
         // a manifest that cannot produce a working page should not cost a wasm
         // compile first.  Two sources, because a main script's own package is never
@@ -10964,401 +10927,428 @@ fn main() {
         // keeps concurrent `loft --html` runs (nextest, a parallel page build)
         // from racing on the old shared scratch/loft_html.{rs,wasm}.
         let build_dir = platform::build_scratch_dir("html");
-        let rs_path = build_dir.join("prog.rs");
-        let (wasm_shim_objects, wasm_shim_failed) = wasm_shim_objects_or_exit(&p.data, "--html");
-        // @PLN117 — does this program actually run anything in parallel?  Set
-        // from the emitted reachable set below; it is what decides whether the
-        // page carries loft's thread pool.
-        let uses_par;
-        {
-            let mut f = match fa::create(&rs_path) {
-                Ok(f) => f,
-                Err(e) => {
-                    eprintln!("loft: cannot write source to '{}': {e}", rs_path.display());
-                    std::process::exit(1);
+        // @PLN203 C6 — the module the C writes (a wasm32-wasi build of the browser unit), or the
+        // one rustc builds from the Rust writer's; asyncify and the page are the same for both.
+        let (wasm_path, threaded) = if native_c {
+            let c = match loft::c::emit_browser_program(&p.data, &state.database) {
+                Ok(c) => c,
+                Err(r) => {
+                    eprintln!("loft: the C backend does not carry this program yet: {r}");
+                    std::process::exit(2);
                 }
             };
-            // @P379 — qualify native symbols for functions whose name
-            // collides across libraries (no-op without a collision; calls
-            // resolve by d_nr so the renamed def stays consistent).
-            p.data.namespace_colliding_native_fns();
-            let mut out = generation::Output::new(&p.data, &state.database);
-            out.wasm_browser = true;
-            // The shim route, as for `--native-wasm`.
-            for (pkg, _) in &wasm_shim_objects {
-                out.wasm_shim_pkgs.push(pkg.clone());
-            }
-            out.wasm_shim_failed.clone_from(&wasm_shim_failed);
-            // @PLN98 P3.4 — a browser client is debug-OFF by default (a production
-            // client should not ship a live-flip / breakpoint channel): the live
-            // tier is opt-IN via `--debug[=name]`.  `--lean` also forces it off.
-            // The debug name is baked so the client can announce itself to the
-            // server, which then addresses debug frames to it over the relay.
-            out.emit_live = debug_name.is_some() && !lean;
-            // @PLN157 — frame NAMING is a separate question from the live tier, and
-            // on this path they diverge: a production client is debug-OFF by default,
-            // so `emit_live` is false without `--lean` ever being passed.  Keying the
-            // nameless push off `!emit_live` stripped loft frame names from every
-            // browser panic (`html_panic_names_itself_and_its_loft_frames`).
-            out.lean = lean;
-            out.debug_name.clone_from(&debug_name);
-            // loft#954 — `--names` promises that a trap's frames resolve to loft
-            // function names, which needs BOTH halves: the wasm name section (kept by
-            // the wasm-opt flags below) and a function left to name.
-            out.keep_fn_names = html_names;
-            // Embed the program source so the debug client bootstraps the parked
-            // interpreter from BYTES (no filesystem in a browser) — see P3.1.
-            if out.emit_live {
-                out.program_src = fa::read_to_string(&abs_file).ok();
-            }
-            let main_nr = p.data.def_nr("n_main");
-            let entry_defs: Vec<u32> = if main_nr < end_def {
-                vec![main_nr]
-            } else {
-                (start_def..end_def).collect()
-            };
-            if let Err(e) = out.output_native_reachable(&mut f, start_def, end_def, &entry_defs) {
-                eprintln!("loft: html code generation failed: {e}");
+            let shim_sources: Vec<String> = p
+                .data
+                .c_libraries
+                .iter()
+                .flat_map(|l| l.shim.iter().cloned())
+                .collect();
+            let wasm = build_dir.join("prog.wasm");
+            if let Err(e) = c_driver::build_wasm(&c, &wasm, &shim_sources, ship_build, true) {
+                eprintln!("loft: {e}");
                 std::process::exit(1);
             }
-            uses_par = out.uses_parallel();
-        }
-        // @PLN100 Slice 1 — build (on stale/missing) + locate loft's own wasm
-        // runtime rlib in the ISOLATED `--html` shape dir (`target/loft/html/`), so
-        // a wasm-bindgen `make wasm` build can't stomp it and no manual `make` step
-        // is needed.  Computed once and reused for both the main link and each wasm
-        // bridge crate (they must link the SAME loft copy).
-        //
-        // @PLN117 (@C3) — a program that uses `par` gets the THREADED shape, whose
-        // rlib is compiled together with an atomics std so `par` can run on Web
-        // Workers.  `--threads` / `--no-threads` override the choice.  Threading
-        // needs a nightly toolchain (only `-Z build-std` produces that std); when
-        // it isn't there we say so and fall back to the single-threaded shape
-        // rather than refusing to build a page at all — `par` then runs
-        // sequentially, which is exactly what a non-isolated host does anyway.
-        let want_threads = html_threads.unwrap_or(uses_par);
-        let (html_runtime_dir, threaded) = {
-            let shape = if want_threads {
-                native_utils::WasmRuntimeShape::HtmlThreads
-            } else {
-                native_utils::WasmRuntimeShape::Html
-            };
-            match native_utils::ensure_loft_runtime_rlib(shape) {
-                Some(dir) => (Some(dir), want_threads),
-                None if want_threads => {
-                    eprintln!(
-                        "loft: --html: could not build the THREADED browser runtime — this page \
-                         will run `par` sequentially on the main thread.\n{}",
-                        native_utils::ATOMICS_STD_TOOLCHAIN_HINT
-                    );
-                    (
-                        native_utils::ensure_loft_runtime_rlib(
-                            native_utils::WasmRuntimeShape::Html,
-                        ),
-                        false,
-                    )
-                }
-                None => (None, false),
-            }
-        };
-        // The atomics std lives beside that rlib; this hands it to `rustc` as a
-        // sysroot.  Missing it is a link error, never a quietly unthreaded page.
-        let atomics_sysroot = threaded
-            .then(|| {
-                html_runtime_dir
-                    .as_deref()
-                    .and_then(native_utils::ensure_atomics_sysroot)
-            })
-            .flatten();
-        // Compile to wasm32-unknown-unknown cdylib
-        let wasm_path = build_dir.join("prog.wasm");
-        // @PLN117 — an rlib only links with the rustc that built it, and the
-        // threaded runtime + its atomics std come from nightly (only `-Z
-        // build-std` can produce that std).  So the link runs on nightly too.
-        let mut cmd = native_utils::wasm_rustc(atomics_sysroot.as_deref());
-        cmd.push_arg("--edition=2024")
-            .push_arg("--target")
-            .push_arg("wasm32-unknown-unknown")
-            .push_arg("--crate-type")
-            .push_arg("cdylib");
-        // A shipped page is fully optimised (`src/native_release_args.txt`) and keeps its
-        // named frames: the panic hook's frame block is a pinned contract.
-        if ship_build {
-            cmd.push_args(loft::cache::release_rustc_args());
+            (wasm, false)
         } else {
-            cmd.push_arg("-O");
-        }
-        cmd.push_arg("-o").push_arg(&wasm_path).push_arg(&rs_path);
-        if let Some(lib_dir) = html_runtime_dir.clone() {
-            cmd.push_args(loft::native_lib::loft_extern_args(
-                &lib_dir.join("libloft.rlib"),
-            ));
-            for d in native_utils::dep_search_dirs(&lib_dir) {
-                cmd.push_arg("-L")
-                    .push_arg(format!("dependency={}", d.display()));
-            }
-            // W1.1 env fix: libloft.rlib depends on wasm-bindgen, which pulls
-            // in the proc-macro crate wasm_bindgen_macro.  Proc-macros are
-            // always built for the host (never for wasm32), so rustc needs
-            // the *host* deps directory on its search path in addition to
-            // the target deps dir.  Without this, compilation fails with:
-            //   error[E0463]: can't find crate for `wasm_bindgen_macro`
-            // and subsequent errors cascade (every `use loft::...` fails,
-            // so `cr_call_push` is reported unfound as a collateral).
-            if let Some(host_lib_dir) = loft_lib_dir_for(None) {
-                for d in native_utils::dep_search_dirs(&host_lib_dir) {
-                    if fa::is_dir(&d) {
-                        cmd.push_arg("-L")
-                            .push_arg(format!("dependency={}", d.display()));
+            let rs_path = build_dir.join("prog.rs");
+            let (wasm_shim_objects, wasm_shim_failed) =
+                wasm_shim_objects_or_exit(&p.data, "--html");
+            // @PLN117 — does this program actually run anything in parallel?  Set
+            // from the emitted reachable set below; it is what decides whether the
+            // page carries loft's thread pool.
+            let uses_par;
+            {
+                let mut f = match fa::create(&rs_path) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        eprintln!("loft: cannot write source to '{}': {e}", rs_path.display());
+                        std::process::exit(1);
                     }
+                };
+                // @P379 — qualify native symbols for functions whose name
+                // collides across libraries (no-op without a collision; calls
+                // resolve by d_nr so the renamed def stays consistent).
+                p.data.namespace_colliding_native_fns();
+                let mut out = generation::Output::new(&p.data, &state.database);
+                out.wasm_browser = true;
+                // The shim route, as for `--native-wasm`.
+                for (pkg, _) in &wasm_shim_objects {
+                    out.wasm_shim_pkgs.push(pkg.clone());
                 }
+                out.wasm_shim_failed.clone_from(&wasm_shim_failed);
+                // @PLN98 P3.4 — a browser client is debug-OFF by default (a production
+                // client should not ship a live-flip / breakpoint channel): the live
+                // tier is opt-IN via `--debug[=name]`.  `--lean` also forces it off.
+                // The debug name is baked so the client can announce itself to the
+                // server, which then addresses debug frames to it over the relay.
+                out.emit_live = debug_name.is_some() && !lean;
+                // @PLN157 — frame NAMING is a separate question from the live tier, and
+                // on this path they diverge: a production client is debug-OFF by default,
+                // so `emit_live` is false without `--lean` ever being passed.  Keying the
+                // nameless push off `!emit_live` stripped loft frame names from every
+                // browser panic (`html_panic_names_itself_and_its_loft_frames`).
+                out.lean = lean;
+                out.debug_name.clone_from(&debug_name);
+                // loft#954 — `--names` promises that a trap's frames resolve to loft
+                // function names, which needs BOTH halves: the wasm name section (kept by
+                // the wasm-opt flags below) and a function left to name.
+                out.keep_fn_names = html_names;
+                // Embed the program source so the debug client bootstraps the parked
+                // interpreter from BYTES (no filesystem in a browser) — see P3.1.
+                if out.emit_live {
+                    out.program_src = fa::read_to_string(&abs_file).ok();
+                }
+                let main_nr = p.data.def_nr("n_main");
+                let entry_defs: Vec<u32> = if main_nr < end_def {
+                    vec![main_nr]
+                } else {
+                    (start_def..end_def).collect()
+                };
+                if let Err(e) = out.output_native_reachable(&mut f, start_def, end_def, &entry_defs)
+                {
+                    eprintln!("loft: html code generation failed: {e}");
+                    std::process::exit(1);
+                }
+                uses_par = out.uses_parallel();
             }
-        }
-        // lib_plan-29 W1c (2026-05-29): link each used library's wasm
-        // bridge crate (declared via `[wasm.bridge]` in `loft.toml`).
-        //
-        // Build via rustc directly, not `cargo build`: cargo would
-        // produce a SECOND copy of `loft` (with a different
-        // StableCrateId than the `--html` runtime rlib in
-        // `html_runtime_dir` that the standalone-binary `--extern
-        // loft=…` references), and rustc
-        // would refuse with "expected DbRef, found DbRef" (two distinct
-        // types from two builds of the same source).  By invoking
-        // rustc with the SAME `--extern loft=…` + deps search path
-        // the standalone build uses, the bridge rlib links against
-        // exactly one copy of loft — eliminating the dup.
-        let loft_wasm_lib_dir = html_runtime_dir;
-        for (bridge_crate, pkg_dir) in &p.data.wasm_bridge_packages {
-            let wasm_dir = std::path::PathBuf::from(pkg_dir).join("wasm");
-            let bridge_src = wasm_dir.join("src/lib.rs");
-            if !fa::exists(&bridge_src) {
-                eprintln!(
-                    "loft: --html: [wasm.bridge] declared `crate = \"{bridge_crate}\"` \
-                     but {} is missing — skipping bridge link",
-                    bridge_src.display()
-                );
-                continue;
-            }
-            let crate_ident = bridge_crate.replace('-', "_");
-            let bridge_rlib = build_dir.join(format!("lib{crate_ident}.rlib"));
-            // Build-extension (@PLN84 ZT-B): when the bridge crate declares Cargo
-            // dependencies beyond `loft` (the vetted dalek/RustCrypto stack the SHARED
-            // ed25519/x25519/aes modules use), build those deps for wasm32 to produce
-            // their rlibs.  Each DIRECT dep is `--extern`'d on the bridge rustc compile
-            // (the `use <crate>` extern-prelude entry — `-L` alone resolves only
-            // TRANSITIVE deps), and the deps dir is `-L`'d on both the bridge compile
-            // and the main wasm link (transitive symbols).  We consume ONLY the
-            // dependency rlibs — the bridge itself is rustc-compiled below against the
-            // SHARED prebuilt loft (no duplicate loft), and these deps are
-            // loft-independent, so no "two copies of loft" (`expected DbRef, found
-            // DbRef`) error arises.
+            // @PLN100 Slice 1 — build (on stale/missing) + locate loft's own wasm
+            // runtime rlib in the ISOLATED `--html` shape dir (`target/loft/html/`), so
+            // a wasm-bindgen `make wasm` build can't stomp it and no manual `make` step
+            // is needed.  Computed once and reused for both the main link and each wasm
+            // bridge crate (they must link the SAME loft copy).
             //
-            // #446: we deliberately do NOT `cargo build` the bridge's own
-            // `wasm/Cargo.toml`.  It carries a `loft = { path = "../../../loft" }` dep
-            // that resolves only in a dev checkout — NOT for a registry-installed
-            // package, where the relative path points at the nonexistent `~/.loft/loft`
-            // and cargo aborts before building any dep.  That `loft` dep is pure
-            // redundancy here: the bridge links the SHARED prebuilt loft via `--extern`
-            // (below), never through this manifest.  So we synthesize a throwaway
-            // deps-only crate whose `[dependencies]` are exactly the bridge's non-`loft`
-            // deps and build THAT: cargo compiles every declared dep (even though the
-            // empty lib uses none), producing the identical wasm32 rlibs without ever
-            // resolving the manifest's `loft` path dep.
-            let wasm_cargo = wasm_dir.join("Cargo.toml");
-            // Every non-`loft` [dependencies] entry as (crate_ident, full TOML line).
-            let nonloft_deps: Vec<(String, String)> = fa::read_to_string(&wasm_cargo)
-                .map(|text| bridge_nonloft_deps(&text))
-                .unwrap_or_default();
-            let nonloft_idents: Vec<String> = nonloft_deps
-                .iter()
-                .map(|(ident, _)| ident.clone())
-                .collect();
-            let mut bridge_dep_search: Option<std::path::PathBuf> = None;
-            let mut bridge_externs: Vec<(String, std::path::PathBuf)> = Vec::new();
-            if !nonloft_deps.is_empty() {
-                // Stage the deps-only crate under a per-bridge temp dir, then build it.
-                let synth_dir = build_dir.join(format!("bridge_deps_{crate_ident}"));
-                let synth_src = synth_dir.join("src");
-                let manifest = synth_bridge_deps_manifest(&nonloft_deps);
-                let staged = fa::create_dir_all(&synth_src).is_ok()
-                    && fa::write(synth_dir.join("Cargo.toml"), &manifest).is_ok()
-                    && fa::write(synth_src.join("lib.rs"), "").is_ok();
-                if !staged {
-                    eprintln!(
-                        "loft: --html: failed to stage wasm-bridge dependency build for {bridge_crate}"
-                    );
-                    std::process::exit(1);
-                }
-                // loft#1238 — nothing here asks whether the deps are already built: the
-                // staleness question is delegated wholesale to cargo, which is correct (it is
-                // the tool that knows) but means the cost is invisible from loft's side.  Name
-                // it in the report so a slow `--html` says which bridge is paying.
-                let mut dep_build = Spawn::new(Program::search("cargo"));
-                dep_build
-                    .push_arg("build")
-                    .push_arg("--release")
-                    .push_arg("--target")
-                    .push_arg("wasm32-unknown-unknown")
-                    .push_arg("--manifest-path")
-                    .push_arg(synth_dir.join("Cargo.toml"));
-                let cargo_ok = loft::platform::timing_exec(
-                    "cargo",
-                    &format!("bridge deps ({crate_ident})"),
-                    "no staleness check here — cargo decides what to rebuild",
-                    || dep_build.status(),
-                )
-                .map(|s| s.success())
-                .unwrap_or(false);
-                if !cargo_ok {
-                    eprintln!(
-                        "loft: --html: failed to cargo-build wasm-bridge dependencies for {bridge_crate}"
-                    );
-                    std::process::exit(1);
-                }
-                let deps = synth_dir.join("target/wasm32-unknown-unknown/release/deps");
-                if fa::is_dir(&deps) {
-                    // Resolve each DIRECT dep to its `lib<ident>-<hash>.rlib` for `--extern`.
-                    let files: Vec<String> = fa::read_dir(&deps)
-                        .map(|rd| {
-                            rd.iter()
-                                .filter_map(|e| e.file_name().map(str::to_string))
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    for ident in &nonloft_idents {
-                        let prefix = format!("lib{ident}-");
-                        if let Some(f) = files.iter().find(|f| {
-                            f.starts_with(&prefix)
-                                && fa::extension(std::path::Path::new(f.as_str()))
-                                    .is_some_and(|ext| ext.eq_ignore_ascii_case("rlib"))
-                        }) {
-                            bridge_externs.push((ident.clone(), deps.join(f)));
-                        }
+            // @PLN117 (@C3) — a program that uses `par` gets the THREADED shape, whose
+            // rlib is compiled together with an atomics std so `par` can run on Web
+            // Workers.  `--threads` / `--no-threads` override the choice.  Threading
+            // needs a nightly toolchain (only `-Z build-std` produces that std); when
+            // it isn't there we say so and fall back to the single-threaded shape
+            // rather than refusing to build a page at all — `par` then runs
+            // sequentially, which is exactly what a non-isolated host does anyway.
+            let want_threads = html_threads.unwrap_or(uses_par);
+            let (html_runtime_dir, threaded) = {
+                let shape = if want_threads {
+                    native_utils::WasmRuntimeShape::HtmlThreads
+                } else {
+                    native_utils::WasmRuntimeShape::Html
+                };
+                match native_utils::ensure_loft_runtime_rlib(shape) {
+                    Some(dir) => (Some(dir), want_threads),
+                    None if want_threads => {
+                        eprintln!(
+                            "loft: --html: could not build the THREADED browser runtime — this page \
+                             will run `par` sequentially on the main thread.\n{}",
+                            native_utils::ATOMICS_STD_TOOLCHAIN_HINT
+                        );
+                        (
+                            native_utils::ensure_loft_runtime_rlib(
+                                native_utils::WasmRuntimeShape::Html,
+                            ),
+                            false,
+                        )
                     }
-                    bridge_dep_search = Some(deps);
+                    None => (None, false),
                 }
-            }
-            // @PLN117 — a bridge links into the same wasm as loft's runtime, so it
-            // gets the same compiler and the same std: an atomics rlib and a
-            // non-atomics one do not link together.
-            let mut build = native_utils::wasm_rustc(atomics_sysroot.as_deref());
-            build
-                .push_arg("--edition=2024")
+            };
+            // The atomics std lives beside that rlib; this hands it to `rustc` as a
+            // sysroot.  Missing it is a link error, never a quietly unthreaded page.
+            let atomics_sysroot = threaded
+                .then(|| {
+                    html_runtime_dir
+                        .as_deref()
+                        .and_then(native_utils::ensure_atomics_sysroot)
+                })
+                .flatten();
+            // Compile to wasm32-unknown-unknown cdylib
+            let wasm_path = build_dir.join("prog.wasm");
+            // @PLN117 — an rlib only links with the rustc that built it, and the
+            // threaded runtime + its atomics std come from nightly (only `-Z
+            // build-std` can produce that std).  So the link runs on nightly too.
+            let mut cmd = native_utils::wasm_rustc(atomics_sysroot.as_deref());
+            cmd.push_arg("--edition=2024")
                 .push_arg("--target")
                 .push_arg("wasm32-unknown-unknown")
                 .push_arg("--crate-type")
-                .push_arg("rlib")
-                .push_arg("--crate-name")
-                .push_arg(&crate_ident);
+                .push_arg("cdylib");
+            // A shipped page is fully optimised (`src/native_release_args.txt`) and keeps its
+            // named frames: the panic hook's frame block is a pinned contract.
             if ship_build {
-                build.push_args(loft::cache::release_rustc_args());
+                cmd.push_args(loft::cache::release_rustc_args());
             } else {
-                build.push_arg("-O");
+                cmd.push_arg("-O");
             }
-            build
-                .push_arg("-o")
-                .push_arg(&bridge_rlib)
-                .push_arg(&bridge_src);
-            if let Some(ref lib_dir) = loft_wasm_lib_dir {
-                build.push_args(loft::native_lib::loft_extern_args(
+            cmd.push_arg("-o").push_arg(&wasm_path).push_arg(&rs_path);
+            if let Some(lib_dir) = html_runtime_dir.clone() {
+                cmd.push_args(loft::native_lib::loft_extern_args(
                     &lib_dir.join("libloft.rlib"),
                 ));
-                for d in native_utils::dep_search_dirs(lib_dir) {
-                    if fa::is_dir(&d) {
-                        build
-                            .push_arg("-L")
-                            .push_arg(format!("dependency={}", d.display()));
-                    }
+                for d in native_utils::dep_search_dirs(&lib_dir) {
+                    cmd.push_arg("-L")
+                        .push_arg(format!("dependency={}", d.display()));
                 }
+                // W1.1 env fix: libloft.rlib depends on wasm-bindgen, which pulls
+                // in the proc-macro crate wasm_bindgen_macro.  Proc-macros are
+                // always built for the host (never for wasm32), so rustc needs
+                // the *host* deps directory on its search path in addition to
+                // the target deps dir.  Without this, compilation fails with:
+                //   error[E0463]: can't find crate for `wasm_bindgen_macro`
+                // and subsequent errors cascade (every `use loft::...` fails,
+                // so `cr_call_push` is reported unfound as a collateral).
                 if let Some(host_lib_dir) = loft_lib_dir_for(None) {
                     for d in native_utils::dep_search_dirs(&host_lib_dir) {
+                        if fa::is_dir(&d) {
+                            cmd.push_arg("-L")
+                                .push_arg(format!("dependency={}", d.display()));
+                        }
+                    }
+                }
+            }
+            // lib_plan-29 W1c (2026-05-29): link each used library's wasm
+            // bridge crate (declared via `[wasm.bridge]` in `loft.toml`).
+            //
+            // Build via rustc directly, not `cargo build`: cargo would
+            // produce a SECOND copy of `loft` (with a different
+            // StableCrateId than the `--html` runtime rlib in
+            // `html_runtime_dir` that the standalone-binary `--extern
+            // loft=…` references), and rustc
+            // would refuse with "expected DbRef, found DbRef" (two distinct
+            // types from two builds of the same source).  By invoking
+            // rustc with the SAME `--extern loft=…` + deps search path
+            // the standalone build uses, the bridge rlib links against
+            // exactly one copy of loft — eliminating the dup.
+            let loft_wasm_lib_dir = html_runtime_dir;
+            for (bridge_crate, pkg_dir) in &p.data.wasm_bridge_packages {
+                let wasm_dir = std::path::PathBuf::from(pkg_dir).join("wasm");
+                let bridge_src = wasm_dir.join("src/lib.rs");
+                if !fa::exists(&bridge_src) {
+                    eprintln!(
+                        "loft: --html: [wasm.bridge] declared `crate = \"{bridge_crate}\"` \
+                         but {} is missing — skipping bridge link",
+                        bridge_src.display()
+                    );
+                    continue;
+                }
+                let crate_ident = bridge_crate.replace('-', "_");
+                let bridge_rlib = build_dir.join(format!("lib{crate_ident}.rlib"));
+                // Build-extension (@PLN84 ZT-B): when the bridge crate declares Cargo
+                // dependencies beyond `loft` (the vetted dalek/RustCrypto stack the SHARED
+                // ed25519/x25519/aes modules use), build those deps for wasm32 to produce
+                // their rlibs.  Each DIRECT dep is `--extern`'d on the bridge rustc compile
+                // (the `use <crate>` extern-prelude entry — `-L` alone resolves only
+                // TRANSITIVE deps), and the deps dir is `-L`'d on both the bridge compile
+                // and the main wasm link (transitive symbols).  We consume ONLY the
+                // dependency rlibs — the bridge itself is rustc-compiled below against the
+                // SHARED prebuilt loft (no duplicate loft), and these deps are
+                // loft-independent, so no "two copies of loft" (`expected DbRef, found
+                // DbRef`) error arises.
+                //
+                // #446: we deliberately do NOT `cargo build` the bridge's own
+                // `wasm/Cargo.toml`.  It carries a `loft = { path = "../../../loft" }` dep
+                // that resolves only in a dev checkout — NOT for a registry-installed
+                // package, where the relative path points at the nonexistent `~/.loft/loft`
+                // and cargo aborts before building any dep.  That `loft` dep is pure
+                // redundancy here: the bridge links the SHARED prebuilt loft via `--extern`
+                // (below), never through this manifest.  So we synthesize a throwaway
+                // deps-only crate whose `[dependencies]` are exactly the bridge's non-`loft`
+                // deps and build THAT: cargo compiles every declared dep (even though the
+                // empty lib uses none), producing the identical wasm32 rlibs without ever
+                // resolving the manifest's `loft` path dep.
+                let wasm_cargo = wasm_dir.join("Cargo.toml");
+                // Every non-`loft` [dependencies] entry as (crate_ident, full TOML line).
+                let nonloft_deps: Vec<(String, String)> = fa::read_to_string(&wasm_cargo)
+                    .map(|text| bridge_nonloft_deps(&text))
+                    .unwrap_or_default();
+                let nonloft_idents: Vec<String> = nonloft_deps
+                    .iter()
+                    .map(|(ident, _)| ident.clone())
+                    .collect();
+                let mut bridge_dep_search: Option<std::path::PathBuf> = None;
+                let mut bridge_externs: Vec<(String, std::path::PathBuf)> = Vec::new();
+                if !nonloft_deps.is_empty() {
+                    // Stage the deps-only crate under a per-bridge temp dir, then build it.
+                    let synth_dir = build_dir.join(format!("bridge_deps_{crate_ident}"));
+                    let synth_src = synth_dir.join("src");
+                    let manifest = synth_bridge_deps_manifest(&nonloft_deps);
+                    let staged = fa::create_dir_all(&synth_src).is_ok()
+                        && fa::write(synth_dir.join("Cargo.toml"), &manifest).is_ok()
+                        && fa::write(synth_src.join("lib.rs"), "").is_ok();
+                    if !staged {
+                        eprintln!(
+                            "loft: --html: failed to stage wasm-bridge dependency build for {bridge_crate}"
+                        );
+                        std::process::exit(1);
+                    }
+                    // loft#1238 — nothing here asks whether the deps are already built: the
+                    // staleness question is delegated wholesale to cargo, which is correct (it is
+                    // the tool that knows) but means the cost is invisible from loft's side.  Name
+                    // it in the report so a slow `--html` says which bridge is paying.
+                    let mut dep_build = Spawn::new(Program::search("cargo"));
+                    dep_build
+                        .push_arg("build")
+                        .push_arg("--release")
+                        .push_arg("--target")
+                        .push_arg("wasm32-unknown-unknown")
+                        .push_arg("--manifest-path")
+                        .push_arg(synth_dir.join("Cargo.toml"));
+                    let cargo_ok = loft::platform::timing_exec(
+                        "cargo",
+                        &format!("bridge deps ({crate_ident})"),
+                        "no staleness check here — cargo decides what to rebuild",
+                        || dep_build.status(),
+                    )
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+                    if !cargo_ok {
+                        eprintln!(
+                            "loft: --html: failed to cargo-build wasm-bridge dependencies for {bridge_crate}"
+                        );
+                        std::process::exit(1);
+                    }
+                    let deps = synth_dir.join("target/wasm32-unknown-unknown/release/deps");
+                    if fa::is_dir(&deps) {
+                        // Resolve each DIRECT dep to its `lib<ident>-<hash>.rlib` for `--extern`.
+                        let files: Vec<String> = fa::read_dir(&deps)
+                            .map(|rd| {
+                                rd.iter()
+                                    .filter_map(|e| e.file_name().map(str::to_string))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        for ident in &nonloft_idents {
+                            let prefix = format!("lib{ident}-");
+                            if let Some(f) = files.iter().find(|f| {
+                                f.starts_with(&prefix)
+                                    && fa::extension(std::path::Path::new(f.as_str()))
+                                        .is_some_and(|ext| ext.eq_ignore_ascii_case("rlib"))
+                            }) {
+                                bridge_externs.push((ident.clone(), deps.join(f)));
+                            }
+                        }
+                        bridge_dep_search = Some(deps);
+                    }
+                }
+                // @PLN117 — a bridge links into the same wasm as loft's runtime, so it
+                // gets the same compiler and the same std: an atomics rlib and a
+                // non-atomics one do not link together.
+                let mut build = native_utils::wasm_rustc(atomics_sysroot.as_deref());
+                build
+                    .push_arg("--edition=2024")
+                    .push_arg("--target")
+                    .push_arg("wasm32-unknown-unknown")
+                    .push_arg("--crate-type")
+                    .push_arg("rlib")
+                    .push_arg("--crate-name")
+                    .push_arg(&crate_ident);
+                if ship_build {
+                    build.push_args(loft::cache::release_rustc_args());
+                } else {
+                    build.push_arg("-O");
+                }
+                build
+                    .push_arg("-o")
+                    .push_arg(&bridge_rlib)
+                    .push_arg(&bridge_src);
+                if let Some(ref lib_dir) = loft_wasm_lib_dir {
+                    build.push_args(loft::native_lib::loft_extern_args(
+                        &lib_dir.join("libloft.rlib"),
+                    ));
+                    for d in native_utils::dep_search_dirs(lib_dir) {
                         if fa::is_dir(&d) {
                             build
                                 .push_arg("-L")
                                 .push_arg(format!("dependency={}", d.display()));
                         }
                     }
+                    if let Some(host_lib_dir) = loft_lib_dir_for(None) {
+                        for d in native_utils::dep_search_dirs(&host_lib_dir) {
+                            if fa::is_dir(&d) {
+                                build
+                                    .push_arg("-L")
+                                    .push_arg(format!("dependency={}", d.display()));
+                            }
+                        }
+                    }
+                }
+                // Build-extension: the bridge crate's own Cargo deps (dalek/RustCrypto).
+                // `--extern` each DIRECT dep (the `use <crate>` extern-prelude entry), then
+                // `-L` the deps dir for their transitive deps.
+                for (ident, rlib) in &bridge_externs {
+                    build
+                        .push_arg("--extern")
+                        .push_arg(format!("{ident}={}", rlib.display()));
+                }
+                if let Some(ref deps) = bridge_dep_search {
+                    build
+                        .push_arg("-L")
+                        .push_arg(format!("dependency={}", deps.display()));
+                }
+                let status = build.status();
+                if !matches!(status, Ok(s) if s.success()) {
+                    eprintln!(
+                        "loft: --html: failed to compile wasm bridge crate {} from {}",
+                        bridge_crate,
+                        bridge_src.display()
+                    );
+                    std::process::exit(1);
+                }
+                cmd.push_arg("--extern")
+                    .push_arg(format!("{crate_ident}={}", bridge_rlib.display()));
+                // Build-extension: link the bridge crate's Cargo deps into the main wasm.
+                if let Some(ref deps) = bridge_dep_search {
+                    cmd.push_arg("-L")
+                        .push_arg(format!("dependency={}", deps.display()));
                 }
             }
-            // Build-extension: the bridge crate's own Cargo deps (dalek/RustCrypto).
-            // `--extern` each DIRECT dep (the `use <crate>` extern-prelude entry), then
-            // `-L` the deps dir for their transitive deps.
-            for (ident, rlib) in &bridge_externs {
-                build
-                    .push_arg("--extern")
-                    .push_arg(format!("{ident}={}", rlib.display()));
+            for (_, objs) in &wasm_shim_objects {
+                for o in objs {
+                    cmd.push_arg("-C")
+                        .push_arg(format!("link-arg={}", o.display()));
+                }
             }
-            if let Some(ref deps) = bridge_dep_search {
-                build
-                    .push_arg("-L")
-                    .push_arg(format!("dependency={}", deps.display()));
-            }
-            let status = build.status();
-            if !matches!(status, Ok(s) if s.success()) {
+            let status = cmd.status();
+            if std::env::var("LOFT_KEEP_NATIVE_RS").is_err() {
+                let _ = fa::remove_file(&rs_path);
+            } else {
                 eprintln!(
-                    "loft: --html: failed to compile wasm bridge crate {} from {}",
-                    bridge_crate,
-                    bridge_src.display()
+                    "loft: browser-wasm source preserved at {} (LOFT_KEEP_NATIVE_RS)",
+                    rs_path.display()
                 );
-                std::process::exit(1);
             }
-            cmd.push_arg("--extern")
-                .push_arg(format!("{crate_ident}={}", bridge_rlib.display()));
-            // Build-extension: link the bridge crate's Cargo deps into the main wasm.
-            if let Some(ref deps) = bridge_dep_search {
-                cmd.push_arg("-L")
-                    .push_arg(format!("dependency={}", deps.display()));
+            match status {
+                Ok(s) if s.success() => {}
+                Ok(_) => {
+                    // loft#678 — rustc has just printed errors against `prog.rs`, a file the
+                    // consumer never wrote. Unattributed, that reads as a fault in their own
+                    // program and sends them auditing loft source that is not the cause. Say
+                    // whose code it is, and name the one shape that actually produces it: a
+                    // builtin whose implementation is absent on this target compiles
+                    // everywhere else and fails only here, as `no method named …` on a
+                    // runtime type (the working-set store loaders did exactly this until
+                    // they were bridged to the browser fetch).
+                    eprintln!(
+                        "loft: browser WASM compilation failed.\n  \
+                         The errors above are against loft-GENERATED Rust (`prog.rs`), not \
+                         your .loft source — a location in it is not a location in your \
+                         program.\n  \
+                         If one reads `no method named …` on a loft runtime type, the \
+                         builtin it names has no implementation on the browser target: the \
+                         same program is expected to build on --native. Re-run with \
+                         LOFT_KEEP_NATIVE_RS=1 to keep `prog.rs` and see the call in \
+                         context, and please report the builtin — a builtin that --native \
+                         accepts and --html cannot is a gap in loft, not in your code."
+                    );
+                    std::process::exit(1);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    eprintln!("loft: rustc not found; install the Rust toolchain to use --html");
+                    std::process::exit(1);
+                }
+                Err(e) => {
+                    eprintln!("loft: failed to launch rustc: {e}");
+                    std::process::exit(1);
+                }
             }
-        }
-        for (_, objs) in &wasm_shim_objects {
-            for o in objs {
-                cmd.push_arg("-C")
-                    .push_arg(format!("link-arg={}", o.display()));
-            }
-        }
-        let status = cmd.status();
-        if std::env::var("LOFT_KEEP_NATIVE_RS").is_err() {
-            let _ = fa::remove_file(&rs_path);
-        } else {
-            eprintln!(
-                "loft: browser-wasm source preserved at {} (LOFT_KEEP_NATIVE_RS)",
-                rs_path.display()
-            );
-        }
-        match status {
-            Ok(s) if s.success() => {}
-            Ok(_) => {
-                // loft#678 — rustc has just printed errors against `prog.rs`, a file the
-                // consumer never wrote. Unattributed, that reads as a fault in their own
-                // program and sends them auditing loft source that is not the cause. Say
-                // whose code it is, and name the one shape that actually produces it: a
-                // builtin whose implementation is absent on this target compiles
-                // everywhere else and fails only here, as `no method named …` on a
-                // runtime type (the working-set store loaders did exactly this until
-                // they were bridged to the browser fetch).
-                eprintln!(
-                    "loft: browser WASM compilation failed.\n  \
-                     The errors above are against loft-GENERATED Rust (`prog.rs`), not \
-                     your .loft source — a location in it is not a location in your \
-                     program.\n  \
-                     If one reads `no method named …` on a loft runtime type, the \
-                     builtin it names has no implementation on the browser target: the \
-                     same program is expected to build on --native. Re-run with \
-                     LOFT_KEEP_NATIVE_RS=1 to keep `prog.rs` and see the call in \
-                     context, and please report the builtin — a builtin that --native \
-                     accepts and --html cannot is a gap in loft, not in your code."
-                );
-                std::process::exit(1);
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                eprintln!("loft: rustc not found; install the Rust toolchain to use --html");
-                std::process::exit(1);
-            }
-            Err(e) => {
-                eprintln!("loft: failed to launch rustc: {e}");
-                std::process::exit(1);
-            }
-        }
+            (wasm_path, threaded)
+        };
         // wasm-opt: optimize size + enable asyncify for frame yield.
         // Asyncify lets loft_gl_swap_buffers suspend the WASM execution
         // so the browser can render the frame via requestAnimationFrame.
@@ -11453,9 +11443,8 @@ fn main() {
                  package) is not installed.\n  \
                  Without it this game page will FREEZE the browser tab \
                  (it locks up and never draws).\n  \
-                 Install it and rebuild before publishing — e.g. `apt \
-                 install binaryen`, or run `make doctor` for the command \
-                 for your system."
+                 Install it and rebuild before publishing: {}.",
+                loft::platform::wasm_opt_cure()
             );
             wasm_path
         };
@@ -11490,7 +11479,15 @@ fn main() {
         // command, not just `make game`.  (The asyncify/wasm-opt footgun is
         // handled by the loud warning above — it's conditional on whether the
         // program frame-yields, so it must not hard-abort compute-only bundles.)
-        if let Err(bad_mods) = html_wasm_import_modules_ok(&wasm_bytes) {
+        // A module the C wrote imports the WASI its libc runs on, which the page supplies
+        // (`doc/loft-wasi.js`); any other module is the stomp this guards.
+        let checked = html_wasm_import_modules_ok(&wasm_bytes).or_else(|mut bad| {
+            if native_c {
+                bad.retain(|m| m != "wasi_snapshot_preview1");
+            }
+            if bad.is_empty() { Ok(()) } else { Err(bad) }
+        });
+        if let Err(bad_mods) = checked {
             eprintln!(
                 "loft: --html produced a BROKEN bundle — the wasm imports \
                  unexpected module(s) {bad_mods:?}.\n  \
@@ -11616,6 +11613,13 @@ fn main() {
             if imports_web && !s.contains("imports.loft_web") {
                 s.push_str("\n/* === loft's web natives: doc/loft-web.js === */\n");
                 s.push_str(include_str!("../doc/loft-web.js"));
+            }
+            // A module the C wrote runs on the WASI libc (@PLN203 C6).
+            if crate::native_utils::html_wasm_import_modules(&wasm_bytes)
+                .is_some_and(|mods| mods.iter().any(|m| m == "wasi_snapshot_preview1"))
+            {
+                s.push_str("\n/* === the WASI layer: doc/loft-wasi.js === */\n");
+                s.push_str(include_str!("../doc/loft-wasi.js"));
             }
             s
         };

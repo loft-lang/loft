@@ -546,11 +546,14 @@ fn native_build_failure_hard_fails_default_and_under_require() {
 }
 
 /// Guards the **main-program** chokepoint of `LOFT_REQUIRE_NATIVE`.  Forces a native
-/// fallback by hiding `rustc` (empty `PATH`) on a cache-bypassed `--native` run; under
-/// the env var that must be a hard error naming the missing toolchain, not a silent
-/// degrade to the interpreter.  On Windows an empty `PATH` hides `rustc` too: a bare name
-/// is searched in the parent's `PATH`, the application directory and the system
-/// directories, and the toolchain proxy lives in none of the last two.
+/// fallback by hiding the toolchain on a cache-bypassed `--native` run; under the env var
+/// that must be a hard error naming the missing toolchain, not a silent degrade to the
+/// interpreter.  The toolchain is `rustc` for the Rust writer and the C compiler for the C
+/// backend, so both are hidden: an empty `PATH` hides `rustc` (on Windows too: a bare name is
+/// searched in the parent's `PATH`, the application directory and the system directories,
+/// and the toolchain proxy lives in none of the last two), and `LOFT_CC` names a compiler
+/// that does not exist — an empty `PATH` alone leaves Windows' MSVC `cl`, which the C driver
+/// finds by its install path as rustc finds `link.exe`.
 #[test]
 fn require_native_errors_when_rustc_is_absent() {
     let pid = std::process::id();
@@ -566,6 +569,7 @@ fn require_native_errors_when_rustc_is_absent() {
         .arg("--native")
         .arg(&prog)
         .env("PATH", "")
+        .env("LOFT_CC", "loft-no-such-c-compiler")
         .env("LOFT_NATIVE_NO_CACHE", "1")
         .env("LOFT_REQUIRE_NATIVE", "1")
         .output()

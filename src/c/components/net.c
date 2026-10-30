@@ -12,12 +12,17 @@
 #define LOFT_HTTPS 1
 #define LOFT_WEB 1
 #define LOFT_SERVER 1
+#include "loft_sock.h"
 #include "loft_https.h"
 #include "loft_web.h"
 #include "loft_server.h"
 #include "loft_ffi.h"
 
+#if defined(_WIN32)
+#define NET_EXPORT __declspec(dllexport)
+#else
 #define NET_EXPORT __attribute__((visibility("default")))
+#endif
 
 /* A text answer stays the library's until its next text answer on the thread (the ABI's
  * promise); loft copies it at once. */

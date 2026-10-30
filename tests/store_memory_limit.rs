@@ -135,3 +135,40 @@ fn an_ordinary_test_run_is_not_disturbed_by_the_ceiling() {
     );
     assert!(out.contains("1 passed"), "the test must pass.\n{out}");
 }
+
+/// A runaway test on a compiled backend: the for-range reserves its 300 million elements up
+/// front, 2.2 GiB in one growth, so the run stops at once at the default 2 GiB ceiling rather
+/// than after filling memory.
+const RUNAWAY_COMPILED: &str = r#"
+fn test_runaway() {
+  v: vector<integer> = [];
+  for i in 0..300000000 { v += [i]; }
+  assert(len(v) > 0, "never reached");
+}
+"#;
+
+/// The test run's ceiling is not the runner's alone: a compiled test runs as a child process,
+/// and the DEFAULT ceiling (no `LOFT_MEMORY_LIMIT` set) must reach it on both writers — the
+/// runaway it exists for is no less likely in compiled code (@PLN206 P0b, D19c).
+#[test]
+fn the_default_ceiling_reaches_a_compiled_test() {
+    for backend in ["--native-c", "--native-rust"] {
+        let path = std::env::temp_dir().join(format!("loft_memlimit_compiled{backend}.loft"));
+        fa::write(&path, RUNAWAY_COMPILED).expect("write probe");
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
+        cmd.arg("--tests").arg(backend).arg(&path);
+        cmd.env("LOFT_TIMEOUT", "240");
+        cmd.env_remove("LOFT_MEMORY_LIMIT");
+        let out = cmd.output().expect("spawn loft");
+        let _ = fa::remove_file(&path);
+        let out = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            out.contains("store memory limit reached") && out.contains("limit 2.0 GiB"),
+            "{backend}: the compiled test must stop at the default ceiling.\n{out}"
+        );
+    }
+}

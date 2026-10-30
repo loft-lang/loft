@@ -12,7 +12,11 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > This chapter defines how ONE store lays out its blocks underneath: where a claim lands, when
 > a freed block is merged, which index finds it again.  No VALUE a program computes depends on
 > these choices (a claim's bytes are undefined, `H-Claim`; a freed record is unreachable), so
-> every rule here is free to change for speed.  The one window onto them is the store report
+> WHERE a block lands is free to change for speed.  The BYTES each kind of block holds — a
+> claimed record's header, a free block's header, footer and tree links, a parked block's
+> list links, a tombstone — are not: they are the loft file layout
+> ([structures.md](structures.md) `S-Live`), which both runtimes write and a mapped file
+> carries, so every rule below names the bytes it uses by those rules.  The one window onto them is the store report
 > (`store_memory()`: free blocks, mergeable pairs, the largest hole), which describes each
 > store as its pending merges will leave it.  What each rule must keep is that every free block is found
 > again by exactly one index, that the block chain tiles the store, and that a store grows no
@@ -39,6 +43,19 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                  unwritten (`H-Claim`), so the claims — the start of every claimed block,
                  its header its length — are asked first, and a claimed block ending at
                  the left edge is a predecessor that cannot merge (@C154).
+  (H-Exact)      a claim of n words takes EXACTLY n words: a free block of b > n words that
+                 serves it is split, the claim at its start and the b − n words behind it a
+                 free block, however small — a one-word rest is a free block no tree tracks
+                 (under MIN_FREE_TREE = 2), merged when a neighbour is freed (H-FreeFooter's
+                 forward merge, or the sweep a one-word predecessor arms).  So a record's
+                 size word is the size its type or its request names, never what the free
+                 block happened to hold.  A resize grown in place takes exactly its new size
+                 the same way, the rest of the free neighbour left free behind it, and one
+                 that cannot grow in place is claimed anew at exactly that size; spare room
+                 is the collection's to ask for (collections.md Col-Capacity), not the
+                 allocator's to hand out.  Freed
+                 blocks still merge with their free neighbours exactly as the rules below
+                 say.
   (H-Wilderness) inside one store, the free block that ENDS the store (the wilderness)
                  is held beside the free tree rather than in it, and every tree
                  operation treats it as the node it would have been: a block of at
@@ -147,6 +164,10 @@ and `check_parked` re-derive the tree, the block chain, the wilderness and the p
 from the store's bytes after every step of a seeded churn of claims, deletes and resizes.
 
 - `H-FreeFooter` — `a_fake_footer_in_claimed_data_never_merges`.
+- `H-Exact` — `bump_tail_claims_are_the_tree_paths_layout` (a claim one word short of the
+  tail takes exactly its size and leaves a one-word free block), and every claim of the seeded
+  churns above, checked against the C's by
+  `the_c_store_allocator_places_every_record_where_store_does` (`tests/c_emit.rs`).
 - `H-Wilderness` — `the_wilderness_takes_the_blocks_the_tree_takes` (the block chain equal to
   the tree-only allocator's at every step), `a_fresh_store_never_claims_its_wilderness`.
 - `H-Carve` — `a_carve_in_place_takes_the_blocks_the_delete_and_insert_take`.

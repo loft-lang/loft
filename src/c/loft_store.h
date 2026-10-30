@@ -127,13 +127,14 @@ static uint32_t loft_bits_next_at_or_after(const loft_bits *b, uint32_t from, in
     }
 }
 
-#ifdef LOFT_FOREIGN
 /* `FOREIGN_REC` (@PLN174): the one synthetic record id a FOREIGN store serves its bytes under —
  * a vector handle names it in its collection slot exactly as it names a claimed record, and
  * `loft_at` answers it from the foreign bytes.  Past any record a store can hold.  The emitter
  * defines `LOFT_FOREIGN` only for a unit that reaches `file_map`, so no other unit pays the
- * test in `loft_at`. */
+ * test in `loft_at`; the id itself is defined for every unit, which names it in a gate. */
 #define LOFT_FOREIGN_REC 0x7FFFFFF0u
+
+#ifdef LOFT_FOREIGN
 
 /* `ForeignOwner`: what keeps the foreign bytes alive, released with the last span over them. */
 typedef struct {
@@ -769,10 +770,22 @@ static void loft_st_poison_range(loft_store_t *s, uint32_t rec, uint32_t pos, ui
 }
 #endif
 
+/* `@C154`: bytes a caller is about to write, in a record of `s`, take no fill.  A DEFINED store
+ * (its bytes leave the process) is written whole, so it zeroes them; a poison build fills them
+ * with poison, so a reader of a byte nobody wrote is loud (c_sweep's `claim-unwritten`). */
+static void loft_st_fresh(loft_store_t *s, uint32_t rec, uint32_t pos, uint32_t len) {
+#ifdef LOFT_POISON_CLAIM
+    if (!s->defined) { loft_st_poison_range(s, rec, pos, len); return; }
+#endif
+    if (s->defined) memset(s->buf + (size_t) rec * 8 + pos, 0, len);
+}
+
+/* `Store::claim_block`: the record takes EXACTLY `size` words and the rest of the block, however
+ * small, is a free block behind it (`@FR-H-Exact`). */
 static uint32_t loft_claim_block(loft_store_t *s, uint32_t pos, uint32_t size) {
     int32_t req = (int32_t) size;
     int32_t bs = -loft_st_i32(s, pos, 0);
-    if (bs > req * 4 / 3) {
+    if (bs > req) {
         loft_st_set_i32(s, pos, 0, req);
         uint32_t nf = pos + size;
         loft_set_free_header(s, nf, bs - req);
@@ -836,7 +849,7 @@ static uint32_t loft_bump_wild(loft_store_t *s, uint32_t size) {
     if (pos == 0 || s->free_root != 0) return 0;
     int32_t req = (int32_t) size;
     int32_t block = loft_fl_size(s, pos);
-    if (block <= req * 4 / 3 || block - req < LOFT_MIN_FREE_TREE) return 0;
+    if (block - req < LOFT_MIN_FREE_TREE) return 0;
     loft_st_set_i32(s, pos, 0, req);
     uint32_t rest = pos + size;
     loft_set_free_header(s, rest, block - req);
@@ -963,16 +976,33 @@ static uint32_t loft_st_claim_inner(loft_store_t *s, uint32_t size) {
 /* `@FR-H-WriteLocked`: a write that reached a locked store (loft_rt.h).  The allocator compiled
  * on its own (without `loft_cc.h`, as its c_emit harness compiles it) has no locks. */
 #ifdef LOFT_CC_H
-static void loft_locked_write(void);
-#define LOFT_WRITE_CHECK(s) do { if (LOFT_UNLIKELY((s)->read_only)) loft_locked_write(); } while (0)
+static int loft_locked_write(void);
+/* True when the write is to be DISCARDED (a production run, `@C80`); a development run stops
+ * inside `loft_locked_write`, and a test fails there.  An operation refuses at its ENTRY, before
+ * any of its store steps, so a discarded one changes nothing (`@FR-H-WriteLocked-Whole`). */
+#define LOFT_WRITE_REFUSED(s) (LOFT_UNLIKELY((s)->read_only) && loft_locked_write())
 #else
-#define LOFT_WRITE_CHECK(s) ((void) (s))
+#define LOFT_WRITE_REFUSED(s) ((void) (s), 0)
 #endif
+
+static uint32_t loft_st_claim_inner(loft_store_t *s, uint32_t size);
+
+/* `Store::claim_discarded`: a claim or a resize a production run discarded answers a FRESH
+ * record of the size asked for, its payload zeroed, and the store stays locked; the record the
+ * program held is unchanged. */
+static uint32_t loft_st_claim_discarded(loft_store_t *s, uint32_t size) {
+    s->read_only = 0;
+    uint32_t pos = loft_st_claim_inner(s, size ? size : 1);
+    int32_t words = loft_st_i32(s, pos, 0);
+    if (words > 1) memset(s->buf + (size_t) pos * 8 + 8, 0, (size_t) (words - 1) * 8);
+    s->read_only = 1;
+    return pos;
+}
 
 /* `Store::claim`: a record of `size` words, its header written; the payload holds whatever the
  * block held (`@FR-H-Claim`). */
 static uint32_t loft_st_claim(loft_store_t *s, uint32_t size) {
-    LOFT_WRITE_CHECK(s);
+    if (LOFT_WRITE_REFUSED(s)) return loft_st_claim_discarded(s, size);
     uint32_t pos = loft_st_claim_inner(s, size);
     LOFT_TRACE("C %llu %d %u\n", (unsigned long long) s->serial, loft_st_i32(s, pos, 0), pos);
 #ifdef LOFT_POISON_CLAIM
@@ -1000,6 +1030,9 @@ static void loft_entomb(loft_store_t *s, uint32_t rec) {
 
 /* `Store::delete`. */
 static void loft_st_delete(loft_store_t *s, uint32_t rec) {
+    /* `read_only` is immutability: nothing in a locked store changes, deletes included
+     * (`Store::delete`). */
+    if (LOFT_WRITE_REFUSED(s)) return;
     LOFT_TRACE("D %llu %u\n", (unsigned long long) s->serial, rec);
     for (uint32_t i = 0; i < s->nplaced;) {
         if (s->placed[i] == rec) s->placed[i] = s->placed[--s->nplaced];
@@ -1032,13 +1065,14 @@ static uint32_t loft_st_resize_inner(loft_store_t *s, uint32_t rec, uint32_t siz
     uint32_t next = rec + (uint32_t) claim;
     if (next < s->size) {
         int32_t next_size = loft_st_i32(s, next, 0);
-        if (next_size < 0 && claim - next_size > req) {
+        if (next_size < 0 && claim - next_size >= req) {
+            /* Grown in place to EXACTLY `size`, the rest of the free block left free behind it
+             * (`@FR-H-Exact`; a growing vector's spare room is in `size`, `@FR-Col-Capacity`). */
             loft_fl_remove(s, next);
-            int32_t act = req * 7 / 4;
-            if (claim - next_size > act) {
-                uint32_t new_next = rec + (uint32_t) act;
+            if (claim - next_size > req) {
+                uint32_t new_next = rec + (uint32_t) req;
                 uint32_t new_free = (uint32_t) -next_size + next - new_next;
-                loft_st_set_i32(s, rec, 0, act);
+                loft_st_set_i32(s, rec, 0, req);
                 loft_set_free_header(s, new_next, (int32_t) new_free);
                 loft_fl_insert(s, new_next);
             } else {
@@ -1062,7 +1096,7 @@ static uint32_t loft_st_resize_inner(loft_store_t *s, uint32_t rec, uint32_t siz
 /* `Store::resize`: `rec` grown to `size` words, in place when the next block allows, else
  * moved (the new position answered). */
 static uint32_t loft_st_resize(loft_store_t *s, uint32_t rec, uint32_t size) {
-    LOFT_WRITE_CHECK(s);
+    if (LOFT_WRITE_REFUSED(s)) return loft_st_claim_discarded(s, size);
     uint32_t nw = loft_st_resize_inner(s, rec, size);
     return nw;
 }
@@ -1133,7 +1167,7 @@ static loft_fspan loft_st_foreign_span(loft_store_t *s, uint32_t lo, uint32_t hi
  * the span's elements, and the span (its owner reference taken) is the store's.  A record the
  * slot named before goes back to the free tree. */
 static void loft_st_make_foreign(loft_store_t *s, uint32_t rec, uint32_t pos, loft_fspan span) {
-    if (loft_st_is_foreign(s)) { fputs("loft: make_foreign on a store that is already foreign\n", stderr); abort(); }
+    if (loft_st_is_foreign(s) || s->read_only) { fputs("loft: make_foreign on a store that is already foreign or locked\n", stderr); abort(); }
     uint32_t old = loft_st_u32(s, rec, pos);
     if (old != 0) loft_st_delete(s, old);
     loft_st_set_u32(s, rec, pos, LOFT_FOREIGN_REC);
@@ -1145,6 +1179,7 @@ static void loft_st_make_foreign(loft_store_t *s, uint32_t rec, uint32_t pos, lo
     s->foreign.span = span;
     s->foreign.slot_rec = rec;
     s->foreign.slot_pos = pos;
+    s->read_only = 1; /* the bytes are the mapping's or the library's: locked, as `Store::make_foreign` */
 }
 
 /* `Store::release_foreign`: the store stops serving the bytes, its slot names the empty vector
@@ -1153,6 +1188,7 @@ static void loft_st_release_foreign(loft_store_t *s) {
     if (!loft_st_is_foreign(s)) return;
     loft_fowner *o = s->foreign.span.owner;
     s->foreign.span.owner = 0;
+    s->read_only = 0;
     loft_st_set_u32(s, s->foreign.slot_rec, s->foreign.slot_pos, 0);
     if (--o->refs == 0) {
         if (o->release) o->release(o->bytes, o->n);

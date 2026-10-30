@@ -113,6 +113,37 @@ declares (`emit_file_header`'s `loft_gl` block), the `loft_start` export, the ht
 the threaded page (`html_embed.rs`, `html_fonts.rs`).  `c_shim::wasm_objects` and
 `src/c/wasm/` already carry a package's C into both targets.
 
+The browser half, one contract with the Rust writer's page rather than a page of its own:
+
+1. a library native the page supplies is a `loft_gl` import with the Rust writer's name and
+   signature — one home, `host_imports`, read by both writers;
+2. the module exports `loft_start` (the page's asyncify controller drives it) and runs the
+   libc's constructors itself, since a page never calls WASI's `_start`;
+3. a unit that binds no lazy collection is built without setjmp (`LOFT_NO_JUMPS`), so without
+   wasm's exception handling, which asyncify cannot carry — and goes through the same
+   `wasm-opt --asyncify` as the Rust writer's module;
+4. `--native-c --html` uses the one page builder (fonts, `[[embed]]`, library host JS, the
+   import stubs), with `doc/loft-wasi.js` answering the WASI libc — files through the page
+   filesystem still to come;
+5. acceptance: the `html_*` node cells on both writers, then Brick Buster — its C page passes
+   the render gate (the title screen drawn from the embedded pack, 782 colours), which needed
+   one more piece of the contract: the module reserves its own asyncify save region and
+   exports where it is (loft#950's `loft_asyncify_data` / `_size` / `_ok`).  The asyncify,
+   embed and font page suites run each page-building test on both writers; `par` in a C page
+   runs its rows in order, as the Rust page does without cross-origin isolation.
+
+The C toolchain is found the same way on every host (`c_driver::wasm_toolchain`): the first
+WASI triple a small program links under — Debian's layout answers to `wasm32-wasi`, wasi-sdk's
+and Homebrew's to `wasm32-wasip1` — Homebrew's LLVM before Apple's clang, and a clang with no
+wasm target refused as a toolchain to install before the program is compiled.  C10's macOS
+and Windows lists were measured on their runners (`macos-probe` / `windows-probe` with `run`)
+and are on the install page.
+
+Open in C6: threads in a C page (wasip1-threads and a Worker-backed spawn — speed only); a
+library native with only a Rust crate under `--native-wasm`, where the Rust writer
+cross-builds the crate and the C, by design, links none — the library needs a C native part,
+and the C says so by name.
+
 **C7 — performance.**  `scripts/native_ratio.sh` and `bench/stats.py` gain a C lane
 (`--emit-c` + `cc -O3 -DLOFT_SHIP_PROBE` once the ledger exists), the perf portal a column;
 the `FnPlan` families of @PLN200 B3.4 move as C's rows ask.  The bar is the Rust writer's: a
@@ -153,6 +184,25 @@ and the falsifier is that switch's A/B on hand-computed values, with the sweep.
 **C8 — platforms and CI.**  MSVC: the macro layer's `_MSC_VER` arms built and swept on the
 Windows runner; the C sweep as a job in `ci.yml` beside the native leg, ASan and poison in the
 nightly; `scripts/test_subjects.sh` gains `c`.
+
+The corpus is swept on all three hosts: Linux per PR (`ci.yml`'s `c-sweep`), macOS with Apple
+clang, Windows with MinGW-w64 gcc in the three modes and with MSVC `cl` in the default mode
+nightly (`miri.yml`'s `c-sweep-platforms`, six shards each).  The driver speaks `cl`'s dialect
+(`c_driver::dialect`, `msvc_args`), finds the Build Tools' `cl` itself on a Windows machine
+with no `cc` (`platform::host_c_compiler`), and the sweep the same (`c_sweep.py`, LOFT_CC=cl).
+The Windows runtime answers the file system and the OS as the interpreter does (directories,
+listings, a replacing rename, `@FR-Path-Case`, the working, home and program directories, the
+environment); its sockets are one layer, `loft_sock.h`, over BSD sockets or Winsock — the HTTP
+and TLS clients (trusting the system `ROOT` store), the server and web natives and the `net`
+component run over it; `lib/process` and `lib/git` start programs in a job object per child
+(`loft_process.h`); and a shipped program binds its libraries at start through one loader
+layer (`loft_dl_*`: `dlopen` or `LoadLibraryA`).  `windows.h` is included only after the
+runtime headers that name `near`, whose macro would erase them.
+
+Open in C8, in order: the engine host over `loft_sock.h` (and its threads over the CRT's), the
+TLS archive and shim archives built by `cl` for a `cl` program (`platform::ShimArchiver::Msvc`),
+then the Windows Test leg on C — `LOFT_NATIVE_BACKEND=c` there too, and `c_runtime_posix_host`'s
+remaining refusals gone.
 
 **C10 — what a user installs.**  The C stack moves the toolchain a user needs from rustup to the
 system's C tools, and the pages a user reads must say so before C9 ships: `README.md`'s install

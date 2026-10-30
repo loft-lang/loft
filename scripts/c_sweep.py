@@ -15,7 +15,9 @@
                                         # excerpt and call chain (the oracle runs --no-warnings)
     scripts/c_sweep.py --poison         # the store poison modes instead: the C built with
                                         # -DLOFT_POISON / -DLOFT_POISON_CLAIM against the
-                                        # interpreter run under LOFT_POISON=1 / LOFT_POISON_CLAIM=1
+                                        # interpreter run under LOFT_POISON=1 / LOFT_POISON_CLAIM=1,
+                                        # and claim-unwritten: poisoned C claims against the
+                                        # plain interpreter (a read of a byte nobody wrote)
     scripts/c_sweep.py --wasm           # the C built for wasm32-wasi by clang and run under
                                         # wasmtime instead (LOFT_WASM_CC names another clang)
     scripts/c_sweep.py --m32            # the C built as 32-bit x86 (gcc -m32) and run natively
@@ -62,7 +64,42 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 LOFT = os.environ.get("LOFT_BIN") or str(ROOT / "target" / "release" / "loft")
-CC = ["cc", "-std=c99", "-O1", "-DLOFT_CALL_CHAIN", "-pthread"] + (["-ldl"] if sys.platform.startswith("linux") else [])
+# The host's C compiler as the driver picks it (`c_driver::cc_program`): LOFT_CC, else CC, else cc.
+HOST_CC = os.environ.get("LOFT_CC") or os.environ.get("CC") or "cc"
+CC = [HOST_CC, "-std=c99", "-O1", "-DLOFT_CALL_CHAIN", "-pthread"] + (["-ldl"] if sys.platform.startswith("linux") else [])
+# After the objects, where a gcc link resolves it (`platform::c_system_link_libs`).
+SYSTEM_LIBS = ["-lws2_32", "-lcrypt32"] if sys.platform == "win32" else []
+# MSVC's `cl` (or `clang-cl`), told apart by name as the driver tells it (`c_driver::dialect`):
+# the same flags in its spelling (`c_driver::msvc_args`).  Run it from a developer prompt.
+MSVC = Path(HOST_CC).stem.lower() in ("cl", "clang-cl")
+
+
+def msvc_args(gnu: list[str]) -> list[str]:
+    spelled = {"-std=c99": "/std:c11", "-w": "/W0", "-Wall": "/W3", "-Werror": "/WX",
+               "-O0": "/Od", "-O1": "/O1", "-O2": "/O2", "-O3": "/O2", "-g": "/Z7"}
+    out = []
+    for f in gnu:
+        if f in spelled:
+            out.append(spelled[f])
+        elif f in ("-pthread", "-ldl", "-lm", "-pedantic") or f.startswith("-W"):
+            continue
+        elif f.startswith("-D"):
+            out.append("/D" + f[2:])
+        elif f.startswith("-l"):
+            out.append(f[2:] + ".lib")
+        else:
+            out.append(f)
+    return out
+
+
+def host_build(flags: list[str], c: str, exe: str, links: list[str]) -> list[str]:
+    """The host compiler's command for `c` into `exe`."""
+    if MSVC:
+        return [HOST_CC, "/nologo"] + msvc_args(CC[1:] + flags) + \
+            [c, f"/Fe:{exe}.exe", f"/Fo:{exe}.obj"] + msvc_args(links)
+    # `-lm` after the shim archives, as the driver links them: a static archive's math calls
+    # (an OGG decoder's `cos`) resolve only against a library named after it.
+    return CC + flags + [c, "-o", exe] + links + ["-lm"] + SYSTEM_LIBS
 MODES = {
     "strict": ["-DLOFT_STRICT", "-pedantic", "-Werror"],
     "default": ["-w"],
@@ -74,6 +111,11 @@ MODES = {
 POISON_MODES = {
     "poison": (["-DLOFT_POISON", "-w"], {"LOFT_POISON": "1"}),
     "poison-claim": (["-DLOFT_POISON_CLAIM", "-w"], {"LOFT_POISON_CLAIM": "1"}),
+    # The C runtime zeroes no claim (`@FR-H-Claim`): its claims filled with poison against the
+    # PLAIN interpreter, so a caller that reads a byte it never wrote answers the poison where
+    # the interpreter answers its own bytes.  (`poison-claim` poisons both sides, and a read of
+    # an unwritten byte then reads the same poison on each.)
+    "claim-unwritten": (["-DLOFT_POISON_CLAIM", "-w"], None),
 }
 ASAN = ["-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-fno-sanitize-recover=all"]
 # `--wasm`: the same unit for wasm32-wasi.  The runtime's recoverable faults use setjmp, which
@@ -118,9 +160,14 @@ HAS_MAIN = re.compile(r"^\s*(pub\s+)?fn\s+main\s*\(", re.M)
 
 
 def corpus() -> list[str]:
-    r = subprocess.run([str(ROOT / "scripts" / "corpus_files.sh")], capture_output=True,
-                       text=True, cwd=ROOT)
-    return [l for l in r.stdout.split("\n") if l.strip()]
+    # `corpus.py`, the Python twin of `corpus_files.sh`: Windows resolves a bare `bash` to
+    # System32's WSL launcher first, whose UTF-16 answer is no list of files.  Sorted whole,
+    # as the shell list's `LC_ALL=C sort`.
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from corpus import corpus_files
+    # Each path relative to the root, the suite's as `../loft-suite/…` — the shell list's.
+    from corpus import rel
+    return sorted(rel(p).replace(os.sep, "/") for p in corpus_files())
 
 
 # The interpreter is the oracle, and the slowest of the runs: a program near a minute on it
@@ -264,11 +311,12 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
         elif mode in CROSS:
             code, _, err = run(CROSS[mode] + [c] + shim_sources + ["-o", exe, "-lm"], 300)
         else:
-            # `-lm` after the shim archives, as the driver links them: a static archive's
-            # math calls (an OGG decoder's `cos`) resolve only against a library named after it.
-            code, _, err = run(CC + flags + (ASAN if asan else []) + [c, "-o", exe] + links + ["-lm"], 120)
+            code, out, err = run(host_build(flags + (ASAN if asan else []), c, exe, links), 120)
+            # `cl` says its errors on stdout, after a line naming the source.
+            err = err or out
         if code != 0:
-            first = err.decode(errors="replace").strip().split("\n")[0]
+            lines = [l for l in err.decode(errors="replace").strip().split("\n") if l.strip()]
+            first = next((l for l in lines if "error" in l), lines[0] if lines else "")
             return path, "cc-error", f"[{mode}] {first}", None, times
         # The program's directory, as the driver hands it to every run (`LOFT_SOURCE_DIR`).
         run_cmd = wasm_run(exe + ".wasm", src.parent, tmpdir) if mode == "wasm" else \

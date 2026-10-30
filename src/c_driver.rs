@@ -28,11 +28,72 @@ pub(crate) fn c_backend_selected() -> bool {
     std::env::var("LOFT_NATIVE_BACKEND").is_ok_and(|v| v.eq_ignore_ascii_case("c"))
 }
 
-/// The C compiler: `LOFT_CC`, else `CC`, else `cc`.
+/// The C compiler: `LOFT_CC`, else `CC`, else the host's own (`platform::host_c_compiler`:
+/// `cc`, or on Windows without one the MSVC `cl` rustc's own target links with).
 pub(crate) fn cc_program() -> String {
-    std::env::var("LOFT_CC")
-        .or_else(|_| std::env::var("CC"))
-        .unwrap_or_else(|_| "cc".to_string())
+    loft::platform::c_unit_compiler()
+}
+
+/// A compiler's command line: gcc's (`cc`, `gcc`, `clang`) or MSVC's (`cl`, `clang-cl`), told
+/// apart by the compiler's name.  The flags are written once, in gcc's spelling, and
+/// [`msvc_args`] renders them for the other.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Dialect {
+    Gnu,
+    Msvc,
+}
+
+fn dialect(cc: &str) -> Dialect {
+    if loft::platform::c_compiler_is_msvc(cc) {
+        Dialect::Msvc
+    } else {
+        Dialect::Gnu
+    }
+}
+
+/// gcc-spelled flags as `cl` takes them: C11 is the oldest standard `cl` names and holds C99's
+/// language as the unit uses it; the warning switches become `cl`'s levels; the libraries a
+/// gcc link names (`-lm`, `-pthread`, `-ldl`) are the CRT's own there, and a run path has no
+/// meaning to a PE binary.
+fn msvc_args(gnu: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for f in gnu {
+        let mapped = match f.as_str() {
+            "-std=c99" => "/std:c11",
+            "-w" => "/W0",
+            "-Wall" => "/W3",
+            "-Werror" => "/WX",
+            "-O0" => "/Od",
+            "-O1" => "/O1",
+            "-O2" | "-O3" => "/O2",
+            "-g" => "/Z7",
+            "-pthread" | "-ldl" | "-lm" | "-pedantic" => continue,
+            other if other.starts_with("-W") => continue,
+            other if let Some(def) = other.strip_prefix("-D") => {
+                out.push(format!("/D{def}"));
+                continue;
+            }
+            other if let Some(lib) = other.strip_prefix("-l") => {
+                out.push(format!("{lib}.lib"));
+                continue;
+            }
+            other => other,
+        };
+        out.push(mapped.to_string());
+    }
+    out
+}
+
+/// The compiler as a process, with the environment an MSVC `cl` needs outside a developer
+/// prompt (`platform::msvc_env`: empty for gcc's dialect, or where the prompt set it).
+fn cc_spawn(cc: &str) -> Spawn {
+    let mut s = Spawn::new(Program::os(cc));
+    if dialect(cc) == Dialect::Msvc {
+        for (k, v) in loft::platform::msvc_env() {
+            s.push_env(k, v);
+        }
+    }
+    s
 }
 
 /// The compiler flags of one build: the tier's optimisation and call chain, and the store's
@@ -176,15 +237,20 @@ pub(crate) fn cc_identity(cc: &str) -> String {
     static IDENTITY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     IDENTITY
         .get_or_init(|| {
-            Spawn::new(Program::os(cc))
-                .arg("--version")
+            // `cl` takes no `--version`: run bare, it prints its banner on stderr.
+            let msvc = dialect(cc) == Dialect::Msvc;
+            let mut probe = cc_spawn(cc);
+            if !msvc {
+                probe.push_arg("--version");
+            }
+            probe
                 .run(b"")
                 .ok()
-                .filter(|o| o.status.success())
+                .filter(|o| msvc || o.status.success())
                 .map_or_else(
                     || cc.to_string(),
                     |o| {
-                        String::from_utf8_lossy(&o.stdout)
+                        String::from_utf8_lossy(if msvc { &o.stderr } else { &o.stdout })
                             .lines()
                             .next()
                             .unwrap_or_default()
@@ -195,7 +261,82 @@ pub(crate) fn cc_identity(cc: &str) -> String {
         .clone()
 }
 
-/// `--native-wasm` through the C (@PLN203 C6): the unit built for wasm32-wasi by clang into
+/// The toolchain a wasm32 build of the C uses, found once per run: the clang, the WASI sysroot,
+/// the `wasm-ld` beside a clang whose own directory has none, and the target triple the
+/// sysroot's headers answer to.
+struct WasmToolchain {
+    cc: String,
+    sysroot: Option<String>,
+    ld: Option<String>,
+    triple: &'static str,
+    /// Whether a small program linked under `triple`: a clang with no wasm target (Apple's)
+    /// or no WASI libc links under neither, and is a toolchain to install, said before the
+    /// program's own C is compiled.
+    links: bool,
+}
+
+/// Measured on each runner's packages (C10): Debian's wasi-libc lays its headers out for
+/// `wasm32-wasi` (and Ubuntu's clang keeps its wasm32 builtins under that name too), wasi-sdk ≥
+/// 25 and Homebrew's wasi-libc for `wasm32-wasip1` alone — so the triple is the first one a
+/// small program links under, `wasm32-wasip1` before `wasm32-wasi`, rather than assumed.  A clang named by
+/// `LOFT_WASM_CC` wins; on macOS Homebrew's LLVM comes before Apple's clang, which has no wasm
+/// target, with Homebrew's `wasm-ld` (a keg of its own) and wasi-libc's sysroot.
+fn wasm_toolchain() -> &'static WasmToolchain {
+    static TC: std::sync::OnceLock<WasmToolchain> = std::sync::OnceLock::new();
+    TC.get_or_init(|| {
+        let named = std::env::var("LOFT_WASM_CC").ok().filter(|s| !s.is_empty());
+        let (cc, ld) = match named {
+            Some(cc) => (cc, None),
+            None => {
+                loft::platform::host_wasm_clang().unwrap_or_else(|| ("clang".to_string(), None))
+            }
+        };
+        let sysroot = std::env::var("WASI_SYSROOT")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                loft::platform::wasi_sysroot_candidates()
+                    .iter()
+                    .find(|p| fa::exists(p))
+                    .map(|p| (*p).to_string())
+            });
+        // A whole link, not the headers alone: a sysroot can answer to one triple while the
+        // compiler's builtins live under the other's directory (Ubuntu: headers for both,
+        // `libclang_rt.builtins` under `lib/wasi` only).
+        let probe_out = loft::platform::scratch_dir()
+            .join(format!("loft_wasm_probe_{}.wasm", std::process::id()));
+        let reaches = |triple: &str| {
+            let mut probe = Spawn::new(Program::os(&cc));
+            probe.push_arg(format!("--target={triple}"));
+            if let Some(root) = &sysroot {
+                probe.push_arg(format!("--sysroot={root}"));
+            }
+            if let Some(ld) = &ld {
+                probe.push_arg(format!("--ld-path={ld}"));
+            }
+            probe.push_args(["-x", "c", "-", "-o"]).push_arg(&probe_out);
+            let linked = probe
+                .run(b"#include <stdio.h>\nint main(void) { puts(\"\"); return 0; }\n")
+                .is_ok_and(|r| r.status.success());
+            let _ = fa::remove_file(&probe_out);
+            linked
+        };
+        let (triple, links) = if reaches("wasm32-wasip1") {
+            ("wasm32-wasip1", true)
+        } else {
+            ("wasm32-wasi", reaches("wasm32-wasi"))
+        };
+        WasmToolchain {
+            cc,
+            sysroot,
+            ld,
+            triple,
+            links,
+        }
+    })
+}
+
+/// `--native-wasm` through the C (@PLN203 C6): the unit built for WASI by clang into
 /// `out`, as `scripts/c_sweep.py --wasm` builds and validates it.  setjmp is wasm's
 /// exception-handling proposal in its standard encoding (a host runs it with exceptions on —
 /// `wasmtime -W exceptions=y`); `clock` and `signal` are WASI's emulation libraries; the stack
@@ -211,51 +352,57 @@ pub(crate) fn build_wasm(
     ship: bool,
     browser: bool,
 ) -> Result<(), String> {
-    let cc = std::env::var("LOFT_WASM_CC").unwrap_or_else(|_| "clang".to_string());
+    let tc = wasm_toolchain();
+    let cc = tc.cc.clone();
+    if !tc.links {
+        return Err(format!(
+            "--native-wasm: the wasm32 toolchain is incomplete — `{cc}` links a small WASI \
+             program under neither wasm32-wasip1 nor wasm32-wasi; {}",
+            loft::platform::c_wasm_toolchain_cure()
+        ));
+    }
     let scratch = loft::platform::scratch_dir();
     let src = scratch.join(format!("loft_wasm_c_{}.c", std::process::id()));
     fa::write(&src, c).map_err(|e| format!("cannot write {}: {e}", src.display()))?;
+    // A unit that jumps nowhere (`LOFT_NO_JUMPS`, a page's module) is built without setjmp,
+    // so without wasm's exception handling: asyncify, which a page's frame yield needs, cannot
+    // carry it.
+    let jumps = !c.contains("#define LOFT_NO_JUMPS");
     let mut cmd = Spawn::new(Program::os(&cc));
+    cmd.push_arg(format!("--target={}", tc.triple));
     cmd.push_args([
-        "--target=wasm32-wasi",
         "-std=c99",
         if ship { "-O3" } else { "-O2" },
         "-w",
-        "-mllvm",
-        "-wasm-enable-sjlj",
         "-D_WASI_EMULATED_PROCESS_CLOCKS",
         "-D_WASI_EMULATED_SIGNAL",
     ]);
     // setjmp in wasm's exception-handling proposal: its standard encoding for a WASI host
     // (wasmtime refuses the legacy one), the legacy one for a browser page, which every
     // current browser runs.
-    if !browser {
-        cmd.push_args(["-mllvm", "-wasm-use-legacy-eh=false"]);
+    if jumps {
+        cmd.push_args(["-mllvm", "-wasm-enable-sjlj"]);
+        if !browser {
+            cmd.push_args(["-mllvm", "-wasm-use-legacy-eh=false"]);
+        }
     }
     if !ship {
         cmd.push_arg("-DLOFT_CALL_CHAIN");
     }
-    // The WASI sysroot: the one `WASI_SYSROOT` names, else the system package's when it is
-    // there (a clang that does not look in it falls back to the host's headers).
-    let sysroot = std::env::var("WASI_SYSROOT")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            fa::exists("/usr/share/wasi-sysroot").then(|| "/usr/share/wasi-sysroot".to_string())
-        });
-    if let Some(root) = sysroot {
+    if let Some(root) = &tc.sysroot {
         cmd.push_arg(format!("--sysroot={root}"));
+    }
+    if let Some(ld) = &tc.ld {
+        cmd.push_arg(format!("--ld-path={ld}"));
     }
     cmd.push_arg(&src);
     cmd.push_args(shim_sources);
     cmd.push_arg("-o").push_arg(out);
-    cmd.push_args([
-        "-Wl,-z,stack-size=8388608",
-        "-lm",
-        "-lsetjmp",
-        "-lwasi-emulated-process-clocks",
-        "-lwasi-emulated-signal",
-    ]);
+    cmd.push_args(["-Wl,-z,stack-size=8388608", "-lm"]);
+    if jumps {
+        cmd.push_arg("-lsetjmp");
+    }
+    cmd.push_args(["-lwasi-emulated-process-clocks", "-lwasi-emulated-signal"]);
     let ran = cmd.run(b"");
     if std::env::var_os("LOFT_KEEP_NATIVE_C").is_none() {
         let _ = fa::remove_file(&src);
@@ -297,105 +444,6 @@ pub(crate) fn build_wasm(
     ))
 }
 
-/// `--native-c --html` (@PLN203 C6): the program's wasm32-wasi module, inline, in a page that
-/// hosts it — a small WASI layer in the page's script writes standard output and error into the
-/// page, answers the clocks, randomness and arguments, and refuses files and sockets (a page has
-/// none) — and runs it once loaded.  The exit status lands in `window.loftExit` and the title.
-pub(crate) fn html_page(title: &str, wasm: &[u8]) -> String {
-    let esc = |t: &str| {
-        t.replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
-    };
-    format!(
-        r#"<!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title}</title>
-<style>body{{font:14px ui-monospace,Menlo,Consolas,monospace;margin:16px;background:#fff;color:#111}}
-#out{{white-space:pre-wrap}}.err{{color:#b00020}}
-@media (prefers-color-scheme: dark){{body{{background:#111;color:#eee}}.err{{color:#ff8080}}}}</style></head>
-<body><pre id="out"></pre>
-<script id="loft-run">
-(async () => {{
-  const out = document.getElementById("out");
-  const write = (fd, text) => {{
-    if (!text) return;
-    if (fd === 2) {{ const s = document.createElement("span"); s.className = "err"; s.textContent = text; out.appendChild(s); }}
-    else out.appendChild(document.createTextNode(text));
-  }};
-  const bytes = Uint8Array.from(atob("{b64}"), c => c.charCodeAt(0));
-  const module = await WebAssembly.compile(bytes);
-  let memory;
-  const view = () => new DataView(memory.buffer);
-  const decs = {{ 1: new TextDecoder(), 2: new TextDecoder() }};
-  const enc = new TextEncoder();
-  const args = ["program"];
-  class Exit {{ constructor(code) {{ this.code = code; }} }}
-  const wasi = {{
-    fd_write(fd, iovs, n, written) {{
-      const v = view(); let total = 0;
-      for (let i = 0; i < n; i++) {{
-        const p = v.getUint32(iovs + 8 * i, true), l = v.getUint32(iovs + 8 * i + 4, true);
-        if (fd === 1 || fd === 2) write(fd, decs[fd].decode(new Uint8Array(memory.buffer, p, l), {{ stream: true }}));
-        total += l;
-      }}
-      v.setUint32(written, total, true);
-      return fd === 1 || fd === 2 ? 0 : 8;
-    }},
-    fd_read(fd, iovs, n, read) {{ view().setUint32(read, 0, true); return fd === 0 ? 0 : 8; }},
-    proc_exit(code) {{ throw new Exit(code); }},
-    args_sizes_get(argc, size) {{
-      const v = view(); v.setUint32(argc, args.length, true);
-      v.setUint32(size, args.reduce((s, a) => s + enc.encode(a).length + 1, 0), true); return 0;
-    }},
-    args_get(argv, buf) {{
-      const v = view(), m = new Uint8Array(memory.buffer); let at = buf;
-      args.forEach((a, i) => {{ v.setUint32(argv + 4 * i, at, true); const b = enc.encode(a); m.set(b, at); m[at + b.length] = 0; at += b.length + 1; }});
-      return 0;
-    }},
-    environ_sizes_get(c, s) {{ const v = view(); v.setUint32(c, 0, true); v.setUint32(s, 0, true); return 0; }},
-    environ_get() {{ return 0; }},
-    clock_time_get(id, precision, t) {{
-      const ns = id === 0 ? BigInt(Date.now()) * 1000000n : BigInt(Math.round(performance.now() * 1e6));
-      view().setBigUint64(t, ns, true); return 0;
-    }},
-    clock_res_get(id, r) {{ view().setBigUint64(r, 1000n, true); return 0; }},
-    random_get(p, l) {{ crypto.getRandomValues(new Uint8Array(memory.buffer, p, l)); return 0; }},
-    fd_fdstat_get(fd, st) {{
-      if (fd > 2) return 8;
-      const v = view(); v.setUint8(st, 2); v.setUint16(st + 2, 0, true);
-      v.setBigUint64(st + 8, 0n, true); v.setBigUint64(st + 16, 0n, true); return 0;
-    }},
-    fd_prestat_get() {{ return 8; }},
-    fd_prestat_dir_name() {{ return 8; }},
-    fd_close() {{ return 0; }},
-    fd_seek() {{ return 70; }},
-    sched_yield() {{ return 0; }},
-    path_open() {{ return 76; }},
-    poll_oneoff() {{ return 52; }},
-  }};
-  const imports = {{}};
-  for (const imp of WebAssembly.Module.imports(module)) {{
-    imports[imp.module] = imports[imp.module] || {{}};
-    if (imp.kind === "function")
-      imports[imp.module][imp.name] = (imp.module === "wasi_snapshot_preview1" && wasi[imp.name]) || (() => 52);
-  }}
-  const inst = await WebAssembly.instantiate(module, imports);
-  memory = inst.exports.memory;
-  let code = 0;
-  try {{ inst.exports._start(); }}
-  catch (e) {{ if (e instanceof Exit) code = e.code; else {{ write(2, String(e) + "\n"); code = 1; }} }}
-  for (const fd of [1, 2]) write(fd, decs[fd].decode());
-  if (code) document.title += " (exit " + code + ")";
-  window.loftExit = code;
-}})();
-</script></body></html>
-"#,
-        title = esc(title),
-        b64 = loft::base64::encode(wasm)
-    )
-}
-
 /// Why [`build`] made no binary: no C compiler to run at all — which a run that did not ask for
 /// native answers by interpreting, as the rustc path does without rustc — or a compiler that
 /// rejected the unit, a defect of the backend.
@@ -419,6 +467,37 @@ fn run_cc(cmd: &mut Spawn) -> std::io::Result<loft::platform::process::Ran> {
     let out = cmd.run(b"");
     loft::timeout::unblocked();
     out
+}
+
+/// The compiler's command building `src` into `binary`, in its own dialect: gcc's links the
+/// libraries after the objects, where it resolves them; `cl` is told where its object goes,
+/// which it writes into the working directory otherwise.
+fn compile_command(
+    cc: &str,
+    flags: &[String],
+    src: &std::path::Path,
+    binary: &std::path::Path,
+    obj: &std::path::Path,
+    link_args: &[String],
+) -> Spawn {
+    let mut cmd = cc_spawn(cc);
+    match dialect(cc) {
+        Dialect::Gnu => {
+            cmd.push_args(flags);
+            cmd.push_arg(src).push_arg("-o").push_arg(binary);
+            cmd.push_args(link_args);
+            cmd.push_arg("-lm");
+            cmd.push_args(loft::platform::c_system_link_libs());
+        }
+        Dialect::Msvc => {
+            cmd.push_arg("/nologo").push_args(msvc_args(flags));
+            cmd.push_arg(src);
+            cmd.push_arg(format!("/Fe:{}", binary.display()));
+            cmd.push_arg(format!("/Fo:{}", obj.display()));
+            cmd.push_args(msvc_args(link_args));
+        }
+    }
+    cmd
 }
 
 /// How the unit's `link:` inputs reach the linker, placed as [`Placement`] says: the run paths
@@ -534,12 +613,10 @@ pub(crate) fn build(
     let binary = scratch.join(format!("loft_native_bin_{pid}{exe}"));
     fa::write(&src, c)
         .map_err(|e| BuildError::Rejected(format!("cannot write {}: {e}", src.display())))?;
-    let mut cmd = Spawn::new(Program::os(&cc));
-    cmd.push_args(&flags);
-    cmd.push_arg(&src).push_arg("-o").push_arg(&binary);
-    cmd.push_args(&link_args);
-    cmd.push_arg("-lm");
+    let obj = scratch.join(format!("loft_native_obj_{pid}.obj"));
+    let mut cmd = compile_command(&cc, &flags, &src, &binary, &obj, &link_args);
     let out = run_cc(&mut cmd);
+    let _ = fa::remove_file(&obj);
     let keep = std::env::var_os("LOFT_KEEP_NATIVE_C").is_some();
     if !keep {
         let _ = fa::remove_file(&src);
@@ -592,36 +669,45 @@ pub(crate) fn build(
 mod tests {
     use super::*;
 
-    /// The page's script closes every string on the line that opens it (loft#2204): a string
-    /// split by a real newline is a JavaScript syntax error, and the page then runs nothing.
-    /// `native_c_html_page_runs_its_program` sees it in node, but only where clang, wasm-ld
-    /// and node are installed; this needs none of them.
     #[test]
-    fn the_page_script_closes_every_string_on_its_line() {
-        let page = html_page("t", b"");
-        let script = page
-            .split("<script id=\"loft-run\">")
-            .nth(1)
-            .and_then(|s| s.split("</script>").next())
-            .expect("the page has its script");
-        for (n, line) in script.lines().enumerate() {
-            let mut quotes = 0u32;
-            let mut chars = line.chars();
-            while let Some(c) = chars.next() {
-                match c {
-                    '\\' => {
-                        chars.next();
-                    }
-                    '"' => quotes += 1,
-                    _ => {}
-                }
-            }
-            assert!(
-                quotes.is_multiple_of(2),
-                "script line {}: an unclosed string: {line}",
-                n + 1
-            );
-        }
+    fn a_cl_compiler_takes_the_flags_in_its_own_spelling() {
+        assert_eq!(dialect("cc"), Dialect::Gnu);
+        assert_eq!(dialect("/usr/bin/clang"), Dialect::Gnu);
+        assert_eq!(dialect("cl"), Dialect::Msvc);
+        assert_eq!(dialect("C:/VS/bin/Hostx64/x64/CL.EXE"), Dialect::Msvc);
+        assert_eq!(dialect("clang-cl.exe"), Dialect::Msvc);
+        let gnu: Vec<String> = [
+            "-std=c99",
+            "-w",
+            "-O1",
+            "-DLOFT_CALL_CHAIN",
+            "-pthread",
+            "-ldl",
+            "-lm",
+            "-Wall",
+            "-Wno-unused-label",
+            "-Werror",
+            "-O3",
+            "-g",
+            "shim.lib",
+        ]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+        assert_eq!(
+            msvc_args(&gnu),
+            [
+                "/std:c11",
+                "/W0",
+                "/O1",
+                "/DLOFT_CALL_CHAIN",
+                "/W3",
+                "/WX",
+                "/O2",
+                "/Z7",
+                "shim.lib"
+            ]
+        );
     }
 
     #[test]

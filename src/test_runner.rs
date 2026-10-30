@@ -302,6 +302,18 @@ fn build_test_base_inner(
     }))
 }
 
+/// Change to `dir` until the guard drops; `None`, or a directory that cannot be entered,
+/// leaves the cwd where it is.
+fn enter_dir(dir: Option<&std::path::Path>) -> CwdGuard {
+    if let Some(dir) = dir
+        && let Ok(prev) = std::env::current_dir()
+        && fa::set_current_dir(dir).is_ok()
+    {
+        return CwdGuard(Some(prev));
+    }
+    CwdGuard(None)
+}
+
 fn enter_source_dir(source_dir: &str, program_relative: bool) -> CwdGuard {
     if program_relative
         && !source_dir.is_empty()
@@ -761,6 +773,12 @@ pub(crate) fn run_tests(
             cmd = cmd.stdout(std::process::Stdio::inherit());
             if leak_check {
                 cmd.push_env("LOFT_NATIVE_LEAK_CHECK", "1");
+            }
+            // The test run's store-memory ceiling reaches the compiled child too: the runner
+            // set it in this process only, and a runaway allocation in a native test is the
+            // one this ceiling exists for (RUN_BOUNDS.md).
+            if std::env::var_os("LOFT_MEMORY_LIMIT").is_none() {
+                cmd.push_env("LOFT_MEMORY_LIMIT", loft::store_budget::limit().to_string());
             }
             let out = cmd
                 .run(b"")
@@ -1768,7 +1786,12 @@ pub(crate) fn run_tests(
                         let mut out = generation::Output::new(&native_data, &native_db);
                         // Host-native backend: C-ABI cdylib link (NATIVE_ARTIFACT_IDENTITY.md § Resolution).
                         out.native_cabi = native_utils::native_cabi_enabled();
-                        out.native_bind = out.native_cabi;
+                        // As the standalone native compile: the program binds at start every
+                        // library it does not link into itself — the packages' under a dynamic
+                        // link, and under a static one the C libraries packages ship with no
+                        // archive to link in.  Tied to `native_cabi`, a static test binary left
+                        // those libraries' `#c` symbols as undefined `extern "C"` references.
+                        out.native_bind = true;
                         // #621 — when this harness supplies the crate's `main`
                         // below, suppress the generator's own bootstrap.
                         // `output_native_reachable` emits one whenever ANY
@@ -1800,6 +1823,9 @@ pub(crate) fn run_tests(
                             // ABI's `&UnsafeCell<Stores>` parameter type is
                             // satisfied by the entry call.
                             writeln!(buf, "\nfn main() {{").unwrap();
+                            // The store-memory ceiling the runner hands down (below).
+                            writeln!(buf, "    loft::store_budget::apply_env_limit_if_set();")
+                                .unwrap();
                             writeln!(
                                 buf,
                                 "    let cell = std::cell::UnsafeCell::new(Stores::new());"
@@ -2005,6 +2031,11 @@ pub(crate) fn run_tests(
                                 None,
                                 loft_deps.as_deref(),
                             );
+                            // And the C libraries the `#c` bindings resolve against, as the
+                            // standalone native compile links them.  Without this a STATIC
+                            // link (`LOFT_NATIVE_CABI=0`) had nothing to bind at start and
+                            // left every `#c` symbol undefined.
+                            native_utils::add_c_library_flags(&mut cmd, &native_data);
                             let rustc_start = std::time::Instant::now();
                             let compile_result = cmd.run(b"");
                             crate::platform::timing_record(
@@ -2144,6 +2175,12 @@ pub(crate) fn run_tests(
                                 if leak_check {
                                     run_cmd.push_env("LOFT_NATIVE_LEAK_CHECK", "1");
                                 }
+                                if std::env::var_os("LOFT_MEMORY_LIMIT").is_none() {
+                                    run_cmd.push_env(
+                                        "LOFT_MEMORY_LIMIT",
+                                        loft::store_budget::limit().to_string(),
+                                    );
+                                }
                                 let out = run_cmd
                                     .run(b"")
                                     .map_err(|e| format!("native run failed: {e}"))?;
@@ -2208,10 +2245,13 @@ pub(crate) fn run_tests(
                 }
             } else {
                 // ── Interpreter mode ──────────────────────────────────────────
-                // Anchor native file I/O at the program's source_dir for the
-                // duration of this file's tests; the guard restores the cwd
-                // afterwards so the next file's parse/compile is unaffected.
-                let _cwd = enter_source_dir(&clean_db.source_dir, clean_db.program_relative);
+                // The program is compiled, and its `#c` and native libraries opened, in
+                // the directory loft was started in — the paths the parse recorded are
+                // relative to it — and only its RUN is anchored at source_dir, the order
+                // a plain run keeps (`main.rs`, before user execution).  Compiling inside
+                // source_dir looked a `--lib` library's shim up under the test file's own
+                // directory (loft#2234).
+                let invocation_dir = std::env::current_dir().ok();
                 // loft#1865 — compile the file ONCE and fork a fresh runtime per test
                 // (`State::fork_program`).  Cloning the checked `Data` and recompiling every
                 // function per test made a file's test time quadratic in its size (≈12 ms a
@@ -2235,6 +2275,10 @@ pub(crate) fn run_tests(
                         }))
                         .ok()
                     };
+                // Anchor native file I/O at the program's source_dir for the
+                // duration of this file's tests; the guard restores the cwd
+                // afterwards so the next file's parse/compile is unaffected.
+                let _cwd = enter_source_dir(&clean_db.source_dir, clean_db.program_relative);
                 for (d_nr, fn_name) in &test_fns {
                     // The leak question is asked only of a function that returns NOTHING:
                     // a value-returning one hands its result to its caller, and this runner
@@ -2277,6 +2321,8 @@ pub(crate) fn run_tests(
                                 std::sync::Arc::clone(data),
                             )
                         } else {
+                            // Compiled where loft was started, as the shared program is.
+                            let _compile_dir = enter_dir(invocation_dir.as_deref());
                             let mut data_copy = clean_data.clone();
                             let mut state = State::new(clean_db.clone());
                             // Coverage is armed below and counts a function entered by a

@@ -514,8 +514,15 @@ static uint32_t loft_h_inline_rebuild(loft_ref c, uint32_t claim, uint32_t want)
         while (loft_u32(s, grown, LOFT_H_BUCKET0 + at * 8) != 0) at = (at + 1) & mask;
         loft_set_u32(s, grown, LOFT_H_BUCKET0 + at * 8, seq);
         loft_set_u32(s, grown, LOFT_H_BUCKET0 + at * 8 + 4, tag);
-        memcpy(s->buf + (size_t) grown * 8 + new0 + at * h.stride, s->buf + (size_t) claim * 8 + old0 + i * h.stride,
-               h.stride);
+        /* The entry in 8-byte words where its stride allows: a fixed-size copy the compiler
+         * inlines, where a variable-size memcpy was a libc call per entry. */
+        uint8_t *to = s->buf + (size_t) grown * 8 + new0 + at * h.stride;
+        const uint8_t *from = s->buf + (size_t) claim * 8 + old0 + i * h.stride;
+        if ((h.stride & 7) == 0 && h.stride <= 64) {
+            for (uint32_t w = 0; w < h.stride; w += 8) memcpy(to + w, from + w, 8);
+        } else {
+            memcpy(to, from, h.stride);
+        }
     }
     loft_h_install_table(c, claim, grown);
     return grown;
@@ -548,7 +555,7 @@ static loft_ref loft_h_inline_file(loft_store_t *s, uint16_t store_nr, uint32_t 
     e.store_nr = store_nr;
     e.rec = claim;
     e.pos = loft_h_ent0(h.count) + at * h.stride;
-    if (zero) memset(s->buf + (size_t) claim * 8 + e.pos, 0, h.stride);
+    if (zero) loft_st_fresh(s, claim, e.pos, h.stride);
     return e;
 }
 
@@ -1402,6 +1409,7 @@ static void loft_free_hash_entry(loft_ref c, loft_ref e, uint32_t slot) {
 static void loft_hash_remove(const loft_tdesc *T, uint16_t elem, loft_ref c, loft_ref e, const loft_key *keys, int nk,
                              int view) {
     if (e.rec == 0 || c.store_nr == 0xFFFF || c.rec == 0) return;
+    if (LOFT_WRITE_REFUSED(loft_store_of(c))) return;
     uint32_t slot = loft_hash_unlink(c, e, keys, nk);
     if (view) return;
     if (loft_hash_owns_entries(c)) {
@@ -1476,6 +1484,12 @@ static int loft_ref_by_place(const void *a, const void *b) {
     return x->e.pos < y->e.pos ? -1 : x->e.pos > y->e.pos;
 }
 
+static int loft_lref_by_place(const void *a, const void *b) {
+    const loft_ref *x = (const loft_ref *) a, *y = (const loft_ref *) b;
+    if (x->rec != y->rec) return x->rec < y->rec ? -1 : 1;
+    return x->pos < y->pos ? -1 : x->pos > y->pos;
+}
+
 static void loft_hash_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, loft_ref to) {
     const loft_tdesc *d = &T[tp];
     loft_store_t *fs = loft_store_of(from);
@@ -1493,12 +1507,25 @@ static void loft_hash_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref fro
     if (!inl && kept) qsort(all, kept, sizeof *all, loft_ref_by_place);
     loft_hash_reserve(T, tp, to, kept);
     uint32_t size = T[d->elem].size;
+    /* A LINKED entry is a record of its own, and claims made in the source's order need not
+     * ascend: the allocator puts each where it fits best (`@FR-H-Exact`).  So every record is
+     * claimed before any is filled, and the source's i-th entry goes into the i-th lowest —
+     * one type's records are one size (`@FR-Col-Unordered`, `copy_claims_hash_body`). */
+    int linked = T[d->elem].linked;
+    loft_ref *recs = 0;
+    if (linked && kept) {
+        recs = (loft_ref *) malloc((size_t) kept * sizeof *recs);
+        if (!recs) { fputs("loft: out of memory\n", stderr); abort(); }
+        for (uint32_t i = 0; i < kept; i++) recs[i] = loft_hash_entry(to, size, 1);
+        qsort(recs, kept, sizeof *recs, loft_lref_by_place);
+    }
     for (uint32_t i = 0; i < kept; i++) {
-        loft_ref e = loft_hash_entry(to, size, T[d->elem].linked);
+        loft_ref e = linked ? recs[i] : loft_hash_entry(to, size, 0);
         loft_copy_bytes(e, 0, all[i].e, 0, size);
         loft_copy_claims(T, d->elem, all[i].e, e);
         (void) loft_h_add(to, e, d->keys, d->nk);
     }
+    free(recs);
     free(all);
 }
 

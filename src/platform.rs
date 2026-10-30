@@ -1167,6 +1167,18 @@ pub fn host_lib_os() -> LibOs {
     }
 }
 
+/// The C runtime library every program on this host already has loaded, by the name a
+/// `[c] libs` / `optional-libs` entry gives it — the one library a test can declare and rely
+/// on being installed.  Each exports the standard C functions (`abs`, …).
+#[must_use]
+pub fn host_c_runtime_library() -> &'static str {
+    match host_lib_os() {
+        LibOs::Linux => "libc.so.6",
+        LibOs::Macos => "libSystem.B.dylib",
+        LibOs::Windows => "ucrtbase.dll",
+    }
+}
+
 /// The `[c]` library that is really present beside `dir`, under whichever
 /// spelling this host uses. `None` when nothing is there — a bare soname the
 /// dynamic linker resolves, or a library that is simply missing.
@@ -1703,9 +1715,8 @@ pub fn c_link_arg_for_soname(soname: &str) -> String {
 pub fn c_whole_archive_args(archive: &str) -> Vec<String> {
     if cfg!(target_os = "macos") {
         vec![format!("-Wl,-force_load,{archive}")]
-    } else if cfg!(windows) {
-        vec![archive.to_string()]
     } else {
+        // GNU ld's form, MinGW's included (@PLN203 C8).
         vec![
             "-Wl,--whole-archive".to_string(),
             archive.to_string(),
@@ -1715,20 +1726,23 @@ pub fn c_whole_archive_args(archive: &str) -> Vec<String> {
 }
 
 /// @PLN195 — does a shipped C program open the libraries its packages ship at start, through
-/// loft's search order (`loft_c_bind_libraries`, POSIX `dlopen`)?  Elsewhere it links them and
-/// finds them beside itself.
+/// loft's search order (`loft_c_bind_libraries`: `dlopen` on POSIX, `LoadLibraryA` on Windows,
+/// @PLN203 C8)?  Every host the C runtime has a loader for does.
 #[must_use]
 pub fn c_binds_libraries_at_start() -> bool {
-    cfg!(unix)
+    cfg!(any(unix, windows))
 }
 
-/// The `cc` argument that exports a C backend program's own symbols to the dynamic table, so a
-/// `dlsym` over the program finds a shim linked into it (@PLN203 C5, optional libraries): GNU
-/// ld's `-rdynamic`; macOS exports them already, and Windows resolves no symbol that way.
+/// The `cc` argument that exports a C backend program's own symbols, so a lookup over the
+/// program finds a shim linked into it (@PLN203 C5, optional libraries): GNU ld's `-rdynamic`;
+/// macOS exports them already; on Windows MinGW's ld exports them from the executable, where
+/// `GetProcAddress` reads (an MSVC `cl` program takes no `-Wl,`, and carries none).
 #[must_use]
 pub fn c_export_dynamic_arg() -> Option<&'static str> {
     if cfg!(target_os = "linux") {
         Some("-rdynamic")
+    } else if cfg!(windows) {
+        Some("-Wl,--export-all-symbols")
     } else {
         None
     }
@@ -1747,12 +1761,90 @@ pub fn c_thread_link_args() -> &'static [&'static str] {
     }
 }
 
+/// The system libraries a C backend link names AFTER the program's objects (@PLN203 C8), where a
+/// gcc link resolves them: on Windows Winsock's (`loft_sock.h`), the certificate store's the
+/// TLS client reads (`loft_tls.c`) and the OS random source the engine kernel's UDP cookie reads
+/// (`loft_engine.h`) — an MSVC `cl` reads each from the sources' `#pragma` — which a unit that
+/// opens no socket never pulls in.  None elsewhere.
+#[must_use]
+pub fn c_system_link_libs() -> &'static [&'static str] {
+    if cfg!(windows) {
+        &["-lws2_32", "-lcrypt32", "-ladvapi32"]
+    } else {
+        &[]
+    }
+}
+
+/// Does the C runtime have sockets here (`src/c/loft_sock.h`: BSD sockets, or Winsock on
+/// Windows, @PLN203 C8) — what the `net` component and a unit that fetches over a URL need?
+#[must_use]
+pub fn c_runtime_has_sockets() -> bool {
+    cfg!(any(unix, windows))
+}
+
 /// Does the C runtime have its POSIX host layer here — the sockets, processes, `mmap` and
 /// `realpath` `src/c/loft_cc.h` puts under `LOFT_POSIX_HOST` (@PLN203)?  Not on Windows, until
 /// C8 gives those parts their Windows form.
 #[must_use]
 pub fn c_runtime_posix_host() -> bool {
     cfg!(unix)
+}
+
+/// The C compiler that builds and links a C backend unit: `LOFT_CC`, else `CC`, else the host's
+/// own ([`host_c_compiler`]).  The driver compiles with it, and every archive the unit links is
+/// built for it ([`c_unit_archiver`]).
+#[must_use]
+pub fn c_unit_compiler() -> String {
+    std::env::var("LOFT_CC")
+        .or_else(|_| std::env::var("CC"))
+        .unwrap_or_else(|_| host_c_compiler())
+}
+
+/// Does `cc` speak MSVC's command line (`cl`, `clang-cl`) rather than gcc's?  Told by its name.
+#[must_use]
+pub fn c_compiler_is_msvc(cc: &str) -> bool {
+    let stem = crate::file_access::file_stem(cc)
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+    stem == "cl" || stem == "clang-cl"
+}
+
+/// The C compiler the C backend drives when neither `LOFT_CC` nor `CC` names one: `cc`, and on
+/// Windows without one the MSVC `cl` of the Build Tools rustc's own target links with — found
+/// as [`shim_archiver`] finds it — so a machine that built loft builds its programs.
+#[must_use]
+pub fn host_c_compiler() -> String {
+    static CC: OnceLock<String> = OnceLock::new();
+    CC.get_or_init(|| {
+        if cfg!(windows)
+            && process::Spawn::new(process::Program::os("cc"))
+                .arg("--version")
+                .run(b"")
+                .is_err()
+            && let Some(cl) = msvc_cl()
+        {
+            return cl.path.display().to_string();
+        }
+        "cc".to_string()
+    })
+    .clone()
+}
+
+/// The environment (`INCLUDE`, `LIB`, `PATH`) an MSVC `cl` needs: none inside a developer
+/// prompt, which set it, nor off Windows; else the found toolset's.
+#[must_use]
+pub fn msvc_env() -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+    if std::env::var_os("INCLUDE").is_some() {
+        return Vec::new();
+    }
+    msvc_cl().map(|cl| cl.env.clone()).unwrap_or_default()
+}
+
+/// The MSVC `cl.exe` for this host, with its environment, found once.
+fn msvc_cl() -> Option<&'static MsvcTool> {
+    static CL: OnceLock<Option<MsvcTool>> = OnceLock::new();
+    CL.get_or_init(|| find_msvc_tool(&crate::cache::host_triple(), "cl.exe"))
+        .as_ref()
 }
 
 /// What to install so the C backend can build a host program, said for this host (@PLN203
@@ -1762,9 +1854,61 @@ pub fn c_host_toolchain_cure() -> &'static str {
     if cfg!(target_os = "macos") {
         "install the Xcode command-line tools (`xcode-select --install`)"
     } else if cfg!(windows) {
-        "install MinGW-w64 gcc, or name a compiler in LOFT_CC"
+        "install Visual Studio's Build Tools (the C++ workload, whose `cl` loft finds by \
+         itself) or MinGW-w64 gcc, or name a compiler in LOFT_CC"
     } else {
         "install one (Debian/Ubuntu: `apt install build-essential`), or name it in LOFT_CC"
+    }
+}
+
+/// A clang for wasm32 that this host keeps apart from its default `clang`, with the `wasm-ld`
+/// beside it: Homebrew's keg-only LLVM and lld on macOS, whose plain `clang` is Apple's and has
+/// no wasm target.  `None` where the default `clang` is the one to use.
+#[must_use]
+pub fn host_wasm_clang() -> Option<(String, Option<String>)> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    let first = |paths: &[&str]| {
+        paths
+            .iter()
+            .find(|p| crate::file_access::exists(p))
+            .map(|p| (*p).to_string())
+    };
+    let clang = first(&[
+        "/opt/homebrew/opt/llvm/bin/clang",
+        "/usr/local/opt/llvm/bin/clang",
+    ])?;
+    let ld = first(&[
+        "/opt/homebrew/opt/lld/bin/wasm-ld",
+        "/usr/local/opt/lld/bin/wasm-ld",
+    ]);
+    Some((clang, ld))
+}
+
+/// Where a WASI sysroot lies when `WASI_SYSROOT` names none: Debian's package, Homebrew's
+/// wasi-libc (Apple silicon and Intel prefixes).  A clang that finds its own (wasi-sdk's) needs
+/// none of these.
+#[must_use]
+pub fn wasi_sysroot_candidates() -> &'static [&'static str] {
+    &[
+        "/usr/share/wasi-sysroot",
+        "/opt/homebrew/opt/wasi-libc/share/wasi-sysroot",
+        "/usr/local/opt/wasi-libc/share/wasi-sysroot",
+    ]
+}
+
+/// How to install `wasm-opt` (binaryen), which a page that yields a frame needs for asyncify —
+/// what the `--html` driver says when it is missing, per host (C10, measured on each runner).
+#[must_use]
+pub fn wasm_opt_cure() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "`brew install binaryen`"
+    } else if cfg!(windows) {
+        "put binaryen's `bin` on PATH (github.com/WebAssembly/binaryen/releases, the \
+         x86_64-windows archive)"
+    } else {
+        "`apt install binaryen` on Debian/Ubuntu, binaryen from your distribution elsewhere"
     }
 }
 
@@ -1775,6 +1919,13 @@ pub fn c_wasm_toolchain_cure() -> &'static str {
     if cfg!(target_os = "linux") {
         "install clang, lld, the WASI libc and the wasm32 compiler-rt (Debian/Ubuntu: \
          `apt install clang lld wasi-libc libclang-rt-dev-wasm32`), or name a clang in LOFT_WASM_CC"
+    } else if cfg!(target_os = "macos") {
+        "install Homebrew's LLVM, lld and WASI libc (`brew install llvm lld wasi-libc \
+         wasi-runtimes`) — Apple's clang has no wasm target — or name a clang in LOFT_WASM_CC"
+    } else if cfg!(windows) {
+        "download wasi-sdk (github.com/WebAssembly/wasi-sdk/releases, the x86_64-windows archive) \
+         and name its clang in LOFT_WASM_CC (`<wasi-sdk>/bin/clang.exe`) — the LLVM installer's \
+         clang has no WASI libc"
     } else {
         "install LLVM's clang and lld with a WASI sysroot and the wasm32 compiler-rt, or name \
          a clang in LOFT_WASM_CC"
@@ -1890,10 +2041,13 @@ pub enum ShimArchiver {
     /// `cl /c` + `lib`, writing `<stem>.msvc-<key>.lib`, the key a hash of the `cl.exe`
     /// path: the path carries the toolset version, and an archive built by one toolset is
     /// not reused by another.  Never `<stem>.lib`, which is the shared shim's import library.
+    /// `static_crt`: the objects ask for the static C runtime (`/MT`, a `cl`-built C unit's
+    /// default, `<stem>.msvc-<key>-mt.lib`) rather than the DLL one rustc's target links.
     Msvc {
         cl: MsvcTool,
         lib: MsvcTool,
         key: u64,
+        static_crt: bool,
     },
 }
 
@@ -1920,7 +2074,12 @@ impl ShimArchiver {
     pub fn file_name(&self, stem: &str) -> String {
         match self {
             ShimArchiver::Unix => format!("lib{stem}.a"),
-            ShimArchiver::Msvc { key, .. } => format!("{stem}.msvc-{key:08x}.lib"),
+            ShimArchiver::Msvc {
+                key, static_crt, ..
+            } => format!(
+                "{stem}.msvc-{key:08x}{}.lib",
+                if *static_crt { "-mt" } else { "" }
+            ),
         }
     }
 
@@ -1958,13 +2117,14 @@ impl ShimArchiver {
                 .arg(src)
                 .arg("-o")
                 .arg(obj),
-            // `/MD` is the C runtime rustc's MSVC target links (the DLL CRT); objects built
-            // for the static one would ask the link for a second CRT.
-            ShimArchiver::Msvc { cl, .. } => cl
+            // `/MD` is the C runtime rustc's MSVC target links (the DLL CRT), `/MT` the one a
+            // `cl`-built C unit links; objects built for the other would ask the link for a
+            // second CRT.
+            ShimArchiver::Msvc { cl, static_crt, .. } => cl
                 .spawn()
                 .arg("/nologo")
                 .arg("/O2")
-                .arg("/MD")
+                .arg(if *static_crt { "/MT" } else { "/MD" })
                 .arg("/c")
                 .arg(src)
                 .arg(format!("/Fo{}", obj.display())),
@@ -2003,9 +2163,46 @@ pub fn shim_archiver() -> Option<&'static ShimArchiver> {
             let cl = find_msvc_tool(&target, "cl.exe")?;
             let lib = find_msvc_tool(&target, "lib.exe")?;
             let key = crate::cache::stable_hash(&[cl.path.to_string_lossy().as_bytes()]);
-            Some(ShimArchiver::Msvc { cl, lib, key })
+            Some(ShimArchiver::Msvc {
+                cl,
+                lib,
+                key,
+                static_crt: false,
+            })
         })
         .as_ref()
+}
+
+/// The archiver for an archive a C backend unit links (its TLS client, a library's `[c] shim`):
+/// the one of the compiler that links the unit ([`c_unit_compiler`]) — `cc` + `ar`, or for `cl`
+/// MSVC's `cl` + `lib` with the static C runtime, since `cl` cannot read a gcc archive and
+/// MinGW's `ld` cannot read an MSVC one.
+///
+/// # Errors
+/// `cl` links the unit but its Build Tools' `cl.exe` / `lib.exe` cannot be found.
+pub fn c_unit_archiver() -> Result<&'static ShimArchiver, String> {
+    static UNIX: ShimArchiver = ShimArchiver::Unix;
+    static MSVC: OnceLock<Option<ShimArchiver>> = OnceLock::new();
+    if !c_compiler_is_msvc(&c_unit_compiler()) {
+        return Ok(&UNIX);
+    }
+    MSVC.get_or_init(|| {
+        let target = crate::cache::host_triple();
+        let cl = find_msvc_tool(&target, "cl.exe")?;
+        let lib = find_msvc_tool(&target, "lib.exe")?;
+        let key = crate::cache::stable_hash(&[cl.path.to_string_lossy().as_bytes()]);
+        Some(ShimArchiver::Msvc {
+            cl,
+            lib,
+            key,
+            static_crt: true,
+        })
+    })
+    .as_ref()
+    .ok_or_else(|| {
+        "`cl` links this program, and the Build Tools' `cl.exe` and `lib.exe` an archive for          it is built with were not found"
+            .to_string()
+    })
 }
 
 /// An MSVC tool for `target`, with its environment: a developer prompt's when one is

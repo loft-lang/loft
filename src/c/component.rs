@@ -23,6 +23,7 @@ const NET: &[(&str, &str)] = &[
     ("net.c", include_str!("components/net.c")),
     ("loft_cc.h", include_str!("loft_cc.h")),
     ("loft_text.h", include_str!("loft_text.h")),
+    ("loft_sock.h", include_str!("loft_sock.h")),
     ("loft_https.h", include_str!("loft_https.h")),
     ("loft_web.h", include_str!("loft_web.h")),
     ("loft_server.h", include_str!("loft_server.h")),
@@ -48,9 +49,9 @@ pub fn build(name: &str, out_dir: &std::path::Path) -> Result<std::path::PathBuf
             ));
         }
     };
-    if !crate::platform::c_runtime_posix_host() {
+    if !crate::platform::c_runtime_has_sockets() {
         return Err(format!(
-            "component `{name}` needs the C runtime's POSIX host layer, which this host lacks"
+            "component `{name}` needs the C runtime's sockets, which this host lacks"
         ));
     }
     let tls = super::tls::archive()
@@ -84,7 +85,22 @@ pub fn build(name: &str, out_dir: &std::path::Path) -> Result<std::path::PathBuf
             .map_err(|e| format!("cannot publish `{}`: {e}", lib.display()))
     });
     let _ = crate::file_access::remove_dir_all(&stage);
-    published?;
+    // A concurrent build may have published the same library first — and on Windows a
+    // library another process has loaded cannot be replaced: that one is the answer once its
+    // key says it is this build's.
+    if let Err(why) = published {
+        let current = || {
+            crate::file_access::exists(&lib)
+                && crate::file_access::read_to_string(&key_file).is_ok_and(|k| k.trim() == key)
+        };
+        for _ in 0..50 {
+            if current() {
+                return Ok(lib);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        return Err(why);
+    }
     crate::file_access::write(&key_file, &key)
         .map_err(|e| format!("cannot write {}: {e}", key_file.display()))?;
     crate::cache::write_native_artifact_fingerprint(out_dir, fp);
@@ -112,7 +128,8 @@ fn compile(
         .push_arg("-fPIC")
         .push_arg("-shared")
         .push_arg("-fvisibility=hidden")
-        .push_arg("-pthread")
+        .push_args(crate::platform::c_thread_link_args())
+        .push_args(crate::platform::shim_cc_runtime_args())
         .push_arg("-I")
         .push_arg(stage)
         .push_arg("-o")
@@ -129,6 +146,7 @@ fn compile(
     } else {
         cmd.push_arg("-Wl,--exclude-libs,ALL");
     }
+    cmd.push_args(crate::platform::c_system_link_libs());
     let out = cmd.run(b"").map_err(|e| {
         format!("component `{name}` needs a C compiler and `{cc}` could not be run ({e})")
     })?;

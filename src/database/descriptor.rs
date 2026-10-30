@@ -236,9 +236,55 @@ pub struct LayoutDesc {
     /// shows it only where a `vector`/`sorted` over the type turned into an
     /// `array`/`ordered`; a store holding only a `hash<T>` gives no sign of it.
     pub linked: std::collections::BTreeSet<u16>,
+    /// loft#2237 — the keyed collections whose dump line lacked the key-order suffix this
+    /// build renders for them ([`crate::placement::KEY_ORDER`]): images written before a null
+    /// `float` / `single` / `text` key ordered first.  Empty for a description of the live
+    /// table; filled by [`LayoutDesc::from_dump`].  Carried so the old line re-renders
+    /// exactly, and so its identity differs from this build's and an upgrade rebuilds the
+    /// collection in this build's order.
+    pub old_order: std::collections::BTreeSet<u16>,
 }
 
 impl LayoutDesc {
+    /// Does a keyed collection over `elem` with `keys` store its entries in
+    /// [`crate::placement::KEY_ORDER`] — is a key field a `float`, `single` or `text`?  The
+    /// twin of `Stores::key_order_tag`, read off the description's own field types.
+    #[must_use]
+    pub fn key_orders(&self, elem: u16, keys: &[(u16, bool)]) -> bool {
+        let Some(LayoutNode::Record(fs) | LayoutNode::EnumValue(_, fs)) = self.nodes.get(&elem)
+        else {
+            return false;
+        };
+        keys.iter().any(|(f, _)| {
+            fs.get(*f as usize)
+                .is_some_and(|fld| self.orders(fld.content, 0))
+        })
+    }
+
+    /// Does a key field of type `t` hold a part that orders by [`crate::placement::KEY_ORDER`]?
+    /// A tuple key is its elements' parts, as the runtime's key list spells it.
+    fn orders(&self, t: u16, depth: u8) -> bool {
+        if matches!(self.name(t).as_str(), "float" | "single" | "text") {
+            return true;
+        }
+        match self.nodes.get(&t) {
+            Some(LayoutNode::Record(fs)) if depth < 8 => {
+                fs.iter().any(|f| self.orders(f.content, depth + 1))
+            }
+            _ => false,
+        }
+    }
+
+    /// The key-order suffix keyed type `id` renders: this build's, unless its line was
+    /// written before it ([`Self::old_order`]).
+    fn order_tag(&self, id: u16, elem: u16, keys: &[(u16, bool)]) -> &'static str {
+        if self.key_orders(elem, keys) && !self.old_order.contains(&id) {
+            crate::placement::KEY_ORDER
+        } else {
+            ""
+        }
+    }
+
     /// The type-name of `k`, matching `Stores::layout_type_name` (`#<id>` when the
     /// id is out of range — only for a `u16::MAX` field content).
     fn name(&self, k: u16) -> String {
@@ -318,16 +364,18 @@ impl LayoutDesc {
             LayoutNode::Iterated(it) => match it {
                 Iterated::Sorted { elem, keys } => {
                     format!(
-                        "sorted<{}>(keys={keys:?},elem_size={})",
+                        "sorted<{}>(keys={keys:?},elem_size={}{})",
                         self.name(*elem),
-                        self.size(*elem)
+                        self.size(*elem),
+                        self.order_tag(id, *elem, keys)
                     )
                 }
                 Iterated::Ordered { elem, keys } => {
                     format!(
-                        "ordered<{}>(keys={keys:?},elem_size={})",
+                        "ordered<{}>(keys={keys:?},elem_size={}{})",
                         self.name(*elem),
-                        self.size(*elem)
+                        self.size(*elem),
+                        self.order_tag(id, *elem, keys)
                     )
                 }
                 // Every keyed kind renders its placement token, not just the one whose
@@ -346,10 +394,11 @@ impl LayoutDesc {
                 }
                 Iterated::Index { elem, keys } => {
                     format!(
-                        "index<{}>(keys={keys:?},elem_size={}{})",
+                        "index<{}>(keys={keys:?},elem_size={}{}{})",
                         self.name(*elem),
                         self.size(*elem),
-                        self.tag(id, crate::placement::INDEX)
+                        self.tag(id, crate::placement::INDEX),
+                        self.order_tag(id, *elem, keys)
                     )
                 }
                 Iterated::Radix { elem, keys } => {
@@ -664,6 +713,7 @@ impl Stores {
             sizes,
             placements: BTreeMap::new(),
             linked,
+            old_order: std::collections::BTreeSet::new(),
         }
     }
 

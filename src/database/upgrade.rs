@@ -291,11 +291,23 @@ impl Stores {
                 self.determine_keys_for(usize::from(*id));
             }
         }
+        // loft#2237 — a keyed collection the image stored in the old key order renders its old
+        // line; it is walked, and the converter files its entries again in this build's order.
+        for id in &closure.old_order {
+            if let Some(b) = ids.get(id) {
+                self.types[usize::from(*b)].key_order = super::types::KeyOrder::Before;
+            }
+        }
         // The rows must BE the old layout: re-rendered, they give back the old dump of the
         // root's closure, line for line.
+        // A `hash` written under a placement this build reads as written (@C152,
+        // `placement::HASH_READS`) is this build's row, as `classify` reads it: an image that
+        // converts for another reason — a key order (loft#2237) — must not be refused for the
+        // token of a table it reads unchanged.
         let written = closure.render_dump();
+        let written = crate::placement::read_as_own(&written);
         let rebuilt = self.layout_dump(&[ids[&root]]);
-        if written != rebuilt {
+        if *written != rebuilt {
             let at = written
                 .lines()
                 .zip(rebuilt.lines())
@@ -1024,17 +1036,20 @@ pub enum FileUpgrade {
     },
 }
 
-/// The `.dschema` text and the image of the store file at `path`.
+/// The `.dschema` text and the image of the store file at `path`, from either filesystem —
+/// the one the layout gate read them from, so a browser page converts what native converts.
 fn read_store_file(path: &std::path::Path) -> Result<(String, Vec<u8>), String> {
     let side = crate::schema_sidecar::dschema_path(path);
-    let text = crate::file_access::read_to_string(&side).map_err(|_| {
+    let text = crate::schema_sidecar::sidecar_text(&side).ok_or_else(|| {
         format!(
             "{} has no recorded layout ({} is missing), so what it holds cannot be known",
             path.display(),
             side.display()
         )
     })?;
-    let bytes = crate::file_access::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let bytes = crate::file_access::read(path)
+        .or_else(|e| path.to_str().and_then(crate::store::image_bytes).ok_or(e))
+        .map_err(|e| e.to_string())?; // the error already names the path
     Ok((text, bytes))
 }
 

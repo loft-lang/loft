@@ -176,6 +176,15 @@ jobs:
           fi
           "$(command -v google-chrome || command -v chromium || command -v chromium-browser)" --version
 
+      # The nightly's version is part of the cache key: `target` holds the std the nightly
+      # built with atomics, and a run on a newer nightly that restored it linked against the
+      # older toolchain's `core` ("only metadata stub found for `rlib` dependency `core`").
+      # The last restore key still crosses nightlies (the registry), which is safe because
+      # the atomics sysroot drops every library the current build did not provide.
+      - name: Nightly version (cache key)
+        id: nightly
+        run: echo "v=$(rustup run nightly rustc -V | sha256sum | cut -c1-12)" >> "$GITHUB_OUTPUT"
+
       - name: Cache cargo
         id: cargo-cache
         uses: actions/cache/restore@v4
@@ -184,9 +193,10 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ubuntu-cargo-threads-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
+          key: ubuntu-cargo-threads-${{ steps.nightly.outputs.v }}-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
           restore-keys: |
-            ubuntu-cargo-threads-${{ hashFiles('**/Cargo.lock') }}-
+            ubuntu-cargo-threads-${{ steps.nightly.outputs.v }}-${{ hashFiles('**/Cargo.lock') }}-
+            ubuntu-cargo-threads-${{ steps.nightly.outputs.v }}-
             ubuntu-cargo-threads-
 
       # The interpreter reference every gate compares against, and the binary

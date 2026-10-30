@@ -733,6 +733,65 @@ pub(crate) fn frees_a_record(
                 && matches!(vars.tp(*v).base(), Type::Reference(_, _) | Type::Enum(_, true, _)))
 }
 
+/// `(R-InPlace)`'s exit clause — the releases in `ops`' EXIT tail: where the block's last
+/// statement is a `return` of a variable or a constant (its answer already computed), the
+/// frees right before it.  After them control leaves the frame, so no holder a loop around
+/// them derived is read again, and nothing they release is reachable from a caller: each
+/// frees a store this frame owns — a local's, or an argument's only where the frame
+/// replaced the store it was handed (`OpFreeRefIfDistinct` against that snapshot).  Answers
+/// the nodes as the walk meets them (`any_node` visits a block before its statements).
+/// Enforces `@FR-R-InPlace`'s exit clause.
+pub(crate) fn exit_tail_frees(
+    ops: &[Value],
+    data: &Data,
+    vars: Option<&crate::variables::Function>,
+) -> Vec<*const Value> {
+    let mut out = Vec::new();
+    let Some(vars) = vars else { return out };
+    if !crate::keys::exit_release_enabled() {
+        return out;
+    }
+    let Some((last, rest)) = ops.split_last() else {
+        return out;
+    };
+    let Value::Return(answer) = last.unspan() else {
+        return out;
+    };
+    if !matches!(
+        answer.unspan(),
+        Value::Var(_) | Value::Null | Value::Int(_) | Value::Long(_) | Value::Boolean(_)
+    ) {
+        return out;
+    }
+    for op in rest.iter().rev() {
+        let n = op.unspan();
+        let Value::Call(op_nr, args) = n else { break };
+        if (*op_nr as usize) >= data.definitions.len() {
+            break;
+        }
+        let name = data.def(*op_nr).name();
+        if !name.starts_with("OpFree") {
+            break;
+        }
+        let local = |v: u16| v < vars.count() && !vars.is_argument(v);
+        let own = match (
+            name,
+            args.first().map(Value::unspan),
+            args.get(1).map(Value::unspan),
+        ) {
+            ("OpFreeRef", Some(Value::Var(v)), _) => local(*v),
+            ("OpFreeRefIfDistinct", Some(Value::Var(v)), Some(Value::Var(w))) => {
+                *v < vars.count() && local(*w)
+            }
+            _ => false,
+        };
+        if own {
+            out.push(std::ptr::from_ref(n));
+        }
+    }
+    out
+}
+
 /// What a callee's body may run and still be an in-place-only or return-buffer-only writer,
 /// beside its own sets: the header hoist's own allowances — a null-discharge buffer's mint,
 /// a lazy buffer's, a record free (it moves nothing), and a DEAD buffer's mint, clear or
@@ -832,6 +891,10 @@ pub(crate) fn local_stack_ref(
 // owned buffers; a struct would put a name between each and the five call sites without
 // removing anything.
 #[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one dispatch over the statement kinds the hoist admits; each arm is a clause of @FR-R-InPlace"
+)]
 pub(crate) fn blocks_header_hoist(
     node: &Value,
     data: &Data,
@@ -843,7 +906,15 @@ pub(crate) fn blocks_header_hoist(
     fresh: &mut HashSet<u16>,
     owned: Option<&HoistOwned>,
 ) -> bool {
+    // `(R-InPlace)`'s exit clause: the releases a `return` runs on its way out, marked as the
+    // walk enters their block.
+    let mut exit_frees: HashSet<*const Value> = HashSet::new();
     node.any_node(&mut |n| match n {
+        Value::Block(bl) => {
+            exit_frees.extend(exit_tail_frees(&bl.operators, data, vars));
+            false
+        }
+        Value::Call(..) if exit_frees.contains(&std::ptr::from_ref(n)) => false,
         // @PLN157 § V-s (`@FR-R-Mint`) — track the element variables the body has minted
         // so far, in the same preorder the write-set walk uses (see `body_writes` for why
         // that order is the execution order of the group).

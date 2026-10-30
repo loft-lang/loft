@@ -53,6 +53,40 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
+thread_local! {
+    /// The writer this test's page is built by (@PLN203 C6): each body runs once per writer.
+    static BACKEND: std::cell::Cell<&'static str> = const { std::cell::Cell::new("--native-rust") };
+}
+
+/// The `--native-rust` / `--native-c` flag the running test builds its page with.
+fn backend() -> &'static str {
+    BACKEND.with(std::cell::Cell::get)
+}
+
+/// Run a test body with its page built by `flag`.
+fn on(flag: &'static str, body: fn()) {
+    BACKEND.with(|b| b.set(flag));
+    body();
+}
+
+/// The running test's scratch directory: one per writer, so the two legs never share one.
+fn scratch(name: &str) -> PathBuf {
+    let leg = if backend() == "--native-c" { "_c" } else { "" };
+    std::env::temp_dir().join(format!("loft_html_embed_{name}{leg}"))
+}
+
+/// A failed page build may skip only for a missing toolchain.  On the C leg, anything else is
+/// the C backend refusing or failing the program, which must fail the test rather than read as
+/// a skip (the C driver's two missing-tool messages carry these words).
+fn skip_or_fail(stderr: &str) {
+    if backend() == "--native-c"
+        && !stderr.contains("needs clang")
+        && !stderr.contains("toolchain is incomplete")
+    {
+        panic!("the C page did not build:\n{stderr}");
+    }
+}
+
 fn pick_free_port() -> Option<u16> {
     let l = TcpListener::bind("127.0.0.1:0").ok()?;
     let p = l.local_addr().ok()?.port();
@@ -135,7 +169,7 @@ const PROGRAM: &str = "struct Rec { r_key: text, r_n: integer }\n\
 /// Lay out a one-file package with `manifest` as its `loft.toml`, and write the pack
 /// the program reads. Answers the package dir, or `None` when this box cannot build.
 fn package(loft: &Path, name: &str, manifest: &str) -> Option<PathBuf> {
-    let dir = std::env::temp_dir().join(format!("loft_html_embed_{name}"));
+    let dir = scratch(name);
     let _ = fa::remove_dir_all(&dir);
     fa::create_dir_all(dir.join("assets")).expect("create package dir");
     fa::write(dir.join("loft.toml"), manifest).expect("write manifest");
@@ -166,9 +200,7 @@ fn package(loft: &Path, name: &str, manifest: &str) -> Option<PathBuf> {
 
 /// @PLN146 F4 — a page declaring `[[embed]]` reads its pack with the same call, by the
 /// same name, as the desktop run that wrote it.
-// @speed 60.0
-#[test]
-fn a_declared_pack_is_readable_in_the_page_by_the_programs_own_path() {
+fn a_declared_pack_is_readable_in_the_page_by_the_programs_own_path_body() {
     let Some(_chrome) = any_of(&["google-chrome", "chromium", "chromium-browser", "chrome"]) else {
         eprintln!("SKIP: no chrome binary in PATH");
         return;
@@ -199,12 +231,13 @@ fn a_declared_pack_is_readable_in_the_page_by_the_programs_own_path() {
     };
 
     let built = loft::platform::process::harness_command(&loft)
-        .args(["--native-rust", "--html", "page.html"])
+        .args([backend(), "--html", "page.html"])
         .arg("embed_page.loft")
         .current_dir(&dir)
         .output()
         .expect("invoke loft --html");
     if !built.status.success() || !fa::exists(dir.join("page.html")) {
+        skip_or_fail(&String::from_utf8_lossy(&built.stderr));
         eprintln!(
             "SKIP: `loft --html` failed (no wasm toolchain?)\nstderr: {}",
             String::from_utf8_lossy(&built.stderr)
@@ -269,6 +302,25 @@ fn a_declared_pack_is_readable_in_the_page_by_the_programs_own_path() {
     );
 }
 
+// @speed 60.0
+#[test]
+fn a_declared_pack_is_readable_in_the_page_by_the_programs_own_path() {
+    on(
+        "--native-rust",
+        a_declared_pack_is_readable_in_the_page_by_the_programs_own_path_body,
+    );
+}
+
+/// [`a_declared_pack_is_readable_in_the_page_by_the_programs_own_path`] on a page whose module the C backend wrote (@PLN203 C6).
+// @speed 60.0
+#[test]
+fn a_declared_pack_is_readable_in_the_page_by_the_programs_own_path_on_the_c() {
+    on(
+        "--native-c",
+        a_declared_pack_is_readable_in_the_page_by_the_programs_own_path_body,
+    );
+}
+
 /// @PLN146 F4 — the declared file is the one the PROGRAM reads, not the one beside the
 /// manifest.
 ///
@@ -278,15 +330,13 @@ fn a_declared_pack_is_readable_in_the_page_by_the_programs_own_path() {
 /// key the program asks for — measured, before the fix, as a desktop run answering
 /// `load=false` while its own page answered `load=true`. The decoy at the manifest root
 /// is what makes this a reading rather than a check that a file was found.
-// @speed 40.0
-#[test]
-fn the_embedded_file_is_the_one_the_program_would_open() {
+fn the_embedded_file_is_the_one_the_program_would_open_body() {
     let loft = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft) {
         eprintln!("SKIP: target/release/loft not built");
         return;
     }
-    let root = std::env::temp_dir().join("loft_html_embed_srclayout");
+    let root = scratch("srclayout");
     let _ = fa::remove_dir_all(&root);
     fa::create_dir_all(root.join("src/assets")).expect("create src tree");
     fa::create_dir_all(root.join("assets")).expect("create decoy tree");
@@ -308,11 +358,12 @@ fn the_embedded_file_is_the_one_the_program_would_open() {
     .expect("write source");
 
     let built = loft::platform::process::harness_command(&loft)
-        .args(["--native-rust", "--html", "page.html", "src/layout.loft"])
+        .args([backend(), "--html", "page.html", "src/layout.loft"])
         .current_dir(&root)
         .output()
         .expect("invoke loft --html");
     if !built.status.success() || !fa::exists(root.join("page.html")) {
+        skip_or_fail(&String::from_utf8_lossy(&built.stderr));
         eprintln!(
             "SKIP: `loft --html` failed (no wasm toolchain?)\nstderr: {}",
             String::from_utf8_lossy(&built.stderr)
@@ -331,21 +382,38 @@ fn the_embedded_file_is_the_one_the_program_would_open() {
     );
 }
 
+// @speed 40.0
+#[test]
+fn the_embedded_file_is_the_one_the_program_would_open() {
+    on(
+        "--native-rust",
+        the_embedded_file_is_the_one_the_program_would_open_body,
+    );
+}
+
+/// [`the_embedded_file_is_the_one_the_program_would_open`] on a page whose module the C backend wrote (@PLN203 C6).
+// @speed 40.0
+#[test]
+fn the_embedded_file_is_the_one_the_program_would_open_on_the_c() {
+    on(
+        "--native-c",
+        the_embedded_file_is_the_one_the_program_would_open_body,
+    );
+}
+
 /// @PLN146 F4 — a LIBRARY's `[[embed]]` reaches a consumer's page, and brings the
 /// library's own file.
 ///
 /// The consumer here holds a file of the same name with different bytes. Without that
 /// decoy the test would pass whichever directory `source` resolved against, which is the
 /// only thing it is trying to measure.
-// @speed 40.0
-#[test]
-fn a_librarys_declaration_brings_the_librarys_own_file() {
+fn a_librarys_declaration_brings_the_librarys_own_file_body() {
     let loft = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft) {
         eprintln!("SKIP: target/release/loft not built");
         return;
     }
-    let root = std::env::temp_dir().join("loft_html_embed_lib");
+    let root = scratch("lib");
     let _ = fa::remove_dir_all(&root);
     let lib = root.join("libs/embedlib");
     fa::create_dir_all(lib.join("src")).expect("create lib dir");
@@ -376,7 +444,7 @@ fn a_librarys_declaration_brings_the_librarys_own_file() {
 
     let built = loft::platform::process::harness_command(&loft)
         .args([
-            "--native-rust",
+            backend(),
             "--html",
             "app.html",
             "--lib",
@@ -387,6 +455,7 @@ fn a_librarys_declaration_brings_the_librarys_own_file() {
         .output()
         .expect("invoke loft --html");
     if !built.status.success() || !fa::exists(app.join("app.html")) {
+        skip_or_fail(&String::from_utf8_lossy(&built.stderr));
         eprintln!(
             "SKIP: `loft --html` failed (no wasm toolchain?)\nstderr: {}",
             String::from_utf8_lossy(&built.stderr)
@@ -411,14 +480,31 @@ fn a_librarys_declaration_brings_the_librarys_own_file() {
     );
 }
 
+// @speed 40.0
+#[test]
+fn a_librarys_declaration_brings_the_librarys_own_file() {
+    on(
+        "--native-rust",
+        a_librarys_declaration_brings_the_librarys_own_file_body,
+    );
+}
+
+/// [`a_librarys_declaration_brings_the_librarys_own_file`] on a page whose module the C backend wrote (@PLN203 C6).
+// @speed 40.0
+#[test]
+fn a_librarys_declaration_brings_the_librarys_own_file_on_the_c() {
+    on(
+        "--native-c",
+        a_librarys_declaration_brings_the_librarys_own_file_body,
+    );
+}
+
 /// @PLN146 F4 — a declaration that cannot produce a working page stops the build, and
 /// stops it before the wasm compile.
 ///
 /// Every cell here is a spelling that would otherwise be carried FAITHFULLY, under a key
 /// the program never asks for: the page loads, the pack does not, and nothing says so.
-// @speed 60.0
-#[test]
-fn a_declaration_that_cannot_work_stops_the_build_before_the_wasm() {
+fn a_declaration_that_cannot_work_stops_the_build_before_the_wasm_body() {
     let loft = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft) {
         eprintln!("SKIP: target/release/loft not built");
@@ -439,7 +525,7 @@ fn a_declaration_that_cannot_work_stops_the_build_before_the_wasm() {
         fa::write(dir.join("loft.toml"), manifest).expect("write manifest");
         let _ = fa::remove_file(dir.join("out.html"));
         let out = loft::platform::process::harness_command(&loft)
-            .args(["--native-rust", "--html", "out.html"])
+            .args([backend(), "--html", "out.html"])
             .arg("embed_page.loft")
             .current_dir(&dir)
             .output()
@@ -506,5 +592,24 @@ fn a_declaration_that_cannot_work_stops_the_build_before_the_wasm() {
         ok && page,
         "the same package with a VALID declaration did not build, so the four refusals \
          above prove nothing about the declaration.\n{err}"
+    );
+}
+
+// @speed 60.0
+#[test]
+fn a_declaration_that_cannot_work_stops_the_build_before_the_wasm() {
+    on(
+        "--native-rust",
+        a_declaration_that_cannot_work_stops_the_build_before_the_wasm_body,
+    );
+}
+
+/// [`a_declaration_that_cannot_work_stops_the_build_before_the_wasm`] on a page whose module the C backend wrote (@PLN203 C6).
+// @speed 60.0
+#[test]
+fn a_declaration_that_cannot_work_stops_the_build_before_the_wasm_on_the_c() {
+    on(
+        "--native-c",
+        a_declaration_that_cannot_work_stops_the_build_before_the_wasm_body,
     );
 }

@@ -8065,124 +8065,37 @@ extern crate loft;"
             // the generated code can call it directly (unqualified).
             writeln!(w, "#[link(wasm_import_module = \"loft_gl\")]")?;
             writeln!(w, "unsafe extern \"C\" {{")?;
+            // Which natives the page supplies, and their signatures, are one contract with the
+            // C writer's browser module (`host_imports`, @PLN203 C6).
             let mut declared_natives = std::collections::HashSet::new();
             for d_nr in 0..data.definitions() {
-                let def = data.def(d_nr);
-                if def.native().is_empty() || declared_natives.contains(def.native()) {
+                let Some(imp) = crate::host_imports::host_import(data, d_nr, reachable) else {
+                    continue;
+                };
+                if !declared_natives.insert(imp.symbol.clone()) {
                     continue;
                 }
-                // #407 — skip the host-import extern declaration for ANY
-                // `#native` routed through `[wasm.bridge].routes`.  The local
-                // wrapper body is a call into `<crate>::<bridge_fn>` (see
-                // `output_wasm_bridge_call`), so the extern would be unused AND
-                // would collide with that wrapper's name (E0428) — exactly the
-                // blocker for a `text -> text` bridge, whose extern decl
-                // (`safe fn n_x(ptr,len) -> i32`) clashed with the loft wrapper
-                // `fn n_x(...) -> String`.  The bridge crate declares its OWN
-                // host imports, so no extern is needed at this layer.
-                if data.wasm_bridge_routes.contains_key(def.native()) {
-                    continue;
-                }
-                // @P321c browser-WASM (2026-05-29): skip the host-import
-                // declaration for store-mutating `#native` fns with NO bridge —
-                // the matching local body is a graceful Phase 1 stub (see
-                // `output_native_direct_call`), so the extern would be unused
-                // AND would collide with the local body name (E0428).
-                let stores_loft_ref =
-                    matches!(def.returned(), Type::Vector(_, _) | Type::Reference(_, _));
-                // A heap-typed arg (Reference / Vector / data-enum / sorted /
-                // hash / index / spatial) is passed as a `LoftStore` + `LoftRef`
-                // handle, exactly as the interpreter's `ArgT::Ref`/`ArgT::Vec`
-                // marshal it — NOT a raw `(ptr, count)` pair.  `heap_dep()` is the
-                // canonical set of those types (the same union the interpreter
-                // groups in `compute_sig`); reuse it so the two backends agree.
-                // D-html-vec (2026-07-04): a `vector<T>` arg IS a valid host import —
-                // it marshals as `(ptr, count)` (declared just below), which the JS glue
-                // reads as `new Float32Array(mem, ptr, count)`.  Only NON-vector heap args
-                // (Reference / keyed collections) need a LoftRef handle a host import can't
-                // take, so only those skip.  #423 broadened this to EVERY heap_dep and
-                // silently dropped gl_upload_vertices / gl_upload_canvas / gl_set_mat4 host
-                // imports → Brick Buster (and any --html WebGL program) rendered blank.
-                let has_ref_arg = def.attributes().iter().any(|a| {
-                    !a.name.starts_with("__")
-                        && a.typedef.heap_dep().is_some()
-                        && !matches!(a.typedef, Type::Vector(_, _))
-                });
-                if stores_loft_ref || has_ref_arg {
-                    continue;
-                }
-                // #623 — a REACHABLE routeless `#native` whose SYMBOL equals the
-                // loft fn's own emitted name (`n_<fn>`, i.e. a bare `#native`)
-                // gets both this host-import declaration and a local wrapper body
-                // under that one name — an unreadable rustc cascade (E0428 plus a
-                // string of E0610/E0061 against generated code, rustc's "remove
-                // the extra argument" pointing nowhere useful).  Skip the extern
-                // so exactly one diagnostic survives: the `compile_error!` the
-                // body site emits, naming the symbol, its library and the fix.
-                //
-                // Two shapes deliberately still get their declaration:
-                //   * an UNREACHABLE routeless native — unused, emits no body, and
-                //     must not reject an otherwise-valid program;
-                //   * a native whose symbol DIFFERS from the fn name
-                //     (`#native "loft_gl_swap_buffers"` on `gl_swap_buffers`) —
-                //     that is the legitimate raw host-import path the browser
-                //     shell supplies, and it never collided.
-                if reachable.contains(&d_nr)
-                    && (def.native() == def.name() || matches!(def.returned(), Type::Text(_)))
-                    && !data.wasm_bridge_routes.contains_key(def.native())
-                {
-                    continue;
-                }
-                declared_natives.insert(def.native().to_string());
-                // Build the C-ABI signature from loft parameter types.
+                use crate::host_imports::Arg;
                 use std::fmt::Write as _;
                 let mut params = String::new();
-                for attr in def.attributes() {
-                    if attr.name.starts_with("__") {
-                        continue;
-                    }
+                for (name, arg) in &imp.args {
                     if !params.is_empty() {
                         params.push_str(", ");
                     }
-                    let name = sanitize(&attr.name);
-                    match &attr.typedef {
-                        Type::Text(_) => params.push_str("ptr: *const u8, len: usize"),
-                        Type::Vector(elem_tp, _) => {
-                            let elem = Self::vector_elem_rust_type(elem_tp);
-                            let _ = write!(params, "ptr: *const {elem}, count: u32");
+                    match arg {
+                        Arg::Text => params.push_str("ptr: *const u8, len: usize"),
+                        Arg::Vector(elem) => {
+                            let _ = write!(params, "ptr: *const {}, count: u32", elem.rust());
                         }
-                        // Post-2c round 10c: wide Type::Integer (former Type::Long)
-                        // passes as i64 — range > i32::MAX can't fit in i32.
-                        Type::Integer(s) if s.is_wide() => {
-                            let _ = write!(params, "{name}: i64");
-                        }
-                        Type::Float => {
-                            let _ = write!(params, "{name}: f64");
-                        }
-                        Type::Single => {
-                            let _ = write!(params, "{name}: f32");
-                        }
-                        // @PLN17: cdylib exports use the u8 boolean storage form
-                        // (generated via rust_type); the extern decl must match.
-                        Type::Boolean => {
-                            let _ = write!(params, "{name}: u8");
-                        }
-                        _ => {
-                            let _ = write!(params, "{name}: i32");
+                        Arg::Scalar(s) => {
+                            let _ = write!(params, "{}: {}", sanitize(name), s.rust());
                         }
                     }
                 }
-                let ret = match def.returned() {
-                    Type::Void => String::new(),
-                    // Post-2c round 10c: wide Type::Integer returns as i64.
-                    Type::Integer(s) if s.is_wide() => " -> i64".to_string(),
-                    Type::Integer(_) | Type::Character => " -> i32".to_string(),
-                    Type::Float => " -> f64".to_string(),
-                    Type::Single => " -> f32".to_string(),
-                    Type::Boolean => " -> u8".to_string(), // @PLN17: u8 storage form
-                    _ => " -> i32".to_string(),
-                };
-                writeln!(w, "    safe fn {}({params}){ret};", def.native())?;
+                let ret = imp
+                    .ret
+                    .map_or_else(String::new, |r| format!(" -> {}", r.rust()));
+                writeln!(w, "    safe fn {}({params}){ret};", imp.symbol)?;
             }
             writeln!(w, "}}")?;
         } else if native_cabi {
@@ -9314,7 +9227,7 @@ extern crate loft;"
             // ~8 MiB OS main-thread stack), then the optional native leak check.
             write!(
                 w,
-                "\nfn main() {{\n{bind}{ledger}    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(loft::live_dispatch::boot_stores(LOFT_LIVE_FNS, LOFT_SRC));\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE;{release} if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    if !loft::live_dispatch::live_enabled() {{ init(&cell); }}\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
+                "\nfn main() {{\n{bind}{ledger}    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::store_budget::apply_env_limit_if_set();\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(loft::live_dispatch::boot_stores(LOFT_LIVE_FNS, LOFT_SRC));\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE;{release} if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    if !loft::live_dispatch::live_enabled() {{ init(&cell); }}\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
             )?;
             writeln!(w, "    if !loft::live_dispatch::live_enabled() {{")?;
             w.write_all(NATIVE_LEAK_CHECK_TAIL.as_bytes())?;
@@ -9355,7 +9268,7 @@ extern crate loft;"
             // references no `live_dispatch` symbol at all.
             write!(
                 w,
-                "\nfn main() {{\n{bind}{ledger}    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(Stores::new());\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE;{release} if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    init(&cell);\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
+                "\nfn main() {{\n{bind}{ledger}    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::store_budget::apply_env_limit_if_set();\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(Stores::new());\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE;{release} if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    init(&cell);\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
             )?;
             w.write_all(NATIVE_LEAK_CHECK_TAIL.as_bytes())?;
             w.write_all(NATIVE_STRICT_STORE_TAIL.as_bytes())?;
@@ -9916,6 +9829,19 @@ extern crate loft;"
                                     "            {{ let store = db.store_mut(&rec); \
                                  let s_pos = store.set_str(\"{esc}\"); \
                                  store.set_u32_raw(rec.rec, {at}, s_pos); }}"
+                                )?;
+                            }
+                            crate::const_literal::ConstField::Narrow {
+                                size,
+                                min,
+                                nullable,
+                                v,
+                            } => {
+                                let set = narrow_setter(*size, *nullable);
+                                let v = narrow_literal(*v);
+                                writeln!(
+                                    w,
+                                    "            db.store_mut(&rec).{set}(rec.rec, {at}, {min}_i32, {v});"
                                 )?;
                             }
                         }
@@ -13134,6 +13060,11 @@ extern crate loft;"
         }
 
         let needs_ret_cast = matches!(def.returned().base(), Type::Integer(_));
+        // `loft_ffi::widen_i32`: a NARROW answer's null is `i32::MIN` at the C-ABI, which a
+        // plain widening turns into an ordinary negative number (the C backend's
+        // `library_native` maps it the same way).
+        let narrow_ret =
+            matches!(def.returned().base(), Type::Integer(s) if s.forced_size.is_some());
         // @PLN17: external Rust fns use `bool`; loft's boolean storage form is u8.
         // Wrap a boolean return `(call) as u8`; boolean args coerce `u8 -> bool` below.
         let needs_bool_ret = matches!(def.returned().base(), Type::Boolean);
@@ -13145,7 +13076,9 @@ extern crate loft;"
         // original P244 fix borrowed a `Str` from `stores.scratch`; N2 retired
         // the scratch hop (owned, freed at scope end — no program-lifetime leak).
         let needs_text_wrap = matches!(def.returned().base(), Type::Text(_));
-        if needs_ret_cast || needs_bool_ret {
+        if narrow_ret {
+            write!(w, "  {{ let __r = unsafe {{ {qualified_symbol}(")?;
+        } else if needs_ret_cast || needs_bool_ret {
             write!(w, "  (unsafe {{ {qualified_symbol}(")?;
         } else if needs_text_wrap {
             // No type annotation: lib/server (and other native sub-crates)
@@ -13233,9 +13166,20 @@ extern crate loft;"
                         write!(w, ", ")?;
                     }
                     first = false;
+                    // What `bridge_args` handed for it: the argument, or its place in the
+                    // writable copy of a read-only store the call was given.
+                    let arg = if needs_loft_store && !self.wasm_browser {
+                        let i = heap_args
+                            .iter()
+                            .position(|a| sanitize(&a.name) == var)
+                            .unwrap_or(0);
+                        format!("_bc.handed({i})")
+                    } else {
+                        format!("var_{var}")
+                    };
                     write!(
                         w,
-                        "unsafe {{ std::mem::transmute_copy(&loft::codegen_runtime::to_loft_ref(var_{var})) }}"
+                        "unsafe {{ std::mem::transmute_copy(&loft::codegen_runtime::to_loft_ref({arg})) }}"
                     )?;
                 }
                 Type::Integer(_) | Type::Character => {
@@ -13270,7 +13214,12 @@ extern crate loft;"
                 }
             }
         }
-        if needs_ret_cast {
+        if narrow_ret {
+            write!(
+                w,
+                ") }}; if __r as i64 == i64::from(i32::MIN) {{ i64::MIN }} else {{ __r as i64 }} }}"
+            )?;
+        } else if needs_ret_cast {
             write!(w, ") }}) as i64")?;
         } else if needs_bool_ret {
             write!(w, ") }}) as u8")?; // @PLN17: external bool -> loft u8 storage form
@@ -13301,16 +13250,27 @@ extern crate loft;"
             // `loft_ffi` invisible to the generated code.
             writeln!(w, ") }};")?;
             // A record's handle is the answer itself; a vector sits behind a header.
-            if matches!(def.returned().base(), Type::Vector(_, _)) {
+            let is_vec = matches!(def.returned().base(), Type::Vector(_, _));
+            if is_vec {
                 write!(
                     w,
-                    "  loft::codegen_runtime::from_loft_ref(stores, unsafe {{ std::mem::transmute_copy(&_lr) }})"
+                    "  let _ans = loft::codegen_runtime::from_loft_ref(stores, unsafe {{ std::mem::transmute_copy(&_lr) }});"
                 )?;
             } else {
                 write!(
                     w,
-                    "  loft::codegen_runtime::from_loft_record(unsafe {{ std::mem::transmute_copy(&_lr) }})"
+                    "  let _ans = loft::codegen_runtime::from_loft_record(unsafe {{ std::mem::transmute_copy(&_lr) }});"
                 )?;
+            }
+            // loft#2227 — out of the argument's store it was built in (`BridgeGuard::answer`).
+            if needs_loft_store && !self.wasm_browser {
+                write!(
+                    w,
+                    "\n  _bc.answer(stores, _ans, {is_vec}, {})",
+                    self.type_lit_u16(def.native_answer_tp)
+                )?;
+            } else {
+                write!(w, "\n  _ans")?;
             }
         } else {
             write!(w, ") }}")?;
@@ -13391,33 +13351,9 @@ extern crate loft;"
     /// Native functions that accept `vector<T>` args receive a `*const ELEM_TYPE`
     /// pointer.  This function returns the Rust type name for each loft element type.
     fn vector_elem_rust_type(tp: &Type) -> &'static str {
-        match tp {
-            Type::Single => "f32",
-            Type::Float => "f64",
-            Type::Boolean => "u8",
-            Type::Character => "u32",
-            // @P310: the FFI data-pointer element width must match the
-            // vector's STORAGE STRIDE, not its value range.  A plain
-            // `vector<integer>` carries no `forced_size`, so it is stored at
-            // the wide 8-byte stride (`byte_width() == 8`, `Type::size == 8`,
-            // `vector_append` strides 8) — even though its bounds are the
-            // signed-32 template (`is_wide() == false`).  Keying off
-            // `vector_narrow_width()` (the same predicate the vector storage +
-            // `OpGetVector`/`OpSetVector` use, `data.rs::vector_narrow_width`)
-            // gives the pointer the storage-matching width: plain integer →
-            // `i64` (matches the cdylib `vec<i64>` wrappers + `Canvas` pixel
-            // semantics), narrow aliases keep their forced width.  (i8/i16
-            // narrow vectors map to the unsigned same-width name — signedness
-            // is moot, no `#native` FFI takes a narrow-int vector today.)
-            Type::Integer(s) => match s.vector_narrow_width(false) {
-                Some(1) => "u8",
-                Some(2) => "i16",
-                Some(4) => "i32",
-                _ => "i64",
-            },
-            // Fallback for struct/enum elements: opaque bytes.
-            _ => "u8",
-        }
+        // The storage-stride width the host reads, one home with the browser
+        // imports' (`host_imports::Elem`).
+        crate::host_imports::Elem::of(tp).rust()
     }
 }
 
@@ -13731,6 +13667,23 @@ fn rust_f64(v: f64) -> String {
     }
 }
 
+/// The store setter a pre-built narrow constant field is written with: the one the runtime
+/// operator it came from uses (`OpSetByte`/`OpSetByteNullable` → `set_byte`, `OpSetShortRaw`
+/// → `set_i16_raw`, `OpSetShort` → `set_short`).
+fn narrow_setter(size: u8, nullable: bool) -> &'static str {
+    match (size, nullable) {
+        (1, _) => "set_byte",
+        (_, false) => "set_i16_raw",
+        (_, true) => "set_short",
+    }
+}
+
+/// A pre-built narrow field's value as a Rust `i32` literal; the setters read `i32::MIN` as
+/// the null.
+fn narrow_literal(v: Option<i64>) -> String {
+    v.map_or_else(|| "i32::MIN".to_string(), |v| format!("{v}_i32"))
+}
+
 /// [`rust_f64`] for a `single`.
 fn rust_f32(v: f32) -> String {
     if v.is_finite() {
@@ -13760,6 +13713,25 @@ fn const_columns(
             if *off != first[k].0 || kind(val) != kind(&first[k].1) {
                 return None;
             }
+            // A narrow column is written with ONE width, ONE bias and ONE setter.
+            if let (
+                crate::const_literal::ConstField::Narrow {
+                    size,
+                    min,
+                    nullable,
+                    ..
+                },
+                crate::const_literal::ConstField::Narrow {
+                    size: s0,
+                    min: m0,
+                    nullable: n0,
+                    ..
+                },
+            ) = (val, &first[k].1)
+                && (size != s0 || min != m0 || nullable != n0)
+            {
+                return None;
+            }
             columns[k].1.push(val);
         }
     }
@@ -13784,6 +13756,7 @@ fn write_const_columns(
             Some(ConstField::Bool(_)) => "i32",
             Some(ConstField::Char(_)) => "u32",
             Some(ConstField::Text(_)) => "&str",
+            Some(ConstField::Narrow { .. }) => "i32",
             None => return Ok(()),
         };
         write!(w, "        static C{d_nr}_{k}: [{ty}; {count}] = [")?;
@@ -13797,6 +13770,7 @@ fn write_const_columns(
                 ConstField::Single(v) => write!(w, " {},", rust_f32(*v))?,
                 ConstField::Bool(v) => write!(w, " {}_i32,", i32::from(*v))?,
                 ConstField::Char(v) => write!(w, " {v}_u32,")?,
+                ConstField::Narrow { v, .. } => write!(w, " {},", narrow_literal(*v))?,
                 ConstField::Text(v) => {
                     let esc = v.replace('\\', "\\\\").replace('"', "\\\"");
                     write!(w, " \"{esc}\",")?;
@@ -13853,6 +13827,19 @@ fn write_const_columns(
                     "            {{ let store = db.store_mut(&rec); \
                      let s_pos = store.set_str({v}); \
                      store.set_u32_raw(rec.rec, {at}, s_pos); }}"
+                )?;
+            }
+            // `const_columns` keeps a narrow column to one width and one bias.
+            Some(ConstField::Narrow {
+                size,
+                min,
+                nullable,
+                ..
+            }) => {
+                let set = narrow_setter(*size, *nullable);
+                writeln!(
+                    w,
+                    "            db.store_mut(&rec).{set}(rec.rec, {at}, {min}_i32, {v});"
                 )?;
             }
             None => {}

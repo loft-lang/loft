@@ -1,0 +1,137 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// SORT PLACES NULL FIRST AND KEEPS EQUAL FLOATS IN ORDER (`@FR-E-NullArg`, loft#2236, @PLN206
+// D19e).  `sort` answers the order `<` answers: a null before every value of an ordered type —
+// `float`, `single`, `text` (`null < ""`) and `integer` alike — and the rest ascending.  It is
+// stable, which a float shows: `-0.0 == 0.0`, so the two zeros keep the order they had.  The
+// cells vary the element type, where the nulls stand (middle, start, end, all), the length (a
+// short vector, and one of 40 that the C runtime sorts by merging runs, not by insertion) and
+// the element's declared type: a plain `vector<float>` is sorted by the runtime's own sort,
+// where the defect was, and a `vector<float?>` by `sort`'s loft body, through `<`.  A null
+// reaches a plain vector through a null local, each the one warning its cell claims.
+//
+// @falsified-at: 6184655a5 — interpret exit 1 -> 0, interpret 5 assertion failures -> 0, native exit 1 -> 0, native 10 assertion failures -> 0
+//   `--native-c` (not a falsify lane) answered the same cells wrong on that build by hand:
+//   the nulls between the values, and a 40-element vector out of order.
+// CHANNEL: the asserts.
+// WITNESS: `test_null_floats_sort_first` — `[2.5,null,-1,-0,0,1,null,0,-0]` on the
+//   interpreter and the nulls in the middle on C before the fix.
+// HOLDS: `test_a_nullable_vector_sorts_the_same`, `test_null_integers_sort_first` and
+//   `test_sort_by_agrees_with_sort` — clean before the fix too (`sort`'s loft body and
+//   `sort_by` go through `<`; an integer's null is its minimum).
+
+// @EXPECT_WARNING: is stored into the local `n`
+fn absent_float() -> float {
+  n: float = null;
+  n
+}
+
+// @EXPECT_WARNING: is stored into the local `n`
+fn absent_single() -> single {
+  n: single = null;
+  n
+}
+
+fn signs(xs: vector<float>) -> text {
+  o = "";
+  for x in xs {
+    o += if x == null { "n " } else if 1.0 / x < 0.0 { "{x}- " } else { "{x}+ " };
+  }
+  o
+}
+
+fn test_null_floats_sort_first() {
+  n = absent_float();
+  a = [2.5, n, -0.0, 1.0, 0.0, -1.0, n, 0.0, -0.0];
+  a.sort();
+  assert(signs(a) == "n n -1- -0- 0+ 0+ -0- 1+ 2.5+ ", "floats {signs(a)}");
+}
+
+fn test_null_singles_sort_first() {
+  n = absent_single();
+  c = [2.5f, n, -1.0f, 0.5f, n];
+  c.sort();
+  assert("{c}" == "[null,null,-1,0.5,2.5]", "singles {c}");
+}
+
+// @EXPECT_WARNING: is stored into the local `nt`
+fn test_a_null_text_sorts_before_the_empty_text() {
+  nt: text = null;
+  g = ["b", nt, "a", "", nt];
+  g.sort();
+  assert("{g}" == "[null,null,\"\",\"a\",\"b\"]", "texts {g}");
+}
+
+fn test_a_null_at_either_end_moves_to_the_front() {
+  n = absent_float();
+  e = [3.0, 2.0, 1.0, n];
+  e.sort();
+  assert(signs(e) == "n 1+ 2+ 3+ ", "null last {signs(e)}");
+  f = [n, 3.0, -2.0];
+  f.sort();
+  assert(signs(f) == "n -2- 3+ ", "null first {signs(f)}");
+  d = [n, n, n];
+  d.sort();
+  assert(signs(d) == "n n n ", "all null {signs(d)}");
+}
+
+fn test_a_long_float_vector_sorts_with_its_nulls_first() {
+  n = absent_float();
+  l: vector<float> = [];
+  for i in 0..40 {
+    l += [if i % 7 == 3 { n } else { (i * 37 % 19) as float - 9.0 }];
+  }
+  l.sort();
+  nulls = 0;
+  seen = false;
+  ordered = true;
+  prev = -100.0;
+  for x in l {
+    if x == null {
+      nulls += 1;
+      if seen { ordered = false; }
+    } else {
+      seen = true;
+      if x < prev { ordered = false; }
+      prev = x;
+    }
+  }
+  assert(nulls == 6, "nulls {nulls}");
+  assert(ordered, "out of order: {l}");
+  assert(len(l) == 40, "length {len(l)}");
+}
+
+fn test_a_long_vector_keeps_its_zeros_in_order() {
+  // 40 zeros, the sign of each its index's parity, behind 10 ones: a stable sort answers the
+  // zeros in their own order, so the signs still alternate.
+  z: vector<float> = [];
+  for _ in 0..10 { z += [1.0]; }
+  for i in 0..40 { z += [if i % 2 == 0 { -0.0 } else { 0.0 }]; }
+  z.sort();
+  want = "";
+  for i in 0..40 { want += if i % 2 == 0 { "-0- " } else { "0+ " }; }
+  for _ in 0..10 { want += "1+ "; }
+  assert(signs(z) == want, "zeros {signs(z)}");
+}
+
+fn test_a_nullable_vector_sorts_the_same() {
+  a: vector<float?> = [2.5, null, -0.0, 1.0, 0.0, -1.0, null, 0.0, -0.0];
+  a.sort();
+  o = "";
+  for x in a { o += if x == null { "n " } else if 1.0 / x < 0.0 { "{x}- " } else { "{x}+ " }; }
+  assert(o == "n n -1- -0- 0+ 0+ -0- 1+ 2.5+ ", "nullable floats {o}");
+}
+
+fn test_null_integers_sort_first() {
+  b: vector<integer?> = [5, null, -3, 0, null, 7, -9];
+  b.sort();
+  assert("{b}" == "[null,null,-9,-3,0,5,7]", "integers {b}");
+}
+
+fn test_sort_by_agrees_with_sort() {
+  n = absent_float();
+  h = [2.0, n, -1.0, 0.0];
+  h.sort_by(fn(x: float) -> float { x });
+  assert(signs(h) == "n -1- 0+ 2+ ", "sort_by {signs(h)}");
+}

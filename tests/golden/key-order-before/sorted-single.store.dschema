@@ -1,0 +1,11 @@
+LOFT-DSCHEMA v2
+hash=6527557263097118759
+root=sorted<KS[k]>
+slot=3
+--
+@endian	little
+KS	size=16	struct{k@8:single, v@0:integer}
+integer	size=8	base
+single	size=4	base
+sorted<KS[k]>	size=4	sorted<KS>(keys=[(0, true)],elem_size=16)
+--facts--

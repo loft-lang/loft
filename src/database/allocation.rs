@@ -1601,7 +1601,7 @@ impl Stores {
     }
 
     /// Can a value of `tp` hold a `File` record — the type itself, or a member at any depth?
-    pub(super) fn type_holds_file(&self, tp: u16) -> bool {
+    pub(crate) fn type_holds_file(&self, tp: u16) -> bool {
         match self
             .types
             .get(tp as usize)
@@ -4166,12 +4166,30 @@ impl Stores {
         // order, ascending, for an unordered walk of the copy to repeat its source's
         // (`@FR-Col-Unordered`).
         self.reserve_hash(to, children.len() as i64, tp);
-        for child in children {
+        // A LINKED entry is a record of its own, and claims made in the source's order need
+        // not ascend: the allocator puts each where it fits best (`@FR-H-Exact`), so a smaller
+        // free block above a larger one below is filled first.  So every record is claimed
+        // before any is filled, and the source's i-th entry goes into the i-th lowest — the
+        // records of one type are one size, so any of them takes any entry.
+        let linked = self.types[content_tp as usize].linked;
+        let mut records: Vec<DbRef> = Vec::new();
+        if linked {
+            for _ in 0..children.len() {
+                let rec = self.hash_entry(to, content_tp, to.rec);
+                records.push(rec);
+            }
+            records.sort_by_key(|r| (r.rec, r.pos));
+        }
+        for (i, child) in children.into_iter().enumerate() {
             let src_db = child.child;
             // The destination's entry takes the layout its TYPE asks for (`hash_entry`): a
             // slot of its own table, or a record when a group's views share it.  Allocate,
             // copy the payload, deep-copy the nested claims, then re-insert by key.
-            let new_db = self.hash_entry(to, content_tp, to.rec);
+            let new_db = if linked {
+                records[i]
+            } else {
+                self.hash_entry(to, content_tp, to.rec)
+            };
             self.copy_block(&src_db, &new_db, size);
             self.copy_claims(&src_db, &new_db, content_tp);
             hash::add(to, &new_db, &mut self.allocations, &keys);

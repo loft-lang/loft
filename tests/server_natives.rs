@@ -417,8 +417,8 @@ fn build_component() {
 }
 
 fn run(backend: &str) {
-    // The component needs the C runtime's POSIX host layer (@PLN203 C8 is Windows').
-    if !loft::platform::c_runtime_posix_host() {
+    // The component needs the C runtime's sockets (POSIX or Winsock, @PLN203 C8).
+    if !loft::platform::c_runtime_has_sockets() {
         return;
     }
     build_component();

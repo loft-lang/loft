@@ -1149,6 +1149,13 @@ impl Stores {
     }
 
     pub fn remove_vector_at(&mut self, data: &DbRef, elem_tp: u16, index: i64) -> bool {
+        // `@FR-H-WriteLocked-Whole`: a locked vector removes nothing, refused WHOLE (a production run
+        // logs it and continues), so the answer is `false` and a walk that asked moves on past
+        // the element still there instead of revisiting it.
+        if data.rec != 0 && self.store(data).is_locked() {
+            self.store(data).refuse_locked_write(data.rec, data.pos);
+            return false;
+        }
         if !self.is_linked(elem_tp) {
             let size = u32::from(self.size(elem_tp));
             // Release before the shift: an inline element IS the slot, so once

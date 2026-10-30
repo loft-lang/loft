@@ -1,5 +1,8 @@
-LOFT-DSCHEMA v1
-hash=819946535902159962
+LOFT-DSCHEMA v2
+hash=4740082068617717196
+root=Pack
+slot=9
+version=0.0.0
 --
 @endian	little
 Anim	size=24	struct{an_key@8:text, an_def@12:text, an_action@16:text, an_facing@0:integer, an_seq@20:text}
@@ -14,13 +17,14 @@ Seq	size=56	struct{sq_key@48:text, sq_page@52:text, sq_first@0:integer, sq_count
 assets::Scene	size=24	struct{sc_name@16:text, sc_w@0:integer, sc_h@8:integer}
 boolean	size=1	base
 float	size=8	base
-hash<Anim[an_key]>	size=4	hash<Anim>(keys=[0],elem_size=24,placement=2)
-hash<Cell[ce_key]>	size=4	hash<Cell>(keys=[0],elem_size=64,placement=2)
-hash<Def[df_name]>	size=4	hash<Def>(keys=[0],elem_size=80,placement=2)
-hash<PageInfo[pi_name]>	size=4	hash<PageInfo>(keys=[0],elem_size=24,placement=2)
-hash<Seq[sq_key]>	size=4	hash<Seq>(keys=[0],elem_size=56,placement=2)
-hash<assets::Scene[sc_name]>	size=4	hash<assets::Scene>(keys=[0],elem_size=24,placement=2)
-index<Placed[pd_scene,pd_order]>	size=4	index<Placed>(keys=[(0, true), (1, true)],elem_size=96,placement=2)
+hash<Anim[an_key]>	size=4	hash<Anim>(keys=[0],elem_size=24,placement=3)
+hash<Cell[ce_key]>	size=4	hash<Cell>(keys=[0],elem_size=64,placement=3)
+hash<Def[df_name]>	size=4	hash<Def>(keys=[0],elem_size=80,placement=3)
+hash<PageInfo[pi_name]>	size=4	hash<PageInfo>(keys=[0],elem_size=24,placement=3)
+hash<Seq[sq_key]>	size=4	hash<Seq>(keys=[0],elem_size=56,placement=3)
+hash<assets::Scene[sc_name]>	size=4	hash<assets::Scene>(keys=[0],elem_size=24,placement=3)
+index<Placed[pd_scene,pd_order]>	size=4	index<Placed>(keys=[(0, true), (1, true)],elem_size=96,placement=2,order=1)
 integer	size=8	base
 text	size=4	base
 vector<Rect>	size=4	vector<Rect>(elem_size=32)
+--facts--

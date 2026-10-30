@@ -1142,6 +1142,16 @@ pub fn library_symbol_table(data: &crate::data::Data) -> Vec<(String, Vec<String
             by_pkg.entry(pkg).or_default().push(sig.symbol);
         }
     }
+    // A symbol a REQUIRED library the package ships defines — its `[c] shim` above all — is
+    // not the optional library's to export: that library is present by construction, and a
+    // native program cannot even find its symbols by name (linked into the binary under a
+    // static link, not yet opened under a dynamic one), so asking for them answered an
+    // installed optional library absent (loft#2238).  The C backend asks for nothing a shim
+    // defines either.
+    let mut shipped = crate::c_shim::ShippedExports::default();
+    for (pkg, syms) in &mut by_pkg {
+        syms.retain(|s| !shipped.defines(data, pkg, s));
+    }
     data.c_libraries
         .iter()
         .map(|lib| {

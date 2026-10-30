@@ -59,12 +59,32 @@ pub fn reached_capacity(db: &DbRef, elem_size: u32, stores: &[Store]) -> u32 {
     vector_capacity(words as u32, elem_size)
 }
 
-/// Checked vector capacity — `(count * size + 15) / 8` using u64.
+/// Checked vector capacity — `(count * size + 15) / 8` words: the header word and the
+/// elements, rounded up to the word.  In 32 bits, as all store arithmetic is.
 #[inline]
 fn checked_vec_cap(count: u32, size: u32) -> u32 {
-    let bytes = u64::from(count) * u64::from(size) + 15;
-    u32::try_from(bytes / 8)
-        .unwrap_or_else(|_| panic!("Vector capacity overflow: count={count} size={size}"))
+    count
+        .checked_mul(size)
+        .and_then(|bytes| bytes.checked_add(15))
+        .map_or_else(
+            || panic!("Vector capacity overflow: count={count} size={size}"),
+            |bytes| bytes / 8,
+        )
+}
+
+/// `@FR-Col-Capacity` — the room a vector that has none, or has run out, asks for: twice the
+/// elements it needs, and never less than its START room of `START_BYTES` (eleven 8-byte
+/// elements, at least one element).  The one growth step of every growing vector form —
+/// append, insert, a sorted insert, a byte run — so a vector's capacity is what its own
+/// growth asked for and nothing else (the allocator gives exactly that, `@FR-H-Exact`).
+pub(crate) const START_BYTES: u32 = 88;
+
+/// The elements a vector's growth step makes room for, `needed` being the length it must
+/// hold (`@FR-Col-Capacity`).
+#[inline]
+pub(crate) fn grown_elems(needed: u32, elem_size: u32) -> u32 {
+    let start = (START_BYTES / elem_size.max(1)).max(1);
+    needed.saturating_mul(2).max(start)
 }
 
 // TODO change slice to its own vector on updating it
@@ -93,13 +113,21 @@ pub fn insert_vector(db: &DbRef, size: u32, index: i64, stores: &mut [Store]) ->
     let mut vec_rec = store.collection_rec(db.rec, db.pos);
     let new_length;
     if vec_rec == 0 {
-        // claim a new array with minimal 11 elements
-        vec_rec = store.claim(checked_vec_cap(11, size));
+        vec_rec = store.claim(checked_vec_cap(grown_elems(1, size), size));
         store.set_u32_raw(db.rec, db.pos, vec_rec);
         new_length = 1;
     } else {
         new_length = len + 1;
-        let new_vec = store.resize(vec_rec, checked_vec_cap(new_length, size));
+        // The growth step only when the room runs out (`@FR-Col-Capacity`).
+        let words = u32::try_from(store.read::<i32>(vec_rec, 0)).unwrap_or(0);
+        let new_vec = if new_length > vector_capacity(words, size) {
+            store.resize(
+                vec_rec,
+                checked_vec_cap(grown_elems(new_length, size), size),
+            )
+        } else {
+            vec_rec
+        };
         if new_vec != vec_rec {
             store.set_u32_raw(db.rec, db.pos, new_vec);
             vec_rec = new_vec;
@@ -144,7 +172,8 @@ actual change.
 /// call it.
 #[allow(dead_code)]
 pub fn alloc_vector_from_bytes(store: &mut Store, elem_size: u32, count: u32, data: &[u8]) -> u32 {
-    let words = checked_vec_cap(count.max(11), elem_size);
+    // A known count is reserved exactly (`@FR-Col-Capacity`).
+    let words = checked_vec_cap(count, elem_size);
     let rec = store.claim(words);
     store.set_u32_raw(rec, 4, count);
     if !data.is_empty() {
@@ -172,9 +201,9 @@ pub fn pre_alloc_vector(db: &DbRef, count: u32, elem_size: u32, stores: &mut [St
     if vec_rec != 0 {
         return; // already allocated — don't overwrite
     }
-    // Match vector_append's minimum of 11 elements to avoid OOB on remove/shift.
-    let alloc_count = count.max(11);
-    let words = checked_vec_cap(alloc_count, elem_size);
+    // A known count is reserved exactly (`@FR-Col-Capacity`); a growth past it takes the
+    // growth step.
+    let words = checked_vec_cap(count, elem_size);
     let new_rec = store.claim(words);
     store.set_u32_raw(db.rec, db.pos, new_rec);
     store.set_u32_raw(new_rec, 4, 0); // length = 0
@@ -209,9 +238,8 @@ pub fn reserve_vector(db: &DbRef, count: i64, elem_size: u32, stores: &mut [Stor
         return; // negative or > u32: nothing to promise
     };
     let store = keys::mut_store(db, stores);
-    // Same 11-element floor as `vector_append` / `pre_alloc_vector`, so a
-    // reserved vector can never be shorter-capacity than an unreserved one.
-    let words = checked_vec_cap(count.max(11), elem_size);
+    // A reservation is exact (`@FR-Col-Capacity`): room for `count`, no more.
+    let words = checked_vec_cap(count, elem_size);
     let vec_rec = store.collection_rec(db.rec, db.pos);
     if vec_rec == 0 {
         let new_rec = store.claim(words);
@@ -246,7 +274,7 @@ pub fn reserve_more(db: &DbRef, extra: i64, elem_size: u32, stores: &mut [Store]
             && !store.read_only
             && let Ok(count) =
                 u32::try_from(i64::from(store.get_u32_raw(vec_rec, 4)).saturating_add(extra))
-            && *store.addr::<i32>(vec_rec, 0) >= checked_vec_cap(count.max(11), elem_size) as i32
+            && *store.addr::<i32>(vec_rec, 0) >= checked_vec_cap(count, elem_size) as i32
         {
             return;
         }
@@ -272,7 +300,7 @@ pub fn append_bytes(db: &DbRef, bytes: &[u8], stores: &mut [Store]) {
     let store = keys::mut_store(db, stores);
     let mut vec_rec = store.collection_rec(db.rec, db.pos);
     if vec_rec == 0 {
-        vec_rec = store.claim(checked_vec_cap(n.max(11), 1));
+        vec_rec = store.claim(checked_vec_cap(grown_elems(n, 1), 1));
         store.set_u32_raw(db.rec, db.pos, vec_rec);
         store.set_u32_raw(vec_rec, 4, 0);
     }
@@ -285,7 +313,7 @@ pub fn append_bytes(db: &DbRef, bytes: &[u8], stores: &mut [Store]) {
         return;
     }
     if needed > vector_capacity(cur_words as u32, 1) {
-        let new_vec = store.resize(vec_rec, checked_vec_cap(needed.saturating_mul(2), 1));
+        let new_vec = store.resize(vec_rec, checked_vec_cap(grown_elems(needed, 1), 1));
         if new_vec != vec_rec {
             store.set_u32_raw(db.rec, db.pos, new_vec);
             vec_rec = new_vec;
@@ -406,7 +434,7 @@ pub fn vector_append(db: &DbRef, size: u32, stores: &mut [Store]) -> DbRef {
     let mut vec_rec = store.collection_rec(db.rec, db.pos);
     let pos = if vec_rec == 0 {
         // new array
-        vec_rec = store.claim(checked_vec_cap(11, size)); // minimal 11 elements
+        vec_rec = store.claim(checked_vec_cap(grown_elems(1, size), size));
         store.set_u32_raw(db.rec, db.pos, vec_rec);
         store.set_u32_raw(vec_rec, 4, 0); // initial length
         0
@@ -452,7 +480,7 @@ pub fn vector_append(db: &DbRef, size: u32, stores: &mut [Store]) -> DbRef {
         // not a growth step (@PLN157 § V-k — 2 % of the `lock` row).  The growth step
         // keeps the ~2x ladder.
         if needed > cur_cap {
-            let new_vec = store.resize(vec_rec, checked_vec_cap(needed.saturating_mul(2), size));
+            let new_vec = store.resize(vec_rec, checked_vec_cap(grown_elems(needed, size), size));
             // `@FR-H-LongRef` — the content moved, the field holding it did not: rewrite the
             // owner slot, the place every long-term reference to this vector names.
             if new_vec != vec_rec {
@@ -509,7 +537,8 @@ pub fn sorted_new(db: &DbRef, size: u32, stores: &mut [Store]) -> DbRef {
     let mut sorted_rec = store.collection_rec(db.rec, db.pos);
     // Claim a record at the back of the current structure or create a new structure.
     if sorted_rec == 0 {
-        sorted_rec = store.claim(checked_vec_cap(12, size));
+        // Room for the element and the scratch slot beside it (`@FR-Col-Capacity`).
+        sorted_rec = store.claim(checked_vec_cap(grown_elems(2, size), size));
         store.set_u32_raw(db.rec, db.pos, sorted_rec);
         // Set initial length to 0
         store.set_u32_raw(sorted_rec, 4, 0);
@@ -521,7 +550,16 @@ pub fn sorted_new(db: &DbRef, size: u32, stores: &mut [Store]) -> DbRef {
         }
     } else {
         let length = store.get_u32_raw(sorted_rec, 4);
-        let new_sorted = store.resize(sorted_rec, checked_vec_cap(length + 2, size));
+        // The element and the scratch slot: the growth step only when they do not fit.
+        let words = u32::try_from(store.read::<i32>(sorted_rec, 0)).unwrap_or(0);
+        let new_sorted = if length + 2 > vector_capacity(words, size) {
+            store.resize(
+                sorted_rec,
+                checked_vec_cap(grown_elems(length + 2, size), size),
+            )
+        } else {
+            sorted_rec
+        };
         if new_sorted != sorted_rec {
             store.set_u32_raw(db.rec, db.pos, new_sorted);
             sorted_rec = new_sorted;
@@ -2589,14 +2627,41 @@ pub fn sort_text_vector(db: &DbRef, stores: &mut [Store]) {
             (off, s.to_string())
         })
         .collect();
-    entries.sort_unstable_by(|a, b| a.1.cmp(&b.1));
+    // `@FR-E-NullArg`: the order `<` answers — a null text (the sentinel `"\0"`) before every
+    // text, `""` included — asked of `<`'s own home rather than of the bytes (loft#2236).
+    entries.sort_by(|a, b| text_order(&a.1, &b.1));
     for (i, (off, _)) in entries.iter().enumerate() {
         store.set_u32_raw(v_rec, 8 + (i as u32) * 4, *off);
     }
 }
 
-/// Sort a vector of primitive elements in-place (ascending).
-/// `elem_size` is the byte size of each element (1, 2, 4, or 8).
+/// `@FR-E-NullArg` — the order of `<` on `text`, as an [`Ordering`] for a sort.
+fn text_order(a: &str, b: &str) -> Ordering {
+    if crate::ops::op_lt_text(a, b) {
+        Ordering::Less
+    } else if crate::ops::op_lt_text(b, a) {
+        Ordering::Greater
+    } else {
+        Ordering::Equal
+    }
+}
+
+/// `@FR-E-NullArg` — the order of `<` on `float` and `single`: a null (a NaN) before every
+/// value, the rest by value, so `-0.0` and `0.0` are EQUAL and a stable sort keeps their order
+/// (loft#2236).  `partial_cmp(..).unwrap_or(Greater)` was no order at all once a null was in
+/// the vector, and the sort answered whatever its comparisons happened to leave.
+fn float_order<F: PartialOrd>(a: &F, b: &F, a_null: bool, b_null: bool) -> Ordering {
+    match (a_null, b_null) {
+        (true, true) => Ordering::Equal,
+        (true, false) => Ordering::Less,
+        (false, true) => Ordering::Greater,
+        (false, false) => a.partial_cmp(b).unwrap_or(Ordering::Equal),
+    }
+}
+
+/// Sort a vector of primitive elements in-place (ascending, STABLE as `sort` promises — it is
+/// observable only for floats, whose `-0.0` and `0.0` compare equal; equal integers are one
+/// value).  `elem_size` is the byte size of each element (1, 2, 4, or 8).
 /// `is_float` must be true for floating-point types (f32 at size=4, f64 at size=8).
 pub fn sort_vector(db: &DbRef, elem_size: u16, is_float: bool, stores: &mut [Store]) {
     let len = length_vector(db, stores) as usize;
@@ -2632,7 +2697,7 @@ pub fn sort_vector(db: &DbRef, elem_size: u16, is_float: bool, stores: &mut [Sto
                 let mut vals: Vec<f32> = (0..len)
                     .map(|i| f32::from_bits(store.get_u32_raw(v_rec, 8 + (i as u32) * 4)))
                     .collect();
-                vals.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Greater));
+                vals.sort_by(|a, b| float_order(a, b, a.is_nan(), b.is_nan()));
                 for (i, &v) in vals.iter().enumerate() {
                     store.set_u32_raw(v_rec, 8 + (i as u32) * 4, v.to_bits());
                 }
@@ -2651,7 +2716,7 @@ pub fn sort_vector(db: &DbRef, elem_size: u16, is_float: bool, stores: &mut [Sto
                 let mut vals: Vec<f64> = (0..len)
                     .map(|i| store.get_float(v_rec, 8 + (i as u32) * 8))
                     .collect();
-                vals.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Greater));
+                vals.sort_by(|a, b| float_order(a, b, a.is_nan(), b.is_nan()));
                 for (i, &v) in vals.iter().enumerate() {
                     store.set_float(v_rec, 8 + (i as u32) * 8, v);
                 }
@@ -2789,5 +2854,113 @@ mod plan25_null_vector_tests {
         sort_vector(&NULL, 8, false, &mut stores);
         reverse_vector(&NULL, 8, &mut stores);
         // Reaching here = no accessor indexed stores[u16::MAX].
+    }
+}
+
+#[cfg(test)]
+mod capacity_policy_tests {
+    //! `@FR-Col-Capacity` against hand-computed claim sizes: a vector's room is what its own
+    //! growth step asked for — twice the length it needs, at least 88 bytes of elements —
+    //! and a known count is reserved exactly; the allocator adds nothing (`@FR-H-Exact`).
+    //! Each answer is the record's size word, in words: one header word plus the elements,
+    //! rounded up.
+    use super::{append_bytes, insert_vector, pre_alloc_vector, reserve_vector, vector_append};
+    use crate::keys::DbRef;
+    use crate::store::Store;
+
+    /// A store with one holder record whose vector slot (at byte 8) is empty.
+    fn holder() -> (Vec<Store>, DbRef) {
+        let mut store = Store::new(100);
+        let rec = store.claim(2);
+        store.set_u32_raw(rec, 8, 0);
+        (
+            vec![store],
+            DbRef {
+                store_nr: 0,
+                rec,
+                pos: 8,
+            },
+        )
+    }
+
+    fn words(stores: &[Store], db: &DbRef) -> i32 {
+        let rec = stores[0].get_u32_raw(db.rec, db.pos);
+        stores[0].read::<i32>(rec, 0)
+    }
+
+    /// One push: room through `vector_append`, then the length counted as its caller does.
+    fn push(stores: &mut [Store], db: &DbRef, size: u32) {
+        let slot = vector_append(db, size, stores);
+        let rec = stores[0].get_u32_raw(db.rec, db.pos);
+        let len = stores[0].get_u32_raw(rec, 4);
+        assert_eq!(slot.pos, 8 + len * size);
+        stores[0].set_u32_raw(rec, 4, len + 1);
+    }
+
+    #[test]
+    fn the_start_room_is_88_bytes_of_elements() {
+        // integer: 11 elements, (88 + 15) / 8 = 12 words.
+        let (mut s, db) = holder();
+        push(&mut s, &db, 8);
+        assert_eq!(words(&s, &db), 12);
+        // a 200-byte struct: the start room holds none, so twice the one needed: 2 elements,
+        // (400 + 15) / 8 = 51 words.
+        let (mut s, db) = holder();
+        push(&mut s, &db, 200);
+        assert_eq!(words(&s, &db), 51);
+        // bytes: 88 of them, (88 + 15) / 8 = 12 words.
+        let (mut s, db) = holder();
+        append_bytes(&db, &[7], &mut s);
+        assert_eq!(words(&s, &db), 12);
+    }
+
+    #[test]
+    fn a_full_vector_grows_to_twice_what_it_needs() {
+        // 11 integers fill the start room; the 12th asks for 24: (192 + 15) / 8 = 25 words,
+        // in place or moved alike, and nothing more until the 25th.
+        let (mut s, db) = holder();
+        for _ in 0..12 {
+            push(&mut s, &db, 8);
+        }
+        assert_eq!(words(&s, &db), 25);
+        for _ in 12..24 {
+            push(&mut s, &db, 8);
+        }
+        assert_eq!(
+            words(&s, &db),
+            25,
+            "24 integers fit the room the 12th asked for"
+        );
+        push(&mut s, &db, 8);
+        assert_eq!(words(&s, &db), 51, "the 25th asks for 50: (400 + 15) / 8");
+    }
+
+    #[test]
+    fn an_insert_takes_the_same_growth_step() {
+        let (mut s, db) = holder();
+        for i in 0..12 {
+            insert_vector(&db, 8, 0, &mut s);
+            let rec = s[0].get_u32_raw(db.rec, db.pos);
+            assert_eq!(s[0].get_u32_raw(rec, 4), i + 1);
+        }
+        assert_eq!(words(&s, &db), 25, "the 12th insert grew to 24, not to 12");
+    }
+
+    #[test]
+    fn a_known_count_is_reserved_exactly() {
+        let (mut s, db) = holder();
+        pre_alloc_vector(&db, 3, 8, &mut s);
+        assert_eq!(words(&s, &db), 4, "(24 + 15) / 8");
+        let (mut s, db) = holder();
+        reserve_vector(&db, 5, 8, &mut s);
+        assert_eq!(words(&s, &db), 6, "(40 + 15) / 8");
+        reserve_vector(&db, 9, 8, &mut s);
+        assert_eq!(
+            words(&s, &db),
+            10,
+            "a larger reservation grows to exactly it"
+        );
+        reserve_vector(&db, 2, 8, &mut s);
+        assert_eq!(words(&s, &db), 10, "a smaller one never shrinks it");
     }
 }

@@ -76,6 +76,7 @@ import argparse
 import os
 import platform
 import re
+import shlex
 import shutil
 import statistics
 import subprocess
@@ -174,6 +175,9 @@ SHIP_ENV = {**os.environ, "LOFT_RELEASE_PASS_PROBE": "1"}
 C_CMD = ["cc", "-std=c99", "-O3"]
 C_SKIPS = []
 C_MISMATCHES = []
+# The programs whose measurement stopped (a lane that failed to run, a hash that moved): each
+# was reported where it stopped, and the run goes on with the next program.
+MEASURE_FAILURES = []
 C_LANES = ("c", "cship")
 
 
@@ -329,10 +333,36 @@ def build_package(pkg_dir, lanes, loft, ref_flags, times, reserve_gb):
         cmds["rust"] = [exe]
     if "interp" in lanes:
         cmds["interp"] = [loft, "--interpret", "bench/bench.loft"]
-    for lane in C_LANES:
-        if lane in lanes:
-            C_SKIPS.append((os.path.basename(pkg_dir.rstrip("/")), lane,
-                            "a library bench: its native bridges have no C build"))
+    # The C99 backend's lanes for a library's bench: emitted from the package, so its manifest
+    # resolves the libraries; a library's native part is a `[c] shim` the unit names in its
+    # `/* link: */` lines, or a loft-ffi library the unit opens itself (`-ldl`).
+    name = os.path.basename(pkg_dir.rstrip("/"))
+    for lane, env in (("c", None), ("cship", SHIP_ENV)):
+        if lane not in lanes:
+            continue
+        out = os.path.join(bench_dir, ".build")
+        os.makedirs(out, exist_ok=True)
+        csrc = os.path.join(out, f"stats_{lane}.c")
+        exe = os.path.join(out, f"stats_{lane}")
+        try:
+            run_checked([loft, "--emit-c", csrc, "bench/bench.loft"],
+                        f"{pkg_dir}: loft --emit-c ({lane})", times, f"{lane}-emit", reserve_gb,
+                        cwd=pkg_dir, **({"env": env} if env else {}))
+            with open(csrc, encoding="utf-8", errors="replace") as f:
+                links = [arg for line in re.findall(r"/\* link: (.*?) \*/", f.read())
+                         for arg in shlex.split(line)]
+            run_checked([*C_CMD, "-o", exe, csrc, *links, "-lm", "-ldl", "-pthread"],
+                        f"{pkg_dir}: {C_CMD[0]} ({lane} lane)", times, f"{lane}-cc", reserve_gb)
+            cmds[lane] = [exe]
+        except BuildFailed as e:
+            lines = [l.strip() for l in str(e).splitlines() if l.strip()]
+            why = next((l for l in lines if "does not carry" in l), None) \
+                or next((l for l in lines if "error:" in l), None) \
+                or (lines[-1] if lines else str(e))
+            C_SKIPS.append((name, lane, why))
+        finally:
+            if os.path.exists(csrc):
+                os.remove(csrc)
     return cmds
 
 
@@ -632,8 +662,11 @@ def measure_batch(jobs, a, lanes, target_us, stamp):
     result in the batch's order, so the table reads the same however many ran at once."""
     if a.measure_jobs <= 1:
         for bench, pkg_dir, cmds in jobs:
-            yield measure_unit(bench, pkg_dir, cmds, pin_prefix(threads_of(bench, pkg_dir), not a.no_pin),
-                               a, lanes, target_us, stamp)
+            try:
+                yield measure_unit(bench, pkg_dir, cmds, pin_prefix(threads_of(bench, pkg_dir), not a.no_pin),
+                                   a, lanes, target_us, stamp)
+            except SystemExit:
+                MEASURE_FAILURES.append(bench)
         return
     import threading
     free = top_tier_cpus() if not a.no_pin and shutil.which("taskset") else []
@@ -662,9 +695,14 @@ def measure_batch(jobs, a, lanes, target_us, stamp):
                     lock.notify_all()
 
     with ThreadPoolExecutor(max_workers=a.measure_jobs) as pool:
-        futures = [pool.submit(one, *job) for job in jobs]
-        for fut in futures:
-            yield fut.result()
+        futures = [(job[0], pool.submit(one, *job)) for job in jobs]
+        for bench, fut in futures:
+            # `fail` exits the WORKER; re-raised here it would end the run at this program and
+            # drop every program after it, so it is counted and the next one is answered.
+            try:
+                yield fut.result()
+            except SystemExit:
+                MEASURE_FAILURES.append(bench)
 
 
 def threads_of(bench, pkg_dir):
@@ -867,6 +905,8 @@ def main():
                   f"worst {max(cr):.2f}x")
     for bench, lane, why in sorted(C_SKIPS):
         print(f"# {lane} lane not built for {bench}: {why}")
+    for bench in MEASURE_FAILURES:
+        failed.append((f"{bench}/*", "its measurement stopped (the reason is printed above)"))
     for bench, name, want, got in C_MISMATCHES:
         failed.append((f"{bench}/{name}", f"the checked C answers hash {got}, the twin {want}"))
     if out_rows and not a.no_local:

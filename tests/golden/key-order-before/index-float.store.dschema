@@ -1,0 +1,11 @@
+LOFT-DSCHEMA v2
+hash=8589816634873682572
+root=index<KF[k]>
+slot=5
+--
+@endian	little
+KF	size=16	struct{k@0:float, v@8:integer}
+float	size=8	base
+index<KF[k]>	size=4	index<KF>(keys=[(0, true)],elem_size=16,placement=2)
+integer	size=8	base
+--facts--

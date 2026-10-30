@@ -32,7 +32,9 @@ import zlib from 'node:zlib';
 // harness must exercise the SAME implementation a real page ships, or a
 // round-trip proven here says nothing about the browser.  In node there is no
 // localStorage, so the delta stays in memory for the run.
-import { loftFSImports } from '../doc/loft-fs.js';
+import { loftFS, loftFSImports } from '../doc/loft-fs.js';
+// The page filesystem the WASI layer (`doc/loft-wasi.js`) reads a C-written module's files from.
+globalThis.loftFS = loftFS;
 
 const argv = process.argv.slice(2);
 if (argv.length < 1) {
@@ -308,6 +310,14 @@ for (const hostJs of (process.env.LOFT_WASM_HOST_JS || '').split(':').filter(Boo
   } catch (e) {
     if (enableTrace) console.error(`host.js load failed for ${hostJs}: ${e.message}`);
   }
+}
+
+// The WASI layer a page carries for a module the C backend wrote (@PLN203 C6): the same file
+// the `--html` driver adds, so a run here exercises what a page ships.
+try {
+  (0, eval)(fs.readFileSync(path.join(repoRoot, 'doc', 'loft-wasi.js'), 'utf8'));
+} catch (e) {
+  if (enableTrace) console.error(`loft-wasi.js load failed: ${e.message}`);
 }
 
 // Apply each registered extension to the stubs object BEFORE

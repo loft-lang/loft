@@ -360,6 +360,13 @@ halves.  A binding to **libc needs no entry** — it is already in the process.
 Distinct from `[native] runtime-libs`, which names what a Rust cdylib needs
 present and only probes for it.
 
+**A package declares no compile or link flags** (`@C158`).  There is no
+`cflags`, `ldflags` or per-platform `[c.<os>]` section: a shim compiles with
+loft's fixed flags, configures itself with `#if` on the platform macros,
+includes vendored code by a path relative to its source, and reaches a system
+library by `dlopen` (`optional-libs`, or its own call) rather than by a link
+flag.  A key of that name is ignored, never applied.
+
 #### Optional libraries — `optional-libs` (arc G)
 
 **`libs` means the package does not work without it.**  Absent, the failure is

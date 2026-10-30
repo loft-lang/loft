@@ -1855,10 +1855,33 @@ impl Parser {
         }
     }
 
+    /// `@FR-N-Decl` for a file-scope constant `ID: want = value`: the value converted into
+    /// the declared type, with the questions a declared local's initialising store asks —
+    /// a value of another collection type is refused, an integer that does not provably fit
+    /// a narrower declared width is refused — and the declared type answered, so every use
+    /// sees it.  Diagnostics on the second pass only, as at the assignment seam.
+    fn constant_into_declared(&mut self, id: &str, val: &mut Value, tp: &Type, want: Type) -> Type {
+        if !self.first_pass && self.field_store_mismatch("=", u16::MAX, &want, tp) {
+            let got = tp.source_name(&self.data);
+            let decl = self.data.written_type_name(&want);
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "constant '{id}' is declared {decl} but its value is {got} — write the value at \
+                 the declared type, or change the declaration"
+            );
+            return want;
+        }
+        if !self.narrow_store_checks(val, &want, tp) {
+            self.convert(val, tp, &want);
+        }
+        want
+    }
+
     // <constant>
-    // Accepts either `NAME = expr;` or `NAME: type = expr;`. The optional
-    // type annotation is parsed (so the parser doesn't reject the form)
-    // but the inferred type from the initialiser is the source of truth.
+    // Accepts either `NAME = expr;` or `NAME: type = expr;`.  An annotation is the
+    // constant's declared type (`constant_into_declared`); without one the initialiser's
+    // type is the constant's.
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_constant(&mut self) -> bool {
         // P246 — accept the optional `const` keyword at file scope as
@@ -1873,13 +1896,17 @@ impl Parser {
         // syntax and lib/hex_world/src/wall.loft's existing usage).
         let _explicit_const = self.lexer.has_keyword("const");
         if let Some(id) = self.lexer.has_identifier() {
-            // Optional `: type` annotation between the identifier and `=`.
-            // Parsed and discarded — the literal's element type is used.
-            // A future enhancement could validate the inferred type matches
-            // the annotation (after dep-list normalisation).
-            if self.lexer.has_token(":") {
-                let _ = self.parse_type_full(u32::MAX, false);
-            }
+            // Optional `: type` annotation between the identifier and `=`.  `@FR-N-Decl` — a
+            // declared slot is a commitment, and a constant is one: the value is built at the
+            // declared type and converted into it, and refused where a typed local refuses it.
+            // Discarded, the literal's own type stood (`CV: vector<u8> = [1, 2]` was a
+            // `vector<integer>`, and a copy of it took a `300` a `vector<u8>` refuses,
+            // loft#2240).
+            let declared = if self.lexer.has_token(":") {
+                self.parse_type_full(u32::MAX, false)
+            } else {
+                None
+            };
             self.lexer.token("=");
             if !is_upper(&id) {
                 diagnostic!(
@@ -1889,7 +1916,18 @@ impl Parser {
                 );
             }
             let mut val = Value::Null;
+            // The declared type is the initialiser's expected type, as an assignment's
+            // destination is: a literal is built at it (`[1, 2]` as `u8` elements).
+            let saved_expected = declared
+                .as_ref()
+                .map(|want| std::mem::replace(&mut self.expected, want.clone()));
             let mut tp = self.expression(&mut val);
+            if let Some(saved) = saved_expected {
+                self.expected = saved;
+            }
+            if let Some(want) = declared {
+                tp = self.constant_into_declared(&id, &mut val, &tp, want);
+            }
             // A struct-valued file-scope constant (`P = Point { … }`) is NOT supported: its
             // value is the constructor's field-writes with no allocated record, so every use
             // inlines writes into a null record — silently reading `null` on `--interpret`,
@@ -3801,6 +3839,23 @@ impl Parser {
         }
     }
 
+    /// loft#2227 — record the type id a `#native`'s heap answer is copied out with when the
+    /// native built it in an argument's store (`Definition::native_answer_tp`): a vector's
+    /// ELEMENT type, as `OpAppendVector` copies with it, or a record's own type.  Here because
+    /// only the parser may register a type (`vector_element_type` mints a narrow element's).
+    fn record_native_answer_type(&mut self) {
+        let returned = self.data.def(self.context).returned().clone();
+        let tp = match returned.base() {
+            Type::Vector(elm, _) => self
+                .data
+                .vector_element_type(elm, &mut self.database)
+                .unwrap_or(u16::MAX),
+            Type::Reference(d, _) | Type::Enum(d, true, _) => self.data.def(*d).known_type(),
+            _ => u16::MAX,
+        };
+        self.data.definitions[self.context as usize].native_answer_tp = tp;
+    }
+
     // <rust> ::= { '#rust' <string> | '#iterator' <string> <string> }
     // <native> ::= '#native' <string>   (any file)
     #[expect(clippy::too_many_lines, reason = "inherited")]
@@ -3851,6 +3906,7 @@ impl Parser {
                     let default_sym = self.data.def(self.context).name().to_string();
                     self.data.definitions[self.context as usize].native = default_sym;
                 }
+                self.record_native_answer_type();
             } else if self.default && id == Some("rust".to_string()) {
                 if let Some(c) = self.lexer.has_cstring() {
                     self.data.definitions[self.context as usize].rust = c;

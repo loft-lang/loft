@@ -1005,6 +1005,20 @@ impl Output<'_> {
             }
             Value::Block(b) => matches!(b.result, Type::Text(_)),
             Value::Insert(ops) => ops.last().is_some_and(|tail| self.yields_owned_text(tail)),
+            // loft#2225 — an `if` yields what `output_if_inner` makes its arms: an owned
+            // `String` when they are unified to one, a `Str` when both are text calls left as
+            // they are, a borrow otherwise.  Ask the emitter's own decision, never a re-derived
+            // one: a disagreement here is a `String` handed to a `&str` parameter (E0308).
+            Value::If(_, t, f) => {
+                let is_text = self
+                    .infer_type(IrNode::Native(t))
+                    .is_some_and(|tp| matches!(tp.base(), Type::Text(_)));
+                let (string, borrow) = self.text_if_unify(t, f, is_text);
+                string
+                    || (!borrow
+                        && self.text_arm_ends_in_text_call(t)
+                        && self.text_arm_ends_in_text_call(f))
+            }
             _ => false,
         }
     }

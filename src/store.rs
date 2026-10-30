@@ -2092,8 +2092,8 @@ impl Store {
     /// one `claim_block` would have produced, because the split rule is the same and the
     /// remainder is the only node either way.  Declines (answering `None`) for anything
     /// that is not exactly that shape — a tree with two nodes, a single free block that is
-    /// not the tail, a tail the split rule would claim whole, or a remainder too small for
-    /// the tree (`MIN_FREE_TREE`, which `fl_insert` would leave out) — so every other claim
+    /// not the tail, or a remainder too small for the tree (`MIN_FREE_TREE`, which
+    /// `fl_insert` would leave out) — so every other claim
     /// takes the path it always took.  Measured on the drawing pass: the free-tree walks
     /// were 9 % of the `fronds` row (@PLN157).
     fn bump_tail(&mut self, size: u32) -> Option<u32> {
@@ -2103,10 +2103,7 @@ impl Store {
         }
         let block_size = -(self.read::<i32>(root, 0));
         let req_size = size as i32;
-        if block_size <= req_size * 4 / 3
-            || block_size - req_size < MIN_FREE_TREE
-            || root + block_size as u32 != self.size
-        {
+        if block_size - req_size < MIN_FREE_TREE || root + block_size as u32 != self.size {
             return None;
         }
         let pos = root;
@@ -2143,7 +2140,7 @@ impl Store {
         }
         let req = size as i32;
         let block = self.fl_size(pos);
-        if block <= req * 4 / 3 || block - req < MIN_FREE_TREE {
+        if block - req < MIN_FREE_TREE {
             return None;
         }
         self.write(pos, 0, req);
@@ -2158,12 +2155,13 @@ impl Store {
         Some(pos)
     }
 
-    /// Mark `pos` as claimed (splitting if the block is much larger than `size`).
+    /// Mark `pos` as claimed: the record takes EXACTLY `size` words and the rest of the block,
+    /// however small, is a free block behind it (`@FR-H-Exact`).
     fn claim_block(&mut self, pos: u32, size: u32) -> u32 {
         let req_size = size as i32;
         let block_size = -(self.read::<i32>(pos, 0));
         assert!(block_size >= req_size, "Claimed block too small at {pos}");
-        if block_size > req_size * 4 / 3 {
+        if block_size > req_size {
             self.write(pos, 0, req_size);
             let new_free = pos + size;
             self.set_free_header(new_free, block_size - req_size);
@@ -2360,17 +2358,19 @@ impl Store {
         let next = rec + claim as u32;
         if next < self.size {
             let next_size = self.read::<i32>(next, 0);
-            if next_size < 0 && claim - next_size > req_size {
-                // The adjacent free block can cover the growth.
+            if next_size < 0 && claim - next_size >= req_size {
+                // The adjacent free block can cover the growth: the record grows to EXACTLY
+                // the size asked for, and the rest of the free block stays free behind it
+                // (`@FR-H-Exact`; the spare room a growing vector wants is in `size`,
+                // `@FR-Col-Capacity`).
                 self.fl_remove(next);
-                let act = req_size * 7 / 4;
-                let new_size = if claim - next_size > act {
-                    let new_next = rec + act as u32;
+                let new_size = if claim - next_size > req_size {
+                    let new_next = rec + req_size as u32;
                     let new_free_size = (-next_size) as u32 + next - new_next;
-                    self.write(rec, 0, act);
+                    self.write(rec, 0, req_size);
                     self.set_free_header(new_next, new_free_size as i32);
                     self.fl_insert(new_next);
-                    act
+                    req_size
                 } else {
                     self.write(rec, 0, claim - next_size);
                     claim - next_size
@@ -4027,13 +4027,41 @@ impl Store {
             );
         }
         // Everything past the image is free space, in one block. `init` writes
-        // the same negative-header form for a whole fresh store.
-        if words < self.size {
-            self.set_free_header(words, (self.size - words) as i32);
+        // the same negative-header form for a whole fresh store.  The prefix ends after
+        // its last claimed block, but a FREE block before that point can run past it: an
+        // empty store's prefix is its first two words, and word one heads the free block
+        // spanning the SENDER's whole capacity.  This buffer can be shorter than that
+        // capacity (it took the size of an earlier, smaller image), so such a block is
+        // re-headed here as the start of the tail; left as sent, the free-tree rebuild
+        // re-foots it past this store's end.
+        let tail = self.image_tail(words);
+        if tail < self.size {
+            self.set_free_header(tail, (self.size - tail) as i32);
         }
         self.free_root = 0;
         self.fl_rebuild();
         self.claims_rebuild();
+    }
+
+    /// Where the free tail of an adopted image of `words` words starts: the image's end, or
+    /// the start of a free block in it that runs past that end (`adopt_image`).  A claimed
+    /// block that runs past the end, or a zero header, stops the walk where it is; the image
+    /// is malformed there, which `validate_structure` refuses.
+    fn image_tail(&self, words: u32) -> u32 {
+        let end = words.min(self.size);
+        let mut pos = PRIMARY;
+        while pos < end {
+            let header = self.read::<i32>(pos, 0);
+            let size = header.unsigned_abs();
+            if size == 0 {
+                return end;
+            }
+            if pos + size > end {
+                return if header < 0 { pos } else { end };
+            }
+            pos += size;
+        }
+        end
     }
 
     /// Rebuild `claims` from the arena, for a store whose records arrived as an IMAGE
@@ -4631,7 +4659,7 @@ impl Store {
     /// Enforces `@FR-R-Cold`: the refusal is outlined so the write check inlines.
     #[cold]
     #[inline(never)]
-    fn refuse_locked_write(&self, rec: u32, fld: u32) {
+    pub(crate) fn refuse_locked_write(&self, rec: u32, fld: u32) {
         self.refuse_locked("Write to read-only store", rec, fld);
     }
 
@@ -6557,6 +6585,40 @@ mod tests {
         assert_eq!(store.claim(9), e, "the next claim takes it back");
     }
 
+    /// An EMPTY store's image is its first two words, and word one heads
+    /// the free block spanning the sender's whole capacity.  Adopted by a store SHORTER
+    /// than that capacity (one that took the size of an earlier, smaller image), the block
+    /// is re-headed as the tail of the receiver: before, the free-tree rebuild re-footed it
+    /// past the receiver's end (the `placement_remote` large-value crossing, once claims
+    /// stopped over-granting).
+    #[test]
+    fn an_empty_image_from_a_larger_store_adopts_into_a_smaller_one() {
+        let sender = Store::new(4096);
+        let words = 2usize;
+        let image = unsafe { std::slice::from_raw_parts(sender.base_ptr(), words * 8) }.to_vec();
+        assert_eq!(
+            sender.read::<i32>(1, 0),
+            -(sender.capacity_words() as i32 - 1),
+            "word one heads the sender's whole free space"
+        );
+        let mut receiver = Store::new(1024);
+        receiver.free = false;
+        assert!(receiver.capacity_words() < sender.capacity_words());
+        let r = receiver.claim(3);
+        receiver.set_u32_raw(r, 4, 77);
+        receiver.adopt_image(&image);
+        let usage = receiver.usage();
+        assert!(usage.walk_complete, "the block chain tiles the receiver");
+        assert_eq!(usage.claimed_words, 0, "nothing is claimed");
+        assert_eq!(
+            receiver.read::<i32>(1, 0),
+            -(receiver.capacity_words() as i32 - 1),
+            "one free block, the receiver's own size"
+        );
+        let c = receiver.claim(5);
+        assert_eq!(c, 1, "and it hands out its first word again");
+    }
+
     /// `@FR-H-LazyFree` — below the floor the store GROWS rather than sweeps: a small
     /// store's churn is never worth an O(blocks) walk, and the phase goes on.
     #[test]
@@ -7055,14 +7117,20 @@ mod tests {
                 "the remainder's header spans exactly the rest of the store"
             );
             // A remainder the tree would not track declines the bump: the claim takes the
-            // tree path and the block whole, leaving no free root — as it always did.
+            // tree path, and still takes exactly its size (`@FR-H-Exact`) — the one word
+            // behind it is a free block nothing tracks, neither tree node nor wilderness.
             let left = store.size - tail;
             let d = store.claim(left - 1);
             assert_eq!(d, tail);
             assert_eq!(
                 store.read::<i32>(d, 0) as u32,
-                left,
-                "a block not much larger than the request is claimed whole"
+                left - 1,
+                "the record takes exactly the words it asked for"
+            );
+            assert_eq!(
+                store.read::<i32>(d + left - 1, 0),
+                -1,
+                "a one-word free block"
             );
             assert_eq!(store.free_root, 0, "nothing is left to track");
             assert_eq!(store.wild, 0, "nor to hold as the wilderness");

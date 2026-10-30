@@ -1,0 +1,55 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Reads the images `write.loft` wrote in the key order before loft#2237: a whole-image load
+// converts each, filing its entries again in this build's order — a null key first
+// (`@FR-E-NullArg`), last under a descending key — and every key, the null one included, is
+// found.  Run from a copy of this directory (`LOFT_PERSIST_TEST_PATH`).
+struct KT { k: text, v: integer }
+struct KF { k: float, v: integer }
+struct KS { k: single, v: integer }
+
+fn at(name: text) -> text { "{env_variable("LOFT_PERSIST_TEST_PATH")}/{name}.store" }
+
+fn main() {
+  nt: text = null;
+  nf: float = null;
+  ns: single = null;
+  st: sorted<KT[k]> = [];
+  ok = store_load(st, at("sorted-text"));
+  o = "";
+  for x in st { o += "{x.v} "; }
+  println("sorted-text {ok} {o}| {st[nt].v ?? -1} {st[\"\"].v ?? -1} {st[\"b\"].v ?? -1}");
+  sd: sorted<KF[-k]> = [];
+  ok = store_load(sd, at("sorted-float-desc"));
+  o = "";
+  for x in sd { o += "{x.v} "; }
+  println("sorted-float-desc {ok} {o}| {sd[nf].v ?? -1} {sd[-1.0].v ?? -1}");
+  ss: sorted<KS[k]> = [];
+  ok = store_load(ss, at("sorted-single"));
+  o = "";
+  for x in ss { o += "{x.v} "; }
+  println("sorted-single {ok} {o}| {ss[ns].v ?? -1}");
+  it: index<KT[k]> = [];
+  ok = store_load(it, at("index-text"));
+  o = "";
+  for x in it { o += "{x.v} "; }
+  println("index-text {ok} {o}| {it[nt].v ?? -1} {it[\"\"].v ?? -1} {it[\"q\"].v ?? -1}");
+  ix: index<KF[k]> = [];
+  ok = store_load(ix, at("index-float"));
+  first = -1;
+  n = 0;
+  ordered = true;
+  prev = -1000.0;
+  seen = false;
+  for x in ix {
+    if n == 0 { first = x.v; }
+    n += 1;
+    if x.k != null {
+      if seen && x.k < prev { ordered = false; }
+      prev = x.k;
+      seen = true;
+    }
+  }
+  println("index-float {ok} first={first} n={n} ordered={ordered} | {ix[nf].v ?? -1} {ix[-0.5].v ?? -1}");
+}

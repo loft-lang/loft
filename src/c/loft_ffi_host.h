@@ -13,8 +13,40 @@ static loft_store_t *loft_ffi_ctx_store(loft_ffi_store_ctx c) {
     return &loft_stores[(uint16_t) (uintptr_t) c.opaque];
 }
 
+/* loft#2227 — the records ONE call pinned to an argument's store claims there (the answer and
+ * its scratch, never what an argument held before the call), for `loft_ffi_own_*` to delete after
+ * copying the answer out: `extensions::claim_log_*`, the interpreter's twin. */
+/* Per THREAD (`LOFT_TLS`): `par` workers call natives concurrently, and one shared log let a
+ * worker's copy-out delete the records another worker's call had just claimed. */
+static LOFT_TLS int loft_ffi_log_on;
+static LOFT_TLS uint16_t loft_ffi_log_store;
+static LOFT_TLS uint32_t *loft_ffi_log_recs;
+static LOFT_TLS uint32_t loft_ffi_log_n, loft_ffi_log_cap;
+
+static void loft_ffi_log_begin(uint16_t nr) {
+    loft_ffi_log_on = 1;
+    loft_ffi_log_store = nr;
+    loft_ffi_log_n = 0;
+}
+
+static void loft_ffi_log_note(uint16_t nr, uint32_t old, uint32_t rec) {
+    if (!loft_ffi_log_on || nr != loft_ffi_log_store) return;
+    if (old) {
+        for (uint32_t i = 0; i < loft_ffi_log_n; i++)
+            if (loft_ffi_log_recs[i] == old) { loft_ffi_log_recs[i] = rec; return; }
+        return;
+    }
+    if (loft_ffi_log_n == loft_ffi_log_cap) {
+        loft_ffi_log_cap = loft_ffi_log_cap ? loft_ffi_log_cap * 2 : 16;
+        loft_ffi_log_recs = (uint32_t *) realloc(loft_ffi_log_recs, loft_ffi_log_cap * sizeof(uint32_t));
+    }
+    loft_ffi_log_recs[loft_ffi_log_n++] = rec;
+}
+
 static uint32_t loft_ffi_claim(loft_ffi_store_ctx c, uint32_t words) {
-    return loft_claim(loft_ffi_ctx_store(c), words);
+    uint32_t rec = loft_claim(loft_ffi_ctx_store(c), words);
+    loft_ffi_log_note((uint16_t) (uintptr_t) c.opaque, 0, rec);
+    return rec;
 }
 
 static void loft_ffi_reload(loft_ffi_store_ctx c, uint8_t **ptr, uint32_t *size) {
@@ -24,7 +56,9 @@ static void loft_ffi_reload(loft_ffi_store_ctx c, uint8_t **ptr, uint32_t *size)
 }
 
 static uint32_t loft_ffi_resize(loft_ffi_store_ctx c, uint32_t rec, uint32_t words) {
-    return loft_st_resize(loft_ffi_ctx_store(c), rec, words);
+    uint32_t to = loft_st_resize(loft_ffi_ctx_store(c), rec, words);
+    loft_ffi_log_note((uint16_t) (uintptr_t) c.opaque, rec, to);
+    return to;
 }
 
 /* Store `nr` as the library sees it.  A library that hands bytes over to be adopted
@@ -42,6 +76,37 @@ static loft_ffi_store loft_ffi_store_of(uint16_t nr) {
     return f;
 }
 
+/* `Stores::bridge_args` for a foreign vector argument (a `file_map`): its bytes are copied into
+ * a vector record of the store the library is handed, in one block, and that record is what
+ * the library reads.  Only a unit that maps a file has a foreign store. */
+#ifdef LOFT_FOREIGN
+static int loft_ffi_is_foreign(loft_ref a) {
+    return a.rec != 0 && a.store_nr < loft_nstores && loft_st_is_foreign(&loft_stores[a.store_nr]);
+}
+
+static uint32_t loft_ffi_copy_in(uint32_t pin, loft_ref a) {
+    loft_fspan sp = loft_stores[a.store_nr].foreign.span;
+    size_t bytes = (size_t) sp.len * sp.elem;
+    loft_store_t *d = &loft_stores[pin];
+    uint32_t rec = loft_st_claim(d, (uint32_t) ((bytes + 15) / 8));
+    loft_st_set_u32(d, rec, 4, sp.len);
+    if (bytes) memcpy(d->buf + (size_t) rec * 8 + 8, sp.base, bytes);
+    return rec;
+}
+
+/* `Stores::bridge_args_done`: whether the library wrote through the copy — its length or a byte. */
+static int loft_ffi_copy_changed(loft_ref a, uint32_t pin, uint32_t rec) {
+    loft_fspan sp = loft_stores[a.store_nr].foreign.span;
+    loft_store_t *d = &loft_stores[pin];
+    return loft_st_u32(d, rec, 4) != sp.len
+        || (sp.len && memcmp(d->buf + (size_t) rec * 8 + 8, sp.base, (size_t) sp.len * sp.elem) != 0);
+}
+#else
+#define loft_ffi_is_foreign(a) 0
+#define loft_ffi_copy_in(pin, a) 0u
+#define loft_ffi_copy_changed(a, pin, rec) 0
+#endif
+
 /* A heap answer as loft holds it (`codegen_runtime::from_loft_ref` / `from_loft_record`): a
  * vector behind a one-word header whose slot at +4 names its data record, a record as it is. */
 static loft_ref loft_ffi_vector_answer(loft_ffi_ref r) {
@@ -58,17 +123,135 @@ static loft_ref loft_ffi_record_answer(loft_ffi_ref r) {
     return v;
 }
 
+#if defined(LOFT_DL)
+/* One `loft_register_v1` entry checked against the name `loft_ffi_sym` asks for. */
+typedef struct { const char *want; size_t len; const void *found; } loft_ffi_reg_q;
+static void loft_ffi_reg_find(const uint8_t *name, size_t len, const void *fn, void *ctx) {
+    loft_ffi_reg_q *q = (loft_ffi_reg_q *) ctx;
+    if (!q->found && len == q->len && memcmp(name, q->want, len) == 0) q->found = fn;
+}
+
+/* The function an open library implements native `sym` with: the entry its `loft_register_v1`
+ * table registers under that name — which may be another symbol (`loft_save_png =>
+ * n_save_png`, the store-aware variant the interpreter calls too) — else the symbol of that
+ * name. */
+static void *loft_ffi_lookup(void *h, const char *sym) {
+    void *p = 0;
+    typedef void (*loft_ffi_reg_fn)(void (*)(const uint8_t *, size_t, const void *, void *), void *);
+    loft_ffi_reg_fn reg;
+    void *r = loft_dl_sym(h, "loft_register_v1");
+    memcpy(&reg, &r, sizeof reg);
+    if (r) {
+        loft_ffi_reg_q q = { sym, strlen(sym), 0 };
+        reg(loft_ffi_reg_find, &q);
+        memcpy(&p, &q.found, sizeof p);
+    }
+    return p ? p : loft_dl_sym(h, sym);
+}
+#endif
+
+/* `Store::snapshot_copy` (`Stores::clone_store_for_call`, loft#2239) — a writable copy of store
+ * `from` in a store of its own, for ONE native call whose answer must not be claimed where `from`
+ * lives: a store the workers of a running `par` share (`loft_par_sharing`), or a pinned one.
+ * Every record keeps its number, so the arguments only change their store. */
+static void loft_ffi_bits_copy(loft_bits *d, const loft_bits *s) {
+    if (d->cap < s->nwords) {
+        d->bits = (uint64_t *) realloc(d->bits, (size_t) s->nwords * sizeof(uint64_t));
+        if (!d->bits) { fputs("loft: out of memory\n", stderr); abort(); }
+        d->cap = s->nwords;
+    }
+    if (s->nwords) memcpy(d->bits, s->bits, (size_t) s->nwords * sizeof(uint64_t));
+    d->nwords = s->nwords;
+    d->live = s->live;
+}
+
+static uint16_t loft_ffi_clone_store(uint16_t from) {
+    uint16_t ns = (uint16_t) loft_store_new();
+    loft_store_t *d = &loft_stores[ns];
+    const loft_store_t *s = &loft_stores[from];
+    if (d->size != s->size) {
+        loft_heap_moved(d, d->size, s->size);
+        d->buf = (uint8_t *) realloc(d->buf, (size_t) s->size * 8);
+        if (!d->buf) { fputs("loft: out of memory\n", stderr); abort(); }
+        d->size = s->size;
+    }
+    memcpy(d->buf, s->buf, (size_t) s->size * 8);
+    loft_ffi_bits_copy(&d->claims, &s->claims);
+    loft_ffi_bits_copy(&d->referenced, &s->referenced);
+    loft_ffi_bits_copy(&d->removed, &s->removed);
+    loft_ffi_bits_copy(&d->lazy_free, &s->lazy_free);
+    loft_ffi_bits_copy(&d->parked_set, &s->parked_set);
+    memcpy(d->parked_heads, s->parked_heads, sizeof d->parked_heads);
+    d->parked_count = s->parked_count;
+    d->claimed_end = s->claimed_end;
+    d->free_root = s->free_root;
+    d->wild = s->wild;
+    d->dead_words = s->dead_words;
+    d->needs_coalesce = s->needs_coalesce;
+    d->lazy = s->lazy;
+    d->defined = s->defined;
+    d->no_park = s->no_park;
+    d->known = s->known;
+    return ns;
+}
+
+/* The store a pinned native call works in: `pn` itself, or a copy of it when it is shared. */
+static uint16_t loft_ffi_call_store(uint16_t pn) {
+    return (loft_par_sharing || loft_stores[pn].pinned) ? loft_ffi_clone_store(pn) : pn;
+}
+
+/* The copy a call was given goes once its answer is copied out. */
+static void loft_ffi_drop_call_store(uint16_t cs, uint16_t pn) {
+    if (cs != pn) {
+        loft_ref m = { cs, 0, 0 };
+        loft_free_ref(m);
+    }
+}
+
+/* The logged records go, the log closes. */
+static void loft_ffi_log_drop(uint16_t nr) {
+    for (uint32_t i = 0; i < loft_ffi_log_n; i++)
+        if (loft_ffi_log_recs[i]) loft_st_delete(&loft_stores[nr], loft_ffi_log_recs[i]);
+    loft_ffi_log_on = 0;
+    loft_ffi_log_n = 0;
+}
+
+/* loft#2227, `@FR-F-Ret` (`Stores::own_bridge_answer`) — a heap answer built in the argument's
+ * store it was pinned to, copied out into a store of its own with its element type (a vector,
+ * `loft_vec_add`) or its record type (`loft_copy_record`); then only what the call claimed is
+ * deleted, and the vector's header. */
+static loft_ref loft_ffi_own_vector(const loft_tdesc *T, uint16_t elem_tp, loft_ref h) {
+    if (h.rec == 0) { loft_ffi_log_on = 0; return h; }
+    uint16_t ns = (uint16_t) loft_store_new();
+    uint32_t root = loft_claim(&loft_stores[ns], 1);
+    loft_set_u32(&loft_stores[ns], root, 4, 0);
+    loft_ref v = { ns, root, 4 };
+    loft_vec_add(T, elem_tp, v, h);
+    loft_ffi_log_drop(h.store_nr);
+    loft_st_delete(&loft_stores[h.store_nr], h.rec);
+    return v;
+}
+
+static loft_ref loft_ffi_own_record(const loft_tdesc *T, uint16_t tp, loft_ref r) {
+    if (r.rec == 0) { loft_ffi_log_on = 0; return r; }
+    loft_ref d = { 0xFFFF, 0, 0 };
+    loft_database_typed(&d, T[tp].size, tp);
+    loft_copy_record(T, tp, r, d, 4);
+    loft_ffi_log_drop(r.store_nr);
+    return d;
+}
+
 /* Symbol `sym` of a library's native part, resolved once per call site: in a shipped program
  * (`LOFT_BIND_LIBS`) the library named `file` it opened at start by search order
  * (`loft_c_bind_libraries`), else the library at `path`, where this build found it.  A library or
  * symbol that is not there halts the program naming both, as the interpreter refuses a native
  * whose library did not load. */
 static void *loft_ffi_sym(const char *path, const char *file, const char *sym) {
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_DL)
 #if defined(LOFT_BIND_LIBS)
     for (uint32_t i = 0; i < loft_ncbl && i < 64; i++) {
         if (!loft_cbl_row_handle[i] || strcmp(loft_cbl[i].file, file) != 0) continue;
-        void *p = dlsym(loft_cbl_row_handle[i], sym);
+        void *p = loft_ffi_lookup(loft_cbl_row_handle[i], sym);
         if (p) return p;
         char m[1024];
         snprintf(m, sizeof m, "native function %s is not available: the library does not export it", sym);
@@ -77,12 +260,12 @@ static void *loft_ffi_sym(const char *path, const char *file, const char *sym) {
     }
 #endif
     (void) file;
-    void *h = dlopen(path, RTLD_NOW | RTLD_LOCAL);
-    void *p = h ? dlsym(h, sym) : 0;
+    void *h = loft_dl_open(path, LOFT_DL_LOCAL);
+    void *p = h ? loft_ffi_lookup(h, sym) : 0;
     if (p) return p;
     char m[1024];
     snprintf(m, sizeof m, "native function %s is not available: %s", sym,
-             h ? "the library does not export it" : dlerror());
+             h ? "the library does not export it" : loft_dl_error());
     loft_panic(loft_lit(m, strlen(m)), loft_lit(path, strlen(path)), 0);
     return 0;
 #else
