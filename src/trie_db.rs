@@ -62,7 +62,10 @@ impl KeyOracle for TextOracle<'_> {
         tree_bytes(text_bytes(store, rec, self.key).as_bytes()).len() as u32 * 8
     }
     fn word(&self, store: &Store, rec: u32, word: u32) -> u64 {
-        bytes_word(&tree_bytes(text_bytes(store, rec, self.key).as_bytes()), word)
+        bytes_word(
+            &tree_bytes(text_bytes(store, rec, self.key).as_bytes()),
+            word,
+        )
     }
 }
 
@@ -117,7 +120,11 @@ pub(crate) const SLOT_TAG: u32 = 0x8000_0000;
 /// The null record a slot word names, `0` when none.
 #[must_use]
 pub(crate) fn slot_rec(word: u32) -> u32 {
-    if word & SLOT_TAG == 0 { 0 } else { word & !SLOT_TAG }
+    if word & SLOT_TAG == 0 {
+        0
+    } else {
+        word & !SLOT_TAG
+    }
 }
 
 /// The slot word naming `rec` (`0`: none).  A record number stays below `i32::MAX`
@@ -172,7 +179,11 @@ pub fn add(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) {
     }
     if is_null_key(text_bytes(store, rec.rec, key).as_bytes()) {
         // `@FR-Col-Insert` displaced the record already under the null key before this.
-        debug_assert_eq!(null_rec(store, tree), 0, "a trie's null slot holds one record");
+        debug_assert_eq!(
+            null_rec(store, tree),
+            0,
+            "a trie's null slot holds one record"
+        );
         store.set_u32_raw(tree, rt::SLOT, slot_word(rec.rec));
         return;
     }
@@ -323,13 +334,7 @@ pub fn prefix(
     // The null slot is never part of a prefix slice: a null text begins with nothing.
     let q = tree_bytes(pre);
     let probe = |word: u32| bytes_word(&q, word);
-    let mut it = rt::rtree_seek(
-        store,
-        tree,
-        &probe,
-        q.len() as u32 * 8,
-        &TextOracle { key },
-    );
+    let mut it = rt::rtree_seek(store, tree, &probe, q.len() as u32 * 8, &TextOracle { key });
     let cap = limit.unwrap_or(usize::MAX);
     let mut rec = it.rec();
     while rec != 0 && out.len() < cap {

@@ -1,12 +1,13 @@
 /* ── Spatial and trie: a PATRICIA tree over a bit-key oracle (src/radix_tree.rs) ────────────
  * loft's own layout, ported line for line.  The collection slot names the TREE record: @4 the
- * top child, @8 the records it holds, @12 the nodes ever minted, @16 the node capacity, @20 the
- * free-node list, and from @24 the nodes, 16 bytes each — @0 the absolute bit it splits on, @4
- * its parent, @8 / @12 its false / true child.  A child is 0 (empty), a record number (> 0) or
- * a node (its negated id).  The tree keys on `user bits ‖ 0x00 ‖ 32-bit record id ‖ zeros`, so
- * no key ends and distinct records always differ.  A spatial collection's user bits are its
- * axes' Morton interleave (src/radix_db.rs); a trie's are its text key's bytes (src/trie_db.rs)
- * (`@FR-S-Tree`, `@FR-S-TreeKey`).
+ * top child, @8 the records it holds, @12 the nodes ever minted, @16 the kind's word (a trie's
+ * null-key slot), @20 the free-node list, and from @24 the nodes, 16 bytes each — @0 the
+ * absolute bit it splits on, @4 its parent, @8 / @12 its false / true child.  A child is 0
+ * (empty), a record number (> 0) or a node (its negated id).  The tree keys on `user bits ‖ 0x00
+ * ‖ 32-bit record id ‖ zeros`, so no key ends and distinct records always differ.  A spatial
+ * collection's user bits are its axes' Morton interleave (src/radix_db.rs); a trie's are its
+ * text key's bytes with 0x00 and 0x01 escaped (src/trie_db.rs) (`@FR-S-Tree`, `@FR-S-TreeKey`,
+ * `@FR-Col-Trie`).
  * An entry is a record of its own, its payload at byte 8. */
 
 #define LOFT_RX_TERM_BITS 8u

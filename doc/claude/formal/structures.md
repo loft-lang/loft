@@ -279,17 +279,23 @@ table's own bytes; nothing depends on the build that wrote it except through the
 
 ```
   (S-Tree)    a spatial or trie collection's slot names its TREE record: @4 i32 the TOP, @8 u32
-              the record count, @12 u32 the highest node id in use, @16 u32 the capacity in
-              nodes, @20 u32 the free-node head; node n (1-based) at byte 24 + 16·(n − 1):
+              the record count, @12 u32 the highest node id in use, @16 u32 the KIND's word,
+              @20 u32 the free-node head; node n (1-based) at byte 24 + 16·(n − 1):
               @0 u32 the bit index it tests, @4 u32 its parent, @8 i32 the child for a 0 bit,
               @12 i32 the child for a 1 bit.  A child (and the top) is 0 for none, a record
               number when positive, −id of a node when negative.  The tree is a PATRICIA tree:
               the bit index strictly grows going down.  Node ids are a numbering, not an order —
               a writer may renumber them (S-Image) and a reader follows ids, so a reader relies
               on every id it meets lying in 1 ..= the highest id, and on nothing else about them.
+              The node capacity is the claim's: (record bytes − 24) / 16.  The kind's word is 0
+              in a spatial; in a trie it names the record of the absent key with bit 31 set, or
+              is 0 when there is none, and that record is not in the tree.  A trie under
+              placement 1 holds the node capacity there, bit 31 clear — read as no such record.
   (S-TreeKey) a record's KEY STRING is its user bits, then 8 zero bits, then its record number
               as 32 bits, most significant first; a lookup that has no record uses 0.  The user
-              bits of a TRIE are its text's bytes in order (no key byte is 0).  The user bits of
+              bits of a TRIE are its text's bytes in order, a 0x00 byte written as 0x01 0x01 and
+              a 0x01 byte as 0x01 0x02, so no key byte is 0 and byte order is kept; under
+              placement 1 the bytes are written as they are.  The user bits of
               a SPATIAL record interleave its axes — at most 3 — bit by bit, most significant
               first, bit b from axis b mod n: each axis is the 64-bit value its declared type
               decodes (L-Narrow-Decode) with its top bit flipped, so the order of the codes is
