@@ -87,6 +87,20 @@ building.
 (`buf += [b]`, one to three a call), hand-priced on cbor: `encode` −1 %, `encode_bytes` within
 noise — deriving the header costs what the pushes save.  `head`'s cost is its call and branches.
 
+### Next design: a local consumed once by the returned literal is built in its field
+
+zttext `insert_text` (`return Doc { buf: nb, pieces: np }`) and cbor's `read_value`
+(`CArray { items: items }`) build a local vector in a store of its own and deep-copy it into the
+returned literal's field (`loft_vec_replace`, then the store's free); rustc does the same.  A
+hand edit that bound `nb` and `np` to the return buffer's fields from the start CHANGED THE
+ANSWER (`insert_text` hash 368acdef → b704c50b): the bench rebinds `d = insert_text(d, …)`, and
+for a rebind the caller hands its OWN record as the buffer (`@FR-R-Rebind`), so clearing the
+fields up front empties `d.buf` before it is read.  The rule therefore needs the argument case
+settled first — a run-time test that the buffer's store is none of the arguments' (building in
+place only then, as `(R-TextBorrow)`'s tested clause does), or a site condition that the call is
+no rebind — and its cells must include the rebind.  Not priced cleanly yet (the run shared the
+box with another A/B).
+
 ### Design: a slice that initialises a field is sliced into it
 
 **Shape.**  A record literal whose vector field is initialised by a value slice,
