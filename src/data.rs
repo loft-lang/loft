@@ -12930,6 +12930,41 @@ impl Data {
         name: &str,
         user_file: &str,
     ) -> Option<String> {
+        self.surface_refusal(
+            lib_source,
+            lib,
+            name,
+            user_file,
+            &format!("`{lib}::{name}`"),
+        )
+    }
+
+    /// @FR-F-Surface — the error for `use lib::(name)` naming what `lib` does not pass on, in
+    /// the words [`Self::qualified_refusal`] gives `lib::name`: neither spelling reaches it, and
+    /// "not found" would send the reader looking for an item `lib` does declare.  `None` when
+    /// the library is unnamed here or does not have the name at all.
+    #[must_use]
+    pub fn import_refusal(&self, lib_source: u16, name: &str, user_file: &str) -> Option<String> {
+        let lib = self.qualifier_of(lib_source)?;
+        let lib = self.writable_qualifier(&lib, lib_source).unwrap_or(lib);
+        self.surface_refusal(
+            lib_source,
+            &lib,
+            name,
+            user_file,
+            &format!("`use {lib}::({name})`"),
+        )
+    }
+
+    /// The one home of the surface verdict, quoting the `spelling` that asked.
+    fn surface_refusal(
+        &self,
+        lib_source: u16,
+        lib: &str,
+        name: &str,
+        user_file: &str,
+        spelling: &str,
+    ) -> Option<String> {
         if lib_source == u16::MAX || lib_source == STD_SOURCE {
             return None;
         }
@@ -12957,13 +12992,13 @@ impl Data {
                     });
                 return Some(match owner {
                     Some(m) => format!(
-                        "`{lib}::{name}` reaches a name `{lib}` only imports for its own use — \
+                        "{spelling} reaches a name `{lib}` only imports for its own use — \
                          it is `{m}`'s, and `{lib}` does not pass it on.\n  fix: write \
                          `{m}::{name}` after `use {m};` (or `{lib}` passes it on with \
                          `pub use {m}::({name});`)"
                     ),
                     None => format!(
-                        "`{lib}::{name}` reaches a name `{lib}` only imports for its own use, \
+                        "{spelling} reaches a name `{lib}` only imports for its own use, \
                          and does not pass on.\n  fix: `{lib}` passes it on with `pub use`"
                     ),
                 });
@@ -12973,7 +13008,7 @@ impl Data {
                 && !self.shares_internals(&self.definitions[d as usize].position.file, user_file)
             {
                 return Some(format!(
-                    "`{name}` is not `pub` in `{lib}`, so `{lib}::{name}` cannot reach it: a \
+                    "`{name}` is not `pub` in `{lib}`, so {spelling} cannot reach it: a \
                      library's surface is its `pub` items.\n  fix: `{lib}` declares it `pub`, \
                      or the program uses something `{lib}` does publish"
                 ));

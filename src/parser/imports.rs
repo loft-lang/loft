@@ -121,11 +121,14 @@ impl Parser {
                                 ));
                             }
                         } else {
-                            diagnostic!(
-                                self.lexer,
-                                Level::Error,
-                                "Name '{name}' not found in library"
-                            );
+                            // `@FR-F-Surface` — a name the library declares but keeps is refused
+                            // as not `pub`, never as missing.
+                            let file = self.lexer.pos().file;
+                            let msg = self
+                                .data
+                                .import_refusal(pi.lib_source, name, &file)
+                                .unwrap_or_else(|| format!("Name '{name}' not found in library"));
+                            diagnostic!(self.lexer, Level::Error, "{msg}");
                         }
                     }
                 }

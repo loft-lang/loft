@@ -1,0 +1,26 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @ARGS: --lib tests/lib
+//
+// @FR-F-Surface — `use lib::(name)` reaches what `lib::name` reaches and nothing more, and it
+// refuses in the same words: an item `lib` declares without `pub` is "not `pub` in `lib`", and a
+// name `lib` only imports for its own use names the library that owns it.  The import list said
+// "Name 'hid_f' not found in library" for an item `privlib` does declare, which sends the reader
+// looking for a missing item rather than a missing `pub`.  A name `lib` does not have at all
+// keeps "not found" (tests/package_layout.rs `by_name_missing`).
+// The qualified spelling's cells are in a-qualified-name-reaches-only-what-a-library-publishes.loft.
+//
+// @falsified-at: 23bc61e47 — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches)
+// WITNESS: on main each of the three names is refused `Name '…' not found in library`.
+// CHANNEL: the expected diagnostics.
+// ARMED: nothing.
+// HOLDS: every cell is a refusal, so only the message can move.
+// @EXPECT_ERROR: `hid_f` is not `pub` in `privlib`, so `use privlib::(hid_f)` cannot reach it
+// @EXPECT_ERROR: `HID_C` is not `pub` in `privlib`, so `use privlib::(HID_C)` cannot reach it
+// @EXPECT_ERROR: `use privlib::(c98_len)` reaches a name `privlib` only imports for its own use — it is `c98_math`'s
+use privlib::(pub_f, hid_f, HID_C, c98_len);
+
+fn main() {
+  println("{pub_f()}");
+}
