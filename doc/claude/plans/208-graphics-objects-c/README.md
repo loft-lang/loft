@@ -16,7 +16,8 @@ Issue: [@PLN208](https://github.com/loft-lang/plans/issues/208).
 | G1 | Done — `Font` in loft (`31d41be`), its metrics pinned to fontdue's (`392e212`); 1532 of 1536 comparison cells agree, the four others a symbol font where fontdue misread its Mac Roman table |
 | G2 | Done — `save_png` through imaging (`16818a4`); six canvases identical to 0.9's files.  It surfaced an imaging defect, fixed as imaging 0.5.1: lodepng's `auto_convert` wrote few-colour images as palettes |
 | G3 | Done — `enum Event` with public variant fields (`16818a4`).  The suite is 108/108 on the interpreter, `--native` and the C; G1–G3 and imaging 0.5.1 go to main together in loft-libs-graphics#67 |
-| G4–G11 | Open |
+| G4 | Done — `Window` over X11 + GLX (`b4ed3ce`): `tests/window.loft` 3/3 on the three backends under Xvfb, the suite 111/111; `compare/window.loft` reads back 0.9's pixels for five clears |
+| G5–G11 | Open |
 
 ## Goal
 
@@ -122,6 +123,12 @@ over X11 + GLX (a 3.3 core context through `glXCreateContextAttribsARB`), `OpDro
 - Goes red when: under Xvfb, a program that opens a window, clears to a colour and reads the
   framebuffer back answers a different pixel than 0.9 does.
 
+Comparisons against 0.9 live in `graphics/compare/`, one file each, run by hand on the interpreter
+and `--native` (the C cannot load 0.9's crate) under `xvfb-run -s "-noreset …"` — an X server that
+loses its last client resets and refuses the next window while it does.  The 0.10 path runs first in
+each file: 0.9's destroy leaves its dead context bound to the thread.  The shim keeps libX11 and
+libGL loaded (`RTLD_NODELETE`); unloading Mesa leaked 10 MiB of address space per window.
+
 **G5 — the GL calls, one group per step (M each).**  Shaders and uniforms · buffers, instancing,
 indices · state (blend, cull, depth, scissor, viewport) · framebuffers and textures · draw modes,
 line width, point size.  `clear` keeps 0.9's `0xAARRGGBB` packing (G.rs:669).
@@ -144,7 +151,8 @@ which no consumer uses, is dropped).  Audio, which no consumer uses, moves to lo
 `audio` library (published first) or leaves graphics.
 
 **G9 — release 0.10.0 (S).**  The crate deleted, `[native]` gone, `api_compatible_with =
-"0.10.0"`, the README and the guide on the new API.  Goes red when: the library CI fails on any
+"0.10.0"`, the `loft` floor raised to the release G1's `Font` needs (2026.10.0 fails its font
+tests on `--native`), the README and the guide on the new API.  Goes red when: the library CI fails on any
 backend.
 
 **G10 — Windows (M), G11 — macOS (L).**  Win32 + WGL; Cocoa through the Objective-C runtime.
