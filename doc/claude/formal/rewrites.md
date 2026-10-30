@@ -1226,7 +1226,13 @@ rebind — an early `return` inside the loop — parks too), and `Stores::park_o
                  no heap (`f(rows[i])` for `fn f(p: &(integer, integer))`) writes
                  nothing — through it a callee writes scalars in place or rebinds
                  the local, and its own summary judges those writes; a heap-owning
-                 record's link stays a writer.
+                 record's link stays a writer.  THE EXIT CLAUSE: the releases a
+                 `return` runs on its way out — the frees between its computed answer
+                 and the `return` of a variable or a constant — are on the list where
+                 each frees a store the frame owns (a local's, or an argument's only
+                 against a local snapshot of the store it was handed): after them
+                 control leaves the frame, so no holder is read again, and nothing a
+                 caller holds is released.  A `break` is no exit.
 ```
 
 **In words.** @PLN157 P4a.  Aliasing is free for headers under this rule — an
@@ -1299,6 +1305,20 @@ while `c3b`, where the copy is the loop's ONLY whole-type write, answers `195 1 
 now 40)"*.  Switch `LOFT_NO_COPY_IN_PLACE`.  Cells `tests/scripts/158-copy-in-place.loft`,
 pins `tests/copy_in_place.rs`.  Sites: `hoist::in_place_copy`, `hoist::blocks_header_hoist`,
 `hoist::body_writes`, `hoist::view_extent_verdict`.
+
+**The exit clause**.  A loop that returns from inside — a decoder's `if bad { return null; }`
+— frees the frame's vectors on that path, the one it pushes among them, and the free was a
+store writer, so the loop held nothing: crypto's `b64_decode` pushed every input byte through
+the store (`base64_to_bytes` 15x its Rust twin on the C ship lane; −71 % with the clause).  The
+frees run after the answer is computed and before the frame leaves, so no holder the loop
+derived is read after them, and every holder kind the gate admits is current at any point of
+the body (a push header writes the length to the record at each push; a push WINDOW, which
+keeps it in registers, has its own gate and refuses a loop with a `return`).  The ownership
+test keeps the clause sound where the gate summarises a CALLEE for a caller's loop: a free of
+an argument the frame was handed is never admitted, and `OpFreeRefIfDistinct(arg, snapshot)`
+frees only a store the frame replaced it with.  Switch `LOFT_NO_EXIT_RELEASE`; cells
+`tests/scripts/a-loop-that-returns-from-inside-keeps-its-holders.loft` c1–c8.  Sites:
+`writes::exit_tail_frees`, `writes::blocks_header_hoist`.
 
 **The read clause**.  `OpReadFile(f, OpCreateStack(t), n, tp)` with a
 scalar `t` sets `t` and the File record's `#next` and `#pos` (and its handle number on the

@@ -1,0 +1,153 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-InPlace`'s exit clause — the releases a `return` runs on its way out of a loop (the
+// frees after its answer is computed) do not decline the loop's hoist: after them control
+// leaves the frame, so no holder is read again.  crypto's `b64_decode` pushed every input byte
+// through the store because its `return null` released the vector the loop pushes (−71 % on
+// `base64_to_bytes` with the clause).  What can go wrong is a holder whose state the exit
+// needs: a push header whose length the record never got, read by the answer or by the
+// caller.  Every cell checks the value AND the length; values hand-computed.
+//
+// @falsified-at: none — the clause has no earlier build to catch, so the receipt is planted
+//   defects (2026-10-30) in the generated C: a push header that never writes its length back
+//   to the record fails c1, c2, c5 and c8 (c2 "0:-9:-9" for "37:1:253"); one whose own length
+//   never advances fails c1, c2, c4, c5, c6 and c8 (c4 676000 for 676025).  c4 and c5 hold a
+//   push header only under the clause (`LOFT_NO_EXIT_RELEASE=1` declines them).
+//   CHANNEL: an assertion.
+
+struct Box { v: vector<integer>, tag: integer }
+
+fn decode(s: text) -> vector<integer>? {
+  vals: vector<integer> = [];
+  for i in 0..size(s) {
+    c = s.byte_at(i);
+    if c == 33 { return null; }
+    vals += [c * 3];
+  }
+  vals
+}
+
+fn shown(v: vector<integer>?) -> text {
+  if v == null { return "null"; }
+  "{len(v)}:{v[0] ?? -9}:{v[len(v) - 1] ?? -9}"
+}
+
+// c1: a local pushed per pass, `return null` mid-loop: bytes 65..69 times 3
+fn test_a_null_return_mid_loop() {
+  got = "{shown(decode("ABCDE"))} {shown(decode("AB!CD"))} {shown(decode(""))}";
+  assert(got == "5:195:207 null 0:-9:-9", "c1 {got}");
+}
+
+fn upto(n: integer, stop: integer) -> vector<integer> {
+  v: vector<integer> = [];
+  for i in 0..n {
+    if i == stop { return v; }
+    v += [i * 7 + 1];
+  }
+  v
+}
+
+// c2: `return v` mid-loop holds every push before it: 37 pushes, the last 36*7+1
+fn test_the_vector_returned_mid_loop() {
+  got = "{shown(upto(100, 37))} {shown(upto(5, 0))} {shown(upto(5, 9))}";
+  assert(got == "37:1:253 0:-9:-9 5:1:29", "c2 {got}");
+}
+
+fn into_field(b: Box, n: integer, stop: integer) -> integer {
+  tmp: vector<integer> = [];
+  for i in 0..n {
+    tmp += [i];
+    if i == stop { return len(tmp) * 100 + len(b.v); }
+    b.v += [i * 11];
+  }
+  -1
+}
+
+// c3: a parameter's field pushed, a scalar return: 21 in tmp, 2 + 20 in b.v, the last 19*11
+fn test_a_parameter_field_pushed_then_a_scalar_return() {
+  b = Box { v: [5, 6], tag: 1 };
+  r = into_field(b, 50, 20);
+  got = "{r} {len(b.v)} {b.v[len(b.v) - 1] ?? -9}";
+  assert(got == "2122 22 209", "c3 {got}");
+}
+
+fn read_and_push(a: vector<integer>, stop: integer) -> integer {
+  bb: vector<integer> = [];
+  s = 0;
+  for i in 0..len(a) {
+    s += a[i] ?? 0;
+    if i == stop { return s * 1000 + len(bb); }
+    bb += [a[i] ?? 0];
+  }
+  s
+}
+
+// c4: a's header read, bb pushed, the exit frees bb: the first 26 odd numbers sum to 676
+fn test_a_read_header_beside_a_pushed_one() {
+  a = [for i in 0..40 { i * 2 + 1 }];
+  got = "{read_and_push(a, 25)} {read_and_push(a, 0)} {read_and_push(a, 99)}";
+  assert(got == "676025 1000 1600", "c4 {got}");
+}
+
+fn nested(n: integer, stop: integer) -> integer {
+  out: vector<integer> = [];
+  for i in 0..n {
+    for j in 0..3 {
+      if i * 3 + j == stop { return len(out) * 10 + j; }
+      out += [i * 3 + j];
+    }
+  }
+  len(out)
+}
+
+// c5: the inner loop returns and frees what the outer loop pushes: 17 pushed, j 2
+fn test_an_inner_return_frees_the_outer_push() {
+  got = "{nested(10, 17)} {nested(10, 0)} {nested(10, 99)}";
+  assert(got == "172 0 30", "c5 {got}");
+}
+
+fn find_k(a: vector<integer>, k: integer) -> integer {
+  w: vector<integer> = [];
+  for i in 0..len(a) {
+    if (a[i] ?? 0) == k { return (a[i] ?? 0) + len(w) * 100; }
+    w += [i];
+  }
+  -2
+}
+
+// c6: the answer is an element read through a held header: 31 is a[15]
+fn test_the_answer_read_through_a_held_header() {
+  a = [for i in 0..40 { i * 2 + 1 }];
+  got = "{find_k(a, 31)} {find_k(a, 1)} {find_k(a, 4)}";
+  assert(got == "1531 1 -2", "c6 {got}");
+}
+
+fn broken(n: integer, stop: integer) -> integer {
+  r = 0;
+  for i in 0..n {
+    t: vector<integer> = [i, i + 1];
+    if i == stop { break; }
+    r += len(t) + (t[1] ?? 0);
+  }
+  r
+}
+
+// c7: a `break` is no exit from the frame: 6 passes of 2 + (i + 1) = 12 + 21
+fn test_a_break_is_not_an_exit() {
+  got = "{broken(10, 6)} {broken(10, 99)}";
+  assert(got == "33 75", "c7 {got}");
+}
+
+fn decoded(s: text) -> vector<integer> {
+  r = decode(s);
+  r ?? []
+}
+
+// c8: crypto's caller shape, 30 calls: ten answer [], twenty answer seven bytes
+fn test_the_decoder_through_its_wrapper() {
+  t = 0;
+  for k in 0..30 { t += len(decoded(if k % 3 == 0 { "AB!" } else { "ABCDEFG" })); }
+  got = "{shown(decoded("XYZ"))} {len(decoded("X!Z"))} {t}";
+  assert(got == "3:264:270 0 140", "c8 {got}");
+}

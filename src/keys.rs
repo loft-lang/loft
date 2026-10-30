@@ -1397,6 +1397,17 @@ pub fn retbuf_hoist_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_RETBUF_HOIST"))
 }
 
+/// `(R-InPlace)`'s exit clause — the releases a `return` runs on its way out do not decline
+/// a loop's hoist — **DEFAULT ON** (`writes::exit_tail_frees`).  Opt OUT with
+/// `LOFT_NO_EXIT_RELEASE` (read at generation time, both compiled backends): such a release
+/// blocks every holder of the loop again, the first bisect step for a wrong value out of a
+/// loop that returns from inside; `LOFT_HOIST_VERIFY=1` / `LOFT_VERIFY` are the falsifiers.
+#[must_use]
+pub fn exit_release_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_EXIT_RELEASE"))
+}
+
 /// A counted loop's variable shares its range index's slot on the interpreter, so the copy
 /// from the index at the top of every round is not emitted — **DEFAULT ON**
 /// (`slot_alias::range_slot_aliases`).  Opt OUT with `LOFT_NO_LOOP_VAR_ALIAS` (read at slot
