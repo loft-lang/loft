@@ -33,7 +33,7 @@ const TWO_TARGETS = 4294967295;
 // src/data.rs:1814 fn base — one `Optional` peeled (`peel_optional`, :1779).
 fn base(t: ir::TypeT) -> ir::TypeT {
   match t {
-    TyOptional { inner } => inner[0] ?? panic("a nullable type has its base"),
+    TyOptional { inner } => inner,
     _ => t,
   }
 }
@@ -56,8 +56,8 @@ fn has_no_deps(t: ir::TypeT) -> boolean {
     TyEnum { n: _, is_ref: _, dep } => len(dep) == 0,
     TyVector { inner: _, dep } => len(dep) == 0,
     TyFunction { args: _, result: _, dep, consts: _ } => len(dep) == 0,
-    TyRefVar { inner } => has_no_deps(inner[0]),
-    TyOptional { inner } => has_no_deps(inner[0]),
+    TyRefVar { inner } => has_no_deps(inner),
+    TyOptional { inner } => has_no_deps(inner),
     TyTuple { elems } => {
       for e in elems {
         if !has_no_deps(e) {
@@ -92,7 +92,7 @@ fn owns_keyed_store(t: ir::TypeT) -> boolean {
 fn ret_promo_peels(t: ir::TypeT) -> boolean {
   match t {
     TyOptional { inner } => {
-      match inner[0] ?? panic("a nullable type has its base") {
+      match inner {
         TyVector { inner: _, dep: _ } => true,
         TyReference { n: _, dep: _ } => true,
         TyEnum { n: _, is_ref, dep: _ } => is_ref,
@@ -107,7 +107,7 @@ fn ret_promo_peels(t: ir::TypeT) -> boolean {
 // lowered by: a `τ?` as its `τ` twin (`LOFT_NO_NULLABLE_RETBUF` unset, default ON).
 fn first_bind_shape(t: ir::TypeT) -> ir::TypeT {
   match t {
-    TyOptional { inner } => inner[0] ?? panic("a nullable type has its base"),
+    TyOptional { inner } => inner,
     _ => t,
   }
 }
@@ -267,7 +267,7 @@ fn owns_displaced_store(b: ir::Bundle, f: ir::Function, v: integer, value: ir::N
 // `value` is handed for its result; -1 for `None`.
 fn displaced_buffer_witness(b: ir::Bundle, f: ir::Function, v: integer, value: ir::Node) -> integer {
   match value {
-    NdSpan { pos: _, inner } => displaced_buffer_witness(b, f, v, inner[0]),
+    NdSpan { pos: _, inner } => displaced_buffer_witness(b, f, v, inner),
     // `Value::Insert(steps) => steps.last().map(Value::unspan)`.
     NdInsert { items } => {
       if len(items) == 0 {
@@ -282,7 +282,7 @@ fn displaced_buffer_witness(b: ir::Bundle, f: ir::Function, v: integer, value: i
 
 fn buffer_witness_of_call(b: ir::Bundle, f: ir::Function, v: integer, call: ir::Node) -> integer {
   match call {
-    NdSpan { pos: _, inner } => buffer_witness_of_call(b, f, v, inner[0]),
+    NdSpan { pos: _, inner } => buffer_witness_of_call(b, f, v, inner),
     NdCall { def_nr, args } => {
       if def_nr < 0 || def_nr >= len(b.data.definitions) || !has_code(def(b, def_nr)) {
         return -1;
@@ -423,7 +423,7 @@ fn is_loft_defined(d: ir::Definition) -> boolean {
 // load replays `Data.imports`); this port reads only the definitions of the source itself.
 fn has_nullable_struct_payload(b: ir::Bundle, t: ir::TypeT) -> boolean {
   match t {
-    TyOptional { inner } => (inner[0] ?? panic("a nullable type has its base")) is TyReference,
+    TyOptional { inner } => (inner) is TyReference,
     TyEnum { n, is_ref, dep: _ } => {
       if !is_ref || n < 0 || n >= len(b.data.definitions) {
         return false;
@@ -449,7 +449,7 @@ fn has_nullable_struct_payload(b: ir::Bundle, t: ir::TypeT) -> boolean {
 // `Value::Call(d, _)` → d, else -1.
 fn call_of(n: ir::Node) -> integer {
   match n {
-    NdSpan { pos: _, inner } => call_of(inner[0]),
+    NdSpan { pos: _, inner } => call_of(inner),
     NdCall { def_nr, args: _ } => def_nr,
     _ => -1,
   }
@@ -458,7 +458,7 @@ fn call_of(n: ir::Node) -> integer {
 // `Value::CallRef(v, _)` → v, else -1.
 fn callref_var(n: ir::Node) -> integer {
   match n {
-    NdSpan { pos: _, inner } => callref_var(inner[0]),
+    NdSpan { pos: _, inner } => callref_var(inner),
     NdCallRef { var, args: _ } => var,
     _ => -1,
   }
@@ -485,7 +485,7 @@ fn var_named_here(n: ir::Node) -> integer {
 // `for_each_child` (:679) enumerates.  Each arm asks the node itself first, then its children.
 fn reads_var(n: ir::Node, v: integer) -> boolean {
   match n {
-    NdSpan { pos: _, inner } => any_reads_var(inner, v),
+    NdSpan { pos: _, inner } => reads_var(inner, v),
     NdCall { def_nr: _, args } => any_reads_var(args, v),
     NdCallRef { var, args } => var == v || any_reads_var(args, v),
     NdInsert { items } => any_reads_var(items, v),
@@ -493,13 +493,13 @@ fn reads_var(n: ir::Node, v: integer) -> boolean {
     NdParallel { arms } => any_reads_var(arms, v),
     NdBlock { block } => any_reads_var((block[0] ?? panic("a block")).operators, v),
     NdLoop { block } => any_reads_var((block[0] ?? panic("a loop")).operators, v),
-    NdSet { var, inner } => var == v || any_reads_var(inner, v),
-    NdReturn { inner } => any_reads_var(inner, v),
-    NdDrop { inner } => any_reads_var(inner, v),
-    NdYield { inner } => any_reads_var(inner, v),
-    NdTuplePut { var, idx: _, inner } => var == v || any_reads_var(inner, v),
-    NdIf { cond, t, f } => any_reads_var(cond, v) || any_reads_var(t, v) || any_reads_var(f, v),
-    NdIter { var, create, next, init } => var == v || any_reads_var(create, v) || any_reads_var(next, v) || any_reads_var(init, v),
+    NdSet { var, inner } => var == v || reads_var(inner, v),
+    NdReturn { inner } => reads_var(inner, v),
+    NdDrop { inner } => reads_var(inner, v),
+    NdYield { inner } => reads_var(inner, v),
+    NdTuplePut { var, idx: _, inner } => var == v || reads_var(inner, v),
+    NdIf { cond, t, f } => reads_var(cond, v) || reads_var(t, v) || reads_var(f, v),
+    NdIter { var, create, next, init } => var == v || reads_var(create, v) || reads_var(next, v) || reads_var(init, v),
     _ => var_named_here(n) == v,
   }
 }
@@ -532,7 +532,7 @@ fn is_null_sentinel_detach(b: ir::Bundle, f: ir::Function, v: integer, value: ir
 // HIDDEN parameter position, the buffer `nrvo_collapse_tail_set` substitutes.
 fn s1_substituted(b: ir::Bundle, v: integer, value: ir::Node) -> boolean {
   match value {
-    NdSpan { pos: _, inner } => s1_substituted(b, v, inner[0]),
+    NdSpan { pos: _, inner } => s1_substituted(b, v, inner),
     NdCall { def_nr, args } => {
       attrs = def(b, def_nr).attributes;
       for a in args {
@@ -638,9 +638,9 @@ fn owned_ref(b: ir::Bundle, d: integer, f: ir::Function, v: integer, value: ir::
 // or what variable it answers, so only the variable is carried.
 fn projection_container_var(b: ir::Bundle, value: ir::Node) -> integer {
   match value {
-    NdSpan { pos: _, inner } => projection_container_var(b, inner[0]),
+    NdSpan { pos: _, inner } => projection_container_var(b, inner),
     NdIf { cond: _, t, f } => {
-      s = own::variant_check_subject(b, t[0] ?? panic("a then side"), f[0] ?? panic("an else side"));
+      s = own::variant_check_subject(b, t, f);
       if s >= 0 { s } else { -1 }
     }
     NdCall { def_nr, args } => {
@@ -684,7 +684,7 @@ fn protectable_ref_args(b: ir::Bundle, defs: own::Defs, call: ir::Node) -> Prote
   r = ProtectableArgs { slots: [], covers_all: false };
   match call {
     NdSpan { pos: _, inner } => {
-      q = protectable_ref_args(b, defs, inner[0] ?? panic("a span holds its node"));
+      q = protectable_ref_args(b, defs, inner);
       return q;
     }
     NdCall { def_nr: _, args } => protectable_args_of(b, defs, call, args, r),
@@ -780,7 +780,7 @@ fn fnref_return_borrows_closure(d: ir::Definition) -> boolean {
 // a `CallRef` resolves through `fnref_target_of(defs.rhs[v])`.
 fn callee_of(b: ir::Bundle, defs: own::Defs, value: ir::Node) -> integer {
   match value {
-    NdSpan { pos: _, inner } => callee_of(b, defs, inner[0]),
+    NdSpan { pos: _, inner } => callee_of(b, defs, inner),
     NdCall { def_nr, args: _ } => def_nr,
     NdCallRef { var: v, args: _ } => {
       rhss: vector<ir::Node> = [];
@@ -904,7 +904,7 @@ fn adopts_minted_at_bind(b: ir::Bundle, ops: own::Ops, f: ir::Function, v: integ
 // callee returning exactly its promoted buffer, bound to a plain local that is not that buffer.
 fn binds_the_callees_minted_store(b: ir::Bundle, ops: own::Ops, f: ir::Function, v: integer, value: ir::Node) -> boolean {
   match value {
-    NdSpan { pos: _, inner } => binds_the_callees_minted_store(b, ops, f, v, inner[0]),
+    NdSpan { pos: _, inner } => binds_the_callees_minted_store(b, ops, f, v, inner),
     NdCall { def_nr, args } => binds_the_minted_store_of_call(b, ops, f, v, def_nr, args),
     _ => false,
   }

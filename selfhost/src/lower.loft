@@ -227,15 +227,15 @@ fn kind_of_type(t: ir::TypeT) -> Kind {
     TyFloat => KFloat,
     TySingle => KSingle,
     TyText { dep: _ } => KText,
-    TyRefVar { inner } => if kind_of_types(inner) == KText { KTextRef } else { KOther },
+    TyRefVar { inner } => if kind_of_type(inner) == KText { KTextRef } else { KOther },
     TyReference { n: _, dep: _ } => KRef,
     TyVector { inner: _, dep: _ } => KRef,
     TyHash { n: _, names: _, dep: _ } => KRef,
     TyVoid => KNone,
     TyNull => KNone,
     TyNever => KNone,
-    TyOptional { inner } => kind_of_types(inner),
-    TyRewritten { inner } => kind_of_types(inner),
+    TyOptional { inner } => kind_of_type(inner),
+    TyRewritten { inner } => kind_of_type(inner),
     _ => KOther,
   }
 }
@@ -264,11 +264,11 @@ fn kind_of(l: Lowering, b: ir::Bundle, n: ir::Node) -> Kind {
       k = l.var_kind[var] ?? KOther;
       if k == KTextRef { KText } else { k }
     }
-    NdSpan { inner } => kind_of(l, b, inner[0]?),
+    NdSpan { inner } => kind_of(l, b, inner),
     NdBlock { block } => kind_of_types(block[0]?.result),
     NdIf { cond: _, t, f } => {
-      k = kind_of(l, b, t[0]?);
-      if k == KNone { kind_of(l, b, f[0]?) } else { k }
+      k = kind_of(l, b, t);
+      if k == KNone { kind_of(l, b, f) } else { k }
     }
     NdCall { def_nr, args: _ } => kind_of_types(b.data.definitions[def_nr]?.returned),
     _ => KNone,
@@ -619,26 +619,26 @@ fn expr(l: Lowering, b: ir::Bundle, n: ir::Node) {
       // A `&text` reads the text it refers to (`Load` of kind `KTextRef`).
       emit(l, Load, if k == KTextRef { KTextRef } else { stack_of(k) }, slot, 0);
     }
-    NdSpan { inner } => expr(l, b, inner[0]?),
+    NdSpan { inner } => expr(l, b, inner),
     NdBlock { block } => block_value(l, b, block[0]?),
     NdIf { cond, t, f } => {
       k = kind_of(l, b, n);
-      expr(l, b, cond[0]?);
+      expr(l, b, cond);
       to_else = len(l.ops);
       emit(l, JumpIfFalse, KInt, 0, 0);
       at_branch = l.depth;
-      value(l, b, t[0]?, k);
+      value(l, b, t, k);
       to_end = len(l.ops);
       emit(l, Jump, KInt, 0, 0);
       l.ops[to_else].a = len(l.ops);
       // The else-side runs from where the then-side started, not from where it ended.
       l.depth = at_branch;
-      value(l, b, f[0]?, k);
+      value(l, b, f, k);
       l.ops[to_end].a = len(l.ops);
     }
     NdCall { def_nr, args } => call(l, b, def_nr, args),
     NdReturn { inner } => {
-      value(l, b, inner[0]?, l.result);
+      value(l, b, inner, l.result);
       emit(l, Ret, stack_of(l.result), 0, 0);
     }
     _ => refuse(l, "an expression the interpreter does not carry: {n}"),
@@ -651,7 +651,7 @@ fn unspan(n: ir::Node) -> ir::Node {
   at = n;
   while at is NdSpan {
     match at {
-      NdSpan { inner } => { at = inner[0] ?? panic("a span holds its node"); }
+      NdSpan { inner } => { at = inner; }
       _ => {}
     }
   }
@@ -1147,7 +1147,7 @@ fn record_of(ts: vector<ir::TypeT>) -> integer {
     TyReference { n, dep: _ } => n,
     TyEnum { n, is_ref, dep: _ } => if is_ref { n } else { -1 },
     TyOptional { inner } => {
-      match inner[0] ?? panic("a nullable type has its base") {
+      match inner {
         TyReference { n, dep: _ } => n,
         TyEnum { n, is_ref, dep: _ } => if is_ref { n } else { -1 },
         _ => -1,
@@ -1186,7 +1186,7 @@ fn is_vector(ts: vector<ir::TypeT>) -> boolean {
   match t {
     TyVector { inner: _, dep: _ } => true,
     TyOptional { inner } => {
-      match inner[0] ?? panic("a nullable type has its base") {
+      match inner {
         TyVector { inner: _, dep: _ } => true,
         _ => false,
       }
@@ -1220,18 +1220,16 @@ pub fn main_vector_of(b: ir::Bundle, ts: vector<ir::TypeT>) -> integer {
   if t == null {
     return -1;
   }
-  inner: vector<ir::TypeT> = [];
-  match t {
-    TyVector { inner: i, dep: _ } => { inner = i; }
+  elem = match t {
+    TyVector { inner: i, dep: _ } => element_type(b, i),
     TyOptional { inner: o } => {
-      match o[0] ?? panic("a nullable type has its base") {
-        TyVector { inner: i, dep: _ } => { inner = i; }
-        _ => { return -1; }
+      match o {
+        TyVector { inner: i, dep: _ } => element_type(b, i),
+        _ => -1,
       }
     }
-    _ => { return -1; }
-  }
-  elem = element_type(b, inner[0] ?? panic("a vector names its element"));
+    _ => -1,
+  };
   if elem < 0 {
     return -1;
   }
@@ -1267,7 +1265,7 @@ pub fn hash_type_of(b: ir::Bundle, ts: vector<ir::TypeT>) -> integer {
       names = ns;
     }
     TyOptional { inner } => {
-      match inner[0] ?? panic("a nullable type has its base") {
+      match inner {
         TyHash { n, names: ns, dep: _ } => {
           def = n;
           names = ns;
@@ -1300,7 +1298,7 @@ fn is_hash(ts: vector<ir::TypeT>) -> boolean {
   match t {
     TyHash { n: _, names: _, dep: _ } => true,
     TyOptional { inner } => {
-      match inner[0] ?? panic("a nullable type has its base") {
+      match inner {
         TyHash { n: _, names: _, dep: _ } => true,
         _ => false,
       }
@@ -1337,7 +1335,7 @@ fn deps_of(ts: vector<ir::TypeT>) -> vector<integer> {
     TyVector { inner: _, dep } => dep,
     TyEnum { n: _, is_ref: _, dep } => dep,
     TyOptional { inner } => {
-      match inner[0] ?? panic("a nullable type has its base") {
+      match inner {
         TyReference { n: _, dep } => dep,
         TyVector { inner: _, dep } => dep,
         TyEnum { n: _, is_ref: _, dep } => dep,
@@ -2144,10 +2142,10 @@ fn is_free(b: ir::Bundle, n: ir::Node) -> boolean {
           || name == "n_set_store_lock";
       }
       NdIf { cond: _, t, f } => {
-        if !(unspan(f[0] ?? panic("an else side")) is NdNull) {
+        if !(unspan(f) is NdNull) {
           return false;
         }
-        at = unspan(t[0] ?? panic("a then side"));
+        at = unspan(t);
       }
       _ => { return false; }
     }
@@ -2234,7 +2232,7 @@ struct Rotation {
 fn exit_test(n: ir::Node) -> vector<ir::Node> {
   match unspan(n) {
     NdIf { cond, t, f } => {
-      brk = match unspan(t[0] ?? panic("a then side")) {
+      brk = match unspan(t) {
         NdBreak { n: 0 } => true,
         NdBlock { block } => {
           ops = (block[0] ?? panic("a block")).operators;
@@ -2242,7 +2240,7 @@ fn exit_test(n: ir::Node) -> vector<ir::Node> {
         }
         _ => false,
       };
-      if brk && unspan(f[0] ?? panic("an else side")) is NdNull { cond } else { [] }
+      if brk && unspan(f) is NdNull { [cond] } else { [] }
     }
     _ => [],
   }
@@ -2260,20 +2258,20 @@ fn holds_jump(n: ir::Node) -> boolean {
   match n {
     NdContinue { n: _ } => true,
     NdLoop { block: _ } => true,
-    NdSpan { pos: _, inner } => holds_jump_in(inner),
+    NdSpan { pos: _, inner } => holds_jump(inner),
     NdCall { def_nr: _, args } => holds_jump_in(args),
     NdCallRef { var: _, args } => holds_jump_in(args),
     NdInsert { items } => holds_jump_in(items),
     NdTuple { items } => holds_jump_in(items),
     NdParallel { arms } => holds_jump_in(arms),
     NdBlock { block } => holds_jump_in((block[0] ?? panic("a block")).operators),
-    NdSet { var: _, inner } => holds_jump_in(inner),
-    NdReturn { inner } => holds_jump_in(inner),
-    NdDrop { inner } => holds_jump_in(inner),
-    NdYield { inner } => holds_jump_in(inner),
-    NdTuplePut { var: _, idx: _, inner } => holds_jump_in(inner),
-    NdIf { cond, t, f } => holds_jump_in(cond) || holds_jump_in(t) || holds_jump_in(f),
-    NdIter { var: _, create, next, init } => holds_jump_in(create) || holds_jump_in(next) || holds_jump_in(init),
+    NdSet { var: _, inner } => holds_jump(inner),
+    NdReturn { inner } => holds_jump(inner),
+    NdDrop { inner } => holds_jump(inner),
+    NdYield { inner } => holds_jump(inner),
+    NdTuplePut { var: _, idx: _, inner } => holds_jump(inner),
+    NdIf { cond, t, f } => holds_jump(cond) || holds_jump(t) || holds_jump(f),
+    NdIter { var: _, create, next, init } => holds_jump(create) || holds_jump(next) || holds_jump(init),
     _ => false,
   }
 }
@@ -2297,7 +2295,7 @@ fn rotation(first: ir::Node) -> Rotation {
   }
   match unspan(first) {
     NdSet { var: lv, inner } => {
-      match unspan(inner[0] ?? panic("a set's value")) {
+      match unspan(inner) {
         NdBlock { block } => {
           bl = block[0] ?? panic("a block");
           n = len(bl.operators);
@@ -2354,7 +2352,7 @@ fn start_step(r: Rotation) -> Rotation {
   match copy {
     NdSet { var, inner } => {
       cix = var;
-      nxt = match unspan(inner[0] ?? panic("a value")) { NdVar { n } => n, _ => -1 };
+      nxt = match unspan(inner) { NdVar { n } => n, _ => -1 };
     }
     _ => {}
   }
@@ -2367,7 +2365,7 @@ fn start_step(r: Rotation) -> Rotation {
       if var != nxt {
         return none;
       }
-      match unspan(inner[0] ?? panic("a value")) {
+      match unspan(inner) {
         NdCall { def_nr, args } => {
           if len(args) == 2 && is_var(args[0] ?? panic("an argument"), nxt) && is_int(args[1] ?? panic("an argument"), 1) {
             add = def_nr;
@@ -2391,7 +2389,7 @@ fn start_step(r: Rotation) -> Rotation {
         return none;
       }
       Rotation {
-        pre: [NdSet { var: ix, inner: [NdCall { def_nr: add, args: [NdVar { n: ix }, NdInt { n: 1 }] }] }],
+        pre: [NdSet { var: ix, inner: NdCall { def_nr: add, args: [NdVar { n: ix }, NdInt { n: 1 }] } }],
         test: [NdCall { def_nr: cmp, args: [end, NdVar { n: ix }] }],
         post: [],
         store_lv: r.store_lv,
@@ -2458,7 +2456,7 @@ fn rotated_loop(l: Lowering, b: ir::Bundle, ops: vector<ir::Node>, r: Rotation) 
       emit(l, Load, stack_of(k), slot_of(l, r.store_ix), 0);
       emit(l, Store, stack_of(k), slot_of(l, r.store_lv), 0);
     } else {
-      statement(l, b, NdSet { var: r.store_lv, inner: [NdVar { n: r.store_ix }] });
+      statement(l, b, NdSet { var: r.store_lv, inner: NdVar { n: r.store_ix } });
     }
   }
   for i in 1..len(ops) {
@@ -2498,18 +2496,18 @@ fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
   match n {
     NdLine { n: _ } => {},
     NdNull => {},
-    NdSpan { inner } => statement(l, b, inner[0]?),
+    NdSpan { inner } => statement(l, b, inner),
     NdReturn { inner } => expr(l, b, n),
     NdSet { var, inner } => {
-      set(l, b, var, inner[0]?);
+      set(l, b, var, inner);
     }
     NdBlock { block } => block_statement(l, b, block[0]?),
     NdIf { cond, t, f } => {
-      expr(l, b, cond[0]?);
+      expr(l, b, cond);
       to_else = len(l.ops);
       emit(l, JumpIfFalse, KInt, 0, 0);
-      statement(l, b, t[0]?);
-      else_side = f[0]?;
+      statement(l, b, t);
+      else_side = f;
       if else_side is NdNull {
         l.ops[to_else].a = len(l.ops);
       } else {
@@ -2552,9 +2550,9 @@ fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
     NdDrop { inner } => {
       // A value computed for its effect and dropped.
       before = l.depth;
-      expr(l, b, inner[0]?);
+      expr(l, b, inner);
       if l.depth > before {
-        emit(l, Pop, stack_of(kind_of(l, b, inner[0]?)), 0, 0);
+        emit(l, Pop, stack_of(kind_of(l, b, inner)), 0, 0);
       }
     }
     // Statements the compiler inserted in place of one (`Value::Insert`).
