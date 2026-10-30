@@ -5198,6 +5198,113 @@ fn the_engine_host_kernel_serves_the_same_on_the_c_and_the_interpreter() {
     }
 }
 
+/// @PLN203 C8 — the connector half of `lib/engine_host`'s kernel (`loft_engine.h`): a listener
+/// and a `run_client` seat, both loft programs on the same backend, every line written out by
+/// hand.  The seat's frames are masked (RFC 6455 requires it of a client); its `7:pose` is a
+/// declared sync kind, which reaches the listener over the WebSocket or, once the cookie's UDP
+/// path is acked, as a datagram — the echo is the same either way; `http_fetch` to a port
+/// nothing serves completes as a kind-3 event with a negative status, and the seat leaves; the
+/// listener sees that as a kind-2 disconnect of cid 0 and stops.
+#[test]
+fn an_engine_host_seat_talks_to_its_listener_on_the_c_and_the_interpreter() {
+    use std::time::{Duration, Instant};
+    if !have_cc() || !loft::platform::c_runtime_has_sockets() {
+        eprintln!("skipped: no cc on PATH, or a host without sockets");
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("lib");
+    for backend in ["--native-c", "--interpret"] {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .and_then(|l| l.local_addr())
+            .map(|a| a.port())
+            .expect("a free port");
+        let dir = scratch(&format!("seat{}", &backend[2..]));
+        let file = dir.join("pair.loft");
+        fa::write(
+            &file,
+            "use engine_host;\nfn main() {\n  role = env_variable(\"ROLE\") ?? \"server\";\n  \
+             port = (env_variable(\"PORT\") ?? \"0\") as integer ?? 0;\n  \
+             engine_host::sync_class(7);\n  if role == \"client\" {\n    \
+             engine_host::run_client(engine_host::default_host(), port, 5000,\n      \
+             fn(ev: engine_host::Event) {\n        \
+             if ev.kind == 0 { engine_host::client_send(\"ping\"); }\n        \
+             if ev.kind == 1 {\n          println(\"client got {ev.payload}\");\n          \
+             if ev.payload == \"echo:ping\" { engine_host::client_send(\"7:pose\"); }\n          \
+             if ev.payload == \"echo:7:pose\" { engine_host::http_fetch(\"GET\", \"http://127.0.0.1:1/x\", \"\", \"\"); }\n        \
+             }\n        \
+             if ev.kind == 3 { println(\"fetch {ev.status < 0}\"); engine_host::client_stop(); }\n      \
+             },\n      fn() {});\n    return;\n  }\n  \
+             engine_host::run(port, 5000,\n    fn(ev: engine_host::Event) {\n      \
+             if ev.kind == 0 { engine_host::send(ev.cid, \"hello {ev.cid}\"); }\n      \
+             if ev.kind == 1 { engine_host::broadcast(\"echo:{ev.payload}\"); }\n      \
+             if ev.kind == 2 { println(\"server saw disconnect {ev.cid}\"); engine_host::stop(); }\n    \
+             },\n    \
+             fn() {});\n}\n",
+        )
+        .expect("write program");
+        let start = |role: &str| {
+            loft::platform::process::harness_command(loft)
+                .arg(backend)
+                .arg("--lib")
+                .arg(&lib)
+                .arg(&file)
+                .env("ROLE", role)
+                .env("PORT", port.to_string())
+                .env("LOFT_TIMEOUT", "120")
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("start loft")
+        };
+        let mut server = start("server");
+        // The C build compiles first: wait for the listener (a probe connection that never
+        // upgrades is dropped without an event, so the seat still gets cid 0).
+        let deadline = Instant::now() + Duration::from_secs(90);
+        while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
+            if Instant::now() > deadline || server.try_wait().ok().flatten().is_some() {
+                let _ = server.kill();
+                let out = server.wait_with_output().expect("listener output");
+                panic!(
+                    "{backend}: the listener never listened\n{}{}",
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let seat = start("client").wait_with_output().expect("seat output");
+        let listener = server.wait_with_output().expect("listener output");
+        assert!(
+            seat.status.success(),
+            "{backend}: the seat's exit {:?}\n{}",
+            seat.status,
+            String::from_utf8_lossy(&seat.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&seat.stdout),
+            "client got hello 0\nclient got echo:ping\nclient got echo:7:pose\nfetch true\n",
+            "{backend}: the seat's lines\n{}",
+            String::from_utf8_lossy(&seat.stderr)
+        );
+        assert!(
+            listener.status.success(),
+            "{backend}: the listener's exit {:?}\n{}",
+            listener.status,
+            String::from_utf8_lossy(&listener.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&listener.stdout),
+            format!(
+                "engine_host: listening on ws://0.0.0.0:{port}/ (tick every 5000 us)\n\
+                 server saw disconnect 0\n"
+            ),
+            "{backend}: the listener's lines\n{}",
+            String::from_utf8_lossy(&listener.stderr)
+        );
+    }
+}
+
 /// `@FR-R-FileHold` as C (`lower::file_hold::held_file`, native's gate): a loop that reads one
 /// `File` through fixed-width integer reads keeps the record's cursor in a `loft_fcur` — read
 /// once, served from a 4 KB buffer, given back on EVERY exit: the loop's end, a `break` of an
