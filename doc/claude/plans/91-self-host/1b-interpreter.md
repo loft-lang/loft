@@ -39,6 +39,15 @@ It holds four constraints:
 4. **The formal rules are the specification.**  Each module implements the rules of one
    `doc/claude/formal/` chapter and cites them by tag.  It is measured by the language
    suite's cells, which are filed under those same rules (§ Reusing the formal rules).
+5. **The same operators, with the same semantics (owner, 2026-10-30).**  The goal is loft
+   again, inside loft — not a new language with new mechanics.  Every IR operator does what
+   the Rust interpreter's operator does, through the C runtime routine that is its port.
+   What the Rust bytecode writer decides beyond the IR (`state/codegen.rs`: a bind's copy,
+   adopt or displaced free, `generate_set`) is the lowering's to decide the SAME way, from the
+   same facts: the lowering is the loft port of the bytecode writer, and a shape it does not
+   port yet is refused by name.  The interpreter adds no mechanism of its own: no owner
+   table, no sweep, no run-time choice the Rust interpreter does not make.  This retires the
+   run-time ownership of 1b-s3.md (2026-10-28), which had become exactly such a mechanism.
 
 **The order of the goals (owner, 2026-10-28).**  First full coverage: every test and program
 the repository defines (the corpus, `tests/scripts`, the language suite's cells) gives
@@ -261,7 +270,7 @@ cannot quietly shrink.
 | **S5** | closures, coroutines, `par` | `closures`, `coroutines`, `concurrency` |
 | **S6** | natives, the corpus | `tests/scripts` against `--interpret` |
 | **S7** | the interpreter runs itself | S1's benchmarks through the self-run |
-| **O** (beside S1–S6) | ownership as its own track, from S0 on: a checker over the bundle's IR, then the authority in 1a | silent on the ownership corpus and in agreement with `ownership_cfg` ([ownership.md](ownership.md)) |
+| **O** (beside S1–S6) | ownership ported, not redesigned (owner, 2026-10-30): the bytecode writer's bind decisions and the facts they read (`ownership_of`, `owns_displaced_store`, …) in loft, each guarded against its Rust home; in 1a the scope pass itself | the same decisions as the Rust implementation on every corpus program ([ownership.md](ownership.md)) |
 
 ## Steps
 
