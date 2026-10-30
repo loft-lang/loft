@@ -1058,11 +1058,32 @@ static void loft_st_delete(loft_store_t *s, uint32_t rec) {
 
 /* ---- resize ---- */
 
+/* `Store::grow_tail_for` (`@FR-H-TailGrow`): a record nothing claimed follows, outgrowing the
+ * free room behind it, grows the store and then grows in place — it is never moved past its own
+ * old block, which a buffer doubling at the tail would leave as a hole at every step. */
+static void loft_grow_tail_for(loft_store_t *s, uint32_t rec, uint32_t next, int32_t claim, int32_t req) {
+    int32_t room = 0;
+    if (next < s->size) {
+        int32_t h = loft_st_i32(s, next, 0);
+        if (h >= 0 || next + (uint32_t) -h != s->size) return;
+        room = -h;
+    }
+    if (claim + room >= req) return;
+    if (room > 0) loft_fl_remove(s, next);
+    uint32_t end = rec + (uint32_t) req;
+    loft_resize_store(s, end);
+    loft_set_free_header(s, next, (int32_t) (s->size - next));
+    loft_fl_insert(s, next);
+    /* The move this replaces raised the claimed high-water mark at least this far. */
+    if (end > s->claimed_end) s->claimed_end = end;
+}
+
 static uint32_t loft_st_resize_inner(loft_store_t *s, uint32_t rec, uint32_t size) {
     int32_t req = (int32_t) size;
     int32_t claim = loft_st_i32(s, rec, 0);
     if (claim >= req) return rec;
     uint32_t next = rec + (uint32_t) claim;
+    loft_grow_tail_for(s, rec, next, claim, req);
     if (next < s->size) {
         int32_t next_size = loft_st_i32(s, next, 0);
         if (next_size < 0 && claim - next_size >= req) {
