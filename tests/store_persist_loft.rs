@@ -4058,10 +4058,27 @@ fn an_image_in_the_old_key_order_is_converted() {
                 index-text true 2 3 1 | 2 3 1\n\
                 index-float true first=999 n=301 ordered=true | 999 150\n";
     let script = dir.join("read.loft");
+    // `--native` here is the Rust-runtime build: CI points `--native` at the C backend
+    // (`LOFT_NATIVE_BACKEND=c`), which converts nothing and is checked below on its own.
     for backend in ["--interpret", "--native"] {
-        let (stdout, code) = run_script(&script, backend, &dir);
-        assert_eq!(code, 0, "{backend}: the reader ran");
-        assert_eq!(stdout, want, "{backend}: the old images, converted");
+        let out = loft::platform::process::harness_command(loft_bin())
+            .arg(backend)
+            .arg(&script)
+            .env("LOFT_PERSIST_TEST_PATH", &dir)
+            .env_remove("LOFT_NATIVE_BACKEND")
+            .current_dir(workspace_root())
+            .output()
+            .expect("run the reader");
+        assert!(
+            out.status.success(),
+            "{backend}: the reader ran:\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            want,
+            "{backend}: the old images, converted"
+        );
     }
     let out = loft::platform::process::harness_command(loft_bin())
         .arg("--native-c")
