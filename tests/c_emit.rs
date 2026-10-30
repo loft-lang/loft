@@ -5315,6 +5315,42 @@ fn an_engine_host_seat_talks_to_its_listener_on_the_c_and_the_interpreter() {
     }
 }
 
+/// @PLN203 C8 — the clocks read at the interpreter's resolution on every host: `now()` in
+/// milliseconds of wall time, `ticks()` in microseconds of a monotonic clock.  The program spins
+/// until each changes and prints whether the step was below 50 ms; the C on Windows read `now()`
+/// from `time()`, whole seconds, so its step was 1000 ms and a timing test under load read a
+/// few hundred milliseconds as a full second (`lib/process`' `lines.loft`).
+#[test]
+fn the_clocks_read_milliseconds_on_the_c_and_the_interpreter() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("clocks");
+    let file = dir.join("clocks.loft");
+    fa::write(
+        &file,
+        "fn main() {\n  a = now();\n  b = a;\n  while b == a { b = now(); }\n  \
+         t = ticks();\n  u = t;\n  while u == t { u = ticks(); }\n  \
+         println(\"now step {b - a < 50} ticks step {u - t < 50000}\");\n}\n",
+    )
+    .expect("write program");
+    for backend in ["--native-c", "--interpret"] {
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+            .arg(backend)
+            .arg(&file)
+            .env("LOFT_TIMEOUT", "60")
+            .output()
+            .expect("run loft");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "now step true ticks step true\n",
+            "{backend}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
 /// `@FR-R-FileHold` as C (`lower::file_hold::held_file`, native's gate): a loop that reads one
 /// `File` through fixed-width integer reads keeps the record's cursor in a `loft_fcur` — read
 /// once, served from a 4 KB buffer, given back on EVERY exit: the loop's end, a `break` of an

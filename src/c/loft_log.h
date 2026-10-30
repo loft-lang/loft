@@ -273,6 +273,8 @@ static uint32_t loft_log_clock(char *out) {
     struct timespec t;
     clock_gettime(CLOCK_REALTIME, &t);
     ms = (int64_t) t.tv_sec * 1000 + t.tv_nsec / 1000000;
+#elif defined(_WIN32)
+    ms = loft_win_wall_ms();
 #else
     ms = (int64_t) time(0) * 1000;
 #endif

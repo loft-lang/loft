@@ -4349,6 +4349,8 @@ static int64_t loft_now(void) {
     struct timespec t;
     clock_gettime(CLOCK_REALTIME, &t);
     return (int64_t) t.tv_sec * 1000 + t.tv_nsec / 1000000;
+#elif defined(_WIN32)
+    return loft_win_wall_ms();
 #else
     return (int64_t) time(0) * 1000;
 #endif

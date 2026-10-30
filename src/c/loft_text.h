@@ -224,11 +224,36 @@ static void loft_push_lossy(loft_text *t, const char *c, size_t n) {
     }
 }
 
+#if !defined(LOFT_POSIX) && defined(_WIN32)
+/* Windows' precise clocks, declared as `windows.h` declares them (a unit that opens a socket
+ * includes it later): the wall clock in 100 ns ticks since 1601, and the monotonic counter.
+ * `time()` counts whole seconds there, so `now()` read 0, 1000, 2000 … where the interpreter
+ * reads milliseconds; `clock()` is no monotonic clock on a host whose CRT follows the standard. */
+struct _FILETIME;
+union _LARGE_INTEGER;
+__declspec(dllimport) void __stdcall GetSystemTimePreciseAsFileTime(struct _FILETIME *ft);
+__declspec(dllimport) int __stdcall QueryPerformanceCounter(union _LARGE_INTEGER *count);
+__declspec(dllimport) int __stdcall QueryPerformanceFrequency(union _LARGE_INTEGER *freq);
+
+/* Milliseconds since the Unix epoch. */
+static int64_t loft_win_wall_ms(void) {
+    unsigned long long ticks = 0; /* a FILETIME: the low word, then the high one */
+    GetSystemTimePreciseAsFileTime((struct _FILETIME *) &ticks);
+    return (int64_t) ((ticks - 116444736000000000ull) / 10000ull);
+}
+#endif
+
 static int64_t loft_now_us(void) {
 #if defined(LOFT_POSIX)
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
     return (int64_t) t.tv_sec * 1000000 + t.tv_nsec / 1000;
+#elif defined(_WIN32)
+    static long long freq = 0;
+    long long count = 0;
+    if (!freq) QueryPerformanceFrequency((union _LARGE_INTEGER *) &freq);
+    QueryPerformanceCounter((union _LARGE_INTEGER *) &count);
+    return (int64_t) (count / freq * 1000000 + count % freq * 1000000 / freq);
 #else
     return (int64_t) ((double) clock() * 1000000.0 / CLOCKS_PER_SEC);
 #endif
