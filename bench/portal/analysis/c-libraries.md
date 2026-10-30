@@ -124,6 +124,16 @@ sweep found one more thing: with the inline copy, gcc's overread check sees `lof
 The branch cannot run for those callers; the check is silenced around that one copy, for gcc
 only.  Sweep after: 2552 match, 0 differ, 0 cc-error.
 
+**clang** (both of the day's last changes against both switches off, 36 libraries, 5 rounds):
+24 faster — `escape_html` −52 %, `escape_html_blob` −57 %, `html_escape` −39 %, `render_inline`
+−34 %, `extract_headings` −27 %, `sha256_small` −25 %, `base64_to_bytes` −25 %, `materialise` −25 %,
+`slugify` −25 %, `form_write` −24 %, `render` −23 %, `wrap` −18 %, `req_state_b64` −16 % (clang
+was already at 231 µs there, gcc at 908), `request` −10 %; 86 the same; 12 slower by 2–10 %.
+Split: the address clause alone moves none of them on clang; six of the twelve have
+byte-identical emitted C, and the two whose machine code was compared (time `parse` +5.6 %,
+stage `blur_region` +2.1 %) are byte-identical functions at another address — placement;
+`blob_put` and `doc_read` did not reproduce, `save_glb` was an outlier round (±455 %).
+
 ### `(R-PlaceReturn)` — built, measured slower, reverted (2026-10-30)
 
 **The idea.**  A local vector answered inside the returned literal (`return Doc { buf: nb,
