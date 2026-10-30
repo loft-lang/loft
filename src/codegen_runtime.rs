@@ -6722,6 +6722,28 @@ pub fn main_file_or(baked: &'static str) -> &'static str {
 /// budget), so the depth guard fires cleanly before the OS stack is exhausted.
 pub const NATIVE_MAIN_STACK: usize = 512 * 1024 * 1024;
 
+/// macOS's native `main`: the program runs on its [`NATIVE_MAIN_STACK`] thread, as everywhere,
+/// and the MAIN thread is handed to the main dispatch queue — AppKit makes and drives a window
+/// on the main thread only, so a library's window code is sent there (`dispatch_sync_f`, as
+/// graphics' C shim does).  The process ends when the program does: 0 when it returns, 1 when
+/// it panics (the hook has printed the message) — what joining the thread answered.
+#[cfg(target_os = "macos")]
+pub fn run_beside_main_queue<F: FnOnce() + Send + 'static>(run: F) -> ! {
+    unsafe extern "C" {
+        fn dispatch_main() -> !;
+    }
+    std::thread::Builder::new()
+        .stack_size(NATIVE_MAIN_STACK)
+        .spawn(move || {
+            let ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)).is_ok();
+            std::process::exit(i32::from(!ok));
+        })
+        .expect("failed to spawn main-stack thread");
+    // SAFETY: `dispatch_main` (libdispatch, part of libSystem) parks the calling thread to run
+    // the main queue's work and never returns; the process exits from the thread above.
+    unsafe { dispatch_main() }
+}
+
 // The return buffers a fn-ref dispatch arm allocated and the callee DELIVERED through,
 // innermost frame last.  The `--native` half of the interpreter's `State::fnref_bufs`
 // (`formal/closures.md`, loft#1183): a fn-ref call site is the only owner its heap return

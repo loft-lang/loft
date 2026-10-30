@@ -9264,8 +9264,12 @@ extern crate loft;"
                  // wasm32 (wasip2 / browser) has no thread support, and Android must run\n    \
                  // on its `android_main` thread (the ALooper owner — a spawned thread\n    \
                  // would panic in the graphics event pump), so both run `__run` inline.\n    \
-                 #[cfg(all(not(target_arch = \"wasm32\"), not(target_os = \"android\")))]\n    \
+                 #[cfg(all(not(target_arch = \"wasm32\"), not(target_os = \"android\"), not(target_os = \"macos\")))]\n    \
                  if std::thread::Builder::new().stack_size(loft::codegen_runtime::NATIVE_MAIN_STACK).spawn(__run).expect(\"failed to spawn main-stack thread\").join().is_err() {{ std::process::exit(1); }}\n    \
+                 // macOS: the same thread, and the MAIN thread serves the main dispatch\n    \
+                 // queue, where AppKit keeps its windows (`run_beside_main_queue`).\n    \
+                 #[cfg(target_os = \"macos\")]\n    \
+                 loft::codegen_runtime::run_beside_main_queue(__run);\n    \
                  // wasm32 has no thread to join, so the halt cannot be observed at a\n    \
                  // join point.  A panic HOOK runs before the abort, which makes the exit\n    \
                  // code reachable even where panics abort rather than unwind — without\n    \
@@ -9301,8 +9305,12 @@ extern crate loft;"
                  // wasm32 (wasip2 / browser) has no thread support, and Android must run\n    \
                  // on its `android_main` thread (the ALooper owner — a spawned thread\n    \
                  // would panic in the graphics event pump), so both run `__run` inline.\n    \
-                 #[cfg(all(not(target_arch = \"wasm32\"), not(target_os = \"android\")))]\n    \
+                 #[cfg(all(not(target_arch = \"wasm32\"), not(target_os = \"android\"), not(target_os = \"macos\")))]\n    \
                  if std::thread::Builder::new().stack_size(loft::codegen_runtime::NATIVE_MAIN_STACK).spawn(__run).expect(\"failed to spawn main-stack thread\").join().is_err() {{ std::process::exit(1); }}\n    \
+                 // macOS: the same thread, and the MAIN thread serves the main dispatch\n    \
+                 // queue, where AppKit keeps its windows (`run_beside_main_queue`).\n    \
+                 #[cfg(target_os = \"macos\")]\n    \
+                 loft::codegen_runtime::run_beside_main_queue(__run);\n    \
                  // wasm32 has no thread to join, so the halt cannot be observed at a\n    \
                  // join point.  A panic HOOK runs before the abort, which makes the exit\n    \
                  // code reachable even where panics abort rather than unwind — without\n    \
