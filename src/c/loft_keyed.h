@@ -1193,9 +1193,16 @@ static void loft_group_unfile(loft_ref parent, loft_ref dr, const loft_member *m
  * (`link_record_siblings`) is this over the members beside the one that holds the record. */
 static void loft_group_finish(const loft_tdesc *T, uint16_t elem, int held, int nullable, loft_ref parent,
                               loft_ref rec, const loft_member *m, int n) {
-    uint32_t gone[16];
-    int ng = 0;
     if (parent.store_nr == 0xFFFF || parent.rec == 0 || rec.rec == 0) return;
+    /* Each member displaces at most one record, so `n` bounds the list (loft#2257: a fixed 16
+     * left the 17th displaced record filed).  No variable-length array: MSVC has none. */
+    uint32_t gone_local[16];
+    uint32_t *gone = gone_local;
+    if (n > 16) {
+        gone = (uint32_t *) malloc((size_t) n * sizeof *gone);
+        if (!gone) { fputs("loft: out of memory\n", stderr); abort(); }
+    }
+    int ng = 0;
     /* `absent_nullable_record`: a null element of a `vector<S?>` member has no key — only a
      * `Some` record (discriminant 2) enters the keyed and tree members. */
     int absent = nullable && *loft_at(loft_store_of(rec), rec.rec, rec.pos) != 2;
@@ -1211,7 +1218,7 @@ static void loft_group_finish(const loft_tdesc *T, uint16_t elem, int held, int 
         else d = loft_ordered_insert(0, 0, c, rec, m[i].keys, m[i].nk, 1).rec;
         int seen = d == 0 || d == rec.rec;
         for (int j = 0; j < ng; j++) seen |= gone[j] == d;
-        if (!seen && ng < 16) gone[ng++] = d;
+        if (!seen) gone[ng++] = d;
     }
     for (int g = 0; g < ng; g++) {
         loft_ref dr = { rec.store_nr, gone[g], 8 };
@@ -1222,6 +1229,7 @@ static void loft_group_finish(const loft_tdesc *T, uint16_t elem, int held, int 
             loft_st_delete(loft_store_of(dr), dr.rec);
         }
     }
+    if (gone != gone_local) free(gone);
 }
 
 /* OpIndexGroup (`index_group_records`, `settle_group`): every record the vector member at
