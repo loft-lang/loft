@@ -1302,8 +1302,9 @@ impl<'a> FnWriter<'a> {
             };
             let e = self.nested(|w| w.expr(&expr, ind))?;
             let h = format!("ph{}", self.decls.len() + 1);
-            self.decls
-                .push(format!("loft_ph {h} = {{ {{ 0xFFFF, 0, 0 }}, 0, 0, 0, 0 }};"));
+            self.decls.push(format!(
+                "loft_ph {h} = {{ {{ 0xFFFF, 0, 0 }}, 0, 0, 0, 0 }};"
+            ));
             self.line(ind, &format!("{h} = loft_ph_of({}, {size});", as_ref(e)?));
             crate::rewrite_census::fired("R-Push", 1);
             if based {
@@ -1321,8 +1322,9 @@ impl<'a> FnWriter<'a> {
             };
             let e = self.nested(|w| w.expr(&expr, ind))?;
             let h = format!("ph{}", self.decls.len() + 1);
-            self.decls
-                .push(format!("loft_ph {h} = {{ {{ 0xFFFF, 0, 0 }}, 0, 0, 0, 0 }};"));
+            self.decls.push(format!(
+                "loft_ph {h} = {{ {{ 0xFFFF, 0, 0 }}, 0, 0, 0, 0 }};"
+            ));
             self.line(ind, &format!("{h} = loft_ph_of({}, {size});", as_ref(e)?));
             crate::rewrite_census::fired("R-PushRec", 1);
             frame.push((path, h, size, false));
@@ -1447,7 +1449,10 @@ impl<'a> FnWriter<'a> {
             };
             let proof_at = format!("{}:{h}", data.def(self.d).original_name());
             let (same, put) = if based {
-                ("loft_phb_same", put.replacen("loft_ph_put", "loft_ph_putb", 1))
+                (
+                    "loft_phb_same",
+                    put.replacen("loft_ph_put", "loft_ph_putb", 1),
+                )
             } else {
                 ("loft_ph_same", put.to_string())
             };
@@ -2428,7 +2433,12 @@ impl<'a> FnWriter<'a> {
     /// locked store alone, so a refused push still refuses where it did.  A path a window, a push
     /// header, a value held apart or a deferred copy serves is left to it.  Answers the index after
     /// the run.  `LOFT_NO_PUSH_RUN_RESERVE=1` reserves nothing.
-    fn reserve_push_run(&mut self, ops: &[Value], at: usize, ind: usize) -> Result<Option<usize>, String> {
+    fn reserve_push_run(
+        &mut self,
+        ops: &[Value],
+        at: usize,
+        ind: usize,
+    ) -> Result<Option<usize>, String> {
         if self.gen_elem.is_some()
             || self.av_any()
             || std::env::var("LOFT_NO_PUSH_RUN_RESERVE").is_ok_and(|v| v != "0")
@@ -2468,7 +2478,11 @@ impl<'a> FnWriter<'a> {
         let v = self.expr(first.vector, ind)?;
         self.line(
             ind,
-            &format!("loft_vec_reserve_run({}, INT64_C({k}), {});", as_ref(v)?, first.size),
+            &format!(
+                "loft_vec_reserve_run({}, INT64_C({k}), {});",
+                as_ref(v)?,
+                first.size
+            ),
         );
         crate::rewrite_census::fired("R-PushFill/run", 1);
         Ok(Some(end))
@@ -5183,14 +5197,14 @@ impl<'a> FnWriter<'a> {
     /// read of it is, instead of a copy into a temporary: the block's statements run, then its
     /// frees, none of which names the local.  `arg_with` guards the view as it guards a read of
     /// the local.  `None` for every other block, and under `LOFT_NO_C_TAIL_VIEW=1`.
-    fn text_tail_view(&mut self, v: &Value, ind: usize) -> Result<Option<E>, String> {
-        let Value::Block(b) = v.unspan() else {
+    fn text_tail_view(&mut self, block: &Value, ind: usize) -> Result<Option<E>, String> {
+        let Value::Block(bl) = block.unspan() else {
             return Ok(None);
         };
-        if std::env::var("LOFT_NO_C_TAIL_VIEW").is_ok_and(|x| x != "0") {
+        if std::env::var("LOFT_NO_C_TAIL_VIEW").is_ok_and(|flag| flag != "0") {
             return Ok(None);
         }
-        let ops = &b.operators;
+        let ops = &bl.operators;
         if self.tail_capture(ops).is_some() {
             return Ok(None);
         }
@@ -5199,14 +5213,14 @@ impl<'a> FnWriter<'a> {
         }) else {
             return Ok(None);
         };
-        let Value::Var(w) = ops[at].unspan() else {
+        let Value::Var(work) = ops[at].unspan() else {
             return Ok(None);
         };
-        let w = *w;
-        if !self.text_held(w)
+        let work = *work;
+        if !self.text_held(work)
             || ops[at + 1..]
                 .iter()
-                .any(|o| o.any_node(&mut |n| matches!(n, Value::Var(x) if *x == w)))
+                .any(|o| o.any_node(&mut |n| matches!(n, Value::Var(x) if *x == work)))
         {
             return Ok(None);
         }
@@ -5216,17 +5230,17 @@ impl<'a> FnWriter<'a> {
                 self.stmt(&ops[i], ind)?;
                 self.bind_view_header(ops, i, ind);
             }
-            let e = self.expr(&ops[at], ind)?;
+            let tail = self.expr(&ops[at], ind)?;
             self.flush(ind);
             ops[at + 1..].iter().try_for_each(|o| self.stmt(o, ind))?;
-            Ok(e)
+            Ok(tail)
         })();
         self.headers.truncate(frames.min(self.headers.len()));
-        let e = r?;
-        if e.kind != K::View {
+        let view = r?;
+        if view.kind != K::View {
             return Err("a text block's tail read as no view".into());
         }
-        Ok(Some(e))
+        Ok(Some(view))
     }
 
     /// The statement temporary an expression `code` reads, when it is exactly a view of an owned
@@ -5344,7 +5358,9 @@ impl<'a> FnWriter<'a> {
         // A text block's tail view (`text_tail_view`) reads a local, as a variable operand does.
         let reads_local = match operand.unspan() {
             Value::Var(_) => true,
-            Value::Block(_) => value.kind == K::View && self.pending_text_temp(&value.code).is_none(),
+            Value::Block(_) => {
+                value.kind == K::View && self.pending_text_temp(&value.code).is_none()
+            }
             _ => false,
         };
         if later_writes && reads_local && value.kind == K::View {
