@@ -11,13 +11,23 @@
  * allocators place every record alike (`tests/c_emit.rs`
  * `a_store_bound_to_a_file_holds_the_same_bytes_on_both_runtimes`).
  *
- * Included after `windows.h` (loft_process.h) on Windows; on a POSIX host it brings its own
- * headers.  Where there is no mapping (WASI, `-DLOFT_NO_POSIX`) nothing here is defined and no
+ * It brings its own system headers: `windows.h` on Windows (after every runtime header that
+ * names `near` or `far`, as loft_process.h places it), the POSIX ones on a POSIX host.  Where there is no mapping (WASI, `-DLOFT_NO_POSIX`) nothing here is defined and no
  * store is ever bound to a file. */
 #if defined(LOFT_POSIX_HOST) || defined(_WIN32)
 #define LOFT_MAPPED_STORE 1
 
-#if !defined(_WIN32)
+#if defined(_WIN32)
+/* Brought in here as loft_process.h brings it for a unit that runs processes, which is the only
+ * other one that does; this header stands after every runtime header that names `near` or `far`. */
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN 1
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX 1
+#endif
+#include <windows.h>
+#else
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
