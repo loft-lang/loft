@@ -109,10 +109,14 @@ jobs:
           restore-keys: |
             library-ci-loft-${{ steps.loftsha.outputs.sha }}-
 
+      # The components too (`make components`): a package with `[native] component = "net"`
+      # — web, server, ssh, and every package that depends on one — finds its natives only
+      # there, in `target/components/` beside `target/release/loft` (src/components.rs).
       - name: Build loft
         working-directory: loft-src
         run: |
-          cargo build --release --lib --bin loft
+          cargo build --release --lib --bin loft --bin loft-components
+          target/release/loft-components
           echo "$PWD/target/release" >> "$GITHUB_PATH"
 
       # System libraries the package's native crate links against, declared as
