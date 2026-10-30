@@ -151,6 +151,140 @@ field: the same VALUE semantics as an inline struct field, a different layout.
   `NdSet { var: integer, inner: Node }`, the Rust writer changes in lockstep (an image format
   bump), and the 176 box discharges go.
 
+**R-2s as the program sees it.**  Nothing new to write: a field whose type contains its host
+is laid out out-of-line by itself.
+
+```loft
+enum Expr {
+  Num { v: integer },
+  Add { l: Expr, r: Expr },
+  Neg { e: Expr },
+}
+
+struct Tree {
+  key: integer,
+  left: Tree?,
+  right: Tree?,
+}
+```
+
+A struct whose recursion runs through a NON-null field has no finite value, so it is refused —
+an enum's other variants end its recursion and need no such rule:
+
+```
+error: `Tree.left: Tree` makes every Tree contain another Tree — make it `Tree?`
+```
+
+Building and reading are ordinary constructors, matches and field reads:
+
+```loft
+fn eval(e: Expr) -> integer {
+  match e {
+    Num { v } => v,
+    Add { l, r } => eval(l) + eval(r),
+    Neg { e } => -eval(e),
+  }
+}
+
+fn main() {
+  e = Add { l: Num { v: 1 }, r: Neg { e: Num { v: 2 } } };
+  println("{eval(e)}");                  // -1
+  t = Tree { key: 5, left: Tree { key: 3 } };
+  if t.left {
+    println("{t.left.key}");             // 3 — the guard narrows `Tree?` to `Tree`
+  }
+}
+```
+
+A write has an inline field's value semantics:
+
+```loft
+t.left = Tree { key: 4 };   // a fresh record: moved into t's store, nothing copied
+t.right = t.left;           // a copy: the two subtrees are independent afterwards
+t.left = null;              // the old subtree is released, all the way down
+l = t.right;                // a view, as every struct projection is (@C86)
+```
+
+The second line deep-copies a subtree, as assigning an inline struct field copies; two places
+SHARING one node is a link, and a link is `reference<Tree>`.  Display, comparison and JSON are
+those of a nested inline value, through `Expr`'s own routines:
+
+```loft
+println("{e}");    // Add {l:Num {v:1},r:Neg {e:Num {v:2}}}
+println("{e:j}");  // {"Add":{"l":{"Num":{"v":1}},"r":{"Neg":{"e":{"Num":{"v":2}}}}}}
+assert(e == Add { l: Num { v: 1 }, r: Neg { e: Num { v: 2 } } });   // deep, not by address
+```
+
+The port, before and after (`selfhost/src/ir.loft` and its readers):
+
+```loft
+// before
+NdSet { var: integer, inner: vector<Node> },
+NdSet { var, inner } => set(l, b, var, inner[0] ?? panic("a set has its value")),
+
+// after
+NdSet { var: integer, inner: Node },
+NdSet { var, inner } => set(l, b, var, inner),
+```
+
+**R-2s, the steps.**  Each step lands green on its own.  Until the last-but-one the feature is
+behind an opt-in switch (`LOFT_OUT_OF_LINE=1`), so the default keeps refusing a recursive type
+exactly as today, and every step's cells run with the switch on.
+
+1. **The rules, no code.**  `formal/layout.md`: the out-of-line field — its layout (a record
+   number in the host's store, `Parts::ChildRec(content)`), absence as record 0.
+   `formal/types.md`: a recursive STRUCT field must be nullable; an enum variant may recur.
+   `formal/binding.md`: the write — a copy into the host's store, a fresh same-store record
+   moved, a null write releasing the old child; a read is a projection, a view (`@C86`).
+   `formal/formatting.md`: rendered and parsed as the nested value.  A `@C` entry in
+   `DESIGN_DECISIONS_VALUES.md`, for the owner.  The suite cells of the examples above are
+   written under the new rule (with `@EXPECT_ERROR` until the feature lands).
+2. **Accept the cycle (behind the switch).**  `data.has_value_cycle` (`src/data.rs:8019`) and
+   its two refusals (`src/typedef.rs:572`, `src/parser/objects.rs:6121`): a cycle through a
+   nullable struct field or an enum variant's field marks those fields out-of-line; a cycle
+   through a non-null struct field gets the message above.  Cells: the refusal (both forms),
+   and a recursive type that now type-checks.
+3. **Lay it out.**  `src/typedef.rs`'s field layout gives an out-of-line field the type
+   `database.child_rec(content)` — the closure record's precedent at `typedef.rs:1456–1480`.
+   Cells: `LOFT_DUMP_TYPES` shows the 4-byte field; `layout_golden` unchanged without the
+   switch.
+4. **Read it.**  `src/parser/fields.rs`: a field read of an out-of-line field is
+   `OpRefFromChildRec(OpGetField(host, pos))` (the closure read at `fields.rs:2770–2827`;
+   `default/01_code.loft:1573`, `Stores::ref_from_child_rec`, `database/structures.rs:1614`),
+   and so is a `match` arm's binding of a variant field.  Cells: `eval` above, on the
+   interpreter.
+5. **Write it.**  `src/parser/objects.rs`: a constructor builds the child in place with
+   `OpChildRec(field, tp)` (`default/01_code.loft:1582`, `Stores::new_child_rec`,
+   `structures.rs:1633`) and fills it as a literal; an assignment of a value copies into a fresh
+   child (`OpCopyRecord`); a null assignment releases it (the `remove_claims` arm,
+   `database/allocation.rs:636`, already cascades).  The move of a fresh same-store record is a
+   later optimisation: copying first is always correct.  Cells: the write block above, values
+   and lengths by hand, `LOFT_STRICT_STORES=1`, no leak.
+6. **The walkers.**  Follow-then-recurse with `content`'s own routine: the two format arms
+   (`database/format.rs:1731`, `:2497`, today the debug shape `ChildRec(rec)`), the text parse
+   (`format.rs:441`, `record_text_parse`), binary read and write (`database/io.rs:308`, `:508`,
+   which panic on a `ChildRec` today), the search walk (`database/search.rs:220`).  A closure
+   record keeps its own shape (its content type is a closure record's).  Equality
+   (`database/equality.rs:83`), copy and release (`allocation.rs`), the image
+   (`ir_store.rs:664`, `ir_read.rs:1022`) and the descriptor already follow the child.  Cells:
+   format, JSON, parse back (`parse(format(e)) == e`), binary write and read back.
+7. **The backends.**  `--native`: the generator already lowers the two operators for closure
+   records (`src/generation/mod.rs`, `src/native.rs`); the field read and write are checked
+   there.  The C: `child_record_operator` (`src/c/body/misc.rs:250`, `loft_ref_from_child_rec`,
+   `loft_new_child_rec`) and the runtime's `LOFT_T_CHILD` arms (`src/c/loft_rt.h:2487`, `:3100`).
+   Cells: every cell of steps 2–6 on all three backends.
+8. **The tools.**  The debugger's value display and the LSP's hover show the field as its
+   type (`Node`), never `child_rec<Node>`.
+9. **On by default.**  The switch becomes the opt-out `LOFT_NO_OUT_OF_LINE`; `LOFT.md` gains the
+   recursive types; the refusal's old cure (`use reference<T>`) is reworded to name both — a
+   child (out-of-line, by value) or a link (`reference<T>`); X24 closes.
+10. **The port.**  `selfhost/src/ir.loft` declares its children by value (`NdSet { var: integer,
+    inner: Node }`), the Rust image writer and reader (`src/ir_store.rs`, `src/ir_read.rs`)
+    write and read them as child records in lockstep, the image format's version bumps (an old
+    image converted or refused by name), and the ports lose the 176 box discharges.  Receipts:
+    `cargo test --release --test ir_schema_roundtrip`, and every comparison layer of
+    `selfhost/compare/compare.py` unchanged on the kernels, the sample and the census.
+
 **Verification.**  For R-2s: suite cells under the new rule — a recursive enum built, read,
 written, copied (the copy independent), compared, formatted and parsed back, a nullable child
 absent — on the interpreter, `--native` and the C; `ir_schema_roundtrip` for the image; the
