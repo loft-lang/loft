@@ -676,6 +676,18 @@ static void loft_h_add_at(loft_ref c, loft_ref rec, uint32_t bucket, uint32_t in
         return;
     }
     uint32_t length = loft_u32(s, claim, LOFT_H_LEN_FLD);
+#ifdef LOFT_KEYED_VERIFY
+    /* `add_at`'s check: the bucket the probe found free is the one the free-slot walk takes. */
+    {
+        uint32_t t, walked = LOFT_H_BUCKET0 + loft_h_free_pos(s, claim, rec, keys, nk, &t) * loft_h_slot_bytes(s, claim);
+        if (walked != bucket) {
+            fflush(stdout);
+            fprintf(stderr, "LOFT_KEYED_VERIFY: the one-probe insert chose bucket %u where the free-slot walk chooses %u\n",
+                    (unsigned) bucket, (unsigned) walked);
+            abort();
+        }
+    }
+#endif
     uint32_t grown = loft_h_grow_if_full(c, claim, length, keys, nk);
     if (grown != 0) {
         loft_h_set(s, grown, index, rec, keys, nk);
@@ -741,10 +753,29 @@ static loft_ref loft_h_find(loft_ref c, const loft_key *keys, const loft_kv *kv,
     return loft_ref_null();
 }
 
+/* `LOFT_KEYED_VERIFY` (OpGetHashLong's check): each typed lookup below is built as `<name>_walk`
+ * and answered through a `<name>` that asks the general `loft_h_find` too and stops the run when
+ * the two disagree; without it the typed walk is the function itself, at no cost. */
+#ifdef LOFT_KEYED_VERIFY
+#define LOFT_H_TYPED(name) name##_walk
+static void loft_h_verify_typed(const char *what, loft_ref c, const loft_key *keys, const loft_kv *kv, int n, loft_ref found) {
+    loft_ref general = loft_h_find(c, keys, kv, n);
+    if (general.rec != found.rec || (found.rec != 0 && general.pos != found.pos)) {
+        fflush(stdout);
+        fprintf(stderr, "LOFT_KEYED_VERIFY: the typed %s answers %u+%u where the general one answers %u+%u\n", what,
+                (unsigned) found.rec, (unsigned) (found.rec ? found.pos : 0), (unsigned) general.rec,
+                (unsigned) (general.rec ? general.pos : 0));
+        abort();
+    }
+}
+#else
+#define LOFT_H_TYPED(name) name
+#endif
+
 /* `@FR-R-TypedKeyed` (hash::find_long): a hash whose ONE key is an 8-byte integer, looked up by
  * that integer — the general entry's digest, home bucket and walk to the first empty bucket, the
  * key compared in place instead of through a key value.  Every exit is `loft_h_find`'s. */
-static loft_ref loft_h_find_i64(loft_ref c, const loft_key *keys, int64_t key) {
+static loft_ref LOFT_H_TYPED(loft_h_find_i64)(loft_ref c, const loft_key *keys, int64_t key) {
     if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
     loft_store_t *s = loft_store_of(c);
     uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
@@ -775,7 +806,7 @@ static loft_ref loft_h_find_i64(loft_ref c, const loft_key *keys, int64_t key) {
  * hashed as the general entry hashes them and compared part by part in place.  Inline with its
  * header readers: the part count is a constant at every call, so the compare unrolls and the
  * header decodes once (GCC kept the whole lookup out of line, -13 % on `reload_and_record`). */
-LOFT_HOT_INLINE loft_ref loft_h_find_ints(loft_ref c, const loft_key *keys, int n, const int64_t *ks) {
+LOFT_HOT_INLINE loft_ref LOFT_H_TYPED(loft_h_find_ints)(loft_ref c, const loft_key *keys, int n, const int64_t *ks) {
     if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
     loft_store_t *s = loft_store_of(c);
     uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
@@ -920,7 +951,7 @@ static loft_ref loft_h_entry_text(loft_ref c, const loft_key *keys, loft_str key
 /* `@FR-R-TypedKeyed`'s text clause (hash::find_str): one text key, hashed as the general entry
  * hashes a text part and compared against each entry's key text in place — equal exactly when
  * `loft_kv_cmp` says so: the same length and the same bytes. */
-static loft_ref loft_h_find_text(loft_ref c, const loft_key *keys, loft_str key) {
+static loft_ref LOFT_H_TYPED(loft_h_find_text)(loft_ref c, const loft_key *keys, loft_str key) {
     if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
     loft_store_t *s = loft_store_of(c);
     uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
@@ -946,6 +977,28 @@ static loft_ref loft_h_find_text(loft_ref c, const loft_key *keys, loft_str key)
     }
     return loft_ref_null();
 }
+
+#ifdef LOFT_KEYED_VERIFY
+static loft_ref loft_h_find_i64(loft_ref c, const loft_key *keys, int64_t key) {
+    loft_ref found = loft_h_find_i64_walk(c, keys, key);
+    loft_kv kv = loft_kv_int(key);
+    loft_h_verify_typed("lookup", c, keys, &kv, 1, found);
+    return found;
+}
+static loft_ref loft_h_find_ints(loft_ref c, const loft_key *keys, int n, const int64_t *ks) {
+    loft_ref found = loft_h_find_ints_walk(c, keys, n, ks);
+    loft_kv kv[4];
+    for (int i = 0; i < n && i < 4; i++) kv[i] = loft_kv_int(ks[i]);
+    loft_h_verify_typed("compound lookup", c, keys, kv, n < 4 ? n : 4, found);
+    return found;
+}
+static loft_ref loft_h_find_text(loft_ref c, const loft_key *keys, loft_str key) {
+    loft_ref found = loft_h_find_text_walk(c, keys, key);
+    loft_kv kv = loft_kv_text(key);
+    loft_h_verify_typed("text lookup", c, keys, &kv, 1, found);
+    return found;
+}
+#endif
 
 /* hash::hash_rec_pos: the bucket naming the entry `rec`, and what it holds; 0 when none does. */
 static int loft_h_rec_pos(loft_store_t *s, uint32_t claim, const loft_hents *ents, loft_ref rec, const loft_key *keys,
@@ -1439,6 +1492,25 @@ static loft_ref loft_hash_insert(const loft_tdesc *T, uint16_t elem, loft_ref c,
                                  int nk, int secondary) {
     if (c.store_nr == 0xFFFF || c.rec == 0 || rec.rec == 0) return loft_ref_null();
     loft_hprobe p = loft_h_probe_for_insert(c, rec, keys, nk);
+#ifdef LOFT_KEYED_VERIFY
+    /* `Stores::verify_probe`: the probe's duplicate is the one the lookup `dedup_keyed` runs
+     * finds, or none on both sides. */
+    if (p.kind != LOFT_H_UNKNOWN) {
+        loft_kv vk[8];
+        int vn = nk > 8 ? 8 : nk;
+        for (int i = 0; i < vn; i++) vk[i] = loft_key_get(loft_store_of(rec), rec.rec, rec.pos, &keys[i]);
+        loft_ref looked = loft_h_find(c, keys, vk, vn);
+        uint32_t lrec = looked.rec != 0 && (looked.rec != rec.rec || looked.pos != rec.pos) ? looked.rec : 0;
+        uint32_t lpos = lrec ? looked.pos : 0;
+        uint32_t wrec = p.kind == LOFT_H_PRESENT ? p.entry.rec : 0, wpos = wrec ? p.entry.pos : 0;
+        if (wrec != lrec || wpos != lpos) {
+            fflush(stdout);
+            fprintf(stderr, "LOFT_KEYED_VERIFY: the one-probe insert found duplicate %u+%u where the lookup finds %u+%u\n",
+                    (unsigned) wrec, (unsigned) wpos, (unsigned) lrec, (unsigned) lpos);
+            abort();
+        }
+    }
+#endif
     if (p.kind == LOFT_H_FREE) {
         loft_h_add_at(c, rec, p.bucket, p.index, p.tag, keys, nk);
         return loft_ref_null();

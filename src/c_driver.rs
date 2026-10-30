@@ -133,6 +133,11 @@ fn cc_flags(tier: Tier) -> Vec<String> {
     if env_on("LOFT_STRICT_STORES") {
         flags.push("-DLOFT_STRICT_STORES".into());
     }
+    // `LOFT_KEYED_VERIFY`: every keyed fast path the C has checked against its general form —
+    // the hash one-probe insert, the index's exact descent (loft_hash.h, loft_btree.h).
+    if env_on("LOFT_KEYED_VERIFY") {
+        flags.push("-DLOFT_KEYED_VERIFY".into());
+    }
     flags
 }
 

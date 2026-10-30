@@ -2825,6 +2825,119 @@ fn a_test_run_on_the_c_leaves_no_store_behind() {
     let _ = fa::remove_dir_all(&dir);
 }
 
+/// @PLN206 P0b — `LOFT_KEYED_VERIFY` on the C: every keyed fast path the C runtime has is checked
+/// against its general form, as the interpreter checks its own — the index's exact descent
+/// against the boundary walk, the typed hash lookups (`loft_h_find_i64`, `_ints`, `_text`) and the
+/// one-probe entry (`loft_keyed_entry_ints`, `_text`) against `loft_h_find`, the one-probe insert
+/// against the lookup and the free-slot walk (that one is exercised on arena tables by
+/// `the_c_hash_table_files_every_entry_where_hash_does`).  A program over a hash and an index is
+/// built with `-DLOFT_KEYED_VERIFY` and answers right; then each fast path is CORRUPTED in the
+/// unit's runtime text — the defect the verifier exists for — and the plain build answers wrong
+/// with nothing said, while the verified one stops naming both answers.
+#[test]
+fn a_keyed_verify_c_build_names_a_fast_path_that_answers_wrong() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("keyed-verify");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let file = dir.join("kv.loft");
+    fa::write(
+        &file,
+        "struct K { k: integer, v: integer }\nfn main() {\n  h: hash<K[k]> = [];\n  \
+         for i in 0..300 { h += [K { k: i, v: i * 10 }]; }\n  h += [K { k: 7, v: 777 }];\n  \
+         ix: index<K[k]> = [];\n  for i in 0..20 { ix += [K { k: i * 3, v: i }]; }\n  \
+         println(\"{h[7].v} {len(h)} {ix[12].v}\");\n}\n",
+    )
+    .expect("write program");
+    let c = dir.join("kv.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "emit: {}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let unit = fa::read_to_string(&c).expect("read the C");
+    let run = |name: &str, text: &str, verify: bool| -> (String, String, i32) {
+        let src = dir.join(format!("{name}.c"));
+        let exe = dir.join(name);
+        fa::write(&src, text).expect("write the cell");
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O1", "-w"])
+            .args(verify.then_some("-DLOFT_KEYED_VERIFY"))
+            .arg(&src)
+            .arg("-o")
+            .arg(&exe)
+            .args(unit_links(&src))
+            .arg("-lm")
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "{name}: cc: {}",
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let out = loft::platform::process::harness_command(&exe)
+            .output()
+            .expect("run the cell");
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+            out.status.code().unwrap_or(-1),
+        )
+    };
+    // 777: the latest insert under key 7 wins; 300 keys; 12 = 4 * 3.
+    let (out, err, code) = run("clean", &unit, true);
+    assert_eq!(out, "777 300 4\n", "the verified build:\n{err}");
+    assert_eq!(code, 0, "the verified build:\n{err}");
+    // Each fast path corrupted: the plain build answers wrong and says nothing, the verified
+    // build stops and names both answers.
+    for (name, from, to, wrong, says) in [
+        (
+            "descent",
+            "        r.rec = loft_bt_find_exact(data, keys, nk, kv, n);\n#ifdef LOFT_KEYED_VERIFY",
+            "        r.rec = loft_bt_find_exact(data, keys, nk, kv, n);\n        \
+             if (r.rec) r.rec = loft_bt_record(data, loft_bt_first(data));\n#ifdef LOFT_KEYED_VERIFY",
+            "777 300 0\n",
+            "LOFT_KEYED_VERIFY: the exact descent answers record",
+        ),
+        (
+            "typed",
+            "                if (have == key) return e;",
+            "                if (have == key && key != 7) return e;",
+            "null 300 4\n",
+            "LOFT_KEYED_VERIFY: the typed lookup answers 0+0 where the general one answers",
+        ),
+    ] {
+        assert_eq!(
+            unit.matches(from).count(),
+            1,
+            "{name}: the runtime text moved"
+        );
+        let broken = unit.replacen(from, to, 1);
+        let (out, err, code) = run(&format!("{name}-plain"), &broken, false);
+        assert_eq!(out, wrong, "{name}: the corrupted plain build:\n{err}");
+        assert!(
+            !err.contains("LOFT_KEYED_VERIFY"),
+            "{name}: the plain build checked"
+        );
+        assert_eq!(code, 0, "{name}: the corrupted plain build exits quietly");
+        let (_, err, code) = run(&format!("{name}-verify"), &broken, true);
+        assert!(
+            err.contains(says),
+            "{name}: the verified build did not name it:\n{err}"
+        );
+        assert_ne!(code, 0, "{name}: the verified build must stop");
+    }
+    let _ = fa::remove_dir_all(&dir);
+}
+
 /// Stores::insert_record's hash arm, for an element that owns nothing: one walk files `e` or
 /// finds the entry under its key, which `e` replaces; a walk that cannot answer falls back to a
 /// lookup, a removal and an add.
@@ -2877,9 +2990,11 @@ fn hash_free_entry(
 /// integer key, a text key, and one that borrows its entries (stride 0, a linked type's) — and
 /// every lookup, the walks in key order and in slot order, and every byte of the store agree —
 /// and on a fourth whose first entry is a record it did not stage, which demotes it from an
-/// inline table to an arena one.  Falsified: the load factor, the inline growth, the back-shift,
-/// the insertion count, the arena's free list, a SipHash rotation, the text terminator and the
-/// replace-in-place insert each fail it.
+/// inline table to an arena one — built plain and with `-DLOFT_KEYED_VERIFY`, which checks every
+/// one-probe insert against the lookup and the free-slot walk.  Falsified: the load factor, the
+/// inline growth, the back-shift, the insertion count, the arena's free list, a SipHash rotation,
+/// the text terminator and the replace-in-place insert each fail it; a probe that answers the
+/// wrong free bucket, or walks past the duplicate, fails the verified build.
 #[test]
 fn the_c_hash_table_files_every_entry_where_hash_does() {
     use loft::hash;
@@ -3112,43 +3227,53 @@ int main(int argc, char **argv) {
     let (src, ops, exe) = (dir.join("hash.c"), dir.join("ops.txt"), dir.join("hash"));
     fa::write(&src, &c).expect("write C");
     fa::write(&ops, &script).expect("write ops");
-    let cc = loft::platform::process::harness_command("cc")
-        .args([
-            "-std=c99",
-            "-O2",
-            "-pedantic",
-            "-Werror",
-            "-Wno-unused-function",
-        ])
-        .arg(&src)
-        .arg("-o")
-        .arg(&exe)
-        .output()
-        .expect("run cc");
-    assert!(
-        cc.status.success(),
-        "cc rejected loft_hash.h:\n{}",
-        String::from_utf8_lossy(&cc.stderr)
-    );
-    let out = loft::platform::process::harness_command(&exe)
-        .arg(&ops)
-        .output()
-        .expect("run the hash program");
-    let got = String::from_utf8_lossy(&out.stdout);
-    if let Some((i, (w, g))) = want
-        .lines()
-        .zip(got.lines())
-        .enumerate()
-        .find(|(_, (w, g))| w != g)
-    {
-        panic!("line {i}: hash.rs answers {w:?}, the C {g:?}");
+    // Built twice: plain, and with `LOFT_KEYED_VERIFY` checking every one-probe insert against the
+    // lookup and the free-slot walk (@PLN206 P0b) — the arena tables here are where it runs.
+    for verify in [false, true] {
+        let exe = if verify {
+            dir.join("hash-verify")
+        } else {
+            exe.clone()
+        };
+        let cc = loft::platform::process::harness_command("cc")
+            .args([
+                "-std=c99",
+                "-O2",
+                "-pedantic",
+                "-Werror",
+                "-Wno-unused-function",
+            ])
+            .args(verify.then_some("-DLOFT_KEYED_VERIFY"))
+            .arg(&src)
+            .arg("-o")
+            .arg(&exe)
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "cc rejected loft_hash.h:\n{}",
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let out = loft::platform::process::harness_command(&exe)
+            .arg(&ops)
+            .output()
+            .expect("run the hash program");
+        let got = String::from_utf8_lossy(&out.stdout);
+        if let Some((i, (w, g))) = want
+            .lines()
+            .zip(got.lines())
+            .enumerate()
+            .find(|(_, (w, g))| w != g)
+        {
+            panic!("line {i}: hash.rs answers {w:?}, the C {g:?}");
+        }
+        assert_eq!(
+            got.lines().count(),
+            want.lines().count(),
+            "the C stopped early: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
-    assert_eq!(
-        got.lines().count(),
-        want.lines().count(),
-        "the C stopped early: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
 }
 
 /// The index in C (`src/c/loft_btree.h`) is `btree.rs`: one seeded sequence of inserts (a key

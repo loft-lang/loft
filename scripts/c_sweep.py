@@ -22,6 +22,9 @@
                                         # -DLOFT_STRICT_STORES against the interpreter under
                                         # LOFT_STRICT_STORES=1 (a use after free or a store never
                                         # freed exits 1 on either side)
+    scripts/c_sweep.py --keyed-verify   # the keyed fast paths checked: the C built with
+                                        # -DLOFT_KEYED_VERIFY against the interpreter under
+                                        # LOFT_KEYED_VERIFY=1
     scripts/c_sweep.py --wasm           # the C built for wasm32-wasi by clang and run under
                                         # wasmtime instead (LOFT_WASM_CC names another clang)
     scripts/c_sweep.py --m32            # the C built as 32-bit x86 (gcc -m32) and run natively
@@ -127,6 +130,12 @@ POISON_MODES = {
 # store that died early or never died; the reverse, one the C does not see.
 STRICT_MODES = {
     "strict-stores": (["-DLOFT_STRICT_STORES", "-w"], {"LOFT_STRICT_STORES": "1"}),
+}
+# `--keyed-verify`: every keyed fast path checked against its general form on both sides
+# (`LOFT_KEYED_VERIFY`) — a disagreement stops the run, so a program that differs is one whose
+# fast path answered what the general one does not.
+VERIFY_MODES = {
+    "keyed-verify": (["-DLOFT_KEYED_VERIFY", "-w"], {"LOFT_KEYED_VERIFY": "1"}),
 }
 ASAN = ["-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-fno-sanitize-recover=all"]
 # `--wasm`: the same unit for wasm32-wasi.  The runtime's recoverable faults use setjmp, which
@@ -305,7 +314,7 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
     i_plain = None
     times = {}
     for mode in modes:
-        flags, env = {**POISON_MODES, **STRICT_MODES}.get(mode, (MODES.get(mode), None))
+        flags, env = {**POISON_MODES, **STRICT_MODES, **VERIFY_MODES}.get(mode, (MODES.get(mode), None))
         if env:
             i_out, times["interp"] = timed(interp, limit(path, "interp"), cwd=src.parent,
                                            env={**env, **tenv})
@@ -428,6 +437,8 @@ def main(argv: list[str]) -> int:
     modes = tuple(POISON_MODES) if "--poison" in argv else tuple(MODES)
     if "--strict-stores" in argv:
         modes = tuple(STRICT_MODES)
+    if "--keyed-verify" in argv:
+        modes = tuple(VERIFY_MODES)
     if "--wasm" in argv:
         modes = ("wasm",)
     if "--m32" in argv:

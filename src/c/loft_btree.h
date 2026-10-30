@@ -864,19 +864,36 @@ static uint32_t *loft_bt_records(loft_ref data, uint32_t *n) {
 
 /* ── the Stores routines over an index (src/database) ── */
 
+/* Stores::find_index_boundary: the first record at or above the key, and one comparison to say
+ * whether it matches — the lowest of the records a partial key names. */
+static loft_ref loft_ix_find_boundary(loft_ref data, const loft_key *keys, int nk, const loft_kv *kv, int n) {
+    loft_ref r = { data.store_nr, 0, 8 };
+    uint32_t below = loft_bt_record(data, loft_bt_find(data, 1, keys, nk, kv, n));
+    r.rec = below == 0 ? loft_bt_record(data, loft_bt_first(data)) : loft_bt_step_record(data, keys, nk, below, 0);
+    if (r.rec != 0 && loft_key_cmp_val(kv, n, loft_store_of(data), r.rec, 8, keys) == 0) return r;
+    return loft_ref_null();
+}
+
 /* Stores::find_index: the record whose key parts equal the `n` given — a whole key by its exact
- * descent, a partial one by the boundary walk (the lowest it matches). */
+ * descent, a partial one by the boundary walk (the lowest it matches).  `LOFT_KEYED_VERIFY`
+ * checks the descent against the walk. */
 static loft_ref loft_ix_find(loft_ref data, const loft_key *keys, int nk, const loft_kv *kv, int n) {
     loft_ref r = { data.store_nr, 0, 8 };
     if (data.store_nr == 0xFFFF || data.rec == 0) return loft_ref_null();
     if (n == nk) {
         r.rec = loft_bt_find_exact(data, keys, nk, kv, n);
+#ifdef LOFT_KEYED_VERIFY
+        uint32_t walked = loft_ix_find_boundary(data, keys, nk, kv, n).rec;
+        if (walked != r.rec) {
+            fflush(stdout);
+            fprintf(stderr, "LOFT_KEYED_VERIFY: the exact descent answers record %u where the boundary walk answers %u\n",
+                    (unsigned) r.rec, (unsigned) walked);
+            abort();
+        }
+#endif
         return r.rec == 0 ? loft_ref_null() : r;
     }
-    uint32_t below = loft_bt_record(data, loft_bt_find(data, 1, keys, nk, kv, n));
-    r.rec = below == 0 ? loft_bt_record(data, loft_bt_first(data)) : loft_bt_step_record(data, keys, nk, below, 0);
-    if (r.rec != 0 && loft_key_cmp_val(kv, n, loft_store_of(data), r.rec, 8, keys) == 0) return r;
-    return loft_ref_null();
+    return loft_ix_find_boundary(data, keys, nk, kv, n);
 }
 
 /* Stores::insert_record on an index (`@FR-Col-Insert`): the record filed by its key; the record
