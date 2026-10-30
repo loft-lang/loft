@@ -79,6 +79,36 @@ fields, `loft_vec_slice(field, src, lo, hi, 1)`): `check_request` −8.3 % (6.31
 other rows unchanged, same hashes.  Next: write it as a rule (with the foreign-view case) before
 building.
 
+### Design: a slice that initialises a field is sliced into it
+
+**Shape.**  A record literal whose vector field is initialised by a value slice,
+`R { f: v[a..b] }` — cbor's `CBytes { value: bytes[argpos..argpos + arg] }`.  Today the slice
+is a value of its own: `materialize_iterator` (`parser/convert.rs`) mints a `__vdb_N` store,
+binds `__iter_vec_N` to it, clamps the bounds, fills it with one `OpSliceView`, and the literal's
+field set then copies it in (`OpAppendVector` → `loft_vec_add`) and the scope frees the store.
+
+**Rule.**  Lower it as `slice_copy_form` (`parser/expressions.rs`) already lowers a slice bound
+to a local, with the FIELD as the destination: the clamped-bounds prelude, then one
+`OpSliceVector(field, v, lo, hi, row)` — no store, no `__iter_vec`, no copy, no free.  The field
+of a literal under construction is empty, so append and replace answer the same.
+
+**Why it is sound.**  The slice's value is fixed by its source and its clamped bounds, both read
+before the copy; the destination is a fresh field of a record no other variable names yet, so
+the source cannot be the destination (a literal cannot alias its own fields).  It takes the COPY
+op, never `OpSliceView`: a field's store holds more than this vector, which is the reason
+`slice_copy_form` gives for keeping the copy for a field, so `@FR-Const-Foreign`'s view does not
+apply and nothing locks a foreign store.  Both backends run the new IR; the interpreter's
+answer is the reference, as for every lowering.
+
+**Cells to write first** (one axis each, hand-computed, value AND length):
+in range; `a > b` (empty); bounds past the end (clamped); a negative bound (counts from the
+end); a slice of a field of the same record type built in a loop; a heap-owning element type
+(`vector<text>`: the copy claims); a slice of a foreign (file-mapped) vector into a field (stays a
+copy — the guard that the view was not taken).
+
+**Price.**  `check_request` −8.3 % by hand; cbor `decode`'s bytes items take the same path.
+
+
 
 1. server `header`: re-measure after server 0.7.6 (key compared in place, loft-libs-net #33; ≈ 3.7× left by its author's count — the per-call `name.to_lowercase()` and the trimmed value's copy).
 2. Profile `forms_upto` (longer run), `fill_polygon`; `edgeset_count`'s remaining cost is the
