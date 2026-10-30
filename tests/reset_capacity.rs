@@ -87,3 +87,89 @@ fn a_reset_buffer_keeps_the_capacity_it_reached() {
          got {off_caps:?}"
     );
 }
+
+// ── The empty clear (STORE_MODEL D19f) ──
+//
+// STORE_MODEL D19f — clearing a vector that holds nothing is nothing, a store-root vector's
+// included: the interpreter does not reset the store, as the C runtime's
+// `loft_vec_clear_release` does not (STORE_MODEL's rule: the C model is the standard;
+// `doc/claude/plans/91-self-host/1b-reference.md` E-3).
+// The values are the language's either way, so the observable is the reset itself:
+// `LOFT_TRACE_CLEAR=1` prints `[clear] reset store=N cap=C` at every reset.  A buffer minted
+// fresh for each call is cleared empty at the callee's entry; with the skip ON no reset of an
+// empty vector (`cap=0`) is made, while the reset of a reused buffer that holds the previous
+// call's elements still is.  The OFF half (`LOFT_NO_EMPTY_CLEAR_SKIP=1`, the behaviour
+// before) is the positive control: the empty resets reappear.  Both halves print the same
+// values.  The interpreter lane proves the contract for both Rust backends: the clear is one
+// function both call.
+const EMPTY_CLEAR_PROGRAM: &str = "struct Leg { a: integer, name: text }
+
+fn legs(n: integer) -> vector<Leg> {
+  out: vector<Leg> = [];
+  for i in 0..n {
+    out += [Leg { a: i, name: \"l{i}\" }];
+  }
+  out
+}
+
+fn main() {
+  t = 0;
+  for k in 1..4 {
+    v = legs(k);
+    t += len(v) * 10 + (v[k - 1].a ?? 0);
+  }
+  assert(t == 63, \"t = {t}\");
+  println(\"empty-clear ok\");
+}
+";
+
+fn run_empty_clear(skip_off: bool) -> String {
+    let dir = std::env::temp_dir().join(format!("loft_empty_clear_{}", std::process::id()));
+    loft::file_access::create_dir_all(&dir).expect("scratch directory");
+    let file = dir.join("empty_clear.loft");
+    loft::file_access::write(&file, EMPTY_CLEAR_PROGRAM).expect("write the program");
+    let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
+    cmd.arg("--interpret")
+        .arg(&file)
+        .env("LOFT_TRACE_CLEAR", "1")
+        .env("LOFT_STRICT_STORES", "1")
+        .env("LOFT_TIMEOUT", "120");
+    if skip_off {
+        cmd.env("LOFT_NO_EMPTY_CLEAR_SKIP", "1");
+    }
+    let out = cmd.output().expect("spawn loft --interpret");
+    let _ = loft::file_access::remove_dir_all(&dir);
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    )
+}
+
+#[test]
+fn an_empty_vector_clears_without_a_store_reset() {
+    let on = run_empty_clear(false);
+    assert!(
+        on.contains("empty-clear ok"),
+        "the program passes with the skip ON — got:\n{on}"
+    );
+    let caps = reset_caps(&on);
+    assert!(
+        !caps.is_empty() && caps.iter().all(|&c| c > 0),
+        "a reused buffer that holds elements is still reset, and no empty vector is: \
+         re-established capacities were {caps:?}"
+    );
+
+    // The falsifier: the switch restores the reset of an empty vector, and the trace sees it.
+    let off = run_empty_clear(true);
+    assert!(
+        off.contains("empty-clear ok"),
+        "the program passes with the skip OFF — got:\n{off}"
+    );
+    let off_caps = reset_caps(&off);
+    assert!(
+        off_caps.contains(&0) && off_caps.len() > caps.len(),
+        "with the skip OFF an empty vector's clear resets its store (cap=0): {off_caps:?} \
+         against {caps:?}"
+    );
+}

@@ -2846,7 +2846,12 @@ impl Stores {
         // A vector already empty — no record, or a record of length 0 — has nothing to release
         // and its clear is nothing: no store reset, no record made again (`loft_vec_clear_release`,
         // STORE_MODEL.md D19f).  An absent slot still takes the clear, which makes it present.
-        if !db.is_null() && (db.store_nr as usize) < self.allocations.len() && db.pos != 0 {
+        // `LOFT_NO_EMPTY_CLEAR_SKIP=1` resets the store again: the before-half of the A/B.
+        if crate::keys::empty_clear_skip_enabled()
+            && !db.is_null()
+            && (db.store_nr as usize) < self.allocations.len()
+            && db.pos != 0
+        {
             let store = &self.allocations[db.store_nr as usize];
             let cur = store.get_u32_raw(db.rec, db.pos);
             if cur == 0 {
