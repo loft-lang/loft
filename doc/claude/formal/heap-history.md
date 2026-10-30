@@ -2968,3 +2968,16 @@ once.  Under the tree order a small claim fills a hole and the tail stays free f
 which is the property `H-Wilderness` keeps.  A footprint pin built on small sizes (claims of
 1–60 words, a 64-word store) did not show it; the shape that does is a large vector growing
 by doubling beside a stream of small claims.
+
+## H-TailGrow: a record at the store's tail grows the store (2026-10-30)
+
+Exact claims (`H-Exact`) made a buffer doubling at the store's end claim each new rung past the
+old one and free the old one, a hole beside the new: glb's byte buffer used 17 % more memory.
+Growing the store and the record in place removes it.  Measured by the performance stream on
+glb's own bench (lean builds, `--n 20`, five runs each, pinned, every hash equal):
+`save_glb` on the C ship lane peaked 15.6–15.8 MB before and 10.0–10.2 MB after (−36 %); the
+interpreter 35.2 → 31.0 MB, of which the rule alone (`LOFT_NO_TAIL_GROW=1` against it) is
+−3.9 MB (−11 %).  Speed: the interpreter's `save_glb` within 0.5 % with the rule on or off,
+`save_scene_glb` unchanged; the C ship lane's `save_glb` read about 10 % faster with less
+spread, on single runs (an alternating A/B was too noisy at its calibrated `--n` to call).
+
