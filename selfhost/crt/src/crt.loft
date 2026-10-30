@@ -446,3 +446,37 @@ fn c_vec_add(tp: integer, store: integer, rec: integer, pos: integer, o_store: i
 pub fn vec_add(tp: integer, store: integer, rec: integer, pos: integer, o_store: integer, o_rec: integer, o_pos: integer) {
   c_vec_add(tp, store, rec, pos, o_store, o_rec, o_pos);
 }
+
+// Rendering a value (`OpFormatDatabase`): the interpreter walks the schema itself, and each value
+// read from the store is the runtime's `loft_show_*` helper of `kind` (`shim/crt.c`): the base
+// types by their type number, then the narrow widths, a stored reference and a child record.
+pub SHOW_BYTE = 7;
+pub SHOW_SHORT = 8;
+pub SHOW_SHORT_RAW = 9;
+pub SHOW_INT4 = 10;
+pub SHOW_INT_RAW = 11;
+pub SHOW_DBREF = 12;
+pub SHOW_CHILD = 13;
+
+fn c_show_leaf(out: vector<u8>, kind: integer, store: integer, rec: integer, pos: integer, fmt: integer, min: integer, nullable: boolean) -> integer;
+#c "loft_crt_show_leaf" "int64_t(char*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_vec_absent(store: integer, rec: integer, pos: integer) -> integer;
+#c "loft_crt_vec_absent" "int64_t(int64_t, int64_t, int64_t)"
+
+// The value at a reference rendered by the runtime's helper of `kind`, in format `fmt` (bit 1
+// pretty, bit 2 JSON); `min` and `nullable` are a narrow integer's.
+pub fn show_leaf(kind: integer, store: integer, rec: integer, pos: integer, fmt: integer, min: integer, nullable: boolean) -> text {
+  buf = room(32);
+  n = c_show_leaf(buf, kind, store, rec, pos, fmt, min, nullable);
+  if n > len(buf) {
+    buf = room(n);
+    n = c_show_leaf(buf, kind, store, rec, pos, fmt, min, nullable);
+  }
+  text_from_byte_range(buf, 0, n)
+}
+
+// Does a collection field hold none?
+pub fn vec_absent(store: integer, rec: integer, pos: integer) -> boolean {
+  c_vec_absent(store, rec, pos) != 0
+}

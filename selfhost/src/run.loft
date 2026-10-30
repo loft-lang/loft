@@ -11,6 +11,7 @@ use ir;
 use lower;
 use crt;
 use types;
+use show;
 
 // The entry's result — a loft integer, so null when the program answers null — or the first
 // thing the interpreter does not carry.  `stores_left` is the leak check: how many of the C
@@ -933,6 +934,19 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         sp_int -= 3;
         put_int(ints, sp_int, crt::hash_len(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0));
         sp_int += 1;
+      }
+      // `"{v}"` of a store value: the schema walked in loft, every value the runtime's helper.  A
+      // hash renders through its snapshot, which reads the table's keys, so it is loaded first.
+      FormatDb => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        at = if op.kind == KTextRef { ints[base_int + op.a] ?? panic("a bound reference") } else { base_text + op.a };
+        sp_int -= 3;
+        piece = "";
+        show::render(b, op.b / 4, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b % 4, 0, piece);
+        texts[at] = (texts[at] ?? "") + piece;
       }
       // `v += other`: the copies are claims of `v`'s store, so no owner changes; the claims are
       // copied by the type table, loaded first.

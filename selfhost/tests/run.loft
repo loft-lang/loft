@@ -220,6 +220,15 @@ fn test_vectors_build_walk_index_and_clear() {
   assert(ran_clean(v, "n_rebound_param", 5) == 37210, "rebound_param(5)");
 }
 
+// `OpFormatDatabase` (1b-s3.md § Rendering a value): 14 cells in `kernels/shown.loft`, each
+// against its text written out by hand — a struct compact, JSON and pretty; nested structs and
+// vectors; a plain enum field; narrow integers and a null one; a character; a struct enum's
+// variant through its own type and through the enum, a unit variant, JSON of a variant; a hash in
+// key order; a vector of integers; a null reference.
+fn test_a_store_value_is_rendered_as_the_runtime_renders_it() {
+  assert(ran_clean(kernel("shown"), "n_shown", 3) == 14, "shown(3): every cell rendered by hand");
+}
+
 // `OpAppendVector` (1b-s3.md § Appending a vector), each value by hand in `kernels/vectors.loft`:
 // a struct literal's vector field from a freed local of records with texts, `a += b` into a
 // vector with elements and into an empty one, and texts appended before their source is cleared.
@@ -301,7 +310,7 @@ fn test_hashes_walk() {
 // A kernel's whole `main`, as the census runs a program: it prints what `loft --interpret`
 // prints (the harness compares nothing here; the census does), and leaves nothing behind.
 fn test_the_kernels_mains_run_whole() {
-  for name in ["structs", "vectors", "enums", "hashes"] {
+  for name in ["structs", "vectors", "enums", "hashes", "shown"] {
     b = kernel(name);
     o = run::run(b, lower::find(b, "n_main"), []);
     assert(o.refused == "", "{name} main refused: {o.refused} in {o.refused_in}");

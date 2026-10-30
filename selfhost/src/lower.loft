@@ -16,6 +16,7 @@
 // interpreter does not carry yet is refused by name, never guessed.
 use ir;
 use types;
+use show;
 
 // What kind of value a node, a variable or a result is, and so which stack holds it.
 enum Kind {
@@ -116,6 +117,7 @@ enum Code {
   FreeScratch,
   RefEq,
   VecAdd,
+  FormatDb,
 }
 
 // One op: `kind` is the kind of value it works on; `a` is a value, a slot, a jump target, a
@@ -464,6 +466,8 @@ fn effect(code: Code, b: integer) -> integer {
     RefEq => -1,
     // An append of one vector's element copies to another: both in, nothing out.
     VecAdd => -2,
+    // A record rendered onto a text: the reference in, nothing out (the text is a variable).
+    FormatDb => -1,
     _ => -1,
   }
 }
@@ -923,6 +927,28 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
   } else if name == "OpLengthHash" {
     value(l, b, args[0] ?? panic("OpLengthHash names its hash"), KRef);
     emit(l, HashLen, KInt, 0, 0);
+  } else if name == "OpFormatDatabase" || name == "OpFormatStackDatabase" {
+    // `"{v}"` of a store value (1b-s3.md § Rendering a value): rendered by `show::render`,
+    // appended to the destination text as a format operator appends.  `b` is the type and the
+    // format flags (bit 1 pretty, bit 2 JSON).
+    dest = 0;
+    dest_kind = KText;
+    match unspan(args[0] ?? panic("a format names its destination")) {
+      NdVar { n: var } => {
+        dest = slot_of(l, var);
+        dest_kind = var_kind(l, var);
+      }
+      _ => refuse(l, "a format operator on a destination that is not a variable"),
+    }
+    tp = literal(l, args[2] ?? panic("a format names its type"));
+    fmt = literal(l, args[3] ?? panic("and its flags"));
+    why = show::refusal(b, tp, []);
+    if why != "" {
+      refuse(l, why);
+      return true;
+    }
+    value(l, b, args[1] ?? panic("a format names its value"), KRef);
+    emit(l, FormatDb, dest_kind, dest, tp * 4 + fmt);
   } else if name == "OpAppendVector" {
     // `v += other`: element copies, the claims copied by the type table (`loft_vec_add`).  A
     // linked element type is `loft_vec_add_array`, a later step.

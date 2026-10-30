@@ -532,3 +532,42 @@ void loft_crt_vec_add(int64_t tp, int64_t store, int64_t rec, int64_t pos, int64
     loft_vec_add(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos),
                  loft_crt_ref(o_store, o_rec, o_pos));
 }
+
+/* ── Rendering a value (@PLN91 S3, `OpFormatDatabase`): the interpreter walks the schema in loft
+ * as the C generator's `loft_show{tp}` does, and every value read from the store is the
+ * runtime's own `loft_show_*` helper, chosen here by `kind`: the base types by their type
+ * number (0–6), then 7 a byte, 8 a short, 9 a raw short, 10 a 4-byte and 11 a raw 4-byte
+ * integer, 12 a stored reference, 13 a child record.  Rendered into a scratch text, copied out. */
+static loft_text loft_crt_show_buf = { 0, 0, 0 };
+
+int64_t loft_crt_show_leaf(char *out, int64_t cap, int64_t kind, int64_t store, int64_t rec,
+                           int64_t pos, int64_t fmt, int64_t min, int64_t nullable) {
+    loft_text *s = &loft_crt_show_buf;
+    s->len = 0;
+    loft_ref r = loft_crt_ref(store, rec, pos);
+    int f = (int) fmt, n = (int) nullable;
+    switch (kind) {
+    case 0: case 1: loft_show_long(s, r, f, 0); break;
+    case 2: loft_show_single(s, r, f, 0); break;
+    case 3: loft_show_float(s, r, f, 0); break;
+    case 4: loft_show_bool(s, r, f, 0); break;
+    case 5: loft_show_text(s, r, f, 0); break;
+    case 6: loft_show_char(s, r, f, 0); break;
+    case 7: loft_show_byte(s, r, min, n); break;
+    case 8: loft_show_short(s, r, min, n); break;
+    case 9: loft_show_short_raw(s, r, min, n); break;
+    case 10: loft_show_int4(s, r, n); break;
+    case 11: loft_show_int_raw(s, r, n); break;
+    case 12: loft_show_dbref(s, r); break;
+    case 13: loft_show_child(s, r); break;
+    default: return 0;
+    }
+    int64_t len = (int64_t) s->len;
+    if (len <= cap && len > 0) memcpy(out, s->p, (size_t) len);
+    return len;
+}
+
+/* loft_vec_absent: a collection field that holds none. */
+int64_t loft_crt_vec_absent(int64_t store, int64_t rec, int64_t pos) {
+    return loft_vec_absent(loft_crt_ref(store, rec, pos));
+}

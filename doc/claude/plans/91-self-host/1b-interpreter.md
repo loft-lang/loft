@@ -423,7 +423,7 @@ reference crosses a `#c` call, where the type table comes from, the first slice 
 **The first slice is built** (records of every field width, texts, embedded records, copies),
 with ownership decided at run time by one owner table (owner, 2026-10-28; 1b-s3.md § Ownership
 at run time), and so are the second, vectors, the third, struct enums, and the fourth, hashes
-and their walks, and appending a vector: **the census: 1 027 programs, 186 pass, 0 leak, 0 wrong, 0 crash, none
+and their walks, appending a vector and rendering a value: **the census: 1 027 programs, 199 pass, 0 leak, 0 wrong, 0 crash, none
 swept.**
 
 ### SU1 — `store_load` maps the image instead of copying it — DESIGNED 2026-10-28
