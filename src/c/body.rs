@@ -231,6 +231,9 @@ pub(crate) struct FnWriter<'a> {
     /// A formatted value's work text written straight into the text it is appended to
     /// (`format_into_dest`): the work variable and the destination's C name.
     work_alias: Option<(u16, String)>,
+    /// `@FR-R-SliceArg`: the wrapper variables of slices the call being emitted hands to `const`
+    /// parameters — their `OpDatabase` takes a pooled carrier (`loft_slice_take`).
+    slice_carriers: Vec<u16>,
     /// The record push headers each enclosing loop binds (`loft_ph`, `@FR-R-PushRec`): the
     /// path, the header, the element size and whether its pushes write through the record
     /// address it holds (`@FR-R-Push`'s sole-growth clause), innermost last.
@@ -645,6 +648,7 @@ impl<'a> FnWriter<'a> {
             kh_passed: std::collections::HashSet::new(),
             nn_seed: Vec::new(),
             push_heads: Vec::new(),
+            slice_carriers: Vec::new(),
             vr: value::VrFn::of(cx, d).map(Box::new),
             widening: None,
             raw: std::collections::HashMap::new(),
@@ -5559,6 +5563,16 @@ impl<'a> FnWriter<'a> {
         // A link argument is the address of the caller's variable; the others are values,
         // evaluated in order.
         let mut xs = vec![String::new(); args.len()];
+        let carriers = self.slice_carriers.len();
+        if !std::env::var("LOFT_NO_SLICE_ARG_POOL").is_ok_and(|v| v != "0") {
+            for (a, arg) in def.attributes().iter().zip(args) {
+                if a.value_const
+                    && let Some(w) = slice_carrier(cx.data, arg)
+                {
+                    self.slice_carriers.push(w);
+                }
+            }
+        }
         let (values, places) = self.link_args(d, args, &shapes, &mut xs, ind)?;
         let ptr = cx.vr_ptr_params(d);
         let tuple_params: Vec<(usize, u16, bool)> = tuple_params
@@ -5569,7 +5583,9 @@ impl<'a> FnWriter<'a> {
         // A callee that runs no store write reads a text argument as a text VALUE op
         // does (`@FR-F-ParamText`) — unless a store place goes to a `&` parameter, which its twin writes.
         let reads = places == 0 && cx.call_keeps_stores(d);
-        self.value_args(args, &shapes, &values, &mut xs, reads, ind)?;
+        let r = self.value_args(args, &shapes, &values, &mut xs, reads, ind);
+        self.slice_carriers.truncate(carriers);
+        r?;
         if let Some(i) = dropped {
             xs.remove(i);
         }
@@ -7083,8 +7099,43 @@ impl<'a> FnWriter<'a> {
         }
     }
 
+    /// `@FR-R-SliceArg`: a slice handed to a `const` parameter is copied into a pooled carrier,
+    /// which keeps its vector record — so the zeroing of the fresh wrapper's field that follows
+    /// the mint is no part of it.
+    fn slice_carrier_operator(&mut self, name: &str, args: &[Value]) -> Result<Option<E>, String> {
+        if self.slice_carriers.is_empty() {
+            return Ok(None);
+        }
+        match (name, args) {
+            ("OpDatabase", [Value::Var(var), tp]) if self.slice_carriers.contains(var) => {
+                let tp = u16::try_from(Self::literal(tp, "type")?)
+                    .map_err(|_| "a type number out of range".to_string())?;
+                let size = self.cx.stores.enum_parent_size(tp);
+                self.cx.describe_type(tp);
+                self.cx.copy_type(tp)?;
+                crate::rewrite_census::fired("R-SliceArg", 1);
+                Ok(Some(E::new(
+                    format!(
+                        "loft_slice_take(loft_types, &{}, {size}, {tp})",
+                        self.var(*var)
+                    ),
+                    K::Void,
+                )))
+            }
+            ("OpSetInt4", [Value::Var(var), Value::Int(0), Value::Int(0)])
+                if self.slice_carriers.contains(var) =>
+            {
+                Ok(Some(E::new("((void) 0)", K::Void)))
+            }
+            _ => Ok(None),
+        }
+    }
+
     fn store_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
         if let Some(e) = self.free_operator(name, args, ind)? {
+            return Ok(e);
+        }
+        if let Some(e) = self.slice_carrier_operator(name, args)? {
             return Ok(e);
         }
         if let Some(e) = self.append_twin_buffer_op(name, args, ind)? {
@@ -8770,4 +8821,55 @@ fn shape_of_kind(k: K) -> Option<CType> {
         K::Tup(id) => CType::Tuple(id),
         K::View | K::Void => return None,
     })
+}
+
+/// `@FR-R-SliceArg`: the wrapper variable of a slice VALUE — the block a slice used as a value is
+/// lowered to, `{ OpDatabase(w, tp); it = OpGetField(w, 0, …); OpSetInt4(w, 0, 0); <bounds>;
+/// OpSliceView(it, src, lo, hi, row); it }` — when `arg` is exactly that; `None` for every other
+/// argument.
+fn slice_carrier(data: &crate::data::Data, arg: &Value) -> Option<u16> {
+    let Value::Block(block) = arg.unspan() else {
+        return None;
+    };
+    let call = |node: &Value| match node.unspan() {
+        Value::Call(def, operands) if (*def as usize) < data.definitions.len() => {
+            Some((data.def(*def).name(), operands.clone()))
+        }
+        _ => None,
+    };
+    let names = |node: Option<&Value>, var: u16| matches!(node.map(Value::unspan), Some(Value::Var(found)) if *found == var);
+    let ops: Vec<&Value> = block
+        .operators
+        .iter()
+        .filter(|op| !matches!(op.unspan(), Value::Line(_)))
+        .collect();
+    let (first, last) = (ops.first()?, ops.last()?);
+    let (mint, mint_ops) = call(first)?;
+    let wrapper = match (mint, mint_ops.as_slice()) {
+        ("OpDatabase", [Value::Var(wrapper), _]) => *wrapper,
+        _ => return None,
+    };
+    let Value::Var(iter) = last.unspan() else {
+        return None;
+    };
+    let iter = *iter;
+    let mut bound = false;
+    let mut sliced = false;
+    for op in &ops[1..ops.len() - 1] {
+        match op.unspan() {
+            Value::Set(var, value) if *var == iter => {
+                bound = matches!(call(value), Some((get, operands))
+                    if get == "OpGetField" && names(operands.first(), wrapper));
+            }
+            other => {
+                if let Some((slice, operands)) = call(other)
+                    && slice == "OpSliceView"
+                    && names(operands.first(), iter)
+                {
+                    sliced = true;
+                }
+            }
+        }
+    }
+    (bound && sliced).then_some(wrapper)
 }

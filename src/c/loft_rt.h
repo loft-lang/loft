@@ -1414,12 +1414,34 @@ static void loft_gen_free(loft_ref g);
  * allocator and keyed harnesses — leaves it null. */
 static void (*loft_release_file_leases_hook)(uint16_t nr);
 
+/* `@FR-R-SliceArg`: the carrier stores a slice handed to a `const` parameter is copied into —
+ * a few per thread, kept across uses instead of minted and freed per use.  An idle carrier is
+ * PINNED, so the leak report passes it by and a stray free leaves it alone; one in use is an
+ * ordinary store until the free that would have released it gives it back (`loft_free_ref`). */
+#define LOFT_SLICE_POOL 16
+static LOFT_TLS loft_ref loft_sp_ref[LOFT_SLICE_POOL];
+static LOFT_TLS uint8_t loft_sp_used[LOFT_SLICE_POOL];
+static LOFT_TLS int loft_sp_n = 0;
+
+/* Give carrier `nr` back if it is one in use: answers whether it was. */
+static int loft_slice_give(uint32_t nr) {
+    for (int i = 0; i < loft_sp_n; i++) {
+        if (loft_sp_used[i] && loft_sp_ref[i].store_nr == nr) {
+            loft_sp_used[i] = 0;
+            loft_stores[nr].pinned = 1;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static void loft_free_ref(loft_ref r) {
     if (r.store_nr == 0xFFFE) {
         loft_gen_free(r);
         return;
     }
     if (r.store_nr == 0xFFFF || r.store_nr >= loft_nstores) return;
+    if (loft_sp_n && loft_slice_give(r.store_nr)) return;
     loft_store_t *s = &loft_stores[r.store_nr];
     /* `Stores::free_named`: a store already free stays as it is. */
     if (s->pinned || !s->live) return;
@@ -1874,6 +1896,42 @@ static void loft_set_dbref(loft_ref r, uint32_t fld, loft_ref x) {
 LOFT_HOT_INLINE uint32_t loft_collection_rec(loft_store_t *s, uint32_t rec, uint32_t pos) {
     uint32_t v = loft_u32(s, rec, pos);
     return v == 0xFFFFFFFFu ? 0 : v;
+}
+
+/* `@FR-R-SliceArg`: OpDatabase of a slice carrier — `var` takes a carrier from the pool, its
+ * vector kept at length 0, so the slice that follows is copied into room the carrier already
+ * has.  A variable that still holds its carrier (the site ran again before the free) keeps it.
+ * A variable holding any other store, or a full pool, takes the ordinary wrapper. */
+static void loft_slice_take(const struct loft_tdesc_s *T, loft_ref *var, uint32_t bytes, uint16_t tp) {
+    int i = 0;
+    if (var->store_nr == 0xFFFF) {
+        while (i < loft_sp_n && loft_sp_used[i]) i++;
+    } else {
+        while (i < loft_sp_n && !(loft_sp_used[i] && loft_sp_ref[i].store_nr == var->store_nr)) i++;
+        if (i == loft_sp_n) i = LOFT_SLICE_POOL;
+    }
+    if (i == loft_sp_n && i < LOFT_SLICE_POOL) {
+        loft_ref r = loft_ref_null();
+        loft_database(&r, bytes);
+        loft_sp_ref[i] = r;
+        loft_sp_used[i] = 0;
+        loft_sp_n++;
+    }
+    if (i >= loft_sp_n) {
+        loft_database_wrapper(T, var, bytes, tp);
+        return;
+    }
+    loft_ref r = loft_sp_ref[i];
+    loft_store_t *s = &loft_stores[r.store_nr];
+#ifdef LOFT_FOREIGN
+    loft_st_release_foreign(s);
+#endif
+    uint32_t v = loft_collection_rec(s, r.rec, r.pos);
+    if (v != 0) loft_set_u32(s, v, 4, 0);
+    loft_sp_used[i] = 1;
+    s->pinned = 0;
+    s->known = tp;
+    *var = r;
 }
 
 /* `checked_vec_cap`: the header word and `count` elements of `size` bytes, in words, in 32 bits
