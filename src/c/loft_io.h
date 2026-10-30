@@ -1414,15 +1414,22 @@ static loft_text loft_directory(loft_str sub) {
     const char *base = "";
 #if defined(LOFT_POSIX)
     if (getcwd(buf, sizeof buf)) base = buf;
+#elif defined(_WIN32)
+    if (_getcwd(buf, (int) sizeof buf)) base = buf;
 #else
     (void) buf;
 #endif
     return loft_dir_with_sub(base, sub);
 }
 
-/* user_directory (Stores::os_home_native): the home directory, `sub` joined to it. */
+/* user_directory (Stores::os_home_native): the home directory, `sub` joined to it — `HOME`, or
+ * on Windows the profile directory `dirs::home_dir` answers there (`USERPROFILE`). */
 static loft_text loft_user_directory(loft_str sub) {
+#if defined(_WIN32)
+    const char *h = getenv("USERPROFILE");
+#else
     const char *h = getenv("HOME");
+#endif
     return loft_dir_with_sub(h ? h : "", sub);
 }
 
@@ -1431,6 +1438,8 @@ static loft_text loft_user_directory(loft_str sub) {
  * macOS, else `argv[0]` — `sub` joined to it. */
 #if defined(__APPLE__)
 extern int _NSGetExecutablePath(char *buf, uint32_t *size);
+#elif defined(_WIN32)
+__declspec(dllimport) unsigned long __stdcall GetModuleFileNameA(void *module, char *buf, unsigned long size);
 #endif
 static loft_text loft_program_directory(loft_str sub) {
     char buf[4096];
@@ -1442,6 +1451,9 @@ static loft_text loft_program_directory(loft_str sub) {
 #elif defined(__APPLE__)
     uint32_t size = sizeof buf;
     if (_NSGetExecutablePath(buf, &size) != 0) buf[0] = 0;
+#elif defined(_WIN32)
+    unsigned long n = GetModuleFileNameA(0, buf, (unsigned long) sizeof buf);
+    buf[n < sizeof buf ? n : 0] = 0;
 #endif
 #if defined(LOFT_POSIX_HOST)
     if (!buf[0] && loft_argv && loft_argv[0]) {
@@ -1454,6 +1466,10 @@ static loft_text loft_program_directory(loft_str sub) {
         strcpy(buf, loft_argv[0]);
 #endif
     char *slash = strrchr(buf, '/');
+#if defined(_WIN32)
+    char *back = strrchr(buf, '\\');
+    if (back && (!slash || back > slash)) slash = back;
+#endif
     if (slash) *(slash == buf ? slash + 1 : slash) = 0; else buf[0] = 0;
     return loft_dir_with_sub(buf, sub);
 }
@@ -1469,7 +1485,11 @@ static loft_text loft_os_cache_dir(void) {
         loft_push_cstr(&t, h);
         loft_push_cstr(&t, "/.cache");
     } else {
-        loft_push_cstr(&t, tmp && *tmp ? tmp : "/tmp");
+        /* `std::env::temp_dir`, as `loft_os_temp_dir` answers it on this host. */
+        loft_text td = loft_os_temp_dir();
+        (void) tmp;
+        loft_text_append(&t, loft_view(&td));
+        loft_text_free(&td);
     }
     if (t.len && t.p[t.len - 1] != '/') loft_push_char(&t, '/');
     loft_push_cstr(&t, "loft");
@@ -1503,13 +1523,17 @@ static loft_text loft_ymd_days_ago(int64_t days) {
  * value at 4) of `size` bytes, in the environment's order, in a vector of its own store. */
 #if defined(LOFT_POSIX)
 extern char **environ;
+#define LOFT_ENVIRON environ
+#elif defined(_WIN32)
+/* The CRT's own copy of the environment (`stdlib.h`). */
+#define LOFT_ENVIRON _environ
 #endif
 static loft_ref loft_env_variables(uint32_t size) {
     loft_ref vec = loft_ref_null();
     loft_database(&vec, size * 8 - 8);
     loft_set_u32(loft_store_of(vec), vec.rec, vec.pos, 0);
-#if defined(LOFT_POSIX)
-    for (char **e = environ; e && *e; e++) {
+#if defined(LOFT_ENVIRON)
+    for (char **e = LOFT_ENVIRON; e && *e; e++) {
         const char *eq = strchr(*e, '=');
         if (!eq) continue;
         loft_ref el = loft_vec_append(vec, size);
