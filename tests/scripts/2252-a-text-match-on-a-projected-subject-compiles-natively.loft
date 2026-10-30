@@ -17,6 +17,8 @@
 // @falsified-at: 23bc61e47 — native exit 1 -> 0; interpret INERT (expected for a
 //   backend-divergence guard — only one side can move)
 //   CHANNEL: exit — the control's rustc refuses the program (E0308), so no assertion runs.
+//   WITNESS: rustc's E0308 on the control's `--native` build, where this tree prints `ok`.
+//   HOLDS: every assertion passes on both backends of this tree; leak and panic are clean.
 
 enum Sh { A { n: integer }, B, C }
 struct T { name: text, parts: vector<Sh> }
