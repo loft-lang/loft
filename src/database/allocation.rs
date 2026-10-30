@@ -4552,8 +4552,11 @@ impl Stores {
                     self.store_mut(to).set_u32_raw(to.rec, to.pos, 0);
                 } else {
                     let content_kt = *content_kt;
-                    let size = u32::from(self.size(content_kt));
-                    let new_rec = self.allocations[to.store_nr as usize].claim(size);
+                    let size = u32::from(self.enum_parent_size(content_kt));
+                    let new_rec = {
+                        let words = self.child_rec_words(content_kt);
+                        self.allocations[to.store_nr as usize].claim(words)
+                    };
                     let src_db = DbRef {
                         store_nr: rec.store_nr,
                         rec: src_rec,

@@ -5491,7 +5491,13 @@ impl Parser {
                     sinks.filled_collections.insert(field.clone());
                 }
             }
-            let mut value = if let Type::Vector(_, _)
+            // `@FR-B-OutOfLine` — an out-of-line field's value is built where it stands and
+            // copied into the host's store by the field write (`OpSetChildRec`); the field's
+            // four bytes are no place to build it in.
+            let out_of_line = self.data.field_is_out_of_line(td_nr, nr);
+            let mut value = if out_of_line {
+                Value::Null
+            } else if let Type::Vector(_, _)
             | Type::Sorted(_, _, _)
             | Type::Hash(_, _, _)
             | Type::Radix(_, _, _)

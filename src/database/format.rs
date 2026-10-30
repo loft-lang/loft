@@ -1726,12 +1726,29 @@ impl ShowDb<'_> {
                         write!(s, "DbRef({store_nr},{rec},{pos})").unwrap();
                     }
                 }
-                // P213: format a child-record rec-id pointer.  Closures
-                // don't round-trip through textual format; debug shape only.
-                Parts::ChildRec(_) => {
+                // `@FR-L-OutOfLine` — an out-of-line field renders as the value it holds: the
+                // record number followed, then the content's own routine.  A closure record's
+                // child keeps its debug shape: closures do not round-trip through text.
+                Parts::ChildRec(content) => {
                     let rec = self.store().get_u32_raw(self.rec, self.pos);
                     if rec == 0 {
                         s.push_str("null");
+                    } else if self.stores.child_rec_is_value(*content) {
+                        let sub = ShowDb {
+                            stores: self.stores,
+                            store: self.store,
+                            rec,
+                            pos: 8,
+                            known_type: *content,
+                            pretty: self.pretty,
+                            json: self.json,
+                            loft: self.loft,
+                            dump: self.dump,
+                            compact: self.compact,
+                            max_depth: self.max_depth,
+                            max_elements: self.max_elements,
+                        };
+                        sub.write(s, indent);
                     } else {
                         write!(s, "ChildRec({rec})").unwrap();
                     }
@@ -2493,11 +2510,14 @@ impl ShowDb<'_> {
                     write!(s, "DbRef({store_nr},{rec},{pos})").unwrap();
                 }
             }
-            // P213: format a child-record rec-id pointer.
-            Parts::ChildRec(_) => {
+            // `@FR-L-OutOfLine` — an out-of-line field dumps the value it holds; a closure
+            // record's child keeps its debug shape.
+            Parts::ChildRec(content) => {
                 let rec = self.store().get_u32_raw(self.rec, self.pos);
                 if rec == 0 {
                     s.push_str("null");
+                } else if self.stores.child_rec_is_value(*content) {
+                    self.dump_child(rec, 8, *content).write_dump(s, indent);
                 } else {
                     write!(s, "ChildRec({rec})").unwrap();
                 }

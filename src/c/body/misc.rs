@@ -302,6 +302,22 @@ impl FnWriter<'_> {
                 );
                 Ok(E::new(t, K::Ref))
             }
+            // `@FR-B-OutOfLine` — a write into an out-of-line field.
+            ("OpSetChildRec", [f, src, tp]) => {
+                let raw = u16::try_from(Self::literal(tp, "type")?)
+                    .map_err(|_| "a type number out of range".to_string())?;
+                let tp = self.copyable(raw & crate::keys::COPY_TP_MASK)?;
+                let free = u8::from(raw & crate::keys::COPY_FREE_SOURCE != 0);
+                let (f, src) = self.two(name, &[f, src], ind)?;
+                Ok(E::new(
+                    format!(
+                        "loft_set_child_rec(loft_types, {tp}, {}, {}, {free})",
+                        as_ref(f)?,
+                        as_ref(src)?
+                    ),
+                    K::Void,
+                ))
+            }
             _ => Err(format!("operator {name}")),
         }
     }

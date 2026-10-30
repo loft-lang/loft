@@ -2765,7 +2765,7 @@ static void loft_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, lo
         uint32_t cur = loft_u32(fs, from.rec, from.pos);
         if (cur == 0) { loft_set_u32(loft_store_of(to), to.rec, to.pos, 0); return; }
         uint32_t size = T[d->elem].size;
-        uint32_t into = loft_st_claim(loft_store_of(to), size);
+        uint32_t into = loft_st_claim(loft_store_of(to), 1 + (size + 7) / 8);
         loft_ref a = { from.store_nr, cur, 8 };
         loft_ref b = { to.store_nr, into, 8 };
         loft_copy_bytes(b, 0, a, 0, size);

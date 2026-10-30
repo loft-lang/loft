@@ -10866,6 +10866,22 @@ extern crate loft;"
         // gate-OFF (no `Optional` is ever constructed, so `.base()` is a no-op).
         let nullable = nullable || matches!(typedef, Type::Optional(_));
         let typedef = typedef.base();
+        // `@FR-L-OutOfLine` — an out-of-line field is the child-record row the compiler
+        // registered for it; replay that row, read from the compiler's own table.
+        if let Some(content) = self.recorded_field_content(host_type_id, field_name)
+            && let crate::database::Parts::ChildRec(c) = self.stores.types[content as usize].parts
+            && self.stores.child_rec_is_value(c)
+        {
+            let c_ref = type_id_ref(c);
+            emit_db_field(
+                w,
+                s_var,
+                field_name,
+                "crec",
+                &format!("db.child_rec({c_ref})"),
+            )?;
+            return Ok(());
+        }
         if let Type::Vector(c, _) = typedef {
             // loft#923 — peel the ELEMENT's `Optional` for the same reason line 3487
             // peels the field's: `Optional(τ)` shares τ's storage exactly, and the

@@ -1988,6 +1988,14 @@ pub fn text_clear_enabled() -> bool {
 /// `LOFT_NO_FLAT_COPY=1` — copy a record that owns no heap through the full release-and-walk
 /// path again (`@FR-R-FlatCopy` off): the first bisect step for a wrong value or a leak after
 /// a record copy on `--native`.
+/// `@FR-L-OutOfLine` — a struct or enum field whose type contains its host is laid out
+/// OUT OF LINE, as a child record in the host's store, instead of being refused as a type of
+/// infinite size.  `LOFT_OUT_OF_LINE=1` turns it on while the feature is landing.
+pub fn out_of_line_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_OUT_OF_LINE"))
+}
+
 pub fn flat_copy_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_FLAT_COPY"))

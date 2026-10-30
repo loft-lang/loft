@@ -1776,6 +1776,15 @@ impl Stores {
         }
     }
 
+    /// `@FR-L-OutOfLine` — does a `child_rec<content>` hold a VALUE (an out-of-line struct or
+    /// enum field), which every walker follows and renders as that value, rather than a
+    /// closure record, whose generated `__` type is no value a program can spell?
+    #[must_use]
+    pub fn child_rec_is_value(&self, content: u16) -> bool {
+        (content as usize) < self.types.len()
+            && !self.types[content as usize].name.starts_with("__")
+    }
+
     /// P213: register a `Parts::ChildRec(content)` type — a 4-byte u32
     /// rec-id pointing at a child record co-located in the same Store
     /// as the host.  Used by capturing-closure-in-struct-field codegen

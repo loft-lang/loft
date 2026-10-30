@@ -267,6 +267,7 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     append_stack_text::<false>,
     append_stack_character::<false>,
     clear_stack_text::<false>,
+    set_child_rec::<false>,
     call_ref::<false>,
     coroutine_next::<false>,
     coroutine_yield::<false>,
@@ -620,6 +621,7 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     append_stack_text::<true>,
     append_stack_character::<true>,
     clear_stack_text::<true>,
+    set_child_rec::<true>,
     call_ref::<true>,
     coroutine_next::<true>,
     coroutine_yield::<true>,
@@ -973,6 +975,7 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     append_stack_text_r,
     append_stack_character_r,
     clear_stack_text_r,
+    set_child_rec_r,
     call_ref_r,
     coroutine_next_r,
     coroutine_yield_r,
@@ -5992,6 +5995,21 @@ fn reserve_vector<const F: bool>(s: &mut State) {
 fn reserve_vector_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     reserve_vector::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn set_child_rec<const F: bool>(s: &mut State) {
+    let operands = s.operands(2);
+    let v_tp = operands.get::<u16>(0);
+    let v_data = s.get_stack_m::<F, DbRef>();
+    let v_field = s.get_stack_m::<F, DbRef>();
+    s.database.set_child_rec(&v_field, &v_data, v_tp);
+}
+
+fn set_child_rec_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    set_child_rec::<true>(s);
     s.regs_out()
 }
 

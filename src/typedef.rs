@@ -575,6 +575,37 @@ pub fn fill_all(data: &mut Data, database: &mut Stores, lexer: &mut Lexer, start
             }
         }
     }
+    // `@FR-T-Recursive` — a STRUCT whose recursion runs through a non-null out-of-line field
+    // has no finite value: every one contains another.  An enum's other variants end its
+    // recursion, so only a struct host is asked.
+    for d_nr in start_def..data.definitions() {
+        if data.def_type(d_nr) != DefType::Struct
+            || data.is_open_instance(d_nr)
+            || data.is_template_part(d_nr)
+            || !data.def_is_authored(d_nr)
+        {
+            continue;
+        }
+        for a_nr in 0..data.attributes(d_nr) {
+            if !data.field_is_out_of_line(d_nr, a_nr)
+                || matches!(data.attr_type(d_nr, a_nr), Type::Optional(_))
+                || !matches!(data.attr_type(d_nr, a_nr).base(), Type::Reference(..))
+            {
+                continue;
+            }
+            found_cycle = true;
+            let host = Type::Reference(d_nr, Deps::none()).source_name(data);
+            let field_tp = data.attr_type(d_nr, a_nr).source_name(data);
+            lexer.pos_diagnostic(
+                Level::Error,
+                &data.def(d_nr).position,
+                &format!(
+                    "`{host}.{}: {field_tp}` makes every {host} contain another {host} — make it `{field_tp}?`",
+                    data.attr_name(d_nr, a_nr),
+                ),
+            );
+        }
+    }
     if found_cycle {
         // Every step below lays records out, and a cyclic type has no layout to reach.  The
         // report is already made and it names the cure; going on can only replace it with a
@@ -911,6 +942,11 @@ fn synth_nullable_struct_fields(data: &mut Data, database: &mut Stores, lexer: &
             for a_nr in 0..data.attributes(host) {
                 // Skip the per-variant `constant` markers.
                 if data.def(host).attributes[a_nr].constant {
+                    continue;
+                }
+                // `@FR-L-OutOfLine` — an out-of-line field spells absence as record 0, in its
+                // own four bytes; it needs no tag.
+                if data.field_is_out_of_line(host, a_nr) {
                     continue;
                 }
                 let Type::Optional(inner) = data.attr_type(host, a_nr) else {
@@ -1289,269 +1325,283 @@ pub(crate) fn fill_database(data: &mut Data, database: &mut Stores, d_nr: u32) {
         let t_nr = data.type_elm(&a_type);
         let nullable = data.attr_nullable(d_nr, a_nr);
         if t_nr < u32::MAX {
-            let tp = match a_type {
-                Type::Vector(c_type, _) => {
-                    let c_nr = data.type_elm(&c_type);
-                    // unresolved vector content — parser already emitted
-                    // a diagnostic (constant-shadow, undefined type, etc.).
-                    // Skip this attribute rather than panicking so the user
-                    // sees the proper error instead of an interpreter crash.
-                    if c_nr == u32::MAX {
+            // `@FR-L-OutOfLine` — a field whose type contains its host holds the record number
+            // of a child record in the host's store, typed by the content it holds so every
+            // walker follows the number and then runs the content's own routine.
+            let tp = if data.field_is_out_of_line(d_nr, a_nr) {
+                let mut kt = data.def(t_nr).known_type;
+                if kt == u16::MAX {
+                    fill_database(data, database, t_nr);
+                    kt = data.def(t_nr).known_type;
+                }
+                database.child_rec(kt)
+            } else {
+                match a_type {
+                    Type::Vector(c_type, _) => {
+                        let c_nr = data.type_elm(&c_type);
+                        // unresolved vector content — parser already emitted
+                        // a diagnostic (constant-shadow, undefined type, etc.).
+                        // Skip this attribute rather than panicking so the user
+                        // sees the proper error instead of an interpreter crash.
+                        if c_nr == u32::MAX {
+                            continue;
+                        }
+                        // route through the shared resolver so struct fields, locals,
+                        // parameters, return types and literals all derive the element
+                        // id the same way (narrow leaf, nested vector, plain
+                        // `known_type`).  `None` = the leaf has no id yet, which is
+                        // the one case this site can fix itself: fill it, then retry.
+                        let c_tp = if let Some(elem) = data.vector_element_type(&c_type, database) {
+                            elem
+                        } else {
+                            fill_database(data, database, c_nr);
+                            data.vector_element_type(&c_type, database)
+                                .unwrap_or(data.def(c_nr).known_type)
+                        };
+                        let tp = database.vector(c_tp);
+                        data.check_vector(c_nr, tp, &data.def(d_nr).position.clone());
+                        tp
+                    }
+                    Type::Integer(int_spec) => {
+                        let IntegerSpec {
+                            not_null,
+                            forced_size: spec_forced,
+                            ..
+                        } = int_spec;
+                        let field_nullable = nullable && !not_null;
+                        // Post-2c: if the field's alias has a forced size(N)
+                        // annotation, prefer it over the limit()-based heuristic.
+                        // The alias def_nr was captured in parse_field because
+                        // Type::Integer collapses alias names.
+                        let alias = data.def(d_nr).attributes[a_nr].alias_d_nr;
+                        // @PLN114 — fall back to the width the TYPE carries when the
+                        // attribute has no alias to consult.  `parse_field` captures
+                        // `alias_d_nr` for a declared struct field, but the synthetic
+                        // `__tuple<…>` struct's attributes are built by `tuple_def` from
+                        // element Types alone, so `forced_size(alias)` finds nothing and
+                        // the range heuristic silently widens: `u8` became a 2-byte
+                        // `short` and `u16` an 8-byte `integer`, which is why a tuple
+                        // packed to 16 bytes where the identical record packs to 3.
+                        // `IntegerSpec.forced_size` is already stamped by `parse_type`
+                        // (definitions.rs:1869), so the fact is present — it just was
+                        // not being read on this path.
+                        let s = data
+                            .forced_size(alias)
+                            .or_else(|| spec_forced.map(std::num::NonZeroU8::get))
+                            .unwrap_or_else(|| a_type.size(field_nullable));
+                        // The Part carries the offset the field's READ and WRITE ops encode
+                        // against (`part_min`), which is not the declared `min` for a nullable
+                        // SIGNED narrow field: it sacrifices its bottom edge to the null
+                        // sentinel, so a present `i16?` rendered one too low through the schema
+                        // while reading the same field answered correctly.
+                        let m = int_spec.part_min(s, field_nullable);
+                        // The schema Part MUST match the op the codegen chose via the ONE
+                        // width→op home, so both are taken from the SAME `NarrowIntKind`
+                        // rather than re-derived here from the width.  What the schema Part
+                        // decides is the READ (`ShowDb` / `to_json` / the store round-trip /
+                        // every keyed lookup); a slot whose Part names a different encoding
+                        // than its ops answers those routes wrong while a direct field access
+                        // stays correct, which is the shape both loft#812 (2-byte, the `+1`
+                        // shift a direct write never did) and loft#1437 (4-byte, a sign-extended
+                        // `u32`) took.  A struct field is not a narrow-vector element, so
+                        // `narrow_vec` is false; a width with no narrow Part keeps the wide
+                        // 8-byte `integer`.
+                        crate::data::NarrowIntKind::of(
+                            s,
+                            field_nullable,
+                            false,
+                            int_spec.unsigned_wide(),
+                        )
+                        .part(database, m, field_nullable)
+                        .unwrap_or_else(|| database.name("integer"))
+                    }
+                    Type::Hash(c_nr, key_fields, _) => {
+                        let mut c_tp = data.def(c_nr).known_type;
+                        if c_tp == u16::MAX {
+                            fill_database(data, database, c_nr);
+                            c_tp = data.def(c_nr).known_type;
+                        }
+                        let kd = key_bearing_def(data, c_nr);
+                        // @PLN25 E2 — for a synth `__nullable<S>` element the keys live
+                        // in the `Some` variant, which is built up-front by the
+                        // eager-variant pass in `fill_all` (so `database.hash` resolves
+                        // the key fields through it AND the hash's tid lands after
+                        // `Some` for native codegen).  Safety net: if a hash is reached
+                        // before that pass has run, build `Some` now so key resolution
+                        // still succeeds (idempotent — a no-op once the pass has run).
+                        if data.def(kd).known_type == u16::MAX {
+                            fill_database(data, database, kd);
+                        }
+                        set_mutable(data, kd, &key_fields, (d_nr, a_nr));
+                        database.hash(c_tp, &key_fields)
+                    }
+                    Type::Index(c_nr, key_fields, _) => {
+                        let mut c_tp = data.def(c_nr).known_type;
+                        if c_tp == u16::MAX {
+                            fill_database(data, database, c_nr);
+                            c_tp = data.def(c_nr).known_type;
+                        }
+                        // @PLN25 E2 — for a synth `__nullable<S>` element the key fields live in the
+                        // `Some` payload, so resolve the key-bearing def (mirror the hash arm) before
+                        // marking them immutable; `c_nr` (the enum) has no direct key attribute.
+                        let kd = key_bearing_def(data, c_nr);
+                        if data.def(kd).known_type == u16::MAX {
+                            fill_database(data, database, kd);
+                        }
+                        set_mutable_directed(data, kd, &key_fields, (d_nr, a_nr));
+                        database.index(c_tp, &key_fields)
+                    }
+                    Type::Sorted(c_nr, key_fields, _) => {
+                        let mut c_tp = data.def(c_nr).known_type;
+                        if c_tp == u16::MAX {
+                            fill_database(data, database, c_nr);
+                            c_tp = data.def(c_nr).known_type;
+                        }
+                        let kd = key_bearing_def(data, c_nr);
+                        if data.def(kd).known_type == u16::MAX {
+                            fill_database(data, database, kd);
+                        }
+                        set_mutable_directed(data, kd, &key_fields, (d_nr, a_nr));
+                        database.sorted(c_tp, &key_fields)
+                    }
+                    Type::Radix(c_nr, key_fields, _) => {
+                        let mut c_tp = data.def(c_nr).known_type;
+                        if c_tp == u16::MAX {
+                            fill_database(data, database, c_nr);
+                            c_tp = data.def(c_nr).known_type;
+                        }
+                        // @PLN25 E2 — for a synth `__nullable<S>` element the key fields live in
+                        // the `Some` payload, so resolve the key-bearing def (mirror the hash arm).
+                        let kd = key_bearing_def(data, c_nr);
+                        if data.def(kd).known_type == u16::MAX {
+                            fill_database(data, database, kd);
+                        }
+                        set_mutable(data, kd, &key_fields, (d_nr, a_nr));
+                        database.spatial(c_tp, &key_fields)
+                    }
+                    Type::Trie(c_nr, key, _) => {
+                        let mut c_tp = data.def(c_nr).known_type;
+                        if c_tp == u16::MAX {
+                            fill_database(data, database, c_nr);
+                            c_tp = data.def(c_nr).known_type;
+                        }
+                        let kd = key_bearing_def(data, c_nr);
+                        if data.def(kd).known_type == u16::MAX {
+                            fill_database(data, database, kd);
+                        }
+                        set_mutable(data, kd, std::slice::from_ref(&key), (d_nr, a_nr));
+                        database.trie(c_tp, &key)
+                    }
+                    Type::Enum(t, _, _) if data.def(t).name == "enumerate" => {
+                        database.byte(0, false)
+                    }
+                    Type::Function(..) => {
+                        // P213: when a capturing-lambda assignment has been
+                        // seen at this attribute (its d_nr recorded on
+                        // `assigned_lambda_d_nr` during first-pass parsing
+                        // of `set_field_check`), split into TWO database
+                        // fields:
+                        //   `<attr>`              : 4B int, lambda d_nr
+                        //   `<attr>__closure_rec` : `Parts::ChildRec(closure_kt)`,
+                        //                           4B u32 rec-id of the
+                        //                           co-located closure record
+                        // For attributes that never received a capturing
+                        // assignment (non-capturing fn-ref struct fields,
+                        // tuple elements of fn-ref type, default-init only)
+                        // stay with the legacy single-field 4B int layout —
+                        // closure_rec field would be wasted space and
+                        // breaks layouts of containers (tuples) that pre-
+                        // computed positions assuming 4B per fn-ref slot.
+                        let attr_name = data.def(d_nr).attributes[a_nr].name.clone();
+                        let lambda_d = data.def(d_nr).attributes[a_nr].assigned_lambda_d_nr;
+                        let closure_rec_d = if lambda_d == u32::MAX {
+                            u32::MAX
+                        } else {
+                            data.def(lambda_d).closure_record
+                        };
+                        if closure_rec_d == u32::MAX {
+                            // Legacy 4B int layout (non-capturing /
+                            // tuple-element / default-init).
+                            let int_tp = database.int(0, false);
+                            database.field(s_type, &attr_name, int_tp);
+                        } else {
+                            let mut c_tp = data.def(closure_rec_d).known_type;
+                            if c_tp == u16::MAX {
+                                fill_database(data, database, closure_rec_d);
+                                c_tp = data.def(closure_rec_d).known_type;
+                            }
+                            let dnr_tp = database.int(0, false);
+                            let crec_tp = database.child_rec(c_tp);
+                            database.field(s_type, &attr_name, dnr_tp);
+                            database.field(s_type, &format!("{attr_name}__closure_rec"), crec_tp);
+                        }
                         continue;
                     }
-                    // route through the shared resolver so struct fields, locals,
-                    // parameters, return types and literals all derive the element
-                    // id the same way (narrow leaf, nested vector, plain
-                    // `known_type`).  `None` = the leaf has no id yet, which is
-                    // the one case this site can fix itself: fill it, then retry.
-                    let c_tp = if let Some(elem) = data.vector_element_type(&c_type, database) {
-                        elem
-                    } else {
-                        fill_database(data, database, c_nr);
-                        data.vector_element_type(&c_type, database)
-                            .unwrap_or(data.def(c_nr).known_type)
-                    };
-                    let tp = database.vector(c_tp);
-                    data.check_vector(c_nr, tp, &data.def(d_nr).position.clone());
-                    tp
-                }
-                Type::Integer(int_spec) => {
-                    let IntegerSpec {
-                        not_null,
-                        forced_size: spec_forced,
-                        ..
-                    } = int_spec;
-                    let field_nullable = nullable && !not_null;
-                    // Post-2c: if the field's alias has a forced size(N)
-                    // annotation, prefer it over the limit()-based heuristic.
-                    // The alias def_nr was captured in parse_field because
-                    // Type::Integer collapses alias names.
-                    let alias = data.def(d_nr).attributes[a_nr].alias_d_nr;
-                    // @PLN114 — fall back to the width the TYPE carries when the
-                    // attribute has no alias to consult.  `parse_field` captures
-                    // `alias_d_nr` for a declared struct field, but the synthetic
-                    // `__tuple<…>` struct's attributes are built by `tuple_def` from
-                    // element Types alone, so `forced_size(alias)` finds nothing and
-                    // the range heuristic silently widens: `u8` became a 2-byte
-                    // `short` and `u16` an 8-byte `integer`, which is why a tuple
-                    // packed to 16 bytes where the identical record packs to 3.
-                    // `IntegerSpec.forced_size` is already stamped by `parse_type`
-                    // (definitions.rs:1869), so the fact is present — it just was
-                    // not being read on this path.
-                    let s = data
-                        .forced_size(alias)
-                        .or_else(|| spec_forced.map(std::num::NonZeroU8::get))
-                        .unwrap_or_else(|| a_type.size(field_nullable));
-                    // The Part carries the offset the field's READ and WRITE ops encode
-                    // against (`part_min`), which is not the declared `min` for a nullable
-                    // SIGNED narrow field: it sacrifices its bottom edge to the null
-                    // sentinel, so a present `i16?` rendered one too low through the schema
-                    // while reading the same field answered correctly.
-                    let m = int_spec.part_min(s, field_nullable);
-                    // The schema Part MUST match the op the codegen chose via the ONE
-                    // width→op home, so both are taken from the SAME `NarrowIntKind`
-                    // rather than re-derived here from the width.  What the schema Part
-                    // decides is the READ (`ShowDb` / `to_json` / the store round-trip /
-                    // every keyed lookup); a slot whose Part names a different encoding
-                    // than its ops answers those routes wrong while a direct field access
-                    // stays correct, which is the shape both loft#812 (2-byte, the `+1`
-                    // shift a direct write never did) and loft#1437 (4-byte, a sign-extended
-                    // `u32`) took.  A struct field is not a narrow-vector element, so
-                    // `narrow_vec` is false; a width with no narrow Part keeps the wide
-                    // 8-byte `integer`.
-                    crate::data::NarrowIntKind::of(
-                        s,
-                        field_nullable,
-                        false,
-                        int_spec.unsigned_wide(),
-                    )
-                    .part(database, m, field_nullable)
-                    .unwrap_or_else(|| database.name("integer"))
-                }
-                Type::Hash(c_nr, key_fields, _) => {
-                    let mut c_tp = data.def(c_nr).known_type;
-                    if c_tp == u16::MAX {
-                        fill_database(data, database, c_nr);
-                        c_tp = data.def(c_nr).known_type;
-                    }
-                    let kd = key_bearing_def(data, c_nr);
-                    // @PLN25 E2 — for a synth `__nullable<S>` element the keys live
-                    // in the `Some` variant, which is built up-front by the
-                    // eager-variant pass in `fill_all` (so `database.hash` resolves
-                    // the key fields through it AND the hash's tid lands after
-                    // `Some` for native codegen).  Safety net: if a hash is reached
-                    // before that pass has run, build `Some` now so key resolution
-                    // still succeeds (idempotent — a no-op once the pass has run).
-                    if data.def(kd).known_type == u16::MAX {
-                        fill_database(data, database, kd);
-                    }
-                    set_mutable(data, kd, &key_fields, (d_nr, a_nr));
-                    database.hash(c_tp, &key_fields)
-                }
-                Type::Index(c_nr, key_fields, _) => {
-                    let mut c_tp = data.def(c_nr).known_type;
-                    if c_tp == u16::MAX {
-                        fill_database(data, database, c_nr);
-                        c_tp = data.def(c_nr).known_type;
-                    }
-                    // @PLN25 E2 — for a synth `__nullable<S>` element the key fields live in the
-                    // `Some` payload, so resolve the key-bearing def (mirror the hash arm) before
-                    // marking them immutable; `c_nr` (the enum) has no direct key attribute.
-                    let kd = key_bearing_def(data, c_nr);
-                    if data.def(kd).known_type == u16::MAX {
-                        fill_database(data, database, kd);
-                    }
-                    set_mutable_directed(data, kd, &key_fields, (d_nr, a_nr));
-                    database.index(c_tp, &key_fields)
-                }
-                Type::Sorted(c_nr, key_fields, _) => {
-                    let mut c_tp = data.def(c_nr).known_type;
-                    if c_tp == u16::MAX {
-                        fill_database(data, database, c_nr);
-                        c_tp = data.def(c_nr).known_type;
-                    }
-                    let kd = key_bearing_def(data, c_nr);
-                    if data.def(kd).known_type == u16::MAX {
-                        fill_database(data, database, kd);
-                    }
-                    set_mutable_directed(data, kd, &key_fields, (d_nr, a_nr));
-                    database.sorted(c_tp, &key_fields)
-                }
-                Type::Radix(c_nr, key_fields, _) => {
-                    let mut c_tp = data.def(c_nr).known_type;
-                    if c_tp == u16::MAX {
-                        fill_database(data, database, c_nr);
-                        c_tp = data.def(c_nr).known_type;
-                    }
-                    // @PLN25 E2 — for a synth `__nullable<S>` element the key fields live in
-                    // the `Some` payload, so resolve the key-bearing def (mirror the hash arm).
-                    let kd = key_bearing_def(data, c_nr);
-                    if data.def(kd).known_type == u16::MAX {
-                        fill_database(data, database, kd);
-                    }
-                    set_mutable(data, kd, &key_fields, (d_nr, a_nr));
-                    database.spatial(c_tp, &key_fields)
-                }
-                Type::Trie(c_nr, key, _) => {
-                    let mut c_tp = data.def(c_nr).known_type;
-                    if c_tp == u16::MAX {
-                        fill_database(data, database, c_nr);
-                        c_tp = data.def(c_nr).known_type;
-                    }
-                    let kd = key_bearing_def(data, c_nr);
-                    if data.def(kd).known_type == u16::MAX {
-                        fill_database(data, database, kd);
-                    }
-                    set_mutable(data, kd, std::slice::from_ref(&key), (d_nr, a_nr));
-                    database.trie(c_tp, &key)
-                }
-                Type::Enum(t, _, _) if data.def(t).name == "enumerate" => database.byte(0, false),
-                Type::Function(..) => {
-                    // P213: when a capturing-lambda assignment has been
-                    // seen at this attribute (its d_nr recorded on
-                    // `assigned_lambda_d_nr` during first-pass parsing
-                    // of `set_field_check`), split into TWO database
-                    // fields:
-                    //   `<attr>`              : 4B int, lambda d_nr
-                    //   `<attr>__closure_rec` : `Parts::ChildRec(closure_kt)`,
-                    //                           4B u32 rec-id of the
-                    //                           co-located closure record
-                    // For attributes that never received a capturing
-                    // assignment (non-capturing fn-ref struct fields,
-                    // tuple elements of fn-ref type, default-init only)
-                    // stay with the legacy single-field 4B int layout —
-                    // closure_rec field would be wasted space and
-                    // breaks layouts of containers (tuples) that pre-
-                    // computed positions assuming 4B per fn-ref slot.
-                    let attr_name = data.def(d_nr).attributes[a_nr].name.clone();
-                    let lambda_d = data.def(d_nr).attributes[a_nr].assigned_lambda_d_nr;
-                    let closure_rec_d = if lambda_d == u32::MAX {
-                        u32::MAX
-                    } else {
-                        data.def(lambda_d).closure_record
-                    };
-                    if closure_rec_d == u32::MAX {
-                        // Legacy 4B int layout (non-capturing /
-                        // tuple-element / default-init).
-                        let int_tp = database.int(0, false);
-                        database.field(s_type, &attr_name, int_tp);
-                    } else {
-                        let mut c_tp = data.def(closure_rec_d).known_type;
+                    Type::Tuple(_) => {
+                        // Plan-06 phase 4d: tuple struct fields inline the
+                        // synthetic `__tuple<…>` struct's bytes.  The
+                        // synthetic struct is registered eagerly by
+                        // `parse_type_full`, but its database-side layout
+                        // is built by `fill_database` on the synthetic
+                        // def itself — recurse first so its `known_type`
+                        // is non-`u16::MAX` when we register the host
+                        // struct's tuple field below.  Mirrors the
+                        // vector / sorted / hash / index recursion above.
+                        let mut c_tp = data.def(t_nr).known_type;
                         if c_tp == u16::MAX {
-                            fill_database(data, database, closure_rec_d);
-                            c_tp = data.def(closure_rec_d).known_type;
+                            fill_database(data, database, t_nr);
+                            c_tp = data.def(t_nr).known_type;
                         }
-                        let dnr_tp = database.int(0, false);
-                        let crec_tp = database.child_rec(c_tp);
-                        database.field(s_type, &attr_name, dnr_tp);
-                        database.field(s_type, &format!("{attr_name}__closure_rec"), crec_tp);
+                        c_tp
                     }
-                    continue;
-                }
-                Type::Tuple(_) => {
-                    // Plan-06 phase 4d: tuple struct fields inline the
-                    // synthetic `__tuple<…>` struct's bytes.  The
-                    // synthetic struct is registered eagerly by
-                    // `parse_type_full`, but its database-side layout
-                    // is built by `fill_database` on the synthetic
-                    // def itself — recurse first so its `known_type`
-                    // is non-`u16::MAX` when we register the host
-                    // struct's tuple field below.  Mirrors the
-                    // vector / sorted / hash / index recursion above.
-                    let mut c_tp = data.def(t_nr).known_type;
-                    if c_tp == u16::MAX {
-                        fill_database(data, database, t_nr);
-                        c_tp = data.def(t_nr).known_type;
+                    Type::Reference(_, ref deps) if !deps.is_empty() => {
+                        // Plan-22 phase 02b (2026-05-12): auto-Reference
+                        // encoding for mutated captures.  When the
+                        // attribute's dep list is non-empty, the field
+                        // holds a 12-byte `DbRef` pointing at the source
+                        // record (shared storage) instead of inline
+                        // bytes (deep-copy).  The dep list is the marker
+                        // — phase 02c is the only producer that sets it
+                        // for closure-record attributes; today's user
+                        // code path always has empty deps so the
+                        // legacy inline-bytes path stays active for
+                        // every existing struct field.
+                        //
+                        // #682: which of the two markers decides whether the
+                        // record ADOPTS the captured store (cascade-freed with
+                        // the record) or merely BORROWS it (freed by its real
+                        // owner).  Same 12 bytes either way — `generation` picks
+                        // the same pair for `--native`.
+                        if deps.is_borrowed_share() {
+                            database.dbref_borrow()
+                        } else {
+                            database.dbref()
+                        }
                     }
-                    c_tp
-                }
-                Type::Reference(_, ref deps) if !deps.is_empty() => {
-                    // Plan-22 phase 02b (2026-05-12): auto-Reference
-                    // encoding for mutated captures.  When the
-                    // attribute's dep list is non-empty, the field
-                    // holds a 12-byte `DbRef` pointing at the source
-                    // record (shared storage) instead of inline
-                    // bytes (deep-copy).  The dep list is the marker
-                    // — phase 02c is the only producer that sets it
-                    // for closure-record attributes; today's user
-                    // code path always has empty deps so the
-                    // legacy inline-bytes path stays active for
-                    // every existing struct field.
-                    //
-                    // #682: which of the two markers decides whether the
-                    // record ADOPTS the captured store (cascade-freed with
-                    // the record) or merely BORROWS it (freed by its real
-                    // owner).  Same 12 bytes either way — `generation` picks
-                    // the same pair for `--native`.
-                    if deps.is_borrowed_share() {
-                        database.dbref_borrow()
-                    } else {
-                        database.dbref()
+                    _ => {
+                        // A struct/enum-reference field stored INLINE (`inner: Cell`,
+                        // empty deps) — its bytes live inside the host record, so the
+                        // host layout needs the content type's size now.  The host can
+                        // be declared BEFORE the content (a forward or cross-package
+                        // reference), in which case the content's `known_type` is still
+                        // u16::MAX here.  Lay it out first — mirroring the vector /
+                        // tuple / keyed-collection recursion above — otherwise the
+                        // field's content id stays u16::MAX, `finish_type` cannot
+                        // position it (the field lands at offset u16::MAX, never
+                        // repaired on pass 2 because `finish_type` skips an
+                        // already-sized type), and codegen reads the bogus offset and
+                        // corrupts the free path (@P373: a SIGSEGV at scope exit
+                        // AFTER the correct value prints).  Primitive fields already
+                        // carry a real `known_type`, so the guard never recurses for
+                        // them; a genuinely-undefined `Unknown(0)` stub short-circuits
+                        // in `fill_database` (already diagnosed elsewhere).
+                        let mut kt = data.def(t_nr).known_type;
+                        if kt == u16::MAX {
+                            fill_database(data, database, t_nr);
+                            kt = data.def(t_nr).known_type;
+                        }
+                        kt
                     }
-                }
-                _ => {
-                    // A struct/enum-reference field stored INLINE (`inner: Cell`,
-                    // empty deps) — its bytes live inside the host record, so the
-                    // host layout needs the content type's size now.  The host can
-                    // be declared BEFORE the content (a forward or cross-package
-                    // reference), in which case the content's `known_type` is still
-                    // u16::MAX here.  Lay it out first — mirroring the vector /
-                    // tuple / keyed-collection recursion above — otherwise the
-                    // field's content id stays u16::MAX, `finish_type` cannot
-                    // position it (the field lands at offset u16::MAX, never
-                    // repaired on pass 2 because `finish_type` skips an
-                    // already-sized type), and codegen reads the bogus offset and
-                    // corrupts the free path (@P373: a SIGSEGV at scope exit
-                    // AFTER the correct value prints).  Primitive fields already
-                    // carry a real `known_type`, so the guard never recurses for
-                    // them; a genuinely-undefined `Unknown(0)` stub short-circuits
-                    // in `fill_database` (already diagnosed elsewhere).
-                    let mut kt = data.def(t_nr).known_type;
-                    if kt == u16::MAX {
-                        fill_database(data, database, t_nr);
-                        kt = data.def(t_nr).known_type;
-                    }
-                    kt
                 }
             };
             database.field(s_type, &data.attr_name(d_nr, a_nr), tp);
