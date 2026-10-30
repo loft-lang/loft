@@ -17939,7 +17939,14 @@ impl Parser {
             // Forward-ref-SAFE for the same reason the `if` arm is: `parse_scalar_match`
             // emits this block on BOTH passes.  A `null` arm still yields `false` via
             // `arm_yields_text`, so a `text?` tail keeps its `(N-Store)` reject.
-            Value::Block(bl) if bl.name == "scalar_match" => {
+            // …and every OTHER match lowering's wrapper, by the one predicate that names them
+            // (`is_match_wrapper`): an enum match behind its subject binding, a
+            // struct, tuple, stream or cursor match.  Listed one name at a time, the enum
+            // match's own `match` block was the one left out, and a text tail whose arms
+            // return a pattern binding and a built local had both promoted onto hidden
+            // buffers — the interpreter answered the built arm's value as "", and `--native`
+            // refused the program.
+            Value::Block(bl) if is_match_wrapper(&bl.name) => {
                 bl.operators.last().is_some_and(Self::if_tail_yields_text)
             }
             // A `match v { [slice] => … }` in tail position lowers to
@@ -17954,9 +17961,6 @@ impl Parser {
             // proven per-arm delivery the scalar match already takes. Forward-ref-safe
             // (the block is emitted on both passes); a `return`/guard arm still yields
             // `false` via `arm_yields_text`, so a non-text arm keeps its reject.
-            Value::Block(bl) if bl.name == "vector_match" => {
-                bl.operators.last().is_some_and(Self::if_tail_yields_text)
-            }
             _ => false,
         }
     }
@@ -24163,4 +24167,22 @@ impl Parser {
             }
         }
     }
+}
+
+/// Is `name` the wrapper block a `match` lowering puts around its arm chain — the subject's
+/// binding, a slice's scaffolding, a stream's materialise — so that a pass asking
+/// about the match's VALUE looks through it to the chain?  One list, beside every lowering that
+/// names one: `parse_match_inner` (`match`), `parse_scalar_match` (`scalar_match`),
+/// `parse_vector_match` (`vector_match`), the struct, tuple, stream and cursor matches.
+pub(super) fn is_match_wrapper(name: &str) -> bool {
+    matches!(
+        name,
+        "match"
+            | "scalar_match"
+            | "vector_match"
+            | "struct_match"
+            | "tuple_match"
+            | "stream match"
+            | "cursor match"
+    )
 }

@@ -354,6 +354,11 @@ git do.
 
 ### Bug fixes
 
+**A function returning text from a `match` answers every arm's value.**  When one arm returned
+a pattern binding and another a text built in the arm, the built text came back empty on the
+interpreter, and `--native` did not compile the program.  It happened when the subject was a
+call (`match id(v) { … }`) or the match was on a struct's fields.
+
 **A `boolean`, `enum` or `character` passed to a `#c` function reaches C as its value.**  Under
 the interpreter, C received the value plus whatever the argument's stack slot held before, so
 `false` could arrive as `256`.  `--native` was already correct.
