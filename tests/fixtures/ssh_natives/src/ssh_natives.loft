@@ -1,0 +1,34 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// The ssh library's native declarations, word for word (ssh 0.1.4, src/ssh.loft), public so a
+// test program reaches them directly; `sleep_ms` is the web library's, for a polling loop.
+
+pub fn ssh_connect(host: text, port: integer) -> integer;
+#native
+
+pub fn ssh_login(handle: integer, user: text, password: text) -> boolean;
+#native
+
+pub fn ssh_open_shell(handle: integer, term: text, cols: integer, rows: integer) -> boolean;
+#native
+
+pub fn ssh_send(handle: integer, data: text);
+#native
+
+pub fn ssh_recv(handle: integer) -> text;
+#native
+
+pub fn ssh_resize(handle: integer, cols: integer, rows: integer);
+#native
+
+pub fn ssh_is_open(handle: integer) -> boolean;
+#native
+
+pub fn ssh_close(handle: integer);
+#native
+
+pub fn byte_at(idx: integer, data: text) -> integer;
+#native
+
+pub fn sleep_ms(ms: integer);
+#native
