@@ -103,7 +103,7 @@ static uint8_t loft_ssh_shell_h(int64_t h, loft_str term, int64_t cols, int64_t 
     struct loft_ssh *s = loft_ssh_at(h);
     if (!s) return 0;
     int ok = loft_ssh_shell(s, term.p, term.len, loft_ssh_dim(cols), loft_ssh_dim(rows));
-    if (!ok) loft_ssh_trace("open_shell", loft_ssh_error(s)[0] ? loft_ssh_error(s) : "the server refused the shell");
+    if (!ok) loft_ssh_trace("open_shell", loft_ssh_error(s)[0] ? loft_ssh_error(s) : "not logged in, or the server refused the shell");
     return (uint8_t) ok;
 }
 

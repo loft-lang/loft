@@ -34,6 +34,16 @@ const NET: &[(&str, &str)] = &[
     ),
 ];
 
+/// The TLS archive the components link (`src/c/tls.rs`), built for the C compiler a unit uses:
+/// BearSSL, the TLS client and the SSH client.  `tests/ssh_natives.rs` links its test SSH server
+/// against it.
+///
+/// # Errors
+/// Why the archive could not be built on this host.
+pub fn tls_archive() -> Result<std::path::PathBuf, String> {
+    super::tls::archive()
+}
+
 /// Build component `name` into `out_dir` (or keep the one there when it is current), returning
 /// the library's path.
 ///

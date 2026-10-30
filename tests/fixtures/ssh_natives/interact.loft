@@ -1,0 +1,89 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// The interactions the ssh natives promise a program, against test_sshd.c (SSH_PORT names it):
+// a refused password, the shell's start and a resize, bytes both ways through each side's
+// flow control, `recv` never waiting, the shell's exit, and every call on a closed or unknown
+// handle doing nothing.  Each line's expected text is fixed in tests/ssh_natives.rs.
+use ssh_natives::*;
+
+// Everything received until `needle` arrives or `ms` pass.
+fn until(h: integer, needle: text, ms: integer) -> text {
+  got = "";
+  start = now();
+  while now() - start < ms {
+    chunk = ssh_natives::ssh_recv(h);
+    if chunk.size() == 0 {
+      if got.contains(needle) { return got; }
+      ssh_natives::sleep_ms(2);
+      continue;
+    }
+    got += chunk;
+  }
+  got
+}
+
+fn main() {
+  port = (env_variable("SSH_PORT") ?? "0") as integer ?? 0;
+  bad = ssh_natives::ssh_connect("127.0.0.1", port);
+  println("BADPW {bad >= 0} {ssh_natives::ssh_login(bad, "u", "wrong")} {ssh_natives::ssh_open_shell(bad, "vt100", 80, 24)}");
+  ssh_natives::ssh_close(bad);
+  h = ssh_natives::ssh_connect("127.0.0.1", port);
+  println("CONNECT {h >= 0} {h != bad}");
+  println("LOGIN {ssh_natives::ssh_login(h, "u", "right")}");
+  println("SHELL {ssh_natives::ssh_open_shell(h, "vt100", 80, 24)} {ssh_natives::ssh_is_open(h)}");
+  // Bound before the interpolation: a view of a call's result inside one does not compile on
+  // the Rust writer (loft#2262).
+  start_line = until(h, "\n", 10000);
+  println("START {start_line.trim()}");
+  ssh_natives::ssh_resize(h, 132, 43);
+  size_line = until(h, "\n", 10000);
+  println("RESIZE {size_line.trim()}");
+  ssh_natives::ssh_send(h, "echo:hello there\n");
+  echo_line = until(h, "\n", 10000);
+  println("ECHO {echo_line.trim()}");
+  // The 256 byte values come back as they were sent: a text is bytes here, read with byte_at.
+  ssh_natives::ssh_send(h, "bytes\n");
+  raw = until(h, "\n", 10000);
+  while raw.size() < 257 {
+    more = until(h, "\n", 2000);
+    if more.size() == 0 { break; }
+    raw += more;
+  }
+  sum = 0;
+  in_order = true;
+  for i in 0..256 {
+    b = ssh_natives::byte_at(i, raw);
+    sum += b;
+    if b != i { in_order = false; }
+  }
+  println("BYTES {raw.size()} {sum} {in_order} {ssh_natives::byte_at(257, raw)}");
+  // Past the 2 MiB window this client grants: the reads must give it back.
+  ssh_natives::ssh_send(h, "big:3000000\n");
+  big = until(h, "BIGDONE", 120000);
+  println("BIG {big.size() - big.replace("x", "").size()} {big.ends_with("BIGDONE\n")}");
+  // Through the server's 8 KiB window in 1 KiB packets: the send splits and waits.
+  block = "";
+  for _ in 0..100 { block += "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ+-*/"; }
+  ssh_natives::ssh_send(h, "count:200000\n");
+  sent = 0;
+  while sent < 200000 {
+    n = 200000 - sent;
+    if n > block.size() { n = block.size(); }
+    ssh_natives::ssh_send(h, block[0..n]);
+    sent += n;
+  }
+  count_line = until(h, "\n", 60000);
+  println("{count_line.trim()}");
+  ssh_natives::sleep_ms(50);
+  println("IDLE [{ssh_natives::ssh_recv(h)}] {ssh_natives::ssh_is_open(h)}");
+  ssh_natives::ssh_send(h, "exit\n");
+  start = now();
+  while ssh_natives::ssh_is_open(h) && now() - start < 10000 { ssh_natives::sleep_ms(5); }
+  println("EXIT {ssh_natives::ssh_is_open(h)}");
+  ssh_natives::ssh_close(h);
+  ssh_natives::ssh_send(h, "after close\n");
+  ssh_natives::ssh_resize(h, 1, 1);
+  println("CLOSED [{ssh_natives::ssh_recv(h)}] {ssh_natives::ssh_is_open(h)} {ssh_natives::ssh_login(h, "u", "right")} {ssh_natives::ssh_open_shell(h, "vt100", 1, 1)}");
+  println("UNKNOWN [{ssh_natives::ssh_recv(99)}] {ssh_natives::ssh_is_open(-1)} {ssh_natives::ssh_login(99, "u", "right")}");
+  println("REFUSED {ssh_natives::ssh_connect("127.0.0.1", port)}");
+}
