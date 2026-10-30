@@ -2955,6 +2955,15 @@ static void loft_vec_reserve_more(loft_ref v, int64_t extra, uint32_t size) {
     loft_vec_reserve(v, (int64_t) count, size);
 }
 
+/* `@FR-R-PushFill`'s run clause: room for `extra` more elements before a straight-line run of
+ * pushes — claimed for an empty vector, as its first push would.  A null reference and a locked
+ * store are left alone — the pushes answer them as they would without it — so the reservation
+ * is capacity and nothing else. */
+static void loft_vec_reserve_run(loft_ref v, int64_t extra, uint32_t size) {
+    if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0 || loft_store_of(v)->read_only) return;
+    loft_vec_reserve_more(v, extra, size);
+}
+
 /* The growth arm, out of line: the length synced, the element appended the ordinary way (which
  * grows, refuses a locked store, drops a push into an absent vector), the window re-derived. */
 LOFT_COLD static loft_win loft_win_grow(loft_win w, loft_ref v, uint32_t size, uint64_t bits) {

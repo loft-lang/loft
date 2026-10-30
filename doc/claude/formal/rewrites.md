@@ -862,6 +862,24 @@ Sites: `hoist::range_counters`, `hoist::plain_for_body`, `hoist::push_loop`,
 (w1–w12 a window; d1–d8 the declines; a1–b1 the aliasing cases; r1 the growth condition),
 pins `tests/push_window.rs`.
 
+**(R-PushFill)'s straight-line run clause (the C), in words.**  A RUN of two or more scalar
+pushes of one element size onto one path P — consecutive statements, only line markers
+between, each a bare push or the `OpPreAllocVector(P, 1, w)` a push onto a local is lowered
+with — RESERVES room for the run's count before its first push, so P grows once instead of at
+each step.  Observably nothing, as the loop's reservation: the elements, the length and every
+value read between the pushes are the pushes' own.  The runtime's `loft_vec_reserve_run` leaves
+a null reference and a locked store alone, so a push refused there is refused where it was and
+no extra refusal is raised; an empty vector is claimed at the reservation as its first push
+would claim it.  A path a window, a push header, a value held apart (`(R-Apart)`) or a
+deferred copy serves is left to it.  It reaches a constructor inlined into its record literal
+— `Form { lens: [la, lb, lc], turns: [ea, eb, ec] }` is six pushes onto two empty fields —
+which hex_recover's `forms_upto` builds per candidate: −7.3 % (gcc ship).  Switch
+`LOFT_NO_PUSH_RUN_RESERVE=1`.  Cells `tests/scripts/a-run-of-pushes-reserves-its-room-once.loft`
+(r1, r2, r4, r5 reach it; falsified by a reservation that also sets the length).  Sites:
+`FnWriter::reserve_push_run` / `push_at` (`src/c/body.rs`, in both statement loops: `stmts_in`
+and a value block's `assign_seq`), `loft_vec_reserve_run` (`src/c/loft_rt.h`).  Native's run
+clause is the byte form above, which opens a window for the run.
+
 **(R-PushFill)'s record clause, in words.**
 (`bench/portal/analysis/round-3.md` § Built).  The consumer bench's `enum_match` builds
 its edits as `for i in 0..3000 { if i % 3 == 0 { edits += [SetHeight { … }] } else if … {
