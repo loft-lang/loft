@@ -4388,7 +4388,8 @@ line in `Output::output_function`'s prelude.
                  stack: hex_form `side_edges` −67 %, hex_place `combine_cut` −51 %,
                  hex_field `trace` −40 %, hex_roof `roof_match` −37 % when they stopped
                  counting (gcc ship lane, 119 library routines: 6 faster, 112 the same,
-                 hex_world `get_cell` +2.8 %).  `LOFT_INLINE_COUNT_BRACES=1` counts
+                 hex_world `get_cell` +2.8 %; clang: hex_edge `passable` −15 %, 118 the
+                 same, none slower).  `LOFT_INLINE_COUNT_BRACES=1` counts
                  them again.
                  Switch `LOFT_NO_INLINE_HINT=1`.
 
