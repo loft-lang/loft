@@ -1091,6 +1091,14 @@ impl Output<'_> {
         } else {
             let mut s = raw_code;
             for (pre_name, pre_code, _, _, inner_replace_all) in &inner_pre_evals {
+                // loft#2259 — an inner binding the identity map already emitted by name is
+                // substituted: text cannot tell it from ANOTHER node with the same text, so a
+                // text pass here rewrote that other node too.  `walk(h) == A && walk(h) == B`
+                // under a dup-param `assert` turned the second call's own binding into
+                // `let _pre_43 = _pre_42;` — one call, its side effect lost, on `--native`.
+                if names_binding(&s, pre_name) {
+                    continue;
+                }
                 if *inner_replace_all {
                     // Dup-param inner pre-eval: the arg code appears multiple times
                     // in the binding code (template expanded @v1 twice), replace all.
@@ -1340,4 +1348,15 @@ impl Output<'_> {
             _ => false,
         }
     }
+}
+
+/// Does `code` already name the binding `name` (`_pre_42`) — the whole name, so `_pre_42` is
+/// not found inside `_pre_420`?
+fn names_binding(code: &str, name: &str) -> bool {
+    code.match_indices(name).any(|(at, _)| {
+        let before = code[..at].chars().next_back();
+        let after = code[at + name.len()..].chars().next();
+        !before.is_some_and(|c| c.is_alphanumeric() || c == '_')
+            && !after.is_some_and(|c| c.is_alphanumeric() || c == '_')
+    })
 }
