@@ -23,8 +23,8 @@ fn parents(b: ir::Bundle) -> vector<vector<integer>> {
     out += [[]];
   }
   for p in 0..n {
-    t = b.types[p] ?? panic("a type");
-    match t.parts[0] ?? panic("a type has its parts") {
+    t = b.types[p]!;
+    match t.parts[0]! {
       PtEnum { values } => {
         for v in values {
           link(out, n, v.nr, p);
@@ -44,7 +44,7 @@ fn link_fields(b: ir::Bundle, out: vector<vector<integer>>, n: integer, fields: 
     if c == null {
       continue;
     }
-    match c.parts[0] ?? panic("a type has its parts") {
+    match c.parts[0]! {
       PtStruct { fields: _ } => link(out, n, f.content, p),
       PtEnumValue { value: _, fields: _ } => link(out, n, f.content, p),
       PtEnum { values: _ } => link(out, n, f.content, p),
@@ -67,7 +67,7 @@ fn link(out: vector<vector<integer>>, n: integer, child: integer, parent: intege
   if child < 0 || child >= n {
     return;
   }
-  ps = out[child] ?? panic("in range");
+  ps = out[child]!;
   at = 0;
   while at < len(ps) && (ps[at] ?? 0) < parent {
     at += 1;
@@ -79,7 +79,7 @@ fn link(out: vector<vector<integer>>, n: integer, child: integer, parent: intege
 }
 
 fn type_name(b: ir::Bundle, tp: integer) -> text {
-  (b.types[tp] ?? panic("a type")).name
+  b.types[tp]!.name
 }
 
 // Rust's `{:?}` of a boolean and of a list of integers.
@@ -147,9 +147,9 @@ fn show_fields(b: ir::Bundle, fields: vector<ir::DbField>) -> text {
 
 // `show_type(tp, true)`.
 fn show_type(b: ir::Bundle, tp: integer, ps: vector<integer>) -> text {
-  t = b.types[tp] ?? panic("a type");
+  t = b.types[tp]!;
   r = "{t.name}[{t.size}/{t.align}]:";
-  p = t.parts[0] ?? panic("a type has its parts");
+  p = t.parts[0]!;
   match p {
     PtEnumValue { value, fields: _ } => { r += " EnumValue({value})"; }
     _ => {}
@@ -245,7 +245,7 @@ fn dep_var(f: ir::Function, dep: vector<integer>) -> text {
 }
 
 fn def_name(b: ir::Bundle, d: integer) -> text {
-  (b.data.definitions[d] ?? panic("a definition")).name
+  b.data.definitions[d]!.name
 }
 
 // `IntegerSpec::source_name` with `Display for Type`'s fallback.
@@ -291,7 +291,7 @@ fn types_debug(ts: vector<ir::TypeT>) -> text {
 }
 
 fn one_debug(ts: vector<ir::TypeT>) -> text {
-  type_debug(ts[0] ?? panic("a boxed type"))
+  type_debug(ts[0]!)
 }
 
 // The derived `Debug for Type` (`src/data.rs`), with `IntegerSpec`'s own form (`min, max,
@@ -329,7 +329,7 @@ fn type_debug(t: ir::TypeT) -> text {
 
 // `Type::show`.
 fn type_show(b: ir::Bundle, f: ir::Function, ts: vector<ir::TypeT>) -> text {
-  type_show_one(b, f, ts[0] ?? panic("a type"))
+  type_show_one(b, f, ts[0]!)
 }
 
 fn type_show_one(b: ir::Bundle, f: ir::Function, t: ir::TypeT) -> text {
@@ -406,7 +406,7 @@ fn dep_att(d: ir::Definition, dep: vector<integer>) -> vector<text> {
 
 // `Type::argument`: a header's spelling.
 fn type_argument(b: ir::Bundle, d: ir::Definition, ts: vector<ir::TypeT>) -> text {
-  type_argument_one(b, d, ts[0] ?? panic("a type"))
+  type_argument_one(b, d, ts[0]!)
 }
 
 fn type_argument_one(b: ir::Bundle, d: ir::Definition, t: ir::TypeT) -> text {
@@ -428,7 +428,7 @@ fn header(b: ir::Bundle, d: ir::Definition) -> text {
     r += "{a.name}:{type_argument(b, d, a.typedef)}";
   }
   r += ")";
-  match d.returned[0] ?? panic("a return type") {
+  match d.returned[0]! {
     TyVoid => {}
     _ => { r += " -> {type_argument(b, d, d.returned)}"; }
   }
@@ -493,13 +493,13 @@ fn show_node(b: ir::Bundle, f: ir::Function, n: ir::Node, ind: integer, o: &text
       }
       o += ")";
     }
-    NdBlock { block } => show_block(b, f, block[0] ?? panic("a block"), ind, o),
+    NdBlock { block } => show_block(b, f, block[0]!, ind, o),
     NdVar { n: v } => { o += "{var_name(f, v)}({var_scope(f, v)})"; }
     NdSet { var, inner } => {
       if var == 65535 {
         o += "unknown(??):?? = ";
       } else {
-        x = f.variables[var] ?? panic("a variable");
+        x = f.variables[var]!;
         o += "{x.name}({x.scope}):{type_show(b, f, x.type_def)} = ";
       }
       show_code(b, f, inner, ind, false, o);
@@ -528,7 +528,7 @@ fn show_node(b: ir::Bundle, f: ir::Function, n: ir::Node, ind: integer, o: &text
       show_code(b, f, e, ind, false, o);
     }
     NdLoop { block } => {
-      lp = block[0] ?? panic("a loop");
+      lp = block[0]!;
       o += "loop {{#{lp.name}_{lp.scope}\n";
       for x in lp.operators {
         show_code(b, f, x, ind + 1, true, o);

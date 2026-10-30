@@ -26,7 +26,7 @@ pub fn refusal(b: ir::Bundle, tp: integer, seen: vector<boolean>) -> text {
   if t == null {
     return "a format of an unknown type";
   }
-  match t.parts[0] ?? panic("a type has its parts") {
+  match t.parts[0]! {
     PtEnum { values } => {
       if t.name == "JsonValue" {
         return "a format of a JsonValue";
@@ -85,9 +85,9 @@ pub fn render(b: ir::Bundle, tp: integer, s: integer, r: integer, p: integer, fm
     o += "null";
     return;
   }
-  t = b.types[tp] ?? panic("a type the lowering checked");
+  t = b.types[tp]!;
   complex = t.complex;
-  match t.parts[0] ?? panic("a type has its parts") {
+  match t.parts[0]! {
     PtStruct { fields } => show_fields(b, fields, s, r, p, fmt, ind, complex, o),
     PtEnumValue { value: _, fields } => {
       if fmt & 2 != 0 {
@@ -181,7 +181,7 @@ fn show_enum(b: ir::Bundle, name: text, values: vector<ir::EnumPair>, s: integer
     }
     vt = values[v - 1];
     if vt != null {
-      match (b.types[vt.nr] ?? panic("a variant type")).parts[0] ?? panic("parts") {
+      match b.types[vt.nr]!.parts[0]! {
         PtEnumValue { value: _, fields } => {
           for f in fields {
             if f.name == "payload" {
@@ -202,7 +202,7 @@ fn show_enum(b: ir::Bundle, name: text, values: vector<ir::EnumPair>, s: integer
   fields: vector<ir::DbField> = [];
   payload = false;
   if vt.nr != 65535 {
-    match (b.types[vt.nr] ?? panic("a variant type")).parts[0] ?? panic("parts") {
+    match b.types[vt.nr]!.parts[0]! {
       PtEnumValue { value: _, fields: fs } => {
         payload = true;
         fields = fs;
@@ -256,7 +256,7 @@ fn is_struct(b: ir::Bundle, tp: integer) -> boolean {
   if t == null {
     return false;
   }
-  match t.parts[0] ?? panic("a type has its parts") {
+  match t.parts[0]! {
     PtStruct { fields: _ } => true,
     PtEnumValue { value: _, fields: _ } => true,
     _ => false,
@@ -264,7 +264,7 @@ fn is_struct(b: ir::Bundle, tp: integer) -> boolean {
 }
 
 fn show_list(b: ir::Bundle, elem: integer, s: integer, r: integer, p: integer, fmt: integer, ind: integer, o: &text) {
-  e = b.types[elem] ?? panic("an element type");
+  e = b.types[elem]!;
   complex_elem = fmt & 1 != 0 && e.complex;
   struct_elem = is_struct(b, elem);
   o += "[";
@@ -283,7 +283,7 @@ fn show_list(b: ir::Bundle, elem: integer, s: integer, r: integer, p: integer, f
 // A hash in key order (`hash::records_sorted`), its entries held outside the store, as the Rust
 // renderer holds them.
 fn show_hash(b: ir::Bundle, tp: integer, elem: integer, s: integer, r: integer, p: integer, fmt: integer, ind: integer, o: &text) {
-  e = b.types[elem] ?? panic("an element type");
+  e = b.types[elem]!;
   complex_elem = fmt & 1 != 0 && e.complex;
   struct_elem = is_struct(b, elem);
   o += "[";

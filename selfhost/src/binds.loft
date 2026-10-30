@@ -123,7 +123,7 @@ fn tp(f: ir::Function, v: integer) -> ir::TypeT {
   if !in_range(f, v) {
     return ir::TypeT.TyNull;
   }
-  (f.variables[v] ?? panic("a variable")).type_def[0] ?? panic("a variable has its type")
+  f.variables[v]!.type_def[0]!
 }
 
 // src/variables/mod.rs:2612 fn var — the variable `names` binds `nm` to, `u16::MAX` for none.
@@ -139,27 +139,27 @@ fn var_named(f: ir::Function, nm: text) -> integer {
 
 // src/variables/mod.rs:2341 fn uses — indexes unguarded, as the Rust does.
 fn uses(f: ir::Function, v: integer) -> integer {
-  (f.variables[v] ?? panic("uses: variable {v} out of range")).uses
+  f.variables[v]!.uses
 }
 
 // src/variables/mod.rs:4401 fn is_captured.
 fn is_captured(f: ir::Function, v: integer) -> boolean {
-  in_range(f, v) && (f.variables[v] ?? panic("a variable")).captured
+  in_range(f, v) && f.variables[v]!.captured
 }
 
 // src/variables/mod.rs:4296 fn is_view_elided.
 fn is_view_elided(f: ir::Function, v: integer) -> boolean {
-  in_range(f, v) && (f.variables[v] ?? panic("a variable")).view_elided
+  in_range(f, v) && f.variables[v]!.view_elided
 }
 
 // src/variables/mod.rs:4549 fn is_caller_hidden_buf.
 fn is_caller_hidden_buf(f: ir::Function, v: integer) -> boolean {
-  in_range(f, v) && (f.variables[v] ?? panic("a variable")).caller_hidden_buf
+  in_range(f, v) && f.variables[v]!.caller_hidden_buf
 }
 
 // src/variables/mod.rs:5341 fn is_buffer_witnessed — the set is stored as the flag.
 fn is_buffer_witnessed(f: ir::Function, v: integer) -> boolean {
-  in_range(f, v) && (f.variables[v] ?? panic("a variable")).buffer_witnessed
+  in_range(f, v) && f.variables[v]!.buffer_witnessed
 }
 
 // src/variables/mod.rs:5449 fn is_inline_ref — `inline_ref_vars`, stored as `inline_refs`.
@@ -173,7 +173,7 @@ fn rebind_orig(f: ir::Function, v: integer) -> integer {
   if !in_range(f, v) {
     return -1;
   }
-  w = (f.variables[v] ?? panic("a variable")).rebind_orig;
+  w = f.variables[v]!.rebind_orig;
   if w == NO_VAR { -1 } else { w }
 }
 
@@ -183,7 +183,7 @@ fn owner_witness(f: ir::Function, v: integer) -> integer {
   if !in_range(f, v) {
     return -1;
   }
-  w = (f.variables[v] ?? panic("a variable")).owner_witness;
+  w = f.variables[v]!.owner_witness;
   if w == NO_VAR { -1 } else { w }
 }
 
@@ -204,7 +204,7 @@ fn entry_witness(f: ir::Function, v: integer) -> integer {
 
 // src/variables/mod.rs:5720 fn is_compiler_generated — indexes unguarded, as the Rust does.
 fn is_compiler_generated(f: ir::Function, v: integer) -> boolean {
-  x = f.variables[v] ?? panic("is_compiler_generated: variable {v} out of range");
+  x = f.variables[v]!;
   x.name.starts_with("_") && !x.user_named
 }
 
@@ -227,7 +227,7 @@ fn deps_are_guarded_backings(f: ir::Function, v: integer) -> boolean {
     if !in_range(f, d) {
       return false;
     }
-    x = f.variables[d] ?? panic("a variable");
+    x = f.variables[d]!;
     if !x.skip_free || !is_inline_ref(f, d) || !x.name.starts_with("__vdb") {
       return false;
     }
@@ -273,7 +273,7 @@ fn displaced_buffer_witness(b: ir::Bundle, f: ir::Function, v: integer, value: i
       if len(items) == 0 {
         return -1;
       }
-      r = buffer_witness_of_call(b, f, v, items[len(items) - 1] ?? panic("a step"));
+      r = buffer_witness_of_call(b, f, v, items[len(items) - 1]!);
       r
     }
     _ => buffer_witness_of_call(b, f, v, value),
@@ -291,7 +291,7 @@ fn buffer_witness_of_call(b: ir::Bundle, f: ir::Function, v: integer, call: ir::
       if buf < 0 || buf >= len(args) {
         return -1;
       }
-      w = own::var_of(args[buf] ?? panic("an argument"));
+      w = own::var_of(args[buf]!);
       if w >= 0 && w != v && is_compiler_generated(f, w) { w } else { -1 }
     }
     _ => -1,
@@ -301,7 +301,7 @@ fn buffer_witness_of_call(b: ir::Bundle, f: ir::Function, v: integer, call: ir::
 // ── definitions (src/data.rs `Definition`, `Data`) ──
 
 fn def(b: ir::Bundle, d: integer) -> ir::Definition {
-  b.data.definitions[d] ?? panic("definition {d} out of range")
+  b.data.definitions[d]!
 }
 
 // `*def.code() != Value::Null` — a definition with a loft body (a native has none).
@@ -309,12 +309,12 @@ fn has_code(d: ir::Definition) -> boolean {
   if len(d.code) == 0 {
     return false;
   }
-  !((d.code[0] ?? panic("a body")) is NdNull)
+  !(d.code[0]! is NdNull)
 }
 
 // src/data.rs:4790 fn returned.
 fn returned(d: ir::Definition) -> ir::TypeT {
-  d.returned[0] ?? panic("a definition has its return type")
+  d.returned[0]!
 }
 
 // The attribute index `attr_names` maps `nm` to, -1 for none.  A warm load derives the map from
@@ -332,7 +332,7 @@ fn attr_index(d: ir::Definition, nm: text) -> integer {
 // `attr_names.get(nm).is_some_and(|&a| attributes()[a].hidden)`.
 fn names_hidden_attr(d: ir::Definition, nm: text) -> boolean {
   a = attr_index(d, nm);
-  a >= 0 && (d.attributes[a] ?? panic("an attribute")).hidden
+  a >= 0 && d.attributes[a]!.hidden
 }
 
 // src/data.rs:4812 fn hidden_return_buffer_attr — the index of the hidden RETURN BUFFER
@@ -342,7 +342,7 @@ fn hidden_return_buffer_attr(d: ir::Definition) -> integer {
     if !a.hidden || a.work_buffer {
       continue;
     }
-    heap = match a.typedef[0] ?? panic("an attribute has its type") {
+    heap = match a.typedef[0]! {
       TyReference { n: _, dep: _ } => true,
       TyVector { inner: _, dep: _ } => true,
       TyEnum { n: _, is_ref, dep: _ } => is_ref,
@@ -491,8 +491,8 @@ fn reads_var(n: ir::Node, v: integer) -> boolean {
     NdInsert { items } => any_reads_var(items, v),
     NdTuple { items } => any_reads_var(items, v),
     NdParallel { arms } => any_reads_var(arms, v),
-    NdBlock { block } => any_reads_var((block[0] ?? panic("a block")).operators, v),
-    NdLoop { block } => any_reads_var((block[0] ?? panic("a loop")).operators, v),
+    NdBlock { block } => any_reads_var(block[0]!.operators, v),
+    NdLoop { block } => any_reads_var(block[0]!.operators, v),
     NdSet { var, inner } => var == v || reads_var(inner, v),
     NdReturn { inner } => reads_var(inner, v),
     NdDrop { inner } => reads_var(inner, v),
@@ -647,7 +647,7 @@ fn projection_container_var(b: ir::Bundle, value: ir::Node) -> integer {
       if !own::is_projection_op(b, def_nr) || len(args) == 0 {
         return -1;
       }
-      c = own::var_of(args[0] ?? panic("an argument"));
+      c = own::var_of(args[0]!);
       if c >= 0 { c } else { projection_container_var(b, args[0]) }
     }
     _ => -1,
@@ -706,7 +706,7 @@ fn protectable_args_of(b: ir::Bundle, defs: own::Defs, call: ir::Node, args: vec
     if at == null {
       continue;
     }
-    t = at.typedef[0] ?? panic("an attribute has its type");
+    t = at.typedef[0]!;
     // `heap_dep()` already peels; `base().heap_dep()` peels once more.
     if !own::has_heap_dep(t) && !own::has_heap_dep(base(t)) {
       continue;
@@ -786,7 +786,7 @@ fn callee_of(b: ir::Bundle, defs: own::Defs, value: ir::Node) -> integer {
       rhss: vector<ir::Node> = [];
       for x in defs.rhs_var {
         if x == v {
-          rhss += [defs.rhs[x#index] ?? panic("a right-hand side")];
+          rhss += [defs.rhs[x#index]!];
         }
       }
       t = own::fnref_target_of(rhss);
@@ -833,7 +833,7 @@ fn callref_captures(b: ir::Bundle, d: integer, call: ir::Node) -> boolean {
       return true;
     }
     for a in def(b, clos).attributes {
-      if own::base_is_dbref(a.typedef[0] ?? panic("an attribute has its type")) {
+      if own::base_is_dbref(a.typedef[0]!) {
         return true;
       }
     }
@@ -865,7 +865,7 @@ fn may_hand_back_a_caller_store(b: ir::Bundle, ops: own::Ops, fn_nr: integer) ->
     return false;
   }
   attrs = def(b, fn_nr).attributes;
-  base_v == NO_VAR || (base_v < len(attrs) && !(attrs[base_v] ?? panic("an attribute")).hidden)
+  base_v == NO_VAR || (base_v < len(attrs) && !attrs[base_v]!.hidden)
 }
 
 // src/use_analysis.rs:3826 fn may_return_a_borrow — the return dep (the proxy) or the oracle
@@ -955,5 +955,5 @@ fn binds_the_minted_store_of_call(b: ir::Bundle, ops: own::Ops, f: ir::Function,
   if buf >= len(args) {
     return true;
   }
-  own::var_of(args[buf] ?? panic("an argument")) != v
+  own::var_of(args[buf]!) != v
 }
