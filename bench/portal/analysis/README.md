@@ -12,6 +12,7 @@ with the units in build order and the file below that priced each.
 
 | file | class | state |
 |---|---|---|
+| `c-libraries.md` | every library bench on the C ship lane against its Rust twin | **MEASURED 2026-10-30** — median ≈ 1.6×, 13 rows over 3.5×; three BUILT the same day (`base64_to_bytes` −71 %, `keys_near` −78 %, `render_inline` −28 %); the order names the ports left (`R-AppendTwin`, `R-Destination`) |
 | `c-3x-bar.md` | the C99 lane against the owner's next-release goal: 3× as the bug bar | **ASSESSED 2026-10-28** — both ship lanes under 3× (worst 2.93× gcc, 2.70× clang); the bar is reliable once every ship row is at or under ≈ 2.7×; the three rows left in order (`slope_path_with_undo`, `map_json`, `par`) and how to measure |
 | `top5-memory.md` | the five worst C ship rows (`map_json`, `par`, `interp_fib`, `slope_path_with_undo`, `grouped_fill_find`), each gap split into memory-model and other causes | **PRICED 2026-10-29** — a header lost to the loop's own append is the shared mechanism (`interp_fib` −31 % gcc / −39 % clang cycles held); `grouped_fill_find` ≈ 85 % memory model, `par` ≈ 3 %; the build order closes the file |
 | `c-store-gaps.md` | the C99 lane, every class | **MEASURED 2026-10-26, NOT PRICED** — 79 routines, median 3.40×, 37 over 3.5×; the C is 3–15× behind NATIVE on most of them, so each gap is a port of a rewrite or runtime routine native already has; the order starts with the push window |
