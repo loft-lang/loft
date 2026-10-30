@@ -285,6 +285,10 @@ enum RetPromotion {
     /// lowering the single-named-local shape already uses and which loft#1078's own
     /// leak fix proved out.
     SkipJoinArm,
+    /// `@FR-N-Shape` — a lambda's nullable vector tail when the lambda has no buffer yet:
+    /// growing would make that local the buffer argument.  Nothing is emitted; the
+    /// between-passes sweep reserves `__retbuf` and pass 2 BINDS the local into it.
+    AwaitReservedBuffer,
     /// Vector / struct-Enum returns on LAMBDAS still grow the arity in place:
     /// a lambda is defined at its literal site and invoked via CallRef, so no
     /// earlier caller can hold a short arg list.  PASS-1 growth on a plain fn
@@ -19901,6 +19905,11 @@ impl Parser {
                 substitute: is_work_ref && !a1b_site,
             };
         }
+        // loft#2233's twin in a lambda: with no buffer to bind to, `Grow` would make the
+        // nullable local itself the buffer argument — the rename the rung above refused.
+        if nullable_vector_local && !ctx.is_plain_fn && self.return_buffer().is_none() {
+            return RetPromotion::AwaitReservedBuffer;
+        }
         RetPromotion::Grow
     }
 
@@ -20210,7 +20219,8 @@ impl Parser {
                     | RetPromotion::MergeOnly
                     | RetPromotion::SkipInnerRef
                     | RetPromotion::SkipCaptured
-                    | RetPromotion::SkipJoinArm => {}
+                    | RetPromotion::SkipJoinArm
+                    | RetPromotion::AwaitReservedBuffer => {}
                     // loft#974 — a shape that carries its own delivery takes the borrow
                     // fact and nothing else: no buffer rename, no bind, no arity growth.
                     // Every leg below rewrites where the value LIVES, and this return
