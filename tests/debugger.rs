@@ -1041,6 +1041,35 @@ fn live_edit_struct_field_resumes_with_new_value() {
     );
 }
 
+/// `@FR-L-OutOfLine` (@C159, step 8) — a field path through a CHILD (`t.left.key`) follows the
+/// child's record: the edit lands in the child, and the resumed program reads it.  `depth`'s
+/// answer is 1 + 2 = 3 before the edit and 1 + 9 = 10 after it.
+#[test]
+fn live_edit_follows_an_out_of_line_child() {
+    let mut p = repl();
+    let defs = &[
+        "struct Tree { key: integer, left: Tree? }",
+        "fn depth(t: Tree) -> integer {\n  m = t.key;\n  t.key + t.left.key\n}",
+    ];
+    let mut state = run_to_pause(
+        &mut p,
+        defs,
+        "assert(depth(Tree{key: 1, left: Tree{key: 2}}) == 10, \"edited t.left.key to 9\")",
+        "depth",
+        2,
+    );
+    assert!(
+        state.set_frame_path("t", &["left", "key"], "9", &p.data),
+        "edit a field of the child"
+    );
+    state.resume();
+    assert!(
+        state.database.runtime_error.is_none(),
+        "the edit reached the child; err = {:?}",
+        state.database.runtime_error
+    );
+}
+
 /// @PLN16.J — field-edit rejection cases: an unknown field, a non-struct base, and
 /// a non-scalar field all return `false` (no write, no corruption).
 #[test]

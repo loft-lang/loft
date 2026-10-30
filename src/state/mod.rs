@@ -5434,12 +5434,33 @@ impl State {
             return None; // null struct
         }
         let mut tp_known = self.database.name(&tp.name(data));
+        let mut rec = db.rec;
         let mut off = db.pos;
         for (i, field) in fields.iter().enumerate() {
             let (position, content) = self.database.struct_field(tp_known, field)?;
             off += u32::from(position);
             if i + 1 == fields.len() {
-                return Some((db.store_nr, db.rec, off, content));
+                return Some((db.store_nr, rec, off, content));
+            }
+            // `@FR-L-OutOfLine` — an out-of-line field is followed to its child record in the
+            // same store; an absent child has no fields to reach.
+            if let crate::database::Parts::ChildRec(child) =
+                self.database.types[content as usize].parts
+                && self.database.child_rec_is_value(child)
+            {
+                let at = crate::keys::DbRef {
+                    store_nr: db.store_nr,
+                    rec,
+                    pos: off,
+                };
+                let c = self.database.ref_from_child_rec(&at);
+                if c.rec == 0 || !self.database.is_struct(child) {
+                    return None;
+                }
+                rec = c.rec;
+                off = c.pos;
+                tp_known = child;
+                continue;
             }
             // Intermediate fields must be inline nested structs (summed offset, same
             // record); a vector / linked ref is the element / whole-value slice.

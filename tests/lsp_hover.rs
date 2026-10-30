@@ -90,3 +90,25 @@ fn an_unknown_identifier_is_none() {
         "an undefined name resolves to no hover"
     );
 }
+
+/// `@FR-L-OutOfLine` (@C159, step 8) — a struct holding a field of its own type shows that
+/// field as the author wrote it, `Tree?`: its out-of-line layout (`child_rec<Tree>`) is a
+/// storage fact, never shown.
+#[test]
+fn a_recursive_field_shows_as_its_declared_type() {
+    let src = "\
+struct Tree {
+  key: integer,
+  left: Tree?,
+}
+fn main() {
+  t = Tree { key: 1, left: Tree { key: 2 } };
+  print(t.left.key)
+}
+";
+    let h = hover(src, 6, 8).expect("the struct `Tree` resolves");
+    assert_eq!(
+        h.signature, "struct Tree { key: integer, left: Tree? }",
+        "the declared field type, not the layout row"
+    );
+}
