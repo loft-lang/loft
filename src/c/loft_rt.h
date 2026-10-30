@@ -2052,7 +2052,9 @@ static void loft_free_displaced(loft_ref displaced, loft_ref witness) {
  * native's emitter resets it (and the bytecode writer's `OpInitRefSentinel` after an owned
  * rebind's free): a later free of the same variable — the next pass's pre-build free — is then
  * a no-op, where it would otherwise release whatever store reused the slot meanwhile. */
-static void loft_free_var(loft_ref *v) {
+/* Inlined at every scope exit: the common case is a variable that was never minted, a test and
+ * no call; the release itself (`loft_free_ref`) stays out of line. */
+LOFT_HOT_INLINE void loft_free_var(loft_ref *v) {
     if (v->store_nr == 0xFFFF) return;
     loft_free_ref(*v);
     v->store_nr = 0xFFFF;
@@ -2060,7 +2062,7 @@ static void loft_free_var(loft_ref *v) {
 
 /* OpFreeRefIfDistinct of a variable: released and reset when it names another store than the
  * witness (native's `OpFreeRefIfDistinctEmitter`). */
-static void loft_free_var_distinct(loft_ref *v, loft_ref witness) {
+LOFT_HOT_INLINE void loft_free_var_distinct(loft_ref *v, loft_ref witness) {
     if (v->store_nr == witness.store_nr || v->store_nr == 0xFFFF) return;
     if (!loft_free_protected(*v)) loft_free_ref(*v);
     v->store_nr = 0xFFFF;
