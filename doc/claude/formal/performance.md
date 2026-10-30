@@ -205,10 +205,10 @@ different matter and `(Perf-Like)`'s.
 OPEN: **1**
 
 - **D-perf-2 (OPEN, [#1743](https://github.com/loft-lang/loft/issues/1743), @PLN158) — not resolvable in a release** (owner's ruling) —
-  violates (Perf-Weight): the shipped routines as a POPULATION are over both bars.  Re-scoped to
-  the C lanes 2026-10-29 (owner): the population is judged on the C ship lane under gcc and clang
+  violates (Perf-Weight): the shipped routines as a POPULATION are over both bars.  Judged on
+  the C lanes (owner's ruling): the population is judged on the C ship lane under gcc and clang
   (`bench/stats.py --lanes rust,c,cship [--cc clang]` with every library bench, which builds its C
-  lanes since 3d2b5fc8b).  The bar spans every public routine of the stdlib and of every shipped
+  lanes).  The bar spans every public routine of the stdlib and of every shipped
   library, and the routines over it fall into mechanism classes whose cures are engine work
   measured in cycles (@PLN158; the C stream, `bench/portal/analysis/c-3x-bar.md`), so no single
   release can close it; each routine that crosses the bar is
