@@ -262,8 +262,10 @@ pub(crate) struct FnWriter<'a> {
     /// The source line the statements now being written come from (`Value::Line`), which a
     /// call records as its frame's site when the unit keeps frames (`Cx::frames`).
     cur_line: u32,
-    /// The loft line the last `#line` named (`Cx::source_lines`), 0 before the first.
+    /// The loft line the statements being written belong to (`Cx::source_lines`), 0 before
+    /// the first; each C line is marked with it, and its file (a C string literal).
     marked_line: u32,
+    marked_file: String,
     /// `LOFT_C_WHERE` reported this function's refusal already.
     where_told: bool,
     /// `@FR-R-RetAdopt` — the result local that IS the hidden return buffer
@@ -664,6 +666,7 @@ impl<'a> FnWriter<'a> {
             range_facts: None,
             cur_line: 0,
             marked_line: 0,
+            marked_file: String::new(),
             where_told: false,
             adopt: if std::env::var("LOFT_NO_RETBUF_ADOPT").is_ok_and(|v| v != "0") {
                 None
@@ -1002,6 +1005,11 @@ impl<'a> FnWriter<'a> {
     }
 
     fn line(&mut self, ind: usize, s: &str) {
+        // `Cx::source_lines`: every C line of a statement is its loft line's — a `#line` before
+        // each, since one marker would number the lines after it onward.
+        if self.marked_line != 0 {
+            let _ = writeln!(self.body, "#line {} {}", self.marked_line, self.marked_file);
+        }
         let _ = writeln!(self.body, "{}{s}", "    ".repeat(ind));
     }
 
@@ -2875,8 +2883,9 @@ impl<'a> FnWriter<'a> {
             // loft line's.  A directive starts its own line; `statement_count` passes over it.
             if self.cx.source_lines && *n != 0 && *n != self.marked_line {
                 self.marked_line = *n;
-                let file = c_string(&self.cx.data.def(self.d).position().file);
-                let _ = writeln!(self.body, "#line {n} {file}");
+                if self.marked_file.is_empty() {
+                    self.marked_file = c_string(&self.cx.data.def(self.d).position().file);
+                }
             }
         } else if self.cur_line != 0
             && !matches!(

@@ -12028,7 +12028,14 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             let ann =
                 test_runner::parse_annotations(&fa::read_to_string(&abs_file).unwrap_or_default());
             let expected = |name: &str| ann.expected_failure(name);
-            let c = match loft::c::emit_program(&p.data, &state.database, &expected) {
+            // The debug tier marks every statement with its loft line, so the binary's debug
+            // information names the loft source (`#line`).
+            let emitted = if tier == c_driver::Tier::Debug {
+                loft::c::emit_program_with_source_lines(&p.data, &state.database, &expected)
+            } else {
+                loft::c::emit_program(&p.data, &state.database, &expected)
+            };
+            let c = match emitted {
                 Ok(c) => c,
                 Err(r) => {
                     let reason = format!("the C backend does not carry this program yet: {r}");

@@ -645,7 +645,14 @@ pub(crate) fn build(
     let pid = std::process::id();
     let src = scratch.join(format!("loft_native_c_{pid}.c"));
     let binary = scratch.join(format!("loft_native_bin_{pid}{exe}"));
-    fa::write(&src, c)
+    // A unit written with source lines (the debug tier) hands the code between its loft
+    // functions back to this file, under the name it is written as here.
+    let text = if tier == Tier::Debug {
+        std::borrow::Cow::Owned(loft::c::resolve_line_resets(c, &src.to_string_lossy()))
+    } else {
+        std::borrow::Cow::Borrowed(c)
+    };
+    fa::write(&src, &*text)
         .map_err(|e| BuildError::Rejected(format!("cannot write {}: {e}", src.display())))?;
     let obj = scratch.join(format!("loft_native_obj_{pid}.obj"));
     let mut cmd = compile_command(&cc, &flags, &src, &binary, &obj, &link_args);

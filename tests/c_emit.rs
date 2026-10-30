@@ -3195,6 +3195,110 @@ fn a_leak_site_c_build_names_where_a_kept_store_was_made() {
     let _ = fa::remove_dir_all(&dir);
 }
 
+/// @PLN206 P0b (the debugger row) — the C debug tier (`--native-debug` on the C backend) writes
+/// the loft source into the binary's debug information: every C line of a statement is preceded
+/// by `#line <its loft line> "<its .loft file>"` (`emit_program_with_source_lines`), and the code
+/// between the functions is handed back to the C file (`resolve_line_resets`).  The line table —
+/// what gdb, lldb, a profiler and a backtrace read — then holds `total.loft` lines 2, 3 and 4 for
+/// `total` and 7 for `main`, and nothing else of that file; the other tiers' C carries no marker.
+/// Falsified: one marker per statement instead of one per C line numbers the lines after it
+/// onward (`total.loft` 8 … 16 appeared), and no marker leaves the file out of the table.
+#[test]
+fn the_c_debug_build_names_loft_lines_in_its_line_table() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("line-table");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let file = dir.join("total.loft");
+    fa::write(
+        &file,
+        "fn total(xs: vector<integer>) -> integer {\n  s = 0;\n  for x in xs { s += x; }\n  s\n}\n\
+         fn main() {\n  println(\"{total([1, 2, 3, 4])}\");\n}\n",
+    )
+    .expect("write program");
+    // The default emission carries no marker.
+    let plain = dir.join("plain.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&plain)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "emit: {}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    assert!(
+        !fa::read_to_string(&plain)
+            .expect("read the C")
+            .contains("#line "),
+        "the default C carries #line markers"
+    );
+    let run = loft::platform::process::harness_command(loft)
+        .arg("--native-debug")
+        .arg(&file)
+        .current_dir(&dir)
+        .env("LOFT_NATIVE_BACKEND", "c")
+        .env("LOFT_KEEP_NATIVE_C", "1")
+        .output()
+        .expect("run loft --native-debug");
+    let err = String::from_utf8_lossy(&run.stderr);
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "10\n",
+        "the debug build:\n{err}"
+    );
+    let kept = err
+        .lines()
+        .find_map(|l| l.strip_prefix("loft: C source preserved at "))
+        .expect("the kept C");
+    let c = fa::read_to_string(kept).expect("read the kept C");
+    let _ = fa::remove_file(kept);
+    let total = file.to_string_lossy().replace('\\', "\\\\");
+    assert!(
+        c.contains(&format!("#line 3 \"{total}\"")),
+        "no marker for line 3 of total.loft"
+    );
+    // The line table, where binutils reads it.
+    let cache = dir.join(".loft").join("cache");
+    let bin = fa::read_dir(&cache)
+        .expect("the build cache")
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .find(|p| p.to_string_lossy().contains("native-c-"))
+        .expect("the debug binary");
+    let Ok(table) = loft::platform::process::harness_command("readelf")
+        .args(["--debug-dump=decodedline"])
+        .arg(&bin)
+        .output()
+    else {
+        eprintln!("skipped the line table: no readelf on PATH");
+        return;
+    };
+    if !table.status.success() {
+        eprintln!("skipped the line table: readelf cannot read this binary");
+        return;
+    }
+    let mut lines: Vec<u32> = String::from_utf8_lossy(&table.stdout)
+        .lines()
+        .filter_map(|l| {
+            let mut f = l.split_whitespace();
+            (f.next()? == "total.loft").then(|| f.next()?.parse().ok())?
+        })
+        .collect();
+    lines.sort_unstable();
+    lines.dedup();
+    assert_eq!(
+        lines,
+        [2, 3, 4, 7],
+        "the loft lines the binary's line table holds"
+    );
+    let _ = fa::remove_dir_all(&dir);
+}
+
 /// Stores::insert_record's hash arm, for an element that owns nothing: one walk files `e` or
 /// finds the entry under its key, which `e` replaces; a walk that cannot answer falls back to a
 /// lookup, a removal and an add.
