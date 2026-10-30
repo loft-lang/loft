@@ -1,0 +1,12 @@
+LOFT-DSCHEMA v2
+hash=16900109347114132701
+root=index<GRec[k]>
+slot=6
+--
+@endian	little
+GRec	size=24	struct{k@0:integer, name@16:text, tags@20:vector<integer>, v@8:integer}
+index<GRec[k]>	size=4	index<GRec>(keys=[(0, true)],elem_size=24,placement=2)
+integer	size=8	base
+text	size=4	base
+vector<integer>	size=4	vector<integer>(elem_size=8)
+--facts--

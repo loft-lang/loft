@@ -1,0 +1,11 @@
+LOFT-DSCHEMA v2
+hash=7753665644829452721
+root=index<GText[name]>
+slot=7
+--
+@endian	little
+GText	size=16	struct{name@8:text, v@0:integer}
+index<GText[name]>	size=4	index<GText>(keys=[(0, true)],elem_size=16,placement=2)
+integer	size=8	base
+text	size=4	base
+--facts--

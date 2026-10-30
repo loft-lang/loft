@@ -1,0 +1,10 @@
+LOFT-DSCHEMA v2
+hash=5588029591822381687
+root=spatial<GPin[x,y]>
+slot=9
+--
+@endian	little
+GPin	size=24	struct{x@0:integer, y@8:integer, n@16:integer}
+integer	size=8	base
+spatial<GPin[x,y]>	size=4	spatial<GPin>(keys=[0, 1],elem_size=24)
+--facts--

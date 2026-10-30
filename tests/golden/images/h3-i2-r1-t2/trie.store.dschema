@@ -1,0 +1,11 @@
+LOFT-DSCHEMA v2
+hash=12368284113633966770
+root=trie<GWord[w]>
+slot=10
+--
+@endian	little
+GWord	size=16	struct{w@8:text, hits@0:integer}
+integer	size=8	base
+text	size=4	base
+trie<GWord[w]>	size=4	trie<GWord[0]>,placement=2
+--facts--
