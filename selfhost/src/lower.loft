@@ -109,12 +109,13 @@ enum Code {
   KeyPart,
   HashFind,
   HashLen,
-  KeyedNull,
+  Remake,
   HashSorted,
   ScratchIterate,
   ScratchStep,
   FreeScratch,
   RefEq,
+  VecAdd,
 }
 
 // One op: `kind` is the kind of value it works on; `a` is a value, a slot, a jump target, a
@@ -453,7 +454,7 @@ fn effect(code: Code, b: integer) -> integer {
     KeyPart => -1,
     HashFind => 0,
     HashLen => 0,
-    KeyedNull => 0,
+    Remake => 0,
     // A hash walk: the snapshot from its hash, a walk's state from the snapshot, the next
     // element from the snapshot (the state is read and written in its slot), the snapshot freed.
     HashSorted => 0,
@@ -461,6 +462,8 @@ fn effect(code: Code, b: integer) -> integer {
     ScratchStep => 0,
     FreeScratch => -1,
     RefEq => -1,
+    // An append of one vector's element copies to another: both in, nothing out.
+    VecAdd => -2,
     _ => -1,
   }
 }
@@ -730,7 +733,9 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     slot = ref_var_slot(l, args[0] ?? panic("OpDatabase names its variable"));
     tp = literal(l, args[1] ?? panic("OpDatabase names its type"));
     mintable(l, b, tp);
-    emit(l, Database, KRef, slot, tp);
+    // The hidden return buffer is the caller's, which the call fills: remade in place whoever
+    // owns it, as the generators write into it (1b-s3.md § Ownership at run time).
+    emit(l, if is_return_buffer(b, l.def_nr, unspan(args[0] ?? panic("checked above"))) { Remake } else { Database }, KRef, slot, tp);
   } else if name == "OpFreeRef" {
     target = unspan(args[0] ?? panic("OpFreeRef names its reference"));
     freed_var = false;
@@ -918,6 +923,17 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
   } else if name == "OpLengthHash" {
     value(l, b, args[0] ?? panic("OpLengthHash names its hash"), KRef);
     emit(l, HashLen, KInt, 0, 0);
+  } else if name == "OpAppendVector" {
+    // `v += other`: element copies, the claims copied by the type table (`loft_vec_add`).  A
+    // linked element type is `loft_vec_add_array`, a later step.
+    tp = literal(l, args[2] ?? panic("OpAppendVector names its element type"));
+    if (b.types[tp] ?? panic("an element type")).linked {
+      refuse(l, "an append of a linked element type");
+      return true;
+    }
+    value(l, b, args[0] ?? panic("OpAppendVector names its vector"), KRef);
+    value(l, b, args[1] ?? panic("and the vector it appends"), KRef);
+    emit(l, VecAdd, KRef, tp, 0);
   } else if name == "OpClearVector" {
     value(l, b, args[0] ?? panic("OpClearVector names its vector"), KRef);
     emit(l, VecClear, KRef, 0, 0);
@@ -1258,7 +1274,7 @@ fn bind(l: Lowering, b: ir::Bundle, var: integer, node: ir::Node) {
         refuse(l, "a hash whose collection type the image does not name: {v.name}");
         return;
       }
-      emit(l, KeyedNull, KRef, slot, ht);
+      emit(l, Remake, KRef, slot, ht);
       return;
     }
     if x is NdNull {
@@ -1331,6 +1347,29 @@ fn bind(l: Lowering, b: ir::Bundle, var: integer, node: ir::Node) {
     value(l, b, x, KRef);
   }
   emit(l, Bind, KRef, slot, tp * 4 + mode);
+}
+
+// Is `n` the variable of function `d`'s hidden return buffer (`hidden_return_buffer_attr`): a
+// hidden parameter that is no work buffer, of a record, vector or struct-enum type?
+fn is_return_buffer(b: ir::Bundle, d: integer, n: ir::Node) -> boolean {
+  var = match n {
+    NdVar { n: v } => v,
+    _ => -1,
+  };
+  def = b.data.definitions[d];
+  if var < 0 || def == null {
+    return false;
+  }
+  v = def.variables.variables[var];
+  if v == null || !v.argument {
+    return false;
+  }
+  for a in def.attributes? {
+    if a.name == v.name {
+      return a.hidden && !a.work_buffer && (record_of(a.typedef) >= 0 || is_vector(a.typedef));
+    }
+  }
+  false
 }
 
 // Is `name` an operator: `Op` and then a capital, as `Definition::is_operator` reads it?

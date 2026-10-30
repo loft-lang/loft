@@ -121,6 +121,92 @@ fn rebound_param(x: integer) -> integer {
   r * 1000 + len(v) * 100 + total(v)
 }
 
+// Appending a vector (`OpAppendVector`, 1b-s3.md § Appending a vector).
+struct Tag { label: text, w: integer }
+struct Holder { id: integer, tags: vector<Tag> }
+
+// A struct literal's vector field from a local of records with texts; the local is freed each
+// pass, so the holders' copies must own their texts.  Weights 0..n-1 twice, out[1]'s last label
+// "t1{n-1}".  appended_field(3): 6 * 100 + 3 * 10 + len("t12") = 633.  appended_field(1): 0 + 10
+// + 3 = 13.
+fn appended_field(n: integer) -> integer {
+  out: vector<Holder> = [];
+  for i in 0..2 {
+    tags: vector<Tag> = [];
+    for j in 0..n {
+      tags += [Tag { label: "t{i}{j}", w: j }];
+    }
+    out += [Holder { id: i, tags: tags }];
+  }
+  s = 0;
+  for h in out {
+    for t in h.tags {
+      s += t.w;
+    }
+  }
+  last = out[1].tags[n - 1];
+  s * 100 + len(out[1].tags) * 10 + (if last { len(last.label) } else { 0 })
+}
+
+// `a += b` into a vector with elements and into an empty one.  added(3): b = [0, 10, 20], a =
+// [1, 2, 0, 10, 20] (sum 33, len 5), e len 3: 3300 + 50 + 3 = 3353.  added(0): 300 + 20 + 0 = 320.
+fn added(n: integer) -> integer {
+  a: vector<integer> = [1, 2];
+  b: vector<integer> = [];
+  for i in 0..n {
+    b += [i * 10];
+  }
+  a += b;
+  e: vector<integer> = [];
+  e += b;
+  s = 0;
+  for x in a {
+    s += x;
+  }
+  s * 100 + len(a) * 10 + len(e)
+}
+
+// A vector of texts appended, then its source cleared: the copies keep their texts.  "x" and
+// "s0".."s{n-1}": texts_kept(3) = 7 * 100 + 4 * 10 + 0 = 740.  texts_kept(0) = 100 + 10 = 110.
+fn texts_kept(n: integer) -> integer {
+  src: vector<text> = [];
+  for i in 0..n {
+    src += ["s{i}"];
+  }
+  dst: vector<text> = ["x"];
+  dst += src;
+  src.clear();
+  t = 0;
+  for x in dst {
+    t += len(x);
+  }
+  t * 100 + len(dst) * 10 + len(src)
+}
+
+struct Leg { a: integer, b: float }
+struct Trip { id: integer, legs: vector<Leg> }
+
+// A vector returned through the caller's buffer: the callee remakes the hidden parameter's store
+// IN PLACE (`OpDatabase(__vdb_1, …)`), so the caller's buffer holds the answer and the IR's free of
+// it is the only free — nothing is left for the sweep.
+fn trips(n: integer, seed: integer) -> vector<Trip> {
+  out: vector<Trip> = [];
+  for i in 0..n {
+    legs: vector<Leg> = [];
+    legs += [Leg { a: seed * 10 + i, b: (i as float) * 0.5 }];
+    out += [Trip { id: seed * 100 + i, legs: legs }];
+  }
+  return out;
+}
+
+// len * 100 + the last trip's first leg (seed 3: 30 + i).  retbuf_filled(2) = 200 + 31 = 231.
+// retbuf_filled(1) = 100 + 30 = 130.
+fn retbuf_filled(n: integer) -> integer {
+  v = trips(n, 3);
+  len(v) * 100 + v[n - 1].legs[0].a
+}
+
 fn main() {
   println("{ints(4)} {records(4)} {texts(5)} {bagged(2)} {passed(3)} {through(4)} {refilled(7)} {defaults(5)} {rebound_param(5)}");
+  println("{appended_field(3)} {appended_field(1)} {added(3)} {added(0)} {texts_kept(3)} {texts_kept(0)} {retbuf_filled(2)} {retbuf_filled(1)}");
 }

@@ -220,6 +220,23 @@ fn test_vectors_build_walk_index_and_clear() {
   assert(ran_clean(v, "n_rebound_param", 5) == 37210, "rebound_param(5)");
 }
 
+// `OpAppendVector` (1b-s3.md § Appending a vector), each value by hand in `kernels/vectors.loft`:
+// a struct literal's vector field from a freed local of records with texts, `a += b` into a
+// vector with elements and into an empty one, and texts appended before their source is cleared.
+fn test_a_vector_is_appended_as_element_copies() {
+  v = kernel("vectors");
+  assert(ran_clean(v, "n_appended_field", 3) == 633, "appended_field(3): the copies own their texts");
+  assert(ran_clean(v, "n_appended_field", 1) == 13, "appended_field(1)");
+  assert(ran_clean(v, "n_added", 3) == 3353, "added(3)");
+  assert(ran_clean(v, "n_added", 0) == 320, "added(0): an empty append changes nothing");
+  assert(ran_clean(v, "n_texts_kept", 3) == 740, "texts_kept(3): the source cleared after");
+  assert(ran_clean(v, "n_texts_kept", 0) == 110, "texts_kept(0)");
+  // census 2026-10-30: the callee filled a fresh store instead of the caller's buffer, and the
+  // caller's adopted copy was swept.
+  assert(ran_clean(v, "n_retbuf_filled", 2) == 231, "retbuf_filled(2): the caller's buffer is filled in place");
+  assert(ran_clean(v, "n_retbuf_filled", 1) == 130, "retbuf_filled(1)");
+}
+
 // S3's third slice: struct enums (1b-s3.md § The third slice), each value by hand in
 // `kernels/enums.loft`: every arm of a match, a unit variant, a variant returned and tested with
 // `is`, a text payload copied and its source freed, a struct holding an enum field, and a vector

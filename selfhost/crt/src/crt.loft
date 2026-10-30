@@ -437,3 +437,12 @@ pub fn scratch_step(out: vector<integer>, state: integer, store: integer, rec: i
 pub fn free_scratch(store: integer, rec: integer, pos: integer) {
   c_free_scratch(store, rec, pos);
 }
+
+// `OpAppendVector`: the elements of one vector appended to another as copies of type `tp`, their
+// claims copied by the loaded table.
+fn c_vec_add(tp: integer, store: integer, rec: integer, pos: integer, o_store: integer, o_rec: integer, o_pos: integer);
+#c "loft_crt_vec_add" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+pub fn vec_add(tp: integer, store: integer, rec: integer, pos: integer, o_store: integer, o_rec: integer, o_pos: integer) {
+  c_vec_add(tp, store, rec, pos, o_store, o_rec, o_pos);
+}

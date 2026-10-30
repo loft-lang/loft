@@ -523,3 +523,12 @@ int64_t loft_crt_scratch_step(int64_t *out, int64_t no, int64_t state, int64_t s
 void loft_crt_free_scratch(int64_t store, int64_t rec, int64_t pos) {
     loft_free_scratch(loft_crt_ref(store, rec, pos));
 }
+
+/* OpAppendVector (@PLN91 S3): the elements of `o` appended to `v` as copies of type `tp`, their
+ * claims copied by the loaded table. */
+void loft_crt_vec_add(int64_t tp, int64_t store, int64_t rec, int64_t pos, int64_t o_store,
+                      int64_t o_rec, int64_t o_pos) {
+    if (!loft_crt_keyed(tp)) return;
+    loft_vec_add(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos),
+                 loft_crt_ref(o_store, o_rec, o_pos));
+}
