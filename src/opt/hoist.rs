@@ -335,6 +335,12 @@ pub struct LoopHoist {
     /// leaves every store's buffer where it is, so a hoisted header may carry the
     /// address of its vector's element 0 for the loop's whole extent.
     pub growth_free: bool,
+    /// `@FR-R-Push`'s sole-growth clause — the loop's ONE store growth is the pushes of its
+    /// one pushed path: no other push, no mint, no reservation of another root, no text set
+    /// and no rebound mover.  Only that path's own growth step can then move its store's
+    /// memory, and the step derives the header again, so the header may hold its record's
+    /// address for the loop's extent.
+    pub sole_push: bool,
     /// `@FR-R-Base`'s growth clause — the ROOT variable of every push, pre-allocation and
     /// mint in the body, the rebound ones included: the stores the loop grows.  A header
     /// whose store is proven apart from every one of them ([`StoreFacts::distinct`]) keeps
@@ -947,6 +953,7 @@ pub fn hoistable(
         pushes: Vec::new(),
         mint_pushes: Vec::new(),
         growth_free: false,
+        sole_push: false,
         movers: Vec::new(),
         apart_mint: false,
     };
@@ -1219,6 +1226,12 @@ pub fn hoistable(
     // for a sibling field of the same record would address the buffer that growth freed.
     out.growth_free =
         out.pushes.is_empty() && mints.is_empty() && !dropped_mover && text_grown.is_none();
+    out.sole_push = out.pushes.len() == 1
+        && mints.is_empty()
+        && !dropped_mover
+        && text_grown.is_none()
+        && out.movers.len() == 1
+        && out.movers[0] == out.pushes[0].0.0;
     if std::env::var("LOFT_TRACE_BASE").is_ok() {
         eprintln!(
             "base: {} loop {} growth_free={} (pushes {}, mint pushes {}, null buffer {}, headers {})",
