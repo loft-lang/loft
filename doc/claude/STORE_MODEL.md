@@ -118,6 +118,8 @@ D18–D19j, D20–D23, D25, D29, D31 and D34 are there.
 | # | Divergence | State |
 |---|---|---|
 | D36 | a returned root record holding a keyed collection: C exchanges the stores (`swap_safe`), the interpreter copies (`tree_holds_no_stored_refs`), as `(H-SwapIn)` says for "the keyed collections" though `(H-SwapKeyed)`'s reasoning admits them | open — the rule first (@PLN91 1b-reference.md E-2) |
+| D37 | the C writer drops a vector's known-count reservation when the vector heads a push group or a mint window (`src/c/body.rs:1394`, `:1986`: "a group's reservation is capacity, observably nothing"), so the group header's mint takes the growth step's start room where `(Col-Capacity)` reserves the count exactly | open — measured 2026-10-30, `scripts/c_alloc_diff.py` over the 13 kernels and the 60-program sample: 24 of the 35 programs that differ first differ at that claim; the C runtime's own routines agree (the loft interpreter's alloc layer, 17 of 17 EQUAL) |
+| D38 | a rebind's free and mint come in the other order in the C writer (`set_stmt` re-mints after the call, the bytecode writer frees the displaced store first) | open — the same sweep: the first difference of 7 programs (`F n` against `N m`, `F n` against `D n m`) |
 
 ### Edges
 
