@@ -23,9 +23,11 @@ sys.path.insert(0, os.path.join(ROOT, "scripts"))
 from c_alloc_diff import program_events  # noqa: E402  — one normalisation for both comparators
 
 LOFT = os.environ.get("LOFT_BIN", os.path.join(ROOT, "target", "op-census", "release", "loft"))
-LAYERS = ["out", "alloc", "leak", "ir", "types", "schema", "ctable", "binds", "slots", "lifetimes", "bytecode"]
+LAYERS = ["out", "alloc", "leak", "ir", "types", "schema", "ctable", "ownership", "ownership-overlays",
+          "binds", "slots", "lifetimes", "bytecode"]
 # The layers the loft side does not produce yet, and the step that builds each (1b-compare.md).
 NOT_YET = {
+    "ownership-overlays": "after the oracle: per_iteration_frees, text_return_orphan_risk, free_before_dependent_read, return_source_freed, ref_param_publish_freed, heap_return_delivery",
     "binds": "C-2, with 1b-s3.md B-1",
     "slots": "C-3, with 1b-frame.md F-1",
     "lifetimes": "C-3, the compute_intervals port",
@@ -161,6 +163,37 @@ def introspect_sections(file):
     return {"ir": ir, "types": types}, None
 
 
+def ownership_sections(file):
+    """`introspect --show-ownership`: its verdict lines (each function's return, each variable)
+    and its overlay lines (`!!` and `⚠`), each a list of lines in order."""
+    rc, out, err = run([LOFT, "introspect", "--show-ownership"] + LIBS + [file])
+    if rc != 0:
+        return None, None, text(err).splitlines()[-3:]
+    verdicts, overlays, inside = [], [], False
+    for ln in text(out).split("\n"):
+        if ln.startswith("=== "):
+            inside = ln == "=== ownership ==="
+            continue
+        if not inside:
+            continue
+        if ln.startswith("!!") or ln.startswith("  \u26a0") or ln.startswith("  delivery: "):
+            overlays.append(ln)
+        else:
+            verdicts.append(ln)
+    return verdicts, overlays, None
+
+
+def ownership_layer(file, img, reports):
+    """The oracle's verdicts (`ownership_of`, `return_ownership`) against the ported oracle's."""
+    verdicts, _, why = ownership_sections(file)
+    if verdicts is None:
+        return "MISSING rust", why
+    lc, loft, lerr = run([reports, "ownership", img])
+    if lc != 0:
+        return "MISSING loft", text(lerr).splitlines()[-3:]
+    return differ("ownership", trimmed(verdicts), trimmed(text(loft).split("\n")))
+
+
 def report_layer(layer, file, img, reports):
     """A compile-time report of `introspect` against the same report of the image."""
     sections, why = introspect_sections(file)
@@ -292,6 +325,8 @@ def compare(spec, exe, reports, layers, keep):
                 v, detail = schema_layer(file, img, reports)
             elif layer == "ctable":
                 v, detail = ctable_layer(file, d, img, reports)
+            elif layer == "ownership":
+                v, detail = ownership_layer(file, img, reports)
             elif layer in ("ir", "types"):
                 v, detail = report_layer(layer, file, img, reports)
             else:
