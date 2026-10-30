@@ -1748,6 +1748,14 @@ pub fn c_export_dynamic_arg() -> Option<&'static str> {
     }
 }
 
+/// Whether a POSIX shell's `ulimit` caps (address space, open descriptors) reach a native
+/// program it starts.  Not on Windows: Git's `sh` accepts the builtins, but a native executable
+/// it runs is not bound by them, so a test bounding a leak that way would pass whatever leaked.
+#[must_use]
+pub fn shell_ulimit_applies() -> bool {
+    !cfg!(windows)
+}
+
 /// The system libraries a C backend unit links (@PLN203 C4, C5): POSIX threads for `par`, and
 /// the dynamic loader `c_library_available` asks; Windows' C runtime carries both.
 #[must_use]

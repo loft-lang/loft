@@ -12255,7 +12255,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                     if !matches!(def.def_type, loft::data::DefType::Function) {
                         continue;
                     }
-                    if !def.name.starts_with("n_") || def.name.starts_with("n___lambda_") {
+                    if !def.name.starts_with("n_") || def.is_compiler_written_fn() {
                         continue;
                     }
                     if file_access::is_stdlib_source(def.position.file.as_str()) {
@@ -13197,7 +13197,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // "Unknown definition" panic.  `def.native.is_empty()` filters them
             // out — the name is NOT gated (a bare `check_me()` must still run).
             if def.name.starts_with("n_")
-                && !def.name.starts_with("n___lambda_")
+                && !def.is_compiler_written_fn()
                 && matches!(def.def_type, data::DefType::Function)
                 && def.native.is_empty()
                 && def.attributes.is_empty()

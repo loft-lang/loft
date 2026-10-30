@@ -317,6 +317,11 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
         why = killed(path, "interp", i_out)
         if why:
             return path, "slow", why, None, times
+        # A run that makes more stores than the checking mode can number is beyond it on
+        # every backend (store_nr is u16 and the mode retires each freed number): skipped,
+        # as the interpreter's own message says to.
+        if mode in STRICT_MODES and b"exhausted by the checking mode" in i_out[2]:
+            return path, "refused", "more stores than the checking mode can number", None, times
         if mode == "wasm":
             code, _, err = run(WASM_CC + [c] + shim_sources + ["-o", exe + ".wasm"] + WASM_LIBS, 120)
         elif mode in CROSS:
@@ -338,6 +343,11 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
         why = killed(path, mode, c_out)
         if why:
             return path, "slow", why, None, times
+        # The C past the mode's numbers where the interpreter is not: the interpreter's
+        # exchange frees the top slot, which the mode makes again, and the C's adopted result
+        # frees the one under it (STORE_MODEL.md D33) — not a lifetime fault either way.
+        if mode in STRICT_MODES and b"exhausted by the checking mode" in c_out[2]:
+            return path, "refused", "more stores than the checking mode can number (C, D33)", None, times
         if asan and (b"Sanitizer" in c_out[2] or b"runtime error:" in c_out[2]):
             line = next((l for l in c_out[2].decode(errors="replace").split("\n")
                          if "Sanitizer" in l or "runtime error:" in l), "")

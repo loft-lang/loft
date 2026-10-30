@@ -1612,8 +1612,8 @@ pub(crate) fn run_tests(
                 if !matches!(def.def_type, DefType::Function) {
                     continue;
                 }
-                // Only user functions (n_<name>); skip generated lambdas.
-                if !def.name.starts_with("n_") || def.name.starts_with("n___lambda_") {
+                // Only user functions (n_<name>); skip what the compiler wrote.
+                if !def.name.starts_with("n_") || def.is_compiler_written_fn() {
                     continue;
                 }
                 // Skip standard library / operators.

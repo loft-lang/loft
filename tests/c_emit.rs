@@ -2594,7 +2594,9 @@ int main(int argc, char **argv) {
 /// reference naming it is reported at the access, a store live at exit is reported, and either
 /// makes the run exit 1.  A correct program cannot reach a freed store, so the cells append a
 /// `main` to an emitted unit that does what a store-lifetime defect would: read a store through
-/// a reference its free left behind, and keep a store alive past the end.  Without the switch the
+/// a reference its free left behind — a store below the top, whose number the mode retires (a
+/// freed TOP slot is made again, as the interpreter's `trim_free_top` makes it) — and keep a
+/// store alive past the end.  Without the switch the
 /// freed slot is made again and the stale read answers quietly — the defect the switch exists
 /// for; with it the read is named and the run fails.  And a correct program built through the
 /// driver under `LOFT_STRICT_STORES=1` runs clean.  Falsified: no check in `loft_store_of`, the
@@ -2648,11 +2650,12 @@ fn a_strict_store_c_build_names_a_use_after_free_and_a_store_never_freed() {
             text,
             "\nint main(void) {{\n    loft_bind_tables();\n    loft_start(0, 0);\n    \
              loft_ref r = loft_ref_null();\n    loft_database_typed(&r, 16, {tp});\n    \
+             loft_ref k = loft_ref_null();\n    loft_database_typed(&k, 16, {tp});\n    \
              loft_set_int(r, 0, INT64_C(7));\n    loft_free_ref(r);\n    \
              printf(\"stale %lld\\n\", (long long) loft_get_int(r, 0));\n    \
              loft_ref q = loft_ref_null();\n    loft_database_typed(&q, 16, {tp});\n    \
              printf(\"fresh store %u, freed %u\\n\", (unsigned) q.store_nr, (unsigned) r.store_nr);\n    \
-             {}\n    loft_leak_report();\n    return 0;\n}}\n",
+             {}\n    loft_free_ref(k);\n    loft_leak_report();\n    return 0;\n}}\n",
             if free_q { "loft_free_ref(q);" } else { "" }
         );
         fa::write(&src, &text).expect("write the cell");
@@ -2691,7 +2694,7 @@ fn a_strict_store_c_build_names_a_use_after_free_and_a_store_never_freed() {
     assert_eq!(code, 0, "the plain build");
     // With it: named at the access, the slot kept dead, and the run fails.
     let (out, err, code) = cell("uaf", true, true);
-    assert_eq!(out, "stale 7\nfresh store 1, freed 0\n", "the strict build");
+    assert_eq!(out, "stale 7\nfresh store 2, freed 0\n", "the strict build");
     assert!(
         err.contains(freed),
         "the strict build did not name the read:\n{err}"
@@ -2731,6 +2734,94 @@ fn a_strict_store_c_build_names_a_use_after_free_and_a_store_never_freed() {
         "a correct program reported:\n{err}"
     );
     assert!(run.status.success(), "a correct program failed:\n{err}");
+    let _ = fa::remove_dir_all(&dir);
+}
+
+/// @PLN206 D31 — a test run leaves no store behind on the C, as on the interpreter, whose tests
+/// each run in a fork of their own.  Three ways it did not, each a cell here:
+/// - a default lowered into a function of its own (`__dflt_f_b`, loft#699) has no parameter,
+///   and every runner counted it as a test — `loft --tests` said "2 passed" for one test, and
+///   the C kept the hash it built;
+/// - a test that answers a store (a helper with no parameter, in a file that names no `test_*`)
+///   is run and its answer dropped — the C kept the store;
+/// - a test expected to fail `longjmp`s past its frames' frees — the C kept the record its frame
+///   made.
+///
+/// The C is built under `LOFT_STRICT_STORES`, where a store live at exit fails the run.
+/// Falsified: the generated function let back into the selection, the returned store left, and
+/// the failed test's stores left each fail it.
+#[test]
+fn a_test_run_on_the_c_leaves_no_store_behind() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("test-stores");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let file = dir.join("leaves.loft");
+    fa::write(
+        &file,
+        "struct K { k: integer, v: integer }\nstruct Calls { n: integer }\n\
+         fn f(a: integer, b: hash<K[k]> = []) -> integer { a + len(b) }\n\
+         fn made() -> hash<K[k]> { h: hash<K[k]> = [K { k: 1, v: 2 }]; h }\n\
+         fn test() { assert(f(1) == 1, \"default\"); }\n\
+         // @EXPECT_FAIL: below zero\n\
+         fn failing() { c = Calls { n: 3 }; assert(c.n < 0, \"below zero {c.n}\"); }\n",
+    )
+    .expect("write program");
+    // The interpreter's runner: the default's function is not a test.
+    let tests = loft::platform::process::harness_command(loft)
+        .arg("--tests")
+        .arg(&file)
+        .output()
+        .expect("run loft --tests");
+    let said = String::from_utf8_lossy(&tests.stdout);
+    assert!(
+        said.contains("3 passed") && !said.contains("__dflt"),
+        "loft --tests ran the generated default as a test:\n{said}"
+    );
+    let c = dir.join("leaves.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "emit: {}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    assert!(
+        !fa::read_to_string(&c)
+            .expect("read the C")
+            .contains("strcmp(loft_only, \"__dflt_f_b\")"),
+        "the C runs the generated default as a test"
+    );
+    let exe = dir.join("leaves");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O1", "-w", "-DLOFT_STRICT_STORES"])
+        .arg(&c)
+        .arg("-o")
+        .arg(&exe)
+        .args(unit_links(&c))
+        .arg("-lm")
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc: {}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let run = loft::platform::process::harness_command(&exe)
+        .output()
+        .expect("run the tests");
+    let err = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        !err.contains("[strict-store]"),
+        "the C test run left a store:\n{err}"
+    );
+    assert!(run.status.success(), "the C test run failed:\n{err}");
     let _ = fa::remove_dir_all(&dir);
 }
 
@@ -6362,7 +6453,7 @@ fn a_released_path_stays_bounded_where_it_used_to_leak() {
         eprintln!("skipped: no cc on PATH");
         return;
     }
-    let can_cap = !cfg!(windows)
+    let can_cap = loft::platform::shell_ulimit_applies()
         && loft::platform::process::harness_command("sh")
             .args(["-c", "ulimit -v 32768 && ulimit -n 64"])
             .output()

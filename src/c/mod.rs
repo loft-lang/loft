@@ -3760,7 +3760,7 @@ fn test_functions(data: &Data) -> Vec<u32> {
             matches!(def.def_type(), DefType::Function)
                 && def.source == crate::data::MAIN_SOURCE
                 && def.name().starts_with("n_")
-                && !def.name().starts_with("n___lambda_")
+                && !def.is_compiler_written_fn()
                 && def.attributes().is_empty()
                 && !matches!(def.returned().base(), Type::Iterator(..))
         })
@@ -3812,7 +3812,7 @@ pub fn emit_tests_of(
     );
     let _ = write!(
         out,
-        "\nint main(int argc, char **argv) {{\n    int failed = 0;\n    const char *loft_only = argc > 1 ? argv[1] : 0;\n    loft_bind_tables();\n    loft_start(argc, argv);\n    {}\n    loft_in_test = 1;\n",
+        "\nint main(int argc, char **argv) {{\n    int failed = 0;\n    volatile uint64_t loft_mark = 0;\n    const char *loft_only = argc > 1 ? argv[1] : 0;\n    loft_bind_tables();\n    loft_start(argc, argv);\n    {}\n    loft_in_test = 1;\n",
         anchor(stores)
     );
     for &d in tests {
@@ -3823,11 +3823,25 @@ pub fn emit_tests_of(
             "    if (!loft_only || !strcmp(loft_only, {})) {{",
             body::c_string(&name)
         );
+        // A test that answers a value hands it back to nobody: the interpreter drops it, so the
+        // C releases it here, or the store it built outlives the run (@PLN206 D31).
+        let call = c_name(data, d);
+        let run = match data.def(d).returned().base() {
+            Type::Reference(..)
+            | Type::Vector(..)
+            | Type::Hash(..)
+            | Type::Sorted(..)
+            | Type::Index(..)
+            | Type::Radix(..)
+            | Type::Trie(..)
+            | Type::Enum(_, true, _) => format!("loft_free_ref({call}());"),
+            Type::Text(_) => format!("loft_text loft_r = {call}(); loft_text_free(&loft_r);"),
+            _ => format!("{call}();"),
+        };
         if subs.is_empty() {
             let _ = writeln!(
                 out,
-                "    LOFT_FRAMES_RESET();\n    if (setjmp(loft_test_jmp) == 0) {}(); else {{ failed++; fputs(\"FAIL {name}\\n\", stderr); }}",
-                c_name(data, d),
+                "    LOFT_FRAMES_RESET();\n    loft_mark = loft_stores_allocated;\n    if (setjmp(loft_test_jmp) == 0) {{ {run} }} else {{ loft_release_stores_since(loft_mark); failed++; fputs(\"FAIL {name}\\n\", stderr); }}",
             );
         } else {
             // Passes only by failing, with one of the expected messages in its own.
@@ -3837,11 +3851,10 @@ pub fn emit_tests_of(
                 .collect();
             let _ = writeln!(
                 out,
-                "    LOFT_FRAMES_RESET();\n    {{ const loft_str want[] = {{ {} }};\n      \
-                 if (setjmp(loft_test_jmp) == 0) {{ {}(); failed++; fputs(\"FAIL {name} (expected to fail)\\n\", stderr); }}\n      \
-                 else if (!loft_failed_with(want, {})) {{ failed++; fputs(\"FAIL {name}\\n\", stderr); }} }}",
+                "    LOFT_FRAMES_RESET();\n    loft_mark = loft_stores_allocated;\n    {{ const loft_str want[] = {{ {} }};\n      \
+                 if (setjmp(loft_test_jmp) == 0) {{ {run} failed++; fputs(\"FAIL {name} (expected to fail)\\n\", stderr); }}\n      \
+                 else {{ loft_release_stores_since(loft_mark); if (!loft_failed_with(want, {})) {{ failed++; fputs(\"FAIL {name}\\n\", stderr); }} }} }}",
                 list.join(", "),
-                c_name(data, d),
                 subs.len()
             );
         }

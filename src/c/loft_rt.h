@@ -1097,9 +1097,10 @@ static loft_ref loft_ref_null_reported(void) {
     return r;
 }
 
-/* `LOFT_STRICT_STORES` (`keys::strict_stores`, @PLN206 P0b): a freed store stays dead for the
- * rest of the run — its slot is never made again (`loft_store_make`) — so an access through a
- * reference naming it is an unambiguous use after free, reported at the access in the
+/* `LOFT_STRICT_STORES` (`keys::strict_stores`, @PLN206 P0b): a freed store stays dead — its
+ * slot is not made again (`loft_store_make`), except the top one, whose free lowers the floor as
+ * the interpreter's `trim_free_top` lowers `max` — so an access through a reference naming it is
+ * a use after free, reported at the access in the
  * interpreter's words (`strict_store_violation`, a native run's: no bytecode positions); and a
  * store still live at exit is reported too (`loft_leak_report`).  Either makes the run exit 1.
  * The driver builds with it when `LOFT_STRICT_STORES` is set.  For probes: never reusing a slot
@@ -1382,6 +1383,13 @@ static void loft_free_ref(loft_ref r) {
     }
     if (loft_release_file_leases_hook) loft_release_file_leases_hook(r.store_nr);
     s->live = 0;
+#ifdef LOFT_STRICT_STORES
+    /* `Stores::trim_free_top`, as the interpreter's strict mode keeps it: a freed TOP slot
+     * lowers the floor, down past every dead slot under it, so the next store takes that
+     * number again — a run that frees and re-makes in a loop stays within the table. */
+    if (r.store_nr + 1u == loft_strict_floor)
+        while (loft_strict_floor > 0 && !loft_stores[loft_strict_floor - 1].live) loft_strict_floor--;
+#endif
     LOFT_TRACE("F %llu\n", (unsigned long long) s->serial);
 #ifdef LOFT_FOREIGN
     /* A foreign store's bytes go with the handle: the owner drops here. */
@@ -1402,6 +1410,20 @@ static void loft_free_ref(loft_ref r) {
         for (size_t off = 8; off < (size_t) s->size * 8; off++) s->buf[off] = poison[off & 3];
     }
 #endif
+}
+
+/* A failed test `longjmp`s past every scope-exit free of its frames, the stores they made among
+ * them.  The interpreter runs each test in a fork of its own program, so nothing a test made
+ * outlives it; here every store made since `mark` (`loft_stores_allocated` as the test began)
+ * that is still live and not pinned is released (@PLN206 D31). */
+static void loft_release_stores_since(uint64_t mark) {
+    for (uint32_t i = 0; i < loft_nstores; i++) {
+        const loft_store_t *s = &loft_stores[i];
+        if (s->live && !s->pinned && s->serial > mark) {
+            loft_ref r = { (uint16_t) i, 1, 8 };
+            loft_free_ref(r);
+        }
+    }
 }
 
 /* ── Generators (@F34, the interpreter's coroutines) ──
