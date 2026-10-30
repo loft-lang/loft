@@ -335,3 +335,46 @@ fn test_a_hash_is_built_and_searched_by_its_loaded_keys() {
   crt::free_ref(h[0] ?? 0, h[1] ?? 0, h[2] ?? 0);
   assert(crt::live_stores() == 0, "the store freed");
 }
+
+// The values a walk of snapshot `x` visits, as digits, forward or in reverse.
+fn walk(x: vector<integer>, reverse: boolean) -> integer {
+  st = crt::scratch_iterate(x[0] ?? 0, x[1] ?? 0, x[2] ?? 0);
+  e: vector<integer> = [65535, 0, 0, 0];
+  r = 0;
+  while true {
+    crt::scratch_step(e, st, x[0] ?? 0, x[1] ?? 0, x[2] ?? 0, reverse);
+    st = e[3] ?? 0;
+    if (e[1] ?? 0) == 0 {
+      break;
+    }
+    r = r * 10 + crt::get_int(e[0] ?? 0, e[1] ?? 0, e[2] ?? 0, 0);
+  }
+  r
+}
+
+// A hash walked through the shim (1b-s3.md § The fourth slice, continued): "c" 3, "a" 1, "b" 2
+// inserted, so the key-order snapshot visits 1 2 3 (123), in reverse 321; the slot-order
+// snapshot visits all three, whatever its order (their sum, 6).  Both snapshots freed, the store
+// is freed whole.
+fn test_a_hash_is_walked_through_its_snapshot() {
+  assert(crt::load_types(hash_rows(), 102) == 3, "three types loaded");
+  h = crt::null_ref();
+  crt::database(h, 4, 100);
+  add(h, "c", 3);
+  add(h, "a", 1);
+  add(h, "b", 2);
+  x = crt::null_ref();
+  crt::hash_sorted(x, h[0] ?? 0, h[1] ?? 0, h[2] ?? 0, 100, false);
+  assert((x[0] ?? 0) == (h[0] ?? 0), "the snapshot is in the hash's own store");
+  assert(walk(x, false) == 123, "key order: {walk(x, false)}");
+  assert(walk(x, true) == 321, "reverse: {walk(x, true)}");
+  u = crt::null_ref();
+  crt::hash_sorted(u, h[0] ?? 0, h[1] ?? 0, h[2] ?? 0, 100, true);
+  v = walk(u, false);
+  assert(v / 100 + v / 10 % 10 + v % 10 == 6 && v >= 123 && v <= 321, "slot order visits all three: {v}");
+  crt::free_scratch(x[0] ?? 0, x[1] ?? 0, x[2] ?? 0);
+  crt::free_scratch(u[0] ?? 0, u[1] ?? 0, u[2] ?? 0);
+  assert(crt::hash_len(h[0] ?? 0, h[1] ?? 0, h[2] ?? 0) == 3, "the hash is whole after its walks");
+  crt::free_ref(h[0] ?? 0, h[1] ?? 0, h[2] ?? 0);
+  assert(crt::live_stores() == 0, "the store freed");
+}

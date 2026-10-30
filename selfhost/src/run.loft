@@ -237,6 +237,8 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
   images: vector<vector<u8>> = [];
   imaged: vector<boolean> = [];
   io: vector<integer> = [65535, 0, 0];
+  // A walk's step answers the element's three parts and the state it leaves.
+  step_io: vector<integer> = [65535, 0, 0, 0];
   ints: vector<integer?> = [];
   floats: vector<float?> = [];
   texts: vector<text?> = [];
@@ -930,6 +932,48 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
       HashLen => {
         sp_int -= 3;
         put_int(ints, sp_int, crt::hash_len(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0));
+        sp_int += 1;
+      }
+      // Walking a hash (S3's fourth slice, continued): the snapshot is two records of the hash's
+      // own store, so none of these changes who owns a store.
+      HashSorted => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 3;
+        crt::hash_sorted(io, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, op.b == 1);
+        ref_out(io, ints, sp_int);
+        sp_int += 3;
+      }
+      ScratchIterate => {
+        sp_int -= 3;
+        put_int(ints, sp_int, crt::scratch_iterate(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0));
+        sp_int += 1;
+      }
+      ScratchStep => {
+        sp_int -= 3;
+        at = base_int + op.a;
+        crt::scratch_step(step_io, ints[at] ?? 0, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b == 1);
+        ints[at] = step_io[3];
+        ref_out(step_io, ints, sp_int);
+        sp_int += 3;
+      }
+      FreeScratch => {
+        sp_int -= 3;
+        crt::free_scratch(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0);
+      }
+      // `loft_ref_eq`: a null side (record 0) equals only another; otherwise all three parts.
+      RefEq => {
+        sp_int -= 6;
+        ar = ints[sp_int + 1] ?? 0;
+        br = ints[sp_int + 4] ?? 0;
+        eq = if ar == 0 || br == 0 {
+          ar == 0 && br == 0
+        } else {
+          (ints[sp_int] ?? NULL_STORE) == (ints[sp_int + 3] ?? NULL_STORE) && ar == br && (ints[sp_int + 2] ?? 0) == (ints[sp_int + 5] ?? 0)
+        };
+        put_int(ints, sp_int, bit(eq != (op.a == 1)));
         sp_int += 1;
       }
       ClearRecord => {

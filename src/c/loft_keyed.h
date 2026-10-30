@@ -271,27 +271,6 @@ static void loft_ordered_remove(const loft_tdesc *T, uint16_t elem, loft_ref c, 
     loft_st_delete(loft_store_of(c), e.rec);
 }
 
-/* ── walks ──
- * A walk's state is the range of positions still to visit, [lo, hi): a forward step takes lo,
- * a reverse one hi - 1. */
-
-static int64_t loft_iter_range(uint32_t lo, uint32_t hi) {
-    if (hi < lo) hi = lo;
-    return (int64_t) (((uint64_t) hi << 32) | lo);
-}
-
-/* The position the walk visits next, or -1 when it is done. */
-static int64_t loft_iter_next(int64_t *state, int reverse) {
-    uint64_t st = (uint64_t) *state;
-    uint32_t lo = (uint32_t) st, hi = (uint32_t) (st >> 32);
-    if (lo >= hi) return -1;
-    int64_t at;
-    if (reverse) { hi--; at = hi; }
-    else { at = lo; lo++; }
-    *state = loft_iter_range(lo, hi);
-    return at;
-}
-
 /* OpIterate over a sorted (on 2) or an index (on 1): the positions of the key range.  `from` is
  * inclusive; `ex` says `till` is exclusive; an empty bound is open (State::iterate,
  * btree::range). */
@@ -316,32 +295,6 @@ static loft_ref loft_seq_step(int64_t *state, loft_ref c, uint32_t size, int rev
     e.store_nr = c.store_nr;
     loft_seq_at(&q, (uint32_t) at, &e.rec, &e.pos);
     return e;
-}
-
-/* OpIterate over a walk's snapshot (on 4, loft_ref_scratch): every pair. */
-static int64_t loft_scratch_iterate(loft_ref x) {
-    if (x.store_nr == 0xFFFF || x.rec == 0) return 0;
-    loft_store_t *s = loft_store_of(x);
-    return loft_iter_range(0, loft_u32(s, loft_u32(s, x.rec, 4), 4));
-}
-
-/* OpStep over a snapshot (vector::step_ordered): the next entry still in the collection, in
- * the entries' store. */
-static loft_ref loft_scratch_step(int64_t *state, loft_ref x, int reverse) {
-    if (x.store_nr == 0xFFFF || x.rec == 0) return loft_ref_null();
-    for (;;) {
-        int64_t at = loft_iter_next(state, reverse);
-        if (at < 0) return loft_ref_null();
-        loft_store_t *s = loft_store_of(x);
-        uint32_t vec = loft_u32(s, x.rec, 4), width = loft_u32(s, x.rec, 12) & 0xFFFFu;
-        uint32_t r = loft_u32(s, vec, 8 + (uint32_t) at * width);
-        if (r == 0) continue;
-        loft_ref e;
-        e.store_nr = (uint16_t) loft_u32(s, x.rec, 8);
-        e.rec = r;
-        e.pos = width == 8 ? loft_u32(s, vec, 12 + (uint32_t) at * 8) : 8;
-        return e;
-    }
 }
 
 /* ── copies, renders and equality over the entries ── */

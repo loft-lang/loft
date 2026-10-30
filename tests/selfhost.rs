@@ -7,6 +7,9 @@
 //! `selfhost/src/ir.loft` declares.  The harness hands the image's path to the loft tests in
 //! `LOFT_SELFHOST_IMAGE` (and a file that is no image in `LOFT_SELFHOST_NOT_AN_IMAGE`), and an
 //! image of every kernel in `selfhost/kernels/` in the directory `LOFT_SELFHOST_KERNELS`.
+//!
+//! The package runs on the interpreter; `LOFT_SELFHOST_BACKEND=--native-c` (or `--native`) runs
+//! the same tests on that backend instead, against the same images.
 
 use loft::file_access as fa;
 use std::path::PathBuf;
@@ -105,6 +108,7 @@ fn the_selfhost_tests_pass_on_an_emitted_image() {
 
     let tested = loft::platform::process::harness_command(loft())
         .arg("test")
+        .args(std::env::var("LOFT_SELFHOST_BACKEND").ok())
         .current_dir(root().join("selfhost"))
         .env("LOFT_SELFHOST_IMAGE", &image)
         .env("LOFT_SELFHOST_KERNELS", &kernels)

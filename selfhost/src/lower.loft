@@ -110,6 +110,11 @@ enum Code {
   HashFind,
   HashLen,
   KeyedNull,
+  HashSorted,
+  ScratchIterate,
+  ScratchStep,
+  FreeScratch,
+  RefEq,
 }
 
 // One op: `kind` is the kind of value it works on; `a` is a value, a slot, a jump target, a
@@ -449,6 +454,13 @@ fn effect(code: Code, b: integer) -> integer {
     HashFind => 0,
     HashLen => 0,
     KeyedNull => 0,
+    // A hash walk: the snapshot from its hash, a walk's state from the snapshot, the next
+    // element from the snapshot (the state is read and written in its slot), the snapshot freed.
+    HashSorted => 0,
+    ScratchIterate => 0,
+    ScratchStep => 0,
+    FreeScratch => -1,
+    RefEq => -1,
     _ => -1,
   }
 }
@@ -932,6 +944,50 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     // The record embedded at a field: the host's reference, its position moved past the field.
     value(l, b, args[0] ?? panic("OpGetField names its record"), KRef);
     emit(l, FieldRef, KRef, literal(l, args[1] ?? panic("and its field")), 0);
+  } else if name == "n_hash_sorted" || name == "n_hash_unsorted" {
+    // A hash walk's snapshot (1b-s3.md § The fourth slice, continued): its elements in key
+    // order, the keys the hash type's from the loaded table; or, for `unordered(h)` and a `par`
+    // walk, in slot order (`b` = 1).
+    value(l, b, args[0] ?? panic("a hash snapshot names its hash"), KRef);
+    emit(l, HashSorted, KRef, literal(l, args[1] ?? panic("and its type")), if name == "n_hash_unsorted" { 1 } else { 0 });
+  } else if name == "OpIterate" || name == "OpStep" {
+    // A walk over a snapshot (kind 4) is the one carried; an index, a sorted or a spatial walk,
+    // and a walk with key bounds, are refused by name.
+    on = literal(l, args[if name == "OpIterate" { 1 } else { 2 }] ?? panic("a walk names its kind"));
+    if on & 63 != 4 {
+      refuse(l, "a walk of kind {on & 63}");
+      return true;
+    }
+    if name == "OpIterate" {
+      if len(args) != 6 || literal(l, args[4] ?? panic("a walk's lower bound count")) != 0 || literal(l, args[5] ?? panic("and its upper")) != 0 {
+        refuse(l, "a walk with key bounds");
+        return true;
+      }
+      value(l, b, args[0] ?? panic("OpIterate names its snapshot"), KRef);
+      emit(l, ScratchIterate, KInt, 0, 0);
+    } else {
+      state = 0;
+      match unspan(args[0] ?? panic("OpStep names its state")) {
+        NdVar { n: var } => {
+          if var_kind(l, var) == KInt {
+            state = slot_of(l, var);
+          } else {
+            refuse(l, "a walk state that is not an integer variable");
+          }
+        }
+        _ => refuse(l, "a walk state that is not a variable"),
+      }
+      value(l, b, args[1] ?? panic("OpStep names its snapshot"), KRef);
+      emit(l, ScratchStep, KRef, state, if on & 64 != 0 { 1 } else { 0 });
+    }
+  } else if name == "OpFreeScratch" {
+    value(l, b, args[0] ?? panic("OpFreeScratch names its snapshot"), KRef);
+    emit(l, FreeScratch, KRef, 0, 0);
+  } else if name == "OpEqRef" || name == "OpNeRef" {
+    // Two references compared as the C generator compares them (`loft_ref_eq`), read in loft.
+    value(l, b, args[0] ?? panic("a reference compare has two sides"), KRef);
+    value(l, b, args[1] ?? panic("a reference compare has two sides"), KRef);
+    emit(l, RefEq, KRef, if name == "OpNeRef" { 1 } else { 0 }, 0);
   } else if name == "OpRefIsNull" || name == "OpConvBoolFromRef" {
     value(l, b, args[0] ?? panic("a null test names its reference"), KRef);
     emit(l, if name == "OpRefIsNull" { RefIsNull } else { RefBool }, KRef, 0, 0);
@@ -1373,7 +1429,8 @@ fn call(l: Lowering, b: ir::Bundle, def_nr: integer, args: vector<ir::Node>) {
     }
     return;
   }
-  if is_operator(d.name) && store_call(l, b, d.name, args) {
+  // A hash snapshot is a native that reads the store, so it is lowered beside the operators.
+  if (is_operator(d.name) || d.name == "n_hash_sorted" || d.name == "n_hash_unsorted") && store_call(l, b, d.name, args) {
     return;
   }
   for i in 0..len(args) {

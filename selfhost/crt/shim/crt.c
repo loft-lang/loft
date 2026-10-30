@@ -487,3 +487,39 @@ void loft_crt_hash_insert(int64_t store, int64_t rec, int64_t pos, int64_t r_sto
 int64_t loft_crt_hash_len(int64_t store, int64_t rec, int64_t pos) {
     return loft_hash_len(loft_crt_ref(store, rec, pos));
 }
+
+/* ── Walking a hash (@PLN91 S3, the fourth slice continued): the snapshot `for c in h` steps
+ * over, two records claimed in the hash's own store (loft_hash.h). ── */
+
+/* n_hash_sorted: the snapshot of a hash of type `tp`, its elements in key order, into `out`;
+ * n_hash_unsorted (`unordered`): in slot order. */
+int64_t loft_crt_hash_sorted(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos,
+                             int64_t tp, int64_t unordered) {
+    loft_ref r = loft_ref_null();
+    if (unordered)
+        r = loft_hash_unsorted(loft_crt_ref(store, rec, pos));
+    else if (loft_crt_keyed(tp))
+        r = loft_hash_sorted(loft_crt_ref(store, rec, pos), loft_crt_types[tp].keys,
+                             loft_crt_types[tp].nk);
+    loft_crt_put_ref(out, no, r);
+    return 0;
+}
+
+/* OpIterate over a snapshot: the walk's state. */
+int64_t loft_crt_scratch_iterate(int64_t store, int64_t rec, int64_t pos) {
+    return loft_scratch_iterate(loft_crt_ref(store, rec, pos));
+}
+
+/* OpStep over a snapshot: the next element into `out[0..3]`, the state it leaves into `out[3]`. */
+int64_t loft_crt_scratch_step(int64_t *out, int64_t no, int64_t state, int64_t store, int64_t rec,
+                              int64_t pos, int64_t reverse) {
+    loft_ref r = loft_scratch_step(&state, loft_crt_ref(store, rec, pos), (int) reverse);
+    loft_crt_put_ref(out, no, r);
+    if (no >= 4) out[3] = state;
+    return 0;
+}
+
+/* OpFreeScratch. */
+void loft_crt_free_scratch(int64_t store, int64_t rec, int64_t pos) {
+    loft_free_scratch(loft_crt_ref(store, rec, pos));
+}

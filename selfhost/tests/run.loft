@@ -257,6 +257,30 @@ fn test_hashes_build_find_and_copy() {
   assert(ran_clean(h, "n_linked", 7) == 202, "linked(7): a hash link writes through");
 }
 
+// Walking a hash (1b-s3.md § The fourth slice, continued), each value by hand in
+// `kernels/hashes.loft`: a local and a field walked, the key order, a write through the walked
+// element, walks left by `return` and `break`, two nested walks of one hash, `#index`, and a
+// walk in slot order (`unordered`).
+fn test_hashes_walk() {
+  h = kernel("hashes");
+  assert(ran_clean(h, "n_walked", 4) == 604, "walked(4)");
+  assert(ran_clean(h, "n_walked", 0) == 0, "walked(0): an empty hash");
+  assert(ran_clean(h, "n_order", 3) == 312, "order(3): key order");
+  assert(ran_clean(h, "n_order", 7) == 712, "order(7)");
+  assert(ran_clean(h, "n_field_walk", 5) == 503, "field_walk(5)");
+  assert(ran_clean(h, "n_field_walk", 2) == 202, "field_walk(2)");
+  assert(ran_clean(h, "n_bumped", 3) == 101303, "bumped(3): the walked element is a view");
+  assert(ran_clean(h, "n_bumped", 1) == 100, "bumped(1)");
+  assert(ran_clean(h, "n_early", 5) == 300105, "early(5): return and break leave the hash whole");
+  assert(ran_clean(h, "n_early", 2) == -9898, "early(2)");
+  assert(ran_clean(h, "n_pairs", 4) == 700, "pairs(4): two snapshots at once");
+  assert(ran_clean(h, "n_pairs", 5) == 1200, "pairs(5)");
+  assert(ran_clean(h, "n_indexed", 4) == 140, "indexed(4)");
+  assert(ran_clean(h, "n_indexed", 3) == 50, "indexed(3)");
+  assert(ran_clean(h, "n_unordered_product", 4) == 7161, "unordered_product(4): a slot-order walk");
+  assert(ran_clean(h, "n_unordered_product", 3) == 231, "unordered_product(3)");
+}
+
 // A kernel's whole `main`, as the census runs a program: it prints what `loft --interpret`
 // prints (the harness compares nothing here; the census does), and leaves nothing behind.
 fn test_the_kernels_mains_run_whole() {
