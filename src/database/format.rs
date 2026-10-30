@@ -76,6 +76,14 @@ struct HostInputPump {
     not(feature = "wasm"),
     any(not(target_arch = "wasm32"), target_os = "wasi")
 ))]
+thread_local! {
+    /// `@FR-L-OutOfLine` — the out-of-line child a record's last field holds, left for
+    /// [`ShowDb::write`]'s loop: its record, its type and its indent.
+    static RENDER_TAIL: std::cell::Cell<Option<(u32, u16, u16)>> = const { std::cell::Cell::new(None) };
+    /// The closing text of the records a pending chain is inside, innermost last.
+    static RENDER_CLOSERS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 impl HostInputPump {
     /// Lock the buffer, taking a poisoned lock's contents rather than panicking:
     /// the reader thread only ever appends, so a panic elsewhere leaves the
@@ -1354,8 +1362,42 @@ impl ShowDb<'_> {
     # Panics
     When the database is not correct.
     */
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn write(&self, s: &mut String, indent: u16) {
+        // `@FR-L-OutOfLine` — a chain of out-of-line children is rendered as a LOOP: the last
+        // field's child is left in `RENDER_TAIL` by the frame that met it, and the closing
+        // text of every frame it leaves waits in `RENDER_CLOSERS` until the chain ends.
+        let mark = RENDER_CLOSERS.with(|c| c.borrow().len());
+        self.write_one(s, indent);
+        while let Some((rec, known_type, ind)) = RENDER_TAIL.with(std::cell::Cell::take) {
+            let sub = ShowDb {
+                rec,
+                pos: 8,
+                known_type,
+                ..*self
+            };
+            sub.write_one(s, ind);
+        }
+        RENDER_CLOSERS.with(|c| {
+            let mut c = c.borrow_mut();
+            while c.len() > mark {
+                let text = c.pop().unwrap_or_default();
+                s.push_str(&text);
+            }
+        });
+    }
+
+    /// Closing text of a record: written now, or — while a child chain is pending in
+    /// `RENDER_TAIL` — after the chain, in the order the frames close.
+    fn write_close(s: &mut String, text: &str) {
+        if RENDER_TAIL.with(|t| t.get().is_some()) {
+            RENDER_CLOSERS.with(|c| c.borrow_mut().push(text.to_string()));
+        } else {
+            s.push_str(text);
+        }
+    }
+
+    #[expect(clippy::too_many_lines, reason = "inherited")]
+    fn write_one(&self, s: &mut String, indent: u16) {
         if self.dump {
             // Trace form (`#store.rec` references + truncation) — its own emission rules.
             self.write_dump(s, indent);
@@ -1552,7 +1594,7 @@ impl ShowDb<'_> {
                         } else {
                             s.push_str("{}");
                         }
-                        s.push('}');
+                        Self::write_close(s, "}");
                         return;
                     }
                     // `@FR-F-Render` — a plain enum's null is the `0xFF` discriminant (`0` reads
@@ -1590,7 +1632,7 @@ impl ShowDb<'_> {
                         if let Some(st) = payload {
                             write!(s, "{{\"{enum_val}\":").unwrap();
                             self.write_struct(s, st, indent);
-                            s.push('}');
+                            Self::write_close(s, "}");
                         } else {
                             // Payload-less (and the absent discriminant): the
                             // same rule the SCALAR route uses, asked in one place.
@@ -1628,7 +1670,7 @@ impl ShowDb<'_> {
                         let variant_name = &self.stores.types[self.known_type as usize].name;
                         write!(s, "{{\"{variant_name}\":").unwrap();
                         self.write_struct(s, st, indent);
-                        s.push('}');
+                        Self::write_close(s, "}");
                     } else {
                         // loft emits the variant as its own constructor `V{…}`.
                         if self.loft {
@@ -1769,7 +1811,7 @@ impl ShowDb<'_> {
 
     fn write_indent(&self, complex: bool, s: &mut String, indent: u16, zero_test: bool) {
         if complex && zero_test {
-            s.push_str(&ShowDb::new_line(indent + 1));
+            s.push_str(&ShowDb::new_line(indent.saturating_add(1)));
         } else if self.pretty {
             s.push(' ');
         }
@@ -1780,7 +1822,7 @@ impl ShowDb<'_> {
         // limit.  In loft mode the type name is already emitted, so this reads `TypeName{...}`.
         // Never fires for the round-tripping serializers (they pass `max_depth == u16::MAX`),
         // so `show_loft` / `to_json` output stays byte-identical.
-        if indent >= self.max_depth {
+        if self.max_depth != u16::MAX && indent >= self.max_depth {
             s.push_str("{...}");
             return;
         }
@@ -1801,17 +1843,19 @@ impl ShowDb<'_> {
         // with a single space (compact `{ a: 1 }` shape) to match
         // the existing dump format.
         if complex && self.json && any_visible {
-            s.push_str(&ShowDb::new_line(indent + 1));
+            s.push_str(&ShowDb::new_line(indent.saturating_add(1)));
         } else if self.pretty {
             s.push(' ');
         }
         self.write_fields(s, fields, indent, complex);
+        let mut close = String::new();
         if complex && any_visible {
-            s.push_str(&ShowDb::new_line(indent));
+            close.push_str(&ShowDb::new_line(indent));
         } else if self.pretty && !complex {
-            s.push(' ');
+            close.push(' ');
         }
-        s.push('}');
+        close.push('}');
+        Self::write_close(s, &close);
     }
 
     /// Return true iff `fields` contains at least one entry that
@@ -1836,7 +1880,8 @@ impl ShowDb<'_> {
 
     fn write_fields(&self, s: &mut String, fields: &[Field], indent: u16, complex: bool) {
         let mut first = true;
-        for fld in fields {
+        let last = fields.iter().rposition(Self::is_shown_field);
+        for (f_nr, fld) in fields.iter().enumerate() {
             if !Self::is_shown_field(fld) {
                 continue;
             }
@@ -1857,6 +1902,19 @@ impl ShowDb<'_> {
             if self.pretty {
                 s.push(' ');
             }
+            // `@FR-L-OutOfLine` — the LAST field's child is rendered by `write`'s loop.
+            if Some(f_nr) == last
+                && let Parts::ChildRec(content) = self.stores.types[fld.content as usize].parts
+                && self.stores.child_rec_is_value(content)
+            {
+                let rec = self
+                    .store()
+                    .get_u32_raw(self.rec, self.pos + u32::from(fld.position));
+                if rec != 0 {
+                    RENDER_TAIL.with(|t| t.set(Some((rec, content, indent.saturating_add(1)))));
+                    continue;
+                }
+            }
             let sub = ShowDb {
                 stores: self.stores,
                 store: self.store,
@@ -1871,7 +1929,7 @@ impl ShowDb<'_> {
                 max_depth: self.max_depth,
                 max_elements: self.max_elements,
             };
-            sub.write(s, indent + 1);
+            sub.write(s, indent.saturating_add(1));
         }
     }
 
@@ -1908,7 +1966,7 @@ impl ShowDb<'_> {
         // Bounded render: a vector past the depth limit collapses to `[...]` (debugger
         // glance).  Unlimited (`max_depth == u16::MAX`) never triggers, so round-trip output
         // is unchanged.
-        if indent >= self.max_depth {
+        if self.max_depth != u16::MAX && indent >= self.max_depth {
             s.push_str("[...]");
             return;
         }
@@ -1988,7 +2046,7 @@ impl ShowDb<'_> {
                 max_depth: self.max_depth,
                 max_elements: self.max_elements,
             };
-            sub.write(s, indent + 1);
+            sub.write(s, indent.saturating_add(1));
             count += 1;
         }
         if self.pretty {
@@ -2054,7 +2112,7 @@ impl ShowDb<'_> {
                 max_depth: self.max_depth,
                 max_elements: self.max_elements,
             };
-            sub.write(s, indent + 1);
+            sub.write(s, indent.saturating_add(1));
         }
         if self.pretty {
             s.push(' ');
@@ -2157,7 +2215,7 @@ impl ShowDb<'_> {
                         max_depth: self.max_depth,
                         max_elements: self.max_elements,
                     };
-                    sub.write_jsonvalue(s, indent + 1);
+                    sub.write_jsonvalue(s, indent.saturating_add(1));
                 }
                 if self.pretty {
                     s.push('\n');
@@ -2219,7 +2277,7 @@ impl ShowDb<'_> {
                         max_depth: self.max_depth,
                         max_elements: self.max_elements,
                     };
-                    sub.write_jsonvalue(s, indent + 1);
+                    sub.write_jsonvalue(s, indent.saturating_add(1));
                 }
                 if self.pretty {
                     s.push('\n');
@@ -2531,7 +2589,7 @@ impl ShowDb<'_> {
     fn write_dump_struct(&self, s: &mut String, fields: &[Field], indent: u16) {
         // Show store:record reference
         write!(s, "#{}.{}", self.store, self.rec).unwrap();
-        if indent >= self.max_depth {
+        if self.max_depth != u16::MAX && indent >= self.max_depth {
             s.push_str(" {...}");
             return;
         }
@@ -2546,11 +2604,11 @@ impl ShowDb<'_> {
                 s.push(',');
             }
             first = false;
-            self.dump_sep(s, indent + 1);
+            self.dump_sep(s, indent.saturating_add(1));
             s.push_str(&fld.name);
             s.push_str(": ");
             self.dump_child(self.rec, self.pos + u32::from(fld.position), fld.content)
-                .write_dump(s, indent + 1);
+                .write_dump(s, indent.saturating_add(1));
         }
         self.dump_sep(s, indent);
         s.push('}');
@@ -2569,7 +2627,7 @@ impl ShowDb<'_> {
             0
         };
         write!(s, "#{}.{}", self.store, vec_rec).unwrap();
-        if indent >= self.max_depth {
+        if self.max_depth != u16::MAX && indent >= self.max_depth {
             let len = vector::length_vector(&data, &self.stores.allocations);
             write!(s, " [{len} items...]").unwrap();
             return;
@@ -2586,7 +2644,7 @@ impl ShowDb<'_> {
                 break;
             }
             if count >= self.max_elements {
-                self.dump_sep(s, indent + 1);
+                self.dump_sep(s, indent.saturating_add(1));
                 let remaining =
                     vector::length_vector(&data, &self.stores.allocations) as u16 - count;
                 write!(s, "...{remaining} more").unwrap();
@@ -2595,9 +2653,9 @@ impl ShowDb<'_> {
             if count > 0 {
                 s.push(',');
             }
-            self.dump_sep(s, indent + 1);
+            self.dump_sep(s, indent.saturating_add(1));
             self.dump_child(rec.rec, rec.pos, content)
-                .write_dump(s, indent + 1);
+                .write_dump(s, indent.saturating_add(1));
             count += 1;
         }
         self.dump_sep(s, indent);

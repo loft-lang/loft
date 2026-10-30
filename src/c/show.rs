@@ -86,25 +86,47 @@ impl Cx<'_> {
     pub(crate) fn show_code(&self) -> String {
         let types = self.show_types.borrow();
         let mut out = String::new();
+        // `@FR-L-OutOfLine` — a program that renders an out-of-line child renders its chains
+        // as a loop (`loft_show_run`): each type's body is `loft_show1_{tp}`, run by the loop
+        // its `loft_show{tp}` holds.  Every other program's rendering is written as before.
+        let chains = types.iter().any(|&tp| {
+            matches!(self.stores.types[tp as usize].parts, Parts::ChildRec(c)
+                if self.stores.child_rec_is_value(c))
+        });
         for &tp in types.iter() {
             let _ = writeln!(
                 out,
                 "static void loft_show{tp}(loft_text *s, loft_ref r, int fmt, int ind);"
             );
+            if chains {
+                let _ = writeln!(
+                    out,
+                    "static void loft_show1_{tp}(loft_text *s, loft_ref r, int fmt, int ind);"
+                );
+            }
         }
         for &tp in types.iter() {
             let t = &self.stores.types[tp as usize];
             if let Parts::Struct(fields) | Parts::EnumValue(_, fields) = &t.parts {
-                Self::fields_fn(&mut out, tp, fields);
+                self.fields_fn(&mut out, tp, fields, chains);
             }
         }
         for &tp in types.iter() {
+            let body = if chains {
+                let _ = writeln!(
+                    out,
+                    "static void loft_show{tp}(loft_text *s, loft_ref r, int fmt, int ind) {{\n    loft_show_run(s, loft_show1_{tp}, r, fmt, ind);\n}}"
+                );
+                format!("loft_show1_{tp}")
+            } else {
+                format!("loft_show{tp}")
+            };
             let _ = writeln!(
                 out,
-                "static void loft_show{tp}(loft_text *s, loft_ref r, int fmt, int ind) {{"
+                "static void {body}(loft_text *s, loft_ref r, int fmt, int ind) {{"
             );
             out.push_str("    if (r.rec == 0) { loft_push(s, \"null\", 4); return; }\n");
-            self.show_body(&mut out, tp);
+            self.show_body(&mut out, tp, chains);
             out.push_str("}\n");
         }
         out
@@ -113,7 +135,7 @@ impl Cx<'_> {
     /// `write_struct` over `fields`, for a type whose layout they are: `loft_showf{tp}`,
     /// framed by the `complex` flag of the type the caller renders (a variant's fields are
     /// framed by its enum's).
-    fn fields_fn(out: &mut String, tp: u16, fields: &[Field]) {
+    fn fields_fn(&self, out: &mut String, tp: u16, fields: &[Field], chains: bool) {
         let shown: Vec<&Field> = fields
             .iter()
             .filter(|f| {
@@ -136,6 +158,19 @@ impl Cx<'_> {
                 out.push_str("    loft_show_sep(s, fmt, ind, c);\n");
             }
             let _ = writeln!(out, "    loft_show_name(s, fmt, {});", c_string(&f.name));
+            // The last field's child is the tail of a chain, left for the loop.
+            if chains
+                && i + 1 == shown.len()
+                && let Parts::ChildRec(c) = self.stores.types[f.content as usize].parts
+                && self.stores.child_rec_is_value(c)
+            {
+                let _ = writeln!(
+                    out,
+                    "    loft_show_tail(s, loft_show1_{c}, loft_ref_from_child_rec(loft_field(r, {})), ind + 1);",
+                    f.position
+                );
+                continue;
+            }
             let _ = writeln!(
                 out,
                 "    {}(s, loft_field(r, {}), fmt, ind + 1);",
@@ -150,7 +185,13 @@ impl Cx<'_> {
         );
     }
 
-    fn show_body(&self, out: &mut String, tp: u16) {
+    fn show_body(&self, out: &mut String, tp: u16, chains: bool) {
+        // A variant's JSON wrapper closes after a pending chain (`loft_show_brace`).
+        let brace = if chains {
+            "loft_show_brace(s);"
+        } else {
+            "loft_push_char(s, '}');"
+        };
         let t = &self.stores.types[tp as usize];
         let complex = i32::from(t.is_complex());
         match &t.parts {
@@ -161,10 +202,10 @@ impl Cx<'_> {
                 let open = c_string(&format!("{{\"{}\":", t.name));
                 let _ = writeln!(
                     out,
-                    "    if (fmt & 2) {{ loft_push_cstr(s, {open}); loft_showf{tp}(s, r, fmt, ind, {complex}); loft_push_char(s, '}}'); }}\n    else loft_showf{tp}(s, r, fmt, ind, {complex});"
+                    "    if (fmt & 2) {{ loft_push_cstr(s, {open}); loft_showf{tp}(s, r, fmt, ind, {complex}); {brace} }}\n    else loft_showf{tp}(s, r, fmt, ind, {complex});"
                 );
             }
-            Parts::Enum(values) => self.enum_body(out, &t.name, values, complex),
+            Parts::Enum(values) => self.enum_body(out, &t.name, values, complex, brace),
             Parts::Hash(elem, _)
             | Parts::Index(elem, _)
             | Parts::Ordered(elem, _)
@@ -251,7 +292,14 @@ impl Cx<'_> {
 
     /// An enum: its variant's name (and fields), or for a `__nullable<S>` the dense value
     /// its `Some` variant carries.
-    fn enum_body(&self, out: &mut String, name: &str, values: &[(u16, String)], complex: i32) {
+    fn enum_body(
+        &self,
+        out: &mut String,
+        name: &str,
+        values: &[(u16, String)],
+        complex: i32,
+        brace: &str,
+    ) {
         if name.starts_with("__nullable<") {
             // A present element renders as the dense value its `Some` variant carries.
             out.push_str("    switch (*loft_at(loft_store_of(r), r.rec, r.pos)) {\n");
@@ -294,7 +342,7 @@ impl Cx<'_> {
             };
             let _ = writeln!(
                 out,
-                "    case {}:\n        if (fmt & 2) {{ loft_push_cstr(s, {json_open}); {body} loft_push_char(s, '}}'); }}\n        else {{ loft_push_cstr(s, {});{plain} }}\n        return;",
+                "    case {}:\n        if (fmt & 2) {{ loft_push_cstr(s, {json_open}); {body} {brace} }}\n        else {{ loft_push_cstr(s, {});{plain} }}\n        return;",
                 i + 1,
                 c_string(name)
             );

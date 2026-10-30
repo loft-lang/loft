@@ -2648,7 +2648,49 @@ static void loft_copy_bytes(loft_ref to, uint32_t to_off, loft_ref from, uint32_
  * the keyed collections — and so without linked groups — leaves it null. */
 static void (*loft_relink_hook)(const loft_tdesc *T, uint16_t tp, loft_ref to);
 
+/* `@FR-L-OutOfLine`: the child records a copy or a release has met and not yet walked, and how
+ * deep the walk is; the outermost call walks them as a loop, so a chain of any length takes no
+ * stack per link (Stores::copy_claims, Stores::remove_claims). */
+typedef struct { uint16_t tp; uint8_t release; loft_ref from, to; } loft_child_job;
+static LOFT_TLS loft_child_job *loft_child_jobs;
+static LOFT_TLS size_t loft_child_njobs, loft_child_cap;
+static LOFT_TLS int loft_child_depth;
+
+static void loft_child_push(uint16_t tp, int release, loft_ref from, loft_ref to) {
+    if (loft_child_njobs == loft_child_cap) {
+        loft_child_cap = loft_child_cap ? loft_child_cap * 2 : 64;
+        loft_child_jobs = (loft_child_job *) realloc(loft_child_jobs, loft_child_cap * sizeof(loft_child_job));
+        if (!loft_child_jobs) abort();
+    }
+    loft_child_job j = { tp, (uint8_t) release, from, to };
+    loft_child_jobs[loft_child_njobs++] = j;
+}
+
+static void loft_copy_claims_one(const loft_tdesc *T, uint16_t tp, loft_ref from, loft_ref to);
+static void loft_remove_claims_one(const loft_tdesc *T, uint16_t tp, loft_ref r, int borrowed);
+
+static void loft_child_drain(const loft_tdesc *T) {
+    while (loft_child_njobs) {
+        loft_child_job j = loft_child_jobs[--loft_child_njobs];
+        loft_child_depth++;
+        if (j.release) {
+            loft_remove_claims_one(T, j.tp, j.from, 0);
+            loft_st_delete(loft_store_of(j.from), j.from.rec);
+        } else {
+            loft_copy_claims_one(T, j.tp, j.from, j.to);
+        }
+        loft_child_depth--;
+    }
+}
+
 static void loft_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, loft_ref to) {
+    loft_child_depth++;
+    loft_copy_claims_one(T, tp, from, to);
+    loft_child_depth--;
+    if (loft_child_depth == 0) loft_child_drain(T);
+}
+
+static void loft_copy_claims_one(const loft_tdesc *T, uint16_t tp, loft_ref from, loft_ref to) {
     const loft_tdesc *d = &T[tp];
     loft_store_t *fs = loft_store_of(from);
     switch (d->kind) {
@@ -2769,8 +2811,8 @@ static void loft_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, lo
         loft_ref a = { from.store_nr, cur, 8 };
         loft_ref b = { to.store_nr, into, 8 };
         loft_copy_bytes(b, 0, a, 0, size);
-        loft_copy_claims(T, d->elem, a, b);
         loft_set_u32(loft_store_of(to), to.rec, to.pos, into);
+        loft_child_push(d->elem, 0, a, b);
         return;
     }
     default:
@@ -3470,6 +3512,13 @@ static void loft_vec_append_copy(const loft_tdesc *T, uint16_t ctp, loft_ref v, 
 static void loft_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r);
 
 static void loft_remove_claims_mode(const loft_tdesc *T, uint16_t tp, loft_ref r, int borrowed) {
+    loft_child_depth++;
+    loft_remove_claims_one(T, tp, r, borrowed);
+    loft_child_depth--;
+    if (loft_child_depth == 0) loft_child_drain(T);
+}
+
+static void loft_remove_claims_one(const loft_tdesc *T, uint16_t tp, loft_ref r, int borrowed) {
     if (r.store_nr == 0xFFFF || r.rec == 0) return;
     const loft_tdesc *d = &T[tp];
     /* `Stores::release_file_handle`: a `File` record that dies returns its lease. */
@@ -3515,12 +3564,11 @@ static void loft_remove_claims_mode(const loft_tdesc *T, uint16_t tp, loft_ref r
     }
     case LOFT_T_CHILD: {
         uint32_t cur = loft_u32(s, r.rec, r.pos);
+        loft_set_u32(loft_store_of(r), r.rec, r.pos, 0);
         if (cur != 0) {
             loft_ref c = { r.store_nr, cur, 8 };
-            loft_remove_claims(T, d->elem, c);
-            loft_st_delete(loft_store_of(r), cur);
+            loft_child_push(d->elem, 1, c, c);
         }
-        loft_set_u32(loft_store_of(r), r.rec, r.pos, 0);
         return;
     }
     case LOFT_T_ENUM: {
@@ -4705,10 +4753,65 @@ static int loft_show_open(loft_text *s, int fmt, int ind, int complex_type, int 
     return c;
 }
 
-static void loft_show_close(loft_text *s, int fmt, int ind, int c, int any) {
+static void loft_show_close_now(loft_text *s, int fmt, int ind, int c, int any) {
     if (c && any) loft_nl(s, ind);
     else if ((fmt & 1) && !c) loft_push_char(s, ' ');
     loft_push_char(s, '}');
+}
+
+/* `@FR-L-OutOfLine` (ShowDb::write): a chain of out-of-line children renders as a LOOP.  The
+ * record whose last field holds a child leaves it in the tail; the closing text of every frame
+ * the chain leaves waits on the closer stack until the chain ends. */
+typedef void (*loft_show1_fn)(loft_text *, loft_ref, int, int);
+typedef struct { uint8_t brace; int fmt, ind, c, any; } loft_show_closer;
+static LOFT_TLS loft_show_closer *loft_closers;
+static LOFT_TLS size_t loft_nclosers, loft_closers_cap;
+static LOFT_TLS loft_show1_fn loft_tail_fn;
+static LOFT_TLS loft_ref loft_tail_ref;
+static LOFT_TLS int loft_tail_ind;
+
+static void loft_show_defer(uint8_t brace, int fmt, int ind, int c, int any) {
+    if (loft_nclosers == loft_closers_cap) {
+        loft_closers_cap = loft_closers_cap ? loft_closers_cap * 2 : 64;
+        loft_closers = (loft_show_closer *) realloc(loft_closers, loft_closers_cap * sizeof(loft_show_closer));
+        if (!loft_closers) abort();
+    }
+    loft_show_closer k = { brace, fmt, ind, c, any };
+    loft_closers[loft_nclosers++] = k;
+}
+
+static void loft_show_close(loft_text *s, int fmt, int ind, int c, int any) {
+    if (loft_tail_fn) loft_show_defer(0, fmt, ind, c, any);
+    else loft_show_close_now(s, fmt, ind, c, any);
+}
+
+/* A variant's JSON wrapper closing: now, or after a pending chain. */
+static void loft_show_brace(loft_text *s) {
+    if (loft_tail_fn) loft_show_defer(1, 0, 0, 0, 0);
+    else loft_push_char(s, '}');
+}
+
+/* The last field's child: left for the loop of the nearest loft_show_run, or `null`. */
+static void loft_show_tail(loft_text *s, loft_show1_fn f, loft_ref r, int ind) {
+    if (r.rec == 0) { loft_push(s, "null", 4); return; }
+    loft_tail_fn = f;
+    loft_tail_ref = r;
+    loft_tail_ind = ind;
+}
+
+static void loft_show_run(loft_text *s, loft_show1_fn f, loft_ref r, int fmt, int ind) {
+    size_t mark = loft_nclosers;
+    f(s, r, fmt, ind);
+    while (loft_tail_fn) {
+        loft_show1_fn g = loft_tail_fn;
+        loft_tail_fn = 0;
+        g(s, loft_tail_ref, fmt, loft_tail_ind);
+    }
+    while (loft_nclosers > mark) {
+        loft_show_closer k = loft_closers[--loft_nclosers];
+        if (k.brace) loft_push_char(s, '}');
+        else loft_show_close_now(s, k.fmt, k.ind, k.c, k.any);
+    }
 }
 
 /* Between two fields (write_indent with its zero test). */

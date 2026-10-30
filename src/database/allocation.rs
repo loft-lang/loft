@@ -3142,6 +3142,8 @@ impl Stores {
             bridge_text_dest: None,
             const_refs: self.const_refs.clone(),
             last_json_errors: Vec::new(),
+            child_copies: Vec::new(),
+            child_copy_depth: 0,
             parse_unfilled: None,
             // The worker inherits the parent's program context, so a `par`
             // inside a `par` worker can dispatch in turn.  Without it the
@@ -4462,6 +4464,20 @@ impl Stores {
     }
 
     pub fn copy_claims(&mut self, rec: &DbRef, to: &DbRef, tp: u16) {
+        self.child_copy_depth += 1;
+        self.copy_claims_one(rec, to, tp);
+        self.child_copy_depth -= 1;
+        if self.child_copy_depth == 0 {
+            // `@FR-L-OutOfLine` — the children the walk claimed, walked as a loop.
+            while let Some((from, into, content)) = self.child_copies.pop() {
+                self.child_copy_depth += 1;
+                self.copy_claims_one(&from, &into, content);
+                self.child_copy_depth -= 1;
+            }
+        }
+    }
+
+    fn copy_claims_one(&mut self, rec: &DbRef, to: &DbRef, tp: u16) {
         if self.copy_absent_collection(rec, to, tp)
             || (self.owns_plain_vectors(tp) && self.copy_plain_vectors(rec, to, tp))
         {
@@ -4584,9 +4600,10 @@ impl Stores {
                             size as isize,
                         );
                     }
-                    // Deep-copy nested heap fields (text, Reference, etc.).
-                    self.copy_claims(&src_db, &new_db, content_kt);
                     self.store_mut(to).set_u32_raw(to.rec, to.pos, new_rec);
+                    // Deep-copy nested heap fields (text, Reference, etc.) — deferred to the
+                    // outermost copy's loop, so a chain takes no stack per link.
+                    self.child_copies.push((src_db, new_db, content_kt));
                 }
             }
             Parts::Array(_) | Parts::Ordered(_, _) => {
