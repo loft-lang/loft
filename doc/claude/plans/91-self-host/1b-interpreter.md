@@ -39,18 +39,20 @@ It holds four constraints:
 4. **The formal rules are the specification.**  Each module implements the rules of one
    `doc/claude/formal/` chapter and cites them by tag.  It is measured by the language
    suite's cells, which are filed under those same rules (§ Reusing the formal rules).
-5. **The same operators, with the same semantics (owner, 2026-10-30).**  The goal is loft
-   again, inside loft — not a new language with new mechanics.  Every IR operator does what
-   the Rust interpreter's operator does, through the C runtime routine that is its port.
-   What the Rust bytecode writer decides beyond the IR (`state/codegen.rs`: a bind's copy,
-   adopt or displaced free, `generate_set`) is the lowering's to decide the SAME way, from the
-   same facts: the lowering is the loft port of the bytecode writer, and a shape it does not
-   port yet is refused by name.  The interpreter adds no mechanism of its own: no owner
-   table, no sweep, no run-time choice the Rust interpreter does not make.  This retires the
-   run-time ownership of 1b-s3.md (2026-10-28), which had become exactly such a mechanism.
-   **And the same memory structures** (owner, 2026-10-30): values live where the Rust
-   interpreter keeps them — one stack store, frames at the image's `stack_pos`, slots reused
-   as the Rust allocator reuses them ([1b-frame.md](1b-frame.md)).
+5. **A reimplementation, not a new language (owner, 2026-10-30).**  The interpreter is the
+   Rust interpreter written again in loft, under ONE rule: the same IR in; the same bytecode
+   out of its lowering, which is the port of the bytecode writer (`src/state/codegen.rs`,
+   `generate_set` and the rest), from the same facts; the same memory structures (one stack
+   store holding the frames and the temporaries at the positions the Rust side gives them,
+   slots reused as its allocator reuses them); and the same semantics for every operator (the
+   port of `fill.rs`/`state`, through the C runtime routines that are their port).  No part is
+   a separate decision and nothing is a mechanism of its own: no owner table, no sweep, no
+   layout or choice the Rust interpreter does not have.  A shape not ported yet is refused by
+   name.  The owner's reason: *"the loft language is not easy to write or maintain, but it is
+   the only way to combine ease of use with optimal code"* — so its intricacy is ported, not
+   redesigned.  This retires the run-time ownership of 1b-s3.md (2026-10-28).  The gate that
+   follows from it: the loft-written bytecode equals `loft introspect`'s, byte for byte, and so
+   do the stores a run makes and frees.
 
 **The order of the goals (owner, 2026-10-28).**  First full coverage: every test and program
 the repository defines (the corpus, `tests/scripts`, the language suite's cells) gives

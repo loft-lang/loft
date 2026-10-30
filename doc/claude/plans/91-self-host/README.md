@@ -17,8 +17,9 @@ end in loft, judged by an IR diff and needing no probe; **1b**, the runtime in l
 P-perf still gates. **Re-ordered 2026-10-27 (owner): 1b first**, as the ultimate dogfood
 project, reading the same IR in the same types the Rust front end writes; ownership is its
 own early track because it is loft's biggest hurdle and its answer to rustc's borrow
-checker.  **Loft again, inside loft (owner, 2026-10-30):** the same IR, the same operators
-with the same semantics, no new mechanics.  The implementation's intricacy (the scope pass,
+checker.  **A reimplementation, not a new language (owner, 2026-10-30):** the same IR, the
+same bytecode, the same memory structures, the same operator semantics — one rule, no new
+mechanics.  The implementation's intricacy (the scope pass,
 the ownership oracle, the bind decisions) is the price of combining ease of use with optimal
 code, so it is ported faithfully, not redesigned. Strand 1b: [1b-interpreter.md](1b-interpreter.md); ownership:
 [ownership.md](ownership.md). **Not

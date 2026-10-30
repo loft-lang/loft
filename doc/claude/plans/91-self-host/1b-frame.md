@@ -5,14 +5,13 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # @PLN91 strand 1b — the frame: the Rust interpreter's memory structures
 
-A child document of [1b-interpreter.md](1b-interpreter.md).  Status: **DECIDED (owner,
-2026-10-30), design, nothing built.**
+A child document of [1b-interpreter.md](1b-interpreter.md).  Status: **design, nothing built.**
 
-## The ruling
+## The rule
 
-*"Yes, keep the same memory structures"* — the answer to the frame-layout decision (A: the Rust
-layout; B: keep the stack per kind).  It follows goal constraint 5 (the same operators, the same
-semantics): the loft interpreter keeps its values where the Rust interpreter keeps them.
+Goal constraint 5: a reimplementation, not a new language.  The frame is not a separate
+decision; it is that rule applied to memory (*"keep the same memory structures"*, owner,
+2026-10-30): the loft interpreter keeps every value where the Rust interpreter keeps it.
 
 ## What the Rust interpreter's memory is (measured)
 
@@ -71,10 +70,12 @@ to a local is a reference into that store.
   stack_pos(v))`, and every store operator works through it unchanged — which is what the 57
   census programs refused with *"a reference to a variable that is not a text"* need.  The
   interpreter's own `&text` (`RefOf`, a text index) goes: a `&text` is the same reference.
-- **The evaluation stack** stays the loft stacks per kind in this step (F-1).  The Rust
-  interpreter keeps its temporaries in the same store, at positions its bytecode writer's stack
-  model tracks; moving them there (F-2) is the port of that model, and is designed after F-1 is
-  built and measured.
+- **The evaluation stack** is the same store too: the Rust interpreter keeps its temporaries
+  there, at the positions its bytecode writer's stack model tracks (`Stack`, `stack.position`
+  in `codegen.rs`).  So the lowering becomes the port of the bytecode writer outright: it
+  emits the Rust interpreter's operators with their operands and positions, and the run loop
+  is the port of their implementations.  F-1 moves the frames; F-2 the temporaries, with the
+  ops that push and pop them.
 
 ## What it settles
 
@@ -109,8 +110,12 @@ never a gate (the order of the goals, 1b-interpreter.md).
 
 ## Steps
 
-- **F-1** — the frame in the stack store (this design); the evaluation stack unchanged.
-- **F-2** — the evaluation stack in the same store, at the bytecode writer's positions
-  (designed after F-1).
+- **F-1** — the frames in the stack store: locals at `stack_pos`, `&` of a local a reference
+  into it.
+- **F-2** — the temporaries in the same store: the lowering emits the bytecode writer's
+  operators at its stack positions, so its output is the Rust bytecode.
 
-F-1 comes after 1b-s3.md's B-0 (the comparisons), so the comparisons measure the change.
+**The gate of both: the bytecode.**  `loft introspect` prints the Rust bytecode of every
+function; the loft lowering's output, written in the same form, must equal it byte for byte
+(F-2), and the frame positions must equal it from F-1 on.  Both come after 1b-s3.md's B-0 (the
+comparisons), so the comparisons measure each change.
