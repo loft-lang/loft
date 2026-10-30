@@ -28,7 +28,8 @@ Median ≈ 1.6×.  Over 3.5×:
 | zttext `insert_text` | 5.2× | the whole document buffer copied twice: element by element into `nb`, then `return Doc { buf: nb, … }` copies `nb` again into the caller's store; Rust moves it | a NEW mechanism (a returned literal's vector field built in the caller's buffer); rustc copies too — design first |
 | cbor `encode` | 4.5× | as `encode_bytes` | **BUILT** — `(R-AppendTwin)` on the C, −27 % |
 | hex_roof `roof_match` | 4.2× | call overhead: 26 % in `hexset_get__inv`'s wrapper, 14 % in `seg_distance__inv`'s — twins of 7-statement accessors left out of line, eight arguments with a 24-byte header crossing on the stack.  `(R-Inline)` counts brace-only lines as statements, so `hexset_get`'s twin (≈ 7 statements) counts 14 and misses the ≤ 12 cut | **BUILT** — `(R-Inline)` counts no brace-only lines: −37 % (gcc A/B; `side_edges` −67 %, `combine_cut` −51 %, `trace` −40 % with it) |
-| graphics `fill_polygon`, hex_form `side_edges` | 3.6× | not profiled | open |
+| graphics `fill_polygon` | 3.6× | `polygon_crossings`: four element views a pass (`pc_a`, `pc_b`, and `pc_ty` / `pc_by`, which are one of the two) each resolve the store for their address (`loft_rec_ptr`: `loft_at`, `loft_vh_index`, `loft_store_of` ≈ 38 %); the loop is growth-free (the output is a push window in another store, versioned) | the element's address from the held header's base (`h.base + i·size`), and a chosen view's address copied from the one it names — the general form of the first was tried and dropped (`top5-memory.md`: +37 % on `slope_path_with_undo`); a growth-free-loop clause wants pricing |
+| hex_form `side_edges` | 3.6× | the `hexset_get` twin left out of line | **BUILT** — `(R-Inline)`'s count, −67 % |
 
 Not measured: **web, ssh, pluginabi** — a C build never builds a Rust cdylib, and each reaches
 a Rust native.  The net stream owns their C story: web runs on C once its manifest declares
@@ -45,6 +46,7 @@ has no C path yet.  **arguments `parse`** printed no C lane row.
 | the index walk hint: a step tries the slot its last step found, validated against the live tree, before descending by key | `c/loft_btree.h` `loft_bt_hinted` (the twin of `btree::hinted`), `-DLOFT_NO_WALK_HINT` | assets `keys_near` 3.04 → 0.67 ms (−78 %) |
 | `(R-AppendTwin)` on C: `X += f(args)` calls `f__ap` with X as the buffer (one more twin bit, `AP_BIT`); the analysis moved to `src/opt/append_twin.rs` | `c/body.rs` `append_site` / `append_call` / `append_twin_buffer_op` | cbor `encode` −27 %, `encode_bytes` −40 % |
 | `(R-Destination)` on C: the `__d` twin answers its scalars as a tuple struct; the caller's window mints the element above the call | `c/body.rs` `destination_site` / `dest_scalar_set` / `dest_return` | cbor `decode` −56 % |
+| `(R-TextBorrow)`'s tested clause on C: a text bound out of a parameter's record is a view while the parameter's store is not the buffer's | `c/body.rs` `borrowed_assign`, `LOFT_NO_C_TESTED_BORROW` | cbor `encode_bytes` −16 %, `encode` −4 % |
 | `(R-Inline)`'s count: lines that only close a block or open its `else` are no statements | `c/body.rs` `statement_count`, `LOFT_INLINE_COUNT_BRACES` | gcc, 119 routines: 6 faster (−5 … −67 %), 112 the same, hex_world `get_cell` +2.8 %; clang: 1 faster (`passable` −15 %), 118 the same |
 | `stats.py` measures every program after one whose lane fails (a worker's exit used to end the run) | `bench/stats.py` `MEASURE_FAILURES` | a 38-library run measured 18 before |
 
