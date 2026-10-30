@@ -4950,10 +4950,12 @@ impl<'a> FnWriter<'a> {
     }
 
     /// `@FR-R-TextBorrow`'s discharge clause, its value: a text choice between views —
-    /// `if c { a } else { b }`, as a `?` discharge writes it,
-    /// where each arm is a borrowed text variable or a literal — as the view it picks: the
-    /// bytes are the arm's own, valid as long as that variable is, so nothing is copied.
-    /// `None` for any other compound.
+    /// `if c { a } else { b }`, as a `?` discharge writes it, or as a text value chooses between
+    /// pieces (`out += if last { "=" } else { chars[k..k + 1] }`) — where each arm is a literal,
+    /// a borrowed text variable, or a slice of one of those or of a plain text parameter: the
+    /// view it picks, the bytes the arm's own, valid as long as that text is, so nothing is
+    /// copied.  Each arm is written in its own branch, so the arm not taken computes nothing.
+    /// `None` for any other compound.  `LOFT_NO_VIEW_CHOICE_SLICE=1` keeps a slice arm's copy.
     fn view_choice(&mut self, compound: &Value, ind: usize) -> Result<Option<E>, String> {
         let (pre, last): (&[Value], &Value) = match compound.unspan() {
             Value::Block(block) => match block.operators.split_last() {
@@ -4965,12 +4967,10 @@ impl<'a> FnWriter<'a> {
         let Value::If(cond, then, other) = last.unspan() else {
             return Ok(None);
         };
-        let viewable = |w: &Self, arm: &Value| match arm.unspan() {
-            Value::Text(_) => true,
-            Value::Var(var) => w.shapes[*var as usize] == CType::Text && w.borrowed[*var as usize],
-            _ => false,
-        };
-        if !viewable(self, then) || !viewable(self, other) {
+        let slices =
+            !crate::env_once!(std::env::var("LOFT_NO_VIEW_CHOICE_SLICE").is_ok_and(|v| v != "0"));
+        let (then, other) = (Self::arm_value(then), Self::arm_value(other));
+        if !self.viewable_arm(then, slices) || !self.viewable_arm(other, slices) {
             return Ok(None);
         }
         // The block's own statements first — the discharge's bind of the variable it tests.
@@ -4979,18 +4979,59 @@ impl<'a> FnWriter<'a> {
         }
         let test = self.expr(cond, ind)?;
         let test = as_cond(test)?;
-        let (then, other) = (self.expr(then, ind)?, self.expr(other, ind)?);
         let view = format!("tv{}", self.decls.len() + 1);
         self.decls.push(format!("loft_str {view} = {{ 0, 0 }};"));
-        self.line(
-            ind,
-            &format!(
-                "{view} = ({test}) ? {} : {};",
-                as_view(then)?,
-                as_view(other)?
-            ),
-        );
+        self.line(ind, &format!("if ({test}) {{"));
+        let then = self.expr(then, ind + 1)?;
+        self.line(ind + 1, &format!("{view} = {};", as_view(then)?));
+        self.line(ind, "} else {");
+        let other = self.expr(other, ind + 1)?;
+        self.line(ind + 1, &format!("{view} = {};", as_view(other)?));
+        self.line(ind, "}");
         Ok(Some(E::new(view, K::View)))
+    }
+
+    /// An arm's value: the arm itself, or the one value a block holds beside its line marks.
+    fn arm_value(arm: &Value) -> &Value {
+        if let Value::Block(b) = arm.unspan() {
+            let mut ops = b
+                .operators
+                .iter()
+                .filter(|o| !matches!(o.unspan(), Value::Line(_)));
+            if let (Some(only), None) = (ops.next(), ops.next()) {
+                return only;
+            }
+        }
+        arm
+    }
+
+    /// An arm `view_choice` reads as a view: a literal, a borrowed text variable, or — with
+    /// `slices` — a slice of a literal, a borrowed text variable or a plain text parameter,
+    /// whose bounds are scalars.
+    fn viewable_arm(&self, arm: &Value, slices: bool) -> bool {
+        let source = |v: &Value| match v.unspan() {
+            Value::Text(_) => true,
+            Value::Var(var) => {
+                let i = *var as usize;
+                self.shapes[i] == CType::Text
+                    && (self.borrowed[i]
+                        || (self.vars.is_argument(*var)
+                            && !matches!(self.vars.tp(*var).base(), crate::data::Type::RefVar(_))))
+            }
+            _ => false,
+        };
+        match arm.unspan() {
+            Value::Text(_) => true,
+            Value::Var(var) => {
+                self.shapes[*var as usize] == CType::Text && self.borrowed[*var as usize]
+            }
+            Value::Call(d, args)
+                if slices && self.cx.data.def(*d).name() == "OpGetTextSub" && args.len() == 3 =>
+            {
+                source(&args[0])
+            }
+            _ => false,
+        }
     }
 
     /// Statements written inside an expression: they free only the temporaries they make, as

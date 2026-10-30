@@ -2710,6 +2710,13 @@ Sites: `hoist::borrowed_text_walks`, `hoist::text_walk_head`,
 `hoist::native_op_is_store_free` (the text-value clause), `hoist::borrowed_discharge_temps`
 and the discharge arm of `hoist::text_escapes_with`, `Output::text_borrowed`, the bind and
 the discharge bind in `Output::output_set`, the `#ncc` tail in `Output::output_block`.
+On the C the discharge's value — a text `if` choosing between views — also takes an arm that
+is a SLICE of a literal, a borrowed text or a plain text parameter (`out += if last { "=" }
+else { chars[k..k + 1] }`): nothing the consumer runs can move those bytes, and each arm is
+written in its own branch so the arm not taken computes nothing (`view_choice` /
+`viewable_arm` in `src/c/body.rs`; crypto's `b64_encode`, pluginabi `req_state_b64` −36 % on
+the C ship lane).  `LOFT_NO_VIEW_CHOICE_SLICE=1` copies a slice arm again; cells
+`tests/scripts/a-text-choice-between-slices-is-a-view.loft`.
 
 **The store-read clause.**  `w = words[i]?` over a `const vector<text>` parameter bound `w`
 through two copies (the temp's `.to_string()` and the bind's `.clone()`) and a third where
