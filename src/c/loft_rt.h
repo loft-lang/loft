@@ -279,8 +279,75 @@ static uint32_t loft_ncl = 0;
 /* Each carried library's declared symbols, which a POSIX host asks the running program for
  * (`dlsym` over its own handle): a library missing one is not available. */
 static const char *const *const *loft_cls = 0;
+/* Opening a library and finding a symbol in it, or in the running program (@PLN203 C5, C8):
+ * `dlopen` / `dlsym` on a POSIX host; `LoadLibraryA` / `GetProcAddress` on Windows, where "the
+ * program" is every module it has loaded (`dlopen(0)`'s global scope).  `LOFT_DL` says the host
+ * can.  The Windows declarations carry `windows.h`'s own types, so a unit that also includes it
+ * (a socket unit) sees the same functions — the header itself is not included here: its `near`
+ * and `far` macros would rename the runtime's own parameters. */
 #if defined(LOFT_POSIX_HOST)
 #include <dlfcn.h>
+#define LOFT_DL 1
+/* `scope`: LOFT_DL_DEFAULT (the host's own default), LOFT_DL_GLOBAL or LOFT_DL_LOCAL. */
+#define LOFT_DL_DEFAULT 0
+#define LOFT_DL_GLOBAL 1
+#define LOFT_DL_LOCAL 2
+static void *loft_dl_open(const char *path, int scope) {
+    return dlopen(path, scope == LOFT_DL_GLOBAL ? RTLD_NOW | RTLD_GLOBAL
+                        : scope == LOFT_DL_LOCAL ? RTLD_NOW | RTLD_LOCAL : RTLD_NOW);
+}
+static void *loft_dl_sym(void *h, const char *sym) { return dlsym(h, sym); }
+static void *loft_dl_self_sym(const char *sym) {
+    void *self = dlopen(0, RTLD_LAZY);
+    return self ? dlsym(self, sym) : 0;
+}
+static const char *loft_dl_error(void) {
+    const char *e = dlerror();
+    return e ? e : "unknown error";
+}
+#elif defined(_WIN32)
+#define LOFT_DL 1
+struct HINSTANCE__;
+typedef intptr_t (__stdcall *loft_win_proc)(void);
+__declspec(dllimport) struct HINSTANCE__ *__stdcall LoadLibraryA(const char *name);
+__declspec(dllimport) loft_win_proc __stdcall GetProcAddress(struct HINSTANCE__ *module, const char *name);
+__declspec(dllimport) void *__stdcall GetCurrentProcess(void);
+__declspec(dllimport) int __stdcall K32EnumProcessModules(void *process, struct HINSTANCE__ **modules, unsigned long cb,
+                                                           unsigned long *needed);
+__declspec(dllimport) unsigned long __stdcall GetLastError(void);
+/* A procedure address as the data pointer the callers hold (ISO C converts neither way). */
+static void *loft_dl_proc(loft_win_proc p) {
+    void *v = 0;
+    memcpy(&v, &p, sizeof v < sizeof p ? sizeof v : sizeof p);
+    return v;
+}
+#define LOFT_DL_DEFAULT 0
+#define LOFT_DL_GLOBAL 1
+#define LOFT_DL_LOCAL 2
+/* Windows has no scope: a symbol is always asked of its own module. */
+static void *loft_dl_open(const char *path, int scope) {
+    (void) scope;
+    return (void *) LoadLibraryA(path);
+}
+static void *loft_dl_sym(void *h, const char *sym) {
+    return loft_dl_proc(GetProcAddress((struct HINSTANCE__ *) h, sym));
+}
+static void *loft_dl_self_sym(const char *sym) {
+    struct HINSTANCE__ *mods[512];
+    unsigned long need = 0;
+    if (!K32EnumProcessModules(GetCurrentProcess(), mods, (unsigned long) sizeof mods, &need)) return 0;
+    size_t n = need / sizeof mods[0];
+    for (size_t i = 0; i < n && i < 512; i++) {
+        void *p = loft_dl_proc(GetProcAddress(mods[i], sym));
+        if (p) return p;
+    }
+    return 0;
+}
+static const char *loft_dl_error(void) {
+    static char why[64];
+    snprintf(why, sizeof why, "Windows error %lu", GetLastError());
+    return why;
+}
 #endif
 /* `[c] optional-libs` (@PLN24 arc G): a library a package works without is never linked; it is
  * opened when a symbol of its package is first called, or when `c_library_available` asks.  Each
@@ -290,7 +357,7 @@ typedef struct { const char *name, *pkg; const char *const *cands; const char *c
 static const loft_c_optlib *loft_col = 0;
 static uint32_t loft_ncol = 0;
 
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_DL)
 /* The handle of optional library `i`, opened once; null when none of its candidates opens. */
 static void *loft_c_optlib_open(uint32_t i) {
     static void *handles[64];
@@ -298,7 +365,7 @@ static void *loft_c_optlib_open(uint32_t i) {
     if (i >= 64) return 0;
     if (!tried[i]) {
         tried[i] = 1;
-        for (const char *const *c = loft_col[i].cands; *c && !handles[i]; c++) handles[i] = dlopen(*c, RTLD_NOW);
+        for (const char *const *c = loft_col[i].cands; *c && !handles[i]; c++) handles[i] = loft_dl_open(*c, LOFT_DL_DEFAULT);
     }
     return handles[i];
 }
@@ -311,7 +378,7 @@ static void *loft_c_optlib_open(uint32_t i) {
 typedef struct { const char *pkg, *version, *file; uint8_t shim; } loft_c_boundlib;
 static const loft_c_boundlib *loft_cbl = 0;
 static uint32_t loft_ncbl = 0;
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_DL)
 static void *loft_cbl_handles[64];
 static uint32_t loft_ncbl_handles = 0;
 #endif
@@ -319,9 +386,9 @@ static uint32_t loft_ncbl_handles = 0;
 /* A `#c` symbol in this program (its linked libraries, its shims), else in a library
  * `loft_c_bind_libraries` opened.  Null when nothing exports it. */
 static void *loft_c_bound_sym(const char *sym) {
-#if defined(LOFT_POSIX_HOST)
-    void *self = dlopen(0, RTLD_LAZY), *p = self ? dlsym(self, sym) : 0;
-    for (uint32_t i = 0; !p && i < loft_ncbl_handles; i++) p = dlsym(loft_cbl_handles[i], sym);
+#if defined(LOFT_DL)
+    void *p = loft_dl_self_sym(sym);
+    for (uint32_t i = 0; !p && i < loft_ncbl_handles; i++) p = loft_dl_sym(loft_cbl_handles[i], sym);
     return p;
 #else
     (void) sym;
@@ -333,12 +400,12 @@ static void *loft_c_bound_sym(const char *sym) {
  * (its linked libraries, its shims), else in one of the package's optional libraries, opened
  * now.  Null when nothing exports it. */
 static void *loft_c_lazy_sym(const char *sym, const char *pkg) {
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_DL)
     void *p = loft_c_bound_sym(sym);
     for (uint32_t i = 0; !p && i < loft_ncol; i++) {
         if (strcmp(loft_col[i].pkg, pkg) != 0) continue;
         void *h = loft_c_optlib_open(i);
-        if (h) p = dlsym(h, sym);
+        if (h) p = loft_dl_sym(h, sym);
     }
     return p;
 #else
@@ -365,7 +432,7 @@ static void loft_c_missing_symbol(const char *sym) {
 static uint8_t loft_c_library_available(loft_str name) {
     for (uint32_t i = 0; i < loft_ncl; i++) {
         if (strlen(loft_cl[i]) == name.len && memcmp(loft_cl[i], name.p, name.len) == 0) {
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_DL)
             if (loft_cls && loft_cls[i]) {
                 for (const char *const *s = loft_cls[i]; *s; s++) {
                     if (!loft_c_bound_sym(*s)) return 0;
@@ -375,7 +442,7 @@ static uint8_t loft_c_library_available(loft_str name) {
             return 1;
         }
     }
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_DL)
     /* An optional library: available when it opens and exports every symbol its package
      * declares (from it or from what the program already has). */
     for (uint32_t i = 0; i < loft_ncol; i++) {
@@ -383,7 +450,7 @@ static uint8_t loft_c_library_available(loft_str name) {
         void *h = loft_c_optlib_open(i);
         if (!h) return 0;
         for (const char *const *s = loft_col[i].syms; *s; s++)
-            if (!dlsym(h, *s) && !loft_c_bound_sym(*s)) return 0;
+            if (!loft_dl_sym(h, *s) && !loft_c_bound_sym(*s)) return 0;
         return 1;
     }
 #endif
@@ -4687,11 +4754,27 @@ static void loft_arm_timeout(void) {
 #endif
 }
 
-#if defined(LOFT_BIND_LIBS) && defined(LOFT_POSIX_HOST)
+#if defined(LOFT_BIND_LIBS) && defined(LOFT_DL)
+#if defined(LOFT_POSIX_HOST)
 #include <dirent.h>
+#endif
 #if defined(__APPLE__)
 extern int _NSGetExecutablePath(char *buf, uint32_t *size);
 #endif
+/* LOFT_LIB_PATH's separator, as `std::env::split_paths` reads it. */
+#if defined(_WIN32)
+#define LOFT_LIB_PATH_SEP ';'
+#else
+#define LOFT_LIB_PATH_SEP ':'
+#endif
+
+static int loft_c_lib_exists(const char *p) {
+#if defined(_WIN32)
+    return _access(p, 0) == 0;
+#else
+    return access(p, F_OK) == 0;
+#endif
+}
 /* The handle each row of `loft_cbl` was opened as (null for a row not opened): where a library's
  * native part finds its symbols in a shipped program (`loft_ffi_sym`). */
 static void *loft_cbl_row_handle[64];
@@ -4704,7 +4787,7 @@ static uint32_t loft_c_lib_dirs(loft_c_libdir *d, uint32_t max) {
     uint32_t n = 0;
     const char *list = getenv("LOFT_LIB_PATH");
     while (list && *list && n < max) {
-        const char *end = strchr(list, ':');
+        const char *end = strchr(list, LOFT_LIB_PATH_SEP);
         size_t len = end ? (size_t) (end - list) : strlen(list);
         if (len > 0 && len < sizeof d[n].path) {
             memcpy(d[n].path, list, len);
@@ -4722,10 +4805,21 @@ static uint32_t loft_c_lib_dirs(loft_c_libdir *d, uint32_t max) {
 #elif defined(__APPLE__)
     uint32_t size = sizeof exe;
     if (_NSGetExecutablePath(exe, &size) != 0) exe[0] = 0;
+#elif defined(_WIN32)
+    char *pg = 0;
+    if (_get_pgmptr(&pg) == 0 && pg) snprintf(exe, sizeof exe, "%s", pg);
 #endif
     if (!exe[0] && loft_argv && loft_argv[0]) snprintf(exe, sizeof exe, "%s", loft_argv[0]);
+#if defined(LOFT_POSIX_HOST)
     if (exe[0] && realpath(exe, real)) snprintf(exe, sizeof exe, "%s", real);
+#else
+    (void) real;
+#endif
     char *slash = strrchr(exe, '/');
+#if defined(_WIN32)
+    char *back = strrchr(exe, '\\');
+    if (back && (!slash || back > slash)) slash = back;
+#endif
     if (slash && n < max) {
         *slash = 0;
         snprintf(d[n].path, sizeof d[n].path, "%s", exe[0] ? exe : "/");
@@ -4733,14 +4827,24 @@ static uint32_t loft_c_lib_dirs(loft_c_libdir *d, uint32_t max) {
         n++;
     }
     const char *home = getenv("LOFT_HOME");
+#if defined(_WIN32)
+    if (!home) home = getenv("USERPROFILE");
+#else
     if (!home) home = getenv("HOME");
+#endif
     if (home && n < max) {
         snprintf(d[n].path, sizeof d[n].path, "%s/.loft/lib", home);
         d[n].flat = 0;
         n++;
     }
+    /* `platform::system_library_root`. */
     if (n < max) {
+#if defined(_WIN32)
+        const char *pd = getenv("ProgramData");
+        snprintf(d[n].path, sizeof d[n].path, "%s/loft/lib", pd && *pd ? pd : "C:/ProgramData");
+#else
         snprintf(d[n].path, sizeof d[n].path, "/usr/local/lib/loft");
+#endif
         d[n].flat = 0;
         n++;
     }
@@ -4758,19 +4862,34 @@ static void loft_c_missing_library(const loft_c_boundlib *l, const loft_c_libdir
     size_t plen = strlen(l->pkg);
     int header = 0;
     for (uint32_t i = 0; i < n; i++) {
+#if defined(_WIN32)
+        char pattern[4200];
+        snprintf(pattern, sizeof pattern, "%s/*", d[i].path);
+        struct _finddata_t fd;
+        intptr_t dir = _findfirst(pattern, &fd);
+        if (dir == -1) continue;
+        do {
+            const char *nm = fd.name;
+#else
         DIR *dir = opendir(d[i].path);
         if (!dir) continue;
         struct dirent *e;
         while ((e = readdir(dir)) != 0) {
             const char *nm = e->d_name;
+#endif
             if (strncmp(nm, l->pkg, plen) != 0 || nm[plen] != '-' || nm[plen + 1] < '0' || nm[plen + 1] > '9' ||
                 strcmp(nm + plen + 1, l->version) == 0)
                 continue;
             if (!header) fprintf(stderr, "\n  other versions found (not used):");
             header = 1;
             fprintf(stderr, "\n    %s/%s", d[i].path, nm);
+#if defined(_WIN32)
+        } while (_findnext(dir, &fd) == 0);
+        _findclose(dir);
+#else
         }
         closedir(dir);
+#endif
     }
     if (refused[0]) fprintf(stderr, "\n  %s", refused);
     fprintf(stderr,
@@ -4798,10 +4917,10 @@ static void loft_c_bind_libraries(void) {
                 if (flat && !dirs[k].flat) break;
                 if (flat) snprintf(p, sizeof p, "%s/%s", dirs[k].path, l->file);
                 else snprintf(p, sizeof p, "%s/%s-%s/%s", dirs[k].path, l->pkg, l->version, l->file);
-                if (access(p, F_OK) != 0) continue;
-                h = dlopen(p, RTLD_NOW | RTLD_GLOBAL);
+                if (!loft_c_lib_exists(p)) continue;
+                h = loft_dl_open(p, LOFT_DL_GLOBAL);
                 if (!h) {
-                    const char *why = dlerror();
+                    const char *why = loft_dl_error();
                     size_t used = strlen(refused);
                     snprintf(refused + used, sizeof refused - used, "%s`%s` would not load: %s", used ? "\n  " : "", p,
                              why ? why : "unknown error");
@@ -4829,7 +4948,7 @@ static void loft_start(int argc, char **argv) {
 #if defined(LOFT_POSIX_HOST)
     signal(SIGPIPE, SIG_IGN);
 #endif
-#if defined(LOFT_BIND_LIBS) && defined(LOFT_POSIX_HOST)
+#if defined(LOFT_BIND_LIBS) && defined(LOFT_DL)
     loft_c_bind_libraries();
 #endif
     LOFT_TRACE("M\n");

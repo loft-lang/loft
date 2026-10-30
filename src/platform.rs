@@ -1703,9 +1703,8 @@ pub fn c_link_arg_for_soname(soname: &str) -> String {
 pub fn c_whole_archive_args(archive: &str) -> Vec<String> {
     if cfg!(target_os = "macos") {
         vec![format!("-Wl,-force_load,{archive}")]
-    } else if cfg!(windows) {
-        vec![archive.to_string()]
     } else {
+        // GNU ld's form, MinGW's included (@PLN203 C8).
         vec![
             "-Wl,--whole-archive".to_string(),
             archive.to_string(),
@@ -1715,20 +1714,23 @@ pub fn c_whole_archive_args(archive: &str) -> Vec<String> {
 }
 
 /// @PLN195 — does a shipped C program open the libraries its packages ship at start, through
-/// loft's search order (`loft_c_bind_libraries`, POSIX `dlopen`)?  Elsewhere it links them and
-/// finds them beside itself.
+/// loft's search order (`loft_c_bind_libraries`: `dlopen` on POSIX, `LoadLibraryA` on Windows,
+/// @PLN203 C8)?  Every host the C runtime has a loader for does.
 #[must_use]
 pub fn c_binds_libraries_at_start() -> bool {
-    cfg!(unix)
+    cfg!(any(unix, windows))
 }
 
-/// The `cc` argument that exports a C backend program's own symbols to the dynamic table, so a
-/// `dlsym` over the program finds a shim linked into it (@PLN203 C5, optional libraries): GNU
-/// ld's `-rdynamic`; macOS exports them already, and Windows resolves no symbol that way.
+/// The `cc` argument that exports a C backend program's own symbols, so a lookup over the
+/// program finds a shim linked into it (@PLN203 C5, optional libraries): GNU ld's `-rdynamic`;
+/// macOS exports them already; on Windows MinGW's ld exports them from the executable, where
+/// `GetProcAddress` reads (an MSVC `cl` program takes no `-Wl,`, and carries none).
 #[must_use]
 pub fn c_export_dynamic_arg() -> Option<&'static str> {
     if cfg!(target_os = "linux") {
         Some("-rdynamic")
+    } else if cfg!(windows) {
+        Some("-Wl,--export-all-symbols")
     } else {
         None
     }

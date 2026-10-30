@@ -89,7 +89,7 @@ static loft_ref loft_ffi_record_answer(loft_ffi_ref r) {
     return v;
 }
 
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_DL)
 /* One `loft_register_v1` entry checked against the name `loft_ffi_sym` asks for. */
 typedef struct { const char *want; size_t len; const void *found; } loft_ffi_reg_q;
 static void loft_ffi_reg_find(const uint8_t *name, size_t len, const void *fn, void *ctx) {
@@ -105,14 +105,14 @@ static void *loft_ffi_lookup(void *h, const char *sym) {
     void *p = 0;
     typedef void (*loft_ffi_reg_fn)(void (*)(const uint8_t *, size_t, const void *, void *), void *);
     loft_ffi_reg_fn reg;
-    void *r = dlsym(h, "loft_register_v1");
+    void *r = loft_dl_sym(h, "loft_register_v1");
     memcpy(&reg, &r, sizeof reg);
     if (r) {
         loft_ffi_reg_q q = { sym, strlen(sym), 0 };
         reg(loft_ffi_reg_find, &q);
         memcpy(&p, &q.found, sizeof p);
     }
-    return p ? p : dlsym(h, sym);
+    return p ? p : loft_dl_sym(h, sym);
 }
 #endif
 
@@ -122,7 +122,7 @@ static void *loft_ffi_lookup(void *h, const char *sym) {
  * symbol that is not there halts the program naming both, as the interpreter refuses a native
  * whose library did not load. */
 static void *loft_ffi_sym(const char *path, const char *file, const char *sym) {
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_DL)
 #if defined(LOFT_BIND_LIBS)
     for (uint32_t i = 0; i < loft_ncbl && i < 64; i++) {
         if (!loft_cbl_row_handle[i] || strcmp(loft_cbl[i].file, file) != 0) continue;
@@ -135,12 +135,12 @@ static void *loft_ffi_sym(const char *path, const char *file, const char *sym) {
     }
 #endif
     (void) file;
-    void *h = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    void *h = loft_dl_open(path, LOFT_DL_LOCAL);
     void *p = h ? loft_ffi_lookup(h, sym) : 0;
     if (p) return p;
     char m[1024];
     snprintf(m, sizeof m, "native function %s is not available: %s", sym,
-             h ? "the library does not export it" : dlerror());
+             h ? "the library does not export it" : loft_dl_error());
     loft_panic(loft_lit(m, strlen(m)), loft_lit(path, strlen(path)), 0);
     return 0;
 #else
