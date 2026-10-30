@@ -11,6 +11,13 @@
 // something else grows a store: two pushed paths, and a push beside a record mint.  Values
 // hand-computed; value AND length.  `LOFT_NO_PUSH_BASE=1` is the same-build oracle and
 // `LOFT_VERIFY` checks the held address against a fresh derivation at every push.
+//
+// @falsified-at: none — the clause has no earlier build to catch, so the receipts are defects
+//   planted (2026-10-30): a growth step that keeps the old address (generated C) crashes every
+//   admitted cell, p1–p7; admitting a push beside a mint (the verdict without its mint test)
+//   loses p9's pushes (an assertion on its length).  The verdict's one-mover test is not
+//   falsified: no cell reaches a reservation of another root without also pushing it.
+//   CHANNEL: an assertion, and a crash.
 
 struct Two { a: vector<integer>, b: vector<integer> }
 struct Pt { x: integer, y: integer }

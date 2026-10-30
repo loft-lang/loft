@@ -1802,6 +1802,13 @@ cells `tests/scripts/157-twin-base.loft`, pins `tests/twin_base.rs`.
                  (R-Alias); the OpPreAllocVector the parser emits before a push to a
                  local claims a record only for an absent vector, never moves one,
                  and is emitted as nothing under a held push header.
+                 SOLE-GROWTH CLAUSE: where the loop's ONE store growth is the pushes
+                 of its one pushed path P — no other push, no mint, no reservation of
+                 another root, no text set, no rebound mover — the header also holds
+                 the ADDRESS of P's record, and a push that fits stores the element
+                 and the length at that address without resolving the store.  Only
+                 P's own growth step can move the store's memory, and that step
+                 derives the whole header again (R-Refresh), the address included.
 ```
 
 **In words.** @PLN157 § V-q.  A growth moves the pushed vector's RECORD and nothing else
@@ -1826,6 +1833,23 @@ one-value slice fill IS admitted, and a `true`, `false` or enum literal is a sim
 for it.  Cells: `loft-suite/attic/scripts/a-boolean-and-enum-push-hold-a-header.loft`.
 Applied by: native generator.  Its clause on the parser's `OpPreAllocVector` is one fact with
 `(R-FirstClaim)`, which the interpreter's generator applies where no header is held.
+
+**The sole-growth clause, in words.**  A push header without an address resolves the store
+twice per push, for the slot and for the length, because a growth of ANY vector in the same
+store may move the store's memory (the reason the C's `loft_ph` holds no pointer).  When the
+loop grows nothing but this one path, nothing but this path's growth step can move it, and that
+step re-derives the header.  crypto's `b64_decode` (`vals += [v]` in a loop with `continue`s
+and `return null` exits, which the counted loop's window does not take) compiles to the loop a
+hand-written address gives, instruction for instruction.  The conditions are read off the hoist
+verdict (`LoopHoist::sole_push`): one pushed path, no mint, no dropped mover, no text growth,
+and the movers exactly that path's root.  The last is conservative: it also refuses a
+reservation of another root, which no admitted loop was found to contain.  Applied by: the C
+(`loft_ph_putb*`, `loft_phb_same` under `LOFT_VERIFY`); native's push header holds no address.
+Switch `LOFT_NO_PUSH_BASE=1`.  Cells
+`tests/scripts/a-loop-whose-one-growth-is-its-push-writes-through-the-record.loft` (p8 and p9
+are the declines; falsified by a growth step that keeps the old address and by admitting a push
+beside a mint).  Sites: `hoist::LoopHoist::sole_push`, `FnWriter::hold_pushes` and
+`FnWriter::pushed_mint` (`src/c/body.rs`).
 
 ### A minted element is a record no holder can name
 
