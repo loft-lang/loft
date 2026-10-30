@@ -1696,14 +1696,6 @@ impl Stores {
     fn copy_record_owning(&mut self, src: &DbRef, to: &DbRef, tp: u16) {
         self.copy_block(src, to, u32::from(self.size(tp)));
         self.copy_claims(src, to, tp);
-        self.clone_owned_captures(to, tp);
-    }
-
-    /// `@FR-L-CapOne` — the record at `to`, just copied as a `tp` record, given its own copy of
-    /// every store an OWNED capture slot names, so the copy and the record it was copied from
-    /// each release what they own once.  A borrowed slot stays shared; a type with no owned
-    /// slot (every non-closure record) is left as it is.
-    pub(crate) fn clone_owned_captures(&mut self, to: &DbRef, tp: u16) {
         let owned_shape = self.dbref();
         let owned: Vec<u16> = match &self.types[tp as usize].parts {
             crate::database::Parts::Struct(fields) => fields

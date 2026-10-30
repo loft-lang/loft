@@ -11859,7 +11859,7 @@ impl Data {
     #[must_use]
     pub fn owns_droppable(&self, type_def: u32) -> bool {
         let mut path = HashSet::new();
-        self.owns_droppable_walk(type_def, &mut path, true)
+        self.owns_droppable_walk(type_def, &mut path)
     }
 
     /// `@FR-L-CapOwn` — the closure record a struct's fn FIELD is built into, where that record
@@ -11884,17 +11884,7 @@ impl Data {
         (holds || self.owns_droppable(record)).then_some(record)
     }
 
-    /// [`Self::owns_droppable`] without what a fn FIELD's closure record owns: the part of a
-    /// record's release that a COPY of the record does not share.  A copy clones the stores a
-    /// closure record owns (`Stores::clone_owned_captures`, `@FR-L-CapOne`), so copy and source
-    /// each release their own, and only the droppables left here make a copy a move of one
-    /// release.
-    #[must_use]
-    pub fn owns_droppable_beyond_closures(&self, type_def: u32) -> bool {
-        self.owns_droppable_walk(type_def, &mut HashSet::new(), false)
-    }
-
-    fn owns_droppable_walk(&self, d_nr: u32, path: &mut HashSet<u32>, closures: bool) -> bool {
+    fn owns_droppable_walk(&self, d_nr: u32, path: &mut HashSet<u32>) -> bool {
         if d_nr == u32::MAX || d_nr as usize >= self.definitions.len() {
             return false;
         }
@@ -11905,8 +11895,8 @@ impl Data {
             return true;
         }
         if self.def(d_nr).attributes().iter().any(|a| {
-            self.type_owns_droppable(&a.typedef, path, closures)
-                || (closures && d_nr < self.fn_fields_settled && self.fn_field_record(a).is_some())
+            self.type_owns_droppable(&a.typedef, path)
+                || (d_nr < self.fn_fields_settled && self.fn_field_record(a).is_some())
         }) {
             return true;
         }
@@ -11914,7 +11904,7 @@ impl Data {
         // payload fields — so a droppable in `WH { h: H }` is reachable only this way.
         self.children_of(d_nr)
             .filter(|&c| self.def_type(c) == DefType::EnumValue)
-            .any(|c| self.owns_droppable_walk(c, path, closures))
+            .any(|c| self.owns_droppable_walk(c, path))
     }
 
     /// The [`owns_droppable`](Self::owns_droppable) walk over a member's TYPE — the step
@@ -11930,7 +11920,7 @@ impl Data {
     /// [`Self::owns_droppable`], for a container that has no def of its own (a `vector<S>`).
     #[must_use]
     pub fn type_owns_droppable_anywhere(&self, t: &Type) -> bool {
-        self.type_owns_droppable(t, &mut HashSet::new(), true)
+        self.type_owns_droppable(t, &mut HashSet::new())
     }
 
     /// Does a value of this TYPE hold a generator handle somewhere inside it — the part of
@@ -11994,7 +11984,7 @@ impl Data {
         ) && self.type_holds_generator(tp)
     }
 
-    fn type_owns_droppable(&self, t: &Type, path: &mut HashSet<u32>, closures: bool) -> bool {
+    fn type_owns_droppable(&self, t: &Type, path: &mut HashSet<u32>) -> bool {
         match t {
             Type::Reference(d, _)
             | Type::Enum(d, true, _)
@@ -12002,14 +11992,12 @@ impl Data {
             | Type::Index(d, _, _)
             | Type::Radix(d, _, _)
             | Type::Trie(d, _, _)
-            | Type::Hash(d, _, _) => self.owns_droppable_walk(*d, path, closures),
-            Type::Vector(elm, _) => self.type_owns_droppable(elm, path, closures),
+            | Type::Hash(d, _, _) => self.owns_droppable_walk(*d, path),
+            Type::Vector(elm, _) => self.type_owns_droppable(elm, path),
             Type::Optional(inner) | Type::RefVar(inner) | Type::Rewritten(inner) => {
-                self.type_owns_droppable(inner, path, closures)
+                self.type_owns_droppable(inner, path)
             }
-            Type::Tuple(elms) => elms
-                .iter()
-                .any(|e| self.type_owns_droppable(e, path, closures)),
+            Type::Tuple(elms) => elms.iter().any(|e| self.type_owns_droppable(e, path)),
             // A generator handle owns its frame (loft#1585): whatever holds one releases it.
             Type::Iterator(_, _) => true,
             _ => false,

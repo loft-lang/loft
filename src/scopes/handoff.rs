@@ -112,11 +112,7 @@ fn copy_carries_drop(function: &Function, data: &Data, v: u16, src_tp: &Type) ->
     let Some(sd) = src_tp.base().heap_def_nr() else {
         return false;
     };
-    // `@FR-L-CapOne` — what a fn field's closure record owns is cloned by the copy, so it
-    // moves no release: copy and source each release their own.
-    data.copies_as(d, sd)
-        && data.drop_cascade_nr(d) != u32::MAX
-        && data.owns_droppable_beyond_closures(d)
+    data.copies_as(d, sd) && data.drop_cascade_nr(d) != u32::MAX
 }
 
 /// Does the plain bind `v = src` between two record locals make `v` the OWNER of its copy, so
