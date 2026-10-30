@@ -27,7 +27,7 @@
 use loft::file_access as fa;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 const WANT: &[&str] = &[
     "BADPW true false false",
@@ -96,7 +96,7 @@ fn build_server(dir: &Path) -> Option<PathBuf> {
     } else {
         "test_sshd"
     });
-    let out = Command::new(&cc)
+    let out = loft::platform::process::harness_command(&cc)
         .arg("-std=c99")
         .arg("-O1")
         .arg("-I")
@@ -136,7 +136,7 @@ fn run(backend: &str) {
     };
     // Two connections: the refused password's and the session's; then it exits, and the port
     // it served is the one nobody does.
-    let mut srv = Command::new(&server)
+    let mut srv = loft::platform::process::harness_command(&server)
         .arg("2")
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
