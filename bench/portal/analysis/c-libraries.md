@@ -161,8 +161,13 @@ source may be a view, held outside the store, materialised where it reaches a st
 `(R-Transient)` (a value built, read and dropped without being stored is built as a short-lived
 object outside the store — the decoded tree with its keys and payloads viewing the frame), and
 `(R-PathRelease)` (an exit releases only what can hold a store on some path to it).  `(R-Transient)`
-is the one that reaches the twin's shape; none is built.  Next: hand-price `(R-Transient)` on
-`read_value`.
+is the one that reaches the twin's shape; none is built.
+
+**`(R-Transient)` priced (2026-10-30, late night)**, by hand in the emitted C, same hashes:
+both decodes as a tree outside the store, `malloc` per array — gcc **0.109×**, clang 0.129×;
+with the arrays in a site-owned bump arena gcc **0.087×** (≈ 87 ns a check, under the twin's
+124); the `.ok` decode alone building no tree at all 0.537×.  Design and steps (T1 the dead
+tree, T2 the representation, T3 materialisation): [`transient.md`](transient.md).
 
 ### The short appends (2026-10-30)
 
