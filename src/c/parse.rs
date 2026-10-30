@@ -49,6 +49,12 @@ impl Cx<'_> {
                 fields.iter().try_for_each(|f| self.parse_type(f.content))
             }
             Parts::Vector(c) => self.parse_type(*c),
+            // `@FR-L-OutOfLine` — an out-of-line field reads its content's value.
+            Parts::ChildRec(c) if self.stores.child_rec_is_value(*c) => {
+                self.name_types();
+                self.describe_type(*c);
+                self.parse_type(*c)
+            }
             Parts::Enum(values) => {
                 self.enum_names(tp);
                 values
@@ -212,7 +218,14 @@ impl Cx<'_> {
                 Parts::Int(min, null) => narrow("LOFT_P_NINT", *min, *null),
                 Parts::IntRaw(min, null) => narrow("LOFT_P_NINTRAW", *min, *null),
                 Parts::DbRef => ".kind = LOFT_P_DBREF".to_string(),
-                Parts::ChildRec(_) => ".kind = LOFT_P_CHILD".to_string(),
+                Parts::ChildRec(c) => format!(
+                    ".kind = LOFT_P_CHILD, .elem = {}",
+                    if self.stores.child_rec_is_value(*c) {
+                        *c
+                    } else {
+                        u16::MAX
+                    }
+                ),
                 Parts::Base => ".kind = LOFT_P_OTHER".to_string(),
             };
             let row = format!("{{ {row}, .size = {size}, .name = {} }}", c_string(&t.name));

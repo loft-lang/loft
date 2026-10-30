@@ -1470,6 +1470,12 @@ impl Parser {
                 Self::TV_FIELD_SET,
             );
         }
+        // `@FR-B-OutOfLine` — a write to an out-of-line field copies into the host's store.
+        if op == "="
+            && let Some((field, kt)) = self.out_of_line_place(to)
+        {
+            return self.out_of_line_set(field, kt, val);
+        }
         // Intercept `h[key] = null` → remove the key from hash/index/sorted
         if let Some(result) = self.towards_set_hash_remove(to, val, op, f_type) {
             return result;

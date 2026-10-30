@@ -241,7 +241,85 @@ impl Parser {
                 None => read,
             };
         }
+        if self.data.field_is_out_of_line(d_nr, f_nr) {
+            // An absent child reads null, whatever the declaration says (`@FR-L-OutOfLine`).
+            self.expr_not_null = false;
+            self.expr_not_null_name.clear();
+            return self.out_of_line_read(&tp, u32::from(pos), code);
+        }
         self.get_val(&tp, nullable, u32::from(pos), code, alias)
+    }
+
+    /// `@FR-L-OutOfLine` — the content row of an out-of-line field of type `tp`: what its
+    /// child record holds.  `u16::MAX` on the first pass, before any layout exists.
+    fn out_of_line_kt(&self, tp: &Type) -> i32 {
+        if self.first_pass {
+            return i32::from(u16::MAX);
+        }
+        let d = self.data.type_def_nr(tp.base());
+        if d == u32::MAX {
+            i32::from(u16::MAX)
+        } else {
+            i32::from(self.data.def(d).known_type())
+        }
+    }
+
+    /// `@FR-L-OutOfLine` — read an out-of-line field: the child record its number names, with
+    /// the host's store attached — a view, as every struct projection is (`@C86`).  The
+    /// field's own `OpGetField` carries the CONTENT row, which is how
+    /// [`Self::out_of_line_place`] knows an assignment target for one.
+    pub(super) fn out_of_line_read(&mut self, tp: &Type, pos: u32, code: Value) -> Value {
+        let kt = self.out_of_line_kt(tp);
+        let field = self.cl(
+            "OpGetField",
+            &[code, Value::Int(pos as i32), Value::Int(kt)],
+        );
+        self.cl("OpRefFromChildRec", &[field])
+    }
+
+    /// `@FR-L-OutOfLine` — the field place an out-of-line read names, and its content row:
+    /// `Some((field, kt))` for `OpRefFromChildRec(OpGetField(host, pos, kt))`.  A closure
+    /// record's child is read through the same operator with row 0, inside its
+    /// `fn_ref_field_read` block, and is never an assignment target, so it answers `None`.
+    pub(crate) fn out_of_line_place(&self, to: &Value) -> Option<(Value, i32)> {
+        let Value::Call(d, args) = to.unspan() else {
+            return None;
+        };
+        if self.data.def(*d).name() != "OpRefFromChildRec" {
+            return None;
+        }
+        let field = args.first()?;
+        let Value::Call(g, gargs) = field.unspan() else {
+            return None;
+        };
+        if self.data.def(*g).name() != "OpGetField" {
+            return None;
+        }
+        match gargs.get(2) {
+            Some(Value::Int(kt)) if *kt != 0 => Some((field.clone(), *kt)),
+            _ => None,
+        }
+    }
+
+    /// `@FR-B-OutOfLine` — write `val` into the out-of-line field at `field` (content row
+    /// `kt`): `OpSetChildRec`, which copies the value into the host's store (in place over a
+    /// present child) or releases the child for a null.  A call's returned store is given up
+    /// to the copy, as `copy_ref` gives it up to `OpCopyRecord`.
+    pub(crate) fn out_of_line_set(&mut self, field: Value, kt: i32, val: &Value) -> Value {
+        let source = if self.is_null_source(val) {
+            self.cl("OpNullRefSentinel", &[])
+        } else {
+            val.clone()
+        };
+        let tp = if !self.first_pass
+            && matches!(source.unspan(), Value::Call(_, _))
+            && self.call_gives_away_its_store(&source)
+        {
+            kt | 0x8000
+        } else {
+            kt
+        };
+        self.cl("OpSetChildRec", &[field, source, Value::Int(tp)])
     }
 
     /// Is the fn-ref struct field `d_nr.f_nr` stored in the split 8B
@@ -1221,6 +1299,12 @@ impl Parser {
         } else {
             None
         };
+        if f_nr != usize::MAX && self.data.field_is_out_of_line(d_nr, f_nr) {
+            let kt = self.out_of_line_kt(&tp);
+            let field = self.cl("OpGetField", &[ref_code, pos_val, Value::Int(kt)]);
+            let set_op = self.out_of_line_set(field, kt, &val_code);
+            return self.emit_field_constraint(set_op, ref_for_check, d_nr, f_nr, &nm);
+        }
         let set_op = match tp {
             Type::Integer(ref spec) => {
                 // Post-2c: honor size(N) on the alias recorded during field

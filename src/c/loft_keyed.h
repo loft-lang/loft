@@ -925,7 +925,7 @@ static loft_ref loft_ref_from_child_rec(loft_ref f) {
 
 /* OpChildRec (Stores::new_child_rec): a fresh `tp` child record in field `f`'s store, filled with
  * its defaults and named by the field; a record the field held before is released as this
- * store's bytes.  The claim is `size` words, as the Rust's is. */
+ * store's bytes.  The claim is its header word and payload (`Stores::child_rec_words`). */
 static loft_ref loft_new_child_rec(const loft_tdesc *T, uint16_t tp, loft_ref f, const uint8_t *image,
                                    uint32_t n) {
     if (f.store_nr == 0xFFFF || f.rec == 0) return loft_ref_null();
@@ -935,11 +935,48 @@ static loft_ref loft_new_child_rec(const loft_tdesc *T, uint16_t tp, loft_ref f,
         loft_remove_claims(T, tp, o);
         loft_st_delete(loft_store_of(f), old);
     }
-    uint32_t rec = loft_claim(loft_store_of(f), T[tp].size);
+    uint32_t rec = loft_claim(loft_store_of(f), 1 + (T[tp].size + 7) / 8);
     loft_ref db = { f.store_nr, rec, 8 };
     loft_fill(db, image, n);
     loft_set_u32(loft_store_of(f), f.rec, f.pos, rec);
     return db;
+}
+
+/* OpSetChildRec (Stores::set_child_rec, `@FR-B-OutOfLine`): write the `tp` value `src` into the
+ * out-of-line field `f`.  A null releases the child; a value is copied into a fresh record of the
+ * host's store first (it may lie inside the child it replaces), which an absent field takes and
+ * a present child takes in place, keeping its record number.  `free_source` releases a given-up
+ * source store, as loft_copy_record's does. */
+static void loft_set_child_rec(const loft_tdesc *T, uint16_t tp, loft_ref f, loft_ref src, int free_source) {
+    int present = src.store_nr != 0xFFFF && src.rec != 0;
+    if (f.store_nr == 0xFFFF || f.rec == 0) {
+        if (free_source && present && src.store_nr != f.store_nr && !loft_free_protected(src)) loft_free_ref(src);
+        return;
+    }
+    uint32_t old = loft_u32(loft_store_of(f), f.rec, f.pos);
+    if (!present) {
+        if (old != 0) {
+            loft_set_u32(loft_store_of(f), f.rec, f.pos, 0);
+            loft_ref o = { f.store_nr, old, 8 };
+            loft_remove_claims(T, tp, o);
+            loft_st_delete(loft_store_of(f), old);
+        }
+        return;
+    }
+    uint32_t size = T[tp].size;
+    uint32_t fresh = loft_claim(loft_store_of(f), 1 + (size + 7) / 8);
+    loft_ref nw = { f.store_nr, fresh, 8 };
+    loft_copy_bytes(nw, 0, src, 0, size);
+    loft_copy_claims(T, tp, src, nw);
+    if (old == 0) {
+        loft_set_u32(loft_store_of(f), f.rec, f.pos, fresh);
+    } else {
+        loft_ref o = { f.store_nr, old, 8 };
+        loft_remove_claims(T, tp, o);
+        loft_copy_bytes(o, 0, nw, 0, size);
+        loft_st_delete(loft_store_of(f), fresh);
+    }
+    if (free_source && src.store_nr != f.store_nr && !loft_free_protected(src)) loft_free_ref(src);
 }
 
 /* Stores::vector_add_array: `v += o` of a linked element type, whose slots are record ids — each

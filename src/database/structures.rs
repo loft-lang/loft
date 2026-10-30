@@ -1625,6 +1625,80 @@ impl Stores {
         }
     }
 
+    /// The words a `tp` child record claims: its header word and its payload, an enum's at
+    /// its largest variant's size (`enum_parent_size`).
+    #[must_use]
+    pub fn child_rec_words(&self, tp: u16) -> u32 {
+        1 + u32::from(self.enum_parent_size(tp)).div_ceil(8)
+    }
+
+    /// `OpSetChildRec` — `@FR-B-OutOfLine`: write the `tp` value `data` into the out-of-line
+    /// field at `field`, with an inline field's value semantics.
+    ///
+    /// - A null value releases the child the field held, all the way down, and leaves the
+    ///   field absent (record 0).  `Store::delete` entombs it where a stored reference named
+    ///   it (`@FR-H-Removed`), so such a link reads null afterwards.
+    /// - A value is copied into a FRESH record of the host's store first, because it may lie
+    ///   inside the child it replaces (`t.left = t.left.left`).  An absent field then takes
+    ///   the fresh record.  A present child keeps its record NUMBER: its claims are released
+    ///   and the fresh bytes moved into it, so a view of the child still names it and sees the
+    ///   new value, as a view of an inline field does.
+    ///
+    /// `raw_tp`'s `COPY_FREE_SOURCE` bit releases a given-up source store after the copy, as
+    /// `OpCopyRecord`'s does.
+    pub fn set_child_rec(&mut self, field: &DbRef, data: &DbRef, raw_tp: u16) {
+        let free_source = raw_tp & crate::keys::COPY_FREE_SOURCE != 0;
+        let tp = raw_tp & crate::keys::COPY_TP_MASK;
+        let present = data.store_nr != u16::MAX && data.rec != 0;
+        if field.store_nr == u16::MAX || field.rec == 0 {
+            if free_source && present {
+                self.release_copy_source(data, field);
+            }
+            return;
+        }
+        let old = self.store(field).get_u32_raw(field.rec, field.pos);
+        if !present {
+            if old != 0 {
+                self.store_mut(field).set_u32_raw(field.rec, field.pos, 0);
+                let old_db = DbRef {
+                    store_nr: field.store_nr,
+                    rec: old,
+                    pos: 8,
+                };
+                self.remove_claims(&old_db, tp);
+                self.store_mut(field).delete(old);
+            }
+            return;
+        }
+        let size = u32::from(self.enum_parent_size(tp));
+        let words = self.child_rec_words(tp);
+        let fresh = self.allocations[field.store_nr as usize].claim(words);
+        let fresh_db = DbRef {
+            store_nr: field.store_nr,
+            rec: fresh,
+            pos: 8,
+        };
+        self.copy_block(data, &fresh_db, size);
+        self.copy_claims(data, &fresh_db, tp);
+        if old == 0 {
+            self.store_mut(field)
+                .set_u32_raw(field.rec, field.pos, fresh);
+        } else {
+            let old_db = DbRef {
+                store_nr: field.store_nr,
+                rec: old,
+                pos: 8,
+            };
+            self.remove_claims(&old_db, tp);
+            self.store_mut(field)
+                .copy_block(fresh, 8, old, 8, size as isize);
+            self.store_mut(field).delete(fresh);
+        }
+        if free_source {
+            self.release_copy_source(data, field);
+        }
+    }
+
     /// `OpChildRec` — a fresh `tp` child record in `host_field`'s store, default-filled, its
     /// rec-id written into the field (loft#1867).  In-store mechanics only: a record the field
     /// held before is released as BYTES of this store; what it adopted outside the store is
@@ -1646,8 +1720,8 @@ impl Stores {
             self.remove_claims(&old_db, tp);
             self.store_mut(host_field).delete(old);
         }
-        let size = u32::from(self.size(tp));
-        let rec = self.allocations[host_field.store_nr as usize].claim(size);
+        let words = self.child_rec_words(tp);
+        let rec = self.allocations[host_field.store_nr as usize].claim(words);
         let db = DbRef {
             store_nr: host_field.store_nr,
             rec,
@@ -3207,8 +3281,16 @@ impl Stores {
             // JSON-representable form — closures don't survive a JSON
             // round-trip.  Surface as a clean error.
             Parts::DbRef => Err(mismatch()),
-            // P213: child-record pointer (closures) — same JSON
-            // restriction as DbRef.
+            // `@FR-L-OutOfLine` — an out-of-line field reads its value into a fresh child
+            // record of the host's store, through the content's own walk.
+            Parts::ChildRec(content) if self.child_rec_is_value(content) => {
+                let child = self.new_child_rec(to, content);
+                if child.rec == 0 {
+                    return Err(mismatch());
+                }
+                self.walk_parsed_into(parsed, content, u16::MAX, u16::MAX, &child, path, at)
+            }
+            // P213: a closure record's child — same JSON restriction as DbRef.
             Parts::ChildRec(_) => Err(mismatch()),
         }
     }

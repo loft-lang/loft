@@ -540,6 +540,23 @@ static int loft_pw_walk(loft_pw *w, const loft_jv *v, uint16_t tp, uint16_t rec_
         }
         return 1;
     }
+    case LOFT_P_CHILD: {
+        /* `@FR-L-OutOfLine` (walk_parsed_into's ChildRec arm): the value read into a fresh
+         * child record of the host's store, through the content's own walk. */
+        if (t->elem == 0xFFFF) return LOFT_PW_MISFIT(errs, at);
+        const loft_tdesc *T = loft_parse_types();
+        uint32_t old = loft_u32(loft_store_of(to), to.rec, to.pos);
+        if (old != 0) {
+            loft_ref o = { to.store_nr, old, 8 };
+            loft_remove_claims(T, t->elem, o);
+            loft_st_delete(loft_store_of(to), old);
+        }
+        uint32_t nr = loft_claim(loft_store_of(to), 1 + (w->P[t->elem].size + 7u) / 8u);
+        loft_ref ch = { to.store_nr, nr, 8 };
+        loft_set_u32(loft_store_of(to), to.rec, to.pos, nr);
+        loft_pw_default(w, t->elem, 0, 0, ch);
+        return loft_pw_walk(w, v, t->elem, 0xFFFF, 0xFFFF, ch, at, errs);
+    }
     case LOFT_P_RECORD: {
         /* A `Type{…}` reads as its body: the schema fixes the type. */
         const loft_jv *body = v->kind == LOFT_JV_CTOR ? &v->kids[0] : v;

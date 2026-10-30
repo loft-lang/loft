@@ -32,6 +32,8 @@ impl Cx<'_> {
                 fields.iter().try_for_each(|f| self.show_type(f.content))
             }
             Parts::Vector(elem) => self.show_type(*elem),
+            // `@FR-L-OutOfLine` — an out-of-line field renders as its content.
+            Parts::ChildRec(c) if self.stores.child_rec_is_value(*c) => self.show_type(*c),
             Parts::Sorted(elem, _)
             | Parts::Hash(elem, _)
             | Parts::Index(elem, _)
@@ -235,6 +237,13 @@ impl Cx<'_> {
             }
             Parts::DbRef => {
                 out.push_str("    (void) fmt; (void) ind;\n    loft_show_dbref(s, r);\n")
+            }
+            Parts::ChildRec(c) if self.stores.child_rec_is_value(*c) => {
+                let _ = writeln!(
+                    out,
+                    "    {}(s, loft_ref_from_child_rec(r), fmt, ind);",
+                    Self::show_fn(*c)
+                );
             }
             _ => out.push_str("    (void) fmt; (void) ind;\n    loft_show_child(s, r);\n"),
         }

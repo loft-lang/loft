@@ -8017,6 +8017,80 @@ impl Data {
         }
     }
 
+    /// `@FR-L-OutOfLine` — is field `a_nr` of `d_nr` laid out OUT OF LINE: a record number in
+    /// the host's store (`Parts::ChildRec`) rather than the value's own bytes?
+    ///
+    /// Exactly the fields that would make their host contain itself: an embedded struct or a
+    /// struct-enum field whose type reaches the host again through inline edges.  Inline
+    /// layout is impossible there, so the compiler knows without being told.  Every field on a
+    /// size cycle answers yes, which is what leaves no cycle behind
+    /// ([`has_value_cycle`](Self::has_value_cycle) skips these edges).  A cycle through a
+    /// TUPLE member answers no and keeps its refusal: a member has no field to hold the number.
+    #[must_use]
+    pub fn field_is_out_of_line(&self, d_nr: u32, a_nr: usize) -> bool {
+        if !crate::keys::out_of_line_enabled() || a_nr == usize::MAX {
+            return false;
+        }
+        let attr = &self.def(d_nr).attributes[a_nr];
+        if attr.constant {
+            return false;
+        }
+        let target = match attr.typedef.base() {
+            Type::Reference(t, deps) if !deps.is_pointer_marker() => *t,
+            Type::Enum(t, true, _) => *t,
+            _ => return false,
+        };
+        if !matches!(
+            self.def_type(target),
+            DefType::Struct | DefType::Enum | DefType::EnumValue
+        ) || self.def(target).name.starts_with("__")
+        {
+            return false;
+        }
+        let mut seen = std::collections::HashSet::new();
+        self.reaches_inline(target, d_nr, &mut seen)
+    }
+
+    /// Does definition `from` hold `goal` in its own bytes, through embedded fields, tuple
+    /// members and enum variants (the edges [`inline_field_defs`](Self::inline_field_defs)
+    /// names)?  The plain graph, with no field taken out of line: what
+    /// [`field_is_out_of_line`](Self::field_is_out_of_line) asks is whether inline layout
+    /// would be possible, so it must not depend on its own answer.
+    fn reaches_inline(
+        &self,
+        from: u32,
+        goal: u32,
+        seen: &mut std::collections::HashSet<u32>,
+    ) -> bool {
+        if from == goal {
+            return true;
+        }
+        if !seen.insert(from) {
+            return false;
+        }
+        match self.def_type(from) {
+            DefType::Enum => self
+                .children_of(from)
+                .filter(|&c| self.def_type(c) == DefType::EnumValue)
+                .any(|c| self.reaches_inline(c, goal, seen)),
+            DefType::Struct | DefType::EnumValue => {
+                let mut children = Vec::new();
+                for a_nr in 0..self.attributes(from) {
+                    if self.def(from).attributes[a_nr].constant {
+                        continue;
+                    }
+                    children.clear();
+                    Self::inline_field_defs(&self.attr_type(from, a_nr), &mut children);
+                    if children.iter().any(|&c| self.reaches_inline(c, goal, seen)) {
+                        return true;
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
     /// Check if struct `d_nr` contains itself as a value type (not reference)
     /// field, directly or through other structs.  (Moved from `typedef.rs` —
     /// pass-2: a walk over `Data`'s definition graph lives with `Data`.)
@@ -8058,6 +8132,11 @@ impl Data {
         }
         let mut children = Vec::new();
         for a_nr in 0..self.attributes(d_nr) {
+            // An out-of-line field is a 4-byte record number (`@FR-L-OutOfLine`): it ends the
+            // size cycle as a collection handle does.
+            if self.field_is_out_of_line(d_nr, a_nr) {
+                continue;
+            }
             children.clear();
             Self::inline_field_defs(&self.attr_type(d_nr, a_nr), &mut children);
             for child_nr in &children {
