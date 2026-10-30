@@ -4674,8 +4674,21 @@ the hand price), which is `insert_text`'s `np += [p]` per piece
                  recursive decoder builds its whole tree in the store of the outermost
                  buffer and copies nothing on the way up.  The move is same-store and
                  into an empty slot by construction; the runtime keeps the copy for any
-                 other pair, and `LOFT_HOIST_VERIFY=1` makes that pair fatal.  The
-                 RECORD clause: a LOCAL RECORD minted once in the body's own statement
+                 other pair, and `LOFT_HOIST_VERIFY=1` makes that pair fatal.  THE
+                 DECLINES ARE ALSO ITS COST ANSWER: widening the rule to an exit that
+                 REPLACES the field (the buffer may be a caller's live record, R-Rebind),
+                 to a wrapper free before the mint (an early `return d`) and to an exit
+                 that stages its scalars first was built and measured (2026-10-30) —
+                 correct on every channel, and slower on every row it reached (zttext
+                 `insert_text` +15 %, `patch` +6 %, `invert` +4 %, gcc ship), because
+                 the wrapper's store is the cheapest place the vector can grow: a fresh
+                 store grows at its tail, while in the buffer's store — which may be an
+                 argument's — a growth relocates the vector, and every holder over an
+                 argument in a loop that grows the local is lost (`opt::apart` cannot
+                 prove the argument apart from it).  The exit copy it saves is one block
+                 copy.  The cells are
+                 `tests/scripts/a-local-built-for-the-returned-literal-is-built-in-its-buffers-store.loft`.
+                 The RECORD clause: a LOCAL RECORD minted once in the body's own statement
                  list whose one fate is the copy into an inline field of the literal
                  of the function's ONE exit IS that field — its mint becomes the
                  buffer's ensure, the local a VIEW of the field (typed depending on

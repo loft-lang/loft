@@ -1,0 +1,143 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `(R-ExitVector)` — a vector local returned inside the exit literal is claimed in the return
+// buffer's store and moved into its field by a handle move.  These cells pin the rule's REACH as
+// well as its answers: c7 (a variant's field, cbor's `CArray { items }`) is admitted; the others
+// are the shapes a wider rule would take and the rule declines — the rebind `d = f(d, …)` that
+// hands the argument's own record as the buffer (c2, c6), a loop holding a header over an
+// argument while the local grows (c3), an exit that answers another record (c4), an exit with an
+// empty field beside one that stores the local (c5).  Widening to them was built and measured
+// (2026-10-30, bench/portal/analysis/c-libraries.md § R-PlaceReturn): correct on every channel,
+// slower on every row it reached, so the declines are the rule's cost answer, not a gap.
+// Values hand-computed; value AND length; the leak and double-free channels are
+// LOFT_STRICT_STORES=1 and LOFT_NATIVE_LEAK_CHECK=1.
+//
+// @falsified-at: none — the cells were written against the rule as it stands, so the receipt is
+//   a planted defect (2026-10-30) in both runtimes: a handle move that leaves the source slot
+//   holding the vector, which the wrapper's release then frees under the field, fails c7
+//   ("c7 0 4" for 4014) on --interpret, --native and --native-c.
+//   CHANNEL: an assertion.
+
+struct Doc { buf: vector<integer>, pieces: vector<integer>, n: integer }
+
+fn grow(d: Doc, extra: integer) -> Doc {
+  nb: vector<integer> = [];
+  nb += d.buf;
+  for i in 0..extra { nb += [100 + i]; }
+  np: vector<integer> = [];
+  for i in 0..len(d.pieces) { np += [(d.pieces[i] ?? 0) * 2]; }
+  np += [len(nb)];
+  return Doc { buf: nb, pieces: np, n: d.n + 1 };
+}
+
+fn show(d: Doc) -> text {
+  t = 0;
+  for x in d.buf { t += x; }
+  p = 0;
+  for x in d.pieces { p += x; }
+  "{len(d.buf)}:{t} {len(d.pieces)}:{p} {d.n}"
+}
+
+// c1: a plain call into a fresh local: buf 1 2 3 then 100 101; pieces 4 8 then len 5
+fn test_a_plain_call() {
+  d0 = Doc { buf: [1, 2, 3], pieces: [2, 4], n: 0 };
+  d1 = grow(d0, 2);
+  assert(show(d1) == "5:207 3:17 1", "c1 {show(d1)}");
+  assert(show(d0) == "3:6 2:6 0", "c1 d0 {show(d0)}");
+}
+
+// c2: the rebind — d handed back as the buffer, read while the locals are built.  Three steps:
+// buf 1 → 1,100 → 1,100,100,101 → 1,100,100,101,100,101,102; pieces doubled and the length added
+fn test_the_rebind() {
+  d = Doc { buf: [1], pieces: [1], n: 0 };
+  for k in 1..4 { d = grow(d, k); }
+  // pieces: [1] → [2,2] → [4,4,4] → [8,8,8,7]
+  assert(show(d) == "7:605 4:31 3", "c2 {show(d)}");
+}
+
+fn grow_under_header(d: Doc, extra: integer) -> Doc {
+  np: vector<integer> = [];
+  for i in 0..len(d.buf) {
+    np += [d.buf[i] ?? 0];
+    if i < extra { np += [-(d.buf[i] ?? 0)]; }
+  }
+  k = len(np);
+  return Doc { buf: d.buf, pieces: np, n: k };
+}
+
+// c3: a loop holding d.buf (its header) while np grows; under a rebind np grows in d's store
+fn test_a_holder_over_an_argument() {
+  d = Doc { buf: [5, 6, 7, 8], pieces: [], n: 0 };
+  d = grow_under_header(d, 2);
+  d = grow_under_header(d, 1);
+  // first: 5 -5 6 -6 7 8 (n 6); second over buf 5 6 7 8 again: 5 -5 6 7 8 (n 5)
+  assert(show(d) == "4:26 5:21 5", "c3 {show(d)}");
+}
+
+fn maybe(d: Doc, keep: boolean) -> Doc {
+  nb: vector<integer> = [];
+  for x in d.buf { nb += [x + 1]; }
+  if !keep { return d; }
+  return Doc { buf: nb, pieces: [], n: 9 };
+}
+
+// c4: an exit that answers another record after the local was built; and a fresh buffer
+fn test_an_exit_that_does_not_store_it() {
+  d = Doc { buf: [1, 2], pieces: [3], n: 4 };
+  a = maybe(d, false);
+  b = maybe(d, true);
+  assert(show(a) == "2:3 1:3 4" && show(b) == "2:5 0:0 9", "c4 {show(a)} | {show(b)}");
+}
+
+fn either(d: Doc, keep: boolean) -> Doc {
+  nb: vector<integer> = [];
+  for x in d.buf { nb += [x * 10]; }
+  if keep { return Doc { buf: nb, pieces: [1], n: 1 }; }
+  return Doc { buf: [], pieces: [2], n: 2 };
+}
+
+// c5: one exit stores the local, another answers an empty field
+fn test_one_exit_stores_another_does_not() {
+  d = Doc { buf: [1, 2, 3], pieces: [], n: 0 };
+  assert(show(either(d, true)) == "3:60 1:1 1" && show(either(d, false)) == "0:0 1:2 2",
+    "c5 {show(either(d, true))} | {show(either(d, false))}");
+}
+
+struct Lines { rows: vector<text>, count: integer }
+
+fn add_line(l: Lines, s: text) -> Lines {
+  rows: vector<text> = [];
+  for r in l.rows { rows += [r]; }
+  rows += ["{s}:{len(rows)}"];
+  return Lines { rows: rows, count: l.count + 1 };
+}
+
+// c6: heap-owning elements under a rebind: each row a text of its own
+fn test_heap_owning_elements() {
+  l = Lines { rows: [], count: 0 };
+  for w in ["a", "bb", "ccc"] { l = add_line(l, w); }
+  got = "{len(l.rows)} {l.rows[0] ?? "-"} {l.rows[2] ?? "-"} {l.count}";
+  assert(got == "3 a:0 ccc:2 3", "c6 {got}");
+}
+
+enum Val { VList { items: vector<integer> }, VNone { z: integer } }
+struct Decoded { value: Val, next: integer }
+
+fn decode_list(src: const vector<integer>, n: integer) -> Decoded {
+  items: vector<integer> = [];
+  for i in 0..n { items += [(src[i] ?? 0) + 1]; }
+  return Decoded { value: VList { items: items }, next: n };
+}
+
+fn list_sum(d: Decoded) -> integer {
+  match d.value { VList { items } => len(items) * 1000 + vtotal(items), VNone { z } => z }
+}
+
+fn vtotal(v: vector<integer>) -> integer { t = 0; for x in v { t += x; } t }
+
+// c7: a variant's field: items 2 3 4 5
+fn test_a_variant_field() {
+  r = decode_list([1, 2, 3, 4, 5], 4);
+  assert(list_sum(r) == 4014 && r.next == 4, "c7 {list_sum(r)} {r.next}");
+}
