@@ -233,6 +233,15 @@ form and is the first bisect step for a leak, a double free or a stale record ou
 loop that binds a record from a branch of calls; `LOFT_STRICT_STORES=1` and
 `LOFT_POISON=1` are the falsifiers.
 
+**A match lowered once per arm (`@FR-M-Once`, default-ON, both backends, parse time):** a
+guarded arm folds its guard into its own condition (`parser::control::guarded_arm`), so a
+failed guard reaches the next arm by control flow and no arm is lowered twice;
+**`LOFT_NO_GUARD_ARM=1`** builds the copying form, whose size grows exponentially with the
+guards (`tests/match_once.rs` counts both).  It is the first bisect step for a wrong answer, a
+leak or a crash in a `match` with guarded arms: a binding first written inside a folded
+condition is the shape to suspect.  Guards `loft-suite/rules/matching/M-Once/`.  (An enum arm's
+test as one op is the interpreter's alone, `LOFT_NO_TAG_JUMP`: `formal/rewrites.md` `(R-Fuse)`.)
+
 **Store confinement across sibling blocks (default-ON since 2026-08-21, both backends):** a
 local reassigned across sibling `if`/`else if`/`match` arms used to keep EVERY arm's store
 alive to scope exit, so the watermark grew with the number of reassignment SITES rather than
