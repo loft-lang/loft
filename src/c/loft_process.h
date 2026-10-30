@@ -448,7 +448,12 @@ static int loft_spawn(char **argv, const size_t *lens, size_t n, int pin, int po
     loft_push_char(&cmd, 0);
     /* Whatever this program wrote reaches its stream before the child's output does. */
     fflush(0);
-    STARTUPINFOA si;
+    /* The command line as UTF-16, as `std::process` hands it over: through the ANSI call a
+     * word's UTF-8 would reach the child in the code page's reading. */
+    int wn = MultiByteToWideChar(CP_UTF8, 0, cmd.p, -1, 0, 0);
+    wchar_t *wcmd = wn > 0 ? (wchar_t *) malloc((size_t) wn * sizeof *wcmd) : 0;
+    if (wcmd) MultiByteToWideChar(CP_UTF8, 0, cmd.p, -1, wcmd, wn);
+    STARTUPINFOW si;
     PROCESS_INFORMATION pi;
     memset(&si, 0, sizeof si);
     memset(&pi, 0, sizeof pi);
@@ -458,8 +463,10 @@ static int loft_spawn(char **argv, const size_t *lens, size_t n, int pin, int po
     si.hStdOutput = child_out;
     si.hStdError = child_err;
     DWORD e = 0;
-    if (ok && !CreateProcessA(0, cmd.p, 0, 0, TRUE, 0, 0, 0, &si, &pi)) ok = 0;
-    if (!ok) e = GetLastError();
+    if (!wcmd) ok = 0;
+    if (ok && !CreateProcessW(0, wcmd, 0, 0, TRUE, 0, 0, 0, &si, &pi)) ok = 0;
+    if (!ok) e = wcmd ? GetLastError() : ERROR_NOT_ENOUGH_MEMORY;
+    free(wcmd);
     free(cmd.p);
     HANDLE child_ends[3] = { child_in, child_out, child_err };
     for (int i = 0; i < 3; i++)

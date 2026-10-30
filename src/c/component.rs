@@ -85,7 +85,22 @@ pub fn build(name: &str, out_dir: &std::path::Path) -> Result<std::path::PathBuf
             .map_err(|e| format!("cannot publish `{}`: {e}", lib.display()))
     });
     let _ = crate::file_access::remove_dir_all(&stage);
-    published?;
+    // A concurrent build may have published the same library first — and on Windows a
+    // library another process has loaded cannot be replaced: that one is the answer once its
+    // key says it is this build's.
+    if let Err(why) = published {
+        let current = || {
+            crate::file_access::exists(&lib)
+                && crate::file_access::read_to_string(&key_file).is_ok_and(|k| k.trim() == key)
+        };
+        for _ in 0..50 {
+            if current() {
+                return Ok(lib);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        return Err(why);
+    }
     crate::file_access::write(&key_file, &key)
         .map_err(|e| format!("cannot write {}: {e}", key_file.display()))?;
     crate::cache::write_native_artifact_fingerprint(out_dir, fp);

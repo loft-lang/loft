@@ -192,14 +192,17 @@ nightly (`miri.yml`'s `c-sweep-platforms`, six shards each).  The driver speaks 
 with no `cc` (`platform::host_c_compiler`), and the sweep the same (`c_sweep.py`, LOFT_CC=cl).
 The Windows runtime answers the file system and the OS as the interpreter does (directories,
 listings, a replacing rename, `@FR-Path-Case`, the working, home and program directories, the
-environment), and its sockets are one layer, `loft_sock.h`, over BSD sockets or Winsock — the
-HTTP client and the TLS client (`loft_tls.c`, trusting the system `ROOT` store) run over it.
+environment); its sockets are one layer, `loft_sock.h`, over BSD sockets or Winsock — the HTTP
+and TLS clients (trusting the system `ROOT` store), the server and web natives and the `net`
+component run over it; `lib/process` and `lib/git` start programs in a job object per child
+(`loft_process.h`); and a shipped program binds its libraries at start through one loader
+layer (`loft_dl_*`: `dlopen` or `LoadLibraryA`).  `windows.h` is included only after the
+runtime headers that name `near`, whose macro would erase them.
 
-Open in C8, in order: the server, the engine host and the `web` component over `loft_sock.h`
-(and their threads over the CRT's), processes (`loft_process.h`: `CreateProcess` and pipes),
-binding a shipped program's libraries at start (`LoadLibrary`), the TLS archive and shim
-archives built by `cl` for a `cl` program (`platform::ShimArchiver::Msvc`), then the Windows
-Test leg on C — `LOFT_NATIVE_BACKEND=c` there too, and `c_runtime_posix_host`'s refusals gone.
+Open in C8, in order: the engine host over `loft_sock.h` (and its threads over the CRT's), the
+TLS archive and shim archives built by `cl` for a `cl` program (`platform::ShimArchiver::Msvc`),
+then the Windows Test leg on C — `LOFT_NATIVE_BACKEND=c` there too, and `c_runtime_posix_host`'s
+remaining refusals gone.
 
 **C10 — what a user installs.**  The C stack moves the toolchain a user needs from rustup to the
 system's C tools, and the pages a user reads must say so before C9 ships: `README.md`'s install
