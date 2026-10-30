@@ -563,6 +563,17 @@ F5 the same switch covers a `#native` bridge's whole vector answer bound to a lo
 (`OpAdoptVector` → `Stores::vector_adopt`, which views a foreign answer and copies under the
 switch; `tests/foreign_bridge.rs` is its A/B).
 
+## Layout: out-of-line fields
+
+**A field whose type would contain its host is a child record (@C159, `@FR-L-OutOfLine`,
+default-ON, both backends, at layout):** `left: Tree?` in `Tree` holds the number of a record
+in `Tree`'s store, written by `OpSetChildRec` and read through `OpRefFromChildRec`.
+**`LOFT_NO_OUT_OF_LINE=1`** lays nothing out of line, so such a type is refused again as one
+that contains itself; it is the first bisect step only for a program whose types do not
+recurse, since a recursive one stops compiling.  For a wrong value, a leak or a double release
+in a recursive type, the falsifiers are `LOFT_STRICT_STORES=1` and `LOFT_POISON=1` against
+hand-computed values (`loft-suite/rules/binding/B-OutOfLine/`).
+
 ## Lowering: `??` chains and nested literals
 
 **A `??` chain is RIGHT-associated (loft#1612, `@FR-G-Assoc`, `@FR-B-Copy`, default-ON, both

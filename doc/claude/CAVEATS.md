@@ -21,6 +21,11 @@ Closed-by-decision entries live in
 here for cross-reference; don't re-argue these in active caveat
 tables.
 
+- **Prepending to a recursive value copies it.**  A child field is a value (@C159), so
+  `h = List { v: i, next: h }` copies the whole list into the new node, and a loop of n
+  prepends does n²/2 copies.  Build in place instead — keep a view of the tail and write
+  `t.next = List { v: i }; t = t.next;` — or collect into a `vector`.  A move of a value
+  nothing else holds is planned (@PLN91, 1b-readability.md § R-2s).
 - **Scalar `v[i]` negative-index asymmetry (intentional; documented 2026-07).**  `i ≥ len`
   → `null`, but a negative `i ∈ [-len, -1]` counts **from the end** (`v[-1]` = last element,
   like slices @P384); only `i < -len` → `null`.  So a null-guard (`if v[i]`, `v[i] ?? d`)

@@ -1385,110 +1385,123 @@ fn if_statement_without_else_ok() {
 
 #[test]
 fn type_cycle_self() {
-    // Self-referential struct is a compile error.
+    // `@FR-T-Recursive` — a struct recursing through a NON-NULL field has no finite value.
     code!("struct Node { val: integer, next: Node }\nfn test() { }")
-        .error("Struct 'Node' contains itself (directly or indirectly) — use reference<Node> to break the cycle at type_cycle_self:1:14");
+        .error("`Node.next: Node` makes every Node contain another Node — make it `Node?` at type_cycle_self:1:14");
 }
 
 #[test]
 fn type_cycle_indirect() {
-    // Mutually recursive structs are a compile error.
+    // Both fields non-null: every A holds a B that holds an A.
     code!(
         "struct A { val: integer, b: B }
 struct B { val: integer, a: A }
 fn test() { }"
     )
-    .error("Struct 'A' contains itself (directly or indirectly) — use reference<A> to break the cycle at type_cycle_indirect:1:11")
-    .error("Struct 'B' contains itself (directly or indirectly) — use reference<B> to break the cycle at type_cycle_indirect:2:11");
+    .error("`A.b: B` makes every A contain another A — make it `B?` at type_cycle_indirect:1:11")
+    .error("`B.a: A` makes every B contain another B — make it `A?` at type_cycle_indirect:2:11");
 }
 
-// ── The cycle report reaches every INLINE field route, not just the bare one ──────────
+// ── A recursive field is laid out OUT OF LINE (`@FR-L-OutOfLine`, @C159) ──────────────
 //
-// `Data::has_value_cycle` asks one question of each field — does this embed the host's own
-// bytes? — and knew a single route into it, a bare `Reference`.  The three shapes below all
-// close the same size cycle and all reached the record builder instead of the diagnostic.
-// They are one omission: the edge enumeration is `Data::inline_field_defs` now.
-//
-// The optional pair is the one a reader meets first, because `next: Node?` is how a linked
-// list is written and `next: Node` is a type nobody writes on purpose.
+// `Data::field_is_out_of_line` reads the same inline edges `Data::inline_field_defs` names:
+// a field whose type reaches its host again holds a child record's number instead of the
+// value's bytes.  Every shape below used to be refused as a type of infinite size; each now
+// builds and reads back.  A cycle through a TUPLE member has no field to hold the number and
+// keeps the refusal, whatever the `?`.
 
 #[test]
-fn type_cycle_self_through_an_optional_field() {
-    // `Node?` on an embedded field is the tagged `__nullable<Node>` (@FR-L-Null-Tag), which
-    // holds its payload inline — so it closes the cycle exactly as the bare spelling does.
-    // It arrives at the walk as `Optional(Reference(Node))`, before the rewrite to the
-    // synthetic enum, and the walk matched `Reference` bare.
-    code!("struct Node { val: integer, next: Node? }\nfn test() { }")
-        .error("Struct 'Node' contains itself (directly or indirectly) — use reference<Node> to break the cycle at type_cycle_self_through_an_optional_field:1:14");
+fn a_self_nullable_field_is_a_child() {
+    code!(
+        "struct Node { val: integer, next: Node? }
+fn test() {
+    n = Node { val: 1, next: Node { val: 2 } };
+    assert(n.next.val == 2 && !n.next.next, \"a list of two\");
+}"
+    );
 }
 
 #[test]
-fn type_cycle_indirect_through_optional_fields() {
+fn mutually_nullable_fields_are_children() {
     code!(
         "struct A { val: integer, b: B? }
 struct B { val: integer, a: A? }
-fn test() { }"
-    )
-    .error("Struct 'A' contains itself (directly or indirectly) — use reference<A> to break the cycle at type_cycle_indirect_through_optional_fields:1:11")
-    .error("Struct 'B' contains itself (directly or indirectly) — use reference<B> to break the cycle at type_cycle_indirect_through_optional_fields:2:11");
+fn test() {
+    x = A { val: 1, b: B { val: 2, a: A { val: 3 } } };
+    assert(x.b.a.val == 3 && !x.b.a.b, \"three levels\");
+}"
+    );
 }
 
 #[test]
-fn type_cycle_indirect_with_one_optional_hop() {
-    // The sharp cell: only ONE hop of the cycle is optional, so a walk that sees bare edges
-    // gets all the way around but for a single step.  Nothing was reported.
+fn one_nullable_hop_makes_the_cycle_finite() {
+    // `(T-Recursive)` asks for a path through non-null struct fields ALONE: `B.a` may be null,
+    // so an A ends after one B, and `A.b` needs no `?`.
     code!(
         "struct A { val: integer, b: B }
 struct B { val: integer, a: A? }
-fn test() { }"
-    )
-    .error("Struct 'A' contains itself (directly or indirectly) — use reference<A> to break the cycle at type_cycle_indirect_with_one_optional_hop:1:11")
-    .error("Struct 'B' contains itself (directly or indirectly) — use reference<B> to break the cycle at type_cycle_indirect_with_one_optional_hop:2:11");
+fn test() {
+    x = A { val: 1, b: B { val: 2 } };
+    assert(x.b.val == 2 && !x.b.a, \"an A holds a B\");
+}"
+    );
 }
 
 #[test]
 fn type_cycle_through_a_tuple_member() {
     // A tuple is its members' bytes (`formal/tuples.md` T-Absent), so a member embeds just as
-    // a field does.  This one did not merely go unreported: with no finite size the offset
-    // accumulator overflowed and the reader met an internal compiler error, `attempt to add
-    // with overflow`, on both backends.
+    // a field does, and has no field to hold a child's number.
     code!("struct Node { val: integer, p: (integer, Node) }\nfn test() { }")
         .error("Struct 'Node' contains itself (directly or indirectly) — use reference<Node> to break the cycle at type_cycle_through_a_tuple_member:1:14");
 }
 
 #[test]
 fn type_cycle_through_an_optional_tuple_member() {
-    // Both missing routes composed — the tuple member and the `?` on it.
     code!("struct Node { val: integer, p: (integer, Node?) }\nfn test() { }")
         .error("Struct 'Node' contains itself (directly or indirectly) — use reference<Node> to break the cycle at type_cycle_through_an_optional_tuple_member:1:14");
 }
 
 #[test]
-fn type_cycle_through_an_enum_variant_payload() {
-    // A struct-enum variant's payload is stored INLINE in the host's bytes, so a variant that
-    // names its own enum has no finite size.  Nothing asked at all: the walk read a def's
-    // ATTRIBUTES, and an enum's variants are its CHILDREN.
-    code!("enum CycE { Leaf, Branch { n: CycE } }\nfn test() { }")
-        .error("Enum 'CycE' contains itself (directly or indirectly) — use reference<CycE> to break the cycle at type_cycle_through_an_enum_variant_payload:1:12");
+fn an_enum_variant_payload_may_hold_its_enum() {
+    // An enum's other variants end its recursion, so a variant's field needs no `?`.
+    code!(
+        "enum CycE { Leaf, Branch { n: CycE } }
+fn depth(e: CycE) -> integer {
+    match e {
+        Leaf => 0,
+        Branch { n } => 1 + depth(n),
+    }
+}
+fn test() {
+    e = Branch { n: Branch { n: Leaf } };
+    assert(depth(e) == 2, \"two branches\");
+}"
+    );
 }
 
 #[test]
-fn type_cycle_through_an_optional_enum_variant_payload() {
-    code!("enum CycE { Leaf, Branch { n: CycE? } }\nfn test() { }")
-        .error("Enum 'CycE' contains itself (directly or indirectly) — use reference<CycE> to break the cycle at type_cycle_through_an_optional_enum_variant_payload:1:12");
+fn an_optional_enum_variant_payload_may_hold_its_enum() {
+    code!(
+        "enum CycE { Leaf, Branch { n: CycE? } }
+fn test() {
+    e = Branch { n: null };
+    assert(\"{e}\" == \"{{n:null}}\", \"an absent child renders null\");
+}"
+    );
 }
 
 #[test]
-fn type_cycle_between_a_struct_and_an_enum_field() {
-    // The mixed route, and the one that shows the two halves are one walk: the struct reaches
-    // the enum through a FIELD and the enum reaches the struct through a VARIANT PAYLOAD.
+fn a_struct_and_an_enum_holding_each_other() {
+    // The mixed route: the struct reaches the enum through a FIELD and the enum reaches the
+    // struct through a VARIANT PAYLOAD — both edges are out of line.
     code!(
         "enum CycE { Leaf, Branch { n: CNode } }
 struct CNode { val: integer, e: CycE }
-fn test() { }"
-    )
-    .error("Enum 'CycE' contains itself (directly or indirectly) — use reference<CycE> to break the cycle at type_cycle_between_a_struct_and_an_enum_field:1:12")
-    .error("Struct 'CNode' contains itself (directly or indirectly) — use reference<CNode> to break the cycle at type_cycle_between_a_struct_and_an_enum_field:2:15");
+fn test() {
+    c = CNode { val: 1, e: Branch { n: CNode { val: 2, e: Leaf } } };
+    assert(\"{c}\" == \"{{val:1,e:Branch {{n:{{val:2,e:Leaf {{}}}}}}}}\", \"rendered nested: {c}\");
+}"
+    );
 }
 
 // ── …and stops where the bytes stop.  Seven shapes that RETURN to their own type and are

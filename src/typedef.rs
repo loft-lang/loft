@@ -587,12 +587,12 @@ pub fn fill_all(data: &mut Data, database: &mut Stores, lexer: &mut Lexer, start
             continue;
         }
         for a_nr in 0..data.attributes(d_nr) {
-            if !data.field_is_out_of_line(d_nr, a_nr)
-                || matches!(data.attr_type(d_nr, a_nr), Type::Optional(_))
-            {
+            let tp = data.attr_type(d_nr, a_nr);
+            // A NULLABLE field ends the recursion: only a present one can make it endless.
+            if !data.field_is_out_of_line(d_nr, a_nr) || matches!(tp, Type::Optional(_)) {
                 continue;
             }
-            let Type::Reference(target, _) = data.attr_type(d_nr, a_nr) else {
+            let Type::Reference(target, _) = *tp.base() else {
                 continue;
             };
             if !data.reaches_through_present_fields(target, d_nr) {

@@ -9,6 +9,14 @@ use crate::store::Store;
 use crate::vector;
 use std::fmt::{Debug, Formatter, Write as _};
 
+thread_local! {
+    /// `@FR-L-OutOfLine` — the out-of-line child a record's last field holds, left for
+    /// [`ShowDb::write`]'s loop: its record, its type and its indent.
+    static RENDER_TAIL: std::cell::Cell<Option<(u32, u16, u16)>> = const { std::cell::Cell::new(None) };
+    /// The closing text of the records a pending chain is inside, innermost last.
+    static RENDER_CLOSERS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// Render a walker / unified-parser failure as `"line N:M path:X"`.
 ///
 /// The path is collected by [`Stores::walk_parsed_into`] as it
@@ -76,14 +84,6 @@ struct HostInputPump {
     not(feature = "wasm"),
     any(not(target_arch = "wasm32"), target_os = "wasi")
 ))]
-thread_local! {
-    /// `@FR-L-OutOfLine` — the out-of-line child a record's last field holds, left for
-    /// [`ShowDb::write`]'s loop: its record, its type and its indent.
-    static RENDER_TAIL: std::cell::Cell<Option<(u32, u16, u16)>> = const { std::cell::Cell::new(None) };
-    /// The closing text of the records a pending chain is inside, innermost last.
-    static RENDER_CLOSERS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
-}
-
 impl HostInputPump {
     /// Lock the buffer, taking a poisoned lock's contents rather than panicking:
     /// the reader thread only ever appends, so a panic elsewhere leaves the

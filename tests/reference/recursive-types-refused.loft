@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT.md § Recursive types — a struct whose recursion runs through non-null fields alone
+// has no finite value and is refused (`@FR-T-Recursive`).  The accepted spelling is in
+// recursive-types.loft.
+//
+// @EXPECT_ERROR: `Bad.next: Bad` makes every Bad contain another Bad — make it `Bad?`
+
+struct Bad {
+  key: integer,
+  next: Bad,
+}
+
+fn test_unreachable() { }

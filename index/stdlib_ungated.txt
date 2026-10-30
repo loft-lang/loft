@@ -272,6 +272,7 @@ OpSetBoolean
 OpSetByte
 OpSetByteNullable
 OpSetCharacter
+OpSetChildRec
 OpSetDbRef
 OpSetEnum
 OpSetFloat

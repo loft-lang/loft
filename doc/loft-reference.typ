@@ -2289,6 +2289,39 @@ value struct Point {
 }
 ```
 
+=== A struct that contains itself
+
+A field may have the struct's own type: a tree node holds its children. Write the field nullable — 'left: Tree?' — so a branch can end. A 'Tree' that must always hold another 'Tree' would never end, and the compiler refuses it: "'Tree.left: Tree' makes every Tree contain another Tree — make it 'Tree?'". A child is a value like any other field. Reading 't.left' gives a view, writing it copies the new subtree in, 'null' removes the subtree, and a copy of the tree copies its children too. It prints, compares and converts to JSON as a nested record. When one node must be SHARED by two places, use 'reference\<Tree\>' instead — that field holds a link, not a copy. To test a child and pass it on, bind it to a local first: 'l = t.left; if l { ... }'. The test narrows 'l' to a present 'Tree'.
+
+```rust
+struct Tree {
+  key: integer,
+  left: Tree?,
+  right: Tree?
+}
+```
+
+```rust
+fn tree_sum(t: Tree?) -> integer {
+  if !t {
+    return 0;
+  }
+  t.key + tree_sum(t.left) + tree_sum(t.right)
+}
+```
+
+```rust
+fn insert(t: Tree, key: integer) {
+  if key < t.key {
+    l = t.left;
+    if l { insert(l, key); } else { t.left = Tree { key: key }; }
+  } else {
+    r = t.right;
+    if r { insert(r, key); } else { t.right = Tree { key: key }; }
+  }
+}
+```
+
 ```rust
 struct Holder8 {
   v: vector<integer>
@@ -2455,6 +2488,34 @@ Write '&' to get a live link where a bind would otherwise copy.
   assert(item.stock == 1, "'&' binds a live link");
 ```
 
+A tree: children are fields of the struct's own type, nullable so a branch can end.
+
+```rust
+  root = Tree { key: 5, left: Tree { key: 3 } };
+  assert(root.left.key == 3, "a child reads like any field");
+  assert(!root.right, "an absent child is null");
+  insert(root, 8);
+  insert(root, 4);
+  assert(root.left.right.key == 4, "inserted below 3");
+  assert(tree_sum(root) == 20, "5 + 3 + 4 + 8 = {tree_sum(root)}");
+```
+
+Binding the whole tree copies every subtree with it.
+
+```rust
+  branch_copy = root;
+  branch_copy.left.key = 30;
+  assert(root.left.key == 3, "the copy's children are its own");
+```
+
+Writing null removes a subtree.
+
+```rust
+  root.right = null;
+  assert(tree_sum(root) == 12, "without the right branch: {tree_sum(root)}");
+  assert("{root}" == "{{key:5,left:{{key:3,left:null,right:{{key:4,left:null,right:null}}}},right:null}}", "prints nested: {root}");
+```
+
 === A record with some fields changed
 
 'Product { price: 90, ..apple }' is a copy of 'apple' with 'price' written — exactly 'sale = apple; sale.price = 90;' in one expression. The base keeps its value, the named fields are written as assignments (each reads the BASE, never the half-written copy), and '..base' is the last entry. The base must be a Product and present. A variant updates the same way when the base is known to be that variant: a local of the variant's type, or '..(s as Circle)' inside 'if s is Circle'.
@@ -2511,6 +2572,28 @@ Sometimes different choices have different shapes of data. A 'Circle' needs one 
 enum Shape {
   Circle {radius: float },
   Rect {width: float, height: float }
+}
+```
+
+=== Variants that hold the enum itself
+
+A variant's field may have the enum's own type. That is how an expression tree is written: an 'Add' holds two expressions, a 'Neg' one. No '?' is needed, because the other variants — here 'Num' — end the recursion. Each child is a value: it is copied when you assign it, compared by content and printed as a nested variant. A 'match' arm binds a child like any other field, so a function over the tree is one arm per variant.
+
+```rust
+enum Expr {
+  Num {v: integer },
+  Add {l: Expr, r: Expr },
+  Neg {e: Expr }
+}
+```
+
+```rust
+fn eval(e: Expr) -> integer {
+  match e {
+    Num { v } => v,
+    Add { l, r } => eval(l) + eval(r),
+    Neg { e } => -eval(e)
+  }
 }
 ```
 
@@ -2608,6 +2691,16 @@ describe() uses format strings with field access inside each variant's method.
 ```rust
   assert(c.describe() == "circle with radius 1", "describe circle: {c.describe()}");
   assert(r.describe() == "rect 4 by 5", "describe rect: {r.describe()}");
+```
+
+An expression tree: 1 + -(2), built from nested variants and evaluated by one match.
+
+```rust
+  expr: Expr = Add {l: Num {v: 1 }, r: Neg {e: Num {v: 2 } } };
+  assert(eval(expr) == -1, "1 + -2 = {eval(expr)}");
+  assert("{expr:j}" == "{{\"Add\":{{\"l\":{{\"Num\":{{\"v\":1}}}},\"r\":{{\"Neg\":{{\"e\":{{\"Num\":{{\"v\":2}}}}}}}}}}}}", "JSON nests the variants");
+  same: Expr = Add {l: Num {v: 1 }, r: Neg {e: Num {v: 2 } } };
+  assert(expr == same, "two trees with the same content are equal");
 ```
 
 === A method on the enum itself is the fallback

@@ -106,6 +106,40 @@ value struct Point {
   x: integer,
   y: integer
 }
+// ## A struct that contains itself
+// A field may have the struct's own type: a tree node holds its children. Write the field
+// nullable — 'left: Tree?' — so a branch can end. A 'Tree' that must always hold another
+// 'Tree' would never end, and the compiler refuses it: "'Tree.left: Tree' makes every Tree
+// contain another Tree — make it 'Tree?'".
+// A child is a value like any other field. Reading 't.left' gives a view, writing it copies
+// the new subtree in, 'null' removes the subtree, and a copy of the tree copies its children
+// too. It prints, compares and converts to JSON as a nested record. When one node must be
+// SHARED by two places, use 'reference<Tree>' instead — that field holds a link, not a copy.
+// To test a child and pass it on, bind it to a local first: 'l = t.left; if l { ... }'.
+// The test narrows 'l' to a present 'Tree'.
+
+struct Tree {
+  key: integer,
+  left: Tree?,
+  right: Tree?
+}
+
+fn tree_sum(t: Tree?) -> integer {
+  if !t {
+    return 0;
+  }
+  t.key + tree_sum(t.left) + tree_sum(t.right)
+}
+
+fn insert(t: Tree, key: integer) {
+  if key < t.key {
+    l = t.left;
+    if l { insert(l, key); } else { t.left = Tree { key: key }; }
+  } else {
+    r = t.right;
+    if r { insert(r, key); } else { t.right = Tree { key: key }; }
+  }
+}
 
 struct Holder8 {
   v: vector<integer>
@@ -202,6 +236,22 @@ fn main() {
   linked = &item;
   linked.stock = 1;
   assert(item.stock == 1, "'&' binds a live link");
+  // A tree: children are fields of the struct's own type, nullable so a branch can end.
+  root = Tree { key: 5, left: Tree { key: 3 } };
+  assert(root.left.key == 3, "a child reads like any field");
+  assert(!root.right, "an absent child is null");
+  insert(root, 8);
+  insert(root, 4);
+  assert(root.left.right.key == 4, "inserted below 3");
+  assert(tree_sum(root) == 20, "5 + 3 + 4 + 8 = {tree_sum(root)}");
+  // Binding the whole tree copies every subtree with it.
+  branch_copy = root;
+  branch_copy.left.key = 30;
+  assert(root.left.key == 3, "the copy's children are its own");
+  // Writing null removes a subtree.
+  root.right = null;
+  assert(tree_sum(root) == 12, "without the right branch: {tree_sum(root)}");
+  assert("{root}" == "{{key:5,left:{{key:3,left:null,right:{{key:4,left:null,right:null}}}},right:null}}", "prints nested: {root}");
   // ## A record with some fields changed
   // 'Product { price: 90, ..apple }' is a copy of 'apple' with 'price' written — exactly
   // 'sale = apple; sale.price = 90;' in one expression. The base keeps its value, the

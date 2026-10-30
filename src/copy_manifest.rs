@@ -225,6 +225,15 @@ pub fn note_grown_view(var: &str, container: &str, function: &str, via: Option<&
     ));
 }
 
+/// `@FR-B-OutOfLine` — `var` views a child of `owner` that a write of a possible null releases.
+pub fn note_released_view(var: &str, owner: &str, function: &str, via: Option<&str>) {
+    note((
+        format!("{}\u{0}release", with_via(var, via)),
+        owner.to_string(),
+        function.to_string(),
+    ));
+}
+
 pub fn note_reassigned_view(var: &str, owner: &str, function: &str, via: Option<&str>) {
     note((
         format!("{}\u{0}reassign", with_via(var, via)),
@@ -249,6 +258,14 @@ pub fn report_materialised_views() {
                  place inside `{container}`, and giving `{container}` a new value leaves \
                  nothing for it to point at. Writes through `{name}` no longer reach \
                  `{container}`."
+            );
+        } else if let Some(name) = var.strip_suffix("\u{0}release") {
+            let (name, via) = peel_via(name);
+            eprintln!(
+                "advice: in `{function}`, `{name}` was copied out of `{container}` because a \
+                 field of `{container}` that `{name}` views is set to a value that may be \
+                 null{via} while `{name}` is in use — writing null releases the record the \
+                 view names. Writes through `{name}` no longer reach `{container}`."
             );
         } else if let Some(name) = var.strip_suffix("\u{0}grow") {
             let (name, via) = peel_via(name);

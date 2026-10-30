@@ -24,6 +24,26 @@ enum Shape {
   Circle {radius: float },
   Rect {width: float, height: float }
 }
+// ## Variants that hold the enum itself
+// A variant's field may have the enum's own type. That is how an expression tree is
+// written: an 'Add' holds two expressions, a 'Neg' one. No '?' is needed, because the other
+// variants — here 'Num' — end the recursion. Each child is a value: it is copied when you
+// assign it, compared by content and printed as a nested variant. A 'match' arm binds a child
+// like any other field, so a function over the tree is one arm per variant.
+
+enum Expr {
+  Num {v: integer },
+  Add {l: Expr, r: Expr },
+  Neg {e: Expr }
+}
+
+fn eval(e: Expr) -> integer {
+  match e {
+    Num { v } => v,
+    Add { l, r } => eval(l) + eval(r),
+    Neg { e } => -eval(e)
+  }
+}
 // ## Methods that work on any variant
 // Write the same function name for each variant, each taking 'self' of that
 // variant's type. Loft automatically picks the right version at runtime based
@@ -87,6 +107,12 @@ fn main() {
   // describe() uses format strings with field access inside each variant's method.
   assert(c.describe() == "circle with radius 1", "describe circle: {c.describe()}");
   assert(r.describe() == "rect 4 by 5", "describe rect: {r.describe()}");
+  // An expression tree: 1 + -(2), built from nested variants and evaluated by one match.
+  expr: Expr = Add {l: Num {v: 1 }, r: Neg {e: Num {v: 2 } } };
+  assert(eval(expr) == -1, "1 + -2 = {eval(expr)}");
+  assert("{expr:j}" == "{{\"Add\":{{\"l\":{{\"Num\":{{\"v\":1}}}},\"r\":{{\"Neg\":{{\"e\":{{\"Num\":{{\"v\":2}}}}}}}}}}}}", "JSON nests the variants");
+  same: Expr = Add {l: Num {v: 1 }, r: Neg {e: Num {v: 2 } } };
+  assert(expr == same, "two trees with the same content are equal");
   // ## A method on the enum itself is the fallback
   // Calling area() on a value held as a 'Shape' works like a match on its variant,
   // and a match must cover every variant. So when only some variants have their

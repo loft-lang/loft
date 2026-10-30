@@ -340,6 +340,14 @@ variant updates the same way when the base's type IS that variant (`..b` with `b
 
 Field names may overlap across structs — lookups are type-scoped.
 
+**A field may hold its own type** — `struct Tree { key: integer, left: Tree?, right: Tree? }`,
+`enum Expr { Num { v: integer }, Add { l: Expr, r: Expr } }`.  It is a CHILD: a value stored
+out of line, copied on write, released by `t.left = null`, compared and rendered as a nested
+value (@C159).  Never write a one-element `vector<T>` or a `reference<T>` to break the cycle:
+`reference<T>` is for ONE node shared by two places.  A struct field on the cycle must be `T?`
+unless a nullable hop or an enum variant ends it.  Building a list by prepending
+(`h = List { v: i, next: h }`) copies the whole list each time; write into the tail instead.
+
 ---
 
 ## Tuples
@@ -920,6 +928,7 @@ needed); `x = v[i]; if x != null { … }` when the consumer's contract is
 | `` the base after `..` may be absent `` / `` must be a `S`, the literal's own type `` | Discharge the base first (`..(b ?? …)`), and give the literal the base's type |
 | `` `E.V` is a variant of a generic enum, whose type arguments come from the target `` | Bind it to a typed local (`x: E<integer> = V`) or pass it where an `E<…>` is expected |
 | `advice[match-scalar-hole]` | A scalar `match` with no `_`: add `_ =>` for the values the arms do not name, or `LOFT_NO_SCALAR_HOLE` for a deliberate hole |
+| `` `Node.next: Node` makes every Node contain another Node — make it `Node?` `` | A struct recursing through non-null fields has no finite value: write `next: Node?` |
 | `compound assignment is not supported for tuple destructuring — use (a, b) = expr instead` | Rebuild the tuple: `(a, b) = (a + 1, b + 2)` — or update each element directly. |
 
 ---

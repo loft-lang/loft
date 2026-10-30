@@ -8,7 +8,7 @@
 
 use super::disturbance::{
     ContainerAt, Disturbance, DisturbedParams, RemovedParams, ViewCause, grown_containers,
-    named_place, reshaped_containers,
+    named_place, released_children, reshaped_containers,
 };
 use super::places::{
     ParamPlace, add_offset, call_arg_at, compose_param_at, get_record_literal_keys,
@@ -604,7 +604,12 @@ impl ViewWalk<'_> {
         // own depth through the keyed-literal filter, a container inside an element through the
         // literal-index one (loft#2161).
         let mut whole: HashSet<(u16, u32)> = HashSet::default();
+        let released = released_children(stmt, self.data);
         for (place, at) in reshaped_containers(stmt, self.data, self.function) {
+            if released.contains_key(&place) {
+                self.shake_places_deeper(place, at.depth, None, ViewCause::Released, None);
+                continue;
+            }
             if at.depth == 0 {
                 whole.insert(place);
             } else {

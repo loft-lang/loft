@@ -103,6 +103,8 @@ impl Parser {
                         | "OpGetRef"
                         | "OpGetDbRef"
                         | "OpGetVectorNullable"
+                        // An out-of-line field's child record (`@FR-L-OutOfLine`).
+                        | "OpRefFromChildRec"
                         // A text field or element (@PLN167 C1), and the base of a mention of
                         // a store-kind text link (`OpGetText(OpVarRef(t), 0)`).
                         | "OpGetText"
