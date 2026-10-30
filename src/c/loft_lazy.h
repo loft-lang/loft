@@ -201,7 +201,7 @@ static uint8_t loft_lazy_bind_coll(loft_ref coll, loft_str source, loft_lazy_fet
  * nothing read as a string literal) is turned off on it. */
 typedef struct { int kind; int64_t i; double f; loft_text t; } loft_sql_cell;  /* kind 0 NULL, 1 int, 2 real, 3 text */
 
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_DL)
 static struct {
     int tried, ok;
     int (*open_v2)(const char *, void **, int, const char *);
@@ -234,14 +234,17 @@ static int loft_sq_resolve(char *why, size_t cap) {
                        (void **) &loft_sq.bind_text, (void **) &loft_sq.bind_double, (void **) &loft_sq.finalize,
                        (void **) &loft_sq.errmsg, (void **) &loft_sq.close, (void **) &loft_sq.db_config };
     if (!loft_sq.tried) {
-        void *self = dlopen(0, RTLD_LAZY), *h = 0;
+        void *h = 0;
         loft_sq.tried = 1;
-        if (!(self && dlsym(self, "sqlite3_open_v2")))
-            for (const char *const *n = names; *n && !h; n++) h = dlopen(*n, RTLD_NOW | RTLD_GLOBAL);
+        /* The program's own sqlite (linked, or a library it loaded) first, else Windows' own
+         * `winsqlite3.dll` or the system's `libsqlite3` (`loft_dl_*`: `dlopen` / `LoadLibraryA`). */
+        int linked = loft_dl_self_sym("sqlite3_open_v2") != 0;
+        if (!linked)
+            for (const char *const *n = names; *n && !h; n++) h = loft_dl_open(*n, LOFT_DL_GLOBAL);
         loft_sq.ok = 1;
         for (int i = 0; syms[i]; i++) {
-            void *p = h ? dlsym(h, syms[i]) : 0;
-            if (!p && self) p = dlsym(self, syms[i]);
+            void *p = h ? loft_dl_sym(h, syms[i]) : 0;
+            if (!p) p = loft_dl_self_sym(syms[i]);
             if (!p) {
                 snprintf(why, cap, "sqlite is not installed — `%s` did not resolve (looked for winsqlite3.dll, libsqlite3.so.0)",
                          syms[i]);
@@ -424,7 +427,7 @@ static int loft_sq_schema(void *db, const char *target, const loft_sql_plan *pl,
 }
 #endif
 
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_DL)
 static void loft_lazy_sql_materialise(const loft_sql_plan *pl, loft_ref coll, const loft_sql_cell *row);
 #endif
 
@@ -446,7 +449,7 @@ static int loft_lazy_sql_fetch(loft_lazy_bind *b, const char *target, const loft
         loft_lazy_refuse(b->coll, loft_lit(why, strlen(why)));
         return 0;
     }
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_DL)
     void *db = loft_sq_open(target, why, sizeof why);
     if (!db) {
         loft_lazy_refuse(b->coll, loft_lit(why, strlen(why)));
@@ -488,7 +491,7 @@ static int loft_lazy_sql_fetch(loft_lazy_bind *b, const char *target, const loft
 #endif
 }
 
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_DL)
 /* `materialise` / `write_cell`: one row written into a fresh record and filed by the collection's
  * own insert; a NULL is the field's null. */
 static void loft_lazy_sql_materialise(const loft_sql_plan *pl, loft_ref coll, const loft_sql_cell *row) {
@@ -620,7 +623,7 @@ static int64_t loft_lazy_query(loft_ref coll, loft_str condition) {
         snprintf(why, sizeof why, "no query can be derived for `%s`", b->element ? b->element : "?");
         return loft_lazy_refuse(coll, loft_lit(why, strlen(why)));
     }
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_DL)
     loft_text q = { 0, 0, 0 };
     loft_push(&q, b->sql->filter, strlen(b->sql->filter));
     loft_push(&q, condition.p, condition.len);
@@ -651,7 +654,7 @@ static int64_t loft_lazy_range(loft_ref coll, int64_t lo, int64_t hi) {
         static const char m[] = "a range fetch takes ONE key column; a composite key needs an explicit query";
         return loft_lazy_refuse(coll, loft_lit(m, sizeof m - 1));
     }
-#if defined(LOFT_POSIX_HOST)
+#if defined(LOFT_DL)
     const char *target = b->source.p + 7;
     why[0] = 0;
     void *db = loft_sq_open(target, why, sizeof why);
