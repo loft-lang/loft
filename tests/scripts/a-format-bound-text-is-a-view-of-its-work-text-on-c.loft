@@ -1,0 +1,91 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-TextBorrow`'s format clause on the C backend — a text local bound only to literals
+// and to format strings whose work text is the format's own (`cs = "{c}"`) is a `loft_str`
+// view of that work text, where the C copied it into a fresh text and freed it per bind
+// (markdown `render_inline` −28 %).  On --native rustc's borrow checker refuses a wrong
+// admission; the C has no such check, so a view that outlives the next refill of its work
+// text answers WRONG.  These cells hold the uses that could make it outlive one: the local
+// copied into another local that lives on, kept across passes through a second local, read
+// after its loop, compared, measured and appended.  Values hand-computed; value AND size.
+//
+// @falsified-at: none — the clause has no earlier C build to catch, so the receipt is a
+//   planted defect (2026-10-30) in the generated C: `keep` made a view of the work text (a
+//   wrong admission) answers "c|abc" for "b|abc" in f1.
+//   CHANNEL: an assertion.
+
+fn per_char(s: text) -> text {
+  out = "";
+  i = 0;
+  n = s.size();
+  while i < n {
+    c = s[i] ?? '\0';
+    if c == '&' { out += "&amp;"; i += 1; }
+    else {
+      cs = "{c}";
+      out += cs;
+      i += cs.size();
+    }
+  }
+  out
+}
+
+// f0: the per-character path, multi-byte characters included: 1 + 5 + 2 (é) + 3 (∑) + 1 bytes
+fn test_the_per_character_path() {
+  got = per_char("a&é∑b");
+  assert(got == "a&amp;é∑b", "f0 {got}");
+  assert(got.size() == 12, "f0 size {got.size()}");
+}
+
+fn chain(s: text) -> text {
+  keep = "";
+  out = "";
+  for c in s { cs = "{c}"; if c == 'b' { keep = cs; } out += cs; }
+  "{keep}|{out}"
+}
+
+// f1: the local copied into one that outlives the next refill keeps the 'b'
+fn test_a_copy_outlives_the_refill() {
+  got = chain("abc");
+  assert(got == "b|abc", "f1 {got}");
+}
+
+fn chain2(s: text) -> text {
+  keep = "-";
+  for c in s { cs = "<{c}>"; k2 = cs; if c == 'b' { keep = k2; } }
+  keep
+}
+
+// f2: through a second local, kept across two more refills
+fn test_through_a_second_local() {
+  got = chain2("abcd");
+  assert(got == "<b>", "f2 {got}");
+}
+
+fn last_of(s: text) -> text {
+  cs = "";
+  for c in s { cs = "[{c}]"; }
+  cs
+}
+
+// f3: read after its loop, and returned: the last refill's value
+fn test_read_after_the_loop() {
+  got = last_of("xyz");
+  assert(got == "[z]" && got.size() == 3, "f3 {got}");
+}
+
+fn count_eq(s: text, want: text) -> integer {
+  k = 0;
+  for c in s {
+    cs = "{c}{c}";
+    if cs == want { k += cs.size(); }
+  }
+  k
+}
+
+// f4: compared and measured in the pass that built it: "bb" twice, 2 bytes each
+fn test_compared_and_measured() {
+  got = count_eq("abcb", "bb");
+  assert(got == 4, "f4 {got}");
+}

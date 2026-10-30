@@ -2739,8 +2739,13 @@ and refills, so the local can be a `&str` into it for as long as nothing refills
 is what the clause's conditions secure: the work text is the format's own, so only the
 format refills it, and each run of the format rebinds the local — the old borrow is dead by
 then, unless the format reads the local itself (refused) or another variable took the
-borrow over (refused).  rustc checks the same borrow, so a wrong admission is a refused
-compile rather than a wrong answer.  Cells
+borrow over (refused).  rustc checks the same borrow, so on native a wrong admission is a
+refused compile rather than a wrong answer.  The C holds such a local as a `loft_str` view of
+the work text (`work_view_bind` in `c/body.rs`; markdown `render_inline` −28 %, `slugify`
+−18 %): there no checker stands behind the analysis, so a wrong admission answers wrong, and
+`tests/scripts/a-format-bound-text-is-a-view-of-its-work-text-on-c.loft` holds the uses that
+could make the view outlive a refill.  The CALL clause stays a copy on the C (its view would
+be of the callee's answer).  `LOFT_NO_C_WORK_BORROW=1` copies again.  Cells
 `loft-suite/rules/rewrites/R-TextBorrow/a-format-bound-text-borrows-its-work-text.loft` (f1–f13; f4b fails to
 compile with the copy refusal off).  Sites: `hoist::own_format_work`, the format arm of
 `hoist::borrowed_store_texts`.

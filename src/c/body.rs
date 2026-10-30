@@ -367,7 +367,22 @@ fn borrowed_texts(cx: &Cx, d: u32) -> Vec<bool> {
         .keys()
         .filter(|v| !store.tested.contains_key(v) && !store.work.contains(v))
         .copied();
-    for v in walks.keys().copied().chain(plain) {
+    // The format clause: a local bound only to literals and to format strings whose work text
+    // is the format's own (`store.work`) views that work text, which only another run of the
+    // same format rewrites — and that run binds the local again.  The call clause keeps its
+    // copy: its view would be of the callee's answer.
+    let work: std::collections::HashSet<u16> =
+        if crate::env_once!(std::env::var("LOFT_NO_C_WORK_BORROW").is_ok_and(|v| v != "0")) {
+            std::collections::HashSet::new()
+        } else {
+            store.work.clone()
+        };
+    for v in walks
+        .keys()
+        .copied()
+        .chain(plain)
+        .chain(work.iter().copied())
+    {
         let i = v as usize;
         if i < n
             && !vars.is_argument(v)
@@ -390,7 +405,10 @@ fn borrowed_texts(cx: &Cx, d: u32) -> Vec<bool> {
     loop {
         let mut dropped = false;
         for (v, x) in &binds {
-            if b[*v as usize] && !view_bind(cx, vars, &b, x) {
+            if b[*v as usize]
+                && !view_bind(cx, vars, &b, x)
+                && !(work.contains(v) && work_view_bind(vars, &b, x))
+            {
                 b[*v as usize] = false;
                 dropped = true;
             }
@@ -399,6 +417,21 @@ fn borrowed_texts(cx: &Cx, d: u32) -> Vec<bool> {
             return b;
         }
     }
+}
+
+/// `@FR-R-TextBorrow`'s format clause (C): a bind of a work-text borrower that is a format
+/// block ending in its work text, a frame-local text the view reads in place.
+fn work_view_bind(vars: &Function, borrowed: &[bool], x: &Value) -> bool {
+    let Value::Block(bl) = x.unspan() else {
+        return false;
+    };
+    matches!(
+        bl.operators.iter().rev().find(|o| !matches!(o.unspan(), Value::Line(_))).map(Value::unspan),
+        Some(Value::Var(w)) if (*w as usize) < borrowed.len()
+            && !borrowed[*w as usize]
+            && !vars.is_argument(*w)
+            && matches!(vars.tp(*w).base(), crate::data::Type::Text(_))
+    )
 }
 
 /// Is `x` a text the view form of a borrowed bind writes with no temporary (`borrowed_texts`)?
