@@ -48,8 +48,8 @@ the shared core below.
 | every byte written once | `defined` | `defined` | same |
 | parked blocks (`@FR-H-Park`) | `park`, `parked` | `no_park`, `parked_set`, `parked_heads`, `parked_count` | same lists, bytes proven alike (D20) |
 | live or free | `free` | `live` | same, opposite sense |
-| read only, and who locked it | `read_only`, `user_locked`, `lock_origin` | `read_only` | D21 |
-| a free that must wait (calls holding it) | `free_protect_depth` | `protect` | D22 |
+| read only, and who locked it | `read_only`, `user_locked`, `lock_origin` | `read_only` | same lock; who locked it is the interpreter's report (D21) |
+| a free that must wait (calls holding it) | `free_protect_depth` | `protect` | same count, two names (D22) |
 | pinned (never freed) | `pinned` | `pinned` | same |
 | the type of its first record | `known_type` | `known` | same |
 | allocation serial | `alloc_serial` | `serial` | same |
@@ -94,7 +94,7 @@ fixes name a row the same way.  D20 onward come from the field-by-field comparis
 from P0b (what the C runtime lacks).  State: **open**, **fixing** (on the branch named), or
 **decided** (the decision and its measurement).  A closed row moves to
 [STORE_MODEL-history.md](STORE_MODEL-history.md) with its commit; D1–D7c, D9a–D10, D12–D17,
-D18–D19f, D19h, D20, D23, D25, D29, D31 and D34 are there.
+D18–D19f, D19h, D20–D23, D25, D29, D31 and D34 are there.
 
 ### Correctness
 
@@ -120,8 +120,6 @@ D18–D19f, D19h, D20, D23, D25, D29, D31 and D34 are there.
 
 | # | Divergence | State |
 |---|---|---|
-| D21 | who locked a store: the interpreter records `user_locked` and `lock_origin` for its report | open — observability, P0b |
-| D22 | free protection: a depth counter against a protect count — one meaning, two spellings | open — one name |
 | D24 | a store held by a generator frame: C marks it (`frame_holds`, `orphaned`), the interpreter answers elsewhere | open |
 | D26 | the interpreter's stack lives in a store; C's is the C stack | open — not a store property for a C unit; P4 decides |
 | D27 | the interpreter's store instruments (generation, recording, tag, timestamps, init shadow) | P0b |
