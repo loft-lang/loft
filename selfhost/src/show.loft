@@ -280,28 +280,18 @@ fn show_list(b: ir::Bundle, elem: integer, s: integer, r: integer, p: integer, f
   o += "]";
 }
 
-// A hash in key order (`hash::records_sorted`), through the walk's own snapshot.
+// A hash in key order (`hash::records_sorted`), its entries held outside the store, as the Rust
+// renderer holds them.
 fn show_hash(b: ir::Bundle, tp: integer, elem: integer, s: integer, r: integer, p: integer, fmt: integer, ind: integer, o: &text) {
   e = b.types[elem] ?? panic("an element type");
   complex_elem = fmt & 1 != 0 && e.complex;
   struct_elem = is_struct(b, elem);
   o += "[";
-  x = crt::null_ref();
-  crt::hash_sorted(x, s, r, p, tp, false);
-  st = crt::scratch_iterate(x[0] ?? 65535, x[1] ?? 0, x[2] ?? 0);
-  at: vector<integer> = [65535, 0, 0, 0];
-  i = 0;
-  while true {
-    crt::scratch_step(at, st, x[0] ?? 65535, x[1] ?? 0, x[2] ?? 0, false);
-    st = at[3] ?? 0;
-    if (at[1] ?? 0) == 0 {
-      break;
-    }
+  refs = crt::hash_refs(s, r, p, tp);
+  for i in 0..len(refs) / 3 {
     open_element(i, fmt, complex_elem, struct_elem, ind, o);
-    render(b, elem, at[0] ?? 65535, at[1] ?? 0, at[2] ?? 0, fmt, ind + 1, o);
-    i += 1;
+    render(b, elem, refs[3 * i] ?? 65535, refs[3 * i + 1] ?? 0, refs[3 * i + 2] ?? 0, fmt, ind + 1, o);
   }
-  crt::free_scratch(x[0] ?? 65535, x[1] ?? 0, x[2] ?? 0);
   if fmt & 1 != 0 {
     o += " ";
   }

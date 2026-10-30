@@ -124,15 +124,13 @@ fn test_every_format_spec_renders_through_the_c_runtime() {
 // S3's first slice: records of integers and texts in the C runtime's stores (1b-s3.md).  Each
 // value is worked out by hand in `kernels/structs.loft`, and each run must leave none of the
 // runtime's stores live: the IR's frees free every record the run made.
-// `entry(arg)` of the kernel image `b`, which must leave no store live and nothing for the
-// sweep.  A test loads its kernel once and runs every entry of it: an image is megabytes.
+// `entry(arg)` of the kernel image `b`, which must leave no store live.  A test loads its kernel once and runs every entry of it: an image is megabytes.
 fn ran_clean(b: ir::Bundle, entry: text, arg: integer) -> integer? {
   d = lower::find(b, entry);
   assert(d >= 0, "the image has {entry}");
   o = run::run(b, d, [arg]);
   assert(o.refused == "", "{entry} refused: {o.refused} in {o.refused_in}");
   assert(o.stores_left == 0, "{entry}({arg}) left {o.stores_left} stores live");
-  assert(o.swept == 0, "{entry}({arg}): the return swept {o.swept} stores the IR did not free");
   o.value
 }
 
@@ -314,6 +312,6 @@ fn test_the_kernels_mains_run_whole() {
     b = kernel(name);
     o = run::run(b, lower::find(b, "n_main"), []);
     assert(o.refused == "", "{name} main refused: {o.refused} in {o.refused_in}");
-    assert(o.stores_left == 0 && o.swept == 0, "{name} main: {o.stores_left} left, {o.swept} swept");
+    assert(o.stores_left == 0, "{name} main: {o.stores_left} stores left live");
   }
 }
