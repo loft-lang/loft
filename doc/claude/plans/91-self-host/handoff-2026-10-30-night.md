@@ -55,4 +55,5 @@ Branch `91-self-host`, everything committed and pushed; the suite pin is loft-su
 
 E-1 is built (00c234374, D-heap-52), and the gate reds the branch carried are repaired
 (7f974619a: clippy on rustc 1.99, the `@FR-N-Shape` ratchet, the `time` census rows).  Next:
-loft#2260, then E-4 and F-1; R-1 / R-3 remain designs for the owner.
+loft#2260, then E-4 and F-1.  R-3 is built (26d95a12b, `lost-write` per field); R-1 remains a
+design for the owner.
