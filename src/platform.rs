@@ -1762,6 +1762,13 @@ pub fn c_system_link_libs() -> &'static [&'static str] {
     }
 }
 
+/// Does the C runtime have sockets here (`src/c/loft_sock.h`: BSD sockets, or Winsock on
+/// Windows, @PLN203 C8) — what the `net` component and a unit that fetches over a URL need?
+#[must_use]
+pub fn c_runtime_has_sockets() -> bool {
+    cfg!(any(unix, windows))
+}
+
 /// Does the C runtime have its POSIX host layer here — the sockets, processes, `mmap` and
 /// `realpath` `src/c/loft_cc.h` puts under `LOFT_POSIX_HOST` (@PLN203)?  Not on Windows, until
 /// C8 gives those parts their Windows form.

@@ -216,6 +216,56 @@ static int loft_sock_poll(loft_pollfd *p, size_t n, int ms) {
 #endif
 }
 
+/* A listening socket bound to `a`: 0, else -1 with the failure in `loft_sock_error`. */
+static int loft_sock_bind_listen(int fd, const struct sockaddr *a, size_t al, int backlog) {
+#if defined(_WIN32)
+    return bind((SOCKET) fd, a, (int) al) == 0 && listen((SOCKET) fd, backlog) == 0 ? 0 : -1;
+#else
+    return bind(fd, a, (socklen_t) al) == 0 && listen(fd, backlog) == 0 ? 0 : -1;
+#endif
+}
+
+/* The next connection on listener `fd`: its socket, else -1 (`loft_sock_would_block` says
+ * whether one was only not pending yet). */
+static int loft_sock_accept(int fd) {
+#if defined(_WIN32)
+    SOCKET s = accept((SOCKET) fd, 0, 0);
+    return s == INVALID_SOCKET ? -1 : (int) s;
+#else
+    return accept(fd, 0, 0);
+#endif
+}
+
+/* Up to `n` bytes waiting on `fd`, left there: the count, 0 when the peer closed, -1 when none
+ * is waiting yet, -2 on a failure.  POSIX peeks without blocking (`MSG_DONTWAIT`); Winsock has
+ * no such flag, so the socket is non-blocking for the peek. */
+static long loft_sock_peek(int fd, void *buf, size_t n) {
+    for (;;) {
+#if defined(_WIN32)
+        loft_sock_blocking(fd, 0);
+        long r = loft_sock_recv(fd, buf, n, MSG_PEEK);
+        int interrupted = r < 0 && loft_sock_interrupted(), waiting = r < 0 && loft_sock_would_block();
+        loft_sock_blocking(fd, 1);
+#else
+        long r = loft_sock_recv(fd, buf, n, MSG_PEEK | MSG_DONTWAIT);
+        int interrupted = r < 0 && loft_sock_interrupted(), waiting = r < 0 && loft_sock_would_block();
+#endif
+        if (interrupted) continue;
+        return r >= 0 ? r : waiting ? -1 : -2;
+    }
+}
+
+/* Sleep `ms`. */
+static void loft_sock_nap(int64_t ms) {
+    if (ms <= 0) return;
+#if defined(_WIN32)
+    Sleep((DWORD) ms);
+#else
+    struct timespec ts = { (time_t) (ms / 1000), (long) ((ms % 1000) * 1000000) };
+    while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {}
+#endif
+}
+
 /* Connect within `ms`: 1 when the TCP handshake completed. */
 static int loft_sock_connect_within(int fd, const struct sockaddr *a, socklen_t al, int64_t ms) {
     loft_sock_blocking(fd, 0);

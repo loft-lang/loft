@@ -49,9 +49,9 @@ pub fn build(name: &str, out_dir: &std::path::Path) -> Result<std::path::PathBuf
             ));
         }
     };
-    if !crate::platform::c_runtime_posix_host() {
+    if !crate::platform::c_runtime_has_sockets() {
         return Err(format!(
-            "component `{name}` needs the C runtime's POSIX host layer, which this host lacks"
+            "component `{name}` needs the C runtime's sockets, which this host lacks"
         ));
     }
     let tls = super::tls::archive()
@@ -113,7 +113,8 @@ fn compile(
         .push_arg("-fPIC")
         .push_arg("-shared")
         .push_arg("-fvisibility=hidden")
-        .push_arg("-pthread")
+        .push_args(crate::platform::c_thread_link_args())
+        .push_args(crate::platform::shim_cc_runtime_args())
         .push_arg("-I")
         .push_arg(stage)
         .push_arg("-o")
@@ -130,6 +131,7 @@ fn compile(
     } else {
         cmd.push_arg("-Wl,--exclude-libs,ALL");
     }
+    cmd.push_args(crate::platform::c_system_link_libs());
     let out = cmd.run(b"").map_err(|e| {
         format!("component `{name}` needs a C compiler and `{cc}` could not be run ({e})")
     })?;
