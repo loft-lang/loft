@@ -49,10 +49,14 @@ fn main() {
   println("SHELL {shell}");
   if !shell { return; }
   ssh_natives::ssh_send(h, "stty size; echo M1-$((6*7))\n");
-  println("SIZE1 {between(until(h, "M1-42", 20000), "\n40 ", "M1-42").starts_with("100")}");
+  // `stty size` answers "rows cols"; the echoed command line cannot carry that answer (bash may
+  // end it with a bracketed-paste reset rather than a newline, so no line start is assumed).
+  size1 = until(h, "M1-42", 20000);
+  println("SIZE1 {size1.contains("40 100")}");
   ssh_natives::ssh_resize(h, 120, 50);
   ssh_natives::ssh_send(h, "stty size; echo M2-$((6*7))\n");
-  println("SIZE2 {between(until(h, "M2-42", 20000), "\n50 ", "M2-42").starts_with("120")}");
+  size2 = until(h, "M2-42", 20000);
+  println("SIZE2 {size2.contains("50 120")}");
   // 3 000 000 bytes of output: past the 2 MiB window this client grants, so the server waits
   // on window adjustments the reads must send.
   ssh_natives::ssh_send(h, "echo S3-$((6*7)); head -c 3000000 /dev/zero | tr '\\0' x; echo; echo M3-$((6*7))\n");
