@@ -220,7 +220,7 @@ static void loft_sha256_hex(const uint8_t *p, size_t n, char hex[65]) {
 /* The layout gate of an image at `u` (`check_sidecar` over HTTP): `<u>.dschema` fetched and
  * classified.  A host's own "not there" (`loft_fetch_absent`) refuses it as a bare image, a request
  * that failed refuses naming why; `recorded` gets the sidecar's slot.  1 when it may be read. */
-static int loft_net_gate(const char *u, const loft_sidecar *sc, const char *who, long *recorded) {
+static int loft_net_gate(const char *u, const loft_sidecar *sc, const char *who, long *recorded, int convert) {
     char err[1024];
     loft_bytes b;
     size_t ulen = strlen(u);
@@ -245,7 +245,7 @@ static int loft_net_gate(const char *u, const loft_sidecar *sc, const char *who,
     if (!text) { fputs("loft: out of memory\n", stderr); abort(); }
     text[b.n] = 0;
     if (recorded) *recorded = loft_sidecar_slot(text);
-    return loft_image_gate_text(u, text, sc, who);
+    return loft_image_gate_text(u, text, sc, who, convert);
 }
 
 /* `load_url_verified` (with `sha`) and `load_url`: the image's layout gated by `<url>.dschema`
@@ -259,7 +259,8 @@ static int loft_image_load_url(loft_ref r, loft_str url, const char *sha, const 
     char err[1024];
     loft_bytes b;
     long recorded = -1;
-    if (sc && loft_stores[r.store_nr].known == sc->tp && !loft_net_gate(u, sc, who, &recorded)) {
+    int gate = sc && loft_stores[r.store_nr].known == sc->tp ? loft_net_gate(u, sc, who, &recorded, 1) : 1;
+    if (gate == 0) {
         free(u);
         return 0;
     }
@@ -287,6 +288,7 @@ static int loft_image_load_url(loft_ref r, loft_str url, const char *sha, const 
     }
     int ok = loft_image_adopt(r, b.p, b.n, 1, sc, recorded, u, who);
     free(u);
+    if (ok && gate == 2) loft_rekey_image(sc, r);
     return ok;
 }
 

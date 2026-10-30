@@ -376,7 +376,10 @@ written from word 0 to past its last live record, padded to the 1024-word floor,
 the sidecar gated (`classify`: the same hash and dump, `Release::admits`), the image adopted
 into the slot as `Store::load` builds one (no parked lists, no lazy frees, the allocator state
 re-derived from the blocks).  A file of another layout is refused, where the interpreter
-converts it; a store holding references has them re-pointed at its slot from the slot its
+converts it — except one written before the null-first key order (`placement::KEY_ORDER`), which a
+whole load converts: the gate admits a layout that differs only by `,order=1` and
+`loft_rekey_walk` files every `sorted`, `ordered` and `index` whose key moved again in this
+build's order (a paged load still refuses it, as the interpreter's does); a store holding references has them re-pointed at its slot from the slot its
 sidecar recorded (`rebase_stored_refs`), read off the image's bytes before it is adopted, so a
 refusal leaves the store as it was; `store_load_untrusted` validates the block structure first
 (`Store::validate_structure`); compaction on load is not done (it declines for an image

@@ -20,7 +20,7 @@ static void loft_pg_refuse(const char *path, const char *reason) {
 }
 
 #ifdef LOFT_NET
-static int loft_net_gate(const char *u, const loft_sidecar *sc, const char *who, long *recorded);
+static int loft_net_gate(const char *u, const loft_sidecar *sc, const char *who, long *recorded, int convert);
 #endif
 
 /* What every loader does before it reads (layout_gate_ok, PageSource::open, the store's
@@ -38,9 +38,9 @@ static int loft_pg_begin(loft_pg *r, loft_ref local, loft_str path, const loft_s
     uint16_t known = loft_stores[local.store_nr].known;
     char err[1100];
 #ifdef LOFT_NET
-    int ok = known == 0xFFFF || (url ? loft_net_gate(p, sc, 0, 0) : loft_image_gate(p, sc, 0));
+    int ok = known == 0xFFFF || (url ? loft_net_gate(p, sc, 0, 0, 0) : loft_image_gate(p, sc, 0, 0));
 #else
-    int ok = known == 0xFFFF || (!url && loft_image_gate(p, sc, 0));
+    int ok = known == 0xFFFF || (!url && loft_image_gate(p, sc, 0, 0));
     if (url && !ok) loft_pg_refuse(p, "this build has no HTTP transport, so it cannot range-read it");
 #endif
     if (ok && !loft_pg_open(r, p, err, sizeof err)) {

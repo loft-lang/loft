@@ -4032,8 +4032,8 @@ fn every_hash_layout_lives_beside_the_others_in_one_store() {
 /// entry again in this build's order.  The images in `tests/golden/key-order-before/` were
 /// written once by a build of origin/main 23bc61e47 and are never written again; the expected
 /// lines are hand-derived from `write.loft` (main itself reads them as `3 2 4 1`, `2 1 3`,
-/// `3 1 2`, `3 2 1` and first=0).  The C runtime converts no store of another layout and
-/// refuses each by name (C_BACKEND.md § Store images) — loud, never the old order.
+/// `3 1 2`, `3 2 1` and first=0).  The C converts them the same way (`loft_rekey_walk`: the one
+/// layout change it converts, STORE_MODEL D30).
 #[test]
 fn an_image_in_the_old_key_order_is_converted() {
     let fixture = workspace_root().join("tests/golden/key-order-before");
@@ -4080,6 +4080,8 @@ fn an_image_in_the_old_key_order_is_converted() {
             "{backend}: the old images, converted"
         );
     }
+    // The C converts the same images (`loft_rekey_walk`, STORE_MODEL D30): a whole load of an
+    // image that differs only by the key order files every entry again in this build's order.
     let out = loft::platform::process::harness_command(loft_bin())
         .arg("--native-c")
         .arg(&script)
@@ -4087,19 +4089,14 @@ fn an_image_in_the_old_key_order_is_converted() {
         .current_dir(workspace_root())
         .output()
         .expect("run the C reader");
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    for name in names {
-        assert!(
-            stdout.contains(&format!("{name} false")),
-            "C: {name} is not read in the old order:\n{stdout}"
-        );
-        assert!(
-            stderr.contains(&format!(
-                "refusing {}",
-                dir.join(format!("{name}.store")).display()
-            )) || stderr.contains(&format!("refusing {name}.store")),
-            "C: {name} is refused by name:\n{stderr}"
-        );
-    }
+    assert!(
+        out.status.success(),
+        "C: the reader ran:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        want,
+        "C: the old images, converted"
+    );
 }

@@ -155,7 +155,7 @@ from P0b (what the C runtime lacks).  State: **open**, **fixing** (on the branch
 | D26 | the interpreter's stack lives in a store; C's is the C stack | open — not a store property for a C unit; P4 decides |
 | D27 | the interpreter's store instruments (generation, recording, tag, timestamps, init shadow) | P0b |
 | D28 | the store table: a `Vec<Store>` beside the type table against a thread-local array | open — P3 |
-| D30 | an image of another layout: the interpreter converts it (`Stores::upgrade_store`), C refuses it by name (`loft_image.h`) — an image written before the null-first key order is one | open — P0b (port) |
+| D30 | an image of another layout: the interpreter converts it (`Stores::upgrade_store`), C refuses it by name (`loft_image.h`) — except the null-first key order, which C converts by itself (`loft_rekey_walk`) | open — P0b (port), the key-order case done |
 
 ## How a divergence is closed
 

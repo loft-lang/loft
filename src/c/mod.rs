@@ -558,6 +558,11 @@ impl<'a> Cx<'a> {
     /// The C name of the sidecar a `store_persist_copy` of a store minted as `tp` writes.
     pub(crate) fn sidecar_of(&self, tp: u16) -> String {
         self.sidecars.borrow_mut().insert(tp);
+        // A layout with a moved key order (`placement::KEY_ORDER`): an image written before it is
+        // converted by a whole load, whose walk reads every type of the tree off the table.
+        if self.needs_rekey(tp) {
+            let _ = self.copy_type(tp);
+        }
         format!("&loft_sidecar{tp}")
     }
 
@@ -580,6 +585,23 @@ impl<'a> Cx<'a> {
             },
             names.len()
         )
+    }
+
+    /// Does `tp`'s layout hold a collection whose key order moved (loft#2237)?  An image of it
+    /// written before is converted by a whole load (`loft_rekey_walk`).
+    fn needs_rekey(&self, tp: u16) -> bool {
+        crate::schema_sidecar::LayoutIdentity::of_store(self.stores, u16::MAX, tp)
+            .dump
+            .contains(crate::placement::KEY_ORDER)
+    }
+
+    /// The rows of the copy table (`loft_ntypes`): one past the highest type it describes.
+    fn table_rows(&self) -> u32 {
+        self.copy_types
+            .borrow()
+            .union(&self.described.borrow())
+            .max()
+            .map_or(0, |m| u32::from(*m) + 1)
     }
 
     /// The sidecars: each type's `.dschema` text split where its slot line goes, and the
@@ -606,13 +628,18 @@ impl<'a> Cx<'a> {
             );
             let _ = writeln!(
                 out,
-                "static const loft_sidecar loft_sidecar{tp} = {{ {tp}, loft_scb{tp}, loft_sca{tp}, UINT64_C({}), loft_scd{tp}, {}, {} }};",
+                "static const loft_sidecar loft_sidecar{tp} = {{ {tp}, loft_scb{tp}, loft_sca{tp}, UINT64_C({}), loft_scd{tp}, {}, {}, {} }};",
                 id.layout_hash,
                 body::c_string(&self.stores.release().oldest),
                 if self.holds_stored_refs(tp) {
                     "loft_types"
                 } else {
                     "0"
+                },
+                if id.dump.contains(crate::placement::KEY_ORDER) {
+                    format!("loft_types, {}", self.table_rows())
+                } else {
+                    "0, 0".to_string()
                 }
             );
         }
@@ -980,9 +1007,12 @@ impl<'a> Cx<'a> {
             // `owns_heap`: the Rust store's own answer (`Stores::type_owns_heap`), never re-derived;
             // a hash's or an index's key parts, which its copy re-files by; `linked`, the type's
             // own flag.
+            // A `sorted` is a vector row; its key parts are what tell it from a plain vector
+            // where the key order moved (`loft_rekey_walk`).
             let keys = if matches!(
                 t.parts,
                 Parts::Hash(..)
+                    | Parts::Sorted(..)
                     | Parts::Index(..)
                     | Parts::Radix(..)
                     | Parts::Trie(..)

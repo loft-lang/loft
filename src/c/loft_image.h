@@ -18,6 +18,10 @@ typedef struct {
     const char *oldest;
     /* The type can hold a stored reference, which a load re-points at its slot (`types` walks it). */
     const loft_tdesc *types;
+    /* The type holds a collection whose key order moved (`placement::KEY_ORDER`): an image written
+     * before it is converted by a whole load (`loft_rekey_walk` over these `rekey_n` rows). */
+    const loft_tdesc *rekey;
+    uint32_t rekey_n;
 } loft_sidecar;
 
 /* ── radix_tree::rtree_relayout: the nodes renumbered in van Emde Boas order ── */
@@ -233,6 +237,134 @@ static uint32_t loft_relayout_walk(const loft_tdesc *T, uint32_t ntypes, uint16_
     }
 }
 
+/* `placement::key_orders`: a key part of this kind orders by `@FR-E-NullArg`'s rule since loft#2237
+ * — a null `float`, `single` or `text` first — where an image written before put it last (after
+ * `""` for a text). */
+static int loft_key_reorders(const loft_key *k, int nk) {
+    for (int i = 0; i < nk; i++) {
+        int t = k[i].type < 0 ? -k[i].type : k[i].type;
+        if (t == 3 || t == 4 || t == 6) return 1;
+    }
+    return 0;
+}
+
+/* The entries `idx[0..n)` of a keyed sequence in this build's key order, stable (a merge sort):
+ * entry i is the element at byte `base + i * stride` of record `vrec` (`ind` 0), or the record
+ * whose number sits there (`ind` 1, its key read at byte 8). */
+static int loft_rekey_cmp(loft_store_t *s, uint32_t vrec, uint32_t stride, int ind, uint32_t a, uint32_t b,
+                          const loft_key *keys, int nk) {
+    uint32_t pa = 8 + a * stride, pb = 8 + b * stride;
+    if (!ind) return loft_key_cmp_recs(s, vrec, pa, vrec, pb, keys, nk);
+    return loft_key_cmp_recs(s, loft_u32(s, vrec, pa), 8, loft_u32(s, vrec, pb), 8, keys, nk);
+}
+
+static void loft_rekey_sort(loft_store_t *s, uint32_t vrec, uint32_t stride, int ind, const loft_key *keys, int nk) {
+    uint32_t n = loft_u32(s, vrec, 4);
+    if (n < 2) return;
+    uint32_t *idx = (uint32_t *) malloc((size_t) n * 4), *tmp = (uint32_t *) malloc((size_t) n * 4);
+    uint8_t *buf = (uint8_t *) malloc((size_t) n * stride);
+    if (!idx || !tmp || !buf) { fputs("loft: out of memory\n", stderr); abort(); }
+    for (uint32_t i = 0; i < n; i++) idx[i] = i;
+    for (uint32_t w = 1; w < n; w *= 2) {
+        for (uint32_t lo = 0; lo < n; lo += 2 * w) {
+            uint32_t mid = lo + w < n ? lo + w : n, hi = lo + 2 * w < n ? lo + 2 * w : n, i = lo, j = mid, k = lo;
+            while (i < mid && j < hi)
+                tmp[k++] = loft_rekey_cmp(s, vrec, stride, ind, idx[j], idx[i], keys, nk) < 0 ? idx[j++] : idx[i++];
+            while (i < mid) tmp[k++] = idx[i++];
+            while (j < hi) tmp[k++] = idx[j++];
+        }
+        uint32_t *t = idx;
+        idx = tmp;
+        tmp = t;
+    }
+    uint8_t *base = loft_at(s, vrec, 8);
+    for (uint32_t i = 0; i < n; i++) memcpy(buf + (size_t) i * stride, base + (size_t) idx[i] * stride, stride);
+    memcpy(base, buf, (size_t) n * stride);
+    free(idx);
+    free(tmp);
+    free(buf);
+}
+
+/* `@FR-L-Sound` for loft#2237 (STORE_MODEL D30): every `sorted`, `ordered` and `index` the value at
+ * `r` holds whose key orders by the moved rule is filed again in this build's order — a sorted's
+ * and an ordered's entries sorted where they stand, an index's records added to a fresh tree —
+ * after a whole load of an image written in the old one (`UpgradeMap`'s rebuild, for this one
+ * change).  The walk is `loft_relayout_walk`'s; `*budget` bounds it the same way. */
+static void loft_rekey_walk(const loft_tdesc *T, uint32_t ntypes, uint16_t tp, loft_ref r, uint32_t *budget) {
+    if (*budget == 0 || tp >= ntypes || r.rec == 0) return;
+    (*budget)--;
+    const loft_tdesc *d = &T[tp];
+    loft_store_t *s = loft_store_of(r);
+    uint32_t cur;
+    switch (d->kind) {
+    case LOFT_T_STRUCT:
+        for (uint16_t i = 0; i < d->n; i++) {
+            if (!T[d->fields[i].type].owns_heap) continue;
+            loft_rekey_walk(T, ntypes, d->fields[i].type, loft_field(r, d->fields[i].pos), budget);
+        }
+        return;
+    case LOFT_T_ENUM: {
+        int e = (int) *loft_at(s, r.rec, r.pos) - 1;
+        if (e >= 0 && e < d->n && d->variants[e] != 0xFFFF) loft_rekey_walk(T, ntypes, d->variants[e], r, budget);
+        return;
+    }
+    case LOFT_T_VECTOR: {
+        cur = loft_collection_rec(s, r.rec, r.pos);
+        if (cur == 0) return;
+        uint32_t size = T[d->elem].size;
+        /* A `sorted` is a vector row with key parts. */
+        if (d->nk && loft_key_reorders(d->keys, d->nk)) loft_rekey_sort(s, cur, size, 0, d->keys, d->nk);
+        uint32_t len = loft_u32(s, cur, 4);
+        for (uint32_t i = 0; i < len; i++) {
+            loft_ref e = { r.store_nr, cur, 8 + i * size };
+            loft_rekey_walk(T, ntypes, d->elem, e, budget);
+        }
+        return;
+    }
+    case LOFT_T_CHILD: {
+        cur = loft_u32(s, r.rec, r.pos);
+        loft_ref e = { r.store_nr, cur, 8 };
+        if (cur != 0) loft_rekey_walk(T, ntypes, d->elem, e, budget);
+        return;
+    }
+    case LOFT_T_HASH: {
+        uint32_t n;
+        loft_hent *all = loft_h_entries_of(r, &n);
+        for (uint32_t i = 0; i < n; i++) loft_rekey_walk(T, ntypes, d->elem, all[i].e, budget);
+        free(all);
+        return;
+    }
+    case LOFT_T_INDEX: {
+        uint32_t n;
+        uint32_t *recs = loft_bt_records(r, &n);
+        cur = loft_u32(s, r.rec, r.pos);
+        if (d->nk && loft_key_reorders(d->keys, d->nk) && cur != 0 && cur != 0xFFFFFFFFu) {
+            loft_st_delete(s, cur);
+            loft_set_u32(s, r.rec, r.pos, 0);
+            for (uint32_t i = 0; i < n; i++) (void) loft_bt_add(r, recs[i], d->keys, d->nk);
+        }
+        for (uint32_t i = 0; i < n; i++) {
+            loft_ref e = { r.store_nr, recs[i], 8 };
+            loft_rekey_walk(T, ntypes, d->elem, e, budget);
+        }
+        free(recs);
+        return;
+    }
+    case LOFT_T_ORDERED: {
+        cur = loft_collection_rec(s, r.rec, r.pos);
+        if (cur == 0) return;
+        if (d->nk && loft_key_reorders(d->keys, d->nk)) loft_rekey_sort(s, cur, 4, 1, d->keys, d->nk);
+        for (uint32_t i = 0; i < loft_u32(s, cur, 4); i++) {
+            loft_ref e = { r.store_nr, loft_u32(s, cur, 8 + 4 * i), 8 };
+            if (e.rec != 0) loft_rekey_walk(T, ntypes, d->elem, e, budget);
+        }
+        return;
+    }
+    default:
+        return;
+    }
+}
+
 /* A fresh store of `words` zeroed words in the lowest free slot, uncounted (`adopt_store`). */
 static uint16_t loft_store_scratch(uint32_t words) {
     uint32_t nr = loft_store_make(0);
@@ -409,9 +541,28 @@ static void loft_gate_refuse(const char *who, const char *path, const char *reas
     loft_pg_record(path, reason);
 }
 
+/* Does the image's layout `dump` differ from the program's `want` only by the key order a
+ * collection gained (`placement::KEY_ORDER`, loft#2237)?  `want` with every `,order=1` taken out
+ * must read as `dump`, and `want` must carry one. */
+static int loft_dump_old_order(const char *dump, const char *want) {
+    static const char tok[] = ",order=1";
+    const size_t tl = sizeof tok - 1;
+    if (!strstr(want, tok)) return 0;
+    for (;;) {
+        const char *hit = strstr(want, tok);
+        size_t run = hit ? (size_t) (hit - want) : strlen(want);
+        if (strncmp(dump, want, run) != 0) return 0;
+        dump += run;
+        if (!hit) return *dump == 0;
+        want = hit + tl;
+    }
+}
+
 /* `classify` over a sidecar's TEXT (`verdict_for_sidecar_text`): its layout must be this
- * program's for the type, else the image is refused, saying why; `text` is consumed. */
-static int loft_image_gate_text(const char *path, char *text, const loft_sidecar *sc, const char *who) {
+ * program's for the type, else the image is refused, saying why; `text` is consumed.  1 when it
+ * may be read as it is; 2 when `convert` (a whole load) and it differs only by the key order
+ * (`loft_dump_old_order`), which the loader converts after adopting it (`loft_rekey_walk`). */
+static int loft_image_gate_text(const char *path, char *text, const loft_sidecar *sc, const char *who, int convert) {
     /* `LayoutIdentity::from_sidecar`: the magic, the header lines, the `--` fence, the dump. */
     int ok = 0, ver = 0;
     unsigned long long hash = 0;
@@ -463,6 +614,7 @@ static int loft_image_gate_text(const char *path, char *text, const loft_sidecar
         return 0;
     }
     ok = hash == sc->hash && strcmp(dump, sc->dump) == 0;
+    if (!ok && convert && sc->rekey && loft_dump_old_order(dump, sc->dump)) ok = 2;
     if (!ok) loft_gate_refuse(who, path, "it was written with a different layout, and it cannot be converted to this program's");
     free(text);
     return ok;
@@ -494,14 +646,14 @@ static char *loft_image_sidecar(const char *path) {
 
 /* The layout gate of an image at `path` (`layout_gate_ok`): its sidecar must say it was written
  * with this program's layout for the type; an image with none is never read raw (`@FR-S-Gate`). */
-static int loft_image_gate(const char *path, const loft_sidecar *sc, const char *who) {
+static int loft_image_gate(const char *path, const loft_sidecar *sc, const char *who, int convert) {
     char *text = loft_image_sidecar(path);
     if (!text) {
         loft_gate_refuse(who, path, "it has no layout sidecar (`.dschema`) beside it, so nothing records the "
                          "layout its records were written with; write it with store_persist_copy, which writes both");
         return 0;
     }
-    return loft_image_gate_text(path, text, sc, who);
+    return loft_image_gate_text(path, text, sc, who, convert);
 }
 
 /* Why `n` bytes are not a whole store image, or 0 when they are (`image_words` and
@@ -663,11 +815,20 @@ static int loft_rebase_refs(const loft_sidecar *sc, uint16_t nr, long recorded, 
 static int loft_image_adopt(loft_ref r, uint8_t *bytes, size_t n, int untrusted, const loft_sidecar *sc,
                             long recorded, const char *what, const char *who);
 
+/* An image the gate admitted in the old key order (`gate == 2`), adopted at `r`: every collection
+ * whose key order moved filed again in this build's (`loft_rekey_walk` from the root). */
+static void loft_rekey_image(const loft_sidecar *sc, loft_ref r) {
+    uint32_t budget = 1u << 30;
+    loft_ref root = { r.store_nr, 1, 8 };
+    loft_rekey_walk(sc->rekey, sc->rekey_n, sc->tp, root, &budget);
+}
+
 static int loft_image_load(loft_ref r, loft_str path, const loft_sidecar *sc, int untrusted) {
     const char *who = untrusted ? "store_load_untrusted" : "store_load";
     if (r.store_nr == 0xFFFF || r.store_nr >= loft_nstores || loft_path_refused(path)) return 0;
     char *p = loft_cpath(path, 0);
-    if (p[0] == 0 || (sc && loft_stores[r.store_nr].known == sc->tp && !loft_image_gate(p, sc, who))) {
+    int gate = sc && loft_stores[r.store_nr].known == sc->tp ? loft_image_gate(p, sc, who, 1) : 1;
+    if (p[0] == 0 || gate == 0) {
         free(p);
         return 0;
     }
@@ -703,6 +864,7 @@ static int loft_image_load(loft_ref r, loft_str path, const loft_sidecar *sc, in
     char *what = loft_cstr_own(path);
     int ok = loft_image_adopt(r, bytes, n, untrusted, sc, recorded, what, untrusted ? "store_load_untrusted" : "store_load");
     free(what);
+    if (ok && gate == 2) loft_rekey_image(sc, r);
     return ok;
 }
 
