@@ -2261,6 +2261,334 @@ int main(int argc, char **argv) {
     );
 }
 
+/// A seeded LCG, the same sequence on every run and every machine.
+struct Lcg(u64);
+
+impl Lcg {
+    fn next(&mut self, n: u64) -> u64 {
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (self.0 >> 33) % n
+    }
+}
+
+/// `steps` claims, deletes, resizes and referenced-record marks through `store`, each written
+/// to `script` as the C reads it and each answer to `want`, closed by deletes down to `keep`
+/// records and a reclaim of the tail (`X`, the words it gave back) and the size the store is
+/// left at.  Large claims come often, so a file-bound store grows several times and its reclaim
+/// cuts the file.  Without `refs` no record is marked referenced, so none leaves a tombstone
+/// (`@FR-H-Removed`) and an emptied store's cut can reach its floor.
+#[cfg(feature = "mmap")]
+fn mapped_ops(
+    store: &mut loft::store::Store,
+    live: &mut Vec<u32>,
+    rng: &mut Lcg,
+    steps: u32,
+    keep: usize,
+    refs: bool,
+    (script, want): (&mut String, &mut String),
+) {
+    for _ in 0..steps {
+        let pick = rng.next(100);
+        if pick < 50 || live.is_empty() {
+            let size = match rng.next(20) {
+                0..=10 => 1 + rng.next(8),
+                11..=15 => 9 + rng.next(12),
+                16..=17 => 40 + rng.next(40),
+                _ => 300 + rng.next(900),
+            } as u32;
+            let pos = store.claim(size);
+            live.push(pos);
+            let _ = writeln!(script, "C {size}");
+            let _ = writeln!(want, "{pos}");
+        } else if pick < 85 {
+            let rec = live.swap_remove(rng.next(live.len() as u64) as usize);
+            store.delete(rec);
+            let _ = writeln!(script, "D {rec}");
+        } else if pick < 95 {
+            let i = rng.next(live.len() as u64) as usize;
+            let rec = live[i];
+            let words = store.read::<i32>(rec, 0) as u32;
+            let size = words + 1 + rng.next(u64::from(words)) as u32;
+            let pos = store.resize(rec, size);
+            live[i] = pos;
+            let _ = writeln!(script, "R {rec} {size}");
+            let _ = writeln!(want, "{pos}");
+        } else if refs {
+            let rec = live[rng.next(live.len() as u64) as usize];
+            store.note_referenced(rec);
+            let _ = writeln!(script, "N {rec}");
+        }
+    }
+    // The tail given back: most of what was claimed goes first, so the file is cut.
+    while live.len() > keep {
+        let rec = live.swap_remove(rng.next(live.len() as u64) as usize);
+        store.delete(rec);
+        let _ = writeln!(script, "D {rec}");
+    }
+    let _ = writeln!(script, "X");
+    let _ = writeln!(want, "{}", store.reclaim_tail());
+    let _ = writeln!(want, "size {}", store.capacity_words());
+}
+
+/// D23 of STORE_MODEL.md (`@FR-S-Mapped`, @PLN206 P2): a store bound to a file is the same store
+/// on both runtimes.  `Store::open` and the C's `loft_st_open_mapped` (`src/c/loft_mapped.h`)
+/// each bind a fresh file and run one seeded sequence that grows it several times and then cuts
+/// it (`reclaim_tail`); each then reopens the file the OTHER runtime wrote and continues with a
+/// second sequence.  Every answer, and after each phase the two FILES byte for byte, must be the
+/// same: the bytes, the size and what reaches the file when the store is released.  Then a read
+/// surface (`@FR-H-ReadSurface`) opens a file and leaves it exactly as it was, and a file that
+/// holds no store is refused by both and left alone.  Falsified: the floor of a file-bound
+/// store, the growth step, the recorded-length clear, the size of a fresh file and parking left
+/// on each fail it.
+#[cfg(feature = "mmap")]
+#[test]
+fn a_store_bound_to_a_file_holds_the_same_bytes_on_both_runtimes() {
+    use loft::store::Store;
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("mapped");
+    let path = |n: &str| dir.join(n).to_string_lossy().into_owned();
+    let (rust_file, c_file) = (path("rust.store"), path("c.store"));
+    for f in [&rust_file, &c_file] {
+        let _ = fa::remove_file(f);
+    }
+    let mut c = String::from(
+        "#if !defined(_WIN32)\n#define _POSIX_C_SOURCE 200809L\n#define LOFT_POSIX_HOST 1\n#endif\n\
+         #include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n",
+    );
+    c.push_str(include_str!("../src/c/loft_store.h"));
+    c.push_str("#if defined(_WIN32)\n#include <windows.h>\n#endif\n");
+    c.push_str(include_str!("../src/c/loft_mapped.h"));
+    c.push_str(
+        r#"
+/* argv: the file, the operations, `w` to bind it or `r` for a read surface. */
+int main(int argc, char **argv) {
+    loft_store_t s;
+    memset(&s, 0, sizeof s);
+    int rc = loft_st_open_mapped(&s, argv[1], argv[3][0] == 'r');
+    printf("open %d\n", rc);
+    if (rc != 1) return 0;
+    printf("size %u ro %d\n", s.size, s.read_only);
+    FILE *f = fopen(argv[2], "r");
+    char op;
+    unsigned a, b;
+    while (fscanf(f, " %c", &op) == 1) {
+        if (op == 'C') { if (fscanf(f, "%u", &a) != 1) return 2; printf("%u\n", loft_st_claim(&s, a)); }
+        else if (op == 'D') { if (fscanf(f, "%u", &a) != 1) return 2; loft_st_delete(&s, a); }
+        else if (op == 'R') { if (fscanf(f, "%u %u", &a, &b) != 2) return 2; printf("%u\n", loft_st_resize(&s, a, b)); }
+        else if (op == 'N') { if (fscanf(f, "%u", &a) != 1) return 2; loft_st_note_referenced(&s, a); }
+        else if (op == 'X') { uint32_t cut = loft_st_reclaim_tail(&s); printf("%u\nsize %u\n", cut, s.size); }
+    }
+    fclose(f);
+    loft_st_close_mapped(&s);
+    return 0;
+}
+"#,
+    );
+    let (src, exe) = (dir.join("mapped.c"), dir.join("mapped"));
+    fa::write(&src, &c).expect("write C");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O2", "-pedantic", "-Werror"])
+        .arg(&src)
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc rejected loft_mapped.h:\n{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let run_c = |file: &str, script: &str, mode: &str, phase: &str| -> String {
+        let ops = dir.join(format!("ops-{phase}.txt"));
+        fa::write(&ops, script).expect("write ops");
+        let out = loft::platform::process::harness_command(&exe)
+            .arg(file)
+            .arg(&ops)
+            .arg(mode)
+            .output()
+            .expect("run the mapped-store program");
+        assert!(
+            out.status.success(),
+            "{phase}: the C exited {:?}",
+            out.status
+        );
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let compare = |phase: &str, want: &str, got: &str| {
+        if let Some((i, (w, g))) = want
+            .lines()
+            .zip(got.lines())
+            .enumerate()
+            .find(|(_, (w, g))| w != g)
+        {
+            panic!("{phase}, line {i}: Store answers {w:?}, the C {g:?}");
+        }
+        assert_eq!(
+            got.lines().count(),
+            want.lines().count(),
+            "{phase}: the C stopped early"
+        );
+    };
+    let same_files = |phase: &str, a: &str, b: &str| {
+        let (x, y) = (fa::read(a).expect("read"), fa::read(b).expect("read"));
+        assert_eq!(x.len(), y.len(), "{phase}: the files' lengths");
+        if let Some(i) = x.iter().zip(&y).position(|(p, q)| p != q) {
+            panic!(
+                "{phase}: the files differ first at byte {i} (word {})",
+                i / 8
+            );
+        }
+    };
+    let mut rng = Lcg(0x5eed_0f11_e000_0023);
+    let mut live = Vec::new();
+
+    // 1. A fresh file on each side, grown and cut.
+    let (mut script, mut want) = (String::new(), String::from("open 1\n"));
+    {
+        let mut store = Store::open(&rust_file);
+        let _ = writeln!(want, "size {} ro 0", store.capacity_words());
+        mapped_ops(
+            &mut store,
+            &mut live,
+            &mut rng,
+            3000,
+            3,
+            true,
+            (&mut script, &mut want),
+        );
+    }
+    compare(
+        "a fresh file",
+        &want,
+        &run_c(&c_file, &script, "w", "fresh"),
+    );
+    same_files("a fresh file", &rust_file, &c_file);
+    let grown = fa::metadata(&rust_file).expect("stat").len();
+    assert!(
+        grown > 8192,
+        "the run must grow the file past its first 8192 bytes"
+    );
+
+    // 2. Each reopens the file the other wrote and continues, down to no live record (the
+    // tombstones stay).  Each file first records its length at bytes 4..8, as a written image
+    // does (`(S-Frame)`): bound again, a store clears it.
+    for f in [&rust_file, &c_file] {
+        let mut bytes = fa::read(f).expect("read");
+        let words = (bytes.len() / 8) as u32;
+        bytes[4..8].copy_from_slice(&words.to_le_bytes());
+        fa::write(f, &bytes).expect("record the length");
+    }
+    let (mut script, mut want) = (String::new(), String::from("open 1\n"));
+    {
+        let mut store = Store::open(&c_file);
+        let _ = writeln!(want, "size {} ro 0", store.capacity_words());
+        mapped_ops(
+            &mut store,
+            &mut live,
+            &mut rng,
+            2000,
+            0,
+            true,
+            (&mut script, &mut want),
+        );
+    }
+    compare(
+        "a reopened file",
+        &want,
+        &run_c(&rust_file, &script, "w", "reopen"),
+    );
+    same_files("a reopened file", &c_file, &rust_file);
+
+    // 2b. A fresh pair whose run marks no reference: emptied, the cut stops at the floor of a
+    // file-bound store, not at the two words a store in memory keeps.
+    let (rust_floor, c_floor) = (path("rust-floor.store"), path("c-floor.store"));
+    for f in [&rust_floor, &c_floor] {
+        let _ = fa::remove_file(f);
+    }
+    let mut floor_live = Vec::new();
+    let (mut script, mut want) = (String::new(), String::from("open 1\n"));
+    {
+        let mut store = Store::open(&rust_floor);
+        let _ = writeln!(want, "size {} ro 0", store.capacity_words());
+        mapped_ops(
+            &mut store,
+            &mut floor_live,
+            &mut rng,
+            600,
+            0,
+            false,
+            (&mut script, &mut want),
+        );
+    }
+    compare(
+        "an emptied file",
+        &want,
+        &run_c(&c_floor, &script, "w", "floor"),
+    );
+    same_files("an emptied file", &rust_floor, &c_floor);
+    let cut: u32 = want
+        .lines()
+        .rev()
+        .nth(1)
+        .and_then(|l| l.parse().ok())
+        .expect("the cut");
+    assert!(
+        cut > 0,
+        "the run must grow the file past its floor, so the cut reaches it"
+    );
+    assert_eq!(
+        fa::metadata(&rust_floor).expect("stat").len(),
+        u64::from(loft::store::MIN_BOUND_WORDS) * 8,
+        "an emptied file-bound store is cut to its floor"
+    );
+
+    // 3. A read surface writes nothing: not the recorded length, not a footer.
+    let before = fa::read(&rust_file).expect("read");
+    let words = {
+        let store = Store::open_read_surface(&rust_file).expect("a read surface");
+        assert!(store.read_only, "a read surface is locked");
+        store.capacity_words()
+    };
+    assert_eq!(
+        fa::read(&rust_file).expect("read"),
+        before,
+        "Store's read surface wrote to its file"
+    );
+    compare(
+        "a read surface",
+        &format!("open 1\nsize {words} ro 1\n"),
+        &run_c(&rust_file, "", "r", "surface"),
+    );
+    assert_eq!(
+        fa::read(&rust_file).expect("read"),
+        before,
+        "the C's read surface wrote to its file"
+    );
+
+    // 4. A file of 8192 bytes or more that holds no store is refused and left alone.
+    let junk = path("junk.bin");
+    let bytes: Vec<u8> = (0..9000u32).map(|i| (i * 7 + 3) as u8).collect();
+    fa::write(&junk, &bytes).expect("write junk");
+    let refused = std::panic::catch_unwind(|| Store::open(&junk)).is_err();
+    assert!(refused, "Store refuses a file that holds no store");
+    compare(
+        "a file that holds no store",
+        "open -1\n",
+        &run_c(&junk, "", "w", "junk"),
+    );
+    assert_eq!(
+        fa::read(&junk).expect("read"),
+        bytes,
+        "a refused file is left as it was"
+    );
+}
+
 /// Stores::insert_record's hash arm, for an element that owns nothing: one walk files `e` or
 /// finds the entry under its key, which `e` replaces; a walk that cannot answer falls back to a
 /// lookup, a removal and an add.

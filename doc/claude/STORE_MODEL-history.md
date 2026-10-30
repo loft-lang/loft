@@ -30,3 +30,26 @@ closed it.  Numbers are kept: a closed number is never reused.
 | D19c | no store-memory ceiling on C test runs | closed — 68ff7debc: the runner hands its ceiling to a compiled child, both writers (`the_default_ceiling_reaches_a_compiled_test`) |
 | D19h | the displaced list of a linked group is capped at 16 in C | closed — a860d16ad: sized by the member count (loft#2257; loft-suite `Col-Group-Dup/2257-every-displaced-record-leaves-a-group-of-many-members.loft`) |
 | D19e | NaN and ±0 sort in different orders | closed — e5dfe58f7 (loft#2236): both were wrong — a null (a NaN) landed anywhere, a null text after `""`.  Both now sort as `<` orders (`@FR-E-NullArg`, null first) and stably, so the zeros keep their order (`tests/scripts/sort-places-null-first-and-keeps-equal-floats-in-order.loft`); the keyed-collection half is loft#2237, closed by ba7fd5451 (null keys first in every keyed collection, old images converted; `tests/scripts/a-null-key-orders-first-in-every-keyed-collection.loft`) |
+
+## Closed in main by #2251 (7e4917203, the laptop-c-perf arc)
+
+| # | Divergence | Closed |
+|---|---|---|
+| D7b | `loft_swap_in` exchanged locked or foreign stores | closed — 7e4917203: `Store::content_swappable`'s gate, only the released store's protection refuses |
+| D7c | `loft_reset_pool_root` re-minted a locked, file-backed or foreign store | closed — 7e4917203: such a store is walked, not re-minted |
+| D9a | `loft_keep_vector_range` released nothing from the dropped elements | closed — 7e4917203: each dropped element's claims released first, a linked one's record removed |
+| D9b | `loft_vec_replace` / `_array` cleared without releasing | closed — 7e4917203: the clear releases (`@FR-H-ClearRelease`) |
+| D9c | `loft_database_wrapper` zeroed the slot without `remove_claims` | closed — 7e4917203: the place's collection released, then emptied |
+| D9d | a dying `File` never closed its handle in C, and a copy never leased it (`@FR-H-Handle`) | closed — 7e4917203: a `File` record leases its handle, closed when the last lease dies |
+| D12 | the FFI claim callback zeroed in C and not in the interpreter | closed — 7e4917203, with D17: `loft_ffi_claim` is a plain `loft_claim` |
+| D13 | `loft_append_text_bytes` worked per byte | closed — 7e4917203: one reservation, one copy, one length |
+| D14 | `loft_vec_slice` worked per element | closed — 7e4917203: one block copy, into the room the vector has or after one growth |
+| D15 | copying a text field malloc'd a temporary in C | closed — 7e4917203 |
+| D16 | `OpReplaceKeyed` rebuilt every entry in C | closed — 7e4917203: a given-up source's store swaps in (`@FR-H-SwapIn`'s keyed clause) |
+| D17 | `loft_claim` zeroed every runtime claim where `@FR-H-Claim` promises nothing | closed — 7e4917203: no claim zeroes; only a discarded claim (`loft_st_claim_discarded`) answers a zeroed fresh record |
+
+## Closed on tuxedo-pr2266-next (@PLN206 P2, this stream)
+
+| # | Divergence | Closed |
+|---|---|---|
+| D23 | mmap-backed stores existed only in the interpreter | closed — `src/c/loft_mapped.h` ports `Store::open_mapped` (create at 8192 bytes, reopen with the recorded length cleared and the side state rebuilt, a read surface left untouched, growth and the cut with the file, unmapped on release), POSIX and Windows; `tests/c_emit.rs` `a_store_bound_to_a_file_holds_the_same_bytes_on_both_runtimes` runs one sequence through both on a file each, reopens the other's, and compares every answer and both files byte for byte.  Binding one into a unit's store table is P4's (the call arena a C worker maps) |

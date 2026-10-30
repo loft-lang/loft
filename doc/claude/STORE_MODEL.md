@@ -55,7 +55,7 @@ the shared core below.
 | allocation serial | `alloc_serial` | `serial` | same |
 | records placed from a foreign source | `placed_foreign` | `placed`, `nplaced`, `placed_cap` | same |
 | a foreign store (`file_map`, adopted) | `foreign` | `foreign` | same (locking converged, D1) |
-| backed by a mapped file | `file` (`MmapStorage`) | — | D23 (decided: C gains it) |
+| backed by a mapped file (`@FR-S-Mapped`) | `file` (`MmapStorage`) | `mapped`, `map_file` (`loft_mapped.h`) | same (D23) |
 | held by a live generator frame (`@FR-G-Arg-Rebind`) | — (asked elsewhere) | `frame_holds`, `orphaned` | D24 |
 | allocator policy flags | `wilderness`, `carve`, `move_on_grow`, `borrowed` | — (always on, or absent) | D25 |
 | the interpreter's stack | `stack_buffer` | — (the C stack) | D26 |
@@ -93,41 +93,25 @@ D1–D19 are the pairing's ranked list; their numbers are kept so the plan, the 
 fixes name a row the same way.  D20 onward come from the field-by-field comparison above and
 from P0b (what the C runtime lacks).  State: **open**, **fixing** (on the branch named), or
 **decided** (the decision and its measurement).  A closed row moves to
-[STORE_MODEL-history.md](STORE_MODEL-history.md) with its commit; D1–D5, D7a and D29 are there.
+[STORE_MODEL-history.md](STORE_MODEL-history.md) with its commit; D1–D7c, D9a–D10, D12–D17,
+D19c, D19e, D19h, D23 and D29 are there.
 
 ### Correctness
 
 | # | Divergence | State |
 |---|---|---|
-| D7b | `loft_swap_in` exchanges locked or foreign stores | fixing — laptop-c-perf |
-| D7c | `loft_reset_pool_root` re-mints a locked, file-backed or foreign store | fixing — laptop-c-perf |
 | D8 | the swap-in gate is narrower in C (walk scratch, constant, lazy binding), and refuses a protected destination where Rust tests the source | open |
-
-### Leaks
-
-| # | Divergence | State |
-|---|---|---|
-| D9a | `loft_keep_vector_range` releases nothing from the dropped elements | fixing — laptop-c-perf |
-| D9b | `loft_vec_replace` / `_array` clear without releasing | fixing — laptop-c-perf |
-| D9c | `loft_database_wrapper` zeroes the slot without `remove_claims` | fixing — laptop-c-perf |
-| D9d | a dying `File` never closes its handle in C, and a copy never leases it (`@FR-H-Handle`) | fixing — laptop-c-perf |
 
 ### Contract and diagnostics
 
 | # | Divergence | State |
 |---|---|---|
 | D11 | no `WriteDropped` diagnostic in C for a write through a null holder | open |
-| D12 | the FFI claim callback zeroes in C and not in the interpreter | open — decided by D17 |
 
 ### Hot paths
 
 | # | Divergence | State |
 |---|---|---|
-| D13 | `loft_append_text_bytes` works per byte; the interpreter grows once and copies once | open — C moves |
-| D14 | `loft_vec_slice` works per element; the interpreter makes one block copy | fixing — laptop-c-perf |
-| D15 | copying a text field mallocs a temporary in C | fixing — laptop-c-perf |
-| D16 | `OpReplaceKeyed` rebuilds every entry in C (O(n)); the interpreter swaps stores (O(1)) | fixing — laptop-c-perf |
-| D17 | `loft_claim` zeroes every runtime claim (about 27 sites) where `@FR-H-Claim` promises nothing | fixing — laptop-c-perf (owner: no zeroing of whole regions) |
 | D18 | a vector copy walks elements that own no heap | open — C moves |
 
 ### Edges
@@ -149,7 +133,6 @@ from P0b (what the C runtime lacks).  State: **open**, **fixing** (on the branch
 | D20 | parking: one `park` switch and a `Parked` set against `no_park` and a bitset with per-size heads | open — compare under the differential |
 | D21 | who locked a store: the interpreter records `user_locked` and `lock_origin` for its report | open — observability, P0b |
 | D22 | free protection: a depth counter against a protect count — one meaning, two spellings | open — one name |
-| D23 | mmap-backed stores exist only in the interpreter | decided (owner): C gains them, the interpreter's model kept |
 | D24 | a store held by a generator frame: C marks it (`frame_holds`, `orphaned`), the interpreter answers elsewhere | open |
 | D25 | allocator policy flags (`wilderness`, `carve`, `move_on_grow`, `borrowed`) are per-store in the interpreter, fixed in C | open — with D19b |
 | D26 | the interpreter's stack lives in a store; C's is the C stack | open — not a store property for a C unit; P4 decides |

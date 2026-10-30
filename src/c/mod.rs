@@ -59,6 +59,8 @@ const RUNTIME: &str = concat!(
     include_str!("loft_https.h"),
     include_str!("loft_net.h"),
     include_str!("loft_process.h"),
+    // After `windows.h`, which loft_process.h brings in on Windows.
+    include_str!("loft_mapped.h"),
     include_str!("loft_engine.h"),
     // A library's native part behind the loft-ffi ABI (@PLN205): the ABI's own header, then
     // the host side.

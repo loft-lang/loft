@@ -684,4 +684,4 @@ path is not removed while a **port** row is open.  The store rows are also numbe
 | wasm and browser targets (`--native-wasm`, `--html`, built through rustc) | — | C to wasm through clang (@PLN203) | covered by @PLN203 | @PLN203's browser lane |
 | the ship and lean tiers (`--ship`, `--lean`) | E | the `cship` lane | covered | the perf portal's `cship` column |
 | native rewrites the C writer does not apply yet | E | the C writer's own `R-` rules | open — `make rewrite-census` on both writers names the gap | the census, per rule |
-| mmap-backed stores | E | — | **port** (decided, D23) | D23's probe |
+| mmap-backed stores (`@FR-S-Mapped`) | E | `loft_mapped.h`: `loft_st_open_mapped`, growth and the cut with the file, unmapped on release (POSIX, Windows) | **ported** (D23) | `tests/c_emit.rs` `a_store_bound_to_a_file_holds_the_same_bytes_on_both_runtimes` |

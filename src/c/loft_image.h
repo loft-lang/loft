@@ -383,6 +383,7 @@ static uint16_t loft_store_scratch(uint32_t words) {
  * (`Store::new_freed_sentinel`, four words, parking on) its next store is made in. */
 static void loft_store_drop(uint16_t nr) {
     loft_store_t *s = &loft_stores[nr];
+    if (s->mapped) loft_map_release_hook(s);
     loft_heap_moved(s, s->size, 4);
     free(s->buf);
     s->size = 4;
@@ -903,6 +904,7 @@ static int loft_image_adopt(loft_ref r, uint8_t *bytes, size_t n, int untrusted,
             return 0;
         }
     }
+    if (s->mapped) loft_map_release_hook(s);
     loft_heap_moved(s, s->size, words);
     free(s->buf);
     s->buf = bytes;

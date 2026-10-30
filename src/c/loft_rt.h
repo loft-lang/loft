@@ -1338,6 +1338,13 @@ static void loft_free_ref(loft_ref r) {
     /* A foreign store's bytes go with the handle: the owner drops here. */
     loft_st_release_foreign(s);
 #endif
+    /* A store bound to a file is cut to its content first (`free_named`: the file is
+     * content-sized whether or not its author called `store_reclaim`), then unmapped, its bytes
+     * kept in the file, before the poison below could reach them. */
+    if (s->mapped) {
+        if (!s->read_only) (void) loft_st_reclaim_tail(s);
+        loft_map_release_hook(s);
+    }
 #ifdef LOFT_POISON
     /* `LOFT_POISON` (free_named): every byte past the first word reads 0xDEADBEEF, so a stale
      * reference into the freed store reads loud garbage. */
@@ -2520,9 +2527,10 @@ static int loft_swap_in(uint16_t tp, loft_ref src, loft_ref dst, int reset_dest)
     loft_store_t *a = &loft_stores[src.store_nr], *b = &loft_stores[dst.store_nr];
     if (!a->live || !b->live || a->known != tp || b->known != tp || a->pinned || b->pinned) return 0;
     /* `Store::content_swappable`: neither store locked (a lock is the slot's, and would move
-     * with the content) nor serving foreign bytes; only the RELEASED store's protection
-     * refuses (`free_protect_depth`), a protected destination takes the content. */
+     * with the content) nor serving foreign bytes nor bound to a file; only the RELEASED store's
+     * protection refuses (`free_protect_depth`), a protected destination takes the content. */
     if (a->read_only || b->read_only || a->protect || a->nplaced || b->nplaced) return 0;
+    if (a->mapped || b->mapped) return 0;
 #ifdef LOFT_FOREIGN
     if (loft_st_is_foreign(a) || loft_st_is_foreign(b)) return 0;
 #endif
@@ -5335,8 +5343,9 @@ static int loft_reset_pool_root(loft_ref r, uint16_t tp, uint32_t size, const ui
     if (r.store_nr == 0xFFFF || r.rec != 1 || r.pos != 8 || r.store_nr >= loft_nstores) return 0;
     loft_store_t *s = &loft_stores[r.store_nr];
     if (!s->live || s->pinned || s->known != tp || s->frame_holds) return 0;
-    /* A locked store is not re-minted, nor one serving foreign bytes: the caller walks. */
-    if (s->read_only) return 0;
+    /* A locked store is not re-minted, nor one bound to a file or serving foreign bytes: the
+     * caller walks. */
+    if (s->read_only || s->mapped) return 0;
 #ifdef LOFT_FOREIGN
     if (loft_st_is_foreign(s)) return 0;
 #endif

@@ -35,6 +35,8 @@
 #define LOFT_PARK_MAX_WORDS 16
 #define LOFT_PARK_PREV 4u
 #define LOFT_PARK_NEXT 8u
+/* `MIN_BOUND_WORDS`: the fewest words a store bound to a file holds (`@FR-S-Mapped`). */
+#define LOFT_MIN_BOUND_WORDS 1024u
 
 /* `Claims`: one bit per word, grown on demand to the highest position inserted.  `nwords` is
  * the length and `cap` the allocation, as a `Vec<u64>`'s: growth doubles the allocation and a
@@ -182,6 +184,11 @@ typedef struct {
      * as an argument, and whether its owner released it while they did. */
     uint32_t frame_holds;
     int orphaned;
+    /* `Store::file` (`@FR-S-Mapped`, loft_mapped.h): the length in bytes of the file `buf`
+     * maps, shared — grown and cut with the file and unmapped when the store is released — and
+     * 0 for a store in memory; `map_file` is the open file (a descriptor, or a Windows handle). */
+    size_t mapped;
+    intptr_t map_file;
 #ifdef LOFT_FOREIGN
     /* `Store::foreign`: the bytes this store serves under `LOFT_FOREIGN_REC`; an owner of 0 for
      * every ordinary store. */
@@ -739,12 +746,25 @@ static void loft_lazy_delete(loft_store_t *s, uint32_t rec) {
 
 /* ---- growth ---- */
 
+/* A store bound to a file (loft_mapped.h, which sets it when it binds one): the file and its
+ * mapping resized to `words` words, `buf` and `size` following; 0 when the OS refused, the
+ * store then as it was.  Null in a unit that binds no file, where no store is mapped. */
+static int (*loft_map_resize_hook)(loft_store_t *s, uint32_t words);
+/* Its release: unmapped and closed, the store left with no buffer (`loft_st_close_mapped`). */
+static void (*loft_map_release_hook)(loft_store_t *s);
+
 static void loft_resize_store(loft_store_t *s, uint32_t to_size) {
     if (to_size <= s->size) return;
     if (to_size > (uint32_t) INT32_MAX) { fputs("loft: store offset overflow\n", stderr); abort(); }
     uint64_t inc64 = (uint64_t) s->size * 7;
     uint32_t inc = inc64 > UINT32_MAX ? UINT32_MAX / 3 : (uint32_t) (inc64 / 3);
     uint32_t size = to_size > inc ? to_size : inc;
+    /* `Store::resize_store`: a mapped store grows its file, which reads zero past the old end,
+     * and is not counted against the heap ceiling — its bytes are the file's. */
+    if (s->mapped) {
+        if (!loft_map_resize_hook(s, size)) { fputs("loft: a store bound to a file could not grow\n", stderr); abort(); }
+        return;
+    }
     loft_heap_moved(s, s->size, size);
 #ifdef LOFT_POISON
     /* `LOFT_POISON`: the growth always MOVES the bytes and scribbles the block it leaves, which
@@ -1279,9 +1299,10 @@ static loft_usage loft_st_usage(const loft_store_t *s) {
     return u;
 }
 
-/* `Store::shrink_to` (a heap store): the buffer cut to `words`, never under the end of the last
- * claimed block nor the two-word floor, and the free space left above it re-tiled as one block
- * ending the store, the free tree rebuilt (`retile_tail`).  0 when it did not shrink. */
+/* `Store::shrink_to`: the buffer cut to `words`, never under the end of the last claimed block
+ * nor the floor — two words, or `LOFT_MIN_BOUND_WORDS` for a store bound to a file, whose file
+ * is cut with it — and the free space left above it re-tiled as one block ending the store, the
+ * free tree rebuilt (`retile_tail`).  0 when it did not shrink. */
 static int loft_st_shrink_to(loft_store_t *s, uint32_t words) {
     if (s->read_only) return 0;
     loft_flush_parked(s);
@@ -1289,13 +1310,18 @@ static int loft_st_shrink_to(loft_store_t *s, uint32_t words) {
     if (!u.walk_complete) return 0;
     uint32_t mark = u.live_end_words;
     if (words < mark) return 0;
-    if (words < LOFT_ST_PRIMARY + 1) words = LOFT_ST_PRIMARY + 1;
+    uint32_t floor = s->mapped ? LOFT_MIN_BOUND_WORDS : LOFT_ST_PRIMARY + 1;
+    if (words < floor) words = floor;
     if (words >= s->size) return 0;
-    loft_heap_moved(s, s->size, words);
-    uint8_t *b = (uint8_t *) realloc(s->buf, (size_t) words * 8);
-    if (!b) { fputs("loft: out of memory\n", stderr); abort(); }
-    s->buf = b;
-    s->size = words;
+    if (s->mapped) {
+        if (!loft_map_resize_hook(s, words)) return 0;
+    } else {
+        loft_heap_moved(s, s->size, words);
+        uint8_t *b = (uint8_t *) realloc(s->buf, (size_t) words * 8);
+        if (!b) { fputs("loft: out of memory\n", stderr); abort(); }
+        s->buf = b;
+        s->size = words;
+    }
     uint32_t tail = mark > LOFT_ST_PRIMARY ? mark : LOFT_ST_PRIMARY;
     if (tail < s->size) loft_set_free_header(s, tail, (int32_t) (s->size - tail));
     loft_fl_rebuild(s);
