@@ -174,6 +174,23 @@ fn runtime_error_surfaces() {
     assert_eq!(p.call("boom", &[Value::Int(7)]).unwrap(), Value::Int(7));
 }
 
+/// loft#2271 as `loft fmt` met it: a five-deep nest holding a line too wide to fit makes the
+/// formatter recurse deep enough to run over a work buffer kept beside the stack (SIGSEGV).  The
+/// answer is the formatter's own, hand-checked: the wide line broken inside its brackets.
+#[test]
+fn formatter_survives_a_deep_nest_with_a_wide_line() {
+    let src = fa::read_to_string("tools/fmt/whole.loft").expect("formatter source");
+    let mut p = Program::from_source(&src).expect("formatter compiles");
+    let input = "fn f() {\n  if a {\n    if b {\n      if c {\n        if d { out += [CmapRange { first: c, last: c, glyph: (g + delta) % 65536, more: 1 }]; }\n      }\n    }\n  }\n}\n";
+    let want = "fn f() {\n  if a {\n    if b {\n      if c {\n        if d {\n          out += [\n            CmapRange { first: c, last: c, glyph: (g + delta) % 65536, more: 1 },\n          ];\n        }\n      }\n    }\n  }\n}\n";
+    for _ in 0..3 {
+        let out = p
+            .call("format", &[Value::Text(input.into())])
+            .expect("format runs");
+        assert_eq!(out, Value::Text(want.into()));
+    }
+}
+
 #[test]
 fn formatter_dogfood() {
     // The driver: call the loft-written formatter's `format(text) -> text`.

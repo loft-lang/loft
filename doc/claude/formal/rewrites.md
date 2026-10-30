@@ -5435,13 +5435,17 @@ publishing it.
                  pointer cached in `State` (`stack_base`), instead of re-deriving it
                  through the store table, the store and its buffer on every access.  The
                  base is re-derived wherever the stack store's buffer can move — at
-                 construction, by `grow_stack`, by `claim_in_stack` (a `par` worker's text
-                 work buffers), by a checkpoint restore (which replaces every store) — and
-                 every OTHER buffer move refuses the stack store (`Store::stack_buffer`:
+                 construction, by `grow_stack`, by a checkpoint restore (which replaces
+                 every store) — and every OTHER buffer move refuses the stack store
+                 (`Store::stack_buffer`:
                  `claim_grow`, `adopt_image`, `reclaim_tail`, `take_slot`, `take_store`
                  panic on it), so a missed re-derivation is a refusal at the move, never a
                  read of a freed buffer.  A snapshot copy keeps the mark; a locked or
                  borrowed copy for a worker does not (the worker has its own stack).
+                 The stack record is the store's only record: a frame is bounded by the
+                 store's capacity, so anything else claimed there is run over by a deep
+                 enough call — a `par` worker's or a host call's text work buffers sit
+                 at the foot of the stack record instead (loft#2271).
 ```
 
 **In words.** Applied by: interpreter runtime (`State::stack_slot`, `stack_base_of`).  A simple
