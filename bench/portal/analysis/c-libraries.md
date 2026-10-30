@@ -53,6 +53,7 @@ has no C path yet.  **arguments `parse`** printed no C lane row.
 | the scope-exit release of a variable inlined (`loft_free_var`, `loft_free_var_distinct`) | `c/loft_rt.h` | cbor `decode` −20 %, pluginabi `check_request` −10 % |
 | a text's set and append inlined (`loft_text_set`, `loft_text_concat`) | `c/loft_text.h`, `-DLOFT_NO_TEXT_INLINE` | 119 routines: 13 faster (up to −16 %), 100 the same, five 2–5 % slower, `hex_neighbor` +22 % from code placement only |
 | `stats.py` measures every program after one whose lane fails (a worker's exit used to end the run) | `bench/stats.py` `MEASURE_FAILURES` | a 38-library run measured 18 before |
+| the short appends: a piece of up to four bytes copied inline, a one-byte ASCII slice `s[k..k + 1]` answered as that byte before any snapping, a one-byte append and an ASCII character append into a buffer with room a store and a length bump | `c/loft_text.h` `loft_push` / `loft_text_concat`, `c/loft_rt.h` `loft_text_sub` / `loft_push_code`, `-DLOFT_NO_SHORT_APPEND` | gcc, 122 routines: pluginabi `req_state_b64` −66 % (7.9× → ≈ 2.7×), `escape_html` −26 %, `escape_html_blob` −30 %, markdown `render_inline` −31 %, `render` −20 %, `opaque_texels` −13 %, `sha256_small` −10 %, `request` −6 %, nine more −3 … −9 %; 100 the same; slower: `slugify` +6.5 %, `terrain_hydrology` +7 %, `hex_neighbor` +7 %, `save_glb` +5 % (see § The short appends) |
 
 ## The census against rustc
 
@@ -74,7 +75,7 @@ The goal stays the worst rows, fixed by general optimisations with the memory mo
 
 | row | ratio | where the time is | state |
 |---|---|---|---|
-| `req_state_b64` | 15.8× | crypto's `b64_encode`: each `if … { chars[k..k + 1] } else { "=" }` piece copied into a temporary text; the result copied out of the work buffer at the return (5.4 KB a call) | **BUILT** — the slice view choice, −36 %; the return copy is the C's missing `(R-TextBorrow)` CALL clause (the caller would read the callee's work buffer as a view) |
+| `req_state_b64` | 15.8× | crypto's `b64_encode`: each `if … { chars[k..k + 1] } else { "=" }` piece copied into a temporary text; then the per-character append itself (75 % of the row: a library `memcpy` per byte, the slice's boundary snapping, the general append) | **BUILT** — the slice view choice, −36 %; then the short appends, −66 %.  The return copies down the four `return <call>` levels are ≈ 2 % (profiled), not the remaining cost an earlier note guessed |
 | `check_request` | 12.1× | cbor's `read_value` (85 %); per bytes value `CBytes { value: bytes[a..b] }` mints a STORE for the slice temporary (`loft_store_make` + `loft_bits_insert` ≈ 13 %), copies it into the field and frees it — rustc does the same | **BUILT** — `(R-SliceInto)` −10 %, and the scope-exit release inlined −10 % (cbor `decode` −20 % with it); what is left is `read_value`'s own frame |
 | `request` | 6.4× | crypto's `b64_decode` (70 %), per input byte: the push header's slot and length writes resolve the store (`loft_ph_new`, `loft_at`, the `memcpy`s), `byte_at`, `b64_value` | the push header holds no data pointer by design (a sibling's growth in the same store moves the memory); a base held where the loop's only growth is that header's own wants pricing |
 
@@ -86,6 +87,41 @@ building.
 **Tried and dropped (2026-10-30):** one push header held across `head`'s straight-line pushes
 (`buf += [b]`, one to three a call), hand-priced on cbor: `encode` −1 %, `encode_bytes` within
 noise — deriving the header costs what the pushes save.  `head`'s cost is its call and branches.
+
+### The short appends (2026-10-30)
+
+**What the row paid.**  `req_state_b64` profiled at 75 % in `b64_encode`'s loop, four
+`out += chars[k..k + 1]` a 3-byte group, and ≈ 2 % in the return copies.  Per character: the
+slice's general path (a boundary snap back and forward), the append's null tests, and a
+`memcpy` whose length the C compiler cannot see — a library call per byte.  The twin pushes a
+byte into a `String` with room.
+
+**What was built.**  Four fast paths in the runtime, each answering exactly what the general
+path answers, behind one switch (`-DLOFT_NO_SHORT_APPEND`):
+`loft_push` copies a piece of up to four bytes inline; `loft_text_sub` answers a one-byte slice
+of an ASCII byte (the next byte tested, so even a text that is not valid UTF-8 answers as the
+general path does) as that byte; `loft_text_concat` appends one byte into a buffer with room
+with a store; `loft_push_code` does the same for an ASCII character (`out += "{c}"`).  The
+slice's fast path alone priced −15 %: after it joins the general path the length is unknown
+again.  With the concat's one-byte path behind it, the C compiler threads the constant length
+through and the append is one store: −67 %, the same as rewriting the slice by hand.
+
+**Measured** (gcc ship, `ab.py`, switch on against off, 36 libraries, 5 alternating rounds):
+see the Built row.  The first run had `escape_html` +8 % slower: its common branch is
+`loft_push_code`, where the inline byte copy cost more than the `memcpy` did; the character
+path took it to −26 %.  The inline copy is still a net gain on its own (without it: `slugify`
++7 %, `opaque_texels` +12 %, `request` +6 %, `escape_html` +3.5 %; `terrain_hydrology` −6 %,
+`base64_to_bytes` −3 %).  `terrain_hydrology`'s hot function appends no text — its code differs
+only in register allocation between the builds — so its +7 % is placement, as `hex_neighbor`'s
+is (owner: no layout fixes).
+
+Guard `tests/scripts/a-one-byte-slice-appended-is-the-general-slice.loft` (11 cells, value and
+size, falsified by three planted defects, one per fast path that has a condition).  The corpus
+sweep found one more thing: with the inline copy, gcc's overread check sees `loft_push`'s
+`memcpy` branch (pieces over four bytes) reached from a four-byte code-point buffer
+(`loft_push_code`, the JSON writer's `loft_jv_push_cp`) and strict mode failed on 8 programs.
+The branch cannot run for those callers; the check is silenced around that one copy, for gcc
+only.  Sweep after: 2552 match, 0 differ, 0 cc-error.
 
 ### `(R-PlaceReturn)` — built, measured slower, reverted (2026-10-30)
 

@@ -1,0 +1,130 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The C runtime's short-append fast paths: a one-byte slice `s[k..k + 1]` of an ASCII
+// character answers that byte before any boundary snapping (`loft_text_sub`), a one-byte
+// append into a buffer with room is a store and a length bump (`loft_text_concat`), and a
+// piece of up to four bytes is copied byte by byte (`loft_push`).  Each must answer what the
+// general path answers: a slice that lands inside a multi-byte character widens to the whole
+// character, an index outside the text answers the empty text, a null text appended makes the
+// destination null (the null text is the one byte 0), a null destination stays null, and a
+// piece of the buffer itself appends what it held; an ASCII character appended by a format is
+// one byte (`loft_push_code`), and the null character appends nothing.
+// Values hand-computed; value AND size.  `-DLOFT_NO_SHORT_APPEND` is the same-build oracle.
+//
+// @falsified-at: none — the fast paths have no earlier build to catch, so the receipts are
+//   defects planted (2026-10-30) in the generated C, each caught by an assertion: the slice's
+//   fast path without its ASCII test answers a lone lead or continuation byte (s2 "aé�∑∑�b",
+//   s4); the concat's without its null-source test appends the null text as a byte (s6 "x");
+//   the character append's without its null-character test appends a 0 byte (s11 size 5).
+//   CHANNEL: an assertion.
+
+fn one_byte_slices(s: text, from: integer, till: integer) -> text {
+  out = "";
+  k = from;
+  while k < till {
+    out += s[k..k + 1];
+    k += 1;
+  }
+  out
+}
+
+fn no_text() -> text? { null }
+
+// s1: every index of an ASCII table, one byte each — the table itself
+fn test_every_index_of_an_ascii_table() {
+  t = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  got = one_byte_slices(t, 0, 64);
+  assert(got == t, "s1 {got}");
+  assert(got.size() == 64, "s1 size {got.size()}");
+}
+
+// s2: a slice inside a multi-byte character widens to the character — a(0) é(1,2) ∑(3..6) b(6)
+//     k = 0 "a", 1 "é", 2 "é", 3 "∑", 4 "∑", 5 "∑", 6 "b": 1 + 2 + 2 + 3 + 3 + 3 + 1 = 15 bytes
+fn test_a_slice_inside_a_character_widens() {
+  got = one_byte_slices("aé∑b", 0, 7);
+  assert(got == "aéé∑∑∑b", "s2 {got}");
+  assert(got.size() == 15, "s2 size {got.size()}");
+}
+
+// s3: an ASCII byte followed by a character's lead byte is one byte — "xé" k = 0 is "x"
+fn test_an_ascii_byte_before_a_lead_byte() {
+  got = one_byte_slices("xé", 0, 1);
+  assert(got == "x", "s3 {got}");
+  assert(got.size() == 1, "s3 size {got.size()}");
+}
+
+// s4: a four-byte character, appended whole through every one of its bytes — 4 × 4 bytes
+fn test_a_four_byte_character() {
+  got = one_byte_slices("😀", 0, 4);
+  assert(got == "😀😀😀😀", "s4 {got}");
+  assert(got.size() == 16, "s4 size {got.size()}");
+}
+
+// s5: an index at the end answers the empty text; -1 counts from the end, its `till` 0 is
+//     before it, so it is empty too
+fn test_indexes_at_and_before_the_ends() {
+  s = "abc";
+  k = 3;
+  m = -1;
+  got = "[" + s[k..k + 1] + "|" + s[m..m + 1] + "]";
+  assert(got == "[|]", "s5 {got}");
+  assert(got.size() == 3, "s5 size {got.size()}");
+}
+
+// s6: a null text appended makes the destination null
+fn test_a_null_text_appended() {
+  out = "x";
+  out += no_text();
+  assert(!out, "s6 {out}");
+}
+
+// s7: a null destination stays null
+fn test_a_null_destination() {
+  out = no_text();
+  out += "abc"[1..2];
+  assert(!out, "s7 {out}");
+}
+
+// s8: a piece of the buffer itself appends what the buffer held
+fn test_a_piece_of_the_buffer_itself() {
+  out = "abc";
+  out += out[0..1];
+  out += out[3..4];
+  assert(out == "abcaa", "s8 {out}");
+  assert(out.size() == 5, "s8 size {out.size()}");
+}
+
+// s9: a thousand appends grow the buffer across its capacity — 1000 bytes, `a`..`j` repeating
+fn test_appends_across_growth() {
+  t = "abcdefghij";
+  out = "";
+  for i in 0..1000 { out += t[i % 10..i % 10 + 1]; }
+  assert(out.size() == 1000, "s9 size {out.size()}");
+  assert(out[0..12] == "abcdefghijab", "s9 head {out[0..12]}");
+  assert(out[990..1000] == "abcdefghij", "s9 tail {out[990..1000]}");
+}
+
+// s10: two-, three- and four-byte pieces appended by literal — 2 + 3 + 4 + 1 = 10 bytes
+fn test_short_multi_byte_pieces() {
+  out = "";
+  out += "é";
+  out += "∑";
+  out += "😀";
+  out += "z";
+  assert(out == "é∑😀z", "s10 {out}");
+  assert(out.size() == 10, "s10 size {out.size()}");
+}
+
+// s11: characters appended by format — each ASCII one a byte, the null character nothing
+fn test_characters_appended_by_format() {
+  s = "ab";
+  out = "x";
+  for c in s { out += "{c}"; }
+  z = s[5] ?? '\0';
+  out += "{z}";
+  q = 'q';
+  out += "{q}";
+  assert(out == "xabq", "s11 {out}");
+  assert(out.size() == 4, "s11 size {out.size()}");
+}

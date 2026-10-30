@@ -113,11 +113,33 @@ static void loft_push_slow(loft_text *t, const char *p, size_t n) {
 }
 
 /* The append every text build runs per piece: in place while the buffer has room and the piece
- * is not a part of the buffer itself, the growth and the self-append out of line. */
+ * is not a part of the buffer itself, the growth and the self-append out of line.  A piece of
+ * one character (up to four bytes) is copied byte by byte: its length is not known to the C
+ * compiler, so `memcpy` would be a library call per character.  `-DLOFT_NO_SHORT_APPEND`
+ * copies every piece with `memcpy`. */
 LOFT_HOT_INLINE void loft_push(loft_text *t, const char *p, size_t n) {
     if (n == 0) return;
     if (LOFT_LIKELY(t->len + n <= t->cap) && (p < t->p || p >= t->p + t->cap)) {
-        memcpy(t->p + t->len, p, n);
+        char *d = t->p + t->len;
+#ifndef LOFT_NO_SHORT_APPEND
+        if (n <= 4) {
+            d[0] = p[0];
+            if (n > 1) { d[1] = p[1]; if (n > 2) { d[2] = p[2]; if (n > 3) d[3] = p[3]; } }
+        } else
+#endif
+        {
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 11
+/* A caller with a four-byte buffer (a code point's encoding) reaches this copy only with
+ * `n <= 4`, which the branch above takes; gcc's overread check does not see that and would
+ * fail strict mode on a copy that cannot run. */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overread"
+#endif
+            memcpy(d, p, n);
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 11
+#pragma GCC diagnostic pop
+#endif
+        }
         t->len += n;
         return;
     }
@@ -146,6 +168,15 @@ static void loft_text_append(loft_text *t, loft_str s) {
 #endif
 
 LOFT_TEXT_INLINE void loft_text_concat(loft_text *t, loft_str s) {
+#ifndef LOFT_NO_SHORT_APPEND
+    /* One byte into a buffer with room: a store and a length bump.  Behind a one-byte slice's
+     * own fast path (`loft_text_sub`) the C compiler sees the length 1 and keeps only this. */
+    if (s.len == 1 && s.p[0] != 0 && t->len < t->cap && !(t->len == 1 && t->p[0] == 0)) {
+        char c = s.p[0];
+        t->p[t->len++] = c;
+        return;
+    }
+#endif
     if (loft_str_is_null(loft_view(t))) return;
     if (loft_str_is_null(s)) {
         t->len = 0;
