@@ -899,7 +899,9 @@ static size_t loft_utf8(uint32_t c, char *out);
  * counting from the end, `from` snapped back and `till` forward to a character boundary;
  * `till` INT32_MIN is the one character at `from`.  The bounds arrive as i64 and are taken
  * as i32, as the interpreter takes them. */
-static loft_str loft_text_sub(loft_str v, int64_t from64, int64_t till64) {
+/* Inlined with the text writes (`LOFT_TEXT_INLINE`, loft_text.h): a one-character slice
+ * `s[k..k + 1]` then folds to a boundary test and a view. */
+LOFT_TEXT_INLINE loft_str loft_text_sub(loft_str v, int64_t from64, int64_t till64) {
     int32_t from = (int32_t) (uint32_t) (uint64_t) from64;
     int32_t till = (int32_t) (uint32_t) (uint64_t) till64;
     int32_t n = (int32_t) v.len;
