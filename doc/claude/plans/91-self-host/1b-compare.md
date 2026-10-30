@@ -37,7 +37,8 @@ written in the table below; a new one is a design change here first.
 ## The layers
 
 Every output either implementation produces, at compile time and at run time (owner: *"it also
-includes all compile time reports: slots, IR, bytecode, lifetimes"*).  The compile-time reports
+includes all compile time reports: slots, IR, bytecode, lifetimes"*; *"also include the type
+information"*).  The compile-time reports
 are `loft introspect`'s sections, per function; the loft side writes the same sections in the
 same text, so the comparison is of text, and a report the loft side reads or derives
 differently shows as the row where it does.
@@ -46,16 +47,19 @@ differently shows as the row where it does.
 |---|---|---|---|
 | **ir** | `loft introspect`: each function's IR, as `Value`'s display writes it | the IR the loft side read from the image, printed by a port of that display | none, per function, byte for byte |
 | **types** | `introspect`'s `=== types ===` table: each variable's type with its dependencies | the same from the image's variable table | none |
+| **schema** | `LOFT_DUMP_TYPES`: every store type (`Stores::show_type`) — size and alignment, the derived parents, the parts: fields with positions, variants, keys | the image's schema (`Bundle.types`) in the same text, the parents derived as the Rust side derives them | none |
+| **ctable** | the C type table the C generator writes for the program (`--emit-c`, read by `tests/selfhost.rs`'s `c_type_table`) | `types::render` of the loft-derived table (P5) | none, row by row |
 | **slots** | `introspect`'s variable table: `slot [a, b)` per variable | the slot and width every access addresses (from F-1 the image's `stack_pos`) | none |
 | **lifetimes** | `introspect`'s variable table: `live [a, b]` per variable (`compute_intervals`) | a port of `compute_intervals` over the image's IR | none |
-| **out** | `loft --interpret` (`--tests FILE::ENTRY` for a test) | the runner on the emitted image | stdout byte for byte; the exit code; stderr byte for byte after removing the front end's diagnostics, which the tool takes from `loft --check FILE` and requires as an exact PREFIX of the run's stderr |
+| **out** | `loft --interpret` (`--tests FILE::ENTRY` for a test) | the runner on the emitted image, in its comparison mode (no census lines) | stdout byte for byte; the exit code; stderr byte for byte after removing the front end's diagnostics, which the tool takes from `--emit-image`'s stderr (the same front end, nothing run) and requires as an exact PREFIX of the run's stderr — PC4 measured it so; `--check` is not that source, it also prints toolchain noise.  For a test entry, the harness's block (from the `ok`/`FAIL` line of the file on) is cut from the Rust stdout, and its verdict and failure message are compared with the runner's |
 | **alloc** | `LOFT_ALLOC_TRACE` from the `op-census` build (`store_census::alloc_event`: `N`, `F`, `C`, `D`, `R`, `M`) | the same lines from the `crt` shim's runtime, compiled with the trace on | the events after `M` on stores made after it, each store named by the order it first appears — exactly `c_alloc_diff.py`'s `program_events` (the Rust value stack and constant stores are setup) |
 | **leak** | the stores live at exit (the alloc layer's `N` without `F`) | the same | none: the two sets, by name, must be equal (a store both sides leak is equal; one side only is a difference) |
 | **binds** | `LOFT_TRACE_BIND` from `generate_set` (1b-s3.md § The comparison) | the lowering's bind table | none: function, variable, first/re, arm, B2's free, every fact and its value |
 | **bytecode** | `loft introspect`'s bytecode listing | the lowering's output in the same form | none, byte for byte |
 
-Until the loft interpreter builds a layer's producer, that layer is `MISSING loft`: ir and
-types from C-1 (the image is already read; the display is ported), binds from 1b-s3.md's B-1,
+Until the loft interpreter builds a layer's producer, that layer is `MISSING loft`: ir,
+types and schema from C-1 (the image is already read; the displays are ported), ctable from C-1
+(P5's table already exists), binds from 1b-s3.md's B-1,
 slots from 1b-frame.md's F-1, lifetimes with the port of `compute_intervals`, bytecode from F-2.  The tool is complete from the
 start; the interpreter fills it in.
 
