@@ -2721,7 +2721,7 @@ use a separate collection or add after the loop"
         if self.first_pass || t == u16::MAX || t >= self.vars.count() {
             return;
         }
-        let Type::Tuple(elems) = self.vars.tp(t).clone() else {
+        let Type::Tuple(elems) = self.vars.tp(t).base().clone() else {
             return;
         };
         if !elems.iter().any(|e| !crate::data::is_scalar(e.base())) || !code.reads_var(t) {

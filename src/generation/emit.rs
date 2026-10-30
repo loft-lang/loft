@@ -5261,12 +5261,7 @@ impl Output<'_> {
                     // the tail is cloned rather than moved out (`tuple_text_elem`).
                     let clone_outer_text = self.tuple_text_elem
                         && own_text_tail.is_none()
-                        && matches!(v.unspan(), Value::Var(x) if {
-                            let vars = self.data.def(self.def_nr).variables();
-                            vars.scope(*x) != bl.scope
-                                && matches!(vars.tp(*x).base(), Type::Text(_))
-                                && !self.text_borrowed(*x)
-                        });
+                        && self.outer_text_var(v, bl.scope);
                     if let Some(name) = &own_text_tail {
                         write!(w, "var_{name}")?;
                     } else {

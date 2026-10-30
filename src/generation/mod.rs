@@ -6505,6 +6505,16 @@ impl Output<'_> {
         self.lazy_splits.contains_key(vec).then_some(*vec)
     }
 
+    /// Is `v` a text variable declared outside the block at `scope`, and not borrowed?
+    pub(crate) fn outer_text_var(&self, v: &Value, scope: u16) -> bool {
+        let Value::Var(x) = v.unspan() else {
+            return false;
+        };
+        let vars = self.data.def(self.def_nr).variables();
+        let is_text = matches!(vars.tp(*x).base(), Type::Text(_));
+        vars.scope(*x) != scope && is_text && !self.text_borrowed(*x)
+    }
+
     /// Is text variable `v` of the function being emitted BORROWED — its Rust slot a `&str` —
     /// rather than an owned `String`?  A text PARAMETER is: the caller's text arrives
     /// borrowed.  A text LOCAL is not, unless a rewrite admitted it to borrow what it reads
