@@ -18,18 +18,19 @@
 //! store instead (`doc/claude/formal/ownership.md`), or raise it with the project owner — a
 //! second use is a change to the ownership model, not a refactor.
 
-use std::fs;
-use std::path::Path;
+use loft::file_access;
+use std::path::{Path, PathBuf};
 
 /// Every `.rs` and `.h` file under `dir` (the C backend's runtime carries a twin of the count),
 /// as `(path relative to the crate, contents)`.
 fn rust_files(dir: &Path, out: &mut Vec<(String, String)>) {
-    for entry in fs::read_dir(dir).expect("read src") {
-        let path = entry.expect("dir entry").path();
-        if path.is_dir() {
+    for entry in file_access::read_dir(dir).expect("read src") {
+        let path: PathBuf = entry.os_spelling();
+        if file_access::is_dir(&path) {
             rust_files(&path, out);
-        } else if path.extension().is_some_and(|e| e == "rs" || e == "h") {
-            let text = fs::read_to_string(&path).expect("read source");
+        } else if file_access::has_extension(&path, "rs") || file_access::has_extension(&path, "h")
+        {
+            let text = file_access::read_to_string(&path).expect("read source");
             let rel = path
                 .strip_prefix(env!("CARGO_MANIFEST_DIR"))
                 .unwrap_or(&path)
@@ -38,6 +39,12 @@ fn rust_files(dir: &Path, out: &mut Vec<(String, String)>) {
             out.push((rel, text));
         }
     }
+}
+
+/// One file of the crate, read.
+fn crate_file(rel: &str) -> String {
+    file_access::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(rel))
+        .unwrap_or_else(|e| panic!("read {rel}: {e}"))
 }
 
 /// The files that name `needle`, sorted.
@@ -83,10 +90,7 @@ fn the_share_is_taken_back_only_by_free_named() {
         ],
         "the closure-copy share is released outside Stores::free_named — see this file's doc"
     );
-    let alloc = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/database/allocation.rs"),
-    )
-    .expect("read allocation.rs");
+    let alloc = crate_file("src/database/allocation.rs");
     assert_eq!(
         alloc.matches("release_closure_share(").count(),
         1,
@@ -112,8 +116,7 @@ fn the_c_twin_is_reached_only_at_its_three_sites() {
         ],
         "the C closure-copy share count is named outside its three sites"
     );
-    let rt = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/c/loft_rt.h"))
-        .expect("read loft_rt.h");
+    let rt = crate_file("src/c/loft_rt.h");
     assert_eq!(
         rt.matches("closure_shares").count(),
         4,
