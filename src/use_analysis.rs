@@ -3458,11 +3458,16 @@ pub fn bracket_can_name(data: &Data, arg: &Value) -> bool {
 /// needs a name), `scopes::base_container_var` and `generation::container_element_base` (@PLN130
 /// F2 — which container a view reads out of).  They ask different questions of the same shape;
 /// keeping the shape in one place is what stops the answers drifting apart.
+///
+/// `OpRefFromChildRec` is the child record a struct field names — an out-of-line field's value
+/// (`@FR-L-OutOfLine`) or a closure record — in argument 0's store: a READ, and an element-like
+/// one, since the child is a record of its own.  A view of a child is therefore a view of its
+/// host, and a null write to the field, which releases the child, disturbs it (`(B-Disturb)`).
 #[must_use]
 pub fn is_projection_op(data: &Data, d_nr: u32) -> bool {
     matches!(
         data.def(d_nr).name(),
-        "OpGetField" | "OpGetVector" | "OpVectorRef" | "OpGetRecord"
+        "OpGetField" | "OpGetVector" | "OpVectorRef" | "OpGetRecord" | "OpRefFromChildRec"
     )
 }
 
@@ -3671,16 +3676,8 @@ fn projection_walk(
             return None;
         };
         let name = data.def(*d).name();
-        // `@FR-L-OutOfLine` — the VIEW side also reads an out-of-line field's child as a
-        // projection of its field: an element-like read (a record of its own), so a null write
-        // to the field, which releases the child, ends a view of it (`(B-Disturb)`).  The
-        // ownership side (`nullable_reads` false) keeps today's answer.
         let projects = is_projection_op(data, *d)
-            || (nullable_reads
-                && matches!(
-                    name,
-                    "OpGetVectorNullable" | "OpVectorRefNullable" | "OpRefFromChildRec"
-                ));
+            || (nullable_reads && matches!(name, "OpGetVectorNullable" | "OpVectorRefNullable"));
         if !projects {
             return None;
         }
