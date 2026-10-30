@@ -183,6 +183,45 @@ fn fields_swap(b: ir::Bundle, fields: vector<ir::DbField>, seen: vector<integer>
   safe
 }
 
+// `Stores::content`: a collection type's element, -1 for any other type.
+fn content_of(b: ir::Bundle, tp: integer) -> integer {
+  t = b.types[tp];
+  if t == null {
+    return -1;
+  }
+  match t.parts[0] ?? panic("a type has its parts") {
+    PtVector { content } => content,
+    PtArray { content } => content,
+    PtOrdered { content, keys: _ } => content,
+    PtSorted { content, keys: _ } => content,
+    PtIndex { content, keys: _ } => content,
+    PtHash { content, fields: _ } => content,
+    PtRadix { content, fields: _ } => content,
+    PtTrie { content, key: _ } => content,
+    _ => -1,
+  }
+}
+
+// Is the element of collection type `tp` a `__nullable<S>` whose `Some` variant exists
+// (`Stores::nullable_some_variant(content(tp)).is_some()`)?
+fn nullable_element(b: ir::Bundle, tp: integer) -> boolean {
+  e = content_of(b, tp);
+  if e < 0 {
+    return false;
+  }
+  et = b.types[e];
+  if et == null || !et.name.starts_with("__nullable<") {
+    return false;
+  }
+  some = "{et.name}::Some";
+  for t in b.types {
+    if t.name == some {
+      return true;
+    }
+  }
+  false
+}
+
 // The owner of field `i`'s linked group — the member whose `other_indexes` does not start with
 // the view marker 65535 — or -1 outside a group.  `group_owner` (`src/c/mod.rs`).
 fn group_owner(fields: vector<ir::DbField>, i: integer) -> integer {
@@ -201,11 +240,10 @@ fn group_owner(fields: vector<ir::DbField>, i: integer) -> integer {
   -1
 }
 
-// A struct's field rows, as `field_rows` writes them (`src/c/mod.rs`).  A view member of a
-// linked group needs `Stores::nullable_some_variant`, which reads a flag the image does not
-// carry yet (`nullable_wrapper`): its `view` is -1, so the comparison names it rather than
-// passing a guess.
-fn field_rows(fields: vector<ir::DbField>) -> vector<FieldRow> {
+// A struct's field rows, as `field_rows` writes them (`src/c/mod.rs`): a view member of a linked
+// group is 1, or 2 when its collection's element is a `__nullable<S>` with a `Some` variant
+// (`Stores::nullable_some_variant`; the wrapper flag is the name, `types.rs`).
+fn field_rows(b: ir::Bundle, fields: vector<ir::DbField>) -> vector<FieldRow> {
   out: vector<FieldRow> = [];
   for i in 0..len(fields) {
     f = fields[i] ?? panic("in range");
@@ -213,7 +251,7 @@ fn field_rows(fields: vector<ir::DbField>) -> vector<FieldRow> {
     view = 0;
     group = 0;
     if o >= 0 && o != i {
-      view = -1;
+      view = 1 + (if nullable_element(b, f.content) { 1 } else { 0 });
       group = o + 1;
     } else if o >= 0 {
       group = o + 1;
@@ -257,12 +295,12 @@ pub fn row(b: ir::Bundle, tp: integer) -> Row {
     PtStruct { fields } => {
       r.kind = T_STRUCT;
       r.n = len(fields);
-      r.fields = field_rows(fields);
+      r.fields = field_rows(b, fields);
     }
     PtEnumValue { value: _, fields } => {
       r.kind = T_STRUCT;
       r.n = len(fields);
-      r.fields = field_rows(fields);
+      r.fields = field_rows(b, fields);
     }
     PtVector { content } => { r.kind = T_VECTOR; r.elem = content; }
     PtSorted { content, keys: _ } => { r.kind = T_VECTOR; r.elem = content; }

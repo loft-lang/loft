@@ -7,6 +7,7 @@
 // port of its Rust home, named beside it; the comparison tool sets the two texts side by side, so
 // any difference in what the image says, or in how this side reads it, is a named row.
 use ir;
+use types;
 
 // ── schema: `LOFT_DUMP_TYPES` (`Stores::dump_types`, `show_type(tp, true)`,
 // `src/database/types.rs`) ──
@@ -258,20 +259,71 @@ fn integer_display(s: ir::IntegerSpec) -> text {
   }
 }
 
-// `Display for Type` for the types `Type::show` hands to it: the lowercased `Debug`.
+// `Display for Type` for the types `Type::show` hands to it: an integer by its source name, a
+// vector of an unknown element as `vector#…`, anything else the lowercased `Debug`.
 fn type_display(t: ir::TypeT) -> text {
   match t {
     TyInteger { spec } => integer_display(spec),
-    TyBoolean => "boolean",
-    TyFloat => "float",
-    TySingle => "single",
-    TyCharacter => "character",
-    TyVoid => "void",
-    TyNull => "null",
-    TyNever => "never",
-    TyKeys => "keys",
-    TyUnknown { n } => "unknown({n})",
-    _ => "<the Debug form of {t}, not ported>",
+    TyVector { inner, dep } => {
+      match inner[0] ?? panic("an element") {
+        TyUnknown { n: _ } => "vector#{deps_debug(dep)}",
+        _ => type_debug(t).to_lowercase(),
+      }
+    }
+    _ => type_debug(t).to_lowercase(),
+  }
+}
+
+// `Debug for Deps` in a release build: `Deps { items: [a, b] }`.
+fn deps_debug(dep: vector<integer>) -> text {
+  "Deps {{ items: {ints_text(dep)} }}"
+}
+
+fn types_debug(ts: vector<ir::TypeT>) -> text {
+  r = "[";
+  for t in ts {
+    if t#index > 0 {
+      r += ", ";
+    }
+    r += type_debug(t);
+  }
+  r + "]"
+}
+
+fn one_debug(ts: vector<ir::TypeT>) -> text {
+  type_debug(ts[0] ?? panic("a boxed type"))
+}
+
+// The derived `Debug for Type` (`src/data.rs`), with `IntegerSpec`'s own form (`min, max,
+// not_null`, then `, size(n)`; `src/narrow.rs`).
+fn type_debug(t: ir::TypeT) -> text {
+  match t {
+    TyUnknown { n } => "Unknown({n})",
+    TyNull => "Null",
+    TyVoid => "Void",
+    TyNever => "Never",
+    TyInteger { spec } => "Integer({spec.min}, {spec.max}, {bool_text(spec.not_null)}{if spec.forced_size > 0 { ", size({spec.forced_size})" } else { "" }})",
+    TyBoolean => "Boolean",
+    TyFloat => "Float",
+    TySingle => "Single",
+    TyCharacter => "Character",
+    TyText { dep } => "Text({deps_debug(dep)})",
+    TyKeys => "Keys",
+    TyEnum { n, is_ref, dep } => "Enum({n}, {bool_text(is_ref)}, {deps_debug(dep)})",
+    TyReference { n, dep } => "Reference({n}, {deps_debug(dep)})",
+    TyRefVar { inner } => "RefVar({one_debug(inner)})",
+    TyVector { inner, dep } => "Vector({one_debug(inner)}, {deps_debug(dep)})",
+    TyRoutine { n } => "Routine({n})",
+    TyIterator { step, inner } => "Iterator({one_debug(step)}, {one_debug(inner)})",
+    TySorted { n, keys, dep } => "Sorted({n}, {sort_keys_debug(keys)}, {deps_debug(dep)})",
+    TyIndex { n, keys, dep } => "Index({n}, {sort_keys_debug(keys)}, {deps_debug(dep)})",
+    TyRadix { n, names, dep } => "Radix({n}, {name_refs_debug(names)}, {deps_debug(dep)})",
+    TyHash { n, names, dep } => "Hash({n}, {name_refs_debug(names)}, {deps_debug(dep)})",
+    TyFunction { args, result, dep, consts } => "Function({types_debug(args)}, {one_debug(result)}, {deps_debug(dep)}, ConstParams({consts}))",
+    TyRewritten { inner } => "Rewritten({one_debug(inner)})",
+    TyTuple { elems } => "Tuple({types_debug(elems)})",
+    TyOptional { inner } => "Optional({one_debug(inner)})",
+    TyTrie { n, key, dep } => "Trie({n}, \"{key}\", {deps_debug(dep)})",
   }
 }
 
@@ -411,7 +463,8 @@ fn show_node(b: ir::Bundle, f: ir::Function, n: ir::Node, ind: integer, o: &text
     NdEnum { ord, tp } => { o += "{ord}u8({tp})"; }
     NdBoolean { b: v } => { o += bool_text(v); }
     NdFloat { f: v } => { o += "{v}f64"; }
-    NdLong { n: l } => { o += "{l}i64"; }
+    // An `i64` literal; its minimum is loft's null, so it is spelled out as Rust writes it.
+    NdLong { n: l } => { o += if l == null { "-9223372036854775808i64" } else { "{l}i64" }; }
     NdSingle { f: v } => { o += "{v}f32"; }
     NdText { s } => { o += "\"{s}\""; }
     NdCall { def_nr, args } => {
@@ -567,15 +620,23 @@ fn is_stdlib(file: text) -> boolean {
   false
 }
 
-// The IR section of `introspect`: every program function (not an operator, not the standard
-// library's), `{header} {code}` and a blank line, in definition order.
+// The IR section of `introspect`: `{header} {code}` and a blank line, in definition order, for
+// the functions `compile::show_code` lists (a function or a dynamic one, no operator, nothing
+// from `default/`) whose name CONTAINS one of the program's own `n_` function names —
+// `introspect::emit_bytecode` hands `show_functions` that list, and the match is a substring.
 pub fn ir_report(b: ir::Bundle) -> text {
+  user: vector<text> = [];
+  for d in b.data.definitions {
+    if d.def_type == 1 && d.name.starts_with("n_") && !d.name.starts_with("n___lambda_") && !is_stdlib(d.position.file) {
+      user += [d.name];
+    }
+  }
   r = "";
   for d in b.data.definitions {
     if d.def_type != 1 && d.def_type != 2 {
       continue;
     }
-    if is_op_name(d.name) || is_stdlib(d.position.file) {
+    if is_op_name(d.name) || is_stdlib(d.position.file) || !names_any(d.name, user) {
       continue;
     }
     r += "{header(b, d)} ";
@@ -588,7 +649,57 @@ pub fn ir_report(b: ir::Bundle) -> text {
   r
 }
 
+// `LogConfig::show_function` over a list: does `name` contain any of `names`?
+fn names_any(name: text, names: vector<text>) -> boolean {
+  for n in names {
+    if name.contains(n) {
+      return true;
+    }
+  }
+  false
+}
+
 // `Definition::is_operator`: `Op` and then a capital.
 fn is_op_name(name: text) -> boolean {
   len(name) > 2 && name.starts_with("Op") && "{name[2]}" >= "A" && "{name[2]}" <= "Z"
+}
+
+// ── types: `introspect`'s `=== types ===` section (`introspect::emit_types`) ──
+
+// Every program function named `n_…` that is not a lambda, has variables and is not the standard
+// library's: its return type, then each variable's type with its dependencies.
+pub fn types_report(b: ir::Bundle) -> text {
+  r = "";
+  dashes = "";
+  for _ in 0..70 {
+    dashes += "-";
+  }
+  for d in b.data.definitions {
+    if d.def_type != 1 || !d.name.starts_with("n_") || d.name.starts_with("n___lambda_") {
+      continue;
+    }
+    if is_stdlib(d.position.file) || len(d.variables.variables) == 0 {
+      continue;
+    }
+    f = d.variables;
+    r += "fn {d.name} -> {type_show(b, f, d.returned)}:\n";
+    r += "  {"#":<4} {"arg":<4} {"name":<24} type [deps]\n";
+    r += "  {dashes}\n";
+    for v in f.variables {
+      arg = if v.argument { "arg" } else { "" };
+      r += "  {v#index:<4} {arg:<4} {v.name:<24} {type_show(b, f, v.type_def)}\n";
+    }
+    r += "\n";
+  }
+  r
+}
+
+// ── ctable: the loft-derived C type table (P5), one row per type, `types::render`'s text ──
+
+pub fn ctable(b: ir::Bundle) -> text {
+  r = "";
+  for tp in 0..len(b.types) {
+    r += types::render(types::row(b, tp)) + "\n";
+  }
+  r
 }

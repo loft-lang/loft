@@ -27,7 +27,7 @@ script or suite cell.  `FILE` runs `main`; `FILE::test_name` runs that one test 
 | `EQUAL` | both sides produced the layer and it is the same, under the layer's stated normalisation only |
 | `DIFFERENT` | the first differing row, with three rows of context from each side |
 | `MISSING <side>` | that side does not produce the layer yet (the loft interpreter before the step that builds it) |
-| `REFUSED <reason>` | the loft interpreter refused the program; no layer is compared |
+| `REFUSED <reason>` | the loft interpreter refused the program; its RUN layers (out, alloc, leak, binds) are not compared — the compile-time layers still are, on every program the front end accepts |
 
 **Strict:** the exit code is 0 only when every selected layer of every entry is `EQUAL`.
 `MISSING` is a failure, not a skip; `--layers out,alloc` selects layers for a run that wants
@@ -45,12 +45,12 @@ differently shows as the row where it does.
 
 | layer | Rust side | loft side | normalisation (all of it) |
 |---|---|---|---|
-| **ir** | `loft introspect`: each function's IR, as `Value`'s display writes it | the IR the loft side read from the image, printed by a port of that display | none, per function, byte for byte |
-| **types** | `introspect`'s `=== types ===` table: each variable's type with its dependencies | the same from the image's variable table | none |
+| **ir** | `loft introspect`: each function's IR, as `Value`'s display writes it | the IR the loft side read from the image, printed by a port of that display | trailing empty lines of the whole report, on both sides; nothing else |
+| **types** | `introspect`'s `=== types ===` table: each variable's type with its dependencies | the same from the image's variable table | trailing empty lines, on both sides |
 | **ownership** | `introspect --show-ownership`: each function's return verdict and each variable's `Owned` / `Borrowed(base)` / `Join(base)` (`use_analysis::ownership_of`) | the ported oracle (1b-s3.md B-2) | none |
 | **resolution** | `introspect --show-resolution`: per source, the names it defines and reaches, every import alias | the loft front end (strand 1a) | none |
-| **schema** | `LOFT_DUMP_TYPES=1 loft --check` (nothing run): every store type (`Stores::show_type`) — size and alignment, the derived parents, the parts: fields with positions, variants, keys | the image's schema (`Bundle.types`) in the same text, the parents derived as the Rust side derives them | none |
-| **ctable** | the C type table the C generator writes for the program (`--emit-c`, read by `tests/selfhost.rs`'s `c_type_table`) | `types::render` of the loft-derived table (P5) | none, row by row |
+| **schema** | `LOFT_DUMP_TYPES=1 loft --check` (nothing run): every store type (`Stores::show_type`) — size and alignment, the derived parents, the parts: fields with positions, variants, keys | the image's schema (`Bundle.types`) in the same text, the parents derived as the Rust side derives them | the closing `ok` line `--check` prints after the dump; nothing else |
+| **ctable** | the C type table the C generator writes for the program (`--emit-c`, read as `tests/selfhost.rs`'s `c_type_table` reads it) | `types::render` of the loft-derived table (P5) | the rows of the types the C describes (it writes a row only for a type the program uses); and where a row's key pointer is `0` — the C describes a type's keys only when the program's code reads them (`keys_of`) — the loft row's `keys=` part is not compared.  Keys the C does describe are |
 | **slots** | `introspect`'s variable table: `slot [a, b)` per variable | the slot and width every access addresses (from F-1 the image's `stack_pos`) | none |
 | **lifetimes** | `introspect`'s variable table: `live [a, b]` per variable (`compute_intervals`) | a port of `compute_intervals` over the image's IR | none |
 | **out** | `loft --interpret` (`--tests FILE::ENTRY` for a test) | the runner on the emitted image, in its comparison mode (no census lines) | stdout byte for byte; the exit code; stderr byte for byte after removing the front end's diagnostics, which the tool takes from `--emit-image`'s stderr (the same front end, nothing run) and requires as an exact PREFIX of the run's stderr — PC4 measured it so; `--check` is not that source, it also prints toolchain noise.  For a test entry, the harness's block (from the `ok`/`FAIL` line of the file on) is cut from the Rust stdout, and its verdict and failure message are compared with the runner's |
@@ -132,3 +132,21 @@ and makes and frees its stores differently.  The first differences fall in three
   store in place (`alloc_record_at`), the loft side makes another — B-1's `Database` in place.
 
 None of them shows in a printed answer or in the census.
+
+## C-1b — BUILT 2026-10-30 (ir, types, schema, ctable)
+
+`selfhost/src/report.loft` ports the Rust reports, each beside its home: the schema dump
+(`show_type`, the parents `rebuild_parents` derives), the IR (`Data::show_code` with its block,
+insert and loop forms, `Definition::header`, `Type::show`, `Type::argument`, the derived `Debug`
+and `Display` of a type), the types table (`emit_types`) and the C type table (P5's
+`types::row`); `selfhost/compare/reports.loft KIND IMAGE` prints one.  The compile-time layers
+are compared on every program the front end accepts, refused by the interpreter or not.
+
+**Measured:** 60 corpus programs (`tests/scripts`, a seeded sample), every compile-time layer
+EQUAL, after the sweep found and the port fixed: introspect's function selection (a SUBSTRING
+include-list of the program's `n_` names, so methods drop out); the `Debug` of function and
+iterator types; an `i64` literal at its minimum (loft's null); and in P5's `types::row`, a view
+member's `view`, which the comment said the image could not give — the wrapper flag is the
+type's NAME (`__nullable<…>` with a `…::Some` variant), so it is derived now.  Probe PC5 holds:
+an IR literal printed `i64` for `i32` is a DIFFERENT row at the right line.  Building the
+report program through the C backend found loft#2255 (a text tail's `panic` arm), fixed first.
