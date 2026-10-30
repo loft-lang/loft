@@ -1053,6 +1053,11 @@ pub struct Output<'a> {
     /// element.  Cleared after the assignment so argument-context
     /// tuples (which need `&str`) keep the default emit.
     pub tuple_text_to_string: bool,
+    /// Set while a tuple's TEXT element is emitted (a literal's member or a member write): a
+    /// value block there whose tail is a text variable of an enclosing scope — a format
+    /// string's work text — yields a clone of it, since the element takes its own copy and a
+    /// moved work text is gone for the next loop pass (E0382, loft#2256).
+    pub tuple_text_elem: bool,
     /// The tuple local an `if` arm is about to hand over, when handing it over would MOVE
     /// it (loft#1354).  Read by the `ValueType::Var` arm, which clones exactly this
     /// variable and nothing else — a blanket clone on every tuple read would copy a
@@ -1978,6 +1983,7 @@ impl<'a> Output<'a> {
             fn_ref_context: false,
             i32_literal_context: false,
             tuple_text_to_string: false,
+            tuple_text_elem: false,
             clone_handed_tuple_local: None,
             tuple_slot_types: Vec::new(),
             call_stack_prefix: None,
