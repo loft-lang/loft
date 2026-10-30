@@ -423,11 +423,11 @@ jobs:
         include: ${{ fromJSON(needs.changes.outputs.legs) }}
 
     # @PLN203 — `--native` in every test compiles through the C backend (`LOFT_NATIVE_BACKEND=c`):
-    # the C is what `--native` becomes at C9, so the PR gate reads it now.  Not on Windows, whose
-    # C runtime has no POSIX host layer yet (sockets, processes — C8); there the Rust writer runs.
+    # the C is what `--native` becomes at C9, so the PR gate reads it now — on every leg, Windows
+    # too, whose C runtime has its host layer since C8 (Winsock, processes, the loader layer).
     # A test of the Rust writer itself (a `[native] crate`, the cdylib layer) unsets it.
     env:
-      LOFT_NATIVE_BACKEND: ${{ matrix.os != 'windows-latest' && 'c' || '' }}
+      LOFT_NATIVE_BACKEND: c
     steps:
       - uses: actions/checkout@v5
       # The language suite beside the tree (@PLN193): the IR round-trip in this pool walks
