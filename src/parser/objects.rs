@@ -4435,6 +4435,9 @@ impl Parser {
         reverse: bool,
     ) -> Type {
         let mut incl = self.lexer.has_token("=");
+        // A range over no subject (`a..b`), as against a slice (`v[a..b]`): read before the
+        // subject is named below.
+        let plain_range = *data == Value::Null;
         // loft#1521 — the slice's SUBJECT is evaluated once for the length and again for every
         // element read, so a subject that is not free to repeat is NAMED here, once, and every
         // use below reads the name.  Measured before this: `src(c)[0..2]` called `src` FOUR
@@ -4485,11 +4488,24 @@ impl Parser {
         // the bound, it made the body an expression (`break` "outside a loop") and compared
         // the counter with its value.  Lowered as `a..=MAX`: `(I-RangeIncl)` already stops
         // exactly after the type's maximum, so the counter never has to overflow.
+        // The maximum is the START's type's (loft#2275): a start of a declared narrow width
+        // (`u8`, `i16`, `u32`, …) stops after its type's maximum, where `i64::MAX` ran the
+        // counter past every value the loop variable's type holds.  A computed `integer`
+        // keeps `i64::MAX`: its spec's `max` describes a value, not the type's storage.
+        let mut open_end_tp = None;
         if *data == Value::Null && !incl && self.lexer.peek_token("{") {
             incl = true;
             till = Value::Long(i64::MAX);
+            if let Type::Integer(spec) = in_type.base()
+                && spec.forced_size.is_some_and(|n| n.get() < 8)
+            {
+                till = Value::Long(spec.max);
+                open_end_tp = Some(in_type.base().clone());
+            }
         }
-        let mut till_tp = if till != Value::Null {
+        let mut till_tp = if let Some(tp) = open_end_tp {
+            tp
+        } else if till != Value::Null {
             crate::data::I64.clone()
         } else if self.lexer.peek_token("]") {
             till = if *data == Value::Null {
@@ -4501,6 +4517,17 @@ impl Parser {
         } else {
             self.expression(&mut till)
         };
+        // The end's type as written, for the element type's join below (`till_tp` is moved
+        // into the lowering).
+        let end_tp = till_tp.clone();
+        // The largest value the range yields, where the end says it: `..=b` yields `b`, `..b`
+        // one less.  A start type that holds it needs no widening, so `u8_start..=255` stays
+        // a `u8` range.
+        let end_fits_start = self.int_range(&till).is_some_and(|(_, hi)| {
+            let last = if incl { hi } else { hi.saturating_sub(1) };
+            matches!(in_type.base(), Type::Integer(spec)
+                if last <= spec.max && last >= i64::from(spec.min))
+        });
         // O8.5: store till value (adjusted for inclusive ranges).
         if incl {
             // 0..=9 means till is 9, but the range includes 9.
@@ -4892,9 +4919,23 @@ impl Parser {
         // a round yields is never null: the loop variable takes the bound's type without its
         // `?` (loft#2036).  The counter above keeps `in_type`, whose null is its not-started
         // state.
+        // `@FR-I-Range` — the values run from the start to the end, so the loop variable's type
+        // holds both bounds: an integer range's type is the UNION of its bounds' types
+        // (`@FR-I-Join`).  The start's type alone gave a `u8`-typed variable every value up to
+        // an `integer` end (loft#2275).  A slice's end is a length, not a value: only a range
+        // over no subject joins.
         let elm_type = match in_type {
             Type::Optional(inner) => *inner,
             plain => plain,
+        };
+        let elm_type = if plain_range && !end_fits_start {
+            self.integer_arm_union(&elm_type, &end_tp)
+                .map_or(elm_type, |joined| match joined {
+                    Type::Optional(inner) => *inner,
+                    plain => plain,
+                })
+        } else {
+            elm_type
         };
         *expr = Value::Iter(
             u16::MAX,
