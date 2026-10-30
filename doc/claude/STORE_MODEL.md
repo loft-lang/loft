@@ -139,7 +139,6 @@ from P0b (what the C runtime lacks).  State: **open**, **fixing** (on the branch
 | D19d | `loft_claim_grow` does not check for u32 overflow | open |
 | D19f | clear-release skips the store reset on an already-empty vector | open |
 | D19g | slice-view and adopt make a view on a locked destination | open |
-| D19h | the displaced list of a linked group is capped at 16 in C | open |
 | D19i | the store minted for an FFI vector answer leaks on a null answer in C | open |
 | D19j | FFI record answers are refused in C (C-MISSING) | open |
 
