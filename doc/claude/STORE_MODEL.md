@@ -94,7 +94,7 @@ fixes name a row the same way.  D20 onward come from the field-by-field comparis
 from P0b (what the C runtime lacks).  State: **open**, **fixing** (on the branch named), or
 **decided** (the decision and its measurement).  A closed row moves to
 [STORE_MODEL-history.md](STORE_MODEL-history.md) with its commit; D1–D7c, D9a–D10, D12–D17,
-D19c, D19e, D19h, D23, D29 and D31 are there.
+D19c, D19e, D19h, D23, D29, D31 and D34 are there.
 
 ### Correctness
 
@@ -140,7 +140,6 @@ D19c, D19e, D19h, D23, D29 and D31 are there.
 | D28 | the store table: a `Vec<Store>` beside the type table against a thread-local array | open — P3 |
 | D32 | (a defect of the language, not a divergence) a capturing closure returned from the FIRST arm of an `if` is freed with its frame on every backend — loft#2272; the strict check sees its first-arm shape on both, its call-twice shape on neither (D34) | filed — loft#2272 |
 | D33 | a call result rebound in a loop (`x = mul(a, x)`): native rotates the call's return buffer (`__rbb`, `@FR-O-Buffer`) and makes no store; the C adopts the result and frees the old store, so it makes and frees one store per iteration; the interpreter exchanges (`@FR-H-SwapRebind`) and also makes one, freeing the TOP slot.  Under `LOFT_STRICT_STORES` the C therefore runs out of numbers in a long loop (`c_sweep.py --strict-stores` files it as beyond the mode) | open — C moves (rotate as native does; the performance stream's) |
-| D34 | `LOFT_STRICT_STORES` retires a freed number except the TOP slot (`trim_free_top`, on both backends): a stale read of the most recently freed top store reads its successor unreported (loft#2272's call-twice shape), while retiring it too would hide the stale FREE the 1522 guard's control relies on (that free becomes a tolerated re-free) | open — owner question |
 | D30 | an image of another layout: the interpreter converts it (`Stores::upgrade_store`), C refuses it by name (`loft_image.h`) — except the null-first key order, which C converts by itself (`loft_rekey_walk`) | open — P0b (port), the key-order case done |
 
 ## How a divergence is closed
