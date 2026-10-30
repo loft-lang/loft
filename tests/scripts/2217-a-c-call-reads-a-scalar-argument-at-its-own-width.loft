@@ -4,7 +4,9 @@
 // loft#2217 — a `#c` binding receives each scalar argument as its loft value, widened to the C
 // slot the way `--native`'s `(int64_t) a` widens it.  A boolean and a plain enum fill one byte
 // of their stack slot and a character four; the interpreter read all eight, so C saw the value
-// plus whatever the slot held before.  `labs` echoes what C received.
+// plus whatever the slot held before.  `llabs` echoes what C received — `long long`, 64 bits
+// on every platform, where `labs`' `long` is 32 bits on Windows and cut the control to its low
+// half there (main's Windows leg, both backends: `1097262572`).
 //
 // What each cell is for:
 //   * `b` — a COMPUTED boolean (`v == null`), whose slot above the byte is not zero: false,
@@ -16,7 +18,8 @@
 //
 // @falsified-at: 6f31a726b — interpret exit 1 -> 0, interpret 1 assertion failures -> 0; native
 // INERT (expected for a backend-divergence guard — only `--interpret` read the wide slot).
-//   CHANNEL: the assertion and the exit — on the control `labs` echoes a boolean or enum with the
+//   (Measured with `labs`, which is `llabs` on the LP64 host it was measured on.)
+//   CHANNEL: the assertion and the exit — on the control `llabs` echoes a boolean or enum with the
 //   slot's earlier bytes above it, so the `got` line differs and the assert fails.
 //   WITNESS: `got` beside its expected line in the assertion message.
 //   ARMED: nothing.
@@ -26,13 +29,13 @@
 enum Hue { Red, Green, Blue }
 
 fn c_labs_bool(b: boolean) -> integer;
-#c "labs" "long(long)"
+#c "llabs" "long long(long long)"
 fn c_labs_hue(h: Hue) -> integer;
-#c "labs" "long(long)"
+#c "llabs" "long long(long long)"
 fn c_labs_char(c: character) -> integer;
-#c "labs" "long(long)"
+#c "llabs" "long long(long long)"
 fn c_labs(x: integer) -> integer;
-#c "labs" "long(long)"
+#c "llabs" "long long(long long)"
 
 fn b(v: integer?) -> integer {
   c_labs_bool(v == null)
