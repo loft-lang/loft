@@ -12107,9 +12107,11 @@ use a separate collection or add after the loop"
                 // lives on a struct (`Parts::Struct`) or an enum VARIANT (`Parts::EnumValue`).
                 // The variant def's `attributes()[f_nr]` aligns with its `EnumValue` field order,
                 // so the same const_field / value_const checks below apply unchanged.
+                // A layout the database does not hold yet (the stdlib's own parse, before its
+                // types are registered) has no const field to check.
                 if known != u16::MAX
-                    && let Parts::Struct(fields) | Parts::EnumValue(_, fields) =
-                        &self.database.types[known as usize].parts
+                    && let Some(Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+                        self.database.types.get(known as usize).map(|t| &t.parts)
                 {
                     // @PLN102 K1 — name the owner accurately: an enum-variant owner is a
                     // "variant", a struct owner a "struct" (the struct wording is unchanged).

@@ -672,8 +672,18 @@ fn disturbed_param_places(
         }
     });
     // A hidden attribute is COMPILER-GENERATED, which is the one test that covers the return
-    // buffer and every other `__`-named slot alike; a user parameter is never one.
-    let visible = |v: u16| function.is_argument(v) && !function.is_compiler_generated(v);
+    // buffer and every other `__`-named slot alike; a user parameter is never one.  A promoted
+    // result buffer keeps its author's name (`result` in `File.files`), so the name alone does
+    // not tell it apart: the attribute's own `hidden` flag does.  Matched by name, because a
+    // promoted local's slot is not its attribute's index.
+    let visible = |v: u16| {
+        function.is_argument(v)
+            && !function.is_compiler_generated(v)
+            && !def
+                .attributes
+                .iter()
+                .any(|a| a.hidden && a.name == function.name(v))
+    };
     // Every depth, each with where its container sits: the caller composes it with the depth
     // of the argument it passed ([`compose_param_at`]) and ends the views the same statement
     // written inline would end.  Kept to depth 0 before, which dropped `p[0].remove(0)` — a
