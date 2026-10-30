@@ -29,6 +29,8 @@ pub fn iota(n: integer) -> vector<integer>;
 #native
 pub fn rev(v: vector<u8>) -> vector<u8>;
 #native
+pub fn cat(a: const vector<u8>, b: vector<u8>) -> vector<u8>;
+#native
 pub fn pair(a: integer, b: integer) -> Pair;
 #native
 

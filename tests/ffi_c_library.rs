@@ -42,6 +42,9 @@ fn main() {
     t = 0;
     for k in 0..200 { t += ffi_c_library::sum_bytes(m); }
     println("MAPPED {m.len()} {ffi_c_library::sum_bytes(m)} {t}");
+    mc = 0;
+    for k in 0..100 { mc += ffi_c_library::cat(m, v).len(); }
+    println("MCAT {ffi_c_library::cat(m, v)} {m} {v} {mc}");
     delete("mapped.bin");
   }
 }
@@ -53,8 +56,11 @@ fn main() {
 /// every backend reads it as null (`loft_ffi::widen_i32`; the C and the Rust writer widened it
 /// to -2147483648).  A MAPPED file handed to `sum_bytes` is copied into the handed store for the
 /// call (`Stores::bridge_args`; the C handed the foreign record id, read out of bounds): 3 bytes,
-/// 1 + 2 + 250 = 253, and 200 calls 50 600, each copy released.
-const WANT: [&str; 14] = [
+/// 1 + 2 + 250 = 253, and 200 calls 50 600, each copy released.  `cat(m, v)` hands the
+/// library the mapped bytes copied into `v`'s store and copies the answer out of that store
+/// (loft#2227 beside the mapped copy): `[1,2,250,1,2,250]`, both arguments as they were, 100
+/// calls 600.
+const WANT: [&str; 15] = [
     "LEN 4",
     "WRAP 6 91 0 255 93",
     "ADD 42 -2",
@@ -69,6 +75,7 @@ const WANT: [&str; 14] = [
     "PAIR -77 123456789",
     "NARROW 42 null true",
     "MAPPED 3 253 50600",
+    "MCAT [1,2,250,1,2,250] [1,2,250] [1,2,250] 600",
 ];
 
 fn root() -> PathBuf {
