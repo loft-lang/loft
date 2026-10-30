@@ -175,6 +175,9 @@ SHIP_ENV = {**os.environ, "LOFT_RELEASE_PASS_PROBE": "1"}
 C_CMD = ["cc", "-std=c99", "-O3"]
 C_SKIPS = []
 C_MISMATCHES = []
+# The programs whose measurement stopped (a lane that failed to run, a hash that moved): each
+# was reported where it stopped, and the run goes on with the next program.
+MEASURE_FAILURES = []
 C_LANES = ("c", "cship")
 
 
@@ -659,8 +662,11 @@ def measure_batch(jobs, a, lanes, target_us, stamp):
     result in the batch's order, so the table reads the same however many ran at once."""
     if a.measure_jobs <= 1:
         for bench, pkg_dir, cmds in jobs:
-            yield measure_unit(bench, pkg_dir, cmds, pin_prefix(threads_of(bench, pkg_dir), not a.no_pin),
-                               a, lanes, target_us, stamp)
+            try:
+                yield measure_unit(bench, pkg_dir, cmds, pin_prefix(threads_of(bench, pkg_dir), not a.no_pin),
+                                   a, lanes, target_us, stamp)
+            except SystemExit:
+                MEASURE_FAILURES.append(bench)
         return
     import threading
     free = top_tier_cpus() if not a.no_pin and shutil.which("taskset") else []
@@ -689,9 +695,14 @@ def measure_batch(jobs, a, lanes, target_us, stamp):
                     lock.notify_all()
 
     with ThreadPoolExecutor(max_workers=a.measure_jobs) as pool:
-        futures = [pool.submit(one, *job) for job in jobs]
-        for fut in futures:
-            yield fut.result()
+        futures = [(job[0], pool.submit(one, *job)) for job in jobs]
+        for bench, fut in futures:
+            # `fail` exits the WORKER; re-raised here it would end the run at this program and
+            # drop every program after it, so it is counted and the next one is answered.
+            try:
+                yield fut.result()
+            except SystemExit:
+                MEASURE_FAILURES.append(bench)
 
 
 def threads_of(bench, pkg_dir):
@@ -894,6 +905,8 @@ def main():
                   f"worst {max(cr):.2f}x")
     for bench, lane, why in sorted(C_SKIPS):
         print(f"# {lane} lane not built for {bench}: {why}")
+    for bench in MEASURE_FAILURES:
+        failed.append((f"{bench}/*", "its measurement stopped (the reason is printed above)"))
     for bench, name, want, got in C_MISMATCHES:
         failed.append((f"{bench}/{name}", f"the checked C answers hash {got}, the twin {want}"))
     if out_rows and not a.no_local:
