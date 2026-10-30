@@ -8,8 +8,10 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 A child document of [1b-interpreter.md](1b-interpreter.md).  Status: **R-2s built through step 9
 (owner, 2026-10-30: "implement our plans for the tree") — on by default, the rules in
 `formal/`, @C159, suite cells under `L-OutOfLine`, `T-Recursive`, `B-OutOfLine`,
-`F-Render-Child`; step 10 (the port) next.  R-1, R-2 (`e!`) and R-3 remain designs for the
-owner's evaluation.**
+`F-Render-Child`; step 10 (the port) built — the IR image's own children are children.
+R-2's `e!` built too (owner, 2026-10-30: "build the ! desugar for ?? panic too"): `(N-Present)`,
+@C160, and every `?? panic` of the ports is `!`.  R-1 and R-3 remain designs for the owner's
+evaluation.**
 
 ## Why (owner, 2026-10-30)
 

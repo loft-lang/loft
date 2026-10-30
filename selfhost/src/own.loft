@@ -341,12 +341,12 @@ fn tp_depend(f: ir::Function, v: integer) -> vector<integer> {
   if x == null {
     return [];
   }
-  depend_of(x.type_def[0] ?? panic("a type"))
+  depend_of(x.type_def[0]!)
 }
 
 // src/data.rs:4906 fn returns_borrowed_view.
 fn returns_borrowed_view(d: ir::Definition) -> boolean {
-  for x in depend_of(d.returned[0] ?? panic("a return type")) {
+  for x in depend_of(d.returned[0]!) {
     a = d.attributes[x];
     if a == null || !a.hidden {
       return true;
@@ -357,8 +357,8 @@ fn returns_borrowed_view(d: ir::Definition) -> boolean {
 
 // src/data.rs:13809 fn copies_as.
 fn copies_as(b: ir::Bundle, dst: integer, src: integer) -> boolean {
-  s = b.data.definitions[src] ?? panic("a definition");
-  t = b.data.definitions[dst] ?? panic("a definition");
+  s = b.data.definitions[src]!;
+  t = b.data.definitions[dst]!;
   dst == src || (s.def_type == 4 && s.parent == dst) || (t.def_type == 4 && t.parent == src)
 }
 
@@ -383,7 +383,7 @@ fn record_copy_source(b: ir::Bundle, f: ir::Function, v: integer, src: integer) 
   if sx == null {
     return -1;
   }
-  src_tp = sx.type_def[0] ?? panic("a type");
+  src_tp = sx.type_def[0]!;
   src_d = -1;
   if base_is_ref_var(src_tp) {
     if len(tp_depend(f, v)) != 0 {
@@ -397,7 +397,7 @@ fn record_copy_source(b: ir::Bundle, f: ir::Function, v: integer, src: integer) 
     return -1;
   }
   vx = f.variables[v];
-  dst_d = if vx == null { -1 } else { heap_def_nr(vx.type_def[0] ?? panic("a type")) };
+  dst_d = if vx == null { -1 } else { heap_def_nr(vx.type_def[0]!) };
   if dst_d >= 0 && !copies_as(b, dst_d, src_d) {
     return -1;
   }
@@ -407,7 +407,7 @@ fn record_copy_source(b: ir::Bundle, f: ir::Function, v: integer, src: integer) 
 // src/use_analysis.rs:3808 fn bind_copies.
 fn bind_copies(b: ir::Bundle, f: ir::Function, v: integer, src: integer) -> boolean {
   vx = f.variables[v];
-  if vx == null || heap_def_nr(vx.type_def[0] ?? panic("a type")) < 0 {
+  if vx == null || heap_def_nr(vx.type_def[0]!) < 0 {
     return false;
   }
   record_copy_source(b, f, v, src) >= 0
@@ -589,8 +589,8 @@ fn walk(b: ir::Bundle, mode: integer, n: ir::Node, ops: Ops, defs: Defs, w: Walk
     NdInsert { items } => walk_all(b, mode, items, ops, defs, w),
     NdTuple { items } => walk_all(b, mode, items, ops, defs, w),
     NdParallel { arms } => walk_all(b, mode, arms, ops, defs, w),
-    NdBlock { block } => walk_all(b, mode, (block[0] ?? panic("a block")).operators, ops, defs, w),
-    NdLoop { block } => walk_all(b, mode, (block[0] ?? panic("a loop")).operators, ops, defs, w),
+    NdBlock { block } => walk_all(b, mode, block[0]!.operators, ops, defs, w),
+    NdLoop { block } => walk_all(b, mode, block[0]!.operators, ops, defs, w),
     NdSet { var: _, inner } => walk(b, mode, inner, ops, defs, w),
     NdReturn { inner } => walk(b, mode, inner, ops, defs, w),
     NdDrop { inner } => walk(b, mode, inner, ops, defs, w),
@@ -687,19 +687,19 @@ fn is_null_text(ops: Ops, n: ir::Node) -> boolean {
 // src/use_analysis.rs:2257 fn collect_defs — its three `Call` arms.
 fn collect_call_defs(d: integer, args: vector<ir::Node>, ops: Ops, defs: Defs) {
   if d == ops.database {
-    v = if len(args) > 0 { var_of(args[0] ?? panic("an argument")) } else { -1 };
+    v = if len(args) > 0 { var_of(args[0]!) } else { -1 };
     if v >= 0 {
       defs.db_vars += [v];
     }
   } else if d == ops.clear_vector || d == ops.append_vector {
-    v = if len(args) > 0 { var_of(args[0] ?? panic("an argument")) } else { -1 };
+    v = if len(args) > 0 { var_of(args[0]!) } else { -1 };
     if v >= 0 {
       defs.filled += [v];
     }
   } else if d == ops.put_ref {
     if len(args) == 2 {
-      v = var_of(args[0] ?? panic("a destination"));
-      rhs = args[1] ?? panic("a value");
+      v = var_of(args[0]!);
+      rhs = args[1]!;
       if v >= 0 && !is_null_node(rhs) {
         defs.moved_var += [v];
         push_unspanned(defs.moved, rhs);
@@ -711,9 +711,9 @@ fn collect_call_defs(d: integer, args: vector<ir::Node>, ops: Ops, defs: Defs) {
 // The `OpSetDbRef(clos, slot, var)` of src/scopes/phase.rs:81 fn collect_fnref_captures.
 fn collect_set_dbref(d: integer, args: vector<ir::Node>, ops: Ops, w: Walk) {
   if d == ops.set_dbref && len(args) >= 3 {
-    a0 = args[0] ?? panic("an argument");
-    a1 = args[1] ?? panic("an argument");
-    a2 = args[2] ?? panic("an argument");
+    a0 = args[0]!;
+    a1 = args[1]!;
+    a2 = args[2]!;
     target = var_of(a0);
     src = var_of(a2);
     if target >= 0 && is_int_node(a1) && src >= 0 && target == w.target {
@@ -732,8 +732,8 @@ fn capture_offset_of(b: ir::Bundle, d: integer, args: vector<ir::Node>, ops: Ops
     }
     return WALK_STOP;
   }
-  callee = b.data.definitions[d] ?? panic("a definition");
-  if !base_is_dbref(callee.returned[0] ?? panic("a return type")) && len(args) > 0 && closure_read(ops, w, args[0] ?? panic("an argument")) != NONE {
+  callee = b.data.definitions[d]!;
+  if !base_is_dbref(callee.returned[0]!) && len(args) > 0 && closure_read(ops, w, args[0]!) != NONE {
     // A capture read consumed by a non-store op: skip it, walk the rest.
     return WALK_SKIP_FIRST;
   }
@@ -754,8 +754,8 @@ fn closure_read_call(ops: Ops, w: Walk, d: integer, args: vector<ir::Node>) -> i
   if d != ops.get_dbref || len(args) < 2 {
     return NONE;
   }
-  base = var_of(args[0] ?? panic("an argument"));
-  a1 = args[1] ?? panic("an argument");
+  base = var_of(args[0]!);
+  a1 = args[1]!;
   if base < 0 || !is_int_node(a1) {
     return NONE;
   }
@@ -806,7 +806,7 @@ fn collect_defs(b: ir::Bundle, code: vector<ir::Node>, ops: Ops, out: Defs) {
 fn fn_vars(f: ir::Function) -> vector<integer> {
   out: vector<integer> = [];
   for x in f.variables {
-    if base_is_function(x.type_def[0] ?? panic("a type")) {
+    if base_is_function(x.type_def[0]!) {
       out += [x#index];
     }
   }
@@ -900,7 +900,7 @@ fn multi_assigned_in(b: ir::Bundle, code: vector<ir::Node>, ops: Ops, defs: Defs
 // src/use_analysis.rs:5186 fn function_defs.
 fn function_defs(b: ir::Bundle, d_nr: integer, ops: Ops) -> Defs {
   defs = new_defs();
-  def = b.data.definitions[d_nr] ?? panic("a definition");
+  def = b.data.definitions[d_nr]!;
   collect_defs(b, def.code, ops, defs);
   wt = new_walk();
   wt.vars = fn_vars(def.variables);
@@ -920,7 +920,7 @@ fn function_defs(b: ir::Bundle, d_nr: integer, ops: Ops) -> Defs {
 fn collect_yielded(n: ir::Node, refs: vector<integer>, ints: vector<integer>) {
   match n {
     NdSpan { pos: _, inner } => collect_yielded(inner, refs, ints),
-    NdBlock { block } => yield_tail((block[0] ?? panic("a block")).operators, refs, ints),
+    NdBlock { block } => yield_tail(block[0]!.operators, refs, ints),
     NdInsert { items } => yield_tail(items, refs, ints),
     NdIf { cond: _, t, f } => {
       collect_yielded(t, refs, ints);
@@ -942,11 +942,11 @@ fn collect_yielded(n: ir::Node, refs: vector<integer>, ints: vector<integer>) {
 // The last operator that is not a `Line`.
 fn yield_tail(ops: vector<ir::Node>, refs: vector<integer>, ints: vector<integer>) {
   at = len(ops) - 1;
-  while at >= 0 && is_line_node(ops[at] ?? panic("an operator")) {
+  while at >= 0 && is_line_node(ops[at]!) {
     at -= 1;
   }
   if at >= 0 {
-    collect_yielded(ops[at] ?? panic("an operator"), refs, ints);
+    collect_yielded(ops[at]!, refs, ints);
   }
 }
 
@@ -1007,10 +1007,10 @@ fn view_root_slots(b: ir::Bundle, arg: ir::Node, out: vector<integer>) -> boolea
     NdNull => true,
     NdIf { cond: _, t, f } => view_root_slots(b, t, out) && view_root_slots(b, f, out),
     NdBlock { block } => {
-      bl = block[0] ?? panic("a block");
+      bl = block[0]!;
       if len(bl.operators) == 1 {
         // Bound first: a tail call whose argument a local holds cannot jump.
-        r = view_root_slots(b, bl.operators[0] ?? panic("an operator"), out);
+        r = view_root_slots(b, bl.operators[0]!, out);
         return r;
       }
       false
@@ -1053,11 +1053,11 @@ const ARG_IS_CALL = -2;
 // src/use_analysis.rs:3125 fn structural_arg_base — a base, MAX for none, or ARG_IS_CALL for
 // the `Err(arg)` whose argument sits at `visible_index`.
 fn structural_arg_base(b: ir::Bundle, callee_d: integer, callee_base: integer, caller_args: vector<ir::Node>) -> integer {
-  def = b.data.definitions[callee_d] ?? panic("a definition");
+  def = b.data.definitions[callee_d]!;
   if callee_base == MAX || callee_base >= len(def.attributes) {
     return MAX;
   }
-  at = def.attributes[callee_base] ?? panic("an attribute");
+  at = def.attributes[callee_base]!;
   if at.hidden && !is_synth_buffer(at.name) {
     return MAX;
   }
@@ -1066,7 +1066,7 @@ fn structural_arg_base(b: ir::Bundle, callee_d: integer, callee_base: integer, c
     return MAX;
   }
   roots: vector<integer> = [];
-  if !view_root_slots(b, caller_args[i] ?? panic("an argument"), roots) {
+  if !view_root_slots(b, caller_args[i]!, roots) {
     return ARG_IS_CALL;
   }
   if len(roots) == 1 { roots[0] ?? MAX } else { MAX }
@@ -1077,9 +1077,9 @@ fn returns_one_of_several_args(b: ir::Bundle, callee: integer) -> boolean {
   if callee >= len(b.data.definitions) {
     return false;
   }
-  def = b.data.definitions[callee] ?? panic("a definition");
+  def = b.data.definitions[callee]!;
   count = 0;
-  for x in depend_of(def.returned[0] ?? panic("a return type")) {
+  for x in depend_of(def.returned[0]!) {
     a = def.attributes[x];
     if a != null && !a.hidden {
       count += 1;
@@ -1114,7 +1114,7 @@ fn closure_vars(f: ir::Function) -> vector<integer> {
 
 // src/use_analysis.rs:4645 fn capture_return_offsets.
 fn capture_return_offsets(b: ir::Bundle, callee_d: integer, ops: Ops) -> vector<integer> {
-  def = b.data.definitions[callee_d] ?? panic("a definition");
+  def = b.data.definitions[callee_d]!;
   w = new_walk();
   w.vars = closure_vars(def.variables);
   walk_code(b, M_CAPTURE_OFFSETS, def.code, ops, new_defs(), w);
@@ -1132,7 +1132,7 @@ fn has_body_tail(code: vector<ir::Node>) -> boolean {
 fn tail_of_block_exists(n: ir::Node) -> boolean {
   match n {
     NdSpan { pos: _, inner } => tail_of_block_exists(inner),
-    NdBlock { block } => len((block[0] ?? panic("a block")).operators) > 0,
+    NdBlock { block } => len(block[0]!.operators) > 0,
     _ => false,
   }
 }
@@ -1191,13 +1191,13 @@ fn return_ownership(b: ir::Bundle, st: St, d_nr: integer) -> integer {
   if m != NONE {
     return m;
   }
-  def = b.data.definitions[d_nr] ?? panic("a definition");
+  def = b.data.definitions[d_nr]!;
   if !has_body_tail(def.code) || def.def_type != 1 {
     c = OWNED;
     if returns_borrowed_view(def) {
       base = MAX;
-      for a in depend_of(def.returned[0] ?? panic("a return type")) {
-        if a < len(def.attributes) && !(def.attributes[a] ?? panic("an attribute")).hidden {
+      for a in depend_of(def.returned[0]!) {
+        if a < len(def.attributes) && !def.attributes[a]!.hidden {
           base = a;
           break;
         }
@@ -1235,7 +1235,7 @@ fn return_ownership(b: ir::Bundle, st: St, d_nr: integer) -> integer {
 
 // src/use_analysis.rs:2415 fn return_ownership_round.
 fn return_ownership_round(b: ir::Bundle, st: St, d_nr: integer, so_far: integer) -> integer {
-  def = b.data.definitions[d_nr] ?? panic("a definition");
+  def = b.data.definitions[d_nr]!;
   if !has_body_tail(def.code) {
     return UNKNOWN;
   }
@@ -1246,7 +1246,7 @@ fn return_ownership_round(b: ir::Bundle, st: St, d_nr: integer, so_far: integer)
   collect_defs(b, def.code, st.ops, defs);
   outer_vars = st.visiting_vars;
   st.visiting_vars = [];
-  class = classify_tail(b, st, def.code[0] ?? panic("a body"), def.variables, defs);
+  class = classify_tail(b, st, def.code[0]!, def.variables, defs);
   early = early_return_values(b, st, d_nr);
   for c in classify_sites(b, st, early, d_nr, defs) {
     class = join(class, c);
@@ -1264,8 +1264,8 @@ fn classify_tail(b: ir::Bundle, st: St, code: ir::Node, func: ir::Function, defs
   match code {
     NdSpan { pos: _, inner } => classify_tail(b, st, inner, func, defs),
     NdBlock { block } => {
-      ops = (block[0] ?? panic("a block")).operators;
-      tail = ops[len(ops) - 1] ?? panic("a tail");
+      ops = block[0]!.operators;
+      tail = ops[len(ops) - 1]!;
       if is_loop_node(tail) { NOT_YET } else { classify(b, st, tail, func, defs) }
     }
     // Unreachable: asked only where `has_body_tail` holds.  Not a `panic`: the C backend does
@@ -1277,7 +1277,7 @@ fn classify_tail(b: ir::Bundle, st: St, code: ir::Node, func: ir::Function, defs
 // src/use_analysis.rs:2491 fn early_return_ownerships — asked by the orphan predicate, not by
 // the verdicts `ownership_report` writes.
 fn early_return_ownerships(b: ir::Bundle, st: St, d_nr: integer) -> vector<integer> {
-  def = b.data.definitions[d_nr] ?? panic("a definition");
+  def = b.data.definitions[d_nr]!;
   if def.def_type != 1 || !has_body_tail(def.code) {
     return [];
   }
@@ -1302,7 +1302,7 @@ fn early_return_ownerships(b: ir::Bundle, st: St, d_nr: integer) -> vector<integ
 
 // src/use_analysis.rs:2523 fn early_return_values.
 fn early_return_values(b: ir::Bundle, st: St, d_nr: integer) -> vector<ir::Node> {
-  def = b.data.definitions[d_nr] ?? panic("a definition");
+  def = b.data.definitions[d_nr]!;
   w = new_walk();
   walk_code(b, M_RETURNS, def.code, st.ops, new_defs(), w);
   w.nodes
@@ -1310,7 +1310,7 @@ fn early_return_values(b: ir::Bundle, st: St, d_nr: integer) -> vector<ir::Node>
 
 // src/use_analysis.rs:2539 fn classify_sites.
 fn classify_sites(b: ir::Bundle, st: St, sites: vector<ir::Node>, d_nr: integer, defs: Defs) -> vector<integer> {
-  def = b.data.definitions[d_nr] ?? panic("a definition");
+  def = b.data.definitions[d_nr]!;
   out: vector<integer> = [];
   for e in sites {
     st.visiting_vars = [];
@@ -1342,12 +1342,12 @@ fn classify(b: ir::Bundle, st: St, node: ir::Node, func: ir::Function, defs: Def
       }
     }
     NdBlock { block } => {
-      ops = (block[0] ?? panic("a block")).operators;
+      ops = block[0]!.operators;
       if len(ops) == 0 {
         return OWNED;
       }
       // Bound first: a tail call whose argument a local holds cannot jump.
-      r = classify(b, st, ops[len(ops) - 1] ?? panic("a tail"), func, defs);
+      r = classify(b, st, ops[len(ops) - 1]!, func, defs);
       r
     }
     NdInsert { items } => {
@@ -1387,7 +1387,7 @@ fn classify_var(b: ir::Bundle, st: St, v: integer, func: ir::Function, defs: Def
   minted = has(defs.db_vars, v);
   stored = false;
   for x in defs.rhs_var {
-    if x == v && !holds_no_store(b, defs.rhs[x#index] ?? panic("a definition")) {
+    if x == v && !holds_no_store(b, defs.rhs[x#index]!) {
       stored = true;
       break;
     }
@@ -1399,7 +1399,7 @@ fn classify_var(b: ir::Bundle, st: St, v: integer, func: ir::Function, defs: Def
       if x != v {
         continue;
       }
-      r = defs.rhs[x#index] ?? panic("a definition");
+      r = defs.rhs[x#index]!;
       if holds_no_store(b, r) {
         continue;
       }
@@ -1425,7 +1425,7 @@ fn classify_var(b: ir::Bundle, st: St, v: integer, func: ir::Function, defs: Def
     if x != v {
       continue;
     }
-    m = defs.moved[x#index] ?? panic("a definition");
+    m = defs.moved[x#index]!;
     if !holds_no_store(b, m) {
       class = join(class, classify(b, st, m, func, defs));
     }
@@ -1437,7 +1437,7 @@ fn classify_var(b: ir::Bundle, st: St, v: integer, func: ir::Function, defs: Def
 // The `Value::TupleGet` arm of `classify`.
 fn classify_tuple_get(base: integer, i: integer, func: ir::Function, defs: Defs) -> integer {
   bx = func.variables[base];
-  if bx == null || !tuple_member_is_dbref(bx.type_def[0] ?? panic("a type"), i) {
+  if bx == null || !tuple_member_is_dbref(bx.type_def[0]!, i) {
     return OWNED;
   }
   r = base;
@@ -1450,9 +1450,9 @@ fn classify_tuple_get(base: integer, i: integer, func: ir::Function, defs: Defs)
     }
   }
   if n == 1 {
-    src = var_of(defs.rhs[k] ?? panic("a definition"));
+    src = var_of(defs.rhs[k]!);
     sx = func.variables[src];
-    if src >= 0 && sx != null && is_tuple(sx.type_def[0] ?? panic("a type")) {
+    if src >= 0 && sx != null && is_tuple(sx.type_def[0]!) {
       r = src;
     }
   }
@@ -1526,15 +1526,15 @@ fn caller_arg_base(b: ir::Bundle, st: St, callee_d: integer, callee_base: intege
   if s != ARG_IS_CALL {
     return s;
   }
-  def = b.data.definitions[callee_d] ?? panic("a definition");
-  arg = caller_args[visible_index(def, callee_base)] ?? panic("an argument");
+  def = b.data.definitions[callee_d]!;
+  arg = caller_args[visible_index(def, callee_base)]!;
   c = classify(b, st, arg, func, defs);
   if is_borrowed(c) || is_join(c) { base_of(c) } else { MAX }
 }
 
 // src/use_analysis.rs:2873 fn closure_capture_base.
 fn closure_capture_base(b: ir::Bundle, st: St, callee_d: integer, callee_base: integer, fn_var: integer, defs: Defs) -> integer {
-  callee = b.data.definitions[callee_d] ?? panic("a definition");
+  callee = b.data.definitions[callee_d]!;
   if var_name(callee.variables, callee_base) != "__closure" {
     return MAX;
   }
@@ -1589,7 +1589,7 @@ fn borrow_base_guarded(b: ir::Bundle, ops: Ops, node: ir::Node, func: ir::Functi
       if len(args) == 0 {
         return -1;
       }
-      first = args[0] ?? panic("an argument");
+      first = args[0]!;
       v = var_of(first);
       if v >= 0 {
         return v;
@@ -1612,7 +1612,7 @@ fn borrow_base_guarded(b: ir::Bundle, ops: Ops, node: ir::Node, func: ir::Functi
       while at >= 0 {
         if (defs.rhs_var[at] ?? -1) == v {
           any = true;
-          r = borrow_base_guarded(b, ops, defs.rhs[at] ?? panic("a definition"), func, defs, visited);
+          r = borrow_base_guarded(b, ops, defs.rhs[at]!, func, defs, visited);
           if r >= 0 {
             return r;
           }
@@ -1623,7 +1623,7 @@ fn borrow_base_guarded(b: ir::Bundle, ops: Ops, node: ir::Node, func: ir::Functi
         return -1;
       }
       vx = func.variables[v];
-      if is_argument(func, v) && vx != null && has_heap_dep(vx.type_def[0] ?? panic("a type")) {
+      if is_argument(func, v) && vx != null && has_heap_dep(vx.type_def[0]!) {
         return v;
       }
       -1
@@ -1633,11 +1633,11 @@ fn borrow_base_guarded(b: ir::Bundle, ops: Ops, node: ir::Node, func: ir::Functi
       if r >= 0 { r } else { borrow_base_guarded(b, ops, f, func, defs, visited) }
     }
     NdBlock { block } => {
-      body = (block[0] ?? panic("a block")).operators;
+      body = block[0]!.operators;
       if len(body) == 0 {
         return -1;
       }
-      r = borrow_base_guarded(b, ops, body[len(body) - 1] ?? panic("a tail"), func, defs, visited);
+      r = borrow_base_guarded(b, ops, body[len(body) - 1]!, func, defs, visited);
       r
     }
     NdReturn { inner } => borrow_base_guarded(b, ops, inner, func, defs, visited),
@@ -1668,7 +1668,7 @@ pub fn ownership_of(b: ir::Bundle, ops: Ops, d_nr: integer, value: ir::Node) -> 
 
 // src/use_analysis.rs:5201 fn ownership_of_with.
 fn ownership_of_with(b: ir::Bundle, ops: Ops, d_nr: integer, value: ir::Node, defs: Defs) -> integer {
-  def = b.data.definitions[d_nr] ?? panic("a definition");
+  def = b.data.definitions[d_nr]!;
   classify(b, new_state(ops), value, def.variables, defs)
 }
 
@@ -1743,7 +1743,7 @@ pub fn ownership_report(b: ir::Bundle) -> text {
     for v in vars.variables {
       arg = if v.argument { "arg" } else { "" };
       rendered = "—  (scalar)";
-      if has_heap_dep(v.type_def[0] ?? panic("a type")) {
+      if has_heap_dep(v.type_def[0]!) {
         rendered = render_own(ownership_of(b, ops, d_nr, ir::NdVar { n: v#index }), vars, v#index);
       }
       r += "  {v#index:<4} {arg:<4} {v.name:<22} {rendered}\n";

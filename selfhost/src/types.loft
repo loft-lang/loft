@@ -190,7 +190,7 @@ fn content_of(b: ir::Bundle, tp: integer) -> integer {
   if t == null {
     return -1;
   }
-  match t.parts[0] ?? panic("a type has its parts") {
+  match t.parts[0]! {
     PtVector { content } => content,
     PtArray { content } => content,
     PtOrdered { content, keys: _ } => content,
@@ -226,7 +226,7 @@ fn nullable_element(b: ir::Bundle, tp: integer) -> boolean {
 // The owner of field `i`'s linked group — the member whose `other_indexes` does not start with
 // the view marker 65535 — or -1 outside a group.  `group_owner` (`src/c/mod.rs`).
 fn group_owner(fields: vector<ir::DbField>, i: integer) -> integer {
-  others = (fields[i] ?? panic("a field of this struct")).other_indexes;
+  others = fields[i]!.other_indexes;
   if len(others) == 0 {
     return -1;
   }
@@ -234,7 +234,7 @@ fn group_owner(fields: vector<ir::DbField>, i: integer) -> integer {
     return i;
   }
   for m in others {
-    if m != 65535 && ((fields[m] ?? panic("a group member")).other_indexes[0] ?? 0) != 65535 {
+    if m != 65535 && (fields[m]!.other_indexes[0] ?? 0) != 65535 {
       return m;
     }
   }
@@ -247,7 +247,7 @@ fn group_owner(fields: vector<ir::DbField>, i: integer) -> integer {
 fn field_rows(b: ir::Bundle, fields: vector<ir::DbField>) -> vector<FieldRow> {
   out: vector<FieldRow> = [];
   for i in 0..len(fields) {
-    f = fields[i] ?? panic("in range");
+    f = fields[i]!;
     o = group_owner(fields, i);
     view = 0;
     group = 0;
@@ -271,7 +271,7 @@ fn field_rows(b: ir::Bundle, fields: vector<ir::DbField>) -> vector<FieldRow> {
 // Type `tp`'s row, as `copy_table` writes it (`src/c/mod.rs`).  A keyed collection's key parts
 // are the image's own (`DbType.keys`), carried as they are.
 pub fn row(b: ir::Bundle, tp: integer) -> Row {
-  t = schema(b, tp) ?? panic("a type of this image");
+  t = schema(b, tp)!;
   r = Row {
     tp: tp,
     kind: T_SCALAR,
@@ -287,7 +287,7 @@ pub fn row(b: ir::Bundle, tp: integer) -> Row {
   for k in t.keys {
     r.keys += [KeyRow { tp: k.type_nr, pos: k.position, start: k.start }];
   }
-  match t.parts[0] ?? panic("a type has its parts") {
+  match t.parts[0]! {
     PtBase => {
       if tp == 5 || t.name == "text" {
         r.kind = T_TEXT;
@@ -383,7 +383,7 @@ pub fn flat(rows: vector<Row>) -> vector<integer> {
 // null code (or a non-null short's `0 - min + 1`), and a variant's type tag.  The selfhost
 // tests compare this with the C generator's image, byte by byte.
 pub fn default_image(b: ir::Bundle, tp: integer) -> vector<u8> {
-  t = schema(b, tp) ?? panic("a type of this image");
+  t = schema(b, tp)!;
   out: vector<u8> = [for _ in 0..t.size { 0 as u8 }];
   default_into(b, tp, true, out, 0);
   out
@@ -440,7 +440,7 @@ fn default_into(b: ir::Bundle, tp: integer, nullable: boolean, out: vector<u8>, 
     PtEnumValue { value: _, fields } => fields_into(b, tp, fields, out, at),
     PtEnum { values: _ } => {
       // `@FR-D-Json`: a non-null `JsonValue` defaults to its `JNull` tag, 1.
-      if !nullable && (schema(b, tp) ?? panic("in range")).name == "JsonValue" {
+      if !nullable && schema(b, tp)!.name == "JsonValue" {
         put_bytes(out, at, [1]);
       }
     }
@@ -464,9 +464,9 @@ fn fields_into(b: ir::Bundle, tp: integer, fields: vector<ir::DbField>, out: vec
 // largest variant's — so any variant can be written over it in place; every other type at its
 // own.  The first enum, in type order, that lists `tp` and is larger.
 pub fn enum_parent_size(b: ir::Bundle, tp: integer) -> integer {
-  own = (b.types[tp] ?? panic("a type the lowering checked")).size;
+  own = b.types[tp]!.size;
   for t in b.types {
-    match t.parts[0] ?? panic("a type has its parts") {
+    match t.parts[0]! {
       PtEnum { values } => {
         for v in values {
           if v.nr == tp && t.size > own {

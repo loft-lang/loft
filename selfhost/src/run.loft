@@ -119,7 +119,7 @@ fn ref_out(io: vector<integer>, ints: vector<integer?>, at: integer) {
 fn load_table(b: ir::Bundle) {
   rows: vector<types::Row> = [];
   for tp in 0..len(b.types) {
-    t = b.types[tp] ?? panic("a type in range");
+    t = b.types[tp]!;
     if len(t.parts) > 0 {
       rows += [types::row(b, tp)];
     }
@@ -144,7 +144,7 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
   // the compiler added) starts null, as a caller with no buffer to offer passes it.
   visible = 0;
   hidden_after = true;
-  for a in (b.data.definitions[entry] ?? panic("the entry")).attributes {
+  for a in b.data.definitions[entry]!.attributes {
     if a.hidden {
       continue;
     }
@@ -190,14 +190,14 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
   // A hidden vector buffer is handed in as a caller hands it: minted before the call
   // (`owned_vector_null`) and released after it.
   at = len(args);
-  for a in (b.data.definitions[entry] ?? panic("the entry")).attributes {
+  for a in b.data.definitions[entry]!.attributes {
     if !a.hidden {
       continue;
     }
     w = lower::main_vector_of(b, a.typedef);
     if w >= 0 {
       ref_in(io, ints, at);
-      crt::database(io, (b.types[w] ?? panic("a wrapper type")).size, w);
+      crt::database(io, b.types[w]!.size, w);
       ref_out(io, ints, at);
       entry_bufs += [at];
     }
@@ -223,9 +223,9 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
   base_int = 0;
   base_float = 0;
   base_text = 0;
-  prog = progs[entry] ?? panic("lowered above");
+  prog = progs[entry]!;
   while true {
-    op = prog.ops[pc] ?? panic("the lowering ends every path in `Ret`, so `pc` stays inside the ops");
+    op = prog.ops[pc]!;
     pc += 1;
     match op.code {
       PushInt => { put_int(ints, sp_int, op.a); sp_int += 1; }
@@ -250,7 +250,7 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
           KText => { put_text(texts, sp_text, texts[base_text + op.a]); sp_text += 1; }
           // A `&text` reads the text whose index its slot holds.
           KTextRef => {
-            put_text(texts, sp_text, texts[ints[base_int + op.a] ?? panic("a bound reference")]);
+            put_text(texts, sp_text, texts[ints[base_int + op.a]!]);
             sp_text += 1;
           }
           KRef => {
@@ -269,7 +269,7 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
           KText => { sp_text -= 1; texts[base_text + op.a] = texts[sp_text]; }
           KTextRef => {
             sp_text -= 1;
-            texts[ints[base_int + op.a] ?? panic("a bound reference")] = texts[sp_text];
+            texts[ints[base_int + op.a]!] = texts[sp_text];
           }
           KRef => {
             sp_int -= 3;
@@ -302,7 +302,7 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
           progs[callee] = lower::lower(b, callee);
           lowered[callee] = true;
         }
-        callee_prog = progs[callee] ?? panic("lowered above");
+        callee_prog = progs[callee]!;
         if callee_prog.refused != "" {
           return Outcome {
             value: 0,
@@ -381,12 +381,12 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         sp_text = base_text;
         fp -= 1;
         // Every frame below the top was saved by the call that entered the one above it.
-        def = f_def[fp] ?? panic("a saved frame");
-        pc = f_pc[fp] ?? panic("a saved frame");
-        base_int = f_int[fp] ?? panic("a saved frame");
-        base_float = f_float[fp] ?? panic("a saved frame");
-        base_text = f_text[fp] ?? panic("a saved frame");
-        prog = progs[def] ?? panic("a lowered caller");
+        def = f_def[fp]!;
+        pc = f_pc[fp]!;
+        base_int = f_int[fp]!;
+        base_float = f_float[fp]!;
+        base_text = f_text[fp]!;
+        prog = progs[def]!;
         match op.kind {
           KFloat => { put_float(floats, sp_float, vf); sp_float += 1; }
           KText => { put_text(texts, sp_text, vt); sp_text += 1; }
@@ -455,12 +455,12 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
       }
       // A text-writing op's destination: a text slot of this frame, or through a `&text`.
       Append => {
-        at = if op.kind == KTextRef { ints[base_int + op.a] ?? panic("a bound reference") } else { base_text + op.a };
+        at = if op.kind == KTextRef { ints[base_int + op.a]! } else { base_text + op.a };
         sp_text -= 1;
         texts[at] = (texts[at] ?? "") + (texts[sp_text] ?? "");
       }
       AppendChar => {
-        at = if op.kind == KTextRef { ints[base_int + op.a] ?? panic("a bound reference") } else { base_text + op.a };
+        at = if op.kind == KTextRef { ints[base_int + op.a]! } else { base_text + op.a };
         sp_int -= 1;
         c = ints[sp_int] as character?;
         t = texts[at] ?? "";
@@ -470,7 +470,7 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         texts[at] = t;
       }
       Clear => {
-        at = if op.kind == KTextRef { ints[base_int + op.a] ?? panic("a bound reference") } else { base_text + op.a };
+        at = if op.kind == KTextRef { ints[base_int + op.a]! } else { base_text + op.a };
         texts[at] = "";
       }
       // A native the interpreter carries, as loft's own function of that name; its arguments
@@ -498,7 +498,7 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
       // renders it.  The operands are on the int stack, the last on top; an integer value sits
       // under them there, a float or text value on its own stack.
       Format => {
-        at = if op.kind == KTextRef { ints[base_int + op.a] ?? panic("a bound reference") } else { base_text + op.a };
+        at = if op.kind == KTextRef { ints[base_int + op.a]! } else { base_text + op.a };
         piece = "";
         if op.b == 0 {
           sp_int -= 7;
@@ -807,7 +807,7 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         }
         sp_int -= 3;
         crt::vec_append(io, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b);
-        crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, images[op.a] ?? panic("derived above"));
+        crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, images[op.a]!);
         ref_out(io, ints, sp_int);
         sp_int += 3;
       }
@@ -837,7 +837,7 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         }
         sp_int -= 3;
         crt::hash_entry(io, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b / 2, op.b % 2 == 1);
-        crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, images[op.a] ?? panic("derived above"));
+        crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, images[op.a]!);
         ref_out(io, ints, sp_int);
         sp_int += 3;
       }
@@ -889,7 +889,7 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
           load_table(b);
           table_loaded = true;
         }
-        at = if op.kind == KTextRef { ints[base_int + op.a] ?? panic("a bound reference") } else { base_text + op.a };
+        at = if op.kind == KTextRef { ints[base_int + op.a]! } else { base_text + op.a };
         sp_int -= 3;
         piece = "";
         show::render(b, op.b / 4, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b % 4, 0, piece);
