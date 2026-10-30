@@ -1,0 +1,11 @@
+LOFT-DSCHEMA v2
+hash=13991414177939093950
+root=trie<EWord[w]>
+slot=3
+--
+@endian	little
+EWord	size=16	struct{w@8:text, v@0:integer}
+integer	size=8	base
+text	size=4	base
+trie<EWord[w]>	size=4	trie<EWord[0]>
+--facts--

@@ -1,0 +1,59 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2241, `@FR-Col-Trie` / `@FR-S-Format` — a trie image written under placement token 1 (by
+// main @ 23bc61e4, before the fix: `tests/golden/images/trie-edge.loft`) holding the keys the fix
+// is about: null (1), `""` (2), `"a"` (3), `"a\0"` (4), `"ab"` (5).  That build filed a data NUL
+// raw, so `""` and `"a"` sat where a lookup ending at their terminator found `null` and `"a\0"`.
+//
+// A WHOLE load converts the image (placement::TRIE_READS): every record is walked key-free and
+// filed again, the null key into the slot, so every key is found and the walk is in key order.
+// A PAGED read reads the image AS WRITTEN — the owner's decision on #2241 — through the old key
+// reading: it answers what the build that wrote it answers, measured on 23bc61e4 on every
+// backend: null and `"a\0"` and `"ab"` found, `""` and `"a"` not, and the prefix slices
+// `""`/`"a"`/`"a\0"` holding 5/3/1 records.
+//
+// @falsified-at: 23bc61e4 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// CHANNEL: the VALUE (each record found or not, the walk order, the loaded counts).
+#cwd
+struct EWord { w: text, v: integer }
+
+fn img() -> text { "tests/golden/images/trie-edge-t1/trie.store" }
+
+fn walk(t: trie<EWord[w]>) -> text {
+  s = "";
+  for e in t { s += "{e.v},"; }
+  s
+}
+
+fn test_a_whole_load_converts_every_key() {
+  nt: text = null;
+  t: trie<EWord[w]> = [];
+  assert(store_load(t, img()), "the image loads whole");
+  assert(len(t) == 5 && walk(t) == "1,2,3,4,5,", "converted walk: {len(t)} {walk(t)}");
+  got = "{t[nt].v ?? -1} {t[""].v ?? -1} {t["a"].v ?? -1} {t["a\0"].v ?? -1} {t["ab"].v ?? -1}";
+  assert(got == "1 2 3 4 5", "converted lookups: {got}");
+  assert(store_verify(t), "the converted trie verifies");
+}
+
+fn test_a_paged_read_answers_as_written() {
+  nt: text = null;
+  got = "";
+  for k in [nt, "", "a", "a\0", "ab", "zz"] {
+    one: trie<EWord[w]> = [];
+    found = store_load_key_text(one, img(), k);
+    got += "{found}:{walk(one)} ";
+  }
+  assert(got == "true:1, false: false: true:4, true:5, false: ", "paged keys: {got}");
+  counts = "";
+  for p in ["", "a", "a\0"] {
+    pre: trie<EWord[w]> = [];
+    counts += "{store_load_prefix(pre, img(), p, -1)} ";
+  }
+  assert(counts == "5 3 1 ", "paged prefixes: {counts}");
+}
+
+fn main() {
+  test_a_whole_load_converts_every_key();
+  test_a_paged_read_answers_as_written();
+}

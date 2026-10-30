@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Writes the trie EDGE image: the keys loft#2241 is about — a null key, `""`, `"a"`, `"a\0"`,
+// `"ab"` — in one trie, written ONCE by a build of placement token 1 (main @ 23bc61e4, before the
+// fix) into `trie-edge-t1/`, and never written again.  `tests/scripts/2241-a-token-1-trie-image-
+// reads-as-written-by-page-and-converted-whole.loft` reads it with every later build.
+//
+// Env: LOFT_GOLDEN_DIR (the directory the image goes to).
+
+struct EWord { w: text, v: integer }
+
+fn main() {
+  dir = env_variable("LOFT_GOLDEN_DIR") ?? "";
+  assert(dir != "", "LOFT_GOLDEN_DIR names the directory");
+  nt: text = null;
+  t: trie<EWord[w]> = [EWord { w: "ab", v: 5 }, EWord { w: "a\0", v: 4 }, EWord { w: "a", v: 3 }, EWord { w: "", v: 2 }, EWord { w: nt, v: 1 }];
+  s = "";
+  for e in t { s += "{e.v},"; }
+  println("written: len {len(t)} walk {s}");
+  assert(store_persist_copy(t, "{dir}/trie.store"), "writing the trie");
+}
