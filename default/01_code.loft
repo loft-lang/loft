@@ -2370,7 +2370,11 @@ pub fn sort < T: Ordered > (self: vector<T>) {
   }
   // Each place takes its sorted element: a sort overwrites the places it has, so a view or a
   // `&` link into the vector stays valid across it (`@FR-B-Disturb`).
-  for at in 0..n { self[at] = src[at]; }
+  at = 0;
+  for e in src {
+    self[at] = e;
+    at += 1;
+  }
 }
 #builtin
 
@@ -2417,7 +2421,11 @@ pub fn sort_by < T, K: Ordered > (self: vector<T>, key: fn(T) -> K) {
   out: vector<T> = [];
   for p in pos { out += self[p..p + 1]; }
   // Each place takes its sorted element (`sort`'s note).
-  for at in 0..n { self[at] = out[at]; }
+  at = 0;
+  for e in out {
+    self[at] = e;
+    at += 1;
+  }
 }
 
 /// The element with the smallest key, or null when the vector is empty:
