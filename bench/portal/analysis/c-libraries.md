@@ -131,6 +131,39 @@ and measured −16.8 % against the copy's −20.7 %, since the keys copied are a
 mint was the cost.  Built: pluginabi `check_request` −19.5 %, `req_state_b64` −3.4 %;
 `request` +2.5 % is placement (its `base64_to_bytes` byte-identical at another address).
 
+### The evening's regressions (2026-10-30, night)
+
+The four evening changes together, against all four switched off (gcc, 36 libraries): 22 rows
+faster, 93 the same, 7 slower.  Split by switch:
+
+| row | cause | finding |
+|---|---|---|
+| cbor `encode_bytes` +7.4 % | the push-run reservation | REAL: `head` runs as an append twin onto the caller's buffer, which has the room; the reservation was a call for nothing.  FIXED: the clause now requires the vector KNOWN EMPTY at the run (`known_empty`); cbor's C is identical with and without it, `forms_upto` keeps −6.8 % |
+| zttext `materialise` +25.6 %, `seg` +4.9 % | the text move | placement: `materialise` contains no move site, and its machine code is the same 513 instructions in both builds (register choices only) |
+| html `escape_html_blob` +10.3 % | the text tail view | placement: the changed code is `main`'s row printer, and `t_4text_escape_html__fr` is byte-identical, 0x60 bytes away |
+| hex_shape `wall_chain_walk` +3.4 %, hex_field `trace` +2.9 % | — | not split (under 4 %) |
+
+Recorded, not fixed (owner: no layout fixes).
+
+### `check_request`: what is left, and what the rules allow (2026-10-30, night)
+
+After `(R-SliceArg)`: ≈ 1 000 ns a check against the twin's 124 (≈ 8×).  Per check: 7
+`read_value` calls, 3 stores, 11 record claims, 39 slice bytes.  By kind: allocating the decoded
+tree's records ≈ 31 % (a claim per node, per key text, per vector growth — the pool-reset path
+is never reached here: whole-store frees), copies ≈ 21 %, store addressing ≈ 8 %, other
+allocator pieces ≈ 13 %, the decoder's own code ≈ 27 % (one ~1 300-line C function, ~95 locals,
+17 exits each releasing ~10 temporaries).
+
+The twin borrows (`Cbor<'a>` holds `&str`/`&[u8]` into the frame).  Owner, 2026-10-30: *"We
+cannot change the store itself, but we can introduce short lived objects as long as the end
+result is the same."*  So the rules written tonight are: `(O-SliceView)` (a slice of a `const`
+source may be a view, held outside the store, materialised where it reaches a store record),
+`(R-Transient)` (a value built, read and dropped without being stored is built as a short-lived
+object outside the store — the decoded tree with its keys and payloads viewing the frame), and
+`(R-PathRelease)` (an exit releases only what can hold a store on some path to it).  `(R-Transient)`
+is the one that reaches the twin's shape; none is built.  Next: hand-price `(R-Transient)` on
+`read_value`.
+
 ### The short appends (2026-10-30)
 
 **What the row paid.**  `req_state_b64` profiled at 75 % in `b64_encode`'s loop, four

@@ -2444,6 +2444,88 @@ impl<'a> FnWriter<'a> {
         crate::opt::writes::fused_push(data, name, args).map(|fp| (fp, next))
     }
 
+    /// Whether `vector` is EMPTY where statement list `ops` ends: its slot was zeroed —
+    /// `OpSetInt4(r, off, 0)` for the field `OpGetField(r, off, …)`, or for the wrapper field a
+    /// local is bound to — and no statement after that names the vector's root.  A run onto a
+    /// vector that may already hold elements (an append twin's buffer, an accumulating local)
+    /// usually has the room, and a reservation there is a call for nothing.
+    fn known_empty(&self, ops: &[Value], vector: &Value) -> bool {
+        let data = self.cx.data;
+        let field_of = |v: &Value| -> Option<(u16, i32)> {
+            match v.unspan() {
+                Value::Call(d, a)
+                    if (*d as usize) < data.definitions.len()
+                        && data.def(*d).name() == "OpGetField" =>
+                {
+                    match (a.first().map(Value::unspan), a.get(1).map(Value::unspan)) {
+                        (Some(Value::Var(r)), Some(Value::Int(off))) => Some((*r, *off)),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            }
+        };
+        // The slot: the field itself, or the wrapper field a local vector is bound to.
+        let (root, slot) = match vector.unspan() {
+            Value::Var(local) => {
+                let Some(bound) = ops.iter().find_map(|o| match o.unspan() {
+                    Value::Set(var, x) if var == local => field_of(x),
+                    _ => None,
+                }) else {
+                    return false;
+                };
+                (Some(*local), bound)
+            }
+            other => match field_of(other) {
+                Some(f) => (None, f),
+                None => return false,
+            },
+        };
+        let names =
+            |o: &Value, var: u16| o.any_node(&mut |n| matches!(n, Value::Var(x) if *x == var));
+        // A mention of the root that only reaches ANOTHER field — `OpGetField(r, off2, …)` or a
+        // write `OpSet…(r, off2, …)`, `off2` not the slot — leaves the slot as it was.
+        let elsewhere = |o: &Value| -> bool {
+            let (mut all, mut other) = (0usize, 0usize);
+            o.any_node(&mut |n| {
+                if matches!(n, Value::Var(x) if *x == slot.0) {
+                    all += 1;
+                }
+                if let Value::Call(d, a) = n
+                    && (*d as usize) < data.definitions.len()
+                    && (data.def(*d).name() == "OpGetField" || data.def(*d).name().starts_with("OpSet"))
+                    && matches!(a.first().map(Value::unspan), Some(Value::Var(x)) if *x == slot.0)
+                    && matches!(a.get(1).map(Value::unspan), Some(Value::Int(off)) if *off != slot.1)
+                {
+                    other += 1;
+                }
+                false
+            });
+            all == other
+        };
+        for op in ops.iter().rev() {
+            if let Value::Call(d, a) = op.unspan()
+                && (*d as usize) < data.definitions.len()
+                && data.def(*d).name() == "OpSetInt4"
+                && matches!(
+                    (a.first().map(Value::unspan), a.get(1).map(Value::unspan), a.get(2).map(Value::unspan)),
+                    (Some(Value::Var(r)), Some(Value::Int(off)), Some(Value::Int(0))) if (*r, *off) == slot
+                )
+            {
+                return true;
+            }
+            if let Value::Set(var, _) = op.unspan()
+                && Some(*var) == root
+            {
+                continue;
+            }
+            if (names(op, slot.0) && !elsewhere(op)) || root.is_some_and(|l| names(op, l)) {
+                return false;
+            }
+        }
+        false
+    }
+
     /// `@FR-R-PushFill`'s run clause on the C: a straight-line RUN of `k >= 2` scalar pushes onto
     /// one path P — consecutive statements with only line markers between, each a push of the
     /// same element size — reserves room for `k` more elements before the first, so the run grows
@@ -2487,6 +2569,7 @@ impl<'a> FnWriter<'a> {
             end = next;
         }
         if k < 2
+            || !self.known_empty(&ops[..at], first.vector)
             || self.apr_holds(first.path.0)
             || self.dc_root(first.path.0)
             || self.push_head(&first.path).is_some()

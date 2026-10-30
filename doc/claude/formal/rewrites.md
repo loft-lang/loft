@@ -866,7 +866,12 @@ pins `tests/push_window.rs`.
 pushes of one element size onto one path P — consecutive statements, only line markers
 between, each a bare push or the `OpPreAllocVector(P, 1, w)` a push onto a local is lowered
 with — RESERVES room for the run's count before its first push, so P grows once instead of at
-each step.  Observably nothing, as the loop's reservation: the elements, the length and every
+each step — where P is KNOWN EMPTY at the run: its slot was zeroed earlier in the same block
+(`OpSetInt4(r, off, 0)` for the field, or for the wrapper field a local is bound to) and nothing
+after that names P's root except to reach another field.  A run onto a vector that may already
+hold elements usually has the room, and a reservation there is a call for nothing: cbor's
+`head`, run as an append twin onto the caller's buffer, measured `encode_bytes` +7.4 % before
+this condition.  Observably nothing, as the loop's reservation: the elements, the length and every
 value read between the pushes are the pushes' own.  The runtime's `loft_vec_reserve_run` leaves
 a null reference and a locked store alone, so a push refused there is refused where it was and
 no extra refusal is raised; an empty vector is claimed at the reservation as its first push
@@ -2799,6 +2804,48 @@ be of the callee's answer).  `LOFT_NO_C_WORK_BORROW=1` copies again.  Cells
 compile with the copy refusal off).  Sites: `hoist::own_format_work`, the format arm of
 `hoist::borrowed_store_texts`.
 
+### A value that never reaches a store is not built in one
+
+```
+  (R-Transient)  a record or enum value — with the vectors and texts it holds, at any
+                 depth — that is built, read and dropped without ever being WRITTEN
+                 into a store record may be built as a SHORT-LIVED object outside the
+                 store: its scalars in a C struct, its vectors and texts as views of
+                 where their bytes already live (O-SliceView) or as short-lived buffers
+                 of its own.  The store is unchanged and nothing can tell: every use
+                 READS the value (a field, a length, an element, a comparison, a text
+                 operand, a `const` argument); a use that would store it — a field set,
+                 an append, a keyed insert, a return that escapes the unit (R-Escape),
+                 a capture, a `yield`, a `parallel` arm, a by-value parameter that
+                 keeps it — MATERIALISES it there, built into the store as the value it
+                 always was, at that use (R-Place, R-InPlaceLiteral).  The short-lived
+                 object dies with the last read: no identity, no release, nothing for
+                 the leak report.  Its views obey O-SliceView's halves: the source is
+                 not disturbed nor written while the object lives.
+                 THE PRODUCER'S HALF: a function whose result is such a value — a
+                 decoder's `decode(bytes) -> Decoded` — has a TRANSIENT twin, emitted
+                 where every call site reads the result only (O-ViewField's sites'
+                 half); the twin builds the tree outside the store, recursively, its
+                 own recursive calls being transient twins too.  A site that keeps the
+                 result calls the store-building function as before.
+```
+
+**In words.**  `check_request` decodes a CBOR frame twice and reads one field of the result;
+the decoded tree is built as store records (a claim per node, a claim per key text, a copy per
+payload) and dropped — ≈ 60 % of the row against a twin whose `Cbor<'a>` borrows the frame and
+allocates one `Vec` per map.  Under @C125 as clarified (owner, 2026-10-30: *"We cannot change
+the store itself, but we can introduce short lived objects as long as the end result is the
+same"*) the tree need not be in a store while nothing stores it.  `(R-ValueRecord)` already
+returns a scalar record in registers and `(O-ViewField)` a record whose vector field is a view;
+this rule is the same idea for a whole tree: depth, variants, vectors of records, and texts and
+bytes that view the frame.  It is the rule `check_request` needs to approach 2×: the tree's
+claims, copies and the frame's releases all belong to the store-built tree.  NOT BUILT
+(designed 2026-10-30).  Open in the design: the C representation of a transient vector of
+records (a stack array with a heap spill), how the twin is cut from the producer (every
+`OpNewRecord` / `OpSetText` / `OpAppendVector` into the result mapped to its struct form), and
+the decline list's proof on the sites — `(O-ViewField)`'s sites' half is the model.  Price
+first, by hand, on `read_value`.
+
 ### A slice handed to a `const` parameter needs no store of its own
 
 ```
@@ -4081,6 +4128,19 @@ panic's frame block read.  Switch `LOFT_NO_LEAF_CHAIN` (one step finer than
 ### A frame no registrant can reach carries no buffer guard
 
 ```
+  (R-PathRelease) an exit releases only the temporaries that can HOLD a store on some
+                 path reaching it.  A temporary whose every assignment on every path to
+                 the exit is still ahead of it — or that is null there on every path
+                 (O-Complete's per-path facts) — is released by nothing, so its release
+                 at that exit is emitted as nothing; one that may hold a store on any
+                 path keeps the release it has.  Observably nothing: the release of a
+                 null is a no-op on both backends (OpFreeRefIfDistinct, OpFreeRef), so
+                 dropping it changes no store, no value and no leak report.  A function
+                 with many exits and many temporaries — a decoder's `read_value`, whose
+                 every early `return` released ten wrappers no path to it had minted —
+                 pays per exit only for what it made.  NOT BUILT (designed 2026-10-30,
+                 `bench/portal/analysis/c-libraries.md` § `check_request`); applied by
+                 nothing yet.
   (R-GuardFree)  a function from which NOTHING that registers a fn-ref return buffer
                  is reachable — over the closure of its call graph, cycles INCLUDED:
                  no fn-ref call, no `parallel`, no `yield`, no `OpFreeRefOrHandUp`,
