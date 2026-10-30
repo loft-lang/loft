@@ -345,8 +345,9 @@ impl FnWriter<'_> {
             .store_value_type(r)
             .and_then(|t| self.cx.root_type(&t, self.cx.data.def(self.d).source()))
             .ok_or("a loaded value whose store type is not known here")?;
-        // A store holding references is re-pointed at its slot by a walk of its type.
-        if self.cx.holds_stored_refs(tp) {
+        // A store holding references (re-pointed at its slot) or a trie (filed again when an older
+        // placement wrote it) is loaded by a walk of its type.
+        if self.cx.load_walks_type(tp) {
             self.cx.copy_type(tp)?;
             self.cx.name_types();
         }
@@ -468,8 +469,9 @@ impl FnWriter<'_> {
                     .store_value_type(r)
                     .and_then(|t| self.cx.root_type(&t, self.cx.data.def(self.d).source()))
                     .ok_or("a loaded value whose store type is not known here")?;
-                // A store holding references is re-pointed at its slot by a walk of its type.
-                if self.cx.holds_stored_refs(tp) {
+                // A store holding references (re-pointed at its slot) or a trie (filed again when
+                // an older placement wrote it) is loaded by a walk of its type.
+                if self.cx.load_walks_type(tp) {
                     self.cx.copy_type(tp)?;
                     self.cx.name_types();
                 }

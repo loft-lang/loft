@@ -15,7 +15,10 @@
 #define LOFT_RX_TOP 4u
 #define LOFT_RX_LEN 8u
 #define LOFT_RX_NODES 12u
-#define LOFT_RX_CAP 16u
+/* The kind's own header word: a trie's null-key record, tagged (trie_db::SLOT_TAG); placement
+ * token 1 kept the node capacity here, which the claim's size says. */
+#define LOFT_RX_SLOT 16u
+#define LOFT_RX_SLOT_TAG 0x80000000u
 #define LOFT_RX_FREE 20u
 #define LOFT_RX_HDR 24u
 #define LOFT_RX_NODE_SIZE 16u
@@ -37,6 +40,7 @@ typedef struct {
     uint64_t codes[LOFT_RX_MAX_AXES];
     const uint8_t *bytes;      /* a text probe */
     size_t len;
+    int esc;                   /* the bytes are read escaped (trie_db::tree_bytes) */
     uint32_t bits, id;
 } loft_rx_key;
 
@@ -66,8 +70,48 @@ static uint64_t loft_rx_bytes_word(const uint8_t *b, size_t len, uint32_t word) 
     return out;
 }
 
+/* trie_db::tree_bytes: how many bytes `b` files as — data 0x00 and 0x01 take two (`01 01`,
+ * `01 02`), so no key reads as another that ends in NULs. */
+static size_t loft_rx_esc_len(const uint8_t *b, size_t len) {
+    size_t n = len;
+    for (size_t i = 0; i < len; i++) n += b[i] < 2;
+    return n;
+}
+
+/* bytes_word over tree_bytes(b), zero-padded past the end. */
+static uint64_t loft_rx_esc_word(const uint8_t *b, size_t len, uint32_t word) {
+    uint64_t out = 0;
+    size_t want = (size_t) word * 8, at = 0;
+    int got = 0;
+    for (size_t i = 0; i < len && got < 8; i++) {
+        uint8_t e[2] = { b[i], 0 };
+        int n = 1;
+        if (b[i] < 2) {
+            e[0] = 1;
+            e[1] = (uint8_t) (b[i] + 1);
+            n = 2;
+        }
+        for (int j = 0; j < n; j++, at++) {
+            if (at >= want && got < 8) {
+                out = out << 8 | e[j];
+                got++;
+            }
+        }
+    }
+    while (got++ < 8) out <<= 8;
+    return out;
+}
+
+/* The bits a text key files as, and whether it must be read escaped: a key holding no byte
+ * below 2 reads as it is — nearly every one. */
+static void loft_rx_text_bits(loft_rx_key *k, int esc) {
+    size_t n = esc ? loft_rx_esc_len(k->bytes, k->len) : k->len;
+    k->esc = n != k->len;
+    k->bits = (uint32_t) n * 8;
+}
+
 static uint64_t loft_rx_word(const loft_rx_key *k, uint32_t w) {
-    if (k->text) return loft_rx_bytes_word(k->bytes, k->len, w);
+    if (k->text) return k->esc ? loft_rx_esc_word(k->bytes, k->len, w) : loft_rx_bytes_word(k->bytes, k->len, w);
     return loft_rx_interleave(w, (uint32_t) k->nk, k->codes);
 }
 
@@ -220,6 +264,7 @@ static void loft_rx_corners(int nk, const int64_t *from, const int64_t *till, ui
 /* The walks over a store (loft_radix_walk.h, pasted next): a node's child read as it is. */
 #define LOFT_RXS loft_store_t
 #define LOFT_RXF(name) loft_rx_##name
+#define LOFT_RX_ESC(s) 1
 #define LOFT_RX_RD(s, r, o) loft_u32(s, r, o)
 #define LOFT_RX_BEGIN(s) ((void) (s))
 #define LOFT_RX_GUARD(s, n) 1

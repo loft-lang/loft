@@ -37,12 +37,15 @@ static int loft_pg_begin(loft_pg *r, loft_ref local, loft_str path, const loft_s
     }
     uint16_t known = loft_stores[local.store_nr].known;
     char err[1100];
+    loft_gate_paged = 1;
+    loft_gate_trie_v1 = 0;
 #ifdef LOFT_NET
     int ok = known == 0xFFFF || (url ? loft_net_gate(p, sc, 0, 0, 0) : loft_image_gate(p, sc, 0, 0));
 #else
     int ok = known == 0xFFFF || (!url && loft_image_gate(p, sc, 0, 0));
     if (url && !ok) loft_pg_refuse(p, "this build has no HTTP transport, so it cannot range-read it");
 #endif
+    loft_gate_paged = 0;
     if (ok && !loft_pg_open(r, p, err, sizeof err)) {
         loft_pg_refuse(p, "it cannot be opened as a paged source");
         ok = 0;
@@ -54,6 +57,7 @@ static int loft_pg_begin(loft_pg *r, loft_ref local, loft_str path, const loft_s
         ok = 0;
     }
     if (!ok) loft_pg_close(r);
+    else r->trie_v1 = loft_gate_trie_v1;
     free(p);
     return ok;
 }
@@ -151,7 +155,13 @@ static uint32_t loft_pg_trie_find(loft_pg *r, uint32_t root_rec, uint32_t root_p
     probe.text = 1;
     probe.bytes = (const uint8_t *) key.p;
     probe.len = key.len;
-    probe.bits = (uint32_t) key.len * 8;
+    /* A null key is filed in the slot ahead of the tree (`@FR-Col-Trie`); a token-1 image has
+     * none, and reads its keys raw. */
+    if (!r->trie_v1 && loft_rx_null_key(probe.bytes, probe.len)) {
+        uint32_t w = loft_pg_u32(r, t, LOFT_RX_SLOT);
+        return (w & LOFT_RX_SLOT_TAG) ? w & ~LOFT_RX_SLOT_TAG : 0;
+    }
+    loft_rx_text_bits(&probe, !r->trie_v1);
     return loft_prx_get(r, t, &probe);
 }
 

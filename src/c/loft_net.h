@@ -259,11 +259,14 @@ static int loft_image_load_url(loft_ref r, loft_str url, const char *sha, const 
     char err[1024];
     loft_bytes b;
     long recorded = -1;
+    loft_gate_trie_v1 = 0;
     int gate = sc && loft_stores[r.store_nr].known == sc->tp ? loft_net_gate(u, sc, who, &recorded, 1) : 1;
     if (gate == 0) {
         free(u);
         return 0;
     }
+    int trie_v1 = loft_gate_trie_v1;
+    loft_gate_trie_v1 = 0;
     if (!loft_fetch(u, &b, err, sizeof err)) {
         fprintf(stderr, sha ? "store loader: refusing %s — fetch failed: %s\n" : "store loader: %s — fetch failed: %s\n", u, err);
         free(u);
@@ -288,6 +291,7 @@ static int loft_image_load_url(loft_ref r, loft_str url, const char *sha, const 
     }
     int ok = loft_image_adopt(r, b.p, b.n, 1, sc, recorded, u, who);
     free(u);
+    if (ok && trie_v1) loft_trie_refile(sc->types, sc->tp, r.store_nr);
     if (ok && gate == 2) loft_rekey_image(sc, r);
     return ok;
 }

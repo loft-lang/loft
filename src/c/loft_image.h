@@ -559,6 +559,41 @@ static int loft_dump_old_order(const char *dump, const char *want) {
     }
 }
 
+/* placement::TRIE's tag, and the gate's two per-thread flags for a PAGED read (loft#2241): a
+ * paged loader asks (`loft_gate_paged`) whether an image whose only difference is a trie
+ * written under placement token 1 may be read as it was written, and is told so
+ * (`loft_gate_trie_v1`).  A whole load converts nothing here, so it refuses such an image. */
+#define LOFT_TRIE_TAG ",placement=2"
+static LOFT_TLS int loft_gate_paged, loft_gate_trie_v1;
+
+/* placement::trie_read_as_own: `dump` with each trie part of token 1 (rendered with no tag) given
+ * this build's tag — a row's layout part is its last tab-separated column.  malloc'd. */
+static char *loft_trie_read_as_own(const char *dump) {
+    size_t n = strlen(dump), lines = 1;
+    for (size_t i = 0; i < n; i++) lines += dump[i] == '\n';
+    char *out = (char *) malloc(n + lines * strlen(LOFT_TRIE_TAG) + 1);
+    if (!out) { fputs("loft: out of memory\n", stderr); abort(); }
+    size_t o = 0;
+    for (const char *line = dump; line;) {
+        const char *end = strchr(line, '\n');
+        size_t len = end ? (size_t) (end - line) : strlen(line);
+        memcpy(out + o, line, len);
+        o += len;
+        const char *tab = 0;
+        for (const char *q = line; q < line + len; q++) if (*q == '\t') tab = q;
+        int tagged = 0;
+        for (const char *q = tab ? tab + 1 : line + len; q + 11 <= line + len && !tagged; q++) tagged = strncmp(q, ",placement=", 11) == 0;
+        if (tab && strncmp(tab + 1, "trie<", 5) == 0 && line[len - 1] == '>' && !tagged) {
+            memcpy(out + o, LOFT_TRIE_TAG, strlen(LOFT_TRIE_TAG));
+            o += strlen(LOFT_TRIE_TAG);
+        }
+        if (end) out[o++] = '\n';
+        line = end ? end + 1 : 0;
+    }
+    out[o] = 0;
+    return out;
+}
+
 /* `classify` over a sidecar's TEXT (`verdict_for_sidecar_text`): its layout must be this
  * program's for the type, else the image is refused, saying why; `text` is consumed.  1 when it
  * may be read as it is; 2 when `convert` (a whole load) and it differs only by the key order
@@ -615,7 +650,21 @@ static int loft_image_gate_text(const char *path, char *text, const loft_sidecar
         return 0;
     }
     ok = hash == sc->hash && strcmp(dump, sc->dump) == 0;
-    if (!ok && convert && sc->rekey && loft_dump_old_order(dump, sc->dump)) ok = 2;
+    loft_gate_trie_v1 = 0;
+    /* A trie written under placement token 1 reads as this build's (loft#2241): a paged read
+     * reads it as written, a whole load converts it once it can walk the type (`sc->types`,
+     * loft_trie_refile).  The key-order verdict is asked of the dump with its tries read as
+     * this build's, so an image old in both ways converts in both. */
+    if (!ok && (loft_gate_paged || sc->types)) {
+        char *own = loft_trie_read_as_own(dump);
+        int trie_v1 = strcmp(own, dump) != 0;
+        if (trie_v1 && strcmp(own, sc->dump) == 0) ok = 1;
+        else if (convert && sc->rekey && loft_dump_old_order(own, sc->dump)) ok = 2;
+        loft_gate_trie_v1 = ok && trie_v1;
+        free(own);
+    } else if (!ok && convert && sc->rekey && loft_dump_old_order(dump, sc->dump)) {
+        ok = 2;
+    }
     if (!ok) loft_gate_refuse(who, path, "it was written with a different layout, and it cannot be converted to this program's");
     free(text);
     return ok;
@@ -717,63 +766,105 @@ static long loft_sidecar_slot(const char *text) {
 
 /* `stored_ref_slots`: every stored reference the `tp` at `at` reaches, through its fields,
  * variants, child records and the elements of its collections. */
-typedef struct { loft_ref *p; size_t n, cap; } loft_refs;
+typedef struct { loft_ref *p; size_t n, cap; uint16_t *tp; } loft_refs;
 
-static void loft_refs_push(loft_refs *o, loft_ref r) {
+/* `tp` the slot's type, kept beside it once a walk asks for one (`loft_refs_typed`). */
+static void loft_refs_push_tp(loft_refs *o, loft_ref r, uint16_t tp) {
     if (o->n == o->cap) {
         o->cap = o->cap ? o->cap * 2 : 16;
         o->p = (loft_ref *) realloc(o->p, o->cap * sizeof *o->p);
         if (!o->p) { fputs("loft: out of memory\n", stderr); abort(); }
+        if (o->tp) {
+            o->tp = (uint16_t *) realloc(o->tp, o->cap * sizeof *o->tp);
+            if (!o->tp) { fputs("loft: out of memory\n", stderr); abort(); }
+        }
     }
+    if (o->tp) o->tp[o->n] = tp;
     o->p[o->n++] = r;
 }
 
-static void loft_ref_slots(const loft_tdesc *T, uint16_t tp, loft_ref at, loft_refs *out, int depth) {
+static void loft_refs_push(loft_refs *o, loft_ref r) { loft_refs_push_tp(o, r, 0xFFFF); }
+
+/* The slots of kind `want` the `tp` at `at` reaches: its stored references (LOFT_T_DBREF), or
+ * its tries (LOFT_T_TRIE, each pushed before its own elements are walked). */
+static void loft_kind_slots(const loft_tdesc *T, uint16_t tp, loft_ref at, loft_refs *out, int depth, int want) {
     const loft_tdesc *d = &T[tp];
     if (depth > 64 || at.rec == 0) return;
     loft_store_t *s = loft_store_of(at);
     switch (d->kind) {
-    case LOFT_T_DBREF: loft_refs_push(out, at); return;
+    case LOFT_T_DBREF:
+        if (want == LOFT_T_DBREF) loft_refs_push(out, at);
+        return;
     case LOFT_T_STRUCT:
-        for (uint16_t i = 0; i < d->n; i++) loft_ref_slots(T, d->fields[i].type, loft_field(at, d->fields[i].pos), out, depth + 1);
+        for (uint16_t i = 0; i < d->n; i++) loft_kind_slots(T, d->fields[i].type, loft_field(at, d->fields[i].pos), out, depth + 1, want);
         return;
     case LOFT_T_ENUM: {
         int e = (int) *loft_at(s, at.rec, at.pos) - 1;
-        if (e >= 0 && e < d->n && d->variants[e] != 0xFFFF) loft_ref_slots(T, d->variants[e], at, out, depth + 1);
+        if (e >= 0 && e < d->n && d->variants[e] != 0xFFFF) loft_kind_slots(T, d->variants[e], at, out, depth + 1, want);
         return;
     }
     default: break;
     }
     uint32_t cur = loft_u32(s, at.rec, at.pos);
     if (cur == 0 || cur == 0xFFFFFFFFu) return;
+    if (d->kind == want) loft_refs_push_tp(out, at, tp);
     if (d->kind == LOFT_T_CHILD) {
         loft_ref c = { at.store_nr, cur, 8 };
-        loft_ref_slots(T, d->elem, c, out, depth + 1);
+        loft_kind_slots(T, d->elem, c, out, depth + 1, want);
     } else if (d->kind == LOFT_T_VECTOR) {
         uint32_t len = loft_u32(s, cur, 4), size = T[d->elem].size;
         for (uint32_t i = 0; i < len; i++) {
             loft_ref e = { at.store_nr, cur, 8 + i * size };
-            loft_ref_slots(T, d->elem, e, out, depth + 1);
+            loft_kind_slots(T, d->elem, e, out, depth + 1, want);
         }
     } else if (d->kind == LOFT_T_ORDERED) {
         uint32_t len = loft_u32(s, cur, 4);
         for (uint32_t i = 0; i < len; i++) {
             loft_ref e = { at.store_nr, loft_u32(loft_store_of(at), cur, 8 + 4 * i), 8 };
-            loft_ref_slots(T, d->elem, e, out, depth + 1);
+            loft_kind_slots(T, d->elem, e, out, depth + 1, want);
         }
     } else if (d->kind == LOFT_T_HASH) {
         uint32_t n = 0;
         loft_hent *all = loft_h_entries_of(at, &n);
-        for (uint32_t i = 0; i < n; i++) loft_ref_slots(T, d->elem, all[i].e, out, depth + 1);
+        for (uint32_t i = 0; i < n; i++) loft_kind_slots(T, d->elem, all[i].e, out, depth + 1, want);
         free(all);
     } else if (d->kind == LOFT_T_INDEX || d->kind == LOFT_T_RADIX || d->kind == LOFT_T_TRIE) {
         uint32_t n = 0, *ids = d->kind == LOFT_T_INDEX ? loft_bt_records(at, &n) : loft_rx_records(at, &n);
         for (uint32_t i = 0; i < n; i++) {
             loft_ref e = { at.store_nr, ids[i], 8 };
-            loft_ref_slots(T, d->elem, e, out, depth + 1);
+            loft_kind_slots(T, d->elem, e, out, depth + 1, want);
         }
         free(ids);
     }
+}
+
+static void loft_ref_slots(const loft_tdesc *T, uint16_t tp, loft_ref at, loft_refs *out, int depth) {
+    loft_kind_slots(T, tp, at, out, depth, LOFT_T_DBREF);
+}
+
+/* loft#2241 — a whole load of an image whose tries were written under placement token 1 files
+ * each trie's records again, in the walk's order: a key with a 0x00/0x01 byte sits where the
+ * escape would not look, and an old null key goes to the slot.  The walk is key-free and an old
+ * tree's slot word carries no tag, so the old tree reads as one with no null record. */
+static void loft_trie_refile(const loft_tdesc *T, uint16_t tp, uint16_t nr) {
+    loft_ref root = { nr, LOFT_ST_PRIMARY, 8 };
+    loft_refs tries = { 0, 0, 0, 0 };
+    tries.tp = (uint16_t *) malloc(16 * sizeof *tries.tp);
+    if (!tries.tp) { fputs("loft: out of memory\n", stderr); abort(); }
+    tries.cap = 0;
+    loft_kind_slots(T, tp, root, &tries, 0, LOFT_T_TRIE);
+    loft_store_t *s = &loft_stores[nr];
+    for (size_t i = 0; i < tries.n; i++) {
+        loft_ref c = tries.p[i];
+        const loft_tdesc *d = &T[tries.tp[i]];
+        uint32_t n = 0, *recs = loft_rx_records(c, &n), old = loft_u32(s, c.rec, c.pos);
+        loft_set_u32(s, c.rec, c.pos, 0);
+        for (uint32_t k = 0; k < n; k++) loft_rx_add(c, recs[k], d->keys, d->nk, 1);
+        loft_st_delete(s, old);
+        free(recs);
+    }
+    free(tries.p);
+    free(tries.tp);
 }
 
 /* `rebase_stored_refs`: the image now in slot `nr` names the slot it was written from
@@ -782,7 +873,7 @@ static void loft_ref_slots(const loft_tdesc *T, uint16_t tp, loft_ref at, loft_r
  * references a sidecar recording no slot cannot tell apart. */
 static int loft_rebase_refs(const loft_sidecar *sc, uint16_t nr, long recorded, const char **why) {
     loft_ref root = { nr, LOFT_ST_PRIMARY, 8 };
-    loft_refs all = { 0, 0, 0 };
+    loft_refs all = { 0, 0, 0, 0 };
     loft_ref_slots(sc->types, sc->tp, root, &all, 0);
     loft_store_t *s = &loft_stores[nr];
     int ok = 1;
@@ -828,11 +919,14 @@ static int loft_image_load(loft_ref r, loft_str path, const loft_sidecar *sc, in
     const char *who = untrusted ? "store_load_untrusted" : "store_load";
     if (r.store_nr == 0xFFFF || r.store_nr >= loft_nstores || loft_path_refused(path)) return 0;
     char *p = loft_cpath(path, 0);
+    loft_gate_trie_v1 = 0;
     int gate = sc && loft_stores[r.store_nr].known == sc->tp ? loft_image_gate(p, sc, who, 1) : 1;
     if (p[0] == 0 || gate == 0) {
         free(p);
         return 0;
     }
+    int trie_v1 = loft_gate_trie_v1;
+    loft_gate_trie_v1 = 0;
     FILE *f = fopen(p, "rb");
     free(p);
     if (!f) return 0;
@@ -865,6 +959,7 @@ static int loft_image_load(loft_ref r, loft_str path, const loft_sidecar *sc, in
     char *what = loft_cstr_own(path);
     int ok = loft_image_adopt(r, bytes, n, untrusted, sc, recorded, what, untrusted ? "store_load_untrusted" : "store_load");
     free(what);
+    if (ok && trie_v1) loft_trie_refile(sc->types, sc->tp, r.store_nr);
     if (ok && gate == 2) loft_rekey_image(sc, r);
     return ok;
 }

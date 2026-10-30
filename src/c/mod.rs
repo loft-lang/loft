@@ -581,6 +581,42 @@ impl<'a> Cx<'a> {
         walk(self.stores, tp, &mut Vec::new())
     }
 
+    /// Does `tp` reach a `trie`?  A whole load of an image whose tries an older placement wrote
+    /// files them again by a walk of the type (loft#2241, `loft_trie_refile`), so such a type
+    /// is described as one holding references is.
+    pub(crate) fn holds_trie(&self, tp: u16) -> bool {
+        use crate::database::Parts;
+        fn walk(s: &Stores, tp: u16, seen: &mut Vec<u16>) -> bool {
+            if seen.contains(&tp) || usize::from(tp) >= s.types.len() {
+                return false;
+            }
+            seen.push(tp);
+            match &s.types[tp as usize].parts {
+                Parts::Trie(..) => true,
+                Parts::Struct(f) | Parts::EnumValue(_, f) => {
+                    f.iter().any(|f| walk(s, f.content, seen))
+                }
+                Parts::Enum(v) => v.iter().any(|(t, _)| *t != u16::MAX && walk(s, *t, seen)),
+                Parts::Vector(c)
+                | Parts::Sorted(c, _)
+                | Parts::Hash(c, _)
+                | Parts::Index(c, _)
+                | Parts::Ordered(c, _)
+                | Parts::Array(c)
+                | Parts::ChildRec(c)
+                | Parts::Radix(c, _) => walk(s, *c, seen),
+                _ => false,
+            }
+        }
+        walk(self.stores, tp, &mut Vec::new())
+    }
+
+    /// Does a load of a store minted as `tp` walk its type: to re-point its references, or to
+    /// file an older placement's tries again?
+    pub(crate) fn load_walks_type(&self, tp: u16) -> bool {
+        self.holds_stored_refs(tp) || self.holds_trie(tp)
+    }
+
     /// The C name of the sidecar a `store_persist_copy` of a store minted as `tp` writes.
     pub(crate) fn sidecar_of(&self, tp: u16) -> String {
         self.sidecars.borrow_mut().insert(tp);
@@ -657,7 +693,7 @@ impl<'a> Cx<'a> {
                 "static const loft_sidecar loft_sidecar{tp} = {{ {tp}, loft_scb{tp}, loft_sca{tp}, UINT64_C({}), loft_scd{tp}, {}, {}, {} }};",
                 id.layout_hash,
                 body::c_string(&self.stores.release().oldest),
-                if self.holds_stored_refs(tp) {
+                if self.load_walks_type(tp) {
                     "loft_types"
                 } else {
                     "0"
