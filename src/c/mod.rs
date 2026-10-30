@@ -3120,26 +3120,7 @@ fn library_native(
         };
         ffi_args.insert(0, format!("loft_ffi_store_of({store})"));
         if owned_answer {
-            // loft#2239 — a store a running `par` shares is never grown: the call works in a
-            // copy (`loft_ffi_call_store`), and every argument that lived in it is renamed to
-            // the copy BEFORE the arguments are read (`prep`) and the foreign copies claimed.
-            let (pn, cs) = if post.is_empty() {
-                (store.clone(), "loft_ffi_call_store(pn)")
-            } else {
-                (
-                    "(uint16_t) pin".to_string(),
-                    "pminted ? pn : loft_ffi_call_store(pn)",
-                )
-            };
-            let _ = writeln!(select, "    uint16_t pn = {pn};\n    uint16_t cs = {cs};");
-            for (j, a) in def.attributes().iter().enumerate() {
-                if a.typedef.base().heap_dep().is_some() {
-                    let _ = writeln!(select, "    if (a{j}.store_nr == pn) a{j}.store_nr = cs;");
-                }
-            }
-            if !post.is_empty() {
-                let _ = writeln!(select, "    pin = cs;");
-            }
+            call_store_copy(def, &store, post.is_empty(), &mut select);
             // After the copies: their records are `post`'s to delete, never the log's.
             let only = if post.is_empty() {
                 ""
@@ -3202,6 +3183,31 @@ fn library_native(
     };
     library_answer(&mut body, def, ret, ffi_ret, &call, &post, answer_store);
     Ok((sig, body))
+}
+
+/// loft#2239 — a store a running `par` shares is never grown: a library call that builds its
+/// answer in `store` works in a copy of it (`loft_ffi_call_store`), and every argument that
+/// lived there is renamed to the copy BEFORE the arguments are read and the foreign copies
+/// claimed.  With foreign vector arguments (`!plain`) `store` is the `pin` chosen at run time,
+/// and a `pin` minted for the call is its own already.  Writes `pn` and `cs` into `select`.
+fn call_store_copy(def: &crate::data::Definition, store: &str, plain: bool, select: &mut String) {
+    let (pn, cs) = if plain {
+        (store.to_string(), "loft_ffi_call_store(pn)")
+    } else {
+        (
+            "(uint16_t) pin".to_string(),
+            "pminted ? pn : loft_ffi_call_store(pn)",
+        )
+    };
+    let _ = writeln!(select, "    uint16_t pn = {pn};\n    uint16_t cs = {cs};");
+    for (j, a) in def.attributes().iter().enumerate() {
+        if a.typedef.base().heap_dep().is_some() {
+            let _ = writeln!(select, "    if (a{j}.store_nr == pn) a{j}.store_nr = cs;");
+        }
+    }
+    if !plain {
+        let _ = writeln!(select, "    pin = cs;");
+    }
 }
 
 /// Where a library native's heap answer is built, which decides what follows the call.

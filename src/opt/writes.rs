@@ -754,22 +754,22 @@ pub(crate) fn exit_tail_frees(
     let Some((last, rest)) = ops.split_last() else {
         return out;
     };
-    let Value::Return(x) = last.unspan() else {
+    let Value::Return(answer) = last.unspan() else {
         return out;
     };
     if !matches!(
-        x.unspan(),
+        answer.unspan(),
         Value::Var(_) | Value::Null | Value::Int(_) | Value::Long(_) | Value::Boolean(_)
     ) {
         return out;
     }
     for op in rest.iter().rev() {
         let n = op.unspan();
-        let Value::Call(d, args) = n else { break };
-        if (*d as usize) >= data.definitions.len() {
+        let Value::Call(op_nr, args) = n else { break };
+        if (*op_nr as usize) >= data.definitions.len() {
             break;
         }
-        let name = data.def(*d).name();
+        let name = data.def(*op_nr).name();
         if !name.starts_with("OpFree") {
             break;
         }
@@ -891,6 +891,10 @@ pub(crate) fn local_stack_ref(
 // owned buffers; a struct would put a name between each and the five call sites without
 // removing anything.
 #[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one dispatch over the statement kinds the hoist admits; each arm is a clause of @FR-R-InPlace"
+)]
 pub(crate) fn blocks_header_hoist(
     node: &Value,
     data: &Data,
