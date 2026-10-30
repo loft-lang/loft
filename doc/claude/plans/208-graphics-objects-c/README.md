@@ -14,7 +14,8 @@ Issue: [@PLN208](https://github.com/loft-lang/plans/issues/208).
 |---|---|
 | G0 | Done — a `[c] shim` and `[native] crate` coexist; the shim answers on all three backends (a scratch probe, not committed) |
 | G1 | Done — `Font` in loft (`31d41be`), its metrics pinned to fontdue's (`392e212`); 1532 of 1536 comparison cells agree, the four others a symbol font where fontdue misread its Mac Roman table |
-| G2, G3 | Next — the suite is 108/108 on the interpreter and `--native`, 106/108 on the C, the two left being `save_png` and the event queue |
+| G2 | Done — `save_png` through imaging (`16818a4`); six canvases identical to 0.9's files.  It surfaced an imaging defect, fixed as imaging 0.5.1: lodepng's `auto_convert` wrote few-colour images as palettes |
+| G3 | Done — `enum Event` with public variant fields (`16818a4`).  The suite is 108/108 on the interpreter, `--native` and the C; G1–G3 and imaging 0.5.1 go to main together in loft-libs-graphics#67 |
 | G4–G11 | Open |
 
 ## Goal
