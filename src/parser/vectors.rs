@@ -7679,7 +7679,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 || matches!(src.unspan(), Value::Block(bl) if bl.name == "block"
                     && Self::arm_yields_text(&src));
             let fill = if arms && !src.reads_var(w) {
-                Self::push_text_arms_into(&mut src, w, self.data.def_nr("OpCreateStack"));
+                Self::push_text_arms_into(&mut src, w, &self.data);
                 src
             } else {
                 v_set(w, src)
