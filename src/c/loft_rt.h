@@ -5593,12 +5593,27 @@ static int loft_eq_vector(loft_ref a, loft_ref b, uint32_t size, loft_eq_fn f) {
     return 1;
 }
 
+/* `@FR-L-OutOfLine` (eq_content's `EqState`): the child pairs a comparison has met and not
+ * yet compared; `loft_eq_content` compares them as a loop, so a chain of any length takes no
+ * stack per link. */
+typedef struct { loft_ref a, b; loft_eq_fn f; } loft_eq_job;
+static LOFT_TLS loft_eq_job *loft_eq_jobs = 0;
+static LOFT_TLS size_t loft_eq_njobs = 0, loft_eq_jobs_cap = 0;
+
 static int loft_eq_child(loft_ref a, loft_ref b, loft_eq_fn f) {
     int s = loft_eq_start(a, b);
     if (s >= 0) return s;
     loft_ref ca = { a.store_nr, loft_u32(loft_store_of(a), a.rec, a.pos), 8 };
     loft_ref cb = { b.store_nr, loft_u32(loft_store_of(b), b.rec, b.pos), 8 };
-    return f(ca, cb);
+    if (ca.rec == 0 || cb.rec == 0) return ca.rec == 0 && cb.rec == 0;
+    if (loft_eq_njobs == loft_eq_jobs_cap) {
+        loft_eq_jobs_cap = loft_eq_jobs_cap ? loft_eq_jobs_cap * 2 : 64;
+        loft_eq_jobs = (loft_eq_job *) realloc(loft_eq_jobs, loft_eq_jobs_cap * sizeof *loft_eq_jobs);
+        if (!loft_eq_jobs) { fputs("loft: out of memory\n", stderr); abort(); }
+    }
+    loft_eq_job j = { ca, cb, f };
+    loft_eq_jobs[loft_eq_njobs++] = j;
+    return 1;
 }
 
 /* The record pairs under comparison: a pair met again is equal, which is where a cycle ends. */
@@ -5624,10 +5639,18 @@ static int loft_eq_reference(loft_ref fa, loft_ref fb, uint16_t target, loft_eq_
     return f(ra, rb);
 }
 
-/* OpEqContent: one comparison, with a list of pairs of its own. */
+/* OpEqContent: one comparison, with a list of pairs of its own, its child pairs compared as a
+ * loop (`loft_eq_child`). */
 static int loft_eq_content(loft_eq_fn f, loft_ref a, loft_ref b) {
     loft_eq_seen_n = 0;
-    return f(a, b);
+    loft_eq_njobs = 0;
+    int r = f(a, b);
+    while (r && loft_eq_njobs > 0) {
+        loft_eq_job j = loft_eq_jobs[--loft_eq_njobs];
+        r = j.f(j.a, j.b);
+    }
+    loft_eq_njobs = 0;
+    return r;
 }
 
 /* ── Kernels and conversions the stdlib calls natively ─────────────────────────────────── */

@@ -666,79 +666,247 @@ static int loft_pr_array(loft_pw *w, loft_jp *p, loft_werrs *errs, uint16_t tp, 
     return 1;
 }
 
-/* `read_struct`: the `{` is at the cursor. */
-static int loft_pr_struct(loft_pw *w, loft_jp *p, loft_werrs *errs, uint16_t tp, uint16_t rec_tp, uint16_t field,
-                          loft_ref to, loft_jfault *f) {
+/* `read_struct`: the `{` is at the cursor.
+ *
+ * `@FR-F-Render-Child`: a member that is an out-of-line CHILD — a record written `{…}`, or an
+ * enum written `{"Tag":{…}}` — is read by this same loop rather than a recursive call: the frame
+ * waits while the child's frame is read, so a chain of children takes no stack per link
+ * (D-fmt-7).  Every other member reads through `loft_pr_into`, as before. */
+typedef struct {
+    uint16_t tp, rec_tp, field;
+    loft_ref to;
+    uint32_t fld, rec;
     size_t start;
-    int more = loft_jp_open_object(p, &start);
+    uint8_t found_local[64];
+    uint8_t *found_heap;   /* a record of more than 64 fields; a frame moves, so no self-pointer */
+    uint16_t next;
+    int more, wrap;
+    size_t wrap_start;   /* an enum child's `{"Tag": … }` wrapper, closed after the payload */
+    size_t wrap_at;      /* where that wrapper's value starts: a misfit is reported there */
+    /* the member a child is being read for */
+    loft_text name;
+    size_t seen;
+    uint16_t hit;
+} loft_pr_frame;
+
+static void loft_pr_frame_open(loft_pw *w, loft_pr_frame *fr, loft_jp *p, uint16_t tp, uint16_t rec_tp,
+                               uint16_t field, loft_ref to, int wrap) {
+    memset(fr, 0, sizeof *fr);
+    fr->tp = tp;
+    fr->rec_tp = rec_tp;
+    fr->field = field;
+    fr->to = to;
+    fr->wrap = wrap;
+    fr->hit = 0xFFFF;
+    fr->more = loft_jp_open_object(p, &fr->start);
     if (loft_pw_unfilled_record(w, rec_tp, field)) loft_pw_absent_fields(w, tp, to, 0);
     const loft_ptype *t = &w->P[tp];
-    uint32_t fld = to.rec == 0 ? 0 : to.pos;
-    uint32_t rec = to.rec == 0 ? loft_claim(loft_store_of(to), (t->size + 7u) / 8u) : to.rec;
-    /* Which fields the text gave: on the stack for an ordinary record. */
-    uint8_t found_local[64];
-    uint8_t *found = found_local;
-    if (t->n > sizeof found_local) {
-        found = (uint8_t *) calloc(t->n, 1);
-        if (!found) { fputs("loft: out of memory\n", stderr); abort(); }
-    } else {
-        memset(found_local, 0, sizeof found_local);
+    fr->fld = to.rec == 0 ? 0 : to.pos;
+    fr->rec = to.rec == 0 ? loft_claim(loft_store_of(to), (t->size + 7u) / 8u) : to.rec;
+    if (t->n > sizeof fr->found_local) {
+        fr->found_heap = (uint8_t *) calloc(t->n, 1);
+        if (!fr->found_heap) { fputs("loft: out of memory\n", stderr); abort(); }
     }
-    /* Members usually come in declaration order (`to_json` writes them so): the search for a
-     * name starts at the field after the last one found. */
-    uint16_t next = 0;
+}
+
+static uint8_t *loft_pr_found(loft_pr_frame *fr) {
+    return fr->found_heap ? fr->found_heap : fr->found_local;
+}
+
+static void loft_pr_frame_close(loft_pr_frame *fr) {
+    free(fr->found_heap);
+    loft_text_free(&fr->name);
+}
+
+/* A fresh child record in the out-of-line field `slot`, the old one released (`new_child_rec`). */
+static loft_ref loft_pr_child(loft_pw *w, uint16_t elem, loft_ref slot) {
+    const loft_tdesc *T = loft_parse_types();
+    uint32_t old = loft_u32(loft_store_of(slot), slot.rec, slot.pos);
+    if (old != 0) {
+        loft_ref o = { slot.store_nr, old, 8 };
+        loft_remove_claims(T, elem, o);
+        loft_st_delete(loft_store_of(slot), old);
+    }
+    uint32_t nr = loft_claim(loft_store_of(slot), 1 + (w->P[elem].size + 7u) / 8u);
+    loft_ref ch = { slot.store_nr, nr, 8 };
+    loft_set_u32(loft_store_of(slot), slot.rec, slot.pos, nr);
+    loft_pw_default(w, elem, 0, 0, ch);
+    return ch;
+}
+
+static int loft_pr_struct(loft_pw *w, loft_jp *p, loft_werrs *errs, uint16_t tp, uint16_t rec_tp, uint16_t field,
+                          loft_ref to, loft_jfault *f) {
+    size_t cap = 8, depth = 1;
+    loft_pr_frame *st = (loft_pr_frame *) malloc(cap * sizeof *st);
+    if (!st) { fputs("loft: out of memory\n", stderr); abort(); }
+    loft_pr_frame_open(w, &st[0], p, tp, rec_tp, field, to, 0);
     int ok = 1;
-    while (more) {
+    while (ok && depth > 0) {
+        loft_pr_frame *fr = &st[depth - 1];
+        const loft_ptype *t = &w->P[fr->tp];
+        if (fr->hit != 0xFFFF) {
+            /* A child's frame has closed: this member's bookkeeping, then the next member. */
+            int misfit = 0;
+            for (size_t k = fr->seen; k < errs->n; k++) {
+                if (errs->e[k].n == 0) misfit = 1;
+                loft_werr_front(&errs->e[k], fr->name.p, fr->name.len);
+            }
+            if (!misfit) loft_pr_found(fr)[fr->hit] = 1;
+            fr->hit = 0xFFFF;
+            loft_text_free(&fr->name);
+            int r = loft_jp_next_member(p, fr->start, f);
+            if (r < 0) { ok = 0; break; }
+            fr->more = r;
+            continue;
+        }
+        if (!fr->more) {
+            loft_ref base = fr->to;
+            base.rec = fr->rec;
+            base.pos = fr->fld;
+            loft_pw_absent_fields(w, fr->tp, base, loft_pr_found(fr));
+            int wrap = fr->wrap;
+            size_t wrap_start = fr->wrap_start, wrap_at = fr->wrap_at;
+            loft_pr_frame_close(fr);
+            depth--;
+            /* An enum child's `{"Tag": … }` wrapper closes after its payload; a second member
+             * names no single variant — a misfit at the value, the rest read past. */
+            if (wrap) {
+                int r = loft_jp_next_member(p, wrap_start, f);
+                if (r > 0) loft_werrs_push(errs, wrap_at);
+                while (r > 0) {
+                    loft_text k = { 0, 0, 0 };
+                    size_t kat, vat;
+                    loft_jv skip;
+                    memset(&skip, 0, sizeof skip);
+                    int okm = loft_jp_member(p, &k, &kat, &vat, f) && loft_jp_value(p, vat, &skip, f);
+                    loft_text_free(&k);
+                    loft_jv_free(&skip);
+                    r = okm ? loft_jp_next_member(p, wrap_start, f) : -1;
+                }
+                if (r < 0) ok = 0;
+            }
+            continue;
+        }
         loft_text name = { 0, 0, 0 };
         size_t key_at, value_at;
         if (!loft_jp_member(p, &name, &key_at, &value_at, f)) { loft_text_free(&name); ok = 0; break; }
         uint16_t hit = 0xFFFF;
         for (uint16_t j = 0; j < t->n; j++) {
-            uint16_t k = (uint16_t) (next + j < t->n ? next + j : next + j - t->n);
+            uint16_t k = (uint16_t) (fr->next + j < t->n ? fr->next + j : fr->next + j - t->n);
             if (strlen(t->fields[k].name) == name.len && memcmp(t->fields[k].name, name.p, name.len) == 0) {
                 hit = k;
-                next = (uint16_t) (k + 1 < t->n ? k + 1 : 0);
+                fr->next = (uint16_t) (k + 1 < t->n ? k + 1 : 0);
                 break;
             }
         }
-        if (hit != 0xFFFF) {
-            const loft_pfield *fd = &t->fields[hit];
-            loft_ref target = to;
-            if (!loft_p_coll(w, fd->content)) {
-                target.rec = rec;
-                target.pos = fld + fd->pos;
-            }
-            size_t seen = errs->n;
-            if (!loft_pr_into(w, p, errs, value_at, fd->content, tp, hit, target, key_at, f)) {
-                loft_text_free(&name);
-                ok = 0;
-                break;
-            }
-            int misfit = 0;
-            for (size_t k = seen; k < errs->n; k++) {
-                if (errs->e[k].n == 0) misfit = 1;
-                loft_werr_front(&errs->e[k], name.p, name.len);
-            }
-            if (!misfit) found[hit] = 1;
-        } else {
+        if (hit == 0xFFFF) {
             loft_jv skip;
             memset(&skip, 0, sizeof skip);
             int r = loft_jp_value(p, value_at, &skip, f);
             loft_jv_free(&skip);
-            if (!r) { loft_text_free(&name); ok = 0; break; }
+            loft_text_free(&name);
+            if (!r) { ok = 0; break; }
+            r = loft_jp_next_member(p, fr->start, f);
+            if (r < 0) { ok = 0; break; }
+            fr->more = r;
+            continue;
         }
+        const loft_pfield *fd = &t->fields[hit];
+        loft_ref target = fr->to;
+        if (!loft_p_coll(w, fd->content)) {
+            target.rec = fr->rec;
+            target.pos = fr->fld + fd->pos;
+        }
+        size_t seen = errs->n;
+        const loft_ptype *ct = &w->P[fd->content];
+        if (ct->kind == LOFT_P_CHILD && ct->elem != 0xFFFF && loft_jp_opening(p) == LOFT_OPEN_OBJECT) {
+            const loft_ptype *et = &w->P[ct->elem];
+            if (et->kind == LOFT_P_RECORD
+                || (et->kind == LOFT_P_ENUM && et->strict_enum && !et->some && !loft_p_is_json(w, ct->elem))) {
+                loft_ref ch = loft_pr_child(w, ct->elem, target);
+                uint16_t body_tp = ct->elem;
+                int wrap = 0;
+                size_t wrap_start = 0;
+                if (et->kind == LOFT_P_ENUM) {
+                    /* `{"Tag":{…}}`: the tag picks the variant, whose payload is a record. */
+                    size_t wstart, wkey, wat;
+                    loft_text tag = { 0, 0, 0 };
+                    int wmore = loft_jp_open_object(p, &wstart);
+                    if (!wmore || !loft_jp_member(p, &tag, &wkey, &wat, f)) { loft_text_free(&tag); loft_text_free(&name); ok = 0; break; }
+                    uint8_t val = 0;
+                    for (uint16_t k = 0; k < et->n; k++)
+                        if (strlen(et->vnames[k + 1]) == tag.len && memcmp(et->vnames[k + 1], tag.p, tag.len) == 0) {
+                            val = (uint8_t) (k + 1);
+                            body_tp = et->vtypes[k];
+                            break;
+                        }
+                    loft_text_free(&tag);
+                    if (val == 0 || body_tp == 0xFFFF || w->P[body_tp].kind != LOFT_P_RECORD
+                        || loft_jp_opening(p) != LOFT_OPEN_OBJECT) {
+                        /* No chain to follow: an unknown tag is the null code (`walk_parsed_into`
+                         * on an element), a payload that is no record reads through the walk. */
+                        *loft_at(loft_store_of(ch), ch.rec, ch.pos) = val;
+                        loft_jv pv;
+                        memset(&pv, 0, sizeof pv);
+                        int r = loft_jp_value(p, wat, &pv, f);
+                        if (r && val != 0 && body_tp != 0xFFFF && w->P[body_tp].size > 1) {
+                            loft_pw_absent_fields(w, body_tp, ch, 0);
+                            loft_pw_walk(w, &pv, body_tp, 0xFFFF, 0xFFFF, ch, key_at, errs);
+                        }
+                        loft_jv_free(&pv);
+                        /* the wrapper closes after its one member */
+                        if (r) r = loft_jp_next_member(p, wstart, f) == 0;
+                        if (!r) { loft_text_free(&name); ok = 0; break; }
+                        int misfit = 0;
+                        for (size_t k = seen; k < errs->n; k++) {
+                            if (errs->e[k].n == 0) misfit = 1;
+                            loft_werr_front(&errs->e[k], name.p, name.len);
+                        }
+                        if (!misfit) loft_pr_found(fr)[hit] = 1;
+                        loft_text_free(&name);
+                        int nx = loft_jp_next_member(p, fr->start, f);
+                        if (nx < 0) { ok = 0; break; }
+                        fr->more = nx;
+                        continue;
+                    }
+                    *loft_at(loft_store_of(ch), ch.rec, ch.pos) = val;
+                    loft_pw_absent_fields(w, body_tp, ch, 0);
+                    wrap = 1;
+                    wrap_start = wstart;
+                }
+                fr->name = name;
+                fr->seen = seen;
+                fr->hit = hit;
+                if (depth == cap) {
+                    cap *= 2;
+                    st = (loft_pr_frame *) realloc(st, cap * sizeof *st);
+                    if (!st) { fputs("loft: out of memory\n", stderr); abort(); }
+                }
+                loft_pr_frame_open(w, &st[depth], p, body_tp, 0xFFFF, 0xFFFF, ch, wrap);
+                st[depth].wrap_start = wrap_start;
+                st[depth].wrap_at = key_at;
+                depth++;
+                continue;
+            }
+        }
+        if (!loft_pr_into(w, p, errs, value_at, fd->content, fr->tp, hit, target, key_at, f)) {
+            loft_text_free(&name);
+            ok = 0;
+            break;
+        }
+        int misfit = 0;
+        for (size_t k = seen; k < errs->n; k++) {
+            if (errs->e[k].n == 0) misfit = 1;
+            loft_werr_front(&errs->e[k], name.p, name.len);
+        }
+        if (!misfit) loft_pr_found(fr)[hit] = 1;
         loft_text_free(&name);
-        int r = loft_jp_next_member(p, start, f);
+        int r = loft_jp_next_member(p, fr->start, f);
         if (r < 0) { ok = 0; break; }
-        more = r;
+        fr->more = r;
     }
-    if (ok) {
-        loft_ref base = to;
-        base.rec = rec;
-        base.pos = fld;
-        loft_pw_absent_fields(w, tp, base, found);
-    }
-    if (found != found_local) free(found);
+    while (depth > 0) loft_pr_frame_close(&st[--depth]);
+    free(st);
     return ok;
 }
 
@@ -752,6 +920,84 @@ static int loft_pr_into(loft_pw *w, loft_jp *p, loft_werrs *errs, size_t value_a
     if ((t->kind == LOFT_P_VECTOR || t->kind == LOFT_P_KEYED) && open == LOFT_OPEN_ARRAY)
         return loft_pr_array(w, p, errs, tp, t->elem, rec_tp, field, to, at, f);
     if (record && open == LOFT_OPEN_OBJECT) return loft_pr_struct(w, p, errs, tp, rec_tp, field, to, f);
+    /* `@FR-F-Render-Child`: a struct-enum written `{"Tag":{…}}` streams too — the tag picks the
+     * variant and its payload reads through `loft_pr_struct`, so an enum whose variants hold the
+     * enum (a chain) takes no stack per link.  The walk's enum arm is the oracle. */
+    if (t->kind == LOFT_P_ENUM && t->strict_enum && !t->some && !loft_p_is_json(w, tp)
+        && open == LOFT_OPEN_OBJECT) {
+        size_t wstart, wkey, wat;
+        loft_text tag = { 0, 0, 0 };
+        if (!loft_jp_open_object(p, &wstart)) {
+            /* `{}` names no variant: a misfit, as the walk answers, in a well-formed document. */
+            loft_werrs_push(errs, at);
+            return 1;
+        }
+        if (!loft_jp_member(p, &tag, &wkey, &wat, f)) { loft_text_free(&tag); return 0; }
+        const char *name = tag.p ? tag.p : "";
+        size_t len = tag.len;
+        for (size_t i = len; i > 0; i--)
+            if (name[i - 1] == '.') { name += i; len -= i; break; }
+        uint8_t val = 0;
+        uint16_t vt = 0xFFFF;
+        if (!(len == 4 && memcmp(name, "null", 4) == 0))
+            for (uint16_t k = 0; k < t->n; k++)
+                if (strlen(t->vnames[k + 1]) == len && memcmp(t->vnames[k + 1], name, len) == 0) {
+                    val = (uint8_t) (k + 1);
+                    vt = t->vtypes[k];
+                    break;
+                }
+        int known = val != 0 || (len == 4 && memcmp(name, "null", 4) == 0);
+        loft_text_free(&tag);
+        int ok = 1;
+        if (!known && field != 0xFFFF && rec_tp != 0xFFFF) {
+            loft_pw_absent_at(w, tp, rec_tp, field, to);
+            loft_werrs_push(errs, at);
+            loft_jv skip;
+            memset(&skip, 0, sizeof skip);
+            ok = loft_jp_value(p, wat, &skip, f);
+            loft_jv_free(&skip);
+        } else {
+            *loft_at(loft_store_of(to), to.rec, to.pos) = val;
+            if (vt != 0xFFFF && w->P[vt].size > 1) {
+                loft_pw_absent_fields(w, vt, to, 0);
+                if (w->P[vt].kind == LOFT_P_RECORD && loft_jp_opening(p) == LOFT_OPEN_OBJECT) {
+                    ok = loft_pr_struct(w, p, errs, vt, rec_tp, field, to, f);
+                } else {
+                    loft_jv pv;
+                    memset(&pv, 0, sizeof pv);
+                    ok = loft_jp_value(p, wat, &pv, f);
+                    if (ok) loft_pw_walk(w, &pv, vt, rec_tp, field, to, at, errs);
+                    loft_jv_free(&pv);
+                }
+            } else {
+                loft_jv skip;
+                memset(&skip, 0, sizeof skip);
+                ok = loft_jp_value(p, wat, &skip, f);
+                loft_jv_free(&skip);
+            }
+        }
+        if (!ok) return 0;
+        int r = loft_jp_next_member(p, wstart, f);
+        if (r < 0) return 0;
+        if (r > 0) {
+            /* More than one member names no single variant: a misfit at the value, as the
+             * walk answers, the rest of the object read past. */
+            loft_werrs_push(errs, at);
+            while (r > 0) {
+                loft_text k = { 0, 0, 0 };
+                size_t kat, vat;
+                loft_jv skip;
+                memset(&skip, 0, sizeof skip);
+                int okm = loft_jp_member(p, &k, &kat, &vat, f) && loft_jp_value(p, vat, &skip, f);
+                loft_text_free(&k);
+                loft_jv_free(&skip);
+                if (!okm) return 0;
+                r = loft_jp_next_member(p, wstart, f);
+                if (r < 0) return 0;
+            }
+        }
+        return 1;
+    }
     /* A number into a numeric field: read straight into the slot through the writer the walk
      * would reach (`loft_pw_primitive`); the number reader sets only the kind and the value,
      * so the general value is neither cleared nor freed. */
