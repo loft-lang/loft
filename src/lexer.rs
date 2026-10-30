@@ -1263,6 +1263,33 @@ impl Lexer {
         &self.peek.position
     }
 
+    /// Does the lookahead token start exactly where the token before it ended — written
+    /// with no space between them?  `@FR-N-Present`'s postfix `e!` is that spelling, so a
+    /// `!x` that starts the next expression is never read as one.
+    #[must_use]
+    pub fn peek_glued(&self) -> bool {
+        self.prev_end.file == self.peek.position.file
+            && self.prev_end.line == self.peek.position.line
+            && self.prev_end.pos == self.peek.position.pos
+    }
+
+    /// The source text between two positions of ONE line of the current file, as written —
+    /// `None` when they span lines or the text is not at hand.  What a diagnostic or a
+    /// generated message quotes of the program.
+    #[must_use]
+    pub fn text_between(&self, from: &Position, to: &Position) -> Option<String> {
+        if from.file != to.file || from.line != to.line || from.pos > to.pos {
+            return None;
+        }
+        let src = self.source_text(from.file.as_str())?;
+        let line = src.lines().nth(from.line.checked_sub(1)? as usize)?;
+        let (a, b) = (
+            from.pos.checked_sub(1)? as usize,
+            to.pos.checked_sub(1)? as usize,
+        );
+        line.get(a..b).map(|t| t.trim().to_string())
+    }
+
     pub fn at(&self) -> (u32, u32) {
         (self.position.line, self.position.pos)
     }
