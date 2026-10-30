@@ -5290,15 +5290,18 @@ had (@PLN91 X22).  Switch `LOFT_NO_TAG_JUMP` (and `LOFT_NO_FUSE`).  Guard
 ### A reservation the append repeats is not emitted
 
 ```
-  (R-FirstClaim) an `OpPreAllocVector(v, n, size)` before a literal append of n <= 11
-                 elements to a plain local `v` is emitted as nothing: it claims a record
-                 only for an ABSENT vector, `max(n, 11)` elements wide, and does nothing
-                 to a vector that has one; the append's own first claim (`vector_append`,
-                 reached by `record_new` for every vector element kind) is the same 11
-                 elements.  Capacity is not observable — `len` reads the length, `size`
-                 multiplies it by the stride.  n > 11 keeps the op (it widens the
-                 first claim), and the IR keeps it in every case: it is the head and the
-                 stride native's append-group recognisers read.
+  (R-FirstClaim) an `OpPreAllocVector(v, n, size)` before a literal append to a plain
+                 local `v` is emitted as nothing when n is the append's own first claim,
+                 `grown_elems(1, size)` elements (11 of 8 bytes): the op claims a record
+                 only for an ABSENT vector, exactly n elements wide (Col-Capacity: a known
+                 count is reserved exactly), and does nothing to a vector that has one;
+                 the append's first claim (`vector_append`, reached by `record_new` for
+                 every vector element kind) is `grown_elems(1, size)` elements.  Any other
+                 n keeps the op, because it decides the first block: `[1, 2]` is a
+                 two-element record, where the append alone would claim eleven — the
+                 C backend, which keeps every reservation, lays the store out so.  The IR
+                 keeps it in every case: it is the head and the stride native's
+                 append-group recognisers read.
 ```
 
 **In words.** Applied by: interpreter generator (`generate_call`).  The same FACT native's

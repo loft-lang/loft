@@ -4544,15 +4544,18 @@ impl State {
             parameters.len(),
             stack.data.def(op).attributes().len(),
         );
-        // `@FR-R-FirstClaim` — the parser's reservation before a literal append of at most 11 elements claims
-        // exactly what the append's own first claim would (`vector_append` and
-        // `pre_alloc_vector` share the 11-element floor) and nothing once the vector has a
-        // record, so it is not emitted.  Over a plain variable only: reading one has no
-        // effect to keep.  `keys::prealloc_elide_enabled`.
+        // `@FR-R-FirstClaim` — the parser's reservation before a literal append is not emitted
+        // when it claims exactly what the append's own first claim would
+        // (`vector::grown_elems(1, size)` elements) and nothing once the vector has a record.
+        // Any other count is reserved exactly (`@FR-Col-Capacity`), so it decides the first
+        // block and stays.  Over a plain variable only: reading one has no effect to keep.
+        // `keys::prealloc_elide_enabled`.
         if stack.data.def(op).name() == "OpPreAllocVector"
             && crate::keys::prealloc_elide_enabled()
-            && let [Value::Var(_), count, _] = parameters
-            && matches!(count.unspan(), Value::Int(n) if (0..=11).contains(n))
+            && let [Value::Var(_), count, size] = parameters
+            && let (Value::Int(n), Value::Int(sz)) = (count.unspan(), size.unspan())
+            && let (Ok(n), Ok(sz)) = (u32::try_from(*n), u32::try_from(*sz))
+            && n == crate::vector::grown_elems(1, sz)
         {
             return Type::Void;
         }
