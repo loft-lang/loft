@@ -2843,8 +2843,11 @@ claims, copies and the frame's releases all belong to the store-built tree.  NOT
 (designed 2026-10-30).  Open in the design: the C representation of a transient vector of
 records (a stack array with a heap spill), how the twin is cut from the producer (every
 `OpNewRecord` / `OpSetText` / `OpAppendVector` into the result mapped to its struct form), and
-the decline list's proof on the sites — `(O-ViewField)`'s sites' half is the model.  Price
-first, by hand, on `read_value`.
+the decline list's proof on the sites — `(O-ViewField)`'s sites' half is the model.  Priced by
+hand on `read_value` (2026-10-30, the emitted C, same hashes): `check_request` 0.109× on gcc,
+0.129× on clang, and 0.087× with the arrays in a bump arena the site owns — 0.7× the twin; the
+`.ok` decode alone, building no tree at all, 0.537×.  The design, the arena and the steps:
+`bench/portal/analysis/transient.md`.
 
 ### A slice handed to a `const` parameter needs no store of its own
 
