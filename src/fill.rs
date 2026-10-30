@@ -267,7 +267,6 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     append_stack_text::<false>,
     append_stack_character::<false>,
     clear_stack_text::<false>,
-    set_child_rec::<false>,
     call_ref::<false>,
     coroutine_next::<false>,
     coroutine_yield::<false>,
@@ -376,6 +375,7 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     coroutine_return::<false>,
     coroutine_exhausted::<false>,
     coroutine_retain::<false>,
+    set_child_rec::<false>,
 ];
 
 /// [`OPERATORS`] with the direct stack path compiled in (`@FR-R-FastTable`): valid
@@ -620,7 +620,6 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     append_stack_text::<true>,
     append_stack_character::<true>,
     clear_stack_text::<true>,
-    set_child_rec::<true>,
     call_ref::<true>,
     coroutine_next::<true>,
     coroutine_yield::<true>,
@@ -729,6 +728,7 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     coroutine_return::<true>,
     coroutine_exhausted::<true>,
     coroutine_retain::<true>,
+    set_child_rec::<true>,
 ];
 
 /// [`OPERATORS_FAST`] with the bytecode position and the stack top passed in and
@@ -973,7 +973,6 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     append_stack_text_r,
     append_stack_character_r,
     clear_stack_text_r,
-    set_child_rec_r,
     call_ref_r,
     coroutine_next_r,
     coroutine_yield_r,
@@ -1082,6 +1081,7 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     coroutine_return_r,
     coroutine_exhausted_r,
     coroutine_retain_r,
+    set_child_rec_r,
 ];
 
 // The slot names and class sizes these tables are laid out by: `op_layout`.
@@ -5981,21 +5981,6 @@ fn reserve_vector_r(s: &mut State, r: Regs) -> Regs {
 }
 
 #[inline(always)]
-fn set_child_rec<const F: bool>(s: &mut State) {
-    let operands = s.operands(2);
-    let v_tp = operands.get::<u16>(0);
-    let v_data = s.get_stack_m::<F, DbRef>();
-    let v_field = s.get_stack_m::<F, DbRef>();
-    s.database.set_child_rec(&v_field, &v_data, v_tp);
-}
-
-fn set_child_rec_r(s: &mut State, r: Regs) -> Regs {
-    s.regs_in(r);
-    set_child_rec::<true>(s);
-    s.regs_out()
-}
-
-#[inline(always)]
 fn get_file<const F: bool>(s: &mut State) {
     let v_file = s.get_stack_m::<F, DbRef>();
     let new_value = s.database.get_file(&v_file);
@@ -6833,6 +6818,21 @@ fn tag_v_c_jump<const F: bool>(s: &mut State) {
 fn tag_v_c_jump_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     tag_v_c_jump::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn set_child_rec<const F: bool>(s: &mut State) {
+    let operands = s.operands(2);
+    let v_tp = operands.get::<u16>(0);
+    let v_data = s.get_stack_m::<F, DbRef>();
+    let v_field = s.get_stack_m::<F, DbRef>();
+    s.database.set_child_rec(&v_field, &v_data, v_tp);
+}
+
+fn set_child_rec_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    set_child_rec::<true>(s);
     s.regs_out()
 }
 

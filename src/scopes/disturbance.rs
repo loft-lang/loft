@@ -121,6 +121,23 @@ pub(super) fn reshaped_containers(
         "OpRemoveVector" | "OpKeepVectorRange" | "OpPrependVector" => Some(0),
         _ => None,
     });
+    // `@FR-B-OutOfLine` — a write to an out-of-line field that may be NULL releases the child,
+    // which ends every view of it.  A record literal is present, and a present value
+    // overwrites the child in place, where a view keeps reading it.
+    code.walk(&mut |v| {
+        if let Value::Call(d, args) = v
+            && data.def(*d).name() == "OpSetChildRec"
+            && let [field, value, _] = &args[..]
+            && !matches!(value.unspan(), Value::Block(_) | Value::Insert(_))
+            && let Some((place, depth)) = named_place_depth(field, data)
+        {
+            let at = out
+                .entry(place)
+                .or_insert(ContainerAt { depth, index: None });
+            at.depth = at.depth.min(depth);
+            at.index = None;
+        }
+    });
     // @FR-Col-RemoveDense — a KEYED removal reaches all five keyed kinds through ONE op, and
     // only one of them renumbers, so this has to be keyed on the KIND and not on the op.
     //

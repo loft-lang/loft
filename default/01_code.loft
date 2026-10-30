@@ -2268,13 +2268,6 @@ fn OpPreAllocVector(r: vector, capacity: const u16, elem_size: const u16);
 fn OpReserveVector(r: vector, count: integer, elem_size: const u16);
 #cold
 #rust"vector::reserve_vector(&@r, @count, u32::from(@elem_size), &mut s.database.allocations);"
-// `@FR-B-OutOfLine` — write `data` into the out-of-line field `field` (a child record in the
-// host's store): a null releases the child; a value is copied into a fresh record, which a
-// present child then takes in place, keeping its record number.  `tp`'s 0x8000 bit releases a
-// given-up source, as `OpCopyRecord`'s does.
-fn OpSetChildRec(field: reference, data: reference, tp: const u16);
-#rust"s.database.set_child_rec(&@field, &@data, @tp);"
-#impure(parent_write)
 // --- Vector aggregates ---
 /// Does the vector hold `value`?  Compared by content, as `==` compares every type; the
 /// empty vector holds nothing.  The membership test a script asks of a list of names —
