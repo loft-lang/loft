@@ -26,18 +26,23 @@ Branch `91-self-host`, everything committed and pushed; the suite pin is loft-su
 - Receipts: `ir_schema_roundtrip` ok; `tests/selfhost.rs` ok; compare.py on the 13 kernels:
   compile layers EQUAL on 13, run layers EQUAL on the 8 the loft interpreter runs.
 
-## Open, this branch's to close before it merges
+## Closed after the first write of this handoff
 
-1. **D-fmt-7** (`formatting.md`): the text parse of a long out-of-line chain recurses per
-   level — `crate::json`'s reader, its `Parsed` drop, `walk_parsed_into`, C `loft_pw_walk`.
-2. The remaining safety items of R-2s: S5 (an out-of-line field as a collection key —
-   `database/search.rs:220` panics; refuse at compile time), S6 (binary `f#write`/`f#read` —
-   `database/io.rs:308`, `:508` panic; refuse or write the arms), S3's strict read check,
-   S7 cells (a `par` worker building a tree; an image upgrade), the debugger/LSP display.
-3. A full test run on a box whose toolchain works: here `rust-objcopy` cannot find
-   `libLLVM.dylib` (it is in the toolchain's `lib/`, not `lib/rustlib/<host>/lib/`), and
-   every native test comparing output fails on the warning.
-4. `LOFT.md` is at 997 lines: split it before adding anything.
+- **D-fmt-7**: a long chain reads back from text (a parse deeper than 2 000 levels runs on a
+  sized-stack thread); C compares, copies, releases and renders one as a loop.
+- **S5** keys were already refused; **S6** binary `f#write`/`f#read` of a tree is refused by
+  name; **S3** the strict read checks a child; **S7** an added or removed child field upgrades
+  a stored type, and `par` and store-image cells are in the suite.
+- **Step 8**: the debugger edits through a child (`t.left.key = 9`); the LSP shows a child
+  field as its declared type.
+- `LOFT.md` split: the Operators subject is `LOFT_OPERATORS.md`.
+- **The full run**: `find_problems.sh --full`, then the 25 binaries that failed under contention
+  rerun alone on this branch and on its start commit, both with `LOFT_NATIVE_KEEP_SYMBOLS=1`.
+  Nothing fails here that does not fail there: `lib_process` (`spawns_sh` twin case) fails on
+  both, and `native_source_key` / `p254_cache_poisoning`'s symbol test fail on the toolchain —
+  `-Cstrip=symbols` runs `rust-objcopy`, which cannot load `libLLVM.dylib` on this box (it is
+  in the toolchain's `lib/`, not `lib/rustlib/<host>/lib/`), so no binary is stripped and the
+  warning lands in compared output.  Rerun those two where the toolchain works before merge.
 
 ## Known, not this branch's
 
@@ -48,4 +53,4 @@ Branch `91-self-host`, everything committed and pushed; the suite pin is loft-su
 
 ## Next
 
-The four items above, then R-1 / R-3 (designs, the owner's), E-1, loft#2260, F-1.
+R-1 / R-3 (designs, the owner's), E-1, loft#2260, F-1.
