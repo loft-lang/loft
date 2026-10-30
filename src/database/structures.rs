@@ -1614,6 +1614,17 @@ impl Stores {
     pub fn ref_from_child_rec(&self, host_field: &DbRef) -> DbRef {
         let store = keys::store(host_field, &self.allocations);
         let rec = store.get_u32_raw(host_field.rec, host_field.pos);
+        // `@FR-L-OutOfLine` I1 — a child lives in its host's store, so under strict stores the
+        // number must name a live record there: a copy that carried it into another store, or
+        // a read after the child's release, is caught here instead of reading foreign bytes.
+        if rec != 0 && crate::keys::strict_stores() && !store.is_claimed_record(rec) {
+            panic!(
+                "strict stores: the child-record field at #{}.{}+{} names record {rec}, which \
+                 is not a live record of store #{} — the child was released, or its number \
+                 left its host's store",
+                host_field.store_nr, host_field.rec, host_field.pos, host_field.store_nr
+            );
+        }
         if rec == 0 {
             DbRef::NULL
         } else {
@@ -4322,6 +4333,67 @@ fn plain_field_append_enabled() -> bool {
 mod tests {
     use super::*;
     use crate::database::Stores;
+
+    /// `@FR-B-OutOfLine` on the runtime alone: `Tree { key: integer, left: child_rec<Tree> }`.
+    /// An overwrite of a present child keeps its record NUMBER (a view of it stays valid,
+    /// S1(a)); a null write releases the record, so the number fails `is_claimed_record` —
+    /// the test the strict read (`ref_from_child_rec`, I1) applies to a stale number.
+    #[test]
+    fn a_child_write_keeps_its_record_and_a_null_write_releases_it() {
+        let mut stores = Stores::new();
+        let int_tp = stores.name("integer");
+        let tree = stores.structure("ProbeTree", 0);
+        stores.field(tree, "key", int_tp);
+        let child = stores.child_rec(tree);
+        stores.field(tree, "left", child);
+        stores.finish();
+        let (key_pos, _) = field_at(&stores, tree, "key");
+        let (left_pos, _) = field_at(&stores, tree, "left");
+        let host = stores.database(8);
+        stores.set_default_value(tree, &host);
+        let value = stores.database(8);
+        stores.set_default_value(tree, &value);
+        stores
+            .store_mut(&value)
+            .set_int(value.rec, value.pos + u32::from(key_pos), 4);
+        let field = DbRef {
+            pos: host.pos + u32::from(left_pos),
+            ..host
+        };
+        stores.set_child_rec(&field, &value, tree);
+        let first = stores.ref_from_child_rec(&field);
+        assert_eq!(
+            stores
+                .store(&first)
+                .get_int(first.rec, first.pos + u32::from(key_pos)),
+            4
+        );
+        stores
+            .store_mut(&value)
+            .set_int(value.rec, value.pos + u32::from(key_pos), 9);
+        stores.set_child_rec(&field, &value, tree);
+        let second = stores.ref_from_child_rec(&field);
+        assert_eq!(
+            second.rec, first.rec,
+            "an overwrite keeps the child's record number"
+        );
+        assert_eq!(
+            stores
+                .store(&second)
+                .get_int(second.rec, second.pos + u32::from(key_pos)),
+            9
+        );
+        stores.set_child_rec(&field, &DbRef::NULL, tree);
+        assert_eq!(
+            stores.ref_from_child_rec(&field),
+            DbRef::NULL,
+            "a null write leaves it absent"
+        );
+        assert!(
+            !stores.store(&host).is_claimed_record(first.rec),
+            "and releases the record, which a stale number then fails"
+        );
+    }
 
     /// Build `enum Shape { Words { ws: vector<text> }, Nums { ns: vector<float> } }` and
     /// answer `(enum type, Words type, Nums type)`.

@@ -1975,7 +1975,10 @@ impl Parser {
                     let tp = self
                         .parse_type(u32::MAX, &type_name, false)
                         .unwrap_or(Type::Text(crate::data::Deps::none()));
-                    if let Type::Reference(d_nr, _) = &tp
+                    let child = matches!(&tp, Type::Reference(d_nr, _)
+                        if self.refuse_child_io("read_file", *d_nr));
+                    if !child
+                        && let Type::Reference(d_nr, _) = &tp
                         && let Some(field) = Self::first_unserialisable_field(*d_nr, &self.data)
                     {
                         let tname = self.data.def(*d_nr).name().to_string();
@@ -2295,6 +2298,51 @@ impl Parser {
     /// that don't serialise at all.  Nested plain structs ARE fixed-width and
     /// round-trip (W11), so recurse into them — reporting the offending field as
     /// `outer.inner`.  Callers emit a compile-time error when this returns `Some`.
+    /// `@FR-L-OutOfLine` — the first field of `d_nr` (or of a struct it embeds) that is a
+    /// CHILD record: binary I/O writes a record's fixed bytes, and a child is a record of its
+    /// own, as deep as the data, so a type holding one has no byte layout to write.
+    fn first_child_field(d_nr: u32, data: &super::Data) -> Option<String> {
+        let mut seen = Vec::new();
+        let mut work = vec![(d_nr, String::new())];
+        while let Some((d, path)) = work.pop() {
+            if seen.contains(&d) {
+                continue;
+            }
+            seen.push(d);
+            for (a_nr, a) in data.def(d).attributes().iter().enumerate() {
+                let name = if path.is_empty() {
+                    a.name.clone()
+                } else {
+                    format!("{path}.{}", a.name)
+                };
+                if data.field_is_out_of_line(d, a_nr) {
+                    return Some(name);
+                }
+                if let Type::Reference(inner, _) = a.typedef.base() {
+                    work.push((*inner, name));
+                }
+            }
+        }
+        None
+    }
+
+    /// Refuse binary I/O of a type holding a child record (`first_child_field`), naming the
+    /// field and the text form that does round-trip it.  Whether it refused.
+    fn refuse_child_io(&mut self, op: &str, d_nr: u32) -> bool {
+        let Some(field) = Self::first_child_field(d_nr, &self.data) else {
+            return false;
+        };
+        let name = self.data.def(d_nr).name().to_string();
+        diagnostic!(
+            self.lexer,
+            Level::Error,
+            "{op}: '{name}' holds a field of its own type, '{field}', and binary I/O writes only \
+             fixed-width records — a tree has no fixed width; write it as text instead \
+             (`f += \"{{v:j}}\"`, read back with `text as {name}`)"
+        );
+        true
+    }
+
     fn first_unserialisable_field(d_nr: u32, data: &super::Data) -> Option<String> {
         Self::first_unserialisable_field_rec(d_nr, data, &mut Vec::new())
     }
@@ -2384,6 +2432,11 @@ impl Parser {
         val_type: &Type,
         cast_alias: u32,
     ) -> Value {
+        if let Type::Reference(d_nr, _) = val_type
+            && self.refuse_child_io("write_file", *d_nr)
+        {
+            return Value::Null;
+        }
         if let Type::Reference(d_nr, _) = val_type
             && let Some(field) = Self::first_unserialisable_field(*d_nr, &self.data)
         {
