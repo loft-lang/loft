@@ -55,11 +55,20 @@ report.  Since the frame is not written, a text view reads the bytes `text_from_
 have copied.
 
 Re-assertion sites (where the invariant must be checked, and the only ones):
-1. the SITE proof — every use of the root reads (§ The sites);
-2. the forwarders' and readers' proofs — the same allow-list over their bodies;
-3. the source proof — no write of a viewed source between the root's bind and its last read
-   (`opt::body_writes`, the question `(O-ViewField)` already asks);
-4. the mark — restored at the root's scope exit and at every exit that passes it.
+1. **never written below the root — already proven, by the parser.**  `Decoded.value`,
+   `CborEntry.key` and `CborEntry.value` are value-const fields (`(Const-Value)`,
+   `@FR-Const-Value`): every write reached through them, at any depth (`t.v[i] = …`,
+   `t.r.x = …`), is a compile error.  A type whose tree is not value-const below the root is
+   not admitted (T1–T2), so the twins carry no write check of their own;
+2. the SITE proof — every use of the root reads: `use_analysis::read_only_uses`, the
+   `@FR-R-Const` walk, with the producers marked (§ The sites).  It also refuses the one write
+   `const` still allows, the whole-value rebind `d.value = other`: a setter's root is a reach;
+3. the hand-on proof — a root handed to a parameter or returned through a forwarder (§ The
+   sites), the two positions `read_only_uses` refuses today;
+4. the source proof (T2 only) — no write of a viewed source between the root's bind and its
+   last read (`opt::body_writes`, the question `(O-ViewField)` already asks); `read_value`'s
+   `bytes` is a plain parameter, so `const` does not answer it;
+5. the mark — restored at the root's scope exit and at every exit that passes it.
 
 ## The representation
 
@@ -80,26 +89,44 @@ never grow).
 
 ## The sites
 
-A ROOT SITE is a call to a twinnable producer whose result is bound to a local or a statement
-temporary and every use of it reads.  The allow-list, as `(O-ViewField)`'s sites' half and
-`append_twin::eligible` do it (a use not on it keeps the store form — never a fallback at run time):
+A ROOT SITE is a call to a twinnable producer whose result is only ever read.  The test is not
+new: it is `use_analysis::read_only_uses(body, n_vars, data, marked, through = true)`, the walk
+behind `@FR-R-Const`, with `marked` answering the producers.  Its `calls` answer is exactly the
+root sites: a marked call at the root of a scalar getter or of a projection chain that ends in
+one (`decode(f).next`), or the value of the single `Set` of a local that is itself read-only
+(`d = decode(bytes); return d.ok;` — `pa_decode_ok`).  `through` adds a block's tail in a read
+position and the alias `w = v` (how `for x in c` reads `c`).  Its fallback is the one this rule
+needs: a position the walk does not name reaches the value, so the set only SHRINKS on a shape
+it does not understand.  The scalar getters it lists (`OpGetEnum`, `OpGetText`,
+`OpLengthVector`, …) are the reads a `match` on the variant, a payload binding, a `len` and a
+text operand lower to.
 
-- a scalar field read (`d.ok`, `d.next`);
-- a `match` / `is` on its variant and a binding of a payload field (a binding is a read);
-- `len`, an element read, a `for` over a vector field;
-- a text field as an operand of `==`, `<`, a format, or a `const text` parameter;
-- the value, or a field of it, handed to a parameter a READER twin takes transient (`pa_get`'s `m`);
-- the value returned from a function whose own result is admitted (a FORWARDER: `decode`,
-  `pa_decode`).
+What the walk refuses today, and this design adds, as extensions behind its `through`-style
+switches so the plain form's answers never move:
 
-A use that stores it — a field set, an append, a keyed insert, a return that escapes the unit,
-a capture, a `yield`, a `parallel` arm, a native callee that takes a store reference
-(`bytes_to_base64(value)`) — declines the site in T1 and T2 and is T3's materialisation.
+- **a hand-on to a parameter** (`pa_text(pa_decode(frame), "op")`, `pa_get(m, key)`): admitted
+  where the parameter is `const`, or the callee never writes it — the one-call-deep fact
+  `(R-Const)` and `(R-CopyView)` already read (`R-Callee`) — AND the callee is itself a READER:
+  its own body, walked with that parameter as the root, passes the same test;
+- **a return through a FORWARDER** (`decode` returns `d`, `pa_decode` returns `decode(…).value`):
+  the result is admitted when every call site of the forwarder is itself a root site or a
+  forwarder's.
 
-The sets are found as one fixpoint over the call graph, like `close_fnref_groups`: the PRODUCERS
-(their result is built transient: `read_value`, recursively), the FORWARDERS (`decode`,
-`pa_decode`), and the READERS (a parameter taken transient: `pa_get`, `pa_text`); a function
-leaves a set when one of its uses fails the allow-list, and its callers are re-checked.
+Those two make the sets a fixpoint over the call graph, the one new analysis
+(`opt/transient.rs`), run as `close_fnref_groups` runs: start with every candidate in, take a
+function out when one of its uses fails, re-check its callers, repeat — it only removes, so it
+ends.  The sets: the PRODUCERS (`read_value`, recursively — its own recursive calls are root
+sites inside its body), the FORWARDERS (`decode`, `pa_decode`) and the READERS (`pa_get`,
+`pa_text`).
+
+A use that stores the value — a field set, an append, a keyed insert, a return that escapes
+the unit, a capture, a `yield`, a `parallel` arm, a native callee that takes a store reference
+(`bytes_to_base64(value)`) — is a reach to the walk, so it declines the site in T1 and T2 and is
+T3's materialisation.
+
+**T1's extra condition**: the site reads no field of the tree at all — no getter or projection
+of `Decoded.value` (field 0) is among the root's reads.  Then the tree is DEAD and the twin
+builds none of it.
 
 ## The twins
 
@@ -150,7 +177,11 @@ allow-list, and T2 adds the representation.
 4. a site that STORES the result (`keep += [decode(f).value]`) — must stay store-built, same values;
 5. a source written while the tree lives (`f[0] = 0` between decode and read) — must decline;
 6. a site inside a loop of 10 000 — the store watermark flat, nothing for the leak report;
-7. a forwarder chain (`pa_text(pa_decode(f), k)`) and a site in a `par` arm (declines).
+7. a forwarder chain (`pa_text(pa_decode(f), k)`) and a site in a `par` arm (declines);
+8. the rebind `const` allows — `d = decode(f); d.value = CInt { value: 7 }; read d.value` —
+   declines (a setter root to the walk) and reads 7;
+9. a reader that writes its plain parameter (`fn touch(m: CborValue) { … m = … }`) declines
+   the hand-on, and its caller's tree is store-built, same values.
 
 Falsified by plants: a twin that keeps the arena across sites (6 grows), a text view that skips
 the UTF-8 check (2 reads the raw bytes), a site proof that ignores a write (5 reads the new byte).
@@ -159,9 +190,9 @@ the UTF-8 check (2 reads the raw bytes), a site proof that ignores a write (5 re
 
 | step | what | measures against |
 |---|---|---|
-| T0 | cells 1–7 on the store form, hand-computed, both backends | — |
-| T1 | `opt/transient.rs` (the sets, the site proof, the source proof); `c/body/transient.rs` `__tr0` (the dead tree); switch `LOFT_NO_TRANSIENT=1` | `check_request` 0.54, cbor `decode` |
-| T2 | the representation: `lt_<T>`, the arena in `loft_rt.h`, `__tr` twins of producers, forwarders and readers | `check_request` ≈ 0.09 |
+| T0 | cells 1–9 on the store form, hand-computed, both backends | — |
+| T1 | `opt/transient.rs`: the producer candidates (a result type value-const below its root), the root sites from `read_only_uses(…, marked, true)` with the dead-`.value` check, the forwarder half of the fixpoint; `c/body/transient.rs` `__tr0` (the dead tree); switch `LOFT_NO_TRANSIENT=1`, trace `LOFT_TRACE_TRANSIENT=1` naming each site admitted and the position that declined | `check_request` 0.54, cbor `decode` |
+| T2 | the hand-on extension (a `const` or never-written parameter of a READER); the source proof; the representation: `lt_<T>`, the arena in `loft_rt.h`, `__tr` twins of producers, forwarders and readers | `check_request` ≈ 0.09 |
 | T3 | materialisation at a storing use: `req_state_b64`, `request` (`bytes_to_base64(value)`) | those rows |
 
 Each step: the C sweep (`scripts/c_sweep.py`), the C test binaries, gcc and clang A/B over all 36
