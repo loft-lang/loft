@@ -272,6 +272,11 @@ pub(crate) const APV_BIT: u64 = 1 << 60;
 /// caller's header is current when the call returns (`opt::apart::kept_growth_param`).
 pub(crate) const KH_BIT: u64 = 1 << 59;
 
+/// The mask bit of an `__ap` twin (`@FR-R-AppendTwin`): the function written again with its
+/// return buffer the CALLER's vector — `X += f(args)` calls `f__ap(args, X)` — so the body's
+/// appends land after X's own elements and the copy is gone (`opt::append_twin::eligible`).
+pub(crate) const AP_BIT: u64 = 1 << 58;
+
 /// The bits of a `__nn` twin (`@FR-R-NonSentinelParam`'s twin clause), one per parameter from
 /// bit 32: the function written again with those parameters seeded as non-sentinel, called by
 /// a call site whose arguments prove them where the program-wide fact cannot (another caller
@@ -1202,7 +1207,7 @@ pub(crate) fn type_word(tp: &Type) -> String {
 /// — `--native`'s `_st` twins.  Mask 0 is the function itself.
 /// An `__inv` twin ([`INV_BIT`]) adds `__inv` after the place mask's name.
 pub(crate) fn twin_name(data: &Data, d: u32, mask: u64) -> String {
-    let places = mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT & !KH_BIT & !NN_MASK;
+    let places = mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT & !KH_BIT & !AP_BIT & !NN_MASK;
     let inv = if mask & INV_BIT == 0 { "" } else { "__inv" };
     let kh = if mask & KH_BIT == 0 { "" } else { "__kh" };
     let nn_bits = (mask & NN_MASK) >> NN_SHIFT;
@@ -1214,10 +1219,11 @@ pub(crate) fn twin_name(data: &Data, d: u32, mask: u64) -> String {
     let nk = if mask & NK_BIT == 0 { "" } else { "__nk" };
     let apr = if mask & APR_BIT == 0 { "" } else { "__apr" };
     let apv = if mask & APV_BIT == 0 { "" } else { "__apv" };
+    let ap = if mask & AP_BIT == 0 { "" } else { "__ap" };
     if places == 0 {
-        format!("{}{inv}{nk}{apr}{apv}{kh}", c_name(data, d))
+        format!("{}{inv}{nk}{apr}{apv}{kh}{ap}", c_name(data, d))
     } else {
-        format!("{}_pl{places}{inv}{nk}{apr}{apv}{kh}", c_name(data, d))
+        format!("{}_pl{places}{inv}{nk}{apr}{apv}{kh}{ap}", c_name(data, d))
     }
 }
 
@@ -2429,7 +2435,7 @@ fn small_function(statements: usize) -> bool {
 #[expect(clippy::too_many_lines)]
 fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     let data = cx.data;
-    let places = mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT & !KH_BIT & !NN_MASK;
+    let places = mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT & !KH_BIT & !AP_BIT & !NN_MASK;
     let def = data.def(d);
     // A `#c` binding (@PLN24): the C function itself, called by its declared signature.
     if def.code() == &Value::Null && !def.c_sig.is_empty() {
@@ -2609,6 +2615,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         .nokeep(mask & NK_BIT != 0)?
         .apart(mask & APR_BIT != 0)
         .apart_value(mask & APV_BIT != 0)
+        .append_twin(mask & AP_BIT != 0)
         .write()?;
     let (body, statements) = body;
     // `@FR-R-Inline`: a small function is declared `inline`, its frame wrapper with it.

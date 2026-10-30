@@ -204,6 +204,13 @@ pub(crate) struct FnWriter<'a> {
     /// `@FR-R-HandOver`'s rotate clause: in a `__nk` twin, the keep statement the body skips
     /// (by node address); at a rotate site, the callee whose next call goes to that twin.
     nk_skip: Option<usize>,
+    /// `@FR-R-AppendTwin` — in an `__ap` twin, the return buffer (the caller's vector) and every
+    /// local that views it; the statement-level call site's rewritten call, matched by callee
+    /// and argument slice so its emission asks for the callee's twin; the eligibility memo.
+    ap_buf: Option<u16>,
+    ap_views: std::collections::HashSet<u16>,
+    ap_site: Option<(u32, usize)>,
+    ap_memo: std::collections::HashMap<u32, bool>,
     nk_call: Option<u32>,
     /// `@FR-R-GuardedChain` — per guarded loop, the argument-slice addresses of its admitted
     /// chain operators, and the guard they branch on (`None` in the plain copy of an innermost
@@ -601,6 +608,10 @@ impl<'a> FnWriter<'a> {
             raw: std::collections::HashMap::new(),
             field_view: false,
             nk_skip: None,
+            ap_buf: None,
+            ap_views: std::collections::HashSet::new(),
+            ap_site: None,
+            ap_memo: std::collections::HashMap::new(),
             nk_call: None,
             plain_chains: Vec::new(),
             chain_guards: 0,
@@ -716,6 +727,19 @@ impl<'a> FnWriter<'a> {
 
     /// This is an `__inv` twin (`@FR-R-Inputs`): `frame` is the headers its caller hands it,
     /// valid for the call, since an admitted callee grows no store.
+    /// An `__ap` twin (`super::AP_BIT`, `@FR-R-AppendTwin`): the return buffer is the caller's
+    /// vector, so none of its clears run and it is minted only where the caller handed none;
+    /// the result never adopts the buffer (`@FR-R-RetAdopt` binds the result to it and clears
+    /// it — the caller's elements).
+    pub(crate) fn append_twin(mut self, on: bool) -> Self {
+        if on && let Some(b) = crate::opt::append_twin::buffer(self.cx.data, self.d) {
+            self.ap_buf = Some(b);
+            self.ap_views = crate::opt::append_twin::views(self.vars, b);
+            self.adopt = None;
+        }
+        self
+    }
+
     /// A `__nk` twin (`super::NK_BIT`): the body without its keep statement.
     pub(crate) fn nokeep(mut self, on: bool) -> Result<Self, String> {
         if on {
@@ -2776,6 +2800,61 @@ impl<'a> FnWriter<'a> {
     }
 
     /// Emit `v` for its effect.
+    /// `@FR-R-AppendTwin` — `X += f(args)` where f has an append twin (`opt::append_twin`):
+    /// written as the call of `f__ap` with X as its buffer, so f's appends land after X's
+    /// elements.  `LOFT_NO_APPEND_TWIN=1` keeps the copy.
+    fn append_site(&mut self, v: &Value, ind: usize) -> Result<bool, String> {
+        if !crate::keys::append_twin_enabled() || self.gen_elem.is_some() {
+            return Ok(false);
+        }
+        let mut memo = std::mem::take(&mut self.ap_memo);
+        let site = crate::opt::append_twin::call_site(v, self.cx.data, self.d, &mut memo);
+        self.ap_memo = memo;
+        let Some(site) = site else { return Ok(false) };
+        let mut args = site.args.to_vec();
+        args[site.at] = site.dest.clone();
+        let call = Value::Call(site.callee, args);
+        let Value::Call(_, a) = &call else {
+            unreachable!()
+        };
+        self.ap_site = Some((site.callee, a.as_ptr() as usize));
+        let e = self.expr(&call, ind)?;
+        if self.ap_site.take().is_some() {
+            return Err(format!(
+                "@FR-R-AppendTwin: the rewritten call of {} was written without its twin",
+                self.cx.data.def(site.callee).name()
+            ));
+        }
+        self.line(ind, &format!("{};", e.code));
+        Ok(true)
+    }
+
+    /// Does this call go to the callee's `__ap` twin?  The statement-level site's own call
+    /// (matched by callee and argument slice), or — inside a twin — a call handed the twin's
+    /// buffer, or a view of it, as the callee's buffer: eligibility admitted the twin only
+    /// where every such callee has a twin of its own.
+    fn append_call(&mut self, d: u32, args: &[Value]) -> bool {
+        let site = self
+            .ap_site
+            .is_some_and(|(c, at)| c == d && at == args.as_ptr() as usize);
+        if site {
+            self.ap_site = None;
+        }
+        let handed = !site
+            && self.ap_buf.is_some()
+            && self
+                .cx
+                .data
+                .def(d)
+                .hidden_return_buffer_attr()
+                .and_then(|at| args.get(at))
+                .is_some_and(|a| matches!(a.unspan(), Value::Var(x) if self.ap_views.contains(x)));
+        if site || handed {
+            crate::rewrite_census::fired("R-AppendTwin", 1);
+        }
+        site || handed
+    }
+
     fn stmt(&mut self, v: &Value, ind: usize) -> Result<(), String> {
         if self.nk_skip == Some(std::ptr::from_ref(v.unspan()) as usize) {
             return Ok(());
@@ -2788,6 +2867,9 @@ impl<'a> FnWriter<'a> {
             return Ok(());
         }
         self.dc_before(v, ind);
+        if self.append_site(v, ind)? {
+            return Ok(());
+        }
         let r = self.stmt_kind(v, ind);
         if r.is_ok()
             && let Value::Set(var, _) = v.unspan()
@@ -4920,6 +5002,9 @@ impl<'a> FnWriter<'a> {
             self.nk_call = None;
             mask |= super::NK_BIT;
         }
+        if self.append_call(d, args) {
+            mask |= super::AP_BIT;
+        }
         // `@FR-R-NonSentinelParam`'s twin clause: the parameters this call's arguments prove
         // beyond the program-wide fact go to a `__nn` twin that seeds them.
         if super::native_c(def.name()).is_none() && args.len() <= 26 && !self.apr_twin_call(d, args)
@@ -6351,8 +6436,41 @@ impl<'a> FnWriter<'a> {
         e.map(Some)
     }
 
+    /// `@FR-R-AppendTwin` — in a twin the buffer is the caller's vector: its length reset is
+    /// skipped and it is minted only where the caller handed none.
+    fn append_twin_buffer_op(
+        &mut self,
+        name: &str,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<Option<E>, String> {
+        let Some(buf) = self.ap_buf else {
+            return Ok(None);
+        };
+        match (name, args) {
+            ("OpSetInt4", [Value::Var(w), ..]) if *w == buf => {
+                Ok(Some(E::new("((void) 0)", K::Void)))
+            }
+            ("OpDatabase", [Value::Var(w), _]) if *w == buf => {
+                let b = self.var(*w);
+                self.ap_buf = None;
+                let mint = self.store_operator(name, args, ind);
+                self.ap_buf = Some(buf);
+                crate::rewrite_census::fired("R-AppendTwin/mint", 1);
+                Ok(Some(E::new(
+                    format!("if ({b}.store_nr == 0xFFFF) {{ {}; }}", mint?.code),
+                    K::Void,
+                )))
+            }
+            _ => Ok(None),
+        }
+    }
+
     fn store_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
         if let Some(e) = self.free_operator(name, args, ind)? {
+            return Ok(e);
+        }
+        if let Some(e) = self.append_twin_buffer_op(name, args, ind)? {
             return Ok(e);
         }
         match (name, args) {
@@ -6962,6 +7080,12 @@ impl<'a> FnWriter<'a> {
                 Ok(E::new(format!("loft_vec_finish({v})"), K::Void))
             }
             ("OpClearVector", [v]) if self.in_delivery > 0 && self.adopted_buffer(v) => {
+                Ok(E::new("((void) 0)", K::Void))
+            }
+            // `@FR-R-AppendTwin` — in a twin a clear of the buffer, or of a view of it, would
+            // empty the caller's elements: eligibility admitted it only before the body's first
+            // write, where it clears nothing the twin's own result needs.
+            ("OpClearVector", [Value::Var(x)]) if self.ap_views.contains(x) => {
                 Ok(E::new("((void) 0)", K::Void))
             }
             ("OpClearVector", [v]) => {

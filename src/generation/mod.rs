@@ -17,7 +17,7 @@ mod apart_records_emit;
 pub use crate::lower::apart_value;
 // `@FR-R-Apart` instance 3's plan, shared with the C writer, lives below both writers.
 pub use crate::lower::apart_vector;
-pub mod append_twin;
+pub use crate::opt::append_twin;
 mod calls;
 mod coroutine;
 pub use crate::lower::decode_structure;

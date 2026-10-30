@@ -6645,10 +6645,14 @@ the verify switch.
 caller that appends that result then copies it.  The twin starts writing after the
 caller's elements instead, so the copy is gone — but only a body that never looks at what
 the buffer held may run that way, which is what admission checks, mention by mention.
-Native only; the interpreter copies and is the reference.
+Both compiled backends write the twin (the C's is `f__ap`, `src/c/body.rs` `append_site` /
+`append_call`, its mint and clears in `store_operator`; cbor `encode` −27 %, `encode_bytes`
+−40 % on the C ship lane); the interpreter copies and is the reference.  The admission is one
+analysis both read, `src/opt/append_twin.rs`.
 
-**BUILT** (`src/generation/append_twin.rs`, the call path in `calls.rs`, the twin's hooks in
-`emit.rs` / `text.rs`; `LOFT_NO_APPEND_TWIN`, `LOFT_TRACE_APPEND_TWIN`; guard
+**BUILT** (`src/opt/append_twin.rs`, the call path in `calls.rs`, the twin's hooks in
+`emit.rs` / `text.rs`, and on the C `src/c/body.rs`; `LOFT_NO_APPEND_TWIN`,
+`LOFT_TRACE_APPEND_TWIN`; guard
 `loft-suite/rules/rewrites/R-AppendTwin/a-call-result-appended-is-built-in-the-destination.loft`).
 
 ### A call result bound first and appended later is appended where it is made
