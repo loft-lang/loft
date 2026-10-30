@@ -36,22 +36,32 @@ written in the table below; a new one is a design change here first.
 
 ## The layers
 
+Every output either implementation produces, at compile time and at run time (owner: *"it also
+includes all compile time reports: slots, IR, bytecode, lifetimes"*).  The compile-time reports
+are `loft introspect`'s sections, per function; the loft side writes the same sections in the
+same text, so the comparison is of text, and a report the loft side reads or derives
+differently shows as the row where it does.
+
 | layer | Rust side | loft side | normalisation (all of it) |
 |---|---|---|---|
+| **ir** | `loft introspect`: each function's IR, as `Value`'s display writes it | the IR the loft side read from the image, printed by a port of that display | none, per function, byte for byte |
+| **types** | `introspect`'s `=== types ===` table: each variable's type with its dependencies | the same from the image's variable table | none |
+| **slots** | `introspect`'s variable table: `slot [a, b)` per variable | the slot and width every access addresses (from F-1 the image's `stack_pos`) | none |
+| **lifetimes** | `introspect`'s variable table: `live [a, b]` per variable (`compute_intervals`) | a port of `compute_intervals` over the image's IR | none |
 | **out** | `loft --interpret` (`--tests FILE::ENTRY` for a test) | the runner on the emitted image | stdout byte for byte; the exit code; stderr byte for byte after removing the front end's diagnostics, which the tool takes from `loft --check FILE` and requires as an exact PREFIX of the run's stderr |
 | **alloc** | `LOFT_ALLOC_TRACE` from the `op-census` build (`store_census::alloc_event`: `N`, `F`, `C`, `D`, `R`, `M`) | the same lines from the `crt` shim's runtime, compiled with the trace on | the events after `M` on stores made after it, each store named by the order it first appears — exactly `c_alloc_diff.py`'s `program_events` (the Rust value stack and constant stores are setup) |
 | **leak** | the stores live at exit (the alloc layer's `N` without `F`) | the same | none: the two sets, by name, must be equal (a store both sides leak is equal; one side only is a difference) |
 | **binds** | `LOFT_TRACE_BIND` from `generate_set` (1b-s3.md § The comparison) | the lowering's bind table | none: function, variable, first/re, arm, B2's free, every fact and its value |
-| **frame** | `loft introspect`'s variable table (`slot [a, b)` per variable) | the slot and width every access addresses | none, per function and variable |
 | **bytecode** | `loft introspect`'s bytecode listing | the lowering's output in the same form | none, byte for byte |
 
-Until the loft interpreter builds a layer's producer, that layer is `MISSING loft`: binds from
-1b-s3.md's B-1, frame from 1b-frame.md's F-1, bytecode from F-2.  The tool is complete from the
+Until the loft interpreter builds a layer's producer, that layer is `MISSING loft`: ir and
+types from C-1 (the image is already read; the display is ported), binds from 1b-s3.md's B-1,
+slots from 1b-frame.md's F-1, lifetimes with the port of `compute_intervals`, bytecode from F-2.  The tool is complete from the
 start; the interpreter fills it in.
 
 ## What each side needs (the build)
 
-- **C-1 — the tool, with out, alloc and leak.**
+- **C-1 — the tool, with out, alloc, leak, ir and types.**
   - The Rust side runs the `op-census` build (`cargo build --release --features op-census
     --target-dir target/op-census`, which `c_alloc_diff.py` already uses) for everything — the
     image, the check and the run — so both sides see one front end.
@@ -66,10 +76,14 @@ start; the interpreter fills it in.
     runtime.
   - The runner is built once per tool run into `target/selfhost-compare/`, rebuilt when a
     `selfhost/` source is newer.
+  - The runner's `--dump-ir` and `--dump-types` print the image's IR and variable types in
+    `introspect`'s text: a loft port of the IR display (`Value`'s `Display`, `src/data.rs`) and
+    of the types table, in `selfhost/src/show_ir.loft`.
 - **C-2 — binds** (with 1b-s3.md's B-0/B-1): `LOFT_TRACE_BIND` in `generate_set`, the lowering's
   table, `--dump-binds` on the runner.
-- **C-3 — frame and bytecode** (with F-1, F-2): the runner's `--dump-frame` and `--dump-code`
-  writing the forms `introspect` prints.
+- **C-3 — slots, lifetimes and bytecode** (with F-1, the `compute_intervals` port, F-2): the
+  runner's `--dump-slots`, `--dump-lifetimes` and `--dump-code`, in the forms `introspect`
+  prints.
 
 ## Probes before building (each can fail on its own)
 
@@ -82,5 +96,7 @@ start; the interpreter fills it in.
   (`tests/scripts/06-structs.loft`, a hash kernel, a vector kernel); the expectation is
   `DIFFERENT` under today's run-time ownership (the owner table makes fresh stores where the
   Rust side remakes in place), and the rows say where.
+- **PC5** — the ir layer can fail: an image read with one node kind decoded wrong (a probe
+  switch in the reader) shows as `DIFFERENT` at that node's function and line.
 - **PC4** — the diagnostics prefix: a program with a warning, whose Rust stderr starts with
   exactly `loft --check`'s output.
