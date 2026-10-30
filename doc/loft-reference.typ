@@ -143,7 +143,7 @@ Native runs need `rustc` on your PATH — the same Rust you built loft with. Wit
 
 `--native-c` writes your program as C and builds it with the C compiler already on your machine, so it needs no Rust at all: the C runtime is inside the `loft` binary. It answers what the interpreter answers; it is on its way to becoming what `--native` means. What each target needs:
 
-On macOS the Xcode command-line tools (`xcode-select --install`) give the C compiler; on Windows, MinGW-w64 gcc. When a tool is missing, loft says which and what to install.
+When a tool is missing, loft says which and what to install on the machine it runs on.
 
 === Standard library
 

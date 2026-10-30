@@ -23,29 +23,29 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <a href="https://loft-lang.org/blog/">Blog</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>imaging source</h1>
 <article>
-<p><a href="lib-imaging.html">← imaging</a> · <a href="lib-imaging-api.html">API reference</a> · version 0.4.4</p>
-<p class="lib-legend">4 file(s), 576 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-imaging.html">← imaging</a> · <a href="lib-imaging-api.html">API reference</a> · version 0.5.0</p>
+<p class="lib-legend">4 file(s), 627 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
 <tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
-<tr><td><code>Pixel</code> <span class="search-kind">struct</span></td><td><a href="#src-imaging-loft-L21">21</a></td><td><a href="#tests-worked-examples-loft-L160">IMG-004</a></td><td><a href="#src-imaging-loft-L33">33</a> <a href="#src-imaging-loft-L40">40</a> <a href="#src-imaging-loft-L50">50</a> <a href="#src-imaging-loft-L63">63</a> <a href="#tests-14-image-loft-L57">57</a> <a href="#tests-15-regression-loft-L25">25</a> … (44 total)</td></tr>
-<tr><td><code>r</code> <span class="search-kind">const</span></td><td><a href="#src-imaging-loft-L22">22</a></td><td>—</td><td><a href="#src-imaging-loft-L34">34</a> <a href="#src-imaging-loft-L41">41</a> <a href="#tests-14-image-loft-L52">52</a> <a href="#tests-14-image-loft-L57">57</a> <a href="#tests-14-image-loft-L58">58</a> <a href="#tests-14-image-loft-L65">65</a> … (71 total)</td></tr>
-<tr><td><code>g</code> <span class="search-kind">const</span></td><td><a href="#src-imaging-loft-L23">23</a></td><td>—</td><td><a href="#src-imaging-loft-L34">34</a> <a href="#src-imaging-loft-L41">41</a> <a href="#tests-14-image-loft-L53">53</a> <a href="#tests-14-image-loft-L57">57</a> <a href="#tests-14-image-loft-L65">65</a> <a href="#tests-14-image-loft-L79">79</a> … (65 total)</td></tr>
-<tr><td><code>b</code> <span class="search-kind">const</span></td><td><a href="#src-imaging-loft-L24">24</a></td><td>—</td><td><a href="#src-imaging-loft-L34">34</a> <a href="#src-imaging-loft-L41">41</a> <a href="#tests-14-image-loft-L54">54</a> <a href="#tests-14-image-loft-L57">57</a> <a href="#tests-14-image-loft-L65">65</a> <a href="#tests-14-image-loft-L80">80</a> … (62 total)</td></tr>
-<tr><td><code>a</code> <span class="search-kind">const</span></td><td><a href="#src-imaging-loft-L25">25</a></td><td>—</td><td><a href="#src-imaging-loft-L41">41</a> <a href="#src-imaging-loft-L51">51</a> <a href="#tests-15-regression-loft-L171">171</a> <a href="#tests-15-regression-loft-L173">173</a> <a href="#tests-15-regression-loft-L186">186</a> <a href="#tests-worked-examples-loft-L30">30</a> … (23 total)</td></tr>
+<tr><td><code>Pixel</code> <span class="search-kind">struct</span></td><td><a href="#src-imaging-loft-L21">21</a></td><td><a href="#tests-worked-examples-loft-L160">IMG-004</a></td><td><a href="#src-imaging-loft-L33">33</a> <a href="#src-imaging-loft-L40">40</a> <a href="#src-imaging-loft-L50">50</a> <a href="#src-imaging-loft-L63">63</a> <a href="#src-imaging-loft-L105">105</a> <a href="#tests-14-image-loft-L57">57</a> … (45 total)</td></tr>
+<tr><td><code>r</code> <span class="search-kind">const</span></td><td><a href="#src-imaging-loft-L22">22</a></td><td>—</td><td><a href="#src-imaging-loft-L34">34</a> <a href="#src-imaging-loft-L41">41</a> <a href="#src-imaging-loft-L105">105</a> <a href="#src-imaging-loft-L120">120</a> <a href="#tests-14-image-loft-L52">52</a> <a href="#tests-14-image-loft-L57">57</a> … (73 total)</td></tr>
+<tr><td><code>g</code> <span class="search-kind">const</span></td><td><a href="#src-imaging-loft-L23">23</a></td><td>—</td><td><a href="#src-imaging-loft-L34">34</a> <a href="#src-imaging-loft-L41">41</a> <a href="#src-imaging-loft-L105">105</a> <a href="#src-imaging-loft-L120">120</a> <a href="#tests-14-image-loft-L53">53</a> <a href="#tests-14-image-loft-L57">57</a> … (67 total)</td></tr>
+<tr><td><code>b</code> <span class="search-kind">const</span></td><td><a href="#src-imaging-loft-L24">24</a></td><td>—</td><td><a href="#src-imaging-loft-L34">34</a> <a href="#src-imaging-loft-L41">41</a> <a href="#src-imaging-loft-L106">106</a> <a href="#src-imaging-loft-L120">120</a> <a href="#tests-14-image-loft-L54">54</a> <a href="#tests-14-image-loft-L57">57</a> … (64 total)</td></tr>
+<tr><td><code>a</code> <span class="search-kind">const</span></td><td><a href="#src-imaging-loft-L25">25</a></td><td>—</td><td><a href="#src-imaging-loft-L41">41</a> <a href="#src-imaging-loft-L51">51</a> <a href="#src-imaging-loft-L106">106</a> <a href="#src-imaging-loft-L120">120</a> <a href="#src-imaging-loft-L121">121</a> <a href="#tests-15-regression-loft-L171">171</a> … (26 total)</td></tr>
 <tr><td><code>value</code> <span class="search-kind">fn</span></td><td><a href="#src-imaging-loft-L33">33</a></td><td>—</td><td><a href="#tests-15-regression-loft-L34">34</a> <a href="#tests-15-regression-loft-L36">36</a> <a href="#tests-15-regression-loft-L38">38</a> <a href="#tests-15-regression-loft-L40">40</a> <a href="#tests-15-regression-loft-L42">42</a> <a href="#tests-15-regression-loft-L44">44</a> … (15 total)</td></tr>
-<tr><td><code>rgba</code> <span class="search-kind">fn</span></td><td><a href="#src-imaging-loft-L40">40</a></td><td>—</td><td><a href="#tests-15-regression-loft-L160">160</a> <a href="#tests-worked-examples-loft-L70">70</a> <a href="#tests-worked-examples-loft-L71">71</a> <a href="#tests-worked-examples-loft-L72">72</a> <a href="#tests-worked-examples-loft-L73">73</a> <a href="#tests-worked-examples-loft-L74">74</a> … (8 total)</td></tr>
+<tr><td><code>rgba</code> <span class="search-kind">fn</span></td><td><a href="#src-imaging-loft-L40">40</a></td><td>—</td><td><a href="#src-imaging-loft-L71">71</a> <a href="#src-imaging-loft-L100">100</a> <a href="#src-imaging-loft-L105">105</a> <a href="#src-imaging-loft-L106">106</a> <a href="#src-imaging-loft-L117">117</a> <a href="#src-imaging-loft-L120">120</a> … (15 total)</td></tr>
 <tr><td><code>opaque</code> <span class="search-kind">fn</span></td><td><a href="#src-imaging-loft-L50">50</a></td><td>—</td><td><a href="#tests-15-regression-loft-L180">180</a> <a href="#tests-15-regression-loft-L182">182</a> <a href="#tests-15-regression-loft-L186">186</a> <a href="#tests-worked-examples-loft-L76">76</a> <a href="#tests-worked-examples-loft-L79">79</a> <a href="#tests-worked-examples-loft-L80">80</a> … (11 total)</td></tr>
-<tr><td><code>Image</code> <span class="search-kind">struct</span></td><td><a href="#src-imaging-loft-L59">59</a></td><td><a href="#tests-worked-examples-loft-L17">IMG-001</a></td><td><a href="#src-imaging-loft-L68">68</a> <a href="#src-imaging-loft-L74">74</a> <a href="#src-imaging-loft-L78">78</a> <a href="#src-imaging-loft-L94">94</a> <a href="#src-imaging-loft-L101">101</a> <a href="#tests-14-image-loft-L40">40</a> … (25 total)</td></tr>
-<tr><td><code>save_png</code> <span class="search-kind">fn</span></td><td><a href="#src-imaging-loft-L78">78</a></td><td>—</td><td><a href="#tests-15-regression-loft-L56">56</a> <a href="#tests-15-regression-loft-L57">57</a> <a href="#tests-15-regression-loft-L73">73</a> <a href="#tests-15-regression-loft-L88">88</a> <a href="#tests-15-regression-loft-L108">108</a> <a href="#tests-15-regression-loft-L128">128</a> … (10 total)</td></tr>
-<tr><td><code>png</code> <span class="search-kind">fn</span></td><td><a href="#src-imaging-loft-L94">94</a></td><td><a href="#tests-worked-examples-loft-L58">IMG-002</a></td><td><a href="#tests-14-image-loft-L40">40</a> <a href="#tests-14-image-loft-L43">43</a> <a href="#tests-14-image-loft-L88">88</a> <a href="#tests-14-image-loft-L89">89</a> <a href="#tests-15-regression-loft-L49">49</a> <a href="#tests-15-regression-loft-L55">55</a> … (42 total)</td></tr>
+<tr><td><code>Image</code> <span class="search-kind">struct</span></td><td><a href="#src-imaging-loft-L59">59</a></td><td><a href="#tests-worked-examples-loft-L17">IMG-001</a></td><td><a href="#src-imaging-loft-L93">93</a> <a href="#src-imaging-loft-L114">114</a> <a href="#src-imaging-loft-L129">129</a> <a href="#src-imaging-loft-L145">145</a> <a href="#src-imaging-loft-L152">152</a> <a href="#tests-14-image-loft-L40">40</a> … (25 total)</td></tr>
+<tr><td><code>save_png</code> <span class="search-kind">fn</span></td><td><a href="#src-imaging-loft-L129">129</a></td><td>—</td><td><a href="#tests-15-regression-loft-L56">56</a> <a href="#tests-15-regression-loft-L57">57</a> <a href="#tests-15-regression-loft-L73">73</a> <a href="#tests-15-regression-loft-L88">88</a> <a href="#tests-15-regression-loft-L108">108</a> <a href="#tests-15-regression-loft-L128">128</a> … (10 total)</td></tr>
+<tr><td><code>png</code> <span class="search-kind">fn</span></td><td><a href="#src-imaging-loft-L145">145</a></td><td><a href="#tests-worked-examples-loft-L58">IMG-002</a></td><td><a href="#src-imaging-loft-L69">69</a> <a href="#tests-14-image-loft-L40">40</a> <a href="#tests-14-image-loft-L43">43</a> <a href="#tests-14-image-loft-L88">88</a> <a href="#tests-14-image-loft-L89">89</a> <a href="#tests-15-regression-loft-L49">49</a> … (43 total)</td></tr>
 </table>
 <h2 id="src-imaging-loft">src/imaging.loft</h2>
 <pre class="src"><code><span id="src-imaging-loft-L1"><span class="cm">// Copyright (c) 2024 Jurjen Stellingwerff</span></span>
 <span id="src-imaging-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
 <span id="src-imaging-loft-L3"><span class="cm">// --- Imaging ---</span></span>
-<span id="src-imaging-loft-L4"><span class="cm">// Types and functions for reading PNG images.</span></span>
+<span id="src-imaging-loft-L4"><span class="cm">// Types and functions for reading and writing PNG images.</span></span>
 <span id="src-imaging-loft-L5"></span>
 <span id="src-imaging-loft-L6"><span class="cm">// Data per pixel of a PNG image.</span></span>
 <span id="src-imaging-loft-L7"><span class="cm">// Fields r, g, b hold red, green and blue intensity and `a` holds opacity, each</span></span>
@@ -107,47 +107,98 @@
 <span id="src-imaging-loft-L63">  <span class="kw">pub</span> data: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Pixel</span>&gt;</span>
 <span id="src-imaging-loft-L64">}</span>
 <span id="src-imaging-loft-L65"></span>
-<span id="src-imaging-loft-L66"><span class="cm">// Native function: decode a PNG file into an Image struct.</span></span>
-<span id="src-imaging-loft-L67"><span class="cm">// Bare `#native` → symbol `n_load_png` by convention (the fn name).</span></span>
-<span id="src-imaging-loft-L68"><span class="kw">fn</span> <span class="fn-call">load_png</span>(path: <span class="ty"><a href="stdlib-types.html">text</a></span>, image: <span class="en">Image</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
-<span id="src-imaging-loft-L69">#native</span>
-<span id="src-imaging-loft-L70"></span>
-<span id="src-imaging-loft-L71"><span class="cm">// Native function: encode an Image struct as a PNG file.</span></span>
-<span id="src-imaging-loft-L72"><span class="cm">// Explicit override: the loft wrapper is `save_png_native` but the</span></span>
-<span id="src-imaging-loft-L73"><span class="cm">// native symbol is `n_save_png` (a pure-loft `save_png` wraps it).</span></span>
-<span id="src-imaging-loft-L74"><span class="kw">fn</span> <span class="fn-call">save_png_native</span>(image: const <span class="en">Image</span>, path: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
-<span id="src-imaging-loft-L75">#native <span class="st">"n_save_png"</span></span>
-<span id="src-imaging-loft-L76"></span>
-<span id="src-imaging-loft-L77"><span class="cm">// Write this image to a PNG file. Returns true on success.</span></span>
-<span id="src-imaging-loft-L78"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">save_png</span>(self: const <span class="en">Image</span>, path: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-imaging-loft-L79">  <span class="fn-call">save_png_native</span>(self, path)</span>
-<span id="src-imaging-loft-L80">}</span>
-<span id="src-imaging-loft-L81"></span>
-<span id="src-imaging-loft-L82"><span class="cm">// Decodes a PNG file and returns an Image.</span></span>
-<span id="src-imaging-loft-L83"><span class="cm">// Returns null when there is nothing to decode — the path does not exist, names</span></span>
-<span id="src-imaging-loft-L84"><span class="cm">// a directory, or holds bytes this decoder cannot read.  So the answer is either</span></span>
-<span id="src-imaging-loft-L85"><span class="cm">// a complete image (`len(data) == width * height`) or null; there is no</span></span>
-<span id="src-imaging-loft-L86"><span class="cm">// half-filled Image to guard against.  Any PNG colour type loads: greyscale and</span></span>
-<span id="src-imaging-loft-L87"><span class="cm">// palette files are expanded to RGBA, and **alpha is carried** — a file with no</span></span>
-<span id="src-imaging-loft-L88"><span class="cm">// alpha channel arrives fully opaque (`a == 255`), never transparent.</span></span>
-<span id="src-imaging-loft-L89"><span class="cm">// Use to load sprite sheets or textures.</span></span>
-<span id="src-imaging-loft-L90"><span class="cm">// Example: @IMG-001 — the three ways to get null, and the completeness the null</span></span>
-<span id="src-imaging-loft-L91"><span class="cm">// check buys past it.</span></span>
-<span id="src-imaging-loft-L92"><span class="cm">// Example: @IMG-002 — every colour type arrives as RGBA, and a source without an</span></span>
-<span id="src-imaging-loft-L93"><span class="cm">// alpha channel is opaque rather than invisible.</span></span>
-<span id="src-imaging-loft-L94"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">png</span>(self: <span class="en"><a href="stdlib-file-system.html">File</a></span>) -&gt; <span class="en">Image</span>? {</span>
-<span id="src-imaging-loft-L95">  <span class="cm">// Early returns, not a nested `if … { result } else { null }`: on a `-&gt; Image?`</span></span>
-<span id="src-imaging-loft-L96">  <span class="cm">// function that nesting hands back the half-built `result` instead of null in</span></span>
-<span id="src-imaging-loft-L97">  <span class="cm">// loft releases before the fix, so an undecodable file read as an empty image.</span></span>
-<span id="src-imaging-loft-L98">  <span class="kw">if</span> self.format != <span class="en"><a href="stdlib-file-system.html">Format</a></span>.<span class="en">TextFile</span> {</span>
-<span id="src-imaging-loft-L99">    <span class="kw">return</span> <span class="kw">null</span>;</span>
-<span id="src-imaging-loft-L100">  }</span>
-<span id="src-imaging-loft-L101">  result = <span class="en">Image</span> { };</span>
-<span id="src-imaging-loft-L102">  <span class="kw">if</span> !<span class="fn-call">load_png</span>(self.path, result) {</span>
-<span id="src-imaging-loft-L103">    <span class="kw">return</span> <span class="kw">null</span>;</span>
-<span id="src-imaging-loft-L104">  }</span>
-<span id="src-imaging-loft-L105">  result</span>
-<span id="src-imaging-loft-L106">}</span>
+<span id="src-imaging-loft-L66"><span class="cm">// The C part (c/imaging_png.c over the vendored lodepng): PNG bytes to RGBA and back, memory to</span></span>
+<span id="src-imaging-loft-L67"><span class="cm">// memory.  A decode or an encode answers a handle (0 on failure); its size is asked, its bytes</span></span>
+<span id="src-imaging-loft-L68"><span class="cm">// copied into a vector sized for them, and the handle freed.</span></span>
+<span id="src-imaging-loft-L69"><span class="kw">fn</span> <span class="fn-call">ip_decode</span>(png: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-imaging-loft-L70">#c <span class="st">"ip_decode"</span> <span class="st">"int64_t(const uint8_t*, int64_t)"</span></span>
+<span id="src-imaging-loft-L71"><span class="kw">fn</span> <span class="fn-call">ip_encode</span>(rgba: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>, alpha: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-imaging-loft-L72">#c <span class="st">"ip_encode"</span> <span class="st">"int64_t(const uint8_t*, int64_t, int32_t, int32_t, int32_t)"</span></span>
+<span id="src-imaging-loft-L73"><span class="kw">fn</span> <span class="fn-call">ip_width</span>(h: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-imaging-loft-L74">#c <span class="st">"ip_width"</span> <span class="st">"int64_t(int64_t)"</span></span>
+<span id="src-imaging-loft-L75"><span class="kw">fn</span> <span class="fn-call">ip_height</span>(h: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-imaging-loft-L76">#c <span class="st">"ip_height"</span> <span class="st">"int64_t(int64_t)"</span></span>
+<span id="src-imaging-loft-L77"><span class="kw">fn</span> <span class="fn-call">ip_size</span>(h: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-imaging-loft-L78">#c <span class="st">"ip_size"</span> <span class="st">"int64_t(int64_t)"</span></span>
+<span id="src-imaging-loft-L79"><span class="kw">fn</span> <span class="fn-call">ip_copy</span>(h: <span class="ty"><a href="stdlib-types.html">integer</a></span>, out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;);</span>
+<span id="src-imaging-loft-L80">#c <span class="st">"ip_copy"</span> <span class="st">"void(int64_t, uint8_t*)"</span></span>
+<span id="src-imaging-loft-L81"><span class="kw">fn</span> <span class="fn-call">ip_free</span>(h: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-imaging-loft-L82">#c <span class="st">"ip_free"</span> <span class="st">"void(int64_t)"</span></span>
+<span id="src-imaging-loft-L83"></span>
+<span id="src-imaging-loft-L84"><span class="cm">// The bytes handle `h` holds, its handle freed.</span></span>
+<span id="src-imaging-loft-L85"><span class="kw">fn</span> <span class="fn-call">ip_take</span>(h: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt; {</span>
+<span id="src-imaging-loft-L86">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt; = [<span class="nm">0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>; <span class="fn-call">ip_size</span>(h)];</span>
+<span id="src-imaging-loft-L87">  <span class="fn-call">ip_copy</span>(h, out);</span>
+<span id="src-imaging-loft-L88">  <span class="fn-call">ip_free</span>(h);</span>
+<span id="src-imaging-loft-L89">  out</span>
+<span id="src-imaging-loft-L90">}</span>
+<span id="src-imaging-loft-L91"></span>
+<span id="src-imaging-loft-L92"><span class="cm">// Decode the PNG file `path` into `image`: false when it cannot be read or decoded.</span></span>
+<span id="src-imaging-loft-L93"><span class="kw">fn</span> <span class="fn-call">load_png</span>(path: <span class="ty"><a href="stdlib-types.html">text</a></span>, image: <span class="en">Image</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-imaging-loft-L94">  bytes = <span class="fn-call"><a href="stdlib-binary-file-i-o.html">read_bytes</a></span>(path) ?? [];</span>
+<span id="src-imaging-loft-L95">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(bytes) == <span class="nm">0</span> { <span class="kw">return</span> <span class="kw">false</span>; }</span>
+<span id="src-imaging-loft-L96">  h = <span class="fn-call">ip_decode</span>(bytes);</span>
+<span id="src-imaging-loft-L97">  <span class="kw">if</span> h == <span class="nm">0</span> { <span class="kw">return</span> <span class="kw">false</span>; }</span>
+<span id="src-imaging-loft-L98">  w = <span class="fn-call">ip_width</span>(h);</span>
+<span id="src-imaging-loft-L99">  ht = <span class="fn-call">ip_height</span>(h);</span>
+<span id="src-imaging-loft-L100">  rgba = <span class="fn-call">ip_take</span>(h);</span>
+<span id="src-imaging-loft-L101">  image.name = path.<span class="fn-call"><a href="stdlib-path-helpers.html">basename</a></span>();</span>
+<span id="src-imaging-loft-L102">  image.width = w;</span>
+<span id="src-imaging-loft-L103">  image.height = ht;</span>
+<span id="src-imaging-loft-L104">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..</span>w * ht {</span>
+<span id="src-imaging-loft-L105">    image.data += [<span class="en">Pixel</span> { r: rgba[<span class="nm">4</span> * i] ?? <span class="nm">0</span>, g: rgba[<span class="nm">4</span> * i + <span class="nm">1</span>] ?? <span class="nm">0</span>,</span>
+<span id="src-imaging-loft-L106">                           b: rgba[<span class="nm">4</span> * i + <span class="nm">2</span>] ?? <span class="nm">0</span>, a: rgba[<span class="nm">4</span> * i + <span class="nm">3</span>] ?? <span class="nm">0</span> }];</span>
+<span id="src-imaging-loft-L107">  }</span>
+<span id="src-imaging-loft-L108">  <span class="kw">true</span></span>
+<span id="src-imaging-loft-L109">}</span>
+<span id="src-imaging-loft-L110"></span>
+<span id="src-imaging-loft-L111"><span class="cm">// Encode `image` as an 8-bit PNG file at `path`: RGB when every pixel is opaque, RGBA</span></span>
+<span id="src-imaging-loft-L112"><span class="cm">// otherwise.  False when the image is not whole (`len(data) != width * height`) or the file</span></span>
+<span id="src-imaging-loft-L113"><span class="cm">// cannot be written.</span></span>
+<span id="src-imaging-loft-L114"><span class="kw">fn</span> <span class="fn-call">save_png_native</span>(image: const <span class="en">Image</span>, path: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-imaging-loft-L115">  n = image.width * image.height;</span>
+<span id="src-imaging-loft-L116">  <span class="kw">if</span> n &lt;= <span class="nm">0</span> || <span class="bi"><a href="stdlib-text.html">len</a></span>(image.data) != n { <span class="kw">return</span> <span class="kw">false</span>; }</span>
+<span id="src-imaging-loft-L117">  rgba: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt; = [];</span>
+<span id="src-imaging-loft-L118">  alpha = <span class="nm">0</span>;</span>
+<span id="src-imaging-loft-L119">  <span class="kw">for</span> p <span class="kw">in</span> image.data {</span>
+<span id="src-imaging-loft-L120">    rgba += [p.r <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>, p.g <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>, p.b <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>, p.a <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>];</span>
+<span id="src-imaging-loft-L121">    <span class="kw">if</span> p.a != <span class="nm">255</span> { alpha = <span class="nm">1</span>; }</span>
+<span id="src-imaging-loft-L122">  }</span>
+<span id="src-imaging-loft-L123">  h = <span class="fn-call">ip_encode</span>(rgba, image.width, image.height, alpha);</span>
+<span id="src-imaging-loft-L124">  <span class="kw">if</span> h == <span class="nm">0</span> { <span class="kw">return</span> <span class="kw">false</span>; }</span>
+<span id="src-imaging-loft-L125">  <span class="fn-call"><a href="stdlib-binary-file-i-o.html">write_bytes</a></span>(path, <span class="fn-call">ip_take</span>(h))</span>
+<span id="src-imaging-loft-L126">}</span>
+<span id="src-imaging-loft-L127"></span>
+<span id="src-imaging-loft-L128"><span class="cm">// Write this image to a PNG file. Returns true on success.</span></span>
+<span id="src-imaging-loft-L129"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">save_png</span>(self: const <span class="en">Image</span>, path: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-imaging-loft-L130">  <span class="fn-call">save_png_native</span>(self, path)</span>
+<span id="src-imaging-loft-L131">}</span>
+<span id="src-imaging-loft-L132"></span>
+<span id="src-imaging-loft-L133"><span class="cm">// Decodes a PNG file and returns an Image.</span></span>
+<span id="src-imaging-loft-L134"><span class="cm">// Returns null when there is nothing to decode — the path does not exist, names</span></span>
+<span id="src-imaging-loft-L135"><span class="cm">// a directory, or holds bytes this decoder cannot read.  So the answer is either</span></span>
+<span id="src-imaging-loft-L136"><span class="cm">// a complete image (`len(data) == width * height`) or null; there is no</span></span>
+<span id="src-imaging-loft-L137"><span class="cm">// half-filled Image to guard against.  Any PNG colour type loads: greyscale and</span></span>
+<span id="src-imaging-loft-L138"><span class="cm">// palette files are expanded to RGBA, and **alpha is carried** — a file with no</span></span>
+<span id="src-imaging-loft-L139"><span class="cm">// alpha channel arrives fully opaque (`a == 255`), never transparent.</span></span>
+<span id="src-imaging-loft-L140"><span class="cm">// Use to load sprite sheets or textures.</span></span>
+<span id="src-imaging-loft-L141"><span class="cm">// Example: @IMG-001 — the three ways to get null, and the completeness the null</span></span>
+<span id="src-imaging-loft-L142"><span class="cm">// check buys past it.</span></span>
+<span id="src-imaging-loft-L143"><span class="cm">// Example: @IMG-002 — every colour type arrives as RGBA, and a source without an</span></span>
+<span id="src-imaging-loft-L144"><span class="cm">// alpha channel is opaque rather than invisible.</span></span>
+<span id="src-imaging-loft-L145"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">png</span>(self: <span class="en"><a href="stdlib-file-system.html">File</a></span>) -&gt; <span class="en">Image</span>? {</span>
+<span id="src-imaging-loft-L146">  <span class="cm">// Early returns, not a nested `if … { result } else { null }`: on a `-&gt; Image?`</span></span>
+<span id="src-imaging-loft-L147">  <span class="cm">// function that nesting hands back the half-built `result` instead of null in</span></span>
+<span id="src-imaging-loft-L148">  <span class="cm">// loft releases before the fix, so an undecodable file read as an empty image.</span></span>
+<span id="src-imaging-loft-L149">  <span class="kw">if</span> self.format != <span class="en"><a href="stdlib-file-system.html">Format</a></span>.<span class="en">TextFile</span> {</span>
+<span id="src-imaging-loft-L150">    <span class="kw">return</span> <span class="kw">null</span>;</span>
+<span id="src-imaging-loft-L151">  }</span>
+<span id="src-imaging-loft-L152">  result = <span class="en">Image</span> { };</span>
+<span id="src-imaging-loft-L153">  <span class="kw">if</span> !<span class="fn-call">load_png</span>(self.path, result) {</span>
+<span id="src-imaging-loft-L154">    <span class="kw">return</span> <span class="kw">null</span>;</span>
+<span id="src-imaging-loft-L155">  }</span>
+<span id="src-imaging-loft-L156">  result</span>
+<span id="src-imaging-loft-L157">}</span>
 </code></pre>
 <h2 id="tests-14-image-loft">tests/14-image.loft</h2>
 <pre class="src"><code><span id="tests-14-image-loft-L1"><span class="cm">// Copyright (c) 2024-2026 Jurjen Stellingwerff</span></span>
