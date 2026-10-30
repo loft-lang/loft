@@ -48,6 +48,10 @@ has no C path yet.  **arguments `parse`** printed no C lane row.
 | `(R-Destination)` on C: the `__d` twin answers its scalars as a tuple struct; the caller's window mints the element above the call | `c/body.rs` `destination_site` / `dest_scalar_set` / `dest_return` | cbor `decode` −56 % |
 | `(R-TextBorrow)`'s tested clause on C: a text bound out of a parameter's record is a view while the parameter's store is not the buffer's | `c/body.rs` `borrowed_assign`, `LOFT_NO_C_TESTED_BORROW` | cbor `encode_bytes` −16 %, `encode` −4 % |
 | `(R-Inline)`'s count: lines that only close a block or open its `else` are no statements | `c/body.rs` `statement_count`, `LOFT_INLINE_COUNT_BRACES` | gcc, 119 routines: 6 faster (−5 … −67 %), 112 the same, hex_world `get_cell` +2.8 %; clang: 1 faster (`passable` −15 %), 118 the same |
+| `(R-TextBorrow)`'s discharge clause on C: a text `if` choosing between slices is a view, each arm in its branch | `c/body.rs` `view_choice` / `viewable_arm`, `LOFT_NO_VIEW_CHOICE_SLICE` | pluginabi `req_state_b64` −36 % |
+| `(R-SliceInto)`: a slice appended to a place is sliced into it, no store of its own | `c/body.rs` `slice_fill` / `slice_into`, `LOFT_NO_SLICE_INTO` | pluginabi `check_request` −10 %, `req_state_b64` −4 % |
+| the scope-exit release of a variable inlined (`loft_free_var`, `loft_free_var_distinct`) | `c/loft_rt.h` | cbor `decode` −20 %, pluginabi `check_request` −10 % |
+| a text's set and append inlined (`loft_text_set`, `loft_text_concat`) | `c/loft_text.h`, `-DLOFT_NO_TEXT_INLINE` | 119 routines: 13 faster (up to −16 %), 100 the same, five 2–5 % slower, `hex_neighbor` +22 % from code placement only |
 | `stats.py` measures every program after one whose lane fails (a worker's exit used to end the run) | `bench/stats.py` `MEASURE_FAILURES` | a 38-library run measured 18 before |
 
 ## The census against rustc
