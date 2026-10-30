@@ -2956,10 +2956,8 @@ impl Stores {
             // The shape, not a byte offset: the store's root record is a
             // `main_vector<T>` WRAPPER — one field, and that field is the vector — which
             // is exactly what `OpDatabase` mints for a vector local or a return buffer,
-            // and the only shape that outlives a call.  Asking the SHAPE keeps the two
-            // backends together: the wrapper's field sits at `pos` 8 on `--native` and
-            // 12 on the interpreter, and a hardcoded offset silently released on one
-            // backend only (measured: the interpreter kept leaking).  Any other root —
+            // and the only shape that outlives a call.  The wrapper's field is at `pos` 8
+            // on every backend (`@FR-H-ClearRelease`, one position).  Any other root —
             // a user struct with collection fields, a placed § V-j buffer (never record
             // 1) — keeps the plain reset.
 

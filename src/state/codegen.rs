@@ -2172,9 +2172,9 @@ impl State {
     }
 
     /// Allocate a fresh `main_vector<elm>` store at `v`'s slot, which holds a DbRef or the
-    /// null sentinel (`OpDatabase` allocates fresh from the sentinel), then init the
-    /// header's length field (4B) and dep field (1B).  The owned-vector null-init, and the
-    /// mint a lazy buffer's guarded `Set(v, Null)` lowers to (`@FR-O-LazyBuffer`).
+    /// null sentinel (`OpDatabase` allocates fresh from the sentinel), then empty the
+    /// wrapper's one field.  The owned-vector null-init, and the mint a lazy buffer's guarded
+    /// `Set(v, Null)` lowers to (`@FR-O-LazyBuffer`).
     fn gen_owned_vector_store(&mut self, stack: &mut Stack, v: u16, elm_tp: &Type) {
         let slot_offset = stack.var_pos(v);
         stack.add_op("OpDatabase", self);
@@ -2188,28 +2188,18 @@ impl State {
             stack.function.name
         );
         self.code_add(known);
-        // Push a DbRef copy of v's slot, set length=0 (4B), set dep byte.
+        // The slot stays at `pos 8`, the wrapper's one field, where `OpDatabase` leaves it: the
+        // one position `--native`, the C and a local bound through `OpGetField(…, 0)` name
+        // (`@FR-H-ClearRelease`).  A second position inside the same root is cleared through a
+        // field that holds nothing once a callee's `OpDatabase` refills the store, and fails
+        // every `(1, 8)` root test.  The field names no vector record yet.
         let slot_offset = stack.var_pos(v);
         stack.add_op("OpVarRef", self);
         self.code_add(slot_offset);
         stack.add_op("OpConstInt", self);
         self.code_add(0i64);
-        // Vector header length field is 4 bytes (u32).
         stack.add_op("OpSetInt4", self);
-        self.code_add(4u16);
-        // OpCreateStack pointing at v's slot (now the real DbRef).
-        let dep_offset = stack.var_pos(v);
-        self.emit_push_create_stack(stack, dep_offset);
-        stack.add_op("OpConstInt", self);
-        self.code_add(12i64);
-        stack.add_op("OpSetByte", self);
-        self.code_add(4u16);
-        // The `min` bias is FOUR bytes (loft#1620), as `default/01_code.loft` declares it
-        // and `variables::size` reserves it.  Written `0u16` here — the only hand-rolled
-        // emission of a narrow field op in this file, so nothing else in the ladder covers
-        // it — every operand after this one was read two bytes early, and the run died in
-        // `keys.rs` with a `DbRef store_nr` out of range, two subsystems away.
-        self.code_add(0i32);
+        self.code_add(0u16);
     }
 
     /// The null-init of a NULLABLE vector local (`vector<T>?`): the slot takes the null

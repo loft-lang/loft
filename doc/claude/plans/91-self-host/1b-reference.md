@@ -52,23 +52,14 @@ a known-equal baseline.
 
 ## The steps, in order
 
-- **E-1 — one wrapper position (offset 8 vs 12).**  Rule: `(H-ClearRelease)`, which states the
-  two positions as a difference BETWEEN backends ("8 on `--native` and 12 on the
-  interpreter") and so cannot express two positions inside one; its shape clause is extended
-  to one position, and a deviation `D-heap-N` is opened against the interpreter when the cell
-  below measures it.  An owned vector local points at byte 4 of
-  its `main_vector<T>` root (`gen_owned_vector_store`: `OpSetInt4(fld 4, 0)` and `pos` 12),
-  while a buffer reached through `OpGetField(…, 0)` names the wrapper's field at `pos` 8; native
-  and the C use 8 throughout.  A reused buffer is filled through one and cleared through the
-  other: in `157-retbuf-adopt` the clear reads no vector, so its store reset carries no capacity
-  and `@PLN157 § V-ai` does not fire on the interpreter (measured with a probe in
-  `Stores::clear_vector_release`).  **First, a cell that can answer wrong:** a clear that does
-  not reset (elements that own no heap) through `pos` 12 would leave the elements a fill
-  through `pos` 8 wrote, so a vector could keep its old length where no `OpDatabase` follows.
-  If the cell answers wrong on `main`, it is a `silent-wrong` issue, filed and fixed as one.
-  The fix: one convention, `pos` 8.  The comment in `clear_vector_release` (*"the wrapper's
-  field sits at pos 8 on --native and 12 on the interpreter, and a hardcoded offset silently
-  released on one backend only"*) records the cost the split has already had.
+- **E-1 — one wrapper position (offset 8 vs 12)** — **BUILT** (D-heap-52).  The null-init of
+  a vector local (`gen_owned_vector_store`) rewrote its slot to `pos 12` while `OpDatabase` and
+  `OpGetField(…, 0)` name 8, so a caller-minted return buffer was cleared through a field its
+  callee never filled.  The cell answered right on `main` (the callee's `OpDatabase` resets the
+  store after every such clear; a corpus sweep found no clear over a live vector without one), so
+  the cost was the capacity carry and the `(1, 8)` root tests, not a value.  The null-init now
+  leaves the slot at 8 and `(H-ClearRelease)` states one position; guard
+  `tests/reset_capacity.rs` `a_buffer_is_cleared_where_its_callee_filled_it`.
 - **E-2 — the store exchange for a record that holds a keyed collection.**  Rule:
   `(H-SwapIn)` keeps the copy for "the keyed collections", which `(H-SwapKeyed)`'s own
   reasoning contradicts (a keyed collection's pointers are record numbers inside its store);

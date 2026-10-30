@@ -2735,6 +2735,22 @@ channel (`m55,55,V56,56` here, `m55,55,V56,56,56` with the witness disabled), wh
 bisect this family on: the loft#1336 guard only reports as a hang, and a control that can only
 time out cannot say which tree moved.
 
+### D-heap-52 — OPENED AND CLOSED (2026-10-30, @PLN91 1b-reference.md E-1): the interpreter named a vector root at two positions
+
+`(H-ClearRelease)` reads the vector a store-root clear releases from the `main_vector<T>`
+wrapper's one field, and its text recorded that field at `pos 8` on `--native` and `pos 12` on
+the interpreter.  The split was inside the interpreter, not between backends: the null-init of a
+vector local (`gen_owned_vector_store`) rewrote its slot's `pos` to 12, while a local bound
+through `OpGetField(…, 0)` and every `OpDatabase` mint named 8.  A caller's return buffer is
+minted the first way and refilled by its callee the second, so the callee's entry clear read an
+empty field: its reset carried no capacity (`@PLN157 § V-ai` never fired on the interpreter) and
+every `(1, 8)` root test declined such a buffer there alone.  No answer was wrong — each such
+clear is followed by the callee's `OpDatabase`, which resets the store (a corpus sweep found no
+clear at one position over a live vector at the other without a re-mint or a free after it).
+Closed by one position: the null-init leaves the slot at 8, as `--native` and the C mint it, and
+the rule states one position.  Guard `tests/reset_capacity.rs`
+`a_buffer_is_cleared_where_its_callee_filled_it`.
+
 ### D-heap-51 — OPENED AND CLOSED (2026-10-12, loft#1985): a parsed vector was an unrecorded view of a temporary store
 
 `(H-View)` makes a projection a view of the record it reads, kept alive by that record's
