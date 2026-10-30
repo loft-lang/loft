@@ -2799,6 +2799,41 @@ be of the callee's answer).  `LOFT_NO_C_WORK_BORROW=1` copies again.  Cells
 compile with the copy refusal off).  Sites: `hoist::own_format_work`, the format arm of
 `hoist::borrowed_store_texts`.
 
+### A slice handed to a `const` parameter needs no store of its own
+
+```
+  (R-SliceArg)   a slice VALUE — `{ OpDatabase(W, tp); T = OpGetField(W, 0, …);
+                 OpSetInt4(W, 0, 0); <bounds>; OpSliceView(T, src, lo, hi, row); T }`,
+                 the block a slice used as a value is lowered to — that is an argument
+                 bound to a `const` parameter is materialised into a CARRIER: a store
+                 kept across uses, whose vector record is reset to length 0 and copied
+                 into, instead of a store minted for it.  The free that ended W's store
+                 gives the carrier back.  Observably nothing: the slice holds the same
+                 elements at the same length, a `const` parameter cannot write it, and
+                 the carrier lives exactly as long as W's store did.  A variable that
+                 still holds its carrier when the site runs again keeps it; when every
+                 carrier is in use the store is minted as before.
+```
+
+**In words.**  A slice used as a value needs a vector record, and a record needs a store: the
+lowering mints one per evaluation and frees it after (the "view" is a copy unless the source is
+file-mapped).  For a decoder that reads each text of its frame as `text_from_bytes(bytes[a..b])`
+the mint, its allocator set-up and the free cost far more than the few bytes copied — cbor's
+`read_value` paid them for every map key.  The callee's parameter is `const`, so nothing it does
+can write or keep the slice beyond what a fresh store allowed, and the carrier is given back at
+the same free.  A copy rather than a foreign view over the source's bytes: a view needs the
+foreign intercept in every store read of the unit (priced: `request` +2.2 %) and a source that
+cannot move during the call; the copy needs neither and measured faster (`check_request` −20.7 %
+against −16.8 %).  Slices are scalar-only, so a length reset is a complete reset.  An idle carrier
+is PINNED: the leak report passes it by and a stray free leaves it alone.  Applied by: the C
+(`loft_slice_take`, the give-back in `loft_free_ref`).  pluginabi `check_request` −19.5 %,
+`req_state_b64` −3.4 % (gcc ship).  Switch `LOFT_NO_SLICE_ARG_POOL=1`.  Cells
+`tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft` (falsified by
+a take that keeps the old length — c1, c2 — and by one that does not mark the carrier in use —
+c4 reads "world+world").  Sites: `slice_carrier` and the `OpDatabase` / `OpSetInt4` arms of
+`FnWriter::store_operator` (`src/c/body.rs`), the carrier registration in `FnWriter::call`,
+`loft_slice_take` / `loft_slice_give` (`src/c/loft_rt.h`).
+
 ### A slice appended to a place is sliced into it
 
 ```

@@ -57,6 +57,7 @@ has no C path yet.  **arguments `parse`** printed no C lane row.
 | `(R-Push)`'s sole-growth clause: a loop whose one store growth is its one pushed path's pushes writes each element and the length through the record address the header holds | `hoist::LoopHoist::sole_push`, `c/body.rs` `hold_pushes` / `pushed_mint`, `c/loft_rt.h` `loft_ph_putb*`, `LOFT_NO_PUSH_BASE` | gcc, 122 routines (the C changes in 11 libraries): pluginabi `request` −3 %, `compose` −3 %, the rest the same.  `request`'s decode loop is now the hand-priced loop instruction for instruction, but that row swings with placement (−3 … −11.5 % across builds): its character-class compares on random base64 are data-dependent branches |
 | a call's text result moves into its local; a value block whose value is a work text is its view | `c/body.rs` `pending_text_temp` / `text_tail_view`, `loft_text_move`, `LOFT_NO_C_TEXT_MOVE`, `LOFT_NO_C_TAIL_VIEW` | pluginabi `req_state_b64` −5 %, `check_request` −3 % |
 | `(R-PushFill)`'s straight-line run clause on the C: a run of pushes onto one path reserves its count first | `c/body.rs` `reserve_push_run`, `loft_vec_reserve_run`, `LOFT_NO_PUSH_RUN_RESERVE` | hex_recover `forms_upto` −7.3 % |
+| `(R-SliceArg)`: a slice handed to a `const` parameter is copied into a pooled carrier store, not a store minted for it | `c/body.rs` `slice_carrier`, `loft_slice_take` / `loft_slice_give`, `LOFT_NO_SLICE_ARG_POOL` | pluginabi `check_request` −19.5 %, `req_state_b64` −3.4 % |
 
 ## The census against rustc
 
@@ -120,16 +121,15 @@ does for a variable: `check_request` −3 %.  The text arm is now conversion, mo
 Guard `tests/scripts/a-call-text-moves-into-its-local.loft` (8 cells; the move falsified by a
 plant that leaves the source its buffer).
 
-**For the owner — the store half (−27 %).**  A vector slice at an argument position is the
-shape; across the library checkouts and the registry it occurs only as
-`text_from_bytes(bytes[a..b])` (cbor's decoder, two sites).  So a mechanism for it is a rewrite
-fitted to one call unless it is stated as the natural spelling made canonical: the stdlib
-already has `text_from_byte_range(v, lo, hi)` with the slice's clamping, and
-`text_from_bytes(v[lo..hi])` is how a reader writes it.  Options: (a) lower that call to its
-ranged twin in the parser, both backends; (b) leave the language alone and ask cbor's stream to
-call `text_from_byte_range` (a library edit, theirs); (c) a general argument-position slice
-without its store — no second consumer to justify it today.  Recommendation: (b) now, and (a)
-only if a second ranged twin appears.
+**The store half — built as `(R-SliceArg)` (owner, 2026-10-30: "text from bytes is known to be
+read only for the slice, can we use that information here?").**  The information is the
+parameter's `const`, so the rule is general: a slice VALUE handed to a `const` parameter is
+copied into a pooled carrier store instead of a store minted for it, and the free that ended the
+fresh store gives the carrier back.  A zero-copy foreign VIEW over the source's bytes was priced
+too and lost: it needs the foreign intercept in every store read of the unit (`request` +2.2 %)
+and measured −16.8 % against the copy's −20.7 %, since the keys copied are a few bytes and the
+mint was the cost.  Built: pluginabi `check_request` −19.5 %, `req_state_b64` −3.4 %;
+`request` +2.5 % is placement (its `base64_to_bytes` byte-identical at another address).
 
 ### The short appends (2026-10-30)
 
