@@ -172,6 +172,17 @@ static int loft_sock_flag(int fd, int level, int opt, int on) {
 #endif
 }
 
+/* A listener that takes its port back at once after a restart, and never shares a live one:
+ * `SO_REUSEADDR` under POSIX; on Windows that option lets a second socket bind over a live
+ * listener, so it is `SO_EXCLUSIVEADDRUSE` there (`std::net::TcpListener` sets neither). */
+static void loft_sock_listener_addr(int fd) {
+#if defined(_WIN32)
+    loft_sock_flag(fd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, 1);
+#else
+    loft_sock_flag(fd, SOL_SOCKET, SO_REUSEADDR, 1);
+#endif
+}
+
 /* The pending error of a connect that finished (`SO_ERROR`): 0 when it connected. */
 static int loft_sock_pending_error(int fd) {
     int err = 0;

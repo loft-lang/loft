@@ -344,8 +344,8 @@ static int loft_child_pump(loft_child *c, loft_text *out, loft_text *err, const 
  * starts joins the job, a stop ends the whole job, and when this program ends the OS closes the
  * job and ends what is left.  It stays in the console's group, so the terminal's Ctrl-C reaches
  * it as it reaches this program.  Windows pipes cannot be polled: the pump asks each output pipe
- * what is waiting (`PeekNamedPipe`) and writes the input through a non-blocking handle, napping
- * between rounds when nothing moved.  A pipe is held as a CRT descriptor; the bytes go through
+ * what is waiting (`PeekNamedPipe`), napping between rounds when nothing moved, and the input is
+ * written by a thread of its own.  A pipe is held as a CRT descriptor; the bytes go through
  * its handle (`_get_osfhandle`), never the CRT's text translation. */
 typedef int loft_pid; /* 1 + the child's row in `loft_win_children`; 0 for none */
 typedef struct { HANDLE proc, job; } loft_win_child;
@@ -489,10 +489,6 @@ static int loft_spawn(char **argv, const size_t *lens, size_t n, int pin, int po
     c->in = pin ? _open_osfhandle((intptr_t) in_w, 0) : -1;
     c->out = pout ? _open_osfhandle((intptr_t) out_r, 0) : -1;
     c->err = perr ? _open_osfhandle((intptr_t) err_r, 0) : -1;
-    if (c->in >= 0) {
-        DWORD mode = PIPE_NOWAIT;
-        SetNamedPipeHandleState(in_w, &mode, 0, 0);
-    }
     return 1;
 }
 
@@ -531,6 +527,24 @@ static int64_t loft_child_stop(loft_pid pid) {
     return loft_child_reap(pid);
 }
 
+/* The input a writer thread owns: its pipe and a copy of the bytes. */
+typedef struct { int fd; size_t n; char p[1]; } loft_win_feed;
+
+static DWORD WINAPI loft_win_feed_run(LPVOID arg) {
+    loft_win_feed *f = (loft_win_feed *) arg;
+    HANDLE h = (HANDLE) _get_osfhandle(f->fd);
+    size_t at = 0;
+    while (at < f->n) {
+        DWORD w = 0;
+        size_t left = f->n - at;
+        if (!WriteFile(h, f->p + at, (DWORD) (left < (1u << 20) ? left : (1u << 20)), &w, 0) || !w) break;
+        at += w;
+    }
+    _close(f->fd);
+    free(f);
+    return 0;
+}
+
 /* One round over the child's pipes, as the POSIX pump's: each output read into its text (its end
  * closes it), the input fed as far as the pipe takes it (closed once all of it is in, or the child
  * closed its end).  `ms` -1 waits until something moves.  Answers whether any pipe is still open. */
@@ -562,23 +576,26 @@ static int loft_child_pump(loft_child *c, loft_text *out, loft_text *err, const 
             }
             moved = 1;
         }
+        /* The input goes to a thread of its own, as `std::process` gives it one: it writes a
+         * copy of what is left, blocking, and closes the pipe — a child that exits without
+         * reading closes its end, which ends the thread.  The pump only reads. */
         if (c->in >= 0) {
-            HANDLE h = (HANDLE) _get_osfhandle(c->in);
-            DWORD w = 0;
             size_t left = inlen - *fed;
-            int alive = left == 0 ||
-                        WriteFile(h, in + *fed, (DWORD) (left < (1u << 20) ? left : (1u << 20)), &w, 0);
-            if (w) {
-                *fed += w;
-                moved = 1;
+            loft_win_feed *f = (loft_win_feed *) malloc(sizeof *f + (left ? left : 1));
+            if (!f) { fputs("loft: out of memory\n", stderr); abort(); }
+            f->fd = c->in;
+            f->n = left;
+            if (left) memcpy(f->p, in + *fed, left);
+            HANDLE t = CreateThread(0, 0, loft_win_feed_run, f, 0, 0);
+            if (t) {
+                CloseHandle(t);
+            } else {
+                _close(f->fd);
+                free(f);
             }
-            /* A child that exits without reading its input closes the pipe: its choice, not a
-             * failure of the run. */
-            if (*fed >= inlen || !alive) {
-                _close(c->in);
-                c->in = -1;
-                moved = 1;
-            }
+            *fed = inlen;
+            c->in = -1;
+            moved = 1;
         }
         if (moved) break;
         int64_t now = loft_now_us();
@@ -1121,7 +1138,19 @@ static void loft_proc_control(const char *op, size_t oplen, loft_words *w, loft_
         /* PathText::program on this host: a name no platform takes refuses the path; the
          * child is handed its normal form. */
         loft_str raw = w->n ? loft_lit(w->v[0], w->len[0]) : loft_lit("", 0);
-        for (size_t i = 0; i < raw.len;) {
+        size_t first = 0;
+#if defined(_WIN32)
+        /* A drive or a share is the path's prefix, not a name. */
+        {
+            char *pfx = (char *) malloc(raw.len + 1);
+            if (!pfx) { fputs("loft: out of memory\n", stderr); abort(); }
+            size_t plen = 0;
+            int rooted = 0;
+            first = loft_win_prefix(raw, pfx, &plen, &rooted);
+            free(pfx);
+        }
+#endif
+        for (size_t i = first; i < raw.len;) {
             size_t s = i;
             while (i < raw.len && raw.p[i] != '/' && raw.p[i] != '\\') i++;
             size_t why_len = 0;

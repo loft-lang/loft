@@ -224,7 +224,7 @@ static int64_t loft_srv_bind(const char *addr, size_t an, int64_t port, void *tl
                 continue;
             }
             loft_sock_cloexec(s);
-            loft_sock_flag(s, SOL_SOCKET, SO_REUSEADDR, 1);
+            loft_sock_listener_addr(s);
             if (loft_sock_bind_listen(s, a->ai_addr, (size_t) a->ai_addrlen, 128) == 0) {
                 fd = s;
             } else {
