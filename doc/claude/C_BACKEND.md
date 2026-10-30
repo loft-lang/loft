@@ -44,7 +44,11 @@ make c-sweep ARGS="…"                          # the release loft built first,
 python3 scripts/image_probe.py                 # every corpus program: the C written from the
                                                #   program IMAGE (LOFT_EMIT_FROM_IMAGE=1) against
                                                #   the C written from memory, byte for byte (@PLN205)
-./scripts/find_problems.sh --subject c         # the C backend's guards (c_emit, c_https)
+./scripts/find_problems.sh --subject c         # the C backend's guards (c_emit, c_https) —
+                                               #   run it before pushing a writer change as
+                                               #   well as the sweep: c_emit COUNTS emitted
+                                               #   constructs, and a new holder or twin moves
+                                               #   a count while every output still matches
 python3 scripts/c_sweep.py --wasm              # the C built for wasm32-wasi, run under wasmtime
 python3 scripts/c_sweep.py --no-limit          # no kill at three times the last sweep's time
 LOFT_C_WHERE=1 loft --emit-c out.c prog.loft   # a refusal also prints the statement it met
