@@ -48,6 +48,9 @@ It holds four constraints:
    port yet is refused by name.  The interpreter adds no mechanism of its own: no owner
    table, no sweep, no run-time choice the Rust interpreter does not make.  This retires the
    run-time ownership of 1b-s3.md (2026-10-28), which had become exactly such a mechanism.
+   **And the same memory structures** (owner, 2026-10-30): values live where the Rust
+   interpreter keeps them — one stack store, frames at the image's `stack_pos`, slots reused
+   as the Rust allocator reuses them ([1b-frame.md](1b-frame.md)).
 
 **The order of the goals (owner, 2026-10-28).**  First full coverage: every test and program
 the repository defines (the corpus, `tests/scripts`, the language suite's cells) gives
