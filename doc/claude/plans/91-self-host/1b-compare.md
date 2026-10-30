@@ -47,7 +47,9 @@ differently shows as the row where it does.
 |---|---|---|---|
 | **ir** | `loft introspect`: each function's IR, as `Value`'s display writes it | the IR the loft side read from the image, printed by a port of that display | none, per function, byte for byte |
 | **types** | `introspect`'s `=== types ===` table: each variable's type with its dependencies | the same from the image's variable table | none |
-| **schema** | `LOFT_DUMP_TYPES`: every store type (`Stores::show_type`) — size and alignment, the derived parents, the parts: fields with positions, variants, keys | the image's schema (`Bundle.types`) in the same text, the parents derived as the Rust side derives them | none |
+| **ownership** | `introspect --show-ownership`: each function's return verdict and each variable's `Owned` / `Borrowed(base)` / `Join(base)` (`use_analysis::ownership_of`) | the ported oracle (1b-s3.md B-2) | none |
+| **resolution** | `introspect --show-resolution`: per source, the names it defines and reaches, every import alias | the loft front end (strand 1a) | none |
+| **schema** | `LOFT_DUMP_TYPES=1 loft --check` (nothing run): every store type (`Stores::show_type`) — size and alignment, the derived parents, the parts: fields with positions, variants, keys | the image's schema (`Bundle.types`) in the same text, the parents derived as the Rust side derives them | none |
 | **ctable** | the C type table the C generator writes for the program (`--emit-c`, read by `tests/selfhost.rs`'s `c_type_table`) | `types::render` of the loft-derived table (P5) | none, row by row |
 | **slots** | `introspect`'s variable table: `slot [a, b)` per variable | the slot and width every access addresses (from F-1 the image's `stack_pos`) | none |
 | **lifetimes** | `introspect`'s variable table: `live [a, b]` per variable (`compute_intervals`) | a port of `compute_intervals` over the image's IR | none |
@@ -60,7 +62,10 @@ differently shows as the row where it does.
 Until the loft interpreter builds a layer's producer, that layer is `MISSING loft`: ir,
 types and schema from C-1 (the image is already read; the displays are ported), ctable from C-1
 (P5's table already exists), binds from 1b-s3.md's B-1,
-slots from 1b-frame.md's F-1, lifetimes with the port of `compute_intervals`, bytecode from F-2.  The tool is complete from the
+slots from 1b-frame.md's F-1, lifetimes with the port of `compute_intervals`, bytecode from F-2,
+ownership from B-2, resolution from strand 1a.  The compile-time reports cover the program's own
+functions, as `introspect` lists them (no operator, nothing from `default/`); `--all-fns` on
+both sides is a later option.  The tool is complete from the
 start; the interpreter fills it in.
 
 ## What each side needs (the build)
