@@ -8,12 +8,12 @@
 use super::backings::{member_backing, outer_collection_backing};
 use super::capture_adoption::{
     closure_record_leaves_frame, closure_records_of_source, link_written_closure_records,
-    owning_record_locals,
+    owning_record_locals, per_run_capture_owners,
 };
 use super::capture_builds::{
     adoption_build_is_conditional, capture_adoption_owns_free, escaping_record_holds,
-    escaping_record_holds_buffer, free_unless_record_built, join_capture_witness,
-    reassigned_join_capture_slot, rebound_capture_slots,
+    escaping_record_holds_buffer, free_unless_leaver_holds, free_unless_record_built,
+    join_capture_witness, reassigned_join_capture_slot, rebound_capture_slots,
 };
 use super::free_vars::Delivered;
 use super::tuple_members::{MemberFacts, tuple_owned_elem_frees};
@@ -604,7 +604,51 @@ impl Scopes<'_> {
                 // conditional on the record existing, which is the same currency @FR-O-Witness
                 // uses for a local whose assignments mix ownership: a fact only the run knows,
                 // read off a slot at the moment the answer is needed.
-                if !emit
+                // loft#2281 — the records whose hold on this capture the run decides.
+                let per_run = if !emit && captured_ref {
+                    per_run_capture_owners(
+                        data,
+                        function,
+                        self.d_nr,
+                        &self.capture_build_backing,
+                        v,
+                    )
+                } else {
+                    Vec::new()
+                };
+                if !per_run.is_empty() {
+                    let owners: Vec<(u16, i32)> = per_run
+                        .iter()
+                        .filter_map(|&(local, record, a)| {
+                            let off = self.database.position(
+                                data.def(record).known_type(),
+                                &data.attr_name(record, a),
+                            );
+                            (off != u16::MAX).then_some((local, i32::from(off)))
+                        })
+                        .collect();
+                    let mut rets: Vec<u16> = return_sources
+                        .iter()
+                        .copied()
+                        .chain(std::iter::once(ret_var))
+                        .filter(|&r| {
+                            r != u16::MAX
+                                && r < function.count()
+                                && matches!(function.tp(r), Type::Function(..))
+                        })
+                        .collect();
+                    rets.sort_unstable();
+                    rets.dedup();
+                    let owner = match function.tp(v).depend().as_slice() {
+                        [] => Some(v),
+                        [b] => Some(*b),
+                        _ => None,
+                    };
+                    let hook = owner
+                        .filter(|o| guarded_hooks.insert(*o))
+                        .and_then(|o| self.scope_end_drop(function, o, data));
+                    guarded.push(free_unless_leaver_holds(v, &owners, &rets, hook, data));
+                } else if !emit
                     && captured_ref
                     && adoption_build_is_conditional(&self.capture_build_backing, v)
                     && let records = owning_record_locals(

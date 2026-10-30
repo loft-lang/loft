@@ -73,6 +73,7 @@ pub(super) fn mark_borrowed_captures(data: &mut Data, database: &crate::database
             // never made (loft#1473).
             if group_is_pairwise_exclusive(data.def(d_nr).code(), &group)
                 || group_every_record_leaves(data, function, d_nr, &group)
+                || group_leaver_is_per_run(data, function, d_nr, &group)
             {
                 continue;
             }
@@ -676,6 +677,111 @@ pub(super) fn capture_store_adopters(
     (adopters, never_adopted)
 }
 
+/// loft#2281, `@FR-L-CapOne` — is WHICH record of `group` leaves the frame a fact of the RUN?
+///
+/// "Exactly one owns: the one that leaves" assumes the leaver is known here.  It is not where one
+/// fn-ref local is bound to builds of two or more of the group's records and the return hands
+/// that fn-ref out: `h = |…| e.a; if q { h = |…| e.a; } h` returns the first record on one run and
+/// the second on the next, while the declared return names only the last build.  Every record
+/// of such a group adopts, and the frame decides at run time which keeps the store
+/// ([`per_run_capture_owners`]): a record left behind is detached from it before its release.
+pub(super) fn group_leaver_is_per_run(
+    data: &Data,
+    function: &Function,
+    d_nr: u32,
+    group: &[(u16, u32, usize)],
+) -> bool {
+    // Records that cannot coexist each own on their own run already (`@FR-L-CapOne`).
+    if group.len() < 2 || group_is_pairwise_exclusive(data.def(d_nr).code(), group) {
+        return false;
+    }
+    let locals: Vec<u16> = group.iter().map(|(r, _, _)| *r).collect();
+    // The return carries the fn-ref out: its declared type names a record of the group.
+    let returned = data.def(d_nr).returned.deps_ref().is_some_and(|d| {
+        d.entries()
+            .any(|e| matches!(e, crate::data::DepEntry::CalleeFrame(w) if locals.contains(&w)))
+    });
+    if !returned || function.count() == 0 {
+        return false;
+    }
+    let database = data.def_nr("OpDatabase");
+    let mut bound: HashMap<u16, Vec<u16>> = HashMap::default();
+    data.def(d_nr).code().walk(&mut |n| {
+        if let Value::Set(h, rhs) = n.unspan()
+            && let Value::Block(b) = rhs.unspan()
+            && b.name == "fn_ref_with_closure"
+        {
+            for op in &b.operators {
+                if let Value::Call(d, args) = op.unspan()
+                    && *d == database
+                    && let Some(Value::Var(r)) = args.first().map(Value::unspan)
+                    && locals.contains(r)
+                {
+                    let rs = bound.entry(*h).or_default();
+                    if !rs.contains(r) {
+                        rs.push(*r);
+                    }
+                }
+            }
+        }
+    });
+    bound.values().any(|rs| rs.len() > 1)
+}
+
+/// loft#2281 — the records whose capture of local `v` the frame decides at run time
+/// ([`group_leaver_is_per_run`]): `(record local, record type, attribute)` for each, or empty.
+pub(super) fn per_run_capture_owners(
+    data: &Data,
+    function: &Function,
+    d_nr: u32,
+    builds: &CaptureBuilds,
+    v: u16,
+) -> Vec<(u16, u32, usize)> {
+    let name = function.name(v).to_string();
+    let (adopters, _) = capture_store_adopters(data, function, builds);
+    for group in adopters.values() {
+        let holds = |&(_, record, a): &(u16, u32, usize)| {
+            let attr = super::capture_builds::capture_name(data, record, a);
+            attr == name || builds.backing.get(&function.var(&attr)) == Some(&v)
+        };
+        if group.iter().any(holds) && group_leaver_is_per_run(data, function, d_nr, group) {
+            return group.iter().copied().filter(holds).collect();
+        }
+    }
+    // A record built in a loop gets a grouping key of its own (a pass may capture another
+    // store), so a build before the loop and one inside it never share a group.  Where `v` is
+    // assigned once, every record captured the one store, and the records are one group.
+    let union: Vec<(u16, u32, usize)> = adopters
+        .values()
+        .flat_map(|g| g.iter().copied())
+        .filter(|&(_, record, a)| {
+            let attr = super::capture_builds::capture_name(data, record, a);
+            attr == name || builds.backing.get(&function.var(&attr)) == Some(&v)
+        })
+        .collect();
+    if union.len() > 1 && assigned_once(data.def(d_nr).code(), v) && {
+        let mut sorted = union.clone();
+        sorted.sort_unstable();
+        group_leaver_is_per_run(data, function, d_nr, &sorted)
+    } {
+        return union;
+    }
+    Vec::new()
+}
+
+/// Does the body assign local `v` exactly once?
+fn assigned_once(body: &Value, v: u16) -> bool {
+    let mut n = 0usize;
+    body.walk(&mut |node| {
+        if let Value::Set(x, _) = node.unspan()
+            && *x == v
+        {
+            n += 1;
+        }
+    });
+    n == 1
+}
+
 /// Which of one store's adopters KEEPS it — `@FR-L-CapOwn`'s "exactly one".
 ///
 /// The record that LEAVES the frame, because the frame is gone by the time the question is
@@ -722,7 +828,9 @@ pub(super) fn owning_record_locals(
         // construction: a record the marking left owning while this side declined to name it
         // would have the frame free the store out from under that run's cascade, which is
         // loft#1473 in the other direction.
-        let owners: Vec<usize> = if group_is_pairwise_exclusive(data.def(d_nr).code(), group) {
+        let owners: Vec<usize> = if group_is_pairwise_exclusive(data.def(d_nr).code(), group)
+            || group_leaver_is_per_run(data, function, d_nr, group)
+        {
             (0..group.len()).collect()
         } else {
             vec![adoption_owner_index(data, function, d_nr, group)]

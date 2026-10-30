@@ -1082,6 +1082,80 @@ pub(super) fn free_unless_record_built(
     v_if(present, Value::Null, release)
 }
 
+/// loft#2281, `@FR-L-CapOne` — release `v`'s store unless the record that LEAVES on this run
+/// holds it, where which record leaves is a fact of the run (`group_leaver_is_per_run`).
+///
+/// Every record in `owners` adopted the capture, at field offset `off`.  First, each record
+/// that is there and is not one the return hands out (by store identity) lets go of the field,
+/// so its cascade, run at its own release later in this sweep, frees nothing of it: a record
+/// left behind never frees (`(L-CapOwn)`).  `rets` are the fn-refs this return may hand out.
+/// Then the frame frees the store unless a record still holds the field — the one that
+/// leaves, which takes the release over.  With none returned every record lets go and the
+/// frame's release is the one.
+pub(super) fn free_unless_leaver_holds(
+    v: u16,
+    owners: &[(u16, i32)],
+    rets: &[u16],
+    hook: Option<Value>,
+    data: &Data,
+) -> Value {
+    let present = |r: u16| {
+        v_if(
+            call("OpRefIsNull", r, data),
+            Value::Boolean(false),
+            call("OpConvBoolFromRef", r, data),
+        )
+    };
+    let field = |r: u16, off: i32| {
+        Value::Call(
+            data.def_nr("OpGetDbRef"),
+            vec![Value::Var(r), Value::Int(off)],
+        )
+    };
+    let mut out = Vec::new();
+    for &(r, off) in owners {
+        let detach = Value::Call(
+            data.def_nr("OpSetDbRef"),
+            vec![
+                Value::Var(r),
+                Value::Int(off),
+                Value::Call(data.def_nr("OpNullRefSentinel"), Vec::new()),
+            ],
+        );
+        // Distinct from every fn-ref the return may hand out, folded as `&&` lowers.
+        let detach = rets.iter().rev().fold(detach, |inner, &h| {
+            v_if(
+                Value::Call(
+                    data.def_nr("OpDistinctStore"),
+                    vec![Value::Var(r), call("OpFnRefClosure", h, data)],
+                ),
+                inner,
+                Value::Null,
+            )
+        });
+        out.push(v_if(present(r), detach, Value::Null));
+    }
+    let kept = owners
+        .iter()
+        .rev()
+        .map(|&(r, off)| {
+            v_if(
+                present(r),
+                Value::Call(data.def_nr("OpConvBoolFromRef"), vec![field(r, off)]),
+                Value::Boolean(false),
+            )
+        })
+        .reduce(|acc, one| v_if(one, Value::Boolean(true), acc))
+        .unwrap_or(Value::Boolean(false));
+    let release = call("OpFreeRef", v, data);
+    let release = match hook {
+        Some(hook) => Value::Insert(vec![hook, release]),
+        None => release,
+    };
+    out.push(v_if(kept, Value::Null, release));
+    Value::Insert(out)
+}
+
 /// Is local `w` a closure record this frame BUILDS (`___clos_N`, `emit_lambda_code`)?  The
 /// other locals of a closure-record type are not: the lambda's own `__closure` parameter, a
 /// rebuild's snapshot (`__disp_N`, `Scopes::displaced_drop`), which copies a record to run
