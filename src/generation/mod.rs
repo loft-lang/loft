@@ -13316,7 +13316,7 @@ extern crate loft;"
     /// Native functions that accept `vector<T>` args receive a `*const ELEM_TYPE`
     /// pointer.  This function returns the Rust type name for each loft element type.
     fn vector_elem_rust_type(tp: &Type) -> &'static str {
-        // The storage-stride width the host reads (@P310), one home with the browser
+        // The storage-stride width the host reads, one home with the browser
         // imports' (`host_imports::Elem`).
         crate::host_imports::Elem::of(tp).rust()
     }

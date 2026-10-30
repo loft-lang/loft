@@ -151,20 +151,6 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ```
 
-**Tried and reverted (2026-10-29): the wilderness serving claims first.**  A claim the
-wilderness could hold was cut off its front even while the free tree held blocks — the tree
-walk (118 instructions a claim on `grouped_fill_find`, whose grown vector and table leave their
-old blocks in the tree) gone, −8 % on that routine under gcc and clang.  It broke the store's
-footprint: small claims ate the tail, so the next growth of a large vector no longer fit there,
-the store grew and left the old block as a hole that small claims never reached (they kept
-taking the new tail), and the cycle repeated.  100 000 inserts into a `hash` and a `sorted` of
-records with text names (`tests/c_https.rs`'s paged images) ran past a 60 s deadline on the
-interpreter and overflowed the store's maximum size in CI, where the tree order finishes at
-once.  Under the tree order a small claim fills a hole and the tail stays free for growth,
-which is the property `H-Wilderness` keeps.  A footprint pin built on small sizes (claims of
-1–60 words, a 64-word store) did not show it; the shape that does is a large vector growing
-by doubling beside a stream of small claims.
-
 ## Deviations
 
 OPEN: **0**.  The history of these rules (each one's measurement and the defect its guard

@@ -6585,7 +6585,7 @@ mod tests {
         assert_eq!(store.claim(9), e, "the next claim takes it back");
     }
 
-    /// @PLN119 arc E — an EMPTY store's image is its first two words, and word one heads
+    /// An EMPTY store's image is its first two words, and word one heads
     /// the free block spanning the sender's whole capacity.  Adopted by a store SHORTER
     /// than that capacity (one that took the size of an earlier, smaller image), the block
     /// is re-headed as the tail of the receiver: before, the free-tree rebuild re-footed it

@@ -187,8 +187,8 @@ pub const INDEX: &str = "2";
 /// order and searched under the new one answers a present key as absent.  The suffix
 /// makes such a collection's layout identity differ from an old image's, so a whole-image
 /// load CONVERTS the old image — `UpgradeMap` rebuilds a keyed collection element by
-/// element, through this build's comparison — and a paged load refuses it (owner,
-/// 2026-10-29).  An integer key always ordered its null first, so its line, and every
+/// element, through this build's comparison — and a paged load refuses it (the
+/// owner's ruling).  An integer key always ordered its null first, so its line, and every
 /// identity recorded for it, is unchanged.
 pub const KEY_ORDER: &str = ",order=1";
 
