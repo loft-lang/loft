@@ -7315,3 +7315,105 @@ fn a_programs_tuple_types_are_numbered_the_same_on_every_emission() {
         }
     }
 }
+
+/// `@FR-R-Transient`'s arena (`loft_ta_*`, `loft_rt.h`): a mark, allocations after it, and the
+/// mark given back — the space is the same space again, nested marks give back in order, and
+/// an allocation past the base block spills into a block of its own that the give-back frees.
+/// Each allocation comes back zeroed and 8-aligned.
+#[test]
+fn the_transient_arena_gives_back_what_a_mark_took() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let mut c = String::new();
+    for part in [
+        include_str!("../src/c/loft_cc.h"),
+        include_str!("../src/c/loft_text.h"),
+        include_str!("../src/c/loft_store.h"),
+        include_str!("../src/c/loft_rt.h"),
+    ] {
+        c.push_str(part);
+    }
+    c.push_str(
+        r#"
+static void loft_init(void) {}
+
+static int fails = 0;
+#define CHECK(c, what) do { if (!(c)) { printf("FAIL %s\n", what); fails++; } } while (0)
+
+int main(void) {
+    /* one mark: the same place again after the give-back */
+    loft_ta_mark_t m0 = loft_ta_mark();
+    unsigned char *a = (unsigned char *) loft_ta_alloc(3);
+    unsigned char *b = (unsigned char *) loft_ta_alloc(10);
+    CHECK(b == a + 8, "3 bytes take 8");
+    CHECK(((uintptr_t) a & 7) == 0 && ((uintptr_t) b & 7) == 0, "8-aligned");
+    memset(a, 0xAB, 3);
+    memset(b, 0xCD, 10);
+    loft_ta_back(m0);
+    unsigned char *a2 = (unsigned char *) loft_ta_alloc(3);
+    CHECK(a2 == a, "the mark's space is reused");
+    CHECK(a2[0] == 0 && a2[1] == 0 && a2[2] == 0, "a reused allocation is zeroed");
+    loft_ta_back(m0);
+    /* nested marks */
+    loft_ta_mark_t outer = loft_ta_mark();
+    void *o1 = loft_ta_alloc(16);
+    loft_ta_mark_t inner = loft_ta_mark();
+    void *i1 = loft_ta_alloc(16);
+    loft_ta_back(inner);
+    void *i2 = loft_ta_alloc(16);
+    CHECK(i2 == i1, "the inner mark's space");
+    loft_ta_back(outer);
+    CHECK(loft_ta_alloc(16) == o1, "the outer mark's space");
+    loft_ta_back(outer);
+    /* spill: past the base block, into blocks of their own */
+    loft_ta_mark_t s0 = loft_ta_mark();
+    void *base = loft_ta_alloc(LOFT_TA_BASE - 64);
+    CHECK(loft_ta_spill == 0, "the base block holds it");
+    unsigned char *sp = (unsigned char *) loft_ta_alloc(128);
+    CHECK(loft_ta_spill != 0, "a spill block");
+    CHECK(((uintptr_t) sp & 7) == 0, "a spill is 8-aligned");
+    loft_ta_mark_t sm = loft_ta_mark();
+    unsigned char *same = (unsigned char *) loft_ta_alloc(64);
+    CHECK(same == sp + 128, "the same spill block");
+    loft_ta_back(sm);
+    CHECK(loft_ta_alloc(64) == same, "a mark inside a spill block gives its top back");
+    loft_ta_back(sm);
+    loft_ta_mark_t s1 = loft_ta_mark();
+    unsigned char *big = (unsigned char *) loft_ta_alloc(3 * LOFT_TA_BASE);
+    big[3 * LOFT_TA_BASE - 1] = 1;
+    CHECK(loft_ta_spill->cap >= 3 * LOFT_TA_BASE, "a block as big as the allocation");
+    loft_ta_back(s1);
+    CHECK(loft_ta_alloc(8) == sp + 128, "back to the first spill, its top kept");
+    loft_ta_back(s0);
+    CHECK(loft_ta_spill == 0, "every spill freed");
+    CHECK(loft_ta_alloc(8) == base, "back in the base block");
+    loft_ta_back(s0);
+    printf("%s\n", fails ? "failed" : "ok");
+    return fails;
+}
+"#,
+    );
+    let dir = scratch("arena");
+    let (src, exe) = (dir.join("arena.c"), dir.join("arena"));
+    fa::write(&src, &c).expect("write C");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O1", "-Wno-unused-function"])
+        .arg(&src)
+        .arg("-o")
+        .arg(&exe)
+        .arg("-lm")
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc rejected the arena:\n{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let run = loft::platform::process::harness_command(&exe)
+        .output()
+        .expect("run the arena");
+    let out = String::from_utf8_lossy(&run.stdout);
+    assert!(run.status.success() && out.trim() == "ok", "{out}");
+}

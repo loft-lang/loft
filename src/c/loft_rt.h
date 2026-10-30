@@ -1415,6 +1415,59 @@ static void loft_gen_free(loft_ref g);
  * allocator and keyed harnesses — leaves it null. */
 static void (*loft_release_file_leases_hook)(uint16_t nr);
 
+/* `@FR-R-Transient`: the arena a transient value lives in — a value built, read and dropped
+ * without being stored, held outside every store.  One block per thread, then a chain of
+ * spill blocks.  A root site takes a mark before it builds and gives the mark back at each of
+ * its exits: everything allocated since dies at once, so nothing is freed node by node and
+ * nothing reaches the leak report.  A spill that cannot be allocated halts as a store that
+ * cannot grow does. */
+#define LOFT_TA_BASE 65536
+typedef struct loft_ta_blk { struct loft_ta_blk *prev; size_t cap, top; } loft_ta_blk;
+typedef struct { size_t top; loft_ta_blk *spill; size_t spill_top; } loft_ta_mark_t;
+static LOFT_TLS uint64_t loft_ta_base[LOFT_TA_BASE / 8];
+static LOFT_TLS size_t loft_ta_top = 0;
+static LOFT_TLS loft_ta_blk *loft_ta_spill = 0;
+
+static inline loft_ta_mark_t loft_ta_mark(void) {
+    loft_ta_mark_t m = { loft_ta_top, loft_ta_spill, loft_ta_spill ? loft_ta_spill->top : 0 };
+    return m;
+}
+
+/* `n` bytes, 8-aligned, zeroed. */
+static inline void *loft_ta_alloc(size_t n) {
+    n = (n + 7) & ~(size_t) 7;
+    if (!loft_ta_spill && loft_ta_top + n <= LOFT_TA_BASE) {
+        void *p = (unsigned char *) loft_ta_base + loft_ta_top;
+        loft_ta_top += n;
+        memset(p, 0, n);
+        return p;
+    }
+    if (!loft_ta_spill || loft_ta_spill->top + n > loft_ta_spill->cap) {
+        size_t cap = n > LOFT_TA_BASE ? n : LOFT_TA_BASE;
+        loft_ta_blk *b = (loft_ta_blk *) malloc(sizeof(loft_ta_blk) + cap);
+        if (!b) { fputs("loft: out of memory\n", stderr); abort(); }
+        b->prev = loft_ta_spill;
+        b->cap = cap;
+        b->top = 0;
+        loft_ta_spill = b;
+    }
+    void *p = (unsigned char *) (loft_ta_spill + 1) + loft_ta_spill->top;
+    loft_ta_spill->top += n;
+    memset(p, 0, n);
+    return p;
+}
+
+/* Everything allocated since `m` dies: the spill blocks made after it are freed. */
+static inline void loft_ta_back(loft_ta_mark_t m) {
+    while (loft_ta_spill && loft_ta_spill != m.spill) {
+        loft_ta_blk *b = loft_ta_spill;
+        loft_ta_spill = b->prev;
+        free(b);
+    }
+    if (loft_ta_spill) loft_ta_spill->top = m.spill_top;
+    loft_ta_top = m.top;
+}
+
 /* `@FR-R-SliceArg`: the carrier stores a slice handed to a `const` parameter is copied into —
  * a few per thread, kept across uses instead of minted and freed per use.  An idle carrier is
  * PINNED, so the leak report passes it by and a stray free leaves it alone; one in use is an
