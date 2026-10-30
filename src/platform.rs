@@ -1790,6 +1790,25 @@ pub fn c_runtime_posix_host() -> bool {
     cfg!(unix)
 }
 
+/// The C compiler that builds and links a C backend unit: `LOFT_CC`, else `CC`, else the host's
+/// own ([`host_c_compiler`]).  The driver compiles with it, and every archive the unit links is
+/// built for it ([`c_unit_archiver`]).
+#[must_use]
+pub fn c_unit_compiler() -> String {
+    std::env::var("LOFT_CC")
+        .or_else(|_| std::env::var("CC"))
+        .unwrap_or_else(|_| host_c_compiler())
+}
+
+/// Does `cc` speak MSVC's command line (`cl`, `clang-cl`) rather than gcc's?  Told by its name.
+#[must_use]
+pub fn c_compiler_is_msvc(cc: &str) -> bool {
+    let stem = crate::file_access::file_stem(cc)
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+    stem == "cl" || stem == "clang-cl"
+}
+
 /// The C compiler the C backend drives when neither `LOFT_CC` nor `CC` names one: `cc`, and on
 /// Windows without one the MSVC `cl` of the Build Tools rustc's own target links with — found
 /// as [`shim_archiver`] finds it — so a machine that built loft builds its programs.
@@ -2022,10 +2041,13 @@ pub enum ShimArchiver {
     /// `cl /c` + `lib`, writing `<stem>.msvc-<key>.lib`, the key a hash of the `cl.exe`
     /// path: the path carries the toolset version, and an archive built by one toolset is
     /// not reused by another.  Never `<stem>.lib`, which is the shared shim's import library.
+    /// `static_crt`: the objects ask for the static C runtime (`/MT`, a `cl`-built C unit's
+    /// default, `<stem>.msvc-<key>-mt.lib`) rather than the DLL one rustc's target links.
     Msvc {
         cl: MsvcTool,
         lib: MsvcTool,
         key: u64,
+        static_crt: bool,
     },
 }
 
@@ -2052,7 +2074,12 @@ impl ShimArchiver {
     pub fn file_name(&self, stem: &str) -> String {
         match self {
             ShimArchiver::Unix => format!("lib{stem}.a"),
-            ShimArchiver::Msvc { key, .. } => format!("{stem}.msvc-{key:08x}.lib"),
+            ShimArchiver::Msvc {
+                key, static_crt, ..
+            } => format!(
+                "{stem}.msvc-{key:08x}{}.lib",
+                if *static_crt { "-mt" } else { "" }
+            ),
         }
     }
 
@@ -2090,13 +2117,14 @@ impl ShimArchiver {
                 .arg(src)
                 .arg("-o")
                 .arg(obj),
-            // `/MD` is the C runtime rustc's MSVC target links (the DLL CRT); objects built
-            // for the static one would ask the link for a second CRT.
-            ShimArchiver::Msvc { cl, .. } => cl
+            // `/MD` is the C runtime rustc's MSVC target links (the DLL CRT), `/MT` the one a
+            // `cl`-built C unit links; objects built for the other would ask the link for a
+            // second CRT.
+            ShimArchiver::Msvc { cl, static_crt, .. } => cl
                 .spawn()
                 .arg("/nologo")
                 .arg("/O2")
-                .arg("/MD")
+                .arg(if *static_crt { "/MT" } else { "/MD" })
                 .arg("/c")
                 .arg(src)
                 .arg(format!("/Fo{}", obj.display())),
@@ -2135,9 +2163,46 @@ pub fn shim_archiver() -> Option<&'static ShimArchiver> {
             let cl = find_msvc_tool(&target, "cl.exe")?;
             let lib = find_msvc_tool(&target, "lib.exe")?;
             let key = crate::cache::stable_hash(&[cl.path.to_string_lossy().as_bytes()]);
-            Some(ShimArchiver::Msvc { cl, lib, key })
+            Some(ShimArchiver::Msvc {
+                cl,
+                lib,
+                key,
+                static_crt: false,
+            })
         })
         .as_ref()
+}
+
+/// The archiver for an archive a C backend unit links (its TLS client, a library's `[c] shim`):
+/// the one of the compiler that links the unit ([`c_unit_compiler`]) — `cc` + `ar`, or for `cl`
+/// MSVC's `cl` + `lib` with the static C runtime, since `cl` cannot read a gcc archive and
+/// MinGW's `ld` cannot read an MSVC one.
+///
+/// # Errors
+/// `cl` links the unit but its Build Tools' `cl.exe` / `lib.exe` cannot be found.
+pub fn c_unit_archiver() -> Result<&'static ShimArchiver, String> {
+    static UNIX: ShimArchiver = ShimArchiver::Unix;
+    static MSVC: OnceLock<Option<ShimArchiver>> = OnceLock::new();
+    if !c_compiler_is_msvc(&c_unit_compiler()) {
+        return Ok(&UNIX);
+    }
+    MSVC.get_or_init(|| {
+        let target = crate::cache::host_triple();
+        let cl = find_msvc_tool(&target, "cl.exe")?;
+        let lib = find_msvc_tool(&target, "lib.exe")?;
+        let key = crate::cache::stable_hash(&[cl.path.to_string_lossy().as_bytes()]);
+        Some(ShimArchiver::Msvc {
+            cl,
+            lib,
+            key,
+            static_crt: true,
+        })
+    })
+    .as_ref()
+    .ok_or_else(|| {
+        "`cl` links this program, and the Build Tools' `cl.exe` and `lib.exe` an archive for          it is built with were not found"
+            .to_string()
+    })
 }
 
 /// An MSVC tool for `target`, with its environment: a developer prompt's when one is

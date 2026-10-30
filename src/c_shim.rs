@@ -266,21 +266,26 @@ pub fn archive(pkg_dir: &str, sources: &[String]) -> Result<Option<std::path::Pa
     let Some(tools) = crate::platform::shim_archiver() else {
         return Ok(None);
     };
-    archive_with(tools, pkg_dir, sources).map(Some)
+    archive_with(tools, &cc_program(), pkg_dir, sources).map(Some)
 }
 
-/// @PLN203 — the shim's static archive for a unit the C backend writes, which `cc` links: built
-/// by `cc` + `ar` on every host.  On Windows the host archiver of [`archive`] is MSVC's, whose
-/// `.lib` MinGW's `ld` refuses ("corrupt .drectve"), so the C unit cannot share it.
+/// @PLN203 — a static archive for a unit the C backend writes (a `[c] shim`, the runtime's TLS
+/// client), built for the compiler that links the unit (`platform::c_unit_archiver`): `cc` +
+/// `ar`, or for `cl` MSVC's `cl` + `lib` with the static C runtime.  It cannot share
+/// [`archive`]'s on Windows: that one is MSVC's with the DLL runtime rustc links, whose `.lib`
+/// MinGW's `ld` refuses ("corrupt .drectve") and whose runtime a `cl` unit does not link.
 ///
 /// # Errors
-/// As [`archive`].
+/// As [`archive`], and `cl` linking the unit with no Build Tools' `lib.exe` to be found.
 pub fn cc_archive(pkg_dir: &str, sources: &[String]) -> Result<std::path::PathBuf, String> {
-    archive_with(&crate::platform::ShimArchiver::Unix, pkg_dir, sources)
+    let tools = crate::platform::c_unit_archiver()?;
+    archive_with(tools, &crate::platform::c_unit_compiler(), pkg_dir, sources)
 }
 
+/// Build the archive with `tools`; `cc` is the compiler of the `Unix` archiver.
 fn archive_with(
     tools: &crate::platform::ShimArchiver,
+    cc: &str,
     pkg_dir: &str,
     sources: &[String],
 ) -> Result<std::path::PathBuf, String> {
@@ -310,7 +315,6 @@ fn archive_with(
         .trim_end()
         .to_string()
     };
-    let cc = cc_program();
     let objects: Vec<std::path::PathBuf> = (0..paths.len())
         .map(|i| stage.join(format!("{i}.o")))
         .collect();
@@ -329,12 +333,12 @@ fn archive_with(
                     if i >= paths.len() {
                         break;
                     }
-                    let why = match tools.compile(&cc, &paths[i], &objects[i]).run(b"") {
+                    let why = match tools.compile(cc, &paths[i], &objects[i]).run(b"") {
                         Ok(o) if o.status.success() => continue,
                         Ok(o) => format!("did not compile.\n{}", said(&o)),
                         Err(e) => format!(
                             "`[c] shim` needs a C compiler and `{}` could not be run ({e})",
-                            tools.compiler(&cc)
+                            tools.compiler(cc)
                         ),
                     };
                     // The lowest-numbered failure is the one reported, as a serial build would.

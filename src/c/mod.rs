@@ -1726,8 +1726,8 @@ fn lazy_driver_table(
 }
 
 /// The `[c]` libraries the program's packages declare, as the unit carries them: a `[c] shim` is
-/// built into its static archive by `cc` + `ar` (`c_shim::cc_archive`; off Windows the same
-/// artefact a `--static` program links) and named in a `/* link: <path> */` line for whoever
+/// built into its static archive for the compiler that links the unit (`c_shim::cc_archive`;
+/// off Windows the same artefact a `--static` program links) and named in a `/* link: <path> */` line for whoever
 /// compiles the unit, its sources in `/* shim-source: <path> */` lines for a wasm32 build.  A
 /// shim is never a part of the unit's own translation unit: its sources may carry `static`
 /// names of their own (the vendored BearSSL does), and a binding declares its callee by the
@@ -1926,8 +1926,8 @@ fn c_libraries(data: &Data, ffi_libs: &std::collections::BTreeSet<(String, Strin
                 lib.name, lib.pkg_dir
             );
         } else if let Ok(archive) = crate::c_shim::cc_archive(&lib.pkg_dir, &lib.shim) {
-            // Archived by `cc` + `ar` whatever the host's static-link archiver is: `cc` links
-            // this unit, and MinGW's `ld` cannot read an MSVC archive.  The sources are named
+            // Archived for the compiler that links this unit (`c_shim::cc_archive`), whatever
+            // the host's static-link archiver for rustc is.  The sources are named
             // too, for a wasm32 build, which compiles them instead of linking the host archive.
             // A package with optional libraries reaches its shim through `dlsym`, so the
             // archive is linked whole — nothing references its symbols directly.

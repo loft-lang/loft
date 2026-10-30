@@ -591,7 +591,11 @@ over the runtime's HTTP client (above).  Not carried, so refused by name: the
 build swap and the background rebuild (`swap_world`, `swap_start`, `rebuild_*`).  The live tier
 — a flip, a live edit, a breakpoint's eval — runs the interpreter inside the program, which a C
 build has not got: a C program's swap step serves and `live_flip` answers false, and the edit
-loop runs interpreted.  All of it POSIX hosts.
+loop runs interpreted.  All of it on every host with sockets (`loft_sock.h`: POSIX and
+Windows); a Windows listener does not share its port, as `platform::bind_tcp_handover` binds
+there.  The kernel closes its sockets at exit, as the Rust kernel's drop does: Windows resets a
+socket a process leaves open, discarding what the peer had not read
+(`tests/c_emit.rs` `an_engine_host_seat_talks_to_its_listener_on_the_c_and_the_interpreter`).
 
 **`deliver`.**  `deliver(tag, value)` prints the loopback host's line: the value's bytes as
 `read_via_descriptor` reads them through its layout, as hex, or the refusal of the first

@@ -31,9 +31,7 @@ pub(crate) fn c_backend_selected() -> bool {
 /// The C compiler: `LOFT_CC`, else `CC`, else the host's own (`platform::host_c_compiler`:
 /// `cc`, or on Windows without one the MSVC `cl` rustc's own target links with).
 pub(crate) fn cc_program() -> String {
-    std::env::var("LOFT_CC")
-        .or_else(|_| std::env::var("CC"))
-        .unwrap_or_else(|_| loft::platform::host_c_compiler())
+    loft::platform::c_unit_compiler()
 }
 
 /// A compiler's command line: gcc's (`cc`, `gcc`, `clang`) or MSVC's (`cl`, `clang-cl`), told
@@ -46,10 +44,7 @@ enum Dialect {
 }
 
 fn dialect(cc: &str) -> Dialect {
-    let stem = fa::file_stem(cc)
-        .map(|s| s.to_ascii_lowercase())
-        .unwrap_or_default();
-    if stem == "cl" || stem == "clang-cl" {
+    if loft::platform::c_compiler_is_msvc(cc) {
         Dialect::Msvc
     } else {
         Dialect::Gnu
