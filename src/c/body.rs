@@ -897,10 +897,19 @@ impl<'a> FnWriter<'a> {
         if !slots.is_empty() {
             let _ = writeln!(out, "    LOFT_HOLD({}, {});", slots.len(), slots.join(", "));
         }
+        // `@FR-R-Inline` counts STATEMENTS: a line that only closes a block or opens its `else`
+        // is none (`LOFT_INLINE_COUNT_BRACES=1` counts them again).
+        let braces =
+            crate::env_once!(std::env::var("LOFT_INLINE_COUNT_BRACES").is_ok_and(|v| v != "0"));
         let statements = self
             .body
             .lines()
-            .filter(|l| !l.trim().is_empty() && !l.contains("loft_frame_site("))
+            .filter(|l| {
+                let t = l.trim();
+                !t.is_empty()
+                    && !l.contains("loft_frame_site(")
+                    && (braces || !matches!(t, "}" | "{" | "};" | "} else {"))
+            })
             .count();
         out.push_str(&self.body);
         Ok((out, statements))
