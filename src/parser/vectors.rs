@@ -6149,7 +6149,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     pub(crate) fn parse_multiply(&mut self, res: &mut Vec<Value>) -> Option<Type> {
         let mut code = Value::Null;
         let tp = self.parse_operators(&Type::Unknown(0), &mut code, &mut Type::Null, 0);
-        if !matches!(tp, Type::Integer(_)) {
+        // In the first pass a call to a function declared further down has no type yet; the
+        // second pass knows it and refuses a count that is not a number.
+        if !matches!(tp, Type::Integer(_)) && !(self.first_pass && matches!(tp, Type::Unknown(_))) {
             diagnostic!(
                 self.lexer,
                 Level::Error,
