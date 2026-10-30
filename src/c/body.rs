@@ -262,6 +262,8 @@ pub(crate) struct FnWriter<'a> {
     /// The source line the statements now being written come from (`Value::Line`), which a
     /// call records as its frame's site when the unit keeps frames (`Cx::frames`).
     cur_line: u32,
+    /// The loft line the last `#line` named (`Cx::source_lines`), 0 before the first.
+    marked_line: u32,
     /// `LOFT_C_WHERE` reported this function's refusal already.
     where_told: bool,
     /// `@FR-R-RetAdopt` — the result local that IS the hidden return buffer
@@ -661,6 +663,7 @@ impl<'a> FnWriter<'a> {
             assumed: Vec::new(),
             range_facts: None,
             cur_line: 0,
+            marked_line: 0,
             where_told: false,
             adopt: if std::env::var("LOFT_NO_RETBUF_ADOPT").is_ok_and(|v| v != "0") {
                 None
@@ -855,6 +858,7 @@ impl<'a> FnWriter<'a> {
                 let t = l.trim();
                 !t.is_empty()
                     && !l.contains("loft_frame_site(")
+                    && !t.starts_with("#line ")
                     && (braces || !matches!(t, "}" | "{" | "};" | "} else {"))
             })
             .count()
@@ -971,6 +975,9 @@ impl<'a> FnWriter<'a> {
         }
         let statements = self.statement_count();
         out.push_str(&self.body);
+        if self.marked_line != 0 {
+            let _ = writeln!(out, "{}", super::LINE_RESET);
+        }
         Ok((out, statements))
     }
 
@@ -2864,6 +2871,13 @@ impl<'a> FnWriter<'a> {
     fn note_site(&mut self, v: &Value, ind: usize) {
         if let Value::Line(n) = v.unspan() {
             self.cur_line = *n;
+            // A debugger's line table (`Cx::source_lines`): the statements that follow are this
+            // loft line's.  A directive starts its own line; `statement_count` passes over it.
+            if self.cx.source_lines && *n != 0 && *n != self.marked_line {
+                self.marked_line = *n;
+                let file = c_string(&self.cx.data.def(self.d).position().file);
+                let _ = writeln!(self.body, "#line {n} {file}");
+            }
         } else if self.cur_line != 0
             && !matches!(
                 v.unspan(),

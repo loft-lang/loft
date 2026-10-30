@@ -220,6 +220,9 @@ pub(crate) struct Cx<'a> {
     /// The unit is a browser page's module (`--native-c --html`, @PLN203 C6): a library native
     /// the page supplies is a `loft_gl` import (`host_imports`), and the program starts from
     /// the exported `loft_start`.
+    /// The unit marks each statement with its loft line (`#line`), for a debugger
+    /// ([`emit_program_with_source_lines`]).
+    pub(crate) source_lines: bool,
     pub(crate) browser: bool,
     /// The `par` sites written on threads so far, which numbers each one's body and context.
     pub(crate) par_sites: std::cell::Cell<u32>,
@@ -316,6 +319,7 @@ impl<'a> Cx<'a> {
             data,
             stores,
             browser,
+            source_lines: SOURCE_LINES.with(std::cell::Cell::get),
             tuples: std::cell::RefCell::new(Vec::new()),
             copy_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             described: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -3742,6 +3746,59 @@ fn framed(
             held(ret)
         )
     }
+}
+
+thread_local! {
+    /// Set for the length of one [`emit_program_with_source_lines`]: the unit marks its statements
+    /// with their loft lines (`Cx::source_lines`).
+    static SOURCE_LINES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The comment that ends a function's run of `#line` markers in a unit written with source
+/// lines: [`resolve_line_resets`] turns each into a `#line` back to the C file itself.
+pub const LINE_RESET: &str = "/*@loft-c-line*/";
+
+/// [`emit_program`] for a debugger: every statement that carries a loft line is preceded by
+/// `#line <n> "<its .loft file>"`, so the binary's debug information — the line table gdb,
+/// lldb, a profiler and a crash backtrace read — names the loft source, and each function ends
+/// with a [`LINE_RESET`] for [`resolve_line_resets`].  Only the debug tier asks for it: a C
+/// compiler's own diagnostics then also point at loft lines, which is what a debugger wants and
+/// a defect report of the C backend does not.
+///
+/// # Errors
+/// As [`emit_program`].
+pub fn emit_program_with_source_lines(
+    data: &Data,
+    stores: &Stores,
+    expected: &dyn Fn(&str) -> Vec<String>,
+) -> Result<String, Refusal> {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            SOURCE_LINES.with(|s| s.set(false));
+        }
+    }
+    SOURCE_LINES.with(|s| s.set(true));
+    let _reset = Reset;
+    emit_program(data, stores, expected)
+}
+
+/// The unit `c` with each [`LINE_RESET`] turned into `#line <the next line> "<c_path>"`, so the
+/// code between the loft functions — their frame wrappers, the tables, `main` — is attributed
+/// to the C file it is written in rather than to the last loft line before it.
+#[must_use]
+pub fn resolve_line_resets(c: &str, c_path: &str) -> String {
+    let path = body::c_string(c_path);
+    let mut out = String::with_capacity(c.len());
+    for (i, line) in c.lines().enumerate() {
+        if line.trim() == LINE_RESET {
+            let _ = writeln!(out, "#line {} {path}", i + 2);
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
 }
 
 /// Does the program have anything to run — a `main`, or a test?  A program with neither (a
