@@ -6,8 +6,7 @@
 // 1b-compare.md), through the loft interpreter.  Before it starts it writes the allocator
 // trace's `M` line (`LOFT_CRT_ALLOC_TRACE`), as the Rust interpreter does on entering a program.  A construct it does not carry yet is reported on stderr as
 // `refused: <reason>` with exit 3, so the census can rank what blocks the most programs.  A run
-// that leaves records of the C runtime's stores live is reported as `leak: <n>` with exit 4; one
-// whose returns swept stores the IR did not free says `swept: <n>` on stderr and runs on.
+// that leaves records of the C runtime's stores live is reported as `leak: <n>` with exit 4.
 use load;
 use lower;
 use run;
@@ -39,9 +38,6 @@ fn main() {
   }
   if compare {
     return;
-  }
-  if o.swept != 0 {
-    eprintln("swept: {o.swept} stores the IR did not free");
   }
   if o.stores_left != 0 {
     eprintln("leak: {o.stores_left} stores left live");

@@ -5,7 +5,10 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # @PLN91 strand 1b — the strict comparison: one program, every output, both implementations
 
-A child document of [1b-interpreter.md](1b-interpreter.md).  Status: **design, nothing built.**
+A child document of [1b-interpreter.md](1b-interpreter.md).  Status: **built** — out, alloc,
+leak, binds and the compile-time layers ir, types, schema, ctable and ownership (§ C-1, § C-1b,
+§ B-2's layer, § C-2); slots, lifetimes and bytecode wait on F-1/F-2, ownership-overlays on
+their ports, resolution on strand 1a.
 
 ## Why (owner, 2026-10-30)
 
@@ -165,3 +168,11 @@ programs — the rest are programs the front end refuses by design; none DIFFERE
 cover 453 `Unknown` and 1253 `Join` verdicts (223 `Join(base=?)`), so mutual recursion and
 unresolved closure calls are exercised.
 
+## C-2 — BUILT 2026-10-30 (binds)
+
+`LOFT_TRACE_BIND=<file>` in `generate_set` (`src/state/codegen.rs`): a notes frame per set,
+the arm each branch takes and B2's facts; off, the bytecode is byte-identical (`introspect_diff`
+2852/2852).  The loft side's table is written by `lower.loft`'s `set` (1b-s3.md B-1c) and the
+run's `write_binds`.  **Measured with B-1:** every program the interpreter runs of the kernels
+and the 60-program sample has an EQUAL bind table; the facts of every reassignment row (52,628
+rows over 510 programs) were checked against the trace before the arms were ported (B-1a).

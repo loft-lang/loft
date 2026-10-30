@@ -96,6 +96,15 @@ fn c_refill_text(store: integer, rec: integer, pos: integer, fld: integer, val: 
 fn c_bind_copy(io: vector<integer>, tp: integer, s_store: integer, s_rec: integer, s_pos: integer);
 #c "loft_crt_bind_copy" "void(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t)"
 
+fn c_database_wrapper(out: vector<integer>, bytes: integer, tp: integer) -> integer;
+#c "loft_crt_database_wrapper" "int64_t(int64_t*, int64_t, int64_t, int64_t)"
+
+fn c_free_displaced(d_store: integer, d_rec: integer, d_pos: integer, w_store: integer, w_rec: integer, w_pos: integer);
+#c "loft_crt_free_displaced" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_protect(store: integer, rec: integer, pos: integer, on: boolean);
+#c "loft_crt_protect" "void(int64_t, int64_t, int64_t, int64_t)"
+
 // The null reference, as a variable's three parts: the sentinel `loft_ref_null()` writes.
 pub fn null_ref() -> vector<integer> {
   [65535, 0, 0]
@@ -111,6 +120,25 @@ pub fn database(io: vector<integer>, bytes: integer, tp: integer) {
 // `OpFreeRef`: the record's whole store goes.
 pub fn free_ref(store: integer, rec: integer, pos: integer) {
   c_free_ref(store, rec, pos);
+}
+
+// `OpDatabase` of a vector wrapper type (`main_vector<T>`) on the variable in `io`: as
+// `database`, except that a live buffer which is a PLACE — a collection field of another record
+// — keeps its place with the collection emptied (`Stores::mint_at_place`).
+pub fn database_wrapper(io: vector<integer>, bytes: integer, tp: integer) {
+  c_database_wrapper(io, bytes, tp);
+}
+
+// `OpFreeRefIfDistinct(d, w)` of two values (`Stores::free_displaced`): `d`'s store goes unless
+// it is `w`'s, absent, or protected by a call in flight.
+pub fn free_displaced(d_store: integer, d_rec: integer, d_pos: integer, w_store: integer, w_rec: integer, w_pos: integer) {
+  c_free_displaced(d_store, d_rec, d_pos, w_store, w_rec, w_pos);
+}
+
+// `n_protect_store_frees` (`on`) and `n_unprotect_store_frees`: the bracket a call puts around a
+// reference argument, so a displaced free inside the callee leaves the caller's store alone.
+pub fn protect(store: integer, rec: integer, pos: integer, on: boolean) {
+  c_protect(store, rec, pos, on);
 }
 
 // `OpFreeRef` of the variable in `io`: its store goes and the variable reads null afterwards.
@@ -276,6 +304,9 @@ fn c_vec_append(out: vector<integer>, store: integer, rec: integer, pos: integer
 fn c_fill(store: integer, rec: integer, pos: integer, image: vector<u8>);
 #c "loft_crt_fill" "void(int64_t, int64_t, int64_t, const uint8_t*, int64_t)"
 
+fn c_reset_pool_root(store: integer, rec: integer, pos: integer, tp: integer, size: integer, image: vector<u8>) -> integer;
+#c "loft_crt_reset_pool_root" "int64_t(int64_t, int64_t, int64_t, int64_t, int64_t, const uint8_t*, int64_t)"
+
 fn c_vec_finish(store: integer, rec: integer, pos: integer);
 #c "loft_crt_vec_finish" "void(int64_t, int64_t, int64_t)"
 
@@ -330,6 +361,13 @@ pub fn vec_append(out: vector<integer>, store: integer, rec: integer, pos: integ
 // A fresh element's bytes: the type's default image (`types::default_image`).
 pub fn fill(store: integer, rec: integer, pos: integer, image: vector<u8>) {
   c_fill(store, rec, pos, image);
+}
+
+// `OpClear` with `@FR-R-Reuse`'s reset flag (`Stores::reset_pool_root`): a pooled call buffer at
+// its store's root, the store minted for it, made again at `size` bytes and prefilled with
+// `image`, its type's defaults; false, and nothing done, for any other buffer.
+pub fn reset_pool_root(store: integer, rec: integer, pos: integer, tp: integer, size: integer, image: vector<u8>) -> boolean {
+  c_reset_pool_root(store, rec, pos, tp, size, image) != 0
 }
 
 // `OpFinishRecord` on a vector.
@@ -407,6 +445,9 @@ pub fn hash_len(store: integer, rec: integer, pos: integer) -> integer {
 fn c_hash_sorted(out: vector<integer>, store: integer, rec: integer, pos: integer, tp: integer, unordered: boolean) -> integer;
 #c "loft_crt_hash_sorted" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 
+fn c_hash_refs(out: vector<integer>, store: integer, rec: integer, pos: integer, tp: integer) -> integer;
+#c "loft_crt_hash_refs" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
 fn c_scratch_iterate(store: integer, rec: integer, pos: integer) -> integer;
 #c "loft_crt_scratch_iterate" "int64_t(int64_t, int64_t, int64_t)"
 
@@ -420,6 +461,19 @@ fn c_free_scratch(store: integer, rec: integer, pos: integer);
 // key order; `n_hash_unsorted` (`unordered`) in slot order.
 pub fn hash_sorted(out: vector<integer>, store: integer, rec: integer, pos: integer, tp: integer, unordered: boolean) {
   c_hash_sorted(out, store, rec, pos, tp, unordered);
+}
+
+// The entries of the hash at `store, rec, pos` (collection type `tp`) in key order, three parts
+// each, as `hash::records_sorted` hands them to `OpFormatDatabase`: nothing is claimed in the
+// store for the walk.
+pub fn hash_refs(store: integer, rec: integer, pos: integer, tp: integer) -> vector<integer> {
+  n = hash_len(store, rec, pos);
+  out: vector<integer> = [];
+  for _ in 0..3 * n {
+    out += [0];
+  }
+  c_hash_refs(out, store, rec, pos, tp);
+  out
 }
 
 // `OpIterate` over a snapshot: the walk's state.

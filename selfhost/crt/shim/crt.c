@@ -103,6 +103,20 @@ void loft_crt_free_ref(int64_t store, int64_t rec, int64_t pos) {
     loft_free_ref(loft_crt_ref(store, rec, pos));
 }
 
+/* OpFreeRefIfDistinct of two values (`Stores::free_displaced`): the displaced store released
+ * unless it is the witness's, absent, or protected by a call in flight. */
+void loft_crt_free_displaced(int64_t d_store, int64_t d_rec, int64_t d_pos, int64_t w_store,
+                             int64_t w_rec, int64_t w_pos) {
+    loft_free_displaced(loft_crt_ref(d_store, d_rec, d_pos), loft_crt_ref(w_store, w_rec, w_pos));
+}
+
+/* n_protect_store_frees / n_unprotect_store_frees: the call bracket around a reference
+ * argument. */
+void loft_crt_protect(int64_t store, int64_t rec, int64_t pos, int64_t on) {
+    if (on) loft_protect(loft_crt_ref(store, rec, pos));
+    else loft_unprotect(loft_crt_ref(store, rec, pos));
+}
+
 int64_t loft_crt_get_int(int64_t store, int64_t rec, int64_t pos, int64_t fld) {
     return loft_get_int(loft_crt_ref(store, rec, pos), (uint32_t) fld);
 }
@@ -369,6 +383,23 @@ int64_t loft_crt_load_types(const int64_t *rows, int64_t n, int64_t ntypes) {
 /* OpClear without its pool reset (as `LOFT_NO_POOL_RESET` runs it, values unchanged by
  * (R-Switch)): the claims the record owns released, by the table loaded above, so the store
  * can take a new value in place. */
+/* OpDatabase of a vector wrapper (`main_vector<T>`, `Stores::mint_at_place`): a live buffer
+ * that is a place stays where it is with its collection emptied. */
+int64_t loft_crt_database_wrapper(int64_t *io, int64_t n, int64_t bytes, int64_t tp) {
+    loft_ref r = loft_crt_get_ref(io, n);
+    loft_database_wrapper((const struct loft_tdesc_s *) loft_crt_types, &r, (uint32_t) bytes, (uint16_t) tp);
+    loft_crt_put_ref(io, n, r);
+    return 0;
+}
+
+/* OpClear with `@FR-R-Reuse`'s reset flag (`Stores::reset_pool_root`): a pooled buffer at its
+ * store's root made again and prefilled with its type's defaults; answers 0 for any other. */
+int64_t loft_crt_reset_pool_root(int64_t store, int64_t rec, int64_t pos, int64_t tp, int64_t size,
+                                 const uint8_t *image, int64_t n) {
+    return loft_reset_pool_root(loft_crt_ref(store, rec, pos), (uint16_t) tp, (uint32_t) size, image,
+                                (uint32_t) n);
+}
+
 void loft_crt_clear(int64_t store, int64_t rec, int64_t pos, int64_t tp) {
     if (!loft_crt_types || tp < 0 || (uint32_t) tp >= loft_crt_ntypes) return;
     loft_remove_claims(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos));
@@ -508,6 +539,24 @@ int64_t loft_crt_hash_sorted(int64_t *out, int64_t no, int64_t store, int64_t re
                              loft_crt_types[tp].nk);
     loft_crt_put_ref(out, no, r);
     return 0;
+}
+
+/* `hash::records_sorted`: the hash's entries in key order, as `OpFormatDatabase` walks them —
+ * held in the runtime's own memory, so the walk claims nothing in the store.  Writes up to
+ * `no / 3` references into `out` and answers how many entries there are. */
+int64_t loft_crt_hash_refs(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos,
+                           int64_t tp) {
+    if (!loft_crt_keyed(tp)) return 0;
+    uint32_t n = 0;
+    loft_ref *refs = loft_hash_refs(loft_crt_ref(store, rec, pos), loft_crt_types[tp].keys,
+                                    loft_crt_types[tp].nk, 0, &n);
+    for (uint32_t i = 0; i < n && 3 * (int64_t) i + 2 < no; i++) {
+        out[3 * i] = refs[i].store_nr;
+        out[3 * i + 1] = refs[i].rec;
+        out[3 * i + 2] = refs[i].pos;
+    }
+    free(refs);
+    return n;
 }
 
 /* OpIterate over a snapshot: the walk's state. */
