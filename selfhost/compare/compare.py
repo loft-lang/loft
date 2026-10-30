@@ -28,7 +28,6 @@ LAYERS = ["out", "alloc", "leak", "ir", "types", "schema", "ctable", "binds", "s
 NOT_YET = {
     "ir": "C-1b, the IR display port",
     "types": "C-1b, the variable types display",
-    "schema": "C-1b, the schema display",
     "ctable": "C-1b, the C type table layer",
     "binds": "C-2, with 1b-s3.md B-1",
     "slots": "C-3, with 1b-frame.md F-1",
@@ -46,10 +45,11 @@ def run(cmd, env=None, timeout=300):
         return -9, b"", b"timeout"
 
 
-def runner():
-    """The loft interpreter, compiled through the C backend; rebuilt when a selfhost source is newer."""
-    out = os.path.join(ROOT, "target", "selfhost-compare", "runner")
-    exe = os.path.join(out, "run_program")
+def build(program, name):
+    """A selfhost program compiled through the C backend into target/selfhost-compare/<name>;
+    rebuilt when a selfhost source is newer."""
+    out = os.path.join(ROOT, "target", "selfhost-compare", name)
+    exe = os.path.join(out, os.path.splitext(os.path.basename(program))[0])
     newest = 0.0
     for d, _, fs in os.walk(os.path.join(ROOT, "selfhost")):
         if "native-auto" in d or os.sep + ".loft" in d:
@@ -60,9 +60,9 @@ def runner():
     if not os.path.exists(exe) or os.path.getmtime(exe) < newest:
         os.makedirs(out, exist_ok=True)
         code, _, err = run([LOFT, "--native-c", "--ship", "--out", out,
-                            os.path.join(ROOT, "selfhost", "cover", "run_program.loft")], timeout=900)
+                            os.path.join(ROOT, "selfhost", program)], timeout=900)
         if not os.path.exists(exe) or os.path.getmtime(exe) < newest:
-            sys.exit("the loft interpreter did not build:\n" + err.decode(errors="replace")[-2000:])
+            sys.exit(f"{program} did not build:\n" + err.decode(errors="replace")[-2000:])
     return exe
 
 
@@ -127,7 +127,22 @@ def leaked(events):
     return [s for s in made if s not in freed]
 
 
-def compare(spec, exe, layers, keep):
+def schema_layer(file, img, reports):
+    """`LOFT_DUMP_TYPES` under `--check` (nothing run), its closing `ok` line dropped, against the
+    image's schema in the same text."""
+    rc, rust, rerr = run([LOFT, "--check"] + LIBS + [file], {"LOFT_DUMP_TYPES": "1"})
+    if rc != 0:
+        return "MISSING rust", text(rerr).splitlines()[-3:]
+    rows = rust.splitlines()
+    if rows and rows[-1] == b"ok":
+        rows = rows[:-1]
+    lc, loft, lerr = run([reports, "schema", img])
+    if lc != 0:
+        return "MISSING loft", text(lerr).splitlines()[-3:]
+    return differ("schema", rows, loft.splitlines())
+
+
+def compare(spec, exe, reports, layers, keep):
     file, _, test = spec.partition("::")
     report = []
     d = tempfile.mkdtemp(prefix="loft-compare-")
@@ -160,6 +175,8 @@ def compare(spec, exe, layers, keep):
                 v, detail = differ("alloc", rev, lev)
             elif layer == "leak":
                 v, detail = differ("leak", leaked(rev), leaked(lev))
+            elif layer == "schema":
+                v, detail = schema_layer(file, img, reports)
             else:
                 v, detail = "MISSING loft", [NOT_YET[layer]]
             report.append((layer, v, detail))
@@ -184,11 +201,12 @@ def main():
     if not os.path.exists(LOFT):
         sys.exit(f"no Rust side at {LOFT}: cargo build --release --features op-census "
                  "--target-dir target/op-census --bin loft (or set LOFT_BIN)")
-    exe = runner()
+    exe = build(os.path.join("cover", "run_program.loft"), "runner")
+    reports = build(os.path.join("compare", "reports.loft"), "reports")
     equal = 0
     for spec in a.entries:
         print(f"== {spec}")
-        report = compare(spec, exe, layers, a.keep)
+        report = compare(spec, exe, reports, layers, a.keep)
         ok = all(v == "EQUAL" for _, v, _ in report)
         equal += ok
         for layer, v, detail in report:

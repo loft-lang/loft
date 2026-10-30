@@ -1,0 +1,594 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The compile-time reports of a program image, in the text the Rust implementation writes them,
+// for the strict comparison (doc/claude/plans/91-self-host/1b-compare.md).  Each report is a
+// port of its Rust home, named beside it; the comparison tool sets the two texts side by side, so
+// any difference in what the image says, or in how this side reads it, is a named row.
+use ir;
+
+// ── schema: `LOFT_DUMP_TYPES` (`Stores::dump_types`, `show_type(tp, true)`,
+// `src/database/types.rs`) ──
+
+// The derived `parents` of every type, as `Stores::rebuild_parents` derives them for a schema read
+// back from an image: an enum's variants name the enum, and a record field whose content is a
+// struct, a variant or an enum — or a collection, through its element — names the record.  A set
+// per type, kept sorted, as the Rust `BTreeSet` is.
+fn parents(b: ir::Bundle) -> vector<vector<integer>> {
+  n = len(b.types);
+  out: vector<vector<integer>> = [];
+  for _ in 0..n {
+    out += [[]];
+  }
+  for p in 0..n {
+    t = b.types[p] ?? panic("a type");
+    match t.parts[0] ?? panic("a type has its parts") {
+      PtEnum { values } => {
+        for v in values {
+          link(out, n, v.nr, p);
+        }
+      }
+      PtStruct { fields } => link_fields(b, out, n, fields, p),
+      PtEnumValue { value: _, fields } => link_fields(b, out, n, fields, p),
+      _ => {}
+    }
+  }
+  out
+}
+
+fn link_fields(b: ir::Bundle, out: vector<vector<integer>>, n: integer, fields: vector<ir::DbField>, p: integer) {
+  for f in fields {
+    c = b.types[f.content];
+    if c == null {
+      continue;
+    }
+    match c.parts[0] ?? panic("a type has its parts") {
+      PtStruct { fields: _ } => link(out, n, f.content, p),
+      PtEnumValue { value: _, fields: _ } => link(out, n, f.content, p),
+      PtEnum { values: _ } => link(out, n, f.content, p),
+      PtArray { content } => link(out, n, content, p),
+      PtVector { content } => link(out, n, content, p),
+      PtSorted { content, keys: _ } => link(out, n, content, p),
+      PtOrdered { content, keys: _ } => link(out, n, content, p),
+      PtHash { content, fields: _ } => link(out, n, content, p),
+      PtIndex { content, keys: _ } => link(out, n, content, p),
+      PtTrie { content, key: _ } => link(out, n, content, p),
+      PtRadix { content, fields: _ } => link(out, n, content, p),
+      _ => {}
+    }
+  }
+}
+
+// `child` names `parent`, once, in ascending order; a child out of range (the `u16::MAX` of a
+// unit variant or a dead wrapper) names nothing.
+fn link(out: vector<vector<integer>>, n: integer, child: integer, parent: integer) {
+  if child < 0 || child >= n {
+    return;
+  }
+  ps = out[child] ?? panic("in range");
+  at = 0;
+  while at < len(ps) && (ps[at] ?? 0) < parent {
+    at += 1;
+  }
+  if at < len(ps) && (ps[at] ?? 0) == parent {
+    return;
+  }
+  ps.insert(at, parent);
+}
+
+fn type_name(b: ir::Bundle, tp: integer) -> text {
+  (b.types[tp] ?? panic("a type")).name
+}
+
+// Rust's `{:?}` of a boolean and of a list of integers.
+fn bool_text(v: boolean) -> text {
+  if v { "true" } else { "false" }
+}
+
+fn ints_text(v: vector<integer>) -> text {
+  r = "[";
+  for x in v {
+    if x#index > 0 {
+      r += ", ";
+    }
+    r += "{x}";
+  }
+  r + "]"
+}
+
+fn key_fields_text(v: vector<ir::KeyField>) -> text {
+  r = "[";
+  for k in v {
+    if k#index > 0 {
+      r += ", ";
+    }
+    r += "({k.nr}, {bool_text(k.asc)})";
+  }
+  r + "]"
+}
+
+// Rust's `{:?}` of a type's `Parts`, for the kinds `show_type` writes that way.
+fn parts_debug(p: ir::DbParts) -> text {
+  match p {
+    PtBase => "Base",
+    PtByte { start, nullable } => "Byte({start}, {bool_text(nullable)})",
+    PtShort { start, nullable } => "Short({start}, {bool_text(nullable)})",
+    PtInt { start, nullable } => "Int({start}, {bool_text(nullable)})",
+    PtShortRaw { start, nullable } => "ShortRaw({start}, {bool_text(nullable)})",
+    PtIntRaw { start, nullable } => "IntRaw({start}, {bool_text(nullable)})",
+    PtVector { content } => "Vector({content})",
+    PtArray { content } => "Array({content})",
+    PtSorted { content, keys } => "Sorted({content}, {key_fields_text(keys)})",
+    PtOrdered { content, keys } => "Ordered({content}, {key_fields_text(keys)})",
+    PtHash { content, fields } => "Hash({content}, {ints_text(fields)})",
+    PtIndex { content, keys } => "Index({content}, {key_fields_text(keys)})",
+    PtRadix { content, fields } => "Radix({content}, {ints_text(fields)})",
+    PtTrie { content, key } => "Trie({content}, {key})",
+    PtDbRef => "DbRef",
+    PtChildRec { content } => "ChildRec({content})",
+    _ => panic("a kind show_type writes otherwise"),
+  }
+}
+
+// `show_fields(pretty)`: a field per line, `name:content[position]`, its link numbers after it.
+fn show_fields(b: ir::Bundle, fields: vector<ir::DbField>) -> text {
+  r = "\n";
+  for f in fields {
+    r += "    {f.name}:{type_name(b, f.content)}[{f.position}]";
+    if len(f.other_indexes) > 0 {
+      r += " other {ints_text(f.other_indexes)}";
+    }
+    r += "\n";
+  }
+  r
+}
+
+// `show_type(tp, true)`.
+fn show_type(b: ir::Bundle, tp: integer, ps: vector<integer>) -> text {
+  t = b.types[tp] ?? panic("a type");
+  r = "{t.name}[{t.size}/{t.align}]:";
+  p = t.parts[0] ?? panic("a type has its parts");
+  match p {
+    PtEnumValue { value, fields: _ } => { r += " EnumValue({value})"; }
+    _ => {}
+  }
+  if len(ps) > 0 {
+    r += " parents [";
+    for q in ps {
+      if q#index > 0 {
+        r += ", ";
+      }
+      r += "{type_name(b, q)} {q}";
+    }
+    r += "]";
+  }
+  match p {
+    PtStruct { fields } => { r += show_fields(b, fields); }
+    PtEnumValue { value: _, fields } => { r += show_fields(b, fields); }
+    PtEnum { values } => {
+      r += "\n";
+      for v in values {
+        r += "    {v.name}";
+        if v.nr != 65535 {
+          r += ":{v.nr}";
+        }
+        r += "\n";
+      }
+    }
+    _ => {
+      r += parts_debug(p);
+      if len(t.keys) > 0 {
+        r += " keys [";
+        for k in t.keys {
+          r += "tp:{k.type_nr.abs()} desc:{bool_text(k.type_nr < 0)} field:{k.position}, ";
+        }
+        r += "]";
+      }
+      r += "\n";
+    }
+  }
+  r
+}
+
+// The whole schema, `Stores::dump_types`: `{tp}:{show_type(tp, true)}` for every type.
+pub fn schema(b: ir::Bundle) -> text {
+  ps = parents(b);
+  r = "";
+  for tp in 0..len(b.types) {
+    r += "{tp}:{show_type(b, tp, ps[tp] ?? [])}";
+  }
+  r
+}
+
+// ── ir: `loft introspect`'s IR of each function (`compile::show_code`, `Definition::header`,
+// `Data::show_code`, `Type::show`, `Type::argument`, `src/compile.rs`, `src/data.rs`) ──
+
+// `Function::name`: a variable out of range reads `??`.
+fn var_name(f: ir::Function, v: integer) -> text {
+  x = f.variables[v];
+  if x == null { "??" } else { x.name }
+}
+
+fn var_scope(f: ir::Function, v: integer) -> integer {
+  x = f.variables[v];
+  if x == null { 65535 } else { x.scope }
+}
+
+// Rust's `{:?}` of a list of texts: `["a", "b"]`.
+fn texts_debug(v: vector<text>) -> text {
+  r = "[";
+  for s in v {
+    if s#index > 0 {
+      r += ", ";
+    }
+    r += "\"{s}\"";
+  }
+  r + "]"
+}
+
+// `Type::dep_var`: the dependencies' variable names, sorted and unique, as a list — or nothing.
+fn dep_var(f: ir::Function, dep: vector<integer>) -> text {
+  names: vector<text> = [];
+  for d in dep {
+    n = var_name(f, d);
+    at = 0;
+    while at < len(names) && (names[at] ?? "") < n {
+      at += 1;
+    }
+    if at >= len(names) || (names[at] ?? "") != n {
+      names.insert(at, n);
+    }
+  }
+  if len(names) == 0 { "" } else { texts_debug(names) }
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  (b.data.definitions[d] ?? panic("a definition")).name
+}
+
+// `IntegerSpec::source_name` with `Display for Type`'s fallback.
+fn integer_display(s: ir::IntegerSpec) -> text {
+  if s.min == -2147483647 && (s.max == 2147483647 || s.max == 4294967295) {
+    "integer"
+  } else if s.min == 0 && s.max == 256 {
+    "byte"
+  } else {
+    "integer({s.min}, {s.max})"
+  }
+}
+
+// `Display for Type` for the types `Type::show` hands to it: the lowercased `Debug`.
+fn type_display(t: ir::TypeT) -> text {
+  match t {
+    TyInteger { spec } => integer_display(spec),
+    TyBoolean => "boolean",
+    TyFloat => "float",
+    TySingle => "single",
+    TyCharacter => "character",
+    TyVoid => "void",
+    TyNull => "null",
+    TyNever => "never",
+    TyKeys => "keys",
+    TyUnknown { n } => "unknown({n})",
+    _ => "<the Debug form of {t}, not ported>",
+  }
+}
+
+// `Type::show`.
+fn type_show(b: ir::Bundle, f: ir::Function, ts: vector<ir::TypeT>) -> text {
+  t = ts[0] ?? panic("a type");
+  match t {
+    TyRefVar { inner } => "&{type_show(b, f, inner)}",
+    TyEnum { n, is_ref, dep } => if is_ref { "ref({def_name(b, n)}){dep_var(f, dep)}" } else { def_name(b, n) },
+    TyReference { n, dep } => "ref({def_name(b, n)}){dep_var(f, dep)}",
+    TyVector { inner, dep } => {
+      match inner[0] ?? panic("an element") {
+        TyUnknown { n: _ } => "vector{dep_var(f, dep)}",
+        _ => "vector<{type_show(b, f, inner)}>{dep_var(f, dep)}",
+      }
+    }
+    TySorted { n, keys, dep } => "sorted<{def_name(b, n)},{sort_keys_debug(keys)}>{dep_var(f, dep)}",
+    TyHash { n, names, dep } => "hash<{def_name(b, n)},{name_refs_debug(names)}>{dep_var(f, dep)}",
+    TyIndex { n, keys, dep } => "index<{def_name(b, n)},{sort_keys_debug(keys)}>{dep_var(f, dep)}",
+    TyTrie { n, key, dep } => "trie<{def_name(b, n)}[{key}]>{dep_var(f, dep)}",
+    TyRadix { n, names, dep } => "spatial<{def_name(b, n)},{name_refs_debug(names)}>{dep_var(f, dep)}",
+    TyRoutine { n } => "fn {def_name(b, n)}[{n}]",
+    TyText { dep } => if len(dep) == 0 { "text" } else { "text{dep_var(f, dep)}" },
+    TyOptional { inner } => "{type_show(b, f, inner)}?",
+    TyTuple { elems } => {
+      r = "(";
+      for e in elems {
+        if e#index > 0 {
+          r += ", ";
+        }
+        r += type_show(b, f, [e]);
+      }
+      r + ")"
+    }
+    _ => type_display(t),
+  }
+}
+
+fn sort_keys_debug(keys: vector<ir::SortKey>) -> text {
+  r = "[";
+  for k in keys {
+    if k#index > 0 {
+      r += ", ";
+    }
+    r += "(\"{k.name}\", {bool_text(k.asc)})";
+  }
+  r + "]"
+}
+
+fn name_refs_debug(names: vector<ir::NameRef>) -> text {
+  r = "[";
+  for k in names {
+    if k#index > 0 {
+      r += ", ";
+    }
+    r += "\"{k.name}\"";
+  }
+  r + "]"
+}
+
+// `Type::dep_att`: a dependency names an ATTRIBUTE of the definition, or `#n` past them.
+fn dep_att(d: ir::Definition, dep: vector<integer>) -> vector<text> {
+  names: vector<text> = [];
+  for x in dep {
+    a = d.attributes[x];
+    n = if a == null { "#{x}" } else { a.name };
+    at = 0;
+    while at < len(names) && (names[at] ?? "") < n {
+      at += 1;
+    }
+    if at >= len(names) || (names[at] ?? "") != n {
+      names.insert(at, n);
+    }
+  }
+  names
+}
+
+// `Type::argument`: a header's spelling.
+fn type_argument(b: ir::Bundle, d: ir::Definition, ts: vector<ir::TypeT>) -> text {
+  t = ts[0] ?? panic("a type");
+  match t {
+    TyReference { n, dep } => if len(dep) == 0 { def_name(b, n) } else { "{def_name(b, n)}{texts_debug(dep_att(d, dep))}" },
+    TyText { dep } => if len(dep) == 0 { "text" } else { "text{texts_debug(dep_att(d, dep))}" },
+    TyOptional { inner } => "{type_argument(b, d, inner)}?",
+    _ => type_show(b, ir::Function { name: d.name, file: d.position.file, variables: [], names: [], inline_refs: [] }, ts),
+  }
+}
+
+// `Definition::header`.
+fn header(b: ir::Bundle, d: ir::Definition) -> text {
+  r = "fn {d.name}(";
+  for a in d.attributes {
+    if a#index > 0 {
+      r += ", ";
+    }
+    r += "{a.name}:{type_argument(b, d, a.typedef)}";
+  }
+  r += ")";
+  match d.returned[0] ?? panic("a return type") {
+    TyVoid => {}
+    _ => { r += " -> {type_argument(b, d, d.returned)}"; }
+  }
+  r
+}
+
+fn indent(o: &text, n: integer) {
+  for _ in 0..n {
+    o += "  ";
+  }
+}
+
+// `Data::show_code`.  A span is transparent and hands `start` on, so each span level writes the
+// indent again, as the Rust recursion does; unwrapped here in a loop.
+fn show_code(b: ir::Bundle, f: ir::Function, n: ir::Node, ind: integer, start: boolean, o: &text) {
+  if start {
+    indent(o, ind);
+  }
+  at = n;
+  while true {
+    match at {
+      NdSpan { pos: _, inner } => {
+        if start {
+          indent(o, ind);
+        }
+        at = inner[0] ?? panic("a spanned value");
+      }
+      _ => { break; }
+    }
+  }
+  show_node(b, f, at, ind, o);
+}
+
+fn show_node(b: ir::Bundle, f: ir::Function, n: ir::Node, ind: integer, o: &text) {
+  match n {
+    NdNull => { o += "null"; }
+    NdInt { n: i } => { o += "{i}i32"; }
+    NdEnum { ord, tp } => { o += "{ord}u8({tp})"; }
+    NdBoolean { b: v } => { o += bool_text(v); }
+    NdFloat { f: v } => { o += "{v}f64"; }
+    NdLong { n: l } => { o += "{l}i64"; }
+    NdSingle { f: v } => { o += "{v}f32"; }
+    NdText { s } => { o += "\"{s}\""; }
+    NdCall { def_nr, args } => {
+      o += "{def_name(b, def_nr)}(";
+      for x in args {
+        if x#index > 0 {
+          o += ", ";
+        }
+        show_code(b, f, x, ind, false, o);
+      }
+      o += ")";
+    }
+    NdCallRef { var, args } => {
+      o += "fn_ref[{var}](";
+      for x in args {
+        if x#index > 0 {
+          o += ", ";
+        }
+        show_code(b, f, x, ind, false, o);
+      }
+      o += ")";
+    }
+    NdBlock { block } => show_block(b, f, block[0] ?? panic("a block"), ind, o),
+    NdVar { n: v } => { o += "{var_name(f, v)}({var_scope(f, v)})"; }
+    NdSet { var, inner } => {
+      if var == 65535 {
+        o += "unknown(??):?? = ";
+      } else {
+        x = f.variables[var] ?? panic("a variable");
+        o += "{x.name}({x.scope}):{type_show(b, f, x.type_def)} = ";
+      }
+      show_code(b, f, inner[0] ?? panic("a value"), ind, false, o);
+    }
+    NdReturn { inner } => {
+      o += "return ";
+      show_code(b, f, inner[0] ?? panic("a value"), ind, false, o);
+    }
+    NdInsert { items } => {
+      o += "{{ !! INSERT\n";
+      for x in items {
+        show_code(b, f, x, ind + 1, true, o);
+        o += "\n";
+      }
+      indent(o, ind);
+      o += "}}";
+    }
+    NdBreak { n: v } => { o += "break({v})"; }
+    NdContinue { n: v } => { o += "continue({v})"; }
+    NdIf { cond, t, f: e } => {
+      o += "if ";
+      show_code(b, f, cond[0] ?? panic("a test"), ind, false, o);
+      o += " ";
+      show_code(b, f, t[0] ?? panic("a then side"), ind, false, o);
+      o += " else ";
+      show_code(b, f, e[0] ?? panic("an else side"), ind, false, o);
+    }
+    NdLoop { block } => {
+      lp = block[0] ?? panic("a loop");
+      o += "loop {{#{lp.name}_{lp.scope}\n";
+      for x in lp.operators {
+        show_code(b, f, x, ind + 1, true, o);
+        o += ";\n";
+      }
+      indent(o, ind);
+      o += "}}#{lp.name}_{lp.scope}";
+    }
+    NdDrop { inner } => {
+      o += "drop ";
+      show_code(b, f, inner[0] ?? panic("a value"), ind, false, o);
+    }
+    NdKeys { keys } => {
+      o += "&[";
+      for k in keys {
+        if k#index > 0 {
+          o += ", ";
+        }
+        o += "Key {{ type_nr: {k.type_nr}, position: {k.position}, start: {k.start} }}";
+      }
+      o += "]";
+    }
+    NdLine { n: l } => { o += "[{l}] "; }
+    NdTuple { items } => {
+      o += "(";
+      for x in items {
+        if x#index > 0 {
+          o += ", ";
+        }
+        show_code(b, f, x, ind, false, o);
+      }
+      o += ")";
+    }
+    NdTupleGet { var, idx } => { o += "{var_name(f, var)}.{idx}"; }
+    NdTuplePut { var, idx, inner } => {
+      o += "{var_name(f, var)}.{idx} = ";
+      show_code(b, f, inner[0] ?? panic("a value"), ind, false, o);
+    }
+    NdYield { inner } => {
+      o += "yield ";
+      show_code(b, f, inner[0] ?? panic("a value"), ind, false, o);
+    }
+    NdFnRef { def_nr, var, t: _ } => { o += "FnRef({def_nr}, {var_name(f, var)})"; }
+    NdFnRefDnr { n: v } => { o += "FnRefDnr({var_name(f, v)})"; }
+    NdParallel { arms } => {
+      o += "parallel {{\n";
+      for x in arms {
+        show_code(b, f, x, ind + 1, true, o);
+        o += ";\n";
+      }
+      indent(o, ind);
+      o += "}}";
+    }
+    NdRawExpr { s } => { o += "raw({s})"; }
+    _ => { o += "<a node not ported: {n}>"; }
+  }
+}
+
+// `Data::show_block`: nothing for an empty block.
+fn show_block(b: ir::Bundle, f: ir::Function, bl: ir::Block, ind: integer, o: &text) {
+  if len(bl.operators) == 0 {
+    return;
+  }
+  ty = type_show(b, f, bl.result);
+  o += "{{#{bl.name}({bl.scope}):{ty}\n";
+  starting = true;
+  for x in bl.operators {
+    show_code(b, f, x, ind + 1, starting, o);
+    if is_line(x) {
+      starting = false;
+    } else {
+      o += ";\n";
+      starting = true;
+    }
+  }
+  indent(o, ind);
+  o += "}}#{bl.name}({bl.scope}):{ty}";
+}
+
+fn is_line(n: ir::Node) -> boolean {
+  match n {
+    NdLine { n: _ } => true,
+    _ => false,
+  }
+}
+
+// Is `file` a standard-library source: a directory named `default` on its path?
+fn is_stdlib(file: text) -> boolean {
+  parts = file.split('/');
+  for p in parts {
+    if p#index < len(parts) - 1 && p == "default" {
+      return true;
+    }
+  }
+  false
+}
+
+// The IR section of `introspect`: every program function (not an operator, not the standard
+// library's), `{header} {code}` and a blank line, in definition order.
+pub fn ir_report(b: ir::Bundle) -> text {
+  r = "";
+  for d in b.data.definitions {
+    if d.def_type != 1 && d.def_type != 2 {
+      continue;
+    }
+    if is_op_name(d.name) || is_stdlib(d.position.file) {
+      continue;
+    }
+    r += "{header(b, d)} ";
+    code = d.code[0];
+    if code != null {
+      show_code(b, d.variables, code, 0, false, r);
+    }
+    r += "\n\n";
+  }
+  r
+}
+
+// `Definition::is_operator`: `Op` and then a capital.
+fn is_op_name(name: text) -> boolean {
+  len(name) > 2 && name.starts_with("Op") && "{name[2]}" >= "A" && "{name[2]}" <= "Z"
+}
