@@ -792,6 +792,16 @@ no assignment at all. A place whose **address calls a function** is fine — `w[
 calls `idx()` once, as [@C92](DESIGN_DECISIONS.md) requires of every compound assignment.
 Rule: `@FR-E-Asgn-Discharge`, [formal/operational.md](formal/operational.md).
 
+**`e!` takes no default:** the value when present, a halt when absent, its message quoting
+the operand (@C160, `(N-Present)`). For a read an invariant guarantees — a table entry by its
+own index — where any default would hide a corrupt input. Written against the operand (`x!`;
+`!x` with a space is a negation), and it reaches a reference or a bare enum, which `?` cannot:
+
+<!-- from tests/reference/null-operators.loft -->
+```loft
+p = rows[i]!;               // present, or a halt: "rows[i] is null"
+```
+
 ### The `as` operator
 
 Used for explicit type casts and conversions:
