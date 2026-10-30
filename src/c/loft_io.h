@@ -287,7 +287,17 @@ static char *loft_normalize(loft_str raw, const char *base, int check) {
 
 /* Stores::resolve_path: the path the program's `raw` names — a relative one under the
  * program's directory unless the program said `#cwd` — or 0 for a refused name. */
-#if defined(LOFT_POSIX)
+#if defined(LOFT_POSIX) || defined(_WIN32)
+static int loft_path_exists(const char *path) {
+#if defined(_WIN32)
+    struct _stat64 st;
+    return _stat64(path, &st) == 0;
+#else
+    struct stat st;
+    return stat(path, &st) == 0;
+#endif
+}
+
 /* ASCII case-insensitive equality of two names. */
 static int loft_name_fold_eq(const char *a, size_t an, const char *b, size_t bn) {
     if (an != bn) return 0;
@@ -301,16 +311,15 @@ static int loft_name_fold_eq(const char *a, size_t an, const char *b, size_t bn)
 
 /* `@FR-Path-Case` (file_access::case_clash): why a name on `full`'s way names another entry's
  * spelling, or 0 (malloc'd).  The longest existing prefix is compared with its on-disk
- * spelling where the file system folds case (macOS); the first missing name below it with
- * the entries of its directory. */
+ * spelling where the file system folds case (macOS, Windows); the first missing name below it
+ * with the entries of its directory. */
 static char *loft_case_clash(const char *full) {
     size_t len = strlen(full);
     char *existing = (char *) malloc(len + 2);
     if (!existing) { fputs("loft: out of memory\n", stderr); abort(); }
     memcpy(existing, full, len + 1);
     char *missing = 0;
-    struct stat st;
-    while (stat(existing, &st) != 0) {
+    while (!loft_path_exists(existing)) {
         char *slash = strrchr(existing, '/');
         /* The walk ends at the root: where even `/` cannot be stat'ed (WASI reaches only its
          * pre-opened directories), no prefix exists to compare spellings against. */
@@ -345,8 +354,65 @@ static char *loft_case_clash(const char *full) {
             if (as == existing || rs == real) break;
         }
     }
+#elif defined(_WIN32)
+    /* Each trailing name of the existing prefix against its on-disk spelling, which the CRT's
+     * `_findfirst` of the name itself answers; the walk stops at the drive. */
+    {
+        char *prefix = (char *) malloc(strlen(existing) + 1);
+        if (!prefix) { fputs("loft: out of memory\n", stderr); abort(); }
+        strcpy(prefix, existing);
+        for (;;) {
+            char *slash = strrchr(prefix, '/');
+            const char *name = slash ? slash + 1 : prefix;
+            size_t nn = strlen(name);
+            if (!nn || (nn == 2 && name[1] == ':')) break;
+            struct _finddata_t fd;
+            intptr_t h = _findfirst(prefix, &fd);
+            if (h != -1) {
+                _findclose(h);
+                size_t fn = strlen(fd.name);
+                if ((fn != nn || memcmp(fd.name, name, nn) != 0) && loft_name_fold_eq(name, nn, fd.name, fn)) {
+                    loft_push_char(&why, '`');
+                    loft_push(&why, name, nn);
+                    loft_push_cstr(&why, "` is spelled `");
+                    loft_push(&why, fd.name, fn);
+                    loft_push_cstr(&why, "` on disk");
+                    break;
+                }
+            }
+            if (!slash || slash == prefix) break;
+            *slash = 0;
+        }
+        free(prefix);
+    }
 #endif
     if (!why.len && missing) {
+#if defined(_WIN32)
+        size_t xl = strlen(existing);
+        char *pattern = (char *) malloc(xl + 3);
+        if (!pattern) { fputs("loft: out of memory\n", stderr); abort(); }
+        memcpy(pattern, existing, xl);
+        memcpy(pattern + xl, xl && existing[xl - 1] == '/' ? "*" : "/*", xl && existing[xl - 1] == '/' ? 2 : 3);
+        struct _finddata_t fd;
+        intptr_t d = _findfirst(pattern, &fd);
+        free(pattern);
+        if (d != -1) {
+            char *best = 0;
+            size_t mn = strlen(missing);
+            do {
+                const char *en_name = fd.name;
+                size_t en = strlen(en_name);
+                if (!strcmp(en_name, ".") || !strcmp(en_name, "..")) continue;
+                if ((en != mn || memcmp(en_name, missing, mn) != 0) && loft_name_fold_eq(en_name, en, missing, mn)
+                    && (!best || strcmp(en_name, best) < 0)) {
+                    free(best);
+                    best = (char *) malloc(en + 1);
+                    if (!best) { fputs("loft: out of memory\n", stderr); abort(); }
+                    strcpy(best, en_name);
+                }
+            } while (_findnext(d, &fd) == 0);
+            _findclose(d);
+#else
         DIR *d = opendir(existing);
         if (d) {
             char *best = 0;
@@ -364,6 +430,7 @@ static char *loft_case_clash(const char *full) {
                 }
             }
             closedir(d);
+#endif
             if (best) {
                 loft_push_char(&why, '`');
                 loft_push_cstr(&why, missing);
@@ -384,7 +451,7 @@ static char *loft_case_clash(const char *full) {
 
 static char *loft_resolve(loft_str raw) {
     char *full = loft_normalize(raw, loft_program_relative ? loft_anchor : "", 1);
-#if defined(LOFT_POSIX)
+#if defined(LOFT_POSIX) || defined(_WIN32)
     if (full && raw.len) {
         char *why = loft_case_clash(full);
         if (why) {
