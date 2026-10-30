@@ -2494,7 +2494,7 @@ impl Parser {
             // starts the next expression's negation.
             || (self.lexer.peek_token("!")
                 && self.lexer.peek_glued()
-                && !matches!(t, Type::Void))
+                && !matches!(t.base(), Type::Void))
         {
             if !self.enter_depth() {
                 *code = Value::Null;
