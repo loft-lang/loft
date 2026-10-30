@@ -80,7 +80,8 @@ a known-equal baseline.
   stored reference.  The C's `swap_safe` has exchanged such records all along, which is
   evidence, not proof: the guard is a record with a hash field rebound from a call, both
   backends, `LOFT_STRICT_STORES=1`.
-- **E-3 — clearing an empty vector at a store's root** (STORE_MODEL **D19f**).  `(H-ClearRelease)`
+- **E-3 — clearing an empty vector at a store's root** (STORE_MODEL **D19f**) — **BUILT**
+  (f491592ba).  `(H-ClearRelease)`
   is a leak rule and indifferent, so STORE_MODEL's rule decides: the C skips the reset, so the
   Rust interpreter moves to the C unless its reset measures better.  `clear_vector_release` resets the
   store (an init and two claims) even when the vector holds nothing; the C's inline fast path
