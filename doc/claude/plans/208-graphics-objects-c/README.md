@@ -17,7 +17,8 @@ Issue: [@PLN208](https://github.com/loft-lang/plans/issues/208).
 | G2 | Done — `save_png` through imaging (`16818a4`); six canvases identical to 0.9's files.  It surfaced an imaging defect, fixed as imaging 0.5.1: lodepng's `auto_convert` wrote few-colour images as palettes |
 | G3 | Done — `enum Event` with public variant fields (`16818a4`).  The suite is 108/108 on the interpreter, `--native` and the C; G1–G3 and imaging 0.5.1 go to main together in loft-libs-graphics#67 |
 | G4 | Done — `Window` over X11 + GLX (`b4ed3ce`): `tests/window.loft` 3/3 on the three backends under Xvfb, the suite 111/111; `compare/window.loft` reads back 0.9's pixels for five clears |
-| G5–G11 | Open |
+| G5 | In progress — `Shader` + `GpuMesh` (`3e30eb9`), render state (`35fd737`), `Texture` + `Framebuffer` + `quad` (`a15bb8c`): each with a hand-computed guard on the three backends and a 0.9 comparison at 0 differing pixels.  Left: instancing, index buffers, buffer updates, draw modes |
+| G6–G11 | Open |
 
 ## Goal
 
@@ -131,7 +132,15 @@ libGL loaded (`RTLD_NODELETE`); unloading Mesa leaked 10 MiB of address space pe
 
 **G5 — the GL calls, one group per step (M each).**  Shaders and uniforms · buffers, instancing,
 indices · state (blend, cull, depth, scissor, viewport) · framebuffers and textures · draw modes,
-line width, point size.  `clear` keeps 0.9's `0xAARRGGBB` packing (G.rs:669).
+line width, point size.  `clear` keeps 0.9's `0xAARRGGBB` packing (G.rs:669).  The objects:
+`w.shader(…) -> Shader?`, `w.upload(vertices, stride) -> GpuMesh` (0.9's stride layout; `GpuMesh`
+because mesh3d owns `Mesh`), `w.texture`/`depth_texture`/`texture_from(canvas) -> Texture`,
+`w.framebuffer() -> Framebuffer`, `w.quad()`; state calls are `Window` methods keeping 0.9's codes.
+Each holds a counted reference to its window in the shim, so a drop after the window closed is a
+no-op.  The games use shaders, uniforms, meshes, state and framebuffers; instancing, index buffers,
+`update_buffer` and the draw modes no game calls.  Also before G9: the 0.9 library's own loft
+helpers built on `gl_*` — `GroupVboSet`, `create_sprite_sheet`/`draw_sprite`, `Painter2D`
+(`draw_rect_at`, `draw_texture_at`), `create_text_texture` — move onto the objects.
 - Goes red when: a scene per group, rendered by 0.9 and by the shim under Xvfb, differs in the
   screenshot.  One group per commit, so a red names its group.
 
