@@ -7754,9 +7754,45 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             {
                 val.unspan().clone()
             }
+            // A COMPOUND value — an `if`, a `match`, a block, a `??` — may answer a NAMED
+            // place from one of its arms: `(c ?? v, 1)` and `(if k { v } else { w }, 1)` were
+            // second names for `v`, so an append through the member reached it, on every
+            // backend, while a plain bind, a struct field and a vector-literal element of the
+            // same spelling copied (loft#2253).  The whole value is copied once, after it is
+            // evaluated, when some arm answers a place (`compound_answers_place`); a compound
+            // that only builds — a struct or vector literal is a block too — is left as the
+            // fresh value it is, since copying it would orphan the record it built.  The
+            // droppable guard is the projection arm's.
+            v @ (Value::If(..) | Value::Block(_))
+                if self.compound_answers_place(v)
+                    && !self.data.type_owns_droppable_anywhere(tp)
+                    && tp.heap_def_nr().is_none_or(|r| {
+                        !self.data.owns_droppable(r) || crate::lease::leases_whole(&self.data, r)
+                    }) =>
+            {
+                v.clone()
+            }
             _ => return None,
         };
         self.owned_heap_copy(val, src, tp)
+    }
+
+    /// Can the compound value `v` — an `if`, a `match`, a block, a `??` — answer a NAMED place
+    /// from one of its arms?  A tail is a place when it is a local the program declared (a
+    /// parser temporary, named with a leading `_`, holds a value the expression built), a
+    /// member of a tuple local, or a record projection.  `@FR-T-Cons`.
+    fn compound_answers_place(&self, v: &Value) -> bool {
+        match v.unspan() {
+            Value::Var(x) => *x < self.vars.count() && !self.vars.name(*x).starts_with('_'),
+            Value::TupleGet(b, _) => *b < self.vars.count(),
+            Value::Call(d, _) => crate::use_analysis::is_projection_op(&self.data, *d),
+            Value::If(_, t, e) => self.compound_answers_place(t) || self.compound_answers_place(e),
+            Value::Block(bl) => bl
+                .operators
+                .last()
+                .is_some_and(|t| self.compound_answers_place(t)),
+            _ => false,
+        }
     }
 
     /// The COPY half of [`Self::tuple_member_owned_copy`]: rewrite `val` into a block that
