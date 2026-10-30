@@ -5329,8 +5329,7 @@ impl<'a> FnWriter<'a> {
         }
         // `@FR-R-NonSentinelParam`'s twin clause: the parameters this call's arguments prove
         // beyond the program-wide fact go to a `__nn` twin that seeds them.
-        if super::native_c(route).is_none() && args.len() <= 26 && !self.apr_twin_call(d, args)
-        {
+        if super::native_c(route).is_none() && args.len() <= 26 && !self.apr_twin_call(d, args) {
             let bits = self.nn_twin_bits(d, args);
             if bits != 0 {
                 mask |= bits << super::NN_SHIFT;
