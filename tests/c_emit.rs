@@ -5203,8 +5203,10 @@ fn the_engine_host_kernel_serves_the_same_on_the_c_and_the_interpreter() {
 /// hand.  The seat's frames are masked (RFC 6455 requires it of a client); its `7:pose` is a
 /// declared sync kind, which reaches the listener over the WebSocket or, once the cookie's UDP
 /// path is acked, as a datagram — the echo is the same either way; `http_fetch` to a port
-/// nothing serves completes as a kind-3 event with a negative status, and the seat leaves; the
-/// listener sees that as a kind-2 disconnect of cid 0 and stops.
+/// nothing serves completes as a kind-3 event with a negative status, and the seat says `bye`
+/// and stops in the same breath.  The `bye` must arrive: a seat that left its socket to the OS
+/// was reset on Windows, which discards what the listener had not read yet.  The listener then
+/// sees a kind-2 disconnect of cid 0 and stops.
 #[test]
 fn an_engine_host_seat_talks_to_its_listener_on_the_c_and_the_interpreter() {
     use std::time::{Duration, Instant};
@@ -5233,11 +5235,12 @@ fn an_engine_host_seat_talks_to_its_listener_on_the_c_and_the_interpreter() {
              if ev.payload == \"echo:ping\" { engine_host::client_send(\"7:pose\"); }\n          \
              if ev.payload == \"echo:7:pose\" { engine_host::http_fetch(\"GET\", \"http://127.0.0.1:1/x\", \"\", \"\"); }\n        \
              }\n        \
-             if ev.kind == 3 { println(\"fetch {ev.status < 0}\"); engine_host::client_stop(); }\n      \
+             if ev.kind == 3 { println(\"fetch {ev.status < 0}\"); engine_host::client_send(\"bye\"); engine_host::client_stop(); }\n      \
              },\n      fn() {});\n    return;\n  }\n  \
              engine_host::run(port, 5000,\n    fn(ev: engine_host::Event) {\n      \
              if ev.kind == 0 { engine_host::send(ev.cid, \"hello {ev.cid}\"); }\n      \
-             if ev.kind == 1 { engine_host::broadcast(\"echo:{ev.payload}\"); }\n      \
+             if ev.kind == 1 && ev.payload == \"bye\" { println(\"server got bye\"); }\n      \
+             if ev.kind == 1 && ev.payload != \"bye\" { engine_host::broadcast(\"echo:{ev.payload}\"); }\n      \
              if ev.kind == 2 { println(\"server saw disconnect {ev.cid}\"); engine_host::stop(); }\n    \
              },\n    \
              fn() {});\n}\n",
@@ -5297,7 +5300,7 @@ fn an_engine_host_seat_talks_to_its_listener_on_the_c_and_the_interpreter() {
             String::from_utf8_lossy(&listener.stdout),
             format!(
                 "engine_host: listening on ws://0.0.0.0:{port}/ (tick every 5000 us)\n\
-                 server saw disconnect 0\n"
+                 server got bye\nserver saw disconnect 0\n"
             ),
             "{backend}: the listener's lines\n{}",
             String::from_utf8_lossy(&listener.stderr)

@@ -608,6 +608,38 @@ static void loft_eh_trim(const char **p, size_t *n) {
 #if defined(LOFT_SOCKETS)
 static void loft_ehk_disconnect(size_t cid);
 
+/* Every socket either role still holds, closed when the program exits — as the Rust kernel's
+ * sockets close when its state drops.  A socket the process leaves open is closed by the OS, and
+ * Windows closes it with a reset, which discards whatever the peer had not read yet: a seat's
+ * last message before `client_stop` never reached its listener.  A plain close sends it, then
+ * the FIN. */
+static void loft_eh_close_fd(int *fd) {
+    if (*fd >= 0) loft_sock_close(*fd);
+    *fd = -1;
+}
+
+/* Only a role that is up: the other's descriptors are still the static's zeros, and 0 is stdin. */
+static void loft_eh_close_all(void) {
+    if (loft_ehk.up) {
+        loft_eh_close_fd(&loft_ehk.listener);
+        loft_eh_close_fd(&loft_ehk.udp);
+        for (size_t i = 0; i < loft_ehk.nconns; i++) loft_eh_close_fd(&loft_ehk.conns[i].fd);
+    }
+    if (loft_ehc.up) {
+        loft_eh_close_fd(&loft_ehc.conn);
+        loft_eh_close_fd(&loft_ehc.udp);
+        loft_eh_close_fd(&loft_ehc.ctl);
+        for (size_t i = 0; i < loft_ehc.nctl; i++) loft_eh_close_fd(&loft_ehc.ctl_conns[i]);
+    }
+}
+
+static void loft_eh_close_at_exit(void) {
+    static int armed = 0;
+    if (armed) return;
+    armed = 1;
+    atexit(loft_eh_close_all);
+}
+
 /* `deliver`: a sync-class message rides a seq-stamped datagram when the client's UDP path is
  * bound; everything else, and every client without one, gets a WS frame.  A failed WS write
  * disconnects the client. */
@@ -803,6 +835,7 @@ static uint8_t loft_kernel_listen(int64_t port, int64_t tick_us) {
     free(loft_ehk.conns);
     loft_ehk.conns = 0;
     loft_ehk.nconns = 0;
+    loft_eh_close_at_exit();
     loft_ehk.up = 1;
     loft_ehk.alive = 1;
     loft_ehk.listener = fd;
@@ -1157,6 +1190,9 @@ static void loft_ehc_reset(int64_t tick_us) {
     loft_ehc.nctl = 0;
     loft_eh_queue_free(&loft_ehc.events);
     loft_eh_slots_free(&loft_ehc.slots);
+#if defined(LOFT_SOCKETS)
+    loft_eh_close_at_exit();
+#endif
     loft_ehc.up = 1;
     loft_ehc.alive = 1;
     loft_ehc.conn = loft_ehc.udp = loft_ehc.ctl = -1;
