@@ -1,0 +1,97 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The C backend moves a call's text result into the text it is assigned to: the result is a
+// statement temporary nothing else names, so the target takes its buffer instead of a copy
+// (`loft_text_move`).  The cells hold the targets a move could get wrong — a local reused
+// across passes (it releases what it held), a caller's text through a `&` parameter, a tuple
+// member, the target read by the call itself (`x = f(x)`), a null result and an empty one.
+// A value block whose value is a call's work text is that text's view (`text_tail_view`); the
+// cells m6–m8 hold two calls' texts consumed by one operation.  Each call site has a work text
+// of its own today, so no cell reaches two blocks sharing one; `arg_with` copies a block's view
+// before a later operand that may write, as it does for a variable, whether or not they do.
+// Values hand-computed; value AND size.  `LOFT_NO_C_TEXT_MOVE=1` is the same-build oracle.
+//
+// @falsified-at: none — the move has no earlier build to catch, so the receipt is a defect
+//   planted (2026-10-30) in the generated C: a move that leaves the source holding its buffer
+//   releases it under the target — m1 aborts in the allocator, m2 and m5 read the freed bytes.
+//   CHANNEL: a crash, and an assertion.
+
+fn tag(s: text, n: integer) -> text { "{s}{n}" }
+
+fn nothing() -> text? { null }
+
+fn fill(out: &text, n: integer) { out = tag("f", n); }
+
+// m1: a local reused across passes takes each pass's result — the last is "p9", 2 bytes;
+//     the total size over the passes is 10 × 2 = 20
+fn test_a_local_reused_across_passes() {
+  x = "";
+  total = 0;
+  for i in 0..10 {
+    x = tag("p", i);
+    total += x.size();
+  }
+  assert(x == "p9", "m1 {x}");
+  assert(total == 20, "m1 total {total}");
+}
+
+// m2: a caller's text through a `&` parameter — "f42"
+fn test_a_callers_text() {
+  out = "before";
+  fill(out, 42);
+  assert(out == "f42", "m2 {out}");
+  assert(out.size() == 3, "m2 size {out.size()}");
+}
+
+// m3: a tuple member — ("t7", 7)
+fn test_a_tuple_member() {
+  pair = (tag("t", 7), 7);
+  assert(pair.0 == "t7" && pair.1 == 7, "m3 {pair.0}");
+}
+
+// m4: the target read by the call — "a" then "a1" then "a12"
+fn test_the_target_read_by_its_call() {
+  x = "a";
+  x = tag(x, 1);
+  x = tag(x, 2);
+  assert(x == "a12", "m4 {x}");
+  assert(x.size() == 3, "m4 size {x.size()}");
+}
+
+// m5: a null result and an empty one
+fn test_a_null_and_an_empty_result() {
+  x = "kept";
+  assert(x.size() == 4, "m5 before");
+  x = nothing() ?? "";
+  assert(x == "", "m5 empty {x}");
+  y = "kept";
+  assert(y.size() == 4, "m5 before");
+  y = tag("", 0);
+  assert(y == "0", "m5 {y}");
+}
+
+struct Two { a: text, b: text }
+
+fn pair(x: text, y: text) -> text { "{x}|{y}" }
+
+// m6: a record literal with two text fields from calls — "a1", "b2"
+fn test_two_fields_from_calls() {
+  r = Two { a: tag("a", 1), b: tag("b", 2) };
+  assert(r.a == "a1" && r.b == "b2", "m6 {r.a} {r.b}");
+}
+
+// m7: one call with two text arguments from calls — "c3|d4", 5 bytes
+fn test_two_arguments_from_calls() {
+  got = pair(tag("c", 3), tag("d", 4));
+  assert(got == "c3|d4", "m7 {got}");
+  assert(got.size() == 5, "m7 size {got.size()}");
+}
+
+// m8: a comparison of two call results, and a format of two — false, then "e5e6"
+fn test_two_results_in_one_expression() {
+  same = tag("e", 5) == tag("e", 6);
+  assert(!same, "m8 compare");
+  both = "{tag("e", 5)}{tag("e", 6)}";
+  assert(both == "e5e6", "m8 {both}");
+}

@@ -4580,6 +4580,16 @@ impl<'a> FnWriter<'a> {
                 {
                     return self.move_tuple_in(e, target, id, ind);
                 }
+                // A text value held in a statement temporary (a call's fresh result) moves into
+                // the target: the temporary is released at the statement's end and nothing else
+                // names it, so the target takes its buffer instead of a copy.
+                // `LOFT_NO_C_TEXT_MOVE=1` copies.
+                if c == CType::Text
+                    && let Some(t) = self.pending_text_temp(&e.code)
+                {
+                    self.line(ind, &format!("loft_text_move(&{target}, &{t});"));
+                    return Ok(());
+                }
                 let s = match c {
                     CType::Text => format!("loft_text_set(&{target}, {});", as_view(e)?),
                     CType::Void => format!("{};", e.code),
@@ -4957,6 +4967,11 @@ impl<'a> FnWriter<'a> {
                     return Ok(e);
                 }
                 let c = self.shape_of(compound)?;
+                if c == CType::Text
+                    && let Some(e) = self.nested(|w| w.text_tail_view(compound, ind))?
+                {
+                    return Ok(e);
+                }
                 self.nested(|w| {
                     if c == CType::Void {
                         w.stmt(compound, ind)?;
@@ -5068,6 +5083,71 @@ impl<'a> FnWriter<'a> {
         r
     }
 
+    /// A text value block whose value is a text local the block leaves alone after it — the
+    /// work text a call or a format fills, `{ w = f(…); w }` — is that local's view, as a plain
+    /// read of it is, instead of a copy into a temporary: the block's statements run, then its
+    /// frees, none of which names the local.  `arg_with` guards the view as it guards a read of
+    /// the local.  `None` for every other block, and under `LOFT_NO_C_TAIL_VIEW=1`.
+    fn text_tail_view(&mut self, v: &Value, ind: usize) -> Result<Option<E>, String> {
+        let Value::Block(b) = v.unspan() else {
+            return Ok(None);
+        };
+        if std::env::var("LOFT_NO_C_TAIL_VIEW").is_ok_and(|x| x != "0") {
+            return Ok(None);
+        }
+        let ops = &b.operators;
+        if self.tail_capture(ops).is_some() {
+            return Ok(None);
+        }
+        let Some(at) = ops.iter().rposition(|o| {
+            !matches!(o.unspan(), Value::Line(_) | Value::Set(..)) && !self.is_free(o)
+        }) else {
+            return Ok(None);
+        };
+        let Value::Var(w) = ops[at].unspan() else {
+            return Ok(None);
+        };
+        let w = *w;
+        if !self.text_held(w)
+            || ops[at + 1..]
+                .iter()
+                .any(|o| o.any_node(&mut |n| matches!(n, Value::Var(x) if *x == w)))
+        {
+            return Ok(None);
+        }
+        let frames = self.headers.len();
+        let r = (|| -> Result<E, String> {
+            for i in 0..at {
+                self.stmt(&ops[i], ind)?;
+                self.bind_view_header(ops, i, ind);
+            }
+            let e = self.expr(&ops[at], ind)?;
+            self.flush(ind);
+            ops[at + 1..].iter().try_for_each(|o| self.stmt(o, ind))?;
+            Ok(e)
+        })();
+        self.headers.truncate(frames.min(self.headers.len()));
+        let e = r?;
+        if e.kind != K::View {
+            return Err("a text block's tail read as no view".into());
+        }
+        Ok(Some(e))
+    }
+
+    /// The statement temporary an expression `code` reads, when it is exactly a view of an owned
+    /// text temporary this statement made ([`Self::held`]) — a value nothing else names, which a
+    /// text target may take by a move.  `None` under `LOFT_NO_C_TEXT_MOVE=1`.
+    fn pending_text_temp(&self, code: &str) -> Option<String> {
+        let t = code.strip_prefix("loft_view(&")?.strip_suffix(')')?;
+        if !self.pending.iter().any(|p| p == t)
+            || !self.temps.iter().any(|(n, c)| n == t && *c == CType::Text)
+            || std::env::var("LOFT_NO_C_TEXT_MOVE").is_ok_and(|v| v != "0")
+        {
+            return None;
+        }
+        Some(t.to_string())
+    }
+
     /// The expression reading temporary `t` of shape `c`.
     fn held(&mut self, t: String, c: CType) -> E {
         match c {
@@ -5166,7 +5246,13 @@ impl<'a> FnWriter<'a> {
     /// node's address (`@FR-R-GuardedChain`'s admitted operators) must meet the node it admitted.
     fn arg_with(&mut self, operand: &Value, later_writes: bool, ind: usize) -> Result<E, String> {
         let value = self.expr(operand, ind)?;
-        if later_writes && matches!(operand.unspan(), Value::Var(_)) && value.kind == K::View {
+        // A text block's tail view (`text_tail_view`) reads a local, as a variable operand does.
+        let reads_local = match operand.unspan() {
+            Value::Var(_) => true,
+            Value::Block(_) => value.kind == K::View && self.pending_text_temp(&value.code).is_none(),
+            _ => false,
+        };
+        if later_writes && reads_local && value.kind == K::View {
             let temp = self.temp(CType::Text);
             self.line(ind, &format!("loft_text_set(&{temp}, {});", value.code));
             return Ok(self.held(temp, CType::Text));
