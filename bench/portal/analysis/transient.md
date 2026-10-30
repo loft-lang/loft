@@ -55,14 +55,16 @@ report.  Since the frame is not written, a text view reads the bytes `text_from_
 have copied.
 
 Re-assertion sites (where the invariant must be checked, and the only ones):
-1. **never written below the root — already proven, by the parser.**  `Decoded.value`,
-   `CborEntry.key` and `CborEntry.value` are value-const fields (`(Const-Value)`,
-   `@FR-Const-Value`): every write reached through them, at any depth (`t.v[i] = …`,
-   `t.r.x = …`), is a compile error.  A type whose tree is not value-const below the root is
-   not admitted (T1–T2), so the twins carry no write check of their own;
+1. **never written below the root — proven by the site walk, NOT by the declarations.**  cbor
+   declares `pub const value: CborValue`: `const` before the NAME is `(Const-Bind)`, which
+   freezes the slot and leaves the contents writable (`t.v += …`, `t.v[i] = x`).  Only
+   `value: const T` (`(Const-Value)`) forbids writes through it, and cbor does not use it.  So
+   the proof is the walk's: a setter at any depth of projection under the root is a reach, and
+   a reach declines the site.  (Found writing the cells, 2026-10-31: the earlier text here
+   claimed the parser proved it, and a candidate test on value-const would have excluded cbor);
 2. the SITE proof — every use of the root reads: `use_analysis::read_only_uses`, the
-   `@FR-R-Const` walk, with the producers marked (§ The sites).  It also refuses the one write
-   `const` still allows, the whole-value rebind `d.value = other`: a setter's root is a reach;
+   `@FR-R-Const` walk, with the producers marked (§ The sites) — this is also where site 1 is
+   asserted;
 3. the hand-on proof — a root handed to a parameter or returned through a forwarder (§ The
    sites), the two positions `read_only_uses` refuses today;
 4. the source proof (T2 only) — no write of a viewed source between the root's bind and its
@@ -180,8 +182,9 @@ allow-list, and T2 adds the representation.
 5. a source written while the tree lives (`f[0] = 0` between decode and read) — must decline;
 6. a site inside a loop of 10 000 — the store watermark flat, nothing for the leak report;
 7. a forwarder chain (`pa_text(pa_decode(f), k)`) and a site in a `par` arm (declines);
-8. the rebind `const` allows — `d = decode(f); d.value = CInt { value: 7 }; read d.value` —
-   declines (a setter root to the walk) and reads 7;
+8. a site that rebinds its root — `t = pa_decode(f); read t; t = CInt { value: 7 }; read t` —
+   declines (two binds) and reads 7 (`d.value = …` itself is a compile error under
+   `(Const-Bind)`, so it is no cell);
 9. a reader that writes its plain parameter (`fn touch(m: CborValue) { … m = … }`) declines
    the hand-on, and its caller's tree is store-built, same values.
 
@@ -242,8 +245,8 @@ non-sentinel at one call site, called beside another that passes null — reads 
 `rewrite_census::fired("R-Transient", …)`.  **Byte-identical.**
 
 **S3. The candidates and the root sites — computed, printed, not used.**  A PRODUCER candidate:
-a loft-defined function returning a record whose every heap field at the root is value-const
-(`Attribute::value_const`, the `@FR-Const-Value` fact), with no `yield`, capture or `par`.  The
+a loft-defined function returning a record, with no `yield`, capture or `par` — its fields'
+`const` does not matter (site 1).  The
 root sites: `use_analysis::read_only_uses(body, n_vars, data, marked, true)` (`src/use_analysis.rs:4123`)
 with `marked` = the candidates; its `calls` are the sites.  The FORWARDER half of the fixpoint:
 a candidate whose result is returned (`decode` returns `d`) stays in only when every call site of
