@@ -313,3 +313,27 @@ the layout (`typedef::fill_database`), the write (`Stores::set_child_rec`, C `lo
 `(B-OutOfLine)`, `formal/formatting.md` `(F-Render-Child)`; guards in
 `loft-suite/rules/layout/L-OutOfLine/`.
 **Catalogue:** `formal/layout.md` `(L-Ref)`.
+
+## C160 — `e!` discharges a `τ?` with no default: the value, or a halt that names it
+
+**Decision.** A postfix `!` written against a nullable operand — `v[i]!`, `find(x)!`,
+`h.link!.name` — is the value when it is present and a halt (`panic`) when it is absent, the
+message quoting the operand's source (`find(x) is null`) and the position the `!`'s.  It is
+exactly `e ?? panic("<e> is null")`.  It needs no default, so it applies where `?` cannot: a
+reference, a bare enum.  On an operand that cannot be null it warns
+(`redundant-present`).  `x != y` is unchanged, and a `!` with a space before it is the prefix
+negation of what follows.
+**Why.** An invariant read — a table entry by its own index, a record an image guarantees — has
+no sensible default, and a silent one turns a corrupt input into a plausible wrong answer; the
+honest spelling was `?? panic("…")` at every such read (258 in the self-hosted ports).  @C89
+declined Rust's mitigation layer (`unwrap`, `if let`); this is sugar inside the `τ?`-with-`??`
+family, beside `x?` (@PLN116): `??` the default you give, `?` the type's, `!` none.  Kotlin
+spells it `!!`, Swift `!`; one character matches `?`.
+**Revisit when.** A program needs the halt to carry its own words — `?? panic("…")` stays the
+spelling for that.  Decided 2026-10-30 (owner).
+**Holds at:** `@C160` — `./scripts/idx tag:@C160`: `Parser::handle_present`
+(`src/parser/operators.rs`), `Lexer::peek_glued`, the formatter's postfix rule
+(`tools/fmt/whole.loft`); `formal/types.md` `(N-Present)`; guards in
+`loft-suite/rules/types/N-Present/`.
+**Catalogue:** @F96 (the discharges) · `formal/types.md` `(N-Default)`.
+

@@ -180,13 +180,18 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
                legal; NEVER yields an out-of-range value.  (`b as u8? ⇒ u8?`.)
 
   elimination (discharge — REQUIRED; there is NO implicit  τ? ⤳ τ: a value leaves `τ?` by
-  `??`, `?` or `match`, and a variable reads as `τ` where a guard proved it, (N-Guard))
+  `??`, `?`, `!` or `match`, and a variable reads as `τ` where a guard proved it, (N-Guard))
   (N-Coal)     Γ ⊢ e ⇒ τ?,  Γ ⊢ d ⇐ τ                ⟹   Γ ⊢ (e ?? d) ⇒ τ
   (N-Default)  Γ ⊢ e ⇒ τ?,  has_default(τ)           ⟹   Γ ⊢ e? ⇒ τ            (@PLN116)
                the TYPE's default discharges:  e?  ≡  e ?? construct_default(τ).
                `has_default(τ)` is a STATIC side-condition — where it fails, `e?` is a
                COMPILE error, never a runtime one (§ Defaults below).  The pairing is the
                mnemonic: `??` = the default YOU give, `?` = the default the TYPE gives.
+  (N-Present)  Γ ⊢ e ⇒ τ?                              ⟹   Γ ⊢ e! ⇒ τ            (C160)
+               no default: present, or a halt that names it.  e!  ≡  e ?? panic("<e> is
+               null"), the message quoting e's source text, the halt at the `!`.  No
+               `has_default` side-condition, so it reaches a reference and a bare enum.  The
+               third of the family: `??` yours, `?` the type's, `!` none — it must be there.
                ONE write applies it implicitly, by design: `c += [ … ]` on an ABSENT nullable
                collection instantiates the empty collection first — collections.md
                (Col-Insert-Absent).  Every other position keeps the explicit discharge.

@@ -106,6 +106,12 @@ Three things to know before reaching for it:
   a bare reference, and a record with a bare enum field lacking `= <variant>`.
   The error names the fixes; `??` or `match` is the fallback.
 
+**`x!` when no default is right — the value, or a halt naming `x` (@C160).**  Write it for a
+read an invariant guarantees: a table entry by its own index, a record the input promises.
+`v[i]!.f` chains; it works on a reference and a bare enum, where `?` cannot.  Never write
+`?? panic("…")` for this — keep that spelling for a halt whose message must say MORE than
+"`x` is null".  Glue it to its operand: `x!`, never `x !` (that is a negation of what follows).
+
 **At a text parse, put `?` after the CHECKED cast:**
 
 <!-- from tests/reference/skill-null-and-casts.loft -->

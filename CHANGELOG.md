@@ -173,6 +173,12 @@ value), a nullable hole into a non-null parameter warns, and a `lit` that does n
 
 ### New
 
+**`x!` reads a value that must be there.**  `rows[i]!`, `find(name)!.age`: the value when it
+is present, and a halt when it is absent, its message naming the expression
+(`find(name) is null`) and its line.  It is short for `x ?? panic("…")` and, unlike `x?`, needs
+no default, so it works on a reference or an enum too.  Use it where any default would hide a
+mistake; keep `x?` where the type's default is a fine answer.
+
 **A struct or enum may hold its own type.**  `struct Tree { key: integer, left: Tree?, right:
 Tree? }` and `enum Expr { Num { v: integer }, Add { l: Expr, r: Expr } }` compile; before, both
 were refused as types that contain themselves.  The field holds a child, a value like any
