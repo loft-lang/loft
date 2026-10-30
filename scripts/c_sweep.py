@@ -25,6 +25,9 @@
     scripts/c_sweep.py --keyed-verify   # the keyed fast paths checked: the C built with
                                         # -DLOFT_KEYED_VERIFY against the interpreter under
                                         # LOFT_KEYED_VERIFY=1
+    scripts/c_sweep.py --copy-check     # every deep copy's nested lengths compared with the
+                                        # source's on both sides (LOFT_COPY_CHECK): a
+                                        # `[copy_check]` warning on one side alone differs
     scripts/c_sweep.py --wasm           # the C built for wasm32-wasi by clang and run under
                                         # wasmtime instead (LOFT_WASM_CC names another clang)
     scripts/c_sweep.py --m32            # the C built as 32-bit x86 (gcc -m32) and run natively
@@ -136,6 +139,10 @@ STRICT_MODES = {
 # fast path answered what the general one does not.
 VERIFY_MODES = {
     "keyed-verify": (["-DLOFT_KEYED_VERIFY", "-w"], {"LOFT_KEYED_VERIFY": "1"}),
+    # `--copy-check`: after every deep copy each nested collection's length compared with its
+    # source's (`LOFT_COPY_CHECK`); it warns and goes on, so a `[copy_check]` line on one side
+    # alone is the difference.
+    "copy-check": (["-DLOFT_COPY_CHECK", "-w"], {"LOFT_COPY_CHECK": "1"}),
 }
 ASAN = ["-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-fno-sanitize-recover=all"]
 # `--wasm`: the same unit for wasm32-wasi.  The runtime's recoverable faults use setjmp, which
@@ -371,6 +378,9 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
             if not same:
                 again = run(interp, ORACLE_TIMEOUT, cwd=src.parent, env={**(env or {}), **tenv})
                 same = scrubbed(again[2]) != scrubbed(i_out[2])
+        if same and mode == "copy-check" and \
+                (b"[copy_check]" in c_out[2]) != (b"[copy_check]" in i_out[2]):
+            same = False
         if not same:
             return path, "differ", f"[{mode}]", (i_out, c_out), times
     return path, "match", "", None, times
@@ -438,7 +448,9 @@ def main(argv: list[str]) -> int:
     if "--strict-stores" in argv:
         modes = tuple(STRICT_MODES)
     if "--keyed-verify" in argv:
-        modes = tuple(VERIFY_MODES)
+        modes = ("keyed-verify",)
+    if "--copy-check" in argv:
+        modes = ("copy-check",)
     if "--wasm" in argv:
         modes = ("wasm",)
     if "--m32" in argv:

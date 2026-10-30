@@ -2639,6 +2639,90 @@ static int loft_swap_rebind(uint16_t tp, loft_ref src, loft_ref *dst) {
 #endif
 }
 
+#ifdef LOFT_COPY_CHECK
+/* `LOFT_COPY_CHECK` (`Stores::report_copy_mismatches`, @P317): after a deep copy the source and
+ * the copy are walked in parallel, and every nested collection whose length differs is warned of
+ * once per field path — a copy that inflates or truncates a nested collection, which no output
+ * need show.  Warn and continue, so one run is a full census.  The driver builds with it when
+ * `LOFT_COPY_CHECK` is set.  Defined further on: the keyed collections' lengths. */
+static int64_t loft_hash_len(loft_ref c);
+static uint32_t loft_bt_len(loft_ref data);
+static uint64_t loft_copy_seen[256];
+static uint32_t loft_ncopy_seen = 0;
+
+static void loft_copy_warn(const char *label, const char *path, const char *what, int64_t sl, int64_t dl, uint16_t kt) {
+    uint64_t h = UINT64_C(0xcbf29ce484222325);
+    for (const char *p = label; *p; p++) h = (h ^ (uint8_t) *p) * UINT64_C(0x100000001b3);
+    for (const char *p = path; *p; p++) h = (h ^ (uint8_t) *p) * UINT64_C(0x100000001b3);
+    for (uint32_t i = 0; i < loft_ncopy_seen; i++) if (loft_copy_seen[i] == h) return;
+    if (loft_ncopy_seen < 256) loft_copy_seen[loft_ncopy_seen++] = h;
+    fflush(stdout);
+    fprintf(stderr, "[copy_check] MISMATCH %s%s: src_len=%lld dst_len=%lld (%s kt=%u)\n", label, path, (long long) sl,
+            (long long) dl, what, (unsigned) kt);
+}
+
+static void loft_copy_cmp(const loft_tdesc *T, uint16_t tp, loft_ref s, loft_ref d, const char *label, char *path,
+                          size_t at, int depth) {
+    const loft_tdesc *t = &T[tp];
+    if (depth > 32 || at > 200) return;
+    path[at] = 0;
+    switch (t->kind) {
+    case LOFT_T_STRUCT:
+        for (uint16_t i = 0; i < t->n; i++) {
+            loft_ref fs = s, fd = d;
+            fs.pos += t->fields[i].pos;
+            fd.pos += t->fields[i].pos;
+            int w = snprintf(path + at, 256 - at, ".%u", (unsigned) i);
+            loft_copy_cmp(T, t->fields[i].type, fs, fd, label, path, at + (size_t) (w > 0 ? w : 0), depth + 1);
+            path[at] = 0;
+        }
+        return;
+    case LOFT_T_VECTOR:
+    case LOFT_T_ORDERED: {
+        int64_t sl = loft_vec_len(s), dl = loft_vec_len(d);
+        if (sl != dl) loft_copy_warn(label, path, t->kind == LOFT_T_VECTOR ? "vector elem" : "array/ordered", sl, dl, t->elem);
+        const loft_tdesc *e = &T[t->elem];
+        if (t->kind != LOFT_T_VECTOR || e->linked || !e->owns_heap || e->size == 0) return;
+        uint32_t sv = loft_u32(loft_store_of(s), s.rec, s.pos), dv = loft_u32(loft_store_of(d), d.rec, d.pos);
+        if (sv == 0 || dv == 0) return;
+        int64_t n = sl < dl ? sl : dl;
+        int w = snprintf(path + at, 256 - at, "[]");
+        for (int64_t i = 0; i < n; i++) {
+            loft_ref es = { s.store_nr, sv, 8 + (uint32_t) i * e->size }, ed = { d.store_nr, dv, 8 + (uint32_t) i * e->size };
+            loft_copy_cmp(T, t->elem, es, ed, label, path, at + (size_t) (w > 0 ? w : 0), depth + 1);
+        }
+        return;
+    }
+    case LOFT_T_HASH: {
+        int64_t sl = loft_hash_len(s), dl = loft_hash_len(d);
+        if (sl != dl) loft_copy_warn(label, path, "hash", sl, dl, t->elem);
+        return;
+    }
+    case LOFT_T_INDEX: {
+        int64_t sl = loft_bt_len(s), dl = loft_bt_len(d);
+        if (sl != dl) loft_copy_warn(label, path, "index", sl, dl, t->elem);
+        return;
+    }
+    case LOFT_T_CHILD: {
+        uint32_t sc = loft_u32(loft_store_of(s), s.rec, s.pos), dc = loft_u32(loft_store_of(d), d.rec, d.pos);
+        if (sc == 0 || dc == 0) return;
+        loft_ref cs = { s.store_nr, sc, 8 }, cd = { d.store_nr, dc, 8 };
+        loft_copy_cmp(T, t->elem, cs, cd, label, path, at, depth + 1);
+        return;
+    }
+    default:
+        return;
+    }
+}
+
+static void loft_report_copy_mismatches(const loft_tdesc *T, uint16_t tp, loft_ref s, loft_ref d, const char *label) {
+    char path[256];
+    if (s.store_nr == 0xFFFF || s.rec == 0 || d.store_nr == 0xFFFF || d.rec == 0) return;
+    path[0] = 0;
+    loft_copy_cmp(T, tp, s, d, label, path, 0, 0);
+}
+#endif
+
 static void loft_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r);
 
 /* OpCopyRecord's flags: bit 0 frees the source, bit 1 says the type may move (loft_swap_in). */
@@ -2677,6 +2761,9 @@ static void loft_copy_record(const loft_tdesc *T, uint16_t tp, loft_ref src, lof
     if (!fresh_dest) loft_remove_claims(T, tp, dst);
     loft_copy_bytes(dst, 0, src, 0, T[tp].size);
     loft_copy_claims(T, tp, src, dst);
+#ifdef LOFT_COPY_CHECK
+    loft_report_copy_mismatches(T, tp, src, dst, "OpCopyRecord");
+#endif
     if (free_source && src.store_nr != dst.store_nr && !loft_free_protected(src)) loft_free_ref(src);
 }
 
@@ -3655,6 +3742,9 @@ static void loft_bind_copy(const loft_tdesc *T, uint16_t tp, loft_ref *dst, loft
 #endif
     loft_copy_bytes(*dst, 0, src, 0, T[tp].size);
     loft_copy_claims(T, tp, src, *dst);
+#ifdef LOFT_COPY_CHECK
+    loft_report_copy_mismatches(T, tp, src, *dst, "bind_copy");
+#endif
 }
 
 /* `@FR-R-DeferredCopy`'s remap: `y` — a view into the graph rooted at `from` — moved to the same

@@ -138,6 +138,11 @@ fn cc_flags(tier: Tier) -> Vec<String> {
     if env_on("LOFT_KEYED_VERIFY") {
         flags.push("-DLOFT_KEYED_VERIFY".into());
     }
+    // `LOFT_COPY_CHECK`: after every deep copy, each nested collection's length compared with
+    // its source's (loft_rt.h `loft_report_copy_mismatches`).
+    if env_on("LOFT_COPY_CHECK") {
+        flags.push("-DLOFT_COPY_CHECK".into());
+    }
     flags
 }
 

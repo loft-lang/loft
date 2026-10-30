@@ -2938,6 +2938,113 @@ fn a_keyed_verify_c_build_names_a_fast_path_that_answers_wrong() {
     let _ = fa::remove_dir_all(&dir);
 }
 
+/// @PLN206 P0b — `LOFT_COPY_CHECK` on the C (`Stores::report_copy_mismatches`): after every deep
+/// copy — a bind's (`loft_bind_copy`), `OpCopyRecord`'s and `OpReplaceKeyed`'s — the source and
+/// the copy are walked in parallel and each nested collection whose length differs is named by
+/// its field path.  A program copying a record of nested vectors, a hash and texts runs silent
+/// under it; then the vector copy is CORRUPTED in the unit's runtime text (a three-element copy
+/// keeps two) — the plain build answers wrong and says nothing, the checked one names the place.
+/// And the interpreter's check stays silent on a correct copy of hashes (it misread them).
+#[test]
+fn a_copy_check_c_build_names_a_copy_that_lost_elements() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("copy-check");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let file = dir.join("cp.loft");
+    fa::write(
+        &file,
+        "struct K { k: integer, v: integer }\nstruct In { xs: vector<integer> }\n\
+         struct S { name: text, parts: vector<In>, h: hash<K[k]>, tags: vector<text> }\n\
+         fn main() {\n  a = S { name: \"a\", parts: [In { xs: [1, 2, 3] }, In { xs: [4] }], \
+         h: [K { k: 1, v: 1 }, K { k: 2, v: 2 }], tags: [\"x\", \"y\"] };\n  b = a;\n  \
+         b.name = \"b\";\n  println(\"{len(a.parts)} {len(b.parts[0].xs)} {len(b.h)} {len(b.tags)} \
+         {a.name} {b.name}\");\n}\n",
+    )
+    .expect("write program");
+    let c = dir.join("cp.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "emit: {}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let unit = fa::read_to_string(&c).expect("read the C");
+    let run = |name: &str, text: &str, check: bool| -> (String, String) {
+        let src = dir.join(format!("{name}.c"));
+        let exe = dir.join(name);
+        fa::write(&src, text).expect("write the cell");
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O1", "-w"])
+            .args(check.then_some("-DLOFT_COPY_CHECK"))
+            .arg(&src)
+            .arg("-o")
+            .arg(&exe)
+            .args(unit_links(&src))
+            .arg("-lm")
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "{name}: cc: {}",
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let out = loft::platform::process::harness_command(&exe)
+            .output()
+            .expect("run the cell");
+        assert!(out.status.success(), "{name}: exited {:?}", out.status);
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    // 2 parts, 3 in the first, 2 entries, 2 tags; the copy renamed alone.
+    let (out, err) = run("clean", &unit, true);
+    assert_eq!(out, "2 3 2 2 a b\n", "the checked build:\n{err}");
+    assert!(
+        !err.contains("[copy_check]"),
+        "a correct copy was reported:\n{err}"
+    );
+    let from = "        loft_copy_bytes(dst_v, 4, src_v, 4, (size_t) len * size + 4);\n";
+    assert_eq!(unit.matches(from).count(), 1, "the runtime text moved");
+    let broken = unit.replacen(
+        from,
+        &format!("{from}        if (len == 3) loft_set_u32(loft_store_of(to), into, 4, 2);\n"),
+        1,
+    );
+    let (out, err) = run("broken-plain", &broken, false);
+    assert_eq!(out, "2 2 2 2 a b\n", "the corrupted plain build:\n{err}");
+    assert!(err.is_empty(), "the plain build said something:\n{err}");
+    let (_, err) = run("broken-checked", &broken, true);
+    assert!(
+        err.contains("[copy_check] MISMATCH bind_copy.1[].0: src_len=3 dst_len=2"),
+        "the checked build did not name the lost elements:\n{err}"
+    );
+    // The interpreter's own check reads a hash through `hash::count`: it read an inline table's
+    // header words as an arena's, reporting "1 against 3" for correct copies and following a
+    // bucket word as a record into a crash on this corpus program.
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg("981-split-ownership-return.loft")
+        .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/scripts"))
+        .env("LOFT_COPY_CHECK", "1")
+        .output()
+        .expect("run loft --interpret");
+    let err = String::from_utf8_lossy(&interp.stderr);
+    assert!(
+        interp.status.success() && !err.contains("[copy_check]"),
+        "the interpreter's copy check misread a correct copy:\n{err}"
+    );
+    let _ = fa::remove_dir_all(&dir);
+}
+
 /// Stores::insert_record's hash arm, for an element that owns nothing: one walk files `e` or
 /// finds the entry under its key, which `e` replaces; a walk that cannot answer falls back to a
 /// lookup, a removal and an add.
