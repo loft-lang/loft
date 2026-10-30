@@ -98,9 +98,18 @@ writing ?? 0."*
   one-liner each, or simply `inner[0]!` at the site).  `fn one(ns:
   vector<Node>) -> Node` (and `block_of`, `type_of` for the other boxes), the one place the
   image's invariant "a box holds exactly one" is discharged, with one message naming the box.
-  The ports read `one(inner)` where they read `inner[0] ?? panic("a set has its value")`.  The
-  representation itself is a language question — an owned single-child field — recorded in the
-  friction register (X24) with this count, not decided here.
+  The ports read `one(inner)` where they read `inner[0] ?? panic("a set has its value")`.
+  **The representation stays (owner's question, 2026-10-30: "our store is an internal tree, and
+  this is a line between branches — is it the right abstraction?").**  An owned single-child
+  field was weighed — the store has the part for it, `Parts::ChildRec` (P213, a 4-byte record
+  number with copy and free cascading, used today only for closure records) — and declined: a
+  second kind of edge between branches would need its own text form and parse back, JSON,
+  equality, copy, image persistence and upgrade, the C runtime, wasm, the debugger and the LSP,
+  all of which a collection already has.  loft models a tree's edges as collections — the
+  `cbor` library's `CArray { items: vector<CborValue> }`, `CMap { entries: vector<CborEntry> }`
+  have no single-child box at all — and a box-of-one is that edge with a cardinality of one;
+  `ir.loft` holds one because it mirrors Rust's `Box<Value>` for the image both sides read.  So
+  the cost is only the READ, which `e!` and the accessors remove.
 - **The table reads (81): the accessors the ports already half-have.**  `binds::def`,
   `fvar`, `fn_of` exist; every port reads definitions, variables and types through them, so the
   discharge is written once per table.
