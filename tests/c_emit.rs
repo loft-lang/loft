@@ -1373,12 +1373,15 @@ fn main() {
     // the twin takes `s.w` as a scalar input, `build` holds no scalar for it, and reads `s`
     // only through that call, so the parameter clause binds no address to read it through
     // either — rustc's call site makes the same choice (`@FR-R-Inputs`).
+    // `s.out = build(s, 7)` is an append into a fresh vector, so it calls `build`'s APPEND
+    // TWIN (`@FR-R-AppendTwin`), a second body of `build`: one more held call, versioned loop
+    // and scalar push header (`pix`, now the caller's vector) wherever `build` has one.
     for (mode, switch, twins, fresh, versioned, pushed, scalar_pushed, scalars) in [
-        ("held", "", 2, 3, 1, 2, 4, 1),
-        ("no-inputs", "LOFT_NO_CALLEE_INPUTS", 0, 3, 0, 2, 4, 1),
-        ("no-version", "LOFT_NO_DISTINCT_VERSION", 1, 3, 0, 2, 4, 1),
-        ("no-record-push", "LOFT_NO_RECORD_PUSH", 2, 3, 1, 0, 4, 1),
-        ("no-scalar", "LOFT_NO_SCALAR_HOIST", 1, 3, 1, 2, 4, 0),
+        ("held", "", 3, 3, 2, 2, 5, 1),
+        ("no-inputs", "LOFT_NO_CALLEE_INPUTS", 0, 3, 0, 2, 5, 1),
+        ("no-version", "LOFT_NO_DISTINCT_VERSION", 1, 3, 0, 2, 5, 1),
+        ("no-record-push", "LOFT_NO_RECORD_PUSH", 3, 3, 2, 0, 5, 1),
+        ("no-scalar", "LOFT_NO_SCALAR_HOIST", 1, 3, 2, 2, 5, 0),
         ("unheld", "LOFT_NO_VECTOR_HOIST", 0, 0, 0, 0, 0, 0),
     ] {
         let c = dir.join(format!("{mode}.c"));

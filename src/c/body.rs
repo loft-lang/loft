@@ -432,13 +432,18 @@ fn work_view_bind(vars: &Function, borrowed: &[bool], x: &Value) -> bool {
     let Value::Block(bl) = x.unspan() else {
         return false;
     };
-    matches!(
-        bl.operators.iter().rev().find(|o| !matches!(o.unspan(), Value::Line(_))).map(Value::unspan),
-        Some(Value::Var(w)) if (*w as usize) < borrowed.len()
-            && !borrowed[*w as usize]
-            && !vars.is_argument(*w)
-            && matches!(vars.tp(*w).base(), crate::data::Type::Text(_))
-    )
+    let last = bl
+        .operators
+        .iter()
+        .rev()
+        .find(|o| !matches!(o.unspan(), Value::Line(_)));
+    let Some(Value::Var(w)) = last.map(Value::unspan) else {
+        return false;
+    };
+    (*w as usize) < borrowed.len()
+        && !borrowed[*w as usize]
+        && !vars.is_argument(*w)
+        && matches!(vars.tp(*w).base(), crate::data::Type::Text(_))
 }
 
 /// Is `x` a text the view form of a borrowed bind writes with no temporary (`borrowed_texts`)?
