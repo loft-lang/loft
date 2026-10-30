@@ -148,6 +148,20 @@ fn cc_flags(tier: Tier) -> Vec<String> {
     if std::env::var_os("LOFT_LEAK_SITES").is_some() {
         flags.push("-DLOFT_LEAK_SITES".into());
     }
+    // The allocator's bisect switches (store.rs; loft_store.h), read as `Store` reads them: set
+    // and not `0`.  Each turns a policy off in the C as it does in the interpreter.
+    for switch in [
+        "LOFT_NO_PARK",
+        "LOFT_NO_LAZY_FREE",
+        "LOFT_NO_TOMBSTONE",
+        "LOFT_NO_FREE_FOOTER",
+        "LOFT_NO_WILD_BUMP",
+        "LOFT_NO_CARVE_IN_PLACE",
+    ] {
+        if std::env::var(switch).is_ok_and(|v| v != "0") {
+            flags.push(format!("-D{switch}"));
+        }
+    }
     flags
 }
 

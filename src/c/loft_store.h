@@ -38,6 +38,46 @@
 /* `MIN_BOUND_WORDS`: the fewest words a store bound to a file holds (`@FR-S-Mapped`). */
 #define LOFT_MIN_BOUND_WORDS 1024u
 
+/* The allocator's bisect switches (store.rs, each a policy turned off), as compile-time defines:
+ * `-DLOFT_NO_PARK` frees every block through the tree or the lazy phase at its delete
+ * (`@FR-H-Park` off), `-DLOFT_NO_LAZY_FREE` tracks every deleted block at the delete
+ * (`@FR-H-LazyFree` off), `-DLOFT_NO_TOMBSTONE` frees a removed record a stored reference named
+ * like any other (`@FR-H-Removed` off).  The driver adds each when its variable is set. */
+#ifdef LOFT_NO_PARK
+#define LOFT_PARKS 0
+#else
+#define LOFT_PARKS 1
+#endif
+#ifdef LOFT_NO_LAZY_FREE
+#define LOFT_LAZY_START 0
+#else
+#define LOFT_LAZY_START 1
+#endif
+#ifdef LOFT_NO_TOMBSTONE
+#define LOFT_TOMBSTONES 0
+#else
+#define LOFT_TOMBSTONES 1
+#endif
+/* `-DLOFT_NO_FREE_FOOTER`: a delete makes no backward merge and arms the lazy sweep
+ * (`@FR-H-FreeFooter` off); `-DLOFT_NO_WILD_BUMP`: a claim on an empty tree takes the best-fit
+ * path instead of the wilderness bump; `-DLOFT_NO_CARVE_IN_PLACE`: a best-fit claim always
+ * deletes the node it takes and inserts the rest (`@FR-H-Carve` off). */
+#ifdef LOFT_NO_FREE_FOOTER
+#define LOFT_FOOTERS 0
+#else
+#define LOFT_FOOTERS 1
+#endif
+#ifdef LOFT_NO_WILD_BUMP
+#define LOFT_WILD_BUMPS 0
+#else
+#define LOFT_WILD_BUMPS 1
+#endif
+#ifdef LOFT_NO_CARVE_IN_PLACE
+#define LOFT_CARVES 0
+#else
+#define LOFT_CARVES 1
+#endif
+
 /* `Claims`: one bit per word, grown on demand to the highest position inserted.  `nwords` is
  * the length and `cap` the allocation, as a `Vec<u64>`'s: growth doubles the allocation and a
  * clear keeps it, so a store cleared and refilled in a loop allocates nothing. */
@@ -643,7 +683,9 @@ static void loft_free_exact(loft_store_t *s, uint32_t rec, int32_t claim) {
     }
     uint32_t prev;
     int32_t words;
-    if (loft_free_predecessor(s, rec, &prev, &words)) {
+    if (!LOFT_FOOTERS) {
+        s->needs_coalesce = 1;
+    } else if (loft_free_predecessor(s, rec, &prev, &words)) {
         loft_fl_remove(s, prev);
         claim += words;
         rec = prev;
@@ -863,7 +905,7 @@ static uint32_t loft_claim_best_fit(loft_store_t *s, uint32_t size) {
     }
     if (found == 0) return 0;
     int32_t rest = loft_fl_size(s, found) - req;
-    if (rest >= req && rest >= LOFT_MIN_FREE_TREE) return loft_carve_in_place(s, found, found_parent, size, rest);
+    if (LOFT_CARVES && rest >= req && rest >= LOFT_MIN_FREE_TREE) return loft_carve_in_place(s, found, found_parent, size, rest);
     s->free_root = loft_fl_delete_node(s, s->free_root, found);
     if (s->free_root) loft_fl_set_red(s, s->free_root, 0);
     return loft_claim_block(s, found, size);
@@ -871,7 +913,7 @@ static uint32_t loft_claim_best_fit(loft_store_t *s, uint32_t size) {
 
 static uint32_t loft_bump_wild(loft_store_t *s, uint32_t size) {
     uint32_t pos = s->wild;
-    if (pos == 0 || s->free_root != 0) return 0;
+    if (pos == 0 || s->free_root != 0 || !LOFT_WILD_BUMPS) return 0;
     int32_t req = (int32_t) size;
     int32_t block = loft_fl_size(s, pos);
     if (block - req < LOFT_MIN_FREE_TREE) return 0;
@@ -1063,12 +1105,12 @@ static void loft_st_delete(loft_store_t *s, uint32_t rec) {
         if (s->placed[i] == rec) s->placed[i] = s->placed[--s->nplaced];
         else i++;
     }
-    if (loft_bits_remove(&s->referenced, rec)) {
+    if (loft_bits_remove(&s->referenced, rec) && LOFT_TOMBSTONES) {
         loft_entomb(s, rec);
         return;
     }
     int32_t words = loft_st_i32(s, rec, 0);
-    if (!s->no_park && words >= LOFT_MIN_FREE_TREE && words <= LOFT_PARK_MAX_WORDS && rec + (uint32_t) words != s->size) {
+    if (LOFT_PARKS && !s->no_park && words >= LOFT_MIN_FREE_TREE && words <= LOFT_PARK_MAX_WORDS && rec + (uint32_t) words != s->size) {
         loft_bits_remove(&s->claims, rec);
         loft_park_block(s, rec, words);
         return;
@@ -1161,7 +1203,7 @@ static void loft_st_init(loft_store_t *s) {
     loft_bits_clear(&s->claims);
     loft_bits_clear(&s->referenced);
     loft_bits_clear(&s->removed);
-    s->lazy = 1;
+    s->lazy = LOFT_LAZY_START;
     s->dead_words = 0;
     loft_bits_clear(&s->lazy_free);
     loft_parked_clear(s);
@@ -1381,7 +1423,7 @@ static uint32_t loft_st_claim_at(loft_store_t *s, uint32_t pos, uint32_t size) {
 /* `Store::kept_positions`: the referenced and removed positions, ascending, in a fresh array
  * (*n of them; 0 and no array when there are none). */
 static uint32_t *loft_st_kept_positions(const loft_store_t *s, uint32_t *n) {
-    *n = s->referenced.live + s->removed.live;
+    *n = LOFT_TOMBSTONES ? s->referenced.live + s->removed.live : 0;
     if (*n == 0) return 0;
     uint32_t *out = (uint32_t *) malloc(*n * sizeof *out), k = 0;
     if (!out) { fputs("loft: out of memory\n", stderr); abort(); }

@@ -2091,6 +2091,53 @@ fn main() {
     assert_eq!(String::from_utf8_lossy(&out.stdout), want, "the C program");
 }
 
+/// The allocator's bisect switches the C runtime honours as `-D` defines (`src/c/loft_store.h`),
+/// each a policy turned off on both sides.
+const ALLOCATOR_SWITCHES: &[&str] = &[
+    "LOFT_NO_PARK",
+    "LOFT_NO_LAZY_FREE",
+    "LOFT_NO_TOMBSTONE",
+    "LOFT_NO_FREE_FOOTER",
+    "LOFT_NO_WILD_BUMP",
+    "LOFT_NO_CARVE_IN_PLACE",
+];
+
+/// @PLN206 P0b — every allocator bisect switch the C honours places every record where `Store`
+/// does under the same switch: the allocator differential below runs again, once per switch, in
+/// a process of its own (`Store` reads each switch once per process) with the variable set, and
+/// the C is built with the matching define.  Falsified: on each switch's own script a C built
+/// without its define places records elsewhere — except `LOFT_NO_WILD_BUMP`, whose fast path
+/// writes the very bytes the best fit it skips writes, so the run shows only that the off path
+/// answers the same.
+#[test]
+fn a_store_allocator_switch_answers_alike_on_both_runtimes() {
+    if !have_cc()
+        || ALLOCATOR_SWITCHES
+            .iter()
+            .any(|v| std::env::var_os(v).is_some())
+    {
+        return;
+    }
+    let me = std::env::current_exe().expect("the test binary");
+    for v in ALLOCATOR_SWITCHES {
+        let out = loft::platform::process::harness_command(&me)
+            .args([
+                "--exact",
+                "the_c_store_allocator_places_every_record_where_store_does",
+                "--test-threads=1",
+            ])
+            .env(v, "1")
+            .output()
+            .expect("run the differential");
+        let said = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success() && said.contains("1 passed"),
+            "{v}: the C and Store place records differently:\n{said}\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
 /// The C store allocator (`src/c/loft_store.h`) is a PORT of `Store`'s, not one of its own
 /// (@PLN200 B5, owner): one seeded sequence of claims, deletes, resizes and referenced-record
 /// marks runs through `Store` and through the C, and every position either answers, then the
@@ -2229,8 +2276,16 @@ int main(int argc, char **argv) {
     let (src, ops, exe) = (dir.join("store.c"), dir.join("ops.txt"), dir.join("store"));
     fa::write(&src, &c).expect("write C");
     fa::write(&ops, &script).expect("write ops");
+    // The allocator's bisect switches this process runs `Store` under, given to the C as its
+    // defines (`a_store_allocator_switch_answers_alike_on_both_runtimes` sets them).
+    let switched: Vec<String> = ALLOCATOR_SWITCHES
+        .iter()
+        .filter(|v| std::env::var(v).is_ok_and(|x| x != "0"))
+        .map(|v| format!("-D{v}"))
+        .collect();
     let cc = loft::platform::process::harness_command("cc")
         .args(["-std=c99", "-O2", "-pedantic", "-Werror"])
+        .args(&switched)
         .arg(&src)
         .arg("-o")
         .arg(&exe)
