@@ -7,6 +7,18 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
+**Superseded as a direction for the rewrite (owner, 2026-10-30):** *"your goal is to make loft
+again inside loft, not to design a new language with new mechanics, the IR produced should be
+the same, the operators should do the same with the same semantics."*  So the rewrite ports the
+Rust implementation's ownership — the scope pass, the oracle, the bytecode writer's bind
+decisions — rather than designing the new analysis "The shape to aim for" sketches below, and
+open question 1 is answered: the IR is the same THROUGH the scope pass, not only up to its
+input.  The inspection below stays as the map of what is to be ported; "The shape to aim for"
+and the O track stand only as ideas for the Rust implementation itself, for the owner to take up
+or drop.  The owner's reason, the same day: *"I know that the loft language is not easy to
+write or maintain, but it is the only way in my opinion to combine ease of use with optimal
+code."*  The interpreter's first use of this is 1b-s3.md § Binds and frees.
+
 **Inspection done, direction set, NO step designed (owner, 2026-10-27).**  The owner wants
 an elegant version of loft's ownership logic in the rewrite.  This file records what the
 current Rust implementation does (measured on `origin/main` @ `c3ea8977d`; every path below is

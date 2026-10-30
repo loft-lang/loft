@@ -1880,7 +1880,7 @@ impl Parser {
                 if let Value::Return(inner) = tail {
                     tail = *inner;
                 }
-                Self::push_text_arms_into(&mut tail, av, self.data.def_nr("OpCreateStack"));
+                Self::push_text_arms_into(&mut tail, av, &self.data);
                 l[last] = tail;
                 // loft#733 — introduce `av` at THIS scope, BEFORE the branch that
                 // writes it. The per-arm `Set`s live INSIDE the branch, so without
@@ -15707,7 +15707,7 @@ impl Parser {
                     if let Value::Return(inner) = tail {
                         tail = *inner;
                     }
-                    Self::push_text_arms_into(&mut tail, av, self.data.def_nr("OpCreateStack"));
+                    Self::push_text_arms_into(&mut tail, av, &self.data);
                     l[last] = tail;
                     // Load-bearing, exactly as at the parse-time site: the per-arm `Set`s
                     // live INSIDE the branch, so nothing else introduces `av` here.
@@ -17939,7 +17939,14 @@ impl Parser {
             // Forward-ref-SAFE for the same reason the `if` arm is: `parse_scalar_match`
             // emits this block on BOTH passes.  A `null` arm still yields `false` via
             // `arm_yields_text`, so a `text?` tail keeps its `(N-Store)` reject.
-            Value::Block(bl) if bl.name == "scalar_match" => {
+            // …and every OTHER match lowering's wrapper, by the one predicate that names them
+            // (`is_match_wrapper`): an enum match behind its subject binding, a
+            // struct, tuple, stream or cursor match.  Listed one name at a time, the enum
+            // match's own `match` block was the one left out, and a text tail whose arms
+            // return a pattern binding and a built local had both promoted onto hidden
+            // buffers — the interpreter answered the built arm's value as "", and `--native`
+            // refused the program.
+            Value::Block(bl) if is_match_wrapper(bl.name) => {
                 bl.operators.last().is_some_and(Self::if_tail_yields_text)
             }
             // A `match v { [slice] => … }` in tail position lowers to
@@ -17954,9 +17961,6 @@ impl Parser {
             // proven per-arm delivery the scalar match already takes. Forward-ref-safe
             // (the block is emitted on both passes); a `return`/guard arm still yields
             // `false` via `arm_yields_text`, so a non-text arm keeps its reject.
-            Value::Block(bl) if bl.name == "vector_match" => {
-                bl.operators.last().is_some_and(Self::if_tail_yields_text)
-            }
             _ => false,
         }
     }
@@ -18021,27 +18025,31 @@ impl Parser {
         {
             return false;
         }
-        Self::push_text_arms_into(code, var_nr, self.data.def_nr("OpCreateStack"));
+        Self::push_text_arms_into(code, var_nr, &self.data);
         let branch = std::mem::replace(code, Value::Null);
         *code = Value::Insert(vec![v_set(var_nr, Value::Text(String::new())), branch]);
         true
     }
 
+    pub(crate) fn push_text_arms_into(op: &mut Value, av: u16, data: &crate::data::Data) {
+        Self::push_text_arms(op, av, data.def_nr("OpCreateStack"), data);
+    }
+
     /// `create_stack` is `OpCreateStack`'s def_nr, threaded in rather than looked
     /// up per leaf — see the leaf arm for what it decides.
-    pub(crate) fn push_text_arms_into(op: &mut Value, av: u16, create_stack: u32) {
+    fn push_text_arms(op: &mut Value, av: u16, create_stack: u32, data: &crate::data::Data) {
         match op {
-            Value::Span(b) => Self::push_text_arms_into(&mut b.1, av, create_stack),
+            Value::Span(b) => Self::push_text_arms(&mut b.1, av, create_stack, data),
             Value::Return(inner) | Value::Drop(inner) => {
-                Self::push_text_arms_into(inner, av, create_stack);
+                Self::push_text_arms(inner, av, create_stack, data);
             }
             Value::If(_, then, els) => {
-                Self::push_text_arms_into(then, av, create_stack);
-                Self::push_text_arms_into(els, av, create_stack);
+                Self::push_text_arms(then, av, create_stack, data);
+                Self::push_text_arms(els, av, create_stack, data);
             }
             Value::Block(bl) => {
                 if let Some(last) = bl.operators.last_mut() {
-                    Self::push_text_arms_into(last, av, create_stack);
+                    Self::push_text_arms(last, av, create_stack, data);
                 }
                 // The arm now ends in a `Set(av, …)` (or a void nested `If`), so
                 // the block yields VOID, not text — retype it, else native emits
@@ -18051,9 +18059,16 @@ impl Parser {
             }
             Value::Insert(ops) => {
                 if let Some(last) = ops.last_mut() {
-                    Self::push_text_arms_into(last, av, create_stack);
+                    Self::push_text_arms(last, av, create_stack, data);
                 }
             }
+            // An arm that ends in a call returning nothing yields no text — `panic(…)`, which
+            // ends the program, is the one a text arm can hold — so it stays a statement.
+            // Delivered, it became `Set(av, panic(…))`: the interpreter stored a void result as a
+            // text and crashed, native wrote `().to_string()`, and the C backend refused.
+            Value::Call(d, _)
+                if *d < data.definitions()
+                    && matches!(data.def(*d).returned().base(), Type::Void) => {}
             leaf => {
                 let mut v = std::mem::replace(leaf, Value::Null);
                 // A `text_ref` arm ends in `OpCreateStack(buf)` — a BORROW of the
@@ -24163,4 +24178,22 @@ impl Parser {
             }
         }
     }
+}
+
+/// Is `name` the wrapper block a `match` lowering puts around its arm chain — the subject's
+/// binding, a slice's scaffolding, a stream's materialise — so that a pass asking
+/// about the match's VALUE looks through it to the chain?  One list, beside every lowering that
+/// names one: `parse_match_inner` (`match`), `parse_scalar_match` (`scalar_match`),
+/// `parse_vector_match` (`vector_match`), the struct, tuple, stream and cursor matches.
+pub(super) fn is_match_wrapper(name: &str) -> bool {
+    matches!(
+        name,
+        "match"
+            | "scalar_match"
+            | "vector_match"
+            | "struct_match"
+            | "tuple_match"
+            | "stream match"
+            | "cursor match"
+    )
 }

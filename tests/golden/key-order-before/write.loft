@@ -5,7 +5,9 @@
 // before loft#2237, in which a null `float` / `single` key sorted above every value and a null
 // `text` key after `""`.  Their sidecars carry no `order=1`.  `read.loft` reads them with every
 // later build (tests/store_persist_loft.rs `an_image_in_the_old_key_order_is_converted`); a
-// committed image is never written again.
+// committed image is never written again.  `nest` (a vector of records each holding a text-keyed
+// `sorted` and `index`, a top `sorted`, and a hash of records holding one) was written the same
+// way by the installed main build of 2026-10-27, still the old order: `write_nest` below.
 struct KT { k: text, v: integer }
 struct KF { k: float, v: integer }
 struct KS { k: single, v: integer }
@@ -27,3 +29,27 @@ fn main() {
   assert(store_persist_copy(ix, "index-float.store"), "index-float");
   println("written");
 }
+
+struct Row { name: text, by: sorted<KT[k]>, ix: index<KT[k]> }
+struct Box { id: integer, s: sorted<KT[k]> }
+struct World { rows: vector<Row>, top: sorted<KT[k]>, h: hash<Box[id]> }
+
+/// Keys "b", null, "", "a" with values 1, 2, 3, 4 in every collection.
+fn write_nest() {
+  nt: text = null;
+  w = World { rows: [], top: [], h: [] };
+  for i in 0..3 {
+    r = Row { name: "r{i}", by: [], ix: [] };
+    r.by += [KT { k: "b", v: 1 }, KT { k: nt, v: 2 }, KT { k: "", v: 3 }, KT { k: "a", v: 4 }];
+    r.ix += [KT { k: "b", v: 1 }, KT { k: nt, v: 2 }, KT { k: "", v: 3 }, KT { k: "a", v: 4 }];
+    w.rows += [r];
+  }
+  w.top += [KT { k: "b", v: 1 }, KT { k: nt, v: 2 }, KT { k: "", v: 3 }, KT { k: "a", v: 4 }];
+  for i in 0..2 {
+    b = Box { id: i, s: [] };
+    b.s += [KT { k: "b", v: 1 }, KT { k: nt, v: 2 }, KT { k: "", v: 3 }, KT { k: "a", v: 4 }];
+    w.h += [b];
+  }
+  assert(store_persist_copy(w, "nest.store"), "nest written");
+}
+

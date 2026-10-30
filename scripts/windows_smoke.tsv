@@ -12,7 +12,6 @@ bench/portal/analysis/x8/price_binary_read.py	--help
 bench/portal/c_profile.py	--help
 bench/portal/hand_price_c.sh	--help
 bench/portal/local.py	--help
-bench/portal/local.py	--help
 bench/run_bench.sh	--help
 bench/stats.py	--help
 doc/claude/plans/85-store-lifetime-retirement/fuzz/grammar_gen.py	--help
@@ -96,6 +95,7 @@ scripts/windows_parity.py	--help
 scripts/work-issues.sh	--help
 scripts/worst.py	--help
 selfhost/bench/measure.py	--help
+selfhost/compare/compare.py	--help
 selfhost/cover/census.py	--help
 tests/comparisons/scripts/replay_tool.sh	tests/comparisons/scripts/bin/true
 tools/audience-demo/run-demo.sh	--help

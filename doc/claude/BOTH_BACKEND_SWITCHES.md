@@ -233,6 +233,15 @@ form and is the first bisect step for a leak, a double free or a stale record ou
 loop that binds a record from a branch of calls; `LOFT_STRICT_STORES=1` and
 `LOFT_POISON=1` are the falsifiers.
 
+**A match lowered once per arm (`@FR-M-Once`, default-ON, both backends, parse time):** a
+guarded arm folds its guard into its own condition (`parser::control::guarded_arm`), so a
+failed guard reaches the next arm by control flow and no arm is lowered twice;
+**`LOFT_NO_GUARD_ARM=1`** builds the copying form, whose size grows exponentially with the
+guards (`tests/match_once.rs` counts both).  It is the first bisect step for a wrong answer, a
+leak or a crash in a `match` with guarded arms: a binding first written inside a folded
+condition is the shape to suspect.  Guards `loft-suite/rules/matching/M-Once/`.  (An enum arm's
+test as one op is the interpreter's alone, `LOFT_NO_TAG_JUMP`: `formal/rewrites.md` `(R-Fuse)`.)
+
 **Store confinement across sibling blocks (default-ON since 2026-08-21, both backends):** a
 local reassigned across sibling `if`/`else if`/`match` arms used to keep EVERY arm's store
 alive to scope exit, so the watermark grew with the number of reassignment SITES rather than
@@ -786,6 +795,13 @@ claim from the tail or a delete into it costs no tree delete, insert or rebalanc
 parse row's tree claims took the tail; the row −6 % in cycles).  **`LOFT_NO_WILDERNESS=1`**
 keeps the tail in the tree again (read per store at construction) and is the first bisect step
 for a store-layout fault or a claim that hands out a live block.
+
+**A record at the store's tail grows the store, not a new block (`@FR-H-TailGrow`):** a resize
+that cannot grow in place, of a record nothing claimed follows, grows the store and then the
+record where it is — moving it left its old block as a hole beside the new one at every
+doubling of a tail buffer.  **`LOFT_NO_TAIL_GROW=1`** (interpreter; read once) moves it again:
+the A/B for a footprint, and a bisect step for a store-layout fault.  The C runtime has no
+switch, as for the wilderness.
 
 **A text loop variable borrows its element on both backends (`@FR-R-TextBorrow`,
 @PLN198):** the interpreter binds `for p in words` over a `vector<text>` as a `Str` view under

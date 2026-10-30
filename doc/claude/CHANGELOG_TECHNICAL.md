@@ -10,6 +10,22 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A `match` is lowered once per arm (`@FR-M-Once`, `@FR-M-Fixed`)
+
+A guarded arm folds its guard into its condition, `cmp && { bindings; guard }`
+(`parser::control::guarded_arm`), where it copied the chain of the arms after it (D-match-26,
+closed): an eight-arm match with six guards lowered to 191 subject tests, now 8.  In the
+bytecode writer an enum arm's test (and `x is V`) is one `OpTagVCJump`, the IR untouched
+(`@FR-R-Fuse`).  A guard that can write the subject's root (`find_written_vars`) is refused, since
+the folded lowering — and a reader — assume it fixed (`check_match_guards`).  Two defects met on
+the way and fixed: the per-arm text delivery (`if_tail_yields_text`) did not see through the
+enum match's `match` or `struct_match` wrapper, so a text tail returning a binding and a built
+local answered `""` (loft#2231; one predicate, `is_match_wrapper`, names every wrapper); and
+the scope pass's pre-init walk (`find_first_ref_vars`) read an `if`'s arms but not its test,
+where a folded guard writes its pattern's bindings.  Switches `LOFT_NO_GUARD_ARM`,
+`LOFT_NO_TAG_JUMP`.  Guards `tests/match_once.rs`, `loft-suite/rules/matching/M-Once/`,
+`rules/matching/M-Fixed/`, `rules/calls/F-Ret/a-text-match-tail-returns-each-arms-value-…`.
+
 ### Store memory is not filled; the bound-store family is removed (@C154)
 ### `(R-FaultFlag)`: a `for` statement runs a fast copy under a fault flag
 

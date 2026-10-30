@@ -16,6 +16,7 @@
 // interpreter does not carry yet is refused by name, never guessed.
 use ir;
 use types;
+use show;
 
 // What kind of value a node, a variable or a result is, and so which stack holds it.
 enum Kind {
@@ -109,7 +110,14 @@ enum Code {
   KeyPart,
   HashFind,
   HashLen,
-  KeyedNull,
+  Remake,
+  HashSorted,
+  ScratchIterate,
+  ScratchStep,
+  FreeScratch,
+  RefEq,
+  VecAdd,
+  FormatDb,
 }
 
 // One op: `kind` is the kind of value it works on; `a` is a value, a slot, a jump target, a
@@ -448,7 +456,18 @@ fn effect(code: Code, b: integer) -> integer {
     KeyPart => -1,
     HashFind => 0,
     HashLen => 0,
-    KeyedNull => 0,
+    Remake => 0,
+    // A hash walk: the snapshot from its hash, a walk's state from the snapshot, the next
+    // element from the snapshot (the state is read and written in its slot), the snapshot freed.
+    HashSorted => 0,
+    ScratchIterate => 0,
+    ScratchStep => 0,
+    FreeScratch => -1,
+    RefEq => -1,
+    // An append of one vector's element copies to another: both in, nothing out.
+    VecAdd => -2,
+    // A record rendered onto a text: the reference in, nothing out (the text is a variable).
+    FormatDb => -1,
     _ => -1,
   }
 }
@@ -718,7 +737,9 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     slot = ref_var_slot(l, args[0] ?? panic("OpDatabase names its variable"));
     tp = literal(l, args[1] ?? panic("OpDatabase names its type"));
     mintable(l, b, tp);
-    emit(l, Database, KRef, slot, tp);
+    // The hidden return buffer is the caller's, which the call fills: remade in place whoever
+    // owns it, as the generators write into it (1b-s3.md § Ownership at run time).
+    emit(l, if is_return_buffer(b, l.def_nr, unspan(args[0] ?? panic("checked above"))) { Remake } else { Database }, KRef, slot, tp);
   } else if name == "OpFreeRef" {
     target = unspan(args[0] ?? panic("OpFreeRef names its reference"));
     freed_var = false;
@@ -906,6 +927,39 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
   } else if name == "OpLengthHash" {
     value(l, b, args[0] ?? panic("OpLengthHash names its hash"), KRef);
     emit(l, HashLen, KInt, 0, 0);
+  } else if name == "OpFormatDatabase" || name == "OpFormatStackDatabase" {
+    // `"{v}"` of a store value (1b-s3.md § Rendering a value): rendered by `show::render`,
+    // appended to the destination text as a format operator appends.  `b` is the type and the
+    // format flags (bit 1 pretty, bit 2 JSON).
+    dest = 0;
+    dest_kind = KText;
+    match unspan(args[0] ?? panic("a format names its destination")) {
+      NdVar { n: var } => {
+        dest = slot_of(l, var);
+        dest_kind = var_kind(l, var);
+      }
+      _ => refuse(l, "a format operator on a destination that is not a variable"),
+    }
+    tp = literal(l, args[2] ?? panic("a format names its type"));
+    fmt = literal(l, args[3] ?? panic("and its flags"));
+    why = show::refusal(b, tp, []);
+    if why != "" {
+      refuse(l, why);
+      return true;
+    }
+    value(l, b, args[1] ?? panic("a format names its value"), KRef);
+    emit(l, FormatDb, dest_kind, dest, tp * 4 + fmt);
+  } else if name == "OpAppendVector" {
+    // `v += other`: element copies, the claims copied by the type table (`loft_vec_add`).  A
+    // linked element type is `loft_vec_add_array`, a later step.
+    tp = literal(l, args[2] ?? panic("OpAppendVector names its element type"));
+    if (b.types[tp] ?? panic("an element type")).linked {
+      refuse(l, "an append of a linked element type");
+      return true;
+    }
+    value(l, b, args[0] ?? panic("OpAppendVector names its vector"), KRef);
+    value(l, b, args[1] ?? panic("and the vector it appends"), KRef);
+    emit(l, VecAdd, KRef, tp, 0);
   } else if name == "OpClearVector" {
     value(l, b, args[0] ?? panic("OpClearVector names its vector"), KRef);
     emit(l, VecClear, KRef, 0, 0);
@@ -932,6 +986,50 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     // The record embedded at a field: the host's reference, its position moved past the field.
     value(l, b, args[0] ?? panic("OpGetField names its record"), KRef);
     emit(l, FieldRef, KRef, literal(l, args[1] ?? panic("and its field")), 0);
+  } else if name == "n_hash_sorted" || name == "n_hash_unsorted" {
+    // A hash walk's snapshot (1b-s3.md § The fourth slice, continued): its elements in key
+    // order, the keys the hash type's from the loaded table; or, for `unordered(h)` and a `par`
+    // walk, in slot order (`b` = 1).
+    value(l, b, args[0] ?? panic("a hash snapshot names its hash"), KRef);
+    emit(l, HashSorted, KRef, literal(l, args[1] ?? panic("and its type")), if name == "n_hash_unsorted" { 1 } else { 0 });
+  } else if name == "OpIterate" || name == "OpStep" {
+    // A walk over a snapshot (kind 4) is the one carried; an index, a sorted or a spatial walk,
+    // and a walk with key bounds, are refused by name.
+    on = literal(l, args[if name == "OpIterate" { 1 } else { 2 }] ?? panic("a walk names its kind"));
+    if on & 63 != 4 {
+      refuse(l, "a walk of kind {on & 63}");
+      return true;
+    }
+    if name == "OpIterate" {
+      if len(args) != 6 || literal(l, args[4] ?? panic("a walk's lower bound count")) != 0 || literal(l, args[5] ?? panic("and its upper")) != 0 {
+        refuse(l, "a walk with key bounds");
+        return true;
+      }
+      value(l, b, args[0] ?? panic("OpIterate names its snapshot"), KRef);
+      emit(l, ScratchIterate, KInt, 0, 0);
+    } else {
+      state = 0;
+      match unspan(args[0] ?? panic("OpStep names its state")) {
+        NdVar { n: var } => {
+          if var_kind(l, var) == KInt {
+            state = slot_of(l, var);
+          } else {
+            refuse(l, "a walk state that is not an integer variable");
+          }
+        }
+        _ => refuse(l, "a walk state that is not a variable"),
+      }
+      value(l, b, args[1] ?? panic("OpStep names its snapshot"), KRef);
+      emit(l, ScratchStep, KRef, state, if on & 64 != 0 { 1 } else { 0 });
+    }
+  } else if name == "OpFreeScratch" {
+    value(l, b, args[0] ?? panic("OpFreeScratch names its snapshot"), KRef);
+    emit(l, FreeScratch, KRef, 0, 0);
+  } else if name == "OpEqRef" || name == "OpNeRef" {
+    // Two references compared as the C generator compares them (`loft_ref_eq`), read in loft.
+    value(l, b, args[0] ?? panic("a reference compare has two sides"), KRef);
+    value(l, b, args[1] ?? panic("a reference compare has two sides"), KRef);
+    emit(l, RefEq, KRef, if name == "OpNeRef" { 1 } else { 0 }, 0);
   } else if name == "OpRefIsNull" || name == "OpConvBoolFromRef" {
     value(l, b, args[0] ?? panic("a null test names its reference"), KRef);
     emit(l, if name == "OpRefIsNull" { RefIsNull } else { RefBool }, KRef, 0, 0);
@@ -1202,7 +1300,7 @@ fn bind(l: Lowering, b: ir::Bundle, var: integer, node: ir::Node) {
         refuse(l, "a hash whose collection type the image does not name: {v.name}");
         return;
       }
-      emit(l, KeyedNull, KRef, slot, ht);
+      emit(l, Remake, KRef, slot, ht);
       return;
     }
     if x is NdNull {
@@ -1275,6 +1373,29 @@ fn bind(l: Lowering, b: ir::Bundle, var: integer, node: ir::Node) {
     value(l, b, x, KRef);
   }
   emit(l, Bind, KRef, slot, tp * 4 + mode);
+}
+
+// Is `n` the variable of function `d`'s hidden return buffer (`hidden_return_buffer_attr`): a
+// hidden parameter that is no work buffer, of a record, vector or struct-enum type?
+fn is_return_buffer(b: ir::Bundle, d: integer, n: ir::Node) -> boolean {
+  var = match n {
+    NdVar { n: v } => v,
+    _ => -1,
+  };
+  def = b.data.definitions[d];
+  if var < 0 || def == null {
+    return false;
+  }
+  v = def.variables.variables[var];
+  if v == null || !v.argument {
+    return false;
+  }
+  for a in def.attributes? {
+    if a.name == v.name {
+      return a.hidden && !a.work_buffer && (record_of(a.typedef) >= 0 || is_vector(a.typedef));
+    }
+  }
+  false
 }
 
 // Is `name` an operator: `Op` and then a capital, as `Definition::is_operator` reads it?
@@ -1373,7 +1494,8 @@ fn call(l: Lowering, b: ir::Bundle, def_nr: integer, args: vector<ir::Node>) {
     }
     return;
   }
-  if is_operator(d.name) && store_call(l, b, d.name, args) {
+  // A hash snapshot is a native that reads the store, so it is lowered beside the operators.
+  if (is_operator(d.name) || d.name == "n_hash_sorted" || d.name == "n_hash_unsorted") && store_call(l, b, d.name, args) {
     return;
   }
   for i in 0..len(args) {

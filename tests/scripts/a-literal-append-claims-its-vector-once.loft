@@ -1,15 +1,16 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// A literal append of at most 11 elements runs no separate reservation on the interpreter.
-// `@FR-R-FirstClaim`.
+// A literal append whose reservation repeats the append's own first claim runs no separate
+// reservation on the interpreter.  `@FR-R-FirstClaim`.
 //
 // The parser emits `OpPreAllocVector(v, n, size)` before every literal append to a local
-// vector.  It claims a record for an ABSENT vector, `max(n, 11)` elements wide, and does
-// nothing to a vector that already has one; the append's own first claim (`vector_append`)
-// is the same 11 elements.  So for n <= 11 the interpreter emits nothing for it, and a
-// counted push loop no longer re-runs it every iteration (`keys::prealloc_elide_enabled`,
-// `LOFT_NO_PREALLOC_ELIDE=1` keeps it).  The IR keeps the op: `--native` reads an append
+// vector.  It claims a record for an ABSENT vector, exactly n elements wide
+// (`@FR-Col-Capacity`), and does nothing to a vector that already has one; the append's own
+// first claim (`vector_append`) is `grown_elems(1, size)` elements, 11 of 8 bytes.  So only
+// where n is that count does the interpreter emit nothing for it; any other n decides the
+// first block and stays (`keys::prealloc_elide_enabled`, `LOFT_NO_PREALLOC_ELIDE=1` keeps
+// every one).  The IR keeps the op: `--native` reads an append
 // group's head and stride from it, and its own emission is unchanged.
 //
 // The elision changes which call makes the first claim and nothing a program can read:

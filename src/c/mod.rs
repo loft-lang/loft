@@ -160,6 +160,10 @@ pub(crate) struct Cx<'a> {
     pub(crate) data: &'a Data,
     pub(crate) stores: &'a Stores,
     tuples: std::cell::RefCell<Vec<Vec<CType>>>,
+    /// `@FR-R-Destination`'s callee shapes, by `(callee, moved field offset)`.
+    pub(crate) dest_memo: std::cell::RefCell<
+        std::collections::HashMap<(u32, i64), Option<crate::lower::destination::Shape>>,
+    >,
     /// Every type the unit's deep copies walk, by type number (`loft_types`).
     copy_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// Types the runtime reads the shape of — a store's root type, which `OpClearVector` asks
@@ -272,6 +276,16 @@ pub(crate) const APV_BIT: u64 = 1 << 60;
 /// caller's header is current when the call returns (`opt::apart::kept_growth_param`).
 pub(crate) const KH_BIT: u64 = 1 << 59;
 
+/// The mask bit of an `__ap` twin (`@FR-R-AppendTwin`): the function written again with its
+/// return buffer the CALLER's vector — `X += f(args)` calls `f__ap(args, X)` — so the body's
+/// appends land after X's own elements and the copy is gone (`opt::append_twin::eligible`).
+pub(crate) const AP_BIT: u64 = 1 << 58;
+
+/// The mask bit of a `__d` twin (`@FR-R-Destination`): the function written again with its
+/// return buffer the CALLER's fresh element — the moved field sits at the buffer's offset 0 —
+/// and its scalar fields answered as a tuple (`lower::destination::shape`).
+pub(crate) const DS_BIT: u64 = 1 << 57;
+
 /// The bits of a `__nn` twin (`@FR-R-NonSentinelParam`'s twin clause), one per parameter from
 /// bit 32: the function written again with those parameters seeded as non-sentinel, called by
 /// a call site whose arguments prove them where the program-wide fact cannot (another caller
@@ -304,6 +318,7 @@ impl<'a> Cx<'a> {
             copy_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             described: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             names_types: std::cell::Cell::new(false),
+            dest_memo: std::cell::RefCell::new(std::collections::HashMap::new()),
             enum_names: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             scratch: std::cell::RefCell::new(None),
             defaults: std::cell::RefCell::new(std::collections::BTreeMap::new()),
@@ -558,6 +573,11 @@ impl<'a> Cx<'a> {
     /// The C name of the sidecar a `store_persist_copy` of a store minted as `tp` writes.
     pub(crate) fn sidecar_of(&self, tp: u16) -> String {
         self.sidecars.borrow_mut().insert(tp);
+        // A layout with a moved key order (`placement::KEY_ORDER`): an image written before it is
+        // converted by a whole load, whose walk reads every type of the tree off the table.
+        if self.needs_rekey(tp) {
+            let _ = self.copy_type(tp);
+        }
         format!("&loft_sidecar{tp}")
     }
 
@@ -580,6 +600,23 @@ impl<'a> Cx<'a> {
             },
             names.len()
         )
+    }
+
+    /// Does `tp`'s layout hold a collection whose key order moved (loft#2237)?  An image of it
+    /// written before is converted by a whole load (`loft_rekey_walk`).
+    fn needs_rekey(&self, tp: u16) -> bool {
+        crate::schema_sidecar::LayoutIdentity::of_store(self.stores, u16::MAX, tp)
+            .dump
+            .contains(crate::placement::KEY_ORDER)
+    }
+
+    /// The rows of the copy table (`loft_ntypes`): one past the highest type it describes.
+    fn table_rows(&self) -> u32 {
+        self.copy_types
+            .borrow()
+            .union(&self.described.borrow())
+            .max()
+            .map_or(0, |m| u32::from(*m) + 1)
     }
 
     /// The sidecars: each type's `.dschema` text split where its slot line goes, and the
@@ -606,13 +643,18 @@ impl<'a> Cx<'a> {
             );
             let _ = writeln!(
                 out,
-                "static const loft_sidecar loft_sidecar{tp} = {{ {tp}, loft_scb{tp}, loft_sca{tp}, UINT64_C({}), loft_scd{tp}, {}, {} }};",
+                "static const loft_sidecar loft_sidecar{tp} = {{ {tp}, loft_scb{tp}, loft_sca{tp}, UINT64_C({}), loft_scd{tp}, {}, {}, {} }};",
                 id.layout_hash,
                 body::c_string(&self.stores.release().oldest),
                 if self.holds_stored_refs(tp) {
                     "loft_types"
                 } else {
                     "0"
+                },
+                if id.dump.contains(crate::placement::KEY_ORDER) {
+                    format!("loft_types, {}", self.table_rows())
+                } else {
+                    "0, 0".to_string()
                 }
             );
         }
@@ -980,9 +1022,12 @@ impl<'a> Cx<'a> {
             // `owns_heap`: the Rust store's own answer (`Stores::type_owns_heap`), never re-derived;
             // a hash's or an index's key parts, which its copy re-files by; `linked`, the type's
             // own flag.
+            // A `sorted` is a vector row; its key parts are what tell it from a plain vector
+            // where the key order moved (`loft_rekey_walk`).
             let keys = if matches!(
                 t.parts,
                 Parts::Hash(..)
+                    | Parts::Sorted(..)
                     | Parts::Index(..)
                     | Parts::Radix(..)
                     | Parts::Trie(..)
@@ -1172,7 +1217,8 @@ pub(crate) fn type_word(tp: &Type) -> String {
 /// — `--native`'s `_st` twins.  Mask 0 is the function itself.
 /// An `__inv` twin ([`INV_BIT`]) adds `__inv` after the place mask's name.
 pub(crate) fn twin_name(data: &Data, d: u32, mask: u64) -> String {
-    let places = mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT & !KH_BIT & !NN_MASK;
+    let places =
+        mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT & !KH_BIT & !AP_BIT & !DS_BIT & !NN_MASK;
     let inv = if mask & INV_BIT == 0 { "" } else { "__inv" };
     let kh = if mask & KH_BIT == 0 { "" } else { "__kh" };
     let nn_bits = (mask & NN_MASK) >> NN_SHIFT;
@@ -1184,10 +1230,15 @@ pub(crate) fn twin_name(data: &Data, d: u32, mask: u64) -> String {
     let nk = if mask & NK_BIT == 0 { "" } else { "__nk" };
     let apr = if mask & APR_BIT == 0 { "" } else { "__apr" };
     let apv = if mask & APV_BIT == 0 { "" } else { "__apv" };
+    let ap = if mask & AP_BIT == 0 { "" } else { "__ap" };
+    let ds = if mask & DS_BIT == 0 { "" } else { "__d" };
     if places == 0 {
-        format!("{}{inv}{nk}{apr}{apv}{kh}", c_name(data, d))
+        format!("{}{inv}{nk}{apr}{apv}{kh}{ap}{ds}", c_name(data, d))
     } else {
-        format!("{}_pl{places}{inv}{nk}{apr}{apv}{kh}", c_name(data, d))
+        format!(
+            "{}_pl{places}{inv}{nk}{apr}{apv}{kh}{ap}{ds}",
+            c_name(data, d)
+        )
     }
 }
 
@@ -1241,7 +1292,11 @@ impl Cx<'_> {
             let def = self.data.def(d);
             let vars = def.variables();
             let args = vars.arguments();
-            for (&i, &key) in params {
+            // In argument order: `vr_ctype` numbers a tuple type the first time it is asked, so a
+            // map's order here numbered `loft_tupN` differently from run to run.
+            let mut params: Vec<(usize, u16)> = params.iter().map(|(&i, &k)| (i, k)).collect();
+            params.sort_unstable();
+            for (i, key) in params {
                 let Some(CType::Tuple(id)) = self.vr_ctype(key) else {
                     continue;
                 };
@@ -1274,6 +1329,17 @@ impl Cx<'_> {
         )
     }
 
+    /// `@FR-R-Destination`: `d`'s destination twin shape, its moved field at offset 0.
+    pub(crate) fn dest_shape(&self, d: u32) -> Option<crate::lower::destination::Shape> {
+        crate::lower::destination::shape(
+            self.data,
+            self.stores,
+            d,
+            0,
+            &mut self.dest_memo.borrow_mut(),
+        )
+    }
+
     /// The place twin `(d, mask)` is called: it is written with the unit.
     pub(crate) fn request_twin(&self, d: u32, mask: u64) {
         let mut t = self.twins.borrow_mut();
@@ -1288,7 +1354,17 @@ pub fn c_name(data: &Data, d: u32) -> String {
     crate::opt::names::disambiguated_fn_ident(&dups, data.def(d))
 }
 
-/// The C runtime function that implements native `name` (a stored `n_…` name), if any.
+/// The name a runtime routine answers definition `d` by: its own for a standard-library
+/// definition, the empty name (which no routine answers) for any other.  A library may define a
+/// function under a standard-library name — only a program's own file is refused one — and its
+/// body is its own: routed by name, `shl::ticks()` called `loft_ticks` and answered the clock.
+pub(crate) fn runtime_name(data: &Data, d: u32) -> &str {
+    let def = data.def(d);
+    if def.is_stdlib() { def.name() } else { "" }
+}
+
+/// The C runtime function that implements native `name` (a stored `n_…` name), if any.  Asked of
+/// a definition, the name is its [`runtime_name`].
 pub(crate) fn native_c(name: &str) -> Option<&'static str> {
     match name {
         "n_assert" => Some("loft_assert"),
@@ -1537,7 +1613,7 @@ pub fn unported_natives(data: &Data) -> Vec<String> {
                 && def.code() == &Value::Null
                 && def.c_sig.is_empty()
                 && def.native().is_empty()
-                && native_c(def.name()).is_none()
+                && native_c(runtime_name(data, d)).is_none()
         })
         .map(|d| data.def(d).name().to_string())
         .collect();
@@ -1589,7 +1665,7 @@ pub fn emit_unit_for(
         .filter(|&d| {
             matches!(data.def(d).def_type(), DefType::Function)
                 && !is_operator(data, d)
-                && native_c(data.def(d).name()).is_none()
+                && native_c(runtime_name(data, d)).is_none()
         })
         .collect();
     // The roots first, so a refusal names the function asked for before one it reaches.
@@ -2106,7 +2182,7 @@ fn fetch_defines(
 ) -> String {
     let loads = lazy
         || reached.iter().any(|&d| {
-            let name = data.def(d).name();
+            let name = runtime_name(data, d);
             matches!(name, "n_store_load_url" | "n_store_load_url_trusted")
                 || native_c(name) == Some("loft_pg_load_keys")
         });
@@ -2390,6 +2466,16 @@ fn vr_param_read_only(data: &crate::data::Data, body: &Value, a: u16) -> bool {
 /// caller's spilled state after every call (bench 20: -69 % cycles); Clang decides alone.
 /// Measured over every bench: nothing else moved beyond noise.  `LOFT_NO_INLINE_HINT=1` drops
 /// the hint.
+/// The C shape a destination twin answers scalar field `s` in.
+pub(crate) fn dest_scalar_ctype(s: &crate::lower::destination::Scalar) -> CType {
+    match s.rust {
+        "f64" => CType::Float,
+        "f32" => CType::Single,
+        "u8" => CType::Bool,
+        _ => CType::Int,
+    }
+}
+
 fn small_function(statements: usize) -> bool {
     statements <= 12
         && !crate::env_once!(std::env::var("LOFT_NO_INLINE_HINT").is_ok_and(|v| v != "0"))
@@ -2399,7 +2485,8 @@ fn small_function(statements: usize) -> bool {
 #[expect(clippy::too_many_lines)]
 fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     let data = cx.data;
-    let places = mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT & !KH_BIT & !NN_MASK;
+    let places =
+        mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT & !KH_BIT & !AP_BIT & !DS_BIT & !NN_MASK;
     let def = data.def(d);
     // A `#c` binding (@PLN24): the C function itself, called by its declared signature.
     if def.code() == &Value::Null && !def.c_sig.is_empty() {
@@ -2473,6 +2560,15 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         Some((rec, roles, def.hidden_return_buffer_attr()))
     };
     let ret = if apv.is_some() { CType::Void } else { ret };
+    // `@FR-R-Destination` — a `__d` twin answers its scalar fields as a tuple.
+    let ret = if mask & DS_BIT == 0 {
+        ret
+    } else {
+        let shape = cx
+            .dest_shape(d)
+            .ok_or("a __d twin of a function with no destination shape")?;
+        CType::Tuple(cx.tuple_id(shape.scalars.iter().map(dest_scalar_ctype).collect()))
+    };
     let vars = def.variables();
     // The parameters are the argument variables, in number order: `ref_return` can promote a
     // local into the return buffer's place, so parameter i is not always variable i.
@@ -2579,6 +2675,8 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         .nokeep(mask & NK_BIT != 0)?
         .apart(mask & APR_BIT != 0)
         .apart_value(mask & APV_BIT != 0)
+        .append_twin(mask & AP_BIT != 0)
+        .destination(mask & DS_BIT != 0)
         .write()?;
     let (body, statements) = body;
     // `@FR-R-Inline`: a small function is declared `inline`, its frame wrapper with it.
@@ -2654,13 +2752,15 @@ fn inv_inputs(
 /// shapes, and an admitted function's return buffer is no parameter: answers the attribute
 /// the signature drops.
 fn vr_shapes(cx: &Cx, d: u32, vr_key: Option<u16>, shapes: &mut [CType]) -> Option<usize> {
-    let locals = cx.vr_locals(d);
+    // In variable order: `vr_ctype` numbers a tuple type the first time it is asked.
+    let mut locals: Vec<(u16, u16)> = cx.vr_locals(d).into_iter().collect();
+    locals.sort_unstable();
     crate::rewrite_census::fired("R-ValueLocal", locals.len());
-    for (v, key) in &locals {
-        if let Some(c) = cx.vr_ctype(*key)
-            && (*v as usize) < shapes.len()
+    for (v, key) in locals {
+        if let Some(c) = cx.vr_ctype(key)
+            && (v as usize) < shapes.len()
         {
-            shapes[*v as usize] = c;
+            shapes[v as usize] = c;
         }
     }
     vr_key.and_then(|_| crate::opt::attrs::ret_buffer_attr(cx.data.def(d)))

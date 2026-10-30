@@ -762,14 +762,70 @@ static uint32_t loft_bt_position(loft_ref data, const loft_key *keys, int nk, ui
     return equal && loft_bt_rec(s, a, path.leaf, slot) == rec ? path.leaf * LOFT_BT_FANOUT + slot : 0;
 }
 
+/* btree::WALK_HINTS: a walk holds a RECORD, never a position (a body may remove records by key,
+ * which moves slots), so finding its slot again is a full descent by key.  The slot the last
+ * step found is kept as a HINT per walk and tried first.  A hint is never trusted: it is taken
+ * only when the slot it names, in the CURRENT arena, is inside a node the arena handed out, a
+ * live leaf, inside its count, and holds exactly the record asked for — and a record is in an
+ * index once — so a stale hint costs a descent, never a wrong slot.  Per thread and outside
+ * the store, so a walk writes nothing.  -DLOFT_NO_WALK_HINT descends on every step. */
+#define LOFT_BT_HINTS 4
+typedef struct { uint16_t store_nr; uint32_t arena, rec, pos; } loft_bt_hint;
+static LOFT_TLS loft_bt_hint loft_bt_hints[LOFT_BT_HINTS];
+
+static uint32_t loft_bt_hinted(loft_store_t *s, uint16_t store_nr, uint32_t a, uint32_t rec) {
+#ifdef LOFT_NO_WALK_HINT
+    (void) s; (void) store_nr; (void) a; (void) rec;
+    return 0;
+#else
+    for (int k = 0; k < LOFT_BT_HINTS; k++) {
+        const loft_bt_hint *h = &loft_bt_hints[k];
+        if (h->rec != rec || h->arena != a || h->store_nr != store_nr) continue;
+        uint32_t n = h->pos / LOFT_BT_FANOUT, i = h->pos % LOFT_BT_FANOUT;
+        int live = n != 0 && n < loft_bt_hdr(s, a, LOFT_BT_H_USED) && loft_bt_is_leaf(s, a, n)
+                   && i < loft_bt_count(s, a, n) && loft_bt_rec(s, a, n, i) == rec;
+        return live ? h->pos : 0;
+    }
+    return 0;
+#endif
+}
+
+/* btree::remember: `pos` as the hint for `rec`, replacing this arena's hint or the oldest. */
+static void loft_bt_remember(uint16_t store_nr, uint32_t a, uint32_t rec, uint32_t pos) {
+    loft_bt_hint *h = loft_bt_hints;
+    if (!(h[0].store_nr == store_nr && h[0].arena == a)) {
+        int at = LOFT_BT_HINTS - 1;
+        for (int k = 0; k < LOFT_BT_HINTS; k++) {
+            if (h[k].store_nr == store_nr && h[k].arena == a) { at = k; break; }
+        }
+        for (int k = at; k > 0; k--) h[k] = h[k - 1];
+    }
+    h[0].store_nr = store_nr;
+    h[0].arena = a;
+    h[0].rec = rec;
+    h[0].pos = pos;
+}
+
 /* btree::next_record / previous_record: the record after (before) `rec` in key order. */
 static uint32_t loft_bt_step_record(loft_ref data, const loft_key *keys, int nk, uint32_t rec, int back) {
     uint32_t a = loft_bt_arena_of(data);
     if (a == 0) return 0;
-    uint32_t at = loft_bt_position(data, keys, nk, rec);
+    loft_store_t *s = loft_store_of(data);
+    uint32_t at = loft_bt_hinted(s, data.store_nr, a, rec);
+    if (at == 0) at = loft_bt_position(data, keys, nk, rec);
     if (at == 0) return 0;
-    uint32_t to = loft_bt_step(loft_store_of(data), a, at, back);
-    return to == 0 ? 0 : loft_bt_rec(loft_store_of(data), a, to / LOFT_BT_FANOUT, to % LOFT_BT_FANOUT);
+    uint32_t to = loft_bt_step(s, a, at, back);
+    if (to == 0) return 0;
+    uint32_t found = loft_bt_rec(s, a, to / LOFT_BT_FANOUT, to % LOFT_BT_FANOUT);
+    loft_bt_remember(data.store_nr, a, found, to);
+    return found;
+}
+
+/* btree::end_record: the record at an end position, remembered as a walk's first hint. */
+static uint32_t loft_bt_end_record(loft_ref data, uint32_t pos) {
+    uint32_t found = loft_bt_record(data, pos);
+    if (found != 0) loft_bt_remember(data.store_nr, loft_bt_arena_of(data), found, pos);
+    return found;
 }
 
 /* btree::range: the first and last positions of a key range; 0 when it is empty. */
@@ -876,7 +932,7 @@ static loft_ref loft_ix_step(int64_t *state, loft_ref data, const loft_key *keys
     uint64_t st = (uint64_t) *state;
     uint32_t cur = (uint32_t) st, finish = (uint32_t) (st >> 32);
     if (data.store_nr == 0xFFFF || data.rec == 0 || finish == UINT32_MAX) return loft_ref_null();
-    uint32_t n = cur == 0 ? loft_bt_record(data, reverse ? loft_bt_last(data) : loft_bt_first(data))
+    uint32_t n = cur == 0 ? loft_bt_end_record(data, reverse ? loft_bt_last(data) : loft_bt_first(data))
                           : loft_bt_step_record(data, keys, nk, cur, reverse);
     if (n == finish) finish = UINT32_MAX;
     *state = (int64_t) ((uint64_t) finish << 32 | n);

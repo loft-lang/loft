@@ -6,12 +6,22 @@ The files here say WHY, price what could be done about it, and record what was b
 the twin winning by something loft cannot say, that is the unit to price — `(Perf-Gap)` in
 `doc/claude/formal/performance.md` — and the twin stays as written.
 
+**The goal (owner, 2026-10-30): fix the WORST performers** — the routines furthest above their
+Rust twin on the C ship lane, library benches included ([`c-libraries.md`](c-libraries.md) holds
+the current ranking).  They are fixed by GENERAL optimisations only, never a rewrite fitted to one
+routine, and the MEMORY MODEL comes first: store resolutions, copies, claims and frees, buffers,
+headers and record addresses before operator-level or call-overhead levers.  So a worst row is
+profiled, its gap split into memory-model and other causes (as [`top5-memory.md`](top5-memory.md)
+does), and the general mechanism behind the largest memory-model share is built first; a gap that
+is a library's own algorithm goes to that library's stream.
+
 **Start from [`worklist.md`](worklist.md)**: every routine over the 3× bar, sorted by what is
 known about it — a priced path under the bar, a priced path that ends above it, or no price —
 with the units in build order and the file below that priced each.
 
 | file | class | state |
 |---|---|---|
+| `c-libraries.md` | every library bench on the C ship lane against its Rust twin | **MEASURED 2026-10-30** — median ≈ 1.6×, 13 rows over 3.5×; three BUILT the same day (`base64_to_bytes` −71 %, `keys_near` −78 %, `render_inline` −28 %); the order names the ports left (`R-AppendTwin`, `R-Destination`) |
 | `c-3x-bar.md` | the C99 lane against the owner's next-release goal: 3× as the bug bar | **ASSESSED 2026-10-28** — both ship lanes under 3× (worst 2.93× gcc, 2.70× clang); the bar is reliable once every ship row is at or under ≈ 2.7×; the three rows left in order (`slope_path_with_undo`, `map_json`, `par`) and how to measure |
 | `top5-memory.md` | the five worst C ship rows (`map_json`, `par`, `interp_fib`, `slope_path_with_undo`, `grouped_fill_find`), each gap split into memory-model and other causes | **PRICED 2026-10-29** — a header lost to the loop's own append is the shared mechanism (`interp_fib` −31 % gcc / −39 % clang cycles held); `grouped_fill_find` ≈ 85 % memory model, `par` ≈ 3 %; the build order closes the file |
 | `c-store-gaps.md` | the C99 lane, every class | **MEASURED 2026-10-26, NOT PRICED** — 79 routines, median 3.40×, 37 over 3.5×; the C is 3–15× behind NATIVE on most of them, so each gap is a port of a rewrite or runtime routine native already has; the order starts with the push window |

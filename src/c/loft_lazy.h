@@ -184,6 +184,12 @@ static uint8_t loft_lazy_bind_coll(loft_ref coll, loft_str source, loft_lazy_fet
         b->sql_refusal = 0;
     }
     loft_text_set(&b->source, source);
+    /* Every reader of the bound source takes `p` as a C string — the stat that pins it, the
+     * path `sqlite:` opens, a message's `%s` — and a loft text carries no terminator: one is
+     * kept past `len`.  Without it the driver read on into the buffer's old bytes (after a
+     * rebind, the longer source's tail; on Windows, whatever the heap held). */
+    loft_push(&b->source, "", 1);
+    b->source.len--;
     b->fetch = fetch;
     b->element = element;
     b->sql = sql;

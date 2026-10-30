@@ -3,7 +3,7 @@
 //
 // S3's fourth slice: hashes in the C runtime's stores (doc/claude/plans/91-self-host/1b-s3.md
 // § The fourth slice).  Each entry takes an integer and answers one, worked out by hand beside
-// it.  No entry walks a hash: that is the next step.
+// it.  The walks are the slice's continuation (§ The fourth slice, continued).
 struct Count { name: text, n: integer }
 struct Bag { counts: hash<Count[name]>, total: integer }
 struct Cell { x: integer, label: text }
@@ -109,6 +109,152 @@ fn linked(n: integer) -> integer {
   len(h) * 100 + len(c)
 }
 
+// Walking a hash (§ The fourth slice, continued).  Most cases build keys "k0".."k{n-1}", key
+// "k{i}" holding i * 10; for n ≤ 10 the key order is the insertion order.  Each builds its hash
+// in place: a hash bound from a call is `OpReplaceKeyed`, a later step.
+// A hash local walked: the sum times ten plus the elements visited.  walked(4): 0 + 10 + 20 + 30
+// = 60, four visited: 604.  walked(0), an empty hash: 0.
+fn walked(n: integer) -> integer {
+  h: hash<Count[name]> = [];
+  for i in 0..n {
+    h += [Count { name: "k{i}", n: i * 10 }];
+  }
+  s = 0;
+  visited = 0;
+  for c in h {
+    s += c.n;
+    visited += 1;
+  }
+  s * 10 + visited
+}
+
+// The walk is in key order, not insertion order: "b" 1, "c" 2, "a" n are visited a, b, c.
+// order(3) = 312, order(7) = 712.
+fn order(n: integer) -> integer {
+  h: hash<Count[name]> = [Count { name: "b", n: 1 }, Count { name: "c", n: 2 }, Count { name: "a", n: n }];
+  r = 0;
+  for c in h {
+    r = r * 10 + c.n;
+  }
+  r
+}
+
+// A hash FIELD walked: bag_of(5) counts w0 2, w1 2, w2 1: 5 * 100 + 3 entries = 503; bag_of(2)
+// counts w0 1, w1 1: 202.
+fn field_walk(n: integer) -> integer {
+  b = bag_of(n);
+  s = 0;
+  e = 0;
+  for c in b.counts {
+    s += c.n;
+    e += 1;
+  }
+  s * 100 + e
+}
+
+// A walk writes through each element (a view), and a lookup after it reads the change: key "k{i}"
+// holds i, each bumped by 100.  bumped(3): k1 is 101, the sum 0 + 1 + 2 + 300 = 303: 101303.
+// bumped(1): k1 is a miss (0), the sum 100: 100.
+fn bumped(n: integer) -> integer {
+  h: hash<Count[name]> = [];
+  for i in 0..n {
+    h += [Count { name: "k{i}", n: i }];
+  }
+  for c in h {
+    c.n += 100;
+  }
+  s = 0;
+  for c in h {
+    s += c.n;
+  }
+  got(h, "k1") * 1000 + s
+}
+
+fn first_over(h: hash<Count[name]>, x: integer) -> integer {
+  for c in h {
+    if c.n > x {
+      return c.n;
+    }
+  }
+  -1
+}
+
+// A walk left by `return` and one left by `break`, then a whole walk of the same hash: the first
+// value over 25, the sum before the first value of 20 or more, the elements a third walk visits.
+// early(5): 30, 0 + 10 = 10, 5: 300105.  early(2): -1, 0 + 10 = 10 (no break), 2: -9898.
+fn early(n: integer) -> integer {
+  h: hash<Count[name]> = [];
+  for i in 0..n {
+    h += [Count { name: "k{i}", n: i * 10 }];
+  }
+  f = first_over(h, 25);
+  s = 0;
+  for c in h {
+    if c.n >= 20 {
+      break;
+    }
+    s += c.n;
+  }
+  e = 0;
+  for c in h {
+    if c.n >= 0 {
+      e += 1;
+    }
+  }
+  f * 10000 + s * 10 + e
+}
+
+// Two walks of one hash nested, two snapshots live at once: the pairs with a.n < b.n, times 100,
+// plus the sum of their differences.  Over 0, 10, 20, 30 (pairs(4)): 6 pairs, differences
+// 10 + 20 + 30 + 10 + 20 + 10 = 100: 700.  pairs(5): 10 pairs, differences 10 × (4 × 1 + 3 × 2 +
+// 2 × 3 + 1 × 4) = 200: 1200.
+fn pairs(n: integer) -> integer {
+  h: hash<Count[name]> = [];
+  for i in 0..n {
+    h += [Count { name: "k{i}", n: i * 10 }];
+  }
+  k = 0;
+  d = 0;
+  for a in h {
+    for c in h {
+      if a.n < c.n {
+        k += 1;
+        d += c.n - a.n;
+      }
+    }
+  }
+  k * 100 + d
+}
+
+// The walk's position: the sum of index × value.  indexed(4): 0 + 10 + 40 + 90 = 140.
+// indexed(3): 0 + 10 + 40 = 50.
+fn indexed(n: integer) -> integer {
+  h: hash<Count[name]> = [];
+  for i in 0..n {
+    h += [Count { name: "k{i}", n: i * 10 }];
+  }
+  s = 0;
+  for c in h {
+    s += c#index * c.n;
+  }
+  s
+}
+
+// `unordered(h)` walks the snapshot in slot order: an order-free product of n + 1.
+// unordered_product(4): 1 × 11 × 21 × 31 = 7161.  unordered_product(3): 1 × 11 × 21 = 231.
+fn unordered_product(n: integer) -> integer {
+  h: hash<Count[name]> = [];
+  for i in 0..n {
+    h += [Count { name: "k{i}", n: i * 10 }];
+  }
+  p = 1;
+  for c in unordered(h) {
+    p *= c.n + 1;
+  }
+  p
+}
+
 fn main() {
   println("{counted(5)} {counted(2)} {replaced(5)} {replaced(2)} {intkey(4)} {intkey(3)} {compound(7)} {nested(5)} {copied(4)} {linked(7)}");
+  println("{walked(4)} {walked(0)} {order(3)} {order(7)} {field_walk(5)} {field_walk(2)} {bumped(3)} {bumped(1)} {early(5)} {early(2)} {pairs(4)} {pairs(5)} {indexed(4)} {indexed(3)} {unordered_product(4)} {unordered_product(3)}");
 }

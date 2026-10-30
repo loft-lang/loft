@@ -91,4 +91,5 @@ def main():
                 b = got[k] if k < len(got) else "-"
                 print(f"   {'>' if k == i else ' '} {a:<28} {b}")
 
-main()
+if __name__ == "__main__":
+    main()

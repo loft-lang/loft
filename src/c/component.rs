@@ -3,7 +3,7 @@
 // @I74 — CDylib extension loader: the prebuilt parts loft ships beside its binary
 
 //! Building the components (@PLN205): the shared libraries loft ships beside its binary
-//! (`crate::components` finds them).  `libloft_net` is the web library's natives,
+//! (`crate::components` finds them).  `libloft_net` is the web, server and ssh libraries' natives,
 //! `src/c/components/net.c`, over the C runtime's own HTTP client, WebSocket code and TLS
 //! client — the same text a C unit pastes, so the two cannot drift apart.
 //!
@@ -27,11 +27,22 @@ const NET: &[(&str, &str)] = &[
     ("loft_https.h", include_str!("loft_https.h")),
     ("loft_web.h", include_str!("loft_web.h")),
     ("loft_server.h", include_str!("loft_server.h")),
+    ("loft_ssh.h", include_str!("loft_ssh.h")),
     (
         "loft_ffi.h",
         include_str!("../../loft-ffi/include/loft_ffi.h"),
     ),
 ];
+
+/// The TLS archive the components link (`src/c/tls.rs`), built for the C compiler a unit uses:
+/// BearSSL, the TLS client and the SSH client.  `tests/ssh_natives.rs` links its test SSH server
+/// against it.
+///
+/// # Errors
+/// Why the archive could not be built on this host.
+pub fn tls_archive() -> Result<std::path::PathBuf, String> {
+    super::tls::archive()
+}
 
 /// Build component `name` into `out_dir` (or keep the one there when it is current), returning
 /// the library's path.

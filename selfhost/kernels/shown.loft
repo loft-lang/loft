@@ -1,0 +1,60 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Rendering a value of a store (`OpFormatDatabase`, 1b-s3.md § Rendering a value): each cell
+// against its text written out by hand.  `shown(n)` answers how many held, so a cell that
+// renders wrong shows in the count as well as in its assertion.
+struct S { n: integer, f: float, s: text, ok: boolean }
+struct Pt { x: integer, y: integer }
+struct Line { a: Pt, pts: vector<Pt>, none: vector<Pt> }
+enum Color { Red, Green }
+struct Px { c: Color, k: u8 }
+struct Narrow { b: u8?, h: i16 }
+struct Ch { c: character }
+enum Tok { Num { v: integer }, Word { s: text }, End }
+struct Count { name: text, n: integer }
+struct Bag { h: hash<Count[name]> }
+
+fn check(got: text, want: text) -> integer {
+  assert(got == want, "rendered '{got}', expected '{want}'");
+  if got == want { 1 } else { 0 }
+}
+
+fn shown(n: integer) -> integer {
+  c = 0;
+  p = S { n: n, f: 1.5, s: "ab", ok: true };
+  c += check("{p}", "{{n:{n},f:1.5,s:\"ab\",ok:true}}");
+  c += check("{p:j}", "{{\"n\":{n},\"f\":1.5,\"s\":\"ab\",\"ok\":true}}");
+  q = Pt { x: 1, y: 2 };
+  c += check("{q:#}", "{{ x: 1, y: 2 }}");
+  l = Line { a: Pt { x: 1, y: 2 }, pts: [Pt { x: 3, y: 4 }, Pt { x: 5, y: 6 }], none: [] };
+  c += check("{l}", "{{a:{{x:1,y:2}},pts:[{{x:3,y:4}},{{x:5,y:6}}],none:[]}}");
+  x = Px { c: Green, k: 7 };
+  c += check("{x}", "{{c:Green,k:7}}");
+  w = Narrow { b: null, h: -5 };
+  c += check("{w}", "{{b:null,h:-5}}");
+  h = Ch { c: 'x' };
+  c += check("{h}", "{{c:'x'}}");
+  // A variant's own type renders its fields; through its enum, its name first.
+  t1 = Num { v: 4 };
+  c += check("{t1}", "{{v:4}}");
+  t4: Tok = Num { v: n };
+  c += check("{t4}", "Num {{v:{n}}}");
+  t2 = End;
+  // A unit variant of a struct enum is an empty variant: its name and an empty frame.
+  c += check("{t2}", "End {{}}");
+  t3 = Word { s: "w" };
+  c += check("{t3:j}", "{{\"Word\":{{\"s\":\"w\"}}}}");
+  b = Bag { h: [] };
+  b.h += [Count { name: "b", n: 2 }, Count { name: "a", n: 1 }];
+  c += check("{b}", "{{h:[{{name:\"a\",n:1}},{{name:\"b\",n:2}}]}}");
+  v = [1, 2, 3];
+  c += check("{v}", "[1,2,3]");
+  z: S? = null;
+  c += check("{z}", "null");
+  c
+}
+
+fn main() {
+  println("{shown(3)}");
+}

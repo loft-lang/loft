@@ -1373,12 +1373,15 @@ fn main() {
     // the twin takes `s.w` as a scalar input, `build` holds no scalar for it, and reads `s`
     // only through that call, so the parameter clause binds no address to read it through
     // either — rustc's call site makes the same choice (`@FR-R-Inputs`).
+    // `s.out = build(s, 7)` is an append into a fresh vector, so it calls `build`'s APPEND
+    // TWIN (`@FR-R-AppendTwin`), a second body of `build`: one more held call, versioned loop
+    // and scalar push header (`pix`, now the caller's vector) wherever `build` has one.
     for (mode, switch, twins, fresh, versioned, pushed, scalar_pushed, scalars) in [
-        ("held", "", 2, 3, 1, 2, 4, 1),
-        ("no-inputs", "LOFT_NO_CALLEE_INPUTS", 0, 3, 0, 2, 4, 1),
-        ("no-version", "LOFT_NO_DISTINCT_VERSION", 1, 3, 0, 2, 4, 1),
-        ("no-record-push", "LOFT_NO_RECORD_PUSH", 2, 3, 1, 0, 4, 1),
-        ("no-scalar", "LOFT_NO_SCALAR_HOIST", 1, 3, 1, 2, 4, 0),
+        ("held", "", 3, 3, 2, 2, 5, 1),
+        ("no-inputs", "LOFT_NO_CALLEE_INPUTS", 0, 3, 0, 2, 5, 1),
+        ("no-version", "LOFT_NO_DISTINCT_VERSION", 1, 3, 0, 2, 5, 1),
+        ("no-record-push", "LOFT_NO_RECORD_PUSH", 3, 3, 2, 0, 5, 1),
+        ("no-scalar", "LOFT_NO_SCALAR_HOIST", 1, 3, 2, 2, 5, 0),
         ("unheld", "LOFT_NO_VECTOR_HOIST", 0, 0, 0, 0, 0, 0),
     ] {
         let c = dir.join(format!("{mode}.c"));
@@ -2149,6 +2152,18 @@ fn the_c_store_allocator_places_every_record_where_store_does() {
             store.note_referenced(rec);
             let _ = writeln!(script, "N {rec}");
         }
+    }
+    // `@FR-H-TailGrow`: a record nothing claimed follows, doubled again and again — the store
+    // grows and the record stays where it is.  The random phase above rarely leaves a record at
+    // the tail when it outgrows the room there, so the case is crossed on purpose.
+    let mut tail = store.claim(8);
+    let _ = writeln!(script, "C 8");
+    let _ = writeln!(want, "{tail}");
+    for step in 1..=12u32 {
+        let size = 8 << step;
+        let _ = writeln!(script, "R {tail} {size}");
+        tail = store.resize(tail, size);
+        let _ = writeln!(want, "{tail}");
     }
     let _ = writeln!(want, "size {}", store.capacity_words());
     // FNV-1a over every byte: the free tree's links and colours, the parked lists' links, the
@@ -6049,4 +6064,141 @@ fn a_rust_crate_native_is_named_as_such_on_the_c() {
         !err.contains("cargo") && !err.contains("poisoned"),
         "no advice that does not apply to a C build\n{err}"
     );
+}
+
+/// A library function under a standard-library native's name keeps its own body on the C: only
+/// a program's own file is refused a stdlib name, so `shl::ticks()` is the library's, and the C
+/// generator routed it by name to `loft_ticks` — the clock, not 42 — while a stdlib name with a
+/// different arity (`hash_sorted`) did not compile.  `42` and `1 + 2 + 3` by hand.
+#[test]
+fn a_library_function_under_a_stdlib_name_keeps_its_own_body() {
+    if !have_cc() {
+        eprintln!("skipped: no `cc` on PATH");
+        return;
+    }
+    let dir = scratch("stdlib_name");
+    let lib = dir.join("lib");
+    fa::create_dir_all(&lib).expect("lib dir");
+    fa::write(
+        lib.join("shl.loft"),
+        "pub fn ticks() -> integer { 42 }\n\
+         pub fn hash_sorted(a: integer, b: integer, c: integer) -> integer { a + b + c }\n",
+    )
+    .expect("write library");
+    let file = dir.join("p.loft");
+    fa::write(
+        &file,
+        "use shl;\nfn main() { println(\"{shl::ticks()} {shl::hash_sorted(1, 2, 3)}\"); }\n",
+    )
+    .expect("write program");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    for backend in ["--native-c", "--interpret"] {
+        let out = loft::platform::process::harness_command(loft)
+            .arg(backend)
+            .arg("--lib")
+            .arg(&lib)
+            .arg(&file)
+            .env("LOFT_TIMEOUT", "120")
+            .output()
+            .expect("run loft");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "42 6\n",
+            "{backend}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+/// A program is emitted ONE way (loft#2250).  A value-record call's tuple arguments were written
+/// in a map's order, which changed from run to run (six orders in eight runs of this program),
+/// and so was the numbering of the `loft_tupN` types, interned as a function's tuple parameters
+/// and value locals were walked.  Four emissions must agree and pass `mk(1)`..`mk(4)` as
+/// `t2`..`t5`, in order — under the defect that holds for one run in 24.  `1234` by hand.
+#[test]
+fn a_programs_c_is_the_same_on_every_emission() {
+    if !have_cc() {
+        eprintln!("skipped: no `cc` on PATH");
+        return;
+    }
+    let dir = scratch("emit_order");
+    let file = dir.join("p.loft");
+    fa::write(
+        &file,
+        "struct P { x: integer }\nfn mk(v: integer) -> P { P { x: v } }\n\
+         fn mix(a: P, b: P, c: P, d: P) -> integer { a.x * 1000 + b.x * 100 + c.x * 10 + d.x }\n\
+         fn main() { println(\"{mix(mk(1), mk(2), mk(3), mk(4))}\"); }\n",
+    )
+    .expect("write program");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let mut first: Option<String> = None;
+    for run in 0..4 {
+        let c = dir.join(format!("p{run}.c"));
+        let out = loft::platform::process::harness_command(loft)
+            .arg("--emit-c")
+            .arg(&c)
+            .arg(&file)
+            .env("LOFT_NO_CACHE", "1")
+            .output()
+            .expect("run loft --emit-c");
+        assert!(
+            out.status.success(),
+            "emit-c: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let unit = fa::read_to_string(&c).expect("read the C");
+        assert!(
+            unit.contains("= n_mix(t2, t3, t4, t5);")
+                && unit.find("t2 = v5___lift_1;") < unit.find("t5 = v8___lift_4;"),
+            "the arguments in order"
+        );
+        match &first {
+            None => first = Some(unit),
+            Some(f) => assert!(*f == unit, "emission {run} differs from the first"),
+        }
+    }
+    let out = loft::platform::process::harness_command(loft)
+        .arg("--native-c")
+        .arg(&file)
+        .env("LOFT_TIMEOUT", "120")
+        .output()
+        .expect("run loft --native-c");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "1234\n");
+}
+
+/// loft#2250's numbering half on a corpus program whose functions take and return three value
+/// record types: its `loft_tupN` types were numbered three ways in twelve emissions.  Ten
+/// emissions must agree (under the defect, about one chance in a thousand that they do).
+#[test]
+fn a_programs_tuple_types_are_numbered_the_same_on_every_emission() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        "tests/scripts/1990-a-nullable-result-that-joins-a-dense-leaf-returns-in-registers.loft",
+    );
+    let dir = scratch("tuple_numbers");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let mut first: Option<String> = None;
+    for run in 0..10 {
+        let c = dir.join(format!("p{run}.c"));
+        let out = loft::platform::process::harness_command(loft)
+            .arg("--emit-c")
+            .arg(&c)
+            .arg(&src)
+            .env("LOFT_NO_CACHE", "1")
+            .output()
+            .expect("run loft --emit-c");
+        assert!(
+            out.status.success(),
+            "emit-c: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let unit = fa::read_to_string(&c).expect("read the C");
+        assert!(
+            unit.contains("loft_tup2;"),
+            "the program has three tuple types"
+        );
+        match &first {
+            None => first = Some(unit),
+            Some(f) => assert!(*f == unit, "emission {run} differs from the first"),
+        }
+    }
 }

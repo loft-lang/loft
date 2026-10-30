@@ -7,6 +7,11 @@
  * a flag) — and calls one routine the C runtime already defines, so a format the loft
  * interpreter renders is the C runtime's rendering.  Each answers the rendering's length in
  * bytes; when that exceeds `cap`, nothing is written and the caller asks again with room. */
+/* The allocator trace of the interpreted program's stores (@PLN91 1b-compare.md, the alloc
+ * layer): this copy of the runtime writes the event lines `LOFT_ALLOC_TRACE` writes, to the file
+ * `LOFT_CRT_ALLOC_TRACE` names, so the interpreter's own stores never mix into them. */
+#define LOFT_ALLOC_TRACE 1
+#define LOFT_ALLOC_TRACE_ENV "LOFT_CRT_ALLOC_TRACE"
 #include "../../../src/c/loft_crt.h"
 
 static int64_t loft_crt_out(loft_text *t, char *out, int64_t cap) {
@@ -486,4 +491,94 @@ void loft_crt_hash_insert(int64_t store, int64_t rec, int64_t pos, int64_t r_sto
 /* OpLengthHash. */
 int64_t loft_crt_hash_len(int64_t store, int64_t rec, int64_t pos) {
     return loft_hash_len(loft_crt_ref(store, rec, pos));
+}
+
+/* ── Walking a hash (@PLN91 S3, the fourth slice continued): the snapshot `for c in h` steps
+ * over, two records claimed in the hash's own store (loft_hash.h). ── */
+
+/* n_hash_sorted: the snapshot of a hash of type `tp`, its elements in key order, into `out`;
+ * n_hash_unsorted (`unordered`): in slot order. */
+int64_t loft_crt_hash_sorted(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos,
+                             int64_t tp, int64_t unordered) {
+    loft_ref r = loft_ref_null();
+    if (unordered)
+        r = loft_hash_unsorted(loft_crt_ref(store, rec, pos));
+    else if (loft_crt_keyed(tp))
+        r = loft_hash_sorted(loft_crt_ref(store, rec, pos), loft_crt_types[tp].keys,
+                             loft_crt_types[tp].nk);
+    loft_crt_put_ref(out, no, r);
+    return 0;
+}
+
+/* OpIterate over a snapshot: the walk's state. */
+int64_t loft_crt_scratch_iterate(int64_t store, int64_t rec, int64_t pos) {
+    return loft_scratch_iterate(loft_crt_ref(store, rec, pos));
+}
+
+/* OpStep over a snapshot: the next element into `out[0..3]`, the state it leaves into `out[3]`. */
+int64_t loft_crt_scratch_step(int64_t *out, int64_t no, int64_t state, int64_t store, int64_t rec,
+                              int64_t pos, int64_t reverse) {
+    loft_ref r = loft_scratch_step(&state, loft_crt_ref(store, rec, pos), (int) reverse);
+    loft_crt_put_ref(out, no, r);
+    if (no >= 4) out[3] = state;
+    return 0;
+}
+
+/* OpFreeScratch. */
+void loft_crt_free_scratch(int64_t store, int64_t rec, int64_t pos) {
+    loft_free_scratch(loft_crt_ref(store, rec, pos));
+}
+
+/* OpAppendVector (@PLN91 S3): the elements of `o` appended to `v` as copies of type `tp`, their
+ * claims copied by the loaded table. */
+void loft_crt_vec_add(int64_t tp, int64_t store, int64_t rec, int64_t pos, int64_t o_store,
+                      int64_t o_rec, int64_t o_pos) {
+    if (!loft_crt_keyed(tp)) return;
+    loft_vec_add(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos),
+                 loft_crt_ref(o_store, o_rec, o_pos));
+}
+
+/* ── Rendering a value (@PLN91 S3, `OpFormatDatabase`): the interpreter walks the schema in loft
+ * as the C generator's `loft_show{tp}` does, and every value read from the store is the
+ * runtime's own `loft_show_*` helper, chosen here by `kind`: the base types by their type
+ * number (0–6), then 7 a byte, 8 a short, 9 a raw short, 10 a 4-byte and 11 a raw 4-byte
+ * integer, 12 a stored reference, 13 a child record.  Rendered into a scratch text, copied out. */
+static loft_text loft_crt_show_buf = { 0, 0, 0 };
+
+int64_t loft_crt_show_leaf(char *out, int64_t cap, int64_t kind, int64_t store, int64_t rec,
+                           int64_t pos, int64_t fmt, int64_t min, int64_t nullable) {
+    loft_text *s = &loft_crt_show_buf;
+    s->len = 0;
+    loft_ref r = loft_crt_ref(store, rec, pos);
+    int f = (int) fmt, n = (int) nullable;
+    switch (kind) {
+    case 0: case 1: loft_show_long(s, r, f, 0); break;
+    case 2: loft_show_single(s, r, f, 0); break;
+    case 3: loft_show_float(s, r, f, 0); break;
+    case 4: loft_show_bool(s, r, f, 0); break;
+    case 5: loft_show_text(s, r, f, 0); break;
+    case 6: loft_show_char(s, r, f, 0); break;
+    case 7: loft_show_byte(s, r, min, n); break;
+    case 8: loft_show_short(s, r, min, n); break;
+    case 9: loft_show_short_raw(s, r, min, n); break;
+    case 10: loft_show_int4(s, r, n); break;
+    case 11: loft_show_int_raw(s, r, n); break;
+    case 12: loft_show_dbref(s, r); break;
+    case 13: loft_show_child(s, r); break;
+    default: return 0;
+    }
+    int64_t len = (int64_t) s->len;
+    if (len <= cap && len > 0) memcpy(out, s->p, (size_t) len);
+    return len;
+}
+
+/* loft_vec_absent: a collection field that holds none. */
+int64_t loft_crt_vec_absent(int64_t store, int64_t rec, int64_t pos) {
+    return loft_vec_absent(loft_crt_ref(store, rec, pos));
+}
+
+/* The interpreted program starts: the trace's `M` line, as the Rust interpreter writes it when
+ * it enters the program (`State::execute_argv_shared`). */
+void loft_crt_trace_mark(void) {
+    LOFT_TRACE("M\n");
 }

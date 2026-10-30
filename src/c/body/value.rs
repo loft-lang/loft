@@ -877,11 +877,14 @@ impl FnWriter<'_> {
         let vr = self.cx.value_records();
         let key = vr.fns.get(&d).copied();
         let dropped = key.and_then(|_| crate::opt::attrs::ret_buffer_attr(self.cx.data.def(d)));
-        let params = vr
+        // In argument order: the call writes each tuple argument's struct in this order, and a
+        // map's own order differed from run to run, so one program was emitted several ways.
+        let mut params: Vec<(usize, u16)> = vr
             .params
             .get(&d)
             .map(|m| m.iter().map(|(i, k)| (*i, *k)).collect())
             .unwrap_or_default();
+        params.sort_unstable();
         (key, dropped, params)
     }
 

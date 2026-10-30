@@ -11,6 +11,7 @@ use ir;
 use lower;
 use crt;
 use types;
+use show;
 
 // The entry's result — a loft integer, so null when the program answers null — or the first
 // thing the interpreter does not carry.  `stores_left` is the leak check: how many of the C
@@ -237,6 +238,8 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
   images: vector<vector<u8>> = [];
   imaged: vector<boolean> = [];
   io: vector<integer> = [65535, 0, 0];
+  // A walk's step answers the element's three parts and the state it leaves.
+  step_io: vector<integer> = [65535, 0, 0, 0];
   ints: vector<integer?> = [];
   floats: vector<float?> = [];
   texts: vector<text?> = [];
@@ -680,10 +683,10 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         ref_out(io, ints, at);
         claim(own, io[0] ?? NULL_STORE, at);
       }
-      // A keyed local bound to null (`keyed_null`): the store the variable names is remade in
-      // place, whoever owns it — a link writes through to its target — and a variable naming
-      // none gets a fresh store it owns.
-      KeyedNull => {
+      // The store the variable names remade in place, whoever owns it, and a fresh store the
+      // variable owns when it names none: a keyed local bound to null (`keyed_null` — a link
+      // writes through to its target), and the hidden return buffer the caller handed in.
+      Remake => {
         at = base_int + op.a;
         ref_in(io, ints, at);
         fresh = (io[0] ?? NULL_STORE) == NULL_STORE;
@@ -930,6 +933,75 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
       HashLen => {
         sp_int -= 3;
         put_int(ints, sp_int, crt::hash_len(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0));
+        sp_int += 1;
+      }
+      // `"{v}"` of a store value: the schema walked in loft, every value the runtime's helper.  A
+      // hash renders through its snapshot, which reads the table's keys, so it is loaded first.
+      FormatDb => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        at = if op.kind == KTextRef { ints[base_int + op.a] ?? panic("a bound reference") } else { base_text + op.a };
+        sp_int -= 3;
+        piece = "";
+        show::render(b, op.b / 4, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b % 4, 0, piece);
+        texts[at] = (texts[at] ?? "") + piece;
+      }
+      // `v += other`: the copies are claims of `v`'s store, so no owner changes; the claims are
+      // copied by the type table, loaded first.
+      VecAdd => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 6;
+        crt::vec_add(
+          op.a,
+          ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0,
+          ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0
+        );
+      }
+      // Walking a hash (S3's fourth slice, continued): the snapshot is two records of the hash's
+      // own store, so none of these changes who owns a store.
+      HashSorted => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 3;
+        crt::hash_sorted(io, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, op.b == 1);
+        ref_out(io, ints, sp_int);
+        sp_int += 3;
+      }
+      ScratchIterate => {
+        sp_int -= 3;
+        put_int(ints, sp_int, crt::scratch_iterate(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0));
+        sp_int += 1;
+      }
+      ScratchStep => {
+        sp_int -= 3;
+        at = base_int + op.a;
+        crt::scratch_step(step_io, ints[at] ?? 0, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b == 1);
+        ints[at] = step_io[3];
+        ref_out(step_io, ints, sp_int);
+        sp_int += 3;
+      }
+      FreeScratch => {
+        sp_int -= 3;
+        crt::free_scratch(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0);
+      }
+      // `loft_ref_eq`: a null side (record 0) equals only another; otherwise all three parts.
+      RefEq => {
+        sp_int -= 6;
+        ar = ints[sp_int + 1] ?? 0;
+        br = ints[sp_int + 4] ?? 0;
+        eq = if ar == 0 || br == 0 {
+          ar == 0 && br == 0
+        } else {
+          (ints[sp_int] ?? NULL_STORE) == (ints[sp_int + 3] ?? NULL_STORE) && ar == br && (ints[sp_int + 2] ?? 0) == (ints[sp_int + 5] ?? 0)
+        };
+        put_int(ints, sp_int, bit(eq != (op.a == 1)));
         sp_int += 1;
       }
       ClearRecord => {

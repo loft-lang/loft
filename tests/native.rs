@@ -3495,6 +3495,60 @@ fn a_connection_the_registry_opened_is_a_connection() -> std::io::Result<()> {
 /// all come from `derive(type_of(coll))` — the same `TableDef` a writer would
 /// `render` into `CREATE TABLE` — which is requirement 2's one derivation doing
 /// both jobs.
+/// @PLN203 C8 — a lazy `sqlite:` source rebound to a shorter one is read as itself
+/// (`tests/fixtures/sqldb/rebind_shorter.loft`).  The C runtime's SQL driver took the binding's
+/// length-counted source text as a C string, and a loft text carries no terminator: it read on
+/// into the buffer's old bytes.  On Windows that was this file's s9 test failing now and then
+/// with "unable to open database file" (`…/pln133_s9.dble`); after a rebind to a shorter source
+/// the leftover bytes are the longer source's tail on every host, so the C opened
+/// `rebind_shorter.db-a-longer-name-nothing-opens` and answered `<none>`.  The interpreter
+/// answers `grace`, and the C must too.
+#[test]
+fn a_lazy_source_rebound_shorter_is_read_as_itself() -> std::io::Result<()> {
+    let _guard = native_suite_lock()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    if loft::platform::process::harness_command("cc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        return Ok(());
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let libdir = root.join("tests/fixtures/sqldb");
+    let script = libdir.join("rebind_shorter.loft");
+    for backend in ["--interpret", "--native-c"] {
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+            .arg(backend)
+            .arg("--no-warnings")
+            .arg("--lib")
+            .arg(&libdir)
+            .arg(&script)
+            .current_dir(root)
+            .output()?;
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        assert!(
+            out.status.success(),
+            "{backend} exited {}: stdout={stdout:?} stderr={:?}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        if stdout.contains("SKIP") {
+            assert!(
+                stdout.contains("not installed"),
+                "an absent library must be REPORTED:\n{stdout}"
+            );
+            return Ok(());
+        }
+        assert!(
+            stdout.contains("rebind nm=grace clean=[]"),
+            "{backend}: the shorter source read as itself:\n{stdout}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn a_lazy_read_gives_one_answer_down_rust_and_down_loft() -> std::io::Result<()> {
     let _guard = native_suite_lock()

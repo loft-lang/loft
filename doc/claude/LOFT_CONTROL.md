@@ -418,7 +418,10 @@ match score {
 **Guard clauses:** any arm may have an `if` guard after the pattern. The guard is
 evaluated when the pattern matches, with the arm's captures already bound, so it can
 test them (`[a, _, _] if a > 10`, `(n, _, true) if n > 10`); if the guard is false,
-matching falls through to the next arm. The one arm that refuses a guard is a **cursor**
+matching falls through to the next arm. A guard may read the value being matched but not
+change it: a guard that assigns it, or passes it to a function that changes it, is a compile
+error, because the arms after it would test something else (`formal/matching.md` `(M-Fixed)`).
+Change the value in the arm's body, after the tests, or match on a copy. The one arm that refuses a guard is a **cursor**
 match arm, where the pattern advances the shared cursor before the guard could be tested
 — put the test inside the arm body there. Guarded arms do **not** count toward exhaustiveness — because the guard
 can fail at runtime, the compiler cannot guarantee the arm will handle that variant.

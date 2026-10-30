@@ -1,0 +1,88 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// One interactive session through the ssh natives, against a real server: SSH_HOST, SSH_PORT,
+// SSH_USER and SSH_PW name it.  Each step prints one line whose expected text is fixed in
+// advance; a marker `M<n>-$((6*7))` is matched as `M<n>-42`, which only the shell's OUTPUT can
+// carry (the echoed command line carries the arithmetic, not its answer).
+use ssh_natives::*;
+
+// Everything received until `needle` arrives or `ms` pass.
+fn until(h: integer, needle: text, ms: integer) -> text {
+  got = "";
+  start = now();
+  while now() - start < ms {
+    chunk = ssh_natives::ssh_recv(h);
+    if chunk.size() == 0 {
+      if got.contains(needle) { return got; }
+      ssh_natives::sleep_ms(5);
+      continue;
+    }
+    got += chunk;
+  }
+  got
+}
+
+// The part of `t` between two markers ("" when either is missing).
+fn between(t: text, a: text, b: text) -> text {
+  i = t.find(a) ?? -1;
+  if i < 0 { return ""; }
+  rest = t[i + a.size()..];
+  j = rest.find(b) ?? -1;
+  if j < 0 { return ""; }
+  rest[0..j]
+}
+
+fn main() {
+  host = env_variable("SSH_HOST") ?? "127.0.0.1";
+  port = (env_variable("SSH_PORT") ?? "22") as integer ?? 22;
+  user = env_variable("SSH_USER") ?? "";
+  pw = env_variable("SSH_PW") ?? "";
+  bad = ssh_natives::ssh_connect(host, port);
+  println("BADPW {bad >= 0} {ssh_natives::ssh_login(bad, user, pw + "-wrong")}");
+  ssh_natives::ssh_close(bad);
+  h = ssh_natives::ssh_connect(host, port);
+  println("CONNECT {h >= 0}");
+  logged = ssh_natives::ssh_login(h, user, pw);
+  println("LOGIN {logged}");
+  if !logged { return; }
+  shell = ssh_natives::ssh_open_shell(h, "xterm", 100, 40);
+  println("SHELL {shell}");
+  if !shell { return; }
+  ssh_natives::ssh_send(h, "stty size; echo M1-$((6*7))\n");
+  // `stty size` answers "rows cols"; the echoed command line cannot carry that answer (bash may
+  // end it with a bracketed-paste reset rather than a newline, so no line start is assumed).
+  size1 = until(h, "M1-42", 20000);
+  println("SIZE1 {size1.contains("40 100")}");
+  ssh_natives::ssh_resize(h, 120, 50);
+  ssh_natives::ssh_send(h, "stty size; echo M2-$((6*7))\n");
+  size2 = until(h, "M2-42", 20000);
+  println("SIZE2 {size2.contains("50 120")}");
+  // 3 000 000 bytes of output: past the 2 MiB window this client grants, so the server waits
+  // on window adjustments the reads must send.
+  ssh_natives::ssh_send(h, "echo S3-$((6*7)); head -c 3000000 /dev/zero | tr '\\0' x; echo; echo M3-$((6*7))\n");
+  big = between(until(h, "M3-42", 120000), "S3-42", "M3-42");
+  println("BIG {big.size() - big.replace("x", "").size()}");
+  // 200 000 bytes of input into a raw-mode reader: more than the server's window and many
+  // times its packet size, so the send splits and waits.
+  ssh_natives::ssh_send(h, "stty raw -echo; echo R4-$((6*7)); head -c 200000 > /tmp/loft_ssh_in.txt; stty sane; echo M4-$(wc -c < /tmp/loft_ssh_in.txt)-$((6*7))\n");
+  until(h, "R4-42", 20000);
+  block = "";
+  for _ in 0..1000 { block += "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ+-*/"; }
+  sent = 0;
+  while sent < 200000 {
+    n = 200000 - sent;
+    if n > block.size() { n = block.size(); }
+    ssh_natives::ssh_send(h, block[0..n]);
+    sent += n;
+  }
+  println("INPUT {between(until(h, "-42", 60000), "M4-", "-42")}");
+  ssh_natives::ssh_send(h, "exit\n");
+  start = now();
+  while ssh_natives::ssh_is_open(h) && now() - start < 20000 {
+    ssh_natives::ssh_recv(h);
+    ssh_natives::sleep_ms(10);
+  }
+  println("EXIT {!ssh_natives::ssh_is_open(h)}");
+  ssh_natives::ssh_close(h);
+  println("AFTER [{ssh_natives::ssh_recv(h)}] {ssh_natives::ssh_is_open(h)} {ssh_natives::ssh_login(h, user, pw)}");
+}

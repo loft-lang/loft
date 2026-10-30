@@ -1,8 +1,8 @@
 diff --git a/src/generation/emit.rs b/src/generation/emit.rs
-index 51ba7bd9..939cf891 100644
+index f3d1361f..75768648 100644
 --- a/src/generation/emit.rs
 +++ b/src/generation/emit.rs
-@@ -2520,20 +2520,6 @@ impl Output<'_> {
+@@ -2883,20 +2883,6 @@ impl Output<'_> {
              }
              _ => false,
          };
@@ -23,7 +23,7 @@ index 51ba7bd9..939cf891 100644
          // For `text_string_unify` we emit `{ (<branch>).to_string() }` around
          // each arm so the if-expression unifies on `String`.  Rust requires
          // braces for if-arms regardless of inner expression form, so even if
-@@ -2611,11 +2597,11 @@ impl Output<'_> {
+@@ -2974,11 +2960,11 @@ impl Output<'_> {
          } else {
              write!(w, "}} else ")?;
          }
@@ -38,7 +38,7 @@ index 51ba7bd9..939cf891 100644
              (true, "({")
          } else if stmt_discard || !b_false {
              (true, "")
-@@ -2631,7 +2617,7 @@ impl Output<'_> {
+@@ -2994,7 +2980,7 @@ impl Output<'_> {
              None
          };
          write!(w, "{false_rest}")?;
@@ -47,7 +47,7 @@ index 51ba7bd9..939cf891 100644
          // When the else branch is Null and the true branch returns a value,
          // emit a typed null sentinel instead of () to match the true branch type.
          if matches!(false_v, Value::Null)
-@@ -2644,18 +2630,18 @@ impl Output<'_> {
+@@ -3007,18 +2993,18 @@ impl Output<'_> {
              self.clone_handed_tuple_local = None;
          }
          self.close_arm_pre_evals(false_pre);
@@ -70,7 +70,7 @@ index 51ba7bd9..939cf891 100644
          if wrap_block {
              write!(w, " }}")?;
          }
-@@ -4394,31 +4380,7 @@ impl Output<'_> {
+@@ -5146,31 +5132,7 @@ impl Output<'_> {
                      // nwb fns via the no-work-buffer arm).
                      let tail_outer_owned =
                          wrap_result && super::def_returns_owned_text(self.data.def(self.def_nr));
@@ -103,9 +103,9 @@ index 51ba7bd9..939cf891 100644
                          // Wrap the captured value in a block.  A tail call whose
                          // argument carries a store-lifetime "lift" pre-eval emits that
                          // lift as a LEADING `{ … };` statement (it reassigns the lifted
-@@ -4452,13 +4414,9 @@ impl Output<'_> {
-                     } else if narrow_cast.is_some() {
-                         write!(w, "(")?;
+@@ -5209,13 +5171,9 @@ impl Output<'_> {
+                         // condition (`@FR-M-Once`), reaches here as a value block's tail.
+                         write!(w, "{}", if lowers_to_statements(v) { "({" } else { "(" })?;
                      }
 -                    if let Some(name) = &own_text_tail {
 -                        write!(w, "var_{name}")?;
@@ -121,10 +121,10 @@ index 51ba7bd9..939cf891 100644
                          // Close the block opened above; the call is its tail expr.
                          write!(w, " }}")?;
 diff --git a/src/parser/collections.rs b/src/parser/collections.rs
-index e4572406..a515b29d 100644
+index 37644699..f236b950 100644
 --- a/src/parser/collections.rs
 +++ b/src/parser/collections.rs
-@@ -2468,7 +2468,7 @@ use #count instead"
+@@ -2469,7 +2469,7 @@ use #count instead"
              }
          } else if self.lexer.has_token("break") {
              if !self.in_loop {
@@ -133,7 +133,7 @@ index e4572406..a515b29d 100644
              }
              // loft#998 — `x#break` names the loop to leave by its VARIABLE, so a name that
              // is not one has no level to jump. `Value::Null` rather than a level: every
-@@ -2479,10 +2479,7 @@ use #count instead"
+@@ -2480,10 +2480,7 @@ use #count instead"
                  Some(lv) => Value::Break(lv),
                  None => self.not_a_loop_variable(name, "break"),
              };
@@ -145,7 +145,7 @@ index e4572406..a515b29d 100644
          } else if self.lexer.has_token("continue") {
              if !self.in_loop {
                  diagnostic!(self.lexer, Level::Error, "Cannot continue outside a loop");
-@@ -2491,7 +2488,7 @@ use #count instead"
+@@ -2492,7 +2489,7 @@ use #count instead"
                  Some(lv) => Value::Continue(lv),
                  None => self.not_a_loop_variable(name, "continue"),
              };
@@ -155,10 +155,10 @@ index e4572406..a515b29d 100644
              self.iter_op_count_or_first(code, name, t, false, index_var);
          } else if self.lexer.has_keyword("first") {
 diff --git a/src/parser/control.rs b/src/parser/control.rs
-index c5287c7a..0d5c070c 100644
+index b5136e13..9076457a 100644
 --- a/src/parser/control.rs
 +++ b/src/parser/control.rs
-@@ -19460,7 +19460,7 @@ impl Parser {
+@@ -20628,7 +20628,7 @@ impl Parser {
          // validate if there is a defined return value
          let mut v = Value::Null;
          let r_type = self.data.def(self.context).returned().clone();
@@ -168,10 +168,10 @@ index c5287c7a..0d5c070c 100644
              // used to report `not null` violations at the tuple literal site.
              let expr_start = self.lexer.peek().clone();
 diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index dc1085c3..c3a42931 100644
+index a38611b1..ec9729ec 100644
 --- a/src/parser/expressions.rs
 +++ b/src/parser/expressions.rs
-@@ -1190,19 +1190,6 @@ impl Parser {
+@@ -1220,19 +1220,6 @@ impl Parser {
          }
      }
  
@@ -191,7 +191,7 @@ index dc1085c3..c3a42931 100644
      // <expression> ::= <for> | 'continue' | 'break' | 'return' | 'yield' | '{' <block> | <operators>
      /// Depth-guarded entry to expression parsing: it bounds the nesting depth at
      /// [`crate::limits::LIMIT`], in every def, sandboxed or not, so a deep `((((…))))` is a clean
-@@ -1346,7 +1333,10 @@ impl Parser {
+@@ -1376,7 +1363,10 @@ impl Parser {
              // since loft loops are currently void-typed.  Covers the common
              // find/search pattern where break-with-value exits the function.
              // TODO: implement for...else for the general case.
@@ -204,10 +204,10 @@ index dc1085c3..c3a42931 100644
                  let break_tp = self.expression(&mut break_val);
                  let ret_tp = self.data.def(self.context).returned().clone();
 diff --git a/src/parser/operators.rs b/src/parser/operators.rs
-index b8f15ebd..a5217a33 100644
+index 5c980f8b..fcf721b6 100644
 --- a/src/parser/operators.rs
 +++ b/src/parser/operators.rs
-@@ -3411,6 +3411,30 @@ impl Parser {
+@@ -3416,6 +3416,30 @@ impl Parser {
              if matches!(self.data.def(*d).returned(), Type::Optional(_)))
      }
  
@@ -238,7 +238,7 @@ index b8f15ebd..a5217a33 100644
      /// Desugar `lhs ?? ...` — both the plain-default form and the
      /// `?? return ret_expr` early-return form.  Lifted out of
      /// [`Self::handle_operator`] so each shape has its own focused helper.
-@@ -3567,14 +3591,8 @@ impl Parser {
+@@ -3572,14 +3596,8 @@ impl Parser {
          // `false ?? x` stays `false` (false is not null); `null ?? x` → x.
          if self.lexer.has_token("return") {
              self.build_null_coalesce_return(code, ctp, &lhs_type);
@@ -255,7 +255,7 @@ index b8f15ebd..a5217a33 100644
          } else {
              self.build_null_coalesce_default(var_tp, code, parent_tp, precedence, ctp, &lhs_type);
          }
-@@ -3866,7 +3884,7 @@ impl Parser {
+@@ -3871,7 +3889,7 @@ impl Parser {
          // produces the typed null sentinel.
          let mut ret_val = Value::Null;
          let r_type = self.data.def(self.context).returned().clone();

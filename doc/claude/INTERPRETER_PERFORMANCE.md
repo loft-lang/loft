@@ -169,11 +169,11 @@ ops per element is the rest.  The lever there is fewer ops per iteration:
 
 - **The reservation before a literal append** — `OpPreAllocVector(v, n, size)`, which the parser
   emits before every literal append to a local vector — claims a record only for an ABSENT
-  vector, `max(n, 11)` elements wide, and `vector_append` claims the same 11 on its own.  So
-  for n <= 11 the interpreter does not emit it (`keys::prealloc_elide_enabled`,
-  `LOFT_NO_PREALLOC_ELIDE=1` keeps it); the IR keeps it, because `--native`'s append-group
-  recognisers read their head and stride from it.  Measured: `push` 279 → 236 ms (−16 %), a
-  record append 623 → 578 ms (−7 %).  Guard
+  vector, exactly n elements wide (`@FR-Col-Capacity`), and `vector_append` claims
+  `grown_elems(1, size)` on its own.  Only where those agree (11 elements of 8 bytes) does the
+  interpreter not emit it (`@FR-R-FirstClaim`, `keys::prealloc_elide_enabled`,
+  `LOFT_NO_PREALLOC_ELIDE=1` keeps it); any other n decides the first block.  The IR keeps it,
+  because `--native`'s append-group recognisers read their head and stride from it.  Guard
   `tests/scripts/a-literal-append-claims-its-vector-once.loft`, pin `tests/prealloc_elide.rs`.
 - **The loop variable** was copied from the range's index each round (`VarInt` + `PutInt`).
   Where nothing but that copy writes the variable and nothing in the body writes the index,

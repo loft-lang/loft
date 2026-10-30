@@ -1,0 +1,49 @@
+// A lazy `sqlite:` source rebound to a SHORTER one is read as itself.  The C runtime keeps a
+// binding's source in a length-counted text and its SQL driver took that text as a C string
+// (the stat that pins the source, the path it opens); a text carries no terminator, so the
+// driver read on past the end into what the buffer held before — after a rebind, the tail of
+// the longer source.  Windows' heap showed it as an intermittent "unable to open database
+// file" on a single bind (`…/pln133_s9.dble`); the rebind makes the leftover bytes certain.
+// Run by tests/native.rs on the interpreter and the C.
+
+use sqlite::*;
+
+struct RbRow { id: integer, nm: text }
+
+struct RbWorld {
+  rows: hash<RbRow[id]> = [],
+}
+
+fn seed(path: text) -> boolean {
+  d = sqlite();
+  if !d.db_open(path) { return false }
+  ok = true;
+  for ddl in [
+    "DROP TABLE IF EXISTS rbrow",
+    "CREATE TABLE rbrow (id INTEGER PRIMARY KEY, nm TEXT NOT NULL)",
+    "INSERT INTO rbrow VALUES (42,'grace')",
+  ] {
+    if !d.db_exec(ddl) { println("FAIL ddl [{ddl}]: {d.db_last_error()}"); ok = false }
+  }
+  d.db_shut();
+  return ok;
+}
+
+fn main() {
+  if !sqlite_available() {
+    println("SKIP rebind_shorter — libsqlite3 is not installed here");
+    return;
+  }
+  path = "{directory()}/.loft/rebind_shorter.db";
+  fresh = delete(path);
+  if !seed(path) { return }
+  w = RbWorld { };
+  // Bound first to a longer source nothing ever opens (a lazy bind reads nothing yet) ...
+  if !store_bind_lazy(w.rows, "sqlite:{path}-a-longer-name-nothing-opens") { println("FAIL bind long"); return }
+  // ... then to the real one, which the lookup must open as written.
+  if !store_bind_lazy(w.rows, "sqlite:{path}") { println("FAIL bind"); return }
+  r = w.rows[42];
+  println("rebind nm={r.nm ?? "<none>"} clean=[{store_lazy_error(w.rows) ?? ""}]");
+  gone = delete(path);
+  if !fresh.ok() && !gone.ok() { println("note: the temp database was not removable") }
+}

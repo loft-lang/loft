@@ -2665,7 +2665,7 @@ and the block it was judged over.  Sites: `hoist::borrowed_store_texts` (`tested
 bind in `Output::output_set`.  Guard
 `tests/scripts/a-match-binding-borrows-its-text-while-the-stores-differ.loft` (falsified under
 `LOFT_POISON=1` by a plant that drops the writer test: t3 reads the scribble), pin
-`tests/tested_text_borrow.rs`.
+`tests/tested_text_borrow.rs`.  On the C the local is a `loft_str` view with a backing text of its own (`loft_own<v>`): the bind tests each root parameter's store against the buffer's and copies into the backing text when they match (`borrowed_assign` in `src/c/body.rs`; cbor `encode_bytes` −16 % on the C ship lane).  No source shape found so far hands such a function a buffer in its parameter's store — every route to one is declined earlier — so on both backends the run-time test is the second line, not the one a cell falsifies.  `LOFT_NO_C_TESTED_BORROW=1` copies again.
 
 **The versioned clause, in words.**  `arguments`' `classify` walks `argv`, a parameter, and
 appends a token per word to its result, which a caller could hand in sharing `argv`'s store;
@@ -2739,8 +2739,13 @@ and refills, so the local can be a `&str` into it for as long as nothing refills
 is what the clause's conditions secure: the work text is the format's own, so only the
 format refills it, and each run of the format rebinds the local — the old borrow is dead by
 then, unless the format reads the local itself (refused) or another variable took the
-borrow over (refused).  rustc checks the same borrow, so a wrong admission is a refused
-compile rather than a wrong answer.  Cells
+borrow over (refused).  rustc checks the same borrow, so on native a wrong admission is a
+refused compile rather than a wrong answer.  The C holds such a local as a `loft_str` view of
+the work text (`work_view_bind` in `c/body.rs`; markdown `render_inline` −28 %, `slugify`
+−18 %): there no checker stands behind the analysis, so a wrong admission answers wrong, and
+`tests/scripts/a-format-bound-text-is-a-view-of-its-work-text-on-c.loft` holds the uses that
+could make the view outlive a refill.  The CALL clause stays a copy on the C (its view would
+be of the callee's answer).  `LOFT_NO_C_WORK_BORROW=1` copies again.  Cells
 `loft-suite/rules/rewrites/R-TextBorrow/a-format-bound-text-borrows-its-work-text.loft` (f1–f13; f4b fails to
 compile with the copy refusal off).  Sites: `hoist::own_format_work`, the format arm of
 `hoist::borrowed_store_texts`.
@@ -4376,7 +4381,16 @@ line in `Output::output_function`'s prelude.
                  cycles); Clang decides without the hint.  The bound is SIZE because
                  hinting every function moved other rows 2-3 % either way, the
                  twelve-statement form none beyond noise.  Counted by the writer
-                 (`FnWriter::write`), declarations and frame sites excluded.
+                 (`FnWriter::write`), declarations, frame sites and the lines that
+                 only close a block or open its `else` excluded — they are no
+                 statements, and counted they kept a seven-statement accessor twin
+                 (`hexset_get__inv`) out of line with eight arguments crossing on the
+                 stack: hex_form `side_edges` −67 %, hex_place `combine_cut` −51 %,
+                 hex_field `trace` −40 %, hex_roof `roof_match` −37 % when they stopped
+                 counting (gcc ship lane, 119 library routines: 6 faster, 112 the same,
+                 hex_world `get_cell` +2.8 %; clang: hex_edge `passable` −15 %, 118 the
+                 same, none slower).  `LOFT_INLINE_COUNT_BRACES=1` counts
+                 them again.
                  Switch `LOFT_NO_INLINE_HINT=1`.
 
   (R-Cold)       a runtime helper on the per-element fast path — an element read or
@@ -5290,15 +5304,18 @@ had (@PLN91 X22).  Switch `LOFT_NO_TAG_JUMP` (and `LOFT_NO_FUSE`).  Guard
 ### A reservation the append repeats is not emitted
 
 ```
-  (R-FirstClaim) an `OpPreAllocVector(v, n, size)` before a literal append of n <= 11
-                 elements to a plain local `v` is emitted as nothing: it claims a record
-                 only for an ABSENT vector, `max(n, 11)` elements wide, and does nothing
-                 to a vector that has one; the append's own first claim (`vector_append`,
-                 reached by `record_new` for every vector element kind) is the same 11
-                 elements.  Capacity is not observable — `len` reads the length, `size`
-                 multiplies it by the stride.  n > 11 keeps the op (it widens the
-                 first claim), and the IR keeps it in every case: it is the head and the
-                 stride native's append-group recognisers read.
+  (R-FirstClaim) an `OpPreAllocVector(v, n, size)` before a literal append to a plain
+                 local `v` is emitted as nothing when n is the append's own first claim,
+                 `grown_elems(1, size)` elements (11 of 8 bytes): the op claims a record
+                 only for an ABSENT vector, exactly n elements wide (Col-Capacity: a known
+                 count is reserved exactly), and does nothing to a vector that has one;
+                 the append's first claim (`vector_append`, reached by `record_new` for
+                 every vector element kind) is `grown_elems(1, size)` elements.  Any other
+                 n keeps the op, because it decides the first block: `[1, 2]` is a
+                 two-element record, where the append alone would claim eleven — the
+                 C backend, which keeps every reservation, lays the store out so.  The IR
+                 keeps it in every case: it is the head and the stride native's
+                 append-group recognisers read.
 ```
 
 **In words.** Applied by: interpreter generator (`generate_call`).  The same FACT native's
@@ -6637,10 +6654,14 @@ the verify switch.
 caller that appends that result then copies it.  The twin starts writing after the
 caller's elements instead, so the copy is gone — but only a body that never looks at what
 the buffer held may run that way, which is what admission checks, mention by mention.
-Native only; the interpreter copies and is the reference.
+Both compiled backends write the twin (the C's is `f__ap`, `src/c/body.rs` `append_site` /
+`append_call`, its mint and clears in `store_operator`; cbor `encode` −27 %, `encode_bytes`
+−40 % on the C ship lane); the interpreter copies and is the reference.  The admission is one
+analysis both read, `src/opt/append_twin.rs`.
 
-**BUILT** (`src/generation/append_twin.rs`, the call path in `calls.rs`, the twin's hooks in
-`emit.rs` / `text.rs`; `LOFT_NO_APPEND_TWIN`, `LOFT_TRACE_APPEND_TWIN`; guard
+**BUILT** (`src/opt/append_twin.rs`, the call path in `calls.rs`, the twin's hooks in
+`emit.rs` / `text.rs`, and on the C `src/c/body.rs`; `LOFT_NO_APPEND_TWIN`,
+`LOFT_TRACE_APPEND_TWIN`; guard
 `loft-suite/rules/rewrites/R-AppendTwin/a-call-result-appended-is-built-in-the-destination.loft`).
 
 ### A call result bound first and appended later is appended where it is made
@@ -6718,11 +6739,13 @@ and neither a value nor the store-level leak check sees it.  The live-reload arm
 parked interpreter call its own buffer (the element would be overrun by a whole record),
 relocates the field into e and reads the scalars back.
 
-**BUILT** (`src/generation/destination.rs` — `shape` for the callee, `site` for the chain;
-the twin's hooks in `emit.rs`, its call name in `calls.rs`, its emission and live arm in
-`mod.rs`; `LOFT_NO_DESTINATION`, `LOFT_TRACE_DESTINATION`; guard
+**BUILT** (`src/lower/destination.rs` — `shape` for the callee, `site` for the chain, read by
+both compiled writers; native's twin hooks in `emit.rs`, its call name in `calls.rs`, its
+emission and live arm in `mod.rs`; the C's `__d` twin (`DS_BIT`) answering its scalars as a
+tuple struct, `dest_scalar_set` / `dest_return` / `destination_site` in `src/c/body.rs` — cbor
+`decode` −56 % on the C ship lane; `LOFT_NO_DESTINATION`, `LOFT_TRACE_DESTINATION`; guard
 `loft-suite/rules/rewrites/R-Destination/a-call-result-moved-into-an-element-is-built-there.loft`, two patch receipts).
-Native only; the interpreter moves as before and is the reference.
+The interpreter moves as before and is the reference.
 
 ### A fn-ref whose every target answers a value record answers the tuple
 

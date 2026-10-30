@@ -51,7 +51,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                  size word is the size its type or its request names, never what the free
                  block happened to hold.  A resize grown in place takes exactly its new size
                  the same way, the rest of the free neighbour left free behind it, and one
-                 that cannot grow in place is claimed anew at exactly that size; spare room
+                 that cannot grow in place — and is not at the store's tail (H-TailGrow) —
+                 is claimed anew at exactly that size; spare room
                  is the collection's to ask for (collections.md Col-Capacity), not the
                  allocator's to hand out.  Freed
                  blocks still merge with their free neighbours exactly as the rules below
@@ -69,6 +70,16 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                  the tail and a delete into it cost no tree delete, insert or
                  rebalance.  At most one wilderness exists, it never overlaps a claim,
                  and the open walk (and every re-tiling) re-derives it.
+  (H-TailGrow)   a resize that cannot grow in place, of a record nothing claimed follows
+                 — the store's end, or a free block that runs to it, comes next — grows
+                 the STORE instead of moving the record: the store takes its growth step
+                 (at least the shortfall), the words from the record's end to the new end
+                 become one free block, and the record grows into it as H-Exact says.
+                 The record keeps its position and nothing is copied.  Moving it instead
+                 claimed a block past it and left the old one as a hole beside the new,
+                 which the next small claims rarely fill: a buffer doubling at the tail
+                 held both rungs at every step.  A record with a claimed block anywhere
+                 behind it moves as before.
   (H-Carve)      inside one store, a best-fit claim of n words from a tree node of b
                  words with b − n ≥ n puts the (b − n)-word remainder IN THE NODE'S
                  PLACE — the node's links, its color, its parent's pointer — instead of

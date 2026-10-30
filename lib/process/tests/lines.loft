@@ -33,15 +33,19 @@ fn test_err_lines_and_input() {
   assert(r.ok && r.stdout == "fed\n", "err_lines: stdout collected [{r.stdout}] code {r.code}");
 }
 
+// The property, not a deadline: once the first line is in hand the producer is still asleep,
+// so the second takes about its second to come.  A cursor that held the lines until the
+// producer ended hands both over at once.  Starting `sh` is not part of the measurement: under
+// load it alone took 500-900 ms on a Windows runner, where the gap still held above 1600 ms.
 fn test_the_first_line_arrives_before_the_producer_ends() {
   c: Command = "sh -c {"echo first; sleep 1; echo second"}";
-  t0 = now();
   l = c.lines();
   first = l.next() ?? "";
-  at = now() - t0;
-  assert(first == "first", "first line: {first}");
-  assert(at < 700, "the first line waited for the producer: {at} ms");
+  t0 = now();
   rest = l.next() ?? "";
+  gap = now() - t0;
+  assert(first == "first", "first line: {first}");
+  assert(gap >= 300, "the first line waited for the producer: the second came {gap} ms after it");
   assert(rest == "second" && l.next() == null, "rest: {rest}");
   assert(l.done().ok, "done");
 }

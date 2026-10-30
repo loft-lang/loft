@@ -1,0 +1,67 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2252 — a text-valued `match` whose subject is not a plain variable lowers to the value
+// form `if … { call } else if … { "" } else if … { "…{x}" } else null`.  `--native` must give
+// every arm of that chain one Rust rep: the call arm is an owned `Str`, the literal and format
+// arms one `if` deeper are borrowed, and the mismatch check did not look into the chain, so
+// rustc refused the program (E0308) that the interpreter and `--native-c` run.
+//
+// What each cell is for:
+//   * `element` — the subject a vector element (`ss[0] ?? panic(…)`): each arm by hand, `o1`,
+//                 `` and `a base x`.
+//   * `nested`  — the subject a field of a record read from a vector, a call arm that recurses,
+//                 and a format arm reading another field: `a base c` through the recursion.
+//   * `bound`   — the same match with its subject bound first (the workaround): `o7`, ``,
+//                 `a base y`.
+// @falsified-at: 23bc61e47 — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+//   CHANNEL: exit — the control's rustc refuses the program (E0308), so no assertion runs.
+
+enum Sh { A { n: integer }, B, C }
+struct T { name: text, parts: vector<Sh> }
+
+fn other(n: integer) -> text { "o{n}" }
+
+fn element(ss: vector<Sh>, name: text) -> text {
+  match ss[0] ?? panic("an element") {
+    A { n } => other(n),
+    B => "",
+    C => "a base {name}",
+  }
+}
+
+fn nested(ts: vector<T>, i: integer) -> text {
+  t = ts[i];
+  if t == null {
+    return "unknown";
+  }
+  match t.parts[0] ?? panic("parts") {
+    A { n } => nested(ts, n),
+    B => "",
+    C => "a base {t.name}",
+  }
+}
+
+fn bound(ss: vector<Sh>, name: text) -> text {
+  s = ss[0] ?? panic("an element");
+  match s {
+    A { n } => other(n),
+    B => "",
+    C => "a base {name}",
+  }
+}
+
+fn main() {
+  assert(element([A { n: 1 }], "x") == "o1", "element: the call arm");
+  assert(element([B], "x") == "", "element: the literal arm");
+  assert(element([C], "x") == "a base x", "element: the format arm");
+  ts = [T { name: "a", parts: [A { n: 1 }] }, T { name: "c", parts: [C] }, T { name: "b", parts: [B] }];
+  assert(nested(ts, 0) == "a base c", "nested: through the recursion");
+  assert(nested(ts, 2) == "", "nested: the literal arm");
+  assert(nested(ts, 5) == "unknown", "nested: a miss");
+  assert(bound([A { n: 7 }], "y") == "o7", "bound: the call arm");
+  assert(bound([B], "y") == "", "bound: the literal arm");
+  assert(bound([C], "y") == "a base y", "bound: the format arm");
+  println("ok");
+}

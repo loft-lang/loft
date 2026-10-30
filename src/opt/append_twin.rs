@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @I68 — Native Rust generator
+// @I68 — shared by the native Rust and the C99 generators
 
 //! `@FR-R-AppendTwin` — `X += f(args)` built in X.
 //!
@@ -17,7 +17,8 @@
 //! The caller's half ([`call_site`]) asks that no argument reach X: a caller never hands a
 //! buffer one of its other arguments reaches (loft#1895 closed the one rebind that did), so
 //! X's root must be the frame's own buffer or a local, and no argument may name that root or
-//! a local whose dependencies do.  Native only; the interpreter copies as before and is the
+//! a local whose dependencies do.  Both compiled backends write the twin (the C as `f__ap`,
+//! `c::body`); the interpreter copies as before and is the
 //! reference.
 
 use crate::data::{Data, Value};

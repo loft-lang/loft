@@ -39,6 +39,20 @@ It holds four constraints:
 4. **The formal rules are the specification.**  Each module implements the rules of one
    `doc/claude/formal/` chapter and cites them by tag.  It is measured by the language
    suite's cells, which are filed under those same rules (§ Reusing the formal rules).
+5. **A reimplementation, not a new language (owner, 2026-10-30).**  The interpreter is the
+   Rust interpreter written again in loft, under ONE rule: the same IR in; the same bytecode
+   out of its lowering, which is the port of the bytecode writer (`src/state/codegen.rs`,
+   `generate_set` and the rest), from the same facts; the same memory structures (one stack
+   store holding the frames and the temporaries at the positions the Rust side gives them,
+   slots reused as its allocator reuses them); and the same semantics for every operator (the
+   port of `fill.rs`/`state`, through the C runtime routines that are their port).  No part is
+   a separate decision and nothing is a mechanism of its own: no owner table, no sweep, no
+   layout or choice the Rust interpreter does not have.  A shape not ported yet is refused by
+   name.  The owner's reason: *"the loft language is not easy to write or maintain, but it is
+   the only way to combine ease of use with optimal code"* — so its intricacy is ported, not
+   redesigned.  This retires the run-time ownership of 1b-s3.md (2026-10-28).  The gate that
+   follows from it: the loft-written bytecode equals `loft introspect`'s, byte for byte, and so
+   do the stores a run makes and frees.
 
 **The order of the goals (owner, 2026-10-28).**  First full coverage: every test and program
 the repository defines (the corpus, `tests/scripts`, the language suite's cells) gives
@@ -261,7 +275,7 @@ cannot quietly shrink.
 | **S5** | closures, coroutines, `par` | `closures`, `coroutines`, `concurrency` |
 | **S6** | natives, the corpus | `tests/scripts` against `--interpret` |
 | **S7** | the interpreter runs itself | S1's benchmarks through the self-run |
-| **O** (beside S1–S6) | ownership as its own track, from S0 on: a checker over the bundle's IR, then the authority in 1a | silent on the ownership corpus and in agreement with `ownership_cfg` ([ownership.md](ownership.md)) |
+| **O** (beside S1–S6) | ownership ported, not redesigned (owner, 2026-10-30): the bytecode writer's bind decisions and the facts they read (`ownership_of`, `owns_displaced_store`, …) in loft, each guarded against its Rust home; in 1a the scope pass itself | the same decisions as the Rust implementation on every corpus program ([ownership.md](ownership.md)) |
 
 ## Steps
 
@@ -422,8 +436,9 @@ gives, and the interpreter's loft code stays readable because the storage is C.
 reference crosses a `#c` call, where the type table comes from, the first slice and its probes.
 **The first slice is built** (records of every field width, texts, embedded records, copies),
 with ownership decided at run time by one owner table (owner, 2026-10-28; 1b-s3.md § Ownership
-at run time), and so is the second, vectors: **the census: 1 026 programs, 117 pass, 0 leak,
-0 wrong, 0 crash, none swept.**
+at run time), and so are the second, vectors, the third, struct enums, and the fourth, hashes
+and their walks, appending a vector and rendering a value: **the census: 1 027 programs, 199 pass, 0 leak, 0 wrong, 0 crash, none
+swept.**
 
 ### SU1 — `store_load` maps the image instead of copying it — DESIGNED 2026-10-28
 

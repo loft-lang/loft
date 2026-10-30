@@ -1,0 +1,134 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// An index walk holds a RECORD, never a position (C147: the body may remove records by key,
+// which moves slots and merges leaves), so each step finds the record's slot again.  The
+// runtime keeps the slot the last step found as a per-thread HINT and takes it only when the
+// slot, in the current tree, is a live leaf's, inside its count, and holds exactly that
+// record (`btree::hinted`); the C runtime does the same (`loft_bt_hinted`; assets
+// `keys_near` −78 %, where every step descended the tree by key compare).  What can go wrong
+// is a stale hint taken: a step from a slot that no longer holds the record, after a removal
+// by key, a removal through the walk, a nested walk over the same tree, or an insert between
+// walks.  Values hand-computed; count AND sum.
+//
+// @falsified-at: none — the hint has no earlier C build to catch, so the receipt is a planted
+//   defect (2026-10-30) in the C runtime: `loft_bt_hinted` trusting a hint without reading the
+//   slot fails h3b ("13 108 288 299" for "300 44850 1 299": each step went on from the slot the
+//   removal had moved the record out of).  h1–h8 pass under it: there the hint stays true.
+//   CHANNEL: an assertion.
+
+struct Elm { k: integer, v: integer }
+struct Db { map: index<Elm[k]> }
+
+fn filled(n: integer) -> Db {
+  d = Db { map: [] };
+  for i in 0..n { d.map += [Elm { k: i, v: i * 3 }]; }
+  d
+}
+
+// h1: a plain walk over 300 records (many leaves): 3 * (0 + … + 299)
+fn test_a_plain_walk() {
+  d = filled(300);
+  c = 0;
+  t = 0;
+  for e in d.map { c += 1; t += e.v; }
+  assert(c == 300 && t == 134550, "h1 {c} {t}");
+}
+
+// h2: every odd record removed through the walk, then walked again: 3 * (0 + 2 + … + 298)
+fn test_removed_through_the_walk() {
+  d = filled(300);
+  for e in d.map if e.k % 2 == 1 { e#remove; }
+  c = 0;
+  t = 0;
+  for e in d.map { c += 1; t += e.v; }
+  assert(c == 150 && t == 67050, "h2 {c} {t}");
+}
+
+// h3: the body removes the NEXT record by key: the walk visits 0, 2, …, 298
+fn test_the_next_record_removed_by_key() {
+  d = filled(300);
+  c = 0;
+  t = 0;
+  for e in d.map {
+    c += 1;
+    t += e.k;
+    if e.k + 1 < 300 { d.map[e.k + 1] = null; }
+  }
+  left = 0;
+  lt = 0;
+  for e in d.map { left += 1; lt += e.k; }
+  assert(c == 150 && t == 22350 && left == 150 && lt == 22350, "h3 {c} {t} {left} {lt}");
+}
+
+// h3b: the body removes the PREVIOUS record by key, which moves the current one a slot left on
+// every step (and across leaves as they merge): every record is visited, 299 alone is left
+fn test_the_previous_record_removed_by_key() {
+  d = filled(300);
+  c = 0;
+  t = 0;
+  for e in d.map {
+    c += 1;
+    t += e.k;
+    if e.k > 0 { d.map[e.k - 1] = null; }
+  }
+  left = 0;
+  last = -1;
+  for e in d.map { left += 1; last = e.k; }
+  assert(c == 300 && t == 44850 && left == 1 && last == 299, "h3b {c} {t} {left} {last}");
+}
+
+// h4: nested walks over two indexes, each keeping its own hint: 50 * 30 pairs
+fn test_nested_walks_over_two_indexes() {
+  a = filled(50);
+  b = filled(30);
+  c = 0;
+  t = 0;
+  for x in a.map { for y in b.map { c += 1; t += x.k * 100 + y.k; } }
+  assert(c == 1500 && t == 3696750, "h4 {c} {t}");
+}
+
+// h5: nested walks over ONE index, whose hints replace each other: (0 + … + 39) squared
+fn test_nested_walks_over_one_index() {
+  d = filled(40);
+  c = 0;
+  t = 0;
+  for x in d.map { for y in d.map { c += 1; t += x.k * y.k; } }
+  assert(c == 1600 && t == 608400, "h5 {c} {t}");
+}
+
+// h6: a reverse walk starts at the last record
+fn test_a_reverse_walk() {
+  d = filled(300);
+  c = 0;
+  first = "";
+  for e in rev(d.map) {
+    if c < 3 { first += "{e.k},"; }
+    c += 1;
+  }
+  assert(c == 300 && first == "299,298,297,", "h6 {c} {first}");
+}
+
+// h7: 250 records removed by key (leaves merge), then walked: 250 + … + 299
+fn test_a_walk_after_merges() {
+  d = filled(300);
+  before = 0;
+  for e in d.map { before += e.v; }
+  for i in 0..250 { d.map[i] = null; }
+  c = 0;
+  t = 0;
+  for e in d.map { c += 1; t += e.k; }
+  assert(before == 134550 && c == 50 && t == 13725, "h7 {before} {c} {t}");
+}
+
+// h8: records inserted between two walks (leaves split): 0 + … + 399
+fn test_a_walk_after_inserts() {
+  d = filled(300);
+  before = 0;
+  for e in d.map { before += e.v; }
+  for i in 300..400 { d.map += [Elm { k: i, v: i * 3 }]; }
+  c = 0;
+  t = 0;
+  for e in d.map { c += 1; t += e.k; }
+  assert(before == 134550 && c == 400 && t == 79800, "h8 {before} {c} {t}");
+}

@@ -87,6 +87,14 @@ fn wild_bump_enabled() -> bool {
     *FLAG.get_or_init(|| !std::env::var("LOFT_NO_WILD_BUMP").is_ok_and(|v| v != "0"))
 }
 
+/// `LOFT_NO_TAIL_GROW=1` moves a record at the store's tail to a new block when it outgrows
+/// the free words behind it, as before `@FR-H-TailGrow`: the A/B for its footprint, and the
+/// bisect step for a store-layout fault.  Read once.
+fn tail_grow_enabled() -> bool {
+    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FLAG.get_or_init(|| !std::env::var("LOFT_NO_TAIL_GROW").is_ok_and(|v| v != "0"))
+}
+
 fn wilderness_enabled() -> bool {
     static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *FLAG.get_or_init(|| !std::env::var("LOFT_NO_WILDERNESS").is_ok_and(|v| v != "0"))
@@ -1678,6 +1686,10 @@ impl Store {
         // garbage headers (the release infinite-loop / heap-over-read hazards).
         store.validate_structure()?;
         store.fl_rebuild();
+        // Its records arrived as an image, so `claims` is rebuilt from the chain as `load` and
+        // `open` do: the old-layout conversion reads this store directly (`upgrade_store_run`),
+        // and an empty set read its root as `Unknown record 1` under debug assertions.
+        store.claims_rebuild();
         Ok(store)
     }
 
@@ -2356,6 +2368,7 @@ impl Store {
         }
         crate::store_census::note(crate::store_census::Work::Grow, 1);
         let next = rec + claim as u32;
+        self.grow_tail_for(rec, next, claim, req_size);
         if next < self.size {
             let next_size = self.read::<i32>(next, 0);
             if next_size < 0 && claim - next_size >= req_size {
@@ -2414,6 +2427,41 @@ impl Store {
             self.read::<i32>(new, 0)
         ));
         new
+    }
+
+    /// `@FR-H-TailGrow` — `rec` (a block of `claim` words, `next` the word past it) must grow
+    /// to `req` words.  When nothing claimed follows it — `next` is the store's end, or a free
+    /// block that runs to the end — and that free room is too small, the store takes its growth
+    /// step and the words from `next` to the new end become one free block, which the in-place
+    /// branch of [`Store::resize`] then grows the record into.  Moving it instead claimed a
+    /// block past it and left the old one as a hole beside the new: a buffer doubling at the
+    /// tail held both rungs at every step.  The interpreter's stack store keeps the old path
+    /// (`@FR-R-StackBase`), and `LOFT_NO_TAIL_GROW=1` turns the rule off.
+    fn grow_tail_for(&mut self, rec: u32, next: u32, claim: i32, req: i32) {
+        if self.stack_buffer || !tail_grow_enabled() {
+            return;
+        }
+        let room = if next >= self.size {
+            0
+        } else {
+            let h = self.read::<i32>(next, 0);
+            if h >= 0 || next + h.unsigned_abs() != self.size {
+                return;
+            }
+            -h
+        };
+        if claim + room >= req {
+            return;
+        }
+        if room > 0 {
+            self.fl_remove(next);
+        }
+        let end = rec + req as u32;
+        self.resize_store(end);
+        self.set_free_header(next, (self.size - next) as i32);
+        self.fl_insert(next);
+        // The move this replaces raised the claimed high-water mark at least this far.
+        self.claimed_end = self.claimed_end.max(end);
     }
 
     /// Delete a record, this assumes that all links towards this record are already removed
@@ -7876,6 +7924,48 @@ mod tests {
             0x0065_4321,
             "a's own bytes survive the growth"
         );
+    }
+
+    /// `@FR-H-TailGrow` — a record nothing claimed follows, doubled again and again, grows where
+    /// it is: its position never changes and its bytes stay, so the store never holds an old
+    /// rung beside a new one.
+    #[test]
+    fn a_tail_record_grows_where_it_is() {
+        let mut store = Store::new(64);
+        store.free = false;
+        let head = store.claim(3);
+        let rec = store.claim(8);
+        store.write::<u32>(rec, 8, 0xABCD_1234);
+        let mut words = 8;
+        for _ in 0..10 {
+            words *= 2;
+            assert_eq!(
+                store.resize(rec, words),
+                rec,
+                "grown in place to {words} words"
+            );
+        }
+        assert_eq!(
+            store.read::<u32>(rec, 8),
+            0xABCD_1234,
+            "the record's bytes survive"
+        );
+        assert_eq!(
+            store.read::<i32>(rec, 0),
+            words as i32,
+            "exactly the size asked for"
+        );
+        // Everything below the record is the head; every word past it is the one free tail.
+        assert!(store.size >= rec + words, "the store holds the record");
+        let tail = rec + words;
+        if tail < store.size {
+            assert_eq!(
+                -store.read::<i32>(tail, 0),
+                (store.size - tail) as i32,
+                "one free block ends the store"
+            );
+        }
+        let _ = head;
     }
 
     /// `@FR-R-StackBase` — a buffer move on the interpreter's stack store other than the

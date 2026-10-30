@@ -376,7 +376,10 @@ written from word 0 to past its last live record, padded to the 1024-word floor,
 the sidecar gated (`classify`: the same hash and dump, `Release::admits`), the image adopted
 into the slot as `Store::load` builds one (no parked lists, no lazy frees, the allocator state
 re-derived from the blocks).  A file of another layout is refused, where the interpreter
-converts it; a store holding references has them re-pointed at its slot from the slot its
+converts it — except one written before the null-first key order (`placement::KEY_ORDER`), which a
+whole load converts: the gate admits a layout that differs only by `,order=1` and
+`loft_rekey_walk` files every `sorted`, `ordered` and `index` whose key moved again in this
+build's order (a paged load still refuses it, as the interpreter's does); a store holding references has them re-pointed at its slot from the slot its
 sidecar recorded (`rebase_stored_refs`), read off the image's bytes before it is adopted, so a
 refusal leaves the store as it was; `store_load_untrusted` validates the block structure first
 (`Store::validate_structure`); compaction on load is not done (it declines for an image
@@ -585,10 +588,11 @@ the C runtime when the runtime carries it (`in_binary_native` in `mod.rs`), and 
 by name when it does not — never the "not loaded" stub, which the interpreter cannot give for a
 native of its own binary.  `loft_process.h` carries `lib/process` (`process_run`: one `poll`
 drains every pipe, a child leads its own process group, the timeout stops the tree) and
-`lib/git` (`git_query`).  The web and server libraries' natives are not the runtime's: they are
-the `net` component (`loft_web.h`, `loft_server.h` and the HTTP client compiled into
-`libloft_net` by `src/c/component.rs`), which a C unit calls through the loft-ffi ABI as it
-calls any prebuilt library (`tests/web_natives.rs`, `tests/server_natives.rs` the guards).  `loft_engine.h` carries `lib/engine_host`'s kernel: the listener and
+`lib/git` (`git_query`).  The web, server and ssh libraries' natives are not the runtime's:
+they are the `net` component (`loft_web.h`, `loft_server.h`, `loft_ssh.h` and the HTTP client
+compiled into `libloft_net` by `src/c/component.rs`), which a C unit calls through the loft-ffi
+ABI as it calls any prebuilt library (`tests/web_natives.rs`, `tests/server_natives.rs`,
+`tests/ssh_natives.rs` the guards; § The SSH client).  `loft_engine.h` carries `lib/engine_host`'s kernel: the listener and
 the connector over WebSockets, the UDP state-sync channel, the events, ticks and `post`, the
 `D!:` debug channel answering as a build with no live tier, and `http_fetch` on a worker thread
 over the runtime's HTTP client (above).  Not carried, so refused by name: the
@@ -606,6 +610,36 @@ socket a process leaves open, discarding what the peer had not read
 store-internal kind it reaches.  `expose` and `release` lock and unlock the value's store; a
 walk over a hash in a locked store keeps its snapshot in a store of its own
 (`build_rec_scratch`).
+
+### The SSH client
+
+`src/c/tls/loft_ssh.c`, built into the TLS archive from the vendored BearSSL, is the ssh
+library's client; `src/c/loft_ssh.h` puts it behind the library's eight natives in the `net`
+component.  It speaks the slice of SSH-2 an interactive shell needs: curve25519-sha256 with
+strict kex, and rekeys the server starts; host keys ssh-ed25519 (an Ed25519 of its own, which
+BearSSL lacks), ecdsa-sha2-nistp256 and rsa-sha2-512/256; aes256/128-gcm@openssh.com, else
+AES-CTR with HMAC-SHA2-256/512 (encrypt-then-MAC first); password login; one session channel with
+a pty, a shell, window-change and flow control both ways.  Every blocking step has a 30 s
+deadline and `ssh_recv` never waits.  The host key's signature over the exchange is always
+verified; which key the server holds is not checked against a store — a first-use record is the
+hardening step left.  `LOFT_SSH_TRACE=1` prints why a connect, a login or a shell failed.
+
+Two instruments, for two questions:
+
+- **The interactions** — `tests/ssh_natives.rs` runs `tests/fixtures/ssh_natives/interact.loft`
+  on the interpreter, the Rust writer and the C against `test_sshd.c`, a small server built on
+  the client's own packet layer: a refused password, the pty size and a resize, the 256 byte
+  values, 3 000 000 bytes past the client's window, 200 000 bytes through an 8 KiB window, the
+  exit, and every call on a closed handle a no-op.  It agrees with the client by construction,
+  so it says nothing about the protocol.  Where `cl` links units the server is not built.
+- **The protocol** — OpenSSH.  `sshd -d -f <config>` runs non-root on a high port with its own
+  host keys, one connection per run; pinning `HostKeyAlgorithms`, `Ciphers` and `MACs` in the
+  config and answering a bad password covers every host key × cipher × MAC.  A full login needs
+  an account with a password, which a Linux runner has: `gh workflow run linux-probe.yml -f
+  run=…` that adds one (`useradd`, `chpasswd`, `PasswordAuthentication yes`), runs
+  `make components`, and runs `tests/fixtures/ssh_natives/session.loft` with `SSH_HOST`,
+  `SSH_PORT`, `SSH_USER`, `SSH_PW` on each backend: login, `stty size` before and after a
+  resize, 3 MB out, 200 KB in through a raw-mode reader, and the exit.
 
 ## Not carried yet
 

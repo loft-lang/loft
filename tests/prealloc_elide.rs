@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The interpreter emits no `OpPreAllocVector` that only repeats the append after it — PINNED
 //! on the bytecode of the cells (`tests/scripts/a-literal-append-claims-its-vector-once.loft`):
-//! a reservation for a literal of at most 11 elements is gone, a wider one stays, and
+//! a reservation whose count is the append's own first claim (`grown_elems(1, size)`, 11 of
+//! 8 bytes) is gone, any other stays — a known count is reserved exactly (`@FR-Col-Capacity`),
+//! so it decides the first block — and
 //! `LOFT_NO_PREALLOC_ELIDE=1` keeps every one.  The cells' values pass on either form, so only
 //! this pin sees the elision drift.  The IR and the native Rust do not change, which the
 //! third test checks: the op is the head `--native`'s append-group recognisers read.
@@ -12,14 +14,14 @@ const CELLS: &str = "tests/scripts/a-literal-append-claims-its-vector-once.loft"
 
 /// Per function: the reservations in its bytecode with the elision ON, and with it OFF.
 const EXPECTED: &[(&str, usize, usize)] = &[
-    ("n_ints", 0, 1),                   // the counted push loop the elision is for
-    ("n_test_narrow_bytes", 0, 1),      // a `u8` element: one byte wide
-    ("n_test_records", 0, 1),           // a record element
-    ("n_test_nested", 0, 2),            // a nested vector and its row literal
-    ("n_test_text", 0, 1),              // a text element
-    ("n_test_eleven_and_twelve", 1, 4), // eleven elided, twelve kept
-    ("n_test_cleared_refill", 0, 2),    // the vector has a record on the second fill
-    ("n_test_array", 0, 1),             // record-id slots: each element its own record
+    ("n_ints", 1, 1),                   // one element: an exact first block of one
+    ("n_test_narrow_bytes", 1, 1),      // a `u8` element: one byte wide
+    ("n_test_records", 1, 1),           // a record element
+    ("n_test_nested", 2, 2),            // a nested vector and its row literal
+    ("n_test_text", 1, 1),              // a text element
+    ("n_test_eleven_and_twelve", 3, 4), // eleven of 8 bytes is the append's claim: elided
+    ("n_test_cleared_refill", 2, 2),    // the vector has a record on the second fill
+    ("n_test_array", 1, 1),             // record-id slots: each element its own record
     ("n_test_field", 0, 0),             // a field: the parser reserves nothing
 ];
 

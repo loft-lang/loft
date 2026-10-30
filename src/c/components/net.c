@@ -1,21 +1,23 @@
 /* Copyright (c) 2026 Jurjen Stellingwerff
  * SPDX-License-Identifier: LGPL-3.0-or-later
  *
- * libloft_net — the component behind the web and server libraries (@PLN205 L1.2, L1.3): their
+ * libloft_net — the component behind the web, server and ssh libraries (@PLN205 L1.2, L1.3): their
  * `#native` functions as the loft-ffi ABI's typed symbols and bridges
  * (`loft-ffi/include/loft_ffi.h`), over the C runtime's own HTTP client, TLS and WebSocket code
- * (`loft_https.h`, which a C unit also pastes; `loft_web.h`, `loft_server.h`,
- * `tls/loft_tls.c`).  Built ahead of time by `loft-components`
+ * (`loft_https.h`, which a C unit also pastes; `loft_web.h`, `loft_server.h`, `loft_ssh.h`,
+ * `tls/loft_tls.c`, `tls/loft_ssh.c`).  Built ahead of time by `loft-components`
  * (`src/c/component.rs`), never where it is used. */
 #include "loft_cc.h"
 #include "loft_text.h"
 #define LOFT_HTTPS 1
 #define LOFT_WEB 1
 #define LOFT_SERVER 1
+#define LOFT_SSH 1
 #include "loft_sock.h"
 #include "loft_https.h"
 #include "loft_web.h"
 #include "loft_server.h"
+#include "loft_ssh.h"
 #include "loft_ffi.h"
 
 #if defined(_WIN32)
@@ -127,6 +129,18 @@ NET_EXPORT int64_t n_ws_broadcast(int64_t h, const uint8_t *m, size_t mn) {
     return loft_srv_ws_broadcast(net_arg(m, mn));
 }
 NET_EXPORT void n_ws_idle_sleep_ms(int64_t ms) { loft_srv_sleep_ms(ms); }
+NET_EXPORT int64_t n_ssh_connect(const uint8_t *h, size_t hn, int64_t port) { return loft_ssh_connect(net_arg(h, hn), port); }
+NET_EXPORT uint8_t n_ssh_login(int64_t h, const uint8_t *u, size_t un, const uint8_t *p, size_t pn) {
+    return loft_ssh_login_h(h, net_arg(u, un), net_arg(p, pn));
+}
+NET_EXPORT uint8_t n_ssh_open_shell(int64_t h, const uint8_t *t, size_t tn, int64_t cols, int64_t rows) {
+    return loft_ssh_shell_h(h, net_arg(t, tn), cols, rows);
+}
+NET_EXPORT void n_ssh_send(int64_t h, const uint8_t *d, size_t dn) { loft_ssh_send_h(h, net_arg(d, dn)); }
+NET_EXPORT loft_ffi_str n_ssh_recv(int64_t h) { return net_text(loft_ssh_recv_h(h)); }
+NET_EXPORT void n_ssh_resize(int64_t h, int64_t cols, int64_t rows) { loft_ssh_resize_h(h, cols, rows); }
+NET_EXPORT uint8_t n_ssh_is_open(int64_t h) { return loft_ssh_is_open_h(h); }
+NET_EXPORT void n_ssh_close(int64_t h) { loft_ssh_close_h(h); }
 
 /* ── Bridges: what the interpreter calls, one per symbol ── */
 
@@ -188,6 +202,14 @@ BRIDGE(ws_event_client_id) { UNUSED; *r = loft_ffi_value_i64(n_ws_event_client_i
 BRIDGE(ws_event_payload) { UNUSED; *r = loft_ffi_value_text(n_ws_event_payload()); }
 BRIDGE(ws_broadcast) { UNUSED; *r = loft_ffi_value_i64(n_ws_broadcast(I(0), T(1))); }
 BRIDGE(ws_idle_sleep_ms) { UNUSED; n_ws_idle_sleep_ms(I(0)); r->tag = LOFT_FFI_TAG_VOID; }
+BRIDGE(ssh_connect) { UNUSED; *r = loft_ffi_value_i64(n_ssh_connect(T(0), I(1))); }
+BRIDGE(ssh_login) { UNUSED; *r = loft_ffi_value_bool(n_ssh_login(I(0), T(1), T(2))); }
+BRIDGE(ssh_open_shell) { UNUSED; *r = loft_ffi_value_bool(n_ssh_open_shell(I(0), T(1), I(2), I(3))); }
+BRIDGE(ssh_send) { UNUSED; n_ssh_send(I(0), T(1)); r->tag = LOFT_FFI_TAG_VOID; }
+BRIDGE(ssh_recv) { UNUSED; *r = loft_ffi_value_text(n_ssh_recv(I(0))); }
+BRIDGE(ssh_resize) { UNUSED; n_ssh_resize(I(0), I(1), I(2)); r->tag = LOFT_FFI_TAG_VOID; }
+BRIDGE(ssh_is_open) { UNUSED; *r = loft_ffi_value_bool(n_ssh_is_open(I(0))); }
+BRIDGE(ssh_close) { UNUSED; n_ssh_close(I(0)); r->tag = LOFT_FFI_TAG_VOID; }
 
 #define NATIVES(X) X(http_do) X(http_body) X(http_headers) X(http_head_size) X(ws_connect) X(ws_client_send) \
     X(ws_client_send_binary) X(ws_client_recv) X(ws_client_message) X(ws_client_opcode) X(ws_client_close) \
@@ -197,7 +219,8 @@ BRIDGE(ws_idle_sleep_ms) { UNUSED; n_ws_idle_sleep_ms(I(0)); r->tag = LOFT_FFI_T
     X(tcp_method) X(tcp_path) X(tcp_body) X(tcp_headers) X(tcp_respond) X(tcp_respond_typed) X(tcp_respond_bytes) \
     X(tcp_respond_full) X(tcp_slice) X(tcp_close) X(ws_upgrade) X(ws_recv) X(ws_message) X(ws_opcode) X(ws_send) \
     X(ws_send_binary) X(ws_close) X(ws_accept_nonblocking) X(ws_clients_len) X(ws_client_active) X(ws_next_event) \
-    X(ws_event_kind) X(ws_event_client_id) X(ws_event_payload) X(ws_broadcast) X(ws_idle_sleep_ms)
+    X(ws_event_kind) X(ws_event_client_id) X(ws_event_payload) X(ws_broadcast) X(ws_idle_sleep_ms) \
+    X(ssh_connect) X(ssh_login) X(ssh_open_shell) X(ssh_send) X(ssh_recv) X(ssh_resize) X(ssh_is_open) X(ssh_close)
 
 #define REG_TYPED(name) cb((const uint8_t *) "n_" #name, sizeof("n_" #name) - 1, (const void *) n_##name, ctx);
 #define REG_BRIDGE(name) cb((const uint8_t *) "n_" #name, sizeof("n_" #name) - 1, (const void *) b_##name, ctx);

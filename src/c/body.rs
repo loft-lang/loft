@@ -204,6 +204,18 @@ pub(crate) struct FnWriter<'a> {
     /// `@FR-R-HandOver`'s rotate clause: in a `__nk` twin, the keep statement the body skips
     /// (by node address); at a rotate site, the callee whose next call goes to that twin.
     nk_skip: Option<usize>,
+    /// `@FR-R-AppendTwin` — in an `__ap` twin, the return buffer (the caller's vector) and every
+    /// local that views it; the statement-level call site's rewritten call, matched by callee
+    /// and argument slice so its emission asks for the callee's twin; the eligibility memo.
+    ap_buf: Option<u16>,
+    ap_views: std::collections::HashSet<u16>,
+    ap_site: Option<(u32, usize)>,
+    ap_memo: std::collections::HashMap<u32, bool>,
+    /// `@FR-R-Destination` — in a `__d` twin, the shape (its buffer is the caller's element,
+    /// its scalar fields the locals `loft_ds<k>`); the call site's rewritten call, matched by
+    /// callee and argument slice so its emission asks for the callee's twin.
+    ds: Option<crate::lower::destination::Shape>,
+    ds_site: Option<(u32, usize)>,
     nk_call: Option<u32>,
     /// `@FR-R-GuardedChain` — per guarded loop, the argument-slice addresses of its admitted
     /// chain operators, and the guard they branch on (`None` in the plain copy of an innermost
@@ -267,6 +279,9 @@ pub(crate) struct FnWriter<'a> {
     /// text locals a walk binds to an element it only READS, under a loop that writes no store —
     /// each a `loft_str` view of the element, as a text parameter is, never a copy.
     borrowed: Vec<bool>,
+    /// `@FR-R-TextBorrow`'s tested clause: the borrowed locals that view a parameter's text only
+    /// while each root parameter's store is not the return buffer's, with those roots.
+    tested: std::collections::HashMap<u16, Vec<u16>>,
     /// `@FR-R-CharWalk` (`opt::char_walk::char_walks`, which the interpreter and native read):
     /// this function's `for c in t` walks by loop scope — their step takes an ASCII byte without
     /// decoding it, and their null test is asked once where the loop never writes `t`.
@@ -328,13 +343,13 @@ struct WindowLoop<'b> {
 /// local or a text parameter, a literal, a text field read, a block ending in one — so
 /// admitting it never turns a carried program into a refused one.
 /// `LOFT_NO_TEXT_BORROW=1` keeps every copy, as on native.
-fn borrowed_texts(cx: &Cx, d: u32) -> Vec<bool> {
+fn borrowed_texts(cx: &Cx, d: u32) -> (Vec<bool>, std::collections::HashMap<u16, Vec<u16>>) {
     let def = cx.data.def(d);
     let vars = def.variables();
     let n = vars.count() as usize;
     let mut b = vec![false; n];
     if std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0") {
-        return b;
+        return (b, std::collections::HashMap::new());
     }
     // As native's setup: the lazy splits' and the split tables' walks need no store
     // condition — their pieces are slices of a text — and a `?` discharge of a table's
@@ -367,7 +382,39 @@ fn borrowed_texts(cx: &Cx, d: u32) -> Vec<bool> {
         .keys()
         .filter(|v| !store.tested.contains_key(v) && !store.work.contains(v))
         .copied();
-    for v in walks.keys().copied().chain(plain) {
+    // The format clause: a local bound only to literals and to format strings whose work text
+    // is the format's own (`store.work`) views that work text, which only another run of the
+    // same format rewrites — and that run binds the local again.  The call clause keeps its
+    // copy: its view would be of the callee's answer.
+    let work: std::collections::HashSet<u16> =
+        if crate::env_once!(std::env::var("LOFT_NO_C_WORK_BORROW").is_ok_and(|v| v != "0")) {
+            std::collections::HashSet::new()
+        } else {
+            store.work.clone()
+        };
+    // The tested clause: a local whose scope also writes the return buffer borrows while each
+    // root parameter's store is not the buffer's, tested at its bind, and copies into a text
+    // of its own (`loft_own<v>`) otherwise.  `LOFT_NO_C_TESTED_BORROW=1` keeps the copy.
+    let tested: std::collections::HashMap<u16, Vec<u16>> =
+        if crate::env_once!(std::env::var("LOFT_NO_C_TESTED_BORROW").is_ok_and(|v| v != "0"))
+            || crate::opt::hoist::retbuf_var(cx.data, d).is_none()
+        {
+            std::collections::HashMap::new()
+        } else {
+            store
+                .tested
+                .iter()
+                .filter(|(v, _)| !store.work.contains(v))
+                .map(|(v, r)| (*v, r.clone()))
+                .collect()
+        };
+    for v in walks
+        .keys()
+        .copied()
+        .chain(plain)
+        .chain(work.iter().copied())
+        .chain(tested.keys().copied())
+    {
         let i = v as usize;
         if i < n
             && !vars.is_argument(v)
@@ -390,15 +437,42 @@ fn borrowed_texts(cx: &Cx, d: u32) -> Vec<bool> {
     loop {
         let mut dropped = false;
         for (v, x) in &binds {
-            if b[*v as usize] && !view_bind(cx, vars, &b, x) {
+            if b[*v as usize]
+                && !view_bind(cx, vars, &b, x)
+                && !(work.contains(v) && work_view_bind(vars, &b, x))
+            {
                 b[*v as usize] = false;
                 dropped = true;
             }
         }
         if !dropped {
-            return b;
+            let tested = tested
+                .into_iter()
+                .filter(|(v, _)| b.get(*v as usize).copied().unwrap_or(false))
+                .collect();
+            return (b, tested);
         }
     }
+}
+
+/// `@FR-R-TextBorrow`'s format clause (C): a bind of a work-text borrower that is a format
+/// block ending in its work text, a frame-local text the view reads in place.
+fn work_view_bind(vars: &Function, borrowed: &[bool], x: &Value) -> bool {
+    let Value::Block(bl) = x.unspan() else {
+        return false;
+    };
+    let last = bl
+        .operators
+        .iter()
+        .rev()
+        .find(|o| !matches!(o.unspan(), Value::Line(_)));
+    let Some(Value::Var(w)) = last.map(Value::unspan) else {
+        return false;
+    };
+    (*w as usize) < borrowed.len()
+        && !borrowed[*w as usize]
+        && !vars.is_argument(*w)
+        && matches!(vars.tp(*w).base(), crate::data::Type::Text(_))
 }
 
 /// Is `x` a text the view form of a borrowed bind writes with no temporary (`borrowed_texts`)?
@@ -521,6 +595,7 @@ impl<'a> FnWriter<'a> {
     #[expect(clippy::too_many_lines)]
     pub(crate) fn new(cx: &'a Cx<'a>, d: u32, shapes: Vec<CType>, ret: CType) -> FnWriter<'a> {
         let def = cx.data.def(d);
+        let (borrowed, tested) = borrowed_texts(cx, d);
         FnWriter {
             cx,
             d,
@@ -568,6 +643,12 @@ impl<'a> FnWriter<'a> {
             raw: std::collections::HashMap::new(),
             field_view: false,
             nk_skip: None,
+            ap_buf: None,
+            ap_views: std::collections::HashSet::new(),
+            ap_site: None,
+            ap_memo: std::collections::HashMap::new(),
+            ds: None,
+            ds_site: None,
             nk_call: None,
             plain_chains: Vec::new(),
             chain_guards: 0,
@@ -589,7 +670,8 @@ impl<'a> FnWriter<'a> {
             in_delivery: 0,
             windows: Vec::new(),
             file_holds: Vec::new(),
-            borrowed: borrowed_texts(cx, d),
+            borrowed,
+            tested,
             lazy: if std::env::var("LOFT_NO_LAZY_SPLIT").is_ok_and(|v| v != "0") {
                 std::collections::BTreeMap::new()
             } else {
@@ -683,6 +765,30 @@ impl<'a> FnWriter<'a> {
 
     /// This is an `__inv` twin (`@FR-R-Inputs`): `frame` is the headers its caller hands it,
     /// valid for the call, since an admitted callee grows no store.
+    /// An `__ap` twin (`super::AP_BIT`, `@FR-R-AppendTwin`): the return buffer is the caller's
+    /// vector, so none of its clears run and it is minted only where the caller handed none;
+    /// the result never adopts the buffer (`@FR-R-RetAdopt` binds the result to it and clears
+    /// it — the caller's elements).
+    pub(crate) fn append_twin(mut self, on: bool) -> Self {
+        if on && let Some(b) = crate::opt::append_twin::buffer(self.cx.data, self.d) {
+            self.ap_buf = Some(b);
+            self.ap_views = crate::opt::append_twin::views(self.vars, b);
+            self.adopt = None;
+        }
+        self
+    }
+
+    /// A `__d` twin (`super::DS_BIT`, `@FR-R-Destination`): the return buffer is the caller's
+    /// fresh element, a write to one of its scalar fields is the local the twin answers, and
+    /// `return buf` answers those locals as a tuple.  The result never adopts the buffer.
+    pub(crate) fn destination(mut self, on: bool) -> Self {
+        if on {
+            self.ds = self.cx.dest_shape(self.d);
+            self.adopt = None;
+        }
+        self
+    }
+
     /// A `__nk` twin (`super::NK_BIT`): the body without its keep statement.
     pub(crate) fn nokeep(mut self, on: bool) -> Result<Self, String> {
         if on {
@@ -738,6 +844,22 @@ impl<'a> FnWriter<'a> {
         self
     }
 
+    /// `@FR-R-Inline` counts STATEMENTS: the body's lines without its frame sites and the lines
+    /// that only close a block or open its `else` (`LOFT_INLINE_COUNT_BRACES=1` counts those).
+    fn statement_count(&self) -> usize {
+        let braces =
+            crate::env_once!(std::env::var("LOFT_INLINE_COUNT_BRACES").is_ok_and(|v| v != "0"));
+        self.body
+            .lines()
+            .filter(|l| {
+                let t = l.trim();
+                !t.is_empty()
+                    && !l.contains("loft_frame_site(")
+                    && (braces || !matches!(t, "}" | "{" | "};" | "} else {"))
+            })
+            .count()
+    }
+
     /// The body: the locals, the temporaries and the statements.
     /// The function's C body, and how many statements it holds — its own lines, without the
     /// declarations, the blank lines and the frame-site bookkeeping (`small_function`).
@@ -768,6 +890,13 @@ impl<'a> FnWriter<'a> {
             for a in &tab.aliases {
                 self.tab_alias.insert(*a, *v);
             }
+        }
+        self.ds_decls();
+        let mut owns: Vec<u16> = self.tested.keys().copied().collect();
+        owns.sort_unstable();
+        for v in owns {
+            self.decls
+                .push(format!("loft_text loft_own{v} = {{ 0, 0, 0 }};"));
         }
         self.apr_decls();
         self.apv_decls();
@@ -840,11 +969,7 @@ impl<'a> FnWriter<'a> {
         if !slots.is_empty() {
             let _ = writeln!(out, "    LOFT_HOLD({}, {});", slots.len(), slots.join(", "));
         }
-        let statements = self
-            .body
-            .lines()
-            .filter(|l| !l.trim().is_empty() && !l.contains("loft_frame_site("))
-            .count();
+        let statements = self.statement_count();
         out.push_str(&self.body);
         Ok((out, statements))
     }
@@ -941,6 +1066,10 @@ impl<'a> FnWriter<'a> {
                 .filter(|(_, c)| *c == CType::Text)
                 .map(|(t, _)| t.clone()),
         );
+        // A tested borrow's own text, which its copying path fills.
+        let mut owns: Vec<u16> = self.tested.keys().copied().collect();
+        owns.sort_unstable();
+        texts.extend(owns.into_iter().map(|v| format!("loft_own{v}")));
         // And the texts a tuple temporary holds.
         let tuple_temps: Vec<(String, u32)> = self
             .temps
@@ -2213,6 +2342,10 @@ impl<'a> FnWriter<'a> {
                 i = last + 1;
                 continue;
             }
+            if let Some(last) = self.destination_site(ops, i, ind)? {
+                i = last + 1;
+                continue;
+            }
             if let Some(last) = self.keyed_entry_site(ops, i, ind)? {
                 ops[i..=last]
                     .iter()
@@ -2743,6 +2876,254 @@ impl<'a> FnWriter<'a> {
     }
 
     /// Emit `v` for its effect.
+    /// `@FR-R-Destination`'s callee half: the scalar locals a `__d` twin answers.
+    fn ds_decls(&mut self) {
+        if let Some(ds) = &self.ds {
+            for (k, sc) in ds.scalars.iter().enumerate() {
+                let c = super::dest_scalar_ctype(sc);
+                self.decls.push(format!("{} loft_ds{k} = 0;", held(c)));
+            }
+        }
+    }
+
+    /// `@FR-R-Destination`'s callee half: a write to a scalar field of the buffer, by that
+    /// field's own setter, is the twin's local — the field lies past the caller's element the
+    /// buffer stands for.
+    fn dest_scalar_set(
+        &mut self,
+        name: &str,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<Option<E>, String> {
+        let Some(ds) = &self.ds else { return Ok(None) };
+        let [base, off, val] = args else {
+            return Ok(None);
+        };
+        if !matches!(base.unspan(), Value::Var(b) if *b == ds.rb) {
+            return Ok(None);
+        }
+        let Value::Int(off) = off.unspan() else {
+            return Ok(None);
+        };
+        let Some(k) = ds
+            .scalars
+            .iter()
+            .position(|sc| sc.off == i64::from(*off) && sc.setter == name)
+        else {
+            return Ok(None);
+        };
+        let c = super::dest_scalar_ctype(&ds.scalars[k]);
+        let e = self.expr(val, ind)?;
+        let v = match c {
+            CType::Float => as_float(e)?,
+            CType::Single => as_single(e)?,
+            CType::Bool => as_bool(e)?,
+            _ => as_int(e)?,
+        };
+        Ok(Some(E::new(format!("loft_ds{k} = {v}"), K::Void)))
+    }
+
+    /// `@FR-R-Destination`'s callee half: `return buf` answers the scalar locals.
+    fn dest_return(&mut self, ind: usize) {
+        let n = self.ds.as_ref().map_or(0, |ds| ds.scalars.len());
+        let CType::Tuple(id) = self.ret else { return };
+        let r = self.temp(self.ret);
+        let parts: Vec<String> = (0..n).map(|k| format!("loft_ds{k}")).collect();
+        self.line(
+            ind,
+            &format!("{r} = (loft_tup{id}){{ {} }};", parts.join(", ")),
+        );
+        self.ret_held(&r, ind);
+    }
+
+    /// `@FR-R-Destination`'s caller half (`lower::destination::site`): the element's mint,
+    /// hoisted above the chain, then each call into its destination — the callee's `__d` twin
+    /// writing the moved field into the element and answering its scalars — and its `ok` arm
+    /// with the moves gone; the element finished only where the plain form moved every result,
+    /// and each destination filled so far released on a failing path.  `LOFT_NO_DESTINATION=1`
+    /// keeps the buffer and the move.
+    fn destination_site(
+        &mut self,
+        ops: &[Value],
+        i: usize,
+        ind: usize,
+    ) -> Result<Option<usize>, String> {
+        if !crate::lower::destination::enabled() || self.gen_elem.is_some() {
+            return Ok(None);
+        }
+        let site = {
+            let mut memo = self.cx.dest_memo.borrow_mut();
+            crate::lower::destination::site(ops, i, self.cx.data, self.cx.stores, self.d, &mut memo)
+        };
+        let Some(site) = site else { return Ok(None) };
+        for m in &site.mint {
+            self.stmt(m, ind)?;
+        }
+        let mut names: Vec<String> = Vec::new();
+        let mut filled: Vec<(Value, u16)> = Vec::new();
+        self.destination_level(&site.top, &mut names, &mut filled, ind)?;
+        Ok(Some(site.last))
+    }
+
+    /// Resolve the chain's `__ds#m#.k` placeholders to the C tuples already named.
+    fn destination_names(&mut self, v: &Value, names: &[String]) -> Value {
+        let mut v = v.clone();
+        let mut made: Vec<(String, K)> = Vec::new();
+        v.map_nodes(&mut |n| {
+            if let Value::RawExpr(e) = n
+                && e.starts_with("__ds#")
+            {
+                for (m, t) in names.iter().enumerate() {
+                    let pre = format!("__ds#{m}#.");
+                    if let Some(k) = e.strip_prefix(&pre) {
+                        *e = format!("{t}.f{k}");
+                        made.push((e.clone(), K::Int));
+                        break;
+                    }
+                }
+            }
+        });
+        for (code, _) in made {
+            let (t, k) = code.split_once(".f").unwrap_or(("", "0"));
+            let kind = self
+                .temps
+                .iter()
+                .find(|(n, _)| n == t)
+                .and_then(|(_, c)| match c {
+                    CType::Tuple(id) => k
+                        .parse::<usize>()
+                        .ok()
+                        .and_then(|i| self.cx.tuple_shapes(*id).get(i).copied()),
+                    _ => None,
+                })
+                .map_or(K::Int, kind_of);
+            self.raw.insert(code, kind);
+        }
+        v
+    }
+
+    fn destination_level(
+        &mut self,
+        level: &crate::lower::destination::Level<'_>,
+        names: &mut Vec<String>,
+        filled: &mut Vec<(Value, u16)>,
+        ind: usize,
+    ) -> Result<(), String> {
+        let mut args: Vec<Value> = level
+            .call_args
+            .iter()
+            .map(|a| self.destination_names(a, names))
+            .collect();
+        args[level.at] = level.dest.clone();
+        let call = Value::Call(level.callee, args);
+        let Value::Call(_, a) = &call else {
+            unreachable!()
+        };
+        self.ds_site = Some((level.callee, a.as_ptr() as usize));
+        let e = self.expr(&call, ind)?;
+        if self.ds_site.take().is_some() {
+            return Err(format!(
+                "@FR-R-Destination: the rewritten call of {} was written without its twin",
+                self.cx.data.def(level.callee).name()
+            ));
+        }
+        let shape = &level.shape;
+        let id = self
+            .cx
+            .tuple_id(shape.scalars.iter().map(super::dest_scalar_ctype).collect());
+        let t = self.temp(CType::Tuple(id));
+        self.line(ind, &format!("{t} = {};", e.code));
+        names.push(t.clone());
+        filled.push((level.dest.clone(), shape.vt));
+        self.line(ind, &format!("if ({t}.f{} == 1) {{", level.ok));
+        for op in &level.pre {
+            if matches!(op, Value::Line(_)) {
+                continue;
+            }
+            let op = self.destination_names(op, names);
+            self.stmt(&op, ind + 1)?;
+        }
+        if let Some(inner) = &level.inner {
+            self.destination_level(inner, names, filled, ind + 1)?;
+        }
+        for op in &level.post {
+            if matches!(op, Value::Line(_)) {
+                continue;
+            }
+            let op = self.destination_names(op, names);
+            self.stmt(&op, ind + 1)?;
+        }
+        self.line(ind, "} else {");
+        for (d, vt) in filled.clone().iter().rev() {
+            self.cx.copy_type(*vt)?;
+            let r = self.expr(d, ind + 1)?;
+            self.line(
+                ind + 1,
+                &format!("loft_remove_claims(loft_types, {vt}, {});", as_ref(r)?),
+            );
+        }
+        self.stmt(level.else_v, ind + 1)?;
+        self.line(ind, "}");
+        filled.pop();
+        names.pop();
+        Ok(())
+    }
+
+    /// `@FR-R-AppendTwin` — `X += f(args)` where f has an append twin (`opt::append_twin`):
+    /// written as the call of `f__ap` with X as its buffer, so f's appends land after X's
+    /// elements.  `LOFT_NO_APPEND_TWIN=1` keeps the copy.
+    fn append_site(&mut self, v: &Value, ind: usize) -> Result<bool, String> {
+        if !crate::keys::append_twin_enabled() || self.gen_elem.is_some() {
+            return Ok(false);
+        }
+        let mut memo = std::mem::take(&mut self.ap_memo);
+        let site = crate::opt::append_twin::call_site(v, self.cx.data, self.d, &mut memo);
+        self.ap_memo = memo;
+        let Some(site) = site else { return Ok(false) };
+        let mut args = site.args.to_vec();
+        args[site.at] = site.dest.clone();
+        let call = Value::Call(site.callee, args);
+        let Value::Call(_, a) = &call else {
+            unreachable!()
+        };
+        self.ap_site = Some((site.callee, a.as_ptr() as usize));
+        let e = self.expr(&call, ind)?;
+        if self.ap_site.take().is_some() {
+            return Err(format!(
+                "@FR-R-AppendTwin: the rewritten call of {} was written without its twin",
+                self.cx.data.def(site.callee).name()
+            ));
+        }
+        self.line(ind, &format!("{};", e.code));
+        Ok(true)
+    }
+
+    /// Does this call go to the callee's `__ap` twin?  The statement-level site's own call
+    /// (matched by callee and argument slice), or — inside a twin — a call handed the twin's
+    /// buffer, or a view of it, as the callee's buffer: eligibility admitted the twin only
+    /// where every such callee has a twin of its own.
+    fn append_call(&mut self, d: u32, args: &[Value]) -> bool {
+        let site = self
+            .ap_site
+            .is_some_and(|(c, at)| c == d && at == args.as_ptr() as usize);
+        if site {
+            self.ap_site = None;
+        }
+        let handed = !site
+            && self.ap_buf.is_some()
+            && self
+                .cx
+                .data
+                .def(d)
+                .hidden_return_buffer_attr()
+                .and_then(|at| args.get(at))
+                .is_some_and(|a| matches!(a.unspan(), Value::Var(x) if self.ap_views.contains(x)));
+        if site || handed {
+            crate::rewrite_census::fired("R-AppendTwin", 1);
+        }
+        site || handed
+    }
+
     fn stmt(&mut self, v: &Value, ind: usize) -> Result<(), String> {
         if self.nk_skip == Some(std::ptr::from_ref(v.unspan()) as usize) {
             return Ok(());
@@ -2755,6 +3136,9 @@ impl<'a> FnWriter<'a> {
             return Ok(());
         }
         self.dc_before(v, ind);
+        if self.append_site(v, ind)? {
+            return Ok(());
+        }
         let r = self.stmt_kind(v, ind);
         if r.is_ok()
             && let Value::Set(var, _) = v.unspan()
@@ -3069,6 +3453,15 @@ impl<'a> FnWriter<'a> {
                 self.line(ind, "goto loft_gen_end;");
                 Ok(())
             }
+            Value::Return(x)
+                if self
+                    .ds
+                    .as_ref()
+                    .is_some_and(|ds| matches!(x.unspan(), Value::Var(b) if *b == ds.rb)) =>
+            {
+                self.dest_return(ind);
+                Ok(())
+            }
             Value::Return(x) => self.ret_value(Some(x), ind),
             Value::Yield(x) => self.gen_yield(x, ind),
             // `parallel { … }`: the arms run one after another — each arm's effect is the one
@@ -3345,12 +3738,8 @@ impl<'a> FnWriter<'a> {
             if self.pending.len() != before {
                 return Err("a borrowed text would view a temporary".into());
             }
-            let name = self.var(var);
-            self.line(
-                ind,
-                &format!("{name} = loft_get_text({}, {fld});", as_ref(r)?),
-            );
-            return Ok(());
+            let view = format!("loft_get_text({}, {fld})", as_ref(r)?);
+            return self.borrowed_assign(var, x, &view, ind);
         }
         let before = self.pending.len();
         let e = self.expr(x, ind)?;
@@ -3358,8 +3747,45 @@ impl<'a> FnWriter<'a> {
             return Err("a borrowed text would view a temporary".into());
         }
         let view = as_view(e)?;
+        self.borrowed_assign(var, x, &view, ind)
+    }
+
+    /// A borrowed local takes its view — under `@FR-R-TextBorrow`'s tested clause only while
+    /// each root parameter's store is not the return buffer's, which the bind tests; else the
+    /// bytes are copied into the local's own text (`loft_own<v>`) and it views that.  A literal,
+    /// a null or another variable borrows as it stands.
+    fn borrowed_assign(
+        &mut self,
+        var: u16,
+        x: &Value,
+        view: &str,
+        ind: usize,
+    ) -> Result<(), String> {
         let name = self.var(var);
-        self.line(ind, &format!("{name} = {view};"));
+        let roots = self.tested.get(&var).cloned();
+        let rb = crate::opt::hoist::retbuf_var(self.cx.data, self.d);
+        let (Some(roots), Some(rb)) = (roots, rb) else {
+            self.line(ind, &format!("{name} = {view};"));
+            return Ok(());
+        };
+        if matches!(x.unspan(), Value::Text(_) | Value::Null | Value::Var(_)) {
+            self.line(ind, &format!("{name} = {view};"));
+            return Ok(());
+        }
+        let b = as_ref(self.expr(&Value::Var(rb), ind)?)?;
+        let mut tests = Vec::new();
+        for p in roots {
+            let r = as_ref(self.expr(&Value::Var(p), ind)?)?;
+            tests.push(format!("{r}.store_nr != {b}.store_nr"));
+        }
+        crate::rewrite_census::fired("R-TextBorrow/tested", 1);
+        self.line(
+            ind,
+            &format!(
+                "{{ loft_str lt = {view}; if ({}) {name} = lt; else {{ loft_text_set(&loft_own{var}, lt); {name} = loft_view(&loft_own{var}); }} }}",
+                tests.join(" && ")
+            ),
+        );
         Ok(())
     }
 
@@ -4774,26 +5200,29 @@ impl<'a> FnWriter<'a> {
     )]
     fn call(&mut self, d: u32, args: &[Value], ind: usize) -> Result<E, String> {
         let cx = self.cx;
-        if let Some(e) = self.apr_length(cx.data.def(d).name(), args) {
+        // Every route below is keyed by the callee's name, and only a standard-library definition
+        // is answered by one: a library's function under a stdlib name keeps its own body.
+        let route = super::runtime_name(cx.data, d);
+        if let Some(e) = self.apr_length(route, args) {
             return Ok(e);
         }
         if is_operator(cx.data, d) {
             return self.call_operator(d, args, ind);
         }
         let def = cx.data.def(d);
-        if let Some(e) = self.keyed_native(def.name(), args, ind)? {
+        if let Some(e) = self.keyed_native(route, args, ind)? {
             return Ok(e);
         }
-        if let Some(e) = self.par_native(def.name(), args, ind)? {
+        if let Some(e) = self.par_native(route, args, ind)? {
             return Ok(e);
         }
-        if let Some(e) = self.unicode_native(def.name(), args, ind)? {
+        if let Some(e) = self.unicode_native(route, args, ind)? {
             return Ok(e);
         }
-        if let Some(e) = self.struct_json_native(def.name(), args, ind)? {
+        if let Some(e) = self.struct_json_native(route, args, ind)? {
             return Ok(e);
         }
-        if def.name() == "n_env_variables" {
+        if route == "n_env_variables" {
             // The element is the stdlib's `EnvVariable`, sized from this program's table.
             let size = self.cx.stores.size(self.cx.stores.name("EnvVariable"));
             return Ok(E::new(format!("loft_env_variables({size})"), K::Ref));
@@ -4826,13 +5255,13 @@ impl<'a> FnWriter<'a> {
         if shapes.len() != args.len() {
             return Err("a call whose arguments do not match its parameters".into());
         }
-        if def.name() == "t_6vector_len"
+        if route == "t_6vector_len"
             && let Some(e) = self.held_len(args, ind)?
         {
             return Ok(e);
         }
         // A native runtime function is written in `int64_t`: a 32-bit integer crosses it widened.
-        let native = super::native_c(def.name()).is_some();
+        let native = super::native_c(route).is_some();
         let (ret, shapes) = if native {
             (
                 super::native_shape(ret),
@@ -4841,7 +5270,7 @@ impl<'a> FnWriter<'a> {
         } else {
             (ret, shapes)
         };
-        let name = super::native_c(def.name()).map_or_else(|| c_name(cx.data, d), str::to_string);
+        let name = super::native_c(route).map_or_else(|| c_name(cx.data, d), str::to_string);
         // A link argument is the address of the caller's variable; the others are values,
         // evaluated in order.
         let mut xs = vec![String::new(); args.len()];
@@ -4863,7 +5292,7 @@ impl<'a> FnWriter<'a> {
         // header for takes that header by pointer and keeps it current; no refresh follows.
         let mut mask = places;
         if places == 0
-            && super::native_c(def.name()).is_none()
+            && super::native_c(route).is_none()
             && args.len() < 64
             && let Some(h) = self.kept_header_arg(d, args)
         {
@@ -4874,7 +5303,7 @@ impl<'a> FnWriter<'a> {
         }
         // `@FR-R-Inputs`: a callee whose every header input this body holds takes them.
         if mask & super::KH_BIT == 0
-            && super::native_c(def.name()).is_none()
+            && super::native_c(route).is_none()
             && args.len() < 64
             && !self.apr_twin_call(d, args)
             && let Some(inputs) = self.twin_inputs(d, args, ind)?
@@ -4887,10 +5316,20 @@ impl<'a> FnWriter<'a> {
             self.nk_call = None;
             mask |= super::NK_BIT;
         }
+        if self.append_call(d, args) {
+            mask |= super::AP_BIT;
+        }
+        if self
+            .ds_site
+            .is_some_and(|(c, at)| c == d && at == args.as_ptr() as usize)
+        {
+            self.ds_site = None;
+            mask |= super::DS_BIT;
+            crate::rewrite_census::fired("R-Destination", 1);
+        }
         // `@FR-R-NonSentinelParam`'s twin clause: the parameters this call's arguments prove
         // beyond the program-wide fact go to a `__nn` twin that seeds them.
-        if super::native_c(def.name()).is_none() && args.len() <= 26 && !self.apr_twin_call(d, args)
-        {
+        if super::native_c(route).is_none() && args.len() <= 26 && !self.apr_twin_call(d, args) {
             let bits = self.nn_twin_bits(d, args);
             if bits != 0 {
                 mask |= bits << super::NN_SHIFT;
@@ -4903,7 +5342,7 @@ impl<'a> FnWriter<'a> {
         }
         let name = if mask == 0 {
             name
-        } else if super::native_c(def.name()).is_some() || args.len() > 63 {
+        } else if super::native_c(route).is_some() || args.len() > 63 {
             return Err(format!("a store place handed to a & parameter of {callee}"));
         } else {
             cx.request_twin(d, mask);
@@ -5364,6 +5803,11 @@ impl<'a> FnWriter<'a> {
             "OpFormatStackDatabase" => "OpFormatDatabase",
             n => n,
         };
+        if self.ds.is_some()
+            && let Some(e) = self.dest_scalar_set(name, args, ind)?
+        {
+            return Ok(e);
+        }
         if let Some(e) = self.apr_operator(name, args, ind)? {
             return Ok(e);
         }
@@ -5833,8 +6277,14 @@ impl<'a> FnWriter<'a> {
                         K::Void,
                     ));
                 }
-                // A borrowed walk variable views the element: its release frees nothing.
-                if matches!(dest.unspan(), Value::Var(v) if self.borrowed[*v as usize]) {
+                // A borrowed walk variable views the element: its release frees nothing — but a
+                // tested borrow's own text, which its copying path filled.
+                if let Value::Var(v) = dest.unspan()
+                    && self.borrowed[*v as usize]
+                {
+                    if self.tested.contains_key(v) {
+                        return Ok(E::new(format!("loft_text_free(&loft_own{v})"), K::Void));
+                    }
                     return Ok(E::new("((void) 0)", K::Void));
                 }
                 let dest = self.text_dest(dest)?;
@@ -6318,8 +6768,41 @@ impl<'a> FnWriter<'a> {
         e.map(Some)
     }
 
+    /// `@FR-R-AppendTwin` — in a twin the buffer is the caller's vector: its length reset is
+    /// skipped and it is minted only where the caller handed none.
+    fn append_twin_buffer_op(
+        &mut self,
+        name: &str,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<Option<E>, String> {
+        let Some(buf) = self.ap_buf else {
+            return Ok(None);
+        };
+        match (name, args) {
+            ("OpSetInt4", [Value::Var(w), ..]) if *w == buf => {
+                Ok(Some(E::new("((void) 0)", K::Void)))
+            }
+            ("OpDatabase", [Value::Var(w), _]) if *w == buf => {
+                let b = self.var(*w);
+                self.ap_buf = None;
+                let mint = self.store_operator(name, args, ind);
+                self.ap_buf = Some(buf);
+                crate::rewrite_census::fired("R-AppendTwin/mint", 1);
+                Ok(Some(E::new(
+                    format!("if ({b}.store_nr == 0xFFFF) {{ {}; }}", mint?.code),
+                    K::Void,
+                )))
+            }
+            _ => Ok(None),
+        }
+    }
+
     fn store_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
         if let Some(e) = self.free_operator(name, args, ind)? {
+            return Ok(e);
+        }
+        if let Some(e) = self.append_twin_buffer_op(name, args, ind)? {
             return Ok(e);
         }
         match (name, args) {
@@ -6929,6 +7412,12 @@ impl<'a> FnWriter<'a> {
                 Ok(E::new(format!("loft_vec_finish({v})"), K::Void))
             }
             ("OpClearVector", [v]) if self.in_delivery > 0 && self.adopted_buffer(v) => {
+                Ok(E::new("((void) 0)", K::Void))
+            }
+            // `@FR-R-AppendTwin` — in a twin a clear of the buffer, or of a view of it, would
+            // empty the caller's elements: eligibility admitted it only before the body's first
+            // write, where it clears nothing the twin's own result needs.
+            ("OpClearVector", [Value::Var(x)]) if self.ap_views.contains(x) => {
                 Ok(E::new("((void) 0)", K::Void))
             }
             ("OpClearVector", [v]) => {

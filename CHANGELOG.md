@@ -16,6 +16,11 @@ invariants, internal phase numbers)?  See
 
 ### May need a change in your code
 
+**A `match` guard cannot change the value being matched.**  `match s { V0 if bump(s) => …, V1
+=> … }`, with `bump` changing `s`, is now a compile error: the arms after a failed guard would
+test a different value than the one the reader sees matched.  Change the value in the arm's
+body, after the tests, or match on a copy (`t = s; match t { … }`).
+
 **A float exactly halfway between two shortest forms prints the even one.**  `"{v}"` writes the
 shortest digits that read back as the value; when two of that length are equally near, the one
 ending in an even digit is taken — the rounding `{v:.2}` and every parse already used.  It shows
@@ -353,6 +358,18 @@ web service checks a server against the bundled roots and the machine's own stor
 git do.
 
 ### Bug fixes
+
+**A function returning text from a `match` answers every arm's value.**  When one arm returned
+a pattern binding and another a text built in the arm, the built text came back empty on the
+interpreter, and `--native` did not compile the program.  It happened when the subject was a
+call (`match id(v) { … }`) or the match was on a struct's fields.
+
+**A value bound in a later `match` arm keeps its value when the arm replaces the subject.**
+Both backends could read the new subject's field instead, with no message.
+
+**A `match` with many guarded arms compiles to code that grows with the number of arms.**  Each
+guarded arm copied every arm after it, so six guarded arms of eight lowered to 191 tests
+instead of 8; long guarded matches compiled slowly and ran from a much larger program.
 
 **A `boolean`, `enum` or `character` passed to a `#c` function reaches C as its value.**  Under
 the interpreter, C received the value plus whatever the argument's stack slot held before, so

@@ -1,6 +1,8 @@
---- a/src/generation/append_twin.rs
-+++ b/src/generation/append_twin.rs
-@@ -105,7 +105,7 @@
+diff --git a/src/opt/append_twin.rs b/src/opt/append_twin.rs
+index 1f9250e6e..bb0ed9a9e 100644
+--- a/src/opt/append_twin.rs
++++ b/src/opt/append_twin.rs
+@@ -91,7 +91,7 @@ impl Scan<'_> {
  
      fn scan_node(&mut self, v: &Value, pos: Pos) -> bool {
          match v.unspan() {

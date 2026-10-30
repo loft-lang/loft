@@ -370,11 +370,7 @@ impl Scopes<'_> {
                             // drained are freed, the scope frees follow, and the buffer is
                             // what the `Return` below names.
                             let mut delivered = o.clone();
-                            crate::parser::Parser::push_text_arms_into(
-                                &mut delivered,
-                                buf,
-                                data.def_nr("OpCreateStack"),
-                            );
+                            crate::parser::Parser::push_text_arms_into(&mut delivered, buf, data);
                             ls.push(delivered);
                             let pending: Vec<Value> =
                                 trailing_frees.iter().chain(free.iter()).cloned().collect();

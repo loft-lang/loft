@@ -3345,7 +3345,47 @@ impl Output<'_> {
         // `def_returns_owned_text`, so the owned-String check above misses it.  #552 caught the
         // call-vs-LITERAL pair only; a call against a parameter or an interpolation was the same
         // mismatch and reached rustc (loft#2225).  So: a call arm against any non-call arm.
-        self.text_arm_ends_in_text_call(true_v) != self.text_arm_ends_in_text_call(false_v)
+        if self.text_arm_ends_in_text_call(true_v) != self.text_arm_ends_in_text_call(false_v) {
+            return true;
+        }
+        // An else-`if` chain (a `match` on a text result lowers to one): its arms sit one `if`
+        // deeper, where neither test above looks, so a call arm beside a chain of literal and
+        // format arms read as no mismatch and the two Rust reps met at this `if` (E0308).  A
+        // call leaf on one side and a borrowed leaf on the other is the same mismatch.
+        if matches!(true_v.unspan(), Value::If(..)) || matches!(false_v.unspan(), Value::If(..)) {
+            let (t_call, t_borrow) = self.text_leaf_reps(true_v);
+            let (f_call, f_borrow) = self.text_leaf_reps(false_v);
+            return (t_call && f_borrow) || (t_borrow && f_call);
+        }
+        false
+    }
+
+    /// Whether the text arm `v` ends, on some path, in a text-returning call (an owned rep) and
+    /// whether it ends in a borrowed one (a literal, a text variable, a null text), walking
+    /// through Block/Insert tails and both arms of an `if`.
+    fn text_leaf_reps(&self, v: &Value) -> (bool, bool) {
+        match v.unspan() {
+            Value::Block(b) => b
+                .operators
+                .last()
+                .map_or((false, false), |t| self.text_leaf_reps(t)),
+            Value::Insert(items) => items
+                .last()
+                .map_or((false, false), |t| self.text_leaf_reps(t)),
+            Value::If(_, t, f) => {
+                let (tc, tb) = self.text_leaf_reps(t);
+                let (fc, fb) = self.text_leaf_reps(f);
+                (tc || fc, tb || fb)
+            }
+            Value::Text(_) | Value::Var(_) | Value::Null => (false, true),
+            Value::Call(..) if self.text_arm_ends_in_text_call(v) => (true, false),
+            Value::Call(d, _) => (
+                false,
+                (*d as usize) < self.data.definitions.len()
+                    && self.data.def(*d).name().starts_with("Op"),
+            ),
+            _ => (false, false),
+        }
     }
 
     /// True when the arm's tail is a text-returning function call (yields `Str`/`String`),
