@@ -89,6 +89,46 @@ building.
 (`buf += [b]`, one to three a call), hand-priced on cbor: `encode` −1 %, `encode_bytes` within
 noise — deriving the header costs what the pushes save.  `head`'s cost is its call and branches.
 
+### `check_request`: the text arm of `read_value` (2026-10-30, evening)
+
+**Profile** (gcc ship, after the day's builds, 10.4× the twin): 60 % in `read_value`'s
+destination twin, diffuse — making stores (`loft_store_make`, `loft_bits_insert`, the claims,
+`loft_database*`) ≈ 16 %, copies ≈ 14 %, vector appends ≈ 7 %.  `loft_store_make`'s scan for
+the lowest free slot is not the cost: 148 k mints at an average of 7 slots.
+
+**The text arm** — `CText { value: text_from_bytes(bytes[argpos..argpos + arg]) }`, every map
+key — mints a store for the slice (for a non-file source the "view" is a copy), copies the bytes
+in, converts them (`loft_text_from_bytes`, a fresh text), copies that into the work text, the
+work text into a temporary, and the temporary into the field.  The twin borrows `&'a str`.
+Hand-priced in the emitted C (same hashes):
+
+| form | `check_request` |
+|---|---|
+| the arm read straight from the range (`loft_text_from_byte_range` into the field) | −33 % |
+| only the slice's store gone (range read, the copies kept) | −27 % |
+| only the copies gone (store kept) | −9 % |
+
+**Built:** a call's text result held in a statement temporary MOVES into the text it is assigned
+to (`loft_text_move`, `FnWriter::pending_text_temp`, `LOFT_NO_C_TEXT_MOVE`): pluginabi
+`req_state_b64` −5 %, `check_request` −2 %.  And a value block whose value is a text local it
+leaves alone after (`{ w = f(…); w }`, a call's or a format's work text) is that local's view
+instead of a copy into a temporary (`FnWriter::text_tail_view`, `LOFT_NO_C_TAIL_VIEW`); the
+operand-order guard (`arg_with`) copies such a view before a later operand that may write, as it
+does for a variable: `check_request` −3 %.  The text arm is now conversion, move, field set.
+Guard `tests/scripts/a-call-text-moves-into-its-local.loft` (8 cells; the move falsified by a
+plant that leaves the source its buffer).
+
+**For the owner — the store half (−27 %).**  A vector slice at an argument position is the
+shape; across the library checkouts and the registry it occurs only as
+`text_from_bytes(bytes[a..b])` (cbor's decoder, two sites).  So a mechanism for it is a rewrite
+fitted to one call unless it is stated as the natural spelling made canonical: the stdlib
+already has `text_from_byte_range(v, lo, hi)` with the slice's clamping, and
+`text_from_bytes(v[lo..hi])` is how a reader writes it.  Options: (a) lower that call to its
+ranged twin in the parser, both backends; (b) leave the language alone and ask cbor's stream to
+call `text_from_byte_range` (a library edit, theirs); (c) a general argument-position slice
+without its store — no second consumer to justify it today.  Recommendation: (b) now, and (a)
+only if a second ranged twin appears.
+
 ### The short appends (2026-10-30)
 
 **What the row paid.**  `req_state_b64` profiled at 75 % in `b64_encode`'s loop, four

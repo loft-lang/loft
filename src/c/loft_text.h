@@ -204,6 +204,17 @@ static void loft_text_free(loft_text *t) {
     t->cap = 0;
 }
 
+/* `*to = *from` for a `from` nothing else names: `to` releases what it held and takes `from`'s
+ * buffer, which is left empty — the value `loft_text_set` would copy, without the copy. */
+static void loft_text_move(loft_text *to, loft_text *from) {
+    if (to == from) return;
+    loft_text_free(to);
+    *to = *from;
+    from->p = 0;
+    from->len = 0;
+    from->cap = 0;
+}
+
 static loft_text loft_text_own(loft_str s) {
     loft_text t = { 0, 0, 0 };
     loft_push(&t, s.p, s.len);

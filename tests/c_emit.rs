@@ -7260,8 +7260,8 @@ fn a_programs_c_is_the_same_on_every_emission() {
         );
         let unit = fa::read_to_string(&c).expect("read the C");
         assert!(
-            unit.contains("= n_mix(t2, t3, t4, t5);")
-                && unit.find("t2 = v5___lift_1;") < unit.find("t5 = v8___lift_4;"),
+            unit.contains("= n_mix(t1, t2, t3, t4);")
+                && unit.find("t1 = v5___lift_1;") < unit.find("t4 = v8___lift_4;"),
             "the arguments in order"
         );
         match &first {
