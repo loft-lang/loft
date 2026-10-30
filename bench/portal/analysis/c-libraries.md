@@ -87,90 +87,52 @@ building.
 (`buf += [b]`, one to three a call), hand-priced on cbor: `encode` −1 %, `encode_bytes` within
 noise — deriving the header costs what the pushes save.  `head`'s cost is its call and branches.
 
-### Design: `(R-PlaceReturn)` — a local built for the returned literal is built in its buffer's store
+### `(R-PlaceReturn)` — built, measured slower, reverted (2026-10-30)
 
-**The cost.**  A function that builds a vector in a local and answers it as a field of a
-returned literal pays a store of its own for the local and a deep copy into the caller's
-buffer at the exit, then the store's free: zttext `insert_text` (`return Doc { buf: nb,
-pieces: np }`: the whole document buffer copied at every insert, 5.2×), cbor `read_value`
-(`CArray { items: items }`, `CMap { entries: es }`: every nested array and map, pluginabi
-`check_request` ~9.8×).  rustc copies the same way.
+**The idea.**  A local vector answered inside the returned literal (`return Doc { buf: nb,
+pieces: np }`) is built in the return buffer's store and moved into its field at the exit,
+instead of in a store of its own and deep-copied there.
 
-**Why not build in the field.**  Binding the local to the buffer's field from the start fails
-under a rebind: `d = insert_text(d, …)` hands the callee `d`'s own record as its buffer
-(`(R-Rebind)`), and `nb` is filled from `d.buf` — building in place clears the field it reads.
-A hand edit of exactly that changed the answer (hash 368acdef → b704c50b).  The field must not
-be touched before the exit; only its STORE can be shared.
+**What was found first.**  The rule exists: `(R-ExitVector)` (`src/exit_vector.rs`) claims the
+wrapper in the buffer's store and hands the vector over by a handle move.  It already admits
+cbor's `read_value` (`items`, `entries`) and most of zttext's layout functions.  It declined
+`insert_text` for three reasons: the early `return d` frees the wrappers before they are minted;
+the exit REPLACES the field (`OpReplaceVector`, since the buffer may be the caller's live record
+under `d = insert_text(d, …)`), which the rule did not match; and an exit that stages a scalar
+field (`n: d.n + 1`) before ensuring the buffer hid the ensure statement from the rule.
 
-**The rule — a clause of `(R-Place)`.**
+**What was built.**  The three clauses (a free that runs before the mint, a replace exit that
+clears the field and then moves, the ensure found after staged statements), plus a runtime move
+into an allocated empty slot on both runtimes.  Cells:
+`tests/scripts/a-local-built-for-the-returned-literal-is-built-in-its-buffers-store.loft`, green on all three backends under strict
+stores, poison, `LOFT_HOIST_VERIFY` and the native leak checks.
 
-```
-  (R-PlaceReturn) a plain vector local v — declared `v: vector<T> = []` (its witness
-                 `__vdb_N` minted by `OpDatabase`), never rebound, captured, linked (`&v`),
-                 yielded, stored into another place or handed to a loft call that may keep
-                 it — whose ONE owning destination on every path that keeps it is a field f
-                 of a literal written into the frame's own return buffer B (an exit
-                 `return R { f: v, … }`, a struct's or a record enum variant's field), has
-                 its witness CLAIMED IN B's store: `__vdb_N = OpPlaceRecord(B, wrapper)` in
-                 place of the mint (B minted first where the caller offered none, as O-Buffer
-                 mints it, the entry snapshot `__rbw_B` recording that it did).  At that exit
-                 f takes v by RELOCATION (`OpMoveField`: v's data record becomes f's, f's old
-                 heap released first — H-ClearRelease — the wrapper record freed record-
-                 level), and every other exit releases the wrapper and v's records alone
-                 (`OpFreeRecordIn`), plus B where this frame minted it and answers something
-                 else.  The state at each exit is a compile-time fact written into the IR,
-                 as `(R-Place)` writes it.
-```
+**What it measured** (gcc ship, `ab.py`, 7 alternating rounds, against the rule as it was):
 
-**Why it is sound.**  f itself is untouched until the exit, so a rebind is as safe as before:
-the callee still reads `d.buf` through the argument while `nb` grows elsewhere in the same
-store.  Records keep their numbers when a store grows, so every `loft_ref`/`DbRef` stays valid.
-What a growth of B's store does invalidate is a RAW address into it — and B's store may be any
-argument's store (a rebind, a destination twin's element in the caller's collection):
-- **The hoist and apart facts must count v's growth as a growth of B's store.**  Today both
-  writers treat v's witness as a store of its own, so `opt::apart`'s "a plain argument's tree
-  is apart from this activation's records" holds and a loop may hold a header, a base or a
-  record address over an argument while v grows (zttext's `for i in 0..len(d.pieces) { …
-  np += [p] }`).  With v placed, v's records are NOT this activation's own: a holder over any
-  argument (or B) must not live across a growth of v, exactly as for a sibling vector of one
-  store.  This is the obligation the rule carries; the cells below pin it.
-- A text argument is passed as a view only to a callee that runs no store write
-  (`@FR-F-ParamText`); a callee with a placed local writes B's store, so it already receives
-  copies.
+| row | B/A | |
+|---|---|---|
+| zttext `insert_text` | 1.146 | slower |
+| zttext `patch` | 1.056 | slower |
+| zttext `invert` | 1.041 | slower |
+| zttext `delete_range` | 1.654 | slower (before the cost decline below) |
+| cbor `encode`/`decode` | identical C | already admitted |
+| runtime move alone | same everywhere | |
 
-**Cells to write first** (one axis each, hand-computed, value AND length, both backends,
-`LOFT_STRICT_STORES=1` / `LOFT_NATIVE_LEAK_CHECK=1` for the leak and double-free channels):
-1. plain call, a pooled buffer apart from the arguments — the local built, returned;
-2. a rebind `d = f(d, …)` where f reads `d`'s vector while building the local (insert_text's
-   shape) — the answer, and `d`'s old content intact until the exit;
-3. a loop that holds a header over an argument's vector while the placed local grows in the
-   same store (insert_text's pieces loop under the rebind) — the header must not go stale;
-4. the caller offers no buffer — v placed in a buffer the callee mints; an early exit that
-   answers another record frees it (leak check);
-5. two locals into two fields (`nb`, `np`);
-6. an exit that answers `R { f: [] }` on one path and `R { f: v }` on another — v released
-   record-level on the first;
-7. a heap-owning element type (`vector<text>`) — relocation keeps the claims; poison mode;
-8. a struct-enum variant's field reached through `(R-Destination)` (cbor's `CArray { items }`
-   inside `read_value__d`);
-9. the local read for its length and indexed before the exit (allowed), and a local also
-   handed to a call that stores it (declines).
+A cost decline (no placement where a loop that grows the local reads an argument's collection)
+fixed `delete_range` but cost `patch` its earlier gain, and `insert_text` stayed slower.
 
-**Falsifiers to plant:** a relocation that does not clear f's old heap (leak), one that leaves
-the source handle (double free under strict stores), and a holder kept across v's growth
-(cell 3 reads a stale length or element).
+**Why.**  The wrapper's own store is the cheapest place a vector can grow.  A fresh store grows
+at its tail, in place.  In the buffer's store, which may be an argument's (the rebind hands
+`d`'s own record), a growth relocates the vector, and a loop that grows the local loses every
+holder over an argument, because `opt::apart` can no longer prove the argument apart from it.
+The exit copy the rule saves is one block copy: for `insert_text` about 10 KB against 7.7 µs
+per insert.  The premise "the exit copy is what the row pays" was wrong.  `insert_text`'s cost
+lies in rebuilding the whole document per insert, which is the library's algorithm.
 
-**Price before building:** hand-place `nb`/`np` in `insert_text`'s emitted C (the wrapper
-claimed in the buffer's store, `loft_place_record`; the exit's `loft_vec_replace` replaced by
-the handle move), with cell 2's rebind shape checked for the same hash, then `read_value`'s
-`items`/`es` the same way.  Expected: `insert_text` loses the whole-document copy per insert
-(the `memmove`/`copy_claims` share), `check_request` / cbor `decode` the per-array copy.
-
-**Where it lives:** `src/place_result.rs` (the admission and the three IR rewrites, beside
-`(R-Place)`'s), the apart/hoist facts in `src/opt/apart.rs` and `src/opt/header.rs` (a placed
-local's growth is B's), both writers' `OpPlaceRecord` / `OpMoveField` / `OpFreeRecordIn`
-(present already); switch `LOFT_NO_PLACE_RETURN`; the rule text beside `(R-Place)` in
-`formal/rewrites.md` once built.
+**Kept:** the cells, as guards of the rule's reach and answers (falsified by a planted
+handle-move defect), and this note in `(R-ExitVector)`'s rule text.  **Reverted:** all code.
+The patch is in the session scratchpad as `placereturn.patch`; it is not needed again unless
+the store model changes so that a shared store grows at its tail.
 
 ### Design: a slice that initialises a field is sliced into it
 
