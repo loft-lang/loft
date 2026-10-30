@@ -2350,7 +2350,14 @@ impl<'a> FnWriter<'a> {
 
     fn stmts_in(&mut self, ops: &[Value], ind: usize) -> Result<(), String> {
         let mut i = 0;
+        // The end of the push run a reservation was made for (`reserve_push_run`).
+        let mut run_end = 0;
         while i < ops.len() {
+            if i >= run_end
+                && let Some(end) = self.reserve_push_run(ops, i, ind)?
+            {
+                run_end = end;
+            }
             // `@FR-R-Apart` instance 2: a construction run builds its value as a whole.
             if let Some(next) = self.av_construction(ops, i, ind)? {
                 ops[i..next]
@@ -2383,6 +2390,88 @@ impl<'a> FnWriter<'a> {
             i += 1;
         }
         Ok(())
+    }
+
+    /// The scalar push starting at statement `at`, as `fused_push` reads it, with the index after
+    /// it: a bare push, or the `OpPreAllocVector(v, 1, w)` a push onto a local is lowered with —
+    /// in an `Insert` pair or as the statement before the push.
+    fn push_at<'v>(
+        &self,
+        ops: &'v [Value],
+        at: usize,
+    ) -> Option<(crate::opt::writes::FusedPush<'v>, usize)> {
+        let data = self.cx.data;
+        let call = |v: &'v Value| match v.unspan() {
+            Value::Call(d, a) if (*d as usize) < data.definitions.len() => {
+                Some((data.def(*d).name(), a.as_slice()))
+            }
+            _ => None,
+        };
+        let pre = |v: &'v Value| call(v).is_some_and(|(n, _)| n == "OpPreAllocVector");
+        let (push, next) = match ops.get(at)?.unspan() {
+            Value::Insert(ins) => match &ins[..] {
+                [p, push] if pre(p) => (push, at + 1),
+                _ => return None,
+            },
+            other if pre(other) => (ops.get(at + 1)?, at + 2),
+            other => (other, at + 1),
+        };
+        let (name, args) = call(push)?;
+        crate::opt::writes::fused_push(data, name, args).map(|fp| (fp, next))
+    }
+
+    /// `@FR-R-PushFill`'s run clause on the C: a straight-line RUN of `k >= 2` scalar pushes onto
+    /// one path P — consecutive statements with only line markers between, each a push of the
+    /// same element size — reserves room for `k` more elements before the first, so the run grows
+    /// P once instead of at each step.  A reservation is capacity: the elements, the length and
+    /// every value are the pushes' own, and `loft_vec_reserve_run` leaves an absent vector and a
+    /// locked store alone, so a refused push still refuses where it did.  A path a window, a push
+    /// header, a value held apart or a deferred copy serves is left to it.  Answers the index after
+    /// the run.  `LOFT_NO_PUSH_RUN_RESERVE=1` reserves nothing.
+    fn reserve_push_run(&mut self, ops: &[Value], at: usize, ind: usize) -> Result<Option<usize>, String> {
+        if self.gen_elem.is_some()
+            || self.av_any()
+            || std::env::var("LOFT_NO_PUSH_RUN_RESERVE").is_ok_and(|v| v != "0")
+        {
+            return Ok(None);
+        }
+        let Some((first, mut next)) = self.push_at(ops, at) else {
+            return Ok(None);
+        };
+        let mut k: i64 = 1;
+        let mut end = next;
+        loop {
+            while matches!(ops.get(next).map(Value::unspan), Some(Value::Line(_))) {
+                next += 1;
+            }
+            let Some((p, after)) = self.push_at(ops, next) else {
+                break;
+            };
+            if p.path != first.path
+                || p.size != first.size
+                || p.vector.unspan() != first.vector.unspan()
+            {
+                break;
+            }
+            k += 1;
+            next = after;
+            end = next;
+        }
+        if k < 2
+            || self.apr_holds(first.path.0)
+            || self.dc_root(first.path.0)
+            || self.push_head(&first.path).is_some()
+            || self.windows.iter().any(|(p, _, _, _)| *p == first.path)
+        {
+            return Ok(None);
+        }
+        let v = self.expr(first.vector, ind)?;
+        self.line(
+            ind,
+            &format!("loft_vec_reserve_run({}, INT64_C({k}), {});", as_ref(v)?, first.size),
+        );
+        crate::rewrite_census::fired("R-PushFill/run", 1);
+        Ok(Some(end))
     }
 
     /// `@FR-R-View` (@PLN157 § V-n, rustc's `bind_view_header`): statement `at` bound a vector
@@ -4690,7 +4779,13 @@ impl<'a> FnWriter<'a> {
         // value included; its frame closes with the block.
         let frames = self.headers.len();
         let r = (|| {
+            let mut run_end = 0;
             for i in 0..at {
+                if i >= run_end
+                    && let Some(end) = self.reserve_push_run(&ops[..at], i, ind)?
+                {
+                    run_end = end;
+                }
                 self.stmt(&ops[i], ind)?;
                 self.bind_view_header(ops, i, ind);
             }
