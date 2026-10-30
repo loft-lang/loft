@@ -102,10 +102,13 @@ writing ?? 0."*
   **The representation stays (owner's question, 2026-10-30: "our store is an internal tree, and
   this is a line between branches — is it the right abstraction?").**  An owned single-child
   field was weighed — the store has the part for it, `Parts::ChildRec` (P213, a 4-byte record
-  number with copy and free cascading, used today only for closure records) — and declined: a
-  second kind of edge between branches would need its own text form and parse back, JSON,
-  equality, copy, image persistence and upgrade, the C runtime, wasm, the debugger and the LSP,
-  all of which a collection already has.  loft models a tree's edges as collections — the
+  number with copy and free cascading, used today only for closure records) — and declined, on
+  what it duplicates rather than on what it would cost to serialize: an OWNED child is a tree
+  edge, which a collection already is, with its text form, JSON, equality, copy, image and C
+  runtime support; a second spelling of the same edge buys one character per read.  A LINK
+  across branches is a different thing and does serialize — as a JSON Reference,
+  `{"$ref": "#/leaves/1"}` (owner, 2026-10-30) — which is how loft's own `reference<T>` should
+  be written and is not today (loft#2268: `DbRef(2,15,8)` in `{x:j}`, invalid JSON).  loft models a tree's edges as collections — the
   `cbor` library's `CArray { items: vector<CborValue> }`, `CMap { entries: vector<CborEntry> }`
   have no single-child box at all — and a box-of-one is that edge with a cardinality of one;
   `ir.loft` holds one because it mirrors Rust's `Box<Value>` for the image both sides read.  So
