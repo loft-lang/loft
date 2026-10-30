@@ -130,6 +130,15 @@ field: the same VALUE semantics as an inline struct field, a different layout.
   (`NdSet { var: 3, inner: x }`) is the same write.
 - *Copy, `==`, `{n}`, JSON, parse*: as an inline field — deep, nested, no `$ref`: a child, not a
   link (links across stores are `reference<T>`, loft#2268).
+- *One routine per type (owner, 2026-10-30: "keep the type of its ancestry so we can reuse the
+  display routine of the original object")*: `Parts::ChildRec(content)` keeps the type it holds,
+  so every walker's arm is ONE indirection — the record number, in the host's store, at
+  `(store(host), rec, 8)` — followed by `content`'s own routine, unchanged: display, JSON, parse,
+  copy, release.  Equality already works so (`eq_walk` with `content`), and the C runtime's
+  `LOFT_T_CHILD` arms copy and release through `d->elem` the same way; the formatter's arm,
+  today the debug shape `ChildRec(rec)`, becomes the same follow-then-recurse.  In the language
+  the field's type stays `Node` — code, diagnostics and the debugger show `Node`;
+  `child_rec<Node>` is a layout row, never displayed.
 - *Absence*: `inner: Node?` is record number 0, which `ChildRec` already reads as null.
 - *When*: automatically, for a field whose type would contain its host by value — inline
   layout is impossible there, so the compiler knows; no new syntax.
