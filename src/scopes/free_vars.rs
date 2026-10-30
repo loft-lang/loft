@@ -1580,13 +1580,18 @@ fn sink_return_branch(tmp: u16, expr: &Value, data: &Data) -> Option<Value> {
 /// reaches the body as `__ref_N`).  Where arguments and attributes do not pair up one to one,
 /// nothing changes.  A tuple member keeps its own list.
 fn text_buffer_in_frame(tp: &Type, attrs: &[crate::data::Attribute], args: &[u16]) -> Type {
-    if let Type::Tuple(elems) = tp {
-        return Type::Tuple(
+    if let Type::Tuple(elems) = tp.base() {
+        let tuple = Type::Tuple(
             elems
                 .iter()
                 .map(|e| text_buffer_in_frame(e, attrs, args))
                 .collect(),
         );
+        return if matches!(tp, Type::Optional(_)) {
+            Type::optional(tuple)
+        } else {
+            tuple
+        };
     }
     let raw = tp.depend();
     if raw.is_empty() || attrs.len() != args.len() {
@@ -1594,7 +1599,8 @@ fn text_buffer_in_frame(tp: &Type, attrs: &[crate::data::Attribute], args: &[u16
     }
     let is_text_buffer = |a: u16| {
         attrs.get(a as usize).is_some_and(|at| {
-            at.hidden && matches!(&at.typedef, Type::RefVar(t) if matches!(t.base(), Type::Text(_)))
+            at.hidden
+                && matches!(at.typedef.base(), Type::RefVar(t) if matches!(t.base(), Type::Text(_)))
         })
     };
     let frame: Vec<u16> = raw

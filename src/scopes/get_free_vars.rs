@@ -634,7 +634,7 @@ impl Scopes<'_> {
                         .filter(|&r| {
                             r != u16::MAX
                                 && r < function.count()
-                                && matches!(function.tp(r), Type::Function(..))
+                                && matches!(function.tp(r).base(), Type::Function(..))
                         })
                         .collect();
                     rets.sort_unstable();
