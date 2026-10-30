@@ -75,15 +75,22 @@ fn have_cc() -> bool {
         .is_ok_and(|o| o.status.success())
 }
 
-/// The inputs a unit names on its `/* link: … */` lines (an archive it is built with — a
-/// `[c] shim`, the TLS client of a unit that fetches over a URL or pages an image), as
-/// `c_driver::link_inputs` reads them.
+/// What a gcc link of the unit needs beyond the program, in the driver's order: the inputs the
+/// unit names on its `/* link: … */` lines (an archive it is built with — a `[c] shim`, the TLS
+/// client of a unit that fetches over a URL or pages an image), as `c_driver::link_inputs`
+/// reads them, then the host's system libraries those archives call (Winsock and the
+/// certificate store on Windows; none elsewhere).
 fn unit_links(c_src: &std::path::Path) -> Vec<String> {
     fa::read_to_string(c_src)
         .expect("read the C")
         .lines()
         .filter_map(|l| l.strip_prefix("/* link: ")?.strip_suffix(" */"))
         .map(str::to_string)
+        .chain(
+            loft::platform::c_system_link_libs()
+                .iter()
+                .map(|l| (*l).to_string()),
+        )
         .collect()
 }
 

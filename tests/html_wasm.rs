@@ -215,8 +215,16 @@ fn run_html_page(
     }
     cmd.args(extra_args);
     cmd.arg(src.to_str().unwrap());
-    let status = cmd.status().expect("invoke loft --html");
-    assert!(status.success(), "loft --html failed for {name}");
+    let built = cmd.output().expect("invoke loft --html");
+    let build_err = String::from_utf8_lossy(&built.stderr);
+    eprint!("{build_err}");
+    // `clang` and `wasm-ld` on PATH are not yet a toolchain: the LLVM installer's (the
+    // Windows runner's) has no WASI libc, which only the driver's own link probe tells.
+    if backend == "--native-c" && build_err.contains("toolchain is incomplete") {
+        eprintln!("SKIP: no WASI sysroot for clang (the C page's toolchain)");
+        return None;
+    }
+    assert!(built.status.success(), "loft --html failed for {name}");
 
     let html_content = fa::read_to_string(&html).expect("read html");
     let marker = "const wasmB64=\"";
