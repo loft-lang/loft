@@ -138,6 +138,9 @@ D19c, D19e, D19h, D23 and D29 are there.
 | D26 | the interpreter's stack lives in a store; C's is the C stack | open — not a store property for a C unit; P4 decides |
 | D27 | the interpreter's store instruments (generation, recording, tag, timestamps, init shadow) | P0b |
 | D28 | the store table: a `Vec<Store>` beside the type table against a thread-local array | open — P3 |
+| D31 | a store the interpreter frees stays live at exit in C — a `hash` parameter's default (`699-collection-parameter-default`), keyed collection literals (`703-keyed-collection-literal-value`), the `Calls` record of a passing assert's test (`2090-a-passing-assert-builds-no-message`); found by `c_sweep.py --strict-stores`, and the plain C build's `LOFT_NATIVE_LEAK_CHECK` names the same stores | open |
+| D32 | a closure's store is read after its free in C (`1475-a-branch-shared-fn-ref-local-is-declared-up-front`: `__closure_returns_fnref_0` and its `E75`); with slot reuse the read lands in whichever store took the number; found by `c_sweep.py --strict-stores` | open |
+| D33 | C makes far more stores than the interpreter for one program: three programs the interpreter finishes under `LOFT_STRICT_STORES` exhaust the 65535 numbers in C (`1934b-a-push-window-declines-a-copy-that-owns-heap-fields`, `a-frame-that-owns-a-store-is-released-before-the-jump`, `a-rebind-from-a-fresh-result-exchanges-the-stores`) — a store freed and made again per iteration where the interpreter reuses or exchanges one | open |
 | D30 | an image of another layout: the interpreter converts it (`Stores::upgrade_store`), C refuses it by name (`loft_image.h`) — except the null-first key order, which C converts by itself (`loft_rekey_walk`) | open — P0b (port), the key-order case done |
 
 ## How a divergence is closed

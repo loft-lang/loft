@@ -128,6 +128,11 @@ fn cc_flags(tier: Tier) -> Vec<String> {
     if env_on("LOFT_POISON_CLAIM") {
         flags.push("-DLOFT_POISON_CLAIM".into());
     }
+    // `LOFT_STRICT_STORES`: a freed store's slot is never made again and an access through it
+    // is reported, and a store live at exit too; either exits 1 (loft_rt.h).
+    if env_on("LOFT_STRICT_STORES") {
+        flags.push("-DLOFT_STRICT_STORES".into());
+    }
     flags
 }
 

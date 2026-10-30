@@ -2589,6 +2589,151 @@ int main(int argc, char **argv) {
     );
 }
 
+/// @PLN206 P0b — `LOFT_STRICT_STORES` on the C, the interpreter's use-after-free ground truth
+/// (`keys::strict_stores`): a freed store's slot is never made again, an access through a
+/// reference naming it is reported at the access, a store live at exit is reported, and either
+/// makes the run exit 1.  A correct program cannot reach a freed store, so the cells append a
+/// `main` to an emitted unit that does what a store-lifetime defect would: read a store through
+/// a reference its free left behind, and keep a store alive past the end.  Without the switch the
+/// freed slot is made again and the stale read answers quietly — the defect the switch exists
+/// for; with it the read is named and the run fails.  And a correct program built through the
+/// driver under `LOFT_STRICT_STORES=1` runs clean.  Falsified: no check in `loft_store_of`, the
+/// slot made again, and the exit left at 0 each fail it.
+#[test]
+fn a_strict_store_c_build_names_a_use_after_free_and_a_store_never_freed() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("strict-stores");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let file = dir.join("strict.loft");
+    fa::write(
+        &file,
+        "struct P { x: integer, name: text }\nfn main() {\n  p = P { x: 41, name: \"a\" };\n  \
+         p.x += 1;\n  println(\"{p.x} {p.name}\");\n}\n",
+    )
+    .expect("write program");
+    let c = dir.join("strict.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "emit: {}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let unit = fa::read_to_string(&c).expect("read the C");
+    // The type the program mints its `P` as, read off the unit.
+    let tp: u32 = unit
+        .split("loft_database_typed(&v0_p, 16, ")
+        .nth(1)
+        .and_then(|t| t.split(')').next())
+        .and_then(|t| t.parse().ok())
+        .expect("the type of P in the unit");
+    let unit = unit.replacen(
+        "int main(int argc, char **argv) {",
+        "static int loft_program_main(int argc, char **argv) {",
+        1,
+    );
+    // `free_q` 0: the second store is never freed.
+    let cell = |name: &str, free_q: bool, strict: bool| -> (String, String, i32) {
+        let src = dir.join(format!("{name}.c"));
+        let exe = dir.join(name);
+        let mut text = unit.clone();
+        let _ = write!(
+            text,
+            "\nint main(void) {{\n    loft_bind_tables();\n    loft_start(0, 0);\n    \
+             loft_ref r = loft_ref_null();\n    loft_database_typed(&r, 16, {tp});\n    \
+             loft_set_int(r, 0, INT64_C(7));\n    loft_free_ref(r);\n    \
+             printf(\"stale %lld\\n\", (long long) loft_get_int(r, 0));\n    \
+             loft_ref q = loft_ref_null();\n    loft_database_typed(&q, 16, {tp});\n    \
+             printf(\"fresh store %u, freed %u\\n\", (unsigned) q.store_nr, (unsigned) r.store_nr);\n    \
+             {}\n    loft_leak_report();\n    return 0;\n}}\n",
+            if free_q { "loft_free_ref(q);" } else { "" }
+        );
+        fa::write(&src, &text).expect("write the cell");
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O1", "-w"])
+            .args(strict.then_some("-DLOFT_STRICT_STORES"))
+            .arg(&src)
+            .arg("-o")
+            .arg(&exe)
+            .args(unit_links(&src))
+            .arg("-lm")
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "{name}: cc: {}",
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let out = loft::platform::process::harness_command(&exe)
+            .output()
+            .expect("run the cell");
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+            out.status.code().unwrap_or(-1),
+        )
+    };
+    let freed = "[strict-store] USE AFTER FREE (access) store #0 type=P rec=1 pos=8";
+    // Without the switch: the slot is made again and the stale read answers quietly.
+    let (out, err, code) = cell("plain", true, false);
+    assert_eq!(out, "stale 7\nfresh store 0, freed 0\n", "the plain build");
+    assert!(
+        !err.contains("[strict-store]"),
+        "the plain build reported:\n{err}"
+    );
+    assert_eq!(code, 0, "the plain build");
+    // With it: named at the access, the slot kept dead, and the run fails.
+    let (out, err, code) = cell("uaf", true, true);
+    assert_eq!(out, "stale 7\nfresh store 1, freed 0\n", "the strict build");
+    assert!(
+        err.contains(freed),
+        "the strict build did not name the read:\n{err}"
+    );
+    assert!(
+        err.contains("[strict-store] FAILED: 1 store-lifetime violation(s)"),
+        "the strict build's verdict:\n{err}"
+    );
+    assert_eq!(code, 1, "the strict build exits 1");
+    // A store never freed is the other half.
+    let (_, err, code) = cell("kept", false, true);
+    assert!(
+        err.contains("[strict-store] NEVER FREED: 1 stores not freed at program exit: kt=")
+            && err.contains(" P\u{d7}1"),
+        "the strict build did not name the store left alive:\n{err}"
+    );
+    assert!(
+        err.contains("[strict-store] FAILED: 2 store-lifetime violation(s)"),
+        "both halves counted:\n{err}"
+    );
+    assert_eq!(code, 1, "the strict build exits 1");
+    // A correct program, through the driver: clean.
+    let run = loft::platform::process::harness_command(loft)
+        .arg("--native-c")
+        .arg(&file)
+        .env("LOFT_STRICT_STORES", "1")
+        .output()
+        .expect("run loft --native-c");
+    let err = String::from_utf8_lossy(&run.stderr);
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "42 a\n",
+        "--native-c:\n{err}"
+    );
+    assert!(
+        !err.contains("[strict-store]"),
+        "a correct program reported:\n{err}"
+    );
+    assert!(run.status.success(), "a correct program failed:\n{err}");
+    let _ = fa::remove_dir_all(&dir);
+}
+
 /// Stores::insert_record's hash arm, for an element that owns nothing: one walk files `e` or
 /// finds the entry under its key, which `e` replaces; a walk that cannot answer falls back to a
 /// lookup, a removal and an add.

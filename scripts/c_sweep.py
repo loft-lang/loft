@@ -18,6 +18,10 @@
                                         # interpreter run under LOFT_POISON=1 / LOFT_POISON_CLAIM=1,
                                         # and claim-unwritten: poisoned C claims against the
                                         # plain interpreter (a read of a byte nobody wrote)
+    scripts/c_sweep.py --strict-stores  # store lifetime made exact: the C built with
+                                        # -DLOFT_STRICT_STORES against the interpreter under
+                                        # LOFT_STRICT_STORES=1 (a use after free or a store never
+                                        # freed exits 1 on either side)
     scripts/c_sweep.py --wasm           # the C built for wasm32-wasi by clang and run under
                                         # wasmtime instead (LOFT_WASM_CC names another clang)
     scripts/c_sweep.py --m32            # the C built as 32-bit x86 (gcc -m32) and run natively
@@ -116,6 +120,13 @@ POISON_MODES = {
     # the interpreter answers its own bytes.  (`poison-claim` poisons both sides, and a read of
     # an unwritten byte then reads the same poison on each.)
     "claim-unwritten": (["-DLOFT_POISON_CLAIM", "-w"], None),
+}
+# `--strict-stores`: store lifetime made exact on both sides — no freed slot made again, an
+# access through a freed store reported, a store live at exit reported, either one exit 1
+# (`LOFT_STRICT_STORES`).  A program clean on the interpreter and failing on the C is a C
+# store that died early or never died; the reverse, one the C does not see.
+STRICT_MODES = {
+    "strict-stores": (["-DLOFT_STRICT_STORES", "-w"], {"LOFT_STRICT_STORES": "1"}),
 }
 ASAN = ["-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-fno-sanitize-recover=all"]
 # `--wasm`: the same unit for wasm32-wasi.  The runtime's recoverable faults use setjmp, which
@@ -294,7 +305,7 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
     i_plain = None
     times = {}
     for mode in modes:
-        flags, env = POISON_MODES.get(mode, (MODES.get(mode), None))
+        flags, env = {**POISON_MODES, **STRICT_MODES}.get(mode, (MODES.get(mode), None))
         if env:
             i_out, times["interp"] = timed(interp, limit(path, "interp"), cwd=src.parent,
                                            env={**env, **tenv})
@@ -405,6 +416,8 @@ def main(argv: list[str]) -> int:
         return 0
     verbose = "--verbose" in argv
     modes = tuple(POISON_MODES) if "--poison" in argv else tuple(MODES)
+    if "--strict-stores" in argv:
+        modes = tuple(STRICT_MODES)
     if "--wasm" in argv:
         modes = ("wasm",)
     if "--m32" in argv:

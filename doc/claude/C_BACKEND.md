@@ -667,7 +667,7 @@ path is not removed while a **port** row is open.  The store rows are also numbe
 
 | Capability (interpreter switch) | For | C has | Proposed verdict | Check owed |
 |---|---|---|---|---|
-| use-after-free generations (`LOFT_UAF`, `LOFT_UAF_GEN`) | R | `LOFT_POISON` (a freed store's buffer is scribbled and kept), the ASan lane | **port**, as the interpreter's ground truth `LOFT_NO_SLOT_REUSE` + `LOFT_POISON` rather than the generation stamps (those ride the interpreter's operand stack, which a C unit does not have): `loft_store_make` always takes the lowest free slot, so a freed store is reused and its poison overwritten | a stale read through a freed store lands on `0xDEADBEEF` on C with no-reuse on |
+| use-after-free generations (`LOFT_UAF`, `LOFT_UAF_GEN`) | R | `LOFT_STRICT_STORES` (`-DLOFT_STRICT_STORES`, the driver's build under the variable): no freed slot made again, an access through a freed store named at `loft_store_of`, a store live at exit named, either one exit 1 — the interpreter's ground truth rather than the generation stamps (those ride its operand stack, which a C unit does not have) | **ported** | `tests/c_emit.rs` `a_strict_store_c_build_names_a_use_after_free_and_a_store_never_freed`; `scripts/c_sweep.py --strict-stores` over the corpus against the interpreter under the same switch |
 | frame-slot verification (`LOFT_VERIFY_STACK`) | R | the C stack; the MemorySanitizer lane | covered | an uninitialised-slot cell MSan flags on C |
 | keyed-structure verifiers (`LOFT_KEYED_VERIFY`, `LOFT_KEY_LIST_VERIFY`) | R | — | **port** | a corrupted-index cell |
 | prefill elision verifier (`LOFT_PREFILL_VERIFY`) | R | `LOFT_POISON_CLAIM` | covered | the field_append cells under `LOFT_POISON_CLAIM` (they pass on C) |

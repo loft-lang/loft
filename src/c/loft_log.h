@@ -531,12 +531,20 @@ static int loft_log_locked_write(void) {
 
 /* `LOFT_NATIVE_LEAK_CHECK` (`collect_store_leaks`, the generated Rust's leak tail): at a run's
  * end, the live stores nothing pinned or locked, by type, most first — `kt=<n> <Type>×<count>`,
- * five named and a count of the rest — as one warning the test runner reads as the verdict. */
+ * five named and a count of the rest — as one warning the test runner reads as the verdict.
+ * A `LOFT_STRICT_STORES` build (loft_rt.h) reports the same list as never freed, counts it with
+ * the uses after free, and exits 1 when either happened (`NATIVE_STRICT_STORE_TAIL`). */
 static void loft_leak_report(void) {
     uint32_t *kt, *count, nk = 0, i, j, total = 0;
     loft_text out = { 0, 0, 0 };
     char buf[96];
-    if (!getenv("LOFT_NATIVE_LEAK_CHECK")) return;
+    int check = getenv("LOFT_NATIVE_LEAK_CHECK") != 0;
+#ifdef LOFT_STRICT_STORES
+    int strict = 1;
+#else
+    int strict = 0;
+#endif
+    if (!check && !strict) return;
     kt = (uint32_t *) calloc(loft_nstores + 1, sizeof *kt);
     count = (uint32_t *) calloc(loft_nstores + 1, sizeof *count);
     if (!kt || !count) { fputs("loft: out of memory\n", stderr); abort(); }
@@ -573,13 +581,29 @@ static void loft_leak_report(void) {
         sprintf(buf, " ... and %u more", (unsigned) (nk - 5));
         loft_push(&out, buf, strlen(buf));
     }
-    if (total) {
+    if (total && check) {
         fflush(stdout);
         fprintf(stderr, "Warning: %u stores not freed at program exit: ", (unsigned) total);
         fwrite(out.p, 1, out.len, stderr);
         fputc('\n', stderr);
     }
+#ifdef LOFT_STRICT_STORES
+    if (total) {
+        fflush(stdout);
+        fprintf(stderr, "[strict-store] NEVER FREED: %u stores not freed at program exit: ", (unsigned) total);
+        fwrite(out.p, 1, out.len, stderr);
+        fputc('\n', stderr);
+        loft_strict_violations += total;
+    }
+#endif
     free(out.p);
     free(kt);
     free(count);
+#ifdef LOFT_STRICT_STORES
+    if (loft_strict_violations) {
+        fflush(stdout);
+        fprintf(stderr, "[strict-store] FAILED: %llu store-lifetime violation(s)\n", (unsigned long long) loft_strict_violations);
+        exit(1);
+    }
+#endif
 }

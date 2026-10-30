@@ -1097,7 +1097,37 @@ static loft_ref loft_ref_null_reported(void) {
     return r;
 }
 
+/* `LOFT_STRICT_STORES` (`keys::strict_stores`, @PLN206 P0b): a freed store stays dead for the
+ * rest of the run — its slot is never made again (`loft_store_make`) — so an access through a
+ * reference naming it is an unambiguous use after free, reported at the access in the
+ * interpreter's words (`strict_store_violation`, a native run's: no bytecode positions); and a
+ * store still live at exit is reported too (`loft_leak_report`).  Either makes the run exit 1.
+ * The driver builds with it when `LOFT_STRICT_STORES` is set.  For probes: never reusing a slot
+ * walks a long run off the end of the store table. */
+#ifdef LOFT_STRICT_STORES
+static uint64_t loft_strict_violations = 0;
+static LOFT_TLS uint32_t loft_strict_floor = 0;
+
+static LOFT_COLD void loft_strict_use_after_free(loft_ref r) {
+    uint64_t n = loft_strict_violations++;
+    if (n < 20) {
+        uint16_t kt = loft_stores[r.store_nr].known;
+        fflush(stdout);
+        fprintf(stderr,
+                "[strict-store] USE AFTER FREE (access) store #%u type=%s rec=%u pos=%u\n"
+                "  killed by the free of `<not recorded>`\n"
+                "  (no bytecode positions \xe2\x80\x94 native run; re-run with --interpret for pcs)\n",
+                (unsigned) r.store_nr, kt < loft_ntn ? loft_tn[kt] : "?", (unsigned) r.rec, (unsigned) r.pos);
+    } else if (n == 20) {
+        fputs("[strict-store] ... further use-after-free reports suppressed\n", stderr);
+    }
+}
+#endif
+
 LOFT_HOT_INLINE loft_store_t *loft_store_of(loft_ref r) {
+#ifdef LOFT_STRICT_STORES
+    if (LOFT_UNLIKELY(r.store_nr < loft_nstores && !loft_stores[r.store_nr].live)) loft_strict_use_after_free(r);
+#endif
     return &loft_stores[r.store_nr];
 }
 
@@ -1136,7 +1166,26 @@ static uint8_t loft_get_store_lock(loft_ref r) {
  * next serial, as every store the program makes. */
 static uint32_t loft_store_make(int counted) {
     uint32_t nr = 0;
+#ifdef LOFT_STRICT_STORES
+    /* `no_slot_reuse`: every slot below the floor was made once, and stays dead once freed. */
+    nr = loft_strict_floor;
+#endif
     while (nr < loft_nstores && loft_stores[nr].live) nr++;
+#ifdef LOFT_STRICT_STORES
+    loft_strict_floor = nr + 1;
+#endif
+#ifdef LOFT_STRICT_STORES
+    if (nr >= 0xFFFF) {
+        uint32_t live = 0, i;
+        for (i = 0; i < loft_nstores; i++) live += loft_stores[i].live != 0;
+        fprintf(stderr, "loft: store table exhausted by the checking mode, not by a leak: this run made 65535 "
+                        "stores and %u are live.  LOFT_STRICT_STORES never reuses a freed store number, so that "
+                        "a stale reference cannot reach a newer store, and store_nr is u16.  This program frees "
+                        "and re-mints more stores than the mode can track: check it with a smaller loop count, "
+                        "or run it without the switch.\n", (unsigned) live);
+        abort();
+    }
+#endif
     if (nr >= 0xFFFF) { fputs("loft: store table exhausted: 65535 stores live at once\n", stderr); abort(); }
     if (nr == loft_nstores) {
         uint32_t n = loft_nstores ? loft_nstores * 2 : 16;
