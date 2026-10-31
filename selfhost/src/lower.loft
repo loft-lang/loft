@@ -32,6 +32,8 @@ enum Kind {
   // (@PLN91 F-1); a read and a write go through it, at the width of what it names.
   KVarRef,
   KRef,
+  // A tuple (@PLN91 F-T1): its leaves on their kinds' stacks, laid out in its slot by its shape.
+  KTuple,
   KNone,
   KOther,
 }
@@ -136,6 +138,10 @@ enum Code {
   BindOrCopy,
   CopyRefOrNull,
   Protect,
+  // A whole tuple (F-T1): `a` its slot, `b` its shape in `Lowering.shapes`.
+  LoadTuple,
+  StoreTuple,
+  PopTuple,
 }
 
 // One op: `kind` is the kind of value it works on; `a` is a value, a slot, a jump target, a
@@ -147,6 +153,19 @@ struct Op {
   kind: Kind,
   a: integer,
   b: integer,
+}
+
+// One scalar of a tuple (F-T1): its byte in the tuple's slot, the stack its value is on, and how
+// the frame holds it (`var_access`'s codes).
+struct Leaf {
+  at: integer,
+  kind: Kind,
+  access: integer,
+}
+
+// A tuple type's leaves, first member first, a nested tuple's flattened in place.
+struct Shape {
+  leaves: vector<Leaf>,
 }
 
 // A function's ops, or the first construct it holds that the interpreter does not carry.  The
@@ -198,6 +217,12 @@ struct Lowering {
   owned_reassigned: vector<boolean>,
   own_ops: own::Ops,
   defs: own::Defs,
+  // The tuple shapes the ops name (F-T1), each tuple variable's (-1 for any other), the
+  // result's, and how many parameters are tuples.
+  shapes: vector<Shape>,
+  var_shape: vector<integer>,
+  result_shape: integer,
+  params_tuple: integer,
 }
 
 // A lowering with nothing in it: what a function not yet lowered holds.
@@ -233,6 +258,10 @@ pub fn empty() -> Lowering {
     owned_reassigned: [],
     own_ops: own::ops_of(ir::empty_bundle()),
     defs: own::new_defs(),
+    shapes: [],
+    var_shape: [],
+    result_shape: -1,
+    params_tuple: 0,
   }
 }
 
@@ -258,6 +287,7 @@ fn kind_of_type(t: ir::TypeT) -> Kind {
     TyNever => KNone,
     TyOptional { inner } => kind_of_type(inner),
     TyRewritten { inner } => kind_of_type(inner),
+    TyTuple { elems: _ } => KTuple,
     _ => KOther,
   }
 }
@@ -297,6 +327,103 @@ fn named_kind(t: ir::TypeT) -> Kind {
   }
 }
 
+// ── Tuples in the frame (@PLN91 F-T1, 1b-frame.md) ──
+
+// The members of tuple type `t` (a `?` peeled), or none when `t` is no tuple.
+fn tuple_elems(t: ir::TypeT) -> vector<ir::TypeT> {
+  match t {
+    TyOptional { inner } => tuple_elems(inner),
+    TyTuple { elems } => elems,
+    _ => [],
+  }
+}
+
+// The type of member `idx` of tuple variable `var` of definition `d_nr`.
+fn member_type(b: ir::Bundle, d_nr: integer, var: integer, idx: integer) -> ir::TypeT {
+  tuple_elems(fvar(b, d_nr, var).type_def[0] ?? ir::TypeT.TyVoid)[idx] ?? ir::TypeT.TyVoid
+}
+
+// Member `idx`'s byte in a tuple of `elems` (`data::element_stack_offsets_in`); `owned` for a
+// tuple local, whose text members are its own.
+fn member_at(elems: vector<ir::TypeT>, idx: integer, owned: boolean) -> integer {
+  at = 0;
+  for e in elems {
+    if e#index == idx {
+      break;
+    }
+    at += frame::member_step(e, owned);
+  }
+  at
+}
+
+// The leaves of `elems` laid out from byte `at`, added to `out`; false at the first member this
+// step does not carry (a text, a reference, a collection, a function), named in the refusal.
+fn add_leaves(l: Lowering, elems: vector<ir::TypeT>, at: integer, owned: boolean, out: vector<Leaf>) -> boolean {
+  pos = at;
+  for e in elems {
+    inner = tuple_elems(e);
+    if len(inner) > 0 {
+      if !add_leaves(l, inner, pos, owned, out) {
+        return false;
+      }
+    } else {
+      k = kind_of_type(e);
+      if k != KInt && k != KFloat && k != KSingle {
+        refuse(l, "a tuple member of a kind the interpreter does not carry yet: {e}");
+        return false;
+      }
+      out += [Leaf { at: pos, kind: stack_of(k), access: access_for(e) }];
+    }
+    pos += frame::member_step(e, owned);
+  }
+  true
+}
+
+// The shape of tuple type `t` in `l.shapes` — a new entry each time it is asked — or -1 when a
+// member is not carried (the function is refused).  A local holds its text members (`owned`).
+fn shape_of(l: Lowering, t: ir::TypeT, owned: boolean) -> integer {
+  leaves: vector<Leaf> = [];
+  if !add_leaves(l, tuple_elems(t), 0, owned, leaves) {
+    return -1;
+  }
+  l.shapes += [Shape { leaves: leaves }];
+  len(l.shapes) - 1
+}
+
+// A tuple value of type `t` onto the stacks, its leaves in order: a literal's items each as its
+// member's value, a null as null leaves (`@FR-T-Absent`: an absent tuple is a tuple of null
+// members), anything else as the expression it is.  It counts as one value on the stacks.
+fn tuple_value(l: Lowering, b: ir::Bundle, n: ir::Node, t: ir::TypeT) {
+  before = l.depth;
+  elems = tuple_elems(t);
+  match unspan(n) {
+    NdTuple { items } => {
+      if len(items) != len(elems) {
+        refuse(l, "a tuple literal of {len(items)} items for a tuple of {len(elems)}");
+        return;
+      }
+      for item in items {
+        e = elems[item#index]!;
+        if len(tuple_elems(e)) > 0 {
+          tuple_value(l, b, item, e);
+        } else {
+          value(l, b, item, stack_of(kind_of_type(e)));
+        }
+      }
+    }
+    NdNull => {
+      sh = shape_of(l, t, false);
+      if sh >= 0 {
+        for leaf in l.shapes[sh]!.leaves {
+          emit(l, PushNull, leaf.kind, 0, 0);
+        }
+      }
+    }
+    _ => expr(l, b, n),
+  }
+  l.depth = before + 1;
+}
+
 // The kind of a box-of-one type, as the IR stores a child type.
 fn kind_of_types(ts: vector<ir::TypeT>) -> Kind {
   if len(ts) == 0 {
@@ -328,6 +455,8 @@ fn kind_of(l: Lowering, b: ir::Bundle, n: ir::Node) -> Kind {
       if k == KNone { kind_of(l, b, f) } else { k }
     }
     NdCall { def_nr, args: _ } => kind_of_types(b.data.definitions[def_nr]?.returned),
+    NdTuple { items: _ } => KTuple,
+    NdTupleGet { var, idx } => kind_of_type(member_type(b, l.def_nr, var, idx)),
     _ => KNone,
   }
 }
@@ -500,6 +629,9 @@ fn effect(code: Code, b: integer) -> integer {
     RefOf => 1,
     Round => 0,
     Nop => 0,
+    LoadTuple => 1,
+    StoreTuple => -1,
+    PopTuple => -1,
     Format => -1 - format_operands(b),
     FromChar => 0,
     Neg => 0,
@@ -707,6 +839,8 @@ fn expr(l: Lowering, b: ir::Bundle, n: ir::Node) {
       if k == KVarRef {
         emit(l, Load, KRef, slot, 0);
         emit(l, Deref, stack_of(l.var_inner[var] ?? KOther), 0, access_of(l, var));
+      } else if k == KTuple {
+        emit(l, LoadTuple, KTuple, slot, l.var_shape[var] ?? -1);
       } else {
         emit(l, Load, if k == KTextRef { KTextRef } else { stack_of(k) }, slot, access_of(l, var));
       }
@@ -730,8 +864,50 @@ fn expr(l: Lowering, b: ir::Bundle, n: ir::Node) {
     }
     NdCall { def_nr, args } => call(l, b, def_nr, args),
     NdReturn { inner } => {
-      value(l, b, inner, l.result);
-      emit(l, Ret, stack_of(l.result), 0, 0);
+      if l.result == KTuple {
+        tuple_value(l, b, inner, b.data.definitions[l.def_nr]!.returned[0] ?? ir::TypeT.TyVoid);
+        emit(l, Ret, KTuple, 0, l.result_shape);
+      } else {
+        value(l, b, inner, l.result);
+        emit(l, Ret, stack_of(l.result), 0, 0);
+      }
+    }
+    // A tuple literal where no tuple type is handed down (a block's tail, an arm): each item at
+    // its own kind; one value on the stacks.  A bare `null` item needs its member's type, which
+    // only `tuple_value` has.
+    NdTuple { items } => {
+      before = l.depth;
+      for item in items {
+        k = kind_of(l, b, item);
+        if k == KNone {
+          refuse(l, "a tuple member whose type is not known here: {item}");
+          return;
+        }
+        if k == KTuple {
+          expr(l, b, item);
+        } else {
+          value(l, b, item, stack_of(k));
+        }
+      }
+      l.depth = before + 1;
+    }
+    // A member of a tuple variable: a scalar is read at its byte of the slot as the frame holds
+    // it, a nested tuple as the tuple at its offset.
+    NdTupleGet { var, idx } => {
+      slot = slot_of(l, var);
+      if var_kind(l, var) != KTuple {
+        refuse(l, "a tuple member of a variable that is not a tuple: {l.var_type[var] ?? "?"}");
+        return;
+      }
+      v = fvar(b, l.def_nr, var);
+      elems = tuple_elems(v.type_def[0] ?? ir::TypeT.TyVoid);
+      at = slot + member_at(elems, idx, !v.argument);
+      e = elems[idx] ?? ir::TypeT.TyVoid;
+      if len(tuple_elems(e)) > 0 {
+        emit(l, LoadTuple, KTuple, at, shape_of(l, e, !v.argument));
+      } else {
+        emit(l, Load, stack_of(kind_of_type(e)), at, access_for(e));
+      }
     }
     _ => refuse(l, "an expression the interpreter does not carry: {n}"),
   }
@@ -1525,6 +1701,12 @@ fn set_inner(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
   // A `&` of a variable that is not a text is written through, as `set_var` writes through
   // the reference its slot holds — unless the set binds it (`@FR-B-Ref-Repoint`): the
   // reference then goes into its own slot, and nothing is written through it or freed.
+  // A tuple: its value's leaves into the slot, by the variable's shape (F-T1).
+  if var_kind(l, var) == KTuple {
+    tuple_value(l, b, x, fvar(b, l.def_nr, var).type_def[0] ?? ir::TypeT.TyVoid);
+    emit(l, StoreTuple, KTuple, slot_of(l, var), l.var_shape[var] ?? -1);
+    return;
+  }
   if var_kind(l, var) == KTextRef && repoints(b, fvar(b, l.def_nr, var).type_def[0] ?? ir::TypeT.TyVoid, x) {
     // A `&text` bound: the byte of the text it names.
     value(l, b, x, KTextRef);
@@ -2253,7 +2435,11 @@ fn call(l: Lowering, b: ir::Bundle, def_nr: integer, args: vector<ir::Node>) {
     return;
   }
   for i in 0..len(args) {
-    value(l, b, args[i]?, kinds[i] ?? KOther);
+    if (kinds[i] ?? KOther) == KTuple && !is_operator(d.name) {
+      tuple_value(l, b, args[i]?, d.attributes[i]!.typedef[0] ?? ir::TypeT.TyVoid);
+    } else {
+      value(l, b, args[i]?, kinds[i] ?? KOther);
+    }
   }
   if is_operator(d.name) {
     op = operator_op(d.name);
@@ -2712,13 +2898,33 @@ fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
       before = l.depth;
       expr(l, b, inner);
       if l.depth > before {
-        emit(l, Pop, stack_of(kind_of(l, b, inner)), 0, 0);
+        discard(l, b, inner);
       }
     }
     // Statements the compiler inserted in place of one (`Value::Insert`).
     NdInsert { items } => {
       for item in items {
         statement(l, b, item);
+      }
+    }
+    // `t.i = v`: the member written at its byte of the slot, a nested tuple whole.
+    NdTuplePut { var, idx, inner } => {
+      slot = slot_of(l, var);
+      if var_kind(l, var) != KTuple {
+        refuse(l, "a tuple member of a variable that is not a tuple: {l.var_type[var] ?? "?"}");
+        return;
+      }
+      v = fvar(b, l.def_nr, var);
+      elems = tuple_elems(v.type_def[0] ?? ir::TypeT.TyVoid);
+      at = slot + member_at(elems, idx, !v.argument);
+      e = elems[idx] ?? ir::TypeT.TyVoid;
+      if len(tuple_elems(e)) > 0 {
+        tuple_value(l, b, inner, e);
+        emit(l, StoreTuple, KTuple, at, shape_of(l, e, !v.argument));
+      } else {
+        k = stack_of(kind_of_type(e));
+        value(l, b, inner, k);
+        emit(l, Store, k, at, access_for(e));
       }
     }
     NdBreak { n: out } => leave_loop(l, out, true),
@@ -2728,10 +2934,26 @@ fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
       expr(l, b, n);
       // A call that leaves a value drops it; a text-writing operator or `OpPrint` leaves none.
       if l.depth > before {
-        emit(l, Pop, stack_of(kind_of(l, b, n)), 0, 0);
+        discard(l, b, n);
       }
     }
     _ => refuse(l, "a statement the interpreter does not carry: {n}"),
+  }
+}
+
+// The value expression `n` left, dropped: a tuple's leaves by the shape of the type the call
+// answers.
+fn discard(l: Lowering, b: ir::Bundle, n: ir::Node) {
+  k = stack_of(kind_of(l, b, n));
+  if k != KTuple {
+    emit(l, Pop, k, 0, 0);
+    return;
+  }
+  match unspan(n) {
+    NdCall { def_nr, args: _ } => {
+      emit(l, PopTuple, KTuple, 0, shape_of(l, b.data.definitions[def_nr]!.returned[0] ?? ir::TypeT.TyVoid, false));
+    }
+    _ => refuse(l, "a tuple dropped that is not a call's"),
   }
 }
 
@@ -2772,6 +2994,7 @@ fn lower_walk(b: ir::Bundle, def_nr: integer, d: ir::Definition) -> Lowering {
     l.var_slot += [-1];
     l.var_access += [access_for(v.type_def[0] ?? ir::TypeT.TyVoid)];
     l.var_inner += [named_kind(v.type_def[0] ?? ir::TypeT.TyVoid)];
+    l.var_shape += [if l.var_kind[v#index] == KTuple { shape_of(l, v.type_def[0] ?? ir::TypeT.TyVoid, !v.argument) } else { -1 }];
     l.owned_reassigned += [false];
     shown = "{v.type_def[0] ?? ir::TypeT.TyVoid}";
     l.var_type += [shown.split(' ')[0] ?? shown];
@@ -2782,7 +3005,7 @@ fn lower_walk(b: ir::Bundle, def_nr: integer, d: ir::Definition) -> Lowering {
     if k == KText && v.argument {
       l.var_access[v#index] = 1;
     }
-    if k == KInt || k == KRef || k == KFloat || k == KText {
+    if k == KInt || k == KRef || k == KFloat || k == KText || k == KTuple {
       at = frame::position(f, v#index);
       if at != null {
         l.var_slot[v#index] = at;
@@ -2812,12 +3035,17 @@ fn lower_walk(b: ir::Bundle, def_nr: integer, d: ir::Definition) -> Lowering {
       l.params_float += 1;
     } else if s == KText {
       l.params_text += 1;
+    } else if s == KTuple {
+      l.params_tuple += 1;
     } else {
       refuse(l, "a parameter of a kind the interpreter does not carry yet");
     }
   }
   if l.result == KTextRef {
     l.result = KText;
+  }
+  if l.result == KTuple {
+    l.result_shape = shape_of(l, d.returned[0] ?? ir::TypeT.TyVoid, false);
   }
   if l.result == KNone {
     statement(l, b, d.code[0]?);

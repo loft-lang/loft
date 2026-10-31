@@ -9,7 +9,8 @@ A child document of [1b-interpreter.md](1b-interpreter.md).  Status: **F-1 built
 variable in the stack store at its Rust byte (PF1 its layout guard, `selfhost/tests/frame.loft`);
 PF2 built (no frame is initialised; each first assignment's positional init writes its slot);
 PF3 built (a `&` of any local is a reference into the frame, read and written through at any
-place); PF4 measured (loft#2310); PF5 built (the stack given back); F-2 not built.**
+place); PF4 measured (loft#2310); PF5 built (the stack given back); F-T1 built (scalar tuple
+locals); F-2 not built.**
 
 ## The rule
 
@@ -190,6 +191,44 @@ never a gate (the order of the goals, 1b-interpreter.md).
   - Found while probing: a self-recursive tail call the compiler turns into a loop
     (`R-TailSelf`, `NdLoop` in a value position) is refused by the lowering as an expression
     it does not carry.
+- **F-T1 — a tuple local in the frame (built; 52 census programs refused `TyTuple`).**  A
+  tuple lives in its slot as the Rust frame holds it: member `i` at the running sum of the
+  stepped member widths before it (`data::element_stack_offsets_in`, `frame::member_at`), a
+  nested tuple's members flattened in place.
+  - **Its shape**: the list of leaves `(offset, kind, access)` a tuple type flattens to, built
+    once per type by the lowering (`Lowering.shapes`).  A leaf is a scalar the frame already
+    carries: integer, float, single, boolean, character, plain enum, each `?` too.  A `text`,
+    reference, collection or `fn` member is refused by name in this step: a tuple local OWNS
+    its text members (`TUPLE_LOCAL_TEXT_OWNED`) and its references take part in ownership,
+    which are each a step of their own.
+  - **A tuple value** is its leaves on their kinds' evaluation stacks, first member deepest: a
+    literal (`NdTuple`) pushes its items in order; a whole-tuple read is `LoadTuple(slot,
+    shape)`, a whole-tuple set `StoreTuple(slot, shape)`, popping the last leaf first.  A
+    `null` tuple is null leaves (`@FR-T-Absent`: an absent tuple is a tuple of null members).
+  - **A member**: `t.i` (`NdTupleGet`) is a `Load` at `slot + offset` with the member's kind
+    and access; `t.i = v` (`NdTuplePut`) a `Store` there.  A nested tuple member is a
+    `LoadTuple` at its offset.
+  - **Calls**: a tuple argument's leaves move off the stacks into the callee's slot, last leaf
+    first, as every other argument moves; a tuple result is carried past the frame restore by
+    `Ret` reading the function's result shape (`Lowering.result_shape`).
+  - **Failure paths**: a member kind outside the leaf set refuses the function with its type;
+    a shape whose leaves would not fit its slot (`frame::width`) is a lowering defect, asserted.
+  - **Tested by**: `kernels/tuples.loft` — a literal, member reads and writes, a nested tuple,
+    a tuple argument, a tuple result destructured, a null tuple, each kind of leaf — values by
+    hand; and the census before and after (no program that passed may change).
+  - **Built**: `lower.loft` (`Leaf`, `Shape`, `shape_of`, `add_leaves`, `member_at`,
+    `tuple_value`, `discard`; the `NdTuple`, `NdTupleGet`, `NdTuplePut` arms), `run.loft`
+    (`LoadTuple`, `StoreTuple`, `PopTuple`; `Ret` and the call's argument move), `frame.loft`
+    (`member_step`).  The census passes 245 programs (222 before), none wrong, crashed or
+    leaking; on the 521 images every program that ran before is unchanged.  What still refuses
+    a tuple is a member this step does not carry: a text (22 programs), a struct enum or
+    reference (10), a vector (8).
+  - **Design → code.**  Transcribed directly, but for two places.  A literal reaches `expr`
+    with no tuple type handed down, as a block's tail (an inlined call's `{ (n, n * 2) }`), so
+    `expr` carries one too, each item at its own kind; only a bare `null` item needs the member
+    type `tuple_value` has.  And `tuple_value`'s `match` was refused by the parser (`Expect
+    token ;`): its last arm calls `expr`, declared further down, which the first pass typed
+    `Unknown` and took for a value — loft#2312, fixed in the parser, not around.
 - **F-2** — the temporaries in the same store: the lowering emits the bytecode writer's
   operators at its stack positions, so its output is the Rust bytecode.
 
