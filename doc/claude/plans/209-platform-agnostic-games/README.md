@@ -16,7 +16,7 @@ over [@PLN72](https://github.com/loft-lang/plans/issues/72)).
 
 | Phase | State |
 |---|---|
-| F1–F12 | Open |
+| F1–F12, F8b | Open |
 | G1–G4 | Open — the 3D work (graphics, stage, the moros editor) continues alongside arc F; G reshapes its boundary |
 
 ## Goal
@@ -142,6 +142,14 @@ Tanmatsu.  One frame clock: `poll` waits for the display's next frame where the 
 (a target check, an absolute OS path, a bare key number, GLSL in tier-F code) fails its library
 CI with the line and the capability to ask instead.
 - Goes red when: a planted platform check in a fixture game passes the gate.
+
+**F8b — the ship build reworks the assets (M).**  `[[asset]]` in `loft.toml` (path and quality),
+and `--ship` for a target packs each asset into that target's form — RGB565 atlases for the
+Tanmatsu, the source on a desktop — under the same path, by the rules in
+[API.md](API.md) § Assets.
+- Goes red when: a shipped game loads other pixels for an `exact` asset than its source; a
+  `reduced` asset differs from its source by more than its bound; a second ship build with no
+  change reworks anything.
 
 **F9 — a reference game on every machine (S).**  tile-world-game (or a successor) moved onto
 F1–F7, published, and built for the Tanmatsu, as a web page and for three desktops from one
