@@ -2931,10 +2931,67 @@ fn is_free(b: ir::Bundle, n: ir::Node) -> boolean {
   false
 }
 
+// The position of the last operator of `ops` that is not a line, or -1.
+fn last_non_line(ops: vector<ir::Node>) -> integer {
+  at = len(ops) - 1;
+  while at >= 0 && unspan(ops[at]!) is NdLine {
+    at -= 1;
+  }
+  at
+}
+
+// A value the scope pass left on the bytecode's stack for the function to answer: `[value,
+// frees…, return null]`, where `OpReturn` answers the stack top (`tail_capture`,
+// `src/c/body.rs`).  The value's position, when `ops` ends that way and the value is of the
+// function's result kind; the return is `last_non_line`.
+fn tail_capture(l: Lowering, b: ir::Bundle, ops: vector<ir::Node>) -> integer? {
+  if l.result == KNone || l.result == KTuple {
+    return null;
+  }
+  ret = last_non_line(ops);
+  if ret < 0 {
+    return null;
+  }
+  match unspan(ops[ret]!) {
+    NdReturn { inner } => {
+      if !(unspan(inner) is NdNull) && !is_free(b, inner) {
+        return null;
+      }
+    }
+    _ => { return null; }
+  }
+  at = ret - 1;
+  while at >= 0 && (unspan(ops[at]!) is NdLine || is_free(b, ops[at]!)) {
+    at -= 1;
+  }
+  if at < 0 || stack_of(kind_of(l, b, ops[at]!)) != stack_of(l.result) {
+    return null;
+  }
+  at
+}
+
 // A block as an expression.  Its value is the last operator that is neither a line, a `Set`
 // nor a free (`assign_seq`, `src/c/body.rs`): the operators before it are statements, and the
 // frees after it run once the value is taken, as they run under it on the bytecode's stack.
+// A `tail_capture` answers its value after the frees.
 fn block_value(l: Lowering, b: ir::Bundle, blk: ir::Block) {
+  tc = tail_capture(l, b, blk.operators);
+  if tc != null {
+    ret = last_non_line(blk.operators);
+    for i in 0..tc! {
+      statement(l, b, blk.operators[i]!);
+    }
+    value(l, b, blk.operators[tc!]!, l.result);
+    for i in tc! + 1..ret {
+      statement(l, b, blk.operators[i]!);
+    }
+    match unspan(blk.operators[ret]!) {
+      NdReturn { inner } => if !(unspan(inner) is NdNull) { statement(l, b, inner); },
+      _ => {}
+    }
+    emit(l, Ret, stack_of(l.result), 0, 0);
+    return;
+  }
   at = len(blk.operators) - 1;
   while at >= 0 {
     o = unspan(blk.operators[at]!);

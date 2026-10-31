@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """The strict comparison of the two interpreters (@PLN91, doc/claude/plans/91-self-host/1b-compare.md).
 
-    selfhost/compare/compare.py FILE[::test_name] … [--layers out,alloc,…] [--keep]
+    selfhost/compare/compare.py FILE[::test_name] … [--layers out,alloc,…] [--keep] [--jobs N]
 
 For each entry — a program's `main`, or one test function — every output both implementations
 produce is compared, one LAYER per line: `EQUAL`, `DIFFERENT` (the first differing row, with
@@ -16,7 +16,7 @@ The Rust side is the `op-census` build (`LOFT_BIN`, default target/op-census/rel
 writes the allocator trace; the loft side is `selfhost/cover/run_program.loft`, compiled through
 the C backend into target/selfhost-compare/ and rebuilt when a selfhost source is newer.  Not a
 test: it is run by hand, on any program, test script or suite cell."""
-import argparse, os, re, subprocess, sys, tempfile, shutil
+import argparse, concurrent.futures as cf, os, re, subprocess, sys, tempfile, shutil
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
@@ -395,6 +395,8 @@ def main():
     ap.add_argument("entries", nargs="+", help="FILE or FILE::test_name")
     ap.add_argument("--layers", default=",".join(LAYERS))
     ap.add_argument("--keep", action="store_true", help="keep each entry's scratch directory")
+    ap.add_argument("--jobs", type=int, default=os.cpu_count() or 1,
+                    help="entries compared at once (each in its own scratch directory)")
     a = ap.parse_args()
     layers = [x for x in a.layers.split(",") if x]
     unknown = [x for x in layers if x not in LAYERS]
@@ -406,15 +408,17 @@ def main():
     exe = build(os.path.join("cover", "run_program.loft"), "runner")
     reports = build(os.path.join("compare", "reports.loft"), "reports")
     equal = 0
-    for spec in a.entries:
-        print(f"== {spec}")
-        report = compare(spec, exe, reports, layers, a.keep)
-        ok = all(v == "EQUAL" for _, v, _ in report)
-        equal += ok
-        for layer, v, detail in report:
-            print(f"   {layer:<10} {v}")
-            for row in detail:
-                print(f"              {row}")
+    # Entries run in parallel; their reports print in the order given.
+    with cf.ThreadPoolExecutor(max(1, a.jobs)) as ex:
+        done = ex.map(lambda spec: compare(spec, exe, reports, layers, a.keep), a.entries)
+        for spec, report in zip(a.entries, done):
+            print(f"== {spec}", flush=True)
+            ok = all(v == "EQUAL" for _, v, _ in report)
+            equal += ok
+            for layer, v, detail in report:
+                print(f"   {layer:<10} {v}")
+                for row in detail:
+                    print(f"              {row}")
     print(f"{equal} of {len(a.entries)} entries equal in every layer ({', '.join(layers)})")
     sys.exit(0 if equal == len(a.entries) else 1)
 

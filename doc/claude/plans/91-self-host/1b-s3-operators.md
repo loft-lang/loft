@@ -24,8 +24,11 @@ strict comparison over every program the census passes (out, alloc, leak, binds,
 | `OpPlaceRecord` (`@FR-R-Place`) | `loft_place_record` with the type's size and default image; `foreign` as the C backend decides it, from the host variable's root type | `kernels/places.loft` `moved` |
 | `OpMoveVector`, `OpMoveField`, `OpMoveRecord`, `OpReplaceVector`, `OpFreeRecordIn` | the runtime's own move, replace and release routines; a linked element type takes the `_array` twin | `places.loft` `moved`; the census |
 | `OpTextWalkStep` (`@FR-R-CharWalk`) | the bytecode writer's fused text-walk step: `char_walk` matches the parser's `for c in T` lowering per loop, the loop variable's set is one `TextWalkStep` (`walk-step` in the bind table) | `small_ops.loft` `text_walk`; the binds layer |
+| `Value::Insert` as a value | its items statements, the last the value (`NdInsert` in `expr` and `kind_of`) | O-Move/1884 |
+| native `n_vector_sum_int` | `crt::vector_sum_int`, the C runtime's kernel (native 2) | `repeats.loft` `summed` |
+| the stack-top return `[value, frees…, return null]` | `tail_capture`, as the C writer reads it: the value taken, the frees run, then `Ret` | O-Move/1884 c6 (a wrapper forwarding a call bound after a preamble) |
 
-**Measured** (2026-10-31): the census went from 297 to 380 programs passed over these rows,
+**Measured** (2026-10-31): the census went from 297 to 438 programs passed over these rows,
 none wrong, crashed or leaking, and every passing program equal to the Rust interpreter in
 every layer.
 
