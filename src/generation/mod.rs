@@ -9269,7 +9269,7 @@ extern crate loft;"
                  // macOS: the same thread, and the MAIN thread serves the main dispatch\n    \
                  // queue, where AppKit keeps its windows (`run_beside_main_queue`).\n    \
                  #[cfg(target_os = \"macos\")]\n    \
-                 loft::codegen_runtime::run_beside_main_queue(__run);\n    \
+                 loft::platform::run_beside_main_queue(__run);\n    \
                  // wasm32 has no thread to join, so the halt cannot be observed at a\n    \
                  // join point.  A panic HOOK runs before the abort, which makes the exit\n    \
                  // code reachable even where panics abort rather than unwind — without\n    \
@@ -9310,7 +9310,7 @@ extern crate loft;"
                  // macOS: the same thread, and the MAIN thread serves the main dispatch\n    \
                  // queue, where AppKit keeps its windows (`run_beside_main_queue`).\n    \
                  #[cfg(target_os = \"macos\")]\n    \
-                 loft::codegen_runtime::run_beside_main_queue(__run);\n    \
+                 loft::platform::run_beside_main_queue(__run);\n    \
                  // wasm32 has no thread to join, so the halt cannot be observed at a\n    \
                  // join point.  A panic HOOK runs before the abort, which makes the exit\n    \
                  // code reachable even where panics abort rather than unwind — without\n    \
