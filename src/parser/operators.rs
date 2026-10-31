@@ -1894,6 +1894,14 @@ impl Parser {
         // `(&a)`, a call receiver) consumes it too — that is what makes the `&`
         // arriving later a sub-expression use rather than the whole RHS.
         let at_head = std::mem::take(&mut self.amp_head);
+        // @PLN46/@PLN25 — `expr_not_null` says "the field access JUST parsed is non-null", for
+        // the operator right after that access; a new operand is never that access.  Without
+        // this reset the marker a `d.items` read left set rode into the next operand — a call
+        // argument `h(d.items, k ?? 7)`, a tuple element, `d.items += [k ?? 7]` — and the `??`
+        // on a plain `k` was reported redundant under the name 'items' while its default was
+        // in use (loft#2302).  The `=>` and statement boundaries reset it for the same reason.
+        self.expr_not_null = false;
+        self.expr_not_null_name.clear();
         // @PLN87 — a PREFIX `&<lvalue>` is a reference-to, distinct from the binary
         // `&` (bitwise-and "Land"). The binary form only ever sits BETWEEN operands,
         // so a `&` seen here at an operand START is the prefix: it flags the `&`-ness
