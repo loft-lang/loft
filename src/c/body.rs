@@ -17,6 +17,7 @@ mod generator;
 mod keyed;
 mod misc;
 mod par;
+pub(super) mod transient;
 mod value;
 
 use super::{CType, Cx, c_name, held, is_operator, type_word};
@@ -130,7 +131,8 @@ fn kind_of(c: CType) -> K {
         CType::Char => K::Char,
         CType::Fn => K::Fn,
         CType::Tuple(id) => K::Tup(id),
-        CType::Void => K::Void,
+        // A transient pointer has no expression kind: it never reaches the ordinary path.
+        CType::Tr(_) | CType::TrVec | CType::Void => K::Void,
     }
 }
 
@@ -194,6 +196,8 @@ pub(crate) struct FnWriter<'a> {
     invariants: Vec<std::collections::HashMap<usize, std::rc::Rc<(String, Value)>>>,
     /// `@FR-R-ValueRecord`'s facts for this function (`value::VrFn`), when the plan has any.
     vr: Option<Box<value::VrFn>>,
+    /// `@FR-R-Transient`: this body's transient variables, when it is a twin or holds a site.
+    tr: Option<Box<transient::TrFn>>,
     /// The leaf being written as its dense self inside its widening (`value::vr_assign`).
     widening: Option<usize>,
     /// A value staged into a C temporary, by the temporary's name, with its kind: what a
@@ -650,6 +654,7 @@ impl<'a> FnWriter<'a> {
             push_heads: Vec::new(),
             slice_carriers: Vec::new(),
             vr: value::VrFn::of(cx, d).map(Box::new),
+            tr: None,
             widening: None,
             raw: std::collections::HashMap::new(),
             field_view: false,
@@ -1216,7 +1221,10 @@ impl<'a> FnWriter<'a> {
     /// (621M -> 541M, -13 %).
     fn hold_invariants(&mut self, b: &Block, ind: usize) {
         let mut frame = std::collections::HashMap::new();
-        if !self.cx.switches.invariant_hoist_disabled && self.gen_elem.is_none() {
+        if !self.cx.switches.invariant_hoist_disabled
+            && self.gen_elem.is_none()
+            && self.tr.is_none()
+        {
             for ch in crate::opt::hoist::invariant_chains(b, self.cx.data, self.vars) {
                 if ch
                     .nodes
@@ -1535,6 +1543,7 @@ impl<'a> FnWriter<'a> {
     fn verdict(&mut self, b: &Block) -> Option<crate::opt::hoist::LoopHoist> {
         // A twin and a region body (`@FR-R-Apart` instance 2) are emitted with the hoists off.
         if self.gen_elem.is_some()
+            || self.tr.is_some()
             || std::env::var("LOFT_NO_VECTOR_HOIST").is_ok_and(|v| v != "0")
             || self.av_any()
         {
@@ -1664,7 +1673,8 @@ impl<'a> FnWriter<'a> {
     #[expect(clippy::type_complexity, reason = "two pair lists, named in the doc")]
     fn distinct_version(&mut self, lp: &Block) -> Option<(Vec<(u16, u16)>, Vec<(u16, u16)>)> {
         let sw = self.cx.switches;
-        if sw.distinct_version_disabled
+        if self.tr.is_some()
+            || sw.distinct_version_disabled
             || sw.distinct_growth_disabled
             || !self.assumed.is_empty()
             || lp.operators.iter().any(|op| {
@@ -1758,6 +1768,7 @@ impl<'a> FnWriter<'a> {
     fn open_window(&mut self, lp: &Block, ind: usize) -> Result<bool, String> {
         let env_on = |k: &str| std::env::var(k).is_ok_and(|v| v != "0");
         if self.gen_elem.is_some()
+            || self.tr.is_some()
             || env_on("LOFT_NO_PUSH_FILL")
             || env_on("LOFT_NO_PUSH_WINDOW")
             || self.av_any()
@@ -1810,7 +1821,10 @@ impl<'a> FnWriter<'a> {
     /// `LOFT_NO_PUSH_FILL=1` / `LOFT_NO_HASH_RESERVE=1` reserve nothing, as on native.
     fn hash_reserve(&mut self, lp: &Block, ind: usize) -> Result<(), String> {
         let env_on = |k: &str| std::env::var(k).is_ok_and(|v| v != "0");
-        if self.gen_elem.is_some() || env_on("LOFT_NO_PUSH_FILL") || env_on("LOFT_NO_HASH_RESERVE")
+        if self.gen_elem.is_some()
+            || self.tr.is_some()
+            || env_on("LOFT_NO_PUSH_FILL")
+            || env_on("LOFT_NO_HASH_RESERVE")
         {
             return Ok(());
         }
@@ -1847,7 +1861,7 @@ impl<'a> FnWriter<'a> {
     /// with no reservation: a push that does not fit takes the window's growth arm.
     fn deep_window(&mut self, lp: &Block, ind: usize) -> Result<bool, String> {
         let env_on = |k: &str| std::env::var(k).is_ok_and(|v| v != "0");
-        if env_on("LOFT_NO_DEEP_WINDOW") {
+        if env_on("LOFT_NO_DEEP_WINDOW") || self.tr.is_some() {
             return Ok(false);
         }
         let data = self.cx.data;
@@ -2253,6 +2267,12 @@ impl<'a> FnWriter<'a> {
     /// Return `v`'s value (or nothing): copy it out, free the function's texts, return.
     fn ret_value(&mut self, v: Option<&Value>, ind: usize) -> Result<(), String> {
         let v = v.filter(|v| !matches!(v.unspan(), Value::Null));
+        if let CType::Tr(_) = self.ret {
+            return match v {
+                Some(v) => self.tr_return(v, ind),
+                None => Err("a transient result answered by nothing".into()),
+            };
+        }
         match (self.ret, v) {
             (CType::Void, Some(v)) => {
                 self.stmt(v, ind)?;
@@ -2541,6 +2561,7 @@ impl<'a> FnWriter<'a> {
         ind: usize,
     ) -> Result<Option<usize>, String> {
         if self.gen_elem.is_some()
+            || self.tr.is_some()
             || self.av_any()
             || std::env::var("LOFT_NO_PUSH_RUN_RESERVE").is_ok_and(|v| v != "0")
         {
@@ -2600,6 +2621,7 @@ impl<'a> FnWriter<'a> {
     fn bind_view_header(&mut self, ops: &[Value], at: usize, ind: usize) {
         if self.cx.switches.view_hoist_disabled
             || self.gen_elem.is_some()
+            || self.tr.is_some()
             || std::env::var("LOFT_NO_VECTOR_HOIST").is_ok_and(|v| v != "0")
         {
             return;
@@ -2654,6 +2676,7 @@ impl<'a> FnWriter<'a> {
     /// native does.  A value record, a `&` link and a generator's parameter are never bound.
     fn bind_param_ptrs(&mut self, code: &Value) {
         if self.gen_elem.is_some()
+            || self.tr.is_some()
             || crate::env_once!(std::env::var("LOFT_NO_RECORD_PTR").is_ok_and(|v| v != "0"))
         {
             return;
@@ -2738,6 +2761,7 @@ impl<'a> FnWriter<'a> {
     /// `LOFT_NO_RECORD_PTR=1` keeps every access a store resolution.
     fn bind_record_ptr(&mut self, ops: &[Value], at: usize, ind: usize) {
         if self.gen_elem.is_some()
+            || self.tr.is_some()
             || self.nk_skip.is_some()
             || crate::env_once!(std::env::var("LOFT_NO_RECORD_PTR").is_ok_and(|v| v != "0"))
         {
@@ -3081,6 +3105,7 @@ impl<'a> FnWriter<'a> {
             CType::Single => format!("{target} = (float) NAN;"),
             CType::Char => format!("{target} = 0;"),
             CType::Fn => format!("{target} = loft_fn_of(LOFT_NULL);"),
+            CType::Tr(_) | CType::TrVec => format!("{target} = 0;"),
             CType::Tuple(id) => {
                 for (i, e) in self.cx.tuple_shapes(id).into_iter().enumerate() {
                     self.null_into(&format!("{target}.f{i}"), e, ind);
@@ -3332,7 +3357,7 @@ impl<'a> FnWriter<'a> {
     /// written as the call of `f__ap` with X as its buffer, so f's appends land after X's
     /// elements.  `LOFT_NO_APPEND_TWIN=1` keeps the copy.
     fn append_site(&mut self, v: &Value, ind: usize) -> Result<bool, String> {
-        if !crate::keys::append_twin_enabled() || self.gen_elem.is_some() {
+        if !crate::keys::append_twin_enabled() || self.gen_elem.is_some() || self.tr.is_some() {
             return Ok(false);
         }
         let mut memo = std::mem::take(&mut self.ap_memo);
@@ -3647,6 +3672,12 @@ impl<'a> FnWriter<'a> {
             Value::Block(b) => self.block_stmt(b, ind),
             Value::Insert(ops) => ops.iter().try_for_each(|o| self.stmt(o, ind)),
             Value::Set(var, x) => {
+                if self.tr.is_some()
+                    && let Some(r) = self.tr_set(*var, x, ind)
+                {
+                    self.bound[*var as usize] = true;
+                    return r;
+                }
                 if self.apr_set(*var, x, ind)?
                     || self.apv_stmt(v, ind)
                     || self.av_set(*var, x, ind)?
@@ -5153,6 +5184,10 @@ impl<'a> FnWriter<'a> {
             // `@FR-R-Apart` instance 4: an apart value is its buffers — what a twin call takes, and
             // a C type error anywhere a record was meant.
             Value::Var(var) if let Some(buf) = self.apr_buf(*var) => Ok(E::new(buf, K::Ref)),
+            // `@FR-R-Transient`: a transient value read where a store value is meant.
+            Value::Var(var) if self.tr_is(*var) || self.tr_dead(*var) => {
+                Err("a transient value read as a store value".into())
+            }
             Value::Var(var) if self.apv_vec(*var) => Ok(E::new(format!("loft_apv{var}"), K::Ref)),
             Value::Var(var) if let Some(val) = self.av_val(*var) => Ok(E::new(val, K::Ref)),
             // A link to a field or element reads that place at each use (`@FR-B-Ref-Read`).
@@ -5685,6 +5720,8 @@ impl<'a> FnWriter<'a> {
             .map(|(i, key)| (i, key, ptr.contains(&i)))
             .collect();
         let values = self.vr_args(args, values, dropped, &tuple_params, &mut xs, ind)?;
+        let (tr_name, values, tr_dropped) = self.tr_args(d, args, values, &mut xs, ind)?;
+        let dropped = dropped.or(tr_dropped);
         // A callee that runs no store write reads a text argument as a text VALUE op
         // does (`@FR-F-ParamText`) — unless a store place goes to a `&` parameter, which its twin writes.
         let reads = places == 0 && cx.call_keeps_stores(d);
@@ -5697,59 +5734,64 @@ impl<'a> FnWriter<'a> {
         // `@FR-R-Header`'s kept-twin clause: a callee handed a vector this body holds a GROWN
         // header for takes that header by pointer and keeps it current; no refresh follows.
         let mut mask = places;
-        if places == 0
-            && super::native_c(route).is_none()
-            && args.len() < 64
-            && let Some(h) = self.kept_header_arg(d, args)
-        {
-            xs.push(format!("&{h}"));
-            self.kh_passed.insert(h);
-            mask |= super::KH_BIT;
-            crate::rewrite_census::fired("R-KeptTwin", 1);
-        }
-        // `@FR-R-Inputs`: a callee whose every header input this body holds takes them.
-        if mask & super::KH_BIT == 0
-            && super::native_c(route).is_none()
-            && args.len() < 64
-            && !self.apr_twin_call(d, args)
-            && let Some(inputs) = self.twin_inputs(d, args, ind)?
-        {
-            xs.extend(inputs);
-            mask |= super::INV_BIT;
-        }
-        crate::rewrite_census::fired("R-Inputs", usize::from(mask & super::INV_BIT != 0));
-        if self.nk_call == Some(d) {
-            self.nk_call = None;
-            mask |= super::NK_BIT;
-        }
-        if self.append_call(d, args) {
-            mask |= super::AP_BIT;
-        }
-        if self
-            .ds_site
-            .is_some_and(|(c, at)| c == d && at == args.as_ptr() as usize)
-        {
-            self.ds_site = None;
-            mask |= super::DS_BIT;
-            crate::rewrite_census::fired("R-Destination", 1);
-        }
-        // `@FR-R-NonSentinelParam`'s twin clause: the parameters this call's arguments prove
-        // beyond the program-wide fact go to a `__nn` twin that seeds them.
-        if super::native_c(route).is_none()
-            && args.len() <= super::NN_PARAMS
-            && !self.apr_twin_call(d, args)
-        {
-            let bits = self.nn_twin_bits(d, args);
-            if bits != 0 {
-                mask |= bits << super::NN_SHIFT;
+        // A transient twin takes no other twin's arguments.
+        if tr_name.is_none() {
+            if places == 0
+                && super::native_c(route).is_none()
+                && args.len() < 64
+                && let Some(h) = self.kept_header_arg(d, args)
+            {
+                xs.push(format!("&{h}"));
+                self.kh_passed.insert(h);
+                mask |= super::KH_BIT;
+                crate::rewrite_census::fired("R-KeptTwin", 1);
+            }
+            // `@FR-R-Inputs`: a callee whose every header input this body holds takes them.
+            if mask & super::KH_BIT == 0
+                && super::native_c(route).is_none()
+                && args.len() < 64
+                && !self.apr_twin_call(d, args)
+                && let Some(inputs) = self.twin_inputs(d, args, ind)?
+            {
+                xs.extend(inputs);
+                mask |= super::INV_BIT;
+            }
+            crate::rewrite_census::fired("R-Inputs", usize::from(mask & super::INV_BIT != 0));
+            if self.nk_call == Some(d) {
+                self.nk_call = None;
+                mask |= super::NK_BIT;
+            }
+            if self.append_call(d, args) {
+                mask |= super::AP_BIT;
+            }
+            if self
+                .ds_site
+                .is_some_and(|(c, at)| c == d && at == args.as_ptr() as usize)
+            {
+                self.ds_site = None;
+                mask |= super::DS_BIT;
+                crate::rewrite_census::fired("R-Destination", 1);
+            }
+            // `@FR-R-NonSentinelParam`'s twin clause: the parameters this call's arguments prove
+            // beyond the program-wide fact go to a `__nn` twin that seeds them.
+            if super::native_c(route).is_none()
+                && args.len() <= super::NN_PARAMS
+                && !self.apr_twin_call(d, args)
+            {
+                let bits = self.nn_twin_bits(d, args);
+                if bits != 0 {
+                    mask |= bits << super::NN_SHIFT;
+                }
+            }
+            // `@FR-R-Apart` instance 4: an apart value handed over goes to the callee's `__apr` twin,
+            // which takes it as its buffers (`expr` answered them at that argument).
+            if self.apr_twin_call(d, args) {
+                mask |= super::APR_BIT;
             }
         }
-        // `@FR-R-Apart` instance 4: an apart value handed over goes to the callee's `__apr` twin,
-        // which takes it as its buffers (`expr` answered them at that argument).
-        if self.apr_twin_call(d, args) {
-            mask |= super::APR_BIT;
-        }
-        let name = if mask == 0 {
+        let name = if let Some(n) = tr_name {
+            n
+        } else if mask == 0 {
             name
         } else if super::native_c(route).is_some() || args.len() > 63 {
             return Err(format!("a store place handed to a & parameter of {callee}"));
@@ -6212,6 +6254,11 @@ impl<'a> FnWriter<'a> {
             "OpFormatStackDatabase" => "OpFormatDatabase",
             n => n,
         };
+        if self.tr.is_some()
+            && let Some(e) = self.tr_operator(name, args, ind)?
+        {
+            return Ok(e);
+        }
         if self.ds.is_some()
             && let Some(e) = self.dest_scalar_set(name, args, ind)?
         {
@@ -8551,6 +8598,7 @@ fn as_shape(e: E, c: CType) -> Result<String, String> {
         CType::Single => as_single(e),
         CType::Char => as_char(e),
         CType::Fn => as_fn(e),
+        CType::Tr(_) | CType::TrVec => Err("a transient value outside its mapping".into()),
         CType::Void => Err("a void value".into()),
     }
 }

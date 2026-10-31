@@ -419,6 +419,25 @@ Steps, replacing S6–S10's order (each one commit, verified as before):
   `e<off>` enum tag / byte, `f<off>` float, `t<off>` text (`loft_str`), `v<off>` vector
   (`lt_vec { void *p; uint32_t n, cap; }`), `r<off>` an inline record (by value).
 
+## Found while building S8 (2026-10-31): `(R-DecodeView)` already covers this, on native only
+
+`src/lower/decode_view.rs` and `decode_structure.rs` hold `(R-DecodeView)` (@C141) and its
+STRUCTURE clause: a decoded value's text and byte fields as SPANS of the frame, and a decoded
+value held as its POSITION — a shape twin `P__ps` that drops every building statement (this
+plan's T1) and a walk twin over a vector field (this plan's T2 readers).  Its plan is decided
+once from the IR in the shared `lower` layer ("every emitter reads the same decisions"), and
+the native writer emits it (`src/generation/decode_view_emit.rs`, `decode_structure_emit.rs`).
+The C writer does not read it.  So `(R-Transient)` as designed is a second mechanism for a case
+the rules already answer, and the general step for the C is to PORT `(R-DecodeView)`'s emission,
+not to build this one.  Owner's decision; recommendation: port.
+
+Where S8 stands: `src/c/body/transient.rs` (twin keys, the struct derivation, the site plan,
+the writer arms) is committed OPT-IN (`LOFT_TRANSIENT=1`), the default emission byte-identical
+(pluginabi's bench C compared).  On the cells every twin still declines, for a reason the IR the
+C writer sees made visible: `(R-Destination)` has already rewritten `read_value`'s child call to
+decode into the new element (`sub = read_value(…, _elm_3)`, the move removed) — the same
+lowering layer.  The arena (S6) and its test stand on their own and serve either route.
+
 ## Not in this design
 
 - A twin for a producer whose result one site keeps and another reads: both forms are emitted,

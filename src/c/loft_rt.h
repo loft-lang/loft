@@ -1487,6 +1487,41 @@ static inline void loft_ta_back(loft_ta_mark_t m) {
     loft_ta_top = m.top;
 }
 
+/* A transient vector: its elements in the arena, `n` of them, room for `cap`. */
+typedef struct { void *p; uint32_t n, cap; } loft_ta_vec;
+
+/* A new zeroed element of `size` bytes at the end of `v`; a vector out of room moves to a
+ * block twice as big (the old one is dead space until the mark goes back). */
+static inline void *loft_ta_vec_push(loft_ta_vec *v, size_t size) {
+    if (v->n == v->cap) {
+        uint32_t cap = v->cap ? v->cap * 2 : 4;
+        void *p = loft_ta_alloc((size_t) cap * size);
+        if (v->n) memcpy(p, v->p, (size_t) v->n * size);
+        v->p = p;
+        v->cap = cap;
+    }
+    void *e = (unsigned char *) v->p + (size_t) v->n * size;
+    v->n++;
+    return e;
+}
+
+/* Element `i` of `v`, or 0 past either end — what a store vector's read answers as null. */
+static inline void *loft_ta_vec_at(const loft_ta_vec *v, int64_t i, size_t size) {
+    if (i < 0 || i >= (int64_t) v->n) return 0;
+    return (unsigned char *) v->p + (size_t) i * size;
+}
+
+/* A text's bytes copied into the arena. */
+static inline loft_str loft_ta_str(loft_str s) {
+    loft_str out = { 0, 0 };
+    if (s.len == 0) return out;
+    char *p = (char *) loft_ta_alloc(s.len);
+    memcpy(p, s.p, s.len);
+    out.p = p;
+    out.len = s.len;
+    return out;
+}
+
 /* `@FR-R-SliceArg`: the carrier stores a slice handed to a `const` parameter is copied into —
  * a few per thread, kept across uses instead of minted and freed per use.  An idle carrier is
  * PINNED, so the leak report passes it by and a stray free leaves it alone; one in use is an
@@ -5752,6 +5787,21 @@ static loft_text loft_text_from_byte_range(loft_ref v, int64_t lo, int64_t hi) {
     const unsigned char *p = loft_elem_base(s, r) + lo;
     if (loft_utf8_valid(p, (size_t) (hi - lo))) loft_push(&out, (const char *) p, (size_t) (hi - lo));
     return out;
+}
+
+/* `@FR-R-Transient`: the scalar elements of store vector `src` copied into transient vector `d`,
+ * each `size` bytes. */
+static void loft_ta_vec_copy(loft_ta_vec *d, loft_ref src, uint32_t size) {
+    int64_t n = loft_vec_len(src);
+    d->p = 0;
+    d->n = d->cap = 0;
+    if (src.store_nr == 0xFFFF || src.rec == 0 || src.pos == 0 || n <= 0) return;
+    loft_store_t *s = loft_store_of(src);
+    uint32_t r = loft_collection_rec(s, src.rec, src.pos);
+    if (r == 0) return;
+    d->p = loft_ta_alloc((size_t) n * size);
+    memcpy(d->p, loft_elem_base(s, r), (size_t) n * size);
+    d->n = d->cap = (uint32_t) n;
 }
 
 /* OpSliceVector (Stores::vector_slice): the elements [lo, hi) of `o`, clamped to it, appended to
