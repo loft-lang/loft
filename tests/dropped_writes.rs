@@ -1,6 +1,5 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @PLN203 C-gap: the C reports no `index_out_of_bounds` yet (@PLN206 D36) — its run takes the cells without one.
 
 //! `@FR-E-Report`'s dropped-write clause and `@FR-H-Write-Else`, with a logger attached, on
 //! both backends: a write whose place names no record lands nowhere (`@FR-H-WriteNull`,
@@ -157,10 +156,7 @@ const CELLS: &[(&str, &str, usize, usize, &str)] = &[
 ];
 
 fn check(backend: &str) {
-    // The C reports no out-of-range index yet (STORE_MODEL.md D36): its run is the cells that
-    // need none.
-    let c = backend == "--native-c";
-    for (name, body, oob, dropped, want) in CELLS.iter().filter(|cell| !c || cell.2 == 0) {
+    for (name, body, oob, dropped, want) in CELLS {
         let (out, log) = run(name, body, backend);
         assert_eq!(out.trim(), *want, "{name} {backend}: stdout");
         assert_eq!(
