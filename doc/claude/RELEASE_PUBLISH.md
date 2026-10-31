@@ -101,9 +101,15 @@ toolchain ships through it — signed, with checksums a user can verify offline.
   ship, so it starts on those and on every newer distribution.  The bundle smoke checks
   both: an ELF interpreter, and no glibc symbol newer than the floor.  A musl system builds
   from source; `scripts/install.sh` says so.
-- **Each bundle is a self-contained zip** — `bin/loft`, the `default/` stdlib, examples,
-  `loft-reference.pdf`, `BUILD-INFO` and `SHA256SUMS` — attached to the draft as
-  `loft-<version>-<triple>.zip` with its `.zip.sha256`.
+- **Each bundle is a self-contained zip** — `bin/loft`, the `default/` stdlib, the components
+  in `lib/loft/components/`, examples, `loft-reference.pdf`, `BUILD-INFO` and `SHA256SUMS` —
+  attached to the draft as `loft-<version>-<triple>.zip` with its `.zip.sha256`.
+- **The components are built per bundle** by the target's own `loft-components`
+  (`make-release.sh`), the cross-built x86_64 macOS one with `-arch x86_64` and its
+  architecture checked.  web, server and ssh call their natives through the `net` component,
+  so both smokes (`release.yml`, `daily-build.yml`) run `scripts/smoke-components.sh`, a
+  program on those natives.  `repro-verify.sh` compares `bin/loft` only; the components are
+  not yet part of what a rebuild verifies.
 - **One manifest per bundle.**  `SHA256SUMS` covers every file the bundle ships and is the
   authoritative list of what it owns (`self_update::owned_files` reads the same file).  There
   is no second, stdlib-only manifest: it would be a second way to validate one installation.
@@ -238,7 +244,7 @@ None of the three reads a sentence; whether the reference still describes the la
 
 ## Two install layouts
 
-A release bundle is `<prefix>/bin/loft` beside `<prefix>/default/`; a source install
+A release bundle is `<prefix>/bin/loft` beside `<prefix>/default/` and `<prefix>/lib/loft/components/`; a source install
 (`make install`) is `<prefix>/bin/loft` with `<prefix>/share/loft/{default,libloft.rlib,deps}`.
 The runtime's resolver (`native_utils::project_root_for`) prefers `<prefix>/share/loft/`
 whenever it exists, so `self-update` over a prefix that was once source-installed would write
@@ -285,7 +291,7 @@ exempt, because it is not a `loft package`, and the weekly `repro-build.yml` cov
 | Artifact | How |
 |---|---|
 | Annotated tag `vYYYY.M.P` | `git tag -a vYYYY.M.P -m "…" && git push origin vYYYY.M.P` — the push triggers `release.yml` |
-| Four bundles `loft-<v>-<triple>.zip` + `.sha256`, each with `bin/`, `default/`, `examples/`, `loft-reference.pdf`, `BUILD-INFO`, `SHA256SUMS` | `release.yml` → `scripts/make-release.sh`, attached to the DRAFT, each smoke-run from its own zip |
+| Four bundles `loft-<v>-<triple>.zip` + `.sha256`, each with `bin/`, `default/`, `lib/loft/components/`, `examples/`, `loft-reference.pdf`, `BUILD-INFO`, `SHA256SUMS` | `release.yml` → `scripts/make-release.sh`, attached to the DRAFT, each smoke-run from its own zip |
 | `loft-<v>-src.zip` + `loft-<v>-registry-entry.json` | the draft job, derived from the bundles it just built |
 | Library artifacts `loft_auto_*` + `lib-artifacts-<triple>.json` | the `artifacts: true` legs, `scripts/release-lib-artifacts.sh` ([§ Library artifacts](#library-artifacts)) |
 | crates.io `loft` | `release.yml` `crates-io` job, when `CARGO_REGISTRY_TOKEN` is set |
