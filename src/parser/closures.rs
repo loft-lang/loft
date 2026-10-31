@@ -570,6 +570,26 @@ impl Parser {
     /// leaves dangling DbRefs — silent cross-object corruption once
     /// the store slot is reused.  The three escape sinks reject on
     /// this predicate; locals and downward argument passing stay free.
+    /// `@FR-L-CapOwn` — bind `___oldrec`, the closure record a write to `place` displaces, as
+    /// a VIEW of `place`: `field` reads the record out of the place's closure slot.  Its one use
+    /// is the cascade the scope pass places after the bind, which must release what the record
+    /// IN the slot adopted.  Bound with no dep it read as an owner whose deps were stripped, and
+    /// a child read is a projection of its host (`@FR-L-OutOfLine`), so `@FR-B-Copy` minted a
+    /// copy: the cascade ran on the copy, and the copy — `skip_free` — leaked one record per
+    /// write.  The slot is overwritten only after the cascade, so `(B-View)` keeps the alias.
+    pub(crate) fn bind_displaced_closure(
+        &mut self,
+        place: &Value,
+        field: Value,
+        record: u32,
+    ) -> Value {
+        let deps = crate::use_analysis::place_root(place, &self.data)
+            .map_or_else(crate::data::Deps::none, crate::data::Deps::frame1);
+        let old = self.create_unique("__oldrec", &Type::Reference(record, deps));
+        self.vars.set_skip_free(old);
+        v_set(old, self.cl("OpRefFromChildRec", &[field]))
+    }
+
     /// loft#1877, `@FR-L-CapOwn` — the closure records an overwrite of the place `to` (a
     /// field holding a value of type `tp`) displaces, bound so their cascades run: `to`
     /// itself when the value holds none.  Each fn field of the value, and of every INLINE
@@ -639,12 +659,7 @@ impl Parser {
                 "OpGetField",
                 &[place, Value::Int(i32::from(crec)), Value::Int(0)],
             );
-            let old = self.create_unique(
-                "__oldrec",
-                &Type::Reference(record, crate::data::Deps::none()),
-            );
-            self.vars.set_skip_free(old);
-            ops.push(v_set(old, self.cl("OpRefFromChildRec", &[field])));
+            ops.push(self.bind_displaced_closure(to, field, record));
         }
         ops.push(to.clone());
         v_block(ops, tp.clone(), "displaced_closures")
