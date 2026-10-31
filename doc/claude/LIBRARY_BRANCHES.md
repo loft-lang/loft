@@ -9,45 +9,13 @@ the branch-level view of what is still IN FLIGHT. A branch with an **open PR** i
 that is **unmerged with no open PR** is an *orphan* — stranded work to land or delete.
 Source: `scripts/lib-branch-audit.sh` (@PLN112 / @PLN20 lib-health).
 
-**14 unmerged branch(es) across 7 repo(s); 11 orphan(s) (unmerged, no open PR).**
-
-## loft-libs-assets
-
-- `laptop-perf-bench` — PR no-PR · (9 files) — bench: every bench program imports under @C98
-  ⚠ orphan
-- `tuxedo-assets-w6` — PR #11 open · (4 files) — A sprite reaches a page without becoming a fil
-
-## loft-libs-core
-
-- `174-f5-crypto-foreign` — PR no-PR · (6 files) — crypto: loft-ffi 0.1.2 from crates.io, and the  ⚠ orphan
-- `174-f6-cbor-spans` — PR no-PR · (8 files) — cbor: the payload arms take their span of the   ⚠ orphan
-- `laptop-perf-bench` — PR no-PR · (15 files) — bench: every bench program imports under @C98
-  ⚠ orphan
-
-## loft-libs-docs
-
-- `laptop-perf-bench` — PR no-PR · (5 files) — bench: every bench program imports under @C98
-  ⚠ orphan
-
-## loft-libs-game
-
-- `laptop-perf-bench` — PR no-PR · (6 files) — bench: every bench program imports under @C98
-  ⚠ orphan
-- `tuxedo-audio-bus` — PR #12 open · (8 files) — audio_bus 0.1.0 — one slider, many sounds
+**3 unmerged branch(es) across 2 repo(s); 2 orphan(s) (unmerged, no open PR).**
 
 ## loft-libs-graphics
 
-- `drawing-lock` — PR no-PR · (12 files) — drawing bench: the four scene rows get their R  ⚠ orphan
-- `imaging-narrowing-cure` — PR no-PR · (3 files) — imaging 0.3.3: the channel constructions say w  ⚠ orphan
-- `laptop-perf-bench` — PR no-PR · (30 files) — Merge main (the @C98 imports) into the bench br  ⚠ orphan
-- `tuxedo-drawing-w4` — PR #46 open · (14 files) — graphics builds and runs under wasm, canvas an
+- `firewall02-imaging-c99` — PR #60 closed · (12 files) — imaging 0.5.0: the PNG codec is C99 — a [c] sh  ⚠ orphan
 
 ## loft-libs-net
 
-- `laptop-perf-bench` — PR no-PR · (11 files) — bench: every bench program imports under @C98
-  ⚠ orphan
-
-## loft-libs-world
-
-- `laptop-perf-bench` — PR no-PR · (42 files) — bench: every bench program imports under @C98
-  ⚠ orphan
+- `firewall02-web-in-binary` — PR no-PR · (15 files) — web 0.5.0: the natives are declared on loft's   ⚠ orphan
+- `server-0.7.6-header` — PR #34 open · (3 files) — server 0.7.6: `Request.header` compares only t
