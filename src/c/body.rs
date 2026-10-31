@@ -198,6 +198,10 @@ pub(crate) struct FnWriter<'a> {
     vr: Option<Box<value::VrFn>>,
     /// `@FR-R-Transient`: this body's transient variables, when it is a twin or holds a site.
     tr: Option<Box<transient::TrFn>>,
+    /// `@FR-H-KeepRoom`: vector wrappers just minted by `loft_database_room`, with their type,
+    /// until a statement other than a binding of one of their fields follows: the zero of the
+    /// vector field that comes next is the mint's own empty vector, and is not written.
+    room_minted: std::collections::HashMap<u16, u16>,
     /// The leaf being written as its dense self inside its widening (`value::vr_assign`).
     widening: Option<usize>,
     /// A value staged into a C temporary, by the temporary's name, with its kind: what a
@@ -215,6 +219,12 @@ pub(crate) struct FnWriter<'a> {
     /// and argument slice so its emission asks for the callee's twin; the eligibility memo.
     ap_buf: Option<u16>,
     ap_views: std::collections::HashSet<u16>,
+    /// `@FR-R-AppendTwin`'s window clause: in an `__ap` twin that takes its caller's window
+    /// (`loft_apw`), the element size; its buffer and every view of it are window paths.
+    apw: Option<u32>,
+    /// A loop window opened as a local copy of the caller's window, with the window it gives
+    /// itself back to at the loop's exit.
+    window_parents: std::collections::HashMap<String, String>,
     ap_site: Option<(u32, usize)>,
     ap_memo: std::collections::HashMap<u32, bool>,
     /// `@FR-R-Destination` — in a `__d` twin, the shape (its buffer is the caller's element,
@@ -655,12 +665,15 @@ impl<'a> FnWriter<'a> {
             slice_carriers: Vec::new(),
             vr: value::VrFn::of(cx, d).map(Box::new),
             tr: None,
+            room_minted: std::collections::HashMap::new(),
             widening: None,
             raw: std::collections::HashMap::new(),
             field_view: false,
             nk_skip: None,
             ap_buf: None,
             ap_views: std::collections::HashSet::new(),
+            apw: None,
+            window_parents: std::collections::HashMap::new(),
             ap_site: None,
             ap_memo: std::collections::HashMap::new(),
             ds: None,
@@ -792,8 +805,44 @@ impl<'a> FnWriter<'a> {
             self.ap_buf = Some(b);
             self.ap_views = crate::opt::append_twin::views(self.vars, b);
             self.adopt = None;
+            // `@FR-R-AppendTwin`'s window clause: the buffer, every view of it and every
+            // view the body binds of one are written through the caller's window.
+            if let Some(size) = self.cx.ap_window(self.d) {
+                let data = self.cx.data;
+                let mut paths: std::collections::BTreeSet<u16> =
+                    self.ap_views.clone().into_iter().collect();
+                paths.insert(b);
+                self.code.walk(&mut |n| {
+                    if let Value::Set(x, rhs) = n
+                        && let Value::Call(op, a) = rhs.unspan()
+                        && matches!(data.def(*op).name(), "OpGetField" | "OpRefAlias")
+                        && a.first().is_some_and(
+                            |f| matches!(f.unspan(), Value::Var(y) if paths.contains(y)),
+                        )
+                    {
+                        paths.insert(*x);
+                    }
+                });
+                for x in paths {
+                    self.ap_views.insert(x);
+                    let pv = self.var(x);
+                    self.windows
+                        .push(((x, Vec::new()), "(*loft_apw)".to_string(), pv, size));
+                }
+                self.apw = Some(size);
+            }
         }
         self
+    }
+
+    /// A body some rewrite writes in a form the per-loop rewrites must leave alone: a transient
+    /// twin or site (`@FR-R-Transient`).  An append twin writing through its caller's window is
+    /// NOT one: its buffer's paths are window frames, which every rewrite that would reserve or
+    /// open a window on a path already asks after (`open_window`, `deep_window`,
+    /// `reserve_push_run`), and admission keeps the twin from reading its buffer, so no header
+    /// is ever held for one.
+    fn lean(&self) -> bool {
+        self.tr.is_some()
     }
 
     /// A `__d` twin (`super::DS_BIT`, `@FR-R-Destination`): the return buffer is the caller's
@@ -1221,10 +1270,7 @@ impl<'a> FnWriter<'a> {
     /// (621M -> 541M, -13 %).
     fn hold_invariants(&mut self, b: &Block, ind: usize) {
         let mut frame = std::collections::HashMap::new();
-        if !self.cx.switches.invariant_hoist_disabled
-            && self.gen_elem.is_none()
-            && self.tr.is_none()
-        {
+        if !self.cx.switches.invariant_hoist_disabled && self.gen_elem.is_none() && !self.lean() {
             for ch in crate::opt::hoist::invariant_chains(b, self.cx.data, self.vars) {
                 if ch
                     .nodes
@@ -1543,7 +1589,7 @@ impl<'a> FnWriter<'a> {
     fn verdict(&mut self, b: &Block) -> Option<crate::opt::hoist::LoopHoist> {
         // A twin and a region body (`@FR-R-Apart` instance 2) are emitted with the hoists off.
         if self.gen_elem.is_some()
-            || self.tr.is_some()
+            || self.lean()
             || std::env::var("LOFT_NO_VECTOR_HOIST").is_ok_and(|v| v != "0")
             || self.av_any()
         {
@@ -1673,7 +1719,7 @@ impl<'a> FnWriter<'a> {
     #[expect(clippy::type_complexity, reason = "two pair lists, named in the doc")]
     fn distinct_version(&mut self, lp: &Block) -> Option<(Vec<(u16, u16)>, Vec<(u16, u16)>)> {
         let sw = self.cx.switches;
-        if self.tr.is_some()
+        if self.lean()
             || sw.distinct_version_disabled
             || sw.distinct_growth_disabled
             || !self.assumed.is_empty()
@@ -1768,7 +1814,7 @@ impl<'a> FnWriter<'a> {
     fn open_window(&mut self, lp: &Block, ind: usize) -> Result<bool, String> {
         let env_on = |k: &str| std::env::var(k).is_ok_and(|v| v != "0");
         if self.gen_elem.is_some()
-            || self.tr.is_some()
+            || self.lean()
             || env_on("LOFT_NO_PUSH_FILL")
             || env_on("LOFT_NO_PUSH_WINDOW")
             || self.av_any()
@@ -1781,6 +1827,27 @@ impl<'a> FnWriter<'a> {
         // A push window on a value held apart (`@FR-R-Apart`) has no record to open.
         if self.apr_holds(p.path.0) {
             return Ok(false);
+        }
+        // `@FR-R-AppendTwin`'s window clause: a twin's buffer is already under its caller's
+        // window, so the loop takes a local copy of THAT window — held in registers across the
+        // loop's calls, where the caller's is behind a pointer — and gives it back at the loop's
+        // one exit.  Any other path already windowed keeps its window.
+        if let Some((parent, pv)) = self
+            .windows
+            .iter()
+            .find(|(q, _, _, _)| *q == p.path)
+            .map(|(_, w, pv, _)| (w.clone(), pv.clone()))
+        {
+            if parent != "(*loft_apw)" {
+                return Ok(false);
+            }
+            let w = format!("pw{}", self.decls.len() + 1);
+            self.decls
+                .push(format!("loft_win {w} = {{ 0, 0, 0, 0, 0xFFFF }};"));
+            self.line(ind, &format!("{w} = {parent};"));
+            self.window_parents.insert(w.clone(), parent);
+            self.windows.push((p.path, w, pv, p.size));
+            return Ok(true);
         }
         let n = self.decls.len() + 1;
         let (w, pv) = (format!("pw{n}"), format!("pv{n}"));
@@ -1822,7 +1889,7 @@ impl<'a> FnWriter<'a> {
     fn hash_reserve(&mut self, lp: &Block, ind: usize) -> Result<(), String> {
         let env_on = |k: &str| std::env::var(k).is_ok_and(|v| v != "0");
         if self.gen_elem.is_some()
-            || self.tr.is_some()
+            || self.lean()
             || env_on("LOFT_NO_PUSH_FILL")
             || env_on("LOFT_NO_HASH_RESERVE")
         {
@@ -1861,7 +1928,7 @@ impl<'a> FnWriter<'a> {
     /// with no reservation: a push that does not fit takes the window's growth arm.
     fn deep_window(&mut self, lp: &Block, ind: usize) -> Result<bool, String> {
         let env_on = |k: &str| std::env::var(k).is_ok_and(|v| v != "0");
-        if env_on("LOFT_NO_DEEP_WINDOW") || self.tr.is_some() {
+        if env_on("LOFT_NO_DEEP_WINDOW") || self.lean() {
             return Ok(false);
         }
         let data = self.cx.data;
@@ -2561,7 +2628,7 @@ impl<'a> FnWriter<'a> {
         ind: usize,
     ) -> Result<Option<usize>, String> {
         if self.gen_elem.is_some()
-            || self.tr.is_some()
+            || self.lean()
             || self.av_any()
             || std::env::var("LOFT_NO_PUSH_RUN_RESERVE").is_ok_and(|v| v != "0")
         {
@@ -2621,7 +2688,7 @@ impl<'a> FnWriter<'a> {
     fn bind_view_header(&mut self, ops: &[Value], at: usize, ind: usize) {
         if self.cx.switches.view_hoist_disabled
             || self.gen_elem.is_some()
-            || self.tr.is_some()
+            || self.lean()
             || std::env::var("LOFT_NO_VECTOR_HOIST").is_ok_and(|v| v != "0")
         {
             return;
@@ -2676,7 +2743,7 @@ impl<'a> FnWriter<'a> {
     /// native does.  A value record, a `&` link and a generator's parameter are never bound.
     fn bind_param_ptrs(&mut self, code: &Value) {
         if self.gen_elem.is_some()
-            || self.tr.is_some()
+            || self.lean()
             || crate::env_once!(std::env::var("LOFT_NO_RECORD_PTR").is_ok_and(|v| v != "0"))
         {
             return;
@@ -2761,7 +2828,7 @@ impl<'a> FnWriter<'a> {
     /// `LOFT_NO_RECORD_PTR=1` keeps every access a store resolution.
     fn bind_record_ptr(&mut self, ops: &[Value], at: usize, ind: usize) {
         if self.gen_elem.is_some()
-            || self.tr.is_some()
+            || self.lean()
             || self.nk_skip.is_some()
             || crate::env_once!(std::env::var("LOFT_NO_RECORD_PTR").is_ok_and(|v| v != "0"))
         {
@@ -3412,6 +3479,9 @@ impl<'a> FnWriter<'a> {
         if self.nk_skip == Some(std::ptr::from_ref(v.unspan()) as usize) {
             return Ok(());
         }
+        if !self.room_minted.is_empty() && !self.room_keeps(v) {
+            self.room_minted.clear();
+        }
         // `@FR-R-DeferredCopy`: a deferred bind takes the source's reference; any statement that
         // may write a source's store takes the copies it would otherwise disturb first.
         if let Value::Set(var, rhs) = v.unspan()
@@ -3452,6 +3522,25 @@ impl<'a> FnWriter<'a> {
             );
         }
         r
+    }
+
+    /// `@FR-H-KeepRoom`: may a just-minted wrapper's vector still be the mint's empty one after
+    /// statement `v`?  A line marker, a binding of one of its fields, and the zero itself.
+    fn room_keeps(&self, v: &Value) -> bool {
+        let data = self.cx.data;
+        let of_minted =
+            |x: &Value| matches!(x.unspan(), Value::Var(w) if self.room_minted.contains_key(w));
+        match v.unspan() {
+            Value::Line(_) => true,
+            Value::Set(_, x) => matches!(x.unspan(), Value::Call(op, a)
+                if data.def(*op).name() == "OpGetField" && a.first().is_some_and(of_minted)),
+            Value::Call(op, a) => {
+                data.def(*op).name() == "OpSetInt4"
+                    && a.first().is_some_and(of_minted)
+                    && matches!(a.get(2).map(Value::unspan), Some(Value::Int(0)))
+            }
+            _ => false,
+        }
     }
 
     /// `@FR-R-Header`'s rebind clause: after `var` is rebound, every header an enclosing loop
@@ -3566,7 +3655,10 @@ impl<'a> FnWriter<'a> {
             // The loop's one exit: the counted push loop has no break, return or
             // continue of its own (`hoist::push_loop`).
             let (path, w, _, _) = self.windows.pop().expect("the window this loop opened");
-            self.line(ind, &format!("loft_win_sync({w});"));
+            match self.window_parents.remove(&w) {
+                Some(parent) => self.line(ind, &format!("{parent} = {w};")),
+                None => self.line(ind, &format!("loft_win_sync({w});")),
+            }
             // `@FR-R-Refresh`: an enclosing loop's push header on the same path did not see the
             // window's reservation or its pushes — the record may have moved and the length
             // grew — so it is derived again here, where the window gave the path back.
@@ -5799,7 +5891,39 @@ impl<'a> FnWriter<'a> {
             cx.request_twin(d, mask);
             super::twin_name(cx.data, d, mask)
         };
+        // `@FR-R-AppendTwin`'s window clause: a twin that takes its caller's window gets this
+        // twin's own where the buffer is one of its window paths, else one opened over the
+        // buffer for the call and synced after it.
+        let mut fresh = None;
+        if mask & super::AP_BIT != 0
+            && let Some(size) = cx.ap_window(d)
+        {
+            let at = def
+                .hidden_return_buffer_attr()
+                .ok_or("an append twin without its buffer")?;
+            let handed = self.apw.is_some()
+                && matches!(args.get(at).map(Value::unspan), Some(Value::Var(x)) if self.ap_views.contains(x));
+            if handed {
+                xs.push("loft_apw".to_string());
+            } else {
+                let w = format!("loft_aw{}", self.decls.len());
+                self.decls.push(format!("loft_win {w};"));
+                let x = xs
+                    .get(at)
+                    .cloned()
+                    .ok_or("an append twin call without its buffer")?;
+                xs.push(format!("&{w}"));
+                fresh = Some((w, x, size));
+            }
+        }
         let call = format!("{name}({})", xs.join(", "));
+        if let Some((w, x, size)) = fresh {
+            let t = self.temp(CType::Ref);
+            return Ok(E::new(
+                format!("({w} = loft_win_of({x}, {size}), {t} = {call}, loft_win_sync({w}), {t})"),
+                K::Ref,
+            ));
+        }
         if let Some(key) = vr_key
             && let Some(buf) = self.vr_forward_target(args, dropped)
         {
@@ -6256,6 +6380,11 @@ impl<'a> FnWriter<'a> {
         };
         if self.tr.is_some()
             && let Some(e) = self.tr_operator(name, args, ind)?
+        {
+            return Ok(e);
+        }
+        if self.apw.is_some()
+            && let Some(e) = self.apw_operator(name, args, ind)?
         {
             return Ok(e);
         }
@@ -7286,6 +7415,107 @@ impl<'a> FnWriter<'a> {
         }
     }
 
+    /// `OpDatabase(v, tp)`: a record of `tp` minted into `v`'s store; a vector wrapper through
+    /// its descriptor, keeping a reused buffer's room (`@FR-H-KeepRoom`).
+    fn database_operator(&mut self, v: u16, tp: &Value) -> Result<E, String> {
+        let tp = Self::literal(tp, "type")?;
+        let tp = u16::try_from(tp).map_err(|_| "a type number out of range".to_string())?;
+        let size = self.cx.stores.enum_parent_size(tp);
+        self.cx.describe_type(tp);
+        let var = self.var(v);
+        if self.cx.stores.is_vector_wrapper(tp) {
+            // A place's old collection is released through the wrapper's descriptor; a
+            // reused buffer keeps the room its vector reached (`@FR-H-KeepRoom`).
+            self.cx.copy_type(tp)?;
+            self.cx.name_types();
+            self.room_minted.insert(v, tp);
+            return Ok(E::new(
+                format!("loft_database_room(loft_types, loft_ntypes, &{var}, {size}, {tp})"),
+                K::Void,
+            ));
+        }
+        Ok(E::new(
+            format!("loft_database_typed(&{var}, {size}, {tp})"),
+            K::Void,
+        ))
+    }
+
+    /// `@FR-R-AppendTwin`'s window clause — a text's bytes or a scalar vector's elements appended
+    /// to one of the twin's window paths go through the caller's window.
+    fn apw_operator(
+        &mut self,
+        name: &str,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<Option<E>, String> {
+        let Some(size) = self.apw else {
+            return Ok(None);
+        };
+        let Some(Value::Var(x)) = args.first().map(Value::unspan) else {
+            return Ok(None);
+        };
+        if !self.ap_views.contains(x) {
+            return Ok(None);
+        }
+        let pv = self.var(*x);
+        match (name, args) {
+            ("OpAppendTextBytes", [_, t, lo, hi]) => {
+                let es = self.args(&[t, lo, hi], ind)?;
+                let [t, lo, hi] = <[E; 3]>::try_from(es)
+                    .map_err(|_| "a byte append without its operands".to_string())?;
+                Ok(Some(E::new(
+                    format!(
+                        "loft_win_text(&(*loft_apw), {pv}, {}, {}, {})",
+                        as_view(t)?,
+                        as_int(lo)?,
+                        as_int(hi)?
+                    ),
+                    K::Void,
+                )))
+            }
+            ("OpAppendVector", [_, src, _]) => {
+                let e = self.expr(src, ind)?;
+                Ok(Some(E::new(
+                    format!("loft_win_vec(&(*loft_apw), {pv}, {}, {size})", as_ref(e)?),
+                    K::Void,
+                )))
+            }
+            // The self-replace a buffer's own view delivers: nothing changes.
+            ("OpReplaceVector", [_, Value::Var(o), _]) if self.ap_views.contains(o) => {
+                Ok(Some(E::new("((void) 0)", K::Void)))
+            }
+            ("OpSliceVector", [_, src, lo, hi, _]) => {
+                let es = self.args(&[src, lo, hi], ind)?;
+                let [src, lo, hi] = <[E; 3]>::try_from(es)
+                    .map_err(|_| "a slice without its operands".to_string())?;
+                Ok(Some(E::new(
+                    format!(
+                        "loft_win_slice(&(*loft_apw), {pv}, {}, {}, {}, {size})",
+                        as_ref(src)?,
+                        as_int(lo)?,
+                        as_int(hi)?
+                    ),
+                    K::Void,
+                )))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// `@FR-H-KeepRoom` — the zero of a wrapper's vector field right after its mint is not
+    /// written: the mint left the vector empty, with the room it had reached.
+    fn keep_room_operator(&mut self, name: &str, args: &[Value]) -> Option<E> {
+        let ("OpSetInt4", [Value::Var(w), Value::Int(off), Value::Int(0)]) = (name, args) else {
+            return None;
+        };
+        let tp = *self.room_minted.get(w)?;
+        if self.cx.stores.wrapper_field_pos(tp) != Some(*off) {
+            return None;
+        }
+        self.room_minted.remove(w);
+        Some(E::new("((void) 0)", K::Void))
+    }
+
     fn store_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
         if let Some(e) = self.free_operator(name, args, ind)? {
             return Ok(e);
@@ -7296,6 +7526,9 @@ impl<'a> FnWriter<'a> {
         if let Some(e) = self.append_twin_buffer_op(name, args, ind)? {
             return Ok(e);
         }
+        if let Some(e) = self.keep_room_operator(name, args) {
+            return Ok(e);
+        }
         match (name, args) {
             // `@FR-R-RetAdopt` — the adopted local's witness is never minted, so neither is
             // its store nor the zero its vector field would have been given.
@@ -7304,25 +7537,7 @@ impl<'a> FnWriter<'a> {
             {
                 Ok(E::new("((void) 0)", K::Void))
             }
-            ("OpDatabase", [Value::Var(v), tp]) => {
-                let tp = Self::literal(tp, "type")?;
-                let tp = u16::try_from(tp).map_err(|_| "a type number out of range".to_string())?;
-                let size = self.cx.stores.enum_parent_size(tp);
-                self.cx.describe_type(tp);
-                let var = self.var(*v);
-                if self.cx.stores.is_vector_wrapper(tp) {
-                    // A place's old collection is released through the wrapper's descriptor.
-                    self.cx.copy_type(tp)?;
-                    return Ok(E::new(
-                        format!("loft_database_wrapper(loft_types, &{var}, {size}, {tp})"),
-                        K::Void,
-                    ));
-                }
-                Ok(E::new(
-                    format!("loft_database_typed(&{var}, {size}, {tp})"),
-                    K::Void,
-                ))
-            }
+            ("OpDatabase", [Value::Var(v), tp]) => self.database_operator(*v, tp),
             ("OpRefIsNull", [r]) => {
                 let r = self.expr(r, ind)?;
                 Ok(E::new(

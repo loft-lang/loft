@@ -6893,14 +6893,29 @@ The interpreter keeps its appends and is the reference.  Keep the window BY POIN
 twin's reads through it: copying it into a local per twin and back was priced and is SLOWER
 (+20 %), the struct copy costing more than the reloads it saves.
 
-**Priced** (2026-10-31, by hand in the emitted C, same hashes; `bench/portal/analysis/
-c-libraries.md` § cbor `encode_bytes` to 2×): cbor `encode_bytes` 7.2× → **2.28×** the twin.
-**NOT BUILT.**  Sites to come: the window's parameter in the twin's signature beside `AP_BIT`
-(`src/c/mod.rs` `twin_name`, `function`), the appends in `src/c/body.rs` (`append_twin` mode),
-a byte run `loft_win_bytes` in `loft_rt.h`.  Switch `LOFT_NO_APPEND_WINDOW=1`; guard to write:
-a chain of append twins over one buffer with a sync point in every position the clause names
-(a length read between appends, a non-twin call, a clear, a placed record, recursion, an
-empty and a growing buffer), value AND length, falsified by a plant that skips one sync.
+**BUILT** (2026-10-31, the C).  Admission is `opt::append_twin::window_size` beside `eligible`
+(the writes a window takes, each with its element size: a scalar push, a reservation, a text's
+bytes, a scalar vector's elements, a slice of one, and the self-replace a buffer's view
+delivers, which writes nothing); the answer is cached per function in `Cx::ap_window`, which the
+twin's signature (`loft_win *loft_apw`, `function`) and every call of the twin ask.  In the twin
+(`FnWriter::append_twin`) the buffer, its views and the views the body binds are window paths:
+pushes and reservations go through the existing window arms (`windowed`), a text, a vector and a
+slice through `apw_operator` (`loft_win_text`, `loft_win_vec`, `loft_win_slice` over
+`loft_win_copy` in `loft_rt.h`).  A call (`call`) hands its own `loft_apw` down where the buffer is
+a window path, and otherwise opens a window over the buffer for the call and syncs it after.  A
+counted push loop in a twin takes a LOCAL copy of the caller's window and gives it back at its
+one exit (`open_window`), so the loop keeps it in registers.  Measured (gcc ship, `ab.py`, same
+hashes): cbor `encode_bytes` **0.624×** of before with `(H-KeepRoom)` (≈ 4.4× the twin, from 7.2×),
+`encode` 0.891×, `decode` unchanged.  The hand price reached 2.28× because it also INLINED the
+small twins (`head` as a local `static inline`); built, the twins keep their calls and their
+prologues, and the same C with gcc's inlining limits raised is another −35 % (≈ 2.9×) — the
+call-overhead lever (`c-libraries.md` § the top three, `edgeset_count`), not this rule.  Switch
+`LOFT_NO_APPEND_WINDOW=1`; trace `LOFT_TRACE_APPEND_TWIN=1` names each twin's window and the
+first write that declined one.  Guard
+`tests/scripts/an-append-twin-writes-through-its-callers-window.loft` (six cells; falsified by a
+call whose window is never synced back and by a window copy that does not bump the length); pin
+`tests/c_emit.rs` `a_loop_holds_its_callees_headers…` (a windowed twin holds no push header of
+its own: four, five under the switch).
 
 ### A call result bound first and appended later is appended where it is made
 

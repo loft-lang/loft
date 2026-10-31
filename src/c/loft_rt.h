@@ -3727,6 +3727,34 @@ static void loft_vec_clear_release_body(const loft_tdesc *T, uint32_t loft_ntype
     loft_vec_clear(v);
 }
 
+/* `@FR-H-KeepRoom`: OpDatabase of a vector wrapper where the variable already names its own
+ * store's root wrapper — a buffer reused across calls (R-Reuse) — makes the store again exactly as
+ * `loft_database_wrapper` does (everything it held goes) and re-establishes the wrapper's vector
+ * at length zero with the room it had reached.  A capacity is no value.  Any other case is the
+ * plain mint.  `-DLOFT_NO_KEEP_ROOM` keeps the plain mint everywhere. */
+static void loft_database_room(const loft_tdesc *T, uint32_t nt, loft_ref *var, uint32_t bytes, uint16_t tp) {
+#ifndef LOFT_NO_KEEP_ROOM
+    if (var->store_nr != 0xFFFF && var->rec == 1 && var->store_nr < loft_nstores
+        && loft_stores[var->store_nr].live && !loft_stores[var->store_nr].frame_holds
+        && loft_stores[var->store_nr].known == tp && tp < nt && T[tp].kind == LOFT_T_STRUCT
+        && T[tp].n == 1) {
+        uint16_t vt = T[tp].fields[0].type;
+        uint16_t elem = vt < nt && T[vt].kind == LOFT_T_VECTOR ? T[vt].elem : 0xFFFF;
+        uint32_t size = elem < nt ? T[elem].size : 0;
+        if (size != 0) {
+            uint32_t fpos = T[tp].fields[0].pos;
+            uint32_t reached = loft_vec_reached(loft_field(*var, fpos), size);
+            loft_database_wrapper(T, var, bytes, tp);
+            if (reached != 0) loft_vec_prealloc(loft_field(*var, fpos), reached, size);
+            return;
+        }
+    }
+#else
+    (void) nt;
+#endif
+    loft_database_wrapper(T, var, bytes, tp);
+}
+
 /* OpAppendVector (Stores::vector_add): every element of `o` appended to `v`, deep-copied so the
  * destination owns what each element holds.  The source's length is read once, and each source
  * element is re-read after the growth, so a self-append (`v += v`) reads the moved record. */
@@ -4023,6 +4051,82 @@ static void loft_append_text_bytes(loft_ref v, loft_str t, int64_t lo, int64_t h
         *loft_at(loft_store_of(e), e.rec, e.pos) = (uint8_t) t.p[i];
         loft_vec_finish(v);
     }
+}
+
+/* `@FR-R-AppendTwin`'s window clause: `n` elements of `size` bytes at `src` appended through
+ * window `w` over vector `v` — one copy while they fit.  Out of room, the length is synced, `v`
+ * grown the ordinary way to at least twice its length and the window derived again.  A source
+ * inside v's own store would move with that growth, and a vector the window cannot serve (absent,
+ * locked) has no room at all: both take the ordinary append, the window synced around it. */
+static void loft_win_grow_copy(loft_win *w, loft_ref v, const uint8_t *src, uint32_t n, uint32_t size) {
+    loft_win_sync(*w);
+    loft_store_t *s = v.store_nr == 0xFFFF ? 0 : loft_store_of(v);
+    int inside = s && src >= s->buf && src < s->buf + (size_t) s->size * 8;
+    if (!inside && w->cap != 0) {
+        uint32_t extra = n > w->len ? n : w->len;
+        loft_vec_reserve_more(v, (int64_t) extra, size);
+        *w = loft_win_of(v, size);
+        if ((uint64_t) w->len + n <= w->cap) {
+            memcpy(w->base + (size_t) w->len * size, src, (size_t) n * size);
+            w->len += n;
+            return;
+        }
+        loft_win_sync(*w);
+    }
+    if (size == 1) {
+        loft_str t = { (const char *) src, n };
+        loft_append_text_bytes(v, t, 0, n);
+    } else {
+        for (uint32_t i = 0; i < n; i++) {
+            loft_ref e = loft_vec_append(v, size);
+            if (e.rec == 0) break;
+            memcpy(loft_at(loft_store_of(e), e.rec, e.pos), src + (size_t) i * size, size);
+            loft_vec_finish(v);
+        }
+    }
+    *w = loft_win_of(v, size);
+}
+
+LOFT_HOT_INLINE void loft_win_copy(loft_win *w, loft_ref v, const uint8_t *src, uint32_t n, uint32_t size) {
+    if (LOFT_LIKELY((uint64_t) w->len + n <= w->cap)) {
+        memcpy(w->base + (size_t) w->len * size, src, (size_t) n * size);
+        w->len += n;
+    } else {
+        loft_win_grow_copy(w, v, src, n, size);
+    }
+}
+
+/* OpAppendTextBytes through a window: the bytes [lo, hi) of `t`, as `loft_append_text_bytes`. */
+LOFT_HOT_INLINE void loft_win_text(loft_win *w, loft_ref v, loft_str t, int64_t lo, int64_t hi) {
+    if (hi > (int64_t) t.len) hi = (int64_t) t.len;
+    if (lo < 0 || hi <= lo) return;
+    loft_win_copy(w, v, (const uint8_t *) t.p + lo, (uint32_t) (hi - lo), 1);
+}
+
+/* OpSliceVector through a window: the elements [lo, hi) of `o`, clamped to it as `loft_vec_slice`
+ * clamps, `size` bytes each. */
+static void loft_win_slice(loft_win *w, loft_ref v, loft_ref o, int64_t lo, int64_t hi, uint32_t size) {
+    if (o.store_nr == 0xFFFF || o.rec == 0 || o.pos == 0 || size == 0) return;
+    int64_t n64 = loft_vec_len(o);
+    if (lo < 0) lo = 0;
+    if (lo > n64) lo = n64;
+    if (hi < lo) hi = lo;
+    if (hi > n64) hi = n64;
+    if (hi <= lo) return;
+    loft_store_t *s = loft_store_of(o);
+    uint32_t r = loft_collection_rec(s, o.rec, o.pos);
+    if (r == 0) return;
+    loft_win_copy(w, v, loft_elem_base(s, r) + (size_t) lo * size, (uint32_t) (hi - lo), size);
+}
+
+/* OpAppendVector of a scalar vector through a window: every element of `o`, `size` bytes each. */
+static void loft_win_vec(loft_win *w, loft_ref v, loft_ref o, uint32_t size) {
+    int64_t n = loft_vec_len(o);
+    if (n <= 0 || o.store_nr == 0xFFFF || o.rec == 0 || o.pos == 0) return;
+    loft_store_t *s = loft_store_of(o);
+    uint32_t r = loft_collection_rec(s, o.rec, o.pos);
+    if (r == 0) return;
+    loft_win_copy(w, v, loft_elem_base(s, r), (uint32_t) n, size);
 }
 
 /* OpKeepVectorRange (Stores::keep_vector_range): only the elements [lo, hi) stay, moved to the

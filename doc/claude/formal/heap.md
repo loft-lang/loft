@@ -662,13 +662,19 @@ across its 100 calls, regrows 16 KiB from nothing on every call (`loft_st_resize
 reset — the SHAPE (a store-root `main_vector<T>`) read from the layout, never an offset — and
 falls back to the plain re-initialisation for any other root.  **Priced** with the window
 clause of (R-AppendTwin) (2026-10-31, by hand, same hashes): `encode_bytes` 2.28× → **1.94×**
-the twin.  **NOT BUILT.**  Sites to come: `loft_database` in `loft_rt.h` (the C) and
-`Stores::clear` (the interpreter and native), both reading `vector::reached_capacity` as the
-reset does.  Switch `LOFT_NO_KEEP_ROOM=1`; guard to write: a buffer reused across calls of a
-vector-returning function, each call's result read for value and length, a call that answers
-shorter after a longer one (the reached capacity must never read as length), a buffer whose
-elements own heap (released, nothing for the leak report), falsified by a plant that keeps
-the old length.
+the twin.  **BUILT on the C** (2026-10-31): `loft_database_room` in `loft_rt.h` — the wrapper's
+mint as before, then the vector re-reserved at the capacity it had reached, when the variable
+already names its own store's root wrapper — emitted for every wrapper mint (`database_operator`);
+and the zero of the wrapper's vector field that the parser writes right after the mint
+(`buf: vector<u8> = []`) is not written when nothing but a binding of one of its fields stands
+between (`FnWriter::keep_room_operator`, `room_minted`, `room_keeps`), since the mint left that
+vector empty — written, it would orphan the kept block.  The interpreter and native keep the plain
+mint: a capacity is no value, and the C is the compiled target.  Alone it is −1.9 % on
+`encode_bytes`; with the window clause the regrowth it removes is what is left after the appends
+stop resolving the store.  Switch `-DLOFT_NO_KEEP_ROOM` (the unit's compile flag).  Guard
+`tests/scripts/a-reused-buffer-keeps-its-room.loft` (five cells: one site reused across lengths, a
+shorter answer after a longer one, elements that own heap, cbor's head shape, a result held across
+the next call; falsified by a mint that keeps the store whole — c5 reads 21548350 for 426700).
 
 **In words.** `free` releases a store slot and everything in it. It is disciplined: (1) **LIFO** —
 you free stores in reverse allocation order, because a store's lifetime is nested inside the

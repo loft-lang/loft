@@ -415,3 +415,174 @@ pub fn call_site<'a>(
         dest,
     })
 }
+
+/// `LOFT_NO_APPEND_WINDOW=1` — every append twin finds its buffer through the store.
+#[must_use]
+pub fn window_enabled() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| !std::env::var("LOFT_NO_APPEND_WINDOW").is_ok_and(|v| v != "0"))
+}
+
+/// `@FR-R-AppendTwin`'s WINDOW clause — the element size of `d_nr`'s append twin's buffer when
+/// that twin can write through its caller's push window: it has an append twin ([`eligible`]),
+/// and every WRITE into its buffer, or a view of it, is one a window takes — a scalar push, a
+/// reservation, a text's bytes, a scalar vector's elements — or a call handing the buffer to a
+/// callee whose own twin takes the window, all of one element size.  A slice, a replace or an
+/// insert into the buffer declines, and so does a mixture of sizes.  `None` when it cannot.
+///
+/// A fixpoint over the call graph like [`eligible`]: a function in progress counts as taking
+/// the window at any size, so a recursive builder takes its own.  Each question starts a fresh
+/// memo, so an answer never rests on a callee a cycle later declined.
+#[must_use]
+pub fn window_size(data: &Data, stores: &crate::database::Stores, d_nr: u32) -> Option<u32> {
+    if !window_enabled() {
+        return None;
+    }
+    let mut memo = HashMap::new();
+    window_of(data, stores, d_nr, &mut memo).filter(|s| *s != 0)
+}
+
+/// What a write into a window path adds to [`window_of`]'s answer: its element size, `0` for an
+/// operation that writes nothing a window carries, `None` for one a window cannot take.
+/// `self_replace` is whether the second operand is a view of the buffer too.
+fn window_write(
+    data: &Data,
+    stores: &crate::database::Stores,
+    name: &str,
+    args: &[Value],
+    self_replace: bool,
+) -> Option<u32> {
+    let size_of = |at: usize| match args.get(at).map(Value::unspan) {
+        Some(Value::Int(tp)) => u16::try_from(*tp)
+            .ok()
+            .filter(|tp| scalar_elem(stores, *tp))
+            .map(|tp| u32::from(stores.size(tp))),
+        _ => None,
+    };
+    match name {
+        "OpAppendTextBytes" => Some(1),
+        "OpPreAllocVector" => match args.get(2).map(Value::unspan) {
+            Some(Value::Int(s)) if *s > 0 => u32::try_from(*s).ok(),
+            _ => None,
+        },
+        "OpAppendVector" => size_of(2),
+        "OpSliceVector" => size_of(4),
+        // The self-replace a buffer's own view delivers changes nothing.
+        "OpReplaceVector" if self_replace => Some(0),
+        "OpReplaceVector" | "OpInsertVector" => None,
+        n if n.starts_with("OpPush") => {
+            crate::opt::writes::fused_push(data, n, args).map(|fp| fp.size)
+        }
+        _ => Some(0),
+    }
+}
+
+/// A scalar element type — what a window copies as bytes: the base numbers and booleans (not
+/// text, type 5) and the narrow integer kinds, as the C writer's slice asks.
+fn scalar_elem(stores: &crate::database::Stores, tp: u16) -> bool {
+    (tp <= 6 && tp != 5)
+        || matches!(
+            stores.types.get(tp as usize).map(|t| &t.parts),
+            Some(
+                crate::database::Parts::Byte(..)
+                    | crate::database::Parts::Short(..)
+                    | crate::database::Parts::ShortRaw(..)
+                    | crate::database::Parts::Int(..)
+                    | crate::database::Parts::IntRaw(..)
+            )
+        )
+}
+
+/// [`window_size`]'s walk; `Some(0)` is a function in progress, whose size its writes decide.
+fn window_of(
+    data: &Data,
+    stores: &crate::database::Stores,
+    d_nr: u32,
+    memo: &mut HashMap<u32, Option<u32>>,
+) -> Option<u32> {
+    if let Some(known) = memo.get(&d_nr) {
+        return *known;
+    }
+    let mut em = HashMap::new();
+    if !eligible(data, d_nr, &mut em) {
+        memo.insert(d_nr, None);
+        return None;
+    }
+    let b = buffer(data, d_nr)?;
+    memo.insert(d_nr, Some(0));
+    let def = data.def(d_nr);
+    let vars = def.variables();
+    let mut vb = views(vars, b);
+    vb.insert(b);
+    // Views the body binds itself (`v = OpGetField(B, …)`, `w = OpRefAlias(B)`).
+    def.code().walk(&mut |n| {
+        if let Value::Set(x, rhs) = n
+            && let Value::Call(op, a) = rhs.unspan()
+            && matches!(data.def(*op).name(), "OpGetField" | "OpRefAlias")
+            && a.first()
+                .is_some_and(|f| matches!(f.unspan(), Value::Var(y) if vb.contains(y)))
+        {
+            vb.insert(*x);
+        }
+    });
+    let on_view =
+        |v: Option<&Value>| matches!(v.map(Value::unspan), Some(Value::Var(x)) if vb.contains(x));
+    let mut size = 0u32;
+    let mut ok = true;
+    let mut why = String::new();
+    let take = |s: u32, size: &mut u32, ok: &mut bool| {
+        if s == 0 {
+            return;
+        }
+        if *size == 0 {
+            *size = s;
+        } else if *size != s {
+            *ok = false;
+        }
+    };
+    let mut callees = Vec::new();
+    def.code().walk(&mut |n| {
+        let Value::Call(op, args) = n else { return };
+        let name = data.def(*op).name();
+        let was = ok;
+        if on_view(args.first()) {
+            match window_write(data, stores, name, args, on_view(args.get(1))) {
+                Some(s) => take(s, &mut size, &mut ok),
+                None => ok = false,
+            }
+        }
+        if was && !ok && why.is_empty() {
+            why = format!("{name} (size {size})");
+        }
+        let callee = data.def(*op);
+        if callee.is_loft_defined()
+            && let Some(at) = callee.hidden_return_buffer_attr()
+            && on_view(args.get(at))
+        {
+            callees.push(*op);
+        }
+    });
+    for c in callees {
+        let was = ok;
+        match window_of(data, stores, c, memo) {
+            Some(s) => take(s, &mut size, &mut ok),
+            None => ok = false,
+        }
+        if was && !ok && why.is_empty() {
+            why = format!("the callee {}", data.def(c).name());
+        }
+    }
+    let answer = (ok && size != 0).then_some(size);
+    memo.insert(d_nr, answer);
+    if trace() {
+        eprintln!(
+            "append-twin: {} {}",
+            def.name(),
+            match answer {
+                Some(s) => format!("takes its caller's window ({s}-byte elements)"),
+                None => format!("keeps the store form (no window): {why}"),
+            }
+        );
+    }
+    answer
+}

@@ -215,6 +215,9 @@ pub(crate) struct Cx<'a> {
     pub(crate) gen_bodies: std::cell::RefCell<String>,
     /// `@FR-R-Transient`'s twins and the structs they use (`body::transient`).
     pub(crate) tr: std::cell::RefCell<body::transient::TrState>,
+    /// `@FR-R-AppendTwin`'s window clause: per function, the element size its append twin's
+    /// window carries, or `None` where the twin finds its buffer through the store.
+    ap_windows: std::cell::RefCell<std::collections::HashMap<u32, Option<u32>>>,
     /// The types a `T.parse` reaches (`parse.rs`): their rows of `loft_ptypes`.
     parse_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// The unit reaches `stack_trace()`: every function keeps a frame (`loft_frame_push`).
@@ -355,6 +358,7 @@ impl<'a> Cx<'a> {
             gen_decls: std::cell::RefCell::new(String::new()),
             gen_bodies: std::cell::RefCell::new(String::new()),
             tr: std::cell::RefCell::new(body::transient::TrState::default()),
+            ap_windows: std::cell::RefCell::new(std::collections::HashMap::new()),
             parse_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             frames: std::cell::Cell::new(false),
             lazy: std::cell::Cell::new(false),
@@ -1396,6 +1400,18 @@ impl Cx<'_> {
             0,
             &mut self.dest_memo.borrow_mut(),
         )
+    }
+
+    /// `@FR-R-AppendTwin`'s window clause: the element size of `d`'s append twin's window, or
+    /// `None` where that twin keeps finding its buffer through the store.  The twin's signature
+    /// and every call of it ask this one answer.
+    pub(crate) fn ap_window(&self, d: u32) -> Option<u32> {
+        if let Some(w) = self.ap_windows.borrow().get(&d) {
+            return *w;
+        }
+        let w = crate::opt::append_twin::window_size(self.data, self.stores, d);
+        self.ap_windows.borrow_mut().insert(d, w);
+        w
     }
 
     /// The place twin `(d, mask)` is called: it is written with the unit.
@@ -2680,6 +2696,10 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     // An `__inv` twin takes the header of each vector it indexes from its caller, which holds
     // them; its body serves those vectors' accesses from them as a loop's held headers.
     let mut params = params;
+    // `@FR-R-AppendTwin`'s window clause: the caller's push window over the buffer.
+    if mask & AP_BIT != 0 && cx.ap_window(d).is_some() {
+        params.push("loft_win *loft_apw".to_string());
+    }
     if let Some((rec, _, _)) = &apv {
         let t = cx.ap2_ctype(*rec).ok_or("an __apv twin of no apart type")?;
         params.push(format!("{t} *loft_apo"));

@@ -1,0 +1,103 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-H-KeepRoom`: a buffer reused across the calls of a vector-returning function is minted
+// again at the callee's entry, and the mint keeps the room the vector reached — a capacity is no
+// value.  What can go wrong is the room leaking into what a program sees: a shorter answer after a
+// longer one reading the old length or the old bytes, an element that owns heap surviving the
+// reset, a result held across the next call changing under it.  Values hand-computed; value AND
+// length.  Run under `LOFT_NATIVE_LEAK_CHECK=1` the reset leaves nothing behind.
+//
+// @falsified-at: none — the rule has no earlier build to catch; the receipt is a defect planted
+//   in the generated C (2026-10-31): a mint that keeps the store whole (its prologue's clear
+//   taken out, which otherwise empties the vector first) leaves every earlier answer in the
+//   buffer, and c5 reads 21548350 for 426700.  A mint that kept only the old length was VACUOUS
+//   here: the prologue's clear has already set it to zero.
+//   CHANNEL: an assertion.
+
+// i & 255 for i in 0..n
+fn ramp(n: integer) -> vector<u8> {
+  b: vector<u8> = [];
+  for i in 0..n { b += [(i & 255) as u8]; }
+  b
+}
+
+fn total(v: const vector<u8>) -> integer {
+  t = 0;
+  for x in v { t += x as integer; }
+  t
+}
+
+// "w0", "w1", … — elements that own heap
+fn words(n: integer) -> vector<text> {
+  out: vector<text> = [];
+  for i in 0..n { out += ["w{i}"]; }
+  out
+}
+
+// cbor's head: a CBOR head, the major type and the shortest form of `arg`
+fn hd(major: integer, arg: integer) -> vector<u8> {
+  buf: vector<u8> = [];
+  if arg < 24 {
+    buf += [((major * 32 + arg) & 255) as u8];
+  } else if arg < 256 {
+    buf += [((major * 32 + 24) & 255) as u8];
+    buf += [(arg & 255) as u8];
+  } else {
+    buf += [((major * 32 + 25) & 255) as u8];
+    buf += [((arg / 256) & 255) as u8];
+    buf += [((arg % 256) & 255) as u8];
+  }
+  return buf;
+}
+
+fn main() {
+  // c1 — one call site reused: 1000, then 10, then 0, then 500
+  sizes = [1000, 10, 0, 500];
+  // sum of i & 255 over 0..n: 1000 = 3*32640 + sum(0..232) = 97920 + 26796 = 124716;
+  // 10 = 45; 0 = 0; 500 = 32640 + sum(0..244) = 32640 + 29646 = 62286
+  sums = [124716, 45, 0, 62286];
+  for k in 0..4 {
+    n = sizes[k] ?? 0;
+    r = ramp(n);
+    assert(len(r) == n, "c1 length {len(r)} for {n}");
+    assert(total(r) == (sums[k] ?? -1), "c1 sum {total(r)} for {n}");
+  }
+
+  // c2 — a shorter answer after a longer one, in a loop of 200: the last element is n - 1
+  acc = 0;
+  for i in 0..200 {
+    n = if i % 2 == 0 { 300 } else { 3 };
+    r = ramp(n);
+    acc += len(r) * 1000 + (r[len(r) - 1] ?? 0) as integer;
+  }
+  // 100 * (300000 + 43) + 100 * (3000 + 2): 299 & 255 = 43
+  assert(acc == 30304500, "c2 acc {acc}");
+
+  // c3 — elements that own heap: each call's words are its own
+  wl = 0;
+  for i in 0..50 {
+    ws = words(i % 7);
+    for w in ws { wl += len(w); }
+  }
+  // per call n = i % 7: n words "w0".."w{n-1}", 2 chars each (n <= 7): 2n; over 50 calls
+  // 7 full cycles (0..6 sums to 21) and 1 more (0): 7 * 42 = 294
+  assert(wl == 294, "c3 total word length {wl}");
+
+  // c5 — head's shape, its own buffer minted per call: 3 bytes then 1, 100 times each
+  hs = 0;
+  for i in 0..200 {
+    h = if i % 2 == 0 { hd(3, 300) } else { hd(3, 5) };
+    for x in h { hs += x as integer; }
+    hs += len(h) * 1000;
+  }
+  // hd(3, 300) = [0x79, 1, 44] = 121 + 1 + 44 = 166, length 3; hd(3, 5) = [0x65] = 101, length 1
+  // 100 * (3166) + 100 * (1101) = 426700
+  assert(hs == 426700, "c5 head sum {hs}");
+
+  // c4 — a result held across the next call keeps its own value
+  a = ramp(5);
+  b = ramp(3);
+  assert(len(a) == 5 && total(a) == 10, "c4 first kept: {len(a)} {total(a)}");
+  assert(len(b) == 3 && total(b) == 3, "c4 second: {len(b)} {total(b)}");
+}

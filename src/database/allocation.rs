@@ -1307,6 +1307,19 @@ impl Stores {
             .is_some_and(|t| t.name.starts_with("main_vector<"))
     }
 
+    /// The byte offset of a vector wrapper's one field — where its vector's handle lives — read
+    /// from the layout; `None` for any other type.
+    #[must_use]
+    pub fn wrapper_field_pos(&self, tp: u16) -> Option<i32> {
+        if !self.is_vector_wrapper(tp) {
+            return None;
+        }
+        match &self.types[tp as usize].parts {
+            Parts::Struct(fs) if fs.len() == 1 => Some(i32::from(fs[0].position)),
+            _ => None,
+        }
+    }
+
     /// `@FR-R-Place` — a wrapper mint (`OpDatabase(b, main_vector<T>)`, a returned collection
     /// literal's) into a LIVE buffer that is not that wrapper's own store: the caller handed
     /// the callee a PLACE, a collection field of a record of its own ("the buffer IS the
