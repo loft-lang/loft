@@ -583,3 +583,55 @@ fn a_set_stack_ref_is_followed_by_the_next_op() {
         String::from_utf8_lossy(&run.stderr)
     );
 }
+
+/// loft#2309 — the slot table sizes an ARGUMENT as the frame lays it out: a text argument is a
+/// 16-byte view, not a 24-byte local, so the argument slots tile without overlapping.
+#[test]
+fn argument_slots_tile_the_frame() {
+    let dir = std::env::temp_dir().join(format!("loft_introspect_args_{}", std::process::id()));
+    fa::create_dir_all(&dir).expect("scratch dir");
+    let file = dir.join("args.loft");
+    fa::write(
+        &file,
+        "fn f(t: text, n: integer, b: boolean, s: single) -> integer { len(t) + n }\n\
+         fn main() { println(\"{f(\\\"ab\\\", 3, true, 1.0f)}\"); }\n",
+    )
+    .expect("write program");
+    let out = loft::platform::process::harness_command(loft_bin())
+        .args(["introspect", "--fn", "n_f", "--show-slots"])
+        .arg(&file)
+        .env("LOFT_NO_CACHE", "1")
+        .output()
+        .expect("run loft introspect");
+    let _ = fa::remove_dir_all(&dir);
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    // Each argument row's `[a, b)`, in frame order.
+    let mut slots: Vec<(u32, u32)> = Vec::new();
+    for line in section(&stdout, "slots").lines() {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        // A variable row starts with its number; the header's second word is `arg` too.
+        let numbered = words.first().is_some_and(|w| w.parse::<u32>().is_ok());
+        if !numbered || words.get(1) != Some(&"arg") {
+            continue;
+        }
+        let at = words
+            .iter()
+            .position(|w| w.starts_with('['))
+            .expect("a slot");
+        let a = words[at].trim_start_matches('[').trim_end_matches(',');
+        let b = words[at + 1].trim_end_matches(')');
+        slots.push((a.parse().expect("start"), b.parse().expect("end")));
+    }
+    assert_eq!(
+        slots.first(),
+        Some(&(0, 16)),
+        "the text argument is a 16-byte view\n{stdout}"
+    );
+    assert_eq!(slots.len(), 4, "four arguments\n{stdout}");
+    for pair in slots.windows(2) {
+        assert!(
+            pair[0].1 <= pair[1].0,
+            "argument slots overlap: {slots:?}\n{stdout}"
+        );
+    }
+}
