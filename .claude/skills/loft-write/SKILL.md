@@ -1,6 +1,12 @@
 ---
 name: loft-write
-description: Reference for writing correct loft code. Apply whenever writing, editing, or reviewing .loft files. Covers types, syntax, known bugs, workarounds, naming rules, and error→fix table.
+description: >-
+  Reference for writing correct loft code. Use it whenever you write, edit or review any
+  .loft source — a program, a library, a doc example, a language-suite cell or a throwaway
+  /tmp probe — and when a probe fails to compile or warns, before assuming the compiler is
+  wrong. Covers types, syntax, structs, closures and their captures, collections, naming
+  rules, known bugs with their workarounds, the lints that fire on small programs, and an
+  error-to-fix table.
 user-invocable: false
 ---
 

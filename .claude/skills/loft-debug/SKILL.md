@@ -1,6 +1,17 @@
 ---
 name: loft-debug
-description: Operational companion for running a loft bug down on this box — LOFT_LOG presets, dump files, find_problems flow, the live-debugger RPC surface (loft debug --rpc — scripted breakpoint/eval/setValue sessions), the native-backend env gotchas that cause FALSE failures, and the operational-safety rules for builds/processes. Routes to the matrix-first protocol (CLAUDE.md) for the METHOD; this is the MECHANICS. Apply when reproducing, investigating, or verifying a loft crash, wrong-result, or codegen bug — and whenever about to sprinkle println/probe prints into a loft program (the debugger session replaces them).
+description: >-
+  The instrument panel for running a loft bug down: USE THIS while reproducing, narrowing or
+  verifying a crash, a wrong answer, a hang, a leak, a native compile error or a backend
+  disagreement — and INSTEAD of adding println or eprintln probes. Reach for it when you
+  need to SEE what the program does: which line wrote a variable's type and its deps
+  (LOFT_LOG=type_timeline), what a function's variable table holds (LOFT_VAR_TABLE), which
+  free released a store a later read touched (LOFT_POISON, LOFT_STRICT_STORES), what the
+  frame holds at line N (loft debug prog.loft:N, scripted with --rpc), where a hang loops
+  (LOFT_MAX_OPS), a leak against a runaway length (the store-heap ceiling), what a dump in
+  tests/dumps says. Also the native env gotchas that fake a failure, the build loop and
+  find_problems. The method — matrix first, hypothesis, falsify — is engineering-rigor's;
+  this skill is the mechanics.
 user-invocable: false
 ---
 
@@ -56,6 +67,21 @@ irreversible moves not to make.
   `ref_debug` (stack snapshots after Ref/CreateStack), `variables` (the per-fn var
   table — name/type/scope/slot), `fn:<name>` (one function). `LOFT_DUMP_DEPTH` /
   `LOFT_DUMP_ELEMENTS` tune the inline struct/vector dumps.
+- **The question-to-instrument table** — reach for these before reading code or adding a
+  print (homes: CLAUDE.md § Environment switches, RUN_BOUNDS.md):
+  - *Which line gave this variable its type or its deps?* `LOFT_LOG=type_timeline:<var>`,
+    with `LOFT_TIMELINE_BT=1` for the stack; it shows pass 1 and pass 2 separately, which is
+    where a dep that "keeps coming back" usually comes from.
+  - *What does the function's variable table really hold?* `LOFT_VAR_TABLE=<fn>` — every
+    dep resolved to `name(index)`, with OWNS / skipfree flags.
+  - *Which free released the store a later read touched?* `LOFT_POISON=1` (freed bytes read
+    as 0xDEADBEEF, so a lucky read becomes a loud one) with `LOFT_STRICT_STORES=1` (names
+    the violation, and every store never freed, at exit).  A probe that prints the right
+    answer is not clean until it passes under both.
+  - *Where does this hang loop?* `LOFT_MAX_OPS=<n>` set low, in a debug-assertions build
+    (RUN_BOUNDS.md § Hang guard) — it prints the last sixteen ops.
+  - *A leak, or a runaway length?* The store-heap ceiling's report under `--tests` /
+    `LOFT_MEMORY_LIMIT` names the type and splits one store from many.
 - **Dump files**: a failing wrap/native test writes `tests/dumps/*.txt` — full IR +
   bytecode + execution trace; the root cause is almost always visible there. (See
   `doc/claude/RUNNING_TESTS.md`.) NEVER `git bisect` / `git checkout HEAD -- <file>` to

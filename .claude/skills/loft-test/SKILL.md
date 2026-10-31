@@ -1,6 +1,14 @@
 ---
 name: loft-test
-description: Reference for writing tests against the loft interpreter, --native backend, and WASM build. Apply whenever adding, editing, or reviewing tests/*.rs or tests/scripts/*.loft / tests/docs/*.loft. Covers test-binary layout, the `code!` and `cross_mode!` macros, the @EXPECT_ERROR / @EXPECT_FAIL / @ARGS / @NAME / @TITLE annotations on `.loft` files, ignore conventions, P-id rules, the `@falsified-at:` gate, and which check to run for a change.
+description: >-
+  Where a loft test goes and how to write it. USE THIS whenever you add, move or review a
+  test: a language-suite cell (../loft-suite/rules/<chapter>/<rule>/ — the default home for
+  a new .loft test), a Rust test in tests/*.rs, a tests/docs page, a guard that scans the
+  tree, or probes graduating into regression tests. Covers which home a test belongs in, the
+  test-binary layout, the code! and cross_mode! macros, the @EXPECT_ERROR / @EXPECT_FAIL /
+  @ARGS / @NAME annotations, marking a test expected-to-fail or ignored, P-ids, the
+  @falsified-at receipt every new guard records (make falsify), and which check to run for a
+  change. Not for running down why a test fails (loft-debug) or fixing what it exposes.
 user-invocable: false
 ---
 
@@ -198,9 +206,13 @@ coverage where you trust the assertions in the script body itself, a
 
 ### Where to put a new `.loft` test
 
+A new language test is a CELL in the language suite by default — `doc/claude/TESTING.md` §
+the three homes.  `tests/scripts/` keeps only the programs something in this repository names.
+
 | Location | Purpose | Doc fields required? |
 |---|---|---|
-| `tests/scripts/<name>.loft` | Regression script for a fix or a feature corner case.  Live naming: the issue number as prefix (`1004-…`) or a descriptive slug (`a-format-spec-is-honoured-not-dropped.loft`). | No — but `@falsified-at:` is gated (below) |
+| `../loft-suite/rules/<chapter>/<rule>/<name>.loft` | **The default home.**  A self-contained program under the formal rule it exercises (`rules/closures/L-CapKeep/2273-…`), run on both backends by `make suite ARGS="@FR-<Rule>"` and the required `Language suite` check.  Commit it on the suite branch of the same name, record its receipt, then bump `tests/loft-suite.pin` here to that suite commit. | No — but `@falsified-at:` is gated (below) |
+| `tests/scripts/<name>.loft` | Only a program something in this repository names (a test binary, a doc, a tool reads it by path).  Live naming: the issue number as prefix (`1004-…`) or a descriptive slug. | No — but `@falsified-at:` is gated (below) |
 | `tests/docs/<NN>-<topic>.loft` | Topic-level documentation script.  Output is part of the public language reference (`gendoc` writes HTML from these). | **Yes** — `@NAME` + `@TITLE` |
 | `tests/lib/<name>.loft` | Library fixture for tests using `// @ARGS: --lib tests/lib`. | No |
 
