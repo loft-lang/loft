@@ -67,6 +67,13 @@ example-first (30 minutes of hand edits, a rule written in three minutes, built 
 5. **Build to the hand form** and compare the emitted code against it; the price is the
    acceptance bar.
 
+**Which compilers, when (owner, 2026-10-31).**  A row being optimised is priced and A/B'd on
+**gcc and clang** — compiling one program twice is cheap, and it shows where clang lags or a
+lever helps one compiler only (`(R-Inline)`'s twin clause: gcc −55 %, clang nothing).  The BIG
+runs — `ab_all.sh` over every library, the full `bench/stats.py` table — are **gcc only**; a
+full clang run is taken every couple of days, not per change.  A gcc table stores its rows in
+`bench/portal/local/<library>/<routine>.tsv` (the history the next table is compared with).
+
 ## Where to resume (2026-09-28 evening, branch `157-native-4x`)
 
 **Superseded by [`handoff-2026-10-20.md`](handoff-2026-10-20.md)** (and before it [`handoff-2026-10-16.md`](handoff-2026-10-16.md)) — the state when the laptop was

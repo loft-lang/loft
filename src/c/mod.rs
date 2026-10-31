@@ -2210,6 +2210,19 @@ fn unit_defines(
     if reached.iter().any(|&d| data.def(d).name() == "n_file_map") {
         out.push_str("#define LOFT_FOREIGN 1\n");
     }
+    // `@FR-R-NoLocks`: a store is read-only only through `#lock = …`, a mapped file
+    // (`file_map`) or a constant store; a unit that reaches none of them meets no locked write.
+    let locks = reached
+        .iter()
+        .any(|&d| matches!(data.def(d).name(), "n_set_store_lock" | "n_file_map"))
+        || cx
+            .consts
+            .borrow()
+            .iter()
+            .any(|&d| data.def(d).const_ref.is_some());
+    if !locks && !crate::env_once!(std::env::var("LOFT_NO_LOCK_FACT").is_ok_and(|v| v != "0")) {
+        out.push_str("#define LOFT_NO_LOCKS 1\n");
+    }
     // The JSON reader (`loft_json.h`) is compiled in for a unit that reads JSON: the JsonValue
     // tree with its layout read from this program's type table for one that reaches a JSON
     // native, the typed walk (`loft_parse.h`) for one that parses a type.
