@@ -77,6 +77,13 @@ PR_ONLY = [
     "not binary(html_asyncify)",
 ]
 
+# The per-change compiled backend is the C; rustc-native runs in the nightly (TESTING.md § The
+# compiled backend a test runs on).  A test whose SUBJECT is the Rust writer — its emission, its
+# rewrites, its page, the `[native] crate` layer — lives in a `mod rust_writer` and runs only on
+# the schedule and a dispatch (release-gate's call is one), never on a pull request or a push.
+NIGHTLY_ONLY = ["not test(/(^|::)rust_writer::/)"]
+NIGHTLY_EVENTS = ("schedule", "workflow_dispatch")
+
 
 # The shard boundary is EVERY single-slot test group, not just `heavy-serial`.
 #
@@ -210,6 +217,8 @@ def main() -> None:
     clauses = list(BASE) + list(DEDICATED_STEP)
     if event == "pull_request":
         clauses += PR_ONLY
+    if event not in NIGHTLY_EVENTS:
+        clauses += NIGHTLY_ONLY
     # A shard no longer narrows the filterset: a leg runs the BINARIES it built, which
     # `scripts/ci_shards.py` decides (`corpus` the whole `native` binary, `heavy` the other
     # single-slot binaries that drive an `--html` page, the rest packed by measured weight),
