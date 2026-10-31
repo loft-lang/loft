@@ -27,7 +27,10 @@ fn fixture(name: &str, aged: usize) -> (PathBuf, u32, u32) {
     child.wait().unwrap();
     let week_ago = SystemTime::now() - Duration::from_secs(7 * 24 * 3600);
     let age = |p: &Path| {
-        std::fs::File::open(p).unwrap().set_modified(week_ago).unwrap();
+        std::fs::File::open(p)
+            .unwrap()
+            .set_modified(week_ago)
+            .unwrap();
     };
     for pid in [live, dead] {
         std::fs::write(dir.join(format!("loft_native_bin_{pid}")), "").unwrap();
@@ -52,7 +55,11 @@ fn sweep(args: &[&str], dir: &Path) {
         .arg(dir)
         .output()
         .expect("run scripts/sweep_scratch.sh");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 fn names(dir: &Path) -> Vec<String> {
@@ -92,7 +99,11 @@ fn the_scratch_sweep_stops_at_its_callers_bound() {
         let (dir, _, _) = fixture(name, 300);
         let before = names(&dir).len();
         sweep(&args, &dir);
-        assert_eq!(names(&dir).len(), before, "{name}: the sweep went past its bound");
+        assert_eq!(
+            names(&dir).len(),
+            before,
+            "{name}: the sweep went past its bound"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
