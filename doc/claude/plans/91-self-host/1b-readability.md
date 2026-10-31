@@ -64,8 +64,8 @@ identity — a call whose argument classifies `NOT_YET` answers a borrow of that
 refactor, against the loft side's own outputs before it (stricter than EQUAL with the Rust):
 the ported oracle's ownership report on every image of the kernels and `tests/scripts` (521),
 and on each the runner's stdout, stderr, exit, bind trace and allocator trace — identical in
-the interpreter (a 46-image sample, the three below included); identical in the C build but for
-three programs loft#2295 miscompiles (§ What follows R-1).  The compiler's diagnostics on both
+the interpreter (a 46-image sample) and in the C build (all 521, once loft#2295 was fixed — before,
+three programs read a released store there).  The compiler's diagnostics on both
 tools are unchanged.  The kernels run no slower (0.28 s before, 0.22 s after, three runs each).
 
 ## What follows R-1 — the log to the best port code
@@ -73,29 +73,23 @@ tools are unchanged.  The kernels run no slower (0.28 s before, 0.22 s after, th
 R-1 met four compiler defects; the port is written in its best form and a defect is fixed in the
 compiler, never routed around in the port.  What remains, in order:
 
-1. **loft#2295 — the C backend answers a different value for `join(f(x), f(y))` of two recursive
-   calls.**  The R-1 port's C build reads `Join` where the Rust oracle and the interpreter read
-   `Borrowed` in 3 of 521 programs (`157-loop-record`, `1081-…`, `1550-…`).  A call-site
-   workaround (binding both calls first) did not hold: renaming a visitor's unused parameters
-   with `_` moved the miscompile elsewhere.  Fix it in the C backend, then re-measure: the C
-   build identical to the baseline on all 521, and `compare.py --layers ownership,binds` EQUAL.
-2. **The `_`-prefixed visitor parameters** (`collect_defs_visit(_b, …)`) changed the C build's
-   answers while the interpreter's stayed right — a sign the C path reads a user's `_` name as a
-   compiler temp (`is_compiler_generated` asks `user_named`).  Check it as part of 1; a user's
-   name must never change an answer.
-3. **The `--native` build of the R-1 port fails to compile** (`reports.loft`: rustc E0502, a
+1. **The `--native` build of the R-1 port fails to compile** (`reports.loft`: rustc E0502, a
    `*stores` borrow conflict); the port before R-1 compiles.  Minimise, check main, file, fix.
-4. **loft#2293 — `--native` assigns a value-record struct literal to the `DbRef` that tracks a
+2. **loft#2293 — `--native` assigns a value-record struct literal to the `DbRef` that tracks a
    returned local's store** (E0308).  Fix.
-5. **The facts R-1's list left on `-1`**: `own::var_of`, `own::variant_check_subject`,
+3. **The facts R-1's list left on `-1`**: `own::var_of`, `own::variant_check_subject`,
    `own::fnref_target_of`, `binds::hidden_return_buffer_attr` answer -1 for none where the Rust
    answers `Option`; the same `integer?` treatment, measured the same way.  And one spelling of
    `u16::MAX`: `binds::NO_VAR` and `own::MAX` are the same value.
-6. Then the plan's queue (handoff): loft#2260, E-4, F-1.
+4. Then the plan's queue (handoff): loft#2260, E-4, F-1.
 
 Fixed on the way: loft#2292 (a local renamed onto the return buffer was copied onto itself — a
-zeroed record on every backend), and a closure-record leak R-2s S1(b) had introduced on this
-branch (`___oldrec` bound as a view of its slot again).
+zeroed record on every backend); loft#2295 (a hoisted call argument a borrowing return answers
+was freed before the return — a use-after-free in the shared IR the C runtime exposed first, and
+the reason the `_`-prefixed visitor parameters seemed to move it: they moved the allocation
+order); and a closure-record leak R-2s S1(b) had introduced on this branch (`___oldrec` bound as
+a view of its slot again).  With loft#2295 fixed, the R-1 port's C build is identical to the
+baseline on all 521 images, no workaround in the port.
 
 ## R-2 — the `?? panic(…)` discharges: mostly one representation choice
 
