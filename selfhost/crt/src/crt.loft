@@ -418,6 +418,9 @@ pub fn copy_record(s_store: integer, s_rec: integer, s_pos: integer, d_store: in
 fn c_vec_len(store: integer, rec: integer, pos: integer) -> integer;
 #c "loft_crt_vec_len" "int64_t(int64_t, int64_t, int64_t)"
 
+fn c_vec_append_copy(store: integer, rec: integer, pos: integer, ctp: integer, count: integer);
+#c "loft_crt_vec_append_copy" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
 fn c_vec_get(out: vector<integer>, store: integer, rec: integer, pos: integer, size: integer, idx: integer) -> integer;
 #c "loft_crt_vec_get" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 
@@ -456,6 +459,12 @@ pub P_BOOLEAN = 5;
 // `OpLengthVector`.
 pub fn vec_len(store: integer, rec: integer, pos: integer) -> integer {
   c_vec_len(store, rec, pos)
+}
+
+// `OpAppendCopy` (`[x; n]`): the vector's last element repeated until it holds `count`, of
+// element type `ctp`; a `count` of 0 or less leaves it empty.  The type table must be loaded.
+pub fn vec_append_copy(store: integer, rec: integer, pos: integer, ctp: integer, count: integer) {
+  c_vec_append_copy(store, rec, pos, ctp, count);
 }
 
 // `OpGetVector`: the element at `idx` of `size` bytes, into `out[0..3]`; the null reference

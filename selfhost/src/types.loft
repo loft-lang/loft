@@ -185,7 +185,7 @@ fn fields_no_refs(b: ir::Bundle, fields: vector<ir::DbField>, walking: vector<in
 }
 
 // `Stores::content`: a collection type's element, null for any other type.
-fn content_of(b: ir::Bundle, tp: integer) -> integer? {
+pub fn content_of(b: ir::Bundle, tp: integer) -> integer? {
   t = b.types[tp];
   if t == null {
     return null;

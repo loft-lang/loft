@@ -1000,6 +1000,25 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
         put_int(ints, sp_int, crt::vec_len(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0));
         sp_int += 1;
       }
+      VecAbsent => {
+        sp_int -= 3;
+        put_int(ints, sp_int, if crt::vec_absent(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0) { 1 } else { 0 });
+        sp_int += 1;
+      }
+      // Two sentinels name the same (absent) store: a witness that never took one releases nothing.
+      DistinctStore => {
+        sp_int -= 6;
+        put_int(ints, sp_int, if (ints[sp_int] ?? NULL_STORE) != (ints[sp_int + 3] ?? NULL_STORE) { 1 } else { 0 });
+        sp_int += 1;
+      }
+      AppendCopy => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 4;
+        crt::vec_append_copy(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, ints[sp_int + 3] ?? 0);
+      }
       VecGet => {
         sp_int -= 4;
         crt::vec_get(io, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, ints[sp_int + 3]);

@@ -766,6 +766,12 @@ int64_t loft_crt_vec_absent(int64_t store, int64_t rec, int64_t pos) {
     return loft_vec_absent(loft_crt_ref(store, rec, pos));
 }
 
+/* OpAppendCopy (State::append_copy): `[x; n]` — the vector's last element repeated until it
+ * holds `count`, of element type `ctp`; `count` <= 0 leaves it empty. */
+void loft_crt_vec_append_copy(int64_t store, int64_t rec, int64_t pos, int64_t ctp, int64_t count) {
+    loft_vec_append_copy(loft_crt_types, (uint16_t) ctp, loft_crt_ref(store, rec, pos), count);
+}
+
 /* The interpreted program starts: the trace's `M` line, as the Rust interpreter writes it when
  * it enters the program (`State::execute_argv_shared`). */
 void loft_crt_trace_mark(void) {

@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 S3: a repeat literal (`OpAppendCopy`) and an absent vector (`OpVectorIsNull`).  By hand:
+// `rep(3)`: v = [3, 3, 3] sums 9; w holds three S { 2, "ab" } at 2 * 10 + 2 * 100 = 220 each, 660;
+// with 3 * 1000 for v's length, 3669.  `rep(0)`: both empty, 0.  `absent(0)`: `maybe(0)` is null,
+// 1, and the empty `e` is present; `absent(2)`: 0.
+struct S { n: integer, t: text }
+fn rep(n: integer) -> integer {
+  v = [3; n];
+  w = [S { n: 2, t: "ab" }; n];
+  total = 0;
+  for x in v { total += x; }
+  for s in w { total += s.n * 10 + len(s.t) * 100; }
+  total + len(v) * 1000
+}
+fn maybe(k: integer) -> vector<integer>? { if k > 0 { [k] } else { null } }
+fn absent(k: integer) -> integer {
+  e: vector<integer> = [];
+  r = 0;
+  if maybe(k) == null { r += 1; }
+  if e == null { r += 10; }
+  r
+}
+fn main() { println("{rep(3)} {rep(0)} {absent(0)} {absent(2)}"); }
