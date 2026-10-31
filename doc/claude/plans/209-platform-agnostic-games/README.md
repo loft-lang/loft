@@ -198,9 +198,15 @@ blocks bound by slot from a typed loft struct — the model Metal, Direct3D 12, 
 console APIs share.  GL and WebGL2 implement it by setting state when a pipeline is bound.
 - Goes red when: stage and every graphics example draw other pixels than on 0.11.
 
-**G3 — the shader decision, then Metal (L).**  One shader source for every backend — open question
-1.  Metal is the first second backend: two very different APIs expose a bad boundary fastest.
-- Goes red when: a scene draws other pixels on Metal than on GL beyond a measured tolerance.
+**G3 — one shader source, then Metal (L).**  Shaders are written once, in a shading subset of
+loft (§ Decisions), compiled by loft to GLSL first: today's graphics and stage shaders, rewritten
+in it, draw the same pixels on GL and WebGL2 as their hand-written GLSL.  Then a Metal emitter;
+Metal is the first second backend because two very different APIs expose a bad boundary fastest.
+A platform may carry a hand-tuned variant of a shader (API.md rule 6), checked against the common
+one's output.
+- Goes red when: a rewritten shader draws other pixels than its GLSL original; a scene draws
+  other pixels on Metal than on GL beyond a measured tolerance; a shader's CPU (C) build answers
+  other pixels than its GPU build beyond that tolerance.
 
 **G3b — meshes reworked per target (M).**  The ship build's asset rework (F8b) extended to
 meshes: a `.glb` simplified for a target's screen and tier by edge collapse, in loft-libs-assets.
@@ -211,16 +217,23 @@ meshes: a `.glb` simplified for a target's screen and tier by edge collapse, in 
 private repo, implementing the same C interface under its maker's licence; Direct3D only when Xbox
 is a target, else through ANGLE.
 
+## Decisions
+
+- **The libraries offer, the game chooses** (owner).  Several displays, gamepads, touch, round
+  screens: the libraries support each well enough that a game can use it, and whether a game does
+  is the game's decision.  No library forces a choice or hides a capability the machine has.
+- **One shader source: a shading subset of loft** (owner).  Pure functions over fixed-size vectors
+  and matrices — no heap, no text — compiled by loft to GLSL, Metal, HLSL and C.  A uniform block
+  is a loft struct, so its layout cannot disagree with the shader; the C build runs a shader on the
+  CPU, which gives shaders pixel tests and a software path.  Per-platform hand-written variants
+  only as optional optimisations (API.md rule 6).  **Fallback**, if the subset proves too costly:
+  Vulkan-style GLSL compiled at ship time to SPIR-V and translated to Metal / HLSL / GLSL ES.
+  WGSL + `naga` (@PLN72's) is out: a Rust crate, against the C-only direction.
+
 ## Open design questions
 
-1. **The shader source** (G3).  (a) Vulkan-style GLSL compiled ahead of time to SPIR-V and
-   translated to MSL / HLSL / GLSL ES, outputs committed as derived files; (b) shaders in a subset
-   of loft, compiled by loft to each target's language and to C for a software path; (c) a fixed
-   set of materials the library provides, no game shaders.  @PLN72's WGSL + `naga` is out: a Rust
-   crate, against the C-only direction.
-2. **The tier table** (F6) — declared per machine, measured at start-up, or both.
-3. **Round displays** (F5) — mask only, or a shape a game can ask for its layout.
-4. **Gamepads** (F4) — in F4, or when a machine with one is a target.
+1. **The tier table** (F6) — declared per machine, measured at start-up, or both.
+2. **Round displays** (F5) — mask only, or a shape a game can ask for its layout.
 
 ## Cross-arc dependencies
 
@@ -228,7 +241,7 @@ is a target, else through ANGLE.
   audio sections are arc F's device half.
 - [@PLN208](https://github.com/loft-lang/plans/issues/208) — graphics' object API; its G10
   (Windows GL) moves into G1 here.
-- [@PLN72](https://github.com/loft-lang/plans/issues/72) — absorbed as G2/G3.
+- [@PLN72](https://github.com/loft-lang/plans/issues/72) — closed, superseded by arc G (G2/G3).
 - [@PLN203](https://github.com/loft-lang/plans/issues/203) — the C backend: every phase is checked
   on it, and the browser pages are the C writer's.
 
@@ -239,7 +252,7 @@ is a target, else through ANGLE.
 - [TANMATSU.md](../../TANMATSU.md) — what runs there after F1–F7.
 - The `screen`, `input`, `audio`, `tiles` READMEs and guides — the capability API, one example game
   loop; and a "writing a game for every machine" guide in loft-libs-game.
-- `make libcatalogue` regenerated; [ROADMAP.md](../../ROADMAP.md) row; @PLN72 closed into this
+- `make libcatalogue` regenerated; [ROADMAP.md](../../ROADMAP.md) row; @PLN72 closed as superseded (done) into this
   plan.
 - The library CI's portability gate (F8) named in
   [LIBRARY_AUTHORING.md § The library contract](../../LIBRARY_AUTHORING.md).
