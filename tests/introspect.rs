@@ -584,29 +584,23 @@ fn a_set_stack_ref_is_followed_by_the_next_op() {
     );
 }
 
-/// loft#2309 — the slot table sizes an ARGUMENT as the frame lays it out: a text argument is a
-/// 16-byte view, not a 24-byte local, so the argument slots tile without overlapping.
-#[test]
-fn argument_slots_tile_the_frame() {
-    let dir = std::env::temp_dir().join(format!("loft_introspect_args_{}", std::process::id()));
+/// Every ARGUMENT row of `fn_name`'s slot table as `introspect --show-slots` prints it for
+/// `program`: each `[a, b)` in frame order, `None` for an argument shown with no slot.  Answers
+/// the printed output too, for the assertion messages.
+fn argument_slots(tag: &str, program: &str, fn_name: &str) -> (Vec<Option<(u32, u32)>>, String) {
+    let dir = std::env::temp_dir().join(format!("loft_introspect_{tag}_{}", std::process::id()));
     fa::create_dir_all(&dir).expect("scratch dir");
     let file = dir.join("args.loft");
-    fa::write(
-        &file,
-        "fn f(t: text, n: integer, b: boolean, s: single) -> integer { len(t) + n }\n\
-         fn main() { println(\"{f(\\\"ab\\\", 3, true, 1.0f)}\"); }\n",
-    )
-    .expect("write program");
+    fa::write(&file, program).expect("write program");
     let out = loft::platform::process::harness_command(loft_bin())
-        .args(["introspect", "--fn", "n_f", "--show-slots"])
+        .args(["introspect", "--fn", fn_name, "--show-slots"])
         .arg(&file)
         .env("LOFT_NO_CACHE", "1")
         .output()
         .expect("run loft introspect");
     let _ = fa::remove_dir_all(&dir);
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-    // Each argument row's `[a, b)`, in frame order.
-    let mut slots: Vec<(u32, u32)> = Vec::new();
+    let mut slots = Vec::new();
     for line in section(&stdout, "slots").lines() {
         let words: Vec<&str> = line.split_whitespace().collect();
         // A variable row starts with its number; the header's second word is `arg` too.
@@ -614,14 +608,32 @@ fn argument_slots_tile_the_frame() {
         if !numbered || words.get(1) != Some(&"arg") {
             continue;
         }
-        let at = words
-            .iter()
-            .position(|w| w.starts_with('['))
-            .expect("a slot");
+        // The slot is the first `[a,` word, or the `-` after the scope; the live column follows.
+        let Some(at) = words.iter().position(|w| w.starts_with('[')) else {
+            slots.push(None);
+            continue;
+        };
         let a = words[at].trim_start_matches('[').trim_end_matches(',');
         let b = words[at + 1].trim_end_matches(')');
-        slots.push((a.parse().expect("start"), b.parse().expect("end")));
+        slots.push(Some((a.parse().expect("start"), b.parse().expect("end"))));
     }
+    (slots, stdout)
+}
+
+/// loft#2309 — the slot table sizes an ARGUMENT as the frame lays it out: a text argument is a
+/// 16-byte view, not a 24-byte local, so the argument slots tile without overlapping.
+#[test]
+fn argument_slots_tile_the_frame() {
+    let (slots, stdout) = argument_slots(
+        "args",
+        "fn f(t: text, n: integer, b: boolean, s: single) -> integer { len(t) + n }\n\
+         fn main() { println(\"{f(\\\"ab\\\", 3, true, 1.0f)}\"); }\n",
+        "n_f",
+    );
+    let slots: Vec<(u32, u32)> = slots
+        .into_iter()
+        .map(|s| s.expect("every argument has a slot"))
+        .collect();
     assert_eq!(
         slots.first(),
         Some(&(0, 16)),
@@ -634,4 +646,22 @@ fn argument_slots_tile_the_frame() {
             "argument slots overlap: {slots:?}\n{stdout}"
         );
     }
+}
+
+/// loft#2311 — an empty stub's arguments are in the frame like any function's: the generator
+/// places them and the table the frame is read from keeps their positions, where the stub's
+/// early return used to drop them and the table showed no slot at all.
+#[test]
+fn an_empty_stubs_arguments_have_their_slots() {
+    let (slots, stdout) = argument_slots(
+        "stub",
+        "fn f(q: integer, r: integer) -> integer { }\n\
+         fn main() { println(\"{f(1, 2)}\"); }\n",
+        "n_f",
+    );
+    assert_eq!(
+        slots,
+        vec![Some((0, 8)), Some((8, 16))],
+        "the stub's two arguments\n{stdout}"
+    );
 }
