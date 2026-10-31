@@ -641,6 +641,35 @@ record before the reset): the space is the store's already, the buffer is reused
 calls (R-Reuse), and a ladder re-run per call would free a rung into the store each step
 and take every later claim off the bump path (@PLN157 § V-ai).
 
+```
+  (H-KeepRoom)   MINTING a store again (`OpDatabase` on a variable that already names a
+                 live store, `Stores::clear`) whose root is a one-field
+                 `main_vector<T>` wrapper re-establishes the wrapper and its vector
+                 at length ZERO inside the block the vector held — the capacity its
+                 last fill reached — exactly as (H-ClearRelease)'s reset does, and
+                 releases what the elements owned as that reset does.  The vector
+                 reads empty and present; nothing else of the store survives.
+```
+
+**In words.**  A capacity is no value: a vector of length zero with room for 16 000 bytes and
+one with none answer every operation alike, so the mint may keep the room the reset would.
+The case is the reused hidden buffer (R-Reuse): one store handed to every call of a site, which
+the callee's prologue clears (`loft_vec_clear_release`, already at the reached capacity per
+`H-RootExtent`) and then MINTS again (`loft_database_wrapper` → `loft_database` →
+`loft_st_init`), throwing the block away — so cbor's `encode_bytes`, whose buffer is reused
+across its 100 calls, regrows 16 KiB from nothing on every call (`loft_st_resize`,
+`loft_vec_reserve_more`, the `memmove` of each rung).  The mint keeps the same gate as the
+reset — the SHAPE (a store-root `main_vector<T>`) read from the layout, never an offset — and
+falls back to the plain re-initialisation for any other root.  **Priced** with the window
+clause of (R-AppendTwin) (2026-10-31, by hand, same hashes): `encode_bytes` 2.28× → **1.94×**
+the twin.  **NOT BUILT.**  Sites to come: `loft_database` in `loft_rt.h` (the C) and
+`Stores::clear` (the interpreter and native), both reading `vector::reached_capacity` as the
+reset does.  Switch `LOFT_NO_KEEP_ROOM=1`; guard to write: a buffer reused across calls of a
+vector-returning function, each call's result read for value and length, a call that answers
+shorter after a longer one (the reached capacity must never read as length), a buffer whose
+elements own heap (released, nothing for the leak report), falsified by a plant that keeps
+the old length.
+
 **In words.** `free` releases a store slot and everything in it. It is disciplined: (1) **LIFO** —
 you free stores in reverse allocation order, because a store's lifetime is nested inside the
 stores allocated before it; (2) never the **stack** store (a `#306` bug is exactly a
