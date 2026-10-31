@@ -422,6 +422,32 @@ pub(crate) fn is_halt_call(data: &crate::data::Data, v: &Value) -> bool {
     matches!(v.unspan(), Value::Call(d, _) if matches!(data.def(*d).name(), "n_exit" | "n_panic"))
 }
 
+/// `@FR-C-Never` — does `code` END in a halt: the halt call itself, or a block whose last
+/// operator does.  Such a value never arrives, so it fits wherever a value is wanted.
+pub(crate) fn ends_in_halt(data: &crate::data::Data, code: &Value) -> bool {
+    match code.unspan() {
+        Value::Block(bl) => bl.operators.last().is_some_and(|o| ends_in_halt(data, o)),
+        other => is_halt_call(data, other),
+    }
+}
+
+/// Give a value that ends in a halt ([`ends_in_halt`]) the value of type `tp` after the halt,
+/// which no run reaches: the halt stays a statement, and every emitter types the result.
+fn give_halt_a_value(code: &mut Value, value: Value, tp: &Type) {
+    if let Value::Block(bl) = code {
+        bl.operators.push(value);
+        bl.result = tp.clone();
+    } else {
+        let halt = std::mem::replace(code, Value::Null);
+        *code = v_block(vec![halt, value], tp.clone(), "halt");
+    }
+}
+
+/// Does `ops` reach its last operator only past a halt — the value behind it is never read?
+fn behind_a_halt(data: &crate::data::Data, ops: &[Value]) -> bool {
+    ops.len() > 1 && ops[..ops.len() - 1].iter().any(|o| is_halt_call(data, o))
+}
+
 /// `@FR-N-Guard` — can the body of a guard clause NOT fall through: it ends in `return`,
 /// `break` or `continue`, or in a halt ([`is_halt_call`]).  Only the guard's narrowing asks
 /// this; a block's TAIL conversion keeps asking [`is_block_divergent`], where a halt still
@@ -2264,6 +2290,20 @@ impl Parser {
         } else {
             result
         };
+        // `@FR-C-Never` — a halt (`exit`, `panic`) never returns, so it fits wherever a value is
+        // wanted, as `?? panic(…)` already reads it.  The tail keeps the halt as a statement and
+        // answers the expected type's null after it, which no run reaches: every arm then has
+        // a value of the joined type, and every emitter types the block (loft#2260).
+        if matches!(t.base(), Type::Void | Type::Never)
+            && !matches!(result.base(), Type::Void | Type::Never | Type::Unknown(_))
+            && let Some(last) = l.len().checked_sub(1)
+            && ends_in_halt(&self.data, &l[last])
+        {
+            let value = self.null_value(result);
+            give_halt_a_value(&mut l[last], value, result);
+            let typed = result.clone();
+            return self.block_result(context, &typed, &typed, l, tail_pos);
+        }
         let mut tp = t.clone();
         // loft#2188 — a block VALUE whose tail is a call that may hand back an argument.
         if context != "return from block"
@@ -5160,6 +5200,8 @@ impl Parser {
     fn branch_yields_null(&self, v: &Value) -> bool {
         match v.unspan() {
             Value::Null => !self.first_pass,
+            // `@FR-C-Never` — a value behind a halt (`give_halt_a_value`) is never answered.
+            Value::Block(bl) if behind_a_halt(&self.data, &bl.operators) => false,
             Value::Block(bl) => bl
                 .operators
                 .last()
@@ -5218,6 +5260,7 @@ impl Parser {
     fn arm_yields_direct_null(&self, v: &Value) -> bool {
         match v.unspan() {
             Value::Null => !self.first_pass,
+            Value::Block(bl) if behind_a_halt(&self.data, &bl.operators) => false,
             Value::Block(bl) => bl
                 .operators
                 .last()
@@ -5956,6 +5999,11 @@ impl Parser {
             } else {
                 None
             };
+            // `@FR-C-Never` — a then arm that ends in a halt answers nothing: it takes the
+            // sibling's type, as a `null` arm does, and the value behind its halt below.
+            if matches!(true_type.base(), Type::Void) && ends_in_halt(&self.data, &true_code) {
+                true_type = Type::Never;
+            }
             if matches!(true_type, Type::Null | Type::Never) || then_tuple_nulls.is_some() {
                 true_type = Type::Unknown(0);
             }
@@ -6130,7 +6178,16 @@ impl Parser {
                     let p = bl.operators.len() - 1;
                     // A then arm of no type yet is a `null`, or on pass 1 an expression pass 1
                     // cannot type (`first_pass_null_arm`): only the null takes the sibling's null.
-                    if !is_block_divergent(&bl.operators) && (true_is_null || !self.first_pass) {
+                    if bl
+                        .operators
+                        .last()
+                        .is_some_and(|o| ends_in_halt(&self.data, o))
+                    {
+                        // `@FR-C-Never` — the halt stays, the sibling's null goes behind it.
+                        bl.operators.push(self.null_value(&false_type));
+                    } else if !is_block_divergent(&bl.operators)
+                        && (true_is_null || !self.first_pass)
+                    {
                         // loft#936 — `null_value`, not `null`: the arm's null travels
                         // to the merge on the eval stack, so a COLLECTION arm needs the
                         // DbRef sentinel.  `null`'s catch-all answers a bare
@@ -7595,6 +7652,14 @@ impl Parser {
         self.vars.clear_write_state();
         let block_arm = self.lexer.peek_token("{");
         let tp = self.parse_match_arm_body_inner(expected, arm_code);
+        // `@FR-C-Never` — a halt arm (`_ => panic(…)`) never returns: it is no void arm, and it
+        // settles nothing about the match's type.  `type_null_arms` gives it the result type's
+        // null after the halt once that type is known (loft#2260).
+        let tp = if matches!(tp.base(), Type::Void) && ends_in_halt(&self.data, arm_code) {
+            Type::Never
+        } else {
+            tp
+        };
         // `(Slice-Value)` — an arm's value is a value position, so a vector slice there is the
         // fresh vector (loft#1941).
         let tp = self.slice_arm_as_vector(arm_code, tp);
@@ -7759,9 +7824,15 @@ impl Parser {
             return;
         }
         let mut typed_null = None;
-        for code in codes.filter(|c| arm_body_is_null(c)) {
-            let typed_null = typed_null.get_or_insert_with(|| self.null_value(result_type));
-            set_arm_null_typed(code, typed_null, result_type);
+        for code in codes {
+            if arm_body_is_null(code) {
+                let typed_null = typed_null.get_or_insert_with(|| self.null_value(result_type));
+                set_arm_null_typed(code, typed_null, result_type);
+            } else if ends_in_halt(&self.data, code) {
+                // `@FR-C-Never` — the halt, then a value of the result type no run reaches.
+                let typed_null = typed_null.get_or_insert_with(|| self.null_value(result_type));
+                give_halt_a_value(code, typed_null.clone(), result_type);
+            }
         }
     }
 
