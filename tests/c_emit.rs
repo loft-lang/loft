@@ -6413,3 +6413,54 @@ fn main() {
         "the interpreter"
     );
 }
+
+/// `@FR-R-NoLocks`: a unit that reaches no `#lock = …`, no `file_map` and no constant store is
+/// compiled with `LOFT_NO_LOCKS`; one that locks a store is not, and keeps (H-WriteLocked)'s
+/// production discard (the locked-write cells above run that unit in production and must see
+/// every write discarded).  `LOFT_NO_LOCK_FACT=1` keeps the discard everywhere.  The answer is
+/// the same either way (hand-computed: 3 + 4 = 7).
+#[test]
+fn a_unit_that_locks_nothing_keeps_no_locked_write_discard() {
+    let plain = "struct P { a: integer, b: integer }\nfn main() {\n  p = P { a: 3, b: 0 };\n  p.b = 4;\n  println(\"{p.a + p.b}\");\n}\n";
+    let locks =
+        "fn main() {\n  v: vector<integer> = [7];\n  v#lock = true;\n  println(\"{len(v)}\");\n}\n";
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("no-locks");
+    for (name, src, switch, fact) in [
+        ("plain", plain, "", true),
+        ("plain-off", plain, "LOFT_NO_LOCK_FACT", false),
+        ("locks", locks, "", false),
+    ] {
+        let file = dir.join(format!("{name}.loft"));
+        fa::write(&file, src).expect("write program");
+        let c = dir.join(format!("{name}.c"));
+        let mut emit = loft::platform::process::harness_command(loft);
+        if !switch.is_empty() {
+            emit.env(switch, "1");
+        }
+        let out = emit
+            .arg("--emit-c")
+            .arg(&c)
+            .arg(&file)
+            .output()
+            .expect("run loft --emit-c");
+        assert!(
+            out.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let text = fa::read_to_string(&c).expect("read the C");
+        let defined = text.lines().any(|l| l == "#define LOFT_NO_LOCKS 1");
+        assert_eq!(defined, fact, "{name}: the fact");
+    }
+    let run = loft::platform::process::harness_command(loft)
+        .arg("--native-c")
+        .arg(dir.join("plain.loft"))
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "7\n",
+        "the C build's answer"
+    );
+}

@@ -4542,6 +4542,19 @@ line in `Output::output_function`'s prelude.
                  `bench/portal/analysis/deferred-copy.md`; guard
                  `loft-suite/rules/binding/B-Copy/a-deferred-copy-keeps-the-value-it-was-bound-to-whatever-the-source-does.loft`.
 
+  (R-NoLocks)    a C unit that reaches none of the three ways a store becomes read-only —
+                 `#lock = …` (`n_set_store_lock`), a mapped file (`n_file_map`), a
+                 constant store — is compiled with `LOFT_NO_LOCKS`, and its locked-write
+                 report keeps no production discard: every path through it ends the run.
+                 No write in such a unit can meet a locked store, so (H-WriteLocked)'s
+                 discard is unreachable there and nothing observable changes; what moves
+                 is the compiler's view of every write's lock test, which no longer
+                 returns into the code after it through an opaque logger, so the values
+                 that code holds stay in registers across the write.  Measured
+                 2026-10-31 (gcc): random `indices` 0.458×, `get` 0.871× — exactly what
+                 the (H-WriteLocked) production clause (@C80) had cost them, 2.16× and
+                 1.14×.  Switch `LOFT_NO_LOCK_FACT=1`.
+
   (R-Inline)     a loft function the C writes in at most twelve statements is declared
                  `static inline`, its frame wrapper with it.  The hint changes no
                  observable behaviour; what it moves is the C compiler's inlining

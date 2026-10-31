@@ -691,7 +691,12 @@ static int (*loft_locked_logger)(void) = 0;
  * (`discard_locked_write_in_production`, `@C80`): the answer is 1, and the caller skips it. */
 static int loft_locked_write(void) {
     static const char msg[] = "write to a locked store — unlock it with `#lock = false` before writing";
+    /* `@FR-R-NoLocks`: a unit that makes no store read-only never gets here, and without the
+     * discard every path below ends the run — so the compiler knows a write's lock test never
+     * returns into the code after it, and keeps what that code holds in registers. */
+#ifndef LOFT_NO_LOCKS
     if (!loft_in_test && loft_locked_logger && loft_locked_logger()) return 1;
+#endif
     fflush(stdout);
     fputs("error: ", stderr);
     fputs(msg, stderr);
