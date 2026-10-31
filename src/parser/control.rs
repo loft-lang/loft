@@ -16654,10 +16654,13 @@ impl Parser {
     /// `Reference(S) ⤳ Enum(E)` exactly there.  The arm keeps its own variant type on
     /// purpose (`arm_joins_to_enum` returns before converting it, so the join can still
     /// see the two differ), which is why the gate cannot read the arm's type alone.
+    /// Both sides are peeled (`@FR-N-Shape`): an optional enum result (`E?`) meets its
+    /// variant as `E` does, and whether the join is optional is `join_arm_into`'s question
+    /// (loft#2315).
     fn match_arms_unify(&self, result: &Type, arm: &Type) -> bool {
         match_arm_types_unify(result, arm)
             || matches!(
-                (self.variant_parent_enum(arm), result),
+                (self.variant_parent_enum(arm), result.base()),
                 (Some(Type::Enum(a, _, _)), Type::Enum(b, _, _)) if a == *b
             )
     }
