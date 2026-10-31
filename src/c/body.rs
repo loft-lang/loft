@@ -1046,6 +1046,7 @@ impl<'a> FnWriter<'a> {
         if !slots.is_empty() {
             let _ = writeln!(out, "    LOFT_HOLD({}, {});", slots.len(), slots.join(", "));
         }
+        self.body = self.expand_epilogues();
         let statements = self.statement_count();
         out.push_str(&self.body);
         if self.marked_line != 0 {
@@ -1114,6 +1115,13 @@ impl<'a> FnWriter<'a> {
     }
 
     /// Free every text the function holds: its locals and its temporaries.
+    ///
+    /// The texts are known only once the whole body is emitted — a `return` inside a loop
+    /// precedes temporaries that a later statement of the same loop declares, and those hold
+    /// the previous round's buffer when it is taken (loft#2313).  So the frees are written as a
+    /// marker here and expanded with the function's full list when it is assembled
+    /// (`expand_epilogues`); every one of them is declared empty, so freeing one this path
+    /// never filled is a no-op.
     fn epilogue(&mut self, ind: usize) {
         // A `return` from inside a held loop: the cursors go back before the frame does.
         self.release_holds(0, ind);
@@ -1121,9 +1129,41 @@ impl<'a> FnWriter<'a> {
         for v in tabs {
             self.line(ind, &format!("loft_stab_free(&st{v});"));
         }
-        for t in self.held_texts() {
-            self.line(ind, &format!("loft_text_free(&{t});"));
+        self.line(ind, EPILOGUE_MARK);
+    }
+
+    /// The body with each epilogue marker replaced by the frees of every text the function
+    /// holds, at the marker's indentation; a `#line` before the marker is repeated before each
+    /// free, as `line` writes one before every line it emits.
+    fn expand_epilogues(&self) -> String {
+        if !self.body.contains(EPILOGUE_MARK) {
+            return self.body.clone();
         }
+        let texts = self.held_texts();
+        let mut out = String::with_capacity(self.body.len());
+        let mut last_line_directive: Option<&str> = None;
+        for l in self.body.lines() {
+            if l.trim_start() == EPILOGUE_MARK {
+                let indent = &l[..l.len() - l.trim_start().len()];
+                for (i, t) in texts.iter().enumerate() {
+                    if i > 0
+                        && let Some(d) = last_line_directive
+                    {
+                        let _ = writeln!(out, "{d}");
+                    }
+                    let _ = writeln!(out, "{indent}loft_text_free(&{t});");
+                }
+                continue;
+            }
+            last_line_directive = if l.starts_with("#line ") {
+                Some(l)
+            } else {
+                None
+            };
+            out.push_str(l);
+            out.push('\n');
+        }
+        out
     }
 
     /// The texts the function holds, each freed by its epilogue — and released by a halt in a
@@ -9002,6 +9042,10 @@ fn as_shape(e: E, c: CType) -> Result<String, String> {
 }
 
 /// The operators of each C shape, for the operators this backend writes.
+/// A function epilogue's place in the body while it is being emitted (`Body::epilogue`): a line
+/// no C statement can be, replaced by the frees when the function is assembled.
+const EPILOGUE_MARK: &str = "\u{1}loft-epilogue\u{1}";
+
 const OP_INT: &[&str] = &[
     "OpAddInt",
     "OpAddLong",

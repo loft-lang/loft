@@ -7580,3 +7580,67 @@ fn a_unit_that_locks_nothing_keeps_no_locked_write_discard() {
         "the C build's answer"
     );
 }
+
+/// loft#2313 — a `return` frees every text the function holds, including the temporaries a
+/// LATER statement of the same loop declares: they hold the previous round's buffer when a
+/// return in an earlier statement is taken.  Read off the emitted C: before each `return` of
+/// the function, the frees name every text temporary it declares.
+#[test]
+fn a_return_inside_a_loop_frees_the_texts_a_later_statement_declares() {
+    let p = parsed(
+        "fn f(name: text) -> integer {\n  for stem in [\"a\", \"b\"] {\n    \
+         if name == \"{stem}x\" { return 1; }\n    if name == \"{stem}y\" { return 2; }\n  }\n  0\n}\n",
+    );
+    let c = loft::c::emit_unit(&p.data, &p.database, &[p.data.def_nr("n_f")])
+        .unwrap_or_else(|r| panic!("f is carried: {r}"));
+    // The definition that holds the body: the frame-carrying `__fr` twin where there is one,
+    // the line that opens a brace (a prototype ends in `;`).
+    let lines: Vec<&str> = c.lines().collect();
+    let opens = |name: &str| {
+        lines
+            .iter()
+            .position(|l| l.starts_with(&format!("static int64_t {name}(")) && l.ends_with('{'))
+    };
+    let start = opens("n_f__fr")
+        .or_else(|| opens("n_f"))
+        .expect("the function's body");
+    let body: Vec<&str> = lines[start..]
+        .iter()
+        .take_while(|l| **l != "}")
+        .copied()
+        .collect();
+    let temps: Vec<String> = body
+        .iter()
+        .filter_map(|l| l.trim().strip_prefix("loft_text "))
+        .filter_map(|r| r.split(' ').next())
+        .filter(|n| n.starts_with('t'))
+        .map(str::to_string)
+        .collect();
+    assert!(temps.len() >= 2, "two text temporaries, one per `if`\n{c}");
+    let mut returns = 0;
+    for (i, l) in body.iter().enumerate() {
+        if !l.trim_start().starts_with("return ") {
+            continue;
+        }
+        returns += 1;
+        let freed: Vec<&str> = body[..i]
+            .iter()
+            .rev()
+            .take_while(|p| p.contains("loft_text_free(&") || p.starts_with("#line "))
+            .copied()
+            .collect();
+        for t in &temps {
+            assert!(
+                freed
+                    .iter()
+                    .any(|f| f.contains(&format!("loft_text_free(&{t});"))),
+                "return {returns} frees {t}\n{}",
+                body.join("\n")
+            );
+        }
+    }
+    assert!(
+        returns >= 3,
+        "the two returns in the loop and the tail\n{c}"
+    );
+}
