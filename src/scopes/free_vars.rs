@@ -709,6 +709,29 @@ impl Scopes<'_> {
             // reset that local's slot on the interpreter even when they decline.  Released
             // first, the witness read null and a local freed the store being returned
             // (loft#2194, `@FR-O-Buffer`).
+            //
+            // loft#2295, `(O-Derived)` — and any record-typed local's store may BE the value
+            // returned, as the `ret_var` leg above already says: a hoisted call argument
+            // (`__lift_N`) handed to a callee that answers that argument (`join(a, c) -> Own["a"]`)
+            // comes back as the return value.  The sweep freed it unconditionally, so the
+            // caller read a released store (poison: `null`; the C runtime reused it first).
+            // Freed only when it is not the store returned.
+            if matches!(tp.base(), Type::Reference(_, _) | Type::Enum(_, true, _)) {
+                let free_nr = data.def_nr("OpFreeRef");
+                let free_distinct = data.def_nr("OpFreeRefIfDistinct");
+                for op in &mut ls {
+                    if let Value::Call(d, args) = op
+                        && *d == free_nr
+                        && let Some(Value::Var(w)) = args.first().map(Value::unspan)
+                        && matches!(
+                            function.tp(*w),
+                            Type::Reference(_, _) | Type::Enum(_, true, _)
+                        )
+                    {
+                        *op = Value::Call(free_distinct, vec![Value::Var(*w), Value::Var(tmp)]);
+                    }
+                }
+            }
             result.append(&mut ls);
             for &src in &null_arm_record_sources {
                 // D-heap-7, `(H-Drop)` — the free below releases a source only on the paths that
