@@ -1130,6 +1130,28 @@ static LOFT_COLD void loft_fault_report(const char *message, const char *file, u
         loft_warn_logger(loft_lit(message, strlen(message)), loft_lit(file, strlen(file)), line);
 }
 
+/* `loft_fault_report` with a message built from `fmt`, for the kinds that name their values. */
+static LOFT_COLD void loft_fault_reportf(const char *file, uint32_t line, const char *fmt, ...) {
+    char m[256];
+    va_list ap;
+    if (!loft_warn_logger || loft_in_test) return;
+    va_start(ap, fmt);
+    vsnprintf(m, sizeof m, fmt, ap);
+    va_end(ap);
+    loft_fault_report(m, file, line);
+}
+
+/* An index that names no element (`State::vec_get_or_raise_slow`): `negative_index` when it is
+ * still negative counted from the end, `index_out_of_bounds` otherwise; the null index is the
+ * most negative one. */
+static LOFT_COLD void loft_index_miss(int64_t from, int64_t len, const char *file, uint32_t line) {
+    if ((from < 0 ? from + len : from) < 0)
+        loft_fault_reportf(file, line, "[negative_index] negative index %lld", (long long) from);
+    else
+        loft_fault_reportf(file, line, "[index_out_of_bounds] index %lld out of bounds for length %lld",
+                           (long long) from, (long long) len);
+}
+
 /* A write through `r` that names no record was dropped: reported unless its absence already
  * was (`DbRef::absence_unreported` — an `else` arm or the access that found it owns it). */
 static LOFT_COLD void loft_write_dropped(loft_ref r, const char *file, uint32_t line) {
@@ -5258,6 +5280,13 @@ LOFT_HOT_INLINE loft_str loft_stab_get(const loft_stab *t, int64_t from) {
     return f < 0 || f >= n ? loft_null_text() : t->at[f];
 }
 
+/* `parts[i]` of a split table (`split_table_get_or_raise`): an index naming no part reports. */
+static loft_str loft_stab_get_at(const loft_stab *t, int64_t from, const char *file, uint32_t line) {
+    int64_t n = (int64_t) t->n, f = from < 0 ? from + n : from;
+    if (LOFT_UNLIKELY(f < 0 || f >= n)) loft_index_miss(from, n, file, line);
+    return loft_stab_get(t, from);
+}
+
 static void loft_stab_free(loft_stab *t) {
     loft_text_free(&t->src);
     free(t->at);
@@ -6088,4 +6117,147 @@ static int loft_reset_pool_root(loft_ref r, uint16_t tp, uint32_t size, const ui
     loft_fill(r, image, n);
     return 1;
 #endif
+}
+
+/* `@FR-E-Report` — the program's operations that can meet an uncomputable value, each the
+ * plain helper and, where the interpreter reports, one Warn record at the statement (its
+ * guarded `*Nullable` twin keeps the plain helper and says nothing).  Each tests the plain
+ * helper's own answer, so the in-range path is the helper's. */
+#define LOFT_DIV0 "[divide_by_zero] divide by zero"
+LOFT_HOT_INLINE int64_t loft_div_at(int64_t a, int64_t b, const char *file, uint32_t line) {
+    if (LOFT_UNLIKELY(b == 0)) loft_fault_report(LOFT_DIV0, file, line);
+    return loft_div(a, b);
+}
+LOFT_HOT_INLINE int64_t loft_rem_at(int64_t a, int64_t b, const char *file, uint32_t line) {
+    if (LOFT_UNLIKELY(b == 0)) loft_fault_report(LOFT_DIV0, file, line);
+    return loft_rem(a, b);
+}
+LOFT_HOT_INLINE int32_t loft_div32_at(int32_t a, int32_t b, const char *file, uint32_t line) {
+    if (LOFT_UNLIKELY(b == 0)) loft_fault_report(LOFT_DIV0, file, line);
+    return loft_div32(a, b);
+}
+LOFT_HOT_INLINE int32_t loft_rem32_at(int32_t a, int32_t b, const char *file, uint32_t line) {
+    if (LOFT_UNLIKELY(b == 0)) loft_fault_report(LOFT_DIV0, file, line);
+    return loft_rem32(a, b);
+}
+/* A float division by zero answers the IEEE value and reports, the null operand too. */
+LOFT_HOT_INLINE double loft_fdiv_at(double a, double b, const char *file, uint32_t line) {
+    if (LOFT_UNLIKELY(b == 0.0)) loft_fault_report(LOFT_DIV0, file, line);
+    return a / b;
+}
+LOFT_HOT_INLINE double loft_frem_at(double a, double b, const char *file, uint32_t line) {
+    if (LOFT_UNLIKELY(b == 0.0)) loft_fault_report(LOFT_DIV0, file, line);
+    return fmod(a, b);
+}
+LOFT_HOT_INLINE float loft_sdiv_at(float a, float b, const char *file, uint32_t line) {
+    if (LOFT_UNLIKELY(b == 0.0f)) loft_fault_report(LOFT_DIV0, file, line);
+    return a / b;
+}
+LOFT_HOT_INLINE float loft_srem_at(float a, float b, const char *file, uint32_t line) {
+    if (LOFT_UNLIKELY(b == 0.0f)) loft_fault_report(LOFT_DIV0, file, line);
+    return fmodf(a, b);
+}
+#undef LOFT_DIV0
+
+/* A shift whose amount is outside 0..63, or whose result is the null: reported unless an
+ * operand was null. */
+#define LOFT_SHIFT_AT(name)                                                                     \
+    LOFT_HOT_INLINE int64_t name##_at(int64_t a, int64_t b, const char *file, uint32_t line) {  \
+        int64_t r = name(a, b);                                                                 \
+        if (LOFT_UNLIKELY(r == LOFT_NULL) && a != LOFT_NULL && b != LOFT_NULL)                  \
+            loft_fault_report("[shift_out_of_range] shift amount out of range [0,64) or result " \
+                              "is the reserved null value", file, line);                        \
+        return r;                                                                               \
+    }
+LOFT_SHIFT_AT(loft_shl)
+LOFT_SHIFT_AT(loft_shr)
+#undef LOFT_SHIFT_AT
+
+#define LOFT_CAST_RANGE "[cast_out_of_range] cast value cannot be represented in the target type"
+/* A float cast to an integer that answers null from a number (NaN is the null float). */
+static int64_t loft_f2i_at(double v, const char *file, uint32_t line) {
+    int64_t r = loft_f2i(v);
+    if (LOFT_UNLIKELY(r == LOFT_NULL) && !isnan(v)) loft_fault_report(LOFT_CAST_RANGE, file, line);
+    return r;
+}
+
+/* An integer cast to a character that names no code point (`char::from_u32` of its low 32
+ * bits); the null integer is the null character. */
+static uint32_t loft_char_of_at(int64_t v, const char *file, uint32_t line) {
+    uint32_t u = (uint32_t) (uint64_t) v;
+    if (v != LOFT_NULL && (u > 0x10FFFF || (u >= 0xD800 && u <= 0xDFFF)))
+        loft_fault_report(LOFT_CAST_RANGE, file, line);
+    return loft_char_of(v);
+}
+
+/* A text parsed as an integer that names the null itself (`-9223372036854775808`, leading
+ * zeros allowed): it reads null, and is reported. */
+static int64_t loft_int_of_text_at(loft_str t, const char *file, uint32_t line) {
+    static const char min[] = "9223372036854775808";
+    int64_t r = loft_int_of_text(t);
+    if (r == LOFT_NULL && t.len > 1 && t.p[0] == '-') {
+        size_t i = 1;
+        while (i + 1 < t.len && t.p[i] == '0') i++;
+        if (t.len - i == sizeof min - 1 && memcmp(t.p + i, min, sizeof min - 1) == 0)
+            loft_fault_report(LOFT_CAST_RANGE, file, line);
+    }
+    return r;
+}
+#undef LOFT_CAST_RANGE
+
+/* A value outside a narrow slot's declared range takes the slot's default, reported. */
+static int64_t loft_range_default_at(int64_t v, int64_t lo, int64_t hi, int64_t dflt, const char *file,
+                                     uint32_t line) {
+    if (v != LOFT_NULL && (v < lo || v > hi))
+        loft_fault_reportf(file, line,
+                           "[range_defaulted] value %lld is outside the declared range %lld..=%lld, so "
+                           "the slot took its default instead",
+                           (long long) v, (long long) lo, (long long) hi);
+    return loft_range_default(v, lo, hi, dflt);
+}
+
+/* `v[i]` (`State::vec_get_or_raise`): an index naming no element is reported, and its null is
+ * the REPORTED one, so a write through it adds nothing (`loft_write_dropped`). */
+LOFT_HOT_INLINE loft_ref loft_vec_get_at(loft_ref v, uint32_t size, int64_t from, const char *file,
+                                         uint32_t line) {
+    loft_ref e = loft_vec_get(v, size, from);
+    if (LOFT_UNLIKELY(e.rec == 0)) {
+        loft_index_miss(from, loft_vec_len(v), file, line);
+        return loft_ref_null_reported();
+    }
+    return e;
+}
+LOFT_HOT_INLINE loft_ref loft_vh_get_at(loft_vh h, uint32_t size, int64_t from, const char *file, uint32_t line) {
+    if (LOFT_UNLIKELY(loft_vh_index(h, from) < 0)) {
+        loft_index_miss(from, h.len, file, line);
+        return loft_ref_null_reported();
+    }
+    return loft_vh_get(h, size, from);
+}
+LOFT_HOT_INLINE int64_t loft_vh_get_int_at(loft_vh h, uint32_t size, int64_t from, uint32_t fld, const char *file,
+                                           uint32_t line) {
+    if (LOFT_UNLIKELY(loft_vh_index(h, from) < 0)) loft_index_miss(from, h.len, file, line);
+    return loft_vh_get_int(h, size, from, fld);
+}
+LOFT_HOT_INLINE double loft_vh_get_float_at(loft_vh h, uint32_t size, int64_t from, uint32_t fld, const char *file,
+                                            uint32_t line) {
+    if (LOFT_UNLIKELY(loft_vh_index(h, from) < 0)) loft_index_miss(from, h.len, file, line);
+    return loft_vh_get_float(h, size, from, fld);
+}
+LOFT_HOT_INLINE void loft_vh_set_int_at(loft_vh h, uint32_t size, int64_t from, uint32_t fld, int64_t v,
+                                        const char *file, uint32_t line) {
+    if (LOFT_UNLIKELY(loft_vh_index(h, from) < 0)) loft_index_miss(from, h.len, file, line);
+    loft_vh_set_int(h, size, from, fld, v);
+}
+LOFT_HOT_INLINE void loft_vh_set_float_at(loft_vh h, uint32_t size, int64_t from, uint32_t fld, double v,
+                                          const char *file, uint32_t line) {
+    if (LOFT_UNLIKELY(loft_vh_index(h, from) < 0)) loft_index_miss(from, h.len, file, line);
+    loft_vh_set_float(h, size, from, fld, v);
+}
+
+/* `t[i]` (`State::text_char_or_raise`): a byte index naming no byte of the text. */
+static uint32_t loft_text_char_at(loft_str t, int64_t from, const char *file, uint32_t line) {
+    int64_t len = (int64_t) t.len, i = from < 0 ? from + len : from;
+    if (LOFT_UNLIKELY(i < 0 || i >= len)) loft_index_miss(from, len, file, line);
+    return loft_text_char(t, from);
 }

@@ -7209,7 +7209,9 @@ impl State {
     /// (`@FR-E-Report`) — is the first byte of the NEXT statement, so a span looked up at it
     /// names the line below.  A span that contains the op's own last byte is exact; without
     /// one (an assignment carries no span) the statement's line marker before `code_pos`
-    /// names the line, in the running function's file.
+    /// names the line, in the running function's file.  Only a marker in the running
+    /// function's own code counts: a body with none (a one-line lambda, whose code follows
+    /// its enclosing function's) names its declaration, not the last line of the code before.
     fn recoverable_position(&self) -> Option<Position> {
         let at = self.code_pos.saturating_sub(1);
         if let Some(p) = self.source_loc_for(at)
@@ -7217,12 +7219,17 @@ impl State {
         {
             return Some(*p);
         }
+        let frame = self.running_frame_declaration()?;
+        let start = self
+            .data_ptr
+            .get()
+            .zip(self.call_stack.last())
+            .map_or(0, |(data, f)| data.def(f.d_nr).code_position);
         let line = self
             .line_numbers
-            .range(..self.code_pos)
+            .range(start..self.code_pos.max(start))
             .next_back()
-            .map(|(_, &l)| l)?;
-        let frame = self.running_frame_declaration()?;
+            .map_or(frame.line, |(_, &l)| l);
         Some(Position {
             file: frame.file,
             line,

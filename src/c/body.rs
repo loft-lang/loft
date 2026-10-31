@@ -285,6 +285,10 @@ pub(crate) struct FnWriter<'a> {
     /// The source line the statements now being written come from (`Value::Line`), which a
     /// call records as its frame's site when the unit keeps frames (`Cx::frames`).
     cur_line: u32,
+    /// `@FR-E-Report` — the source position of the innermost fault-prone construct being
+    /// written (`Value::Span`): the file (a C string literal) and line a fault there reports
+    /// at, as the interpreter's pc→span table answers it.
+    span_site: Option<(String, u32)>,
     /// The loft line the statements being written belong to (`Cx::source_lines`), 0 before
     /// the first; each C line is marked with it, and its file (a C string literal).
     marked_line: u32,
@@ -694,6 +698,7 @@ impl<'a> FnWriter<'a> {
             assumed: Vec::new(),
             range_facts: None,
             cur_line: 0,
+            span_site: None,
             marked_line: 0,
             marked_file: String::new(),
             where_told: false,
@@ -2250,14 +2255,24 @@ impl<'a> FnWriter<'a> {
     /// An element access of a held vector: `OpGetVector(v, size, i)` itself, or a scalar read
     /// or in-place write of a field of one — through the held base.  `None` for any other.
     fn held_access(&mut self, name: &str, args: &[Value], ind: usize) -> Result<Option<E>, String> {
-        let elem = |v: &Value| -> Option<(Value, Value, Value)> {
+        // The element read, and — `@FR-E-Report` — the site an unguarded one (`OpGetVector`,
+        // not its `Nullable` twin) reports a missing element at, as `_at` and its arguments.
+        let elem = |v: &Value| -> Option<(Value, Value, Value, bool)> {
             match v.unspan() {
                 Value::Call(d, a) if a.len() == 3 => {
                     let n = self.cx.data.def(*d).name();
                     (n == "OpGetVector" || n == "OpGetVectorNullable")
-                        .then(|| (a[0].clone(), a[1].clone(), a[2].clone()))
+                        .then(|| (a[0].clone(), a[1].clone(), a[2].clone(), n == "OpGetVector"))
                 }
                 _ => None,
+            }
+        };
+        let here = self.site();
+        let at = |report: bool| {
+            if report {
+                ("_at", format!(", {here}"))
+            } else {
+                ("", String::new())
             }
         };
         match (name, args) {
@@ -2268,8 +2283,12 @@ impl<'a> FnWriter<'a> {
                 let size = Self::literal(size, "element size")?;
                 let i = self.expr(idx, ind)?;
                 let proof = self.held_proof(v, &h);
+                let (at, tail) = at(name == "OpGetVector");
                 Ok(Some(E::new(
-                    format!("({proof}, loft_vh_get({h}, {size}, {}))", as_int(i)?),
+                    format!(
+                        "({proof}, loft_vh_get{at}({h}, {size}, {}{tail}))",
+                        as_int(i)?
+                    ),
                     K::Ref,
                 )))
             }
@@ -2277,7 +2296,7 @@ impl<'a> FnWriter<'a> {
                 .held_vector(v)
                 .map(|h| E::new(format!("{h}.len"), K::Int))),
             ("OpGetInt" | "OpGetFloat", [inner, fld]) => {
-                let Some((vec, size, idx)) = elem(inner) else {
+                let Some((vec, size, idx, report)) = elem(inner) else {
                     return Ok(None);
                 };
                 let Some(held) = self.held_vector(&vec) else {
@@ -2292,13 +2311,17 @@ impl<'a> FnWriter<'a> {
                     ("loft_vh_get_float", K::Float)
                 };
                 let proof = self.held_proof(&vec, &held);
+                let (at, tail) = at(report);
                 Ok(Some(E::new(
-                    format!("({proof}, {f}({held}, {size}, {}, {fld}))", as_int(index)?),
+                    format!(
+                        "({proof}, {f}{at}({held}, {size}, {}, {fld}{tail}))",
+                        as_int(index)?
+                    ),
                     k,
                 )))
             }
             ("OpSetInt" | "OpSetFloat", [inner, fld, val]) => {
-                let Some((vec, size, idx)) = elem(inner) else {
+                let Some((vec, size, idx, report)) = elem(inner) else {
                     return Ok(None);
                 };
                 let Some(held) = self.held_vector(&vec) else {
@@ -2313,9 +2336,10 @@ impl<'a> FnWriter<'a> {
                     ("loft_vh_set_float", as_float(value)?)
                 };
                 let proof = self.held_proof(&vec, &held);
+                let (at, tail) = at(report);
                 Ok(Some(E::new(
                     format!(
-                        "({proof}, {f}({held}, {size}, {}, {fld}, {value}))",
+                        "({proof}, {f}{at}({held}, {size}, {}, {fld}, {value}{tail}))",
                         as_int(index)?
                     ),
                     K::Void,
@@ -3215,11 +3239,44 @@ impl<'a> FnWriter<'a> {
     /// `@FR-E-Report` — where a fault on the current statement is reported: the function's
     /// source file and the statement's line, as the two trailing arguments of a `_at` setter.
     fn site(&self) -> String {
-        format!(
-            "{}, {}",
-            c_string(&self.cx.data.def(self.d).position().file),
+        if let Some((file, line)) = &self.span_site {
+            return format!("{file}, {line}");
+        }
+        // A body with no line marker before the fault (a one-line lambda) reports at its
+        // declaration, as the interpreter's frame does.
+        let pos = self.cx.data.def(self.d).position();
+        let line = if self.cur_line == 0 {
+            pos.line
+        } else {
             self.cur_line
-        )
+        };
+        format!("{}, {line}", c_string(&pos.file))
+    }
+
+    /// Write `inner` with `pos` as the site its faults report at (`Self::site`).
+    fn in_span<T>(
+        &mut self,
+        pos: &crate::lexer::Position,
+        inner: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        let saved = if pos.line == 0 {
+            self.span_site.clone()
+        } else {
+            self.span_site.replace((c_string(&pos.file), pos.line))
+        };
+        let r = inner(self);
+        self.span_site = saved;
+        r
+    }
+
+    /// The `_at` suffix and the site arguments of a helper that reports a fault, or neither
+    /// for its guarded (`Nullable`) twin, which says nothing.
+    fn fault_at(&self, report: bool) -> (&'static str, String) {
+        if report {
+            ("_at", format!(", {}", self.site()))
+        } else {
+            ("", String::new())
+        }
     }
 
     /// A program write (`OpSet*`) as its `_at` setter: `f(args…, file, line)`.
@@ -3497,7 +3554,17 @@ impl<'a> FnWriter<'a> {
         if self.append_site(v, ind)? {
             return Ok(());
         }
-        let r = self.stmt_kind(v, ind);
+        // `@FR-E-Report` — an assignment or `return` of a located value (an inlined leaf's
+        // statements carry their line as a span on the value) reports a fault in it at that
+        // line, whichever writer the statement takes.
+        let at = match v.unspan() {
+            Value::Set(_, e) | Value::Return(e) => innermost_span(e),
+            _ => None,
+        };
+        let r = match at {
+            Some(p) => self.in_span(&p, |s| s.stmt_kind(v, ind)),
+            None => self.stmt_kind(v, ind),
+        };
         if r.is_ok()
             && let Value::Set(var, _) = v.unspan()
         {
@@ -3771,7 +3838,7 @@ impl<'a> FnWriter<'a> {
             | Value::Single(_)
             | Value::Enum(..)
             | Value::Text(_) => Ok(()),
-            Value::Span(b) => self.stmt(&b.1, ind),
+            Value::Span(b) => self.in_span(&b.0, |s| s.stmt(&b.1, ind)),
             // `@FR-R-ValueRecord` — a materialised view return, or a build that returns what
             // it builds, standing as a statement returns its struct.
             Value::Block(b) if self.vr_stmt_leaf(b) => self.vr_stmt(v, b, ind),
@@ -4284,9 +4351,11 @@ impl<'a> FnWriter<'a> {
                 let Value::Call(d, inner) = elem.unspan() else {
                     return Ok(None);
                 };
-                if !matches!(data.def(*d).name(), "OpGetVectorNullable" | "OpGetVector") {
-                    return Ok(None);
-                }
+                let report = match data.def(*d).name() {
+                    "OpGetVector" => true,
+                    "OpGetVectorNullable" => false,
+                    _ => return Ok(None),
+                };
                 let (Some(v), Some(idx)) = (inner.first(), inner.get(2)) else {
                     return Ok(None);
                 };
@@ -4294,10 +4363,14 @@ impl<'a> FnWriter<'a> {
                     return Ok(None);
                 };
                 let i = self.expr(idx, ind)?;
-                Ok(Some(E::new(
-                    format!("loft_stab_get(&st{t}, {})", as_int(i)?),
-                    K::View,
-                )))
+                // `@FR-E-Report` — the unguarded read reports an index naming no part
+                // (`split_table_get_or_raise`).
+                let code = if report {
+                    format!("loft_stab_get_at(&st{t}, {}, {})", as_int(i)?, self.site())
+                } else {
+                    format!("loft_stab_get(&st{t}, {})", as_int(i)?)
+                };
+                Ok(Some(E::new(code, K::View)))
             }
             ("OpDatabase", [Value::Var(b), _])
                 if self.split_tabs.values().any(|t| t.dead_buf == Some(*b)) =>
@@ -4835,14 +4908,30 @@ impl<'a> FnWriter<'a> {
     }
 
     /// Emit the statements `v` needs and put its value in `target`, of shape `c`.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "past the bar where the 32-bit arms met the value-record arms on a join; the split is release work (M-file-split)"
-    )]
     fn assign(&mut self, v: &Value, target: &str, c: CType, ind: usize) -> Result<(), String> {
         if self.vr.is_some() && self.vr_assign(v, target, c, ind)? {
             return Ok(());
         }
+        // `@FR-E-Report` — a located value reports a fault in it at its own line; the value
+        // is written as before, only the site changes.
+        if let Some(pos) = innermost_span(v) {
+            return self.in_span(&pos, |s| s.assign_value(v, target, c, ind));
+        }
+        self.assign_value(v, target, c, ind)
+    }
+
+    /// [`Self::assign`] once the value-record writer declined.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "past the bar where the 32-bit arms met the value-record arms on a join; the split is release work (M-file-split)"
+    )]
+    fn assign_value(
+        &mut self,
+        v: &Value,
+        target: &str,
+        c: CType,
+        ind: usize,
+    ) -> Result<(), String> {
         match v.unspan() {
             // A tuple that owns texts is copied element by element: a struct copy would share them.
             Value::Var(src) if matches!(c, CType::Tuple(id) if self.cx.tuple_has_text(id)) => {
@@ -5266,6 +5355,16 @@ impl<'a> FnWriter<'a> {
         {
             return self.invariant_use(&memo, ind);
         }
+        // `@FR-E-Report` — a located value reports a fault in it at its own line; the value
+        // is written as before, only the site changes.
+        if let Some(pos) = innermost_span(v) {
+            return self.in_span(&pos, |s| s.expr_value(v, ind));
+        }
+        self.expr_value(v, ind)
+    }
+
+    /// [`Self::expr`] once no loop invariant holds the value.
+    fn expr_value(&mut self, v: &Value, ind: usize) -> Result<E, String> {
         match v.unspan() {
             Value::RawExpr(code) if self.raw.contains_key(code) => {
                 Ok(E::new(code.clone(), self.raw[code]))
@@ -6486,19 +6585,28 @@ impl<'a> FnWriter<'a> {
             "OpAddInt" | "OpAddLong" | "OpAddIntNullable" => Some("loft_add"),
             "OpMinInt" | "OpMinLong" | "OpMinIntNullable" => Some("loft_sub"),
             "OpMulInt" | "OpMulLong" | "OpMulIntNullable" => Some("loft_mul"),
-            "OpDivInt" | "OpDivLong" | "OpDivIntNullable" => Some("loft_div"),
-            "OpRemInt" | "OpRemLong" | "OpRemIntNullable" => Some("loft_rem"),
+            // `@FR-E-Report` — the unguarded division reports a zero divisor; its `Nullable`
+            // twin, the operand of `??`, says nothing.
+            "OpDivInt" | "OpDivLong" => Some("loft_div_at"),
+            "OpRemInt" | "OpRemLong" => Some("loft_rem_at"),
+            "OpDivIntNullable" => Some("loft_div"),
+            "OpRemIntNullable" => Some("loft_rem"),
             "OpLandInt" | "OpLandLong" => Some("loft_and"),
             "OpLorInt" | "OpLorLong" => Some("loft_or"),
             "OpEorInt" | "OpEorLong" => Some("loft_xor"),
-            "OpSLeftInt" | "OpSLeftLong" => Some("loft_shl"),
-            "OpSRightInt" | "OpSRightLong" => Some("loft_shr"),
+            "OpSLeftInt" | "OpSLeftLong" => Some("loft_shl_at"),
+            "OpSRightInt" | "OpSRightLong" => Some("loft_shr_at"),
             _ => None,
         };
         if let Some(f) = arith {
             let (a, b) = self.two(name, args, ind)?;
+            let site = if f.ends_with("_at") {
+                format!(", {}", self.site())
+            } else {
+                String::new()
+            };
             return Ok(E::new(
-                format!("{f}({}, {})", as_int(a)?, as_int(b)?),
+                format!("{f}({}, {}{site})", as_int(a)?, as_int(b)?),
                 K::Int,
             ));
         }
@@ -6561,12 +6669,21 @@ impl<'a> FnWriter<'a> {
                 && !super::no_c_int32()
             {
                 let (a, b) = self.two32(name, args, ind)?;
+                // `@FR-E-Report` — the unguarded division reports a zero divisor.
+                let (at, site) = if matches!(name, "OpDivInt" | "OpRemInt") {
+                    ("_at", format!(", {}", self.site()))
+                } else {
+                    ("", String::new())
+                };
                 if a.kind == K::Int32 && b.kind == K::Int32 {
-                    return Ok(E::new(format!("{op32}({}, {})", a.code, b.code), K::Int32));
+                    return Ok(E::new(
+                        format!("{op32}{at}({}, {}{site})", a.code, b.code),
+                        K::Int32,
+                    ));
                 }
                 let wide = &op32[..op32.len() - 2];
                 return Ok(E::new(
-                    format!("loft_n32({wide}({}, {}))", as_int(a)?, as_int(b)?),
+                    format!("loft_n32({wide}{at}({}, {}{site}))", as_int(a)?, as_int(b)?),
                     K::Int32,
                 ));
             }
@@ -7034,11 +7151,12 @@ impl<'a> FnWriter<'a> {
                 let v = self.expr(v, ind)?;
                 Ok(E::new(
                     format!(
-                        "loft_range_default({}, {}, {}, {})",
+                        "loft_range_default_at({}, {}, {}, {}, {})",
                         as_int(v)?,
                         c_long(lo),
                         c_long(hi),
-                        c_long(dflt)
+                        c_long(dflt),
+                        self.site()
                     ),
                     K::Int,
                 ))
@@ -7147,20 +7265,16 @@ impl<'a> FnWriter<'a> {
             ("OpAddFloat", false, "+"),
             ("OpMinFloat", false, "-"),
             ("OpMulFloat", false, "*"),
-            ("OpDivFloat", false, "/"),
             ("OpDivFloatNullable", false, "/"),
             ("OpAddSingle", true, "+"),
             ("OpMinSingle", true, "-"),
             ("OpMulSingle", true, "*"),
-            ("OpDivSingle", true, "/"),
             ("OpDivSingleNullable", true, "/"),
         ];
         /// `(operator, single?, C function)` for the calls of two operands.
         const CALL2: &[(&str, bool, &str)] = &[
-            ("OpRemFloat", false, "fmod"),
             ("OpRemFloatNullable", false, "fmod"),
             ("OpPowFloat", false, "pow"),
-            ("OpRemSingle", true, "fmodf"),
             ("OpRemSingleNullable", true, "fmodf"),
             ("OpPowSingle", true, "powf"),
         ];
@@ -7182,6 +7296,23 @@ impl<'a> FnWriter<'a> {
                 (K::Float, as_float)
             }
         };
+        // `@FR-E-Report` — the unguarded float division and remainder report a zero divisor.
+        let div = match name {
+            "OpDivFloat" => Some((false, "loft_fdiv_at")),
+            "OpRemFloat" => Some((false, "loft_frem_at")),
+            "OpDivSingle" => Some((true, "loft_sdiv_at")),
+            "OpRemSingle" => Some((true, "loft_srem_at")),
+            _ => None,
+        };
+        if let Some((single, f)) = div {
+            let (k, conv) = shape(single);
+            let (a, b) = self.two(name, args, ind)?;
+            let site = self.site();
+            return Ok(E::new(
+                format!("{f}({}, {}, {site})", conv(a)?, conv(b)?),
+                k,
+            ));
+        }
         if let Some((_, single, op)) = INFIX.iter().find(|(n, _, _)| *n == name) {
             let (k, conv) = shape(*single);
             let (a, b) = self.two(name, args, ind)?;
@@ -7231,12 +7362,15 @@ impl<'a> FnWriter<'a> {
             }
             ("OpCastIntFromFloat", [_]) => {
                 let a = self.one(name, args, ind)?;
-                Ok(E::new(format!("loft_f2i({})", as_float(a)?), K::Int))
+                Ok(E::new(
+                    format!("loft_f2i_at({}, {})", as_float(a)?, self.site()),
+                    K::Int,
+                ))
             }
             ("OpCastIntFromSingle", [_]) => {
                 let a = self.one(name, args, ind)?;
                 Ok(E::new(
-                    format!("loft_f2i((double) {})", as_single(a)?),
+                    format!("loft_f2i_at((double) {}, {})", as_single(a)?, self.site()),
                     K::Int,
                 ))
             }
@@ -8289,15 +8423,31 @@ impl<'a> FnWriter<'a> {
                 ))
             }
             ("OpGetVector" | "OpGetVectorNullable", [v, size, idx]) => {
-                let size = Self::literal(size, "element size")?;
-                let (v, idx) = self.two(name, &[v, idx], ind)?;
-                Ok(E::new(
-                    format!("loft_vec_get({}, {size}, {})", as_ref(v)?, as_int(idx)?),
-                    K::Ref,
-                ))
+                self.vec_get(name, v, size, idx, ind)
             }
             _ => self.collection_operator(name, args, ind),
         }
+    }
+
+    /// `v[i]`: the element's reference, an unguarded read (`OpGetVector`) reporting an index
+    /// that names no element (`@FR-E-Report`).
+    fn vec_get(
+        &mut self,
+        name: &str,
+        v: &Value,
+        size: &Value,
+        idx: &Value,
+        ind: usize,
+    ) -> Result<E, String> {
+        let size = Self::literal(size, "element size")?;
+        let (v, idx) = self.two(name, &[v, idx], ind)?;
+        let (at, t) = self.fault_at(name == "OpGetVector");
+        let c = format!(
+            "loft_vec_get{at}({}, {size}, {}{t})",
+            as_ref(v)?,
+            as_int(idx)?
+        );
+        Ok(E::new(c, K::Ref))
     }
 
     /// The character operators: a code point, 0 the null character.
@@ -8305,7 +8455,10 @@ impl<'a> FnWriter<'a> {
         match (name, args) {
             ("OpConvCharacterFromInt", [v]) => {
                 let v = self.expr(v, ind)?;
-                Ok(E::new(format!("loft_char_of({})", as_int(v)?), K::Char))
+                Ok(E::new(
+                    format!("loft_char_of_at({}, {})", as_int(v)?, self.site()),
+                    K::Char,
+                ))
             }
             ("OpConvIntFromCharacter", [c]) => {
                 let c = self.expr(c, ind)?;
@@ -8321,8 +8474,14 @@ impl<'a> FnWriter<'a> {
             }
             ("OpTextCharacter" | "OpTextCharacterNullable", [_, _]) => {
                 let (t, i) = self.two(name, args, ind)?;
+                // `@FR-E-Report` — the unguarded index reports a byte it does not name.
+                let (at, site) = if name == "OpTextCharacter" {
+                    ("_at", format!(", {}", self.site()))
+                } else {
+                    ("", String::new())
+                };
                 Ok(E::new(
-                    format!("loft_text_char({}, {})", as_view(t)?, as_int(i)?),
+                    format!("loft_text_char{at}({}, {}{site})", as_view(t)?, as_int(i)?),
                     K::Char,
                 ))
             }
@@ -8665,7 +8824,10 @@ impl<'a> FnWriter<'a> {
             ("OpConvBoolFromNull", []) => Ok(E::new("LOFT_BOOL_NULL", K::Bool)),
             ("OpCastIntFromText" | "OpCastLongFromText", [t]) => {
                 let t = self.expr(t, ind)?;
-                Ok(E::new(format!("loft_int_of_text({})", as_view(t)?), K::Int))
+                Ok(E::new(
+                    format!("loft_int_of_text_at({}, {})", as_view(t)?, self.site()),
+                    K::Int,
+                ))
             }
             ("OpGetTextSub", [_, _, _]) => {
                 let es = self.args(args, ind)?;
@@ -9040,6 +9202,20 @@ fn op_shape(name: &str) -> Option<CType> {
 
 /// `s` as a C string literal: printable ASCII as itself, every other byte as an octal escape
 /// (three digits, so the next character can never extend it), `?` escaped against trigraphs.
+/// `@FR-E-Report` — the position of the innermost located span `v` is wrapped in (a span
+/// around a span: an inlined statement's line around the fault-prone operator's own), or
+/// `None` when `v` carries none with a line.
+fn innermost_span(mut v: &Value) -> Option<crate::lexer::Position> {
+    let mut at = None;
+    while let Value::Span(b) = v {
+        if b.0.line != 0 {
+            at = Some(b.0);
+        }
+        v = &b.1;
+    }
+    at
+}
+
 pub(crate) fn c_string(s: &str) -> String {
     let mut out = String::from("\"");
     for b in s.bytes() {

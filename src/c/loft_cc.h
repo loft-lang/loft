@@ -41,6 +41,7 @@
 #define _DARWIN_C_SOURCE 1
 #endif
 #endif
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>

@@ -118,14 +118,21 @@ impl FnWriter<'_> {
             return Ok(None);
         }
         let data = self.cx.data;
-        if let Some((v, idx, _)) = apart_vector::read(data, x)
+        if let Some((v, idx, nullable)) = apart_vector::read(data, x)
             && self.apv_vec(v)
         {
             let i = self.expr(idx, ind)?;
-            return Ok(Some(E::new(
-                format!("loft_apv_get(&loft_apv{v}, {})", as_int(i)?),
-                K::Float,
-            )));
+            // `@FR-E-Report` — the unguarded read reports an index naming no element.
+            let code = if nullable {
+                format!("loft_apv_get(&loft_apv{v}, {})", as_int(i)?)
+            } else {
+                format!(
+                    "loft_apv_get_at(&loft_apv{v}, {}, {})",
+                    as_int(i)?,
+                    self.site()
+                )
+            };
+            return Ok(Some(E::new(code, K::Float)));
         }
         if let Some((v, idx, val)) = apart_vector::write(data, x)
             && self.apv_vec(v)
@@ -134,9 +141,10 @@ impl FnWriter<'_> {
             self.line(
                 ind,
                 &format!(
-                    "loft_apv_set(&loft_apv{v}, {}, {});",
+                    "loft_apv_set_at(&loft_apv{v}, {}, {}, {});",
                     as_int(i)?,
-                    as_float(y)?
+                    as_float(y)?,
+                    self.site()
                 ),
             );
             return Ok(Some(E::new("((void) 0)", K::Void)));
