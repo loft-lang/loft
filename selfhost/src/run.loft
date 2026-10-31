@@ -12,6 +12,7 @@ use lower;
 use crt;
 use types;
 use show;
+use consts;
 
 // The entry's result — a loft integer, so null when the program answers null — or the first
 // thing the interpreter does not carry.  `stores_left` is the leak check: how many of the C
@@ -213,11 +214,13 @@ fn text_at(stk: integer, base: integer, op: lower::Op) -> integer {
   if op.kind == KTextRef { slot_int(stk, base + op.a, 0) ?? 0 } else { base + op.a }
 }
 
-// A run on a stack store of its own, released after it.
+// A run on a stack store and constant stores of its own, released after it.
 pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
+  consts = consts::build(b);
   stk = new_stack();
-  o = run_on(b, entry, args, stk);
+  o = run_on(b, entry, args, stk, consts);
   crt::stack_free(stk);
+  consts::release(consts);
   o
 }
 
@@ -229,8 +232,9 @@ pub fn new_stack() -> integer {
   stack[0] ?? NULL_STORE
 }
 
-// A run on stack store `stk`, which the caller releases (`crt::stack_free`).
-pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) -> Outcome {
+// A run on stack store `stk`, which the caller releases (`crt::stack_free`), with the constant
+// stores `consts::build` made.
+pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer, consts: vector<integer>) -> Outcome {
   stk_cap = STACK_START;
   progs: vector<lower::Lowering> = [];
   lowered: vector<boolean> = [];
@@ -1030,6 +1034,24 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
         sp_int -= 3;
         put_int(ints, sp_int, if crt::vec_absent(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0) { 1 } else { 0 });
         sp_int += 1;
+      }
+      // A vector constant's store, built before the run (`consts.loft`); one the builder could
+      // not read is refused by name.
+      ConstRef => {
+        cs = consts[op.a] ?? NULL_STORE;
+        if cs == NULL_STORE {
+          return Outcome {
+            value: 0,
+            refused: "a constant the interpreter could not build: {b.data.definitions[op.a]!.name}",
+            refused_in: b.data.definitions[prog.def_nr]!.name,
+            stores_left: crt::live_stores() - stores_before,
+            stack_left: 0,
+          };
+        }
+        put_int(ints, sp_int, cs);
+        put_int(ints, sp_int + 1, 1);
+        put_int(ints, sp_int + 2, 8);
+        sp_int += 3;
       }
       // Two sentinels name the same (absent) store: a witness that never took one releases nothing.
       DistinctStore => {

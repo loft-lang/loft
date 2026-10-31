@@ -120,6 +120,12 @@ fn c_stack_grow(store: integer, bytes: integer);
 fn c_stack_free(store: integer);
 #c "loft_crt_stack_free" "void(int64_t)"
 
+fn c_lock_constant(store: integer);
+#c "loft_crt_lock_constant" "void(int64_t)"
+
+fn c_free_constant(store: integer);
+#c "loft_crt_free_constant" "void(int64_t)"
+
 fn c_slot_text(out: vector<u8>, store: integer, at: integer, arg: boolean) -> integer;
 #c "loft_crt_slot_text" "int64_t(char*, int64_t, int64_t, int64_t, int64_t)"
 
@@ -226,6 +232,16 @@ pub fn slot_arg_free(store: integer, at: integer) {
 // The run's end: the stack store released.
 pub fn stack_free(store: integer) {
   c_stack_free(store);
+}
+
+// A constant's store (`consts.loft`) pinned and read-only, as `Store::lock_constant` leaves it.
+pub fn lock_constant(store: integer) {
+  c_lock_constant(store);
+}
+
+// A constant's store released by the run that built it (`consts::release`).
+pub fn free_constant(store: integer) {
+  c_free_constant(store);
 }
 
 // The reference a place holds, into `io`: its twelve bytes as the Rust interpreter holds them

@@ -11,6 +11,7 @@ use load;
 use lower;
 use run;
 use crt;
+use consts;
 
 fn main() {
   a = arguments();
@@ -30,12 +31,15 @@ fn main() {
     eprintln("refused: the image has no {name}");
     exit(3);
   }
-  // The stack store before the mark: the Rust interpreter's exists before its program enters,
-  // so neither side's trace counts it among the program's stores.
+  // The constant stores and the stack store before the mark: the Rust interpreter builds its
+  // constants at compile time and has its stack before the program enters, so neither side's
+  // trace counts them among the program's stores.
+  cs = consts::build(b);
   stk = run::new_stack();
   crt::trace_mark();
-  o = run::run_on(b, entry, [], stk);
+  o = run::run_on(b, entry, [], stk, cs);
   crt::stack_free(stk);
+  consts::release(cs);
   if o.refused != "" {
     eprintln("refused: {o.refused} — in {o.refused_in}");
     exit(3);

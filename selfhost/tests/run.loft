@@ -312,6 +312,15 @@ fn test_a_repeat_fills_and_an_absent_vector_is_null() {
   assert(ran_clean(r, "n_summed", -6) == 7, "summed(-6)");
 }
 
+// @PLN91 1b: vector constants built at load (`consts.loft`) — every field kind, values spelled as
+// arithmetic, a copy appended to — read through `OpConstRef`, nothing left live but the pinned
+// constants.  `kernels/constants.loft` has the sums by hand.
+fn test_a_vector_constant_is_built_once_and_read() {
+  c = kernel("constants");
+  assert(ran_clean(c, "n_consts", 3) == 1252058667, "consts(3)");
+  assert(ran_clean(c, "n_consts", 0) == 52058667, "consts(0)");
+}
+
 // @PLN91 S3: a record placed in the store of the vector it takes, the vector moved into its field
 // (`OpPlaceRecord`, `OpMoveVector`), nothing left live.
 fn test_a_record_is_placed_where_its_vector_lives() {

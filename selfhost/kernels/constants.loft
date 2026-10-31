@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 1b: vector constants (`OpConstRef`), built once at load (`consts.loft`) — each field
+// kind a constant element holds, a value spelled as arithmetic (`BASE + 1`, `-9`, `"tw" + "o"`),
+// and a copy of a constant appended to, which leaves the constant's own store alone.
+//
+// consts(n) by hand: SQ sums 1 + 4 - 9 + 41 = 37; NAMES 3 * 100 + 6 letters * 1000 = 6300; FL
+// (0.5 - 2.0 + 2.0) * 10 = 5 → 50000; CH 'a' + 'é' = 97 + 233 = 330; BY 200 * 10 = 2000; BO two
+// trues → 2000000; the copy's 5 elements → 50000000; len(SQ) * n * 100000000.
+// consts(3) = 1252058667, consts(0) = 52058667.
+
+struct R { a: integer, t: text }
+
+BASE = 40;
+SQ = [1, 4, -9, BASE + 1];
+NAMES = [R { a: 1, t: "one" }, R { a: 2, t: "tw" + "o" }];
+FL = [0.5, -2.0];
+CH = ['a', 'é'];
+BY = [0 as u8, 200 as u8];
+BO = [true, false, true];
+
+fn consts(n: integer) -> integer {
+  s = 0;
+  for x in SQ { s += x; }
+  for r in NAMES { s += r.a * 100 + len(r.t) * 1000; }
+  f = 0.0;
+  for x in FL { f += x; }
+  s += ((f + 2.0) * 10.0) as integer * 10000;
+  for c in CH { s += c as integer; }
+  for b in BY { s += b as integer * 10; }
+  for b in BO {
+    if b { s += 1000000; }
+  }
+  v = SQ;
+  v += [5];
+  s += len(v) * 10000000;
+  s + len(SQ) * n * 100000000
+}
+
+fn main() { println("{consts(3)} {consts(0)} {SQ}"); }
