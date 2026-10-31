@@ -6849,6 +6849,55 @@ analysis both read, `src/opt/append_twin.rs`.
 `LOFT_TRACE_APPEND_TWIN`; guard
 `loft-suite/rules/rewrites/R-AppendTwin/a-call-result-appended-is-built-in-the-destination.loft`).
 
+### An append twin writes through its caller's window
+
+```
+  (R-AppendTwin), the WINDOW clause: an append twin f__ap whose buffer B is
+                 written only by APPENDS (OpAppendVector, OpAppendTextBytes,
+                 OpPreAllocVector, an OpPush kind of a scalar element) and by
+                 calls handing B to another append twin AS its buffer takes the
+                 caller's PUSH WINDOW over B — B's record, length, capacity and
+                 element base (`loft_win`) — by POINTER, and is written through it:
+                 an append is one capacity test, a store or a `memcpy`, and a
+                 length bump, the growth arm syncing the length, growing B the
+                 ordinary way and deriving the window again; a call to another
+                 admitted twin hands the SAME pointer down.  The window's length is
+                 written back into B's record (a SYNC) before any other operation
+                 of f that names B — a length read, a clear, a call taking B
+                 without the window, a release — and before f returns where its
+                 caller holds no window; the window is derived again after it.
+                 The caller OPENS the window where it calls the twin (once before
+                 a loop of such calls, not per call) and syncs it after.  An
+                 operation that may CLAIM in B's store without naming B (a record
+                 placed in it, a text put there) syncs before and derives after,
+                 because a claim may move the store's memory and so the base.
+```
+
+**In words.**  `(R-AppendTwin)` removed the copy of a callee's result into the caller's
+vector; what it left is the vector itself, which every append in every twin finds again
+through its store — the record walk, the reservation, the length read and written back.
+cbor's `encode_bytes` writes 64 texts of 256 bytes, each behind a 3-byte head written by
+`head__ap`, and the profile is that finding: `loft_append_text_bytes` and
+`loft_vec_prealloc` + `loft_vec_push_byte` per byte of the head, ≈ 66 ns an item against the
+twin's ≈ 10.  A window is what `(R-PushFill)`'s windows and `(R-Push)`'s headers already are
+for a loop; this clause hands one down a chain of calls, as `(R-Header)`'s kept-twin clause
+hands a loop's header to a `__kh` callee.  Sound for the same reason as the kept twin:
+admission already makes the chain the ONLY writer of B (no argument of a twin call reaches B,
+loft#1895), so between two syncs nothing reads B's record but the window's owner, and every
+operation that does read it — or may move the store under the base — is preceded by a sync.
+The interpreter keeps its appends and is the reference.  Keep the window BY POINTER and the
+twin's reads through it: copying it into a local per twin and back was priced and is SLOWER
+(+20 %), the struct copy costing more than the reloads it saves.
+
+**Priced** (2026-10-31, by hand in the emitted C, same hashes; `bench/portal/analysis/
+c-libraries.md` § cbor `encode_bytes` to 2×): cbor `encode_bytes` 7.2× → **2.28×** the twin.
+**NOT BUILT.**  Sites to come: the window's parameter in the twin's signature beside `AP_BIT`
+(`src/c/mod.rs` `twin_name`, `function`), the appends in `src/c/body.rs` (`append_twin` mode),
+a byte run `loft_win_bytes` in `loft_rt.h`.  Switch `LOFT_NO_APPEND_WINDOW=1`; guard to write:
+a chain of append twins over one buffer with a sync point in every position the clause names
+(a length read between appends, a non-twin call, a clear, a placed record, recursion, an
+empty and a growing buffer), value AND length, falsified by a plant that skips one sync.
+
 ### A call result bound first and appended later is appended where it is made
 
 ```
