@@ -4648,7 +4648,7 @@ as well (`eg_dir_from`, `nb_q`) adds nothing there, and FLATTENING the whole cal
 slower: what gcc leaves after the hint is its code for the search, not a call.  The helper half
 is hex_shape's `wall_chain_walk`: with the twins alone it read **+10.5 %**, because `chain_marks`
 now took in seven copies of `eg_index__inv` and gcc then left `hex_neighbor` (73 statements) out
-of line in it — 8 calls of it in the disassembly where there had been none.  It is not gcc's
+of line in it — 8 calls of it in the disassembly, none without the twins.  It is not gcc's
 growth budget (`inline-unit-growth`, `large-function-growth`, `large-function-insns` raised:
 no change); it is gcc's own choice for a caller that grew, and hinting what the twin's LOOP
 calls up to 80 statements restores it: `wall_chain_walk` **0.780×**, `edgeset_count` 0.450×

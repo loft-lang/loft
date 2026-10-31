@@ -660,21 +660,9 @@ the callee's prologue clears (`loft_vec_clear_release`, already at the reached c
 across its 100 calls, regrows 16 KiB from nothing on every call (`loft_st_resize`,
 `loft_vec_reserve_more`, the `memmove` of each rung).  The mint keeps the same gate as the
 reset — the SHAPE (a store-root `main_vector<T>`) read from the layout, never an offset — and
-falls back to the plain re-initialisation for any other root.  **Priced** with the window
-clause of (R-AppendTwin) (2026-10-31, by hand, same hashes): `encode_bytes` 2.28× → **1.94×**
-the twin.  **BUILT on the C** (2026-10-31): `loft_database_room` in `loft_rt.h` — the wrapper's
-mint as before, then the vector re-reserved at the capacity it had reached, when the variable
-already names its own store's root wrapper — emitted for every wrapper mint (`database_operator`);
-and the zero of the wrapper's vector field that the parser writes right after the mint
-(`buf: vector<u8> = []`) is not written when nothing but a binding of one of its fields stands
-between (`FnWriter::keep_room_operator`, `room_minted`, `room_keeps`), since the mint left that
-vector empty — written, it would orphan the kept block.  The interpreter and native keep the plain
-mint: a capacity is no value, and the C is the compiled target.  Alone it is −1.9 % on
-`encode_bytes`; with the window clause the regrowth it removes is what is left after the appends
-stop resolving the store.  Switch `-DLOFT_NO_KEEP_ROOM` (the unit's compile flag).  Guard
-`tests/scripts/a-reused-buffer-keeps-its-room.loft` (five cells: one site reused across lengths, a
-shorter answer after a longer one, elements that own heap, cbor's head shape, a result held across
-the next call; falsified by a mint that keeps the store whole — c5 reads 21548350 for 426700).
+falls back to the plain re-initialisation for any other root.  The C mints with `loft_database_room` (`database_operator`) and skips the parser's re-zero of the
+vector (`FnWriter::keep_room_operator`); the other backends keep the plain mint.  `-DLOFT_NO_KEEP_ROOM`;
+guard `tests/scripts/a-reused-buffer-keeps-its-room.loft`; pricing in [heap-history.md](heap-history.md).
 
 **In words.** `free` releases a store slot and everything in it. It is disciplined: (1) **LIFO** —
 you free stores in reverse allocation order, because a store's lifetime is nested inside the
@@ -927,13 +915,8 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **1**.  The entries the register closed, and how each closed, are in
+OPEN: **0**.  The entries the register closed, and how each closed, are in
 [heap-history.md](heap-history.md).
-
-* **D-heap-52** — `(H-Spent)`: a struct whose only droppable is what a fn field's closure record
-  owns is not spent by a move, so `h2 = h; h.f()` compiles and the two names share the captured
-  store (loft#2283).  The move itself is decided right (`copy_moves_drop_from` hands the release
-  to `h2`); the refusal of the later read is what is missing.
 
 `tests/ownership_drop_gate.rs` gives every generated cell a lease verdict and ties each cell
 that must release once, and does not, to exactly one open entry.

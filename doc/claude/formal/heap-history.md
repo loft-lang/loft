@@ -2751,6 +2751,36 @@ Closed by one position: the null-init leaves the slot at 8, as `--native` and th
 the rule states one position.  Guard `tests/reset_capacity.rs`
 `a_buffer_is_cleared_where_its_callee_filled_it`.
 
+### (H-KeepRoom) — written and built on the C (2026-10-31)
+
+**Priced** with the window
+clause of (R-AppendTwin) (2026-10-31, by hand, same hashes): `encode_bytes` 2.28× → **1.94×**
+the twin.  **BUILT on the C** (2026-10-31): `loft_database_room` in `loft_rt.h` — the wrapper's
+mint as before, then the vector re-reserved at the capacity it had reached, when the variable
+already names its own store's root wrapper — emitted for every wrapper mint (`database_operator`);
+and the zero of the wrapper's vector field that the parser writes right after the mint
+(`buf: vector<u8> = []`) is not written when nothing but a binding of one of its fields stands
+between (`FnWriter::keep_room_operator`, `room_minted`, `room_keeps`), since the mint left that
+vector empty — written, it would orphan the kept block.  The interpreter and native keep the plain
+mint: a capacity is no value, and the C is the compiled target.  Alone it is −1.9 % on
+`encode_bytes`; with the window clause the regrowth it removes is what is left after the appends
+stop resolving the store.  Switch `-DLOFT_NO_KEEP_ROOM` (the unit's compile flag).  Guard
+`tests/scripts/a-reused-buffer-keeps-its-room.loft` (five cells: one site reused across lengths, a
+shorter answer after a longer one, elements that own heap, cbor's head shape, a result held across
+the next call; falsified by a mint that keeps the store whole — c5 reads 21548350 for 426700).
+
+### D-heap-52 — CLOSED (2026-10-31, loft#2283): a name moved on a one-line function was never spent
+
+Filed as *"a struct whose only droppable is what a fn field's closure record owns is not spent
+by a move"*: `h2 = h; h.f()` compiled and the two names shared the captured store.  The type
+half was already right — `fn_field_record` makes such a struct own a droppable, and the move
+was decided.  The measured boundary was the LAYOUT: spread over lines the read was refused,
+on one line it was not, for any droppable.  The spent walk (`spent::Flow::block`) grouped
+operators into statements by their `Line` marker, so a function on one line was one
+statement and nothing moved in it was spent.  A whole-value bind to an author's name now ends
+its statement.  Guard: loft-suite `rules/heap/H-Spent/2283-a-name-moved-on-a-line-is-spent-
+for-the-rest-of-it.loft` (main raised 1 of its 4 errors).
+
 ### D-heap-51 — OPENED AND CLOSED (2026-10-12, loft#1985): a parsed vector was an unrecorded view of a temporary store
 
 `(H-View)` makes a projection a view of the record it reads, kept alive by that record's

@@ -1754,6 +1754,10 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
 ///
 /// # Errors
 /// The first function the C backend does not carry yet.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the unit's assembly in one place: runtime, prototypes, bodies, the log binding"
+)]
 pub fn emit_unit_for(
     data: &Data,
     stores: &Stores,
