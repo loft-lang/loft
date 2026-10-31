@@ -52,6 +52,38 @@ RGB565 internally on the Tanmatsu (rule 6); its API takes and answers RGBA.  Pal
 (colour cycling) are an explicit `tiles` feature — an indexed sheet and a palette object — not a
 pixel format.
 
+## Assets: declared once, reworked by the ship build
+
+A game names its assets in `loft.toml`, beside `[[embed]]`
+([HTML_EXPORT.md](../../HTML_EXPORT.md) § Putting a file there), and loads them by the same path
+on every machine:
+
+```toml
+[[asset]]
+path    = "art/hero.png"     # what the game passes to load_sheet / load_texture
+quality = "exact"            # exact | reduced | compressed — how far a target may rework it
+```
+
+A development run reads the RGBA source.  **`--ship` for a target reworks every declared asset
+into that target's best form** and carries the result under the same path, so no game line
+changes:
+
+| Target | What `--ship` makes of a texture |
+|---|---|
+| the Tanmatsu | RGB565, dithered once; sheets packed into atlases; scaled down to what its tier draws |
+| a page | the source, or a smaller lossless encoding; atlases |
+| a desktop, frame tier | the source |
+| a GPU target (arc G) | mipmaps, and the GPU's compressed format where `quality` allows (BC on a desktop, ASTC / ETC2 on a phone or console) |
+
+Each rework is a pure function of the source, the target and the quality, kept by that key, so a
+second ship build redoes nothing that did not change.
+
+This is the one place a shipped build may differ from a development build, and only by what the
+asset declares: `exact` is never changed in its pixels (pixel art, fonts, UI), `reduced` may lose
+colour depth and size, `compressed` may use a GPU's lossy formats.  The ship build checks each
+reworked asset against its source within the bound its quality allows, and refuses an asset
+over it with the asset's path and the measured difference.
+
 ## Packages
 
 | Package | Holds | Depends on |
