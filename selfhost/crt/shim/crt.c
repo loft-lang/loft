@@ -84,6 +84,67 @@ int64_t loft_crt_database(int64_t *io, int64_t n, int64_t bytes, int64_t tp) {
     return 0;
 }
 
+/* ── @PLN91 F-1: the interpreter's stack store (`State::stack_cur`) ────────────────────────
+ * One store whose primary record holds every frame, each variable at the byte the Rust
+ * interpreter keeps it at: frame byte `at` is field `at` of `(store, 1, 8)`.  The store holds
+ * nothing but that record, which spans the whole store. */
+
+/* `Store::extend_primary_to_store_end`: record 1 takes the rest of the store, so no free tail
+ * is left for the allocator to hand out. */
+static void loft_crt_stack_span(loft_store_t *s) {
+    loft_set_u32(s, LOFT_ST_PRIMARY, 0, s->size - LOFT_ST_PRIMARY);
+    s->wild = 0;
+    s->free_root = 0;
+    s->claimed_end = s->size;
+}
+
+/* `database_defined`: a fresh stack store of at least `bytes` of frame, pinned to its slot. */
+int64_t loft_crt_stack_new(int64_t *io, int64_t n, int64_t bytes) {
+    loft_ref r = loft_ref_null();
+    loft_database(&r, (uint32_t) bytes);
+    loft_store_t *s = &loft_stores[r.store_nr];
+    s->pinned = 1;
+    loft_crt_stack_span(s);
+    loft_crt_put_ref(io, n, r);
+    return 0;
+}
+
+/* `State::grow_stack`: the store grown until record 1 holds `bytes` of frame. */
+void loft_crt_stack_grow(int64_t store, int64_t bytes) {
+    loft_store_t *s = &loft_stores[store];
+    uint32_t words = (uint32_t) ((8 + bytes + 7) / 8) + 1;
+    if (s->size >= LOFT_ST_PRIMARY + words) return;
+    loft_resize_store(s, LOFT_ST_PRIMARY + words);
+    loft_crt_stack_span(s);
+}
+
+/* The run's end: the stack store released (a pinned store keeps itself from `loft_free_ref`). */
+void loft_crt_stack_free(int64_t store) {
+    loft_store_t *s = &loft_stores[store];
+    s->pinned = 0;
+    loft_free_ref(loft_crt_ref(store, LOFT_ST_PRIMARY, 8));
+}
+
+/* A reference held in a frame slot, read and written as the Rust frame holds it: twelve raw
+ * bytes, no record marked and no tombstone read through (`loft_get_dbref` does both, for a
+ * reference FIELD). */
+int64_t loft_crt_slot_ref(int64_t *out, int64_t n, int64_t store, int64_t at) {
+    loft_store_t *s = &loft_stores[store];
+    loft_ref x;
+    x.store_nr = (uint16_t) loft_u32(s, LOFT_ST_PRIMARY, 8 + (uint32_t) at);
+    x.rec = loft_u32(s, LOFT_ST_PRIMARY, 8 + (uint32_t) at + 4);
+    x.pos = loft_u32(s, LOFT_ST_PRIMARY, 8 + (uint32_t) at + 8);
+    loft_crt_put_ref(out, n, x);
+    return 0;
+}
+
+void loft_crt_set_slot_ref(int64_t store, int64_t at, int64_t r_store, int64_t r_rec, int64_t r_pos) {
+    loft_store_t *s = &loft_stores[store];
+    loft_set_u32(s, LOFT_ST_PRIMARY, 8 + (uint32_t) at, (uint32_t) r_store);
+    loft_set_u32(s, LOFT_ST_PRIMARY, 8 + (uint32_t) at + 4, (uint32_t) r_rec);
+    loft_set_u32(s, LOFT_ST_PRIMARY, 8 + (uint32_t) at + 8, (uint32_t) r_pos);
+}
+
 /* OpFreeRef of a variable: its store released, the variable reset to the sentinel. */
 void loft_crt_free_var(int64_t *io, int64_t n) {
     loft_ref r = loft_crt_get_ref(io, n);

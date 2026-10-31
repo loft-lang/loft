@@ -16,7 +16,7 @@ fn kernel(name: text) -> ir::Bundle {
 fn test_fib_answers_what_the_interpreter_answers() {
   b = kernel("fib");
   fib = lower::find(b, "n_fib");
-  assert(fib >= 0, "the image has fib");
+  assert(fib != null, "the image has fib");
   got = "";
   for n in 0..11 {
     o = run::run(b, fib, [n]);
@@ -30,7 +30,7 @@ fn test_fib_answers_what_the_interpreter_answers() {
 
 fn test_an_entry_given_the_wrong_arguments_is_refused() {
   b = kernel("fib");
-  fib = lower::find(b, "n_fib");
+  fib = lower::find(b, "n_fib")!;
   o = run::run(b, fib, []);
   assert(o.refused == "the entry takes 1 arguments, given 0", "refused: {o.refused}");
 }
@@ -38,7 +38,7 @@ fn test_an_entry_given_the_wrong_arguments_is_refused() {
 fn test_a_function_the_lowering_refuses_is_named_not_run() {
   b = kernel("fib");
   main = lower::find(b, "n_main");
-  assert(main >= 0, "the image has main");
+  assert(main != null, "the image has main");
   o = run::run(b, main, []);
   assert(o.refused != "", "main formats text, which S1 does not carry: {o.value}");
 }
@@ -48,7 +48,7 @@ fn test_a_function_the_lowering_refuses_is_named_not_run() {
 fn ran(kernel_name: text, entry: text, args: vector<integer>) -> integer? {
   b = kernel(kernel_name);
   d = lower::find(b, entry);
-  assert(d >= 0, "the image has {entry}");
+  assert(d != null, "the image has {entry}");
   o = run::run(b, d, args);
   assert(o.refused == "", "{entry} refused: {o.refused}");
   o.value
@@ -72,7 +72,7 @@ fn test_a_loop_with_break_remainder_and_division_runs() {
 
 fn test_a_break_with_a_value_pending_is_refused() {
   b = kernel("pending");
-  d = lower::find(b, "n_pending");
+  d = lower::find(b, "n_pending")!;
   o = run::run(b, d, [10]);
   assert(o.refused == "a break or continue with values pending, which S1 does not carry", "refused: {o.refused}");
 }
@@ -87,7 +87,7 @@ fn test_the_stdlibs_own_loft_functions_run_from_the_image() {
 
 fn test_an_operator_the_interpreter_does_not_carry_is_refused_by_name() {
   b = kernel("stdlib");
-  d = lower::find(b, "n_uses_pow");
+  d = lower::find(b, "n_uses_pow")!;
   o = run::run(b, d, [3]);
   assert(o.refused == "an operator the interpreter does not carry: OpPowInt", "refused: {o.refused}");
 }
@@ -127,7 +127,7 @@ fn test_every_format_spec_renders_through_the_c_runtime() {
 // `entry(arg)` of the kernel image `b`, which must leave no store live.  A test loads its kernel once and runs every entry of it: an image is megabytes.
 fn ran_clean(b: ir::Bundle, entry: text, arg: integer) -> integer? {
   d = lower::find(b, entry);
-  assert(d >= 0, "the image has {entry}");
+  assert(d != null, "the image has {entry}");
   o = run::run(b, d, [arg]);
   assert(o.refused == "", "{entry} refused: {o.refused} in {o.refused_in}");
   assert(o.stores_left == 0, "{entry}({arg}) left {o.stores_left} stores live");
@@ -249,6 +249,14 @@ fn test_a_vector_is_appended_as_element_copies() {
 // `is`, a text payload copied and its source freed, a struct holding an enum field, and a vector
 // of them built from a literal, a call and a unit variant.  A copy of a `Word` owns its text only
 // because the type table hands the runtime the enum's variants.
+// @PLN91 F-1: a recursion 3000 deep through the stack store, which grows several times past its
+// first size; each level's integer, boolean and float local written and read at its width.
+fn test_a_deep_recursion_grows_the_stack_store() {
+  f = kernel("frames");
+  assert(ran_clean(f, "n_depth", 3000) == 12852, "depth(3000)");
+  assert(ran_clean(f, "n_depth", 7) == 30, "depth(7)");
+}
+
 fn test_struct_enums_build_match_and_copy() {
   e = kernel("enums");
   assert(ran_clean(e, "n_arms", 7) == 26, "arms(7)");
@@ -310,7 +318,7 @@ fn test_hashes_walk() {
 fn test_the_kernels_mains_run_whole() {
   for name in ["structs", "vectors", "enums", "hashes", "shown"] {
     b = kernel(name);
-    o = run::run(b, lower::find(b, "n_main"), []);
+    o = run::run(b, lower::find(b, "n_main")!, []);
     assert(o.refused == "", "{name} main refused: {o.refused} in {o.refused_in}");
     assert(o.stores_left == 0, "{name} main: {o.stores_left} stores left live");
   }
