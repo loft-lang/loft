@@ -25,4 +25,6 @@
 #include "loft_radix.h"
 #include "loft_radix_walk.h"
 #include "loft_radix_db.h"
+/* A keyed collection filled again from another (`OpReplaceKeyed`, `loft_replace_keyed`). */
+#include "loft_keyed.h"
 #endif

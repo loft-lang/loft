@@ -254,7 +254,28 @@ fn unordered_product(n: integer) -> integer {
   p
 }
 
+// A keyed field cleared (`OpClearKeyed`) and a keyed local rebound from a call
+// (`OpReplaceKeyed`).  By hand: `keyed(4)` — the seed hash holds 1 (10000), the cleared field 0,
+// the rebound hash 2 entries (200) and `h[2].v` is 8: 10208; `keyed(0)`: 10200.
+struct KV { k: integer, v: integer }
+struct Holder { h: hash<KV[k]> }
+
+fn mk_kv(n: integer) -> hash<KV[k]> {
+  r: hash<KV[k]> = [KV { k: 1, v: n }, KV { k: 2, v: n * 2 }];
+  r
+}
+
+fn keyed(n: integer) -> integer {
+  b = Holder { h: [KV { k: 1, v: 5 }] };
+  b.h = [];
+  first = len(b.h);
+  h: hash<KV[k]> = [KV { k: 9, v: 9 }];
+  seed = len(h);
+  h = mk_kv(n);
+  seed * 10000 + first * 1000 + len(h) * 100 + (h[2]?.v ?? 0)
+}
+
 fn main() {
   println("{counted(5)} {counted(2)} {replaced(5)} {replaced(2)} {intkey(4)} {intkey(3)} {compound(7)} {nested(5)} {copied(4)} {linked(7)}");
-  println("{walked(4)} {walked(0)} {order(3)} {order(7)} {field_walk(5)} {field_walk(2)} {bumped(3)} {bumped(1)} {early(5)} {early(2)} {pairs(4)} {pairs(5)} {indexed(4)} {indexed(3)} {unordered_product(4)} {unordered_product(3)}");
+  println("{walked(4)} {walked(0)} {order(3)} {order(7)} {field_walk(5)} {field_walk(2)} {bumped(3)} {bumped(1)} {early(5)} {early(2)} {pairs(4)} {pairs(5)} {indexed(4)} {indexed(3)} {unordered_product(4)} {unordered_product(3)} {keyed(4)} {keyed(0)}");
 }

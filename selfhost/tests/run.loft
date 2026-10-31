@@ -350,6 +350,9 @@ fn test_hashes_walk() {
   assert(ran_clean(h, "n_order", 7) == 712, "order(7)");
   assert(ran_clean(h, "n_field_walk", 5) == 503, "field_walk(5)");
   assert(ran_clean(h, "n_field_walk", 2) == 202, "field_walk(2)");
+  // A keyed field cleared and a keyed local rebound from a call, nothing left live.
+  assert(ran_clean(h, "n_keyed", 4) == 10208, "keyed(4)");
+  assert(ran_clean(h, "n_keyed", 0) == 10200, "keyed(0)");
   assert(ran_clean(h, "n_bumped", 3) == 101303, "bumped(3): the walked element is a view");
   assert(ran_clean(h, "n_bumped", 1) == 100, "bumped(1)");
   assert(ran_clean(h, "n_early", 5) == 300105, "early(5): return and break leave the hash whole");

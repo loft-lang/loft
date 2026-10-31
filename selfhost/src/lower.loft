@@ -144,6 +144,10 @@ enum Code {
   AppendCopy,
   // `OpSliceVector` / `OpSliceView`: `a` the element size, `b` 1 for the view.
   SliceVec,
+  // `OpClearKeyed` (`a` the type, `b` 1 for a linked group's view) and `OpReplaceKeyed` (`a` the
+  // type, `b` the flags).
+  ClearKeyed,
+  ReplaceKeyed,
   // S1.5: a loop's mark of the stack pointers, its drop, and a leave to the mark `a` loops out.
   LoopMark,
   LoopUnmark,
@@ -658,6 +662,8 @@ fn effect(code: Code, b: integer) -> integer {
     DistinctStore => -1,
     AppendCopy => -2,
     SliceVec => -4,
+    ClearKeyed => -1,
+    ReplaceKeyed => -2,
     LoopMark => 0,
     LoopUnmark => 0,
     Unwind => 0,
@@ -1236,6 +1242,32 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
       refuse(l, "a slice of elements that are not scalars");
     } else {
       emit(l, SliceVec, KRef, b.types[tp]!.size, if name == "OpSliceView" { 1 } else { 0 });
+    }
+  } else if name == "OpClearKeyed" {
+    // `s.h = []` of a field: its claims released, of whatever type (`remove_claims_keyed`); a
+    // linked group's secondary view (`CLEAR_KEYED_VIEW`, 0x8000), always a keyed collection,
+    // drops only its own route.
+    value(l, b, args[0]!, KRef);
+    raw = literal(l, args[1]!);
+    tp = raw & 32767;
+    view = raw & 32768 != 0;
+    if view && !types::is_keyed(b, tp) {
+      refuse(l, "a keyed view clear of a type that is not a keyed collection");
+    } else {
+      emit(l, ClearKeyed, KRef, tp, if view { 1 } else { 0 });
+    }
+  } else if name == "OpReplaceKeyed" {
+    // A keyed local rebound from a call (`h = f()`): `dest` filled again from `src`.  Bit 0 is
+    // the operator's own flag, bit 1 whether the element tree may move whole (`Cx::swap_safe`).
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KRef);
+    raw = literal(l, args[2]!);
+    tp = raw & 32767;
+    if !types::is_keyed(b, tp) {
+      refuse(l, "a keyed replace of a type that is not a keyed collection");
+    } else {
+      flags = (if raw & 32768 != 0 { 1 } else { 0 }) + (if types::swap_safe(b, tp) { 2 } else { 0 });
+      emit(l, ReplaceKeyed, KRef, tp, flags);
     }
   } else if name == "OpAppendCopy" {
     value(l, b, args[0]!, KRef);

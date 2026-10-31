@@ -203,6 +203,75 @@ pub fn content_of(b: ir::Bundle, tp: integer) -> integer? {
   }
 }
 
+// Is `tp` a keyed collection — a hash, index, sorted, ordered, spatial or trie (`Cx::keyed`)?
+pub fn is_keyed(b: ir::Bundle, tp: integer) -> boolean {
+  t = b.types[tp];
+  if t == null {
+    return false;
+  }
+  match t.parts[0]! {
+    PtHash { content: _, fields: _ } => true,
+    PtIndex { content: _, keys: _ } => true,
+    PtSorted { content: _, keys: _ } => true,
+    PtOrdered { content: _, keys: _ } => true,
+    PtRadix { content: _, fields: _ } => true,
+    PtTrie { content: _, key: _ } => true,
+    _ => false,
+  }
+}
+
+// `Cx::swap_safe`: may a `tp` collection's element tree move whole — no stored reference
+// (`target`) and no `DbRef` anywhere inside it?  A type met again on the walk answers yes.
+pub fn swap_safe(b: ir::Bundle, tp: integer) -> boolean {
+  seen: vector<integer> = [];
+  swap_walk(b, tp, seen)
+}
+
+fn swap_walk(b: ir::Bundle, tp: integer, seen: vector<integer>) -> boolean {
+  for s in seen {
+    if s == tp {
+      return true;
+    }
+  }
+  seen += [tp];
+  t = b.types[tp];
+  if t == null {
+    return false;
+  }
+  match t.parts[0]! {
+    PtStruct { fields } => swap_fields(b, fields, seen),
+    PtEnumValue { value: _, fields } => swap_fields(b, fields, seen),
+    PtEnum { values } => {
+      for v in values {
+        if v.nr != 65535 && !swap_walk(b, v.nr, seen) {
+          return false;
+        }
+      }
+      true
+    }
+    PtVector { content } => swap_walk(b, content, seen),
+    PtSorted { content, keys: _ } => swap_walk(b, content, seen),
+    PtArray { content } => swap_walk(b, content, seen),
+    PtOrdered { content, keys: _ } => swap_walk(b, content, seen),
+    PtHash { content, fields: _ } => swap_walk(b, content, seen),
+    PtIndex { content, keys: _ } => swap_walk(b, content, seen),
+    PtRadix { content, fields: _ } => swap_walk(b, content, seen),
+    PtTrie { content, key: _ } => swap_walk(b, content, seen),
+    PtChildRec { content } => swap_walk(b, content, seen),
+    PtDbRef => false,
+    _ => true,
+  }
+}
+
+fn swap_fields(b: ir::Bundle, fields: vector<ir::DbField>, seen: vector<integer>) -> boolean {
+  for f in fields {
+    if f.target != 65535 || !swap_walk(b, f.content, seen) {
+      return false;
+    }
+  }
+  true
+}
+
 // Is the element of collection type `tp` a `__nullable<S>` whose `Some` variant exists
 // (`Stores::nullable_some_variant(content(tp)).is_some()`)?
 fn nullable_element(b: ir::Bundle, tp: integer) -> boolean {

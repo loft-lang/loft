@@ -545,6 +545,22 @@ void loft_crt_clear(int64_t store, int64_t rec, int64_t pos, int64_t tp) {
     loft_remove_claims(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos));
 }
 
+/* OpClearKeyed of a SECONDARY VIEW of a linked group (`CLEAR_KEYED_VIEW`): the view drops its own
+ * route and leaves the records to the member that holds them (`remove_claims_keyed`). */
+void loft_crt_clear_view(int64_t store, int64_t rec, int64_t pos, int64_t tp) {
+    if (!loft_crt_types || tp < 0 || (uint32_t) tp >= loft_crt_ntypes) return;
+    loft_remove_claims_mode(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos), 1);
+}
+
+/* OpReplaceKeyed (`Stores::replace_keyed`): `dest`'s collection filled again from `src`'s, of
+ * type `tp`; `flags` bit 0 the caller's own, bit 1 the element tree may move whole. */
+void loft_crt_replace_keyed(int64_t s_store, int64_t s_rec, int64_t s_pos, int64_t d_store, int64_t d_rec,
+                            int64_t d_pos, int64_t tp, int64_t flags) {
+    if (!loft_crt_types || tp < 0 || (uint32_t) tp >= loft_crt_ntypes) return;
+    loft_replace_keyed(loft_crt_types, (uint16_t) tp, loft_crt_ref(s_store, s_rec, s_pos),
+                       loft_crt_ref(d_store, d_rec, d_pos), (int) flags);
+}
+
 /* A record variable bound to a copy of another (`loft_bind_copy`, the C generator's
  * `whole_value_bind`): the variable in `io` gets a store of its own holding `src`'s record and
  * the claims it owns, by the table loaded above. */
