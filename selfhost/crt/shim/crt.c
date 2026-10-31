@@ -202,6 +202,23 @@ void loft_crt_stack_free(int64_t store) {
     loft_free_ref(loft_crt_ref(store, LOFT_ST_PRIMARY, 8));
 }
 
+/* A constant's store built (`consts.loft`): pinned and read-only, as `Store::lock_constant` and
+ * `loft_const_store` leave it. */
+void loft_crt_lock_constant(int64_t store) {
+    loft_store_t *s = &loft_stores[store];
+    s->pinned = 1;
+    s->read_only = 1;
+}
+
+/* A constant's store released by the run that built it: unpinned and writable first, as the
+ * stack store is. */
+void loft_crt_free_constant(int64_t store) {
+    loft_store_t *s = &loft_stores[store];
+    s->pinned = 0;
+    s->read_only = 0;
+    loft_free_ref(loft_crt_ref(store, LOFT_ST_PRIMARY, 8));
+}
+
 /* The reference a PLACE holds — a frame slot (`(stack, 1, 8 + at)`), a field, an element —
  * read and written as `OpGetStackRef` / `OpSetStackRef` do: twelve raw bytes at `(rec, pos)`,
  * no record marked and no tombstone read through (`loft_get_dbref` does both, for a reference

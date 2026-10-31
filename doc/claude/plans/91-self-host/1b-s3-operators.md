@@ -27,8 +27,9 @@ strict comparison over every program the census passes (out, alloc, leak, binds,
 | `Value::Insert` as a value | its items statements, the last the value (`NdInsert` in `expr` and `kind_of`) | O-Move/1884 |
 | native `n_vector_sum_int` | `crt::vector_sum_int`, the C runtime's kernel (native 2) | `repeats.loft` `summed` |
 | the stack-top return `[value, frees…, return null]` | `tail_capture`, as the C writer reads it: the value taken, the frees run, then `Ret` | O-Move/1884 c6 (a wrapper forwarding a call bound after a preamble) |
+| `OpConstRef` (vector constants) | `consts.loft` ports `build_const_vectors` with its readers (`extract_literal_values`, `const_eval`, `fold_text_block`): each constant's literal body built into a store of its own at load, before the trace's `M` mark as Rust builds it at compile time, then pinned and read-only (`crt::lock_constant`); `OpConstRef(d)` answers `(store, 1, 8)`, a constant the builder cannot read is refused by name | `kernels/constants.loft` `consts` |
 
-**Measured** (2026-10-31): the census went from 297 to 438 programs passed over these rows,
+**Measured** (2026-10-31): the census went from 297 to 459 programs passed over these rows,
 none wrong, crashed or leaking, and every passing program equal to the Rust interpreter in
 every layer.
 

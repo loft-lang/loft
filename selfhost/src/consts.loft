@@ -1,0 +1,458 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 1b — the constant store.  Each vector constant (a definition of kind `Constant`, the
+// compiler's own or a literal-bodied function's twin) is built once at load, before the program
+// starts, as the Rust compiler builds it (`build_const_vectors`, `src/const_literal.rs`): its
+// literal body read into elements of field writes, folded where the body spells a value as
+// arithmetic (`src/const_eval.rs`), written into a store of its own, then pinned and read-only.
+// `OpConstRef(d)` answers `(store, 1, 8)` of definition `d`'s store.
+use ir;
+use lower;
+use types;
+use crt;
+
+// A folded literal (`const_eval`'s `Value`): an `Int` is the IR's 32-bit integer, wrapping as
+// the Rust fold wraps; a `Long` the full width.
+enum Folded {
+  VInt { n: integer },
+  VLong { n: integer },
+  // A float may be NaN (`0.0 / 0.0` folds to it), which loft reads as null.
+  VFloat { f: float? },
+  VSingle { f: single? },
+  VBool { b: boolean },
+}
+
+// One literal field write of an element (`ConstField`), as the C runtime's setter takes it.
+enum Field {
+  // `integer` at full width (`ConstField::Int` and `Long` both write eight bytes).
+  FInt { v: integer },
+  FFloat { v: float },
+  FSingle { v: single },
+  FBool { v: boolean },
+  FChar { v: integer },
+  FText { v: text },
+  // A narrow integer: the `crt::set_w` width of the setter it came from, its bias, its value.
+  FNarrow { width: integer, min: integer, v: integer? },
+}
+
+struct Write {
+  at: integer,
+  f: Field,
+}
+
+struct Element {
+  writes: vector<Write>,
+}
+
+// What a constant's body builds: the vector wrapper type (`main_vector<T>`, as the body's
+// `OpDatabase` names it) and its elements.
+struct Literal {
+  wrapper: integer,
+  elements: vector<Element>,
+}
+
+MIN_I32 = -2147483648;
+NULL_STORE = 65535;
+
+// `x` wrapped to 32 bits, as `i32::wrapping_*` answers.
+fn wrap32(x: integer) -> integer {
+  r = x & 4294967295;
+  if r >= 2147483648 { r - 4294967296 } else { r }
+}
+
+fn op_name(b: ir::Bundle, d: integer) -> text {
+  b.data.definitions[d]!.name
+}
+
+// `const_eval`: a literal, or a call of a foldable operator over foldable arguments, or a
+// conditional over a folded boolean; null for anything known only at run time.
+fn fold(b: ir::Bundle, n: ir::Node) -> Folded? {
+  at = lower::unspan(n);
+  // A conditional folds to the arm its folded condition picks.
+  while at is NdIf {
+    match at {
+      NdIf { cond, t, f } => match fold(b, cond) {
+        VBool { b: c } => { at = lower::unspan(if c { t } else { f }); }
+        _ => { return null; }
+      },
+      _ => {}
+    }
+  }
+  match at {
+    NdInt { n: v } => VInt { n: v },
+    NdLong { n: v } => VLong { n: v },
+    NdFloat { f } => VFloat { f: f },
+    NdSingle { f } => VSingle { f: f },
+    NdBoolean { b: v } => VBool { b: v },
+    NdCall { def_nr, args } => {
+      vals: vector<Folded> = [];
+      for a in args {
+        v = fold(b, a);
+        if v == null {
+          return null;
+        }
+        vals += [v!];
+      }
+      fold_op(op_name(b, def_nr), vals)
+    }
+    _ => null,
+  }
+}
+
+// `fold_op`: one operator over folded arguments.
+fn fold_op(name: text, a: vector<Folded>) -> Folded? {
+  if len(a) == 0 {
+    return match name {
+      "OpMathPiFloat" => VFloat { f: PI },
+      "OpMathEFloat" => VFloat { f: E },
+      _ => null,
+    };
+  }
+  if len(a) == 1 {
+    return match a[0]! {
+      VInt { n } => match name {
+        "OpMinSingleInt" => VInt { n: wrap32(-n) },
+        "OpConvFloatFromInt" => VFloat { f: n as float },
+        "OpConvSingleFromInt" => VSingle { f: n as single },
+        _ => null,
+      },
+      VFloat { f } => match name {
+        "OpMinSingleFloat" => VFloat { f: -f },
+        // `Value::int_const`: an `Int` where it fits 32 bits, else a `Long`.
+        "OpConvIntFromFloat" => if f == null || f - f != 0.0 {
+          null
+        } else {
+          i = f! as integer;
+          if i >= MIN_I32 && i <= 2147483647 { VInt { n: i } } else { VLong { n: i } }
+        },
+        _ => null,
+      },
+      VSingle { f } => if name == "OpMinSingleSingle" { VSingle { f: -f } } else { null },
+      VBool { b: v } => if name == "OpNot" { VBool { b: !v } } else { null },
+      _ => null,
+    };
+  }
+  if len(a) != 2 {
+    return null;
+  }
+  match a[0]! {
+    VInt { n: x } => match a[1]! {
+      VInt { n: y } => match name {
+        "OpAddInt" => VInt { n: wrap32(x + y) },
+        "OpMinInt" => VInt { n: wrap32(x - y) },
+        "OpMulInt" => VInt { n: wrap32(x * y) },
+        "OpDivInt" => if y == 0 || (x == MIN_I32 && y == -1) { null } else { VInt { n: (x / y)! } },
+        "OpModInt" => if y == 0 || (x == MIN_I32 && y == -1) { null } else { VInt { n: (x % y)! } },
+        "OpAndInt" => VInt { n: x & y },
+        "OpOrInt" => VInt { n: x | y },
+        "OpXorInt" => VInt { n: x ^ y },
+        "OpEqInt" => VBool { b: x == y },
+        "OpNeInt" => VBool { b: x != y },
+        "OpLtInt" => VBool { b: x < y },
+        "OpLeInt" => VBool { b: x <= y },
+        _ => null,
+      },
+      _ => null,
+    },
+    VFloat { f: x } => match a[1]! {
+      VFloat { f: y } => match name {
+        "OpAddFloat" => VFloat { f: x + y },
+        "OpMinFloat" => VFloat { f: x - y },
+        "OpMulFloat" => VFloat { f: x * y },
+        "OpDivFloat" => VFloat { f: x / y },
+        _ => null,
+      },
+      _ => null,
+    },
+    VSingle { f: x } => match a[1]! {
+      VSingle { f: y } => match name {
+        "OpAddSingle" => VSingle { f: x + y },
+        "OpMinSingle" => VSingle { f: x - y },
+        "OpMulSingle" => VSingle { f: x * y },
+        "OpDivSingle" => VSingle { f: x / y },
+        _ => null,
+      },
+      _ => null,
+    },
+    _ => null,
+  }
+}
+
+// `fold_text_block`: an all-literal text expression's string — `"x" + "y"` builds its value in
+// a work buffer (`OpClearText(w); OpAppendText(w, "x"); …; w`) — or null.
+fn fold_text(b: ir::Bundle, n: ir::Node) -> text? {
+  match lower::unspan(n) {
+    NdText { s } => s,
+    NdBlock { block } => {
+      out = "";
+      for op in block[0]!.operators {
+        match lower::unspan(op) {
+          NdVar { n: _ } => {}
+          NdCall { def_nr, args } => {
+            name = op_name(b, def_nr);
+            if name == "OpClearText" && len(args) == 1 {
+              continue;
+            }
+            if name != "OpAppendText" || len(args) != 2 {
+              return null;
+            }
+            match lower::unspan(args[1]!) {
+              NdText { s } => { out += s; }
+              _ => { return null; }
+            }
+          }
+          _ => { return null; }
+        }
+      }
+      out
+    }
+    _ => null,
+  }
+}
+
+// `fold_const_field`: a field written by `setter`, folded to the literal the store writes, or
+// null.  The OPERATOR decides which literal is admissible; a fold landing on a type's null
+// sentinel is refused, as a null the author never wrote.
+fn const_field(b: ir::Bundle, setter: text, v: ir::Node) -> Field? {
+  if setter == "OpSetCharacter" {
+    at = lower::unspan(v);
+    match at {
+      NdCall { def_nr, args } => {
+        if op_name(b, def_nr) == "OpConvCharacterFromInt" && len(args) == 1 {
+          at = lower::unspan(args[0]!);
+        }
+      }
+      _ => {}
+    }
+    return match at {
+      NdInt { n } => if n >= 0 { FChar { v: n } } else { null },
+      _ => null,
+    };
+  }
+  if setter == "OpSetText" {
+    t = fold_text(b, v);
+    return if t == null { null } else { FText { v: t! } };
+  }
+  f = fold(b, v);
+  if f == null {
+    return null;
+  }
+  match f! {
+    VInt { n } => if setter == "OpSetInt" && n != MIN_I32 { FInt { v: n } } else { null },
+    VLong { n } => if setter == "OpSetInt" && n != null { FInt { v: n } } else { null },
+    VFloat { f: x } => if setter == "OpSetFloat" && x != null { FFloat { v: x! } } else { null },
+    VSingle { f: x } => if setter == "OpSetSingle" && x != null { FSingle { v: x! } } else { null },
+    VBool { b: x } => if setter == "OpSetBoolean" { FBool { v: x } } else { null },
+  }
+}
+
+// `fold_narrow_field`: a narrow integer written by `setter` with bias `min`, or null for a
+// value known only at run time, one outside the width, or a null an element cannot hold.
+fn narrow_field(b: ir::Bundle, setter: text, min: ir::Node, v: ir::Node) -> Field? {
+  width = match setter {
+    "OpSetByte" => 1,
+    "OpSetByteNullable" => 2,
+    "OpSetShort" => 3,
+    "OpSetShortRaw" => 4,
+    _ => 0,
+  };
+  if width == 0 {
+    return null;
+  }
+  nullable = width == 2 || width == 3;
+  size = if width <= 2 { 1 } else { 2 };
+  lo = match lower::unspan(min) {
+    NdInt { n } => n,
+    _ => { return null; }
+  };
+  is_null = match lower::unspan(v) {
+    NdNull => true,
+    NdCall { def_nr, args } => len(args) == 0 && op_name(b, def_nr) == "OpConvIntFromNull",
+    _ => false,
+  };
+  if is_null {
+    return if nullable { FNarrow { width: width, min: lo, v: null } } else { null };
+  }
+  x = match fold(b, v) {
+    VInt { n } => n,
+    VLong { n } => n,
+    _ => { return null; }
+  };
+  hi = lo + (if size == 1 { 255 } else { 65535 }) - (if nullable { 1 } else { 0 });
+  if x >= lo && x <= hi { FNarrow { width: width, min: lo, v: x } } else { null }
+}
+
+// A fused scalar append (`OpPush<Kind>(vector, val)`, `FUSED_PUSH_KINDS`): its setter, or null.
+fn fused_setter(name: text) -> text? {
+  match name {
+    "OpPushByte" => "OpSetByte",
+    "OpPushInt" => "OpSetInt",
+    "OpPushInt4" => "OpSetInt4",
+    "OpPushFloat" => "OpSetFloat",
+    "OpPushSingle" => "OpSetSingle",
+    "OpPushBoolean" => "OpSetBoolean",
+    "OpPushEnum" => "OpSetEnum",
+    "OpPushCharacter" => "OpSetCharacter",
+    _ => null,
+  }
+}
+
+// `extract_literal_values`: the elements a constant's body writes, or null when it holds
+// anything the store cannot pre-build (the compiler refused such a constant at its declaration,
+// so a program image holds none).  `OpNewRecord` opens an element and `OpFinishRecord` closes
+// it; the writes before the first belong to the vector's own header.
+pub fn literal(b: ir::Bundle, d: integer) -> Literal? {
+  code = b.data.definitions[d]!.code;
+  if len(code) == 0 {
+    return null;
+  }
+  ops = match lower::unspan(code[0]!) {
+    NdBlock { block } => block[0]!.operators,
+    _ => { return null; }
+  };
+  wrapper = -1;
+  elements: vector<Element> = [];
+  in_element = false;
+  for o in ops {
+    op = lower::unspan(o);
+    match op {
+      NdSet { var: _, inner } => { op = lower::unspan(inner); }
+      _ => {}
+    }
+    if !(op is NdCall) {
+      continue;
+    }
+    def_nr = 0;
+    args: vector<ir::Node> = [];
+    match op {
+      NdCall { def_nr: dn, args: a } => {
+        def_nr = dn;
+        args = a;
+      }
+      _ => {}
+    }
+    name = op_name(b, def_nr);
+    if name == "OpDatabase" && wrapper < 0 && len(args) == 2 {
+      wrapper = match lower::unspan(args[1]!) {
+        NdInt { n } => n,
+        _ => -1,
+      };
+      continue;
+    }
+    if name == "OpNewRecord" {
+      elements += [Element { writes: [] }];
+      in_element = true;
+      continue;
+    }
+    if name == "OpFinishRecord" {
+      in_element = false;
+      continue;
+    }
+    setter = fused_setter(name);
+    if setter != null {
+      f = if len(args) == 2 {
+        const_field(b, setter!, args[1]!)
+      } else if len(args) == 3 {
+        narrow_field(b, setter!, args[1]!, args[2]!)
+      } else {
+        null
+      };
+      if f == null {
+        return null;
+      }
+      elements += [Element { writes: [Write { at: 0, f: f! }] }];
+      in_element = false;
+      continue;
+    }
+    if !in_element || !name.starts_with("OpSet") || len(args) < 3 {
+      continue;
+    }
+    at = match lower::unspan(args[1]!) {
+      NdInt { n } => n,
+      _ => { return null; }
+    };
+    f = if len(args) == 4 {
+      narrow_field(b, name, args[2]!, args[3]!)
+    } else {
+      const_field(b, name, args[2]!)
+    };
+    if f == null || len(elements) == 0 {
+      return null;
+    }
+    elements[len(elements) - 1].writes += [Write { at: at, f: f! }];
+  }
+  if wrapper < 0 || !types::is_vector_wrapper(b, wrapper) || len(elements) == 0 {
+    return null;
+  }
+  for e in elements {
+    if len(e.writes) == 0 {
+      return null;
+    }
+  }
+  Literal { wrapper: wrapper, elements: elements }
+}
+
+// The literal's store: the wrapper record with its defaults, each element appended with its
+// type's defaults and its writes (each mirrors the runtime setter of its field), counted, then
+// the store pinned and read-only (`Store::lock_constant`).
+fn build_one(b: ir::Bundle, lit: Literal) -> integer {
+  elem = types::root_vector_element(b, lit.wrapper);
+  if elem == null {
+    return NULL_STORE;
+  }
+  io: vector<integer> = [NULL_STORE, 0, 0];
+  crt::database(io, types::enum_parent_size(b, lit.wrapper), lit.wrapper);
+  store = io[0] ?? NULL_STORE;
+  crt::fill(store, 1, 8, types::default_image(b, lit.wrapper));
+  size = b.types[elem!]!.size;
+  image = types::default_image(b, elem!);
+  rec: vector<integer> = [NULL_STORE, 0, 0];
+  for e in lit.elements {
+    crt::vec_append(rec, store, 1, 8, size);
+    s = rec[0] ?? NULL_STORE;
+    r = rec[1] ?? 0;
+    p = rec[2] ?? 0;
+    crt::fill(s, r, p, image);
+    for w in e.writes {
+      match w.f {
+        FInt { v } => crt::set_int(s, r, p, w.at, v),
+        FFloat { v } => crt::set_float(s, r, p, w.at, v, false),
+        FSingle { v } => crt::set_float(s, r, p, w.at, v as float, true),
+        FBool { v } => crt::set_w(6, s, r, p, w.at, 0, if v { 1 } else { 0 }),
+        FChar { v } => crt::set_w(5, s, r, p, w.at, 0, v),
+        FText { v } => crt::set_text(s, r, p, w.at, v),
+        FNarrow { width, min, v } => crt::set_w(width, s, r, p, w.at, min, v),
+      }
+    }
+    crt::vec_finish(store, 1, 8);
+  }
+  crt::lock_constant(store);
+  store
+}
+
+// Every vector constant of the image built: the store of each definition, NULL_STORE where
+// it is no constant or its body is no literal this builder reads.
+pub fn build(b: ir::Bundle) -> vector<integer> {
+  stores: vector<integer> = [];
+  for d in 0..len(b.data.definitions) {
+    s = NULL_STORE;
+    if b.data.definitions[d]!.def_type == 8 {
+      lit = literal(b, d);
+      if lit != null {
+        s = build_one(b, lit!);
+      }
+    }
+    stores += [s];
+  }
+  stores
+}
+
+// The stores `build` made, released once the run that read them is over.
+pub fn release(stores: vector<integer>) {
+  for s in stores {
+    if s != NULL_STORE {
+      crt::free_constant(s);
+    }
+  }
+}

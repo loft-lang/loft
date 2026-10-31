@@ -142,6 +142,8 @@ enum Code {
   VecAbsent,
   DistinctStore,
   AppendCopy,
+  // `OpConstRef(d)`: the reference to constant `d`'s store (`consts.loft`).
+  ConstRef,
   // `OpSliceVector` / `OpSliceView`: `a` the element size, `b` 1 for the view.
   SliceVec,
   // `OpPlaceRecord`: `a` the record type, `b` twice its size plus 1 for a foreign root.
@@ -703,6 +705,7 @@ fn effect(code: Code, b: integer) -> integer {
     Nop => 0,
     VecAbsent => 0,
     DistinctStore => -1,
+    ConstRef => 1,
     AppendCopy => -2,
     SliceVec => -4,
     ClearKeyed => -1,
@@ -1018,7 +1021,7 @@ fn expr(l: Lowering, b: ir::Bundle, n: ir::Node) {
 
 // `n` without the source spans around it (`Value::unspan`): a node whose SHAPE decides what
 // it lowers to is read through them, as the generators read it.
-fn unspan(n: ir::Node) -> ir::Node {
+pub fn unspan(n: ir::Node) -> ir::Node {
   at = n;
   while at is NdSpan {
     match at {
@@ -1290,6 +1293,9 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
   } else if name == "OpVectorIsNull" {
     value(l, b, args[0]!, KRef);
     emit(l, VecAbsent, KInt, 0, 0);
+  } else if name == "OpConstRef" {
+    // A vector constant: its store, built at load (`consts.loft`).
+    emit(l, ConstRef, KRef, literal(l, args[0]!), 0);
   } else if name == "OpDistinctStore" {
     // A runtime owner witness's test: do the two references name different stores?
     value(l, b, args[0]!, KRef);
