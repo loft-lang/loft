@@ -1,22 +1,25 @@
-diff --git b/src/parser/objects.rs a/src/parser/objects.rs
-index 9a87d8d58..8d8a1ac8a 100644
---- b/src/parser/objects.rs
-+++ a/src/parser/objects.rs
-@@ -3822,19 +3822,7 @@ impl Parser {
-         // O8.5: capture range bounds for const-unroll detection.
-         self.last_range_from = Some(expr.clone());
-         let mut till = Value::Null;
--        // `@FR-I-RangeFrom` — `for i in a.. { … }` has no end: it counts up until the body
--        // leaves (`break`, `return`), as a Rust `RangeFrom` does (loft#1813).  With nothing
--        // sliced, a `{` right after the `..` is the loop's body, never a bound — read as
--        // the bound, it made the body an expression (`break` "outside a loop") and compared
--        // the counter with its value.  Lowered as `a..=MAX`: `(I-RangeIncl)` already stops
--        // exactly after the type's maximum, so the counter never has to overflow.
+diff --git a/src/parser/objects.rs b/src/parser/objects.rs
+index 01be01afe..4e07cf2d5 100644
+--- a/src/parser/objects.rs
++++ b/src/parser/objects.rs
+@@ -4545,22 +4545,7 @@ impl Parser {
+         // (`u8`, `i16`, `u32`, …) stops after its type's maximum, where `i64::MAX` ran the
+         // counter past every value the loop variable's type holds.  A computed `integer`
+         // keeps `i64::MAX`: its spec's `max` describes a value, not the type's storage.
+-        let mut open_end_tp = None;
 -        if *data == Value::Null && !incl && self.lexer.peek_token("{") {
 -            incl = true;
 -            till = Value::Long(i64::MAX);
+-            if let Type::Integer(spec) = in_type.base()
+-                && spec.forced_size.is_some_and(|n| n.get() < 8)
+-            {
+-                till = Value::Long(spec.max);
+-                open_end_tp = Some(in_type.base().clone());
+-            }
 -        }
--        let mut till_tp = if till != Value::Null {
+-        let mut till_tp = if let Some(tp) = open_end_tp {
+-            tp
+-        } else if till != Value::Null {
 -            crate::data::I64.clone()
 -        } else if self.lexer.peek_token("]") {
 +        let mut till_tp = if self.lexer.peek_token("]") {

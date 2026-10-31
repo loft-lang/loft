@@ -1,8 +1,8 @@
 diff --git a/src/codegen_runtime.rs b/src/codegen_runtime.rs
-index 3038a4143..a372f88f9 100644
+index 35917b42e..eeaaed684 100644
 --- a/src/codegen_runtime.rs
 +++ b/src/codegen_runtime.rs
-@@ -50,38 +50,6 @@ pub use crate::live_control::n_live_flip;
+@@ -53,38 +53,6 @@ pub use crate::live_control::n_live_flip;
  #[cfg(not(target_arch = "wasm32"))]
  pub use crate::live_rebuild::{n_kernel_rebuild_artifact, n_rebuild_start, n_rebuild_status};
  
@@ -42,10 +42,10 @@ index 3038a4143..a372f88f9 100644
  /// Both types have identical layout (u16 + u32 + u32).
  #[must_use]
 diff --git a/src/generation/emit.rs b/src/generation/emit.rs
-index e56c0d2c6..310ca6f38 100644
+index 7dbfe5c15..f928b9e1d 100644
 --- a/src/generation/emit.rs
 +++ b/src/generation/emit.rs
-@@ -652,14 +652,6 @@ impl Output<'_> {
+@@ -676,14 +676,6 @@ impl Output<'_> {
                      // block that binds it — is a statement list with a value tail, which
                      // inside a tuple is legal Rust only as a block expression.
                      let as_block = e.unspan().kind() == ValueType::Insert;
@@ -60,7 +60,7 @@ index e56c0d2c6..310ca6f38 100644
                      if as_block {
                          write!(w, "{{ ")?;
                      }
-@@ -667,9 +659,6 @@ impl Output<'_> {
+@@ -700,9 +692,6 @@ impl Output<'_> {
                      if as_block {
                          write!(w, " }}")?;
                      }
@@ -71,10 +71,10 @@ index e56c0d2c6..310ca6f38 100644
                          write!(w, ") as u8)")?;
                      }
 diff --git a/src/parser/control.rs b/src/parser/control.rs
-index 76e655ca7..61d185d85 100644
+index 986576949..0f72841bf 100644
 --- a/src/parser/control.rs
 +++ b/src/parser/control.rs
-@@ -2289,15 +2289,6 @@ impl Parser {
+@@ -2433,15 +2433,6 @@ impl Parser {
              // the same carve-outs — the sibling-variant join, the statement-position discard,
              // the honest nullability.  Gated on a KNOWN expected type exactly as `if` is: the
              // first concrete arm has nothing to agree with and names the type instead.
@@ -90,7 +90,7 @@ index 76e655ca7..61d185d85 100644
              let arm_of_sibling = context == "else"
                  || ((context == "if" || context == "match_arm") && !result.is_unknown());
              let tuple_rewritten = !self.first_pass
-@@ -4676,53 +4667,6 @@ impl Parser {
+@@ -4834,53 +4825,6 @@ impl Parser {
          }
      }
  
@@ -144,7 +144,7 @@ index 76e655ca7..61d185d85 100644
      pub(crate) fn rewrite_tail_tuple_to_synthetic_struct(
          &mut self,
          synthetic_d_nr: u32,
-@@ -20187,9 +20131,6 @@ impl Parser {
+@@ -20786,9 +20730,6 @@ impl Parser {
              // "expected __tuple<…>, got (…)" even though the SAME tuple as a
              // function's final expression compiles.  parse_return is the statement
              // path; block_result is the tail path — they must agree.
@@ -155,10 +155,10 @@ index 76e655ca7..61d185d85 100644
                  // Through `base()`, exactly as `block_result`'s twin above: the statement path
                  // and the tail path must agree about what a tuple is, and an absent tuple is one
 diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
-index 475ce7e30..fdac4f645 100644
+index d895f8ae8..9c920f4e1 100644
 --- a/src/parser/vectors.rs
 +++ b/src/parser/vectors.rs
-@@ -7334,12 +7334,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -7655,16 +7655,11 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                      && !self.vars.work_texts().contains(&d)
                      && !self.vars.is_argument(d)
              });
@@ -167,8 +167,12 @@ index 475ce7e30..fdac4f645 100644
 -            // `(opt() ?? "d", 1.5)` stored into a local left the member reading freed text
 -            // (loft#1740).
 -            let discharge_temp = matches!(val.unspan(), Value::Block(bl) if bl.name == "ncc");
--            if !borrows_a_place && !discharge_temp {
-+            if !borrows_a_place {
+             // A BRANCH is delivered per arm below whatever its type says: left whole it reaches
+             // native as one expression whose arms are a `String` and a `&str`.
+             let branch = matches!(val.unspan(), Value::If(..))
+                 || matches!(val.unspan(), Value::Block(bl) if bl.name == "block");
+-            if !borrows_a_place && !discharge_temp && !branch {
++            if !borrows_a_place && !branch {
                  return None;
              }
              let w = self.vars.work_text_p2(&mut self.lexer);

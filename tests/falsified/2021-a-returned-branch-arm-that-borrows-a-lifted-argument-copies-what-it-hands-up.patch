@@ -1,5 +1,5 @@
 diff --git a/src/scopes/free_vars.rs b/src/scopes/free_vars.rs
-index 5737fabe..5b9ced75 100644
+index f65820aa9..b89b33576 100644
 --- a/src/scopes/free_vars.rs
 +++ b/src/scopes/free_vars.rs
 @@ -15,7 +15,7 @@ use super::insert_free::{
@@ -11,7 +11,7 @@ index 5737fabe..5b9ced75 100644
      return_copies_whole_local, return_has_non_source_arm, return_has_null_arm,
      return_moved_holders, returned_var_null_unified,
  };
-@@ -691,7 +691,7 @@ impl Scopes<'_> {
+@@ -701,7 +701,7 @@ impl Scopes<'_> {
                  "OpFreeRefIfDistinct"
              });
              let mut result = Vec::with_capacity(ls.len() + null_arm_record_sources.len() + 2);
@@ -20,7 +20,7 @@ index 5737fabe..5b9ced75 100644
              let distinct = data.def_nr("OpDistinctStore");
              let join_arm_dropped = &join_arm_dropped;
              // The sweep's frees go FIRST: they name the returned local as their WITNESS (its
-@@ -858,7 +858,7 @@ impl Scopes<'_> {
+@@ -891,7 +891,7 @@ impl Scopes<'_> {
              self.var_scope.insert(tmp, self.scope);
              self.var_order.push(tmp);
              let mut result = Vec::with_capacity(ls.len() + 2);
@@ -29,7 +29,7 @@ index 5737fabe..5b9ced75 100644
              free_copied_text_sources(&mut result, expr, &ls, function, data);
              result.extend(ls);
              result.push(Value::Return(Box::new(Value::Var(tmp))));
-@@ -904,7 +904,7 @@ impl Scopes<'_> {
+@@ -937,7 +937,7 @@ impl Scopes<'_> {
              self.var_scope.insert(tmp, self.scope);
              self.var_order.push(tmp);
              let mut result = Vec::with_capacity(ls.len() + 2);
@@ -38,7 +38,7 @@ index 5737fabe..5b9ced75 100644
              result.extend(ls);
              result.push(Value::Return(Box::new(Value::Var(tmp))));
              return result;
-@@ -959,7 +959,7 @@ impl Scopes<'_> {
+@@ -992,7 +992,7 @@ impl Scopes<'_> {
                  }
              }
              let mut result = Vec::with_capacity(ls.len() + 2);
@@ -47,7 +47,7 @@ index 5737fabe..5b9ced75 100644
              result.append(&mut ls);
              result.push(Value::Return(Box::new(Value::Var(tmp))));
              return result;
-@@ -1256,7 +1256,7 @@ impl Scopes<'_> {
+@@ -1285,7 +1285,7 @@ impl Scopes<'_> {
                      self.ret_temp_counter += 1;
                      let name = format!("__ret_tail_{}", self.ret_temp_counter);
                      let tmp = function.add_temp_var(&name, tp);
@@ -56,7 +56,7 @@ index 5737fabe..5b9ced75 100644
                      ls.push(Value::Return(Box::new(Value::Var(tmp))));
                  } else if ret_var != u16::MAX {
                      ls.push(Value::Return(Box::new(Value::Var(ret_var))));
-@@ -1318,7 +1318,7 @@ impl Scopes<'_> {
+@@ -1347,7 +1347,7 @@ impl Scopes<'_> {
                      self.ret_temp_counter += 1;
                      let name = format!("__ret_tail_{}", self.ret_temp_counter);
                      let tmp = function.add_temp_var(&name, tp);
@@ -65,7 +65,7 @@ index 5737fabe..5b9ced75 100644
                      ls.push(Value::Return(Box::new(Value::Var(tmp))));
                  } else {
                      ls.push(Value::Return(Box::new(Value::Null)));
-@@ -1399,163 +1399,31 @@ pub(super) struct Delivered {
+@@ -1428,165 +1428,33 @@ pub(super) struct Delivered {
      pub(super) moved_out: Option<(u16, Vec<u16>)>,
  }
  
@@ -254,11 +254,13 @@ index 5737fabe..5b9ced75 100644
 -    Some(out)
 +    vec![v_set(tmp, expr.clone())]
  }
+ 
+ /// loft#2282 — `tp`, a definition's declared return type, with a dep on its hidden TEXT
 diff --git a/src/state/codegen.rs b/src/state/codegen.rs
-index c89a605e..310810f2 100644
+index 8249eefb0..70f9ab4a2 100644
 --- a/src/state/codegen.rs
 +++ b/src/state/codegen.rs
-@@ -2705,12 +2705,7 @@ impl State {
+@@ -2724,12 +2724,7 @@ impl State {
              // (@FR-O-NoDiverge).  Excluding it outright left the store a frame minted for a
              // null-handed buffer to nobody when a call that took the buffer answered another
              // store: `none = rec(k - 1, none)` leaked one record per top-level call.
@@ -272,7 +274,7 @@ index c89a605e..310810f2 100644
                  && (!is_hidden_buf_arg || entry_w.is_some());
              // An `OpNewRecord` RHS returns an INTERIOR ref into an existing
              // container's backing store (a vector element / nested field), so
-@@ -2952,16 +2947,7 @@ impl State {
+@@ -2991,16 +2986,7 @@ impl State {
                  }
                  if let Type::Reference(d_nr, _) | Type::Enum(d_nr, true, _) =
                      stack.function.tp(v).base().clone()
@@ -290,11 +292,10 @@ index c89a605e..310810f2 100644
                      && matches!(value.unspan(), Value::Call(_, _) | Value::CallRef(_, _))
                      && let Some(fn_nr) =
                          crate::use_analysis::callee_of(stack.data, stack.def_nr, value)
-@@ -7284,43 +7270,3 @@ fn start_step(r: &Rotation) -> Option<Rotation> {
-         seed: Some((ix, *nxt)),
+@@ -7414,46 +7400,6 @@ fn start_step(r: &Rotation) -> Option<Rotation> {
      })
  }
--
+ 
 -/// Is `v` the function's return buffer with a local's name — a `__retbuf` parameter the
 -/// parser renamed onto the local it delivers (`RetPromotion::Rename`)?  The one argument a
 -/// frame binds a value INTO, so a bind into it answers as a local's bind does (loft#2021).
@@ -334,3 +335,7 @@ index c89a605e..310810f2 100644
 -            }
 -        })
 -}
+-
+ // ── `LOFT_TRACE_BIND` — the strict comparison's binds layer (1b-compare.md) ──
+ 
+ std::thread_local! {
