@@ -1861,7 +1861,13 @@ impl Parser {
             );
             return want;
         }
-        if !self.narrow_store_checks(val, &want, tp) {
+        // The narrowing a declared local's store refuses is refused once: a refusal here
+        // leaves the value unconverted, as the assignment seam leaves it (the second report
+        // from `convert` failed the release corpus's one-error-per-expectation check).
+        let errors = self.lexer.diagnostics().error_count();
+        if !self.narrow_store_checks(val, &want, tp)
+            && self.lexer.diagnostics().error_count() == errors
+        {
             self.convert(val, tp, &want);
         }
         want
