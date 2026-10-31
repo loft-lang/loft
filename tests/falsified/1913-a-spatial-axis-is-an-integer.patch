@@ -1,9 +1,9 @@
 diff --git a/src/parser/definitions.rs b/src/parser/definitions.rs
-index c2583df94..9841c8169 100644
+index 8bc885e57..35a026ac5 100644
 --- a/src/parser/definitions.rs
 +++ b/src/parser/definitions.rs
-@@ -80,21 +80,6 @@ impl Parser {
-             }
+@@ -69,21 +69,6 @@ impl Parser {
+             );
              return;
          }
 -        // @FR-Col-Spatial — an axis is an integer-not-null coordinate.  A float or single axis
@@ -24,7 +24,7 @@ index c2583df94..9841c8169 100644
          if is_text == want_text {
              return;
          }
-@@ -5240,9 +5225,6 @@ impl Parser {
+@@ -5517,9 +5502,6 @@ impl Parser {
                              if f.len() == 1 {
                                  self.check_key_is_text(sub_nr, &f[0], true);
                                  Type::Trie(sub_nr, f[0].clone(), crate::data::Deps::none())
@@ -34,7 +34,7 @@ index c2583df94..9841c8169 100644
                              } else {
                                  diagnostic!(
                                      self.lexer,
-@@ -5432,18 +5414,6 @@ impl Parser {
+@@ -5709,18 +5691,6 @@ impl Parser {
              }
          }
          self.lexer.token("]");

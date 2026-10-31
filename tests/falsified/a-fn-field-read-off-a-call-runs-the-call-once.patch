@@ -1,8 +1,8 @@
 diff --git a/src/generation/dispatch.rs b/src/generation/dispatch.rs
-index b5aa45f91..06e49e80c 100644
+index cc02c80be..e9f1d368a 100644
 --- a/src/generation/dispatch.rs
 +++ b/src/generation/dispatch.rs
-@@ -1513,13 +1513,6 @@ impl Output<'_> {
+@@ -1526,13 +1526,6 @@ impl Output<'_> {
                  // narrow-int, text deref, typed-null, fn-ref) as the normal call
                  // path.  Re-deriving arg emission here is what dropped the
                  // boolean→u8 wrap and tripped rustc E0308 (issue #366).
@@ -16,7 +16,7 @@ index b5aa45f91..06e49e80c 100644
                  for (idx, arg) in args.iter().enumerate() {
                      write!(w, ", ")?;
                      // The callee this argument belongs to, for the questions `emit_call_arg`
-@@ -1528,8 +1521,6 @@ impl Output<'_> {
+@@ -1541,8 +1534,6 @@ impl Output<'_> {
                      self.current_call_def = fn_nr;
                      self.emit_call_arg(w, callee, idx, arg)?;
                  }
@@ -26,10 +26,10 @@ index b5aa45f91..06e49e80c 100644
                      write!(w, ", {extra}")?;
                  }
 diff --git a/src/parser/members.rs b/src/parser/members.rs
-index ecdd7a624..0c1339810 100644
+index 76f8c36d5..fff53c54a 100644
 --- a/src/parser/members.rs
 +++ b/src/parser/members.rs
-@@ -146,28 +146,12 @@ impl Parser {
+@@ -195,28 +195,12 @@ impl Parser {
              // (loft#1072). The read carries a byte offset, and on pass 1 that offset is
              // `u16::MAX` for every field of a struct whose layout does not exist yet.
              self.fn_ref_read_attr = Some((d_nr, f_nr));
@@ -59,7 +59,7 @@ index ecdd7a624..0c1339810 100644
                  self.read_fn_ref_split(&tp, u32::from(pos), code)
              } else {
                  // loft#1869 — a closure record's fn-ref capture reads its closure half from the
-@@ -187,10 +171,6 @@ impl Parser {
+@@ -236,10 +220,6 @@ impl Parser {
                  let read_dnr = self.cl("OpGetInt4", &[code, Value::Int(i32::from(pos))]);
                  crate::data::v_block(vec![read_dnr, read_clos], tp.clone(), "fn_ref_field_read")
              };
@@ -68,5 +68,5 @@ index ecdd7a624..0c1339810 100644
 -                None => read,
 -            };
          }
-         self.get_val(&tp, nullable, u32::from(pos), code, alias)
-     }
+         if self.data.field_is_out_of_line(d_nr, f_nr) {
+             // An absent child reads null, whatever the declaration says (`@FR-L-OutOfLine`).
