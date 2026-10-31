@@ -195,7 +195,7 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
       continue;
     }
     w = lower::main_vector_of(b, a.typedef);
-    if w >= 0 {
+    if w != null {
       ref_in(io, ints, at);
       crt::database(io, b.types[w]!.size, w);
       ref_out(io, ints, at);

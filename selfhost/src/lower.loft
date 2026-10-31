@@ -516,17 +516,17 @@ fn emit(l: Lowering, code: Code, kind: Kind, a: integer, b: integer) {
 
 // The natives the interpreter carries, by the index a `Native` op names: each runs as loft's
 // own function of that name (`run.loft`), so its behaviour is the stdlib's.
-fn native_index(name: text) -> integer {
+fn native_index(name: text) -> integer? {
   match name {
     "n_assert" => 0,
     "n_env_variable" => 1,
-    _ => -1,
+    _ => null,
   }
 }
 
-// The level of the loop `n` loops out from the innermost, or -1 when there is none.
-fn loop_level(l: Lowering, n: integer) -> integer {
-  len(l.loop_start) - 1 - n
+// The level of the loop `n` loops out from the innermost, or null when there is none.
+fn loop_level(l: Lowering, n: integer) -> integer? {
+  if n < len(l.loop_start) { len(l.loop_start) - 1 - n } else { null }
 }
 
 // A note of the set being lowered: the arm it took, or B2's facts (`note_bind`).
@@ -677,9 +677,12 @@ fn literal(l: Lowering, n: ir::Node) -> integer {
 // less than the 88-byte start room, one element at least)?  Any other count is reserved
 // exactly (`@FR-Col-Capacity`) and stays.
 fn first_claim_count(count: ir::Node, size: ir::Node) -> boolean {
-  c = match unspan(count) { NdInt { n } => n, _ => -1 };
-  sz = match unspan(size) { NdInt { n } => n, _ => -1 };
-  if c < 0 || sz < 0 {
+  c = match unspan(count) { NdInt { n } => n, _ => null };
+  if c == null {
+    return false;
+  }
+  sz = match unspan(size) { NdInt { n } => n, _ => null };
+  if sz == null {
     return false;
   }
   start = 88 / (if sz > 1 { sz } else { 1 });
@@ -719,9 +722,9 @@ fn mintable(l: Lowering, b: ir::Bundle, tp: integer) {
   }
 }
 
-// The field width a get or set operator names, as `crt::W_*` numbers it, or -1.  A float and a
-// single go through `crt::get_float` instead (`float_width`).
-fn width_of(name: text) -> integer {
+// The field width a get or set operator names, as `crt::W_*` numbers it, or null.  A float and
+// a single go through `crt::get_float` instead (`float_width`).
+fn width_of(name: text) -> integer? {
   match name {
     "OpGetInt4" => 0,
     "OpSetInt4" => 0,
@@ -741,7 +744,7 @@ fn width_of(name: text) -> integer {
     "OpSetBoolean" => 6,
     "OpGetEnum" => 7,
     "OpSetEnum" => 7,
-    _ => -1,
+    _ => null,
   }
 }
 
@@ -750,19 +753,19 @@ fn width_has_min(w: integer) -> boolean {
   w >= 1 && w <= 4
 }
 
-// 0 for `OpGetFloat`/`OpSetFloat`, 1 for the single pair, -1 for any other operator.
-fn float_width(name: text) -> integer {
+// 0 for `OpGetFloat`/`OpSetFloat`, 1 for the single pair, null for any other operator.
+fn float_width(name: text) -> integer? {
   if name == "OpGetFloat" || name == "OpSetFloat" {
     0
   } else if name == "OpGetSingle" || name == "OpSetSingle" {
     1
   } else {
-    -1
+    null
   }
 }
 
-// The scalar pushes, as `crt::P_*` numbers them, or -1.
-fn push_of(name: text) -> integer {
+// The scalar pushes, as `crt::P_*` numbers them, or null.
+fn push_of(name: text) -> integer? {
   match name {
     "OpPushInt" => 0,
     "OpPushInt4" => 1,
@@ -770,31 +773,31 @@ fn push_of(name: text) -> integer {
     "OpPushByte" => 3,
     "OpPushEnum" => 4,
     "OpPushBoolean" => 5,
-    _ => -1,
+    _ => null,
   }
 }
 
-// The element type of `tp` when it is a hash, else -1.
-fn hash_element(b: ir::Bundle, tp: integer) -> integer {
+// The element type of `tp` when it is a hash, else null.
+fn hash_element(b: ir::Bundle, tp: integer) -> integer? {
   t = b.types[tp];
   if t == null {
-    return -1;
+    return null;
   }
   match t.parts[0]! {
     PtHash { content, fields: _ } => content,
-    _ => -1,
+    _ => null,
   }
 }
 
-// The element type of `tp` when it is a plain vector, else -1.
-fn vector_element(b: ir::Bundle, tp: integer) -> integer {
+// The element type of `tp` when it is a plain vector, else null.
+fn vector_element(b: ir::Bundle, tp: integer) -> integer? {
   t = b.types[tp];
   if t == null {
-    return -1;
+    return null;
   }
   match t.parts[0]! {
     PtVector { content } => content,
-    _ => -1,
+    _ => null,
   }
 }
 
@@ -803,6 +806,10 @@ fn vector_element(b: ir::Bundle, tp: integer) -> integer {
 // unchanged; an operator that writes a VARIABLE (`OpDatabase`, `OpFreeRef` of one,
 // `OpFreeRefIfDistinct`) names its slot, because the runtime routine changes the variable.
 fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) -> boolean {
+  // The three operator families numbered by name, each null for an operator outside it.
+  w = width_of(name);
+  single = float_width(name);
+  which = push_of(name);
   if name == "OpDatabase" {
     slot = ref_var_slot(l, args[0]!);
     tp = literal(l, args[1]!);
@@ -870,10 +877,9 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
       value(l, b, args[2]!, KText);
       emit(l, if name == "OpSetText" { SetText } else { RefillText }, KText, fld, 0);
     }
-  } else if width_of(name) >= 0 {
+  } else if w != null {
     // A field of another width: the record, the field, a narrow integer's minimum, and for a
     // write the value; the width is the operator's.
-    w = width_of(name);
     value(l, b, args[0]!, KRef);
     fld = literal(l, args[1]!);
     next = 2;
@@ -887,8 +893,7 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     } else {
       emit(l, GetW, KInt, fld, w);
     }
-  } else if float_width(name) >= 0 {
-    single = float_width(name);
+  } else if single != null {
     value(l, b, args[0]!, KRef);
     fld = literal(l, args[1]!);
     if name.starts_with("OpSet") {
@@ -922,9 +927,8 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
   } else if name == "OpPreAllocVector" {
     value(l, b, args[0]!, KRef);
     emit(l, VecPrealloc, KRef, literal(l, args[1]!), literal(l, args[2]!));
-  } else if push_of(name) >= 0 {
+  } else if which != null {
     // A push of a scalar: the vector, a byte's minimum, the value.
-    which = push_of(name);
     value(l, b, args[0]!, KRef);
     if which == 3 {
       value(l, b, args[1]!, KInt);
@@ -945,7 +949,7 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     ptp = literal(l, args[last - 1]!);
     fld = literal(l, args[last]!);
     vtp = ptp;
-    at = -1;
+    at: integer? = null;
     if fld != 65535 {
       match b.types[ptp]!.parts[0]! {
         PtStruct { fields } => {
@@ -960,15 +964,15 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     }
     elem = vector_element(b, vtp);
     helem = hash_element(b, vtp);
-    if (fld != 65535 && at < 0) || (elem < 0 && helem < 0) {
+    if (fld != 65535 && at == null) || (elem == null && helem == null) {
       refuse(l, "a record added to a collection that is not a plain vector or a hash: {b.types[vtp]!.name}");
       return true;
     }
     value(l, b, args[0]!, KRef);
-    if at >= 0 {
+    if at != null {
       emit(l, FieldRef, KRef, at, 0);
     }
-    if helem >= 0 {
+    if helem != null {
       // `keyed_new` / `keyed_finish` (`src/c/body/keyed.rs`): an entry of the hash's table,
       // filled with the element's default image, then filed under its key.
       et = b.types[helem]!;
@@ -980,8 +984,9 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
       }
       return true;
     }
+    // Not a hash, so the refusal above leaves a plain vector's element.
     if name == "OpNewRecord" {
-      emit(l, VecNew, KRef, elem, b.types[elem]!.size);
+      emit(l, VecNew, KRef, elem!, b.types[elem!]!.size);
     } else {
       value(l, b, args[1]!, KRef);
       emit(l, VecFinish, KRef, 0, 0);
@@ -990,7 +995,7 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     // `OpGetRecord(data, tp, n, value…)` on a hash: the collection, then each key part as its
     // key's type converts it (`key_value`, `src/c/body/keyed.rs`), then the find.
     tp = literal(l, args[1]!);
-    if hash_element(b, tp) < 0 {
+    if hash_element(b, tp) == null {
       refuse(l, "a lookup in a keyed collection that is not a hash: {b.types[tp]!.name}");
       return true;
     }
@@ -1136,27 +1141,6 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
   true
 }
 
-// The record definition a reference or struct-enum type names (`Type::heap_def_nr`), through a
-// nullability marker; -1 for another type.
-fn record_of(ts: vector<ir::TypeT>) -> integer {
-  t = ts[0];
-  if t == null {
-    return -1;
-  }
-  match t {
-    TyReference { n, dep: _ } => n,
-    TyEnum { n, is_ref, dep: _ } => if is_ref { n } else { -1 },
-    TyOptional { inner } => {
-      match inner {
-        TyReference { n, dep: _ } => n,
-        TyEnum { n, is_ref, dep: _ } => if is_ref { n } else { -1 },
-        _ => -1,
-      }
-    }
-    _ => -1,
-  }
-}
-
 // `Data::copies_as`: a record copies into a variable of its own definition, and a variant and
 // its enum into each other.
 fn copies_as(b: ir::Bundle, dst: integer, src: integer) -> boolean {
@@ -1195,43 +1179,37 @@ fn is_vector(ts: vector<ir::TypeT>) -> boolean {
   }
 }
 
-// The known type of a vector's element type, or -1: a record or plain enum by its definition, a
-// base type by its number (`integer` 0, `long` 1, `single` 2, `float` 3, `boolean` 4, `text` 5,
-// `character` 6).  A narrow integer has a type of its own and is not resolved here.
-fn element_type(b: ir::Bundle, t: ir::TypeT) -> integer {
+// The known type of a vector's element type, or null: a record or plain enum by its definition,
+// a base type by its number (`integer` 0, `long` 1, `single` 2, `float` 3, `boolean` 4, `text`
+// 5, `character` 6).  A narrow integer has a type of its own and is not resolved here.
+fn element_type(b: ir::Bundle, t: ir::TypeT) -> integer? {
   match t {
     TyReference { n, dep: _ } => b.data.definitions[n]!.known_type,
     TyEnum { n, is_ref: _, dep: _ } => b.data.definitions[n]!.known_type,
-    TyInteger { spec } => if spec.min == -2147483647 && spec.max == 2147483647 && spec.forced_size == 0 { 0 } else { -1 },
+    TyInteger { spec } => if spec.min == -2147483647 && spec.max == 2147483647 && spec.forced_size == 0 { 0 } else { null },
     TySingle => 2,
     TyFloat => 3,
     TyBoolean => 4,
     TyText { dep: _ } => 5,
     TyCharacter => 6,
-    _ => -1,
+    _ => null,
   }
 }
 
 // The `main_vector<T>` wrapper of vector type `ts` (`Data::owned_vector_type`): the struct whose
-// one field is the plain vector of `T`.  Found by that shape in the image's schema; -1 when
+// one field is the plain vector of `T`.  Found by that shape in the image's schema; null when
 // there is none.
-pub fn main_vector_of(b: ir::Bundle, ts: vector<ir::TypeT>) -> integer {
+pub fn main_vector_of(b: ir::Bundle, ts: vector<ir::TypeT>) -> integer? {
   t = ts[0];
   if t == null {
-    return -1;
+    return null;
   }
-  elem = match t {
+  elem = match binds::base(t) {
     TyVector { inner: i, dep: _ } => element_type(b, i),
-    TyOptional { inner: o } => {
-      match o {
-        TyVector { inner: i, dep: _ } => element_type(b, i),
-        _ => -1,
-      }
-    }
-    _ => -1,
+    _ => null,
   };
-  if elem < 0 {
-    return -1;
+  if elem == null {
+    return null;
   }
   for w in b.types {
     if !w.name.starts_with("main_vector<") {
@@ -1246,35 +1224,25 @@ pub fn main_vector_of(b: ir::Bundle, ts: vector<ir::TypeT>) -> integer {
       _ => {}
     }
   }
-  -1
+  null
 }
 
 // The schema type of a hash variable's collection, by the name `Stores::hash` gives it:
-// `hash<{content}[{key},…]>`, through a nullability marker; -1 for another type, or a hash the
+// `hash<{content}[{key},…]>`, through a nullability marker; null for another type, or a hash the
 // image has no type for.
-pub fn hash_type_of(b: ir::Bundle, ts: vector<ir::TypeT>) -> integer {
+pub fn hash_type_of(b: ir::Bundle, ts: vector<ir::TypeT>) -> integer? {
   t = ts[0];
   if t == null {
-    return -1;
+    return null;
   }
-  def = -1;
-  names: vector<ir::NameRef> = [];
-  match t {
-    TyHash { n, names: ns, dep: _ } => {
-      def = n;
-      names = ns;
-    }
-    TyOptional { inner } => {
-      match inner {
-        TyHash { n, names: ns, dep: _ } => {
-          def = n;
-          names = ns;
-        }
-        _ => { return -1; }
-      }
-    }
-    _ => { return -1; }
+  match binds::base(t) {
+    TyHash { n, names, dep: _ } => hash_type_named(b, n, names),
+    _ => null,
   }
+}
+
+// The schema type `Stores::hash` names for the hash of definition `def` keyed on `names`.
+fn hash_type_named(b: ir::Bundle, def: integer, names: vector<ir::NameRef>) -> integer? {
   content = b.data.definitions[def]!.known_type;
   want = "hash<{b.types[content]!.name}[";
   for k in names {
@@ -1286,7 +1254,7 @@ pub fn hash_type_of(b: ir::Bundle, ts: vector<ir::TypeT>) -> integer {
       return w#index;
     }
   }
-  -1
+  null
 }
 
 // Is `ts` a hash type, through a nullability marker?
@@ -1491,13 +1459,13 @@ fn set_again(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
     l.owned_reassigned[var] = true;
   }
   // R1 — a join: bound or copied by the store it comes back in (`join_own_enabled`, on).
-  d = match t { TyReference { n, dep: _ } => n, _ => -1 };
+  d = match t { TyReference { n, dep: _ } => n, _ => null };
   jb = own::named_join_base(own);
-  if owned_ref && !s1 && !stash && !(u is NdVar) && !v.view_elided && jb != null && d >= 0 {
+  if owned_ref && !s1 && !stash && !(u is NdVar) && !v.view_elided && jb != null && d != null {
     note(l, "R1");
     value(l, b, x, KRef);
     emit(l, Load, KRef, slot_of(l, jb!), 0);
-    emit(l, BindOrCopy, KRef, slot, copy_operand(b, known_type(b, d)));
+    emit(l, BindOrCopy, KRef, slot, copy_operand(b, known_type(b, d!)));
     return;
   }
   if (owned_ref || witnessed) && !s1 {
@@ -1506,17 +1474,17 @@ fn set_again(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
       refuse(l, "a record bound from a call through a function value");
       return;
     }
-    hd = match binds::base(t) { TyReference { n, dep: _ } => n, TyEnum { n, is_ref, dep: _ } => if is_ref { n } else { -1 }, _ => -1 };
+    hd = own::heap_def_nr(t);
     callee = binds::callee_of(b, l.defs, x);
     cd = binds::def(b, callee ?? l.def_nr);
-    if hd >= 0 && (!v.argument || (binds::is_promoted_return_buffer(b, l.def_nr, f, var) && !reads_v))
+    if hd != null && (!v.argument || (binds::is_promoted_return_buffer(b, l.def_nr, f, var) && !reads_v))
         && ((u is NdCall) || (u is NdCallRef)) && callee != null && binds::is_loft_defined(cd)
         && !binds::return_adopts_fresh_store(cd)
         && !(reads_v && own::returns_borrowed_view(cd) && !(rhs_base == 65535 && stash))
         && !v.view_elided
         && !(v.deferred_first_bind && binds::adopts_minted_at_bind(b, l.own_ops, f, var, x)) {
       // R2b — the call copy (`codegen.rs:2953–3036`).
-      tp = known_type(b, hd);
+      tp = known_type(b, hd!);
       alloc_after = stash || (witnessed && reads_v);
       if !alloc_after {
         init_ref(l, slot);
@@ -1554,15 +1522,15 @@ fn set_again(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
       }
       return;
     }
-    src = match u { NdVar { n } => n, _ => -1 };
+    src = match u { NdVar { n } => n, _ => null };
     hh = own::heap_def_nr(t);
-    if hh != null && src >= 0 && src != var {
-      sd = own::record_copy_source(b, f, var, src);
+    if hh != null && src != null && src != var {
+      sd = own::record_copy_source(b, f, var, src!);
       if sd != null && own::copies_as(b, hh!, sd!) {
         // R2c — a whole record variable copied in.
         init_ref(l, slot);
-        emit(l, Load, KRef, slot_of(l, src), 0);
-        emit(l, Load, KRef, slot_of(l, src), 0);
+        emit(l, Load, KRef, slot_of(l, src!), 0);
+        emit(l, Load, KRef, slot_of(l, src!), 0);
         note(l, "R2c");
         emit(l, BindOrCopy, KRef, slot, copy_operand(b, known_type(b, hh!)));
         if stash {
@@ -1642,19 +1610,19 @@ fn set_first(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
     init_ref(l, slot);
     return;
   }
-  d = match t { TyReference { n, dep: _ } => n, _ => -1 };
-  if d >= 0 && is_call_of(b, u, "OpCopyRecord") {
+  d = match t { TyReference { n, dep: _ } => n, _ => null };
+  if d != null && is_call_of(b, u, "OpCopyRecord") {
     note(l, "F2");
-    first_copy(l, b, var, d, u);
+    first_copy(l, b, var, d!, u);
     return;
   }
   hd = own::heap_def_nr(t);
-  src = match x { NdVar { n } => n, _ => -1 };
-  if hd != null && src >= 0 {
-    sd = own::record_copy_source(b, f, var, src);
+  src = match x { NdVar { n } => n, _ => null };
+  if hd != null && src != null {
+    sd = own::record_copy_source(b, f, var, src!);
     if sd != null && own::copies_as(b, hd!, sd!) {
       note(l, "F3");
-      var_copy(l, b, var, src, hd!);
+      var_copy(l, b, var, src!, hd!);
       return;
     }
   }
@@ -1663,10 +1631,10 @@ fn set_first(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
     elem_copy(l, b, var, x, hd!);
     return;
   }
-  if d >= 0 && (x is NdTupleGet) && binds::has_no_deps(t) && binds::owner_witness(f, var) == null {
+  if d != null && (x is NdTupleGet) && binds::has_no_deps(t) && binds::owner_witness(f, var) == null {
     // F5 (`gen_set_first_ref_tuple_copy`): a tuple member copied into a record of its own.
     note(l, "F5");
-    kt = known_type(b, d);
+    kt = known_type(b, d!);
     init_ref(l, slot);
     emit(l, Database, KRef, slot, kt);
     value(l, b, x, KRef);
@@ -1680,23 +1648,23 @@ fn set_first(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
     return;
   }
   shape = binds::first_bind_shape(t);
-  sd2 = match shape { TyReference { n, dep: _ } => n, TyEnum { n, is_ref, dep: _ } => if is_ref { n } else { -1 }, _ => -1 };
+  sd2 = own::heap_def_nr_bare(shape);
   callee = binds::callee_of(b, l.defs, x);
-  if sd2 >= 0 && callee != null && binds::is_loft_defined(binds::def(b, callee!)) {
+  if sd2 != null && callee != null && binds::is_loft_defined(binds::def(b, callee!)) {
     jb = own::named_join_base(own::ownership_of(b, l.own_ops, l.def_nr, x));
     if (shape is TyReference) && !v.view_elided && jb != null {
       note(l, "F9a");
       value(l, b, x, KRef);
       emit(l, Load, KRef, slot_of(l, jb!), 0);
       init_ref_under(l, slot);
-      emit(l, BindOrCopy, KRef, slot, copy_operand(b, known_type(b, sd2)));
+      emit(l, BindOrCopy, KRef, slot, copy_operand(b, known_type(b, sd2!)));
     } else if binds::return_adopts_fresh_store(binds::def(b, callee!)) || v.view_elided || binds::adopts_minted_at_bind(b, l.own_ops, f, var, x) {
       note(l, "F9b");
       value(l, b, x, KRef);
       emit(l, Store, KRef, slot, 0);
     } else {
       note(l, "F9c");
-      call_copy(l, b, var, x, sd2);
+      call_copy(l, b, var, x, sd2!);
     }
     return;
   }
@@ -1725,7 +1693,7 @@ fn set_first(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
     plain_set(l, b, var, x);
     return;
   }
-  if (t is TyRefVar) && src >= 0 && (binds::tp(f, src) is TyRefVar) {
+  if (t is TyRefVar) && src != null && (binds::tp(f, src!) is TyRefVar) {
     note(l, "first-refvar");
     plain_set(l, b, var, x);
     return;
@@ -1945,7 +1913,7 @@ fn vector_null(l: Lowering, b: ir::Bundle, var: integer) {
 // `OpGetField(…, 0)` names it, `(H-ClearRelease)`), and that field zeroed.
 fn owned_vector(l: Lowering, b: ir::Bundle, var: integer) {
   w = main_vector_of(b, fvar(b, l.def_nr, var).type_def);
-  if w < 0 {
+  if w == null {
     refuse(l, "an owned vector whose wrapper type the image does not name: {fvar(b, l.def_nr, var).name}");
     return;
   }
@@ -1953,7 +1921,7 @@ fn owned_vector(l: Lowering, b: ir::Bundle, var: integer) {
   emit(l, Database, KRef, slot, w);
   emit(l, Load, KRef, slot, 0);
   emit(l, PushInt, KInt, 0, 0);
-  emit(l, SetW, KInt, 0, width_of("OpSetInt4"));
+  emit(l, SetW, KInt, 0, width_of("OpSetInt4")!);
 }
 
 // `gen_keyed_null` (`codegen.rs:2264`): a keyed local bound to null is minted AS its
@@ -1969,7 +1937,7 @@ fn keyed_null(l: Lowering, b: ir::Bundle, var: integer, first: boolean) {
     return;
   }
   ht = hash_type_of(b, v.type_def);
-  if ht < 0 {
+  if ht == null {
     refuse(l, "a keyed collection whose type the image does not name: {v.name}");
     return;
   }
@@ -2109,7 +2077,7 @@ fn call(l: Lowering, b: ir::Bundle, def_nr: integer, args: vector<ir::Node>) {
     }
   } else if d.native != "" || !has_body(d) {
     idx = native_index(d.name);
-    if idx >= 0 {
+    if idx != null {
       emit(l, Native, kind_of_types(d.returned), idx, len(args));
     } else {
       refuse(l, "a native the interpreter does not carry: {d.name}");
@@ -2180,7 +2148,7 @@ fn block_statement(l: Lowering, b: ir::Bundle, blk: ir::Block) {
 // it would leave values on the stack, which only a loop inside an operand could do.
 fn leave_loop(l: Lowering, n: integer, is_break: boolean) {
   level = loop_level(l, n);
-  if level < 0 {
+  if level == null {
     refuse(l, "a break or continue outside a loop");
     return;
   }
@@ -2632,12 +2600,12 @@ pub fn lower(b: ir::Bundle, def_nr: integer) -> Lowering {
   l
 }
 
-// The definition number of the function the compiler named `name`, or -1.
-pub fn find(b: ir::Bundle, name: text) -> integer {
+// The definition number of the function the compiler named `name`, or null.
+pub fn find(b: ir::Bundle, name: text) -> integer? {
   for d in b.data.definitions {
     if d.name == name {
       return d#index;
     }
   }
-  -1
+  null
 }
