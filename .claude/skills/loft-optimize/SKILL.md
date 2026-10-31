@@ -187,12 +187,9 @@ the copy — it was no faster for this workload, so no rewrite was built for it.
 
 ## Where the tools are in this repository
 
-The same loop with the repository's commands, benchmarks and rules is written down in
-`doc/claude/PERFORMANCE.md` § How to optimise — the checklist. Useful starting points:
-`make perf-check [ARGS="--only N"]` (the targeted A/B against this machine's committed row; a
-slowdown exits 1), `make perf-trend` (how a routine moved over the committed history),
-`make interp-gap` (interpreter against compiled, per routine), `make perf-portal` (compiled
-against Rust), `python3 bench/stats.py` (statistically sound timings), `loft --interpret --dump`
-and `loft --native-emit` (what a program compiles to), `bench/portal/hand_price.sh` (time a
-hand-edited generated Rust file), and `make rewrite-census` (which rewrites still fire where
-they did).
+The loop with this repository's commands, benchmarks and rules is
+[`doc/claude/PERFORMANCE.md` § How to optimise](../../../doc/claude/PERFORMANCE.md#how-to-optimise--the-checklist);
+the bench and perf `make` targets are in `CLAUDE.md`'s key commands. Beyond those:
+`make gap-report ARGS="--bench N --fn F"` (where one routine's distance to its Rust twin lives),
+`bench/portal/hand_price.sh` (time a hand-edited generated Rust file), and
+`loft --interpret --dump` / `loft --native-emit` (what a program compiles to).
