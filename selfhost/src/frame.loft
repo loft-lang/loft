@@ -43,7 +43,7 @@ pub fn width(t: ir::TypeT, argument: boolean) -> integer {
 fn tuple_width(elems: vector<ir::TypeT>, owned: boolean) -> integer {
   total = 0;
   for e in elems {
-    total += step(member_width(e, owned));
+    total += stepped(member_width(e, owned));
   }
   total
 }
@@ -60,7 +60,7 @@ fn member_width(t: ir::TypeT, owned: boolean) -> integer {
 }
 
 // `call_frames::aligned_stack_step`: the next multiple of 8.
-fn step(size: integer) -> integer {
+pub fn stepped(size: integer) -> integer {
   (size + 7) / 8 * 8
 }
 
@@ -82,7 +82,7 @@ pub fn position(f: ir::Function, nr: integer) -> integer? {
       break;
     }
     if a.argument {
-      at += step(width(a.type_def[0]!, true));
+      at += stepped(width(a.type_def[0]!, true));
     }
   }
   at

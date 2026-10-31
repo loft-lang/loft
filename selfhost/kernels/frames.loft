@@ -1,0 +1,18 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 F-1: the frames in the stack store.  A recursion 3000 deep — not a tail call, which the
+// compiler would turn into a loop — with an integer, a boolean and a float local in every frame,
+// so the stack store grows several times past its first size and every width is written and
+// read back.  Per level 12 when `n` is a multiple of 7, else 3: 428 * 12 + 2572 * 3 = 12852.
+fn depth(n: integer) -> integer {
+  if n == 0 { return 0; }
+  b = n % 7 == 0;
+  c = if b { 2.5 } else { 1.0 };
+  ch = if b { 7 } else { 1 };
+  depth(n - 1) + (c * 2.0) as integer + ch
+}
+
+fn main() {
+  println("{depth(3000)}");
+}

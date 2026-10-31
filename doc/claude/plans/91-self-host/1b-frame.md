@@ -6,7 +6,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 # @PLN91 strand 1b — the frame: the Rust interpreter's memory structures
 
 A child document of [1b-interpreter.md](1b-interpreter.md).  Status: **PF1 built (the layout
-guard, `selfhost/tests/frame.loft`); F-1 not built.**
+guard, `selfhost/tests/frame.loft`); F-1a built — every integer, float and reference variable
+in the stack store at its Rust byte; F-1b (the texts) not built.**
 
 ## The rule
 
@@ -119,7 +120,24 @@ never a gate (the order of the goals, 1b-interpreter.md).
 ## Steps
 
 - **F-1** — the frames in the stack store: locals at `stack_pos`, `&` of a local a reference
-  into it.
+  into it.  Built in two parts:
+  - **F-1a (built)**: the integer, float and reference variables.  `crt::stack_new` mints the
+    stack store (pinned, its record spanning the store), `stack_grow` is `State::grow_stack`,
+    and a reference slot is twelve raw bytes (`slot_ref` / `set_slot_ref`: no record marked,
+    no tombstone read through, as the Rust frame holds one).  A narrow local is read and
+    written at its width (`var_access`).  A call moves its arguments off the evaluation
+    stacks into their bytes of the callee's frame, last first; the locals still start null,
+    which the Rust does not do (PF2 removes it).  It found one defect the per-kind frame hid:
+    the lowering's `mark` left `stack_allocated` / `skip_free` set on the image, so lowering a
+    function again — the next run's — read the last walk's marks and took a first bind for a
+    rebind, freeing a reused slot's other value; `lower` now puts the image's flags back.
+    Guarded by `kernels/frames.loft` (a recursion 3000 deep that grows the store).  The S1
+    kernels, loft interpreter through C (`--native-c --ship`), best of three, before → after:
+    fib 2.24 s → 2.38 s, mix 4.83 s → 4.58 s, collatz 16.06 s → 15.32 s — within noise of each
+    other; the per-access cost measured above does not show at the kernels' share of local
+    accesses.
+  - **F-1b**: the texts — a `loft_text` at a local's slot, a `loft_str` view at an argument's,
+    `&text` a reference into the stack store, `OpFreeText` a release.
 - **F-2** — the temporaries in the same store: the lowering emits the bytecode writer's
   operators at its stack positions, so its output is the Rust bytecode.
 

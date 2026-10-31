@@ -24,7 +24,7 @@ fn render(ops: vector<lower::Op>) -> text {
 fn test_fib_lowers_to_a_flat_stack_program() {
   b = kernel("fib");
   fib = lower::find(b, "n_fib");
-  assert(fib >= 0, "the image has fib");
+  assert(fib != null, "the image has fib");
   l = lower::lower(b, fib);
   assert(l.refused == "", "refused: {l.refused}");
   expected = `

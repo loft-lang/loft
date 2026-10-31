@@ -55,7 +55,7 @@ fn compare_slots(kernel: text) -> integer {
 
 fn test_the_frame_is_the_rust_interpreters() {
   total = 0;
-  for k in ["fib", "collatz", "mix", "records", "enums", "hashes", "vectors", "structs", "format", "small_ops", "stdlib", "shown", "pending"] {
+  for k in ["fib", "collatz", "mix", "records", "enums", "hashes", "vectors", "structs", "format", "small_ops", "stdlib", "shown", "pending", "frames"] {
     total += compare_slots(k);
   }
   assert(total >= 40, "the kernels' slot rows were compared: {total}");

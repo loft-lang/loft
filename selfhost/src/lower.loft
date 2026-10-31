@@ -19,6 +19,7 @@ use types;
 use show;
 use own;
 use binds;
+use frame;
 
 // What kind of value a node, a variable or a result is, and so which stack holds it.
 enum Kind {
@@ -138,8 +139,12 @@ struct Op {
 }
 
 // A function's ops, or the first construct it holds that the interpreter does not carry.  The
-// frame has a part per kind: `slots_*` slots, the first `params_*` of them the caller's
-// arguments; each variable's kind and its slot in that part are `var_kind` and `var_slot`.
+// frame is the Rust interpreter's (@PLN91 F-1, `frame.loft`): an integer, float or reference
+// variable at its byte in the stack store (`var_slot`), read and written at its width
+// (`var_access`: 0 an eight-byte integer or a float, 1 + the runtime's width for a narrow one,
+// 1 a single), in a frame of `frame_bytes`; the arguments are `arg_vars`, in order.  A text
+// keeps a part of its own until F-1 moves it: `slots_text` slots, the first `params_text` of
+// them the caller's arguments.
 // Float and text constants are kept in `floats` and `texts`, named by index.  While lowering,
 // `depth` is how many values the ops so far leave on the stacks, and the open loops are a
 // stack: each one's first op and the depth at its start, and every `break` still to be pointed
@@ -150,14 +155,16 @@ struct Lowering {
   refused_in: text,
   var_type: vector<text>,
   result: Kind,
-  slots_int: integer,
-  slots_float: integer,
   slots_text: integer,
   params_int: integer,
   params_float: integer,
   params_text: integer,
   var_kind: vector<Kind>,
   var_slot: vector<integer>,
+  var_access: vector<integer>,
+  frame_bytes: integer,
+  arg_vars: vector<integer>,
+  local_vars: vector<integer>,
   floats: vector<float>,
   texts: vector<text>,
   depth: integer,
@@ -190,14 +197,16 @@ pub fn empty() -> Lowering {
     refused_in: "",
     var_type: [],
     result: KNone,
-    slots_int: 0,
-    slots_float: 0,
     slots_text: 0,
     params_int: 0,
     params_float: 0,
     params_text: 0,
     var_kind: [],
     var_slot: [],
+    var_access: [],
+    frame_bytes: 0,
+    arg_vars: [],
+    local_vars: [],
     floats: [],
     texts: [],
     depth: 0,
@@ -278,7 +287,7 @@ fn kind_of(l: Lowering, b: ir::Bundle, n: ir::Node) -> Kind {
 // The stack a kind's values are on: a single is carried as a float, and rounded by its ops; a
 // `&text` is the absolute index of the text it refers to, an integer.  A reference keeps its
 // kind: it is three integers on the integer stack, and every op that moves one moves three.
-fn stack_of(k: Kind) -> Kind {
+pub fn stack_of(k: Kind) -> Kind {
   if k == KSingle { KFloat } else if k == KTextRef { KInt } else { k }
 }
 
@@ -561,15 +570,38 @@ fn var_kind(l: Lowering, var: integer) -> Kind {
   l.var_kind[var] ?? KOther
 }
 
-// Variable `var`'s slot in its kind's part of the frame, or refused when its kind is not
-// carried yet.
+// Variable `var`'s slot — its byte in the frame, or a text's slot in its own part — or refused
+// when its kind is not carried yet or the compiler gave it no slot.
 fn slot_of(l: Lowering, var: integer) -> integer {
   k = l.var_kind[var] ?? KOther;
   if k == KOther || k == KNone {
     refuse(l, "a variable of a kind the interpreter does not carry yet: {l.var_type[var] ?? "?"}");
     return 0;
   }
-  l.var_slot[var] ?? 0
+  slot = l.var_slot[var] ?? -1;
+  if slot < 0 {
+    refuse(l, "a variable the compiler gave no slot: {l.var_type[var] ?? "?"}");
+    return 0;
+  }
+  slot
+}
+
+// How variable `var`'s slot is read and written (`var_access`).
+fn access_of(l: Lowering, var: integer) -> integer {
+  l.var_access[var] ?? 0
+}
+
+// `var_access` of a variable of type `t`: 0 an eight-byte integer or a float; a boolean, a
+// character and a plain enum 1 + the runtime's width (`crt::W_*`); a single 1.
+fn access_for(t: ir::TypeT) -> integer {
+  match t {
+    TyOptional { inner } => access_for(inner),
+    TyBoolean => 1 + crt::W_BOOLEAN,
+    TyCharacter => 1 + crt::W_CHARACTER,
+    TyEnum { n: _, is_ref, dep: _ } => if is_ref { 0 } else { 1 + crt::W_ENUM },
+    TySingle => 1,
+    _ => 0,
+  }
 }
 
 // `n`, an expression whose value goes where a `k` is expected: a bare null takes that kind,
@@ -617,7 +649,7 @@ fn expr(l: Lowering, b: ir::Bundle, n: ir::Node) {
       slot = slot_of(l, var);
       k = var_kind(l, var);
       // A `&text` reads the text it refers to (`Load` of kind `KTextRef`).
-      emit(l, Load, if k == KTextRef { KTextRef } else { stack_of(k) }, slot, 0);
+      emit(l, Load, if k == KTextRef { KTextRef } else { stack_of(k) }, slot, access_of(l, var));
     }
     NdSpan { inner } => expr(l, b, inner),
     NdBlock { block } => block_value(l, b, block[0]?),
@@ -1961,7 +1993,7 @@ fn plain_set(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
   }
   // A `&text` is written through (`Store` of kind `KTextRef`): its value is a text.
   value(l, b, x, if k == KTextRef { KText } else { k });
-  emit(l, Store, if k == KTextRef { KTextRef } else { stack_of(k) }, slot, 0);
+  emit(l, Store, if k == KTextRef { KTextRef } else { stack_of(k) }, slot, access_of(l, var));
 }
 
 
@@ -2426,12 +2458,8 @@ fn rotated_loop(l: Lowering, b: ir::Bundle, ops: vector<ir::Node>, r: Rotation) 
   if st != null {
     pos = fvar(b, l.def_nr, st.lv).stack_pos;
     if pos != 65535 && pos == fvar(b, l.def_nr, st.ix).stack_pos {
-      // The loop variable IS its index's slot: no set (`set_stack_allocated`); the loft frame
-      // keeps the two apart until F-1, so the value is copied here.
+      // The loop variable IS its index's slot: no set (`set_stack_allocated`).
       mark(b, l.def_nr, st.lv, true);
-      k = var_kind(l, st.ix);
-      emit(l, Load, stack_of(k), slot_of(l, st.ix), 0);
-      emit(l, Store, stack_of(k), slot_of(l, st.lv), 0);
     } else {
       statement(l, b, NdSet { var: st.lv, inner: NdVar { n: st.ix } });
     }
@@ -2552,37 +2580,77 @@ fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
   }
 }
 
-// The ops of definition `def_nr`'s body.
+// The ops of definition `def_nr`'s body.  The walk marks variables as the bytecode writer does
+// (`mark`: `set_stack_allocated`, `set_skip_free`), for every reader in this walk; the image's
+// own flags are put back after it, so a later lowering of the same function — the next run's —
+// walks from where this one did.
 pub fn lower(b: ir::Bundle, def_nr: integer) -> Lowering {
   d = b.data.definitions[def_nr]?;
+  was_allocated: vector<boolean> = [];
+  was_skipped: vector<boolean> = [];
+  for v in d.variables.variables {
+    was_allocated += [v.stack_allocated];
+    was_skipped += [v.skip_free];
+  }
+  l = lower_walk(b, def_nr, d);
+  for v in b.data.definitions[def_nr]!.variables.variables {
+    v.stack_allocated = was_allocated[v#index] ?? false;
+    v.skip_free = was_skipped[v#index] ?? false;
+  }
+  l
+}
+
+fn lower_walk(b: ir::Bundle, def_nr: integer, d: ir::Definition) -> Lowering {
   l = empty();
   l.def_nr = def_nr;
   l.own_ops = own::ops_of(b);
   l.defs = own::function_defs(b, def_nr, l.own_ops);
   l.result = kind_of_types(d.returned);
-  // Each variable gets the next slot of its kind.  The parameters take theirs FIRST, in order,
-  // so they fill the slots the caller's arguments land in — a hidden one too (a text result's
-  // return buffer), which the scope pass creates after the locals, at a higher number.
-  for v in d.variables.variables {
+  // An integer, float or reference variable lives at its byte of the Rust interpreter's frame
+  // (`frame::position`); the frame is as large as its furthest variable reaches.  A text takes
+  // the next slot of its own part, the parameters theirs FIRST, in order, so they fill the
+  // slots the caller's arguments land in — a hidden one too (a text result's return buffer),
+  // which the scope pass creates after the locals, at a higher number.
+  f = d.variables;
+  for v in f.variables {
     l.var_kind += [kind_of_types(v.type_def)];
-    l.var_slot += [0];
+    l.var_slot += [-1];
+    l.var_access += [access_for(v.type_def[0] ?? ir::TypeT.TyVoid)];
     l.owned_reassigned += [false];
     shown = "{v.type_def[0] ?? ir::TypeT.TyVoid}";
     l.var_type += [shown.split(' ')[0] ?? shown];
+    if v.argument {
+      l.arg_vars += [v#index];
+    }
+    k = stack_of(kind_of_types(v.type_def));
+    if k == KInt || k == KRef || k == KFloat {
+      at = frame::position(f, v#index);
+      if at != null {
+        l.var_slot[v#index] = at;
+        if !v.argument {
+          l.local_vars += [v#index];
+        }
+        reach = at + frame::width(v.type_def[0]!, v.argument);
+        if reach > l.frame_bytes {
+          l.frame_bytes = reach;
+        }
+      }
+    }
+  }
+  // The return address's slot follows the arguments (`codegen.rs`: `stack.step(4)`).
+  args_end = 0;
+  for a in l.arg_vars {
+    args_end += frame::stepped(frame::width(f.variables[a]!.type_def[0]!, true));
+  }
+  if args_end + 8 > l.frame_bytes {
+    l.frame_bytes = args_end + 8;
   }
   for pass in 0..2 {
-    for v in d.variables.variables {
+    for v in f.variables {
       if v.argument != (pass == 0) {
         continue;
       }
-      k = stack_of(kind_of_types(v.type_def));
-      if k == KInt || k == KRef {
-        l.var_slot[v#index] = l.slots_int;
-        l.slots_int += int_width(k);
-      } else if k == KFloat {
-        l.var_slot[v#index] = l.slots_float;
-        l.slots_float += 1;
-      } else if k == KText {
+      if stack_of(kind_of_types(v.type_def)) == KText {
         l.var_slot[v#index] = l.slots_text;
         l.slots_text += 1;
       }

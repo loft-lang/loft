@@ -105,6 +105,21 @@ fn c_free_displaced(d_store: integer, d_rec: integer, d_pos: integer, w_store: i
 fn c_protect(store: integer, rec: integer, pos: integer, on: boolean);
 #c "loft_crt_protect" "void(int64_t, int64_t, int64_t, int64_t)"
 
+fn c_stack_new(out: vector<integer>, bytes: integer) -> integer;
+#c "loft_crt_stack_new" "int64_t(int64_t*, int64_t, int64_t)"
+
+fn c_stack_grow(store: integer, bytes: integer);
+#c "loft_crt_stack_grow" "void(int64_t, int64_t)"
+
+fn c_stack_free(store: integer);
+#c "loft_crt_stack_free" "void(int64_t)"
+
+fn c_slot_ref(out: vector<integer>, store: integer, at: integer) -> integer;
+#c "loft_crt_slot_ref" "int64_t(int64_t*, int64_t, int64_t, int64_t)"
+
+fn c_set_slot_ref(store: integer, at: integer, r_store: integer, r_rec: integer, r_pos: integer);
+#c "loft_crt_set_slot_ref" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
 // The null reference, as a variable's three parts: the sentinel `loft_ref_null()` writes.
 pub fn null_ref() -> vector<integer> {
   [65535, 0, 0]
@@ -115,6 +130,33 @@ pub fn null_ref() -> vector<integer> {
 // `bytes` of type `tp`, and its reference is written back into `io`.
 pub fn database(io: vector<integer>, bytes: integer, tp: integer) {
   c_database(io, bytes, tp);
+}
+
+// The interpreter's stack store (`State::stack_cur`, @PLN91 F-1): one store whose primary
+// record holds every frame, at least `bytes` of it; its reference is written into `io`.
+pub fn stack_new(io: vector<integer>, bytes: integer) {
+  c_stack_new(io, bytes);
+}
+
+// `State::grow_stack`: the stack store grown until it holds `bytes` of frame.
+pub fn stack_grow(store: integer, bytes: integer) {
+  c_stack_grow(store, bytes);
+}
+
+// The run's end: the stack store released.
+pub fn stack_free(store: integer) {
+  c_stack_free(store);
+}
+
+// The reference a frame slot at byte `at` of the stack store holds, into `io`: its twelve
+// bytes as the Rust frame holds them.
+pub fn slot_ref(io: vector<integer>, store: integer, at: integer) {
+  c_slot_ref(io, store, at);
+}
+
+// A reference written into the frame slot at byte `at`.
+pub fn set_slot_ref(store: integer, at: integer, r_store: integer, r_rec: integer, r_pos: integer) {
+  c_set_slot_ref(store, at, r_store, r_rec, r_pos);
 }
 
 // `OpFreeRef`: the record's whole store goes.
