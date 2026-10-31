@@ -102,8 +102,9 @@ cargo test --release --test ir_schema_roundtrip   # the IR codec over the whole 
                                          #   suite beside the tree (../loft-suite, LOFT_SUITE_DIR);
                                          #   run it after an IR-schema/serialiser change
                                          #   (`make ci` runs it in the pool)
-make suite ARGS="@FR-B-Copy --mode both" # the LANGUAGE SUITE (loft-lang/loft-suite, beside this
-                                         #   tree): one rule's cells on both backends, a chapter
+make suite ARGS="@FR-B-Copy --mode both-c" # the LANGUAGE SUITE (loft-lang/loft-suite, beside
+                                         #   this tree): one rule's cells on the interpreter and
+                                         #   the C backend (`all` adds rustc-native), a chapter
                                          #   (`--chapter heap`), or everything.  A new .loft test
                                          #   is a CELL there, under its rule; `tests/scripts`
                                          #   keeps only what this repo names — TESTING.md.  Every
@@ -509,7 +510,12 @@ signal you haven't earned it:**
 5. Fix at the chokepoint enforcing exactly the violated invariant — no narrower, no wider.
    The invariant is often already NAMED in `doc/claude/formal/` — cite the rule rather than
    re-deriving it, and close its deviation entry if it had one.
-6. Verify the full matrix on **BOTH backends**; graduate guarantee probes to `tests/scripts/`.
+6. Verify the full matrix on **BOTH backends**: the interpreter and the C backend
+   (`--native-c`, which `make`, `find_problems.sh` and `make falsify` select for their test
+   runs, as CI's PR gate does).  Add rustc-native (`--native` with `LOFT_NATIVE_BACKEND`
+   unset, `make … NATIVE_BACKEND=`) only when the change touches what it emits —
+   `src/generation/`, `src/codegen_runtime.rs`, an operator's `#rust` body, a Rust native;
+   otherwise the daily run covers it.  Graduate guarantee probes to suite cells.
 7. **Propose 3+ cases to check → write them ALL down BEFORE working the first.** Detail decays
    while you work: the headline of case three survives, its specifics (which axis, which shape,
    why suspected) do not. Writing the list first also makes it reviewable while it's cheap.

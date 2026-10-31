@@ -569,7 +569,12 @@ rebuild-native-cdylibs:
 # sweeping an empty directory and reporting the 23 GB one emptied.
 REPO_TAG := $(shell printf '%s' "$(notdir $(CURDIR))" | tr -c 'A-Za-z0-9._-' '_').$(shell printf '%s' "$(CURDIR)" | cksum | cut -d' ' -f1)
 TEST_SCRATCH := /var/tmp/loft-test-scratch-$(REPO_TAG)
-TEST_ENV := TMPDIR=$(TEST_SCRATCH) LOFT_TMPDIR=$(TEST_SCRATCH)
+# The native backend a TEST run compiles through: the C, as on CI's PR gate (@PLN203); the
+# rustc-native backend runs on the daily schedule.  `make <target> NATIVE_BACKEND=` puts rustc
+# back for one run.  Only the test runs read it: a census or a perf lane counting the Rust
+# writer keeps `--native` = rustc.
+NATIVE_BACKEND ?= c
+TEST_ENV := TMPDIR=$(TEST_SCRATCH) LOFT_TMPDIR=$(TEST_SCRATCH) LOFT_NATIVE_BACKEND=$(NATIVE_BACKEND)
 
 # How many loft gates are live on this box right now, counting this checkout's own
 # claim — the divisor the CI throttle shares its parallelism by.
@@ -748,7 +753,7 @@ iter:
 	@-rm -f tests/generated/* tests/dumps/*.txt 2>/dev/null
 	@TFILE_ARG=$$([ -n "$(TFILE)" ] && echo "--test $(TFILE)" || echo ""); \
 	PROFILE_ARG=$$([ "$(PROFILE)" = "release" ] && echo "--release" || echo ""); \
-	RUST_BACKTRACE=1 cargo test $$PROFILE_ARG $$TFILE_ARG -- $(TEST) --nocapture
+	LOFT_NATIVE_BACKEND=$(NATIVE_BACKEND) RUST_BACKTRACE=1 cargo test $$PROFILE_ARG $$TFILE_ARG -- $(TEST) --nocapture
 
 
 # wasm: build the browser bundle (loft.js + loft_bg.wasm under doc/pkg/)
@@ -1073,7 +1078,7 @@ examples-index:  ## Regenerate examples-index.tsv (worked-example tag -> file:li
 # starvation window, so re-run a networked failure under `--profile ci` before believing
 # it.  `make ci` is unchanged and stays the pre-push gate.
 test-fast:  ## The suite under the local `fast` profile (~1.9x quicker than `make ci`'s)
-	@bash scripts/box-claim.sh cargo nextest run --profile fast
+	@LOFT_NATIVE_BACKEND=$(NATIVE_BACKEND) bash scripts/box-claim.sh cargo nextest run --profile fast
 
 examples-preflight:  ## Would a PR report anything on worked-example tags? (REPO=../loft-libs-x)
 	@EXAMPLES_REPO_ROOT=$(REPO) bash scripts/check_doc_drift.sh examples-preflight
@@ -2493,7 +2498,7 @@ ci: ci-guard
 	./target/release/loft cache warm --from tests >> result.txt 2>&1 && \
 	./target/debug/loft cache warm --from tests >> result.txt 2>&1 && \
 	python3 scripts/rewrite_census.py >> result.txt 2>&1 && \
-	{ gates=$(CI_LIVE_GATES); jobs=$$(( $(CI_NPROC) / $${gates:-1} )); memjobs=$(CI_MEM_JOBS); [ -n "$$memjobs" ] && [ "$$memjobs" -lt "$$jobs" ] && jobs=$$memjobs; if [ $$jobs -lt 2 ]; then jobs=2; fi; export NEXTEST_TEST_THREADS=$$jobs; } && \
+	{ gates=$(CI_LIVE_GATES); jobs=$$(( $(CI_NPROC) / $${gates:-1} )); memjobs=$(CI_MEM_JOBS); [ -n "$$memjobs" ] && [ "$$memjobs" -lt "$$jobs" ] && jobs=$$memjobs; if [ $$jobs -lt 2 ]; then jobs=2; fi; export NEXTEST_TEST_THREADS=$$jobs; export LOFT_NATIVE_BACKEND=$(NATIVE_BACKEND); } && \
 	{ first=$$(scripts/nextest_priority.sh 2>>result.txt); echo "make ci: tests on $$jobs thread(s), $$gates gate(s) live$${first:+; the changed subjects run first}; stopping after $(CI_MAX_FAIL) failure(s)" >> result.txt; } && \
 	{ sel=$$(python3 scripts/gate_ledger.py plan 2>>result.txt); \
 	  case "$$sel" in \
@@ -2640,7 +2645,7 @@ ship:
 	cargo clippy --all-targets --all-features -- -D warnings && \
 	cargo clippy --no-default-features --all-targets -- -D warnings && \
 	scripts/check_doc_drift.sh && \
-	cargo test --release
+	LOFT_NATIVE_BACKEND=$(NATIVE_BACKEND) cargo test --release
 
 # The cheap CI gates ONLY (~2-3 min warm): exactly the commands the Format /
 # Clippy / Doc-hygiene jobs run, nothing else.  A local pass here removes the

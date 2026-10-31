@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# The native backend the tests compile through: the C, as on CI's PR gate (@PLN203);
+# `LOFT_NATIVE_BACKEND=` (set, empty) puts rustc-native back for one run.
+export LOFT_NATIVE_BACKEND="${LOFT_NATIVE_BACKEND-c}"
 # Copyright (c) 2026 Jurjen Stellingwerff
 # SPDX-License-Identifier: LGPL-3.0-or-later
 #

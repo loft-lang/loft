@@ -56,6 +56,8 @@ irreversible moves not to make.
   you find and fix at once: `claim.py file …`), and the fix commit must claim it (below).
 - Single file, interpreter: `cargo run --bin loft -- --interpret file.loft`
 - Native: `cargo run --bin loft -- --native file.loft`
+- The compiled leg of a check is the C backend (`--native-c`, or `LOFT_NATIVE_BACKEND=c` for a
+  plain `--native`); rustc-native only for an edit in what that writer emits.
 - ⚠ **The default backend is `--native` wherever rustc is available** (a downloaded release
   interprets). For the SEEING loop ALWAYS pass
   `--interpret` explicitly — strides/types are IR operands the interpreter surfaces in

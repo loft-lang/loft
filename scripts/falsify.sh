@@ -233,12 +233,16 @@ entry_modes() { # <guard> ; sets MODE_I / MODE_N
   # whose declared errors all occur exits 0, one with an unmatched declaration exits 1.
   # Measured on both guard shapes — the mixed one reads 0 -> 0 (genuinely INERT, which the
   # direct run reported as a misleading `1/5` on both trees) and an all-pass-2 one reads 1 -> 0.
+  # The compiled leg is the C backend, the per-change backend (@PLN203);
+  # `FALSIFY_NATIVE=rust` scores a guard of the rustc-native writer on it instead.
+  local nat=--native-c
+  [ "${FALSIFY_NATIVE:-c}" = rust ] && nat=--native
   if grep -qE '@EXPECT_ERROR|@EXPECT_FAIL' "$1"; then
-    MODE_I=(--tests); MODE_N=(--tests --native)
+    MODE_I=(--tests); MODE_N=(--tests "$nat")
   elif grep -qE '^[[:space:]]*fn main[[:space:]]*\(' "$1"; then
-    MODE_I=(--interpret); MODE_N=(--native)
+    MODE_I=(--interpret); MODE_N=("$nat")
   else
-    MODE_I=(--tests); MODE_N=(--tests --native)
+    MODE_I=(--tests); MODE_N=(--tests "$nat")
   fi
   # A guard of a rewrite that a build shipping the live tier never makes (an IR-phase rewrite,
   # `@FR-R-Apart`) names the release tier, or its native side runs code the defect is not in.

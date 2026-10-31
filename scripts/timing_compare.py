@@ -13,7 +13,8 @@ A ledger row is written by every loft process (`src/platform.rs`):
 
     phase   <name>  <secs>                     <test>   parse_default, parse_user, scopes, lints,
                                                         byte_code, native_emit, run
-    binary  <program> hit|miss <secs>          <test>   the program's own native compile
+    binary  <program> hit|miss <secs>          <test>   the program's own compile, by rustc
+    binary-c <program> hit|miss <secs>         <test>   the same, by the C backend
     exec    <tool> <subject> <reason> <secs>   <test>   an external build step (cargo, rustc…)
     cdylib|fixture <name> hit|miss <secs>      <test>   a library's native build
 
