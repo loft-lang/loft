@@ -280,6 +280,28 @@ cannot quietly shrink.
 | **S7** | the interpreter runs itself | S1's benchmarks through the self-run |
 | **O** (beside S1–S6) | ownership ported, not redesigned (owner, 2026-10-30): the bytecode writer's bind decisions and the facts they read (`ownership_of`, `owns_displaced_store`, …) in loft, each guarded against its Rust home; in 1a the scope pass itself | the same decisions as the Rust implementation on every corpus program ([ownership.md](ownership.md)) |
 
+### S5's closures — after S3 and S4, by direction (owner, 2026-10-31)
+
+Closures come after the store and the collections are carried, not beside them: they are a
+separate part of the language, and the last to be stabilised — their capture and release rules
+(`formal/closures.md`, the `(L-Cap…)` family) settled late, and the history beside them
+(`closures-history.md`) is the longest record of lifetime defects in the formal chapters.  A
+function value is the largest single refusal in the census (`TyFunction`, with `OpSetDbRef` for a
+stored closure half), and stays refused by name until then.
+
+When S5 is designed:
+- **The rules first.**  The design starts from `formal/closures.md` and its history, not from the
+  code: each capture rule — `(L-CapScalar)`, `(L-CapHeap)`, `(L-CapWrite)`, `(L-CapBox)`,
+  `(L-CapOwn)`, `(L-CapKeep)`, `(L-CapOne)`, `(L-CapRef)`, `(L-CapRebind)` — gets a probe with
+  values by hand before any code, and the chapter's `OPEN: 0` is re-measured, not trusted.
+- **Reproduced, not reinvented.**  The interpreter carries the Rust model as it is: the fn-ref's
+  twenty bytes in the frame (the definition number and the closure record), the closure record as
+  a store of its own, and the release protocol — a closure record's free cascading to what it
+  captured, guarded by `OpStoreLive` where a store can be reached twice (`(L-CapOwn)`).
+- **Measured by the comparison.**  The alloc and leak layers check every closure record's store
+  event against the Rust interpreter's; a disagreement is a defect on one side, fixed where it
+  lives — in the Rust implementation too, as today's store work found four.
+
 ## Steps
 
 Phase S0 (the bundle opens in loft: S0.1 to S0.3d) is built; each step's design and its
