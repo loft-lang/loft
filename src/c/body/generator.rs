@@ -291,7 +291,7 @@ impl FnWriter<'_> {
             let _ = writeln!(bodies, "    case {k}: goto loft_y{k};");
         }
         bodies.push_str("    default: break;\n    }\n");
-        bodies.push_str(&self.body);
+        bodies.push_str(&self.expand_epilogues());
         let _ = writeln!(bodies, "}}\n#undef LOFT_SAVE{d}");
         if in_frame {
             for (_, n, _, _) in &fields {
