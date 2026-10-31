@@ -7660,14 +7660,32 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // `(opt() ?? "d", 1.5)` stored into a local left the member reading freed text
             // (loft#1740).
             let discharge_temp = matches!(val.unspan(), Value::Block(bl) if bl.name == "ncc");
-            if !borrows_a_place && !discharge_temp {
+            // A BRANCH is delivered per arm below whatever its type says: left whole it reaches
+            // native as one expression whose arms are a `String` and a `&str`.
+            let branch = matches!(val.unspan(), Value::If(..))
+                || matches!(val.unspan(), Value::Block(bl) if bl.name == "block");
+            if !borrows_a_place && !discharge_temp && !branch {
                 return None;
             }
             let w = self.vars.work_text_p2(&mut self.lexer);
-            let src = std::mem::replace(val.unspan_mut(), Value::Null);
+            let mut src = std::mem::replace(val.unspan_mut(), Value::Null);
             let owned = Type::Text(Deps::none()).depending(w);
+            // A branch delivers per ARM into the work text, as a plain bind of one does
+            // (`try_branch_text_bind`'s `push_text_arms_into`): written whole, `(if k { s } else { "zz" }, 2)` joined
+            // a `String` arm and a `&str` arm in one native expression, which rustc refused.
+            // Every arm assigns the work text whole, so no clear goes ahead of them: in a loop
+            // the previous round's member MOVED the work text, and a clear borrows it (E0382).
+            let arms = Self::if_tail_yields_text(&src)
+                || matches!(src.unspan(), Value::Block(bl) if bl.name == "block"
+                    && Self::arm_yields_text(&src));
+            let fill = if arms && !src.reads_var(w) {
+                Self::push_text_arms_into(&mut src, w, &self.data);
+                src
+            } else {
+                v_set(w, src)
+            };
             *val.unspan_mut() = crate::data::v_block(
-                vec![v_set(w, src), Value::Var(w)],
+                vec![fill, Value::Var(w)],
                 owned.clone(),
                 "tuple_member_copy",
             );
@@ -7754,9 +7772,45 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             {
                 val.unspan().clone()
             }
+            // A COMPOUND value — an `if`, a `match`, a block, a `??` — may answer a NAMED
+            // place from one of its arms: `(c ?? v, 1)` and `(if k { v } else { w }, 1)` were
+            // second names for `v`, so an append through the member reached it, on every
+            // backend, while a plain bind, a struct field and a vector-literal element of the
+            // same spelling copied (loft#2253).  The whole value is copied once, after it is
+            // evaluated, when some arm answers a place (`compound_answers_place`); a compound
+            // that only builds — a struct or vector literal is a block too — is left as the
+            // fresh value it is, since copying it would orphan the record it built.  The
+            // droppable guard is the projection arm's.
+            v @ (Value::If(..) | Value::Block(_))
+                if self.compound_answers_place(v)
+                    && !self.data.type_owns_droppable_anywhere(tp)
+                    && tp.heap_def_nr().is_none_or(|r| {
+                        !self.data.owns_droppable(r) || crate::lease::leases_whole(&self.data, r)
+                    }) =>
+            {
+                v.clone()
+            }
             _ => return None,
         };
         self.owned_heap_copy(val, src, tp)
+    }
+
+    /// Can the compound value `v` — an `if`, a `match`, a block, a `??` — answer a NAMED place
+    /// from one of its arms?  A tail is a place when it is a local the program declared (a
+    /// parser temporary, named with a leading `_`, holds a value the expression built), a
+    /// member of a tuple local, or a record projection.  `@FR-T-Cons`.
+    fn compound_answers_place(&self, v: &Value) -> bool {
+        match v.unspan() {
+            Value::Var(x) => *x < self.vars.count() && !self.vars.name(*x).starts_with('_'),
+            Value::TupleGet(b, _) => *b < self.vars.count(),
+            Value::Call(d, _) => crate::use_analysis::is_projection_op(&self.data, *d),
+            Value::If(_, t, e) => self.compound_answers_place(t) || self.compound_answers_place(e),
+            Value::Block(bl) => bl
+                .operators
+                .last()
+                .is_some_and(|t| self.compound_answers_place(t)),
+            _ => false,
+        }
     }
 
     /// The COPY half of [`Self::tuple_member_owned_copy`]: rewrite `val` into a block that

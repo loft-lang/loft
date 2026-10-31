@@ -274,9 +274,9 @@ fn a_nullable_target_is_silent() {
 /// bytes and spends `nullref` on absence — so the suppression went with it.
 ///
 /// The cure is checked as TEXT, not just for presence.  `Type::name` renders a pointer field as
-/// the bare struct name, which would print `Node?` — and `next: Node?` is the INLINE tagged form
-/// (`@FR-L-Null-Tag`), which on a self-referencing struct has no finite size and does not
-/// compile.  Naming `reference<Node>?` is the whole point of the flip.
+/// the bare struct name, which would print `Node?` — and `next: Node?` is a CHILD
+/// (`@FR-L-OutOfLine`): it compiles, but it holds a copy where the field holds a shared
+/// pointer, a different program.  Naming `reference<Node>?` keeps the field what it is.
 #[test]
 fn a_cyclic_reference_field_warns_and_names_a_cure_that_compiles() {
     let cells: [(&str, &str, &str); 2] = [

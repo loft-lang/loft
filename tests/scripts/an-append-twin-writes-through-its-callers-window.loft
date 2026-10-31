@@ -1,0 +1,120 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-AppendTwin`'s WINDOW clause: an append twin whose buffer is written only by appends and
+// by calls handing it to other append twins takes its caller's push window and writes through
+// it.  The cells hold an encoder of cbor's shape — a head of one to three bytes, a text arm that
+// appends the text's bytes, an array arm that recurses, a bytes arm that appends a vector — and
+// what a window could get wrong: a buffer that is not empty when the chain starts, one that grows
+// far past its first room, a recursion several levels deep, a twin that READS its buffer's length
+// (no window: it keeps the plain twin), and a loop of encodes into one destination.  Values
+// hand-computed in Python from the CBOR encoding (see each cell); value AND length.
+//
+// @falsified-at: none — the clause has no earlier build to catch; the receipts are defects
+//   planted in the generated C (2026-10-31): a call through a fresh window that never syncs it
+//   back reads length 3 for 37 in c1; a window copy that does not bump the length reads 35.
+//   CHANNEL: an assertion.
+
+enum Item {
+  T { s: text },
+  A { items: vector<Item> },
+  B { b: vector<u8> },
+}
+
+fn hd(major: integer, arg: integer) -> vector<u8> {
+  buf: vector<u8> = [];
+  if arg < 24 {
+    buf += [((major * 32 + arg) & 255) as u8];
+  } else if arg < 256 {
+    buf += [((major * 32 + 24) & 255) as u8];
+    buf += [(arg & 255) as u8];
+  } else {
+    buf += [((major * 32 + 25) & 255) as u8];
+    buf += [((arg / 256) & 255) as u8];
+    buf += [((arg % 256) & 255) as u8];
+  }
+  return buf;
+}
+
+fn enc(v: Item) -> vector<u8> {
+  match v {
+    T { s } => {
+      n = size(s);
+      buf = hd(3, n);
+      for i in 0..n { buf += [(s.byte_at(i) & 255) as u8]; }
+      buf
+    },
+    A { items } => {
+      buf = hd(4, len(items));
+      for i in 0..len(items) { buf += enc(items[i] ?? T { s: "" }); }
+      buf
+    },
+    B { b } => {
+      buf = hd(2, len(b));
+      buf += b;
+      buf
+    },
+  }
+}
+
+// A twin that reads its buffer's length in the middle: [head..., length so far].
+fn enc_len(n: integer) -> vector<u8> {
+  buf = hd(0, n);
+  buf += [(len(buf) & 255) as u8];
+  buf
+}
+
+fn bsum(v: const vector<u8>) -> integer {
+  t = 0;
+  for x in v { t += x as integer; }
+  t
+}
+
+fn texts(k: integer, n: integer) -> Item {
+  items: vector<Item> = [];
+  for i in 0..k {
+    b: vector<u8> = [];
+    for j in 0..n { b += [((97 + (i * 7 + j) % 26) & 255) as u8]; }
+    items += [T { s: text_from_bytes(b) }];
+  }
+  A { items: items }
+}
+
+fn main() {
+  // c1 — three texts: [0x83, 0x62 'a' 'b', 0x60, 0x78 30 'x'*30]: 37 bytes, sum 4270
+  x30 = "";
+  for _ in 0..30 { x30 += "x"; }
+  c1 = enc(A { items: [T { s: "ab" }, T { s: "" }, T { s: x30 }] });
+  assert(len(c1) == 37, "c1 length {len(c1)}");
+  assert(bsum(c1) == 4270, "c1 sum {bsum(c1)}");
+
+  // c2 — nested: [0x82, 0x81, 0x61 'a', 0x43 1 2 3]: 8 bytes, sum 526
+  c2 = enc(A { items: [A { items: [T { s: "a" }] }, B { b: [1, 2, 3] }] });
+  assert(len(c2) == 8, "c2 length {len(c2)}");
+  assert(bsum(c2) == 526, "c2 sum {bsum(c2)}");
+
+  // c3 — onto a buffer that is not empty: [9, 9] + c2 + [0x61 'a']: 12 bytes, sum 18 + 526 + 194
+  out: vector<u8> = [9, 9];
+  out += enc(A { items: [A { items: [T { s: "a" }] }, B { b: [1, 2, 3] }] });
+  out += enc(T { s: "a" });
+  assert(len(out) == 12, "c3 length {len(out)}");
+  assert(bsum(out) == 738, "c3 sum {bsum(out)}");
+  assert((out[0] ?? 0) == 9 && (out[1] ?? 0) == 9 && (out[2] ?? 0) == 130, "c3 prefix kept");
+
+  // c4 — 64 texts of 256 bytes: [0x98 64] + 64 * [0x79 1 0 + 256 bytes]: 16578 bytes
+  c4 = enc(texts(64, 256));
+  assert(len(c4) == 16578, "c4 length {len(c4)}");
+  assert(bsum(c4) == 1802036, "c4 sum {bsum(c4)}");
+
+  // c5 — a twin that reads its own length: [0x19 1 44, 3] appended after [7]
+  o5: vector<u8> = [7];
+  o5 += enc_len(300);
+  assert(len(o5) == 5, "c5 length {len(o5)}");
+  assert(bsum(o5) == 7 + 25 + 1 + 44 + 3, "c5 sum {bsum(o5)}");
+
+  // c6 — a loop of encodes into one destination: 200 * 4 bytes ([0x63 'a' 'b' 'c'])
+  o6: vector<u8> = [];
+  for _ in 0..200 { o6 += enc(T { s: "abc" }); }
+  assert(len(o6) == 800, "c6 length {len(o6)}");
+  assert(bsum(o6) == 200 * (99 + 97 + 98 + 99), "c6 sum {bsum(o6)}");
+}

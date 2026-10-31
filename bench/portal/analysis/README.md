@@ -44,6 +44,36 @@ with the units in build order and the file below that priced each.
 | `over-3.5x.md` | the eight rows over the proposed 3.5× cut (2026-10-23): where each gap lives (`gap_report.py --lean`) and the lever to ≈ 2.5×, which need the null-int decision | `par` PRICED (−39 % with its NaN test gone: the lost unroll); the rest estimated from instruction shares |
 | `over-9x.md` | the five rows over 9× on the 2026-10-05 run (`header`, `decode`, `flow_layout_full`, `draw_bezier`, `check_request`), by MECHANISM | **PRICED 2026-10-05, NOT BUILT** — every row reaches 3.6–4.8× by hand except `check_request` (≈5.5× by `decode`'s ladder, clearly under only with texts kept in their slots); four new rules drafted in rewrites.md § Proposed (`(R-FoldCompare)`, `(R-Destination)`, `(R-FnRefValue)`, `(R-ViewReturn)`) and seven clauses on existing ones; the edit scripts under `over-9x/` |
 
+## The method: an optimized example first, then the rule (owner, 2026-10-31)
+
+A row is made faster by writing the target first, in the emitted code, and only then the rule.
+Measured on two arcs the same night: `check_request` went design-first (two hours of plans and
+plumbing for `(R-Transient)`, abandoned — it duplicated `(R-DecodeView)`), `encode_bytes`
+example-first (30 minutes of hand edits, a rule written in three minutes, built in two hours,
+−38 %).  The loop:
+
+1. **Profile the row**, and ask the rules for each lever it suggests BEFORE any edit
+   (`grep` `doc/claude/formal/rewrites.md`, `src/lower/`, `src/opt/`): a mechanism one backend
+   already has is a port, not a design.
+2. **Hand-edit the emitted code one lever at a time**, A/B each step against the previous one
+   with the hashes unchanged.  A step that measures nothing has disproved a reading of the
+   profile; keep it in the table.
+3. **Price each lever in the form the generator will EMIT** — wrappers, prologues and calls
+   left as they are.  An edit that also inlines or bypasses a call is a SEPARATE step: the
+   `encode_bytes` price (1.94×) included `head` inlined, which the rules do not do, and the build
+   landed at 4.4× until that lever is built too.
+4. **Write the rule from the priced form**: the mechanism as the hand edit has it, the
+   soundness argument, the price, the switch, the cells and their plants.
+5. **Build to the hand form** and compare the emitted code against it; the price is the
+   acceptance bar.
+
+**Which compilers, when (owner, 2026-10-31).**  A row being optimised is priced and A/B'd on
+**gcc and clang** — compiling one program twice is cheap, and it shows where clang lags or a
+lever helps one compiler only (`(R-Inline)`'s twin clause: gcc −55 %, clang nothing).  The BIG
+runs — `ab_all.sh` over every library, the full `bench/stats.py` table — are **gcc only**; a
+full clang run is taken every couple of days, not per change.  A gcc table stores its rows in
+`bench/portal/local/<library>/<routine>.tsv` (the history the next table is compared with).
+
 ## Where to resume (2026-09-28 evening, branch `157-native-4x`)
 
 **Superseded by [`handoff-2026-10-20.md`](handoff-2026-10-20.md)** (and before it [`handoff-2026-10-16.md`](handoff-2026-10-16.md)) — the state when the laptop was

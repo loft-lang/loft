@@ -442,7 +442,7 @@ impl<'a> IrNode<'a> {
     pub fn tupleput_inner(&self) -> IrNode<'a> {
         match *self {
             IrNode::Native(Value::TuplePut(_, _, b)) => IrNode::Native(b),
-            IrNode::Store(s, n) => store_child(s, n, ds::NDTUPLEPUT_INNER),
+            IrNode::Store(s, n) => IrNode::Store(s, n.field_child(s, ds::NDTUPLEPUT_INNER)),
             IrNode::Native(_) => kind_panic("tupleput_inner", self),
         }
     }
@@ -454,7 +454,7 @@ impl<'a> IrNode<'a> {
     pub fn return_inner(&self) -> IrNode<'a> {
         match *self {
             IrNode::Native(Value::Return(b)) => IrNode::Native(b),
-            IrNode::Store(s, n) => store_child(s, n, ds::NDRETURN_INNER),
+            IrNode::Store(s, n) => IrNode::Store(s, n.field_child(s, ds::NDRETURN_INNER)),
             IrNode::Native(_) => kind_panic("return_inner", self),
         }
     }
@@ -498,7 +498,7 @@ impl<'a> IrNode<'a> {
     pub fn drop_inner(&self) -> IrNode<'a> {
         match *self {
             IrNode::Native(Value::Drop(b)) => IrNode::Native(b),
-            IrNode::Store(s, n) => store_child(s, n, ds::NDDROP_INNER),
+            IrNode::Store(s, n) => IrNode::Store(s, n.field_child(s, ds::NDDROP_INNER)),
             IrNode::Native(_) => kind_panic("drop_inner", self),
         }
     }
@@ -518,7 +518,7 @@ impl<'a> IrNode<'a> {
     pub fn iter_create(&self) -> IrNode<'a> {
         match *self {
             IrNode::Native(Value::Iter(_, c, _, _)) => IrNode::Native(c),
-            IrNode::Store(s, n) => store_child(s, n, ds::NDITER_CREATE),
+            IrNode::Store(s, n) => IrNode::Store(s, n.field_child(s, ds::NDITER_CREATE)),
             IrNode::Native(_) => kind_panic("iter_create", self),
         }
     }
@@ -528,7 +528,7 @@ impl<'a> IrNode<'a> {
     pub fn iter_next(&self) -> IrNode<'a> {
         match *self {
             IrNode::Native(Value::Iter(_, _, n_, _)) => IrNode::Native(n_),
-            IrNode::Store(s, n) => store_child(s, n, ds::NDITER_NEXT),
+            IrNode::Store(s, n) => IrNode::Store(s, n.field_child(s, ds::NDITER_NEXT)),
             IrNode::Native(_) => kind_panic("iter_next", self),
         }
     }
@@ -538,7 +538,7 @@ impl<'a> IrNode<'a> {
     pub fn iter_init(&self) -> IrNode<'a> {
         match *self {
             IrNode::Native(Value::Iter(_, _, _, i)) => IrNode::Native(i),
-            IrNode::Store(s, n) => store_child(s, n, ds::NDITER_INIT),
+            IrNode::Store(s, n) => IrNode::Store(s, n.field_child(s, ds::NDITER_INIT)),
             IrNode::Native(_) => kind_panic("iter_init", self),
         }
     }
@@ -548,7 +548,7 @@ impl<'a> IrNode<'a> {
     pub fn yield_inner(&self) -> IrNode<'a> {
         match *self {
             IrNode::Native(Value::Yield(b)) => IrNode::Native(b),
-            IrNode::Store(s, n) => store_child(s, n, ds::NDYIELD_INNER),
+            IrNode::Store(s, n) => IrNode::Store(s, n.field_child(s, ds::NDYIELD_INNER)),
             IrNode::Native(_) => kind_panic("yield_inner", self),
         }
     }
@@ -570,7 +570,7 @@ impl<'a> IrNode<'a> {
     pub fn set_inner(&self) -> IrNode<'a> {
         match *self {
             IrNode::Native(Value::Set(_, b)) => IrNode::Native(b),
-            IrNode::Store(s, n) => store_child(s, n, ds::NDSET_INNER),
+            IrNode::Store(s, n) => IrNode::Store(s, n.field_child(s, ds::NDSET_INNER)),
             IrNode::Native(_) => kind_panic("set_inner", self),
         }
     }
@@ -582,7 +582,7 @@ impl<'a> IrNode<'a> {
     pub fn if_cond(&self) -> IrNode<'a> {
         match *self {
             IrNode::Native(Value::If(c, _, _)) => IrNode::Native(c),
-            IrNode::Store(s, n) => store_child(s, n, ds::NDIF_COND),
+            IrNode::Store(s, n) => IrNode::Store(s, n.field_child(s, ds::NDIF_COND)),
             IrNode::Native(_) => kind_panic("if_cond", self),
         }
     }
@@ -592,7 +592,7 @@ impl<'a> IrNode<'a> {
     pub fn if_then(&self) -> IrNode<'a> {
         match *self {
             IrNode::Native(Value::If(_, t, _)) => IrNode::Native(t),
-            IrNode::Store(s, n) => store_child(s, n, ds::NDIF_T),
+            IrNode::Store(s, n) => IrNode::Store(s, n.field_child(s, ds::NDIF_T)),
             IrNode::Native(_) => kind_panic("if_then", self),
         }
     }
@@ -602,7 +602,7 @@ impl<'a> IrNode<'a> {
     pub fn if_else(&self) -> IrNode<'a> {
         match *self {
             IrNode::Native(Value::If(_, _, f)) => IrNode::Native(f),
-            IrNode::Store(s, n) => store_child(s, n, ds::NDIF_F),
+            IrNode::Store(s, n) => IrNode::Store(s, n.field_child(s, ds::NDIF_F)),
             IrNode::Native(_) => kind_panic("if_else", self),
         }
     }
@@ -625,7 +625,7 @@ impl<'a> IrNode<'a> {
     pub fn span_inner(&self) -> IrNode<'a> {
         match *self {
             IrNode::Native(Value::Span(b)) => IrNode::Native(&b.1),
-            IrNode::Store(s, n) => store_child(s, n, ds::NDSPAN_INNER),
+            IrNode::Store(s, n) => IrNode::Store(s, n.field_child(s, ds::NDSPAN_INNER)),
             IrNode::Native(_) => kind_panic("span_inner", self),
         }
     }
@@ -797,13 +797,6 @@ impl<'a> IrType<'a> {
             IrType::Store(..) => None,
         }
     }
-}
-
-/// Build a single-child [`IrNode`] from a store node's boxed-child field (a
-/// length-1 `vector<Node>` slot), mirroring [`read_node_child`].
-#[inline]
-fn store_child(stores: &Stores, node: Node, off: u32) -> IrNode<'_> {
-    IrNode::Store(stores, node.field_vec(off).get(0, stores))
 }
 
 /// Diverge with a clear message when an accessor is called on the wrong variant

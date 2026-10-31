@@ -2468,6 +2468,8 @@ impl Parser {
         // step (`parser::abstract_alias`).
         self.operand_fact = crate::data::AliasFact::Plain;
         self.produced = None;
+        // Where the operand starts — `e!` quotes it in the halt's message (`@FR-N-Present`).
+        let operand_start = *self.lexer.peek_pos();
         let mut t = self.parse_single(var_tp, code, parent_tp);
         self.settle_operand(code);
         // --show-types --trace: log the type after the initial
@@ -2488,6 +2490,11 @@ impl Parser {
             || (self.lexer.peek_token("[") && !matches!(t, Type::Void))
             || (self.lexer.peek_token("(") && matches!(t, Type::Function(..)))
             || self.lexer.peek_token("?")
+            // `@FR-N-Present` — `e!` is written against its operand; a `!` after a space
+            // starts the next expression's negation.
+            || (self.lexer.peek_token("!")
+                && self.lexer.peek_glued()
+                && !matches!(t.base(), Type::Void))
         {
             if !self.enter_depth() {
                 *code = Value::Null;
@@ -2508,7 +2515,7 @@ impl Parser {
             };
             let step = if self.lexer.peek_token("[") {
                 crate::parser::abstract_alias::Step::Index
-            } else if self.lexer.peek_token("?") {
+            } else if self.lexer.peek_token("?") || self.lexer.peek_token("!") {
                 crate::parser::abstract_alias::Step::Fallback
             } else {
                 crate::parser::abstract_alias::Step::Member
@@ -2533,6 +2540,18 @@ impl Parser {
             // two-char match means `??` never reaches here as two `?` tokens.
             if self.lexer.has_token("?") {
                 self.handle_default_fallback(var_tp, code, parent_tp, &mut t);
+                self.check_postfix(&recv, step, false, &Value::Null);
+                self.record_type_trace(&t);
+                continue;
+            }
+            if self.lexer.peek_token("!") {
+                let at = *self.lexer.peek_pos();
+                let shown = self
+                    .lexer
+                    .text_between(&operand_start, &at)
+                    .unwrap_or_else(|| "a value".to_string());
+                self.lexer.has_token("!");
+                self.handle_present(var_tp, code, parent_tp, &mut t, &shown, &at);
                 self.check_postfix(&recv, step, false, &Value::Null);
                 self.record_type_trace(&t);
                 continue;
@@ -3905,6 +3924,23 @@ impl Parser {
     ) {
         let ret_stmt = exit;
         // { tmp = lhs; if (tmp == null) { <exit>; }; tmp }
+        //
+        // loft#2298 — a plain VARIABLE is tested and answered as itself: reading it twice has
+        // no effect to repeat.  Bound to a temp, a record local was COPIED (`@FR-B-Copy`: the
+        // temp, typed with no dep, read as an owner), and a discharge consumed in place —
+        // `show(x!)`, `(x ?? panic(…)) == y` — leaked that copy, one record per discharge.
+        if let Value::Var(x) = code.unspan() {
+            let x = *x;
+            let not_null = self.coalesce_not_null(&Value::Var(x), lhs_type);
+            let is_null = self.cl("OpNot", &[not_null]);
+            *code = v_block(
+                vec![v_if(is_null, ret_stmt, Value::Null), Value::Var(x)],
+                lhs_type.clone(),
+                "ncr",
+            );
+            *ctp = lhs_type.clone();
+            return;
+        }
         let tmp = self.create_unique("ncr", lhs_type);
         let set_tmp = v_set(tmp, code.clone());
         // `@FR-N-Coal` — "is it present" has ONE home, the one the value-default `??` asks:
@@ -4797,6 +4833,64 @@ impl Parser {
         let lhs_type = ctp.clone();
         self.pending_default_rhs = Some((default, default_tp));
         // The precedence is irrelevant — the right operand is pre-built, never parsed.
+        self.build_null_coalesce_default(var_tp, code, parent_tp, OPERATORS.len(), ctp, &lhs_type);
+    }
+
+    /// `@FR-N-Present`, @C160 — the postfix discharge with no default, `e!`: the value of a present
+    /// `e`, or a halt naming it.  Exactly `e ?? panic("<e> is null")`, the message written from
+    /// the source text of `e` and the halt carrying the `!`'s position, so it reuses the whole
+    /// `??` lowering; unlike `x?` it needs no default, so it reaches a reference and a bare enum.
+    /// On an operand that cannot be null it changes nothing, and says so.
+    pub(crate) fn handle_present(
+        &mut self,
+        var_tp: &Type,
+        code: &mut Value,
+        parent_tp: &mut Type,
+        ctp: &mut Type,
+        shown: &str,
+        at: &crate::lexer::Position,
+    ) {
+        self.read_through_tag(code, ctp);
+        if !self.first_pass {
+            Self::rewrite_outer_arith_to_nullable(code, &self.data);
+        }
+        if self.expr_not_null
+            && !self.first_pass
+            && !matches!(ctp, Type::Optional(_))
+            && !self.call_declares_nullable(code)
+        {
+            diagnostic!(
+                self.lexer,
+                Level::Warning,
+                code = "redundant-present",
+                "Redundant `!` — '{}' is 'not null', so it is never absent",
+                self.expr_not_null_name,
+            );
+            self.lexer.fix_last(crate::diagnostics::Fix {
+                kind: crate::diagnostics::FixKind::Mechanical,
+                title: "delete the `!`".to_string(),
+                condition: None,
+                edit: None,
+                concept: "present discharge",
+                concept_ref: "@F96",
+            });
+        }
+        self.expr_not_null = false;
+        if let Some(key) = self.last_field_read_site.take() {
+            self.defended_field_reads.insert(key);
+        }
+        let halt = Value::Call(
+            self.data.def_nr("n_panic"),
+            vec![
+                Value::str(&format!("{shown} is null")),
+                Value::str(at.file.as_str()),
+                Value::Int(at.line as i32),
+            ],
+        );
+        let base = ctp.peel_link().clone();
+        *ctp = base;
+        let lhs_type = ctp.clone();
+        self.pending_default_rhs = Some((halt, Type::Void));
         self.build_null_coalesce_default(var_tp, code, parent_tp, OPERATORS.len(), ctp, &lhs_type);
     }
 

@@ -1470,6 +1470,12 @@ impl Parser {
                 Self::TV_FIELD_SET,
             );
         }
+        // `@FR-B-OutOfLine` — a write to an out-of-line field copies into the host's store.
+        if op == "="
+            && let Some((field, kt)) = self.out_of_line_place(to)
+        {
+            return self.out_of_line_set(field, kt, val);
+        }
         // Intercept `h[key] = null` → remove the key from hash/index/sorted
         if let Some(result) = self.towards_set_hash_remove(to, val, op, f_type) {
             return result;
@@ -2002,16 +2008,12 @@ impl Parser {
                             self.data.def(lambda).closure_record()
                         };
                         if record != u32::MAX && !self.first_pass {
-                            let old = self.create_unique(
-                                "__oldrec",
-                                &Type::Reference(record, crate::data::Deps::none()),
-                            );
-                            self.vars.set_skip_free(old);
                             let read = self.cl(
                                 "OpGetField",
                                 &[host.clone(), Value::Int(offset + 4), Value::Int(0)],
                             );
-                            ops.push(v_set(old, self.cl("OpRefFromChildRec", &[read])));
+                            let bind = self.bind_displaced_closure(&host, read, record);
+                            ops.push(bind);
                         }
                         ops.push(self.cl("OpClearKeyed", &[field, tp_val]));
                     }

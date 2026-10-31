@@ -321,6 +321,8 @@ fn render_range(kids: vector<Node>, a: integer, b: integer, col0: integer, inden
   prev2 = "";   // token before prev (whitespace skipped) — for `-> Type {` dispatch
   col = col0;
   pu = false;   // pending unary: suppress the space before the next token
+  glued = false;   // no whitespace since the previous real token — a postfix `e!` keeps it
+  after_present = false;   // the previous real token was a postfix `!` — a value, no `)` of a pattern
   gdepth = 0;   // generic-nesting depth: inside `<…>`, `<`/`>`/`>>` render TIGHT
   saw_fn = false;   // this line began a `fn` — its body block always breaks (stdlib style)
   cbar = false; // inside a closure's `|params|`: the bars hug what they enclose
@@ -329,6 +331,7 @@ fn render_range(kids: vector<Node>, a: integer, b: integer, col0: integer, inden
     nd = kids[k] ?? Leaf { tok: "" };
     match nd {
       Leaf { tok } => {
+        if is_ws_tok(tok) { glued = false; }
         if !is_ws_tok(tok) {
           if tok == "fn" { saw_fn = true; }
           // emit real tokens AND comments (whitespace is re-derived)
@@ -337,12 +340,17 @@ fn render_range(kids: vector<Node>, a: integer, b: integer, col0: integer, inden
           // match-PEG repetition postfix: `( V )*` / `( V )+` must hug the `)` — a space
           // there breaks the pattern parse.  Whitespace around `*`/`+` is insignificant
           // everywhere else, so forcing `)*`/`)+` tight (both sides) is always safe.
-          rep_post = (tok == "*" || tok == "+") && prev == ")";
+          rep_post = (tok == "*" || tok == "+") && prev == ")" && !after_present;
           // A `|` where an operand starts opens a closure's parameters; the next `|` closes
           // them.  Any other `|` is the bitwise operator.
           bar_open = tok == "|" && !cbar && unary_ctx(prev);
           bar_close = tok == "|" && cbar;
-          if !pu && !gen_open && !gen_close && !rep_post && !bar_close && sp(prev, tok) {
+          // `@FR-N-Present` — a `!` written against a value (`v[i]!`, `f(x)!`, `x!`) is the
+          // postfix discharge: it hugs what it follows, and what follows it spaces as after
+          // any value.  A space before it in the source makes it the prefix negation.
+          present = tok == "!" && glued
+            && (ends_word(prev) || prev == ")" || prev == "]" || prev.ends_with("\""));
+          if !pu && !gen_open && !gen_close && !rep_post && !bar_close && !present && sp(prev, tok) {
             s += " ";
             col += 1;
           }
@@ -356,9 +364,11 @@ fn render_range(kids: vector<Node>, a: integer, b: integer, col0: integer, inden
           // postfix (`)*(sep)` hugs), or a unary op
           pu = gen_open || rep_post || bar_open
             || ((tok == "-" || tok == "+" || tok == "*" || tok == "&") && unary_ctx(prev))
-            || tok == "!";   // `!` is always prefix-unary — it hugs its operand: `!c`, `!(c)`
+            || (tok == "!" && !present);   // a prefix `!` hugs its operand: `!c`, `!(c)`
           prev2 = prev;
-          prev = tok;
+          prev = if present { ")" } else { tok };
+          after_present = present;
+          glued = true;
         }
       },
       Group { open, kids, close } => {
@@ -402,6 +412,8 @@ fn render_range(kids: vector<Node>, a: integer, b: integer, col0: integer, inden
         pu = false;
         prev2 = prev;
         prev = close;
+        glued = true;
+        after_present = false;
       },
     }
     k += 1;

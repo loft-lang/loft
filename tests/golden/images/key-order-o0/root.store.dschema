@@ -1,0 +1,23 @@
+LOFT-DSCHEMA v2
+hash=2941560127567469514
+root=KRoot
+slot=3
+--
+@endian	little
+KF	size=16	struct{f@0:float, v@8:integer}
+KRoot	size=16	struct{st@0:ordered<KT[k]>, it@4:index<KT[k]>, sf@8:ordered<KF[f]>, xf@12:index<KF[f]>}
+KT	size=16	struct{k@8:text, v@0:integer}
+float	size=8	base
+index<KF[f]>	size=4	index<KF>(keys=[(0, true)],elem_size=16,placement=2)
+index<KT[k]>	size=4	index<KT>(keys=[(0, true)],elem_size=16,placement=2)
+integer	size=8	base
+ordered<KF[f]>	size=4	ordered<KF>(keys=[(0, true)],elem_size=16)
+ordered<KT[k]>	size=4	ordered<KT>(keys=[(0, true)],elem_size=16)
+text	size=4	base
+--facts--
+KF	linked
+KRoot.it	group=65535,0
+KRoot.sf	group=3
+KRoot.st	group=1
+KRoot.xf	group=65535,2
+KT	linked

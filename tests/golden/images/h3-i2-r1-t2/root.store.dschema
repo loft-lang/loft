@@ -1,0 +1,20 @@
+LOFT-DSCHEMA v2
+hash=13015112789225398441
+root=GRoot
+slot=12
+--
+@endian	little
+GInner	size=16	struct{a@0:integer, b@8:text}
+GKind	size=16	enum{Plain, Named}
+GRoot	size=56	struct{title@40:text, nums@44:vector<integer>, inner@0:GInner, kind@16:GKind, f@32:float, small@48:byte<-100,false>}
+Named	size=16	enumvalue[2]{enum@0:byte, label@4:text, n@8:integer}
+Plain	size=1	enumvalue[1]{enum@0:byte}
+byte	size=1	byte(start=0,null=false)
+byte<-100,false>	size=1	byte(start=-100,null=false)
+float	size=8	base
+integer	size=8	base
+text	size=4	base
+vector<integer>	size=4	vector<integer>(elem_size=8)
+--facts--
+Named.enum	nullable
+Plain.enum	nullable

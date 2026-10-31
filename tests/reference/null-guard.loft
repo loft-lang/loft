@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PAGE: LOFT.md § A null test that leaves proves the value is there — `(N-Guard)`: after a
+// @PAGE: LOFT_OPERATORS.md § A null test that leaves proves the value is there — `(N-Guard)`: after a
 // test that stops the code when a value is absent, the value reads as present.
 
 fn shout(s: text) -> text {

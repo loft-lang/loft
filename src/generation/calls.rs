@@ -67,7 +67,13 @@ fn may_borrow_store(v: &Value, data: &Data) -> bool {
         Value::If(c, t, e) => {
             may_borrow_store(c, data) || may_borrow_store(t, data) || may_borrow_store(e, data)
         }
-        Value::Block(b) | Value::Loop(b) => b.operators.iter().any(|s| may_borrow_store(s, data)),
+        // A block in argument position is a STATEMENT sequence, and its statements borrow the
+        // store in ways no IR node shows: the generator DECLARES a heap local where the block
+        // first sets it (`let mut var_x: DbRef = stores.null_named(…)`), and a record bind it
+        // lowers to `OpDatabase` + `OpCopyRecord`.  A discharge `e!` of a record local is such
+        // a block, and `x! == y` put it inside `stores.eq_content(&…)` (rustc E0502).  Binding
+        // a block to a local first is always valid Rust and costs nothing at run time.
+        Value::Block(_) | Value::Loop(_) => true,
         _ => false,
     }
 }

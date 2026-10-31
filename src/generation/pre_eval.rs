@@ -925,11 +925,24 @@ impl Output<'_> {
                     || def_fn.rust().contains("s.vec_ref_or_raise(")
                     || def_fn.rust().contains("s.text_char_or_raise(");
                 let left = self.left_first(vals);
+                // loft#2262 — a template whose result is a VIEW of an argument (`trim(self) ->
+                // text[self]`, `@self.trim()`) borrows that argument's Rust value.  When the
+                // argument is a call, its `Str` is a temporary, and a view hoisted into its own
+                // `let _pre_N` — as an interpolation hoists it — outlived it (E0716).  The owner
+                // gets a binding of its own, which lives as long as the view.
+                let returned = def_fn.returned().depend();
+                let view_owner: Vec<bool> = (0..vals.len())
+                    .map(|i| {
+                        u16::try_from(i).is_ok_and(|a| returned.contains(&a))
+                            && self.needs_pre_eval(&vals[i])
+                    })
+                    .collect();
                 let needs_pre_eval_args = block_count > 0
                     || user_fn_count > 1
                     || (template_uses_stores && user_fn_count > 0)
                     || has_dup_param
-                    || left.contains(&true);
+                    || left.contains(&true)
+                    || view_owner.contains(&true);
                 if needs_pre_eval_args {
                     for (arg_idx, arg) in vals.iter().enumerate() {
                         let is_block = Self::is_sequence_arg(arg) || left[arg_idx];
@@ -942,7 +955,12 @@ impl Output<'_> {
                         } else {
                             false
                         };
-                        if is_block || is_multi_user_fn || is_stores_conflict || is_dup {
+                        if is_block
+                            || is_multi_user_fn
+                            || is_stores_conflict
+                            || is_dup
+                            || view_owner[arg_idx]
+                        {
                             let name = format!("_pre_{}", self.counter);
                             self.counter += 1;
                             self.rewrite_code(result, arg, name, is_dup)?;
@@ -1091,6 +1109,14 @@ impl Output<'_> {
         } else {
             let mut s = raw_code;
             for (pre_name, pre_code, _, _, inner_replace_all) in &inner_pre_evals {
+                // loft#2259 — an inner binding the identity map already emitted by name is
+                // substituted: text cannot tell it from ANOTHER node with the same text, so a
+                // text pass here rewrote that other node too.  `walk(h) == A && walk(h) == B`
+                // under a dup-param `assert` turned the second call's own binding into
+                // `let _pre_43 = _pre_42;` — one call, its side effect lost, on `--native`.
+                if names_binding(&s, pre_name) {
+                    continue;
+                }
                 if *inner_replace_all {
                     // Dup-param inner pre-eval: the arg code appears multiple times
                     // in the binding code (template expanded @v1 twice), replace all.
@@ -1340,4 +1366,15 @@ impl Output<'_> {
             _ => false,
         }
     }
+}
+
+/// Does `code` already name the binding `name` (`_pre_42`) — the whole name, so `_pre_42` is
+/// not found inside `_pre_420`?
+fn names_binding(code: &str, name: &str) -> bool {
+    code.match_indices(name).any(|(at, _)| {
+        let before = code[..at].chars().next_back();
+        let after = code[at + name.len()..].chars().next();
+        !before.is_some_and(|c| c.is_alphanumeric() || c == '_')
+            && !after.is_some_and(|c| c.is_alphanumeric() || c == '_')
+    })
 }

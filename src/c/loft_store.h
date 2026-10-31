@@ -72,6 +72,14 @@
 #else
 #define LOFT_WILD_BUMPS 1
 #endif
+/* `-DLOFT_NO_WILDERNESS` (`Store`'s `LOFT_NO_WILDERNESS`, `@FR-H-Wilderness` off): the tail free
+ * block is a tree node like any other, and a fresh store tracks no block — its first claim walks
+ * the chain (`loft_claim_scan`), as the interpreter's does.  STORE_MODEL.md D35. */
+#ifdef LOFT_NO_WILDERNESS
+#define LOFT_WILDERNESS 0
+#else
+#define LOFT_WILDERNESS 1
+#endif
 #ifdef LOFT_NO_CARVE_IN_PLACE
 #define LOFT_CARVES 0
 #else
@@ -229,6 +237,12 @@ typedef struct {
      * 0 for a store in memory; `map_file` is the open file (a descriptor, or a Windows handle). */
     size_t mapped;
     intptr_t map_file;
+    /* `src/database/closure_share.rs` — the closure-copy share count, the one reference count in
+     * the store layer and for that case ONLY: a fn-ref copied out of a struct field shares the
+     * stores its closure record owns, and the last holder releases them (loft#2273).  Raised by
+     * `loft_copy_closure` alone, taken back by `loft_free_ref` alone; nothing else may read or
+     * write it — find the store's owner instead. */
+    uint32_t closure_shares;
 #ifdef LOFT_FOREIGN
     /* `Store::foreign`: the bytes this store serves under `LOFT_FOREIGN_REC`; an owner of 0 for
      * every ordinary store. */
@@ -463,7 +477,7 @@ static uint32_t loft_fl_insert_node(loft_store_t *s, uint32_t h, uint32_t rec) {
 
 static void loft_fl_insert(loft_store_t *s, uint32_t rec) {
     if (loft_fl_size(s, rec) < LOFT_MIN_FREE_TREE) return;
-    if (rec + (uint32_t) loft_fl_size(s, rec) == s->size) {
+    if (LOFT_WILDERNESS && rec + (uint32_t) loft_fl_size(s, rec) == s->size) {
         s->wild = rec;
         return;
     }
@@ -1218,7 +1232,9 @@ static void loft_st_init(loft_store_t *s) {
     s->nplaced = 0;
     s->needs_coalesce = 0;
     s->claimed_end = 0;
-    loft_fl_insert(s, LOFT_ST_PRIMARY);
+    /* The whole store is one free block ending at its end: the wilderness.  Without one
+     * nothing tracks it, as `Store::init` leaves it. */
+    if (LOFT_WILDERNESS) loft_fl_insert(s, LOFT_ST_PRIMARY);
 }
 
 /* `Store::note_placed_foreign` (`@FR-H-RootExtent`). */

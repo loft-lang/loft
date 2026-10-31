@@ -1298,7 +1298,9 @@ jobs:
     # @windows-exempt: Windows runs both link modes in win-cdylib.yml; this is the Unix half
     name: Native static link (${{ matrix.os }})
     needs: changes
-    if: needs.changes.outputs.code == 'true' && inputs.os != 'windows-latest'
+    # rustc-native runs in the nightly only (the schedule, and release-gate / a dispatch that
+    # call this workflow): never on a pull request, nor on every push to main.
+    if: needs.changes.outputs.code == 'true' && inputs.os != 'windows-latest' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     strategy:
       fail-fast: false
       matrix:
@@ -1447,16 +1449,26 @@ jobs:
         run: cargo build --release --lib --bin loft
       - name: Every cell sits under a rule it cites
         run: python3 loft-suite/loft-suite check
-      - name: Run the rules on both backends
+      - name: Run the rules on the interpreter and the C backend
         run: >
-          python3 loft-suite/loft-suite run --loft target/release/loft --mode both
+          python3 loft-suite/loft-suite run --loft target/release/loft --mode both-c
           --jobs 4 --timeout 300 --junit target/loft-suite-junit.xml
+      # The rustc-native backend reads the rules once a day, off the per-change path.
+      - name: Run the rules on the rustc-native backend (daily)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        env:
+          LOFT_NATIVE_BACKEND: ''
+        run: >
+          python3 loft-suite/loft-suite run --loft target/release/loft --mode native
+          --jobs 4 --timeout 300 --junit target/loft-suite-native-junit.xml
       - name: Keep the suite junit
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: loft-suite-junit
-          path: target/loft-suite-junit.xml
+          path: |
+            target/loft-suite-junit.xml
+            target/loft-suite-native-junit.xml
           retention-days: 7
           if-no-files-found: ignore
 

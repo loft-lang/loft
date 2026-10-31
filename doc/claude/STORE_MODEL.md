@@ -89,32 +89,41 @@ pairing comments).  The families, and where each lives:
 
 ## Divergences
 
+**A third implementation measures both.**  The loft interpreter (@PLN91 1b) runs on the C
+runtime's routines with the Rust interpreter's operator semantics, and
+`selfhost/compare/compare.py --layers alloc` sets its store events beside the Rust
+interpreter's, event by event; a difference there is a row here (or a port defect), and its
+direction is decided as below ([plans/91-self-host/1b-reference.md](plans/91-self-host/1b-reference.md)).
+
 D1–D19 are the pairing's ranked list; their numbers are kept so the plan, the pairing and the
 fixes name a row the same way.  D20 onward come from the field-by-field comparison above and
 from P0b (what the C runtime lacks).  State: **open**, **fixing** (on the branch named), or
 **decided** (the decision and its measurement).  A closed row moves to
-[STORE_MODEL-history.md](STORE_MODEL-history.md) with its commit; D1–D7c, D9a–D10, D12–D17,
-D18–D19f, D19h, D20–D23, D25, D29, D31 and D34 are there.
+[STORE_MODEL-history.md](STORE_MODEL-history.md) with its commit; D1–D8, D9a–D17,
+D18–D19j, D20–D23, D25, D29, D31, D34 and D36 are there.
 
 ### Correctness
 
 | # | Divergence | State |
 |---|---|---|
-| D8 | the swap-in gate is narrower in C (walk scratch, constant, lazy binding), and refuses a protected destination where Rust tests the source | open |
 
 ### Contract and diagnostics
 
 | # | Divergence | State |
 |---|---|---|
-| D11 | no `WriteDropped` diagnostic in C for a write through a null holder | open |
+
+### Hot paths
+
+| # | Divergence | State |
+|---|---|---|
+| D39 | a returned root record holding a keyed collection: C exchanges the stores (`swap_safe`), the interpreter copies (`tree_holds_no_stored_refs`), as `(H-SwapIn)` says for "the keyed collections" though `(H-SwapKeyed)`'s reasoning admits them | open — the rule first (@PLN91 1b-reference.md E-2) |
+| D37 | the C writer drops a vector's known-count reservation when the vector heads a push group or a mint window (`src/c/body.rs:1394`, `:1986`: "a group's reservation is capacity, observably nothing"), so the group header's mint takes the growth step's start room where `(Col-Capacity)` reserves the count exactly | open — measured by `scripts/c_alloc_diff.py` over the 13 kernels and the 60-program sample: 24 of the 35 programs that differ first differ at that claim; the C runtime's own routines agree (the loft interpreter's alloc layer, 17 of 17 EQUAL) |
+| D38 | a rebind's free and mint come in the other order in the C writer (`set_stmt` re-mints after the call, the bytecode writer frees the displaced store first) | open — the same sweep: the first difference of 7 programs (`F n` against `N m`, `F n` against `D n m`) |
 
 ### Edges
 
 | # | Divergence | State |
 |---|---|---|
-| D19g | slice-view and adopt make a view on a locked destination | open |
-| D19i | the store minted for an FFI vector answer leaks on a null answer in C | open |
-| D19j | FFI record answers are refused in C (C-MISSING) | open |
 
 ### From the field comparison and P0b
 
@@ -125,7 +134,6 @@ D18–D19f, D19h, D20–D23, D25, D29, D31 and D34 are there.
 | D27 | the interpreter's store instruments (generation, recording, tag, timestamps, init shadow) | P0b |
 | D28 | the store table: a `Vec<Store>` beside the type table against a thread-local array | open — P3 |
 | D33 | a call result rebound in a loop (`x = mul(a, x)`): native rotates the call's return buffer (`__rbb`, `@FR-O-Buffer`) and makes no store; the C adopts the result and frees the old store, so it makes and frees one store per iteration; the interpreter exchanges (`@FR-H-SwapRebind`) and also makes one, freeing the TOP slot.  Under `LOFT_STRICT_STORES` the C therefore runs out of numbers in a long loop (`c_sweep.py --strict-stores` files it as beyond the mode) | open — C moves (`@FR-R-RebindBuffer` in the C writer; the performance stream's).  Measured by hand on the emitted unit: the rotation saves about 7 % on a 3 000 000-iteration `x = mul(a, x)` loop at `-O3` (0.14 s → 0.13 s, same answer) — a C store's make and free are cheap |
-| D35 | the allocator's `LOFT_NO_WILDERNESS` switch: off, the interpreter tracks no block at `init` and every claim path changes; the C has the policy always on (the other six switches are ported, D19b) | open — a port of its own |
 | D30 | an image of another layout: the interpreter converts it (`Stores::upgrade_store`), C refuses it by name (`loft_image.h`) — except the null-first key order, which C converts by itself (`loft_rekey_walk`) | open — P0b (port), the key-order case done |
 
 ## How a divergence is closed

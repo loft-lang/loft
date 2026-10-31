@@ -685,7 +685,8 @@ REFERENCE_DOCS = ("doc/claude/LOFT.md", "doc/claude/LOFT_*.md",
                   "doc/claude/STDLIB.md", "doc/claude/STDLIB_*.md")
 CLAIM_DOCS = (os.environ["CLAIM_DOCS"].split(":") if os.environ.get("CLAIM_DOCS")
               else _family(*REFERENCE_DOCS, "doc/claude/CAVEATS.md",
-                           ".claude/skills/loft-write/*.md"))
+                           ".claude/skills/loft-write/*.md",
+                           ".claude/skills/loft-write/references/*.md"))
 ISSUE_CITE = re.compile(r"loft#(\d+)")
 # A sentence is a LIMITATION when it says something does not work, is refused, needs a
 # workaround, or holds "until" something — the forms the two stale callouts took.
@@ -809,7 +810,8 @@ def claim_sites(docs=None):
 # fence NAMES its program and must match a window of it verbatim; the program asserts.
 FENCE_DOCS = (os.environ["FENCE_DOCS"].split(":") if os.environ.get("FENCE_DOCS")
               else _family(*REFERENCE_DOCS, "doc/claude/CAVEATS.md",
-                           ".claude/skills/loft-write/*.md"))
+                           ".claude/skills/loft-write/*.md",
+                           ".claude/skills/loft-write/references/*.md"))
 FENCE_PAGES = (os.environ["FENCE_PAGES"].split(":") if os.environ.get("FENCE_PAGES")
                else ["doc/00-vs-rust.html", "doc/00-vs-python.html"])
 FENCE_FROM = re.compile(r"<!--\s*from\s+(\S+)\s*-->")

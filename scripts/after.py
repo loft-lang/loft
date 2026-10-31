@@ -198,10 +198,10 @@ def plan(mode, paths, base, want_tests):
         # on a second line, which nextest would read as unparsed input.
         filt = filt.strip().splitlines()[0] if filt.strip() else ""
         if ok and filt.strip():
-            steps.append(Step("tests", f"cargo nextest run --no-fail-fast --status-level fail -E \"{filt.strip()}\"",
+            steps.append(Step("tests", f"LOFT_NATIVE_BACKEND=${{LOFT_NATIVE_BACKEND-c}} cargo nextest run --no-fail-fast --status-level fail -E \"{filt.strip()}\"",
                               f"the subjects the diff touches ({filt.strip()[:60]}…)", "B"))
         else:
-            steps.append(Step("tests", "cargo nextest run --no-fail-fast --status-level fail "
+            steps.append(Step("tests", "LOFT_NATIVE_BACKEND=${LOFT_NATIVE_BACKEND-c} cargo nextest run --no-fail-fast --status-level fail "
                               "-E \"$(bash -c 'source scripts/test_subjects.sh; curated_filter')\"",
                               "the diff touches what every binary depends on — the curated set", "B"))
     return steps, runner

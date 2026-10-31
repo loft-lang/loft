@@ -53,8 +53,9 @@ impl Parser {
     /// which the parametric IR already encodes correctly (the source
     /// IS a DbRef regardless of substitution).
     pub(crate) fn is_primitive_vector_element_target(tp: &Type) -> bool {
+        // `@FR-N-Shape` — `.base()`: a `τ?` element is `τ`'s slot, its null the sentinel.
         matches!(
-            tp,
+            tp.base(),
             Type::Integer(_)
                 | Type::Float
                 | Type::Single
@@ -72,7 +73,7 @@ impl Parser {
     /// with patched type-id args (struct).
     pub(crate) fn is_rewritable_vector_element_target(tp: &Type) -> bool {
         Self::is_primitive_vector_element_target(tp)
-            || matches!(tp, Type::Reference(_, _) | Type::Tuple(_))
+            || matches!(tp.base(), Type::Reference(_, _) | Type::Tuple(_))
     }
 
     /// The targets an APPEND's triplet is rewritten for: every element-write target, and a
@@ -96,6 +97,15 @@ impl Parser {
         data: &Data,
     ) -> Option<Value> {
         let pos = Value::Int(0);
+        // A `τ?` writes as `τ` does (`@FR-N-Shape`) — except a `boolean?`, whose null is a byte
+        // of its own: it is written as the concrete `v[i] = x` writes it, the value's byte
+        // unchanged, where the dense boolean's 0/1 wrap would turn the null into `false`.
+        if matches!(concrete, Type::Optional(inner) if **inner == Type::Boolean) {
+            let d = data.def_nr("OpSetByte");
+            return (d != u32::MAX)
+                .then(|| Value::Call(d, vec![elm, pos, Value::Int(0), src_value]));
+        }
+        let concrete = concrete.base();
         // Resolve op def_nrs.  Each branch resolves only the ones it needs.
         let op = match concrete {
             Type::Integer(_) => {

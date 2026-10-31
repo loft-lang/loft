@@ -638,6 +638,31 @@ pub struct RecVector {
     stride: u32,
 }
 
+/// `@FR-L-OutOfLine` — claim a zeroed `stride`-byte child record in `field`'s store and write
+/// its number into the field: what a write of an out-of-line field does, for a writer that
+/// fills the child in place.  The handle of the child.
+fn claim_child(stores: &mut Stores, field: DbRef, stride: u32) -> DbRef {
+    let words = 1 + stride.div_ceil(8);
+    let rec = stores.allocations[field.store_nr as usize].claim(words);
+    let store = stores.store_mut(&field);
+    store.zero_range(rec, 8, stride);
+    store.set_u32_raw(field.rec, field.pos, rec);
+    DbRef {
+        store_nr: field.store_nr,
+        rec,
+        pos: 8,
+    }
+}
+
+/// The field at `off` of `rec`, as a place.
+fn field_at(rec: DbRef, off: u32) -> DbRef {
+    DbRef {
+        store_nr: rec.store_nr,
+        rec: rec.rec,
+        pos: rec.pos + off,
+    }
+}
+
 impl Value {
     /// Wrap a `Node` record.
     #[must_use]
@@ -915,6 +940,22 @@ impl Value {
         }
     }
 
+    /// The `Node` an out-of-line field at `off` holds (`@FR-L-OutOfLine`).
+    #[must_use]
+    pub fn field_child(&self, stores: &Stores, off: u32) -> Value {
+        Value {
+            rec: stores.ref_from_child_rec(&field_at(self.rec, off)),
+        }
+    }
+
+    /// A fresh, zeroed `Node` child in the out-of-line field at `off`.
+    #[must_use]
+    pub fn new_child(&self, stores: &mut Stores, off: u32) -> Value {
+        Value {
+            rec: claim_child(stores, field_at(self.rec, off), NODE_STRIDE),
+        }
+    }
+
     /// Handle to a non-`Node` `vector<T>` field at `off` with element `stride`.
     #[must_use]
     pub fn field_recvec(&self, off: u32, stride: u32) -> RecVector {
@@ -1092,6 +1133,23 @@ impl Record {
                 pos: self.rec.pos + off,
             },
             stride,
+        }
+    }
+
+    /// The record an out-of-line field at `off` holds (`@FR-L-OutOfLine`), e.g. a `TypeT`'s
+    /// own `TypeT` child.
+    #[must_use]
+    pub fn field_child(&self, stores: &Stores, off: u32) -> Record {
+        Record {
+            rec: stores.ref_from_child_rec(&field_at(self.rec, off)),
+        }
+    }
+
+    /// A fresh, zeroed `stride`-byte child in the out-of-line field at `off`.
+    #[must_use]
+    pub fn new_child(&self, stores: &mut Stores, off: u32, stride: u32) -> Record {
+        Record {
+            rec: claim_child(stores, field_at(self.rec, off), stride),
         }
     }
 

@@ -909,6 +909,16 @@ impl Stores {
                     self.finish_type(linked, c_nr, in_progress);
                 }
                 sizes.push((self.types[c_nr].size, self.types[c_nr].align));
+                // `@FR-L-OutOfLine` — a child record's content is no part of this record's
+                // size, but a record laid out on its own (`lay_out_late`) must leave its
+                // children readable too; `in_progress` ends a cycle through them.
+                if let Parts::ChildRec(cc) = self.types[c_nr].parts
+                    && cc != u16::MAX
+                    && cc as usize != t_nr
+                    && self.types[cc as usize].size == u16::MAX
+                {
+                    self.finish_type(linked, cc as usize, in_progress);
+                }
                 // `@C145`, `@FR-H-LongRef` — a linked element type is laid out by reference:
                 // `vector` → `array`, `sorted` → `ordered`, its records pushed out.
                 if let Parts::Vector(c) = self.types[c_nr].parts
@@ -1774,6 +1784,15 @@ impl Stores {
             self.names.insert(name, num);
             num
         }
+    }
+
+    /// `@FR-L-OutOfLine` — does a `child_rec<content>` hold a VALUE (an out-of-line struct or
+    /// enum field), which every walker follows and renders as that value, rather than a
+    /// closure record, whose generated `__` type is no value a program can spell?
+    #[must_use]
+    pub fn child_rec_is_value(&self, content: u16) -> bool {
+        (content as usize) < self.types.len()
+            && !self.types[content as usize].name.starts_with("__")
     }
 
     /// P213: register a `Parts::ChildRec(content)` type — a 4-byte u32

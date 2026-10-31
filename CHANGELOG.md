@@ -173,6 +173,26 @@ value), a nullable hole into a non-null parameter warns, and a `lit` that does n
 
 ### New
 
+**A field written into a copy, and never read, is reported.**  `v = pick(f, 0)` binds a COPY of
+what `pick` returns, so `v.on = true` never reaches `f`; reading `v.name` afterwards used to
+hide that, because the copy as a whole was read.  `lost-write` now looks at each field: bind a
+live reference (`v = &f.vars[0]`) when the write is meant to land, or read the field back when
+a copy was intended.
+
+**`x!` reads a value that must be there.**  `rows[i]!`, `find(name)!.age`: the value when it
+is present, and a halt when it is absent, its message naming the expression
+(`find(name) is null`) and its line.  It is short for `x ?? panic("…")` and, unlike `x?`, needs
+no default, so it works on a reference or an enum too.  Use it where any default would hide a
+mistake; keep `x?` where the type's default is a fine answer.
+
+**A struct or enum may hold its own type.**  `struct Tree { key: integer, left: Tree?, right:
+Tree? }` and `enum Expr { Num { v: integer }, Add { l: Expr, r: Expr } }` compile; before, both
+were refused as types that contain themselves.  The field holds a child, a value like any
+other: assigning it copies, `t.left = null` removes the subtree, and `==`, `"{t}"`, `:j` and
+`Tree.parse` treat it as a nested value.  A struct that would contain itself forever —
+`next: Node` with no `?` — is refused and told to write `Node?`.  For one node shared by two
+places, `reference<T>` is still the field to use.
+
 **A recursion that cannot become a loop compiles, with a warning.**  A function that ends by
 calling itself becomes a loop, so it runs to any depth.  Where that cannot be done — it passes a
 fresh value on, say — loft refused the program.  It now compiles: the call stays an ordinary

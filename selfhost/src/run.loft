@@ -15,99 +15,32 @@ use show;
 
 // The entry's result — a loft integer, so null when the program answers null — or the first
 // thing the interpreter does not carry.  `stores_left` is the leak check: how many of the C
-// runtime's stores the run left live.  `swept` is how many stores a return released because
-// the frame still owned them: the frees the IR did not place (1b-s3.md § Ownership at run time).
+// runtime's stores the run left live.  Nothing is freed that the program's IR and the bytecode
+// writer's binds do not free (1b-s3.md § Binds and frees): no store has an owner at run time.
 pub struct Outcome {
   pub value: integer?,
   pub refused: text,
   pub refused_in: text,
   pub stores_left: integer,
-  pub swept: integer,
 }
 
-// The owner table, `(O-Owner)` held at run time (1b-s3.md § Ownership at run time): per store of
-// the C runtime, the absolute integer-stack slot of the variable that owns it, `IN_FLIGHT - d`
-// for a returned value frame `d` holds and has not bound, or `NOBODY`.  Every op that creates,
-// binds, frees or returns a record reads and updates it, and no store is released except
-// through it, so a bind's choice and the frees cannot disagree.  `held` lists the stores with
-// an owner, so a return looks only at those.
-struct Owners {
-  owner: vector<integer>,
-  held: vector<integer>,
-  swept: integer,
-}
-
-NOBODY = -1;
-// The owner of what the entry's caller hands in (a hidden buffer): released after the run, by
-// the caller, so not by the entry's sweep.
-ENTRY_CALLER = -5;
-IN_FLIGHT = -10;
 NULL_STORE = 65535;
 
-fn owner_of(t: Owners, s: integer) -> integer {
-  if s < 0 || s >= len(t.owner) { NOBODY } else { t.owner[s] ?? NOBODY }
-}
-
-// Store `s` owned by `who` from here on.
-fn claim(t: Owners, s: integer, who: integer) {
-  if s < 0 || s == NULL_STORE {
+// The bind table of every function the run lowered, written to the file `LOFT_TRACE_BIND`
+// names, as the Rust bytecode writer writes its own (1b-compare.md, the binds layer).
+fn write_binds(progs: vector<lower::Lowering>) {
+  path = env_variable("LOFT_TRACE_BIND");
+  if path == null || path == "" {
     return;
   }
-  while len(t.owner) <= s {
-    t.owner += [NOBODY];
-  }
-  if (t.owner[s] ?? NOBODY) == NOBODY {
-    t.held += [s];
-  }
-  t.owner[s] = who;
-}
-
-// Store `s` owned by nobody: it was released, or handed to the runtime to release.
-fn disown(t: Owners, s: integer) {
-  if owner_of(t, s) == NOBODY {
-    return;
-  }
-  t.owner[s] = NOBODY;
-  for h in t.held {
-    if h == s {
-      t.held.remove(h#index);
-      return;
+  rows = "";
+  for p in progs {
+    for r in p.binds {
+      rows += "{r}\n";
     }
   }
-}
-
-// Does the frame whose integer slots start at `base` (at depth `depth`) own store `s` — one of
-// its variables, or a value it holds in flight?  An IR free may name a store by any variable
-// of the frame that views it (a vector's field names its wrapper's store); it never releases
-// a store a caller owns.
-fn frame_owns(t: Owners, s: integer, base: integer, depth: integer) -> boolean {
-  o = owner_of(t, s);
-  o >= base || o == IN_FLIGHT - depth
-}
-
-// Store `s` released through the runtime, and its entry with it.
-fn release(t: Owners, s: integer) {
-  crt::free_ref(s, 0, 0);
-  disown(t, s);
-}
-
-// Every store a run still owns, released: the end of the entry, or a refusal mid-run.  The
-// entry caller's buffers are its own frees, not the sweep's.
-fn release_all(t: Owners) {
-  mine: vector<integer> = [];
-  for h in t.held {
-    if owner_of(t, h) == ENTRY_CALLER {
-      mine += [h];
-    }
-  }
-  for h in mine {
-    release(t, h);
-  }
-  while len(t.held) > 0 {
-    s = t.held[len(t.held) - 1] ?? NULL_STORE;
-    release(t, s);
-    t.swept += 1;
-  }
+  f = file(path);
+  f.write(rows);
 }
 
 // A value pushed at `sp` on its kind's stack: overwritten below the length, appended at it.
@@ -186,7 +119,7 @@ fn ref_out(io: vector<integer>, ints: vector<integer?>, at: integer) {
 fn load_table(b: ir::Bundle) {
   rows: vector<types::Row> = [];
   for tp in 0..len(b.types) {
-    t = b.types[tp] ?? panic("a type in range");
+    t = b.types[tp]!;
     if len(t.parts) > 0 {
       rows += [types::row(b, tp)];
     }
@@ -205,13 +138,13 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
   }
   first = lower::lower(b, entry);
   if first.refused != "" {
-    return Outcome { value: 0, refused: first.refused, refused_in: first.refused_in, stores_left: 0, swept: 0 };
+    return Outcome { value: 0, refused: first.refused, refused_in: first.refused_in, stores_left: 0 };
   }
   // The entry's visible parameters are the given integers; a hidden one after them (a buffer
   // the compiler added) starts null, as a caller with no buffer to offer passes it.
   visible = 0;
   hidden_after = true;
-  for a in (b.data.definitions[entry] ?? panic("the entry")).attributes {
+  for a in b.data.definitions[entry]!.attributes {
     if a.hidden {
       continue;
     }
@@ -226,14 +159,14 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
       refused: "the entry takes {visible} arguments, given {len(args)}",
       refused_in: "",
       stores_left: 0,
-      swept: 0,
     };
   }
   progs[entry] = first;
   lowered[entry] = true;
   stores_before = crt::live_stores();
   table_loaded = false;
-  own = Owners { owner: [], held: [], swept: 0 };
+  // The hidden buffers the entry's caller minted, released by that caller after the run.
+  entry_bufs: vector<integer> = [];
   // Each element type's default image, derived once a run (`types::default_image`).
   images: vector<vector<u8>> = [];
   imaged: vector<boolean> = [];
@@ -255,18 +188,18 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
     sp_int += 1;
   }
   // A hidden vector buffer is handed in as a caller hands it: minted before the call
-  // (`owned_vector_null`) and released after it, owned by the caller (`ENTRY_CALLER`).
+  // (`owned_vector_null`) and released after it.
   at = len(args);
-  for a in (b.data.definitions[entry] ?? panic("the entry")).attributes {
+  for a in b.data.definitions[entry]!.attributes {
     if !a.hidden {
       continue;
     }
     w = lower::main_vector_of(b, a.typedef);
     if w >= 0 {
       ref_in(io, ints, at);
-      crt::database(io, (b.types[w] ?? panic("a wrapper type")).size, w);
+      crt::database(io, b.types[w]!.size, w);
       ref_out(io, ints, at);
-      claim(own, io[0] ?? NULL_STORE, ENTRY_CALLER);
+      entry_bufs += [at];
     }
     at += if lower::is_ref_kind(a.typedef) { 3 } else { 1 };
   }
@@ -290,9 +223,9 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
   base_int = 0;
   base_float = 0;
   base_text = 0;
-  prog = progs[entry] ?? panic("lowered above");
+  prog = progs[entry]!;
   while true {
-    op = prog.ops[pc] ?? panic("the lowering ends every path in `Ret`, so `pc` stays inside the ops");
+    op = prog.ops[pc]!;
     pc += 1;
     match op.code {
       PushInt => { put_int(ints, sp_int, op.a); sp_int += 1; }
@@ -317,7 +250,7 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
           KText => { put_text(texts, sp_text, texts[base_text + op.a]); sp_text += 1; }
           // A `&text` reads the text whose index its slot holds.
           KTextRef => {
-            put_text(texts, sp_text, texts[ints[base_int + op.a] ?? panic("a bound reference")]);
+            put_text(texts, sp_text, texts[ints[base_int + op.a]!]);
             sp_text += 1;
           }
           KRef => {
@@ -336,7 +269,7 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
           KText => { sp_text -= 1; texts[base_text + op.a] = texts[sp_text]; }
           KTextRef => {
             sp_text -= 1;
-            texts[ints[base_int + op.a] ?? panic("a bound reference")] = texts[sp_text];
+            texts[ints[base_int + op.a]!] = texts[sp_text];
           }
           KRef => {
             sp_int -= 3;
@@ -369,15 +302,13 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
           progs[callee] = lower::lower(b, callee);
           lowered[callee] = true;
         }
-        callee_prog = progs[callee] ?? panic("lowered above");
+        callee_prog = progs[callee]!;
         if callee_prog.refused != "" {
-          release_all(own);
           return Outcome {
             value: 0,
             refused: callee_prog.refused,
             refused_in: callee_prog.refused_in,
             stores_left: crt::live_stores() - stores_before,
-            swept: own.swept,
           };
         }
         if fp < len(f_def) {
@@ -434,46 +365,28 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
           _ => { sp_int -= 1; vi = ints[sp_int]; }
         }
         if fp == 0 {
-          release_all(own);
+          write_binds(progs);
+          for e in entry_bufs {
+            crt::free_ref(ints[e] ?? NULL_STORE, ints[e + 1] ?? 0, ints[e + 2] ?? 0);
+          }
           return Outcome {
             value: vi,
             refused: "",
             refused_in: "",
             stores_left: crt::live_stores() - stores_before,
-            swept: own.swept,
           };
-        }
-        // The sweep: a store this frame's variables own, or a value it holds in flight, is
-        // released — except the returned one, which the caller now holds in flight (O-Move).
-        if len(own.held) > 0 {
-          returned = if op.kind == KRef { vi ?? NULL_STORE } else { NULL_STORE };
-          gone: vector<integer> = [];
-          for st in own.held {
-            o = owner_of(own, st);
-            if o >= base_int || o == IN_FLIGHT - fp {
-              if st == returned {
-                own.owner[st] = IN_FLIGHT - (fp - 1);
-              } else {
-                gone += [st];
-              }
-            }
-          }
-          for st in gone {
-            release(own, st);
-            own.swept += 1;
-          }
         }
         sp_int = base_int;
         sp_float = base_float;
         sp_text = base_text;
         fp -= 1;
         // Every frame below the top was saved by the call that entered the one above it.
-        def = f_def[fp] ?? panic("a saved frame");
-        pc = f_pc[fp] ?? panic("a saved frame");
-        base_int = f_int[fp] ?? panic("a saved frame");
-        base_float = f_float[fp] ?? panic("a saved frame");
-        base_text = f_text[fp] ?? panic("a saved frame");
-        prog = progs[def] ?? panic("a lowered caller");
+        def = f_def[fp]!;
+        pc = f_pc[fp]!;
+        base_int = f_int[fp]!;
+        base_float = f_float[fp]!;
+        base_text = f_text[fp]!;
+        prog = progs[def]!;
         match op.kind {
           KFloat => { put_float(floats, sp_float, vf); sp_float += 1; }
           KText => { put_text(texts, sp_text, vt); sp_text += 1; }
@@ -542,12 +455,12 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
       }
       // A text-writing op's destination: a text slot of this frame, or through a `&text`.
       Append => {
-        at = if op.kind == KTextRef { ints[base_int + op.a] ?? panic("a bound reference") } else { base_text + op.a };
+        at = if op.kind == KTextRef { ints[base_int + op.a]! } else { base_text + op.a };
         sp_text -= 1;
         texts[at] = (texts[at] ?? "") + (texts[sp_text] ?? "");
       }
       AppendChar => {
-        at = if op.kind == KTextRef { ints[base_int + op.a] ?? panic("a bound reference") } else { base_text + op.a };
+        at = if op.kind == KTextRef { ints[base_int + op.a]! } else { base_text + op.a };
         sp_int -= 1;
         c = ints[sp_int] as character?;
         t = texts[at] ?? "";
@@ -557,7 +470,7 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         texts[at] = t;
       }
       Clear => {
-        at = if op.kind == KTextRef { ints[base_int + op.a] ?? panic("a bound reference") } else { base_text + op.a };
+        at = if op.kind == KTextRef { ints[base_int + op.a]! } else { base_text + op.a };
         texts[at] = "";
       }
       // A native the interpreter carries, as loft's own function of that name; its arguments
@@ -585,7 +498,7 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
       // renders it.  The operands are on the int stack, the last on top; an integer value sits
       // under them there, a float or text value on its own stack.
       Format => {
-        at = if op.kind == KTextRef { ints[base_int + op.a] ?? panic("a bound reference") } else { base_text + op.a };
+        at = if op.kind == KTextRef { ints[base_int + op.a]! } else { base_text + op.a };
         piece = "";
         if op.b == 0 {
           sp_int -= 7;
@@ -668,65 +581,103 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
       // The store (S3): each op calls the C runtime's routine of its operator through `crt`.
       // A reference is three integers, the store part under the record and the position.
       // An op that writes a variable hands its three parts over and writes back what the
-      // routine left there.  Who owns a store is the owner table's, and only it releases one.
+      // routine left there.  `OpDatabase` (`alloc_record_at`, `state/io.rs:888`): the store the
+      // variable names is made again IN PLACE, whoever else names it; a fresh one only from
+      // the sentinel; a struct-enum variant at its enum's size; a vector wrapper keeps a buffer
+      // that is a place.
       Database => {
-        // A store the variable owns is made again in place; any other variable gets a store
-        // of its own, so a store it only views is never cleared under its owner.
         at = base_int + op.a;
         ref_in(io, ints, at);
-        if owner_of(own, io[0] ?? NULL_STORE) != at {
-          io[0] = NULL_STORE;
-          io[1] = 0;
-          io[2] = 0;
+        bytes = types::enum_parent_size(b, op.b);
+        if types::is_vector_wrapper(b, op.b) {
+          // A place's collection is released through the type table.
+          if !table_loaded {
+            load_table(b);
+            table_loaded = true;
+          }
+          crt::database_wrapper(io, bytes, op.b);
+        } else {
+          crt::database(io, bytes, op.b);
         }
-        crt::database(io, (b.types[op.b] ?? panic("a type the lowering checked")).size, op.b);
         ref_out(io, ints, at);
-        claim(own, io[0] ?? NULL_STORE, at);
       }
-      // The store the variable names remade in place, whoever owns it, and a fresh store the
-      // variable owns when it names none: a keyed local bound to null (`keyed_null` — a link
-      // writes through to its target), and the hidden return buffer the caller handed in.
-      Remake => {
-        at = base_int + op.a;
-        ref_in(io, ints, at);
-        fresh = (io[0] ?? NULL_STORE) == NULL_STORE;
-        crt::database(io, (b.types[op.b] ?? panic("a type the lowering checked")).size, op.b);
-        ref_out(io, ints, at);
-        if fresh {
-          claim(own, io[0] ?? NULL_STORE, at);
-        }
-      }
-      // `OpFreeRef(v)`: released when this frame owns `v`'s store; `v` is reset either way, as
-      // the runtime's `loft_free_var` resets it.
+      // `OpVarRef(v); OpFreeRef` (`free_named`): the store `v` names released — a null and an
+      // already free store are no-ops; the slot keeps what it held.
       FreeVar => {
         at = base_int + op.a;
-        st = ints[at] ?? NULL_STORE;
-        if st != NULL_STORE {
-          if frame_owns(own, st, base_int, fp) {
-            release(own, st);
-          }
-          ints[at] = NULL_STORE;
-        }
+        crt::free_ref(ints[at] ?? NULL_STORE, ints[at + 1] ?? 0, ints[at + 2] ?? 0);
       }
-      // `OpFreeRef` of a value: released when this frame owns it, or nobody does.
+      // `OpFreeRef` of a value.
       FreeRef => {
         sp_int -= 3;
-        st = ints[sp_int] ?? NULL_STORE;
-        if st != NULL_STORE && (owner_of(own, st) == NOBODY || frame_owns(own, st, base_int, fp)) {
-          release(own, st);
-        }
+        crt::free_ref(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0);
       }
-      // `OpFreeRefIfDistinct(v, w)`: as `OpFreeRef(v)`, unless `v` names `w`'s store.
+      // `OpVarRef(v); <w>; OpFreeRefIfDistinct` (`free_displaced`): `v`'s store released unless
+      // it is the witness's, absent or protected.
       FreeVarDistinct => {
         sp_int -= 3;
         at = base_int + op.a;
-        st = ints[at] ?? NULL_STORE;
-        if st != NULL_STORE && st != (ints[sp_int] ?? NULL_STORE) {
-          if frame_owns(own, st, base_int, fp) {
-            release(own, st);
-          }
-          ints[at] = NULL_STORE;
+        crt::free_displaced(ints[at] ?? NULL_STORE, ints[at + 1] ?? 0, ints[at + 2] ?? 0, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0);
+      }
+      // `OpFreeRefIfDistinct` of two values: the displaced one, then its witness.
+      FreeRefDistinct => {
+        sp_int -= 6;
+        crt::free_displaced(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0);
+      }
+      // `OpFreeRefUnlessEntry` (`fill.rs:3650`): the displaced value, the witness, the entry
+      // witness — freed as `OpFreeRefIfDistinct` unless it is the entry's store.
+      FreeRefUnlessEntry => {
+        sp_int -= 9;
+        if (ints[sp_int] ?? NULL_STORE) != (ints[sp_int + 6] ?? NULL_STORE) {
+          crt::free_displaced(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0);
         }
+      }
+      // `OpBindOrCopy(v, tp)` (`state/io.rs:2018`): the call's result and the witness it may
+      // borrow from.  In the witness's store: `OpDatabase` on `v`, then the copy (the flags
+      // carry its source free); otherwise adopted — `v` takes it, nothing freed.  `b` is the
+      // type plus 65536 times the copy's flags.
+      BindOrCopy => {
+        sp_int -= 6;
+        at = base_int + op.a;
+        rs = ints[sp_int] ?? NULL_STORE;
+        if rs != NULL_STORE && rs == (ints[sp_int + 3] ?? NULL_STORE) {
+          if !table_loaded {
+            load_table(b);
+            table_loaded = true;
+          }
+          tp = op.b % 65536;
+          ref_in(io, ints, at);
+          crt::database(io, types::enum_parent_size(b, tp), tp);
+          ref_out(io, ints, at);
+          crt::copy_record(rs, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[at] ?? NULL_STORE, ints[at + 1] ?? 0, ints[at + 2] ?? 0, tp, op.b / 65536);
+        } else {
+          ints[at] = ints[sp_int];
+          ints[at + 1] = ints[sp_int + 1];
+          ints[at + 2] = ints[sp_int + 2];
+        }
+      }
+      // `OpCopyRefOrNull(v, tp)` (`state/io.rs:1961`): an absent result (`rec == 0`) releases
+      // the record `v` was given and binds the sentinel; any other is copied into it.
+      CopyRefOrNull => {
+        sp_int -= 3;
+        at = base_int + op.a;
+        if (ints[sp_int + 1] ?? 0) == 0 {
+          crt::free_ref(ints[at] ?? NULL_STORE, ints[at + 1] ?? 0, ints[at + 2] ?? 0);
+          ints[at] = NULL_STORE;
+          ints[at + 1] = 0;
+          ints[at + 2] = 0;
+        } else {
+          if !table_loaded {
+            load_table(b);
+            table_loaded = true;
+          }
+          crt::copy_record(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[at] ?? NULL_STORE, ints[at + 1] ?? 0, ints[at + 2] ?? 0, op.b % 65536, op.b / 65536);
+        }
+      }
+      // `n_protect_store_frees` (`b` 1) and `n_unprotect_store_frees` (`b` 0) of a reference.
+      Protect => {
+        sp_int -= 3;
+        crt::protect(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b == 1);
       }
       GetInt => {
         sp_int -= 3;
@@ -810,10 +761,6 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
           ints[sp_int + 3] ?? 65535, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0,
           op.a, op.b
         );
-        // A copy that frees its source (flag 1) released the source's store in the runtime.
-        if op.b & 1 != 0 {
-          disown(own, ints[sp_int] ?? NULL_STORE);
-        }
       }
       // Vectors (S3's second slice): a vector is the reference to its field, an element a
       // reference into the same store, so neither changes who owns the store.
@@ -860,7 +807,7 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         }
         sp_int -= 3;
         crt::vec_append(io, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b);
-        crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, images[op.a] ?? panic("derived above"));
+        crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, images[op.a]!);
         ref_out(io, ints, sp_int);
         sp_int += 3;
       }
@@ -890,7 +837,7 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         }
         sp_int -= 3;
         crt::hash_entry(io, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b / 2, op.b % 2 == 1);
-        crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, images[op.a] ?? panic("derived above"));
+        crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, images[op.a]!);
         ref_out(io, ints, sp_int);
         sp_int += 3;
       }
@@ -942,7 +889,7 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
           load_table(b);
           table_loaded = true;
         }
-        at = if op.kind == KTextRef { ints[base_int + op.a] ?? panic("a bound reference") } else { base_text + op.a };
+        at = if op.kind == KTextRef { ints[base_int + op.a]! } else { base_text + op.a };
         sp_int -= 3;
         piece = "";
         show::render(b, op.b / 4, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b % 4, 0, piece);
@@ -1010,52 +957,29 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
           table_loaded = true;
         }
         sp_int -= 3;
-        crt::clear(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a);
-      }
-      // `v = x` (`lower::bind`): ADOPT a value this frame holds in flight or nobody owns;
-      // otherwise COPY (the mode says so) or bind a VIEW.  A store `v` owned and no longer
-      // names is released.  A copy refills the store `v` owns in place, or mints one.
-      Bind => {
-        mode = op.b % 4;
-        tp = op.b / 4;
-        sp_int -= 3;
-        rs = ints[sp_int] ?? NULL_STORE;
-        rr = ints[sp_int + 1] ?? 0;
-        rp = ints[sp_int + 2] ?? 0;
-        at = base_int + op.a;
-        old = ints[at] ?? NULL_STORE;
-        owned_old = old != NULL_STORE && owner_of(own, old) == at;
-        ro = owner_of(own, rs);
-        adopt = rs != NULL_STORE && (ro == NOBODY || ro == IN_FLIGHT - fp);
-        if !adopt && rs != NULL_STORE && rr != 0 && mode != lower::BIND_PLAIN {
-          if !table_loaded {
-            load_table(b);
-            table_loaded = true;
+        reset = false;
+        if op.b == 1 {
+          while len(imaged) <= op.a {
+            images += [[]];
+            imaged += [false];
           }
-          if owned_old && old != rs {
-            ref_in(io, ints, at);
-          } else {
-            io[0] = NULL_STORE;
-            io[1] = 0;
-            io[2] = 0;
+          if !imaged[op.a] {
+            images[op.a] = types::default_image(b, op.a);
+            imaged[op.a] = true;
           }
-          crt::bind_copy(io, tp, rs, rr, rp);
-          if owned_old && old == rs {
-            release(own, old);
-          }
-          ref_out(io, ints, at);
-          claim(own, io[0] ?? NULL_STORE, at);
-        } else {
-          if owned_old && old != rs {
-            release(own, old);
-          }
-          ints[at] = rs;
-          ints[at + 1] = rr;
-          ints[at + 2] = rp;
-          if adopt {
-            claim(own, rs, at);
-          }
+          reset = crt::reset_pool_root(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, types::enum_parent_size(b, op.a), images[op.a] ?? []);
         }
+        if !reset {
+          crt::clear(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a);
+        }
+      }
+      // `OpPutRef`: the reference stored into the variable's slot; nothing is freed.
+      Bind => {
+        sp_int -= 3;
+        at = base_int + op.a;
+        ints[at] = ints[sp_int];
+        ints[at + 1] = ints[sp_int + 1];
+        ints[at + 2] = ints[sp_int + 2];
       }
       _ => {
         match op.kind {
@@ -1130,5 +1054,5 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
       }
     }
   }
-  Outcome { value: 0, refused: "the program ran off its last op", refused_in: "", stores_left: 0, swept: 0 }
+  Outcome { value: 0, refused: "the program ran off its last op", refused_in: "", stores_left: 0 }
 }

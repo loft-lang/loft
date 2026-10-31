@@ -1988,6 +1988,15 @@ pub fn text_clear_enabled() -> bool {
 /// `LOFT_NO_FLAT_COPY=1` — copy a record that owns no heap through the full release-and-walk
 /// path again (`@FR-R-FlatCopy` off): the first bisect step for a wrong value or a leak after
 /// a record copy on `--native`.
+/// `@FR-L-OutOfLine` — a struct or enum field whose type contains its host is laid out
+/// OUT OF LINE, as a child record in the host's store, instead of being refused as a type of
+/// infinite size.  `LOFT_NO_OUT_OF_LINE=1` refuses such a type again, as a cycle — the first
+/// bisect step for a wrong value or a leak in a recursive type (BOTH_BACKEND_SWITCHES.md).
+pub fn out_of_line_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_OUT_OF_LINE"))
+}
+
 pub fn flat_copy_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_FLAT_COPY"))
@@ -2083,6 +2092,17 @@ pub fn trace_place() -> bool {
 pub fn store_reset_clear_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_STORE_RESET_CLEAR"))
+}
+
+/// STORE_MODEL D19f: clearing a vector that holds nothing — no block, or a block of length
+/// zero — is nothing, a store-root vector's included: the store is not reset, as the C
+/// runtime's `loft_vec_clear_release` does not reset it (STORE_MODEL's rule: the C model is
+/// the standard).  **DEFAULT ON**, both backends (a runtime fact).  Opt OUT with
+/// `LOFT_NO_EMPTY_CLEAR_SKIP`: the before-half of the A/B on one binary; `LOFT_TRACE_CLEAR=1`
+/// prints a reset when one is made.
+pub fn empty_clear_skip_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_EMPTY_CLEAR_SKIP"))
 }
 
 /// @PLN157 § V-ai: the store reset of § V-ag re-establishes the root vector at the

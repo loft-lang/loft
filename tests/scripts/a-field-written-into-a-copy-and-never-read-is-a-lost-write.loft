@@ -1,0 +1,88 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A FIELD written into a local that holds a COPY of a place, and never read, is a lost write
+// even when another field of the copy is read (`@FR-B-Copy`, `@FR-F-Ret`).  `v = pick(w, 0)`
+// returns a projection of `w`, which the bind copies; `v.on = true` lands in the copy, and
+// reading `v.name` afterwards made the whole-value lint count the copy as used.  The
+// self-hosted interpreter met it first (`v = fvar(b, d, var); v.stack_allocated = true`).
+//
+// Each warning cell names its local after the cell; `tests/dead_code_lint.rs` runs this file
+// and asserts the EXACT set of locals warned — the silent cells are half the claim: a field
+// read back, the copy used whole (passed on, returned, written back, rendered, a method), a
+// `&` bind and a direct projection (both write through), a literal's own fields, a group's
+// sibling member, and a field read in the next pass of a loop.
+//
+// @falsified-at: a102fed3d — BY HAND, because `make falsify` cannot see a warning: 0 per-field
+//   `lost-write` reports there, 6 here (ap_v cl_v fc_v ne_v tx_v vs_m), on both backends;
+//   `tests/dead_code_lint.rs` asserts the exact set.  CHANNEL: the warnings.  ARMED: nothing.
+//   HOLDS: exit 0 and every assertion on both trees and both backends.
+
+value struct VP { x: integer, y: integer }
+struct P { x: integer, y: integer }
+struct Var { name: text, on: boolean, pos: P, vp: VP, items: vector<integer> }
+struct Func { vars: vector<Var> }
+struct S { k: integer, w: integer }
+struct G { grp: vector<S>, by_k: hash<S[k]>, tag: integer }
+
+fn pick(f: Func, i: integer) -> Var { f.vars[i]! }
+fn name_of(v: Var) -> text { v.name }
+fn shown(self: Var) -> text { self.name }
+
+// ------------------------------------------------------------------ the write is lost
+
+// @EXPECT_WARNING: 'fc_v' holds a COPY, and this field written into it is never read
+fn field_of_a_call(f: Func) -> text { fc_v = pick(f, 0); fc_v.on = true; fc_v.name }
+// @EXPECT_WARNING: 'ne_v' holds a COPY, and this field written into it is never read
+fn nested_field(f: Func) -> text { ne_v = pick(f, 0); ne_v.pos.x = 9; ne_v.name }
+// @EXPECT_WARNING: 'ap_v' holds a COPY, and this field written into it is never read
+fn append_into_a_field(f: Func) -> text { ap_v = pick(f, 0); ap_v.items += [5]; ap_v.name }
+// @EXPECT_WARNING: 'tx_v' holds a COPY, and this field written into it is never read
+fn text_field(f: Func) -> boolean { tx_v = pick(f, 0); tx_v.name = "lost"; tx_v.on }
+// @EXPECT_WARNING: 'cl_v' holds a COPY, and this field written into it is never read
+fn copy_of_a_local(f: Func) -> text { u = pick(f, 0); cl_v = u; cl_v.on = true; "{cl_v.name} {u.on}" }
+// @EXPECT_WARNING: 'vs_m' holds a COPY, and this field written into it is never read
+fn value_struct_copy(f: Func) -> integer { w = f.vars[0]!; vs_m = w.vp; vs_m.x = 9; vs_m.y }
+
+// ------------------------------------------------------------------ the write is observed
+
+fn read_back(f: Func) -> boolean { rb_v = pick(f, 0); rb_v.on = true; rb_v.on }
+fn passed_whole(f: Func) -> text { pw_v = pick(f, 0); pw_v.on = true; name_of(pw_v) }
+fn returned(f: Func) -> Var { rt_v = pick(f, 0); rt_v.on = true; rt_v }
+fn written_back(f: Func) { wb_v = pick(f, 0); wb_v.pos.x = 7; f.vars[0] = wb_v; }
+fn rendered(f: Func) -> text { rn_v = pick(f, 0); rn_v.on = true; "{rn_v}" }
+fn method(f: Func) -> text { me_v = pick(f, 0); me_v.on = true; me_v.shown() }
+fn linked(f: Func) -> text { lk_v = &f.vars[0]; lk_v.pos.y = 8; lk_v.name }
+fn projection(f: Func) -> text { pj_v = f.vars[0]!; pj_v.items += [3]; pj_v.name }
+fn literal() -> text {
+  li_v = Var { name: "lit", on: false, pos: P { x: 1, y: 2 }, vp: VP { x: 0, y: 0 }, items: [] };
+  li_v.on = true;
+  li_v.name
+}
+fn other_field_read(f: Func) -> integer { of_v = pick(f, 0); of_v.pos.x = 4; of_v.pos.y }
+fn next_pass(f: Func) -> integer {
+  np_v = pick(f, 0);
+  n = 0;
+  for _pass in 0..2 { if np_v.on { n += 1; } np_v.on = true; }
+  n
+}
+fn group_sibling(a: G) -> integer { gs_b = a; gs_b.grp[0].w = 77; gs_b.by_k[1].w ?? -1 }
+
+fn main() {
+  f = Func { vars: [Var { name: "a", on: false, pos: P { x: 1, y: 2 }, vp: VP { x: 3, y: 4 }, items: [] }] };
+  assert(field_of_a_call(f) == "a" && nested_field(f) == "a" && append_into_a_field(f) == "a", "lost 1");
+  assert(!text_field(f) && copy_of_a_local(f) == "a false" && value_struct_copy(f) == 4, "lost 2");
+  e = f.vars[0]!;
+  assert(!e.on && e.name == "a" && e.pos.x == 1 && len(e.items) == 0 && e.vp.x == 3, "a copy's write never reaches f");
+
+  assert(read_back(f) && passed_whole(f) == "a" && returned(f).on && rendered(f) != "", "observed 1");
+  assert(method(f) == "a" && literal() == "lit" && other_field_read(f) == 2 && next_pass(f) == 1, "observed 2");
+  written_back(f);
+  assert(f.vars[0]!.pos.x == 7, "a write-back lands");
+  assert(linked(f) == "a" && f.vars[0]!.pos.y == 8, "a & bind writes through");
+  assert(projection(f) == "a" && len(f.vars[0]!.items) == 1, "a projection writes through");
+  g = G { tag: 1 };
+  g.grp += [S { k: 1, w: 11 }];
+  assert(group_sibling(g) == 77 && g.grp[0].w == 11, "a group's sibling sees the write; the source does not");
+  println("field-copy ok");
+}

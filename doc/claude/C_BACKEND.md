@@ -32,6 +32,10 @@ python3 scripts/c_sweep.py --poison  # the store poison modes, against the inter
 python3 scripts/c_sweep.py --verbose FILE...   # both outputs of each differing program
 python3 scripts/c_sweep.py --mode default      # one macro mode instead of all three
 python3 scripts/c_sweep.py --all               # every refusal reason and program, not the top 25
+python3 scripts/c_sweep.py --log               # the runtime log compared too: each side writes its
+                                               #   own file and the records (timestamps aside)
+                                               #   must agree — a recoverable fault's Warn line
+                                               #   (`@FR-E-Report`) included
 python3 scripts/c_sweep.py --stderr            # stderr compared too (a fault's message, location
                                                #   and chain), the driver's `advice:` notes aside
 python3 scripts/c_sweep.py --shard K/N         # every N-th program from K: ci.yml's `c-sweep`
@@ -376,10 +380,12 @@ written from word 0 to past its last live record, padded to the 1024-word floor,
 the sidecar gated (`classify`: the same hash and dump, `Release::admits`), the image adopted
 into the slot as `Store::load` builds one (no parked lists, no lazy frees, the allocator state
 re-derived from the blocks).  A file of another layout is refused, where the interpreter
-converts it — except one written before the null-first key order (`placement::KEY_ORDER`), which a
-whole load converts: the gate admits a layout that differs only by `,order=1` and
+converts it — except two, which a whole load converts.  One written before the null-first key
+order (`placement::KEY_ORDER`): the gate admits a layout that differs only by `,order=1` and
 `loft_rekey_walk` files every `sorted`, `ordered` and `index` whose key moved again in this
-build's order (a paged load still refuses it, as the interpreter's does); a store holding references has them re-pointed at its slot from the slot its
+build's order (a paged load still refuses it, as the interpreter's does).  And tries written
+under placement token 1: `loft_trie_refile` files each trie's records again (a paged load reads
+them as written).  A store holding references has them re-pointed at its slot from the slot its
 sidecar recorded (`rebase_stored_refs`), read off the image's bytes before it is adopted, so a
 refusal leaves the store as it was; `store_load_untrusted` validates the block structure first
 (`Store::validate_structure`); compaction on load is not done (it declines for an image
@@ -680,7 +686,7 @@ path is not removed while a **port** row is open.  The store rows are also numbe
 | store watch, lock backtrace (`LOFT_WATCH_STORE`, `LOFT_LOCK_BT`) | O | — | **port** when a C defect needs it; drop otherwise | — |
 | leak sites (`LOFT_LEAK_SITES`) | O | `-DLOFT_LEAK_SITES` (the driver's build under the variable): each store remembers the function, file and line it was made at (`loft_note_site`, the frames kept), and the leak report groups the stores left by site and type, most first — a file and line where the interpreter names a pc | **ported** | `tests/c_emit.rs` `a_leak_site_c_build_names_where_a_kept_store_was_made` |
 | store log, tags, allocation report (`LOFT_STORE_LOG`, `LOFT_STORE_TAG`, `LOFT_ALLOC_REPORT`) | O | `LOFT_ALLOC_TRACE`, `LOFT_NATIVE_LEAK_CHECK` | **drop** (proposed): the allocation trace and the leak report, sites included, answer what these were read for | — |
-| allocator policy switches — the allocator's own (`LOFT_NO_PARK`, `NO_LAZY_FREE`, `NO_TOMBSTONE`, `NO_FREE_FOOTER`, `NO_WILD_BUMP`, `NO_CARVE_IN_PLACE`, `NO_WILDERNESS`) | E | `-DLOFT_NO_PARK` … `-DLOFT_NO_CARVE_IN_PLACE` in `loft_store.h`, each the policy turned off as `Store` turns it off | **ported**, six of seven: the allocator differential runs once per switch with `Store` under the variable and the C under the define, byte for byte (`NO_WILD_BUMP` lays out the same bytes by construction — a fast path to the block the best fit takes); **`NO_WILDERNESS` open** (off, `init` tracks no block and every claim path changes — a port of its own).  The runtime's other `LOFT_NO_*` policies (exact copy claim, compaction on load, clear release, prefill image, inline hash, …) are their own rows when a C defect needs them | `tests/c_emit.rs` `a_store_allocator_switch_answers_alike_on_both_runtimes` |
+| allocator policy switches — the allocator's own (`LOFT_NO_PARK`, `NO_LAZY_FREE`, `NO_TOMBSTONE`, `NO_FREE_FOOTER`, `NO_WILD_BUMP`, `NO_CARVE_IN_PLACE`, `NO_WILDERNESS`) | E | `-DLOFT_NO_PARK` … `-DLOFT_NO_WILDERNESS` in `loft_store.h`, each the policy turned off as `Store` turns it off | **ported**, all seven: the allocator differential runs once per switch with `Store` under the variable and the C under the define, byte for byte (`NO_WILD_BUMP` lays out the same bytes by construction — a fast path to the block the best fit takes); `NO_WILDERNESS` keeps the tail in the tree and a fresh store untracked, its first claim the chain walk (`loft_claim_scan`), as `Store` does.  The runtime's other `LOFT_NO_*` policies (exact copy claim, compaction on load, clear release, prefill image, inline hash, …) are their own rows when a C defect needs them | `tests/c_emit.rs` `a_store_allocator_switch_answers_alike_on_both_runtimes` |
 | the live debugger (`loft debug`, `--rpc`) | O | the C debug tier's `#line` markers: the loft file and line of every C line in the binary's debug information, for gdb, lldb, a profiler and a backtrace (`emit_program_with_source_lines`, DEBUG.md § A C build in gdb or lldb) | **covered** (owner, decided): the full debugger is the interpreter's, for development, as live editing is; a bug only the C build shows is debugged on its binary by loft line | `tests/c_emit.rs` `the_c_debug_build_names_loft_lines_in_its_line_table` |
 | live reload / live dispatch (`LOFT_LIVE_RELOAD`, `LOFT_LIVE_FLIP`, the engine host's `flip` / `rebuild` / `swap`) | E | — the C engine host answers `flip false` and refuses `rebuild` and `swap` | **covered** (owner, decided): changing a running program needs the interpreter, so live editing is the interpreter's — development runs with it around, as the full debugger already does, with the libraries running as C inside it (P4); a shipped C build carries none of it and stays compact | — |
 | the profilers (`make profile`, `LOFT_NATIVE_CHECKPOINTS`) | E | `c_profile` | covered for time; open for heap by line | `make profile-corpus` on C |

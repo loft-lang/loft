@@ -1610,10 +1610,27 @@ impl Stores {
     /// in the same Store as the host.  Returns the null sentinel
     /// (`store_nr=u16::MAX, rec=0, pos=0`) when the rec-id is 0
     /// (non-capturing / default-init case).
+    ///
+    /// # Panics
+    /// Under `LOFT_STRICT_STORES=1`, when the field names a record that is not live in the
+    /// host's store.
     #[must_use]
     pub fn ref_from_child_rec(&self, host_field: &DbRef) -> DbRef {
         let store = keys::store(host_field, &self.allocations);
         let rec = store.get_u32_raw(host_field.rec, host_field.pos);
+        // `@FR-L-OutOfLine` I1 — a child lives in its host's store, so under strict stores the
+        // number must name a live record there: a copy that carried it into another store, or
+        // a read after the child's release, is caught here instead of reading foreign bytes.
+        assert!(
+            rec == 0 || !crate::keys::strict_stores() || store.is_claimed_record(rec),
+            "strict stores: the child-record field at #{}.{}+{} names record {rec}, which \
+             is not a live record of store #{} — the child was released, or its number \
+             left its host's store",
+            host_field.store_nr,
+            host_field.rec,
+            host_field.pos,
+            host_field.store_nr
+        );
         if rec == 0 {
             DbRef::NULL
         } else {
@@ -1622,6 +1639,80 @@ impl Stores {
                 rec,
                 pos: 8,
             }
+        }
+    }
+
+    /// The words a `tp` child record claims: its header word and its payload, an enum's at
+    /// its largest variant's size (`enum_parent_size`).
+    #[must_use]
+    pub fn child_rec_words(&self, tp: u16) -> u32 {
+        1 + u32::from(self.enum_parent_size(tp)).div_ceil(8)
+    }
+
+    /// `OpSetChildRec` — `@FR-B-OutOfLine`: write the `tp` value `data` into the out-of-line
+    /// field at `field`, with an inline field's value semantics.
+    ///
+    /// - A null value releases the child the field held, all the way down, and leaves the
+    ///   field absent (record 0).  `Store::delete` entombs it where a stored reference named
+    ///   it (`@FR-H-Removed`), so such a link reads null afterwards.
+    /// - A value is copied into a FRESH record of the host's store first, because it may lie
+    ///   inside the child it replaces (`t.left = t.left.left`).  An absent field then takes
+    ///   the fresh record.  A present child keeps its record NUMBER: its claims are released
+    ///   and the fresh bytes moved into it, so a view of the child still names it and sees the
+    ///   new value, as a view of an inline field does.
+    ///
+    /// `raw_tp`'s `COPY_FREE_SOURCE` bit releases a given-up source store after the copy, as
+    /// `OpCopyRecord`'s does.
+    pub fn set_child_rec(&mut self, field: &DbRef, data: &DbRef, raw_tp: u16) {
+        let free_source = raw_tp & crate::keys::COPY_FREE_SOURCE != 0;
+        let tp = raw_tp & crate::keys::COPY_TP_MASK;
+        let present = data.store_nr != u16::MAX && data.rec != 0;
+        if field.store_nr == u16::MAX || field.rec == 0 {
+            if free_source && present {
+                self.release_copy_source(data, field);
+            }
+            return;
+        }
+        let old = self.store(field).get_u32_raw(field.rec, field.pos);
+        if !present {
+            if old != 0 {
+                self.store_mut(field).set_u32_raw(field.rec, field.pos, 0);
+                let old_db = DbRef {
+                    store_nr: field.store_nr,
+                    rec: old,
+                    pos: 8,
+                };
+                self.remove_claims(&old_db, tp);
+                self.store_mut(field).delete(old);
+            }
+            return;
+        }
+        let size = u32::from(self.enum_parent_size(tp));
+        let words = self.child_rec_words(tp);
+        let fresh = self.allocations[field.store_nr as usize].claim(words);
+        let fresh_db = DbRef {
+            store_nr: field.store_nr,
+            rec: fresh,
+            pos: 8,
+        };
+        self.copy_block(data, &fresh_db, size);
+        self.copy_claims(data, &fresh_db, tp);
+        if old == 0 {
+            self.store_mut(field)
+                .set_u32_raw(field.rec, field.pos, fresh);
+        } else {
+            let old_db = DbRef {
+                store_nr: field.store_nr,
+                rec: old,
+                pos: 8,
+            };
+            self.remove_claims(&old_db, tp);
+            self.store_mut(field)
+                .copy_block(fresh, 8, old, 8, size as isize);
+            self.store_mut(field).delete(fresh);
+        }
+        if free_source {
+            self.release_copy_source(data, field);
         }
     }
 
@@ -1646,8 +1737,8 @@ impl Stores {
             self.remove_claims(&old_db, tp);
             self.store_mut(host_field).delete(old);
         }
-        let size = u32::from(self.size(tp));
-        let rec = self.allocations[host_field.store_nr as usize].claim(size);
+        let words = self.child_rec_words(tp);
+        let rec = self.allocations[host_field.store_nr as usize].claim(words);
         let db = DbRef {
             store_nr: host_field.store_nr,
             rec,
@@ -2354,8 +2445,9 @@ impl Stores {
     /// The call is over.  A bridge that WROTE through a foreign vector's copy — grew it,
     /// or changed an element — wrote to bytes the program does not own, and the copy has
     /// nowhere to carry that: it is the same refusal a direct write meets, raised after
-    /// the call instead of silently dropped.  Then the copies go: a store minted for a
-    /// scalar answer is freed whole; otherwise each copy's records are deleted from the
+    /// the call instead of silently dropped.  Then the copies go: a store minted for an
+    /// answer it does not hold — a scalar, or a null (`returns_ref` false; STORE_MODEL.md
+    /// D19i) — is freed whole; otherwise each copy's records are deleted from the
     /// store they were claimed in — unless a foreign ANSWER locked that store, which the
     /// answer's own free releases, copies and all.
     pub fn bridge_args_done(&mut self, args: &BridgeArgs, returns_ref: bool) {
@@ -3207,8 +3299,16 @@ impl Stores {
             // JSON-representable form — closures don't survive a JSON
             // round-trip.  Surface as a clean error.
             Parts::DbRef => Err(mismatch()),
-            // P213: child-record pointer (closures) — same JSON
-            // restriction as DbRef.
+            // `@FR-L-OutOfLine` — an out-of-line field reads its value into a fresh child
+            // record of the host's store, through the content's own walk.
+            Parts::ChildRec(content) if self.child_rec_is_value(content) => {
+                let child = self.new_child_rec(to, content);
+                if child.rec == 0 {
+                    return Err(mismatch());
+                }
+                self.walk_parsed_into(parsed, content, u16::MAX, u16::MAX, &child, path, at)
+            }
+            // P213: a closure record's child — same JSON restriction as DbRef.
             Parts::ChildRec(_) => Err(mismatch()),
         }
     }
@@ -4239,6 +4339,67 @@ fn plain_field_append_enabled() -> bool {
 mod tests {
     use super::*;
     use crate::database::Stores;
+
+    /// `@FR-B-OutOfLine` on the runtime alone: `Tree { key: integer, left: child_rec<Tree> }`.
+    /// An overwrite of a present child keeps its record NUMBER (a view of it stays valid,
+    /// S1(a)); a null write releases the record, so the number fails `is_claimed_record` —
+    /// the test the strict read (`ref_from_child_rec`, I1) applies to a stale number.
+    #[test]
+    fn a_child_write_keeps_its_record_and_a_null_write_releases_it() {
+        let mut stores = Stores::new();
+        let int_tp = stores.name("integer");
+        let tree = stores.structure("ProbeTree", 0);
+        stores.field(tree, "key", int_tp);
+        let child = stores.child_rec(tree);
+        stores.field(tree, "left", child);
+        stores.finish();
+        let (key_pos, _) = field_at(&stores, tree, "key");
+        let (left_pos, _) = field_at(&stores, tree, "left");
+        let host = stores.database(8);
+        stores.set_default_value(tree, &host);
+        let value = stores.database(8);
+        stores.set_default_value(tree, &value);
+        stores
+            .store_mut(&value)
+            .set_int(value.rec, value.pos + u32::from(key_pos), 4);
+        let field = DbRef {
+            pos: host.pos + u32::from(left_pos),
+            ..host
+        };
+        stores.set_child_rec(&field, &value, tree);
+        let first = stores.ref_from_child_rec(&field);
+        assert_eq!(
+            stores
+                .store(&first)
+                .get_int(first.rec, first.pos + u32::from(key_pos)),
+            4
+        );
+        stores
+            .store_mut(&value)
+            .set_int(value.rec, value.pos + u32::from(key_pos), 9);
+        stores.set_child_rec(&field, &value, tree);
+        let second = stores.ref_from_child_rec(&field);
+        assert_eq!(
+            second.rec, first.rec,
+            "an overwrite keeps the child's record number"
+        );
+        assert_eq!(
+            stores
+                .store(&second)
+                .get_int(second.rec, second.pos + u32::from(key_pos)),
+            9
+        );
+        stores.set_child_rec(&field, &DbRef::NULL, tree);
+        assert_eq!(
+            stores.ref_from_child_rec(&field),
+            DbRef::NULL,
+            "a null write leaves it absent"
+        );
+        assert!(
+            !stores.store(&host).is_claimed_record(first.rec),
+            "and releases the record, which a stale number then fails"
+        );
+    }
 
     /// Build `enum Shape { Words { ws: vector<text> }, Nums { ns: vector<float> } }` and
     /// answer `(enum type, Words type, Nums type)`.

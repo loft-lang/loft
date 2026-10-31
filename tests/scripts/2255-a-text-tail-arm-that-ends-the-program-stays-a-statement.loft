@@ -15,10 +15,12 @@
 //   CHANNEL: exit — the control's rustc refuses the program.  The interpreter's crash depends on
 //   what the misdelivered arm leaves on the stack: run directly, `loft --interpret` of this file
 //   on main exits 138 (SIGBUS); under the falsify harness the control exits 0.
+//   WITNESS: rustc's E0308 on the control's `--native` build, where this tree prints
+//   `one two 2`.
 // HOLDS: the interpreter's exit and output under `make falsify` (inert there); only native's
 //   exit moves.
-// An `if` chain tail whose `else` panics is refused at compile time, as a value `if` or
-// `match` with such an arm is; which of the two is the rule is the open question on loft#2255.
+// An `if` chain tail whose `else` panics is refused at compile time, as a value `if` with such
+// an arm is; `(C-Never)` says a halt fits anywhere a value does, so both are loft#2260's.
 
 enum Sh { A { n: integer }, B, C }
 

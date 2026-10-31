@@ -18,19 +18,27 @@ description: >-
 
 # Draw — iterative visual making (2D and 3D)
 
-You cannot draw a good picture in one shot — not by hand, and not here. A finished
-image is **downstream of perceiving**: you commit a mark, *see the gap* between
-what you meant and what appeared, and adjust — over many passes. This skill is that
-loop, plus the tools that make the *seeing* cheap. It is the opposite of generative
-synthesis (prompt in, finished picture out): here, nothing is final until the loop
-converges, and your judgment of the result *is* the engine.
+## Quick start
 
-The same loop drives **2D drawing** and **3D scene-making**. The method below is
-medium-agnostic; pick the medium at the end and read the matching reference.
+1. **Freeze the intent in a file** before any mark — predicates, feeling, composition (§ The loop).
+2. **Run `python3 sketch/draw.py scene.draw` in the background** — it re-renders on every save,
+   into `$SKETCH_OUT` (default `<tmp>/loft_sketch`): `stats.txt` (checks, density, composition —
+   text, read it most passes), `canvas.png`, `canvas_check.png` (red = failed check), `preview.png`.
+3. **Loop:** edit the scene → read `stats.txt` → look at an image only for gestalt and feeling →
+   critique cold → refine. Grammar: [`references/2d.md`](references/2d.md),
+   [`sketch/README.md`](../../../sketch/README.md); 3D: [`references/3d.md`](references/3d.md).
 
-> Full rationale and the design journey live in `doc/claude/DRAWING.md`
-> ([`../../../doc/claude/DRAWING.md`](../../../doc/claude/DRAWING.md)). This file is the operational
-> recipe — read it to *do*; read `doc/claude/DRAWING.md` to understand *why*.
+## Why a loop
+
+A finished image is **downstream of perceiving**: you commit a mark, *see the gap*
+between what you meant and what appeared, and adjust — over many passes. That is why
+one-shot output fails, here as by hand; nothing is final until the loop converges, and
+your judgment of the result *is* the engine. The same loop drives **2D drawing** and
+**3D scene-making**; the method below is medium-agnostic.
+
+The reasoning behind each choice is in [`doc/claude/DRAWING.md`](../../../doc/claude/DRAWING.md)
+(read it to understand *why*; this file is the recipe). Current mechanics live in
+[`sketch/README.md`](../../../sketch/README.md) and the two references.
 
 ## The loop
 

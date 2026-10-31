@@ -13,6 +13,10 @@
     scripts/c_sweep.py --shard K/N      # every N-th program from offset K (CI splits the sweep)
     scripts/c_sweep.py --stderr         # also compare stderr: a fault's message, its `-->` line,
                                         # excerpt and call chain (the oracle runs --no-warnings)
+    scripts/c_sweep.py --log            # also compare the runtime log: each side writes its own
+                                        # file (LOFT_LOG_CONF) and the records, timestamps aside,
+                                        # must be the interpreter's — a recoverable fault's Warn
+                                        # line (`@FR-E-Report`) included
     scripts/c_sweep.py --poison         # the store poison modes instead: the C built with
                                         # -DLOFT_POISON / -DLOFT_POISON_CLAIM against the
                                         # interpreter run under LOFT_POISON=1 / LOFT_POISON_CLAIM=1,
@@ -184,6 +188,12 @@ def wasm_run(wasm: str, cwd: Path, tmpdir: str) -> list[str]:
             "--env", f"LOFT_SOURCE_DIR={cwd}",
             *env, wasm]
 HAS_MAIN = re.compile(r"^\s*(pub\s+)?fn\s+main\s*\(", re.M)
+# A `#cwd` program (`loft` @PLN9) opts out of program-relative paths: it reads and writes
+# relative to the PROCESS's working directory, which the test harness sets to the workspace
+# root.  Run from the program's own directory instead, every such path missed on BOTH sides,
+# and an oracle and a C build that both fail every load scored as a match — the golden-image
+# readers among them, whose whole point is what they load.
+CWD_DIRECTIVE = re.compile(r"^\s*#cwd\b", re.M)
 
 
 def corpus() -> list[str]:
@@ -249,6 +259,26 @@ def scrubbed(err: bytes) -> bytes:
     return INTERP_ONLY.sub(b"", err).strip(b"\n")
 
 
+def log_config(tmp: str, side: str) -> dict:
+    """The environment that sends one side's runtime log to its own file in the program's
+    scratch (the levels at their defaults: warning and up), with the file emptied."""
+    conf, log = os.path.join(tmp, f"{side}.conf"), os.path.join(tmp, f"{side}.log")
+    with open(conf, "w", encoding="utf-8") as f:
+        f.write(f"[log]\nfile = {log}\n")
+    if os.path.exists(log):
+        os.remove(log)
+    return {"LOFT_LOG_CONF": conf}
+
+
+def log_records(tmp: str, side: str) -> list:
+    """The records of one side's log, each without its leading timestamp."""
+    try:
+        text = Path(os.path.join(tmp, f"{side}.log")).read_bytes()
+    except OSError:
+        return []
+    return [l.split(b" ", 1)[-1] for l in text.split(b"\n") if l.strip()]
+
+
 
 # How long a run may take: three times what the same program took in the same mode in the
 # last sweep of the same modes (the times report_times files), and never less than that time
@@ -278,7 +308,8 @@ def killed(path: str, mode: str, out) -> str:
     return f"[{mode}] killed at {limit(path, mode):.1f}s; its last sweep took {LAST[(path, mode)]:.2f}s"
 
 
-def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False):
+def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False,
+        log: bool = False):
     src = ROOT / path
     # A directory per program, named for it; `main` drops the ones that matched or were
     # refused and reports the others' (a slow or differing program's C, binary and files).
@@ -295,7 +326,7 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
     tenv = {"TMPDIR": tmpdir}
     c = os.path.join(tmp, "p.c")
     exe = os.path.join(tmp, "p")
-    code, _, err = run([LOFT, "--emit-c", c, str(src)], 60, cwd=src.parent)
+    code, _, err = run([LOFT, "--emit-c", c, str(src)], 60, cwd=src.parent)  # emit: no I/O
     if code == 2:
         return path, "refused", reason(err), None, {}
     if code != 0:
@@ -313,22 +344,27 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
         return path, "refused", "a declared C library has no wasm32 build", None, {}
     if any(m in CROSS for m in modes) and any(not l.startswith("-Wl,") for l in links if not l.endswith(".a")):
         return path, "refused", "a declared C library has no 32-bit build", None, {}
-    tests = not HAS_MAIN.search(src.read_text(encoding="utf-8", errors="replace"))
+    text = src.read_text(encoding="utf-8", errors="replace")
+    tests = not HAS_MAIN.search(text)
+    rundir = ROOT if CWD_DIRECTIVE.search(text) else src.parent
     # A program without `main` is its tests: the C runs them as `loft --tests` does,
     # and the two exit statuses say whether every test passed.
+    # The interpreter reads its log config from `--log-conf`; the compiled program from
+    # `LOFT_LOG_CONF`, as a shipped binary does.
+    i_log = ["--log-conf", log_config(tmp, "interp")["LOFT_LOG_CONF"]] if log else []
     interp = [LOFT, "--tests" if tests else "--interpret"] + \
-        (["--no-warnings"] if stderr else []) + [str(src)]
+        (["--no-warnings"] if stderr else []) + i_log + [str(src)]
     i_plain = None
     times = {}
     for mode in modes:
         flags, env = {**POISON_MODES, **STRICT_MODES, **VERIFY_MODES}.get(mode, (MODES.get(mode), None))
         if env:
-            i_out, times["interp"] = timed(interp, limit(path, "interp"), cwd=src.parent,
+            i_out, times["interp"] = timed(interp, limit(path, "interp"), cwd=rundir,
                                            env={**env, **tenv})
         else:
             i_out = i_plain
         if i_out is None:
-            i_out, times["interp"] = timed(interp, limit(path, "interp"), cwd=src.parent, env=tenv)
+            i_out, times["interp"] = timed(interp, limit(path, "interp"), cwd=rundir, env=tenv)
             i_plain = i_out
         why = killed(path, "interp", i_out)
         if why:
@@ -353,9 +389,10 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
         # The program's directory, as the driver hands it to every run (`LOFT_SOURCE_DIR`).
         run_cmd = wasm_run(exe + ".wasm", src.parent, tmpdir) if mode == "wasm" else \
             ["qemu-riscv32", exe] if mode == "riscv32" else [exe]
+        cenv = {**tenv, **log_config(tmp, "c")} if log else tenv
         c_out, times[mode] = timed(run_cmd,
-                                   limit(path, mode), cwd=src.parent,
-                                   env={**tenv, "LOFT_SOURCE_DIR": str(src.parent.resolve())})
+                                   limit(path, mode), cwd=rundir,
+                                   env={**cenv, "LOFT_SOURCE_DIR": str(src.parent.resolve())})
         why = killed(path, mode, c_out)
         if why:
             return path, "slow", why, None, times
@@ -376,11 +413,24 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
             # and the pid) cannot match: when the interpreter's own second run says
             # something else, the stream is not compared.
             if not same:
-                again = run(interp, ORACLE_TIMEOUT, cwd=src.parent, env={**(env or {}), **tenv})
+                again = run(interp, ORACLE_TIMEOUT, cwd=rundir, env={**(env or {}), **tenv})
                 same = scrubbed(again[2]) != scrubbed(i_out[2])
         if same and mode == "copy-check" and \
                 (b"[copy_check]" in c_out[2]) != (b"[copy_check]" in i_out[2]):
             same = False
+        if same and log:
+            i_log, c_log = log_records(tmp, "interp"), log_records(tmp, "c")
+            if i_log != c_log:
+                # The first record the two disagree on names the kind: `[divide_by_zero]` …
+                at = next((k for k in range(max(len(i_log), len(c_log)))
+                           if k >= len(i_log) or k >= len(c_log) or i_log[k] != c_log[k]), 0)
+                first = i_log[at] if at < len(i_log) else c_log[at]
+                kind = re.search(rb"\[(\w+)\]", first)
+                why = kind.group(1).decode() if kind else "log"
+                side = "C only" if at >= len(i_log) else \
+                    "interpreter only" if at >= len(c_log) else "the record differs"
+                return path, "differ", f"[{mode}] log: {why} ({side})", \
+                    ((b"", b"\n".join(i_log), b""), (b"", b"\n".join(c_log), b"")), times
         if not same:
             return path, "differ", f"[{mode}]", (i_out, c_out), times
     return path, "match", "", None, times
@@ -487,7 +537,9 @@ def main(argv: list[str]) -> int:
     with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as ex:
         asan = "--asan" in argv
         stderr = "--stderr" in argv
-        for path, bucket, why, outs, times in ex.map(lambda f: one(f, asan, modes, stderr), files):
+        log = "--log" in argv
+        for path, bucket, why, outs, times in ex.map(lambda f: one(f, asan, modes, stderr, log),
+                                                     files):
             timings[path] = times
             buckets[bucket] += 1
             if bucket in ("match", "refused"):

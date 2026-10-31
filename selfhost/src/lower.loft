@@ -17,6 +17,8 @@
 use ir;
 use types;
 use show;
+use own;
+use binds;
 
 // What kind of value a node, a variable or a result is, and so which stack holds it.
 enum Kind {
@@ -110,7 +112,6 @@ enum Code {
   KeyPart,
   HashFind,
   HashLen,
-  Remake,
   HashSorted,
   ScratchIterate,
   ScratchStep,
@@ -118,6 +119,11 @@ enum Code {
   RefEq,
   VecAdd,
   FormatDb,
+  FreeRefDistinct,
+  FreeRefUnlessEntry,
+  BindOrCopy,
+  CopyRefOrNull,
+  Protect,
 }
 
 // One op: `kind` is the kind of value it works on; `a` is a value, a slot, a jump target, a
@@ -159,8 +165,21 @@ struct Lowering {
   loop_depth: vector<integer>,
   brk_loop: vector<integer>,
   brk_at: vector<integer>,
-  bound: vector<boolean>,
+  // Every `continue` of a rotated loop still to be pointed at its step (`cont_loop` the loop's
+  // level, `cont_at` the op): a rotated loop's `loop_start` is -1.
+  cont_loop: vector<integer>,
+  cont_at: vector<integer>,
   def_nr: integer,
+  // The bind table (1b-compare.md, the binds layer): one row per `set`, in the form
+  // `LOFT_TRACE_BIND` writes from `generate_set` — `function⇥variable⇥first|re⇥notes` — and the
+  // notes of the sets still open, innermost last, each set's from its `note_at` on.
+  binds: vector<text>,
+  notes: vector<text>,
+  // The bytecode writer's walk state the binds read: the variables B2 freed before their
+  // reassignment (`stack.owned_reassigned`), and the oracle's operator table, built once.
+  owned_reassigned: vector<boolean>,
+  own_ops: own::Ops,
+  defs: own::Defs,
 }
 
 // A lowering with nothing in it: what a function not yet lowered holds.
@@ -186,8 +205,14 @@ pub fn empty() -> Lowering {
     loop_depth: [],
     brk_loop: [],
     brk_at: [],
-    bound: [],
+    cont_loop: [],
+    cont_at: [],
     def_nr: -1,
+    binds: [],
+    notes: [],
+    owned_reassigned: [],
+    own_ops: own::ops_of(ir::empty_bundle()),
+    defs: own::new_defs(),
   }
 }
 
@@ -202,15 +227,15 @@ fn kind_of_type(t: ir::TypeT) -> Kind {
     TyFloat => KFloat,
     TySingle => KSingle,
     TyText { dep: _ } => KText,
-    TyRefVar { inner } => if kind_of_types(inner) == KText { KTextRef } else { KOther },
+    TyRefVar { inner } => if kind_of_type(inner) == KText { KTextRef } else { KOther },
     TyReference { n: _, dep: _ } => KRef,
     TyVector { inner: _, dep: _ } => KRef,
     TyHash { n: _, names: _, dep: _ } => KRef,
     TyVoid => KNone,
     TyNull => KNone,
     TyNever => KNone,
-    TyOptional { inner } => kind_of_types(inner),
-    TyRewritten { inner } => kind_of_types(inner),
+    TyOptional { inner } => kind_of_type(inner),
+    TyRewritten { inner } => kind_of_type(inner),
     _ => KOther,
   }
 }
@@ -220,7 +245,7 @@ fn kind_of_types(ts: vector<ir::TypeT>) -> Kind {
   if len(ts) == 0 {
     return KNone;
   }
-  kind_of_type(ts[0] ?? panic("a non-empty type vector"))
+  kind_of_type(ts[0]!)
 }
 
 // The kind of the value expression `n` leaves; `KNone` for one that leaves none, or a null
@@ -239,11 +264,11 @@ fn kind_of(l: Lowering, b: ir::Bundle, n: ir::Node) -> Kind {
       k = l.var_kind[var] ?? KOther;
       if k == KTextRef { KText } else { k }
     }
-    NdSpan { inner } => kind_of(l, b, inner[0]?),
+    NdSpan { inner } => kind_of(l, b, inner),
     NdBlock { block } => kind_of_types(block[0]?.result),
     NdIf { cond: _, t, f } => {
-      k = kind_of(l, b, t[0]?);
-      if k == KNone { kind_of(l, b, f[0]?) } else { k }
+      k = kind_of(l, b, t);
+      if k == KNone { kind_of(l, b, f) } else { k }
     }
     NdCall { def_nr, args: _ } => kind_of_types(b.data.definitions[def_nr]?.returned),
     _ => KNone,
@@ -456,7 +481,6 @@ fn effect(code: Code, b: integer) -> integer {
     KeyPart => -1,
     HashFind => 0,
     HashLen => 0,
-    Remake => 0,
     // A hash walk: the snapshot from its hash, a walk's state from the snapshot, the next
     // element from the snapshot (the state is read and written in its slot), the snapshot freed.
     HashSorted => 0,
@@ -468,6 +492,14 @@ fn effect(code: Code, b: integer) -> integer {
     VecAdd => -2,
     // A record rendered onto a text: the reference in, nothing out (the text is a variable).
     FormatDb => -1,
+    // The bytecode writer's bind and free operators (1b-s3.md § The operators): the displaced
+    // value and its witness (and the entry witness) in, nothing out; a call's result (and the
+    // witness) bound into the slot `a`; a reference argument protected or released.
+    FreeRefDistinct => -2,
+    FreeRefUnlessEntry => -3,
+    BindOrCopy => -2,
+    CopyRefOrNull => -1,
+    Protect => -1,
     _ => -1,
   }
 }
@@ -495,6 +527,26 @@ fn native_index(name: text) -> integer {
 // The level of the loop `n` loops out from the innermost, or -1 when there is none.
 fn loop_level(l: Lowering, n: integer) -> integer {
   len(l.loop_start) - 1 - n
+}
+
+// A note of the set being lowered: the arm it took, or B2's facts (`note_bind`).
+fn note(l: Lowering, what: text) {
+  l.notes += [what];
+}
+
+// The row of the set of `var` whose notes start at `at`, as `generate_set` writes it when the
+// set is done: a nested set's row comes before the one that encloses it.
+fn bind_row(l: Lowering, b: ir::Bundle, var: integer, first: boolean, at: integer) {
+  d = b.data.definitions[l.def_nr]!;
+  joined = "";
+  for i in at..len(l.notes) {
+    joined += if i > at { " {l.notes[i] ?? ""}" } else { l.notes[i] ?? "" };
+  }
+  while len(l.notes) > at {
+    l.notes.remove(len(l.notes) - 1);
+  }
+  name = d.variables.variables[var]!.name;
+  l.binds += ["{d.name}\t{name}\t{if first { "first" } else { "re" }}\t{if joined == "" { "?" } else { joined }}"];
 }
 
 fn refuse(l: Lowering, what: text) {
@@ -567,26 +619,26 @@ fn expr(l: Lowering, b: ir::Bundle, n: ir::Node) {
       // A `&text` reads the text it refers to (`Load` of kind `KTextRef`).
       emit(l, Load, if k == KTextRef { KTextRef } else { stack_of(k) }, slot, 0);
     }
-    NdSpan { inner } => expr(l, b, inner[0]?),
+    NdSpan { inner } => expr(l, b, inner),
     NdBlock { block } => block_value(l, b, block[0]?),
     NdIf { cond, t, f } => {
       k = kind_of(l, b, n);
-      expr(l, b, cond[0]?);
+      expr(l, b, cond);
       to_else = len(l.ops);
       emit(l, JumpIfFalse, KInt, 0, 0);
       at_branch = l.depth;
-      value(l, b, t[0]?, k);
+      value(l, b, t, k);
       to_end = len(l.ops);
       emit(l, Jump, KInt, 0, 0);
       l.ops[to_else].a = len(l.ops);
       // The else-side runs from where the then-side started, not from where it ended.
       l.depth = at_branch;
-      value(l, b, f[0]?, k);
+      value(l, b, f, k);
       l.ops[to_end].a = len(l.ops);
     }
     NdCall { def_nr, args } => call(l, b, def_nr, args),
     NdReturn { inner } => {
-      value(l, b, inner[0]?, l.result);
+      value(l, b, inner, l.result);
       emit(l, Ret, stack_of(l.result), 0, 0);
     }
     _ => refuse(l, "an expression the interpreter does not carry: {n}"),
@@ -599,7 +651,7 @@ fn unspan(n: ir::Node) -> ir::Node {
   at = n;
   while at is NdSpan {
     match at {
-      NdSpan { inner } => { at = inner[0] ?? panic("a span holds its node"); }
+      NdSpan { inner } => { at = inner; }
       _ => {}
     }
   }
@@ -617,6 +669,24 @@ fn literal(l: Lowering, n: ir::Node) -> integer {
       0
     }
   }
+}
+
+// `@FR-R-FirstClaim` (`codegen.rs` `gen_call`, `prealloc_elide_enabled`): is the reservation
+// `OpPreAllocVector(v, count, size)` exactly the append's own first claim — `count` the
+// elements `vector::grown_elems(1, size)` gives (`src/vector.rs:85`: twice the length, never
+// less than the 88-byte start room, one element at least)?  Any other count is reserved
+// exactly (`@FR-Col-Capacity`) and stays.
+fn first_claim_count(count: ir::Node, size: ir::Node) -> boolean {
+  c = match unspan(count) { NdInt { n } => n, _ => -1 };
+  sz = match unspan(size) { NdInt { n } => n, _ => -1 };
+  if c < 0 || sz < 0 {
+    return false;
+  }
+  start = 88 / (if sz > 1 { sz } else { 1 });
+  if start < 1 {
+    start = 1;
+  }
+  c == (if start > 2 { start } else { 2 })
 }
 
 // The slot of the record variable an operator writes (`OpDatabase(v, tp)`), or refused when
@@ -710,7 +780,7 @@ fn hash_element(b: ir::Bundle, tp: integer) -> integer {
   if t == null {
     return -1;
   }
-  match t.parts[0] ?? panic("a type has its parts") {
+  match t.parts[0]! {
     PtHash { content, fields: _ } => content,
     _ => -1,
   }
@@ -722,7 +792,7 @@ fn vector_element(b: ir::Bundle, tp: integer) -> integer {
   if t == null {
     return -1;
   }
-  match t.parts[0] ?? panic("a type has its parts") {
+  match t.parts[0]! {
     PtVector { content } => content,
     _ => -1,
   }
@@ -734,19 +804,33 @@ fn vector_element(b: ir::Bundle, tp: integer) -> integer {
 // `OpFreeRefIfDistinct`) names its slot, because the runtime routine changes the variable.
 fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) -> boolean {
   if name == "OpDatabase" {
-    slot = ref_var_slot(l, args[0] ?? panic("OpDatabase names its variable"));
-    tp = literal(l, args[1] ?? panic("OpDatabase names its type"));
+    slot = ref_var_slot(l, args[0]!);
+    tp = literal(l, args[1]!);
     mintable(l, b, tp);
     // The hidden return buffer is the caller's, which the call fills: remade in place whoever
     // owns it, as the generators write into it (1b-s3.md § Ownership at run time).
-    emit(l, if is_return_buffer(b, l.def_nr, unspan(args[0] ?? panic("checked above"))) { Remake } else { Database }, KRef, slot, tp);
+    emit(l, Database, KRef, slot, tp);
   } else if name == "OpFreeRef" {
-    target = unspan(args[0] ?? panic("OpFreeRef names its reference"));
+    // `gen_call`'s rules for a free of a variable (`codegen.rs:4638–4700`), on the argument as
+    // written: a never-freed variable — F3's moved source among them — emits nothing; one the
+    // walk owned-reassigned (B2's pre-free) reads the sentinel after its free.
+    raw_target = args[0]!;
+    target = unspan(raw_target);
     freed_var = false;
-    match target {
+    match raw_target {
       NdVar { n: var } => {
+        if fvar(b, l.def_nr, var).skip_free {
+          return true;
+        }
+        if fvar(b, l.def_nr, var).type_def[0]! is TyFunction {
+          refuse(l, "a function value freed");
+          return true;
+        }
         if var_kind(l, var) == KRef {
           emit(l, FreeVar, KRef, slot_of(l, var), 0);
+          if l.owned_reassigned[var] ?? false {
+            init_ref(l, slot_of(l, var));
+          }
           freed_var = true;
         }
       }
@@ -757,50 +841,58 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
       emit(l, FreeRef, KRef, 0, 0);
     }
   } else if name == "OpFreeRefIfDistinct" {
-    slot = ref_var_slot(l, args[0] ?? panic("OpFreeRefIfDistinct names its variable"));
-    value(l, b, args[1] ?? panic("and its witness"), KRef);
+    slot = ref_var_slot(l, args[0]!);
+    value(l, b, args[1]!, KRef);
     emit(l, FreeVarDistinct, KRef, slot, 0);
+    match args[0]! {
+      NdVar { n: var } => {
+        if l.owned_reassigned[var] ?? false {
+          init_ref(l, slot);
+        }
+      }
+      _ => {}
+    }
   } else if name == "OpGetInt" || name == "OpGetText" {
-    value(l, b, args[0] ?? panic("a field read names its record"), KRef);
-    fld = literal(l, args[1] ?? panic("and its field"));
+    value(l, b, args[0]!, KRef);
+    fld = literal(l, args[1]!);
     if name == "OpGetInt" {
       emit(l, GetInt, KInt, fld, 0);
     } else {
       emit(l, GetText, KText, fld, 0);
     }
   } else if name == "OpSetInt" || name == "OpSetText" || name == "OpSetTextReplace" {
-    value(l, b, args[0] ?? panic("a field write names its record"), KRef);
-    fld = literal(l, args[1] ?? panic("and its field"));
+    value(l, b, args[0]!, KRef);
+    fld = literal(l, args[1]!);
     if name == "OpSetInt" {
-      value(l, b, args[2] ?? panic("and its value"), KInt);
+      value(l, b, args[2]!, KInt);
       emit(l, SetInt, KInt, fld, 0);
     } else {
-      value(l, b, args[2] ?? panic("and its value"), KText);
+      value(l, b, args[2]!, KText);
       emit(l, if name == "OpSetText" { SetText } else { RefillText }, KText, fld, 0);
     }
   } else if width_of(name) >= 0 {
     // A field of another width: the record, the field, a narrow integer's minimum, and for a
     // write the value; the width is the operator's.
     w = width_of(name);
-    value(l, b, args[0] ?? panic("a field operator names its record"), KRef);
-    fld = literal(l, args[1] ?? panic("and its field"));
+    value(l, b, args[0]!, KRef);
+    fld = literal(l, args[1]!);
     next = 2;
     if width_has_min(w) {
-      value(l, b, args[2] ?? panic("and its minimum"), KInt);
+      value(l, b, args[2]!, KInt);
       next = 3;
     }
     if name.starts_with("OpSet") {
-      value(l, b, args[next] ?? panic("and its value"), KInt);
+      value(l, b, args[next]!, KInt);
       emit(l, SetW, KInt, fld, w);
     } else {
       emit(l, GetW, KInt, fld, w);
     }
   } else if float_width(name) >= 0 {
     single = float_width(name);
-    value(l, b, args[0] ?? panic("a field operator names its record"), KRef);
-    fld = literal(l, args[1] ?? panic("and its field"));
+    value(l, b, args[0]!, KRef);
+    fld = literal(l, args[1]!);
     if name.starts_with("OpSet") {
-      value(l, b, args[2] ?? panic("and its value"), if single == 1 { KSingle } else { KFloat });
+      value(l, b, args[2]!, if single == 1 { KSingle } else { KFloat });
       emit(l, SetFloat, KFloat, fld, single);
     } else {
       emit(l, GetFloat, KFloat, fld, single);
@@ -808,37 +900,40 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
   } else if name == "OpCopyRecord" {
     // `OpCopyRecord(src, dst, tp)`: the type's low bits, and the flags the C generator derives
     // from it — the source freed (0x8000), the type swap-safe, the destination fresh (0x4000).
-    value(l, b, args[0] ?? panic("OpCopyRecord names its source"), KRef);
-    value(l, b, args[1] ?? panic("and its destination"), KRef);
-    raw = literal(l, args[2] ?? panic("and its type"));
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KRef);
+    raw = literal(l, args[2]!);
     tp = raw & 16383;
     flags = (if raw & 32768 != 0 { 1 } else { 0 })
-      + (if types::swap_safe(b, tp) { 2 } else { 0 })
+      + (if types::holds_no_stored_refs(b, tp) { 2 } else { 0 })
       + (if raw & 16384 != 0 { 4 } else { 0 });
     emit(l, CopyRecord, KRef, tp, flags);
   } else if name == "OpLengthVector" {
-    value(l, b, args[0] ?? panic("OpLengthVector names its vector"), KRef);
+    value(l, b, args[0]!, KRef);
     emit(l, VecLen, KInt, 0, 0);
   } else if name == "OpGetVector" || name == "OpGetVectorNullable" {
-    value(l, b, args[0] ?? panic("an element read names its vector"), KRef);
-    size = literal(l, args[1] ?? panic("and its element size"));
-    value(l, b, args[2] ?? panic("and its index"), KInt);
+    value(l, b, args[0]!, KRef);
+    size = literal(l, args[1]!);
+    value(l, b, args[2]!, KInt);
     emit(l, VecGet, KRef, size, 0);
+  } else if name == "OpPreAllocVector" && args[0]! is NdVar && first_claim_count(args[1]!, args[2]!) {
+    // `@FR-R-FirstClaim` (`prealloc_elide_enabled`, on): a reservation into a variable that is
+    // exactly the append's own first claim is not emitted (`gen_call`, `codegen.rs`).
   } else if name == "OpPreAllocVector" {
-    value(l, b, args[0] ?? panic("OpPreAllocVector names its vector"), KRef);
-    emit(l, VecPrealloc, KRef, literal(l, args[1] ?? panic("and a count")), literal(l, args[2] ?? panic("and a size")));
+    value(l, b, args[0]!, KRef);
+    emit(l, VecPrealloc, KRef, literal(l, args[1]!), literal(l, args[2]!));
   } else if push_of(name) >= 0 {
     // A push of a scalar: the vector, a byte's minimum, the value.
     which = push_of(name);
-    value(l, b, args[0] ?? panic("a push names its vector"), KRef);
+    value(l, b, args[0]!, KRef);
     if which == 3 {
-      value(l, b, args[1] ?? panic("a byte push names its minimum"), KInt);
+      value(l, b, args[1]!, KInt);
     }
-    value(l, b, args[len(args) - 1] ?? panic("and its value"), KInt);
+    value(l, b, args[len(args) - 1]!, KInt);
     emit(l, VecPush, KInt, 0, which);
   } else if name == "OpPushFloat" || name == "OpPushSingle" {
-    value(l, b, args[0] ?? panic("a push names its vector"), KRef);
-    value(l, b, args[1] ?? panic("and its value"), if name == "OpPushSingle" { KSingle } else { KFloat });
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, if name == "OpPushSingle" { KSingle } else { KFloat });
     emit(l, VecPushFloat, KFloat, 0, if name == "OpPushSingle" { 1 } else { 0 });
   } else if name == "OpNewRecord" || name == "OpFinishRecord" {
     // A record added to a plain vector: appended (and filled with its type's defaults), then
@@ -847,14 +942,14 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     // struct's field `fld`, read at its position (`loft_field`) when it is a plain vector with
     // no linked siblings.
     last = len(args) - 1;
-    ptp = literal(l, args[last - 1] ?? panic("a record add names its collection type"));
-    fld = literal(l, args[last] ?? panic("and its field"));
+    ptp = literal(l, args[last - 1]!);
+    fld = literal(l, args[last]!);
     vtp = ptp;
     at = -1;
     if fld != 65535 {
-      match (b.types[ptp] ?? panic("a type")).parts[0] ?? panic("a type has its parts") {
+      match b.types[ptp]!.parts[0]! {
         PtStruct { fields } => {
-          f = fields[fld] ?? panic("a field of the parent");
+          f = fields[fld]!;
           if len(f.other_indexes) == 0 {
             vtp = f.content;
             at = f.position;
@@ -866,49 +961,49 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     elem = vector_element(b, vtp);
     helem = hash_element(b, vtp);
     if (fld != 65535 && at < 0) || (elem < 0 && helem < 0) {
-      refuse(l, "a record added to a collection that is not a plain vector or a hash: {(b.types[vtp] ?? panic("a type")).name}");
+      refuse(l, "a record added to a collection that is not a plain vector or a hash: {b.types[vtp]!.name}");
       return true;
     }
-    value(l, b, args[0] ?? panic("a record add names its collection"), KRef);
+    value(l, b, args[0]!, KRef);
     if at >= 0 {
       emit(l, FieldRef, KRef, at, 0);
     }
     if helem >= 0 {
       // `keyed_new` / `keyed_finish` (`src/c/body/keyed.rs`): an entry of the hash's table,
       // filled with the element's default image, then filed under its key.
-      et = b.types[helem] ?? panic("an element type");
+      et = b.types[helem]!;
       if name == "OpNewRecord" {
         emit(l, HashNew, KRef, helem, et.size * 2 + (if et.linked { 1 } else { 0 }));
       } else {
-        value(l, b, args[1] ?? panic("OpFinishRecord names its record"), KRef);
+        value(l, b, args[1]!, KRef);
         emit(l, HashInsert, KRef, helem, vtp);
       }
       return true;
     }
     if name == "OpNewRecord" {
-      emit(l, VecNew, KRef, elem, (b.types[elem] ?? panic("an element type")).size);
+      emit(l, VecNew, KRef, elem, b.types[elem]!.size);
     } else {
-      value(l, b, args[1] ?? panic("OpFinishRecord names its record"), KRef);
+      value(l, b, args[1]!, KRef);
       emit(l, VecFinish, KRef, 0, 0);
     }
   } else if name == "OpGetRecord" {
     // `OpGetRecord(data, tp, n, value…)` on a hash: the collection, then each key part as its
     // key's type converts it (`key_value`, `src/c/body/keyed.rs`), then the find.
-    tp = literal(l, args[1] ?? panic("OpGetRecord names its type"));
+    tp = literal(l, args[1]!);
     if hash_element(b, tp) < 0 {
-      refuse(l, "a lookup in a keyed collection that is not a hash: {(b.types[tp] ?? panic("a type")).name}");
+      refuse(l, "a lookup in a keyed collection that is not a hash: {b.types[tp]!.name}");
       return true;
     }
-    keys = (b.types[tp] ?? panic("a hash type")).keys;
+    keys = b.types[tp]!.keys;
     n = len(args) - 3;
     if n > len(keys) {
       refuse(l, "a lookup with more values than keys");
       return true;
     }
-    value(l, b, args[0] ?? panic("OpGetRecord names its collection"), KRef);
+    value(l, b, args[0]!, KRef);
     for i in 0..n {
-      kt = ((keys[i] ?? panic("a key part")).type_nr).abs();
-      arg = args[3 + i] ?? panic("a key value");
+      kt = (keys[i]!.type_nr).abs();
+      arg = args[3 + i]!;
       if kt == 3 {
         value(l, b, arg, KSingle);
         emit(l, KeyPart, KFloat, 0, 2);
@@ -925,7 +1020,7 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     }
     emit(l, HashFind, KRef, tp, n);
   } else if name == "OpLengthHash" {
-    value(l, b, args[0] ?? panic("OpLengthHash names its hash"), KRef);
+    value(l, b, args[0]!, KRef);
     emit(l, HashLen, KInt, 0, 0);
   } else if name == "OpFormatDatabase" || name == "OpFormatStackDatabase" {
     // `"{v}"` of a store value (1b-s3.md § Rendering a value): rendered by `show::render`,
@@ -933,49 +1028,51 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     // format flags (bit 1 pretty, bit 2 JSON).
     dest = 0;
     dest_kind = KText;
-    match unspan(args[0] ?? panic("a format names its destination")) {
+    match unspan(args[0]!) {
       NdVar { n: var } => {
         dest = slot_of(l, var);
         dest_kind = var_kind(l, var);
       }
       _ => refuse(l, "a format operator on a destination that is not a variable"),
     }
-    tp = literal(l, args[2] ?? panic("a format names its type"));
-    fmt = literal(l, args[3] ?? panic("and its flags"));
+    tp = literal(l, args[2]!);
+    fmt = literal(l, args[3]!);
     why = show::refusal(b, tp, []);
     if why != "" {
       refuse(l, why);
       return true;
     }
-    value(l, b, args[1] ?? panic("a format names its value"), KRef);
+    value(l, b, args[1]!, KRef);
     emit(l, FormatDb, dest_kind, dest, tp * 4 + fmt);
   } else if name == "OpAppendVector" {
     // `v += other`: element copies, the claims copied by the type table (`loft_vec_add`).  A
     // linked element type is `loft_vec_add_array`, a later step.
-    tp = literal(l, args[2] ?? panic("OpAppendVector names its element type"));
-    if (b.types[tp] ?? panic("an element type")).linked {
+    tp = literal(l, args[2]!);
+    if b.types[tp]!.linked {
       refuse(l, "an append of a linked element type");
       return true;
     }
-    value(l, b, args[0] ?? panic("OpAppendVector names its vector"), KRef);
-    value(l, b, args[1] ?? panic("and the vector it appends"), KRef);
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KRef);
     emit(l, VecAdd, KRef, tp, 0);
   } else if name == "OpClearVector" {
-    value(l, b, args[0] ?? panic("OpClearVector names its vector"), KRef);
+    value(l, b, args[0]!, KRef);
     emit(l, VecClear, KRef, 0, 0);
   } else if name == "OpClear" {
-    // A buffer emptied for reuse: its claims released (the pool reset is an optimisation,
-    // `LOFT_NO_POOL_RESET`, values unchanged).  Who owns the store does not change.
-    value(l, b, args[0] ?? panic("OpClear names its record"), KRef);
-    emit(l, ClearRecord, KRef, literal(l, args[1] ?? panic("and its type")) & 32767, 0);
+    // `OpClear(r, tp)` (`Stores::remove_claims`): a buffer emptied for reuse, its claims
+    // released; with `@FR-R-Reuse`'s reset flag (`POOL_RESET`, 0x8000) a pooled buffer's store
+    // is made again at its root instead, where `reset_pool_root` allows (`b` 1).
+    value(l, b, args[0]!, KRef);
+    raw = literal(l, args[1]!);
+    emit(l, ClearRecord, KRef, raw & 32767, if raw & 32768 != 0 { 1 } else { 0 });
   } else if name == "OpRefAlias" {
-    value(l, b, args[0] ?? panic("OpRefAlias names its reference"), KRef);
+    value(l, b, args[0]!, KRef);
   } else if name == "OpPutRef" || name == "OpInitRefSentinel" {
     // A raw write of a reference into a variable (a witness's snapshot, or the null sentinel):
     // no bind, so the owner table is not asked and nothing changes owner.
-    slot = ref_var_slot(l, args[0] ?? panic("a reference write names its variable"));
+    slot = ref_var_slot(l, args[0]!);
     if name == "OpPutRef" {
-      value(l, b, args[1] ?? panic("and its value"), KRef);
+      value(l, b, args[1]!, KRef);
     } else {
       emit(l, PushNull, KRef, 0, 0);
     }
@@ -984,32 +1081,32 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     emit(l, PushNull, KRef, 0, 0);
   } else if name == "OpGetField" {
     // The record embedded at a field: the host's reference, its position moved past the field.
-    value(l, b, args[0] ?? panic("OpGetField names its record"), KRef);
-    emit(l, FieldRef, KRef, literal(l, args[1] ?? panic("and its field")), 0);
+    value(l, b, args[0]!, KRef);
+    emit(l, FieldRef, KRef, literal(l, args[1]!), 0);
   } else if name == "n_hash_sorted" || name == "n_hash_unsorted" {
     // A hash walk's snapshot (1b-s3.md § The fourth slice, continued): its elements in key
     // order, the keys the hash type's from the loaded table; or, for `unordered(h)` and a `par`
     // walk, in slot order (`b` = 1).
-    value(l, b, args[0] ?? panic("a hash snapshot names its hash"), KRef);
-    emit(l, HashSorted, KRef, literal(l, args[1] ?? panic("and its type")), if name == "n_hash_unsorted" { 1 } else { 0 });
+    value(l, b, args[0]!, KRef);
+    emit(l, HashSorted, KRef, literal(l, args[1]!), if name == "n_hash_unsorted" { 1 } else { 0 });
   } else if name == "OpIterate" || name == "OpStep" {
     // A walk over a snapshot (kind 4) is the one carried; an index, a sorted or a spatial walk,
     // and a walk with key bounds, are refused by name.
-    on = literal(l, args[if name == "OpIterate" { 1 } else { 2 }] ?? panic("a walk names its kind"));
+    on = literal(l, args[if name == "OpIterate" { 1 } else { 2 }]!);
     if on & 63 != 4 {
       refuse(l, "a walk of kind {on & 63}");
       return true;
     }
     if name == "OpIterate" {
-      if len(args) != 6 || literal(l, args[4] ?? panic("a walk's lower bound count")) != 0 || literal(l, args[5] ?? panic("and its upper")) != 0 {
+      if len(args) != 6 || literal(l, args[4]!) != 0 || literal(l, args[5]!) != 0 {
         refuse(l, "a walk with key bounds");
         return true;
       }
-      value(l, b, args[0] ?? panic("OpIterate names its snapshot"), KRef);
+      value(l, b, args[0]!, KRef);
       emit(l, ScratchIterate, KInt, 0, 0);
     } else {
       state = 0;
-      match unspan(args[0] ?? panic("OpStep names its state")) {
+      match unspan(args[0]!) {
         NdVar { n: var } => {
           if var_kind(l, var) == KInt {
             state = slot_of(l, var);
@@ -1019,19 +1116,19 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
         }
         _ => refuse(l, "a walk state that is not a variable"),
       }
-      value(l, b, args[1] ?? panic("OpStep names its snapshot"), KRef);
+      value(l, b, args[1]!, KRef);
       emit(l, ScratchStep, KRef, state, if on & 64 != 0 { 1 } else { 0 });
     }
   } else if name == "OpFreeScratch" {
-    value(l, b, args[0] ?? panic("OpFreeScratch names its snapshot"), KRef);
+    value(l, b, args[0]!, KRef);
     emit(l, FreeScratch, KRef, 0, 0);
   } else if name == "OpEqRef" || name == "OpNeRef" {
     // Two references compared as the C generator compares them (`loft_ref_eq`), read in loft.
-    value(l, b, args[0] ?? panic("a reference compare has two sides"), KRef);
-    value(l, b, args[1] ?? panic("a reference compare has two sides"), KRef);
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KRef);
     emit(l, RefEq, KRef, if name == "OpNeRef" { 1 } else { 0 }, 0);
   } else if name == "OpRefIsNull" || name == "OpConvBoolFromRef" {
-    value(l, b, args[0] ?? panic("a null test names its reference"), KRef);
+    value(l, b, args[0]!, KRef);
     emit(l, if name == "OpRefIsNull" { RefIsNull } else { RefBool }, KRef, 0, 0);
   } else {
     return false;
@@ -1050,7 +1147,7 @@ fn record_of(ts: vector<ir::TypeT>) -> integer {
     TyReference { n, dep: _ } => n,
     TyEnum { n, is_ref, dep: _ } => if is_ref { n } else { -1 },
     TyOptional { inner } => {
-      match inner[0] ?? panic("a nullable type has its base") {
+      match inner {
         TyReference { n, dep: _ } => n,
         TyEnum { n, is_ref, dep: _ } => if is_ref { n } else { -1 },
         _ => -1,
@@ -1089,7 +1186,7 @@ fn is_vector(ts: vector<ir::TypeT>) -> boolean {
   match t {
     TyVector { inner: _, dep: _ } => true,
     TyOptional { inner } => {
-      match inner[0] ?? panic("a nullable type has its base") {
+      match inner {
         TyVector { inner: _, dep: _ } => true,
         _ => false,
       }
@@ -1103,8 +1200,8 @@ fn is_vector(ts: vector<ir::TypeT>) -> boolean {
 // `character` 6).  A narrow integer has a type of its own and is not resolved here.
 fn element_type(b: ir::Bundle, t: ir::TypeT) -> integer {
   match t {
-    TyReference { n, dep: _ } => (b.data.definitions[n] ?? panic("a record")).known_type,
-    TyEnum { n, is_ref: _, dep: _ } => (b.data.definitions[n] ?? panic("an enum")).known_type,
+    TyReference { n, dep: _ } => b.data.definitions[n]!.known_type,
+    TyEnum { n, is_ref: _, dep: _ } => b.data.definitions[n]!.known_type,
     TyInteger { spec } => if spec.min == -2147483647 && spec.max == 2147483647 && spec.forced_size == 0 { 0 } else { -1 },
     TySingle => 2,
     TyFloat => 3,
@@ -1123,18 +1220,16 @@ pub fn main_vector_of(b: ir::Bundle, ts: vector<ir::TypeT>) -> integer {
   if t == null {
     return -1;
   }
-  inner: vector<ir::TypeT> = [];
-  match t {
-    TyVector { inner: i, dep: _ } => { inner = i; }
+  elem = match t {
+    TyVector { inner: i, dep: _ } => element_type(b, i),
     TyOptional { inner: o } => {
-      match o[0] ?? panic("a nullable type has its base") {
-        TyVector { inner: i, dep: _ } => { inner = i; }
-        _ => { return -1; }
+      match o {
+        TyVector { inner: i, dep: _ } => element_type(b, i),
+        _ => -1,
       }
     }
-    _ => { return -1; }
-  }
-  elem = element_type(b, inner[0] ?? panic("a vector names its element"));
+    _ => -1,
+  };
   if elem < 0 {
     return -1;
   }
@@ -1142,9 +1237,9 @@ pub fn main_vector_of(b: ir::Bundle, ts: vector<ir::TypeT>) -> integer {
     if !w.name.starts_with("main_vector<") {
       continue;
     }
-    match w.parts[0] ?? panic("a type has its parts") {
+    match w.parts[0]! {
       PtStruct { fields } => {
-        if len(fields) == 1 && vector_element(b, (fields[0] ?? panic("one field")).content) == elem {
+        if len(fields) == 1 && vector_element(b, fields[0]!.content) == elem {
           return w#index;
         }
       }
@@ -1170,7 +1265,7 @@ pub fn hash_type_of(b: ir::Bundle, ts: vector<ir::TypeT>) -> integer {
       names = ns;
     }
     TyOptional { inner } => {
-      match inner[0] ?? panic("a nullable type has its base") {
+      match inner {
         TyHash { n, names: ns, dep: _ } => {
           def = n;
           names = ns;
@@ -1180,8 +1275,8 @@ pub fn hash_type_of(b: ir::Bundle, ts: vector<ir::TypeT>) -> integer {
     }
     _ => { return -1; }
   }
-  content = (b.data.definitions[def] ?? panic("a hash names its record")).known_type;
-  want = "hash<{(b.types[content] ?? panic("a record type")).name}[";
+  content = b.data.definitions[def]!.known_type;
+  want = "hash<{b.types[content]!.name}[";
   for k in names {
     want += if k#index > 0 { ",{k.name}" } else { k.name };
   }
@@ -1203,7 +1298,7 @@ fn is_hash(ts: vector<ir::TypeT>) -> boolean {
   match t {
     TyHash { n: _, names: _, dep: _ } => true,
     TyOptional { inner } => {
-      match inner[0] ?? panic("a nullable type has its base") {
+      match inner {
         TyHash { n: _, names: _, dep: _ } => true,
         _ => false,
       }
@@ -1220,7 +1315,7 @@ fn is_overwritten_view(v: ir::Variable) -> boolean {
 
 // Is variable `var` of definition `d` one the compiler builds in place (`inline_ref_vars`)?
 fn is_inline_ref(b: ir::Bundle, d: integer, var: integer) -> boolean {
-  for r in (b.data.definitions[d] ?? panic("a definition")).variables.inline_refs {
+  for r in b.data.definitions[d]!.variables.inline_refs {
     if r == var {
       return true;
     }
@@ -1240,7 +1335,7 @@ fn deps_of(ts: vector<ir::TypeT>) -> vector<integer> {
     TyVector { inner: _, dep } => dep,
     TyEnum { n: _, is_ref: _, dep } => dep,
     TyOptional { inner } => {
-      match inner[0] ?? panic("a nullable type has its base") {
+      match inner {
         TyReference { n: _, dep } => dep,
         TyVector { inner: _, dep } => dep,
         TyEnum { n: _, is_ref: _, dep } => dep,
@@ -1260,11 +1355,11 @@ fn projects_a_variable(b: ir::Bundle, n: ir::Node) -> boolean {
       NdVar { n: _ } => { return true; }
       NdCall { def_nr, args } => {
         // `is_projection_op`: a field read and the non-nullable element reads.
-        name = (b.data.definitions[def_nr] ?? panic("a called definition")).name;
+        name = b.data.definitions[def_nr]!.name;
         if name != "OpGetField" && name != "OpGetVector" && name != "OpVectorRef" && name != "OpGetRecord" {
           return false;
         }
-        at = unspan(args[0] ?? panic("OpGetField names its record"));
+        at = unspan(args[0]!);
       }
       _ => { return false; }
     }
@@ -1272,131 +1367,635 @@ fn projects_a_variable(b: ir::Bundle, n: ir::Node) -> boolean {
   false
 }
 
-// How a `Bind` op binds (its `b` is the record type times 4 plus the mode), as `run.loft`'s owner
-// table carries it out (1b-s3.md § Ownership at run time): a value held in flight or by nobody
-// is ADOPTED whatever the mode; otherwise PLAIN binds a view, COPY always copies, and
-// COPY_HELD — a loft function's result in a store somebody owns, (O-Move)'s borrow — copies.
-pub BIND_PLAIN = 0;
-pub BIND_COPY = 1;
-pub BIND_COPY_HELD = 2;
+// ── The binds: `generate_set` (`src/state/codegen.rs:2446`), ported arm for arm ────────────
+// (1b-s3.md § Binds and frees).  `v = x` lowered as the bytecode writer lowers it: the same arm
+// for the same facts, emitting the same operators, with the Rust semantics `run.loft` gives
+// them.  The bytecode writer changes the function's variable table as it walks — a variable is
+// allocated at its first set (`set_stack_allocated`), a moved record's source is never freed
+// (`set_skip_free`) — and later facts read those flags, so the lowering changes the image's
+// table the same way.  Each set leaves its row in the bind table (`note`, `bind_row`).
 
-// `v = x` for a record variable `v`.  What is decided here is only what the C generator's
-// `set_stmt` reads off the IR — whether the value is a whole record variable or a projection
-// `element_copy` copies, a loft function's result, or anything else; whether the bind adopts,
-// copies or views, and what it frees, is the owner table's at run time.
-fn bind(l: Lowering, b: ir::Bundle, var: integer, node: ir::Node) {
-  x = unspan(node);
+// `generate_set`: the row is written when the set is done, so a set inside the value comes
+// first.
+fn set(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
+  at = len(l.notes);
+  first = !(fvar(b, l.def_nr, var)).stack_allocated;
+  set_inner(l, b, var, x);
+  bind_row(l, b, var, first, at);
+}
+
+// The variable `var` of definition `d`, as the image holds it (and the walk changes it).
+fn fvar(b: ir::Bundle, d: integer, var: integer) -> ir::Variable {
+  b.data.definitions[d]!.variables.variables[var]!
+}
+
+// The bytecode writer's two writes to the variable table, made in the image itself: `v` is
+// allocated (`set_stack_allocated`, `allocated`), or never freed (`set_skip_free`).  A local
+// bound to the variable would be a copy (`(B-Copy)`), so the write names the path.
+fn mark(b: ir::Bundle, d: integer, var: integer, allocated: boolean) {
+  if allocated {
+    b.data.definitions[d]!.variables.variables[var].stack_allocated = true;
+  } else {
+    b.data.definitions[d]!.variables.variables[var].skip_free = true;
+  }
+}
+
+// The variable table of definition `d`.
+fn fn_of(b: ir::Bundle, d: integer) -> ir::Function {
+  b.data.definitions[d]!.variables
+}
+
+// A struct enum (`Type::Enum(_, true, _)`).
+fn is_struct_enum(t: ir::TypeT) -> boolean {
+  match t {
+    TyEnum { n: _, is_ref, dep: _ } => is_ref,
+    _ => false,
+  }
+}
+
+// A definition's `known_type`: the store type a record of it is minted as.
+fn known_type(b: ir::Bundle, d: integer) -> integer {
+  b.data.definitions[d]!.known_type
+}
+
+// `generate_set_inner` (`codegen.rs:2467`).
+fn set_inner(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
+  v = fvar(b, l.def_nr, var);
+  // `@FR-R-LoopSlot`: a counted loop's variable on its range index's slot — the bytecode
+  // writer drops the copy; the loft frame keeps every variable apart until F-1, so the value
+  // is still stored here.
+  if is_loop_slot(b, l.def_nr, var, x) {
+    note(l, "loop-slot");
+    mark(b, l.def_nr, var, true);
+    plain_set(l, b, var, x);
+    return;
+  }
+  if is_zero_size(v.type_def) {
+    mark(b, l.def_nr, var, true);
+    note(l, "zero-size");
+    return;
+  }
+  if !v.stack_allocated {
+    mark(b, l.def_nr, var, true);
+    set_first(l, b, var, x);
+    return;
+  }
+  set_again(l, b, var, x);
+}
+
+// The reassignment (`codegen.rs:2513–3405`): B0, then B1's facts once, B2's free of the
+// displaced store, and the first arm of R1–R3 that matches.
+fn set_again(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
+  v = fvar(b, l.def_nr, var);
+  f = fn_of(b, l.def_nr);
+  t = binds::tp(f, var);
+  if binds::owns_keyed_store(t) && x is NdNull {
+    note(l, "B0");
+    keyed_null(l, b, var, false);
+    return;
+  }
+  u = unspan(x);
+  // B1 — the facts, each once.
+  s1 = binds::s1_substituted(b, var, x);
+  reads_v = binds::reads_var(x, var);
+  own = own::ownership_of(b, l.own_ops, l.def_nr, x);
+  rhs_base = own::base_of(own);
+  rhs_may_alias_v = binds::rhs_may_alias_v(b, l.own_ops, l.def_nr, f, var, x);
+  entry_w = binds::entry_witness(f, var);
+  owned_ref = binds::owned_ref(b, l.def_nr, f, var, x);
+  rhs_is_new_record = binds::rhs_is_new_record(b, x);
+  nullable_local = binds::nullable_local(f, var);
+  witnessed = binds::owner_witness(f, var) != null;
+  buffer_w = binds::displaced_buffer_witness(b, f, var, x);
+  // B2 — the displaced store: stashed past the assignment, freed before it, or kept.
+  stash = owned_ref && (reads_v || rhs_is_new_record || nullable_local);
+  b2 = if stash { "stash" } else if owned_ref && !s1 { "pre" } else { "none" };
+  note(l, "b2={b2} owned_ref={flag(owned_ref)} s1={flag(s1)} reads_v={flag(reads_v)} witnessed={flag(witnessed)} entry_w={flag(entry_w != null)} buffer_w={flag(buffer_w != null)}");
   slot = slot_of(l, var);
-  v = b.data.definitions[l.def_nr]?.variables.variables[var]?;
-  if is_hash(v.type_def) {
-    // A hash local bound to null is minted AS the collection type, unless it is built in place
-    // or an overwritten view (`keyed_null`, `src/c/body.rs`): `loft_database_typed` on the
-    // variable, which remakes IN PLACE whatever store it names — a link's too, which is how
-    // `c = &n; c = [ … ]` writes through to `n` — and mints one when it names none.  Any other
-    // bind is a view.
-    if x is NdNull && !is_inline_ref(b, l.def_nr, var) && !is_overwritten_view(v) {
-      ht = hash_type_of(b, v.type_def);
-      if ht < 0 {
-        refuse(l, "a hash whose collection type the image does not name: {v.name}");
-        return;
-      }
-      emit(l, Remake, KRef, slot, ht);
-      return;
-    }
-    if x is NdNull {
-      emit(l, PushNull, KRef, 0, 0);
+  if stash {
+    emit(l, Load, KRef, slot, 0);
+  } else if owned_ref && !s1 {
+    emit(l, Load, KRef, slot, 0);
+    // `displaced_witness_enabled` (default on): the projection's container, else the buffer.
+    witness = binds::projection_container_var(b, x) ?? buffer_w;
+    if witness != null && entry_w != null {
+      emit(l, Load, KRef, slot_of(l, witness!), 0);
+      emit(l, Load, KRef, slot_of(l, entry_w!), 0);
+      emit(l, FreeRefUnlessEntry, KRef, 0, 0);
+    } else if witness != null || entry_w != null {
+      emit(l, Load, KRef, slot_of(l, witness ?? entry_w!), 0);
+      emit(l, FreeRefDistinct, KRef, 0, 0);
     } else {
-      value(l, b, x, KRef);
+      emit(l, FreeRef, KRef, 0, 0);
     }
-    emit(l, Bind, KRef, slot, BIND_PLAIN);
+    l.owned_reassigned[var] = true;
+  }
+  // R1 — a join: bound or copied by the store it comes back in (`join_own_enabled`, on).
+  d = match t { TyReference { n, dep: _ } => n, _ => -1 };
+  jb = own::named_join_base(own);
+  if owned_ref && !s1 && !stash && !(u is NdVar) && !v.view_elided && jb != null && d >= 0 {
+    note(l, "R1");
+    value(l, b, x, KRef);
+    emit(l, Load, KRef, slot_of(l, jb!), 0);
+    emit(l, BindOrCopy, KRef, slot, copy_operand(b, known_type(b, d)));
     return;
   }
-  if is_vector(v.type_def) {
-    // A vector bind is a view (no copy arm names a vector); the one exception is the null bind
-    // of a vector that owns its store, which mints a `main_vector<T>` (`owned_vector_null`).
-    owns = len(deps_of(v.type_def)) == 0 && !v.skip_free && !is_inline_ref(b, l.def_nr, var);
-    first = !(l.bound[var] ?? false);
-    l.bound[var] = true;
-    // A lazy buffer (`@FR-O-LazyBuffer`) keeps the sentinel at its first bind; a later null bind
-    // — the scope pass guards it with `OpRefIsNull` — is its mint.
-    if x is NdNull && (if v.lazy_buffer { !first } else { owns }) {
-      // The variable gets a `main_vector<T>` store of its own, its (empty) vector at offset 0:
-      // `OpDatabase` on it, as `loft_database_typed` mints one.
-      w = main_vector_of(b, v.type_def);
-      if w < 0 {
-        refuse(l, "an owned vector whose wrapper type the image does not name: {v.name}");
-        return;
-      }
-      emit(l, Database, KRef, slot, w);
+  if (owned_ref || witnessed) && !s1 {
+    if u is NdCallRef {
+      // R2a — a call through a function value (`opaque_callref_bind`).
+      refuse(l, "a record bound from a call through a function value");
       return;
     }
-    if x is NdNull {
-      emit(l, PushNull, KRef, 0, 0);
-    } else {
+    hd = match binds::base(t) { TyReference { n, dep: _ } => n, TyEnum { n, is_ref, dep: _ } => if is_ref { n } else { -1 }, _ => -1 };
+    callee = binds::callee_of(b, l.defs, x);
+    cd = binds::def(b, callee ?? l.def_nr);
+    if hd >= 0 && (!v.argument || (binds::is_promoted_return_buffer(b, l.def_nr, f, var) && !reads_v))
+        && ((u is NdCall) || (u is NdCallRef)) && callee != null && binds::is_loft_defined(cd)
+        && !binds::return_adopts_fresh_store(cd)
+        && !(reads_v && own::returns_borrowed_view(cd) && !(rhs_base == 65535 && stash))
+        && !v.view_elided
+        && !(v.deferred_first_bind && binds::adopts_minted_at_bind(b, l.own_ops, f, var, x)) {
+      // R2b — the call copy (`codegen.rs:2953–3036`).
+      tp = known_type(b, hd);
+      alloc_after = stash || (witnessed && reads_v);
+      if !alloc_after {
+        init_ref(l, slot);
+        emit(l, Database, KRef, slot, tp);
+      }
+      raw = if binds::call_return_frees_source(b, l.own_ops, l.def_nr, l.defs, x) { tp + 32768 } else { tp };
+      fresh_path = (witnessed && reads_v) || (stash && rhs_may_alias_v);
+      ref_args: vector<integer> = [];
+      for a in binds::protectable_ref_args(b, l.defs, x).slots {
+        if !(fresh_path && a == var) {
+          ref_args += [a];
+        }
+      }
+      hidden = caller_hidden_args(b, l.def_nr, var, u);
+      for a in ref_args {
+        emit(l, Load, KRef, slot_of(l, a), 0);
+        emit(l, Protect, KRef, 0, 1);
+      }
       value(l, b, x, KRef);
+      if fresh_path {
+        init_ref(l, slot);
+      }
+      emit(l, Database, KRef, slot, tp);
+      note(l, "R2b");
+      emit(l, CopyRefOrNull, KRef, slot, copy_operand(b, raw));
+      for a in ref_args {
+        emit(l, Load, KRef, slot_of(l, a), 0);
+        emit(l, Protect, KRef, 0, 0);
+      }
+      for a in hidden {
+        release_caller_hidden_arg(l, b, a);
+      }
+      if stash {
+        free_stashed(l, var, entry_w);
+      }
+      return;
     }
-    emit(l, Bind, KRef, slot, BIND_PLAIN);
-    return;
-  }
-  d = record_of(v.type_def);
-  tp = if d >= 0 { b.data.definitions[d]?.known_type } else { 0 };
-  mode = BIND_PLAIN;
-  match x {
-    NdVar { n: src } => {
-      // `whole_value_bind`: the source's record copied into a store of the variable's own,
-      // unless the variable is an overwritten view (`Function::is_overwritten_view`).
-      sd = if var_kind(l, src) == KRef { record_of(b.data.definitions[l.def_nr]?.variables.variables[src]?.type_def) } else { -1 };
-      if d >= 0 && sd >= 0 && copies_as(b, d, sd) && !is_overwritten_view(v) {
-        mode = BIND_COPY;
+    src = match u { NdVar { n } => n, _ => -1 };
+    hh = own::heap_def_nr(t);
+    if hh != null && src >= 0 && src != var {
+      sd = own::record_copy_source(b, f, var, src);
+      if sd != null && own::copies_as(b, hh!, sd!) {
+        // R2c — a whole record variable copied in.
+        init_ref(l, slot);
+        emit(l, Load, KRef, slot_of(l, src), 0);
+        emit(l, Load, KRef, slot_of(l, src), 0);
+        note(l, "R2c");
+        emit(l, BindOrCopy, KRef, slot, copy_operand(b, known_type(b, hh!)));
+        if stash {
+          free_stashed(l, var, entry_w);
+        }
+        return;
       }
     }
-    NdCall { def_nr: f, args: _ } => {
-      fd = b.data.definitions[f]?;
-      if (fd.name == "OpGetField" || fd.name == "OpGetVector" || fd.name == "OpVectorRef" || fd.name == "OpGetRecord") && projects_a_variable(b, x) && len(deps_of(v.type_def)) == 0 && v.owner_witness == 65535 {
-        // `element_copy`: an owning variable — no dependency, no owner witness — bound to a
-        // projection of a container variable copies the record out; one with a dependency
-        // views it (`(B-View)`).
-        mode = BIND_COPY;
-      } else if has_body(fd) && !is_operator(fd.name) {
-        mode = BIND_COPY_HELD;
+    if owned_ref && hh != null && !stash && binds::projection_container_var(b, x) != null {
+      note(l, "R2d");
+      elem_copy(l, b, var, x, hh!);
+      return;
+    }
+  }
+  note(l, "R3");
+  plain_set(l, b, var, x);
+  if stash {
+    free_stashed(l, var, entry_w);
+  }
+}
+
+// A fact as the trace writes it: `u8::from`.
+fn flag(x: boolean) -> integer {
+  if x { 1 } else { 0 }
+}
+
+// `free_stashed` (`codegen.rs:3547`): the displaced value the stash left under the
+// assignment, freed now unless it is the new value's store (or the entry's).
+fn free_stashed(l: Lowering, var: integer, entry_w: integer?) {
+  emit(l, Load, KRef, slot_of(l, var), 0);
+  if entry_w != null {
+    emit(l, Load, KRef, slot_of(l, entry_w!), 0);
+    emit(l, FreeRefUnlessEntry, KRef, 0, 0);
+  } else {
+    emit(l, FreeRefDistinct, KRef, 0, 0);
+  }
+}
+
+// `OpInitRef`/`OpInitRefSentinel` of a reference slot: the null sentinel written.
+fn init_ref(l: Lowering, slot: integer) {
+  emit(l, PushNull, KRef, 0, 0);
+  emit(l, Store, KRef, slot, 0);
+}
+
+// A copy's type operand as `run.loft` reads it: the type plus 65536 times the C runtime's
+// flags, derived from the bytecode writer's raw operand as `OpCopyRecord`'s are.
+fn copy_operand(b: ir::Bundle, raw: integer) -> integer {
+  tp = raw & 16383;
+  tp + 65536 * ((if raw & 32768 != 0 { 1 } else { 0 })
+    + (if types::holds_no_stored_refs(b, tp) { 2 } else { 0 })
+    + (if raw & 16384 != 0 { 4 } else { 0 }))
+}
+
+// The first assignment (`gen_set_first_at_tos`, `codegen.rs:3558`): the arms in its order.
+fn set_first(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
+  v = fvar(b, l.def_nr, var);
+  f = fn_of(b, l.def_nr);
+  t = binds::tp(f, var);
+  base = binds::base(t);
+  u = unspan(x);
+  is_null = x is NdNull;
+  slot = if var_kind(l, var) == KRef { slot_of(l, var) } else { -1 };
+  if base is TyText {
+    note(l, "first-text");
+    plain_set(l, b, var, x);
+    return;
+  }
+  if (base is TyReference || is_struct_enum(base)) && is_null {
+    // F1 (`gen_set_first_ref_null`): the sentinel, whatever the deps say — `OpInitRef`
+    // writes it too; a dependent's `OpInitCreateStack` is the stack store's (1b-frame.md F-1).
+    note(l, "F1");
+    init_ref(l, slot);
+    return;
+  }
+  if base is TyIterator && is_null {
+    note(l, "first-iter-null");
+    init_ref(l, slot);
+    return;
+  }
+  d = match t { TyReference { n, dep: _ } => n, _ => -1 };
+  if d >= 0 && is_call_of(b, u, "OpCopyRecord") {
+    note(l, "F2");
+    first_copy(l, b, var, d, u);
+    return;
+  }
+  hd = own::heap_def_nr(t);
+  src = match x { NdVar { n } => n, _ => -1 };
+  if hd != null && src >= 0 {
+    sd = own::record_copy_source(b, f, var, src);
+    if sd != null && own::copies_as(b, hd!, sd!) {
+      note(l, "F3");
+      var_copy(l, b, var, src, hd!);
+      return;
+    }
+  }
+  if hd != null && binds::has_no_deps(t) && binds::owner_witness(f, var) == null && binds::projection_container_var(b, x) != null {
+    note(l, "F4");
+    elem_copy(l, b, var, x, hd!);
+    return;
+  }
+  if d >= 0 && (x is NdTupleGet) && binds::has_no_deps(t) && binds::owner_witness(f, var) == null {
+    // F5 (`gen_set_first_ref_tuple_copy`): a tuple member copied into a record of its own.
+    note(l, "F5");
+    kt = known_type(b, d);
+    init_ref(l, slot);
+    emit(l, Database, KRef, slot, kt);
+    value(l, b, x, KRef);
+    emit(l, Load, KRef, slot, 0);
+    emit(l, CopyRecord, KRef, kt, copy_operand(b, kt) / 65536);
+    return;
+  }
+  if u is NdCallRef && hd != null {
+    // F6–F8: a record from a call through a function value.
+    refuse(l, "a record bound from a call through a function value");
+    return;
+  }
+  shape = binds::first_bind_shape(t);
+  sd2 = match shape { TyReference { n, dep: _ } => n, TyEnum { n, is_ref, dep: _ } => if is_ref { n } else { -1 }, _ => -1 };
+  callee = binds::callee_of(b, l.defs, x);
+  if sd2 >= 0 && callee != null && binds::is_loft_defined(binds::def(b, callee!)) {
+    jb = own::named_join_base(own::ownership_of(b, l.own_ops, l.def_nr, x));
+    if (shape is TyReference) && !v.view_elided && jb != null {
+      note(l, "F9a");
+      value(l, b, x, KRef);
+      emit(l, Load, KRef, slot_of(l, jb!), 0);
+      init_ref_under(l, slot);
+      emit(l, BindOrCopy, KRef, slot, copy_operand(b, known_type(b, sd2)));
+    } else if binds::return_adopts_fresh_store(binds::def(b, callee!)) || v.view_elided || binds::adopts_minted_at_bind(b, l.own_ops, f, var, x) {
+      note(l, "F9b");
+      value(l, b, x, KRef);
+      emit(l, Store, KRef, slot, 0);
+    } else {
+      note(l, "F9c");
+      call_copy(l, b, var, x, sd2);
+    }
+    return;
+  }
+  if is_null && (t is TyOptional) && base is TyVector {
+    note(l, "F10");
+    init_ref(l, slot);
+    return;
+  }
+  if is_null && (t is TyVector) {
+    note(l, "F11");
+    vector_null(l, b, var);
+    return;
+  }
+  if is_null && binds::owns_keyed_store(t) {
+    note(l, "F12");
+    keyed_null(l, b, var, true);
+    return;
+  }
+  if is_null && base is TyTuple {
+    note(l, "first-tuple-null");
+    plain_set(l, b, var, x);
+    return;
+  }
+  if t is TyFunction {
+    note(l, "first-fn");
+    plain_set(l, b, var, x);
+    return;
+  }
+  if (t is TyRefVar) && src >= 0 && (binds::tp(f, src) is TyRefVar) {
+    note(l, "first-refvar");
+    plain_set(l, b, var, x);
+    return;
+  }
+  note(l, "F13");
+  plain_set(l, b, var, x);
+}
+
+// `OpInitRefSentinel` of the slot while a value is on the stack: the stores above leave it.
+fn init_ref_under(l: Lowering, slot: integer) {
+  init_ref(l, slot);
+}
+
+// F2 (`gen_set_first_ref_copy`, `codegen.rs:3985`): `v = OpCopyRecord(call, v, tp)`.  A call
+// whose record comes back fresh is adopted; otherwise `v` gets its record and the copy fills it.
+fn first_copy(l: Lowering, b: ir::Bundle, var: integer, d: integer, u: ir::Node) {
+  slot = slot_of(l, var);
+  match u {
+    NdCall { def_nr: _, args } => {
+      inner = args[0]!;
+      match inner {
+        NdCall { def_nr: f, args: _ } => {
+          fd = binds::def(b, f);
+          rt = binds::returned(fd);
+          if ((rt is TyReference) || is_struct_enum(rt)) && binds::return_adopts_fresh_store(fd) {
+            value(l, b, inner, KRef);
+            emit(l, Store, KRef, slot, 0);
+            return;
+          }
+        }
+        _ => {}
       }
     }
     _ => {}
   }
-  if mode != BIND_PLAIN && d < 0 {
-    refuse(l, "a record bind into a variable that is not a record: {v.name}");
-    return;
-  }
-  if x is NdNull {
-    emit(l, PushNull, KRef, 0, 0);
-  } else {
-    value(l, b, x, KRef);
-  }
-  emit(l, Bind, KRef, slot, tp * 4 + mode);
+  init_ref(l, slot);
+  emit(l, Database, KRef, slot, known_type(b, d));
+  statement(l, b, u);
 }
 
-// Is `n` the variable of function `d`'s hidden return buffer (`hidden_return_buffer_attr`): a
-// hidden parameter that is no work buffer, of a record, vector or struct-enum type?
-fn is_return_buffer(b: ir::Bundle, d: integer, n: ir::Node) -> boolean {
-  var = match n {
-    NdVar { n: v } => v,
-    _ => -1,
-  };
-  def = b.data.definitions[d];
-  if var < 0 || def == null {
-    return false;
+// F3 (`gen_set_first_ref_var_copy`, `codegen.rs:4071`): a record variable bound to another.  A
+// source used once, owned and local is MOVED — its reference taken and itself never freed
+// (`set_skip_free`); any other is copied (`OpBindOrCopy` against itself, so always a copy).
+fn var_copy(l: Lowering, b: ir::Bundle, var: integer, src: integer, d: integer) {
+  s = fvar(b, l.def_nr, src);
+  slot = slot_of(l, var);
+  if s.uses == 1 && binds::proxy_says_owned(fn_of(b, l.def_nr), src) && !s.argument && !s.captured {
+    note(l, "move");
+    emit(l, Load, KRef, slot_of(l, src), 0);
+    mark(b, l.def_nr, src, false);
+    emit(l, Store, KRef, slot, 0);
+    return;
   }
-  v = def.variables.variables[var];
-  if v == null || !v.argument {
-    return false;
-  }
-  for a in def.attributes? {
-    if a.name == v.name {
-      return a.hidden && !a.work_buffer && (record_of(a.typedef) >= 0 || is_vector(a.typedef));
-    }
-  }
-  false
+  note(l, "copy");
+  init_ref(l, slot);
+  emit(l, Load, KRef, slot_of(l, src), 0);
+  emit(l, Load, KRef, slot_of(l, src), 0);
+  emit(l, BindOrCopy, KRef, slot, copy_operand(b, known_type(b, d)));
 }
+
+// F4 and R2d (`gen_set_first_ref_elem_copy`, `codegen.rs:4175`): a projection copied out into a
+// record of `v`'s own; an absent one binds null.
+fn elem_copy(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node, d: integer) {
+  slot = slot_of(l, var);
+  t = known_type(b, d);
+  init_ref(l, slot);
+  emit(l, Database, KRef, slot, t);
+  value(l, b, x, KRef);
+  emit(l, CopyRefOrNull, KRef, slot, copy_operand(b, t));
+}
+
+// F9c (`gen_set_first_ref_call_copy`, `codegen.rs:4392`): `v` gets a record, the reference
+// arguments are protected over the call, the result is copied in (its source freed when the
+// call hands back a temporary), and the caller's hidden buffers are released.
+fn call_copy(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node, d: integer) {
+  slot = slot_of(l, var);
+  t = known_type(b, d);
+  init_ref(l, slot);
+  emit(l, Database, KRef, slot, t);
+  ref_args = binds::protectable_ref_args(b, l.defs, x).slots;
+  hidden = caller_hidden_args(b, l.def_nr, var, unspan(x));
+  for a in ref_args {
+    emit(l, Load, KRef, slot_of(l, a), 0);
+    emit(l, Protect, KRef, 0, 1);
+  }
+  raw = if binds::call_return_frees_source(b, l.own_ops, l.def_nr, l.defs, x) { t + 32768 } else { t };
+  value(l, b, x, KRef);
+  emit(l, CopyRefOrNull, KRef, slot, copy_operand(b, raw));
+  for a in ref_args {
+    emit(l, Load, KRef, slot_of(l, a), 0);
+    emit(l, Protect, KRef, 0, 0);
+  }
+  for a in hidden {
+    release_caller_hidden_arg(l, b, a);
+  }
+}
+
+// The call's arguments that are the caller's own hidden buffers (`is_caller_hidden_buf`), not
+// `v` itself.
+fn caller_hidden_args(b: ir::Bundle, d: integer, var: integer, u: ir::Node) -> vector<integer> {
+  out: vector<integer> = [];
+  match u {
+    NdCall { def_nr: _, args } => {
+      for a in args {
+        match unspan(a) {
+          NdVar { n } => {
+            if n != var && fvar(b, d, n).caller_hidden_buf {
+              out += [n];
+            }
+          }
+          _ => {}
+        }
+      }
+    }
+    _ => {}
+  }
+  out
+}
+
+// `release_caller_hidden_arg` (`codegen.rs:4362`): a buffer argument is released unless it is
+// the store its entry witness names; a local buffer is freed; either way it reads null after.
+fn release_caller_hidden_arg(l: Lowering, b: ir::Bundle, a: integer) {
+  slot = slot_of(l, a);
+  if fvar(b, l.def_nr, a).argument {
+    w = binds::entry_witness(fn_of(b, l.def_nr), a);
+    if w == null {
+      return;
+    }
+    emit(l, Load, KRef, slot, 0);
+    emit(l, Load, KRef, slot_of(l, w!), 0);
+    emit(l, FreeRefDistinct, KRef, 0, 0);
+  } else {
+    emit(l, Load, KRef, slot, 0);
+    emit(l, FreeRef, KRef, 0, 0);
+  }
+  init_ref(l, slot);
+}
+
+// Is `u` a call of the operator `name`?
+fn is_call_of(b: ir::Bundle, u: ir::Node, name: text) -> boolean {
+  match u {
+    NdCall { def_nr, args: _ } => (b.data.definitions[def_nr]?.name ?? "") == name,
+    _ => false,
+  }
+}
+
+// `size(tp, Context::Variable) == 0` (`variables/mod.rs:6072`): a variable with no storage.
+fn is_zero_size(tp: vector<ir::TypeT>) -> boolean {
+  t0 = tp[0];
+  if t0 == null {
+    return true;
+  }
+  // `Optional(τ)` is τ's size.
+  t = binds::base(t0);
+  match t {
+    TyBoolean => false,
+    TyEnum { n: _, is_ref: _, dep: _ } => false,
+    TySingle => false,
+    TyCharacter => false,
+    TyInteger { spec: _ } => false,
+    TyFloat => false,
+    TyFunction { args: _, result: _, dep: _, consts: _ } => false,
+    TyText { dep: _ } => false,
+    TyRefVar { inner: _ } => false,
+    TyReference { n: _, dep: _ } => false,
+    TyVector { inner: _, dep: _ } => false,
+    TyIndex { n: _, keys: _, dep: _ } => false,
+    TyHash { n: _, names: _, dep: _ } => false,
+    TySorted { n: _, keys: _, dep: _ } => false,
+    TyRadix { n: _, names: _, dep: _ } => false,
+    TyTrie { n: _, key: _, dep: _ } => false,
+    TyIterator { step: _, inner: _ } => false,
+    TyTuple { elems } => len(elems) == 0,
+    _ => true,
+  }
+}
+
+// `@FR-R-LoopSlot` (`codegen.rs:2486`): `v = { …range step…; w }`, a counted loop's variable
+// whose slot is its range index's own.
+fn is_loop_slot(b: ir::Bundle, d: integer, var: integer, x: ir::Node) -> boolean {
+  match unspan(x) {
+    NdBlock { block } => {
+      bl = block[0]!;
+      if bl.name != "Iter range" || len(bl.operators) == 0 {
+        return false;
+      }
+      match unspan(bl.operators[len(bl.operators) - 1]!) {
+        NdVar { n: w } => {
+          p = fvar(b, d, var).stack_pos;
+          w != var && p != 65535 && p == fvar(b, d, w).stack_pos
+        }
+        _ => false,
+      }
+    }
+    _ => false,
+  }
+}
+
+// `gen_set_first_vector_null` (`codegen.rs:2130`): a never-freed, built-in-place or lazy
+// vector keeps the sentinel; one that owns its store is minted a `main_vector<T>`; a
+// dependent one views its dependency's (`OpInitCreateStack`, the stack store's — F-1).
+fn vector_null(l: Lowering, b: ir::Bundle, var: integer) {
+  v = fvar(b, l.def_nr, var);
+  slot = slot_of(l, var);
+  if v.skip_free || is_inline_ref(b, l.def_nr, var) || v.lazy_buffer {
+    init_ref(l, slot);
+  } else if len(deps_of(v.type_def)) == 0 {
+    init_ref(l, slot);
+    owned_vector(l, b, var);
+  } else {
+    init_ref(l, slot);
+  }
+}
+
+// `gen_owned_vector_store` (`codegen.rs:2178`): the variable's own `main_vector<T>` store,
+// the variable left at the wrapper's one field (`pos` 8, where `OpDatabase` puts it and
+// `OpGetField(…, 0)` names it, `(H-ClearRelease)`), and that field zeroed.
+fn owned_vector(l: Lowering, b: ir::Bundle, var: integer) {
+  w = main_vector_of(b, fvar(b, l.def_nr, var).type_def);
+  if w < 0 {
+    refuse(l, "an owned vector whose wrapper type the image does not name: {fvar(b, l.def_nr, var).name}");
+    return;
+  }
+  slot = slot_of(l, var);
+  emit(l, Database, KRef, slot, w);
+  emit(l, Load, KRef, slot, 0);
+  emit(l, PushInt, KInt, 0, 0);
+  emit(l, SetW, KInt, 0, width_of("OpSetInt4"));
+}
+
+// `gen_keyed_null` (`codegen.rs:2264`): a keyed local bound to null is minted AS its
+// collection type, in place — unless it is built in place or an overwritten view, which keep
+// the sentinel from their first bind.
+fn keyed_null(l: Lowering, b: ir::Bundle, var: integer, first: boolean) {
+  v = fvar(b, l.def_nr, var);
+  slot = slot_of(l, var);
+  if is_inline_ref(b, l.def_nr, var) || is_overwritten_view(v) {
+    if first {
+      init_ref(l, slot);
+    }
+    return;
+  }
+  ht = hash_type_of(b, v.type_def);
+  if ht < 0 {
+    refuse(l, "a keyed collection whose type the image does not name: {v.name}");
+    return;
+  }
+  emit(l, Database, KRef, slot, ht);
+}
+
+// `set_var` (`codegen.rs:6172`), R3 and every plain arm: the value stored into the variable.
+// A lazy buffer's null is its mint.
+fn plain_set(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
+  k = var_kind(l, var);
+  slot = slot_of(l, var);
+  if k == KRef {
+    v = fvar(b, l.def_nr, var);
+    if x is NdNull && v.lazy_buffer && !(v.type_def[0]! is TyOptional) && is_vector(v.type_def) && len(deps_of(v.type_def)) == 0 {
+      owned_vector(l, b, var);
+      return;
+    }
+    value(l, b, x, KRef);
+    emit(l, Store, KRef, slot, 0);
+    return;
+  }
+  // A `&text` is written through (`Store` of kind `KTextRef`): its value is a text.
+  value(l, b, x, if k == KTextRef { KText } else { k });
+  emit(l, Store, if k == KTextRef { KTextRef } else { stack_of(k) }, slot, 0);
+}
+
 
 // Is `name` an operator: `Op` and then a capital, as `Definition::is_operator` reads it?
 fn is_operator(name: text) -> boolean {
@@ -1408,7 +2007,7 @@ fn has_body(d: ir::Definition) -> boolean {
   if len(d.code) == 0 {
     return false;
   }
-  first = d.code[0] ?? panic("a non-empty code vector");
+  first = d.code[0]!;
   !(first is NdNull)
 }
 
@@ -1436,7 +2035,7 @@ fn call(l: Lowering, b: ir::Bundle, def_nr: integer, args: vector<ir::Node>) {
   kinds = param_kinds(d);
   writer = if is_operator(d.name) { writer_code(d.name) } else { null };
   if writer != null {
-    first = args[0] ?? panic("a text-writing operator names its destination");
+    first = args[0]!;
     dest = 0;
     dest_kind = KText;
     match first {
@@ -1456,7 +2055,7 @@ fn call(l: Lowering, b: ir::Bundle, def_nr: integer, args: vector<ir::Node>) {
   // A format operator: the value, then its operands as ordinary values (a boolean as 1 or 0),
   // then one `Format` op whose kind is the destination's and whose `b` is the value's kind.
   if is_format(d.name) {
-    first = args[0] ?? panic("a format operator names its destination");
+    first = args[0]!;
     dest = 0;
     dest_kind = KText;
     match first {
@@ -1480,7 +2079,7 @@ fn call(l: Lowering, b: ir::Bundle, def_nr: integer, args: vector<ir::Node>) {
   }
   // `OpCreateStack(v)`: a reference to text variable `v`, to hand to a `&text` parameter.
   if d.name == "OpCreateStack" {
-    match args[0] ?? panic("OpCreateStack names a variable") {
+    match args[0]! {
       NdVar { n: var } => {
         if var_kind(l, var) == KText {
           emit(l, RefOf, KText, slot_of(l, var), 0);
@@ -1527,17 +2126,17 @@ fn is_free(b: ir::Bundle, n: ir::Node) -> boolean {
   while true {
     match at {
       NdCall { def_nr, args: _ } => {
-        name = (b.data.definitions[def_nr] ?? panic("a called definition")).name;
+        name = b.data.definitions[def_nr]!.name;
         return name.starts_with("OpFree")
           || name == "OpDropFnRef"
           || (name.starts_with("t_") && (name.ends_with("_OpDrop") || name.ends_with("_OpDropAll")))
           || name == "n_set_store_lock";
       }
       NdIf { cond: _, t, f } => {
-        if !(unspan(f[0] ?? panic("an else side")) is NdNull) {
+        if !(unspan(f) is NdNull) {
           return false;
         }
-        at = unspan(t[0] ?? panic("a then side"));
+        at = unspan(t);
       }
       _ => { return false; }
     }
@@ -1551,7 +2150,7 @@ fn is_free(b: ir::Bundle, n: ir::Node) -> boolean {
 fn block_value(l: Lowering, b: ir::Bundle, blk: ir::Block) {
   at = len(blk.operators) - 1;
   while at >= 0 {
-    o = unspan(blk.operators[at] ?? panic("in range"));
+    o = unspan(blk.operators[at]!);
     if !(o is NdLine) && !(o is NdSet) && !is_free(b, o) {
       break;
     }
@@ -1593,9 +2192,294 @@ fn leave_loop(l: Lowering, n: integer, is_break: boolean) {
     l.brk_loop += [level];
     l.brk_at += [len(l.ops)];
     emit(l, Jump, KInt, 0, 0);
+  } else if l.loop_start[level]! < 0 {
+    l.cont_loop += [level];
+    l.cont_at += [len(l.ops)];
+    emit(l, Jump, KInt, 0, 0);
   } else {
-    emit(l, Jump, KInt, l.loop_start[level] ?? panic("an open loop"), 0);
+    emit(l, Jump, KInt, l.loop_start[level]!, 0);
   }
+}
+
+// ── Loops: the bytecode writer's rotation (`gen_loop`, `codegen.rs:1162`) ─────────────────
+// A loop whose first statement is its exit test — a `while`'s `if c { break }`, or a counted
+// range's iterator — is laid out bottom-tested: the body, then the step, then the test that
+// jumps back.  Its iterator's statements are lowered in that order, so the binds are too.
+
+// `Rotation` (`codegen.rs:7290`): the statements before the exit test, the test, those after
+// it, the loop variable and the index it takes (`store`, -1 when none), and `(index, next)`
+// when the start step seeds one counter from the other (`seed`, -1 when none).
+struct Rotation {
+  pre: vector<ir::Node>,
+  test: vector<ir::Node>,
+  post: vector<ir::Node>,
+  store_lv: integer,
+  store_ix: integer,
+  seed_ix: integer,
+  seed_nxt: integer,
+}
+
+// `exit_test` (`codegen.rs:7303`): `if c { break }` of the innermost loop, answering `c`.
+fn exit_test(n: ir::Node) -> vector<ir::Node> {
+  match unspan(n) {
+    NdIf { cond, t, f } => {
+      brk = match unspan(t) {
+        NdBreak { n: 0 } => true,
+        NdBlock { block } => {
+          ops = block[0]!.operators;
+          len(ops) == 1 && is_break_0(ops[0]!)
+        }
+        _ => false,
+      };
+      if brk && unspan(f) is NdNull { [cond] } else { [] }
+    }
+    _ => [],
+  }
+}
+
+fn is_break_0(n: ir::Node) -> boolean {
+  match unspan(n) {
+    NdBreak { n: 0 } => true,
+    _ => false,
+  }
+}
+
+// Does `n` hold a `continue` or a loop anywhere (`any_node`)?
+fn holds_jump(n: ir::Node) -> boolean {
+  match n {
+    NdContinue { n: _ } => true,
+    NdLoop { block: _ } => true,
+    NdSpan { pos: _, inner } => holds_jump(inner),
+    NdCall { def_nr: _, args } => holds_jump_in(args),
+    NdCallRef { var: _, args } => holds_jump_in(args),
+    NdInsert { items } => holds_jump_in(items),
+    NdTuple { items } => holds_jump_in(items),
+    NdParallel { arms } => holds_jump_in(arms),
+    NdBlock { block } => holds_jump_in(block[0]!.operators),
+    NdSet { var: _, inner } => holds_jump(inner),
+    NdReturn { inner } => holds_jump(inner),
+    NdDrop { inner } => holds_jump(inner),
+    NdYield { inner } => holds_jump(inner),
+    NdTuplePut { var: _, idx: _, inner } => holds_jump(inner),
+    NdIf { cond, t, f } => holds_jump(cond) || holds_jump(t) || holds_jump(f),
+    NdIter { var: _, create, next, init } => holds_jump(create) || holds_jump(next) || holds_jump(init),
+    _ => false,
+  }
+}
+
+fn holds_jump_in(ns: vector<ir::Node>) -> boolean {
+  for n in ns {
+    if holds_jump(n) {
+      return true;
+    }
+  }
+  false
+}
+
+// `rotation` (`codegen.rs:7324`): a loop's first statement read as a rotatable exit, or the
+// rotation with an empty test when it is none.
+fn rotation(first: ir::Node) -> Rotation {
+  none = Rotation { pre: [], test: [], post: [], store_lv: -1, store_ix: -1, seed_ix: -1, seed_nxt: -1 };
+  c = exit_test(first);
+  if len(c) > 0 {
+    return Rotation { pre: [], test: c, post: [], store_lv: -1, store_ix: -1, seed_ix: -1, seed_nxt: -1 };
+  }
+  match unspan(first) {
+    NdSet { var: lv, inner } => {
+      match unspan(inner) {
+        NdBlock { block } => {
+          bl = block[0]!;
+          n = len(bl.operators);
+          if bl.name != "Iter range" || n == 0 {
+            return none;
+          }
+          ix = match unspan(bl.operators[n - 1]!) { NdVar { n: x } => x, _ => -1 };
+          if ix < 0 {
+            return none;
+          }
+          k = -1;
+          for i in 0..n - 1 {
+            if len(exit_test(bl.operators[i]!)) > 0 {
+              k = i;
+            }
+          }
+          if k < 0 {
+            return none;
+          }
+          for i in 0..n - 1 {
+            if i != k && holds_jump(bl.operators[i]!) {
+              return none;
+            }
+          }
+          r = Rotation { pre: [], test: exit_test(bl.operators[k]!), post: [], store_lv: lv, store_ix: ix, seed_ix: -1, seed_nxt: -1 };
+          for i in 0..k {
+            r.pre += [bl.operators[i]!];
+          }
+          for i in k + 1..n - 1 {
+            r.post += [bl.operators[i]!];
+          }
+          r
+        }
+        _ => none,
+      }
+    }
+    _ => none,
+  }
+}
+
+// `start_step` (`codegen.rs:7377`, `@FR-R-StartStep`): `{if c(next) break; index = next;
+// next = next + 1; index}` stepped as one counter, `index` seeded from `next`.  An empty test
+// when it does not apply.
+fn start_step(r: Rotation) -> Rotation {
+  none = Rotation { pre: [], test: [], post: [], store_lv: -1, store_ix: -1, seed_ix: -1, seed_nxt: -1 };
+  ix = r.store_ix;
+  if ix < 0 || len(r.pre) != 0 || r.seed_ix >= 0 || len(r.post) != 2 {
+    return none;
+  }
+  copy = unspan(r.post[0]!);
+  step = unspan(r.post[1]!);
+  cix = -1;
+  nxt = -1;
+  match copy {
+    NdSet { var, inner } => {
+      cix = var;
+      nxt = match unspan(inner) { NdVar { n } => n, _ => -1 };
+    }
+    _ => {}
+  }
+  if nxt < 0 || cix != ix || nxt == ix {
+    return none;
+  }
+  add = -1;
+  match step {
+    NdSet { var, inner } => {
+      if var != nxt {
+        return none;
+      }
+      match unspan(inner) {
+        NdCall { def_nr, args } => {
+          if len(args) == 2 && is_var(args[0]!, nxt) && is_int(args[1]!, 1) {
+            add = def_nr;
+          }
+        }
+        _ => {}
+      }
+    }
+    _ => {}
+  }
+  if add < 0 {
+    return none;
+  }
+  match unspan(r.test[0]!) {
+    NdCall { def_nr: cmp, args: targs } => {
+      if len(targs) != 2 {
+        return none;
+      }
+      end = targs[0]!;
+      if !is_var(targs[1]!, nxt) || binds::reads_var(end, nxt) || binds::reads_var(end, ix) {
+        return none;
+      }
+      Rotation {
+        pre: [NdSet { var: ix, inner: NdCall { def_nr: add, args: [NdVar { n: ix }, NdInt { n: 1 }] } }],
+        test: [NdCall { def_nr: cmp, args: [end, NdVar { n: ix }] }],
+        post: [],
+        store_lv: r.store_lv,
+        store_ix: r.store_ix,
+        seed_ix: ix,
+        seed_nxt: nxt,
+      }
+    }
+    _ => none,
+  }
+}
+
+fn is_var(n: ir::Node, v: integer) -> boolean {
+  match unspan(n) {
+    NdVar { n: x } => x == v,
+    _ => false,
+  }
+}
+
+fn is_int(n: ir::Node, v: integer) -> boolean {
+  match unspan(n) {
+    NdInt { n: x } => x == v,
+    _ => false,
+  }
+}
+
+// `start_step_holds` (`codegen.rs:1276`): the body never reads `next`, nor `index` unless the
+// loop variable shares its slot.
+fn start_step_holds(b: ir::Bundle, d: integer, ops: vector<ir::Node>, s: Rotation) -> boolean {
+  pos = fvar(b, d, s.store_lv).stack_pos;
+  shared = pos != 65535 && pos == fvar(b, d, s.seed_ix).stack_pos;
+  for i in 1..len(ops) {
+    o = ops[i]!;
+    if binds::reads_var(o, s.seed_nxt) || (!shared && binds::reads_var(o, s.seed_ix)) {
+      return false;
+    }
+  }
+  true
+}
+
+// `gen_rotated_loop` (`codegen.rs:1205`): [the seed]; a jump to the step (or, seeded, to the
+// test); the body: the post statements, the loop variable, the rest; the step; the test, which
+// jumps back to the body while it is false.  A `continue` goes to the step.
+fn rotated_loop(l: Lowering, b: ir::Bundle, ops: vector<ir::Node>, r: Rotation) {
+  if r.seed_ix >= 0 {
+    set(l, b, r.seed_ix, NdVar { n: r.seed_nxt });
+  }
+  level = len(l.loop_start);
+  l.loop_start += [-1];
+  l.loop_depth += [l.depth];
+  entry = len(l.ops);
+  emit(l, Jump, KInt, 0, 0);
+  body = len(l.ops);
+  for p in r.post {
+    statement(l, b, p);
+  }
+  if r.store_lv >= 0 {
+    pos = fvar(b, l.def_nr, r.store_lv).stack_pos;
+    if pos != 65535 && pos == fvar(b, l.def_nr, r.store_ix).stack_pos {
+      // The loop variable IS its index's slot: no set (`set_stack_allocated`); the loft frame
+      // keeps the two apart until F-1, so the value is copied here.
+      mark(b, l.def_nr, r.store_lv, true);
+      k = var_kind(l, r.store_ix);
+      emit(l, Load, stack_of(k), slot_of(l, r.store_ix), 0);
+      emit(l, Store, stack_of(k), slot_of(l, r.store_lv), 0);
+    } else {
+      statement(l, b, NdSet { var: r.store_lv, inner: NdVar { n: r.store_ix } });
+    }
+  }
+  for i in 1..len(ops) {
+    statement(l, b, ops[i]!);
+  }
+  if r.seed_ix < 0 {
+    l.ops[entry].a = len(l.ops);
+  }
+  step = len(l.ops);
+  for i in 0..len(l.cont_at) {
+    if l.cont_loop[i] == level {
+      l.ops[l.cont_at[i]!].a = step;
+      l.cont_loop[i] = -1;
+    }
+  }
+  for p in r.pre {
+    statement(l, b, p);
+  }
+  if r.seed_ix >= 0 {
+    l.ops[entry].a = len(l.ops);
+  }
+  expr(l, b, r.test[0]!);
+  emit(l, JumpIfFalse, KInt, body, 0);
+  end = len(l.ops);
+  for i in 0..len(l.brk_at) {
+    if l.brk_loop[i] == level {
+      l.ops[l.brk_at[i]!].a = end;
+      l.brk_loop[i] = -1;
+    }
+  }
+  l.loop_start.remove(level);
+  l.loop_depth.remove(level);
 }
 
 // `n`, a statement: its ops leave the stacks as they found them.
@@ -1603,26 +2487,18 @@ fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
   match n {
     NdLine { n: _ } => {},
     NdNull => {},
-    NdSpan { inner } => statement(l, b, inner[0]?),
+    NdSpan { inner } => statement(l, b, inner),
     NdReturn { inner } => expr(l, b, n),
     NdSet { var, inner } => {
-      k = var_kind(l, var);
-      if k == KRef {
-        bind(l, b, var, inner[0]?);
-        return;
-      }
-      slot = slot_of(l, var);
-      // A `&text` is written through (`Store` of kind `KTextRef`): its value is a text.
-      value(l, b, inner[0]?, if k == KTextRef { KText } else { k });
-      emit(l, Store, if k == KTextRef { KTextRef } else { stack_of(k) }, slot, 0);
+      set(l, b, var, inner);
     }
     NdBlock { block } => block_statement(l, b, block[0]?),
     NdIf { cond, t, f } => {
-      expr(l, b, cond[0]?);
+      expr(l, b, cond);
       to_else = len(l.ops);
       emit(l, JumpIfFalse, KInt, 0, 0);
-      statement(l, b, t[0]?);
-      else_side = f[0]?;
+      statement(l, b, t);
+      else_side = f;
       if else_side is NdNull {
         l.ops[to_else].a = len(l.ops);
       } else {
@@ -1634,15 +2510,28 @@ fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
       }
     }
     NdLoop { block } => {
+      ops = block[0]!.operators;
+      if len(ops) > 0 {
+        r = rotation(ops[0]!);
+        if len(r.test) > 0 {
+          s = start_step(r);
+          if len(s.test) > 0 && start_step_holds(b, l.def_nr, ops, s) {
+            rotated_loop(l, b, ops, s);
+          } else {
+            rotated_loop(l, b, ops, r);
+          }
+          return;
+        }
+      }
       level = len(l.loop_start);
       l.loop_start += [len(l.ops)];
       l.loop_depth += [l.depth];
       block_statement(l, b, block[0]?);
-      emit(l, Jump, KInt, l.loop_start[level] ?? panic("an open loop"), 0);
+      emit(l, Jump, KInt, l.loop_start[level]!, 0);
       end = len(l.ops);
       for i in 0..len(l.brk_at) {
         if l.brk_loop[i] == level {
-          l.ops[l.brk_at[i] ?? panic("a break site")].a = end;
+          l.ops[l.brk_at[i]!].a = end;
           l.brk_loop[i] = -1;
         }
       }
@@ -1652,9 +2541,9 @@ fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
     NdDrop { inner } => {
       // A value computed for its effect and dropped.
       before = l.depth;
-      expr(l, b, inner[0]?);
+      expr(l, b, inner);
       if l.depth > before {
-        emit(l, Pop, stack_of(kind_of(l, b, inner[0]?)), 0, 0);
+        emit(l, Pop, stack_of(kind_of(l, b, inner)), 0, 0);
       }
     }
     // Statements the compiler inserted in place of one (`Value::Insert`).
@@ -1682,6 +2571,8 @@ pub fn lower(b: ir::Bundle, def_nr: integer) -> Lowering {
   d = b.data.definitions[def_nr]?;
   l = empty();
   l.def_nr = def_nr;
+  l.own_ops = own::ops_of(b);
+  l.defs = own::function_defs(b, def_nr, l.own_ops);
   l.result = kind_of_types(d.returned);
   // Each variable gets the next slot of its kind.  The parameters take theirs FIRST, in order,
   // so they fill the slots the caller's arguments land in — a hidden one too (a text result's
@@ -1689,7 +2580,7 @@ pub fn lower(b: ir::Bundle, def_nr: integer) -> Lowering {
   for v in d.variables.variables {
     l.var_kind += [kind_of_types(v.type_def)];
     l.var_slot += [0];
-    l.bound += [false];
+    l.owned_reassigned += [false];
     shown = "{v.type_def[0] ?? ir::TypeT.TyVoid}";
     l.var_type += [shown.split(' ')[0] ?? shown];
   }

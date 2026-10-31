@@ -2658,6 +2658,9 @@ impl Parser {
             if is_return && !needs_convert {
                 self.n_store_violation(t, result, "the return value", ret_at.as_ref());
             }
+            if is_return {
+                self.copy_returned_fn_field(&mut l[last]);
+            }
             let converted = if needs_convert {
                 self.lexer.to((tail_pos.line, tail_pos.pos));
                 let done = if is_return {
@@ -3347,6 +3350,17 @@ impl Parser {
             return RefDelivery::MaterializeView;
         }
         if ls.is_empty() {
+            if l.last().is_some_and(|tail| {
+                Self::return_tail_is_join(tail) && self.projects_into_local(tail, true)
+            }) {
+                // loft#2289, `@FR-F-Ret` — an ARM projects into a store this frame frees
+                // (`if c { decode(n).value } else { … }`: a field of the inline call's
+                // `__lift_N`).  A buffered join is copied arm by arm only through
+                // `ref_return`'s copy leg, which runs for a non-empty dep list; this one is
+                // empty — the lifted temporary publishes no dep — so without this leg the
+                // tail went `AsIs` and the caller read the freed temporary.
+                return RefDelivery::MaterializeView;
+            }
             // Issue #120: deps stripped — recover the tail's hidden work-refs so the
             // site still binds to the one buffer. No work-ref to recover → AsIs.
             if let Some(last) = l.last() {
@@ -14466,6 +14480,18 @@ impl Parser {
             .filter(|&v| v != u16::MAX)
     }
 
+    /// Did an earlier pass publish a hidden `&text` return buffer for this function under a
+    /// name other than `v`'s?  The signature that pass made is the one callers were built
+    /// against, so a later pass delivers into it instead of growing another (loft#2286).
+    fn text_buffer_published_under_another_name(&self, v: u16) -> bool {
+        let n = self.vars.name(v);
+        self.data.def(self.context).attributes().iter().any(|a| {
+            a.hidden
+                && a.name != n
+                && matches!(&a.typedef, Type::RefVar(t) if matches!(t.base(), Type::Text(_)))
+        })
+    }
+
     fn holds_text_work_buf(&self) -> bool {
         self.data
             .def(self.context)
@@ -14540,9 +14566,16 @@ impl Parser {
                     // dep LIST is what differs between passes (`a ?? b ?? "d"` lists `a` on
                     // pass 1 and `b` on pass 2 from a byte-identical body).  A compiler temp
                     // (`__tret`, `___acc`) is minted on the pass that promotes it, so it is not
-                    // gated.
+                    // gated — unless pass 1 already published a hidden text buffer under another
+                    // name.  A pooled work text is a compiler temp whose NUMBER follows the pool
+                    // (`__work_4` on pass 1, `__work_3` on pass 2 once a capture changes which
+                    // buffers are free), so promoting it again grew a second `&text` parameter
+                    // pass 1 never published: the attribute and variable orders crossed and the
+                    // interpreter wrote the result through a corrupted buffer (loft#2286).
                     TextDep::PromoteHidden
-                        if !self.first_pass && !self.vars.is_compiler_generated(*v) => {}
+                        if !self.first_pass
+                            && (!self.vars.is_compiler_generated(*v)
+                                || self.text_buffer_published_under_another_name(*v)) => {}
                     TextDep::PromoteHidden => {
                         let n = self.vars.name(*v);
                         let a = self.data.add_attribute(
@@ -17971,7 +18004,7 @@ impl Parser {
     /// promotable value-yielding tail needs BOTH arms to yield; a guard `if c {
     /// return … }` does not, and must stay unbound so the missing-return
     /// diagnostic still fires.
-    fn arm_yields_text(arm: &Value) -> bool {
+    pub(super) fn arm_yields_text(arm: &Value) -> bool {
         match arm.unspan() {
             Value::Return(_) | Value::Break(_) | Value::Continue(_) => false,
             Value::Null => false,
@@ -18532,19 +18565,26 @@ impl Parser {
     }
 
     fn return_projects_into_local(&self, tail: &Value) -> bool {
+        self.projects_into_local(tail, false)
+    }
+
+    /// [`Self::return_projects_into_local`], with `every_arm` asking the arms of a join
+    /// whatever the return — the question the empty-dep leg of the selector asks, where no
+    /// copy leg will copy the arms (loft#2289).
+    fn projects_into_local(&self, tail: &Value, every_arm: bool) -> bool {
         let (get_field, get_vector) = (
             self.data.def_nr("OpGetField"),
             self.data.def_nr("OpGetVector"),
         );
         match tail.unspan() {
-            Value::Return(inner) | Value::Drop(inner) => self.return_projects_into_local(inner),
+            Value::Return(inner) | Value::Drop(inner) => self.projects_into_local(inner, every_arm),
             Value::Block(bl) => bl
                 .operators
                 .last()
-                .is_some_and(|t| self.return_projects_into_local(t)),
+                .is_some_and(|t| self.projects_into_local(t, every_arm)),
             Value::Insert(ops) => ops
                 .last()
-                .is_some_and(|t| self.return_projects_into_local(t)),
+                .is_some_and(|t| self.projects_into_local(t, every_arm)),
             // An ARM of the tail is a tail too — `if take { t.l } else { null }` hands up
             // `t.l` on one path.  A function WITH a return buffer copies every arm into it
             // through `ref_return`'s copy leg, so only the buffer-less return (`-> S?`, a
@@ -18554,10 +18594,11 @@ impl Parser {
             // the `?` — copying a `null` arm into the buffer would answer a record — so its
             // arms are asked here as well and materialised per arm, a null arm left null.
             Value::If(_, t, f)
-                if self.return_buffer().is_none()
+                if every_arm
+                    || self.return_buffer().is_none()
                     || matches!(self.data.def(self.context).returned(), Type::Optional(_)) =>
             {
-                self.return_projects_into_local(t) || self.return_projects_into_local(f)
+                self.projects_into_local(t, every_arm) || self.projects_into_local(f, every_arm)
             }
             // A TUPLE element read is a projection like the two op calls below, spelled as
             // a `Value` variant: it carries its base as a var NUMBER, so no call pattern
@@ -19930,13 +19971,21 @@ impl Parser {
         // source still aliases the buffer, and the B5-L3 text hoist copies first), and
         // both were measured clean on this shape — narrowing here keeps the guard on the
         // path that actually re-mints.
+        // loft#2292 — a parser-minted WORK REF is the same hazard by substitution: its
+        // `materialized_view_return` copies a source into it, and `Bind { substitute }`
+        // makes the buffer var the destination.  When pass 1 renamed the returned local
+        // onto the buffer (a callee further down was not typed yet) and pass 2 finds that
+        // local may be a view, the source IS the buffer var — `OpDatabase(class);
+        // OpCopyRecord(class, class)` — and the answer is a zeroed record (`@FR-H-CopySelf`
+        // holds only for the copy, not for the re-mint in front of it).  The work ref then
+        // keeps its own store and is handed back, the callee-minted delivery `(O-Buffer)`
+        // admits.
         let tail_reads_buffer = matches!(
             ctx.ret.ret_promo_base(),
             Type::Reference(_, _) | Type::Enum(_, true, _)
-        ) && !is_work_ref
-            && self.return_buffer().is_some_and(|(_, buf_var)| {
-                buf_var != v && body.last().is_some_and(|t| t.reads_var(buf_var))
-            });
+        ) && self.return_buffer().is_some_and(|(_, buf_var)| {
+            buf_var != v && body.last().is_some_and(|t| t.reads_var(buf_var))
+        });
         if tail_reads_buffer {
             return RetPromotion::SkipJoinArm;
         }
@@ -20770,6 +20819,7 @@ impl Parser {
             {
                 self.validate_convert("return", &t, &r_type, &expr_start.position);
             }
+            self.copy_returned_fn_field(&mut v);
             // loft#822 — `convert` can UNBOX a stored tuple into its stack spelling, and
             // `t` still names the spelling the value had BEFORE that.  The delivery
             // classification below branches on `t`'s kind: left stale it sees a

@@ -5,6 +5,7 @@
 #![allow(dead_code)]
 
 mod allocation;
+mod closure_share;
 pub use allocation::SLICE_UNCAPPED;
 mod descriptor;
 mod equality;
@@ -465,6 +466,9 @@ pub struct Stores {
     /// place takes a fresh one instead ([`Stores::detach_if_frame_held`]), so the frame keeps
     /// the value it was handed.  Runtime-only: `clone` starts it empty.
     pub(crate) frame_held: Vec<(u16, u32, bool)>,
+    /// loft#2273 — the closure-copy share count, and NOTHING else: see `closure_share.rs`
+    /// before touching it.  Runtime-only: `clone` starts it empty.
+    closure_shares: closure_share::ClosureShares,
     /// @PLN133 S8 — the stores created while a lazy DRIVER is running, or
     /// `None` when none is.
     ///
@@ -538,6 +542,11 @@ pub struct Stores {
     /// `json_errors()`.  Cleared on every successful `json_parse`;
     /// populated with `format!("{msg} (byte {pos})")` on parse failure.
     pub last_json_errors: Vec<String>,
+    /// `@FR-L-OutOfLine` — the child records a copy has claimed and not yet walked, and how
+    /// deep in [`Stores::copy_claims`] the copy is: the outermost call walks them as a loop,
+    /// so a chain of any length takes no stack per link.
+    pub child_copies: Vec<(DbRef, DbRef, u16)>,
+    pub child_copy_depth: u32,
     /// loft#2079 — the first non-null enum FIELD the running text parse left with no value
     /// (`Stores::write_absent_value`): `record_from_text` answers null for it.
     pub parse_unfilled: Option<String>,
@@ -793,6 +802,7 @@ impl Clone for Stores {
             owed: upgrade::Owed::default(),
             upgrade_routines: self.upgrade_routines.clone(),
             frame_held: Vec::new(),
+            closure_shares: closure_share::ClosureShares::default(),
             lazy_driver_allocs: None,
             files: Vec::new(),
             max: self.max,
@@ -805,6 +815,8 @@ impl Clone for Stores {
             bridge_text_dest: None,
             const_refs: Vec::new(),
             last_json_errors: Vec::new(),
+            child_copies: Vec::new(),
+            child_copy_depth: 0,
             parse_unfilled: None,
             parallel_ctx: None,
             par_buffer_stack: Vec::new(),
@@ -1578,6 +1590,7 @@ impl Stores {
             owed: upgrade::Owed::default(),
             upgrade_routines: upgrade::Routines::new(),
             frame_held: Vec::new(),
+            closure_shares: closure_share::ClosureShares::default(),
             lazy_driver_allocs: None,
             files: Vec::new(),
             max: 0,
@@ -1590,6 +1603,8 @@ impl Stores {
             bridge_text_dest: None,
             const_refs: Vec::new(),
             last_json_errors: Vec::new(),
+            child_copies: Vec::new(),
+            child_copy_depth: 0,
             parse_unfilled: None,
             parallel_ctx: None,
             par_buffer_stack: Vec::new(),
@@ -2840,7 +2855,12 @@ impl Stores {
         // A vector already empty — no record, or a record of length 0 — has nothing to release
         // and its clear is nothing: no store reset, no record made again (`loft_vec_clear_release`,
         // STORE_MODEL.md D19f).  An absent slot still takes the clear, which makes it present.
-        if !db.is_null() && (db.store_nr as usize) < self.allocations.len() && db.pos != 0 {
+        // `LOFT_NO_EMPTY_CLEAR_SKIP=1` resets the store again: the before-half of the A/B.
+        if crate::keys::empty_clear_skip_enabled()
+            && !db.is_null()
+            && (db.store_nr as usize) < self.allocations.len()
+            && db.pos != 0
+        {
             let store = &self.allocations[db.store_nr as usize];
             let cur = store.get_u32_raw(db.rec, db.pos);
             if cur == 0 {
@@ -2936,10 +2956,8 @@ impl Stores {
             // The shape, not a byte offset: the store's root record is a
             // `main_vector<T>` WRAPPER — one field, and that field is the vector — which
             // is exactly what `OpDatabase` mints for a vector local or a return buffer,
-            // and the only shape that outlives a call.  Asking the SHAPE keeps the two
-            // backends together: the wrapper's field sits at `pos` 8 on `--native` and
-            // 12 on the interpreter, and a hardcoded offset silently released on one
-            // backend only (measured: the interpreter kept leaking).  Any other root —
+            // and the only shape that outlives a call.  The wrapper's field is at `pos` 8
+            // on every backend (`@FR-H-ClearRelease`, one position).  Any other root —
             // a user struct with collection fields, a placed § V-j buffer (never record
             // 1) — keeps the plain reset.
 

@@ -7,7 +7,7 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0**. `D-fmt-2` and `D-fmt-3` were closed on 2026-08-29 by the composition fix that
+OPEN: **0**. `D-fmt-7` was opened and closed on 2026-10-30 (below).  `D-fmt-2` and `D-fmt-3` were closed on 2026-08-29 by the composition fix that
 `formatting.md` now states as a rule; this file carried them as open until 2026-09-01 because
 the commit that split it out of the rules doc replayed the list from before that fix.
 `D-fmt-4` was opened and closed the same day by the `@FR-E-NullArg` walk, and `D-fmt-5` on
@@ -28,6 +28,20 @@ ran — the pad on a float, the case of `X`, a width before `b`. The lesson is n
 first walk was careless: a rule walk asks *does the code do what the rule says*, and a
 reference walk asks *does the code do what we PROMISED*, which is a larger set because the
 prose promises more than the rules state.
+
+### D-fmt-7 — OPENED AND CLOSED (2026-10-30, @PLN91): the text parse of an out-of-line chain recursed per level
+- **Violates:** `(F-Render-Child)` — "no walk is deeper than the data's nesting".
+- **Where:** `crate::json`'s reader (`parse_value` / `parse_object`), the drop of its `Parsed`
+  tree, `Stores::walk_parsed_into`, and the C `loft_pw_walk`.
+- **Effect:** `"{h:j}" as List?` on a list of about 100 000 links overflows the stack; render,
+  copy, compare and release of the same list loop (measured 2026-10-30, interpreter, `--native`, C).
+- **Status:** CLOSED on branch `91-self-host`, before it merged.  The Rust text parse reads a
+  document nested deeper than 2 000 levels on a thread whose stack is sized to it
+  (`Stores::read_text`); the C reader reads a record child, and an enum child or root written
+  `{"Tag":{…}}`, in one loop over an explicit frame stack (`loft_pr_struct`, `loft_pr_into`),
+  and its content equality compares child pairs from a work list (`loft_eq_content`).
+  Measured: 1 000 000-link lists and enum chains built, copied, compared, rendered and read
+  back on the interpreter, `--native` and C; `tests/c_emit.rs`'s 2 373 parse checks unchanged.
 
 ### D-fmt-6 — OPENED AND CLOSED (2026-09-22): a hole that opened with whitespace was refused
 

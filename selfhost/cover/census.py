@@ -11,8 +11,7 @@ emitted as a program image, run by `loft --interpret` for the expected stdout an
 `selfhost/cover/run_program.loft` (compiled once through the C backend) for the actual ones.
 A program is `pass` (stdout and exit equal), `refused` (the interpreter named what it does not
 carry), `leak` (it left records of the C runtime's stores live; the row says whether
-`loft --interpret` leaked on it too), `wrong` (ran and answered differently) or `crash`.  A
-passing row notes `swept N` when the interpreter's returns released stores the IR's frees left.  What is not a plain run is
+`loft --interpret` leaked on it too), `wrong` (ran and answered differently) or `crash`.  What is not a plain run is
 skipped: @EXPECT_ERROR / @EXPECT_FAIL / @ARGS / @EXPECT_WARNING files, and files with no main.
 The rows go to target/selfhost-census.tsv; the summary ranks the refusals by programs blocked.
 """
@@ -76,8 +75,7 @@ def judge(path, loft, runner, tmp, env, root):
         also = "the Rust interpreter leaks too" if "stores not freed" in eerr else "the Rust interpreter does not"
         return path, "leak", aerr.split("leak: ", 1)[1].strip().splitlines()[0] + "; " + also
     if acode == ecode and aout == eout:
-        swept = re.search(r"swept: (\d+)", aerr)
-        return path, "pass", f"swept {swept.group(1)}" if swept else ""
+        return path, "pass", ""
     if acode < 0 or acode >= 100:
         return path, "crash", f"exit {acode}: {aerr.strip()[-160:]}"
     return path, "wrong", f"exit {acode} want {ecode}"
@@ -118,9 +116,6 @@ def census(o, root, loft, suite, env, tmp):
             f.write(f"{os.path.relpath(path, os.path.dirname(root))}\t{kind}\t{why}\n")
     counts = collections.Counter(k for _, k, _ in rows)
     print(f"{len(rows)} programs: " + ", ".join(f"{k} {counts[k]}" for k in ("pass", "refused", "leak", "wrong", "crash", "skip")))
-    swept = [p for p, k, w in rows if k == "pass" and w.startswith("swept")]
-    if swept:
-        print(f"passing programs whose returns swept stores the IR did not free: {len(swept)}")
     reasons = collections.Counter(w for _, k, w in rows if k == "refused")
     print("refusals by programs blocked:")
     for why, n in reasons.most_common(15):

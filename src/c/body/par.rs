@@ -161,6 +161,9 @@ impl FnWriter<'_> {
             CType::Fn => format!("loft_b[loft_i].fn = {call};"),
             CType::Void => format!("{call};"),
             CType::Tuple(_) => return Err("a par worker returning a tuple".into()),
+            CType::Tr(_) | CType::TrVec => {
+                return Err("a par worker returning a transient value".into());
+            }
             // Every scalar kind has its dense row (`dense_rows`).
             CType::Int | CType::Bool | CType::Enum | CType::Char | CType::Float | CType::Single => {
                 return Err("a scalar par result without its dense rows".into());
@@ -558,6 +561,9 @@ impl FnWriter<'_> {
                     CType::Fn => format!("loft_fn_of((int64_t) (uint32_t) {bits})"),
                     CType::Tuple(_) => stored_value(cx, "loft_e", a.typedef.base())
                         .ok_or("a par worker over rows of tuples holding references")?,
+                    CType::Tr(_) | CType::TrVec => {
+                        return Err("a par worker over transient rows".into());
+                    }
                     CType::Void => return Err("a par worker over rows of nothing".into()),
                 });
             } else {

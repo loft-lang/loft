@@ -563,6 +563,17 @@ F5 the same switch covers a `#native` bridge's whole vector answer bound to a lo
 (`OpAdoptVector` → `Stores::vector_adopt`, which views a foreign answer and copies under the
 switch; `tests/foreign_bridge.rs` is its A/B).
 
+## Layout: out-of-line fields
+
+**A field whose type would contain its host is a child record (@C159, `@FR-L-OutOfLine`,
+default-ON, both backends, at layout):** `left: Tree?` in `Tree` holds the number of a record
+in `Tree`'s store, written by `OpSetChildRec` and read through `OpRefFromChildRec`.
+**`LOFT_NO_OUT_OF_LINE=1`** lays nothing out of line, so such a type is refused again as one
+that contains itself; it is the first bisect step only for a program whose types do not
+recurse, since a recursive one stops compiling.  For a wrong value, a leak or a double release
+in a recursive type, the falsifiers are `LOFT_STRICT_STORES=1` and `LOFT_POISON=1` against
+hand-computed values (`loft-suite/rules/binding/B-OutOfLine/`).
+
 ## Lowering: `??` chains and nested literals
 
 **A `??` chain is RIGHT-associated (loft#1612, `@FR-G-Assoc`, `@FR-B-Copy`, default-ON, both
@@ -767,6 +778,13 @@ tree are never made (`fronds` −22.5 %, 4.28× → 3.42× on x86-64) — and is
 for a wrong element or length out of a reused vector-returning call.  `LOFT_TRACE_CLEAR=1`
 prints the capacity each reset re-establishes.
 
+**`LOFT_NO_EMPTY_CLEAR_SKIP=1`** (STORE_MODEL D19f, runtime, BOTH backends) makes clearing a
+store-root vector that holds nothing reset its store again — with it off, a clear of a vector
+with no block, or a block of length zero, does nothing, as the C runtime's
+`loft_vec_clear_release` does nothing (STORE_MODEL's rule: the C model is the standard) —
+and is the A/B for the store events a reused, empty buffer makes.  `LOFT_TRACE_CLEAR=1`
+prints each reset made.
+
 **`LOFT_NO_PREFILL_IMAGE=1`** (@PLN164 C4, `@FR-R-Prefill`, runtime, BOTH backends) makes
 every record mint that is not proven complete-write prefill its defaults field by field
 again — with it off, the prefill is ONE block write of a per-type image captured from the
@@ -795,7 +813,8 @@ tree's insert, remove and best-fit take treat it as the node it would have been 
 claim takes the block it always took (a seeded side-by-side unit test pins the layout), and a
 claim from the tail or a delete into it costs no tree delete, insert or rebalance (64 % of the
 parse row's tree claims took the tail; the row −6 % in cycles).  **`LOFT_NO_WILDERNESS=1`**
-keeps the tail in the tree again (read per store at construction) and is the first bisect step
+keeps the tail in the tree again (read per store at construction; on C the
+`-DLOFT_NO_WILDERNESS` define the driver adds from it) and is the first bisect step
 for a store-layout fault or a claim that hands out a live block.
 
 **A record at the store's tail grows the store, not a new block (`@FR-H-TailGrow`):** a resize

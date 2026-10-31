@@ -23,8 +23,8 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <a href="https://loft-lang.org/blog/">Blog</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>input API</h1>
 <article>
-<p><a href="lib-input.html">← input</a> · version 0.2.6</p>
-<p class="lib-legend">18 public items, in source order. Generated from the registry index, which re-derives them from the package source at publish time — so a signature here is the one that version actually ships.</p>
+<p><a href="lib-input.html">← input</a> · version 0.3.0</p>
+<p class="lib-legend">23 public items, in source order. Generated from the registry index, which re-derives them from the package source at publish time — so a signature here is the one that version actually ships.</p>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">ActionBinding</span> { const ab_name: <span class="ty"><a href="stdlib-types.html">text</a></span>, const ab_keys: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; }</code></pre>
 <p>One named action: &quot;jump&quot; → [KEY_SPACE, KEY_UP] (any of the listed keys triggers the action).  An empty <code>ab_keys</code> is degenerate but valid — the action will simply never fire.</p>
@@ -51,12 +51,32 @@
 <p>Replace the binding set on a live state (e.g. after the player remaps keys in a settings menu).  Does NOT clear the key tables — in-flight key presses survive the rebind so a remap doesn't strand an already-held key.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">input_tick</span>(self: &amp;<span class="en">InputState</span>)</code></pre>
-<p>Poll the graphics input primitives and refresh state for one tick. Reads <code>gl_key_pressed</code> for every key code referenced by the current bindings (avoids a 256-call sweep — only ask about keys the game actually cares about), plus <code>gl_mouse_x</code>/<code>gl_mouse_y</code>/ <code>gl_mouse_button</code>/<code>gl_mouse_wheel</code> unconditionally.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">input_tick</span>(self: &amp;<span class="en">InputState</span>, w: const <span class="en">Window</span>, events: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Event</span>&gt;)</code></pre>
+<p>Refresh state for one tick from window <code>w</code>.  Reads <code>w.key_down</code> for every key code the current bindings name (only the keys the game cares about, not a 256-key sweep), and the pointer and its buttons.  The wheel is the sum of the <code>Wheel</code> deltas in <code>events</code> — the frame's events, which the caller takes with <code>w.events()</code> after <code>w.poll()</code> and keeps for its own use; input never takes them from the window.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">device_open</span>() -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>Start reading the machine's own keys: the Tanmatsu's keyboard, or the terminal this program runs in (put in raw mode — no echo, no line buffering — until <code>device_close</code> or the program ends).  False where the machine has none: no terminal on stdin, or a browser build.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">device_close</span>()</code></pre>
+<p>Give the terminal back as it was.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">device_feed</span>(bytes: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;)</code></pre>
+<p>Hand the key source bytes as if they were typed on a terminal: <code>w</code> is 119, Enter is 13, an arrow is ESC <code>[</code> A / B / C / D (27, 91, 65 for Up). They count on the next <code>input_tick_device</code>.  For tests and replays; it works with no terminal at all.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">input_tick_device</span>(self: &amp;<span class="en">InputState</span>)</code></pre>
+<p>Refresh state for one tick from the machine's own keys, as <code>input_tick</code> does from a graphics window.  The Tanmatsu reports which keys are held; a terminal reports key PRESSES, so there a key is down for the tick its press arrived in and again on each of the terminal's repeats while it is held.  The mouse reads as untouched.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">input_tick_from_state</span>( self: &amp;<span class="en">InputState</span>, keys: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">boolean</a></span>&gt;, mx: <span class="ty"><a href="stdlib-types.html">float</a></span>, my: <span class="ty"><a href="stdlib-types.html">float</a></span>, mbtn: <span class="ty"><a href="stdlib-types.html">integer</a></span>, wheel: <span class="ty"><a href="stdlib-types.html">integer</a></span> )</code></pre>
 <p>Advance state from a caller-supplied snapshot instead of polling <code>graphics</code>.  Used by tests (no GL context) and by network replay / record-playback systems.  <code>keys</code> length is clamped to KEY_MAX; out-of-range entries are ignored.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">is_key_down</span>(self: const <span class="en">InputState</span>, key: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>True if key <code>key</code> (a graphics key code, <code>KEY_W</code>, ...) is down this tick, bound or not — for a key a game reads directly.  A code outside 0 .. 255 is never down.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">is_action_pressed</span>(self: const <span class="en">InputState</span>, action: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
@@ -76,7 +96,7 @@
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">mouse_x</span>(self: const <span class="en">InputState</span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
-<p>Mouse position — pixels from the top-left of the window (matches <code>graphics::gl_mouse_x</code> / <code>gl_mouse_y</code>).</p>
+<p>Mouse position — pixels from the top-left of the window (as <code>Window.mouse_x</code> / <code>mouse_y</code> report it).</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">mouse_y</span>(self: const <span class="en">InputState</span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
@@ -96,7 +116,7 @@
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">mouse_wheel</span>(self: const <span class="en">InputState</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
-<p>Accumulated scroll-wheel delta since the last <code>input_tick</code> — positive = scroll up.  Mirrors <code>graphics::gl_mouse_wheel</code>.</p>
+<p>The scroll-wheel delta of this tick — positive = scroll up, one per notch: the sum of the <code>Wheel</code> events handed to <code>input_tick</code>.</p>
 </div>
 
   </article>

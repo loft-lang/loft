@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PAGE: LOFT.md § Operators on your own type — a `Date` ordered by its `operator compare`.
+// @PAGE: LOFT_OPERATORS.md § Operators on your own type — a `Date` ordered by its `operator compare`.
 // The fence on that page is a window of the lines below (`rule_tags.py fences`).
 
 value struct Date { ms: integer }

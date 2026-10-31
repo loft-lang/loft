@@ -180,13 +180,18 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
                legal; NEVER yields an out-of-range value.  (`b as u8? ⇒ u8?`.)
 
   elimination (discharge — REQUIRED; there is NO implicit  τ? ⤳ τ: a value leaves `τ?` by
-  `??`, `?` or `match`, and a variable reads as `τ` where a guard proved it, (N-Guard))
+  `??`, `?`, `!` or `match`, and a variable reads as `τ` where a guard proved it, (N-Guard))
   (N-Coal)     Γ ⊢ e ⇒ τ?,  Γ ⊢ d ⇐ τ                ⟹   Γ ⊢ (e ?? d) ⇒ τ
   (N-Default)  Γ ⊢ e ⇒ τ?,  has_default(τ)           ⟹   Γ ⊢ e? ⇒ τ            (@PLN116)
                the TYPE's default discharges:  e?  ≡  e ?? construct_default(τ).
                `has_default(τ)` is a STATIC side-condition — where it fails, `e?` is a
                COMPILE error, never a runtime one (§ Defaults below).  The pairing is the
                mnemonic: `??` = the default YOU give, `?` = the default the TYPE gives.
+  (N-Present)  Γ ⊢ e ⇒ τ?                              ⟹   Γ ⊢ e! ⇒ τ            (C160)
+               no default: present, or a halt that names it.  e!  ≡  e ?? panic("<e> is
+               null"), the message quoting e's source text, the halt at the `!`.  No
+               `has_default` side-condition, so it reaches a reference and a bare enum.  The
+               third of the family: `??` yours, `?` the type's, `!` none — it must be there.
                ONE write applies it implicitly, by design: `c += [ … ]` on an ABSENT nullable
                collection instantiates the empty collection first — collections.md
                (Col-Insert-Absent).  Every other position keeps the explicit discharge.
@@ -722,6 +727,20 @@ overflows *at runtime* yields **null and keeps running** (operational.md `E-Unco
   (C-Only)    ⤳ is the only implicit coercion.  Every other type change is an explicit
               op or cast and appears in the syntax.
 ```
+
+### Recursive types
+
+```
+  (T-Recursive) a type may contain itself through a collection, a `reference<T>`, or an
+              out-of-line field (layout.md `L-OutOfLine`).  A STRUCT whose recursion runs
+              through a non-null struct field has no finite value — every one contains another —
+              and is refused at its declaration, naming the field and the cure `τ?`.  An enum's
+              other variants end its recursion, so a variant's field may recur without `?`.
+```
+
+**In words.** `struct List { v: integer, next: List? }` and `enum Expr { Num { v: integer },
+Add { l: Expr, r: Expr } }` are both well-formed; `struct Bad { next: Bad }` is refused with
+`` `Bad.next: Bad` makes every Bad contain another Bad — make it `Bad?` ``.
 
 ### Pattern captures (@PLN35, SHIPPED)
 

@@ -27,7 +27,7 @@ deliberating a fix that has a choice in it.
    NOT definitions — both produced false positives when treated as such.
 2. **A namespaced citation tag: `@FR-<Name>`** in a code comment at each site that
    enforces the rule. A bare `@Name` is not unambiguous in a tree that already uses
-   `@` for anything else (loft measured this: formal/README.md § Rule tags). Pick a prefix that no other tag family can collide with.
+   `@` for anything else. Pick a prefix that no other tag family can collide with.
 3. **Boundary-exact matching.** A general rule and its refinements share a stem
    (`B-View` / `B-View-Base`), so a citation matches only when the next character
    cannot continue a tag. Never rename rules to dodge a matcher.
@@ -63,7 +63,7 @@ RULES_DIR=docs/rules CITE_DIRS=src:lib CITE_EXTS=.rs,.py python3 rule_tags.py ch
 
 (`RULES_DIR` = where the rules docs live; `CITE_DIRS` = colon-separated dirs whose
 files are scanned for citations; `CITE_EXTS` = comma-separated extensions,
-default `.rs,.loft`.) Then write the first rules doc in the definition shape above, cite
+default `.rs,.loft,.h`; `GUARD_DIRS` / `GUARD_EXTS` name where `coverage` looks for the tests that exercise a rule.) Then write the first rules doc in the definition shape above, cite
 it from one site, and wire `check` into CI before the register grows.
 
 ## Working with the register
@@ -75,21 +75,23 @@ it from one site, and wire `check` into CI before the register grows.
 - **An edge the rules cannot express** → the RULE wants extending; extend the doc,
   then cite. Record a deliberate divergence as a numbered deviation and drive the
   open count to zero.
-- **The standing audit** (loft: STABILITY_METHOD.md § The rule-led walk): pick a
-  rule, split it into the questions its sites ask, find each question's one home,
-  verify related cases against it — the defects are in the disagreements.  `make
-  rule-worklist` is its queue (the uncited rules, ordered by expected yield).
+- **The standing audit**: pick a rule, split it into the questions its sites ask, find each
+  question's one home, verify related cases against it — the defects are in the
+  disagreements.  Work the rules in order of expected yield: the ones no test exercises
+  yet, most defect-prone first.
 
 ## In the loft tree (bindings — skip outside it)
 
 - Rules home: `doc/claude/formal/` — `formal/README.md` § Rule tags is the
   convention's authority; `formal/IMPLEMENTATIONS.md` indexes merged enforcement.
-- Checker: `scripts/rule_tags.py` (defaults already point here); `check` runs in CI as the
-  `doc_hygiene::every_rule_citation_resolves` test, which shells out to this same command so
-  the gate and the tool cannot drift — the `rule_tags` calls in `Makefile`/`.github/` are its
-  OTHER subcommands (`claims`, `fences`, `sections`, `coverage`, `worklist`; `selftest`, the
-  gate on `registers`' own parser, runs beside `check` in `doc_hygiene`), so a grep there does not
-  show that `check` runs.
+- Checker: `scripts/rule_tags.py` (defaults already point here).  `check` gates in CI as
+  the `doc_hygiene::every_rule_citation_resolves` test, which shells out to this same command
+  so the gate and the tool cannot drift; `selftest`, the gate on `registers`' own parser,
+  runs beside it.  A grep of `Makefile` / `.github/` for `rule_tags` shows only the OTHER
+  subcommands (`claims`, `fences`, `sections`, `coverage`, `worklist`), not `check`.
+- Why `@FR-` and not a bare `@Name`: measured in `formal/README.md` § Rule tags.
+- The standing audit is STABILITY_METHOD.md § The rule-led walk; `make rule-worklist` is its
+  queue — the untested rules, ordered by the defects a walk is expected to find.
   `registers` is a REPORT, not a gate: its issue half needs the tracker, and a stale
   count is a doc fix rather than a reason to fail a build. `make rule-coverage` runs
   `coverage`.

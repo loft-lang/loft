@@ -447,6 +447,21 @@ pub fn run_parallel_text(
     results
 }
 
+/// A worker's hidden destination: a real store (never `null()` — the worker claims records
+/// in it) whose root record reads as a FRESH one, every byte after its header zero.  A
+/// callee handed a present destination reuses it as the caller made it, as the caller's own
+/// `OpDatabase` leaves it on the main thread: a struct return's literal then reads the
+/// slots it fills (an out-of-line child's old record, `OpSetChildRec`), and a reused store
+/// slot's bytes read back as a record id nobody wrote — the worker panicked on one in
+/// about a tenth of runs, and in every run with one worker (`L-OutOfLine`'s par cell).
+fn worker_dest(db: &mut Stores) -> DbRef {
+    let d = db.vector_buffer(100);
+    let store = db.store_mut(&d);
+    let bytes = store.record_words(d.rec) * 8;
+    store.zero_range(d.rec, d.pos, bytes.saturating_sub(d.pos));
+    d
+}
+
 /// Plan-06 PRIORITY.md spine step 8d.0 — `Stitch::Queue` runtime for
 /// reference / struct-enum-payload / vector return shapes.
 ///
@@ -582,7 +597,7 @@ pub fn run_parallel_queue_ref(
             // is enough seed; the standard claim path grows it
             // as the worker appends.
             let hidden_dests: Vec<DbRef> = (0..n_hidden_dests)
-                .map(|_| state.database.vector_buffer(100))
+                .map(|_| worker_dest(&mut state.database))
                 .collect();
             // Every element reaches the worker the way its first parameter reads it.
             // This route used to answer `DbRef` for a text or wide element as well,
@@ -1019,7 +1034,7 @@ pub fn run_parallel_discard(
                 // claims records in it.  Nothing adopts them back — the worker's whole
                 // `Stores` clone dies with the batch, which is what discard means.
                 let dests: Vec<DbRef> = (0..n_hidden_dests)
-                    .map(|_| state.database.vector_buffer(100))
+                    .map(|_| worker_dest(&mut state.database))
                     .collect();
                 let _ = state.execute_at_ref(fn_pos, arg, &dests, &extras);
             } else {

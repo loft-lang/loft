@@ -1,5 +1,5 @@
 diff --git a/src/database/format.rs b/src/database/format.rs
-index d933776a3..7e28f9e2c 100644
+index ae4b9a150..ad3cd89f7 100644
 --- a/src/database/format.rs
 +++ b/src/database/format.rs
 @@ -9,6 +9,12 @@ use crate::store::Store;
@@ -12,10 +12,10 @@ index d933776a3..7e28f9e2c 100644
 +        const { std::cell::RefCell::new(Vec::new()) };
 +}
 +
- /// Render a walker / unified-parser failure as `"line N:M path:X"`.
- ///
- /// The path is collected by [`Stores::walk_parsed_into`] as it
-@@ -582,12 +588,9 @@ impl Stores {
+ /// The nesting depth above which a text parse runs on a stack sized to the document
+ /// ([`Stores::read_text`]): an ordinary stack carries this many levels with room to spare.
+ const DEEP_TEXT_NESTING: usize = 2_000;
+@@ -670,12 +676,9 @@ impl Stores {
      /// null reference and for a store no parse built.
      #[must_use]
      pub fn parse_errors_vector(&mut self, of: &DbRef) -> DbRef {
@@ -31,7 +31,7 @@ index d933776a3..7e28f9e2c 100644
          self.text_vector(&errors)
      }
  
-@@ -595,6 +598,7 @@ impl Stores {
+@@ -683,6 +686,7 @@ impl Stores {
      /// are its errors, one per value that did not fit, empty for a parse that succeeded
      /// (@C148).  Both forms file here — the text read and the `JsonValue` walk.
      pub fn set_parse_errors(&mut self, into: &DbRef, tp: u16, errs: Vec<String>) {

@@ -52,32 +52,21 @@ impl Parser {
         // AXIS' place: accepted, iterating its records, and answering null for a point just
         // inserted (loft#1429).
         let is_text = matches!(tp.base(), Type::Text(_));
-        // @FR-Col-Trie / @FR-Col-Spatial — and nullability is its own answer, because neither
-        // kind has a key for absence: a trie walks the BYTES of a text and an absent text has
-        // none, a spatial interleaves integer-NOT-NULL coordinates and an absent one has no
-        // position on the curve.  The three VALUE-keyed kinds hold an absent key like any
-        // other value, so they never ask this — which is what both messages name as the cure.
-        if matches!(tp, Type::Optional(_)) {
+        // @FR-Col-Spatial — nullability is its own answer for a spatial: it interleaves
+        // integer-NOT-NULL coordinates, and an absent one has no position on the curve.  A trie
+        // asks nothing here: it files an absent key in the slot ahead of its tree, first in a
+        // walk and in no prefix slice (`@FR-Col-Trie`, loft#2241), as the VALUE-keyed kinds
+        // hold one like any other value.
+        if !want_text && matches!(tp, Type::Optional(_)) {
             let shown = tp.source_name(&self.data);
-            if want_text {
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "a trie keys on the BYTES of a text field, and `{field}` is `{shown}` — an \
-                     absent text has no bytes to walk; declare the key `text`, or key on the \
-                     VALUE with `hash<{}[{field}]>`, which holds an absent key like any other",
-                    self.data.def(content).name()
-                );
-            } else {
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "a spatial index interleaves its axes into a Morton code, and the axis \
-                     `{field}` is `{shown}` — an absent coordinate has no position on the \
-                     curve; declare it `integer`, or key on the VALUE with `sorted` / `index`, \
-                     which order an absent key before every present one"
-                );
-            }
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "a spatial index interleaves its axes into a Morton code, and the axis \
+                 `{field}` is `{shown}` — an absent coordinate has no position on the \
+                 curve; declare it `integer`, or key on the VALUE with `sorted` / `index`, \
+                 which order an absent key before every present one"
+            );
             return;
         }
         // @FR-Col-Spatial — an axis is an integer-not-null coordinate.  A float or single axis

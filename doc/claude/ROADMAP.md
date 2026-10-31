@@ -82,6 +82,7 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 | [@PLN76](https://github.com/loft-lang/plans/issues/76) | future | Particle system |
 | [@PLN56](https://github.com/loft-lang/plans/issues/56) | future | Rigged characters |
 | [@PLN49](https://github.com/loft-lang/plans/issues/49) | future | dryopea — sci-fi free-build / tower-defence game |
+| [@PLN209](https://github.com/loft-lang/plans/issues/209) | next | Platform-agnostic game libraries — one game source on the Tanmatsu, the web and the desktop; every game with a small-format version ([plan](plans/209-platform-agnostic-games/README.md)) |
 | [@PLN51](https://github.com/loft-lang/plans/issues/51) | future | Bumper-airplanes — the next audience demo |
 | [@PLN111](https://github.com/loft-lang/plans/issues/111) | parked | `graphics` — browser (`--html`) port |
 | [@PLN73](https://github.com/loft-lang/plans/issues/73) | parked | Universal editor |
@@ -93,7 +94,6 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 |---|---|---|
 | [@PLN184](https://github.com/loft-lang/plans/issues/184) | future | loft fully functional on Windows — every routine, test and script, each count under a ratchet and proven by a Windows CI leg ([CODE.md § File access](CODE.md#file-access)) |
 | [@PLN148](https://github.com/loft-lang/plans/issues/148) | next | Better PHP end to end — a web client, an HTTPS server that renews its own certificate, and the libraries between them ([WEB_STACK.md](WEB_STACK.md)) |
-| [@PLN72](https://github.com/loft-lang/plans/issues/72) | future | Renderer backend boundary |
 | [@PLN43](https://github.com/loft-lang/plans/issues/43) | parked | loft store durability — three-tier opt-in mmap durability |
 | [@PLN199](https://github.com/loft-lang/plans/issues/199) | next | A `use`d library compiles whole — only a generic keeps a loft function interpreted; a published library arrives compiled without `rustc` (`LOFT_TRACE_NATIVE_GATE=1` shows what is left; [plan](plans/199-library-compiles-whole.md)) |
 

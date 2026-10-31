@@ -14,8 +14,15 @@ description: >-
 
 # loft-library — one source, four targets, identical behavior
 
+**Read [LIBRARY_AUTHORING.md § The library contract](../../../doc/claude/LIBRARY_AUTHORING.md#the-library-contract)
+first** — the standing rules for any library work, one line each.  Two of them shape every
+change: a library is tested on its **testbed** (its own CI run locally, declared dependencies
+only, no consumer in the loop), and every `loft-libs-*` change goes as a branch plus a PR with
+auto-merge armed, published only from the merged `main`.
+
 A loft library ships to **four targets**, and the runtime — not the consumer — picks the
-variant ([PACKAGES_BUILD.md § Target matrix](../../../doc/claude/PACKAGES_BUILD.md)):
+variant ([PACKAGES_BUILD.md § Target matrix](../../../doc/claude/PACKAGES_BUILD.md); the `#c`
+row is [PACKAGES_C_BINDING.md](../../../doc/claude/PACKAGES_C_BINDING.md)):
 
 | | Interpreter | `--native` | `--native-wasm` | `--html` (browser) |
 |---|---|---|---|---|
@@ -92,8 +99,12 @@ API an `advice` names (`(Perf-Teach)`).
 
 ## The parity gate — the definition of "shipped"
 
-Run the library's own tests on **every target it claims**, and confirm the *results match* —
-not just that each exits 0. Bound any `--native`/wasm run with `LOFT_TIMEOUT` (the build can
+Run the library's own tests **on its testbed**
+([LIBRARY_AUTHORING.md § The testbed](../../../doc/claude/LIBRARY_AUTHORING.md#the-testbed--a-library-tested-with-minimal-dependencies):
+a worktree of the library's `origin/main`, this tree's loft, declared dependencies only,
+warnings denied) on **every target it claims**, and confirm the *results match* — not just
+that each exits 0.  The change then goes as a branch and a PR with `gh pr merge --auto
+--squash` armed; publish only from the merged `main`. Bound any `--native`/wasm run with `LOFT_TIMEOUT` (the build can
 hang). The gate, in order of how often each catches a real bug:
 
 1. `--interpret` — the baseline (fastest; the reference result).

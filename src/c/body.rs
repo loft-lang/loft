@@ -17,6 +17,7 @@ mod generator;
 mod keyed;
 mod misc;
 mod par;
+pub(super) mod transient;
 mod value;
 
 use super::{CType, Cx, c_name, held, is_operator, type_word};
@@ -130,7 +131,8 @@ fn kind_of(c: CType) -> K {
         CType::Char => K::Char,
         CType::Fn => K::Fn,
         CType::Tuple(id) => K::Tup(id),
-        CType::Void => K::Void,
+        // A transient pointer has no expression kind: it never reaches the ordinary path.
+        CType::Tr(_) | CType::TrVec | CType::Void => K::Void,
     }
 }
 
@@ -175,6 +177,9 @@ pub(crate) struct FnWriter<'a> {
     /// with whether its element base stays valid for the loop's extent (`@FR-R-Base`: the
     /// loop grows no store).  An `__inv` twin starts with its inputs as one frame.
     headers: Vec<Vec<(crate::opt::writes::PathKey, String, bool)>>,
+    /// Per open loop, the functions its body calls: `@FR-R-Inline`'s twin clause makes them
+    /// roots of `Cx::hot_helpers` when the loop calls an `__inv` twin.
+    loop_calls: Vec<std::collections::BTreeSet<u32>>,
     /// `@FR-R-Header`'s growth half: the held headers derived again after every statement
     /// that grows their vector (`refresh_grown_header`), and the paths the verdict just
     /// admitted under it, which `hold_vectors` binds.
@@ -194,6 +199,12 @@ pub(crate) struct FnWriter<'a> {
     invariants: Vec<std::collections::HashMap<usize, std::rc::Rc<(String, Value)>>>,
     /// `@FR-R-ValueRecord`'s facts for this function (`value::VrFn`), when the plan has any.
     vr: Option<Box<value::VrFn>>,
+    /// `@FR-R-Transient`: this body's transient variables, when it is a twin or holds a site.
+    tr: Option<Box<transient::TrFn>>,
+    /// `@FR-H-KeepRoom`: vector wrappers just minted by `loft_database_room`, with their type,
+    /// until a statement other than a binding of one of their fields follows: the zero of the
+    /// vector field that comes next is the mint's own empty vector, and is not written.
+    room_minted: std::collections::HashMap<u16, u16>,
     /// The leaf being written as its dense self inside its widening (`value::vr_assign`).
     widening: Option<usize>,
     /// A value staged into a C temporary, by the temporary's name, with its kind: what a
@@ -211,6 +222,12 @@ pub(crate) struct FnWriter<'a> {
     /// and argument slice so its emission asks for the callee's twin; the eligibility memo.
     ap_buf: Option<u16>,
     ap_views: std::collections::HashSet<u16>,
+    /// `@FR-R-AppendTwin`'s window clause: in an `__ap` twin that takes its caller's window
+    /// (`loft_apw`), the element size; its buffer and every view of it are window paths.
+    apw: Option<u32>,
+    /// A loop window opened as a local copy of the caller's window, with the window it gives
+    /// itself back to at the loop's exit.
+    window_parents: std::collections::HashMap<String, String>,
     ap_site: Option<(u32, usize)>,
     ap_memo: std::collections::HashMap<u32, bool>,
     /// `@FR-R-Destination` — in a `__d` twin, the shape (its buffer is the caller's element,
@@ -268,6 +285,10 @@ pub(crate) struct FnWriter<'a> {
     /// The source line the statements now being written come from (`Value::Line`), which a
     /// call records as its frame's site when the unit keeps frames (`Cx::frames`).
     cur_line: u32,
+    /// `@FR-E-Report` — the source position of the innermost fault-prone construct being
+    /// written (`Value::Span`): the file (a C string literal) and line a fault there reports
+    /// at, as the interpreter's pc→span table answers it.
+    span_site: Option<(String, u32)>,
     /// The loft line the statements being written belong to (`Cx::source_lines`), 0 before
     /// the first; each C line is marked with it, and its file (a C string literal).
     marked_line: u32,
@@ -643,6 +664,7 @@ impl<'a> FnWriter<'a> {
             loops: Vec::new(),
             labels: 0,
             headers: Vec::new(),
+            loop_calls: Vec::new(),
             grown_headers: std::collections::HashSet::new(),
             pending_grown: Vec::new(),
             kh_passed: std::collections::HashSet::new(),
@@ -650,12 +672,16 @@ impl<'a> FnWriter<'a> {
             push_heads: Vec::new(),
             slice_carriers: Vec::new(),
             vr: value::VrFn::of(cx, d).map(Box::new),
+            tr: None,
+            room_minted: std::collections::HashMap::new(),
             widening: None,
             raw: std::collections::HashMap::new(),
             field_view: false,
             nk_skip: None,
             ap_buf: None,
             ap_views: std::collections::HashSet::new(),
+            apw: None,
+            window_parents: std::collections::HashMap::new(),
             ap_site: None,
             ap_memo: std::collections::HashMap::new(),
             ds: None,
@@ -672,6 +698,7 @@ impl<'a> FnWriter<'a> {
             assumed: Vec::new(),
             range_facts: None,
             cur_line: 0,
+            span_site: None,
             marked_line: 0,
             marked_file: String::new(),
             where_told: false,
@@ -787,8 +814,44 @@ impl<'a> FnWriter<'a> {
             self.ap_buf = Some(b);
             self.ap_views = crate::opt::append_twin::views(self.vars, b);
             self.adopt = None;
+            // `@FR-R-AppendTwin`'s window clause: the buffer, every view of it and every
+            // view the body binds of one are written through the caller's window.
+            if let Some(size) = self.cx.ap_window(self.d) {
+                let data = self.cx.data;
+                let mut paths: std::collections::BTreeSet<u16> =
+                    self.ap_views.clone().into_iter().collect();
+                paths.insert(b);
+                self.code.walk(&mut |n| {
+                    if let Value::Set(x, rhs) = n
+                        && let Value::Call(op, a) = rhs.unspan()
+                        && matches!(data.def(*op).name(), "OpGetField" | "OpRefAlias")
+                        && a.first().is_some_and(
+                            |f| matches!(f.unspan(), Value::Var(y) if paths.contains(y)),
+                        )
+                    {
+                        paths.insert(*x);
+                    }
+                });
+                for x in paths {
+                    self.ap_views.insert(x);
+                    let pv = self.var(x);
+                    self.windows
+                        .push(((x, Vec::new()), "(*loft_apw)".to_string(), pv, size));
+                }
+                self.apw = Some(size);
+            }
         }
         self
+    }
+
+    /// A body some rewrite writes in a form the per-loop rewrites must leave alone: a transient
+    /// twin or site (`@FR-R-Transient`).  An append twin writing through its caller's window is
+    /// NOT one: its buffer's paths are window frames, which every rewrite that would reserve or
+    /// open a window on a path already asks after (`open_window`, `deep_window`,
+    /// `reserve_push_run`), and admission keeps the twin from reading its buffer, so no header
+    /// is ever held for one.
+    fn lean(&self) -> bool {
+        self.tr.is_some()
     }
 
     /// A `__d` twin (`super::DS_BIT`, `@FR-R-Destination`): the return buffer is the caller's
@@ -1216,7 +1279,7 @@ impl<'a> FnWriter<'a> {
     /// (621M -> 541M, -13 %).
     fn hold_invariants(&mut self, b: &Block, ind: usize) {
         let mut frame = std::collections::HashMap::new();
-        if !self.cx.switches.invariant_hoist_disabled && self.gen_elem.is_none() {
+        if !self.cx.switches.invariant_hoist_disabled && self.gen_elem.is_none() && !self.lean() {
             for ch in crate::opt::hoist::invariant_chains(b, self.cx.data, self.vars) {
                 if ch
                     .nodes
@@ -1535,6 +1598,7 @@ impl<'a> FnWriter<'a> {
     fn verdict(&mut self, b: &Block) -> Option<crate::opt::hoist::LoopHoist> {
         // A twin and a region body (`@FR-R-Apart` instance 2) are emitted with the hoists off.
         if self.gen_elem.is_some()
+            || self.lean()
             || std::env::var("LOFT_NO_VECTOR_HOIST").is_ok_and(|v| v != "0")
             || self.av_any()
         {
@@ -1664,7 +1728,8 @@ impl<'a> FnWriter<'a> {
     #[expect(clippy::type_complexity, reason = "two pair lists, named in the doc")]
     fn distinct_version(&mut self, lp: &Block) -> Option<(Vec<(u16, u16)>, Vec<(u16, u16)>)> {
         let sw = self.cx.switches;
-        if sw.distinct_version_disabled
+        if self.lean()
+            || sw.distinct_version_disabled
             || sw.distinct_growth_disabled
             || !self.assumed.is_empty()
             || lp.operators.iter().any(|op| {
@@ -1758,6 +1823,7 @@ impl<'a> FnWriter<'a> {
     fn open_window(&mut self, lp: &Block, ind: usize) -> Result<bool, String> {
         let env_on = |k: &str| std::env::var(k).is_ok_and(|v| v != "0");
         if self.gen_elem.is_some()
+            || self.lean()
             || env_on("LOFT_NO_PUSH_FILL")
             || env_on("LOFT_NO_PUSH_WINDOW")
             || self.av_any()
@@ -1770,6 +1836,27 @@ impl<'a> FnWriter<'a> {
         // A push window on a value held apart (`@FR-R-Apart`) has no record to open.
         if self.apr_holds(p.path.0) {
             return Ok(false);
+        }
+        // `@FR-R-AppendTwin`'s window clause: a twin's buffer is already under its caller's
+        // window, so the loop takes a local copy of THAT window — held in registers across the
+        // loop's calls, where the caller's is behind a pointer — and gives it back at the loop's
+        // one exit.  Any other path already windowed keeps its window.
+        if let Some((parent, pv)) = self
+            .windows
+            .iter()
+            .find(|(q, _, _, _)| *q == p.path)
+            .map(|(_, w, pv, _)| (w.clone(), pv.clone()))
+        {
+            if parent != "(*loft_apw)" {
+                return Ok(false);
+            }
+            let w = format!("pw{}", self.decls.len() + 1);
+            self.decls
+                .push(format!("loft_win {w} = {{ 0, 0, 0, 0, 0xFFFF }};"));
+            self.line(ind, &format!("{w} = {parent};"));
+            self.window_parents.insert(w.clone(), parent);
+            self.windows.push((p.path, w, pv, p.size));
+            return Ok(true);
         }
         let n = self.decls.len() + 1;
         let (w, pv) = (format!("pw{n}"), format!("pv{n}"));
@@ -1810,7 +1897,10 @@ impl<'a> FnWriter<'a> {
     /// `LOFT_NO_PUSH_FILL=1` / `LOFT_NO_HASH_RESERVE=1` reserve nothing, as on native.
     fn hash_reserve(&mut self, lp: &Block, ind: usize) -> Result<(), String> {
         let env_on = |k: &str| std::env::var(k).is_ok_and(|v| v != "0");
-        if self.gen_elem.is_some() || env_on("LOFT_NO_PUSH_FILL") || env_on("LOFT_NO_HASH_RESERVE")
+        if self.gen_elem.is_some()
+            || self.lean()
+            || env_on("LOFT_NO_PUSH_FILL")
+            || env_on("LOFT_NO_HASH_RESERVE")
         {
             return Ok(());
         }
@@ -1847,7 +1937,7 @@ impl<'a> FnWriter<'a> {
     /// with no reservation: a push that does not fit takes the window's growth arm.
     fn deep_window(&mut self, lp: &Block, ind: usize) -> Result<bool, String> {
         let env_on = |k: &str| std::env::var(k).is_ok_and(|v| v != "0");
-        if env_on("LOFT_NO_DEEP_WINDOW") {
+        if env_on("LOFT_NO_DEEP_WINDOW") || self.lean() {
             return Ok(false);
         }
         let data = self.cx.data;
@@ -2165,14 +2255,24 @@ impl<'a> FnWriter<'a> {
     /// An element access of a held vector: `OpGetVector(v, size, i)` itself, or a scalar read
     /// or in-place write of a field of one — through the held base.  `None` for any other.
     fn held_access(&mut self, name: &str, args: &[Value], ind: usize) -> Result<Option<E>, String> {
-        let elem = |v: &Value| -> Option<(Value, Value, Value)> {
+        // The element read, and — `@FR-E-Report` — the site an unguarded one (`OpGetVector`,
+        // not its `Nullable` twin) reports a missing element at, as `_at` and its arguments.
+        let elem = |v: &Value| -> Option<(Value, Value, Value, bool)> {
             match v.unspan() {
                 Value::Call(d, a) if a.len() == 3 => {
                     let n = self.cx.data.def(*d).name();
                     (n == "OpGetVector" || n == "OpGetVectorNullable")
-                        .then(|| (a[0].clone(), a[1].clone(), a[2].clone()))
+                        .then(|| (a[0].clone(), a[1].clone(), a[2].clone(), n == "OpGetVector"))
                 }
                 _ => None,
+            }
+        };
+        let here = self.site();
+        let at = |report: bool| {
+            if report {
+                ("_at", format!(", {here}"))
+            } else {
+                ("", String::new())
             }
         };
         match (name, args) {
@@ -2183,8 +2283,12 @@ impl<'a> FnWriter<'a> {
                 let size = Self::literal(size, "element size")?;
                 let i = self.expr(idx, ind)?;
                 let proof = self.held_proof(v, &h);
+                let (at, tail) = at(name == "OpGetVector");
                 Ok(Some(E::new(
-                    format!("({proof}, loft_vh_get({h}, {size}, {}))", as_int(i)?),
+                    format!(
+                        "({proof}, loft_vh_get{at}({h}, {size}, {}{tail}))",
+                        as_int(i)?
+                    ),
                     K::Ref,
                 )))
             }
@@ -2192,7 +2296,7 @@ impl<'a> FnWriter<'a> {
                 .held_vector(v)
                 .map(|h| E::new(format!("{h}.len"), K::Int))),
             ("OpGetInt" | "OpGetFloat", [inner, fld]) => {
-                let Some((vec, size, idx)) = elem(inner) else {
+                let Some((vec, size, idx, report)) = elem(inner) else {
                     return Ok(None);
                 };
                 let Some(held) = self.held_vector(&vec) else {
@@ -2207,13 +2311,17 @@ impl<'a> FnWriter<'a> {
                     ("loft_vh_get_float", K::Float)
                 };
                 let proof = self.held_proof(&vec, &held);
+                let (at, tail) = at(report);
                 Ok(Some(E::new(
-                    format!("({proof}, {f}({held}, {size}, {}, {fld}))", as_int(index)?),
+                    format!(
+                        "({proof}, {f}{at}({held}, {size}, {}, {fld}{tail}))",
+                        as_int(index)?
+                    ),
                     k,
                 )))
             }
             ("OpSetInt" | "OpSetFloat", [inner, fld, val]) => {
-                let Some((vec, size, idx)) = elem(inner) else {
+                let Some((vec, size, idx, report)) = elem(inner) else {
                     return Ok(None);
                 };
                 let Some(held) = self.held_vector(&vec) else {
@@ -2228,9 +2336,10 @@ impl<'a> FnWriter<'a> {
                     ("loft_vh_set_float", as_float(value)?)
                 };
                 let proof = self.held_proof(&vec, &held);
+                let (at, tail) = at(report);
                 Ok(Some(E::new(
                     format!(
-                        "({proof}, {f}({held}, {size}, {}, {fld}, {value}))",
+                        "({proof}, {f}{at}({held}, {size}, {}, {fld}, {value}{tail}))",
                         as_int(index)?
                     ),
                     K::Void,
@@ -2253,6 +2362,12 @@ impl<'a> FnWriter<'a> {
     /// Return `v`'s value (or nothing): copy it out, free the function's texts, return.
     fn ret_value(&mut self, v: Option<&Value>, ind: usize) -> Result<(), String> {
         let v = v.filter(|v| !matches!(v.unspan(), Value::Null));
+        if let CType::Tr(_) = self.ret {
+            return match v {
+                Some(v) => self.tr_return(v, ind),
+                None => Err("a transient result answered by nothing".into()),
+            };
+        }
         match (self.ret, v) {
             (CType::Void, Some(v)) => {
                 self.stmt(v, ind)?;
@@ -2541,6 +2656,7 @@ impl<'a> FnWriter<'a> {
         ind: usize,
     ) -> Result<Option<usize>, String> {
         if self.gen_elem.is_some()
+            || self.lean()
             || self.av_any()
             || std::env::var("LOFT_NO_PUSH_RUN_RESERVE").is_ok_and(|v| v != "0")
         {
@@ -2600,6 +2716,7 @@ impl<'a> FnWriter<'a> {
     fn bind_view_header(&mut self, ops: &[Value], at: usize, ind: usize) {
         if self.cx.switches.view_hoist_disabled
             || self.gen_elem.is_some()
+            || self.lean()
             || std::env::var("LOFT_NO_VECTOR_HOIST").is_ok_and(|v| v != "0")
         {
             return;
@@ -2654,6 +2771,7 @@ impl<'a> FnWriter<'a> {
     /// native does.  A value record, a `&` link and a generator's parameter are never bound.
     fn bind_param_ptrs(&mut self, code: &Value) {
         if self.gen_elem.is_some()
+            || self.lean()
             || crate::env_once!(std::env::var("LOFT_NO_RECORD_PTR").is_ok_and(|v| v != "0"))
         {
             return;
@@ -2738,6 +2856,7 @@ impl<'a> FnWriter<'a> {
     /// `LOFT_NO_RECORD_PTR=1` keeps every access a store resolution.
     fn bind_record_ptr(&mut self, ops: &[Value], at: usize, ind: usize) {
         if self.gen_elem.is_some()
+            || self.lean()
             || self.nk_skip.is_some()
             || crate::env_once!(std::env::var("LOFT_NO_RECORD_PTR").is_ok_and(|v| v != "0"))
         {
@@ -2905,8 +3024,12 @@ impl<'a> FnWriter<'a> {
             _ => CType::Enum,
         });
         self.line(ind, &format!("{t} = ({ty}) ({val});"));
+        let root = self.var(root);
         Ok(Some(E::new(
-            format!("loft_pa_set({pa}, {pl}, {off}, &{t}, sizeof({ty}))"),
+            format!(
+                "loft_pa_set_at({pa}, {pl}, {off}, &{t}, sizeof({ty}), {root}, {})",
+                self.site()
+            ),
             K::Void,
         )))
     }
@@ -3077,6 +3200,7 @@ impl<'a> FnWriter<'a> {
             CType::Single => format!("{target} = (float) NAN;"),
             CType::Char => format!("{target} = 0;"),
             CType::Fn => format!("{target} = loft_fn_of(LOFT_NULL);"),
+            CType::Tr(_) | CType::TrVec => format!("{target} = 0;"),
             CType::Tuple(id) => {
                 for (i, e) in self.cx.tuple_shapes(id).into_iter().enumerate() {
                     self.null_into(&format!("{target}.f{i}"), e, ind);
@@ -3110,6 +3234,57 @@ impl<'a> FnWriter<'a> {
         {
             self.line(ind, &format!("loft_frame_site({});", self.cur_line));
         }
+    }
+
+    /// `@FR-E-Report` — where a fault on the current statement is reported: the function's
+    /// source file and the statement's line, as the two trailing arguments of a `_at` setter.
+    fn site(&self) -> String {
+        if let Some((file, line)) = &self.span_site {
+            return format!("{file}, {line}");
+        }
+        // A body with no line marker before the fault (a one-line lambda) reports at its
+        // declaration, as the interpreter's frame does.
+        let pos = self.cx.data.def(self.d).position();
+        let line = if self.cur_line == 0 {
+            pos.line
+        } else {
+            self.cur_line
+        };
+        format!("{}, {line}", c_string(&pos.file))
+    }
+
+    /// Write `inner` with `pos` as the site its faults report at (`Self::site`).
+    fn in_span<T>(
+        &mut self,
+        pos: &crate::lexer::Position,
+        inner: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        let saved = if pos.line == 0 {
+            self.span_site.clone()
+        } else {
+            self.span_site.replace((c_string(&pos.file), pos.line))
+        };
+        let r = inner(self);
+        self.span_site = saved;
+        r
+    }
+
+    /// The `_at` suffix and the site arguments of a helper that reports a fault, or neither
+    /// for its guarded (`Nullable`) twin, which says nothing.
+    fn fault_at(&self, report: bool) -> (&'static str, String) {
+        if report {
+            ("_at", format!(", {}", self.site()))
+        } else {
+            ("", String::new())
+        }
+    }
+
+    /// A program write (`OpSet*`) as its `_at` setter: `f(args…, file, line)`.
+    fn set_at(&self, f: &str, args: &[String]) -> E {
+        E::new(
+            format!("{f}({}, {})", args.join(", "), self.site()),
+            K::Void,
+        )
     }
 
     /// Emit `v` for its effect.
@@ -3310,7 +3485,7 @@ impl<'a> FnWriter<'a> {
     /// written as the call of `f__ap` with X as its buffer, so f's appends land after X's
     /// elements.  `LOFT_NO_APPEND_TWIN=1` keeps the copy.
     fn append_site(&mut self, v: &Value, ind: usize) -> Result<bool, String> {
-        if !crate::keys::append_twin_enabled() || self.gen_elem.is_some() {
+        if !crate::keys::append_twin_enabled() || self.gen_elem.is_some() || self.tr.is_some() {
             return Ok(false);
         }
         let mut memo = std::mem::take(&mut self.ap_memo);
@@ -3365,6 +3540,9 @@ impl<'a> FnWriter<'a> {
         if self.nk_skip == Some(std::ptr::from_ref(v.unspan()) as usize) {
             return Ok(());
         }
+        if !self.room_minted.is_empty() && !self.room_keeps(v) {
+            self.room_minted.clear();
+        }
         // `@FR-R-DeferredCopy`: a deferred bind takes the source's reference; any statement that
         // may write a source's store takes the copies it would otherwise disturb first.
         if let Value::Set(var, rhs) = v.unspan()
@@ -3376,7 +3554,17 @@ impl<'a> FnWriter<'a> {
         if self.append_site(v, ind)? {
             return Ok(());
         }
-        let r = self.stmt_kind(v, ind);
+        // `@FR-E-Report` — an assignment or `return` of a located value (an inlined leaf's
+        // statements carry their line as a span on the value) reports a fault in it at that
+        // line, whichever writer the statement takes.
+        let at = match v.unspan() {
+            Value::Set(_, e) | Value::Return(e) => innermost_span(e),
+            _ => None,
+        };
+        let r = match at {
+            Some(p) => self.in_span(&p, |s| s.stmt_kind(v, ind)),
+            None => self.stmt_kind(v, ind),
+        };
         if r.is_ok()
             && let Value::Set(var, _) = v.unspan()
         {
@@ -3405,6 +3593,25 @@ impl<'a> FnWriter<'a> {
             );
         }
         r
+    }
+
+    /// `@FR-H-KeepRoom`: may a just-minted wrapper's vector still be the mint's empty one after
+    /// statement `v`?  A line marker, a binding of one of its fields, and the zero itself.
+    fn room_keeps(&self, v: &Value) -> bool {
+        let data = self.cx.data;
+        let of_minted =
+            |x: &Value| matches!(x.unspan(), Value::Var(w) if self.room_minted.contains_key(w));
+        match v.unspan() {
+            Value::Line(_) => true,
+            Value::Set(_, x) => matches!(x.unspan(), Value::Call(op, a)
+                if data.def(*op).name() == "OpGetField" && a.first().is_some_and(of_minted)),
+            Value::Call(op, a) => {
+                data.def(*op).name() == "OpSetInt4"
+                    && a.first().is_some_and(of_minted)
+                    && matches!(a.get(2).map(Value::unspan), Some(Value::Int(0)))
+            }
+            _ => false,
+        }
     }
 
     /// `@FR-R-Header`'s rebind clause: after `var` is rebound, every header an enclosing loop
@@ -3483,6 +3690,15 @@ impl<'a> FnWriter<'a> {
 
     fn loop_copy(&mut self, b: &Block, ind: usize) -> Result<(), String> {
         let held_file = self.open_file_hold(b, ind)?;
+        let mut calls = std::collections::BTreeSet::new();
+        for op in &b.operators {
+            op.walk(&mut |n| {
+                if let Value::Call(c, _) = n {
+                    calls.insert(*c);
+                }
+            });
+        }
+        self.loop_calls.push(calls);
         self.hold_invariants(b, ind);
         let mints = self.hold_vectors(b, ind)?;
         let window = self.open_window(b, ind)?;
@@ -3512,6 +3728,7 @@ impl<'a> FnWriter<'a> {
             None => self.loop_core(b, ind)?,
         }
         self.headers.pop();
+        self.loop_calls.pop();
         self.push_heads.pop();
         self.scalars.pop();
         self.invariants.pop();
@@ -3519,7 +3736,10 @@ impl<'a> FnWriter<'a> {
             // The loop's one exit: the counted push loop has no break, return or
             // continue of its own (`hoist::push_loop`).
             let (path, w, _, _) = self.windows.pop().expect("the window this loop opened");
-            self.line(ind, &format!("loft_win_sync({w});"));
+            match self.window_parents.remove(&w) {
+                Some(parent) => self.line(ind, &format!("{parent} = {w};")),
+                None => self.line(ind, &format!("loft_win_sync({w});")),
+            }
             // `@FR-R-Refresh`: an enclosing loop's push header on the same path did not see the
             // window's reservation or its pushes — the record may have moved and the length
             // grew — so it is derived again here, where the window gave the path back.
@@ -3618,13 +3838,19 @@ impl<'a> FnWriter<'a> {
             | Value::Single(_)
             | Value::Enum(..)
             | Value::Text(_) => Ok(()),
-            Value::Span(b) => self.stmt(&b.1, ind),
+            Value::Span(b) => self.in_span(&b.0, |s| s.stmt(&b.1, ind)),
             // `@FR-R-ValueRecord` — a materialised view return, or a build that returns what
             // it builds, standing as a statement returns its struct.
             Value::Block(b) if self.vr_stmt_leaf(b) => self.vr_stmt(v, b, ind),
             Value::Block(b) => self.block_stmt(b, ind),
             Value::Insert(ops) => ops.iter().try_for_each(|o| self.stmt(o, ind)),
             Value::Set(var, x) => {
+                if self.tr.is_some()
+                    && let Some(r) = self.tr_set(*var, x, ind)
+                {
+                    self.bound[*var as usize] = true;
+                    return r;
+                }
                 if self.apr_set(*var, x, ind)?
                     || self.apv_stmt(v, ind)
                     || self.av_set(*var, x, ind)?
@@ -4125,9 +4351,11 @@ impl<'a> FnWriter<'a> {
                 let Value::Call(d, inner) = elem.unspan() else {
                     return Ok(None);
                 };
-                if !matches!(data.def(*d).name(), "OpGetVectorNullable" | "OpGetVector") {
-                    return Ok(None);
-                }
+                let report = match data.def(*d).name() {
+                    "OpGetVector" => true,
+                    "OpGetVectorNullable" => false,
+                    _ => return Ok(None),
+                };
                 let (Some(v), Some(idx)) = (inner.first(), inner.get(2)) else {
                     return Ok(None);
                 };
@@ -4135,10 +4363,14 @@ impl<'a> FnWriter<'a> {
                     return Ok(None);
                 };
                 let i = self.expr(idx, ind)?;
-                Ok(Some(E::new(
-                    format!("loft_stab_get(&st{t}, {})", as_int(i)?),
-                    K::View,
-                )))
+                // `@FR-E-Report` — the unguarded read reports an index naming no part
+                // (`split_table_get_or_raise`).
+                let code = if report {
+                    format!("loft_stab_get_at(&st{t}, {}, {})", as_int(i)?, self.site())
+                } else {
+                    format!("loft_stab_get(&st{t}, {})", as_int(i)?)
+                };
+                Ok(Some(E::new(code, K::View)))
             }
             ("OpDatabase", [Value::Var(b), _])
                 if self.split_tabs.values().any(|t| t.dead_buf == Some(*b)) =>
@@ -4676,14 +4908,30 @@ impl<'a> FnWriter<'a> {
     }
 
     /// Emit the statements `v` needs and put its value in `target`, of shape `c`.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "past the bar where the 32-bit arms met the value-record arms on a join; the split is release work (M-file-split)"
-    )]
     fn assign(&mut self, v: &Value, target: &str, c: CType, ind: usize) -> Result<(), String> {
         if self.vr.is_some() && self.vr_assign(v, target, c, ind)? {
             return Ok(());
         }
+        // `@FR-E-Report` — a located value reports a fault in it at its own line; the value
+        // is written as before, only the site changes.
+        if let Some(pos) = innermost_span(v) {
+            return self.in_span(&pos, |s| s.assign_value(v, target, c, ind));
+        }
+        self.assign_value(v, target, c, ind)
+    }
+
+    /// [`Self::assign`] once the value-record writer declined.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "past the bar where the 32-bit arms met the value-record arms on a join; the split is release work (M-file-split)"
+    )]
+    fn assign_value(
+        &mut self,
+        v: &Value,
+        target: &str,
+        c: CType,
+        ind: usize,
+    ) -> Result<(), String> {
         match v.unspan() {
             // A tuple that owns texts is copied element by element: a struct copy would share them.
             Value::Var(src) if matches!(c, CType::Tuple(id) if self.cx.tuple_has_text(id)) => {
@@ -5107,6 +5355,16 @@ impl<'a> FnWriter<'a> {
         {
             return self.invariant_use(&memo, ind);
         }
+        // `@FR-E-Report` — a located value reports a fault in it at its own line; the value
+        // is written as before, only the site changes.
+        if let Some(pos) = innermost_span(v) {
+            return self.in_span(&pos, |s| s.expr_value(v, ind));
+        }
+        self.expr_value(v, ind)
+    }
+
+    /// [`Self::expr`] once no loop invariant holds the value.
+    fn expr_value(&mut self, v: &Value, ind: usize) -> Result<E, String> {
         match v.unspan() {
             Value::RawExpr(code) if self.raw.contains_key(code) => {
                 Ok(E::new(code.clone(), self.raw[code]))
@@ -5131,6 +5389,10 @@ impl<'a> FnWriter<'a> {
             // `@FR-R-Apart` instance 4: an apart value is its buffers — what a twin call takes, and
             // a C type error anywhere a record was meant.
             Value::Var(var) if let Some(buf) = self.apr_buf(*var) => Ok(E::new(buf, K::Ref)),
+            // `@FR-R-Transient`: a transient value read where a store value is meant.
+            Value::Var(var) if self.tr_is(*var) || self.tr_dead(*var) => {
+                Err("a transient value read as a store value".into())
+            }
             Value::Var(var) if self.apv_vec(*var) => Ok(E::new(format!("loft_apv{var}"), K::Ref)),
             Value::Var(var) if let Some(val) = self.av_val(*var) => Ok(E::new(val, K::Ref)),
             // A link to a field or element reads that place at each use (`@FR-B-Ref-Read`).
@@ -5239,7 +5501,9 @@ impl<'a> FnWriter<'a> {
         let test = as_cond(test)?;
         let view = format!("tv{}", self.decls.len() + 1);
         self.decls.push(format!("loft_str {view} = {{ 0, 0 }};"));
-        self.line(ind, &format!("if ({test}) {{"));
+        // One pair of parentheses: clang's `-Wparentheses-equality` refuses `if ((a == b))`
+        // under `-DLOFT_STRICT`'s `-Werror`.
+        self.line(ind, &format!("if ({}) {{", bare(&test)));
         let then = self.expr(then, ind + 1)?;
         self.line(ind + 1, &format!("{view} = {};", as_view(then)?));
         self.line(ind, "} else {");
@@ -5663,6 +5927,8 @@ impl<'a> FnWriter<'a> {
             .map(|(i, key)| (i, key, ptr.contains(&i)))
             .collect();
         let values = self.vr_args(args, values, dropped, &tuple_params, &mut xs, ind)?;
+        let (tr_name, values, tr_dropped) = self.tr_args(d, args, values, &mut xs, ind)?;
+        let dropped = dropped.or(tr_dropped);
         // A callee that runs no store write reads a text argument as a text VALUE op
         // does (`@FR-F-ParamText`) — unless a store place goes to a `&` parameter, which its twin writes.
         let reads = places == 0 && cx.call_keeps_stores(d);
@@ -5675,67 +5941,109 @@ impl<'a> FnWriter<'a> {
         // `@FR-R-Header`'s kept-twin clause: a callee handed a vector this body holds a GROWN
         // header for takes that header by pointer and keeps it current; no refresh follows.
         let mut mask = places;
-        if places == 0
-            && super::native_c(route).is_none()
-            && args.len() < 64
-            && let Some(h) = self.kept_header_arg(d, args)
-        {
-            xs.push(format!("&{h}"));
-            self.kh_passed.insert(h);
-            mask |= super::KH_BIT;
-            crate::rewrite_census::fired("R-KeptTwin", 1);
-        }
-        // `@FR-R-Inputs`: a callee whose every header input this body holds takes them.
-        if mask & super::KH_BIT == 0
-            && super::native_c(route).is_none()
-            && args.len() < 64
-            && !self.apr_twin_call(d, args)
-            && let Some(inputs) = self.twin_inputs(d, args, ind)?
-        {
-            xs.extend(inputs);
-            mask |= super::INV_BIT;
-        }
-        crate::rewrite_census::fired("R-Inputs", usize::from(mask & super::INV_BIT != 0));
-        if self.nk_call == Some(d) {
-            self.nk_call = None;
-            mask |= super::NK_BIT;
-        }
-        if self.append_call(d, args) {
-            mask |= super::AP_BIT;
-        }
-        if self
-            .ds_site
-            .is_some_and(|(c, at)| c == d && at == args.as_ptr() as usize)
-        {
-            self.ds_site = None;
-            mask |= super::DS_BIT;
-            crate::rewrite_census::fired("R-Destination", 1);
-        }
-        // `@FR-R-NonSentinelParam`'s twin clause: the parameters this call's arguments prove
-        // beyond the program-wide fact go to a `__nn` twin that seeds them.
-        if super::native_c(route).is_none()
-            && args.len() <= super::NN_PARAMS
-            && !self.apr_twin_call(d, args)
-        {
-            let bits = self.nn_twin_bits(d, args);
-            if bits != 0 {
-                mask |= bits << super::NN_SHIFT;
+        // A transient twin takes no other twin's arguments.
+        if tr_name.is_none() {
+            if places == 0
+                && super::native_c(route).is_none()
+                && args.len() < 64
+                && let Some(h) = self.kept_header_arg(d, args)
+            {
+                xs.push(format!("&{h}"));
+                self.kh_passed.insert(h);
+                mask |= super::KH_BIT;
+                crate::rewrite_census::fired("R-KeptTwin", 1);
+            }
+            // `@FR-R-Inputs`: a callee whose every header input this body holds takes them.
+            if mask & super::KH_BIT == 0
+                && super::native_c(route).is_none()
+                && args.len() < 64
+                && !self.apr_twin_call(d, args)
+                && let Some(inputs) = self.twin_inputs(d, args, ind)?
+            {
+                xs.extend(inputs);
+                mask |= super::INV_BIT;
+            }
+            crate::rewrite_census::fired("R-Inputs", usize::from(mask & super::INV_BIT != 0));
+            if self.nk_call == Some(d) {
+                self.nk_call = None;
+                mask |= super::NK_BIT;
+            }
+            if self.append_call(d, args) {
+                mask |= super::AP_BIT;
+            }
+            if self
+                .ds_site
+                .is_some_and(|(c, at)| c == d && at == args.as_ptr() as usize)
+            {
+                self.ds_site = None;
+                mask |= super::DS_BIT;
+                crate::rewrite_census::fired("R-Destination", 1);
+            }
+            // `@FR-R-NonSentinelParam`'s twin clause: the parameters this call's arguments prove
+            // beyond the program-wide fact go to a `__nn` twin that seeds them.
+            if super::native_c(route).is_none()
+                && args.len() <= super::NN_PARAMS
+                && !self.apr_twin_call(d, args)
+            {
+                let bits = self.nn_twin_bits(d, args);
+                if bits != 0 {
+                    mask |= bits << super::NN_SHIFT;
+                }
+            }
+            // `@FR-R-Apart` instance 4: an apart value handed over goes to the callee's `__apr` twin,
+            // which takes it as its buffers (`expr` answered them at that argument).
+            if self.apr_twin_call(d, args) {
+                mask |= super::APR_BIT;
             }
         }
-        // `@FR-R-Apart` instance 4: an apart value handed over goes to the callee's `__apr` twin,
-        // which takes it as its buffers (`expr` answered them at that argument).
-        if self.apr_twin_call(d, args) {
-            mask |= super::APR_BIT;
-        }
-        let name = if mask == 0 {
+        let name = if let Some(n) = tr_name {
+            n
+        } else if mask == 0 {
             name
         } else if super::native_c(route).is_some() || args.len() > 63 {
             return Err(format!("a store place handed to a & parameter of {callee}"));
         } else {
             cx.request_twin(d, mask);
+            if mask & super::INV_BIT != 0
+                && let Some(calls) = self.loop_calls.last()
+            {
+                cx.loop_callees.borrow_mut().extend(calls.iter().copied());
+            }
             super::twin_name(cx.data, d, mask)
         };
+        // `@FR-R-AppendTwin`'s window clause: a twin that takes its caller's window gets this
+        // twin's own where the buffer is one of its window paths, else one opened over the
+        // buffer for the call and synced after it.
+        let mut fresh = None;
+        if mask & super::AP_BIT != 0
+            && let Some(size) = cx.ap_window(d)
+        {
+            let at = def
+                .hidden_return_buffer_attr()
+                .ok_or("an append twin without its buffer")?;
+            let handed = self.apw.is_some()
+                && matches!(args.get(at).map(Value::unspan), Some(Value::Var(x)) if self.ap_views.contains(x));
+            if handed {
+                xs.push("loft_apw".to_string());
+            } else {
+                let w = format!("loft_aw{}", self.decls.len());
+                self.decls.push(format!("loft_win {w};"));
+                let x = xs
+                    .get(at)
+                    .cloned()
+                    .ok_or("an append twin call without its buffer")?;
+                xs.push(format!("&{w}"));
+                fresh = Some((w, x, size));
+            }
+        }
         let call = format!("{name}({})", xs.join(", "));
+        if let Some((w, x, size)) = fresh {
+            let t = self.temp(CType::Ref);
+            return Ok(E::new(
+                format!("({w} = loft_win_of({x}, {size}), {t} = {call}, loft_win_sync({w}), {t})"),
+                K::Ref,
+            ));
+        }
         if let Some(key) = vr_key
             && let Some(buf) = self.vr_forward_target(args, dropped)
         {
@@ -6190,6 +6498,16 @@ impl<'a> FnWriter<'a> {
             "OpFormatStackDatabase" => "OpFormatDatabase",
             n => n,
         };
+        if self.tr.is_some()
+            && let Some(e) = self.tr_operator(name, args, ind)?
+        {
+            return Ok(e);
+        }
+        if self.apw.is_some()
+            && let Some(e) = self.apw_operator(name, args, ind)?
+        {
+            return Ok(e);
+        }
         if self.ds.is_some()
             && let Some(e) = self.dest_scalar_set(name, args, ind)?
         {
@@ -6269,19 +6587,28 @@ impl<'a> FnWriter<'a> {
             "OpAddInt" | "OpAddLong" | "OpAddIntNullable" => Some("loft_add"),
             "OpMinInt" | "OpMinLong" | "OpMinIntNullable" => Some("loft_sub"),
             "OpMulInt" | "OpMulLong" | "OpMulIntNullable" => Some("loft_mul"),
-            "OpDivInt" | "OpDivLong" | "OpDivIntNullable" => Some("loft_div"),
-            "OpRemInt" | "OpRemLong" | "OpRemIntNullable" => Some("loft_rem"),
+            // `@FR-E-Report` — the unguarded division reports a zero divisor; its `Nullable`
+            // twin, the operand of `??`, says nothing.
+            "OpDivInt" | "OpDivLong" => Some("loft_div_at"),
+            "OpRemInt" | "OpRemLong" => Some("loft_rem_at"),
+            "OpDivIntNullable" => Some("loft_div"),
+            "OpRemIntNullable" => Some("loft_rem"),
             "OpLandInt" | "OpLandLong" => Some("loft_and"),
             "OpLorInt" | "OpLorLong" => Some("loft_or"),
             "OpEorInt" | "OpEorLong" => Some("loft_xor"),
-            "OpSLeftInt" | "OpSLeftLong" => Some("loft_shl"),
-            "OpSRightInt" | "OpSRightLong" => Some("loft_shr"),
+            "OpSLeftInt" | "OpSLeftLong" => Some("loft_shl_at"),
+            "OpSRightInt" | "OpSRightLong" => Some("loft_shr_at"),
             _ => None,
         };
         if let Some(f) = arith {
             let (a, b) = self.two(name, args, ind)?;
+            let site = if f.ends_with("_at") {
+                format!(", {}", self.site())
+            } else {
+                String::new()
+            };
             return Ok(E::new(
-                format!("{f}({}, {})", as_int(a)?, as_int(b)?),
+                format!("{f}({}, {}{site})", as_int(a)?, as_int(b)?),
                 K::Int,
             ));
         }
@@ -6344,12 +6671,21 @@ impl<'a> FnWriter<'a> {
                 && !super::no_c_int32()
             {
                 let (a, b) = self.two32(name, args, ind)?;
+                // `@FR-E-Report` — the unguarded division reports a zero divisor.
+                let (at, site) = if matches!(name, "OpDivInt" | "OpRemInt") {
+                    ("_at", format!(", {}", self.site()))
+                } else {
+                    ("", String::new())
+                };
                 if a.kind == K::Int32 && b.kind == K::Int32 {
-                    return Ok(E::new(format!("{op32}({}, {})", a.code, b.code), K::Int32));
+                    return Ok(E::new(
+                        format!("{op32}{at}({}, {}{site})", a.code, b.code),
+                        K::Int32,
+                    ));
                 }
                 let wide = &op32[..op32.len() - 2];
                 return Ok(E::new(
-                    format!("loft_n32({wide}({}, {}))", as_int(a)?, as_int(b)?),
+                    format!("loft_n32({wide}{at}({}, {}{site}))", as_int(a)?, as_int(b)?),
                     K::Int32,
                 ));
             }
@@ -6817,11 +7153,12 @@ impl<'a> FnWriter<'a> {
                 let v = self.expr(v, ind)?;
                 Ok(E::new(
                     format!(
-                        "loft_range_default({}, {}, {}, {})",
+                        "loft_range_default_at({}, {}, {}, {}, {})",
                         as_int(v)?,
                         c_long(lo),
                         c_long(hi),
-                        c_long(dflt)
+                        c_long(dflt),
+                        self.site()
                     ),
                     K::Int,
                 ))
@@ -6930,20 +7267,16 @@ impl<'a> FnWriter<'a> {
             ("OpAddFloat", false, "+"),
             ("OpMinFloat", false, "-"),
             ("OpMulFloat", false, "*"),
-            ("OpDivFloat", false, "/"),
             ("OpDivFloatNullable", false, "/"),
             ("OpAddSingle", true, "+"),
             ("OpMinSingle", true, "-"),
             ("OpMulSingle", true, "*"),
-            ("OpDivSingle", true, "/"),
             ("OpDivSingleNullable", true, "/"),
         ];
         /// `(operator, single?, C function)` for the calls of two operands.
         const CALL2: &[(&str, bool, &str)] = &[
-            ("OpRemFloat", false, "fmod"),
             ("OpRemFloatNullable", false, "fmod"),
             ("OpPowFloat", false, "pow"),
-            ("OpRemSingle", true, "fmodf"),
             ("OpRemSingleNullable", true, "fmodf"),
             ("OpPowSingle", true, "powf"),
         ];
@@ -6965,6 +7298,23 @@ impl<'a> FnWriter<'a> {
                 (K::Float, as_float)
             }
         };
+        // `@FR-E-Report` — the unguarded float division and remainder report a zero divisor.
+        let div = match name {
+            "OpDivFloat" => Some((false, "loft_fdiv_at")),
+            "OpRemFloat" => Some((false, "loft_frem_at")),
+            "OpDivSingle" => Some((true, "loft_sdiv_at")),
+            "OpRemSingle" => Some((true, "loft_srem_at")),
+            _ => None,
+        };
+        if let Some((single, f)) = div {
+            let (k, conv) = shape(single);
+            let (a, b) = self.two(name, args, ind)?;
+            let site = self.site();
+            return Ok(E::new(
+                format!("{f}({}, {}, {site})", conv(a)?, conv(b)?),
+                k,
+            ));
+        }
         if let Some((_, single, op)) = INFIX.iter().find(|(n, _, _)| *n == name) {
             let (k, conv) = shape(*single);
             let (a, b) = self.two(name, args, ind)?;
@@ -7014,12 +7364,15 @@ impl<'a> FnWriter<'a> {
             }
             ("OpCastIntFromFloat", [_]) => {
                 let a = self.one(name, args, ind)?;
-                Ok(E::new(format!("loft_f2i({})", as_float(a)?), K::Int))
+                Ok(E::new(
+                    format!("loft_f2i_at({}, {})", as_float(a)?, self.site()),
+                    K::Int,
+                ))
             }
             ("OpCastIntFromSingle", [_]) => {
                 let a = self.one(name, args, ind)?;
                 Ok(E::new(
-                    format!("loft_f2i((double) {})", as_single(a)?),
+                    format!("loft_f2i_at((double) {}, {})", as_single(a)?, self.site()),
                     K::Int,
                 ))
             }
@@ -7217,6 +7570,107 @@ impl<'a> FnWriter<'a> {
         }
     }
 
+    /// `OpDatabase(v, tp)`: a record of `tp` minted into `v`'s store; a vector wrapper through
+    /// its descriptor, keeping a reused buffer's room (`@FR-H-KeepRoom`).
+    fn database_operator(&mut self, v: u16, tp: &Value) -> Result<E, String> {
+        let tp = Self::literal(tp, "type")?;
+        let tp = u16::try_from(tp).map_err(|_| "a type number out of range".to_string())?;
+        let size = self.cx.stores.enum_parent_size(tp);
+        self.cx.describe_type(tp);
+        let var = self.var(v);
+        if self.cx.stores.is_vector_wrapper(tp) {
+            // A place's old collection is released through the wrapper's descriptor; a
+            // reused buffer keeps the room its vector reached (`@FR-H-KeepRoom`).
+            self.cx.copy_type(tp)?;
+            self.cx.name_types();
+            self.room_minted.insert(v, tp);
+            return Ok(E::new(
+                format!("loft_database_room(loft_types, loft_ntypes, &{var}, {size}, {tp})"),
+                K::Void,
+            ));
+        }
+        Ok(E::new(
+            format!("loft_database_typed(&{var}, {size}, {tp})"),
+            K::Void,
+        ))
+    }
+
+    /// `@FR-R-AppendTwin`'s window clause — a text's bytes or a scalar vector's elements appended
+    /// to one of the twin's window paths go through the caller's window.
+    fn apw_operator(
+        &mut self,
+        name: &str,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<Option<E>, String> {
+        let Some(size) = self.apw else {
+            return Ok(None);
+        };
+        let Some(Value::Var(x)) = args.first().map(Value::unspan) else {
+            return Ok(None);
+        };
+        if !self.ap_views.contains(x) {
+            return Ok(None);
+        }
+        let pv = self.var(*x);
+        match (name, args) {
+            ("OpAppendTextBytes", [_, t, lo, hi]) => {
+                let es = self.args(&[t, lo, hi], ind)?;
+                let [t, lo, hi] = <[E; 3]>::try_from(es)
+                    .map_err(|_| "a byte append without its operands".to_string())?;
+                Ok(Some(E::new(
+                    format!(
+                        "loft_win_text(&(*loft_apw), {pv}, {}, {}, {})",
+                        as_view(t)?,
+                        as_int(lo)?,
+                        as_int(hi)?
+                    ),
+                    K::Void,
+                )))
+            }
+            ("OpAppendVector", [_, src, _]) => {
+                let e = self.expr(src, ind)?;
+                Ok(Some(E::new(
+                    format!("loft_win_vec(&(*loft_apw), {pv}, {}, {size})", as_ref(e)?),
+                    K::Void,
+                )))
+            }
+            // The self-replace a buffer's own view delivers: nothing changes.
+            ("OpReplaceVector", [_, Value::Var(o), _]) if self.ap_views.contains(o) => {
+                Ok(Some(E::new("((void) 0)", K::Void)))
+            }
+            ("OpSliceVector", [_, src, lo, hi, _]) => {
+                let es = self.args(&[src, lo, hi], ind)?;
+                let [src, lo, hi] = <[E; 3]>::try_from(es)
+                    .map_err(|_| "a slice without its operands".to_string())?;
+                Ok(Some(E::new(
+                    format!(
+                        "loft_win_slice(&(*loft_apw), {pv}, {}, {}, {}, {size})",
+                        as_ref(src)?,
+                        as_int(lo)?,
+                        as_int(hi)?
+                    ),
+                    K::Void,
+                )))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// `@FR-H-KeepRoom` — the zero of a wrapper's vector field right after its mint is not
+    /// written: the mint left the vector empty, with the room it had reached.
+    fn keep_room_operator(&mut self, name: &str, args: &[Value]) -> Option<E> {
+        let ("OpSetInt4", [Value::Var(w), Value::Int(off), Value::Int(0)]) = (name, args) else {
+            return None;
+        };
+        let tp = *self.room_minted.get(w)?;
+        if self.cx.stores.wrapper_field_pos(tp) != Some(*off) {
+            return None;
+        }
+        self.room_minted.remove(w);
+        Some(E::new("((void) 0)", K::Void))
+    }
+
     fn store_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
         if let Some(e) = self.free_operator(name, args, ind)? {
             return Ok(e);
@@ -7227,6 +7681,9 @@ impl<'a> FnWriter<'a> {
         if let Some(e) = self.append_twin_buffer_op(name, args, ind)? {
             return Ok(e);
         }
+        if let Some(e) = self.keep_room_operator(name, args) {
+            return Ok(e);
+        }
         match (name, args) {
             // `@FR-R-RetAdopt` — the adopted local's witness is never minted, so neither is
             // its store nor the zero its vector field would have been given.
@@ -7235,25 +7692,7 @@ impl<'a> FnWriter<'a> {
             {
                 Ok(E::new("((void) 0)", K::Void))
             }
-            ("OpDatabase", [Value::Var(v), tp]) => {
-                let tp = Self::literal(tp, "type")?;
-                let tp = u16::try_from(tp).map_err(|_| "a type number out of range".to_string())?;
-                let size = self.cx.stores.enum_parent_size(tp);
-                self.cx.describe_type(tp);
-                let var = self.var(*v);
-                if self.cx.stores.is_vector_wrapper(tp) {
-                    // A place's old collection is released through the wrapper's descriptor.
-                    self.cx.copy_type(tp)?;
-                    return Ok(E::new(
-                        format!("loft_database_wrapper(loft_types, &{var}, {size}, {tp})"),
-                        K::Void,
-                    ));
-                }
-                Ok(E::new(
-                    format!("loft_database_typed(&{var}, {size}, {tp})"),
-                    K::Void,
-                ))
-            }
+            ("OpDatabase", [Value::Var(v), tp]) => self.database_operator(*v, tp),
             ("OpRefIsNull", [r]) => {
                 let r = self.expr(r, ind)?;
                 Ok(E::new(
@@ -7279,14 +7718,11 @@ impl<'a> FnWriter<'a> {
                 let fld = Self::literal(fld, "field")?;
                 let (r, val) = self.two(name, &[r, val], ind)?;
                 let f = if name == "OpSetInt" {
-                    "loft_set_int"
+                    "loft_set_int_at"
                 } else {
-                    "loft_set_int4"
+                    "loft_set_int4_at"
                 };
-                Ok(E::new(
-                    format!("{f}({}, {fld}, {})", as_ref(r)?, as_int(val)?),
-                    K::Void,
-                ))
+                Ok(self.set_at(f, &[as_ref(r)?, fld.to_string(), as_int(val)?]))
             }
             ("OpCopyRecord", [src, dst, tp]) => {
                 let raw = Self::literal(tp, "type")?;
@@ -7298,7 +7734,10 @@ impl<'a> FnWriter<'a> {
                     | (u8::from(raw & crate::keys::COPY_FRESH_DEST != 0) << 2);
                 let (src, dst) = self.two(name, &[src, dst], ind)?;
                 let (src, dst) = (as_ref(src)?, as_ref(dst)?);
-                let copy = format!("loft_copy_record(loft_types, {tp}, {src}, {dst}, {free})");
+                let copy = format!(
+                    "loft_copy_record_at(loft_types, {tp}, {src}, {dst}, {free}, {})",
+                    self.site()
+                );
                 // A copy into a field of an element being built: its null arm is the default.
                 if self.is_fresh_field_copy(args) {
                     let (s, d) = (self.temp(CType::Ref), self.temp(CType::Ref));
@@ -7555,9 +7994,9 @@ impl<'a> FnWriter<'a> {
             ("OpSetDbRef", [r, fld, x]) => {
                 let fld = Self::literal(fld, "field")?;
                 let (r, x) = self.two(name, &[r, x], ind)?;
-                Ok(E::new(
-                    format!("loft_set_dbref({}, {fld}, {})", as_ref(r)?, as_ref(x)?),
-                    K::Void,
+                Ok(self.set_at(
+                    "loft_set_dbref_at",
+                    &[as_ref(r)?, fld.to_string(), as_ref(x)?],
                 ))
             }
             // The closure record releases what it captured, running the captured values'
@@ -7653,9 +8092,9 @@ impl<'a> FnWriter<'a> {
             ("OpSetEnum", [r, fld, val]) => {
                 let fld = Self::literal(fld, "field")?;
                 let (r, val) = self.two(name, &[r, val], ind)?;
-                Ok(E::new(
-                    format!("loft_set_byte({}, {fld}, {})", as_ref(r)?, as_enum(val)?),
-                    K::Void,
+                Ok(self.set_at(
+                    "loft_set_byte_at",
+                    &[as_ref(r)?, fld.to_string(), as_enum(val)?],
                 ))
             }
             ("OpGetText", [r, fld]) => {
@@ -7687,14 +8126,11 @@ impl<'a> FnWriter<'a> {
                 let fld = Self::literal(fld, "field")?;
                 let (r, val) = self.two(name, &[r, val], ind)?;
                 let f = if name == "OpSetText" {
-                    "loft_set_text"
+                    "loft_set_text_at"
                 } else {
-                    "loft_refill_text"
+                    "loft_refill_text_at"
                 };
-                Ok(E::new(
-                    format!("{f}({}, {fld}, {})", as_ref(r)?, as_view(val)?),
-                    K::Void,
-                ))
+                Ok(self.set_at(f, &[as_ref(r)?, fld.to_string(), as_view(val)?]))
             }
             ("OpGetFloat" | "OpGetSingle", [r, fld]) => {
                 let fld = Self::literal(fld, "field")?;
@@ -7710,11 +8146,11 @@ impl<'a> FnWriter<'a> {
                 let fld = Self::literal(fld, "field")?;
                 let (r, val) = self.two(name, &[r, val], ind)?;
                 let (f, v) = if name == "OpSetFloat" {
-                    ("loft_set_float", as_float(val)?)
+                    ("loft_set_float_at", as_float(val)?)
                 } else {
-                    ("loft_set_single", as_single(val)?)
+                    ("loft_set_single_at", as_single(val)?)
                 };
-                Ok(E::new(format!("{f}({}, {fld}, {v})", as_ref(r)?), K::Void))
+                Ok(self.set_at(f, &[as_ref(r)?, fld.to_string(), v]))
             }
             ("OpPushBoolean", [v, val]) => {
                 let (v, val) = self.two(name, &[v, val], ind)?;
@@ -7765,21 +8201,13 @@ impl<'a> FnWriter<'a> {
                 let fld = Self::literal(fld, "field")?;
                 let min = Self::literal(min, "minimum")?;
                 let f = match name {
-                    "OpSetByte" => "loft_set_byte_v",
-                    "OpSetByteNullable" => "loft_set_byte_nullable",
-                    "OpSetShort" => "loft_set_short",
-                    _ => "loft_set_short_raw",
+                    "OpSetByte" => "loft_set_byte_v_at",
+                    "OpSetByteNullable" => "loft_set_byte_nullable_at",
+                    "OpSetShort" => "loft_set_short_at",
+                    _ => "loft_set_short_raw_at",
                 };
                 let (r, val) = self.two(name, &[r, val], ind)?;
-                Ok(E::new(
-                    format!(
-                        "{f}({}, {fld}, {}, {})",
-                        as_ref(r)?,
-                        c_long(min),
-                        as_int(val)?
-                    ),
-                    K::Void,
-                ))
+                Ok(self.set_at(f, &[as_ref(r)?, fld.to_string(), c_long(min), as_int(val)?]))
             }
             ("OpGetInt4" | "OpGetInt4Raw" | "OpGetInt4Full", [r, fld]) => {
                 let fld = Self::literal(fld, "field")?;
@@ -7794,9 +8222,9 @@ impl<'a> FnWriter<'a> {
             ("OpSetInt4Raw", [r, fld, val]) => {
                 let fld = Self::literal(fld, "field")?;
                 let (r, val) = self.two(name, &[r, val], ind)?;
-                Ok(E::new(
-                    format!("loft_set_int4_raw({}, {fld}, {})", as_ref(r)?, as_int(val)?),
-                    K::Void,
+                Ok(self.set_at(
+                    "loft_set_int4_raw_at",
+                    &[as_ref(r)?, fld.to_string(), as_int(val)?],
                 ))
             }
             ("OpPushInt4", [v, val]) => {
@@ -7997,15 +8425,31 @@ impl<'a> FnWriter<'a> {
                 ))
             }
             ("OpGetVector" | "OpGetVectorNullable", [v, size, idx]) => {
-                let size = Self::literal(size, "element size")?;
-                let (v, idx) = self.two(name, &[v, idx], ind)?;
-                Ok(E::new(
-                    format!("loft_vec_get({}, {size}, {})", as_ref(v)?, as_int(idx)?),
-                    K::Ref,
-                ))
+                self.vec_get(name, v, size, idx, ind)
             }
             _ => self.collection_operator(name, args, ind),
         }
+    }
+
+    /// `v[i]`: the element's reference, an unguarded read (`OpGetVector`) reporting an index
+    /// that names no element (`@FR-E-Report`).
+    fn vec_get(
+        &mut self,
+        name: &str,
+        v: &Value,
+        size: &Value,
+        idx: &Value,
+        ind: usize,
+    ) -> Result<E, String> {
+        let size = Self::literal(size, "element size")?;
+        let (v, idx) = self.two(name, &[v, idx], ind)?;
+        let (at, t) = self.fault_at(name == "OpGetVector");
+        let c = format!(
+            "loft_vec_get{at}({}, {size}, {}{t})",
+            as_ref(v)?,
+            as_int(idx)?
+        );
+        Ok(E::new(c, K::Ref))
     }
 
     /// The character operators: a code point, 0 the null character.
@@ -8013,7 +8457,10 @@ impl<'a> FnWriter<'a> {
         match (name, args) {
             ("OpConvCharacterFromInt", [v]) => {
                 let v = self.expr(v, ind)?;
-                Ok(E::new(format!("loft_char_of({})", as_int(v)?), K::Char))
+                Ok(E::new(
+                    format!("loft_char_of_at({}, {})", as_int(v)?, self.site()),
+                    K::Char,
+                ))
             }
             ("OpConvIntFromCharacter", [c]) => {
                 let c = self.expr(c, ind)?;
@@ -8029,8 +8476,14 @@ impl<'a> FnWriter<'a> {
             }
             ("OpTextCharacter" | "OpTextCharacterNullable", [_, _]) => {
                 let (t, i) = self.two(name, args, ind)?;
+                // `@FR-E-Report` — the unguarded index reports a byte it does not name.
+                let (at, site) = if name == "OpTextCharacter" {
+                    ("_at", format!(", {}", self.site()))
+                } else {
+                    ("", String::new())
+                };
                 Ok(E::new(
-                    format!("loft_text_char({}, {})", as_view(t)?, as_int(i)?),
+                    format!("loft_text_char{at}({}, {}{site})", as_view(t)?, as_int(i)?),
                     K::Char,
                 ))
             }
@@ -8053,9 +8506,9 @@ impl<'a> FnWriter<'a> {
             ("OpSetCharacter", [r, fld, c]) => {
                 let fld = Self::literal(fld, "field")?;
                 let (r, c) = self.two(name, &[r, c], ind)?;
-                Ok(E::new(
-                    format!("loft_set_char({}, {fld}, {})", as_ref(r)?, as_char(c)?),
-                    K::Void,
+                Ok(self.set_at(
+                    "loft_set_char_at",
+                    &[as_ref(r)?, fld.to_string(), as_char(c)?],
                 ))
             }
             ("OpPushCharacter", [v, c]) => {
@@ -8331,9 +8784,9 @@ impl<'a> FnWriter<'a> {
             ("OpSetBoolean", [r, fld, val]) => {
                 let fld = Self::literal(fld, "field")?;
                 let (r, val) = self.two(name, &[r, val], ind)?;
-                Ok(E::new(
-                    format!("loft_set_byte({}, {fld}, {})", as_ref(r)?, as_bool(val)?),
-                    K::Void,
+                Ok(self.set_at(
+                    "loft_set_byte_at",
+                    &[as_ref(r)?, fld.to_string(), as_bool(val)?],
                 ))
             }
             ("OpPushByte", [v, min, val]) => {
@@ -8373,7 +8826,10 @@ impl<'a> FnWriter<'a> {
             ("OpConvBoolFromNull", []) => Ok(E::new("LOFT_BOOL_NULL", K::Bool)),
             ("OpCastIntFromText" | "OpCastLongFromText", [t]) => {
                 let t = self.expr(t, ind)?;
-                Ok(E::new(format!("loft_int_of_text({})", as_view(t)?), K::Int))
+                Ok(E::new(
+                    format!("loft_int_of_text_at({}, {})", as_view(t)?, self.site()),
+                    K::Int,
+                ))
             }
             ("OpGetTextSub", [_, _, _]) => {
                 let es = self.args(args, ind)?;
@@ -8540,6 +8996,7 @@ fn as_shape(e: E, c: CType) -> Result<String, String> {
         CType::Single => as_single(e),
         CType::Char => as_char(e),
         CType::Fn => as_fn(e),
+        CType::Tr(_) | CType::TrVec => Err("a transient value outside its mapping".into()),
         CType::Void => Err("a void value".into()),
     }
 }
@@ -8639,6 +9096,7 @@ const OP_REF: &[&str] = &[
     "OpInsertVector",
     "OpRefFromChildRec",
     "OpChildRec",
+    "OpCopyClosure",
     "OpCoroutineRetain",
 ];
 const OP_ENUM: &[&str] = &[
@@ -8746,6 +9204,20 @@ fn op_shape(name: &str) -> Option<CType> {
 
 /// `s` as a C string literal: printable ASCII as itself, every other byte as an octal escape
 /// (three digits, so the next character can never extend it), `?` escaped against trigraphs.
+/// `@FR-E-Report` — the position of the innermost located span `v` is wrapped in (a span
+/// around a span: an inlined statement's line around the fault-prone operator's own), or
+/// `None` when `v` carries none with a line.
+fn innermost_span(mut v: &Value) -> Option<crate::lexer::Position> {
+    let mut at = None;
+    while let Value::Span(b) = v {
+        if b.0.line != 0 {
+            at = Some(b.0);
+        }
+        v = &b.1;
+    }
+    at
+}
+
 pub(crate) fn c_string(s: &str) -> String {
     let mut out = String::from("\"");
     for b in s.bytes() {

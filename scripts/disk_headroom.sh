@@ -27,6 +27,12 @@
 #                                           test cache, so this step waits its turn
 #   4. cargo artefacts no build used in 14 days   `cargo sweep --time 14`, when installed
 #
+# Bounded in TIME as well as room: the steps share LOFT_HEADROOM_SECS (300), and a step that
+# would start past it is skipped and named — the gate's own budget is 20 minutes, and an
+# unbounded sweep (15 minutes measured, 2026-10-31) spent it all before the first test.  Step 1
+# stops as soon as --min-gb is free, between batches, so a short disk is not swept to the end
+# first; step 2 runs whatever the clock says, as the cheapest room there is to take.
+#
 # Prints one line when it acted or is still short, nothing when nothing needed doing; exits 1
 # only below --floor-gb (2), so the gate stops HERE instead of running to a fiction.  Never
 # another program's files, never a sibling checkout's scratch (the tag names this one).
@@ -57,21 +63,26 @@ alive() { local p; p=$(cat "$1" 2>/dev/null); [ -n "$p" ] && kill -0 "$p" 2>/dev
 
 start=$(free_gb)
 [ "$start" -ge "$min_gb" ] && exit 0
+deadline=$(( $(date +%s) + ${LOFT_HEADROOM_SECS:-300} ))
+late() { [ "$(date +%s)" -ge "$deadline" ]; }
 steps=()
-# 1. the standing rules: dead pids, aged entries, the session prune.
-scripts/sweep_scratch.sh --sessions "$scratch" "${TMPDIR:-$HOME/.cache/tmp}" /tmp >/dev/null 2>&1
+# 1. the standing rules: dead pids, aged entries, the session prune — until there is room.
+scripts/sweep_scratch.sh --sessions --enough-gb "$min_gb" --on "$REPO_ROOT" --deadline "$deadline" \
+  "$scratch" "${TMPDIR:-$HOME/.cache/tmp}" /tmp >/dev/null 2>&1
 steps+=("scratch swept")
 if [ "$(free_gb)" -lt "$min_gb" ]; then
   # 2. incremental caches: a rebuild's time, nothing else.
   for d in target/*/incremental; do [ -d "$d" ] && rm -rf "$d"; done
   steps+=("incremental caches dropped")
 fi
-if [ "$(free_gb)" -lt "$min_gb" ] && cargo sweep --version >/dev/null 2>&1; then
+if [ "$(free_gb)" -lt "$min_gb" ] && late; then
+  steps+=("out of time after ${LOFT_HEADROOM_SECS:-300} s")
+elif [ "$(free_gb)" -lt "$min_gb" ] && cargo sweep --version >/dev/null 2>&1; then
   # 2b. superseded artefacts: everything past the newest KEEP_GB of target/, by last use.
   cargo sweep --maxsize "${LOFT_TARGET_KEEP_GB:-70}GB" >/dev/null 2>&1
   steps+=("superseded cargo artefacts swept")
 fi
-if [ "$(free_gb)" -lt "$min_gb" ] && [ -d "$scratch" ]; then
+if [ "$(free_gb)" -lt "$min_gb" ] && [ -d "$scratch" ] && ! late; then
   # 3. this checkout's gate scratch, whole — only with no gate of this checkout alive.
   if alive "$PID_FILE" || alive .ci-running; then
     steps+=("gate scratch kept: a gate of this checkout is running")
@@ -80,7 +91,7 @@ if [ "$(free_gb)" -lt "$min_gb" ] && [ -d "$scratch" ]; then
     steps+=("gate scratch emptied")
   fi
 fi
-if [ "$(free_gb)" -lt "$min_gb" ] && cargo sweep --version >/dev/null 2>&1; then
+if [ "$(free_gb)" -lt "$min_gb" ] && ! late && cargo sweep --version >/dev/null 2>&1; then
   # 4. cargo artefacts no build touched in two weeks.
   cargo sweep --time 14 >/dev/null 2>&1
   steps+=("cargo swept")

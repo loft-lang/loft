@@ -1374,14 +1374,17 @@ fn main() {
     // only through that call, so the parameter clause binds no address to read it through
     // either — rustc's call site makes the same choice (`@FR-R-Inputs`).
     // `s.out = build(s, 7)` is an append into a fresh vector, so it calls `build`'s APPEND
-    // TWIN (`@FR-R-AppendTwin`), a second body of `build`: one more held call, versioned loop
-    // and scalar push header (`pix`, now the caller's vector) wherever `build` has one.
+    // TWIN (`@FR-R-AppendTwin`), a second body of `build`: one more held call and versioned
+    // loop wherever `build` has one.  Its `pix` is the caller's vector, written through the
+    // caller's push window (the window clause), so the twin holds no push header of its own:
+    // four scalar push headers, five under `LOFT_NO_APPEND_WINDOW`.
     for (mode, switch, twins, fresh, versioned, pushed, scalar_pushed, scalars) in [
-        ("held", "", 3, 3, 2, 2, 5, 1),
-        ("no-inputs", "LOFT_NO_CALLEE_INPUTS", 0, 3, 0, 2, 5, 1),
-        ("no-version", "LOFT_NO_DISTINCT_VERSION", 1, 3, 0, 2, 5, 1),
-        ("no-record-push", "LOFT_NO_RECORD_PUSH", 3, 3, 2, 0, 5, 1),
-        ("no-scalar", "LOFT_NO_SCALAR_HOIST", 1, 3, 2, 2, 5, 0),
+        ("held", "", 3, 3, 2, 2, 4, 1),
+        ("no-window", "LOFT_NO_APPEND_WINDOW", 3, 3, 2, 2, 5, 1),
+        ("no-inputs", "LOFT_NO_CALLEE_INPUTS", 0, 3, 0, 2, 4, 1),
+        ("no-version", "LOFT_NO_DISTINCT_VERSION", 1, 3, 0, 2, 4, 1),
+        ("no-record-push", "LOFT_NO_RECORD_PUSH", 3, 3, 2, 0, 4, 1),
+        ("no-scalar", "LOFT_NO_SCALAR_HOIST", 1, 3, 2, 2, 4, 0),
         ("unheld", "LOFT_NO_VECTOR_HOIST", 0, 0, 0, 0, 0, 0),
     ] {
         let c = dir.join(format!("{mode}.c"));
@@ -2100,6 +2103,7 @@ const ALLOCATOR_SWITCHES: &[&str] = &[
     "LOFT_NO_FREE_FOOTER",
     "LOFT_NO_WILD_BUMP",
     "LOFT_NO_CARVE_IN_PLACE",
+    "LOFT_NO_WILDERNESS",
 ];
 
 /// @PLN206 P0b — every allocator bisect switch the C honours places every record where `Store`
@@ -7313,4 +7317,263 @@ fn a_programs_tuple_types_are_numbered_the_same_on_every_emission() {
             Some(f) => assert!(*f == unit, "emission {run} differs from the first"),
         }
     }
+}
+
+/// `@FR-R-Transient`'s arena (`loft_ta_*`, `loft_rt.h`): a mark, allocations after it, and the
+/// mark given back — the space is the same space again, nested marks give back in order, and
+/// an allocation past the base block spills into a block of its own that the give-back frees.
+/// Each allocation comes back zeroed and 8-aligned.
+#[test]
+fn the_transient_arena_gives_back_what_a_mark_took() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let mut c = String::new();
+    for part in [
+        include_str!("../src/c/loft_cc.h"),
+        include_str!("../src/c/loft_text.h"),
+        include_str!("../src/c/loft_store.h"),
+        include_str!("../src/c/loft_rt.h"),
+    ] {
+        c.push_str(part);
+    }
+    c.push_str(
+        r#"
+static void loft_init(void) {}
+
+static int fails = 0;
+#define CHECK(c, what) do { if (!(c)) { printf("FAIL %s\n", what); fails++; } } while (0)
+
+int main(void) {
+    /* one mark: the same place again after the give-back */
+    loft_ta_mark_t m0 = loft_ta_mark();
+    unsigned char *a = (unsigned char *) loft_ta_alloc(3);
+    unsigned char *b = (unsigned char *) loft_ta_alloc(10);
+    CHECK(b == a + 8, "3 bytes take 8");
+    CHECK(((uintptr_t) a & 7) == 0 && ((uintptr_t) b & 7) == 0, "8-aligned");
+    memset(a, 0xAB, 3);
+    memset(b, 0xCD, 10);
+    loft_ta_back(m0);
+    unsigned char *a2 = (unsigned char *) loft_ta_alloc(3);
+    CHECK(a2 == a, "the mark's space is reused");
+    CHECK(a2[0] == 0 && a2[1] == 0 && a2[2] == 0, "a reused allocation is zeroed");
+    loft_ta_back(m0);
+    /* nested marks */
+    loft_ta_mark_t outer = loft_ta_mark();
+    void *o1 = loft_ta_alloc(16);
+    loft_ta_mark_t inner = loft_ta_mark();
+    void *i1 = loft_ta_alloc(16);
+    loft_ta_back(inner);
+    void *i2 = loft_ta_alloc(16);
+    CHECK(i2 == i1, "the inner mark's space");
+    loft_ta_back(outer);
+    CHECK(loft_ta_alloc(16) == o1, "the outer mark's space");
+    loft_ta_back(outer);
+    /* spill: past the base block, into blocks of their own */
+    loft_ta_mark_t s0 = loft_ta_mark();
+    void *base = loft_ta_alloc(LOFT_TA_BASE - 64);
+    CHECK(loft_ta_spill == 0, "the base block holds it");
+    unsigned char *sp = (unsigned char *) loft_ta_alloc(128);
+    CHECK(loft_ta_spill != 0, "a spill block");
+    CHECK(((uintptr_t) sp & 7) == 0, "a spill is 8-aligned");
+    loft_ta_mark_t sm = loft_ta_mark();
+    unsigned char *same = (unsigned char *) loft_ta_alloc(64);
+    CHECK(same == sp + 128, "the same spill block");
+    loft_ta_back(sm);
+    CHECK(loft_ta_alloc(64) == same, "a mark inside a spill block gives its top back");
+    loft_ta_back(sm);
+    loft_ta_mark_t s1 = loft_ta_mark();
+    unsigned char *big = (unsigned char *) loft_ta_alloc(3 * LOFT_TA_BASE);
+    big[3 * LOFT_TA_BASE - 1] = 1;
+    CHECK(loft_ta_spill->cap >= 3 * LOFT_TA_BASE, "a block as big as the allocation");
+    loft_ta_back(s1);
+    CHECK(loft_ta_alloc(8) == sp + 128, "back to the first spill, its top kept");
+    loft_ta_back(s0);
+    CHECK(loft_ta_spill == 0, "every spill freed");
+    CHECK(loft_ta_alloc(8) == base, "back in the base block");
+    loft_ta_back(s0);
+    printf("%s\n", fails ? "failed" : "ok");
+    return fails;
+}
+"#,
+    );
+    let dir = scratch("arena");
+    let (src, exe) = (dir.join("arena.c"), dir.join("arena"));
+    fa::write(&src, &c).expect("write C");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O1", "-Wno-unused-function"])
+        .arg(&src)
+        .arg("-o")
+        .arg(&exe)
+        .arg("-lm")
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc rejected the arena:\n{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let run = loft::platform::process::harness_command(&exe)
+        .output()
+        .expect("run the arena");
+    let out = String::from_utf8_lossy(&run.stdout);
+    assert!(run.status.success() && out.trim() == "ok", "{out}");
+}
+
+/// `@FR-R-Inline`'s twin clause: an `__inv` twin — called only from a loop that holds its
+/// inputs — is hinted `static inline` up to 64 statements, past the twelve-statement bound,
+/// and so is a plain helper the twin calls (`inside`, 24 statements); `count`, which holds the
+/// loop but runs outside it, keeps the bound.  `LOFT_NO_INLINE_TWIN=1` is the
+/// build without the clause: twin and helper go out of line again.  The program's answer is
+/// the same either way (hand-computed: cells 0..11 summed over the 4×3 grid = 66).
+#[test]
+fn a_loop_twin_past_the_size_bound_is_declared_inline() {
+    let src = r#"
+struct Grid { w: integer, h: integer, x0: integer, y0: integer, cells: vector<integer> }
+fn inside(v: integer, lo: integer, n: integer) -> boolean {
+  d = v - lo;
+  if d < 0 { return false; }
+  if d >= n { return false; }
+  e = d * 3;
+  f = e / 3;
+  if f != d { return false; }
+  h = f + lo;
+  if h != v { return false; }
+  k = h - v;
+  if k != 0 { return false; }
+  m = k + 1;
+  m == 1
+}
+fn slot(g: Grid, x: integer, y: integer) -> integer {
+  dx = x - g.x0;
+  dy = y - g.y0;
+  if !inside(x, g.x0, g.w) { return -1; }
+  if dx < 0 { return -1; }
+  if dy < 0 { return -1; }
+  if dx >= g.w { return -1; }
+  if dy >= g.h { return -1; }
+  s = dy * g.w + dx;
+  if s < 0 { return -1; }
+  t = s * 2;
+  u = t / 2;
+  v = u + 0;
+  if v != s { return -1; }
+  s
+}
+fn count(g: Grid) -> integer {
+  n = 0;
+  for y in 0..g.h + 2 {
+    for x in 0..g.w + 2 {
+      i = slot(g, x + g.x0 - 1, y + g.y0 - 1);
+      if i >= 0 { n += g.cells[i] ?? 0; }
+    }
+  }
+  n
+}
+fn main() {
+  c: vector<integer> = [];
+  for i in 0..12 { c += [i]; }
+  g = Grid { w: 4, h: 3, x0: 10, y0: 20, cells: c };
+  println("{count(g)}");
+}
+"#;
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("inline-twin");
+    let file = dir.join("twin.loft");
+    fa::write(&file, src).expect("write program");
+    for (mode, switch, twin_inline) in [("on", "", true), ("off", "LOFT_NO_INLINE_TWIN", false)] {
+        let c = dir.join(format!("{mode}.c"));
+        let mut emit = loft::platform::process::harness_command(loft);
+        if !switch.is_empty() {
+            emit.env(switch, "1");
+        }
+        let out = emit
+            .arg("--emit-c")
+            .arg(&c)
+            .arg(&file)
+            .output()
+            .expect("run loft --emit-c");
+        assert!(
+            out.status.success(),
+            "{mode}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let text = fa::read_to_string(&c).expect("read the C");
+        assert_eq!(
+            text.contains("\nstatic inline int64_t n_slot__inv("),
+            twin_inline,
+            "{mode}: the loop twin's hint"
+        );
+        assert_eq!(
+            text.contains("\nstatic inline uint8_t n_inside("),
+            twin_inline,
+            "{mode}: the twin's helper's hint"
+        );
+        assert!(
+            text.contains("\nstatic int64_t n_count("),
+            "{mode}: the loop's own function keeps the size bound"
+        );
+    }
+    let run = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg(&file)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "66\n",
+        "the interpreter"
+    );
+}
+
+/// `@FR-R-NoLocks`: a unit that reaches no `#lock = …`, no `file_map` and no constant store is
+/// compiled with `LOFT_NO_LOCKS`; one that locks a store is not, and keeps (H-WriteLocked)'s
+/// production discard (the locked-write cells above run that unit in production and must see
+/// every write discarded).  `LOFT_NO_LOCK_FACT=1` keeps the discard everywhere.  The answer is
+/// the same either way (hand-computed: 3 + 4 = 7).
+#[test]
+fn a_unit_that_locks_nothing_keeps_no_locked_write_discard() {
+    let plain = "struct P { a: integer, b: integer }\nfn main() {\n  p = P { a: 3, b: 0 };\n  p.b = 4;\n  println(\"{p.a + p.b}\");\n}\n";
+    let locks =
+        "fn main() {\n  v: vector<integer> = [7];\n  v#lock = true;\n  println(\"{len(v)}\");\n}\n";
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("no-locks");
+    for (name, src, switch, fact) in [
+        ("plain", plain, "", true),
+        ("plain-off", plain, "LOFT_NO_LOCK_FACT", false),
+        ("locks", locks, "", false),
+    ] {
+        let file = dir.join(format!("{name}.loft"));
+        fa::write(&file, src).expect("write program");
+        let c = dir.join(format!("{name}.c"));
+        let mut emit = loft::platform::process::harness_command(loft);
+        if !switch.is_empty() {
+            emit.env(switch, "1");
+        }
+        let out = emit
+            .arg("--emit-c")
+            .arg(&c)
+            .arg(&file)
+            .output()
+            .expect("run loft --emit-c");
+        assert!(
+            out.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let text = fa::read_to_string(&c).expect("read the C");
+        let defined = text.lines().any(|l| l == "#define LOFT_NO_LOCKS 1");
+        assert_eq!(defined, fact, "{name}: the fact");
+    }
+    let run = loft::platform::process::harness_command(loft)
+        .arg("--native-c")
+        .arg(dir.join("plain.loft"))
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "7\n",
+        "the C build's answer"
+    );
 }

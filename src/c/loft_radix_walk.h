@@ -9,7 +9,9 @@
  *   LOFT_RX_GUARD(s, n)  whether node `n`'s child may be read (a paged source: fuel left, `n` a
  *                        node the tree minted); a refused read is the empty child
  *   LOFT_RX_KEYI(s, r, k)  integer key part `k` of record `r`'s payload
- *   LOFT_RX_KEYT(s, r, k)  text key part `k` of record `r`'s payload */
+ *   LOFT_RX_KEYT(s, r, k)  text key part `k` of record `r`'s payload
+ *   LOFT_RX_ESC(s)       whether the source's trie keys are filed escaped (placement token 2;
+ *                        a paged token-1 image is read as it was written) */
 
 static uint32_t LOFT_RXF(node_bit)(LOFT_RXS *s, uint32_t t, uint32_t n) { return LOFT_RX_RD(s, t, loft_rx_node_off(n)); }
 static uint32_t LOFT_RXF(node_parent)(LOFT_RXS *s, uint32_t t, uint32_t n) { return LOFT_RX_RD(s, t, loft_rx_node_off(n) + 4); }
@@ -36,7 +38,7 @@ static loft_rx_key LOFT_RXF(rec_key)(LOFT_RXS *s, const loft_key *keys, int nk, 
         loft_str t = LOFT_RX_KEYT(s, rec, &keys[0]);
         k.bytes = (const uint8_t *) t.p;
         k.len = t.len;
-        k.bits = (uint32_t) t.len * 8;
+        loft_rx_text_bits(&k, LOFT_RX_ESC(s));
     } else {
         LOFT_RXF(axes)(s, rec, keys, nk, k.codes);
         k.bits = LOFT_RX_AXIS_BITS * (uint32_t) nk;
@@ -163,7 +165,8 @@ static uint32_t LOFT_RXF(get)(LOFT_RXS *s, uint32_t t, const loft_rx_key *probe)
     if (it.rec == 0) return 0;
     if (d != UINT32_MAX && d < probe->bits) return 0;
     loft_rx_key k = LOFT_RXF(rec_key)(s, probe->keys, probe->nk, probe->text, it.rec);
-    return k.bits == probe->bits ? it.rec : 0;
+    if (k.bits != probe->bits) return 0;
+    return !probe->text || (k.len == probe->len && (k.len == 0 || memcmp(k.bytes, probe->bytes, k.len) == 0)) ? it.rec : 0;
 }
 
 /* radix_db::box_walk: the records inside the closed box `qlo`..`qhi` (axis codes), in Morton
@@ -220,7 +223,7 @@ static void LOFT_RXF(prefix_walk)(LOFT_RXS *s, uint32_t t, const loft_key *keys,
     probe.text = 1;
     probe.bytes = (const uint8_t *) pre.p;
     probe.len = pre.len;
-    probe.bits = (uint32_t) pre.len * 8;
+    loft_rx_text_bits(&probe, LOFT_RX_ESC(s));
     loft_rx_iter it = LOFT_RXF(seek)(s, t, &probe, &d);
     for (uint32_t rec = it.rec; rec != 0 && out->n < cap; rec = LOFT_RXF(step)(s, t, &it, 1)) {
         loft_str k = LOFT_RX_KEYT(s, rec, &keys[0]);
@@ -236,3 +239,4 @@ static void LOFT_RXF(prefix_walk)(LOFT_RXS *s, uint32_t t, const loft_key *keys,
 #undef LOFT_RX_GUARD
 #undef LOFT_RX_KEYI
 #undef LOFT_RX_KEYT
+#undef LOFT_RX_ESC

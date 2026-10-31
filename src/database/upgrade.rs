@@ -303,9 +303,11 @@ impl Stores {
         // A `hash` written under a placement this build reads as written (@C152,
         // `placement::HASH_READS`) is this build's row, as `classify` reads it: an image that
         // converts for another reason — a key order (loft#2237) — must not be refused for the
-        // token of a table it reads unchanged.
+        // token of a table it reads unchanged.  A trie under an older placement this build
+        // converts renders as this build's too (`placement::trie_read_as_own`): its rows are
+        // this build's, its walk is key-free.
         let written = closure.render_dump();
-        let written = crate::placement::read_as_own(&written);
+        let written = crate::placement::trie_read_as_own(&crate::placement::read_as_own(&written));
         let rebuilt = self.layout_dump(&[ids[&root]]);
         if *written != rebuilt {
             let at = written

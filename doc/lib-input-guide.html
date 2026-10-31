@@ -25,7 +25,7 @@
 <article>
 <p><a href="lib-input.html">← input</a> · <a href="lib-input-api.html">API reference</a> · <a href="lib-input-src.html">source</a></p>
 <p><code>input</code> turns raw keys and mouse buttons into what a game asks about: a named ACTION bound to one or more keys ("jump" on SPACE or UP), the one tick an action was pressed or released, and an AXIS that reads -1 / 0 / +1 from a pair of keys.  Game code asks for "jump", not for key 32, so a rebind changes one table instead of every call site.</p>
-<p>It reads <code>graphics</code>' polled keyboard and mouse once per <code>input_tick</code>.  This guide drives it with <code>input_tick_from_state</code> instead — the same edge detection from a snapshot you supply — so it runs with no window, the way a test, a replay or a network rollback does.</p>
+<p>It reads a <code>graphics</code> window's keys and mouse once per <code>input_tick</code>.  This guide drives it with <code>input_tick_from_state</code> instead — the same edge detection from a snapshot you supply — so it runs with no window, the way a test, a replay or a network rollback does.</p>
 <pre><code><span class="kw">use</span> graphics::*;    <span class="cm">// the key codes: KEY_SPACE, KEY_LEFT, …</span>
 <span class="kw">use</span> input::*;</code></pre>
 <p>One frame's keyboard: every key code up except the ones listed.</p>
@@ -102,7 +102,7 @@
 <h2 id="where-to-go-next">Where to go next</h2>
 <ul>
 <li><code>tests/02-worked-examples.loft</code> — <code>@INP-001</code> … <code>@INP-004</code>: tick once per frame, a name is bare text, a mouse mask means "either", and a rebind keeps the keys already held.</li>
-<li>In a game, call <code>st.input_tick()</code> once per frame instead: it polls <code>graphics</code> for the keys the bindings name.</li>
+<li>In a game, call <code>st.input_tick(w, evs)</code> once per frame instead, with the <code>graphics</code> window and the events <code>w.events()</code> gave this frame: it reads the window for the keys the bindings name, and the wheel from the events.</li>
 </ul>
 
   </article>

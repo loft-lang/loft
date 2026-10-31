@@ -687,6 +687,7 @@ impl Output<'_> {
                     if as_block {
                         write!(w, "{{ ")?;
                     }
+                    let prev_elem = std::mem::replace(&mut self.tuple_text_elem, elem_is_text);
                     match e
                         .native()
                         .and_then(|v| self.fn_number_code(v))
@@ -695,6 +696,7 @@ impl Output<'_> {
                         Some(code) => write!(w, "{code}")?,
                         None => self.output_code_node(w, e)?,
                     }
+                    self.tuple_text_elem = prev_elem;
                     if as_block {
                         write!(w, " }}")?;
                     }
@@ -847,7 +849,9 @@ impl Output<'_> {
                 if elem_is_text && var_src {
                     write!(w, "(")?;
                 }
+                let prev_elem = std::mem::replace(&mut self.tuple_text_elem, elem_is_text);
                 let r = self.output_code_node(w, node.tupleput_inner());
+                self.tuple_text_elem = prev_elem;
                 self.fn_ref_context = prev_fn_ref_ctx;
                 self.tuple_text_to_string = prev;
                 // The same conversion the `Tuple` element loop applies, for the same
@@ -2640,10 +2644,14 @@ impl Output<'_> {
             | Type::Sorted(_, _, _)
             | Type::Hash(_, _, _)
             | Type::Index(_, _, _)
+            | Type::Radix(_, _, _)
+            | Type::Trie(_, _, _)
             | Type::Iterator(_, _)
             | Type::Enum(_, true, _) => {
                 // A generator's handle is a `DbRef` too (loft#2059: an absent fn-ref of a
-                // generator type answered `()` in its dispatch's fallback arm, E0308).
+                // generator type answered `()` in its dispatch's fallback arm, E0308), and so
+                // is a `spatial` and a `trie` (loft#2258: the same E0308 for a fn-ref that
+                // answers one).
                 // The canonical heap-ref null is `DbRef::NULL` (`keys.rs`), the
                 // ONE source every backend reads — `is_null()` keys off
                 // `store_nr == u16::MAX` and ignores `pos`, so the historical
@@ -5249,12 +5257,20 @@ impl Output<'_> {
                         // condition (`@FR-M-Once`), reaches here as a value block's tail.
                         write!(w, "{}", if lowers_to_statements(v) { "({" } else { "(" })?;
                     }
+                    // A tuple's text element takes its own copy, so an outer text variable at
+                    // the tail is cloned rather than moved out (`tuple_text_elem`).
+                    let clone_outer_text = self.tuple_text_elem
+                        && own_text_tail.is_none()
+                        && self.outer_text_var(v, bl.scope);
                     if let Some(name) = &own_text_tail {
                         write!(w, "var_{name}")?;
                     } else {
                         self.indent += 1;
                         self.output_code_inner(w, v)?;
                         self.indent -= 1;
+                        if clone_outer_text {
+                            write!(w, ".clone()")?;
+                        }
                     }
                     if is_tail_capture_call {
                         // Close the block opened above; the call is its tail expr.

@@ -56,24 +56,30 @@ reaches the generic scalar-range branch). This split is the doc's spine.
   (Col-Spatial) spatial<T[a]> / [a,b] / [a,b,c]   1–3 coordinate axes (MAX_AXES=3), Morton/Z-order radix tree;
                                               the runtime Parts variant is `Radix`.  integer-not-null coord keys;
                                               negative coords via offset-binary (signed axes order like sorted).
-  (Col-Trie)    trie<T[k]>                    a radix tree over ONE `text`-NOT-NULL key field: exact lookup, KEY-ORDERED
+  (Col-Trie)    trie<T[k]>                    a radix tree over ONE `text` key field: exact lookup, KEY-ORDERED
                                               iteration, and a PREFIX slice — the operation the kind exists for.
+                                              Every text is its own key: a key's bytes order as bytes, so a
+                                              key and the same key with trailing NULs are two keys and the
+                                              shorter comes first.  An absent key (`text?`, or a null text)
+                                              is held in a slot of its own: first in a walk, found by an
+                                              exact lookup, and in NO prefix slice — an absent text begins
+                                              with nothing (`(E-NullArg)`).
                                               Shares `radix_tree` with `Radix` and nothing above it: `Radix` is
                                               GEOMETRIC (Morton interleave, boxes, nearest) and none of that
                                               means anything for a word, which is why `spatial` is not spelled
                                               `radix` at the surface.
 ```
-**The two NOT-NULL keys are the two kinds that key on something other than the value.**  A trie
-walks the BYTES of its key and a spatial interleaves its axes into a Morton code, and an absence
-has neither: no byte string (and `""` is a different value — `(L-Null-Text)`), no position on the
-curve.  So both refuse a `?` on a key at the declaration, naming it.  The three VALUE-keyed kinds
-do not ask: `hash` keys on the value, where an absent key is a value like any other, and `sorted`
-and `index` order by it, where `(L-Null)`'s in-band sentinel puts an absence first, below every
-present key — measured in `loft-suite/attic/scripts/1429b-the-kinds-that-do-hold-an-absent-key.loft`, which
-is also where the two refusals' advertised cures are checked.  Asked as a bare `Type::Text`, the
-kind test read a `text?` as "not a text", which let it take a spatial AXIS' place: accepted,
-iterating its records, and answering null for a point just inserted — loft#799's failure reached
-through the `?` (loft#1429).
+**The one NOT-NULL key is the kind that keys on something other than the value.**  A spatial
+interleaves its axes into a Morton code, and an absent coordinate has no position on the curve,
+so it refuses a `?` on an axis at the declaration, naming it.  A trie walks the BYTES of its key
+and an absent text has none either, but the trie keeps it apart from the bytes — in its own slot,
+ordered first — so it admits a `?` key as the VALUE-keyed kinds do: `hash` keys on the value,
+where an absent key is a value like any other, and `sorted` and `index` order by it, where
+`(L-Null)`'s in-band sentinel puts an absence first, below every present key
+(`loft-suite/attic/scripts/1429b-the-kinds-that-do-hold-an-absent-key.loft` measures those, and
+`loft-suite/rules/collections/Col-Trie/2241-…` the trie's).  The kind test peels the `?` before
+asking whether a key is a text: a `text?` is a text in the same four bytes, and must not pass for
+"not a text" and take a spatial AXIS' place.
 
 ```
   (Col-Key)     a key field of hash / sorted / index has an IMMUTABLE VALUE type: a scalar

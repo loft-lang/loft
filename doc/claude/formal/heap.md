@@ -508,14 +508,15 @@ the record it points at, not a place of the holder's.
                  that never dies, unbounded in the call count.  The release arm is
                  gated on the SHAPE and the ELEMENT TYPE, both read from the
                  layout: the store's root record is a one-field `main_vector<T>`
-                 wrapper (what `OpDatabase` mints — asking the shape, never a byte
-                 offset, is what keeps the two backends together: the field sits at
-                 8 on `--native` and 12 on the interpreter) and the element type
-                 OWNS HEAP.  A no-heap element pays exactly the old reset — for a
-                 field vector the emitter decides that from `OpGetField`'s vector
-                 type, since asking the layout at run time searched the record's
-                 fields per clear; a field
-                 vector, a user-struct root and a placed buffer (never record 1)
+                 wrapper (what `OpDatabase` mints) and the element type OWNS HEAP.
+                 The wrapper's one field is at ONE position, `pos 8`, on every
+                 backend and through every DbRef that names it — a vector local's
+                 own mint, a buffer bound through `OpGetField(…, 0)`, a callee's
+                 refill — so a clear reads the vector a fill wrote.  A no-heap
+                 element pays exactly the old reset — for a field vector the
+                 emitter decides that from `OpGetField`'s vector type, since asking
+                 the layout at run time searched the record's fields per clear; a
+                 field vector, a user-struct root and a placed buffer (never record 1)
                  keep it too.  Values are unaffected either way — this is a leak
                  rule, not a semantics rule.  The release is ONE STORE RESET, not a
                  walk: the shape above says the vector owns the store's whole
@@ -639,6 +640,29 @@ fill reached rather than at the fresh minimum (`vector::reached_capacity`, read 
 record before the reset): the space is the store's already, the buffer is reused across
 calls (R-Reuse), and a ladder re-run per call would free a rung into the store each step
 and take every later claim off the bump path (@PLN157 § V-ai).
+
+```
+  (H-KeepRoom)   MINTING a store again (`OpDatabase` on a variable that already names a
+                 live store, `Stores::clear`) whose root is a one-field
+                 `main_vector<T>` wrapper re-establishes the wrapper and its vector
+                 at length ZERO inside the block the vector held — the capacity its
+                 last fill reached — exactly as (H-ClearRelease)'s reset does, and
+                 releases what the elements owned as that reset does.  The vector
+                 reads empty and present; nothing else of the store survives.
+```
+
+**In words.**  A capacity is no value: a vector of length zero with room for 16 000 bytes and
+one with none answer every operation alike, so the mint may keep the room the reset would.
+The case is the reused hidden buffer (R-Reuse): one store handed to every call of a site, which
+the callee's prologue clears (`loft_vec_clear_release`, already at the reached capacity per
+`H-RootExtent`) and then MINTS again (`loft_database_wrapper` → `loft_database` →
+`loft_st_init`), throwing the block away — so cbor's `encode_bytes`, whose buffer is reused
+across its 100 calls, regrows 16 KiB from nothing on every call (`loft_st_resize`,
+`loft_vec_reserve_more`, the `memmove` of each rung).  The mint keeps the same gate as the
+reset — the SHAPE (a store-root `main_vector<T>`) read from the layout, never an offset — and
+falls back to the plain re-initialisation for any other root.  The C mints with `loft_database_room` (`database_operator`) and skips the parser's re-zero of the
+vector (`FnWriter::keep_room_operator`); the other backends keep the plain mint.  `-DLOFT_NO_KEEP_ROOM`;
+guard `tests/scripts/a-reused-buffer-keeps-its-room.loft`; pricing in [heap-history.md](heap-history.md).
 
 **In words.** `free` releases a store slot and everything in it. It is disciplined: (1) **LIFO** —
 you free stores in reverse allocation order, because a store's lifetime is nested inside the
@@ -894,9 +918,8 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 OPEN: **0**.  The entries the register closed, and how each closed, are in
 [heap-history.md](heap-history.md).
 
-No entry is open.  `tests/ownership_drop_gate.rs` gives every generated cell
-a lease verdict and ties each cell that must release once, and does not, to exactly one open
-entry.
+`tests/ownership_drop_gate.rs` gives every generated cell a lease verdict and ties each cell
+that must release once, and does not, to exactly one open entry.
 
 Writing these rules **shrinks** [operational.md](operational.md)'s D-op-1 — the heap/store
 steps it named as *"unwritten … the interpreter remains their spec"* now have a written

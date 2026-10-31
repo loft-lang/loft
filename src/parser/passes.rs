@@ -1216,11 +1216,12 @@ impl Parser {
         for (lib, into, name, bind, public, pos) in std::mem::take(&mut self.deferred_import_misses)
         {
             if !self.data.import_name(lib, into, &name, &bind, public) {
-                self.lexer.pos_diagnostic(
-                    Level::Error,
-                    &pos,
-                    &format!("Name '{name}' not found in library"),
-                );
+                // `@FR-F-Surface` — kept is not missing (as at the import's own site).
+                let msg = self
+                    .data
+                    .import_refusal(lib, &name, &pos.file)
+                    .unwrap_or_else(|| format!("Name '{name}' not found in library"));
+                self.lexer.pos_diagnostic(Level::Error, &pos, &msg);
             }
         }
 

@@ -1,0 +1,11 @@
+LOFT-DSCHEMA v2
+hash=7093563851787252825
+root=hash<GNarrow[k]>
+slot=5
+--
+@endian	little
+GNarrow	size=16	struct{k@8:byte<1000,false>, v@0:integer}
+byte<1000,false>	size=1	byte(start=1000,null=false)
+hash<GNarrow[k]>	size=4	hash<GNarrow>(keys=[0],elem_size=16,placement=3)
+integer	size=8	base
+--facts--

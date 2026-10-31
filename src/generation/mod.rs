@@ -1053,6 +1053,11 @@ pub struct Output<'a> {
     /// element.  Cleared after the assignment so argument-context
     /// tuples (which need `&str`) keep the default emit.
     pub tuple_text_to_string: bool,
+    /// Set while a tuple's TEXT element is emitted (a literal's member or a member write): a
+    /// value block there whose tail is a text variable of an enclosing scope — a format
+    /// string's work text — yields a clone of it, since the element takes its own copy and a
+    /// moved work text is gone for the next loop pass (E0382, loft#2256).
+    pub tuple_text_elem: bool,
     /// The tuple local an `if` arm is about to hand over, when handing it over would MOVE
     /// it (loft#1354).  Read by the `ValueType::Var` arm, which clones exactly this
     /// variable and nothing else — a blanket clone on every tuple read would copy a
@@ -1978,6 +1983,7 @@ impl<'a> Output<'a> {
             fn_ref_context: false,
             i32_literal_context: false,
             tuple_text_to_string: false,
+            tuple_text_elem: false,
             clone_handed_tuple_local: None,
             tuple_slot_types: Vec::new(),
             call_stack_prefix: None,
@@ -6499,6 +6505,16 @@ impl Output<'_> {
         self.lazy_splits.contains_key(vec).then_some(*vec)
     }
 
+    /// Is `v` a text variable declared outside the block at `scope`, and not borrowed?
+    pub(crate) fn outer_text_var(&self, v: &Value, scope: u16) -> bool {
+        let Value::Var(x) = v.unspan() else {
+            return false;
+        };
+        let vars = self.data.def(self.def_nr).variables();
+        let is_text = matches!(vars.tp(*x).base(), Type::Text(_));
+        vars.scope(*x) != scope && is_text && !self.text_borrowed(*x)
+    }
+
     /// Is text variable `v` of the function being emitted BORROWED — its Rust slot a `&str` —
     /// rather than an owned `String`?  A text PARAMETER is: the caller's text arrives
     /// borrowed.  A text LOCAL is not, unless a rewrite admitted it to borrow what it reads
@@ -9248,8 +9264,12 @@ extern crate loft;"
                  // wasm32 (wasip2 / browser) has no thread support, and Android must run\n    \
                  // on its `android_main` thread (the ALooper owner — a spawned thread\n    \
                  // would panic in the graphics event pump), so both run `__run` inline.\n    \
-                 #[cfg(all(not(target_arch = \"wasm32\"), not(target_os = \"android\")))]\n    \
+                 #[cfg(all(not(target_arch = \"wasm32\"), not(target_os = \"android\"), not(target_os = \"macos\")))]\n    \
                  if std::thread::Builder::new().stack_size(loft::codegen_runtime::NATIVE_MAIN_STACK).spawn(__run).expect(\"failed to spawn main-stack thread\").join().is_err() {{ std::process::exit(1); }}\n    \
+                 // macOS: the same thread, and the MAIN thread serves the main dispatch\n    \
+                 // queue, where AppKit keeps its windows (`run_beside_main_queue`).\n    \
+                 #[cfg(target_os = \"macos\")]\n    \
+                 loft::platform::run_beside_main_queue(__run);\n    \
                  // wasm32 has no thread to join, so the halt cannot be observed at a\n    \
                  // join point.  A panic HOOK runs before the abort, which makes the exit\n    \
                  // code reachable even where panics abort rather than unwind — without\n    \
@@ -9285,8 +9305,12 @@ extern crate loft;"
                  // wasm32 (wasip2 / browser) has no thread support, and Android must run\n    \
                  // on its `android_main` thread (the ALooper owner — a spawned thread\n    \
                  // would panic in the graphics event pump), so both run `__run` inline.\n    \
-                 #[cfg(all(not(target_arch = \"wasm32\"), not(target_os = \"android\")))]\n    \
+                 #[cfg(all(not(target_arch = \"wasm32\"), not(target_os = \"android\"), not(target_os = \"macos\")))]\n    \
                  if std::thread::Builder::new().stack_size(loft::codegen_runtime::NATIVE_MAIN_STACK).spawn(__run).expect(\"failed to spawn main-stack thread\").join().is_err() {{ std::process::exit(1); }}\n    \
+                 // macOS: the same thread, and the MAIN thread serves the main dispatch\n    \
+                 // queue, where AppKit keeps its windows (`run_beside_main_queue`).\n    \
+                 #[cfg(target_os = \"macos\")]\n    \
+                 loft::platform::run_beside_main_queue(__run);\n    \
                  // wasm32 has no thread to join, so the halt cannot be observed at a\n    \
                  // join point.  A panic HOOK runs before the abort, which makes the exit\n    \
                  // code reachable even where panics abort rather than unwind — without\n    \
@@ -10842,6 +10866,22 @@ extern crate loft;"
         // gate-OFF (no `Optional` is ever constructed, so `.base()` is a no-op).
         let nullable = nullable || matches!(typedef, Type::Optional(_));
         let typedef = typedef.base();
+        // `@FR-L-OutOfLine` — an out-of-line field is the child-record row the compiler
+        // registered for it; replay that row, read from the compiler's own table.
+        if let Some(content) = self.recorded_field_content(host_type_id, field_name)
+            && let crate::database::Parts::ChildRec(c) = self.stores.types[content as usize].parts
+            && self.stores.child_rec_is_value(c)
+        {
+            let c_ref = type_id_ref(c);
+            emit_db_field(
+                w,
+                s_var,
+                field_name,
+                "crec",
+                &format!("db.child_rec({c_ref})"),
+            )?;
+            return Ok(());
+        }
         if let Type::Vector(c, _) = typedef {
             // loft#923 — peel the ELEMENT's `Optional` for the same reason line 3487
             // peels the field's: `Optional(τ)` shares τ's storage exactly, and the
@@ -11984,6 +12024,11 @@ extern crate loft;"
             // NULL once r holds a borrow); the in-loop displaced-free and the
             // scope-exit `OpFreeRef` (ops/ref_ops.rs) free THIS, never r's view.
             self.witness_vars = collect_witness_vars(self.data, def_nr);
+            // loft#2293 — a VALUE-RECORD local (`(R-ValueLocal)`) is a tuple of its fields
+            // with no store of its own, so it has nothing to track: kept in the set, its
+            // tracker `_own_store_x: DbRef` was assigned the tuple (rustc E0308).
+            let value_locals = &self.value_record_locals;
+            self.witness_vars.retain(|v| !value_locals.contains_key(v));
             // Emit in variable order, not hash order.  `witness_vars` is a `HashSet`,
             // whose iteration order Rust randomises PER PROCESS, so emitting straight
             // from it made the generated Rust differ between two runs of the same binary

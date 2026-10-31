@@ -1307,6 +1307,19 @@ impl Stores {
             .is_some_and(|t| t.name.starts_with("main_vector<"))
     }
 
+    /// The byte offset of a vector wrapper's one field — where its vector's handle lives — read
+    /// from the layout; `None` for any other type.
+    #[must_use]
+    pub fn wrapper_field_pos(&self, tp: u16) -> Option<i32> {
+        if !self.is_vector_wrapper(tp) {
+            return None;
+        }
+        match &self.types[tp as usize].parts {
+            Parts::Struct(fs) if fs.len() == 1 => Some(i32::from(fs[0].position)),
+            _ => None,
+        }
+    }
+
     /// `@FR-R-Place` — a wrapper mint (`OpDatabase(b, main_vector<T>)`, a returned collection
     /// literal's) into a LIVE buffer that is not that wrapper's own store: the caller handed
     /// the callee a PLACE, a collection field of a record of its own ("the buffer IS the
@@ -1705,6 +1718,12 @@ impl Stores {
         // `@FR-G-Arg-Rebind` — a store a live generator frame names is released when the
         // frame is done with it too: this free only orphans it.
         if !self.frame_held.is_empty() && self.orphan_if_frame_held(db.store_nr) {
+            return;
+        }
+        // loft#2273 — a store a closure COPY shares with its source record is released by the
+        // last of them; this free only takes one share back.  The one use of that count:
+        // `closure_share.rs` says why there is no other.
+        if self.release_closure_share(db.store_nr) {
             return;
         }
         let al = db.store_nr;
@@ -2496,12 +2515,18 @@ impl Stores {
     /// order** (its in-order walk is key order — Morton/Z-order for a spatial
     /// index), so `radix_db::records` already yields the records sorted: no O(n log n)
     /// key sort, just the O(n) tree walk.  The `tp` is unused for the same reason.
-    pub fn build_radix_sorted_vec(&mut self, coll: &DbRef, _tp: u16) -> DbRef {
+    pub fn build_radix_sorted_vec(&mut self, coll: &DbRef, tp: u16) -> DbRef {
         // An absent holder has no scratch — see `build_hash_sorted_vec`.
         if coll.rec == 0 {
             return DbRef::NULL;
         }
-        let recs = crate::radix_db::records(coll, &self.allocations);
+        // A trie walks through `trie_db`: its null-key record sits in a slot ahead of the
+        // tree (`@FR-Col-Trie`), which the shared tree walk does not know about.
+        let recs = if matches!(self.types[tp as usize].parts, Parts::Trie(..)) {
+            crate::trie_db::records(coll, &self.allocations)
+        } else {
+            crate::radix_db::records(coll, &self.allocations)
+        };
         self.build_rec_scratch(coll, &recs)
     }
 
@@ -3121,6 +3146,7 @@ impl Stores {
             owed: super::upgrade::Owed::default(),
             upgrade_routines: self.upgrade_routines.clone(),
             frame_held: Vec::new(),
+            closure_shares: super::closure_share::ClosureShares::default(),
             lazy_driver_allocs: None,
             files: Vec::new(),
             max: (self.allocations.len() + scratch_stores) as u16,
@@ -3129,6 +3155,8 @@ impl Stores {
             bridge_text_dest: None,
             const_refs: self.const_refs.clone(),
             last_json_errors: Vec::new(),
+            child_copies: Vec::new(),
+            child_copy_depth: 0,
             parse_unfilled: None,
             // The worker inherits the parent's program context, so a `par`
             // inside a `par` worker can dispatch in turn.  Without it the
@@ -4449,6 +4477,20 @@ impl Stores {
     }
 
     pub fn copy_claims(&mut self, rec: &DbRef, to: &DbRef, tp: u16) {
+        self.child_copy_depth += 1;
+        self.copy_claims_one(rec, to, tp);
+        self.child_copy_depth -= 1;
+        if self.child_copy_depth == 0 {
+            // `@FR-L-OutOfLine` — the children the walk claimed, walked as a loop.
+            while let Some((from, into, content)) = self.child_copies.pop() {
+                self.child_copy_depth += 1;
+                self.copy_claims_one(&from, &into, content);
+                self.child_copy_depth -= 1;
+            }
+        }
+    }
+
+    fn copy_claims_one(&mut self, rec: &DbRef, to: &DbRef, tp: u16) {
         if self.copy_absent_collection(rec, to, tp)
             || (self.owns_plain_vectors(tp) && self.copy_plain_vectors(rec, to, tp))
         {
@@ -4539,8 +4581,11 @@ impl Stores {
                     self.store_mut(to).set_u32_raw(to.rec, to.pos, 0);
                 } else {
                     let content_kt = *content_kt;
-                    let size = u32::from(self.size(content_kt));
-                    let new_rec = self.allocations[to.store_nr as usize].claim(size);
+                    let size = u32::from(self.enum_parent_size(content_kt));
+                    let new_rec = {
+                        let words = self.child_rec_words(content_kt);
+                        self.allocations[to.store_nr as usize].claim(words)
+                    };
                     let src_db = DbRef {
                         store_nr: rec.store_nr,
                         rec: src_rec,
@@ -4568,9 +4613,10 @@ impl Stores {
                             size as isize,
                         );
                     }
-                    // Deep-copy nested heap fields (text, Reference, etc.).
-                    self.copy_claims(&src_db, &new_db, content_kt);
                     self.store_mut(to).set_u32_raw(to.rec, to.pos, new_rec);
+                    // Deep-copy nested heap fields (text, Reference, etc.) — deferred to the
+                    // outermost copy's loop, so a chain takes no stack per link.
+                    self.child_copies.push((src_db, new_db, content_kt));
                 }
             }
             Parts::Array(_) | Parts::Ordered(_, _) => {
@@ -7184,16 +7230,25 @@ impl Stores {
     /// untyped local store has no identity to compare and passes. `path`
     /// is a local file or an `http(s)://` URL — the sidecar is read from beside
     /// it (`<path>.dschema`), over the same transport.
+    ///
+    /// `Some(trie_v1)` reads the image; `trie_v1` says its tries were written under a
+    /// placement this build reads as written (`placement::TRIE_READS`), which the reader must
+    /// be told ([`PagedReader::trie_v1`](crate::paged_reader::PagedReader::trie_v1)).
     #[cfg(paged_store)]
-    fn layout_gate_ok(&mut self, path: &str, local: &DbRef) -> bool {
+    fn layout_gate_ok(&mut self, path: &str, local: &DbRef) -> Option<bool> {
         let known_type = self.allocations[local.store_nr as usize].known_type;
         if known_type == u16::MAX {
-            return true; // untyped store — no identity to compare against
+            return Some(false); // untyped store — no identity to compare against
         }
         let current = crate::schema_sidecar::LayoutIdentity::of(self, &[known_type]);
         let verdict = crate::paged_reader::check_sidecar(path, &current, self.release());
         if verdict.is_raw_safe() {
-            return true;
+            return Some(false);
+        }
+        if let crate::schema_sidecar::SchemaVerdict::Changed(diff) = &verdict
+            && diff.trie_v1
+        {
+            return Some(true);
         }
         // A layout mismatch is a rare, important safety event — always surface it
         // so a rejected load is not silently mistaken for "key absent". Through
@@ -7211,7 +7266,7 @@ impl Stores {
             ),
         };
         self.refuse_paged(path, &reason);
-        false
+        None
     }
 
     /// @PLN97 arc G Phase 4 / 3b.7 — load the entries with integer key in
@@ -7231,15 +7286,16 @@ impl Stores {
             return 0;
         };
         let path = resolved.as_str();
-        if !self.layout_gate_ok(path, local) {
+        let Some(trie_v1) = self.layout_gate_ok(path, local) else {
             return 0;
-        }
+        };
         use crate::paged_reader::{PageSource, PagedReader};
         let Ok(source) = PageSource::open(path) else {
             self.refuse_paged(path, "it cannot be opened as a paged source");
             return 0;
         };
         let mut reader = PagedReader::new(source);
+        reader.trie_v1 = trie_v1;
         let tp = self.allocations[local.store_nr as usize].known_type;
         if tp == u16::MAX {
             self.refuse_paged(path, "the target collection's store has no recorded type");
@@ -7942,15 +7998,16 @@ impl Stores {
             return false;
         };
         let path = resolved.as_str();
-        if !self.layout_gate_ok(path, local) {
+        let Some(trie_v1) = self.layout_gate_ok(path, local) else {
             return false;
-        }
+        };
         use crate::paged_reader::{PageSource, PagedReader};
         let Ok(source) = PageSource::open(path) else {
             self.refuse_paged(path, "it cannot be opened as a paged source");
             return false;
         };
         let mut reader = PagedReader::new(source);
+        reader.trie_v1 = trie_v1;
         let root_tp = self.allocations[local.store_nr as usize].known_type;
         if root_tp == u16::MAX {
             self.refuse_paged(path, "the target collection's store has no recorded type");
@@ -8013,15 +8070,16 @@ impl Stores {
             return 0;
         };
         let path = resolved.as_str();
-        if !self.layout_gate_ok(path, local) {
+        let Some(trie_v1) = self.layout_gate_ok(path, local) else {
             return 0;
-        }
+        };
         use crate::paged_reader::{PageSource, PagedReader};
         let Ok(source) = PageSource::open(path) else {
             self.refuse_paged(path, "it cannot be opened as a paged source");
             return 0;
         };
         let mut reader = PagedReader::new(source);
+        reader.trie_v1 = trie_v1;
         let root_tp = self.allocations[local.store_nr as usize].known_type;
         if root_tp == u16::MAX {
             self.refuse_paged(path, "the target collection's store has no recorded type");
@@ -8106,15 +8164,16 @@ impl Stores {
             return 0;
         };
         let path = resolved.as_str();
-        if !self.layout_gate_ok(path, local) {
+        let Some(trie_v1) = self.layout_gate_ok(path, local) else {
             return 0;
-        }
+        };
         use crate::paged_reader::{PageSource, PagedReader};
         let Ok(source) = PageSource::open(path) else {
             self.refuse_paged(path, "it cannot be opened as a paged source");
             return 0;
         };
         let mut reader = PagedReader::new(source);
+        reader.trie_v1 = trie_v1;
         let root_tp = self.allocations[local.store_nr as usize].known_type;
         if root_tp == u16::MAX {
             self.refuse_paged(path, "the target collection's store has no recorded type");
@@ -8252,9 +8311,9 @@ impl Stores {
         key_sets: &[Vec<crate::keys::Content>],
         stats_label: &str,
     ) -> i64 {
-        if !self.layout_gate_ok(path, local) {
+        let Some(trie_v1) = self.layout_gate_ok(path, local) else {
             return 0;
-        }
+        };
         use crate::paged_reader::{PageSource, PagedReader};
         // `path` is a local file OR an `http(s)://` URL — the paged reader pulls
         // only the pages a lookup touches, from disk or over the network (#517).
@@ -8263,6 +8322,7 @@ impl Stores {
             return 0;
         };
         let mut reader = PagedReader::new(source);
+        reader.trie_v1 = trie_v1;
 
         // Schema from the LIVE type of `local` (never reverse-engineered bytes).
         // `known_type` roots the collection directly (annotated local) OR the

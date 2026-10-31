@@ -488,8 +488,9 @@ edit.  Measured on the 24-core box; the dated runs are in the history companion
   file, never a sleep loop.
 - Every gate the change can move runs BEFORE the push; a gate first run on GitHub after it
   costs the gate, a fix build, and a red tip a sibling may already have joined.
-- Land one issue per push.  A defect found while verifying is filed with its repro at once and
-  is the next push, not part of this one.
+- Land one fix per push.  A defect found while verifying is fixed in its own next push, not
+  folded into this one; it is filed only when it blocks you or needs a design and could have
+  reached users (CLAUDE.md § Bug-filing policy).
 
 ## What a compiler change needs before its commit — and what runs beside the work
 
@@ -565,6 +566,17 @@ and then it is ONE new run, not a restart per fix.  Re-running everything is the
 because it needs no thought about what moved; deciding what moved is the work, and a rerun of
 forty-five minutes for one test is the cost of skipping it.
 
+**A run VALIDATES; it is never run for a green notice** (owner).  A gate — local, or a
+`gh workflow run ci.yml` dispatch — is started only when it answers a question no cheaper check
+answers: does a change of unknown reach break something, or does a fix whose check cannot run
+here hold.  Once every failure a run named is fixed and that fix has passed its own check (the
+failed test, the script that reported it, the row measured on the runner), the branch is done:
+do not start another run to turn the red verdict green.  The green verdict belongs to the PR,
+whose own `ci.yml` runs on the exact sha that merges.  An agent branch does not merge as it is —
+it lands as part of a join of the active branches — so its own verdict, its tallies and its
+pinned rows are superseded the moment the join is made, and a run spent confirming them confirms
+nothing that reaches `main`.
+
 ### Sizing the checks for a performance change
 
 Size the local checks to how far the change reaches and how quietly it could fail.
@@ -626,14 +638,14 @@ does not belong on a PR, however cheap it is.**
 
 | cadence | jobs | trigger |
 |---|---|---|
-| **per PR** (`ci.yml`) | full suite ubuntu + macOS, ASan UAF/OOB (ubuntu), `stack_align_guard`, browser build+probe, Clippy, Format, Doc hygiene, CodeQL (`codeql.yml`, scoped by `.github/codeql/codeql-config.yml`), feature catalogue, contract-goldens drift, API compat, the advisory ownership leak scan (`leak-scan`), the advisory native suites under a STATIC link (`static-link`: `LOFT_NATIVE_CABI=0`, every suite that links a package; ubuntu on a PR, macOS too on push / daily / dispatch — no other Unix leg links statically, @PLN197), several advisory doc jobs, **the language suite** (`language-suite`: loft-lang/loft-suite at the commit `tests/loft-suite.pin` names, every rule cell on both backends through `loft --tests` against the release binary the diff builds — required, on every diff, @PLN193), **the C backend sweep** (`c-sweep`: every corpus program through the C backend in its three macro modes against the interpreter, four shards of about ten minutes; advisory, @PLN203 C8) | `pull_request` |
+| **per PR** (`ci.yml`) | full suite ubuntu + macOS, ASan UAF/OOB (ubuntu), `stack_align_guard`, browser build+probe, Clippy, Format, Doc hygiene, CodeQL (`codeql.yml`, scoped by `.github/codeql/codeql-config.yml`), feature catalogue, contract-goldens drift, API compat, the advisory ownership leak scan (`leak-scan`),  several advisory doc jobs, **the language suite** (`language-suite`: loft-lang/loft-suite at the commit `tests/loft-suite.pin` names, every rule cell on the interpreter and the C backend through `loft --tests` against the release binary the diff builds — required, on every diff, @PLN193; its rustc-native leg runs on the daily schedule), **the C backend sweep** (`c-sweep`: every corpus program through the C backend in its three macro modes against the interpreter, four shards of about ten minutes; advisory, @PLN203 C8) | `pull_request` |
 | **push to main** | everything above **plus the real `Test (windows-latest)` leg** (~53 min) | `push: main` |
 | **nightly 04:00** (`miri.yml`) | Miri ×2, ASan UAF/OOB ×2, ASan interpreter leak ×2, POISON arena-UAF, POISON-CLAIM claimed-slot gate (both backends), STACK-SHADOW frame-slot gate, TSan, native-backend ASan, the C backend's poison and ASan sweeps (`c-sweep-unsound`, four poison shards and eight ASan ones), debug-assertions, valgrind memcheck sweep (release binary, both backends), release-gate sweeps (the ignored tests whose reason names the job: ownership fuzz replay, SI-2 check, whole corpus in one process, cross-mode and native leak gates, keyed-collection poison sweep and differential, seed-corpus replay), toolchain matrix (beta+nightly), doc index hygiene, library health, stale-plan audit | `schedule` |
 | **nightly 04:30** | `registry-validation` (scope `tip`) — each published package's NEWEST stable installed + tested on both backends, 42 legs | `schedule` |
 | **Sundays 05:30** | `registry-validation` (scope `full`) — EVERY non-yanked published version, 164 legs.  The nightly only ever validated the tip, so 121 of 164 versions were checked by nothing (loft#1462, the gate hole behind #1448).  Weekly rather than nightly because a rotted OLD release breaks nobody until somebody pins it | `schedule` |
 | **nightly 06:17 + on `src/**`,`default/**`** | `revalidate-libs` — ONE suite pass per published lib, scored twice: does it still compile + test (a break is the freeze's business), and is it RELEASE-READY — RED on any warning, since a lib carrying them fails its own `LOFT_DENY_WARNINGS` CI. **Advisory, never a required check**; blocking on a release | `schedule`, `push`, `pull_request` |
 | **nightly 07:00** | `lib-branch-report` — unmerged branches across the library repos | `schedule` |
-| **daily 03:00** | the Windows leg (mirrored onto PRs as the non-blocking `Windows (daily)` check) | `schedule` |
+| **daily 03:00** | the Windows leg (mirrored onto PRs as the non-blocking `Windows (daily)` check), and the **rustc-native** jobs taken off the per-change path: the language suite on rustc-native (`language-suite`'s daily step, its junit kept beside the per-change one) and the native suites under a STATIC link (`static-link`: `LOFT_NATIVE_CABI=0`, every suite that links a package, ubuntu and macOS, @PLN197).  The per-change compiled backend is the C (@PLN203) | `schedule` |
 | **daily 05:00** | `browser-threads` — the threaded-wasm browser leg | `schedule` |
 | **daily 05:45** | `lib-main-health` — published libs against their own `main` | `schedule` |
 | **daily 06:15** | `consumer-main-health` — each consumer's tip (moros, dryopea, Moros-Economy-Development, crawler) against loft main, every package on both backends; a stability meter (STABILITY_ROADMAP.md § The owner's directive) | `schedule` |

@@ -2701,6 +2701,54 @@ use a separate collection or add after the loop"
     /// Compound assignments are excluded — `h.v += x` appends an ELEMENT, so the
     /// source is legitimately not the field's type, and the operator's own attribute
     /// list types it.
+    /// `@FR-O-Detach` for a TUPLE: when `code` — the value about to be written to the tuple local
+    /// `t`, or to one of its members — reads `t`, and `t` holds a heap member, bind a snapshot of
+    /// `t` first (each heap member copied, as a whole-tuple bind copies it) and read the snapshot
+    /// instead.  The snapshot's bind is left in [`Parser::tuple_self_snapshot`], which
+    /// `parse_assign_op` runs as a statement ahead of the assignment.  A tuple literal's member copies and fresh builds land in stores the literal SITE
+    /// reuses, which from the second evaluation are the stores `t`'s members live in; the reads
+    /// therefore have to be taken before the first of those stores is cleared (loft#2261).
+    /// Run the snapshot [`Self::snapshot_tuple_self_read`] left for this assignment as a
+    /// statement ahead of it, and restore the enclosing assignment's (`outer`).
+    fn prefix_tuple_snapshot(&mut self, code: &mut Value, outer: Option<Value>) {
+        if let Some(snapshot) = std::mem::replace(&mut self.tuple_self_snapshot, outer) {
+            let statement = std::mem::replace(code, Value::Null);
+            *code = Value::Insert(vec![snapshot, statement]);
+        }
+    }
+
+    pub(crate) fn snapshot_tuple_self_read(&mut self, t: u16, code: &mut Value) {
+        if self.first_pass || t == u16::MAX || t >= self.vars.count() {
+            return;
+        }
+        let Type::Tuple(elems) = self.vars.tp(t).base().clone() else {
+            return;
+        };
+        if !elems.iter().any(|e| !crate::data::is_scalar(e.base())) || !code.reads_var(t) {
+            return;
+        }
+        let mut types = elems.clone();
+        let mut members = Vec::with_capacity(elems.len());
+        for (i, tp) in elems.iter().enumerate() {
+            let mut m = Value::TupleGet(t, i as u16);
+            if let Some(owned) = self.tuple_member_owned_copy(&mut m, tp) {
+                types[i] = owned;
+            }
+            members.push(m);
+        }
+        let snap_tp = Type::Tuple(types);
+        let snap = self.create_unique("tsnap", &snap_tp);
+        if snap == u16::MAX {
+            return;
+        }
+        self.vars.defined(snap);
+        code.map_nodes(&mut |n| match n {
+            Value::Var(x) | Value::TupleGet(x, _) if *x == t => *x = snap,
+            _ => {}
+        });
+        self.tuple_self_snapshot = Some(v_set(snap, Value::Tuple(members)));
+    }
+
     pub(crate) fn field_store_mismatch(
         &mut self,
         op: &str,
@@ -3913,6 +3961,10 @@ use a separate collection or add after the loop"
     }
 
     #[allow(clippy::too_many_arguments)] // the inner fn's parameter list, forwarded
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the assignment's bracketing steps around its inner parse, one per concern"
+    )]
     pub(crate) fn parse_assign_op(
         &mut self,
         code: &mut Value,
@@ -3986,7 +4038,9 @@ use a separate collection or add after the loop"
         let outer_taken = std::mem::replace(&mut self.assign_target_taken, false);
         // @PLN187 — the place's abstract alias (its read settled it) against the value's.
         let place_fact = std::mem::take(&mut self.operand_fact);
+        let outer_snapshot = self.tuple_self_snapshot.take();
         let tp = self.parse_assign_op_inner(code, op, f_type, to, parent_tp, var_nr, skip_validate);
+        self.prefix_tuple_snapshot(code, outer_snapshot);
         let value_fact = std::mem::take(&mut self.operand_fact);
         self.check_assignment(op, to, &place_fact, &value_fact);
         let taken = std::mem::replace(&mut self.assign_target_taken, outer_taken);
@@ -4783,6 +4837,17 @@ use a separate collection or add after the loop"
         } else {
             (to, f_type)
         };
+        // `@FR-O-Detach` — a tuple LITERAL rebinding the tuple it reads (`t = (t.1, t.0)`,
+        // `t = ([for x in t.0 { x + 1 }], t.1)`) reads a snapshot taken first.  Each member's
+        // copy and each fresh member's build lands in a store this literal SITE reuses on every
+        // evaluation, which from the second pass is the store the old member still lives in:
+        // the clear ran before the read, so a loop emptied or crossed the members (loft#2261).
+        if op == "="
+            && let Value::Var(t) = to
+            && matches!(code.unspan(), Value::Tuple(_))
+        {
+            self.snapshot_tuple_self_read(*t, code);
+        }
         // `@FR-B-Copy` (with `@FR-T-Cons`) — a whole-tuple bind `u = t` COPIES every heap
         // member.  It is lowered onto the literal's own per-member copy: the source
         // becomes the tuple of its member reads and `tuple_member_owned_copy` gives each heap
@@ -5430,12 +5495,29 @@ use a separate collection or add after the loop"
         // (d_nr = 0xDEADBEEF, the issue_313 cross-fn shape).  `skip_free` is
         // the established borrowed-fn-ref carrier (the vector-element read
         // path marks its `__fn_ref_tmp` the same way).
+        //
+        // `@FR-B-Copy`, `@FR-L-CapKeep` — and where the field holds a closure record, the bind
+        // is a COPY of it instead (loft#2273): the local owns its own record, released by its
+        // own scope end, and an overwrite of the field or a release of the host leaves it alone.
         if op == "="
             && var_nr != u16::MAX
             && matches!(&s_type, Type::Function(..))
-            && matches!(code, Value::Block(b) if b.name == "fn_ref_field_read")
+            && matches!(code.unspan(), Value::Block(b) if b.name == "fn_ref_field_read")
         {
-            self.vars.set_skip_free(var_nr);
+            if let Some(copy) = self.fn_ref_field_copy(code) {
+                *code.unspan_mut() = copy;
+                // Pass 1 has no layout to tell a split field by, and marked the view there.
+                self.vars.clear_skip_free(var_nr);
+                // …and the copy depends on nothing: the host's dep the read carried would make
+                // the local a view of it, which a rebind then declines to release.  Pass 1 left
+                // that dep on the slot, and a bind only ever adds deps, so the slot is cleared
+                // here as `rebuild_call_deps` clears a call result's.
+                s_type = s_type.without_deps();
+                let own = self.vars.tp(var_nr).without_deps();
+                self.vars.set_type(var_nr, own);
+            } else {
+                self.vars.set_skip_free(var_nr);
+            }
         }
         // loft#1585 — the same for a generator handle read out of a field or an element
         // (`h = t.g`, `h = tasks[i]`): a VIEW of a member (`(B-View)`, `(H-View-Drop)`), so
@@ -9545,6 +9627,12 @@ use a separate collection or add after the loop"
             // handle instead, so `w.1 = s; s.n = 1` answered `1` through `w.1`, on both
             // backends.  The literal's own helper decides what is a place to copy and what is a
             // fresh value or a parameter that keeps its documented alias.
+            // `@FR-O-Detach` — a member write whose value reads the tuple it writes
+            // (`t.0 = [for q in t.0 { q + 1 }]`) reads a snapshot taken first, for the reason a
+            // literal rebinding its own tuple does (loft#2261).
+            let outer_snapshot = self.tuple_self_snapshot.take();
+            self.snapshot_tuple_self_read(lhs.root, &mut rhs);
+            let member_snapshot = std::mem::replace(&mut self.tuple_self_snapshot, outer_snapshot);
             if let Some(member) = member_for_null.as_ref() {
                 self.tuple_member_owned_copy(&mut rhs, member);
             }
@@ -9564,7 +9652,28 @@ use a separate collection or add after the loop"
                     self.guard_declared_range(&mut rhs, member, &rhs_tp, holds_null);
                 }
             }
-            *code = build_nested_tuple_assign(code, &lhs, rhs);
+            // A text member's copy is filled AHEAD of the write and the write reads its work
+            // text by name: as the written value the copy block moved the work text out, which
+            // native refused the second time a loop came round (E0382).  The literal reads the
+            // work text the same way through its element conversion.
+            let mut fill = None;
+            if let Value::Block(bl) = rhs.unspan()
+                && bl.name == "tuple_member_copy"
+                && matches!(bl.result.base(), Type::Text(_))
+                && let [pre, Value::Var(w)] = bl.operators.as_slice()
+            {
+                fill = Some(pre.clone());
+                rhs = Value::Var(*w);
+            }
+            let write = build_nested_tuple_assign(code, &lhs, rhs);
+            let mut ops: Vec<Value> = member_snapshot.into_iter().collect();
+            ops.extend(fill);
+            *code = if ops.is_empty() {
+                write
+            } else {
+                ops.push(write);
+                Value::Insert(ops)
+            };
             return Type::Void;
         }
         // T1.11b: compound assignment on a tuple LHS is not supported.
@@ -12015,9 +12124,11 @@ use a separate collection or add after the loop"
                 // lives on a struct (`Parts::Struct`) or an enum VARIANT (`Parts::EnumValue`).
                 // The variant def's `attributes()[f_nr]` aligns with its `EnumValue` field order,
                 // so the same const_field / value_const checks below apply unchanged.
+                // A layout the database does not hold yet (the stdlib's own parse, before its
+                // types are registered) has no const field to check.
                 if known != u16::MAX
-                    && let Parts::Struct(fields) | Parts::EnumValue(_, fields) =
-                        &self.database.types[known as usize].parts
+                    && let Some(Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+                        self.database.types.get(known as usize).map(|t| &t.parts)
                 {
                     // @PLN102 K1 — name the owner accurately: an enum-variant owner is a
                     // "variant", a struct owner a "struct" (the struct wording is unchanged).

@@ -493,8 +493,12 @@ fn apply(
         get_field: u32,
         tp_nr: i32,
     ) -> bool {
+        // The BIND is rewritten, never `t`'s null-init: walked first, the init became the
+        // projection and the bind stayed a copy — a view of a loop variable declared at
+        // function scope, ahead of the loop that binds it (loft#2265: native E0425 `var_c`).
         if let Value::Set(x, rhs) = n.unspan_mut()
             && *x == t
+            && !matches!(rhs.unspan(), Value::Null)
         {
             match shape {
                 Shape::Plain(a) => {

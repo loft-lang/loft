@@ -1,33 +1,21 @@
 ---
 name: design-protocol
 description: >-
-  Design Protocol 1 — a design is a testable HYPOTHESIS about an invariant, not a
-  plan you execute. The DESIGN-mode counterpart to the engineering-rigor skill
-  (which routes here for the design half). USE THIS whenever you are about to commit
-  to a load-bearing design — a core representation, runtime, memory model, codegen, a
-  public contract, a data format, or any algorithm that will carry weight: name the
-  ONE invariant, count its re-assertion sites, build the cheapest probe that could
-  FALSIFY each load-bearing claim, then build and validate against the written
-  prediction. And for exact-invariant domains where you cannot even form the
-  invariant (geometry, caching, hashing, store/memory lifetime, round-trips), flip to
-  the constructive instrument — plot a concrete instance of the ANSWER and read the
-  invariant off it. Reach for it when a design feels too clean, when you keep reaching
-  for an approximation, or whenever you catch yourself about to build the first
-  coherent design without probing it. ALSO reach for it BEFORE writing any routine,
-  predicate, helper, or type-list that might already exist somewhere else — in another
-  module of this project, or in a library or package the project can already use — and
-  especially when PORTING or RE-TARGETING something that already works (a new backend, a
-  new output format, a standalone or single-file version, a different language). That
-  case does not feel like new work, which is exactly why it is where duplicate and
-  subtly-wrong reimplementations come from. The skill covers how to find the existing
-  implementation before you write a second one, and — as a system grows past what fits in
-  one head — how to anchor that question on NAMED RULES cited at each enforcement site,
-  so "does this already exist?" becomes a lookup instead of a search, and so two sites
-  that implement one rule are distinguishable from two that merely look alike today.
-  ALSO reach for it when deciding or changing what a user-facing construct MEANS — what a
-  bind, a copy, a drop, a return does — and when one rule has collected its third exception
-  or its defect list keeps re-cutting instead of shrinking: the short-term patches are then
-  likely pointing away from the design that is actually needed.
+  A design is a testable HYPOTHESIS about one invariant, not a plan to execute. USE THIS
+  before committing to a load-bearing design — a representation, the memory or ownership
+  model, codegen, a public contract, a data format — and BEFORE RECOMMENDING a rule or
+  design in answer to a question ("which way should this work?", "what would option 2
+  entail?"): answering feels like advice, so the probe gets skipped, and an approved
+  recommendation is built on. Also when deciding what a construct MEANS (what a bind, copy,
+  drop or return does), when one rule collects its third exception or its defect list
+  re-cuts instead of shrinking, and before writing or porting code that may already exist
+  (another module, a library, an implementation for another target). The method: name the
+  invariant, count the sites that re-assert it, build the cheapest probe that could falsify
+  each load-bearing claim — for a recommendation, its premise about the current code — then
+  build and validate against the written prediction. Where you cannot state the invariant
+  (geometry, caching, store lifetime, round-trips), construct a concrete instance of the
+  answer and read the invariant off it; for a meaning, table the candidate rules over the
+  real use-case programs.
 user-invocable: true
 ---
 
@@ -58,146 +46,13 @@ that reads correct in prose and breaks at the first case the prose didn't look a
 
 ## Why a probe, not more care
 
-The generative capability is real — a coherent design, correct load-bearing
-predictions. Its **characteristic failure is over-reach**: making the design
-*cleaner / bigger / more unifying* than the domain warrants — and that failure is
-**invisible to introspection**, because it presents as *elegance*. So brittleness here
-is a **sight failure, not a values failure**: you are not *choosing* fragility, you
-genuinely **cannot see** the false absorption from the desk. The cure is therefore
-**not "more care"** (a values lever — it does nothing for a sight gap) but **better
-eyes**: a test that can falsify the claim. *The design-probe is to a design what the
-boundary matrix is to a bug.*
-
-Earned the hard way. A real design's invariant was framed plausibly but **wrong**,
-and it "also subsumed" an unrelated bug it actually didn't — both read as correct in
-prose; re-reading caught neither, only probing the specific claims did. And the
-inverse: a design shipped *without* probing, whose own plan said *"one chokepoint that
-18 sites route through"* — a spray wearing the word **chokepoint** — shipped as 18
-bypasses and a silent mismatch.
-
----
-
-## The other half — when you cannot form the invariant at all
-
-Over-reach is the failure of a design you **already have** — a candidate invariant,
-too clean, that a falsifying probe can break. It assumes the generative step has
-*succeeded*. There is a symmetric failure one move earlier, where it has **not**: you
-cannot state a candidate invariant at all. Step 1 below names this state — *"a pile of
-cases, not a design yet"* — but treats it as a stop sign. On one class of problem it
-is the **main event**.
-
-**Exact-invariant domains.** In geometry, caching / serialization, hashing, store /
-memory lifetime, and protocol round-trips, the correct design is not an open space to
-explore — it is a single **construction that already exists** and must be
-**recovered**. There the characteristic failure is not over-reach but **failing to
-generate the right candidate**: the mind reaches for an **approximation** (geometry —
-fit a line, bucket the angles, smooth the wobble) or **chases the symptom** (a store
-desync surfacing as three different corruptions). Both are *iterating toward an answer
-that already exists exactly* — motion that never converges, because the target is a
-point, not a region.
-
-**Same epistemics, opposite instrument.** This is still sight, not willpower — you
-cannot *will* the invariant into view, and "think harder" does nothing for the gap.
-But the instrument here is **constructive, not falsifying**: a falsifying probe needs a
-claim to break, and you have none. The generative instrument is to **plot a concrete
-instance of the *answer*** — the exact target output / state for one specific input —
-or build the **cheapest thing that *produces* it** (a throwaway prototype, a
-round-trip test), then **read the invariant off it.** The construction you could not
-name in the abstract is legible in one worked instance.
-
-- *Caching.* A startup-cache desync was symptom-chased across manifestations until the
-  **target store state after a round-trip** was plotted concretely — the invariant then
-  read out at once (*the round-trip must reproduce every binding identically*, the
-  synthetic wrappers included). A one-line fix behind a large discovery cost.
-- *Geometry.* A grid wall-straightener resisted eight approximations (line-fit,
-  angle-buckets) against an *"exact, not an approximation"* spec, until the construction
-  was drawn as a **plotted end-result** (subdivide each cell into triangles; keep the
-  band the boundary cuts, drop the full-in / full-out ones). Only pinpointable after a
-  throwaway prototype *produced* it — then ported unchanged.
-
-**When the answer already EXISTS — capture its artifact and diff.** The cheapest
-"plot the answer" is a **working sibling that already produces the construction** for a
-near-identical case. Then you neither prototype nor theorise: **capture the sibling's
-artifact and your broken one's — into files, not glances — and `diff`.** The residual
-divergence *is* the construction to recover; you read it **off the diff**, not out of
-your head. Three captures sharpen it: BEFORE (your change off) → NOW (your change)
-confirms you changed what you meant; NOW → PROVEN-sibling isolates the bug. The failure
-this prevents is **symptom-chasing a near-miss**: holding a theory of the difference
-*without* the capture, patching one manifestation, and finding the next — motion near a
-point it never lands on. *Earned.* A borrowed store-delivery corrupted only under
-allocation pressure; three theories held without a capture — a stride-type, a missing
-wrapper op, a lifetime flag — were each wrong. Capturing the proven sibling (a simpler
-shape that survives the same stress) beside the broken output showed the one real
-difference in a line: the proven path delivered into a **canonical owned buffer**, the
-broken one reused an incidental local **as** the buffer — a dep the lifetime analysis
-never tracked as the return, so a later allocation reused its slot. The captured diff
-landed on the point the three patches kept circling. (For a captured-artifact domain —
-IR, serialized bytes, store state, protocol frames — this beats prototyping: the answer
-is already running; make yours byte-equal to it.)
-
-**A sharp distinction from the bug side.** The matrix law is *"the truth is in the
-class, invisible in the instance"* — beware acting on one instance. This does **not**
-contradict "plot one concrete instance," because the instances are opposites: an
-instance of the **problem / symptom** is the trap (it hides the class it belongs to);
-an instance of the **answer / end-result** is the instrument (you read the invariant —
-and therefore the class — *off* it). One misleads, the other generates.
-
-**Where this sits.** It runs *before* step 3's falsification and moves step 5's build
-*forward*: for an exact-invariant domain the build is not the last probe but the
-**first, generative** act — the construction is named *by* building the cheapest
-version, that invariant is then probed (steps 3–4), and only then is the real one
-built. The cheap prototype is where the design gets **pinned**, not merely confirmed.
-
----
-
-## When the design is a MEANING — decide from the use cases
-
-Both instruments above assume a correct answer exists. What a user-facing construct *means*
-— what a bind, a copy, a drop, a return does — has none: it has the programs people write
-with it, and they pull in different directions. So list those programs (lifetimes that nest
-and cross, resources that can and cannot be shared, the move-like uses), run each today, and
-table every candidate rule's result per program; decide in the rows where they disagree. Do
-not draw the options from the rule text or the defect list — both encode the current model.
-
-**When the patches point the other way.** A local fix answers *"how do I make this case right
-under the current rule?"*, which strengthens the rule even when the rule is wrong. Signs: the
-fix infers an intent the language cannot state; one rule collects exceptions; the defect list
-re-cuts instead of shrinking; each option grows its own machinery. At the third exception to
-one rule, stop patching and walk the use cases.
-
----
-
-## Write the doc before the code — the failure-paths are where the invariant surfaces
-
-The design doc is **not** after-the-fact write-up. Writing it is the **generative act
-that surfaces the invariant and the requirements** — cheaply, before code commits you to
-an unstated one. Enumerating the **failure paths** (every way it breaks) and naming
-**what must hold across the boundary** (the requirements) is exactly where the
-load-bearing invariant becomes *nameable* (step 1 below). Code-first skips that
-enumeration: you silently adopt the **narrowest invariant you happened to see** and then
-discover the real one by **whack-a-mole** — each patch fixes one case and reveals the
-next the prose never listed. The doc is the cheapest place to find the right invariant;
-code is the most expensive place to discover it was the wrong one.
-
-Earned. A native-link `StableCrateId` collision was "fixed" by **build-identity keying**
-— rebuild the package so its shared deps *match* the consumer's — coded before the design
-was written down. It fixed `libloading` (a flags mismatch), then `log` collided (a
-*profile* mismatch), and the next would have been build-script reproducibility: a symptom
-chased one collision at a time. The load-bearing invariant — *keep the **API identity**
-(the C-ABI contract) separate from the **Rust part** (the package's private internals),
-so the latter never enters the consumer's link* — only became visible once the **failure
-paths were written down** and the two identities were named on the page. *Matching* is
-whack-a-mole; the doc made *separation* legible, and writing it first would have skipped
-the dead-end build entirely.
-
-So for a load-bearing design: **write the doc first** — the failure paths, the
-cross-boundary requirements, the candidate invariant — *then* code. Not a full spec; the
-minimum that forces you to enumerate how it breaks and what must hold. The enumeration is
-the instrument: the class you cannot see from the desk is legible the moment you are
-forced to list its members. (This sits *before* step 1 — it is how you reach a nameable
-invariant — and complements *the other half*: when you cannot state the invariant, plot a
-concrete instance of the answer *or* write the failure paths down; both make the
-construction legible.)
+The characteristic failure of a capable designer is **over-reach**: making the design
+*cleaner / bigger / more unifying* than the domain warrants. It is **invisible to
+introspection**, because it presents as *elegance* — you genuinely **cannot see** the false
+absorption from the desk, so "more care" does nothing for it. The cure is **better eyes**: a
+test that can falsify the claim. *The design-probe is to a design what the boundary matrix is
+to a bug.* (Re-reading the prose of a design that "also subsumed" an unrelated bug caught
+nothing; probing that one claim did.)
 
 ---
 
@@ -264,43 +119,152 @@ don't revert the clean one. See engineering-rigor § "Building a noisy check to 
 
 ---
 
-## The two ways to fail (teach both — they are symmetric)
+## When you RECOMMEND it — the answer is the commitment
+
+A design recommended in answer to a question is committed the moment the asker approves it:
+they build on the recommendation, not on its probes, and an approved wrong rule costs a round
+trip plus everything done under it. Answering does not feel like designing — nothing is being
+edited, no routine is being written — so the cues that normally start this protocol do not
+fire. That is the gap, and it is where a confident rule gets past both of you.
+
+So before you recommend, run step 3 early: build the cell that would falsify the rule, and run
+it. Aim it at the **premise** the recommendation rests on, which is usually a claim about how
+the current system behaves ("X only happens when Y", "this value is reachable only through Z",
+"the owner of this is always the one that outlives the other"). The asker can weigh your
+options; they cannot check your premise about the code — that part is yours. A premise that
+turns on a NAME in the code (an "owned" flag, a "borrowed" marker, an "adopted" store) is the
+riskiest kind: the name says what the code decides, not what the program can still reach.
+
+When you present several options, probe the premise each one rests on, not only your
+favourite's. And say in the answer what you measured and what you assumed: an assumption named
+is one the asker can challenge before approving it, and one left implicit is approved with
+the rest.
+
+---
+
+## The two ways to fail (symmetric — debugging shares them)
 
 | Failure | What it is | The cure |
 |---|---|---|
-| **Ignore the alarm** (under-unify, ship the spray) | N mechanisms for what is really **one** family — a missed invariant; *or* the alarm fired and lost to momentum | the alarm must **gate**, not log (step 6); count the sites (step 2) |
+| **Ignore the alarm** (under-unify, ship the spray) | N mechanisms for what is really **one** family — a missed invariant; *or* the alarm fired and lost to momentum | the alarm must **gate**, not log (step 6); count the sites (step 2); in a bug, the matrix showing the sibling cases |
 | **Obey it blindly** (over-unify) | **one** mechanism forced over genuinely **N** families — a false invariant that breaks when the cases assert their differences | **probe** the cleanest claim (steps 3–4) |
 
-The probe is what distinguishes them: it tells you whether the cases *actually* share
-the invariant. Under-unification is caught by counting sites; over-unification by
-trying to falsify the unifying claim.
+The probe is what distinguishes them: it tells you whether the cases *actually* share the
+invariant. Under-unification is the failure of the lazy, over-unification the failure of the
+clever; both are brittleness, and both are invisible without the matrix or the probe. The same
+pair is *under-reach* and *over-reach* when fixing a bug.
 
-But over-unification has a **second face a falsifying probe misses**: a unifying claim
-that is **true** — every case really fits — yet applied **wider than the defect**. A
-correct universal rule rewritten across every *producer* to repair a fault that lives in
-one *consumer* path is over-reach by **blast radius, not falsehood**; no probe fires,
-because the claim holds, and the re-assertion count can be **N = 1** (one place adds it
-to all), so step 2 stays silent too. The check here is **informational, not
-falsifying** — before committing the universal form, look for a **special circumstance**
-in the implementation context (a consumer / runtime that already holds the per-case
-information) that lets the broken path *adapt* while the producers stay untouched. The
-*correct* universal story is exactly what suppresses that look; the cue to run it is the
-scope ballooning past the size of the failing domain — universal stays the right default,
-but special circumstances still occur and have to be looked for, not assumed away.
+But over-unification has a **second face a falsifying probe misses**: a unifying claim that is
+**true** — every case really fits — yet applied **wider than the defect**. A correct universal
+rule rewritten across every *producer* to repair a fault that lives in one *consumer* path is
+over-reach by **blast radius, not falsehood**; no probe fires, because the claim holds, and the
+re-assertion count can be **N = 1** (one place adds it to all), so step 2 stays silent too. The
+check is **informational, not falsifying** — before committing the universal form, look for a
+**special circumstance** in the implementation context (a consumer / runtime that already holds
+the per-case information) that lets the broken path *adapt* while the producers stay untouched.
+The *correct* universal story is exactly what suppresses that look; the cue to run it is the
+scope ballooning past the size of the failing domain — or the build *stuttering* (§ Keep it
+light). Universal stays the right default, but special circumstances still occur and have to be
+looked for, not assumed away.
+
+---
+
+## The other half — when you cannot form the invariant at all
+
+Over-reach is the failure of a design you **already have** — a candidate invariant, too clean,
+that a falsifying probe can break. There is a symmetric failure one move earlier: you cannot
+state a candidate invariant at all. Step 1 names this state — *"a pile of cases, not a design
+yet"* — but on one class of problem it is the **main event**.
+
+**Exact-invariant domains.** In geometry, caching / serialization, hashing, store / memory
+lifetime, and protocol round-trips, the correct design is not an open space to explore — it is
+a single **construction that already exists** and must be **recovered**. There the
+characteristic failure is **failing to generate the right candidate**: the mind reaches for an
+**approximation** (fit a line, bucket the angles, smooth the wobble) or **chases the symptom**
+(a store desync surfacing as three different corruptions). Both iterate toward an answer that
+already exists exactly — motion that never converges, because the target is a point, not a
+region.
+
+**Same epistemics, opposite instrument.** A falsifying probe needs a claim to break, and you
+have none. The generative instrument is to **plot a concrete instance of the *answer*** — the
+exact target output / state for one specific input — or build the **cheapest thing that
+*produces* it** (a throwaway prototype, a round-trip test), then **read the invariant off it.**
+The construction you could not name in the abstract is legible in one worked instance: a cache
+desync resolved the moment the target store state after a round-trip was written out, and a
+wall-straightener that resisted eight approximations yielded once a prototype drew the exact
+end-result.
+
+**When the answer already EXISTS — capture its artifact and diff.** The cheapest "plot the
+answer" is a **working sibling that already produces the construction** for a near-identical
+case. Then you neither prototype nor theorise: **capture the sibling's artifact and your broken
+one's — into files, not glances — and `diff`.** The residual divergence *is* the construction to
+recover. Three captures sharpen it: BEFORE (your change off) → NOW (your change) confirms you
+changed what you meant; NOW → PROVEN-sibling isolates the bug. The failure this prevents is
+**symptom-chasing a near-miss**: holding a theory of the difference *without* the capture,
+patching one manifestation, and finding the next (three wrong theories of one corruption, where
+the captured diff showed the real difference in a line). For a captured-artifact domain — IR,
+serialized bytes, store state, protocol frames — this beats prototyping: the answer is already
+running; make yours byte-equal to it.
+
+**A sharp distinction from the bug side.** The matrix law is *"the truth is in the class,
+invisible in the instance"*. This does **not** contradict "plot one concrete instance," because
+the instances are opposites: an instance of the **problem / symptom** is the trap (it hides its
+class); an instance of the **answer / end-result** is the instrument (you read the invariant —
+and therefore the class — *off* it).
+
+**Where this sits.** It runs *before* step 3's falsification and moves step 5's build
+*forward*: for an exact-invariant domain the build is the **first, generative** act — the
+construction is named *by* building the cheapest version, that invariant is then probed (steps
+3–4), and only then is the real one built. The cheap prototype is where the design gets
+**pinned**, not merely confirmed.
+
+---
+
+## When the design is a MEANING — decide from the use cases
+
+Both instruments above assume a correct answer exists. What a user-facing construct *means*
+— what a bind, a copy, a drop, a return does — has none: it has the programs people write
+with it, and they pull in different directions. So list those programs (lifetimes that nest
+and cross, resources that can and cannot be shared, the move-like uses), run each today, and
+table every candidate rule's result per program; decide in the rows where they disagree. Do
+not draw the options from the rule text or the defect list — both encode the current model.
+
+**When the patches point the other way.** A local fix answers *"how do I make this case right
+under the current rule?"*, which strengthens the rule even when the rule is wrong. Signs: the
+fix infers an intent the language cannot state; one rule collects exceptions; the defect list
+re-cuts instead of shrinking; each option grows its own machinery. At the third exception to
+one rule, stop patching and walk the use cases.
+
+---
+
+## Write the doc before the code — the failure-paths are where the invariant surfaces
+
+The design doc is **not** after-the-fact write-up. Writing it is the **generative act that
+surfaces the invariant and the requirements** — cheaply, before code commits you to an unstated
+one. Enumerating the **failure paths** (every way it breaks) and naming **what must hold across
+the boundary** is exactly where the load-bearing invariant becomes *nameable*. Code-first skips
+that enumeration: you silently adopt the **narrowest invariant you happened to see** and then
+discover the real one by **whack-a-mole** — each patch fixes one case and reveals the next. (A
+link collision "fixed" by making two builds *match* collided again on the next mismatch; only
+writing the failure paths down showed the invariant was *separation* of the two identities.)
+
+So for a load-bearing design: **write the doc first** — the failure paths, the cross-boundary
+requirements, the candidate invariant — *then* code. Not a full spec; the minimum that forces
+you to enumerate how it breaks and what must hold. The enumeration is the instrument: the
+class you cannot see from the desk is legible the moment you are forced to list its members.
+This sits *before* step 1 and complements
+*the other half*: when you cannot state the invariant, plot a concrete instance of the answer
+*or* write the failure paths down; both make the construction legible.
 
 ---
 
 ## Before you write it — the sites you have to count include the ones you cannot see
 
-Step 2 asks you to count an invariant's re-assertion sites. That presumes you can *find*
-them, and the ones that matter most are the ones you have no reason to open: another
-module, another file, a library the project already depends on. A duplicate
-implementation is rarely a decision made badly. It is a decision **never made** — nothing
-in the local task raised the question, so the choice was never on the table.
-
-This is why more care does not help. Care operates on what is in front of you, and the
-second implementation is not in front of you. The failure is not carelessness, and
-resolving to be more careful next time does not touch it.
+Step 2 asks you to count an invariant's re-assertion sites. That presumes you can *find* them,
+and the ones that matter most are the ones you have no reason to open: another module, another
+file, a library the project already depends on. A duplicate implementation is rarely a
+decision made badly; it is a decision **never made** — nothing in the local task raised the
+question, and care operates only on what is in front of you.
 
 Two radii, asked *before* writing rather than reviewed after:
 
@@ -309,85 +273,49 @@ Two radii, asked *before* writing rather than reviewed after:
 
 **Two implementations of one rule is a defect with a delay, not untidiness.** The copies
 drift, and a drifted copy is worse than a copy: it looks like the thing it is not, so it
-passes review and reads as authoritative while answering differently. Every site you leave
-behind is a place the invariant can quietly stop holding.
+passes review and reads as authoritative while answering differently.
 
 **The case that gets missed is "same functionality, new target"** — porting to another
-backend, another output format, a single self-contained artifact — because it does not
-*feel* like new functionality. It feels like moving something that already exists, so the
-question "does this exist?" reads as already answered. Notice what the constraint actually
-forbids: it forbids *depending* on the original, and that is not a licence to *re-derive*
-it. Port it, or generate the new form from it. Rewriting from the idea throws away every
-correction the original accumulated — which is how a reimplementation comes out not merely
-duplicated but **wrong**, and wrong in ways the original already knew about.
+backend, another output format, a single self-contained artifact — because it feels like
+moving something that already exists, so "does this exist?" reads as already answered. The
+constraint forbids *depending* on the original; that is not a licence to *re-derive* it. Port
+it, or generate the new form from it. Rewriting from the idea throws away every correction the
+original accumulated — which is how a reimplementation comes out not merely duplicated but
+**wrong**, in ways the original already knew about.
 
-**You cannot answer either question from memory, and reading for it does not scale.** So
-reach for an instrument; if the project has none, build the cheap one *before* you write
-the code rather than after. What such a tool looks for:
+**You cannot answer either question from memory, and reading for it does not scale.** Reach
+for an instrument; if the project has none, build the cheap one *before* you write the code.
+What it looks for:
 
 - the same set of names in a membership test or match arm, at two or more sites
 - one symbol name defined in more than one module
 - near-duplicate bodies — the same call sequence under different local names
 - for the outer radius: the dependency manifest, the package index, the library catalogue
 
-That is minutes of scripting, and it pays twice if you **keep it and re-run it** — a
-one-off answer rots, an instrument does not. But such a tool searches by **shape**, and
-shape is the weaker anchor; the next section is the stronger one.
-
-**The outer radius cuts both ways.** Before writing a routine, verify no library
-already implements it — and when none does, that absence is itself a signal:
-**prioritize building the routine INTO a library** over burying it in the current
-project. Experimenting inside a side project first is fine — prove it where the need
-is concrete — but the end state of a routine worth keeping is *available to more
-projects than this one*. A routine that stays project-local is a duplicate someone
-else has not written yet.
+That is minutes of scripting, and it pays twice if you **keep it and re-run it** — a one-off
+answer rots, an instrument does not. But it searches by **shape**, the weaker anchor.
 
 ### As the system grows, anchor the question on the RULE, not on the code
 
-Searching by shape has a **rising false-negative rate**. Early on, two implementations of
-one rule tend to look alike — the same list, the same few lines — and a grep finds them. As
-the system grows the same rule gets expressed in more ways: one site checks a type list,
-another takes an early return, a third consults a table. They implement one rule and share
-no text. A shape-matcher cannot see that, and neither can you, because by then the whole
-picture no longer fits in one head — which is the condition the search was supposed to
-compensate for.
+Searching by shape has a **rising false-negative rate**. Early on, two implementations of one
+rule tend to look alike and a grep finds them. As the system grows the same rule gets expressed
+in more ways: one site checks a type list, another takes an early return, a third consults a
+table. They implement one rule and share no text, and by then the whole picture no longer fits
+in one head — the condition the search was supposed to compensate for.
 
-What survives that growth is **the rule itself, named**. So write down what you design as a
-named rule — the invariant, spelled once, somewhere that is not the code — and have every
-site that enforces it *say which rule it obeys*. A citation costs a comment, and it is
-written at the only moment the fact is reliably known: while you are making that site obey
-the rule. Later, nobody has to reconstruct it.
+What survives that growth is **the rule itself, named**. Write down what you design as a named
+rule — the invariant, spelled once, somewhere that is not the code — and have every site that
+enforces it *say which rule it obeys*. A citation costs a comment, written at the only moment
+the fact is reliably known: while you are making that site obey the rule.
 
-**A name is not yet an anchor — it has to be a TAG.** "Named" is carrying more weight there
-than it looks: for a citation to be findable *by a machine* the name must be unique and
-unambiguous, and a bare rule name is usually neither.
-
-- **prose collision** — the name reads as ordinary words, so a search returns discussion
-  as well as enforcement, and you cannot tell the count from the noise;
-- **prefix collision** — one rule's name begins another's, so searching the general rule
-  silently sweeps in the specific ones (and a search for a specific one misses sites that
-  spell it generally);
-- **namespace collision** — two areas independently pick the same short name, and nothing
-  in either says they are different rules.
-
-So mint a **tag**: a sigil you reserve for this purpose, so it cannot occur by accident in
-prose, plus a rule that makes a match *exact*. Sub-rules make prefixes hard to avoid — a
-general rule and its refinements naturally share a stem — so the cheaper route is usually not
-to forbid prefixes but to **specify the boundary**: a citation matches the tag only when the
-next character cannot continue a tag. (Word-boundary matching often will not do this for you;
-if your names contain `-` or `_`, those already read as boundaries.) Keep the tags in one
-registry and let a cheap check enforce that every citation resolves to a registered tag, that
-no tag is defined twice, and that the boundary rule holds. Those three are what make step 2's count
-*trustworthy* rather than merely suggestive; without them the number is a lower bound you
-cannot size.
-
-The tag is also the **rename unit**. Without one, renaming a rule silently rots every
-citation and nothing reports it. With one, the rename is mechanical and the check names the
-sites you missed.
-
-**Mint the tag when you write the rule.** Retrofitting tags across a corpus that already has
-both rules and enforcement sites is the expensive path, and it is the path you are on from
-the moment you decide the rules are obvious enough not to need them.
+For a machine to find a citation, the name must be a **tag** — a reserved sigil, matched
+boundary-exact, kept in one registry with a check that every citation resolves and no tag is
+defined twice; the `formal-rules` skill is that mechanism. Beyond it: the tag is also the
+**rename unit** (without one, renaming a rule silently rots every citation); **mint it when you
+write the rule**, because retrofitting tags across a corpus that already has rules and sites is
+the expensive path; keep citations **honest rather than complete** (a citation to a missing rule
+fails from day one, while *every rule cited* can tighten slowly); and generate any index **from**
+the citations, never beside them — a second copy is this section's defect one level up.
 
 Three things fall out, and the third is not available any other way:
 
@@ -396,75 +324,43 @@ Three things fall out, and the third is not available any other way:
 - **step 2's count comes for free** — an invariant's re-assertion sites *are* its citations,
   so the number you were told to count is a query rather than an audit, and it stays correct
   as the code moves;
-- **the merge question gets arbitrated.** Above: *equality is evidence; sameness-of-rule is
-  the claim.* A rule name **is** that claim, written down and reviewable. Two sites citing
-  one rule are candidates to merge. Two sites citing different rules stay apart however
-  identical their code looks today — so when one of them later has to change, there is
-  nothing to untangle, and the too-early-abstraction trap is closed by construction rather
-  than by taste.
+- **the merge question gets arbitrated.** *Equality is evidence; sameness-of-rule is the
+  claim.* A rule name **is** that claim, written down and reviewable. Two sites citing one rule
+  are candidates to merge. Two sites citing different rules stay apart however identical their
+  code looks today — so when one later has to change, there is nothing to untangle, and the
+  too-early-abstraction trap is closed by construction rather than by taste.
 
-Keep the citations **honest rather than complete**: a citation naming a rule that does not
-exist is worth failing on from the first day, while *every rule has at least one citation*
-can tighten slowly as coverage grows. And generate any index **from** the citations rather
-than maintaining one beside them — a second copy of where the rules live is the same defect
-this section is about, one level up.
-
-**The symmetric error is the over-unification already named above**, arriving by a
-different road. Do not merge two sites because their lists are equal *today*. Equality is
-evidence; sameness-of-rule is the claim, and only the second licenses the merge. A merge
-that couples two rules which must stay free to diverge is worse than the duplication —
-that is the too-early-abstraction failure relocated, and it is expensive to undo precisely
-because later work has to fight it. Duplication is cheap to undo once you can find it;
-that asymmetry is what makes the instrument the right investment and the reflex to merge
-the wrong one.
+**The symmetric error is the over-unification already named above**, arriving by a different
+road. Do not merge two sites because their lists are equal *today*; only sameness-of-rule
+licenses the merge. A merge that couples two rules which must stay free to diverge is worse
+than the duplication — expensive to undo precisely because later work has to fight it.
+Duplication is cheap to undo once you can find it; that asymmetry is what makes the instrument
+the right investment and the reflex to merge the wrong one.
 
 ---
 
 ## Keep it light — the procedure must not consume the judgment it serves
 
-The cheap, always-available sensor is the **tell**: *"this is longer / absorbs more
-than I expected for what it does."* Code longer than it should be trips the worry
-before any matrix, profile, or crash — because the robust design covers N cases with
-**one** mechanism (it lands short) and the brittle one covers them with **N**
-mechanisms (it accretes as bulk, then as runtime cost). This is **robustness by
-subtraction**: the deep reason *the shorter version is usually the more robust one* —
-correctness-by-construction from a single nameable invariant, won by removing cases,
-not guarding them.
+The cheap sensor is the **tell** — *"this is longer / absorbs more than I expected"* — and the
+two-layer rule (cheap probe always, full procedure only when the tell trips on something
+load-bearing) is `engineering-rigor` § The tell and § Keep it light. Two points are
+design-specific:
 
-The tell has an **earlier, more visceral form than final length — the implementation
-*stutters*.** When the build fights you (you reach for a workaround to make the chosen
-mechanism fit, the scope grows *again* mid-build, you are on the third re-read of code
-that still won't sit right), that friction is the approach working *against the grain* —
-a solution that fits the domain rides the existing structure and goes smoothly. **Route
-the stutter to the search** (the over-broad check above — is a special circumstance being
-fought?), **not to pushing harder.** Reading the stutter as *"this is just hard"* rather
-than *"the frame is wrong"* is the characteristic miss: the friction WAS the signal, and
-it fires before the length does.
+- **Robustness by subtraction.** The robust design covers N cases with one mechanism and lands
+  short; the brittle one accretes as bulk, then as runtime cost. Correctness-by-construction
+  from a single nameable invariant is won by removing cases, not guarding them — the deep reason
+  the shorter version is usually the more robust one.
+- **The build stutters before the length shows.** You reach for a workaround to make the chosen
+  mechanism fit, the scope grows *again* mid-build, the third re-read still won't sit right: the
+  approach is working against the grain. Route the stutter to the over-broad check (§ The two
+  ways to fail), not to pushing harder; reading it as *"this is just hard"* is the miss.
 
-But the tell says **look**, not what you will find — sometimes length is **essential**
-(genuinely N families, or an invariant deliberately spelled out so it is explicit
-rather than hidden in cleverness). So the tell triggers the *search*; it never dictates
-shortening.
+Design is intrinsically heavy — it holds the whole composition space at once — so writing the
+prediction down is a load **reducer**: the page carries what you would otherwise drown carrying.
 
-The full write-down-predict-probe-validate procedure fires **only when the tell trips
-on something load-bearing** — never reflexively per function. An ever-on checklist
-would be friction and would burn the very capacity the essential-vs-accidental
-judgment depends on. Writing the prediction down is a load **reducer**, not a tax: it
-moves the prior onto the page so working memory is freed for the building and the
-judgment. Design is intrinsically heavy — it holds the whole composition space at once
-— so the page is where you put down what you would otherwise drown carrying.
-
----
-
-## The residual
-
-The protocol only covers axes you *know* to vary. The axis invisible at design time —
-the composition no probe imagined — survives any discipline; only real use reveals it.
-Walking a construct's use cases before deciding (above) moves many of those axes to design
-time; the rest still need **the second engine: the dogfood loop** — real consumers, not
-toys — is what converts an unknown axis into a known one, and each harvested lesson is
-appended to the axis list your next design's matrix varies. This protocol makes the
-*visible* axes safe; the dogfood loop grows what is visible.
+The axes no probe imagined survive any of this; walking the use cases (§ When the design is a
+MEANING) moves many to design time, and real use finds the rest (`engineering-rigor` § The
+residual).
 
 ---
 
@@ -473,9 +369,21 @@ appended to the axis list your next design's matrix varies. This protocol makes 
 The body above is tree-agnostic. Working in the loft repo, these are the instruments it
 tells you to reach for:
 
+- A recommendation's premise is probed like any cell: a `/tmp` program per shape, hand-computed
+  values, `--interpret` and `--native`, the controls beside it. loft#2273 put that rule here: a
+  rule approved on the premise "an owned capture is reachable only through closures" was wrong,
+  and a five-minute control cell showed it after the approval.
+- The incidents behind the examples in the body (the caching and geometry recoveries, the
+  store-delivery diff, the `StableCrateId` collision, loft#2273 in full) are in
+  [`DESIGN_PROTOCOL-history.md`](../../../doc/claude/DESIGN_PROTOCOL-history.md).
 - The outer radius (dependency manifest / package index / library catalogue) is
   `make libcatalogue` + `loft install` — read the generated `doc/claude/LIBRARIES.md`,
   never a clone or installed copy.
+- The outer radius cuts both ways here (the dogfood policy): when no library implements a
+  routine, prioritize building it INTO a library over burying it in the current project.
+  Proving it first inside a side project is fine, but the end state of a routine worth keeping
+  is available to more projects than this one — a project-local routine is a duplicate someone
+  else has not written yet.
 - The named-rule register is `doc/claude/formal/` (`@FR-` tags); `scripts/rule_tags.py`
   is the citation instrument (`list` · `check` · `sites <tag>` · `dups` · `registers` ·
   `coverage` · `worklist` — `make rule-coverage`, `make rule-worklist`), and

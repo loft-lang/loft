@@ -1012,8 +1012,17 @@ impl Parser {
                 {
                     return Value::Call(m, new_args);
                 }
+                // The stub must be THIS type variable's: substituting `T` leaves a `<` over
+                // another variable `K` alone, or `sort_by<T, K>` compared its keys with `T`'s
+                // `operator compare` (loft#2269).
+                let names_tv = |d: u32| {
+                    data.visible_params(d).first().is_some_and(|t| {
+                        Self::substitute_type((*t).clone(), tv_nr, concrete) != **t
+                    })
+                };
                 if new_args.len() == 2
                     && Data::is_bound_stub_for(data.def(d).name(), "OpLt", 2)
+                    && names_tv(d)
                     && let Some(cmp) = data.operator_compare_for(concrete)
                 {
                     let read = Value::Call(
@@ -1032,6 +1041,7 @@ impl Parser {
                 // marked and `resolve_content_eq` (parser side) fills the row in.
                 if new_args.len() == 2
                     && Data::is_bound_stub_for(data.def(d).name(), "OpEq", 2)
+                    && names_tv(d)
                     && (new_d == u32::MAX || new_d == d || data.def(new_d).name() == "OpEqRef")
                 {
                     let mut marked = new_args;

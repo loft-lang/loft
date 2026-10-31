@@ -478,6 +478,19 @@ process** ([@PLN119](https://github.com/loft-lang/plans/issues/119)).
 so the guard an optional backend already writes keeps working when the same
 source is built for wasm.
 
+#### A shim that opens a window on macOS
+
+AppKit makes and drives a window on the main thread only.  The interpreter and the C backend
+run a program there; a `--native` program runs on its big-stack thread (`NATIVE_MAIN_STACK`),
+and on macOS its `main` keeps the main thread in its run loop (`run_beside_main_queue`), which
+drains the main dispatch queue there.  So a shim sends its AppKit work with `dispatch_sync_f`
+to the main queue (`_dispatch_main_q`) when `pthread_main_np()` says it is elsewhere, and keeps
+its GL calls on its own thread, where its context is current.  `dispatch_main` would not do:
+it exits the main thread and lets worker threads drain the queue.  A shim cannot tell a loft
+that serves the queue by its version, so it asks the run loop: a main thread never seen in
+`CFRunLoopIsWaiting` is not serving it, and the shim says so rather than wait forever.
+graphics 0.11 is the user (`c/graphics_gl.c`, `GG_COCOA`).
+
 #### Under the sandbox
 
 **A `#c` binding is gated by `native_ffi`, never by a `#cap` grant.**  A

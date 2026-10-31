@@ -54,6 +54,9 @@ pub(super) fn report_materialised_view(
         ViewCause::Reassigned => {
             crate::copy_manifest::note_reassigned_view(vname, cname, fname, via);
         }
+        ViewCause::Released => {
+            crate::copy_manifest::note_released_view(vname, cname, fname, via);
+        }
     }
 }
 
@@ -121,6 +124,11 @@ pub(super) fn reshaped_containers(
         "OpRemoveVector" | "OpKeepVectorRange" | "OpPrependVector" => Some(0),
         _ => None,
     });
+    for (place, at) in released_children(code, data) {
+        let e = out.entry(place).or_insert(at);
+        e.depth = e.depth.min(at.depth);
+        e.index = None;
+    }
     // @FR-Col-RemoveDense — a KEYED removal reaches all five keyed kinds through ONE op, and
     // only one of them renumbers, so this has to be keyed on the KIND and not on the op.
     //
@@ -172,6 +180,28 @@ pub(super) fn reshaped_containers(
             out.insert(place, at);
         }
     }
+    out
+}
+
+/// The out-of-line FIELDS `code` writes a value that may be null — `@FR-B-OutOfLine`: such a
+/// write releases the child, which ends every view of it.  A record literal is present, and a
+/// present value overwrites the child in place, where a view keeps reading it.  Part of
+/// [`reshaped_containers`]; asked apart only for the advice, which names the null write.
+pub(super) fn released_children(code: &Value, data: &Data) -> HashMap<(u16, u32), ContainerAt> {
+    let mut out: HashMap<(u16, u32), ContainerAt> = HashMap::default();
+    code.walk(&mut |v| {
+        if let Value::Call(d, args) = v
+            && data.def(*d).name() == "OpSetChildRec"
+            && let [field, value, _] = &args[..]
+            && !matches!(value.unspan(), Value::Block(_) | Value::Insert(_))
+            && let Some((place, depth)) = named_place_depth(field, data)
+        {
+            let at = out
+                .entry(place)
+                .or_insert(ContainerAt { depth, index: None });
+            at.depth = at.depth.min(depth);
+        }
+    });
     out
 }
 
@@ -422,7 +452,7 @@ pub(super) fn removed_params_map(data: &Data) -> RemovedParams {
     let mut forwards: HashMap<(u32, u16), Vec<(u32, u16)>> = HashMap::default();
     for d_nr in 0..data.definitions() {
         let def = data.def(d_nr);
-        if !def.name.starts_with("n_") {
+        if !def.is_loft_defined() {
             continue;
         }
         for k in removed_ref_params(data, d_nr) {
@@ -435,7 +465,7 @@ pub(super) fn removed_params_map(data: &Data) -> RemovedParams {
         }
         def.code.walk(&mut |v| {
             let Value::Call(callee, args) = v else { return };
-            if !data.def(*callee).name.starts_with("n_") {
+            if !data.def(*callee).is_loft_defined() {
                 return;
             }
             for (i, arg) in args.iter().enumerate() {
@@ -483,6 +513,9 @@ pub enum ViewCause {
     Grown,
     /// The container VARIABLE is re-established, so the name stops meaning the store (F8).
     Reassigned,
+    /// An out-of-line field is written a value that may be null, which releases the child a
+    /// view names (`@FR-B-OutOfLine`).
+    Released,
 }
 
 /// One disturbance of a container, as the walk saw it.
@@ -672,8 +705,18 @@ fn disturbed_param_places(
         }
     });
     // A hidden attribute is COMPILER-GENERATED, which is the one test that covers the return
-    // buffer and every other `__`-named slot alike; a user parameter is never one.
-    let visible = |v: u16| function.is_argument(v) && !function.is_compiler_generated(v);
+    // buffer and every other `__`-named slot alike; a user parameter is never one.  A promoted
+    // result buffer keeps its author's name (`result` in `File.files`), so the name alone does
+    // not tell it apart: the attribute's own `hidden` flag does.  Matched by name, because a
+    // promoted local's slot is not its attribute's index.
+    let visible = |v: u16| {
+        function.is_argument(v)
+            && !function.is_compiler_generated(v)
+            && !def
+                .attributes
+                .iter()
+                .any(|a| a.hidden && a.name == function.name(v))
+    };
     // Every depth, each with where its container sits: the caller composes it with the depth
     // of the argument it passed ([`compose_param_at`]) and ends the views the same statement
     // written inline would end.  Kept to depth 0 before, which dropped `p[0].remove(0)` — a
@@ -746,7 +789,7 @@ pub fn disturbed_params_map(
     let mut forwards: HashMap<(u32, u16), Vec<Forward>> = HashMap::default();
     for d_nr in 0..data.definitions() {
         let def = data.def(d_nr);
-        if !def.name.starts_with("n_") {
+        if !def.is_loft_defined() {
             continue;
         }
         // By reference: consuming the map runs `RawIntoIter::drop`, whose test of an
@@ -767,7 +810,7 @@ pub fn disturbed_params_map(
         let function = &def.variables;
         def.code.walk(&mut |v| {
             let Value::Call(callee, args) = v else { return };
-            if !data.def(*callee).name.starts_with("n_") {
+            if !data.def(*callee).is_loft_defined() {
                 return;
             }
             for (i, arg) in args.iter().enumerate() {

@@ -766,6 +766,16 @@ static inline void loft_apv_set(loft_apvec *v, int64_t i, double x) {
     if (f >= 0) memcpy(loft_apv_at(v, f), &x, sizeof x);
 }
 
+/* `v[i]` of a vector held apart (`@FR-E-Report`): an index naming no element is reported. */
+static inline double loft_apv_get_at(loft_apvec *v, int64_t i, const char *file, uint32_t line) {
+    if (LOFT_UNLIKELY(loft_apv_index(v, i) < 0)) loft_index_miss(i, (int64_t) v->n, file, line);
+    return loft_apv_get(v, i);
+}
+static inline void loft_apv_set_at(loft_apvec *v, int64_t i, double x, const char *file, uint32_t line) {
+    if (LOFT_UNLIKELY(loft_apv_index(v, i) < 0)) loft_index_miss(i, (int64_t) v->n, file, line);
+    loft_apv_set(v, i, x);
+}
+
 /* `@FR-R-Apart` instance 4 (codegen_runtime::AprVec): one field of a record of record vectors
  * held apart is the bytes of its elements, `esize` each, in the element's store layout — a text
  * buffer, so the frame's epilogue frees it with its texts.  Clearing keeps the capacity: a value
@@ -925,7 +935,7 @@ static loft_ref loft_ref_from_child_rec(loft_ref f) {
 
 /* OpChildRec (Stores::new_child_rec): a fresh `tp` child record in field `f`'s store, filled with
  * its defaults and named by the field; a record the field held before is released as this
- * store's bytes.  The claim is `size` words, as the Rust's is. */
+ * store's bytes.  The claim is its header word and payload (`Stores::child_rec_words`). */
 static loft_ref loft_new_child_rec(const loft_tdesc *T, uint16_t tp, loft_ref f, const uint8_t *image,
                                    uint32_t n) {
     if (f.store_nr == 0xFFFF || f.rec == 0) return loft_ref_null();
@@ -935,11 +945,69 @@ static loft_ref loft_new_child_rec(const loft_tdesc *T, uint16_t tp, loft_ref f,
         loft_remove_claims(T, tp, o);
         loft_st_delete(loft_store_of(f), old);
     }
-    uint32_t rec = loft_claim(loft_store_of(f), T[tp].size);
+    uint32_t rec = loft_claim(loft_store_of(f), 1 + (T[tp].size + 7) / 8);
     loft_ref db = { f.store_nr, rec, 8 };
     loft_fill(db, image, n);
     loft_set_u32(loft_store_of(f), f.rec, f.pos, rec);
     return db;
+}
+
+/* OpCopyClosure (Stores::copy_closure_record, `src/database/closure_share.rs`): a fn-ref read out of
+ * a struct field and kept, as a copy of the `tp` closure record at `src` in a fresh store.  Every
+ * capture is shared; each store an OWNED slot (`owned`, the byte positions the generator listed
+ * from `Stores::owned_capture_slots`) names gains one share, so the copy and its source each
+ * release it once.  The only writer of `closure_shares` that raises it. */
+static loft_ref loft_copy_closure(const loft_tdesc *T, uint16_t tp, loft_ref src, const uint16_t *owned,
+                                  uint32_t n) {
+    if (src.store_nr == 0xFFFF || src.rec == 0) return loft_ref_null();
+    loft_ref to = loft_ref_null();
+    loft_database_typed(&to, T[tp].size, tp);
+    loft_copy_bytes(to, 0, src, 0, T[tp].size);
+    loft_copy_claims(T, tp, src, to);
+    for (uint32_t i = 0; i < n; i++) {
+        loft_ref held = loft_get_dbref(to, owned[i]);
+        if (held.store_nr != 0xFFFF && held.rec != 0 && held.store_nr < loft_nstores
+            && loft_stores[held.store_nr].live)
+            loft_stores[held.store_nr].closure_shares++;
+    }
+    return to;
+}
+
+/* OpSetChildRec (Stores::set_child_rec, `@FR-B-OutOfLine`): write the `tp` value `src` into the
+ * out-of-line field `f`.  A null releases the child; a value is copied into a fresh record of the
+ * host's store first (it may lie inside the child it replaces), which an absent field takes and
+ * a present child takes in place, keeping its record number.  `free_source` releases a given-up
+ * source store, as loft_copy_record's does. */
+static void loft_set_child_rec(const loft_tdesc *T, uint16_t tp, loft_ref f, loft_ref src, int free_source) {
+    int present = src.store_nr != 0xFFFF && src.rec != 0;
+    if (f.store_nr == 0xFFFF || f.rec == 0) {
+        if (free_source && present && src.store_nr != f.store_nr && !loft_free_protected(src)) loft_free_ref(src);
+        return;
+    }
+    uint32_t old = loft_u32(loft_store_of(f), f.rec, f.pos);
+    if (!present) {
+        if (old != 0) {
+            loft_set_u32(loft_store_of(f), f.rec, f.pos, 0);
+            loft_ref o = { f.store_nr, old, 8 };
+            loft_remove_claims(T, tp, o);
+            loft_st_delete(loft_store_of(f), old);
+        }
+        return;
+    }
+    uint32_t size = T[tp].size;
+    uint32_t fresh = loft_claim(loft_store_of(f), 1 + (size + 7) / 8);
+    loft_ref nw = { f.store_nr, fresh, 8 };
+    loft_copy_bytes(nw, 0, src, 0, size);
+    loft_copy_claims(T, tp, src, nw);
+    if (old == 0) {
+        loft_set_u32(loft_store_of(f), f.rec, f.pos, fresh);
+    } else {
+        loft_ref o = { f.store_nr, old, 8 };
+        loft_remove_claims(T, tp, o);
+        loft_copy_bytes(o, 0, nw, 0, size);
+        loft_st_delete(loft_store_of(f), fresh);
+    }
+    if (free_source && src.store_nr != f.store_nr && !loft_free_protected(src)) loft_free_ref(src);
 }
 
 /* Stores::vector_add_array: `v += o` of a linked element type, whose slots are record ids — each
@@ -1116,6 +1184,13 @@ static loft_ref loft_array_get(loft_ref v, int64_t from) {
     if (r == 0) return loft_ref_null();
     loft_ref e = { slot.store_nr, r, 8 };
     return e;
+}
+
+/* `OpVectorRef` (`State::vec_ref_or_raise`): an index naming no slot is reported. */
+static loft_ref loft_array_get_at(loft_ref v, int64_t from, const char *file, uint32_t line) {
+    int64_t len = loft_vec_len(v), i = from < 0 ? from + len : from;
+    if (LOFT_UNLIKELY(i < 0 || i >= len)) loft_index_miss(from, len, file, line);
+    return loft_array_get(v, from);
 }
 
 /* insert_record on an array: the record's number joins the end. */
@@ -1512,6 +1587,11 @@ static void loft_par_free_table(loft_store_t *table, uint32_t from, uint32_t n) 
     free(table);
 }
 
+/* The stack each `par` worker thread is started with (see `loft_par_run`). */
+#ifndef LOFT_PAR_STACK
+#define LOFT_PAR_STACK ((size_t) 8 << 20)
+#endif
+
 /* A worker's end: the stores it made are destroyed with its table and its frames — or, when it
  * keeps them, its table as it now stands handed back for the caller to adopt from. */
 static void loft_par_job_run(loft_par_job *j) {
@@ -1590,12 +1670,21 @@ static void loft_par_run(int64_t n, int64_t threads, loft_par_body body, void *c
             j->keep = adopt != 0;
         }
         for (k = 1; k < t; k++) {
-            /* A thread that cannot start: its slice runs here, on this thread's own table. */
+            /* A thread that cannot start: its slice runs here, on this thread's own table.  Each
+             * worker gets LOFT_PAR_STACK bytes of stack, the same on every host: the platform
+             * default is 8 MiB on Linux but 512 KiB on macOS and 1 MiB on Windows, where a
+             * worker a few thousand calls deep ran out (`@FR-R-StackBase`'s deep-call cell). */
 #if defined(_WIN32)
-            ids[k] = (void *) _beginthreadex(0, 0, loft_par_thread, &jobs[k], 0, 0);
+            ids[k] = (void *) _beginthreadex(0, (unsigned) LOFT_PAR_STACK, loft_par_thread, &jobs[k], 0, 0);
             if (!ids[k]) {
 #else
-            if (pthread_create(&ids[k], 0, loft_par_thread, &jobs[k]) != 0) {
+            pthread_attr_t at;
+            int started;
+            pthread_attr_init(&at);
+            pthread_attr_setstacksize(&at, LOFT_PAR_STACK);
+            started = pthread_create(&ids[k], &at, loft_par_thread, &jobs[k]) == 0;
+            pthread_attr_destroy(&at);
+            if (!started) {
 #endif
                 free(jobs[k].table);
                 jobs[k].table = 0;

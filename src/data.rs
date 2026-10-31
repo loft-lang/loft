@@ -8017,6 +8017,150 @@ impl Data {
         }
     }
 
+    /// `@FR-L-OutOfLine`, @C159 — is field `a_nr` of `d_nr` laid out OUT OF LINE: a record number in
+    /// the host's store (`Parts::ChildRec`) rather than the value's own bytes?
+    ///
+    /// Exactly the fields that would make their host contain itself: an embedded struct or a
+    /// struct-enum field whose type reaches the host again through inline edges.  Inline
+    /// layout is impossible there, so the compiler knows without being told.  Every field on a
+    /// size cycle answers yes, which is what leaves no cycle behind
+    /// ([`has_value_cycle`](Self::has_value_cycle) skips these edges).  A cycle through a
+    /// TUPLE member answers no and keeps its refusal: a member has no field to hold the number.
+    #[must_use]
+    pub fn field_is_out_of_line(&self, d_nr: u32, a_nr: usize) -> bool {
+        if !crate::keys::out_of_line_enabled() || a_nr == usize::MAX {
+            return false;
+        }
+        let attr = &self.def(d_nr).attributes[a_nr];
+        if attr.constant {
+            return false;
+        }
+        let target = match attr.typedef.base() {
+            Type::Reference(t, deps) if !deps.is_pointer_marker() => *t,
+            Type::Enum(t, true, _) => *t,
+            _ => return false,
+        };
+        if !matches!(
+            self.def_type(target),
+            DefType::Struct | DefType::Enum | DefType::EnumValue
+        ) || self.def(target).name.starts_with("__")
+        {
+            return false;
+        }
+        let mut seen = std::collections::HashSet::new();
+        self.reaches_inline(target, d_nr, &mut seen)
+    }
+
+    /// Does a type reachable from `from` through inline edges (embedded fields, tuple members,
+    /// enum variants) still carry a field naming an unresolved type — a forward stub?  While it
+    /// does, which of those fields are out of line (`@FR-L-OutOfLine`) is not decided.
+    #[must_use]
+    pub fn inline_graph_unresolved(&self, from: u32) -> bool {
+        let mut seen = std::collections::HashSet::new();
+        let mut work = vec![from];
+        while let Some(d) = work.pop() {
+            if !seen.insert(d) {
+                continue;
+            }
+            match self.def_type(d) {
+                DefType::Enum => work.extend(
+                    self.children_of(d)
+                        .filter(|&c| self.def_type(c) == DefType::EnumValue),
+                ),
+                DefType::Struct | DefType::EnumValue => {
+                    let mut children = Vec::new();
+                    for a_nr in 0..self.attributes(d) {
+                        if self.def(d).attributes[a_nr].constant {
+                            continue;
+                        }
+                        let tp = self.attr_type(d, a_nr);
+                        if self.names_unresolved(&tp) {
+                            return true;
+                        }
+                        Self::inline_field_defs(&tp, &mut children);
+                    }
+                    work.extend(children);
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// `@FR-T-Recursive` — does every `from` hold a `goal`: is there a path from `from` to `goal`
+    /// through non-null struct fields alone?  A nullable field or an enum on the way can end
+    /// the recursion, so it is no such path; this is what makes a struct recursing through it
+    /// a type with no finite value.
+    #[must_use]
+    pub fn reaches_through_present_fields(&self, from: u32, goal: u32) -> bool {
+        let mut seen = std::collections::HashSet::new();
+        let mut work = vec![from];
+        while let Some(d) = work.pop() {
+            if d == goal {
+                return true;
+            }
+            if !seen.insert(d) || self.def_type(d) != DefType::Struct {
+                continue;
+            }
+            for a_nr in 0..self.attributes(d) {
+                if self.def(d).attributes[a_nr].constant {
+                    continue;
+                }
+                let tp = self.attr_type(d, a_nr);
+                // A NULLABLE field can end the recursion, so it is no present path.
+                if matches!(tp, Type::Optional(_)) {
+                    continue;
+                }
+                if let Type::Reference(t, deps) = tp.base()
+                    && !deps.is_pointer_marker()
+                {
+                    work.push(*t);
+                }
+            }
+        }
+        false
+    }
+
+    /// Does definition `from` hold `goal` in its own bytes, through embedded fields, tuple
+    /// members and enum variants (the edges [`inline_field_defs`](Self::inline_field_defs)
+    /// names)?  The plain graph, with no field taken out of line: what
+    /// [`field_is_out_of_line`](Self::field_is_out_of_line) asks is whether inline layout
+    /// would be possible, so it must not depend on its own answer.
+    fn reaches_inline(
+        &self,
+        from: u32,
+        goal: u32,
+        seen: &mut std::collections::HashSet<u32>,
+    ) -> bool {
+        if from == goal {
+            return true;
+        }
+        if !seen.insert(from) {
+            return false;
+        }
+        match self.def_type(from) {
+            DefType::Enum => self
+                .children_of(from)
+                .filter(|&c| self.def_type(c) == DefType::EnumValue)
+                .any(|c| self.reaches_inline(c, goal, seen)),
+            DefType::Struct | DefType::EnumValue => {
+                let mut children = Vec::new();
+                for a_nr in 0..self.attributes(from) {
+                    if self.def(from).attributes[a_nr].constant {
+                        continue;
+                    }
+                    children.clear();
+                    Self::inline_field_defs(&self.attr_type(from, a_nr), &mut children);
+                    if children.iter().any(|&c| self.reaches_inline(c, goal, seen)) {
+                        return true;
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
     /// Check if struct `d_nr` contains itself as a value type (not reference)
     /// field, directly or through other structs.  (Moved from `typedef.rs` —
     /// pass-2: a walk over `Data`'s definition graph lives with `Data`.)
@@ -8058,6 +8202,11 @@ impl Data {
         }
         let mut children = Vec::new();
         for a_nr in 0..self.attributes(d_nr) {
+            // An out-of-line field is a 4-byte record number (`@FR-L-OutOfLine`): it ends the
+            // size cycle as a collection handle does.
+            if self.field_is_out_of_line(d_nr, a_nr) {
+                continue;
+            }
             children.clear();
             Self::inline_field_defs(&self.attr_type(d_nr, a_nr), &mut children);
             for child_nr in &children {
@@ -12930,6 +13079,41 @@ impl Data {
         name: &str,
         user_file: &str,
     ) -> Option<String> {
+        self.surface_refusal(
+            lib_source,
+            lib,
+            name,
+            user_file,
+            &format!("`{lib}::{name}`"),
+        )
+    }
+
+    /// @FR-F-Surface — the error for `use lib::(name)` naming what `lib` does not pass on, in
+    /// the words [`Self::qualified_refusal`] gives `lib::name`: neither spelling reaches it, and
+    /// "not found" would send the reader looking for an item `lib` does declare.  `None` when
+    /// the library is unnamed here or does not have the name at all.
+    #[must_use]
+    pub fn import_refusal(&self, lib_source: u16, name: &str, user_file: &str) -> Option<String> {
+        let lib = self.qualifier_of(lib_source)?;
+        let lib = self.writable_qualifier(&lib, lib_source).unwrap_or(lib);
+        self.surface_refusal(
+            lib_source,
+            &lib,
+            name,
+            user_file,
+            &format!("`use {lib}::({name})`"),
+        )
+    }
+
+    /// The one home of the surface verdict, quoting the `spelling` that asked.
+    fn surface_refusal(
+        &self,
+        lib_source: u16,
+        lib: &str,
+        name: &str,
+        user_file: &str,
+        spelling: &str,
+    ) -> Option<String> {
         if lib_source == u16::MAX || lib_source == STD_SOURCE {
             return None;
         }
@@ -12957,13 +13141,13 @@ impl Data {
                     });
                 return Some(match owner {
                     Some(m) => format!(
-                        "`{lib}::{name}` reaches a name `{lib}` only imports for its own use — \
+                        "{spelling} reaches a name `{lib}` only imports for its own use — \
                          it is `{m}`'s, and `{lib}` does not pass it on.\n  fix: write \
                          `{m}::{name}` after `use {m};` (or `{lib}` passes it on with \
                          `pub use {m}::({name});`)"
                     ),
                     None => format!(
-                        "`{lib}::{name}` reaches a name `{lib}` only imports for its own use, \
+                        "{spelling} reaches a name `{lib}` only imports for its own use, \
                          and does not pass on.\n  fix: `{lib}` passes it on with `pub use`"
                     ),
                 });
@@ -12973,7 +13157,7 @@ impl Data {
                 && !self.shares_internals(&self.definitions[d as usize].position.file, user_file)
             {
                 return Some(format!(
-                    "`{name}` is not `pub` in `{lib}`, so `{lib}::{name}` cannot reach it: a \
+                    "`{name}` is not `pub` in `{lib}`, so {spelling} cannot reach it: a \
                      library's surface is its `pub` items.\n  fix: `{lib}` declares it `pub`, \
                      or the program uses something `{lib}` does publish"
                 ));

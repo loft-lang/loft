@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PAGE: LOFT.md § The `??` operator and § The `x?` operator — absence is discharged at the
-// point of use: `??` names the fallback, `?` takes the type's default.
+// @PAGE: LOFT_OPERATORS.md § The `??` operator and § The `x?` operator — absence is discharged at the
+// point of use: `??` names the fallback, `?` takes the type's default, `!` takes none (@C160).
 
 struct Record { optional_field: text?, n: integer }
 struct Row { label: text? }
@@ -51,3 +51,11 @@ fn test_the_question_mark_on_the_left_reads_the_default_and_writes_the_slot() {
   assert(hits == 1, "`hits? += 1` reads 0 and writes 1");
   assert(misses == null, "without `?` the null propagates");
 }
+
+fn test_the_bang_takes_no_default() {
+  rows = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }];
+  i = 1;
+  p = rows[i]!;               // present, or a halt: "rows[i] is null"
+  assert(p.x == 3 && rows[0]!.y == 2, "the value of a present read, and it chains");
+}
+

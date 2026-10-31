@@ -44,6 +44,12 @@ loft_ffi_ref n_iota(loft_ffi_store s, int64_t n) {
     for (int64_t i = 0; i < n; i++) v[i] = n * 10 + i + 1;
     return loft_ffi_vector_from_bytes(&s, 8, (uint32_t) n, v);
 }
+/* No answer: the null ref, in a call that hands no heap argument, so loft minted the store. */
+loft_ffi_ref n_none_vec(loft_ffi_store s) {
+    loft_ffi_ref r = { 0, 0, 0 };
+    (void) s;
+    return r;
+}
 loft_ffi_ref n_rev(loft_ffi_store s, loft_ffi_ref a) {
     uint32_t n = loft_ffi_vector_len(s, a);
     uint8_t b[256];
@@ -108,6 +114,7 @@ static void b_narrow(loft_ffi_store s, const loft_ffi_value *a, size_t n, loft_f
 }
 static void b_half(loft_ffi_store s, const loft_ffi_value *a, size_t n, loft_ffi_value *r) { (void) s; (void) n; *r = loft_ffi_value_f64(n_half(a[0].payload.f)); }
 static void b_iota(loft_ffi_store s, const loft_ffi_value *a, size_t n, loft_ffi_value *r) { (void) n; *r = loft_ffi_value_ref(n_iota(s, a[0].payload.i)); }
+static void b_none_vec(loft_ffi_store s, const loft_ffi_value *a, size_t n, loft_ffi_value *r) { (void) a; (void) n; *r = loft_ffi_value_ref(n_none_vec(s)); }
 static void b_rev(loft_ffi_store s, const loft_ffi_value *a, size_t n, loft_ffi_value *r) { (void) n; *r = loft_ffi_value_ref(n_rev(s, a[0].payload.r)); }
 static void b_cat(loft_ffi_store s, const loft_ffi_value *a, size_t n, loft_ffi_value *r) { (void) n; *r = loft_ffi_value_ref(n_cat(s, a[0].payload.r, a[1].payload.r)); }
 static void b_pair(loft_ffi_store s, const loft_ffi_value *a, size_t n, loft_ffi_value *r) { (void) n; *r = loft_ffi_value_ref(n_pair(s, a[0].payload.i, a[1].payload.i)); }
@@ -121,7 +128,7 @@ void loft_register_v1(loft_ffi_register_cb cb, void *ctx) {
     REG(cb, ctx, "n_make_bin", n_make_bin); REG(cb, ctx, "n_text_len", n_text_len); REG(cb, ctx, "n_wrap", n_wrap);
     REG(cb, ctx, "n_byte", n_byte); REG(cb, ctx, "n_add", n_add); REG(cb, ctx, "n_is_even", n_is_even);
     REG(cb, ctx, "n_sum_bytes", n_sum_bytes); REG(cb, ctx, "n_half", n_half); REG(cb, ctx, "n_narrow", n_narrow);
-    REG(cb, ctx, "n_iota", n_iota); REG(cb, ctx, "n_rev", n_rev); REG(cb, ctx, "n_pair", n_pair);
+    REG(cb, ctx, "n_iota", n_iota); REG(cb, ctx, "n_none_vec", n_none_vec); REG(cb, ctx, "n_rev", n_rev); REG(cb, ctx, "n_pair", n_pair);
     REG(cb, ctx, "n_cat", n_cat);
     REG(cb, ctx, "n_same", n_same); REG(cb, ctx, "n_bag_items", n_bag_items); REG(cb, ctx, "n_named_k", n_named_k);
 }
@@ -129,7 +136,7 @@ void loft_register_bridges_v1(loft_ffi_register_cb cb, void *ctx) {
     REG(cb, ctx, "n_make_bin", b_make_bin); REG(cb, ctx, "n_text_len", b_text_len); REG(cb, ctx, "n_wrap", b_wrap);
     REG(cb, ctx, "n_byte", b_byte); REG(cb, ctx, "n_add", b_add); REG(cb, ctx, "n_is_even", b_is_even);
     REG(cb, ctx, "n_sum_bytes", b_sum_bytes); REG(cb, ctx, "n_half", b_half); REG(cb, ctx, "n_narrow", b_narrow);
-    REG(cb, ctx, "n_iota", b_iota); REG(cb, ctx, "n_rev", b_rev); REG(cb, ctx, "n_pair", b_pair);
+    REG(cb, ctx, "n_iota", b_iota); REG(cb, ctx, "n_none_vec", b_none_vec); REG(cb, ctx, "n_rev", b_rev); REG(cb, ctx, "n_pair", b_pair);
     REG(cb, ctx, "n_cat", b_cat);
     REG(cb, ctx, "n_same", b_same); REG(cb, ctx, "n_bag_items", b_bag_items); REG(cb, ctx, "n_named_k", b_named_k);
 }

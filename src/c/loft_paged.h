@@ -32,6 +32,9 @@ typedef struct {
     uint8_t *kbuf;
     size_t kcap, klen;
     uint32_t krec;
+    /* PagedReader::trie_v1: the image's tries were written under placement token 1 — keys read
+     * raw, no null slot — and are read as written. */
+    int trie_v1;
 } loft_pg;
 
 /* PageSource::open: the image, refused when it does not begin with the store signature — 1, else
@@ -244,3 +247,4 @@ static int loft_pg_child_ok(loft_pg *r, uint32_t n) {
 #define LOFT_RX_GUARD(s, n) loft_pg_child_ok(s, n)
 #define LOFT_RX_KEYI(s, r, k) loft_pg_field_value(s, r, 8 + (k)->pos, k)
 #define LOFT_RX_KEYT(s, r, k) loft_pg_key_text(s, r, k)
+#define LOFT_RX_ESC(s) (!(s)->trie_v1)

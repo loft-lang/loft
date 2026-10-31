@@ -8,7 +8,7 @@
 
 use super::disturbance::{
     ContainerAt, Disturbance, DisturbedParams, RemovedParams, ViewCause, grown_containers,
-    named_place, reshaped_containers,
+    named_place, released_children, reshaped_containers,
 };
 use super::places::{
     ParamPlace, add_offset, call_arg_at, compose_param_at, get_record_literal_keys,
@@ -604,7 +604,12 @@ impl ViewWalk<'_> {
         // own depth through the keyed-literal filter, a container inside an element through the
         // literal-index one (loft#2161).
         let mut whole: HashSet<(u16, u32)> = HashSet::default();
+        let released = released_children(stmt, self.data);
         for (place, at) in reshaped_containers(stmt, self.data, self.function) {
+            if released.contains_key(&place) {
+                self.shake_places_deeper(place, at.depth, None, ViewCause::Released, None);
+                continue;
+            }
             if at.depth == 0 {
                 whole.insert(place);
             } else {
@@ -1373,7 +1378,7 @@ fn established_stores(stmt: &Value, function: &Function, data: &Data) -> HashSet
             }
         }
         // A call that reassigns one of its `&` parameters displaces the caller's store.
-        Value::Call(d, args) if data.def(*d).name.starts_with("n_") => {
+        Value::Call(d, args) if data.def(*d).is_loft_defined() => {
             let reassigned = reassigned_ref_params(data, *d);
             for (i, arg) in args.iter().enumerate() {
                 if !u16::try_from(i).is_ok_and(|i| reassigned.contains(&i)) {
@@ -1392,7 +1397,11 @@ fn established_stores(stmt: &Value, function: &Function, data: &Data) -> HashSet
                     function.tp(*src).base(),
                     Type::Reference(_, _) | Type::Enum(_, true, _)
                 ),
-                Value::Call(f, _) => data.def(*f).name.starts_with("n_"),
+                Value::Call(f, _) => {
+                    // A native's result is established as a loft body's is; a method's too.
+                    let def = data.def(*f);
+                    def.name.starts_with("n_") || def.is_loft_defined()
+                }
                 // A struct-ENUM literal builds into a work-ref and hands the variable that
                 // block: `sh = { OpDatabase(__ref_p2_2, …); …; __ref_p2_2 }`.  The tail is
                 // the same `Var` establishment the first arm names, one wrapper out — and

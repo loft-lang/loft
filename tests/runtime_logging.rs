@@ -1,6 +1,5 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @PLN203 C-gap: the runtime log of a fault site is not written by the C — its `--native` runs as `--native-rust` until then.
 
 //! Plan-07 phase 4 production-mode tests.
 //!
@@ -463,6 +462,7 @@ fn main() {
     {
         legs.push("--native-rust");
     }
+    legs.push("--native-c");
     for leg in legs {
         let (script_path, log_path) = setup_prod_run(&format!("every_fault{}", &leg[1..]), source);
         let out = loft::platform::process::harness_command(loft_bin())
@@ -564,6 +564,7 @@ fn main() {
     {
         legs.push("--native-rust");
     }
+    legs.push("--native-c");
     for leg in legs {
         let (script_path, log_path) = setup_prod_run(&format!("held_oob{}", &leg[1..]), source);
         let out = loft::platform::process::harness_command(loft_bin())
@@ -639,17 +640,16 @@ fn main() {
 // machinery (script + log.conf + read the captured log) is already here.
 // ---------------------------------------------------------------------------
 
+/// The three backends every logged cell runs on.
+const LEGS: [&str; 3] = ["--interpret", "--native-rust", "--native-c"];
+
 /// Run a script under a plain (non-production) backend with a logger attached,
 /// and return the captured log.
-fn run_logged(name: &str, source: &str, native: bool) -> String {
-    let (script_path, log_path) = setup_prod_run(name, source);
+fn run_logged(name: &str, source: &str, leg: &str) -> String {
+    let (script_path, log_path) = setup_prod_run(&format!("{name}{leg}"), source);
     let conf = script_path.parent().unwrap().join("log.conf");
     let out = loft::platform::process::harness_command(loft_bin())
-        .arg(if native {
-            "--native-rust"
-        } else {
-            "--interpret"
-        })
+        .arg(leg)
         .arg("--log-conf")
         .arg(&conf)
         .arg(&script_path)
@@ -658,8 +658,7 @@ fn run_logged(name: &str, source: &str, native: bool) -> String {
         .expect("invoke loft binary");
     assert!(
         out.status.success(),
-        "{name} ({}) did not run cleanly: {}",
-        if native { "native" } else { "interp" },
+        "{name} ({leg}) did not run cleanly: {}",
         String::from_utf8_lossy(&out.stderr)
     );
     let log = fa::read_to_string(&log_path).unwrap_or_default();
@@ -714,12 +713,12 @@ fn main() {
   if g == null { print(\"g\\n\"); }
 }
 ";
-    for native in [false, true] {
+    for native in LEGS {
         let log = run_logged("defended_sites", source, native);
         assert!(
             !log.contains("[index_out_of_bounds]"),
             "a defended fault site reported ({}); got {log:?}",
-            if native { "native" } else { "interp" }
+            native
         );
     }
 }
@@ -744,14 +743,13 @@ fn main() {
   print(\"{y}\\n\");
 }
 ";
-    for native in [false, true] {
+    for native in LEGS {
         let log = run_logged("undefended_sites", source, native);
         let hits = log.matches("[index_out_of_bounds]").count();
         assert_eq!(
-            hits,
-            3,
+            hits, 3,
             "an undefended fault site must report ({}); got {log:?}",
-            if native { "native" } else { "interp" }
+            native
         );
     }
 }
@@ -770,12 +768,12 @@ fn main() {
   if f == null { print(\"{g}\\n\"); }
 }
 ";
-    for native in [false, true] {
+    for native in LEGS {
         let log = run_logged("gap_then_check", source, native);
         assert!(
             !log.contains("[index_out_of_bounds]"),
             "an intervening statement must not defeat the guard ({}); got {log:?}",
-            if native { "native" } else { "interp" }
+            native
         );
     }
 }
@@ -803,12 +801,12 @@ fn a_fault_site_inside_its_own_null_test_is_guarded() {
         ("or", "if v[5] == null || v[0] == 7 { print(\"e\\n\"); }"),
     ] {
         let source = format!("fn main() {{\n  v: vector<integer> = [7];\n  {guard}\n}}\n");
-        for native in [false, true] {
+        for native in LEGS {
             let log = run_logged(&format!("inline_null_test_{tag}"), &source, native);
             assert!(
                 !log.contains("[index_out_of_bounds]"),
                 "`{guard}` guards its own fault site ({}); got {log:?}",
-                if native { "native" } else { "interp" }
+                native
             );
         }
     }
@@ -827,12 +825,12 @@ fn main() {
   if v[5] > 3 { print(\"big\\n\"); } else { print(\"small\\n\"); }
 }
 ";
-    for native in [false, true] {
+    for native in LEGS {
         let log = run_logged("inline_non_null_cmp", source, native);
         assert!(
             log.contains("[index_out_of_bounds]"),
             "a non-null comparison does not own the null and must still report ({}); got {log:?}",
-            if native { "native" } else { "interp" }
+            native
         );
     }
 }
@@ -852,12 +850,12 @@ fn main() {
   print(\"{r}\\n\");
 }
 ";
-    for native in [false, true] {
+    for native in LEGS {
         let log = run_logged("match_null_guard", source, native);
         assert!(
             !log.contains("[index_out_of_bounds]"),
             "a `null` match arm owns the null ({}); got {log:?}",
-            if native { "native" } else { "interp" }
+            native
         );
     }
 }
@@ -878,12 +876,12 @@ fn main() {
   print(\"{r}\\n\");
 }
 ";
-    for native in [false, true] {
+    for native in LEGS {
         let log = run_logged("match_value_reports", source, native);
         assert!(
             log.contains("[index_out_of_bounds]"),
             "a non-null match arm does not own the null and must still report ({}); got {log:?}",
-            if native { "native" } else { "interp" }
+            native
         );
     }
 }
@@ -911,14 +909,100 @@ fn main() {
   if w == null { print(\"no\\n\"); } else { print(\"n3\\n\"); }
 }
 ";
-    for native in [false, true] {
+    for native in LEGS {
         let log = run_logged("escaped_null", source, native);
         let hits = log.matches("[index_out_of_bounds]").count();
         assert_eq!(
-            hits,
-            3,
+            hits, 3,
             "a guard that does not own the null must not silence it ({}); got {log:?}",
-            if native { "native" } else { "interp" }
+            native
         );
+    }
+}
+
+/// `@FR-E-Report` over every recoverable fault KIND, one cell a line, with the guarded twins
+/// beside them: each backend logs exactly the hand-computed (line, kind) list below — the C
+/// (@PLN206 D36) as the interpreter and native do.  The axes the other cells hold fixed are
+/// moved here: the operator (integer, float and single division, both shifts, the three
+/// casts, a narrow slot's range), the element read's holder (a plain vector, one held for a
+/// loop, one held apart on the stack, a split table, text), and a fault inside a one-line
+/// lambda, which names the lambda's statement.
+#[test]
+fn every_fault_kind_reports_once_at_its_line_on_every_backend() {
+    let source = "\
+fn zero() -> integer { z = 0; for i in 0..3 { z = z * i; } z }
+fn main() {
+  z = zero();
+  f = 0.0 + z as float;
+  s = 0.0f + z as single;
+  a1 = 10 / z;
+  a2 = (10 / z) ?? 5;
+  b1 = 2.0 / f;
+  b2 = 2.0f % s;
+  c1 = 1 << (z + 64);
+  c2 = 1 << (z + 63);
+  d1 = (1.0e30 + f) as integer;
+  d2 = \"-9223372036854775808\" as integer?;
+  d3 = (z + 55296) as character;
+  u: u8 = 250;
+  u += 10 + z;
+  w: u8 = 250;
+  w = (w + 10 + z) ?? 7;
+  v = [1, 2, 3];
+  e1 = v[z + 7];
+  e2 = v[z - 9];
+  e3 = v[z + 8] ?? 0;
+  t = \"ab\";
+  e4 = t[z + 5];
+  fv: vector<float> = [1.5];
+  e5 = fv[z + 4];
+  parts = \"a/b\".split('/');
+  e6: text? = parts[z + 2];
+  n = 0;
+  for i in 0..4 { n += v[i]; }
+  g: u8 = 1;
+  h = fn(k: integer) { g += 255 + k; };
+  h(z);
+  println(\"{a1} {a2} {b1} {b2} {c1} {c2} {d1} {d2} {d3} {u} {w} {e1} {e2} {e3} {e4} {e5} {e6} {n} {g}\");
+}
+";
+    let want: &[(u32, &str)] = &[
+        (6, "divide_by_zero"),
+        (8, "divide_by_zero"),
+        (9, "divide_by_zero"),
+        (10, "shift_out_of_range"),
+        (11, "shift_out_of_range"),
+        (12, "cast_out_of_range"),
+        (13, "cast_out_of_range"),
+        (14, "cast_out_of_range"),
+        (16, "range_defaulted"),
+        (20, "index_out_of_bounds"),
+        (21, "negative_index"),
+        (24, "index_out_of_bounds"),
+        (26, "index_out_of_bounds"),
+        (28, "index_out_of_bounds"),
+        (30, "index_out_of_bounds"),
+        (32, "range_defaulted"),
+    ];
+    for leg in LEGS {
+        let log = run_logged("every_kind", source, leg);
+        let got: Vec<(u32, String)> = log
+            .lines()
+            .filter_map(|l| {
+                let at = l.split(".loft:").nth(1)?;
+                let line = at.split_whitespace().next()?.parse().ok()?;
+                let kind = at.split('[').nth(1)?.split(']').next()?.to_string();
+                Some((line, kind))
+            })
+            .collect();
+        let want: Vec<(u32, String)> = want.iter().map(|(l, k)| (*l, (*k).to_string())).collect();
+        if leg == "--native-rust" {
+            // `(E-Report)`: native may name the running function's declaration instead of
+            // the statement, so its records are compared by kind, in order.
+            let kinds = |v: &[(u32, String)]| v.iter().map(|(_, k)| k.clone()).collect::<Vec<_>>();
+            assert_eq!(kinds(&got), kinds(&want), "{leg}: the fault kinds\n{log}");
+        } else {
+            assert_eq!(got, want, "{leg}: the fault records\n{log}");
+        }
     }
 }

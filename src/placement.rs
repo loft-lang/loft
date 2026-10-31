@@ -202,7 +202,55 @@ pub fn key_orders(type_nr: i8) -> bool {
 pub const RADIX: &str = "1";
 
 /// `trie<T[k]>` — the paged text trie in `crate::trie_db`.
-pub const TRIE: &str = "1";
+///
+/// `2` is loft#2241 (`@FR-Col-Trie`): a key's data bytes `0x00`/`0x01` are filed escaped
+/// (`01 01`/`01 02`), so no key reads as another that ends in NULs, and a null key lives in a
+/// slot ahead of the tree — the header word `1` used for the node capacity.  A `1` trie files
+/// every other key exactly as `2` does ([`TRIE_READS`]).
+pub const TRIE: &str = "2";
+/// The older [`TRIE`] tokens this build reads.  A whole-image load CONVERTS such a trie — walks
+/// it key-free and files every record again, an old null key into the slot — because a key it
+/// holds with a `0x00`/`0x01` byte sits where the escape would not look.  A paged read reads it
+/// as it was written, through the old key reading (`paged_reader::PagedReader::trie_v1`).
+pub const TRIE_READS: &[&str] = &["1"];
+/// Does this build read a `trie` written under placement `token`?
+#[must_use]
+pub fn trie_reads(token: &str) -> bool {
+    token == TRIE || TRIE_READS.contains(&token)
+}
+
+/// `dump` with every `trie` part written under a token this build reads ([`TRIE_READS`])
+/// given this build's own token — what the same types render as now.  The upgrade compares
+/// an old layout re-rendered through this build's rows against this, since a row renders
+/// this build's token; the trie itself is then walked and filed again, never read raw.
+/// A row's layout part is its last tab-separated column, where a trie is one whole part.
+#[must_use]
+pub fn trie_read_as_own(dump: &str) -> String {
+    let own = tag(TRIE);
+    let mut out = String::with_capacity(dump.len());
+    for (i, line) in dump.split('\n').enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        let (head, part) = line.rsplit_once('\t').map_or(("", line), |(h, p)| (h, p));
+        let rewritten = part.strip_prefix("trie<").and_then(|_| {
+            let (body, token) = match part.split_once(",placement=") {
+                Some((b, t)) => (b, t),
+                None => (part, BASELINE),
+            };
+            (body.ends_with('>') && TRIE_READS.contains(&token)).then(|| format!("{body}{own}"))
+        });
+        match rewritten {
+            Some(r) if !head.is_empty() => {
+                out.push_str(head);
+                out.push('\t');
+                out.push_str(&r);
+            }
+            _ => out.push_str(line),
+        }
+    }
+    out
+}
 
 /// The suffix a keyed collection contributes to its line in `Stores::layout_dump`.
 ///

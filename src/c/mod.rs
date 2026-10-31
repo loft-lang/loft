@@ -113,6 +113,11 @@ pub(crate) enum CType {
     Fn,
     /// A tuple: the C struct [`Cx::tuple_shapes`] numbers, held and passed by value.
     Tuple(u32),
+    /// `@FR-R-Transient` — a record held outside the store: a pointer to the struct of this
+    /// group (`lt_<group> *`); null is 0.
+    Tr(u16),
+    /// `@FR-R-Transient` — a vector held outside the store, `loft_ta_vec *`; null is 0.
+    TrVec,
     /// No value.
     Void,
 }
@@ -144,6 +149,8 @@ pub(crate) fn held(c: CType) -> String {
         CType::Char => "uint32_t".into(),
         CType::Fn => "loft_fn".into(),
         CType::Tuple(id) => format!("loft_tup{id}"),
+        CType::Tr(g) => format!("lt_{g} *"),
+        CType::TrVec => "loft_ta_vec *".into(),
         CType::Void => "void".into(),
     }
 }
@@ -206,6 +213,17 @@ pub(crate) struct Cx<'a> {
     pub(crate) gen_decls: std::cell::RefCell<String>,
     /// The generators' resume and release functions, written after them.
     pub(crate) gen_bodies: std::cell::RefCell<String>,
+    /// `@FR-R-Transient`'s twins and the structs they use (`body::transient`).
+    pub(crate) tr: std::cell::RefCell<body::transient::TrState>,
+    /// `@FR-R-AppendTwin`'s window clause: per function, the element size its append twin's
+    /// window carries, or `None` where the twin finds its buffer through the store.
+    ap_windows: std::cell::RefCell<std::collections::HashMap<u32, Option<u32>>>,
+    /// `@FR-R-Inline`'s twin clause, its helper half: the small plain functions written with a
+    /// `/*loft_hot:D*/` storage marker, resolved once every twin is written (`hot_helpers`).
+    hot_candidates: std::cell::RefCell<std::collections::BTreeSet<u32>>,
+    /// The functions called in the body of a loop that calls an `__inv` twin: the twin is
+    /// taken into that loop, so they are roots of `hot_helpers` as much as the twin is.
+    pub(crate) loop_callees: std::cell::RefCell<std::collections::BTreeSet<u32>>,
     /// The types a `T.parse` reaches (`parse.rs`): their rows of `loft_ptypes`.
     parse_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// The unit reaches `stack_trace()`: every function keeps a frame (`loft_frame_push`).
@@ -345,6 +363,10 @@ impl<'a> Cx<'a> {
             unicode: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             gen_decls: std::cell::RefCell::new(String::new()),
             gen_bodies: std::cell::RefCell::new(String::new()),
+            tr: std::cell::RefCell::new(body::transient::TrState::default()),
+            ap_windows: std::cell::RefCell::new(std::collections::HashMap::new()),
+            hot_candidates: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            loop_callees: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             parse_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             frames: std::cell::Cell::new(false),
             lazy: std::cell::Cell::new(false),
@@ -581,6 +603,42 @@ impl<'a> Cx<'a> {
         walk(self.stores, tp, &mut Vec::new())
     }
 
+    /// Does `tp` reach a `trie`?  A whole load of an image whose tries an older placement wrote
+    /// files them again by a walk of the type (loft#2241, `loft_trie_refile`), so such a type
+    /// is described as one holding references is.
+    pub(crate) fn holds_trie(&self, tp: u16) -> bool {
+        use crate::database::Parts;
+        fn walk(s: &Stores, tp: u16, seen: &mut Vec<u16>) -> bool {
+            if seen.contains(&tp) || usize::from(tp) >= s.types.len() {
+                return false;
+            }
+            seen.push(tp);
+            match &s.types[tp as usize].parts {
+                Parts::Trie(..) => true,
+                Parts::Struct(f) | Parts::EnumValue(_, f) => {
+                    f.iter().any(|f| walk(s, f.content, seen))
+                }
+                Parts::Enum(v) => v.iter().any(|(t, _)| *t != u16::MAX && walk(s, *t, seen)),
+                Parts::Vector(c)
+                | Parts::Sorted(c, _)
+                | Parts::Hash(c, _)
+                | Parts::Index(c, _)
+                | Parts::Ordered(c, _)
+                | Parts::Array(c)
+                | Parts::ChildRec(c)
+                | Parts::Radix(c, _) => walk(s, *c, seen),
+                _ => false,
+            }
+        }
+        walk(self.stores, tp, &mut Vec::new())
+    }
+
+    /// Does a load of a store minted as `tp` walk its type: to re-point its references, or to
+    /// file an older placement's tries again?
+    pub(crate) fn load_walks_type(&self, tp: u16) -> bool {
+        self.holds_stored_refs(tp) || self.holds_trie(tp)
+    }
+
     /// The C name of the sidecar a `store_persist_copy` of a store minted as `tp` writes.
     pub(crate) fn sidecar_of(&self, tp: u16) -> String {
         self.sidecars.borrow_mut().insert(tp);
@@ -657,7 +715,7 @@ impl<'a> Cx<'a> {
                 "static const loft_sidecar loft_sidecar{tp} = {{ {tp}, loft_scb{tp}, loft_sca{tp}, UINT64_C({}), loft_scd{tp}, {}, {}, {} }};",
                 id.layout_hash,
                 body::c_string(&self.stores.release().oldest),
-                if self.holds_stored_refs(tp) {
+                if self.load_walks_type(tp) {
                     "loft_types"
                 } else {
                     "0"
@@ -796,6 +854,7 @@ impl<'a> Cx<'a> {
                     .collect();
                 format!("{{ {} }}", fields.join(", "))
             }
+            CType::Tr(_) | CType::TrVec => "0".into(),
             CType::Void => String::new(),
         }
     }
@@ -1351,6 +1410,56 @@ impl Cx<'_> {
         )
     }
 
+    /// `@FR-R-AppendTwin`'s window clause: the element size of `d`'s append twin's window, or
+    /// `None` where that twin keeps finding its buffer through the store.  The twin's signature
+    /// and every call of it ask this one answer.
+    pub(crate) fn ap_window(&self, d: u32) -> Option<u32> {
+        if let Some(w) = self.ap_windows.borrow().get(&d) {
+            return *w;
+        }
+        let w = crate::opt::append_twin::window_size(self.data, self.stores, d);
+        self.ap_windows.borrow_mut().insert(d, w);
+        w
+    }
+
+    /// `@FR-R-Inline`'s twin clause, the helper half: the marked functions (`hot_candidates`)
+    /// that run inside a loop calling an `__inv` twin — called in that loop's body
+    /// (`loop_callees`) or by the twin — and the ones those reach through calls of hinted
+    /// functions.  The loop is what is hot, not the function around it: a caller's code
+    /// outside the loop, the bench driver around a `main` that prints in a loop, is not.
+    pub(crate) fn hot_helpers(&self) -> std::collections::BTreeSet<u32> {
+        let cands = self.hot_candidates.borrow();
+        let mut hot = std::collections::BTreeSet::new();
+        let mut work: Vec<u32> = self
+            .twins
+            .borrow()
+            .iter()
+            .filter(|(_, m)| m & INV_BIT != 0)
+            .map(|(d, _)| *d)
+            .collect();
+        for &c in self.loop_callees.borrow().iter() {
+            if cands.contains(&c) {
+                hot.insert(c);
+                work.push(c);
+            }
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        while let Some(f) = work.pop() {
+            if !seen.insert(f) || (f as usize) >= self.data.definitions.len() {
+                continue;
+            }
+            self.data.def(f).code().walk(&mut |n| {
+                if let Value::Call(c, _) = n
+                    && cands.contains(c)
+                {
+                    hot.insert(*c);
+                    work.push(*c);
+                }
+            });
+        }
+        hot
+    }
+
     /// The place twin `(d, mask)` is called: it is written with the unit.
     pub(crate) fn request_twin(&self, d: u32, mask: u64) {
         let mut t = self.twins.borrow_mut();
@@ -1645,6 +1754,10 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
 ///
 /// # Errors
 /// The first function the C backend does not carry yet.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the unit's assembly in one place: runtime, prototypes, bodies, the log binding"
+)]
 pub fn emit_unit_for(
     data: &Data,
     stores: &Stores,
@@ -1711,6 +1824,8 @@ pub fn emit_unit_for(
         }
         write_twins(&cx, &mut written, &mut protos, &mut bodies)?;
     };
+    // `@FR-R-Inline`'s twin clause, the helper half.
+    let (protos, bodies) = resolve_hot_helpers(&cx, &protos, &bodies);
     // `file_map` is the one producer of a foreign store (@PLN174): a unit that does not reach
     // it compiles `loft_at` without the foreign record's test.
     let mut out = String::new();
@@ -1721,6 +1836,8 @@ pub fn emit_unit_for(
     out.push('\n');
     out.push_str(&c_libraries(data, &cx.ffi_libs.borrow()));
     out.push_str(&cx.typedefs());
+    out.push_str(&cx.tr_typedefs());
+    out.push_str(&cx.tr_protos());
     if parses {
         out.push_str(&cx.parse_table());
         out.push_str(&cx.main_vector_test());
@@ -1735,6 +1852,7 @@ pub fn emit_unit_for(
     out.push_str(&cx.drop_code(&fns));
     out.push_str(&cx.gen_bodies.borrow());
     out.push_str(&bodies);
+    out.push_str(&cx.tr_bodies());
     // The unit's tables, for the runtime (`loft_tn`, `loft_cl`, the lazy drivers): a generated
     // `main` binds them before it starts.  Written last, so it can name every function.
     let mut bind = String::from(
@@ -1743,7 +1861,8 @@ pub fn emit_unit_for(
          loft_col = loft_coptlibs;\n    loft_ncol = loft_ncoptlibs;\n    \
          loft_cbl = loft_cboundlibs;\n    loft_ncbl = loft_ncboundlibs;\n    \
          loft_fault_logger = loft_log_production_fault;\n    \
-         loft_locked_logger = loft_log_locked_write;\n",
+         loft_locked_logger = loft_log_locked_write;\n    \
+         loft_warn_logger = loft_log_warn;\n",
     );
     // The type table, for what a store's free walks (`@FR-H-Handle`): a unit that describes no
     // type declares none, and the runtime's pointer stays null.
@@ -2094,6 +2213,19 @@ fn unit_defines(
     let mut out = String::new();
     if reached.iter().any(|&d| data.def(d).name() == "n_file_map") {
         out.push_str("#define LOFT_FOREIGN 1\n");
+    }
+    // `@FR-R-NoLocks`: a store is read-only only through `#lock = …`, a mapped file
+    // (`file_map`) or a constant store; a unit that reaches none of them meets no locked write.
+    let locks = reached
+        .iter()
+        .any(|&d| matches!(data.def(d).name(), "n_set_store_lock" | "n_file_map"))
+        || cx
+            .consts
+            .borrow()
+            .iter()
+            .any(|&d| data.def(d).const_ref.is_some());
+    if !locks && !crate::env_once!(std::env::var("LOFT_NO_LOCK_FACT").is_ok_and(|v| v != "0")) {
+        out.push_str("#define LOFT_NO_LOCKS 1\n");
     }
     // The JSON reader (`loft_json.h`) is compiled in for a unit that reads JSON: the JsonValue
     // tree with its layout read from this program's type table for one that reaches a JSON
@@ -2487,8 +2619,52 @@ pub(crate) fn dest_scalar_ctype(s: &crate::lower::destination::Scalar) -> CType 
     }
 }
 
+/// `@FR-R-Inline`'s twin clause, the helper half: every function written with a `/*loft_hot:D*/`
+/// storage marker becomes `static inline` when a twin's loop reaches it (`Cx::hot_helpers`) and
+/// plain `static` otherwise — in the unit's own text and in the frame wrappers'.
+fn resolve_hot_helpers(cx: &Cx, protos: &str, bodies: &str) -> (String, String) {
+    let hot = cx.hot_helpers();
+    let resolve = |text: &str| -> String {
+        let mut out = text.to_string();
+        for d in cx.hot_candidates.borrow().iter() {
+            let marker = format!("static /*loft_hot:{d}*/");
+            let to = if hot.contains(d) {
+                "static inline"
+            } else {
+                "static"
+            };
+            out = out.replace(&marker, to);
+        }
+        out
+    };
+    let decls = resolve(&cx.gen_decls.borrow());
+    let wrapped = resolve(&cx.gen_bodies.borrow());
+    *cx.gen_decls.borrow_mut() = decls;
+    *cx.gen_bodies.borrow_mut() = wrapped;
+    (resolve(protos), resolve(bodies))
+}
+
 fn small_function(statements: usize) -> bool {
     statements <= 12
+        && !crate::env_once!(std::env::var("LOFT_NO_INLINE_HINT").is_ok_and(|v| v != "0"))
+}
+
+/// `@FR-R-Inline`'s twin clause, the helper half: a plain function of this size or less that a
+/// hinted twin or a twin's caller calls is hinted with it; decided once the twins are written.
+fn hot_helper_size(mask: u64, statements: usize) -> bool {
+    mask == 0
+        && statements <= 80
+        && !crate::env_once!(std::env::var("LOFT_NO_INLINE_TWIN").is_ok_and(|v| v != "0"))
+        && !crate::env_once!(std::env::var("LOFT_NO_INLINE_HINT").is_ok_and(|v| v != "0"))
+}
+
+/// `@FR-R-Inline`'s twin clause: an `__inv` twin exists only because a loop holds its inputs
+/// for the call, so every call of it is hot; up to this size it is hinted inline whatever the
+/// twelve-statement bound says.
+fn hot_twin(mask: u64, statements: usize) -> bool {
+    mask & INV_BIT != 0
+        && statements <= 64
+        && !crate::env_once!(std::env::var("LOFT_NO_INLINE_TWIN").is_ok_and(|v| v != "0"))
         && !crate::env_once!(std::env::var("LOFT_NO_INLINE_HINT").is_ok_and(|v| v != "0"))
 }
 
@@ -2629,6 +2805,10 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     // An `__inv` twin takes the header of each vector it indexes from its caller, which holds
     // them; its body serves those vectors' accesses from them as a loop's held headers.
     let mut params = params;
+    // `@FR-R-AppendTwin`'s window clause: the caller's push window over the buffer.
+    if mask & AP_BIT != 0 && cx.ap_window(d).is_some() {
+        params.push("loft_win *loft_apw".to_string());
+    }
     if let Some((rec, _, _)) = &apv {
         let t = cx.ap2_ctype(*rec).ok_or("an __apv twin of no apart type")?;
         params.push(format!("{t} *loft_apo"));
@@ -2677,30 +2857,70 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         cx.gen_bodies.borrow_mut().push_str(&parts.bodies);
         return Ok((sig, body));
     }
-    let body = body::FnWriter::new(cx, d, shapes, ret)
-        .places(places)
-        .inputs(inputs)
-        .scalar_inputs(scalar_inputs)
-        .kept_growth(kept)
-        .nn_seed(mask)
-        .nokeep(mask & NK_BIT != 0)?
-        .apart(mask & APR_BIT != 0)
-        .apart_value(mask & APV_BIT != 0)
-        .append_twin(mask & AP_BIT != 0)
-        .destination(mask & DS_BIT != 0)
-        .write()?;
+    // `@FR-R-Transient`: a plain function with a root site is written with it first, and again
+    // without it when the writer declines it.
+    let site = if mask == 0 && inputs.is_empty() && scalar_inputs.is_empty() && !kept {
+        body::transient::site_plan(cx, d)
+    } else {
+        None
+    };
+    let tried = site.and_then(|tf| {
+        let mut s = shapes.clone();
+        tf.shape(&mut s);
+        match body::FnWriter::new(cx, d, s, ret)
+            .places(places)
+            .transient(tf)
+            .write()
+        {
+            Ok(b) => Some(b),
+            Err(why) => {
+                body::transient::declined(cx, d, &why);
+                None
+            }
+        }
+    });
+    let body = match tried {
+        Some(b) => b,
+        None => body::FnWriter::new(cx, d, shapes, ret)
+            .places(places)
+            .inputs(inputs)
+            .scalar_inputs(scalar_inputs)
+            .kept_growth(kept)
+            .nn_seed(mask)
+            .nokeep(mask & NK_BIT != 0)?
+            .apart(mask & APR_BIT != 0)
+            .apart_value(mask & APV_BIT != 0)
+            .append_twin(mask & AP_BIT != 0)
+            .destination(mask & DS_BIT != 0)
+            .write()?,
+    };
     let (body, statements) = body;
     // `@FR-R-Inline`: a small function is declared `inline`, its frame wrapper with it.
-    let inline = small_function(statements);
-    let sig = if inline {
-        sig.replacen("static ", "static inline ", 1)
+    let inline = small_function(statements) || hot_twin(mask, statements);
+    let helper = !inline && hot_helper_size(mask, statements);
+    let storage = if inline {
+        "static inline".to_string()
+    } else if helper {
+        cx.hot_candidates.borrow_mut().insert(d);
+        format!("static /*loft_hot:{d}*/")
     } else {
-        sig
+        "static".to_string()
     };
+    if crate::env_once!(std::env::var("LOFT_TRACE_INLINE").is_ok_and(|v| v != "0")) {
+        let verdict = if inline {
+            "inline"
+        } else if helper {
+            "inline if a twin reaches it"
+        } else {
+            "out of line"
+        };
+        eprintln!("[inline] {name}: {statements} statements, {verdict}");
+    }
+    let sig = sig.replacen("static", &storage, 1);
     // Every function keeps its frame: the pushes are macros that a build without the call
     // chain (`LOFT_CALL_CHAIN`, `LOFT_FRAMES`) compiles to nothing, the wrapper then a call
     // the compiler folds into its caller.
-    Ok((sig, framed(cx, d, &name, &params, ret, &body, inline)))
+    Ok((sig, framed(cx, d, &name, &params, ret, &body, &storage)))
 }
 
 /// The shape an `__inv` twin takes a scalar input in (`@FR-R-Inputs`' scalar clause): the
@@ -3690,10 +3910,9 @@ fn framed(
     params: &str,
     ret: CType,
     body: &str,
-    inline: bool,
+    storage: &str,
 ) -> String {
     let def = cx.data.def(d);
-    let storage = if inline { "static inline" } else { "static" };
     let _ = writeln!(
         cx.gen_decls.borrow_mut(),
         "{storage} {} {name}__fr({params});",

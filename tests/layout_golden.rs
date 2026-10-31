@@ -529,6 +529,10 @@ fn placement_contract_is_pinned() {
     assert_eq!(loft::hash::ent0(16), 32 + 16 * 8, "{BUMP}");
     assert_eq!(loft::placement::HASH, "3", "{BUMP}");
     assert_eq!(loft::placement::HASH_READS, ["2"], "{BUMP}");
+    // A trie (loft#2241): `2` files a key's 0x00/0x01 bytes escaped and a null key in the slot
+    // ahead of the tree; a `1` trie is converted by a whole load and read as written by page.
+    assert_eq!(loft::placement::TRIE, "2", "{BUMP}");
+    assert_eq!(loft::placement::TRIE_READS, ["1"], "{BUMP}");
     // The arena's own geometry: a slot's address is a pure function of its index, so
     // these three ARE where an entry lives.  A reader that tiles the index space
     // differently finds an entry at a byte offset nothing put one at.

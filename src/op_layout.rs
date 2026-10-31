@@ -310,6 +310,7 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpInsertVector",
     "OpAdoptVector",
     "OpReplaceVector",
+    "OpCopyClosure",
     "OpHashRemove",
     "OpReserveHash",
     "OpSizeHash",
@@ -356,6 +357,7 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpCoroutineReturn",
     "OpCoroutineExhausted",
     "OpCoroutineRetain",
+    "OpSetChildRec",
 ];
 
 /// How many operators are `#hot` (slots `0..OP_HOT`, all one-byte opcodes): the lean

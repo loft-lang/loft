@@ -19085,14 +19085,10 @@ fn i815_reachable_set_is_closed_under_calls() {
     );
 }
 
-// A struct that contains ITSELF by value is reported as such — the diagnostic names the
-// type and the cure (`reference<T>`).  `Data::has_value_cycle` used to skip recursing into
-// a child the program had CONSTRUCTED anywhere (`def_referenced`), which is every cyclic
-// type a real program writes: the report went silent and the reader met the internal
-// layout validator instead — `type layout: PENode: field 'next' has no position
-// (u16::MAX)`, with no source position and no cure.  The `@EXPECT_ERROR: contains itself`
-// fixture in `tests/scripts/36-parse-errors.loft` was meant to catch that and had itself
-// gone inert (loft#929).
+// A struct that contains ITSELF through a non-null field is reported as such, in a program
+// that also CONSTRUCTS it — the diagnostic names the field and the cure (`τ?`,
+// `@FR-T-Recursive`).  The report must not depend on whether the type is used: a gate on
+// `def_referenced` once silenced it for every cyclic type a real program writes (loft#929).
 #[test]
 fn a_struct_containing_itself_by_value_says_so() {
     code!(
@@ -19102,8 +19098,8 @@ fn test() {
 }"
     )
     .error(
-        "Struct 'PENode' contains itself (directly or indirectly) — use reference<PENode> \
-to break the cycle at a_struct_containing_itself_by_value_says_so:1:16",
+        "`PENode.next: PENode` makes every PENode contain another PENode — make it `PENode?` \
+at a_struct_containing_itself_by_value_says_so:1:16",
     );
 }
 

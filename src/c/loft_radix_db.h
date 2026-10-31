@@ -12,18 +12,17 @@ static int64_t loft_rx_table_bytes(loft_ref c) {
     if (c.store_nr == 0xFFFF || c.rec == 0) return 0;
     loft_store_t *s = loft_store_of(c);
     uint32_t t = loft_collection_rec(s, c.rec, c.pos);
-    return t == 0 ? 0 : (int64_t) loft_u32(s, t, LOFT_RX_CAP) * LOFT_RX_NODE_SIZE;
+    return t == 0 ? 0 : (int64_t) loft_rx_cap_for_words(loft_rec_words(s, t)) * LOFT_RX_NODE_SIZE;
 }
 
 static uint32_t loft_rx_init(loft_store_t *s, uint32_t initial) {
     uint32_t words = (LOFT_RX_HDR + LOFT_RX_NODE_SIZE * initial + 7) / 8;
     if (words < LOFT_RX_HDR / 8) words = LOFT_RX_HDR / 8;
     uint32_t t = loft_st_claim(s, words);
-    uint32_t cap = loft_rx_cap_for_words(loft_rec_words(s, t));
     loft_set_u32(s, t, LOFT_RX_TOP, 0);
     loft_set_u32(s, t, LOFT_RX_LEN, 0);
     loft_set_u32(s, t, LOFT_RX_NODES, 0);
-    loft_set_u32(s, t, LOFT_RX_CAP, cap);
+    loft_set_u32(s, t, LOFT_RX_SLOT, 0);
     loft_set_u32(s, t, LOFT_RX_FREE, 0);
     return t;
 }
@@ -36,10 +35,9 @@ static uint32_t loft_rx_alloc_node(loft_store_t *s, uint32_t *t) {
         return free_n;
     }
     uint32_t used = loft_u32(s, *t, LOFT_RX_NODES);
-    if (used >= loft_u32(s, *t, LOFT_RX_CAP)) {
+    if (used >= loft_rx_cap_for_words(loft_rec_words(s, *t))) {
         uint32_t words = loft_rec_words(s, *t);
         *t = loft_st_resize(s, *t, words * 2 > words + 2 ? words * 2 : words + 2);
-        loft_set_u32(s, *t, LOFT_RX_CAP, loft_rx_cap_for_words(loft_rec_words(s, *t)));
     }
     loft_set_u32(s, *t, LOFT_RX_NODES, used + 1);
     return used + 1;
@@ -109,7 +107,18 @@ static uint32_t loft_rx_tree(loft_ref c) {
     return loft_collection_rec(loft_store_of(c), c.rec, c.pos);
 }
 
-/* radix_db::add / trie_db::add: the record into the tree, made on first use. */
+/* trie_db::null_rec: the record in a trie's null slot, 0 when none — a token-1 tree's word (its
+ * node capacity) carries no tag, so it reads as none. */
+static uint32_t loft_rx_null_rec(loft_store_t *s, uint32_t t) {
+    uint32_t w = t == 0 ? 0 : loft_u32(s, t, LOFT_RX_SLOT);
+    return (w & LOFT_RX_SLOT_TAG) ? w & ~LOFT_RX_SLOT_TAG : 0;
+}
+
+/* trie_db::is_null_key: a null text reads as "\0" (`(L-Null-Text)`). */
+static int loft_rx_null_key(const uint8_t *b, size_t len) { return len == 1 && b[0] == 0; }
+
+/* radix_db::add / trie_db::add: the record into the tree, made on first use; a trie's null key
+ * into the slot ahead of the tree (`@FR-Col-Trie`). */
 static void loft_rx_add(loft_ref c, uint32_t rec, const loft_key *keys, int nk, int text) {
     loft_store_t *s = loft_store_of(c);
     uint32_t t = loft_collection_rec(s, c.rec, c.pos);
@@ -117,13 +126,22 @@ static void loft_rx_add(loft_ref c, uint32_t rec, const loft_key *keys, int nk, 
         t = loft_rx_init(s, 0);
         loft_set_u32(s, c.rec, c.pos, t);
     }
+    if (text) {
+        loft_str k = loft_store_str(s, loft_u32(s, rec, 8 + keys[0].pos));
+        if (loft_rx_null_key((const uint8_t *) k.p, k.len)) {
+            loft_set_u32(s, t, LOFT_RX_SLOT, rec | LOFT_RX_SLOT_TAG);
+            return;
+        }
+    }
     t = loft_rx_insert(s, t, rec, keys, nk, text);
     loft_set_u32(s, c.rec, c.pos, t);
 }
 
 static int64_t loft_rx_count(loft_ref c) {
     uint32_t t = loft_rx_tree(c);
-    return t == 0 ? 0 : (int64_t) loft_rx_len(loft_store_of(c), t);
+    if (t == 0) return 0;
+    loft_store_t *s = loft_store_of(c);
+    return (int64_t) loft_rx_len(s, t) + (loft_rx_null_rec(s, t) != 0);
 }
 
 /* A probe from key values: a spatial one's axis codes, a trie's text. */
@@ -138,7 +156,7 @@ static loft_rx_key loft_rx_probe(const loft_key *keys, int nk, int text, const l
             k.bytes = (const uint8_t *) kv[0].s.p;
             k.len = kv[0].s.len;
         }
-        k.bits = (uint32_t) k.len * 8;
+        loft_rx_text_bits(&k, 1);
     } else {
         for (int a = 0; a < n && a < LOFT_RX_MAX_AXES; a++) k.codes[a] = kv[a].kind == LOFT_KV_INT ? loft_rx_coord(kv[a].i) : 0;
         k.nk = n;
@@ -152,6 +170,10 @@ static loft_ref loft_rx_find(loft_ref c, const loft_key *keys, int nk, int text,
     uint32_t t = loft_rx_tree(c);
     if (t == 0) return loft_ref_null();
     loft_rx_key p = loft_rx_probe(keys, nk, text, kv, n);
+    if (text && loft_rx_null_key(p.bytes, p.len)) {
+        loft_ref e = { c.store_nr, loft_rx_null_rec(loft_store_of(c), t), 8 };
+        return e.rec == 0 ? loft_ref_null() : e;
+    }
     loft_ref e = { c.store_nr, loft_rx_get(loft_store_of(c), t, &p), 8 };
     return e.rec == 0 ? loft_ref_null() : e;
 }
@@ -164,6 +186,8 @@ static uint32_t *loft_rx_records(loft_ref c, uint32_t *n) {
     *n = 0;
     if (t == 0) return out;
     loft_store_t *s = loft_store_of(c);
+    /* The null key orders first (`@FR-Col-Order`): its slot before the tree. */
+    if (loft_rx_null_rec(s, t) != 0) out[(*n)++] = loft_rx_null_rec(s, t);
     loft_rx_iter it = loft_rx_straight(s, t, 0);
     for (uint32_t r = it.rec; r != 0; r = loft_rx_step(s, t, &it, 1)) out[(*n)++] = r;
     return out;
@@ -253,6 +277,10 @@ static uint32_t *loft_rx_prefix(loft_ref c, const loft_key *keys, loft_str pre, 
 static int loft_rx_unlink(loft_ref c, loft_ref e, const loft_key *keys, int nk, int text) {
     uint32_t t = loft_rx_tree(c);
     loft_forget_in_scratches(c, e);
+    if (t != 0 && text && e.rec != 0 && loft_rx_null_rec(loft_store_of(c), t) == e.rec) {
+        loft_set_u32(loft_store_of(c), t, LOFT_RX_SLOT, 0);
+        return 1;
+    }
     return t != 0 && loft_rx_remove(loft_store_of(c), t, e.rec, keys, nk, text);
 }
 

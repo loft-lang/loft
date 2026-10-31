@@ -169,6 +169,48 @@ with the arrays in a site-owned bump arena gcc **0.087×** (≈ 87 ns a check, u
 124); the `.ok` decode alone building no tree at all 0.537×.  Design and steps (T1 the dead
 tree, T2 the representation, T3 materialisation): [`transient.md`](transient.md).
 
+### The top three after `check_request` (2026-10-31, gcc ship, profiled at `888133d95`)
+
+| row | ratio | what the profile says | lever (general) | priced |
+|---|--:|---|---|---|
+| cbor `encode_bytes` | ≈ 6.9× | per ITEM, not per byte (64 texts × 256 bytes; the bytes are one `loft_append_text_bytes`): `head` 47 % — three one-byte pushes for a length of 256, each `loft_vec_prealloc(buf, 1, 1)` + `loft_vec_push_byte` resolving the store, behind a frame wrapper, the buffer re-resolved per call (`loft_field`); `encode`'s own arm 40 %.  ≈ 66 ns an item against the twin's ≈ 10 | a push RUN onto a vector that is not known empty: one capacity check for the run, byte stores through a held header (`(R-PushFill)`'s run clause asks known-empty since the `encode_bytes` regression); the per-push prealloc is redundant with the push's own growth | no |
+| hex_field `edgeset_count` | 7.2× | the twin runs the SAME algorithm (a six-way `eg_dir_from` per edge); 3.1 ns an edge against 0.43.  `eg_index__inv` 60 %, `eg_dir_from` 17 % — gcc does not inline the helpers (an `__inv` twin behind a frame wrapper) | the C's inlining decision: gcc with its limits raised (`max-inline-insns-single=4000` …) on the same C is **−47 %** (≈ 3.8×); the checked `loft_add`s replaced by wrapping adds on top: −3.6 % only (the integer-null cost is small here) | BUILT 2026-10-31 as `(R-Inline)`'s twin clause, no flags: the `__inv` twin and what its loop calls hinted inline — `edgeset_count` 0.450× (gcc), hex_shape `wall_chain_walk` 0.780×; clang unchanged |
+| server `header` | 7.0× | the LIBRARY's algorithm: `loft_text_case` 60 % — every header line lowercased whole per lookup; the twin compares the key with `eq_ignore_ascii_case` | library-side: loft-libs-net PR #33 (server 0.7.6, key compared in place) is OPEN, not merged; the bench checkout is 0.7.5 | by its author: ≈ 3.7× after |
+
+### cbor `encode_bytes` to 2× — priced by hand (2026-10-31)
+
+The emitted C at `06770627d` (`target-exp/prof/cbor/{a..g}.c`, local), `ab.py` 5 rounds, every
+form the same hashes (`encode_bytes` 71560779, `encode` de1a932).  Rust twin 57.9 µs an op.
+
+| form | µs an op | × twin | finding |
+|---|--:|--:|---|
+| today | 418 | 7.2× | |
+| A: `head`'s 1–9 bytes as ONE bulk append | 418 | 7.2× | nothing: three pushes cost what one append does — the per-CALL store work is the cost, not the per-byte |
+| **B: the output buffer as a push WINDOW kept across the append twins** (`encode__ap` and `head` take the caller's window by pointer; the text's bytes one `memcpy` into it; the array arm opens the window, syncs at its end; other arms sync around their calls) | **132** | **2.28×** | the lever: every append re-resolved the store, re-reserved and re-wrote the length (`loft_append_text_bytes`, `loft_vec_prealloc` + `loft_vec_push_byte`) |
+| C: B + the window copied into a local per twin | 155 | 2.7× | worse: the struct copy in and out costs more than it saves — keep it by pointer |
+| D: B + `items` held as a header in the outer loop | 129 | 2.2× | nothing |
+| E: B + the text arm before the twin's 30-local prologue | 126 | 2.2× | −2 % |
+| **F: B + E + the reused buffer KEEPS its capacity** (reserved once) | **116** | **1.94×** | `head` re-mints its holder (`loft_database_wrapper`) and zeroes the vector field (`loft_set_int4(vdb, 0, 0)`) per call, so the buffer reused across the 100 calls regrows from empty every call: `(R-ResetCapacity)` keeps a reused buffer's room only for a store-ROOT vector, not a holder's vector field |
+
+**Built (2026-10-31)** — the window clause of `(R-AppendTwin)` and `(H-KeepRoom)`, on the C:
+
+| form | µs an op | × twin | note |
+|---|--:|--:|---|
+| before | 409 | 7.1× | |
+| `(H-KeepRoom)` alone | 402 | 6.9× | the regrowth hides behind the per-append store work |
+| both rules | **255** | **4.4×** | cbor `encode` 0.891×, `decode` unchanged; hashes the same |
+| both + gcc's inlining limits raised (no code change) | 166 | 2.9× | the rest of the hand price: it inlined `head` and called the twin bodies directly |
+
+The gap between the built 4.4× and the priced 2.28× is CALL OVERHEAD — the twins' frame
+wrappers (8 % and 7.5 % of the profile) and their prologues (`head__ap` initialises ~20 locals for
+three byte pushes) — the same lever as `edgeset_count`'s −47 %.  Next for this row: that lever.
+
+Split of F: `make_texts` (the setup, once an op) 19.4 µs against the twin's 8.7 (2.2×); one
+`encode` ≈ 0.97 µs against 0.51.  The two general mechanisms that reach 2×: a push window kept
+across an append-twin chain (`(R-Header)`'s kept-twin clause, `__kh`, extended from a loop's
+held header to the push window an append twin writes through), and `(R-ResetCapacity)` for a
+holder's vector field.  Neither is built.
+
 ### The short appends (2026-10-30)
 
 **What the row paid.**  `req_state_b64` profiled at 75 % in `b64_encode`'s loop, four

@@ -1,23 +1,49 @@
 ---
 name: loft-write
-description: Reference for writing correct loft code. Apply whenever writing, editing, or reviewing .loft files. Covers types, syntax, known bugs, workarounds, naming rules, and error→fix table.
+description: >-
+  Reference for writing correct loft code. Use it whenever you write, edit or review any
+  .loft source — a program, a library, a doc example, a language-suite cell or a throwaway
+  /tmp probe — and when a probe fails to compile or warns, before assuming the compiler is
+  wrong. Covers types, syntax, structs, closures and their captures, collections, naming
+  rules, known bugs with their workarounds, the lints that fire on small programs, and an
+  error-to-fix table.
 user-invocable: false
 ---
 
 # Loft Language Writing Reference
 
-Always consult this before writing or reviewing `.loft` files.
+## Top traps
 
-**Before reimplementing stdlib-or-library functionality, run `make libcatalogue` and read the generated `doc/claude/LIBRARIES.md` (built on demand, git-ignored), plus `loft install <name>` — a registered library may already provide it. Stdlib function signatures: [doc/claude/STDLIB.md](../../../doc/claude/STDLIB.md).** <!--noindex-->
+Each of these either compiles to a program that answers wrong without a word, or fails a
+compile in a way that sends you looking in the wrong place.
 
-**Readable first.** Library code doubles as loft's teaching corpus, so write the clear
-loft version and keep it: a routine that measures slow is an ENGINE finding (or an
-algorithm fix here, in loft) — never a cue to shadow readable code with an optimized
-"fast pass" or a native rewrite; that escape hatch is a per-routine edge case with its
-reason recorded ([formal/performance.md](../../../doc/claude/formal/performance.md)
-`(Perf-Cure)`).  A faster LOFT spelling is the last resort too: first the code generation
-for the code as written, and a rewrite only as an API an `advice` names to users
-(`(Perf-Teach)`).
+1. **A whole-value bind COPIES** — `w = r.v; w[0] = 99` leaves `r.v` unchanged.  Bind
+   `w = &r.v` to write through (§ Copy or view).
+2. **A struct-element bind is a VIEW** — `t = v[j]` names slot j, so swapping struct elements
+   via a temp duplicates one record.  Swap field by field, or build a new vector.
+3. **`len(t)` counts characters, `t[a..b]` counts bytes** — cut by a character count with
+   `t.char_slice(a, b)` (§ Text pitfalls).
+4. **`v[-1]` is the last element; only `i >= len(v)` answers null** — a `-1` sentinel reads a
+   real element.  Test `i >= 0` before trusting a null guard.
+5. **Uncomputable arithmetic answers null and keeps running** — `÷0` and overflow yield null.
+   Defend with `?? fallback`, or `x?` for the type's zero.
+6. **`a / b?` is `a / (b?)` and answers null** — postfix `?` binds tightest, `??` loosest.
+   Write `(a / b)?`.
+7. **A local ends at its block's `}`** — reading it after is `local-out-of-scope`.  Bind it
+   before the block, or make the block's value the binding (§ Variable scoping).
+8. **Match arms use `=>` and are comma-separated** — `->` is the return arrow; a missing comma
+   reads as `Expect token ,`.
+9. **`fn` only at file scope** — inside a body write a lambda (`|x| { … }`, `fn(x: T) { … }`).
+10. **`text`, not `string`; `integer` (64-bit), not `long`** — literals take no `l` suffix.
+11. **A bare variant (`c = Red`) needs one owning enum** — when two enums share `Red`, write
+    `Color.Red` unless the context picks one (§ Enums).
+12. **`text as integer` is `integer?`** — a parse can fail; write `s as integer ?? 0`.
+
+Before reimplementing stdlib or library functionality, run `make libcatalogue` and read the
+generated `doc/claude/LIBRARIES.md`, plus `loft install <name>`; stdlib signatures are in
+[STDLIB.md](../../../doc/claude/STDLIB.md).  Library code is written readable first — a slow
+routine is an engine finding, not a cue for a fast-path rewrite
+([LIBRARY_AUTHORING.md § The library contract](../../../doc/claude/LIBRARY_AUTHORING.md#the-library-contract), item 7). <!--noindex-->
 
 ---
 
@@ -30,11 +56,9 @@ for the code as written, and a rewrite only as an API an `advice` names to users
 | Constants (file-scope) | `UPPER_CASE` | `PI`, `MAX_SIZE` |
 | Operator definitions | `OpXxx` prefix | `OpAdd`, `OpEqInt` |
 
-The parser **rejects** code that violates these rules.
-
-`OpXxx` definitions are the stdlib's operator table only (@C132, DESIGN_DECISIONS_SYNTAX.md):
-a user `fn Op…` is an ordinary function and binds no operator.  To put an operator on your
-own type write `operator compare` / `plus` / `minus` / `times` / `negate` (§ Operators).
+The parser **rejects** code that violates these rules.  `OpXxx` names are the stdlib's
+operator table only (@C132); to put an operator on your own type write `operator compare` /
+`plus` / … ([references/expressions.md](references/expressions.md)).
 
 ---
 
@@ -49,102 +73,27 @@ own type write `operator compare` / `plus` / `minus` / `times` / `negate` (§ Op
 | `character` | Single Unicode char; literal: `'a'`, `'😊'`; `c as integer` → codepoint | `'\0'` |
 | `text` | UTF-8 string (primary string type) | internal null pointer |
 
-**There is no `long` type and no `l` literal suffix.**  `integer` is already 64-bit (i64), so integer literals are
-plain (`86400000`, not `86400000l`), and `now()` / `File.size` return a
-full-range `integer`.  Writing `long` or `10l` is a compile error
-that names the fix.
+`now()` / `File.size` return a full-range `integer`.  **Narrow / sized integers are aliases of
+`integer`** (defined in `default/01_code.loft`), for byte-width-sensitive file / wire formats:
+`i8` `size(1)`, `i16`/`u16` `size(2)`, `i32`/`u32` `size(4)`.  Cast with `x as i32` etc.  Use
+plain `integer` for ordinary arithmetic — it has the full 64-bit range.
 
-**Narrow / sized integers are aliases of `integer`** (defined in
-`default/01_code.loft`), for byte-width-sensitive file / wire formats:
-`i8` `size(1)`, `i16`/`u16` `size(2)`, `i32`/`u32` `size(4)`.  Cast with
-`x as i32` etc.  Use plain `integer` for ordinary arithmetic — it has
-the full 64-bit range.
+---
 
-**Uncomputable arithmetic → null, and the program KEEPS RUNNING** (@C80, the spreadsheet
-model): divide / modulo by zero, and integer overflow (`i64::MAX + 1`), are uncomputable,
-so they yield `null` and execution CONTINUES — no trap, no halt in every build.  Any
-arithmetic landing exactly on `i64::MIN` also reads as `null` (the in-band sentinel).
-Defend a site with `?? <fallback>` to turn the null into a value; a CONSTANT zero divisor
-warns at compile time; a runtime one, like an index out of range, logs one Warn line unless
-the site is defended (`??`, a null check) — the value is null either way.  A function
-returning `integer` may `return null` (it yields `i64::MIN`, detectable with `!result`).
+## Null, `?` and casts — the short version
 
-**Prefer `x?` when the fallback is just the type's zero (@PLN116).** Postfix `?`
-discharges `T?` to `T` using **the type's own** default, so `?? 0` / `?? 0.0` /
-`?? ""` / `?? Pixel{r:0,g:0,b:0}` boilerplate collapses to one character.  `??`
-supplies *the default you give*; `?` supplies *the default the type gives* — that
-pairing is the mnemonic.
+- **Every scalar, `text` and vector is non-null by default**; append `?` to allow null
+  (`integer?`, `text?`, `vector<T>?`).  Storing null into a plain slot warns.
+- **`x ?? d`** supplies the default you give; **`x?`** supplies the type's own (`0`, `""`,
+  empty, every field defaulted, an enum's first variant).  `?` binds tightest, `??` loosest.
+- **A text parse is checked**: `s as integer` types `integer?`; write `s as integer ?? 0`,
+  `(s as integer?)?`, or keep it `integer?`.  `(s as integer)?` is refused.
+- **`s as Circle` and `t as Color` answer a default on a miss and warn** — check with `is`
+  first, or write `as Circle?`.
+- **`if v == null { return …; }` narrows** `v` to present for the rest of the block.
 
-<!-- from tests/reference/skill-null-and-casts.loft -->
-```loft
-name  = row.label?;         // text?   → ""      (was: ?? "")
-first = points[i]?;         // Point?  → Point{} (every field defaulted)
-count = (a / b)?;           // integer? → 0      (parens — see below)
-```
-
-Defaults: scalar → `0`/`0.0`/`false`/`'\0'`, `text` → `""`, collection → empty,
-record → every field defaulted, nullable `U?` → `null`, bare enum → its
-**first-declared** variant.
-
-Three things to know before reaching for it:
-
-- **`?` binds TIGHTEST, `??` binds LOOSEST** — opposite ends.  On a *binary*
-  result that flips the parens: `a / b ?? 0` discharges the division, but
-  `a / b?` is `a / (b?)` and evaluates to **null**.  Write `(a / b)?`.  So `?` is
-  a clear win on a **primary** (`row.label?`, `v[i]?`, `x?` — no parens) and a
-  wash on arithmetic.
-- **On an enum it is positional.** `c?` is the first-*declared* variant, so
-  reordering the enum silently changes it.  Use `?? Colour.Red` when the variant
-  matters.
-- **Two types have no default, so `x?` is a COMPILE error** (never a runtime one):
-  a bare reference, and a record with a bare enum field lacking `= <variant>`.
-  The error names the fixes; `??` or `match` is the fallback.
-
-**At a text parse, put `?` after the CHECKED cast:**
-
-<!-- from tests/reference/skill-null-and-casts.loft -->
-```loft
-n = (s as integer?)?;    // integer — checked cast, then default ⇒ 0 on a bad parse
-m = s as integer ?? 0;   // integer — the assert-or-default form
-o = s as integer?;       // integer? — the nullable CAST (that `?` belongs to the type)
-```
-
-and a bare `as` on text is an assertion, so the `?` on it is refused:
-
-<!-- from tests/reference/skill-casts-refused.loft -->
-```loft
-n = (s as integer)?;     // COMPILE ERROR — a bare `as` on text is an assertion
-```
-
-A bare `text as integer` is an *assertion* the compiler refuses (a parse can't be
-proven), so `(s as integer)?` fails on the inner cast — not because `?` is
-unavailable.  Write the checked cast first.
-
-**Parsing text is fallible, so `text as integer` types `integer?`** (`as float` →
-`float?`, `as single` → `single?`).  `"42" as integer` is a **parse**, not a numeric
-cast — a non-numeric string yields `null`, so the compiler types the result nullable
-and **rejects storing it into a non-null slot**.  Discharge at the parse site:
-`n = s as integer ?? 0` (default), `n = s as integer?` (keep it nullable), or `match`.
-This is the same reachable-fault rule as `÷0` / out-of-bounds indexing (@PLN25
-`(N-Parse)`).  A *numeric* `as` (`3.14 as integer`, `x as u8`) is not a parse and does
-not add `?` on its own (a narrowing numeric cast that can miss uses `as u8?`).
-
-**A cast to a variant is non-null** (@C131): `s as Circle` answers a `Circle`; on a miss its fields
-are defaulted and it WARNS (`variant-cast-default`) unless checked first (`if s is Circle { … }`)
-or spelled `as Circle?` (null on a miss).  A miss the compiler can prove is an error.  Likewise
-`t as Color` (text → plain enum) answers the FIRST variant on a miss and warns
-(`enum-parse-default`); write `as Color?` or `t as Color ?? Blue`.
-
-**Nullability defaults (@PLN25 DN1) — every scalar and vector is NON-NULL by default.** A plain
-`integer` / `float` / `single` / `boolean` / `character` / `text` (and `vector<T>`) field, local, or
-return does not intend `null`: storing `null` or an undischarged `τ?` into it is a WARNING
-(`(N-Store)` — the slot then holds null, and a library's deny-warnings CI fails on it), and a bare
-text parse into it is refused (`text-parse-may-fail`, above). To ALLOW null, append `?` to the type (`integer?`, `text?`,
-`vector<T>?`). A `vector<T>` field defaults to `[]` (empty, non-null). **The old `not null` modifier
-is a RETIRED accepted no-op** — it now means what the default already is, so don't write it; write
-`?` when (and only when) you want the slot to hold null.
-
-**`text` vs `string`:** The canonical string type is `text`. Using `string` in struct fields causes errors.
+Read [references/null-and-casts.md](references/null-and-casts.md) when a slot may hold null,
+when you discharge a `τ?` or parse text, or when the default `x?` picks matters.
 
 ---
 
@@ -195,16 +144,13 @@ const E  = 2.71828182845905;    // const-keyword form
 pub const MAX_SIZE = 256;       // pub + const combine for exported constants
 ```
 
-Constants must be `UPPER_CASE`.  Prefer the `const` form when you
-want the immutability intent visible at the declaration site
-(the bare-name form relies on the UPPER_CASE convention as the only
-visual signal); both forms behave identically.
+Constants must be `UPPER_CASE`.  Prefer the `const` form when you want the immutability intent
+visible at the declaration site (the bare-name form relies on the UPPER_CASE convention as the
+only visual signal); both forms behave identically.
 
-**UPPER_CASE locals get `advice[upper-case-local]` unless declared
-`const`.**  Inside a function body, `FOO = 5;` (an assignment with an
-UPPER_CASE name and no `const` keyword) emits advice telling you to
-add `const` or rename to `lower_case`.  The convention "UPPER_CASE means immutable"
-is enforced by this check at every scope.
+**UPPER_CASE locals get `advice[upper-case-local]` unless declared `const`.**  Inside a
+function body, `FOO = 5;` emits advice telling you to add `const` or rename to `lower_case` —
+"UPPER_CASE means immutable" holds at every scope.
 
 ---
 
@@ -222,7 +168,7 @@ Parameter modifiers:
   writes write the caller, field/element mutation mutates the caller. **Call WITHOUT `&`** — the
   reference comes from the param's TYPE: `fn inc(n: &integer){ n = n + 1 }` is called `inc(x)`, not
   `inc(&x)` (`&` is a binding marker, not a general operator). `&` to a temporary or in a general
-  expression is an error.
+  expression is an error; `v[i]` and `s.field` pass directly.
 - **`&` that is never mutated is a compile error** — drop it if the param is read-only
 - Omit modifier — pass by value/copy (heap values still alias: field/element mutation propagates)
 
@@ -231,61 +177,40 @@ variable / struct field / vector element). Full model: [LOFT_DECLARATIONS.md § 
 
 A function body ending in an expression (no `;`) returns that value. Functions without `->` return `void`.
 
-**Nested fn definitions are forbidden.**  `fn` declarations must be at file
-scope.  Code like
+### `self` — one name, both call spellings
 
-```grammar
-fn outer() {
-    fn inner() { ... }   // PARSE ERROR
+Name the first parameter `self` and the function is callable as a method AND as a
+free function:
+
+<!-- from tests/reference/methods.loft -->
+```loft
+pub fn exists(self: Doc) -> boolean {
+  self.format != "missing"
 }
 ```
 
-produces *"'fn' definitions must be at file scope, not inside a function or
-block"*.  Move helper fns alongside the caller, not inside it.  Lambdas
-(`|x| { ... }` or `fn(x: T) { ... }`) are the only "function-shaped" thing
-allowed inside a fn body.
+Both spellings call it:
+
+<!-- from tests/reference/methods.loft -->
+```loft
+// Can be called as:
+a = f.exists();      // method syntax
+b = exists(f);       // free function syntax
+```
+
+Don't name a first parameter `both` — it warns (`both-receiver-deprecated`), and a library's
+CI denies warnings.
 
 ---
 
 ## Imports
 
-<!-- from library:arguments -->
-```loft
-use arguments;                       // the `arguments::` qualifier only
-use arguments::*;                    // all pub names bare, for this file
-use arguments::parse_args;           // selective: just one name, bare
-use arguments::(parse_args, Flag);   // selective group — MULTIPLE names need parentheses
-use arguments::Flag as Opt;          // alias an imported name (bare `Opt`)
-use arguments::(Flag as Opt, parse_args);   // per-name aliases inside the group
-use arguments as args;               // library alias → `args::parse_args` (qualified-only,
-                                     //   does NOT import names bare)
-```
+Multiple names are parenthesised — `use lib::(a, b);`, never `use lib::a, b;` — and `use`
+declarations come before any other declaration in the file.  `use lib;` gives the `lib::`
+qualifier only; `use lib::*;` brings every `pub` name in bare.
 
-- **Multiple names MUST be parenthesised** — `use lib::a, b;` (flat comma list) is a
-  hard error; write `use lib::(a, b);`.  (@PLN22 Phase 4.)
-- `use lib;` gives the `lib::` qualifier only (@C98); `use lib::*;` brings every `pub` name in
-  bare.  An import serves this file only; `pub use lib::*;` / `pub use lib::(a);` also passes
-  the names on to whoever imports this file (a package entry offering its modules).
-- **Everything a file declares is private to that file**; `pub` shows it (an item, or one
-  field).  A file that is part of something bigger starts with **`#package`**: to the files
-  of its own directory and of the directory directly above it, it reads as if everything in
-  it were `pub` (fields, literals, variants, private functions, glob and selective imports).
-  Not two levels up, not a subdirectory, not a sibling; the reading files declare nothing.
-  A package's tests (anything inside `tests/`) see what its `src/` shares, so test internal
-  steps directly instead of making them `pub`.
-  Prefer it over `pub` on every field of a type shared inside one component; keep `pub` for
-  what the component offers outside.  A used file may say `#package`, never `#cwd`/`#link`.
-- `use lib as m;` gives a qualifier alias only (`m::fn`); it does not wildcard-import.
-- **A null test that leaves narrows**: after `if v == null { return …; }` or `assert(v != null,
-  …)`, `v` reads as present to the end of the block (until it is assigned again); no `?? d`
-  needed.  The same holds for an index bound, a non-zero divisor and a non-negative `sqrt`
-  operand proven by an `if … { return }` or an `assert`.
-- A qualified `lib::fn()` auto-loads the library — an explicit `use` is optional for
-  qualified access.
-
-**`use` declarations must appear before any other declarations in the file.**
-
-### Finding a library's API
+Read [references/names-and-imports.md](references/names-and-imports.md) for aliases, `pub use`,
+`#package` visibility, and which builtin names you may shadow.
 
 **Read [library-api.md](library-api.md) before writing `use` of a library.**  Never guess a
 signature: for a program, read `.loft/api/<name>.api` (or `loft api <name>`); to see what exists,
@@ -334,6 +259,14 @@ variant updates the same way when the base's type IS that variant (`..b` with `b
 
 Field names may overlap across structs — lookups are type-scoped.
 
+**A field may hold its own type** — `struct Tree { key: integer, left: Tree?, right: Tree? }`,
+`enum Expr { Num { v: integer }, Add { l: Expr, r: Expr } }`.  It is a CHILD: a value stored
+out of line, copied on write, released by `t.left = null`, compared and rendered as a nested
+value (@C159).  Never write a one-element `vector<T>` or a `reference<T>` to break the cycle:
+`reference<T>` is for ONE node shared by two places.  A struct field on the cycle must be `T?`
+unless a nullable hop or an enum variant ends it.  Building a list by prepending
+(`h = List { v: i, next: h }`) copies the whole list each time; write into the tail instead.
+
 ---
 
 ## Tuples
@@ -358,37 +291,16 @@ c = Color.Red;                 // qualify when DEFINING a new variable
 // ordering follows declaration order: Red < Green < Blue
 ```
 
-**Bare variants need a type context (@PLN22 Phase 1).**  A bare `Red` resolves only
-against a known enum — a `match` subject, a typed target (`c: Color = Red`), a
-typed reassignment / field, a parameter, a return type, an `==` LHS, or an `is`
-subject.  Defining a NEW untyped variable from a bare variant (`c = Red`) is a hard
-error — qualify it (`c = Color.Red`) or annotate (`c: Color = Red`).  Match arms and
-the other context positions still use the bare form (`match c { Red => … }`).  Two
-enums MAY share a variant name (`enum Color { Red }` + `enum Berry { Red }`); the
-bare `Red` resolves by its context enum.
+**A bare variant is the variant of the one enum that owns that name.**  `c = Red` works
+when only `Color` has `Red`.  Two enums MAY share a variant name (`enum Color { Red }` +
+`enum Berry { Red }`); then the context picks one — a `match` subject, a typed target
+(`c: Color = Red`), a comparison (`c == Red`), a parameter, a return position, a field's
+type, or the other arms of the same `if` / `match` — and with no context the shared name is
+refused with an error that names the qualification to write (`Color.Red`).  The full rule:
+`doc/claude/LOFT_DECLARATIONS.md` § Enum-scoped variants.
 
-Struct-enum (each variant has fields; polymorphic dispatch via methods):
-<!-- from tests/reference/skill-declarations.loft -->
-```loft
-enum Shape {
-    Circle { radius: float },
-    Rect   { w: float, h: float },
-}
-fn area(self: Circle) -> float { 3.14159 * self.radius * self.radius }
-fn area(self: Rect)   -> float { self.w * self.h }
-```
-<!-- from tests/reference/skill-declarations.loft -->
-```loft
-s = Circle { radius: 2.0 };
-a = area(s);   // dispatches to correct variant
-```
-
-A plain enum takes methods too (`fn label(self: Color) -> text { match self { … } }`);
-struct-enum variants add per-variant dispatch.
-
-Trailing commas in variant field lists are accepted: `Circle { radius: float, }`.
-
-JSON round-trip: `"{shape:j}"` produces `{"Circle":{"radius":3.14}}`; `Shape.parse(json)` reconstructs the correct variant.
+Struct-enums (variants with fields), per-variant methods and the JSON round-trip:
+[references/expressions.md](references/expressions.md).
 
 ---
 
@@ -411,7 +323,33 @@ v[i];                // index read
 
 **`v[i]` with a possibly-negative index does NOT null-guard.** Scalar indexing counts from the end for negative `i`, exactly like slices: `v[-1]` is the LAST element, `v[-len]` the first — NOT `null`.  Only `i >= len` (and `i < -len`) yield `null`.  So `if v[i] { … }` and `v[i] ?? d` catch an over-range index but NOT a negative one — a `-1` "not-found" sentinel or a `a - b` underflow silently reads a real element from the end.  When `i` can go negative, test `if i >= 0` FIRST (that `>= 0` check is not redundant with a later null-guard).
 
-**Never swap `vector<STRUCT>` elements in-place via a temp (a bind is a VIEW — `(B-View)` in `formal/binding.md`).** `tmp = v[j]` is a VIEW of slot j (not a copy), but `v[j] = v[k]` COPIES into the slot — so `tmp = v[j]; v[j] = v[k]; v[k] = tmp;` silently loses j's record and duplicates k's. Swap scalar fields one by one, or build a fresh vector (selection instead of in-place insertion sort).
+### Copy or view
+
+**A struct-typed projection is a VIEW; a whole value or a collection field COPIES** (@C86)
+([formal/binding.md](../../../doc/claude/formal/binding.md) `(B-View)` / `(B-Copy)`; the
+other view cases are `(B-View-Base)` and `(B-View-Depth)` there).
+
+- `e = v[i]` or `s = o.inner`, where the element or field IS a struct, names that slot: writes
+  through `e` reach `v[i]`.  So **never swap `vector<STRUCT>` elements via a temp** —
+  `tmp = v[j]; v[j] = v[k]; v[k] = tmp;` copies k into j while `tmp` still views j, losing j's
+  record and duplicating k's.  Swap scalar fields one by one, or build a fresh vector.
+- `w = v` or `w = r.v` (a collection field) is an independent copy, so **never capture a vector
+  into a local in order to write through it** — every write lands in the copy:
+
+```grammar
+// BAD — `results` is a COPY; all three writes are discarded:
+results = self.results;
+results[i] = "true";               // lost
+results[i] = Row { id: 1 };        // lost
+results += [Row { id: 2 }];        // lost
+
+// If you need a local at all, bind a live reference with `&`:
+results = &self.results;           // aliases the field
+results[i] = "true";               // propagates
+```
+
+Reads through a plain copy are correct, so only the writes vanish, arbitrarily far from where
+the value is later found missing.  The compiler warns on the simple shape (§ Known bugs).
 
 ---
 
@@ -445,47 +383,9 @@ local is fine too.)
 
 ## Interfaces and bounded generics
 
-```grammar
-interface Comparable {
-  fn less_than(self: Self, other: Self) -> boolean
-}
-
-fn find_min<T: Comparable>(v: vector<T>) -> T { ... }
-```
-
-Structural satisfaction: if the methods exist, the type satisfies the interface.
-No `impl` block needed. Built-in types satisfy `Ordered`, `Equatable`, `Addable`,
-`Numeric`, `Scalable`, `Printable` automatically, and EVERY type — a struct, vector,
-tuple, enum — is `Equatable` (@C91).
-
----
-
-## `self` — one name, both call spellings
-
-Name the first parameter `self` and the function is callable as a method AND as a
-free function:
-
-<!-- from tests/reference/methods.loft -->
-```loft
-pub fn exists(self: Doc) -> boolean {
-  self.format != "missing"
-}
-```
-
-Both spellings call it:
-
-<!-- from tests/reference/methods.loft -->
-```loft
-// Can be called as:
-a = f.exists();      // method syntax
-b = exists(f);       // free function syntax
-```
-
-**`both` is the retired spelling for this (`fn f(both: T)`, a first parameter named
-`both`) — do not write it.** It still resolves, and
-still gives both spellings, but it emits `both-receiver-deprecated`, which is a
-`warning`; a library's CI runs with `LOFT_DENY_WARNINGS=1`, so writing `both` turns a
-package's own gate red (@C123, [COMPATIBILITY.md](../../../doc/claude/COMPATIBILITY.md)).
+Structural: a type satisfies `interface Comparable { … }` when the methods exist — no `impl`
+block; bound a generic with `fn find_min<T: Comparable>(v: vector<T>) -> T`.  Every type is
+`Equatable`.  Declaring one: [references/program-shape.md](references/program-shape.md).
 
 ---
 
@@ -505,9 +405,6 @@ package's own gate red (@C123, [COMPATIBILITY.md](../../../doc/claude/COMPATIBIL
 
 Unary: `!` (logical not / null check), `-` (negation), `~` (bitwise NOT, integer only)
 Assignment: `=`, `+=`, `-=`, `*=`, `/=`, `%=`
-**On your own type** (`operator` in place of `fn`, `self` first, the type's own package only): `compare` → `< <= > >=` (answers `Ordering`); `plus minus times divided_by remainder negate` → `+ - * / %` and unary `-` (`a += b` is `a = a.plus(b)`); `to_<type>` → `as`; `to_text` / `next` → `"{x}"` / `for`.
-`==` / `!=` stay structural for every type, and a plain `fn` named like one drives nothing.  `[…]` is the built-in collections' (a type reads through a named method, `x.at(i)`).
-Full list and rules: LOFT.md § Operators on your own type, `formal/operators.md`, feature @F124.
 
 ```grammar
 name = record.field ?? "default"   // null-coalescing
@@ -516,17 +413,9 @@ x as i32                           // cast to a 4-byte sized integer
 flags & ~32                        // bitwise NOT — clears bit 5
 ```
 
-**`?` and `??` are at opposite ends of this table** — write `(a / b)?` (see § `?`).
-
-### `==` compares content; `&a == &b` asks identity
-
-**`==` / `!=` compare CONTENT for every type** — structs, vectors, tuples, struct-enum
-values, keyed collections, recursively through fields and `reference<T>`, cycles
-included (DESIGN_DECISIONS_VALUES.md § @C91).  Two separately built records with equal
-fields are `==`; `[P{x:1}] == [P{x:1}]` is `true`.  To ask whether two names are ONE
-record, write `&a == &b` — `&` on both sides; on one side only it is a compile error.
-There is no `===`.  Keyed collections hash and compare keys the way `==` does (`0.0`
-and `-0.0` are one key).
+**`==` compares content for every type**; `&a == &b` asks whether two names are one record.
+Operators on your own type (`operator plus` …) and the identity rule in full:
+[references/expressions.md](references/expressions.md).
 
 ### `is` variant check
 
@@ -575,27 +464,13 @@ println("{{literal braces}}");    // escape { } by doubling — see the warning 
 named `r` with the spec `1,g:2`, and the error names the FORMATTER, not the brace. Any text
 containing braces — JSON, a rendered struct, a code sample — must double them: `{{` and `}}`.
 
-**A format spec tunes what the value RENDERS as, so it works on every type**, not just
-numbers and text: `{c:>5}` pads a character, `{v:>12}` a vector, `{p:*^16}` a struct. The
-flags that choose the rendering (`#`, `:j`) are separate from width and alignment and combine
-with them.  Zero-padding is the exception: `0N` pads a NUMBER (`{-1:04}` is `-001`) and is a
-compile error on anything else — use a fill instead (`{b:*>6}`).  Inside a `<T: Printable>`
-generic a hole renders as the instance's type (`{x:05}` on an integer `T` is `00042`).
+A spec pads and aligns any type, but `0N` zero-padding is for numbers only:
+[references/expressions.md](references/expressions.md) § Format specs.
 
 ### Backtick strings (`` `...` ``)
 
-**Multi-line.** Supports `{expr}` interpolation. Bare `"` is literal.
-Auto-strips common leading indentation (based on closing backtick column).
-
-<!-- from tests/reference/skill-constants.loft -->
-```loft
-SHADER = `
-  #version 330 core
-  void main() {{
-      gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
-  }}
-`;   // a backtick string is a format string too: a literal brace is doubled
-```
+Multi-line, interpolated, common indentation stripped; a literal brace is doubled there too:
+[references/program-shape.md](references/program-shape.md).
 
 Use `println()` for line-oriented output and `print()` for output without a newline.
 
@@ -632,18 +507,8 @@ for i in rev(0..n) { }    // reverse range
 
 ### Loop attributes
 
-```grammar
-for v in collection {
-    v#index    // 0-based position (vector/sorted); byte offset (text)
-    v#count    // iterations completed so far (all types)
-    v#first    // true for first element (all types)
-    v#next     // byte offset after current char (text only)
-    v#remove   // remove current element (filtered loops only)
-}
-```
-
-`#index` is NOT supported on `index` collections — use `#count` there.
-
+`v#index`, `v#count`, `v#first`, `v#next` and `v#remove` (filtered loops) inside a `for`:
+[references/program-shape.md](references/program-shape.md).
 ---
 
 ## Match
@@ -664,58 +529,10 @@ match shape {
     _ => {},
 }
 ```
-A name after `:` in a `match` field pattern BINDS (`Circle { radius: r } => r`), never compares
-with a variable in scope; `is` takes bare names only (`if s is Circle { radius } { … }`).
-<!-- from tests/reference/skill-is-and-match.loft -->
-```loft
-said = match (3, 7) {
-    (0, _)   => "zero",
-    (n, m)   => "{n},{m}",
-};
-```
-<!-- from tests/reference/skill-is-and-match.loft -->
-```loft
-// An enum element names a VARIANT — by tag, or with its payload bound.  A record payload
-// bound this way is a view of the MATCHED VALUE; a scalar payload is a copy.  `a` and `b`
-// are PARAMETERS here, which keep aliasing the caller's values inside the tuple
-// (B-Ref-Alias), so `status.hp -= 3` reaches the caller's `b`.  A tuple of LOCALS copies
-// them in (T-Cons) and the write would stay in that copy — match a local alone to write
-// through to it.
-match (a, b) {
-    (Fireball, IceWall { status }) => { status.hp -= 3; },
-    (Arrow { id }, Crate)          => { world.removed += [id]; },
-    _ => {},
-}
-```
 
-Match is an expression — all arms must produce the same type (or void).
-
-**The arm separator is `=>`, never `->`.**  `->` is the lambda /
-function return-type arrow; using it in a match arm produces a clear
-diagnostic ("match arm separator is `=>`, not `->`").  Fix any `->` arm before running.
-
-**Scalar-match arms need commas between them**; enum and tuple match
-also accept newline-separated arms.  When in doubt, comma-separate —
-it's universally accepted.
-
-**Slice arms that together cover every length need no `_`** — `[]` with `[x, ..rest]` is the
-list recursion; a rest arm alone, or a set that leaves a length out, is refused (*"a slice
-pattern can fail"*):
-
-<!-- from tests/reference/skill-is-and-match.loft -->
-```loft
-fn total(v: vector<integer>) -> integer {
-  match v {
-    [] => 0,
-    [x, ..rest] => x + total(rest),
-  }
-}
-```
-
-**A scalar `match` with no `_` and no bare-binding arm selects nothing for a value its arms do
-not name** — the match answers null (`τ?`); a statement does nothing — and the
-`match-scalar-hole` advice says so at the match.  Add the `_` arm, or set `LOFT_NO_SCALAR_HOLE`
-for a deliberate hole.
+Match is an expression — all arms must produce the same type (or void).  Matching a tuple, a
+variant payload or a slice, and the scalar-hole advice:
+[references/expressions.md](references/expressions.md) § Match beyond a plain enum.
 
 ---
 
@@ -786,39 +603,6 @@ Use `_` for an unused loop variable to keep the build warning-clean.
 
 ---
 
-## Reserved words with no implementation
-
-`debug_assert` is a reserved keyword and does nothing yet — using it in any position is a
-compile error naming the reservation. Use `assert(cond, "message")`, and do not use
-`debug_assert` as a variable name. `sizeof(Type)` IS implemented (`sizeof(integer)` is 8).
-
-## Builtin names — shadowing rules (@PLN22 Phase 2)
-
-- **Definitions CAN shadow a stdlib name.**  `enum E`, `struct File`,
-  `pub PI = 3;` are legal even though the stdlib has `E`/`File`/`PI`; your name wins
-  bare resolution and `std::Name` still reaches the original.  A LIBRARY name is
-  different: one brought in by `use lib::*;` cannot be redefined (an error naming the
-  library's definition),
-  while a bare `use lib;` leaves the unqualified name free (`lib::name` reaches the
-  library's).
-- **Built-in TYPE-KEYWORDS are reserved** — you cannot define `struct integer`,
-  `enum vector`, etc. (it errors: "conflicts with a type").  Reserved: `integer`,
-  `float`, `single`, `text`, `boolean`, `character`, `vector`, `hash`, `sorted`,
-  `index`, `radix`, `spatial`, `iterator`, `i8`/`i16`/`i32`, `u8`/`u16`/`u32`,
-  `reference`.  This holds for `struct`, `enum`, and `type` alike.
-- **A function's name is free as a local** (loft#852).  Values and functions are
-  separate namespaces: `chr = 65` binds a local and `chr(65)` in the same scope
-  still calls the function.  True for every binding form — assignment, the typed
-  local, a tuple element, a parameter, a `for` variable, a struct field — and for
-  library functions as much as stdlib ones, which is what stops a library's new
-  `pub fn` from taking a word away from its consumers.
-- **One builtin name still breaks as a local variable name** — the literal `null`
-  (assigning to it errors: `Cannot assign integer to a field of type null — use 'as
-  null' to cast explicitly`).  Method names (`map`/`filter`/`reduce`/`len`/`sorted`/…)
-  are fine as locals; the method call still resolves.
-
----
-
 ## Text pitfalls
 
 **There is no `substr` / `substring`.** A part of a text is a slice:
@@ -858,41 +642,16 @@ width (`f += (n as i32)`).
 
 ---
 
-## Nullable defaults, the copy-write hazard, and null-checking reads
+## Known bugs and workarounds
 
-**A plain `vector<T>` field is non-null and defaults to `[]`** (@PLN25 DN1) — declare
-it plainly; write `vector<T>?` only when null must be distinct from empty.
-
-**Never capture a vector into a local in order to write through it.**  A
-whole-value bind COPIES the heap value (@C86), so every write lands in the
-copy and is silently lost — indexed writes, whole-element assigns and
-appends alike:
-
-```grammar
-// BAD — `results` is a COPY; all three writes are discarded:
-results = self.results;
-results[i] = "true";               // lost
-results[i] = Row { id: 1 };        // lost
-results += [Row { id: 2 }];        // lost
-
-// If you need a local at all, bind a live reference with `&`:
-results = &self.results;           // aliases the field
-results[i] = "true";               // propagates
-```
-
-Reads through a plain copy are correct, which is what makes this
-expensive to find: `len`, indexing and field reads all behave, and only
-the writes vanish — arbitrarily far from where the value is later found
-missing.  The compiler warns on the simple shape (`w = v`
-followed by an unread `w[i] = …`), but a bound-guard such as
-`if i < len(results)` counts as a read and silences it, so the diagnostic
-is a backstop, not a guarantee.
-
-**Reading a maybe-null element `v[i]`, pick by contract:** `v[i] ?? sentinel` when a
-non-null default is meaningful (changes behaviour on OOB); `if i < len(v) { v[i] }`
-when the access is index-bounded (works on a struct field directly — no capture
-needed); `x = v[i]; if x != null { … }` when the consumer's contract is
-"missing → null".
+- **`Too few parameters on n_<fn> (got …, need …)`** is a compiler panic (a hidden-buffer ABI
+  mismatch), not a mistake in your code — reduce it to a minimal repro and file it
+  (`gh issue create`).
+- **`Allocating a used store`** — a store is being reused while still held; check parallel
+  blocks and store lifetimes.  A field named `key` is NOT the cause; that works.
+- **The lost-write lint misses guarded writes.**  It warns on `w = v` followed by an unread
+  `w[i] = …`, but a bound guard such as `if i < len(w)` counts as a read and silences it.
+  Treat it as a backstop: bind `w = &v` whenever you mean to write through (§ Copy or view).
 
 ---
 
@@ -900,67 +659,46 @@ needed); `x = v[i]; if x != null { … }` when the consumer's contract is
 
 | Error message | Fix |
 |--------------|-----|
-| `Too few parameters on n_<fn> (got …, need …)` | A compiler panic (a hidden-buffer ABI mismatch), not a mistake in your code — reduce it to a minimal repro and file it (`gh issue create`) |
 | `Variable <x> is never read` | A **warning** (program still runs, exit 0) — use the variable, or name an unused loop var `_` |
 | `The value parameter 'p' receives is never read` / `Dead assignment — … a parameter's assignment stays in this function` | A plain parameter is the callee's own local: the assignment reaches no caller.  Write `p: &T` if the caller is meant to see it, else a local (DIAGNOSTICS.md `never-read` / `dead-assignment`) |
 | `Indexing a non vector` | You indexed a scalar (`x = 5; x[0]`) — index a vector/collection, not a single value |
 | `Cannot assign <T> to a field of type null` | A local named `null` (a literal keyword) — rename it |
-| `Undefined type string` | Use `text`, not `string` |
+| `Undefined type string — did you mean 'text'?` | Use `text`, not `string` |
+| `Undefined type long — did you mean 'integer'?` | `integer` is already 64-bit; literals are plain (`86400000`, not `86400000l`) |
 | `variant-cast-default` / `enum-parse-default` (warnings) | The cast answers a default on a miss — check first (`if s is Circle`), or write `as V?` / `?? default` |
-| `Allocating a used store` | A store is being reused while still held — check parallel blocks / store lifetimes (a `key` field name is NOT the cause; that works) |
 | `Unknown function say` | Use `println()` |
-| `Cannot pass a literal or expression to a '&' parameter` | Assign to a named variable first, then pass it. `v[i]` and `s.field` work directly (P160). |
+| `Cannot pass a literal or expression to a '&' parameter` | Assign to a named variable first, then pass it. `v[i]` and `s.field` work directly. |
 | `match arm separator is \`=>\`, not \`->\`` | Replace `->` with `=>` in the arm. |
+| `Expect token ,` in a `match` | Separate the arms with commas — newline-separated arms are refused. |
 | `'fn' definitions must be at file scope, not inside a function or block` | Move the helper fn out of the enclosing fn body.  Lambdas (`|x| { … }` or `fn(x: T) { … }`) are the only function-shaped values allowed inside a fn body. |
+| `ambiguous variant 'Red' (a variant of Color, Berry)` | Qualify it (`Color.Red`), or give it a typed context |
+| `error[local-out-of-scope]` | The local was bound inside a block that has ended — bind it before the block, or make the block's value the binding |
 | `` `&` has nothing to bind here: this place holds the record itself `` | A `&` into a plain record field or element — assign the record (`d.o = p`, a copy) or declare the field `reference<T>`; `d.r = &p` on a `reference<T>` field stores the pointer |
 | `` the base after `..` is a `E`, which may hold any of its variants `` | Name the variant: `..(base as V)` inside `if base is V`; for a generic enum, `match` on the base and build `V` from its fields |
 | `` the base after `..` may be absent `` / `` must be a `S`, the literal's own type `` | Discharge the base first (`..(b ?? …)`), and give the literal the base's type |
 | `` `E.V` is a variant of a generic enum, whose type arguments come from the target `` | Bind it to a typed local (`x: E<integer> = V`) or pass it where an `E<…>` is expected |
 | `advice[match-scalar-hole]` | A scalar `match` with no `_`: add `_ =>` for the values the arms do not name, or `LOFT_NO_SCALAR_HOLE` for a deliberate hole |
+| `` `Node.next: Node` makes every Node contain another Node — make it `Node?` `` | A struct recursing through non-null fields has no finite value: write `next: Node?` |
 | `compound assignment is not supported for tuple destructuring — use (a, b) = expr instead` | Rebuild the tuple: `(a, b) = (a + 1, b + 2)` — or update each element directly. |
+
+Compiler faults (`Too few parameters …`, `Allocating a used store`) are under § Known bugs.
 
 ---
 
 ## The entry point, and reading arguments
 
-```grammar
-fn main() { println("hi"); }                 // the usual form
-fn main(args: vector<text>) {                // the invocation arguments
-  for a in args { println(a); }              // `loft p.loft Ada Grace` → Ada, Grace
-}
-```
-
-**One `vector<text>` parameter is the ONLY supported shape.** It works on both backends.
-Any other spelling is a clean compile error (*"`main` takes no parameters, or one
-`vector<text>` …"*; guard `tests/main_signature.rs`). There is
-no `args()` builtin.
-
-A file with no `main` is a library: the interpreter runs nothing, and `--native`
-compile-checks it rather than linking.
-
-## CLI invocation
-
-```bash
-loft --path /path/to/repo/ file.loft                        # interpreter
-loft --native --path /path/to/repo/ file.loft               # compile + run native
-loft --native-wasm out.wasm --path /path/to/repo/ file.loft # compile to wasm
-```
-
-`--path` takes the directory containing `default/`; a trailing slash is optional.
-
+`fn main()` or `fn main(args: vector<text>)` — no other shape compiles, and there is no
+`args()` builtin.  A file with no `main` is a library.  The CLI flags (`--native`,
+`--native-wasm`, `--path`): [references/program-shape.md](references/program-shape.md).
 ---
 
 ## Pre-flight checklist
 
-- [ ] No loop variable shares a name with a plain local in the same function (loops may share names with each other)
-- [ ] No nested `fn` definitions — helpers live at file scope
-- [ ] No local named `null`
-- [ ] All `use` imports appear before any other declarations
-- [ ] No `long` type / no `l` literal suffix — `integer` is i64; literals are plain (`86400000`), `f.size` compares with `0`
-- [ ] String type in struct fields is `text`, not `string`
+- [ ] Every Top trap checked against the code — above all a bind you write through (`&`?),
+      a text cut (characters or bytes?), an index that can go negative, and arithmetic that
+      can divide by zero
+- [ ] Every local read after its block is bound before the block
+- [ ] All `use` imports come before any other declaration
+- [ ] No loop variable shares a name with a plain local in the same function
 - [ ] No `character == text` comparisons — use `"{c}" == t`
-- [ ] `v[i]` and `s.field` can be passed directly as `&` parameters
-- [ ] Match arm separator is `=>`, never `->`
-- [ ] No single-element tuples; `(integer)` is just `integer`
-- [ ] Tuple element access uses an integer literal (`t.0`, not `t.i`)
-- [ ] No compound assignment on a tuple LHS (`(a, b) +=` is rejected)
+- [ ] The probe ran on `--interpret` and every warning it printed is read, not skimmed

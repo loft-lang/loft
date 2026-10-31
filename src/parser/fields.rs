@@ -2829,6 +2829,88 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         Some((host, pos, split))
     }
 
+    /// `@FR-B-Copy`, `@FR-L-CapKeep` — a fn-ref read out of a struct field and KEPT (bound, or
+    /// returned) as a copy of its closure record (`OpCopyClosure`), where the read names one in
+    /// the host's child slot.  The read alone is a view of that slot, which an overwrite of the
+    /// field rebuilds and the host's release frees; the copy is the holder's own.
+    ///
+    /// `None` for every other shape: a legacy four-byte field holds no closure (nothing to
+    /// copy), and a read this cannot peel has no record type to copy as.
+    pub(crate) fn fn_ref_field_copy(&mut self, code: &Value) -> Option<Value> {
+        let Value::Block(b) = code.unspan() else {
+            return None;
+        };
+        let (host, pos, split) = self.fn_ref_place(code)?;
+        if !split || self.first_pass {
+            return None;
+        }
+        let d_nr = self.fn_ref_host_def(&host)?;
+        let Value::Int(pos) = pos.unspan() else {
+            return None;
+        };
+        let f_nr = self.fn_ref_attr_at(d_nr, *pos)?;
+        let lambda = self.data.def(d_nr).attributes()[f_nr].assigned_lambda_d_nr;
+        if lambda == u32::MAX {
+            return None;
+        }
+        let record = self.data.def(lambda).closure_record();
+        if record == u32::MAX {
+            return None;
+        }
+        let kt = self.data.def(record).known_type();
+        let mut b = (**b).clone();
+        let clos = b.operators[1].clone();
+        b.operators[1] = self.cl("OpCopyClosure", &[clos, Value::Int(i32::from(kt))]);
+        Some(Value::Block(Box::new(b)))
+    }
+
+    /// `@FR-B-Copy` — a RETURNED fn-ref field read (`fn get(h: H) -> fn() { h.f }`) leaves the
+    /// frame as a copy of its closure record, as a bound one does: the caller owns the value
+    /// it is handed, and the host may be released, or its field overwritten, while the caller
+    /// still holds it.
+    pub(crate) fn copy_returned_fn_field(&mut self, v: &mut Value) {
+        if !matches!(v.unspan(), Value::Block(b) if b.name == "fn_ref_field_read") {
+            return;
+        }
+        if let Some(copy) = self.fn_ref_field_copy(v) {
+            *v.unspan_mut() = copy;
+        }
+    }
+
+    /// The struct definition a fn-ref field read's HOST expression names, for
+    /// [`Self::fn_ref_field_copy`]: a local or `&` parameter by its type, a nested field by
+    /// the content type its `OpGetField` carries, a call by its declared return.  `None` for
+    /// any other shape — the caller then keeps the read as the view it was, which is what
+    /// every host it cannot name already gets.
+    fn fn_ref_host_def(&self, host: &Value) -> Option<u32> {
+        let of_type = |t: &Type| match t.base() {
+            Type::Reference(d, _) => Some(*d),
+            Type::RefVar(inner) => match inner.base() {
+                Type::Reference(d, _) => Some(*d),
+                _ => None,
+            },
+            _ => None,
+        };
+        match host.unspan() {
+            Value::Var(v) => of_type(self.vars.tp(*v)),
+            Value::Call(d, args) if self.data.def(*d).name() == "OpGetField" => {
+                let Some(Value::Int(content)) = args.get(2).map(Value::unspan) else {
+                    return None;
+                };
+                let kt = u16::try_from(*content).ok()?;
+                (0..self.data.definitions()).find(|&d| {
+                    matches!(self.data.def(d).def_type, DefType::Struct)
+                        && self.data.def(d).known_type() == kt
+                })
+            }
+            Value::Call(d, _) if matches!(self.data.def(*d).def_type, DefType::Function) => {
+                of_type(&self.data.def(*d).returned)
+            }
+            Value::Block(b) => b.operators.last().and_then(|l| self.fn_ref_host_def(l)),
+            _ => None,
+        }
+    }
+
     /// The attribute index of the `fn(…)` field of `d_nr` stored at byte offset `pos`.
     ///
     /// Inverts [`Self::field_position`], which is what put the offset into the read in the

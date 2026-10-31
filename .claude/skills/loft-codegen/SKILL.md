@@ -1,22 +1,18 @@
 ---
 name: loft-codegen
 description: >-
-  The discipline for ANY loft compiler/codegen work — fixing a store-lifetime or
-  codegen bug, adding/altering bytecode, parser IR, the interpreter, or the native
-  generator, or implementing a language feature that emits ops — OR restructuring
-  any of those without meaning to change what they emit (extracting a selector,
-  folding a special case, deleting a redundant condition). USE THIS the moment you
-  are about to edit src/parser/, src/state/codegen.rs, src/fill.rs,
-  src/generation/, src/compile.rs, or scopes.rs to change OR reshape what code is
-  emitted — ESPECIALLY when a fix looks obvious and you're tempted to "just patch the
-  generator and run the suite." The one load-bearing instrument is the same in both
-  modes — `loft introspect` on BOTH backends BEFORE you touch the compiler — but the
-  gate flips: a BUG FIX proves the WORKING bytecode standalone beside the broken one;
-  a behaviour-PRESERVING REFACTOR proves the emitted IR + native Rust BYTE-IDENTICAL
-  before/after. Skipping it is how codegen work flails and regresses the suite (see
-  the probe-04 anti-example). The DESIGN/diagnosis counterparts are the
-  engineering-rigor and design-protocol skills; this is the EMIT-mode sibling. Routes
-  to CODEGEN_METHOD.md (the method) and OWNERSHIP_MODEL.md (the ownership beacon).
+  The discipline for ANY loft compiler work on any of the three generators — the
+  interpreter's bytecode, the native Rust emitter and the C backend: fixing a store-lifetime
+  or codegen bug, adding an operator or builtin (default/*.loft and its #rust template),
+  changing parser IR or the scope pass, or reshaping any of those without meaning to change
+  what they emit. USE THIS the moment you are about to edit src/parser/, src/scopes/,
+  src/compile.rs, src/state/codegen.rs, src/generation/, src/c/ or an operator's #rust
+  template — ESPECIALLY when a fix looks obvious and you are tempted to patch the generator
+  and run the suite. The one instrument: loft introspect on every backend BEFORE touching
+  the compiler. A BUG FIX proves the WORKING bytecode standalone beside the broken one; a
+  behaviour-preserving REFACTOR proves the emitted IR and native Rust byte-identical before
+  and after. The design and diagnosis halves are engineering-rigor and design-protocol; this
+  is the emit-mode sibling. Routes to CODEGEN_METHOD.md and OWNERSHIP_MODEL.md.
 user-invocable: true
 ---
 
@@ -26,7 +22,8 @@ user-invocable: true
 
 > **Do NOT edit the compiler until you have the WORKING bytecode/IR for THIS
 > situation, captured beside the current/broken bytecode, and proven correct on
-> BOTH backends (`--interpret` AND `--native`).**
+> BOTH backends (`--interpret` AND the C backend, `--native-c`) — and on rustc-native
+> (`--native`, `LOFT_NATIVE_BACKEND` unset) too when the edit is in what that writer emits.**
 
 This is the step that, skipped, wrecks codegen work. The proof is cheap (a `/tmp`
 source shape + `loft introspect` + a run on each backend); skipping it is what costs
@@ -34,12 +31,10 @@ hours. A patch to `src/generation/` or `gen_set_*` written *before* you can poin
 the exact ops you intend to emit is a guess — and guesses in codegen regress the
 suite, because every new shape needs another condition and the conditions interact.
 
-**The anti-example (internalize it):** @PLN85 probe 05 was fixed correctly — working
-bytecode proven standalone (`bytecode-comparisons/` rungs, the hand-correct
-`a:vec=[]; a+=enc()` form) → types → codegen → clean on both backends. Probe 04 was
-NOT — a parser change went in with no working IR proven first; it regressed
-`loft_suite` and never closed the case. Same method, opposite outcomes. The
-difference was this gate.
+A parser change without proven working IR regressed the suite; the same method with it
+landed clean (@PLN85 probes 04 and 05 —
+[CODEGEN_METHOD-history.md](../../../doc/claude/CODEGEN_METHOD-history.md) holds the stories
+behind this skill's rules).
 
 ## Zeroth: has the spec already TRIED your fix?
 
@@ -60,21 +55,14 @@ Grep the mechanism, not the symptom — the op or the pass (`OpFreeRefIfDistinct
 already merged; `ownership.md` holds the rules and `ownership-history.md` the
 store-lifetime narrative (what was tried, measured, reverted).
 
-⚠ **The anti-example is loft#1096** (`ownership-history.md` D-own-9). Its obvious repair —
-skip `OpFreeRefIfDistinct` when the witness is null — measured clean on both backends, then the
-poison sweep exhausted the store table. The register had already recorded that exact move as
-*"a trade, not a closure"*, reverted as inert. Reading it first would have skipped the attempt:
-CLAUDE.md's *"READ THE FORMAL SPEC FIRST"* with a price tag on it.
+**A closure names where ITS unsound step was, not yours** — read the register for what was
+TRIED and measured; the next defect in the same machinery is measured, not inherited (an
+obvious repair the register had already recorded as reverted measured clean and still failed
+the poison sweep).
 
-⚠ **But a closure names where ITS unsound step was, not yours.** The register pointed at the
-promotion (loft#1081's site); loft#1096's unsound step was one site over, in
-`scopes::free_vars`. Read the register for what was TRIED and measured; the next defect in the
-same machinery is measured, not inherited.
-
-⚠ **Grep the BELIEF, not the op.** loft#1096 and loft#1097 are one wrong sentence — *a
-collection slot holds the null sentinel on a path that did not write it* — at two sites, each
-of which wrote the belief down in its own comment. When a register entry names a false premise,
-the next search is for other places that hold it.
+**Grep the BELIEF, not the op.** When a register entry names a false premise, search for the
+other sites that hold it — two defects can be one wrong sentence written down in two sites'
+comments. (`ownership-history.md` D-own-9 is the record.)
 
 **And a citation gap is a finding, not a dead end.** If the site you are about to edit enforces
 a rule and cites none — `src/fill.rs` carries no `@FR-` tag of its own (the one it holds,
@@ -164,8 +152,16 @@ carried one more fact?* Yes → the fact belongs in the type.
 
 ## The both-backends rule
 
-Interp (`src/state/codegen.rs` → bytecode) and native (`src/generation/` → Rust) are
-**separate generators reading the same IR**. A rung is closed ONLY when BOTH emit
+Interp (`src/state/codegen.rs` → bytecode), native (`src/generation/` → Rust) and the C
+backend (`src/c/`, `--native-c` → C99) are **separate generators reading the same IR**.  A
+new operator lands in all three: its `#rust` template in `default/*.loft` gives the
+interpreter (`make fill` regenerates `src/fill.rs`) and native, while the C backend
+implements it by hand (`src/c/body.rs` or a file under `src/c/body/`, plus its runtime
+header) and lists it in the
+operator shape table that matches its result (`OP_INT`, `OP_REF`, … in `src/c/body.rs`).
+Per change, "both backends" is the interpreter and the C backend; rustc-native runs daily,
+and is added to a change's own checks only when the change is in `src/generation/`,
+`src/codegen_runtime.rs`, an operator's `#rust` body or a Rust native. A rung is closed ONLY when BOTH emit
 the proven bytecode and pass (correct + clean + no leak). An interp fix that breaks
 native compile is NOT landable. When they diverge on the same IR (one clean, one
 wrong/E0425), that divergence is the bug — neither "the suite is green" nor "interp
@@ -187,11 +183,9 @@ So before adding a match arm or a type list, ask where that question already liv
 - `doc/claude/formal/IMPLEMENTATIONS.md` — the checklist of predicates already merged, and
   the pairs deliberately kept apart.
 
-⚠ **Equal today is not the same rule.** The narrow-width family once had five sites spelling
-one list and only three were the same question — the other two write a RAW slot where the three
-write an encoded field, and their own comments said so. Merging on the list alone would have
-folded a raw-slot writer onto an encoded-field writer. Read what each site asks; cite the
-rule it enforces; leave a note where two look alike and must stay apart.
+**Equal today is not the same rule.** Two sites can spell the same variant list and ask
+different questions (one writes a raw slot, the other an encoded field). Read what each site
+asks; cite the rule it enforces; leave a note where two look alike and must stay apart.
 
 ## And the dual: does this notion have a SECOND spelling?
 
@@ -206,6 +200,15 @@ Three instances, in three subsystems: a PROJECTION is `Call(OpGetField|OpGetVect
 not a call at all; a NULL AT A JOIN is a literal lowering to `OpConv*FromNull` **and** a
 nullable-TYPED value that carries no null-shaped node; a BORROW is a value with a dep list **and**
 one with no dep at all. Each cost a wrong answer that no test could see.
+
+The projection, concretely: `b.items` and `vv[0]` lower to `Call(OpGetField|OpGetVector, [base,
+…])`; `t.0` lowers to `TupleGet(base, i)`. Two return gates matched only the call spelling, so a
+tuple-element tail was not copied into the caller's buffer and the function returned null. Even
+`use_analysis::is_projection_op(data, d_nr)` cannot express the other spelling: it takes a def
+number, and a projection that is not a call has none. The variants that carry a var number
+outside a `Value::Var` node — `TupleGet`, `TuplePut`, `CallRef`, `FnRef`, `FnRefDnr`, `Set`,
+`Iter` — are the ones to check any *"does this mention / project from variable X?"* walker
+against; `scopes::dominance_walk` (`src/scopes/confinement.rs`) is the model.
 
 So before writing *"is this an X?"* over the IR, ask whether X has a second spelling — a `Value`
 VARIANT beside an op call, a TYPE fact beside a node shape, an absence beside a presence. Match
@@ -244,42 +247,32 @@ If you cannot write the sentence, that is the signal to probe the omitted shapes
 ship the arm. `python3 scripts/ir_walker_audit.py reach` lists these walkers, marks the ones
 whose fallback answers no, and ranks by production reachability.
 
-## The projection case in full — match the NODE, not the op
-
-The dual above in its measured form: `b.items` and `vv[0]` lower to
-`Call(OpGetField|OpGetVector, [base, …])`; `t.0` lowers to `TupleGet(base, i)`, which carries
-its base as a var NUMBER and is not a `Call` at all. The two return gates that decide whether a
-returned projection must be COPIED into the caller's buffer both matched the call spelling only,
-so a tuple-element tail renamed the TUPLE local onto a vector-shaped `__retbuf` — the prologue
-cleared a stack tuple slot as a vector, the tail became a discarded statement, the function
-returned null, and `--native` would not compile the result. Even the canonical helper cannot
-express the other spelling: `use_analysis::is_projection_op(data, d_nr)` takes a def number, and
-a projection that is not a call has none.
-
-The variants that carry a var number outside a `Value::Var` node are the ones to check against
-any "does this mention / project from variable X?" walker: `TupleGet`, `TuplePut`, `CallRef`,
-`FnRef`, `FnRefDnr`, `Set`, `Iter`. `scopes::dominance_walk` (`src/scopes/confinement.rs`) is
-the model: check any new "mentions variable X" walker against the variant list above, not
-against a count read here.
-
-So when adding or auditing such a matcher, ask: **is there a second spelling of this notion?**
-If the answer is yes, match the node kind, and put both spellings in one predicate rather than
-adding the missing arm at the site that happened to break.
-
 ## Before the push — the order of a lowering change, and what each build is for
 
-A release build of the crate is the costliest rung (CI_BUDGET.md has the measured costs) and a dev build minutes
-([CI_BUDGET.md § the ladder](../../../doc/claude/CI_BUDGET.md#what-a-build-and-each-check-costs-here--the-ladder)),
-so each build must answer a question nothing cheaper can.  The full order is
+`src/` is ONE crate: any one-file edit recompiles all of it, and the release profile is not
+incremental.  A release build is the costliest rung and a dev build minutes
+([CI_BUDGET.md § the ladder](../../../doc/claude/CI_BUDGET.md#what-a-build-and-each-check-costs-here--the-ladder)
+has the costs; re-measure one before it decides anything), so each build must answer a
+question nothing cheaper can.  This checklist serves any bug run down to a fix, not only a
+lowering change.  The full order is
 [CODEGEN_METHOD.md § The order of a lowering change](../../../doc/claude/CODEGEN_METHOD.md#the-order-of-a-lowering-change-and-what-each-build-is-for);
 the checklist:
 
 1. **The cause named from an artefact, not a guess** — the IR and the emitted Rust of the
-   failing function, pointing at the wrong node or line, BEFORE any build (step 1 above).
-2. **Compile questions go to `cargo check`**; the loop runs on the dev binary
-   (`cargo build --bin loft`); one release build per fix, for the rlib, at the end.
-3. **One heavy job at a time** — a build, the corpus census, a `cargo test` of many binaries,
-   `make falsify`, the drop gate; never beside each other.
+   failing function (`loft introspect`, `--native-emit`), pointing at the wrong node or line,
+   BEFORE any build (step 1 above).  A fix built on a hypothesis the artefact never showed is
+   a build that may change nothing.
+2. **Compile questions go to `cargo check --bin loft`**; the loop runs on the dev binary
+   (`cargo build --bin loft`, then `target/debug/loft --interpret | --native | introspect |
+   --native-emit …` — its `--native` links the `deps/` rlib the same build wrote; `make iter
+   TEST=…` for one test).  One release build per fix, at the end, never one per hypothesis:
+   it refreshes `target/release/libloft.rlib`, which only the `cargo test --release` native
+   suites link, and `make check-rlib` says whether it is due.
+3. **One heavy job at a time** — a build, a gate (`ci-run.sh start`), the corpus census, a
+   `cargo test` of many binaries, `make falsify` (one dev build against the installed main, two
+   against a `REF`), the drop gate (every core for an hour); beside one another they slow every
+   one of them.  While a build runs, read the next unit's code, and wait on its pid or output
+   file (CLAUDE.md § Never wait on a process by NAME).
 4. **Every gate the change can move runs BEFORE the push**: the pin tests of the rewrites it
    touches; `cargo test --release --test ownership_drop_gate` on both backends for anything
    that changes what a value is held in or when it is released; the poison and stack sweeps
@@ -291,8 +284,9 @@ the checklist:
    is committed and while no edit is pending.  Score against the installed main
    (`make install-main`, then `make falsify GUARD=…` without `REF`) before the branch is
    joined: no control build at all (GUARDS.md § The control is installed main).
-6. **One issue per push** — a defect found while verifying is filed with its repro at once
-   and is the next push.
+6. **One fix per push** — a defect found while verifying is fixed in its own next push; it is
+   filed only when it blocks you or needs a design and could have reached users (CLAUDE.md §
+   Bug-filing policy).
 
 ## Stop conditions (revert, don't push through)
 

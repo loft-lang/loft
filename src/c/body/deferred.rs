@@ -115,6 +115,7 @@ impl FnWriter<'_> {
         let mut out = DeferredCopies::default();
         if crate::env_once!(std::env::var("LOFT_NO_DEFERRED_COPY").is_ok_and(|v| v != "0"))
             || self.gen_elem.is_some()
+            || self.lean()
         {
             return out;
         }

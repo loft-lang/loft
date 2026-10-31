@@ -581,17 +581,30 @@ impl OpEmitter for FusedElementWriteEmitter {
             && let Some(ptr) = ctx.output.active_rec_ptr(v).map(str::to_owned)
         {
             let verify = ctx.output.hoist_verify;
+            // `@FR-E-Report` — the null address is the null view: the write it drops is
+            // reported at the statement, as the setter's cold branch reports it (a fast
+            // copy's raise sets its flag instead, as every raise there does).
+            let raise = match &ctx.output.fault_flag {
+                Some(flag) => format!("ops::fault_flag_raise(&mut {flag}, "),
+                None => format!(
+                    "stores.raise_recoverable_at_runtime({}, ",
+                    ctx.output.ckpt_cur_line
+                ),
+            };
             write!(ctx.w, "{{ let __wv = (")?;
             ctx.emit(val)?;
-            let lock = crate::generation::rec_ptr_lock(&ptr);
+            write!(ctx.w, "); if {ptr}.is_null() {{ if (")?;
+            ctx.emit(&Value::Var(v))?;
             write!(
                 ctx.w,
-                "); unsafe {{ vector::rec_set::<{ty}>({ptr}, {lock}, &("
+                ").absence_unreported() {{ {raise}loft::runtime_error::RuntimeErrorKind::WriteDropped); }} }} else {{ "
             )?;
+            let lock = crate::generation::rec_ptr_lock(&ptr);
+            write!(ctx.w, "unsafe {{ vector::rec_set::<{ty}>({ptr}, {lock}, &(")?;
             ctx.emit(&Value::Var(v))?;
             return write!(
                 ctx.w,
-                "), ({off}_i64) as u32, __wv, &stores.allocations, {verify}) }} }}"
+                "), ({off}_i64) as u32, __wv, &stores.allocations, {verify}) }} }} }}"
             );
         }
         let Some(fused) = ctx.output.fused_element_write(ctx.def_fn.name(), args) else {

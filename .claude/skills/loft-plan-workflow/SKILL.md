@@ -4,23 +4,7 @@ description: How to run plan-shaped work end to end — decide whether something
 user-invocable: false
 ---
 
-## What this skill is — and what's portable
-
-The methodology below is **tree-agnostic**: the way you decide *whether* work is a
-plan, open it, run an investigation, and close it is identical in any project that
-organizes multi-phase work as plans.  The concrete paths, templates, tracker, and
-naming that bind it to *this* repository live in **one place** — [§ Bind to your
-tree](#bind-to-your-tree) at the bottom.  Carrying this skill into another tree
-means keeping the body unchanged and repointing that one section.
-
-This skill is **procedural-only**.  Definitions, rationale, and templates live in
-the source docs the bindings point at — not restated here.
-
-**Cross-cuts:** branch / commit / push policy and bug-filing policy live in the
-repo's master instructions (loft: `CLAUDE.md`).  This skill assumes you've already
-followed those.
-
----
+# Plan workflow
 
 ## Pick the lightest workflow that fits
 
@@ -42,6 +26,16 @@ genuinely multi-phase **and** benefits from its own document space.  The sharpes
 promote-up triggers (including the one-liner *"about to `#[ignore]` an existing
 test"*) are in `plans/README.md § When a problem should escalate` — check it when
 the tier is unclear.
+
+---
+
+## Portability
+
+The method is **tree-agnostic**; the paths, templates, tracker and naming that bind it to
+this repository live in one place, [§ Bind to your tree](#bind-to-your-tree) — carry the
+skill elsewhere by repointing that section.  It is procedural only: definitions, rationale
+and templates live in the docs the bindings name, and branch / commit / bug-filing policy
+in the repo's master instructions (loft: `CLAUDE.md`), which this skill assumes you followed.
 
 ---
 
@@ -181,8 +175,8 @@ commit having reached the trunk — the code lands on main later, on its own clo
   20-minute rule) to close a single plan is waste; bundle the closing doc-changes (across
   several plans, even unrelated) into the next substantive push
   (`doc/claude/DEVELOPMENT.md` § Branches: bundle many subjects into one PR).
-- Because the close is a **hand-close** (issue closed before/independent of a `Closes
-  @PLN<n>` PR merge), you MUST swap the status label yourself — see step 4's hand-close note.
+- The close is a **hand-close** with the full closing procedure below, never a merge
+  directive: swap the status label yourself in the same step (step 4).
 
 **Pick the outcome first:**
 
@@ -214,19 +208,17 @@ commit having reached the trunk — the code lands on main later, on its own clo
    closing → swap `status:active` for `status:finished` **and close the issue**;
    deferring → `status:parked` when a floor SHIPPED and the rest is paused,
    `status:future` only when nothing shipped — the outcome table in
-   `_LIFECYCLE.md` § Pick the outcome is the authority — issue stays open.  **Don't rely on
-   GitHub's `Fixes #N` — it's same-repo only and can't reach the plans repo.**
-   Instead the finishing PR carries a cross-repo close directive (`Closes
-   @PLN<n>`); on merge to the trunk a close-on-merge workflow runs the repo's
-   close-shipped-plans script to do the `status:finished` + close, with a
-   stale-plan audit as the drift safety net.  The manual `gh issue` edit is the
-   fallback / out-of-band path.
+   `_LIFECYCLE.md` § Pick the outcome is the authority — issue stays open.  **The close is
+   done by hand, at finish, as the last step of this whole procedure** (steps 1–6): the
+   doc work a close needs — reference content moved, the README trimmed, links rewritten,
+   the catalogue checked — is far too much to hang on a merge, so a merge is never the
+   closing route.  A close-on-merge workflow (a `Closes @PLN<n>` directive in the PR) may
+   exist as a safety net for a plan someone left open; it does none of the doc work.
+   GitHub's `Fixes #N` cannot reach the plans repo at all.
    - **A CLOSED plan's status label must be `status:finished` (delivered) or
      `status:declined` (de-scoped) — NEVER a live status (`active` / `future` /
-     `next` / `closing`).**  The swap is automatic ONLY when the finishing PR used
-     `Closes @PLN<n>`; a **hand-close** (the issue closed directly) or a PR that used
-     **`Refs`** instead of `Closes` closes the issue but leaves the label stale, so
-     you must swap it yourself: `gh issue edit <n> -R loft-lang/plans --remove-label
+     `next` / `closing`).**  A hand-close does not swap it for you, so swap it in the same
+     step: `gh issue edit <n> -R loft-lang/plans --remove-label
      status:<live> --add-label status:finished`.  The daily stale-plans audit fails the
      nightly on a closed plan with a live label, so a missed swap turns a nightly red —
      swap it at the close, and when you touch a closed plan, check its label.
@@ -253,7 +245,8 @@ commit having reached the trunk — the code lands on main later, on its own clo
    `## Open work` section — a thin "pointer-plan" that only links back to a doc is
    over-engineering; don't create one.
 3. If promoting to a full plan: move the doc into the flat plan directory, apply
-   the opening steps from step 4 onward, and rewrite incoming links to the old path
+   the opening steps (1–5 — claiming the issue first is the collision guard), and
+   rewrite incoming links to the old path
    (same grep as closing, step 5).
 
 ---
@@ -281,13 +274,14 @@ Two independent questions, and both must be answered before you file: **which re
 owns it** ([`references/consumer-projects.md`](references/consumer-projects.md))
 and **is it already on the mainline** (below).
 
-A tracker issue is a **claim about the mainline**.  So, working inside a plan:
-**file a problem only when it reproduces *outside* the plan — already on the
-mainline.**  A pre-existing mainline bug you stumble on during plan work gets filed
-(and cross-linked to the plan); a breakage the plan's own in-progress work caused
-is branch-internal — it lives in the plan's docs and is fixed on the branch, never
-filed.  Investigation plans are the strongest case: the probes + cluster docs
-already document every shape, so a separate issue would just double-document it.
+A tracker issue is a **record for the users who could have met the defect**.  So, working
+inside a plan, the default is to **fix what you find, on the spot**, with a regression test.
+File only a defect that both blocks the plan or needs a design of its own, **and** could have
+reached users — on the mainline and old enough to be in a release (one that came in since the
+last release reached no one).  A breakage the plan's own in-progress work caused is
+branch-internal: it lives in the plan's docs and is fixed on the branch, never filed.
+Investigation plans are the strongest case: a bug met while digging is fixed there, because
+leaving it in the way hides the full picture.
 
 Full policy in the master instructions (loft: `CLAUDE.md § Bug-filing policy`).
 

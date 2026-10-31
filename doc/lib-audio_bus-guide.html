@@ -24,9 +24,9 @@
 <h1>audio_bus guide</h1>
 <article>
 <p><a href="lib-audio_bus.html">← audio_bus</a> · <a href="lib-audio_bus-api.html">API reference</a> · <a href="lib-audio_bus-src.html">source</a></p>
-<p><code>audio_bus</code> decides how loud; <code>graphics</code> plays the sounds.  A bus is a number that multiplies, arranged in a tree under <code>MASTER</code>, and a voice is heard at its own level times the gain of every bus above it — so one write to <code>sfx</code> moves every effect, and everything under it.  Nothing below plays a sound: <code>attach</code> puts a handle a caller already holds on a bus, which is also how this guide runs on a machine with no audio device.</p>
+<p><code>audio_bus</code> decides how loud; <code>audio</code> plays the sounds.  A bus is a number that multiplies, arranged in a tree under <code>MASTER</code>, and a voice is heard at its own level times the gain of every bus above it — so one write to <code>sfx</code> moves every effect, and everything under it.  Nothing below plays a sound: <code>attach</code> puts a handle a caller already holds on a bus, which is also how this guide runs on a machine with no audio device.</p>
 <pre><code><span class="kw">use</span> audio_bus::*;
-<span class="kw">use</span> graphics;</code></pre>
+<span class="kw">use</span> audio;</code></pre>
 <pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
   m = <span class="fn-call">mixer</span>();
   _ = <span class="fn-call">add</span>(m, <span class="st">"music"</span>, <span class="en">MASTER</span>, <span class="nm">0.5</span>);

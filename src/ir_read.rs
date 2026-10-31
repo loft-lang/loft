@@ -45,6 +45,7 @@ use std::num::NonZeroU8;
 /// If `slot`'s discriminant byte is not a known `Node` variant — only possible
 /// on a record not written by [`crate::ir_store`] (a corrupt or foreign store).
 #[must_use]
+#[expect(clippy::too_many_lines, reason = "one arm per Node variant")]
 pub fn read_value(stores: &Stores, slot: Node) -> Value {
     match slot.value_type(stores) {
         // ── leaves ───────────────────────────────────────────────────────────
@@ -83,39 +84,51 @@ pub fn read_value(stores: &Stores, slot: Node) -> Value {
         }
         ValueType::Set => Value::Set(
             slot.field_int(stores, ds::NDSET_VAR) as u16,
-            Box::new(read_node_child(stores, slot.field_vec(ds::NDSET_INNER))),
+            Box::new(read_value(
+                stores,
+                slot.field_child(stores, ds::NDSET_INNER),
+            )),
         ),
-        ValueType::Return => Value::Return(Box::new(read_node_child(
+        ValueType::Return => Value::Return(Box::new(read_value(
             stores,
-            slot.field_vec(ds::NDRETURN_INNER),
+            slot.field_child(stores, ds::NDRETURN_INNER),
         ))),
         ValueType::If => Value::If(
-            Box::new(read_node_child(stores, slot.field_vec(ds::NDIF_COND))),
-            Box::new(read_node_child(stores, slot.field_vec(ds::NDIF_T))),
-            Box::new(read_node_child(stores, slot.field_vec(ds::NDIF_F))),
+            Box::new(read_value(stores, slot.field_child(stores, ds::NDIF_COND))),
+            Box::new(read_value(stores, slot.field_child(stores, ds::NDIF_T))),
+            Box::new(read_value(stores, slot.field_child(stores, ds::NDIF_F))),
         ),
-        ValueType::Drop => Value::Drop(Box::new(read_node_child(
+        ValueType::Drop => Value::Drop(Box::new(read_value(
             stores,
-            slot.field_vec(ds::NDDROP_INNER),
+            slot.field_child(stores, ds::NDDROP_INNER),
         ))),
         ValueType::Iter => Value::Iter(
             slot.field_int(stores, ds::NDITER_VAR) as u16,
-            Box::new(read_node_child(stores, slot.field_vec(ds::NDITER_CREATE))),
-            Box::new(read_node_child(stores, slot.field_vec(ds::NDITER_NEXT))),
-            Box::new(read_node_child(stores, slot.field_vec(ds::NDITER_INIT))),
+            Box::new(read_value(
+                stores,
+                slot.field_child(stores, ds::NDITER_CREATE),
+            )),
+            Box::new(read_value(
+                stores,
+                slot.field_child(stores, ds::NDITER_NEXT),
+            )),
+            Box::new(read_value(
+                stores,
+                slot.field_child(stores, ds::NDITER_INIT),
+            )),
         ),
         ValueType::Tuple => Value::Tuple(read_node_list(stores, slot.field_vec(ds::NDTUPLE_ITEMS))),
         ValueType::TuplePut => Value::TuplePut(
             slot.field_int(stores, ds::NDTUPLEPUT_VAR) as u16,
             slot.field_int(stores, ds::NDTUPLEPUT_IDX) as u16,
-            Box::new(read_node_child(
+            Box::new(read_value(
                 stores,
-                slot.field_vec(ds::NDTUPLEPUT_INNER),
+                slot.field_child(stores, ds::NDTUPLEPUT_INNER),
             )),
         ),
-        ValueType::Yield => Value::Yield(Box::new(read_node_child(
+        ValueType::Yield => Value::Yield(Box::new(read_value(
             stores,
-            slot.field_vec(ds::NDYIELD_INNER),
+            slot.field_child(stores, ds::NDYIELD_INNER),
         ))),
         ValueType::Parallel => {
             Value::Parallel(read_node_list(stores, slot.field_vec(ds::NDPARALLEL_ARMS)))
@@ -130,7 +143,7 @@ pub fn read_value(stores: &Stores, slot: Node) -> Value {
                 line: slot.field_int(stores, ds::SPAN_POS_LINE) as u32,
                 pos: slot.field_int(stores, ds::SPAN_POS_POS) as u32,
             };
-            let inner = read_node_child(stores, slot.field_vec(ds::NDSPAN_INNER));
+            let inner = read_value(stores, slot.field_child(stores, ds::NDSPAN_INNER));
             Value::Span(Box::new((position, inner)))
         }
         // ── vector of a non-Node struct ───────────────────────────────────────
@@ -154,7 +167,6 @@ pub fn read_value(stores: &Stores, slot: Node) -> Value {
 /// If `slot`'s discriminant byte is not a known `TypeT` variant — only possible
 /// on a record not written by [`crate::ir_store`] (a corrupt or foreign store).
 #[must_use]
-#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn read_type(stores: &Stores, slot: Record) -> Type {
     match type_kind(slot.discriminant(stores)) {
         TypeKind::Unknown => Type::Unknown(slot.field_int(stores, ds::TYUNKNOWN_N) as u32),
@@ -177,26 +189,23 @@ pub fn read_type(stores: &Stores, slot: Record) -> Type {
             slot.field_int(stores, ds::TYREF_N) as u32,
             read_deps(stores, slot, ds::TYREF_DEP),
         ),
-        TypeKind::RefVar => Type::RefVar(Box::new(read_type_child(
+        TypeKind::RefVar => Type::RefVar(Box::new(read_type(
             stores,
-            slot.field_recvec(ds::TYREFVAR_INNER, ds::TYPET_STRIDE),
+            slot.field_child(stores, ds::TYREFVAR_INNER),
         ))),
         TypeKind::Vector => Type::Vector(
-            Box::new(read_type_child(
+            Box::new(read_type(
                 stores,
-                slot.field_recvec(ds::TYVECTOR_INNER, ds::TYPET_STRIDE),
+                slot.field_child(stores, ds::TYVECTOR_INNER),
             )),
             read_deps(stores, slot, ds::TYVECTOR_DEP),
         ),
         TypeKind::Routine => Type::Routine(slot.field_int(stores, ds::TYROUTINE_N) as u32),
         TypeKind::Iterator => Type::Iterator(
-            Box::new(read_type_child(
+            Box::new(read_type(stores, slot.field_child(stores, ds::TYITER_STEP))),
+            Box::new(read_type(
                 stores,
-                slot.field_recvec(ds::TYITER_STEP, ds::TYPET_STRIDE),
-            )),
-            Box::new(read_type_child(
-                stores,
-                slot.field_recvec(ds::TYITER_INNER, ds::TYPET_STRIDE),
+                slot.field_child(stores, ds::TYITER_INNER),
             )),
         ),
         TypeKind::Sorted => Type::Sorted(
@@ -238,16 +247,16 @@ pub fn read_type(stores: &Stores, slot: Record) -> Type {
         ),
         TypeKind::Function => Type::Function(
             read_type_list(stores, slot.field_recvec(ds::TYFUNC_ARGS, ds::TYPET_STRIDE)),
-            Box::new(read_type_child(
+            Box::new(read_type(
                 stores,
-                slot.field_recvec(ds::TYFUNC_RESULT, ds::TYPET_STRIDE),
+                slot.field_child(stores, ds::TYFUNC_RESULT),
             )),
             read_deps(stores, slot, ds::TYFUNC_DEP),
             crate::data::ConstParams::from_bits(slot.field_int(stores, ds::TYFUNC_CONSTS) as u32),
         ),
-        TypeKind::Rewritten => Type::Rewritten(Box::new(read_type_child(
+        TypeKind::Rewritten => Type::Rewritten(Box::new(read_type(
             stores,
-            slot.field_recvec(ds::TYREWRITTEN_INNER, ds::TYPET_STRIDE),
+            slot.field_child(stores, ds::TYREWRITTEN_INNER),
         ))),
         TypeKind::Tuple => Type::Tuple(read_type_list(
             stores,
@@ -256,9 +265,9 @@ pub fn read_type(stores: &Stores, slot: Record) -> Type {
         // @PLN25 — the `τ?` marker (a box-of-one child, like RefVar). `Type::optional`
         // is the idempotent former (N-Idem); a real in-memory `Optional` never wraps
         // Never/Null, so this reconstructs the written type exactly.
-        TypeKind::Optional => Type::optional(read_type_child(
+        TypeKind::Optional => Type::optional(read_type(
             stores,
-            slot.field_recvec(ds::TYOPTIONAL_INNER, ds::TYPET_STRIDE),
+            slot.field_child(stores, ds::TYOPTIONAL_INNER),
         )),
         TypeKind::Other(d) => panic!("ir_read: unknown TypeT discriminant {d}"),
     }

@@ -723,6 +723,28 @@
   x: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
   y: <span class="ty"><a href="stdlib-types.html">integer</a></span>
 }</code></pre>
+<h2 id="a-struct-that-contains-itself">A struct that contains itself</h2>
+<p>A field may have the struct's own type: a tree node holds its children. Write the field nullable — <code>left: Tree?</code> — so a branch can end. A <code>Tree</code> that must always hold another <code>Tree</code> would never end, and the compiler refuses it: "<code>Tree.left: Tree</code> makes every Tree contain another Tree — make it <code>Tree?</code>". A child is a value like any other field. Reading <code>t.left</code> gives a view, writing it copies the new subtree in, <code>null</code> removes the subtree, and a copy of the tree copies its children too. It prints, compares and converts to JSON as a nested record. When one node must be SHARED by two places, use <code>reference&lt;Tree&gt;</code> instead — that field holds a link, not a copy. To test a child and pass it on, bind it to a local first: <code>l = t.left; if l { ... }</code>. The test narrows <code>l</code> to a present <code>Tree</code>.</p>
+<pre><code><span class="kw">struct</span> <span class="en">Tree</span> {
+  key: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
+  left: <span class="en">Tree</span>?,
+  right: <span class="en">Tree</span>?
+}</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">tree_sum</span>(t: <span class="en">Tree</span>?) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {
+  <span class="kw">if</span> !t {
+    <span class="kw">return</span> <span class="nm">0</span>;
+  }
+  t.key + <span class="fn-call">tree_sum</span>(t.left) + <span class="fn-call">tree_sum</span>(t.right)
+}</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call"><a href="stdlib-vector-aggregates.html">insert</a></span>(t: <span class="en">Tree</span>, key: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {
+  <span class="kw">if</span> key &lt; t.key {
+    l = t.left;
+    <span class="kw">if</span> l { <span class="fn-call"><a href="stdlib-vector-aggregates.html">insert</a></span>(l, key); } <span class="kw">else</span> { t.left = <span class="en">Tree</span> { key: key }; }
+  } <span class="kw">else</span> {
+    r = t.right;
+    <span class="kw">if</span> r { <span class="fn-call"><a href="stdlib-vector-aggregates.html">insert</a></span>(r, key); } <span class="kw">else</span> { t.right = <span class="en">Tree</span> { key: key }; }
+  }
+}</code></pre>
 <pre><code><span class="kw">struct</span> <span class="en">Holder8</span> {
   v: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;
 }</code></pre>
@@ -804,6 +826,22 @@
 <pre><code>  linked = &amp;item;
   linked.stock = <span class="nm">1</span>;
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(item.stock == <span class="nm">1</span>, <span class="st">"'&amp;' binds a live link"</span>);</code></pre>
+<p>A tree: children are fields of the struct's own type, nullable so a branch can end.</p>
+<pre><code>  root = <span class="en">Tree</span> { key: <span class="nm">5</span>, left: <span class="en">Tree</span> { key: <span class="nm">3</span> } };
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(root.left.key == <span class="nm">3</span>, <span class="st">"a child reads like any field"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!root.right, <span class="st">"an absent child is null"</span>);
+  <span class="fn-call"><a href="stdlib-vector-aggregates.html">insert</a></span>(root, <span class="nm">8</span>);
+  <span class="fn-call"><a href="stdlib-vector-aggregates.html">insert</a></span>(root, <span class="nm">4</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(root.left.right.key == <span class="nm">4</span>, <span class="st">"inserted below 3"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">tree_sum</span>(root) == <span class="nm">20</span>, <span class="st">"5 + 3 + 4 + 8 = {tree_sum(root)}"</span>);</code></pre>
+<p>Binding the whole tree copies every subtree with it.</p>
+<pre><code>  branch_copy = root;
+  branch_copy.left.key = <span class="nm">30</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(root.left.key == <span class="nm">3</span>, <span class="st">"the copy's children are its own"</span>);</code></pre>
+<p>Writing null removes a subtree.</p>
+<pre><code>  root.right = <span class="kw">null</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">tree_sum</span>(root) == <span class="nm">12</span>, <span class="st">"without the right branch: {tree_sum(root)}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{root}"</span> == <span class="st">"{{key:5,left:{{key:3,left:null,right:{{key:4,left:null,right:null}}}},right:null}}"</span>, <span class="st">"prints nested: {root}"</span>);</code></pre>
 <h2 id="a-record-with-some-fields-changed">A record with some fields changed</h2>
 <p><code>Product { price: 90, ..apple }</code> is a copy of <code>apple</code> with <code>price</code> written — exactly <code>sale = apple; sale.price = 90;</code> in one expression. The base keeps its value, the named fields are written as assignments (each reads the BASE, never the half-written copy), and <code>..base</code> is the last entry. The base must be a Product and present. A variant updates the same way when the base is known to be that variant: a local of the variant's type, or <code>..(s as Circle)</code> inside <code>if s is Circle</code>.</p>
 <pre><code>  sale = <span class="en">Product</span> { price: <span class="nm">90</span>, ..apple };
@@ -838,6 +876,20 @@
 <pre><code><span class="kw">enum</span> <span class="en">Shape</span> {
   <span class="en">Circle</span> {radius: <span class="ty"><a href="stdlib-types.html">float</a></span> },
   <span class="en">Rect</span> {width: <span class="ty"><a href="stdlib-types.html">float</a></span>, height: <span class="ty"><a href="stdlib-types.html">float</a></span> }
+}</code></pre>
+<h2 id="variants-that-hold-the-enum-itself">Variants that hold the enum itself</h2>
+<p>A variant's field may have the enum's own type. That is how an expression tree is written: an <code>Add</code> holds two expressions, a <code>Neg</code> one. No <code>?</code> is needed, because the other variants — here <code>Num</code> — end the recursion. Each child is a value: it is copied when you assign it, compared by content and printed as a nested variant. A <code>match</code> arm binds a child like any other field, so a function over the tree is one arm per variant.</p>
+<pre><code><span class="kw">enum</span> <span class="en">Expr</span> {
+  <span class="en">Num</span> {v: <span class="ty"><a href="stdlib-types.html">integer</a></span> },
+  <span class="en">Add</span> {l: <span class="en">Expr</span>, r: <span class="en">Expr</span> },
+  <span class="en">Neg</span> {e: <span class="en">Expr</span> }
+}</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">eval</span>(e: <span class="en">Expr</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {
+  match e {
+    <span class="en">Num</span> { v } =&gt; v,
+    <span class="en">Add</span> { l, r } =&gt; <span class="fn-call">eval</span>(l) + <span class="fn-call">eval</span>(r),
+    <span class="en">Neg</span> { e } =&gt; -<span class="fn-call">eval</span>(e)
+  }
 }</code></pre>
 <h2 id="methods-that-work-on-any-variant">Methods that work on any variant</h2>
 <p>Write the same function name for each variant, each taking <code>self</code> of that variant's type. Loft automatically picks the right version at runtime based on which variant is actually stored in the variable. This lets you call shape.area() without caring which kind of shape it is.</p>
@@ -888,6 +940,12 @@
 <p>describe() uses format strings with field access inside each variant's method.</p>
 <pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(c.<span class="fn-call">describe</span>() == <span class="st">"circle with radius 1"</span>, <span class="st">"describe circle: {c.describe()}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(r.<span class="fn-call">describe</span>() == <span class="st">"rect 4 by 5"</span>, <span class="st">"describe rect: {r.describe()}"</span>);</code></pre>
+<p>An expression tree: 1 + -(2), built from nested variants and evaluated by one match.</p>
+<pre><code>  expr: <span class="en">Expr</span> = <span class="en">Add</span> {l: <span class="en">Num</span> {v: <span class="nm">1</span> }, r: <span class="en">Neg</span> {e: <span class="en">Num</span> {v: <span class="nm">2</span> } } };
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">eval</span>(expr) == -<span class="nm">1</span>, <span class="st">"1 + -2 = {eval(expr)}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{expr:j}"</span> == <span class="st">"{{\"</span><span class="en">Add</span>\<span class="st">":{{\"</span>l\<span class="st">":{{\"</span><span class="en">Num</span>\<span class="st">":{{\"</span>v\<span class="st">":1}}}},\"</span>r\<span class="st">":{{\"</span><span class="en">Neg</span>\<span class="st">":{{\"</span>e\<span class="st">":{{\"</span><span class="en">Num</span>\<span class="st">":{{\"</span>v\<span class="st">":2}}}}}}}}}}}}"</span>, <span class="st">"JSON nests the variants"</span>);
+  same: <span class="en">Expr</span> = <span class="en">Add</span> {l: <span class="en">Num</span> {v: <span class="nm">1</span> }, r: <span class="en">Neg</span> {e: <span class="en">Num</span> {v: <span class="nm">2</span> } } };
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(expr == same, <span class="st">"two trees with the same content are equal"</span>);</code></pre>
 <h2 id="a-method-on-the-enum-itself-is-the-fallback">A method on the enum itself is the fallback</h2>
 <p>Calling area() on a value held as a <code>Shape</code> works like a match on its variant, and a match must cover every variant. So when only some variants have their own version, the call is refused unless the enum has one too: fn area(self: Shape) -&gt; float { 0.0 } That version is the <code>_</code> arm: a variant with its own area() still runs it, and every other variant runs this one. A method only some variants have is fine as long as nothing calls it on a value held as the enum. An empty-body stub for one variant also covers it: fn area(self: SomeVariant) -&gt; float { } Give the stub a real body — <code>{ 0.0 }</code> — when anything reads its result. An empty body hands back the type's default (0.0 for a float, 0 for an integer, "" for text), which is the same on both backends. That is a real value, not a marker: it is not null, so there is nothing to test for, and a caller cannot tell it from a computed 0.0.</p>
 <h2 id="match-expressions-on-enums">Match expressions on enums</h2>

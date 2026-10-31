@@ -1,0 +1,36 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Writes the KEY-ORDER edge image: a `sorted`, an `index` and an `ordered` keyed by a text and
+// by a float, each holding a null key beside `""` / `0.0` and two present keys, written ONCE by
+// a build from before loft#2237 (main @ 23bc61e4: a null text after `""`, a null float above
+// every value) into `key-order-o0/`, and never written again.
+// `tests/scripts/2237-a-key-order-image-converts-on-every-backend.loft` reads it.
+//
+// Env: LOFT_GOLDEN_DIR (the directory the image goes to).
+
+struct KT { k: text, v: integer }
+struct KF { f: float, v: integer }
+struct KRoot { st: sorted<KT[k]>, it: index<KT[k]>, sf: sorted<KF[f]>, xf: index<KF[f]> }
+
+fn main() {
+  dir = env_variable("LOFT_GOLDEN_DIR") ?? "";
+  assert(dir != "", "LOFT_GOLDEN_DIR names the directory");
+  nt: text = null;
+  nf: float = null;
+  r = KRoot { st: [], it: [], sf: [], xf: [] };
+  r.st += [KT { k: "b", v: 4 }, KT { k: nt, v: 1 }, KT { k: "", v: 2 }, KT { k: "a", v: 3 }];
+  r.it += [KT { k: "b", v: 4 }, KT { k: nt, v: 1 }, KT { k: "", v: 2 }, KT { k: "a", v: 3 }];
+  r.sf += [KF { f: 2.5, v: 4 }, KF { f: nf, v: 1 }, KF { f: -1.5, v: 2 }, KF { f: 0.0, v: 3 }];
+  r.xf += [KF { f: 2.5, v: 4 }, KF { f: nf, v: 1 }, KF { f: -1.5, v: 2 }, KF { f: 0.0, v: 3 }];
+  s = "";
+  for e in r.st { s += "{e.v}"; }
+  s += " ";
+  for e in r.it { s += "{e.v}"; }
+  s += " ";
+  for e in r.sf { s += "{e.v}"; }
+  s += " ";
+  for e in r.xf { s += "{e.v}"; }
+  println("written in order: {s}");
+  assert(store_persist_copy(r, "{dir}/root.store"), "writing the image");
+}

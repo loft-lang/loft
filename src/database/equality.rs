@@ -8,6 +8,14 @@
 use crate::database::{Field, Parts, Stores};
 use crate::keys::DbRef;
 
+/// One comparison's state: the record pairs under comparison (coinduction), and the child
+/// records of out-of-line fields still to compare (`@FR-L-OutOfLine`).
+#[derive(Default)]
+struct EqState {
+    pairs: Vec<(DbRef, DbRef, u16)>,
+    children: Vec<(DbRef, DbRef, u16)>,
+}
+
 impl Stores {
     /// Whether the values at `a` and `b`, both of known type `tp`, hold the same content
     /// (`@FR-E-Eq`): a scalar by its value (`0.0 == -0.0`, null equals null), a `text` by its
@@ -26,12 +34,22 @@ impl Stores {
     /// On a `tp` that is no stored type, as the schema walks do.
     #[must_use]
     pub fn eq_content(&self, a: &DbRef, b: &DbRef, tp: u16) -> bool {
-        let mut seen = Vec::new();
-        self.eq_walk(a, b, tp, &mut seen)
+        let mut seen = EqState::default();
+        if !self.eq_walk(a, b, tp, &mut seen) {
+            return false;
+        }
+        // `@FR-L-OutOfLine` — the child records, compared as a loop rather than a recursion,
+        // so a chain of any length takes no stack per link.
+        while let Some((x, y, t)) = seen.children.pop() {
+            if !self.eq_walk(&x, &y, t, &mut seen) {
+                return false;
+            }
+        }
+        true
     }
 
     /// [`Self::eq_content`] with the record pairs already under comparison.
-    fn eq_walk(&self, a: &DbRef, b: &DbRef, tp: u16, seen: &mut Vec<(DbRef, DbRef, u16)>) -> bool {
+    fn eq_walk(&self, a: &DbRef, b: &DbRef, tp: u16, seen: &mut EqState) -> bool {
         if a == b {
             return true;
         }
@@ -82,17 +100,17 @@ impl Stores {
             }),
             Parts::ChildRec(content) => {
                 let (ra, rb) = (sa.get_u32_raw(a.rec, a.pos), sb.get_u32_raw(b.rec, b.pos));
+                if ra == 0 || rb == 0 {
+                    return ra == 0 && rb == 0;
+                }
                 let child = |store_nr, rec| DbRef {
                     store_nr,
                     rec,
                     pos: 8,
                 };
-                self.eq_walk(
-                    &child(a.store_nr, ra),
-                    &child(b.store_nr, rb),
-                    *content,
-                    seen,
-                )
+                seen.children
+                    .push((child(a.store_nr, ra), child(b.store_nr, rb), *content));
+                true
             }
             Parts::Vector(content)
             | Parts::Sorted(content, _)
@@ -154,7 +172,7 @@ impl Stores {
         b: &DbRef,
         tp: u16,
         content: u16,
-        seen: &mut Vec<(DbRef, DbRef, u16)>,
+        seen: &mut EqState,
     ) -> bool {
         if let Some(answer) = self.eq_absent_collections(a, b) {
             return answer;
@@ -213,13 +231,7 @@ impl Stores {
     /// `#…` is the collection's own bookkeeping (a tree link, a back pointer) and a field whose
     /// first other-index is `u16::MAX` is a secondary VIEW of a collection another field
     /// holds — neither is content, exactly as the renderer skips them.
-    fn eq_fields(
-        &self,
-        a: &DbRef,
-        b: &DbRef,
-        fields: &[Field],
-        seen: &mut Vec<(DbRef, DbRef, u16)>,
-    ) -> bool {
+    fn eq_fields(&self, a: &DbRef, b: &DbRef, fields: &[Field], seen: &mut EqState) -> bool {
         fields.iter().all(|f| {
             if f.name.starts_with('#') || f.other_indexes.first() == Some(&u16::MAX) {
                 return true;
@@ -246,13 +258,7 @@ impl Stores {
     /// Two stored `reference<T>` slots: the records they name, compared as `target`.  Both
     /// absent are equal and one absent differs; a pair already under comparison is assumed
     /// equal, which is where a cycle ends.
-    fn eq_reference(
-        &self,
-        fa: &DbRef,
-        fb: &DbRef,
-        target: u16,
-        seen: &mut Vec<(DbRef, DbRef, u16)>,
-    ) -> bool {
+    fn eq_reference(&self, fa: &DbRef, fb: &DbRef, target: u16, seen: &mut EqState) -> bool {
         // `@FR-H-Removed`: a reference to a removed record reads null, here as at every other
         // read, so it equals a null reference and any other reference to a removed record.
         let (ra, rb) = (self.get_db_ref(fa, 0), self.get_db_ref(fb, 0));
@@ -260,12 +266,13 @@ impl Stores {
             return ra.rec == 0 && rb.rec == 0;
         }
         if seen
+            .pairs
             .iter()
             .any(|&(x, y, t)| x == ra && y == rb && t == target)
         {
             return true;
         }
-        seen.push((ra, rb, target));
+        seen.pairs.push((ra, rb, target));
         self.eq_walk(&ra, &rb, target, seen)
     }
 
