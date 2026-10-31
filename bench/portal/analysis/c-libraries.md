@@ -169,6 +169,14 @@ with the arrays in a site-owned bump arena gcc **0.087×** (≈ 87 ns a check, u
 124); the `.ok` decode alone building no tree at all 0.537×.  Design and steps (T1 the dead
 tree, T2 the representation, T3 materialisation): [`transient.md`](transient.md).
 
+### The top three after `check_request` (2026-10-31, gcc ship, profiled at `888133d95`)
+
+| row | ratio | what the profile says | lever (general) | priced |
+|---|--:|---|---|---|
+| cbor `encode_bytes` | ≈ 6.9× | per ITEM, not per byte (64 texts × 256 bytes; the bytes are one `loft_append_text_bytes`): `head` 47 % — three one-byte pushes for a length of 256, each `loft_vec_prealloc(buf, 1, 1)` + `loft_vec_push_byte` resolving the store, behind a frame wrapper, the buffer re-resolved per call (`loft_field`); `encode`'s own arm 40 %.  ≈ 66 ns an item against the twin's ≈ 10 | a push RUN onto a vector that is not known empty: one capacity check for the run, byte stores through a held header (`(R-PushFill)`'s run clause asks known-empty since the `encode_bytes` regression); the per-push prealloc is redundant with the push's own growth | no |
+| hex_field `edgeset_count` | 7.2× | the twin runs the SAME algorithm (a six-way `eg_dir_from` per edge); 3.1 ns an edge against 0.43.  `eg_index__inv` 60 %, `eg_dir_from` 17 % — gcc does not inline the helpers (an `__inv` twin behind a frame wrapper) | the C's inlining decision: gcc with its limits raised (`max-inline-insns-single=4000` …) on the same C is **−47 %** (≈ 3.8×); the checked `loft_add`s replaced by wrapping adds on top: −3.6 % only (the integer-null cost is small here) | yes, by compiler flags; ≈ 3.7× left unattributed |
+| server `header` | 7.0× | the LIBRARY's algorithm: `loft_text_case` 60 % — every header line lowercased whole per lookup; the twin compares the key with `eq_ignore_ascii_case` | library-side: loft-libs-net PR #33 (server 0.7.6, key compared in place) is OPEN, not merged; the bench checkout is 0.7.5 | by its author: ≈ 3.7× after |
+
 ### The short appends (2026-10-30)
 
 **What the row paid.**  `req_state_b64` profiled at 75 % in `b64_encode`'s loop, four
