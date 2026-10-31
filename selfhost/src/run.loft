@@ -139,24 +139,42 @@ fn load_table(b: ir::Bundle) {
 // The stack store's first size, grown as a call needs (`State::grow_stack`).
 STACK_START = 4096;
 
-fn slot_int(stk: integer, at: integer, access: integer) -> integer? {
-  if access == 0 { crt::get_int(stk, 1, 8, at) } else { crt::get_w(access - 1, stk, 1, 8, at, 0) }
+// The value a place holds as `access` reads it (`lower::Lowering.var_access`); a frame slot is
+// the place `(stk, 1, 8 + at)`.
+fn place_int(store: integer, rec: integer, pos: integer, access: integer) -> integer? {
+  if access == 0 { crt::get_int(store, rec, pos, 0) } else { crt::get_w(access - 1, store, rec, pos, 0, 0) }
 }
 
-fn set_slot_int(stk: integer, at: integer, access: integer, v: integer?) {
+fn set_place_int(store: integer, rec: integer, pos: integer, access: integer, v: integer?) {
   if access == 0 {
-    crt::set_int(stk, 1, 8, at, v);
+    crt::set_int(store, rec, pos, 0, v);
   } else {
-    crt::set_w(access - 1, stk, 1, 8, at, 0, v);
+    crt::set_w(access - 1, store, rec, pos, 0, 0, v);
   }
 }
 
+fn place_float(store: integer, rec: integer, pos: integer, access: integer) -> float? {
+  crt::get_float(store, rec, pos, 0, access == 1)
+}
+
+fn set_place_float(store: integer, rec: integer, pos: integer, access: integer, v: float?) {
+  crt::set_float(store, rec, pos, 0, v, access == 1);
+}
+
+fn slot_int(stk: integer, at: integer, access: integer) -> integer? {
+  place_int(stk, 1, 8 + at, access)
+}
+
+fn set_slot_int(stk: integer, at: integer, access: integer, v: integer?) {
+  set_place_int(stk, 1, 8 + at, access, v);
+}
+
 fn slot_float(stk: integer, at: integer, access: integer) -> float? {
-  crt::get_float(stk, 1, 8, at, access == 1)
+  place_float(stk, 1, 8 + at, access)
 }
 
 fn set_slot_float(stk: integer, at: integer, access: integer, v: float?) {
-  crt::set_float(stk, 1, 8, at, v, access == 1);
+  set_place_float(stk, 1, 8 + at, access, v);
 }
 
 // The reference a slot holds, pushed as three integers at `sp`.
@@ -537,6 +555,55 @@ fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) ->
       FreeText => { crt::slot_text_free(stk, text_at(stk, base, op)); }
       // `OpInitText`: a text local's slot made the empty text, whatever an earlier frame left.
       InitText => { crt::slot_text_init(stk, base + op.a); }
+      // `OpCreateStack(v)`: the reference to `v`'s slot of this frame.
+      StackRef => {
+        put_int(ints, sp_int, stk);
+        put_int(ints, sp_int + 1, 1);
+        put_int(ints, sp_int + 2, 8 + base + op.a);
+        sp_int += 3;
+      }
+      // A read through a `&`: what the place it names holds — a frame slot, a field, an element —
+      // at the width of the type it names (`OpGetInt` … `OpGetStackRef` with field 0).
+      Deref => {
+        sp_int -= 3;
+        p_store = ints[sp_int] ?? NULL_STORE;
+        p_rec = ints[sp_int + 1] ?? 0;
+        p_pos = ints[sp_int + 2] ?? 0;
+        if op.kind == KFloat {
+          put_float(floats, sp_float, place_float(p_store, p_rec, p_pos, op.b));
+          sp_float += 1;
+        } else if op.kind == KRef {
+          crt::place_ref(io, p_store, p_rec, p_pos);
+          put_int(ints, sp_int, io[0]);
+          put_int(ints, sp_int + 1, io[1]);
+          put_int(ints, sp_int + 2, io[2]);
+          sp_int += 3;
+        } else {
+          put_int(ints, sp_int, place_int(p_store, p_rec, p_pos, op.b));
+          sp_int += 1;
+        }
+      }
+      // A write through a `&`: the value into the place the reference under it names.
+      Through => {
+        if op.kind == KFloat {
+          sp_float -= 1;
+          sp_int -= 3;
+        } else if op.kind == KRef {
+          sp_int -= 6;
+        } else {
+          sp_int -= 4;
+        }
+        p_store = ints[sp_int] ?? NULL_STORE;
+        p_rec = ints[sp_int + 1] ?? 0;
+        p_pos = ints[sp_int + 2] ?? 0;
+        if op.kind == KFloat {
+          set_place_float(p_store, p_rec, p_pos, op.b, floats[sp_float]);
+        } else if op.kind == KRef {
+          crt::set_place_ref(p_store, p_rec, p_pos, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0);
+        } else {
+          set_place_int(p_store, p_rec, p_pos, op.b, ints[sp_int + 3]);
+        }
+      }
       // A native the interpreter carries, as loft's own function of that name; its arguments
       // are on their kinds' stacks, the last one on top.
       Native => {

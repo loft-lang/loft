@@ -28,6 +28,9 @@ enum Kind {
   KSingle,
   KText,
   KTextRef,
+  // A `&` of a variable that is not a text: a reference into the frame of the variable it names
+  // (@PLN91 F-1); a read and a write go through it, at the width of what it names.
+  KVarRef,
   KRef,
   KNone,
   KOther,
@@ -70,6 +73,12 @@ enum Code {
   Clear,
   FreeText,
   InitText,
+  // `OpCreateStack(v)` of a variable that is not a text: the reference to its frame slot.
+  StackRef,
+  // A read through a `&` (`KVarRef`): the reference on top answered by what it names.
+  Deref,
+  // A write through a `&`: the reference, then the value, both taken.
+  Through,
   Print,
   RefOf,
   Round,
@@ -162,6 +171,8 @@ struct Lowering {
   var_kind: vector<Kind>,
   var_slot: vector<integer>,
   var_access: vector<integer>,
+  // What a `KVarRef` variable names (`named_kind`); `KNone` for any other.
+  var_inner: vector<Kind>,
   frame_bytes: integer,
   arg_vars: vector<integer>,
   local_vars: vector<integer>,
@@ -203,6 +214,7 @@ pub fn empty() -> Lowering {
     var_kind: [],
     var_slot: [],
     var_access: [],
+    var_inner: [],
     frame_bytes: 0,
     arg_vars: [],
     local_vars: [],
@@ -235,7 +247,9 @@ fn kind_of_type(t: ir::TypeT) -> Kind {
     TyFloat => KFloat,
     TySingle => KSingle,
     TyText { dep: _ } => KText,
-    TyRefVar { inner } => if kind_of_type(inner) == KText { KTextRef } else { KOther },
+    // A `&` to a narrow integer place reads through the width's own op and minimum
+    // (`NarrowSlot::of_type`), which this lowering does not carry yet.
+    TyRefVar { inner } => if narrow_integer(inner, false) { KOther } else { var_ref_kind(kind_of_type(inner)) },
     TyReference { n: _, dep: _ } => KRef,
     TyVector { inner: _, dep: _ } => KRef,
     TyHash { n: _, names: _, dep: _ } => KRef,
@@ -245,6 +259,41 @@ fn kind_of_type(t: ir::TypeT) -> Kind {
     TyOptional { inner } => kind_of_type(inner),
     TyRewritten { inner } => kind_of_type(inner),
     _ => KOther,
+  }
+}
+
+// The kind of a `&` of a variable of kind `inner`: a `&text` keeps its own; any other carried
+// kind is a reference into the frame (`KVarRef`).
+fn var_ref_kind(inner: Kind) -> Kind {
+  if inner == KText {
+    KTextRef
+  } else if inner == KInt || inner == KFloat || inner == KSingle || inner == KRef {
+    KVarRef
+  } else {
+    KOther
+  }
+}
+
+// Is `t` an integer stored narrower than eight bytes (`IntegerSpec::byte_width`): a declared
+// size, or a range that fits two bytes with the null's code reserved?
+fn narrow_integer(t: ir::TypeT, nullable: boolean) -> boolean {
+  match t {
+    TyOptional { inner } => narrow_integer(inner, true),
+    TyInteger { spec } => if spec.forced_size > 0 {
+      spec.forced_size < 8
+    } else {
+      spec.max - spec.min + 1 + if nullable { 1 } else { 0 } <= 65536
+    },
+    _ => false,
+  }
+}
+
+// The kind a `&` names (`&integer` an integer); `KNone` for a type that is no `&`.
+fn named_kind(t: ir::TypeT) -> Kind {
+  match t {
+    TyOptional { inner } => named_kind(inner),
+    TyRefVar { inner } => kind_of_type(inner),
+    _ => KNone,
   }
 }
 
@@ -268,9 +317,9 @@ fn kind_of(l: Lowering, b: ir::Bundle, n: ir::Node) -> Kind {
     NdSingle { f: _ } => KSingle,
     NdText { s: _ } => KText,
     NdVar { n: var } => {
-      // Reading a `&text` variable reads the text it refers to.
+      // Reading a `&` variable reads what it refers to.
       k = l.var_kind[var] ?? KOther;
-      if k == KTextRef { KText } else { k }
+      if k == KTextRef { KText } else if k == KVarRef { l.var_inner[var] ?? KOther } else { k }
     }
     NdSpan { inner } => kind_of(l, b, inner),
     NdBlock { block } => kind_of_types(block[0]?.result),
@@ -287,7 +336,7 @@ fn kind_of(l: Lowering, b: ir::Bundle, n: ir::Node) -> Kind {
 // `&text` is the absolute index of the text it refers to, an integer.  A reference keeps its
 // kind: it is three integers on the integer stack, and every op that moves one moves three.
 pub fn stack_of(k: Kind) -> Kind {
-  if k == KSingle { KFloat } else if k == KTextRef { KInt } else { k }
+  if k == KSingle { KFloat } else if k == KTextRef { KInt } else if k == KVarRef { KRef } else { k }
 }
 
 // How many integer slots a value of kind `k` takes: three for a reference, else one.
@@ -444,6 +493,9 @@ fn effect(code: Code, b: integer) -> integer {
     Clear => 0,
     FreeText => 0,
     InitText => 0,
+    StackRef => 1,
+    Deref => 0,
+    Through => -2,
     Print => -1,
     RefOf => 1,
     Round => 0,
@@ -601,22 +653,23 @@ fn access_for(t: ir::TypeT) -> integer {
     TyCharacter => 1 + crt::W_CHARACTER,
     TyEnum { n: _, is_ref, dep: _ } => if is_ref { 0 } else { 1 + crt::W_ENUM },
     TySingle => 1,
+    TyRefVar { inner } => access_for(inner),
     _ => 0,
   }
 }
 
 // `n`, an expression whose value goes where a `k` is expected: a bare null takes that kind,
-// and a `&text` variable handed to a `&text` parameter is handed on as the reference itself.
+// and a `&` variable handed to a `&` parameter is handed on as the reference itself.
 fn value(l: Lowering, b: ir::Bundle, n: ir::Node, k: Kind) {
   if n is NdNull {
     emit(l, PushNull, stack_of(k), 0, 0);
     return;
   }
-  if k == KTextRef {
+  if k == KTextRef || k == KVarRef {
     match n {
       NdVar { n: var } => {
-        if var_kind(l, var) == KTextRef {
-          emit(l, Load, KInt, slot_of(l, var), 0);
+        if var_kind(l, var) == k {
+          emit(l, Load, if k == KTextRef { KInt } else { KRef }, slot_of(l, var), 0);
           return;
         }
       }
@@ -649,8 +702,14 @@ fn expr(l: Lowering, b: ir::Bundle, n: ir::Node) {
     NdVar { n: var } => {
       slot = slot_of(l, var);
       k = var_kind(l, var);
-      // A `&text` reads the text it refers to (`Load` of kind `KTextRef`).
-      emit(l, Load, if k == KTextRef { KTextRef } else { stack_of(k) }, slot, access_of(l, var));
+      // A `&text` reads the text it refers to (`Load` of kind `KTextRef`); any other `&` reads
+      // through the reference its slot holds, at the width of what it names.
+      if k == KVarRef {
+        emit(l, Load, KRef, slot, 0);
+        emit(l, Deref, stack_of(l.var_inner[var] ?? KOther), 0, access_of(l, var));
+      } else {
+        emit(l, Load, if k == KTextRef { KTextRef } else { stack_of(k) }, slot, access_of(l, var));
+      }
     }
     NdSpan { inner } => expr(l, b, inner),
     NdBlock { block } => block_value(l, b, block[0]?),
@@ -1419,8 +1478,85 @@ fn known_type(b: ir::Bundle, d: integer) -> integer {
   b.data.definitions[d]!.known_type
 }
 
+// `@FR-B-Ref-Repoint` (`scopes::link_set_repoints`): does a set of a link of type `t` with
+// `x` RE-POINT it rather than write through it?  `p = &q` installs (`OpCreateStack`,
+// `OpVarRef`); for a link to a scalar a PLACE does too (`c = &v[0]`, `f = &o.y`), which arrives
+// as the place operator, declared to return a reference where a value read out of a place is
+// typed as the scalar.  For a record or collection link an element's value is a reference as
+// well, so only the install operators count there; anything else is a value written through.
+fn repoints(b: ir::Bundle, t: ir::TypeT, x: ir::Node) -> boolean {
+  match x {
+    NdSpan { inner } => repoints(b, t, inner),
+    NdCall { def_nr, args: _ } => {
+      d = b.data.definitions[def_nr]!;
+      d.name == "OpCreateStack" || d.name == "OpVarRef" || (scalar(t) && is_reference(d.returned[0] ?? ir::TypeT.TyVoid))
+    }
+    _ => false,
+  }
+}
+
+// Is `t` — what a link names, a `&` peeled — a scalar: an integer, boolean, float, single,
+// character or plain enum?
+fn scalar(t: ir::TypeT) -> boolean {
+  match t {
+    TyOptional { inner } => scalar(inner),
+    TyRefVar { inner } => scalar(inner),
+    TyInteger { spec: _ } => true,
+    TyBoolean => true,
+    TyFloat => true,
+    TySingle => true,
+    TyCharacter => true,
+    TyEnum { n: _, is_ref, dep: _ } => !is_ref,
+    _ => false,
+  }
+}
+
+// Is `t` (a nullable one too) a record reference?
+fn is_reference(t: ir::TypeT) -> boolean {
+  match t {
+    TyOptional { inner } => is_reference(inner),
+    TyReference { n: _, dep: _ } => true,
+    _ => false,
+  }
+}
+
 // `generate_set_inner` (`codegen.rs:2467`).
 fn set_inner(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
+  // A `&` of a variable that is not a text is written through, as `set_var` writes through
+  // the reference its slot holds — unless the set binds it (`@FR-B-Ref-Repoint`): the
+  // reference then goes into its own slot, and nothing is written through it or freed.
+  if var_kind(l, var) == KTextRef && repoints(b, fvar(b, l.def_nr, var).type_def[0] ?? ir::TypeT.TyVoid, x) {
+    // A `&text` bound: the byte of the text it names.
+    value(l, b, x, KTextRef);
+    emit(l, Store, KInt, slot_of(l, var), 0);
+    return;
+  }
+  if var_kind(l, var) == KVarRef {
+    if repoints(b, fvar(b, l.def_nr, var).type_def[0] ?? ir::TypeT.TyVoid, x) {
+      value(l, b, x, KRef);
+      emit(l, Store, KRef, slot_of(l, var), 0);
+      return;
+    }
+    inner = l.var_inner[var] ?? KOther;
+    // A fresh OWNED store written through a link to a store-backed place displaces the store
+    // the place held: kept by value before the write, released after it unless the place
+    // still names it (`amp_owned_writeback`, `codegen.rs`) — a self-reading value keeps the
+    // old store live while it is built.
+    displaces = inner == KRef && own::ownership_of(b, l.own_ops, l.def_nr, x) is Owned;
+    if displaces {
+      emit(l, Load, KRef, slot_of(l, var), 0);
+      emit(l, Deref, KRef, 0, 0);
+    }
+    emit(l, Load, KRef, slot_of(l, var), 0);
+    value(l, b, x, inner);
+    emit(l, Through, stack_of(inner), 0, access_of(l, var));
+    if displaces {
+      emit(l, Load, KRef, slot_of(l, var), 0);
+      emit(l, Deref, KRef, 0, 0);
+      emit(l, FreeRefDistinct, KRef, 0, 0);
+    }
+    return;
+  }
   v = fvar(b, l.def_nr, var);
   // `@FR-R-LoopSlot`: a counted loop's variable on its range index's slot — the bytecode
   // writer drops the copy; the loft frame keeps every variable apart until F-1, so the value
@@ -2094,12 +2230,18 @@ fn call(l: Lowering, b: ir::Bundle, def_nr: integer, args: vector<ir::Node>) {
   if d.name == "OpCreateStack" {
     match args[0]! {
       NdVar { n: var } => {
-        if var_kind(l, var) == KText {
+        k = var_kind(l, var);
+        if k == KText {
           emit(l, RefOf, KText, slot_of(l, var), 0);
-        } else if var_kind(l, var) == KTextRef {
+        } else if k == KTextRef {
           emit(l, Load, KInt, slot_of(l, var), 0);
+        } else if k == KVarRef {
+          // A `&` handed on is the reference it holds.
+          emit(l, Load, KRef, slot_of(l, var), 0);
+        } else if k == KInt || k == KFloat || k == KSingle || k == KRef {
+          emit(l, StackRef, KRef, slot_of(l, var), 0);
         } else {
-          refuse(l, "a reference to a variable that is not a text");
+          refuse(l, "a reference to a variable of a kind the interpreter does not carry yet");
         }
       }
       _ => refuse(l, "a reference to something that is not a variable"),
@@ -2619,16 +2761,17 @@ fn lower_walk(b: ir::Bundle, def_nr: integer, d: ir::Definition) -> Lowering {
   l.own_ops = own::ops_of(b);
   l.defs = own::function_defs(b, def_nr, l.own_ops);
   l.result = kind_of_types(d.returned);
-  // An integer, float or reference variable lives at its byte of the Rust interpreter's frame
-  // (`frame::position`); the frame is as large as its furthest variable reaches.  A text takes
-  // the next slot of its own part, the parameters theirs FIRST, in order, so they fill the
-  // slots the caller's arguments land in — a hidden one too (a text result's return buffer),
-  // which the scope pass creates after the locals, at a higher number.
+  // Every variable lives at its byte of the Rust interpreter's frame (`frame::position`); the
+  // frame is as large as its furthest variable reaches.
   f = d.variables;
   for v in f.variables {
-    l.var_kind += [kind_of_types(v.type_def)];
+    // Two link shapes are not carried yet: a narrow local a `&` names, which holds its FIELD
+    // encoding (`linked_narrow`, `@FR-L-Narrow-Linked`), and a `&text` to a text field or
+    // element (`store_text_link`) — a `&text` here is the byte of a text in the frame.
+    l.var_kind += [if (v.linked_narrow && narrow_integer(v.type_def[0] ?? ir::TypeT.TyVoid, false)) || v.store_text_link { KOther } else { kind_of_types(v.type_def) }];
     l.var_slot += [-1];
     l.var_access += [access_for(v.type_def[0] ?? ir::TypeT.TyVoid)];
+    l.var_inner += [named_kind(v.type_def[0] ?? ir::TypeT.TyVoid)];
     l.owned_reassigned += [false];
     shown = "{v.type_def[0] ?? ir::TypeT.TyVoid}";
     l.var_type += [shown.split(' ')[0] ?? shown];

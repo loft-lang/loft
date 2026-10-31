@@ -1,0 +1,52 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 F-1 probe PF3: a `&` parameter of every width — an integer, a boolean, a float, a vector
+// and a record — written through by the callee and read back by the caller.  The `&` of a local is
+// a reference into the frame (`OpCreateStack`), so every write lands in the caller's slot.
+// `refs(10)`, by hand: a 15, w [1, 7], q.x 12, t true, x 4.5 — 15 * 100 + 2 * 10 + 12 + 1000 + 9.
+// `linked` takes a `&` of every place: a field and an element (`bump(q.x)`, `bump(w[1])`), a
+// local link bound, written through and handed on, and a whole record written through a link,
+// which releases the record it displaced.  `linked(10)`, by hand: q.x 15, w[1] 8, a 9, s.x 40 —
+// 15 * 1000 + 8 * 100 + 9 * 10 + 1.
+struct P { x: integer }
+
+fn bump(n: &integer) { n += 5; }
+fn flip(b: &boolean) { b = !b; }
+fn halve(f: &float) { f = f / 2.0; }
+fn grow(v: &vector<integer>) { v += [7]; }
+fn shift(p: &P) { p.x += 2; }
+fn handed(n: &integer) { bump(n); }
+fn renew(p: &P) { p = P { x: 40 }; }
+
+fn refs(n: integer) -> integer {
+  a = n;
+  bump(a);
+  t = false;
+  flip(t);
+  x = 9.0;
+  halve(x);
+  w: vector<integer> = [1];
+  grow(w);
+  q = P { x: n };
+  shift(q);
+  a * 100 + len(w) * 10 + q.x + (if t { 1000 } else { 0 }) + (x * 2.0) as integer
+}
+
+fn linked(n: integer) -> integer {
+  q = P { x: n };
+  bump(q.x);
+  w: vector<integer> = [n, 3];
+  bump(w[1]);
+  a = 1;
+  l = &a;
+  l = 4;
+  handed(l);
+  s = P { x: 0 };
+  renew(s);
+  q.x * 1000 + w[1] * 100 + a * 10 + s.x / 40
+}
+
+fn main() {
+  println("{refs(10)} {linked(10)}");
+}

@@ -8,7 +8,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 A child document of [1b-interpreter.md](1b-interpreter.md).  Status: **F-1 built — every
 variable in the stack store at its Rust byte (PF1 its layout guard, `selfhost/tests/frame.loft`);
 PF2 built (no frame is initialised; each first assignment's positional init writes its slot);
-PF4 measured (loft#2310); PF3, PF5 and F-2 not built.**
+PF3 built (a `&` of any local is a reference into the frame, read and written through at any place); PF4 measured (loft#2310); PF5 and
+F-2 not built.**
 
 ## The rule
 
@@ -155,6 +156,30 @@ never a gate (the order of the goals, 1b-interpreter.md).
     `gen_keyed_null`'s `OpInitRef` before its first `OpDatabase` (the mint remade whatever store
     the slot's old bytes named — `kernels/hashes.loft` `intkey` crashed).  The 521 images
     measure the same with the frame uninitialised; `enums.loft` `listed` reuses its slots.
+  - **PF3 (built)**: a `&` of a local that is not a text is the reference to its slot of the
+    stack store (`OpCreateStack` → `StackRef`, `(stack store, 1, 8 + base + slot)`), a `&`
+    variable (`KVarRef`) is read and written THROUGH that reference at the width of what it
+    names (`Deref`, `Through`), and a `&` handed to a `&` parameter is the reference it holds.
+    The reference may name any place — a frame slot, a field, an element — so `Deref` and
+    `Through` address its `(store, rec, pos)`, as `OpGetInt` … `OpGetStackRef` do.
+    - A set that BINDS a link (`@FR-B-Ref-Repoint`, `scopes::link_set_repoints`: `p = &q`, or
+      a place for a link to a scalar) stores the reference in the link's own slot; a `&text`
+      local binds the same way.  Every other set writes through it.
+    - A fresh owned record, vector or collection written through a link displaces the store
+      the place held: kept by value before the write, released after it unless the place still
+      names it (`amp_owned_writeback`).
+    - Not carried, refused: a `&` to a narrow integer place, and a narrow local a `&` names
+      (`linked_narrow`), which the Rust interpreter reads through the width's own operator and
+      minimum (`NarrowSlot::of_type`); a `&text` to a text field or element (`store_text_link`).
+    - Guarded by `kernels/refs.loft`: an integer, a boolean, a float, a vector and a record
+      written by the callee, and `linked`: a field, an element, a local link bound, written
+      through and handed on, and a whole record written through a link with no store left.
+    - Found on the way: the shim measured every text crossing the `#c` bridge with `strlen`, so
+      a text holding a NUL byte was cut there (`102-escape-sequences`).  A text now crosses
+      with its byte length beside it, -1 for null (`crt::bytes_of`).
+    - Measured: the census passes 222 programs (199 before PF3) with none wrong, crashed or
+      leaking; on the 521 images every program that ran before PF3 writes the same output,
+      bind trace and allocator trace.
   - Found while probing: a self-recursive tail call the compiler turns into a loop
     (`R-TailSelf`, `NdLoop` in a value position) is refused by the lowering as an expression
     it does not carry.

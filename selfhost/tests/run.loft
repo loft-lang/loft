@@ -257,6 +257,17 @@ fn test_a_deep_recursion_grows_the_stack_store() {
   assert(ran_clean(f, "n_depth", 7) == 30, "depth(7)");
 }
 
+// @PLN91 F-1 PF3: a `&` parameter of every width written through by the callee, read back by
+// the caller — each a reference into the caller's frame — and a `&` of a field, an element and
+// a local link, with the record a whole-value write displaces released.
+fn test_a_reference_to_a_local_writes_into_the_callers_frame() {
+  r = kernel("refs");
+  assert(ran_clean(r, "n_refs", 10) == 2541, "refs(10)");
+  assert(ran_clean(r, "n_refs", 0) == 1531, "refs(0)");
+  assert(ran_clean(r, "n_linked", 10) == 15891, "linked(10)");
+  assert(ran_clean(r, "n_linked", 0) == 5891, "linked(0)");
+}
+
 fn test_struct_enums_build_match_and_copy() {
   e = kernel("enums");
   assert(ran_clean(e, "n_arms", 7) == 26, "arms(7)");

@@ -13,8 +13,14 @@ fn c_format_int(out: vector<u8>, val: integer, is_null: boolean, radix: integer,
 fn c_format_float(out: vector<u8>, val: vector<float>, is_null: boolean, width: integer, precision: integer, token: integer, plus: boolean, dir: integer, single: boolean) -> integer;
 #c "loft_crt_format_float" "int64_t(char*, int64_t, const double*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 
-fn c_format_text(out: vector<u8>, val: text, is_null: boolean, width: integer, dir: integer, token: integer) -> integer;
+fn c_format_text(out: vector<u8>, val: text, bytes: integer, width: integer, dir: integer, token: integer) -> integer;
 #c "loft_crt_format_text" "int64_t(char*, int64_t, const char*, int64_t, int64_t, int64_t, int64_t)"
+
+// What crosses the bridge beside a text: its length in BYTES, so an embedded NUL survives the
+// C string the bridge hands over; -1 for the null text.
+fn bytes_of(v: text?) -> integer {
+  if v == null { -1 } else { v!.size() }
+}
 
 // A byte buffer of `n` zero bytes, for a routine to write into.
 fn room(n: integer) -> vector<u8> {
@@ -47,10 +53,10 @@ pub fn format_float(val: float?, width: integer, precision: integer, token: inte
 // `val` formatted as `OpFormatText(_, val, width, dir, token)` formats it.
 pub fn format_text(val: text?, width: integer, dir: integer, token: integer) -> text {
   buf = room(size(val ?? "") + width + 8);
-  n = c_format_text(buf, val ?? "", val == null, width, dir, token);
+  n = c_format_text(buf, val ?? "", bytes_of(val), width, dir, token);
   if n > len(buf) {
     buf = room(n);
-    n = c_format_text(buf, val ?? "", val == null, width, dir, token);
+    n = c_format_text(buf, val ?? "", bytes_of(val), width, dir, token);
   }
   text_from_byte_range(buf, 0, n)
 }
@@ -75,7 +81,7 @@ fn c_set_int(store: integer, rec: integer, pos: integer, fld: integer, v: intege
 fn c_get_text(out: vector<u8>, store: integer, rec: integer, pos: integer, fld: integer) -> integer;
 #c "loft_crt_get_text" "int64_t(char*, int64_t, int64_t, int64_t, int64_t, int64_t)"
 
-fn c_set_text(store: integer, rec: integer, pos: integer, fld: integer, val: text, is_null: boolean);
+fn c_set_text(store: integer, rec: integer, pos: integer, fld: integer, val: text, bytes: integer);
 #c "loft_crt_set_text" "void(int64_t, int64_t, int64_t, int64_t, const char*, int64_t)"
 
 fn c_live_stores() -> integer;
@@ -90,7 +96,7 @@ fn c_free_var(io: vector<integer>);
 fn c_free_var_distinct(io: vector<integer>, w_store: integer, w_rec: integer, w_pos: integer);
 #c "loft_crt_free_var_distinct" "void(int64_t*, int64_t, int64_t, int64_t, int64_t)"
 
-fn c_refill_text(store: integer, rec: integer, pos: integer, fld: integer, val: text, is_null: boolean);
+fn c_refill_text(store: integer, rec: integer, pos: integer, fld: integer, val: text, bytes: integer);
 #c "loft_crt_refill_text" "void(int64_t, int64_t, int64_t, int64_t, const char*, int64_t)"
 
 fn c_bind_copy(io: vector<integer>, tp: integer, s_store: integer, s_rec: integer, s_pos: integer);
@@ -120,11 +126,11 @@ fn c_slot_text(out: vector<u8>, store: integer, at: integer, arg: boolean) -> in
 fn c_slot_text_init(store: integer, at: integer);
 #c "loft_crt_slot_text_init" "void(int64_t, int64_t)"
 
-fn c_set_slot_text(store: integer, at: integer, val: text, is_null: boolean);
+fn c_set_slot_text(store: integer, at: integer, val: text, bytes: integer);
 #c "loft_crt_set_slot_text" "void(int64_t, int64_t, const char*, int64_t)"
 
-fn c_slot_text_append(store: integer, at: integer, val: text);
-#c "loft_crt_slot_text_append" "void(int64_t, int64_t, const char*)"
+fn c_slot_text_append(store: integer, at: integer, val: text, bytes: integer);
+#c "loft_crt_slot_text_append" "void(int64_t, int64_t, const char*, int64_t)"
 
 fn c_slot_text_clear(store: integer, at: integer);
 #c "loft_crt_slot_text_clear" "void(int64_t, int64_t)"
@@ -132,17 +138,17 @@ fn c_slot_text_clear(store: integer, at: integer);
 fn c_slot_text_free(store: integer, at: integer);
 #c "loft_crt_slot_text_free" "void(int64_t, int64_t)"
 
-fn c_set_slot_arg(store: integer, at: integer, val: text, is_null: boolean);
+fn c_set_slot_arg(store: integer, at: integer, val: text, bytes: integer);
 #c "loft_crt_set_slot_arg" "void(int64_t, int64_t, const char*, int64_t)"
 
 fn c_slot_arg_free(store: integer, at: integer);
 #c "loft_crt_slot_arg_free" "void(int64_t, int64_t)"
 
-fn c_slot_ref(out: vector<integer>, store: integer, at: integer) -> integer;
-#c "loft_crt_slot_ref" "int64_t(int64_t*, int64_t, int64_t, int64_t)"
+fn c_place_ref(out: vector<integer>, store: integer, rec: integer, pos: integer) -> integer;
+#c "loft_crt_place_ref" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t)"
 
-fn c_set_slot_ref(store: integer, at: integer, r_store: integer, r_rec: integer, r_pos: integer);
-#c "loft_crt_set_slot_ref" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_set_place_ref(store: integer, rec: integer, pos: integer, r_store: integer, r_rec: integer, r_pos: integer);
+#c "loft_crt_set_place_ref" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 
 // The null reference, as a variable's three parts: the sentinel `loft_ref_null()` writes.
 pub fn null_ref() -> vector<integer> {
@@ -189,12 +195,12 @@ pub fn slot_text_init(store: integer, at: integer) {
 
 // A text local set to `v`.
 pub fn set_slot_text(store: integer, at: integer, v: text?) {
-  c_set_slot_text(store, at, v ?? "", v == null);
+  c_set_slot_text(store, at, v ?? "", bytes_of(v));
 }
 
 // `v` appended to a text local; a null local becomes `v`.
 pub fn slot_text_append(store: integer, at: integer, v: text) {
-  c_slot_text_append(store, at, v);
+  c_slot_text_append(store, at, v, v.size());
 }
 
 // `OpClearText` of a text local.
@@ -209,7 +215,7 @@ pub fn slot_text_free(store: integer, at: integer) {
 
 // A text argument's slot: a view of a copy of `v`.
 pub fn set_slot_arg(store: integer, at: integer, v: text?) {
-  c_set_slot_arg(store, at, v ?? "", v == null);
+  c_set_slot_arg(store, at, v ?? "", bytes_of(v));
 }
 
 // The call's return: a text argument's copy released.
@@ -222,15 +228,25 @@ pub fn stack_free(store: integer) {
   c_stack_free(store);
 }
 
-// The reference a frame slot at byte `at` of the stack store holds, into `io`: its twelve
-// bytes as the Rust frame holds them.
+// The reference a place holds, into `io`: its twelve bytes as the Rust interpreter holds them
+// — a frame slot is the place `(stack, 1, 8 + at)`, a field or element its own `(rec, pos)`.
+pub fn place_ref(io: vector<integer>, store: integer, rec: integer, pos: integer) {
+  c_place_ref(io, store, rec, pos);
+}
+
+// A reference written into a place.
+pub fn set_place_ref(store: integer, rec: integer, pos: integer, r_store: integer, r_rec: integer, r_pos: integer) {
+  c_set_place_ref(store, rec, pos, r_store, r_rec, r_pos);
+}
+
+// The reference the frame slot at byte `at` of the stack store holds, into `io`.
 pub fn slot_ref(io: vector<integer>, store: integer, at: integer) {
-  c_slot_ref(io, store, at);
+  c_place_ref(io, store, 1, 8 + at);
 }
 
 // A reference written into the frame slot at byte `at`.
 pub fn set_slot_ref(store: integer, at: integer, r_store: integer, r_rec: integer, r_pos: integer) {
-  c_set_slot_ref(store, at, r_store, r_rec, r_pos);
+  c_set_place_ref(store, 1, 8 + at, r_store, r_rec, r_pos);
 }
 
 // `OpFreeRef`: the record's whole store goes.
@@ -298,12 +314,12 @@ pub fn get_text(store: integer, rec: integer, pos: integer, fld: integer) -> tex
 }
 
 pub fn set_text(store: integer, rec: integer, pos: integer, fld: integer, val: text?) {
-  c_set_text(store, rec, pos, fld, val ?? "", val == null);
+  c_set_text(store, rec, pos, fld, val ?? "", bytes_of(val));
 }
 
 // `OpSetTextReplace`: the text field refilled in place where its claim has room.
 pub fn refill_text(store: integer, rec: integer, pos: integer, fld: integer, val: text?) {
-  c_refill_text(store, rec, pos, fld, val ?? "", val == null);
+  c_refill_text(store, rec, pos, fld, val ?? "", bytes_of(val));
 }
 
 fn c_get_w(which: integer, store: integer, rec: integer, pos: integer, fld: integer, min: integer) -> integer;
@@ -506,7 +522,7 @@ fn c_key_int(v: integer, is_null: boolean);
 fn c_key_float(v: vector<float>, is_null: boolean, single: boolean);
 #c "loft_crt_key_float" "void(const double*, int64_t, int64_t, int64_t)"
 
-fn c_key_text(val: text, is_null: boolean);
+fn c_key_text(val: text, bytes: integer);
 #c "loft_crt_key_text" "void(const char*, int64_t)"
 
 fn c_hash_find(out: vector<integer>, store: integer, rec: integer, pos: integer, tp: integer, n: integer) -> integer;
@@ -532,7 +548,7 @@ pub fn key_float(v: float?, single: boolean) {
 }
 
 pub fn key_text(v: text?) {
-  c_key_text(v ?? "", v == null);
+  c_key_text(v ?? "", bytes_of(v));
 }
 
 // `OpGetRecord` on a hash of type `tp`: the record keyed by the top `n` parts, into `out[0..3]`,
