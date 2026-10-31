@@ -649,6 +649,13 @@ and take every later claim off the bump path (@PLN157 § V-ai).
                  last fill reached — exactly as (H-ClearRelease)'s reset does, and
                  releases what the elements owned as that reset does.  The vector
                  reads empty and present; nothing else of the store survives.
+                 THE PROLOGUE CLAUSE: a clear of the buffer (`OpClearVector(x)`) that
+                 stands directly before such a mint of the same variable — line
+                 markers only between — is the mint's own work, done twice: the mint
+                 empties the vector and releases what its elements owned, so the clear
+                 is not written.  A buffer a live generator frame names is ORPHANED by
+                 the mint (G-Arg-Rebind), and the clear would have emptied the value
+                 that frame was handed — dropping it is that rule's own answer too.
 ```
 
 **In words.**  A capacity is no value: a vector of length zero with room for 16 000 bytes and
@@ -662,6 +669,7 @@ across its 100 calls, regrows 16 KiB from nothing on every call (`loft_st_resize
 reset — the SHAPE (a store-root `main_vector<T>`) read from the layout, never an offset — and
 falls back to the plain re-initialisation for any other root.  The C mints with `loft_database_room` (`database_operator`) and skips the parser's re-zero of the
 vector (`FnWriter::keep_room_operator`); the other backends keep the plain mint.  `-DLOFT_NO_KEEP_ROOM`;
+a clear in the callee's prologue is the mint's own reset, not a second one;
 guard `tests/scripts/a-reused-buffer-keeps-its-room.loft`; pricing in [heap-history.md](heap-history.md).
 
 **In words.** `free` releases a store slot and everything in it. It is disciplined: (1) **LIFO** —

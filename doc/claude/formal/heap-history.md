@@ -2753,6 +2753,11 @@ the rule states one position.  Guard `tests/reset_capacity.rs`
 
 ### (H-KeepRoom) — written and built on the C (2026-10-31)
 
+**The prologue clause, priced** (2026-10-31, zttext `flow_layout_full`, a driver running only
+that routine, gcc): `slice_runs` is called three times a token and its prologue reset the store
+twice — the clear's reset (`loft_st_init`, the root claimed, zeroed, the room pre-sized) and the
+mint's — 0.37 → 0.31 s, **−16 %**, the answer unchanged.
+
 **Priced** with the window
 clause of (R-AppendTwin) (2026-10-31, by hand, same hashes): `encode_bytes` 2.28× → **1.94×**
 the twin.  **BUILT on the C** (2026-10-31): `loft_database_room` in `loft_rt.h` — the wrapper's

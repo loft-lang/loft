@@ -62,18 +62,27 @@ impl Cx<'_> {
         let sigs = self.fn_sigs.borrow().clone();
         let values = self.fn_values.borrow().clone();
         let mut out = String::new();
-        for (id, (params, ret)) in sigs.iter().enumerate() {
-            let list: Vec<String> = std::iter::once("loft_fn f".to_string())
+        let with_buf = self.fn_sigs_buf.borrow().clone();
+        let variants = sigs.iter().enumerate().flat_map(|(id, s)| {
+            std::iter::once((id, s, false)).chain(with_buf.contains(&id).then_some((id, s, true)))
+        });
+        for (id, (params, ret), buf) in variants {
+            let mut list: Vec<String> = std::iter::once("loft_fn f".to_string())
                 .chain(params.iter().enumerate().map(|(i, (c, mode))| match mode {
                     2 => format!("loft_ref a{i}"),
                     1 => format!("{} *a{i}", held(*c)),
                     _ => format!("{} a{i}", passed(*c)),
                 }))
                 .collect();
+            // `@FR-R-FnRefBuffer`: the caller's store, handed to a target's record buffer.
+            if buf {
+                list.push("loft_ref rb".to_string());
+            }
             let _ = writeln!(
                 out,
-                "\nstatic {} loft_call{id}({}) {{\n    switch (f.d) {{",
+                "\nstatic {} loft_call{id}{}({}) {{\n    switch (f.d) {{",
                 held(*ret),
+                if buf { "b" } else { "" },
                 list.join(", ")
             );
             // A place is a link the arm hands to the place twin.
@@ -108,7 +117,7 @@ impl Cx<'_> {
                         self.data.def(d).original_name()
                     ));
                 }
-                self.dispatch_arm(&mut out, d, *ret, &places)?;
+                self.dispatch_arm(&mut out, d, *ret, &places, buf)?;
             }
             out.push_str("    default:\n        break;\n    }\n");
             // An absent value, or one naming no function of this signature: the result's null.
@@ -188,12 +197,14 @@ impl Cx<'_> {
     /// record or a work buffer — the callee mints its own store — and, for a vector return, a
     /// vector store made for the call, kept when the result IS it and freed otherwise
     /// (`State::fn_return`'s rule, loft#1179).
+    #[expect(clippy::too_many_lines)]
     fn dispatch_arm(
         &self,
         out: &mut String,
         d: u32,
         ret: CType,
         places: &[bool],
+        buf: bool,
     ) -> Result<(), String> {
         let def = self.data.def(d);
         let mut args = Vec::new();
@@ -210,6 +221,7 @@ impl Cx<'_> {
             _ => None,
         };
         let mut uses_vec_buf = false;
+        let mut rb_used = false;
         for (i, a) in def.attributes().iter().enumerate() {
             if a.name == "__closure" {
                 args.push("f.clos".to_string());
@@ -235,6 +247,17 @@ impl Cx<'_> {
                 if vec_buf.is_some() && ret == CType::Ref {
                     uses_vec_buf = true;
                     args.push("hb".to_string());
+                } else if buf
+                    && !rb_used
+                    && ret == CType::Ref
+                    && matches!(
+                        (a.typedef.base(), def.returned().base()),
+                        (Type::Reference(x, _), Type::Reference(y, _)) if x == y
+                    )
+                {
+                    // `@FR-R-FnRefBuffer`: the record buffer is the caller's store.
+                    rb_used = true;
+                    args.push("rb".to_string());
                 } else {
                     args.push("loft_ref_null()".to_string());
                 }
@@ -264,7 +287,10 @@ impl Cx<'_> {
                 def.returned().base(),
                 Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
             );
-        if heap_answer {
+        // `@FR-R-FnRefBuffer`: a buffer call is made by a bind that adopts a minted answer or
+        // copies an older one at once (`opaque_callref_stmt`), so nothing is held for it.
+        let hold = heap_answer && !buf;
+        if hold {
             out.push_str(" uint64_t sn = loft_stores_allocated;");
         }
         let vec_tp = vec_buf.filter(|_| uses_vec_buf && ret == CType::Ref);
@@ -283,7 +309,7 @@ impl Cx<'_> {
         if vec_tp.is_some() {
             out.push_str(" loft_fnref_buf(r, hb);");
         }
-        if heap_answer {
+        if hold {
             out.push_str(" loft_fnref_mint(r, sn, f.clos);");
         }
         for w in &buffers {
