@@ -205,6 +205,18 @@ impl Flow<'_> {
                     self.check_reads(op.unspan(), &live);
                     self.collect(op.unspan(), &mut group);
                 }
+                // A whole-value assignment to a name the AUTHOR wrote ends its statement: the
+                // parts of a construction come before the bind that takes them, so nothing of
+                // the same statement follows it.  Without this a line holding several
+                // statements was one group — `h = mk(); h2 = h; h.tag` on one line moved `h`
+                // and read it in the same "statement", and the read was never refused
+                // (loft#2283).  A statement the parser splices flat already ends at the
+                // `Line` marker it pushes after it.
+                if let Value::Set(x, _) = op.unspan()
+                    && !self.func.is_compiler_generated(*x)
+                {
+                    st = group.apply(st);
+                }
             }
         }
         group.apply(st)
