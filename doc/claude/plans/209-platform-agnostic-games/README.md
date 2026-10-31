@@ -46,6 +46,9 @@ density) and how much drawing it can afford (a performance tier).
 
 ## The shape
 
+The frame tier's loft API — packages, objects, what is cached — is designed in
+[API.md](API.md).
+
 **Ask, never detect.**  A library answers what the machine HAS, never which machine it is:
 
 | Question | Answer |
