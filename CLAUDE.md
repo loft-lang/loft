@@ -49,7 +49,10 @@ make ci                                  # fmt → clippy → test (full local g
                                          #   here (memory, a sibling gate)?  Run the SAME gate
                                          #   on GitHub, no PR needed: `gh workflow run ci.yml
                                          #   --ref <branch> -f os=ubuntu-latest` — CI_BUDGET.md
-                                         #   § When the local gate is unreliable
+                                         #   § When the local gate is unreliable.  Either gate
+                                         #   VALIDATES; never re-run one for a green notice once
+                                         #   its failures are fixed and checked — the PR's CI is
+                                         #   the verdict (CI_BUDGET.md § After a red gate)
 make test                                # clippy + test → result.txt
 make check-rlib                          # 1s pre-flight: is libloft.rlib current? RUN IT
                                          #   BEFORE a bare `cargo test` — `cargo build

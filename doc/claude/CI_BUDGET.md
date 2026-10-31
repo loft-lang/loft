@@ -565,6 +565,17 @@ and then it is ONE new run, not a restart per fix.  Re-running everything is the
 because it needs no thought about what moved; deciding what moved is the work, and a rerun of
 forty-five minutes for one test is the cost of skipping it.
 
+**A run VALIDATES; it is never run for a green notice** (owner).  A gate — local, or a
+`gh workflow run ci.yml` dispatch — is started only when it answers a question no cheaper check
+answers: does a change of unknown reach break something, or does a fix whose check cannot run
+here hold.  Once every failure a run named is fixed and that fix has passed its own check (the
+failed test, the script that reported it, the row measured on the runner), the branch is done:
+do not start another run to turn the red verdict green.  The green verdict belongs to the PR,
+whose own `ci.yml` runs on the exact sha that merges.  An agent branch does not merge as it is —
+it lands as part of a join of the active branches — so its own verdict, its tallies and its
+pinned rows are superseded the moment the join is made, and a run spent confirming them confirms
+nothing that reaches `main`.
+
 ### Sizing the checks for a performance change
 
 Size the local checks to how far the change reaches and how quietly it could fail.
