@@ -669,7 +669,8 @@ across its 100 calls, regrows 16 KiB from nothing on every call (`loft_st_resize
 reset — the SHAPE (a store-root `main_vector<T>`) read from the layout, never an offset — and
 falls back to the plain re-initialisation for any other root.  The C mints with `loft_database_room` (`database_operator`) and skips the parser's re-zero of the
 vector (`FnWriter::keep_room_operator`); the other backends keep the plain mint.  `-DLOFT_NO_KEEP_ROOM`;
-a clear in the callee's prologue is the mint's own reset, not a second one;
+a clear in the callee's prologue is the mint's own reset, not a second one
+(`FnWriter::clear_before_mint`, switch `LOFT_NO_PROLOGUE_CLEAR_DROP=1`);
 guard `tests/scripts/a-reused-buffer-keeps-its-room.loft`; pricing in [heap-history.md](heap-history.md).
 
 **In words.** `free` releases a store slot and everything in it. It is disciplined: (1) **LIFO** —
