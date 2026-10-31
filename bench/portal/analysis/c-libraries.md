@@ -192,6 +192,19 @@ form the same hashes (`encode_bytes` 71560779, `encode` de1a932).  Rust twin 57.
 | E: B + the text arm before the twin's 30-local prologue | 126 | 2.2× | −2 % |
 | **F: B + E + the reused buffer KEEPS its capacity** (reserved once) | **116** | **1.94×** | `head` re-mints its holder (`loft_database_wrapper`) and zeroes the vector field (`loft_set_int4(vdb, 0, 0)`) per call, so the buffer reused across the 100 calls regrows from empty every call: `(R-ResetCapacity)` keeps a reused buffer's room only for a store-ROOT vector, not a holder's vector field |
 
+**Built (2026-10-31)** — the window clause of `(R-AppendTwin)` and `(H-KeepRoom)`, on the C:
+
+| form | µs an op | × twin | note |
+|---|--:|--:|---|
+| before | 409 | 7.1× | |
+| `(H-KeepRoom)` alone | 402 | 6.9× | the regrowth hides behind the per-append store work |
+| both rules | **255** | **4.4×** | cbor `encode` 0.891×, `decode` unchanged; hashes the same |
+| both + gcc's inlining limits raised (no code change) | 166 | 2.9× | the rest of the hand price: it inlined `head` and called the twin bodies directly |
+
+The gap between the built 4.4× and the priced 2.28× is CALL OVERHEAD — the twins' frame
+wrappers (8 % and 7.5 % of the profile) and their prologues (`head__ap` initialises ~20 locals for
+three byte pushes) — the same lever as `edgeset_count`'s −47 %.  Next for this row: that lever.
+
 Split of F: `make_texts` (the setup, once an op) 19.4 µs against the twin's 8.7 (2.2×); one
 `encode` ≈ 0.97 µs against 0.51.  The two general mechanisms that reach 2×: a push window kept
 across an append-twin chain (`(R-Header)`'s kept-twin clause, `__kh`, extended from a loop's
