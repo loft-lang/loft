@@ -6082,3 +6082,44 @@ fn f(e: Arm) -> integer {
     )
     .error("Expect token , at an_expression_bodied_match_arm_still_needs_its_comma:5:53");
 }
+
+// loft#2312 — `(F-Block)` asks a `;` only of a construct that ends in a VALUE.  A `match`
+// statement in a block parsed against void (a loop body here) whose last arm calls a function
+// that returns nothing, declared further down, was taken for a value on the first pass — the
+// callee's type is not known there yet — and refused with `Expect token ;`.  The value twin
+// below keeps its refusal: that one ends in a value.
+#[test]
+fn a_match_statement_ending_in_a_void_call_below_needs_no_semicolon() {
+    code!(
+        "enum N2312 { A, B, C }
+fn f(n: N2312) -> integer {
+  d = 0;
+  for _ in 0..1 {
+    match n { A => { d = 1; } _ => g(n), }
+    d += 100;
+  }
+  d + 10
+}
+fn g(n: N2312) { println(\"g {n}\"); }"
+    )
+    .expr("f(N2312.A) * 1000 + f(N2312.C)")
+    .result(Value::Int(111110));
+}
+
+#[test]
+fn a_match_statement_ending_in_a_value_below_needs_its_semicolon() {
+    code!(
+        "enum N2312 { A, B, C }
+fn f(n: N2312) -> integer {
+  d = 0;
+  for _ in 0..1 {
+    match n { A => { d = 1; } _ => h(n), }
+    d += 100;
+  }
+  d + 10
+}
+fn h(n: N2312) -> integer { 5 }"
+    )
+    .error("Expect token ; at a_match_statement_ending_in_a_value_below_needs_its_semicolon:5:43")
+    .warning("Parameter n is never read at a_match_statement_ending_in_a_value_below_needs_its_semicolon:10:28");
+}
