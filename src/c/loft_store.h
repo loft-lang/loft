@@ -72,6 +72,14 @@
 #else
 #define LOFT_WILD_BUMPS 1
 #endif
+/* `-DLOFT_NO_WILDERNESS` (`Store`'s `LOFT_NO_WILDERNESS`, `@FR-H-Wilderness` off): the tail free
+ * block is a tree node like any other, and a fresh store tracks no block — its first claim walks
+ * the chain (`loft_claim_scan`), as the interpreter's does.  STORE_MODEL.md D35. */
+#ifdef LOFT_NO_WILDERNESS
+#define LOFT_WILDERNESS 0
+#else
+#define LOFT_WILDERNESS 1
+#endif
 #ifdef LOFT_NO_CARVE_IN_PLACE
 #define LOFT_CARVES 0
 #else
@@ -463,7 +471,7 @@ static uint32_t loft_fl_insert_node(loft_store_t *s, uint32_t h, uint32_t rec) {
 
 static void loft_fl_insert(loft_store_t *s, uint32_t rec) {
     if (loft_fl_size(s, rec) < LOFT_MIN_FREE_TREE) return;
-    if (rec + (uint32_t) loft_fl_size(s, rec) == s->size) {
+    if (LOFT_WILDERNESS && rec + (uint32_t) loft_fl_size(s, rec) == s->size) {
         s->wild = rec;
         return;
     }
@@ -1218,7 +1226,9 @@ static void loft_st_init(loft_store_t *s) {
     s->nplaced = 0;
     s->needs_coalesce = 0;
     s->claimed_end = 0;
-    loft_fl_insert(s, LOFT_ST_PRIMARY);
+    /* The whole store is one free block ending at its end: the wilderness.  Without one
+     * nothing tracks it, as `Store::init` leaves it. */
+    if (LOFT_WILDERNESS) loft_fl_insert(s, LOFT_ST_PRIMARY);
 }
 
 /* `Store::note_placed_foreign` (`@FR-H-RootExtent`). */

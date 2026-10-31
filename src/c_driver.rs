@@ -157,6 +157,7 @@ fn cc_flags(tier: Tier) -> Vec<String> {
         "LOFT_NO_FREE_FOOTER",
         "LOFT_NO_WILD_BUMP",
         "LOFT_NO_CARVE_IN_PLACE",
+        "LOFT_NO_WILDERNESS",
     ] {
         if std::env::var(switch).is_ok_and(|v| v != "0") {
             flags.push(format!("-D{switch}"));
