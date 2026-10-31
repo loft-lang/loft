@@ -14,6 +14,11 @@
 #define LOFT_ALLOC_TRACE_ENV "LOFT_CRT_ALLOC_TRACE"
 #include "../../../src/c/loft_crt.h"
 
+/* A text that crossed the bridge: `bytes` long (an embedded NUL kept), or null when -1. */
+static loft_str loft_crt_str(const char *val, int64_t bytes) {
+    return bytes < 0 ? loft_null_text() : loft_lit(val, (size_t) bytes);
+}
+
 static int64_t loft_crt_out(loft_text *t, char *out, int64_t cap) {
     loft_str v = loft_view(t);
     int64_t n = (int64_t) v.len;
@@ -41,10 +46,10 @@ int64_t loft_crt_format_float(char *out, int64_t cap, const double *val, int64_t
     return loft_crt_out(&t, out, cap);
 }
 
-int64_t loft_crt_format_text(char *out, int64_t cap, const char *val, int64_t is_null,
+int64_t loft_crt_format_text(char *out, int64_t cap, const char *val, int64_t bytes,
                              int64_t width, int64_t dir, int64_t token) {
     loft_text t = {0};
-    loft_str v = is_null ? loft_null_text() : loft_lit(val, strlen(val));
+    loft_str v = loft_crt_str(val, bytes);
     loft_format_text(&t, v, width, (int) dir, (uint8_t) token);
     return loft_crt_out(&t, out, cap);
 }
@@ -147,15 +152,15 @@ void loft_crt_slot_text_init(int64_t store, int64_t at) {
 }
 
 /* A local set to `val` (or the null text). */
-void loft_crt_set_slot_text(int64_t store, int64_t at, const char *val, int64_t is_null) {
+void loft_crt_set_slot_text(int64_t store, int64_t at, const char *val, int64_t bytes) {
     loft_text *t = (loft_text *) loft_crt_slot_at(store, at);
-    loft_text_set(t, is_null ? loft_null_text() : loft_lit(val, strlen(val)));
+    loft_text_set(t, loft_crt_str(val, bytes));
 }
 
 /* `val` appended to a local; a null local becomes `val`, as the empty text would. */
-void loft_crt_slot_text_append(int64_t store, int64_t at, const char *val) {
+void loft_crt_slot_text_append(int64_t store, int64_t at, const char *val, int64_t bytes) {
     loft_text *t = (loft_text *) loft_crt_slot_at(store, at);
-    loft_str s = loft_lit(val, strlen(val));
+    loft_str s = loft_crt_str(val, bytes);
     if (loft_str_is_null(loft_view(t))) loft_text_set(t, s);
     else loft_text_append(t, s);
 }
@@ -171,8 +176,8 @@ void loft_crt_slot_text_free(int64_t store, int64_t at) {
 }
 
 /* An argument's slot: a view of a copy of `val` (the null text's one byte too). */
-void loft_crt_set_slot_arg(int64_t store, int64_t at, const char *val, int64_t is_null) {
-    loft_str v = is_null ? loft_null_text() : loft_lit(val, strlen(val));
+void loft_crt_set_slot_arg(int64_t store, int64_t at, const char *val, int64_t bytes) {
+    loft_str v = loft_crt_str(val, bytes);
     char *copy = (char *) malloc(v.len + 1);
     if (!copy) { fputs("loft: out of memory\n", stderr); abort(); }
     memcpy(copy, v.p, v.len);
@@ -197,24 +202,26 @@ void loft_crt_stack_free(int64_t store) {
     loft_free_ref(loft_crt_ref(store, LOFT_ST_PRIMARY, 8));
 }
 
-/* A reference held in a frame slot, read and written as the Rust frame holds it: twelve raw
- * bytes, no record marked and no tombstone read through (`loft_get_dbref` does both, for a
- * reference FIELD). */
-int64_t loft_crt_slot_ref(int64_t *out, int64_t n, int64_t store, int64_t at) {
+/* The reference a PLACE holds — a frame slot (`(stack, 1, 8 + at)`), a field, an element —
+ * read and written as `OpGetStackRef` / `OpSetStackRef` do: twelve raw bytes at `(rec, pos)`,
+ * no record marked and no tombstone read through (`loft_get_dbref` does both, for a reference
+ * FIELD read as a value). */
+int64_t loft_crt_place_ref(int64_t *out, int64_t n, int64_t store, int64_t rec, int64_t pos) {
     loft_store_t *s = &loft_stores[store];
     loft_ref x;
-    x.store_nr = (uint16_t) loft_u32(s, LOFT_ST_PRIMARY, 8 + (uint32_t) at);
-    x.rec = loft_u32(s, LOFT_ST_PRIMARY, 8 + (uint32_t) at + 4);
-    x.pos = loft_u32(s, LOFT_ST_PRIMARY, 8 + (uint32_t) at + 8);
+    x.store_nr = (uint16_t) loft_u32(s, (uint32_t) rec, (uint32_t) pos);
+    x.rec = loft_u32(s, (uint32_t) rec, (uint32_t) pos + 4);
+    x.pos = loft_u32(s, (uint32_t) rec, (uint32_t) pos + 8);
     loft_crt_put_ref(out, n, x);
     return 0;
 }
 
-void loft_crt_set_slot_ref(int64_t store, int64_t at, int64_t r_store, int64_t r_rec, int64_t r_pos) {
+void loft_crt_set_place_ref(int64_t store, int64_t rec, int64_t pos, int64_t r_store, int64_t r_rec,
+                            int64_t r_pos) {
     loft_store_t *s = &loft_stores[store];
-    loft_set_u32(s, LOFT_ST_PRIMARY, 8 + (uint32_t) at, (uint32_t) r_store);
-    loft_set_u32(s, LOFT_ST_PRIMARY, 8 + (uint32_t) at + 4, (uint32_t) r_rec);
-    loft_set_u32(s, LOFT_ST_PRIMARY, 8 + (uint32_t) at + 8, (uint32_t) r_pos);
+    loft_set_u32(s, (uint32_t) rec, (uint32_t) pos, (uint32_t) r_store);
+    loft_set_u32(s, (uint32_t) rec, (uint32_t) pos + 4, (uint32_t) r_rec);
+    loft_set_u32(s, (uint32_t) rec, (uint32_t) pos + 8, (uint32_t) r_pos);
 }
 
 /* OpFreeRef of a variable: its store released, the variable reset to the sentinel. */
@@ -271,15 +278,15 @@ int64_t loft_crt_get_text(char *out, int64_t cap, int64_t store, int64_t rec, in
 }
 
 void loft_crt_set_text(int64_t store, int64_t rec, int64_t pos, int64_t fld, const char *val,
-                       int64_t is_null) {
-    loft_str v = is_null ? loft_null_text() : loft_lit(val, strlen(val));
+                       int64_t bytes) {
+    loft_str v = loft_crt_str(val, bytes);
     loft_set_text(loft_crt_ref(store, rec, pos), (uint32_t) fld, v);
 }
 
 /* OpSetTextReplace: the text field refilled in place where its claim has room. */
 void loft_crt_refill_text(int64_t store, int64_t rec, int64_t pos, int64_t fld, const char *val,
-                          int64_t is_null) {
-    loft_str v = is_null ? loft_null_text() : loft_lit(val, strlen(val));
+                          int64_t bytes) {
+    loft_str v = loft_crt_str(val, bytes);
     loft_refill_text(loft_crt_ref(store, rec, pos), (uint32_t) fld, v);
 }
 
@@ -596,12 +603,12 @@ void loft_crt_key_float(const double *v, int64_t n, int64_t is_null, int64_t sin
     loft_crt_key_push(single ? loft_kv_single((float) f) : loft_kv_float(f), 0);
 }
 
-void loft_crt_key_text(const char *val, int64_t is_null) {
-    if (is_null) {
+void loft_crt_key_text(const char *val, int64_t bytes) {
+    if (bytes < 0) {
         loft_crt_key_push(loft_kv_text(loft_null_text()), 0);
         return;
     }
-    size_t len = strlen(val);
+    size_t len = (size_t) bytes;
     char *copy = (char *) malloc(len + 1);
     if (!copy) return;
     memcpy(copy, val, len + 1);
