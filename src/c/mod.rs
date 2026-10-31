@@ -216,6 +216,12 @@ pub(crate) struct Cx<'a> {
     /// `@FR-R-AppendTwin`'s window clause: per function, the element size its append twin's
     /// window carries, or `None` where the twin finds its buffer through the store.
     ap_windows: std::cell::RefCell<std::collections::HashMap<u32, Option<u32>>>,
+    /// `@FR-R-Inline`'s twin clause, its helper half: the small plain functions written with a
+    /// `/*loft_hot:D*/` storage marker, resolved once every twin is written (`hot_helpers`).
+    hot_candidates: std::cell::RefCell<std::collections::BTreeSet<u32>>,
+    /// The functions called in the body of a loop that calls an `__inv` twin: the twin is
+    /// taken into that loop, so they are roots of `hot_helpers` as much as the twin is.
+    pub(crate) loop_callees: std::cell::RefCell<std::collections::BTreeSet<u32>>,
     /// The types a `T.parse` reaches (`parse.rs`): their rows of `loft_ptypes`.
     parse_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// The unit reaches `stack_trace()`: every function keeps a frame (`loft_frame_push`).
@@ -353,6 +359,8 @@ impl<'a> Cx<'a> {
             gen_bodies: std::cell::RefCell::new(String::new()),
             tr: std::cell::RefCell::new(body::transient::TrState::default()),
             ap_windows: std::cell::RefCell::new(std::collections::HashMap::new()),
+            hot_candidates: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            loop_callees: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             parse_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             frames: std::cell::Cell::new(false),
             lazy: std::cell::Cell::new(false),
@@ -1372,6 +1380,44 @@ impl Cx<'_> {
         w
     }
 
+    /// `@FR-R-Inline`'s twin clause, the helper half: the marked functions (`hot_candidates`)
+    /// that run inside a loop calling an `__inv` twin — called in that loop's body
+    /// (`loop_callees`) or by the twin — and the ones those reach through calls of hinted
+    /// functions.  The loop is what is hot, not the function around it: a caller's code
+    /// outside the loop, the bench driver around a `main` that prints in a loop, is not.
+    pub(crate) fn hot_helpers(&self) -> std::collections::BTreeSet<u32> {
+        let cands = self.hot_candidates.borrow();
+        let mut hot = std::collections::BTreeSet::new();
+        let mut work: Vec<u32> = self
+            .twins
+            .borrow()
+            .iter()
+            .filter(|(_, m)| m & INV_BIT != 0)
+            .map(|(d, _)| *d)
+            .collect();
+        for &c in self.loop_callees.borrow().iter() {
+            if cands.contains(&c) {
+                hot.insert(c);
+                work.push(c);
+            }
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        while let Some(f) = work.pop() {
+            if !seen.insert(f) || (f as usize) >= self.data.definitions.len() {
+                continue;
+            }
+            self.data.def(f).code().walk(&mut |n| {
+                if let Value::Call(c, _) = n
+                    && cands.contains(c)
+                {
+                    hot.insert(*c);
+                    work.push(*c);
+                }
+            });
+        }
+        hot
+    }
+
     /// The place twin `(d, mask)` is called: it is written with the unit.
     pub(crate) fn request_twin(&self, d: u32, mask: u64) {
         let mut t = self.twins.borrow_mut();
@@ -1732,6 +1778,8 @@ pub fn emit_unit_for(
         }
         write_twins(&cx, &mut written, &mut protos, &mut bodies)?;
     };
+    // `@FR-R-Inline`'s twin clause, the helper half.
+    let (protos, bodies) = resolve_hot_helpers(&cx, &protos, &bodies);
     // `file_map` is the one producer of a foreign store (@PLN174): a unit that does not reach
     // it compiles `loft_at` without the foreign record's test.
     let mut out = String::new();
@@ -2511,8 +2559,52 @@ pub(crate) fn dest_scalar_ctype(s: &crate::lower::destination::Scalar) -> CType 
     }
 }
 
+/// `@FR-R-Inline`'s twin clause, the helper half: every function written with a `/*loft_hot:D*/`
+/// storage marker becomes `static inline` when a twin's loop reaches it (`Cx::hot_helpers`) and
+/// plain `static` otherwise — in the unit's own text and in the frame wrappers'.
+fn resolve_hot_helpers(cx: &Cx, protos: &str, bodies: &str) -> (String, String) {
+    let hot = cx.hot_helpers();
+    let resolve = |text: &str| -> String {
+        let mut out = text.to_string();
+        for d in cx.hot_candidates.borrow().iter() {
+            let marker = format!("static /*loft_hot:{d}*/");
+            let to = if hot.contains(d) {
+                "static inline"
+            } else {
+                "static"
+            };
+            out = out.replace(&marker, to);
+        }
+        out
+    };
+    let decls = resolve(&cx.gen_decls.borrow());
+    let wrapped = resolve(&cx.gen_bodies.borrow());
+    *cx.gen_decls.borrow_mut() = decls;
+    *cx.gen_bodies.borrow_mut() = wrapped;
+    (resolve(protos), resolve(bodies))
+}
+
 fn small_function(statements: usize) -> bool {
     statements <= 12
+        && !crate::env_once!(std::env::var("LOFT_NO_INLINE_HINT").is_ok_and(|v| v != "0"))
+}
+
+/// `@FR-R-Inline`'s twin clause, the helper half: a plain function of this size or less that a
+/// hinted twin or a twin's caller calls is hinted with it; decided once the twins are written.
+fn hot_helper_size(mask: u64, statements: usize) -> bool {
+    mask == 0
+        && statements <= 80
+        && !crate::env_once!(std::env::var("LOFT_NO_INLINE_TWIN").is_ok_and(|v| v != "0"))
+        && !crate::env_once!(std::env::var("LOFT_NO_INLINE_HINT").is_ok_and(|v| v != "0"))
+}
+
+/// `@FR-R-Inline`'s twin clause: an `__inv` twin exists only because a loop holds its inputs
+/// for the call, so every call of it is hot; up to this size it is hinted inline whatever the
+/// twelve-statement bound says.
+fn hot_twin(mask: u64, statements: usize) -> bool {
+    mask & INV_BIT != 0
+        && statements <= 64
+        && !crate::env_once!(std::env::var("LOFT_NO_INLINE_TWIN").is_ok_and(|v| v != "0"))
         && !crate::env_once!(std::env::var("LOFT_NO_INLINE_HINT").is_ok_and(|v| v != "0"))
 }
 
@@ -2744,16 +2836,31 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     };
     let (body, statements) = body;
     // `@FR-R-Inline`: a small function is declared `inline`, its frame wrapper with it.
-    let inline = small_function(statements);
-    let sig = if inline {
-        sig.replacen("static ", "static inline ", 1)
+    let inline = small_function(statements) || hot_twin(mask, statements);
+    let helper = !inline && hot_helper_size(mask, statements);
+    let storage = if inline {
+        "static inline".to_string()
+    } else if helper {
+        cx.hot_candidates.borrow_mut().insert(d);
+        format!("static /*loft_hot:{d}*/")
     } else {
-        sig
+        "static".to_string()
     };
+    if crate::env_once!(std::env::var("LOFT_TRACE_INLINE").is_ok_and(|v| v != "0")) {
+        let verdict = if inline {
+            "inline"
+        } else if helper {
+            "inline if a twin reaches it"
+        } else {
+            "out of line"
+        };
+        eprintln!("[inline] {name}: {statements} statements, {verdict}");
+    }
+    let sig = sig.replacen("static", &storage, 1);
     // Every function keeps its frame: the pushes are macros that a build without the call
     // chain (`LOFT_CALL_CHAIN`, `LOFT_FRAMES`) compiles to nothing, the wrapper then a call
     // the compiler folds into its caller.
-    Ok((sig, framed(cx, d, &name, &params, ret, &body, inline)))
+    Ok((sig, framed(cx, d, &name, &params, ret, &body, &storage)))
 }
 
 /// The shape an `__inv` twin takes a scalar input in (`@FR-R-Inputs`' scalar clause): the
@@ -3743,10 +3850,9 @@ fn framed(
     params: &str,
     ret: CType,
     body: &str,
-    inline: bool,
+    storage: &str,
 ) -> String {
     let def = cx.data.def(d);
-    let storage = if inline { "static inline" } else { "static" };
     let _ = writeln!(
         cx.gen_decls.borrow_mut(),
         "{storage} {} {name}__fr({params});",
