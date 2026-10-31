@@ -70,6 +70,21 @@ fn text_walk(n: integer) -> integer {
   s
 }
 
+// `starts_with` and `ends_with` (natives 3 and 4, loft's own): affixed(3) on "loft-3.store" —
+// "loft" 1, ".store" 10, "loft-3" 100, "" 1000, a prefix longer than the text 0, "3.store"
+// 100000: 101111.  affixed(5): "loft-3" no longer leads, 101011.
+fn affixed(n: integer) -> integer {
+  t = "loft-{n}.store";
+  s = 0;
+  if t.starts_with("loft") { s += 1; }
+  if t.ends_with(".store") { s += 10; }
+  if t.starts_with("loft-3") { s += 100; }
+  if t.ends_with("") { s += 1000; }
+  if t.starts_with("loft-3.store.") { s += 10000; }
+  if t.ends_with("{n}.store") { s += 100000; }
+  s
+}
+
 fn main() {
-  println("{hue_number(0)} {hue_number(1)} {hue_number(2)} {div_or(7, 2)} {div_or(7, 0)} {rem_or(7, 3)} {rem_or(7, 0)} {abs_floats(-6)} {abs_floats(6)} {char_or_zero(0)} {char_or_zero(233)} {narrow(200)} {narrow(300)} {narrow_or_null(200)} {narrow_or_null(300)} {ops_or(7, 2)} {ops_or(-1, 2)} {enum_named(1)} {enum_named(2)} {text_walk(0)} {text_walk(1)}");
+  println("{hue_number(0)} {hue_number(1)} {hue_number(2)} {div_or(7, 2)} {div_or(7, 0)} {rem_or(7, 3)} {rem_or(7, 0)} {abs_floats(-6)} {abs_floats(6)} {char_or_zero(0)} {char_or_zero(233)} {narrow(200)} {narrow(300)} {narrow_or_null(200)} {narrow_or_null(300)} {ops_or(7, 2)} {ops_or(-1, 2)} {enum_named(1)} {enum_named(2)} {text_walk(0)} {text_walk(1)} {affixed(3)} {affixed(5)}");
 }

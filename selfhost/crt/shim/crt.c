@@ -871,6 +871,19 @@ void loft_crt_vec_append_copy(int64_t store, int64_t rec, int64_t pos, int64_t c
     loft_vec_append_copy(loft_crt_types, (uint16_t) ctp, loft_crt_ref(store, rec, pos), count);
 }
 
+/* OpRemoveVector (`Stores::remove_vector_at`): the element at `index` of element type `tp` taken
+ * out, as the C generator picks the routine — `mode` 2 a linked element (its slot unlinked, its
+ * record released), 1 an element owning heap (released first), 0 a plain one of `size` bytes.
+ * Answers whether an element was removed. */
+int64_t loft_crt_vec_remove(int64_t store, int64_t rec, int64_t pos, int64_t tp, int64_t size,
+                            int64_t mode, int64_t index) {
+    loft_ref v = loft_crt_ref(store, rec, pos);
+    const loft_tdesc *T = (const loft_tdesc *) loft_crt_types;
+    if (mode == 2) return loft_vec_remove_linked(T, (uint16_t) tp, v, index);
+    if (mode == 1) return loft_vec_remove_at(T, (uint16_t) tp, v, index);
+    return loft_vec_remove(v, (uint32_t) size, index);
+}
+
 /* The interpreted program starts: the trace's `M` line, as the Rust interpreter writes it when
  * it enters the program (`State::execute_argv_shared`). */
 void loft_crt_trace_mark(void) {
