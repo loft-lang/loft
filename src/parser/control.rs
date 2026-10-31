@@ -1433,6 +1433,12 @@ impl Parser {
                     t = Type::Void;
                 }
             } else if !matches!(t, Type::Void | Type::Never)
+                // On the first pass a call to a function declared further down is typed
+                // `Unknown`: whether the statement yields a value is not known yet, and taking
+                // it for one wrapped a `match` whose arms return nothing in a `Drop` and
+                // demanded the `;` (F-Block) asks only of a value (loft#2312).  The second
+                // pass knows the type and decides.
+                && !(self.first_pass && matches!(t, Type::Unknown(_)))
                 && (self.lexer.peek_token(";") || *result == Type::Void)
             {
                 l.push(Value::Drop(Box::new(n)));
