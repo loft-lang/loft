@@ -19,8 +19,8 @@
 //   `one two 2`.
 // HOLDS: the interpreter's exit and output under `make falsify` (inert there); only native's
 //   exit moves.
-// An `if` chain tail whose `else` panics is refused at compile time, as a value `if` with such
-// an arm is; `(C-Never)` says a halt fits anywhere a value does, so both are loft#2260's.
+// An `if` chain tail whose `else` panics is a value too: `(C-Never)` says a halt fits anywhere a
+// value does (loft#2260, its own cells in the suite's `C-Never`).
 
 enum Sh { A { n: integer }, B, C }
 
