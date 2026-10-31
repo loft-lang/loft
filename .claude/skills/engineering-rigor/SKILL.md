@@ -1,18 +1,18 @@
 ---
 name: engineering-rigor
 description: >-
-  The discipline for fixing a non-trivial loft bug or reshaping load-bearing code. USE THIS
-  before you fix a crash, a silent corruption, a wrong answer, a leak or a disagreement
-  between backends — and STOP AND LOAD IT when: the fix already looks obvious; a second fix
-  for the same symptom has failed; probes do not converge or a diagnostic shows a symptom
-  but not its cause; a failure happens "sometimes"; or you are about to write a helper,
-  predicate or type list that may already exist, or port working code to another backend. It
-  is a speed tool, not a brake: a coherent explanation is a hypothesis, so state the cause,
-  then run the cheapest probe that could prove it wrong (a count, one introspect, one
-  timing). Then build the instrument that shows the whole CLASS (boundary matrix,
-  falsification probe), find the ONE invariant, enforce it at the chokepoint (no narrower,
-  no wider) and verify against what you wrote down. Routes to the matrix-first protocol in
-  CLAUDE.md and to design-protocol for the design half.
+  The discipline for fixing a non-trivial bug or reshaping load-bearing code, in any
+  codebase. USE THIS before you fix a crash, a silent corruption, a wrong answer, a leak or
+  a disagreement between two implementations that should agree — and STOP AND LOAD IT when:
+  the fix already looks obvious; a second fix for the same symptom has failed; probes do not
+  converge or a diagnostic shows a symptom but not its cause; a failure happens "sometimes";
+  or you are about to write a helper, predicate or type list that may already exist, or port
+  working code to another target. It is a speed tool, not a brake: a coherent explanation is
+  a hypothesis, so state the cause, then run the cheapest probe that could prove it wrong (a
+  count, one look at what the tool actually produced, one timing). Then build the instrument
+  that shows the whole CLASS (boundary matrix, falsification probe), find the ONE invariant,
+  enforce it at the chokepoint (no narrower, no wider) and verify against what you wrote
+  down. Routes to the project's debugging policy and to design-protocol for the design half.
 user-invocable: true
 ---
 
@@ -38,7 +38,7 @@ can see.
 
 Read this as a **speed tool.** The fastest route to a fix that's actually right is
 **the cheapest thing that could prove your idea wrong** — a single timing, a `grep`
-of a count, one `introspect`/`--native-emit`-and-look, a cold/warm run. *Seconds.* Reach for it like a
+of a count, one look at what the compiler or tool actually emitted, a cold/warm run. *Seconds.* Reach for it like a
 cherry: it's right there, it's cheap, and it hands you **certainty** — which is what
 lets you fix once and move on.
 
@@ -138,8 +138,7 @@ one level apart** — learn the column you're in, but know it's one method.
    structure so the special case becomes the normal case (Linus's "good taste";
    "data dominates") — every site then *reads* it instead of re-deriving. You can't
    design the perfect structure upfront, so this is recurring, not a one-time win:
-   recognize it, signal it, evolve. Full story:
-   [STABILITY_METHOD.md § The trigger](../../../doc/claude/STABILITY_METHOD.md).
+   recognize it, signal it, evolve.
 
 5. **Verify against what you wrote down**, not against the action's own momentum.
    Debug: re-run the full matrix on **every mode the result can diverge across**
@@ -224,7 +223,7 @@ So when isolated-correct parts fail together:
    siblings collide is the software form of charge building until it arcs).
 3. **Fix by owning the medium.** Every engineering field manages the medium, not the
    parts — a ground strap, a damper, pressure equalization. The software form is
-   Goal E (`doc/claude/GOALS.md`): give the shared thing **one owned home** (a
+   to give the shared thing **one owned home** (a
    per-loop-keyed name instead of a global counter) so the channel can't carry
    contention — or make the coupling explicit. The stale-artifact trap above is the
    same lens: a shared medium (the build) out of sync, coupling source and test.
@@ -415,16 +414,13 @@ For a refactor the sharpest instrument is **`git diff main`**: it shows your del
 going the right direction?) and lets you read the known-good baseline without
 touching your tree (`git show origin/main:f` — never `git checkout … -- f`, which
 silently discards uncommitted work; undo a probe with the inverse edit, and commit
-before anything that rewrites the working tree). That instrument only works
-while you stay on **one** branch held **close to main** — build everything there (mixed
-topics are fine) and **rebase on `origin/main` often**, not once at the end (with a PR open on the branch, push nothing to
-it and do not rebase it: stack further work on `<host>-pr<N>-next` and rebase onto `main`
-after the merge — CLAUDE.md § Branch policy, rules 4–5). Per-topic
-branches, or a branch left to diverge, poison the diff with merge noise AND make overlapping
-work un-mergeable later: a squash upstream vs your original commits is a guaranteed conflict,
-then a multi-commit rebase from hell. Do not create a branch unless the user explicitly asks;
-if the branch has drifted from main, rebase before continuing. (Full rationale: `doc/claude/DEVELOPMENT.md` § "Stay close to main — rebase rigorously"; the
-mechanics of a rebase onto a squash: `doc/claude/JOINING.md`.)
+before anything that rewrites the working tree). That instrument only works while you stay
+on **one** branch held **close to main** — build everything there (mixed topics are fine)
+and **rebase on `origin/main` often**, not once at the end.  Per-topic branches, or a branch
+left to diverge, poison the diff with merge noise AND make overlapping work un-mergeable
+later: a squash upstream against your original commits is a guaranteed conflict, then a
+multi-commit rebase from hell.  How branches, open pull requests and rebases are handled in
+a given repository is its own policy; follow it.
 
 ## Go deeper — route here, don't reinvent
 
@@ -441,11 +437,12 @@ answer-instance and read the invariant off it. The skill is self-contained and
 tree-agnostic; the full DESIGN depth (evidence, the two failure modes, worked
 examples) lives there.
 
-**The DEBUG-method depth and the worked references are repo-specific.** The routes
-below point into *this* repository (loft); carrying this skill into another tree
-means keeping the body + the `design-protocol` sibling unchanged and
-repointing these links at that tree's equivalents — its debugging policy, its test
-layout.
+**The DEBUG-method depth and the worked references are repo-specific**, and live in the
+bindings below.  Carrying this skill into another tree means keeping the body and the
+`design-protocol` sibling unchanged and repointing the bindings at that tree's equivalents
+— its debugging policy, its test layout.
+
+## In the loft tree (bindings — skip outside it)
 
 - **DEBUG method** — `CLAUDE.md` § Debugging policy (matrix-first: the boundary
   matrix, `scripts/matrix_axes.py` for the axes you held fixed, the
@@ -462,4 +459,15 @@ layout.
 - **Heavyweight investigations** — `doc/claude/plans/_INVESTIGATION_TEMPLATE.md`.
 - **The deep why** — `doc/claude/GOALS.md` § Stability trumps features: robustness by
   *subtraction* — remove the mechanism rather than guard it; the reason the short version is
-  usually the robust one.
+  usually the robust one.  Goal E there is the "own the medium" step: one owned home for a
+  shared thing.
+- **The cheapest probe in loft** — `loft introspect prog.loft` (IR, bytecode and the native
+  Rust in one capture), `--native-emit`, a `LOFT_LOG` preset; the `loft-debug` skill has the
+  question-to-instrument table.
+- **When the special case wants to become the normal case** — `doc/claude/STABILITY_METHOD.md`
+  § The trigger: the full story of evolving the representation.
+- **Branches here** — one hostname-prefixed branch held close to `main`; never create one
+  without the owner's ask; with a PR open on it, push nothing to it and stack further work on
+  `<host>-pr<N>-next`, rebasing onto `main` after the merge (CLAUDE.md § Branch policy, rules
+  3–5; `doc/claude/DEVELOPMENT.md` § "Stay close to main — rebase rigorously"; a rebase onto a
+  squash: `doc/claude/JOINING.md`).
