@@ -22,6 +22,9 @@ pub struct Outcome {
   pub refused: text,
   pub refused_in: text,
   pub stores_left: integer,
+  // What the entry's return left on the stack: its frame base and the evaluation stacks'
+  // depths, 0 when every call gave back what it took (PF5); 0 for a refused run.
+  pub stack_left: integer,
 }
 
 NULL_STORE = 65535;
@@ -215,7 +218,7 @@ fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) ->
   }
   first = lower::lower(b, entry);
   if first.refused != "" {
-    return Outcome { value: 0, refused: first.refused, refused_in: first.refused_in, stores_left: 0 };
+    return Outcome { value: 0, refused: first.refused, refused_in: first.refused_in, stores_left: 0, stack_left: 0 };
   }
   // The entry's visible parameters are the given integers; a hidden one after them (a buffer
   // the compiler added) starts null, as a caller with no buffer to offer passes it.
@@ -236,6 +239,7 @@ fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) ->
       refused: "the entry takes {visible} arguments, given {len(args)}",
       refused_in: "",
       stores_left: 0,
+      stack_left: 0,
     };
   }
   progs[entry] = first;
@@ -378,6 +382,7 @@ fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) ->
             refused: callee_prog.refused,
             refused_in: callee_prog.refused_in,
             stores_left: crt::live_stores() - stores_before,
+            stack_left: 0,
           };
         }
         // The callee's frame starts at the top of this one; its arguments, the last on top of
@@ -458,6 +463,7 @@ fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) ->
             refused: "",
             refused_in: "",
             stores_left: crt::live_stores() - stores_before,
+            stack_left: base + sp_int + sp_float + sp_text,
           };
         }
         // The frame's text arguments were copies the call made.
@@ -1179,5 +1185,5 @@ fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) ->
       }
     }
   }
-  Outcome { value: 0, refused: "the program ran off its last op", refused_in: "", stores_left: 0 }
+  Outcome { value: 0, refused: "the program ran off its last op", refused_in: "", stores_left: 0, stack_left: 0 }
 }

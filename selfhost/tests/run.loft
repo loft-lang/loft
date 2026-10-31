@@ -24,8 +24,11 @@ fn test_fib_answers_what_the_interpreter_answers() {
     got += "{o.value} ";
   }
   assert(got == "0 1 1 2 3 5 8 13 21 34 55 ", "fib(0..10): {got}");
+  // PF5: 242785 calls deep and wide, each frame given back — the base and the evaluation
+  // stacks where the entry found them.
   o = run::run(b, fib, [25]);
   assert(o.value == 75025, "fib(25): {o.value} {o.refused}");
+  assert(o.stack_left == 0, "fib(25) left {o.stack_left} on the stack");
 }
 
 fn test_an_entry_given_the_wrong_arguments_is_refused() {
@@ -131,6 +134,7 @@ fn ran_clean(b: ir::Bundle, entry: text, arg: integer) -> integer? {
   o = run::run(b, d, [arg]);
   assert(o.refused == "", "{entry} refused: {o.refused} in {o.refused_in}");
   assert(o.stores_left == 0, "{entry}({arg}) left {o.stores_left} stores live");
+  assert(o.stack_left == 0, "{entry}({arg}) left {o.stack_left} on the stack");
   o.value
 }
 
@@ -250,7 +254,8 @@ fn test_a_vector_is_appended_as_element_copies() {
 // of them built from a literal, a call and a unit variant.  A copy of a `Word` owns its text only
 // because the type table hands the runtime the enum's variants.
 // @PLN91 F-1: a recursion 3000 deep through the stack store, which grows several times past its
-// first size; each level's integer, boolean and float local written and read at its width.
+// first size; each level's integer, boolean and float local written and read at its width, and
+// (PF5, `ran_clean`) the stack given back when the entry returns.
 fn test_a_deep_recursion_grows_the_stack_store() {
   f = kernel("frames");
   assert(ran_clean(f, "n_depth", 3000) == 12852, "depth(3000)");
