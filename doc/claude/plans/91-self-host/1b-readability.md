@@ -70,14 +70,26 @@ tools are unchanged.  The kernels run no slower (0.28 s before, 0.22 s after, th
 
 ## What follows R-1 — the log to the best port code
 
-R-1 met four compiler defects; the port is written in its best form and a defect is fixed in the
+R-1 met compiler defects; the port is written in its best form and a defect is fixed in the
 compiler, never routed around in the port.  What remains, in order:
 
-1. **The facts R-1's list left on `-1`**: `own::var_of`, `own::variant_check_subject`,
-   `own::fnref_target_of`, `binds::hidden_return_buffer_attr` answer -1 for none where the Rust
-   answers `Option`; the same `integer?` treatment, measured the same way.  And one spelling of
-   `u16::MAX`: `binds::NO_VAR` and `own::MAX` are the same value.
-2. Then the plan's queue (handoff): loft#2260, E-4, F-1.
+1. **`run.loft` `sub_text`** — `t[from..till]` with nullable bounds, the port's last build
+   warning.  The language answers an empty slice for a null end and reads a null start as 0
+   where `(N-Store)` says a null bound reads null (loft#2306); once that is fixed the warning is
+   the store's own and `sub_text`'s comment ("a null `till` takes the one character at `from`")
+   is rewritten to the rule.
+2. **`lower.loft` `Rotation`** keeps four `-1` fields where its Rust (`codegen.rs:7290`) has two
+   `Option` pairs: one `(integer, integer)?` field per pair.
+3. Then the plan's queue (handoff): loft#2260, E-4, F-1.
+
+**Done (2026-10-31).** Every "none" answer of `own`, `binds`, `lower` and `types` is `integer?`
+— the `Option` facts of the Rust, the lookups of the port's own, the local `match … _ => -1`
+bindings — and `binds`' second spellings of `u16::MAX`/`u32::MAX` are `own::MAX`/`own::UMAX`.
+A `let Some(x) = … else { return … }` is a single-name guard, so `(N-Guard)` proves `x` after it
+and no `!` follows; a compound guard is split into one guard per fact, and a `!` stays only
+after a compound test, which proves nothing.  `crt::key_float` passes `is_null` as its two
+float siblings do.  Measured each step: all 521 images, C build, same compiler — identical;
+tests/selfhost.rs passes.
 
 Fixed on the way: loft#2292 (a local renamed onto the return buffer was copied onto itself — a
 zeroed record on every backend); loft#2295 (a hoisted call argument a borrowing return answers
@@ -89,6 +101,11 @@ baseline on all 521 images, no workaround in the port.  loft#2298 (the port's `-
 failed: a discharged local compared in an `else if` — a block argument to a `#rust` template is
 now bound first), loft#2300 (that discharge, consumed in place, leaked a copy of the record) and
 loft#2293 (a value-record local was also tracked as a witnessed owner on --native: E0308).
+Then, from the `integer?` pass: loft#2302 (a heap field's not-null marker rode into the next
+operand, so a live `??` default was reported redundant — and `loft fix` deleted it), loft#2303
+(pass 1 read `x == null` on a heap or enum value with the truthy polarity: a guard proved nothing
+after it) and loft#2305 (pass 1 read a call to a function declared below as a `null` arm, so an
+inferred local joined to `τ?`).
 
 ## R-2 — the `?? panic(…)` discharges: mostly one representation choice
 
