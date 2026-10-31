@@ -9,13 +9,13 @@ description: >-
   recommendation is built on. Also when deciding what a construct MEANS (what a bind, copy,
   drop or return does), when one rule collects its third exception or its defect list
   re-cuts instead of shrinking, and before writing or porting code that may already exist
-  (another module, a library, the other backend). The method: name the invariant, count the
-  sites that re-assert it, build the cheapest probe that could falsify each load-bearing
-  claim — for a recommendation, its premise about the current code — then build and validate
-  against the written prediction. Where you cannot state the invariant (geometry, caching,
-  store lifetime, round-trips), construct a concrete instance of the answer and read the
-  invariant off it; for a meaning, table the candidate rules over the real use-case
-  programs.
+  (another module, a library, an implementation for another target). The method: name the
+  invariant, count the sites that re-assert it, build the cheapest probe that could falsify
+  each load-bearing claim — for a recommendation, its premise about the current code — then
+  build and validate against the written prediction. Where you cannot state the invariant
+  (geometry, caching, store lifetime, round-trips), construct a concrete instance of the
+  answer and read the invariant off it; for a meaning, table the candidate rules over the
+  real use-case programs.
 user-invocable: true
 ---
 
