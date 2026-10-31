@@ -27,6 +27,30 @@ signature here is a proposal the F-phases check.
    the panel is 480×800 portrait.
 5. **One thread.**  An object is used from the thread that opened it; another thread is refused
    with a message, as graphics' `Window` is.
+6. **Optimise freely per platform, invisibly.**  Each platform's section may take every shortcut
+   its hardware offers — a pixel accelerator, a native format, a SIMD path, a format kept
+   internally — as long as the game cannot tell except by speed.  The check is the same as the
+   cache's: the frame `capture` answers and every value a call returns are identical with the
+   shortcut on or off.
+
+## Pixels: RGBA everywhere, packed per destination
+
+A game sees one pixel format: 32-bit RGBA — PNG RGBA assets, `Canvas`, and every frame it shows.
+What a destination wants is produced behind the API, at two points:
+
+- **Assets, when the game is built for a target.**  A packer turns the RGBA sources into the
+  target's format — RGB565 for the Tanmatsu, dithered once there; untouched on a desktop or a
+  page.  A pure function of the source and the target, so its output is kept by key.
+- **Frames, when `show` presents.**  The screen converts, scales and rotates in one pass — on
+  the Tanmatsu by the ESP32-P4's pixel accelerator where it does the conversion, with a fixed
+  ordered dither so nothing shimmers between frames.
+
+So a game's frame is byte-identical on every machine before it is presented: only the presenter
+differs, which is what the F-phases compare.  RGBA is stored packed, four bytes a pixel
+(`vector<u32>`) — not one loft `integer` per pixel, as `Canvas` keeps it today.  `tiles` may keep
+RGB565 internally on the Tanmatsu (rule 6); its API takes and answers RGBA.  Palette effects
+(colour cycling) are an explicit `tiles` feature — an indexed sheet and a palette object — not a
+pixel format.
 
 ## Packages
 
@@ -35,7 +59,7 @@ signature here is a proposal the F-phases check.
 | `machine` | `Caps`, `Event`, the `KEY_*` names, `Saves`, `Clock` | nothing |
 | `geom` | the math types (`vec2` … `Mat4`) and pure geometry, moved from `graphics` (F10) | nothing |
 | `canvas` | `Canvas` (RGBA) and its drawing, moved from `graphics` (F10) | `geom` |
-| `tiles` | RGB565 surfaces, tile sheets, sprites (exists) | — |
+| `tiles` | tile sheets, maps and sprites drawn into a `Canvas`; sheets and maps as objects, not integer handles (exists, re-shaped) | `canvas` |
 | `screen` | `Screen`: shows a frame, answers its events | `machine` |
 | `input` | `Bindings`, `Actions`: events to actions | `machine` (no longer `graphics`) |
 | `audio` | `Audio`, `Clip`, `Voice` (exists, re-shaped) | `machine` |
@@ -148,8 +172,7 @@ pub fn offscreen(f: const Frame) -> Screen;
 
 pub fn poll(self: const Screen, wait_ms: integer = 0) -> boolean;   // false once closed
 pub fn events(self: const Screen) -> vector<Event>;                  // since the last call
-pub fn show(self: const Screen, s: const Surface);                   // a tiles surface (RGB565)
-pub fn show_canvas(self: const Screen, c: const Canvas);             // a canvas (RGBA)
+pub fn show(self: const Screen, c: const Canvas);                    // the frame, RGBA
 pub fn frame(self: const Screen) -> Frame;
 pub fn refit(self: Screen, f: const Frame);        // after a Resize: the game picks a new frame
 pub fn capture(self: const Screen) -> Canvas;      // what was last shown, at frame size
@@ -230,7 +253,7 @@ fn main() {
   act = input::actions();
   saves = machine::open_saves("tile-world");
   world = load_world(saves);                  // the game's logic package: draws nothing
-  view = surface(f.width, f.height);
+  view = canvas::canvas(f.width, f.height, 0);
   t = machine::clock(60);
   while s.poll(1) {
     act.feed(s.events(), b);
@@ -246,11 +269,9 @@ The same `world` and `step` serve a GPU view (arc G): only `draw_world` and `sho
 
 ## Open questions
 
-1. **The frame's pixel format.**  `tiles` is RGB565 (the Tanmatsu's panel); `Canvas` is RGBA.
-   Both are shown above; whether tier F settles on one is open.
-2. **Several displays** — `open_screen` takes a `Display`, so the API allows it; no host opens two
+1. **Several displays** — `open_screen` takes a `Display`, so the API allows it; no host opens two
    yet.
-3. **Touch zones in `Bindings`** — screen regions as virtual keys, for a touch-only machine.
-4. **Gamepads** — `GamepadButton` / `GamepadAxis` events, and `Bindings` defaults for them.
-5. **`Close` and `poll`** — `Close` arrives and `poll` still answers true, so a game can ask
+2. **Touch zones in `Bindings`** — screen regions as virtual keys, for a touch-only machine.
+3. **Gamepads** — `GamepadButton` / `GamepadAxis` events, and `Bindings` defaults for them.
+4. **`Close` and `poll`** — `Close` arrives and `poll` still answers true, so a game can ask
    "save first?"; whether `poll` turns false on its own after a second `Close` is open.

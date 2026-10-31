@@ -104,7 +104,7 @@ on (X11 and the Tanmatsu), and `open` takes the frame size the game picked from 
 - Goes red when: an offscreen screen of a given display answers other than the values the test
   set; the Tanmatsu answers anything but 480×800 portrait, `low`, keys and no pointer.
 
-**F2 — `screen` in the browser (M).**  A canvas: the RGB565 frame converted and drawn with
+**F2 — `screen` in the browser (M).**  A canvas: the RGBA frame drawn with
 `putImageData`, scaled with nearest-neighbour, keys and pointer from the page's events.  Both
 writers' pages.
 - Goes red when: a scripted frame read back from the headless page differs by one byte from the
