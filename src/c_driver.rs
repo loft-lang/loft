@@ -385,6 +385,7 @@ pub(crate) fn build_wasm(
     shim_sources: &[String],
     ship: bool,
     browser: bool,
+    names: bool,
 ) -> Result<(), String> {
     let tc = wasm_toolchain();
     let cc = tc.cc.clone();
@@ -423,6 +424,14 @@ pub(crate) fn build_wasm(
     if !ship {
         cmd.push_arg("-DLOFT_CALL_CHAIN");
     }
+    // `--names` (loft#954): wasm-ld writes the function names, but clang's driver then runs
+    // `wasm-opt` itself when one is on PATH, without `-g`, which drops them.  The page runs its
+    // own `wasm-opt` (`--strip-dwarf -g` under `--names`), so clang's pass is skipped here.
+    // And each loft function stays a frame of its own, so a trap's backtrace names the function
+    // the author wrote, not the caller it was inlined into.
+    if names {
+        cmd.push_args(["--no-wasm-opt", "-fno-inline"]);
+    }
     // A shim built for a page sees `LOFT_BROWSER`, as `c_shim::wasm_objects` defines it for
     // the Rust writer's page: there it can call the page's `loft_gl` imports.
     if browser {
@@ -437,7 +446,10 @@ pub(crate) fn build_wasm(
     cmd.push_arg(&src);
     cmd.push_args(shim_sources);
     cmd.push_arg("-o").push_arg(out);
-    cmd.push_args(["-Wl,-z,stack-size=8388608", "-lm"]);
+    // The stack FIRST, at the bottom of memory (wasm-ld's `--stack-first`, the Rust writer's
+    // layout): an overflow then traps below address 0 instead of running down into the data —
+    // a page's asyncify save region among it (loft#950).
+    cmd.push_args(["-Wl,-z,stack-size=8388608", "-Wl,--stack-first", "-lm"]);
     if jumps {
         cmd.push_arg("-lsetjmp");
     }

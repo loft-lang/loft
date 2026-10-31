@@ -54,6 +54,7 @@ const RUNTIME: &str = concat!(
     include_str!("loft_reflect.h"),
     include_str!("loft_io.h"),
     include_str!("loft_host_io.h"),
+    include_str!("loft_web_page.h"),
     include_str!("loft_log.h"),
     include_str!("loft_lazy.h"),
     include_str!("loft_sock.h"),
@@ -2552,6 +2553,13 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         {
             return browser_import_native(cx, d, ret, &imp);
         }
+        // The web library's natives are loft's own in a page too (`loft_web_page.h`, the C
+        // twin of `web_browser.rs`), over the `loft_web` imports the page script provides.
+        if cx.browser
+            && let Some(runtime) = page_web_native(def.native())
+        {
+            return forwarded_native(cx, d, ret, runtime);
+        }
         // …and a library native it has no import for cannot be called from a page: refused at
         // build, as the Rust writer refuses it (`compile_error!` naming the function).
         if cx.browser && cx.data.native_symbol_crates.contains_key(def.native()) {
@@ -3040,6 +3048,36 @@ fn c_binding_result(
 /// The runtime function behind a native of an `in_binary` library — one whose natives live in
 /// loft's own binary (`[native] in_binary = true`, `native.rs`' table): the C runtime carries
 /// each one the C programs reach.
+/// The page's C twin of a web-library native (`loft_web_page.h`), as `web_browser.rs` is the
+/// Rust writer's.
+fn page_web_native(native: &str) -> Option<&'static str> {
+    Some(match native {
+        "n_http_do" => "loft_wp_http_do",
+        "n_http_body" => "loft_wp_http_body",
+        "n_http_headers" => "loft_wp_http_headers",
+        "n_http_head_size" => "loft_wp_http_head_size",
+        "n_ws_connect" => "loft_wp_ws_connect",
+        "n_ws_client_send" => "loft_wp_ws_client_send",
+        "n_ws_client_send_binary" => "loft_wp_ws_client_send_binary",
+        "n_ws_client_recv" => "loft_wp_ws_client_recv",
+        "n_ws_client_message" => "loft_wp_ws_client_message",
+        "n_ws_client_opcode" => "loft_wp_ws_client_opcode",
+        "n_ws_client_close" => "loft_wp_ws_client_close",
+        "n_sleep_ms" => "loft_wp_sleep_ms",
+        "n_frame_yield" => "loft_wp_frame_yield",
+        "n_pack_reset" => "loft_wp_pack_reset",
+        "n_pack_u8" => "loft_wp_pack_u8",
+        "n_pack_u16_le" => "loft_wp_pack_u16_le",
+        "n_pack_u32_le" => "loft_wp_pack_u32_le",
+        "n_pack_take" => "loft_wp_pack_take",
+        "n_byte_at" => "loft_wp_byte_at",
+        "n_ws_group_clear" => "loft_wp_ws_group_clear",
+        "n_ws_group_add" => "loft_wp_ws_group_add",
+        "n_ws_group_poll" => "loft_wp_ws_group_poll",
+        _ => return None,
+    })
+}
+
 fn in_binary_native(native: &str) -> Option<&'static str> {
     match native {
         "n_process_run" => Some("loft_process_run"),
