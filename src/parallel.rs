@@ -447,6 +447,21 @@ pub fn run_parallel_text(
     results
 }
 
+/// A worker's hidden destination: a real store (never `null()` — the worker claims records
+/// in it) whose root record reads as a FRESH one, every byte after its header zero.  A
+/// callee handed a present destination reuses it as the caller made it, as the caller's own
+/// `OpDatabase` leaves it on the main thread: a struct return's literal then reads the
+/// slots it fills (an out-of-line child's old record, `OpSetChildRec`), and a reused store
+/// slot's bytes read back as a record id nobody wrote — the worker panicked on one in
+/// about a tenth of runs, and in every run with one worker (`L-OutOfLine`'s par cell).
+fn worker_dest(db: &mut Stores) -> DbRef {
+    let d = db.vector_buffer(100);
+    let store = db.store_mut(&d);
+    let bytes = store.record_words(d.rec) * 8;
+    store.zero_range(d.rec, d.pos, bytes.saturating_sub(d.pos));
+    d
+}
+
 /// Plan-06 PRIORITY.md spine step 8d.0 — `Stitch::Queue` runtime for
 /// reference / struct-enum-payload / vector return shapes.
 ///
@@ -474,21 +489,6 @@ pub fn run_parallel_text(
 /// consumer (`n_parallel_queue_ref` native fn).
 #[allow(dead_code, clippy::too_many_arguments)]
 #[must_use]
-/// A worker's hidden destination: a real store (never `null()` — the worker claims records
-/// in it) whose root record reads as a FRESH one, every byte after its header zero.  A
-/// callee handed a present destination reuses it as the caller made it, as the caller's own
-/// `OpDatabase` leaves it on the main thread: a struct return's literal then reads the
-/// slots it fills (an out-of-line child's old record, `OpSetChildRec`), and a reused store
-/// slot's bytes read back as a record id nobody wrote — the worker panicked on one in
-/// about a tenth of runs, and in every run with one worker (`L-OutOfLine`'s par cell).
-fn worker_dest(db: &mut Stores) -> DbRef {
-    let d = db.vector_buffer(100);
-    let store = db.store_mut(&d);
-    let bytes = store.record_words(d.rec) * 8;
-    store.zero_range(d.rec, d.pos, bytes.saturating_sub(d.pos));
-    d
-}
-
 pub fn run_parallel_queue_ref(
     stores: &mut Stores,
     program: WorkerProgram,
