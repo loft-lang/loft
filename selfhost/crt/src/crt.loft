@@ -114,6 +114,30 @@ fn c_stack_grow(store: integer, bytes: integer);
 fn c_stack_free(store: integer);
 #c "loft_crt_stack_free" "void(int64_t)"
 
+fn c_slot_text(out: vector<u8>, store: integer, at: integer, arg: boolean) -> integer;
+#c "loft_crt_slot_text" "int64_t(char*, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_slot_text_init(store: integer, at: integer);
+#c "loft_crt_slot_text_init" "void(int64_t, int64_t)"
+
+fn c_set_slot_text(store: integer, at: integer, val: text, is_null: boolean);
+#c "loft_crt_set_slot_text" "void(int64_t, int64_t, const char*, int64_t)"
+
+fn c_slot_text_append(store: integer, at: integer, val: text);
+#c "loft_crt_slot_text_append" "void(int64_t, int64_t, const char*)"
+
+fn c_slot_text_clear(store: integer, at: integer);
+#c "loft_crt_slot_text_clear" "void(int64_t, int64_t)"
+
+fn c_slot_text_free(store: integer, at: integer);
+#c "loft_crt_slot_text_free" "void(int64_t, int64_t)"
+
+fn c_set_slot_arg(store: integer, at: integer, val: text, is_null: boolean);
+#c "loft_crt_set_slot_arg" "void(int64_t, int64_t, const char*, int64_t)"
+
+fn c_slot_arg_free(store: integer, at: integer);
+#c "loft_crt_slot_arg_free" "void(int64_t, int64_t)"
+
 fn c_slot_ref(out: vector<integer>, store: integer, at: integer) -> integer;
 #c "loft_crt_slot_ref" "int64_t(int64_t*, int64_t, int64_t, int64_t)"
 
@@ -141,6 +165,56 @@ pub fn stack_new(io: vector<integer>, bytes: integer) {
 // `State::grow_stack`: the stack store grown until it holds `bytes` of frame.
 pub fn stack_grow(store: integer, bytes: integer) {
   c_stack_grow(store, bytes);
+}
+
+// The text a frame slot at byte `at` holds: a local's `loft_text`, or (`arg`) an argument's
+// view; null for the null text.
+pub fn slot_text(store: integer, at: integer, arg: boolean) -> text? {
+  buf = room(64);
+  n = c_slot_text(buf, store, at, arg);
+  if n < 0 {
+    return null;
+  }
+  if n > len(buf) {
+    buf = room(n);
+    n = c_slot_text(buf, store, at, arg);
+  }
+  text_from_byte_range(buf, 0, n)
+}
+
+// A text local's slot as `OpInitText` leaves it: empty, no buffer.
+pub fn slot_text_init(store: integer, at: integer) {
+  c_slot_text_init(store, at);
+}
+
+// A text local set to `v`.
+pub fn set_slot_text(store: integer, at: integer, v: text?) {
+  c_set_slot_text(store, at, v ?? "", v == null);
+}
+
+// `v` appended to a text local; a null local becomes `v`.
+pub fn slot_text_append(store: integer, at: integer, v: text) {
+  c_slot_text_append(store, at, v);
+}
+
+// `OpClearText` of a text local.
+pub fn slot_text_clear(store: integer, at: integer) {
+  c_slot_text_clear(store, at);
+}
+
+// `OpFreeText` of a text local: its buffer released.
+pub fn slot_text_free(store: integer, at: integer) {
+  c_slot_text_free(store, at);
+}
+
+// A text argument's slot: a view of a copy of `v`.
+pub fn set_slot_arg(store: integer, at: integer, v: text?) {
+  c_set_slot_arg(store, at, v ?? "", v == null);
+}
+
+// The call's return: a text argument's copy released.
+pub fn slot_arg_free(store: integer, at: integer) {
+  c_slot_arg_free(store, at);
 }
 
 // The run's end: the stack store released.
