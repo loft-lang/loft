@@ -1301,9 +1301,7 @@ fn classify_tail(b: ir::Bundle, st: St, code: ir::Node, func: ir::Function, defs
       tail = ops[len(ops) - 1]!;
       if is_loop_node(tail) { not_yet() } else { classify(b, st, tail, func, defs) }
     }
-    // Unreachable: asked only where `has_body_tail` holds.  Not a `panic`: the C backend does
-    // not carry a `panic` arm of an integer `match`.
-    _ => Unknown,
+    _ => panic("classify_tail is asked only where has_body_tail holds"),
   }
 }
 
