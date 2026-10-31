@@ -394,6 +394,21 @@ fn c_copy_record(s_store: integer, s_rec: integer, s_pos: integer, d_store: inte
 fn c_clear(store: integer, rec: integer, pos: integer, tp: integer);
 #c "loft_crt_clear" "void(int64_t, int64_t, int64_t, int64_t)"
 
+fn c_place_record(out: vector<integer>, h_store: integer, h_rec: integer, h_pos: integer, tp: integer, size: integer, image: vector<u8>, foreign: boolean) -> integer;
+#c "loft_crt_place_record" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, const uint8_t*, int64_t, int64_t)"
+
+fn c_move_vector(d_store: integer, d_rec: integer, d_pos: integer, s_store: integer, s_rec: integer, s_pos: integer, tp: integer, linked: boolean);
+#c "loft_crt_move_vector" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_move_field(s_store: integer, s_rec: integer, s_pos: integer, d_store: integer, d_rec: integer, d_pos: integer, tp: integer, record_out: boolean);
+#c "loft_crt_move_field" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_free_record_in(store: integer, rec: integer, pos: integer, tp: integer);
+#c "loft_crt_free_record_in" "void(int64_t, int64_t, int64_t, int64_t)"
+
+fn c_vec_replace(v_store: integer, v_rec: integer, v_pos: integer, o_store: integer, o_rec: integer, o_pos: integer, tp: integer, linked: boolean);
+#c "loft_crt_vec_replace" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
 fn c_clear_view(store: integer, rec: integer, pos: integer, tp: integer);
 #c "loft_crt_clear_view" "void(int64_t, int64_t, int64_t, int64_t)"
 
@@ -404,6 +419,35 @@ fn c_replace_keyed(s_store: integer, s_rec: integer, s_pos: integer, d_store: in
 // the loaded table, so its store takes a new value in place.
 pub fn clear(store: integer, rec: integer, pos: integer, tp: integer) {
   c_clear(store, rec, pos, tp);
+}
+
+// `OpPlaceRecord`: a `tp` record of `size` bytes claimed inside the host's store, prefilled with
+// `image`, or in a fresh store with no host; its reference written into `io`.  `foreign`: the
+// host's root is a vector of another element type.
+pub fn place_record(io: vector<integer>, h_store: integer, h_rec: integer, h_pos: integer, tp: integer, size: integer, image: vector<u8>, foreign: boolean) {
+  c_place_record(io, h_store, h_rec, h_pos, tp, size, image, foreign);
+}
+
+// The placement family (`@FR-R-Place`); each needs the type table loaded.
+// `OpMoveVector`: `src`'s elements moved onto `dst`; `linked` a linked group's element type.
+pub fn move_vector(d_store: integer, d_rec: integer, d_pos: integer, s_store: integer, s_rec: integer, s_pos: integer, tp: integer, linked: boolean) {
+  c_move_vector(d_store, d_rec, d_pos, s_store, s_rec, s_pos, tp, linked);
+}
+
+// `OpMoveField` / `OpMoveRecord`: a `tp` record moved from `src` to `dst` — into a field, or out
+// to a returned record (`record_out`).
+pub fn move_field(s_store: integer, s_rec: integer, s_pos: integer, d_store: integer, d_rec: integer, d_pos: integer, tp: integer, record_out: boolean) {
+  c_move_field(s_store, s_rec, s_pos, d_store, d_rec, d_pos, tp, record_out);
+}
+
+// `OpFreeRecordIn`: a placed `tp` record released inside its host's store.
+pub fn free_record_in(store: integer, rec: integer, pos: integer, tp: integer) {
+  c_free_record_in(store, rec, pos, tp);
+}
+
+// `OpReplaceVector`: `v`'s elements replaced by `o`'s.
+pub fn vec_replace(v_store: integer, v_rec: integer, v_pos: integer, o_store: integer, o_rec: integer, o_pos: integer, tp: integer, linked: boolean) {
+  c_vec_replace(v_store, v_rec, v_pos, o_store, o_rec, o_pos, tp, linked);
 }
 
 // `OpClearKeyed` of a linked group's secondary view: its own route dropped, the records left to

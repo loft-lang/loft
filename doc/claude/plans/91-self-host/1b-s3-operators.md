@@ -21,9 +21,11 @@ strict comparison over every program the census passes (out, alloc, leak, binds,
 | `OpReplaceKeyed` | `loft_replace_keyed`, its swap bit from `types::swap_safe` | `hashes.loft` `keyed` |
 | `OpCastTextFromEnum` | the enum's names as the function's text constants (`EnumName`) | `small_ops.loft` `enum_named` |
 | `OpTextCharacterNullable`, `OpLengthCharacter` | the character holding a byte; its UTF-8 width | `small_ops.loft` `text_walk` |
+| `OpPlaceRecord` (`@FR-R-Place`) | `loft_place_record` with the type's size and default image; `foreign` as the C backend decides it, from the host variable's root type | `kernels/places.loft` `moved` |
+| `OpMoveVector`, `OpMoveField`, `OpMoveRecord`, `OpReplaceVector`, `OpFreeRecordIn` | the runtime's own move, replace and release routines; a linked element type takes the `_array` twin | `places.loft` `moved`; the census |
 | `OpTextWalkStep` (`@FR-R-CharWalk`) | the bytecode writer's fused text-walk step: `char_walk` matches the parser's `for c in T` lowering per loop, the loop variable's set is one `TextWalkStep` (`walk-step` in the bind table) | `small_ops.loft` `text_walk`; the binds layer |
 
-**Measured** (2026-10-31): the census went from 297 to 364 programs passed over these rows,
+**Measured** (2026-10-31): the census went from 297 to 380 programs passed over these rows,
 none wrong, crashed or leaking, and every passing program equal to the Rust interpreter in
 every layer.
 
