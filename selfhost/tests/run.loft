@@ -108,6 +108,10 @@ fn test_the_small_integer_operators_answer_as_loft_does() {
   assert(ran("small_ops", "n_div_or", [7, 0]) == -1, "div_or(7, 0)");
   assert(ran("small_ops", "n_ops_or", [7, 2]) == 9064, "ops_or(7, 2)");
   assert(ran("small_ops", "n_ops_or", [-1, 2]) == -1023, "ops_or(-1, 2)");
+  assert(ran("small_ops", "n_enum_named", [1]) == 500, "enum_named(1)");
+  assert(ran("small_ops", "n_enum_named", [2]) == 401, "enum_named(2)");
+  assert(ran("small_ops", "n_text_walk", [0]) == 97098099, "text_walk(0)");
+  assert(ran("small_ops", "n_text_walk", [1]) == 97233, "text_walk(1)");
   assert(ran("small_ops", "n_rem_or", [7, 3]) == 1, "rem_or(7, 3)");
   assert(ran("small_ops", "n_rem_or", [7, 0]) == -1, "rem_or(7, 0)");
   // |-6 / 4| = 1.5, as a float and as a single, each times 100.

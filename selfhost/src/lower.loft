@@ -148,6 +148,15 @@ enum Code {
   // type, `b` the flags).
   ClearKeyed,
   ReplaceKeyed,
+  // `OpCastTextFromEnum`: `a` the first of the enum's names in `texts`, `b` how many.
+  EnumName,
+  // `OpTextCharacterNullable`: the character holding a byte, null out of range.
+  TextChar,
+  // `OpLengthCharacter`: a character's UTF-8 byte length.
+  CharLen,
+  // `OpTextWalkStep` (`@FR-R-CharWalk`): a text walk's step, `a` the loop variable's slot, `b`
+  // the walk in `Lowering.walks`.
+  TextWalkStep,
   // S1.5: a loop's mark of the stack pointers, its drop, and a leave to the mark `a` loops out.
   LoopMark,
   LoopUnmark,
@@ -171,6 +180,26 @@ struct Op {
 
 // One scalar of a tuple (F-T1): its byte in the tuple's slot, the stack its value is on, and how
 // the frame holds it (`var_access`'s codes).
+// `@FR-R-CharWalk` (`opt::char_walk::CharWalk`): a `for c in T` walk over a text variable — the
+// loop variable, the `#index` and `#next` the step keeps, the block's result temp, the text.
+struct CharWalk {
+  loop_var: integer,
+  index: integer,
+  next: integer,
+  result: integer,
+  src: integer,
+}
+
+// A fused walk step's frame bytes (`OpTextWalkStep`'s operands): `#index`, `#next`, the text,
+// whether it is an argument's view, and how the loop variable is held (`var_access`).
+struct WalkSlots {
+  index: integer,
+  next: integer,
+  src: integer,
+  src_arg: boolean,
+  c_access: integer,
+}
+
 struct Leaf {
   at: integer,
   kind: Kind,
@@ -234,6 +263,9 @@ struct Lowering {
   owned_reassigned: vector<boolean>,
   own_ops: own::Ops,
   defs: own::Defs,
+  // The text walks of the loops being lowered (`@FR-R-CharWalk`), and the fused steps' slots.
+  walks: vector<CharWalk>,
+  walk_slots: vector<WalkSlots>,
   // The tuple shapes the ops name (F-T1), each tuple variable's (-1 for any other), the
   // result's, and how many parameters are tuples.
   shapes: vector<Shape>,
@@ -277,6 +309,8 @@ pub fn empty() -> Lowering {
     owned_reassigned: [],
     own_ops: own::ops_of(ir::empty_bundle()),
     defs: own::new_defs(),
+    walks: [],
+    walk_slots: [],
     shapes: [],
     var_shape: [],
     result_shape: -1,
@@ -663,6 +697,10 @@ fn effect(code: Code, b: integer) -> integer {
     AppendCopy => -2,
     SliceVec => -4,
     ClearKeyed => -1,
+    EnumName => 0,
+    TextChar => -1,
+    CharLen => 0,
+    TextWalkStep => 0,
     ReplaceKeyed => -2,
     LoopMark => 0,
     LoopUnmark => 0,
@@ -1243,6 +1281,24 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     } else {
       emit(l, SliceVec, KRef, b.types[tp]!.size, if name == "OpSliceView" { 1 } else { 0 });
     }
+  } else if name == "OpCastTextFromEnum" {
+    // A plain enum's name (`Stores::enum_val`): the names are the function's text constants.
+    value(l, b, args[0]!, KInt);
+    tp = literal(l, args[1]!);
+    names = types::enum_names(b, tp);
+    if names == null {
+      refuse(l, "an enum name of a type that is no plain enum");
+    } else {
+      emit(l, EnumName, KText, len(l.texts), len(names!));
+      l.texts += names!;
+    }
+  } else if name == "OpLengthCharacter" {
+    value(l, b, args[0]!, KInt);
+    emit(l, CharLen, KInt, 0, 0);
+  } else if name == "OpTextCharacterNullable" {
+    value(l, b, args[0]!, KText);
+    value(l, b, args[1]!, KInt);
+    emit(l, TextChar, KInt, 0, 0);
   } else if name == "OpClearKeyed" {
     // `s.h = []` of a field: its claims released, of whatever type (`remove_claims_keyed`); a
     // linked group's secondary view (`CLEAR_KEYED_VIEW`, 0x8000), always a keyed collection,
@@ -1842,8 +1898,171 @@ fn is_reference(t: ir::TypeT) -> boolean {
   }
 }
 
+// `opt::char_walk::char_walks`, for one loop: the parser's lowering of `for c in T` matched
+// whole — the loop's first statement binds `c` to a `for text next` block of five statements
+// (`index = next`; the character at `next`; `next` advanced by its width; the zero-width
+// guard; the character), its second the null test `if !T { break }`, and T a text VARIABLE.
+fn char_walk(b: ir::Bundle, d_nr: integer, lp: ir::Block) -> CharWalk? {
+  if lp.name != "For loop" || len(lp.operators) < 2 {
+    return null;
+  }
+  loop_var = -1;
+  it: ir::Block? = null;
+  match unspan(lp.operators[0]!) {
+    NdSet { var, inner } => {
+      loop_var = var;
+      match unspan(inner) {
+        NdBlock { block } => { it = block[0]; }
+        _ => {}
+      }
+    }
+    _ => {}
+  }
+  if it == null || it!.name != "for text next" {
+    return null;
+  }
+  ops: vector<ir::Node> = [];
+  for o in it!.operators {
+    if !(unspan(o) is NdLine) {
+      ops += [unspan(o)];
+    }
+  }
+  if len(ops) != 5 {
+    return null;
+  }
+  // index = next
+  index = set_target(ops[0]!);
+  next = var_value(set_value(ops[0]!));
+  // res = OpTextCharacterNullable(src, next)
+  res = set_target(ops[1]!);
+  read = call_args(b, set_value(ops[1]!), "OpTextCharacterNullable");
+  if index == null || next == null || res == null || read == null || len(read!) != 2 {
+    return null;
+  }
+  src = var_value(read![0]!);
+  if src == null || var_value(read![1]!) != next || !(binds::base(fvar(b, d_nr, src!).type_def[0]!) is TyText) {
+    return null;
+  }
+  // next = next + OpLengthCharacter(res)
+  stepped = call_args(b, set_value(ops[2]!), "OpAddInt");
+  if set_target(ops[2]!) != next || stepped == null || var_value(stepped![0]!) != next {
+    return null;
+  }
+  width = call_args(b, stepped![1]!, "OpLengthCharacter");
+  if width == null || var_value(width![0]!) != res {
+    return null;
+  }
+  // if next <= index { next = index + 1 }
+  if !guard_shape(b, ops[3]!, next!, index!) || var_value(ops[4]!) != res {
+    return null;
+  }
+  // the null test: if !T { break }
+  if !null_test_shape(b, lp.operators[1]!, src!) {
+    return null;
+  }
+  CharWalk { loop_var: loop_var, index: index!, next: next!, result: res!, src: src! }
+}
+
+// The variable a `Set` writes, its value, a variable read's number, a call's operands when it
+// calls the operator named: the pieces `char_walk` matches, each null for any other shape.
+fn set_target(n: ir::Node) -> integer? {
+  match unspan(n) {
+    NdSet { var, inner: _ } => var,
+    _ => null,
+  }
+}
+
+fn set_value(n: ir::Node) -> ir::Node {
+  match unspan(n) {
+    NdSet { var: _, inner } => unspan(inner),
+    _ => ir::Node.NdNull,
+  }
+}
+
+fn var_value(n: ir::Node) -> integer? {
+  match unspan(n) {
+    NdVar { n: v } => v,
+    _ => null,
+  }
+}
+
+fn call_args(b: ir::Bundle, n: ir::Node, name: text) -> vector<ir::Node>? {
+  match unspan(n) {
+    NdCall { def_nr, args } => if b.data.definitions[def_nr]?.name == name { args } else { null },
+    _ => null,
+  }
+}
+
+// `if next <= index { next = index + 1 }`, the walk's zero-width guard.
+fn guard_shape(b: ir::Bundle, n: ir::Node, next: integer, index: integer) -> boolean {
+  match unspan(n) {
+    NdIf { cond, t, f } => {
+      le = call_args(b, cond, "OpLeInt");
+      bump = call_args(b, set_value(t), "OpAddInt");
+      le != null && var_value(le![0]!) == next && var_value(le![1]!) == index
+        && set_target(t) == next && bump != null && var_value(bump![0]!) == index
+        && unspan(bump![1]!) == NdInt { n: 1 } && unspan(f) is NdNull
+    }
+    _ => false,
+  }
+}
+
+// `if !T { break }`, the walk's null test.
+fn null_test_shape(b: ir::Bundle, n: ir::Node, src: integer) -> boolean {
+  match unspan(n) {
+    NdIf { cond, t: _, f } => {
+      not = call_args(b, cond, "OpNot");
+      if not == null || !(unspan(f) is NdNull) {
+        return false;
+      }
+      conv = call_args(b, not![0]!, "OpConvBoolFromText");
+      conv != null && var_value(conv![0]!) == src
+    }
+    _ => false,
+  }
+}
+
+// `Codegen::emit_walk_step`: the loop variable of a walk of the loop being lowered, set from its
+// step block, is one `TextWalkStep` — when `#index`, `#next` and the text are allocated and
+// placed, the variable a character and the text a text.  The block's result temp is not written:
+// the character goes straight to the loop variable.
+fn walk_step(l: Lowering, b: ir::Bundle, c: integer) -> boolean {
+  w: CharWalk? = null;
+  for x in l.walks {
+    if x.loop_var == c {
+      w = x;
+    }
+  }
+  if w == null || !(binds::base(fvar(b, l.def_nr, c).type_def[0]!) is TyCharacter) {
+    return false;
+  }
+  for v in [w!.index, w!.next, w!.src] {
+    if !fvar(b, l.def_nr, v).stack_allocated || (l.var_slot[v] ?? -1) < 0 {
+      return false;
+    }
+  }
+  if (l.var_slot[c] ?? -1) < 0 {
+    return false;
+  }
+  mark(b, l.def_nr, c, true);
+  emit(l, TextWalkStep, KInt, slot_of(l, c), len(l.walk_slots));
+  l.walk_slots += [WalkSlots {
+    index: slot_of(l, w!.index),
+    next: slot_of(l, w!.next),
+    src: slot_of(l, w!.src),
+    src_arg: (l.var_access[w!.src] ?? 0) == 1,
+    c_access: access_of(l, c),
+  }];
+  true
+}
+
 // `generate_set_inner` (`codegen.rs:2467`).
 fn set_inner(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
+  // `@FR-R-CharWalk`: a text walk's loop variable set from its step block is one fused step.
+  if unspan(x) is NdBlock && walk_step(l, b, var) {
+    note(l, "walk-step");
+    return;
+  }
   v = fvar(b, l.def_nr, var);
   // `@FR-R-LoopSlot`: a counted loop's variable on its range index's slot — the bytecode
   // writer drops the copy; the loft frame keeps every variable apart until F-1, so the value
@@ -3047,6 +3266,10 @@ fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
     }
     NdLoop { block } => {
       ops = block[0]!.operators;
+      w = char_walk(b, l.def_nr, block[0]!);
+      if w != null {
+        l.walks += [w!];
+      }
       if len(ops) > 0 {
         r = rotation(ops[0]!);
         if r != null {
