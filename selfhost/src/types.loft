@@ -184,11 +184,11 @@ fn fields_no_refs(b: ir::Bundle, fields: vector<ir::DbField>, walking: vector<in
   true
 }
 
-// `Stores::content`: a collection type's element, -1 for any other type.
-fn content_of(b: ir::Bundle, tp: integer) -> integer {
+// `Stores::content`: a collection type's element, null for any other type.
+fn content_of(b: ir::Bundle, tp: integer) -> integer? {
   t = b.types[tp];
   if t == null {
-    return -1;
+    return null;
   }
   match t.parts[0]! {
     PtVector { content } => content,
@@ -199,7 +199,7 @@ fn content_of(b: ir::Bundle, tp: integer) -> integer {
     PtHash { content, fields: _ } => content,
     PtRadix { content, fields: _ } => content,
     PtTrie { content, key: _ } => content,
-    _ => -1,
+    _ => null,
   }
 }
 
@@ -207,11 +207,14 @@ fn content_of(b: ir::Bundle, tp: integer) -> integer {
 // (`Stores::nullable_some_variant(content(tp)).is_some()`)?
 fn nullable_element(b: ir::Bundle, tp: integer) -> boolean {
   e = content_of(b, tp);
-  if e < 0 {
+  if e == null {
     return false;
   }
   et = b.types[e];
-  if et == null || !et.name.starts_with("__nullable<") {
+  if et == null {
+    return false;
+  }
+  if !et.name.starts_with("__nullable<") {
     return false;
   }
   some = "{et.name}::Some";
@@ -224,11 +227,11 @@ fn nullable_element(b: ir::Bundle, tp: integer) -> boolean {
 }
 
 // The owner of field `i`'s linked group — the member whose `other_indexes` does not start with
-// the view marker 65535 — or -1 outside a group.  `group_owner` (`src/c/mod.rs`).
-fn group_owner(fields: vector<ir::DbField>, i: integer) -> integer {
+// the view marker 65535 — or null outside a group.  `group_owner` (`src/c/mod.rs`).
+fn group_owner(fields: vector<ir::DbField>, i: integer) -> integer? {
   others = fields[i]!.other_indexes;
   if len(others) == 0 {
-    return -1;
+    return null;
   }
   if (others[0] ?? 0) != 65535 {
     return i;
@@ -238,7 +241,7 @@ fn group_owner(fields: vector<ir::DbField>, i: integer) -> integer {
       return m;
     }
   }
-  -1
+  null
 }
 
 // A struct's field rows, as `field_rows` writes them (`src/c/mod.rs`): a view member of a linked
@@ -251,11 +254,11 @@ fn field_rows(b: ir::Bundle, fields: vector<ir::DbField>) -> vector<FieldRow> {
     o = group_owner(fields, i);
     view = 0;
     group = 0;
-    if o >= 0 && o != i {
-      view = 1 + (if nullable_element(b, f.content) { 1 } else { 0 });
+    if o != null {
       group = o + 1;
-    } else if o >= 0 {
-      group = o + 1;
+      if o != i {
+        view = 1 + (if nullable_element(b, f.content) { 1 } else { 0 });
+      }
     }
     out += [FieldRow {
       pos: f.position,

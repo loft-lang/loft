@@ -458,8 +458,8 @@ void loft_crt_key_int(int64_t v, int64_t is_null) {
     loft_crt_key_push(loft_kv_int(is_null ? LOFT_NULL : v), 0);
 }
 
-void loft_crt_key_float(const double *v, int64_t n, int64_t single) {
-    double f = n > 0 ? v[0] : 0.0;
+void loft_crt_key_float(const double *v, int64_t n, int64_t is_null, int64_t single) {
+    double f = is_null || n < 1 ? (double) NAN : v[0];
     loft_crt_key_push(single ? loft_kv_single((float) f) : loft_kv_float(f), 0);
 }
 
