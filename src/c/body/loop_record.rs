@@ -107,24 +107,25 @@ impl super::FnWriter<'_> {
     /// A statement the port rewrites: a dropped declaration or free writes nothing, and a
     /// vector-field zero of a kept record empties the vector on a kept pass.  Answers whether
     /// `v` was handled.
-    pub(super) fn loop_record_stmt(&mut self, v: &Value, ind: usize) -> Result<bool, String> {
+    pub(super) fn loop_record_stmt(&mut self, v: &Value, ind: usize) -> bool {
         let at = std::ptr::from_ref(v.unspan()) as usize;
         if self.lr.dropped.contains(&at) {
-            return Ok(true);
+            return true;
         }
         if !self.lr.zeros.contains(&at) {
-            return Ok(false);
+            return false;
         }
         let Value::Call(_, args) = v.unspan() else {
-            return Ok(false);
+            return false;
         };
-        let (Some(Value::Var(r)), Some(Value::Int(off))) =
-            (args.first().map(Value::unspan), args.get(1).map(Value::unspan))
-        else {
-            return Ok(false);
+        let (Some(Value::Var(r)), Some(Value::Int(off))) = (
+            args.first().map(Value::unspan),
+            args.get(1).map(Value::unspan),
+        ) else {
+            return false;
         };
         if !self.lr.recs.contains_key(r) {
-            return Ok(false);
+            return false;
         }
         let var = self.var(*r);
         self.flush(ind);
@@ -134,6 +135,6 @@ impl super::FnWriter<'_> {
                 "if (lrf{r}) loft_set_int4({var}, {off}, INT64_C(0)); else loft_vec_clear(loft_field({var}, {off}));"
             ),
         );
-        Ok(true)
+        true
     }
 }
