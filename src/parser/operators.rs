@@ -6154,15 +6154,27 @@ impl Parser {
                 );
                 *ctp = Type::Boolean;
             } else if vec_null || float_null || enum_null || ref_null || senum_null || tuple_null {
-                if !self.first_pass {
-                    let (n_code, n_tp) = if *ctp == Type::Null {
-                        (second_code, second_type.clone())
+                let (n_code, n_tp) = if *ctp == Type::Null {
+                    (second_code, second_type.clone())
+                } else {
+                    (code.clone(), ctp.clone())
+                };
+                if self.first_pass {
+                    // `@FR-N-Guard` reads its proof off the condition on BOTH passes, and pass 1
+                    // keeps the type of an inferred local.  The operand alone is the truthy
+                    // `if v` to `narrowing_from_condition` — present on the THEN side — which
+                    // is `!= null`'s polarity and the opposite of `== null`'s.  Left bare, a
+                    // guard `if e == null { return … }` proved nothing after it (a struct-enum
+                    // `e == Owned` was refused there) and its null branch proved `e` PRESENT
+                    // (`y = f` there typed `y` non-null, then warned on the store), loft#2303.
+                    // The negation states the polarity in the shape the negation arm reads.
+                    *code = if operator == "==" {
+                        self.cl("OpNot", &[n_code])
                     } else {
-                        (code.clone(), ctp.clone())
+                        n_code
                     };
-                    if let Some(test) = self.null_test(n_code, &n_tp, operator == "!=") {
-                        *code = test;
-                    }
+                } else if let Some(test) = self.null_test(n_code, &n_tp, operator == "!=") {
+                    *code = test;
                 }
                 *ctp = Type::Boolean;
             } else if matches!(operator, "<" | "<=" | ">" | ">=")
