@@ -7,6 +7,7 @@
 # programmer needs to run loft offline:
 #   bin/loft(.exe)        the binary
 #   default/*.loft        the standard library (resolved at <exe-dir>/../default)
+#   lib/loft/components/  the prebuilt components (`libloft_net`: web/server/ssh natives)
 #   examples/*.loft       runnable sample programs
 #   loft-reference.pdf    the full reference (if built)
 #   README / LICENSE / CHANGELOG / QUICKSTART
@@ -79,7 +80,54 @@ TARGETS=("$@"); [ ${#TARGETS[@]} -eq 0 ] && TARGETS=("$HOST")
 # `repro_c_toolchain`, which BUILD-INFO records below — the same file repro-verify.sh asks.
 . "$(dirname "$0")/repro-toolchain.sh"
 
-
+# The components (@PLN205): the prebuilt libraries behind a package's `[native] component`,
+# such as `libloft_net` — web's, server's and ssh's natives.  `bin/loft` looks for them in
+# `<bin>/../lib/loft/components/` (src/components.rs); a bundle without them refuses every
+# program that uses one of those libraries (loft#2274).  Built by the target's own
+# `loft-components`, into a scratch LOFT_HOME so no cached TLS archive of this machine — or
+# of another architecture — is linked in.  The `.key` beside the library is that tool's
+# rebuild cache and names the scratch path, so it is not shipped; `.loft-build-fp` is what
+# the loader checks, and stays.
+build_components() {
+  local triple="$1" out="$2"
+  local tool="target/install-lib/$triple/release/loft-components"
+  case "$triple" in *windows*) tool="$tool.exe";; esac
+  [ -f "$tool" ] || { echo "make-release: no loft-components at $tool" >&2; exit 1; }
+  local home
+  home="$(mktemp -d)"
+  case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) home="$(cygpath -m "$home")";; esac
+  local cc="" arch=""
+  case "$triple" in
+    aarch64-apple-darwin) arch=arm64 ;;
+    x86_64-apple-darwin) arch=x86_64 ;;
+  esac
+  if [ "$triple" != "$HOST" ]; then
+    # The one cross leg: x86_64 macOS on Apple Silicon.  The C is the target's because the
+    # compiler is told so — not because the tool happens to run under Rosetta.
+    [ -n "$arch" ] || {
+      echo "make-release: cannot build loft's components for $triple on $HOST — build this bundle on a $triple host" >&2
+      exit 1
+    }
+    cc="$home/cc-$arch"
+    printf '#!/bin/sh\nexec cc -arch %s "$@"\n' "$arch" > "$cc"
+    chmod +x "$cc"
+  fi
+  ( export LOFT_HOME="$home"
+    [ -z "$cc" ] || export CC="$cc" LOFT_CC="$cc"
+    "$tool" --out "$out" ) || { echo "make-release: the components did not build for $triple" >&2; exit 1; }
+  rm -rf "$home"
+  rm -f "$out"/.*.key
+  local lib
+  for lib in "$out"/*loft_*; do
+    [ -f "$lib" ] || { echo "make-release: loft-components left no library in $out" >&2; exit 1; }
+    # A library of the wrong architecture is found, fingerprinted and then refused by the
+    # loader on the user's machine; say so here instead.
+    if [ -n "$arch" ] && [ "$(lipo -archs "$lib")" != "$arch" ]; then
+      echo "make-release: $lib is $(lipo -archs "$lib"), not $arch" >&2
+      exit 1
+    fi
+  done
+}
 
 for TRIPLE in "${TARGETS[@]}"; do
   echo ">> building loft for $TRIPLE"
@@ -105,6 +153,11 @@ for TRIPLE in "${TARGETS[@]}"; do
   cp README.md LICENSE CHANGELOG.md "$stage/"
   [ -f doc/loft-reference.pdf ] && cp doc/loft-reference.pdf "$stage/loft-reference.pdf"
 
+  # A second build, not a second `--bin` on the first: the shipped `loft` stays the binary
+  # `repro-verify.sh` rebuilds with `--bin loft` alone.
+  CARGO_INCREMENTAL=0 scripts/lean_build.sh --bin loft-components --target "$TRIPLE"
+  build_components "$TRIPLE" "$stage/lib/loft/components"
+
   cat > "$stage/QUICKSTART.md" <<QS
 # loft $VERSION — quick start ($TRIPLE)
 
@@ -114,7 +167,8 @@ Run a program with the bundled interpreter:
 
 The standard library lives in \`default/\` next to \`bin/\` — keep them together
 (loft loads it from \`<binary-dir>/../default\`). Put \`bin/\` on your PATH to call
-\`loft\` from anywhere.
+\`loft\` from anywhere.  \`lib/loft/components/\` holds the prebuilt native parts some
+libraries call (web, server, ssh) — keep it beside \`bin/\` too.
 
 > \`--interpret\` is the standalone runtime — it needs nothing but this bundle.
 > The faster \`--native\` mode (loft's default) compiles via \`rustc\` against loft's

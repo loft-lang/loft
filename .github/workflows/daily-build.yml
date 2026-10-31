@@ -180,6 +180,8 @@ jobs:
           out=$("$exe" --interpret _smoke/hello.loft)
           echo "$out"
           [ "$out" = "daily build ok" ] || { echo "the bundle did not run its own program"; exit 1; }
+          # The components ship and load (loft#2274): the same check as release.yml's smoke.
+          scripts/smoke-components.sh "$exe"
           # The same artefact checks as release.yml's smoke: dynamically linked, so it can
           # load a library's native code, and no glibc newer than the row's floor.
           if [ -n "${{ matrix.glibc }}" ]; then
