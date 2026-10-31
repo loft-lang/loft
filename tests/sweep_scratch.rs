@@ -10,11 +10,36 @@
 //! stop it, because an unbounded sweep spent a gate's whole 20-minute budget before its first
 //! test (RUN_BOUNDS.md § Scratch hygiene).
 
-#![cfg(unix)]
-
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+
+/// A `bash -c` script, run to its end.  The fixture uses bash for what the script under test
+/// will see the same way on every host: a process's id and an entry's age.
+fn bash(script: &str, args: &[&Path]) -> String {
+    let out = loft::platform::process::harness_command(loft::platform::bash_program())
+        .arg("-c")
+        .arg(script)
+        .arg("bash")
+        .args(args)
+        .output()
+        .expect("run bash");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// Can the sweep tell a live process from a dead one here?  It reads the process list from
+/// `ps -A -o pid=`; where that lists nothing (Git Bash's `ps` has no `-o`), no pid is known
+/// dead and every pid's artefacts stay.
+fn lists_processes() -> bool {
+    let me = std::process::id().to_string();
+    bash("ps -A -o pid= 2>/dev/null || true", &[])
+        .split_whitespace()
+        .any(|p| p == me)
+}
 
 /// A temp directory with: a live and a dead process's two native artefacts, `aged` loft
 /// entries a week old, one fresh loft entry and one old entry that is not loft's.
@@ -23,27 +48,32 @@ fn fixture(name: &str, aged: usize) -> (PathBuf, u32, u32) {
     let _ = fa::remove_dir_all(&dir);
     fa::create_dir_all(&dir).unwrap();
     let live = std::process::id();
-    let mut child = loft::platform::process::harness_command("true")
+    let mut child = loft::platform::process::harness_command(loft::platform::bash_program())
+        .args(["-c", "exit 0"])
         .spawn()
         .unwrap();
     let dead = child.id();
     child.wait().unwrap();
-    let week_ago = SystemTime::now() - Duration::from_secs(7 * 24 * 3600);
-    let age = |p: &Path| {
-        fa::open(p).unwrap().set_modified(week_ago).unwrap();
-    };
     for pid in [live, dead] {
         fa::write(dir.join(format!("loft_native_bin_{pid}")), "").unwrap();
         fa::write(dir.join(format!("loft_native_{pid}.rs")), "").unwrap();
     }
+    let mut old = Vec::new();
     for i in 0..aged {
         let e = dir.join(format!("loft_old_{i}"));
         fa::create_dir_all(e.join("inner")).unwrap();
-        age(&e);
+        old.push(e);
     }
     fa::create_dir_all(dir.join("loft_fresh")).unwrap();
     fa::create_dir_all(dir.join("other_old")).unwrap();
-    age(&dir.join("other_old"));
+    old.push(dir.join("other_old"));
+    // A week old, a directory included: `touch -t` with the stamp from GNU `date -d` (Linux,
+    // Git Bash) or BSD `date -v` (macOS).
+    let paths: Vec<&Path> = old.iter().map(PathBuf::as_path).collect();
+    bash(
+        "t=$(date -d '7 days ago' +%Y%m%d%H%M 2>/dev/null || date -v-7d +%Y%m%d%H%M) && touch -t \"$t\" \"$@\"",
+        &paths,
+    );
     (dir, live, dead)
 }
 
@@ -76,7 +106,7 @@ fn names(dir: &Path) -> Vec<String> {
 /// process's artefacts, a fresh entry and another program's entry stay.
 #[test]
 fn the_scratch_sweep_keeps_a_live_process_and_fresh_work() {
-    let (dir, live, _) = fixture("rules", 600);
+    let (dir, live, dead) = fixture("rules", 600);
     sweep(&[], &dir);
     let mut want = vec![
         "loft_fresh".to_string(),
@@ -84,6 +114,10 @@ fn the_scratch_sweep_keeps_a_live_process_and_fresh_work() {
         format!("loft_native_bin_{live}"),
         "other_old".to_string(),
     ];
+    if !lists_processes() {
+        want.push(format!("loft_native_{dead}.rs"));
+        want.push(format!("loft_native_bin_{dead}"));
+    }
     want.sort();
     assert_eq!(names(&dir), want);
     fa::remove_dir_all(&dir).unwrap();
