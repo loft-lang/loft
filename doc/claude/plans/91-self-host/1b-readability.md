@@ -73,13 +73,11 @@ tools are unchanged.  The kernels run no slower (0.28 s before, 0.22 s after, th
 R-1 met four compiler defects; the port is written in its best form and a defect is fixed in the
 compiler, never routed around in the port.  What remains, in order:
 
-1. **loft#2293 — `--native` assigns a value-record struct literal to the `DbRef` that tracks a
-   returned local's store** (E0308).  Fix.
-2. **The facts R-1's list left on `-1`**: `own::var_of`, `own::variant_check_subject`,
+1. **The facts R-1's list left on `-1`**: `own::var_of`, `own::variant_check_subject`,
    `own::fnref_target_of`, `binds::hidden_return_buffer_attr` answer -1 for none where the Rust
    answers `Option`; the same `integer?` treatment, measured the same way.  And one spelling of
    `u16::MAX`: `binds::NO_VAR` and `own::MAX` are the same value.
-3. Then the plan's queue (handoff): loft#2260, E-4, F-1.
+2. Then the plan's queue (handoff): loft#2260, E-4, F-1.
 
 Fixed on the way: loft#2292 (a local renamed onto the return buffer was copied onto itself — a
 zeroed record on every backend); loft#2295 (a hoisted call argument a borrowing return answers
@@ -89,7 +87,8 @@ order); and a closure-record leak R-2s S1(b) had introduced on this branch (`___
 a view of its slot again).  With loft#2295 fixed, the R-1 port's C build is identical to the
 baseline on all 521 images, no workaround in the port.  loft#2298 (the port's `--native` build
 failed: a discharged local compared in an `else if` — a block argument to a `#rust` template is
-now bound first) and loft#2300 (that discharge, consumed in place, leaked a copy of the record).
+now bound first), loft#2300 (that discharge, consumed in place, leaked a copy of the record) and
+loft#2293 (a value-record local was also tracked as a witnessed owner on --native: E0308).
 
 ## R-2 — the `?? panic(…)` discharges: mostly one representation choice
 

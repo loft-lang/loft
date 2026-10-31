@@ -12000,6 +12000,11 @@ extern crate loft;"
             // NULL once r holds a borrow); the in-loop displaced-free and the
             // scope-exit `OpFreeRef` (ops/ref_ops.rs) free THIS, never r's view.
             self.witness_vars = collect_witness_vars(self.data, def_nr);
+            // loft#2293 — a VALUE-RECORD local (`(R-ValueLocal)`) is a tuple of its fields
+            // with no store of its own, so it has nothing to track: kept in the set, its
+            // tracker `_own_store_x: DbRef` was assigned the tuple (rustc E0308).
+            let value_locals = &self.value_record_locals;
+            self.witness_vars.retain(|v| !value_locals.contains_key(v));
             // Emit in variable order, not hash order.  `witness_vars` is a `HashSet`,
             // whose iteration order Rust randomises PER PROCESS, so emitting straight
             // from it made the generated Rust differ between two runs of the same binary
