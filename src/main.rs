@@ -10726,6 +10726,7 @@ fn main() {
                 &shim_sources,
                 ship_build,
                 false,
+                false,
             ) {
                 eprintln!("loft: {e}");
                 std::process::exit(1);
@@ -10979,7 +10980,9 @@ fn main() {
                 .flat_map(|l| l.shim.iter().cloned())
                 .collect();
             let wasm = build_dir.join("prog.wasm");
-            if let Err(e) = c_driver::build_wasm(&c, &wasm, &shim_sources, ship_build, true) {
+            if let Err(e) =
+                c_driver::build_wasm(&c, &wasm, &shim_sources, ship_build, true, html_names)
+            {
                 eprintln!("loft: {e}");
                 std::process::exit(1);
             }

@@ -194,6 +194,13 @@ try {
 } catch (e) {
   console.error(`doc/loft-web.js load failed: ${e.message}`);
 }
+// The WASI layer a page carries for a module the C backend wrote (@PLN203 C6), as
+// `wasm_repro.mjs` loads it: the same file the `--html` driver adds.
+try {
+  (0, eval)(fs.readFileSync(path.join(repoRoot, 'doc', 'loft-wasi.js'), 'utf8'));
+} catch (e) {
+  console.error(`doc/loft-wasi.js load failed: ${e.message}`);
+}
 for (const hostJs of (process.env.LOFT_WASM_HOST_JS || '').split(':').filter(Boolean)) {
   try {
     (0, eval)(fs.readFileSync(hostJs, 'utf8'));
