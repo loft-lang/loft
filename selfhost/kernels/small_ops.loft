@@ -6,6 +6,9 @@
 // value entering a narrow integer (`OpRangeDefault`).  Each function answers one integer.
 // `ops_or` the `??` twins of `+`, `-`, `*` (`OpAddIntNullable` …): `ops_or(7, 2)` is
 // 9 * 1000 + 5 * 10 + 14 = 9064; `ops_or(-1, 2)` takes `a` as null, -1000 - 20 - 3 = -1023.
+// `enum_named` a plain enum's name (`OpCastTextFromEnum`): "Green" is 5 long, 500; "Blue" 401.
+// `text_walk` a walk over a text's characters (`OpTextCharacterNullable`, `OpLengthCharacter`):
+// "abc" is 97098099, "aé" (é is 233, two bytes) 97233.
 enum Hue { Red, Green, Blue }
 
 fn hue_number(n: integer) -> integer {
@@ -52,6 +55,21 @@ fn ops_or(n: integer, b: integer) -> integer {
   (a + b ?? -1) * 1000 + (a - b ?? -2) * 10 + (a * b ?? -3)
 }
 
+fn enum_named(n: integer) -> integer {
+  c = if n == 0 { Hue.Red } else if n == 1 { Hue.Green } else { Hue.Blue };
+  t = "{c}";
+  len(t) * 100 + (if t == "Blue" { 1 } else { 0 })
+}
+
+fn text_walk(n: integer) -> integer {
+  t = if n == 0 { "abc" } else { "aé" };
+  s = 0;
+  for c in t {
+    s = s * 1000 + c as integer;
+  }
+  s
+}
+
 fn main() {
-  println("{hue_number(0)} {hue_number(1)} {hue_number(2)} {div_or(7, 2)} {div_or(7, 0)} {rem_or(7, 3)} {rem_or(7, 0)} {abs_floats(-6)} {abs_floats(6)} {char_or_zero(0)} {char_or_zero(233)} {narrow(200)} {narrow(300)} {narrow_or_null(200)} {narrow_or_null(300)} {ops_or(7, 2)} {ops_or(-1, 2)}");
+  println("{hue_number(0)} {hue_number(1)} {hue_number(2)} {div_or(7, 2)} {div_or(7, 0)} {rem_or(7, 3)} {rem_or(7, 0)} {abs_floats(-6)} {abs_floats(6)} {char_or_zero(0)} {char_or_zero(233)} {narrow(200)} {narrow(300)} {narrow_or_null(200)} {narrow_or_null(300)} {ops_or(7, 2)} {ops_or(-1, 2)} {enum_named(1)} {enum_named(2)} {text_walk(0)} {text_walk(1)}");
 }

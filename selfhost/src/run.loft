@@ -1018,6 +1018,55 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
         put_int(ints, sp_int, if (ints[sp_int] ?? NULL_STORE) != (ints[sp_int + 3] ?? NULL_STORE) { 1 } else { 0 });
         sp_int += 1;
       }
+      // `OpCastTextFromEnum` (`Stores::enum_val`): the absent discriminant (0, 255, null) casts
+      // to the null text, a value past the names to "null", any other to its variant's name.
+      EnumName => {
+        sp_int -= 1;
+        ev = ints[sp_int];
+        nm: text? = if ev == null || ev == 0 || ev == 255 {
+          null
+        } else if ev > op.b {
+          "null"
+        } else {
+          prog.texts[op.a + ev! - 1]
+        };
+        put_text(texts, sp_text, nm);
+        sp_text += 1;
+      }
+      // `ops::text_character`: the character holding byte `i` (negative from the end), null — the
+      // character 0 — out of range.
+      TextChar => {
+        sp_int -= 1;
+        ci = ints[sp_int] ?? 0;
+        sp_text -= 1;
+        ct = texts[sp_text] ?? "";
+        at = if ci < 0 { ci + ct.size() } else { ci };
+        cp: integer? = if at < 0 || at >= ct.size() { null } else { ct[at] as integer };
+        put_int(ints, sp_int, if cp == 0 { null } else { cp });
+        sp_int += 1;
+      }
+      // `OpTextWalkStep` (`State::text_walk_step`): `#index` takes `#next`; the loop variable the
+      // character there, null past the end; `#next` moves by its width, at least by one.
+      TextWalkStep => {
+        ws = prog.walk_slots[op.b]!;
+        wat = slot_int(stk, base + ws.next, 0) ?? 0;
+        wt = crt::slot_text(stk, base + ws.src, ws.src_arg) ?? "";
+        wi = if wat < 0 { wat + wt.size() } else { wat };
+        wcp: integer = if wi < 0 || wi >= wt.size() { 0 } else { wt[wi] as integer };
+        wwidth = if wcp <= 0 { 0 } else if wcp < 128 { 1 } else if wcp < 2048 { 2 } else if wcp < 65536 { 3 } else { 4 };
+        moved = wat + wwidth;
+        if moved <= wat {
+          moved = wat + 1;
+        }
+        set_slot_int(stk, base + ws.index, 0, wat);
+        set_slot_int(stk, base + ws.next, 0, moved);
+        set_slot_int(stk, base + op.a, ws.c_access, if wcp == 0 { null } else { wcp });
+      }
+      // `State::length_character`: the UTF-8 length of the character, 0 for the null character.
+      CharLen => {
+        cc = ints[sp_int - 1] ?? 0;
+        ints[sp_int - 1] = if cc <= 0 { 0 } else if cc < 128 { 1 } else if cc < 2048 { 2 } else if cc < 65536 { 3 } else { 4 };
+      }
       ClearKeyed => {
         if !table_loaded {
           load_table(b);

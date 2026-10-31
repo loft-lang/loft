@@ -203,6 +203,24 @@ pub fn content_of(b: ir::Bundle, tp: integer) -> integer? {
   }
 }
 
+// A plain enum's variant names in their order, or null when `tp` is no plain enum.
+pub fn enum_names(b: ir::Bundle, tp: integer) -> vector<text>? {
+  t = b.types[tp];
+  if t == null {
+    return null;
+  }
+  match t.parts[0]! {
+    PtEnum { values } => {
+      names: vector<text> = [];
+      for v in values {
+        names += [v.name];
+      }
+      names
+    }
+    _ => null,
+  }
+}
+
 // Is `tp` a keyed collection — a hash, index, sorted, ordered, spatial or trie (`Cx::keyed`)?
 pub fn is_keyed(b: ir::Bundle, tp: integer) -> boolean {
   t = b.types[tp];
