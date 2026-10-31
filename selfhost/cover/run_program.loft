@@ -26,7 +26,7 @@ fn main() {
   }
   name = a[at + 1] ?? "n_main";
   entry = lower::find(b, name);
-  if entry < 0 {
+  if entry == null {
     eprintln("refused: the image has no {name}");
     exit(3);
   }
