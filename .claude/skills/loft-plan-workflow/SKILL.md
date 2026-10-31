@@ -4,23 +4,7 @@ description: How to run plan-shaped work end to end — decide whether something
 user-invocable: false
 ---
 
-## What this skill is — and what's portable
-
-The methodology below is **tree-agnostic**: the way you decide *whether* work is a
-plan, open it, run an investigation, and close it is identical in any project that
-organizes multi-phase work as plans.  The concrete paths, templates, tracker, and
-naming that bind it to *this* repository live in **one place** — [§ Bind to your
-tree](#bind-to-your-tree) at the bottom.  Carrying this skill into another tree
-means keeping the body unchanged and repointing that one section.
-
-This skill is **procedural-only**.  Definitions, rationale, and templates live in
-the source docs the bindings point at — not restated here.
-
-**Cross-cuts:** branch / commit / push policy and bug-filing policy live in the
-repo's master instructions (loft: `CLAUDE.md`).  This skill assumes you've already
-followed those.
-
----
+# Plan workflow
 
 ## Pick the lightest workflow that fits
 
@@ -42,6 +26,16 @@ genuinely multi-phase **and** benefits from its own document space.  The sharpes
 promote-up triggers (including the one-liner *"about to `#[ignore]` an existing
 test"*) are in `plans/README.md § When a problem should escalate` — check it when
 the tier is unclear.
+
+---
+
+## Portability
+
+The method is **tree-agnostic**; the paths, templates, tracker and naming that bind it to
+this repository live in one place, [§ Bind to your tree](#bind-to-your-tree) — carry the
+skill elsewhere by repointing that section.  It is procedural only: definitions, rationale
+and templates live in the docs the bindings name, and branch / commit / bug-filing policy
+in the repo's master instructions (loft: `CLAUDE.md`), which this skill assumes you followed.
 
 ---
 
