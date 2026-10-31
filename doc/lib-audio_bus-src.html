@@ -23,8 +23,8 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <a href="https://loft-lang.org/blog/">Blog</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>audio_bus source</h1>
 <article>
-<p><a href="lib-audio_bus.html">← audio_bus</a> · <a href="lib-audio_bus-api.html">API reference</a> · version 0.1.3</p>
-<p class="lib-legend">2 file(s), 420 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-audio_bus.html">← audio_bus</a> · <a href="lib-audio_bus-api.html">API reference</a> · version 0.2.0</p>
+<p class="lib-legend">2 file(s), 479 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
@@ -32,7 +32,7 @@
 <tr><td><code>Bus</code> <span class="search-kind">struct</span></td><td><a href="#src-audio-bus-loft-L36">36</a></td><td>—</td><td><a href="#src-audio-bus-loft-L61">61</a> <a href="#src-audio-bus-loft-L78">78</a> <a href="#src-audio-bus-loft-L91">91</a></td></tr>
 <tr><td><code>Voice</code> <span class="search-kind">struct</span></td><td><a href="#src-audio-bus-loft-L49">49</a></td><td>—</td><td><a href="#src-audio-bus-loft-L62">62</a> <a href="#src-audio-bus-loft-L132">132</a></td></tr>
 <tr><td><code>Mixer</code> <span class="search-kind">struct</span></td><td><a href="#src-audio-bus-loft-L60">60</a></td><td>—</td><td><a href="#src-audio-bus-loft-L76">76</a> <a href="#src-audio-bus-loft-L77">77</a> <a href="#src-audio-bus-loft-L87">87</a> <a href="#src-audio-bus-loft-L100">100</a> <a href="#src-audio-bus-loft-L118">118</a> <a href="#src-audio-bus-loft-L129">129</a> … (20 total)</td></tr>
-<tr><td><code>MASTER</code> <span class="search-kind">const</span></td><td><a href="#src-audio-bus-loft-L66">66</a></td><td>—</td><td><a href="#src-audio-bus-loft-L78">78</a> <a href="#src-audio-bus-loft-L87">87</a> <a href="#tests-bus-loft-L15">15</a> <a href="#tests-bus-loft-L16">16</a> <a href="#tests-bus-loft-L23">23</a> <a href="#tests-bus-loft-L26">26</a> … (9 total)</td></tr>
+<tr><td><code>MASTER</code> <span class="search-kind">const</span></td><td><a href="#src-audio-bus-loft-L66">66</a></td><td>—</td><td><a href="#src-audio-bus-loft-L78">78</a> <a href="#src-audio-bus-loft-L87">87</a> <a href="#tests-bus-loft-L15">15</a> <a href="#tests-bus-loft-L16">16</a> <a href="#tests-bus-loft-L23">23</a> <a href="#tests-bus-loft-L26">26</a> … (10 total)</td></tr>
 <tr><td><code>MAX_DEPTH</code> <span class="search-kind">const</span></td><td><a href="#src-audio-bus-loft-L73">73</a></td><td>—</td><td><a href="#src-audio-bus-loft-L103">103</a> <a href="#src-audio-bus-loft-L261">261</a></td></tr>
 <tr><td><code>mixer</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-bus-loft-L76">76</a></td><td>—</td><td><a href="#tests-bus-loft-L14">14</a> <a href="#tests-bus-loft-L46">46</a> <a href="#tests-bus-loft-L105">105</a> <a href="#tests-bus-loft-L115">115</a> <a href="#tests-bus-loft-L125">125</a> <a href="#tests-bus-loft-L132">132</a> … (7 total)</td></tr>
 <tr><td><code>add</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-bus-loft-L87">87</a></td><td>—</td><td><a href="#tests-bus-loft-L15">15</a> <a href="#tests-bus-loft-L16">16</a> <a href="#tests-bus-loft-L17">17</a> <a href="#tests-bus-loft-L36">36</a> <a href="#tests-bus-loft-L37">37</a> <a href="#tests-bus-loft-L133">133</a> … (7 total)</td></tr>
@@ -40,17 +40,17 @@
 <tr><td><code>level</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-bus-loft-L118">118</a></td><td>—</td><td><a href="#src-audio-bus-loft-L133">133</a> <a href="#tests-bus-loft-L23">23</a> <a href="#tests-bus-loft-L28">28</a> <a href="#tests-bus-loft-L43">43</a> <a href="#tests-bus-loft-L45">45</a> <a href="#tests-bus-loft-L46">46</a> … (14 total)</td></tr>
 <tr><td><code>attach</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-bus-loft-L129">129</a></td><td>—</td><td><a href="#src-audio-bus-loft-L152">152</a> <a href="#tests-bus-loft-L42">42</a> <a href="#tests-bus-loft-L47">47</a> <a href="#tests-bus-loft-L81">81</a> <a href="#tests-bus-loft-L99">99</a> <a href="#tests-bus-loft-L100">100</a> … (9 total)</td></tr>
 <tr><td><code>detach</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-bus-loft-L138">138</a></td><td>—</td><td><a href="#tests-bus-loft-L114">114</a></td></tr>
-<tr><td><code>play</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-bus-loft-L147">147</a></td><td>—</td><td><a href="#tests-bus-loft-L147">147</a> <a href="#tests-bus-loft-L150">150</a></td></tr>
-<tr><td><code>set_volume</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-bus-loft-L168">168</a></td><td>—</td><td><a href="#tests-bus-loft-L26">26</a> <a href="#tests-bus-loft-L35">35</a> <a href="#tests-bus-loft-L44">44</a> <a href="#tests-bus-loft-L55">55</a> <a href="#tests-bus-loft-L69">69</a> <a href="#tests-bus-loft-L91">91</a></td></tr>
+<tr><td><code>play</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-bus-loft-L147">147</a></td><td>—</td><td><a href="#src-audio-bus-loft-L150">150</a> <a href="#tests-bus-loft-L147">147</a> <a href="#tests-bus-loft-L150">150</a> <a href="#tests-bus-loft-L173">173</a> <a href="#tests-bus-loft-L183">183</a> <a href="#tests-bus-loft-L193">193</a> … (8 total)</td></tr>
+<tr><td><code>set_volume</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-bus-loft-L168">168</a></td><td>—</td><td><a href="#src-audio-bus-loft-L133">133</a> <a href="#src-audio-bus-loft-L159">159</a> <a href="#tests-bus-loft-L26">26</a> <a href="#tests-bus-loft-L35">35</a> <a href="#tests-bus-loft-L44">44</a> <a href="#tests-bus-loft-L55">55</a> … (9 total)</td></tr>
 <tr><td><code>volume</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-bus-loft-L177">177</a></td><td>—</td><td><a href="#src-audio-bus-loft-L87">87</a> <a href="#src-audio-bus-loft-L91">91</a> <a href="#src-audio-bus-loft-L129">129</a> <a href="#src-audio-bus-loft-L132">132</a> <a href="#src-audio-bus-loft-L147">147</a> <a href="#src-audio-bus-loft-L150">150</a> … (18 total)</td></tr>
-<tr><td><code>duck</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-bus-loft-L190">190</a></td><td>—</td><td><a href="#tests-bus-loft-L58">58</a> <a href="#tests-bus-loft-L70">70</a> <a href="#tests-bus-loft-L71">71</a> <a href="#tests-bus-loft-L72">72</a> <a href="#tests-bus-loft-L75">75</a> <a href="#tests-bus-loft-L83">83</a> … (9 total)</td></tr>
-<tr><td><code>unduck</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-bus-loft-L204">204</a></td><td>—</td><td><a href="#tests-bus-loft-L60">60</a> <a href="#tests-bus-loft-L73">73</a> <a href="#tests-bus-loft-L76">76</a> <a href="#tests-bus-loft-L85">85</a></td></tr>
-<tr><td><code>ducked</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-bus-loft-L215">215</a></td><td>—</td><td><a href="#tests-bus-loft-L58">58</a> <a href="#tests-bus-loft-L59">59</a> <a href="#tests-bus-loft-L64">64</a></td></tr>
+<tr><td><code>duck</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-bus-loft-L190">190</a></td><td>—</td><td><a href="#tests-bus-loft-L58">58</a> <a href="#tests-bus-loft-L70">70</a> <a href="#tests-bus-loft-L71">71</a> <a href="#tests-bus-loft-L72">72</a> <a href="#tests-bus-loft-L75">75</a> <a href="#tests-bus-loft-L83">83</a> … (10 total)</td></tr>
+<tr><td><code>unduck</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-bus-loft-L204">204</a></td><td>—</td><td><a href="#tests-bus-loft-L60">60</a> <a href="#tests-bus-loft-L73">73</a> <a href="#tests-bus-loft-L76">76</a> <a href="#tests-bus-loft-L85">85</a> <a href="#tests-bus-loft-L196">196</a></td></tr>
+<tr><td><code>ducked</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-bus-loft-L215">215</a></td><td>—</td><td><a href="#tests-bus-loft-L58">58</a> <a href="#tests-bus-loft-L59">59</a> <a href="#tests-bus-loft-L64">64</a> <a href="#tests-bus-loft-L195">195</a></td></tr>
 <tr><td><code>pan</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-bus-loft-L223">223</a></td><td>—</td><td><a href="#src-audio-bus-loft-L148">148</a> <a href="#src-audio-bus-loft-L150">150</a> <a href="#tests-bus-loft-L122">122</a> <a href="#tests-bus-loft-L123">123</a></td></tr>
-<tr><td><code>stop</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-bus-loft-L229">229</a></td><td>—</td><td><a href="#tests-bus-loft-L116">116</a> <a href="#tests-bus-loft-L124">124</a> <a href="#tests-bus-loft-L126">126</a></td></tr>
-<tr><td><code>stop_bus</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-bus-loft-L239">239</a></td><td>—</td><td><a href="#tests-bus-loft-L104">104</a> <a href="#tests-bus-loft-L116">116</a></td></tr>
-<tr><td><code>stop_all</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-bus-loft-L250">250</a></td><td>—</td><td><a href="#tests-bus-loft-L107">107</a> <a href="#tests-bus-loft-L108">108</a> <a href="#tests-bus-loft-L127">127</a> <a href="#tests-bus-loft-L149">149</a></td></tr>
-<tr><td><code>under</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-bus-loft-L259">259</a></td><td>—</td><td><a href="#src-audio-bus-loft-L241">241</a> <a href="#tests-bus-loft-L24">24</a> <a href="#tests-bus-loft-L102">102</a> <a href="#tests-bus-loft-L103">103</a> <a href="#tests-bus-loft-L137">137</a></td></tr>
+<tr><td><code>stop</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-bus-loft-L229">229</a></td><td>—</td><td><a href="#src-audio-bus-loft-L231">231</a> <a href="#src-audio-bus-loft-L243">243</a> <a href="#tests-bus-loft-L116">116</a> <a href="#tests-bus-loft-L124">124</a> <a href="#tests-bus-loft-L126">126</a></td></tr>
+<tr><td><code>stop_bus</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-bus-loft-L239">239</a></td><td>—</td><td><a href="#tests-bus-loft-L104">104</a> <a href="#tests-bus-loft-L116">116</a> <a href="#tests-bus-loft-L207">207</a></td></tr>
+<tr><td><code>stop_all</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-bus-loft-L250">250</a></td><td>—</td><td><a href="#src-audio-bus-loft-L253">253</a> <a href="#tests-bus-loft-L107">107</a> <a href="#tests-bus-loft-L108">108</a> <a href="#tests-bus-loft-L127">127</a> <a href="#tests-bus-loft-L149">149</a></td></tr>
+<tr><td><code>under</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-bus-loft-L259">259</a></td><td>—</td><td><a href="#src-audio-bus-loft-L241">241</a> <a href="#tests-bus-loft-L24">24</a> <a href="#tests-bus-loft-L102">102</a> <a href="#tests-bus-loft-L103">103</a> <a href="#tests-bus-loft-L137">137</a> <a href="#tests-bus-loft-L207">207</a></td></tr>
 </table>
 <h2 id="src-audio-bus-loft">src/audio_bus.loft</h2>
 <pre class="src"><code><span id="src-audio-bus-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -65,7 +65,7 @@
 <span id="src-audio-bus-loft-L10"><span class="cm">// &gt; and a duck that is lifted restores the level EXACTLY.**</span></span>
 <span id="src-audio-bus-loft-L11"><span class="cm">//</span></span>
 <span id="src-audio-bus-loft-L12"><span class="cm">// Both halves are the whole package. The first says why a mixer exists at all:</span></span>
-<span id="src-audio-bus-loft-L13"><span class="cm">// `graphics::audio_set_volume` moves one sink, so "turn the music down" without a</span></span>
+<span id="src-audio-bus-loft-L13"><span class="cm">// `audio::set_volume` moves one voice, so "turn the music down" without a</span></span>
 <span id="src-audio-bus-loft-L14"><span class="cm">// bus means walking a list a game had to keep itself, and "turn everything down"</span></span>
 <span id="src-audio-bus-loft-L15"><span class="cm">// means walking all of them. The second says why ducking is not a multiplication:</span></span>
 <span id="src-audio-bus-loft-L16"><span class="cm">// a game ducks the music under speech a thousand times an hour, and restoring by</span></span>
@@ -81,11 +81,11 @@
 <span id="src-audio-bus-loft-L26"><span class="cm">// here is a number that multiplies, arranged in a tree. That is what a 2-D game</span></span>
 <span id="src-audio-bus-loft-L27"><span class="cm">// wants from a mixer, and everything past it belongs to a sound engine.</span></span>
 <span id="src-audio-bus-loft-L28"><span class="cm">//</span></span>
-<span id="src-audio-bus-loft-L29"><span class="cm">// Not an owner of playback either: `graphics` plays the sounds and this decides</span></span>
+<span id="src-audio-bus-loft-L29"><span class="cm">// Not an owner of playback either: `audio` plays the sounds and this decides</span></span>
 <span id="src-audio-bus-loft-L30"><span class="cm">// how loud. A sink a caller played itself is welcome — `attach` puts an existing</span></span>
 <span id="src-audio-bus-loft-L31"><span class="cm">// handle on a bus — which is also what lets every rule here be tested on a</span></span>
 <span id="src-audio-bus-loft-L32"><span class="cm">// machine with no audio device at all.</span></span>
-<span id="src-audio-bus-loft-L33"><span class="kw">use</span> graphics;</span>
+<span id="src-audio-bus-loft-L33"><span class="kw">use</span> audio;</span>
 <span id="src-audio-bus-loft-L34"></span>
 <span id="src-audio-bus-loft-L35"><span class="cm">/// One level in the tree: a name, a level, and what it hangs under.</span></span>
 <span id="src-audio-bus-loft-L36"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Bus</span> {</span>
@@ -102,7 +102,7 @@
 <span id="src-audio-bus-loft-L47"></span>
 <span id="src-audio-bus-loft-L48"><span class="cm">/// One playing sound, and the bus it answers to.</span></span>
 <span id="src-audio-bus-loft-L49"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Voice</span> {</span>
-<span id="src-audio-bus-loft-L50">  <span class="cm">/// The handle `graphics::audio_play` answered — the key, because it is the</span></span>
+<span id="src-audio-bus-loft-L50">  <span class="cm">/// The voice handle `audio::play` answered — the key, because it is the</span></span>
 <span id="src-audio-bus-loft-L51">  <span class="cm">/// one thing a caller already holds.</span></span>
 <span id="src-audio-bus-loft-L52">  vc_sink: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
 <span id="src-audio-bus-loft-L53">  vc_bus: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span>,</span>
@@ -178,14 +178,14 @@
 <span id="src-audio-bus-loft-L123"></span>
 <span id="src-audio-bus-loft-L124"><span class="cm">/// Put an already-playing sink on a bus at its own level.</span></span>
 <span id="src-audio-bus-loft-L125"><span class="cm">///</span></span>
-<span id="src-audio-bus-loft-L126"><span class="cm">/// The seam this package is built around: `play` is `graphics::audio_play`</span></span>
+<span id="src-audio-bus-loft-L126"><span class="cm">/// The seam this package is built around: `play` is `audio::play`</span></span>
 <span id="src-audio-bus-loft-L127"><span class="cm">/// followed by this, and a caller who plays a sound their own way — a procedural</span></span>
 <span id="src-audio-bus-loft-L128"><span class="cm">/// effect, a clip started before the mixer existed — gets the same bus.</span></span>
 <span id="src-audio-bus-loft-L129"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">attach</span>(m: <span class="en">Mixer</span>, sink: <span class="ty"><a href="stdlib-types.html">integer</a></span>, bus: <span class="ty"><a href="stdlib-types.html">text</a></span>, volume: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
 <span id="src-audio-bus-loft-L130">  <span class="kw">if</span> sink &lt; <span class="nm">0</span> || m.buses[bus] == <span class="kw">null</span> { <span class="kw">return</span> <span class="kw">false</span> }</span>
 <span id="src-audio-bus-loft-L131">  <span class="kw">if</span> m.voices[sink] != <span class="kw">null</span> { m.voices[sink] = <span class="kw">null</span>; }</span>
 <span id="src-audio-bus-loft-L132">  m.voices += [<span class="en">Voice</span> { vc_sink: sink, vc_bus: bus, vc_volume: volume }];</span>
-<span id="src-audio-bus-loft-L133">  graphics::<span class="fn-call">audio_set_volume</span>(sink, <span class="fn-call">level</span>(m, sink));</span>
+<span id="src-audio-bus-loft-L133">  audio::<span class="fn-call">set_volume</span>(sink, <span class="fn-call">level</span>(m, sink));</span>
 <span id="src-audio-bus-loft-L134">  <span class="kw">true</span></span>
 <span id="src-audio-bus-loft-L135">}</span>
 <span id="src-audio-bus-loft-L136"></span>
@@ -194,7 +194,7 @@
 <span id="src-audio-bus-loft-L139">  <span class="kw">if</span> m.voices[sink] != <span class="kw">null</span> { m.voices[sink] = <span class="kw">null</span>; }</span>
 <span id="src-audio-bus-loft-L140">}</span>
 <span id="src-audio-bus-loft-L141"></span>
-<span id="src-audio-bus-loft-L142"><span class="cm">/// Play a clip on a bus. The arguments past `volume` are `graphics::audio_play`'s</span></span>
+<span id="src-audio-bus-loft-L142"><span class="cm">/// Play a clip on a bus. The arguments past `volume` are `audio::play`'s</span></span>
 <span id="src-audio-bus-loft-L143"><span class="cm">/// and mean exactly what they mean there.</span></span>
 <span id="src-audio-bus-loft-L144"><span class="cm">///</span></span>
 <span id="src-audio-bus-loft-L145"><span class="cm">/// Answers the sink handle, or -1 when the sound did not start — in which case</span></span>
@@ -202,7 +202,7 @@
 <span id="src-audio-bus-loft-L147"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">play</span>(m: <span class="en">Mixer</span>, bus: <span class="ty"><a href="stdlib-types.html">text</a></span>, clip: <span class="ty"><a href="stdlib-types.html">integer</a></span>, volume: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span>,</span>
 <span id="src-audio-bus-loft-L148">            looping: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>, pan: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>, start: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
 <span id="src-audio-bus-loft-L149">  <span class="kw">if</span> m.buses[bus] == <span class="kw">null</span> { <span class="kw">return</span> -<span class="nm">1</span> }</span>
-<span id="src-audio-bus-loft-L150">  py_sink = graphics::<span class="fn-call">audio_play</span>(clip, volume * <span class="fn-call">gain</span>(m, bus), looping, pan, start);</span>
+<span id="src-audio-bus-loft-L150">  py_sink = audio::<span class="fn-call">play</span>(clip, volume * <span class="fn-call">gain</span>(m, bus), looping, pan, start) ?? -<span class="nm">1</span>;</span>
 <span id="src-audio-bus-loft-L151">  <span class="kw">if</span> py_sink &lt; <span class="nm">0</span> { <span class="kw">return</span> -<span class="nm">1</span> }</span>
 <span id="src-audio-bus-loft-L152">  _ = <span class="fn-call">attach</span>(m, py_sink, bus, volume);</span>
 <span id="src-audio-bus-loft-L153">  py_sink</span>
@@ -211,7 +211,7 @@
 <span id="src-audio-bus-loft-L156"><span class="cm">/// Re-apply every voice's level — after a bus moved, or after a whole tree did.</span></span>
 <span id="src-audio-bus-loft-L157"><span class="kw">fn</span> <span class="fn-call">reapply</span>(m: <span class="en">Mixer</span>) {</span>
 <span id="src-audio-bus-loft-L158">  <span class="kw">for</span> v <span class="kw">in</span> m.voices {</span>
-<span id="src-audio-bus-loft-L159">    graphics::<span class="fn-call">audio_set_volume</span>(v.vc_sink, v.vc_volume * <span class="fn-call">gain</span>(m, v.vc_bus));</span>
+<span id="src-audio-bus-loft-L159">    audio::<span class="fn-call">set_volume</span>(v.vc_sink, v.vc_volume * <span class="fn-call">gain</span>(m, v.vc_bus));</span>
 <span id="src-audio-bus-loft-L160">  }</span>
 <span id="src-audio-bus-loft-L161">}</span>
 <span id="src-audio-bus-loft-L162"></span>
@@ -277,13 +277,13 @@
 <span id="src-audio-bus-loft-L222"><span class="cm">/// list, so this is where a caller already is.</span></span>
 <span id="src-audio-bus-loft-L223"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">pan</span>(m: const <span class="en">Mixer</span>, sink: <span class="ty"><a href="stdlib-types.html">integer</a></span>, position: <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
 <span id="src-audio-bus-loft-L224">  <span class="kw">if</span> m.voices[sink] == <span class="kw">null</span> { <span class="kw">return</span> }</span>
-<span id="src-audio-bus-loft-L225">  graphics::<span class="fn-call">audio_set_pan</span>(sink, position);</span>
+<span id="src-audio-bus-loft-L225">  audio::<span class="fn-call">set_pan</span>(sink, position);</span>
 <span id="src-audio-bus-loft-L226">}</span>
 <span id="src-audio-bus-loft-L227"></span>
 <span id="src-audio-bus-loft-L228"><span class="cm">/// Stop one sound and forget it.</span></span>
 <span id="src-audio-bus-loft-L229"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">stop</span>(m: <span class="en">Mixer</span>, sink: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
 <span id="src-audio-bus-loft-L230">  <span class="kw">if</span> m.voices[sink] == <span class="kw">null</span> { <span class="kw">return</span> }</span>
-<span id="src-audio-bus-loft-L231">  graphics::<span class="fn-call">audio_stop</span>(sink);</span>
+<span id="src-audio-bus-loft-L231">  audio::<span class="fn-call">stop</span>(sink);</span>
 <span id="src-audio-bus-loft-L232">  m.voices[sink] = <span class="kw">null</span>;</span>
 <span id="src-audio-bus-loft-L233">}</span>
 <span id="src-audio-bus-loft-L234"></span>
@@ -295,7 +295,7 @@
 <span id="src-audio-bus-loft-L240">  sb_gone: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
 <span id="src-audio-bus-loft-L241">  <span class="kw">for</span> v <span class="kw">in</span> m.voices <span class="kw">if</span> <span class="fn-call">under</span>(m, v.vc_bus, name) { sb_gone += [v.vc_sink]; }</span>
 <span id="src-audio-bus-loft-L242">  <span class="kw">for</span> s <span class="kw">in</span> sb_gone {</span>
-<span id="src-audio-bus-loft-L243">    graphics::<span class="fn-call">audio_stop</span>(s);</span>
+<span id="src-audio-bus-loft-L243">    audio::<span class="fn-call">stop</span>(s);</span>
 <span id="src-audio-bus-loft-L244">    m.voices[s] = <span class="kw">null</span>;</span>
 <span id="src-audio-bus-loft-L245">  }</span>
 <span id="src-audio-bus-loft-L246">  <span class="bi"><a href="stdlib-text.html">len</a></span>(sb_gone)</span>
@@ -305,7 +305,7 @@
 <span id="src-audio-bus-loft-L250"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">stop_all</span>(m: <span class="en">Mixer</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
 <span id="src-audio-bus-loft-L251">  sa_gone: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
 <span id="src-audio-bus-loft-L252">  <span class="kw">for</span> v <span class="kw">in</span> m.voices { sa_gone += [v.vc_sink]; }</span>
-<span id="src-audio-bus-loft-L253">  graphics::<span class="fn-call">audio_stop_all</span>();</span>
+<span id="src-audio-bus-loft-L253">  audio::<span class="fn-call">stop_all</span>();</span>
 <span id="src-audio-bus-loft-L254">  <span class="kw">for</span> s <span class="kw">in</span> sa_gone { m.voices[s] = <span class="kw">null</span>; }</span>
 <span id="src-audio-bus-loft-L255">  <span class="bi"><a href="stdlib-text.html">len</a></span>(sa_gone)</span>
 <span id="src-audio-bus-loft-L256">}</span>
@@ -329,12 +329,12 @@
 <span id="tests-bus-loft-L3"><span class="cm">//</span></span>
 <span id="tests-bus-loft-L4"><span class="cm">// What a bus multiplies, and what a duck puts back.</span></span>
 <span id="tests-bus-loft-L5"><span class="cm">//</span></span>
-<span id="tests-bus-loft-L6"><span class="cm">// Every number below is hand-computed from the tree, not read off a run. And</span></span>
-<span id="tests-bus-loft-L7"><span class="cm">// nothing here plays a sound: CI has no audio device, so a test that needed one</span></span>
-<span id="tests-bus-loft-L8"><span class="cm">// would gate nothing — `attach` puts a handle a caller already has on a bus, and</span></span>
-<span id="tests-bus-loft-L9"><span class="cm">// that is the seam this whole suite runs through.</span></span>
+<span id="tests-bus-loft-L6"><span class="cm">// Every number below is hand-computed from the tree, not read off a run.  CI has</span></span>
+<span id="tests-bus-loft-L7"><span class="cm">// no audio device, so nothing here opens one: the `attach` cells put a handle a</span></span>
+<span id="tests-bus-loft-L8"><span class="cm">// caller already has on a bus, and the `heard` cells read the mix itself back</span></span>
+<span id="tests-bus-loft-L9"><span class="cm">// through `audio::render`, which is what a device would play.</span></span>
 <span id="tests-bus-loft-L10"><span class="kw">use</span> audio_bus;</span>
-<span id="tests-bus-loft-L11"><span class="kw">use</span> graphics;</span>
+<span id="tests-bus-loft-L11"><span class="kw">use</span> audio;</span>
 <span id="tests-bus-loft-L12"></span>
 <span id="tests-bus-loft-L13"><span class="kw">fn</span> <span class="fn-call">a_mixer</span>() -&gt; audio_bus::<span class="en">Mixer</span> {</span>
 <span id="tests-bus-loft-L14">  m = audio_bus::<span class="fn-call">mixer</span>();</span>
@@ -445,7 +445,7 @@
 <span id="tests-bus-loft-L119"><span class="kw">fn</span> <span class="fn-call">test_stopping_and_panning_one_voice</span>() {</span>
 <span id="tests-bus-loft-L120">  m = <span class="fn-call">a_mixer</span>();</span>
 <span id="tests-bus-loft-L121">  _ = audio_bus::<span class="fn-call">attach</span>(m, <span class="nm">4</span>, <span class="st">"music"</span>, <span class="nm">1.0</span>);</span>
-<span id="tests-bus-loft-L122">  audio_bus::<span class="fn-call">pan</span>(m, <span class="nm">4</span>, -<span class="nm">1.0</span>);          <span class="cm">// reaches graphics; nothing here to read back</span></span>
+<span id="tests-bus-loft-L122">  audio_bus::<span class="fn-call">pan</span>(m, <span class="nm">4</span>, -<span class="nm">1.0</span>);          <span class="cm">// reaches audio; nothing here to read back</span></span>
 <span id="tests-bus-loft-L123">  audio_bus::<span class="fn-call">pan</span>(m, <span class="nm">404</span>, -<span class="nm">1.0</span>);        <span class="cm">// …and a sink nobody attached is a no-op</span></span>
 <span id="tests-bus-loft-L124">  audio_bus::<span class="fn-call">stop</span>(m, <span class="nm">4</span>);</span>
 <span id="tests-bus-loft-L125">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(audio_bus::<span class="fn-call">level</span>(m, <span class="nm">4</span>) == <span class="nm">0.0</span>, <span class="st">"a stopped voice is off the mixer"</span>);</span>
@@ -469,12 +469,70 @@
 <span id="tests-bus-loft-L143">  <span class="cm">// which never started leaves no voice behind: a mixer whose list fills up with</span></span>
 <span id="tests-bus-loft-L144">  <span class="cm">// handles that are not playing reports a scene as noisy when it is silent.</span></span>
 <span id="tests-bus-loft-L145">  m = <span class="fn-call">a_mixer</span>();</span>
-<span id="tests-bus-loft-L146">  clip = graphics::<span class="fn-call">audio_load</span>(<span class="st">"no-such-file.wav"</span>);</span>
+<span id="tests-bus-loft-L146">  clip = audio::<span class="fn-call">load</span>(<span class="st">"no-such-file.wav"</span>) ?? <span class="nm">0</span>;</span>
 <span id="tests-bus-loft-L147">  sink = audio_bus::<span class="fn-call">play</span>(m, <span class="st">"music"</span>, clip, <span class="nm">1.0</span>);</span>
 <span id="tests-bus-loft-L148">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sink &lt; <span class="nm">0</span>, <span class="st">"no clip, no sound"</span>);</span>
 <span id="tests-bus-loft-L149">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(audio_bus::<span class="fn-call">stop_all</span>(m) == <span class="nm">0</span>, <span class="st">"and no voice on the mixer"</span>);</span>
 <span id="tests-bus-loft-L150">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(audio_bus::<span class="fn-call">play</span>(m, <span class="st">"voices"</span>, clip, <span class="nm">1.0</span>) &lt; <span class="nm">0</span>, <span class="st">"a bus nobody declared plays nothing"</span>);</span>
 <span id="tests-bus-loft-L151">}</span>
+<span id="tests-bus-loft-L152"></span>
+<span id="tests-bus-loft-L153"><span class="cm">// --- What is heard ---</span></span>
+<span id="tests-bus-loft-L154"><span class="cm">//</span></span>
+<span id="tests-bus-loft-L155"><span class="cm">// A clip of 0.5 at 8000 Hz, played hard left (pan -1: the left gain is exactly 1), so the left</span></span>
+<span id="tests-bus-loft-L156"><span class="cm">// sample is round(level * 0.5 * 32767), halves away from zero.</span></span>
+<span id="tests-bus-loft-L157"></span>
+<span id="tests-bus-loft-L158"><span class="kw">fn</span> <span class="fn-call">heard</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="tests-bus-loft-L159">  out = audio::<span class="fn-call">render</span>(<span class="nm">1</span>);</span>
+<span id="tests-bus-loft-L160">  out[<span class="nm">0</span>] ?? -<span class="nm">99999</span></span>
+<span id="tests-bus-loft-L161">}</span>
+<span id="tests-bus-loft-L162"></span>
+<span id="tests-bus-loft-L163"><span class="kw">fn</span> <span class="fn-call">half_clip</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="tests-bus-loft-L164">  audio::<span class="fn-call">init</span>(<span class="nm">8000</span>);</span>
+<span id="tests-bus-loft-L165">  samples: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt; = [<span class="nm">0.5f</span>; <span class="nm">64</span>];</span>
+<span id="tests-bus-loft-L166">  audio::<span class="fn-call">load_samples</span>(samples, <span class="nm">8000</span>) ?? <span class="nm">0</span></span>
+<span id="tests-bus-loft-L167">}</span>
+<span id="tests-bus-loft-L168"></span>
+<span id="tests-bus-loft-L169"><span class="cm">// music 0.5 under master 1.0: 0.5 * 0.5 = 0.25 -&gt; 8191.75 -&gt; 8192.</span></span>
+<span id="tests-bus-loft-L170"><span class="kw">fn</span> <span class="fn-call">test_heard_through_the_bus</span>() {</span>
+<span id="tests-bus-loft-L171">  c = <span class="fn-call">half_clip</span>();</span>
+<span id="tests-bus-loft-L172">  m = <span class="fn-call">a_mixer</span>();</span>
+<span id="tests-bus-loft-L173">  v = audio_bus::<span class="fn-call">play</span>(m, <span class="st">"music"</span>, c, <span class="nm">1.0</span>, <span class="kw">false</span>, -<span class="nm">1.0</span>);</span>
+<span id="tests-bus-loft-L174">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(v &gt; <span class="nm">0</span>, <span class="st">"playing"</span>);</span>
+<span id="tests-bus-loft-L175">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">heard</span>() == <span class="nm">8192</span>, <span class="st">"0.25 heard: {heard()}"</span>);</span>
+<span id="tests-bus-loft-L176">}</span>
+<span id="tests-bus-loft-L177"></span>
+<span id="tests-bus-loft-L178"><span class="cm">// steps 0.5 under sfx 0.8 under master: 0.5 * 0.8 * 0.5 (the clip) = 0.2 -&gt; 6553.4 -&gt; 6553;</span></span>
+<span id="tests-bus-loft-L179"><span class="cm">// master to 0.5 halves it: 0.1 -&gt; 3276.7 -&gt; 3277.</span></span>
+<span id="tests-bus-loft-L180"><span class="kw">fn</span> <span class="fn-call">test_heard_through_two_buses_and_master</span>() {</span>
+<span id="tests-bus-loft-L181">  c = <span class="fn-call">half_clip</span>();</span>
+<span id="tests-bus-loft-L182">  m = <span class="fn-call">a_mixer</span>();</span>
+<span id="tests-bus-loft-L183">  _ = audio_bus::<span class="fn-call">play</span>(m, <span class="st">"steps"</span>, c, <span class="nm">1.0</span>, <span class="kw">false</span>, -<span class="nm">1.0</span>);</span>
+<span id="tests-bus-loft-L184">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">heard</span>() == <span class="nm">6553</span>, <span class="st">"0.2 heard: {heard()}"</span>);</span>
+<span id="tests-bus-loft-L185">  _ = audio_bus::<span class="fn-call">set_volume</span>(m, audio_bus::<span class="en">MASTER</span>, <span class="nm">0.5</span>);</span>
+<span id="tests-bus-loft-L186">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">heard</span>() == <span class="nm">3277</span>, <span class="st">"0.1 heard: {heard()}"</span>);</span>
+<span id="tests-bus-loft-L187">}</span>
+<span id="tests-bus-loft-L188"></span>
+<span id="tests-bus-loft-L189"><span class="cm">// A duck to 0.1 on music: 0.1 * 0.5 = 0.05 -&gt; 1638.35 -&gt; 1638; lifted, exactly 8192 again.</span></span>
+<span id="tests-bus-loft-L190"><span class="kw">fn</span> <span class="fn-call">test_a_lifted_duck_is_heard_exactly</span>() {</span>
+<span id="tests-bus-loft-L191">  c = <span class="fn-call">half_clip</span>();</span>
+<span id="tests-bus-loft-L192">  m = <span class="fn-call">a_mixer</span>();</span>
+<span id="tests-bus-loft-L193">  _ = audio_bus::<span class="fn-call">play</span>(m, <span class="st">"music"</span>, c, <span class="nm">1.0</span>, <span class="kw">false</span>, -<span class="nm">1.0</span>);</span>
+<span id="tests-bus-loft-L194">  _ = audio_bus::<span class="fn-call">duck</span>(m, <span class="st">"music"</span>, <span class="nm">0.1</span>);</span>
+<span id="tests-bus-loft-L195">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">heard</span>() == <span class="nm">1638</span>, <span class="st">"ducked: {heard()}"</span>);</span>
+<span id="tests-bus-loft-L196">  _ = audio_bus::<span class="fn-call">unduck</span>(m, <span class="st">"music"</span>);</span>
+<span id="tests-bus-loft-L197">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">heard</span>() == <span class="nm">8192</span>, <span class="st">"restored: {heard()}"</span>);</span>
+<span id="tests-bus-loft-L198">}</span>
+<span id="tests-bus-loft-L199"></span>
+<span id="tests-bus-loft-L200"><span class="cm">// stop_bus silences what is under it and nothing else: sfx stops, music plays on.</span></span>
+<span id="tests-bus-loft-L201"><span class="kw">fn</span> <span class="fn-call">test_stop_bus_is_heard</span>() {</span>
+<span id="tests-bus-loft-L202">  c = <span class="fn-call">half_clip</span>();</span>
+<span id="tests-bus-loft-L203">  m = <span class="fn-call">a_mixer</span>();</span>
+<span id="tests-bus-loft-L204">  _ = audio_bus::<span class="fn-call">play</span>(m, <span class="st">"music"</span>, c, <span class="nm">1.0</span>, <span class="kw">true</span>, -<span class="nm">1.0</span>);</span>
+<span id="tests-bus-loft-L205">  _ = audio_bus::<span class="fn-call">play</span>(m, <span class="st">"steps"</span>, c, <span class="nm">1.0</span>, <span class="kw">true</span>, -<span class="nm">1.0</span>);</span>
+<span id="tests-bus-loft-L206">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">heard</span>() == <span class="nm">8192</span> + <span class="nm">6553</span>, <span class="st">"both: {heard()}"</span>);</span>
+<span id="tests-bus-loft-L207">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(audio_bus::<span class="fn-call">stop_bus</span>(m, <span class="st">"sfx"</span>) == <span class="nm">1</span>, <span class="st">"one voice under sfx"</span>);</span>
+<span id="tests-bus-loft-L208">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">heard</span>() == <span class="nm">8192</span>, <span class="st">"music alone: {heard()}"</span>);</span>
+<span id="tests-bus-loft-L209">}</span>
 </code></pre>
 
   </article>

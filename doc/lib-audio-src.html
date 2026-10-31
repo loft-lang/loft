@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>audio source — Loft, a programming language for small browser games</title>
+  <meta name="description" content="The loft source of the audio library — every file it ships, highlighted, with each public item linked to its definition, its worked example and its call sites.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-audio-src.html">
+<meta property="og:title" content="audio source — Loft, a programming language for small browser games">
+<meta property="og:description" content="The loft source of the audio library — every file it ships, highlighted, with each public item linked to its definition, its worked example and its call sites.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-audio-src.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="audio source — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="The loft source of the audio library — every file it ships, highlighted, with each public item linked to its definition, its worked example and its call sites.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <a href="https://loft-lang.org/blog/">Blog</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>audio source</h1>
+<article>
+<p><a href="lib-audio.html">← audio</a> · <a href="lib-audio-api.html">API reference</a> · version 0.2.0</p>
+<p class="lib-legend">3 file(s), 447 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<h2 id="items">Public items</h2>
+<p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
+<table class="lib-table">
+<tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
+<tr><td><code>init</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-loft-L76">76</a></td><td>—</td><td><a href="#tests-output-loft-L20">20</a> <a href="#tests-render-loft-L28">28</a> <a href="#tests-render-loft-L35">35</a> <a href="#tests-render-loft-L46">46</a> <a href="#tests-render-loft-L57">57</a> <a href="#tests-render-loft-L66">66</a> … (16 total)</td></tr>
+<tr><td><code>rate</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-loft-L81">81</a></td><td>—</td><td><a href="#src-audio-loft-L31">31</a> <a href="#src-audio-loft-L39">39</a> <a href="#src-audio-loft-L51">51</a> <a href="#src-audio-loft-L76">76</a> <a href="#src-audio-loft-L77">77</a> <a href="#tests-render-loft-L29">29</a></td></tr>
+<tr><td><code>has_vorbis</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-loft-L86">86</a></td><td>—</td><td><a href="#tests-render-loft-L173">173</a></td></tr>
+<tr><td><code>load</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-loft-L92">92</a></td><td>—</td><td><a href="#tests-render-loft-L150">150</a> <a href="#tests-render-loft-L162">162</a> <a href="#tests-render-loft-L175">175</a> <a href="#tests-render-loft-L194">194</a></td></tr>
+<tr><td><code>load_bytes</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-loft-L99">99</a></td><td>—</td><td><a href="#tests-render-loft-L195">195</a></td></tr>
+<tr><td><code>load_samples</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-loft-L106">106</a></td><td>—</td><td><a href="#tests-output-loft-L22">22</a> <a href="#tests-render-loft-L24">24</a> <a href="#tests-render-loft-L101">101</a> <a href="#tests-render-loft-L197">197</a></td></tr>
+<tr><td><code>unload</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-loft-L112">112</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>clip_frames</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-loft-L117">117</a></td><td>—</td><td><a href="#tests-render-loft-L152">152</a> <a href="#tests-render-loft-L178">178</a></td></tr>
+<tr><td><code>clip_rate</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-loft-L121">121</a></td><td>—</td><td><a href="#tests-render-loft-L152">152</a> <a href="#tests-render-loft-L177">177</a></td></tr>
+<tr><td><code>clip_channels</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-loft-L125">125</a></td><td>—</td><td><a href="#tests-render-loft-L152">152</a> <a href="#tests-render-loft-L163">163</a> <a href="#tests-render-loft-L177">177</a></td></tr>
+<tr><td><code>play</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-loft-L132">132</a></td><td>—</td><td><a href="#tests-output-loft-L27">27</a> <a href="#tests-output-loft-L36">36</a> <a href="#tests-render-loft-L37">37</a> <a href="#tests-render-loft-L48">48</a> <a href="#tests-render-loft-L58">58</a> <a href="#tests-render-loft-L69">69</a> … (19 total)</td></tr>
+<tr><td><code>play_raw</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-loft-L139">139</a></td><td>—</td><td><a href="#tests-render-loft-L141">141</a></td></tr>
+<tr><td><code>stop</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-loft-L145">145</a></td><td>—</td><td><a href="#tests-render-loft-L112">112</a> <a href="#tests-render-loft-L115">115</a></td></tr>
+<tr><td><code>stop_all</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-loft-L150">150</a></td><td>—</td><td><a href="#tests-output-loft-L39">39</a> <a href="#tests-render-loft-L117">117</a> <a href="#tests-render-loft-L118">118</a></td></tr>
+<tr><td><code>playing</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-loft-L155">155</a></td><td>—</td><td><a href="#tests-output-loft-L28">28</a> <a href="#tests-output-loft-L32">32</a> <a href="#tests-output-loft-L38">38</a> <a href="#tests-render-loft-L41">41</a> <a href="#tests-render-loft-L86">86</a> <a href="#tests-render-loft-L116">116</a> … (8 total)</td></tr>
+<tr><td><code>set_volume</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-loft-L160">160</a></td><td>—</td><td><a href="#tests-render-loft-L127">127</a></td></tr>
+<tr><td><code>set_pan</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-loft-L165">165</a></td><td>—</td><td><a href="#tests-render-loft-L129">129</a></td></tr>
+<tr><td><code>seek</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-loft-L171">171</a></td><td>—</td><td><a href="#tests-render-loft-L134">134</a> <a href="#tests-render-loft-L135">135</a></td></tr>
+<tr><td><code>render</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-loft-L178">178</a></td><td>—</td><td><a href="#tests-output-loft-L37">37</a> <a href="#tests-output-loft-L38">38</a> <a href="#tests-render-loft-L38">38</a> <a href="#tests-render-loft-L49">49</a> <a href="#tests-render-loft-L59">59</a> <a href="#tests-render-loft-L71">71</a> … (17 total)</td></tr>
+<tr><td><code>start</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-loft-L191">191</a></td><td>—</td><td><a href="#src-audio-loft-L133">133</a> <a href="#src-audio-loft-L135">135</a> <a href="#tests-output-loft-L24">24</a> <a href="#tests-output-loft-L26">26</a></td></tr>
+<tr><td><code>stop_output</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-loft-L196">196</a></td><td>—</td><td><a href="#tests-output-loft-L33">33</a></td></tr>
+<tr><td><code>output_running</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-loft-L201">201</a></td><td>—</td><td><a href="#tests-output-loft-L25">25</a> <a href="#tests-output-loft-L34">34</a></td></tr>
+<tr><td><code>output_frames</code> <span class="search-kind">fn</span></td><td><a href="#src-audio-loft-L206">206</a></td><td>—</td><td><a href="#tests-output-loft-L13">13</a> <a href="#tests-output-loft-L31">31</a></td></tr>
+</table>
+<h2 id="src-audio-loft">src/audio.loft</h2>
+<pre class="src"><code><span id="src-audio-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="src-audio-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="src-audio-loft-L3"><span class="cm">//</span></span>
+<span id="src-audio-loft-L4"><span class="cm">// audio — clips, voices and one mix, the same on every target.</span></span>
+<span id="src-audio-loft-L5"><span class="cm">//</span></span>
+<span id="src-audio-loft-L6"><span class="cm">// The engine (c/audio_engine.c) holds the clips and the playing voices and RENDERS: `render`</span></span>
+<span id="src-audio-loft-L7"><span class="cm">// answers the next stereo frames of the mix as 16-bit samples.  A platform's OUTPUT asks the</span></span>
+<span id="src-audio-loft-L8"><span class="cm">// engine for frames on its own thread (c/audio_out.c): `start()` opens it — the system's sound</span></span>
+<span id="src-audio-loft-L9"><span class="cm">// device on a desktop (miniaudio), the I2S stream on a Tanmatsu — and from then on every voice</span></span>
+<span id="src-audio-loft-L10"><span class="cm">// is heard.  Without `start`, `render` is the way out, so every rule below is checkable on a</span></span>
+<span id="src-audio-loft-L11"><span class="cm">// machine with no sound device.  The calls are `graphics`' audio calls (`audio_play(clip, volume, looping, pan,</span></span>
+<span id="src-audio-loft-L12"><span class="cm">// start)` and the rest), so a program written against those moves over unchanged.</span></span>
+<span id="src-audio-loft-L13"><span class="cm">//</span></span>
+<span id="src-audio-loft-L14"><span class="cm">// The mix, per output frame: each voice reads its clip with linear interpolation, resampled</span></span>
+<span id="src-audio-loft-L15"><span class="cm">// from the clip's rate to the output rate; its volume scales it and its pan places it by Web</span></span>
+<span id="src-audio-loft-L16"><span class="cm">// Audio's StereoPannerNode law (equal-power: a mono clip at the centre is cos(pi/4) = 0.7071 on</span></span>
+<span id="src-audio-loft-L17"><span class="cm">// each side); the voices are summed, clamped to [-1, 1] and written as round(s * 32767).</span></span>
+<span id="src-audio-loft-L18"><span class="cm">//</span></span>
+<span id="src-audio-loft-L19"><span class="cm">// Handles: a clip or a voice is a positive integer, null on failure.  A voice handle names</span></span>
+<span id="src-audio-loft-L20"><span class="cm">// one playing, never a slot: once a voice ends, its handle acts on nothing, even after its</span></span>
+<span id="src-audio-loft-L21"><span class="cm">// slot plays something else.</span></span>
+<span id="src-audio-loft-L22"></span>
+<span id="src-audio-loft-L23"><span class="kw">fn</span> <span class="fn-call">ae_out_open</span>(mode: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-audio-loft-L24">#c <span class="st">"ae_out_open"</span> <span class="st">"int64_t(int64_t)"</span></span>
+<span id="src-audio-loft-L25"><span class="kw">fn</span> <span class="fn-call">ae_out_close</span>();</span>
+<span id="src-audio-loft-L26">#c <span class="st">"ae_out_close"</span> <span class="st">"void(void)"</span></span>
+<span id="src-audio-loft-L27"><span class="kw">fn</span> <span class="fn-call">ae_out_running</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-audio-loft-L28">#c <span class="st">"ae_out_running"</span> <span class="st">"int64_t(void)"</span></span>
+<span id="src-audio-loft-L29"><span class="kw">fn</span> <span class="fn-call">ae_out_frames</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-audio-loft-L30">#c <span class="st">"ae_out_frames"</span> <span class="st">"int64_t(void)"</span></span>
+<span id="src-audio-loft-L31"><span class="kw">fn</span> <span class="fn-call">ae_init</span>(rate: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-audio-loft-L32">#c <span class="st">"ae_init"</span> <span class="st">"void(int64_t)"</span></span>
+<span id="src-audio-loft-L33"><span class="kw">fn</span> <span class="fn-call">ae_rate</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-audio-loft-L34">#c <span class="st">"ae_rate"</span> <span class="st">"int64_t(void)"</span></span>
+<span id="src-audio-loft-L35"><span class="kw">fn</span> <span class="fn-call">ae_vorbis</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-audio-loft-L36">#c <span class="st">"ae_vorbis"</span> <span class="st">"int64_t(void)"</span></span>
+<span id="src-audio-loft-L37"><span class="kw">fn</span> <span class="fn-call">ae_load</span>(bytes: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-audio-loft-L38">#c <span class="st">"ae_load"</span> <span class="st">"int64_t(const uint8_t*, int64_t)"</span></span>
+<span id="src-audio-loft-L39"><span class="kw">fn</span> <span class="fn-call">ae_load_pcm</span>(samples: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;, rate: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-audio-loft-L40">#c <span class="st">"ae_load_pcm"</span> <span class="st">"int64_t(const float*, int64_t, int64_t)"</span></span>
+<span id="src-audio-loft-L41"><span class="kw">fn</span> <span class="fn-call">ae_unload</span>(clip: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-audio-loft-L42">#c <span class="st">"ae_unload"</span> <span class="st">"void(int64_t)"</span></span>
+<span id="src-audio-loft-L43"><span class="kw">fn</span> <span class="fn-call">ae_clip_frames</span>(clip: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-audio-loft-L44">#c <span class="st">"ae_clip_frames"</span> <span class="st">"int64_t(int64_t)"</span></span>
+<span id="src-audio-loft-L45"><span class="kw">fn</span> <span class="fn-call">ae_clip_rate</span>(clip: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-audio-loft-L46">#c <span class="st">"ae_clip_rate"</span> <span class="st">"int64_t(int64_t)"</span></span>
+<span id="src-audio-loft-L47"><span class="kw">fn</span> <span class="fn-call">ae_clip_channels</span>(clip: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-audio-loft-L48">#c <span class="st">"ae_clip_channels"</span> <span class="st">"int64_t(int64_t)"</span></span>
+<span id="src-audio-loft-L49"><span class="kw">fn</span> <span class="fn-call">ae_play</span>(clip: <span class="ty"><a href="stdlib-types.html">integer</a></span>, p: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-audio-loft-L50">#c <span class="st">"ae_play"</span> <span class="st">"int64_t(int64_t, const double*, int64_t)"</span></span>
+<span id="src-audio-loft-L51"><span class="kw">fn</span> <span class="fn-call">ae_play_raw</span>(samples: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;, rate: <span class="ty"><a href="stdlib-types.html">integer</a></span>, p: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-audio-loft-L52">#c <span class="st">"ae_play_raw"</span> <span class="st">"int64_t(const float*, int64_t, int64_t, const double*, int64_t)"</span></span>
+<span id="src-audio-loft-L53"><span class="kw">fn</span> <span class="fn-call">ae_stop</span>(voice: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-audio-loft-L54">#c <span class="st">"ae_stop"</span> <span class="st">"void(int64_t)"</span></span>
+<span id="src-audio-loft-L55"><span class="kw">fn</span> <span class="fn-call">ae_stop_all</span>();</span>
+<span id="src-audio-loft-L56">#c <span class="st">"ae_stop_all"</span> <span class="st">"void(void)"</span></span>
+<span id="src-audio-loft-L57"><span class="kw">fn</span> <span class="fn-call">ae_playing</span>(voice: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-audio-loft-L58">#c <span class="st">"ae_playing"</span> <span class="st">"int64_t(int64_t)"</span></span>
+<span id="src-audio-loft-L59"><span class="kw">fn</span> <span class="fn-call">ae_set_volume</span>(voice: <span class="ty"><a href="stdlib-types.html">integer</a></span>, p: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;);</span>
+<span id="src-audio-loft-L60">#c <span class="st">"ae_set_volume"</span> <span class="st">"void(int64_t, const double*, int64_t)"</span></span>
+<span id="src-audio-loft-L61"><span class="kw">fn</span> <span class="fn-call">ae_set_pan</span>(voice: <span class="ty"><a href="stdlib-types.html">integer</a></span>, p: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;);</span>
+<span id="src-audio-loft-L62">#c <span class="st">"ae_set_pan"</span> <span class="st">"void(int64_t, const double*, int64_t)"</span></span>
+<span id="src-audio-loft-L63"><span class="kw">fn</span> <span class="fn-call">ae_seek</span>(voice: <span class="ty"><a href="stdlib-types.html">integer</a></span>, p: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-audio-loft-L64">#c <span class="st">"ae_seek"</span> <span class="st">"int64_t(int64_t, const double*, int64_t)"</span></span>
+<span id="src-audio-loft-L65"><span class="kw">fn</span> <span class="fn-call">ae_render</span>(out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">i32</a></span>&gt;);</span>
+<span id="src-audio-loft-L66">#c <span class="st">"ae_render"</span> <span class="st">"void(int32_t*, int64_t)"</span></span>
+<span id="src-audio-loft-L67"></span>
+<span id="src-audio-loft-L68"><span class="cm">// A handle the engine answered, null for its 0.</span></span>
+<span id="src-audio-loft-L69"><span class="kw">fn</span> <span class="fn-call">handle</span>(h: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>? {</span>
+<span id="src-audio-loft-L70">  <span class="kw">if</span> h &lt;= <span class="nm">0</span> { <span class="kw">return</span> <span class="kw">null</span>; }</span>
+<span id="src-audio-loft-L71">  h</span>
+<span id="src-audio-loft-L72">}</span>
+<span id="src-audio-loft-L73"></span>
+<span id="src-audio-loft-L74"><span class="cm">/// Set the output rate (frames per second, 44100 unless set) and stop every voice; the</span></span>
+<span id="src-audio-loft-L75"><span class="cm">/// loaded clips stay.  A platform's output layer calls this with the rate its device runs at.</span></span>
+<span id="src-audio-loft-L76"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">init</span>(rate: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">44100</span>) {</span>
+<span id="src-audio-loft-L77">  <span class="fn-call">ae_init</span>(rate);</span>
+<span id="src-audio-loft-L78">}</span>
+<span id="src-audio-loft-L79"></span>
+<span id="src-audio-loft-L80"><span class="cm">/// The output rate the mix renders at.</span></span>
+<span id="src-audio-loft-L81"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rate</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-audio-loft-L82">  <span class="fn-call">ae_rate</span>()</span>
+<span id="src-audio-loft-L83">}</span>
+<span id="src-audio-loft-L84"></span>
+<span id="src-audio-loft-L85"><span class="cm">/// Does this build decode OGG Vorbis?  Every target but the two wasm builds does.</span></span>
+<span id="src-audio-loft-L86"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">has_vorbis</span>() -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-audio-loft-L87">  <span class="fn-call">ae_vorbis</span>() != <span class="nm">0</span></span>
+<span id="src-audio-loft-L88">}</span>
+<span id="src-audio-loft-L89"></span>
+<span id="src-audio-loft-L90"><span class="cm">/// Load a clip from a WAV (PCM 8/16/24/32-bit or float, mono or stereo) or OGG Vorbis file.</span></span>
+<span id="src-audio-loft-L91"><span class="cm">/// Null when the file cannot be read or decoded.</span></span>
+<span id="src-audio-loft-L92"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">load</span>(path: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>? {</span>
+<span id="src-audio-loft-L93">  bytes = <span class="fn-call"><a href="stdlib-binary-file-i-o.html">read_bytes</a></span>(path) ?? [];</span>
+<span id="src-audio-loft-L94">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(bytes) == <span class="nm">0</span> { <span class="kw">return</span> <span class="kw">null</span>; }</span>
+<span id="src-audio-loft-L95">  <span class="fn-call">handle</span>(<span class="fn-call">ae_load</span>(bytes))</span>
+<span id="src-audio-loft-L96">}</span>
+<span id="src-audio-loft-L97"></span>
+<span id="src-audio-loft-L98"><span class="cm">/// Load a clip from a file's bytes already in memory.</span></span>
+<span id="src-audio-loft-L99"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">load_bytes</span>(bytes: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>? {</span>
+<span id="src-audio-loft-L100">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(bytes) == <span class="nm">0</span> { <span class="kw">return</span> <span class="kw">null</span>; }</span>
+<span id="src-audio-loft-L101">  <span class="fn-call">handle</span>(<span class="fn-call">ae_load</span>(bytes))</span>
+<span id="src-audio-loft-L102">}</span>
+<span id="src-audio-loft-L103"></span>
+<span id="src-audio-loft-L104"><span class="cm">/// A mono clip from samples in [-1, 1] at `sample_rate` — a sound made in loft, kept to be</span></span>
+<span id="src-audio-loft-L105"><span class="cm">/// played again.</span></span>
+<span id="src-audio-loft-L106"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">load_samples</span>(samples: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;, sample_rate: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>? {</span>
+<span id="src-audio-loft-L107">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(samples) == <span class="nm">0</span> { <span class="kw">return</span> <span class="kw">null</span>; }</span>
+<span id="src-audio-loft-L108">  <span class="fn-call">handle</span>(<span class="fn-call">ae_load_pcm</span>(samples, sample_rate))</span>
+<span id="src-audio-loft-L109">}</span>
+<span id="src-audio-loft-L110"></span>
+<span id="src-audio-loft-L111"><span class="cm">/// Unload a clip; every voice playing it stops.</span></span>
+<span id="src-audio-loft-L112"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">unload</span>(clip: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-audio-loft-L113">  <span class="fn-call">ae_unload</span>(clip);</span>
+<span id="src-audio-loft-L114">}</span>
+<span id="src-audio-loft-L115"></span>
+<span id="src-audio-loft-L116"><span class="cm">/// A clip's length in frames, its rate and its channel count (1 or 2); 0 for no clip.</span></span>
+<span id="src-audio-loft-L117"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">clip_frames</span>(clip: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-audio-loft-L118">  <span class="fn-call">ae_clip_frames</span>(clip)</span>
+<span id="src-audio-loft-L119">}</span>
+<span id="src-audio-loft-L120"></span>
+<span id="src-audio-loft-L121"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">clip_rate</span>(clip: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-audio-loft-L122">  <span class="fn-call">ae_clip_rate</span>(clip)</span>
+<span id="src-audio-loft-L123">}</span>
+<span id="src-audio-loft-L124"></span>
+<span id="src-audio-loft-L125"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">clip_channels</span>(clip: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-audio-loft-L126">  <span class="fn-call">ae_clip_channels</span>(clip)</span>
+<span id="src-audio-loft-L127">}</span>
+<span id="src-audio-loft-L128"></span>
+<span id="src-audio-loft-L129"><span class="cm">/// Play a clip: `volume` 0.0-1.0, `looping` repeats it until it is stopped, `pan` places it</span></span>
+<span id="src-audio-loft-L130"><span class="cm">/// from -1 (left) through 0 (centre) to 1 (right), `start` begins that many seconds in.</span></span>
+<span id="src-audio-loft-L131"><span class="cm">/// Answers the voice, or null when the clip is unknown or every voice is busy (64 play at once).</span></span>
+<span id="src-audio-loft-L132"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">play</span>(clip: <span class="ty"><a href="stdlib-types.html">integer</a></span>, volume: <span class="ty"><a href="stdlib-types.html">float</a></span>, looping: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>, pan: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-audio-loft-L133">            start: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>? {</span>
+<span id="src-audio-loft-L134">  l = <span class="kw">if</span> looping { <span class="nm">1.0</span> } <span class="kw">else</span> { <span class="nm">0.0</span> };</span>
+<span id="src-audio-loft-L135">  <span class="fn-call">handle</span>(<span class="fn-call">ae_play</span>(clip, [volume, l, pan, start]))</span>
+<span id="src-audio-loft-L136">}</span>
+<span id="src-audio-loft-L137"></span>
+<span id="src-audio-loft-L138"><span class="cm">/// Play mono samples in [-1, 1] at `sample_rate` once; the samples are released when it ends.</span></span>
+<span id="src-audio-loft-L139"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">play_raw</span>(samples: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;, sample_rate: <span class="ty"><a href="stdlib-types.html">integer</a></span>, volume: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>? {</span>
+<span id="src-audio-loft-L140">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(samples) == <span class="nm">0</span> { <span class="kw">return</span> <span class="kw">null</span>; }</span>
+<span id="src-audio-loft-L141">  <span class="fn-call">handle</span>(<span class="fn-call">ae_play_raw</span>(samples, sample_rate, [volume]))</span>
+<span id="src-audio-loft-L142">}</span>
+<span id="src-audio-loft-L143"></span>
+<span id="src-audio-loft-L144"><span class="cm">/// Stop a voice.  A voice that already ended is left alone, as is whatever plays in its place.</span></span>
+<span id="src-audio-loft-L145"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">stop</span>(voice: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-audio-loft-L146">  <span class="fn-call">ae_stop</span>(voice);</span>
+<span id="src-audio-loft-L147">}</span>
+<span id="src-audio-loft-L148"></span>
+<span id="src-audio-loft-L149"><span class="cm">/// Stop every voice — a pause menu, a scene change, a game over.</span></span>
+<span id="src-audio-loft-L150"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">stop_all</span>() {</span>
+<span id="src-audio-loft-L151">  <span class="fn-call">ae_stop_all</span>();</span>
+<span id="src-audio-loft-L152">}</span>
+<span id="src-audio-loft-L153"></span>
+<span id="src-audio-loft-L154"><span class="cm">/// Is this voice still playing?</span></span>
+<span id="src-audio-loft-L155"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">playing</span>(voice: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-audio-loft-L156">  <span class="fn-call">ae_playing</span>(voice) != <span class="nm">0</span></span>
+<span id="src-audio-loft-L157">}</span>
+<span id="src-audio-loft-L158"></span>
+<span id="src-audio-loft-L159"><span class="cm">/// Set a playing voice's volume, 0.0-1.0.</span></span>
+<span id="src-audio-loft-L160"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">set_volume</span>(voice: <span class="ty"><a href="stdlib-types.html">integer</a></span>, volume: <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-audio-loft-L161">  <span class="fn-call">ae_set_volume</span>(voice, [volume]);</span>
+<span id="src-audio-loft-L162">}</span>
+<span id="src-audio-loft-L163"></span>
+<span id="src-audio-loft-L164"><span class="cm">/// Move a playing voice across the stereo field, -1 (left) to 1 (right).</span></span>
+<span id="src-audio-loft-L165"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">set_pan</span>(voice: <span class="ty"><a href="stdlib-types.html">integer</a></span>, pan: <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-audio-loft-L166">  <span class="fn-call">ae_set_pan</span>(voice, [pan]);</span>
+<span id="src-audio-loft-L167">}</span>
+<span id="src-audio-loft-L168"></span>
+<span id="src-audio-loft-L169"><span class="cm">/// Jump a playing voice to `seconds` into its clip.  False for a voice that ended, and for a</span></span>
+<span id="src-audio-loft-L170"><span class="cm">/// position past the end of a clip that does not loop (a looping clip wraps).</span></span>
+<span id="src-audio-loft-L171"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-binary-file-i-o.html">seek</a></span>(voice: <span class="ty"><a href="stdlib-types.html">integer</a></span>, seconds: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-audio-loft-L172">  <span class="fn-call">ae_seek</span>(voice, [seconds]) != <span class="nm">0</span></span>
+<span id="src-audio-loft-L173">}</span>
+<span id="src-audio-loft-L174"></span>
+<span id="src-audio-loft-L175"><span class="cm">/// The next `frames` frames of the mix: 2 * frames samples, left and right interleaved, each</span></span>
+<span id="src-audio-loft-L176"><span class="cm">/// a 16-bit value (-32767 to 32767).  Advances every voice; a voice that reaches the end of a</span></span>
+<span id="src-audio-loft-L177"><span class="cm">/// clip it does not loop ends.</span></span>
+<span id="src-audio-loft-L178"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">render</span>(frames: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">i32</a></span>&gt; {</span>
+<span id="src-audio-loft-L179">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">i32</a></span>&gt; = [<span class="nm">0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>; <span class="nm">2</span> * frames];</span>
+<span id="src-audio-loft-L180">  <span class="kw">if</span> frames &gt; <span class="nm">0</span> { <span class="fn-call">ae_render</span>(out); }</span>
+<span id="src-audio-loft-L181">  out</span>
+<span id="src-audio-loft-L182">}</span>
+<span id="src-audio-loft-L183"></span>
+<span id="src-audio-loft-L184"><span class="cm">// --- Output ---</span></span>
+<span id="src-audio-loft-L185"></span>
+<span id="src-audio-loft-L186"><span class="cm">/// Start the output, so every voice is heard: the system's sound device on a desktop, the</span></span>
+<span id="src-audio-loft-L187"><span class="cm">/// board's I2S stream on a Tanmatsu.  `silent` plays at real-time pace into no device at all,</span></span>
+<span id="src-audio-loft-L188"><span class="cm">/// for a test or a server.  Answers whether it runs: false where this machine has no output</span></span>
+<span id="src-audio-loft-L189"><span class="cm">/// (no sound device, or a browser build), and the engine then only renders.  Starting twice</span></span>
+<span id="src-audio-loft-L190"><span class="cm">/// is starting once.  Set the rate with `init` before this.</span></span>
+<span id="src-audio-loft-L191"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">start</span>(silent: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-audio-loft-L192">  <span class="fn-call">ae_out_open</span>(<span class="kw">if</span> silent { <span class="nm">1</span> } <span class="kw">else</span> { <span class="nm">0</span> }) != <span class="nm">0</span></span>
+<span id="src-audio-loft-L193">}</span>
+<span id="src-audio-loft-L194"></span>
+<span id="src-audio-loft-L195"><span class="cm">/// Stop the output; the voices keep their place and play on from it after the next `start`.</span></span>
+<span id="src-audio-loft-L196"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">stop_output</span>() {</span>
+<span id="src-audio-loft-L197">  <span class="fn-call">ae_out_close</span>();</span>
+<span id="src-audio-loft-L198">}</span>
+<span id="src-audio-loft-L199"></span>
+<span id="src-audio-loft-L200"><span class="cm">/// Is the output running?</span></span>
+<span id="src-audio-loft-L201"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">output_running</span>() -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-audio-loft-L202">  <span class="fn-call">ae_out_running</span>() != <span class="nm">0</span></span>
+<span id="src-audio-loft-L203">}</span>
+<span id="src-audio-loft-L204"></span>
+<span id="src-audio-loft-L205"><span class="cm">/// How many stereo frames the output has taken since it started — the clock of what was heard.</span></span>
+<span id="src-audio-loft-L206"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">output_frames</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-audio-loft-L207">  <span class="fn-call">ae_out_frames</span>()</span>
+<span id="src-audio-loft-L208">}</span>
+</code></pre>
+<h2 id="tests-output-loft">tests/output.loft</h2>
+<pre class="src"><code><span id="tests-output-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="tests-output-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="tests-output-loft-L3"><span class="cm">//</span></span>
+<span id="tests-output-loft-L4"><span class="cm">// The output layer, run for real: `start(true)` opens a device that takes frames at real-time</span></span>
+<span id="tests-output-loft-L5"><span class="cm">// pace from the output thread and plays them into nothing.  A clip of 4410 frames at 44100 Hz</span></span>
+<span id="tests-output-loft-L6"><span class="cm">// (0.1 s) is heard through it and ends, with no `render` from this thread, so the frames the</span></span>
+<span id="tests-output-loft-L7"><span class="cm">// output took are the mix running on its own.  Each wait polls with a 3 s deadline on `ticks`.</span></span>
+<span id="tests-output-loft-L8"><span class="kw">use</span> audio;</span>
+<span id="tests-output-loft-L9"></span>
+<span id="tests-output-loft-L10"><span class="cm">// Wait until the output has taken `frames` frames, or 3 s pass; answers whether it did.</span></span>
+<span id="tests-output-loft-L11"><span class="kw">fn</span> <span class="fn-call">wait_frames</span>(frames: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="tests-output-loft-L12">  deadline = <span class="fn-call"><a href="stdlib-time.html">ticks</a></span>() + <span class="nm">3000000</span>;</span>
+<span id="tests-output-loft-L13">  while audio::<span class="fn-call">output_frames</span>() &lt; frames {</span>
+<span id="tests-output-loft-L14">    <span class="kw">if</span> <span class="fn-call"><a href="stdlib-time.html">ticks</a></span>() &gt; deadline { <span class="kw">return</span> <span class="kw">false</span>; }</span>
+<span id="tests-output-loft-L15">  }</span>
+<span id="tests-output-loft-L16">  <span class="kw">true</span></span>
+<span id="tests-output-loft-L17">}</span>
+<span id="tests-output-loft-L18"></span>
+<span id="tests-output-loft-L19"><span class="kw">fn</span> <span class="fn-call">main</span>() {</span>
+<span id="tests-output-loft-L20">  audio::<span class="fn-call">init</span>(<span class="nm">44100</span>);</span>
+<span id="tests-output-loft-L21">  samples: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt; = [<span class="nm">0.5f</span>; <span class="nm">4410</span>];</span>
+<span id="tests-output-loft-L22">  c = audio::<span class="fn-call">load_samples</span>(samples, <span class="nm">44100</span>) ?? <span class="nm">0</span>;</span>
+<span id="tests-output-loft-L23">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(c &gt; <span class="nm">0</span>, <span class="st">"the clip loads"</span>);</span>
+<span id="tests-output-loft-L24">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(audio::<span class="fn-call">start</span>(<span class="kw">true</span>), <span class="st">"the null device opens"</span>);</span>
+<span id="tests-output-loft-L25">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(audio::<span class="fn-call">output_running</span>(), <span class="st">"running"</span>);</span>
+<span id="tests-output-loft-L26">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(audio::<span class="fn-call">start</span>(<span class="kw">true</span>), <span class="st">"starting twice is starting once"</span>);</span>
+<span id="tests-output-loft-L27">  v = audio::<span class="fn-call">play</span>(c, <span class="nm">1.0</span>) ?? <span class="nm">0</span>;</span>
+<span id="tests-output-loft-L28">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(audio::<span class="fn-call">playing</span>(v), <span class="st">"the voice plays"</span>);</span>
+<span id="tests-output-loft-L29">  <span class="cm">// The device takes frames in periods; 4410 frames of clip are gone by the time it has taken</span></span>
+<span id="tests-output-loft-L30">  <span class="cm">// 4410 + two periods of 1024 more (it began counting before the voice started).</span></span>
+<span id="tests-output-loft-L31">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">wait_frames</span>(<span class="nm">4410</span> + <span class="nm">2048</span> + <span class="nm">4410</span>), <span class="st">"the output took frames: {audio::output_frames()}"</span>);</span>
+<span id="tests-output-loft-L32">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!audio::<span class="fn-call">playing</span>(v), <span class="st">"the clip was heard to its end by the output alone"</span>);</span>
+<span id="tests-output-loft-L33">  audio::<span class="fn-call">stop_output</span>();</span>
+<span id="tests-output-loft-L34">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!audio::<span class="fn-call">output_running</span>(), <span class="st">"stopped"</span>);</span>
+<span id="tests-output-loft-L35">  <span class="cm">// Stopped, the engine renders again, and a voice started now waits for it.</span></span>
+<span id="tests-output-loft-L36">  w = audio::<span class="fn-call">play</span>(c, <span class="nm">1.0</span>) ?? <span class="nm">0</span>;</span>
+<span id="tests-output-loft-L37">  out = audio::<span class="fn-call">render</span>(<span class="nm">10</span>);</span>
+<span id="tests-output-loft-L38">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(out[<span class="nm">0</span>] == <span class="nm">11585</span> &amp;&amp; audio::<span class="fn-call">playing</span>(w), <span class="st">"render is the way out again: {out[0]}"</span>);</span>
+<span id="tests-output-loft-L39">  audio::<span class="fn-call">stop_all</span>();</span>
+<span id="tests-output-loft-L40">}</span>
+</code></pre>
+<h2 id="tests-render-loft">tests/render.loft</h2>
+<pre class="src"><code><span id="tests-render-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="tests-render-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="tests-render-loft-L3"><span class="cm">//</span></span>
+<span id="tests-render-loft-L4"><span class="cm">// The engine's mix, read back through `render`.  Every expected sample is computed by hand in</span></span>
+<span id="tests-render-loft-L5"><span class="cm">// the cell's comment.  The clip values are binary fractions and the pans the two edges, where</span></span>
+<span id="tests-render-loft-L6"><span class="cm">// the gains are exactly 1 and 0, so the arithmetic is exact: a 16-bit sample is</span></span>
+<span id="tests-render-loft-L7"><span class="cm">// round(s * 32767), halves away from zero (0.5 -&gt; 16383.5 -&gt; 16384, -0.25 -&gt; -8192).</span></span>
+<span id="tests-render-loft-L8"><span class="cm">// Output rate 8000 and clips at 8000, so one clip frame is one output frame, except where a</span></span>
+<span id="tests-render-loft-L9"><span class="cm">// cell says otherwise.  Each cell starts from `init`, which stops every voice.</span></span>
+<span id="tests-render-loft-L10"><span class="kw">use</span> audio;</span>
+<span id="tests-render-loft-L11"></span>
+<span id="tests-render-loft-L12"><span class="cm">// Every other sample, from `start`: the left channel (0) or the right (1) as text.</span></span>
+<span id="tests-render-loft-L13"><span class="kw">fn</span> <span class="fn-call">side</span>(out: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">i32</a></span>&gt;, ch: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="tests-render-loft-L14">  t = <span class="st">""</span>;</span>
+<span id="tests-render-loft-L15">  i = ch;</span>
+<span id="tests-render-loft-L16">  while i &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(out) {</span>
+<span id="tests-render-loft-L17">    t += <span class="st">"{out[i] ?? -99999},"</span>;</span>
+<span id="tests-render-loft-L18">    i += <span class="nm">2</span>;</span>
+<span id="tests-render-loft-L19">  }</span>
+<span id="tests-render-loft-L20">  t</span>
+<span id="tests-render-loft-L21">}</span>
+<span id="tests-render-loft-L22"></span>
+<span id="tests-render-loft-L23"><span class="kw">fn</span> <span class="fn-call">clip</span>(samples: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="tests-render-loft-L24">  audio::<span class="fn-call">load_samples</span>(samples, <span class="nm">8000</span>) ?? <span class="nm">0</span></span>
+<span id="tests-render-loft-L25">}</span>
+<span id="tests-render-loft-L26"></span>
+<span id="tests-render-loft-L27"><span class="kw">fn</span> <span class="fn-call">main</span>() {</span>
+<span id="tests-render-loft-L28">  audio::<span class="fn-call">init</span>(<span class="nm">8000</span>);</span>
+<span id="tests-render-loft-L29">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(audio::<span class="fn-call">rate</span>() == <span class="nm">8000</span>, <span class="st">"the output rate"</span>);</span>
+<span id="tests-render-loft-L30">}</span>
+<span id="tests-render-loft-L31"></span>
+<span id="tests-render-loft-L32"><span class="cm">// Hard left (pan -1): the left gain is cos 0 = 1, the right sin 0 = 0.  The clip ends after</span></span>
+<span id="tests-render-loft-L33"><span class="cm">// four frames and the voice with it.</span></span>
+<span id="tests-render-loft-L34"><span class="kw">fn</span> <span class="fn-call">test_hard_left</span>() {</span>
+<span id="tests-render-loft-L35">  audio::<span class="fn-call">init</span>(<span class="nm">8000</span>);</span>
+<span id="tests-render-loft-L36">  c = <span class="fn-call">clip</span>([<span class="nm">0.5f</span>, -<span class="nm">0.25f</span>, <span class="nm">1.0f</span>, <span class="nm">0.0f</span>]);</span>
+<span id="tests-render-loft-L37">  v = audio::<span class="fn-call">play</span>(c, <span class="nm">1.0</span>, <span class="kw">false</span>, -<span class="nm">1.0</span>) ?? <span class="nm">0</span>;</span>
+<span id="tests-render-loft-L38">  out = audio::<span class="fn-call">render</span>(<span class="nm">6</span>);</span>
+<span id="tests-render-loft-L39">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">side</span>(out, <span class="nm">0</span>) == <span class="st">"16384,-8192,32767,0,0,0,"</span>, <span class="st">"left: {side(out, 0)}"</span>);</span>
+<span id="tests-render-loft-L40">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">side</span>(out, <span class="nm">1</span>) == <span class="st">"0,0,0,0,0,0,"</span>, <span class="st">"right: {side(out, 1)}"</span>);</span>
+<span id="tests-render-loft-L41">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!audio::<span class="fn-call">playing</span>(v), <span class="st">"a clip that does not loop ends its voice"</span>);</span>
+<span id="tests-render-loft-L42">}</span>
+<span id="tests-render-loft-L43"></span>
+<span id="tests-render-loft-L44"><span class="cm">// Hard right at volume 0.5: 0.25 -&gt; 8192, -0.125 -&gt; -4096, 0.5 -&gt; 16384, 0 -&gt; 0 on the right.</span></span>
+<span id="tests-render-loft-L45"><span class="kw">fn</span> <span class="fn-call">test_hard_right_half_volume</span>() {</span>
+<span id="tests-render-loft-L46">  audio::<span class="fn-call">init</span>(<span class="nm">8000</span>);</span>
+<span id="tests-render-loft-L47">  c = <span class="fn-call">clip</span>([<span class="nm">0.5f</span>, -<span class="nm">0.25f</span>, <span class="nm">1.0f</span>, <span class="nm">0.0f</span>]);</span>
+<span id="tests-render-loft-L48">  audio::<span class="fn-call">play</span>(c, <span class="nm">0.5</span>, <span class="kw">false</span>, <span class="nm">1.0</span>);</span>
+<span id="tests-render-loft-L49">  out = audio::<span class="fn-call">render</span>(<span class="nm">4</span>);</span>
+<span id="tests-render-loft-L50">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">side</span>(out, <span class="nm">1</span>) == <span class="st">"8192,-4096,16384,0,"</span>, <span class="st">"right: {side(out, 1)}"</span>);</span>
+<span id="tests-render-loft-L51">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">side</span>(out, <span class="nm">0</span>) == <span class="st">"0,0,0,0,"</span>, <span class="st">"left: {side(out, 0)}"</span>);</span>
+<span id="tests-render-loft-L52">}</span>
+<span id="tests-render-loft-L53"></span>
+<span id="tests-render-loft-L54"><span class="cm">// A mono clip at the centre is cos(pi/4) = 0.70710677 on each side: 0.25 -&gt; 5792.44 -&gt; 5792,</span></span>
+<span id="tests-render-loft-L55"><span class="cm">// 0.75 -&gt; 17377.32 -&gt; 17377 (measured as single arithmetic does it).</span></span>
+<span id="tests-render-loft-L56"><span class="kw">fn</span> <span class="fn-call">test_centre_pan_is_equal_power</span>() {</span>
+<span id="tests-render-loft-L57">  audio::<span class="fn-call">init</span>(<span class="nm">8000</span>);</span>
+<span id="tests-render-loft-L58">  audio::<span class="fn-call">play</span>(<span class="fn-call">clip</span>([<span class="nm">0.25f</span>, <span class="nm">0.75f</span>]), <span class="nm">1.0</span>);</span>
+<span id="tests-render-loft-L59">  out = audio::<span class="fn-call">render</span>(<span class="nm">2</span>);</span>
+<span id="tests-render-loft-L60">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">side</span>(out, <span class="nm">0</span>) == <span class="st">"5792,17377,"</span>, <span class="st">"left: {side(out, 0)}"</span>);</span>
+<span id="tests-render-loft-L61">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">side</span>(out, <span class="nm">1</span>) == <span class="st">"5792,17377,"</span>, <span class="st">"right: {side(out, 1)}"</span>);</span>
+<span id="tests-render-loft-L62">}</span>
+<span id="tests-render-loft-L63"></span>
+<span id="tests-render-loft-L64"><span class="cm">// Two full-scale voices sum to 2 and -2, which clamp to the 16-bit edge.</span></span>
+<span id="tests-render-loft-L65"><span class="kw">fn</span> <span class="fn-call">test_sum_clamps</span>() {</span>
+<span id="tests-render-loft-L66">  audio::<span class="fn-call">init</span>(<span class="nm">8000</span>);</span>
+<span id="tests-render-loft-L67">  up = <span class="fn-call">clip</span>([<span class="nm">1.0f</span>]);</span>
+<span id="tests-render-loft-L68">  down = <span class="fn-call">clip</span>([-<span class="nm">1.0f</span>]);</span>
+<span id="tests-render-loft-L69">  audio::<span class="fn-call">play</span>(up, <span class="nm">1.0</span>, <span class="kw">false</span>, -<span class="nm">1.0</span>);</span>
+<span id="tests-render-loft-L70">  audio::<span class="fn-call">play</span>(up, <span class="nm">1.0</span>, <span class="kw">false</span>, -<span class="nm">1.0</span>);</span>
+<span id="tests-render-loft-L71">  first = audio::<span class="fn-call">render</span>(<span class="nm">1</span>);</span>
+<span id="tests-render-loft-L72">  audio::<span class="fn-call">play</span>(down, <span class="nm">1.0</span>, <span class="kw">false</span>, -<span class="nm">1.0</span>);</span>
+<span id="tests-render-loft-L73">  audio::<span class="fn-call">play</span>(down, <span class="nm">1.0</span>, <span class="kw">false</span>, -<span class="nm">1.0</span>);</span>
+<span id="tests-render-loft-L74">  second = audio::<span class="fn-call">render</span>(<span class="nm">1</span>);</span>
+<span id="tests-render-loft-L75">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">side</span>(first, <span class="nm">0</span>) == <span class="st">"32767,"</span>, <span class="st">"2.0 clamps: {side(first, 0)}"</span>);</span>
+<span id="tests-render-loft-L76">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">side</span>(second, <span class="nm">0</span>) == <span class="st">"-32767,"</span>, <span class="st">"-2.0 clamps: {side(second, 0)}"</span>);</span>
+<span id="tests-render-loft-L77">}</span>
+<span id="tests-render-loft-L78"></span>
+<span id="tests-render-loft-L79"><span class="cm">// A looping clip of three frames, rendered for seven: 0.25 -&gt; 8192, 0.5 -&gt; 16384,</span></span>
+<span id="tests-render-loft-L80"><span class="cm">// -0.5 -&gt; -16384, then again from the start.</span></span>
+<span id="tests-render-loft-L81"><span class="kw">fn</span> <span class="fn-call">test_looping_wraps</span>() {</span>
+<span id="tests-render-loft-L82">  audio::<span class="fn-call">init</span>(<span class="nm">8000</span>);</span>
+<span id="tests-render-loft-L83">  v = audio::<span class="fn-call">play</span>(<span class="fn-call">clip</span>([<span class="nm">0.25f</span>, <span class="nm">0.5f</span>, -<span class="nm">0.5f</span>]), <span class="nm">1.0</span>, <span class="kw">true</span>, -<span class="nm">1.0</span>) ?? <span class="nm">0</span>;</span>
+<span id="tests-render-loft-L84">  out = audio::<span class="fn-call">render</span>(<span class="nm">7</span>);</span>
+<span id="tests-render-loft-L85">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">side</span>(out, <span class="nm">0</span>) == <span class="st">"8192,16384,-16384,8192,16384,-16384,8192,"</span>, <span class="st">"left: {side(out, 0)}"</span>);</span>
+<span id="tests-render-loft-L86">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(audio::<span class="fn-call">playing</span>(v), <span class="st">"a looping voice plays on"</span>);</span>
+<span id="tests-render-loft-L87">}</span>
+<span id="tests-render-loft-L88"></span>
+<span id="tests-render-loft-L89"><span class="cm">// Starting 2 frames in (2 / 8000 s): -0.5, 1.0, then the end.</span></span>
+<span id="tests-render-loft-L90"><span class="kw">fn</span> <span class="fn-call">test_start_offset</span>() {</span>
+<span id="tests-render-loft-L91">  audio::<span class="fn-call">init</span>(<span class="nm">8000</span>);</span>
+<span id="tests-render-loft-L92">  audio::<span class="fn-call">play</span>(<span class="fn-call">clip</span>([<span class="nm">0.25f</span>, <span class="nm">0.5f</span>, -<span class="nm">0.5f</span>, <span class="nm">1.0f</span>]), <span class="nm">1.0</span>, <span class="kw">false</span>, -<span class="nm">1.0</span>, <span class="nm">0.00025</span>);</span>
+<span id="tests-render-loft-L93">  out = audio::<span class="fn-call">render</span>(<span class="nm">3</span>);</span>
+<span id="tests-render-loft-L94">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">side</span>(out, <span class="nm">0</span>) == <span class="st">"-16384,32767,0,"</span>, <span class="st">"left: {side(out, 0)}"</span>);</span>
+<span id="tests-render-loft-L95">}</span>
+<span id="tests-render-loft-L96"></span>
+<span id="tests-render-loft-L97"><span class="cm">// A 4000 Hz clip at an 8000 Hz output moves half a frame per output frame, interpolating:</span></span>
+<span id="tests-render-loft-L98"><span class="cm">// 0, 0.5 (-&gt; 16384), 1.0, then between 1.0 and the silence past the end, 0.5; then done.</span></span>
+<span id="tests-render-loft-L99"><span class="kw">fn</span> <span class="fn-call">test_resampling_interpolates</span>() {</span>
+<span id="tests-render-loft-L100">  audio::<span class="fn-call">init</span>(<span class="nm">8000</span>);</span>
+<span id="tests-render-loft-L101">  c = audio::<span class="fn-call">load_samples</span>([<span class="nm">0.0f</span>, <span class="nm">1.0f</span>], <span class="nm">4000</span>) ?? <span class="nm">0</span>;</span>
+<span id="tests-render-loft-L102">  audio::<span class="fn-call">play</span>(c, <span class="nm">1.0</span>, <span class="kw">false</span>, -<span class="nm">1.0</span>);</span>
+<span id="tests-render-loft-L103">  out = audio::<span class="fn-call">render</span>(<span class="nm">5</span>);</span>
+<span id="tests-render-loft-L104">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">side</span>(out, <span class="nm">0</span>) == <span class="st">"0,16384,32767,16384,0,"</span>, <span class="st">"left: {side(out, 0)}"</span>);</span>
+<span id="tests-render-loft-L105">}</span>
+<span id="tests-render-loft-L106"></span>
+<span id="tests-render-loft-L107"><span class="cm">// A stopped voice's handle acts on nothing, even once its slot plays another voice.</span></span>
+<span id="tests-render-loft-L108"><span class="kw">fn</span> <span class="fn-call">test_a_stale_handle_stops_nothing</span>() {</span>
+<span id="tests-render-loft-L109">  audio::<span class="fn-call">init</span>(<span class="nm">8000</span>);</span>
+<span id="tests-render-loft-L110">  c = <span class="fn-call">clip</span>([<span class="nm">0.5f</span>, <span class="nm">0.5f</span>, <span class="nm">0.5f</span>, <span class="nm">0.5f</span>]);</span>
+<span id="tests-render-loft-L111">  first = audio::<span class="fn-call">play</span>(c, <span class="nm">1.0</span>) ?? <span class="nm">0</span>;</span>
+<span id="tests-render-loft-L112">  audio::<span class="fn-call">stop</span>(first);</span>
+<span id="tests-render-loft-L113">  second = audio::<span class="fn-call">play</span>(c, <span class="nm">1.0</span>) ?? <span class="nm">0</span>;</span>
+<span id="tests-render-loft-L114">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(first != second, <span class="st">"a new handle for the reused slot"</span>);</span>
+<span id="tests-render-loft-L115">  audio::<span class="fn-call">stop</span>(first);</span>
+<span id="tests-render-loft-L116">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(audio::<span class="fn-call">playing</span>(second), <span class="st">"stopping the old handle left the new voice playing"</span>);</span>
+<span id="tests-render-loft-L117">  audio::<span class="fn-call">stop_all</span>();</span>
+<span id="tests-render-loft-L118">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!audio::<span class="fn-call">playing</span>(second), <span class="st">"stop_all stops it"</span>);</span>
+<span id="tests-render-loft-L119">}</span>
+<span id="tests-render-loft-L120"></span>
+<span id="tests-render-loft-L121"><span class="cm">// Volume, pan and position change between renders: 0.5 -&gt; 16384, at volume 0.5 -&gt; 8192, then</span></span>
+<span id="tests-render-loft-L122"><span class="cm">// panned hard right; a seek to 0 succeeds, one past the end of a clip that does not loop fails.</span></span>
+<span id="tests-render-loft-L123"><span class="kw">fn</span> <span class="fn-call">test_set_volume_pan_and_seek</span>() {</span>
+<span id="tests-render-loft-L124">  audio::<span class="fn-call">init</span>(<span class="nm">8000</span>);</span>
+<span id="tests-render-loft-L125">  v = audio::<span class="fn-call">play</span>(<span class="fn-call">clip</span>([<span class="nm">0.5f</span>, <span class="nm">0.5f</span>, <span class="nm">0.5f</span>, <span class="nm">0.5f</span>, <span class="nm">0.5f</span>, <span class="nm">0.5f</span>]), <span class="nm">1.0</span>, <span class="kw">false</span>, -<span class="nm">1.0</span>) ?? <span class="nm">0</span>;</span>
+<span id="tests-render-loft-L126">  a = audio::<span class="fn-call">render</span>(<span class="nm">1</span>);</span>
+<span id="tests-render-loft-L127">  audio::<span class="fn-call">set_volume</span>(v, <span class="nm">0.5</span>);</span>
+<span id="tests-render-loft-L128">  b = audio::<span class="fn-call">render</span>(<span class="nm">1</span>);</span>
+<span id="tests-render-loft-L129">  audio::<span class="fn-call">set_pan</span>(v, <span class="nm">1.0</span>);</span>
+<span id="tests-render-loft-L130">  c = audio::<span class="fn-call">render</span>(<span class="nm">1</span>);</span>
+<span id="tests-render-loft-L131">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">side</span>(a, <span class="nm">0</span>) == <span class="st">"16384,"</span>, <span class="st">"full: {side(a, 0)}"</span>);</span>
+<span id="tests-render-loft-L132">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">side</span>(b, <span class="nm">0</span>) == <span class="st">"8192,"</span>, <span class="st">"half: {side(b, 0)}"</span>);</span>
+<span id="tests-render-loft-L133">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">side</span>(c, <span class="nm">0</span>) == <span class="st">"0,"</span> &amp;&amp; <span class="fn-call">side</span>(c, <span class="nm">1</span>) == <span class="st">"8192,"</span>, <span class="st">"panned right: {c}"</span>);</span>
+<span id="tests-render-loft-L134">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(audio::<span class="fn-call"><a href="stdlib-binary-file-i-o.html">seek</a></span>(v, <span class="nm">0.0</span>), <span class="st">"a seek inside the clip"</span>);</span>
+<span id="tests-render-loft-L135">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!audio::<span class="fn-call"><a href="stdlib-binary-file-i-o.html">seek</a></span>(v, <span class="nm">1.0</span>), <span class="st">"a seek past the end of a clip that does not loop"</span>);</span>
+<span id="tests-render-loft-L136">}</span>
+<span id="tests-render-loft-L137"></span>
+<span id="tests-render-loft-L138"><span class="cm">// play_raw plays once at the centre and releases its samples when it ends.</span></span>
+<span id="tests-render-loft-L139"><span class="kw">fn</span> <span class="fn-call">test_play_raw</span>() {</span>
+<span id="tests-render-loft-L140">  audio::<span class="fn-call">init</span>(<span class="nm">8000</span>);</span>
+<span id="tests-render-loft-L141">  v = audio::<span class="fn-call">play_raw</span>([<span class="nm">0.25f</span>, <span class="nm">0.75f</span>], <span class="nm">8000</span>, <span class="nm">1.0</span>) ?? <span class="nm">0</span>;</span>
+<span id="tests-render-loft-L142">  out = audio::<span class="fn-call">render</span>(<span class="nm">3</span>);</span>
+<span id="tests-render-loft-L143">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">side</span>(out, <span class="nm">0</span>) == <span class="st">"5792,17377,0,"</span>, <span class="st">"left: {side(out, 0)}"</span>);</span>
+<span id="tests-render-loft-L144">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!audio::<span class="fn-call">playing</span>(v), <span class="st">"it ended"</span>);</span>
+<span id="tests-render-loft-L145">}</span>
+<span id="tests-render-loft-L146"></span>
+<span id="tests-render-loft-L147"><span class="cm">// A 16-bit WAV: 16384 / 32768 = 0.5, -0.5, 0, 32767 / 32768 = 0.99997 -&gt; 32766.0 -&gt; 32766.</span></span>
+<span id="tests-render-loft-L148"><span class="kw">fn</span> <span class="fn-call">test_wav_mono</span>() {</span>
+<span id="tests-render-loft-L149">  audio::<span class="fn-call">init</span>(<span class="nm">8000</span>);</span>
+<span id="tests-render-loft-L150">  c = audio::<span class="fn-call">load</span>(<span class="st">"mono16.wav"</span>) ?? <span class="nm">0</span>;</span>
+<span id="tests-render-loft-L151">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(c &gt; <span class="nm">0</span>, <span class="st">"the WAV loads"</span>);</span>
+<span id="tests-render-loft-L152">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(audio::<span class="fn-call">clip_frames</span>(c) == <span class="nm">4</span> &amp;&amp; audio::<span class="fn-call">clip_rate</span>(c) == <span class="nm">8000</span> &amp;&amp; audio::<span class="fn-call">clip_channels</span>(c) == <span class="nm">1</span>,</span>
+<span id="tests-render-loft-L153">         <span class="st">"4 frames, 8000 Hz, mono"</span>);</span>
+<span id="tests-render-loft-L154">  audio::<span class="fn-call">play</span>(c, <span class="nm">1.0</span>, <span class="kw">false</span>, -<span class="nm">1.0</span>);</span>
+<span id="tests-render-loft-L155">  out = audio::<span class="fn-call">render</span>(<span class="nm">4</span>);</span>
+<span id="tests-render-loft-L156">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">side</span>(out, <span class="nm">0</span>) == <span class="st">"16384,-16384,0,32766,"</span>, <span class="st">"left: {side(out, 0)}"</span>);</span>
+<span id="tests-render-loft-L157">}</span>
+<span id="tests-render-loft-L158"></span>
+<span id="tests-render-loft-L159"><span class="cm">// A stereo clip at the centre passes each side through: (0.5, -0.25), (0.99997, 0).</span></span>
+<span id="tests-render-loft-L160"><span class="kw">fn</span> <span class="fn-call">test_wav_stereo_centre</span>() {</span>
+<span id="tests-render-loft-L161">  audio::<span class="fn-call">init</span>(<span class="nm">8000</span>);</span>
+<span id="tests-render-loft-L162">  c = audio::<span class="fn-call">load</span>(<span class="st">"stereo16.wav"</span>) ?? <span class="nm">0</span>;</span>
+<span id="tests-render-loft-L163">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(audio::<span class="fn-call">clip_channels</span>(c) == <span class="nm">2</span>, <span class="st">"stereo"</span>);</span>
+<span id="tests-render-loft-L164">  audio::<span class="fn-call">play</span>(c, <span class="nm">1.0</span>);</span>
+<span id="tests-render-loft-L165">  out = audio::<span class="fn-call">render</span>(<span class="nm">2</span>);</span>
+<span id="tests-render-loft-L166">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">side</span>(out, <span class="nm">0</span>) == <span class="st">"16384,32766,"</span>, <span class="st">"left: {side(out, 0)}"</span>);</span>
+<span id="tests-render-loft-L167">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">side</span>(out, <span class="nm">1</span>) == <span class="st">"-8192,0,"</span>, <span class="st">"right: {side(out, 1)}"</span>);</span>
+<span id="tests-render-loft-L168">}</span>
+<span id="tests-render-loft-L169"></span>
+<span id="tests-render-loft-L170"><span class="cm">// A 441 Hz tone at 22050 Hz for 0.25 s (5512 frames), peak 0.0625 (ffmpeg's sine is 1/8 of full</span></span>
+<span id="tests-render-loft-L171"><span class="cm">// scale, halved): Vorbis is lossy, so the length and the peak are checked, not the samples.</span></span>
+<span id="tests-render-loft-L172"><span class="kw">fn</span> <span class="fn-call">test_ogg</span>() {</span>
+<span id="tests-render-loft-L173">  <span class="kw">if</span> !audio::<span class="fn-call">has_vorbis</span>() { <span class="kw">return</span>; }</span>
+<span id="tests-render-loft-L174">  audio::<span class="fn-call">init</span>(<span class="nm">22050</span>);</span>
+<span id="tests-render-loft-L175">  c = audio::<span class="fn-call">load</span>(<span class="st">"tone.ogg"</span>) ?? <span class="nm">0</span>;</span>
+<span id="tests-render-loft-L176">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(c &gt; <span class="nm">0</span>, <span class="st">"the OGG loads"</span>);</span>
+<span id="tests-render-loft-L177">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(audio::<span class="fn-call">clip_rate</span>(c) == <span class="nm">22050</span> &amp;&amp; audio::<span class="fn-call">clip_channels</span>(c) == <span class="nm">1</span>, <span class="st">"22050 Hz mono"</span>);</span>
+<span id="tests-render-loft-L178">  n = audio::<span class="fn-call">clip_frames</span>(c);</span>
+<span id="tests-render-loft-L179">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(n &gt;= <span class="nm">5500</span> &amp;&amp; n &lt;= <span class="nm">5520</span>, <span class="st">"about 5512 frames, got {n}"</span>);</span>
+<span id="tests-render-loft-L180">  audio::<span class="fn-call">play</span>(c, <span class="nm">1.0</span>, <span class="kw">false</span>, -<span class="nm">1.0</span>);</span>
+<span id="tests-render-loft-L181">  out = audio::<span class="fn-call">render</span>(<span class="nm">2000</span>);</span>
+<span id="tests-render-loft-L182">  peak = <span class="nm">0</span>;</span>
+<span id="tests-render-loft-L183">  i = <span class="nm">0</span>;</span>
+<span id="tests-render-loft-L184">  while i &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(out) {</span>
+<span id="tests-render-loft-L185">    s = out[i] ?? <span class="nm">0</span>;</span>
+<span id="tests-render-loft-L186">    <span class="kw">if</span> s &gt; peak { peak = s; }</span>
+<span id="tests-render-loft-L187">    i += <span class="nm">2</span>;</span>
+<span id="tests-render-loft-L188">  }</span>
+<span id="tests-render-loft-L189">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(peak &gt; <span class="nm">1850</span> &amp;&amp; peak &lt; <span class="nm">2250</span>, <span class="st">"peak near 2048, got {peak}"</span>);</span>
+<span id="tests-render-loft-L190">}</span>
+<span id="tests-render-loft-L191"></span>
+<span id="tests-render-loft-L192"><span class="kw">fn</span> <span class="fn-call">test_failures_answer_null</span>() {</span>
+<span id="tests-render-loft-L193">  audio::<span class="fn-call">init</span>(<span class="nm">8000</span>);</span>
+<span id="tests-render-loft-L194">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!audio::<span class="fn-call">load</span>(<span class="st">"no-such-file.wav"</span>), <span class="st">"a missing file"</span>);</span>
+<span id="tests-render-loft-L195">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!audio::<span class="fn-call">load_bytes</span>([<span class="nm">1</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>, <span class="nm">2</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>, <span class="nm">3</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>]), <span class="st">"bytes that are no clip"</span>);</span>
+<span id="tests-render-loft-L196">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!audio::<span class="fn-call">play</span>(<span class="nm">9999</span>, <span class="nm">1.0</span>), <span class="st">"an unknown clip"</span>);</span>
+<span id="tests-render-loft-L197">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!audio::<span class="fn-call">load_samples</span>([], <span class="nm">8000</span>), <span class="st">"no samples"</span>);</span>
+<span id="tests-render-loft-L198">}</span>
+</code></pre>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>
