@@ -1115,6 +1115,25 @@ static loft_ref loft_ref_null_reported(void) {
     return r;
 }
 
+/* `@FR-E-Report` (`Stores::raise_recoverable_runtime`): a recoverable fault at an unguarded
+ * site writes one Warn record `[<label>] <message>` at the site's file and line.  The logger is
+ * the unit's (`loft_log_warn`), bound by its `main`; a runtime built without one says nothing,
+ * and so does a test, which runs with no logger on the interpreter. */
+static void (*loft_warn_logger)(loft_str, loft_str, int64_t) = 0;
+static LOFT_COLD void loft_fault_report(const char *message, const char *file, uint32_t line) {
+    if (loft_warn_logger && !loft_in_test)
+        loft_warn_logger(loft_lit(message, strlen(message)), loft_lit(file, strlen(file)), line);
+}
+
+/* A write through `r` that names no record was dropped: reported unless its absence already
+ * was (`DbRef::absence_unreported` — an `else` arm or the access that found it owns it). */
+static LOFT_COLD void loft_write_dropped(loft_ref r, const char *file, uint32_t line) {
+    if (r.rec == 0 && !(r.pos & 0x80000000u))
+        loft_fault_report("[write_dropped] a write to a place that names no record was dropped "
+                          "\xe2\x80\x94 add `else { \xe2\x80\xa6 }` to the assignment to handle it",
+                          file, line);
+}
+
 /* `LOFT_STRICT_STORES` (`keys::strict_stores`, @PLN206 P0b): a freed store stays dead — its
  * slot is not made again (`loft_store_make`), except the top one, whose free lowers the floor as
  * the interpreter's `trim_free_top` lowers `max` — so an access through a reference naming it is
@@ -1670,6 +1689,14 @@ LOFT_HOT_INLINE void loft_pa_set(uint8_t *p, int locked, uint32_t off, const voi
     if (!p) return;
     if (LOFT_UNLIKELY(locked) && loft_locked_write()) return;
     memcpy(p + off, v, n);
+}
+/* A program's field write at a held address: through a null record — `root`, the view the
+ * address was taken from — the write is reported where it was dropped (`loft_write_dropped`). */
+static void loft_write_dropped(loft_ref r, const char *file, uint32_t line);
+LOFT_HOT_INLINE void loft_pa_set_at(uint8_t *p, int locked, uint32_t off, const void *v, size_t n,
+                                    loft_ref root, const char *file, uint32_t line) {
+    if (LOFT_UNLIKELY(!p)) { loft_write_dropped(root, file, line); return; }
+    loft_pa_set(p, locked, off, v, n);
 }
 
 /* The bytes of record `r` for a run of scalar field writes (`@FR-R-ValueRecord`'s copy into a
@@ -2879,6 +2906,16 @@ static void loft_copy_record(const loft_tdesc *T, uint16_t tp, loft_ref src, lof
     if (free_source && src.store_nr != dst.store_nr && !loft_free_protected(src)) loft_free_ref(src);
 }
 
+/* A program's record copy (`OpCopyRecord`): into a null place it is dropped and reported, after
+ * the two cases that copy nothing at all — the place itself and a null source — as
+ * `State::do_copy_record` orders them. */
+static void loft_copy_record_at(const loft_tdesc *T, uint16_t tp, loft_ref src, loft_ref dst, int flags,
+                                const char *file, uint32_t line) {
+    if (LOFT_UNLIKELY(dst.store_nr == 0xFFFF) && src.store_nr != 0xFFFF)
+        loft_write_dropped(dst, file, line);
+    loft_copy_record(T, tp, src, dst, flags);
+}
+
 
 #ifdef LOFT_FRAMES
 /* stack_trace (codegen_runtime::n_stack_trace): a StackFrame per live frame, outermost first; a
@@ -4058,6 +4095,38 @@ static void loft_set_single(loft_ref r, uint32_t fld, float v) {
     if (LOFT_WRITE_REFUSED(loft_store_of(r))) return;
     memcpy(loft_at(loft_store_of(r), r.rec, r.pos + fld), &v, 4);
 }
+
+/* The program's field writes (`OpSet*`): the setter, and a write through a null place reported
+ * at the statement's file and line (`loft_write_dropped`), after the value is computed, as the
+ * interpreter's setter reports.  The runtime's own writes call the setters, which say nothing.
+ * Inlined, the site is two constants on the null branch alone. */
+#define LOFT_SET_AT(name, T)                                                                   \
+    LOFT_HOT_INLINE void name##_at(loft_ref r, uint32_t fld, T v, const char *file, uint32_t line) { \
+        if (LOFT_UNLIKELY(r.rec == 0)) { loft_write_dropped(r, file, line); return; }          \
+        name(r, fld, v);                                                                       \
+    }
+#define LOFT_SET_MIN_AT(name)                                                                  \
+    LOFT_HOT_INLINE void name##_at(loft_ref r, uint32_t fld, int64_t min, int64_t v,           \
+                                   const char *file, uint32_t line) {                          \
+        if (LOFT_UNLIKELY(r.rec == 0)) { loft_write_dropped(r, file, line); return; }          \
+        name(r, fld, min, v);                                                                  \
+    }
+LOFT_SET_AT(loft_set_int, int64_t)
+LOFT_SET_AT(loft_set_int4, int64_t)
+LOFT_SET_AT(loft_set_int4_raw, int64_t)
+LOFT_SET_AT(loft_set_float, double)
+LOFT_SET_AT(loft_set_single, float)
+LOFT_SET_AT(loft_set_byte, uint8_t)
+LOFT_SET_AT(loft_set_char, uint32_t)
+LOFT_SET_AT(loft_set_dbref, loft_ref)
+LOFT_SET_AT(loft_set_text, loft_str)
+LOFT_SET_AT(loft_refill_text, loft_str)
+LOFT_SET_MIN_AT(loft_set_byte_v)
+LOFT_SET_MIN_AT(loft_set_byte_nullable)
+LOFT_SET_MIN_AT(loft_set_short)
+LOFT_SET_MIN_AT(loft_set_short_raw)
+#undef LOFT_SET_AT
+#undef LOFT_SET_MIN_AT
 
 static void loft_vec_push_float(loft_ref v, double x) {
     uint8_t *slot = loft_vec_push_slot(v, 8);

@@ -93,7 +93,7 @@ D1–D19 are the pairing's ranked list; their numbers are kept so the plan, the 
 fixes name a row the same way.  D20 onward come from the field-by-field comparison above and
 from P0b (what the C runtime lacks).  State: **open**, **fixing** (on the branch named), or
 **decided** (the decision and its measurement).  A closed row moves to
-[STORE_MODEL-history.md](STORE_MODEL-history.md) with its commit; D1–D8, D9a–D10, D12–D17,
+[STORE_MODEL-history.md](STORE_MODEL-history.md) with its commit; D1–D8, D9a–D17,
 D18–D19j, D20–D23, D25, D29, D31 and D34 are there.
 
 ### Correctness
@@ -105,7 +105,7 @@ D18–D19j, D20–D23, D25, D29, D31 and D34 are there.
 
 | # | Divergence | State |
 |---|---|---|
-| D11 | no `WriteDropped` diagnostic in C for a write through a null holder | open |
+| D36 | a recoverable fault's Warn record (`@FR-E-Report`): the C writes none for an index out of range (`index_out_of_bounds`, `negative_index`), a value outside a field's range (`range_defaulted`), a division by zero, a cast or a shift out of range — 138 corpus programs log differently (`c_sweep.py --log`; 78 of them first at an index), so a write through an out-of-range element reports `write_dropped` in C where the interpreter reported the index | open — the reporting is D11's (`loft_fault_report`, the statement's file and line as constants); each faulting operation takes an `_at` form, its guarded `*Nullable` twin none |
 
 ### Edges
 

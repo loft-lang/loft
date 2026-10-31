@@ -32,6 +32,10 @@ python3 scripts/c_sweep.py --poison  # the store poison modes, against the inter
 python3 scripts/c_sweep.py --verbose FILE...   # both outputs of each differing program
 python3 scripts/c_sweep.py --mode default      # one macro mode instead of all three
 python3 scripts/c_sweep.py --all               # every refusal reason and program, not the top 25
+python3 scripts/c_sweep.py --log               # the runtime log compared too: each side writes its
+                                               #   own file and the records (timestamps aside)
+                                               #   must agree — a recoverable fault's Warn line
+                                               #   (`@FR-E-Report`) included
 python3 scripts/c_sweep.py --stderr            # stderr compared too (a fault's message, location
                                                #   and chain), the driver's `advice:` notes aside
 python3 scripts/c_sweep.py --shard K/N         # every N-th program from K: ci.yml's `c-sweep`

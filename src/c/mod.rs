@@ -1743,7 +1743,8 @@ pub fn emit_unit_for(
          loft_col = loft_coptlibs;\n    loft_ncol = loft_ncoptlibs;\n    \
          loft_cbl = loft_cboundlibs;\n    loft_ncbl = loft_ncboundlibs;\n    \
          loft_fault_logger = loft_log_production_fault;\n    \
-         loft_locked_logger = loft_log_locked_write;\n",
+         loft_locked_logger = loft_log_locked_write;\n    \
+         loft_warn_logger = loft_log_warn;\n",
     );
     // The type table, for what a store's free walks (`@FR-H-Handle`): a unit that describes no
     // type declares none, and the runtime's pointer stays null.

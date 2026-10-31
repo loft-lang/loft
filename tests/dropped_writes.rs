@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @PLN203 C-gap: dropped-write reports are not printed by the C — its `--native` runs as `--native-rust` until then.
+// @PLN203 C-gap: the C reports no `index_out_of_bounds` yet (@PLN206 D36) — its run takes the cells without one.
 
 //! `@FR-E-Report`'s dropped-write clause and `@FR-H-Write-Else`, with a logger attached, on
 //! both backends: a write whose place names no record lands nowhere (`@FR-H-WriteNull`,
@@ -32,7 +32,15 @@ fn run(name: &str, body: &str, backend: &str) -> (String, String) {
         "struct P {{ x: integer, t: text }}\n\
          struct H {{ k: integer, v: integer }}\n\
          struct D {{ hs: hash<H[k]> }}\n\
+         struct I {{ y: integer }}\n\
+         struct O {{ n: integer, i: I }}\n\
+         struct Q {{ n: integer, p: P }}\n\
+         struct W {{ a: integer, b: integer, c: integer, d: integer, e: integer, f: integer, g: integer }}\n\
          fn mk(x: integer) -> P {{ P {{ x: x, t: \"p{{x}}\" }} }}\n\
+         fn none_o(n: integer) -> O? {{ if n > 0 {{ O {{ n: n }} }} else {{ null }} }}\n\
+         fn none_w(n: integer) -> W? {{ if n > 0 {{ W {{ a: n }} }} else {{ null }} }}\n\
+         fn none_q(n: integer) -> Q? {{ if n > 0 {{ Q {{ n: n }} }} else {{ null }} }}\n\
+         fn put_p(o: Q?, p: P) {{ o.p = p; }}\n\
          fn main() {{\n\
          v = [1, 2, 3];\n\
          ps = [mk(1)];\n\
@@ -94,6 +102,30 @@ const CELLS: &[(&str, &str, usize, usize, &str)] = &[
         1,
         "v=[1,2,3] ps=1 h=1 q=true",
     ),
+    // The same through each other way a write reaches a record: a sub-record view whose
+    // address the block holds (`@FR-R-RecPtr` on the C), a record copied into a null
+    // place (`OpCopyRecord`), and fields of a record held as a value (`@FR-R-ValueRecord`).
+    (
+        "sub-view",
+        "o = none_o(0); w = o.i; w.y = 1; println(\"{w.y}\");",
+        0,
+        1,
+        "null\nv=[1,2,3] ps=1 h=1 q=true",
+    ),
+    (
+        "copy",
+        "put_p(none_q(0), mk(4));",
+        0,
+        1,
+        "v=[1,2,3] ps=1 h=1 q=true",
+    ),
+    (
+        "value",
+        "w = none_w(0); w.a = 3; w.g = 4; println(\"{w.a}\");",
+        0,
+        2,
+        "null\nv=[1,2,3] ps=1 h=1 q=true",
+    ),
     // Two misses past the end in a loop: one line each (the hoisted writer on --native).
     (
         "loop",
@@ -125,7 +157,10 @@ const CELLS: &[(&str, &str, usize, usize, &str)] = &[
 ];
 
 fn check(backend: &str) {
-    for (name, body, oob, dropped, want) in CELLS {
+    // The C reports no out-of-range index yet (STORE_MODEL.md D36): its run is the cells that
+    // need none.
+    let c = backend == "--native-c";
+    for (name, body, oob, dropped, want) in CELLS.iter().filter(|cell| !c || cell.2 == 0) {
         let (out, log) = run(name, body, backend);
         assert_eq!(out.trim(), *want, "{name} {backend}: stdout");
         assert_eq!(
@@ -151,12 +186,17 @@ fn each_unguarded_dropped_write_reports_once_and_a_guarded_one_never_native() {
     check("--native-rust");
 }
 
+#[test]
+fn each_unguarded_dropped_write_reports_once_and_a_guarded_one_never_c() {
+    check("--native-c");
+}
+
 /// A thousand dropped writes at one statement are the logger's to thin, not the runtime's:
 /// five lines and a suppression count, never a thousand lines.  The count line arrives only
 /// when the window closes, so the cell asserts the ceiling.
 #[test]
 fn a_thousand_dropped_writes_at_one_place_are_rate_limited() {
-    for backend in ["--interpret", "--native-rust"] {
+    for backend in ["--interpret", "--native-rust", "--native-c"] {
         let (_, log) = run("thousand", "for _ in 0..1000 { q.x = 9; }", backend);
         let n = count(&log, "write_dropped");
         assert!((1..=5).contains(&n), "{backend}: {n} lines\n{log}");
