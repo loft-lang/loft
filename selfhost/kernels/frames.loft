@@ -13,6 +13,27 @@ fn depth(n: integer) -> integer {
   depth(n - 1) + (c * 2.0) as integer + ch
 }
 
+// S1.5: a `for` over a slice breaks out of its index computation with the vector pending, and
+// a `return` leaves a marked loop.  By hand: `unwind(4)` — v[1..4] sums 2 + 3 + 4 = 9, the first
+// element over 4 is 5: 905; `unwind(0)` — an empty slice, the first element over 0 is 1: 1.
+fn unwind(n: integer) -> integer {
+  v = [1, 2, 3, 4, 5, 6];
+  s = 0;
+  for x in v[1..n] {
+    s += x;
+  }
+  s * 100 + first_over(v, n)
+}
+
+fn first_over(v: vector<integer>, n: integer) -> integer {
+  for x in v[0..6] {
+    if x > n {
+      return x;
+    }
+  }
+  0
+}
+
 fn main() {
-  println("{depth(3000)}");
+  println("{depth(3000)} {unwind(4)} {unwind(0)}");
 }

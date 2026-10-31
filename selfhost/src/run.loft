@@ -306,6 +306,10 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
   f_sp_int: vector<integer> = [];
   f_sp_float: vector<integer> = [];
   f_sp_text: vector<integer> = [];
+  f_marks: vector<integer> = [];
+  // The loops' marks (S1.5): three stack pointers each, `n_marks` of them live.
+  marks: vector<integer?> = [];
+  n_marks = 0;
   fp = 0;
   def = entry;
   pc = 0;
@@ -485,6 +489,7 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
           f_sp_int[fp] = sp_int;
           f_sp_float[fp] = sp_float;
           f_sp_text[fp] = sp_text;
+          f_marks[fp] = n_marks;
         } else {
           f_def += [def];
           f_pc += [pc];
@@ -492,6 +497,7 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
           f_sp_int += [sp_int];
           f_sp_float += [sp_float];
           f_sp_text += [sp_text];
+          f_marks += [n_marks];
         }
         fp += 1;
         def = callee;
@@ -572,6 +578,7 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
         sp_int = f_sp_int[fp]!;
         sp_float = f_sp_float[fp]!;
         sp_text = f_sp_text[fp]!;
+        n_marks = f_marks[fp]!;
         prog = progs[def]!;
         match op.kind {
           KTuple => {
@@ -1010,6 +1017,22 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
         sp_int -= 6;
         put_int(ints, sp_int, if (ints[sp_int] ?? NULL_STORE) != (ints[sp_int + 3] ?? NULL_STORE) { 1 } else { 0 });
         sp_int += 1;
+      }
+      // S1.5: a loop's mark of the three stack pointers, its drop, and a leave to the mark
+      // `op.a` loops out — the marks of the loops inside it dropped, its own kept.
+      LoopMark => {
+        put_int(marks, n_marks * 3, sp_int);
+        put_int(marks, n_marks * 3 + 1, sp_float);
+        put_int(marks, n_marks * 3 + 2, sp_text);
+        n_marks += 1;
+      }
+      LoopUnmark => { n_marks -= 1; }
+      Unwind => {
+        target = n_marks - 1 - op.a;
+        sp_int = marks[target * 3] ?? 0;
+        sp_float = marks[target * 3 + 1] ?? 0;
+        sp_text = marks[target * 3 + 2] ?? 0;
+        n_marks = target + 1;
       }
       SliceVec => {
         sp_int -= 8;

@@ -144,6 +144,10 @@ enum Code {
   AppendCopy,
   // `OpSliceVector` / `OpSliceView`: `a` the element size, `b` 1 for the view.
   SliceVec,
+  // S1.5: a loop's mark of the stack pointers, its drop, and a leave to the mark `a` loops out.
+  LoopMark,
+  LoopUnmark,
+  Unwind,
   // A whole tuple (F-T1): `a` its slot, `b` its shape in `Lowering.shapes`.
   LoadTuple,
   StoreTuple,
@@ -212,6 +216,9 @@ struct Lowering {
   // level, `cont_at` the op): a rotated loop's `loop_start` is -1.
   cont_loop: vector<integer>,
   cont_at: vector<integer>,
+  // S1.5: each open loop's mark placeholder and whether a leave marked it.
+  loop_mark_at: vector<integer>,
+  loop_marked: vector<boolean>,
   def_nr: integer,
   // The bind table (1b-compare.md, the binds layer): one row per `set`, in the form
   // `LOFT_TRACE_BIND` writes from `generate_set` — `function⇥variable⇥first|re⇥notes` — and the
@@ -258,6 +265,8 @@ pub fn empty() -> Lowering {
     brk_at: [],
     cont_loop: [],
     cont_at: [],
+    loop_mark_at: [],
+    loop_marked: [],
     def_nr: -1,
     binds: [],
     notes: [],
@@ -649,6 +658,9 @@ fn effect(code: Code, b: integer) -> integer {
     DistinctStore => -1,
     AppendCopy => -2,
     SliceVec => -4,
+    LoopMark => 0,
+    LoopUnmark => 0,
+    Unwind => 0,
     LoadTuple => 1,
     StoreTuple => -1,
     PopTuple => -1,
@@ -2635,9 +2647,13 @@ fn leave_loop(l: Lowering, n: integer, is_break: boolean) {
     refuse(l, "a break or continue outside a loop");
     return;
   }
-  if l.depth != l.loop_depth[level] {
-    refuse(l, "a break or continue with values pending, which S1 does not carry");
-    return;
+  // S1.5: values pending, or loops between this one and the target: the stacks go back to the
+  // target's mark and the marks of the loops inside it go (`Unwind`).
+  if l.depth != l.loop_depth[level] || n > 0 {
+    for lv in level..len(l.loop_marked) {
+      l.loop_marked[lv] = true;
+    }
+    emit(l, Unwind, KInt, n, 0);
   }
   if is_break {
     l.brk_loop += [level];
@@ -2897,6 +2913,7 @@ fn rotated_loop(l: Lowering, b: ir::Bundle, ops: vector<ir::Node>, r: Rotation) 
     set(l, b, sd.ix, NdVar { n: sd.nxt });
   }
   level = len(l.loop_start);
+  open_mark(l);
   l.loop_start += [-1];
   l.loop_depth += [l.depth];
   entry = len(l.ops);
@@ -2943,8 +2960,26 @@ fn rotated_loop(l: Lowering, b: ir::Bundle, ops: vector<ir::Node>, r: Rotation) 
       l.brk_loop[i] = -1;
     }
   }
+  close_mark(l, level);
   l.loop_start.remove(level);
   l.loop_depth.remove(level);
+}
+
+// S1.5: a loop's mark placeholder, made `LoopMark` at its end if a leave marked the loop.
+fn open_mark(l: Lowering) {
+  l.loop_mark_at += [len(l.ops)];
+  l.loop_marked += [false];
+  emit(l, Nop, KInt, 0, 0);
+}
+
+// The end of loop `level`, where its breaks land: a marked loop drops its mark here.
+fn close_mark(l: Lowering, level: integer) {
+  if l.loop_marked[level] ?? false {
+    l.ops[l.loop_mark_at[level]!].code = LoopMark;
+    emit(l, LoopUnmark, KInt, 0, 0);
+  }
+  l.loop_mark_at.remove(level);
+  l.loop_marked.remove(level);
 }
 
 // `n`, a statement: its ops leave the stacks as they found them.
@@ -2993,6 +3028,7 @@ fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
         }
       }
       level = len(l.loop_start);
+      open_mark(l);
       l.loop_start += [len(l.ops)];
       l.loop_depth += [l.depth];
       block_statement(l, b, block[0]?);
@@ -3004,6 +3040,7 @@ fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
           l.brk_loop[i] = -1;
         }
       }
+      close_mark(l, level);
       l.loop_start.remove(level);
       l.loop_depth.remove(level);
     }

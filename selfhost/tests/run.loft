@@ -73,11 +73,13 @@ fn test_a_loop_with_break_remainder_and_division_runs() {
   assert(ran("collatz", "n_longest", [1, 2000]) == 1161182, "longest(1, 2000)");
 }
 
-fn test_a_break_with_a_value_pending_is_refused() {
+// S1.5: a `break` taken while `t` and `1` are pending leaves the stacks as the loop found them;
+// by hand, rounds 0 to 2 add 2 each, round 3 breaks.
+fn test_a_break_with_values_pending_gives_them_back() {
   b = kernel("pending");
-  d = lower::find(b, "n_pending")!;
-  o = run::run(b, d, [10]);
-  assert(o.refused == "a break or continue with values pending, which S1 does not carry", "refused: {o.refused}");
+  assert(ran_clean(b, "n_pending", 10) == 6, "pending(10)");
+  assert(ran_clean(b, "n_pending", 2) == 4, "pending(2)");
+  assert(ran_clean(b, "n_pending", 0) == 0, "pending(0)");
 }
 
 fn test_the_stdlibs_own_loft_functions_run_from_the_image() {
@@ -262,6 +264,9 @@ fn test_a_deep_recursion_grows_the_stack_store() {
   f = kernel("frames");
   assert(ran_clean(f, "n_depth", 3000) == 12852, "depth(3000)");
   assert(ran_clean(f, "n_depth", 7) == 30, "depth(7)");
+  // S1.5: a break with the vector pending, a return from a marked loop.
+  assert(ran_clean(f, "n_unwind", 4) == 905, "unwind(4)");
+  assert(ran_clean(f, "n_unwind", 0) == 1, "unwind(0)");
 }
 
 // @PLN91 F-1 PF3: a `&` parameter of every width written through by the callee, read back by
