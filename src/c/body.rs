@@ -13,9 +13,9 @@ mod apart_value;
 mod chain;
 mod deferred;
 mod files;
-mod loop_record;
 mod generator;
 mod keyed;
+mod loop_record;
 mod misc;
 mod par;
 pub(super) mod transient;
@@ -2683,14 +2683,17 @@ impl<'a> FnWriter<'a> {
         // and the run's one growth is the reservation above — so its pushes write through one
         // header and its held record address (`loft_ph_putb*`), the growth step left as the
         // runtime's append for a vector the reservation could not grow.
+        // `LOFT_NO_VECTOR_HOIST` holds no header anywhere, this one included.
         let header = !std::env::var("LOFT_NO_PUSH_RUN_HEADER").is_ok_and(|v| v != "0")
+            && !std::env::var("LOFT_NO_VECTOR_HOIST").is_ok_and(|v| v != "0")
             && vals.iter().all(|val| {
                 crate::opt::hoist::run_value_plain(self.cx.data, self.vars, first.path.0, val)
             });
         if header {
             let h = format!("ph{}", self.decls.len() + 1);
-            self.decls
-                .push(format!("loft_ph {h} = {{ {{ 0xFFFF, 0, 0 }}, 0, 0, 0, 0 }};"));
+            self.decls.push(format!(
+                "loft_ph {h} = {{ {{ 0xFFFF, 0, 0 }}, 0, 0, 0, 0 }};"
+            ));
             self.line(ind, &format!("{h} = loft_ph_of({v}, {});", first.size));
             self.push_heads
                 .push(vec![(first.path.clone(), h, first.size, true)]);
@@ -3470,7 +3473,7 @@ impl<'a> FnWriter<'a> {
         if self.nk_skip == Some(std::ptr::from_ref(v.unspan()) as usize) {
             return Ok(());
         }
-        if !self.lr.is_empty() && self.loop_record_stmt(v, ind)? {
+        if !self.lr.is_empty() && self.loop_record_stmt(v, ind) {
             return Ok(());
         }
         if !self.room_minted.is_empty() && !self.room_keeps(v) {
@@ -7462,7 +7465,11 @@ impl<'a> FnWriter<'a> {
         // `@FR-R-LoopRecord`'s refill clause: a kept record mints only where it holds no store.
         if self.lr.recs.contains_key(&v) {
             let fresh = format!("lrf{v}");
-            if !self.decls.iter().any(|d| d.starts_with(&format!("int {fresh} "))) {
+            if !self
+                .decls
+                .iter()
+                .any(|d| d.starts_with(&format!("int {fresh} ")))
+            {
                 self.decls.push(format!("int {fresh} = 0;"));
             }
             crate::rewrite_census::fired("R-LoopRecord/refill", 1);

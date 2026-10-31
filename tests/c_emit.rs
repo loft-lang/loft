@@ -1377,14 +1377,16 @@ fn main() {
     // TWIN (`@FR-R-AppendTwin`), a second body of `build`: one more held call and versioned
     // loop wherever `build` has one.  Its `pix` is the caller's vector, written through the
     // caller's push window (the window clause), so the twin holds no push header of its own:
-    // four scalar push headers, five under `LOFT_NO_APPEND_WINDOW`.
+    // four scalar push headers, five under `LOFT_NO_APPEND_WINDOW` — plus one in `main` for the
+    // literal `v: [2, 4, 6, 8, 10]`, a straight run written through one header
+    // (`@FR-R-PushFill`'s header clause).
     for (mode, switch, twins, fresh, versioned, pushed, scalar_pushed, scalars) in [
-        ("held", "", 3, 3, 2, 2, 4, 1),
-        ("no-window", "LOFT_NO_APPEND_WINDOW", 3, 3, 2, 2, 5, 1),
-        ("no-inputs", "LOFT_NO_CALLEE_INPUTS", 0, 3, 0, 2, 4, 1),
-        ("no-version", "LOFT_NO_DISTINCT_VERSION", 1, 3, 0, 2, 4, 1),
-        ("no-record-push", "LOFT_NO_RECORD_PUSH", 3, 3, 2, 0, 4, 1),
-        ("no-scalar", "LOFT_NO_SCALAR_HOIST", 1, 3, 2, 2, 4, 0),
+        ("held", "", 3, 3, 2, 2, 5, 1),
+        ("no-window", "LOFT_NO_APPEND_WINDOW", 3, 3, 2, 2, 6, 1),
+        ("no-inputs", "LOFT_NO_CALLEE_INPUTS", 0, 3, 0, 2, 5, 1),
+        ("no-version", "LOFT_NO_DISTINCT_VERSION", 1, 3, 0, 2, 5, 1),
+        ("no-record-push", "LOFT_NO_RECORD_PUSH", 3, 3, 2, 0, 5, 1),
+        ("no-scalar", "LOFT_NO_SCALAR_HOIST", 1, 3, 2, 2, 5, 0),
         ("unheld", "LOFT_NO_VECTOR_HOIST", 0, 0, 0, 0, 0, 0),
     ] {
         let c = dir.join(format!("{mode}.c"));
