@@ -82,6 +82,7 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 | [@PLN76](https://github.com/loft-lang/plans/issues/76) | future | Particle system |
 | [@PLN56](https://github.com/loft-lang/plans/issues/56) | future | Rigged characters |
 | [@PLN49](https://github.com/loft-lang/plans/issues/49) | future | dryopea — sci-fi free-build / tower-defence game |
+| [@PLN209](https://github.com/loft-lang/plans/issues/209) | next | Platform-agnostic game libraries — one game source on the Tanmatsu, the web and the desktop; every game with a small-format version ([plan](plans/209-platform-agnostic-games/README.md)) |
 | [@PLN51](https://github.com/loft-lang/plans/issues/51) | future | Bumper-airplanes — the next audience demo |
 | [@PLN111](https://github.com/loft-lang/plans/issues/111) | parked | `graphics` — browser (`--html`) port |
 | [@PLN73](https://github.com/loft-lang/plans/issues/73) | parked | Universal editor |
