@@ -67,7 +67,13 @@ case "${1:-status}" in
     # The `setsid` is load-bearing beside the traps: a `make ci` run as an agent tool's
     # background task is a child of that tool's process tree and dies with whatever stops
     # that tree; started here it is its own session and only an addressed signal reaches it.
-    setsid nohup bash -c '
+    # macOS ships no `setsid` command: there the session is made by `os.setsid` — without the
+    # fallback the launch failed with "command not found", `start` still said "gate started",
+    # and `status` read the dead pid as a gate that DIED (three on 2026-10-31, none ran).
+    if command -v setsid >/dev/null 2>&1; then detach=(setsid)
+    else detach=(python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])')
+    fi
+    "${detach[@]}" nohup bash -c '
       s=$(date +%s)
       note() { echo "$1 $$ $(date +%s) $(( $(date +%s) - s ))s $2" > .ci-verdict; }
       snapshot() { mkdir -p target; ps -eo pid,ppid,pgid,sid,uid,etimes,comm,args > target/gate-killer-snapshot.txt 2>/dev/null; }
@@ -153,8 +159,16 @@ case "${1:-status}" in
           note FAILED "0 tests and neither fmt nor clippy — toolchain/box/target-dir: $(grep -m1 -E "^error" result.txt 2>/dev/null | head -c 120)"
         fi
       fi' >/dev/null 2>&1 &
-    echo "RUNNING $! $(date +%s) started" > $V
-    echo "gate started (pid $!)"
+    gate=$!
+    echo "RUNNING $gate $(date +%s) started" > $V
+    # A launch that cannot run dies at once; say so here, not as a DIED gate on the next status.
+    sleep 1
+    if ! kill -0 "$gate" 2>/dev/null && read -r st _ < $V && [ "$st" = RUNNING ]; then
+      echo "NOT-STARTED $gate $(date +%s) the launch exited within a second" > $V
+      echo "gate NOT started: the launch exited within a second (try \`make ci\` in the foreground to see why)"
+      exit 1
+    fi
+    echo "gate started (pid $gate)"
     ;;
   status)
     [ -f $V ] || { echo "NOT-STARTED"; exit 0; }
