@@ -888,8 +888,14 @@ impl FnWriter<'_> {
             }
             ("OpVectorRef" | "OpVectorRefNullable", [_, _]) => {
                 let (v, i) = self.two(name, args, ind)?;
+                // `@FR-E-Report` — the unguarded index reports a slot it does not name.
+                let (at, site) = if name == "OpVectorRef" {
+                    ("_at", format!(", {}", self.site()))
+                } else {
+                    ("", String::new())
+                };
                 Ok(Some(E::new(
-                    format!("loft_array_get({}, {})", as_ref(v)?, as_int(i)?),
+                    format!("loft_array_get{at}({}, {}{site})", as_ref(v)?, as_int(i)?),
                     K::Ref,
                 )))
             }

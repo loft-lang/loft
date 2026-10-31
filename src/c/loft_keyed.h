@@ -766,6 +766,16 @@ static inline void loft_apv_set(loft_apvec *v, int64_t i, double x) {
     if (f >= 0) memcpy(loft_apv_at(v, f), &x, sizeof x);
 }
 
+/* `v[i]` of a vector held apart (`@FR-E-Report`): an index naming no element is reported. */
+static inline double loft_apv_get_at(loft_apvec *v, int64_t i, const char *file, uint32_t line) {
+    if (LOFT_UNLIKELY(loft_apv_index(v, i) < 0)) loft_index_miss(i, (int64_t) v->n, file, line);
+    return loft_apv_get(v, i);
+}
+static inline void loft_apv_set_at(loft_apvec *v, int64_t i, double x, const char *file, uint32_t line) {
+    if (LOFT_UNLIKELY(loft_apv_index(v, i) < 0)) loft_index_miss(i, (int64_t) v->n, file, line);
+    loft_apv_set(v, i, x);
+}
+
 /* `@FR-R-Apart` instance 4 (codegen_runtime::AprVec): one field of a record of record vectors
  * held apart is the bytes of its elements, `esize` each, in the element's store layout — a text
  * buffer, so the frame's epilogue frees it with its texts.  Clearing keeps the capacity: a value
@@ -1116,6 +1126,13 @@ static loft_ref loft_array_get(loft_ref v, int64_t from) {
     if (r == 0) return loft_ref_null();
     loft_ref e = { slot.store_nr, r, 8 };
     return e;
+}
+
+/* `OpVectorRef` (`State::vec_ref_or_raise`): an index naming no slot is reported. */
+static loft_ref loft_array_get_at(loft_ref v, int64_t from, const char *file, uint32_t line) {
+    int64_t len = loft_vec_len(v), i = from < 0 ? from + len : from;
+    if (LOFT_UNLIKELY(i < 0 || i >= len)) loft_index_miss(from, len, file, line);
+    return loft_array_get(v, from);
 }
 
 /* insert_record on an array: the record's number joins the end. */

@@ -367,7 +367,8 @@ a / b?          // null  — `?` is TIGHTEST: this is `a / (b?)`, and the DIVISI
                access that found it (`index_out_of_bounds`, naming the index and the length),
                an absent key or a null view by the write (`write_dropped`).  A store with an
                `else` reports nothing (the arm owns the failure).  The line names the
-               statement on the interpreter and the running function on `--native`.
+               statement on the interpreter and the C backend, and may name the running
+               function's declaration on the Rust backend (`--native-rust`).
 
   (E-Uncomp-Seen)  `place = v else { B }` (H-Write-Else) is the form that observes it; the
                older `if !place` on the next statement stays accepted, with this meaning.
