@@ -913,11 +913,11 @@ fn t_4text_basename(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str) ->
   } /*block_1: text["self"]*/
 
 // loft:default/02_files.loft:1267
-fn t_4text_resolve(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut var_target: &str, mut var_t: *mut String, mut var___work_4: *mut String, mut var___work_2: *mut String) -> Str { //block_1: text["base", "t"]
+fn t_4text_resolve(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut var_target: &str, mut var_t: *mut String, mut var___work_4: *mut String) -> Str { //block_1: text["base", "t"]
   let stores: &mut Stores = unsafe { &mut *cell.get() };
   let mut var___work_p2_2: String = "".to_string();
   let mut var___work_p2_1: String = "".to_string();
-  unsafe { (*var___work_2).clear() };
+  let mut var___work_2: String = "".to_string();
   let mut var___work_1: String = "".to_string();
   // loft:default/02_files.loft:1268
   let mut var_base: String = var_self.to_string();
@@ -989,19 +989,22 @@ fn t_4text_resolve(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut
     ;
     ;
     ;
+    ;
     return Str::new(unsafe { &*var_t })
     } /*block_14: never*/ else {()};
   // loft:default/02_files.loft:1289
   { //Formatted string_15: text["__work_2"]
-    unsafe { (*var___work_2).clear() };
-    unsafe { ops::format_text(&mut *var___work_2, &var_base, 0_i64, 2, 32) };
-    unsafe { ops::append_text(&mut (*var___work_2), &*("/")) };
-    unsafe { ops::format_text(&mut *var___work_2, unsafe { &*var_t }, 0_i64, 2, 32) };
+    var___work_2.clear();
+    ops::format_text(&mut var___work_2, &var_base, 0_i64, 2, 32);
+    ops::append_text(&mut var___work_2, &*("/"));
+    ops::format_text(&mut var___work_2, unsafe { &*var_t }, 0_i64, 2, 32);
+    unsafe { *var_t = (&var___work_2).to_string() };
     ;
     ;
     ;
     ;
-    return Str::new(unsafe { &*var___work_2 })
+    ;
+    return Str::new(unsafe { &*var_t })
     } /*Formatted string_15: text["__work_2"]*/
   } /*block_1: text["base", "t"]*/
 
@@ -1645,9 +1648,8 @@ pub extern "C" fn loft_shared_t_4text_resolve(
     let p1: &str = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(a[1].text_ptr, a[1].text_len)) };
     let mut p2: String = String::new();
     let mut p3: String = String::new();
-    let mut p4: String = String::new();
     let __text_dest = unsafe { (&mut *cell.get()).bridge_text_dest.take() };
-    let __r = (t_4text_resolve(cell, p0, p1, &mut p2, &mut p3, &mut p4));
+    let __r = (t_4text_resolve(cell, p0, p1, &mut p2, &mut p3));
     let __t = __r.str();
     let __st: &mut Stores = unsafe { &mut *cell.get() };
     if let Some(__d) = __text_dest {
