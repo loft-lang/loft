@@ -8,6 +8,7 @@
 // any difference in what the image says, or in how this side reads it, is a named row.
 use ir;
 use types;
+use frame;
 
 // ── schema: `LOFT_DUMP_TYPES` (`Stores::dump_types`, `show_type(tp, true)`,
 // `src/database/types.rs`) ──
@@ -696,6 +697,83 @@ pub fn types_report(b: ir::Bundle) -> text {
       r += "  {v#index:<4} {arg:<4} {v.name:<24} {type_show(b, f, v.type_def)}\n";
     }
     r += "\n";
+  }
+  r
+}
+
+// ── slots: each function's frame, `introspect --show-slots`'s table (1b-compare.md C-3) ──
+
+// `validate::short_type`: the type as the slot table writes it.
+fn short_type(t: ir::TypeT) -> text {
+  match t {
+    TyOptional { inner } => "{short_type(inner)}?",
+    TyUnknown { n: _ } => "?",
+    TyNull => "null",
+    TyVoid => "void",
+    TyNever => "void",
+    TyInteger { spec: _ } => "int",
+    TyBoolean => "bool",
+    TyFloat => "float",
+    TySingle => "single",
+    TyCharacter => "char",
+    TyText { dep: _ } => "text",
+    TyKeys => "keys",
+    TyEnum { n, is_ref: _, dep: _ } => "enum({n})",
+    TyReference { n, dep: _ } => "ref({n})",
+    TyRefVar { inner } => "&{short_type(inner)}",
+    TyVector { inner, dep: _ } => "vec<{short_type(inner)}>",
+    TyRoutine { n } => "routine({n})",
+    TyIterator { step, inner: _ } => "iter<{short_type(step)}>",
+    TySorted { n, keys: _, dep: _ } => "sorted({n})",
+    TyIndex { n, keys: _, dep: _ } => "index({n})",
+    TyRadix { n, names: _, dep: _ } => "spatial({n})",
+    TyTrie { n, key: _, dep: _ } => "trie({n})",
+    TyHash { n, names: _, dep: _ } => "hash({n})",
+    TyFunction { args: _, result: _, dep: _, consts: _ } => "fn",
+    TyRewritten { inner } => "~{short_type(inner)}",
+    TyTuple { elems } => "({elems_short(elems)})",
+  }
+}
+
+fn elems_short(elems: vector<ir::TypeT>) -> text {
+  r = "";
+  for e in elems {
+    if e#index > 0 {
+      r += ",";
+    }
+    r += short_type(e);
+  }
+  r
+}
+
+// `variables::dump_variables` for every function `introspect` lists, its last column — the
+// live interval, which the bytecode writer's `compute_intervals` decides — left out: that is
+// the lifetimes layer's.  The slot is the frame's (`frame::slot`): a local's `stack_pos` as
+// wide as it is held, an argument's position as the bytecode writer lays it out.
+pub fn slots_report(b: ir::Bundle) -> text {
+  r = "";
+  dashes = "";
+  for _ in 0..70 {
+    dashes += "-";
+  }
+  for d in b.data.definitions {
+    if d.def_type != 1 || !d.name.starts_with("n_") || d.name.starts_with("n___lambda_") {
+      continue;
+    }
+    if is_stdlib(d.position.file) || len(d.variables.variables) == 0 {
+      continue;
+    }
+    f = d.variables;
+    r += "fn {d.name}:\n";
+    r += "  {"#":<4} {"arg":<4} {"name":<20} {"type":<14} {"scope":<6} slot\n";
+    r += "  {dashes}\n";
+    for v in f.variables {
+      arg = if v.argument { "arg" } else { "" };
+      scope = if v.scope == 65535 { "-" } else { "{v.scope}" };
+      r += "  {v#index:<4} {arg:<4} {v.name:<20} {short_type(v.type_def[0] ?? ir::TypeT.TyVoid):<14} {scope:<6} {frame::slot(f, v#index)}\n";
+    }
+    // `dump_variables` closes each table with an empty line and `emit_slots` adds one.
+    r += "\n\n";
   }
   r
 }
