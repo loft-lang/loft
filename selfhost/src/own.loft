@@ -20,80 +20,87 @@ use ir;
 
 // ── `Own` (src/use_analysis.rs:1874 enum Own) ──
 //
-// One integer per verdict, so a verdict compares and stores as a scalar: `Owned` and `Unknown`
-// are negative, `Borrowed { base }` is the base itself (0..=u16::MAX) and `Join { base }` is the
-// base plus JOIN_AT.  `base_of` answers the base, or -1 for none.
-const OWNED = -1;
-const UNKNOWN = -2;
-const JOIN_AT = 65536;
+// The Rust's four variants.  A base is a variable number; `u16::MAX` stays a value, as in the
+// Rust — the base of a borrow or join the oracle cannot name.
+pub enum Own {
+  Owned,
+  Unknown,
+  Borrowed { base: integer },
+  Join { base: integer },
+}
+
 // `u16::MAX`: the base the oracle cannot name.
 const MAX = 65535;
 // `u32::MAX`: a fn-ref variable naming TWO targets (`fnref_target_in`).
 const UMAX = 4294967295;
-// src/use_analysis.rs:1924 const NOT_YET — `Borrowed { base: u16::MAX - 1 }`.
-const NOT_YET = 65534;
+// src/use_analysis.rs:1922 const NOT_YET — the reserved `Borrowed { base: u16::MAX - 1 }`, NOT a
+// variant of its own: the oracle relies on the identity.  A call whose argument classifies
+// NOT_YET answers a borrow of base `u16::MAX - 1`, which IS `NOT_YET` again where it is joined.
+fn not_yet() -> Own {
+  Borrowed { base: MAX - 1 }
+}
+
 // src/use_analysis.rs:1902 const FIXPOINT_ROUNDS.
 const FIXPOINT_ROUNDS = 6;
-// A memo or fixpoint slot that holds nothing yet.
+// An offset no closure read answers (`closure_read`).
 const NONE = -100;
 
-fn borrowed(base: integer) -> integer {
-  base
+fn is_borrowed(o: Own) -> boolean {
+  match o {
+    Borrowed { base: _ } => true,
+    _ => false,
+  }
 }
 
-fn joined(base: integer) -> integer {
-  JOIN_AT + base
+fn is_join(o: Own) -> boolean {
+  match o {
+    Join { base: _ } => true,
+    _ => false,
+  }
 }
 
-fn is_borrowed(o: integer) -> boolean {
-  o >= 0 && o < JOIN_AT
+// src/use_analysis.rs:1928 fn base — the base of a `Borrowed`/`Join`, null for the others.
+pub fn base_of(o: Own) -> integer? {
+  match o {
+    Borrowed { base } => base,
+    Join { base } => base,
+    _ => null,
+  }
 }
 
-fn is_join(o: integer) -> boolean {
-  o >= JOIN_AT
-}
-
-// src/use_analysis.rs:1928 fn base — the base of a `Borrowed`/`Join`, -1 for `Owned`/`Unknown`.
-fn base_of(o: integer) -> integer {
-  if is_borrowed(o) {
-    o
-  } else if is_join(o) {
-    o - JOIN_AT
-  } else {
-    -1
+// `let Own::Join { base } = own && base != u16::MAX` (src/state/codegen.rs:2883 R1, :3796
+// F9a): the base of a join the oracle can name, null for any other verdict.
+pub fn named_join_base(o: Own) -> integer? {
+  match o {
+    Join { base } => if base == MAX { null } else { base },
+    _ => null,
   }
 }
 
 // src/use_analysis.rs:1943 fn join — the lattice join of two arms.
-fn join(a: integer, c: integer) -> integer {
-  if a == NOT_YET {
+fn join(a: Own, c: Own) -> Own {
+  if a == not_yet() {
     return c;
   }
-  if c == NOT_YET {
+  if c == not_yet() {
     return a;
   }
-  if a == UNKNOWN && c == UNKNOWN {
-    return UNKNOWN;
+  if a == Unknown && c == Unknown {
+    return Unknown;
   }
-  // `own_declines("join")` is false at its default: no absorbing arm.
-  if a == UNKNOWN {
-    return join(OWNED, c);
-  }
-  if c == UNKNOWN {
-    return join(OWNED, a);
-  }
-  if a == OWNED && c == OWNED {
-    return OWNED;
+  // `own_declines("join")` is false at its default: no absorbing arm.  The Rust joins an
+  // `Unknown` arm as `Owned` (`Own::Owned.join(o)`); below, the two differ only in the first
+  // test — neither is a borrow, and neither has a base.
+  if (a == Owned || a == Unknown) && (c == Owned || c == Unknown) {
+    return Owned;
   }
   if is_borrowed(a) && is_borrowed(c) {
     if a == c {
       return a;
     }
-    return borrowed(MAX);
+    return Borrowed { base: MAX };
   }
-  ba = base_of(a);
-  bc = base_of(c);
-  joined(if ba >= 0 { ba } else if bc >= 0 { bc } else { MAX })
+  Join { base: base_of(a) ?? base_of(c) ?? MAX }
 }
 
 // ── the program's tables: `Data::def_nr`, `Function::name` / `tp` / `is_argument` ──
@@ -206,32 +213,32 @@ fn heap_dep_bare(t: ir::TypeT) -> boolean {
   }
 }
 
-// src/data.rs:2322 fn heap_def_nr — through `base()`; -1 for `None`.
-fn heap_def_nr(t: ir::TypeT) -> integer {
+// src/data.rs:2322 fn heap_def_nr — through `base()`; null for `None`.
+fn heap_def_nr(t: ir::TypeT) -> integer? {
   match t {
     TyOptional { inner } => heap_def_nr_bare(inner),
     _ => heap_def_nr_bare(t),
   }
 }
 
-fn heap_def_nr_bare(t: ir::TypeT) -> integer {
+fn heap_def_nr_bare(t: ir::TypeT) -> integer? {
   match t {
     TyReference { n, dep: _ } => n,
-    TyEnum { n, is_ref, dep: _ } => if is_ref { n } else { -1 },
-    _ => -1,
+    TyEnum { n, is_ref, dep: _ } => if is_ref { n } else { null },
+    _ => null,
   }
 }
 
 // src/data.rs:1845 fn peel_link, then `heap_def_nr`: `base()`, then every `&` and `Rewritten`
 // marker peeled, each followed by its own `base()`.
-fn peel_link_heap_def_nr(t: ir::TypeT) -> integer {
+fn peel_link_heap_def_nr(t: ir::TypeT) -> integer? {
   match t {
     TyOptional { inner } => peel_link_after_base(inner),
     _ => peel_link_after_base(t),
   }
 }
 
-fn peel_link_after_base(t: ir::TypeT) -> integer {
+fn peel_link_after_base(t: ir::TypeT) -> integer? {
   match t {
     TyRefVar { inner } => peel_link_heap_def_nr(inner),
     TyRewritten { inner } => peel_link_heap_def_nr(inner),
@@ -373,33 +380,32 @@ fn is_overwritten_view(f: ir::Function, v: integer) -> boolean {
   n.starts_with("_mv_") || n.starts_with("__ncc_")
 }
 
-// src/variables/mod.rs:4077 fn record_copy_source — -1 for `None`.  `tp` of a variable out of
+// src/variables/mod.rs:4077 fn record_copy_source — null for `None`.  `tp` of a variable out of
 // range is `Type::Null`, which answers no record.
-fn record_copy_source(b: ir::Bundle, f: ir::Function, v: integer, src: integer) -> integer {
+fn record_copy_source(b: ir::Bundle, f: ir::Function, v: integer, src: integer) -> integer? {
   if is_overwritten_view(f, v) {
-    return -1;
+    return null;
   }
   sx = f.variables[src];
   if sx == null {
-    return -1;
+    return null;
   }
   src_tp = sx.type_def[0]!;
-  src_d = -1;
-  if base_is_ref_var(src_tp) {
+  src_d = if base_is_ref_var(src_tp) {
     if len(tp_depend(f, v)) != 0 {
-      return -1;
+      return null;
     }
-    src_d = peel_link_heap_def_nr(src_tp);
+    peel_link_heap_def_nr(src_tp)
   } else {
-    src_d = heap_def_nr(src_tp);
-  }
-  if src_d < 0 {
-    return -1;
+    heap_def_nr(src_tp)
+  };
+  if src_d == null {
+    return null;
   }
   vx = f.variables[v];
-  dst_d = if vx == null { -1 } else { heap_def_nr(vx.type_def[0]!) };
-  if dst_d >= 0 && !copies_as(b, dst_d, src_d) {
-    return -1;
+  dst_d = if vx == null { null } else { heap_def_nr(vx.type_def[0]!) };
+  if dst_d != null && !copies_as(b, dst_d!, src_d!) {
+    return null;
   }
   src_d
 }
@@ -407,10 +413,10 @@ fn record_copy_source(b: ir::Bundle, f: ir::Function, v: integer, src: integer) 
 // src/use_analysis.rs:3808 fn bind_copies.
 fn bind_copies(b: ir::Bundle, f: ir::Function, v: integer, src: integer) -> boolean {
   vx = f.variables[v];
-  if vx == null || heap_def_nr(vx.type_def[0]!) < 0 {
+  if vx == null || heap_def_nr(vx.type_def[0]!) == null {
     return false;
   }
-  record_copy_source(b, f, v, src) >= 0
+  record_copy_source(b, f, v, src) != null
 }
 
 // ── node questions, read through any `Span` (`Value::unspan`, src/data.rs:654) ──
@@ -520,42 +526,28 @@ fn through_null_arm_is_if(b: ir::Bundle, n: ir::Node) -> boolean {
 
 // ── the one child enumeration (`Value::for_each_child`, src/data.rs:679) and its walkers ──
 //
-// `walk` visits every node pre-order, its spans included, and asks `visit` what to descend
-// into: WALK_ALL, WALK_STOP or WALK_SKIP_FIRST (a call's arguments after the first).  Every
-// walker of the Rust reads through a span the way its own `unspan` does; `visit` says so per
-// mode.
+// `walk` visits every node pre-order, its spans included, and asks its visitor what to descend
+// into: WALK_ALL, WALK_STOP or WALK_SKIP_FIRST (a call's arguments after the first).  The Rust
+// writes each traversal as a closure over `for_each_child`; here each is a visitor function,
+// named after the traversal it ports.  Every walker of the Rust reads through a span the way its
+// own `unspan` does, and each visitor says so for itself.
 const WALK_ALL = 0;
 const WALK_STOP = 1;
 const WALK_SKIP_FIRST = 2;
 
-// The walkers, one per Rust traversal.
-// src/use_analysis.rs:2257 fn collect_defs.
-const M_DEFS = 1;
-// src/use_analysis.rs:2523 fn early_return_values (`Value::walk`).
-const M_RETURNS = 2;
-// src/scopes/phase.rs:45 fn collect_fnref_targets.
-const M_FNREF_TARGETS = 3;
-// src/scopes/phase.rs:81 fn collect_fnref_captures, and its two walks of a right-hand side.
-const M_FNREF_CAPTURES = 4;
-const M_LAST_FNREF = 5;
-const M_SET_DBREF = 6;
-// src/scopes/phase.rs:693 fn multi_assigned_in.
-const M_COUNT_SETS = 7;
-// src/use_analysis.rs:4645 fn capture_return_offsets.
-const M_CAPTURE_OFFSETS = 8;
-
 // What a walk gathers outside `Defs`.
 struct Walk {
-  // `M_RETURNS`: the early return values.
+  // `early_return_visit`: the early return values.
   nodes: vector<ir::Node>,
-  // `M_SET_DBREF`: the slots; `M_COUNT_SETS`: the variables; `M_CAPTURE_OFFSETS`: the offsets.
+  // `set_dbref_visit`: the slots; `count_sets_visit`: the variables; `capture_offsets_visit`:
+  // the offsets.
   a: vector<integer>,
-  // `M_SET_DBREF`: the source variables; `M_COUNT_SETS`: their counts.
+  // `set_dbref_visit`: the source variables; `count_sets_visit`: their counts.
   c: vector<integer>,
-  // `M_LAST_FNREF`: the closure variable found; `M_SET_DBREF`: the one asked about.
+  // `last_fnref_visit`: the closure variable found; `set_dbref_visit`: the one asked about.
   target: integer,
-  // The variables of the walked function that are typed `fn` (`M_FNREF_*`), or named
-  // `__closure` (`M_CAPTURE_OFFSETS`).
+  // The variables of the walked function that are typed `fn` (the fn-ref visitors), or named
+  // `__closure` (`capture_offsets_visit`).
   vars: vector<integer>,
 }
 
@@ -564,113 +556,150 @@ fn new_walk() -> Walk {
 }
 
 // `def.code`, which an image holds as a box of one; an empty box is `Value::Null`.
-fn walk_code(b: ir::Bundle, mode: integer, code: vector<ir::Node>, ops: Ops, defs: Defs, w: Walk) {
+fn walk_code(b: ir::Bundle, code: vector<ir::Node>, ops: Ops, defs: Defs, w: Walk, visit: fn(ir::Bundle, ir::Node, Ops, Defs, Walk) -> integer) {
   for n in code {
-    walk(b, mode, n, ops, defs, w);
+    walk(b, n, ops, defs, w, visit);
   }
 }
 
-fn walk(b: ir::Bundle, mode: integer, n: ir::Node, ops: Ops, defs: Defs, w: Walk) {
-  how = visit(b, mode, n, ops, defs, w);
+fn walk(b: ir::Bundle, n: ir::Node, ops: Ops, defs: Defs, w: Walk, visit: fn(ir::Bundle, ir::Node, Ops, Defs, Walk) -> integer) {
+  how = visit(b, n, ops, defs, w);
   if how == WALK_STOP {
     return;
   }
   match n {
-    NdSpan { pos: _, inner } => walk(b, mode, inner, ops, defs, w),
+    NdSpan { pos: _, inner } => walk(b, inner, ops, defs, w, visit),
     NdCall { def_nr: _, args } => {
       for x in args {
         if how == WALK_SKIP_FIRST && x#index == 0 {
           continue;
         }
-        walk(b, mode, x, ops, defs, w);
+        walk(b, x, ops, defs, w, visit);
       }
     }
-    NdCallRef { var: _, args } => walk_all(b, mode, args, ops, defs, w),
-    NdInsert { items } => walk_all(b, mode, items, ops, defs, w),
-    NdTuple { items } => walk_all(b, mode, items, ops, defs, w),
-    NdParallel { arms } => walk_all(b, mode, arms, ops, defs, w),
-    NdBlock { block } => walk_all(b, mode, block[0]!.operators, ops, defs, w),
-    NdLoop { block } => walk_all(b, mode, block[0]!.operators, ops, defs, w),
-    NdSet { var: _, inner } => walk(b, mode, inner, ops, defs, w),
-    NdReturn { inner } => walk(b, mode, inner, ops, defs, w),
-    NdDrop { inner } => walk(b, mode, inner, ops, defs, w),
-    NdYield { inner } => walk(b, mode, inner, ops, defs, w),
-    NdTuplePut { var: _, idx: _, inner } => walk(b, mode, inner, ops, defs, w),
+    NdCallRef { var: _, args } => walk_all(b, args, ops, defs, w, visit),
+    NdInsert { items } => walk_all(b, items, ops, defs, w, visit),
+    NdTuple { items } => walk_all(b, items, ops, defs, w, visit),
+    NdParallel { arms } => walk_all(b, arms, ops, defs, w, visit),
+    NdBlock { block } => walk_all(b, block[0]!.operators, ops, defs, w, visit),
+    NdLoop { block } => walk_all(b, block[0]!.operators, ops, defs, w, visit),
+    NdSet { var: _, inner } => walk(b, inner, ops, defs, w, visit),
+    NdReturn { inner } => walk(b, inner, ops, defs, w, visit),
+    NdDrop { inner } => walk(b, inner, ops, defs, w, visit),
+    NdYield { inner } => walk(b, inner, ops, defs, w, visit),
+    NdTuplePut { var: _, idx: _, inner } => walk(b, inner, ops, defs, w, visit),
     NdIf { cond, t, f } => {
-      walk(b, mode, cond, ops, defs, w);
-      walk(b, mode, t, ops, defs, w);
-      walk(b, mode, f, ops, defs, w);
+      walk(b, cond, ops, defs, w, visit);
+      walk(b, t, ops, defs, w, visit);
+      walk(b, f, ops, defs, w, visit);
     }
     NdIter { var: _, create, next, init } => {
-      walk(b, mode, create, ops, defs, w);
-      walk(b, mode, next, ops, defs, w);
-      walk(b, mode, init, ops, defs, w);
+      walk(b, create, ops, defs, w, visit);
+      walk(b, next, ops, defs, w, visit);
+      walk(b, init, ops, defs, w, visit);
     }
     _ => {}
   }
 }
 
-fn walk_all(b: ir::Bundle, mode: integer, ns: vector<ir::Node>, ops: Ops, defs: Defs, w: Walk) {
+fn walk_all(b: ir::Bundle, ns: vector<ir::Node>, ops: Ops, defs: Defs, w: Walk, visit: fn(ir::Bundle, ir::Node, Ops, Defs, Walk) -> integer) {
   for x in ns {
-    walk(b, mode, x, ops, defs, w);
+    walk(b, x, ops, defs, w, visit);
   }
 }
 
-fn visit(b: ir::Bundle, mode: integer, n: ir::Node, ops: Ops, defs: Defs, w: Walk) -> integer {
-  if mode == M_COUNT_SETS {
-    // `count` asks `node.unspan()` and then walks the children of the node AS GIVEN, so a
-    // `Set` under a span is counted at the span and again at itself.
-    v = set_var_of(n);
-    if v >= 0 {
-      count_set(w, v);
-    }
-    return WALK_ALL;
-  }
+// src/use_analysis.rs:2257 fn collect_defs — each `Set` with a value defines its variable, and
+// three calls record a mint, a fill and a move.
+fn collect_defs_visit(_b: ir::Bundle, n: ir::Node, ops: Ops, defs: Defs, _w: Walk) -> integer {
   match n {
-    NdSpan { pos: _, inner: _ } => WALK_ALL,
     NdSet { var, inner } => {
-      rhs = inner;
-      if mode == M_DEFS {
-        if !is_null_node(rhs) {
-          defs.rhs_var += [var];
-          push_unspanned(defs.rhs, rhs);
-        }
-      } else if mode == M_FNREF_TARGETS {
-        if has(w.vars, var) {
-          fnref_target_set(defs, var, fnref_target_in(rhs));
-        }
-      } else if mode == M_FNREF_CAPTURES {
-        if has(w.vars, var) {
-          fnref_captures_set(b, defs, var, rhs, ops);
-        }
+      if !is_null_node(inner) {
+        defs.rhs_var += [var];
+        push_unspanned(defs.rhs, inner);
       }
-      WALK_ALL
     }
-    NdCall { def_nr, args } => {
-      if mode == M_DEFS {
-        collect_call_defs(def_nr, args, ops, defs);
-      } else if mode == M_SET_DBREF {
-        collect_set_dbref(def_nr, args, ops, w);
-      } else if mode == M_CAPTURE_OFFSETS {
-        return capture_offset_of(b, def_nr, args, ops, w);
-      }
-      WALK_ALL
-    }
+    NdCall { def_nr, args } => collect_call_defs(def_nr, args, ops, defs),
+    _ => {}
+  }
+  WALK_ALL
+}
+
+// src/use_analysis.rs:2523 fn early_return_values (`Value::walk`) — every `return` with a value.
+fn early_return_visit(_b: ir::Bundle, n: ir::Node, ops: Ops, _defs: Defs, w: Walk) -> integer {
+  match n {
     NdReturn { inner } => {
-      if mode == M_RETURNS {
-        x = inner;
-        if !is_null_node(x) && !is_null_text(ops, x) {
-          push_unspanned(w.nodes, x);
-        }
+      if !is_null_node(inner) && !is_null_text(ops, inner) {
+        push_unspanned(w.nodes, inner);
       }
-      WALK_ALL
     }
+    _ => {}
+  }
+  WALK_ALL
+}
+
+// src/scopes/phase.rs:45 fn collect_fnref_targets — a fn-typed variable's assignments.
+fn fnref_targets_visit(_b: ir::Bundle, n: ir::Node, _ops: Ops, defs: Defs, w: Walk) -> integer {
+  match n {
+    NdSet { var, inner } => {
+      if has(w.vars, var) {
+        fnref_target_set(defs, var, fnref_target_in(inner));
+      }
+    }
+    _ => {}
+  }
+  WALK_ALL
+}
+
+// src/scopes/phase.rs:81 fn collect_fnref_captures — a fn-typed variable's captures.
+fn fnref_captures_visit(b: ir::Bundle, n: ir::Node, ops: Ops, defs: Defs, w: Walk) -> integer {
+  match n {
+    NdSet { var, inner } => {
+      if has(w.vars, var) {
+        fnref_captures_set(b, defs, var, inner, ops);
+      }
+    }
+    _ => {}
+  }
+  WALK_ALL
+}
+
+// collect_fnref_captures' first walk of a right-hand side: the closure variable of the LAST
+// fn-ref in it.
+fn last_fnref_visit(_b: ir::Bundle, n: ir::Node, _ops: Ops, _defs: Defs, w: Walk) -> integer {
+  match n {
     NdFnRef { def_nr: _, var, t: _ } => {
-      if mode == M_LAST_FNREF {
-        w.target = var;
-      }
-      WALK_ALL
+      w.target = var;
     }
+    _ => {}
+  }
+  WALK_ALL
+}
+
+// collect_fnref_captures' second walk of a right-hand side: the `OpSetDbRef(clos, slot, var)`
+// writes into that closure.
+fn set_dbref_visit(_b: ir::Bundle, n: ir::Node, ops: Ops, _defs: Defs, w: Walk) -> integer {
+  match n {
+    NdCall { def_nr, args } => collect_set_dbref(def_nr, args, ops, w),
+    _ => {}
+  }
+  WALK_ALL
+}
+
+// src/scopes/phase.rs:693 fn multi_assigned_in — `count` asks `node.unspan()` and then walks
+// the children of the node AS GIVEN, so a `Set` under a span is counted at the span and again
+// at itself.
+fn count_sets_visit(_b: ir::Bundle, n: ir::Node, _ops: Ops, _defs: Defs, w: Walk) -> integer {
+  v = set_var_of(n);
+  if v >= 0 {
+    count_set(w, v);
+  }
+  WALK_ALL
+}
+
+// src/use_analysis.rs:4645 fn capture_return_offsets — the closure reads the walk meets.
+fn capture_offsets_visit(b: ir::Bundle, n: ir::Node, ops: Ops, _defs: Defs, w: Walk) -> integer {
+  match n {
+    NdCall { def_nr, args } => capture_offset_of(b, def_nr, args, ops, w),
     _ => WALK_ALL,
   }
 }
@@ -799,7 +828,7 @@ fn new_defs() -> Defs {
 
 // src/use_analysis.rs:2257 fn collect_defs, over a whole body.
 fn collect_defs(b: ir::Bundle, code: vector<ir::Node>, ops: Ops, out: Defs) {
-  walk_code(b, M_DEFS, code, ops, out, new_walk());
+  walk_code(b, code, ops, out, new_walk(), collect_defs_visit);
 }
 
 // The variables of `f` whose type is a function (`function.tp(var).base()` is `Type::Function`).
@@ -847,14 +876,14 @@ fn fnref_target(defs: Defs, var: integer) -> integer {
 // `Set` of the same variable replaces the list.
 fn fnref_captures_set(b: ir::Bundle, defs: Defs, var: integer, rhs: ir::Node, ops: Ops) {
   wf = new_walk();
-  walk(b, M_LAST_FNREF, rhs, ops, defs, wf);
+  walk(b, rhs, ops, defs, wf, last_fnref_visit);
   clos = wf.target;
   if clos < 0 {
     return;
   }
   ws = new_walk();
   ws.target = clos;
-  walk(b, M_SET_DBREF, rhs, ops, defs, ws);
+  walk(b, rhs, ops, defs, ws, set_dbref_visit);
   // `slots.sort_by_key(slot)`: stable.
   offs: vector<integer> = [];
   vs: vector<integer> = [];
@@ -887,7 +916,7 @@ fn fnref_captures_set(b: ir::Bundle, defs: Defs, var: integer, rhs: ir::Node, op
 // src/scopes/phase.rs:693 fn multi_assigned_in.
 fn multi_assigned_in(b: ir::Bundle, code: vector<ir::Node>, ops: Ops, defs: Defs) -> vector<integer> {
   w = new_walk();
-  walk_code(b, M_COUNT_SETS, code, ops, defs, w);
+  walk_code(b, code, ops, defs, w, count_sets_visit);
   out: vector<integer> = [];
   for v in w.a {
     if (w.c[v#index] ?? 0) >= 2 {
@@ -904,10 +933,10 @@ fn function_defs(b: ir::Bundle, d_nr: integer, ops: Ops) -> Defs {
   collect_defs(b, def.code, ops, defs);
   wt = new_walk();
   wt.vars = fn_vars(def.variables);
-  walk_code(b, M_FNREF_TARGETS, def.code, ops, defs, wt);
+  walk_code(b, def.code, ops, defs, wt, fnref_targets_visit);
   wc = new_walk();
   wc.vars = fn_vars(def.variables);
-  walk_code(b, M_FNREF_CAPTURES, def.code, ops, defs, wc);
+  walk_code(b, def.code, ops, defs, wc, fnref_captures_visit);
   defs.multi_assigned = multi_assigned_in(b, def.code, ops, defs);
   defs
 }
@@ -1117,7 +1146,7 @@ fn capture_return_offsets(b: ir::Bundle, callee_d: integer, ops: Ops) -> vector<
   def = b.data.definitions[callee_d]!;
   w = new_walk();
   w.vars = closure_vars(def.variables);
-  walk_code(b, M_CAPTURE_OFFSETS, def.code, ops, new_defs(), w);
+  walk_code(b, def.code, ops, new_defs(), w, capture_offsets_visit);
   w.a
 }
 
@@ -1143,12 +1172,12 @@ struct St {
   ops: Ops,
   // `ret_memo`: a function and its class.
   memo_d: vector<integer>,
-  memo_own: vector<integer>,
+  memo_own: vector<Own>,
   visiting: vector<integer>,
   visiting_vars: vector<integer>,
   // `frames`: the function and the class its self call answers.
   frame_d: vector<integer>,
-  frame_own: vector<integer>,
+  frame_own: vector<Own>,
 }
 
 // src/use_analysis.rs:2348 fn new.
@@ -1156,16 +1185,16 @@ fn new_state(ops: Ops) -> St {
   St { ops: ops, memo_d: [], memo_own: [], visiting: [], visiting_vars: [], frame_d: [], frame_own: [] }
 }
 
-fn memo_get(st: St, d: integer) -> integer {
+fn memo_get(st: St, d: integer) -> Own? {
   for x in st.memo_d {
     if x == d {
-      return st.memo_own[x#index] ?? NONE;
+      return st.memo_own[x#index];
     }
   }
-  NONE
+  null
 }
 
-fn memo_put(st: St, d: integer, c: integer) {
+fn memo_put(st: St, d: integer, c: Own) {
   for x in st.memo_d {
     if x == d {
       st.memo_own[x#index] = c;
@@ -1186,14 +1215,14 @@ fn remove_value(v: vector<integer>, x: integer) {
 }
 
 // src/use_analysis.rs:2363 fn return_ownership.
-fn return_ownership(b: ir::Bundle, st: St, d_nr: integer) -> integer {
+fn return_ownership(b: ir::Bundle, st: St, d_nr: integer) -> Own {
   m = memo_get(st, d_nr);
-  if m != NONE {
-    return m;
+  if m != null {
+    return m!;
   }
   def = b.data.definitions[d_nr]!;
   if !has_body_tail(def.code) || def.def_type != 1 {
-    c = OWNED;
+    c = Owned;
     if returns_borrowed_view(def) {
       base = MAX;
       for a in depend_of(def.returned[0]!) {
@@ -1202,7 +1231,7 @@ fn return_ownership(b: ir::Bundle, st: St, d_nr: integer) -> integer {
           break;
         }
       }
-      c = borrowed(base);
+      c = Borrowed { base: base };
     }
     memo_put(st, d_nr, c);
     return c;
@@ -1210,34 +1239,37 @@ fn return_ownership(b: ir::Bundle, st: St, d_nr: integer) -> integer {
   if has(st.visiting, d_nr) {
     n = len(st.frame_d);
     if n > 0 && (st.frame_d[n - 1] ?? -1) == d_nr {
-      return st.frame_own[n - 1] ?? NONE;
+      return st.frame_own[n - 1]!;
     }
-    return borrowed(MAX);
+    return Borrowed { base: MAX };
   }
-  so_far = NOT_YET;
-  class = NONE;
+  so_far = not_yet();
+  // The fixpoint: null until two rounds agree.
+  fixed: Own? = null;
   for _ in 0..FIXPOINT_ROUNDS {
     next = return_ownership_round(b, st, d_nr, so_far);
     if next == so_far {
-      class = next;
+      fixed = next;
       break;
     }
     so_far = next;
   }
-  if class == NOT_YET {
-    class = UNKNOWN;
-  } else if class == NONE {
-    class = return_ownership_round(b, st, d_nr, borrowed(MAX));
-  }
+  class = if fixed == null {
+    return_ownership_round(b, st, d_nr, Borrowed { base: MAX })
+  } else if fixed! == not_yet() {
+    Unknown
+  } else {
+    fixed!
+  };
   memo_put(st, d_nr, class);
   class
 }
 
 // src/use_analysis.rs:2415 fn return_ownership_round.
-fn return_ownership_round(b: ir::Bundle, st: St, d_nr: integer, so_far: integer) -> integer {
+fn return_ownership_round(b: ir::Bundle, st: St, d_nr: integer, so_far: Own) -> Own {
   def = b.data.definitions[d_nr]!;
   if !has_body_tail(def.code) {
-    return UNKNOWN;
+    return Unknown;
   }
   st.visiting += [d_nr];
   st.frame_d += [d_nr];
@@ -1255,28 +1287,28 @@ fn return_ownership_round(b: ir::Bundle, st: St, d_nr: integer, so_far: integer)
   st.frame_d.remove(len(st.frame_d) - 1);
   st.frame_own.remove(len(st.frame_own) - 1);
   remove_value(st.visiting, d_nr);
-  if class == NOT_YET { OWNED } else { class }
+  if class == not_yet() { Owned } else { class }
 }
 
 // The tail of a body block: a `Loop` there delivers through its `return`s alone (NOT_YET),
 // anything else is classified.
-fn classify_tail(b: ir::Bundle, st: St, code: ir::Node, func: ir::Function, defs: Defs) -> integer {
+fn classify_tail(b: ir::Bundle, st: St, code: ir::Node, func: ir::Function, defs: Defs) -> Own {
   match code {
     NdSpan { pos: _, inner } => classify_tail(b, st, inner, func, defs),
     NdBlock { block } => {
       ops = block[0]!.operators;
       tail = ops[len(ops) - 1]!;
-      if is_loop_node(tail) { NOT_YET } else { classify(b, st, tail, func, defs) }
+      if is_loop_node(tail) { not_yet() } else { classify(b, st, tail, func, defs) }
     }
     // Unreachable: asked only where `has_body_tail` holds.  Not a `panic`: the C backend does
     // not carry a `panic` arm of an integer `match`.
-    _ => UNKNOWN,
+    _ => Unknown,
   }
 }
 
 // src/use_analysis.rs:2491 fn early_return_ownerships — asked by the orphan predicate, not by
 // the verdicts `ownership_report` writes.
-fn early_return_ownerships(b: ir::Bundle, st: St, d_nr: integer) -> vector<integer> {
+fn early_return_ownerships(b: ir::Bundle, st: St, d_nr: integer) -> vector<Own> {
   def = b.data.definitions[d_nr]!;
   if def.def_type != 1 || !has_body_tail(def.code) {
     return [];
@@ -1304,14 +1336,14 @@ fn early_return_ownerships(b: ir::Bundle, st: St, d_nr: integer) -> vector<integ
 fn early_return_values(b: ir::Bundle, st: St, d_nr: integer) -> vector<ir::Node> {
   def = b.data.definitions[d_nr]!;
   w = new_walk();
-  walk_code(b, M_RETURNS, def.code, st.ops, new_defs(), w);
+  walk_code(b, def.code, st.ops, new_defs(), w, early_return_visit);
   w.nodes
 }
 
 // src/use_analysis.rs:2539 fn classify_sites.
-fn classify_sites(b: ir::Bundle, st: St, sites: vector<ir::Node>, d_nr: integer, defs: Defs) -> vector<integer> {
+fn classify_sites(b: ir::Bundle, st: St, sites: vector<ir::Node>, d_nr: integer, defs: Defs) -> vector<Own> {
   def = b.data.definitions[d_nr]!;
-  out: vector<integer> = [];
+  out: vector<Own> = [];
   for e in sites {
     st.visiting_vars = [];
     out += [classify(b, st, e, def.variables, defs)];
@@ -1320,16 +1352,16 @@ fn classify_sites(b: ir::Bundle, st: St, sites: vector<ir::Node>, d_nr: integer,
 }
 
 // src/use_analysis.rs:2554 fn classify.
-fn classify(b: ir::Bundle, st: St, node: ir::Node, func: ir::Function, defs: Defs) -> integer {
+fn classify(b: ir::Bundle, st: St, node: ir::Node, func: ir::Function, defs: Defs) -> Own {
   match node {
     NdSpan { pos: _, inner } => classify(b, st, inner, func, defs),
     NdVar { n: v } => classify_var(b, st, v, func, defs),
     NdCall { def_nr, args } => {
       if def_nr == st.ops.database || def_nr == st.ops.new_record {
-        OWNED
+        Owned
       } else if has(st.ops.projections, def_nr) {
         bb = borrow_base(b, st.ops, node, func, defs);
-        if bb >= 0 { borrowed(bb) } else { OWNED }
+        if bb >= 0 { Borrowed { base: bb } } else { Owned }
       } else {
         call_ownership(b, st, def_nr, args, func, defs)
       }
@@ -1344,24 +1376,24 @@ fn classify(b: ir::Bundle, st: St, node: ir::Node, func: ir::Function, defs: Def
     NdBlock { block } => {
       ops = block[0]!.operators;
       if len(ops) == 0 {
-        return OWNED;
+        return Owned;
       }
       // Bound first: a tail call whose argument a local holds cannot jump.
       r = classify(b, st, ops[len(ops) - 1]!, func, defs);
       r
     }
     NdInsert { items } => {
-      if len(items) == 0 { OWNED } else { classify(b, st, items[len(items) - 1], func, defs) }
+      if len(items) == 0 { Owned } else { classify(b, st, items[len(items) - 1], func, defs) }
     }
     NdReturn { inner } => classify(b, st, inner, func, defs),
     NdTupleGet { var, idx } => classify_tuple_get(var, idx, func, defs),
     NdCallRef { var, args } => classify_call_ref(b, st, var, args, func, defs),
-    _ => OWNED,
+    _ => Owned,
   }
 }
 
 // The `If` arm's other branch: classify what `through_null_arm` delivers.
-fn classify_through_null_arm(b: ir::Bundle, st: St, node: ir::Node, func: ir::Function, defs: Defs) -> integer {
+fn classify_through_null_arm(b: ir::Bundle, st: St, node: ir::Node, func: ir::Function, defs: Defs) -> Own {
   match node {
     NdSpan { pos: _, inner } => classify_through_null_arm(b, st, inner, func, defs),
     NdIf { cond: _, t, f } => {
@@ -1378,10 +1410,10 @@ fn classify_through_null_arm(b: ir::Bundle, st: St, node: ir::Node, func: ir::Fu
 }
 
 // The `Value::Var` arm of `classify`.
-fn classify_var(b: ir::Bundle, st: St, v: integer, func: ir::Function, defs: Defs) -> integer {
+fn classify_var(b: ir::Bundle, st: St, v: integer, func: ir::Function, defs: Defs) -> Own {
   if has(st.visiting_vars, v) {
     // Recursion back-edge: this var appears in its OWN definition.
-    return borrowed(MAX);
+    return Borrowed { base: MAX };
   }
   st.visiting_vars += [v];
   minted = has(defs.db_vars, v);
@@ -1392,9 +1424,9 @@ fn classify_var(b: ir::Bundle, st: St, v: integer, func: ir::Function, defs: Def
       break;
     }
   }
-  class = NONE;
+  class = Owned;
   if stored {
-    bound = NONE;
+    bound: Own? = null;
     for x in defs.rhs_var {
       if x != v {
         continue;
@@ -1405,21 +1437,21 @@ fn classify_var(b: ir::Bundle, st: St, v: integer, func: ir::Function, defs: Def
       }
       src = var_of(r);
       copied = src >= 0 && bind_copies(b, func, v, src);
-      c = if (minted && src >= 0) || copied { OWNED } else { classify(b, st, r, func, defs) };
-      bound = if bound == NONE { c } else { join(bound, c) };
+      c = if (minted && src >= 0) || copied { Owned } else { classify(b, st, r, func, defs) };
+      bound = if bound == null { c } else { join(bound!, c) };
     }
-    if bound == NONE {
-      bound = OWNED;
+    class = bound ?? Owned;
+    if has(defs.filled, v) || minted {
+      class = join(class, Owned);
     }
-    class = if has(defs.filled, v) || minted { join(bound, OWNED) } else { bound };
   } else if minted {
-    class = OWNED;
+    class = Owned;
   } else if is_argument(func, v) {
-    class = borrowed(v);
+    class = Borrowed { base: v };
   } else if has(defs.moved_var, v) {
-    class = NOT_YET;
+    class = not_yet();
   } else {
-    class = OWNED;
+    class = Owned;
   }
   for x in defs.moved_var {
     if x != v {
@@ -1431,14 +1463,14 @@ fn classify_var(b: ir::Bundle, st: St, v: integer, func: ir::Function, defs: Def
     }
   }
   remove_value(st.visiting_vars, v);
-  if class == NOT_YET { OWNED } else { class }
+  if class == not_yet() { Owned } else { class }
 }
 
 // The `Value::TupleGet` arm of `classify`.
-fn classify_tuple_get(base: integer, i: integer, func: ir::Function, defs: Defs) -> integer {
+fn classify_tuple_get(base: integer, i: integer, func: ir::Function, defs: Defs) -> Own {
   bx = func.variables[base];
   if bx == null || !tuple_member_is_dbref(bx.type_def[0]!, i) {
-    return OWNED;
+    return Owned;
   }
   r = base;
   k = -1;
@@ -1456,7 +1488,7 @@ fn classify_tuple_get(base: integer, i: integer, func: ir::Function, defs: Defs)
       r = src;
     }
   }
-  borrowed(r)
+  Borrowed { base: r }
 }
 
 fn tuple_member_is_dbref(t: ir::TypeT, i: integer) -> boolean {
@@ -1477,47 +1509,47 @@ fn is_tuple(t: ir::TypeT) -> boolean {
 }
 
 // The `Value::CallRef` arm of `classify`.
-fn classify_call_ref(b: ir::Bundle, st: St, fn_var: integer, args: vector<ir::Node>, func: ir::Function, defs: Defs) -> integer {
+fn classify_call_ref(b: ir::Bundle, st: St, fn_var: integer, args: vector<ir::Node>, func: ir::Function, defs: Defs) -> Own {
   d = fnref_target(defs, fn_var);
   if d < 0 || d == UMAX {
-    return UNKNOWN;
+    return Unknown;
   }
   callee_own = return_ownership(b, st, d);
-  if callee_own == NOT_YET {
-    return NOT_YET;
+  if callee_own == not_yet() {
+    return not_yet();
   }
-  if callee_own == OWNED {
-    return OWNED;
+  if callee_own == Owned {
+    return Owned;
   }
-  if callee_own == UNKNOWN {
-    return UNKNOWN;
+  if callee_own == Unknown {
+    return Unknown;
   }
-  callee_base = base_of(callee_own);
+  callee_base = base_of(callee_own)!;
   base = caller_arg_base(b, st, d, callee_base, args, func, defs);
   if base == MAX {
     base = closure_capture_base(b, st, d, callee_base, fn_var, defs);
   }
-  if is_join(callee_own) && base != MAX { joined(base) } else { UNKNOWN }
+  if is_join(callee_own) && base != MAX { Join { base: base } } else { Unknown }
 }
 
 // src/use_analysis.rs:2774 fn call_ownership.
-fn call_ownership(b: ir::Bundle, st: St, callee_d: integer, caller_args: vector<ir::Node>, func: ir::Function, defs: Defs) -> integer {
+fn call_ownership(b: ir::Bundle, st: St, callee_d: integer, caller_args: vector<ir::Node>, func: ir::Function, defs: Defs) -> Own {
   callee_own = return_ownership(b, st, callee_d);
-  if callee_own == NOT_YET {
-    return NOT_YET;
+  if callee_own == not_yet() {
+    return not_yet();
   }
-  if callee_own == OWNED {
-    return OWNED;
+  if callee_own == Owned {
+    return Owned;
   }
-  if callee_own == UNKNOWN {
-    return UNKNOWN;
+  if callee_own == Unknown {
+    return Unknown;
   }
-  callee_base = base_of(callee_own);
+  callee_base = base_of(callee_own)!;
   if returns_one_of_several_args(b, callee_d) {
-    return joined(MAX);
+    return Join { base: MAX };
   }
   base = caller_arg_base(b, st, callee_d, callee_base, caller_args, func, defs);
-  if is_join(callee_own) { joined(base) } else { borrowed(base) }
+  if is_join(callee_own) { Join { base: base } } else { Borrowed { base: base } }
 }
 
 // src/use_analysis.rs:2830 fn caller_arg_base.
@@ -1529,7 +1561,7 @@ fn caller_arg_base(b: ir::Bundle, st: St, callee_d: integer, callee_base: intege
   def = b.data.definitions[callee_d]!;
   arg = caller_args[visible_index(def, callee_base)]!;
   c = classify(b, st, arg, func, defs);
-  if is_borrowed(c) || is_join(c) { base_of(c) } else { MAX }
+  base_of(c) ?? MAX
 }
 
 // src/use_analysis.rs:2873 fn closure_capture_base.
@@ -1657,54 +1689,52 @@ fn if_variant_subject(b: ir::Bundle, n: ir::Node) -> integer {
 // ── the public entries ──
 
 // src/use_analysis.rs:3159 fn return_ownership.
-pub fn return_ownership_of(b: ir::Bundle, ops: Ops, d_nr: integer) -> integer {
+pub fn return_ownership_of(b: ir::Bundle, ops: Ops, d_nr: integer) -> Own {
   return_ownership(b, new_state(ops), d_nr)
 }
 
 // src/use_analysis.rs:5033 fn ownership_of.
-pub fn ownership_of(b: ir::Bundle, ops: Ops, d_nr: integer, value: ir::Node) -> integer {
+pub fn ownership_of(b: ir::Bundle, ops: Ops, d_nr: integer, value: ir::Node) -> Own {
   ownership_of_with(b, ops, d_nr, value, function_defs(b, d_nr, ops))
 }
 
 // src/use_analysis.rs:5201 fn ownership_of_with.
-fn ownership_of_with(b: ir::Bundle, ops: Ops, d_nr: integer, value: ir::Node, defs: Defs) -> integer {
+fn ownership_of_with(b: ir::Bundle, ops: Ops, d_nr: integer, value: ir::Node, defs: Defs) -> Own {
   def = b.data.definitions[d_nr]!;
   classify(b, new_state(ops), value, def.variables, defs)
 }
 
+// The name a verdict shows for its base: `?` for `u16::MAX`, the base no variable is.
+fn base_name(func: ir::Function, base: integer) -> text {
+  if base == MAX { "?" } else { var_name(func, base) }
+}
+
 // src/use_analysis.rs:5268 fn fmt_own.
-pub fn fmt_own(own: integer, func: ir::Function) -> text {
-  if own == OWNED {
-    return "Owned";
+pub fn fmt_own(own: Own, func: ir::Function) -> text {
+  match own {
+    Owned => "Owned",
+    Unknown => "Unknown",
+    Borrowed { base } => "Borrowed(base={base_name(func, base)})",
+    Join { base } => "Join(base={base_name(func, base)})",
   }
-  if own == UNKNOWN {
-    return "Unknown";
-  }
-  base = base_of(own);
-  name = if base == MAX { "?" } else { var_name(func, base) };
-  if is_borrowed(own) { "Borrowed(base={name})" } else { "Join(base={name})" }
 }
 
 // src/use_analysis.rs:5343 fn render_own.
-pub fn render_own(own: integer, func: ir::Function, v: integer) -> text {
-  if own == OWNED {
-    return "Owned";
-  }
-  if own == UNKNOWN {
-    return "Unknown";
-  }
-  base = base_of(own);
-  name = if base == MAX { "?" } else { var_name(func, base) };
-  if is_borrowed(own) {
-    if base == v {
-      return "Borrowed(caller-arg)";
+pub fn render_own(own: Own, func: ir::Function, v: integer) -> text {
+  match own {
+    Owned => "Owned",
+    Unknown => "Unknown",
+    Borrowed { base } => {
+      if base == v {
+        "Borrowed(caller-arg)"
+      } else if base != MAX && is_synth_buffer(var_name(func, base)) {
+        "Owned (backing={base_name(func, base)})"
+      } else {
+        "Borrowed(base={base_name(func, base)})"
+      }
     }
-    if base != MAX && is_synth_buffer(var_name(func, base)) {
-      return "Owned (backing={name})";
-    }
-    return "Borrowed(base={name})";
+    Join { base } => "Join(base={base_name(func, base)})",
   }
-  "Join(base={name})"
 }
 
 // Is `file` a standard-library source: a directory named `default` on its path?

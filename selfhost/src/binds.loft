@@ -168,23 +168,23 @@ fn is_inline_ref(f: ir::Function, v: integer) -> boolean {
 }
 
 // src/variables/mod.rs:4495 fn rebind_orig — the map is stored per variable (`u16::MAX` none);
-// -1 for `None`.
-fn rebind_orig(f: ir::Function, v: integer) -> integer {
+// null for `None`.
+fn rebind_orig(f: ir::Function, v: integer) -> integer? {
   if !in_range(f, v) {
-    return -1;
+    return null;
   }
   w = f.variables[v]!.rebind_orig;
-  if w == NO_VAR { -1 } else { w }
+  if w == NO_VAR { null } else { w }
 }
 
-// src/variables/mod.rs:4516 fn owner_witness — stored per variable (`u16::MAX` none); -1 for
+// src/variables/mod.rs:4516 fn owner_witness — stored per variable (`u16::MAX` none); null for
 // `None`.
-fn owner_witness(f: ir::Function, v: integer) -> integer {
+fn owner_witness(f: ir::Function, v: integer) -> integer? {
   if !in_range(f, v) {
-    return -1;
+    return null;
   }
   w = f.variables[v]!.owner_witness;
-  if w == NO_VAR { -1 } else { w }
+  if w == NO_VAR { null } else { w }
 }
 
 // src/variables/mod.rs:4524 fn entry_witness_name.
@@ -193,13 +193,13 @@ fn entry_witness_name(buf: text) -> text {
 }
 
 // src/variables/mod.rs:4541 fn entry_witness — the variable holding the store the CALLER handed
-// as `v`'s return buffer; -1 for `None`.
-fn entry_witness(f: ir::Function, v: integer) -> integer {
+// as `v`'s return buffer; null for `None`.
+fn entry_witness(f: ir::Function, v: integer) -> integer? {
   if !in_range(f, v) {
-    return -1;
+    return null;
   }
   w = var_named(f, entry_witness_name(own::var_name(f, v)));
-  if w != NO_VAR { w } else { -1 }
+  if w != NO_VAR { w } else { null }
 }
 
 // src/variables/mod.rs:5720 fn is_compiler_generated — indexes unguarded, as the Rust does.
@@ -216,7 +216,7 @@ fn owns_literal_backing_store(nm: text) -> boolean {
 // src/variables/mod.rs:5647 fn deps_are_guarded_backings — every dep of `v` names a GUARDED
 // BACKING (`skip_free`, `inline_ref` and a `__vdb` name), and `v` is no rebound parameter.
 fn deps_are_guarded_backings(f: ir::Function, v: integer) -> boolean {
-  if rebind_orig(f, v) >= 0 {
+  if rebind_orig(f, v) != null {
     return false;
   }
   deps = own::tp_depend(f, v);
@@ -264,14 +264,14 @@ fn owns_displaced_store(b: ir::Bundle, f: ir::Function, v: integer, value: ir::N
 }
 
 // src/variables/mod.rs:5429 fn displaced_buffer_witness — the compiler-built buffer the CALL in
-// `value` is handed for its result; -1 for `None`.
-fn displaced_buffer_witness(b: ir::Bundle, f: ir::Function, v: integer, value: ir::Node) -> integer {
+// `value` is handed for its result; null for `None`.
+fn displaced_buffer_witness(b: ir::Bundle, f: ir::Function, v: integer, value: ir::Node) -> integer? {
   match value {
     NdSpan { pos: _, inner } => displaced_buffer_witness(b, f, v, inner),
     // `Value::Insert(steps) => steps.last().map(Value::unspan)`.
     NdInsert { items } => {
       if len(items) == 0 {
-        return -1;
+        return null;
       }
       r = buffer_witness_of_call(b, f, v, items[len(items) - 1]!);
       r
@@ -280,21 +280,21 @@ fn displaced_buffer_witness(b: ir::Bundle, f: ir::Function, v: integer, value: i
   }
 }
 
-fn buffer_witness_of_call(b: ir::Bundle, f: ir::Function, v: integer, call: ir::Node) -> integer {
+fn buffer_witness_of_call(b: ir::Bundle, f: ir::Function, v: integer, call: ir::Node) -> integer? {
   match call {
     NdSpan { pos: _, inner } => buffer_witness_of_call(b, f, v, inner),
     NdCall { def_nr, args } => {
       if def_nr < 0 || def_nr >= len(b.data.definitions) || !has_code(def(b, def_nr)) {
-        return -1;
+        return null;
       }
       buf = hidden_return_buffer_attr(def(b, def_nr));
       if buf < 0 || buf >= len(args) {
-        return -1;
+        return null;
       }
       w = own::var_of(args[buf]!);
-      if w >= 0 && w != v && is_compiler_generated(f, w) { w } else { -1 }
+      if w >= 0 && w != v && is_compiler_generated(f, w) { w } else { null }
     }
-    _ => -1,
+    _ => null,
   }
 }
 
@@ -569,12 +569,12 @@ fn is_hidden_buf_arg(b: ir::Bundle, d: integer, f: ir::Function, v: integer, s1:
 // base of `u16::MAX` names no variable, so it may be `v` exactly when the value reads `v`.
 fn rhs_may_alias_v(b: ir::Bundle, ops: own::Ops, d: integer, f: ir::Function, v: integer, value: ir::Node) -> boolean {
   rhs_base = own::base_of(own::ownership_of(b, ops, d, value));
-  if rhs_base == NO_VAR {
-    reads_var(value, v)
-  } else if rhs_base >= 0 {
-    rhs_base == v || own::has(own::tp_depend(f, rhs_base), v)
-  } else {
+  if rhs_base == null {
     false
+  } else if rhs_base! == NO_VAR {
+    reads_var(value, v)
+  } else {
+    rhs_base! == v || own::has(own::tp_depend(f, rhs_base!), v)
   }
 }
 
@@ -627,30 +627,30 @@ fn is_return_temp_owning_its_arms(b: ir::Bundle, d: integer, f: ir::Function, v:
 fn owned_ref(b: ir::Bundle, d: integer, f: ir::Function, v: integer, value: ir::Node) -> boolean {
   s1 = s1_substituted(b, v, value);
   (owns_displaced_store(b, f, v, value) || is_return_temp_owning_its_arms(b, d, f, v))
-    && (!is_hidden_buf_arg(b, d, f, v, s1) || entry_witness(f, v) >= 0)
+    && (!is_hidden_buf_arg(b, d, f, v, s1) || entry_witness(f, v) != null)
 }
 
 // ── projections (src/use_analysis.rs) ──
 
 // src/use_analysis.rs:3498 fn projection_container_var — the container VARIABLE a projection
-// chain reads out of; -1 for `None`.  The walk is `projection_walk` (:3634) with
+// chain reads out of; null for `None`.  The walk is `projection_walk` (:3634) with
 // `nullable_reads` false; its offset, depth and index bookkeeping never changes where it stops
 // or what variable it answers, so only the variable is carried.
-fn projection_container_var(b: ir::Bundle, value: ir::Node) -> integer {
+fn projection_container_var(b: ir::Bundle, value: ir::Node) -> integer? {
   match value {
     NdSpan { pos: _, inner } => projection_container_var(b, inner),
     NdIf { cond: _, t, f } => {
       s = own::variant_check_subject(b, t, f);
-      if s >= 0 { s } else { -1 }
+      if s >= 0 { s } else { null }
     }
     NdCall { def_nr, args } => {
       if !own::is_projection_op(b, def_nr) || len(args) == 0 {
-        return -1;
+        return null;
       }
       c = own::var_of(args[0]!);
       if c >= 0 { c } else { projection_container_var(b, args[0]) }
     }
-    _ => -1,
+    _ => null,
   }
 }
 
@@ -695,10 +695,11 @@ fn protectable_ref_args(b: ir::Bundle, defs: own::Defs, call: ir::Node) -> Prote
 }
 
 fn protectable_args_of(b: ir::Bundle, defs: own::Defs, call: ir::Node, args: vector<ir::Node>, r: ProtectableArgs) {
-  fn_nr = callee_of(b, defs, call);
-  if fn_nr < 0 {
+  callee = callee_of(b, defs, call);
+  if callee == null {
     return;
   }
+  fn_nr = callee!;
   attrs = def(b, fn_nr).attributes;
   r.covers_all = true;
   for arg in args {
@@ -775,10 +776,10 @@ fn fnref_return_borrows_closure(d: ir::Definition) -> boolean {
 }
 
 // src/use_analysis.rs:4821 fn callee_of — the definition this call reaches, in EITHER spelling;
-// -1 for `None` (not a call, or a fn-ref whose target is unresolved, ambiguous, or a nullable
+// null for `None` (not a call, or a fn-ref whose target is unresolved, ambiguous, or a nullable
 // struct return borrowing its closure).  `defs` is the calling function's `own::function_defs`:
 // a `CallRef` resolves through `fnref_target_of(defs.rhs[v])`.
-fn callee_of(b: ir::Bundle, defs: own::Defs, value: ir::Node) -> integer {
+fn callee_of(b: ir::Bundle, defs: own::Defs, value: ir::Node) -> integer? {
   match value {
     NdSpan { pos: _, inner } => callee_of(b, defs, inner),
     NdCall { def_nr, args: _ } => def_nr,
@@ -791,12 +792,12 @@ fn callee_of(b: ir::Bundle, defs: own::Defs, value: ir::Node) -> integer {
       }
       t = own::fnref_target_of(rhss);
       if t < 0 {
-        return -1;
+        return null;
       }
       td = def(b, t);
-      if !has_nullable_struct_payload(b, returned(td)) || !fnref_return_borrows_closure(td) { t } else { -1 }
+      if !has_nullable_struct_payload(b, returned(td)) || !fnref_return_borrows_closure(td) { t } else { null }
     }
-    _ => -1,
+    _ => null,
   }
 }
 
@@ -860,12 +861,12 @@ fn capture_can_be_returned(b: ir::Bundle, defs: own::Defs, call: ir::Node) -> bo
 // src/use_analysis.rs:3837 fn may_hand_back_a_caller_store — the oracle says `fn_nr` may hand
 // back a store its CALLER holds: a borrow of a visible parameter, or of a base it cannot name.
 fn may_hand_back_a_caller_store(b: ir::Bundle, ops: own::Ops, fn_nr: integer) -> boolean {
-  base_v = own::base_of(own::return_ownership_of(b, ops, fn_nr));
-  if base_v < 0 {
+  base = own::base_of(own::return_ownership_of(b, ops, fn_nr));
+  if base == null {
     return false;
   }
   attrs = def(b, fn_nr).attributes;
-  base_v == NO_VAR || (base_v < len(attrs) && !attrs[base_v]!.hidden)
+  base! == NO_VAR || (base! < len(attrs) && !attrs[base!]!.hidden)
 }
 
 // src/use_analysis.rs:3826 fn may_return_a_borrow — the return dep (the proxy) or the oracle
@@ -881,10 +882,11 @@ fn call_return_frees_source(b: ir::Bundle, ops: own::Ops, d: integer, defs: own:
   if call_of(call) < 0 && callref_var(call) < 0 {
     return false;
   }
-  fn_nr = callee_of(b, defs, call);
-  if fn_nr < 0 {
+  callee = callee_of(b, defs, call);
+  if callee == null {
     return false;
   }
+  fn_nr = callee!;
   if callref_captures(b, d, call) && capture_can_be_returned(b, defs, call) {
     return false;
   }
