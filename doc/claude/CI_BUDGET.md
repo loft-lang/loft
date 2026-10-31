@@ -488,8 +488,9 @@ edit.  Measured on the 24-core box; the dated runs are in the history companion
   file, never a sleep loop.
 - Every gate the change can move runs BEFORE the push; a gate first run on GitHub after it
   costs the gate, a fix build, and a red tip a sibling may already have joined.
-- Land one issue per push.  A defect found while verifying is filed with its repro at once and
-  is the next push, not part of this one.
+- Land one fix per push.  A defect found while verifying is fixed in its own next push, not
+  folded into this one; it is filed only when it blocks you or needs a design and could have
+  reached users (CLAUDE.md § Bug-filing policy).
 
 ## What a compiler change needs before its commit — and what runs beside the work
 

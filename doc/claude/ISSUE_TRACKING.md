@@ -163,6 +163,13 @@ caused it, or exposed it in code main does not run — is not an issue: the bran
 it merges and the commit message records scope and cause (inside a plan, the plan's docs too).
 When the latest main cannot be built or the repro cannot run there, say so and do not file.
 
+Being on `main` is necessary, not sufficient (owner): an issue is a record for the users and
+consumers who could have met the defect, so one that came in since the last release — this
+month's work — has reached no one, and is fixed and recorded in its commit like a branch-only
+defect.  Judge it by when the defect came in (`git log -S`, the commit that introduced the
+shape); no released build needs keeping to test against.  The default stays FIX: a defect
+that could have shipped is filed only when it blocks the current work or needs a design.
+
 ## A repro carries the base it was measured on — name it
 
 A repro written from a work branch silently depends on every OTHER fix that branch holds, and

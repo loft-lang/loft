@@ -52,7 +52,7 @@ PR gate that refuses a NEW stamp, history or two-h1 finding or a doc crossing 10
 ## Maintainer docs (`doc/claude/`, CLAUDE.md, skills)
 
 29. A doc answers one question. — DOC_QUALITY § Maintainer docs rule 1
-30. 1000 lines is a hard ceiling (a `-history.md` record companion is exempt); under it, the structure must let a reader navigate. — rule 2 · report: `make file-sizes`
+30. 1000 lines is a hard ceiling (a formal rule chapter, a generated report and a `-history.md` record companion are exempt, marked `<!-- size-exempt: <why> -->`); under it, the structure must let a reader navigate. — rule 2 · report: `make file-sizes`
 31. Every doc is reachable from CLAUDE.md in two hops, and an index entry names the start-here doc. — rule 3
 32. What normal work needs is in a compact doc; its history goes to the `<doc>-history.md` companion beside it, and nowhere else. — rule 4, RELEASE § 5b
 33. Commit the goal and the command that reports the position, never the position. — rule 5

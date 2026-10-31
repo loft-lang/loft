@@ -364,14 +364,13 @@ c = Color.Red;                 // qualify when DEFINING a new variable
 // ordering follows declaration order: Red < Green < Blue
 ```
 
-**Bare variants need a type context (@PLN22 Phase 1).**  A bare `Red` resolves only
-against a known enum — a `match` subject, a typed target (`c: Color = Red`), a
-typed reassignment / field, a parameter, a return type, an `==` LHS, or an `is`
-subject.  Defining a NEW untyped variable from a bare variant (`c = Red`) is a hard
-error — qualify it (`c = Color.Red`) or annotate (`c: Color = Red`).  Match arms and
-the other context positions still use the bare form (`match c { Red => … }`).  Two
-enums MAY share a variant name (`enum Color { Red }` + `enum Berry { Red }`); the
-bare `Red` resolves by its context enum.
+**A bare variant is the variant of the one enum that owns that name.**  `c = Red` works
+when only `Color` has `Red`.  Two enums MAY share a variant name (`enum Color { Red }` +
+`enum Berry { Red }`); then the context picks one — a `match` subject, a typed target
+(`c: Color = Red`), a comparison (`c == Red`), a parameter, a return position, a field's
+type, or the other arms of the same `if` / `match` — and with no context the shared name is
+refused with an error that names the qualification to write (`Color.Red`).  The full rule:
+`doc/claude/LOFT_DECLARATIONS.md` § Enum-scoped variants.
 
 Struct-enum (each variant has fields; polymorphic dispatch via methods):
 <!-- from tests/reference/skill-declarations.loft -->
@@ -700,9 +699,8 @@ Match is an expression — all arms must produce the same type (or void).
 function return-type arrow; using it in a match arm produces a clear
 diagnostic ("match arm separator is `=>`, not `->`").  Fix any `->` arm before running.
 
-**Scalar-match arms need commas between them**; enum and tuple match
-also accept newline-separated arms.  When in doubt, comma-separate —
-it's universally accepted.
+**Separate match arms with commas.**  Newline-separated expression arms are refused
+(`Expect token ,`), whatever the subject's type; a comma is accepted everywhere.
 
 **Slice arms that together cover every length need no `_`** — `[]` with `[x, ..rest]` is the
 list recursion; a rest arm alone, or a set that leaves a length out, is refused (*"a slice
@@ -819,8 +817,7 @@ compile error naming the reservation. Use `assert(cond, "message")`, and do not 
   library functions as much as stdlib ones, which is what stops a library's new
   `pub fn` from taking a word away from its consumers.
 - **One builtin name still breaks as a local variable name** — the literal `null`
-  (assigning to it errors: `Cannot assign integer to a field of type null — use 'as
-  null' to cast explicitly`).  Method names (`map`/`filter`/`reduce`/`len`/`sorted`/…)
+  (assigning to it errors: `Cannot assign integer to a field of type null`).  Method names (`map`/`filter`/`reduce`/`len`/`sorted`/…)
   are fine as locals; the method call still resolves.
 
 ---

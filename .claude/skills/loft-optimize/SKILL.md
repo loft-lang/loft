@@ -109,8 +109,8 @@ slower than the compiled program on the same code. So:
    rewrites still fire where they did. Regenerate any file derived from what you changed.
    - **Check what the program holds, not only what it answers.** Many rewrites change
      resources without changing a single value: stores created, records left alive inside a
-     store. Compare those counts with the switch on and off (`LOFT_TRACE_DB=1` names every
-     store mint; `store_memory()` reports live records). A wrong "nothing to release" answer
+     store. Compare those counts with the switch on and off (`LOFT_TRACE_DB=1` prints every
+     record allocation, `OpDatabase`; `store_memory()` reports live records). A wrong "nothing to release" answer
      leaves every value right and leaks records that no store-level check can see.
    - **Use a measurement that works where you run it.** A resident-memory check reads nothing
      on macOS; a live-record count is exact on every platform. A guard whose channel is blind

@@ -251,7 +251,8 @@ commit having reached the trunk — the code lands on main later, on its own clo
    `## Open work` section — a thin "pointer-plan" that only links back to a doc is
    over-engineering; don't create one.
 3. If promoting to a full plan: move the doc into the flat plan directory, apply
-   the opening steps from step 4 onward, and rewrite incoming links to the old path
+   the opening steps (1–5 — claiming the issue first is the collision guard), and
+   rewrite incoming links to the old path
    (same grep as closing, step 5).
 
 ---
@@ -279,13 +280,14 @@ Two independent questions, and both must be answered before you file: **which re
 owns it** ([`references/consumer-projects.md`](references/consumer-projects.md))
 and **is it already on the mainline** (below).
 
-A tracker issue is a **claim about the mainline**.  So, working inside a plan:
-**file a problem only when it reproduces *outside* the plan — already on the
-mainline.**  A pre-existing mainline bug you stumble on during plan work gets filed
-(and cross-linked to the plan); a breakage the plan's own in-progress work caused
-is branch-internal — it lives in the plan's docs and is fixed on the branch, never
-filed.  Investigation plans are the strongest case: the probes + cluster docs
-already document every shape, so a separate issue would just double-document it.
+A tracker issue is a **record for the users who could have met the defect**.  So, working
+inside a plan, the default is to **fix what you find, on the spot**, with a regression test.
+File only a defect that both blocks the plan or needs a design of its own, **and** could have
+reached users — on the mainline and old enough to be in a release (one that came in since the
+last release reached no one).  A breakage the plan's own in-progress work caused is
+branch-internal: it lives in the plan's docs and is fixed on the branch, never filed.
+Investigation plans are the strongest case: a bug met while digging is fixed there, because
+leaving it in the way hides the full picture.
 
 Full policy in the master instructions (loft: `CLAUDE.md § Bug-filing policy`).
 

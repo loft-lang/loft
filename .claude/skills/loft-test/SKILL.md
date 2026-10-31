@@ -37,7 +37,7 @@ binary that matches the kind of behaviour you're verifying.
 |---|---|---|
 | `tests/wrap.rs` | Loft script suites in `tests/scripts/*.loft` and `tests/docs/*.loft` driven through the **interpreter** (`dir` / the chunked `loft_suite_NN`), plus the `wasm_dir` leg (`--native-wasm`, run under `wasmtime` when available). | Reads scripts from disk; no Rust-level macro. |
 | `tests/native.rs` | Same scripts driven through `--native` (`native_dir` / `native_features` / `native_scripts`).  Catches codegen vs interp divergence. | Disk-driven; `find_loft_rlib` + `compile_native_job`. |
-| `tests/issues.rs` | The regression register — small named pins for fixes.  Prefer a `tests/scripts/*.loft` file where possible: it locks all three backends. | `code!(...)` |
+| `tests/issues.rs` | The regression register — small named pins for fixes.  Prefer a language-suite cell where the fix can be shown as a loft program: it runs on both backends. | `code!(...)` |
 | `tests/expressions.rs` | Language feature tests grouped by topic. | `code!(...)` and `expr!(...)` |
 | `tests/parse_errors.rs` | Negative tests — the loft source must produce a specific diagnostic. | `code!(...).error(...).warning(...)` |
 | the `*_matrix.rs` binaries | Cross-mode matrices (`tuple_matrix`, `closure_matrix`, `coroutine_matrix`, `mut_closure_matrix`, `binary_io_matrix`, `template_matrix`, `par_nested`) — every cell runs interp + `--native` and asserts byte-identical stdout. | `cross_mode!(name, body)` |
@@ -191,18 +191,18 @@ failed" tells the next reader nothing the source does not.
 **That's why pure loft tests have a bigger testing scope than Rust
 integration tests.**  A `code!(...)` test in `tests/issues.rs`
 exercises one execution path (the in-process interpreter via
-`State::execute`).  A `.loft` script automatically exercises all three
-backends — interpreter, `--native`, and WASM — and any divergence
-between them surfaces as a backend-specific failure.  When you fix a
-codegen bug, dropping a single `.loft` reproducer into `tests/scripts/`
-locks all three backends in one stroke; the same coverage in Rust
-would be three separate tests.
+`State::execute`).  A `.loft` program runs on both backends — interpreter
+and `--native` — and any divergence between them surfaces as a
+backend-specific failure (a `tests/docs` page also gets a wasm leg; a
+`tests/scripts` file's wasm leg is only the corpus sweep).  When you fix a
+codegen bug, one cell in the language suite locks both backends in one
+stroke; the same coverage in Rust would be separate tests.
 
 This is also why **the cross-mode Rust harness exists at all**: a matrix
 needs precise per-cell control of which loft snippet runs in which
 mode and a stdout-equivalence assertion.  For broader regression
 coverage where you trust the assertions in the script body itself, a
-`.loft` file under `tests/scripts/` is the lighter-weight option.
+language-suite cell is the lighter-weight option.
 
 ### Where to put a new `.loft` test
 
@@ -231,7 +231,7 @@ specific `fn`.
 | `// @EXPECT_WARNING: <substring>` | Anywhere | Like `@EXPECT_ERROR` but for warnings — execution proceeds. |
 | `// @EXPECT_FAIL` | File-level (header) **or** fn-level (the comment block immediately above a `fn`) | Tolerate a panic.  File-level: parse / scope-check / runtime failures are accepted anywhere.  Fn-level: only the named fn's panic is tolerated; sibling fns still must pass.  Add a colon-trailing reason when known: `// @EXPECT_FAIL: native function not loaded`.  Native runs skip the file only for a FILE-LEVEL `@EXPECT_FAIL`; a fn-level one skips just that fn and the siblings still run natively (loft#1311). |
 | `// #warn <text>` | Anywhere | Older-style expected warning.  Still supported; `@EXPECT_WARNING:` is preferred for new tests. |
-| `// @falsified-at: <ref>` | Header — **GATED** for every `tests/scripts/*.loft` | The falsification receipt: `make falsify GUARD=<file> [REF=<commit>]` proves the guard FAILS on the build it was written to catch (without `REF`, against the installed main — `make install-main`), and this records the answer (`@falsified-at: none — <reason>` when no such build exists).  `tests/doc_hygiene.rs` fails any scripts file without it (pre-existing files ride `tests/falsified.baseline`, a shrink-only ratchet).  GUARDS.md § A guard that never failed is not a guard. |
+| `// @falsified-at: <ref>` | Header — **GATED** for every `tests/scripts/*.loft`, and written into every new suite cell | The falsification receipt: `make falsify GUARD=<file> [REF=<commit>]` proves the guard FAILS on the build it was written to catch (without `REF`, against the installed main — `make install-main`), and this records the answer (`@falsified-at: none — <reason>` when no such build exists).  `tests/doc_hygiene.rs` fails any scripts file without it (pre-existing files ride `tests/falsified.baseline`, a shrink-only ratchet).  The receipt also says how to score the guard again — CHANNEL, WITNESS and HOLDS, plus ARMED for a leak guard — checked by `scripts/falsify-review.py --check` with its own shrink-only `tests/falsified_docs.baseline`.  GUARDS.md § A guard that never failed is not a guard. |
 
 **Diagnostic-format rule:** the `<substring>` for `@EXPECT_ERROR` and
 `@EXPECT_WARNING` is a substring match against the rendered diagnostic.
@@ -285,65 +285,32 @@ status).
 
 ## `#[ignore = "<reason>"]` conventions
 
-Every `#[ignore]` attribute MUST carry a reason.  Bare `#[ignore]` is
-opaque and breaks the audit trail.  **The reason MUST name the
-trigger to resume** so a future `cargo test -- --ignored` run +
-`grep` audit can locate every parked test and tell what should
-re-activate it.
+An ignore is a ROUTING, never a resting place: the test still runs somewhere, or a named
+condition removes it.  Two gates in `tests/doc_hygiene.rs` hold every `#[ignore]` (and
+`#[cfg_attr(<cfg>, ignore = "…")]`) in `tests/*.rs` and `src/**/*.rs` to that — the full rule is
+`doc/claude/TESTING.md` § Every skip:
 
-Reason categories:
-
-| Reason format | Meaning | Example |
-|---|---|---|
-| `P###` / `#NNN` | Open bug — now a **GitHub Issue** (legacy `P###` ids survive as references; PROBLEMS.md is the closed archive).  Un-ignore in the commit that closes it (`Fixes #NNN`). | `#[ignore = "P207 — native char-tuple-elem eq codegen bug"]` |
-| `<feature-tag> — <plan-ref>` | Waiting on a feature or plan phase that hasn't shipped.  Un-ignore in a one-line follow-up commit when the feature lands. | `#[ignore = "T1.8a — plan-06 phase 9a"]` |
-| `<plan>-<phase>` | Pending implementation in a multi-phase plan.  Same un-ignore rules as a bug, but tracked via the plan rather than an Issue. | `#[ignore = "plan-14 phase 03"]` |
-| `<plan> (<sub>) — un-ignore when <trigger>` | User-facing lock-in test: the test demonstrates a today-broken behaviour, marked ignored so CI stays green; auto-flips to PASS when the trigger fires. | `#[ignore = "plan-17 (A) caveat — implicit generic-tuple type inference; un-ignore when the parser propagates substituted return types to receiving variables (DEFERRED.md / USER_FACING.md)"]` |
-
-**The trigger phrase is mandatory.** Acceptable forms include
-`un-ignore when <X>`, `triggers when <X>`, or `<plan>-phase <N>`.
-The convention is greppable: `cargo test -- --ignored` + reading
-the reason should tell a future contributor what to do.
-
-When un-ignoring, the commit message names the reason being retired and
-the new test status (`P207 closes; cell flips from #[ignore] to PASS`).
-
-### Lock-in tests for user-facing deferred items
-
-When deferring an item that affects user code (anything that
-belongs in `doc/claude/USER_FACING.md`), **write the lock-in test
-in the same commit as the deferral**.  The test exercises the
-today-broken shape, asserts the post-fix behaviour, and is
-`#[ignore]`d with a trigger.  When the fix lands, the test goes
-green automatically — preventing accidental release without the
-fix.
-
-The shape, as `plan17_a_implicit_generic_tuple_type_inference` in `tests/issues.rs`
-carried it until its fix landed and the `#[ignore]` came off (it now runs):
+- **The reason names the run it rides.**  `every_ignore_reason_says_how_it_runs` accepts a
+  reason containing `--ignored` (run by hand — give the command), a nightly job (`miri.yml`,
+  `ci.yml`), `on demand` / `manually` / `by hand`, or a platform (`Windows`).  A reason that
+  only says WHY (`heavy`, `P207 — codegen bug`, `plan-14 phase 03`) fails it.  Add what ends
+  the ignore as well — the issue or condition that removes it.
+- **The ignore is listed.**  `ignored_tests_baseline_is_current` fails on any drift from
+  `tests/ignored_tests.baseline`; regenerate it in the same commit:
+  `python3 tests/dump_ignored_tests.py > tests/ignored_tests.baseline`.
 
 ```rust
 #[test]
-#[ignore = "plan-17 (A) caveat — implicit generic-tuple type inference; un-ignore when the parser propagates substituted return types to receiving variables (DEFERRED.md / USER_FACING.md)"]
-fn plan17_a_implicit_generic_tuple_type_inference() {
-    code!(
-        "fn min_max<T: Ordered>(a: T, b: T) -> (T, T) {
-    if a < b { (a, b) } else { (b, a) }
-}
-fn run() -> integer {
-    t = min_max(7, 3);                         // <- no annotation
-    t.0 * 10 + t.1
-}"
-    )
-    .expr("run()")
-    .result(Value::Int(37));
-}
+#[ignore = "lock-in for #2284, runs by hand: cargo test --test issues lock_2284 -- --ignored; un-ignore when #2284 is fixed"]
+fn lock_2284_a_field_overwrite_keeps_a_frame_owned_capture() { … }
 ```
 
-The two-file index — `doc/claude/plans/DEFERRED.md` (every parked
-item) and `doc/claude/USER_FACING.md` (user-visible subset) — is
-the single source of truth.  A lock-in test references the
-relevant file in its ignore reason so a future contributor can
-trace the audit trail in one grep.
+**A lock-in test** is the one deliberate kind: written in the same commit as a deferral that
+affects user code, it asserts the post-fix behaviour of a today-broken shape and is ignored
+with a reason like the one above, so the fix turns it green rather than being remembered.  When
+un-ignoring, the commit message names the reason it retires.  The parked items it refers to
+are indexed in `doc/claude/plans/DEFERRED.md` (every parked item) and
+`doc/claude/USER_FACING.md` (the user-visible subset).
 
 ---
 
@@ -366,7 +333,7 @@ closed/historical archive; the legacy `P###` ids survive only as references).
    or a bug you fix in the SAME change (the
    fix + regression test ARE the record — close it with `Fixes #NNN`, don't also file).
 4. **Pin every fix with a regression test.** Name it `p<NNN>_<short>` for a legacy
-   P-id or `tests/scripts/NN-<slug>.loft` for a GitHub issue; reference it in the
+   P-id, or a suite cell `rules/<chapter>/<rule>/<issue>-<slug>.loft` for a GitHub issue; reference it in the
    commit (`Fixes #NNN`).
 
 ---
@@ -466,9 +433,9 @@ for runtime panics that have no diagnostic-printing path.
 - [ ] No `->` arm separators in any `match` (use `=>`).
 - [ ] No `cross_mode!` body shorter than `fn test() { … }` (the harness appends `fn main`, nothing else).
 - [ ] If introducing a new `tests/*.rs` binary, its name matches a subject pattern in `scripts/test_subjects.sh` (or extend one).
-- [ ] If adding a `.loft` test, picked the right location: `tests/scripts/` (regression) vs `tests/docs/` (also drives HTML).
+- [ ] If adding a `.loft` test, picked the right home: a language-suite cell (the default), `tests/docs/` (also drives HTML), or `tests/scripts/` only when something in this repo names the file.
 - [ ] `tests/docs/*.loft` files have both `@NAME:` and `@TITLE:` header comments.
-- [ ] Every new `tests/scripts/*.loft` records `@falsified-at:` (run `make falsify` — the doc_hygiene gate fails without it).
+- [ ] Every new suite cell and `tests/scripts/*.loft` records `@falsified-at:` (run `make falsify` — the doc_hygiene gate fails without it).
 - [ ] `@EXPECT_ERROR:` / `@EXPECT_WARNING:` substrings do NOT include the `at file:line:col` tail.
 - [ ] `@EXPECT_FAIL` placement is correct: file-level only when the comment is in the header above the first declaration; fn-level only when the comment is the line(s) immediately above the target `fn`.
 

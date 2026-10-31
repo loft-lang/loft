@@ -67,14 +67,16 @@ chapter, not a defect.
   the original.
 - Change **nothing else**: not a signature, not a `pub`, not a comment, not a name.  A
   long function you pass is left as it is, or gains
-  `#[expect(clippy::too_many_lines, reason = "…")]` with a reason a reader can check.  An
-  `inherited` reason on a function you move must be replaced — split it (if that is a move
-  too) or write the real reason.  Anything else you notice becomes an issue, not a diff.
+  `#[expect(clippy::too_many_lines, reason = "…")]` with a reason a reader can check.  The
+  one allowed exception: an `inherited` reason on a function you move must be replaced —
+  split it (if that is a move too) or write the real reason.  Anything else you notice becomes an issue, not a diff.
 - `rustfmt` runs; nothing is hand-formatted.
 
 ## Prove it
 
-`<base>` is the commit the split started from.
+`<base>` is the commit the split started from.  `git add -N` the new part files first: an
+untracked file is invisible to `git diff`, so every moved line would read as a removal
+with no twin.
 
 ```bash
 git diff -M --color-moved=dimmed-zebra <base>   # read it: moved lines dim, the rest stand out
@@ -83,6 +85,7 @@ diff <(git diff -U0 <base> | grep '^-[^-]' | cut -c2- | sed 's/^[[:space:]]*//' 
      <(git diff -U0 <base> | grep '^+[^+]' | cut -c2- | sed 's/^[[:space:]]*//' | sort) | grep -c '^[<>]'
 scripts/ci-run.sh start                         # the full gate, both clippy legs
 make file-sizes ARGS="--all"                    # the source shrank, no part is over the bar
+make docs-lint-baseline                         # moved doc comments shift the baseline: re-pin it
 ```
 
 A plain `grep -c '^[+-]'` over the diff counts every moved line twice and says nothing.  If
@@ -93,6 +96,7 @@ changed that should not have; find it and undo it with the inverse edit.
 
 Subject `split <file> into N parts` or `carve <subject> out of <file>`; body is the parts and
 one line each on what they hold.  Nothing else in the commit — it may travel in the release
-branch's PR beside other work.  Tick the row with the commit and the PR that carried it:
+branch's PR beside other work, including the re-pinned docs-lint baseline.  Tick the row
+with the commit now and add the PR link at pre-tag, once the owner has opened the PR:
 `scripts/release-checklist.py --done M-file-split --note "<commit> in <PR link>; pick at <sha>; non-move count <n>; gate <PASSED sha>"`
 — a tick note says what ran, on which commit, and what it answered (RELEASE.md).
