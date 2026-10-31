@@ -394,10 +394,28 @@ fn c_copy_record(s_store: integer, s_rec: integer, s_pos: integer, d_store: inte
 fn c_clear(store: integer, rec: integer, pos: integer, tp: integer);
 #c "loft_crt_clear" "void(int64_t, int64_t, int64_t, int64_t)"
 
+fn c_clear_view(store: integer, rec: integer, pos: integer, tp: integer);
+#c "loft_crt_clear_view" "void(int64_t, int64_t, int64_t, int64_t)"
+
+fn c_replace_keyed(s_store: integer, s_rec: integer, s_pos: integer, d_store: integer, d_rec: integer, d_pos: integer, tp: integer, flags: integer);
+#c "loft_crt_replace_keyed" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
 // `OpClear(r, tp)` without its pool reset: the claims the record of type `tp` owns released, by
 // the loaded table, so its store takes a new value in place.
 pub fn clear(store: integer, rec: integer, pos: integer, tp: integer) {
   c_clear(store, rec, pos, tp);
+}
+
+// `OpClearKeyed` of a linked group's secondary view: its own route dropped, the records left to
+// the member that holds them.  The type table must be loaded.
+pub fn clear_view(store: integer, rec: integer, pos: integer, tp: integer) {
+  c_clear_view(store, rec, pos, tp);
+}
+
+// `OpReplaceKeyed`: `dest`'s collection of type `tp` filled again from `src`'s; `flags` bit 0
+// the operator's own, bit 1 the element tree may move whole.  The type table must be loaded.
+pub fn replace_keyed(s_store: integer, s_rec: integer, s_pos: integer, d_store: integer, d_rec: integer, d_pos: integer, tp: integer, flags: integer) {
+  c_replace_keyed(s_store, s_rec, s_pos, d_store, d_rec, d_pos, tp, flags);
 }
 
 // The runtime's type table, from flat rows (`shim/crt.c` names their layout): how many types

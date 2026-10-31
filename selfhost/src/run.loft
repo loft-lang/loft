@@ -1018,6 +1018,30 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
         put_int(ints, sp_int, if (ints[sp_int] ?? NULL_STORE) != (ints[sp_int + 3] ?? NULL_STORE) { 1 } else { 0 });
         sp_int += 1;
       }
+      ClearKeyed => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 3;
+        if op.b == 1 {
+          crt::clear_view(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a);
+        } else {
+          crt::clear(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a);
+        }
+      }
+      ReplaceKeyed => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 6;
+        crt::replace_keyed(
+          ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0,
+          ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0,
+          op.a, op.b
+        );
+      }
       // S1.5: a loop's mark of the three stack pointers, its drop, and a leave to the mark
       // `op.a` loops out — the marks of the loops inside it dropped, its own kept.
       LoopMark => {
