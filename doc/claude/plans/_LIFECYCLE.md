@@ -133,11 +133,12 @@ There are no per-state tables in `plans/README.md` / `lib_plans/README.md` to
 edit — tracking lives on the issue (`_TEMPLATE.md` step 3).  A deferred plan
 additionally records its **trigger** in [`DEFERRED.md`](DEFERRED.md).
 
-**Closing is automated at release.**  Put a close directive in the PR that
-finishes the plan — `Closes @PLN<n>` (cross-repo `Fixes #N` can't reach the
-plans repo) — and on merge to `main` the `close-plans` workflow runs
-`scripts/close-shipped-plans.sh`, doing the `status:finished` + close above for
-you.  So the manual `gh` here is the *fallback* (or for an out-of-band close);
+**A plan closes when its work is finished, by hand, with this whole procedure — not at
+the merge** (owner).  The doc work a close needs (Steps 1–6) is too much to hang on a merge,
+so the `gh` commands above are THE close, run as its last step.  A `Closes @PLN<n>`
+directive in a PR is only a safety net: on merge to `main` the `close-plans` workflow runs
+`scripts/close-shipped-plans.sh`, which closes a plan still left open and swaps its label
+(cross-repo `Fixes #N` can't reach the plans repo), and does none of the doc work.
 `scripts/audit-stale-plans.sh` is the drift sweep — it runs **daily** in the
 nightly checks (`miri.yml` → `stale-plans-audit`) and makes two passes.  It
 *warns* about a plan left `status:active` after its work shipped, because that is

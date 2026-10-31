@@ -103,8 +103,9 @@ Both backends, in this order.  Each step's detail lives where it points; the ord
    before a generator rewrite ([§ Wide before deep](#wide-before-deep)).  **No combined opcode
    or kernel built for one row**: it speeds one spelling and nothing next to it ([KERNELS.md](KERNELS.md)); an
    operator comes after the IR work, from broad evidence (formal/performance.md `(Perf-Order)`).
-   **Fix the mechanism, not the shape**: a rule that speeds one shape is a STOPGAP, recorded
-   with the root fix that retires it, and the measure of a fix is what it moved that nobody
+   **Fix the mechanism, not the shape**: a rule that speeds one shape is a STOPGAP — never
+   built for the bench alone, only for a shape real programs use (grep the consumers and the
+   libraries) while the root fix is far off — recorded with the root fix that retires it, and the measure of a fix is what it moved that nobody
    targeted (class medians, `make perf-portal`).  A representation of the compiler's own —
    a stack array, a tuple in registers — is allowed wherever a program cannot observe it,
    which is everywhere except a package's native code and a store bound to a file

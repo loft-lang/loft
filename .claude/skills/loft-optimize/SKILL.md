@@ -87,9 +87,11 @@ slower than the compiled program on the same code. So:
    you can. Prefer a runtime improvement (a better allocator, a faster lookup) over a new
    compiler rule when either would do — it changes no emitted program and is easier to verify.
    Prefer the fix that removes the mechanism even when it is larger than a rewrite for this
-   shape. A rewrite that covers only one shape is a STOPGAP: allowed when the root fix is far
-   off, but recorded as such, with the root fix that will retire it, the way `KERNELS.md` keeps
-   every Rust stand-in with its removal trigger. Before building, check that the rule's own
+   shape. A rewrite that covers only one shape is a STOPGAP, and it is never built for the
+   bench alone: only when the shape occurs in real programs (grep the consumers and the
+   `loft-libs-*` libraries) and the root fix is far off.  It is then recorded as such, with the
+   root fix that will retire it, the way `KERNELS.md` keeps every Rust stand-in with its
+   removal trigger. Before building, check that the rule's own
    conditions hold on the case you priced: a rule whose gate refuses its target costs a build
    and measures nothing. Two traps when stating the condition:
    - **Sound is not the same as profitable.** State where the gain is paid back, not only where
@@ -128,9 +130,10 @@ slower than the compiled program on the same code. So:
 
 - **A new rule for the shape at hand.** It makes this routine fast while the mechanism stays
   slow everywhere else, and every such rule is one more place a wrong answer can hide and one
-  more condition the next change must respect. Never build one, not even as a stopgap (owner
-  ruling): the goal is a language that is quick overall, and the bench against its Rust twin is
-  the instrument that measures it, not the target. Rules fitted to the bench routines store fast
+  more condition the next change must respect. Never build one for the bench alone: the goal
+  is a language that is quick overall, and the bench against its Rust twin is the instrument
+  that measures it, not the target.  A one-shape rewrite is admitted only as step 5's recorded
+  stopgap — the shape occurs in real programs and the root fix is far off. Rules fitted to the bench routines store fast
   copies of those routines and leave the language as slow as it was. Before building, name the
   programs beyond the bench the rewrite reaches: grep the consumers and the `loft-libs-*`
   libraries for its shape. A `par`-only row mapper was built, measured −49 % on its one bench
