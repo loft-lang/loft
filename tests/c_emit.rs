@@ -3272,9 +3272,11 @@ fn the_c_debug_build_names_loft_lines_in_its_line_table() {
         .expect("the kept C");
     let c = fa::read_to_string(kept).expect("read the kept C");
     let _ = fa::remove_file(kept);
-    let total = file.to_string_lossy().replace('\\', "\\\\");
+    // The file as the driver resolved it: macOS spells a temp path through `/private`, Windows
+    // through its short names, so the marker is matched by its line and the file's own name.
     assert!(
-        c.contains(&format!("#line 3 \"{total}\"")),
+        c.lines()
+            .any(|l| l.starts_with("#line 3 \"") && l.trim_end().ends_with("total.loft\"")),
         "no marker for line 3 of total.loft"
     );
     // The line table, where binutils reads it.
