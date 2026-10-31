@@ -4564,6 +4564,22 @@ line in `Output::output_function`'s prelude.
                  same, none slower).  `LOFT_INLINE_COUNT_BRACES=1` counts
                  them again.
                  Switch `LOFT_NO_INLINE_HINT=1`.
+                 THE TWIN CLAUSE: an `__inv` twin (R-Inputs) of at most 64 statements
+                 is declared `static inline` too, its wrapper with it.  A twin exists
+                 only because a LOOP holds its inputs for the call — every call of it
+                 is a hot call by construction — so taking it into its caller keeps
+                 those held inputs in registers, the twin's whole point, where an
+                 out-of-line twin passes them, often on the stack.  And its HELPERS
+                 with it: a plain function of at most 80 statements that the twin calls,
+                 or that the LOOP calling the twin calls, is hinted too, and what those
+                 call in turn.  Once the twin is taken in, the loop's function is
+                 larger, and GCC stops taking in the other callees it took in on its own
+                 before — the hint keeps them.  The root is the loop, never the function
+                 around it: rooted at the caller, a `main` that prints rows through a
+                 twin hinted the whole bench driver.  Decided once every twin is written
+                 (`Cx::hot_helpers`), the candidates written with a storage marker the
+                 unit resolves.  Switch
+                 `LOFT_NO_INLINE_TWIN=1`.
 
   (R-Cold)       a runtime helper on the per-element fast path — an element read or
                  write through a holder, a length, a bounds test, a fault note, a
@@ -4605,6 +4621,30 @@ line in `Output::output_function`'s prelude.
                  (`get_vector_hoisted` at the walk's end) stays outlined, since
                  the cheaper `get_vector` inlined there grows every held loop.
 ```
+
+**The twin clause, in words.**  hex_field's `edgeset_count` walks every cell and calls
+`edge_mat` → `eg_index` → `eg_dir_from` → `nb_q`/`nb_r` per edge; the loop holds the edge set's
+scalars, so it calls `eg_index`'s `__inv` twin with nine arguments, four on the stack.  At 51
+counted statements the twin was past the twelve-statement bound, and gcc kept it out of line:
+3.1 ns an edge against the Rust twin's 0.43, 7.2×.  Priced by hand in the emitted C (2026-10-31,
+the hints added and nothing else, hashes unchanged): every `__inv` twin of at most 64 statements
+hinted — hex_field `edgeset_count` **0.445×** under gcc (≈ 3.7× the twin), `stencil_rotate`
+0.917×, `doc_read` 0.834×, `trace` the same; under clang nothing moves (clang inlines them
+without the hint, and runs `edgeset_count` at 1.75× the twin already).  Hinting the plain chain
+as well (`eg_dir_from`, `nb_q`) adds nothing there, and FLATTENING the whole call tree is 16 %
+slower: what gcc leaves after the hint is its code for the search, not a call.  The helper half
+is hex_shape's `wall_chain_walk`: with the twins alone it read **+10.5 %**, because `chain_marks`
+now took in seven copies of `eg_index__inv` and gcc then left `hex_neighbor` (73 statements) out
+of line in it — 8 calls of it in the disassembly where there had been none.  It is not gcc's
+growth budget (`inline-unit-growth`, `large-function-growth`, `large-function-insns` raised:
+no change); it is gcc's own choice for a caller that grew, and hinting what the twin's LOOP
+calls up to 80 statements restores it: `wall_chain_walk` **0.780×**, `edgeset_count` 0.450×
+(at 32 statements `hex_neighbor` stays out and the row stays at +10.4 %).  Rooted at the whole
+CALLER instead of its loop, the clause cost hex_way `track_distance` +18 %, hex_recover
+`field_digest` +11 %, assets `keys_near` +5 % (gcc) and graphics `draw_line` +11 % (clang):
+`main` calls `print_row__inv` in a loop, and from `main` the walk hinted every small function
+of the bench.  Rooted at the loop, those four rows read the same.  `LOFT_TRACE_INLINE=1`
+prints every function's statement count and whether it is hinted.
 
 **In words.** @PLN157 § V-h found the class (`hash` paid a third of its row for the
 un-inlined fault note BESIDE its checks, not for the checks); loft#1508 and its write

@@ -7420,3 +7420,109 @@ int main(void) {
     let out = String::from_utf8_lossy(&run.stdout);
     assert!(run.status.success() && out.trim() == "ok", "{out}");
 }
+
+/// `@FR-R-Inline`'s twin clause: an `__inv` twin — called only from a loop that holds its
+/// inputs — is hinted `static inline` up to 64 statements, past the twelve-statement bound,
+/// and so is a plain helper the twin calls (`inside`, 24 statements); `count`, which holds the
+/// loop but runs outside it, keeps the bound.  `LOFT_NO_INLINE_TWIN=1` is the
+/// build without the clause: twin and helper go out of line again.  The program's answer is
+/// the same either way (hand-computed: cells 0..11 summed over the 4×3 grid = 66).
+#[test]
+fn a_loop_twin_past_the_size_bound_is_declared_inline() {
+    let src = r#"
+struct Grid { w: integer, h: integer, x0: integer, y0: integer, cells: vector<integer> }
+fn inside(v: integer, lo: integer, n: integer) -> boolean {
+  d = v - lo;
+  if d < 0 { return false; }
+  if d >= n { return false; }
+  e = d * 3;
+  f = e / 3;
+  if f != d { return false; }
+  h = f + lo;
+  if h != v { return false; }
+  k = h - v;
+  if k != 0 { return false; }
+  m = k + 1;
+  m == 1
+}
+fn slot(g: Grid, x: integer, y: integer) -> integer {
+  dx = x - g.x0;
+  dy = y - g.y0;
+  if !inside(x, g.x0, g.w) { return -1; }
+  if dx < 0 { return -1; }
+  if dy < 0 { return -1; }
+  if dx >= g.w { return -1; }
+  if dy >= g.h { return -1; }
+  s = dy * g.w + dx;
+  if s < 0 { return -1; }
+  t = s * 2;
+  u = t / 2;
+  v = u + 0;
+  if v != s { return -1; }
+  s
+}
+fn count(g: Grid) -> integer {
+  n = 0;
+  for y in 0..g.h + 2 {
+    for x in 0..g.w + 2 {
+      i = slot(g, x + g.x0 - 1, y + g.y0 - 1);
+      if i >= 0 { n += g.cells[i] ?? 0; }
+    }
+  }
+  n
+}
+fn main() {
+  c: vector<integer> = [];
+  for i in 0..12 { c += [i]; }
+  g = Grid { w: 4, h: 3, x0: 10, y0: 20, cells: c };
+  println("{count(g)}");
+}
+"#;
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("inline-twin");
+    let file = dir.join("twin.loft");
+    fa::write(&file, src).expect("write program");
+    for (mode, switch, twin_inline) in [("on", "", true), ("off", "LOFT_NO_INLINE_TWIN", false)] {
+        let c = dir.join(format!("{mode}.c"));
+        let mut emit = loft::platform::process::harness_command(loft);
+        if !switch.is_empty() {
+            emit.env(switch, "1");
+        }
+        let out = emit
+            .arg("--emit-c")
+            .arg(&c)
+            .arg(&file)
+            .output()
+            .expect("run loft --emit-c");
+        assert!(
+            out.status.success(),
+            "{mode}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let text = fa::read_to_string(&c).expect("read the C");
+        assert_eq!(
+            text.contains("\nstatic inline int64_t n_slot__inv("),
+            twin_inline,
+            "{mode}: the loop twin's hint"
+        );
+        assert_eq!(
+            text.contains("\nstatic inline uint8_t n_inside("),
+            twin_inline,
+            "{mode}: the twin's helper's hint"
+        );
+        assert!(
+            text.contains("\nstatic int64_t n_count("),
+            "{mode}: the loop's own function keeps the size bound"
+        );
+    }
+    let run = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg(&file)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "66\n",
+        "the interpreter"
+    );
+}

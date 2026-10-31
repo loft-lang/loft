@@ -177,6 +177,9 @@ pub(crate) struct FnWriter<'a> {
     /// with whether its element base stays valid for the loop's extent (`@FR-R-Base`: the
     /// loop grows no store).  An `__inv` twin starts with its inputs as one frame.
     headers: Vec<Vec<(crate::opt::writes::PathKey, String, bool)>>,
+    /// Per open loop, the functions its body calls: `@FR-R-Inline`'s twin clause makes them
+    /// roots of `Cx::hot_helpers` when the loop calls an `__inv` twin.
+    loop_calls: Vec<std::collections::BTreeSet<u32>>,
     /// `@FR-R-Header`'s growth half: the held headers derived again after every statement
     /// that grows their vector (`refresh_grown_header`), and the paths the verdict just
     /// admitted under it, which `hold_vectors` binds.
@@ -657,6 +660,7 @@ impl<'a> FnWriter<'a> {
             loops: Vec::new(),
             labels: 0,
             headers: Vec::new(),
+            loop_calls: Vec::new(),
             grown_headers: std::collections::HashSet::new(),
             pending_grown: Vec::new(),
             kh_passed: std::collections::HashSet::new(),
@@ -3619,6 +3623,15 @@ impl<'a> FnWriter<'a> {
 
     fn loop_copy(&mut self, b: &Block, ind: usize) -> Result<(), String> {
         let held_file = self.open_file_hold(b, ind)?;
+        let mut calls = std::collections::BTreeSet::new();
+        for op in &b.operators {
+            op.walk(&mut |n| {
+                if let Value::Call(c, _) = n {
+                    calls.insert(*c);
+                }
+            });
+        }
+        self.loop_calls.push(calls);
         self.hold_invariants(b, ind);
         let mints = self.hold_vectors(b, ind)?;
         let window = self.open_window(b, ind)?;
@@ -3648,6 +3661,7 @@ impl<'a> FnWriter<'a> {
             None => self.loop_core(b, ind)?,
         }
         self.headers.pop();
+        self.loop_calls.pop();
         self.push_heads.pop();
         self.scalars.pop();
         self.invariants.pop();
@@ -5889,6 +5903,11 @@ impl<'a> FnWriter<'a> {
             return Err(format!("a store place handed to a & parameter of {callee}"));
         } else {
             cx.request_twin(d, mask);
+            if mask & super::INV_BIT != 0
+                && let Some(calls) = self.loop_calls.last()
+            {
+                cx.loop_callees.borrow_mut().extend(calls.iter().copied());
+            }
             super::twin_name(cx.data, d, mask)
         };
         // `@FR-R-AppendTwin`'s window clause: a twin that takes its caller's window gets this
