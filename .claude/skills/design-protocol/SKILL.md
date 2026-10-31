@@ -1,36 +1,21 @@
 ---
 name: design-protocol
 description: >-
-  Design Protocol 1 — a design is a testable HYPOTHESIS about an invariant, not a
-  plan you execute. The DESIGN-mode counterpart to the engineering-rigor skill
-  (which routes here for the design half). USE THIS whenever you are about to commit
-  to a load-bearing design — a core representation, runtime, memory model, codegen, a
-  public contract, a data format, or any algorithm that will carry weight: name the
-  ONE invariant, count its re-assertion sites, build the cheapest probe that could
-  FALSIFY each load-bearing claim, then build and validate against the written
-  prediction. USE IT TOO before RECOMMENDING a rule, a semantics or a design in answer to a
-  question ("which way should this work?", "what would option 2 entail?"): answering feels
-  like advice, not design, so the probe gets skipped — and an approved recommendation is a
-  commitment the asker builds on. And for exact-invariant domains where you cannot even form the
-  invariant (geometry, caching, hashing, store/memory lifetime, round-trips), flip to
-  the constructive instrument — plot a concrete instance of the ANSWER and read the
-  invariant off it. Reach for it when a design feels too clean, when you keep reaching
-  for an approximation, or whenever you catch yourself about to build the first
-  coherent design without probing it. ALSO reach for it BEFORE writing any routine,
-  predicate, helper, or type-list that might already exist somewhere else — in another
-  module of this project, or in a library or package the project can already use — and
-  especially when PORTING or RE-TARGETING something that already works (a new backend, a
-  new output format, a standalone or single-file version, a different language). That
-  case does not feel like new work, which is exactly why it is where duplicate and
-  subtly-wrong reimplementations come from. The skill covers how to find the existing
-  implementation before you write a second one, and — as a system grows past what fits in
-  one head — how to anchor that question on NAMED RULES cited at each enforcement site,
-  so "does this already exist?" becomes a lookup instead of a search, and so two sites
-  that implement one rule are distinguishable from two that merely look alike today.
-  ALSO reach for it when deciding or changing what a user-facing construct MEANS — what a
-  bind, a copy, a drop, a return does — and when one rule has collected its third exception
-  or its defect list keeps re-cutting instead of shrinking: the short-term patches are then
-  likely pointing away from the design that is actually needed.
+  A design is a testable HYPOTHESIS about one invariant, not a plan to execute. USE THIS
+  before committing to a load-bearing design — a representation, the memory or ownership
+  model, codegen, a public contract, a data format — and BEFORE RECOMMENDING a rule or
+  design in answer to a question ("which way should this work?", "what would option 2
+  entail?"): answering feels like advice, so the probe gets skipped, and an approved
+  recommendation is built on. Also when deciding what a construct MEANS (what a bind, copy,
+  drop or return does), when one rule collects its third exception or its defect list
+  re-cuts instead of shrinking, and before writing or porting code that may already exist
+  (another module, a library, the other backend). The method: name the invariant, count the
+  sites that re-assert it, build the cheapest probe that could falsify each load-bearing
+  claim — for a recommendation, its premise about the current code — then build and validate
+  against the written prediction. Where you cannot state the invariant (geometry, caching,
+  store lifetime, round-trips), construct a concrete instance of the answer and read the
+  invariant off it; for a meaning, table the candidate rules over the real use-case
+  programs.
 user-invocable: true
 ---
 

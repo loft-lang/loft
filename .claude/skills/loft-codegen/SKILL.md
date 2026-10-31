@@ -1,22 +1,18 @@
 ---
 name: loft-codegen
 description: >-
-  The discipline for ANY loft compiler/codegen work — fixing a store-lifetime or
-  codegen bug, adding/altering bytecode, parser IR, the interpreter, or the native
-  generator, or implementing a language feature that emits ops — OR restructuring
-  any of those without meaning to change what they emit (extracting a selector,
-  folding a special case, deleting a redundant condition). USE THIS the moment you
-  are about to edit src/parser/, src/state/codegen.rs, src/fill.rs,
-  src/generation/, src/compile.rs, or scopes.rs to change OR reshape what code is
-  emitted — ESPECIALLY when a fix looks obvious and you're tempted to "just patch the
-  generator and run the suite." The one load-bearing instrument is the same in both
-  modes — `loft introspect` on BOTH backends BEFORE you touch the compiler — but the
-  gate flips: a BUG FIX proves the WORKING bytecode standalone beside the broken one;
-  a behaviour-PRESERVING REFACTOR proves the emitted IR + native Rust BYTE-IDENTICAL
-  before/after. Skipping it is how codegen work flails and regresses the suite (see
-  the probe-04 anti-example). The DESIGN/diagnosis counterparts are the
-  engineering-rigor and design-protocol skills; this is the EMIT-mode sibling. Routes
-  to CODEGEN_METHOD.md (the method) and OWNERSHIP_MODEL.md (the ownership beacon).
+  The discipline for ANY loft compiler work on any of the three generators — the
+  interpreter's bytecode, the native Rust emitter and the C backend: fixing a store-lifetime
+  or codegen bug, adding an operator or builtin (default/*.loft and its #rust template),
+  changing parser IR or the scope pass, or reshaping any of those without meaning to change
+  what they emit. USE THIS the moment you are about to edit src/parser/, src/scopes/,
+  src/compile.rs, src/state/codegen.rs, src/generation/, src/c/ or an operator's #rust
+  template — ESPECIALLY when a fix looks obvious and you are tempted to patch the generator
+  and run the suite. The one instrument: loft introspect on every backend BEFORE touching
+  the compiler. A BUG FIX proves the WORKING bytecode standalone beside the broken one; a
+  behaviour-preserving REFACTOR proves the emitted IR and native Rust byte-identical before
+  and after. The design and diagnosis halves are engineering-rigor and design-protocol; this
+  is the emit-mode sibling. Routes to CODEGEN_METHOD.md and OWNERSHIP_MODEL.md.
 user-invocable: true
 ---
 
@@ -164,8 +160,12 @@ carried one more fact?* Yes → the fact belongs in the type.
 
 ## The both-backends rule
 
-Interp (`src/state/codegen.rs` → bytecode) and native (`src/generation/` → Rust) are
-**separate generators reading the same IR**. A rung is closed ONLY when BOTH emit
+Interp (`src/state/codegen.rs` → bytecode), native (`src/generation/` → Rust) and the C
+backend (`src/c/`, `--native-c` → C99) are **separate generators reading the same IR**.  A
+new operator lands in all three: its `#rust` template in `default/*.loft` gives the
+interpreter (`make fill` regenerates `src/fill.rs`) and native, while the C backend
+implements it by hand (`src/c/body*.rs` plus its runtime header) and lists it in the
+operator shape table that matches its result (`OP_INT`, `OP_REF`, … in `src/c/body.rs`). A rung is closed ONLY when BOTH emit
 the proven bytecode and pass (correct + clean + no leak). An interp fix that breaks
 native compile is NOT landable. When they diverge on the same IR (one clean, one
 wrong/E0425), that divergence is the bug — neither "the suite is green" nor "interp

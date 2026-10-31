@@ -1,32 +1,18 @@
 ---
 name: engineering-rigor
 description: >-
-  The shared discipline for any non-trivial change — fixing a bug OR
-  designing/refactoring a load-bearing algorithm. USE THIS when about to fix a
-  non-trivial bug (crash, silent corruption, wrong result), design or refactor a
-  load-bearing algorithm (core representation, runtime, memory, codegen, a public
-  contract or data format), when a change feels fragile or "longer than expected
-  for what it does", or when reaching for an approximation in an exact-invariant
-  domain (geometry, caching, hashing, round-trips) and can't pin the exact
-  construction — ESPECIALLY when a fix already looks obvious (that's the cue, not
-  the exception). It is a SPEED tool, not a brake: a coherent explanation is a
-  hypothesis, not a conclusion, and the fastest route to a fix that sticks is the
-  cheapest probe that could prove your idea wrong (a timing, a grep of a count, one
-  `introspect`/`--native-emit`-and-look — seconds). So the moment you can state a cause or a fix, that
-  fluency is the cue to GATHER first, not act — which also lets you fix the SOURCE
-  and delete the whole class, not just this instance. Then build the instrument
-  that makes the CLASS visible (boundary matrix, falsification probe, usage
-  sentinel), find the ONE invariant, enforce it at the chokepoint (no narrower, no
-  wider), verify against what you wrote down. And when a diagnostic reports a
-  symptom but not its cause, or repeated probes won't converge (non-monotonic,
-  "sometimes it happens"), treat that as a blind instrument, not a hard bug —
-  upgrade the tool to ATTRIBUTE the effect to its cause before guessing at a fix.
-  ALSO applies BEFORE you write: a predicate, type list, helper or routine that may
-  ALREADY EXIST elsewhere in this project or in a library it can use — and especially
-  when PORTING or RE-TARGETING something that already works, which does not feel like
-  new work. A duplicate is a decision NEVER MADE rather than one made badly, so more
-  care cannot find it; an instrument can.
-  Routes to the matrix-first protocol and Design Protocol 1.
+  The discipline for fixing a non-trivial loft bug or reshaping load-bearing code. USE THIS
+  before you fix a crash, a silent corruption, a wrong answer, a leak or a disagreement
+  between backends — and STOP AND LOAD IT when: the fix already looks obvious; a second fix
+  for the same symptom has failed; probes do not converge or a diagnostic shows a symptom
+  but not its cause; a failure happens "sometimes"; or you are about to write a helper,
+  predicate or type list that may already exist, or port working code to another backend. It
+  is a speed tool, not a brake: a coherent explanation is a hypothesis, so state the cause,
+  then run the cheapest probe that could prove it wrong (a count, one introspect, one
+  timing). Then build the instrument that shows the whole CLASS (boundary matrix,
+  falsification probe), find the ONE invariant, enforce it at the chokepoint (no narrower,
+  no wider) and verify against what you wrote down. Routes to the matrix-first protocol in
+  CLAUDE.md and to design-protocol for the design half.
 user-invocable: true
 ---
 
