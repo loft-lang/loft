@@ -207,6 +207,21 @@ fn formatter_spaces_bitwise_operators_and_keeps_closure_bars_tight() {
     assert_eq!(out, Value::Text(want.into()));
 }
 
+/// `@FR-N-Present` beside the closure bars: a postfix `!` hugs the value it discharges and what
+/// follows spaces as after any value (`v[0]! | 1`, `x! * 2`), a prefix `!` hugs its operand, and a
+/// closure's bars still hug their parameters when its body ends in a discharge (`|i| v[i]!`).
+#[test]
+fn formatter_glues_a_postfix_discharge_beside_closure_bars() {
+    let src = fa::read_to_string("tools/fmt/whole.loft").expect("formatter source");
+    let mut p = Program::from_source(&src).expect("formatter compiles");
+    let input = "fn f(v: vector<integer>, x: integer?, c: boolean) -> integer {\n  g = |i|v[i]!;\n  y = v[0]!|1;\n  z = ! c;\n  w = x!*2;\n  m = map(v, |e| f(e)!&255);\n  y + w\n}\n";
+    let want = "fn f(v: vector<integer>, x: integer?, c: boolean) -> integer {\n  g = |i| v[i]!;\n  y = v[0]! | 1;\n  z = !c;\n  w = x! * 2;\n  m = map(v, |e| f(e)! & 255);\n  y + w\n}\n";
+    let out = p
+        .call("format", &[Value::Text(input.into())])
+        .expect("format runs");
+    assert_eq!(out, Value::Text(want.into()));
+}
+
 /// A keyword is not a value: the bracket after `in`, `return`, `if`, `while` opens an operand and
 /// is spaced (`for c in [1, 2]`, `return (v)`), while a call or index (`g(1)`, `v[0]`), the
 /// call-like `assert(` and the type `fn(` stay tight.  The formatter used to glue all of them
