@@ -3657,8 +3657,11 @@ static void loft_vec_adopt(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_re
             loft_fspan span = loft_st_foreign_span(loft_store_of(o), 0, (uint32_t) n);
             loft_store_t *s = loft_store_of(v);
             loft_st_release_foreign(s);
-            loft_st_make_foreign(s, v.rec, v.pos, span);
-            return;
+            /* As the slice view: a locked destination is copied into, and refuses (D19g). */
+            if (!s->read_only) {
+                loft_st_make_foreign(s, v.rec, v.pos, span);
+                return;
+            }
         }
     }
 #endif
@@ -5557,8 +5560,12 @@ static void loft_vec_slice_view(loft_ref v, loft_ref o, int64_t lo, int64_t hi, 
             loft_fspan span = loft_st_foreign_span(loft_store_of(o), (uint32_t) l, (uint32_t) h);
             loft_store_t *s = loft_store_of(v);
             loft_st_release_foreign(s);
-            loft_st_make_foreign(s, v.rec, v.pos, span);
-            return;
+            /* A locked destination takes no view (`Stores::vector_slice_view`): the copy below
+             * meets the write refusal.  STORE_MODEL.md D19g. */
+            if (!s->read_only) {
+                loft_st_make_foreign(s, v.rec, v.pos, span);
+                return;
+            }
         }
     }
 #endif

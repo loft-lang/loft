@@ -93,14 +93,13 @@ D1–D19 are the pairing's ranked list; their numbers are kept so the plan, the 
 fixes name a row the same way.  D20 onward come from the field-by-field comparison above and
 from P0b (what the C runtime lacks).  State: **open**, **fixing** (on the branch named), or
 **decided** (the decision and its measurement).  A closed row moves to
-[STORE_MODEL-history.md](STORE_MODEL-history.md) with its commit; D1–D7c, D9a–D10, D12–D17,
-D18–D19f, D19h–D19j, D20–D23, D25, D29, D31 and D34 are there.
+[STORE_MODEL-history.md](STORE_MODEL-history.md) with its commit; D1–D8, D9a–D10, D12–D17,
+D18–D19j, D20–D23, D25, D29, D31 and D34 are there.
 
 ### Correctness
 
 | # | Divergence | State |
 |---|---|---|
-| D8 | the swap-in gate is narrower in C (walk scratch, constant, lazy binding), and refuses a protected destination where Rust tests the source | open |
 
 ### Contract and diagnostics
 
@@ -112,7 +111,6 @@ D18–D19f, D19h–D19j, D20–D23, D25, D29, D31 and D34 are there.
 
 | # | Divergence | State |
 |---|---|---|
-| D19g | slice-view and adopt make a view on a locked destination | open |
 
 ### From the field comparison and P0b
 
