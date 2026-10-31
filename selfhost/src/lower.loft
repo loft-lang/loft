@@ -142,6 +142,8 @@ enum Code {
   VecAbsent,
   DistinctStore,
   AppendCopy,
+  // `OpSliceVector` / `OpSliceView`: `a` the element size, `b` 1 for the view.
+  SliceVec,
   // A whole tuple (F-T1): `a` its slot, `b` its shape in `Lowering.shapes`.
   LoadTuple,
   StoreTuple,
@@ -640,6 +642,7 @@ fn effect(code: Code, b: integer) -> integer {
     VecAbsent => 0,
     DistinctStore => -1,
     AppendCopy => -2,
+    SliceVec => -4,
     LoadTuple => 1,
     StoreTuple => -1,
     PopTuple => -1,
@@ -1203,6 +1206,19 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     value(l, b, args[0]!, KRef);
     value(l, b, args[1]!, KRef);
     emit(l, DistinctStore, KInt, 0, 0);
+  } else if name == "OpSliceVector" || name == "OpSliceView" {
+    // `v = src[lo..hi]`, the bounds already clamped by the slice prelude; the parser emits it for
+    // scalar elements only, and anything else is refused as the C backend refuses it.
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KRef);
+    value(l, b, args[2]!, KInt);
+    value(l, b, args[3]!, KInt);
+    tp = literal(l, args[4]!);
+    if !scalar_element(b, tp) {
+      refuse(l, "a slice of elements that are not scalars");
+    } else {
+      emit(l, SliceVec, KRef, b.types[tp]!.size, if name == "OpSliceView" { 1 } else { 0 });
+    }
   } else if name == "OpAppendCopy" {
     value(l, b, args[0]!, KRef);
     value(l, b, args[1]!, KInt);
@@ -1540,6 +1556,26 @@ fn type_key(b: ir::Bundle, t: ir::TypeT) -> text? {
       "({r})"
     }
     _ => null,
+  }
+}
+
+// Is type `tp` a scalar a slice copies as one block: a base type but text (`integer` 0 to
+// `character` 6), or a narrow integer's encoding?
+fn scalar_element(b: ir::Bundle, tp: integer) -> boolean {
+  if tp <= 6 && tp != 5 {
+    return true;
+  }
+  t = b.types[tp];
+  if t == null {
+    return false;
+  }
+  match t.parts[0]! {
+    PtByte { start: _, nullable: _ } => true,
+    PtShort { start: _, nullable: _ } => true,
+    PtShortRaw { start: _, nullable: _ } => true,
+    PtInt { start: _, nullable: _ } => true,
+    PtIntRaw { start: _, nullable: _ } => true,
+    _ => false,
   }
 }
 

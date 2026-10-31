@@ -418,6 +418,9 @@ pub fn copy_record(s_store: integer, s_rec: integer, s_pos: integer, d_store: in
 fn c_vec_len(store: integer, rec: integer, pos: integer) -> integer;
 #c "loft_crt_vec_len" "int64_t(int64_t, int64_t, int64_t)"
 
+fn c_vec_slice(v_store: integer, v_rec: integer, v_pos: integer, o_store: integer, o_rec: integer, o_pos: integer, lo: integer, hi: integer, size: integer, view: boolean);
+#c "loft_crt_vec_slice" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
 fn c_vec_append_copy(store: integer, rec: integer, pos: integer, ctp: integer, count: integer);
 #c "loft_crt_vec_append_copy" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
 
@@ -459,6 +462,12 @@ pub P_BOOLEAN = 5;
 // `OpLengthVector`.
 pub fn vec_len(store: integer, rec: integer, pos: integer) -> integer {
   c_vec_len(store, rec, pos)
+}
+
+// `OpSliceVector` / `OpSliceView`: `v = src[lo..hi]` of scalar elements `size` bytes wide, the
+// bounds clamped; a `view` serves a foreign source's bytes in place where the runtime can.
+pub fn vec_slice(v_store: integer, v_rec: integer, v_pos: integer, o_store: integer, o_rec: integer, o_pos: integer, lo: integer, hi: integer, size: integer, view: boolean) {
+  c_vec_slice(v_store, v_rec, v_pos, o_store, o_rec, o_pos, lo, hi, size, view);
 }
 
 // `OpAppendCopy` (`[x; n]`): the vector's last element repeated until it holds `count`, of

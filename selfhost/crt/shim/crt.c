@@ -766,6 +766,16 @@ int64_t loft_crt_vec_absent(int64_t store, int64_t rec, int64_t pos) {
     return loft_vec_absent(loft_crt_ref(store, rec, pos));
 }
 
+/* OpSliceVector / OpSliceView (Stores::vector_slice / vector_slice_view): `v = src[lo..hi]`
+ * of scalar elements `size` bytes wide, the bounds clamped; `view` serves a foreign source's
+ * bytes in place where the runtime can. */
+void loft_crt_vec_slice(int64_t v_store, int64_t v_rec, int64_t v_pos, int64_t o_store, int64_t o_rec,
+                        int64_t o_pos, int64_t lo, int64_t hi, int64_t size, int64_t view) {
+    loft_ref v = loft_crt_ref(v_store, v_rec, v_pos), o = loft_crt_ref(o_store, o_rec, o_pos);
+    if (view) loft_vec_slice_view(v, o, lo, hi, (uint32_t) size);
+    else loft_vec_slice(v, o, lo, hi, (uint32_t) size);
+}
+
 /* OpAppendCopy (State::append_copy): `[x; n]` — the vector's last element repeated until it
  * holds `count`, of element type `ctp`; `count` <= 0 leaves it empty. */
 void loft_crt_vec_append_copy(int64_t store, int64_t rec, int64_t pos, int64_t ctp, int64_t count) {

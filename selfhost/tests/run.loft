@@ -288,13 +288,15 @@ fn test_a_tuple_lives_in_its_slot_member_by_member() {
 
 // @PLN91 S3: `[x; n]` repeats a scalar and a record holding a text (`OpAppendCopy`), a count of 0
 // leaves the vector empty, and a null vector is absent where an empty one is present
-// (`OpVectorIsNull`).
+// (`OpVectorIsNull`); a slice copies its clamped span (`OpSliceView`, `OpSliceVector`).
 fn test_a_repeat_fills_and_an_absent_vector_is_null() {
   r = kernel("repeats");
   assert(ran_clean(r, "n_rep", 3) == 3669, "rep(3)");
   assert(ran_clean(r, "n_rep", 0) == 0, "rep(0)");
   assert(ran_clean(r, "n_absent", 0) == 1, "absent(0)");
   assert(ran_clean(r, "n_absent", 2) == 0, "absent(2)");
+  assert(ran_clean(r, "n_slices", 3) == 717250, "slices(3)");
+  assert(ran_clean(r, "n_slices", 0) == 717000, "slices(0)");
 }
 
 fn test_struct_enums_build_match_and_copy() {

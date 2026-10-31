@@ -1011,6 +1011,14 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
         put_int(ints, sp_int, if (ints[sp_int] ?? NULL_STORE) != (ints[sp_int + 3] ?? NULL_STORE) { 1 } else { 0 });
         sp_int += 1;
       }
+      SliceVec => {
+        sp_int -= 8;
+        crt::vec_slice(
+          ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0,
+          ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0,
+          ints[sp_int + 6] ?? 0, ints[sp_int + 7] ?? 0, op.a, op.b == 1
+        );
+      }
       AppendCopy => {
         if !table_loaded {
           load_table(b);
