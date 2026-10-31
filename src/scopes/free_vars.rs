@@ -724,7 +724,7 @@ impl Scopes<'_> {
                         && *d == free_nr
                         && let Some(Value::Var(w)) = args.first().map(Value::unspan)
                         && matches!(
-                            function.tp(*w),
+                            function.tp(*w).base(),
                             Type::Reference(_, _) | Type::Enum(_, true, _)
                         )
                     {
