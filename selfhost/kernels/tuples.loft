@@ -13,6 +13,9 @@
 // (A tuple itself is never null; the destructuring's temporary is set from `null` first, the
 // absent tuple of null members.)
 // total 17978494.
+// `named(4)`, the text members (F-T2): t = ("abc", 4) after `t.0 += "c"`, u its copy then
+// ("abcd", 4) — t keeps its own text; label(t) 3 * 10 + 4 = 34, label(u) 44, and "abcabcd" is
+// 7 long: 34 * 100 + 44 + 7 * 10000 = 73444.
 enum Col { Red, Green }
 
 fn pair(n: integer) -> (integer, integer) { (n, n * 2) }
@@ -35,6 +38,16 @@ fn tuples(n: integer) -> integer {
   t.0 + 10 * t.1 + 100 * a + 1000 * b + 10000 * (nested.0.1 + nested.1) + 100000 * add_up((n, 5)) + 1000000 * kinds + 10000000 * absent
 }
 
+fn label(p: (text, integer)) -> integer { len(p.0) * 10 + p.1 }
+
+fn named(n: integer) -> integer {
+  t = ("ab", n);
+  t.0 += "c";
+  u = t;
+  u.0 += "d";
+  label(t) * 100 + label(u) + len("{t.0}{u.0}") * 10000
+}
+
 fn main() {
-  println("{tuples(4)}");
+  println("{tuples(4)} {named(4)}");
 }

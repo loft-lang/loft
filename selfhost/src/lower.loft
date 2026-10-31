@@ -368,11 +368,15 @@ fn add_leaves(l: Lowering, elems: vector<ir::TypeT>, at: integer, owned: boolean
       }
     } else {
       k = kind_of_type(e);
-      if k != KInt && k != KFloat && k != KSingle {
+      if k == KText {
+        // F-T2: a local's own text, an argument's view of a copy.
+        out += [Leaf { at: pos, kind: KText, access: if owned { 0 } else { 1 } }];
+      } else if k != KInt && k != KFloat && k != KSingle {
         refuse(l, "a tuple member of a kind the interpreter does not carry yet: {e}");
         return false;
+      } else {
+        out += [Leaf { at: pos, kind: stack_of(k), access: access_for(e) }];
       }
-      out += [Leaf { at: pos, kind: stack_of(k), access: access_for(e) }];
     }
     pos += frame::member_step(e, owned);
   }
@@ -2002,6 +2006,7 @@ fn set_first(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
   }
   if is_null && base is TyTuple {
     note(l, "first-tuple-null");
+    init_tuple_texts(l, var);
     plain_set(l, b, var, x);
     return;
   }
@@ -2016,6 +2021,9 @@ fn set_first(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
     return;
   }
   note(l, "F13");
+  if var_kind(l, var) == KTuple {
+    init_tuple_texts(l, var);
+  }
   plain_set(l, b, var, x);
 }
 
@@ -2373,6 +2381,10 @@ fn call(l: Lowering, b: ir::Bundle, def_nr: integer, args: vector<ir::Node>) {
       NdVar { n: var } => {
         dest = slot_of(l, var);
         dest_kind = var_kind(l, var);
+      }
+      // F-T2: a text member of a local tuple, at its byte of the slot.
+      NdTupleGet { var, idx } => {
+        dest = member_text(l, b, var, idx);
       }
       _ => { refuse(l, "a text-writing operator on a destination that is not a variable"); }
     }
@@ -2921,6 +2933,8 @@ fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
       if len(tuple_elems(e)) > 0 {
         tuple_value(l, b, inner, e);
         emit(l, StoreTuple, KTuple, at, shape_of(l, e, !v.argument));
+      } else if v.argument && kind_of_type(e) == KText {
+        refuse(l, "a text member of a tuple argument written");
       } else {
         k = stack_of(kind_of_type(e));
         value(l, b, inner, k);
@@ -2938,6 +2952,35 @@ fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
       }
     }
     _ => refuse(l, "a statement the interpreter does not carry: {n}"),
+  }
+}
+
+// The byte of text member `idx` of local tuple `var`, written in place by a text-writing
+// operator; an argument tuple's member is a view of the caller's text, so it is refused.
+fn member_text(l: Lowering, b: ir::Bundle, var: integer, idx: integer) -> integer {
+  slot = slot_of(l, var);
+  v = fvar(b, l.def_nr, var);
+  elems = tuple_elems(v.type_def[0] ?? ir::TypeT.TyVoid);
+  member = elems[idx] ?? ir::TypeT.TyVoid;
+  if var_kind(l, var) != KTuple || v.argument || kind_of_type(member) != KText {
+    refuse(l, "a text-writing operator on a member that is not a local tuple's text");
+    return 0;
+  }
+  slot + member_at(elems, idx, true)
+}
+
+// The first set of a tuple local: each text member made the empty text at its byte, whatever an
+// earlier frame left there, before the store writes it (F-T2; PF2's `InitText`).
+fn init_tuple_texts(l: Lowering, var: integer) {
+  sh = l.var_shape[var] ?? -1;
+  if sh < 0 {
+    return;
+  }
+  slot = slot_of(l, var);
+  for leaf in l.shapes[sh]!.leaves {
+    if leaf.kind == KText {
+      emit(l, InitText, KText, slot + leaf.at, 0);
+    }
   }
 }
 

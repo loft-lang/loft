@@ -9,8 +9,8 @@ A child document of [1b-interpreter.md](1b-interpreter.md).  Status: **F-1 built
 variable in the stack store at its Rust byte (PF1 its layout guard, `selfhost/tests/frame.loft`);
 PF2 built (no frame is initialised; each first assignment's positional init writes its slot);
 PF3 built (a `&` of any local is a reference into the frame, read and written through at any
-place); PF4 measured (loft#2310); PF5 built (the stack given back); F-T1 built (scalar tuple
-locals); F-2 not built.**
+place); PF4 measured (loft#2310); PF5 built (the stack given back); F-T1 and F-T2 built (tuple
+locals, text members too); F-2 not built.**
 
 ## The rule
 
@@ -229,6 +229,28 @@ never a gate (the order of the goals, 1b-interpreter.md).
     type `tuple_value` has.  And `tuple_value`'s `match` was refused by the parser (`Expect
     token ;`): its last arm calls `expr`, declared further down, which the first pass typed
     `Unknown` and took for a value — loft#2312, fixed in the parser, not around.
+- **F-T2 — a tuple's text members (built; 22 census programs refused a `text` member).**
+  A text leaf is held as a text variable is: in a tuple LOCAL its own `loft_text` (24 bytes,
+  `TUPLE_LOCAL_TEXT_OWNED`), in a tuple ARGUMENT a view of a copy the call made (16 bytes),
+  released at `Ret` with the other text arguments.  A tuple result holding a text is a record
+  (`__tuple<…>`), not a frame tuple, so `Ret` carries no text leaf.
+  - **First set**: the frame is not initialised (PF2), so the first set of a tuple local inits
+    each text member (`InitText` at its byte) before the store writes it; a later set replaces
+    the member's text as a text local's set does.
+  - **Members as destinations**: the text-writing operators take a member of a local tuple as
+    their destination (`OpFreeText(t.0)` frees it at its byte, as the scope's exit writes it);
+    an argument tuple's member is a view, so writing one is refused by name.
+  - **Tested by**: `kernels/tuples.loft`'s `named` — a text member built, appended to, copied
+    with the whole tuple, handed to a tuple parameter, freed — values by hand, no store left.
+  - **Built**: `add_leaves` takes a text leaf; `member_text` and `init_tuple_texts` in
+    `lower.loft`; the text leaves in `run.loft`'s tuple ops, the argument copy and its release at
+    `Ret`.  The census passes 254 programs (245 before), none wrong, crashed or leaking, and all
+    254 are equal to the Rust interpreter in every layer the comparison has (out, alloc, leak,
+    binds, slots).
+  - **Design → code.**  Transcribed directly.  Measuring it with `leaks` found the interpreter's
+    C build leaking 3 to 45 buffers a run, none of them tuple texts: the C backend's epilogue
+    missed text temporaries declared after a `return` in a loop (loft#2313, fixed in the
+    backend).  It leaks none now.
 - **F-2** — the temporaries in the same store: the lowering emits the bytecode writer's
   operators at its stack positions, so its output is the Rust bytecode.
 
