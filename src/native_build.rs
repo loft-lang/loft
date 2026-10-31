@@ -10,6 +10,16 @@
 
 use crate::platform::process::{Program, Spawn};
 
+/// Is rustc off for this run (`LOFT_NO_RUSTC=1`)?  The per-change test run sets it: the C is
+/// the compiled backend a change is tested on, and rustc-native runs in the nightly
+/// (TESTING.md § The compiled backend a test runs on).  Asked where a run COMMITS to rustc —
+/// the Rust writer chosen, a package's Rust crate needed — before any cache is consulted, so
+/// the answer does not depend on what an earlier run left built.
+#[must_use]
+pub fn rustc_off() -> bool {
+    std::env::var("LOFT_NO_RUSTC").is_ok_and(|v| v == "1")
+}
+
 /// The `--remap-path-prefix` flags for the machine doing the building.
 ///
 /// Mirrors `scripts/repro-flags.sh`, which does the same for the release build.
@@ -320,6 +330,13 @@ pub fn auto_build_native(pkg_dir: &str, stem: &str) -> Option<String> {
     let pkg = PathBuf::from(pkg_dir);
     let cargo_toml = pkg.join("native").join("Cargo.toml");
     if !crate::file_access::exists(&cargo_toml) {
+        return None;
+    }
+    if rustc_off() {
+        eprintln!(
+            "loft: package `{stem}` has a Rust native crate, and rustc is off for this run \
+             (LOFT_NO_RUSTC=1) — its natives are not loaded"
+        );
         return None;
     }
     let lib_name = platform_lib_name(stem);
