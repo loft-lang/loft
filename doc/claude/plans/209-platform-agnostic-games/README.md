@@ -30,6 +30,10 @@ density) and how much drawing it can afford (a performance tier).
 - **Short-term game writing is for small machines.**  A Tanmatsu game is cheap to write, and the
   same game as a web page is what reaches people.  That needs one source to run on both, and on a
   desktop for development.
+- **The small-format game is a product, not a reduced port.**  The games are meant to look cool
+  eventually, in 3D; on the way there, their frame-tier versions already serve old-school gamers
+  with good games.  So a frame-tier view is held to the same bar as a game's GPU view — complete
+  and fun to play — and it ships first.
 - **Today a game is tied to the machines its author tested.**  `screen` opens nothing in a browser,
   on Windows or on macOS; keys come from two places (`input`'s `c/keys.c` and graphics'
   `Window.key_down`); the X11 window is written twice (`screen/c/screen.c`, graphics'
