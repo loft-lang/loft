@@ -3350,6 +3350,17 @@ impl Parser {
             return RefDelivery::MaterializeView;
         }
         if ls.is_empty() {
+            if l.last().is_some_and(|tail| {
+                Self::return_tail_is_join(tail) && self.projects_into_local(tail, true)
+            }) {
+                // loft#2289, `@FR-F-Ret` — an ARM projects into a store this frame frees
+                // (`if c { decode(n).value } else { … }`: a field of the inline call's
+                // `__lift_N`).  A buffered join is copied arm by arm only through
+                // `ref_return`'s copy leg, which runs for a non-empty dep list; this one is
+                // empty — the lifted temporary publishes no dep — so without this leg the
+                // tail went `AsIs` and the caller read the freed temporary.
+                return RefDelivery::MaterializeView;
+            }
             // Issue #120: deps stripped — recover the tail's hidden work-refs so the
             // site still binds to the one buffer. No work-ref to recover → AsIs.
             if let Some(last) = l.last() {
@@ -18535,19 +18546,26 @@ impl Parser {
     }
 
     fn return_projects_into_local(&self, tail: &Value) -> bool {
+        self.projects_into_local(tail, false)
+    }
+
+    /// [`Self::return_projects_into_local`], with `every_arm` asking the arms of a join
+    /// whatever the return — the question the empty-dep leg of the selector asks, where no
+    /// copy leg will copy the arms (loft#2289).
+    fn projects_into_local(&self, tail: &Value, every_arm: bool) -> bool {
         let (get_field, get_vector) = (
             self.data.def_nr("OpGetField"),
             self.data.def_nr("OpGetVector"),
         );
         match tail.unspan() {
-            Value::Return(inner) | Value::Drop(inner) => self.return_projects_into_local(inner),
+            Value::Return(inner) | Value::Drop(inner) => self.projects_into_local(inner, every_arm),
             Value::Block(bl) => bl
                 .operators
                 .last()
-                .is_some_and(|t| self.return_projects_into_local(t)),
+                .is_some_and(|t| self.projects_into_local(t, every_arm)),
             Value::Insert(ops) => ops
                 .last()
-                .is_some_and(|t| self.return_projects_into_local(t)),
+                .is_some_and(|t| self.projects_into_local(t, every_arm)),
             // An ARM of the tail is a tail too — `if take { t.l } else { null }` hands up
             // `t.l` on one path.  A function WITH a return buffer copies every arm into it
             // through `ref_return`'s copy leg, so only the buffer-less return (`-> S?`, a
@@ -18557,10 +18575,11 @@ impl Parser {
             // the `?` — copying a `null` arm into the buffer would answer a record — so its
             // arms are asked here as well and materialised per arm, a null arm left null.
             Value::If(_, t, f)
-                if self.return_buffer().is_none()
+                if every_arm
+                    || self.return_buffer().is_none()
                     || matches!(self.data.def(self.context).returned(), Type::Optional(_)) =>
             {
-                self.return_projects_into_local(t) || self.return_projects_into_local(f)
+                self.projects_into_local(t, every_arm) || self.projects_into_local(f, every_arm)
             }
             // A TUPLE element read is a projection like the two op calls below, spelled as
             // a `Value` variant: it carries its base as a var NUMBER, so no call pattern
