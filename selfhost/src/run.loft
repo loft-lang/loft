@@ -172,24 +172,6 @@ fn store_slot_ref(ints: vector<integer?>, sp: integer, stk: integer, at: integer
   crt::set_slot_ref(stk, at, ints[sp] ?? NULL_STORE, ints[sp + 1] ?? 0, ints[sp + 2] ?? 0);
 }
 
-// A frame's locals as the run loop starts them: null, an integer or float at its width, a
-// reference as the sentinel and a text empty (`OpInitText`).  The arguments are the caller's.
-fn clear_frame(p: lower::Lowering, stk: integer, base: integer) {
-  for v in p.local_vars {
-    at = base + (p.var_slot[v] ?? 0);
-    k = lower::stack_of(p.var_kind[v] ?? KOther);
-    if k == KText {
-      crt::slot_text_init(stk, at);
-    } else if k == KRef {
-      crt::set_slot_ref(stk, at, NULL_STORE, 0, 0);
-    } else if k == KFloat {
-      set_slot_float(stk, at, p.var_access[v] ?? 0, null);
-    } else {
-      set_slot_int(stk, at, p.var_access[v] ?? 0, null);
-    }
-  }
-}
-
 // The byte of the text a text-writing op writes: its variable's slot, or through a `&text`, the
 // byte that holds.
 fn text_at(stk: integer, base: integer, op: lower::Op) -> integer {
@@ -258,12 +240,13 @@ fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) ->
   sp_text = 0;
   // The entry's frame at the foot of the stack store: its visible arguments the given integers,
   // a hidden vector buffer handed in as a caller hands it — minted before the call
-  // (`owned_vector_null`) and released after it — and its locals null.
+  // (`owned_vector_null`) and released after it.  A frame's locals are not started: each
+  // first assignment's positional init writes its slot, as the Rust interpreter's do
+  // (`OpReserveFrame` moves the top only).
   if first.frame_bytes > stk_cap {
     stk_cap = first.frame_bytes * 2;
     crt::stack_grow(stk, stk_cap);
   }
-  clear_frame(first, stk, 0);
   given = 0;
   for a in b.data.definitions[entry]!.attributes {
     arg_nr = first.arg_vars[a#index] ?? -1;
@@ -380,8 +363,8 @@ fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) ->
           };
         }
         // The callee's frame starts at the top of this one; its arguments, the last on top of
-        // its kind's stack, go into their bytes of it, and its locals start null.  A text
-        // argument stays on the text stack, where its part of the frame starts.
+        // its kind's stack, go into their bytes of it.  Its locals hold what an earlier frame
+        // left until their positional inits write them.
         callee_base = base + prog.frame_bytes;
         if callee_base + callee_prog.frame_bytes > stk_cap {
           stk_cap = (callee_base + callee_prog.frame_bytes) * 2;
@@ -407,7 +390,6 @@ fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) ->
           }
           arg_at -= 1;
         }
-        clear_frame(callee_prog, stk, callee_base);
         if fp < len(f_def) {
           f_def[fp] = def;
           f_pc[fp] = pc;
@@ -553,6 +535,8 @@ fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) ->
       }
       Clear => { crt::slot_text_clear(stk, text_at(stk, base, op)); }
       FreeText => { crt::slot_text_free(stk, text_at(stk, base, op)); }
+      // `OpInitText`: a text local's slot made the empty text, whatever an earlier frame left.
+      InitText => { crt::slot_text_init(stk, base + op.a); }
       // A native the interpreter carries, as loft's own function of that name; its arguments
       // are on their kinds' stacks, the last one on top.
       Native => {
