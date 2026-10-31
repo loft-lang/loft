@@ -2327,9 +2327,12 @@ int main(int argc, char **argv) {
     );
 }
 
-/// A seeded LCG, the same sequence on every run and every machine.
+/// A seeded LCG, the same sequence on every run and every machine.  Only the mapped-store
+/// sequences draw from it, so it is built where they are.
+#[cfg(feature = "mmap")]
 struct Lcg(u64);
 
+#[cfg(feature = "mmap")]
 impl Lcg {
     fn next(&mut self, n: u64) -> u64 {
         self.0 = self
