@@ -119,6 +119,7 @@ static loft_ref loft_ffi_vector_answer(loft_ffi_ref r) {
 }
 
 static loft_ref loft_ffi_record_answer(loft_ffi_ref r) {
+    if (r.rec == 0 && r.pos == 0) return loft_ref_null();
     loft_ref v = { r.store_nr, r.rec, r.pos };
     return v;
 }

@@ -2354,8 +2354,9 @@ impl Stores {
     /// The call is over.  A bridge that WROTE through a foreign vector's copy — grew it,
     /// or changed an element — wrote to bytes the program does not own, and the copy has
     /// nowhere to carry that: it is the same refusal a direct write meets, raised after
-    /// the call instead of silently dropped.  Then the copies go: a store minted for a
-    /// scalar answer is freed whole; otherwise each copy's records are deleted from the
+    /// the call instead of silently dropped.  Then the copies go: a store minted for an
+    /// answer it does not hold — a scalar, or a null (`returns_ref` false; STORE_MODEL.md
+    /// D19i) — is freed whole; otherwise each copy's records are deleted from the
     /// store they were claimed in — unless a foreign ANSWER locked that store, which the
     /// answer's own free releases, copies and all.
     pub fn bridge_args_done(&mut self, args: &BridgeArgs, returns_ref: bool) {
