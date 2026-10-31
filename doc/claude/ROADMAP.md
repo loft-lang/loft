@@ -94,7 +94,6 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 |---|---|---|
 | [@PLN184](https://github.com/loft-lang/plans/issues/184) | future | loft fully functional on Windows — every routine, test and script, each count under a ratchet and proven by a Windows CI leg ([CODE.md § File access](CODE.md#file-access)) |
 | [@PLN148](https://github.com/loft-lang/plans/issues/148) | next | Better PHP end to end — a web client, an HTTPS server that renews its own certificate, and the libraries between them ([WEB_STACK.md](WEB_STACK.md)) |
-| [@PLN72](https://github.com/loft-lang/plans/issues/72) | future | Renderer backend boundary |
 | [@PLN43](https://github.com/loft-lang/plans/issues/43) | parked | loft store durability — three-tier opt-in mmap durability |
 | [@PLN199](https://github.com/loft-lang/plans/issues/199) | next | A `use`d library compiles whole — only a generic keeps a loft function interpreted; a published library arrives compiled without `rustc` (`LOFT_TRACE_NATIVE_GATE=1` shows what is left; [plan](plans/199-library-compiles-whole.md)) |
 

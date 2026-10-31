@@ -33,6 +33,10 @@ signature here is a proposal the F-phases check.
    cache's: the frame `capture` answers and every value a call returns are identical with the
    shortcut on or off.
 
+7. **The library offers, the game chooses.**  Several displays, gamepads, touch, a round screen:
+   each is supported well enough to use, and whether a game uses it is the game's decision.
+   Nothing here makes that choice for it.
+
 ## Pixels: RGBA everywhere, packed per destination
 
 A game sees one pixel format: 32-bit RGBA — PNG RGBA assets, `Canvas`, and every frame it shows.
@@ -138,8 +142,8 @@ pub fn caps() -> Caps;
 modest desktop, `High` a desktop with a GPU.  A game reads it once and picks its frame size and
 detail; it never measures the machine itself.
 
-**Events** — graphics 0.10's `enum Event`, moved here unchanged and widened by the gamepad
-(open question 4), so every library speaks one form.  Positions are in the frame's pixels.
+**Events** — graphics 0.10's `enum Event`, moved here and widened by the gamepad, so every
+library speaks one form.  Positions are in the frame's pixels.
 
 ```loft
 pub enum Event {
@@ -153,6 +157,8 @@ pub enum Event {
   TouchBegin { pub id: integer, pub x: float, pub y: float },
   TouchMove { pub id: integer, pub x: float, pub y: float },
   TouchEnd { pub id: integer, pub x: float, pub y: float },
+  GamepadButton { pub pad: integer, pub button: integer, pub down: boolean },
+  GamepadAxis { pub pad: integer, pub axis: integer, pub value: float },   // -1.0 .. 1.0
   Resize { pub width: integer, pub height: integer },   // the DISPLAY changed; see Screen.refit
   Close                                                   // the user asked to quit
 }
@@ -226,6 +232,10 @@ pub struct Bindings { … }                           // action name -> keys, bu
 pub fn bindings_for(c: const Caps) -> Bindings;     // the defaults for what the machine has
 pub fn bind(self: Bindings, action: text, key: integer);
 pub fn bind_axis(self: Bindings, axis: text, minus: integer, plus: integer);
+pub fn bind_pad(self: Bindings, action: text, button: integer);
+pub fn bind_stick(self: Bindings, axis: text, stick_axis: integer);
+pub fn bind_zone(self: Bindings, action: text, x: integer, y: integer, w: integer, h: integer);
+                                                    // a frame region as a key, for touch
 
 pub struct Actions { … }                            // this tick's state, and the last tick's
 pub fn actions() -> Actions;
@@ -307,9 +317,8 @@ The same `world` and `step` serve a GPU view (arc G): only `draw_world` and `sho
 
 ## Open questions
 
-1. **Several displays** — `open_screen` takes a `Display`, so the API allows it; no host opens two
-   yet.
-2. **Touch zones in `Bindings`** — screen regions as virtual keys, for a touch-only machine.
-3. **Gamepads** — `GamepadButton` / `GamepadAxis` events, and `Bindings` defaults for them.
-4. **`Close` and `poll`** — `Close` arrives and `poll` still answers true, so a game can ask
+1. **`Close` and `poll`** — `Close` arrives and `poll` still answers true, so a game can ask
    "save first?"; whether `poll` turns false on its own after a second `Close` is open.
+
+Several displays (one `Screen` per `Display`), gamepads and touch zones are supported, and each
+game decides whether it uses them (rule 7).

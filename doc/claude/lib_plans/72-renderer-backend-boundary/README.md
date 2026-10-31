@@ -7,6 +7,10 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
+**Closed — superseded by [@PLN209](../../plans/209-platform-agnostic-games/README.md) arc G**
+(the GPU boundary and the shader source, on graphics 0.10's object API).  Kept as the record of
+the evaluation; nothing below is current.
+
 Open — design/evaluation, no implementation.  **Prerequisite** for any
 native GPU backend (and therefore for native Android/iOS rendering).
 Surfaced 2026-05-25 while evaluating Vulkan/Metal backends — see
