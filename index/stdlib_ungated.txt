@@ -74,6 +74,7 @@ OpConvRefFromNull
 OpConvSingleFromInt
 OpConvSingleFromNull
 OpConvTextFromNull
+OpCopyClosure
 OpCopyRecord
 OpCopyRefOrNull
 OpCoroutineCreate
@@ -339,7 +340,7 @@ __iface_32#2_OpMin
 __iface_32#2_minus
 __iface_35#2_scale
 __iface_37#1_to_text
-__iface_521#1_children
+__iface_522#1_children
 i_7integer_n_sum
 n___ledger
 n___ledger_div
