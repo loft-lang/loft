@@ -275,8 +275,20 @@ impl State {
                 self.generate(&dflt, &mut stack, false);
             }
             self.add_return(&mut stack, start);
+            // The arguments were placed on the generator's copy of the variable table; the
+            // table the frame is read from (`introspect --show-slots`, a debugger) takes their
+            // positions too, as the regular path's write-back gives it (loft#2311).
+            let arg_pos: Vec<(u16, u16)> = args
+                .iter()
+                .map(|v| (*v, stack.function.stack(*v)))
+                .collect();
             data.definitions[def_nr as usize].code_position = start;
             data.definitions[def_nr as usize].code_length = self.code_pos - start;
+            for (v_nr, pos) in arg_pos {
+                data.definitions[def_nr as usize]
+                    .variables
+                    .set_stack(v_nr, pos);
+            }
             self.record_frame_headroom(def_nr);
             return;
         }
