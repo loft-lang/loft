@@ -129,14 +129,13 @@ impl Scopes<'_> {
         // loft#2282 — the sweep to the frame's own scope is handed the DECLARED return type (an
         // explicit `return`, and the body block, whose result the parser set to it), and its
         // deps number ATTRIBUTES.  Every reader below takes them as frame variables.
-        let in_frame;
-        let tp = if to_scope == 1 && self.d_nr != u32::MAX && *tp == data.def(self.d_nr).returned {
-            in_frame =
-                text_buffer_in_frame(tp, data.def(self.d_nr).attributes(), &function.arguments());
-            &in_frame
-        } else {
-            tp
-        };
+        let in_frame =
+            if to_scope == 1 && self.d_nr != u32::MAX && *tp == data.def(self.d_nr).returned {
+                text_buffer_in_frame(tp, data.def(self.d_nr).attributes(), function)
+            } else {
+                None
+            };
+        let tp = in_frame.as_ref().unwrap_or(tp);
         // loft#1476 — a closure record the return delivers on SOME path is exempt from the
         // frame's free on ALL of them, because `record_leaves_frame` is one static answer to a
         // per-run question.  The run that does not deliver it then leaks the record and the
@@ -1579,38 +1578,70 @@ fn sink_return_branch(tmp: u16, expr: &Value, data: &Data) -> Option<Value> {
 /// attribute `i` already, and the struct return buffer has its own renumbering (`__retbuf`
 /// reaches the body as `__ref_N`).  Where arguments and attributes do not pair up one to one,
 /// nothing changes.  A tuple member keeps its own list.
-fn text_buffer_in_frame(tp: &Type, attrs: &[crate::data::Attribute], args: &[u16]) -> Type {
-    if let Type::Tuple(elems) = tp.base() {
-        let tuple = Type::Tuple(
-            elems
-                .iter()
-                .map(|e| text_buffer_in_frame(e, attrs, args))
-                .collect(),
-        );
-        return if matches!(tp, Type::Optional(_)) {
-            Type::optional(tuple)
-        } else {
-            tuple
-        };
-    }
-    let raw = tp.depend();
-    if raw.is_empty() || attrs.len() != args.len() {
-        return tp.clone();
-    }
+fn text_buffer_in_frame(
+    tp: &Type,
+    attrs: &[crate::data::Attribute],
+    function: &Function,
+) -> Option<Type> {
+    // Asked for every frame's return: decline before allocating anything where the function
+    // has no hidden text buffer for a dep to name.
     let is_text_buffer = |a: u16| {
         attrs.get(a as usize).is_some_and(|at| {
             at.hidden
                 && matches!(at.typedef.base(), Type::RefVar(t) if matches!(t.base(), Type::Text(_)))
         })
     };
+    if !(0..attrs.len()).any(|a| is_text_buffer(a as u16)) {
+        return None;
+    }
+    let args = function.arguments();
+    if attrs.len() != args.len() {
+        return None;
+    }
+    renumber_text_buffer(tp, &is_text_buffer, &args)
+}
+
+/// The renumbering half of [`text_buffer_in_frame`]: `None` where no dep names the buffer.
+fn renumber_text_buffer(
+    tp: &Type,
+    is_text_buffer: &dyn Fn(u16) -> bool,
+    args: &[u16],
+) -> Option<Type> {
+    if let Type::Tuple(elems) = tp.base() {
+        let renumbered: Vec<Option<Type>> = elems
+            .iter()
+            .map(|e| renumber_text_buffer(e, is_text_buffer, args))
+            .collect();
+        if renumbered.iter().all(Option::is_none) {
+            return None;
+        }
+        let tuple = Type::Tuple(
+            renumbered
+                .into_iter()
+                .zip(elems)
+                .map(|(r, e)| r.unwrap_or_else(|| e.clone()))
+                .collect(),
+        );
+        return Some(if matches!(tp, Type::Optional(_)) {
+            Type::optional(tuple)
+        } else {
+            tuple
+        });
+    }
+    let raw = tp.depend();
+    let names_buffer = |d: u16| {
+        matches!(crate::data::DepEntry::decode(d),
+            crate::data::DepEntry::Attr(a) if a != u16::MAX && is_text_buffer(a))
+    };
+    if !raw.iter().any(|&d| names_buffer(d)) {
+        return None;
+    }
     let frame: Vec<u16> = raw
         .into_iter()
         .map(|d| match crate::data::DepEntry::decode(d) {
-            crate::data::DepEntry::Attr(a) if a != u16::MAX && is_text_buffer(a) => {
-                args[a as usize]
-            }
+            crate::data::DepEntry::Attr(a) if names_buffer(d) => args[a as usize],
             _ => d,
         })
         .collect();
-    tp.with_deps(&Deps::frame(frame))
+    Some(tp.with_deps(&Deps::frame(frame)))
 }

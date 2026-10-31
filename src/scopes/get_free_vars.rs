@@ -605,7 +605,9 @@ impl Scopes<'_> {
                 // uses for a local whose assignments mix ownership: a fact only the run knows,
                 // read off a slot at the moment the answer is needed.
                 // loft#2281 — the records whose hold on this capture the run decides.
-                let per_run = if !emit && captured_ref {
+                // A per-run group needs one fn-ref bound to two records, which always gates the
+                // frame's keep set (`closure_keep_set`): the cheap test goes first.
+                let per_run = if !emit && captured_ref && self.closure_keep.gated {
                     per_run_capture_owners(
                         data,
                         function,
