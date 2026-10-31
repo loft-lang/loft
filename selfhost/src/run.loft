@@ -1277,6 +1277,23 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
         ref_out(io, ints, sp_int);
         sp_int += 3;
       }
+      HashRemove => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 6;
+        crt::hash_remove(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0, types::content_of(b, op.a) ?? 0, op.a, op.b == 1);
+      }
+      SetKeyed => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 6;
+        tp = op.a % 32768;
+        crt::set_keyed(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0, types::content_of(b, tp) ?? 0, tp, op.b, op.a >= 32768);
+      }
       HashInsert => {
         if !table_loaded {
           load_table(b);

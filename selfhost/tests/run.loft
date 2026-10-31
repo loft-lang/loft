@@ -114,6 +114,8 @@ fn test_the_small_integer_operators_answer_as_loft_does() {
   assert(ran("small_ops", "n_text_walk", [1]) == 97233, "text_walk(1)");
   assert(ran("small_ops", "n_affixed", [3]) == 101111, "affixed(3): starts_with and ends_with");
   assert(ran("small_ops", "n_affixed", [5]) == 101011, "affixed(5)");
+  assert(ran("small_ops", "n_tail_sum", [100000]) == 5000050000, "tail_sum(100000): a jump, not 100000 frames");
+  assert(ran("small_ops", "n_tail_sum", [0]) == 0, "tail_sum(0)");
   assert(ran("small_ops", "n_rem_or", [7, 3]) == 1, "rem_or(7, 3)");
   assert(ran("small_ops", "n_rem_or", [7, 0]) == -1, "rem_or(7, 0)");
   // |-6 / 4| = 1.5, as a float and as a single, each times 100.
@@ -380,6 +382,8 @@ fn test_hashes_walk() {
   // A keyed field cleared and a keyed local rebound from a call, nothing left live.
   assert(ran_clean(h, "n_keyed", 4) == 10208, "keyed(4)");
   assert(ran_clean(h, "n_keyed", 0) == 10200, "keyed(0)");
+  assert(ran_clean(h, "n_dropped", 3) == 307030, "dropped(3): removed, then written back");
+  assert(ran_clean(h, "n_dropped", 4) == 306027, "dropped(4): an entry replaced under its key");
   assert(ran_clean(h, "n_bumped", 3) == 101303, "bumped(3): the walked element is a view");
   assert(ran_clean(h, "n_bumped", 1) == 100, "bumped(1)");
   assert(ran_clean(h, "n_early", 5) == 300105, "early(5): return and break leave the hash whole");

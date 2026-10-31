@@ -748,6 +748,28 @@ void loft_crt_hash_insert(int64_t store, int64_t rec, int64_t pos, int64_t r_sto
                             loft_crt_types[tp].nk, 0);
 }
 
+/* OpHashRemove on a hash of type `tp` (element type `elem`): the entry unlinked from its key, and
+ * released unless `view` (`CLEAR_KEYED_VIEW`: a linked group's view member only unlinks). */
+void loft_crt_hash_remove(int64_t store, int64_t rec, int64_t pos, int64_t r_store, int64_t r_rec,
+                          int64_t r_pos, int64_t elem, int64_t tp, int64_t view) {
+    if (!loft_crt_keyed(tp) || !loft_crt_keyed(elem)) return;
+    loft_hash_remove(loft_crt_types, (uint16_t) elem, loft_crt_ref(store, rec, pos),
+                     loft_crt_ref(r_store, r_rec, r_pos), loft_crt_types[tp].keys,
+                     loft_crt_types[tp].nk, (int) view);
+}
+
+/* OpSetKeyed (`c[k…] = v`, `Stores::set_keyed`) on a hash of type `tp`: a copy of `v` filed under
+ * the top `n` key parts, which are popped; `free_source` releases `v`'s store after. */
+void loft_crt_set_keyed(int64_t store, int64_t rec, int64_t pos, int64_t v_store, int64_t v_rec,
+                        int64_t v_pos, int64_t elem, int64_t tp, int64_t n, int64_t free_source) {
+    if (loft_crt_keyed(tp) && loft_crt_keyed(elem) && n >= 0 && n <= loft_crt_nkv)
+        loft_set_keyed(loft_crt_types, (uint16_t) elem, loft_crt_ref(store, rec, pos),
+                       loft_crt_ref(v_store, v_rec, v_pos), LOFT_KEYED_HASH, loft_crt_types[tp].keys,
+                       loft_crt_types[tp].nk, &loft_crt_kv[loft_crt_nkv - n], (int) n,
+                       (int) free_source, 0);
+    loft_crt_key_pop(n);
+}
+
 /* OpLengthHash. */
 int64_t loft_crt_hash_len(int64_t store, int64_t rec, int64_t pos) {
     return loft_hash_len(loft_crt_ref(store, rec, pos));

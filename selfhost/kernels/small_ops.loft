@@ -85,6 +85,17 @@ fn affixed(n: integer) -> integer {
   s
 }
 
+// A self-call in tail position runs as a jump to the body's head (`@FR-R-TailSelf`): the body a
+// loop in value position, left by `return`.  tail_sum(100000) = 100000 * 100001 / 2 =
+// 5000050000, ten times deeper than a call stack holds; tail_sum(0) = 0.
+fn sum_to(n: integer, acc: integer) -> integer {
+  if n <= 0 {
+    return acc;
+  }
+  sum_to(n - 1, acc + n)
+}
+fn tail_sum(n: integer) -> integer { sum_to(n, 0) }
+
 fn main() {
-  println("{hue_number(0)} {hue_number(1)} {hue_number(2)} {div_or(7, 2)} {div_or(7, 0)} {rem_or(7, 3)} {rem_or(7, 0)} {abs_floats(-6)} {abs_floats(6)} {char_or_zero(0)} {char_or_zero(233)} {narrow(200)} {narrow(300)} {narrow_or_null(200)} {narrow_or_null(300)} {ops_or(7, 2)} {ops_or(-1, 2)} {enum_named(1)} {enum_named(2)} {text_walk(0)} {text_walk(1)} {affixed(3)} {affixed(5)}");
+  println("{hue_number(0)} {hue_number(1)} {hue_number(2)} {div_or(7, 2)} {div_or(7, 0)} {rem_or(7, 3)} {rem_or(7, 0)} {abs_floats(-6)} {abs_floats(6)} {char_or_zero(0)} {char_or_zero(233)} {narrow(200)} {narrow(300)} {narrow_or_null(200)} {narrow_or_null(300)} {ops_or(7, 2)} {ops_or(-1, 2)} {enum_named(1)} {enum_named(2)} {text_walk(0)} {text_walk(1)} {affixed(3)} {affixed(5)} {tail_sum(100000)} {tail_sum(0)}");
 }

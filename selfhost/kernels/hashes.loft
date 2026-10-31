@@ -275,7 +275,32 @@ fn keyed(n: integer) -> integer {
   seed * 10000 + first * 1000 + len(h) * 100 + (h[2]?.v ?? 0)
 }
 
+// `h[k] = null` removes the entry (`OpHashRemove`, its text released) and `h[k] = v` files a copy
+// of `v` under `k`, its key field set to `k` (`OpSetKeyed`, `Col-Assign`).  Ten slots, those of
+// keys 0, 3, 6 and 9 removed: 1 2 4 5 7 8 left.  dropped(3): key 3 written back — seven entries,
+// 1 + 2 + 3 + 4 + 5 + 7 + 8 = 30, 7030, and its name "new" 3 * 100000: 307030.  dropped(4):
+// key 4 replaced — six entries summing 27, 306027.
+struct Slot { k: integer, name: text }
+struct Slots { h: hash<Slot[k]> }
+fn dropped(n: integer) -> integer {
+  bx = Slots { h: [] };
+  for i in 0..10 {
+    bx.h += [Slot { k: i, name: "s{i}" }];
+  }
+  for i in 0..10 {
+    if i % 3 == 0 {
+      bx.h[i] = null;
+    }
+  }
+  bx.h[n] = Slot { k: 99, name: "new" };
+  s = len(bx.h) * 1000;
+  for e in bx.h {
+    s += e.k;
+  }
+  s + len(bx.h[n].name ?? "") * 100000
+}
+
 fn main() {
   println("{counted(5)} {counted(2)} {replaced(5)} {replaced(2)} {intkey(4)} {intkey(3)} {compound(7)} {nested(5)} {copied(4)} {linked(7)}");
-  println("{walked(4)} {walked(0)} {order(3)} {order(7)} {field_walk(5)} {field_walk(2)} {bumped(3)} {bumped(1)} {early(5)} {early(2)} {pairs(4)} {pairs(5)} {indexed(4)} {indexed(3)} {unordered_product(4)} {unordered_product(3)} {keyed(4)} {keyed(0)}");
+  println("{walked(4)} {walked(0)} {order(3)} {order(7)} {field_walk(5)} {field_walk(2)} {bumped(3)} {bumped(1)} {early(5)} {early(2)} {pairs(4)} {pairs(5)} {indexed(4)} {indexed(3)} {unordered_product(4)} {unordered_product(3)} {keyed(4)} {keyed(0)} {dropped(3)} {dropped(4)}");
 }
