@@ -3924,6 +3924,23 @@ impl Parser {
     ) {
         let ret_stmt = exit;
         // { tmp = lhs; if (tmp == null) { <exit>; }; tmp }
+        //
+        // loft#2298 — a plain VARIABLE is tested and answered as itself: reading it twice has
+        // no effect to repeat.  Bound to a temp, a record local was COPIED (`@FR-B-Copy`: the
+        // temp, typed with no dep, read as an owner), and a discharge consumed in place —
+        // `show(x!)`, `(x ?? panic(…)) == y` — leaked that copy, one record per discharge.
+        if let Value::Var(x) = code.unspan() {
+            let x = *x;
+            let not_null = self.coalesce_not_null(&Value::Var(x), lhs_type);
+            let is_null = self.cl("OpNot", &[not_null]);
+            *code = v_block(
+                vec![v_if(is_null, ret_stmt, Value::Null), Value::Var(x)],
+                lhs_type.clone(),
+                "ncr",
+            );
+            *ctp = lhs_type.clone();
+            return;
+        }
         let tmp = self.create_unique("ncr", lhs_type);
         let set_tmp = v_set(tmp, code.clone());
         // `@FR-N-Coal` — "is it present" has ONE home, the one the value-default `??` asks:
