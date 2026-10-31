@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 F-1 probe PF1 (doc/claude/plans/91-self-host/1b-frame.md), and the guard it starts: the
+// frame the loft interpreter reads off a program's image — every variable at its `stack_pos`,
+// as wide as `variables::size` makes it (`frame.loft`) — equals the slot table `loft introspect`
+// prints for the same program, row by row.  The harness writes that table beside each kernel's
+// image (`<kernel>.slots`, tests/selfhost.rs).
+use load;
+use frame;
+
+// The variable rows of `kernel`'s slot table compared with the frame's, function by function;
+// answers how many rows matched.
+fn compare_slots(kernel: text) -> integer {
+  dir = env_variable("LOFT_SELFHOST_KERNELS") ?? "";
+  b = load::load("{dir}/{kernel}.store");
+  assert(b != null, "the {kernel} image opens");
+  f: ir::Function? = null;
+  fn_name = "";
+  n = 0;
+  for line in file("{dir}/{kernel}.slots").lines() {
+    if line.starts_with("fn ") {
+      fn_name = line[3..len(line) - 1];
+      d = load::definition(b!, fn_name);
+      assert(d != null, "{kernel}: the image has {fn_name}");
+      f = d.variables;
+      continue;
+    }
+    words: vector<text> = [];
+    for w in line.split(' ') {
+      if w != "" {
+        words += [w];
+      }
+    }
+    // A variable row starts with its number; the header and the rule do not.
+    nr = (words[0] ?? "") as integer?;
+    if nr == null {
+      continue;
+    }
+    at = 0;
+    for w in words {
+      if w.starts_with("[") || w == "-" {
+        at = w#index;
+        break;
+      }
+    }
+    want = if words[at] == "-" { "-" } else { "{words[at]} {words[at + 1]}" };
+    assert(f != null, "{kernel}: a row before its function");
+    got = frame::slot(f!, nr!);
+    assert(got == want, "{kernel} {fn_name} #{nr}: loft {got}, introspect {want}");
+    n += 1;
+  }
+  n
+}
+
+fn test_the_frame_is_the_rust_interpreters() {
+  total = 0;
+  for k in ["fib", "collatz", "mix", "records", "enums", "hashes", "vectors", "structs", "format", "small_ops", "stdlib", "shown", "pending"] {
+    total += compare_slots(k);
+  }
+  assert(total >= 40, "the kernels' slot rows were compared: {total}");
+}

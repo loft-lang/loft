@@ -5,7 +5,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # @PLN91 strand 1b — the frame: the Rust interpreter's memory structures
 
-A child document of [1b-interpreter.md](1b-interpreter.md).  Status: **design, nothing built.**
+A child document of [1b-interpreter.md](1b-interpreter.md).  Status: **PF1 built (the layout
+guard, `selfhost/tests/frame.loft`); F-1 not built.**
 
 ## The rule
 
@@ -22,7 +23,11 @@ decision; it is that rule applied to memory (*"keep the same memory structures"*
   STEPPED argument size, then a 4-byte return-address slot, then the locals from `local_start`
   (`src/scopes.rs:979`, `src/state/codegen.rs:201–209`).  `LOFT_ALIGN` steps every size to keep
   the base 8-aligned; it is identity when off.
-- **Every local's position is decided before the image is saved.**  `assign_slots_v2`
+- **Every local's position is decided before the image is saved; an argument's is not.**  The
+  bytecode writer places the arguments when it writes the function (`codegen.rs`,
+  `set_stack_pos`): each at the sum of the stepped argument sizes before it, in variable order,
+  so the image carries `stack_pos` 65535 for every argument and `frame.loft` ports that layout
+  (PF1 measured it).  `assign_slots_v2`
   (`src/variables/slots_v2.rs:112`), run inside `scopes::check` (`src/scopes.rs:1002`), writes
   `Variable.stack_pos`, which the image carries (`ir.loft` `Variable.stack_pos`).  Slots are
   REUSED: small locals by greedy colouring of their live intervals (`compute_intervals`), large
@@ -99,6 +104,9 @@ never a gate (the order of the goals, 1b-interpreter.md).
 
 - **PF1** — the layout is the Rust one: for every function of every kernel, each variable's
   slot and width as the interpreter addresses them equal `loft introspect`'s `slot [a, b)`.
+  **Built**: `selfhost/src/frame.loft` (`width`, `position`, `slot`) against the table the
+  harness writes beside each kernel (`<kernel>.slots`); every row equal.  It needed the
+  arguments' layout ported (above) and the table fixed for a text argument (loft#2309).
 - **PF2** — slot reuse: two locals with disjoint intervals sharing a slot (introspect shows
   it), the second's first assignment written by its positional init, values by hand.
 - **PF3** — `&` of a record, a vector and an integer local handed to a `&` parameter, written
