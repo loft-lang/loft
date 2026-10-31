@@ -12,6 +12,9 @@
 # bundle without the component fails here with the refusal a user would see (loft#2274).
 # The natives used build a byte string in memory: no network, nothing the runner lacks.
 set -euo pipefail
+case "${1:-}" in
+  -h|--help) echo "usage: $0 <bundle>/bin/loft[.exe] — does the bundle's loft load its \`net\` component?"; exit 0 ;;
+esac
 [ $# -eq 1 ] || { echo "usage: $0 <bundle>/bin/loft" >&2; exit 2; }
 exe="$1"
 fixtures="$(cd "$(dirname "$0")/../tests/fixtures" && pwd)"
