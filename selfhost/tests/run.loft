@@ -273,6 +273,15 @@ fn test_a_reference_to_a_local_writes_into_the_callers_frame() {
   assert(ran_clean(r, "n_linked", 0) == 5891, "linked(0)");
 }
 
+// @PLN91 F-T1: a tuple local in the frame — a literal, member reads and writes, a nested tuple,
+// a tuple argument, a tuple result destructured, every scalar kind of member; the stack given
+// back.  `kernels/tuples.loft` has the sum by hand.
+fn test_a_tuple_lives_in_its_slot_member_by_member() {
+  t = kernel("tuples");
+  assert(ran_clean(t, "n_tuples", 4) == 17978494, "tuples(4)");
+  assert(ran_clean(t, "n_tuples", 2) == 14774292, "tuples(2)");
+}
+
 fn test_struct_enums_build_match_and_copy() {
   e = kernel("enums");
   assert(ran_clean(e, "n_arms", 7) == 26, "arms(7)");

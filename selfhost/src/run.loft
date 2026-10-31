@@ -233,7 +233,7 @@ fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) ->
     }
     visible += 1;
   }
-  if visible != len(args) || !hidden_after || first.params_float + first.params_text != 0 {
+  if visible != len(args) || !hidden_after || first.params_float + first.params_text + first.params_tuple != 0 || first.result == KTuple {
     return Outcome {
       value: 0,
       refused: "the entry takes {visible} arguments, given {len(args)}",
@@ -354,6 +354,39 @@ fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) ->
           _ => { sp_int -= 1; set_slot_int(stk, base + op.a, op.b, ints[sp_int]); }
         }
       }
+      // A whole tuple (F-T1): its leaves read from, or written into, its slot by its shape;
+      // the last leaf is on top.
+      LoadTuple => {
+        for leaf in prog.shapes[op.b]!.leaves {
+          if leaf.kind == KFloat {
+            put_float(floats, sp_float, slot_float(stk, base + op.a + leaf.at, leaf.access));
+            sp_float += 1;
+          } else {
+            put_int(ints, sp_int, slot_int(stk, base + op.a + leaf.at, leaf.access));
+            sp_int += 1;
+          }
+        }
+      }
+      StoreTuple => {
+        leaves = prog.shapes[op.b]!.leaves;
+        li = len(leaves) - 1;
+        while li >= 0 {
+          leaf = leaves[li]!;
+          if leaf.kind == KFloat {
+            sp_float -= 1;
+            set_slot_float(stk, base + op.a + leaf.at, leaf.access, floats[sp_float]);
+          } else {
+            sp_int -= 1;
+            set_slot_int(stk, base + op.a + leaf.at, leaf.access, ints[sp_int]);
+          }
+          li -= 1;
+        }
+      }
+      PopTuple => {
+        for leaf in prog.shapes[op.b]!.leaves {
+          if leaf.kind == KFloat { sp_float -= 1; } else { sp_int -= 1; }
+        }
+      }
       Pop => {
         match op.kind {
           KFloat => { sp_float -= 1; }
@@ -410,6 +443,21 @@ fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) ->
           } else if k == KInt {
             sp_int -= 1;
             set_slot_int(stk, at, callee_prog.var_access[arg_nr] ?? 0, ints[sp_int]);
+          } else if k == KTuple {
+            // A tuple argument's leaves into its slot, the last leaf first (F-T1).
+            leaves = callee_prog.shapes[callee_prog.var_shape[arg_nr] ?? 0]!.leaves;
+            li = len(leaves) - 1;
+            while li >= 0 {
+              leaf = leaves[li]!;
+              if leaf.kind == KFloat {
+                sp_float -= 1;
+                set_slot_float(stk, at + leaf.at, leaf.access, floats[sp_float]);
+              } else {
+                sp_int -= 1;
+                set_slot_int(stk, at + leaf.at, leaf.access, ints[sp_int]);
+              }
+              li -= 1;
+            }
           }
           arg_at -= 1;
         }
@@ -441,7 +489,23 @@ fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) ->
         vt: text? = null;
         vr1: integer? = null;
         vr2: integer? = null;
+        // A tuple's leaves, carried past the frame (F-T1): the top of each kind's stack, as many
+        // values as it has leaves of that kind, in stack order.
+        t_ints: vector<integer?> = [];
+        t_floats: vector<float?> = [];
+        if op.kind == KTuple {
+          n_float = 0;
+          for leaf in prog.shapes[op.b]!.leaves {
+            if leaf.kind == KFloat { n_float += 1; }
+          }
+          n_int = len(prog.shapes[op.b]!.leaves) - n_float;
+          for ti in sp_int - n_int..sp_int { t_ints += [ints[ti]]; }
+          for ti in sp_float - n_float..sp_float { t_floats += [floats[ti]]; }
+          sp_int -= n_int;
+          sp_float -= n_float;
+        }
         match op.kind {
+          KTuple => {}
           KFloat => { sp_float -= 1; vf = floats[sp_float]; }
           KText => { sp_text -= 1; vt = texts[sp_text]; }
           KRef => {
@@ -482,6 +546,10 @@ fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) ->
         sp_text = f_sp_text[fp]!;
         prog = progs[def]!;
         match op.kind {
+          KTuple => {
+            for tv in t_ints { put_int(ints, sp_int, tv); sp_int += 1; }
+            for tf in t_floats { put_float(floats, sp_float, tf); sp_float += 1; }
+          }
           KFloat => { put_float(floats, sp_float, vf); sp_float += 1; }
           KText => { put_text(texts, sp_text, vt); sp_text += 1; }
           KRef => {

@@ -59,6 +59,12 @@ fn member_width(t: ir::TypeT, owned: boolean) -> integer {
   }
 }
 
+// How far a tuple member moves the next one along (`data::element_stack_offsets_in`): its own
+// width, stepped — so member `i` sits at the sum of these over the members before it.
+pub fn member_step(t: ir::TypeT, owned: boolean) -> integer {
+  stepped(member_width(t, owned))
+}
+
 // `call_frames::aligned_stack_step`: the next multiple of 8.
 pub fn stepped(size: integer) -> integer {
   (size + 7) / 8 * 8

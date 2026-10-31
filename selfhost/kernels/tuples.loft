@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 F-T1 (1b-frame.md): a tuple local in the frame — a literal, member reads and writes, a
+// nested tuple, a tuple argument, a tuple result destructured, a null tuple, and every scalar
+// kind of member.  By hand, `tuples(4)`:
+//   t (4, 3) then t.1 = 9            -> t.0 + 10 * t.1          =    94
+//   pair(4) = (4, 8) destructured    -> 100 * a + 1000 * b      =  8400
+//   n ((4, 2), 5): n.0.1 + n.1       -> 7, times 10000          = 70000
+//   add_up((4, 5))                   -> 9, times 100000         = 900000
+//   mixed(4): (4.5, true, 'b', Green) -> 4 + 1 + 1 + 1, times 1000000 = 7000000
+//   z = (null, 7), members nullable  -> z.0 null, so 1, times 10000000 = 10000000
+// (A tuple itself is never null; the destructuring's temporary is set from `null` first, the
+// absent tuple of null members.)
+// total 17978494.
+enum Col { Red, Green }
+
+fn pair(n: integer) -> (integer, integer) { (n, n * 2) }
+
+fn add_up(p: (integer, integer)) -> integer { p.0 + p.1 }
+
+fn mixed(n: integer) -> (float, boolean, character, Col) {
+  (n as float + 0.5, n > 3, 'b', Col.Green)
+}
+
+fn tuples(n: integer) -> integer {
+  t = (n, 3);
+  t.1 = 9;
+  (a, b) = pair(n);
+  nested = ((n, 2), 5);
+  m = mixed(n);
+  kinds = m.0 as integer + (if m.1 { 1 } else { 0 }) + (if m.2 == 'b' { 1 } else { 0 }) + (if m.3 == Col.Green { 1 } else { 0 });
+  z: (integer?, integer?) = (null, 7);
+  absent = if z.0 == null { 1 } else { 0 };
+  t.0 + 10 * t.1 + 100 * a + 1000 * b + 10000 * (nested.0.1 + nested.1) + 100000 * add_up((n, 5)) + 1000000 * kinds + 10000000 * absent
+}
+
+fn main() {
+  println("{tuples(4)}");
+}
