@@ -30,8 +30,12 @@ fn main() {
     eprintln("refused: the image has no {name}");
     exit(3);
   }
+  // The stack store before the mark: the Rust interpreter's exists before its program enters,
+  // so neither side's trace counts it among the program's stores.
+  stk = run::new_stack();
   crt::trace_mark();
-  o = run::run(b, entry, []);
+  o = run::run_on(b, entry, [], stk);
+  crt::stack_free(stk);
   if o.refused != "" {
     eprintln("refused: {o.refused} — in {o.refused_in}");
     exit(3);
