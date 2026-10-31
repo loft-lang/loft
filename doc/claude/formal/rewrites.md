@@ -4639,8 +4639,8 @@ line in `Output::output_function`'s prelude.
 `edge_mat` → `eg_index` → `eg_dir_from` → `nb_q`/`nb_r` per edge; the loop holds the edge set's
 scalars, so it calls `eg_index`'s `__inv` twin with nine arguments, four on the stack.  At 51
 counted statements the twin was past the twelve-statement bound, and gcc kept it out of line:
-3.1 ns an edge against the Rust twin's 0.43, 7.2×.  Priced by hand in the emitted C (2026-10-31,
-the hints added and nothing else, hashes unchanged): every `__inv` twin of at most 64 statements
+3.1 ns an edge against the Rust twin's 0.43, 7.2×.  Priced by hand in the emitted C
+(the hints added and nothing else, hashes unchanged): every `__inv` twin of at most 64 statements
 hinted — hex_field `edgeset_count` **0.445×** under gcc (≈ 3.7× the twin), `stencil_rotate`
 0.917×, `doc_read` 0.834×, `trace` the same; under clang nothing moves (clang inlines them
 without the hint, and runs `edgeset_count` at 1.75× the twin already).  Hinting the plain chain
@@ -6940,13 +6940,13 @@ twin's ≈ 10.  A window is what `(R-PushFill)`'s windows and `(R-Push)`'s heade
 for a loop; this clause hands one down a chain of calls, as `(R-Header)`'s kept-twin clause
 hands a loop's header to a `__kh` callee.  Sound for the same reason as the kept twin:
 admission already makes the chain the ONLY writer of B (no argument of a twin call reaches B,
-loft#1895), so between two syncs nothing reads B's record but the window's owner, and every
+loft#1895), so between two syncs nothing reads B's record but the window's owner, and every <!-- doc-lint: ok -->
 operation that does read it — or may move the store under the base — is preceded by a sync.
 The interpreter keeps its appends and is the reference.  Keep the window BY POINTER and the
 twin's reads through it: copying it into a local per twin and back was priced and is SLOWER
 (+20 %), the struct copy costing more than the reloads it saves.
 
-**BUILT** (2026-10-31, the C).  Admission is `opt::append_twin::window_size` beside `eligible`
+**BUILT** (the C).  Admission is `opt::append_twin::window_size` beside `eligible`
 (the writes a window takes, each with its element size: a scalar push, a reservation, a text's
 bytes, a scalar vector's elements, a slice of one, and the self-replace a buffer's view
 delivers, which writes nothing); the answer is cached per function in `Cx::ap_window`, which the
