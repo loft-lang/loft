@@ -155,6 +155,8 @@ Tanmatsu, the source on a desktop — under the same path, by the rules in
 F1–F7, published, and built for the Tanmatsu, as a web page and for three desktops from one
 source.
 - Goes red when: any build of it differs from the others in a scripted run's frames.
+- And its guide shows each optional capability — a second display, a gamepad, touch zones — taken
+  up in a few lines over the defaults; a capability that needs more is a library gap to fix.
 
 **F10 — game logic apart from its view (M).**  What a game's logic needs leaves the display
 libraries: the math types (`vec3`, `Mat4`, …) and the pure geometry move from `graphics` to a

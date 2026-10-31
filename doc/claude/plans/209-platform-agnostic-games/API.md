@@ -35,7 +35,10 @@ signature here is a proposal the F-phases check.
 
 7. **The library offers, the game chooses.**  Several displays, gamepads, touch, a round screen:
    each is supported well enough to use, and whether a game uses it is the game's decision.
-   Nothing here makes that choice for it.
+   Nothing here makes that choice for it — and making it is cheap: the defaults already cover
+   the common case (`bindings_for` maps keys, a gamepad and touch zones to the same actions;
+   `frame_for` fits any display), so a game that does nothing still plays everywhere, and taking
+   up a capability is a few lines, not a subsystem.
 
 ## Pixels: RGBA everywhere, packed per destination
 
@@ -229,7 +232,9 @@ every frame, so it is not cached: the work is the conversion, and it is cheap at
 
 ```loft
 pub struct Bindings { … }                           // action name -> keys, buttons, touch zones
-pub fn bindings_for(c: const Caps) -> Bindings;     // the defaults for what the machine has
+pub fn bindings_for(c: const Caps, actions: const vector<text>) -> Bindings;
+                     // the game's actions bound to everything the machine has: keys, the first
+                     // gamepad, and touch zones laid over the frame — rebind only to differ
 pub fn bind(self: Bindings, action: text, key: integer);
 pub fn bind_axis(self: Bindings, axis: text, minus: integer, plus: integer);
 pub fn bind_pad(self: Bindings, action: text, button: integer);
@@ -297,7 +302,7 @@ fn main() {
   f = screen::frame_for(d, 208, 160);
   s = screen::open_screen(d, f, "tile world") ?? return;
   a = audio::open_audio();                    // may be null: then the game is silent
-  b = input::bindings_for(c);
+  b = input::bindings_for(c, ["left", "right", "jump", "menu"]);
   act = input::actions();
   saves = machine::open_saves("tile-world");
   world = load_world(saves);                  // the game's logic package: draws nothing
