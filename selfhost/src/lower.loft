@@ -138,6 +138,10 @@ enum Code {
   BindOrCopy,
   CopyRefOrNull,
   Protect,
+  // `OpVectorIsNull`, `OpDistinctStore`, `OpAppendCopy` (S3: `a` the element type).
+  VecAbsent,
+  DistinctStore,
+  AppendCopy,
   // A whole tuple (F-T1): `a` its slot, `b` its shape in `Lowering.shapes`.
   LoadTuple,
   StoreTuple,
@@ -633,6 +637,9 @@ fn effect(code: Code, b: integer) -> integer {
     RefOf => 1,
     Round => 0,
     Nop => 0,
+    VecAbsent => 0,
+    DistinctStore => -1,
+    AppendCopy => -2,
     LoadTuple => 1,
     StoreTuple => -1,
     PopTuple => -1,
@@ -1188,6 +1195,25 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
   } else if name == "OpLengthVector" {
     value(l, b, args[0]!, KRef);
     emit(l, VecLen, KInt, 0, 0);
+  } else if name == "OpVectorIsNull" {
+    value(l, b, args[0]!, KRef);
+    emit(l, VecAbsent, KInt, 0, 0);
+  } else if name == "OpDistinctStore" {
+    // A runtime owner witness's test: do the two references name different stores?
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KRef);
+    emit(l, DistinctStore, KInt, 0, 0);
+  } else if name == "OpAppendCopy" {
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KInt);
+    tp = literal(l, args[2]!);
+    ctp = types::content_of(b, tp);
+    if ctp == null || (b.types[ctp!]?.linked ?? false) {
+      // A repeat of a linked element is refused as the C backend refuses it.
+      refuse(l, "a repeat of an element type the interpreter does not carry");
+    } else {
+      emit(l, AppendCopy, KRef, ctp!, 0);
+    }
   } else if name == "OpGetVector" || name == "OpGetVectorNullable" {
     value(l, b, args[0]!, KRef);
     size = literal(l, args[1]!);
