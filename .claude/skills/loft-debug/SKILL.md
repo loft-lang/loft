@@ -17,35 +17,46 @@ user-invocable: false
 
 # Loft Debugging Reference (operational)
 
-The **method** lives elsewhere and is always-loaded — this skill is the **mechanics**:
-how to actually run a bug down here, the env traps that fake failures, and the
-irreversible moves not to make.
+The **method** — matrix first, hypothesis, falsify — is `CLAUDE.md` § Debugging policy and the
+`engineering-rigor` skill.  This skill is the **mechanics**: which instrument answers which
+question, the env traps that fake a failure, and the live debugger.
 
-## Method — read first, don't duplicate here
+## Ask the instrument, not a print — question → instrument
 
-- **Matrix-first protocol** — `CLAUDE.md` § Debugging policy. Don't fix on first read;
-  build the `/tmp` boundary matrix on `--interpret`; find the real boundary (the filed
-  scope is usually wrong); fix at the chokepoint enforcing the *invariant* (no
-  narrower / no wider); verify BOTH backends at the end.
-- **Run the matrix with `scripts/probe-matrix`** (`init` scaffolds a probe dir; cells
-  carry `// @EXPECT:` / `// @CONTROL` headers; `--baseline <main-worktree-binary>`
-  labels each failure REGRESSION vs PRE-EXISTING; the validity rules — hand-computed
-  expectations, no vacuous cells, control stays red — are hard errors).  Usage:
-  `doc/claude/DEBUG_PROBES.md` § Boundary-matrix runner.
-- **Composition axes** (what to vary in the matrix) — `python3 scripts/matrix_axes.py file
-  <probe.loft>` names which axis values your cells reach (`cross A B` for never-crossed
-  pairs); the vocabulary is `doc/claude/plans/README.md` § The composition axes.
-- **Brittleness vs bugs** — `doc/claude/DESIGN_VERIFICATION.md` § C1 (the real target
-  is robust algorithms; a green matrix can still be brittle).
-- **Prior attempts on THIS mechanism** — `doc/claude/formal/`, and grep it by the MECHANISM
-  (the op, the pass) rather than the symptom. For store lifetime and return buffers it is
-  the record of what was tried: `ownership.md` holds the rules and `ownership-history.md`
-  writes each reverted fix up, with the measurement that killed it, names where the closure decided the
-  unsound step actually is, and cites the `tests/scripts/` cell now guarding it — so you
-  inherit a working control — and when an entry names a FALSE PREMISE, search for the other
-  sites that hold it. The cost of skipping it, worked through: the `loft-codegen` skill
-  § Zeroth. `IMPLEMENTATIONS.md` indexes what is merged.
-- **Investigation plans** (heavyweight) — `doc/claude/plans/_INVESTIGATION_TEMPLATE.md`.
+Reach for these before reading code or adding an `eprintln` (homes: CLAUDE.md § Environment
+switches, [RUN_BOUNDS.md](../../../doc/claude/RUN_BOUNDS.md)):
+
+- *Which line gave this variable its type or its deps?* `LOFT_LOG=type_timeline:<var>`,
+  with `LOFT_TIMELINE_BT=1` for the stack; it shows pass 1 and pass 2 separately, which is
+  where a dep that "keeps coming back" usually comes from.
+- *What does the function's variable table really hold?* `LOFT_VAR_TABLE=<fn>` — every
+  dep resolved to `name(index)`, with OWNS / skipfree flags.
+- *Which free released the store a later read touched?* `LOFT_POISON=1` (freed bytes read
+  as 0xDEADBEEF, so a lucky read becomes a loud one) with `LOFT_STRICT_STORES=1` (names
+  the violation, and every store never freed, at exit).  A probe that prints the right
+  answer is not clean until it passes under both.
+- *Where does this hang loop?* `LOFT_MAX_OPS=<n>` set low, in a debug-assertions build
+  (RUN_BOUNDS.md § Hang guard) — it prints the last sixteen ops.
+- *A leak, or a runaway length?* The store-heap ceiling's report under `--tests` /
+  `LOFT_MEMORY_LIMIT` names the type and splits one store from many.
+- *What does the frame hold at line N?* `loft debug prog.loft:N`, scripted with `--rpc`
+  (§ The agent debug surface below).
+- *What did the parser resolve at compile time?* `LOFT_TRACE=<category>` (§ Parser tracing
+  below).
+
+## Method — where it lives
+
+- Matrix-first protocol: `CLAUDE.md` § Debugging policy; run the matrix with
+  `scripts/probe-matrix` (usage: `doc/claude/DEBUG_PROBES.md` § Boundary-matrix runner —
+  `--baseline <main-worktree-binary>` labels each failure REGRESSION vs PRE-EXISTING) and
+  check its axes with `scripts/matrix_axes.py` (vocabulary: `doc/claude/plans/README.md` §
+  The composition axes).
+- Brittleness vs bugs: `doc/claude/DESIGN_VERIFICATION.md` § C1 — a green matrix can still be
+  brittle.
+- Prior attempts on THIS mechanism — grep `doc/claude/formal/` by the mechanism (the op, the
+  pass), not the symptom; for store lifetime, `ownership-history.md` is the record of reverted
+  fixes and the cells guarding each closure.  Why: the `loft-codegen` skill § Zeroth.
+- Heavyweight investigations: `doc/claude/plans/_INVESTIGATION_TEMPLATE.md`.
 
 ## Running a bug down — mechanics
 
@@ -69,21 +80,6 @@ irreversible moves not to make.
   `ref_debug` (stack snapshots after Ref/CreateStack), `variables` (the per-fn var
   table — name/type/scope/slot), `fn:<name>` (one function). `LOFT_DUMP_DEPTH` /
   `LOFT_DUMP_ELEMENTS` tune the inline struct/vector dumps.
-- **The question-to-instrument table** — reach for these before reading code or adding a
-  print (homes: CLAUDE.md § Environment switches, RUN_BOUNDS.md):
-  - *Which line gave this variable its type or its deps?* `LOFT_LOG=type_timeline:<var>`,
-    with `LOFT_TIMELINE_BT=1` for the stack; it shows pass 1 and pass 2 separately, which is
-    where a dep that "keeps coming back" usually comes from.
-  - *What does the function's variable table really hold?* `LOFT_VAR_TABLE=<fn>` — every
-    dep resolved to `name(index)`, with OWNS / skipfree flags.
-  - *Which free released the store a later read touched?* `LOFT_POISON=1` (freed bytes read
-    as 0xDEADBEEF, so a lucky read becomes a loud one) with `LOFT_STRICT_STORES=1` (names
-    the violation, and every store never freed, at exit).  A probe that prints the right
-    answer is not clean until it passes under both.
-  - *Where does this hang loop?* `LOFT_MAX_OPS=<n>` set low, in a debug-assertions build
-    (RUN_BOUNDS.md § Hang guard) — it prints the last sixteen ops.
-  - *A leak, or a runaway length?* The store-heap ceiling's report under `--tests` /
-    `LOFT_MEMORY_LIMIT` names the type and splits one store from many.
 - **Dump files**: a failing wrap/native test writes `tests/dumps/*.txt` — full IR +
   bytecode + execution trace; the root cause is almost always visible there. (See
   `doc/claude/RUNNING_TESTS.md`.) NEVER `git bisect` / `git checkout HEAD -- <file>` to
@@ -94,35 +90,9 @@ irreversible moves not to make.
   `ci-run.sh start` again, which resumes it.
 - **Full suite, detached**: `./scripts/find_problems.sh --bg` → `--peek` mid-run /
   `--wait` to block; structured summary on finish in `/tmp/loft_problems.txt`.
-
-## The build loop — which binary, and what each build costs
-
-`src/` is ONE crate of half a million lines: any one-file edit recompiles all of it, and the release
-profile is not incremental.  So the loop is decided by which build answers the question
-([CI_BUDGET.md § What a build and each check costs here](../../../doc/claude/CI_BUDGET.md#what-a-build-and-each-check-costs-here--the-ladder)
-has the ladder; re-measure a number before it decides anything):
-
-- **Iterate on the dev binary** — `cargo build --bin loft` (minutes), then
-  `target/debug/loft --interpret | --native | introspect | --native-emit …`; it runs
-  `--native` against the `deps/` rlib the same build wrote.  `make iter TEST=…` for one test.
-- **`cargo check --bin loft` for a compile-only question** — never a build.
-- **A release build (`cargo build --release --bin loft`, the costliest rung — CI_BUDGET.md) once per fix, at the
-  end**: it refreshes `target/release/libloft.rlib`, which only the `cargo test --release`
-  native suites link; `make check-rlib` says whether it is due.  Never one per hypothesis.
-- **Name the cause from an artefact before any build** — the IR (`loft introspect`) or the
-  emitted Rust (`--native-emit`) of the failing function, pointing at the node or line that
-  is wrong.  A fix built on a hypothesis the artefact never showed is a build that may change
-  nothing.
-- **One heavy job at a time**: a build, a gate (`ci-run.sh start`), `make falsify` (one dev
-  build against the installed main, two against a `REF`), the drop gate (every core for an hour), a native corpus census, a `cargo test` of
-  many binaries.  Beside one another they slow every one of them and the one waited on most
-  of all.
-  While a build runs, read the next unit's code; wait on its pid or output file, never a
-  sleep loop (CLAUDE.md § Never wait on a process by NAME).
-- **Receipts last**: `make falsify` builds the working tree, so it runs after the fix is
-  committed and while no edit is pending — not in the middle of a fix.  Without `REF` its
-  control is the installed main (`make install-main`), so it builds nothing else; score
-  before the branch is joined, while main still lacks the fix.
+- **Building**: which build answers which question (`cargo check`, the dev binary, one release
+  build per fix for the rlib, one heavy job at a time, receipts last) is the checklist in the
+  `loft-codegen` skill § Before the push; CI_BUDGET.md holds the costs.
 
 ## The agent debug surface — `loft debug <file> --rpc` (drive a live session, don't println)
 
@@ -216,35 +186,70 @@ Pattern: a sudden wave of native-compile/link failures right after a rebase / de
 toolchain change is almost always 2–5, not a regression. Rebuild fully + re-run
 serially before believing them.
 
-## Operational safety — the irreversible moves
+## Parser tracing (`LOFT_TRACE`)
 
-- **Never `kill` / `pkill` a process you did not personally start.** A broad
-  `pkill -f "cargo run …"` matches a SIBLING agent's identical command — it has killed
-  another agent's build (and the killer's own). To stop your OWN background task, kill
-  only its specific PID / task-id.
-- **Never touch a sibling checkout of this repo** (a parallel agent's workspace). An
-  `--out-dir` pointing into a tree that is not your working directory, in a process you
-  are inspecting, means that process is NOT yours.
-- **An anomaly right before a destructive command (kill / rm / force-push / overwrite)
-  is a STOP, not a footnote.** Investigate the surprise first — there is no undo, and
-  this is exactly where "don't act on partial sight" matters most.
+Compile-time debugging vantages with near-zero overhead when
+disabled.  Distinct from `LOFT_LOG` (runtime/bytecode) and
+log-config (loft-program-level).  See `src/trace.rs` for the
+implementation; this section documents *when to use it*.
 
-## After the fix — routes
+### Enabling
 
-- **Re-probe the tracker with what you NOW know** (the fixed mechanism names
-  better keywords than the filed symptom did), and put `Fixes #N` in the fix
-  commit (or PR body) for every row your fix closes, beside its `Contract: settled|strained
-  — <why>` trailer (CLAUDE.md § Bug-filing policy). The `Fixes` trailer drives the
-  whole lifecycle — `fixed-pending-merge` on push, auto-close + label-strip on
-  merge; never hand-label. Add the substantive comment: fixing commit,
-  regression test, what verification actually found. When a PR opens, copy
-  every `Fixes #N` into the PR BODY too — merges squash, and a merge-time
-  edit of the squash message would otherwise kill the trailer (issue stays
-  open, label goes stale).
-- Found a *sibling* bug while debugging? Default is **FIX** it (cheapest bug you'll
-  ever fix), not file it — `CLAUDE.md` § Bug-filing policy. File only if it blocks the
-  task or is too big to fix now.
-- Before marking `fixed-pending-merge`: the **done-gate** —
-  `doc/claude/ISSUE_TRACKING.md` § The done-gate (class coverage + intent match;
-  "would the requester file a slight variation?"). Name any residual you couldn't
-  close; don't leave it silent.
+```bash
+# Single category:
+LOFT_TRACE=call cargo run --release --bin loft -- --interpret /tmp/foo.loft
+
+# Multiple categories, comma-separated:
+LOFT_TRACE=call,field,generic cargo run ...
+
+# Everything:
+LOFT_TRACE=all cargo run ...
+
+# During tests (use --nocapture to see stderr):
+LOFT_TRACE=generic cargo test --release --test issues plan17 -- --nocapture
+```
+
+When `LOFT_TRACE` is unset (default), trace calls compile to one
+bool load + one branch; the branch predictor learns "always-false"
+fast and the overhead is below measurement.  Format-string args
+are evaluated only when the branch fires.
+
+### Currently registered categories
+
+| Category | Site | Use when debugging |
+|---|---|---|
+| `call` | `Parser::call` after `find_fn` | "Which def did the parser resolve, and was it skipped as Generic?" |
+| `field` | `Parser::field` after attr lookup | "Did method dispatch find the attribute, what's the receiver type?" |
+| `generic` | `predict_generic_return_type` + `try_generic_instantiation` | "What did first-pass predict?  What did second-pass instantiate?" |
+| `match` | `expect_match_arm_arrow` | "What arrow did the parser see at the arm boundary?" |
+
+### Adding a new category — selective rule
+
+Trace points are for **recurring** diagnostic vantages, not one-off probes: a
+bug-specific `eprintln!` stays local and is removed before commit; a vantage you
+expect to revisit becomes a `loft_trace!(category, …)` call.  The mechanics of
+adding a category (field, initialiser, macro arm) are documented in
+`src/trace.rs` itself — follow it, then extend the table above.
+
+### When NOT to use `LOFT_TRACE`
+
+- Runtime/bytecode debugging — use `LOFT_LOG` (RUNNING_TESTS.md § LogConfig).
+- Loft-program-level logging — use `log_info` / `log_warn` /
+  `log_error` from inside loft programs (STDLIB.md § Logging).
+- A one-time question — an instrument above answers it first.  When a read resists twice
+  and none does, add ONE env-gated `eprintln!` (CLAUDE.md § Debugging policy, step 4),
+  committed around so it can be removed with the inverse edit, never with git.
+
+## Safety and after the fix
+
+- The kill / wait-by-name / sibling-checkout rules are `CLAUDE.md` § Key commands and § Git
+  safety.  One more: **an anomaly right before a destructive command (kill / rm / force-push /
+  overwrite) is a STOP, not a footnote** — investigate the surprise first; there is no undo.
+- The `Fixes #N` + `Contract:` trailers and fix-not-file are `CLAUDE.md` § Bug-filing policy.
+  Beyond it: **re-probe the tracker with what you NOW know** (the fixed mechanism names better
+  keywords than the filed symptom did) and add every row the fix closes; leave a substantive
+  comment on each (fixing commit, regression test, what verification found); when a PR opens,
+  copy every `Fixes #N` into the PR BODY too, since a squash merge can drop the commit trailer.
+- Before `fixed-pending-merge`, the **done-gate** — `doc/claude/ISSUE_TRACKING.md` § The
+  done-gate (class coverage + intent match: "would the requester file a slight variation?").
+  Name any residual you couldn't close.
