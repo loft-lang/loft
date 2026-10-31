@@ -572,6 +572,13 @@ fn link_plan(
             }
             continue;
         }
+        // A system library arrives as the linker's own argument (`-l:libpq.so.5`,
+        // `c_link_arg_for_soname`), not as a file: passed through as it is.  Read as a path it
+        // became `-L` and `-l:-l:libpq.so.5`, and the library was never linked.
+        if l.starts_with('-') {
+            link_args.push(l.clone());
+            continue;
+        }
         let p = std::path::Path::new(l);
         let shared = l.ends_with(&ext) || l.contains(".so.");
         if !shared {
@@ -755,6 +762,19 @@ mod tests {
                 "shim.lib"
             ]
         );
+    }
+
+    #[test]
+    fn a_system_library_reaches_the_linker_as_its_own_argument() {
+        // `c_link_arg_for_soname` writes a versioned system library as `-l:libpq.so.5`; read
+        // as a path it carried `.so.` and became `-L` + `-l:-l:libpq.so.5`, linking nothing.
+        let none = std::collections::HashSet::new();
+        for flag in ["-l:libmariadb.so.3", "-lpq"] {
+            let (rpaths, args) =
+                link_plan(&[flag.to_string()], &none, &none, Placement::Local, false);
+            assert_eq!(args, vec![flag.to_string()], "{flag}");
+            assert!(rpaths.is_empty(), "{flag}: {rpaths:?}");
+        }
     }
 
     #[test]
