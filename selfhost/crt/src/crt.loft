@@ -511,6 +511,9 @@ fn c_vec_slice(v_store: integer, v_rec: integer, v_pos: integer, o_store: intege
 fn c_vec_append_copy(store: integer, rec: integer, pos: integer, ctp: integer, count: integer);
 #c "loft_crt_vec_append_copy" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
 
+fn c_vec_reverse(store: integer, rec: integer, pos: integer, size: integer);
+#c "loft_crt_vec_reverse" "void(int64_t, int64_t, int64_t, int64_t)"
+
 fn c_vec_remove(store: integer, rec: integer, pos: integer, tp: integer, size: integer, mode: integer, index: integer) -> integer;
 #c "loft_crt_vec_remove" "int64_t(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 
@@ -564,6 +567,11 @@ pub fn vec_slice(v_store: integer, v_rec: integer, v_pos: integer, o_store: inte
 // element type `ctp`; a `count` of 0 or less leaves it empty.  The type table must be loaded.
 pub fn vec_append_copy(store: integer, rec: integer, pos: integer, ctp: integer, count: integer) {
   c_vec_append_copy(store, rec, pos, ctp, count);
+}
+
+// `OpReverseVector`: the elements of `size` bytes reversed in place.
+pub fn vec_reverse(store: integer, rec: integer, pos: integer, size: integer) {
+  c_vec_reverse(store, rec, pos, size);
 }
 
 // `OpRemoveVector`: the element at `index` (of element type `tp`, `size` bytes) taken out — `mode`
@@ -655,6 +663,9 @@ fn c_hash_remove(store: integer, rec: integer, pos: integer, r_store: integer, r
 fn c_set_keyed(store: integer, rec: integer, pos: integer, v_store: integer, v_rec: integer, v_pos: integer, elem: integer, tp: integer, n: integer, free_source: boolean);
 #c "loft_crt_set_keyed" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 
+fn c_hash_bytes(store: integer, rec: integer, pos: integer) -> integer;
+#c "loft_crt_hash_bytes" "int64_t(int64_t, int64_t, int64_t)"
+
 fn c_hash_len(store: integer, rec: integer, pos: integer) -> integer;
 #c "loft_crt_hash_len" "int64_t(int64_t, int64_t, int64_t)"
 
@@ -698,6 +709,11 @@ pub fn hash_remove(store: integer, rec: integer, pos: integer, r_store: integer,
 // pushed with `key_*`), which are popped; `free_source` releases `v`'s store after.
 pub fn set_keyed(store: integer, rec: integer, pos: integer, v_store: integer, v_rec: integer, v_pos: integer, elem: integer, tp: integer, n: integer, free_source: boolean) {
   c_set_keyed(store, rec, pos, v_store, v_rec, v_pos, elem, tp, n, free_source);
+}
+
+// `OpSizeHash`: a hash's bucket table in bytes, holes included.
+pub fn hash_bytes(store: integer, rec: integer, pos: integer) -> integer {
+  c_hash_bytes(store, rec, pos)
 }
 
 // `OpLengthHash`.

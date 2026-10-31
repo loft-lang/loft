@@ -335,6 +335,7 @@ int64_t loft_crt_get_w(int64_t which, int64_t store, int64_t rec, int64_t pos, i
         uint8_t e = loft_get_enum(r, f);
         return e == 255 ? LOFT_NULL : (int64_t) e;
     }
+    case 8: return loft_get_int4_raw(r, f);
     default: return LOFT_NULL;
     }
 }
@@ -353,6 +354,7 @@ void loft_crt_set_w(int64_t which, int64_t store, int64_t rec, int64_t pos, int6
     case 5: loft_set_char(r, f, is_null ? 0u : (uint32_t) v); break;
     case 6: loft_set_byte(r, f, is_null ? LOFT_BOOL_NULL : (uint8_t) v); break;
     case 7: loft_set_byte(r, f, is_null ? (uint8_t) 255 : (uint8_t) v); break;
+    case 8: loft_set_int4_raw(r, f, x); break;
     default: break;
     }
 }
@@ -770,6 +772,11 @@ void loft_crt_set_keyed(int64_t store, int64_t rec, int64_t pos, int64_t v_store
     loft_crt_key_pop(n);
 }
 
+/* OpSizeHash (`hash::table_bytes`): the bytes of a hash's bucket table, holes included. */
+int64_t loft_crt_hash_bytes(int64_t store, int64_t rec, int64_t pos) {
+    return loft_hash_table_bytes(loft_crt_ref(store, rec, pos));
+}
+
 /* OpLengthHash. */
 int64_t loft_crt_hash_len(int64_t store, int64_t rec, int64_t pos) {
     return loft_hash_len(loft_crt_ref(store, rec, pos));
@@ -891,6 +898,11 @@ void loft_crt_vec_slice(int64_t v_store, int64_t v_rec, int64_t v_pos, int64_t o
  * holds `count`, of element type `ctp`; `count` <= 0 leaves it empty. */
 void loft_crt_vec_append_copy(int64_t store, int64_t rec, int64_t pos, int64_t ctp, int64_t count) {
     loft_vec_append_copy(loft_crt_types, (uint16_t) ctp, loft_crt_ref(store, rec, pos), count);
+}
+
+/* OpReverseVector: the elements of `size` bytes reversed in place. */
+void loft_crt_vec_reverse(int64_t store, int64_t rec, int64_t pos, int64_t size) {
+    loft_vec_reverse(loft_crt_ref(store, rec, pos), (uint32_t) size);
 }
 
 /* OpRemoveVector (`Stores::remove_vector_at`): the element at `index` of element type `tp` taken

@@ -61,6 +61,9 @@ enum Code {
   BitAnd,
   BitOr,
   BitXor,
+  // `<<`, `>>` on integers (loft's own).
+  Shl,
+  Shr,
   Not,
   NonNull,
   PushNull,
@@ -146,6 +149,18 @@ enum Code {
   ConstRef,
   // `OpRemoveVector`: `a` the element type, `b` the mode (2 linked, 1 owning heap, 0 plain).
   VecRemove,
+  // `OpCastIntFromText`: a text parsed as an integer, null when it is none.
+  IntFromText,
+  FloatFromText,
+  // `pow` and `OpMathFunc2Float` (`a` 0 `atan2`, 1 `log`) on two floats: loft's own.
+  Pow,
+  MathFunc2,
+  // `OpReverseVector`: `a` the element size.
+  VecReverse,
+  // `OpMathFuncFloat`: `a` the function (`loft_math1`'s numbering), loft's own on a float.
+  MathFunc,
+  // `OpSizeHash`: a hash's bucket table in bytes.
+  HashBytes,
   // `OpHashRemove` (`a` the hash type, `b` 1 for a view member) and `OpSetKeyed` (`a` the raw
   // type operand, `b` the key parts on the key stack).
   HashRemove,
@@ -576,6 +591,11 @@ fn operator_op(name: text) -> Op? {
     // Equal to `OpDivInt` and `OpRemInt` for every pair: both answer null for a null operand
     // or a zero divisor, and no other pair overflows, since the one that would divides null.
     "OpDivIntNullable" => Op { code: Div, kind: KInt, a: 0, b: 0 },
+    // The float and single twins are `@v1 / @v2` and `@v1 % @v2`, as the plain operators.
+    "OpDivFloatNullable" => Op { code: Div, kind: KFloat, a: 0, b: 0 },
+    "OpRemFloatNullable" => Op { code: Rem, kind: KFloat, a: 0, b: 0 },
+    "OpDivSingleNullable" => Op { code: Div, kind: KSingle, a: 0, b: 0 },
+    "OpRemSingleNullable" => Op { code: Rem, kind: KSingle, a: 0, b: 0 },
     "OpRemIntNullable" => Op { code: Rem, kind: KInt, a: 0, b: 0 },
     // The `??`-operand twins of `+`, `-`, `*` (C54.G-hybrid): the same values; the Rust plain
     // ops report an overflow and these do not, and the C runtime's, which this runs on, report
@@ -597,11 +617,18 @@ fn operator_op(name: text) -> Op? {
     "OpSizeText" => Op { code: SizeText, kind: KText, a: 0, b: 0 },
     "OpGetTextSub" => Op { code: SubText, kind: KText, a: 0, b: 0 },
     "OpLandInt" => Op { code: BitAnd, kind: KInt, a: 0, b: 0 },
+    // `<<` and `>>`: loft's own, so a null operand and a shift out of range answer as it does.
+    "OpSLeftInt" => Op { code: Shl, kind: KInt, a: 0, b: 0 },
+    "OpSLeftLong" => Op { code: Shl, kind: KInt, a: 0, b: 0 },
+    "OpSRightInt" => Op { code: Shr, kind: KInt, a: 0, b: 0 },
+    "OpSRightLong" => Op { code: Shr, kind: KInt, a: 0, b: 0 },
     "OpLorInt" => Op { code: BitOr, kind: KInt, a: 0, b: 0 },
     "OpEorInt" => Op { code: BitXor, kind: KInt, a: 0, b: 0 },
     "OpNot" => Op { code: Not, kind: KInt, a: 0, b: 0 },
     "OpConvBoolFromInt" => Op { code: NonNull, kind: KInt, a: 0, b: 0 },
     "OpConvBoolFromCharacter" => Op { code: NonNull, kind: KInt, a: 1, b: 0 },
+    // A plain enum's absent discriminants are 0 and its null (255 in the store).
+    "OpConvBoolFromEnum" => Op { code: NonNull, kind: KInt, a: 1, b: 0 },
     "OpConvBoolFromFloat" => Op { code: NonNull, kind: KFloat, a: 0, b: 0 },
     "OpConvBoolFromSingle" => Op { code: NonNull, kind: KFloat, a: 0, b: 0 },
     "OpConvBoolFromText" => Op { code: NonNull, kind: KText, a: 0, b: 0 },
@@ -611,6 +638,7 @@ fn operator_op(name: text) -> Op? {
     "OpConvFloatFromNull" => Op { code: PushNull, kind: KFloat, a: 0, b: 0 },
     "OpConvSingleFromNull" => Op { code: PushNull, kind: KFloat, a: 0, b: 0 },
     "OpConvTextFromNull" => Op { code: PushNull, kind: KText, a: 0, b: 0 },
+    "OpConvRefFromNull" => Op { code: PushNull, kind: KRef, a: 0, b: 0 },
     "OpConvFloatFromInt" => Op { code: ToFloat, kind: KFloat, a: 0, b: 0 },
     "OpConvSingleFromInt" => Op { code: ToFloat, kind: KSingle, a: 0, b: 0 },
     "OpCastIntFromFloat" => Op { code: ToInt, kind: KFloat, a: 0, b: 0 },
@@ -620,6 +648,11 @@ fn operator_op(name: text) -> Op? {
     "OpCastSingleFromFloat" => Op { code: Round, kind: KSingle, a: 0, b: 0 },
     "OpConvIntFromCharacter" => Op { code: FromChar, kind: KInt, a: 0, b: 0 },
     "OpCastTextFromBool" => Op { code: TextFromBool, kind: KText, a: 0, b: 0 },
+    // `t as integer`: loft's own.
+    "OpCastIntFromText" => Op { code: IntFromText, kind: KText, a: 0, b: 0 },
+    "OpCastFloatFromText" => Op { code: FloatFromText, kind: KText, a: 0, b: 0 },
+    "OpPowFloat" => Op { code: Pow, kind: KFloat, a: 0, b: 0 },
+    "OpPowSingle" => Op { code: Pow, kind: KSingle, a: 0, b: 0 },
     "OpPrint" => Op { code: Print, kind: KText, a: 0, b: 0 },
     _ => null,
   }
@@ -713,6 +746,11 @@ fn effect(code: Code, b: integer) -> integer {
     DistinctStore => -1,
     ConstRef => 1,
     VecRemove => -1,
+    MathFunc => 0,
+    IntFromText => 0,
+    FloatFromText => 0,
+    VecReverse => -1,
+    HashBytes => 0,
     HashRemove => -2,
     SetKeyed => -2,
     AppendCopy => -2,
@@ -819,6 +857,7 @@ fn native_index(name: text) -> integer? {
     "n_vector_sum_int" => 2,
     "t_4text_starts_with" => 3,
     "t_4text_ends_with" => 4,
+    "t_4text_byte_at" => 5,
     _ => null,
   }
 }
@@ -1126,6 +1165,9 @@ fn width_of(name: text) -> integer? {
   match name {
     "OpGetInt4" => 0,
     "OpSetInt4" => 0,
+    // `OpGetInt4Raw` / `OpSetInt4Raw`: four bytes as an unsigned word, null as all ones.
+    "OpGetInt4Raw" => 8,
+    "OpSetInt4Raw" => 8,
     "OpGetByte" => 1,
     "OpSetByte" => 1,
     "OpGetByteNullable" => 2,
@@ -1336,6 +1378,27 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
   } else if name == "OpLengthVector" {
     value(l, b, args[0]!, KRef);
     emit(l, VecLen, KInt, 0, 0);
+  } else if name == "OpConvEnumFromNull" {
+    // A plain enum's null (255 in the store): its operand is the enum's type, not a value.
+    emit(l, PushNull, KInt, 0, 0);
+  } else if name == "OpMathPiFloat" || name == "OpMathEFloat" {
+    l.floats += [if name == "OpMathPiFloat" { PI } else { E }];
+    emit(l, PushFloat, KFloat, len(l.floats) - 1, 0);
+  } else if name == "OpMathFunc2Float" || name == "OpMathFunc2Single" {
+    k = if name == "OpMathFunc2Single" { KSingle } else { KFloat };
+    value(l, b, args[1]!, k);
+    value(l, b, args[2]!, k);
+    emit(l, MathFunc2, k, literal(l, args[0]!), 0);
+  } else if name == "OpReverseVector" {
+    value(l, b, args[0]!, KRef);
+    emit(l, VecReverse, KRef, literal(l, args[1]!), 0);
+  } else if name == "OpMathFuncFloat" || name == "OpMathFuncSingle" {
+    k = if name == "OpMathFuncSingle" { KSingle } else { KFloat };
+    value(l, b, args[1]!, k);
+    emit(l, MathFunc, k, literal(l, args[0]!), 0);
+  } else if name == "OpSizeHash" {
+    value(l, b, args[0]!, KRef);
+    emit(l, HashBytes, KInt, 0, 0);
   } else if name == "OpSizeVector" {
     // A vector's size in bytes: its length times the element stride the parser filled in.
     value(l, b, args[0]!, KRef);
