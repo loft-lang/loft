@@ -386,6 +386,9 @@ src/main.rs            CLI; loads default/ then user file
   then a one-line summary of the rest; no long dumps.
 - **Advice vs action:** asked for advice/evaluation → give the recommendation (best option + why),
   don't bounce it back. Asked a question → answer it. Act/edit only on an explicit do-it instruction.
+  A recommended RULE or design is probed before it is recommended: build the cell that would
+  falsify its premise first — answering feels like advice, so the check gets skipped, and an
+  approved wrong rule is built on (`design-protocol` § When you RECOMMEND it).
 - **Shared knowledge:** anything durable an agent records to private memory must ALSO land in the
   right repo doc (memory is per-agent; the repo is the shared channel). Keep machine-specific values
   out of shared docs.
