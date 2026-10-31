@@ -5159,7 +5159,7 @@ impl Parser {
     /// code separates the two.  The source does.
     fn branch_yields_null(&self, v: &Value) -> bool {
         match v.unspan() {
-            Value::Null => true,
+            Value::Null => !self.first_pass,
             Value::Block(bl) => bl
                 .operators
                 .last()
@@ -5173,6 +5173,33 @@ impl Parser {
             Value::Call(d, args) => self.is_null_literal_call(*d, args),
             _ => false,
         }
+    }
+
+    /// `@FR-N-Join` on pass 1 — does an arm the SOURCE wrote as `null` make the join `τ?`?
+    ///
+    /// On pass 1 a bare `Value::Null` is two things: the `null` literal, and the placeholder of
+    /// an expression pass 1 cannot type yet — a call to a function declared below the caller,
+    /// which leaves no IR until pass 2.  [`Self::branch_yields_null`] and
+    /// [`Self::arm_yields_direct_null`] therefore do not count a bare `Value::Null` on pass 1,
+    /// and the arm's own record of what was written (`block_tail_null_literal`, a `null`-typed
+    /// arm, `null_literal_arms`) answers instead.  Counting the placeholder joined `later(x)`
+    /// with `false` to `boolean?`, and pass 1 keeps the type of an inferred local: `ok = if c
+    /// { later(x) } else { false }` stayed `boolean?` and warned when returned as `boolean`
+    /// (loft#2305).
+    fn first_pass_null_arm(first_pass: bool, written_null: bool) -> bool {
+        first_pass && written_null
+    }
+
+    /// A `match` arm whose body is a bare `Value::Null` it was not WRITTEN as: on pass 1 the arm
+    /// of a call pass 1 cannot type yet (`first_pass_null_arm`), typed `Unknown` where a written
+    /// `null` arm is typed `Null`.  Taking the result type's null would make it a `null` arm.
+    fn is_placeholder_arm(first_pass: bool, tp: &Type) -> bool {
+        first_pass && matches!(tp.base(), Type::Unknown(_))
+    }
+
+    /// A `match` arm that answers `null`: its body is the null and it is no placeholder.
+    fn is_null_arm(first_pass: bool, code: &Value, tp: &Type) -> bool {
+        arm_body_is_null(code) && !Self::is_placeholder_arm(first_pass, tp)
     }
 
     /// @PLN25 DN1 — like [`Self::branch_yields_null`] but does NOT descend into a nested
@@ -5190,7 +5217,7 @@ impl Parser {
     /// than an escape, and pass through it.
     fn arm_yields_direct_null(&self, v: &Value) -> bool {
         match v.unspan() {
-            Value::Null => true,
+            Value::Null => !self.first_pass,
             Value::Block(bl) => bl
                 .operators
                 .last()
@@ -5855,6 +5882,9 @@ impl Parser {
         let true_fact = std::mem::take(&mut self.operand_fact); // @PLN187
         let mut false_fact = crate::data::AliasFact::Empty;
         let true_is_null_literal = self.block_tail_null_literal;
+        // The then arm IS a null: the literal, or a value typed `null` (a constant).  On pass 1
+        // the code cannot say so — see `first_pass_null_arm`.
+        let true_is_null = true_is_null_literal || matches!(true_type.base(), Type::Null);
         if !is_bindings.is_empty()
             && let Value::Block(bl) = &mut true_code
         {
@@ -6098,7 +6128,9 @@ impl Parser {
                     false_type = joined;
                 } else if let Value::Block(bl) = &mut true_code {
                     let p = bl.operators.len() - 1;
-                    if !is_block_divergent(&bl.operators) {
+                    // A then arm of no type yet is a `null`, or on pass 1 an expression pass 1
+                    // cannot type (`first_pass_null_arm`): only the null takes the sibling's null.
+                    if !is_block_divergent(&bl.operators) && (true_is_null || !self.first_pass) {
                         // loft#936 — `null_value`, not `null`: the arm's null travels
                         // to the merge on the eval stack, so a COLLECTION arm needs the
                         // DbRef sentinel.  `null`'s catch-all answers a bare
@@ -6191,8 +6223,10 @@ impl Parser {
             result_tp = Type::optional(result_tp);
         }
         if had_else && crate::keys::pln25_dn1_enabled() && !matches!(result_tp, Type::Optional(_)) {
-            let t_null = self.branch_yields_null(&true_code);
-            let f_null = self.branch_yields_null(&false_code);
+            let t_null = self.branch_yields_null(&true_code)
+                || Self::first_pass_null_arm(self.first_pass, true_is_null);
+            let f_null = self.branch_yields_null(&false_code)
+                || Self::first_pass_null_arm(self.first_pass, false_is_null_literal);
             if t_null != f_null {
                 let other = if t_null { &false_type } else { &true_type };
                 if Self::is_non_null_scalar(other) {
@@ -7346,10 +7380,19 @@ impl Parser {
         let base = if matches!(result_type, Type::Void | Type::Null) {
             Value::Null
         } else {
-            for arm in arms.iter_mut().filter(|a| arm_body_is_null(&a.code)) {
+            let first_pass = self.first_pass;
+            for arm in arms
+                .iter_mut()
+                .filter(|a| Self::is_null_arm(first_pass, &a.code, &a.tp))
+            {
                 arm.tp = result_type.clone();
             }
-            self.type_null_arms(arms.iter_mut().map(|a| &mut a.code), &result_type);
+            self.type_null_arms(
+                arms.iter_mut()
+                    .filter(|a| !Self::is_placeholder_arm(first_pass, &a.tp))
+                    .map(|a| &mut a.code),
+                &result_type,
+            );
             let typed_null = self.null_value(&result_type);
             // Seed the chain base with the typed null too: an exhaustive enum
             // match's innermost else is unreachable, but codegen still emits it
@@ -13772,7 +13815,13 @@ impl Parser {
         // this one tested only the bare form, so `match n { 0 => { null }, _ => { [n] } }`
         // answered null for EVERY n while the bare-arm spelling of the same function was
         // right — a wrong value with no diagnostic, on both backends.
-        self.type_null_arms(arms.iter_mut().map(|a| &mut a.1), result_type);
+        let first_pass = self.first_pass;
+        self.type_null_arms(
+            arms.iter_mut()
+                .filter(|a| !Self::is_placeholder_arm(first_pass, &a.2))
+                .map(|a| &mut a.1),
+            result_type,
+        );
         // The same repair one width up, for the fn-ref result type.  A non-capturing
         // lambda arm is a bare `Value::Int(d_nr)` — eight bytes — where the join reads
         // the full twenty-byte fn-ref, so the arms of one choice leave different depths
