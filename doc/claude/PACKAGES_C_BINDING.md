@@ -434,7 +434,8 @@ a package are declared as typed externs at **wasm32's widths** (ILP32: `long` is
 and called directly, exactly as `--native` calls them.  So a library whose native part is a
 `[c] shim` of pure computation — `random`, `regex`, `crypto` — is a wasm and a browser
 library with no bridge crate, from the one C source.  A program links one copy of loft's
-small C library however many shims it carries (loft#2280).
+small C library however many shims it carries (`tests/native.rs`
+`two_c_shims_link_into_the_wasm_target`).
 
 **A shim built for a browser page sees `LOFT_BROWSER` defined** (the Rust writer's page and
 the C writer's alike; a `--native-wasm` module never), and there it may call the page's

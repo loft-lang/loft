@@ -2833,18 +2833,18 @@ compile with the copy refusal off).  Sites: `hoist::own_format_work`, the format
 **In words.**  `check_request` decodes a CBOR frame twice and reads one field of the result;
 the decoded tree is built as store records (a claim per node, a claim per key text, a copy per
 payload) and dropped — ≈ 60 % of the row against a twin whose `Cbor<'a>` borrows the frame and
-allocates one `Vec` per map.  Under @C125 as clarified (owner, 2026-10-30: *"We cannot change
+allocates one `Vec` per map.  Under @C125 as the owner clarified it (*"We cannot change
 the store itself, but we can introduce short lived objects as long as the end result is the
 same"*) the tree need not be in a store while nothing stores it.  `(R-ValueRecord)` already
 returns a scalar record in registers and `(O-ViewField)` a record whose vector field is a view;
 this rule is the same idea for a whole tree: depth, variants, vectors of records, and texts and
 bytes that view the frame.  It is the rule `check_request` needs to approach 2×: the tree's
 claims, copies and the frame's releases all belong to the store-built tree.  NOT BUILT
-(designed 2026-10-30).  Open in the design: the C representation of a transient vector of
+(designed, not yet implemented).  Open in the design: the C representation of a transient vector of
 records (a stack array with a heap spill), how the twin is cut from the producer (every
 `OpNewRecord` / `OpSetText` / `OpAppendVector` into the result mapped to its struct form), and
 the decline list's proof on the sites — `(O-ViewField)`'s sites' half is the model.  Priced by
-hand on `read_value` (2026-10-30, the emitted C, same hashes): `check_request` 0.109× on gcc,
+hand on `read_value` (the emitted C, same hashes): `check_request` 0.109× on gcc,
 0.129× on clang, and 0.087× with the arrays in a bump arena the site owns — 0.7× the twin; the
 `.ok` decode alone, building no tree at all, 0.537×.  The design, the arena and the steps:
 `bench/portal/analysis/transient.md`.
