@@ -55,5 +55,6 @@ Branch `91-self-host`, everything committed and pushed; the suite pin is loft-su
 
 E-1 is built (00c234374, D-heap-52), and the gate reds the branch carried are repaired
 (7f974619a: clippy on rustc 1.99, the `@FR-N-Shape` ratchet, the `time` census rows).  Next:
-loft#2260, then E-4 and F-1.  R-3 is built (26d95a12b, `lost-write` per field); R-1 remains a
-design for the owner.
+loft#2260, then E-4 and F-1.  R-3 is built (26d95a12b, `lost-write` per field).  R-1 is built
+too, and what it still owes comes first: [1b-readability.md § What follows R-1](1b-readability.md#what-follows-r-1--the-log-to-the-best-port-code)
+(loft#2295 in the C backend first, then the native E0502 and loft#2293), before loft#2260.
