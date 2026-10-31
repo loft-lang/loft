@@ -12,6 +12,7 @@
 
 #![cfg(unix)]
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -19,37 +20,36 @@ use std::time::{Duration, SystemTime};
 /// entries a week old, one fresh loft entry and one old entry that is not loft's.
 fn fixture(name: &str, aged: usize) -> (PathBuf, u32, u32) {
     let dir = std::env::temp_dir().join(format!("sweep_scratch_{name}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).unwrap();
     let live = std::process::id();
-    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let mut child = loft::platform::process::harness_command("true")
+        .spawn()
+        .unwrap();
     let dead = child.id();
     child.wait().unwrap();
     let week_ago = SystemTime::now() - Duration::from_secs(7 * 24 * 3600);
     let age = |p: &Path| {
-        std::fs::File::open(p)
-            .unwrap()
-            .set_modified(week_ago)
-            .unwrap();
+        fa::open(p).unwrap().set_modified(week_ago).unwrap();
     };
     for pid in [live, dead] {
-        std::fs::write(dir.join(format!("loft_native_bin_{pid}")), "").unwrap();
-        std::fs::write(dir.join(format!("loft_native_{pid}.rs")), "").unwrap();
+        fa::write(dir.join(format!("loft_native_bin_{pid}")), "").unwrap();
+        fa::write(dir.join(format!("loft_native_{pid}.rs")), "").unwrap();
     }
     for i in 0..aged {
         let e = dir.join(format!("loft_old_{i}"));
-        std::fs::create_dir_all(e.join("inner")).unwrap();
+        fa::create_dir_all(e.join("inner")).unwrap();
         age(&e);
     }
-    std::fs::create_dir_all(dir.join("loft_fresh")).unwrap();
-    std::fs::create_dir_all(dir.join("other_old")).unwrap();
+    fa::create_dir_all(dir.join("loft_fresh")).unwrap();
+    fa::create_dir_all(dir.join("other_old")).unwrap();
     age(&dir.join("other_old"));
     (dir, live, dead)
 }
 
 fn sweep(args: &[&str], dir: &Path) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out = std::process::Command::new("bash")
+    let out = loft::platform::process::harness_command(loft::platform::bash_program())
         .arg(root.join("scripts/sweep_scratch.sh"))
         .args(args)
         .arg(dir)
@@ -63,9 +63,10 @@ fn sweep(args: &[&str], dir: &Path) {
 }
 
 fn names(dir: &Path) -> Vec<String> {
-    let mut v: Vec<String> = std::fs::read_dir(dir)
+    let mut v: Vec<String> = fa::read_dir(dir)
         .unwrap()
-        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .iter()
+        .map(|e| e.file_name().unwrap().to_string())
         .collect();
     v.sort();
     v
@@ -85,7 +86,7 @@ fn the_scratch_sweep_keeps_a_live_process_and_fresh_work() {
     ];
     want.sort();
     assert_eq!(names(&dir), want);
-    std::fs::remove_dir_all(&dir).unwrap();
+    fa::remove_dir_all(&dir).unwrap();
 }
 
 /// A deadline already passed, or the room already there, stops the sweep before it removes
@@ -104,6 +105,6 @@ fn the_scratch_sweep_stops_at_its_callers_bound() {
             before,
             "{name}: the sweep went past its bound"
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        fa::remove_dir_all(&dir).unwrap();
     }
 }
