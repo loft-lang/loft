@@ -1477,52 +1477,82 @@ fn is_vector(ts: vector<ir::TypeT>) -> boolean {
   }
 }
 
-// The known type of a vector's element type, or null: a record or plain enum by its definition,
-// a base type by its number (`integer` 0, `long` 1, `single` 2, `float` 3, `boolean` 4, `text`
-// 5, `character` 6).  A narrow integer has a type of its own and is not resolved here.
-fn element_type(b: ir::Bundle, t: ir::TypeT) -> integer? {
-  match t {
-    TyReference { n, dep: _ } => b.data.definitions[n]!.known_type,
-    TyEnum { n, is_ref: _, dep: _ } => b.data.definitions[n]!.known_type,
-    TyInteger { spec } => if spec.min == -2147483647 && spec.max == 2147483647 && spec.forced_size == 0 { 0 } else { null },
-    TySingle => 2,
-    TyFloat => 3,
-    TyBoolean => 4,
-    TyText { dep: _ } => 5,
-    TyCharacter => 6,
-    _ => null,
-  }
-}
-
-// The `main_vector<T>` wrapper of vector type `ts` (`Data::owned_vector_type`): the struct whose
-// one field is the plain vector of `T`.  Found by that shape in the image's schema; null when
-// there is none.
+// The `main_vector<T>` wrapper of vector type `ts` (`Data::owned_vector_type`): the type of the
+// definition named `main_vector<` the element's key name `>`; null when the image has none.
 pub fn main_vector_of(b: ir::Bundle, ts: vector<ir::TypeT>) -> integer? {
   t = ts[0];
   if t == null {
     return null;
   }
-  elem = match binds::base(t) {
-    TyVector { inner: i, dep: _ } => element_type(b, i),
+  key = match binds::base(t) {
+    TyVector { inner: i, dep: _ } => type_key(b, i),
     _ => null,
   };
-  if elem == null {
+  if key == null {
     return null;
   }
-  for w in b.types {
-    if !w.name.starts_with("main_vector<") {
-      continue;
-    }
-    match w.parts[0]! {
-      PtStruct { fields } => {
-        if len(fields) == 1 && vector_element(b, fields[0]!.content) == elem {
-          return w#index;
-        }
-      }
-      _ => {}
+  name = "main_vector<{key}>";
+  for d in b.data.definitions {
+    if d.name == name {
+      return d.known_type;
     }
   }
   null
+}
+
+// `Type::name`: the type as the definition table keys it (`render` with `source` false), or
+// null for a keyed collection, whose key spells its key list as a Rust value.
+fn type_key(b: ir::Bundle, t: ir::TypeT) -> text? {
+  match t {
+    TyOptional { inner } => {
+      k = type_key(b, inner);
+      if k == null { null } else { "{k}?" }
+    }
+    TyRewritten { inner } => type_key(b, inner),
+    TyRefVar { inner } => {
+      k = type_key(b, inner);
+      if k == null { null } else { "&{k}" }
+    }
+    TyEnum { n, is_ref: _, dep: _ } => b.data.definitions[n]?.name,
+    TyReference { n, dep: _ } => b.data.definitions[n]?.name,
+    TyText { dep: _ } => "text",
+    TyVector { inner, dep: _ } => if inner is TyUnknown {
+      "vector"
+    } else {
+      k = type_key(b, inner);
+      if k == null { null } else { "vector<{k}>" }
+    },
+    TyInteger { spec } => integer_key(spec),
+    TyBoolean => "boolean",
+    TyFloat => "float",
+    TySingle => "single",
+    TyCharacter => "character",
+    TyKeys => "keys",
+    TyTuple { elems } => {
+      r = "";
+      for e in elems {
+        k = type_key(b, e);
+        if k == null {
+          return null;
+        }
+        r += if e#index > 0 { ", {k}" } else { k! };
+      }
+      "({r})"
+    }
+    _ => null,
+  }
+}
+
+// `IntegerSpec::source_name`, else `integer(min, max)`: the plain and the wide template are
+// `integer`, the `0..256` range `byte`.
+fn integer_key(s: ir::IntegerSpec) -> text {
+  if s.min == -2147483647 && (s.max == 2147483647 || s.max == 4294967295) {
+    "integer"
+  } else if s.min == 0 && s.max == 256 {
+    "byte"
+  } else {
+    "integer({s.min}, {s.max})"
+  }
 }
 
 // The schema type of a hash variable's collection, by the name `Stores::hash` gives it:
@@ -2886,6 +2916,10 @@ fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
       set(l, b, var, inner);
     }
     NdBlock { block } => block_statement(l, b, block[0]?),
+    // A variable read for nothing: the tail of a value block standing as a statement (the
+    // scope pass's `one_buffer_chain`).  The Rust writer pushes it and drops it later; reading
+    // a variable has no effect, so nothing is lowered.
+    NdVar { n: _ } => {}
     NdIf { cond, t, f } => {
       expr(l, b, cond);
       to_else = len(l.ops);
