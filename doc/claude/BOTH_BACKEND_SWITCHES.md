@@ -689,7 +689,9 @@ per-element form for every slice, this one included.
 **`LOFT_KEYED_VERIFY=1`** is the falsifier for both: every pre-resolved comparison, every
 exact lookup and every one-probe insert is checked against the general form as it is made,
 and a disagreement panics naming both answers — run the keyed cells or the script corpus
-under it after touching `keys.rs`, `hash.rs`, `btree.rs` or the `sorted` searches.  Two more
+under it after touching `keys.rs`, `hash.rs`, `btree.rs` or the `sorted` searches.  The C
+backend honours it too, for the fast paths it has (`-DLOFT_KEYED_VERIFY`, C_BACKEND.md § What
+switching to C loses; `scripts/c_sweep.py --keyed-verify` runs the corpus both ways).  Two more
 levers of the same pass carry no switch because they have no second answer to bisect to: a
 miss on a collection with no lazy binding answers at once (`Stores::lazy_bound`, a lookup
 loop that misses half the time −20 %), and a whole word fed to the hasher on a word boundary

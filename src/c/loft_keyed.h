@@ -397,6 +397,9 @@ static void loft_replace_keyed(const loft_tdesc *T, uint16_t tp, loft_ref src, l
     if (free_source && (flags & 2) && loft_swap_in(tp, src, dest, 0)) return;
     loft_remove_claims(T, tp, dest);
     loft_copy_claims(T, tp, src, dest);
+#ifdef LOFT_COPY_CHECK
+    loft_report_copy_mismatches(T, tp, src, dest, "OpReplaceKeyed");
+#endif
     if (free_source && src.store_nr != dest.store_nr && !loft_free_protected(src)) loft_free_ref(src);
 }
 
@@ -571,6 +574,20 @@ static loft_ref loft_keyed_entry_ints(const loft_tdesc *T, uint16_t etp, loft_re
                loft_scratches[i].source.pos == c.pos;
     if (!live) {
         loft_ref e = loft_h_entry_ints(c, keys, nk, ks);
+#ifdef LOFT_KEYED_VERIFY
+        /* `keyed_entry_long`'s check: the entry the one probe answers is the one the key finds. */
+        if (e.rec != 0) {
+            loft_kv vk[4];
+            for (int i = 0; i < nk && i < 4; i++) vk[i] = loft_kv_int(ks[i]);
+            loft_ref found = loft_h_find(c, keys, vk, nk < 4 ? nk : 4);
+            if (found.rec != e.rec || found.pos != e.pos) {
+                fflush(stdout);
+                fprintf(stderr, "LOFT_KEYED_VERIFY: the key answers %u+%u where the entry is %u+%u\n",
+                        (unsigned) found.rec, (unsigned) found.pos, (unsigned) e.rec, (unsigned) e.pos);
+                abort();
+            }
+        }
+#endif
         if (e.rec != 0) return e;
     }
     loft_kv kv[4];
@@ -595,6 +612,18 @@ static loft_ref loft_keyed_entry_text(const loft_tdesc *T, uint16_t etp, loft_re
                loft_scratches[i].source.pos == c.pos;
     if (!live) {
         loft_ref e = loft_h_entry_text(c, keys, key);
+#ifdef LOFT_KEYED_VERIFY
+        if (e.rec != 0) {
+            loft_kv vk = loft_kv_text(key);
+            loft_ref found = loft_h_find(c, keys, &vk, 1);
+            if (found.rec != e.rec || found.pos != e.pos) {
+                fflush(stdout);
+                fprintf(stderr, "LOFT_KEYED_VERIFY: the key answers %u+%u where the entry is %u+%u\n",
+                        (unsigned) found.rec, (unsigned) found.pos, (unsigned) e.rec, (unsigned) e.pos);
+                abort();
+            }
+        }
+#endif
         if (e.rec != 0) return e;
     }
     loft_text own = loft_text_own(key);

@@ -2837,6 +2837,22 @@ impl Stores {
             crate::vector::clear_vector(db, &mut self.allocations);
             return;
         }
+        // A vector already empty — no record, or a record of length 0 — has nothing to release
+        // and its clear is nothing: no store reset, no record made again (`loft_vec_clear_release`,
+        // STORE_MODEL.md D19f).  An absent slot still takes the clear, which makes it present.
+        if !db.is_null() && (db.store_nr as usize) < self.allocations.len() && db.pos != 0 {
+            let store = &self.allocations[db.store_nr as usize];
+            let cur = store.get_u32_raw(db.rec, db.pos);
+            if cur == 0 {
+                return;
+            }
+            if cur != u32::MAX {
+                let rec = store.collection_rec(db.rec, db.pos);
+                if rec != 0 && store.get_u32_raw(rec, 4) == 0 {
+                    return;
+                }
+            }
+        }
         // Cached like the switch above: this runs on every clear of a reused vector, and
         // an uncached `getenv` here was 3.8 % of the consumer's `smooth` row (perf,
         // 2026-09-13).

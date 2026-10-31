@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The C's twin bits: a call whose arguments prove a parameter non-sentinel goes to an `__nn`
+// twin, one mask bit per parameter from bit 32, and the named twins (`__d`, `__ap`, …) take
+// the bits above.  The parameter bits must stop below the named ones: with 26 of them,
+// parameter 25 was bit 57, `DS_BIT`, so a call proving its 26th argument chose a destination
+// twin, and every `__d` twin was named and seeded as if parameter 25 were proven.  Values
+// hand-computed: 25 ones plus z / 7.
+//
+// @falsified-at: a906a782f — the C backend refused the program.
+// CHANNEL: exit status, the C backend.
+// WITNESS: `f26: a __d twin of a function with no destination shape` on the control.
+// HOLDS: --interpret and --native exit 0 on the fixed build (the twin bits are the C writer's
+//   alone; those two were not re-measured on the control).
+
+fn f26(a1: integer, a2: integer, a3: integer, a4: integer, a5: integer, a6: integer, a7: integer, a8: integer, a9: integer, a10: integer, a11: integer, a12: integer, a13: integer, a14: integer, a15: integer, a16: integer, a17: integer, a18: integer, a19: integer, a20: integer, a21: integer, a22: integer, a23: integer, a24: integer, a25: integer, z: integer) -> integer { (a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9 + a10 + a11 + a12 + a13 + a14 + a15 + a16 + a17 + a18 + a19 + a20 + a21 + a22 + a23 + a24 + a25) + z / 7 }
+
+fn main() {
+  vals: vector<integer> = [1, 2, 3];
+  k = 2;
+  for i in 0..len(vals) { k += vals[i] ?? 0; }
+  // the literal proves z: 25 + 70 / 7 = 35
+  assert(f26(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 70) == 35, "literal z");
+  // k = 2 + 1 + 2 + 3 = 8: 25 + 8 / 7 = 26
+  assert(f26(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, k) == 26, "computed z");
+  // an index past the end is null, and so is the sum
+  r = f26(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, vals[5]);
+  assert(!r, "a null z answers null");
+}

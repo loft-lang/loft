@@ -4630,6 +4630,17 @@ pub struct Definition {
 }
 
 impl Definition {
+    /// A function the COMPILER wrote, not the author: a lambda's body (`__lambda_*`), or a
+    /// default value lowered into a function of its own (`__dflt_*`, loft#699 for a parameter,
+    /// loft#703 for a field).  Never an entry point or a test, whatever its signature: a
+    /// default's function has no parameter when its value reads none, and every runner that
+    /// counted zero-parameter functions ran it as a test — the C test harness then kept the
+    /// collection it built (@PLN206 D31).  Every runner's selection asks this one question.
+    #[must_use]
+    pub fn is_compiler_written_fn(&self) -> bool {
+        self.name.starts_with("n___lambda_") || self.name.starts_with("n___dflt_")
+    }
+
     /// Is `def` a CORPUS ENTRY POINT — a function a `tests/scripts/` harness may call on its own
     /// in a file that declares no `main`?
     ///
@@ -4665,7 +4676,7 @@ impl Definition {
         if !matches!(self.def_type, DefType::Function) {
             return false;
         }
-        if !self.name.starts_with("n_") || self.name.starts_with("n___lambda_") {
+        if !self.name.starts_with("n_") || self.is_compiler_written_fn() {
             return false;
         }
         if crate::file_access::is_stdlib_source(self.position.file.as_str()) {

@@ -84,10 +84,12 @@ struct E {
 }
 
 /// What a loop's verdict hands its push headers: the minted record paths and the scalar pushed
-/// paths, each with the vector operand the prelude evaluates.
+/// paths, each with the vector operand the prelude evaluates, and whether the loop's one
+/// growth is its one pushed path's pushes (`hoist::LoopHoist::sole_push`).
 type Pushed = (
     Vec<(crate::opt::writes::PathKey, Value)>,
     Vec<(crate::opt::writes::PathKey, Value)>,
+    bool,
 );
 
 impl E {
@@ -229,9 +231,13 @@ pub(crate) struct FnWriter<'a> {
     /// A formatted value's work text written straight into the text it is appended to
     /// (`format_into_dest`): the work variable and the destination's C name.
     work_alias: Option<(u16, String)>,
+    /// `@FR-R-SliceArg`: the wrapper variables of slices the call being emitted hands to `const`
+    /// parameters — their `OpDatabase` takes a pooled carrier (`loft_slice_take`).
+    slice_carriers: Vec<u16>,
     /// The record push headers each enclosing loop binds (`loft_ph`, `@FR-R-PushRec`): the
-    /// path, the header and the element size, innermost last.
-    push_heads: Vec<Vec<(crate::opt::writes::PathKey, String, u32)>>,
+    /// path, the header, the element size and whether its pushes write through the record
+    /// address it holds (`@FR-R-Push`'s sole-growth clause), innermost last.
+    push_heads: Vec<Vec<(crate::opt::writes::PathKey, String, u32, bool)>>,
     /// The header gate's memo of which callees write a store.
     hoist_cache: std::collections::HashMap<u32, bool>,
     /// The locals `(R-Place)` put in another record's store (`hoist::placed_locals`), for
@@ -262,6 +268,10 @@ pub(crate) struct FnWriter<'a> {
     /// The source line the statements now being written come from (`Value::Line`), which a
     /// call records as its frame's site when the unit keeps frames (`Cx::frames`).
     cur_line: u32,
+    /// The loft line the statements being written belong to (`Cx::source_lines`), 0 before
+    /// the first; each C line is marked with it, and its file (a C string literal).
+    marked_line: u32,
+    marked_file: String,
     /// `LOFT_C_WHERE` reported this function's refusal already.
     where_told: bool,
     /// `@FR-R-RetAdopt` — the result local that IS the hidden return buffer
@@ -638,6 +648,7 @@ impl<'a> FnWriter<'a> {
             kh_passed: std::collections::HashSet::new(),
             nn_seed: Vec::new(),
             push_heads: Vec::new(),
+            slice_carriers: Vec::new(),
             vr: value::VrFn::of(cx, d).map(Box::new),
             widening: None,
             raw: std::collections::HashMap::new(),
@@ -661,6 +672,8 @@ impl<'a> FnWriter<'a> {
             assumed: Vec::new(),
             range_facts: None,
             cur_line: 0,
+            marked_line: 0,
+            marked_file: String::new(),
             where_told: false,
             adopt: if std::env::var("LOFT_NO_RETBUF_ADOPT").is_ok_and(|v| v != "0") {
                 None
@@ -855,6 +868,7 @@ impl<'a> FnWriter<'a> {
                 let t = l.trim();
                 !t.is_empty()
                     && !l.contains("loft_frame_site(")
+                    && !t.starts_with("#line ")
                     && (braces || !matches!(t, "}" | "{" | "};" | "} else {"))
             })
             .count()
@@ -971,6 +985,9 @@ impl<'a> FnWriter<'a> {
         }
         let statements = self.statement_count();
         out.push_str(&self.body);
+        if self.marked_line != 0 {
+            let _ = writeln!(out, "{}", super::LINE_RESET);
+        }
         Ok((out, statements))
     }
 
@@ -995,6 +1012,11 @@ impl<'a> FnWriter<'a> {
     }
 
     fn line(&mut self, ind: usize, s: &str) {
+        // `Cx::source_lines`: every C line of a statement is its loft line's — a `#line` before
+        // each, since one marker would number the lines after it onward.
+        if self.marked_line != 0 {
+            let _ = writeln!(self.body, "#line {} {}", self.marked_line, self.marked_file);
+        }
         let _ = writeln!(self.body, "{}{s}", "    ".repeat(ind));
     }
 
@@ -1104,9 +1126,11 @@ impl<'a> FnWriter<'a> {
         let mut mints = Vec::new();
         let mut pushes = Vec::new();
         let mut held_scalars = Vec::new();
+        let mut sole_push = false;
         if let Some(verdict) = self.verdict(b) {
             mints.clone_from(&verdict.mint_pushes);
             pushes.clone_from(&verdict.pushes);
+            sole_push = verdict.sole_push;
             for (key, getter) in &verdict.scalars {
                 // A direct read the loop spells `getter(Var(v), fld)` is what this serves; a
                 // path scalar of a callee's input shares its key and its bytes.
@@ -1177,7 +1201,7 @@ impl<'a> FnWriter<'a> {
         }
         self.headers.push(frame);
         self.scalars.push(held_scalars);
-        Ok((mints, pushes))
+        Ok((mints, pushes, sole_push))
     }
 
     /// `@FR-R-Invariant` (@PLN157 § V-ao, rustc's `begin_vector_hoist`): each invariant integer
@@ -1275,10 +1299,16 @@ impl<'a> FnWriter<'a> {
     fn hold_pushes(
         &mut self,
         b: &Block,
-        (mints, pushes): Pushed,
+        (mints, pushes, sole_push): Pushed,
         ind: usize,
     ) -> Result<(), String> {
         let mut frame = Vec::new();
+        // `@FR-R-Push`'s sole-growth clause: the loop's one growth is this path's pushes, so
+        // its header writes through the record address it holds.  `LOFT_NO_PUSH_BASE=1`
+        // resolves the store per push again.
+        let based = sole_push
+            && pushes.len() == 1
+            && !std::env::var("LOFT_NO_PUSH_BASE").is_ok_and(|v| v != "0");
         // `@FR-R-Push`: a scalar pushed path the verdict admits (never also one of its held
         // vectors) keeps a push header the push itself keeps current; its size is its pushes'.
         for (path, expr) in pushes {
@@ -1291,11 +1321,15 @@ impl<'a> FnWriter<'a> {
             };
             let e = self.nested(|w| w.expr(&expr, ind))?;
             let h = format!("ph{}", self.decls.len() + 1);
-            self.decls
-                .push(format!("loft_ph {h} = {{ {{ 0xFFFF, 0, 0 }}, 0, 0, 0 }};"));
+            self.decls.push(format!(
+                "loft_ph {h} = {{ {{ 0xFFFF, 0, 0 }}, 0, 0, 0, 0 }};"
+            ));
             self.line(ind, &format!("{h} = loft_ph_of({}, {size});", as_ref(e)?));
             crate::rewrite_census::fired("R-Push", 1);
-            frame.push((path, h, size));
+            if based {
+                crate::rewrite_census::fired("R-Push/sole", 1);
+            }
+            frame.push((path, h, size, based));
         }
         for (path, expr) in mints {
             if self.windows.iter().any(|(p, _, _, _)| *p == path) || self.push_head(&path).is_some()
@@ -1307,11 +1341,12 @@ impl<'a> FnWriter<'a> {
             };
             let e = self.nested(|w| w.expr(&expr, ind))?;
             let h = format!("ph{}", self.decls.len() + 1);
-            self.decls
-                .push(format!("loft_ph {h} = {{ {{ 0xFFFF, 0, 0 }}, 0, 0, 0 }};"));
+            self.decls.push(format!(
+                "loft_ph {h} = {{ {{ 0xFFFF, 0, 0 }}, 0, 0, 0, 0 }};"
+            ));
             self.line(ind, &format!("{h} = loft_ph_of({}, {size});", as_ref(e)?));
             crate::rewrite_census::fired("R-PushRec", 1);
-            frame.push((path, h, size));
+            frame.push((path, h, size, false));
         }
         self.push_heads.push(frame);
         Ok(())
@@ -1371,12 +1406,17 @@ impl<'a> FnWriter<'a> {
 
     /// The record push header an enclosing loop binds for `path`, with its element size.
     fn push_head(&self, path: &crate::opt::writes::PathKey) -> Option<(String, u32)> {
+        self.push_head_based(path).map(|(h, size, _)| (h, size))
+    }
+
+    /// [`Self::push_head`], with whether its pushes write through its record address.
+    fn push_head_based(&self, path: &crate::opt::writes::PathKey) -> Option<(String, u32, bool)> {
         self.push_heads
             .iter()
             .rev()
             .flat_map(|f| f.iter())
-            .find(|(p, _, _)| p == path)
-            .map(|(_, h, size)| (h.clone(), *size))
+            .find(|(p, _, _, _)| p == path)
+            .map(|(_, h, size, based)| (h.clone(), *size, *based))
     }
 
     /// A mint, a finish or a length of a path a record push header serves.
@@ -1399,7 +1439,7 @@ impl<'a> FnWriter<'a> {
                 .map(|_| E::new("((void) 0)", K::Void)));
         }
         if let Some(fp) = crate::opt::writes::fused_push(data, name, args)
-            && let Some((h, size)) = self.push_head(&fp.path)
+            && let Some((h, size, based)) = self.push_head_based(&fp.path)
             && size == fp.size
         {
             let val = self.expr(fp.val, ind)?;
@@ -1427,9 +1467,17 @@ impl<'a> FnWriter<'a> {
                 _ => return Ok(None),
             };
             let proof_at = format!("{}:{h}", data.def(self.d).original_name());
+            let (same, put) = if based {
+                (
+                    "loft_phb_same",
+                    put.replacen("loft_ph_put", "loft_ph_putb", 1),
+                )
+            } else {
+                ("loft_ph_same", put.to_string())
+            };
             return Ok(Some(E::new(
                 format!(
-                    "(LOFT_PROVED(loft_ph_same({h}, {size}), {}), {put}(&{h}, {bits}))",
+                    "(LOFT_PROVED({same}({h}, {size}), {}), {put}(&{h}, {bits}))",
                     c_string(&proof_at)
                 ),
                 K::Void,
@@ -2326,7 +2374,14 @@ impl<'a> FnWriter<'a> {
 
     fn stmts_in(&mut self, ops: &[Value], ind: usize) -> Result<(), String> {
         let mut i = 0;
+        // The end of the push run a reservation was made for (`reserve_push_run`).
+        let mut run_end = 0;
         while i < ops.len() {
+            if i >= run_end
+                && let Some(end) = self.reserve_push_run(ops, i, ind)?
+            {
+                run_end = end;
+            }
             // `@FR-R-Apart` instance 2: a construction run builds its value as a whole.
             if let Some(next) = self.av_construction(ops, i, ind)? {
                 ops[i..next]
@@ -2359,6 +2414,180 @@ impl<'a> FnWriter<'a> {
             i += 1;
         }
         Ok(())
+    }
+
+    /// The scalar push starting at statement `at`, as `fused_push` reads it, with the index after
+    /// it: a bare push, or the `OpPreAllocVector(v, 1, w)` a push onto a local is lowered with —
+    /// in an `Insert` pair or as the statement before the push.
+    fn push_at<'v>(
+        &self,
+        ops: &'v [Value],
+        at: usize,
+    ) -> Option<(crate::opt::writes::FusedPush<'v>, usize)> {
+        let data = self.cx.data;
+        let call = |v: &'v Value| match v.unspan() {
+            Value::Call(d, a) if (*d as usize) < data.definitions.len() => {
+                Some((data.def(*d).name(), a.as_slice()))
+            }
+            _ => None,
+        };
+        let pre = |v: &'v Value| call(v).is_some_and(|(n, _)| n == "OpPreAllocVector");
+        let (push, next) = match ops.get(at)?.unspan() {
+            Value::Insert(ins) => match &ins[..] {
+                [p, push] if pre(p) => (push, at + 1),
+                _ => return None,
+            },
+            other if pre(other) => (ops.get(at + 1)?, at + 2),
+            other => (other, at + 1),
+        };
+        let (name, args) = call(push)?;
+        crate::opt::writes::fused_push(data, name, args).map(|fp| (fp, next))
+    }
+
+    /// Whether `vector` is EMPTY where statement list `ops` ends: its slot was zeroed —
+    /// `OpSetInt4(r, off, 0)` for the field `OpGetField(r, off, …)`, or for the wrapper field a
+    /// local is bound to — and no statement after that names the vector's root.  A run onto a
+    /// vector that may already hold elements (an append twin's buffer, an accumulating local)
+    /// usually has the room, and a reservation there is a call for nothing.
+    fn known_empty(&self, ops: &[Value], vector: &Value) -> bool {
+        let data = self.cx.data;
+        let field_of = |v: &Value| -> Option<(u16, i32)> {
+            match v.unspan() {
+                Value::Call(d, a)
+                    if (*d as usize) < data.definitions.len()
+                        && data.def(*d).name() == "OpGetField" =>
+                {
+                    match (a.first().map(Value::unspan), a.get(1).map(Value::unspan)) {
+                        (Some(Value::Var(r)), Some(Value::Int(off))) => Some((*r, *off)),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            }
+        };
+        // The slot: the field itself, or the wrapper field a local vector is bound to.
+        let (root, slot) = match vector.unspan() {
+            Value::Var(local) => {
+                let Some(bound) = ops.iter().find_map(|o| match o.unspan() {
+                    Value::Set(var, x) if var == local => field_of(x),
+                    _ => None,
+                }) else {
+                    return false;
+                };
+                (Some(*local), bound)
+            }
+            other => match field_of(other) {
+                Some(f) => (None, f),
+                None => return false,
+            },
+        };
+        let names =
+            |o: &Value, var: u16| o.any_node(&mut |n| matches!(n, Value::Var(x) if *x == var));
+        // A mention of the root that only reaches ANOTHER field — `OpGetField(r, off2, …)` or a
+        // write `OpSet…(r, off2, …)`, `off2` not the slot — leaves the slot as it was.
+        let elsewhere = |o: &Value| -> bool {
+            let (mut all, mut other) = (0usize, 0usize);
+            o.any_node(&mut |n| {
+                if matches!(n, Value::Var(x) if *x == slot.0) {
+                    all += 1;
+                }
+                if let Value::Call(d, a) = n
+                    && (*d as usize) < data.definitions.len()
+                    && (data.def(*d).name() == "OpGetField" || data.def(*d).name().starts_with("OpSet"))
+                    && matches!(a.first().map(Value::unspan), Some(Value::Var(x)) if *x == slot.0)
+                    && matches!(a.get(1).map(Value::unspan), Some(Value::Int(off)) if *off != slot.1)
+                {
+                    other += 1;
+                }
+                false
+            });
+            all == other
+        };
+        for op in ops.iter().rev() {
+            if let Value::Call(d, a) = op.unspan()
+                && (*d as usize) < data.definitions.len()
+                && data.def(*d).name() == "OpSetInt4"
+                && matches!(
+                    (a.first().map(Value::unspan), a.get(1).map(Value::unspan), a.get(2).map(Value::unspan)),
+                    (Some(Value::Var(r)), Some(Value::Int(off)), Some(Value::Int(0))) if (*r, *off) == slot
+                )
+            {
+                return true;
+            }
+            if let Value::Set(var, _) = op.unspan()
+                && Some(*var) == root
+            {
+                continue;
+            }
+            if (names(op, slot.0) && !elsewhere(op)) || root.is_some_and(|l| names(op, l)) {
+                return false;
+            }
+        }
+        false
+    }
+
+    /// `@FR-R-PushFill`'s run clause on the C: a straight-line RUN of `k >= 2` scalar pushes onto
+    /// one path P — consecutive statements with only line markers between, each a push of the
+    /// same element size — reserves room for `k` more elements before the first, so the run grows
+    /// P once instead of at each step.  A reservation is capacity: the elements, the length and
+    /// every value are the pushes' own, and `loft_vec_reserve_run` leaves an absent vector and a
+    /// locked store alone, so a refused push still refuses where it did.  A path a window, a push
+    /// header, a value held apart or a deferred copy serves is left to it.  Answers the index after
+    /// the run.  `LOFT_NO_PUSH_RUN_RESERVE=1` reserves nothing.
+    fn reserve_push_run(
+        &mut self,
+        ops: &[Value],
+        at: usize,
+        ind: usize,
+    ) -> Result<Option<usize>, String> {
+        if self.gen_elem.is_some()
+            || self.av_any()
+            || std::env::var("LOFT_NO_PUSH_RUN_RESERVE").is_ok_and(|v| v != "0")
+        {
+            return Ok(None);
+        }
+        let Some((first, mut next)) = self.push_at(ops, at) else {
+            return Ok(None);
+        };
+        let mut k: i64 = 1;
+        let mut end = next;
+        loop {
+            while matches!(ops.get(next).map(Value::unspan), Some(Value::Line(_))) {
+                next += 1;
+            }
+            let Some((p, after)) = self.push_at(ops, next) else {
+                break;
+            };
+            if p.path != first.path
+                || p.size != first.size
+                || p.vector.unspan() != first.vector.unspan()
+            {
+                break;
+            }
+            k += 1;
+            next = after;
+            end = next;
+        }
+        if k < 2
+            || !self.known_empty(&ops[..at], first.vector)
+            || self.apr_holds(first.path.0)
+            || self.dc_root(first.path.0)
+            || self.push_head(&first.path).is_some()
+            || self.windows.iter().any(|(p, _, _, _)| *p == first.path)
+        {
+            return Ok(None);
+        }
+        let v = self.expr(first.vector, ind)?;
+        self.line(
+            ind,
+            &format!(
+                "loft_vec_reserve_run({}, INT64_C({k}), {});",
+                as_ref(v)?,
+                first.size
+            ),
+        );
+        crate::rewrite_census::fired("R-PushFill/run", 1);
+        Ok(Some(end))
     }
 
     /// `@FR-R-View` (@PLN157 § V-n, rustc's `bind_view_header`): statement `at` bound a vector
@@ -2864,6 +3093,14 @@ impl<'a> FnWriter<'a> {
     fn note_site(&mut self, v: &Value, ind: usize) {
         if let Value::Line(n) = v.unspan() {
             self.cur_line = *n;
+            // A debugger's line table (`Cx::source_lines`): the statements that follow are this
+            // loft line's.  A directive starts its own line; `statement_count` passes over it.
+            if self.cx.source_lines && *n != 0 && *n != self.marked_line {
+                self.marked_line = *n;
+                if self.marked_file.is_empty() {
+                    self.marked_file = c_string(&self.cx.data.def(self.d).position().file);
+                }
+            }
         } else if self.cur_line != 0
             && !matches!(
                 v.unspan(),
@@ -4556,6 +4793,16 @@ impl<'a> FnWriter<'a> {
                 {
                     return self.move_tuple_in(e, target, id, ind);
                 }
+                // A text value held in a statement temporary (a call's fresh result) moves into
+                // the target: the temporary is released at the statement's end and nothing else
+                // names it, so the target takes its buffer instead of a copy.
+                // `LOFT_NO_C_TEXT_MOVE=1` copies.
+                if c == CType::Text
+                    && let Some(t) = self.pending_text_temp(&e.code)
+                {
+                    self.line(ind, &format!("loft_text_move(&{target}, &{t});"));
+                    return Ok(());
+                }
                 let s = match c {
                     CType::Text => format!("loft_text_set(&{target}, {});", as_view(e)?),
                     CType::Void => format!("{};", e.code),
@@ -4656,7 +4903,13 @@ impl<'a> FnWriter<'a> {
         // value included; its frame closes with the block.
         let frames = self.headers.len();
         let r = (|| {
+            let mut run_end = 0;
             for i in 0..at {
+                if i >= run_end
+                    && let Some(end) = self.reserve_push_run(&ops[..at], i, ind)?
+                {
+                    run_end = end;
+                }
                 self.stmt(&ops[i], ind)?;
                 self.bind_view_header(ops, i, ind);
             }
@@ -4933,6 +5186,11 @@ impl<'a> FnWriter<'a> {
                     return Ok(e);
                 }
                 let c = self.shape_of(compound)?;
+                if c == CType::Text
+                    && let Some(e) = self.nested(|w| w.text_tail_view(compound, ind))?
+                {
+                    return Ok(e);
+                }
                 self.nested(|w| {
                     if c == CType::Void {
                         w.stmt(compound, ind)?;
@@ -4950,10 +5208,12 @@ impl<'a> FnWriter<'a> {
     }
 
     /// `@FR-R-TextBorrow`'s discharge clause, its value: a text choice between views —
-    /// `if c { a } else { b }`, as a `?` discharge writes it,
-    /// where each arm is a borrowed text variable or a literal — as the view it picks: the
-    /// bytes are the arm's own, valid as long as that variable is, so nothing is copied.
-    /// `None` for any other compound.
+    /// `if c { a } else { b }`, as a `?` discharge writes it, or as a text value chooses between
+    /// pieces (`out += if last { "=" } else { chars[k..k + 1] }`) — where each arm is a literal,
+    /// a borrowed text variable, or a slice of one of those or of a plain text parameter: the
+    /// view it picks, the bytes the arm's own, valid as long as that text is, so nothing is
+    /// copied.  Each arm is written in its own branch, so the arm not taken computes nothing.
+    /// `None` for any other compound.  `LOFT_NO_VIEW_CHOICE_SLICE=1` keeps a slice arm's copy.
     fn view_choice(&mut self, compound: &Value, ind: usize) -> Result<Option<E>, String> {
         let (pre, last): (&[Value], &Value) = match compound.unspan() {
             Value::Block(block) => match block.operators.split_last() {
@@ -4965,12 +5225,10 @@ impl<'a> FnWriter<'a> {
         let Value::If(cond, then, other) = last.unspan() else {
             return Ok(None);
         };
-        let viewable = |w: &Self, arm: &Value| match arm.unspan() {
-            Value::Text(_) => true,
-            Value::Var(var) => w.shapes[*var as usize] == CType::Text && w.borrowed[*var as usize],
-            _ => false,
-        };
-        if !viewable(self, then) || !viewable(self, other) {
+        let slices =
+            !crate::env_once!(std::env::var("LOFT_NO_VIEW_CHOICE_SLICE").is_ok_and(|v| v != "0"));
+        let (then, other) = (Self::arm_value(then), Self::arm_value(other));
+        if !self.viewable_arm(then, slices) || !self.viewable_arm(other, slices) {
             return Ok(None);
         }
         // The block's own statements first — the discharge's bind of the variable it tests.
@@ -4979,18 +5237,59 @@ impl<'a> FnWriter<'a> {
         }
         let test = self.expr(cond, ind)?;
         let test = as_cond(test)?;
-        let (then, other) = (self.expr(then, ind)?, self.expr(other, ind)?);
         let view = format!("tv{}", self.decls.len() + 1);
         self.decls.push(format!("loft_str {view} = {{ 0, 0 }};"));
-        self.line(
-            ind,
-            &format!(
-                "{view} = ({test}) ? {} : {};",
-                as_view(then)?,
-                as_view(other)?
-            ),
-        );
+        self.line(ind, &format!("if ({test}) {{"));
+        let then = self.expr(then, ind + 1)?;
+        self.line(ind + 1, &format!("{view} = {};", as_view(then)?));
+        self.line(ind, "} else {");
+        let other = self.expr(other, ind + 1)?;
+        self.line(ind + 1, &format!("{view} = {};", as_view(other)?));
+        self.line(ind, "}");
         Ok(Some(E::new(view, K::View)))
+    }
+
+    /// An arm's value: the arm itself, or the one value a block holds beside its line marks.
+    fn arm_value(arm: &Value) -> &Value {
+        if let Value::Block(b) = arm.unspan() {
+            let mut ops = b
+                .operators
+                .iter()
+                .filter(|o| !matches!(o.unspan(), Value::Line(_)));
+            if let (Some(only), None) = (ops.next(), ops.next()) {
+                return only;
+            }
+        }
+        arm
+    }
+
+    /// An arm `view_choice` reads as a view: a literal, a borrowed text variable, or — with
+    /// `slices` — a slice of a literal, a borrowed text variable or a plain text parameter,
+    /// whose bounds are scalars.
+    fn viewable_arm(&self, arm: &Value, slices: bool) -> bool {
+        let source = |v: &Value| match v.unspan() {
+            Value::Text(_) => true,
+            Value::Var(var) => {
+                let i = *var as usize;
+                self.shapes[i] == CType::Text
+                    && (self.borrowed[i]
+                        || (self.vars.is_argument(*var)
+                            && !matches!(self.vars.tp(*var).base(), crate::data::Type::RefVar(_))))
+            }
+            _ => false,
+        };
+        match arm.unspan() {
+            Value::Text(_) => true,
+            Value::Var(var) => {
+                self.shapes[*var as usize] == CType::Text && self.borrowed[*var as usize]
+            }
+            Value::Call(d, args)
+                if slices && self.cx.data.def(*d).name() == "OpGetTextSub" && args.len() == 3 =>
+            {
+                source(&args[0])
+            }
+            _ => false,
+        }
     }
 
     /// Statements written inside an expression: they free only the temporaries they make, as
@@ -5001,6 +5300,71 @@ impl<'a> FnWriter<'a> {
         let inner = std::mem::replace(&mut self.pending, outer);
         self.pending.extend(inner);
         r
+    }
+
+    /// A text value block whose value is a text local the block leaves alone after it — the
+    /// work text a call or a format fills, `{ w = f(…); w }` — is that local's view, as a plain
+    /// read of it is, instead of a copy into a temporary: the block's statements run, then its
+    /// frees, none of which names the local.  `arg_with` guards the view as it guards a read of
+    /// the local.  `None` for every other block, and under `LOFT_NO_C_TAIL_VIEW=1`.
+    fn text_tail_view(&mut self, block: &Value, ind: usize) -> Result<Option<E>, String> {
+        let Value::Block(bl) = block.unspan() else {
+            return Ok(None);
+        };
+        if std::env::var("LOFT_NO_C_TAIL_VIEW").is_ok_and(|flag| flag != "0") {
+            return Ok(None);
+        }
+        let ops = &bl.operators;
+        if self.tail_capture(ops).is_some() {
+            return Ok(None);
+        }
+        let Some(at) = ops.iter().rposition(|o| {
+            !matches!(o.unspan(), Value::Line(_) | Value::Set(..)) && !self.is_free(o)
+        }) else {
+            return Ok(None);
+        };
+        let Value::Var(work) = ops[at].unspan() else {
+            return Ok(None);
+        };
+        let work = *work;
+        if !self.text_held(work)
+            || ops[at + 1..]
+                .iter()
+                .any(|o| o.any_node(&mut |n| matches!(n, Value::Var(x) if *x == work)))
+        {
+            return Ok(None);
+        }
+        let frames = self.headers.len();
+        let r = (|| -> Result<E, String> {
+            for i in 0..at {
+                self.stmt(&ops[i], ind)?;
+                self.bind_view_header(ops, i, ind);
+            }
+            let tail = self.expr(&ops[at], ind)?;
+            self.flush(ind);
+            ops[at + 1..].iter().try_for_each(|o| self.stmt(o, ind))?;
+            Ok(tail)
+        })();
+        self.headers.truncate(frames.min(self.headers.len()));
+        let view = r?;
+        if view.kind != K::View {
+            return Err("a text block's tail read as no view".into());
+        }
+        Ok(Some(view))
+    }
+
+    /// The statement temporary an expression `code` reads, when it is exactly a view of an owned
+    /// text temporary this statement made ([`Self::held`]) — a value nothing else names, which a
+    /// text target may take by a move.  `None` under `LOFT_NO_C_TEXT_MOVE=1`.
+    fn pending_text_temp(&self, code: &str) -> Option<String> {
+        let t = code.strip_prefix("loft_view(&")?.strip_suffix(')')?;
+        if !self.pending.iter().any(|p| p == t)
+            || !self.temps.iter().any(|(n, c)| n == t && *c == CType::Text)
+            || std::env::var("LOFT_NO_C_TEXT_MOVE").is_ok_and(|v| v != "0")
+        {
+            return None;
+        }
+        Some(t.to_string())
     }
 
     /// The expression reading temporary `t` of shape `c`.
@@ -5101,7 +5465,15 @@ impl<'a> FnWriter<'a> {
     /// node's address (`@FR-R-GuardedChain`'s admitted operators) must meet the node it admitted.
     fn arg_with(&mut self, operand: &Value, later_writes: bool, ind: usize) -> Result<E, String> {
         let value = self.expr(operand, ind)?;
-        if later_writes && matches!(operand.unspan(), Value::Var(_)) && value.kind == K::View {
+        // A text block's tail view (`text_tail_view`) reads a local, as a variable operand does.
+        let reads_local = match operand.unspan() {
+            Value::Var(_) => true,
+            Value::Block(_) => {
+                value.kind == K::View && self.pending_text_temp(&value.code).is_none()
+            }
+            _ => false,
+        };
+        if later_writes && reads_local && value.kind == K::View {
             let temp = self.temp(CType::Text);
             self.line(ind, &format!("loft_text_set(&{temp}, {});", value.code));
             return Ok(self.held(temp, CType::Text));
@@ -5274,6 +5646,16 @@ impl<'a> FnWriter<'a> {
         // A link argument is the address of the caller's variable; the others are values,
         // evaluated in order.
         let mut xs = vec![String::new(); args.len()];
+        let carriers = self.slice_carriers.len();
+        if !std::env::var("LOFT_NO_SLICE_ARG_POOL").is_ok_and(|v| v != "0") {
+            for (a, arg) in def.attributes().iter().zip(args) {
+                if a.value_const
+                    && let Some(w) = slice_carrier(cx.data, arg)
+                {
+                    self.slice_carriers.push(w);
+                }
+            }
+        }
         let (values, places) = self.link_args(d, args, &shapes, &mut xs, ind)?;
         let ptr = cx.vr_ptr_params(d);
         let tuple_params: Vec<(usize, u16, bool)> = tuple_params
@@ -5284,7 +5666,9 @@ impl<'a> FnWriter<'a> {
         // A callee that runs no store write reads a text argument as a text VALUE op
         // does (`@FR-F-ParamText`) — unless a store place goes to a `&` parameter, which its twin writes.
         let reads = places == 0 && cx.call_keeps_stores(d);
-        self.value_args(args, &shapes, &values, &mut xs, reads, ind)?;
+        let r = self.value_args(args, &shapes, &values, &mut xs, reads, ind);
+        self.slice_carriers.truncate(carriers);
+        r?;
         if let Some(i) = dropped {
             xs.remove(i);
         }
@@ -5329,7 +5713,10 @@ impl<'a> FnWriter<'a> {
         }
         // `@FR-R-NonSentinelParam`'s twin clause: the parameters this call's arguments prove
         // beyond the program-wide fact go to a `__nn` twin that seeds them.
-        if super::native_c(route).is_none() && args.len() <= 26 && !self.apr_twin_call(d, args) {
+        if super::native_c(route).is_none()
+            && args.len() <= super::NN_PARAMS
+            && !self.apr_twin_call(d, args)
+        {
             let bits = self.nn_twin_bits(d, args);
             if bits != 0 {
                 mask |= bits << super::NN_SHIFT;
@@ -5411,7 +5798,7 @@ impl<'a> FnWriter<'a> {
         let global = crate::opt::non_sentinel::proven_param_flags(data, d).unwrap_or_default();
         let facts = self.nn_facts();
         let mut bits = 0u64;
-        for (i, a) in args.iter().enumerate().take(26) {
+        for (i, a) in args.iter().enumerate().take(super::NN_PARAMS) {
             if cand.get(i).copied().unwrap_or(false)
                 && !global.get(i).copied().unwrap_or(false)
                 && crate::opt::non_sentinel::non_sentinel(data, &facts.0, a)
@@ -6798,8 +7185,43 @@ impl<'a> FnWriter<'a> {
         }
     }
 
+    /// `@FR-R-SliceArg`: a slice handed to a `const` parameter is copied into a pooled carrier,
+    /// which keeps its vector record — so the zeroing of the fresh wrapper's field that follows
+    /// the mint is no part of it.
+    fn slice_carrier_operator(&mut self, name: &str, args: &[Value]) -> Result<Option<E>, String> {
+        if self.slice_carriers.is_empty() {
+            return Ok(None);
+        }
+        match (name, args) {
+            ("OpDatabase", [Value::Var(var), tp]) if self.slice_carriers.contains(var) => {
+                let tp = u16::try_from(Self::literal(tp, "type")?)
+                    .map_err(|_| "a type number out of range".to_string())?;
+                let size = self.cx.stores.enum_parent_size(tp);
+                self.cx.describe_type(tp);
+                self.cx.copy_type(tp)?;
+                crate::rewrite_census::fired("R-SliceArg", 1);
+                Ok(Some(E::new(
+                    format!(
+                        "loft_slice_take(loft_types, &{}, {size}, {tp})",
+                        self.var(*var)
+                    ),
+                    K::Void,
+                )))
+            }
+            ("OpSetInt4", [Value::Var(var), Value::Int(0), Value::Int(0)])
+                if self.slice_carriers.contains(var) =>
+            {
+                Ok(Some(E::new("((void) 0)", K::Void)))
+            }
+            _ => Ok(None),
+        }
+    }
+
     fn store_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
         if let Some(e) = self.free_operator(name, args, ind)? {
+            return Ok(e);
+        }
+        if let Some(e) = self.slice_carrier_operator(name, args)? {
             return Ok(e);
         }
         if let Some(e) = self.append_twin_buffer_op(name, args, ind)? {
@@ -6963,6 +7385,116 @@ impl<'a> FnWriter<'a> {
 
     /// `OpAppendVector(v, other, tp)` (`Stores::vector_add`, a linked element type's records by
     /// `vector_add_array`) and `OpPrependVector` (`Stores::prepend_vector`), `tp` the element.
+    /// A vector value that is one scalar slice materialised into a temporary of its own —
+    /// `{ <bounds>; <mint the temporary>; OpSliceView(tmp, src, lo, hi, row); tmp }`, the block a
+    /// slice used as a value converts to (`Parser::materialise_slice_leaves`) — as the statements
+    /// that compute its bounds and the slice op's operands.  `None` for any other value, or when
+    /// anything but its own mint, zero, clear or bind mentions the temporary.
+    fn slice_fill<'v>(&self, other: &'v Value) -> Option<(Vec<&'v Value>, &'v [Value])> {
+        if crate::env_once!(std::env::var("LOFT_NO_SLICE_INTO").is_ok_and(|v| v != "0")) {
+            return None;
+        }
+        let Value::Block(bl) = other.unspan() else {
+            return None;
+        };
+        let (last, rest) = bl.operators.split_last()?;
+        let Value::Var(tmp) = last.unspan() else {
+            return None;
+        };
+        if !self.vars.name(*tmp).contains("__iter_vec") {
+            return None;
+        }
+        let mut owned: Vec<u16> = vec![*tmp];
+        owned.extend(self.vars.tp(*tmp).depend().iter().copied());
+        let names_owned = |v: &Value| {
+            let mut hit = false;
+            v.walk(&mut |n| {
+                if matches!(n, Value::Var(x) if owned.contains(x)) {
+                    hit = true;
+                }
+            });
+            hit
+        };
+        let mut flat: Vec<&Value> = Vec::new();
+        fn flatten<'a>(ops: &'a [Value], out: &mut Vec<&'a Value>) {
+            for op in ops {
+                match op.unspan() {
+                    Value::Insert(inner) => flatten(inner, out),
+                    _ => out.push(op),
+                }
+            }
+        }
+        flatten(rest, &mut flat);
+        let mut prelude = Vec::new();
+        let mut slice: Option<&[Value]> = None;
+        for op in flat {
+            let n = op.unspan();
+            if let Value::Call(d, args) = n {
+                let name = self.cx.data.def(*d).name();
+                if matches!(name, "OpSliceView" | "OpSliceVector")
+                    && args.len() == 5
+                    && matches!(args[0].unspan(), Value::Var(x) if x == tmp)
+                    && !args[1..].iter().any(&names_owned)
+                    && slice.is_none()
+                {
+                    slice = Some(&args[1..]);
+                    continue;
+                }
+                if matches!(
+                    name,
+                    "OpDatabase" | "OpDatabaseNP" | "OpSetInt4" | "OpClearVector"
+                ) && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if owned.contains(x))
+                    && !args[1..].iter().any(&names_owned)
+                {
+                    continue;
+                }
+            }
+            // The temporary's own setup — its store's null init and its bind to that store's
+            // field — names nothing but the temporary's variables.
+            if let Value::Set(x, val) = n
+                && owned.contains(x)
+            {
+                let mut foreign = false;
+                val.walk(&mut |m| {
+                    if matches!(m, Value::Var(y) if !owned.contains(y)) {
+                        foreign = true;
+                    }
+                });
+                if foreign || slice.is_some() {
+                    return None;
+                }
+                continue;
+            }
+            if names_owned(op) {
+                return None;
+            }
+            prelude.push(op);
+        }
+        Some((prelude, slice?))
+    }
+
+    /// `(R-SliceInto)` (C) — the slice appended straight onto `v`: the bounds' statements, then
+    /// `loft_vec_slice(v, src, lo, hi, size)`, which appends `[lo, hi)` clamped as one block —
+    /// what the temporary's fill and the append it fed did together, without its store.
+    fn slice_into(
+        &mut self,
+        v: &Value,
+        prelude: &[&Value],
+        slice: &[Value],
+        ind: usize,
+    ) -> Result<E, String> {
+        let dest = as_ref(self.expr(v, ind)?)?;
+        for op in prelude {
+            self.stmt(op, ind)?;
+        }
+        let raw = format!("({dest})");
+        self.raw.insert(raw.clone(), K::Ref);
+        let mut args = vec![Value::RawExpr(raw)];
+        args.extend(slice.iter().cloned());
+        crate::rewrite_census::fired("R-SliceInto", 1);
+        self.vec_slice(&args, ind, "loft_vec_slice")
+    }
+
     fn append_vector_op(
         &mut self,
         name: &str,
@@ -6974,6 +7506,12 @@ impl<'a> FnWriter<'a> {
         let tp = u16::try_from(Self::literal(tp, "element type")?)
             .map_err(|_| "an element type out of range")?;
         let linked = self.cx.stores.is_linked(tp);
+        if name == "OpAppendVector"
+            && !linked
+            && let Some((prelude, slice)) = self.slice_fill(other)
+        {
+            return self.slice_into(v, &prelude, slice, ind);
+        }
         self.cx.copy_type(tp)?;
         let (v, other) = self.two(name, &[v, other], ind)?;
         let (v, other) = (as_ref(v)?, as_ref(other)?);
@@ -8369,4 +8907,55 @@ fn shape_of_kind(k: K) -> Option<CType> {
         K::Tup(id) => CType::Tuple(id),
         K::View | K::Void => return None,
     })
+}
+
+/// `@FR-R-SliceArg`: the wrapper variable of a slice VALUE — the block a slice used as a value is
+/// lowered to, `{ OpDatabase(w, tp); it = OpGetField(w, 0, …); OpSetInt4(w, 0, 0); <bounds>;
+/// OpSliceView(it, src, lo, hi, row); it }` — when `arg` is exactly that; `None` for every other
+/// argument.
+fn slice_carrier(data: &crate::data::Data, arg: &Value) -> Option<u16> {
+    let Value::Block(block) = arg.unspan() else {
+        return None;
+    };
+    let call = |node: &Value| match node.unspan() {
+        Value::Call(def, operands) if (*def as usize) < data.definitions.len() => {
+            Some((data.def(*def).name(), operands.clone()))
+        }
+        _ => None,
+    };
+    let names = |node: Option<&Value>, var: u16| matches!(node.map(Value::unspan), Some(Value::Var(found)) if *found == var);
+    let ops: Vec<&Value> = block
+        .operators
+        .iter()
+        .filter(|op| !matches!(op.unspan(), Value::Line(_)))
+        .collect();
+    let (first, last) = (ops.first()?, ops.last()?);
+    let (mint, mint_ops) = call(first)?;
+    let wrapper = match (mint, mint_ops.as_slice()) {
+        ("OpDatabase", [Value::Var(wrapper), _]) => *wrapper,
+        _ => return None,
+    };
+    let Value::Var(iter) = last.unspan() else {
+        return None;
+    };
+    let iter = *iter;
+    let mut bound = false;
+    let mut sliced = false;
+    for op in &ops[1..ops.len() - 1] {
+        match op.unspan() {
+            Value::Set(var, value) if *var == iter => {
+                bound = matches!(call(value), Some((get, operands))
+                    if get == "OpGetField" && names(operands.first(), wrapper));
+            }
+            other => {
+                if let Some((slice, operands)) = call(other)
+                    && slice == "OpSliceView"
+                    && names(operands.first(), iter)
+                {
+                    sliced = true;
+                }
+            }
+        }
+    }
+    (bound && sliced).then_some(wrapper)
 }

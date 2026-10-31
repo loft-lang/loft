@@ -39,25 +39,25 @@ the shared core below.
 | claimed blocks | `claims` | `claims` | same |
 | records a stored reference named (`@FR-H-Removed`) | `referenced` | `referenced` | same |
 | removed records that keep their header | `removed` | `removed` | same |
-| the claimed high-water mark | `claimed_end` | `claimed_end` | same; reset on init differs — D19a |
+| the claimed high-water mark | `claimed_end` | `claimed_end` | same |
 | the free tree's root | `free_root` | `free_root` | same |
 | the wilderness end | `wild` | `wild` | same |
 | words lost to fragments | `dead_words` | `dead_words` | same |
-| a coalesce pending | `needs_coalesce` | `needs_coalesce` | same; reset on init differs — D19a |
+| a coalesce pending | `needs_coalesce` | `needs_coalesce` | same |
 | lazy frees, and the set of them | `lazy`, `lazy_free` | `lazy`, `lazy_free` | same |
 | every byte written once | `defined` | `defined` | same |
-| parked blocks (`@FR-H-Park`) | `park`, `parked` | `no_park`, `parked_set`, `parked_heads`, `parked_count` | D20 |
+| parked blocks (`@FR-H-Park`) | `park`, `parked` | `no_park`, `parked_set`, `parked_heads`, `parked_count` | same lists, bytes proven alike (D20) |
 | live or free | `free` | `live` | same, opposite sense |
-| read only, and who locked it | `read_only`, `user_locked`, `lock_origin` | `read_only` | D21 |
-| a free that must wait (calls holding it) | `free_protect_depth` | `protect` | D22 |
+| read only, and who locked it | `read_only`, `user_locked`, `lock_origin` | `read_only` | same lock; who locked it is the interpreter's report (D21) |
+| a free that must wait (calls holding it) | `free_protect_depth` | `protect` | same count, two names (D22) |
 | pinned (never freed) | `pinned` | `pinned` | same |
 | the type of its first record | `known_type` | `known` | same |
 | allocation serial | `alloc_serial` | `serial` | same |
 | records placed from a foreign source | `placed_foreign` | `placed`, `nplaced`, `placed_cap` | same |
 | a foreign store (`file_map`, adopted) | `foreign` | `foreign` | same (locking converged, D1) |
-| backed by a mapped file | `file` (`MmapStorage`) | — | D23 (decided: C gains it) |
+| backed by a mapped file (`@FR-S-Mapped`) | `file` (`MmapStorage`) | `mapped`, `map_file` (`loft_mapped.h`) | same (D23) |
 | held by a live generator frame (`@FR-G-Arg-Rebind`) | — (asked elsewhere) | `frame_holds`, `orphaned` | D24 |
-| allocator policy flags | `wilderness`, `carve`, `move_on_grow`, `borrowed` | — (always on, or absent) | D25 |
+| allocator policy flags | `wilderness`, `carve`, `move_on_grow`, `borrowed` | compile-time switches (`-DLOFT_NO_*`) | D25 closed; `wilderness` is D35 |
 | the interpreter's stack | `stack_buffer` | — (the C stack) | D26 |
 | instruments | `generation`, `recording`, `tag`, `created_at`, `last_op_at`, `init_shadow`, `parse_errors`, `parse_type`, `store_nr` | — | D27 |
 
@@ -93,51 +93,25 @@ D1–D19 are the pairing's ranked list; their numbers are kept so the plan, the 
 fixes name a row the same way.  D20 onward come from the field-by-field comparison above and
 from P0b (what the C runtime lacks).  State: **open**, **fixing** (on the branch named), or
 **decided** (the decision and its measurement).  A closed row moves to
-[STORE_MODEL-history.md](STORE_MODEL-history.md) with its commit; D1–D5, D7a and D29 are there.
+[STORE_MODEL-history.md](STORE_MODEL-history.md) with its commit; D1–D7c, D9a–D10, D12–D17,
+D18–D19f, D19h, D20–D23, D25, D29, D31 and D34 are there.
 
 ### Correctness
 
 | # | Divergence | State |
 |---|---|---|
-| D7b | `loft_swap_in` exchanges locked or foreign stores | fixing — laptop-c-perf |
-| D7c | `loft_reset_pool_root` re-mints a locked, file-backed or foreign store | fixing — laptop-c-perf |
 | D8 | the swap-in gate is narrower in C (walk scratch, constant, lazy binding), and refuses a protected destination where Rust tests the source | open |
-
-### Leaks
-
-| # | Divergence | State |
-|---|---|---|
-| D9a | `loft_keep_vector_range` releases nothing from the dropped elements | fixing — laptop-c-perf |
-| D9b | `loft_vec_replace` / `_array` clear without releasing | fixing — laptop-c-perf |
-| D9c | `loft_database_wrapper` zeroes the slot without `remove_claims` | fixing — laptop-c-perf |
-| D9d | a dying `File` never closes its handle in C, and a copy never leases it (`@FR-H-Handle`) | fixing — laptop-c-perf |
 
 ### Contract and diagnostics
 
 | # | Divergence | State |
 |---|---|---|
 | D11 | no `WriteDropped` diagnostic in C for a write through a null holder | open |
-| D12 | the FFI claim callback zeroes in C and not in the interpreter | open — decided by D17 |
-
-### Hot paths
-
-| # | Divergence | State |
-|---|---|---|
-| D13 | `loft_append_text_bytes` works per byte; the interpreter grows once and copies once | open — C moves |
-| D14 | `loft_vec_slice` works per element; the interpreter makes one block copy | fixing — laptop-c-perf |
-| D15 | copying a text field mallocs a temporary in C | fixing — laptop-c-perf |
-| D16 | `OpReplaceKeyed` rebuilds every entry in C (O(n)); the interpreter swaps stores (O(1)) | fixing — laptop-c-perf |
-| D17 | `loft_claim` zeroes every runtime claim (about 27 sites) where `@FR-H-Claim` promises nothing | fixing — laptop-c-perf (owner: no zeroing of whole regions) |
-| D18 | a vector copy walks elements that own no heap | open — C moves |
 
 ### Edges
 
 | # | Divergence | State |
 |---|---|---|
-| D19a | `loft_st_init` resets `claimed_end` and `needs_coalesce`; the interpreter does not | open — is the interpreter's stale value intended? |
-| D19b | the allocator's switches are hard-wired in C | P0b |
-| D19d | `loft_claim_grow` does not check for u32 overflow | open |
-| D19f | clear-release skips the store reset on an already-empty vector | open |
 | D19g | slice-view and adopt make a view on a locked destination | open |
 | D19i | the store minted for an FFI vector answer leaks on a null answer in C | open |
 | D19j | FFI record answers are refused in C (C-MISSING) | open |
@@ -146,15 +120,12 @@ from P0b (what the C runtime lacks).  State: **open**, **fixing** (on the branch
 
 | # | Divergence | State |
 |---|---|---|
-| D20 | parking: one `park` switch and a `Parked` set against `no_park` and a bitset with per-size heads | open — compare under the differential |
-| D21 | who locked a store: the interpreter records `user_locked` and `lock_origin` for its report | open — observability, P0b |
-| D22 | free protection: a depth counter against a protect count — one meaning, two spellings | open — one name |
-| D23 | mmap-backed stores exist only in the interpreter | decided (owner): C gains them, the interpreter's model kept |
 | D24 | a store held by a generator frame: C marks it (`frame_holds`, `orphaned`), the interpreter answers elsewhere | open |
-| D25 | allocator policy flags (`wilderness`, `carve`, `move_on_grow`, `borrowed`) are per-store in the interpreter, fixed in C | open — with D19b |
 | D26 | the interpreter's stack lives in a store; C's is the C stack | open — not a store property for a C unit; P4 decides |
 | D27 | the interpreter's store instruments (generation, recording, tag, timestamps, init shadow) | P0b |
 | D28 | the store table: a `Vec<Store>` beside the type table against a thread-local array | open — P3 |
+| D33 | a call result rebound in a loop (`x = mul(a, x)`): native rotates the call's return buffer (`__rbb`, `@FR-O-Buffer`) and makes no store; the C adopts the result and frees the old store, so it makes and frees one store per iteration; the interpreter exchanges (`@FR-H-SwapRebind`) and also makes one, freeing the TOP slot.  Under `LOFT_STRICT_STORES` the C therefore runs out of numbers in a long loop (`c_sweep.py --strict-stores` files it as beyond the mode) | open — C moves (`@FR-R-RebindBuffer` in the C writer; the performance stream's).  Measured by hand on the emitted unit: the rotation saves about 7 % on a 3 000 000-iteration `x = mul(a, x)` loop at `-O3` (0.14 s → 0.13 s, same answer) — a C store's make and free are cheap |
+| D35 | the allocator's `LOFT_NO_WILDERNESS` switch: off, the interpreter tracks no block at `init` and every claim path changes; the C has the policy always on (the other six switches are ported, D19b) | open — a port of its own |
 | D30 | an image of another layout: the interpreter converts it (`Stores::upgrade_store`), C refuses it by name (`loft_image.h`) — except the null-first key order, which C converts by itself (`loft_rekey_walk`) | open — P0b (port), the key-order case done |
 
 ## How a divergence is closed

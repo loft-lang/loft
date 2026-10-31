@@ -4683,7 +4683,6 @@ impl Stores {
         self.walk_copy_cmp(src, dst, tp, label.to_string(), &mut seen);
     }
 
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn walk_copy_cmp(
         &self,
         src: &DbRef,
@@ -4751,42 +4750,19 @@ impl Stores {
                 }
             }
             Parts::Hash(v, _) => {
-                let v = *v;
-                let s_cur = self.store(src).get_u32_raw(src.rec, src.pos);
-                let d_cur = self.store(dst).get_u32_raw(dst.rec, dst.pos);
-                if s_cur == 0 || d_cur == 0 {
-                    return;
-                }
-                let s_room = self.store(src).get_u32_raw(s_cur, 0);
-                let d_room = self.store(dst).get_u32_raw(d_cur, 0);
-                let s_len = self.store(src).get_u32_raw(s_cur, 4);
-                let d_len = self.store(dst).get_u32_raw(d_cur, 4);
-                if s_len != d_len && seen.insert(format!("{path}#count")) {
+                // The live counts through `hash::count` (what `len(h)` answers), never the
+                // table's raw header words: an inline table keeps neither its room nor its
+                // count where an arena table does, and reading them so reported "1 against 3"
+                // for correct copies and followed a bucket word as a record into a crash
+                // (@PLN206, `c_sweep.py --copy-check`).  The entries are not walked pairwise:
+                // a rebuilt table need not keep the source's bucket order.  The C walk is
+                // the same (`loft_copy_cmp`).
+                let sl = crate::hash::count(src, &self.allocations);
+                let dl = crate::hash::count(dst, &self.allocations);
+                if sl != dl && seen.insert(format!("{path}#count")) {
                     crate::loft_eprintln!(
-                        "[copy_check] MISMATCH {path}: src_count={s_len} dst_count={d_len} (hash)"
+                        "[copy_check] MISMATCH {path}: src_count={sl} dst_count={dl} (hash kt={v})"
                     );
-                }
-                // copy_claims_hash_body copies bucket-by-bucket, so when the two
-                // tables have equal `room` the bucket index pairs src↔dst.
-                if s_room == d_room && self.has_nested_heap(v) {
-                    let elms = s_room.saturating_sub(1) * 2;
-                    for i in 0..elms {
-                        let se = self.store(src).get_u32_raw(s_cur, 8 + 4 * i);
-                        let de = self.store(dst).get_u32_raw(d_cur, 8 + 4 * i);
-                        if se != 0 && de != 0 {
-                            let s = DbRef {
-                                store_nr: src.store_nr,
-                                rec: se,
-                                pos: 8,
-                            };
-                            let d = DbRef {
-                                store_nr: dst.store_nr,
-                                rec: de,
-                                pos: 8,
-                            };
-                            self.walk_copy_cmp(&s, &d, v, format!("{path}[]"), seen);
-                        }
-                    }
                 }
             }
             Parts::ChildRec(content_kt) => {

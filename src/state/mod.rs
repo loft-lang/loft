@@ -3058,18 +3058,37 @@ impl State {
         self.stack_base = stack_base_of(&self.database, &self.stack_cur);
     }
 
-    /// `@FR-R-StackBase` — claim a record IN the stack store (a `par` worker's text work
-    /// buffers).  The claim may grow the store and move its buffer, which every other mover
-    /// refuses (`Store::stack_buffer`); this one is sanctioned because it re-derives the
-    /// cached base and capacity after it, as `grow_stack` does.
-    fn claim_in_stack(&mut self, words: u32) -> DbRef {
-        self.database.store_mut(&self.stack_cur).stack_buffer = false;
-        let cr = self.database.claim(&self.stack_cur, words);
-        let store = self.database.store_mut(&self.stack_cur);
-        store.stack_buffer = true;
-        self.stack_cap_bytes = store.byte_capacity() as u32;
-        self.stack_base = stack_base_of(&self.database, &self.stack_cur);
-        cr
+    /// The hidden text work-buffers of a `-> text` function entered from Rust (a `par`
+    /// worker, a host call): `n` empty `String`s at the foot of the stack, where an ordinary
+    /// caller keeps its callee's buffer in its own frame.  Answers their references and the
+    /// entry frame's base just above them.  Inside the stack record they move with it; a
+    /// record of their own beside it in the stack's store was run over by the frames of a
+    /// deep enough call, since a frame is bounded by the store and not by the record
+    /// (loft#2271).
+    fn stack_work_buffers(&mut self, n: usize) -> (Vec<DbRef>, u32) {
+        const BUFFER: u32 = 32; // a `String` (24 bytes) on the stack's 8-byte step
+        let foot = self.stack_step(4);
+        self.stack_pos = foot;
+        self.ensure_stack(BUFFER * n as u32);
+        let mut crs = Vec::with_capacity(n);
+        for i in 0..n as u32 {
+            let cr = DbRef {
+                store_nr: self.stack_cur.store_nr,
+                rec: self.stack_cur.rec,
+                pos: self.stack_cur.pos + foot + BUFFER * i,
+            };
+            // SAFETY: the slot lies inside the stack record (`ensure_stack` above), 8-aligned,
+            // and holds no live value — the entry frame starts above it.
+            unsafe {
+                let p = self
+                    .database
+                    .store_mut(&self.stack_cur)
+                    .addr_mut::<String>(cr.rec, cr.pos);
+                std::ptr::write(std::ptr::from_mut(p), String::new());
+            }
+            crs.push(cr);
+        }
+        (crs, foot + BUFFER * n as u32)
     }
 
     /// The address of stack byte `off` (relative to the stack record's field base), for the
@@ -9835,28 +9854,15 @@ impl State {
         }
         let d_nr = self.worker_d_nr(fn_pos);
         let args_size = self.worker_arg_size(&arg);
+        // String buffers for the hidden RefVar(Text) params, below the entry frame.
+        let (work_crs, entry) = self.stack_work_buffers(n_hidden_text);
         self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
-            args_base: self.stack_step(4),
+            args_base: entry,
             args_size,
         });
-        // Allocate String buffers for hidden RefVar(Text) params in the stack store.
-        let mut work_crs: Vec<DbRef> = Vec::with_capacity(n_hidden_text);
-        for _ in 0..n_hidden_text {
-            let cr = self.claim_in_stack(4); // 32 bytes; String needs 24
-            unsafe {
-                let p = self
-                    .database
-                    .store_mut(&self.stack_cur)
-                    .addr_mut::<String>(cr.rec, cr.pos);
-                let p = std::ptr::from_mut(p);
-                std::ptr::write(p, String::new());
-            }
-            work_crs.push(cr);
-        }
-
-        self.stack_pos = self.stack_step(4); // @PLAN53 2j: stepped par-worker entry base (guard-clean; identity flag-OFF)
+        self.stack_pos = entry; // @PLAN53 2j: stepped par-worker entry base
         self.push_worker_arg(arg);
         for &extra in extra_args {
             self.put_stack(extra as i64);
@@ -9934,27 +9940,16 @@ impl State {
 
         let d_nr = self.worker_d_nr(fn_pos);
         let args_size: u16 = args.iter().map(|a| self.worker_arg_size(a)).sum();
+        // Hidden text work-buffers below the entry frame, as `execute_at_text` places them —
+        // a `-> text` callee reads/writes these before the return.
+        let (work_crs, entry) = self.stack_work_buffers(n_hidden_text);
         self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
-            args_base: self.stack_step(4),
+            args_base: entry,
             args_size,
         });
-        // Hidden text work-buffers (String allocated in the stack store), mirroring
-        // `execute_at_text` — a `-> text` callee reads/writes these before the return.
-        let mut work_crs: Vec<DbRef> = Vec::with_capacity(n_hidden_text);
-        for _ in 0..n_hidden_text {
-            let cr = self.claim_in_stack(4); // 32 bytes; String needs 24
-            unsafe {
-                let p = self
-                    .database
-                    .store_mut(&self.stack_cur)
-                    .addr_mut::<String>(cr.rec, cr.pos);
-                std::ptr::write(std::ptr::from_mut(p), String::new());
-            }
-            work_crs.push(cr);
-        }
-        self.stack_pos = self.stack_step(4);
+        self.stack_pos = entry;
         for a in args {
             self.push_worker_arg(*a);
         }

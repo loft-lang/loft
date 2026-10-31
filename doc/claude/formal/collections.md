@@ -439,6 +439,11 @@ independent of the source — cross-link heap.md H-Alloc / iteration.md I-Comp).
 ### 1.6 Keyed range-slice iterators — `Slice-KeyedIter` (`D-key-1`, the shipped decided edge)
 
 ```
+                 FRESH is the value's SEMANTICS, not its representation: a slice no
+                 one can tell from a fresh vector may be carried by a pooled store
+                 (R-SliceArg: a `const` argument) or be a VIEW of its source's bytes
+                 (O-SliceView); a slice that initialises a place is sliced into it
+                 (R-SliceInto).
   (Slice-KeyedIter)  a keyed range slice c[lo..hi] is a `for`-ONLY ITERATOR (Value::Iter) over the raw
                      KEY interval, in the collection's key order.  It is NOT a value: `x = idx[lo..hi]`
                      in value position is a STATIC ERROR ("a keyed range slice is a for-loop iterator,

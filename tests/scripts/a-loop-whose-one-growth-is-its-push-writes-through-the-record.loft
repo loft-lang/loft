@@ -1,0 +1,144 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-Push`'s sole-growth clause on the C backend: a loop whose ONE store growth is the
+// pushes of its one pushed path keeps the record's address in the push header and writes each
+// element and the length through it; the growth step derives the header, address included,
+// again.  The cells hold what could make the address stale — growth across many capacities,
+// several pushes of the path in one pass, a nested loop pushing the same path, early exits,
+// reads of the path inside the loop (each loop reads its length, which keeps the counted
+// loop's push window, `@FR-R-PushFill`, from taking it) — and the shapes the clause must decline because
+// something else grows a store: two pushed paths, and a push beside a record mint.  Values
+// hand-computed; value AND length.  `LOFT_NO_PUSH_BASE=1` is the same-build oracle and
+// `LOFT_VERIFY` checks the held address against a fresh derivation at every push.
+//
+// @falsified-at: none — the clause has no earlier build to catch, so the receipts are defects
+//   planted (2026-10-30): a growth step that keeps the old address (generated C) crashes every
+//   admitted cell, p1–p7; admitting a push beside a mint (the verdict without its mint test)
+//   loses p9's pushes (an assertion on its length).  The verdict's one-mover test is not
+//   falsified: no cell reaches a reservation of another root without also pushing it.
+//   CHANNEL: an assertion, and a crash.
+
+struct Two { a: vector<integer>, b: vector<integer> }
+struct Pt { x: integer, y: integer }
+struct Shapes { pts: vector<Pt>, ids: vector<integer> }
+
+// digits of `t`, a space skipped, a '!' ends it early: the decode loop's shape
+fn digits(t: text) -> vector<integer>? {
+  out: vector<integer> = [];
+  for i in 0..size(t) {
+    c = t.byte_at(i);
+    if c == 32 { continue; }
+    if c == 33 { return null; }
+    out += [c - 48];
+  }
+  out
+}
+
+// p1: the decode shape — "1 2 3" is [1, 2, 3]; a '!' answers null
+fn test_the_decode_shape() {
+  got = digits("1 2 3") ?? [];
+  assert(len(got) == 3, "p1 len {len(got)}");
+  assert(got[0] == 1 && got[1] == 2 && got[2] == 3, "p1 {got}");
+  bad = digits("12!3");
+  assert(!bad, "p1 null");
+}
+
+// p2: growth across many capacities — 0..10000, sum 49995000, last 9999
+fn test_growth_across_capacities() {
+  v: vector<integer> = [];
+  while len(v) < 10000 { v += [len(v)]; }
+  s = 0;
+  for x in v { s += x; }
+  assert(len(v) == 10000, "p2 len {len(v)}");
+  assert(s == 49995000, "p2 sum {s}");
+  assert(v[9999] == 9999, "p2 last {v[9999]}");
+}
+
+// p3: two pushes of the path in one pass — i < 3 pushes i, else i and 10 × i:
+//     [0, 1, 2, 3, 30, 4, 40]
+fn test_two_pushes_in_one_pass() {
+  v: vector<integer> = [];
+  i = 0;
+  while i < 5 {
+    if len(v) < 3 { v += [i]; } else { v += [i]; v += [10 * i]; }
+    i += 1;
+  }
+  assert(len(v) == 7, "p3 len {len(v)}");
+  assert(v[4] == 30 && v[6] == 40, "p3 {v}");
+}
+
+// p4: a nested loop pushing the same path — 3 × (marker 100 + j, then 0..3 up to the next
+//     multiple of five): 15
+fn test_a_nested_loop_pushes_the_same_path() {
+  v: vector<integer> = [];
+  j = 0;
+  while j < 3 {
+    v += [100 + j];
+    while len(v) % 5 != 0 { v += [len(v) % 5 - 1]; }
+    j += 1;
+  }
+  assert(len(v) == 15, "p4 len {len(v)}");
+  assert(v[5] == 101 && v[14] == 3, "p4 {v}");
+}
+
+// p5: the path read inside the loop — each pass reads the length and the last element and
+//     pushes that element plus 2: [0, 2, 4, …, 200], 101 elements
+fn test_the_path_read_inside_the_loop() {
+  v: vector<integer> = [0];
+  for _ in 0..100 {
+    n = len(v);
+    last = v[n - 1] ?? -1;
+    v += [last + 2];
+  }
+  assert(len(v) == 101, "p5 len {len(v)}");
+  assert(v[100] == 200, "p5 last {v[100]}");
+}
+
+// p6: a break leaves the length written — pushes 0..6 then breaks at 7
+fn test_a_break() {
+  v: vector<integer> = [];
+  while len(v) < 1000 {
+    if len(v) == 7 { break; }
+    v += [len(v) * len(v)];
+  }
+  assert(len(v) == 7, "p6 len {len(v)}");
+  assert(v[6] == 36, "p6 {v[6]}");
+}
+
+// p7: the narrower kinds — float, byte, boolean, character: 300 each
+fn test_the_narrower_kinds() {
+  f: vector<float> = [];
+  while len(f) < 300 { f += [len(f) * 0.5]; }
+  b: vector<u8> = [];
+  while len(b) < 300 { b += [len(b) & 255]; }
+  o: vector<boolean> = [];
+  while len(o) < 300 { o += [len(o) % 3 == 0]; }
+  c: vector<character> = [];
+  while len(c) < 300 { c += ['a']; }
+  assert(len(f) == 300 && f[299] == 149.5, "p7 float");
+  assert(len(b) == 300 && b[299] == 43, "p7 byte {b[299]}");
+  assert(len(o) == 300 && o[297] && !o[298], "p7 boolean");
+  assert(len(c) == 300 && c[299] == 'a', "p7 character");
+}
+
+// p8: two pushed paths of one record — each growth moves the other's memory, so the clause
+//     declines: a 0..499, b the doubles
+fn test_two_paths_of_one_record() {
+  t = Two { a: [], b: [] };
+  for i in 0..500 { t.a += [i]; t.b += [2 * i]; }
+  assert(len(t.a) == 500 && len(t.b) == 500, "p8 len");
+  assert(t.a[499] == 499 && t.b[499] == 998, "p8 {t.a[499]} {t.b[499]}");
+}
+
+// p9: a push beside a record mint into the same record — declined: 400 points and ids
+fn test_a_push_beside_a_mint() {
+  s = Shapes { pts: [], ids: [] };
+  for i in 0..400 {
+    s.ids += [i];
+    s.pts += [Pt { x: i, y: -i }];
+  }
+  assert(len(s.ids) == 400 && len(s.pts) == 400, "p9 len");
+  assert(s.ids[399] == 399, "p9 id");
+  assert(s.pts[399].y == -399, "p9 pt");
+}

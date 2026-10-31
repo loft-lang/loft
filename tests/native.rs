@@ -6144,3 +6144,69 @@ fn main() {\n\
     let _ = fa::remove_dir_all(&dir);
     Ok(())
 }
+
+/// Two packages with a `[c] shim` link into one wasm program (loft#2280).  Each package's wasm
+/// objects carry loft's wasm C library; linking both copies failed with `duplicate symbol:
+/// loft_w_strlen`.  `lcshim2` needs `strlen` from that library, `lcshim` brings its own copy.
+/// Skips without `clang`, the `wasm32-wasip2` target or `wasmtime`.
+#[test]
+fn two_c_shims_link_into_the_wasm_target() -> std::io::Result<()> {
+    let have = |tool: &str| {
+        loft::platform::process::harness_command(tool)
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success())
+    };
+    if !have("clang") || !have("wasmtime") {
+        eprintln!("skipped: needs clang and wasmtime");
+        return Ok(());
+    }
+    let sysroot = loft::platform::process::harness_command("rustc")
+        .arg("--print")
+        .arg("sysroot")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    if !fa::is_dir(PathBuf::from(&sysroot).join("lib/rustlib/wasm32-wasip2")) {
+        eprintln!("skipped: the wasm32-wasip2 target is not installed");
+        return Ok(());
+    }
+    let libdir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/c_abi/pkg");
+    let dir = std::env::temp_dir().join(format!("loft-two-shims-{}", std::process::id()));
+    fa::create_dir_all(&dir)?;
+    let src = "use lcshim::*;\nuse lcshim2::*;\n\
+fn main() {\n\
+  println(\"{shim_mod(17, 5)} {shim2_len(\"wasm\")}\");\n\
+}\n";
+    // 17 % 5; 10 times the length of "wasm".
+    let want = "2 40\n";
+    let file = dir.join("two.loft");
+    fa::write(&file, src)?;
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let wasm = dir.join("two.wasm");
+    let build = loft::platform::process::harness_command(loft)
+        .env("LOFT_TIMEOUT", "900")
+        .arg("--native-rust")
+        .arg("--native-wasm")
+        .arg(&wasm)
+        .arg("--lib")
+        .arg(&libdir)
+        .arg(&file)
+        .output()?;
+    assert!(
+        build.status.success(),
+        "the wasm build with two shims linked in: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = loft::platform::process::harness_command("wasmtime")
+        .arg(&wasm)
+        .output()?;
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        want,
+        "the wasm program: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let _ = fa::remove_dir_all(&dir);
+    Ok(())
+}

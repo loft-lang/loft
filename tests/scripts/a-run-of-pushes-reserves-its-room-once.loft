@@ -1,0 +1,89 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-PushFill`'s run clause on the C backend: a straight-line run of two or more scalar
+// pushes onto one vector reserves room for the run before its first push, so the vector grows
+// once.  A reservation is capacity only: every element, every length and every value read
+// between the pushes is what the pushes alone give.  The cells hold the runs the clause meets —
+// a fresh record's empty fields (a constructor inlined into its literal), a local, values that
+// read the vector's own length, bytes, a run broken by another element kind, and runs repeated
+// across a loop whose vector grows past several capacities.  Values hand-computed; value AND
+// length.  `LOFT_NO_PUSH_RUN_RESERVE=1` is the same-build oracle.
+//
+// r1, r2, r4 and r5 reach the clause; r3 (its length is read in a statement of its own between
+// the pushes) and r6 (the counted loop's push window takes it) hold the same values without it.
+//
+// @falsified-at: none — the clause has no earlier build to catch, so the receipt is a defect
+//   planted (2026-10-30) in the generated C: a reservation that also sets the length to the
+//   room it made fails r1 (lengths 6 for 3), r2, r4 and r5.
+//   CHANNEL: an assertion.
+
+struct Shape { h: integer, lens: vector<integer>, turns: vector<integer> }
+
+fn shape(h: integer, a: integer, b: integer) -> Shape {
+  Shape { h: h, lens: [a, b, a + b], turns: [b, a, 12 - a - b] }
+}
+
+// r1: a fresh record's two empty fields, three pushes each — lens [2, 3, 5], turns [3, 2, 7]
+fn test_a_fresh_records_fields() {
+  s = shape(1, 2, 3);
+  assert(len(s.lens) == 3 && len(s.turns) == 3, "r1 len {len(s.lens)} {len(s.turns)}");
+  assert(s.lens[2] == 5 && s.turns[2] == 7, "r1 {s.lens} {s.turns}");
+}
+
+// r2: a local, four pushes — [10, 20, 30, 40], sum 100
+fn test_a_local() {
+  v: vector<integer> = [];
+  v += [10];
+  v += [20];
+  v += [30];
+  v += [40];
+  t = 0;
+  for x in v { t += x; }
+  assert(len(v) == 4 && t == 100, "r2 {len(v)} {t}");
+}
+
+// r3: values that read the vector's length — [1, 0, 1, 2] after the first: [1, 1, 2, 3]
+fn test_values_read_the_length() {
+  v: vector<integer> = [1];
+  v += [len(v)];
+  v += [len(v)];
+  v += [len(v)];
+  assert(len(v) == 4, "r3 len {len(v)}");
+  assert(v[1] == 1 && v[2] == 2 && v[3] == 3, "r3 {v}");
+}
+
+// r4: bytes — [7, 8, 9], 3 long
+fn test_bytes() {
+  b: vector<u8> = [];
+  b += [7];
+  b += [8];
+  b += [9];
+  assert(len(b) == 3 && b[0] == 7 && b[2] == 9, "r4 {len(b)}");
+}
+
+// r5: a run broken by another element kind — integers, then floats, then integers
+fn test_a_run_broken_by_another_kind() {
+  v: vector<integer> = [];
+  f: vector<float> = [];
+  v += [1];
+  v += [2];
+  f += [0.5];
+  f += [1.5];
+  v += [3];
+  assert(len(v) == 3 && v[2] == 3, "r5 ints {len(v)}");
+  assert(len(f) == 2 && f[1] == 1.5, "r5 floats {len(f)}");
+}
+
+// r6: a run repeated across a loop, past several capacities — 300 passes of 3: 900 elements,
+//     the last pass i = 299 pushing 299, 300, 301
+fn test_runs_across_a_loop() {
+  v: vector<integer> = [];
+  for i in 0..300 {
+    v += [i];
+    v += [i + 1];
+    v += [i + 2];
+  }
+  assert(len(v) == 900, "r6 len {len(v)}");
+  assert(v[897] == 299 && v[899] == 301, "r6 {v[897]} {v[899]}");
+}

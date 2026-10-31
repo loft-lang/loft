@@ -35,6 +35,48 @@
 #define LOFT_PARK_MAX_WORDS 16
 #define LOFT_PARK_PREV 4u
 #define LOFT_PARK_NEXT 8u
+/* `MIN_BOUND_WORDS`: the fewest words a store bound to a file holds (`@FR-S-Mapped`). */
+#define LOFT_MIN_BOUND_WORDS 1024u
+
+/* The allocator's bisect switches (store.rs, each a policy turned off), as compile-time defines:
+ * `-DLOFT_NO_PARK` frees every block through the tree or the lazy phase at its delete
+ * (`@FR-H-Park` off), `-DLOFT_NO_LAZY_FREE` tracks every deleted block at the delete
+ * (`@FR-H-LazyFree` off), `-DLOFT_NO_TOMBSTONE` frees a removed record a stored reference named
+ * like any other (`@FR-H-Removed` off).  The driver adds each when its variable is set. */
+#ifdef LOFT_NO_PARK
+#define LOFT_PARKS 0
+#else
+#define LOFT_PARKS 1
+#endif
+#ifdef LOFT_NO_LAZY_FREE
+#define LOFT_LAZY_START 0
+#else
+#define LOFT_LAZY_START 1
+#endif
+#ifdef LOFT_NO_TOMBSTONE
+#define LOFT_TOMBSTONES 0
+#else
+#define LOFT_TOMBSTONES 1
+#endif
+/* `-DLOFT_NO_FREE_FOOTER`: a delete makes no backward merge and arms the lazy sweep
+ * (`@FR-H-FreeFooter` off); `-DLOFT_NO_WILD_BUMP`: a claim on an empty tree takes the best-fit
+ * path instead of the wilderness bump; `-DLOFT_NO_CARVE_IN_PLACE`: a best-fit claim always
+ * deletes the node it takes and inserts the rest (`@FR-H-Carve` off). */
+#ifdef LOFT_NO_FREE_FOOTER
+#define LOFT_FOOTERS 0
+#else
+#define LOFT_FOOTERS 1
+#endif
+#ifdef LOFT_NO_WILD_BUMP
+#define LOFT_WILD_BUMPS 0
+#else
+#define LOFT_WILD_BUMPS 1
+#endif
+#ifdef LOFT_NO_CARVE_IN_PLACE
+#define LOFT_CARVES 0
+#else
+#define LOFT_CARVES 1
+#endif
 
 /* `Claims`: one bit per word, grown on demand to the highest position inserted.  `nwords` is
  * the length and `cap` the allocation, as a `Vec<u64>`'s: growth doubles the allocation and a
@@ -182,6 +224,11 @@ typedef struct {
      * as an argument, and whether its owner released it while they did. */
     uint32_t frame_holds;
     int orphaned;
+    /* `Store::file` (`@FR-S-Mapped`, loft_mapped.h): the length in bytes of the file `buf`
+     * maps, shared — grown and cut with the file and unmapped when the store is released — and
+     * 0 for a store in memory; `map_file` is the open file (a descriptor, or a Windows handle). */
+    size_t mapped;
+    intptr_t map_file;
 #ifdef LOFT_FOREIGN
     /* `Store::foreign`: the bytes this store serves under `LOFT_FOREIGN_REC`; an owner of 0 for
      * every ordinary store. */
@@ -636,7 +683,9 @@ static void loft_free_exact(loft_store_t *s, uint32_t rec, int32_t claim) {
     }
     uint32_t prev;
     int32_t words;
-    if (loft_free_predecessor(s, rec, &prev, &words)) {
+    if (!LOFT_FOOTERS) {
+        s->needs_coalesce = 1;
+    } else if (loft_free_predecessor(s, rec, &prev, &words)) {
         loft_fl_remove(s, prev);
         claim += words;
         rec = prev;
@@ -739,12 +788,25 @@ static void loft_lazy_delete(loft_store_t *s, uint32_t rec) {
 
 /* ---- growth ---- */
 
+/* A store bound to a file (loft_mapped.h, which sets it when it binds one): the file and its
+ * mapping resized to `words` words, `buf` and `size` following; 0 when the OS refused, the
+ * store then as it was.  Null in a unit that binds no file, where no store is mapped. */
+static int (*loft_map_resize_hook)(loft_store_t *s, uint32_t words);
+/* Its release: unmapped and closed, the store left with no buffer (`loft_st_close_mapped`). */
+static void (*loft_map_release_hook)(loft_store_t *s);
+
 static void loft_resize_store(loft_store_t *s, uint32_t to_size) {
     if (to_size <= s->size) return;
     if (to_size > (uint32_t) INT32_MAX) { fputs("loft: store offset overflow\n", stderr); abort(); }
     uint64_t inc64 = (uint64_t) s->size * 7;
     uint32_t inc = inc64 > UINT32_MAX ? UINT32_MAX / 3 : (uint32_t) (inc64 / 3);
     uint32_t size = to_size > inc ? to_size : inc;
+    /* `Store::resize_store`: a mapped store grows its file, which reads zero past the old end,
+     * and is not counted against the heap ceiling — its bytes are the file's. */
+    if (s->mapped) {
+        if (!loft_map_resize_hook(s, size)) { fputs("loft: a store bound to a file could not grow\n", stderr); abort(); }
+        return;
+    }
     loft_heap_moved(s, s->size, size);
 #ifdef LOFT_POISON
     /* `LOFT_POISON`: the growth always MOVES the bytes and scribbles the block it leaves, which
@@ -843,7 +905,7 @@ static uint32_t loft_claim_best_fit(loft_store_t *s, uint32_t size) {
     }
     if (found == 0) return 0;
     int32_t rest = loft_fl_size(s, found) - req;
-    if (rest >= req && rest >= LOFT_MIN_FREE_TREE) return loft_carve_in_place(s, found, found_parent, size, rest);
+    if (LOFT_CARVES && rest >= req && rest >= LOFT_MIN_FREE_TREE) return loft_carve_in_place(s, found, found_parent, size, rest);
     s->free_root = loft_fl_delete_node(s, s->free_root, found);
     if (s->free_root) loft_fl_set_red(s, s->free_root, 0);
     return loft_claim_block(s, found, size);
@@ -851,7 +913,7 @@ static uint32_t loft_claim_best_fit(loft_store_t *s, uint32_t size) {
 
 static uint32_t loft_bump_wild(loft_store_t *s, uint32_t size) {
     uint32_t pos = s->wild;
-    if (pos == 0 || s->free_root != 0) return 0;
+    if (pos == 0 || s->free_root != 0 || !LOFT_WILD_BUMPS) return 0;
     int32_t req = (int32_t) size;
     int32_t block = loft_fl_size(s, pos);
     if (block - req < LOFT_MIN_FREE_TREE) return 0;
@@ -911,6 +973,14 @@ static void loft_walk_scan(const loft_store_t *s, int32_t req, uint32_t *pos_out
 
 static uint32_t loft_claim_grow(loft_store_t *s, uint32_t size, uint32_t last, int32_t last_claim) {
     uint32_t cur = s->size;
+    /* `Store::claim_grow`'s checked add: a growth past the 32-bit word count stops the run, as the
+     * interpreter does, rather than wrapping to a smaller store that the claim then overruns. */
+    if (last_claim >= 0 && (uint64_t) s->size + size > UINT32_MAX) {
+        fflush(stdout);
+        fprintf(stderr, "loft: store size limit exceeded: %llu words (%llu bytes)\n",
+                (unsigned long long) ((uint64_t) s->size + size), (unsigned long long) (((uint64_t) s->size + size) * 8));
+        abort();
+    }
     uint32_t new_size = last_claim < 0 ? (uint32_t) ((int32_t) s->size + (int32_t) size + last_claim) : s->size + size;
     loft_resize_store(s, new_size);
     int32_t increase = (int32_t) (s->size - cur);
@@ -1043,12 +1113,12 @@ static void loft_st_delete(loft_store_t *s, uint32_t rec) {
         if (s->placed[i] == rec) s->placed[i] = s->placed[--s->nplaced];
         else i++;
     }
-    if (loft_bits_remove(&s->referenced, rec)) {
+    if (loft_bits_remove(&s->referenced, rec) && LOFT_TOMBSTONES) {
         loft_entomb(s, rec);
         return;
     }
     int32_t words = loft_st_i32(s, rec, 0);
-    if (!s->no_park && words >= LOFT_MIN_FREE_TREE && words <= LOFT_PARK_MAX_WORDS && rec + (uint32_t) words != s->size) {
+    if (LOFT_PARKS && !s->no_park && words >= LOFT_MIN_FREE_TREE && words <= LOFT_PARK_MAX_WORDS && rec + (uint32_t) words != s->size) {
         loft_bits_remove(&s->claims, rec);
         loft_park_block(s, rec, words);
         return;
@@ -1141,7 +1211,7 @@ static void loft_st_init(loft_store_t *s) {
     loft_bits_clear(&s->claims);
     loft_bits_clear(&s->referenced);
     loft_bits_clear(&s->removed);
-    s->lazy = 1;
+    s->lazy = LOFT_LAZY_START;
     s->dead_words = 0;
     loft_bits_clear(&s->lazy_free);
     loft_parked_clear(s);
@@ -1279,9 +1349,10 @@ static loft_usage loft_st_usage(const loft_store_t *s) {
     return u;
 }
 
-/* `Store::shrink_to` (a heap store): the buffer cut to `words`, never under the end of the last
- * claimed block nor the two-word floor, and the free space left above it re-tiled as one block
- * ending the store, the free tree rebuilt (`retile_tail`).  0 when it did not shrink. */
+/* `Store::shrink_to`: the buffer cut to `words`, never under the end of the last claimed block
+ * nor the floor — two words, or `LOFT_MIN_BOUND_WORDS` for a store bound to a file, whose file
+ * is cut with it — and the free space left above it re-tiled as one block ending the store, the
+ * free tree rebuilt (`retile_tail`).  0 when it did not shrink. */
 static int loft_st_shrink_to(loft_store_t *s, uint32_t words) {
     if (s->read_only) return 0;
     loft_flush_parked(s);
@@ -1289,13 +1360,18 @@ static int loft_st_shrink_to(loft_store_t *s, uint32_t words) {
     if (!u.walk_complete) return 0;
     uint32_t mark = u.live_end_words;
     if (words < mark) return 0;
-    if (words < LOFT_ST_PRIMARY + 1) words = LOFT_ST_PRIMARY + 1;
+    uint32_t floor = s->mapped ? LOFT_MIN_BOUND_WORDS : LOFT_ST_PRIMARY + 1;
+    if (words < floor) words = floor;
     if (words >= s->size) return 0;
-    loft_heap_moved(s, s->size, words);
-    uint8_t *b = (uint8_t *) realloc(s->buf, (size_t) words * 8);
-    if (!b) { fputs("loft: out of memory\n", stderr); abort(); }
-    s->buf = b;
-    s->size = words;
+    if (s->mapped) {
+        if (!loft_map_resize_hook(s, words)) return 0;
+    } else {
+        loft_heap_moved(s, s->size, words);
+        uint8_t *b = (uint8_t *) realloc(s->buf, (size_t) words * 8);
+        if (!b) { fputs("loft: out of memory\n", stderr); abort(); }
+        s->buf = b;
+        s->size = words;
+    }
     uint32_t tail = mark > LOFT_ST_PRIMARY ? mark : LOFT_ST_PRIMARY;
     if (tail < s->size) loft_set_free_header(s, tail, (int32_t) (s->size - tail));
     loft_fl_rebuild(s);
@@ -1355,7 +1431,7 @@ static uint32_t loft_st_claim_at(loft_store_t *s, uint32_t pos, uint32_t size) {
 /* `Store::kept_positions`: the referenced and removed positions, ascending, in a fresh array
  * (*n of them; 0 and no array when there are none). */
 static uint32_t *loft_st_kept_positions(const loft_store_t *s, uint32_t *n) {
-    *n = s->referenced.live + s->removed.live;
+    *n = LOFT_TOMBSTONES ? s->referenced.live + s->removed.live : 0;
     if (*n == 0) return 0;
     uint32_t *out = (uint32_t *) malloc(*n * sizeof *out), k = 0;
     if (!out) { fputs("loft: out of memory\n", stderr); abort(); }

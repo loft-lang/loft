@@ -862,6 +862,29 @@ Sites: `hoist::range_counters`, `hoist::plain_for_body`, `hoist::push_loop`,
 (w1–w12 a window; d1–d8 the declines; a1–b1 the aliasing cases; r1 the growth condition),
 pins `tests/push_window.rs`.
 
+**(R-PushFill)'s straight-line run clause (the C), in words.**  A RUN of two or more scalar
+pushes of one element size onto one path P — consecutive statements, only line markers
+between, each a bare push or the `OpPreAllocVector(P, 1, w)` a push onto a local is lowered
+with — RESERVES room for the run's count before its first push, so P grows once instead of at
+each step — where P is KNOWN EMPTY at the run: its slot was zeroed earlier in the same block
+(`OpSetInt4(r, off, 0)` for the field, or for the wrapper field a local is bound to) and nothing
+after that names P's root except to reach another field.  A run onto a vector that may already
+hold elements usually has the room, and a reservation there is a call for nothing: cbor's
+`head`, run as an append twin onto the caller's buffer, measured `encode_bytes` +7.4 % before
+this condition.  Observably nothing, as the loop's reservation: the elements, the length and every
+value read between the pushes are the pushes' own.  The runtime's `loft_vec_reserve_run` leaves
+a null reference and a locked store alone, so a push refused there is refused where it was and
+no extra refusal is raised; an empty vector is claimed at the reservation as its first push
+would claim it.  A path a window, a push header, a value held apart (`(R-Apart)`) or a
+deferred copy serves is left to it.  It reaches a constructor inlined into its record literal
+— `Form { lens: [la, lb, lc], turns: [ea, eb, ec] }` is six pushes onto two empty fields —
+which hex_recover's `forms_upto` builds per candidate: −7.3 % (gcc ship).  Switch
+`LOFT_NO_PUSH_RUN_RESERVE=1`.  Cells `tests/scripts/a-run-of-pushes-reserves-its-room-once.loft`
+(r1, r2, r4, r5 reach it; falsified by a reservation that also sets the length).  Sites:
+`FnWriter::reserve_push_run` / `push_at` (`src/c/body.rs`, in both statement loops: `stmts_in`
+and a value block's `assign_seq`), `loft_vec_reserve_run` (`src/c/loft_rt.h`).  Native's run
+clause is the byte form above, which opens a window for the run.
+
 **(R-PushFill)'s record clause, in words.**
 (`bench/portal/analysis/round-3.md` § Built).  The consumer bench's `enum_match` builds
 its edits as `for i in 0..3000 { if i % 3 == 0 { edits += [SetHeight { … }] } else if … {
@@ -1802,6 +1825,13 @@ cells `tests/scripts/157-twin-base.loft`, pins `tests/twin_base.rs`.
                  (R-Alias); the OpPreAllocVector the parser emits before a push to a
                  local claims a record only for an absent vector, never moves one,
                  and is emitted as nothing under a held push header.
+                 SOLE-GROWTH CLAUSE: where the loop's ONE store growth is the pushes
+                 of its one pushed path P — no other push, no mint, no reservation of
+                 another root, no text set, no rebound mover — the header also holds
+                 the ADDRESS of P's record, and a push that fits stores the element
+                 and the length at that address without resolving the store.  Only
+                 P's own growth step can move the store's memory, and that step
+                 derives the whole header again (R-Refresh), the address included.
 ```
 
 **In words.** @PLN157 § V-q.  A growth moves the pushed vector's RECORD and nothing else
@@ -1826,6 +1856,23 @@ one-value slice fill IS admitted, and a `true`, `false` or enum literal is a sim
 for it.  Cells: `loft-suite/attic/scripts/a-boolean-and-enum-push-hold-a-header.loft`.
 Applied by: native generator.  Its clause on the parser's `OpPreAllocVector` is one fact with
 `(R-FirstClaim)`, which the interpreter's generator applies where no header is held.
+
+**The sole-growth clause, in words.**  A push header without an address resolves the store
+twice per push, for the slot and for the length, because a growth of ANY vector in the same
+store may move the store's memory (the reason the C's `loft_ph` holds no pointer).  When the
+loop grows nothing but this one path, nothing but this path's growth step can move it, and that
+step re-derives the header.  crypto's `b64_decode` (`vals += [v]` in a loop with `continue`s
+and `return null` exits, which the counted loop's window does not take) compiles to the loop a
+hand-written address gives, instruction for instruction.  The conditions are read off the hoist
+verdict (`LoopHoist::sole_push`): one pushed path, no mint, no dropped mover, no text growth,
+and the movers exactly that path's root.  The last is conservative: it also refuses a
+reservation of another root, which no admitted loop was found to contain.  Applied by: the C
+(`loft_ph_putb*`, `loft_phb_same` under `LOFT_VERIFY`); native's push header holds no address.
+Switch `LOFT_NO_PUSH_BASE=1`.  Cells
+`tests/scripts/a-loop-whose-one-growth-is-its-push-writes-through-the-record.loft` (p8 and p9
+are the declines; falsified by a growth step that keeps the old address and by admitting a push
+beside a mint).  Sites: `hoist::LoopHoist::sole_push`, `FnWriter::hold_pushes` and
+`FnWriter::pushed_mint` (`src/c/body.rs`).
 
 ### A minted element is a record no holder can name
 
@@ -2710,6 +2757,13 @@ Sites: `hoist::borrowed_text_walks`, `hoist::text_walk_head`,
 `hoist::native_op_is_store_free` (the text-value clause), `hoist::borrowed_discharge_temps`
 and the discharge arm of `hoist::text_escapes_with`, `Output::text_borrowed`, the bind and
 the discharge bind in `Output::output_set`, the `#ncc` tail in `Output::output_block`.
+On the C the discharge's value — a text `if` choosing between views — also takes an arm that
+is a SLICE of a literal, a borrowed text or a plain text parameter (`out += if last { "=" }
+else { chars[k..k + 1] }`): nothing the consumer runs can move those bytes, and each arm is
+written in its own branch so the arm not taken computes nothing (`view_choice` /
+`viewable_arm` in `src/c/body.rs`; crypto's `b64_encode`, pluginabi `req_state_b64` −36 % on
+the C ship lane).  `LOFT_NO_VIEW_CHOICE_SLICE=1` copies a slice arm again; cells
+`tests/scripts/a-text-choice-between-slices-is-a-view.loft`.
 
 **The store-read clause.**  `w = words[i]?` over a `const vector<text>` parameter bound `w`
 through two copies (the temp's `.to_string()` and the bind's `.clone()`) and a third where
@@ -2749,6 +2803,111 @@ be of the callee's answer).  `LOFT_NO_C_WORK_BORROW=1` copies again.  Cells
 `loft-suite/rules/rewrites/R-TextBorrow/a-format-bound-text-borrows-its-work-text.loft` (f1–f13; f4b fails to
 compile with the copy refusal off).  Sites: `hoist::own_format_work`, the format arm of
 `hoist::borrowed_store_texts`.
+
+### A value that never reaches a store is not built in one
+
+```
+  (R-Transient)  a record or enum value — with the vectors and texts it holds, at any
+                 depth — that is built, read and dropped without ever being WRITTEN
+                 into a store record may be built as a SHORT-LIVED object outside the
+                 store: its scalars in a C struct, its vectors and texts as views of
+                 where their bytes already live (O-SliceView) or as short-lived buffers
+                 of its own.  The store is unchanged and nothing can tell: every use
+                 READS the value (a field, a length, an element, a comparison, a text
+                 operand, a `const` argument); a use that would store it — a field set,
+                 an append, a keyed insert, a return that escapes the unit (R-Escape),
+                 a capture, a `yield`, a `parallel` arm, a by-value parameter that
+                 keeps it — MATERIALISES it there, built into the store as the value it
+                 always was, at that use (R-Place, R-InPlaceLiteral).  The short-lived
+                 object dies with the last read: no identity, no release, nothing for
+                 the leak report.  Its views obey O-SliceView's halves: the source is
+                 not disturbed nor written while the object lives.
+                 THE PRODUCER'S HALF: a function whose result is such a value — a
+                 decoder's `decode(bytes) -> Decoded` — has a TRANSIENT twin, emitted
+                 where every call site reads the result only (O-ViewField's sites'
+                 half); the twin builds the tree outside the store, recursively, its
+                 own recursive calls being transient twins too.  A site that keeps the
+                 result calls the store-building function as before.
+```
+
+**In words.**  `check_request` decodes a CBOR frame twice and reads one field of the result;
+the decoded tree is built as store records (a claim per node, a claim per key text, a copy per
+payload) and dropped — ≈ 60 % of the row against a twin whose `Cbor<'a>` borrows the frame and
+allocates one `Vec` per map.  Under @C125 as the owner clarified it (*"We cannot change
+the store itself, but we can introduce short lived objects as long as the end result is the
+same"*) the tree need not be in a store while nothing stores it.  `(R-ValueRecord)` already
+returns a scalar record in registers and `(O-ViewField)` a record whose vector field is a view;
+this rule is the same idea for a whole tree: depth, variants, vectors of records, and texts and
+bytes that view the frame.  It is the rule `check_request` needs to approach 2×: the tree's
+claims, copies and the frame's releases all belong to the store-built tree.  NOT BUILT
+(designed, not yet implemented).  Open in the design: the C representation of a transient vector of
+records (a stack array with a heap spill), how the twin is cut from the producer (every
+`OpNewRecord` / `OpSetText` / `OpAppendVector` into the result mapped to its struct form), and
+the decline list's proof on the sites — `(O-ViewField)`'s sites' half is the model.  Priced by
+hand on `read_value` (the emitted C, same hashes): `check_request` 0.109× on gcc,
+0.129× on clang, and 0.087× with the arrays in a bump arena the site owns — 0.7× the twin; the
+`.ok` decode alone, building no tree at all, 0.537×.  The design, the arena and the steps:
+`bench/portal/analysis/transient.md`.
+
+### A slice handed to a `const` parameter needs no store of its own
+
+```
+  (R-SliceArg)   a slice VALUE — `{ OpDatabase(W, tp); T = OpGetField(W, 0, …);
+                 OpSetInt4(W, 0, 0); <bounds>; OpSliceView(T, src, lo, hi, row); T }`,
+                 the block a slice used as a value is lowered to — that is an argument
+                 bound to a `const` parameter is materialised into a CARRIER: a store
+                 kept across uses, whose vector record is reset to length 0 and copied
+                 into, instead of a store minted for it.  The free that ended W's store
+                 gives the carrier back.  Observably nothing: the slice holds the same
+                 elements at the same length, a `const` parameter cannot write it, and
+                 the carrier lives exactly as long as W's store did.  A variable that
+                 still holds its carrier when the site runs again keeps it; when every
+                 carrier is in use the store is minted as before.
+```
+
+**In words.**  A slice used as a value needs a vector record, and a record needs a store: the
+lowering mints one per evaluation and frees it after (the "view" is a copy unless the source is
+file-mapped).  For a decoder that reads each text of its frame as `text_from_bytes(bytes[a..b])`
+the mint, its allocator set-up and the free cost far more than the few bytes copied — cbor's
+`read_value` paid them for every map key.  The callee's parameter is `const`, so nothing it does
+can write or keep the slice beyond what a fresh store allowed, and the carrier is given back at
+the same free.  A copy rather than a foreign view over the source's bytes: a view needs the
+foreign intercept in every store read of the unit (priced: `request` +2.2 %) and a source that
+cannot move during the call; the copy needs neither and measured faster (`check_request` −20.7 %
+against −16.8 %).  Slices are scalar-only, so a length reset is a complete reset.  An idle carrier
+is PINNED: the leak report passes it by and a stray free leaves it alone.  Applied by: the C
+(`loft_slice_take`, the give-back in `loft_free_ref`).  pluginabi `check_request` −19.5 %,
+`req_state_b64` −3.4 % (gcc ship).  Switch `LOFT_NO_SLICE_ARG_POOL=1`.  Cells
+`tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft` (falsified by
+a take that keeps the old length — c1, c2 — and by one that does not mark the carrier in use —
+c4 reads "world+world").  Sites: `slice_carrier` and the `OpDatabase` / `OpSetInt4` arms of
+`FnWriter::store_operator` (`src/c/body.rs`), the carrier registration in `FnWriter::call`,
+`loft_slice_take` / `loft_slice_give` (`src/c/loft_rt.h`).
+
+### A slice appended to a place is sliced into it
+
+```
+  (R-SliceInto)  `OpAppendVector(P, { mint T's store; T = its field; zero; <bounds>;
+                 OpSliceView(T, src, lo, hi, row); T }, tp)` — a scalar vector slice used
+                 as a value, converted to a temporary T of its own
+                 (`Parser::materialise_slice_leaves`) and appended to a place P (a literal's
+                 field, `x += v[a..b]`) — is the bounds' statements and one
+                 `OpSliceVector(P, src, lo, hi, row)`: `[lo, hi)` clamped, appended onto P as
+                 one block.  Nothing but T's own mint, bind, zero, clear and the one slice may
+                 name T or its store; anything else declines.  T is never minted, and its
+                 scope-exit release sees the null it starts as.
+```
+
+**In words.**  The append was the only reader of T, and `loft_vec_slice` appends exactly what
+the temporary's fill and the append did together — the same clamped span, read before anything
+is written, safe when P is the source (`v += v[a..b]`: the span lies below the length).  A
+foreign source is COPIED, as the append copied the view's bytes before: P's store holds more
+than this vector, so `@FR-Const-Foreign`'s view does not apply to it.  C only (an emitter form;
+rustc's writer still fills a temporary); the interpreter runs the IR and is the reference.
+cbor's `CBytes { value: bytes[a..b] }`: pluginabi `check_request` −10 %, `req_state_b64` −4 % on
+the C ship lane.  Switch `LOFT_NO_SLICE_INTO`; cells
+`tests/scripts/a-slice-appended-to-a-place-is-sliced-into-it.loft`.  Sites: `slice_fill` /
+`slice_into` / `append_vector_op` in `src/c/body.rs`.
 
 ### A slice of a parameter is read where it lies
 
@@ -3972,6 +4131,19 @@ panic's frame block read.  Switch `LOFT_NO_LEAF_CHAIN` (one step finer than
 ### A frame no registrant can reach carries no buffer guard
 
 ```
+  (R-PathRelease) an exit releases only the temporaries that can HOLD a store on some
+                 path reaching it.  A temporary whose every assignment on every path to
+                 the exit is still ahead of it — or that is null there on every path
+                 (O-Complete's per-path facts) — is released by nothing, so its release
+                 at that exit is emitted as nothing; one that may hold a store on any
+                 path keeps the release it has.  Observably nothing: the release of a
+                 null is a no-op on both backends (OpFreeRefIfDistinct, OpFreeRef), so
+                 dropping it changes no store, no value and no leak report.  A function
+                 with many exits and many temporaries — a decoder's `read_value`, whose
+                 every early `return` released ten wrappers no path to it had minted —
+                 pays per exit only for what it made.  NOT BUILT (designed 2026-10-30,
+                 `bench/portal/analysis/c-libraries.md` § `check_request`); applied by
+                 nothing yet.
   (R-GuardFree)  a function from which NOTHING that registers a fn-ref return buffer
                  is reachable — over the closure of its call graph, cycles INCLUDED:
                  no fn-ref call, no `parallel`, no `yield`, no `OpFreeRefOrHandUp`,
@@ -4642,8 +4814,21 @@ the hand price), which is `insert_text`'s `np += [p]` per piece
                  recursive decoder builds its whole tree in the store of the outermost
                  buffer and copies nothing on the way up.  The move is same-store and
                  into an empty slot by construction; the runtime keeps the copy for any
-                 other pair, and `LOFT_HOIST_VERIFY=1` makes that pair fatal.  The
-                 RECORD clause: a LOCAL RECORD minted once in the body's own statement
+                 other pair, and `LOFT_HOIST_VERIFY=1` makes that pair fatal.  THE
+                 DECLINES ARE ALSO ITS COST ANSWER: widening the rule to an exit that
+                 REPLACES the field (the buffer may be a caller's live record, R-Rebind),
+                 to a wrapper free before the mint (an early `return d`) and to an exit
+                 that stages its scalars first was built and measured (2026-10-30) —
+                 correct on every channel, and slower on every row it reached (zttext
+                 `insert_text` +15 %, `patch` +6 %, `invert` +4 %, gcc ship), because
+                 the wrapper's store is the cheapest place the vector can grow: a fresh
+                 store grows at its tail, while in the buffer's store — which may be an
+                 argument's — a growth relocates the vector, and every holder over an
+                 argument in a loop that grows the local is lost (`opt::apart` cannot
+                 prove the argument apart from it).  The exit copy it saves is one block
+                 copy.  The cells are
+                 `tests/scripts/a-local-built-for-the-returned-literal-is-built-in-its-buffers-store.loft`.
+                 The RECORD clause: a LOCAL RECORD minted once in the body's own statement
                  list whose one fate is the copy into an inline field of the literal
                  of the function's ONE exit IS that field — its mint becomes the
                  buffer's ensure, the local a VIEW of the field (typed depending on
@@ -5435,13 +5620,17 @@ publishing it.
                  pointer cached in `State` (`stack_base`), instead of re-deriving it
                  through the store table, the store and its buffer on every access.  The
                  base is re-derived wherever the stack store's buffer can move — at
-                 construction, by `grow_stack`, by `claim_in_stack` (a `par` worker's text
-                 work buffers), by a checkpoint restore (which replaces every store) — and
-                 every OTHER buffer move refuses the stack store (`Store::stack_buffer`:
+                 construction, by `grow_stack`, by a checkpoint restore (which replaces
+                 every store) — and every OTHER buffer move refuses the stack store
+                 (`Store::stack_buffer`:
                  `claim_grow`, `adopt_image`, `reclaim_tail`, `take_slot`, `take_store`
                  panic on it), so a missed re-derivation is a refusal at the move, never a
                  read of a freed buffer.  A snapshot copy keeps the mark; a locked or
                  borrowed copy for a worker does not (the worker has its own stack).
+                 The stack record is the store's only record: a frame is bounded by the
+                 store's capacity, so anything else claimed there is run over by a deep
+                 enough call — a `par` worker's or a host call's text work buffers sit
+                 at the foot of the stack record instead (loft#2271).
 ```
 
 **In words.** Applied by: interpreter runtime (`State::stack_slot`, `stack_base_of`).  A simple

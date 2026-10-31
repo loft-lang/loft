@@ -128,6 +128,40 @@ fn cc_flags(tier: Tier) -> Vec<String> {
     if env_on("LOFT_POISON_CLAIM") {
         flags.push("-DLOFT_POISON_CLAIM".into());
     }
+    // `LOFT_STRICT_STORES`: a freed store's slot is never made again and an access through it
+    // is reported, and a store live at exit too; either exits 1 (loft_rt.h).
+    if env_on("LOFT_STRICT_STORES") {
+        flags.push("-DLOFT_STRICT_STORES".into());
+    }
+    // `LOFT_KEYED_VERIFY`: every keyed fast path the C has checked against its general form —
+    // the hash one-probe insert, the index's exact descent (loft_hash.h, loft_btree.h).
+    if env_on("LOFT_KEYED_VERIFY") {
+        flags.push("-DLOFT_KEYED_VERIFY".into());
+    }
+    // `LOFT_COPY_CHECK`: after every deep copy, each nested collection's length compared with
+    // its source's (loft_rt.h `loft_report_copy_mismatches`).
+    if env_on("LOFT_COPY_CHECK") {
+        flags.push("-DLOFT_COPY_CHECK".into());
+    }
+    // `LOFT_LEAK_SITES` (any value, as the interpreter reads it): a store left at exit is named
+    // by where it was made (loft_rt.h `loft_note_site`, loft_log.h's report).
+    if std::env::var_os("LOFT_LEAK_SITES").is_some() {
+        flags.push("-DLOFT_LEAK_SITES".into());
+    }
+    // The allocator's bisect switches (store.rs; loft_store.h), read as `Store` reads them: set
+    // and not `0`.  Each turns a policy off in the C as it does in the interpreter.
+    for switch in [
+        "LOFT_NO_PARK",
+        "LOFT_NO_LAZY_FREE",
+        "LOFT_NO_TOMBSTONE",
+        "LOFT_NO_FREE_FOOTER",
+        "LOFT_NO_WILD_BUMP",
+        "LOFT_NO_CARVE_IN_PLACE",
+    ] {
+        if std::env::var(switch).is_ok_and(|v| v != "0") {
+            flags.push(format!("-D{switch}"));
+        }
+    }
     flags
 }
 
@@ -389,6 +423,11 @@ pub(crate) fn build_wasm(
     if !ship {
         cmd.push_arg("-DLOFT_CALL_CHAIN");
     }
+    // A shim built for a page sees `LOFT_BROWSER`, as `c_shim::wasm_objects` defines it for
+    // the Rust writer's page: there it can call the page's `loft_gl` imports.
+    if browser {
+        cmd.push_arg("-DLOFT_BROWSER");
+    }
     if let Some(root) = &tc.sysroot {
         cmd.push_arg(format!("--sysroot={root}"));
     }
@@ -611,7 +650,14 @@ pub(crate) fn build(
     let pid = std::process::id();
     let src = scratch.join(format!("loft_native_c_{pid}.c"));
     let binary = scratch.join(format!("loft_native_bin_{pid}{exe}"));
-    fa::write(&src, c)
+    // A unit written with source lines (the debug tier) hands the code between its loft
+    // functions back to this file, under the name it is written as here.
+    let text = if tier == Tier::Debug {
+        std::borrow::Cow::Owned(loft::c::resolve_line_resets(c, &src.to_string_lossy()))
+    } else {
+        std::borrow::Cow::Borrowed(c)
+    };
+    fa::write(&src, &*text)
         .map_err(|e| BuildError::Rejected(format!("cannot write {}: {e}", src.display())))?;
     let obj = scratch.join(format!("loft_native_obj_{pid}.obj"));
     let mut cmd = compile_command(&cc, &flags, &src, &binary, &obj, &link_args);

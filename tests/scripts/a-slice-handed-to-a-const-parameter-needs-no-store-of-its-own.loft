@@ -1,0 +1,116 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-SliceArg` on the C backend: a slice handed to a `const` parameter — `text_from_bytes(
+// bytes[a..b])`, how a decoder reads a text out of its frame — is copied into a pooled carrier
+// store instead of a store minted and freed for it, given back where the fresh store was
+// freed.  The cells hold what a pool could get wrong: one site run again and again, slices
+// nested deeper than the pool holds (a recursion), two slices in one call, a callee that
+// answers a copy of its argument, empty and clamped bounds, 8-byte elements, and a parameter
+// that is not `const` (no carrier).  Values hand-computed; value AND size.
+// `LOFT_NO_SLICE_ARG_POOL=1` is the same-build oracle; run under `LOFT_NATIVE_LEAK_CHECK=1`
+// an idle carrier is no leak.
+//
+// @falsified-at: none — the rule has no earlier build to catch, so the receipts are defects
+//   planted (2026-10-30) in the generated C: a take that keeps the carrier's old length fails
+//   c1 (size 313750 for 2500) and c2; a take that does not mark the carrier in use lets two
+//   live slices share it, and c4 reads "world+world".
+//   CHANNEL: an assertion.
+
+// "hello world" as bytes: h e l l o ␠ w o r l d
+fn frame() -> vector<u8> { [104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100] }
+
+fn total(v: const vector<u8>) -> integer {
+  t = 0;
+  for x in v { t += x; }
+  t
+}
+
+fn total8(v: const vector<integer>) -> integer {
+  t = 0;
+  for x in v { t += x; }
+  t
+}
+
+fn joined(a: const vector<u8>, b: const vector<u8>) -> text {
+  "{text_from_bytes(a)}+{text_from_bytes(b)}"
+}
+
+fn keep(v: const vector<u8>) -> vector<u8> { v }
+
+fn plain_len(v: vector<u8>) -> integer { len(v) }
+
+// the first `n` bytes of `b` read back as text one level per byte, deepest first
+fn nested(b: vector<u8>, n: integer) -> text {
+  if n == 0 { return ""; }
+  "{nested(b, n - 1)}{text_from_bytes(b[n - 1..n])}"
+}
+
+// c1: one site run 500 times — "hello" and "world" in turn: 250 × 5 + 250 × 5 = 2500 bytes
+fn test_one_site_run_again_and_again() {
+  b = frame();
+  size = 0;
+  last = "";
+  for i in 0..500 {
+    last = if i % 2 == 0 { text_from_bytes(b[0..5]) } else { text_from_bytes(b[6..11]) };
+    size += last.size();
+  }
+  assert(size == 2500, "c1 size {size}");
+  assert(last == "world", "c1 last {last}");
+}
+
+// c2: slices nested 20 deep, past the pool's 16 — the frame is 11 bytes, so levels 1–11 read
+//     its bytes and levels 12–20 slice past its end and read "": "hello world"
+fn test_nested_past_the_pool() {
+  b = frame();
+  got = nested(b, 20);
+  assert(got == "hello world", "c2 {got}");
+  assert(got.size() == 11, "c2 size {got.size()}");
+}
+
+// c3: a user callee — 104 + 101 + 108 + 108 + 111 = 532
+fn test_a_user_callee() {
+  b = frame();
+  t = total(b[0..5]);
+  assert(t == 532, "c3 {t}");
+}
+
+// c4: two slices in one call — "hello+world"
+fn test_two_slices_in_one_call() {
+  b = frame();
+  got = joined(b[0..5], b[6..11]);
+  assert(got == "hello+world", "c4 {got}");
+}
+
+// c5: a callee that answers a copy of its argument, read after another slice was handed on —
+//     [108, 108] stays, the later "wor" does not disturb it
+fn test_a_kept_copy() {
+  b = frame();
+  k = keep(b[2..4]);
+  w = text_from_bytes(b[6..9]);
+  assert(len(k) == 2 && (k[0] ?? 0) == 108 && (k[1] ?? 0) == 108, "c5 {len(k)}");
+  assert(w == "wor", "c5 {w}");
+}
+
+// c6: empty and clamped bounds — "" for 3..3, "ld" for 9..40, "" for 20..30
+fn test_empty_and_clamped_bounds() {
+  b = frame();
+  e = text_from_bytes(b[3..3]);
+  c = text_from_bytes(b[9..40]);
+  f = text_from_bytes(b[20..30]);
+  assert(e == "" && c == "ld" && f == "", "c6 [{e}] [{c}] [{f}]");
+}
+
+// c7: 8-byte elements — 20 + 30 + 40 = 90
+fn test_eight_byte_elements() {
+  v: vector<integer> = [10, 20, 30, 40, 50];
+  t = total8(v[1..4]);
+  assert(t == 90, "c7 {t}");
+}
+
+// c8: a parameter that is not `const` takes the slice as before — 4
+fn test_a_plain_parameter() {
+  b = frame();
+  n = plain_len(b[1..5]);
+  assert(n == 4, "c8 {n}");
+}

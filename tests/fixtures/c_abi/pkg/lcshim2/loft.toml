@@ -1,0 +1,8 @@
+[library]
+name = "lcshim2"
+version = "0.1.0"
+
+# A second package with a `[c] shim`, for the program that links two of them (loft#2280):
+# each package's wasm objects carry loft's wasm C library, and the program links it once.
+[c]
+shim = "src/lc2.c"

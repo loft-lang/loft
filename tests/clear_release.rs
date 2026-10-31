@@ -55,3 +55,43 @@ fn a_reused_buffer_releases_its_heap_owning_elements() {
         "release OFF must strand the heap and trip the ceiling (the falsifier) — got:\n{off_out}"
     );
 }
+
+/// STORE_MODEL.md D19f (@PLN206 P1) — clearing a vector that is already empty does nothing: no
+/// store reset, no record made again, as the C's `loft_vec_clear_release` answers it.  A function
+/// that keeps answering an empty vector clears its pooled return buffer (`@FR-R-Reuse`) while it
+/// is still empty, and the interpreter reset that buffer's store on every call — measured on
+/// 2 000 000 calls of `make(0)`: 8.96e9 instructions before, 5.17e9 with the early exit.
+/// `LOFT_TRACE_CLEAR` names every clear that reaches the release; none may.  Falsified: without
+/// the early exit the trace prints `[clear] reset store=… cap=0` per call.
+#[test]
+fn clearing_an_empty_vector_resets_no_store() {
+    let dir = std::env::temp_dir().join(format!("loft-clear-empty-{}", std::process::id()));
+    loft::file_access::create_dir_all(&dir).expect("scratch");
+    let file = dir.join("buf.loft");
+    loft::file_access::write(
+        &file,
+        "struct Heavy { hv: vector<float> }\nfn make(k: integer) -> vector<Heavy> {\n  \
+         mk_out: vector<Heavy> = [];\n  for i in 0..k { mk_out += [Heavy { hv: [i as float] }]; }\n  \
+         mk_out\n}\nfn main() {\n  n = 0;\n  for _ in 0..3 { r = make(0); n += len(r); }\n  \
+         r = make(2);\n  println(\"{n} {len(r)} {r[1].hv[0]}\");\n}\n",
+    )
+    .expect("write program");
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--interpret")
+        .arg(&file)
+        .env("LOFT_TRACE_CLEAR", "1")
+        .env("LOFT_TIMEOUT", "60")
+        .output()
+        .expect("spawn loft");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "0 2 1\n",
+        "the answer:\n{err}"
+    );
+    assert!(
+        !err.contains("[clear] reset store="),
+        "an empty buffer's clear reset its store:\n{err}"
+    );
+    let _ = loft::file_access::remove_dir_all(&dir);
+}

@@ -2091,6 +2091,53 @@ fn main() {
     assert_eq!(String::from_utf8_lossy(&out.stdout), want, "the C program");
 }
 
+/// The allocator's bisect switches the C runtime honours as `-D` defines (`src/c/loft_store.h`),
+/// each a policy turned off on both sides.
+const ALLOCATOR_SWITCHES: &[&str] = &[
+    "LOFT_NO_PARK",
+    "LOFT_NO_LAZY_FREE",
+    "LOFT_NO_TOMBSTONE",
+    "LOFT_NO_FREE_FOOTER",
+    "LOFT_NO_WILD_BUMP",
+    "LOFT_NO_CARVE_IN_PLACE",
+];
+
+/// @PLN206 P0b — every allocator bisect switch the C honours places every record where `Store`
+/// does under the same switch: the allocator differential below runs again, once per switch, in
+/// a process of its own (`Store` reads each switch once per process) with the variable set, and
+/// the C is built with the matching define.  Falsified: on each switch's own script a C built
+/// without its define places records elsewhere — except `LOFT_NO_WILD_BUMP`, whose fast path
+/// writes the very bytes the best fit it skips writes, so the run shows only that the off path
+/// answers the same.
+#[test]
+fn a_store_allocator_switch_answers_alike_on_both_runtimes() {
+    if !have_cc()
+        || ALLOCATOR_SWITCHES
+            .iter()
+            .any(|v| std::env::var_os(v).is_some())
+    {
+        return;
+    }
+    let me = std::env::current_exe().expect("the test binary");
+    for v in ALLOCATOR_SWITCHES {
+        let out = loft::platform::process::harness_command(&me)
+            .args([
+                "--exact",
+                "the_c_store_allocator_places_every_record_where_store_does",
+                "--test-threads=1",
+            ])
+            .env(v, "1")
+            .output()
+            .expect("run the differential");
+        let said = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success() && said.contains("1 passed"),
+            "{v}: the C and Store place records differently:\n{said}\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
 /// The C store allocator (`src/c/loft_store.h`) is a PORT of `Store`'s, not one of its own
 /// (@PLN200 B5, owner): one seeded sequence of claims, deletes, resizes and referenced-record
 /// marks runs through `Store` and through the C, and every position either answers, then the
@@ -2121,36 +2168,46 @@ fn the_c_store_allocator_places_every_record_where_store_does() {
     let mut store = loft::store::Store::new_in_use_defined(100);
     let mut live: Vec<u32> = Vec::new();
     let (mut script, mut want) = (String::new(), String::new());
-    for _ in 0..6000 {
-        let pick = next(100);
-        if pick < 50 || live.is_empty() {
-            let size = match next(20) {
-                0..=11 => 1 + next(8),
-                12..=16 => 9 + next(12),
-                17..=18 => 40 + next(40),
-                _ => 150 + next(250),
-            } as u32;
-            let pos = store.claim(size);
-            live.push(pos);
-            let _ = writeln!(script, "C {size}");
-            let _ = writeln!(want, "{pos}");
-        } else if pick < 80 {
-            let rec = live.swap_remove(next(live.len() as u64) as usize);
-            store.delete(rec);
-            let _ = writeln!(script, "D {rec}");
-        } else if pick < 95 {
-            let i = next(live.len() as u64) as usize;
-            let rec = live[i];
-            let words = store.read::<i32>(rec, 0) as u32;
-            let size = words + 1 + next(u64::from(words)) as u32;
-            let pos = store.resize(rec, size);
-            live[i] = pos;
-            let _ = writeln!(script, "R {rec} {size}");
-            let _ = writeln!(want, "{pos}");
-        } else {
-            let rec = live[next(live.len() as u64) as usize];
-            store.note_referenced(rec);
-            let _ = writeln!(script, "N {rec}");
+    // Twice: the second time on the same store re-initialised (`I`), as a pooled store is made
+    // again — its high-water mark and pending merge start over on both sides (STORE_MODEL.md
+    // D19a), or the reused store sweeps later than the C's.
+    for phase in 0..2 {
+        if phase == 1 {
+            store.init();
+            live.clear();
+            let _ = writeln!(script, "I");
+        }
+        for _ in 0..6000 {
+            let pick = next(100);
+            if pick < 50 || live.is_empty() {
+                let size = match next(20) {
+                    0..=11 => 1 + next(8),
+                    12..=16 => 9 + next(12),
+                    17..=18 => 40 + next(40),
+                    _ => 150 + next(250),
+                } as u32;
+                let pos = store.claim(size);
+                live.push(pos);
+                let _ = writeln!(script, "C {size}");
+                let _ = writeln!(want, "{pos}");
+            } else if pick < 80 {
+                let rec = live.swap_remove(next(live.len() as u64) as usize);
+                store.delete(rec);
+                let _ = writeln!(script, "D {rec}");
+            } else if pick < 95 {
+                let i = next(live.len() as u64) as usize;
+                let rec = live[i];
+                let words = store.read::<i32>(rec, 0) as u32;
+                let size = words + 1 + next(u64::from(words)) as u32;
+                let pos = store.resize(rec, size);
+                live[i] = pos;
+                let _ = writeln!(script, "R {rec} {size}");
+                let _ = writeln!(want, "{pos}");
+            } else {
+                let rec = live[next(live.len() as u64) as usize];
+                store.note_referenced(rec);
+                let _ = writeln!(script, "N {rec}");
+            }
         }
     }
     // `@FR-H-TailGrow`: a record nothing claimed follows, doubled again and again — the store
@@ -2209,6 +2266,7 @@ int main(int argc, char **argv) {
         else if (op == 'D') { if (fscanf(f, "%u", &a) != 1) return 2; loft_st_delete(&s, a); }
         else if (op == 'R') { if (fscanf(f, "%u %u", &a, &b) != 2) return 2; printf("%u\n", loft_st_resize(&s, a, b)); }
         else if (op == 'N') { if (fscanf(f, "%u", &a) != 1) return 2; loft_st_note_referenced(&s, a); }
+        else if (op == 'I') loft_st_init(&s);
     }
     printf("size %u\n", s.size);
     uint64_t h = UINT64_C(0xcbf29ce484222325);
@@ -2229,8 +2287,16 @@ int main(int argc, char **argv) {
     let (src, ops, exe) = (dir.join("store.c"), dir.join("ops.txt"), dir.join("store"));
     fa::write(&src, &c).expect("write C");
     fa::write(&ops, &script).expect("write ops");
+    // The allocator's bisect switches this process runs `Store` under, given to the C as its
+    // defines (`a_store_allocator_switch_answers_alike_on_both_runtimes` sets them).
+    let switched: Vec<String> = ALLOCATOR_SWITCHES
+        .iter()
+        .filter(|v| std::env::var(v).is_ok_and(|x| x != "0"))
+        .map(|v| format!("-D{v}"))
+        .collect();
     let cc = loft::platform::process::harness_command("cc")
         .args(["-std=c99", "-O2", "-pedantic", "-Werror"])
+        .args(&switched)
         .arg(&src)
         .arg("-o")
         .arg(&exe)
@@ -2259,6 +2325,1037 @@ int main(int argc, char **argv) {
         want.lines().count(),
         "the C stopped early"
     );
+}
+
+/// A seeded LCG, the same sequence on every run and every machine.
+struct Lcg(u64);
+
+impl Lcg {
+    fn next(&mut self, n: u64) -> u64 {
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (self.0 >> 33) % n
+    }
+}
+
+/// `steps` claims, deletes, resizes and referenced-record marks through `store`, each written
+/// to `script` as the C reads it and each answer to `want`, closed by deletes down to `keep`
+/// records and a reclaim of the tail (`X`, the words it gave back) and the size the store is
+/// left at.  Large claims come often, so a file-bound store grows several times and its reclaim
+/// cuts the file.  Without `refs` no record is marked referenced, so none leaves a tombstone
+/// (`@FR-H-Removed`) and an emptied store's cut can reach its floor.
+#[cfg(feature = "mmap")]
+fn mapped_ops(
+    store: &mut loft::store::Store,
+    live: &mut Vec<u32>,
+    rng: &mut Lcg,
+    steps: u32,
+    keep: usize,
+    refs: bool,
+    (script, want): (&mut String, &mut String),
+) {
+    for _ in 0..steps {
+        let pick = rng.next(100);
+        if pick < 50 || live.is_empty() {
+            let size = match rng.next(20) {
+                0..=10 => 1 + rng.next(8),
+                11..=15 => 9 + rng.next(12),
+                16..=17 => 40 + rng.next(40),
+                _ => 300 + rng.next(900),
+            } as u32;
+            let pos = store.claim(size);
+            live.push(pos);
+            let _ = writeln!(script, "C {size}");
+            let _ = writeln!(want, "{pos}");
+        } else if pick < 85 {
+            let rec = live.swap_remove(rng.next(live.len() as u64) as usize);
+            store.delete(rec);
+            let _ = writeln!(script, "D {rec}");
+        } else if pick < 95 {
+            let i = rng.next(live.len() as u64) as usize;
+            let rec = live[i];
+            let words = store.read::<i32>(rec, 0) as u32;
+            let size = words + 1 + rng.next(u64::from(words)) as u32;
+            let pos = store.resize(rec, size);
+            live[i] = pos;
+            let _ = writeln!(script, "R {rec} {size}");
+            let _ = writeln!(want, "{pos}");
+        } else if refs {
+            let rec = live[rng.next(live.len() as u64) as usize];
+            store.note_referenced(rec);
+            let _ = writeln!(script, "N {rec}");
+        }
+    }
+    // The tail given back: most of what was claimed goes first, so the file is cut.
+    while live.len() > keep {
+        let rec = live.swap_remove(rng.next(live.len() as u64) as usize);
+        store.delete(rec);
+        let _ = writeln!(script, "D {rec}");
+    }
+    let _ = writeln!(script, "X");
+    let _ = writeln!(want, "{}", store.reclaim_tail());
+    let _ = writeln!(want, "size {}", store.capacity_words());
+}
+
+/// D23 of STORE_MODEL.md (`@FR-S-Mapped`, @PLN206 P2): a store bound to a file is the same store
+/// on both runtimes.  `Store::open` and the C's `loft_st_open_mapped` (`src/c/loft_mapped.h`)
+/// each bind a fresh file and run one seeded sequence that grows it several times and then cuts
+/// it (`reclaim_tail`); each then reopens the file the OTHER runtime wrote and continues with a
+/// second sequence.  Every answer, and after each phase the two FILES byte for byte, must be the
+/// same: the bytes, the size and what reaches the file when the store is released.  Then a read
+/// surface (`@FR-H-ReadSurface`) opens a file and leaves it exactly as it was, and a file that
+/// holds no store is refused by both and left alone.  Falsified: the floor of a file-bound
+/// store, the growth step, the recorded-length clear, the size of a fresh file and parking left
+/// on each fail it.
+#[cfg(feature = "mmap")]
+#[test]
+fn a_store_bound_to_a_file_holds_the_same_bytes_on_both_runtimes() {
+    use loft::store::Store;
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("mapped");
+    let path = |n: &str| dir.join(n).to_string_lossy().into_owned();
+    let (rust_file, c_file) = (path("rust.store"), path("c.store"));
+    for f in [&rust_file, &c_file] {
+        let _ = fa::remove_file(f);
+    }
+    let mut c = String::from(
+        "#if !defined(_WIN32)\n#define _POSIX_C_SOURCE 200809L\n#define LOFT_POSIX_HOST 1\n#endif\n\
+         #include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n",
+    );
+    c.push_str(include_str!("../src/c/loft_store.h"));
+    c.push_str("#if defined(_WIN32)\n#include <windows.h>\n#endif\n");
+    c.push_str(include_str!("../src/c/loft_mapped.h"));
+    c.push_str(
+        r#"
+/* argv: the file, the operations, `w` to bind it or `r` for a read surface. */
+int main(int argc, char **argv) {
+    loft_store_t s;
+    memset(&s, 0, sizeof s);
+    int rc = loft_st_open_mapped(&s, argv[1], argv[3][0] == 'r');
+    printf("open %d\n", rc);
+    if (rc != 1) return 0;
+    printf("size %u ro %d\n", s.size, s.read_only);
+    FILE *f = fopen(argv[2], "r");
+    char op;
+    unsigned a, b;
+    while (fscanf(f, " %c", &op) == 1) {
+        if (op == 'C') { if (fscanf(f, "%u", &a) != 1) return 2; printf("%u\n", loft_st_claim(&s, a)); }
+        else if (op == 'D') { if (fscanf(f, "%u", &a) != 1) return 2; loft_st_delete(&s, a); }
+        else if (op == 'R') { if (fscanf(f, "%u %u", &a, &b) != 2) return 2; printf("%u\n", loft_st_resize(&s, a, b)); }
+        else if (op == 'N') { if (fscanf(f, "%u", &a) != 1) return 2; loft_st_note_referenced(&s, a); }
+        else if (op == 'X') { uint32_t cut = loft_st_reclaim_tail(&s); printf("%u\nsize %u\n", cut, s.size); }
+    }
+    fclose(f);
+    loft_st_close_mapped(&s);
+    return 0;
+}
+"#,
+    );
+    let (src, exe) = (dir.join("mapped.c"), dir.join("mapped"));
+    fa::write(&src, &c).expect("write C");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O2", "-pedantic", "-Werror"])
+        .arg(&src)
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc rejected loft_mapped.h:\n{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let run_c = |file: &str, script: &str, mode: &str, phase: &str| -> String {
+        let ops = dir.join(format!("ops-{phase}.txt"));
+        fa::write(&ops, script).expect("write ops");
+        let out = loft::platform::process::harness_command(&exe)
+            .arg(file)
+            .arg(&ops)
+            .arg(mode)
+            .output()
+            .expect("run the mapped-store program");
+        assert!(
+            out.status.success(),
+            "{phase}: the C exited {:?}",
+            out.status
+        );
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let compare = |phase: &str, want: &str, got: &str| {
+        if let Some((i, (w, g))) = want
+            .lines()
+            .zip(got.lines())
+            .enumerate()
+            .find(|(_, (w, g))| w != g)
+        {
+            panic!("{phase}, line {i}: Store answers {w:?}, the C {g:?}");
+        }
+        assert_eq!(
+            got.lines().count(),
+            want.lines().count(),
+            "{phase}: the C stopped early"
+        );
+    };
+    let same_files = |phase: &str, a: &str, b: &str| {
+        let (x, y) = (fa::read(a).expect("read"), fa::read(b).expect("read"));
+        assert_eq!(x.len(), y.len(), "{phase}: the files' lengths");
+        if let Some(i) = x.iter().zip(&y).position(|(p, q)| p != q) {
+            panic!(
+                "{phase}: the files differ first at byte {i} (word {})",
+                i / 8
+            );
+        }
+    };
+    let mut rng = Lcg(0x5eed_0f11_e000_0023);
+    let mut live = Vec::new();
+
+    // 1. A fresh file on each side, grown and cut.
+    let (mut script, mut want) = (String::new(), String::from("open 1\n"));
+    {
+        let mut store = Store::open(&rust_file);
+        let _ = writeln!(want, "size {} ro 0", store.capacity_words());
+        mapped_ops(
+            &mut store,
+            &mut live,
+            &mut rng,
+            3000,
+            3,
+            true,
+            (&mut script, &mut want),
+        );
+    }
+    compare(
+        "a fresh file",
+        &want,
+        &run_c(&c_file, &script, "w", "fresh"),
+    );
+    same_files("a fresh file", &rust_file, &c_file);
+    let grown = fa::metadata(&rust_file).expect("stat").len();
+    assert!(
+        grown > 8192,
+        "the run must grow the file past its first 8192 bytes"
+    );
+
+    // 2. Each reopens the file the other wrote and continues, down to no live record (the
+    // tombstones stay).  Each file first records its length at bytes 4..8, as a written image
+    // does (`(S-Frame)`): bound again, a store clears it.
+    for f in [&rust_file, &c_file] {
+        let mut bytes = fa::read(f).expect("read");
+        let words = (bytes.len() / 8) as u32;
+        bytes[4..8].copy_from_slice(&words.to_le_bytes());
+        fa::write(f, &bytes).expect("record the length");
+    }
+    let (mut script, mut want) = (String::new(), String::from("open 1\n"));
+    {
+        let mut store = Store::open(&c_file);
+        let _ = writeln!(want, "size {} ro 0", store.capacity_words());
+        mapped_ops(
+            &mut store,
+            &mut live,
+            &mut rng,
+            2000,
+            0,
+            true,
+            (&mut script, &mut want),
+        );
+    }
+    compare(
+        "a reopened file",
+        &want,
+        &run_c(&rust_file, &script, "w", "reopen"),
+    );
+    same_files("a reopened file", &c_file, &rust_file);
+
+    // 2b. A fresh pair whose run marks no reference: emptied, the cut stops at the floor of a
+    // file-bound store, not at the two words a store in memory keeps.
+    let (rust_floor, c_floor) = (path("rust-floor.store"), path("c-floor.store"));
+    for f in [&rust_floor, &c_floor] {
+        let _ = fa::remove_file(f);
+    }
+    let mut floor_live = Vec::new();
+    let (mut script, mut want) = (String::new(), String::from("open 1\n"));
+    {
+        let mut store = Store::open(&rust_floor);
+        let _ = writeln!(want, "size {} ro 0", store.capacity_words());
+        mapped_ops(
+            &mut store,
+            &mut floor_live,
+            &mut rng,
+            600,
+            0,
+            false,
+            (&mut script, &mut want),
+        );
+    }
+    compare(
+        "an emptied file",
+        &want,
+        &run_c(&c_floor, &script, "w", "floor"),
+    );
+    same_files("an emptied file", &rust_floor, &c_floor);
+    let cut: u32 = want
+        .lines()
+        .rev()
+        .nth(1)
+        .and_then(|l| l.parse().ok())
+        .expect("the cut");
+    assert!(
+        cut > 0,
+        "the run must grow the file past its floor, so the cut reaches it"
+    );
+    assert_eq!(
+        fa::metadata(&rust_floor).expect("stat").len(),
+        u64::from(loft::store::MIN_BOUND_WORDS) * 8,
+        "an emptied file-bound store is cut to its floor"
+    );
+
+    // 3. A read surface writes nothing: not the recorded length, not a footer.
+    let before = fa::read(&rust_file).expect("read");
+    let words = {
+        let store = Store::open_read_surface(&rust_file).expect("a read surface");
+        assert!(store.read_only, "a read surface is locked");
+        store.capacity_words()
+    };
+    assert_eq!(
+        fa::read(&rust_file).expect("read"),
+        before,
+        "Store's read surface wrote to its file"
+    );
+    compare(
+        "a read surface",
+        &format!("open 1\nsize {words} ro 1\n"),
+        &run_c(&rust_file, "", "r", "surface"),
+    );
+    assert_eq!(
+        fa::read(&rust_file).expect("read"),
+        before,
+        "the C's read surface wrote to its file"
+    );
+
+    // 4. A file of 8192 bytes or more that holds no store is refused and left alone.
+    let junk = path("junk.bin");
+    let bytes: Vec<u8> = (0..9000u32).map(|i| (i * 7 + 3) as u8).collect();
+    fa::write(&junk, &bytes).expect("write junk");
+    let refused = std::panic::catch_unwind(|| Store::open(&junk)).is_err();
+    assert!(refused, "Store refuses a file that holds no store");
+    compare(
+        "a file that holds no store",
+        "open -1\n",
+        &run_c(&junk, "", "w", "junk"),
+    );
+    assert_eq!(
+        fa::read(&junk).expect("read"),
+        bytes,
+        "a refused file is left as it was"
+    );
+}
+
+/// @PLN206 P0b — `LOFT_STRICT_STORES` on the C, the interpreter's use-after-free ground truth
+/// (`keys::strict_stores`): a freed store's slot is never made again, an access through a
+/// reference naming it is reported at the access, a store live at exit is reported, and either
+/// makes the run exit 1.  A correct program cannot reach a freed store, so the cells append a
+/// `main` to an emitted unit that does what a store-lifetime defect would: read a store through
+/// a reference its free left behind — a store below the top, whose number the mode retires (a
+/// freed TOP slot is made again, as the interpreter's `trim_free_top` makes it) — and keep a
+/// store alive past the end.  Without the switch the
+/// freed slot is made again and the stale read answers quietly — the defect the switch exists
+/// for; with it the read is named and the run fails.  And a correct program built through the
+/// driver under `LOFT_STRICT_STORES=1` runs clean.  Falsified: no check in `loft_store_of`, the
+/// slot made again, and the exit left at 0 each fail it.
+#[test]
+fn a_strict_store_c_build_names_a_use_after_free_and_a_store_never_freed() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("strict-stores");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let file = dir.join("strict.loft");
+    fa::write(
+        &file,
+        "struct P { x: integer, name: text }\nfn main() {\n  p = P { x: 41, name: \"a\" };\n  \
+         p.x += 1;\n  println(\"{p.x} {p.name}\");\n}\n",
+    )
+    .expect("write program");
+    let c = dir.join("strict.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "emit: {}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let unit = fa::read_to_string(&c).expect("read the C");
+    // The type the program mints its `P` as, read off the unit.
+    let tp: u32 = unit
+        .split("loft_database_typed(&v0_p, 16, ")
+        .nth(1)
+        .and_then(|t| t.split(')').next())
+        .and_then(|t| t.parse().ok())
+        .expect("the type of P in the unit");
+    let unit = unit.replacen(
+        "int main(int argc, char **argv) {",
+        "static int loft_program_main(int argc, char **argv) {",
+        1,
+    );
+    // `free_q` 0: the second store is never freed.
+    let cell = |name: &str, free_q: bool, strict: bool| -> (String, String, i32) {
+        let src = dir.join(format!("{name}.c"));
+        let exe = dir.join(name);
+        let mut text = unit.clone();
+        let _ = write!(
+            text,
+            "\nint main(void) {{\n    loft_bind_tables();\n    loft_start(0, 0);\n    \
+             loft_ref r = loft_ref_null();\n    loft_database_typed(&r, 16, {tp});\n    \
+             loft_ref k = loft_ref_null();\n    loft_database_typed(&k, 16, {tp});\n    \
+             loft_set_int(r, 0, INT64_C(7));\n    loft_free_ref(r);\n    \
+             printf(\"stale %lld\\n\", (long long) loft_get_int(r, 0));\n    \
+             loft_ref q = loft_ref_null();\n    loft_database_typed(&q, 16, {tp});\n    \
+             printf(\"fresh store %u, freed %u\\n\", (unsigned) q.store_nr, (unsigned) r.store_nr);\n    \
+             {}\n    loft_free_ref(k);\n    loft_leak_report();\n    return 0;\n}}\n",
+            if free_q { "loft_free_ref(q);" } else { "" }
+        );
+        fa::write(&src, &text).expect("write the cell");
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O1", "-w"])
+            .args(strict.then_some("-DLOFT_STRICT_STORES"))
+            .arg(&src)
+            .arg("-o")
+            .arg(&exe)
+            .args(unit_links(&src))
+            .arg("-lm")
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "{name}: cc: {}",
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let out = loft::platform::process::harness_command(&exe)
+            .output()
+            .expect("run the cell");
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+            out.status.code().unwrap_or(-1),
+        )
+    };
+    let freed = "[strict-store] USE AFTER FREE (access) store #0 type=P rec=1 pos=8";
+    // Without the switch: the slot is made again and the stale read answers quietly.
+    let (out, err, code) = cell("plain", true, false);
+    assert_eq!(out, "stale 7\nfresh store 0, freed 0\n", "the plain build");
+    assert!(
+        !err.contains("[strict-store]"),
+        "the plain build reported:\n{err}"
+    );
+    assert_eq!(code, 0, "the plain build");
+    // With it: named at the access, the slot kept dead, and the run fails.
+    let (out, err, code) = cell("uaf", true, true);
+    assert_eq!(out, "stale 7\nfresh store 2, freed 0\n", "the strict build");
+    assert!(
+        err.contains(freed),
+        "the strict build did not name the read:\n{err}"
+    );
+    assert!(
+        err.contains("[strict-store] FAILED: 1 store-lifetime violation(s)"),
+        "the strict build's verdict:\n{err}"
+    );
+    assert_eq!(code, 1, "the strict build exits 1");
+    // A store never freed is the other half.
+    let (_, err, code) = cell("kept", false, true);
+    assert!(
+        err.contains("[strict-store] NEVER FREED: 1 stores not freed at program exit: kt=")
+            && err.contains(" P\u{d7}1"),
+        "the strict build did not name the store left alive:\n{err}"
+    );
+    assert!(
+        err.contains("[strict-store] FAILED: 2 store-lifetime violation(s)"),
+        "both halves counted:\n{err}"
+    );
+    assert_eq!(code, 1, "the strict build exits 1");
+    // A correct program, through the driver: clean.
+    let run = loft::platform::process::harness_command(loft)
+        .arg("--native-c")
+        .arg(&file)
+        .env("LOFT_STRICT_STORES", "1")
+        .output()
+        .expect("run loft --native-c");
+    let err = String::from_utf8_lossy(&run.stderr);
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "42 a\n",
+        "--native-c:\n{err}"
+    );
+    assert!(
+        !err.contains("[strict-store]"),
+        "a correct program reported:\n{err}"
+    );
+    assert!(run.status.success(), "a correct program failed:\n{err}");
+    let _ = fa::remove_dir_all(&dir);
+}
+
+/// @PLN206 D31 — a test run leaves no store behind on the C, as on the interpreter, whose tests
+/// each run in a fork of their own.  Three ways it did not, each a cell here:
+/// - a default lowered into a function of its own (`__dflt_f_b`, loft#699) has no parameter,
+///   and every runner counted it as a test — `loft --tests` said "2 passed" for one test, and
+///   the C kept the hash it built;
+/// - a test that answers a store (a helper with no parameter, in a file that names no `test_*`)
+///   is run and its answer dropped — the C kept the store;
+/// - a test expected to fail `longjmp`s past its frames' frees — the C kept the record its frame
+///   made.
+///
+/// The C is built under `LOFT_STRICT_STORES`, where a store live at exit fails the run.
+/// Falsified: the generated function let back into the selection, the returned store left, and
+/// the failed test's stores left each fail it.
+#[test]
+fn a_test_run_on_the_c_leaves_no_store_behind() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("test-stores");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let file = dir.join("leaves.loft");
+    fa::write(
+        &file,
+        "struct K { k: integer, v: integer }\nstruct Calls { n: integer }\n\
+         fn f(a: integer, b: hash<K[k]> = []) -> integer { a + len(b) }\n\
+         fn made() -> hash<K[k]> { h: hash<K[k]> = [K { k: 1, v: 2 }]; h }\n\
+         fn test() { assert(f(1) == 1, \"default\"); }\n\
+         // @EXPECT_FAIL: below zero\n\
+         fn failing() { c = Calls { n: 3 }; assert(c.n < 0, \"below zero {c.n}\"); }\n",
+    )
+    .expect("write program");
+    // The interpreter's runner: the default's function is not a test.
+    let tests = loft::platform::process::harness_command(loft)
+        .arg("--tests")
+        .arg(&file)
+        .output()
+        .expect("run loft --tests");
+    let said = String::from_utf8_lossy(&tests.stdout);
+    assert!(
+        said.contains("3 passed") && !said.contains("__dflt"),
+        "loft --tests ran the generated default as a test:\n{said}"
+    );
+    let c = dir.join("leaves.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "emit: {}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    assert!(
+        !fa::read_to_string(&c)
+            .expect("read the C")
+            .contains("strcmp(loft_only, \"__dflt_f_b\")"),
+        "the C runs the generated default as a test"
+    );
+    let exe = dir.join("leaves");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O1", "-w", "-DLOFT_STRICT_STORES"])
+        .arg(&c)
+        .arg("-o")
+        .arg(&exe)
+        .args(unit_links(&c))
+        .arg("-lm")
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc: {}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let run = loft::platform::process::harness_command(&exe)
+        .output()
+        .expect("run the tests");
+    let err = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        !err.contains("[strict-store]"),
+        "the C test run left a store:\n{err}"
+    );
+    assert!(run.status.success(), "the C test run failed:\n{err}");
+    let _ = fa::remove_dir_all(&dir);
+}
+
+/// @PLN206 P0b — `LOFT_KEYED_VERIFY` on the C: every keyed fast path the C runtime has is checked
+/// against its general form, as the interpreter checks its own — the index's exact descent
+/// against the boundary walk, the typed hash lookups (`loft_h_find_i64`, `_ints`, `_text`) and the
+/// one-probe entry (`loft_keyed_entry_ints`, `_text`) against `loft_h_find`, the one-probe insert
+/// against the lookup and the free-slot walk (that one is exercised on arena tables by
+/// `the_c_hash_table_files_every_entry_where_hash_does`).  A program over a hash and an index is
+/// built with `-DLOFT_KEYED_VERIFY` and answers right; then each fast path is CORRUPTED in the
+/// unit's runtime text — the defect the verifier exists for — and the plain build answers wrong
+/// with nothing said, while the verified one stops naming both answers.
+#[test]
+fn a_keyed_verify_c_build_names_a_fast_path_that_answers_wrong() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("keyed-verify");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let file = dir.join("kv.loft");
+    fa::write(
+        &file,
+        "struct K { k: integer, v: integer }\nfn main() {\n  h: hash<K[k]> = [];\n  \
+         for i in 0..300 { h += [K { k: i, v: i * 10 }]; }\n  h += [K { k: 7, v: 777 }];\n  \
+         ix: index<K[k]> = [];\n  for i in 0..20 { ix += [K { k: i * 3, v: i }]; }\n  \
+         println(\"{h[7].v} {len(h)} {ix[12].v}\");\n}\n",
+    )
+    .expect("write program");
+    let c = dir.join("kv.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "emit: {}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let unit = fa::read_to_string(&c).expect("read the C");
+    let run = |name: &str, text: &str, verify: bool| -> (String, String, i32) {
+        let src = dir.join(format!("{name}.c"));
+        let exe = dir.join(name);
+        fa::write(&src, text).expect("write the cell");
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O1", "-w"])
+            .args(verify.then_some("-DLOFT_KEYED_VERIFY"))
+            .arg(&src)
+            .arg("-o")
+            .arg(&exe)
+            .args(unit_links(&src))
+            .arg("-lm")
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "{name}: cc: {}",
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let out = loft::platform::process::harness_command(&exe)
+            .output()
+            .expect("run the cell");
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+            out.status.code().unwrap_or(-1),
+        )
+    };
+    // 777: the latest insert under key 7 wins; 300 keys; 12 = 4 * 3.
+    let (out, err, code) = run("clean", &unit, true);
+    assert_eq!(out, "777 300 4\n", "the verified build:\n{err}");
+    assert_eq!(code, 0, "the verified build:\n{err}");
+    // Each fast path corrupted: the plain build answers wrong and says nothing, the verified
+    // build stops and names both answers.
+    for (name, from, to, wrong, says) in [
+        (
+            "descent",
+            "        r.rec = loft_bt_find_exact(data, keys, nk, kv, n);\n#ifdef LOFT_KEYED_VERIFY",
+            "        r.rec = loft_bt_find_exact(data, keys, nk, kv, n);\n        \
+             if (r.rec) r.rec = loft_bt_record(data, loft_bt_first(data));\n#ifdef LOFT_KEYED_VERIFY",
+            "777 300 0\n",
+            "LOFT_KEYED_VERIFY: the exact descent answers record",
+        ),
+        (
+            "typed",
+            "                if (have == key) return e;",
+            "                if (have == key && key != 7) return e;",
+            "null 300 4\n",
+            "LOFT_KEYED_VERIFY: the typed lookup answers 0+0 where the general one answers",
+        ),
+    ] {
+        assert_eq!(
+            unit.matches(from).count(),
+            1,
+            "{name}: the runtime text moved"
+        );
+        let broken = unit.replacen(from, to, 1);
+        let (out, err, code) = run(&format!("{name}-plain"), &broken, false);
+        assert_eq!(out, wrong, "{name}: the corrupted plain build:\n{err}");
+        assert!(
+            !err.contains("LOFT_KEYED_VERIFY"),
+            "{name}: the plain build checked"
+        );
+        assert_eq!(code, 0, "{name}: the corrupted plain build exits quietly");
+        let (_, err, code) = run(&format!("{name}-verify"), &broken, true);
+        assert!(
+            err.contains(says),
+            "{name}: the verified build did not name it:\n{err}"
+        );
+        assert_ne!(code, 0, "{name}: the verified build must stop");
+    }
+    let _ = fa::remove_dir_all(&dir);
+}
+
+/// @PLN206 P0b — `LOFT_COPY_CHECK` on the C (`Stores::report_copy_mismatches`): after every deep
+/// copy — a bind's (`loft_bind_copy`), `OpCopyRecord`'s and `OpReplaceKeyed`'s — the source and
+/// the copy are walked in parallel and each nested collection whose length differs is named by
+/// its field path.  A program copying a record of nested vectors, a hash and texts runs silent
+/// under it; then the vector copy is CORRUPTED in the unit's runtime text (a three-element copy
+/// keeps two) — the plain build answers wrong and says nothing, the checked one names the place.
+/// And the interpreter's check stays silent on a correct copy of hashes (it misread them).
+#[test]
+fn a_copy_check_c_build_names_a_copy_that_lost_elements() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("copy-check");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let file = dir.join("cp.loft");
+    fa::write(
+        &file,
+        "struct K { k: integer, v: integer }\nstruct In { xs: vector<integer> }\n\
+         struct S { name: text, parts: vector<In>, h: hash<K[k]>, tags: vector<text> }\n\
+         fn main() {\n  a = S { name: \"a\", parts: [In { xs: [1, 2, 3] }, In { xs: [4] }], \
+         h: [K { k: 1, v: 1 }, K { k: 2, v: 2 }], tags: [\"x\", \"y\"] };\n  b = a;\n  \
+         b.name = \"b\";\n  println(\"{len(a.parts)} {len(b.parts[0].xs)} {len(b.h)} {len(b.tags)} \
+         {a.name} {b.name}\");\n}\n",
+    )
+    .expect("write program");
+    let c = dir.join("cp.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "emit: {}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let unit = fa::read_to_string(&c).expect("read the C");
+    let run = |name: &str, text: &str, check: bool| -> (String, String) {
+        let src = dir.join(format!("{name}.c"));
+        let exe = dir.join(name);
+        fa::write(&src, text).expect("write the cell");
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O1", "-w"])
+            .args(check.then_some("-DLOFT_COPY_CHECK"))
+            .arg(&src)
+            .arg("-o")
+            .arg(&exe)
+            .args(unit_links(&src))
+            .arg("-lm")
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "{name}: cc: {}",
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let out = loft::platform::process::harness_command(&exe)
+            .output()
+            .expect("run the cell");
+        assert!(out.status.success(), "{name}: exited {:?}", out.status);
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    // 2 parts, 3 in the first, 2 entries, 2 tags; the copy renamed alone.
+    let (out, err) = run("clean", &unit, true);
+    assert_eq!(out, "2 3 2 2 a b\n", "the checked build:\n{err}");
+    assert!(
+        !err.contains("[copy_check]"),
+        "a correct copy was reported:\n{err}"
+    );
+    let from = "        loft_copy_bytes(dst_v, 4, src_v, 4, (size_t) len * size + 4);\n";
+    assert_eq!(unit.matches(from).count(), 1, "the runtime text moved");
+    let broken = unit.replacen(
+        from,
+        &format!("{from}        if (len == 3) loft_set_u32(loft_store_of(to), into, 4, 2);\n"),
+        1,
+    );
+    let (out, err) = run("broken-plain", &broken, false);
+    assert_eq!(out, "2 2 2 2 a b\n", "the corrupted plain build:\n{err}");
+    assert!(err.is_empty(), "the plain build said something:\n{err}");
+    let (_, err) = run("broken-checked", &broken, true);
+    assert!(
+        err.contains("[copy_check] MISMATCH bind_copy.1[].0: src_len=3 dst_len=2"),
+        "the checked build did not name the lost elements:\n{err}"
+    );
+    // The interpreter's own check reads a hash through `hash::count`: it read an inline table's
+    // header words as an arena's, reporting "1 against 3" for correct copies and following a
+    // bucket word as a record into a crash on this corpus program.
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg("981-split-ownership-return.loft")
+        .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/scripts"))
+        .env("LOFT_COPY_CHECK", "1")
+        .output()
+        .expect("run loft --interpret");
+    let err = String::from_utf8_lossy(&interp.stderr);
+    assert!(
+        interp.status.success() && !err.contains("[copy_check]"),
+        "the interpreter's copy check misread a correct copy:\n{err}"
+    );
+    let _ = fa::remove_dir_all(&dir);
+}
+
+/// @PLN206 P0b — `LOFT_LEAK_SITES` on the C: a store left at exit is named by where it was made
+/// — function, file and the line its frame was at — grouped and counted, most first, beside the
+/// leak report (`loft_note_site`, `loft_leak_report`).  A correct program leaks nothing, so the
+/// cell appends a `main` that makes three stores in a frame of its own, at two lines, and keeps
+/// them; a plain build names only their type.
+#[test]
+fn a_leak_site_c_build_names_where_a_kept_store_was_made() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("leak-sites");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let file = dir.join("p.loft");
+    fa::write(
+        &file,
+        "struct P { x: integer }\nfn main() {\n  p = P { x: 1 };\n  println(\"{p.x}\");\n}\n",
+    )
+    .expect("write program");
+    let c = dir.join("p.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "emit: {}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let unit = fa::read_to_string(&c).expect("read the C");
+    let tp: u32 = unit
+        .split("loft_database_typed(&v0_p, 8, ")
+        .nth(1)
+        .and_then(|t| t.split(')').next())
+        .and_then(|t| t.parse().ok())
+        .expect("the type of P in the unit");
+    let mut text = unit.replacen(
+        "int main(int argc, char **argv) {",
+        "static int loft_program_main(int argc, char **argv) {",
+        1,
+    );
+    let _ = write!(
+        text,
+        "\nint main(void) {{\n    loft_bind_tables();\n    loft_start(0, 0);\n    \
+         loft_frame_push(\"leaky\", \"x.loft\", 3);\n    loft_frame_site(7);\n    \
+         loft_ref a = loft_ref_null(); loft_database_typed(&a, 8, {tp});\n    \
+         loft_ref b = loft_ref_null(); loft_database_typed(&b, 8, {tp});\n    \
+         loft_frame_site(9);\n    \
+         loft_ref c = loft_ref_null(); loft_database_typed(&c, 8, {tp});\n    \
+         loft_frame_pop();\n    loft_leak_report();\n    return 0;\n}}\n"
+    );
+    let src = dir.join("leak.c");
+    fa::write(&src, &text).expect("write the cell");
+    let run = |sites: bool| -> String {
+        let exe = dir.join(if sites { "sites" } else { "plain" });
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O1", "-w"])
+            .args(sites.then_some("-DLOFT_LEAK_SITES"))
+            .arg(&src)
+            .arg("-o")
+            .arg(&exe)
+            .args(unit_links(&src))
+            .arg("-lm")
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "cc: {}",
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let out = loft::platform::process::harness_command(&exe)
+            .env("LOFT_NATIVE_LEAK_CHECK", "1")
+            .output()
+            .expect("run the cell");
+        String::from_utf8_lossy(&out.stderr).into_owned()
+    };
+    let plain = run(false);
+    assert!(
+        plain.contains("stores not freed at program exit: kt="),
+        "the plain report:\n{plain}"
+    );
+    assert!(
+        !plain.contains("[leak-site]"),
+        "a plain build names sites:\n{plain}"
+    );
+    let sites = run(true);
+    assert!(
+        sites.contains(&format!("  [leak-site] 2\u{d7} P (kt={tp}) allocated at x.loft:7 in fn leaky()\n  [leak-site] 1\u{d7} P (kt={tp}) allocated at x.loft:9 in fn leaky()")),
+        "the sites, most first:\n{sites}"
+    );
+    let _ = fa::remove_dir_all(&dir);
+}
+
+/// @PLN206 P0b (the debugger row) — the C debug tier (`--native-debug` on the C backend) writes
+/// the loft source into the binary's debug information: every C line of a statement is preceded
+/// by `#line <its loft line> "<its .loft file>"` (`emit_program_with_source_lines`), and the code
+/// between the functions is handed back to the C file (`resolve_line_resets`).  The line table —
+/// what gdb, lldb, a profiler and a backtrace read — then holds `total.loft` lines 2, 3 and 4 for
+/// `total` and 7 for `main`, and nothing else of that file; the other tiers' C carries no marker.
+/// Falsified: one marker per statement instead of one per C line numbers the lines after it
+/// onward (`total.loft` 8 … 16 appeared), and no marker leaves the file out of the table.
+#[test]
+fn the_c_debug_build_names_loft_lines_in_its_line_table() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("line-table");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let file = dir.join("total.loft");
+    fa::write(
+        &file,
+        "fn total(xs: vector<integer>) -> integer {\n  s = 0;\n  for x in xs { s += x; }\n  s\n}\n\
+         fn main() {\n  println(\"{total([1, 2, 3, 4])}\");\n}\n",
+    )
+    .expect("write program");
+    // The default emission carries no marker.
+    let plain = dir.join("plain.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&plain)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "emit: {}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    assert!(
+        !fa::read_to_string(&plain)
+            .expect("read the C")
+            .contains("#line "),
+        "the default C carries #line markers"
+    );
+    let run = loft::platform::process::harness_command(loft)
+        .arg("--native-debug")
+        .arg(&file)
+        .current_dir(&dir)
+        .env("LOFT_NATIVE_BACKEND", "c")
+        .env("LOFT_KEEP_NATIVE_C", "1")
+        .output()
+        .expect("run loft --native-debug");
+    let err = String::from_utf8_lossy(&run.stderr);
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "10\n",
+        "the debug build:\n{err}"
+    );
+    let kept = err
+        .lines()
+        .find_map(|l| l.strip_prefix("loft: C source preserved at "))
+        .expect("the kept C");
+    let c = fa::read_to_string(kept).expect("read the kept C");
+    let _ = fa::remove_file(kept);
+    let total = file.to_string_lossy().replace('\\', "\\\\");
+    assert!(
+        c.contains(&format!("#line 3 \"{total}\"")),
+        "no marker for line 3 of total.loft"
+    );
+    // The line table, where binutils reads it.
+    let cache = dir.join(".loft").join("cache");
+    let bin = fa::read_dir(&cache)
+        .expect("the build cache")
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .find(|p| p.to_string_lossy().contains("native-c-"))
+        .expect("the debug binary");
+    let Ok(table) = loft::platform::process::harness_command("readelf")
+        .args(["--debug-dump=decodedline"])
+        .arg(&bin)
+        .output()
+    else {
+        eprintln!("skipped the line table: no readelf on PATH");
+        return;
+    };
+    if !table.status.success() {
+        eprintln!("skipped the line table: readelf cannot read this binary");
+        return;
+    }
+    let mut lines: Vec<u32> = String::from_utf8_lossy(&table.stdout)
+        .lines()
+        .filter_map(|l| {
+            let mut f = l.split_whitespace();
+            (f.next()? == "total.loft").then(|| f.next()?.parse().ok())?
+        })
+        .collect();
+    lines.sort_unstable();
+    lines.dedup();
+    assert_eq!(
+        lines,
+        [2, 3, 4, 7],
+        "the loft lines the binary's line table holds"
+    );
+    let _ = fa::remove_dir_all(&dir);
+}
+
+/// STORE_MODEL.md D19d (@PLN206 P2) — a growth past the 32-bit word count stops the run, naming
+/// the size, as `Store::claim_grow`'s checked add does; the C (`loft_claim_grow`) wrapped to a
+/// smaller store the claim then overran.  Reachable only from a store already past 2^31 words
+/// (16 GB) — a claim is at most 2^31 words — so the cell sets that word count on a store with no
+/// buffer and grows it: the check stands before any byte is touched.  Falsified: without it
+/// the C goes on and reads the missing buffer.
+#[test]
+fn a_growth_past_the_word_count_stops_the_c() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let mut c = String::from(
+        "#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n",
+    );
+    c.push_str(include_str!("../src/c/loft_store.h"));
+    c.push_str(
+        "\nint main(void) {\n    loft_store_t s;\n    memset(&s, 0, sizeof s);\n    \
+         s.size = 0xF0000000u;\n    printf(\"grew to %u\\n\", loft_claim_grow(&s, 0x20000000u, 0, 0));\n    \
+         return 0;\n}\n",
+    );
+    let dir = scratch("grow-limit");
+    let (src, exe) = (dir.join("grow.c"), dir.join("grow"));
+    fa::write(&src, &c).expect("write C");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O1", "-w"])
+        .arg(&src)
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc: {}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .output()
+        .expect("run the cell");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success() && err.contains("store size limit exceeded: 4563402752 words"),
+        "the C grew past the word count: {}\n{err}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let _ = fa::remove_dir_all(&dir);
 }
 
 /// Stores::insert_record's hash arm, for an element that owns nothing: one walk files `e` or
@@ -2313,9 +3410,11 @@ fn hash_free_entry(
 /// integer key, a text key, and one that borrows its entries (stride 0, a linked type's) — and
 /// every lookup, the walks in key order and in slot order, and every byte of the store agree —
 /// and on a fourth whose first entry is a record it did not stage, which demotes it from an
-/// inline table to an arena one.  Falsified: the load factor, the inline growth, the back-shift,
-/// the insertion count, the arena's free list, a SipHash rotation, the text terminator and the
-/// replace-in-place insert each fail it.
+/// inline table to an arena one — built plain and with `-DLOFT_KEYED_VERIFY`, which checks every
+/// one-probe insert against the lookup and the free-slot walk.  Falsified: the load factor, the
+/// inline growth, the back-shift, the insertion count, the arena's free list, a SipHash rotation,
+/// the text terminator and the replace-in-place insert each fail it; a probe that answers the
+/// wrong free bucket, or walks past the duplicate, fails the verified build.
 #[test]
 fn the_c_hash_table_files_every_entry_where_hash_does() {
     use loft::hash;
@@ -2548,43 +3647,53 @@ int main(int argc, char **argv) {
     let (src, ops, exe) = (dir.join("hash.c"), dir.join("ops.txt"), dir.join("hash"));
     fa::write(&src, &c).expect("write C");
     fa::write(&ops, &script).expect("write ops");
-    let cc = loft::platform::process::harness_command("cc")
-        .args([
-            "-std=c99",
-            "-O2",
-            "-pedantic",
-            "-Werror",
-            "-Wno-unused-function",
-        ])
-        .arg(&src)
-        .arg("-o")
-        .arg(&exe)
-        .output()
-        .expect("run cc");
-    assert!(
-        cc.status.success(),
-        "cc rejected loft_hash.h:\n{}",
-        String::from_utf8_lossy(&cc.stderr)
-    );
-    let out = loft::platform::process::harness_command(&exe)
-        .arg(&ops)
-        .output()
-        .expect("run the hash program");
-    let got = String::from_utf8_lossy(&out.stdout);
-    if let Some((i, (w, g))) = want
-        .lines()
-        .zip(got.lines())
-        .enumerate()
-        .find(|(_, (w, g))| w != g)
-    {
-        panic!("line {i}: hash.rs answers {w:?}, the C {g:?}");
+    // Built twice: plain, and with `LOFT_KEYED_VERIFY` checking every one-probe insert against the
+    // lookup and the free-slot walk (@PLN206 P0b) — the arena tables here are where it runs.
+    for verify in [false, true] {
+        let exe = if verify {
+            dir.join("hash-verify")
+        } else {
+            exe.clone()
+        };
+        let cc = loft::platform::process::harness_command("cc")
+            .args([
+                "-std=c99",
+                "-O2",
+                "-pedantic",
+                "-Werror",
+                "-Wno-unused-function",
+            ])
+            .args(verify.then_some("-DLOFT_KEYED_VERIFY"))
+            .arg(&src)
+            .arg("-o")
+            .arg(&exe)
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "cc rejected loft_hash.h:\n{}",
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let out = loft::platform::process::harness_command(&exe)
+            .arg(&ops)
+            .output()
+            .expect("run the hash program");
+        let got = String::from_utf8_lossy(&out.stdout);
+        if let Some((i, (w, g))) = want
+            .lines()
+            .zip(got.lines())
+            .enumerate()
+            .find(|(_, (w, g))| w != g)
+        {
+            panic!("line {i}: hash.rs answers {w:?}, the C {g:?}");
+        }
+        assert_eq!(
+            got.lines().count(),
+            want.lines().count(),
+            "the C stopped early: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
-    assert_eq!(
-        got.lines().count(),
-        want.lines().count(),
-        "the C stopped early: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
 }
 
 /// The index in C (`src/c/loft_btree.h`) is `btree.rs`: one seeded sequence of inserts (a key
@@ -5880,17 +6989,20 @@ fn a_c_build_builds_no_rust_native_crate() {
 /// released (`loft_database_wrapper`); FILE: a `File` record that dies without a close returns
 /// its lease and its handle closes (`@FR-H-Handle`), while a copy keeps its handle open.  Each
 /// ran out of memory or descriptors on the build before.  The caps are a POSIX shell's
-/// `ulimit`; where no `sh` can set one the test skips, as it does without `cc`.
+/// `ulimit`; where no `sh` can set one the test skips, as it does without `cc` — and on Windows,
+/// whose `sh` (Git's) accepts `ulimit` but cannot apply it to a native program, so the run there
+/// would pass whatever the C leaked.
 #[test]
 fn a_released_path_stays_bounded_where_it_used_to_leak() {
     if !have_cc() {
         eprintln!("skipped: no cc on PATH");
         return;
     }
-    let can_cap = loft::platform::process::harness_command("sh")
-        .args(["-c", "ulimit -v 32768 && ulimit -n 64"])
-        .output()
-        .is_ok_and(|o| o.status.success());
+    let can_cap = loft::platform::shell_ulimit_applies()
+        && loft::platform::process::harness_command("sh")
+            .args(["-c", "ulimit -v 32768 && ulimit -n 64"])
+            .output()
+            .is_ok_and(|o| o.status.success());
     if !can_cap {
         eprintln!("skipped: no sh that sets ulimit caps");
         return;
@@ -6148,8 +7260,8 @@ fn a_programs_c_is_the_same_on_every_emission() {
         );
         let unit = fa::read_to_string(&c).expect("read the C");
         assert!(
-            unit.contains("= n_mix(t2, t3, t4, t5);")
-                && unit.find("t2 = v5___lift_1;") < unit.find("t5 = v8___lift_4;"),
+            unit.contains("= n_mix(t1, t2, t3, t4);")
+                && unit.find("t1 = v5___lift_1;") < unit.find("t4 = v8___lift_4;"),
             "the arguments in order"
         );
         match &first {

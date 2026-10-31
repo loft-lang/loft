@@ -32,7 +32,10 @@
         out.style.display = '';
         out.textContent += text;
       }
-      (fd === 2 ? console.error : console.log)(text.replace(/\n$/, ''));
+      // A write that is only the line's end (wasi-libc writes a message's last `\n` apart) is
+      // no line of its own: an empty console.error reads as a failure to a page's checker.
+      const line = text.replace(/\n$/, '');
+      if (line !== '' || text === '') (fd === 2 ? console.error : console.log)(line);
     };
     // WASI errnos.
     const BADF = 8, EXIST = 20, INVAL = 28, ISDIR = 31, NOENT = 44, NOSYS = 52, NOTDIR = 54,

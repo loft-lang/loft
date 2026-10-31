@@ -1,0 +1,282 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-Transient`: a value built, read and dropped without being stored may be built outside
+// the store.  The cells hold a decoder of cbor's shape — a recursive producer whose result is a
+// tree under `const` fields, a forwarder (`decode`) and plain-parameter readers (`pa_get`,
+// `pa_text`), as pluginabi calls them — and every way a site can read, keep or disturb the
+// tree: only its scalars read (the tree dead), one key read, a recursive walk, a stored result,
+// a source written while the tree lives, a site in a loop, a forwarder chain, a `par` arm, a
+// site that rebinds its root, and a reader that writes its own parameter.  The fields are
+// binding-const as cbor's are (`const key: CV`, `(Const-Bind)`): the slot never re-points, but
+// the contents stay writable, so nothing here is proven read-only by the declarations — the
+// site's own uses are the proof.  Values
+// hand-computed in each cell's comment; value AND length.  `LOFT_NO_TRANSIENT=1` is the
+// same-build oracle; run under `LOFT_NATIVE_LEAK_CHECK=1` a site leaves nothing behind.
+//
+// @falsified-at: none — the rule has no earlier build to catch; the receipts are defects
+//   planted in the generated C, recorded per step in bench/portal/analysis/transient.md.
+//   CHANNEL: an assertion.
+
+enum CV {
+  CNull,
+  CBool { value: boolean },
+  CInt { value: integer },
+  CBytes { value: vector<u8> },
+  CText { value: text },
+  CArray { items: vector<CV> },
+  CMap { entries: vector<CE> },
+}
+
+struct CE {
+  const key: CV,
+  const value: CV,
+}
+
+struct Dec {
+  const value: CV,
+  const next: integer,
+  const ok: boolean,
+}
+
+// Arrays and maps may nest this deep; a value at depth DEPTH + 1 is refused.
+const DEPTH = 4;
+
+// cbor's read_value: canonical shortest-form heads, definite lengths, a depth bound.
+fn read_value(bytes: vector<u8>, pos: integer, depth: integer) -> Dec {
+  n = len(bytes);
+  if pos >= n || depth > DEPTH { return Dec { value: CNull, next: pos, ok: false }; }
+  b = bytes[pos] ?? 0;
+  major = b / 32;
+  info = b % 32;
+  arg = 0;
+  argpos = pos + 1;
+  argok = true;
+  if info < 24 {
+    arg = info;
+  } else if info == 24 {
+    if argpos >= n { argok = false; }
+    else { arg = bytes[argpos] ?? 0; argpos = argpos + 1; if arg < 24 { argok = false; } }
+  } else if info == 25 {
+    if argpos + 1 >= n { argok = false; }
+    else { arg = (bytes[argpos] ?? 0) * 256 + (bytes[argpos + 1] ?? 0); argpos = argpos + 2; if arg < 256 { argok = false; } }
+  } else {
+    argok = false;
+  }
+  if !argok { return Dec { value: CNull, next: pos, ok: false }; }
+  if major == 0 { return Dec { value: CInt { value: arg }, next: argpos, ok: true }; }
+  if major == 1 { return Dec { value: CInt { value: 0 - arg - 1 }, next: argpos, ok: true }; }
+  if major == 2 {
+    if argpos + arg > n { return Dec { value: CNull, next: pos, ok: false }; }
+    return Dec { value: CBytes { value: bytes[argpos..argpos + arg] }, next: argpos + arg, ok: true };
+  }
+  if major == 3 {
+    if argpos + arg > n { return Dec { value: CNull, next: pos, ok: false }; }
+    return Dec { value: CText { value: text_from_bytes(bytes[argpos..argpos + arg]) }, next: argpos + arg, ok: true };
+  }
+  if major == 4 {
+    items: vector<CV> = [];
+    p = argpos;
+    aok = true;
+    for _ in 0..arg {
+      if aok {
+        sub = read_value(bytes, p, depth + 1);
+        if sub.ok { items += [sub.value]; p = sub.next; } else { aok = false; }
+      }
+    }
+    if !aok { return Dec { value: CNull, next: pos, ok: false }; }
+    return Dec { value: CArray { items: items }, next: p, ok: true };
+  }
+  if major == 5 {
+    entries: vector<CE> = [];
+    p = argpos;
+    mok = true;
+    for _ in 0..arg {
+      if mok {
+        kd = read_value(bytes, p, depth + 1);
+        if kd.ok {
+          vd = read_value(bytes, kd.next, depth + 1);
+          if vd.ok {
+            kv = kd.value;
+            vv = vd.value;
+            entries += [CE { key: kv, value: vv }];
+            p = vd.next;
+          } else { mok = false; }
+        } else { mok = false; }
+      }
+    }
+    if !mok { return Dec { value: CNull, next: pos, ok: false }; }
+    return Dec { value: CMap { entries: entries }, next: p, ok: true };
+  }
+  if major == 7 {
+    if info == 20 { return Dec { value: CBool { value: false }, next: argpos, ok: true }; }
+    if info == 21 { return Dec { value: CBool { value: true }, next: argpos, ok: true }; }
+    if info == 22 { return Dec { value: CNull, next: argpos, ok: true }; }
+  }
+  return Dec { value: CNull, next: pos, ok: false };
+}
+
+// The forwarder: reads `ok` and `next`, refuses trailing bytes, hands the result on.
+fn decode(bytes: vector<u8>) -> Dec {
+  d = read_value(bytes, 0, 0);
+  if d.ok {
+    if d.next != len(bytes) { return Dec { value: CNull, next: d.next, ok: false }; }
+  }
+  return d;
+}
+
+// pluginabi's readers, plain parameters as there.
+fn pa_decode(bytes: vector<u8>) -> CV { decode(bytes).value }
+fn pa_decode_ok(bytes: vector<u8>) -> boolean { d = decode(bytes); return d.ok; }
+
+fn pa_get(m: CV, key: text) -> CV {
+  match m {
+    CMap { entries } => {
+      for e in entries {
+        match e.key { CText { value } => { if value == key { return e.value; } }, _ => {} }
+      }
+    },
+    _ => {}
+  }
+  return CNull;
+}
+
+fn pa_text(m: CV, key: text) -> text {
+  match pa_get(m, key) { CText { value } => { return "{value}"; }, _ => {} }
+  return "";
+}
+
+// A const reader, for a value read through a `const` field.
+fn get_text(m: const CV, key: text) -> text {
+  match m {
+    CMap { entries } => {
+      for e in entries {
+        match e.key {
+          CText { value } => {
+            if value == key { match e.value { CText { value } => { return "{value}"; }, _ => {} } }
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  return "";
+}
+
+// A recursive reader: nodes * 100 + the sum of the integers.
+fn walk(v: const CV) -> integer {
+  match v {
+    CInt { value } => { return 100 + value; },
+    CArray { items } => { t = 100; for it in items { t += walk(it); } return t; },
+    CMap { entries } => { t = 100; for e in entries { t += walk(e.key) + walk(e.value); } return t; },
+    _ => { return 100; }
+  }
+}
+
+// A reader that writes its plain parameter after reading it.
+fn touch(m: CV, key: text) -> text {
+  r = pa_text(m, key);
+  m = CInt { value: 3 };
+  match m { CInt { value } => "{r}{value}", _ => r }
+}
+
+// {"op": "apply", "n": 5} — 13 bytes:
+//   A2 | 62 'o' 'p' | 65 'a' 'p' 'p' 'l' 'y' | 61 'n' | 05
+fn frame() -> vector<u8> { [162, 98, 111, 112, 101, 97, 112, 112, 108, 121, 97, 110, 5] }
+
+fn ok_of(f: vector<u8>) -> boolean { d = decode(f); d.ok }
+fn next_of(f: vector<u8>) -> integer { decode(f).next }
+
+fn main() {
+  m = frame();
+
+  // c1 — only the scalars read: the tree is dead at the site.
+  //   the whole frame: ok, next 13
+  assert(ok_of(m), "c1 frame ok");
+  assert(next_of(m) == 13, "c1 frame next 13: {next_of(m)}");
+  assert(pa_decode_ok(m), "c1 pa_decode_ok");
+  //   the last byte lost: the value of "n" is missing at 12 >= 12, the map fails at pos 0
+  cut: vector<u8> = [];
+  for k in 0..12 { cut += [m[k] ?? 0]; }
+  assert(len(cut) == 12, "c1 cut length");
+  assert(!ok_of(cut), "c1 cut refused");
+  assert(next_of(cut) == 0, "c1 cut next 0: {next_of(cut)}");
+  //   a trailing byte: the map reads to 13, 13 != 14, refused with next 13
+  long = frame();
+  long += [0];
+  assert(!ok_of(long), "c1 trailing refused");
+  assert(next_of(long) == 13, "c1 trailing next 13: {next_of(long)}");
+  //   info 24 carrying 5 (< 24): not the shortest form
+  assert(!ok_of([24, 5]), "c1 overlong head refused");
+  assert(next_of([24, 5]) == 0, "c1 overlong next 0");
+  //   [[[[0]]]]: the 0 at depth 4 is the deepest that decodes; one level more is refused
+  assert(ok_of([129, 129, 129, 129, 0]), "c1 depth 4 ok");
+  assert(next_of([129, 129, 129, 129, 0]) == 5, "c1 depth 4 next 5");
+  assert(!ok_of([129, 129, 129, 129, 129, 0]), "c1 depth 5 refused");
+  assert(next_of([129, 129, 129, 129, 129, 0]) == 0, "c1 depth 5 next 0");
+
+  // c2 — one key read through the forwarder chain.
+  assert(pa_text(pa_decode(m), "op") == "apply", "c2 op");
+  assert(len(pa_text(pa_decode(m), "op")) == 5, "c2 op length");
+  assert(pa_text(pa_decode(m), "zz") == "", "c2 absent key");
+  //   {"n": 5}: a key whose value is not a text answers ""
+  assert(pa_text(pa_decode(m), "n") == "", "c2 int value");
+  //   {"\xFF": "x"} — A1 61 FF 61 'x': the key is not UTF-8, so it reads as "" and "" finds it
+  bad: vector<u8> = [161, 97, 255, 97, 120];
+  assert(pa_text(pa_decode(bad), "") == "x", "c2 non-UTF-8 key reads as the empty text");
+  //   {"a": "1", "a": "2"} — the first entry wins
+  dup: vector<u8> = [162, 97, 97, 97, 49, 97, 97, 97, 50];
+  assert(pa_text(pa_decode(dup), "a") == "1", "c2 duplicate key: the first");
+
+  // c3 — a recursive walk: [1, [2, 3]] is 5 nodes, ints 1+2+3 = 6 → 506; the map 13 is
+  //   map + 2 keys + text value + int 5 = 5 nodes, 5 → 505
+  arr: vector<u8> = [130, 1, 130, 2, 3];
+  da = decode(arr);
+  assert(walk(da.value) == 506, "c3 array walk: {walk(da.value)}");
+  dm = decode(m);
+  assert(walk(dm.value) == 505, "c3 map walk: {walk(dm.value)}");
+
+  // c4 — a site that STORES the result keeps it: two decodes kept, read after both
+  keep: vector<CV> = [];
+  keep += [pa_decode(m)];
+  keep += [pa_decode(dup)];
+  assert(len(keep) == 2, "c4 kept two");
+  assert(pa_text(keep[0], "op") == "apply", "c4 first kept");
+  assert(pa_text(keep[1], "a") == "1", "c4 second kept");
+
+  // c5 — the source written while the tree lives: the tree keeps what was decoded
+  src = frame();
+  ds = decode(src);
+  src[1] = 120;
+  src[3] = 120;
+  assert(get_text(ds.value, "op") == "apply", "c5 the tree read before the write");
+  assert(get_text(decode(src).value, "op") == "", "c5 a fresh decode sees the write");
+  assert(get_text(decode(src).value, "ox") == "", "c5 'x' as a head is not a text of 2");
+
+  // c6 — a site in a loop: 10 000 decodes, each read for ok and next
+  total = 0;
+  for i in 0..10000 {
+    dl = decode(m);
+    if dl.ok { total += dl.next + i % 2; }
+  }
+  // 10 000 * 13 + 5 000 odd i
+  assert(total == 135000, "c6 loop total {total}");
+
+  // c7 — a decode in a par arm: the result crosses to the worker's caller
+  frames: vector<vector<u8>> = [frame(), arr, cut, dup];
+  pn = 0;
+  for f in frames par(r = decode(f), 2) { pn += r.next; }
+  // 13 + 5 + 0 + 9
+  assert(pn == 27, "c7 par next sum {pn}");
+
+  // c8 — the site rebinds its root, then reads it
+  dr = pa_decode(m);
+  assert(pa_text(dr, "op") == "apply", "c8 read before the rebind");
+  dr = CInt { value: 7 };
+  match dr { CInt { value } => { assert(value == 7, "c8 rebind reads 7"); }, _ => { assert(false, "c8 rebind variant"); } }
+
+  // c9 — a reader that writes its plain parameter
+  assert(touch(pa_decode(m), "op") == "apply3", "c9 touch reads, then writes: {touch(pa_decode(m), "op")}");
+  assert(touch(pa_decode(dup), "a") == "13", "c9 touch dup");
+}

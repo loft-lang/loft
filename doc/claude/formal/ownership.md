@@ -188,6 +188,37 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                 carries a view.  It keeps its record, since the boundary that
                 materialises a tuple writes FIELDS and a reference is not one.  A
                 declined view is a copy, never a stale read.
+  (O-SliceView) A SLICE OF A CONST SOURCE MAY BE A VIEW.  A slice VALUE `v[a..b]` of a
+                scalar-element vector or a text (Slice-Value: a FRESH value) may be
+                delivered as a VIEW of the bytes it copies — a store whose bytes are a
+                foreign span over the source's (@PLN174), which every read routine
+                already serves (O-One-Kind) — where nothing can tell it from the copy:
+                THE SOURCE'S HALF: `v` is reached from a `const` parameter or is foreign
+                data (Const-Foreign), so this frame writes no element of it, and no store
+                the frame writes can hold it — a `const` parameter's store can arrive
+                under a second name the frame cannot watch, so a frame that writes any
+                store it did not mint declines.
+                THE HOLDER'S HALF: the view is held OUTSIDE the store — a local, an
+                argument, a value record (R-ValueRecord, O-ViewField), or a short-lived
+                tree the compiler builds for a value that never reaches a store
+                (R-Transient).  The store itself is unchanged: a stored vector or text
+                field names a record of ITS OWN store, so a view that reaches a store
+                record — a field of a stored record, an element of a stored collection —
+                is MATERIALISED there, copied at that write, which is the copy the
+                program spells anyway (`CBytes { value: b[a..b] }` written into a
+                stored tree copies; held in a transient tree it views).
+                THE LIFETIME'S HALF: as O-ViewField's sites' half — every use until the
+                holder's last read is a READ that answers a value, and the source is not
+                disturbed (B-Disturb) and none of its elements is written between the
+                bind and that read, in this frame or below it; a view that reaches the
+                caller is decided over every call site, and a result that escapes the
+                unit (R-Escape) never carries one.  Every half declines to the copy.
+                THE PRICE: a view saves the COPY, never the store that carries it, so it
+                pays only where the bytes copied cost more than a carrier — a large
+                payload handed on, not a key a few bytes long (measured on the C: a foreign
+                view −16.8 % against the pooled copy's −20.7 % on cbor keys, R-SliceArg).
+                NOT BUILT (designed 2026-10-30): no slice is a view today except one of a
+                file-mapped source, which `OpSliceView` already serves.
   (O-One-Kind)  THE STORE IS THE ONE KIND OF HEAP OBJECT.  Every value that reaches the
                 heap is a `DbRef` naming a store: identity is the store, and a free
                 releases a store (`Stores::free`), on both backends.  An optimisation may
@@ -198,7 +229,11 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                 an object with an identity or a release of its own.  The admission test is
                 reuse: a variant that every existing read routine serves unchanged is a
                 store; one that needs its own reads, or its own handle, is a second kind
-                (@C125).
+                (@C125).  A SHORT-LIVED object the compiler introduces OUTSIDE the store
+                (R-Apart, R-ValueRecord, R-Transient) is not a heap value in this sense:
+                it changes no store, has no identity or release a program can observe,
+                and becomes the store value it stands for wherever it reaches a store
+                record (owner, 2026-10-30, @C125's clarification).
 ```
 
 **`(O-ViewField)` in words** (@PLN164 C5, written before the phase is cut).  The natural

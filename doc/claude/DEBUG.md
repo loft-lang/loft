@@ -94,6 +94,14 @@ Editors get the same engine over DAP (`loft-dap`); see [@I91](../features/I91.md
 
 ---
 
+### A C build in gdb or lldb
+
+A bug that shows only in the C build (a defect of the C backend: the interpreter answers right)
+is debugged on the binary itself.  `LOFT_NATIVE_BACKEND=c loft --native-debug prog.loft` builds
+with `-g` and marks every C line with its loft line (`#line`), so `break prog.loft:3`, `next`
+and a backtrace work on the loft source in any C debugger; a local `s` is named `v<n>_s`.
+`LOFT_KEEP_NATIVE_C=1` keeps the generated C, which the code between the functions points at.
+
 ## Moved: The `LOFT_LOG` preset guide, the debug dumps and function-level IR / trace inspection
 
 See [DEBUG_TRACE.md](DEBUG_TRACE.md) for the `LOFT_LOG` preset guide, the debug dumps and function-level IR / trace inspection.

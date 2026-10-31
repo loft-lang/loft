@@ -370,8 +370,36 @@ impl Output<'_> {
         let copied = std::mem::take(&mut self.call_bind_owns);
         if owned || materialised || copied {
             write!(w, "; _own_store_{name} = var_{name}")?;
+        } else if let Some(buf) = self.adopted_beside_buffer(var, to) {
+            // `@FR-O-Move` — the bind ADOPTED the store the callee minted (its promoted local),
+            // which the oracle reads as a view of the call's buffer.  On a run that answered the
+            // buffer itself the buffer's identity-guarded free is the release; on any other the
+            // local owns what it holds, and a rebind must release it.
+            let b = sanitize(variables.name(buf));
+            write!(
+                w,
+                "; if var_{name}.store_nr != var_{b}.store_nr {{ _own_store_{name} = var_{name}; }}"
+            )?;
         }
         Ok(())
+    }
+
+    /// The call's buffer argument where `var = to` adopts the store the callee minted onto it
+    /// (`use_analysis::binds_the_callees_minted_store`), so `var` owns whatever store is not
+    /// that buffer's.  `None` for any other bind, or a buffer argument that is not a local.
+    fn adopted_beside_buffer(&self, var: u16, to: &Value) -> Option<u16> {
+        let variables = self.data.def(self.def_nr).variables();
+        if !crate::use_analysis::binds_the_callees_minted_store(self.data, variables, var, to) {
+            return None;
+        }
+        let Value::Call(fn_nr, args) = to.unspan() else {
+            return None;
+        };
+        let buf = self.data.def(*fn_nr).hidden_return_buffer_attr()?;
+        match args.get(buf).map(Value::unspan) {
+            Some(Value::Var(b)) => Some(*b),
+            _ => None,
+        }
     }
 
     /// `@FR-B-Ref-Lvalue` — the Rust place of member `i` of tuple `t`: a tuple local's field, or

@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import urllib.request
@@ -77,6 +78,15 @@ def registry_versions() -> dict[str, list[str]] | None:
     except Exception:  # network, TLS, JSON — all the same answer here
         return None
     return {n: list(p.get("versions") or {}) for n, p in index.get("packages", {}).items()}
+
+
+def checkout_sha() -> str | None:
+    """The commit the checkout holds — the one `manifest_version` read.  A PR's run checks out
+    the PR (its merge commit), so a version bumped there is dated there, not on the default
+    branch, whose manifest may not have moved for weeks."""
+    r = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True)
+    sha = r.stdout.strip() if r.returncode == 0 else ""
+    return sha or os.environ.get("GITHUB_SHA") or None
 
 
 def manifest_version(pkg: str) -> str | None:
@@ -207,6 +217,7 @@ def main() -> int:
 
     # ---- versions on the default branch the registry has never seen ---------------
     published = registry_versions()
+    sha = checkout_sha()
     if published is None:
         unknown.append("the registry index could not be fetched")
     else:
@@ -217,10 +228,12 @@ def main() -> int:
                 continue
             if ver in (published.get(pkg) or []):
                 continue
-            # When the manifest last moved, which is when this claim was made.  Read from
-            # the API so a shallow CI checkout (no history) still answers.
+            # When the manifest last moved, which is when this claim was made — in the history
+            # of the commit the version was READ from.  From the API, so a shallow CI
+            # checkout (no history) still answers.
+            at = f"&sha={sha}" if sha else ""
             commits = gh_json(
-                ["api", f"repos/{repo}/commits?path={pkg}/loft.toml&per_page=1"], None)
+                ["api", f"repos/{repo}/commits?path={pkg}/loft.toml&per_page=1{at}"], None)
             age = days_since(
                 commits[0]["commit"]["committer"]["date"] if commits else None)
             have = ", ".join(published.get(pkg) or []) or "nothing"

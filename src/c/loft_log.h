@@ -531,12 +531,20 @@ static int loft_log_locked_write(void) {
 
 /* `LOFT_NATIVE_LEAK_CHECK` (`collect_store_leaks`, the generated Rust's leak tail): at a run's
  * end, the live stores nothing pinned or locked, by type, most first — `kt=<n> <Type>×<count>`,
- * five named and a count of the rest — as one warning the test runner reads as the verdict. */
+ * five named and a count of the rest — as one warning the test runner reads as the verdict.
+ * A `LOFT_STRICT_STORES` build (loft_rt.h) reports the same list as never freed, counts it with
+ * the uses after free, and exits 1 when either happened (`NATIVE_STRICT_STORE_TAIL`). */
 static void loft_leak_report(void) {
     uint32_t *kt, *count, nk = 0, i, j, total = 0;
     loft_text out = { 0, 0, 0 };
     char buf[96];
-    if (!getenv("LOFT_NATIVE_LEAK_CHECK")) return;
+    int check = getenv("LOFT_NATIVE_LEAK_CHECK") != 0;
+#ifdef LOFT_STRICT_STORES
+    int strict = 1;
+#else
+    int strict = 0;
+#endif
+    if (!check && !strict) return;
     kt = (uint32_t *) calloc(loft_nstores + 1, sizeof *kt);
     count = (uint32_t *) calloc(loft_nstores + 1, sizeof *count);
     if (!kt || !count) { fputs("loft: out of memory\n", stderr); abort(); }
@@ -573,13 +581,66 @@ static void loft_leak_report(void) {
         sprintf(buf, " ... and %u more", (unsigned) (nk - 5));
         loft_push(&out, buf, strlen(buf));
     }
-    if (total) {
+    if (total && check) {
         fflush(stdout);
         fprintf(stderr, "Warning: %u stores not freed at program exit: ", (unsigned) total);
         fwrite(out.p, 1, out.len, stderr);
         fputc('\n', stderr);
     }
+#ifdef LOFT_STRICT_STORES
+    if (total) {
+        fflush(stdout);
+        fprintf(stderr, "[strict-store] NEVER FREED: %u stores not freed at program exit: ", (unsigned) total);
+        fwrite(out.p, 1, out.len, stderr);
+        fputc('\n', stderr);
+        loft_strict_violations += total;
+    }
+#endif
+#ifdef LOFT_LEAK_SITES
+    /* The interpreter's `[leak-site]` lines: the stores left, grouped by where each was made
+     * (function, file and line — a C unit has no bytecode position) and by type, most first. */
+    if (total) {
+        uint32_t *who = (uint32_t *) calloc(loft_nstores + 1, sizeof *who), *many = (uint32_t *) calloc(loft_nstores + 1, sizeof *many);
+        uint32_t ng = 0;
+        if (!who || !many) { fputs("loft: out of memory\n", stderr); abort(); }
+        for (i = 0; i < loft_nstores; i++) {
+            const loft_store_t *s = &loft_stores[i];
+            if (!s->live || s->pinned || s->read_only) continue;
+            const loft_leak_site *a = i < loft_nsites ? &loft_sites[i] : 0;
+            for (j = 0; j < ng; j++) {
+                const loft_store_t *t = &loft_stores[who[j]];
+                const loft_leak_site *b = who[j] < loft_nsites ? &loft_sites[who[j]] : 0;
+                if (t->known == s->known && (a == 0) == (b == 0) &&
+                    (a == 0 || (a->fn == b->fn && a->file == b->file && a->line == b->line)))
+                    break;
+            }
+            if (j == ng) { who[ng] = i; many[ng] = 0; ng++; }
+            many[j]++;
+        }
+        for (i = 1; i < ng; i++)
+            for (j = i; j > 0 && many[j - 1] < many[j]; j--) {
+                uint32_t a = who[j], b = many[j];
+                who[j] = who[j - 1]; many[j] = many[j - 1]; who[j - 1] = a; many[j - 1] = b;
+            }
+        for (i = 0; i < ng; i++) {
+            const loft_store_t *s = &loft_stores[who[i]];
+            const loft_leak_site *a = who[i] < loft_nsites ? &loft_sites[who[i]] : 0;
+            fprintf(stderr, "  [leak-site] %u\xc3\x97 %s (kt=%u) allocated at %s:%u in fn %s()\n", (unsigned) many[i],
+                    s->known < loft_ntn ? loft_tn[s->known] : "?", (unsigned) s->known,
+                    a && a->file ? a->file : "?", a ? (unsigned) a->line : 0u, a && a->fn ? a->fn : "?");
+        }
+        free(who);
+        free(many);
+    }
+#endif
     free(out.p);
     free(kt);
     free(count);
+#ifdef LOFT_STRICT_STORES
+    if (loft_strict_violations) {
+        fflush(stdout);
+        fprintf(stderr, "[strict-store] FAILED: %llu store-lifetime violation(s)\n", (unsigned long long) loft_strict_violations);
+        exit(1);
+    }
+#endif
 }

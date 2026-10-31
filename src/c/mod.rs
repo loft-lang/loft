@@ -59,6 +59,8 @@ const RUNTIME: &str = concat!(
     include_str!("loft_https.h"),
     include_str!("loft_net.h"),
     include_str!("loft_process.h"),
+    // After `windows.h`, which loft_process.h brings in on Windows.
+    include_str!("loft_mapped.h"),
     include_str!("loft_engine.h"),
     // A library's native part behind the loft-ffi ABI (@PLN205): the ABI's own header, then
     // the host side.
@@ -218,6 +220,9 @@ pub(crate) struct Cx<'a> {
     /// The unit is a browser page's module (`--native-c --html`, @PLN203 C6): a library native
     /// the page supplies is a `loft_gl` import (`host_imports`), and the program starts from
     /// the exported `loft_start`.
+    /// The unit marks each statement with its loft line (`#line`), for a debugger
+    /// ([`emit_program_with_source_lines`]).
+    pub(crate) source_lines: bool,
     pub(crate) browser: bool,
     /// The `par` sites written on threads so far, which numbers each one's body and context.
     pub(crate) par_sites: std::cell::Cell<u32>,
@@ -289,9 +294,14 @@ pub(crate) const DS_BIT: u64 = 1 << 57;
 /// The bits of a `__nn` twin (`@FR-R-NonSentinelParam`'s twin clause), one per parameter from
 /// bit 32: the function written again with those parameters seeded as non-sentinel, called by
 /// a call site whose arguments prove them where the program-wide fact cannot (another caller
-/// passes a value that may be null).
+/// passes a value that may be null).  The first [`NN_PARAMS`] parameters can be named, so the
+/// mask ends at bit 55, below every named twin bit — one bit more and parameter 25 would read
+/// as `DS_BIT`.
 pub(crate) const NN_SHIFT: u32 = 32;
-pub(crate) const NN_MASK: u64 = ((1u64 << 26) - 1) << NN_SHIFT;
+pub(crate) const NN_PARAMS: usize = 24;
+pub(crate) const NN_MASK: u64 = ((1u64 << NN_PARAMS) - 1) << NN_SHIFT;
+const _: () =
+    assert!(NN_MASK & (DS_BIT | AP_BIT | KH_BIT | APV_BIT | APR_BIT | NK_BIT | INV_BIT) == 0);
 
 /// The record collections beside a plain vector the C carries; each layout is described in
 /// `loft_keyed.h`.  An `array` and an `ordered` are the forms a vector and a sorted take when
@@ -314,6 +324,7 @@ impl<'a> Cx<'a> {
             data,
             stores,
             browser,
+            source_lines: SOURCE_LINES.with(std::cell::Cell::get),
             tuples: std::cell::RefCell::new(Vec::new()),
             copy_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             described: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -3742,6 +3753,59 @@ fn framed(
     }
 }
 
+thread_local! {
+    /// Set for the length of one [`emit_program_with_source_lines`]: the unit marks its statements
+    /// with their loft lines (`Cx::source_lines`).
+    static SOURCE_LINES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The comment that ends a function's run of `#line` markers in a unit written with source
+/// lines: [`resolve_line_resets`] turns each into a `#line` back to the C file itself.
+pub const LINE_RESET: &str = "/*@loft-c-line*/";
+
+/// [`emit_program`] for a debugger: every statement that carries a loft line is preceded by
+/// `#line <n> "<its .loft file>"`, so the binary's debug information — the line table gdb,
+/// lldb, a profiler and a crash backtrace read — names the loft source, and each function ends
+/// with a [`LINE_RESET`] for [`resolve_line_resets`].  Only the debug tier asks for it: a C
+/// compiler's own diagnostics then also point at loft lines, which is what a debugger wants and
+/// a defect report of the C backend does not.
+///
+/// # Errors
+/// As [`emit_program`].
+pub fn emit_program_with_source_lines(
+    data: &Data,
+    stores: &Stores,
+    expected: &dyn Fn(&str) -> Vec<String>,
+) -> Result<String, Refusal> {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            SOURCE_LINES.with(|s| s.set(false));
+        }
+    }
+    SOURCE_LINES.with(|s| s.set(true));
+    let _reset = Reset;
+    emit_program(data, stores, expected)
+}
+
+/// The unit `c` with each [`LINE_RESET`] turned into `#line <the next line> "<c_path>"`, so the
+/// code between the loft functions — their frame wrappers, the tables, `main` — is attributed
+/// to the C file it is written in rather than to the last loft line before it.
+#[must_use]
+pub fn resolve_line_resets(c: &str, c_path: &str) -> String {
+    let path = body::c_string(c_path);
+    let mut out = String::with_capacity(c.len());
+    for (i, line) in c.lines().enumerate() {
+        if line.trim() == LINE_RESET {
+            let _ = writeln!(out, "#line {} {path}", i + 2);
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
 /// Does the program have anything to run — a `main`, or a test?  A program with neither (a
 /// library, a file of declarations) compiles to nothing a driver could run.
 #[must_use]
@@ -3758,7 +3822,7 @@ fn test_functions(data: &Data) -> Vec<u32> {
             matches!(def.def_type(), DefType::Function)
                 && def.source == crate::data::MAIN_SOURCE
                 && def.name().starts_with("n_")
-                && !def.name().starts_with("n___lambda_")
+                && !def.is_compiler_written_fn()
                 && def.attributes().is_empty()
                 && !matches!(def.returned().base(), Type::Iterator(..))
         })
@@ -3810,7 +3874,7 @@ pub fn emit_tests_of(
     );
     let _ = write!(
         out,
-        "\nint main(int argc, char **argv) {{\n    int failed = 0;\n    const char *loft_only = argc > 1 ? argv[1] : 0;\n    loft_bind_tables();\n    loft_start(argc, argv);\n    {}\n    loft_in_test = 1;\n",
+        "\nint main(int argc, char **argv) {{\n    int failed = 0;\n    volatile uint64_t loft_mark = 0;\n    const char *loft_only = argc > 1 ? argv[1] : 0;\n    loft_bind_tables();\n    loft_start(argc, argv);\n    {}\n    loft_in_test = 1;\n",
         anchor(stores)
     );
     for &d in tests {
@@ -3821,11 +3885,25 @@ pub fn emit_tests_of(
             "    if (!loft_only || !strcmp(loft_only, {})) {{",
             body::c_string(&name)
         );
+        // A test that answers a value hands it back to nobody: the interpreter drops it, so the
+        // C releases it here, or the store it built outlives the run (@PLN206 D31).
+        let call = c_name(data, d);
+        let run = match data.def(d).returned().base() {
+            Type::Reference(..)
+            | Type::Vector(..)
+            | Type::Hash(..)
+            | Type::Sorted(..)
+            | Type::Index(..)
+            | Type::Radix(..)
+            | Type::Trie(..)
+            | Type::Enum(_, true, _) => format!("loft_free_ref({call}());"),
+            Type::Text(_) => format!("loft_text loft_r = {call}(); loft_text_free(&loft_r);"),
+            _ => format!("{call}();"),
+        };
         if subs.is_empty() {
             let _ = writeln!(
                 out,
-                "    LOFT_FRAMES_RESET();\n    if (setjmp(loft_test_jmp) == 0) {}(); else {{ failed++; fputs(\"FAIL {name}\\n\", stderr); }}",
-                c_name(data, d),
+                "    LOFT_FRAMES_RESET();\n    loft_mark = loft_stores_allocated;\n    if (setjmp(loft_test_jmp) == 0) {{ {run} }} else {{ loft_release_stores_since(loft_mark); failed++; fputs(\"FAIL {name}\\n\", stderr); }}",
             );
         } else {
             // Passes only by failing, with one of the expected messages in its own.
@@ -3835,11 +3913,10 @@ pub fn emit_tests_of(
                 .collect();
             let _ = writeln!(
                 out,
-                "    LOFT_FRAMES_RESET();\n    {{ const loft_str want[] = {{ {} }};\n      \
-                 if (setjmp(loft_test_jmp) == 0) {{ {}(); failed++; fputs(\"FAIL {name} (expected to fail)\\n\", stderr); }}\n      \
-                 else if (!loft_failed_with(want, {})) {{ failed++; fputs(\"FAIL {name}\\n\", stderr); }} }}",
+                "    LOFT_FRAMES_RESET();\n    loft_mark = loft_stores_allocated;\n    {{ const loft_str want[] = {{ {} }};\n      \
+                 if (setjmp(loft_test_jmp) == 0) {{ {run} failed++; fputs(\"FAIL {name} (expected to fail)\\n\", stderr); }}\n      \
+                 else {{ loft_release_stores_since(loft_mark); if (!loft_failed_with(want, {})) {{ failed++; fputs(\"FAIL {name}\\n\", stderr); }} }} }}",
                 list.join(", "),
-                c_name(data, d),
                 subs.len()
             );
         }

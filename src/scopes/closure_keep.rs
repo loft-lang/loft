@@ -586,6 +586,10 @@ impl Scopes<'_> {
 /// - the scope-end sweep releases a record, or a fn-ref's closure, only where no name released
 ///   after it holds the same store (`Scopes::closure_keep_stand_down`).
 ///
+/// One fn-ref bound to builds of two or more records (each arm of a branch binding `h`) is the
+/// same question without a loop: its dep list names only the last record, so which one it holds
+/// is known only by identity (loft#2272).
+///
 /// `holders` are the frame's own fn-ref locals, `records` its `___clos_N` locals not confined
 /// to one pass.  `owning` are the holders every assignment of which yields a closure this
 /// frame owns (a build, another holder, a call's result): only a displaced value of those is
@@ -714,7 +718,41 @@ pub(crate) fn closure_keep_set(data: &Data, function: &Function, code: &Value) -
         &mut shared,
         &mut foreign,
     );
-    out.gated = (built_in_loop && !out.records.is_empty()) || (shared && !out.holders.is_empty());
+    let loop_or_shared =
+        (built_in_loop && !out.records.is_empty()) || (shared && !out.holders.is_empty());
+    // A fn-ref bound to two records needs two: the walk below is skipped for every other frame.
+    if !loop_or_shared && out.records.len() < 2 {
+        return ClosureKeep::default();
+    }
+    let mut targets: HashMap<u16, Vec<u16>> = HashMap::default();
+    code.walk(&mut |n| {
+        if let Value::Set(h, rhs) = n.unspan()
+            && let Value::Block(b) = rhs.unspan()
+            && b.name == "fn_ref_with_closure"
+        {
+            for op in &b.operators {
+                if let Value::Call(d, args) = op.unspan()
+                    && *d == database
+                    && let Some(Value::Var(r)) = args.first().map(Value::unspan)
+                    && out.records.contains(r)
+                {
+                    targets.entry(*r).or_default().push(*h);
+                }
+            }
+        }
+    });
+    out.targets = targets;
+    // loft#2272 — one fn-ref local bound to builds of TWO OR MORE records (each arm of a
+    // branch, or a build and a conditional rebind): its dep list names only the last, so the
+    // record it really holds is known only by store identity.
+    let mut bound_to: HashMap<u16, HashSet<u16>> = HashMap::default();
+    for (r, hs) in &out.targets {
+        for h in hs {
+            bound_to.entry(*h).or_default().insert(*r);
+        }
+    }
+    let multi_bound = bound_to.values().any(|rs| rs.len() > 1);
+    out.gated = loop_or_shared || multi_bound;
     if !out.gated {
         return ClosureKeep::default();
     }
@@ -734,24 +772,6 @@ pub(crate) fn closure_keep_set(data: &Data, function: &Function, code: &Value) -
         }
     });
     out.captures = captures;
-    let mut targets: HashMap<u16, Vec<u16>> = HashMap::default();
-    code.walk(&mut |n| {
-        if let Value::Set(h, rhs) = n.unspan()
-            && let Value::Block(b) = rhs.unspan()
-            && b.name == "fn_ref_with_closure"
-        {
-            for op in &b.operators {
-                if let Value::Call(d, args) = op.unspan()
-                    && *d == database
-                    && let Some(Value::Var(r)) = args.first().map(Value::unspan)
-                    && out.records.contains(r)
-                {
-                    targets.entry(*r).or_default().push(*h);
-                }
-            }
-        }
-    });
-    out.targets = targets;
     out.owning = out
         .holders
         .iter()

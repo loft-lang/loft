@@ -174,6 +174,91 @@ fn runtime_error_surfaces() {
     assert_eq!(p.call("boom", &[Value::Int(7)]).unwrap(), Value::Int(7));
 }
 
+/// loft#2271 as `loft fmt` met it: a five-deep nest holding a line too wide to fit makes the
+/// formatter recurse deep enough to run over a work buffer kept beside the stack (SIGSEGV).  The
+/// answer is the formatter's own, hand-checked: the wide line broken inside its brackets.
+#[test]
+fn formatter_survives_a_deep_nest_with_a_wide_line() {
+    let src = fa::read_to_string("tools/fmt/whole.loft").expect("formatter source");
+    let mut p = Program::from_source(&src).expect("formatter compiles");
+    let input = "fn f() {\n  if a {\n    if b {\n      if c {\n        if d { out += [CmapRange { first: c, last: c, glyph: (g + delta) % 65536, more: 1 }]; }\n      }\n    }\n  }\n}\n";
+    let want = "fn f() {\n  if a {\n    if b {\n      if c {\n        if d {\n          out += [\n            CmapRange { first: c, last: c, glyph: (g + delta) % 65536, more: 1 },\n          ];\n        }\n      }\n    }\n  }\n}\n";
+    for _ in 0..3 {
+        let out = p
+            .call("format", &[Value::Text(input.into())])
+            .expect("format runs");
+        assert_eq!(out, Value::Text(want.into()));
+    }
+}
+
+/// A bitwise operator is spaced like every other binary operator (`a | b`, `x & 255`, `a << 2`),
+/// while a closure's parameter bars hug their parameters (`|p| p * 2`, `|p, q| { … }`, `|| {…}`)
+/// and the prefix `&` and `-` hug their operand.  The formatter used to glue every bitwise
+/// operator (`a|b`), since only the closure sense of `|` was known to it.
+#[test]
+fn formatter_spaces_bitwise_operators_and_keeps_closure_bars_tight() {
+    let src = fa::read_to_string("tools/fmt/whole.loft").expect("formatter source");
+    let mut p = Program::from_source(&src).expect("formatter compiles");
+    let input = "fn f(a: integer, b: integer) -> integer {\n  x = a|b;\n  y = (a ?? 0)|1;\n  z = a&b ^ a<<2 | b>>1;\n  w = &a == &b;\n  g = |p|p * 2;\n  h = |p, q| { p|q };\n  m = map(v, |e| e&255);\n  n = -a | -b;\n  t: vector<vector<integer>> = [];\n  k = || { 1 };\n  x + y\n}\n";
+    let want = "fn f(a: integer, b: integer) -> integer {\n  x = a | b;\n  y = (a ?? 0) | 1;\n  z = a & b ^ a << 2 | b >> 1;\n  w = &a == &b;\n  g = |p| p * 2;\n  h = |p, q| { p | q };\n  m = map(v, |e| e & 255);\n  n = -a | -b;\n  t: vector<vector<integer>> = [];\n  k = || { 1 };\n  x + y\n}\n";
+    let out = p
+        .call("format", &[Value::Text(input.into())])
+        .expect("format runs");
+    assert_eq!(out, Value::Text(want.into()));
+}
+
+/// A keyword is not a value: the bracket after `in`, `return`, `if`, `while` opens an operand and
+/// is spaced (`for c in [1, 2]`, `return (v)`), while a call or index (`g(1)`, `v[0]`), the
+/// call-like `assert(` and the type `fn(` stay tight.  The formatter used to glue all of them
+/// (`for c in[1, 2]`, `if(x > 1)`, `return[x]`).
+#[test]
+fn formatter_spaces_a_bracket_after_a_keyword() {
+    let src = fa::read_to_string("tools/fmt/whole.loft").expect("formatter source");
+    let mut p = Program::from_source(&src).expect("formatter compiles");
+    let input = "fn f(v: vector<integer>) -> vector<integer> {\n  for c in[1, 2] { x = c; }\n  for d in(v) { y = d; }\n  if(x > 1) { return[x]; }\n  while(x > 0) { x -= 1; }\n  assert(x > 0, \"x\");\n  w = v[0] + g(1);\n  return(v);\n}\n";
+    let want = "fn f(v: vector<integer>) -> vector<integer> {\n  for c in [1, 2] { x = c; }\n  for d in (v) { y = d; }\n  if (x > 1) { return [x]; }\n  while (x > 0) { x -= 1; }\n  assert(x > 0, \"x\");\n  w = v[0] + g(1);\n  return (v);\n}\n";
+    let out = p
+        .call("format", &[Value::Text(input.into())])
+        .expect("format runs");
+    assert_eq!(out, Value::Text(want.into()));
+}
+
+/// A line of 40 nested `(…)` far wider than the width: each container rendered itself inline,
+/// found it too wide and rendered again broken, so the work doubled at every level (2^40 here;
+/// `tests/scripts/a-frame-never-pushes-past-the-room-its-entry-made.loft`, 100 deep, ran past ten
+/// minutes).  A container whose tokens alone cannot fit skips the inline attempt.  The answer is
+/// checked as the formatter's own fixpoint: formatting it again changes nothing.
+#[test]
+fn formatter_is_linear_in_nesting_depth() {
+    let src = fa::read_to_string("tools/fmt/whole.loft").expect("formatter source");
+    let mut p = Program::from_source(&src).expect("formatter compiles");
+    let mut expr = String::from("(a9 + 99)");
+    for i in (0..40).rev() {
+        expr = format!("((a{} + {i}) + {expr})", i % 10);
+    }
+    let input = format!("fn wide(a0: integer) -> integer {{\n  {expr}\n}}\n");
+    let started = std::time::Instant::now();
+    let once = p
+        .call("format", &[Value::Text(input)])
+        .expect("format runs");
+    let Value::Text(once) = once else {
+        panic!("text")
+    };
+    let twice = p
+        .call("format", &[Value::Text(once.clone())])
+        .expect("format runs");
+    assert_eq!(twice, Value::Text(once.clone()), "formatting is a fixpoint");
+    assert!(
+        once.lines().all(|l| l.chars().count() <= 100),
+        "every line fits:\n{once}"
+    );
+    assert!(
+        started.elapsed().as_secs() < 60,
+        "took {:?}",
+        started.elapsed()
+    );
+}
+
 #[test]
 fn formatter_dogfood() {
     // The driver: call the loft-written formatter's `format(text) -> text`.

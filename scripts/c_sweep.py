@@ -18,6 +18,16 @@
                                         # interpreter run under LOFT_POISON=1 / LOFT_POISON_CLAIM=1,
                                         # and claim-unwritten: poisoned C claims against the
                                         # plain interpreter (a read of a byte nobody wrote)
+    scripts/c_sweep.py --strict-stores  # store lifetime made exact: the C built with
+                                        # -DLOFT_STRICT_STORES against the interpreter under
+                                        # LOFT_STRICT_STORES=1 (a use after free or a store never
+                                        # freed exits 1 on either side)
+    scripts/c_sweep.py --keyed-verify   # the keyed fast paths checked: the C built with
+                                        # -DLOFT_KEYED_VERIFY against the interpreter under
+                                        # LOFT_KEYED_VERIFY=1
+    scripts/c_sweep.py --copy-check     # every deep copy's nested lengths compared with the
+                                        # source's on both sides (LOFT_COPY_CHECK): a
+                                        # `[copy_check]` warning on one side alone differs
     scripts/c_sweep.py --wasm           # the C built for wasm32-wasi by clang and run under
                                         # wasmtime instead (LOFT_WASM_CC names another clang)
     scripts/c_sweep.py --m32            # the C built as 32-bit x86 (gcc -m32) and run natively
@@ -116,6 +126,23 @@ POISON_MODES = {
     # the interpreter answers its own bytes.  (`poison-claim` poisons both sides, and a read of
     # an unwritten byte then reads the same poison on each.)
     "claim-unwritten": (["-DLOFT_POISON_CLAIM", "-w"], None),
+}
+# `--strict-stores`: store lifetime made exact on both sides — no freed slot made again, an
+# access through a freed store reported, a store live at exit reported, either one exit 1
+# (`LOFT_STRICT_STORES`).  A program clean on the interpreter and failing on the C is a C
+# store that died early or never died; the reverse, one the C does not see.
+STRICT_MODES = {
+    "strict-stores": (["-DLOFT_STRICT_STORES", "-w"], {"LOFT_STRICT_STORES": "1"}),
+}
+# `--keyed-verify`: every keyed fast path checked against its general form on both sides
+# (`LOFT_KEYED_VERIFY`) — a disagreement stops the run, so a program that differs is one whose
+# fast path answered what the general one does not.
+VERIFY_MODES = {
+    "keyed-verify": (["-DLOFT_KEYED_VERIFY", "-w"], {"LOFT_KEYED_VERIFY": "1"}),
+    # `--copy-check`: after every deep copy each nested collection's length compared with its
+    # source's (`LOFT_COPY_CHECK`); it warns and goes on, so a `[copy_check]` line on one side
+    # alone is the difference.
+    "copy-check": (["-DLOFT_COPY_CHECK", "-w"], {"LOFT_COPY_CHECK": "1"}),
 }
 ASAN = ["-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-fno-sanitize-recover=all"]
 # `--wasm`: the same unit for wasm32-wasi.  The runtime's recoverable faults use setjmp, which
@@ -294,7 +321,7 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
     i_plain = None
     times = {}
     for mode in modes:
-        flags, env = POISON_MODES.get(mode, (MODES.get(mode), None))
+        flags, env = {**POISON_MODES, **STRICT_MODES, **VERIFY_MODES}.get(mode, (MODES.get(mode), None))
         if env:
             i_out, times["interp"] = timed(interp, limit(path, "interp"), cwd=src.parent,
                                            env={**env, **tenv})
@@ -306,6 +333,11 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
         why = killed(path, "interp", i_out)
         if why:
             return path, "slow", why, None, times
+        # A run that makes more stores than the checking mode can number is beyond it on
+        # every backend (store_nr is u16 and the mode retires each freed number): skipped,
+        # as the interpreter's own message says to.
+        if mode in STRICT_MODES and b"exhausted by the checking mode" in i_out[2]:
+            return path, "refused", "more stores than the checking mode can number", None, times
         if mode == "wasm":
             code, _, err = run(WASM_CC + [c] + shim_sources + ["-o", exe + ".wasm"] + WASM_LIBS, 120)
         elif mode in CROSS:
@@ -327,6 +359,11 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
         why = killed(path, mode, c_out)
         if why:
             return path, "slow", why, None, times
+        # The C past the mode's numbers where the interpreter is not: the interpreter's
+        # exchange frees the top slot, which the mode makes again, and the C's adopted result
+        # frees the one under it (STORE_MODEL.md D33) — not a lifetime fault either way.
+        if mode in STRICT_MODES and b"exhausted by the checking mode" in c_out[2]:
+            return path, "refused", "more stores than the checking mode can number (C, D33)", None, times
         if asan and (b"Sanitizer" in c_out[2] or b"runtime error:" in c_out[2]):
             line = next((l for l in c_out[2].decode(errors="replace").split("\n")
                          if "Sanitizer" in l or "runtime error:" in l), "")
@@ -341,6 +378,9 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
             if not same:
                 again = run(interp, ORACLE_TIMEOUT, cwd=src.parent, env={**(env or {}), **tenv})
                 same = scrubbed(again[2]) != scrubbed(i_out[2])
+        if same and mode == "copy-check" and \
+                (b"[copy_check]" in c_out[2]) != (b"[copy_check]" in i_out[2]):
+            same = False
         if not same:
             return path, "differ", f"[{mode}]", (i_out, c_out), times
     return path, "match", "", None, times
@@ -405,6 +445,12 @@ def main(argv: list[str]) -> int:
         return 0
     verbose = "--verbose" in argv
     modes = tuple(POISON_MODES) if "--poison" in argv else tuple(MODES)
+    if "--strict-stores" in argv:
+        modes = tuple(STRICT_MODES)
+    if "--keyed-verify" in argv:
+        modes = ("keyed-verify",)
+    if "--copy-check" in argv:
+        modes = ("copy-check",)
     if "--wasm" in argv:
         modes = ("wasm",)
     if "--m32" in argv:

@@ -4322,6 +4322,8 @@ impl Output<'_> {
             growth_free,
             movers,
             apart_mint,
+            // `@FR-R-Push`'s sole-growth clause is the C's: native's push header holds no address.
+            sole_push: _,
         } = hoisted;
         // `@FR-R-Base` — every candidate's base in a growth-free loop; under growth, the
         // base of each candidate whose store is proven apart from every store the loop grows.

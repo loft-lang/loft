@@ -726,7 +726,7 @@ static void loft_stack_overflow(const char *file, uint32_t line) {
 /* `stack_trace()` reads the frames, so a unit that reaches it keeps them in every build; any
  * other unit keeps them where the build asks for the call chain a fault prints
  * (`-DLOFT_CALL_CHAIN`, the semantics tier) and compiles the pushes away where it does not. */
-#if defined(LOFT_FRAMES) && !defined(LOFT_CALL_CHAIN)
+#if (defined(LOFT_FRAMES) || defined(LOFT_LEAK_SITES)) && !defined(LOFT_CALL_CHAIN)
 #define LOFT_CALL_CHAIN 1
 #endif
 #ifdef LOFT_CALL_CHAIN
@@ -899,7 +899,18 @@ static size_t loft_utf8(uint32_t c, char *out);
  * counting from the end, `from` snapped back and `till` forward to a character boundary;
  * `till` INT32_MIN is the one character at `from`.  The bounds arrive as i64 and are taken
  * as i32, as the interpreter takes them. */
-static loft_str loft_text_sub(loft_str v, int64_t from64, int64_t till64) {
+/* Inlined with the text writes (`LOFT_TEXT_INLINE`, loft_text.h).  A one-byte slice
+ * `s[k..k + 1]` of an ASCII character answers that byte before any snapping: the general path
+ * gives the same byte, since an ASCII byte starts a character and the next byte, tested here,
+ * does not continue it.  Its length is then the constant 1, which the append after it folds
+ * on (`loft_text_concat`).  `-DLOFT_NO_SHORT_APPEND` takes the general path. */
+LOFT_TEXT_INLINE loft_str loft_text_sub(loft_str v, int64_t from64, int64_t till64) {
+#ifndef LOFT_NO_SHORT_APPEND
+    if ((uint64_t) till64 == (uint64_t) from64 + 1 && (uint64_t) from64 < v.len && from64 < INT32_MAX
+        && (unsigned char) v.p[from64] < 0x80
+        && ((uint64_t) till64 == v.len || ((unsigned char) v.p[till64] & 0xC0) != 0x80))
+        return loft_lit(v.p + from64, 1);
+#endif
     int32_t from = (int32_t) (uint32_t) (uint64_t) from64;
     int32_t till = (int32_t) (uint32_t) (uint64_t) till64;
     int32_t n = (int32_t) v.len;
@@ -1061,8 +1072,15 @@ static uint32_t loft_text_char(loft_str t, int64_t from) {
     return c;
 }
 
-/* OpAppendCharacter: the null character appends nothing. */
+/* OpAppendCharacter: the null character appends nothing.  An ASCII character into a buffer with
+ * room is one store and a length bump (`-DLOFT_NO_SHORT_APPEND` encodes and pushes it). */
 static void loft_push_code(loft_text *t, uint32_t c) {
+#ifndef LOFT_NO_SHORT_APPEND
+    if (c - 1u < 0x7Fu && t->len < t->cap) {
+        t->p[t->len++] = (char) c;
+        return;
+    }
+#endif
     char buf[4];
     size_t n = c == 0 ? 0 : loft_utf8(c, buf);
     loft_push(t, buf, n);
@@ -1097,7 +1115,38 @@ static loft_ref loft_ref_null_reported(void) {
     return r;
 }
 
+/* `LOFT_STRICT_STORES` (`keys::strict_stores`, @PLN206 P0b): a freed store stays dead — its
+ * slot is not made again (`loft_store_make`), except the top one, whose free lowers the floor as
+ * the interpreter's `trim_free_top` lowers `max` — so an access through a reference naming it is
+ * a use after free, reported at the access in the
+ * interpreter's words (`strict_store_violation`, a native run's: no bytecode positions); and a
+ * store still live at exit is reported too (`loft_leak_report`).  Either makes the run exit 1.
+ * The driver builds with it when `LOFT_STRICT_STORES` is set.  For probes: never reusing a slot
+ * walks a long run off the end of the store table. */
+#ifdef LOFT_STRICT_STORES
+static uint64_t loft_strict_violations = 0;
+static LOFT_TLS uint32_t loft_strict_floor = 0;
+
+static LOFT_COLD void loft_strict_use_after_free(loft_ref r) {
+    uint64_t n = loft_strict_violations++;
+    if (n < 20) {
+        uint16_t kt = loft_stores[r.store_nr].known;
+        fflush(stdout);
+        fprintf(stderr,
+                "[strict-store] USE AFTER FREE (access) store #%u type=%s rec=%u pos=%u\n"
+                "  killed by the free of `<not recorded>`\n"
+                "  (no bytecode positions \xe2\x80\x94 native run; re-run with --interpret for pcs)\n",
+                (unsigned) r.store_nr, kt < loft_ntn ? loft_tn[kt] : "?", (unsigned) r.rec, (unsigned) r.pos);
+    } else if (n == 20) {
+        fputs("[strict-store] ... further use-after-free reports suppressed\n", stderr);
+    }
+}
+#endif
+
 LOFT_HOT_INLINE loft_store_t *loft_store_of(loft_ref r) {
+#ifdef LOFT_STRICT_STORES
+    if (LOFT_UNLIKELY(r.store_nr < loft_nstores && !loft_stores[r.store_nr].live)) loft_strict_use_after_free(r);
+#endif
     return &loft_stores[r.store_nr];
 }
 
@@ -1134,9 +1183,59 @@ static uint8_t loft_get_store_lock(loft_ref r) {
 
 /* `Stores::database_named`: the lowest free slot, a fresh store in it; `counted` gives it the
  * next serial, as every store the program makes. */
+/* `LOFT_LEAK_SITES` (the interpreter's leak-site report): each store remembers where it was made
+ * — the function running, its file and the line it was at (`loft_frame_site`) — so a store left
+ * at exit is named by its site, not only its type (`loft_leak_report`).  It keeps the frames
+ * (`LOFT_CALL_CHAIN`); the driver builds with it when `LOFT_LEAK_SITES` is set. */
+#ifdef LOFT_LEAK_SITES
+typedef struct { const char *fn, *file; uint32_t line; } loft_leak_site;
+static LOFT_TLS loft_leak_site *loft_sites = 0;
+static LOFT_TLS uint32_t loft_nsites = 0;
+static void loft_note_site(uint32_t nr) {
+    if (nr >= loft_nsites) {
+        uint32_t n = loft_nsites ? loft_nsites * 2 : 64;
+        if (n <= nr) n = nr + 1;
+        loft_sites = (loft_leak_site *) realloc(loft_sites, (size_t) n * sizeof *loft_sites);
+        if (!loft_sites) { fputs("loft: out of memory\n", stderr); abort(); }
+        memset(loft_sites + loft_nsites, 0, (size_t) (n - loft_nsites) * sizeof *loft_sites);
+        loft_nsites = n;
+    }
+    loft_leak_site *w = &loft_sites[nr];
+    if (loft_nframes) {
+        const loft_frame *f = &loft_frames[loft_nframes - 1];
+        w->fn = f->fn;
+        w->file = f->file;
+        w->line = f->site ? f->site : f->decl;
+    } else {
+        w->fn = 0;
+        w->file = 0;
+        w->line = 0;
+    }
+}
+#endif
+
 static uint32_t loft_store_make(int counted) {
     uint32_t nr = 0;
+#ifdef LOFT_STRICT_STORES
+    /* `no_slot_reuse`: every slot below the floor was made once, and stays dead once freed. */
+    nr = loft_strict_floor;
+#endif
     while (nr < loft_nstores && loft_stores[nr].live) nr++;
+#ifdef LOFT_STRICT_STORES
+    loft_strict_floor = nr + 1;
+#endif
+#ifdef LOFT_STRICT_STORES
+    if (nr >= 0xFFFF) {
+        uint32_t live = 0, i;
+        for (i = 0; i < loft_nstores; i++) live += loft_stores[i].live != 0;
+        fprintf(stderr, "loft: store table exhausted by the checking mode, not by a leak: this run made 65535 "
+                        "stores and %u are live.  LOFT_STRICT_STORES never reuses a freed store number, so that "
+                        "a stale reference cannot reach a newer store, and store_nr is u16.  This program frees "
+                        "and re-mints more stores than the mode can track: check it with a smaller loop count, "
+                        "or run it without the switch.\n", (unsigned) live);
+        abort();
+    }
+#endif
     if (nr >= 0xFFFF) { fputs("loft: store table exhausted: 65535 stores live at once\n", stderr); abort(); }
     if (nr == loft_nstores) {
         uint32_t n = loft_nstores ? loft_nstores * 2 : 16;
@@ -1148,6 +1247,9 @@ static uint32_t loft_store_make(int counted) {
         loft_nstores = n;
     }
     loft_store_t *s = &loft_stores[nr];
+#ifdef LOFT_LEAK_SITES
+    loft_note_site(nr);
+#endif
     if (!s->buf) {
         loft_heap_moved(s, 0, 100);
         s->size = 100;
@@ -1312,12 +1414,34 @@ static void loft_gen_free(loft_ref g);
  * allocator and keyed harnesses — leaves it null. */
 static void (*loft_release_file_leases_hook)(uint16_t nr);
 
+/* `@FR-R-SliceArg`: the carrier stores a slice handed to a `const` parameter is copied into —
+ * a few per thread, kept across uses instead of minted and freed per use.  An idle carrier is
+ * PINNED, so the leak report passes it by and a stray free leaves it alone; one in use is an
+ * ordinary store until the free that would have released it gives it back (`loft_free_ref`). */
+#define LOFT_SLICE_POOL 16
+static LOFT_TLS loft_ref loft_sp_ref[LOFT_SLICE_POOL];
+static LOFT_TLS uint8_t loft_sp_used[LOFT_SLICE_POOL];
+static LOFT_TLS int loft_sp_n = 0;
+
+/* Give carrier `nr` back if it is one in use: answers whether it was. */
+static int loft_slice_give(uint32_t nr) {
+    for (int i = 0; i < loft_sp_n; i++) {
+        if (loft_sp_used[i] && loft_sp_ref[i].store_nr == nr) {
+            loft_sp_used[i] = 0;
+            loft_stores[nr].pinned = 1;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static void loft_free_ref(loft_ref r) {
     if (r.store_nr == 0xFFFE) {
         loft_gen_free(r);
         return;
     }
     if (r.store_nr == 0xFFFF || r.store_nr >= loft_nstores) return;
+    if (loft_sp_n && loft_slice_give(r.store_nr)) return;
     loft_store_t *s = &loft_stores[r.store_nr];
     /* `Stores::free_named`: a store already free stays as it is. */
     if (s->pinned || !s->live) return;
@@ -1333,11 +1457,25 @@ static void loft_free_ref(loft_ref r) {
     }
     if (loft_release_file_leases_hook) loft_release_file_leases_hook(r.store_nr);
     s->live = 0;
+#ifdef LOFT_STRICT_STORES
+    /* `Stores::trim_free_top`, as the interpreter's strict mode keeps it: a freed TOP slot
+     * lowers the floor, down past every dead slot under it, so the next store takes that
+     * number again — a run that frees and re-makes in a loop stays within the table. */
+    if (r.store_nr + 1u == loft_strict_floor)
+        while (loft_strict_floor > 0 && !loft_stores[loft_strict_floor - 1].live) loft_strict_floor--;
+#endif
     LOFT_TRACE("F %llu\n", (unsigned long long) s->serial);
 #ifdef LOFT_FOREIGN
     /* A foreign store's bytes go with the handle: the owner drops here. */
     loft_st_release_foreign(s);
 #endif
+    /* A store bound to a file is cut to its content first (`free_named`: the file is
+     * content-sized whether or not its author called `store_reclaim`), then unmapped, its bytes
+     * kept in the file, before the poison below could reach them. */
+    if (s->mapped) {
+        if (!s->read_only) (void) loft_st_reclaim_tail(s);
+        loft_map_release_hook(s);
+    }
 #ifdef LOFT_POISON
     /* `LOFT_POISON` (free_named): every byte past the first word reads 0xDEADBEEF, so a stale
      * reference into the freed store reads loud garbage. */
@@ -1346,6 +1484,20 @@ static void loft_free_ref(loft_ref r) {
         for (size_t off = 8; off < (size_t) s->size * 8; off++) s->buf[off] = poison[off & 3];
     }
 #endif
+}
+
+/* A failed test `longjmp`s past every scope-exit free of its frames, the stores they made among
+ * them.  The interpreter runs each test in a fork of its own program, so nothing a test made
+ * outlives it; here every store made since `mark` (`loft_stores_allocated` as the test began)
+ * that is still live and not pinned is released (@PLN206 D31). */
+static void loft_release_stores_since(uint64_t mark) {
+    for (uint32_t i = 0; i < loft_nstores; i++) {
+        const loft_store_t *s = &loft_stores[i];
+        if (s->live && !s->pinned && s->serial > mark) {
+            loft_ref r = { (uint16_t) i, 1, 8 };
+            loft_free_ref(r);
+        }
+    }
 }
 
 /* ── Generators (@F34, the interpreter's coroutines) ──
@@ -1746,6 +1898,42 @@ LOFT_HOT_INLINE uint32_t loft_collection_rec(loft_store_t *s, uint32_t rec, uint
     return v == 0xFFFFFFFFu ? 0 : v;
 }
 
+/* `@FR-R-SliceArg`: OpDatabase of a slice carrier — `var` takes a carrier from the pool, its
+ * vector kept at length 0, so the slice that follows is copied into room the carrier already
+ * has.  A variable that still holds its carrier (the site ran again before the free) keeps it.
+ * A variable holding any other store, or a full pool, takes the ordinary wrapper. */
+static void loft_slice_take(const struct loft_tdesc_s *T, loft_ref *var, uint32_t bytes, uint16_t tp) {
+    int i = 0;
+    if (var->store_nr == 0xFFFF) {
+        while (i < loft_sp_n && loft_sp_used[i]) i++;
+    } else {
+        while (i < loft_sp_n && !(loft_sp_used[i] && loft_sp_ref[i].store_nr == var->store_nr)) i++;
+        if (i == loft_sp_n) i = LOFT_SLICE_POOL;
+    }
+    if (i == loft_sp_n && i < LOFT_SLICE_POOL) {
+        loft_ref r = loft_ref_null();
+        loft_database(&r, bytes);
+        loft_sp_ref[i] = r;
+        loft_sp_used[i] = 0;
+        loft_sp_n++;
+    }
+    if (i >= loft_sp_n) {
+        loft_database_wrapper(T, var, bytes, tp);
+        return;
+    }
+    loft_ref r = loft_sp_ref[i];
+    loft_store_t *s = &loft_stores[r.store_nr];
+#ifdef LOFT_FOREIGN
+    loft_st_release_foreign(s);
+#endif
+    uint32_t v = loft_collection_rec(s, r.rec, r.pos);
+    if (v != 0) loft_set_u32(s, v, 4, 0);
+    loft_sp_used[i] = 1;
+    s->pinned = 0;
+    s->known = tp;
+    *var = r;
+}
+
 /* `checked_vec_cap`: the header word and `count` elements of `size` bytes, in words, in 32 bits
  * (the store does no 64-bit arithmetic).  A count past what 32 bits hold answers the largest
  * size, which the store's growth refuses ("store offset overflow"). */
@@ -2052,7 +2240,9 @@ static void loft_free_displaced(loft_ref displaced, loft_ref witness) {
  * native's emitter resets it (and the bytecode writer's `OpInitRefSentinel` after an owned
  * rebind's free): a later free of the same variable — the next pass's pre-build free — is then
  * a no-op, where it would otherwise release whatever store reused the slot meanwhile. */
-static void loft_free_var(loft_ref *v) {
+/* Inlined at every scope exit: the common case is a variable that was never minted, a test and
+ * no call; the release itself (`loft_free_ref`) stays out of line. */
+LOFT_HOT_INLINE void loft_free_var(loft_ref *v) {
     if (v->store_nr == 0xFFFF) return;
     loft_free_ref(*v);
     v->store_nr = 0xFFFF;
@@ -2060,7 +2250,7 @@ static void loft_free_var(loft_ref *v) {
 
 /* OpFreeRefIfDistinct of a variable: released and reset when it names another store than the
  * witness (native's `OpFreeRefIfDistinctEmitter`). */
-static void loft_free_var_distinct(loft_ref *v, loft_ref witness) {
+LOFT_HOT_INLINE void loft_free_var_distinct(loft_ref *v, loft_ref witness) {
     if (v->store_nr == witness.store_nr || v->store_nr == 0xFFFF) return;
     if (!loft_free_protected(*v)) loft_free_ref(*v);
     v->store_nr = 0xFFFF;
@@ -2520,9 +2710,10 @@ static int loft_swap_in(uint16_t tp, loft_ref src, loft_ref dst, int reset_dest)
     loft_store_t *a = &loft_stores[src.store_nr], *b = &loft_stores[dst.store_nr];
     if (!a->live || !b->live || a->known != tp || b->known != tp || a->pinned || b->pinned) return 0;
     /* `Store::content_swappable`: neither store locked (a lock is the slot's, and would move
-     * with the content) nor serving foreign bytes; only the RELEASED store's protection
-     * refuses (`free_protect_depth`), a protected destination takes the content. */
+     * with the content) nor serving foreign bytes nor bound to a file; only the RELEASED store's
+     * protection refuses (`free_protect_depth`), a protected destination takes the content. */
     if (a->read_only || b->read_only || a->protect || a->nplaced || b->nplaced) return 0;
+    if (a->mapped || b->mapped) return 0;
 #ifdef LOFT_FOREIGN
     if (loft_st_is_foreign(a) || loft_st_is_foreign(b)) return 0;
 #endif
@@ -2559,6 +2750,90 @@ static int loft_swap_rebind(uint16_t tp, loft_ref src, loft_ref *dst) {
     return loft_swap_in(tp, src, *dst, 0);
 #endif
 }
+
+#ifdef LOFT_COPY_CHECK
+/* `LOFT_COPY_CHECK` (`Stores::report_copy_mismatches`, @P317): after a deep copy the source and
+ * the copy are walked in parallel, and every nested collection whose length differs is warned of
+ * once per field path — a copy that inflates or truncates a nested collection, which no output
+ * need show.  Warn and continue, so one run is a full census.  The driver builds with it when
+ * `LOFT_COPY_CHECK` is set.  Defined further on: the keyed collections' lengths. */
+static int64_t loft_hash_len(loft_ref c);
+static uint32_t loft_bt_len(loft_ref data);
+static uint64_t loft_copy_seen[256];
+static uint32_t loft_ncopy_seen = 0;
+
+static void loft_copy_warn(const char *label, const char *path, const char *what, int64_t sl, int64_t dl, uint16_t kt) {
+    uint64_t h = UINT64_C(0xcbf29ce484222325);
+    for (const char *p = label; *p; p++) h = (h ^ (uint8_t) *p) * UINT64_C(0x100000001b3);
+    for (const char *p = path; *p; p++) h = (h ^ (uint8_t) *p) * UINT64_C(0x100000001b3);
+    for (uint32_t i = 0; i < loft_ncopy_seen; i++) if (loft_copy_seen[i] == h) return;
+    if (loft_ncopy_seen < 256) loft_copy_seen[loft_ncopy_seen++] = h;
+    fflush(stdout);
+    fprintf(stderr, "[copy_check] MISMATCH %s%s: src_len=%lld dst_len=%lld (%s kt=%u)\n", label, path, (long long) sl,
+            (long long) dl, what, (unsigned) kt);
+}
+
+static void loft_copy_cmp(const loft_tdesc *T, uint16_t tp, loft_ref s, loft_ref d, const char *label, char *path,
+                          size_t at, int depth) {
+    const loft_tdesc *t = &T[tp];
+    if (depth > 32 || at > 200) return;
+    path[at] = 0;
+    switch (t->kind) {
+    case LOFT_T_STRUCT:
+        for (uint16_t i = 0; i < t->n; i++) {
+            loft_ref fs = s, fd = d;
+            fs.pos += t->fields[i].pos;
+            fd.pos += t->fields[i].pos;
+            int w = snprintf(path + at, 256 - at, ".%u", (unsigned) i);
+            loft_copy_cmp(T, t->fields[i].type, fs, fd, label, path, at + (size_t) (w > 0 ? w : 0), depth + 1);
+            path[at] = 0;
+        }
+        return;
+    case LOFT_T_VECTOR:
+    case LOFT_T_ORDERED: {
+        int64_t sl = loft_vec_len(s), dl = loft_vec_len(d);
+        if (sl != dl) loft_copy_warn(label, path, t->kind == LOFT_T_VECTOR ? "vector elem" : "array/ordered", sl, dl, t->elem);
+        const loft_tdesc *e = &T[t->elem];
+        if (t->kind != LOFT_T_VECTOR || e->linked || !e->owns_heap || e->size == 0) return;
+        uint32_t sv = loft_u32(loft_store_of(s), s.rec, s.pos), dv = loft_u32(loft_store_of(d), d.rec, d.pos);
+        if (sv == 0 || dv == 0) return;
+        int64_t n = sl < dl ? sl : dl;
+        int w = snprintf(path + at, 256 - at, "[]");
+        for (int64_t i = 0; i < n; i++) {
+            loft_ref es = { s.store_nr, sv, 8 + (uint32_t) i * e->size }, ed = { d.store_nr, dv, 8 + (uint32_t) i * e->size };
+            loft_copy_cmp(T, t->elem, es, ed, label, path, at + (size_t) (w > 0 ? w : 0), depth + 1);
+        }
+        return;
+    }
+    case LOFT_T_HASH: {
+        int64_t sl = loft_hash_len(s), dl = loft_hash_len(d);
+        if (sl != dl) loft_copy_warn(label, path, "hash", sl, dl, t->elem);
+        return;
+    }
+    case LOFT_T_INDEX: {
+        int64_t sl = loft_bt_len(s), dl = loft_bt_len(d);
+        if (sl != dl) loft_copy_warn(label, path, "index", sl, dl, t->elem);
+        return;
+    }
+    case LOFT_T_CHILD: {
+        uint32_t sc = loft_u32(loft_store_of(s), s.rec, s.pos), dc = loft_u32(loft_store_of(d), d.rec, d.pos);
+        if (sc == 0 || dc == 0) return;
+        loft_ref cs = { s.store_nr, sc, 8 }, cd = { d.store_nr, dc, 8 };
+        loft_copy_cmp(T, t->elem, cs, cd, label, path, at, depth + 1);
+        return;
+    }
+    default:
+        return;
+    }
+}
+
+static void loft_report_copy_mismatches(const loft_tdesc *T, uint16_t tp, loft_ref s, loft_ref d, const char *label) {
+    char path[256];
+    if (s.store_nr == 0xFFFF || s.rec == 0 || d.store_nr == 0xFFFF || d.rec == 0) return;
+    path[0] = 0;
+    loft_copy_cmp(T, tp, s, d, label, path, 0, 0);
+}
+#endif
 
 static void loft_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r);
 
@@ -2598,6 +2873,9 @@ static void loft_copy_record(const loft_tdesc *T, uint16_t tp, loft_ref src, lof
     if (!fresh_dest) loft_remove_claims(T, tp, dst);
     loft_copy_bytes(dst, 0, src, 0, T[tp].size);
     loft_copy_claims(T, tp, src, dst);
+#ifdef LOFT_COPY_CHECK
+    loft_report_copy_mismatches(T, tp, src, dst, "OpCopyRecord");
+#endif
     if (free_source && src.store_nr != dst.store_nr && !loft_free_protected(src)) loft_free_ref(src);
 }
 
@@ -2735,6 +3013,15 @@ static void loft_vec_reserve_more(loft_ref v, int64_t extra, uint32_t size) {
     loft_vec_reserve(v, (int64_t) count, size);
 }
 
+/* `@FR-R-PushFill`'s run clause: room for `extra` more elements before a straight-line run of
+ * pushes — claimed for an empty vector, as its first push would.  A null reference and a locked
+ * store are left alone — the pushes answer them as they would without it — so the reservation
+ * is capacity and nothing else. */
+static void loft_vec_reserve_run(loft_ref v, int64_t extra, uint32_t size) {
+    if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0 || loft_store_of(v)->read_only) return;
+    loft_vec_reserve_more(v, extra, size);
+}
+
 /* The growth arm, out of line: the length synced, the element appended the ordinary way (which
  * grows, refuses a locked store, drops a push into an absent vector), the window re-derived. */
 LOFT_COLD static loft_win loft_win_grow(loft_win w, loft_ref v, uint32_t size, uint64_t bits) {
@@ -2830,7 +3117,11 @@ LOFT_HOT_INLINE void loft_win_finish(loft_win *w, loft_ref v, uint32_t size) {
  * (`loft_vec_append`: claimed, doubled, refused when locked, dropped when absent) and the header
  * is derived again.  The finish writes the length back, so the store answers every other read
  * and no exit has anything to sync.  A locked store has no room, so its mints refuse as before. */
-typedef struct { loft_ref v; uint32_t rec; uint32_t len; uint32_t cap; } loft_ph;
+/* `base` is the record's address when it was derived.  Only a loop whose one growth is this
+ * header's own pushes writes through it (`@FR-R-Push`'s sole-growth clause, `loft_ph_putb*`):
+ * nothing else in such a loop moves the store's memory, and the growth step derives the whole
+ * header again. */
+typedef struct { loft_ref v; uint32_t rec; uint32_t len; uint32_t cap; uint8_t *base; } loft_ph;
 
 LOFT_HOT_INLINE loft_ph loft_ph_of(loft_ref v, uint32_t size) {
     loft_ph h;
@@ -2838,11 +3129,13 @@ LOFT_HOT_INLINE loft_ph loft_ph_of(loft_ref v, uint32_t size) {
     h.rec = 0;
     h.len = 0;
     h.cap = 0;
+    h.base = 0;
     if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return h;
     loft_store_t *s = loft_store_of(v);
     uint32_t r = loft_collection_rec(s, v.rec, v.pos);
     if (r == 0) return h;
     h.rec = r;
+    h.base = loft_at(s, r, 0);
     h.len = loft_u32(s, r, 4);
     if (s->read_only) return h;
     int32_t claimed;
@@ -2891,10 +3184,36 @@ LOFT_PH_PUT(8, uint64_t)
 LOFT_PH_PUT(4, uint32_t)
 LOFT_PH_PUT(1, uint8_t)
 
+/* `@FR-R-Push`'s sole-growth clause: the same push through the record address the header
+ * holds — a push that fits stores the element and the length at that address, without
+ * resolving the store; one that does not takes `loft_ph_put*`'s growth step, which derives
+ * the header (and its address) again.  A header with no room (absent, refused, locked) never
+ * reads the address. */
+#define LOFT_PH_PUTB(W, T)                                                                  \
+    LOFT_HOT_INLINE void loft_ph_putb##W(loft_ph *h, T bits) {                              \
+        if (LOFT_LIKELY(h->len < h->cap)) {                                                 \
+            memcpy(h->base + 8 + (size_t) h->len * W, &bits, W);                            \
+            h->len++;                                                                       \
+            memcpy(h->base + 4, &h->len, 4);                                                \
+            return;                                                                         \
+        }                                                                                   \
+        loft_ph_put##W(h, bits);                                                            \
+    }
+LOFT_PH_PUTB(8, uint64_t)
+LOFT_PH_PUTB(4, uint32_t)
+LOFT_PH_PUTB(1, uint8_t)
+
 /* `LOFT_VERIFY`'s proof for a push header: a fresh derivation answers its record, length and room. */
 static int loft_ph_same(loft_ph h, uint32_t size) {
     loft_ph f = loft_ph_of(h.v, size);
     return f.rec == h.rec && f.len == h.len && f.cap == h.cap;
+}
+
+/* `LOFT_VERIFY`'s proof for a push header that writes through its address: the address too is
+ * what a fresh derivation answers — nothing moved the store since the header was derived. */
+static int loft_phb_same(loft_ph h, uint32_t size) {
+    loft_ph f = loft_ph_of(h.v, size);
+    return loft_ph_same(h, size) && f.base == h.base;
 }
 
 /* `LOFT_VERIFY`'s proof for a windowed push: the window still describes the vector — its
@@ -3576,6 +3895,9 @@ static void loft_bind_copy(const loft_tdesc *T, uint16_t tp, loft_ref *dst, loft
 #endif
     loft_copy_bytes(*dst, 0, src, 0, T[tp].size);
     loft_copy_claims(T, tp, src, *dst);
+#ifdef LOFT_COPY_CHECK
+    loft_report_copy_mismatches(T, tp, src, *dst, "bind_copy");
+#endif
 }
 
 /* `@FR-R-DeferredCopy`'s remap: `y` — a view into the graph rooted at `from` — moved to the same
@@ -5335,8 +5657,9 @@ static int loft_reset_pool_root(loft_ref r, uint16_t tp, uint32_t size, const ui
     if (r.store_nr == 0xFFFF || r.rec != 1 || r.pos != 8 || r.store_nr >= loft_nstores) return 0;
     loft_store_t *s = &loft_stores[r.store_nr];
     if (!s->live || s->pinned || s->known != tp || s->frame_holds) return 0;
-    /* A locked store is not re-minted, nor one serving foreign bytes: the caller walks. */
-    if (s->read_only) return 0;
+    /* A locked store is not re-minted, nor one bound to a file or serving foreign bytes: the
+     * caller walks. */
+    if (s->read_only || s->mapped) return 0;
 #ifdef LOFT_FOREIGN
     if (loft_st_is_foreign(s)) return 0;
 #endif
