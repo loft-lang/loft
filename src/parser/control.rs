@@ -17207,6 +17207,15 @@ impl Parser {
         self.vars.is_compiler_generated(d) && self.vars.owns_store(d)
     }
 
+    /// Is `d` a vector's OWN backing — a compiler-generated record of a `main_vector<T>`
+    /// wrapper, whose one field is the vector (`__vdb_N`)?  A projection rooted there is the
+    /// vector itself, not a view into another value; the mint @FR-O-Proxy means.
+    fn var_is_vector_backing(&self, d: u16) -> bool {
+        self.vars.is_compiler_generated(d)
+            && matches!(self.vars.tp(d).base(), Type::Reference(t, _)
+                if self.data.def(*t).name().starts_with("main_vector<"))
+    }
+
     /// Does expression `e` READ OUT OF a store this function frees — an element or field
     /// of a local, or of an inline call's temporary?
     ///
@@ -17226,8 +17235,13 @@ impl Parser {
         match e.unspan() {
             Value::Call(d, args) if *d == get_field || *d == get_vector => {
                 match args.first().map(Self::projection_base) {
+                    // Only the binding's OWN backing is exempt: a vector wrapper mint
+                    // (`__vdb_N`), whose one field IS the vector.  A projection into any
+                    // other local — a match subject, a work-ref — reads a PART of a store
+                    // the function frees: a borrow (loft#2314).  Decided on the base's type,
+                    // which both passes agree on.
                     Some(Value::Var(base)) => {
-                        !self.vars.is_argument(*base) && !self.var_is_mint(*base)
+                        !self.vars.is_argument(*base) && !self.var_is_vector_backing(*base)
                     }
                     Some(inner @ Value::Call(bd, _)) if *bd == get_field || *bd == get_vector => {
                         self.expr_borrows_local(inner)
@@ -17240,21 +17254,6 @@ impl Parser {
             }
             _ => false,
         }
-    }
-
-    /// The expression `body` most recently ASSIGNS to `v`, seen through the statement
-    /// wrappers a body carries.  Walked in reverse so a rebound variable answers with the
-    /// assignment that survives to the tail, not the first one.
-    fn var_defining_expr(body: &[Value], v: u16) -> Option<&Value> {
-        fn walk(node: &Value, v: u16) -> Option<&Value> {
-            match node.unspan() {
-                Value::Set(w, rhs) if *w == v => Some(rhs),
-                Value::Insert(ops) => ops.iter().rev().find_map(|o| walk(o, v)),
-                Value::Block(bl) => bl.operators.iter().rev().find_map(|o| walk(o, v)),
-                _ => None,
-            }
-        }
-        body.iter().rev().find_map(|s| walk(s, v))
     }
 
     /// Is `v` DEFINED by a projection into something this function frees?  The same
@@ -17270,7 +17269,21 @@ impl Parser {
     /// `OpFreeRef(__lift_1)` two statements later frees what it now points at.
     /// @FR-O-Borrow — the borrow is real whether or not a dep records it.
     fn var_defined_by_projection(&self, body: &[Value], v: u16) -> bool {
-        Self::var_defining_expr(body, v).is_some_and(|rhs| self.expr_borrows_local(rhs))
+        // Every assignment counts, an arm's too: a `match` binds its arm's capture inside the
+        // `If` that tests the arm, and any one of them borrowing makes the value a view on
+        // that path (loft#2314).
+        fn any_def(node: &Value, v: u16, f: &mut dyn FnMut(&Value) -> bool) -> bool {
+            match node.unspan() {
+                Value::Set(w, rhs) if *w == v => f(rhs),
+                Value::Insert(ops) => ops.iter().any(|o| any_def(o, v, f)),
+                Value::Block(bl) => bl.operators.iter().any(|o| any_def(o, v, f)),
+                Value::If(_, t, e) => any_def(t, v, f) || any_def(e, v, f),
+                Value::Set(_, rhs) => any_def(rhs, v, f),
+                _ => false,
+            }
+        }
+        body.iter()
+            .any(|s| any_def(s, v, &mut |rhs| self.expr_borrows_local(rhs)))
     }
 
     /// Does `v` BORROW another local's store?  The BINDING form of the view a tail
