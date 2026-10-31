@@ -1787,9 +1787,11 @@ fn dispatch_via_bridge(
     // `bridge_args_done`, which deletes the foreign-vector copies an answer may name.
     let answer = bridge_heap_answer(stores, call.as_ref(), sig, &ret, &claimed);
 
-    // The copies the foreign vector arguments took, and a store minted for a scalar answer.
+    // The copies the foreign vector arguments took, and a store minted for an answer it does
+    // not hold: a scalar, or a null (STORE_MODEL.md D19i — the C frees `ns` the same way).
     if let Some(call) = &call {
-        stores.bridge_args_done(call, returns_ref);
+        let held = returns_ref && answer.is_none_or(|db| !db.is_null());
+        stores.bridge_args_done(call, held);
     }
 
     // Write the tagged return to the stack (mirrors dispatch_call's returns).
@@ -1901,6 +1903,12 @@ fn bridge_ref_handle(
     stores: &mut crate::database::Stores,
     r: loft_ffi::LoftRef,
 ) -> crate::keys::DbRef {
+    // A null answer is loft's null, whatever store it names: claiming a header there wrapped
+    // it as an empty vector in a store the call never handed over (STORE_MODEL.md D19i — the C
+    // answers `loft_ref_null()`, the Rust writer `codegen_runtime::from_loft_ref`'s null).
+    if r.is_null() {
+        return crate::keys::DbRef::NULL;
+    }
     let base = crate::keys::DbRef {
         store_nr: r.store_nr,
         rec: 0,
@@ -2386,7 +2394,9 @@ pub mod native_call {
     pub struct BridgeGuard<'a> {
         cell: &'a std::cell::UnsafeCell<Stores>,
         args: Option<crate::database::BridgeArgs>,
-        returns_ref: bool,
+        /// Whether the answer lives in the call's store — cleared by a null answer, so a store
+        /// minted for it is released (STORE_MODEL.md D19i).
+        returns_ref: std::cell::Cell<bool>,
     }
 
     impl<'a> BridgeGuard<'a> {
@@ -2406,7 +2416,7 @@ pub mod native_call {
             Self {
                 cell,
                 args: Some(args),
-                returns_ref,
+                returns_ref: std::cell::Cell::new(returns_ref),
             }
         }
 
@@ -2422,8 +2432,11 @@ pub mod native_call {
             tp: u16,
         ) -> crate::keys::DbRef {
             let claimed = super::claim_log_end();
+            if db.is_null() {
+                self.returns_ref.set(false);
+            }
             match &self.args {
-                Some(args) if self.returns_ref => {
+                Some(args) if self.returns_ref.get() => {
                     stores.own_bridge_answer(args, db, is_vec, tp, &claimed)
                 }
                 _ => db,
@@ -2463,7 +2476,7 @@ pub mod native_call {
                 // SAFETY: generated code holds no other live borrow of the stores across a
                 // local's drop (the same cell discipline `FnRefBufGuard` relies on).
                 let stores = unsafe { &mut *self.cell.get() };
-                stores.bridge_args_done(&args, self.returns_ref);
+                stores.bridge_args_done(&args, self.returns_ref.get());
             }
         }
     }

@@ -30,6 +30,7 @@ fn main() {
   println("IOTA {n.len()} {n}");
   z = ffi_c_library::iota(0);
   println("EMPTY {z.len()} {z}");
+  for k in 0..50 { x = ffi_c_library::none_vec(); if k == 0 { w = x ?? [5]; println("NONE {x.len()} {w} {z ?? [6]}"); } }
   r = ffi_c_library::rev(v);
   println("REV {r.len()} {r} {v}");
   r += [9];
@@ -51,7 +52,12 @@ fn main() {
 "#;
 
 /// `make_bin` is `A \0 0xff B`; `wrap` puts `[` and `]` (91, 93) around its argument;
-/// `iota(n)` is `n*10+1 ..= n*10+n`; `rev` reverses and appends a 7, leaving its argument be.
+/// `iota(n)` is `n*10+1 ..= n*10+n`; `none_vec` answers the null ref from a store loft minted
+/// for it (no heap argument): the declared `vector<integer>` reads it as the empty vector on
+/// every backend, 50 calls release 50 minted stores (STORE_MODEL.md D19i: the interpreter
+/// claimed a header in the store the null named — store 0, its stack — and the Rust writer
+/// answered a ref into store 0; both kept the minted store); `rev` reverses and appends a 7,
+/// leaving its argument be.
 /// `narrow` doubles a non-negative and answers `INT32_MIN` — the narrow null — for a negative:
 /// every backend reads it as null (`loft_ffi::widen_i32`; the C and the Rust writer widened it
 /// to -2147483648).  A MAPPED file handed to `sum_bytes` is copied into the handed store for the
@@ -60,7 +66,7 @@ fn main() {
 /// library the mapped bytes copied into `v`'s store and copies the answer out of that store
 /// (loft#2227 beside the mapped copy): `[1,2,250,1,2,250]`, both arguments as they were, 100
 /// calls 600.
-const WANT: [&str; 15] = [
+const WANT: [&str; 16] = [
     "LEN 4",
     "WRAP 6 91 0 255 93",
     "ADD 42 -2",
@@ -70,6 +76,7 @@ const WANT: [&str; 15] = [
     "TEXT [hé]",
     "IOTA 3 [31,32,33]",
     "EMPTY 0 []",
+    "NONE 0 [] []",
     "REV 4 [250,2,1,7] [1,2,250]",
     "GROW 5 [250,2,1,7,9]",
     "PAIR -77 123456789",
@@ -161,7 +168,9 @@ fn run(backend: &str, how: Shipped) -> (String, String) {
         .arg(&libs)
         .arg(&file)
         .current_dir(&libs)
-        .env("LOFT_TIMEOUT", "240");
+        .env("LOFT_TIMEOUT", "240")
+        .env("LOFT_STRICT_STORES", "1")
+        .env("LOFT_NATIVE_LEAK_CHECK", "1");
     match &components {
         Some(dir) => cmd.env("LOFT_COMPONENTS", dir),
         None => cmd.env_remove("LOFT_COMPONENTS"),
@@ -178,6 +187,11 @@ fn check(backend: &str, how: Shipped) {
     let (out, err) = run(backend, how);
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines, WANT, "{backend}\nstderr:\n{err}");
+    // STORE_MODEL.md D19i — every store the calls mint is released, a null answer's included.
+    assert!(
+        !err.contains("strict-store") && !err.contains("not freed"),
+        "{backend}: a store outlived the program\nstderr:\n{err}"
+    );
 }
 
 /// The backends a C library is called on: the interpreter, the Rust writer, and the C runtime

@@ -106,12 +106,10 @@ pub fn to_loft_ref(db: DbRef) -> loft_ffi::LoftRef {
 /// @PLAN12 phase 3.5a (2026-05-24).
 #[must_use]
 pub fn from_loft_ref(stores: &mut Stores, r: loft_ffi::LoftRef) -> DbRef {
+    // loft's null, as the interpreter's bridge and the C answer it (STORE_MODEL.md D19i):
+    // store 0 is a real store, and a release of a ref naming it read out of its bounds.
     if r.is_null() {
-        return DbRef {
-            store_nr: 0,
-            rec: 0,
-            pos: 0,
-        };
+        return DbRef::NULL;
     }
     let base = DbRef {
         store_nr: r.store_nr,
@@ -143,6 +141,9 @@ pub fn from_loft_ref(stores: &mut Stores, r: loft_ffi::LoftRef) -> DbRef {
 /// a header ([`from_loft_ref`]).  The null ref stays null.
 #[must_use]
 pub fn from_loft_record(r: loft_ffi::LoftRef) -> DbRef {
+    if r.is_null() {
+        return DbRef::NULL;
+    }
     DbRef {
         store_nr: r.store_nr,
         rec: r.rec,
