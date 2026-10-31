@@ -2905,8 +2905,12 @@ impl<'a> FnWriter<'a> {
             _ => CType::Enum,
         });
         self.line(ind, &format!("{t} = ({ty}) ({val});"));
+        let root = self.var(root);
         Ok(Some(E::new(
-            format!("loft_pa_set({pa}, {pl}, {off}, &{t}, sizeof({ty}))"),
+            format!(
+                "loft_pa_set_at({pa}, {pl}, {off}, &{t}, sizeof({ty}), {root}, {})",
+                self.site()
+            ),
             K::Void,
         )))
     }
@@ -3110,6 +3114,24 @@ impl<'a> FnWriter<'a> {
         {
             self.line(ind, &format!("loft_frame_site({});", self.cur_line));
         }
+    }
+
+    /// `@FR-E-Report` — where a fault on the current statement is reported: the function's
+    /// source file and the statement's line, as the two trailing arguments of a `_at` setter.
+    fn site(&self) -> String {
+        format!(
+            "{}, {}",
+            c_string(&self.cx.data.def(self.d).position().file),
+            self.cur_line
+        )
+    }
+
+    /// A program write (`OpSet*`) as its `_at` setter: `f(args…, file, line)`.
+    fn set_at(&self, f: &str, args: &[String]) -> E {
+        E::new(
+            format!("{f}({}, {})", args.join(", "), self.site()),
+            K::Void,
+        )
     }
 
     /// Emit `v` for its effect.
@@ -7279,14 +7301,11 @@ impl<'a> FnWriter<'a> {
                 let fld = Self::literal(fld, "field")?;
                 let (r, val) = self.two(name, &[r, val], ind)?;
                 let f = if name == "OpSetInt" {
-                    "loft_set_int"
+                    "loft_set_int_at"
                 } else {
-                    "loft_set_int4"
+                    "loft_set_int4_at"
                 };
-                Ok(E::new(
-                    format!("{f}({}, {fld}, {})", as_ref(r)?, as_int(val)?),
-                    K::Void,
-                ))
+                Ok(self.set_at(f, &[as_ref(r)?, fld.to_string(), as_int(val)?]))
             }
             ("OpCopyRecord", [src, dst, tp]) => {
                 let raw = Self::literal(tp, "type")?;
@@ -7298,7 +7317,10 @@ impl<'a> FnWriter<'a> {
                     | (u8::from(raw & crate::keys::COPY_FRESH_DEST != 0) << 2);
                 let (src, dst) = self.two(name, &[src, dst], ind)?;
                 let (src, dst) = (as_ref(src)?, as_ref(dst)?);
-                let copy = format!("loft_copy_record(loft_types, {tp}, {src}, {dst}, {free})");
+                let copy = format!(
+                    "loft_copy_record_at(loft_types, {tp}, {src}, {dst}, {free}, {})",
+                    self.site()
+                );
                 // A copy into a field of an element being built: its null arm is the default.
                 if self.is_fresh_field_copy(args) {
                     let (s, d) = (self.temp(CType::Ref), self.temp(CType::Ref));
@@ -7555,9 +7577,9 @@ impl<'a> FnWriter<'a> {
             ("OpSetDbRef", [r, fld, x]) => {
                 let fld = Self::literal(fld, "field")?;
                 let (r, x) = self.two(name, &[r, x], ind)?;
-                Ok(E::new(
-                    format!("loft_set_dbref({}, {fld}, {})", as_ref(r)?, as_ref(x)?),
-                    K::Void,
+                Ok(self.set_at(
+                    "loft_set_dbref_at",
+                    &[as_ref(r)?, fld.to_string(), as_ref(x)?],
                 ))
             }
             // The closure record releases what it captured, running the captured values'
@@ -7653,9 +7675,9 @@ impl<'a> FnWriter<'a> {
             ("OpSetEnum", [r, fld, val]) => {
                 let fld = Self::literal(fld, "field")?;
                 let (r, val) = self.two(name, &[r, val], ind)?;
-                Ok(E::new(
-                    format!("loft_set_byte({}, {fld}, {})", as_ref(r)?, as_enum(val)?),
-                    K::Void,
+                Ok(self.set_at(
+                    "loft_set_byte_at",
+                    &[as_ref(r)?, fld.to_string(), as_enum(val)?],
                 ))
             }
             ("OpGetText", [r, fld]) => {
@@ -7687,14 +7709,11 @@ impl<'a> FnWriter<'a> {
                 let fld = Self::literal(fld, "field")?;
                 let (r, val) = self.two(name, &[r, val], ind)?;
                 let f = if name == "OpSetText" {
-                    "loft_set_text"
+                    "loft_set_text_at"
                 } else {
-                    "loft_refill_text"
+                    "loft_refill_text_at"
                 };
-                Ok(E::new(
-                    format!("{f}({}, {fld}, {})", as_ref(r)?, as_view(val)?),
-                    K::Void,
-                ))
+                Ok(self.set_at(f, &[as_ref(r)?, fld.to_string(), as_view(val)?]))
             }
             ("OpGetFloat" | "OpGetSingle", [r, fld]) => {
                 let fld = Self::literal(fld, "field")?;
@@ -7710,11 +7729,11 @@ impl<'a> FnWriter<'a> {
                 let fld = Self::literal(fld, "field")?;
                 let (r, val) = self.two(name, &[r, val], ind)?;
                 let (f, v) = if name == "OpSetFloat" {
-                    ("loft_set_float", as_float(val)?)
+                    ("loft_set_float_at", as_float(val)?)
                 } else {
-                    ("loft_set_single", as_single(val)?)
+                    ("loft_set_single_at", as_single(val)?)
                 };
-                Ok(E::new(format!("{f}({}, {fld}, {v})", as_ref(r)?), K::Void))
+                Ok(self.set_at(f, &[as_ref(r)?, fld.to_string(), v]))
             }
             ("OpPushBoolean", [v, val]) => {
                 let (v, val) = self.two(name, &[v, val], ind)?;
@@ -7765,21 +7784,13 @@ impl<'a> FnWriter<'a> {
                 let fld = Self::literal(fld, "field")?;
                 let min = Self::literal(min, "minimum")?;
                 let f = match name {
-                    "OpSetByte" => "loft_set_byte_v",
-                    "OpSetByteNullable" => "loft_set_byte_nullable",
-                    "OpSetShort" => "loft_set_short",
-                    _ => "loft_set_short_raw",
+                    "OpSetByte" => "loft_set_byte_v_at",
+                    "OpSetByteNullable" => "loft_set_byte_nullable_at",
+                    "OpSetShort" => "loft_set_short_at",
+                    _ => "loft_set_short_raw_at",
                 };
                 let (r, val) = self.two(name, &[r, val], ind)?;
-                Ok(E::new(
-                    format!(
-                        "{f}({}, {fld}, {}, {})",
-                        as_ref(r)?,
-                        c_long(min),
-                        as_int(val)?
-                    ),
-                    K::Void,
-                ))
+                Ok(self.set_at(f, &[as_ref(r)?, fld.to_string(), c_long(min), as_int(val)?]))
             }
             ("OpGetInt4" | "OpGetInt4Raw" | "OpGetInt4Full", [r, fld]) => {
                 let fld = Self::literal(fld, "field")?;
@@ -7794,9 +7805,9 @@ impl<'a> FnWriter<'a> {
             ("OpSetInt4Raw", [r, fld, val]) => {
                 let fld = Self::literal(fld, "field")?;
                 let (r, val) = self.two(name, &[r, val], ind)?;
-                Ok(E::new(
-                    format!("loft_set_int4_raw({}, {fld}, {})", as_ref(r)?, as_int(val)?),
-                    K::Void,
+                Ok(self.set_at(
+                    "loft_set_int4_raw_at",
+                    &[as_ref(r)?, fld.to_string(), as_int(val)?],
                 ))
             }
             ("OpPushInt4", [v, val]) => {
@@ -8053,9 +8064,9 @@ impl<'a> FnWriter<'a> {
             ("OpSetCharacter", [r, fld, c]) => {
                 let fld = Self::literal(fld, "field")?;
                 let (r, c) = self.two(name, &[r, c], ind)?;
-                Ok(E::new(
-                    format!("loft_set_char({}, {fld}, {})", as_ref(r)?, as_char(c)?),
-                    K::Void,
+                Ok(self.set_at(
+                    "loft_set_char_at",
+                    &[as_ref(r)?, fld.to_string(), as_char(c)?],
                 ))
             }
             ("OpPushCharacter", [v, c]) => {
@@ -8331,9 +8342,9 @@ impl<'a> FnWriter<'a> {
             ("OpSetBoolean", [r, fld, val]) => {
                 let fld = Self::literal(fld, "field")?;
                 let (r, val) = self.two(name, &[r, val], ind)?;
-                Ok(E::new(
-                    format!("loft_set_byte({}, {fld}, {})", as_ref(r)?, as_bool(val)?),
-                    K::Void,
+                Ok(self.set_at(
+                    "loft_set_byte_at",
+                    &[as_ref(r)?, fld.to_string(), as_bool(val)?],
                 ))
             }
             ("OpPushByte", [v, min, val]) => {

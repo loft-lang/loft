@@ -212,11 +212,12 @@ impl FnWriter<'_> {
                 };
                 let val = self.expr(val, ind)?;
                 let val = as_shape(val, c)?;
-                // A write through an absent `τ?` struct lands nowhere, as the setter's null
-                // record arm does.
+                // A write through an absent `τ?` struct lands nowhere, and is reported, as the
+                // setter's null record arm does.
+                let dropped = format!("loft_write_dropped(loft_ref_null(), {})", self.site());
                 Ok(Some(match self.vr_presence(key, &self.var(v)) {
                     Some(p) => E::new(
-                        format!("(({p} == 1) ? (void) ({m} = {val}) : (void) 0)"),
+                        format!("(({p} == 1) ? (void) ({m} = {val}) : {dropped})"),
                         K::Void,
                     ),
                     None => E::new(format!("((void) ({m} = {val}))"), K::Void),
@@ -255,7 +256,19 @@ impl FnWriter<'_> {
         let dst = self.expr(dst, ind)?;
         let d = self.temp(CType::Ref);
         self.line(ind, &format!("{d} = {};", as_ref(dst)?));
+        // `@FR-E-Report` — a copy into a null place is dropped, and reported once, as
+        // `loft_copy_record_at` reports one; an absent source copies nothing and says nothing.
         let s = self.var(root);
+        let present = self
+            .vr_presence(key, &s)
+            .map_or_else(String::new, |p| format!("{p} == 1 && "));
+        self.line(
+            ind,
+            &format!(
+                "if (LOFT_UNLIKELY({present}{d}.store_nr == 0xFFFF)) loft_write_dropped({d}, {});",
+                self.site()
+            ),
+        );
         // An absent `τ?` struct copies as the record form copies a null source: the same
         // `loft_copy_record` under the same type and flags (a fresh destination takes its
         // default, any other keeps what it held).
