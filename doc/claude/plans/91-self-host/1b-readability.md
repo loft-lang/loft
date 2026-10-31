@@ -78,9 +78,7 @@ compiler, never routed around in the port.  What remains, in order:
    where `(N-Store)` says a null bound reads null (loft#2306); once that is fixed the warning is
    the store's own and `sub_text`'s comment ("a null `till` takes the one character at `from`")
    is rewritten to the rule.
-2. **`lower.loft` `Rotation`** keeps four `-1` fields where its Rust (`codegen.rs:7290`) has two
-   `Option` pairs: one `(integer, integer)?` field per pair.
-3. Then the plan's queue (handoff): loft#2260, E-4, F-1.
+2. Then the plan's queue (handoff): loft#2260, E-4, F-1.
 
 **Done (2026-10-31).** Every "none" answer of `own`, `binds`, `lower` and `types` is `integer?`
 — the `Option` facts of the Rust, the lookups of the port's own, the local `match … _ => -1`
@@ -88,7 +86,9 @@ bindings — and `binds`' second spellings of `u16::MAX`/`u32::MAX` are `own::MA
 A `let Some(x) = … else { return … }` is a single-name guard, so `(N-Guard)` proves `x` after it
 and no `!` follows; a compound guard is split into one guard per fact, and a `!` stays only
 after a compound test, which proves nothing.  `crt::key_float` passes `is_null` as its two
-float siblings do.  Measured each step: all 521 images, C build, same compiler — identical;
+float siblings do.  `lower`'s `Rotation` carries the Rust's two `Option` pairs as `LoopVar?` and
+`Seed?` records (a tuple has no `?`, `@FR-T-Absent`), and `rotation` / `start_step` answer
+`Rotation?` as their Rust answers `Option<Rotation>`.  Measured each step: all 521 images, C build, same compiler — identical;
 tests/selfhost.rs passes.
 
 Fixed on the way: loft#2292 (a local renamed onto the return buffer was copied onto itself — a

@@ -2175,16 +2175,27 @@ fn leave_loop(l: Lowering, n: integer, is_break: boolean) {
 // jumps back.  Its iterator's statements are lowered in that order, so the binds are too.
 
 // `Rotation` (`codegen.rs:7290`): the statements before the exit test, the test, those after
-// it, the loop variable and the index it takes (`store`, -1 when none), and `(index, next)`
-// when the start step seeds one counter from the other (`seed`, -1 when none).
+// it, the loop variable and the index it takes (`store`), and the counter the start step seeds
+// from the other (`seed`).  The Rust's two `Option<(u16, u16)>`; a tuple has no `?` of its own
+// (`@FR-T-Absent`), so each pair is a record.
 struct Rotation {
   pre: vector<ir::Node>,
   test: vector<ir::Node>,
   post: vector<ir::Node>,
-  store_lv: integer,
-  store_ix: integer,
-  seed_ix: integer,
-  seed_nxt: integer,
+  store: LoopVar?,
+  seed: Seed?,
+}
+
+// The loop variable `lv` and the range index `ix` it takes each round.
+struct LoopVar {
+  lv: integer,
+  ix: integer,
+}
+
+// `index` seeded from `next` before the loop (`start_step`).
+struct Seed {
+  ix: integer,
+  nxt: integer,
 }
 
 // `exit_test` (`codegen.rs:7303`): `if c { break }` of the innermost loop, answering `c`.
@@ -2244,13 +2255,12 @@ fn holds_jump_in(ns: vector<ir::Node>) -> boolean {
   false
 }
 
-// `rotation` (`codegen.rs:7324`): a loop's first statement read as a rotatable exit, or the
-// rotation with an empty test when it is none.
-fn rotation(first: ir::Node) -> Rotation {
-  none = Rotation { pre: [], test: [], post: [], store_lv: -1, store_ix: -1, seed_ix: -1, seed_nxt: -1 };
+// `rotation` (`codegen.rs:7324`): a loop's first statement read as a rotatable exit, or null
+// when it is none.
+fn rotation(first: ir::Node) -> Rotation? {
   c = exit_test(first);
   if len(c) > 0 {
-    return Rotation { pre: [], test: c, post: [], store_lv: -1, store_ix: -1, seed_ix: -1, seed_nxt: -1 };
+    return Rotation { pre: [], test: c, post: [], store: null, seed: null };
   }
   match unspan(first) {
     NdSet { var: lv, inner } => {
@@ -2259,27 +2269,27 @@ fn rotation(first: ir::Node) -> Rotation {
           bl = block[0]!;
           n = len(bl.operators);
           if bl.name != "Iter range" || n == 0 {
-            return none;
+            return null;
           }
-          ix = match unspan(bl.operators[n - 1]!) { NdVar { n: x } => x, _ => -1 };
-          if ix < 0 {
-            return none;
+          ix = own::var_of(bl.operators[n - 1]!);
+          if ix == null {
+            return null;
           }
-          k = -1;
+          k: integer? = null;
           for i in 0..n - 1 {
             if len(exit_test(bl.operators[i]!)) > 0 {
               k = i;
             }
           }
-          if k < 0 {
-            return none;
+          if k == null {
+            return null;
           }
           for i in 0..n - 1 {
             if i != k && holds_jump(bl.operators[i]!) {
-              return none;
+              return null;
             }
           }
-          r = Rotation { pre: [], test: exit_test(bl.operators[k]!), post: [], store_lv: lv, store_ix: ix, seed_ix: -1, seed_nxt: -1 };
+          r = Rotation { pre: [], test: exit_test(bl.operators[k]!), post: [], store: LoopVar { lv: lv, ix: ix }, seed: null };
           for i in 0..k {
             r.pre += [bl.operators[i]!];
           }
@@ -2288,76 +2298,74 @@ fn rotation(first: ir::Node) -> Rotation {
           }
           r
         }
-        _ => none,
+        _ => null,
       }
     }
-    _ => none,
+    _ => null,
   }
 }
 
 // `start_step` (`codegen.rs:7377`, `@FR-R-StartStep`): `{if c(next) break; index = next;
-// next = next + 1; index}` stepped as one counter, `index` seeded from `next`.  An empty test
-// when it does not apply.
-fn start_step(r: Rotation) -> Rotation {
-  none = Rotation { pre: [], test: [], post: [], store_lv: -1, store_ix: -1, seed_ix: -1, seed_nxt: -1 };
-  ix = r.store_ix;
-  if ix < 0 || len(r.pre) != 0 || r.seed_ix >= 0 || len(r.post) != 2 {
-    return none;
+// next = next + 1; index}` stepped as one counter, `index` seeded from `next`; null when it does
+// not apply.
+fn start_step(r: Rotation) -> Rotation? {
+  st = r.store;
+  if st == null {
+    return null;
   }
-  copy = unspan(r.post[0]!);
-  step = unspan(r.post[1]!);
-  cix = -1;
-  nxt = -1;
-  match copy {
-    NdSet { var, inner } => {
-      cix = var;
-      nxt = match unspan(inner) { NdVar { n } => n, _ => -1 };
-    }
-    _ => {}
+  if len(r.pre) != 0 || r.seed != null || len(r.post) != 2 {
+    return null;
   }
-  if nxt < 0 || cix != ix || nxt == ix {
-    return none;
+  ix = st.ix;
+  // `index = next`, then `next = next + 1`.
+  nxt = match unspan(r.post[0]!) {
+    NdSet { var, inner } => if var == ix { own::var_of(inner) } else { null },
+    _ => null,
+  };
+  if nxt == null {
+    return null;
   }
-  add = -1;
-  match step {
-    NdSet { var, inner } => {
-      if var != nxt {
-        return none;
-      }
-      match unspan(inner) {
-        NdCall { def_nr, args } => {
-          if len(args) == 2 && is_var(args[0]!, nxt) && is_int(args[1]!, 1) {
-            add = def_nr;
-          }
-        }
-        _ => {}
-      }
-    }
-    _ => {}
+  if nxt == ix {
+    return null;
   }
-  if add < 0 {
-    return none;
+  add = increment_of(r.post[1]!, nxt);
+  if add == null {
+    return null;
   }
   match unspan(r.test[0]!) {
     NdCall { def_nr: cmp, args: targs } => {
       if len(targs) != 2 {
-        return none;
+        return null;
       }
       end = targs[0]!;
       if !is_var(targs[1]!, nxt) || binds::reads_var(end, nxt) || binds::reads_var(end, ix) {
-        return none;
+        return null;
       }
       Rotation {
         pre: [NdSet { var: ix, inner: NdCall { def_nr: add, args: [NdVar { n: ix }, NdInt { n: 1 }] } }],
         test: [NdCall { def_nr: cmp, args: [end, NdVar { n: ix }] }],
         post: [],
-        store_lv: r.store_lv,
-        store_ix: r.store_ix,
-        seed_ix: ix,
-        seed_nxt: nxt,
+        store: st,
+        seed: Seed { ix: ix, nxt: nxt },
       }
     }
-    _ => none,
+    _ => null,
+  }
+}
+
+// The operator of `v = v + 1` for counter `v`, or null when `step` is not that.
+fn increment_of(step: ir::Node, v: integer) -> integer? {
+  match unspan(step) {
+    NdSet { var, inner } => {
+      if var != v {
+        return null;
+      }
+      match unspan(inner) {
+        NdCall { def_nr, args } => if len(args) == 2 && is_var(args[0]!, v) && is_int(args[1]!, 1) { def_nr } else { null },
+        _ => null,
+      }
+    }
+    _ => null,
   }
 }
 
@@ -2378,11 +2386,19 @@ fn is_int(n: ir::Node, v: integer) -> boolean {
 // `start_step_holds` (`codegen.rs:1276`): the body never reads `next`, nor `index` unless the
 // loop variable shares its slot.
 fn start_step_holds(b: ir::Bundle, d: integer, ops: vector<ir::Node>, s: Rotation) -> boolean {
-  pos = fvar(b, d, s.store_lv).stack_pos;
-  shared = pos != 65535 && pos == fvar(b, d, s.seed_ix).stack_pos;
+  sd = s.seed;
+  if sd == null {
+    return false;
+  }
+  st = s.store;
+  if st == null {
+    return false;
+  }
+  pos = fvar(b, d, st.lv).stack_pos;
+  shared = pos != 65535 && pos == fvar(b, d, sd.ix).stack_pos;
   for i in 1..len(ops) {
     o = ops[i]!;
-    if binds::reads_var(o, s.seed_nxt) || (!shared && binds::reads_var(o, s.seed_ix)) {
+    if binds::reads_var(o, sd.nxt) || (!shared && binds::reads_var(o, sd.ix)) {
       return false;
     }
   }
@@ -2393,8 +2409,9 @@ fn start_step_holds(b: ir::Bundle, d: integer, ops: vector<ir::Node>, s: Rotatio
 // test); the body: the post statements, the loop variable, the rest; the step; the test, which
 // jumps back to the body while it is false.  A `continue` goes to the step.
 fn rotated_loop(l: Lowering, b: ir::Bundle, ops: vector<ir::Node>, r: Rotation) {
-  if r.seed_ix >= 0 {
-    set(l, b, r.seed_ix, NdVar { n: r.seed_nxt });
+  sd = r.seed;
+  if sd != null {
+    set(l, b, sd.ix, NdVar { n: sd.nxt });
   }
   level = len(l.loop_start);
   l.loop_start += [-1];
@@ -2405,23 +2422,24 @@ fn rotated_loop(l: Lowering, b: ir::Bundle, ops: vector<ir::Node>, r: Rotation) 
   for p in r.post {
     statement(l, b, p);
   }
-  if r.store_lv >= 0 {
-    pos = fvar(b, l.def_nr, r.store_lv).stack_pos;
-    if pos != 65535 && pos == fvar(b, l.def_nr, r.store_ix).stack_pos {
+  st = r.store;
+  if st != null {
+    pos = fvar(b, l.def_nr, st.lv).stack_pos;
+    if pos != 65535 && pos == fvar(b, l.def_nr, st.ix).stack_pos {
       // The loop variable IS its index's slot: no set (`set_stack_allocated`); the loft frame
       // keeps the two apart until F-1, so the value is copied here.
-      mark(b, l.def_nr, r.store_lv, true);
-      k = var_kind(l, r.store_ix);
-      emit(l, Load, stack_of(k), slot_of(l, r.store_ix), 0);
-      emit(l, Store, stack_of(k), slot_of(l, r.store_lv), 0);
+      mark(b, l.def_nr, st.lv, true);
+      k = var_kind(l, st.ix);
+      emit(l, Load, stack_of(k), slot_of(l, st.ix), 0);
+      emit(l, Store, stack_of(k), slot_of(l, st.lv), 0);
     } else {
-      statement(l, b, NdSet { var: r.store_lv, inner: NdVar { n: r.store_ix } });
+      statement(l, b, NdSet { var: st.lv, inner: NdVar { n: st.ix } });
     }
   }
   for i in 1..len(ops) {
     statement(l, b, ops[i]!);
   }
-  if r.seed_ix < 0 {
+  if sd == null {
     l.ops[entry].a = len(l.ops);
   }
   step = len(l.ops);
@@ -2434,7 +2452,7 @@ fn rotated_loop(l: Lowering, b: ir::Bundle, ops: vector<ir::Node>, r: Rotation) 
   for p in r.pre {
     statement(l, b, p);
   }
-  if r.seed_ix >= 0 {
+  if sd != null {
     l.ops[entry].a = len(l.ops);
   }
   expr(l, b, r.test[0]!);
@@ -2481,10 +2499,10 @@ fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
       ops = block[0]!.operators;
       if len(ops) > 0 {
         r = rotation(ops[0]!);
-        if len(r.test) > 0 {
+        if r != null {
           s = start_step(r);
-          if len(s.test) > 0 && start_step_holds(b, l.def_nr, ops, s) {
-            rotated_loop(l, b, ops, s);
+          if s != null && start_step_holds(b, l.def_nr, ops, s!) {
+            rotated_loop(l, b, ops, s!);
           } else {
             rotated_loop(l, b, ops, r);
           }
