@@ -2008,16 +2008,12 @@ impl Parser {
                             self.data.def(lambda).closure_record()
                         };
                         if record != u32::MAX && !self.first_pass {
-                            let old = self.create_unique(
-                                "__oldrec",
-                                &Type::Reference(record, crate::data::Deps::none()),
-                            );
-                            self.vars.set_skip_free(old);
                             let read = self.cl(
                                 "OpGetField",
                                 &[host.clone(), Value::Int(offset + 4), Value::Int(0)],
                             );
-                            ops.push(v_set(old, self.cl("OpRefFromChildRec", &[read])));
+                            let bind = self.bind_displaced_closure(&host, read, record);
+                            ops.push(bind);
                         }
                         ops.push(self.cl("OpClearKeyed", &[field, tp_val]));
                     }
