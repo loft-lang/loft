@@ -7,7 +7,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 A child document of [1b-interpreter.md](1b-interpreter.md).  Status: **F-1 built — every
 variable in the stack store at its Rust byte (PF1 its layout guard, `selfhost/tests/frame.loft`);
-PF4 measured (loft#2310); PF2, PF3, PF5 and F-2 not built.**
+PF2 built (no frame is initialised; each first assignment's positional init writes its slot);
+PF4 measured (loft#2310); PF3, PF5 and F-2 not built.**
 
 ## The rule
 
@@ -147,6 +148,13 @@ never a gate (the order of the goals, 1b-interpreter.md).
     the interpreter's text stack is written by `put_text`, whose release `@FR-H-TextReplace`
     declines because its parameter is also appended on the other branch (loft#2310), so every
     text the run evaluates stays in that vector's store.
+  - **PF2 (built)**: no frame is initialised, as `OpReserveFrame` initialises nothing — a slot
+    holds what an earlier frame left until its first assignment's positional init writes it.
+    Two inits the port lacked and the null-started frame hid: `gen_set_first_text`'s
+    `OpInitText` (a text local's first set wrote over an earlier frame's `loft_text`), and
+    `gen_keyed_null`'s `OpInitRef` before its first `OpDatabase` (the mint remade whatever store
+    the slot's old bytes named — `kernels/hashes.loft` `intkey` crashed).  The 521 images
+    measure the same with the frame uninitialised; `enums.loft` `listed` reuses its slots.
   - Found while probing: a self-recursive tail call the compiler turns into a loop
     (`R-TailSelf`, `NdLoop` in a value position) is refused by the lowering as an expression
     it does not carry.

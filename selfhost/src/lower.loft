@@ -69,6 +69,7 @@ enum Code {
   AppendChar,
   Clear,
   FreeText,
+  InitText,
   Print,
   RefOf,
   Round,
@@ -442,6 +443,7 @@ fn effect(code: Code, b: integer) -> integer {
     AppendChar => -1,
     Clear => 0,
     FreeText => 0,
+    InitText => 0,
     Print => -1,
     RefOf => 1,
     Round => 0,
@@ -1625,8 +1627,15 @@ fn set_first(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
   is_null = x is NdNull;
   slot = if var_kind(l, var) == KRef { slot_of(l, var) } else { -1 };
   if base is TyText {
+    // `gen_set_first_text` (`codegen.rs:1769`): the positional init — the empty text written at
+    // the slot, which holds what an earlier frame left — then the set, which the empty literal
+    // needs none of.  A text view (@PLN198) owns no text and takes no init; the loft
+    // interpreter holds every text loop variable as its own copy, so it never is one here.
     note(l, "first-text");
-    plain_set(l, b, var, x);
+    emit(l, InitText, KText, slot_of(l, var), 0);
+    if !(u is NdText && u == NdText { s: "" }) {
+      plain_set(l, b, var, x);
+    }
     return;
   }
   if (base is TyReference || is_struct_enum(base)) && is_null {
@@ -1971,6 +1980,11 @@ fn keyed_null(l: Lowering, b: ir::Bundle, var: integer, first: boolean) {
   if ht == null {
     refuse(l, "a keyed collection whose type the image does not name: {v.name}");
     return;
+  }
+  // First assignment: the slot nulled before the mint, which would otherwise remake whatever
+  // store an earlier frame left there (`OpInitRef`, then `OpDatabase`).
+  if first {
+    init_ref(l, slot);
   }
   emit(l, Database, KRef, slot, ht);
 }
