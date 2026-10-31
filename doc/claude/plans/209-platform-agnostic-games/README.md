@@ -16,8 +16,8 @@ over [@PLN72](https://github.com/loft-lang/plans/issues/72)).
 
 | Phase | State |
 |---|---|
-| F1–F11 | Open |
-| G1–G4 | Open — started when a game needs the GPU tier on a new machine |
+| F1–F12 | Open |
+| G1–G4 | Open — the 3D work (graphics, stage, the moros editor) continues alongside arc F; G reshapes its boundary |
 
 ## Goal
 
@@ -160,9 +160,20 @@ reports gaps; dryopea's agent moves the code.
 - Goes red when: a scripted game played through both views ends in a different state; the
   frame-tier build does not start on any of the five machines.
 
-## Arc G — the GPU tier on the same layer (later)
+**F12 — a hex world editor in the frame tier (M).**  An editor for `hex_world` worlds — terrain,
+places, ways — drawn with `tiles` / `Canvas`, so it runs on the Tanmatsu, in a page and on a
+desktop.  It writes the world in `hex_world`'s stored format, the one the 3D games read, so a
+world made in the small editor is the world the 3D version loads later.
+- Goes red when: a world saved by the editor and loaded by a 3D game's loader answers another
+  `hex_world` state than the editor held; a scripted edit session gives a different world on any
+  machine.
 
-Started when a game needs the GPU tier somewhere new.  Takes over @PLN72, whose `render.loft` and
+## Arc G — the GPU tier on the same layer
+
+The 3D work does not wait for arc F: graphics, stage and the moros editor keep being built — the
+editor is a large gain on its own.  What arc G orders is the BOUNDARY: G1 and G2 reshape where the
+GPU tier meets the platform layer, and are taken up when arc F's layer exists and before a second
+GPU backend is written.  Takes over @PLN72, whose `render.loft` and
 `gl_*` premises graphics 0.10 already removed.
 
 **G1 — one platform layer under `graphics` (M).**  graphics' window, input and present use arc F's
