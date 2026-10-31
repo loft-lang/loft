@@ -601,6 +601,24 @@ tests/
 
 ---
 
+## The compiled backend a test runs on
+
+The C backend is the compiled backend every change is tested on: `make`, `find_problems.sh`
+and CI's PR gate set `LOFT_NATIVE_BACKEND=c`, so `--native` compiles through the C.  The
+rustc-native backend runs in the daily schedule ([CI_BUDGET.md](CI_BUDGET.md) § What
+runs when — today).  The C's coverage is what makes it stable, so a test:
+
+- **compiles a program through the C** — `--native` under that variable, or `--native-c`.  A
+  browser page builds through the C too (`--native-c --html`, its wasm through clang —
+  [C_BACKEND.md](C_BACKEND.md)).
+- **names `--native-rust` only when its subject is the Rust writer** — what it emits, its
+  rewrites, its counts.  A test that only needs *a* compiled program uses the C.
+- **is never skipped, or moved back to rustc, because the C fails it.**  A program the C
+  refuses or answers wrongly is a C backend defect: fix it (or file it, by the bug-filing
+  policy), and keep the test on the C.
+
+---
+
 ## Key Constraints
 
 - **Test order within a binary is not deterministic** — Cargo runs tests in parallel.
