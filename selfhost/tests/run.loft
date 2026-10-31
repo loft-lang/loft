@@ -308,6 +308,8 @@ fn test_a_repeat_fills_and_an_absent_vector_is_null() {
   assert(ran_clean(r, "n_absent", 2) == 0, "absent(2)");
   assert(ran_clean(r, "n_slices", 3) == 717250, "slices(3)");
   assert(ran_clean(r, "n_slices", 0) == 717000, "slices(0)");
+  assert(ran_clean(r, "n_summed", 4) == 1007, "summed(4): the vector_sum_int kernel");
+  assert(ran_clean(r, "n_summed", -6) == 7, "summed(-6)");
 }
 
 // @PLN91 S3: a record placed in the store of the vector it takes, the vector moved into its field
