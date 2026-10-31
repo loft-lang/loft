@@ -1594,7 +1594,7 @@ fn flag(x: boolean) -> integer {
 fn free_stashed(l: Lowering, var: integer, entry_w: integer?) {
   emit(l, Load, KRef, slot_of(l, var), 0);
   if entry_w != null {
-    emit(l, Load, KRef, slot_of(l, entry_w!), 0);
+    emit(l, Load, KRef, slot_of(l, entry_w), 0);
     emit(l, FreeRefUnlessEntry, KRef, 0, 0);
   } else {
     emit(l, FreeRefDistinct, KRef, 0, 0);
@@ -1855,7 +1855,7 @@ fn release_caller_hidden_arg(l: Lowering, b: ir::Bundle, a: integer) {
       return;
     }
     emit(l, Load, KRef, slot, 0);
-    emit(l, Load, KRef, slot_of(l, w!), 0);
+    emit(l, Load, KRef, slot_of(l, w), 0);
     emit(l, FreeRefDistinct, KRef, 0, 0);
   } else {
     emit(l, Load, KRef, slot, 0);
