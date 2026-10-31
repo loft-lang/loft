@@ -8,7 +8,10 @@ description: >-
   public contract, a data format, or any algorithm that will carry weight: name the
   ONE invariant, count its re-assertion sites, build the cheapest probe that could
   FALSIFY each load-bearing claim, then build and validate against the written
-  prediction. And for exact-invariant domains where you cannot even form the
+  prediction. USE IT TOO before RECOMMENDING a rule, a semantics or a design in answer to a
+  question ("which way should this work?", "what would option 2 entail?"): answering feels
+  like advice, not design, so the probe gets skipped — and an approved recommendation is a
+  commitment the asker builds on. And for exact-invariant domains where you cannot even form the
   invariant (geometry, caching, hashing, store/memory lifetime, round-trips), flip to
   the constructive instrument — plot a concrete instance of the ANSWER and read the
   invariant off it. Reach for it when a design feels too clean, when you keep reaching
@@ -164,6 +167,29 @@ under the current rule?"*, which strengthens the rule even when the rule is wron
 fix infers an intent the language cannot state; one rule collects exceptions; the defect list
 re-cuts instead of shrinking; each option grows its own machinery. At the third exception to
 one rule, stop patching and walk the use cases.
+
+---
+
+## When you RECOMMEND it — the answer is the commitment
+
+A design recommended in answer to a question is committed the moment the asker approves it:
+they build on the recommendation, not on its probes, and an approved wrong rule costs a round
+trip plus everything done under it. Answering does not feel like designing — nothing is being
+edited, no routine is being written — so the cues that normally start this protocol do not
+fire. That is the gap, and it is where a confident rule gets past both of you.
+
+So before you recommend, run step 3 early: build the cell that would falsify the rule, and run
+it. Aim it at the **premise** the recommendation rests on, which is usually a claim about how
+the current system behaves ("X only happens when Y", "this value is reachable only through Z",
+"the owner of this is always the one that outlives the other"). The asker can weigh your
+options; they cannot check your premise about the code — that part is yours. A premise that
+turns on a NAME in the code (an "owned" flag, a "borrowed" marker, an "adopted" store) is the
+riskiest kind: the name says what the code decides, not what the program can still reach.
+
+When you present several options, probe the premise each one rests on, not only your
+favourite's. And say in the answer what you measured and what you assumed: an assumption named
+is one the asker can challenge before approving it, and one left implicit is approved with
+the rest.
 
 ---
 
@@ -473,6 +499,13 @@ appended to the axis list your next design's matrix varies. This protocol makes 
 The body above is tree-agnostic. Working in the loft repo, these are the instruments it
 tells you to reach for:
 
+- A recommendation's premise is probed like any cell: a `/tmp` program per shape, hand-computed
+  values, `--interpret` and `--native`, the controls beside it. The case that put this rule in
+  the skill — loft#2273: "a copy clones what its closure record OWNS" was recommended and
+  approved on the premise that an owned capture is reachable only through closures. It is
+  not: the frame that captured a written scalar keeps reading it through the very store the
+  record "owns", so writes through the copy stopped reaching the variable. A five-minute
+  control cell showed it — after the approval, not before.
 - The outer radius (dependency manifest / package index / library catalogue) is
   `make libcatalogue` + `loft install` — read the generated `doc/claude/LIBRARIES.md`,
   never a clone or installed copy.
