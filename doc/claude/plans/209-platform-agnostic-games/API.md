@@ -62,6 +62,7 @@ on every machine:
 [[asset]]
 path    = "art/hero.png"     # what the game passes to load_sheet / load_texture
 quality = "exact"            # exact | reduced | compressed — how far a target may rework it
+                             # (a mesh: `reduced` with `max_error = 0.01`, in model units)
 ```
 
 A development run reads the RGBA source.  **`--ship` for a target reworks every declared asset
@@ -74,6 +75,11 @@ changes:
 | a page | the source, or a smaller lossless encoding; atlases |
 | a desktop, frame tier | the source |
 | a GPU target (arc G) | mipmaps, and the GPU's compressed format where `quality` allows (BC on a desktop, ASTC / ETC2 on a phone or console) |
+
+**Meshes** are reworked the same way, for the GPU targets only (the Tanmatsu draws no 3D): a
+`[[asset]]` naming a `.glb` may be simplified for a target's screen and tier — fewer triangles,
+the same silhouette — by an edge-collapse routine beside `glb` / `mesh3d` in loft-libs-assets.
+Its bound is geometric: the simplified surface stays within a declared distance of the source.
 
 Each rework is a pure function of the source, the target and the quality, kept by that key, so a
 second ship build redoes nothing that did not change.

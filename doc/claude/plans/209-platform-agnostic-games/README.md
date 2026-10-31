@@ -17,7 +17,7 @@ over [@PLN72](https://github.com/loft-lang/plans/issues/72)).
 | Phase | State |
 |---|---|
 | F1–F12, F8b | Open |
-| G1–G4 | Open — the 3D work (graphics, stage, the moros editor) continues alongside arc F; G reshapes its boundary |
+| G1–G4, G3b | Open — the 3D work (graphics, stage, the moros editor) continues alongside arc F; G reshapes its boundary |
 
 ## Goal
 
@@ -201,6 +201,11 @@ console APIs share.  GL and WebGL2 implement it by setting state when a pipeline
 **G3 — the shader decision, then Metal (L).**  One shader source for every backend — open question
 1.  Metal is the first second backend: two very different APIs expose a bad boundary fastest.
 - Goes red when: a scene draws other pixels on Metal than on GL beyond a measured tolerance.
+
+**G3b — meshes reworked per target (M).**  The ship build's asset rework (F8b) extended to
+meshes: a `.glb` simplified for a target's screen and tier by edge collapse, in loft-libs-assets.
+- Goes red when: a simplified mesh leaves its source by more than its declared `max_error`
+  (measured as the largest surface distance); its triangle count does not fall for a lower tier.
 
 **G4 — further backends (L each).**  Vulkan (Linux, Android, Steam Deck); a console backend in a
 private repo, implementing the same C interface under its maker's licence; Direct3D only when Xbox
