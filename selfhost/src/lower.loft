@@ -513,6 +513,12 @@ fn operator_op(name: text) -> Op? {
     // or a zero divisor, and no other pair overflows, since the one that would divides null.
     "OpDivIntNullable" => Op { code: Div, kind: KInt, a: 0, b: 0 },
     "OpRemIntNullable" => Op { code: Rem, kind: KInt, a: 0, b: 0 },
+    // The `??`-operand twins of `+`, `-`, `*` (C54.G-hybrid): the same values; the Rust plain
+    // ops report an overflow and these do not, and the C runtime's, which this runs on, report
+    // none either way (`loft_add` for both).
+    "OpAddIntNullable" => Op { code: Add, kind: KInt, a: 0, b: 0 },
+    "OpMinIntNullable" => Op { code: Sub, kind: KInt, a: 0, b: 0 },
+    "OpMulIntNullable" => Op { code: Mul, kind: KInt, a: 0, b: 0 },
     "OpAbsFloat" => Op { code: Abs, kind: KFloat, a: 0, b: 0 },
     "OpAbsSingle" => Op { code: Abs, kind: KSingle, a: 0, b: 0 },
     // A plain enum is its number on the integer stack, and its null is null.
