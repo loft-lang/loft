@@ -181,8 +181,8 @@ commit having reached the trunk — the code lands on main later, on its own clo
   20-minute rule) to close a single plan is waste; bundle the closing doc-changes (across
   several plans, even unrelated) into the next substantive push
   (`doc/claude/DEVELOPMENT.md` § Branches: bundle many subjects into one PR).
-- Because the close is a **hand-close** (issue closed before/independent of a `Closes
-  @PLN<n>` PR merge), you MUST swap the status label yourself — see step 4's hand-close note.
+- The close is a **hand-close** with the full closing procedure below, never a merge
+  directive: swap the status label yourself in the same step (step 4).
 
 **Pick the outcome first:**
 
@@ -214,19 +214,17 @@ commit having reached the trunk — the code lands on main later, on its own clo
    closing → swap `status:active` for `status:finished` **and close the issue**;
    deferring → `status:parked` when a floor SHIPPED and the rest is paused,
    `status:future` only when nothing shipped — the outcome table in
-   `_LIFECYCLE.md` § Pick the outcome is the authority — issue stays open.  **Don't rely on
-   GitHub's `Fixes #N` — it's same-repo only and can't reach the plans repo.**
-   Instead the finishing PR carries a cross-repo close directive (`Closes
-   @PLN<n>`); on merge to the trunk a close-on-merge workflow runs the repo's
-   close-shipped-plans script to do the `status:finished` + close, with a
-   stale-plan audit as the drift safety net.  The manual `gh issue` edit is the
-   fallback / out-of-band path.
+   `_LIFECYCLE.md` § Pick the outcome is the authority — issue stays open.  **The close is
+   done by hand, at finish, as the last step of this whole procedure** (steps 1–6): the
+   doc work a close needs — reference content moved, the README trimmed, links rewritten,
+   the catalogue checked — is far too much to hang on a merge, so a merge is never the
+   closing route.  A close-on-merge workflow (a `Closes @PLN<n>` directive in the PR) may
+   exist as a safety net for a plan someone left open; it does none of the doc work.
+   GitHub's `Fixes #N` cannot reach the plans repo at all.
    - **A CLOSED plan's status label must be `status:finished` (delivered) or
      `status:declined` (de-scoped) — NEVER a live status (`active` / `future` /
-     `next` / `closing`).**  The swap is automatic ONLY when the finishing PR used
-     `Closes @PLN<n>`; a **hand-close** (the issue closed directly) or a PR that used
-     **`Refs`** instead of `Closes` closes the issue but leaves the label stale, so
-     you must swap it yourself: `gh issue edit <n> -R loft-lang/plans --remove-label
+     `next` / `closing`).**  A hand-close does not swap it for you, so swap it in the same
+     step: `gh issue edit <n> -R loft-lang/plans --remove-label
      status:<live> --add-label status:finished`.  The daily stale-plans audit fails the
      nightly on a closed plan with a live label, so a missed swap turns a nightly red —
      swap it at the close, and when you touch a closed plan, check its label.
