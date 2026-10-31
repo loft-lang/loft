@@ -8,8 +8,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 A child document of [1b-interpreter.md](1b-interpreter.md).  Status: **F-1 built — every
 variable in the stack store at its Rust byte (PF1 its layout guard, `selfhost/tests/frame.loft`);
 PF2 built (no frame is initialised; each first assignment's positional init writes its slot);
-PF3 built (a `&` of any local is a reference into the frame, read and written through at any place); PF4 measured (loft#2310); PF5 and
-F-2 not built.**
+PF3 built (a `&` of any local is a reference into the frame, read and written through at any
+place); PF4 measured (loft#2310); PF5 built (the stack given back); F-2 not built.**
 
 ## The rule
 
@@ -180,6 +180,13 @@ never a gate (the order of the goals, 1b-interpreter.md).
     - Measured: the census passes 222 programs (199 before PF3) with none wrong, crashed or
       leaking; on the 521 images every program that ran before PF3 writes the same output,
       bind trace and allocator trace.
+  - **PF5 (built)**: a run reports what the entry's return left on the stack — its frame base
+    and the three evaluation stacks' depths (`Outcome.stack_left`) — and every kernel test
+    asserts it is 0 (`ran_clean`); `fib(25)`, 242785 calls, answers 75025 and leaves 0.  The
+    Rust interpreter never shrinks the stack store (`State::grow_stack` only grows it), so the
+    store's SIZE does not return to its start, and the loft one does not either: what returns
+    is the stack's top.  Falsified: a `Pop` that leaves its integer fails four kernel tests on
+    this check alone, every value still right.
   - Found while probing: a self-recursive tail call the compiler turns into a loop
     (`R-TailSelf`, `NdLoop` in a value position) is refused by the lowering as an expression
     it does not carry.
