@@ -124,7 +124,12 @@ hand), which reclaims in the order of what it costs to lose — the standing swe
 incremental caches, this checkout's whole gate scratch, `cargo sweep` — until 20 GB is free,
 prints one line when it acted and nothing when it did not, and REFUSES below 2 GB so the gate
 stops there instead of reporting truncated object files and missing rlibs as test failures
-(measured: 71 of 5312 red with 2 MB free).  Beside it, `scripts/sweep_scratch.sh`
+(measured: 71 of 5312 red with 2 MB free).  It is bounded in time too: its steps share
+`LOFT_HEADROOM_SECS` (300), the sweep stops as soon as the room is there, and a step that would
+start past the budget is skipped and named in its line — so a short disk costs the gate minutes,
+never its whole 20-minute budget.  The sweep removes in batches, one `rm` per few hundred
+entries, and reads the live pids once from `ps` (a `/proc` test called every process dead on
+macOS).  Beside it, `scripts/sweep_scratch.sh`
 alone runs on the checkout's scratch at the start of every gate, and `make sweep-scratch` runs
 it on the checkout's scratch and on `TMPDIR` with the session prune, printing `df` after.  All
 of them touch only loft's own names, only dead pids or aged entries, and never a sibling
