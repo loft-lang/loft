@@ -1,11 +1,11 @@
 diff --git a/src/parser/closures.rs b/src/parser/closures.rs
-index 09db702f0..f60c0b61e 100644
+index 37bdc2afc..0cc99d217 100644
 --- a/src/parser/closures.rs
 +++ b/src/parser/closures.rs
-@@ -569,86 +569,6 @@ impl Parser {
-     /// leaves dangling DbRefs — silent cross-object corruption once
-     /// the store slot is reused.  The three escape sinks reject on
-     /// this predicate; locals and downward argument passing stay free.
+@@ -590,80 +590,6 @@ impl Parser {
+         v_set(old, self.cl("OpRefFromChildRec", &[field]))
+     }
+ 
 -    /// loft#1877, `@FR-L-CapOwn` — the closure records an overwrite of the place `to` (a
 -    /// field holding a value of type `tp`) displaces, bound so their cascades run: `to`
 -    /// itself when the value holds none.  Each fn field of the value, and of every INLINE
@@ -75,25 +75,19 @@ index 09db702f0..f60c0b61e 100644
 -                "OpGetField",
 -                &[place, Value::Int(i32::from(crec)), Value::Int(0)],
 -            );
--            let old = self.create_unique(
--                "__oldrec",
--                &Type::Reference(record, crate::data::Deps::none()),
--            );
--            self.vars.set_skip_free(old);
--            ops.push(v_set(old, self.cl("OpRefFromChildRec", &[field])));
+-            ops.push(self.bind_displaced_closure(to, field, record));
 -        }
 -        ops.push(to.clone());
 -        v_block(ops, tp.clone(), "displaced_closures")
 -    }
--
+ 
      /// The return deps an instance's `-> T` record return was declared without, from its body.
      ///
-     /// @FR-F-Ret / @FR-O-Oracle — a template's `-> T` record return carries NO deps: its
 diff --git a/src/parser/members.rs b/src/parser/members.rs
-index ecdd7a624..5f86b35d6 100644
+index 76f8c36d5..b9330f0b6 100644
 --- a/src/parser/members.rs
 +++ b/src/parser/members.rs
-@@ -1148,10 +1148,29 @@ impl Parser {
+@@ -1277,10 +1277,29 @@ impl Parser {
          // transparent to it (nullability is read separately via `attr_nullable`).
          let tp = tp.base().clone();
          let nm = self.data.attr_name(d_nr, f_nr);
@@ -128,10 +122,10 @@ index ecdd7a624..5f86b35d6 100644
              .database
              .position(self.data.def(d_nr).known_type(), &nm);
 diff --git a/src/parser/operators.rs b/src/parser/operators.rs
-index 2f384a474..2c7730df1 100644
+index 37155f8aa..33fe3bda9 100644
 --- a/src/parser/operators.rs
 +++ b/src/parser/operators.rs
-@@ -1215,10 +1215,10 @@ impl Parser {
+@@ -1225,10 +1225,10 @@ impl Parser {
              };
          #[cfg(feature = "wasm")]
          let tp_val = i32::from(tp);
@@ -147,10 +141,10 @@ index 2f384a474..2c7730df1 100644
  
      /// `@FR-Op-Back` (@PLN182) — the form an `operator` definition backs, the symbol it is
 diff --git a/src/scopes/capture_adoption.rs b/src/scopes/capture_adoption.rs
-index 0d84192ba..9f3b1c940 100644
+index 246870fc2..57c5ea82f 100644
 --- a/src/scopes/capture_adoption.rs
 +++ b/src/scopes/capture_adoption.rs
-@@ -103,6 +103,7 @@ fn cascade_before_record_frees(data: &mut Data) {
+@@ -104,6 +104,7 @@ fn cascade_before_record_frees(data: &mut Data) {
          free_ref: data.def_nr("OpFreeRef"),
          live: data.def_nr("OpStoreLive"),
          conv: data.def_nr("OpConvBoolFromRef"),
@@ -158,7 +152,7 @@ index 0d84192ba..9f3b1c940 100644
      };
      // Paid only where a closure record can owe a release: this runs over every function the
      // scope pass checked — the whole stdlib on every compile — so a program, or a function,
-@@ -133,6 +134,7 @@ struct ReleaseOps {
+@@ -134,6 +135,7 @@ struct ReleaseOps {
      /// a store twice (`@FR-H-FreeTwice`) must not run its cascade twice.
      live: u32,
      conv: u32,
@@ -166,7 +160,7 @@ index 0d84192ba..9f3b1c940 100644
  }
  
  impl ReleaseOps {
-@@ -147,25 +149,24 @@ impl ReleaseOps {
+@@ -148,25 +150,24 @@ impl ReleaseOps {
      }
  
      /// Place the cascades one statement list owes: before each release of a closure record,
@@ -198,7 +192,7 @@ index 0d84192ba..9f3b1c940 100644
              }
              if let Some((v, c)) = self.owed(data, vars, &op) {
                  // A cascade the scope pass already placed ahead of this free is re-guarded on
-@@ -209,15 +210,26 @@ impl ReleaseOps {
+@@ -210,15 +211,26 @@ impl ReleaseOps {
          (c != u32::MAX).then_some((*v, c))
      }
  
@@ -232,7 +226,7 @@ index 0d84192ba..9f3b1c940 100644
              return None;
          }
          let Type::Reference(r, _) = vars.tp(*t).base() else {
-@@ -626,7 +638,7 @@ pub(super) fn capture_store_adopters(
+@@ -627,7 +639,7 @@ pub(super) fn capture_store_adopters(
          // released where it is taken, never an adopter: named one, it became the witness the
          // frame's conditional release reads, and the frame freed the capture under the live
          // record (loft#1606).
@@ -242,10 +236,10 @@ index 0d84192ba..9f3b1c940 100644
          }
          let Type::Reference(record, _) = function.tp(v) else {
 diff --git a/src/scopes/capture_builds.rs b/src/scopes/capture_builds.rs
-index cf1166b8d..be71165a9 100644
+index 7ad9dec8c..0123ef0a7 100644
 --- a/src/scopes/capture_builds.rs
 +++ b/src/scopes/capture_builds.rs
-@@ -773,7 +773,7 @@ pub(crate) fn backs_an_adopted_capture(
+@@ -815,7 +815,7 @@ pub(crate) fn backs_an_adopted_capture(
  fn capture_is_adopted(data: &Data, function: &Function, builds: &CaptureBuilds, c: u16) -> bool {
      let name = function.name(c);
      for w in 0..function.next_var() {
@@ -254,7 +248,7 @@ index cf1166b8d..be71165a9 100644
              continue;
          }
          let Type::Reference(record, _) = function.tp(w) else {
-@@ -1038,11 +1038,9 @@ pub(super) fn free_unless_record_built(
+@@ -1157,11 +1157,9 @@ pub(super) fn free_unless_leaver_holds(
  }
  
  /// Is local `w` a closure record this frame BUILDS (`___clos_N`, `emit_lambda_code`)?  The
@@ -269,7 +263,7 @@ index cf1166b8d..be71165a9 100644
  /// The name of the local closure record `record`'s capture attribute `a` holds: the attribute's
  /// own name, or — for the `<name>__clos` half of a captured fn-ref (loft#1869) — the fn-ref
  /// local `<name>`, through which the frame holds that closure's record.
-@@ -1070,6 +1068,6 @@ fn filled_capture(data: &Data, fill: Option<&Value>) -> Option<(u16, bool)> {
+@@ -1211,6 +1209,6 @@ fn filled_capture(data: &Data, fill: Option<&Value>) -> Option<(u16, bool)> {
      }
  }
  
