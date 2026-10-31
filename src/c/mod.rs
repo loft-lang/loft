@@ -111,6 +111,11 @@ pub(crate) enum CType {
     Fn,
     /// A tuple: the C struct [`Cx::tuple_shapes`] numbers, held and passed by value.
     Tuple(u32),
+    /// `@FR-R-Transient` — a record held outside the store: a pointer to the struct of this
+    /// group (`lt_<group> *`); null is 0.
+    Tr(u16),
+    /// `@FR-R-Transient` — a vector held outside the store, `loft_ta_vec *`; null is 0.
+    TrVec,
     /// No value.
     Void,
 }
@@ -142,6 +147,8 @@ pub(crate) fn held(c: CType) -> String {
         CType::Char => "uint32_t".into(),
         CType::Fn => "loft_fn".into(),
         CType::Tuple(id) => format!("loft_tup{id}"),
+        CType::Tr(g) => format!("lt_{g} *"),
+        CType::TrVec => "loft_ta_vec *".into(),
         CType::Void => "void".into(),
     }
 }
@@ -204,6 +211,8 @@ pub(crate) struct Cx<'a> {
     pub(crate) gen_decls: std::cell::RefCell<String>,
     /// The generators' resume and release functions, written after them.
     pub(crate) gen_bodies: std::cell::RefCell<String>,
+    /// `@FR-R-Transient`'s twins and the structs they use (`body::transient`).
+    pub(crate) tr: std::cell::RefCell<body::transient::TrState>,
     /// The types a `T.parse` reaches (`parse.rs`): their rows of `loft_ptypes`.
     parse_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// The unit reaches `stack_trace()`: every function keeps a frame (`loft_frame_push`).
@@ -339,6 +348,7 @@ impl<'a> Cx<'a> {
             unicode: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             gen_decls: std::cell::RefCell::new(String::new()),
             gen_bodies: std::cell::RefCell::new(String::new()),
+            tr: std::cell::RefCell::new(body::transient::TrState::default()),
             parse_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             frames: std::cell::Cell::new(false),
             lazy: std::cell::Cell::new(false),
@@ -790,6 +800,7 @@ impl<'a> Cx<'a> {
                     .collect();
                 format!("{{ {} }}", fields.join(", "))
             }
+            CType::Tr(_) | CType::TrVec => "0".into(),
             CType::Void => String::new(),
         }
     }
@@ -1715,6 +1726,8 @@ pub fn emit_unit_for(
     out.push('\n');
     out.push_str(&c_libraries(data, &cx.ffi_libs.borrow()));
     out.push_str(&cx.typedefs());
+    out.push_str(&cx.tr_typedefs());
+    out.push_str(&cx.tr_protos());
     if parses {
         out.push_str(&cx.parse_table());
         out.push_str(&cx.main_vector_test());
@@ -1729,6 +1742,7 @@ pub fn emit_unit_for(
     out.push_str(&cx.drop_code(&fns));
     out.push_str(&cx.gen_bodies.borrow());
     out.push_str(&bodies);
+    out.push_str(&cx.tr_bodies());
     // The unit's tables, for the runtime (`loft_tn`, `loft_cl`, the lazy drivers): a generated
     // `main` binds them before it starts.  Written last, so it can name every function.
     let mut bind = String::from(
@@ -2671,18 +2685,43 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         cx.gen_bodies.borrow_mut().push_str(&parts.bodies);
         return Ok((sig, body));
     }
-    let body = body::FnWriter::new(cx, d, shapes, ret)
-        .places(places)
-        .inputs(inputs)
-        .scalar_inputs(scalar_inputs)
-        .kept_growth(kept)
-        .nn_seed(mask)
-        .nokeep(mask & NK_BIT != 0)?
-        .apart(mask & APR_BIT != 0)
-        .apart_value(mask & APV_BIT != 0)
-        .append_twin(mask & AP_BIT != 0)
-        .destination(mask & DS_BIT != 0)
-        .write()?;
+    // `@FR-R-Transient`: a plain function with a root site is written with it first, and again
+    // without it when the writer declines it.
+    let site = if mask == 0 && inputs.is_empty() && scalar_inputs.is_empty() && !kept {
+        body::transient::site_plan(cx, d)
+    } else {
+        None
+    };
+    let tried = site.and_then(|tf| {
+        let mut s = shapes.clone();
+        tf.shape(&mut s);
+        match body::FnWriter::new(cx, d, s, ret)
+            .places(places)
+            .transient(tf)
+            .write()
+        {
+            Ok(b) => Some(b),
+            Err(why) => {
+                body::transient::declined(cx, d, &why);
+                None
+            }
+        }
+    });
+    let body = match tried {
+        Some(b) => b,
+        None => body::FnWriter::new(cx, d, shapes, ret)
+            .places(places)
+            .inputs(inputs)
+            .scalar_inputs(scalar_inputs)
+            .kept_growth(kept)
+            .nn_seed(mask)
+            .nokeep(mask & NK_BIT != 0)?
+            .apart(mask & APR_BIT != 0)
+            .apart_value(mask & APV_BIT != 0)
+            .append_twin(mask & AP_BIT != 0)
+            .destination(mask & DS_BIT != 0)
+            .write()?,
+    };
     let (body, statements) = body;
     // `@FR-R-Inline`: a small function is declared `inline`, its frame wrapper with it.
     let inline = small_function(statements);
