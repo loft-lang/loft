@@ -568,11 +568,38 @@ struct PatternArm {
 fn arm_body_is_null(code: &Value) -> bool {
     match code {
         Value::Null => true,
+        Value::Block(bl) if bl.name == FORWARD_CALL => false,
         Value::Block(bl) => bl
             .operators
             .last()
             .is_some_and(|o| matches!(o.unspan(), Value::Null)),
         _ => false,
+    }
+}
+
+/// The name of the block that spells a pass-1 PLACEHOLDER arm: a `match` arm calling a function
+/// declared further down, which pass 1 cannot type and builds no IR for.  Left as the bare
+/// `Value::Null` it was handed, it read as the `null` literal — to the arm joins (loft#2305) and to
+/// the text-accumulator gate (`if_tail_yields_text`), which then answered differently on the two
+/// passes and left a `text?` match to native's mixed-arm join (E0308).  Spelled apart, each
+/// recogniser answers by the notion: no null arm, and an arm that yields a value, as the call
+/// will on pass 2.  Pass-1 IR is never emitted, so nothing downstream sees it.
+const FORWARD_CALL: &str = "forward_call";
+
+/// Spell a placeholder arm apart from the `null` literal (`FORWARD_CALL`), where
+/// [`arm_body_is_null`] finds its bare `Value::Null`.
+fn mark_forward_call(code: &mut Value) {
+    let stand_in = v_block(vec![Value::Null], Type::Unknown(0), FORWARD_CALL);
+    match code {
+        Value::Block(bl) if bl.name != FORWARD_CALL => {
+            if let Some(last) = bl.operators.last_mut()
+                && matches!(last.unspan(), Value::Null)
+            {
+                *last = stand_in;
+            }
+        }
+        Value::Null => *code = stand_in,
+        _ => {}
     }
 }
 
@@ -5208,6 +5235,7 @@ impl Parser {
     fn branch_yields_null(&self, v: &Value) -> bool {
         match v.unspan() {
             Value::Null => !self.first_pass,
+            Value::Block(bl) if bl.name == FORWARD_CALL => false,
             // `@FR-C-Never` — a value behind a halt (`give_halt_a_value`) is never answered.
             Value::Block(bl) if behind_a_halt(&self.data, &bl.operators) => false,
             Value::Block(bl) => bl
@@ -5268,6 +5296,7 @@ impl Parser {
     fn arm_yields_direct_null(&self, v: &Value) -> bool {
         match v.unspan() {
             Value::Null => !self.first_pass,
+            Value::Block(bl) if bl.name == FORWARD_CALL => false,
             Value::Block(bl) if behind_a_halt(&self.data, &bl.operators) => false,
             Value::Block(bl) => bl
                 .operators
@@ -7458,6 +7487,12 @@ impl Parser {
                     .map(|a| &mut a.code),
                 &result_type,
             );
+            for arm in arms
+                .iter_mut()
+                .filter(|a| Self::is_placeholder_arm(first_pass, &a.tp))
+            {
+                mark_forward_call(&mut arm.code);
+            }
             let typed_null = self.null_value(&result_type);
             // Seed the chain base with the typed null too: an exhaustive enum
             // match's innermost else is unreachable, but codegen still emits it
@@ -13901,6 +13936,12 @@ impl Parser {
                 .map(|a| &mut a.1),
             result_type,
         );
+        for arm in arms
+            .iter_mut()
+            .filter(|a| Self::is_placeholder_arm(first_pass, &a.2))
+        {
+            mark_forward_call(&mut arm.1);
+        }
         // The same repair one width up, for the fn-ref result type.  A non-capturing
         // lambda arm is a bare `Value::Int(d_nr)` — eight bytes — where the join reads
         // the full twenty-byte fn-ref, so the arms of one choice leave different depths
@@ -18136,6 +18177,8 @@ impl Parser {
         match arm.unspan() {
             Value::Return(_) | Value::Break(_) | Value::Continue(_) => false,
             Value::Null => false,
+            // A pass-1 placeholder: the call pass 2 builds here yields the arm's value.
+            Value::Block(bl) if bl.name == FORWARD_CALL => true,
             Value::Block(bl) => bl.operators.last().is_some_and(Self::arm_yields_text),
             Value::Insert(ops) => ops.last().is_some_and(Self::arm_yields_text),
             Value::If(_, then, els) => Self::arm_yields_text(then) && Self::arm_yields_text(els),
