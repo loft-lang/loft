@@ -3020,7 +3020,7 @@ impl State {
                         stack.data.def(fn_nr).attributes().iter().any(|a| {
                             !a.hidden
                                 && matches!(
-                                    a.typedef,
+                                    a.typedef.base(),
                                     Type::Reference(_, _) | Type::Enum(_, true, _)
                                 )
                         })
