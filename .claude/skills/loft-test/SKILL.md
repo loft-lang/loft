@@ -14,17 +14,23 @@ user-invocable: false
 
 # Loft Testing Reference
 
-Always consult this before adding or modifying tests under `tests/`.
-The loft project has several hundred integration test binaries (`ls tests/*.rs`
-is the census) plus a custom testing framework; picking the wrong
-binary or the wrong macro means either a slow CI cycle or a test that
-doesn't actually validate the change.
+## Where does my test go?
 
-For runtime debugging conventions (LOFT_LOG presets, dump files), see the parent
-project's [RUNNING_TESTS.md](../../../doc/claude/RUNNING_TESTS.md) § LogConfig;
-[TESTING.md](../../../doc/claude/TESTING.md) is where a test BELONGS.  This
-skill covers the *authoring* side: where a test belongs, which macro
-to use, and how to keep the suite fast.
+Three homes, in the order to reach for them ([TESTING.md](../../../doc/claude/TESTING.md) §
+Overview):
+
+1. **A cell in the language suite** — `../loft-suite/rules/<chapter>/<rule>/<name>.loft`, a
+   self-contained loft program under the formal rule it exercises, run on both backends.
+   **The default for any new `.loft` test.**  `tests/scripts/` keeps only a program something
+   in THIS repo names by path.
+2. **`tests/docs/<NN>-<topic>.loft`** — when the test is also a page of the user documentation.
+3. **`tests/*.rs`** — for what a script cannot express: an exact diagnostic set, a Rust API, a
+   compiler internal, a process-level fixture, a cross-mode stdout matrix.
+
+The rest of this skill is the how: the suite-cell and script annotations, the `code!` and
+`cross_mode!` macros, ignores, naming, and the `@falsified-at` receipt.  Running down why a
+test fails is the `loft-debug` skill; runtime log knobs are
+[RUNNING_TESTS.md](../../../doc/claude/RUNNING_TESTS.md) § LogConfig.
 
 ---
 
@@ -156,10 +162,11 @@ as green.)
 
 ---
 
-## Pure loft tests — `tests/scripts/*.loft` and `tests/docs/*.loft`
+## Pure loft tests — suite cells, `tests/scripts/*.loft` and `tests/docs/*.loft`
 
-A `.loft` test file is **three legs for the price of one** under `tests/docs/`, two under
-`tests/scripts/`.  The same file is picked up by:
+A suite cell runs on both backends through `loft --tests` (`make suite`, the required
+`Language suite` check).  In this repo a `.loft` test file is **three legs for the price of
+one** under `tests/docs/`, two under `tests/scripts/`.  The same file is picked up by:
 
 - `tests/wrap.rs::dir` and the chunked `loft_suite_NN` tests (the chunking is explained at
   wrap.rs § loft_suite) — runs it through the **interpreter** end-to-end.
@@ -340,48 +347,23 @@ closed/historical archive; the legacy `P###` ids survive only as references).
 
 ## Targeted regression — which suites to run
 
-**Just run `./scripts/find_problems.sh`.** Its default is the CURATED set —
-everything except a short named list of slow-and-few binaries.  The current
-numbers (test counts, timings, the excluded list) live in
-`scripts/find_problems.sh` / `scripts/test_subjects.sh`, which also carry the
-re-measure recipe — don't trust a copy of them here.  You do not have to guess
-which suites your change could break.
+The commands are `CLAUDE.md` § Key commands: `./scripts/find_problems.sh` (the curated
+default), `--changed [ref]` / `--subject <name>` for the tight loop, `--full`, and `make
+after-fix` / `make after-join` for exactly what a change needs.  What that list does not say:
 
-Guessing does not work, and there is a worked example. An over-broad change to
-the parser's `null()` was caught by `binary_io_matrix` — a binary no
-parser-touches-these-suites map would ever have picked. Curating by INCLUSION has
-to predict which suite will catch a bug, which nobody can do in advance; curating
-by EXCLUSION leaves a miss set that is small, named and reviewable.
-
-| You want | Run |
-|---|---|
-| the normal check before a commit | `./scripts/find_problems.sh` |
-| a tight loop on what YOUR diff touches | `./scripts/find_problems.sh --changed [ref]` (seconds) |
-| a tight loop on one area | `./scripts/find_problems.sh --subject <name>` (seconds) |
-| everything, incl. the slow-and-few | `./scripts/find_problems.sh --full` |
-| what a CHANGE needs and nothing more, read from git | `make after-fix` (since the last green run here) / `make after-join` (what a join added): fmt, the lint gates, clippy, the ratchets, the changed guards on both backends, the diff's subjects, each timed; what needs a runner is reported as the dispatch (`--dispatch` sends it); `ARGS=--dry-run` is the plan |
-| to see subjects + what is excluded | `./scripts/find_problems.sh --list-subjects` |
-
-Subjects are `parser scopes codegen runtime store wasm packages lsp sql docs
-host`, defined as binary-name PATTERNS in `scripts/test_subjects.sh` so a new
-binary joins the subject its name already matches. They are a convenience for
-tight loops, not the safety mechanism — the default is subtractive, so a gap in
-a subject costs seconds, never coverage.
-
-What the default skips is the `HEAVY_BINARIES` list in `scripts/test_subjects.sh` —
-binaries that are slow AND have very few tests. CI runs the whole suite on every
-PR — five ubuntu shards, all required checks — so none of them can be skipped on the
-way to main.
-
-**Always run after the targeted set:**
-- `cargo fmt --all` (format, don't just `--check`)
-- `cargo clippy --all-targets --all-features -- -D warnings` (what the CI job adds)
-- `cargo clippy --no-default-features --all-targets -- -D warnings`
-
-The two clippy variants are the pair `make ship` runs; `make gate` runs fmt-check, the
-first variant, doc drift and `doc_hygiene` in a few minutes. The `--no-default-features`
-variant catches lint debt in conditionally compiled paths and is the one most often
-skipped.
+- **The default is curated by EXCLUSION, not inclusion** — nobody can predict which binary
+  catches a bug, so the default runs everything except the `HEAVY_BINARIES` list in
+  `scripts/test_subjects.sh` (slow AND few tests).  Subjects are binary-name PATTERNS there, so
+  a new binary joins the subject its name matches; they are a convenience for tight loops, not
+  the safety mechanism.  Current counts and timings live in that script — don't trust a copy.
+- **CI runs the whole suite on every PR** (all shards required), so nothing the default skips
+  can be skipped on the way to main.
+- **After the targeted set:** `cargo fmt --all`, then both clippy variants —
+  `cargo clippy --all-targets --all-features -- -D warnings` and
+  `cargo clippy --no-default-features --all-targets -- -D warnings`.  The second catches lint
+  debt in conditionally compiled paths and is the one most often skipped (`make ship` runs
+  the pair).  `make gate` runs
+  fmt-check, the first variant, doc drift and `doc_hygiene` in a few minutes.
 
 ---
 
@@ -441,65 +423,12 @@ for runtime panics that have no diagnostic-printing path.
 
 ---
 
-## Parser tracing (`LOFT_TRACE`)
-
-Compile-time debugging vantages with near-zero overhead when
-disabled.  Distinct from `LOFT_LOG` (runtime/bytecode) and
-log-config (loft-program-level).  See `src/trace.rs` for the
-implementation; this section documents *when to use it*.
-
-### Enabling
-
-```bash
-# Single category:
-LOFT_TRACE=call cargo run --release --bin loft -- --interpret /tmp/foo.loft
-
-# Multiple categories, comma-separated:
-LOFT_TRACE=call,field,generic cargo run ...
-
-# Everything:
-LOFT_TRACE=all cargo run ...
-
-# During tests (use --nocapture to see stderr):
-LOFT_TRACE=generic cargo test --release --test issues plan17 -- --nocapture
-```
-
-When `LOFT_TRACE` is unset (default), trace calls compile to one
-bool load + one branch; the branch predictor learns "always-false"
-fast and the overhead is below measurement.  Format-string args
-are evaluated only when the branch fires.
-
-### Currently registered categories
-
-| Category | Site | Use when debugging |
-|---|---|---|
-| `call` | `Parser::call` after `find_fn` | "Which def did the parser resolve, and was it skipped as Generic?" |
-| `field` | `Parser::field` after attr lookup | "Did method dispatch find the attribute, what's the receiver type?" |
-| `generic` | `predict_generic_return_type` + `try_generic_instantiation` | "What did first-pass predict?  What did second-pass instantiate?" |
-| `match` | `expect_match_arm_arrow` | "What arrow did the parser see at the arm boundary?" |
-
-### Adding a new category — selective rule
-
-Trace points are for **recurring** diagnostic vantages, not one-off probes: a
-bug-specific `eprintln!` stays local and is removed before commit; a vantage you
-expect to revisit becomes a `loft_trace!(category, …)` call.  The mechanics of
-adding a category (field, initialiser, macro arm) are documented in
-`src/trace.rs` itself — follow it, then extend the table above.
-
-### When NOT to use `LOFT_TRACE`
-
-- Runtime/bytecode debugging — use `LOFT_LOG` (RUNNING_TESTS.md § LogConfig).
-- Loft-program-level logging — use `log_info` / `log_warn` /
-  `log_error` from inside loft programs (STDLIB.md § Logging).
-- One-time diagnostic probes — temporary `eprintln!` is fine
-  for a single session; remove before commit.
-
----
-
 ## Cross-references
 
 - [RUNNING_TESTS.md](../../../doc/claude/RUNNING_TESTS.md) — runtime debugging knobs:
   `LogConfig`, `LOFT_LOG`, dump file format, `LOFT_DUMP_DEPTH`.
+- Parser tracing (`LOFT_TRACE`) — the [loft-debug skill](../loft-debug/SKILL.md) § Parser
+  tracing.
 - [ISSUE_TRACKING.md](../../../doc/claude/ISSUE_TRACKING.md) — where bugs
   live (open → GitHub Issues, closed → PROBLEMS.md archive) + the item
   lifecycle.  Run `gh issue list` before filing a new one.
