@@ -68,6 +68,7 @@ enum Code {
   Append,
   AppendChar,
   Clear,
+  FreeText,
   Print,
   RefOf,
   Round,
@@ -139,12 +140,11 @@ struct Op {
 }
 
 // A function's ops, or the first construct it holds that the interpreter does not carry.  The
-// frame is the Rust interpreter's (@PLN91 F-1, `frame.loft`): an integer, float or reference
-// variable at its byte in the stack store (`var_slot`), read and written at its width
-// (`var_access`: 0 an eight-byte integer or a float, 1 + the runtime's width for a narrow one,
-// 1 a single), in a frame of `frame_bytes`; the arguments are `arg_vars`, in order.  A text
-// keeps a part of its own until F-1 moves it: `slots_text` slots, the first `params_text` of
-// them the caller's arguments.
+// frame is the Rust interpreter's (@PLN91 F-1, `frame.loft`): every variable at its byte in the
+// stack store (`var_slot`), read and written as it is held there (`var_access`: 0 an
+// eight-byte integer, a float or a text local's `loft_text`; 1 + the runtime's width for a
+// narrow integer; 1 a single, or a text argument's `loft_str` view), in a frame of
+// `frame_bytes`; the arguments are `arg_vars`, in order, and `params_text` of them texts.
 // Float and text constants are kept in `floats` and `texts`, named by index.  While lowering,
 // `depth` is how many values the ops so far leave on the stacks, and the open loops are a
 // stack: each one's first op and the depth at its start, and every `break` still to be pointed
@@ -155,7 +155,6 @@ struct Lowering {
   refused_in: text,
   var_type: vector<text>,
   result: Kind,
-  slots_text: integer,
   params_int: integer,
   params_float: integer,
   params_text: integer,
@@ -197,7 +196,6 @@ pub fn empty() -> Lowering {
     refused_in: "",
     var_type: [],
     result: KNone,
-    slots_text: 0,
     params_int: 0,
     params_float: 0,
     params_text: 0,
@@ -374,7 +372,7 @@ fn writer_code(name: text) -> Code? {
     "OpAppendText" => Append,
     "OpAppendCharacter" => AppendChar,
     "OpClearText" => Clear,
-    "OpFreeText" => Clear,
+    "OpFreeText" => FreeText,
     "OpAppendStackText" => Append,
     "OpAppendStackCharacter" => AppendChar,
     "OpClearStackText" => Clear,
@@ -443,6 +441,7 @@ fn effect(code: Code, b: integer) -> integer {
     Append => -1,
     AppendChar => -1,
     Clear => 0,
+    FreeText => 0,
     Print => -1,
     RefOf => 1,
     Round => 0,
@@ -2623,7 +2622,10 @@ fn lower_walk(b: ir::Bundle, def_nr: integer, d: ir::Definition) -> Lowering {
       l.arg_vars += [v#index];
     }
     k = stack_of(kind_of_types(v.type_def));
-    if k == KInt || k == KRef || k == KFloat {
+    if k == KText && v.argument {
+      l.var_access[v#index] = 1;
+    }
+    if k == KInt || k == KRef || k == KFloat || k == KText {
       at = frame::position(f, v#index);
       if at != null {
         l.var_slot[v#index] = at;
@@ -2644,17 +2646,6 @@ fn lower_walk(b: ir::Bundle, def_nr: integer, d: ir::Definition) -> Lowering {
   }
   if args_end + 8 > l.frame_bytes {
     l.frame_bytes = args_end + 8;
-  }
-  for pass in 0..2 {
-    for v in f.variables {
-      if v.argument != (pass == 0) {
-        continue;
-      }
-      if stack_of(kind_of_types(v.type_def)) == KText {
-        l.var_slot[v#index] = l.slots_text;
-        l.slots_text += 1;
-      }
-    }
   }
   for pk in param_kinds(d) {
     s = stack_of(pk);

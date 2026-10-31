@@ -118,6 +118,78 @@ void loft_crt_stack_grow(int64_t store, int64_t bytes) {
     loft_crt_stack_span(s);
 }
 
+/* ── F-1b: a text variable in its slot, as the Rust frame holds it: a local a `loft_text` (24
+ * bytes, a `String`), an argument a `loft_str` view (16 bytes, a `&str`) of a copy the call made
+ * and its return releases. */
+static uint8_t *loft_crt_slot_at(int64_t store, int64_t at) {
+    return loft_stores[store].buf + (size_t) LOFT_ST_PRIMARY * 8 + 8 + (size_t) at;
+}
+
+/* The text a slot holds — a local's (`arg` 0) or an argument's (1) — copied into `out` when it
+ * fits: its length, or -1 for the null text. */
+int64_t loft_crt_slot_text(char *out, int64_t cap, int64_t store, int64_t at, int64_t arg) {
+    loft_str v;
+    if (arg) {
+        loft_str *a = (loft_str *) loft_crt_slot_at(store, at);
+        v = a->p ? *a : loft_lit("", 0);
+    } else {
+        v = loft_view((loft_text *) loft_crt_slot_at(store, at));
+    }
+    if (loft_str_is_null(v)) return -1;
+    int64_t len = (int64_t) v.len;
+    if (len <= cap && len > 0) memcpy(out, v.p, (size_t) len);
+    return len;
+}
+
+/* A local's slot as `OpInitText` leaves it: the empty text, no buffer. */
+void loft_crt_slot_text_init(int64_t store, int64_t at) {
+    memset(loft_crt_slot_at(store, at), 0, sizeof(loft_text));
+}
+
+/* A local set to `val` (or the null text). */
+void loft_crt_set_slot_text(int64_t store, int64_t at, const char *val, int64_t is_null) {
+    loft_text *t = (loft_text *) loft_crt_slot_at(store, at);
+    loft_text_set(t, is_null ? loft_null_text() : loft_lit(val, strlen(val)));
+}
+
+/* `val` appended to a local; a null local becomes `val`, as the empty text would. */
+void loft_crt_slot_text_append(int64_t store, int64_t at, const char *val) {
+    loft_text *t = (loft_text *) loft_crt_slot_at(store, at);
+    loft_str s = loft_lit(val, strlen(val));
+    if (loft_str_is_null(loft_view(t))) loft_text_set(t, s);
+    else loft_text_append(t, s);
+}
+
+/* `OpClearText`: the local emptied, its buffer kept. */
+void loft_crt_slot_text_clear(int64_t store, int64_t at) {
+    loft_text_set((loft_text *) loft_crt_slot_at(store, at), loft_lit("", 0));
+}
+
+/* `OpFreeText`: the local's buffer released; the slot reads as the empty text. */
+void loft_crt_slot_text_free(int64_t store, int64_t at) {
+    loft_text_free((loft_text *) loft_crt_slot_at(store, at));
+}
+
+/* An argument's slot: a view of a copy of `val` (the null text's one byte too). */
+void loft_crt_set_slot_arg(int64_t store, int64_t at, const char *val, int64_t is_null) {
+    loft_str v = is_null ? loft_null_text() : loft_lit(val, strlen(val));
+    char *copy = (char *) malloc(v.len + 1);
+    if (!copy) { fputs("loft: out of memory\n", stderr); abort(); }
+    memcpy(copy, v.p, v.len);
+    copy[v.len] = 0;
+    loft_str *a = (loft_str *) loft_crt_slot_at(store, at);
+    a->p = copy;
+    a->len = v.len;
+}
+
+/* The call's return: the argument's copy released. */
+void loft_crt_slot_arg_free(int64_t store, int64_t at) {
+    loft_str *a = (loft_str *) loft_crt_slot_at(store, at);
+    free((char *) a->p);
+    a->p = 0;
+    a->len = 0;
+}
+
 /* The run's end: the stack store released (a pinned store keeps itself from `loft_free_ref`). */
 void loft_crt_stack_free(int64_t store) {
     loft_store_t *s = &loft_stores[store];

@@ -5,9 +5,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # @PLN91 strand 1b — the frame: the Rust interpreter's memory structures
 
-A child document of [1b-interpreter.md](1b-interpreter.md).  Status: **PF1 built (the layout
-guard, `selfhost/tests/frame.loft`); F-1a built — every integer, float and reference variable
-in the stack store at its Rust byte; F-1b (the texts) not built.**
+A child document of [1b-interpreter.md](1b-interpreter.md).  Status: **F-1 built — every
+variable in the stack store at its Rust byte (PF1 its layout guard, `selfhost/tests/frame.loft`);
+PF4 measured (loft#2310); PF2, PF3, PF5 and F-2 not built.**
 
 ## The rule
 
@@ -136,8 +136,20 @@ never a gate (the order of the goals, 1b-interpreter.md).
     fib 2.24 s → 2.38 s, mix 4.83 s → 4.58 s, collatz 16.06 s → 15.32 s — within noise of each
     other; the per-access cost measured above does not show at the kernels' share of local
     accesses.
-  - **F-1b**: the texts — a `loft_text` at a local's slot, a `loft_str` view at an argument's,
-    `&text` a reference into the stack store, `OpFreeText` a release.
+  - **F-1b (built)**: the texts.  A text local is the runtime's `loft_text` at its slot,
+    set, appended, cleared and released there (`crt::slot_text*`, `OpFreeText` a release now,
+    not a clear); a text argument is a `loft_str` view of a copy the call makes and its return
+    releases — F-2 makes it a view of the caller's own value, once the temporaries live in the
+    store; a `&text` is the absolute byte of the text it names.  The text part of the frame is
+    gone: the loft-side text stack holds the temporaries only.
+  - **PF4 (measured)**: a text loop's peak memory grows with its round count — before F-1 too
+    (15 → 84 MB from 20 000 to 200 000 rounds; F-1b 14 → 68 MB).  The cause is not the frame:
+    the interpreter's text stack is written by `put_text`, whose release `@FR-H-TextReplace`
+    declines because its parameter is also appended on the other branch (loft#2310), so every
+    text the run evaluates stays in that vector's store.
+  - Found while probing: a self-recursive tail call the compiler turns into a loop
+    (`R-TailSelf`, `NdLoop` in a value position) is refused by the lowering as an expression
+    it does not carry.
 - **F-2** — the temporaries in the same store: the lowering emits the bytecode writer's
   operators at its stack positions, so its output is the Rust bytecode.
 

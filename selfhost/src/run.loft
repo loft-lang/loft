@@ -130,9 +130,11 @@ fn load_table(b: ir::Bundle) {
 
 // Definition `entry` called with the integer `args`.
 // ── The frame (@PLN91 F-1, 1b-frame.md) ──
-// Every integer, float and reference variable lives at its byte of the Rust interpreter's frame,
-// in one store of the run (`State::stack_cur`): frame byte `at` is field `at` of the store's
-// primary record, read and written at the variable's width (`lower::Lowering.var_access`).
+// Every variable lives at its byte of the Rust interpreter's frame, in one store of the run
+// (`State::stack_cur`): frame byte `at` is field `at` of the store's primary record, read and
+// written as the variable is held there (`lower::Lowering.var_access`) — a text local as the
+// runtime's `loft_text`, a text argument as a view of a copy the call made.  A `&text` is the
+// absolute byte of the text it names.  The evaluation stacks hold the temporaries only.
 
 // The stack store's first size, grown as a call needs (`State::grow_stack`).
 STACK_START = 4096;
@@ -170,13 +172,15 @@ fn store_slot_ref(ints: vector<integer?>, sp: integer, stk: integer, at: integer
   crt::set_slot_ref(stk, at, ints[sp] ?? NULL_STORE, ints[sp + 1] ?? 0, ints[sp + 2] ?? 0);
 }
 
-// A frame's locals as the run loop starts them: null, an integer or float at its width and a
-// reference as the sentinel.  The arguments are the caller's.
+// A frame's locals as the run loop starts them: null, an integer or float at its width, a
+// reference as the sentinel and a text empty (`OpInitText`).  The arguments are the caller's.
 fn clear_frame(p: lower::Lowering, stk: integer, base: integer) {
   for v in p.local_vars {
     at = base + (p.var_slot[v] ?? 0);
     k = lower::stack_of(p.var_kind[v] ?? KOther);
-    if k == KRef {
+    if k == KText {
+      crt::slot_text_init(stk, at);
+    } else if k == KRef {
       crt::set_slot_ref(stk, at, NULL_STORE, 0, 0);
     } else if k == KFloat {
       set_slot_float(stk, at, p.var_access[v] ?? 0, null);
@@ -184,6 +188,12 @@ fn clear_frame(p: lower::Lowering, stk: integer, base: integer) {
       set_slot_int(stk, at, p.var_access[v] ?? 0, null);
     }
   }
+}
+
+// The byte of the text a text-writing op writes: its variable's slot, or through a `&text`, the
+// byte that holds.
+fn text_at(stk: integer, base: integer, op: lower::Op) -> integer {
+  if op.kind == KTextRef { slot_int(stk, base + op.a, 0) ?? 0 } else { base + op.a }
 }
 
 // A run on a stack store of its own, released after it.
@@ -256,13 +266,13 @@ fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) ->
   clear_frame(first, stk, 0);
   given = 0;
   for a in b.data.definitions[entry]!.attributes {
-    v = first.arg_vars[a#index] ?? -1;
-    at = first.var_slot[v] ?? -1;
+    arg_nr = first.arg_vars[a#index] ?? -1;
+    at = first.var_slot[arg_nr] ?? -1;
     if at < 0 {
       continue;
     }
     if !a.hidden {
-      set_slot_int(stk, at, first.var_access[v] ?? 0, args[given]);
+      set_slot_int(stk, at, first.var_access[arg_nr] ?? 0, args[given]);
       given += 1;
       continue;
     }
@@ -275,23 +285,18 @@ fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) ->
       entry_bufs += [at];
     }
   }
-  for _ in 0..first.slots_text {
-    put_text(texts, sp_text, null);
-    sp_text += 1;
-  }
-  // The saved frames: the caller's definition, its next op, its frame's base, its text part's
-  // base, and how deep its integer and float stacks were under the call's arguments.
+  // The saved frames: the caller's definition, its next op, its frame's base, and how deep its
+  // evaluation stacks were under the call's arguments.
   f_def: vector<integer> = [];
   f_pc: vector<integer> = [];
   f_base: vector<integer> = [];
-  f_text: vector<integer> = [];
   f_sp_int: vector<integer> = [];
   f_sp_float: vector<integer> = [];
+  f_sp_text: vector<integer> = [];
   fp = 0;
   def = entry;
   pc = 0;
   base = 0;
-  base_text = 0;
   prog = progs[entry]!;
   while true {
     op = prog.ops[pc]!;
@@ -316,10 +321,10 @@ fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) ->
       Load => {
         match op.kind {
           KFloat => { put_float(floats, sp_float, slot_float(stk, base + op.a, op.b)); sp_float += 1; }
-          KText => { put_text(texts, sp_text, texts[base_text + op.a]); sp_text += 1; }
-          // A `&text` reads the text whose index its slot holds.
+          KText => { put_text(texts, sp_text, crt::slot_text(stk, base + op.a, op.b == 1)); sp_text += 1; }
+          // A `&text` reads the text at the byte its slot holds.
           KTextRef => {
-            put_text(texts, sp_text, texts[slot_int(stk, base + op.a, 0)!]);
+            put_text(texts, sp_text, crt::slot_text(stk, slot_int(stk, base + op.a, 0)!, false));
             sp_text += 1;
           }
           KRef => {
@@ -332,10 +337,10 @@ fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) ->
       Store => {
         match op.kind {
           KFloat => { sp_float -= 1; set_slot_float(stk, base + op.a, op.b, floats[sp_float]); }
-          KText => { sp_text -= 1; texts[base_text + op.a] = texts[sp_text]; }
+          KText => { sp_text -= 1; crt::set_slot_text(stk, base + op.a, texts[sp_text]); }
           KTextRef => {
             sp_text -= 1;
-            texts[slot_int(stk, base + op.a, 0)!] = texts[sp_text];
+            crt::set_slot_text(stk, slot_int(stk, base + op.a, 0)!, texts[sp_text]);
           }
           KRef => {
             sp_int -= 3;
@@ -382,48 +387,46 @@ fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) ->
           stk_cap = (callee_base + callee_prog.frame_bytes) * 2;
           crt::stack_grow(stk, stk_cap);
         }
-        i = len(callee_prog.arg_vars) - 1;
-        while i >= 0 {
-          v = callee_prog.arg_vars[i] ?? 0;
-          at = callee_base + (callee_prog.var_slot[v] ?? 0);
-          k = lower::stack_of(callee_prog.var_kind[v] ?? KOther);
+        arg_at = len(callee_prog.arg_vars) - 1;
+        while arg_at >= 0 {
+          arg_nr = callee_prog.arg_vars[arg_at] ?? 0;
+          at = callee_base + (callee_prog.var_slot[arg_nr] ?? 0);
+          k = lower::stack_of(callee_prog.var_kind[arg_nr] ?? KOther);
           if k == KRef {
             sp_int -= 3;
             store_slot_ref(ints, sp_int, stk, at);
+          } else if k == KText {
+            sp_text -= 1;
+            crt::set_slot_arg(stk, at, texts[sp_text]);
           } else if k == KFloat {
             sp_float -= 1;
-            set_slot_float(stk, at, callee_prog.var_access[v] ?? 0, floats[sp_float]);
+            set_slot_float(stk, at, callee_prog.var_access[arg_nr] ?? 0, floats[sp_float]);
           } else if k == KInt {
             sp_int -= 1;
-            set_slot_int(stk, at, callee_prog.var_access[v] ?? 0, ints[sp_int]);
+            set_slot_int(stk, at, callee_prog.var_access[arg_nr] ?? 0, ints[sp_int]);
           }
-          i -= 1;
+          arg_at -= 1;
         }
         clear_frame(callee_prog, stk, callee_base);
         if fp < len(f_def) {
           f_def[fp] = def;
           f_pc[fp] = pc;
           f_base[fp] = base;
-          f_text[fp] = base_text;
           f_sp_int[fp] = sp_int;
           f_sp_float[fp] = sp_float;
+          f_sp_text[fp] = sp_text;
         } else {
           f_def += [def];
           f_pc += [pc];
           f_base += [base];
-          f_text += [base_text];
           f_sp_int += [sp_int];
           f_sp_float += [sp_float];
+          f_sp_text += [sp_text];
         }
         fp += 1;
         def = callee;
         pc = 0;
         base = callee_base;
-        base_text = sp_text - callee_prog.params_text;
-        for _ in callee_prog.params_text..callee_prog.slots_text {
-          put_text(texts, sp_text, null);
-          sp_text += 1;
-        }
         prog = callee_prog;
       }
       Ret => {
@@ -457,15 +460,20 @@ fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) ->
             stores_left: crt::live_stores() - stores_before,
           };
         }
-        sp_text = base_text;
+        // The frame's text arguments were copies the call made.
+        for a in prog.arg_vars {
+          if (prog.var_access[a] ?? 0) == 1 && prog.var_kind[a] == KText {
+            crt::slot_arg_free(stk, base + (prog.var_slot[a] ?? 0));
+          }
+        }
         fp -= 1;
         // Every frame below the top was saved by the call that entered the one above it.
         def = f_def[fp]!;
         pc = f_pc[fp]!;
         base = f_base[fp]!;
-        base_text = f_text[fp]!;
         sp_int = f_sp_int[fp]!;
         sp_float = f_sp_float[fp]!;
+        sp_text = f_sp_text[fp]!;
         prog = progs[def]!;
         match op.kind {
           KFloat => { put_float(floats, sp_float, vf); sp_float += 1; }
@@ -535,24 +543,16 @@ fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) ->
       }
       // A text-writing op's destination: a text slot of this frame, or through a `&text`.
       Append => {
-        at = if op.kind == KTextRef { slot_int(stk, base + op.a, 0)! } else { base_text + op.a };
         sp_text -= 1;
-        texts[at] = (texts[at] ?? "") + (texts[sp_text] ?? "");
+        crt::slot_text_append(stk, text_at(stk, base, op), texts[sp_text] ?? "");
       }
       AppendChar => {
-        at = if op.kind == KTextRef { slot_int(stk, base + op.a, 0)! } else { base_text + op.a };
         sp_int -= 1;
         c = ints[sp_int] as character?;
-        t = texts[at] ?? "";
-        if c != null {
-          t += c;
-        }
-        texts[at] = t;
+        crt::slot_text_append(stk, text_at(stk, base, op), if c != null { "{c}" } else { "" });
       }
-      Clear => {
-        at = if op.kind == KTextRef { slot_int(stk, base + op.a, 0)! } else { base_text + op.a };
-        texts[at] = "";
-      }
+      Clear => { crt::slot_text_clear(stk, text_at(stk, base, op)); }
+      FreeText => { crt::slot_text_free(stk, text_at(stk, base, op)); }
       // A native the interpreter carries, as loft's own function of that name; its arguments
       // are on their kinds' stacks, the last one on top.
       Native => {
@@ -578,7 +578,7 @@ fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) ->
       // renders it.  The operands are on the int stack, the last on top; an integer value sits
       // under them there, a float or text value on its own stack.
       Format => {
-        at = if op.kind == KTextRef { slot_int(stk, base + op.a, 0)! } else { base_text + op.a };
+        at = text_at(stk, base, op);
         piece = "";
         if op.b == 0 {
           sp_int -= 7;
@@ -608,7 +608,7 @@ fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) ->
             op.b == 2
           );
         }
-        texts[at] = (texts[at] ?? "") + piece;
+        crt::slot_text_append(stk, at, piece);
       }
       // A single is carried as a float, and its absolute value is exact in either.
       Abs => {
@@ -653,7 +653,7 @@ fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) ->
       Nop => {}
       Round => { floats[sp_float - 1] = (floats[sp_float - 1] as single?) as float?; }
       // A reference to a text slot of this frame: its absolute index on the text stack.
-      RefOf => { put_int(ints, sp_int, base_text + op.a); sp_int += 1; }
+      RefOf => { put_int(ints, sp_int, base + op.a); sp_int += 1; }
       Print => {
         sp_text -= 1;
         print(texts[sp_text] ?? "");
@@ -966,11 +966,11 @@ fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) ->
           load_table(b);
           table_loaded = true;
         }
-        at = if op.kind == KTextRef { slot_int(stk, base + op.a, 0)! } else { base_text + op.a };
+        at = text_at(stk, base, op);
         sp_int -= 3;
         piece = "";
         show::render(b, op.b / 4, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b % 4, 0, piece);
-        texts[at] = (texts[at] ?? "") + piece;
+        crt::slot_text_append(stk, at, piece);
       }
       // `v += other`: the copies are claims of `v`'s store, so no owner changes; the claims are
       // copied by the type table, loaded first.
