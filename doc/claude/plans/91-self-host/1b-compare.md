@@ -80,7 +80,8 @@ start; the interpreter fills it in.
     image, the check and the run — so both sides see one front end.
   - The runner (`selfhost/cover/run_program.loft`) takes the entry to run (`run_program IMAGE
     [ENTRY]`, `n_main` by default), writes `M` before it starts (a `crt::trace_mark` over the
-    runtime's `LOFT_TRACE("M")`), and exits with what the Rust interpreter exits with for a
+    runtime's `LOFT_TRACE("M")`) — after minting the stack store (F-1), which the Rust
+    interpreter also has before its program enters, so neither trace counts it — and exits with what the Rust interpreter exits with for a
     failed assertion or a panic.  Like every loft program it resolves a RELATIVE path against its own
     directory (STDLIB_FILES.md § Path resolution), so `IMAGE` — and the `reports` tool's — is
     given absolute: a relative one is refused as an image with no layout sidecar, and a

@@ -201,14 +201,22 @@ fn text_at(stk: integer, base: integer, op: lower::Op) -> integer {
 
 // A run on a stack store of its own, released after it.
 pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
-  stack: vector<integer> = [NULL_STORE, 0, 0];
-  crt::stack_new(stack, STACK_START);
-  o = run_on(b, entry, args, stack[0] ?? NULL_STORE);
-  crt::stack_free(stack[0] ?? NULL_STORE);
+  stk = new_stack();
+  o = run_on(b, entry, args, stk);
+  crt::stack_free(stk);
   o
 }
 
-fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) -> Outcome {
+// A stack store of the run's first size (`State::new`'s): a runner that marks where the program
+// starts mints it first, as the Rust interpreter has its stack before the program enters.
+pub fn new_stack() -> integer {
+  stack: vector<integer> = [NULL_STORE, 0, 0];
+  crt::stack_new(stack, STACK_START);
+  stack[0] ?? NULL_STORE
+}
+
+// A run on stack store `stk`, which the caller releases (`crt::stack_free`).
+pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer) -> Outcome {
   stk_cap = STACK_START;
   progs: vector<lower::Lowering> = [];
   lowered: vector<boolean> = [];
