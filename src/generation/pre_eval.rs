@@ -925,11 +925,24 @@ impl Output<'_> {
                     || def_fn.rust().contains("s.vec_ref_or_raise(")
                     || def_fn.rust().contains("s.text_char_or_raise(");
                 let left = self.left_first(vals);
+                // loft#2262 — a template whose result is a VIEW of an argument (`trim(self) ->
+                // text[self]`, `@self.trim()`) borrows that argument's Rust value.  When the
+                // argument is a call, its `Str` is a temporary, and a view hoisted into its own
+                // `let _pre_N` — as an interpolation hoists it — outlived it (E0716).  The owner
+                // gets a binding of its own, which lives as long as the view.
+                let returned = def_fn.returned().depend();
+                let view_owner: Vec<bool> = (0..vals.len())
+                    .map(|i| {
+                        u16::try_from(i).is_ok_and(|a| returned.contains(&a))
+                            && self.needs_pre_eval(&vals[i])
+                    })
+                    .collect();
                 let needs_pre_eval_args = block_count > 0
                     || user_fn_count > 1
                     || (template_uses_stores && user_fn_count > 0)
                     || has_dup_param
-                    || left.contains(&true);
+                    || left.contains(&true)
+                    || view_owner.contains(&true);
                 if needs_pre_eval_args {
                     for (arg_idx, arg) in vals.iter().enumerate() {
                         let is_block = Self::is_sequence_arg(arg) || left[arg_idx];
@@ -942,7 +955,12 @@ impl Output<'_> {
                         } else {
                             false
                         };
-                        if is_block || is_multi_user_fn || is_stores_conflict || is_dup {
+                        if is_block
+                            || is_multi_user_fn
+                            || is_stores_conflict
+                            || is_dup
+                            || view_owner[arg_idx]
+                        {
                             let name = format!("_pre_{}", self.counter);
                             self.counter += 1;
                             self.rewrite_code(result, arg, name, is_dup)?;
