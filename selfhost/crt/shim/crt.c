@@ -545,6 +545,56 @@ void loft_crt_clear(int64_t store, int64_t rec, int64_t pos, int64_t tp) {
     loft_remove_claims(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos));
 }
 
+/* OpPlaceRecord (Stores::place_record_prefilled): a `tp` record of `size` bytes claimed inside
+ * the host's store and prefilled with `image`, or in a fresh store when there is no host; written
+ * into `out`.  `foreign`: the host's root is a vector of another element type (@FR-H-RootExtent). */
+int64_t loft_crt_place_record(int64_t *out, int64_t n, int64_t h_store, int64_t h_rec, int64_t h_pos, int64_t tp,
+                              int64_t size, const uint8_t *image, int64_t in, int64_t foreign) {
+    loft_ref r = loft_place_record(loft_crt_ref(h_store, h_rec, h_pos), (uint16_t) tp, (uint32_t) size, image,
+                                   (uint32_t) in, (int) foreign);
+    loft_crt_put_ref(out, n, r);
+    return 0;
+}
+
+/* The placement family (`@FR-R-Place`), each through the runtime's own routine and the loaded
+ * type table; a call before the table is loaded does nothing. */
+#define LOFT_CRT_TP_OK(tp) (loft_crt_types && (tp) >= 0 && (uint32_t) (tp) < loft_crt_ntypes)
+
+/* OpMoveVector (Stores::move_vector): `src`'s elements moved onto `dst`, `linked` an element
+ * type of a linked group. */
+void loft_crt_move_vector(int64_t d_store, int64_t d_rec, int64_t d_pos, int64_t s_store, int64_t s_rec,
+                          int64_t s_pos, int64_t tp, int64_t linked) {
+    if (!LOFT_CRT_TP_OK(tp)) return;
+    loft_ref d = loft_crt_ref(d_store, d_rec, d_pos), s = loft_crt_ref(s_store, s_rec, s_pos);
+    if (linked) loft_move_vector_array(loft_crt_types, (uint16_t) tp, d, s);
+    else loft_move_vector(loft_crt_types, (uint16_t) tp, d, s);
+}
+
+/* OpMoveField / OpMoveRecord: a `tp` record moved from `src` to `dst` — into a field, or out to a
+ * returned record (`record_out`). */
+void loft_crt_move_field(int64_t s_store, int64_t s_rec, int64_t s_pos, int64_t d_store, int64_t d_rec,
+                         int64_t d_pos, int64_t tp, int64_t record_out) {
+    if (!LOFT_CRT_TP_OK(tp)) return;
+    loft_ref s = loft_crt_ref(s_store, s_rec, s_pos), d = loft_crt_ref(d_store, d_rec, d_pos);
+    if (record_out) loft_move_record_out(loft_crt_types, (uint16_t) tp, s, d);
+    else loft_move_field(loft_crt_types, (uint16_t) tp, s, d);
+}
+
+/* OpFreeRecordIn: a placed `tp` record released inside its host's store. */
+void loft_crt_free_record_in(int64_t store, int64_t rec, int64_t pos, int64_t tp) {
+    if (!LOFT_CRT_TP_OK(tp)) return;
+    loft_free_record_in(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos));
+}
+
+/* OpReplaceVector (Stores::vector_replace): `v`'s elements replaced by `o`'s. */
+void loft_crt_vec_replace(int64_t v_store, int64_t v_rec, int64_t v_pos, int64_t o_store, int64_t o_rec,
+                          int64_t o_pos, int64_t tp, int64_t linked) {
+    if (!LOFT_CRT_TP_OK(tp)) return;
+    loft_ref v = loft_crt_ref(v_store, v_rec, v_pos), o = loft_crt_ref(o_store, o_rec, o_pos);
+    if (linked) loft_vec_replace_array(loft_crt_types, (uint16_t) tp, v, o);
+    else loft_vec_replace(loft_crt_types, loft_crt_ntypes, (uint16_t) tp, v, o);
+}
+
 /* OpClearKeyed of a SECONDARY VIEW of a linked group (`CLEAR_KEYED_VIEW`): the view drops its own
  * route and leaves the records to the member that holds them (`remove_claims_keyed`). */
 void loft_crt_clear_view(int64_t store, int64_t rec, int64_t pos, int64_t tp) {

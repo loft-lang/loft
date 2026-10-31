@@ -221,6 +221,31 @@ pub fn enum_names(b: ir::Bundle, tp: integer) -> vector<text>? {
   }
 }
 
+// `Stores::root_vector_element_of`: the element type of the one vector field of struct `kt` — a
+// store whose root is a vector — or null for any other type.
+pub fn root_vector_element(b: ir::Bundle, kt: integer) -> integer? {
+  t = b.types[kt];
+  if t == null {
+    return null;
+  }
+  match t.parts[0]! {
+    PtStruct { fields } => {
+      if len(fields) != 1 {
+        return null;
+      }
+      vt = b.types[fields[0]!.content];
+      if vt == null {
+        return null;
+      }
+      match vt.parts[0]! {
+        PtVector { content } => content,
+        _ => null,
+      }
+    }
+    _ => null,
+  }
+}
+
 // Is `tp` a keyed collection — a hash, index, sorted, ordered, spatial or trie (`Cx::keyed`)?
 pub fn is_keyed(b: ir::Bundle, tp: integer) -> boolean {
   t = b.types[tp];

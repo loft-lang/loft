@@ -310,6 +310,14 @@ fn test_a_repeat_fills_and_an_absent_vector_is_null() {
   assert(ran_clean(r, "n_slices", 0) == 717000, "slices(0)");
 }
 
+// @PLN91 S3: a record placed in the store of the vector it takes, the vector moved into its field
+// (`OpPlaceRecord`, `OpMoveVector`), nothing left live.
+fn test_a_record_is_placed_where_its_vector_lives() {
+  p = kernel("places");
+  assert(ran_clean(p, "n_moved", 4) == 4024, "moved(4)");
+  assert(ran_clean(p, "n_moved", 0) == 0, "moved(0)");
+}
+
 fn test_struct_enums_build_match_and_copy() {
   e = kernel("enums");
   assert(ran_clean(e, "n_arms", 7) == 26, "arms(7)");

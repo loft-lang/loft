@@ -144,6 +144,14 @@ enum Code {
   AppendCopy,
   // `OpSliceVector` / `OpSliceView`: `a` the element size, `b` 1 for the view.
   SliceVec,
+  // `OpPlaceRecord`: `a` the record type, `b` twice its size plus 1 for a foreign root.
+  PlaceRecord,
+  // The rest of the placement family: `a` the type, `b` 1 for a linked element (`MoveVec`,
+  // `ReplaceVec`) or a move out to a returned record (`MoveField`).
+  MoveVec,
+  MoveField,
+  FreeRecordIn,
+  ReplaceVec,
   // `OpClearKeyed` (`a` the type, `b` 1 for a linked group's view) and `OpReplaceKeyed` (`a` the
   // type, `b` the flags).
   ClearKeyed,
@@ -697,6 +705,11 @@ fn effect(code: Code, b: integer) -> integer {
     AppendCopy => -2,
     SliceVec => -4,
     ClearKeyed => -1,
+    PlaceRecord => 0,
+    MoveVec => -2,
+    MoveField => -2,
+    FreeRecordIn => -1,
+    ReplaceVec => -2,
     EnumName => 0,
     TextChar => -1,
     CharLen => 0,
@@ -1281,6 +1294,40 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     } else {
       emit(l, SliceVec, KRef, b.types[tp]!.size, if name == "OpSliceView" { 1 } else { 0 });
     }
+  } else if name == "OpPlaceRecord" {
+    // A call's return buffer claimed in the store of the record its result lands in
+    // (`@FR-R-Place`), prefilled with its type's defaults.  `foreign` as the C backend decides
+    // it: the host variable's store root is a vector of another element type.
+    value(l, b, args[0]!, KRef);
+    tp = literal(l, args[1]!);
+    foreign = false;
+    match unspan(args[0]!) {
+      NdVar { n: host } => {
+        kt = root_type(b, fvar(b, l.def_nr, host).type_def[0] ?? ir::TypeT.TyVoid);
+        if kt != null {
+          elem = types::root_vector_element(b, kt!);
+          foreign = elem != null && elem != tp;
+        }
+      }
+      _ => {}
+    }
+    emit(l, PlaceRecord, KRef, tp, types::enum_parent_size(b, tp) * 2 + (if foreign { 1 } else { 0 }));
+  } else if name == "OpMoveVector" || name == "OpReplaceVector" || name == "OpMoveField" || name == "OpMoveRecord" {
+    // The two references in the operator's order, the element or record type last.
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KRef);
+    tp = literal(l, args[2]!);
+    linked = b.types[tp]?.linked ?? false;
+    if name == "OpMoveVector" {
+      emit(l, MoveVec, KRef, tp, if linked { 1 } else { 0 });
+    } else if name == "OpReplaceVector" {
+      emit(l, ReplaceVec, KRef, tp, if linked { 1 } else { 0 });
+    } else {
+      emit(l, MoveField, KRef, tp, if name == "OpMoveRecord" { 1 } else { 0 });
+    }
+  } else if name == "OpFreeRecordIn" {
+    value(l, b, args[0]!, KRef);
+    emit(l, FreeRecordIn, KRef, literal(l, args[1]!), 0);
   } else if name == "OpCastTextFromEnum" {
     // A plain enum's name (`Stores::enum_val`): the names are the function's text constants.
     value(l, b, args[0]!, KInt);
@@ -1661,6 +1708,18 @@ fn type_key(b: ir::Bundle, t: ir::TypeT) -> text? {
       }
       "({r})"
     }
+    _ => null,
+  }
+}
+
+// `Cx::root_type`: the store type a value of type `t` is minted as — a record's or struct enum's
+// own, a vector's `main_vector<T>` wrapper — or null for any other.
+fn root_type(b: ir::Bundle, t: ir::TypeT) -> integer? {
+  match t {
+    TyOptional { inner } => root_type(b, inner),
+    TyReference { n, dep: _ } => b.data.definitions[n]?.known_type,
+    TyEnum { n, is_ref, dep: _ } => if is_ref { b.data.definitions[n]?.known_type } else { null },
+    TyVector { inner: _, dep: _ } => main_vector_of(b, [t]),
     _ => null,
   }
 }
