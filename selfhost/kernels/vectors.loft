@@ -206,7 +206,31 @@ fn retbuf_filled(n: integer) -> integer {
   len(v) * 100 + v[n - 1].legs[0].a
 }
 
+// `v.remove(i)` (`OpRemoveVector`) of a plain element, of one owning a text (released first), and
+// out of range (nothing removed); `size` (`OpSizeVector`) is the length times the stride.
+// removed(9): [10, 20, 30, 40, 50] less 20 sums 130, `remove(9)` changes nothing; the tags less
+// the first are 2 * 100 + 2 * 1000 + 3 * 100 + 3 * 1000 = 5500; size(v) 4 * 8 = 32 → 3200000;
+// size(bytes) 3 → 30000000; len(t) 2 → 2000000000.  2033205630.
+// removed(0): v loses 10 too, 120 and size 24: 2032405620.
+struct Rm { k: integer, name: text }
+fn removed(n: integer) -> integer {
+  v = [10, 20, 30, 40, 50];
+  v.remove(1);
+  v.remove(n);
+  s = 0;
+  for x in v {
+    s += x;
+  }
+  t = [Rm { k: 1, name: "a" }, Rm { k: 2, name: "bb" }, Rm { k: 3, name: "ccc" }];
+  t.remove(0);
+  for g in t {
+    s += g.k * 100 + len(g.name) * 1000;
+  }
+  bytes: vector<u8> = [1, 2, 3];
+  s + size(v) * 100000 + size(bytes) * 10000000 + len(t) * 1000000000
+}
+
 fn main() {
   println("{ints(4)} {records(4)} {texts(5)} {bagged(2)} {passed(3)} {through(4)} {refilled(7)} {defaults(5)} {rebound_param(5)}");
-  println("{appended_field(3)} {appended_field(1)} {added(3)} {added(0)} {texts_kept(3)} {texts_kept(0)} {retbuf_filled(2)} {retbuf_filled(1)}");
+  println("{appended_field(3)} {appended_field(1)} {added(3)} {added(0)} {texts_kept(3)} {texts_kept(0)} {retbuf_filled(2)} {retbuf_filled(1)} {removed(9)} {removed(0)}");
 }

@@ -511,6 +511,9 @@ fn c_vec_slice(v_store: integer, v_rec: integer, v_pos: integer, o_store: intege
 fn c_vec_append_copy(store: integer, rec: integer, pos: integer, ctp: integer, count: integer);
 #c "loft_crt_vec_append_copy" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
 
+fn c_vec_remove(store: integer, rec: integer, pos: integer, tp: integer, size: integer, mode: integer, index: integer) -> integer;
+#c "loft_crt_vec_remove" "int64_t(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
 fn c_vec_get(out: vector<integer>, store: integer, rec: integer, pos: integer, size: integer, idx: integer) -> integer;
 #c "loft_crt_vec_get" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 
@@ -561,6 +564,13 @@ pub fn vec_slice(v_store: integer, v_rec: integer, v_pos: integer, o_store: inte
 // element type `ctp`; a `count` of 0 or less leaves it empty.  The type table must be loaded.
 pub fn vec_append_copy(store: integer, rec: integer, pos: integer, ctp: integer, count: integer) {
   c_vec_append_copy(store, rec, pos, ctp, count);
+}
+
+// `OpRemoveVector`: the element at `index` (of element type `tp`, `size` bytes) taken out — `mode`
+// 2 a linked element, 1 one owning heap, 0 a plain one; true when one was.  A mode above 0 needs
+// the type table loaded.
+pub fn vec_remove(store: integer, rec: integer, pos: integer, tp: integer, size: integer, mode: integer, index: integer?) -> boolean {
+  index != null && c_vec_remove(store, rec, pos, tp, size, mode, index!) != 0
 }
 
 // `OpGetVector`: the element at `idx` of `size` bytes, into `out[0..3]`; the null reference

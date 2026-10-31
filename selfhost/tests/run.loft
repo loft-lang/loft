@@ -112,6 +112,8 @@ fn test_the_small_integer_operators_answer_as_loft_does() {
   assert(ran("small_ops", "n_enum_named", [2]) == 401, "enum_named(2)");
   assert(ran("small_ops", "n_text_walk", [0]) == 97098099, "text_walk(0)");
   assert(ran("small_ops", "n_text_walk", [1]) == 97233, "text_walk(1)");
+  assert(ran("small_ops", "n_affixed", [3]) == 101111, "affixed(3): starts_with and ends_with");
+  assert(ran("small_ops", "n_affixed", [5]) == 101011, "affixed(5)");
   assert(ran("small_ops", "n_rem_or", [7, 3]) == 1, "rem_or(7, 3)");
   assert(ran("small_ops", "n_rem_or", [7, 0]) == -1, "rem_or(7, 0)");
   // |-6 / 4| = 1.5, as a float and as a single, each times 100.
@@ -250,6 +252,8 @@ fn test_a_vector_is_appended_as_element_copies() {
   assert(ran_clean(v, "n_added", 0) == 320, "added(0): an empty append changes nothing");
   assert(ran_clean(v, "n_texts_kept", 3) == 740, "texts_kept(3): the source cleared after");
   assert(ran_clean(v, "n_texts_kept", 0) == 110, "texts_kept(0)");
+  assert(ran_clean(v, "n_removed", 9) == 2033205630, "removed(9): out of range removes nothing");
+  assert(ran_clean(v, "n_removed", 0) == 2032405620, "removed(0)");
   // census 2026-10-30: the callee filled a fresh store instead of the caller's buffer, and the
   // caller's adopted copy was swept.
   assert(ran_clean(v, "n_retbuf_filled", 2) == 231, "retbuf_filled(2): the caller's buffer is filled in place");

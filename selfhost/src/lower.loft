@@ -144,6 +144,8 @@ enum Code {
   AppendCopy,
   // `OpConstRef(d)`: the reference to constant `d`'s store (`consts.loft`).
   ConstRef,
+  // `OpRemoveVector`: `a` the element type, `b` the mode (2 linked, 1 owning heap, 0 plain).
+  VecRemove,
   // `OpSliceVector` / `OpSliceView`: `a` the element size, `b` 1 for the view.
   SliceVec,
   // `OpPlaceRecord`: `a` the record type, `b` twice its size plus 1 for a foreign root.
@@ -706,6 +708,7 @@ fn effect(code: Code, b: integer) -> integer {
     VecAbsent => 0,
     DistinctStore => -1,
     ConstRef => 1,
+    VecRemove => -1,
     AppendCopy => -2,
     SliceVec => -4,
     ClearKeyed => -1,
@@ -808,6 +811,8 @@ fn native_index(name: text) -> integer? {
     "n_assert" => 0,
     "n_env_variable" => 1,
     "n_vector_sum_int" => 2,
+    "t_4text_starts_with" => 3,
+    "t_4text_ends_with" => 4,
     _ => null,
   }
 }
@@ -1290,6 +1295,25 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
   } else if name == "OpLengthVector" {
     value(l, b, args[0]!, KRef);
     emit(l, VecLen, KInt, 0, 0);
+  } else if name == "OpSizeVector" {
+    // A vector's size in bytes: its length times the element stride the parser filled in.
+    value(l, b, args[0]!, KRef);
+    emit(l, VecLen, KInt, 0, 0);
+    emit(l, PushInt, KInt, literal(l, args[1]!), 0);
+    emit(l, Mul, KInt, 0, 0);
+  } else if name == "OpRemoveVector" {
+    // `v.remove(i)`, by element type as the C generator picks it (`a` the type, `b` the mode:
+    // 2 linked, 1 owning heap, 0 plain).
+    tp = literal(l, args[1]!);
+    et = b.types[tp];
+    if et == null {
+      refuse(l, "a removal from a vector of an unknown element type");
+      return true;
+    }
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[2]!, KInt);
+    mode = if et!.linked { 2 } else if types::owns_heap(b, tp) { 1 } else { 0 };
+    emit(l, VecRemove, KInt, tp, mode);
   } else if name == "OpVectorIsNull" {
     value(l, b, args[0]!, KRef);
     emit(l, VecAbsent, KInt, 0, 0);
@@ -3600,7 +3624,8 @@ fn lower_walk(b: ir::Bundle, def_nr: integer, d: ir::Definition) -> Lowering {
   if args_end + 8 > l.frame_bytes {
     l.frame_bytes = args_end + 8;
   }
-  for pk in param_kinds(d) {
+  for a in d.attributes {
+    pk = kind_of_types(a.typedef);
     s = stack_of(pk);
     if s == KInt || s == KRef {
       l.params_int += int_width(s);
@@ -3611,7 +3636,8 @@ fn lower_walk(b: ir::Bundle, def_nr: integer, d: ir::Definition) -> Lowering {
     } else if s == KTuple {
       l.params_tuple += 1;
     } else {
-      refuse(l, "a parameter of a kind the interpreter does not carry yet");
+      shown = "{a.typedef[0] ?? ir::TypeT.TyVoid}";
+      refuse(l, "a parameter of a kind the interpreter does not carry yet: {shown.split(' ')[0] ?? shown}");
     }
   }
   if l.result == KTextRef {
