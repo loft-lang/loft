@@ -13,6 +13,7 @@ mod apart_value;
 mod chain;
 mod deferred;
 mod files;
+mod loop_record;
 mod generator;
 mod keyed;
 mod misc;
@@ -155,6 +156,8 @@ pub(crate) struct FnWriter<'a> {
     /// The locals whose copy is deferred to the first statement that may write its source
     /// (`@FR-R-DeferredCopy`, `deferred::deferred_plan`).
     dc: deferred::DeferredCopies,
+    /// `@FR-R-LoopRecord`'s refill clause: the loop records this function keeps.
+    lr: loop_record::LoopRecordPort,
     /// Which value-record parameters arrive as `const loft_tupN *` (`Cx::vr_ptr_params`,
     /// `@FR-R-ValueRecord`'s pointer clause): read through (`(*v)`), never written.
     vr_ptr: Vec<bool>,
@@ -638,6 +641,7 @@ impl<'a> FnWriter<'a> {
                 .collect(),
             vr_ptr: vr_ptr_flags(cx, d),
             dc: deferred::DeferredCopies::default(),
+            lr: loop_record::LoopRecordPort::of(cx, d),
             // A store instance's text parameter (`n_app@st1`, `parser/store_text.rs`) is a
             // store link: the IR reads and writes it as the field it names.
             store_links: {
@@ -2450,13 +2454,20 @@ impl<'a> FnWriter<'a> {
 
     fn stmts_in(&mut self, ops: &[Value], ind: usize) -> Result<(), String> {
         let mut i = 0;
-        // The end of the push run a reservation was made for (`reserve_push_run`).
+        // The end of the push run a reservation was made for (`reserve_push_run`), and whether
+        // a header frame is open for it.
         let mut run_end = 0;
+        let mut run_head = false;
         while i < ops.len() {
+            if run_head && i >= run_end {
+                self.push_heads.pop();
+                run_head = false;
+            }
             if i >= run_end
-                && let Some(end) = self.reserve_push_run(ops, i, ind)?
+                && let Some((end, head)) = self.reserve_push_run(ops, i, ind)?
             {
                 run_end = end;
+                run_head = head;
             }
             // `@FR-R-Apart` instance 2: a construction run builds its value as a whole.
             if let Some(next) = self.av_construction(ops, i, ind)? {
@@ -2488,6 +2499,9 @@ impl<'a> FnWriter<'a> {
             self.bind_record_ptr(ops, i, ind);
             self.bind_view_header(ops, i, ind);
             i += 1;
+        }
+        if run_head {
+            self.push_heads.pop();
         }
         Ok(())
     }
@@ -2609,13 +2623,16 @@ impl<'a> FnWriter<'a> {
     /// every value are the pushes' own, and `loft_vec_reserve_run` leaves an absent vector and a
     /// locked store alone, so a refused push still refuses where it did.  A path a window, a push
     /// header, a value held apart or a deferred copy serves is left to it.  Answers the index after
-    /// the run.  `LOFT_NO_PUSH_RUN_RESERVE=1` reserves nothing.
+    /// the run, and whether a header frame was opened for it (the HEADER clause: every pushed
+    /// value plain, `hoist::run_value_plain`, so the run writes through one push header the caller
+    /// closes at the run's end).  `LOFT_NO_PUSH_RUN_RESERVE=1` reserves nothing;
+    /// `LOFT_NO_PUSH_RUN_HEADER=1` reserves and pushes one call at a time.
     fn reserve_push_run(
         &mut self,
         ops: &[Value],
         at: usize,
         ind: usize,
-    ) -> Result<Option<usize>, String> {
+    ) -> Result<Option<(usize, bool)>, String> {
         if self.gen_elem.is_some()
             || self.lean()
             || self.av_any()
@@ -2628,6 +2645,7 @@ impl<'a> FnWriter<'a> {
         };
         let mut k: i64 = 1;
         let mut end = next;
+        let mut vals = vec![first.val];
         loop {
             while matches!(ops.get(next).map(Value::unspan), Some(Value::Line(_))) {
                 next += 1;
@@ -2642,6 +2660,7 @@ impl<'a> FnWriter<'a> {
                 break;
             }
             k += 1;
+            vals.push(p.val);
             next = after;
             end = next;
         }
@@ -2654,17 +2673,30 @@ impl<'a> FnWriter<'a> {
         {
             return Ok(None);
         }
-        let v = self.expr(first.vector, ind)?;
+        let v = as_ref(self.expr(first.vector, ind)?)?;
         self.line(
             ind,
-            &format!(
-                "loft_vec_reserve_run({}, INT64_C({k}), {});",
-                as_ref(v)?,
-                first.size
-            ),
+            &format!("loft_vec_reserve_run({v}, INT64_C({k}), {});", first.size),
         );
         crate::rewrite_census::fired("R-PushFill/run", 1);
-        Ok(Some(end))
+        // The header clause: values computed from scalars and operators cannot move the store,
+        // and the run's one growth is the reservation above — so its pushes write through one
+        // header and its held record address (`loft_ph_putb*`), the growth step left as the
+        // runtime's append for a vector the reservation could not grow.
+        let header = !std::env::var("LOFT_NO_PUSH_RUN_HEADER").is_ok_and(|v| v != "0")
+            && vals.iter().all(|val| {
+                crate::opt::hoist::run_value_plain(self.cx.data, self.vars, first.path.0, val)
+            });
+        if header {
+            let h = format!("ph{}", self.decls.len() + 1);
+            self.decls
+                .push(format!("loft_ph {h} = {{ {{ 0xFFFF, 0, 0 }}, 0, 0, 0, 0 }};"));
+            self.line(ind, &format!("{h} = loft_ph_of({v}, {});", first.size));
+            self.push_heads
+                .push(vec![(first.path.clone(), h, first.size, true)]);
+            crate::rewrite_census::fired("R-PushFill/run-header", 1);
+        }
+        Ok(Some((end, header)))
     }
 
     /// `@FR-R-View` (@PLN157 § V-n, rustc's `bind_view_header`): statement `at` bound a vector
@@ -3438,6 +3470,9 @@ impl<'a> FnWriter<'a> {
         if self.nk_skip == Some(std::ptr::from_ref(v.unspan()) as usize) {
             return Ok(());
         }
+        if !self.lr.is_empty() && self.loop_record_stmt(v, ind)? {
+            return Ok(());
+        }
         if !self.room_minted.is_empty() && !self.room_keeps(v) {
             self.room_minted.clear();
         }
@@ -3555,6 +3590,24 @@ impl<'a> FnWriter<'a> {
     /// that assumes the parameters apart from the return buffer runs when a test of their
     /// store numbers says so at its entry, the plain one otherwise.
     fn loop_stmt(&mut self, b: &Block, ind: usize) -> Result<(), String> {
+        self.loop_stmt_inner(b, ind)?;
+        // `@FR-R-LoopRecord`: the records this loop keeps are freed once, after every copy of it.
+        let mut kept: Vec<u16> = self
+            .lr
+            .recs
+            .iter()
+            .filter(|(_, s)| **s == b.scope)
+            .map(|(v, _)| *v)
+            .collect();
+        kept.sort_unstable();
+        for v in kept {
+            let var = self.var(v);
+            self.line(ind, &format!("loft_free_var(&{var});"));
+        }
+        Ok(())
+    }
+
+    fn loop_stmt_inner(&mut self, b: &Block, ind: usize) -> Result<(), String> {
         if let Some((tests, pairs)) = self.distinct_version(b) {
             let test = tests
                 .iter()
@@ -5018,14 +5071,23 @@ impl<'a> FnWriter<'a> {
         let frames = self.headers.len();
         let r = (|| {
             let mut run_end = 0;
+            let mut run_head = false;
             for i in 0..at {
+                if run_head && i >= run_end {
+                    self.push_heads.pop();
+                    run_head = false;
+                }
                 if i >= run_end
-                    && let Some(end) = self.reserve_push_run(&ops[..at], i, ind)?
+                    && let Some((end, head)) = self.reserve_push_run(&ops[..at], i, ind)?
                 {
                     run_end = end;
+                    run_head = head;
                 }
                 self.stmt(&ops[i], ind)?;
                 self.bind_view_header(ops, i, ind);
+            }
+            if run_head {
+                self.push_heads.pop();
             }
             self.assign(&ops[at], target, c, ind)?;
             self.flush(ind);
@@ -7397,6 +7459,20 @@ impl<'a> FnWriter<'a> {
         let size = self.cx.stores.enum_parent_size(tp);
         self.cx.describe_type(tp);
         let var = self.var(v);
+        // `@FR-R-LoopRecord`'s refill clause: a kept record mints only where it holds no store.
+        if self.lr.recs.contains_key(&v) {
+            let fresh = format!("lrf{v}");
+            if !self.decls.iter().any(|d| d.starts_with(&format!("int {fresh} "))) {
+                self.decls.push(format!("int {fresh} = 0;"));
+            }
+            crate::rewrite_census::fired("R-LoopRecord/refill", 1);
+            return Ok(E::new(
+                format!(
+                    "(({var}.store_nr == 0xFFFF) ? (loft_database_typed(&{var}, {size}, {tp}), {fresh} = 1) : ({fresh} = 0))"
+                ),
+                K::Void,
+            ));
+        }
         if self.cx.stores.is_vector_wrapper(tp) {
             // A place's old collection is released through the wrapper's descriptor; a
             // reused buffer keeps the room its vector reached (`@FR-H-KeepRoom`).

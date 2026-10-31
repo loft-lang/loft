@@ -8,8 +8,8 @@
 // Kept: r1 (the vectors grow and shrink across passes, with pushes after the literal), r4
 // (a callee pushes into the record), r6 and r7 (records appended into the kept vector).  Declined: r2 (an omitted field is written by the
 // prefill, not by a zero in the group) and r5 (the record is handed to a native append).
-// `--native` only; the interpreter takes the per-pass store and is the oracle.  Every value is
-// hand-computed.
+// `--native` and the C (since 2026-10-31, `src/c/body/loop_record.rs`); the interpreter takes
+// the per-pass store and is the oracle.  Every value is hand-computed.
 //
 // @falsified-at: hand-measured (sabotage, 2026-10-08) — with the kept record's vector empties
 //   not emitted, every value still holds and r6's live-record count grows on --ship
@@ -18,6 +18,9 @@
 //   `LOFT_NO_LOOP_RECORD=1`, and under LOFT_STRICT_STORES=1, LOFT_POISON=1, LOFT_POISON_CLAIM=1
 //   and LOFT_NATIVE_LEAK_CHECK=1.  With the appends by field number not admitted, r7's `st`
 //   declines (values hold) and `tests/ctor_literal.rs` fails on the kept count.
+//   The C port (planted in the generated C, 2026-10-31): a kept pass that does not empty its
+//   vectors (`loft_vec_clear` dropped) fails r1 with 102280.
+//   CHANNEL: an assertion.
 struct Fm { h0: integer, lens: vector<integer>, turns: vector<integer> }
 
 fn fm_sum(f: const Fm) -> integer {

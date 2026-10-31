@@ -2801,6 +2801,35 @@ pub struct PushRun<'a> {
 
 /// Recognise a [`PushRun`] starting at statement `at`.
 #[must_use]
+/// `@FR-R-PushFill`'s run clause: whether `val`, pushed onto a vector rooted at `root`, can be
+/// written while the vector's header is held — it reads neither `root` nor any non-scalar local
+/// (a view could reach the store and read a length not yet written back) and calls nothing but
+/// an operator, so nothing it does can move the store's memory.
+pub fn run_value_plain(
+    data: &Data,
+    vars: &crate::variables::Function,
+    root: u16,
+    val: &Value,
+) -> bool {
+    let mut ok = true;
+    val.walk(&mut |n| match n {
+        Value::Var(x) if *x == root || !crate::data::is_scalar(vars.tp(*x).base()) => {
+            ok = false;
+        }
+        Value::Call(d, _) if !data.def(*d).name().starts_with("Op") => ok = false,
+        // A value with statements of its own — a `??` temp bound in a block, a branch —
+        // is emitted with pre-evaluations a held header's single expression cannot carry.
+        Value::CallRef(..)
+        | Value::Block(_)
+        | Value::Loop(_)
+        | Value::Insert(_)
+        | Value::Set(..)
+        | Value::If(..) => ok = false,
+        _ => {}
+    });
+    ok
+}
+
 pub fn push_run<'a>(
     ops: &'a [Value],
     at: usize,
@@ -2838,25 +2867,7 @@ pub fn push_run<'a>(
     };
     let (vector, min, first, mut next) = one(at)?;
     let (root, _) = vector_path(data, vector)?;
-    let plain = |val: &Value| {
-        let mut ok = true;
-        val.walk(&mut |n| match n {
-            Value::Var(x) if *x == root || !crate::data::is_scalar(vars.tp(*x).base()) => {
-                ok = false;
-            }
-            Value::Call(d, _) if !data.def(*d).name().starts_with("Op") => ok = false,
-            // A value with statements of its own — a `??` temp bound in a block, a branch —
-            // is emitted with pre-evaluations the window's single expression cannot carry.
-            Value::CallRef(..)
-            | Value::Block(_)
-            | Value::Loop(_)
-            | Value::Insert(_)
-            | Value::Set(..)
-            | Value::If(..) => ok = false,
-            _ => {}
-        });
-        ok
-    };
+    let plain = |val: &Value| run_value_plain(data, vars, root, val);
     if !plain(first) {
         return None;
     }

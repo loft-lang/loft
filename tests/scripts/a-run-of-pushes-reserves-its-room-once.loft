@@ -15,7 +15,9 @@
 //
 // @falsified-at: none — the clause has no earlier build to catch, so the receipt is a defect
 //   planted (2026-10-30) in the generated C: a reservation that also sets the length to the
-//   room it made fails r1 (lengths 6 for 3), r2, r4 and r5.
+//   room it made fails r1 (lengths 6 for 3), r2, r4 and r5.  The HEADER clause (2026-10-31: the
+//   run written through one push header): a header put that never bumps the length fails r1
+//   with lengths 0 for 3.
 //   CHANNEL: an assertion.
 
 struct Shape { h: integer, lens: vector<integer>, turns: vector<integer> }
