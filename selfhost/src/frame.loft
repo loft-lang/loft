@@ -1,0 +1,100 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The frame as the Rust interpreter lays it out (@PLN91 1b-frame.md): every variable at the
+// `stack_pos` the image carries, as wide as `variables::size` makes it.  Nothing is laid out
+// here: the positions are the compiler's (`assign_slots_v2`), and this answers the widths the
+// interpreter reads and writes them at.
+use ir;
+
+// `variables::size` (src/variables/mod.rs:6081) in the two contexts a frame slot takes: an
+// ARGUMENT, laid out by the bytecode writer at its argument size (a text a 16-byte `&str`
+// view), and a local (`Context::Variable`, a text a 24-byte `String`).  0 for a type that
+// takes no slot.
+pub fn width(t: ir::TypeT, argument: boolean) -> integer {
+  match t {
+    TyOptional { inner } => width(inner, argument),
+    TyBoolean => 1,
+    TyEnum { n: _, is_ref, dep: _ } => if is_ref { 12 } else { 1 },
+    TySingle => 4,
+    TyCharacter => 4,
+    TyInteger { spec: _ } => 8,
+    TyFloat => 8,
+    TyFunction { args: _, result: _, dep: _, consts: _ } => 20,
+    TyText { dep: _ } => if argument { 16 } else { 24 },
+    TyRefVar { inner: _ } => 12,
+    TyReference { n: _, dep: _ } => 12,
+    TyVector { inner: _, dep: _ } => 12,
+    TyIndex { n: _, keys: _, dep: _ } => 12,
+    TyHash { n: _, names: _, dep: _ } => 12,
+    TySorted { n: _, keys: _, dep: _ } => 12,
+    TyRadix { n: _, names: _, dep: _ } => 12,
+    TyTrie { n: _, key: _, dep: _ } => 12,
+    TyIterator { step: _, inner: _ } => 12,
+    // A tuple LOCAL owns its text members (`data::TUPLE_LOCAL_TEXT_OWNED`); an argument's
+    // stay borrowed.
+    TyTuple { elems } => tuple_width(elems, !argument),
+    _ => 0,
+  }
+}
+
+// `data::element_stack_size_in` over a tuple: one 8-stepped slot per member
+// (`call_frames::aligned_stack_step`).
+fn tuple_width(elems: vector<ir::TypeT>, owned: boolean) -> integer {
+  total = 0;
+  for e in elems {
+    total += step(member_width(e, owned));
+  }
+  total
+}
+
+// `data::element_stack_size_in` for one tuple member.  A `&` member takes no slot there.
+fn member_width(t: ir::TypeT, owned: boolean) -> integer {
+  match t {
+    TyOptional { inner } => member_width(inner, owned),
+    TyText { dep: _ } => if owned { 24 } else { 16 },
+    TyRefVar { inner: _ } => 0,
+    TyTuple { elems } => tuple_width(elems, owned),
+    _ => width(t, true),
+  }
+}
+
+// `call_frames::aligned_stack_step`: the next multiple of 8.
+fn step(size: integer) -> integer {
+  (size + 7) / 8 * 8
+}
+
+// Where variable `nr` of `f` lives in its frame, or null when it has no slot.  A local's
+// position is the compiler's (`assign_slots_v2`), carried by the image; an argument's is
+// decided when the bytecode is written (`codegen.rs`, `set_stack_pos`): each at the sum of
+// the stepped ARGUMENT sizes of the arguments before it, in variable order.
+pub fn position(f: ir::Function, nr: integer) -> integer? {
+  v = f.variables[nr];
+  if v == null {
+    return null;
+  }
+  if !v.argument {
+    return if v.stack_pos == 65535 { null } else { v.stack_pos };
+  }
+  at = 0;
+  for a in f.variables {
+    if a#index == nr {
+      break;
+    }
+    if a.argument {
+      at += step(width(a.type_def[0]!, true));
+    }
+  }
+  at
+}
+
+// Variable `nr` of `f`'s slot as `loft introspect` prints it (`variables::dump_variables`):
+// `[a, b)`, or `-` when it has none.
+pub fn slot(f: ir::Function, nr: integer) -> text {
+  at = position(f, nr);
+  if at == null {
+    return "-";
+  }
+  v = f.variables[nr]!;
+  "[{at}, {at + width(v.type_def[0]!, v.argument)})"
+}

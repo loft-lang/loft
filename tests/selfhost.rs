@@ -76,6 +76,23 @@ fn the_selfhost_tests_pass_on_an_emitted_image() {
             "emit-image {stem}: {}",
             String::from_utf8_lossy(&emitted.stderr)
         );
+        // The Rust interpreter's frame for the same program — every variable's slot as the
+        // compiler laid it out: the oracle `selfhost/tests/frame.loft` compares with (@PLN91
+        // F-1 probe PF1).
+        let slots = loft::platform::process::harness_command(loft())
+            .arg("introspect")
+            .arg("--show-slots")
+            .arg("--slots-out")
+            .arg(kernels.join(format!("{stem}.slots")))
+            .arg(&source)
+            .env("LOFT_NO_CACHE", "1")
+            .output()
+            .expect("run loft introspect");
+        assert!(
+            slots.status.success(),
+            "introspect {stem}: {}",
+            String::from_utf8_lossy(&slots.stderr)
+        );
         // The C generator's type table for the same program: the oracle the loft-derived
         // table is compared with (@PLN91 S3, `selfhost/tests/types.loft`).
         let c = tmp.join(format!("{stem}.c"));
