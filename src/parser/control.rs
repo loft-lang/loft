@@ -19930,13 +19930,21 @@ impl Parser {
         // source still aliases the buffer, and the B5-L3 text hoist copies first), and
         // both were measured clean on this shape — narrowing here keeps the guard on the
         // path that actually re-mints.
+        // loft#2292 — a parser-minted WORK REF is the same hazard by substitution: its
+        // `materialized_view_return` copies a source into it, and `Bind { substitute }`
+        // makes the buffer var the destination.  When pass 1 renamed the returned local
+        // onto the buffer (a callee further down was not typed yet) and pass 2 finds that
+        // local may be a view, the source IS the buffer var — `OpDatabase(class);
+        // OpCopyRecord(class, class)` — and the answer is a zeroed record (`@FR-H-CopySelf`
+        // holds only for the copy, not for the re-mint in front of it).  The work ref then
+        // keeps its own store and is handed back, the callee-minted delivery `(O-Buffer)`
+        // admits.
         let tail_reads_buffer = matches!(
             ctx.ret.ret_promo_base(),
             Type::Reference(_, _) | Type::Enum(_, true, _)
-        ) && !is_work_ref
-            && self.return_buffer().is_some_and(|(_, buf_var)| {
-                buf_var != v && body.last().is_some_and(|t| t.reads_var(buf_var))
-            });
+        ) && self.return_buffer().is_some_and(|(_, buf_var)| {
+            buf_var != v && body.last().is_some_and(|t| t.reads_var(buf_var))
+        });
         if tail_reads_buffer {
             return RetPromotion::SkipJoinArm;
         }
