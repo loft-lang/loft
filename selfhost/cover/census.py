@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """@PLN91 S2.1 — how much of the repository's programs the loft interpreter runs.
 
-    python3 selfhost/cover/census.py [--loft target/release/loft] [--jobs 8]
+    python3 selfhost/cover/census.py [--loft target/release/loft] [--jobs N, default: every core]
                                      [--chapter operational --chapter calls …] [--scripts-only]
 
 Each program (tests/scripts/*.loft, and the language suite's cells under LOFT_SUITE_DIR) is
@@ -83,7 +83,7 @@ def judge(path, loft, runner, tmp, env, root):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--loft", default="target/release/loft")
-    ap.add_argument("--jobs", type=int, default=6)
+    ap.add_argument("--jobs", type=int, default=os.cpu_count() or 1)
     ap.add_argument("--chapter", action="append", default=[])
     ap.add_argument("--scripts-only", action="store_true")
     o = ap.parse_args()
