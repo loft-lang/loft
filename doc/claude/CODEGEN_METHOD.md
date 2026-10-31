@@ -306,8 +306,9 @@ question that nothing cheaper can.  In order:
    a red tip a sibling may already have joined.
 5. **Receipts last.**  `scripts/falsify.sh` reads the working tree for its own build, so it
    runs after the fix is committed and while no source edit is pending.
-6. **One issue per push.**  A defect found while verifying is filed with its repro at once;
-   it is the next push, not part of this one.
+6. **One fix per push.**  A defect found while verifying is fixed in its own next push, not
+   folded into this one; it is filed only when it blocks you or needs a design and could have
+   reached users (CLAUDE.md § Bug-filing policy).
 
 ## Diff against the proven sibling — when your new path misbehaves
 

@@ -30,7 +30,7 @@ Commands (coords are fractions; origin top-left, y down; gray L in 0..1, 0=black
            | grad=R,G,B>R,G,B [dir=ax,ay,bx,by]      linear gradient (c1->c2)
            | radial=R,G,B>R,G,B [at=cx,cy,r]         radial gradient (centre->edge)
   landmark <name> = <value>
-  check <prop> <op> <term> [tol T]        op: ~ < > <= >= ; arithmetic on RHS only
+  check <prop> <op> <term> [tol T]        op: ~ < > <= >= == ; arithmetic on RHS only
   # ...                                    comment / SHOULD note (ignored, searchable)
 """
 import sys, time, re, os, math, tempfile

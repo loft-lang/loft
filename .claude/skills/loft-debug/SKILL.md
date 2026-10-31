@@ -127,8 +127,8 @@ has the ladder; re-measure a number before it decides anything):
 The @PLN16 debugger speaks NDJSON over stdio (the contract:
 `doc/claude/plans/16-debugger/PROTOCOL.md`). One `printf` pipes a whole scripted
 session — breakpoint → inspect the live frame → eval → edit → resume. A setBreakpoints
-response without `verified` is a pre-2026-06 installed binary — drive `target/*/loft` from
-this tree instead.
+response without `verified` comes from an installed binary older than the protocol —
+drive `target/*/loft` from this tree instead.
 
 ```sh
 printf '%s\n' \
@@ -188,7 +188,7 @@ printf '%s\n' \
 
 ## Native-backend env gotchas — these fake FAILURES; rule them out before believing a native failure
 
-1. **Default is `--native`** — see above; pass `--interpret` for the seeing loop.
+1. **Default is `--native`** — pass `--interpret` for the seeing loop (§ Running a bug down).
 2. **Toolchain mismatch.** The box's rustup default can differ from the repo's
    `rust-toolchain.toml`. Then `--native` fails
    `E0514 incompatible rustc`, *or* forcing a toolchain triggers a full from-scratch

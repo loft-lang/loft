@@ -671,34 +671,17 @@ the plan is re-scoped.  The 2026-04-21 P184 Phase 0 attempt (bulk
 4-tuple extension, then reverted when test failures surfaced) is
 the canonical example of this discipline in action.
 
-## Ground rule — file pre-existing bugs surfaced during a phase
+## Ground rule — a bug surfaced during a phase is fixed, not lost
 
-A plan phase fixing one bug or implementing one cell routinely
-surfaces *other* bugs while probing variants, reading code, or
-comparing backends — sibling shapes, latent issues flagged in
-comments, symptoms unrelated to the active fix.
-
-**File those P-issues before the phase closes, not later.**  See
-[CLAUDE.md § Bug-filing policy](../../../CLAUDE.md#bug-filing-policy--mandatory)
-and [DEVELOPMENT.md § Bug-filing During a Hunt](../DEVELOPMENT.md#bug-filing-during-a-hunt--mandatory)
-for the full policy.  Plans-specific notes:
-
-- The phase's commit message lists every P-id filed and every
-  P-id closed in this phase.
-- New P-issue rows in [PROBLEMS.md](../PROBLEMS.md) are part of
-  the phase's deliverable, not a follow-up TODO.
-- Follow-ups belong to their own future phase or session — do not
-  scope-creep the active fix to "while I'm here, also fix X".  One
-  fix per commit; one follow-up per row.
-
-The May 2026 @P211 hunt is the canonical example: the original
-P-issue was native `yield text`, but the diagnostic probes
-surfaced @P217 (text accumulator), @P218 (format-with-param in
-generator body), @P219 (vector-for-yield), @P220 (`""` in
-`vector<text>`) and @P221 (server-side BufReader).  All five were
-filed in the same commit window; none were lost.  The @P217
-follow-up hunt then surfaced @P222 / @P223 (narrower self-concat
-shapes) — same rule applied.
+A plan phase fixing one bug or implementing one cell routinely surfaces *other* bugs while
+probing variants, reading code, or comparing backends — sibling shapes, latent issues flagged in
+comments, symptoms unrelated to the active fix.  Each one is fixed: on the spot when it is
+in the way (always, inside an investigation plan), otherwise as its own commit beside the
+phase, never folded into the phase's fix.  One is filed only when it blocks the phase or needs
+a design, and could have reached users — on `main` and old enough to be in a release
+([CLAUDE.md § Bug-filing policy](../../../CLAUDE.md#bug-filing-policy--mandatory),
+[ISSUE_TRACKING.md § File only what the latest main has](../ISSUE_TRACKING.md#file-only-what-the-latest-main-has)).
+The phase's commit message names every defect it fixed on the way and every issue it filed.
 
 ### Per-plan status lives with the plan — not on ROADMAP
 

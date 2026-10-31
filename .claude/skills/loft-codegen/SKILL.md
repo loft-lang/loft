@@ -164,7 +164,8 @@ Interp (`src/state/codegen.rs` → bytecode), native (`src/generation/` → Rust
 backend (`src/c/`, `--native-c` → C99) are **separate generators reading the same IR**.  A
 new operator lands in all three: its `#rust` template in `default/*.loft` gives the
 interpreter (`make fill` regenerates `src/fill.rs`) and native, while the C backend
-implements it by hand (`src/c/body*.rs` plus its runtime header) and lists it in the
+implements it by hand (`src/c/body.rs` or a file under `src/c/body/`, plus its runtime
+header) and lists it in the
 operator shape table that matches its result (`OP_INT`, `OP_REF`, … in `src/c/body.rs`). A rung is closed ONLY when BOTH emit
 the proven bytecode and pass (correct + clean + no leak). An interp fix that breaks
 native compile is NOT landable. When they diverge on the same IR (one clean, one
@@ -291,8 +292,9 @@ the checklist:
    is committed and while no edit is pending.  Score against the installed main
    (`make install-main`, then `make falsify GUARD=…` without `REF`) before the branch is
    joined: no control build at all (GUARDS.md § The control is installed main).
-6. **One issue per push** — a defect found while verifying is filed with its repro at once
-   and is the next push.
+6. **One fix per push** — a defect found while verifying is fixed in its own next push; it is
+   filed only when it blocks you or needs a design and could have reached users (CLAUDE.md §
+   Bug-filing policy).
 
 ## Stop conditions (revert, don't push through)
 

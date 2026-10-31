@@ -535,7 +535,10 @@ cause, never origin commit.
 build of the current `origin/main` (fetched, built, run on both backends; the body says `measured
 on main @ <sha>`).  A defect that exists only on a work branch — its own unmerged work caused it —
 is that branch's to fix before it merges, recorded in the commit message (and the plan's docs
-inside a plan), never an issue, even one filed already fixed.
+inside a plan), never an issue, even one filed already fixed.  Nor is a defect `main` has but no
+release can: one that came in since the last release (this month's work) has reached no user,
+so it is fixed and recorded in the commit, not filed.  Judge it by when the defect came in; no
+released build needs keeping to test against.
 [ISSUE_TRACKING.md § File only what main has](doc/claude/ISSUE_TRACKING.md#file-only-what-the-latest-main-has).
 
 **Claim before you fix, on the issue:** `scripts/claim.py take N` before starting any fix, and
