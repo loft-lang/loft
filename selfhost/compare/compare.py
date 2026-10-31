@@ -28,7 +28,6 @@ LAYERS = ["out", "alloc", "leak", "ir", "types", "schema", "ctable", "ownership"
 # The layers the loft side does not produce yet, and the step that builds each (1b-compare.md).
 NOT_YET = {
     "ownership-overlays": "after the oracle: per_iteration_frees, text_return_orphan_risk, free_before_dependent_read, return_source_freed, ref_param_publish_freed, heap_return_delivery",
-    "slots": "C-3, with 1b-frame.md F-1",
     "lifetimes": "C-3, the compute_intervals port",
     "bytecode": "C-3, with 1b-frame.md F-2",
 }
@@ -160,6 +159,29 @@ def introspect_sections(file):
     while types and types[0] == "":
         types.pop(0)
     return {"ir": ir, "types": types}, None
+
+
+def slots_layer(file, img, reports):
+    """`introspect --show-slots`'s tables against the frame the loft side reads off the image, the
+    one normalisation the live column: the lifetimes layer compares it (compute_intervals)."""
+    rc, out, err = run([LOFT, "introspect", "--show-slots"] + LIBS + [file])
+    if rc != 0:
+        return "MISSING rust", text(err).splitlines()[-3:]
+    rows, inside = [], False
+    for ln in text(out).split("\n"):
+        if ln.startswith("=== "):
+            inside = ln == "=== slots ==="
+            continue
+        if inside:
+            ln = re.sub(r"\s+live$", "", ln)
+            ln = re.sub(r"^(  \d.*?)\s+(\[\d+, \d+\]|-)$", r"\1", ln)
+            rows.append(ln.rstrip())
+    lc, loft, lerr = run([reports, "slots", img])
+    if lc != 0:
+        return "MISSING loft", text(lerr).splitlines()[-3:]
+    while rows and rows[0] == "":
+        rows.pop(0)
+    return differ("slots", trimmed(rows), trimmed([x.rstrip() for x in text(loft).split("\n")]))
 
 
 def ownership_sections(file):
@@ -353,6 +375,8 @@ def compare(spec, exe, reports, layers, keep):
                 v, detail = ctable_layer(file, d, img, reports)
             elif layer == "ownership":
                 v, detail = ownership_layer(file, img, reports)
+            elif layer == "slots":
+                v, detail = slots_layer(file, img, reports)
             elif layer in ("ir", "types"):
                 v, detail = report_layer(layer, file, img, reports)
             else:
