@@ -10707,10 +10707,10 @@ fn main() {
             let ann =
                 test_runner::parse_annotations(&fa::read_to_string(&abs_file).unwrap_or_default());
             let expected = |name: &str| ann.expected_failure(name);
-            let c = match loft::c::emit_program(&p.data, &state.database, &expected) {
+            let c = match loft::c::emit_wasm_program(&p.data, &state.database, &expected) {
                 Ok(c) => c,
                 Err(r) => {
-                    eprintln!("loft: the C backend does not carry this program yet: {r}");
+                    eprintln!("loft: {}", r.message());
                     std::process::exit(2);
                 }
             };
@@ -10968,7 +10968,7 @@ fn main() {
             let c = match loft::c::emit_browser_program(&p.data, &state.database) {
                 Ok(c) => c,
                 Err(r) => {
-                    eprintln!("loft: the C backend does not carry this program yet: {r}");
+                    eprintln!("loft: {}", r.message());
                     std::process::exit(2);
                 }
             };
@@ -12073,7 +12073,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             let c = match emitted {
                 Ok(c) => c,
                 Err(r) => {
-                    let reason = format!("the C backend does not carry this program yet: {r}");
+                    let reason = r.message();
                     if native_requested || native_required {
                         eprintln!("loft: {reason}");
                         std::process::exit(2);
@@ -13114,10 +13114,10 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             round
                 .map_err(|e| format!("the program image did not round-trip: {e}"))
                 .and_then(|(data, db)| {
-                    loft::c::emit_program(&data, &db, &expected).map_err(|r| r.to_string())
+                    loft::c::emit_program(&data, &db, &expected).map_err(|r| r.message())
                 })
         } else {
-            loft::c::emit_program(&p.data, &state.database, &expected).map_err(|r| r.to_string())
+            loft::c::emit_program(&p.data, &state.database, &expected).map_err(|r| r.message())
         };
         match emitted {
             Ok(c) => {
@@ -13128,7 +13128,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 return;
             }
             Err(r) => {
-                eprintln!("loft: the C backend does not carry this program yet: {r}");
+                eprintln!("loft: {r}");
                 std::process::exit(2);
             }
         }

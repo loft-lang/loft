@@ -85,6 +85,23 @@ impl std::fmt::Display for Refusal {
     }
 }
 
+/// The start of a refusal's `why` that is a CONTRACT — the program asks for something no
+/// backend gives on this target (a `#c` call on wasm, @PLN24 arc E) — rather than a construct
+/// the C backend does not carry yet.  [`Refusal::message`] says it as the sentence alone.
+pub(crate) const CONTRACT: &str = "\u{0}contract:";
+
+impl Refusal {
+    /// What the author reads: a contract refusal's own sentence, or that the C backend does
+    /// not carry this program yet, naming the function and the construct.
+    #[must_use]
+    pub fn message(&self) -> String {
+        match self.why.split_once(CONTRACT) {
+            Some((_, sentence)) => sentence.to_string(),
+            None => format!("the C backend does not carry this program yet: {self}"),
+        }
+    }
+}
+
 /// The C shapes a loft value takes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CType {
@@ -224,6 +241,9 @@ pub(crate) struct Cx<'a> {
     /// ([`emit_program_with_source_lines`]).
     pub(crate) source_lines: bool,
     pub(crate) browser: bool,
+    /// The unit is compiled to wasm32 — a page's module or a `--native-wasm` program
+    /// ([`emit_wasm_program`]): no shared library can be opened there.
+    pub(crate) wasm: bool,
     /// The `par` sites written on threads so far, which numbers each one's body and context.
     pub(crate) par_sites: std::cell::Cell<u32>,
     /// The keyed collection types a `sqlite:` plan was written for (`loft_sqlplan{tp}`).
@@ -324,6 +344,7 @@ impl<'a> Cx<'a> {
             data,
             stores,
             browser,
+            wasm: browser || WASM_UNIT.with(std::cell::Cell::get),
             source_lines: SOURCE_LINES.with(std::cell::Cell::get),
             tuples: std::cell::RefCell::new(Vec::new()),
             copy_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -2793,6 +2814,36 @@ fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
     let sig = cs::of(data, d, cs::CTarget::host())
         .ok_or("a C binding without a signature")?
         .map_err(|e| format!("a C binding whose signature does not parse: {e}"))?;
+    // @PLN24 arc E (PACKAGES_C_BINDING.md § The wasm and browser targets): on wasm only a
+    // package's `[c] shim` is compiled into the module; any other `#c` call is refused by name
+    // — the sentence the Rust writer gives.  A symbol the WASI libc happens to export would
+    // otherwise link and trap, and an absent one fail at the link naming no package.
+    if cx.wasm {
+        let owner = data.c_owner_pkg(def.position().file.as_str());
+        let shim = owner.is_some_and(|pkg| {
+            data.c_libraries
+                .iter()
+                .any(|l| l.pkg_dir == pkg && !l.shim.is_empty())
+        });
+        if !shim {
+            let name = def.name().strip_prefix("n_").unwrap_or(def.name());
+            let (which, flag) = if cx.browser {
+                ("browser", "--html")
+            } else {
+                ("wasm (wasip2)", "--native-wasm")
+            };
+            let from = owner.map_or_else(String::new, |pkg| {
+                format!(" (package `{}`)", crate::file_access::name_of(pkg))
+            });
+            return Err(format!(
+                "{CONTRACT}`{name}` is bound to the C symbol '{}' with #c{from}, and the {which} \
+                 target has no C ABI to reach it — a wasm module cannot open a shared library.  \
+                 Give the library a wasm implementation (a `[c] shim`), host it out of process, \
+                 or drop the {flag} claim",
+                sig.symbol
+            ));
+        }
+    }
     let params: Vec<Type> = def.attributes().iter().map(|a| a.typedef.clone()).collect();
     let plan = cs::plan(&params, &sig).map_err(|_| "a C binding whose arguments do not fit")?;
     // The author's spelling: `<ret>(<param>, …)`.
@@ -3757,6 +3808,30 @@ thread_local! {
     /// Set for the length of one [`emit_program_with_source_lines`]: the unit marks its statements
     /// with their loft lines (`Cx::source_lines`).
     static SOURCE_LINES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Set for the length of one [`emit_wasm_program`]: the unit is compiled to wasm32.
+    static WASM_UNIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// [`emit_program`] for a `--native-wasm` module: the same unit, written knowing it is compiled
+/// to wasm32, so a `#c` binding no `[c] shim` provides is refused by name (@PLN24 arc E) rather
+/// than failing at the wasm link.
+///
+/// # Errors
+/// As [`emit_program`].
+pub fn emit_wasm_program(
+    data: &Data,
+    stores: &Stores,
+    expected: &dyn Fn(&str) -> Vec<String>,
+) -> Result<String, Refusal> {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            WASM_UNIT.with(|s| s.set(false));
+        }
+    }
+    WASM_UNIT.with(|s| s.set(true));
+    let _reset = Reset;
+    emit_program(data, stores, expected)
 }
 
 /// The comment that ends a function's run of `#line` markers in a unit written with source
