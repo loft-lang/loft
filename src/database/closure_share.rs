@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I70 — Database subsystem: the closure-copy share count, its one use (loft#2273).
 
 //! The closure-copy share count: the ONE reference count in the store layer.
 //!
