@@ -649,6 +649,12 @@ fn c_hash_entry(out: vector<integer>, store: integer, rec: integer, pos: integer
 fn c_hash_insert(store: integer, rec: integer, pos: integer, r_store: integer, r_rec: integer, r_pos: integer, elem: integer, tp: integer);
 #c "loft_crt_hash_insert" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 
+fn c_hash_remove(store: integer, rec: integer, pos: integer, r_store: integer, r_rec: integer, r_pos: integer, elem: integer, tp: integer, view: boolean);
+#c "loft_crt_hash_remove" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_set_keyed(store: integer, rec: integer, pos: integer, v_store: integer, v_rec: integer, v_pos: integer, elem: integer, tp: integer, n: integer, free_source: boolean);
+#c "loft_crt_set_keyed" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
 fn c_hash_len(store: integer, rec: integer, pos: integer) -> integer;
 #c "loft_crt_hash_len" "int64_t(int64_t, int64_t, int64_t)"
 
@@ -680,6 +686,18 @@ pub fn hash_entry(out: vector<integer>, store: integer, rec: integer, pos: integ
 // `OpFinishRecord` in a hash of type `tp` whose elements are type `elem`.
 pub fn hash_insert(store: integer, rec: integer, pos: integer, r_store: integer, r_rec: integer, r_pos: integer, elem: integer, tp: integer) {
   c_hash_insert(store, rec, pos, r_store, r_rec, r_pos, elem, tp);
+}
+
+// `OpHashRemove`: the entry `r` unlinked from hash `tp` (element type `elem`) and released, or with
+// `view` only unlinked.  The type table must be loaded.
+pub fn hash_remove(store: integer, rec: integer, pos: integer, r_store: integer, r_rec: integer, r_pos: integer, elem: integer, tp: integer, view: boolean) {
+  c_hash_remove(store, rec, pos, r_store, r_rec, r_pos, elem, tp, view);
+}
+
+// `OpSetKeyed` (`c[k…] = v`): a copy of `v` filed in hash `tp` under the top `n` key parts (each
+// pushed with `key_*`), which are popped; `free_source` releases `v`'s store after.
+pub fn set_keyed(store: integer, rec: integer, pos: integer, v_store: integer, v_rec: integer, v_pos: integer, elem: integer, tp: integer, n: integer, free_source: boolean) {
+  c_set_keyed(store, rec, pos, v_store, v_rec, v_pos, elem, tp, n, free_source);
 }
 
 // `OpLengthHash`.

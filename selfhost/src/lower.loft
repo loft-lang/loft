@@ -146,6 +146,10 @@ enum Code {
   ConstRef,
   // `OpRemoveVector`: `a` the element type, `b` the mode (2 linked, 1 owning heap, 0 plain).
   VecRemove,
+  // `OpHashRemove` (`a` the hash type, `b` 1 for a view member) and `OpSetKeyed` (`a` the raw
+  // type operand, `b` the key parts on the key stack).
+  HashRemove,
+  SetKeyed,
   // `OpSliceVector` / `OpSliceView`: `a` the element size, `b` 1 for the view.
   SliceVec,
   // `OpPlaceRecord`: `a` the record type, `b` twice its size plus 1 for a foreign root.
@@ -709,6 +713,8 @@ fn effect(code: Code, b: integer) -> integer {
     DistinctStore => -1,
     ConstRef => 1,
     VecRemove => -1,
+    HashRemove => -2,
+    SetKeyed => -2,
     AppendCopy => -2,
     SliceVec => -4,
     ClearKeyed => -1,
@@ -971,6 +977,19 @@ fn expr(l: Lowering, b: ir::Bundle, n: ir::Node) {
         emit(l, Ret, stack_of(l.result), 0, 0);
       }
     }
+    // A loop as a value — a self-call in tail position rewritten as a jump to the body's head
+    // (`tail_self`, `@FR-R-TailSelf`) — leaves only by `return`, so it never completes and lands
+    // no value, as the bytecode's loop does not.  One a `break` leaves would complete.
+    NdLoop { block } => {
+      if breaks_to_in(block[0]!.operators, 0) {
+        refuse(l, "a loop as a value that a break leaves");
+        return;
+      }
+      statement(l, b, n);
+    }
+    // A jump in value position (an arm typed `never`) lands no value either.
+    NdBreak { n: out } => leave_loop(l, out, true),
+    NdContinue { n: out } => leave_loop(l, out, false),
     // Statements the compiler inserted in place of a value (`Value::Insert`): all but the last
     // are statements, the last is the value.
     NdInsert { items } => {
@@ -1177,6 +1196,28 @@ fn vector_element(b: ir::Bundle, tp: integer) -> integer? {
   match t.parts[0]! {
     PtVector { content } => content,
     _ => null,
+  }
+}
+
+// The key parts `args[from..]` of a lookup or a keyed write, each pushed onto the key stack as
+// its key's type converts it (`key_value`, `src/c/body/keyed.rs`).
+fn key_parts(l: Lowering, b: ir::Bundle, keys: vector<ir::Key>, args: vector<ir::Node>, from: integer) {
+  for i in from..len(args) {
+    kt = (keys[i - from]!.type_nr).abs();
+    arg = args[i]!;
+    if kt == 3 {
+      value(l, b, arg, KSingle);
+      emit(l, KeyPart, KFloat, 0, 2);
+    } else if kt == 4 {
+      value(l, b, arg, KFloat);
+      emit(l, KeyPart, KFloat, 0, 1);
+    } else if kt == 6 {
+      value(l, b, arg, KText);
+      emit(l, KeyPart, KText, 0, 3);
+    } else {
+      value(l, b, arg, KInt);
+      emit(l, KeyPart, KInt, 0, 0);
+    }
   }
 }
 
@@ -1517,24 +1558,40 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
       return true;
     }
     value(l, b, args[0]!, KRef);
-    for i in 0..n {
-      kt = (keys[i]!.type_nr).abs();
-      arg = args[3 + i]!;
-      if kt == 3 {
-        value(l, b, arg, KSingle);
-        emit(l, KeyPart, KFloat, 0, 2);
-      } else if kt == 4 {
-        value(l, b, arg, KFloat);
-        emit(l, KeyPart, KFloat, 0, 1);
-      } else if kt == 6 {
-        value(l, b, arg, KText);
-        emit(l, KeyPart, KText, 0, 3);
-      } else {
-        value(l, b, arg, KInt);
-        emit(l, KeyPart, KInt, 0, 0);
-      }
-    }
+    key_parts(l, b, keys, args, 3);
     emit(l, HashFind, KRef, tp, n);
+  } else if name == "OpHashRemove" {
+    // `OpHashRemove(data, rec, tp)`: the entry unlinked and released; the type's top bit
+    // (`CLEAR_KEYED_VIEW`) marks a linked group's view member, which only unlinks.
+    raw = literal(l, args[2]!);
+    tp = raw & 32767;
+    elem = hash_element(b, tp);
+    if elem == null {
+      refuse(l, "a removal from a keyed collection that is not a hash: {b.types[tp]!.name}");
+      return true;
+    }
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KRef);
+    emit(l, HashRemove, KRef, tp, if raw & 32768 != 0 { 1 } else { 0 });
+  } else if name == "OpSetKeyed" {
+    // `OpSetKeyed(coll, value, tp, no_keys, value…)` (`c[k…] = v`) on a hash: the collection, the
+    // value, each key part, then the write; the type's top bit releases the value after.
+    raw = literal(l, args[2]!);
+    tp = raw & 32767;
+    if hash_element(b, tp) == null {
+      refuse(l, "a keyed write into a collection that is not a hash: {b.types[tp]!.name}");
+      return true;
+    }
+    keys = b.types[tp]!.keys;
+    n = len(args) - 4;
+    if n > len(keys) {
+      refuse(l, "a keyed write with more values than keys");
+      return true;
+    }
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KRef);
+    key_parts(l, b, keys, args, 4);
+    emit(l, SetKeyed, KRef, raw, n);
   } else if name == "OpLengthHash" {
     value(l, b, args[0]!, KRef);
     emit(l, HashLen, KInt, 0, 0);
@@ -3154,6 +3211,36 @@ fn holds_jump(n: ir::Node) -> boolean {
     NdIter { var: _, create, next, init } => holds_jump(create) || holds_jump(next) || holds_jump(init),
     _ => false,
   }
+}
+
+// Does `n` hold a `break` to the end of the loop `level` loops out from it?
+fn breaks_to(n: ir::Node, level: integer) -> boolean {
+  match n {
+    NdBreak { n: out } => out == level,
+    NdLoop { block } => breaks_to_in(block[0]!.operators, level + 1),
+    NdSpan { pos: _, inner } => breaks_to(inner, level),
+    NdCall { def_nr: _, args } => breaks_to_in(args, level),
+    NdCallRef { var: _, args } => breaks_to_in(args, level),
+    NdInsert { items } => breaks_to_in(items, level),
+    NdTuple { items } => breaks_to_in(items, level),
+    NdBlock { block } => breaks_to_in(block[0]!.operators, level),
+    NdSet { var: _, inner } => breaks_to(inner, level),
+    NdReturn { inner } => breaks_to(inner, level),
+    NdDrop { inner } => breaks_to(inner, level),
+    NdTuplePut { var: _, idx: _, inner } => breaks_to(inner, level),
+    NdIf { cond, t, f } => breaks_to(cond, level) || breaks_to(t, level) || breaks_to(f, level),
+    NdIter { var: _, create, next, init } => breaks_to(create, level) || breaks_to(next, level) || breaks_to(init, level),
+    _ => false,
+  }
+}
+
+fn breaks_to_in(ns: vector<ir::Node>, level: integer) -> boolean {
+  for n in ns {
+    if breaks_to(n, level) {
+      return true;
+    }
+  }
+  false
 }
 
 fn holds_jump_in(ns: vector<ir::Node>) -> boolean {
