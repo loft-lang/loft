@@ -33,8 +33,10 @@ strict comparison over every program the census passes (out, alloc, leak, binds,
 | natives `t_4text_starts_with`, `t_4text_ends_with` | loft's own (natives 3, 4) | `small_ops.loft` `affixed` |
 | a loop in value position (`@FR-R-TailSelf`'s jump), `break` / `continue` as a value | lowered as statements: the loop leaves only by `return` and lands no value (one a `break` leaves is refused), a jump typed `never` lands none either | `small_ops.loft` `tail_sum` (100 000 deep) |
 | `OpHashRemove`, `OpSetKeyed` (a hash) | `loft_hash_remove` (a view member only unlinks), `loft_set_keyed` with the key parts from the key stack (`key_parts`, shared with `OpGetRecord`); other keyed kinds wait for S4 | `hashes.loft` `dropped` |
+| scalars: `<<` / `>>`, `OpMathFunc*` and `OpMathFunc2*` (float, single), `pow`, `PI` / `E`, `OpCastIntFromText` / `OpCastFloatFromText`, the float and single `Nullable` division twins, a plain enum's null and truth, a null reference, `t.byte_at(i)` | loft's own operator or function in each case (the twins are the plain `/` and `%`; an enum's absent discriminants 0 and 255 read false, `OpConvEnumFromNull`'s type operand is no value) | `small_ops.loft` `scalars` |
+| `OpGetInt4Raw`, `OpSetInt4Raw`, `OpSizeHash`, `OpReverseVector` | `loft_get_int4_raw` / `loft_set_int4_raw` (width 8), `loft_hash_table_bytes`, `loft_vec_reverse` | `scalars`; the census |
 
-**Measured** (2026-10-31): the census went from 297 to 494 programs passed over these rows,
+**Measured** (2026-10-31): the census went from 297 to 514 programs passed over these rows,
 none wrong, crashed or leaking, and every passing program equal to the Rust interpreter in
 every layer.
 
