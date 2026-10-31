@@ -236,7 +236,7 @@ index 246870fc2..57c5ea82f 100644
          }
          let Type::Reference(record, _) = function.tp(v) else {
 diff --git a/src/scopes/capture_builds.rs b/src/scopes/capture_builds.rs
-index 7ad9dec8c..0123ef0a7 100644
+index 7ad9dec8c..ac4ef1b4b 100644
 --- a/src/scopes/capture_builds.rs
 +++ b/src/scopes/capture_builds.rs
 @@ -815,7 +815,7 @@ pub(crate) fn backs_an_adopted_capture(
@@ -263,11 +263,3 @@ index 7ad9dec8c..0123ef0a7 100644
  /// The name of the local closure record `record`'s capture attribute `a` holds: the attribute's
  /// own name, or — for the `<name>__clos` half of a captured fn-ref (loft#1869) — the fn-ref
  /// local `<name>`, through which the frame holds that closure's record.
-@@ -1211,6 +1209,6 @@ fn filled_capture(data: &Data, fill: Option<&Value>) -> Option<(u16, bool)> {
-     }
- }
- 
--pub(super) fn is_record_local(function: &Function, w: u16) -> bool {
-+fn is_record_local(function: &Function, w: u16) -> bool {
-     !function.is_argument(w) && function.name(w).starts_with("___clos_")
- }
