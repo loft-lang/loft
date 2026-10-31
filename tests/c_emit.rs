@@ -2100,6 +2100,7 @@ const ALLOCATOR_SWITCHES: &[&str] = &[
     "LOFT_NO_FREE_FOOTER",
     "LOFT_NO_WILD_BUMP",
     "LOFT_NO_CARVE_IN_PLACE",
+    "LOFT_NO_WILDERNESS",
 ];
 
 /// @PLN206 P0b — every allocator bisect switch the C honours places every record where `Store`

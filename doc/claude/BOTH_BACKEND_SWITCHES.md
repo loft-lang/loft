@@ -795,7 +795,8 @@ tree's insert, remove and best-fit take treat it as the node it would have been 
 claim takes the block it always took (a seeded side-by-side unit test pins the layout), and a
 claim from the tail or a delete into it costs no tree delete, insert or rebalance (64 % of the
 parse row's tree claims took the tail; the row −6 % in cycles).  **`LOFT_NO_WILDERNESS=1`**
-keeps the tail in the tree again (read per store at construction) and is the first bisect step
+keeps the tail in the tree again (read per store at construction; on C the
+`-DLOFT_NO_WILDERNESS` define the driver adds from it) and is the first bisect step
 for a store-layout fault or a claim that hands out a live block.
 
 **A record at the store's tail grows the store, not a new block (`@FR-H-TailGrow`):** a resize
