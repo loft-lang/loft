@@ -297,10 +297,24 @@ impl super::FnWriter<'_> {
     /// A statement the port rewrites: a dropped declaration or free writes nothing, and a
     /// vector-field zero of a kept record empties the vector on a kept pass.  Answers whether
     /// `v` was handled.
+    /// Is `v` kept by the port in this body?  A record held apart (`@FR-R-Apart`) is no store
+    /// record to keep — its mint is the apart construction's — as native's `loop_records` says.
+    pub(super) fn lr_kept(&self, v: u16) -> bool {
+        self.lr.recs.contains_key(&v) && !self.apr_holds(v)
+    }
+
     pub(super) fn loop_record_stmt(&mut self, v: &Value, ind: usize) -> bool {
         let at = std::ptr::from_ref(v.unspan()) as usize;
         if self.lr.dropped.contains(&at) {
-            return true;
+            let local = match v.unspan() {
+                Value::Set(lv, _) => Some(*lv),
+                Value::Call(_, args) => match args.first().map(Value::unspan) {
+                    Some(Value::Var(lv)) => Some(*lv),
+                    _ => None,
+                },
+                _ => None,
+            };
+            return local.is_some_and(|lv| self.lr_kept(lv));
         }
         if !self.lr.zeros.contains(&at) {
             return false;
@@ -314,7 +328,7 @@ impl super::FnWriter<'_> {
         ) else {
             return false;
         };
-        if !self.lr.recs.contains_key(r) {
+        if !self.lr_kept(*r) {
             return false;
         }
         let var = self.var(*r);
