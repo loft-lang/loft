@@ -885,6 +885,28 @@ which hex_recover's `forms_upto` builds per candidate: −7.3 % (gcc ship).  Swi
 and a value block's `assign_seq`), `loft_vec_reserve_run` (`src/c/loft_rt.h`).  Native's run
 clause is the byte form above, which opens a window for the run.
 
+**The run's header clause (the C) — BUILT 2026-10-31.**  After the reservation, a
+run whose every pushed value meets native's run conditions — it reads neither P's root nor any
+non-scalar local, and calls nothing but an operator — writes its k elements through ONE push
+header (`loft_ph_of` once, `loft_ph_putb<w>` per element: a bounds test against the held
+capacity, the element and the length stored at the held record address), where the plain run
+called `loft_vec_push_<w>` k times, each re-resolving the store, the vector's record, its length
+and its claim and testing the lock.  Nothing between the header's derivation and the run's last
+write can move the store's memory: the values are computed from scalars and operators, and the
+run's own growth is the reservation before it.  A push the header has no room for takes the
+header's growth step, which is the runtime's own append — so a vector the reservation could not
+grow (absent, locked) refuses exactly where the plain push refused.  Priced in hex_recover's
+`forms_upto` (gcc, a driver running only that routine): 0.30 s → 0.17 s, **−43 %**, the answer
+unchanged — the six pushes of `Form { fm_len: [la, lb, lc], fm_turn: [ea, eb, ec] }` were
+out-of-line calls around which gcc spilled the six loop counters of the enumeration.  Built
+to the hand form (the same 0.17 s): `reserve_push_run` opens a one-path frame in `push_heads`
+after the reservation, both statement loops close it at the run's end, and the pushes take the
+header path they take in a loop.  The value test is native's, lifted to
+`opt::hoist::run_value_plain` so both backends read one predicate.  Switch
+`LOFT_NO_PUSH_RUN_HEADER=1`; census `R-PushFill/run-header`.  Guard: the run cells
+(`a-run-of-pushes-reserves-its-room-once.loft`) — a header put that never bumps the length
+fails r1 with lengths 0 for 3.
+
 **(R-PushFill)'s record clause, in words.**
 (`bench/portal/analysis/round-3.md` § Built).  The consumer bench's `enum_match` builds
 its edits as `for i in 0..3000 { if i % 3 == 0 { edits += [SetHeight { … }] } else if … {
@@ -1006,6 +1028,30 @@ and capacity, so a literal of vectors refills them where the plain form claimed 
 every pass.  Sites `hoist::loop_record_zeros` (the groups and their zeros) and the
 `(R-RefillBuffer)` empty in `emit.rs`; cells `tests/scripts/157-a-loop-record-keeps-its-vectors.loft`,
 pins `tests/ctor_literal.rs`.
+
+**On the C — BUILT 2026-10-31 (a port).**  The C writer does not ask
+`crate::opt::loop_records::loop_records`, so a record literal in a loop mints a store, claims
+its vectors and frees it every pass.  The port is the same three moves in the C's spelling: the
+mint is taken only where the local holds no store (`if (r.store_nr == 0xFFFF)`), a refill
+record's literal zero of a vector field (`loft_set_int4(r, off, 0)`, in `field_zeros`) becomes
+`loft_vec_clear` of that field on a kept pass — length 0, block kept — and the end-of-body
+free moves after the loop.  Priced on hex_recover's `forms_upto` (gcc), on top of the run's
+header clause: 0.17 s → 0.11 s, **−35 %**; together 0.30 → 0.11 s (0.37×, ≈ 6.3× → ≈ 2.3×
+the Rust twin).  Resetting the store (`loft_reset_pool_root`) instead measured NOTHING — the
+cost is the two vectors' claims, not the store — and so did skipping the run's reservation on
+a kept pass and hinting `head_step` inline.  Built to the hand form (0.12 s against 0.11:
+the fresh flag below): `src/c/body/loop_record.rs` reads the shared analysis once per
+function; the mint is `((v.store_nr == 0xFFFF) ? (mint, lrf = 1) : (lrf = 0))`, each vector-field
+zero `if (lrf) zero; else loft_vec_clear(field)` — a fresh mint keeps its zero, because the C's
+claim is not promised to be zeroed — and the declaring block's `Set(v, null)` and end-of-pass
+free are skipped by node address, with one free after every copy of the keeping loop
+(`loop_stmt`).  The refill records only: a plain no-heap record keeps the plain mint on the C,
+where a reset measured nothing.  Bench (A/B, both clauses off against on): hex_recover
+`forms_upto` **0.302×** gcc (1045 → 315 µs, ≈ 2.5× the twin), **0.234×** clang (799 → 187 µs,
+≈ 1.5×).  Switch `LOFT_NO_LOOP_RECORD_REFILL=1` (and `LOFT_NO_LOOP_RECORD`); census
+`R-LoopRecord/refill`.  Guard: `157-a-loop-record-keeps-its-vectors.loft` and
+`157-loop-record.loft` now run on the C too (both pass, and under `LOFT_NATIVE_LEAK_CHECK`) —
+a kept pass that does not empty its vectors fails r1 with 102280.
 
 ### A return buffer refills the store a rebind released
 
