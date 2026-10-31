@@ -1587,6 +1587,11 @@ static void loft_par_free_table(loft_store_t *table, uint32_t from, uint32_t n) 
     free(table);
 }
 
+/* The stack each `par` worker thread is started with (see `loft_par_run`). */
+#ifndef LOFT_PAR_STACK
+#define LOFT_PAR_STACK ((size_t) 8 << 20)
+#endif
+
 /* A worker's end: the stores it made are destroyed with its table and its frames — or, when it
  * keeps them, its table as it now stands handed back for the caller to adopt from. */
 static void loft_par_job_run(loft_par_job *j) {
@@ -1665,12 +1670,21 @@ static void loft_par_run(int64_t n, int64_t threads, loft_par_body body, void *c
             j->keep = adopt != 0;
         }
         for (k = 1; k < t; k++) {
-            /* A thread that cannot start: its slice runs here, on this thread's own table. */
+            /* A thread that cannot start: its slice runs here, on this thread's own table.  Each
+             * worker gets LOFT_PAR_STACK bytes of stack, the same on every host: the platform
+             * default is 8 MiB on Linux but 512 KiB on macOS and 1 MiB on Windows, where a
+             * worker a few thousand calls deep ran out (`@FR-R-StackBase`'s deep-call cell). */
 #if defined(_WIN32)
-            ids[k] = (void *) _beginthreadex(0, 0, loft_par_thread, &jobs[k], 0, 0);
+            ids[k] = (void *) _beginthreadex(0, (unsigned) LOFT_PAR_STACK, loft_par_thread, &jobs[k], 0, 0);
             if (!ids[k]) {
 #else
-            if (pthread_create(&ids[k], 0, loft_par_thread, &jobs[k]) != 0) {
+            pthread_attr_t at;
+            int started;
+            pthread_attr_init(&at);
+            pthread_attr_setstacksize(&at, LOFT_PAR_STACK);
+            started = pthread_create(&ids[k], &at, loft_par_thread, &jobs[k]) == 0;
+            pthread_attr_destroy(&at);
+            if (!started) {
 #endif
                 free(jobs[k].table);
                 jobs[k].table = 0;

@@ -5501,7 +5501,9 @@ impl<'a> FnWriter<'a> {
         let test = as_cond(test)?;
         let view = format!("tv{}", self.decls.len() + 1);
         self.decls.push(format!("loft_str {view} = {{ 0, 0 }};"));
-        self.line(ind, &format!("if ({test}) {{"));
+        // One pair of parentheses: clang's `-Wparentheses-equality` refuses `if ((a == b))`
+        // under `-DLOFT_STRICT`'s `-Werror`.
+        self.line(ind, &format!("if ({}) {{", bare(&test)));
         let then = self.expr(then, ind + 1)?;
         self.line(ind + 1, &format!("{view} = {};", as_view(then)?));
         self.line(ind, "} else {");
