@@ -12108,8 +12108,10 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                     std::process::exit(1);
                 }
             };
+            // `binary-c`, apart from rustc's `binary`: which backend paid the compile is the
+            // question a ledger is read for when the per-change backend is the C.
             loft::platform::timing_record(
-                "binary",
+                "binary-c",
                 &fa::file_stem(&abs_file).unwrap_or_default(),
                 built.cached,
                 Some(t_compile.elapsed().as_secs_f64()),

@@ -22,7 +22,8 @@ user-invocable: true
 
 > **Do NOT edit the compiler until you have the WORKING bytecode/IR for THIS
 > situation, captured beside the current/broken bytecode, and proven correct on
-> BOTH backends (`--interpret` AND `--native`).**
+> BOTH backends (`--interpret` AND the C backend, `--native-c`) — and on rustc-native
+> (`--native`, `LOFT_NATIVE_BACKEND` unset) too when the edit is in what that writer emits.**
 
 This is the step that, skipped, wrecks codegen work. The proof is cheap (a `/tmp`
 source shape + `loft introspect` + a run on each backend); skipping it is what costs
@@ -166,7 +167,10 @@ new operator lands in all three: its `#rust` template in `default/*.loft` gives 
 interpreter (`make fill` regenerates `src/fill.rs`) and native, while the C backend
 implements it by hand (`src/c/body.rs` or a file under `src/c/body/`, plus its runtime
 header) and lists it in the
-operator shape table that matches its result (`OP_INT`, `OP_REF`, … in `src/c/body.rs`). A rung is closed ONLY when BOTH emit
+operator shape table that matches its result (`OP_INT`, `OP_REF`, … in `src/c/body.rs`).
+Per change, "both backends" is the interpreter and the C backend; rustc-native runs daily,
+and is added to a change's own checks only when the change is in `src/generation/`,
+`src/codegen_runtime.rs`, an operator's `#rust` body or a Rust native. A rung is closed ONLY when BOTH emit
 the proven bytecode and pass (correct + clean + no leak). An interp fix that breaks
 native compile is NOT landable. When they diverge on the same IR (one clean, one
 wrong/E0425), that divergence is the bug — neither "the suite is green" nor "interp
