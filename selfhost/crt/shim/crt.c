@@ -595,6 +595,12 @@ void loft_crt_vec_replace(int64_t v_store, int64_t v_rec, int64_t v_pos, int64_t
     else loft_vec_replace(loft_crt_types, loft_crt_ntypes, (uint16_t) tp, v, o);
 }
 
+/* `vector_sum_int` (KERNELS.md, `sum`'s integer loop): `acc` plus every element of the vector,
+ * with integer addition's rules — a null element or an overflow makes it null. */
+int64_t loft_crt_vector_sum_int(int64_t store, int64_t rec, int64_t pos, int64_t acc) {
+    return loft_vector_sum_int(loft_crt_ref(store, rec, pos), acc);
+}
+
 /* OpClearKeyed of a SECONDARY VIEW of a linked group (`CLEAR_KEYED_VIEW`): the view drops its own
  * route and leaves the records to the member that holds them (`remove_claims_keyed`). */
 void loft_crt_clear_view(int64_t store, int64_t rec, int64_t pos, int64_t tp) {

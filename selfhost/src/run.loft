@@ -746,6 +746,11 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
           sp_text -= 1;
           put_text(texts, sp_text, env_variable(texts[sp_text] ?? ""));
           sp_text += 1;
+        } else if op.a == 2 {
+          // `vector_sum_int(v, acc)`, the C runtime's own kernel.
+          sp_int -= 4;
+          put_int(ints, sp_int, crt::vector_sum_int(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3]));
+          sp_int += 1;
         }
       }
       // A format: the C runtime's routine for the value's kind renders it with the operands

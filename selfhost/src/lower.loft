@@ -522,6 +522,7 @@ fn kind_of(l: Lowering, b: ir::Bundle, n: ir::Node) -> Kind {
     NdCall { def_nr, args: _ } => kind_of_types(b.data.definitions[def_nr]?.returned),
     NdTuple { items: _ } => KTuple,
     NdTupleGet { var, idx } => kind_of_type(member_type(b, l.def_nr, var, idx)),
+    NdInsert { items } => if len(items) == 0 { KNone } else { kind_of(l, b, items[len(items) - 1]!) },
     _ => KNone,
   }
 }
@@ -803,6 +804,7 @@ fn native_index(name: text) -> integer? {
   match name {
     "n_assert" => 0,
     "n_env_variable" => 1,
+    "n_vector_sum_int" => 2,
     _ => null,
   }
 }
@@ -960,6 +962,18 @@ fn expr(l: Lowering, b: ir::Bundle, n: ir::Node) {
         value(l, b, inner, l.result);
         emit(l, Ret, stack_of(l.result), 0, 0);
       }
+    }
+    // Statements the compiler inserted in place of a value (`Value::Insert`): all but the last
+    // are statements, the last is the value.
+    NdInsert { items } => {
+      if len(items) == 0 {
+        refuse(l, "an inserted value with no items");
+        return;
+      }
+      for i in 0..len(items) - 1 {
+        statement(l, b, items[i]!);
+      }
+      expr(l, b, items[len(items) - 1]!);
     }
     // A tuple literal where no tuple type is handed down (a block's tail, an arm): each item at
     // its own kind; one value on the stacks.  A bare `null` item needs its member's type, which

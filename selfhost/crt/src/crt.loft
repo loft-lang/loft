@@ -409,6 +409,9 @@ fn c_free_record_in(store: integer, rec: integer, pos: integer, tp: integer);
 fn c_vec_replace(v_store: integer, v_rec: integer, v_pos: integer, o_store: integer, o_rec: integer, o_pos: integer, tp: integer, linked: boolean);
 #c "loft_crt_vec_replace" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 
+fn c_vector_sum_int(store: integer, rec: integer, pos: integer, acc: integer) -> integer;
+#c "loft_crt_vector_sum_int" "int64_t(int64_t, int64_t, int64_t, int64_t)"
+
 fn c_clear_view(store: integer, rec: integer, pos: integer, tp: integer);
 #c "loft_crt_clear_view" "void(int64_t, int64_t, int64_t, int64_t)"
 
@@ -448,6 +451,12 @@ pub fn free_record_in(store: integer, rec: integer, pos: integer, tp: integer) {
 // `OpReplaceVector`: `v`'s elements replaced by `o`'s.
 pub fn vec_replace(v_store: integer, v_rec: integer, v_pos: integer, o_store: integer, o_rec: integer, o_pos: integer, tp: integer, linked: boolean) {
   c_vec_replace(v_store, v_rec, v_pos, o_store, o_rec, o_pos, tp, linked);
+}
+
+// `vector_sum_int`, the kernel `sum`'s integer loop calls: `acc` plus every element, null on a
+// null element or an overflow.
+pub fn vector_sum_int(store: integer, rec: integer, pos: integer, acc: integer?) -> integer? {
+  c_vector_sum_int(store, rec, pos, acc ?? -9223372036854775807 - 1)
 }
 
 // `OpClearKeyed` of a linked group's secondary view: its own route dropped, the records left to
