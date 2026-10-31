@@ -670,7 +670,11 @@ falls back to the plain re-initialisation for any other root.  **The prologue cl
 (2026-10-31, zttext `flow_layout_full`, a driver running only that routine, gcc): `slice_runs`
 is called three times a token and its prologue reset the store twice — the clear's reset
 (`loft_st_init`, the root claimed, zeroed, the room pre-sized) and the mint's — 0.37 → 0.31 s,
-**−16 %**, the answer unchanged.  **Priced** with the window
+**−16 %**, the answer unchanged.  **BUILT** (2026-10-31, `FnWriter::clear_before_mint`, both
+statement loops), to the hand form exactly; switch `LOFT_NO_PROLOGUE_CLEAR_DROP=1`.  Alone it
+reads `flow_layout_full` 0.844× and zttext `seg` +4 %, `locate` +3.5 % on gcc — with 8 % fewer
+instructions over the whole run: the mint gcc no longer reached through a call is inlined into
+`seg`, a code decision, not work.  **Priced** with the window
 clause of (R-AppendTwin) (2026-10-31, by hand, same hashes): `encode_bytes` 2.28× → **1.94×**
 the twin.  **BUILT on the C** (2026-10-31): `loft_database_room` in `loft_rt.h` — the wrapper's
 mint as before, then the vector re-reserved at the capacity it had reached, when the variable

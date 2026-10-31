@@ -4162,7 +4162,7 @@ reads such a `main` as a possible leak, and it is a working set.
                  the one that releases it.  The live-flip check stays.
 ```
 
-**(R-FnRefBuffer), in words — PRICED 2026-10-31, to build.**  zttext's layout takes its style
+**(R-FnRefBuffer), in words — BUILT 2026-10-31.**  zttext's layout takes its style
 resolver as a function value, `resolve: fn(integer) -> Style`, and calls it for every run of
 every token, three times a token; each call minted a `Style` store (`default_style`'s
 `loft_database`), adopted it and freed it at the end of the pass — 15 % of the routine.  The
@@ -4172,7 +4172,23 @@ caller's store and every resolver site taking it, kept across the inner loop onl
 (−6.5 %) — the inner loop walks a token's RUNS, one per token here — and kept across the whole
 frame, 0.29 → 0.26 s: **−16 %** in all.  Not priced: the buffer handed down from caller to
 callee across frames (`token_width` is called once per token), which is `(R-WorkBuffer)`'s
-result clause made transitive.
+result clause made transitive.  Built (`src/c/fnval.rs` — the `loft_call{n}b` dispatcher,
+asked for per signature through `Cx::fn_sigs_buf`; `FnWriter::opaque_callref_stmt` — the handed
+store and the in-place branch; `src/c/body/loop_record.rs` `fnref_kept` — the admission, the
+per-pass frees dropped, one free after the outermost loop): 0.27 s against the hand form's 0.26,
+the difference the call site's adopt-or-copy branches, which a resolver answering a table
+record needs.  Building to the hand form found three defects of the build's own: the target's
+buffer slot was matched by its whole `Type` (the deps differ — no buffer was ever passed), the
+in-place test compared store and record but not position (a vector's elements share one
+record), and the buffer dispatcher kept the hold bookkeeping its caller does not need (−0.02 s
+when dropped).  A record held apart (`@FR-R-Apart`) is no loop record to keep (`lr_kept`): the
+sweep's strict mode found a flag used and never declared there.  Bench (A/B, gcc, both clauses
+of this pass off against on): zttext `flow_layout_full` **0.735×** gcc, **0.777×** clang; all
+libraries 2 faster, 112 the same; zttext `seg` and `locate` +3.5–5 % on gcc only (the whole
+run executes 8 % FEWER instructions — the dropped clear's work moved, gcc inlined the mint into
+`seg`; clang reads them the same).  Switch `LOFT_NO_FNREF_BUFFER=1`, trace
+`LOFT_TRACE_FNREF_BUFFER=1`, census `R-FnRefBuffer`.  Guard
+`tests/scripts/a-function-value-fills-its-callers-record.loft`.
 
 **In words.** @PLN157 N4.  A runtime fault inside a leaf keeps its exact position
 and loses only the innermost frame NAME from the chain.  Switch
