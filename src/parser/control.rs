@@ -14488,7 +14488,7 @@ impl Parser {
         self.data.def(self.context).attributes().iter().any(|a| {
             a.hidden
                 && a.name != n
-                && matches!(&a.typedef, Type::RefVar(t) if matches!(**t, Type::Text(_)))
+                && matches!(&a.typedef, Type::RefVar(t) if matches!(t.base(), Type::Text(_)))
         })
     }
 
