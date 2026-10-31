@@ -195,6 +195,9 @@ pub(crate) struct Cx<'a> {
     /// The signatures the unit calls function values through: `loft_call{n}`.
     /// The dispatcher signatures: each parameter's shape and whether it is a `&` link.
     fn_sigs: std::cell::RefCell<Vec<(Vec<(CType, u8)>, CType)>>,
+    /// `@FR-R-FnRefBuffer`: the signatures a call asked for with the caller's record buffer —
+    /// each gets a `loft_call{n}b` dispatcher beside `loft_call{n}`.
+    pub(crate) fn_sigs_buf: std::cell::RefCell<std::collections::BTreeSet<usize>>,
     /// Every function the unit uses as a value, by definition number.
     fn_values: std::cell::RefCell<std::collections::BTreeSet<u32>>,
     /// Every type the unit compares by content (`loft_eq{tp}`), by type number.
@@ -349,6 +352,7 @@ impl<'a> Cx<'a> {
             deliver_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             consts: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             fn_sigs: std::cell::RefCell::new(Vec::new()),
+            fn_sigs_buf: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             fn_values: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             eq_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             key_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),

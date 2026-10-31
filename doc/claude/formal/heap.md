@@ -648,6 +648,13 @@ and take every later claim off the bump path (@PLN157 § V-ai).
                  last fill reached — exactly as (H-ClearRelease)'s reset does, and
                  releases what the elements owned as that reset does.  The vector
                  reads empty and present; nothing else of the store survives.
+                 THE PROLOGUE CLAUSE: a clear of the buffer (`OpClearVector(x)`) that
+                 stands directly before such a mint of the same variable — line
+                 markers only between — is the mint's own work, done twice: the mint
+                 empties the vector and releases what its elements owned, so the clear
+                 is not written.  A buffer a live generator frame names is ORPHANED by
+                 the mint (G-Arg-Rebind), and the clear would have emptied the value
+                 that frame was handed — dropping it is that rule's own answer too.
 ```
 
 **In words.**  A capacity is no value: a vector of length zero with room for 16 000 bytes and
@@ -659,7 +666,11 @@ the callee's prologue clears (`loft_vec_clear_release`, already at the reached c
 across its 100 calls, regrows 16 KiB from nothing on every call (`loft_st_resize`,
 `loft_vec_reserve_more`, the `memmove` of each rung).  The mint keeps the same gate as the
 reset — the SHAPE (a store-root `main_vector<T>`) read from the layout, never an offset — and
-falls back to the plain re-initialisation for any other root.  **Priced** with the window
+falls back to the plain re-initialisation for any other root.  **The prologue clause, priced**
+(2026-10-31, zttext `flow_layout_full`, a driver running only that routine, gcc): `slice_runs`
+is called three times a token and its prologue reset the store twice — the clear's reset
+(`loft_st_init`, the root claimed, zeroed, the room pre-sized) and the mint's — 0.37 → 0.31 s,
+**−16 %**, the answer unchanged.  **Priced** with the window
 clause of (R-AppendTwin) (2026-10-31, by hand, same hashes): `encode_bytes` 2.28× → **1.94×**
 the twin.  **BUILT on the C** (2026-10-31): `loft_database_room` in `loft_rt.h` — the wrapper's
 mint as before, then the vector re-reserved at the capacity it had reached, when the variable

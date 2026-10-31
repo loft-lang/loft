@@ -158,6 +158,8 @@ pub(crate) struct FnWriter<'a> {
     dc: deferred::DeferredCopies,
     /// `@FR-R-LoopRecord`'s refill clause: the loop records this function keeps.
     lr: loop_record::LoopRecordPort,
+    /// `@FR-R-FnRefBuffer`: the store the next function-value call is handed, set by the bind.
+    callref_buf: Option<String>,
     /// Which value-record parameters arrive as `const loft_tupN *` (`Cx::vr_ptr_params`,
     /// `@FR-R-ValueRecord`'s pointer clause): read through (`(*v)`), never written.
     vr_ptr: Vec<bool>,
@@ -642,6 +644,7 @@ impl<'a> FnWriter<'a> {
             vr_ptr: vr_ptr_flags(cx, d),
             dc: deferred::DeferredCopies::default(),
             lr: loop_record::LoopRecordPort::of(cx, d),
+            callref_buf: None,
             // A store instance's text parameter (`n_app@st1`, `parser/store_text.rs`) is a
             // store link: the IR reads and writes it as the field it names.
             store_links: {
@@ -2469,6 +2472,10 @@ impl<'a> FnWriter<'a> {
                 run_end = end;
                 run_head = head;
             }
+            if self.clear_before_mint(ops, i) {
+                i += 1;
+                continue;
+            }
             // `@FR-R-Apart` instance 2: a construction run builds its value as a whole.
             if let Some(next) = self.av_construction(ops, i, ind)? {
                 ops[i..next]
@@ -2614,6 +2621,52 @@ impl<'a> FnWriter<'a> {
             }
         }
         false
+    }
+
+    /// `@FR-H-KeepRoom`'s prologue clause: statement `i` clears a vector buffer `x`
+    /// (`OpClearVector(x)`) and the next statement, line markers aside, mints `x` again as a
+    /// vector wrapper — a mint that empties the vector and releases what its elements owned, so
+    /// the clear is that work done twice.  `LOFT_NO_PROLOGUE_CLEAR_DROP=1` writes it.
+    fn clear_before_mint(&self, ops: &[Value], i: usize) -> bool {
+        let data = self.cx.data;
+        let named = |v: &Value, n: &str| -> Option<Vec<Value>> {
+            match v.unspan() {
+                Value::Call(d, a)
+                    if (*d as usize) < data.definitions.len() && data.def(*d).name() == n =>
+                {
+                    Some(a.clone())
+                }
+                _ => None,
+            }
+        };
+        let Some(args) = ops.get(i).and_then(|o| named(o, "OpClearVector")) else {
+            return false;
+        };
+        let Some(Value::Var(x)) = args.first().map(Value::unspan) else {
+            return false;
+        };
+        if self.ap_views.contains(x)
+            || std::env::var("LOFT_NO_PROLOGUE_CLEAR_DROP").is_ok_and(|v| v != "0")
+        {
+            return false;
+        }
+        let Some(next) = ops[i + 1..]
+            .iter()
+            .find(|o| !matches!(o.unspan(), Value::Line(_)))
+        else {
+            return false;
+        };
+        let Some(m) = named(next, "OpDatabase") else {
+            return false;
+        };
+        match (m.first().map(Value::unspan), m.get(1).map(Value::unspan)) {
+            (Some(Value::Var(y)), Some(Value::Int(tp))) if y == x => {
+                u16::try_from(*tp).is_ok_and(|tp| {
+                    self.cx.stores.is_vector_wrapper(tp) && !self.lr.recs.contains_key(x)
+                })
+            }
+            _ => false,
+        }
     }
 
     /// `@FR-R-PushFill`'s run clause on the C: a straight-line RUN of `k >= 2` scalar pushes onto
@@ -4710,8 +4763,25 @@ impl<'a> FnWriter<'a> {
         let clos = format!("{}.clos", self.var(*fv));
         self.line(ind, &format!("{dst} = {name};"));
         self.line(ind, &format!("{since} = (int64_t) loft_stores_allocated;"));
+        // `@FR-R-FnRefBuffer`: a kept binding is handed to the target as its record buffer, and
+        // an answer in that store is the binding already.
+        let in_place = self.lr.fnref_bufs.contains(&var);
+        if in_place {
+            self.callref_buf = Some(name.to_string());
+            crate::rewrite_census::fired("R-FnRefBuffer", 1);
+        }
         let e = self.expr(x, ind)?;
+        self.callref_buf = None;
         self.line(ind, &format!("{src} = {};", as_ref(e)?));
+        if in_place {
+            self.line(
+                ind,
+                &format!(
+                    "if ({src}.store_nr != 0xFFFF && {src}.store_nr == {name}.store_nr && {src}.rec == {name}.rec && {src}.pos == {name}.pos) {{"
+                ),
+            );
+            self.line(ind, "} else");
+        }
         self.line(
             ind,
             &format!("if (loft_fnref_minted({src}, (uint64_t) {since}, {clos})) {{"),
@@ -5085,6 +5155,9 @@ impl<'a> FnWriter<'a> {
                 {
                     run_end = end;
                     run_head = head;
+                }
+                if self.clear_before_mint(&ops[..at], i) {
+                    continue;
                 }
                 self.stmt(&ops[i], ind)?;
                 self.bind_view_header(ops, i, ind);
@@ -6241,7 +6314,15 @@ impl<'a> FnWriter<'a> {
         self.value_args(&args[..shapes.len()], &shapes, &values, &mut xs, false, ind)?;
         let mut list = vec![self.var(v)];
         list.extend(xs);
-        let call = format!("loft_call{sig}({})", list.join(", "));
+        // `@FR-R-FnRefBuffer`: a kept binding hands its own store to the target.
+        let buf = self.callref_buf.take().filter(|_| ret == CType::Ref);
+        let call = if let Some(b) = buf {
+            cx.fn_sigs_buf.borrow_mut().insert(sig);
+            list.push(b);
+            format!("loft_call{sig}b({})", list.join(", "))
+        } else {
+            format!("loft_call{sig}({})", list.join(", "))
+        };
         Ok(match ret {
             CType::Text => {
                 let t = self.temp(CType::Text);

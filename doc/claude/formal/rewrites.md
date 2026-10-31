@@ -4140,12 +4140,39 @@ reads such a `main` as a possible leak, and it is a working set.
 ### A leaf carries no frame
 
 ```
+  (R-FnRefBuffer) on the C, a function value whose call answers a record is
+                 handed the binding's own store as its return buffer: the dispatcher
+                 sees every target the program can pass (a closed world), and a target
+                 that takes a hidden record buffer is passed the caller's where it was
+                 passed null.  The bind keeps `(O-Unknown)`'s protocol for every other
+                 answer — a store the call minted is adopted, one that predates the call
+                 is copied — and adds the third: an answer IN the handed store is the
+                 binding already, nothing to adopt or copy.  The binding — a local
+                 bound only by such calls inside a loop, read in place or handed to a
+                 call whose return cannot borrow it — keeps its store across the passes
+                 (the per-pass free dropped, one free after the outermost loop), so the
+                 target fills one store per frame instead of minting one per call.  A
+                 target that keeps or returns some other record is unaffected: its
+                 answer is not the handed store, and the protocol takes it as before.
+
   (R-Leaf)       a function whose body calls no user function and no fn-ref (a store
                  bracket, as in (R-LeafChain), is none) — a LEAF — is emitted without a shadow-stack frame push and without a fn-ref
                  buffer guard: it cannot recurse, cannot reach stack_trace / assert /
                  panic, and cannot sit between the frame that pushed a buffer and
                  the one that releases it.  The live-flip check stays.
 ```
+
+**(R-FnRefBuffer), in words — PRICED 2026-10-31, to build.**  zttext's layout takes its style
+resolver as a function value, `resolve: fn(integer) -> Style`, and calls it for every run of
+every token, three times a token; each call minted a `Style` store (`default_style`'s
+`loft_database`), adopted it and freed it at the end of the pass — 15 % of the routine.  The
+Rust twin is generic over the resolver and calls it directly.  Priced by hand on the C
+(`flow_layout_full`, gcc, after `(H-KeepRoom)`'s prologue clause): the dispatcher passing the
+caller's store and every resolver site taking it, kept across the inner loop only, 0.31 → 0.29 s
+(−6.5 %) — the inner loop walks a token's RUNS, one per token here — and kept across the whole
+frame, 0.29 → 0.26 s: **−16 %** in all.  Not priced: the buffer handed down from caller to
+callee across frames (`token_width` is called once per token), which is `(R-WorkBuffer)`'s
+result clause made transitive.
 
 **In words.** @PLN157 N4.  A runtime fault inside a leaf keeps its exact position
 and loses only the innermost frame NAME from the chain.  Switch

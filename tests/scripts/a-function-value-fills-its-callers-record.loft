@@ -1,0 +1,91 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-FnRefBuffer`: on the C, a call through a function value that answers a record is
+// handed the binding's own store, kept across a loop's passes, and a target that fills it
+// answers in place.  What a kept store could get wrong is a target that does NOT fill it: one
+// answering a record of a table (its answer must be copied, the table left whole), one answering
+// a captured record, a function value that changes between passes, and the value read after the
+// loop.  Values hand-computed; every cell also checks the record it handed out was not written
+// through.
+//
+// @falsified-at: none — the rule has no earlier build to catch; the receipt is a defect planted
+//   in the generated C (2026-10-31): an in-place test that takes every answer as the binding's
+//   own leaves the binding unset on the first pass, and f1 reads null.  (A bind that adopts a
+//   table record instead of copying it was NOT observable: freeing a reference to an element,
+//   not a store's root, releases nothing.)
+//   CHANNEL: an assertion.
+
+struct Sty { size: float, weight: integer, italic: boolean }
+
+fn fresh(id: integer) -> Sty { Sty { size: 1.0 + id as float, weight: id * 100, italic: id % 2 == 1 } }
+
+fn width(s: const Sty) -> float { s.size * 10.0 + s.weight as float }
+
+fn walk(n: integer, resolve: fn(integer) -> Sty) -> float {
+  w = 0.0;
+  for i in 0..n {
+    st = resolve(i % 4);
+    w += width(st);
+    if st.italic { w += 0.5; }
+  }
+  w
+}
+
+TABLE = 0;
+
+fn main() {
+  // f1 — a fresh record per call: ids 0..3 cycle, n = 8.
+  // width(id) = (1 + id)·10 + 100·id: 10, 120, 230, 340 → 700 per cycle, 1400 for 8;
+  // italic ids 1 and 3: 4 × 0.5 = 2.0 → 1402
+  f1 = walk(8, fresh);
+  assert(f1 == 1402.0, "f1 {f1}");
+
+  // f2 — a record of a table: each call answers styles[id], which the kept store must COPY,
+  // never take over or write — the table reads the same afterwards.
+  styles: vector<Sty> = [];
+  for k in 0..4 { styles += [Sty { size: 2.0 * k as float, weight: k, italic: false }]; }
+  from_table = fn(id: integer) -> Sty { styles[id] ?? Sty { size: 0.0, weight: 0, italic: false } };
+  // width = 20k + k = 21k: 0, 21, 42, 63 → 126 per cycle, 252 for 8, none italic
+  f2 = walk(8, from_table);
+  assert(f2 == 252.0, "f2 {f2}");
+  // the closure's captured table answers the same on a second walk
+  f2b = walk(8, from_table);
+  assert(f2b == 252.0, "f2 second walk {f2b}");
+  assert(styles[0].size == 0.0 && styles[3].size == 6.0 && styles[3].weight == 3,
+         "f2 table kept: {styles[0].size} {styles[3].size} {styles[3].weight}");
+  // the table is still the program's own after the walk: it grows and reads back
+  for k in 4..40 { styles += [Sty { size: 2.0 * k as float, weight: k, italic: false }]; }
+  tw = 0;
+  for s in styles { tw += s.weight; }
+  // 0 + 1 + … + 39 = 780
+  assert(len(styles) == 40 && tw == 780, "f2 table after: {len(styles)} {tw}");
+
+  // f3 — a captured record answered every time: width 5·10 + 7 = 57, italic → 57.5, ×6 = 345
+  cap = Sty { size: 5.0, weight: 7, italic: true };
+  captured = fn(id: integer) -> Sty { cap };
+  f3 = walk(6, captured);
+  assert(f3 == 345.0, "f3 {f3}");
+  assert(cap.size == 5.0 && cap.weight == 7, "f3 capture kept: {cap.size} {cap.weight}");
+
+  // f4 — the function value changes between passes: even passes fresh(i % 4), odd from the table.
+  // i: 0 fresh(0)=10, 1 table(1)=21, 2 fresh(2)=230, 3 table(3)=63, 4 fresh(0)=10, 5 table(1)=21
+  // → 355, no italic (fresh(1)/fresh(3) never reached)
+  f4 = 0.0;
+  for i in 0..6 {
+    r = if i % 2 == 0 { fresh } else { from_table };
+    s = r(i % 4);
+    f4 += width(s);
+  }
+  assert(f4 == 355.0, "f4 {f4}");
+
+  // f5 — the kept value read after the loop: the last pass's record, fresh(3) → 340
+  last = 0.0;
+  for i in 0..4 {
+    st = fresh(i);
+    last = width(st);
+  }
+  assert(last == 340.0, "f5 {last}");
+  assert(TABLE == 0, "unused");
+  println("ok");
+}
