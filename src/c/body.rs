@@ -2662,7 +2662,7 @@ impl<'a> FnWriter<'a> {
         match (m.first().map(Value::unspan), m.get(1).map(Value::unspan)) {
             (Some(Value::Var(y)), Some(Value::Int(tp))) if y == x => {
                 u16::try_from(*tp).is_ok_and(|tp| {
-                    self.cx.stores.is_vector_wrapper(tp) && !self.lr.recs.contains_key(x)
+                    self.cx.stores.is_vector_wrapper(tp) && !self.lr_kept(*x)
                 })
             }
             _ => false,
@@ -3652,7 +3652,7 @@ impl<'a> FnWriter<'a> {
             .lr
             .recs
             .iter()
-            .filter(|(_, s)| **s == b.scope)
+            .filter(|(v, s)| **s == b.scope && self.lr_kept(**v))
             .map(|(v, _)| *v)
             .collect();
         kept.sort_unstable();
@@ -4765,7 +4765,7 @@ impl<'a> FnWriter<'a> {
         self.line(ind, &format!("{since} = (int64_t) loft_stores_allocated;"));
         // `@FR-R-FnRefBuffer`: a kept binding is handed to the target as its record buffer, and
         // an answer in that store is the binding already.
-        let in_place = self.lr.fnref_bufs.contains(&var);
+        let in_place = self.lr.fnref_bufs.contains(&var) && self.lr_kept(var);
         if in_place {
             self.callref_buf = Some(name.to_string());
             crate::rewrite_census::fired("R-FnRefBuffer", 1);
@@ -7544,7 +7544,7 @@ impl<'a> FnWriter<'a> {
         self.cx.describe_type(tp);
         let var = self.var(v);
         // `@FR-R-LoopRecord`'s refill clause: a kept record mints only where it holds no store.
-        if self.lr.recs.contains_key(&v) {
+        if self.lr_kept(v) && !self.lr.fnref_bufs.contains(&v) {
             let fresh = format!("lrf{v}");
             if !self
                 .decls
