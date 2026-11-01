@@ -204,9 +204,9 @@ pub fn set_slot_text(store: integer, at: integer, v: text?) {
   c_set_slot_text(store, at, v ?? "", bytes_of(v));
 }
 
-// `v` appended to a text local; a null local becomes `v`.
-pub fn slot_text_append(store: integer, at: integer, v: text) {
-  c_slot_text_append(store, at, v, v.size());
+// `v` appended to a text local: a null local stays null, a null `v` makes it null.
+pub fn slot_text_append(store: integer, at: integer, v: text?) {
+  c_slot_text_append(store, at, v ?? "", bytes_of(v));
 }
 
 // `OpClearText` of a text local.
@@ -756,8 +756,8 @@ fn c_hash_insert(store: integer, rec: integer, pos: integer, r_store: integer, r
 fn c_hash_remove(store: integer, rec: integer, pos: integer, r_store: integer, r_rec: integer, r_pos: integer, elem: integer, tp: integer, view: boolean);
 #c "loft_crt_hash_remove" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 
-fn c_set_keyed(store: integer, rec: integer, pos: integer, v_store: integer, v_rec: integer, v_pos: integer, elem: integer, tp: integer, n: integer, free_source: boolean);
-#c "loft_crt_set_keyed" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_set_keyed(store: integer, rec: integer, pos: integer, v_store: integer, v_rec: integer, v_pos: integer, elem: integer, tp: integer, n: integer, free_source: boolean, kind: integer);
+#c "loft_crt_set_keyed" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 
 fn c_hash_bytes(store: integer, rec: integer, pos: integer) -> integer;
 #c "loft_crt_hash_bytes" "int64_t(int64_t, int64_t, int64_t)"
@@ -803,8 +803,8 @@ pub fn hash_remove(store: integer, rec: integer, pos: integer, r_store: integer,
 
 // `OpSetKeyed` (`c[k…] = v`): a copy of `v` filed in hash `tp` under the top `n` key parts (each
 // pushed with `key_*`), which are popped; `free_source` releases `v`'s store after.
-pub fn set_keyed(store: integer, rec: integer, pos: integer, v_store: integer, v_rec: integer, v_pos: integer, elem: integer, tp: integer, n: integer, free_source: boolean) {
-  c_set_keyed(store, rec, pos, v_store, v_rec, v_pos, elem, tp, n, free_source);
+pub fn set_keyed(store: integer, rec: integer, pos: integer, v_store: integer, v_rec: integer, v_pos: integer, elem: integer, tp: integer, n: integer, free_source: boolean, kind: integer) {
+  c_set_keyed(store, rec, pos, v_store, v_rec, v_pos, elem, tp, n, free_source, kind);
 }
 
 // `OpSizeHash`: a hash's bucket table in bytes, holes included.
@@ -925,8 +925,8 @@ pub fn trace_mark() {
 // The interpreted program's File records, through the C runtime's own file routines; a relative
 // path resolves against `LOFT_SOURCE_DIR` as a C program's does.
 
-fn c_fs_anchor();
-#c "loft_crt_fs_anchor" "void()"
+fn c_fs_anchor(program_relative: boolean);
+#c "loft_crt_fs_anchor" "void(int64_t)"
 
 fn c_get_file(store: integer, rec: integer, pos: integer) -> integer;
 #c "loft_crt_get_file" "int64_t(int64_t, int64_t, int64_t)"
@@ -970,9 +970,10 @@ fn c_de_at(store: integer, rec: integer, pos: integer, off: integer, w: integer,
 fn c_de_int(off: integer, w: integer, sgn: boolean, le: boolean) -> integer;
 #c "loft_crt_de_int" "int64_t(int64_t, int64_t, int64_t, int64_t)"
 
-// The run starts in the program's directory: relative paths resolve against it.
-pub fn fs_anchor() {
-  c_fs_anchor();
+// The run's relative paths resolve against the program's directory, or against the working
+// directory for a program that declared `#cwd` (`program_relative` false).
+pub fn fs_anchor(program_relative: boolean) {
+  c_fs_anchor(program_relative);
 }
 
 // `OpGetFile`: what the File's path names.
@@ -1097,4 +1098,140 @@ pub fn write_text_raw(store: integer, rec: integer, pos: integer, v: text?) -> b
 // `list_dir(path)`: the names in a store of their own, into `out`.
 pub fn list_dir(out: vector<integer>, path: text) {
   c_list_dir(out, path, path.size());
+}
+
+fn c_store_native(which: integer, store: integer, rec: integer, pos: integer, arg: integer) -> integer;
+#c "loft_crt_store_native" "int64_t(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_add_arg(v: text, bytes: integer);
+#c "loft_crt_add_arg" "void(const char*, int64_t)"
+
+fn c_arguments(out: vector<integer>) -> integer;
+#c "loft_crt_arguments" "int64_t(int64_t*, int64_t)"
+
+// `protect_store_frees` (0), `unprotect_store_frees` (1), `get_store_lock` (2), `set_store_lock`
+// (3, `arg` the lock), `store_reclaim` (4): the C runtime's own.
+pub fn store_native(which: integer, store: integer, rec: integer, pos: integer, arg: integer) -> integer {
+  c_store_native(which, store, rec, pos, arg)
+}
+
+// One argument of the interpreted program's command line, after its name.
+pub fn add_arg(v: text) {
+  c_add_arg(v, v.size());
+}
+
+// `arguments()`: the program's arguments in a store of their own, into `out`.
+pub fn arguments_into(out: vector<integer>) {
+  c_arguments(out);
+}
+
+fn c_add_type_name(v: text, bytes: integer);
+#c "loft_crt_add_type_name" "void(const char*, int64_t)"
+
+fn c_type_names() -> integer;
+#c "loft_crt_type_names" "int64_t()"
+
+fn c_store_memory(out: vector<u8>) -> integer;
+#c "loft_crt_store_memory" "int64_t(char*, int64_t)"
+
+// The bundle's type names, by number, for the reports that name a store's type; once per run.
+pub fn type_names(names: vector<text>) {
+  if c_type_names() == 0 {
+    for n in names {
+      c_add_type_name(n, n.size());
+    }
+  }
+}
+
+// `store_memory()`: the C runtime's own report.
+pub fn store_memory() -> text {
+  buf = room(1024);
+  n = c_store_memory(buf);
+  if n > len(buf) {
+    buf = room(n);
+    n = c_store_memory(buf);
+  }
+  text_from_byte_range(buf, 0, n)
+}
+
+// ── S4: keyed collections beyond a hash (kind 1 a sorted, 2 an ordered, 3 an index) ─────────────
+
+fn c_keyed_new(out: vector<integer>, store: integer, rec: integer, pos: integer, kind: integer, size: integer) -> integer;
+#c "loft_crt_keyed_new" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_keyed_finish(store: integer, rec: integer, pos: integer, r_store: integer, r_rec: integer, r_pos: integer, kind: integer, elem: integer, tp: integer);
+#c "loft_crt_keyed_finish" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_keyed_find(out: vector<integer>, store: integer, rec: integer, pos: integer, kind: integer, tp: integer, n: integer) -> integer;
+#c "loft_crt_keyed_find" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_keyed_remove(store: integer, rec: integer, pos: integer, r_store: integer, r_rec: integer, r_pos: integer, kind: integer, elem: integer, tp: integer, view: boolean);
+#c "loft_crt_keyed_remove" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_walk_key(tp: integer, pos: integer, start: integer);
+#c "loft_crt_walk_key" "void(int64_t, int64_t, int64_t)"
+
+fn c_keyed_iterate(store: integer, rec: integer, pos: integer, on: integer, arg: integer, nfrom: integer, ntill: integer) -> integer;
+#c "loft_crt_keyed_iterate" "int64_t(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_keyed_step(out: vector<integer>, state: integer, store: integer, rec: integer, pos: integer, on: integer, arg: integer) -> integer;
+#c "loft_crt_keyed_step" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+// `OpNewRecord` in a sorted (staged past its end) or an ordered or index (a record of its own).
+pub fn keyed_new(out: vector<integer>, store: integer, rec: integer, pos: integer, kind: integer, size: integer) {
+  c_keyed_new(out, store, rec, pos, kind, size);
+}
+
+// `OpFinishRecord`: filed under its key, an equal key's element replaced.
+pub fn keyed_finish(store: integer, rec: integer, pos: integer, r_store: integer, r_rec: integer, r_pos: integer, kind: integer, elem: integer, tp: integer) {
+  c_keyed_finish(store, rec, pos, r_store, r_rec, r_pos, kind, elem, tp);
+}
+
+// `OpGetRecord`: the element the top `n` key parts name, into `out`.
+pub fn keyed_find(out: vector<integer>, store: integer, rec: integer, pos: integer, kind: integer, tp: integer, n: integer) {
+  c_keyed_find(out, store, rec, pos, kind, tp, n);
+}
+
+// `OpHashRemove` on a sorted, an ordered or an index.
+pub fn keyed_remove(store: integer, rec: integer, pos: integer, r_store: integer, r_rec: integer, r_pos: integer, kind: integer, elem: integer, tp: integer, view: boolean) {
+  c_keyed_remove(store, rec, pos, r_store, r_rec, r_pos, kind, elem, tp, view);
+}
+
+// One part of a walk's key list.
+pub fn walk_key(tp: integer, pos: integer, start: integer) {
+  c_walk_key(tp, pos, start);
+}
+
+// `OpIterate` over an index, a sorted or an ordered: the first state.
+pub fn keyed_iterate(store: integer, rec: integer, pos: integer, on: integer, arg: integer, nfrom: integer, ntill: integer) -> integer {
+  c_keyed_iterate(store, rec, pos, on, arg, nfrom, ntill)
+}
+
+// `OpStep` of such a walk: the element into `out[0..3]`, the next state into `out[3]`.
+pub fn keyed_step(out: vector<integer>, state: integer, store: integer, rec: integer, pos: integer, on: integer, arg: integer) {
+  c_keyed_step(out, state, store, rec, pos, on, arg);
+}
+
+fn c_index_len(store: integer, rec: integer, pos: integer, which: integer) -> integer;
+#c "loft_crt_index_len" "int64_t(int64_t, int64_t, int64_t, int64_t)"
+
+fn c_radix_snap(out: vector<integer>, store: integer, rec: integer, pos: integer, which: integer, tp: integer, ints: vector<integer>, pre: text, pre_bytes: integer) -> integer;
+#c "loft_crt_radix_snap" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, const int64_t*, int64_t, const char*, int64_t)"
+
+// `OpLengthIndex` (0), `OpSizeIndex` (1), `OpLengthSpatial` / `OpLengthTrie` (2), `OpSizeSpatial` (3).
+pub fn index_len(store: integer, rec: integer, pos: integer, which: integer) -> integer {
+  c_index_len(store, rec, pos, which)
+}
+
+// A spatial or trie snapshot (`which` 0 all, 1 a range of eight integers, 2 a prefix and a limit).
+pub fn radix_snap(out: vector<integer>, store: integer, rec: integer, pos: integer, which: integer, tp: integer, ints: vector<integer>, pre: text?) {
+  c_radix_snap(out, store, rec, pos, which, tp, ints, pre ?? "", bytes_of(pre));
+}
+
+fn c_walk_remove(state: integer, store: integer, rec: integer, pos: integer, on: integer, tp: integer) -> integer;
+#c "loft_crt_walk_remove" "int64_t(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+// `OpRemove`: the walk's last element removed; the state the walk goes on from.
+pub fn walk_remove(state: integer, store: integer, rec: integer, pos: integer, on: integer, tp: integer) -> integer {
+  c_walk_remove(state, store, rec, pos, on, tp)
 }

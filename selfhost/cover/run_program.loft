@@ -7,6 +7,9 @@
 // trace's `M` line (`LOFT_CRT_ALLOC_TRACE`), as the Rust interpreter does on entering a program.  A construct it does not carry yet is reported on stderr as
 // `refused: <reason>` with exit 3, so the census can rank what blocks the most programs.  A run
 // that leaves records of the C runtime's stores live is reported as `leak: <n>` with exit 4.
+// The runner keeps the working directory it was started in: the interpreted program's anchor is
+// the shim's (`crt::fs_anchor`), which moves into the program's directory unless it declared `#cwd`.
+#cwd
 use load;
 use lower;
 use run;
@@ -26,9 +29,14 @@ fn main() {
     exit(3);
   }
   // A relative path of the program's resolves against its own directory, which the driver hands
-  // the run as `LOFT_SOURCE_DIR` (as `loft` hands a C program's run).
-  crt::fs_anchor();
+  // the run as `LOFT_SOURCE_DIR` (as `loft` hands a C program's run) — or against the working
+  // directory, when the program declared `#cwd`.
+  crt::fs_anchor(load::program_relative(b));
   name = a[at + 1] ?? "n_main";
+  // The program's own arguments follow its entry: what its `arguments()` answers.
+  for extra in a[at + 2..] {
+    crt::add_arg(extra);
+  }
   entry = lower::find(b, name);
   if entry == null {
     eprintln("refused: the image has no {name}");

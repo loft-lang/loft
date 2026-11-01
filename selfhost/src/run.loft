@@ -346,10 +346,11 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
         match op.kind {
           KFloat => { put_float(floats, sp_float, null); sp_float += 1; }
           KText => { put_text(texts, sp_text, null); sp_text += 1; }
+          // A null reference; `a` its position — 0, or `OpNullReported`'s mark.
           KRef => {
             put_int(ints, sp_int, 65535);
             put_int(ints, sp_int + 1, 0);
-            put_int(ints, sp_int + 2, 0);
+            put_int(ints, sp_int + 2, op.a);
             sp_int += 3;
           }
           _ => { put_int(ints, sp_int, null); sp_int += 1; }
@@ -683,7 +684,7 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
       // A text-writing op's destination: a text slot of this frame, or through a `&text`.
       Append => {
         sp_text -= 1;
-        crt::slot_text_append(stk, text_at(stk, base, op), texts[sp_text] ?? "");
+        crt::slot_text_append(stk, text_at(stk, base, op), texts[sp_text]);
       }
       AppendChar => {
         sp_int -= 1;
@@ -1007,6 +1008,41 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
           sp_int -= 3;
           put_int(ints, sp_int, if crt::write_text_raw(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, texts[sp_text]) { 1 } else { 0 });
           sp_int += 1;
+        } else if op.a >= 43 && op.a <= 47 {
+          // The store natives: the C runtime's own, on the store the reference names.
+          sarg = 0;
+          if op.a == 46 {
+            sp_int -= 1;
+            sarg = ints[sp_int] ?? 0;
+          }
+          sp_int -= 3;
+          sanswer = crt::store_native(op.a - 43, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, sarg);
+          if op.a == 45 || op.a == 47 {
+            put_int(ints, sp_int, sanswer);
+            sp_int += 1;
+          }
+        } else if op.a == 48 {
+          // `arguments()`: the C runtime's own, over the command line the runner handed on.
+          crt::arguments_into(io);
+          put_int(ints, sp_int, io[0]);
+          put_int(ints, sp_int + 1, io[1]);
+          put_int(ints, sp_int + 2, io[2]);
+          sp_int += 3;
+        } else if op.a == 49 {
+          // `store_memory()`: the C runtime's own report, its types named as the bundle names them;
+          // a compiled caller's text buffer gets the answer too.
+          buf = -1;
+          if op.b > 0 {
+            sp_int -= 1;
+            buf = ints[sp_int] ?? -1;
+          }
+          crt::type_names([for tn in b.types { tn.name }]);
+          answer = crt::store_memory();
+          if buf >= 0 {
+            crt::set_slot_text(stk, buf, answer);
+          }
+          put_text(texts, sp_text, answer);
+          sp_text += 1;
         } else if op.a == 12 || op.a == 13 {
           // `now()`, `ticks()`: loft's own clocks.
           put_int(ints, sp_int, if op.a == 12 { now() } else { ticks() });
@@ -1746,7 +1782,7 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
         }
         sp_int -= 6;
         tp = op.a % 32768;
-        crt::set_keyed(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0, types::content_of(b, tp) ?? 0, tp, op.b, op.a >= 32768);
+        crt::set_keyed(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0, types::content_of(b, tp) ?? 0, tp, op.b % 256, op.a >= 32768, op.b / 256);
       }
       HashInsert => {
         if !table_loaded {
@@ -1838,6 +1874,104 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
         at = base + op.a;
         crt::scratch_step(step_io, slot_int(stk, at, 0) ?? 0, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b == 1);
         set_slot_int(stk, at, 0, step_io[3]);
+        ref_out(step_io, ints, sp_int);
+        sp_int += 3;
+      }
+      // S4's keyed collections, through the shim's keyed routines (1 sorted, 2 ordered, 3 index).
+      KeyedNew => {
+        sp_int -= 3;
+        crt::keyed_new(io, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b, b.types[op.a]!.size);
+        crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, image_of(b, images, imaged, op.a));
+        ref_out(io, ints, sp_int);
+        sp_int += 3;
+      }
+      KeyedFinish => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 6;
+        crt::keyed_finish(
+          ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0,
+          ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0,
+          op.b % 8, op.b / 8, op.a
+        );
+      }
+      KeyedFind => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 3;
+        crt::keyed_find(io, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b % 8, op.a, op.b / 8);
+        ref_out(io, ints, sp_int);
+        sp_int += 3;
+      }
+      KeyedRemove => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 6;
+        crt::keyed_remove(
+          ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0,
+          ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0,
+          op.b % 8, op.b / 8, op.a & 32767, op.a & 32768 != 0
+        );
+      }
+      IndexLen => {
+        sp_int -= 3;
+        put_int(ints, sp_int, crt::index_len(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a));
+        sp_int += 1;
+      }
+      RadixSnap => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        rints: vector<integer> = [];
+        rpre: text? = null;
+        if op.b == 1 {
+          sp_int -= 8;
+          rints = [for ri in 0..8 { ints[sp_int + ri] ?? 0 }];
+        } else if op.b == 2 {
+          sp_int -= 1;
+          rints = [ints[sp_int] ?? 0];
+          sp_text -= 1;
+          rpre = texts[sp_text];
+        }
+        sp_int -= 3;
+        crt::radix_snap(io, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b, op.a, rints, rpre);
+        ref_out(io, ints, sp_int);
+        sp_int += 3;
+      }
+      WalkRemove => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 3;
+        wat = base + op.a;
+        set_slot_int(stk, wat, 0, crt::walk_remove(slot_int(stk, wat, 0) ?? 0, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b % 256, op.b / 256));
+      }
+      WalkKey => {
+        sp_int -= 3;
+        crt::walk_key(ints[sp_int] ?? 0, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0);
+      }
+      KeyedIterate => {
+        sp_int -= 3;
+        put_int(ints, sp_int, crt::keyed_iterate(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, op.b / 65536, (op.b / 256) % 256, op.b % 256));
+        sp_int += 1;
+      }
+      KeyedStep => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 3;
+        kat = base + op.a;
+        crt::keyed_step(step_io, slot_int(stk, kat, 0) ?? 0, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b % 256, op.b / 256);
+        set_slot_int(stk, kat, 0, step_io[3]);
         ref_out(step_io, ints, sp_int);
         sp_int += 3;
       }

@@ -436,3 +436,20 @@ fn test_a_file_is_written_and_read_back() {
   assert(ran_clean(fl, "n_binary", 5) == 48879074805, "binary(5): an integer, a record and a narrow local, little endian");
   assert(ran_clean(fl, "n_lined", 2) == 332, "lined(2): lines through the compiled body's twin");
 }
+
+// The store natives through the C runtime: a lock, the memory report, the arguments.
+fn test_the_store_natives_answer_as_the_runtime_does() {
+  sn = kernel("stores");
+  assert(ran_clean(sn, "n_locked", 3) == 310, "locked(3): get_store_lock and #lock");
+  assert(ran_clean(sn, "n_reported", 4) == 4, "reported(4): store_memory's report");
+  assert(ran_clean(sn, "n_argc", 5) == 5, "argc(5): no arguments");
+}
+
+// S4: a sorted, an index, a spatial index and a trie through the C runtime's keyed routines.
+fn test_keyed_collections_beyond_a_hash_run() {
+  ky = kernel("keyed");
+  assert(ran_clean(ky, "n_sorted_walk", 1) == 300503, "sorted_walk(1): find, a bounded walk, a removal");
+  assert(ran_clean(ky, "n_index_walk", 1) == 5009, "index_walk(1): a descending index");
+  assert(ran_clean(ky, "n_spatial_find", 1) == 233, "spatial_find(1)");
+  assert(ran_clean(ky, "n_trie_find", 1) == 202, "trie_find(1)");
+}

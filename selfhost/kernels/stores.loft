@@ -1,0 +1,33 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — the store natives as the C runtime answers them: a store's lock, the memory report,
+// the program's arguments.  Every value is hand-computed beside its kernel.
+struct Counter {
+  val: integer,
+}
+
+// `get_store_lock` before and `#lock` after `d#lock = true`, the record still readable:
+// locked(3) = 3 * 100 + 0 (unlocked first) + 10 (locked after) = 310.
+fn locked(n: integer) -> integer {
+  e = Counter { val: n };
+  a = if get_store_lock(e) { 1 } else { 0 };
+  e#lock = true;
+  b = if e#lock { 10 } else { 0 };
+  e.val * 100 + a + b
+}
+
+// `store_memory()`: the report opens with the live count — reported(4) = 4.
+fn reported(n: integer) -> integer {
+  m = store_memory();
+  if m.starts_with("stores: ") && m.contains(" live | cap ") { n } else { -1 }
+}
+
+// `arguments()`: a run handed none answers the empty vector — argc(5) = 5.
+fn argc(n: integer) -> integer {
+  n + len(arguments()) * 100
+}
+
+fn main() {
+  println("{locked(3)} {reported(4)} {argc(5)}");
+}
