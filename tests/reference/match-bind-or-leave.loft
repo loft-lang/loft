@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT_CONTROL.md § Match expressions — bind a variant's fields or leave: a `match` is a
+// value, and an arm that leaves (`return`, `break`, `continue`) fits any type (`(C-Never)`).
+
+enum Node { Leaf { v: integer }, Pair { l: integer, r: integer } }
+
+fn pair_sum(n: Node) -> integer? {
+  r = match n { Pair { r } => r, _ => return null };
+  l = match n { Pair { l } => l, _ => return null };
+  l + r
+}
+
+fn first_leaves(ns: vector<Node>) -> integer {
+  total = 0;
+  for n in ns {
+    v = match n { Leaf { v } => v, _ => break };
+    total += v;
+  }
+  total
+}
+
+fn test_bind_or_leave() {
+  assert(pair_sum(Pair { l: 2, r: 3 }) == 5, "a pair");
+  assert(pair_sum(Leaf { v: 1 }) == null, "not a pair: left with null");
+  assert(first_leaves([Leaf { v: 1 }, Leaf { v: 2 }, Pair { l: 0, r: 0 }, Leaf { v: 9 }]) == 3, "up to the pair");
+}
