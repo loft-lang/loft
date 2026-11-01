@@ -242,15 +242,18 @@ fn decoded(n: integer) -> integer {
 
 // A record a `reference<T>` field can name is linked: its vector holds 4-byte record ids (an array,
 // `ArrayNew` / `ArrayAppend` / `ArrayGet`), and a stored reference (`OpSetDbRef` / `OpGetDbRef`)
-// names one.  linked_ids(4): 3 ids * 4 bytes → 12000; v[1].k = 4 + 10 written through the stored
-// reference → 140; len("bb") 2: 12142.  linked_ids(0): 12102.
+// names one; `v += w` copies each id's record into one of v's own (`loft_vec_add_array`).
+// linked_ids(4): 4 ids * 4 bytes → 16000; v[1].k = 4 + 10 written through the stored reference →
+// 140; len("bb") 2; the appended k 7 → 700000: 716142.  linked_ids(0): 716102.
 struct Lk { k: integer, t: text }
 struct LkHold { r: reference<Lk>, n: integer }
 fn linked_ids(n: integer) -> integer {
   v: vector<Lk> = [Lk { k: 1, t: "a" }, Lk { k: n, t: "bb" }, Lk { k: 3, t: "ccc" }];
   h = LkHold { r: v[1], n: 0 };
   h.r.k += 10;
-  size(v) * 1000 + v[1].k * 10 + len(h.r.t)
+  w: vector<Lk> = [Lk { k: 7, t: "dddd" }];
+  v += w;
+  size(v) * 1000 + v[1].k * 10 + len(h.r.t) + v[3].k * 100000
 }
 
 fn main() {
