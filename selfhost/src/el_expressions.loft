@@ -1620,7 +1620,7 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
       }
       cp = el::pos_at(e, after_paren(e, at));
       message = if len(list) == 0 { ir::NdText { s: "" } } else { list[0] };
-      return ex(el_ir::cl(e, "n_{name}", [message, ir::NdText { s: cp.file }, ir::NdInt { n: cp.line }]), ir::TyVoid);
+      return ex(ir::NdSpan { pos: cp, inner: el_ir::cl(e, "n_{name}", [message, ir::NdText { s: cp.file }, ir::NdInt { n: cp.line }]) }, ir::TyVoid);
     }
   }
   first = if len(types) > 0 { types[0] } else { ir::TyUnknown { n: 0 } };
