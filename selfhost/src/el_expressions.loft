@@ -715,6 +715,9 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
     el::refuse(e, "a const binding");
     return ex(ir::NdNull, ir::TyVoid);
   }
+  if e.p.nodes[target] is SMember || e.p.nodes[target] is SIndex {
+    return place_assignment(e, vars, op, target, rhs!);
+  }
   if op != "=" {
     return compound(e, vars, op, target, rhs!);
   }
@@ -729,6 +732,12 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
   }
   if v < 0 {
     el::refuse(e, "an assignment to a place that is not a plain local");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  // A parameter of a heap type rebound whole takes the rebound-parameter road (an entry witness,
+  // the detach before the bind) or, for a text, a shadow local — not carried yet.
+  if vars.vars[v].argument && !scalar(el_types::base(el_vars::tp(vars, v))) {
+    el::refuse(e, "a rebound parameter of a heap type");
     return ex(ir::NdNull, ir::TyVoid);
   }
   if e.p.nodes[rhs!] is SVecLit {
@@ -755,6 +764,81 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
     }
   }
   ex(el_ir::v_set(v, x.code), ir::TyVoid)
+}
+
+// `parse_assign_op_inner` for a PLACE — a plain struct's field (`p.f = v`, `p.f op= v`) or a
+// vector's element (`v[i] = x`): the place's read gives its record and position, the value is
+// converted to the place's type (a compound one computed from the place's current value first),
+// and written through the field's write op — a text field replaced (`OpSetTextReplace`), an
+// element written at offset 0 of `OpGetVector`.  Any other place is refused by name.
+fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: integer) -> Ex {
+  // The place, read as a value: its code names the record and position the write takes.
+  p = expression(e, vars, target);
+  if el_types::is_unknown(p.tp) {
+    if e.first_pass {
+      expression(e, vars, rhs);
+    }
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  x = expression(e, vars, rhs);
+  pt = p.tp;
+  if op != "=" {
+    if el_types::base(pt) is TyText {
+      el::refuse(e, "a compound assignment to a text place");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    c = call_op(e, vars, op[0..len(op) - 1], [el_ir::unspan(p.code), x.code], [pt, x.tp]);
+    x = c;
+  }
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  if pt is TyOptional {
+    el::refuse(e, "an assignment to a nullable place");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  v = stored(e, vars, x, pt);
+  if v == null {
+    refuse_known(e, x.tp, "a place assignment its type converts: {type_kind(x.tp)} to {type_kind(pt)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  w = place_write(e, el_ir::unspan(p.code), pt, v!);
+  if w == null {
+    el::refuse(e, "an assignment to a place that is not a plain local");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  ex(w!, ir::TyVoid)
+}
+
+// The write twin of a place's read: `OpGet<T>(r, pos…)` becomes `OpSet<T>(r, pos…, value)`, a
+// text read `OpSetTextReplace`; null for a read with no plain twin.
+fn place_write(e: el::El, read: ir::Node, t: ir::TypeT, val: ir::Node) -> ir::Node? {
+  match read {
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if !starts_with(nm, "OpGet") || len(args) < 2 {
+        return null;
+      }
+      rest = nm[5..len(nm)];
+      if rest == "Text" {
+        return el_ir::cl(e, "OpSetTextReplace", [args[0] ?? ir::NdNull, args[1] ?? ir::NdNull, val]);
+      }
+      if rest == "Vector" || rest == "VectorNullable" || rest == "Field" || rest == "DbRef" || rest == "Enum" {
+        return null;
+      }
+      set = if rest == "ShortFull" { "OpSetShortRaw" } else if rest == "Int4Full" { "OpSetInt4Raw" } else { "OpSet{rest}" };
+      if el::def_nr(e, set) < 0 {
+        return null;
+      }
+      a2: vector<ir::Node> = [];
+      for a in args {
+        a2 += [a];
+      }
+      a2 += [val];
+      el_ir::cl(e, set, a2)
+    },
+    _ => null
+  }
 }
 
 // `Parser::parse_assign_op_inner` for `x op= v` on a plain local: a number takes
