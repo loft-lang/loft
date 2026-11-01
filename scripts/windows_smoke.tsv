@@ -98,6 +98,7 @@ scripts/worst.py	--help
 selfhost/bench/measure.py	--help
 selfhost/compare/compare.py	--help
 selfhost/cover/census.py	--help
+selfhost/front/elab_gate.py	--help
 selfhost/front/tokens_gate.py	--help
 tests/comparisons/scripts/replay_tool.sh	tests/comparisons/scripts/bin/true
 tools/audience-demo/run-demo.sh	--help
