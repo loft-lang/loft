@@ -249,9 +249,12 @@ fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text) -> 
 // the first pass, found again on the second — the right side is read, the local takes the
 // value's type (`change_var`) and the statement is the `Set` (`towards_set`), typed void.
 fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: integer, rhs: integer?) -> Ex {
-  if fixed || op != "=" || rhs == null {
-    el::refuse(e, "a const binding or a compound assignment");
+  if fixed || rhs == null {
+    el::refuse(e, "a const binding");
     return ex(ir::NdNull, ir::TyVoid);
+  }
+  if op != "=" {
+    return compound(e, vars, op, target, rhs!);
   }
   v = -1;
   match e.p.nodes[target] {
@@ -287,6 +290,51 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
     }
   }
   ex(el_ir::v_set(v, x.code), ir::TyVoid)
+}
+
+// `Parser::parse_assign_op_inner` for `x op= v` on a plain local: a number takes
+// `x = Op…(x, v)` through the builtin candidates (`towards_set` → `compute_op_code`, no position
+// wrap); a text appends — another text as it is (`assign_text`), any other value rendered as a
+// concatenation operand (`append_rendering`).  Anything else is refused by name.
+fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: integer) -> Ex {
+  v = -1;
+  match e.p.nodes[target] {
+    SName { name, member } => {
+      if member == "" {
+        v = el_vars::var(vars, name);
+      }
+    },
+    _ => {}
+  }
+  if v < 0 {
+    el::refuse(e, "a compound assignment to a place that is not a known local");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  el_vars::mark_user_named(vars, v);
+  el_vars::in_use(vars, v, true);
+  vt = el_vars::tp(vars, v);
+  x = expression(e, vars, rhs);
+  bin = op[0..len(op) - 1];
+  if el_types::base(vt) is TyText && !(vt is TyOptional) {
+    if bin != "+" {
+      el::refuse(e, "a text compound assignment other than `+=`");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    el_vars::drop_use(vars, v);
+    if el_types::base(x.tp) is TyText || el_types::is_unknown(x.tp) {
+      return ex(el_ir::cl(e, "OpAppendText", [ir::NdVar { n: v }, x.code]), ir::TyVoid);
+    }
+    ops: vector<ir::Node> = [];
+    concat_operand(e, ops, v, x);
+    return ex(ir::NdInsert { items: ops }, ir::TyVoid);
+  }
+  if !scalar(vt) || vt is TyVoid {
+    el::refuse(e, "a compound assignment to a local of this type: {type_kind(vt)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  r = call_op(e, bin, [ir::NdVar { n: v }, x.code], [vt, x.tp]);
+  el_vars::drop_use(vars, v);
+  ex(el_ir::v_set(v, r.code), ir::TyVoid)
 }
 
 // `Parser::parse_assign`'s annotation branch, `name: T = value`: the local is made as an
