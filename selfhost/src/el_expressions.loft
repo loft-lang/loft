@@ -12,6 +12,7 @@ use el_ir;
 use el_vars;
 use el_types;
 use el_schema;
+use el_convert;
 
 // An expression's IR and type.
 pub struct Ex {
@@ -366,6 +367,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SJump { kind, e: je } => jump(e, vars, kind, je),
     SIndex { at, e: ie, keys, range, hi, limit, spatial } => index(e, vars, at, ie, keys, range || len(hi) > 0 || limit != null || spatial),
     SVecLit { items: _ } => vector_value(e, vars, n).x,
+    SAs { at, e: ae, tp: at_tp, checked } => cast_expr(e, vars, ae, at_tp),
     SParen { e: pe } => if pe == null { ex(ir::NdNull, ir::TyUnknown { n: 0 }) } else { expression(e, vars, pe!) },
     _ => {
       el::refuse(e, "an expression form: {syn_kind(e, n)}");
@@ -1701,6 +1703,48 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
   before = el_ir::v_if(el_ir::cl(e, "OpLtInt", [i, ir::NdInt { n: 0 }]), brk, ir::NdNull);
   lp = el_ir::v_loop([el_ir::v_set(lv, next), past_end, before, b.code], "For loop");
   ex(el_ir::v_block([el_ir::v_set(vec, x.code), el_ir::v_set(idx, ir::NdInt { n: -1 }), lp], ir::TyVoid, "For block"), ir::TyVoid)
+}
+
+// `handle_operator`'s `as` for plain scalars: the target read as a type, the value converted the
+// way an implicit store converts it (`convert` in its explicit-cast mode: a narrowing that a
+// constant provably fits needs no op) or else cast (`OpCast…`), typed as the target.  A checked
+// `as τ?`, a nullable or non-scalar side and a narrowing no constant answers are refused by name.
+fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> Ex {
+  if ae == null || tn == null {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  x = expression(e, vars, ae!);
+  t = el_types::parse_type(e, tn!);
+  if t == null {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  to = t!;
+  if el_types::is_unknown(x.tp) {
+    if !e.first_pass {
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    return ex(ir::NdNull, to);
+  }
+  if !el_convert::plain_scalar(x.tp) || !el_convert::plain_scalar(to) {
+    el::refuse(e, "a cast between these types: {type_kind(x.tp)} to {type_kind(to)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if e.first_pass {
+    return ex(ir::NdNull, to);
+  }
+  if el_convert::narrowing_int(x.tp, to) && !el_convert::constant_fits(x.code, to) {
+    el::refuse(e, "a narrowing cast no constant answers");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  c = el_convert::convert(e, x.code, x.tp, to, true);
+  if c == null {
+    c = el_convert::cast(e, x.code, x.tp, to);
+  }
+  if c == null {
+    el::refuse(e, "a cast between these types: {type_kind(x.tp)} to {type_kind(to)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  ex(c!, to)
 }
 
 // `Parser::literal_walk` (`@FR-R-LiteralWalk`): a `for` over a literal of 1 to 16 scalar items

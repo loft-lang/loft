@@ -1,0 +1,121 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Conversions (src/parser/convert.rs `Parser::convert` and `cast`, store_check.rs): a value of
+// one type made a value of another — the implicit `τ ⤳ σ` (`@FR-C-Num`, `@FR-C-Int`) and the
+// explicit `as`.  Each answers the converted code, or null for a pair the elaboration does not
+// carry yet; the caller refuses that by name.
+use ir;
+use el;
+use el_ir;
+use el_types;
+
+// `IntegerSpec::is_full_integer`: the one target nothing narrows to — no forced size, and either
+// full template's bounds (`signed32`, or the `wide` one ending at u32::MAX).
+fn full_integer(s: ir::IntegerSpec) -> boolean {
+  s.forced_size == 0 && s.min == -2147483647 && (s.max == 2147483647 || s.max == 4294967295)
+}
+
+// `Parser::is_narrowing_int`: an integer into a narrow integer whose range does not contain it.
+pub fn narrowing_int(src: ir::TypeT, dst: ir::TypeT) -> boolean {
+  match src {
+    TyInteger { spec: s } => match dst {
+      TyInteger { spec: d } => !full_integer(d) && (s.min < d.min || s.max > d.max),
+      _ => false
+    },
+    _ => false
+  }
+}
+
+// `Parser::int_value_fits` for a constant: the literal lies in the target's range.
+pub fn constant_fits(code: ir::Node, dst: ir::TypeT) -> boolean {
+  match dst {
+    TyInteger { spec: d } => match code {
+      NdInt { n } => n >= d.min && n <= d.max,
+      _ => false
+    },
+    _ => false
+  }
+}
+
+// A scalar the elaboration converts: no record, text, collection or nullable spelling.
+pub fn plain_scalar(t: ir::TypeT) -> boolean {
+  match t {
+    TyInteger { spec: _ } => true,
+    TyFloat => true,
+    TySingle => true,
+    TyCharacter => true,
+    TyBoolean => true,
+    _ => false
+  }
+}
+
+// `Parser::convert` for plain scalars: the same type as it is (`(C-Refl)`, the widths folded into
+// `(C-Int)`), a `Never` anywhere, and the first `OpConv` whose parameter and result are the pair
+// (`Data::converts_with`).  A narrowing integer store is the author's to write as a cast (null
+// unless a constant provably fits); `explicit` is the `as` that does so.
+pub fn convert(e: el::El, code: ir::Node, src: ir::TypeT, should: ir::TypeT, explicit: boolean) -> ir::Node? {
+  if src is TyNever {
+    return code;
+  }
+  if !plain_scalar(src) || !plain_scalar(should) {
+    return null;
+  }
+  if narrowing_int(src, should) {
+    return if constant_fits(code, should) { code } else { null };
+  }
+  if !explicit && store_narrows(src, should) && !constant_fits(code, should) {
+    return null;
+  }
+  if el_types::is_equal(e, src, should) {
+    return code;
+  }
+  for d in el::possible(e, "OpConv") {
+    def = el::def(e, d);
+    if ends_with(def.name, "FromNull") || len(def.attributes) != 1 {
+      continue;
+    }
+    if el_types::is_equal(e, def.attributes[0].typedef[0] ?? ir::TyVoid, src) && el_types::is_equal(e, def.returned[0] ?? ir::TyVoid, should) {
+      // A character literal read back as its code point is the code point.
+      if def.name == "OpConvIntFromCharacter" {
+        match code {
+          NdCall { def_nr: inner, args } => {
+            if el::def(e, inner).name == "OpConvCharacterFromInt" && len(args) == 1 {
+              match args[0] ?? ir::NdNull {
+                NdInt { n } => if n > 0 && n < 1114112 && (n < 55296 || n > 57343) { return ir::NdInt { n: n }; },
+                _ => {}
+              }
+            }
+          },
+          _ => {}
+        }
+      }
+      return ir::NdCall { def_nr: d, args: [code] };
+    }
+  }
+  null
+}
+
+// `Parser::is_narrowing_int_store`: beside a narrowing, the full integer into a slot of a smaller
+// forced width.
+fn store_narrows(src: ir::TypeT, dst: ir::TypeT) -> boolean {
+  match src {
+    TyInteger { spec: s } => match dst {
+      TyInteger { spec: d } => d.forced_size > 0 && full_integer(s) && 8 > d.forced_size,
+      _ => false
+    },
+    _ => false
+  }
+}
+
+// `Parser::cast` for plain scalars: the first one-parameter `OpCast` from `is` to `should`
+// (`Type::is_same`, the widths ignored).
+pub fn cast(e: el::El, code: ir::Node, src: ir::TypeT, should: ir::TypeT) -> ir::Node? {
+  for d in el::possible(e, "OpCast") {
+    def = el::def(e, d);
+    if len(def.attributes) == 1 && el_types::is_same(def.attributes[0].typedef[0] ?? ir::TyVoid, src) && el_types::is_same(def.returned[0] ?? ir::TyVoid, should) {
+      return ir::NdCall { def_nr: d, args: [code] };
+    }
+  }
+  null
+}
