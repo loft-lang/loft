@@ -23651,7 +23651,7 @@ impl Parser {
         // element is deep-copied into a fresh record on bind (@PLN101), so the bound local
         // is never null and the test could never fire — `reduce` hung forever.
         let break_if_null = if matches!(in_type, Type::Vector(_, _)) {
-            Value::Insert(self.vector_loop_break(&Value::Var(vec_copy_var), iter_var))
+            Value::Insert(self.vector_loop_break(&Value::Var(vec_copy_var), iter_var, false))
         } else {
             let mut test_for = Value::Var(for_var);
             self.convert(&mut test_for, &var_tp, &Type::Boolean);

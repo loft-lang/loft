@@ -427,17 +427,33 @@ impl Parser {
     /// The index is pre-incremented from `-1` by the `{#iter next}` block, so at the test
     /// it is the 0-based index just READ, and `len <= idx` is exactly "past the end".
     /// Re-read each iteration rather than hoisted, so an in-loop `#remove` — which shrinks
-    /// the vector and steps the index back — still terminates. Forward-only: these
-    /// builtins have no reverse form, so the `for` statement's `idx < 0` companion test
-    /// has nothing to answer here.
-    pub(crate) fn vector_loop_break(&mut self, coll: &Value, index_var: u16) -> Vec<Value> {
+    /// the vector and steps the index back — still terminates.  `@FR-I-Comp` — a walk that
+    /// can run BACKWARDS (`rev(v)`, the comprehension's only reverse form) also takes the `for`
+    /// statement's `idx < 0` companion test: the reverse step parks the index at `i32::MIN`
+    /// past the first element, and without it `[for x in rev(v) { x }]` read below zero for
+    /// ever (loft#2345).  The builtins have no reverse form and pay nothing for it.
+    pub(crate) fn vector_loop_break(
+        &mut self,
+        coll: &Value,
+        index_var: u16,
+        reversible: bool,
+    ) -> Vec<Value> {
         let len = self.cl("OpLengthVector", std::slice::from_ref(coll));
         let past_end = self.cl("OpLeInt", &[len, Value::Var(index_var)]);
-        vec![v_if(
+        let mut out = vec![v_if(
             past_end,
             v_block(vec![Value::Break(0)], Type::Void, "break"),
             Value::Null,
-        )]
+        )];
+        if reversible {
+            let before_start = self.cl("OpLtInt", &[Value::Var(index_var), Value::Int(0)]);
+            out.push(v_if(
+                before_start,
+                v_block(vec![Value::Break(0)], Type::Void, "break"),
+                Value::Null,
+            ));
+        }
+        out
     }
 
     /// The ONE home for a vector's per-element ITERATION stride — the byte
@@ -8059,7 +8075,7 @@ use #count instead"
 
         // loft#1000 — a VECTOR ends on its length, not on the element's value.
         let break_if_done = if matches!(in_type, Type::Vector(_, _)) {
-            let brk = self.vector_loop_break(&Value::Var(vec_var), iter_var);
+            let brk = self.vector_loop_break(&Value::Var(vec_var), iter_var, false);
             Value::Insert(brk)
         } else {
             let mut test_for = Value::Var(for_var);

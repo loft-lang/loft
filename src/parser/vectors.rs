@@ -4376,6 +4376,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             Some((_, handle)) => handle.clone(),
             None => vec_expr.clone(),
         };
+        // Only a walk whose step goes backwards (`rev(v)`, its `rev step`) can pass the start.
+        let reversible =
+            for_next.any_node(&mut |n| matches!(n, Value::Block(bl) if bl.name == "rev step"));
         let mut lp = vec![for_next];
         if matches!(in_type.base(), Type::Text(_))
             && let Some(idx) = pre_var
@@ -4398,8 +4401,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // a null the vector really holds shares the out-of-bounds sentinel, and a
             // `value struct` element is deep-copied into a fresh record on bind (@PLN101),
             // so the bound local is never null and a null test can never fire at all.
-            // `map`, `filter` and the comprehension all route their break through here.
-            for step in self.vector_loop_break(&src, index_var) {
+            // `map`, `filter` and the comprehension all route their break through here; only a
+            // walk whose step goes backwards (`rev(v)`, its `rev step`) can pass the start.
+            for step in self.vector_loop_break(&src, index_var, reversible) {
                 lp.push(step);
             }
         } else if !matches!(in_type.base(), Type::Iterator(_, _)) {
