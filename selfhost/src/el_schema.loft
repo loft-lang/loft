@@ -111,10 +111,15 @@ fn fill_database(e: el::El, d: integer) {
 // types, a record its struct's.
 // The store type of a keyed collection type, made where it is missing.
 pub fn keyed_type(e: el::El, t: ir::TypeT) -> integer {
-  content_type(e, t)
+  store_type(e, t, false)
 }
 
 fn content_type(e: el::El, t: ir::TypeT) -> integer {
+  store_type(e, t, true)
+}
+
+// `field`: a struct field's keyed collection makes its key fields immutable; a local's does not.
+fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
   match t {
     TyInteger { spec } => {
       if spec.forced_size != 0 {
@@ -167,7 +172,9 @@ fn content_type(e: el::El, t: ir::TypeT) -> integer {
         if f >= 0 {
           nrs += [f];
         }
-        immutable(e, n, k.name);
+        if field {
+          immutable(e, n, k.name);
+        }
       }
       nm += "]>";
       ht = schema_type(e, nm);
@@ -178,10 +185,52 @@ fn content_type(e: el::El, t: ir::TypeT) -> integer {
       e.b.types += [ir::DbType { name: nm, parts: [ir::PtHash { content: c, fields: nrs }], keys: [], complex: true, linked: false, size: 4, align: 4, field_groups: [] }];
       num
     },
-    TySorted { n, keys } => sorted_type(e, "sorted", n, keys),
-    TyIndex { n, keys } => sorted_type(e, "index", n, keys),
+    TySorted { n, keys } => sorted_type(e, "sorted", n, keys, field),
+    TyIndex { n, keys } => sorted_type(e, "index", n, keys, field),
     _ => -1
   }
+}
+
+// `Stores::determine_keys_for`: a keyed store type's key descriptors — per key field its
+// content's code (`key_descriptor_for_content`, negated when descending), position and start.
+pub fn key_descriptors(e: el::El, t: integer) -> vector<ir::Key> {
+  r: vector<ir::Key> = [];
+  c = -1;
+  ks: vector<ir::KeyField> = [];
+  match e.b.types[t].parts[0] ?? ir::PtBase {
+    PtHash { content, fields } => {
+      c = content;
+      for f in fields {
+        ks += [ir::KeyField { nr: f, asc: true }];
+      }
+    },
+    PtSorted { content, keys } => { c = content; ks = keys; },
+    PtIndex { content, keys } => { c = content; ks = keys; },
+    _ => {}
+  }
+  if c < 0 {
+    return r;
+  }
+  fields = struct_fields(e, c);
+  for k in ks {
+    f = fields[k.nr];
+    tn = 7;
+    start = 0;
+    if f.content <= 5 {
+      tn = 1 + f.content;
+    } else {
+      match e.b.types[f.content].parts[0] ?? ir::PtBase {
+        PtInt { start: _ } => { tn = 8; },
+        PtShort { start: m } => { tn = 9; start = m; },
+        PtByte { start: m } => { tn = 10; start = m; },
+        PtShortRaw { start: m } => { tn = 11; start = m; },
+        PtIntRaw { start: _ } => { tn = 12; },
+        _ => {}
+      }
+    }
+    r += [ir::Key { type_nr: if k.asc { tn } else { -tn }, position: f.position, start: start }];
+  }
+  r
 }
 
 // The element store type of a keyed collection, registered first where it is missing.
@@ -204,7 +253,7 @@ fn immutable(e: el::El, d: integer, name: text) {
 }
 
 // `Stores::sorted` / `Stores::index` (`create_key`): named by the element and its directed keys.
-fn sorted_type(e: el::El, kind: text, n: integer, keys: vector<ir::SortKey>) -> integer {
+fn sorted_type(e: el::El, kind: text, n: integer, keys: vector<ir::SortKey>, field: boolean) -> integer {
   c = keyed_content(e, n);
   if c < 0 {
     return -1;
@@ -223,7 +272,9 @@ fn sorted_type(e: el::El, kind: text, n: integer, keys: vector<ir::SortKey>) -> 
     if f >= 0 {
       nrs += [ir::KeyField { nr: f, asc: k.asc }];
     }
-    immutable(e, n, k.name);
+    if field {
+      immutable(e, n, k.name);
+    }
   }
   nm += "]>";
   t = schema_type(e, nm);

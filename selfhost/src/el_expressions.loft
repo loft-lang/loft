@@ -1466,6 +1466,14 @@ fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: inte
     el_vars::drop_use(vars, v);
     return vector_append(e, vars, v, rhs);
   }
+  if keyed_kind(vt) && !(vt is TyOptional) && bin == "+" && e.p.nodes[rhs] is SVecLit {
+    ops = keyed_items(e, vars, v, rhs);
+    if ops == null {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    el_vars::drop_use(vars, v);
+    return ex(ir::NdInsert { items: ops! }, ir::TyVoid);
+  }
   x = expression(e, vars, rhs);
   // A promoted text buffer (`&text`) appends through the stack ops.
   stack = false;
@@ -1540,6 +1548,17 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
     match declared! {
       TyVector { inner } => return vector_into(e, vars, v, rhs!, inner),
       _ => {}
+    }
+    if keyed_kind(declared!) && !(declared! is TyOptional) {
+      // A keyed local starts with no store; each item is a record made through it.
+      ops = keyed_items(e, vars, v, rhs!);
+      if ops == null {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      el_vars::drop_use(vars, v);
+      list: vector<ir::Node> = [el_ir::v_set(v, ir::NdNull)];
+      list += ops!;
+      return ex(ir::NdInsert { items: list }, ir::TyVoid);
     }
   }
   x = expression(e, vars, rhs!);
@@ -3724,6 +3743,9 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
   } else {
     x = expression(e, vars, source);
   }
+  if keyed_kind(x.tp) && !(x.tp is TyOptional) {
+    return keyed_for(e, vars, src_id, id, x, body!, filter);
+  }
   match el_types::base(x.tp) {
     TyVector { inner: _ } => {},
     TyUnknown { n: _ } => {
@@ -3791,6 +3813,73 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
   steps += [b.code];
   lp = el_ir::v_loop(steps, "For loop");
   ex(el_ir::v_block([el_ir::v_set(vec, x.code), el_ir::v_set(idx, ir::NdInt { n: -1 }), lp], ir::TyVoid, "For block"), ir::TyVoid)
+}
+
+// `iterator`'s keyed arm: a walk over a hash, sorted or index from its first record
+// (`OpIterate(c, on, arg, keys, 0, 0)` into `x#iter_state`), each step `OpStep` — the record,
+// borrowing what the collection does, or the null sentinel past the last.
+fn keyed_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, x: Ex, body: integer, filter: integer?) -> Ex {
+  ct = el_types::base(x.tp);
+  el_d = match ct {
+    TyHash { n: hn } => hn,
+    TySorted { n: sn } => sn,
+    TyIndex { n: xn } => xn,
+    _ => -1
+  };
+  elem = el_types::with_deps(ir::TyReference { n: el_d, dep: [] }, el_types::deps(ct));
+  match x.code {
+    NdVar { n } => { elem = el_types::with_deps(elem, [n]); },
+    _ => {}
+  }
+  // `keyed_snapshot`: a hash is walked in key order through a sorted scratch copy
+  // (`n_hash_sorted`), released after the loop.
+  scratch = -1;
+  if ct is TyHash {
+    scratch = el_vars::create_unique(vars, "hash_scratch", el_types::with_deps(ir::TyReference { n: el_d, dep: [] }, el_types::deps(ct)));
+  }
+  idx = loop_index(vars, id);
+  base = if id == "_" { el_vars::name_of(vars, idx) } else { id };
+  state = el_vars::add_variable(vars, "{base}#iter_state", ir::TyInteger { spec: i32_spec() });
+  el_vars::set_defined(vars, state);
+  lv = loop_var(vars, src_id, id, elem);
+  vars.active_loops += [lv];
+  fc = loop_filter(e, vars, filter);
+  b = parse_block(e, vars, body, "for", ir::TyVoid);
+  vars.active_loops = drop_last_int(vars.active_loops);
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  known = el_schema::keyed_type(e, ct);
+  on = 128;
+  arg = 4;
+  match ct {
+    TyIndex { n: _ } => { on += 1; arg = known; },
+    TySorted { n: _ } => { on += 2; arg = e.b.types[el::def(e, el_d).known_type].size; },
+    _ => { on += 4; }
+  }
+  src = x.code;
+  pre: vector<ir::Node> = [];
+  if scratch >= 0 {
+    el_vars::set_var_type(vars, scratch, el_types::with_deps(ir::TyReference { n: el_d, dep: [] }, el_types::deps(ct)));
+    pre += [el_ir::v_set(scratch, el_ir::cl(e, "n_hash_sorted", [x.code, ir::NdInt { n: known }]))];
+    src = ir::NdVar { n: scratch };
+  }
+  start = el_ir::cl(e, "OpIterate", [src, ir::NdInt { n: on }, ir::NdInt { n: arg }, ir::NdKeys { keys: el_schema::key_descriptors(e, known) }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]);
+  i = ir::NdVar { n: idx };
+  next = el_ir::v_block([el_ir::v_set(idx, el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: 1 }])), el_ir::cl(e, "OpStep", [ir::NdVar { n: state }, src, ir::NdInt { n: on }, ir::NdInt { n: arg }])], elem, "sorted iter next");
+  brk = el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break");
+  done = el_ir::v_if(el_ir::cl(e, "OpEqRef", [ir::NdVar { n: lv }, el_ir::cl(e, "OpNullRefSentinel", [])]), brk, ir::NdNull);
+  steps: vector<ir::Node> = [el_ir::v_set(lv, next), done];
+  if fc != null {
+    steps += [fc!];
+  }
+  steps += [b.code];
+  lp = el_ir::v_loop(steps, "For loop");
+  pre += [ir::NdInsert { items: [el_ir::v_set(state, start), el_ir::v_set(idx, ir::NdInt { n: -1 })] }, lp];
+  if scratch >= 0 {
+    pre += [el_ir::cl(e, "OpFreeScratch", [ir::NdVar { n: scratch }]), el_ir::v_set(scratch, el_ir::cl(e, "OpNullRefSentinel", []))];
+  }
+  ex(el_ir::v_block(pre, ir::TyVoid, "For block"), ir::TyVoid)
 }
 
 // `handle_operator`'s `as` for plain scalars: the target read as a type, the value converted the
@@ -4786,6 +4875,61 @@ fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vector<
     code = ir::NdSpan { pos: el::pos_at(e, at), inner: code };
   }
   ex(code, t)
+}
+
+// The items of a literal appended to a keyed local (`parse_vector_inner` with `is_var`): each a
+// struct literal built as a record of the collection (`OpNewRecord(v, type, u16::MAX)`, its
+// fields, `OpFinishRecord`, which indexes it).  Any other item is refused by name.
+fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> vector<ir::Node>? {
+  ct = el_types::base(el_vars::tp(vars, v));
+  items: vector<integer> = [];
+  match e.p.nodes[n] {
+    SVecLit { items: its } => { items = its; },
+    _ => {}
+  }
+  el_d = match ct {
+    TyHash { n: hn } => hn,
+    TySorted { n: sn } => sn,
+    TyIndex { n: xn } => xn,
+    _ => -1
+  };
+  elm = -1;
+  if len(items) > 0 {
+    elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
+  }
+  kt = if e.first_pass { 65535 } else { el_schema::keyed_type(e, ct) };
+  w = ir::NdVar { n: v };
+  at = ir::NdVar { n: elm };
+  ls: vector<ir::Node> = [];
+  for it in items {
+    sd = struct_literal_def(e, it);
+    if sd != el_d {
+      el::refuse(e, "a keyed collection item that is not a literal of its record");
+      return null;
+    }
+    if e.first_pass {
+      literal_field_exprs(e, vars, it);
+      continue;
+    }
+    el_vars::set_var_type(vars, elm, ir::TyReference { n: sd, dep: [v] });
+    fields: vector<integer> = [];
+    match e.p.nodes[it] {
+      SStructLit { fields: fs } => { fields = fs; },
+      _ => {}
+    }
+    fl = object_fields(e, vars, elm, sd, fields);
+    if fl == null {
+      return null;
+    }
+    ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: kt }, ir::NdInt { n: 65535 }]))];
+    for op in fl! {
+      if op#index >= 2 {
+        ls += [op];
+      }
+    }
+    ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: kt }, ir::NdInt { n: 65535 }])];
+  }
+  ls
 }
 
 fn keyed_kind(t: ir::TypeT) -> boolean {
