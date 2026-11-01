@@ -455,14 +455,21 @@ impl Scopes<'_> {
                         let mut tail = o.clone();
                         push_frees_into_arms(&mut tail, &ret_frees);
                         ls.push(Value::Return(Box::new(tail)));
+                    } else if !is_return {
+                        // @FR-O-Detach — a VALUE block that is not a return yields its tail to
+                        // whatever reads it, so the scope-exit frees follow the tail, exactly as
+                        // `free_vars` orders a non-block tail.  Ahead of it they released a lift
+                        // the tail still reads: a `match` arm `{ ex(0, first(h)) }` beside a text
+                        // capture had its `first(h)` temp freed before `ex` read it, and `ex`
+                        // copied a released record (loft#2327).
+                        ls.push(o.clone());
+                        ls.extend(ret_frees);
                     } else {
                         ls.extend(ret_frees);
                         if let Some(tmp) = hoist_tmp {
                             ls.push(Value::Return(Box::new(Value::Var(tmp))));
-                        } else if is_return {
-                            ls.push(Value::Return(Box::new(o.clone())));
                         } else {
-                            ls.push(o.clone());
+                            ls.push(Value::Return(Box::new(o.clone())));
                         }
                     }
                 }

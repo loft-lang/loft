@@ -108,8 +108,6 @@ fn drop_last(l: vector<ir::Node>) -> vector<ir::Node> {
 pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   match e.p.nodes[n] {
     SInt { v } => ex(ir::NdInt { n: v }, ir::TyInteger { spec: i32_spec() }),
-    // An arm, not a block: a block arm binding the `text` fields frees the `Ex` it builds
-    // before it is read (loft#2327) — lifted once that is fixed.
     SName { name, member } => name_expression(e, vars, name, member),
     SBin { op, l, r } => {
       a = expression(e, vars, l);
