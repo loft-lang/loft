@@ -2907,9 +2907,14 @@ impl Function {
         // discarded, so that type is no fact: pass 2's wins.  Kept the old way, a correct
         // program was refused — `c = v` on a `vector<vector<integer>>` followed by a deeper
         // literal: "Variable '_elm_5' cannot change type" (found by loft#1739's guard).  Only
-        // a SHAPE conflict, and only this family: another family can mint the same site twice
-        // on purpose and read pass 1's type (a multi-pattern capture keeps its local `τ?`).
-        if name == "elm"
+        // a SHAPE conflict, and only these families: another family can mint the same site
+        // twice on purpose and read pass 1's type (a multi-pattern capture keeps its local `τ?`).
+        // loft#2340 — a value literal's accumulator `_vec_N` is the same case: a literal written
+        // into a field whose type pass 1 does not know yet (its holder comes from a function
+        // declared below) is built as a VALUE there, minting a `_vec_N`, and as the field on
+        // pass 2, minting none, so a literal nested inside it takes the outer one's number at
+        // another element shape.
+        if (name == "elm" || name == "vec")
             && let Some(&v) = self.names.get(&full)
             && !type_def.is_unknown()
             && self.variables[v as usize].type_def.without_deps() != type_def.without_deps()

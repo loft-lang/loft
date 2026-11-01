@@ -260,6 +260,13 @@ rule already said the set; the test asked about a pair.
 
 Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.
 
+- **`D-col-21`** — opened and CLOSED 2026-11-01 (loft#2340): **a literal nested in a vector literal
+  written to a field the first pass could not type was refused** ("Variable '_vec_1' cannot change
+  type"), against `(Col-Vec)`: pass 1 built the outer literal as a value and minted its accumulator
+  `_vec_1`, pass 2 built it into the field and minted none, so the nested literal took `_vec_1` at
+  another element shape.  `Function::unique` lets pass 2's type win for the `vec` family as it did
+  for `elm`.  Found porting the self-host elaborator.  Guard
+  `loft-suite rules/collections/Col-Vec/2340-a-literal-nested-in-a-field-literal-of-a-forward-holder.loft`.
 - **`D-col-20`** — opened and CLOSED 2026-10-07 (loft#1915): **`ix.len()` was refused on an
   `index`** ("Unknown field index<E[id]>.len") against `(Col-Len)`, while `len(ix)` answered:
   the length op takes the record-link offset, a constant only the parser knows, so no stdlib
