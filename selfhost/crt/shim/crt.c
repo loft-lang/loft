@@ -939,6 +939,26 @@ void loft_crt_vec_reverse(int64_t store, int64_t rec, int64_t pos, int64_t size)
     loft_vec_reverse(loft_crt_ref(store, rec, pos), (uint32_t) size);
 }
 
+/* OpReserveVector (`vector::reserve_vector`): room for `count` elements of `size` bytes. */
+void loft_crt_vec_reserve(int64_t store, int64_t rec, int64_t pos, int64_t count, int64_t size) {
+    loft_vec_reserve(loft_crt_ref(store, rec, pos), count, (uint32_t) size);
+}
+
+/* OpReserveHash (`Stores::reserve_hash`): a hash of type `tp` sized for `count` entries. */
+void loft_crt_hash_reserve(int64_t store, int64_t rec, int64_t pos, int64_t tp, int64_t count) {
+    if (!loft_crt_keyed(tp)) return;
+    loft_hash_reserve(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos), count);
+}
+
+/* OpPrependVector (`Stores::prepend_vector`): `o`'s elements put in front of `v`'s, copied by the
+ * element type `tp`'s table entry; answers whether anything was prepended. */
+int64_t loft_crt_vec_prepend(int64_t store, int64_t rec, int64_t pos, int64_t o_store, int64_t o_rec,
+                             int64_t o_pos, int64_t tp, int64_t linked) {
+    if (!loft_crt_keyed(tp)) return 0;
+    return loft_vec_prepend(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos),
+                            loft_crt_ref(o_store, o_rec, o_pos), (int) linked);
+}
+
 /* OpSetDbRef (`Stores::set_db_ref`): a reference written into the twelve bytes at `fld`, the record
  * it names marked referenced, so removing it leaves a tombstone. */
 void loft_crt_set_dbref(int64_t store, int64_t rec, int64_t pos, int64_t fld, int64_t r_store,

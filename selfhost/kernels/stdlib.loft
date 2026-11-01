@@ -17,6 +17,12 @@ fn uses_pow(n: integer) -> integer {
   n.pow(2) ?? 0
 }
 
+// A text parsed as a vector (`OpCastVectorFromText`), which the interpreter does not carry yet.
+fn parsed(n: integer) -> integer {
+  v = "[1,2,{n}]" as vector<integer>;
+  len(v)
+}
+
 fn main() {
-  println("{use_stdlib(-5)} {use_stdlib(12)} {use_stdlib(4)} {uses_abs(-3)} {uses_pow(3)}");
+  println("{use_stdlib(-5)} {use_stdlib(12)} {use_stdlib(4)} {uses_abs(-3)} {uses_pow(3)} {parsed(3)}");
 }

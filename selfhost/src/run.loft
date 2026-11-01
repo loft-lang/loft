@@ -1039,6 +1039,31 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
         sp_int -= 3;
         crt::vec_reverse(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a);
       }
+      Narrow32 => {
+        nv = ints[sp_int - 1];
+        ints[sp_int - 1] = if nv != null && nv! > -2147483648 && nv! <= 2147483647 { nv } else { null };
+      }
+      VecReserve => {
+        sp_int -= 4;
+        crt::vec_reserve(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3], op.a);
+      }
+      HashReserve => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 4;
+        crt::hash_reserve(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, ints[sp_int + 3]);
+      }
+      VecPrepend => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 6;
+        put_int(ints, sp_int, if crt::vec_prepend(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0, op.a, op.b == 1) { 1 } else { 0 });
+        sp_int += 1;
+      }
       SetDbRef => {
         sp_int -= 6;
         crt::set_dbref(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0);
@@ -1773,6 +1798,7 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
               BitAnd => x & y,
               BitOr => x | y,
               BitXor => x ^ y,
+              Pow => if x == null || y == null { null } else { (x!).pow(y!) },
               Shl => x << y,
               Shr => x >> y,
               Eq => bit(x == y),

@@ -523,6 +523,15 @@ fn c_append_text_bytes(store: integer, rec: integer, pos: integer, val: text, by
 fn c_vec_reverse(store: integer, rec: integer, pos: integer, size: integer);
 #c "loft_crt_vec_reverse" "void(int64_t, int64_t, int64_t, int64_t)"
 
+fn c_vec_reserve(store: integer, rec: integer, pos: integer, count: integer, size: integer);
+#c "loft_crt_vec_reserve" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_hash_reserve(store: integer, rec: integer, pos: integer, tp: integer, count: integer);
+#c "loft_crt_hash_reserve" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_vec_prepend(store: integer, rec: integer, pos: integer, o_store: integer, o_rec: integer, o_pos: integer, tp: integer, linked: boolean) -> integer;
+#c "loft_crt_vec_prepend" "int64_t(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
 fn c_set_dbref(store: integer, rec: integer, pos: integer, fld: integer, r_store: integer, r_rec: integer, r_pos: integer);
 #c "loft_crt_set_dbref" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 
@@ -618,6 +627,21 @@ pub fn append_text_bytes(store: integer, rec: integer, pos: integer, t: text?, l
 // `OpReverseVector`: the elements of `size` bytes reversed in place.
 pub fn vec_reverse(store: integer, rec: integer, pos: integer, size: integer) {
   c_vec_reverse(store, rec, pos, size);
+}
+
+// `OpReserveVector`: room for `count` elements of `size` bytes.
+pub fn vec_reserve(store: integer, rec: integer, pos: integer, count: integer?, size: integer) {
+  c_vec_reserve(store, rec, pos, count ?? 0, size);
+}
+
+// `OpReserveHash`: hash `tp` sized for `count` entries.  The type table must be loaded.
+pub fn hash_reserve(store: integer, rec: integer, pos: integer, tp: integer, count: integer?) {
+  c_hash_reserve(store, rec, pos, tp, count ?? 0);
+}
+
+// `OpPrependVector`: `o`'s elements in front of `v`'s, of element type `tp`; true when any were.
+pub fn vec_prepend(store: integer, rec: integer, pos: integer, o_store: integer, o_rec: integer, o_pos: integer, tp: integer, linked: boolean) -> boolean {
+  c_vec_prepend(store, rec, pos, o_store, o_rec, o_pos, tp, linked) != 0
 }
 
 // `OpSetDbRef`: a stored reference written at `fld`, the record it names marked referenced.

@@ -92,9 +92,11 @@ fn test_the_stdlibs_own_loft_functions_run_from_the_image() {
 
 fn test_an_operator_the_interpreter_does_not_carry_is_refused_by_name() {
   b = kernel("stdlib");
-  d = lower::find(b, "n_uses_pow")!;
+  d = lower::find(b, "n_parsed")!;
   o = run::run(b, d, [3]);
-  assert(o.refused == "an operator the interpreter does not carry: OpPowInt", "refused: {o.refused}");
+  assert(o.refused == "an operator the interpreter does not carry: OpCastVectorFromText", "refused: {o.refused}");
+  // An integer power runs (`OpPowInt`, in the stdlib's `pow`): 3 ** 2.
+  assert(ran("stdlib", "n_uses_pow", [3]) == 9, "uses_pow(3)");
 }
 
 fn test_the_small_integer_operators_answer_as_loft_does() {
@@ -125,6 +127,8 @@ fn test_the_small_integer_operators_answer_as_loft_does() {
   assert(ran("small_ops", "n_clocked", [4]) == 5, "clocked(4): now and ticks");
   assert(ran("small_ops", "n_worded", [3]) == 31131594, "worded(3): split, join, trim, replace, rfind, contains, classes");
   assert(ran("small_ops", "n_worded", [0]) == 1131594, "worded(0)");
+  assert(ran("small_ops", "n_grown", [4]) == 645704, "grown(4): a prepend and an integer power");
+  assert(ran("small_ops", "n_grown", [2]) == 85702, "grown(2)");
   assert(ran("small_ops", "n_rem_or", [7, 3]) == 1, "rem_or(7, 3)");
   assert(ran("small_ops", "n_rem_or", [7, 0]) == -1, "rem_or(7, 0)");
   // |-6 / 4| = 1.5, as a float and as a single, each times 100.
