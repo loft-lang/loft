@@ -8,6 +8,7 @@
 // needs beyond a scalar, a text or an already laid-out record is refused by name.
 use ir;
 use el;
+use el_types;
 
 // One field's storage, as `finish_type` collects it.
 pub struct SizeAlign {
@@ -94,6 +95,11 @@ fn content_type(e: el::El, t: ir::TypeT) -> integer {
       k = el::def(e, n).known_type;
       if k == NO_TYPE || el::def(e, n).def_type != el::DT_STRUCT { -1 } else { k }
     },
+    // `database.vector(content)`, deduplicated by name: the rows the standard library has.
+    TyVector { inner } => {
+      nm = el_types::elem_name(e, inner);
+      if nm == "" { -1 } else { schema_type(e, "vector<{nm}>") }
+    },
     _ => -1
   }
 }
@@ -111,6 +117,16 @@ pub fn field_position(e: el::El, t: integer, name: text) -> integer {
     }
   }
   NO_TYPE
+}
+
+// `Stores::field_nr`: the number of the field named `name` in store type `t`, or -1.
+pub fn field_nr(e: el::El, t: integer, name: text) -> integer {
+  for f in struct_fields(e, t) {
+    if f.name == name {
+      return f#index;
+    }
+  }
+  -1
 }
 
 // `Stores::names`: the schema type of that name, or -1.
