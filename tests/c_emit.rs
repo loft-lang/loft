@@ -2810,6 +2810,100 @@ fn a_strict_store_c_build_names_a_use_after_free_and_a_store_never_freed() {
     let _ = fa::remove_dir_all(&dir);
 }
 
+/// `LOFT_STRICT_STORES` names the FREE that killed a store, and `LOFT_DOUBLE_FREE` builds the
+/// interpreter's re-free census on C (`strict_note_free`, `keys::double_free_audit`): a cell in
+/// one loft frame frees a store at line 9, reads it at line 11, frees it again at line 12 and
+/// makes it again through the same reference at line 13.  The use after free names both the
+/// free and the access; the census names the re-free and the revival with both their sites, and
+/// counts them.  Falsified: no site recorded at the free (`<not recorded>`), the revival not
+/// noted, and the re-free classified by store alone each fail it.
+#[test]
+fn a_strict_store_c_build_names_the_free_that_killed_a_store_and_the_census_its_sites() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("strict-free-sites");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let file = dir.join("sites.loft");
+    fa::write(
+        &file,
+        "struct P { x: integer, name: text }\nfn main() {\n  p = P { x: 41, name: \"a\" };\n  \
+         println(\"{p.x} {p.name}\");\n}\n",
+    )
+    .expect("write program");
+    let c = dir.join("sites.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "emit: {}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let unit = fa::read_to_string(&c).expect("read the C");
+    let tp: u32 = unit
+        .split("loft_database_typed(&v0_p, 16, ")
+        .nth(1)
+        .and_then(|t| t.split(')').next())
+        .and_then(|t| t.parse().ok())
+        .expect("the type of P in the unit");
+    let mut text = unit.replacen(
+        "int main(int argc, char **argv) {",
+        "static int loft_program_main(int argc, char **argv) {",
+        1,
+    );
+    let _ = write!(
+        text,
+        "\nint main(void) {{\n    loft_bind_tables();\n    loft_start(0, 0);\n    \
+         loft_frame_push(\"cell\", \"cell.loft\", 3);\n    \
+         loft_ref r = loft_ref_null();\n    loft_database_typed(&r, 16, {tp});\n    \
+         loft_ref k = loft_ref_null();\n    loft_database_typed(&k, 16, {tp});\n    \
+         loft_frame_site(9);\n    loft_free_ref(r);\n    \
+         loft_frame_site(11);\n    printf(\"stale %lld\\n\", (long long) loft_get_int(r, 0));\n    \
+         loft_frame_site(12);\n    loft_free_ref(r);\n    \
+         loft_frame_site(13);\n    loft_database_typed(&r, 16, {tp});\n    \
+         loft_free_ref(r);\n    loft_free_ref(k);\n    loft_frame_pop();\n    \
+         loft_leak_report();\n    return 0;\n}}\n"
+    );
+    let src = dir.join("cell.c");
+    let exe = dir.join("cell");
+    fa::write(&src, &text).expect("write the cell");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O1", "-w", "-DLOFT_STRICT_STORES", "-DLOFT_DOUBLE_FREE"])
+        .arg(&src)
+        .arg("-o")
+        .arg(&exe)
+        .args(unit_links(&src))
+        .arg("-lm")
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc: {}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .output()
+        .expect("run the cell");
+    let err = String::from_utf8_lossy(&out.stderr);
+    for want in [
+        "[strict-store] USE AFTER FREE (access) store #0 type=P rec=1 pos=8",
+        "  killed by the free in fn cell() at cell.loft:9",
+        "  accessed now in fn cell() at cell.loft:11",
+        "[double-free] store #0 freed again in fn cell() at cell.loft:12, first freed in fn cell() at cell.loft:9",
+        "[double-free] store #0 made again in fn cell() at cell.loft:13, freed in fn cell() at cell.loft:9",
+        "[double-free] 1 re-free(s) of an already-free slot: 1 from a DIFFERENT site and 0 from the SAME site; \
+         1 freed slot(s) made again through a reference that still named them.",
+    ] {
+        assert!(err.contains(want), "missing {want:?} in:\n{err}");
+    }
+    assert_eq!(out.status.code(), Some(1), "the use after free fails the run");
+}
+
 /// @PLN206 D31 — a test run leaves no store behind on the C, as on the interpreter, whose tests
 /// each run in a fork of their own.  Three ways it did not, each a cell here:
 /// - a default lowered into a function of its own (`__dflt_f_b`, loft#699) has no parameter,
