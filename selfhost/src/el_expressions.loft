@@ -629,6 +629,12 @@ fn field_default(e: el::El, d: integer, a: integer, r: ir::Node, base: integer) 
         el::refuse(e, "an omitted field of this type");
         return null;
       }
+      // A nullable struct field, or one that would contain its host, is an out-of-line child
+      // (`@FR-L-OutOfLine`), whose default is not carried yet.
+      if at.nullable || contains_struct(e, fd, d, 0) {
+        el::refuse(e, "an omitted nullable or out-of-line struct field");
+        return null;
+      }
       out: vector<ir::Node> = [];
       for fa in el::def(e, fd).attributes {
         if fa.constant {
@@ -656,6 +662,27 @@ fn field_default(e: el::El, d: integer, a: integer, r: ir::Node, base: integer) 
     return null;
   }
   [el_ir::cl(e, op, [r, ir::NdInt { n: pos }, val])]
+}
+
+// Does struct `d` hold a record of struct `host`, directly or through its struct fields?
+fn contains_struct(e: el::El, d: integer, host: integer, depth: integer) -> boolean {
+  if d == host {
+    return true;
+  }
+  if depth > 32 {
+    return true;
+  }
+  for a in el::def(e, d).attributes {
+    match a.typedef[0] ?? ir::TyVoid {
+      TyReference { n } => {
+        if el::def(e, n).def_type == el::DT_STRUCT && contains_struct(e, n, host, depth + 1) {
+          return true;
+        }
+      },
+      _ => {}
+    }
+  }
+  false
 }
 
 // A vector field written from a literal, built into the field (`parse_vector_inner` with
