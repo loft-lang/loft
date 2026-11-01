@@ -176,11 +176,20 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SIntrinsic { at, kind, args } => intrinsic(e, vars, at, kind, args),
     SMember { e: re, name, args, call } => member(e, vars, re, name, args, call),
     SBin { op, l, r } => binary(e, vars, op, l, r),
+    SUnary { op, e: ue } => unary(e, vars, op, ue),
+    SParen { e: pe } => if pe == null { ex(ir::NdNull, ir::TyUnknown { n: 0 }) } else { expression(e, vars, pe!) },
     _ => {
       el::refuse(e, "an expression form: {syn_kind(e, n)}");
       ex(ir::NdNull, ir::TyUnknown { n: 0 })
     }
   }
+}
+
+// A type's variant name, for a refusal that says which operands it met.
+fn type_kind(t: ir::TypeT) -> text {
+  s = "{t}";
+  cut = s.find(" ") ?? len(s);
+  s[0..cut]
 }
 
 // The node's variant name, for a refusal that says which form it is.
@@ -574,6 +583,10 @@ fn intrinsic(e: el::El, vars: el_vars::Vars, at: integer, kind: text, args: vect
     message = if len(list) == 0 { ir::NdText { s: "panic" } } else { list[0] };
     code = el_ir::cl(e, "n_panic", [message, file_arg, line_arg]);
   } else {
+    if len(list) > 0 && el_types::is_unknown(types[0] ?? ir::TyVoid) {
+      // Already refused where its type was lost.
+      return ex(ir::NdNull, ir::TyVoid);
+    }
     if len(list) == 0 || !(el_types::base(types[0] ?? ir::TyVoid) is TyBoolean) {
       el::refuse(e, "an assert whose condition is not a boolean");
       return ex(ir::NdNull, ir::TyVoid);
@@ -862,7 +875,9 @@ fn append_data(e: el::El, list: vector<ir::Node>, var: integer, val: ir::Node, t
       list += [format_fp(e, "OpFormatSingle", w, val)];
     },
     TyUnknown { n: _ } => {},
-    _ => el::refuse(e, "a formatted value of this type")
+    // A value already refused where its type was lost.
+    TyNever => {},
+    _ => el::refuse(e, "a formatted value of this type: {type_kind(tp)}")
   }
 }
 
@@ -886,6 +901,9 @@ fn binary(e: el::El, vars: el_vars::Vars, op: text, l: integer, r: integer) -> E
   if op == "+" {
     return plus_run(e, vars, l, r);
   }
+  if op == "&&" || op == "and" || op == "||" || op == "or" {
+    return logical(e, vars, op == "||" || op == "or", l, r);
+  }
   a = expression(e, vars, l);
   b = expression(e, vars, r);
   builtin_op(e, op, a, b)
@@ -903,6 +921,42 @@ fn builtin_op(e: el::El, op: text, a: Ex, b: Ex) -> Ex {
     return call_op(e, "<=", [b.code, a.code], [b.tp, a.tp]);
   }
   call_op(e, op, [a.code, b.code], [a.tp, b.tp])
+}
+
+// `Parser::boolean_operator`: both operands are truthiness positions (`convert_condition`, which
+// leaves a boolean as it is); `a && b` is `if a { b } else { false }` and `a || b` is
+// `if a { true } else { b }`, a `boolean?` right operand made definite by `== true`, the result a
+// boolean on both passes.  An operand of another type is refused by name.
+fn logical(e: el::El, vars: el_vars::Vars, is_or: boolean, l: integer, r: integer) -> Ex {
+  a = expression(e, vars, l);
+  b = expression(e, vars, r);
+  for x in [a, b] {
+    if !e.first_pass && !el_types::is_unknown(x.tp) && !(el_types::base(x.tp) is TyBoolean) {
+      el::refuse(e, "a `&&` or `||` operand that is not a boolean: {type_kind(x.tp)}");
+      return ex(ir::NdNull, ir::TyBoolean);
+    }
+  }
+  second = b.code;
+  if b.tp is TyOptional {
+    second = el_ir::cl(e, "OpEqBool", [second, ir::NdBoolean { b: true }]);
+  }
+  code = if is_or {
+    el_ir::v_if(a.code, ir::NdBoolean { b: true }, second)
+  } else {
+    el_ir::v_if(a.code, second, ir::NdBoolean { b: false })
+  };
+  ex(code, ir::TyBoolean)
+}
+
+// `Parser::parse_single`'s prefix operators: `-x`, `!x` and `~x` call the one-operand builtin
+// candidates (`OpMinSingle…`, `OpNot`, `OpBitNotSingle…`) on the operand.  A `&` there is refused.
+fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
+  if op == "&" || n == null {
+    el::refuse(e, "a `&` reference");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  x = expression(e, vars, n!);
+  call_op(e, op, [x.code], [x.tp])
 }
 
 // `Parser::level_run_inner`'s `+` arm: a run of `+` at one level (the tree nests it to the left)
@@ -1043,17 +1097,18 @@ fn rename(op: text) -> text {
   if op == ">>" { return "SRight"; }
   if op == "**" { return "Pow"; }
   if op == "!" { return "Not"; }
+  if op == "~" { return "BitNot"; }
   op
 }
 
 // `Parser::call_op_as`, the builtin-operator path: the first `Op<name>…` candidate whose
 // parameters take these arguments.
 pub fn call_op(e: el::El, op: text, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
-  if e.first_pass {
-    for t in types {
-      if el_types::is_unknown(t) {
-        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-      }
+  // An untyped operand is a callee the first pass has not met, or — on the second pass — a
+  // construct already refused by name, which this refusal would only count again.
+  for t in types {
+    if el_types::is_unknown(t) {
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
   }
   for c in el::possible(e, "Op{rename(op)}") {
@@ -1062,7 +1117,11 @@ pub fn call_op(e: el::El, op: text, list: vector<ir::Node>, types: vector<ir::Ty
       return r!;
     }
   }
-  el::refuse(e, "an operator with no builtin candidate");
+  kinds = "";
+  for t in types {
+    kinds += if t#index > 0 { ", {type_kind(t)}" } else { type_kind(t) };
+  }
+  el::refuse(e, "an operator with no builtin candidate: {op} on {kinds}");
   ex(ir::NdNull, ir::TyUnknown { n: 0 })
 }
 
