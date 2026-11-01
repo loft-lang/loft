@@ -63,11 +63,12 @@ def oracle_one(loft, path, tmp, env, i):
 
 def places(toks):
     """Mine as {place: item}: the first token at a place, except a `.`/`..` the number lexer
-    queued beside another token at the same place (the Rust never traces a queued token)."""
+    queued beside another token at the same place (the Rust never traces a queued token).  An
+    item is the token and, after a tab, the scan cursor after it."""
     count = collections.Counter((l, c) for l, c, _ in toks)
     out = {}
     for l, c, item in toks:
-        if count[(l, c)] > 1 and item in ("tok .", "tok .."):
+        if count[(l, c)] > 1 and item.split("\t")[0] in ("tok .", "tok .."):
             continue
         out.setdefault((l, c), item)
     return out

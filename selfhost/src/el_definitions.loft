@@ -1,0 +1,292 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The declarations of a file (src/parser/definitions.rs and the item loop of src/parser/mod.rs
+// `parse_file`), elaborated from the syntax tree.  Each function is named after the Rust one it
+// ports, and keeps its order of effects: a definition is added where the Rust parser adds it,
+// at the position the Rust lexer stands on then (`el::pos_at` of the token it is peeking).
+use ir;
+use lex::*;
+use syntax::*;
+use el;
+use el_vars;
+use el_types;
+use el_expressions;
+
+// `Parser::parse_file`'s definition loop, over the file's items in order.
+pub fn elab_file(e: el::El, file: integer) {
+  match e.p.nodes[file] {
+    SFile { items } => {
+      for it in items {
+        top_item(e, it);
+      }
+    },
+    _ => {}
+  }
+}
+
+fn top_item(e: el::El, it: integer) {
+  match e.p.nodes[it] {
+    SDirective { at } => {},
+    SUse { at } => { el::refuse(e, "use"); },
+    SCapability { at } => {},
+    SAlias { at, name, tp, size } => { parse_typedef(e, at, name, tp, size); },
+    SEnum { at, name, tvars, variants } => { parse_enum(e, at, name, tvars, variants); },
+    SInterface { at, name, members, end } => { parse_interface(e, at, name, members, end); },
+    SFn { at, is_op, name, tvars, params, ret, ret_const, cap, body, annots } => {
+      parse_function(e, at, is_op, name, tvars, params, ret, ret_const, cap, body, annots);
+    },
+    SStruct { at } => { el::refuse(e, "struct"); },
+    SConst { at } => { el::refuse(e, "constant"); },
+    _ => { el::refuse(e, "item"); }
+  }
+}
+
+// `type Name (= Type)? (size(n))? ;`                               Parser::parse_typedef
+fn parse_typedef(e: el::El, at: integer, name: text, tp: integer?, size: integer?) {
+  nt = el::name_tok(e, at, name);
+  d = el::def_nr(e, name);
+  if e.first_pass {
+    if d >= 0 {
+      el::refuse(e, "a type alias over an existing name");
+      return;
+    }
+    d = el::add_def(e, name, el::pos_at(e, nt + 1), el::DT_TYPE);
+  }
+  if d < 0 {
+    return;
+  }
+  if tp != null {
+    el::refuse(e, "a type alias's `= type`");
+  }
+  if size != null && e.first_pass {
+    match e.p.nodes[size ?? 0] {
+      SInt { v } => {
+        if v == 1 || v == 2 || v == 4 || v == 8 {
+          e.b.data.definitions[d].forced_size = v;
+        }
+      },
+      _ => {}
+    }
+  }
+  if e.first_pass {
+    el::complete_definition(e, d);
+  }
+}
+
+// `enum Name { Variant ({ fields })?, … }`                           Parser::parse_enum
+fn parse_enum(e: el::El, at: integer, name: text, tvars: vector<integer>, variants: vector<integer>) {
+  if len(tvars) > 0 {
+    el::refuse(e, "an enum template");
+  }
+  nt = el::name_tok(e, at, name);
+  d = el::def_nr(e, name);
+  if d < 0 {
+    d = el::add_def(e, name, el::pos_at(e, nt + 1), el::DT_ENUM);
+  } else if e.first_pass {
+    el::refuse(e, "an enum over an existing name");
+    return;
+  }
+  if e.first_pass {
+    el::set_returned(e, d, ir::TyEnum { n: d, is_ref: false, dep: [] });
+  }
+  parse_enum_values(e, d, variants);
+  if e.first_pass {
+    el::complete_definition(e, d);
+  }
+}
+
+// The variants, in order: each a definition whose parent is the enum.   parse_enum_values
+fn parse_enum_values(e: el::El, d: integer, variants: vector<integer>) {
+  for vn in variants {
+    match e.p.nodes[vn] {
+      SVariant { at, name, fields } => {
+        v = -1;
+        if e.first_pass {
+          v = el::add_def(e, name, el::pos_at(e, at + 1), el::DT_ENUM_VALUE);
+          e.b.data.definitions[v].parent = d;
+        }
+        if len(fields) > 0 {
+          el::refuse(e, "a struct variant");
+        }
+      },
+      _ => {}
+    }
+  }
+}
+
+// `interface Name { member… }`                                     Parser::parse_interface
+fn parse_interface(e: el::El, at: integer, name: text, members: vector<integer>, end: integer) {
+  nt = el::name_tok(e, at, name);
+  d = el::def_nr(e, name);
+  if d < 0 {
+    if e.first_pass {
+      d = el::add_def(e, name, el::pos_at(e, nt + 1), el::DT_INTERFACE);
+    }
+  } else if e.first_pass {
+    el::refuse(e, "an interface over an existing name");
+  }
+  if e.first_pass && el::def_nr(e, "Self") < 0 {
+    s = el::add_def(e, "Self", el::pos_at(e, nt + 1), el::DT_STRUCT);
+    el::set_returned(e, s, ir::TyReference { n: s, dep: [] });
+  }
+  for m in members {
+    match e.p.nodes[m] {
+      SIType { at: mat, name: aname } => {
+        el::refuse(e, "an interface's associated type");
+      },
+      SIFn { kind, name: method, params, ret, end: mend } => {
+        member = if kind == "op" { "Op{op_rename(method)}" } else { method };
+        if e.first_pass && d >= 0 {
+          stub = "__iface_{d}#{len(params)}_{member}";
+          if el::def_nr(e, stub) < 0 {
+            sn = el::add_def(e, stub, el::pos_at(e, mend), el::DT_FUNCTION);
+            e.b.data.definitions[sn].parent = d;
+            e.b.data.definitions[sn].operator_form = kind == "operator";
+          }
+          sym = symbolic_member(member, len(params));
+          if kind == "operator" && sym != "" {
+            alias = "__iface_{d}#{len(params)}_{sym}";
+            if el::def_nr(e, alias) < 0 {
+              an = el::add_def(e, alias, el::pos_at(e, mend), el::DT_FUNCTION);
+              e.b.data.definitions[an].parent = d;
+            }
+          }
+        }
+      },
+      _ => {}
+    }
+  }
+  if e.default && e.first_pass && name == "Equatable" && d >= 0 {
+    stub = "__iface_{d}#2_OpEq";
+    if el::def_nr(e, "Self") >= 0 && el::def_nr(e, stub) < 0 {
+      sn = el::add_def(e, stub, el::pos_at(e, end), el::DT_FUNCTION);
+      e.b.data.definitions[sn].parent = d;
+      el::set_returned(e, sn, ir::TyBoolean);
+    }
+  }
+}
+
+// `Parser::symbolic_member`: the operator an `operator` member also answers as; "" for none.
+fn symbolic_member(form: text, arity: integer) -> text {
+  if form == "compare" && arity == 2 { return "OpLt"; }
+  if form == "plus" && arity == 2 { return "OpAdd"; }
+  if form == "minus" && arity == 2 { return "OpMin"; }
+  if form == "times" && arity == 2 { return "OpMul"; }
+  if form == "divided_by" && arity == 2 { return "OpDiv"; }
+  if form == "remainder" && arity == 2 { return "OpRem"; }
+  if form == "negate" && arity == 1 { return "OpMin"; }
+  ""
+}
+
+// `rename` (src/parser/mod.rs): an operator token's name in `Op…` spellings.
+fn op_rename(tok: text) -> text {
+  if tok == "[]" { return "Index"; }
+  tok
+}
+
+// One parameter as `parse_arguments` collects it (src/data.rs `Argument`).
+struct Argument {
+  name: text,
+  typedef: ir::TypeT,
+  constant: boolean
+}
+
+// `fn name(params) (-> type)? (; / block)`                    Parser::parse_function
+// The plain path: no type variables, no operator form, no capability, no annotation, no `self`.
+fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vector<integer>, params: vector<integer>, ret: integer?, ret_const: boolean, cap: integer?, body: integer?, annots: vector<integer>) {
+  if is_op || len(tvars) > 0 || cap != null || len(annots) > 0 || ret_const {
+    el::refuse(e, "a function with an operator form, type variables, a capability, annotations or `-> const`");
+    return;
+  }
+  vars = el_vars::new_vars(name, e.file);
+  arguments: vector<Argument> = [];
+  for pn in params {
+    match e.p.nodes[pn] {
+      SParam { name: an, amp, fixed, tp, init, cap: pcap } => {
+        if amp || init != null || pcap != null || tp == null {
+          el::refuse(e, "a parameter with `&`, a default, a capability or no type");
+          return;
+        }
+        t = el_types::parse_type(e, tp ?? 0);
+        if t == null {
+          return;
+        }
+        if an == "self" || an == "both" {
+          el::refuse(e, "a method");
+          return;
+        }
+        arguments += [Argument { name: an, typedef: t!, constant: fixed }];
+      },
+      _ => {}
+    }
+  }
+  // Where the Rust lexer stands after `)`: on the `->`, the body's `{` or the `;`.
+  after = at;
+  rt: ir::TypeT = ir::TyVoid;
+  if ret != null {
+    match e.p.nodes[ret ?? 0] {
+      STy { at: tat } => {
+        // `-> T` (or `-> const T`): the lexer stood on the `->`.
+        after = tat - 1;
+      },
+      _ => {}
+    }
+    t = el_types::parse_type(e, ret ?? 0);
+    if t == null {
+      return;
+    }
+    rt = t!;
+  } else if body != null {
+    match e.p.nodes[body ?? 0] {
+      SBlock { at: bat } => { after = bat; },
+      _ => {}
+    }
+  }
+  if e.first_pass {
+    if el::def_nr(e, "n_{name}") >= 0 {
+      el::refuse(e, "a function over an existing name");
+      return;
+    }
+    e.context = add_fn(e, name, arguments, el::pos_at(e, after));
+  } else {
+    e.context = el::def_nr(e, "n_{name}");
+  }
+  if e.context < 0 {
+    return;
+  }
+  el_vars::take_over(vars, el::def(e, e.context).variables);
+  if e.first_pass {
+    el::set_returned(e, e.context, rt);
+  }
+  if body != null {
+    for a in arguments {
+      if e.first_pass {
+        v = el_vars::add_variable(vars, a.name, a.typedef);
+        el_vars::become_argument(vars, v);
+        if vars.vars[v].uses > 0 {
+          el_vars::in_use(vars, v, false);
+        }
+        if a.constant {
+          el_vars::set_value_const(vars, v);
+        }
+      } else if a.constant {
+        el_vars::set_value_const(vars, a#index);
+      }
+    }
+    code = el_expressions::parse_code(e, vars, body ?? 0);
+    e.b.data.definitions[e.context].code = [code];
+  }
+  e.b.data.definitions[e.context].variables = el_vars::stored(vars);
+  e.context = -1;
+}
+
+// `Data::add_fn`, a plain function: `n_<name>`, its parameters as attributes.
+fn add_fn(e: el::El, name: text, arguments: vector<Argument>, pos: ir::Position) -> integer {
+  d = el::add_def(e, "n_{name}", pos, el::DT_FUNCTION);
+  for a in arguments {
+    e.b.data.definitions[d].attributes += [el::attribute(a.name, a.typedef)];
+    e.b.data.definitions[d].attributes[a#index].value_const = a.constant;
+  }
+  d
+}

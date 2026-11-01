@@ -1,0 +1,83 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Types as the parser asks them (src/data.rs `Type`'s methods, src/parser/definitions.rs
+// `parse_type`), over `ir::TypeT` — the same variants under the image's names.
+use ir;
+use syntax::*;
+use el;
+
+// `Type::base`: the type behind a nullability marker.
+pub fn base(t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyOptional { inner } => inner,
+    _ => t
+  }
+}
+
+pub fn is_unknown(t: ir::TypeT) -> boolean {
+  match t {
+    TyUnknown { n: _ } => true,
+    _ => false
+  }
+}
+
+// `Type::is_same`: one type, ignoring dependencies (the shapes compared, not the stores).
+pub fn is_same(a: ir::TypeT, b: ir::TypeT) -> boolean {
+  match a {
+    TyInteger { spec: sa } => match b {
+      TyInteger { spec: sb } => true,
+      _ => false
+    },
+    TyBoolean => b is TyBoolean,
+    TyFloat => b is TyFloat,
+    TySingle => b is TySingle,
+    TyCharacter => b is TyCharacter,
+    TyText { dep: _ } => match b {
+      TyText { dep: _ } => true,
+      _ => false
+    },
+    TyVoid => b is TyVoid,
+    TyNull => b is TyNull,
+    TyEnum { n: na, is_ref: ra } => match b {
+      TyEnum { n: nb, is_ref: rb } => na == nb && ra == rb,
+      _ => false
+    },
+    TyReference { n: na } => match b {
+      TyReference { n: nb } => na == nb,
+      _ => false
+    },
+    TyOptional { inner: ia } => match b {
+      TyOptional { inner: ib } => is_same(ia, ib),
+      _ => false
+    },
+    _ => false
+  }
+}
+
+// `Parser::parse_type` of a named type with nothing after its name: the type a definition of
+// that name answers.  What it does not carry yet is refused by name.
+pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
+  match e.p.nodes[n] {
+    STy { name, member, args, keys, deps, limit, not_null, assoc, nullable } => {
+      if member != "" || len(args) > 0 || len(keys) > 0 || len(deps) > 0 || limit != null || not_null || assoc != "" {
+        el::refuse(e, "a type with arguments, keys, a limit or a member");
+        return null;
+      }
+      d = el::def_nr(e, name);
+      if d < 0 {
+        el::refuse(e, "a forward type reference");
+        return null;
+      }
+      t = el::def(e, d).returned[0] ?? ir::TyUnknown { n: d };
+      if nullable {
+        el::refuse(e, "a nullable type");
+      }
+      t
+    },
+    _ => {
+      el::refuse(e, "a tuple or function type");
+      null
+    }
+  }
+}

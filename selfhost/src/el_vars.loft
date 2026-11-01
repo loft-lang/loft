@@ -1,0 +1,153 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A function's variable table while it is elaborated (src/variables/mod.rs `Function`): the
+// variables in creation order and the name each spelling currently means.  What the image
+// keeps of it is `ir::Function`; `Vars` adds the working state the parser asks while it reads
+// the body.  A variable's number is its index, as in the Rust table.
+use ir;
+
+pub struct VarName {
+  pub name: text,
+  pub nr: integer
+}
+
+pub struct Vars {
+  pub name: text,
+  pub file: text,
+  pub vars: vector<ir::Variable>,
+  // `Function::names`: the variable a spelling names now
+  pub names: hash<VarName[name]>,
+  // `Variable::defined`, per variable
+  pub defined: vector<boolean>,
+  // `Function::work_texts`: the `__work_N` text buffers this body minted, in order
+  pub work_texts: vector<integer>,
+  pub work_text: integer
+}
+
+pub fn new_vars(name: text, file: text) -> Vars {
+  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0 }
+}
+
+pub fn count(v: Vars) -> integer {
+  len(v.vars)
+}
+
+// `Function::var`: the variable `name` names, or -1 (`u16::MAX`).
+pub fn var(v: Vars, name: text) -> integer {
+  e = v.names[name];
+  if e == null { -1 } else { e.nr }
+}
+
+pub fn tp(v: Vars, nr: integer) -> ir::TypeT {
+  v.vars[nr].type_def[0] ?? ir::TyUnknown { n: 0 }
+}
+
+// `Function::new_var`: a fresh variable; the first variable of a spelling takes the name.
+pub fn new_var(v: Vars, name: text, tp: ir::TypeT) -> integer {
+  nr = len(v.vars);
+  if v.names[name] == null {
+    v.names += [VarName { name: name, nr: nr }];
+  }
+  v.vars += [ir::Variable {
+    name: name,
+    type_def: [tp],
+    stack_pos: 65535,
+    uses: 1,
+    argument: false,
+    stack_allocated: false,
+    skip_free: false,
+    captured: false,
+    caller_hidden_buf: false,
+    view_elided: false,
+    lazy_buffer: false,
+    deferred_first_bind: false,
+    linked_narrow: false,
+    store_text_link: false,
+    user_named: false,
+    user_appended: false,
+    copy_bound: false,
+    buffer_witnessed: false,
+    value_const: false,
+    owner_witness: 65535,
+    rebind_orig: 65535,
+    scope: 65535
+  }];
+  v.defined += [false];
+  nr
+}
+
+// `Function::add_variable`: the variable `name` already names (its type settled when it was
+// still unknown), or a fresh one.
+pub fn add_variable(v: Vars, name: text, t: ir::TypeT) -> integer {
+  e = v.names[name];
+  if e != null {
+    nr = e.nr;
+    if is_unknown(tp(v, nr)) {
+      v.vars[nr].type_def = [t];
+    }
+    return nr;
+  }
+  new_var(v, name, t)
+}
+
+pub fn become_argument(v: Vars, nr: integer) {
+  v.vars[nr].argument = true;
+  v.defined[nr] = true;
+  v.vars[nr].stack_allocated = true;
+}
+
+pub fn set_defined(v: Vars, nr: integer) {
+  v.defined[nr] = true;
+}
+
+pub fn set_value_const(v: Vars, nr: integer) {
+  v.vars[nr].value_const = true;
+}
+
+// `Function::in_use`: count a use (or take one back).
+pub fn in_use(v: Vars, nr: integer, plus: boolean) {
+  if plus {
+    v.vars[nr].uses += 1;
+  } else {
+    v.vars[nr].uses -= 1;
+  }
+}
+
+// `Function::append(other)`: this table takes over the one a definition kept from the pass
+// before — its variables with their uses reset, and its names.
+pub fn take_over(v: Vars, kept: ir::Function) {
+  v.vars = [];
+  v.defined = [];
+  for x in kept.variables {
+    y = x;
+    y.uses = 0;
+    v.vars += [y];
+    v.defined += [false];
+  }
+  v.names = [];
+  for n in kept.names {
+    v.names += [VarName { name: n.name, nr: n.nr }];
+  }
+  v.work_text = 0;
+  v.work_texts = [];
+}
+
+// What the image keeps of the table (`ir::Function`).
+pub fn stored(v: Vars) -> ir::Function {
+  f = ir::Function { name: v.name, file: v.file, variables: [], names: [], inline_refs: [] };
+  for x in v.vars {
+    f.variables += [x];
+  }
+  for n in v.names {
+    f.names += [ir::NameNr { name: n.name, nr: n.nr }];
+  }
+  f
+}
+
+pub fn is_unknown(t: ir::TypeT) -> boolean {
+  match t {
+    TyUnknown { n: _ } => true,
+    _ => false
+  }
+}
