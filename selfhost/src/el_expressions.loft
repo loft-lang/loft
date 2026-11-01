@@ -307,7 +307,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SCall { at, f, args } => call_expression(e, vars, at, f, args),
     SString { parts } => string_expression(e, vars, parts),
     SIntrinsic { at, kind, args } => intrinsic(e, vars, at, kind, args),
-    SMember { e: re, name, args, call } => member(e, vars, re, name, args, call),
+    SMember { at, e: re, name, args, call } => member(e, vars, at, re, name, args, call),
     SBin { at, op, l, r } => binary(e, vars, at, op, l, r),
     SUnary { op, e: ue } => unary(e, vars, op, ue),
     SIf { cond, then, other } => if_expr(e, vars, cond, then, other),
@@ -542,6 +542,19 @@ fn object_fields(e: el::El, vars: el_vars::Vars, v: integer, d: integer, fields:
   def = el::def(e, d);
   r = ir::NdVar { n: v };
   list: vector<ir::Node> = [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpDatabase", [r, ir::NdInt { n: def.known_type }])];
+  // `parse_object_field`'s header prime: each WRITTEN vector field's handle zeroed right after
+  // the record is made, in literal order.
+  for fi in fields {
+    match e.p.nodes[fi] {
+      SFieldInit { name: fname } => {
+        a = attr_nr(def, fname);
+        if a >= 0 && def.attributes[a].typedef[0] is TyVector {
+          list += [el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: field_position(e, d, fname) }, ir::NdInt { n: 0 }])];
+        }
+      },
+      _ => {}
+    }
+  }
   found: vector<text> = [];
   for fi in fields {
     match e.p.nodes[fi] {
@@ -551,8 +564,26 @@ fn object_fields(e: el::El, vars: el_vars::Vars, v: integer, d: integer, fields:
           el::refuse(e, "a struct field that is quoted, valueless or not declared");
           return null;
         }
-        x = expression(e, vars, fe!);
         at = def.attributes[a].typedef[0] ?? ir::TyUnknown { n: 0 };
+        match at {
+          TyVector { inner } => {
+            if !(e.p.nodes[fe!] is SVecLit) {
+              el::refuse(e, "a vector field written from something other than a literal");
+              return null;
+            }
+            built = field_vector(e, vars, v, d, fname, inner, fe!);
+            if built == null {
+              return null;
+            }
+            for op in built! {
+              list += [op];
+            }
+            found += [fname];
+            continue;
+          },
+          _ => {}
+        }
+        x = expression(e, vars, fe!);
         if !el_types::is_equal(e, at, x.tp) && !(e.first_pass && el_types::is_unknown(x.tp)) {
           el::refuse(e, "a field value its type converts");
           return null;
@@ -568,10 +599,112 @@ fn object_fields(e: el::El, vars: el_vars::Vars, v: integer, d: integer, fields:
       if a.constant || text_in(found, a.name) {
         continue;
       }
-      list += [set_field(e, d, a#index, r, to_default(e, a.typedef[0] ?? ir::TyVoid))];
+      defaults = field_default(e, d, a#index, r, 0);
+      if defaults == null {
+        return null;
+      }
+      for op in defaults! {
+        list += [op];
+      }
     }
   }
   list
+}
+
+// `object_init` for one omitted field at `base` bytes into the record `r`: a plain field its
+// type's default; a vector field its handle zeroed (twice: the prime, then the default's own
+// write); a struct field each of ITS fields' defaults, inline at its offset.
+fn field_default(e: el::El, d: integer, a: integer, r: ir::Node, base: integer) -> vector<ir::Node>? {
+  def = el::def(e, d);
+  at = def.attributes[a];
+  pos = base + field_position(e, d, at.name);
+  ft = at.typedef[0] ?? ir::TyVoid;
+  match ft {
+    TyVector { inner: _ } => {
+      z = el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: pos }, ir::NdInt { n: 0 }]);
+      return [z, z];
+    },
+    TyReference { n: fd } => {
+      if el::def(e, fd).def_type != el::DT_STRUCT {
+        el::refuse(e, "an omitted field of this type");
+        return null;
+      }
+      out: vector<ir::Node> = [];
+      for fa in el::def(e, fd).attributes {
+        if fa.constant {
+          continue;
+        }
+        sub = field_default(e, fd, fa#index, r, pos);
+        if sub == null {
+          return null;
+        }
+        for op in sub! {
+          out += [op];
+        }
+      }
+      return out;
+    },
+    _ => {}
+  }
+  val = to_default(e, ft);
+  if base == 0 {
+    return [set_field(e, d, a, r, val)];
+  }
+  op = write_op(at);
+  if op == "" {
+    el::refuse(e, "a field write of this type");
+    return null;
+  }
+  [el_ir::cl(e, op, [r, ir::NdInt { n: pos }, val])]
+}
+
+// A vector field written from a literal, built into the field (`parse_vector_inner` with
+// `is_field`): no room made first; a scalar item pushed onto the field's place, a text item a
+// record made through the owning struct's field (`OpNewRecord(r, struct, field)`).
+fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, d: integer, fname: text, inner: ir::TypeT, n: integer) -> vector<ir::Node>? {
+  items: vector<integer> = [];
+  match e.p.nodes[n] {
+    SVecLit { items: its } => { items = its; },
+    _ => {}
+  }
+  elm = -1;
+  if len(items) > 0 {
+    elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
+  }
+  out: vector<ir::Node> = [];
+  def = el::def(e, d);
+  kt = def.known_type;
+  pos = field_position(e, d, fname);
+  vk = el_schema::schema_type(e, "vector<{el_types::elem_name(e, inner)}>");
+  fnr = el_schema::field_nr(e, kt, fname);
+  push = push_op(inner);
+  r = ir::NdVar { n: v };
+  for it in items {
+    if e.p.nodes[it] is SRepeat {
+      el::refuse(e, "a repeated vector item");
+      return null;
+    }
+    x = expression(e, vars, it);
+    if !el_types::is_unknown(x.tp) && !el_types::is_equal(e, inner, x.tp) {
+      el::refuse(e, "a vector item of another type than the field's");
+      return null;
+    }
+    if e.first_pass {
+      continue;
+    }
+    if push != "" {
+      out += [el_ir::cl(e, push, [el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: pos }, ir::NdInt { n: vk }]), x.code])];
+    } else if inner is TyText {
+      at = ir::NdVar { n: elm };
+      out += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: kt }, ir::NdInt { n: fnr }]))];
+      out += [el_ir::cl(e, "OpSetText", [at, ir::NdInt { n: 0 }, x.code])];
+      out += [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: kt }, ir::NdInt { n: fnr }])];
+    } else {
+      el::refuse(e, "a vector field of records written from a literal");
+      return null;
+    }
+  }
+  out
 }
 
 // `Parser::parse_object`'s fresh-record arm, a literal that is a value rather than a bind: on the
@@ -661,15 +794,17 @@ fn set_field(e: el::El, d: integer, a: integer, r: ir::Node, val: ir::Node) -> i
   def = el::def(e, d);
   at = def.attributes[a];
   pos = ir::NdInt { n: field_position(e, d, at.name) };
-  op = match el_types::base(at.typedef[0] ?? ir::TyVoid) {
-    TyInteger { spec } => if spec.forced_size == 0 && at.alias_d_nr == el::NONE { "OpSetInt" } else { "" },
-    TyText { dep: _ } => "OpSetText",
-    TyBoolean => "OpSetBoolean",
-    TyFloat => "OpSetFloat",
-    TySingle => "OpSetSingle",
-    TyCharacter => "OpSetCharacter",
-    _ => ""
-  };
+  // `set_field_check`'s record arm: a struct field takes a copy of the value.
+  match el_types::base(at.typedef[0] ?? ir::TyVoid) {
+    TyReference { n: fd } => {
+      if el::def(e, fd).def_type == el::DT_STRUCT {
+        k = ir::NdInt { n: el::def(e, fd).known_type };
+        return el_ir::cl(e, "OpCopyRecord", [val, el_ir::cl(e, "OpGetField", [r, pos, k]), k]);
+      }
+    },
+    _ => {}
+  }
+  op = write_op(at);
   if op == "" {
     el::refuse(e, "a field write of this type");
     return ir::NdNull;
@@ -677,9 +812,22 @@ fn set_field(e: el::El, d: integer, a: integer, r: ir::Node, val: ir::Node) -> i
   el_ir::cl(e, op, [r, pos, val])
 }
 
+// The op a plain field of this attribute's type is written through, or "".
+fn write_op(at: ir::Attribute) -> text {
+  match el_types::base(at.typedef[0] ?? ir::TyVoid) {
+    TyInteger { spec } => if spec.forced_size == 0 && at.alias_d_nr == el::NONE { "OpSetInt" } else { "" },
+    TyText { dep: _ } => "OpSetText",
+    TyBoolean => "OpSetBoolean",
+    TyFloat => "OpSetFloat",
+    TySingle => "OpSetSingle",
+    TyCharacter => "OpSetCharacter",
+    _ => ""
+  }
+}
+
 // `Parser::field` / `get_field` for a plain struct's field: the read op its type loads
 // through, typed as the field — borrowing what the record borrows, and the record's local.
-fn member(e: el::El, vars: el_vars::Vars, re: integer?, name: text, args: vector<integer>, call: boolean) -> Ex {
+fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text, args: vector<integer>, call: boolean) -> Ex {
   if call || len(args) > 0 || re == null {
     el::refuse(e, "a method call");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -714,20 +862,48 @@ fn member(e: el::El, vars: el_vars::Vars, re: integer?, name: text, args: vector
     _ => {}
   }
   pos = ir::NdInt { n: field_position(e, d, name) };
-  op = match el_types::base(def.attributes[a].typedef[0] ?? ir::TyVoid) {
-    TyInteger { spec } => if spec.forced_size == 0 && def.attributes[a].alias_d_nr == el::NONE { "OpGetInt" } else { "" },
-    TyText { dep: _ } => "OpGetText",
-    TyBoolean => "OpGetBoolean",
-    TyFloat => "OpGetFloat",
-    TySingle => "OpGetSingle",
-    TyCharacter => "OpGetCharacter",
-    _ => ""
-  };
-  if op == "" {
-    el::refuse(e, "a field read of this type");
-    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  ft = el_types::base(def.attributes[a].typedef[0] ?? ir::TyVoid);
+  // `get_val`: a collection or record field is the place itself (`OpGetField` with the field's
+  // store type), a plain field its read.
+  code = ir::NdNull;
+  match ft {
+    TyVector { inner } => {
+      vk = el_schema::schema_type(e, "vector<{el_types::elem_name(e, inner)}>");
+      if vk < 0 {
+        el::refuse(e, "a field read of a vector the library has no rows for");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+      code = el_ir::cl(e, "OpGetField", [x.code, pos, ir::NdInt { n: vk }]);
+    },
+    TyReference { n: fd } => {
+      if el::def(e, fd).def_type != el::DT_STRUCT {
+        el::refuse(e, "a field read of this type");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+      code = el_ir::cl(e, "OpGetField", [x.code, pos, ir::NdInt { n: el::def(e, fd).known_type }]);
+    },
+    _ => {
+      op = match ft {
+        TyInteger { spec } => if spec.forced_size == 0 && def.attributes[a].alias_d_nr == el::NONE { "OpGetInt" } else { "" },
+        TyText { dep: _ } => "OpGetText",
+        TyBoolean => "OpGetBoolean",
+        TyFloat => "OpGetFloat",
+        TySingle => "OpGetSingle",
+        TyCharacter => "OpGetCharacter",
+        _ => ""
+      };
+      if op == "" {
+        el::refuse(e, "a field read of this type");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+      code = el_ir::cl(e, op, [x.code, pos]);
+    }
   }
-  ex(el_ir::cl(e, op, [x.code, pos]), t)
+  // `wrap_chain`: on the second pass each `.` step is wrapped in the `.`'s position.
+  if !e.first_pass {
+    code = ir::NdSpan { pos: el::pos_at(e, at), inner: code };
+  }
+  ex(code, t)
 }
 
 // `Parser::parse_var` for the name a binding writes: on the first pass a name that is not a
@@ -1523,21 +1699,8 @@ pub struct VecRows {
   pub vec_known: integer
 }
 
-fn elem_name(e: el::El, t: ir::TypeT) -> text {
-  match t {
-    TyInteger { spec } => if spec.forced_size == 0 && spec.min == -2147483647 && spec.max == 2147483647 { "integer" } else { "" },
-    TyText { dep: _ } => "text",
-    TyBoolean => "boolean",
-    TyFloat => "float",
-    TySingle => "single",
-    TyCharacter => "character",
-    TyReference { n } => if el::def(e, n).def_type == el::DT_STRUCT { el::def(e, n).name } else { "" },
-    _ => ""
-  }
-}
-
 fn vector_rows(e: el::El, t: ir::TypeT) -> VecRows? {
-  nm = elem_name(e, t);
+  nm = el_types::elem_name(e, t);
   if nm == "" {
     el::refuse(e, "a vector of this element type: {type_kind(t)}");
     return null;

@@ -148,6 +148,20 @@ pub fn with_deps(t: ir::TypeT, deps: vector<integer>) -> ir::TypeT {
   }
 }
 
+// The name a vector of `t` is registered under (`vector<integer>`, `main_vector<P>`), or "".
+pub fn elem_name(e: el::El, t: ir::TypeT) -> text {
+  match t {
+    TyInteger { spec } => if spec.forced_size == 0 && spec.min == -2147483647 && spec.max == 2147483647 { "integer" } else { "" },
+    TyText { dep: _ } => "text",
+    TyBoolean => "boolean",
+    TyFloat => "float",
+    TySingle => "single",
+    TyCharacter => "character",
+    TyReference { n } => if el::def(e, n).def_type == el::DT_STRUCT { el::def(e, n).name } else { "" },
+    _ => ""
+  }
+}
+
 // `Type::without_deps`: the type with no borrows.
 pub fn without_deps(t: ir::TypeT) -> ir::TypeT {
   if len(deps(t)) == 0 {
