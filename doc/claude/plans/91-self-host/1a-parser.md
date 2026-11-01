@@ -81,26 +81,34 @@ held as arena indices, never as `&v[i]` into a vector that grows (README § Sub-
 Token positions stay in `Toks`; a node records the index of its first token, which names its
 line and column.
 
-## What the language lacks — fixed in the language first
+## What the language needed — fixed in the language
 
-Measured on `91-self-host @ ad9811d2b`, the shipped PEG cursor match cannot hold a grammar:
+A production is a sequence of tokens and rules, so the PEG cursor match was extended before the
+grammar was written (`formal/matching.md` `(P-Cursor)`, `(P-Rule)`, `(WF-Term)`, `(WF-Pure)`;
+cells under the suite's `rules/matching/P-Cursor` and `P-Rule`):
 
-1. **A sub-rule must be the whole slice pattern** (`control.rs` `parse_subrule_slice_element`):
-   `[LParen, e: expr, RParen]` is refused.  A production is a sequence of tokens and rules,
-   so this is the first fix: **P-Rule in a sequence** — fixed elements and sub-rule calls
-   mixed, each fixed element read at the running position, the cursor restored when the arm
-   fails (`(P-Atomic)`).
-2. **Every cycle of sub-rule calls is refused as left recursion** (PC3), even one that
-   consumes a token before it recurses — `primary` calling `expr` inside its `[LParen]` arm.
-   With (1), an edge after a consumed element is a consuming edge; WF-Term rejects only a
-   cycle of non-consuming edges, as SUBRULE-DESIGN § 4.1 specifies.
-3. **A sub-rule must answer a struct** (`peek_subrule_capture` asks for a `Reference`).  The
-   arena form answers `integer?`; a scalar sub-rule is gated on `!= null` as a struct one is.
-4. **Repetition and option of a sub-rule** (`[(xs: arg)*]`, `[(t: ty)?]`) — after 1–3, measured
-   on the grammar as it is written.
+1. A sub-rule anywhere in a pattern: `[LParen, e: expr, RParen]`, read in segments, the rule
+   called only when its arm is tried, the cursor put back when the arm fails.
+2. A sub-rule group: `(args: expr)*(Comma)`, `+`, `(r: ret)?`.
+3. Recursion through a consumed token is admitted; only a cycle of calls that can run before a
+   token is consumed is left recursion.
+4. A rule answers any type, so the arena form (`-> integer?`) is a rule.
+5. A cursor match's mode covers its patterns, not its arm bodies (loft#2322).
 
-Each is a compiler fix with its suite cell under `rules/matching/`, both backends, falsified —
-never a hand-written cursor save and restore in the parser.
+A look-ahead is written as a PREDICATE rule — a function that answers the position without
+consuming, or null (`brace_next`, `no_else`, `empty_literal_allowed`).
+
+## Open
+
+- **A rule answering a `vector` bound in a match that is a function's tail** loses the match's
+  value on the interpreter and is refused by the C backend ("an integer expected, a Void found"):
+  the scope pass assigns the binding's conditional free, not the match value, to the return
+  slot.  The grammar's list rules answer an `SList` node, so it does not block the parser; it is
+  this branch's own defect (the sub-rule lowering is new) and is fixed before the branch merges.
+- **Diagnostics** are part of the port (same text, same position), measured after gate E on the
+  programs `tests/parse_errors.rs` and the suite's refusal cells carry.
+- **Scripts** (`src/script.rs`, a textual desugar before parsing) are not ported yet: gate S
+  counts the file the driver would rewrite as a failure.
 
 ## Gates, in order
 
@@ -113,17 +121,19 @@ never a hand-written cursor save and restore in the parser.
 The corpus for every gate: `default/*.loft`, `tests/scripts/`, `tests/docs/`, `lib/`, and the
 language suite (`../loft-suite-91`).
 
+## Where it stands
+
+| Gate | Measured | Remaining |
+|---|---|---|
+| T tokens | 1845 of 1850 files | four `"\0"` literals (a one-NUL text is loft's null text), one script |
+| S syntax | 1836 of 1843 files | seven refusal cells, all `@EXPECT_ERROR` files |
+| E image | not started | — |
+
+The syntax layer is `selfhost/src/syntax.loft` (the rules, one per production of
+[1a-grammar.md](1a-grammar.md)); gate S's runner is `selfhost/front/parse.loft`.
+
 ## Order of work
 
-1. Gate T: the C lexer and its gate (in progress).
-2. The language fixes 1–3 above.
-3. The syntax layer: definitions (`fn`, `struct`, `enum`, `type`, `interface`, `use`,
-   constants, `#` attributes), types, statements, expressions by precedence
-   (`operators.rs`'s table), patterns, string holes and specs, lambdas.  Gate S.
-4. Elaboration, pass by pass, in the Rust parser's order — definitions first, then the
+1. Elaboration, pass by pass, in the Rust parser's order — definitions first, then the
    bodies; gate E per definition so a partial port is measured.
-
-## Open
-
-- Diagnostics are part of the port (same text, same position), measured after gate E on the
-  programs `tests/parse_errors.rs` and the suite's refusal cells carry.
+2. The script desugar, then diagnostics.
