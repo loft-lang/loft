@@ -668,7 +668,7 @@ impl Parser {
         // value position — recurse into its args (nested natives), then wrap.
         let wrap_here = matches!(
             &*v,
-            Value::Call(op, _) if crate::text_calls::is_text_dest_native(self.data.def(*op).name())
+            Value::Call(op, _) if crate::text_calls::is_text_dest_def(self.data.def(*op))
                 || self.crosses_text_bridge(*op)
                 // @PLN24 arc D — a `#c` binding returning text is a value-position
                 // producer like the other two, and needs the same work-text temp.
@@ -744,7 +744,7 @@ impl Parser {
     /// (nested natives still need a temp).  Any other shape walks normally.
     fn descend_skip_direct(&mut self, v: &mut Value) {
         if let Value::Call(op, args) = v.unspan_mut() {
-            let is_dest = crate::text_calls::is_text_dest_native(self.data.def(*op).name())
+            let is_dest = crate::text_calls::is_text_dest_def(self.data.def(*op))
                 || self.crosses_text_bridge(*op);
             if is_dest {
                 for a in args.iter_mut() {

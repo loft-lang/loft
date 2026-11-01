@@ -19,7 +19,7 @@ use crate::data_store::ValueType;
 use crate::database::Stores;
 use crate::ir_node::{IrBlock, IrNode, IrNodeList};
 use crate::stack::Stack;
-pub(crate) use crate::text_calls::{is_c_text_call, is_cdylib_text_call, is_text_dest_native};
+pub(crate) use crate::text_calls::{is_c_text_call, is_cdylib_text_call, is_text_dest_def};
 use crate::type_schema::StoreTypeOf;
 #[cfg(debug_assertions)]
 use crate::variables::Function;
@@ -4551,7 +4551,7 @@ impl State {
                 return true;
             }
         }
-        if !is_text_dest_native(&inner_name) {
+        if !is_text_dest_def(stack.data.def(*inner_op)) {
             return false;
         }
         let dest_name = inner_name.clone() + "_dest";
@@ -6253,7 +6253,7 @@ impl State {
                 // fires and the call fell back to the scratch producer (`n_kind`).
                 if let Value::Call(op, args) = value.unspan() {
                     let name = stack.data.def(*op).name().to_owned();
-                    if is_text_dest_native(&name)
+                    if is_text_dest_def(stack.data.def(*op))
                         && let Some(&lib_nr) = self.library_names.get(&(name + "_dest"))
                     {
                         let var_pos = stack.var_pos(var);
@@ -6456,7 +6456,7 @@ impl State {
             && let Value::Call(op, args) = value.unspan()
         {
             let name = stack.data.def(*op).name().to_owned();
-            if is_text_dest_native(&name) {
+            if is_text_dest_def(stack.data.def(*op)) {
                 let dest_name = name.clone() + "_dest";
                 if let Some(&lib_nr) = self.library_names.get(&dest_name) {
                     self.gen_text_dest_call(stack, var, *op, args, lib_nr);
