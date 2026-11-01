@@ -2795,13 +2795,21 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
   }
   size = elem_size(elem);
   op = read_op(elem);
-  if size < 0 || op == "" {
+  record = false;
+  if size == -2 {
+    size = if e.first_pass { 0 } else { record_size(e, elem) };
+    record = size >= 0;
+  }
+  if size < 0 || (op == "" && !record) {
     el::refuse(e, "a `for` over a vector of records");
     return ex(ir::NdNull, ir::TyVoid);
   }
   i = ir::NdVar { n: idx };
   step = el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: 1 }]);
-  get = el_ir::cl(e, op, [el_ir::cl(e, "OpGetVectorNullable", [ir::NdVar { n: vec }, ir::NdInt { n: size }, i]), ir::NdInt { n: 0 }]);
+  get = el_ir::cl(e, "OpGetVectorNullable", [ir::NdVar { n: vec }, ir::NdInt { n: size }, i]);
+  if !record {
+    get = el_ir::cl(e, op, [get, ir::NdInt { n: 0 }]);
+  }
   next = el_ir::v_block([el_ir::v_set(idx, step), get], el_types::without_deps(elem), "iter next");
   brk = el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break");
   past_end = el_ir::v_if(el_ir::cl(e, "OpLeInt", [el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: vec }]), i]), brk, ir::NdNull);
@@ -3681,7 +3689,14 @@ fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vector<
   may_miss = !fits(e, vars, i.code, x.code);
   size = elem_size(inner);
   op = read_op(inner);
-  if size < 0 || op == "" {
+  // A record element is the element itself (`OpGetVector`), a view of the container.
+  record = false;
+  if size == -2 {
+    // Laid out after the first pass, whose code is not kept.
+    size = if e.first_pass { 0 } else { record_size(e, inner) };
+    record = size >= 0;
+  }
+  if size < 0 || (op == "" && !record) {
     el::refuse(e, "an index into a vector of records");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -3693,7 +3708,10 @@ fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vector<
   if may_miss {
     t = ir::TyOptional { inner: t };
   }
-  code = el_ir::cl(e, op, [el_ir::cl(e, "OpGetVector", [x.code, ir::NdInt { n: size }, i.code]), ir::NdInt { n: 0 }]);
+  code = el_ir::cl(e, "OpGetVector", [x.code, ir::NdInt { n: size }, i.code]);
+  if !record {
+    code = el_ir::cl(e, op, [code, ir::NdInt { n: 0 }]);
+  }
   if !e.first_pass {
     code = ir::NdSpan { pos: el::pos_at(e, at), inner: code };
   }
