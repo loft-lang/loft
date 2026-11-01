@@ -8,10 +8,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 ## Status
 
 **Open — design, no implementation (owner, 2026-10-27).**  A child document of
-[@PLN91](README.md).  It changes the strand order the README records (1a, the front end,
-first): the owner starts with the INTERPRETER, written in loft, reading the IR the Rust
-front end already writes.  The README's strand table and phase ordering are to be updated
-to match.  Every "measured" line below was run on 2026-10-27 with the installed `loft`
+[@PLN91](README.md), its stage 2 ([README.md § The path](README.md#the-path--stages-and-gates)):
+the INTERPRETER, written in loft, reading the IR the front end writes.  It went first from
+2026-10-27 to 2026-11-01; the lexer and the parser (stage 1) go first now.  Every "measured" line below was run on 2026-10-27 with the installed `loft`
 2026.10.0 (`origin/main`), on `--interpret`, from a scratch directory.
 
 ## Goal
@@ -831,7 +830,7 @@ absence.
 
 ## Documentation this plan owes
 
-- [ ] `91-self-host/README.md`: strand table and phase ordering (1b first, S0–S7), link here.
+- [x] `91-self-host/README.md`: strand table and § The path, stage 2, link here.
 - [ ] `tools/ir_schema/README.md`: the new home of `ir.loft`.
 - [ ] `scripts/rule_tags.py`: citations from `selfhost/**/*.loft`; `formal/README.md` § Rule tags.
 - [ ] `doc/claude/bars/OCAML_BAR.md`: the register's rows that are bar entries (X3, X4, X5, X7).
