@@ -953,7 +953,7 @@ fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
     SStructLit { name: sn, member, fields: fs, base } => {
       if member != "" || base != null {
         el::refuse(e, "a qualified struct literal or an update");
-        return ex(ir::NdNull, ir::TyVoid);
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
       }
       name = sn;
       fields = fs;
@@ -963,7 +963,7 @@ fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
   d = el::def_nr(e, name);
   if d < 0 || el::def(e, d).def_type != el::DT_STRUCT {
     el::refuse(e, "a literal of something other than a declared struct");
-    return ex(ir::NdNull, ir::TyVoid);
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   vt = el_vars::tp(vars, v);
   matches = match vt {
@@ -973,12 +973,12 @@ fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
   };
   if !matches || el_vars::was_built(vars, v) {
     el::refuse(e, "a struct literal rebinding a local");
-    return ex(ir::NdNull, ir::TyVoid);
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   el_vars::mark_built(vars, v);
   list = object_fields(e, vars, v, d, fields);
   if list == null {
-    return ex(ir::NdNull, ir::TyVoid);
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   ex(ir::NdInsert { items: list! }, ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } })
 }
