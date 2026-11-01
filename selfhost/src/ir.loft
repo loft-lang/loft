@@ -413,10 +413,13 @@ struct DbType {
   field_groups: vector<LinkedFieldGroup>,
 }
 
-// The store root for a saved bundle: the IR plus its database type schema.
+// The store root for a saved bundle: the IR plus its database type schema, and whether the
+// program declared `#cwd` — its relative paths resolve against the working directory, not its
+// own (`Stores::program_relative`), which a run from the image must know as a compiled one does.
 struct Bundle {
   data: Data,
   types: vector<DbType>,
+  cwd: boolean,
 }
 
 // @FTR-078 — the compiler's whole IR vocabulary written as loft types: 24 `Type` variants,
@@ -424,5 +427,5 @@ struct Bundle {
 // schema for the same graph falls out of it
 // The empty bundle a program image is read into (`load.loft`).
 fn empty_bundle() -> Bundle {
-  Bundle { data: Data { definitions: [], source: 0 }, types: [] }
+  Bundle { data: Data { definitions: [], source: 0 }, types: [], cwd: false }
 }

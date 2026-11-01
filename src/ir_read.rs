@@ -660,7 +660,7 @@ pub fn open_bundle_into(path: &str, database: &mut Stores) -> std::io::Result<Da
 pub fn image_round_trip(data: &Data, stores: &Stores) -> std::io::Result<(Data, Stores)> {
     let path = std::env::temp_dir().join(format!("loft_image_{}.bundle", std::process::id()));
     let path = path.to_string_lossy().to_string();
-    crate::ir_store::save_bundle(data, &stores.types, &path)?;
+    crate::ir_store::save_bundle(data, stores, &path)?;
     let mut fresh = Stores::new();
     let read = open_bundle_into(&path, &mut fresh);
     let _ = crate::file_access::remove_file(&path);
@@ -2244,7 +2244,7 @@ mod tests {
 
         let path = std::env::temp_dir().join(format!("loft_bundle_{}.store", std::process::id()));
         let path_str = path.to_str().unwrap();
-        save_bundle(&p.data, &p.database.types, path_str).expect("save_bundle");
+        save_bundle(&p.data, &p.database, path_str).expect("save_bundle");
 
         let (loaded_data, loaded_types) = open_bundle(path_str).expect("open_bundle");
         let _ = crate::file_access::remove_file(&path);
@@ -2288,7 +2288,7 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("loft_bundle_side_{}.store", std::process::id()));
         let path_str = path.to_str().unwrap();
-        save_bundle(&p.data, &p.database.types, path_str).expect("save_bundle");
+        save_bundle(&p.data, &p.database, path_str).expect("save_bundle");
         let side = dschema_path(&path);
         assert!(
             crate::file_access::exists(&side),

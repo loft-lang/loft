@@ -484,10 +484,12 @@ pub(crate) const DBTYPE_FIELD_GROUPS: u32 = 28; // vector<LinkedFieldGroup>
 pub(crate) const DBTYPE_COMPLEX: u32 = 32;
 pub(crate) const DBTYPE_LINKED: u32 = 33;
 
-/// `Bundle { data: Data, types: vector<DbType> }` — the saved-bundle store root
-/// (D2a step 4): `Data` inlined at offset 0, the schema vector at `BUNDLE_TYPES`.
+/// `Bundle { data: Data, types: vector<DbType>, cwd: boolean }` — the saved-bundle store root
+/// (D2a step 4): `Data` inlined at offset 0, the schema vector at `BUNDLE_TYPES`, and whether
+/// the program declared `#cwd` at `BUNDLE_CWD`.
 pub(crate) const BUNDLE_DATA: u32 = 0;
 pub(crate) const BUNDLE_TYPES: u32 = 32; // right after the inlined 32-byte `Data`
+pub(crate) const BUNDLE_CWD: u32 = 36;
 /// The bundle root's size in bytes, and its claim in words (see `DATA_ROOT_WORDS`).
 pub(crate) const BUNDLE_STRIDE: u32 = 40;
 #[cfg(feature = "mmap")] // only `save_bundle` claims a bundle root
@@ -1745,5 +1747,6 @@ mod tests {
         assert_eq!(u32::from(stores.size(ids.bundle)), BUNDLE_STRIDE);
         assert_eq!(pos(ids.bundle, "data"), BUNDLE_DATA);
         assert_eq!(pos(ids.bundle, "types"), BUNDLE_TYPES);
+        assert_eq!(pos(ids.bundle, "cwd"), BUNDLE_CWD);
     }
 }
