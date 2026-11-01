@@ -15,6 +15,11 @@ pub fn load(path: text) -> ir::Bundle? {
   b
 }
 
+// Do the program's relative paths resolve against its own directory?  Not when it declared `#cwd`.
+pub fn program_relative(b: ir::Bundle) -> boolean {
+  !b.cwd
+}
+
 // The definition the compiler named `name` (`n_main` for `fn main`), or null.
 pub fn definition(b: ir::Bundle, name: text) -> ir::Definition? {
   for d in b.data.definitions {

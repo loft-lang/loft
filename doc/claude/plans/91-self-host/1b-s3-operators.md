@@ -51,8 +51,9 @@ strict comparison over every program the census passes (out, alloc, leak, binds,
 | a File record (S6's files, carried here because the heap and binding chapters trace through a file): `OpGetFile`, `OpGetFileText`, `OpWriteFile`, `OpReadFile`, natives `write_bytes`, `read_bytes`, `list_dir`, `write_text_raw` | the shim includes `loft_io.h`; each operator is the runtime's own (`loft_get_file`, `loft_get_file_text` into the `&text` slot, `loft_write_file`, `loft_read_file`, …).  A value's binary form is `files.loft`, a port of `read_data` / `write_data` walking the bundle's types while the shim gathers or decodes each piece; a relative path resolves against `LOFT_SOURCE_DIR`, which the census and the comparison hand the runner as `loft` hands a C program | `kernels/files.loft` `bytes_back`, `binary` |
 | `OpDelete`, `OpMoveFile`, `OpMkdir`, `OpMkdirAll`, `OpRmdir`; `OpSizeFile`, `OpSeekFile`, `OpTruncateFile`, `OpSyncFile`; native `os_temp_dir` | the runtime's own (`loft_fs_*`, `loft_size_file`, …); `os_temp_dir` as loft's own `temp_dir()` | `bytes_back`; the census |
 | a compiled stdlib body (`compiled_stdlib`, a `loft_shared_` symbol) with no native here | its loft body, lowered as any function's — except `File.lines`, whose compiled body adopts the caller's buffer (`R-RetAdopt`, native-only): native 40 writes that buffer step for step as `split` does, over `File.content()` read through the record | `files.loft` `lined` |
+| natives `protect_store_frees`, `unprotect_store_frees`, `get_store_lock`, `set_store_lock`, `store_reclaim`, `arguments`, `store_memory`; `OpNullReported` | the runtime's own (`loft_protect`, `loft_get_store_lock`, `loft_store_reclaim`, `loft_arguments` over the arguments after the runner's entry, `loft_store_memory` naming types as the bundle does — the shim's store table holds the interpreted program's stores only, so its report is that program's); `OpNullReported` the null reference with `loft_ref_null_reported`'s mark | `kernels/stores.loft` `locked`, `reported`, `argc` |
 
-**Measured** (2026-11-01): the census went from 297 to 694 programs passed over these rows,
+**Measured** (2026-11-01): the census went from 297 to 720 programs passed over these rows,
 none wrong, crashed or leaking, and every passing program equal to the Rust interpreter in
 every layer but five, each naming its file by the clock: `ticks()` counts from each process's
 own start, the Rust interpreter's including its parse, so the path — and its claim — is a word
@@ -67,4 +68,6 @@ fixed in the compiler.  Later: a match's arm gate peeled only the arm (loft#2315
 native assigned to a `text?` local read back empty on the interpreter (loft#2317, silent) — each
 fixed where it lived.  The files rows found a drop or copy hook taking a hidden work buffer that
 its call sites, placed after `(R-WorkBuffer)`, never pass (loft#2320, an internal error), fixed
-by declining hooks as the rule declines entry points.
+by declining hooks as the rule declines entry points; and the store natives met a loop variable
+spelled like an ended block's local refused as a shadow or a type change (loft#2321), fixed at the
+one check both loop forms now share.

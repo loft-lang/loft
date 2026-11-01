@@ -465,6 +465,9 @@ at run time), and so are the second, vectors, the third, struct enums, and the f
 and their walks, appending a vector and rendering a value: **the census: 1 027 programs, 199 pass, 0 leak, 0 wrong, 0 crash, none
 swept.**
 
+**S4 has begun ([1b-s4.md](1b-s4.md)):** the keyed collections beyond a hash — sorted, ordered,
+index, spatial, trie — and their walks, under S3's invariant unchanged.
+
 ### SU1 — `store_load` maps the image instead of copying it — DESIGNED 2026-10-28
 
 **Why now (owner, 2026-10-28):** the store's file format IS its memory format, so a store

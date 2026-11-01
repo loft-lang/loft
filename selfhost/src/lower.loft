@@ -133,6 +133,27 @@ enum Code {
   HashSorted,
   ScratchIterate,
   ScratchStep,
+  // S4's keyed collections (`keyed_kind`: 1 sorted, 2 ordered, 3 index, 4 spatial, 5 trie).
+  // `KeyedNew` (`a` the element type, `b` the kind), `KeyedFinish` (`a` the collection type, `b`
+  // kind + 8 * element), `KeyedFind` (`a` the type, `b` kind + 8 * parts), `KeyedRemove` (`a` the
+  // raw type, `b` kind + 8 * element); a walk's key list one `WalkKey` at a time, `KeyedIterate` (`a` the walk's
+  // `on`, `b` its argument * 65536 + lower parts * 256 + upper parts) and `KeyedStep` (`a` the
+  // state's slot, `b` the argument * 256 + `on`).
+  KeyedNew,
+  KeyedFinish,
+  KeyedFind,
+  KeyedRemove,
+  WalkKey,
+  KeyedIterate,
+  KeyedStep,
+  // `OpLengthIndex` (`a` 0), `OpSizeIndex` (1), `OpLengthSpatial` / `OpLengthTrie` (2),
+  // `OpSizeSpatial` (3).
+  IndexLen,
+  // A spatial or trie snapshot: `b` 0 all of it (`n_radix_sorted`), 1 a range (`n_spatial_range`,
+  // eight integers), 2 a prefix (`n_trie_prefix`, a text and a limit); `a` the collection type.
+  RadixSnap,
+  // `OpRemove` in a walk: `a` the state's slot, `b` the type * 256 + the walk's `on`.
+  WalkRemove,
   FreeScratch,
   RefEq,
   VecAdd,
@@ -399,6 +420,10 @@ fn kind_of_type(t: ir::TypeT) -> Kind {
     TyReference { n: _, dep: _ } => KRef,
     TyVector { inner: _, dep: _ } => KRef,
     TyHash { n: _, names: _, dep: _ } => KRef,
+    TySorted { n: _, keys: _, dep: _ } => KRef,
+    TyIndex { n: _, keys: _, dep: _ } => KRef,
+    TyRadix { n: _, names: _, dep: _ } => KRef,
+    TyTrie { n: _, key: _, dep: _ } => KRef,
     TyVoid => KNone,
     TyNull => KNone,
     TyNever => KNone,
@@ -870,6 +895,16 @@ fn effect(code: Code, b: integer) -> integer {
     HashNew => 0,
     HashInsert => -2,
     KeyPart => -1,
+    KeyedNew => 0,
+    KeyedFinish => -2,
+    KeyedFind => 0,
+    KeyedRemove => -2,
+    WalkKey => -3,
+    KeyedIterate => 0,
+    KeyedStep => 0,
+    IndexLen => 0,
+    WalkRemove => -1,
+    RadixSnap => if b == 1 { -8 } else if b == 2 { -2 } else { 0 },
     HashFind => 0,
     HashLen => 0,
     // A hash walk: the snapshot from its hash, a walk's state from the snapshot, the next
@@ -952,6 +987,13 @@ fn native_index(name: text) -> integer? {
     "t_4File_lines" => 40,
     "n_write_text_raw" => 41,
     "n_list_dir" => 42,
+    "n_protect_store_frees" => 43,
+    "n_unprotect_store_frees" => 44,
+    "n_get_store_lock" => 45,
+    "n_set_store_lock" => 46,
+    "n_store_reclaim" => 47,
+    "n_arguments" => 48,
+    "n_store_memory" => 49,
     _ => null,
   }
 }
@@ -1314,7 +1356,7 @@ fn mintable(l: Lowering, b: ir::Bundle, tp: integer) {
   p = t.parts[0];
   // A struct enum's parent (`PtEnum`) is minted at its largest variant (`enum_parent_size`);
   // its variant is written into the record after.
-  if !(p is PtStruct) && !(p is PtEnumValue) && !(p is PtHash) && !(p is PtEnum) {
+  if !(p is PtStruct) && !(p is PtEnumValue) && !(p is PtHash) && !(p is PtEnum) && keyed_kind(b, tp) == null {
     refuse(l, "a store of a type the interpreter does not carry yet: {t.name}");
   }
 }
@@ -1413,10 +1455,48 @@ fn vector_element(b: ir::Bundle, tp: integer) -> integer? {
   }
 }
 
+// S4's keyed collections, by the kind the shim's keyed routines take: 1 a sorted, 2 an ordered (a
+// sorted of linked records), 3 an index, 4 a spatial index, 5 a trie; null for any other type.
+fn keyed_kind(b: ir::Bundle, tp: integer) -> integer? {
+  t = b.types[tp];
+  if t == null {
+    return null;
+  }
+  match t.parts[0]! {
+    PtSorted { content: _, keys: _ } => 1,
+    PtOrdered { content: _, keys: _ } => 2,
+    PtIndex { content: _, keys: _ } => 3,
+    PtRadix { content: _, fields: _ } => 4,
+    PtTrie { content: _, key: _ } => 5,
+    _ => null,
+  }
+}
+
+// The element type of a keyed collection of S4's, or null.
+fn keyed_element(b: ir::Bundle, tp: integer) -> integer? {
+  t = b.types[tp];
+  if t == null {
+    return null;
+  }
+  match t.parts[0]! {
+    PtSorted { content, keys: _ } => content,
+    PtOrdered { content, keys: _ } => content,
+    PtIndex { content, keys: _ } => content,
+    PtRadix { content, fields: _ } => content,
+    PtTrie { content, key: _ } => content,
+    _ => null,
+  }
+}
+
 // The key parts `args[from..]` of a lookup or a keyed write, each pushed onto the key stack as
 // its key's type converts it (`key_value`, `src/c/body/keyed.rs`).
 fn key_parts(l: Lowering, b: ir::Bundle, keys: vector<ir::Key>, args: vector<ir::Node>, from: integer) {
-  for i in from..len(args) {
+  key_parts_n(l, b, keys, args, from, len(args) - from);
+}
+
+// The `n` key parts `args[from..from + n]`, as `key_parts` pushes them.
+fn key_parts_n(l: Lowering, b: ir::Bundle, keys: vector<ir::Key>, args: vector<ir::Node>, from: integer, n: integer) {
+  for i in from..from + n {
     kt = (keys[i - from]!.type_nr).abs();
     arg = args[i]!;
     if kt == 3 {
@@ -1618,6 +1698,10 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     value(l, b, args[0]!, KRef);
     value(l, b, args[1]!, KRef);
     emit(l, VecPrepend, KInt, tp, if b.types[tp]?.linked ?? false { 1 } else { 0 });
+  } else if name == "OpNullReported" {
+    // `@FR-E-Report`: the null reference a store-else write hands its setter, its position
+    // marking the fault as reported (`loft_ref_null_reported`).
+    emit(l, PushNull, KRef, 2147483648, 0);
   } else if name == "OpGetFile" {
     value(l, b, args[0]!, KRef);
     emit(l, GetFile, KInt, 0, 0);
@@ -1846,7 +1930,8 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     elem = vector_element(b, vtp);
     helem = hash_element(b, vtp);
     aelem = array_element(b, vtp);
-    if (fld != 65535 && at == null) || (elem == null && helem == null && aelem == null) {
+    kelem = keyed_element(b, vtp);
+    if (fld != 65535 && at == null) || (elem == null && helem == null && aelem == null && kelem == null) {
       refuse(l, "a record added to a collection that is not a plain vector or a hash: {b.types[vtp]!.name}");
       return true;
     }
@@ -1862,6 +1947,19 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
       } else {
         value(l, b, args[1]!, KRef);
         emit(l, ArrayAppend, KRef, 0, 0);
+      }
+      return true;
+    }
+    if kelem != null {
+      // `keyed_new` / `keyed_finish` (S4): a sorted stages its element past its end, an ordered
+      // or an index gives it a record of its own, each filled with the element's defaults; the
+      // finish files it under its key, an equal key's element replaced (`@FR-Col-Insert`).
+      kind = keyed_kind(b, vtp) ?? 0;
+      if name == "OpNewRecord" {
+        emit(l, KeyedNew, KRef, kelem!, kind);
+      } else {
+        value(l, b, args[1]!, KRef);
+        emit(l, KeyedFinish, KRef, vtp, kind + 8 * kelem!);
       }
       return true;
     }
@@ -1888,8 +1986,9 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     // `OpGetRecord(data, tp, n, value…)` on a hash: the collection, then each key part as its
     // key's type converts it (`key_value`, `src/c/body/keyed.rs`), then the find.
     tp = literal(l, args[1]!);
-    if hash_element(b, tp) == null {
-      refuse(l, "a lookup in a keyed collection that is not a hash: {b.types[tp]!.name}");
+    kind = keyed_kind(b, tp);
+    if hash_element(b, tp) == null && kind == null {
+      refuse(l, "a lookup in a keyed collection that is not a hash, a sorted or an index: {b.types[tp]!.name}");
       return true;
     }
     keys = b.types[tp]!.keys;
@@ -1900,27 +1999,39 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     }
     value(l, b, args[0]!, KRef);
     key_parts(l, b, keys, args, 3);
-    emit(l, HashFind, KRef, tp, n);
+    if kind != null {
+      emit(l, KeyedFind, KRef, tp, kind! + 8 * n);
+    } else {
+      emit(l, HashFind, KRef, tp, n);
+    }
   } else if name == "OpHashRemove" {
     // `OpHashRemove(data, rec, tp)`: the entry unlinked and released; the type's top bit
     // (`CLEAR_KEYED_VIEW`) marks a linked group's view member, which only unlinks.
     raw = literal(l, args[2]!);
     tp = raw & 32767;
     elem = hash_element(b, tp);
-    if elem == null {
-      refuse(l, "a removal from a keyed collection that is not a hash: {b.types[tp]!.name}");
+    kelem = keyed_element(b, tp);
+    if elem == null && kelem == null {
+      refuse(l, "a removal from a keyed collection that is not a hash, a sorted or an index: {b.types[tp]!.name}");
       return true;
     }
     value(l, b, args[0]!, KRef);
     value(l, b, args[1]!, KRef);
-    emit(l, HashRemove, KRef, tp, if raw & 32768 != 0 { 1 } else { 0 });
+    if kelem != null {
+      // `keyed_remove`'s other arms: what the element owns is released, a view member only
+      // unlinks.
+      emit(l, KeyedRemove, KRef, raw, (keyed_kind(b, tp) ?? 0) + 8 * kelem!);
+    } else {
+      emit(l, HashRemove, KRef, tp, if raw & 32768 != 0 { 1 } else { 0 });
+    }
   } else if name == "OpSetKeyed" {
     // `OpSetKeyed(coll, value, tp, no_keys, value…)` (`c[k…] = v`) on a hash: the collection, the
     // value, each key part, then the write; the type's top bit releases the value after.
     raw = literal(l, args[2]!);
     tp = raw & 32767;
-    if hash_element(b, tp) == null {
-      refuse(l, "a keyed write into a collection that is not a hash: {b.types[tp]!.name}");
+    kind = keyed_kind(b, tp) ?? 0;
+    if hash_element(b, tp) == null && kind == 0 {
+      refuse(l, "a keyed write into a collection that is not a hash, a sorted or an index: {b.types[tp]!.name}");
       return true;
     }
     keys = b.types[tp]!.keys;
@@ -1932,7 +2043,38 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     value(l, b, args[0]!, KRef);
     value(l, b, args[1]!, KRef);
     key_parts(l, b, keys, args, 4);
-    emit(l, SetKeyed, KRef, raw, n);
+    emit(l, SetKeyed, KRef, raw, n + 256 * kind);
+  } else if name == "OpLengthSorted" {
+    // A sorted is laid out as a vector: its length is the vector's.
+    value(l, b, args[0]!, KRef);
+    emit(l, VecLen, KInt, 0, 0);
+  } else if name == "OpLengthSpatial" || name == "OpLengthTrie" || name == "OpSizeSpatial" {
+    value(l, b, args[0]!, KRef);
+    emit(l, IndexLen, KInt, if name == "OpSizeSpatial" { 3 } else { 2 }, 0);
+  } else if name == "n_radix_sorted" {
+    // A spatial or trie walk's snapshot, its elements in key order (a scratch vector).
+    value(l, b, args[0]!, KRef);
+    emit(l, RadixSnap, KRef, 0, 0);
+  } else if name == "n_spatial_range" {
+    // `s[lo..hi]` of a spatial index: the elements in range as a snapshot; `a` the index type.
+    if len(args) != 10 {
+      refuse(l, "a spatial range with {len(args)} arguments");
+      return true;
+    }
+    value(l, b, args[0]!, KRef);
+    for i in 2..10 {
+      value(l, b, args[i]!, KInt);
+    }
+    emit(l, RadixSnap, KRef, literal(l, args[1]!), 1);
+  } else if name == "n_trie_prefix" {
+    // The trie's elements under a prefix, at most `limit`, as a snapshot; `a` the trie type.
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[2]!, KText);
+    value(l, b, args[3]!, KInt);
+    emit(l, RadixSnap, KRef, literal(l, args[1]!), 2);
+  } else if name == "OpLengthIndex" || name == "OpSizeIndex" {
+    value(l, b, args[0]!, KRef);
+    emit(l, IndexLen, KInt, if name == "OpSizeIndex" { 1 } else { 0 }, 0);
   } else if name == "OpLengthHash" {
     value(l, b, args[0]!, KRef);
     emit(l, HashLen, KInt, 0, 0);
@@ -2000,20 +2142,53 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     value(l, b, args[0]!, KRef);
     emit(l, HashSorted, KRef, literal(l, args[1]!), if name == "n_hash_unsorted" { 1 } else { 0 });
   } else if name == "OpIterate" || name == "OpStep" {
-    // A walk over a snapshot (kind 4) is the one carried; an index, a sorted or a spatial walk,
-    // and a walk with key bounds, are refused by name.
+    // A walk: over a snapshot (kind 4, no key bounds), or over an index (1), a sorted (2) or an
+    // ordered (3) — its state an integer, as the C generator's `loft_*_iterate` / `_step` keep
+    // it.  A spatial walk is refused by name.
     on = literal(l, args[if name == "OpIterate" { 1 } else { 2 }]!);
-    if on & 63 != 4 {
-      refuse(l, "a walk of kind {on & 63}");
+    kind = on & 63;
+    if kind < 1 || kind > 4 {
+      refuse(l, "a walk of kind {kind}");
       return true;
     }
     if name == "OpIterate" {
-      if len(args) != 6 || literal(l, args[4]!) != 0 || literal(l, args[5]!) != 0 {
-        refuse(l, "a walk with key bounds");
+      arg = literal(l, args[2]!);
+      nfrom = literal(l, args[4]!);
+      ntill = literal(l, args[5 + nfrom]!);
+      if kind == 4 {
+        if nfrom != 0 || ntill != 0 {
+          refuse(l, "a walk with key bounds");
+          return true;
+        }
+        value(l, b, args[0]!, KRef);
+        emit(l, ScratchIterate, KInt, 0, 0);
+        return true;
+      }
+      keys: vector<ir::Key> = [];
+      match args[3]! {
+        NdKeys { keys: ks } => {
+          keys = ks;
+        }
+        _ => {
+          refuse(l, "a walk without its keys");
+          return true;
+        }
+      }
+      if nfrom > len(keys) || ntill > len(keys) {
+        refuse(l, "a walk bound with more values than keys");
         return true;
       }
       value(l, b, args[0]!, KRef);
-      emit(l, ScratchIterate, KInt, 0, 0);
+      // The walk's key list, then its bounds' parts onto the key stack, the lower ones first.
+      for k in keys {
+        emit(l, PushInt, KInt, k.type_nr, 0);
+        emit(l, PushInt, KInt, k.position, 0);
+        emit(l, PushInt, KInt, k.start, 0);
+        emit(l, WalkKey, KInt, 0, 0);
+      }
+      key_parts_n(l, b, keys, args, 5, nfrom);
+      key_parts_n(l, b, keys, args, 6 + nfrom, ntill);
+      emit(l, KeyedIterate, KInt, on, arg * 65536 + nfrom * 256 + ntill);
     } else {
       state = 0;
       match unspan(args[0]!) {
@@ -2027,8 +2202,33 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
         _ => refuse(l, "a walk state that is not a variable"),
       }
       value(l, b, args[1]!, KRef);
-      emit(l, ScratchStep, KRef, state, if on & 64 != 0 { 1 } else { 0 });
+      if kind == 4 {
+        emit(l, ScratchStep, KRef, state, if on & 64 != 0 { 1 } else { 0 });
+      } else {
+        emit(l, KeyedStep, KRef, state, literal(l, args[3]!) * 256 + on);
+      }
     }
+  } else if name == "OpRemove" {
+    // `e#remove` in a walk (`OpRemove(state, data, on, tp)`): the walk's state variable, the
+    // collection, then the removal by the walk's kind.
+    on = literal(l, args[2]!);
+    if on & 63 > 3 {
+      refuse(l, "a removal in a walk of kind {on & 63}");
+      return true;
+    }
+    state = 0;
+    match unspan(args[0]!) {
+      NdVar { n: var } => {
+        if var_kind(l, var) == KInt {
+          state = slot_of(l, var);
+        } else {
+          refuse(l, "a walk state that is not an integer variable");
+        }
+      }
+      _ => refuse(l, "a walk state that is not a variable"),
+    }
+    value(l, b, args[1]!, KRef);
+    emit(l, WalkRemove, KRef, state, literal(l, args[3]!) * 256 + on);
   } else if name == "OpFreeScratch" {
     value(l, b, args[0]!, KRef);
     emit(l, FreeScratch, KRef, 0, 0);
@@ -2204,9 +2404,45 @@ pub fn hash_type_of(b: ir::Bundle, ts: vector<ir::TypeT>) -> integer? {
   }
   match binds::base(t) {
     TyHash { n, names, dep: _ } => hash_type_named(b, n, names),
+    // S4: `Stores::sorted` / `Stores::index` name theirs `sorted<{content}[{key},-{key}…]>` and
+    // `index<…>`, a descending key marked `-`; a sorted of linked records is laid out as an
+    // `ordered<…>` of the same tail.
+    TySorted { n, keys, dep: _ } => types::named(b, "sorted<" + key_tail(b, n, keys)) ?? types::named(b, "ordered<" + key_tail(b, n, keys)),
+    TyIndex { n, keys, dep: _ } => types::named(b, "index<" + key_tail(b, n, keys)),
+    // `Stores::spatial` and `Stores::trie`: `spatial<{content}[{field},…]>`, `trie<{content}[{field}]>`.
+    TyRadix { n, names, dep: _ } => types::named(b, "spatial<{b.types[b.data.definitions[n]!.known_type]!.name}[{names_joined(names)}]>"),
+    TyTrie { n, key, dep: _ } => types::named(b, "trie<{b.types[b.data.definitions[n]!.known_type]!.name}[{key}]>"),
     _ => null,
   }
 }
+
+// Field names joined by `,`, as `Stores::field_name` writes them.
+fn names_joined(names: vector<ir::NameRef>) -> text {
+  out = "";
+  for k in names {
+    if k#index > 0 {
+      out += ",";
+    }
+    out += k.name;
+  }
+  out
+}
+
+// `{content}[{key},-{key}…]>`: the tail of a sorted or index type's name.
+fn key_tail(b: ir::Bundle, def: integer, keys: vector<ir::SortKey>) -> text {
+  out = "{b.types[b.data.definitions[def]!.known_type]!.name}[";
+  for k in keys {
+    if k#index > 0 {
+      out += ",";
+    }
+    if !k.asc {
+      out += "-";
+    }
+    out += k.name;
+  }
+  out + "]>"
+}
+
 
 // The schema type `Stores::hash` names for the hash of definition `def` keyed on `names`.
 fn hash_type_named(b: ir::Bundle, def: integer, names: vector<ir::NameRef>) -> integer? {
@@ -3308,7 +3544,7 @@ fn call(l: Lowering, b: ir::Bundle, def_nr: integer, args: vector<ir::Node>) {
     return;
   }
   // A hash snapshot is a native that reads the store, so it is lowered beside the operators.
-  if (is_operator(d.name) || d.name == "n_hash_sorted" || d.name == "n_hash_unsorted") && store_call(l, b, d.name, args) {
+  if (is_operator(d.name) || d.name == "n_hash_sorted" || d.name == "n_hash_unsorted" || d.name == "n_radix_sorted" || d.name == "n_spatial_range" || d.name == "n_trie_prefix") && store_call(l, b, d.name, args) {
     return;
   }
   for i in 0..len(args) {

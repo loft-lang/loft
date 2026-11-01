@@ -161,12 +161,10 @@ void loft_crt_set_slot_text(int64_t store, int64_t at, const char *val, int64_t 
     loft_text_set(t, loft_crt_str(val, bytes));
 }
 
-/* `val` appended to a local; a null local becomes `val`, as the empty text would. */
+/* `val` appended to a local (`OpAppendText`, `loft_text_concat`): a null local stays null, a null
+ * `val` makes it null (`@FR-E-NullArg`). */
 void loft_crt_slot_text_append(int64_t store, int64_t at, const char *val, int64_t bytes) {
-    loft_text *t = (loft_text *) loft_crt_slot_at(store, at);
-    loft_str s = loft_crt_str(val, bytes);
-    if (loft_str_is_null(loft_view(t))) loft_text_set(t, s);
-    else loft_text_append(t, s);
+    loft_text_concat((loft_text *) loft_crt_slot_at(store, at), loft_crt_str(val, bytes));
 }
 
 /* `OpClearText`: the local emptied, its buffer kept. */
@@ -770,10 +768,15 @@ void loft_crt_hash_remove(int64_t store, int64_t rec, int64_t pos, int64_t r_sto
 /* OpSetKeyed (`c[k…] = v`, `Stores::set_keyed`) on a hash of type `tp`: a copy of `v` filed under
  * the top `n` key parts, which are popped; `free_source` releases `v`'s store after. */
 void loft_crt_set_keyed(int64_t store, int64_t rec, int64_t pos, int64_t v_store, int64_t v_rec,
-                        int64_t v_pos, int64_t elem, int64_t tp, int64_t n, int64_t free_source) {
+                        int64_t v_pos, int64_t elem, int64_t tp, int64_t n, int64_t free_source,
+                        int64_t kind) {
+    /* `kind` as the lowering numbers it: 0 a hash, 1 a sorted, 2 an ordered, 3 an index, 4 a
+     * spatial index, 5 a trie. */
+    int k = kind == 1 ? LOFT_KEYED_SORTED : kind == 2 ? LOFT_KEYED_ORDERED : kind == 3 ? LOFT_KEYED_INDEX
+          : kind == 4 ? LOFT_KEYED_SPATIAL : kind == 5 ? LOFT_KEYED_TRIE : LOFT_KEYED_HASH;
     if (loft_crt_keyed(tp) && loft_crt_keyed(elem) && n >= 0 && n <= loft_crt_nkv)
         loft_set_keyed(loft_crt_types, (uint16_t) elem, loft_crt_ref(store, rec, pos),
-                       loft_crt_ref(v_store, v_rec, v_pos), LOFT_KEYED_HASH, loft_crt_types[tp].keys,
+                       loft_crt_ref(v_store, v_rec, v_pos), k, loft_crt_types[tp].keys,
                        loft_crt_types[tp].nk, &loft_crt_kv[loft_crt_nkv - n], (int) n,
                        (int) free_source, 0);
     loft_crt_key_pop(n);
@@ -1020,9 +1023,10 @@ void loft_crt_trace_mark(void) {
 
 /* ── Files (@PLN91 S6): the interpreted program's File records, through the runtime's own file
  * routines.  A relative path resolves against `LOFT_SOURCE_DIR`, which the driver hands the run,
- * as a C program anchors (`loft_set_anchor`). */
-void loft_crt_fs_anchor(void) {
-    loft_set_anchor(1);
+ * as a C program anchors (`loft_set_anchor`) — or against the working directory, for a program
+ * that declared `#cwd`. */
+void loft_crt_fs_anchor(int64_t program_relative) {
+    loft_set_anchor((int) program_relative);
 }
 
 /* OpGetFile: what the File's path names. */
@@ -1174,4 +1178,237 @@ int64_t loft_crt_write_text_raw(int64_t store, int64_t rec, int64_t pos, const c
 int64_t loft_crt_list_dir(int64_t *out, int64_t no, const char *path, int64_t bytes) {
     loft_crt_put_ref(out, no, loft_list_dir(loft_crt_str(path, bytes)));
     return 0;
+}
+
+/* The store natives by `which`: 0 `protect_store_frees`, 1 `unprotect_store_frees`, 2
+ * `get_store_lock`, 3 `set_store_lock` (`arg` the lock), 4 `store_reclaim` — the runtime's own. */
+int64_t loft_crt_store_native(int64_t which, int64_t store, int64_t rec, int64_t pos, int64_t arg) {
+    loft_ref r = loft_crt_ref(store, rec, pos);
+    switch (which) {
+    case 0: loft_protect(r); return 0;
+    case 1: loft_unprotect(r); return 0;
+    case 2: return loft_get_store_lock(r);
+    case 3: loft_set_store_lock(r, (uint8_t) arg); return 0;
+    case 4: return loft_store_reclaim(r);
+    default: return 0;
+    }
+}
+
+/* The interpreted program's command line, one argument at a time after its name (the image):
+ * what `arguments()` answers. */
+void loft_crt_add_arg(const char *v, int64_t bytes) {
+    if (loft_argc == 0) {
+        loft_argv = (char **) malloc(sizeof(char *));
+        if (!loft_argv) { fputs("loft: out of memory\n", stderr); abort(); }
+        loft_argv[0] = (char *) "";
+        loft_argc = 1;
+    }
+    char **grown = (char **) realloc(loft_argv, sizeof(char *) * (size_t) (loft_argc + 1));
+    char *copy = (char *) malloc((size_t) bytes + 1);
+    if (!grown || !copy) { fputs("loft: out of memory\n", stderr); abort(); }
+    memcpy(copy, v, (size_t) bytes);
+    copy[bytes] = 0;
+    loft_argv = grown;
+    loft_argv[loft_argc++] = copy;
+}
+
+/* `arguments()`: the program's arguments in a store of their own, into `out`. */
+int64_t loft_crt_arguments(int64_t *out, int64_t no) {
+    loft_crt_put_ref(out, no, loft_arguments());
+    return 0;
+}
+
+/* The bundle's type names by number, for the reports that name a store's type. */
+static const char **loft_crt_tnames = 0;
+static uint32_t loft_crt_ntnames = 0;
+
+void loft_crt_add_type_name(const char *v, int64_t bytes) {
+    const char **grown = (const char **) realloc((void *) loft_crt_tnames, sizeof(char *) * (loft_crt_ntnames + 1));
+    char *copy = (char *) malloc((size_t) bytes + 1);
+    if (!grown || !copy) { fputs("loft: out of memory\n", stderr); abort(); }
+    memcpy(copy, v, (size_t) bytes);
+    copy[bytes] = 0;
+    loft_crt_tnames = grown;
+    loft_crt_tnames[loft_crt_ntnames++] = copy;
+}
+
+int64_t loft_crt_type_names(void) {
+    return loft_crt_ntnames;
+}
+
+/* `store_memory()`: the runtime's own report over the interpreted program's stores. */
+int64_t loft_crt_store_memory(char *out, int64_t cap) {
+    loft_text t = loft_store_memory(loft_crt_tnames, loft_crt_ntnames);
+    return loft_crt_out(&t, out, cap);
+}
+
+/* ── S4: the keyed collections beyond a hash, by `kind` (1 a sorted, 2 an ordered, 3 an index),
+ * each through the routine the C generator calls for that kind (`src/c/body/keyed.rs`), its keys
+ * the loaded table's. */
+static uint32_t loft_crt_size_of(int64_t tp) {
+    return loft_crt_keyed(tp) ? loft_crt_types[tp].size : 0;
+}
+
+/* OpNewRecord: a sorted stages an element of `size` bytes past its end; an ordered or an index
+ * gives it a record of its own.  Into `out`; the caller fills it with the defaults. */
+int64_t loft_crt_keyed_new(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos,
+                           int64_t kind, int64_t size) {
+    loft_ref c = loft_crt_ref(store, rec, pos);
+    loft_crt_put_ref(out, no, kind == 1 ? loft_sorted_new(c, (uint32_t) size) : loft_entry_new(c, (uint32_t) size));
+    return 0;
+}
+
+/* OpFinishRecord: the record filed under its key, an equal key's element replaced and released
+ * by the element type `elem`'s row. */
+void loft_crt_keyed_finish(int64_t store, int64_t rec, int64_t pos, int64_t r_store, int64_t r_rec,
+                           int64_t r_pos, int64_t kind, int64_t elem, int64_t tp) {
+    if (!loft_crt_keyed(tp) || !loft_crt_keyed(elem)) return;
+    loft_ref c = loft_crt_ref(store, rec, pos), r = loft_crt_ref(r_store, r_rec, r_pos);
+    const loft_key *keys = loft_crt_types[tp].keys;
+    int nk = loft_crt_types[tp].nk;
+    if (kind == 1) loft_sorted_finish(c, loft_crt_size_of(elem), keys, nk);
+    else if (kind == 2) (void) loft_ordered_insert(loft_crt_types, (uint16_t) elem, c, r, keys, nk, 0);
+    else if (kind == 3) (void) loft_ix_insert(loft_crt_types, (uint16_t) elem, c, r, keys, nk, 0);
+    else (void) loft_rx_insert_record(loft_crt_types, (uint16_t) elem, c, r, keys, nk, kind == 5, 0);
+}
+
+/* OpGetRecord: the element whose key is the top `n` parts, into `out`; null on a miss.  The parts
+ * are popped either way. */
+int64_t loft_crt_keyed_find(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos,
+                            int64_t kind, int64_t tp, int64_t n) {
+    loft_ref r = loft_ref_null();
+    if (loft_crt_keyed(tp) && n >= 0 && n <= loft_crt_nkv) {
+        loft_ref c = loft_crt_ref(store, rec, pos);
+        const loft_key *keys = loft_crt_types[tp].keys;
+        int nk = loft_crt_types[tp].nk;
+        const loft_kv *kv = &loft_crt_kv[loft_crt_nkv - n];
+        if (kind == 1) r = loft_seq_find(c, loft_crt_size_of(loft_crt_types[tp].elem), keys, nk, kv, (int) n);
+        else if (kind == 2) r = loft_seq_find(c, 0, keys, nk, kv, (int) n);
+        else if (kind == 3) r = loft_ix_find(c, keys, nk, kv, (int) n);
+        else r = loft_rx_find(c, keys, nk, kind == 5, kv, (int) n);
+    }
+    loft_crt_key_pop(n);
+    loft_crt_put_ref(out, no, r);
+    return 0;
+}
+
+/* OpHashRemove on a sorted, an ordered or an index: the element leaves, what it owns released; a
+ * view member (`view`) only unlinks. */
+void loft_crt_keyed_remove(int64_t store, int64_t rec, int64_t pos, int64_t r_store, int64_t r_rec,
+                           int64_t r_pos, int64_t kind, int64_t elem, int64_t tp, int64_t view) {
+    if (!loft_crt_keyed(tp) || !loft_crt_keyed(elem)) return;
+    loft_ref c = loft_crt_ref(store, rec, pos), r = loft_crt_ref(r_store, r_rec, r_pos);
+    if (kind == 1) loft_sorted_remove_owned(loft_crt_types, (uint16_t) elem, c, r, loft_crt_size_of(elem));
+    else if (kind == 2) loft_ordered_remove(loft_crt_types, (uint16_t) elem, c, r, 0, (int) view);
+    else if (kind == 3) loft_ix_remove(loft_crt_types, (uint16_t) elem, c, r, loft_crt_types[tp].keys, loft_crt_types[tp].nk, (int) view);
+    else loft_rx_remove_owned(loft_crt_types, (uint16_t) elem, c, r, loft_crt_types[tp].keys, loft_crt_types[tp].nk, kind == 5, (int) view);
+}
+
+/* A walk's key list (`OpIterate`'s `Keys`), one part at a time, for the iterate that follows. */
+static loft_key loft_crt_wkeys[LOFT_CRT_KEYS];
+static int loft_crt_nwkeys = 0;
+
+void loft_crt_walk_key(int64_t type, int64_t pos, int64_t start) {
+    if (loft_crt_nwkeys >= LOFT_CRT_KEYS) return;
+    loft_crt_wkeys[loft_crt_nwkeys].type = (int8_t) type;
+    loft_crt_wkeys[loft_crt_nwkeys].pos = (uint16_t) pos;
+    loft_crt_wkeys[loft_crt_nwkeys].start = (int32_t) start;
+    loft_crt_nwkeys++;
+}
+
+/* OpIterate over an index (`on & 63` 1), a sorted (2, `arg` its element size) or an ordered (3):
+ * the walk's first state, its bounds the top `nfrom` + `ntill` parts (popped), its keys the list
+ * above (cleared). */
+int64_t loft_crt_keyed_iterate(int64_t store, int64_t rec, int64_t pos, int64_t on, int64_t arg,
+                               int64_t nfrom, int64_t ntill) {
+    int64_t state = 0;
+    int64_t n = nfrom + ntill;
+    if (n >= 0 && n <= loft_crt_nkv) {
+        loft_ref c = loft_crt_ref(store, rec, pos);
+        const loft_kv *from = &loft_crt_kv[loft_crt_nkv - n];
+        const loft_kv *till = from + nfrom;
+        int ex = (on & 128) == 0, reverse = (on & 64) != 0;
+        switch (on & 63) {
+        case 1: state = loft_ix_iterate(c, ex, reverse, loft_crt_wkeys, loft_crt_nwkeys, from, (int) nfrom, till, (int) ntill); break;
+        case 2: state = loft_seq_iterate(c, (uint32_t) arg, ex, loft_crt_wkeys, loft_crt_nwkeys, from, (int) nfrom, till, (int) ntill); break;
+        case 3: state = loft_seq_iterate(c, 0, ex, loft_crt_wkeys, loft_crt_nwkeys, from, (int) nfrom, till, (int) ntill); break;
+        default: break;
+        }
+    }
+    loft_crt_key_pop(n);
+    loft_crt_nwkeys = 0;
+    return state;
+}
+
+/* OpStep of such a walk: the next element into `out[0..3]`, the state it leaves into `out[3]`;
+ * `arg` is the index type (its keys find the record again) or the sorted's element size. */
+int64_t loft_crt_keyed_step(int64_t *out, int64_t no, int64_t state, int64_t store, int64_t rec,
+                            int64_t pos, int64_t on, int64_t arg) {
+    loft_ref c = loft_crt_ref(store, rec, pos), r = loft_ref_null();
+    int reverse = (on & 64) != 0;
+    switch (on & 63) {
+    case 1:
+        if (loft_crt_keyed(arg)) r = loft_ix_step(&state, c, loft_crt_types[arg].keys, loft_crt_types[arg].nk, reverse);
+        break;
+    case 2: r = loft_seq_step(&state, c, (uint32_t) arg, reverse); break;
+    case 3: r = loft_seq_step(&state, c, 0, reverse); break;
+    default: break;
+    }
+    loft_crt_put_ref(out, no, r);
+    if (no >= 4) out[3] = state;
+    return 0;
+}
+
+/* By `which`: OpLengthIndex (0), OpSizeIndex (1), OpLengthSpatial / OpLengthTrie (2), OpSizeSpatial
+ * (3) — the records, or the table's bytes. */
+int64_t loft_crt_index_len(int64_t store, int64_t rec, int64_t pos, int64_t which) {
+    loft_ref r = loft_crt_ref(store, rec, pos);
+    switch (which) {
+    case 1: return (int64_t) loft_bt_table_bytes(r);
+    case 2: return (int64_t) loft_rx_count(r);
+    case 3: return (int64_t) loft_rx_table_bytes(r);
+    default: return (int64_t) loft_bt_len(r);
+    }
+}
+
+/* A spatial or trie walk's snapshot, into `out`: `which` 0 all of it in key order, 1 the range
+ * `ints[0..8]` of spatial type `tp`, 2 the elements under prefix `pre` of trie type `tp`, at most
+ * `ints[0]`. */
+int64_t loft_crt_radix_snap(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos,
+                            int64_t which, int64_t tp, const int64_t *ints, int64_t nints,
+                            const char *pre, int64_t pre_bytes) {
+    loft_ref c = loft_crt_ref(store, rec, pos), r = loft_ref_null();
+    if (which == 0) r = loft_radix_sorted(c);
+    else if (which == 1 && nints >= 8 && loft_crt_keyed(tp))
+        r = loft_spatial_range(c, loft_crt_types[tp].keys, loft_crt_types[tp].nk, ints[0], ints[1], ints[2],
+                               ints[3], ints[4], ints[5], ints[6], ints[7]);
+    else if (which == 2 && nints >= 1 && loft_crt_keyed(tp))
+        r = loft_trie_prefix(c, loft_crt_types[tp].keys, loft_crt_str(pre, pre_bytes), ints[0]);
+    loft_crt_put_ref(out, no, r);
+    return 0;
+}
+
+/* OpRemove (`e#remove` in a walk): the element the walk visited last leaves its collection, what
+ * it owns released, and the walk goes on with the next.  `on & 63` the walk's kind — 0 a vector
+ * (an array when `tp`'s records are linked), 1 an index (`tp` the index type), 2 a sorted, 3 an
+ * ordered (`tp` the element type) — and the state it leaves is answered. */
+int64_t loft_crt_walk_remove(int64_t state, int64_t store, int64_t rec, int64_t pos, int64_t on, int64_t tp) {
+    if (!loft_crt_keyed(tp)) return state;
+    loft_ref d = loft_crt_ref(store, rec, pos);
+    int reverse = (on & 64) != 0;
+    uint16_t t = (uint16_t) tp;
+    switch (on & 63) {
+    case 0:
+        if (loft_crt_types[tp].linked) loft_array_walk_remove(loft_crt_types, t, &state, d, reverse);
+        else loft_vec_walk_remove(loft_crt_types, t, &state, d, reverse);
+        break;
+    case 1:
+        loft_ix_walk_remove(loft_crt_types, loft_crt_types[tp].elem, &state, d, loft_crt_types[tp].keys,
+                            loft_crt_types[tp].nk, reverse);
+        break;
+    case 2: loft_sorted_walk_remove(loft_crt_types, t, &state, d, reverse); break;
+    case 3: loft_ordered_walk_remove(loft_crt_types, t, &state, d, reverse); break;
+    default: break;
+    }
+    return state;
 }
