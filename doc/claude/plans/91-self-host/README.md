@@ -175,12 +175,13 @@ agree.  The comparison instrument is `selfhost/compare/` ([1b-compare.md](1b-com
    `#hot` / normal / `#cold` classes) and the bytecode byte-identical.  The natives that
    exist only in Rust today move to loft or, where they reach the system, to the C runtime
    (strand 9).  Gate: every layer of the comparison equal — opcodes, bytecode, slots,
-   binds, out, alloc, leak.  **The expected speed is near 3× the Rust interpreter's run
-   time (owner, 2026-11-01), and it rests on the C optimisation layer** — the shared
-   decisions in `src/opt/` and the C writer, which keep optimising the interpreter's loft
-   code throughout the project.  A gap is closed there, for every loft program, never by
-   hand-tuning the interpreter's source or its C.  P-perf measures the inner loop against
-   the Rust interpreter; it steers that work and no longer decides whether 1b happens.
+   binds, out, alloc, leak.  **Speed is out of this stage's scope** (owner, 2026-11-01):
+   the expected near 3× the Rust interpreter's run time rests on the C optimisation layer
+   (the shared decisions in `src/opt/` and the C writer), which keeps optimising loft code
+   throughout the project as its own work, outside the interpreter's implementation.  The
+   interpreter is written as the faithful port, never hand-tuned in its source or its C.
+   P-perf measures the inner loop against the Rust interpreter, as input to that layer; it
+   does not decide whether 1b happens.
 3. **The C generator in loft (strand 12).**  `src/opt/`'s decisions and `src/c/`'s writer,
    the C byte-identical to the Rust generator's for every program.
 4. **Bootstrap.**  Stage 1: the loft-written compiler and interpreter, compiled to C by the
