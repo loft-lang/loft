@@ -240,7 +240,20 @@ fn decoded(n: integer) -> integer {
   len(t) * 100 + len(r) * 10 + (if r == "ell" { 1 } else { 0 })
 }
 
+// A record a `reference<T>` field can name is linked: its vector holds 4-byte record ids (an array,
+// `ArrayNew` / `ArrayAppend` / `ArrayGet`), and a stored reference (`OpSetDbRef` / `OpGetDbRef`)
+// names one.  linked_ids(4): 3 ids * 4 bytes → 12000; v[1].k = 4 + 10 written through the stored
+// reference → 140; len("bb") 2: 12142.  linked_ids(0): 12102.
+struct Lk { k: integer, t: text }
+struct LkHold { r: reference<Lk>, n: integer }
+fn linked_ids(n: integer) -> integer {
+  v: vector<Lk> = [Lk { k: 1, t: "a" }, Lk { k: n, t: "bb" }, Lk { k: 3, t: "ccc" }];
+  h = LkHold { r: v[1], n: 0 };
+  h.r.k += 10;
+  size(v) * 1000 + v[1].k * 10 + len(h.r.t)
+}
+
 fn main() {
   println("{ints(4)} {records(4)} {texts(5)} {bagged(2)} {passed(3)} {through(4)} {refilled(7)} {defaults(5)} {rebound_param(5)}");
-  println("{appended_field(3)} {appended_field(1)} {added(3)} {added(0)} {texts_kept(3)} {texts_kept(0)} {retbuf_filled(2)} {retbuf_filled(1)} {removed(9)} {removed(0)} {decoded(4)} {decoded(2)}");
+  println("{appended_field(3)} {appended_field(1)} {added(3)} {added(0)} {texts_kept(3)} {texts_kept(0)} {retbuf_filled(2)} {retbuf_filled(1)} {removed(9)} {removed(0)} {decoded(4)} {decoded(2)} {linked_ids(4)} {linked_ids(0)}");
 }
