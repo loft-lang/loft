@@ -1,0 +1,2100 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft's syntax as PEG cursor matches (@PLN91 stage 1, doc/claude/plans/91-self-host/1a-parser.md).
+// Each grammar rule is a function over the token cursor `Syntax` that answers the index of the
+// node it built in the arena `nodes`, or null when it does not match — the match puts the cursor
+// back (`(P-Atomic)`).  The tree holds syntax only: what a name MEANS (a type, a variant, a
+// binding, a constant) is the elaboration's to decide, as the Rust parser decides it from its
+// definition tables.  The productions and the Rust function each one ports: 1a-grammar.md.
+use lex::*;
+
+// A syntax node.  `at` is the index of its first token.  A child is an index into `nodes`;
+// an absent optional child is null.  Names are kept as written.
+pub enum Syn {
+  // ── the file ──
+  SFile { pub at: integer, pub items: vector<integer> },
+  // A list a rule answers as one node: arguments, binders, type variables, dependencies.
+  SList { pub at: integer, pub items: vector<integer> },
+  SDirective { pub at: integer, pub name: text, pub arg: text },
+  SUse { pub at: integer, pub public: boolean, pub own: boolean, pub lib: text, pub alias: text, pub star: boolean, pub names: vector<integer> },
+  SImport { pub at: integer, pub name: text, pub alias: text },
+  SCapability { pub at: integer, pub public: boolean, pub name: text, pub path: vector<text> },
+  // ── functions ──
+  SFn { pub at: integer, pub public: boolean, pub is_op: boolean, pub name: text, pub tvars: vector<integer>, pub params: vector<integer>, pub ret: integer?, pub ret_const: boolean, pub cap: integer?, pub body: integer?, pub annots: vector<integer> },
+  STVar { pub at: integer, pub name: text, pub bounds: vector<text> },
+  SParam { pub at: integer, pub name: text, pub amp: boolean, pub fixed: boolean, pub tp: integer?, pub init: integer?, pub cap: integer? },
+  SCapLink { pub at: integer, pub path: vector<text>, pub right: text },
+  SAnnot { pub at: integer, pub name: text, pub args: vector<text> },
+  // ── struct, enum, alias, interface, constant ──
+  SStruct { pub at: integer, pub public: boolean, pub value: boolean, pub name: text, pub tvars: vector<integer>, pub fields: vector<integer> },
+  SFieldDecl { pub at: integer, pub public: boolean, pub lexeme: boolean, pub fixed: boolean, pub name: text, pub mods: vector<integer> },
+  SFieldMod { pub at: integer, pub kind: text, pub a: integer?, pub b: integer? },
+  SFieldType { pub at: integer, pub tp: integer?, pub init: integer?, pub caps: vector<integer> },
+  SEnum { pub at: integer, pub public: boolean, pub name: text, pub tvars: vector<integer>, pub variants: vector<integer> },
+  SVariant { pub at: integer, pub name: text, pub fields: vector<integer> },
+  SAlias { pub at: integer, pub public: boolean, pub name: text, pub tp: integer?, pub size: integer? },
+  SInterface { pub at: integer, pub public: boolean, pub name: text, pub members: vector<integer> },
+  SIType { pub at: integer, pub name: text, pub bounds: vector<text> },
+  SIFn { pub at: integer, pub kind: text, pub name: text, pub params: vector<integer>, pub ret: integer? },
+  SConst { pub at: integer, pub public: boolean, pub fixed: boolean, pub name: text, pub tp: integer?, pub value: integer? },
+  // ── types ──
+  // A named type: `name[::member]<args>[deps] limit(lo, hi) not null .assoc ?`.  `keys` holds a
+  // collection's key fields, a descending one written `-name`.
+  STy { pub at: integer, pub name: text, pub member: text, pub args: vector<integer>, pub elem_null: boolean, pub keys: vector<text>, pub deps: vector<text>, pub limit: integer?, pub not_null: boolean, pub assoc: text, pub nullable: boolean },
+  SLimit { pub at: integer, pub lo: integer?, pub hi: integer? },
+  STyTuple { pub at: integer, pub elems: vector<integer> },
+  STyFn { pub at: integer, pub args: vector<integer>, pub ret: integer? },
+  STyArg { pub at: integer, pub amp: boolean, pub fixed: boolean, pub tp: integer? },
+  // ── statements ──
+  SBlock { pub at: integer, pub stmts: vector<integer> },
+  // One statement; `semi` says a `;` ended it, `orelse` is a store's failure block.
+  SStmt { pub at: integer, pub e: integer?, pub semi: boolean, pub orelse: integer? },
+  SFor { pub at: integer, pub binds: vector<text>, pub source: integer, pub par: integer?, pub filter: integer?, pub body: integer? },
+  SPar { pub at: integer, pub var: text, pub worker: integer?, pub threads: integer? },
+  SRange { pub at: integer, pub lo: integer?, pub hi: integer?, pub inclusive: boolean },
+  SIterWrap { pub at: integer, pub kind: text, pub e: integer? },
+  SWhile { pub at: integer, pub cond: integer, pub body: integer? },
+  SJump { pub at: integer, pub kind: text, pub e: integer? },
+  SYield { pub at: integer, pub from: boolean, pub e: integer? },
+  SParallel { pub at: integer, pub items: vector<integer> },
+  SLet { pub at: integer, pub fixed: boolean, pub name: text, pub amp: boolean, pub tfixed: boolean, pub tp: integer?, pub e: integer? },
+  SAssign { pub at: integer, pub fixed: boolean, pub op: text, pub target: integer, pub e: integer? },
+  SDestructure { pub at: integer, pub places: vector<integer>, pub e: integer? },
+  SIf { pub at: integer, pub cond: integer, pub then: integer, pub other: integer? },
+  // ── expressions ──
+  SBin { pub at: integer, pub op: text, pub l: integer, pub r: integer },
+  SOpTail { pub at: integer, pub op: text, pub r: integer },
+  SIs { pub at: integer, pub e: integer?, pub variant: text, pub caps: vector<text>, pub has_caps: boolean },
+  SAs { pub at: integer, pub e: integer?, pub tp: integer?, pub checked: boolean },
+  SUnary { pub at: integer, pub op: text, pub e: integer? },
+  SMember { pub at: integer, pub e: integer?, pub name: text, pub args: vector<integer>, pub call: boolean },
+  STupleGet { pub at: integer, pub e: integer?, pub index: integer },
+  SIndex { pub at: integer, pub e: integer?, pub keys: vector<integer>, pub range: boolean, pub inclusive: boolean, pub hi: vector<integer>, pub limit: integer?, pub spatial: boolean },
+  SCall { pub at: integer, pub f: integer?, pub args: vector<integer> },
+  SArg { pub at: integer, pub name: text, pub e: integer? },
+  SPostfix { pub at: integer, pub op: text, pub e: integer? },
+  SParen { pub at: integer, pub e: integer? },
+  STupleLit { pub at: integer, pub elems: vector<integer> },
+  SStructLit { pub at: integer, pub name: text, pub member: text, pub fields: vector<integer>, pub base: integer? },
+  SFieldInit { pub at: integer, pub name: text, pub quoted: boolean, pub e: integer? },
+  SVecLit { pub at: integer, pub items: vector<integer> },
+  SRepeat { pub at: integer, pub e: integer?, pub n: integer },
+  SComprehension { pub at: integer, pub binds: vector<text>, pub source: integer, pub filter: integer?, pub body: integer? },
+  SLambda { pub at: integer, pub params: vector<integer>, pub ret: integer?, pub body: integer?, pub short: boolean, pub names: vector<text> },
+  SSizeof { pub at: integer, pub kind: text, pub tp: integer?, pub e: integer? },
+  SIntrinsic { pub at: integer, pub kind: text, pub args: vector<integer> },
+  SVectorParse { pub at: integer, pub elem: text, pub args: vector<integer> },
+  SName { pub at: integer, pub name: text, pub member: text },
+  SVarAttr { pub at: integer, pub var: text, pub attr: text, pub arg: integer?, pub tp: integer? },
+  SMatch { pub at: integer, pub subject: integer, pub arms: vector<integer> },
+  SArm { pub at: integer, pub pats: vector<integer>, pub guard: integer?, pub body: integer? },
+  // ── literals and strings ──
+  SDollar { pub at: integer },
+  SInt { pub at: integer, pub v: integer, pub zero: boolean },
+  SLong { pub at: integer, pub v: integer },
+  SWide { pub at: integer, pub v: integer },
+  SFloat { pub at: integer, pub v: float, pub zero: boolean },
+  SDouble { pub at: integer, pub v: float },
+  SSingle { pub at: integer, pub v: single },
+  SChar { pub at: integer, pub c: integer },
+  SBool { pub at: integer, pub b: boolean },
+  SNull { pub at: integer },
+  SString { pub at: integer, pub parts: vector<integer> },
+  SText { pub at: integer, pub s: text },
+  // A hole `{e:spec}` of a string: the spec's tokens are kept as written, `spec` to `spec_end`.
+  SHole { pub at: integer, pub e: integer?, pub spec: integer, pub spec_end: integer },
+  // ── patterns ──
+  PWild { pub at: integer },
+  PNull { pub at: integer },
+  PName { pub at: integer, pub name: text, pub member: text, pub fields: vector<integer>, pub braces: boolean },
+  PFieldPat { pub at: integer, pub name: text, pub pat: integer? },
+  PCap { pub at: integer, pub name: text, pub pat: integer?, pub at_sign: boolean },
+  PAlt { pub at: integer, pub alts: vector<integer> },
+  PGroup { pub at: integer, pub seqs: vector<integer>, pub quant: text, pub sep: integer? },
+  PSeq { pub at: integer, pub items: vector<integer> },
+  PQuant { pub at: integer, pub pat: integer?, pub quant: text },
+  PSlice { pub at: integer, pub elems: vector<integer> },
+  PRest { pub at: integer, pub name: text },
+  PTuple { pub at: integer, pub elems: vector<integer> },
+  PRange { pub at: integer, pub lo: integer?, pub hi: integer?, pub inclusive: boolean },
+  PLit { pub at: integer, pub e: integer? }
+}
+
+// The token cursor: `src` is the token stream (the cursor's source, its first vector field),
+// `pos` the position, `farthest` the deepest position any rule reached — where a parse error
+// points.  `>>` and `>=` arrive split into two tokens, so a type's closing angle is always one
+// token (`prepare`).  `head` is set while a control head (`if` / `while` condition, `for`
+// source, `match` subject) is parsed: a `{` there opens the body, not a struct literal.
+pub struct Syntax {
+  pub src: vector<Tok>,
+  pub pos: integer,
+  pub farthest: integer,
+  pub nodes: vector<Syn>,
+  pub line: vector<integer>,
+  pub col: vector<integer>,
+  pub head: boolean
+}
+
+// ── the cursor ───────────────────────────────────────────────────────────────────────────────
+
+// The cursor over `t`'s tokens: `>>` becomes `Gt` then `GtGlued`, and `>=` becomes `Gt` then
+// `AssignGlued`, each half at its own column (the Rust parser splits them where a type's angle
+// closes, `has_closing_angle`).
+pub fn prepare(t: Toks) -> Syntax {
+  p = Syntax { src: [], pos: 0, farthest: 0, nodes: [], line: [], col: [], head: false };
+  for i in 0..len(t.src) {
+    k = t.src[i];
+    ln = t.line[i];
+    cl = t.col[i];
+    if k is Shr {
+      p.src += [Gt, GtGlued];
+      p.line += [ln, ln];
+      p.col += [cl, cl + 1];
+    } else if k is Ge {
+      p.src += [Gt, AssignGlued];
+      p.line += [ln, ln];
+      p.col += [cl, cl + 1];
+    } else {
+      p.src += [k];
+      p.line += [ln];
+      p.col += [cl];
+    }
+  }
+  p
+}
+
+// `s` in the arena; its index.
+fn add(p: Syntax, s: Syn) -> integer {
+  p.nodes += [s];
+  len(p.nodes) - 1
+}
+
+// The names of a run of `Ident` tokens collected by a group.
+fn texts(p: Syntax, ids: vector<integer>) -> vector<text> {
+  r: vector<text> = [];
+  for i in ids {
+    if p.nodes[i] is SName { name } {
+      r += [name];
+    }
+  }
+  r
+}
+
+// ── names and small pieces ───────────────────────────────────────────────────────────────────
+
+// An identifier, as a name node (the rules that need its text read it back).
+fn ident(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Ident { name }] => add(p, SName { at: at, name: name, member: "" }),
+    _ => null
+  }
+}
+
+// `Ident ('::' Ident)?`
+fn path(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Ident { name }, Scope, Ident { name: m }] => add(p, SName { at: at, name: name, member: m }),
+    [Ident { name }] => add(p, SName { at: at, name: name, member: "" }),
+    _ => null
+  }
+}
+
+// `, Ident` — one more name of a list.
+fn more_ident(p: Syntax) -> integer? {
+  match p {
+    [Comma, n: ident] => n,
+    _ => null
+  }
+}
+
+// `+ Ident` — one more bound of a type variable.
+fn more_bound(p: Syntax) -> integer? {
+  match p {
+    [Plus, n: ident] => n,
+    _ => null
+  }
+}
+
+// `. Ident` — one more step of a capability path.
+fn more_step(p: Syntax) -> integer? {
+  match p {
+    [Dot, n: ident] => n,
+    _ => null
+  }
+}
+
+fn name_of(p: Syntax, n: integer) -> text {
+  if p.nodes[n] is SName { name } { name } else { "" }
+}
+
+// ── types ────────────────────────────────────────────────────────────────────────────────────
+
+// Type <- TupleType / FnType / NamedType                         definitions.rs parse_type_full
+fn ty(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [LParen, first: ty, (rest: more_ty)+, (_c: trailing_comma)?, RParen] => {
+      elems = [first];
+      elems += rest;
+      add(p, STyTuple { at: at, elems: elems })
+    },
+    [KwFn, LParen, (args: ty_arg)*(Comma), RParen, (r: ret_type)?] =>
+      add(p, STyFn { at: at, args: args, ret: r }),
+    [n: named_ty] => n,
+    _ => null
+  }
+}
+
+fn more_ty(p: Syntax) -> integer? {
+  match p {
+    [Comma, t: ty] => t,
+    _ => null
+  }
+}
+
+fn trailing_comma(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Comma] => at,
+    _ => null
+  }
+}
+
+fn ret_type(p: Syntax) -> integer? {
+  match p {
+    [Arrow, t: ty] => t,
+    _ => null
+  }
+}
+
+// FnTArg <- '&'? 'const'? Type
+fn ty_arg(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Amp, "const", t: ty] => add(p, STyArg { at: at, amp: true, fixed: true, tp: t }),
+    [Amp, t: ty] => add(p, STyArg { at: at, amp: true, fixed: false, tp: t }),
+    ["const", t: ty] => add(p, STyArg { at: at, amp: false, fixed: true, tp: t }),
+    [t: ty] => add(p, STyArg { at: at, amp: false, fixed: false, tp: t }),
+    _ => null
+  }
+}
+
+// NamedType <- Path TypeArgs? IntSuffix? ('.' Ident)? '?'?     parse_type, parse_type_inner
+fn named_ty(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [n: path, (a: ty_args)?, (l: limit)?, (nn: not_null)?, (s: assoc)?, (q: quest)?] => {
+      name = name_of(p, n);
+      member = member_of(p, n);
+      args: vector<integer> = [];
+      keys: vector<text> = [];
+      if a != null {
+        match p.nodes[a] {
+          STy { args: aa, keys: kk } => {
+            args = aa;
+            keys = kk;
+          },
+          _ => {}
+        }
+      }
+      assoc = "";
+      if s != null {
+        assoc = name_of(p, s);
+      }
+      add(p, STy { at: at, name: name, member: member, args: args, elem_null: false, keys: keys, deps: [], limit: l, not_null: nn != null, assoc: assoc, nullable: q != null })
+    },
+    _ => null
+  }
+}
+
+// `<` ... `>` — a type's arguments, held in a carrier `STy` (only `args` and `keys`).  A
+// collection takes one element with key fields (`sorted<T[k, -j]>`) or a second type
+// (`iterator<T, U>`); a template instance takes a list (`Pair<A, B>`).  An element's `?`
+// (`vector<T?>`) is the element type's own.
+fn ty_args(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Lt, e: ty, (rest: more_ty)*, (nn: not_null)?, (ks: key_spec)?, _g: close_angle] => {
+      args = [e];
+      args += rest;
+      add(p, STy { at: at, name: "", member: "", args: args, elem_null: false, keys: texts(p, items(p, ks)), deps: [], limit: null, not_null: nn != null, assoc: "", nullable: false })
+    },
+    _ => null
+  }
+}
+
+// `[k, -j]` — a collection's key fields.
+fn key_spec(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [LBracket, (ks: key_field)*(Comma), RBracket] => add(p, SList { at: at, items: ks }),
+    _ => null
+  }
+}
+
+// A type's closing `>`: a `>` of its own, or the second half of a `>>` / `>=` whose first
+// closed the type inside it (`has_closing_angle`).
+fn close_angle(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Gt] => at,
+    [GtGlued] => at,
+    _ => null
+  }
+}
+
+// `=`, also as the second half of a `>=` after a type (`v: vector<integer>= []`).
+fn assign_sign(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Assign] => at,
+    [AssignGlued] => at,
+    _ => null
+  }
+}
+
+// A key field, `-` marking a descending one: answered as a name node spelled `-name`.
+fn key_field(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Minus, Ident { name }] => add(p, SName { at: at, name: "-{name}", member: "" }),
+    [Ident { name }] => add(p, SName { at: at, name: name, member: "" }),
+    _ => null
+  }
+}
+
+// `[a, b]` — the dependencies a stdlib return type names: name nodes.
+fn deps(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [LBracket, d: ident, (ds: more_ident)*, RBracket] => {
+      all = [d];
+      all += ds;
+      add(p, SList { at: at, items: all })
+    },
+    _ => null
+  }
+}
+
+// The items of a list node; none for null.
+fn items(p: Syntax, n: integer?) -> vector<integer> {
+  if n == null {
+    return [];
+  }
+  match p.nodes[n ?? 0] {
+    SList { items } => items,
+    _ => []
+  }
+}
+
+// `limit(lo, hi)` after `integer`.
+fn limit(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    ["limit", LParen, lo: signed_int, Comma, hi: signed_int, RParen] => add(p, SLimit { at: at, lo: lo, hi: hi }),
+    _ => null
+  }
+}
+
+fn signed_int(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Minus, Int { v }] => add(p, SInt { at: at, v: -v, zero: false }),
+    [Int { v, zero }] => add(p, SInt { at: at, v: v, zero: zero }),
+    [Minus, Long { v }] => add(p, SLong { at: at, v: -v }),
+    [Long { v }] => add(p, SLong { at: at, v: v }),
+    _ => null
+  }
+}
+
+fn not_null(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    ["not", KwNull] => at,
+    _ => null
+  }
+}
+
+// `.Name` — an associated type of `Self` inside an interface.
+fn assoc(p: Syntax) -> integer? {
+  match p {
+    [Dot, n: ident] => n,
+    _ => null
+  }
+}
+
+fn quest(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Quest] => at,
+    _ => null
+  }
+}
+
+// ── the file ─────────────────────────────────────────────────────────────────────────────────
+
+// File <- FileDirective* UseDecl* TopItem* End                               mod.rs parse_file
+pub fn parse_file(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [(ds: directive)*, (us: use_decl)*, (ts: top_item)*, End] => {
+      items = ds;
+      items += us;
+      items += ts;
+      add(p, SFile { at: at, items: items })
+    },
+    _ => null
+  }
+}
+
+// `#width 32`, `#package`, `#cwd`, `#link static` — before the first `use`.   mod.rs, width32.rs
+fn directive(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Hash, "width", Int { v }, (_s: semi)?] => add(p, SDirective { at: at, name: "width", arg: "{v}" }),
+    [Hash, "link", Ident { name: how }, (_s: semi)?] => add(p, SDirective { at: at, name: "link", arg: how }),
+    [Hash, "package", (_s: semi)?] => add(p, SDirective { at: at, name: "package", arg: "" }),
+    [Hash, "cwd", (_s: semi)?] => add(p, SDirective { at: at, name: "cwd", arg: "" }),
+    _ => null
+  }
+}
+
+fn semi(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Semi] => at,
+    _ => null
+  }
+}
+
+// UseDecl <- 'pub'? 'use' ('self' '::' Ident / Ident) ('as' Ident)? ImportSpec? ';'
+//                                                              imports.rs parse_use_self, mod.rs
+fn use_decl(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [(pb: pub_mark)?, KwUse, "self", Scope, Ident { name }, (a: alias)?, (sp: import_spec)?, Semi] =>
+      use_node(p, at, pb != null, true, name, a, sp),
+    [(pb: pub_mark)?, KwUse, Ident { name }, (a: alias)?, (sp: import_spec)?, Semi] =>
+      use_node(p, at, pb != null, false, name, a, sp),
+    _ => null
+  }
+}
+
+fn use_node(p: Syntax, at: integer, public: boolean, own: boolean, lib: text, a: integer?, sp: integer?) -> integer {
+  alias = if a == null { "" } else { name_of(p, a ?? 0) };
+  star = false;
+  names: vector<integer> = [];
+  if sp != null {
+    match p.nodes[sp ?? 0] {
+      SUse { star: st, names: ns } => {
+        star = st;
+        names = ns;
+      },
+      _ => {}
+    }
+  }
+  add(p, SUse { at: at, public: public, own: own, lib: lib, alias: alias, star: star, names: names })
+}
+
+fn pub_mark(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [KwPub] => at,
+    _ => null
+  }
+}
+
+fn alias(p: Syntax) -> integer? {
+  match p {
+    [KwAs, n: ident] => n,
+    _ => null
+  }
+}
+
+// ImportSpec <- '::' ('*' / '(' ImportName (',' ImportName)* ')' / ImportName), held in a
+// carrier `SUse` (only `star` and `names`).                         imports.rs parse_import_spec
+fn import_spec(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Scope, Star] => add(p, SUse { at: at, public: false, own: false, lib: "", alias: "", star: true, names: [] }),
+    [Scope, LParen, (ns: import_name)+(Comma), RParen] => add(p, SUse { at: at, public: false, own: false, lib: "", alias: "", star: false, names: ns }),
+    [Scope, n: import_name] => add(p, SUse { at: at, public: false, own: false, lib: "", alias: "", star: false, names: [n] }),
+    _ => null
+  }
+}
+
+fn import_name(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Ident { name }, KwAs, Ident { name: a }] => add(p, SImport { at: at, name: name, alias: a }),
+    [Ident { name }] => add(p, SImport { at: at, name: name, alias: "" }),
+    _ => null
+  }
+}
+
+// TopItem <- 'pub'? (Capability / Enum / TypeAlias / Function / Struct / Interface / Constant)
+//                                                                      mod.rs, in this order
+fn top_item(p: Syntax) -> integer? {
+  match p {
+    [d: capability] => d,
+    [d: enum_decl] => d,
+    [d: alias_decl] => d,
+    [d: fn_decl] => d,
+    [d: struct_decl] => d,
+    [d: interface_decl] => d,
+    [d: const_decl] => d,
+    _ => null
+  }
+}
+
+// Capability <- 'capability' Ident ('.' Ident)*                       definitions.rs (no `;`)
+fn capability(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [(pb: pub_mark)?, "capability", Ident { name }, (steps: more_step)*] =>
+      add(p, SCapability { at: at, public: pb != null, name: name, path: texts(p, steps) }),
+    _ => null
+  }
+}
+
+// ── functions ────────────────────────────────────────────────────────────────────────────────
+
+// Function <- ('fn' / 'operator') FnName TypeVars? '(' Params ')' ('->' 'const'? Type Deps?)?
+//             CapLink? (';' / Block ';'?) Annotation*                  definitions.rs parse_function
+fn fn_decl(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [(pb: pub_mark)?, k: fn_keyword, n: fn_name, (tv: type_vars)?, LParen, (ps: param)*(Comma), (_t: trailing_comma)?, RParen,
+     (r: fn_ret)?, (c: cap_link)?, b: fn_body, (an: annotation)*] => {
+      ret: integer? = null;
+      ret_const = false;
+      if r != null {
+        if p.nodes[r ?? 0] is SParam { tp, fixed } {
+          ret = tp;
+          ret_const = fixed;
+        }
+      }
+      body: integer? = null;
+      if p.nodes[b] is SBlock {
+        body = b;
+      }
+      add(p, SFn { at: at, public: pb != null, is_op: name_of(p, k) == "operator", name: name_of(p, n), tvars: items(p, tv), params: ps, ret: ret, ret_const: ret_const, cap: c, body: body, annots: an })
+    },
+    _ => null
+  }
+}
+
+fn fn_keyword(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [KwFn] => add(p, SName { at: at, name: "fn", member: "" }),
+    [KwOperator] => add(p, SName { at: at, name: "operator", member: "" }),
+    _ => null
+  }
+}
+
+// FnName <- Ident / 'assert' / 'panic'
+fn fn_name(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [n: ident] => n,
+    [KwAssert] => add(p, SName { at: at, name: "assert", member: "" }),
+    [KwPanic] => add(p, SName { at: at, name: "panic", member: "" }),
+    _ => null
+  }
+}
+
+// `-> const? Type Deps?`, in a carrier `SParam` (`tp`, `fixed`; the deps go on the type).
+fn fn_ret(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Arrow, "const", t: ty, (d: deps)?] => add(p, SParam { at: at, name: "", amp: false, fixed: true, tp: with_deps(p, t, d), init: null, cap: null }),
+    [Arrow, t: ty, (d: deps)?] => add(p, SParam { at: at, name: "", amp: false, fixed: false, tp: with_deps(p, t, d), init: null, cap: null }),
+    _ => null
+  }
+}
+
+// The type `t` with the dependencies `d` (name nodes) written after it.
+fn with_deps(p: Syntax, t: integer, d: integer?) -> integer {
+  if d == null {
+    return t;
+  }
+  if p.nodes[t] is STy { at, name, member, args, elem_null, keys, limit, not_null, assoc, nullable } {
+    return add(p, STy { at: at, name: name, member: member, args: args, elem_null: elem_null, keys: keys, deps: texts(p, items(p, d)), limit: limit, not_null: not_null, assoc: assoc, nullable: nullable });
+  }
+  t
+}
+
+// `;` or a block, with an optional `;` after the block: the block's node, or an `SName` for `;`.
+fn fn_body(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Semi] => add(p, SName { at: at, name: ";", member: "" }),
+    [b: block, (_s: semi)?] => b,
+    _ => null
+  }
+}
+
+// TypeVars <- '<' (TVar (',' TVar)*)? '>'                      parse_type_var_header
+fn type_vars(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Lt, (vs: type_var)*(Comma), _g: close_angle] => add(p, SList { at: at, items: vs }),
+    _ => null
+  }
+}
+
+fn type_var(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Ident { name }, Colon, b: ident, (bs: more_bound)*] => {
+      all = [b];
+      all += bs;
+      add(p, STVar { at: at, name: name, bounds: texts(p, all) })
+    },
+    [Ident { name }] => add(p, STVar { at: at, name: name, bounds: [] }),
+    _ => null
+  }
+}
+
+// Param <- Ident (':' '&'? 'const'? Type)? ('=' Expr)? CapLink?          parse_arguments
+fn param(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Ident { name }, Colon, Amp, "const", t: ty, (i: init)?, (c: cap_link)?] =>
+      add(p, SParam { at: at, name: name, amp: true, fixed: true, tp: t, init: i, cap: c }),
+    [Ident { name }, Colon, Amp, t: ty, (i: init)?, (c: cap_link)?] =>
+      add(p, SParam { at: at, name: name, amp: true, fixed: false, tp: t, init: i, cap: c }),
+    [Ident { name }, Colon, "const", t: ty, (i: init)?, (c: cap_link)?] =>
+      add(p, SParam { at: at, name: name, amp: false, fixed: true, tp: t, init: i, cap: c }),
+    [Ident { name }, Colon, t: ty, (i: init)?, (c: cap_link)?] =>
+      add(p, SParam { at: at, name: name, amp: false, fixed: false, tp: t, init: i, cap: c }),
+    [Ident { name }, (i: init)?, (c: cap_link)?] =>
+      add(p, SParam { at: at, name: name, amp: false, fixed: false, tp: null, init: i, cap: c }),
+    _ => null
+  }
+}
+
+fn init(p: Syntax) -> integer? {
+  match p {
+    [_a: assign_sign, e: expr] => e,
+    _ => null
+  }
+}
+
+// CapLink <- Ident ('.' Ident)* '#' Ident                        try_cap_link
+fn cap_link(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [n: ident, (steps: more_step)*, Hash, Ident { name: right }] => {
+      all = [n];
+      all += steps;
+      add(p, SCapLink { at: at, path: texts(p, all), right: right })
+    },
+    _ => null
+  }
+}
+
+// Annotation <- '#' ( 'native' Str? / 'rust' Str / 'iterator' Str Str / 'c' Str Str / 'hot' /
+//   'cold' / 'null_safe' / 'builtin' / 'pure' / 'superseded' Str / 'impure' '(' Ident ')' )
+//                                                              parse_rust, parse_c_binding
+fn annotation(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Hash, "native", Str { s }] => add(p, SAnnot { at: at, name: "native", args: [s] }),
+    [Hash, "native"] => add(p, SAnnot { at: at, name: "native", args: [] }),
+    [Hash, "rust", s: plain_string] => add(p, SAnnot { at: at, name: "rust", args: [name_of(p, s)] }),
+    [Hash, "iterator", Str { s }, Str { s: t }] => add(p, SAnnot { at: at, name: "iterator", args: [s, t] }),
+    [Hash, "c", Str { s }, Str { s: t }] => add(p, SAnnot { at: at, name: "c", args: [s, t] }),
+    [Hash, "superseded", Str { s }] => add(p, SAnnot { at: at, name: "superseded", args: [s] }),
+    [Hash, "impure", LParen, Ident { name }, RParen] => add(p, SAnnot { at: at, name: "impure", args: [name] }),
+    [Hash, Ident { name }] => add(p, SAnnot { at: at, name: name, args: [] }),
+    _ => null
+  }
+}
+
+// A `#rust` body: one segment, or segments around holes the template writes as `{{`/`}}` —
+// its tokens as one text (the elaboration reads the template as written).
+fn plain_string(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Str { s }] => add(p, SName { at: at, name: s, member: "" }),
+    _ => null
+  }
+}
+
+// ── struct, enum, alias, interface, constant ─────────────────────────────────────────────────
+
+// Struct <- 'value'? 'struct' Ident TypeVars? '{' SField (',' SField)* ','? '}' ';'?  parse_struct
+fn struct_decl(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [(pb: pub_mark)?, (v: value_mark)?, KwStruct, Ident { name }, (tv: type_vars)?, LBrace, (fs: field_decl)+(Comma), (_t: trailing_comma)?, RBrace, (_s: semi)?] =>
+      add(p, SStruct { at: at, public: pb != null, value: v != null, name: name, tvars: items(p, tv), fields: fs }),
+    _ => null
+  }
+}
+
+fn value_mark(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    ["value"] => at,
+    _ => null
+  }
+}
+
+// SField <- '#lexeme'? 'pub'? 'const'? Ident ':' FieldItem+        parse_field (a loop, any order)
+fn field_decl(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [(lx: lexeme_mark)?, (pb: pub_mark)?, (c: const_mark)?, Ident { name }, Colon, (ms: field_item)+] =>
+      add(p, SFieldDecl { at: at, public: pb != null, lexeme: lx != null, fixed: c != null, name: name, mods: ms }),
+    _ => null
+  }
+}
+
+fn lexeme_mark(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Hash, "lexeme"] => at,
+    _ => null
+  }
+}
+
+fn const_mark(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    ["const"] => at,
+    _ => null
+  }
+}
+
+// FieldItem <- 'const' / 'not' 'null' / ('computed'/'virtual'/'init'/'default') '(' Expr ')'
+//            / ('assert'/'CHECK') '(' Expr (',' Expr)? ')' / Type ('=' Expr)? CapLink*
+//                                                               definitions.rs parse_field
+fn field_item(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    ["const"] => add(p, SFieldMod { at: at, kind: "const", a: null, b: null }),
+    ["not", KwNull] => add(p, SFieldMod { at: at, kind: "not null", a: null, b: null }),
+    ["computed", LParen, e: expr, RParen] => add(p, SFieldMod { at: at, kind: "computed", a: e, b: null }),
+    ["virtual", LParen, e: expr, RParen] => add(p, SFieldMod { at: at, kind: "virtual", a: e, b: null }),
+    ["init", LParen, e: expr, RParen] => add(p, SFieldMod { at: at, kind: "init", a: e, b: null }),
+    ["default", LParen, e: expr, RParen] => add(p, SFieldMod { at: at, kind: "default", a: e, b: null }),
+    [KwAssert, LParen, e: expr, (m: more_expr)?, RParen] => add(p, SFieldMod { at: at, kind: "assert", a: e, b: m }),
+    ["CHECK", LParen, e: expr, (m: more_expr)?, RParen] => add(p, SFieldMod { at: at, kind: "CHECK", a: e, b: m }),
+    [t: ty, (i: init)?, (cs: cap_link)*] => add(p, SFieldType { at: at, tp: t, init: i, caps: cs }),
+    _ => null
+  }
+}
+
+fn more_expr(p: Syntax) -> integer? {
+  match p {
+    [Comma, e: expr] => e,
+    _ => null
+  }
+}
+
+// Enum <- 'enum' Ident TypeVars? '{' Variant (',' Variant)* ','? '}' ';'?        parse_enum
+fn enum_decl(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [(pb: pub_mark)?, KwEnum, Ident { name }, (tv: type_vars)?, LBrace, (vs: variant)+(Comma), (_t: trailing_comma)?, RBrace, (_s: semi)?] =>
+      add(p, SEnum { at: at, public: pb != null, name: name, tvars: items(p, tv), variants: vs }),
+    _ => null
+  }
+}
+
+// Variant <- Ident ('{' VField (',' VField)* ','? '}')?                 parse_enum_values
+fn variant(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Ident { name }, LBrace, (fs: field_decl)+(Comma), (_t: trailing_comma)?, RBrace] =>
+      add(p, SVariant { at: at, name: name, fields: fs }),
+    [Ident { name }] => add(p, SVariant { at: at, name: name, fields: [] }),
+    _ => null
+  }
+}
+
+// TypeAlias <- 'type' Ident ('=' Type)? ('size' '(' Int ')')? ';'        parse_typedef
+fn alias_decl(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [(pb: pub_mark)?, KwType, Ident { name }, (t: alias_type)?, (sz: alias_size)?, Semi] =>
+      add(p, SAlias { at: at, public: pb != null, name: name, tp: t, size: sz }),
+    _ => null
+  }
+}
+
+fn alias_type(p: Syntax) -> integer? {
+  match p {
+    [Assign, t: ty] => t,
+    _ => null
+  }
+}
+
+fn alias_size(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    ["size", LParen, Int { v }, RParen] => add(p, SInt { at: at, v: v, zero: false }),
+    _ => null
+  }
+}
+
+// Interface <- 'interface' Ident '{' IMember* '}' ';'?                  parse_interface
+fn interface_decl(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [(pb: pub_mark)?, KwInterface, Ident { name }, LBrace, (ms: interface_member)*, RBrace, (_s: semi)?] =>
+      add(p, SInterface { at: at, public: pb != null, name: name, members: ms }),
+    _ => null
+  }
+}
+
+// IMember <- 'type' Ident (':' Ident ('+' Ident)*)? ';'?
+//          / ('op' OpTok / 'operator' Ident / 'fn' Ident) '(' Params ')' ('->' Type)? ';'?
+fn interface_member(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [KwType, Ident { name }, Colon, b: ident, (bs: more_bound)*, (_s: semi)?] => {
+      all = [b];
+      all += bs;
+      add(p, SIType { at: at, name: name, bounds: texts(p, all) })
+    },
+    [KwType, Ident { name }, (_s: semi)?] => add(p, SIType { at: at, name: name, bounds: [] }),
+    [KwFn, Ident { name }, LParen, (ps: param)*(Comma), (_t: trailing_comma)?, RParen, (r: ret_type)?, (_s: semi)?] =>
+      add(p, SIFn { at: at, kind: "fn", name: name, params: ps, ret: r }),
+    [KwOperator, Ident { name }, LParen, (ps: param)*(Comma), (_t: trailing_comma)?, RParen, (r: ret_type)?, (_s: semi)?] =>
+      add(p, SIFn { at: at, kind: "operator", name: name, params: ps, ret: r }),
+    ["op", LBracket, RBracket, LParen, (ps: param)*(Comma), (_t: trailing_comma)?, RParen, (r: ret_type)?, (_s: semi)?] =>
+      add(p, SIFn { at: at, kind: "op", name: "[]", params: ps, ret: r }),
+    ["op", o: op_token, LParen, (ps: param)*(Comma), (_t: trailing_comma)?, RParen, (r: ret_type)?, (_s: semi)?] =>
+      add(p, SIFn { at: at, kind: "op", name: name_of(p, o), params: ps, ret: r }),
+    _ => null
+  }
+}
+
+// Constant <- 'const'? Ident (':' Type)? '=' Expr ';'                   parse_constant
+fn const_decl(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [(pb: pub_mark)?, (c: const_mark)?, Ident { name }, (t: annotation_type)?, _a: assign_sign, e: expr, Semi] =>
+      add(p, SConst { at: at, public: pb != null, fixed: c != null, name: name, tp: t, value: e }),
+    _ => null
+  }
+}
+
+fn annotation_type(p: Syntax) -> integer? {
+  match p {
+    [Colon, t: ty] => t,
+    _ => null
+  }
+}
+
+// `op X` in an interface names an operator token.
+fn op_token(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Plus] => add(p, SName { at: at, name: "+", member: "" }),
+    [Minus] => add(p, SName { at: at, name: "-", member: "" }),
+    [Star] => add(p, SName { at: at, name: "*", member: "" }),
+    [Slash] => add(p, SName { at: at, name: "/", member: "" }),
+    [Percent] => add(p, SName { at: at, name: "%", member: "" }),
+    [EqEq] => add(p, SName { at: at, name: "==", member: "" }),
+    [Ne] => add(p, SName { at: at, name: "!=", member: "" }),
+    [Lt] => add(p, SName { at: at, name: "<", member: "" }),
+    [Le] => add(p, SName { at: at, name: "<=", member: "" }),
+    [Gt] => add(p, SName { at: at, name: ">", member: "" }),
+    [Bang] => add(p, SName { at: at, name: "!", member: "" }),
+    [Amp] => add(p, SName { at: at, name: "&", member: "" }),
+    [Pipe] => add(p, SName { at: at, name: "|", member: "" }),
+    [Caret] => add(p, SName { at: at, name: "^", member: "" }),
+    [StarStar] => add(p, SName { at: at, name: "**", member: "" }),
+    _ => null
+  }
+}
+
+// ── predicates ───────────────────────────────────────────────────────────────────────────────
+// A predicate answers the position without consuming, or null: a look-ahead in a pattern.
+
+// The next token opens a block.
+fn brace_next(p: Syntax) -> integer? {
+  if p.src[p.pos] is LBrace { p.pos } else { null }
+}
+
+// An empty `{}` after a name is a struct literal — outside a control head always; inside one
+// only when `{ ) ] , .` or `??` follows it (`peek_struct_literal_body`).
+fn empty_literal_allowed(p: Syntax) -> integer? {
+  if !p.head {
+    return p.pos;
+  }
+  t = p.src[p.pos];
+  if t is LBrace || t is RParen || t is RBracket || t is Comma || t is Dot || t is QuestQuest {
+    p.pos
+  } else {
+    null
+  }
+}
+
+// ── statements ───────────────────────────────────────────────────────────────────────────────
+
+// Block <- '{' (';' / Stmt StmtEnd)* '}'                       control.rs parse_block_inner
+// A block ends a control head: a `{` inside it is a block or a literal as anywhere else.
+pub fn block(p: Syntax) -> integer? {
+  at = p.pos;
+  was = p.head;
+  p.head = false;
+  r = match p {
+    [LBrace, (ss: stmt)*, RBrace] => add(p, SBlock { at: at, stmts: ss }),
+    _ => null
+  };
+  p.head = was;
+  r
+}
+
+// Stmt <- ';' / BlockLike Postfix* ('else' Block)? ';'? / Expr ('else' Block)? ';'?
+// A block-like statement (`if`, `match`, `for`, `while`, `parallel`, a block) needs no `;`, and
+// a binary operator after it starts the next statement (the Rust parser: a void left operand).
+// An expression without `;` is the block's value, the last statement.
+fn stmt(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Semi] => add(p, SStmt { at: at, e: null, semi: true, orelse: null }),
+    [e: loop_like, (s: semi)?] => add(p, SStmt { at: at, e: e, semi: s != null, orelse: null }),
+    [e: if_no_else, (s: semi)?] => add(p, SStmt { at: at, e: e, semi: s != null, orelse: null }),
+    [e: expr, (o: store_else)?, (s: semi)?] => add(p, SStmt { at: at, e: e, semi: s != null, orelse: o }),
+    _ => null
+  }
+}
+
+// `else { … }` after a statement: a store's failure arm.            store_else.rs parse_store_else
+fn store_else(p: Syntax) -> integer? {
+  match p {
+    [KwElse, b: block] => b,
+    _ => null
+  }
+}
+
+// A loop at the start of a statement: it answers nothing, so what follows it is the next
+// statement (the Rust parser's void left operand).
+fn loop_like(p: Syntax) -> integer? {
+  match p {
+    [e: for_expr] => e,
+    [e: while_expr] => e,
+    [e: parallel_expr] => e,
+    _ => null
+  }
+}
+
+// An `if` with no `else` at the start of a statement answers nothing either.
+fn if_no_else(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [KwIf, c: head_expr, t: block, _n: no_else] => add(p, SIf { at: at, cond: c, then: t, other: null }),
+    _ => null
+  }
+}
+
+fn no_else(p: Syntax) -> integer? {
+  if p.src[p.pos] is KwElse { null } else { p.pos }
+}
+
+// Expr <- 'for' … / 'while' … / 'continue' / 'break' Expr? / 'return' Expr? / 'debug_assert'
+//       / 'parallel' … / 'yield' 'from'? Expr / 'const'? Assign      expressions.rs expression_inner
+pub fn expr(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [e: for_expr] => e,
+    [e: while_expr] => e,
+    [e: parallel_expr] => e,
+    [KwContinue] => add(p, SJump { at: at, kind: "continue", e: null }),
+    [KwBreak, (e: expr)?] => add(p, SJump { at: at, kind: "break", e: e }),
+    [KwReturn, (e: expr)?] => add(p, SJump { at: at, kind: "return", e: e }),
+    [KwYield, "from", e: expr] => add(p, SYield { at: at, from: true, e: e }),
+    [KwYield, e: expr] => add(p, SYield { at: at, from: false, e: e }),
+    [KwDebugAssert, (a: call_args)?] => add(p, SIntrinsic { at: at, kind: "debug_assert", args: items(p, a) }),
+    [e: assignment] => e,
+    _ => null
+  }
+}
+
+// Assign <- PlaceList '=' Expr / Ident ':' '&'? 'const'? Type '=' Expr / OpExpr (AssignOp OpExpr)?
+//                                       expressions.rs parse_place_destructure, parse_assign_inner
+fn assignment(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [LParen, first: op_expr, (rest: more_op_expr)+, RParen, Assign, e: expr] => {
+      places = [first];
+      places += rest;
+      add(p, SDestructure { at: at, places: places, e: e })
+    },
+    [(c: const_mark)?, Ident { name }, Colon, Amp, "const", t: ty, _a: assign_sign, e: expr] =>
+      add(p, SLet { at: at, fixed: c != null, name: name, amp: true, tfixed: true, tp: t, e: e }),
+    [(c: const_mark)?, Ident { name }, Colon, Amp, t: ty, _a: assign_sign, e: expr] =>
+      add(p, SLet { at: at, fixed: c != null, name: name, amp: true, tfixed: false, tp: t, e: e }),
+    [(c: const_mark)?, Ident { name }, Colon, "const", t: ty, _a: assign_sign, e: expr] =>
+      add(p, SLet { at: at, fixed: c != null, name: name, amp: false, tfixed: true, tp: t, e: e }),
+    [(c: const_mark)?, Ident { name }, Colon, t: ty, _a: assign_sign, e: expr] =>
+      add(p, SLet { at: at, fixed: c != null, name: name, amp: false, tfixed: false, tp: t, e: e }),
+    [(c: const_mark)?, l: op_expr, (t: assign_tail)?] => {
+      if t == null {
+        return l;
+      }
+      match p.nodes[t ?? 0] {
+        SOpTail { op, r } => add(p, SAssign { at: at, fixed: c != null, op: op, target: l, e: r }),
+        _ => l
+      }
+    },
+    _ => null
+  }
+}
+
+fn assign_tail(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [o: assign_op, r: op_expr] => add(p, SOpTail { at: at, op: name_of(p, o), r: r }),
+    _ => null
+  }
+}
+
+fn more_op_expr(p: Syntax) -> integer? {
+  match p {
+    [Comma, e: op_expr] => e,
+    _ => null
+  }
+}
+
+fn assign_op(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Assign] => add(p, SName { at: at, name: "=", member: "" }),
+    [PlusEq] => add(p, SName { at: at, name: "+=", member: "" }),
+    [MinusEq] => add(p, SName { at: at, name: "-=", member: "" }),
+    [StarEq] => add(p, SName { at: at, name: "*=", member: "" }),
+    [SlashEq] => add(p, SName { at: at, name: "/=", member: "" }),
+    [PercentEq] => add(p, SName { at: at, name: "%=", member: "" }),
+    _ => null
+  }
+}
+
+// A control head: `if` / `while` condition, `for` source, `match` subject.
+fn head_expr(p: Syntax) -> integer? {
+  was = p.head;
+  p.head = true;
+  r = match p {
+    [e: expr] => e,
+    _ => null
+  };
+  p.head = was;
+  r
+}
+
+// If <- 'if' Expr Block ('else' (If / Block))?                   control.rs parse_if_expecting
+fn if_expr(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [KwIf, c: head_expr, t: block, (o: else_part)?] => add(p, SIf { at: at, cond: c, then: t, other: o }),
+    _ => null
+  }
+}
+
+fn else_part(p: Syntax) -> integer? {
+  match p {
+    [KwElse, o: if_expr] => o,
+    [KwElse, o: block] => o,
+    _ => null
+  }
+}
+
+// 'while' Expr Block                                                expressions.rs parse_while
+fn while_expr(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [KwWhile, c: head_expr, b: block] => add(p, SWhile { at: at, cond: c, body: b }),
+    _ => null
+  }
+}
+
+// 'parallel' '{' (Expr ';'?)* '}'                                    parse_parallel
+fn parallel_expr(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    ["parallel", LBrace, (es: parallel_item)*, RBrace] => add(p, SParallel { at: at, items: es }),
+    _ => null
+  }
+}
+
+fn parallel_item(p: Syntax) -> integer? {
+  match p {
+    [e: expr, (_s: semi)?] => e,
+    _ => null
+  }
+}
+
+// For <- 'for' ForBind 'in' IterSrc (ParClause / ('if' Expr)?) Block   collections.rs parse_for
+fn for_expr(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [KwFor, bs: for_bind, KwIn, s: iter_source, (pc: par_clause)?, (f: for_filter)?, b: block] =>
+      add(p, SFor { at: at, binds: texts(p, items(p, bs)), source: s, par: pc, filter: f, body: b }),
+    _ => null
+  }
+}
+
+fn for_filter(p: Syntax) -> integer? {
+  match p {
+    [KwIf, f: head_expr] => f,
+    _ => null
+  }
+}
+
+// ForBind <- Ident / '(' Ident (',' Ident)+ ')' — name nodes.
+fn for_bind(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [LParen, n: ident, (ns: more_ident)+, RParen] => {
+      all = [n];
+      all += ns;
+      add(p, SList { at: at, items: all })
+    },
+    [n: ident] => add(p, SList { at: at, items: [n] }),
+    _ => null
+  }
+}
+
+// IterSrc <- 'unordered' '(' Range ')' / 'rev' '(' Range ')' / Range, read as a control head.
+fn iter_source(p: Syntax) -> integer? {
+  at = p.pos;
+  was = p.head;
+  p.head = true;
+  r = match p {
+    ["unordered", LParen, e: range_expr, RParen] => add(p, SIterWrap { at: at, kind: "unordered", e: e }),
+    ["rev", LParen, e: range_expr, RParen] => add(p, SIterWrap { at: at, kind: "rev", e: e }),
+    [e: range_expr] => e,
+    _ => null
+  };
+  p.head = was;
+  r
+}
+
+// Range <- OpExpr? ('..' '='? OpExpr?)?                             objects.rs parse_in_range_body
+fn range_expr(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [lo: op_expr, (r: range_tail)?] => if r == null { lo } else { with_lo(p, at, lo, r ?? 0) },
+    [r: range_tail] => with_lo(p, at, null, r),
+    [e: expr] => e,
+    _ => null
+  }
+}
+
+// `.. hi` / `..= hi` / `..` — a range's end, carried in an `SRange` with no `lo`.
+fn range_tail(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [DotDot, Assign, hi: op_expr] => add(p, SRange { at: at, lo: null, hi: hi, inclusive: true }),
+    [DotDot, _b: no_brace, hi: op_expr] => add(p, SRange { at: at, lo: null, hi: hi, inclusive: false }),
+    [DotDot] => add(p, SRange { at: at, lo: null, hi: null, inclusive: false }),
+    _ => null
+  }
+}
+
+// The next token does not open a block: `0..` before a loop body is an open range.
+fn no_brace(p: Syntax) -> integer? {
+  if p.src[p.pos] is LBrace { null } else { p.pos }
+}
+
+fn with_lo(p: Syntax, at: integer, lo: integer?, r: integer) -> integer {
+  match p.nodes[r] {
+    SRange { hi, inclusive } => add(p, SRange { at: at, lo: lo, hi: hi, inclusive: inclusive }),
+    _ => r
+  }
+}
+
+// ParClause <- 'par' '(' Ident '=' Worker ',' Expr ')'               collections.rs
+fn par_clause(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    ["par", LParen, Ident { name }, Assign, w: postfix_expr, Comma, n: expr, RParen] =>
+      add(p, SPar { at: at, var: name, worker: w, threads: n }),
+    _ => null
+  }
+}
+
+// ── operators: precedence climbing, loosest first (mod.rs OPERATORS) ─────────────────────────
+
+pub fn op_expr(p: Syntax) -> integer? {
+  match p {
+    [e: coalesce_expr] => e,
+    _ => null
+  }
+}
+
+// `??` — right-associative.
+fn coalesce_expr(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [l: or_expr, (r: coalesce_tail)?] => if r == null { l } else { add(p, SBin { at: at, op: "??", l: l, r: r }) },
+    _ => null
+  }
+}
+
+fn coalesce_tail(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [QuestQuest, KwReturn, (e: op_expr)?] => add(p, SJump { at: at + 1, kind: "return", e: e }),
+    [QuestQuest, KwBreak, (e: op_expr)?] => add(p, SJump { at: at + 1, kind: "break", e: e }),
+    [QuestQuest, KwContinue] => add(p, SJump { at: at + 1, kind: "continue", e: null }),
+    [QuestQuest, r: coalesce_expr] => r,
+    _ => null
+  }
+}
+
+fn or_expr(p: Syntax) -> integer? {
+  match p {
+    [l: and_expr, (ts: or_tail)*] => fold(p, l, ts),
+    _ => null
+  }
+}
+
+fn or_tail(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [OrOr, r: and_expr] => add(p, SOpTail { at: at, op: "||", r: r }),
+    [KwOr, r: and_expr] => add(p, SOpTail { at: at, op: "or", r: r }),
+    _ => null
+  }
+}
+
+fn and_expr(p: Syntax) -> integer? {
+  match p {
+    [l: cmp_expr, (ts: and_tail)*] => fold(p, l, ts),
+    _ => null
+  }
+}
+
+fn and_tail(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [AndAnd, r: cmp_expr] => add(p, SOpTail { at: at, op: "&&", r: r }),
+    [KwAnd, r: cmp_expr] => add(p, SOpTail { at: at, op: "and", r: r }),
+    _ => null
+  }
+}
+
+// Comparisons and `is` — a second comparison is the elaboration's error, as in the Rust parser.
+fn cmp_expr(p: Syntax) -> integer? {
+  match p {
+    [l: bor_expr, (ts: cmp_tail)*] => fold(p, l, ts),
+    _ => null
+  }
+}
+
+fn cmp_tail(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [EqEq, r: bor_expr] => add(p, SOpTail { at: at, op: "==", r: r }),
+    [Ne, r: bor_expr] => add(p, SOpTail { at: at, op: "!=", r: r }),
+    [Le, r: bor_expr] => add(p, SOpTail { at: at, op: "<=", r: r }),
+    [Lt, r: bor_expr] => add(p, SOpTail { at: at, op: "<", r: r }),
+    [Gt, AssignGlued, r: bor_expr] => add(p, SOpTail { at: at, op: ">=", r: r }),
+    [Gt, r: bor_expr] => add(p, SOpTail { at: at, op: ">", r: r }),
+    [KwIs, Ident { name }, LBrace, (cs: ident)+(Comma), (_t: trailing_comma)?, RBrace, _b: brace_next] =>
+      add(p, SIs { at: at, e: null, variant: name, caps: texts(p, cs), has_caps: true }),
+    [KwIs, Ident { name }] => add(p, SIs { at: at, e: null, variant: name, caps: [], has_caps: false }),
+    _ => null
+  }
+}
+
+fn bor_expr(p: Syntax) -> integer? {
+  match p {
+    [l: xor_expr, (ts: bor_tail)*] => fold(p, l, ts),
+    _ => null
+  }
+}
+
+fn bor_tail(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Pipe, r: xor_expr] => add(p, SOpTail { at: at, op: "|", r: r }),
+    _ => null
+  }
+}
+
+fn xor_expr(p: Syntax) -> integer? {
+  match p {
+    [l: band_expr, (ts: xor_tail)*] => fold(p, l, ts),
+    _ => null
+  }
+}
+
+fn xor_tail(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Caret, r: band_expr] => add(p, SOpTail { at: at, op: "^", r: r }),
+    _ => null
+  }
+}
+
+fn band_expr(p: Syntax) -> integer? {
+  match p {
+    [l: shift_expr, (ts: band_tail)*] => fold(p, l, ts),
+    _ => null
+  }
+}
+
+fn band_tail(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Amp, r: shift_expr] => add(p, SOpTail { at: at, op: "&", r: r }),
+    _ => null
+  }
+}
+
+fn shift_expr(p: Syntax) -> integer? {
+  match p {
+    [l: add_expr, (ts: shift_tail)*] => fold(p, l, ts),
+    _ => null
+  }
+}
+
+fn shift_tail(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Shl, r: add_expr] => add(p, SOpTail { at: at, op: "<<", r: r }),
+    [Gt, GtGlued, r: add_expr] => add(p, SOpTail { at: at, op: ">>", r: r }),
+    _ => null
+  }
+}
+
+fn add_expr(p: Syntax) -> integer? {
+  match p {
+    [l: mul_expr, (ts: add_tail)*] => fold(p, l, ts),
+    _ => null
+  }
+}
+
+fn add_tail(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Plus, r: mul_expr] => add(p, SOpTail { at: at, op: "+", r: r }),
+    [Minus, r: mul_expr] => add(p, SOpTail { at: at, op: "-", r: r }),
+    _ => null
+  }
+}
+
+fn mul_expr(p: Syntax) -> integer? {
+  match p {
+    [l: pow_expr, (ts: mul_tail)*] => fold(p, l, ts),
+    _ => null
+  }
+}
+
+fn mul_tail(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Star, r: pow_expr] => add(p, SOpTail { at: at, op: "*", r: r }),
+    [Slash, r: pow_expr] => add(p, SOpTail { at: at, op: "/", r: r }),
+    [Percent, r: pow_expr] => add(p, SOpTail { at: at, op: "%", r: r }),
+    _ => null
+  }
+}
+
+// `**` — right-associative.
+fn pow_expr(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [l: as_expr, (r: pow_tail)?] => if r == null { l } else { add(p, SBin { at: at, op: "**", l: l, r: r }) },
+    _ => null
+  }
+}
+
+fn pow_tail(p: Syntax) -> integer? {
+  match p {
+    [StarStar, r: pow_expr] => r,
+    _ => null
+  }
+}
+
+// `as` Type `?`? — a type on the right, left-associative.
+fn as_expr(p: Syntax) -> integer? {
+  match p {
+    [l: unary, (ts: as_tail)*] => fold(p, l, ts),
+    _ => null
+  }
+}
+
+fn as_tail(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [KwAs, t: ty] => add(p, SAs { at: at, e: null, tp: t, checked: false }),
+    _ => null
+  }
+}
+
+// Each tail in `ts` applied to the operand before it, left to right.
+fn fold(p: Syntax, l: integer, ts: vector<integer>) -> integer {
+  acc = l;
+  for t in ts {
+    n = p.nodes[t];
+    match n {
+      SOpTail { at, op, r } => {
+        acc = add(p, SBin { at: at, op: op, l: acc, r: r });
+      },
+      SIs { at, variant, caps, has_caps } => {
+        acc = add(p, SIs { at: at, e: acc, variant: variant, caps: caps, has_caps: has_caps });
+      },
+      SAs { at, tp } => {
+        acc = add(p, SAs { at: at, e: acc, tp: tp, checked: false });
+      },
+      _ => {}
+    }
+  }
+  acc
+}
+
+// Unary <- ('&' / '!' / '~' / '-') Unary / Postfix                   vectors.rs parse_single
+fn unary(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Amp, e: unary] => add(p, SUnary { at: at, op: "&", e: e }),
+    [Bang, e: unary] => add(p, SUnary { at: at, op: "!", e: e }),
+    [Tilde, e: unary] => add(p, SUnary { at: at, op: "~", e: e }),
+    [Minus, e: unary] => add(p, SUnary { at: at, op: "-", e: e }),
+    [e: postfix_expr] => e,
+    _ => null
+  }
+}
+
+// Postfix <- Primary ('.' (Int / Ident Args?) / '[' Index ']' / Args / '?' / '!')*
+//                                                               operators.rs parse_part_inner
+pub fn postfix_expr(p: Syntax) -> integer? {
+  match p {
+    [e: primary, (ps: postfix_step)*] => fold_postfix(p, e, ps),
+    _ => null
+  }
+}
+
+fn postfix_step(p: Syntax) -> integer? {
+  match p {
+    [s: member_step] => s,
+    [s: index_step] => s,
+    [s: call_step] => s,
+    _ => null
+  }
+}
+
+// The steps that continue a block-like statement: `.`, `?` and `!`.
+fn member_step(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Dot, Int { v }] => add(p, STupleGet { at: at, e: null, index: v }),
+    [Dot, Ident { name }, a: call_args] => add(p, SMember { at: at, e: null, name: name, args: items(p, a), call: true }),
+    [Dot, Ident { name }] => add(p, SMember { at: at, e: null, name: name, args: [], call: false }),
+    [Quest] => add(p, SPostfix { at: at, op: "?", e: null }),
+    [Bang] => add(p, SPostfix { at: at, op: "!", e: null }),
+    _ => null
+  }
+}
+
+fn index_step(p: Syntax) -> integer? {
+  match p {
+    [LBracket, ix: index_body, RBracket] => ix,
+    _ => null
+  }
+}
+
+fn call_step(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [a: call_args] => add(p, SCall { at: at, f: null, args: items(p, a) }),
+    _ => null
+  }
+}
+
+// Each step in `ps` applied to the operand before it.
+fn fold_postfix(p: Syntax, e: integer, ps: vector<integer>) -> integer {
+  acc = e;
+  for s in ps {
+    match p.nodes[s] {
+      STupleGet { at, index } => {
+        acc = add(p, STupleGet { at: at, e: acc, index: index });
+      },
+      SMember { at, name, args, call } => {
+        acc = add(p, SMember { at: at, e: acc, name: name, args: args, call: call });
+      },
+      SPostfix { at, op } => {
+        acc = add(p, SPostfix { at: at, op: op, e: acc });
+      },
+      SIndex { at, keys, range, inclusive, hi, limit, spatial } => {
+        acc = add(p, SIndex { at: at, e: acc, keys: keys, range: range, inclusive: inclusive, hi: hi, limit: limit, spatial: spatial });
+      },
+      SCall { at, args } => {
+        acc = add(p, SCall { at: at, f: acc, args: args });
+      },
+      _ => {}
+    }
+  }
+  acc
+}
+
+// Index <- '(' Expr (',' Expr)* ')' '..' ('(' Expr (',' Expr)* ')' / ':' Expr)?
+//        / (Expr (',' Expr)*)? ('..' '='? (':' Expr / Expr (',' Expr)*)?)?   fields.rs parse_index
+fn index_body(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    ["rev", LParen, e: range_expr, RParen] => add(p, SIterWrap { at: at, kind: "rev", e: e }),
+    [LParen, (lo: expr)+(Comma), RParen, DotDot, LParen, (hi: expr)+(Comma), RParen] =>
+      add(p, SIndex { at: at, e: null, keys: lo, range: true, inclusive: false, hi: hi, limit: null, spatial: true }),
+    [LParen, (lo: expr)+(Comma), RParen, DotDot, Colon, n: expr] =>
+      add(p, SIndex { at: at, e: null, keys: lo, range: true, inclusive: false, hi: [], limit: n, spatial: true }),
+    [(ks: range_key)*(Comma), (t: index_tail)?] => {
+      if t == null {
+        add(p, SIndex { at: at, e: null, keys: ks, range: false, inclusive: false, hi: [], limit: null, spatial: false })
+      } else {
+        match p.nodes[t ?? 0] {
+          SIndex { inclusive, hi, limit } => add(p, SIndex { at: at, e: null, keys: ks, range: true, inclusive: inclusive, hi: hi, limit: limit, spatial: false }),
+          _ => t ?? 0
+        }
+      }
+    },
+    _ => null
+  }
+}
+
+// `..= hi…` / `..: n` / `.. hi…` — a key range's end, in a carrier `SIndex`.
+fn index_tail(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [DotDot, Assign, (hs: range_key)*(Comma)] =>
+      add(p, SIndex { at: at, e: null, keys: [], range: true, inclusive: true, hi: hs, limit: null, spatial: false }),
+    [DotDot, Colon, n: expr] =>
+      add(p, SIndex { at: at, e: null, keys: [], range: true, inclusive: false, hi: [], limit: n, spatial: false }),
+    [DotDot, (hs: range_key)*(Comma)] =>
+      add(p, SIndex { at: at, e: null, keys: [], range: true, inclusive: false, hi: hs, limit: null, spatial: false }),
+    _ => null
+  }
+}
+
+// A key of a range bound: an operator expression (`..` is not an operator).
+fn range_key(p: Syntax) -> integer? {
+  match p {
+    [e: op_expr] => e,
+    _ => null
+  }
+}
+
+// Args <- '(' (Arg (',' Arg)* ','?)? ')'      Arg <- (Ident ':' !':')? Expr
+fn call_args(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [LParen, (a: call_arg)*(Comma), (_t: trailing_comma)?, RParen] => add(p, SList { at: at, items: a }),
+    _ => null
+  }
+}
+
+fn call_arg(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Ident { name }, Colon, e: expr] => add(p, SArg { at: at, name: name, e: e }),
+    [e: expr] => add(p, SArg { at: at, name: "", e: e }),
+    _ => null
+  }
+}
+
+// ── primaries ────────────────────────────────────────────────────────────────────────────────
+
+// Primary <- paren or tuple / AnonStruct / Block / '[' VecBody ']' / If / Match / lambda
+//          / sizeof / type_name / assert / panic / vector<T>.parse / Path (StructLit / Args /
+//          '#' VarAttr)? / '$' / literal / string                 vectors.rs parse_single,
+//                                                                 objects.rs parse_var
+fn primary(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [LParen, e: expr, (t: tuple_rest)?, RParen] => {
+      if t == null {
+        add(p, SParen { at: at, e: e })
+      } else {
+        elems = [e];
+        elems += items(p, t);
+        add(p, STupleLit { at: at, elems: elems })
+      }
+    },
+    [s: anon_struct] => s,
+    [b: block] => b,
+    [v: vector_lit] => v,
+    [e: if_expr] => e,
+    [e: match_expr] => e,
+    [l: lambda] => l,
+    [KwSizeof, LParen, t: ty, RParen] => add(p, SSizeof { at: at, kind: "sizeof", tp: t, e: null }),
+    [KwSizeof, LParen, e: expr, RParen] => add(p, SSizeof { at: at, kind: "sizeof", tp: null, e: e }),
+    ["type_name", LParen, t: ty, RParen] => add(p, SSizeof { at: at, kind: "type_name", tp: t, e: null }),
+    [KwAssert, a: call_args] => add(p, SIntrinsic { at: at, kind: "assert", args: items(p, a) }),
+    [KwPanic, a: call_args] => add(p, SIntrinsic { at: at, kind: "panic", args: items(p, a) }),
+    ["vector", Lt, Ident { name }, _g: close_angle, Dot, "parse", a: call_args] =>
+      add(p, SVectorParse { at: at, elem: name, args: items(p, a) }),
+    [s: struct_lit] => s,
+    [Ident { name }, Hash, KwBreak] => add(p, SVarAttr { at: at, var: name, attr: "break", arg: null, tp: null }),
+    [Ident { name }, Hash, KwContinue] => add(p, SVarAttr { at: at, var: name, attr: "continue", arg: null, tp: null }),
+    [Ident { name }, Hash, Ident { name: attr }, LParen, a: expr, RParen, KwAs, t: ty] =>
+      add(p, SVarAttr { at: at, var: name, attr: attr, arg: a, tp: t }),
+    [Ident { name }, Hash, Ident { name: attr }, KwAs, t: ty] =>
+      add(p, SVarAttr { at: at, var: name, attr: attr, arg: null, tp: t }),
+    [Ident { name }, Hash, Ident { name: attr }, LParen, a: expr, RParen] =>
+      add(p, SVarAttr { at: at, var: name, attr: attr, arg: a, tp: null }),
+    [Ident { name }, Hash, Ident { name: attr }] =>
+      add(p, SVarAttr { at: at, var: name, attr: attr, arg: null, tp: null }),
+    [n: path, a: call_args] => add(p, SCall { at: at, f: n, args: items(p, a) }),
+    [n: path] => n,
+    [Dollar] => add(p, SDollar { at: at }),
+    [l: literal] => l,
+    _ => null
+  }
+}
+
+// `, e, …` after a tuple's first element: the rest (a trailing comma alone makes a tuple too).
+fn tuple_rest(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Comma, (es: expr)*(Comma), (_t: trailing_comma)?] => add(p, SList { at: at, items: es }),
+    _ => null
+  }
+}
+
+fn literal(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Int { v, zero }] => add(p, SInt { at: at, v: v, zero: zero }),
+    [Long { v }] => add(p, SLong { at: at, v: v }),
+    [Wide { v }] => add(p, SWide { at: at, v: v }),
+    [Float { v, zero }] => add(p, SFloat { at: at, v: v, zero: zero }),
+    [Double { v }] => add(p, SDouble { at: at, v: v }),
+    [Single { v }] => add(p, SSingle { at: at, v: v }),
+    [Char { c }] => add(p, SChar { at: at, c: c }),
+    [KwTrue] => add(p, SBool { at: at, b: true }),
+    [KwFalse] => add(p, SBool { at: at, b: false }),
+    [KwNull] => add(p, SNull { at: at }),
+    [s: string_lit] => s,
+    _ => null
+  }
+}
+
+// StructLit <- Path '{' ('..' Expr ','? / Field (',' (Field / '..' Expr ','?))* ','?)? '}'
+//                                                               objects.rs parse_object_inner
+fn struct_lit(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [n: path, LBrace, DotDot, b: expr, (_t: trailing_comma)?, RBrace] => lit_node(p, at, n, [], b),
+    [n: path, LBrace, (fs: field_init)+(Comma), Comma, DotDot, b: expr, (_t: trailing_comma)?, RBrace] => lit_node(p, at, n, fs, b),
+    [n: path, LBrace, (fs: field_init)+(Comma), (_t: trailing_comma)?, RBrace] => lit_node(p, at, n, fs, null),
+    [n: path, LBrace, RBrace, _ok: empty_literal_allowed] => lit_node(p, at, n, [], null),
+    _ => null
+  }
+}
+
+fn lit_node(p: Syntax, at: integer, n: integer, fs: vector<integer>, base: integer?) -> integer {
+  add(p, SStructLit { at: at, name: name_of(p, n), member: member_of(p, n), fields: fs, base: base })
+}
+
+// Field <- (Ident / Str) ':' OpExpr                               objects.rs parse_object_field
+fn field_init(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Ident { name }, Colon, e: op_expr] => add(p, SFieldInit { at: at, name: name, quoted: false, e: e }),
+    [Str { s }, Colon, e: op_expr] => add(p, SFieldInit { at: at, name: s, quoted: true, e: e }),
+    _ => null
+  }
+}
+
+// AnonStruct <- '{' Field (',' Field)* ','? '}'                    control.rs parse_block_inner
+fn anon_struct(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [LBrace, (fs: field_init)+(Comma), (_t: trailing_comma)?, RBrace] =>
+      add(p, SStructLit { at: at, name: "", member: "", fields: fs, base: null }),
+    _ => null
+  }
+}
+
+// '[' VecBody ']'   VecBody <- 'for' ForBind 'in' IterSrc ('if' Expr)? Block
+//                            / (Item (',' Item)* ','?)?    Item <- OpExpr (';' OpExpr)?
+//                                                               vectors.rs parse_vector_inner
+fn vector_lit(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [LBracket, KwFor, bs: for_bind, KwIn, s: iter_source, (f: for_filter)?, b: block, RBracket] =>
+      add(p, SComprehension { at: at, binds: texts(p, items(p, bs)), source: s, filter: f, body: b }),
+    [LBracket, (items: vec_item)*(Comma), (_t: trailing_comma)?, RBracket] =>
+      add(p, SVecLit { at: at, items: items }),
+    _ => null
+  }
+}
+
+fn vec_item(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [e: op_expr, Semi, n: op_expr] => add(p, SRepeat { at: at, e: e, n: n }),
+    [e: op_expr] => e,
+    _ => null
+  }
+}
+
+// 'fn' '(' Params ')' ('->' Type)? Block / '||' Block / '|' (Ident (',' Ident)*)? '|' Block
+//                                                    vectors.rs parse_lambda, parse_lambda_short
+fn lambda(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [KwFn, LParen, (ps: param)*(Comma), (_t: trailing_comma)?, RParen, (r: ret_type)?, b: block] =>
+      add(p, SLambda { at: at, params: ps, ret: r, body: b, short: false, names: [] }),
+    [OrOr, b: block] => add(p, SLambda { at: at, params: [], ret: null, body: b, short: true, names: [] }),
+    [Pipe, (ns: ident)*(Comma), Pipe, b: block] =>
+      add(p, SLambda { at: at, params: [], ret: null, body: b, short: true, names: texts(p, ns) }),
+    _ => null
+  }
+}
+
+// ── strings ──────────────────────────────────────────────────────────────────────────────────
+
+// StringLit <- (StrHole Hole '}')* Str — the lexer hands a literal over as its segments, each
+// segment that opens a hole followed by the hole's tokens and its `}`.   objects.rs parse_string
+fn string_lit(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [(hs: string_hole)*, Str { s }] => {
+      parts = hs;
+      parts += [add(p, SText { at: p.pos - 1, s: s })];
+      add(p, SString { at: at, parts: parts })
+    },
+    _ => null
+  }
+}
+
+// One segment that opens a hole, and the hole: a text part followed by an `SHole`.  Answered
+// as the hole; its segment is the node just before it.
+fn string_hole(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [StrHole { s }, (_w: space)*, e: hole_expr, (_x: space)*, (sp: spec)?, (_r: hole_close)?] => {
+      add(p, SText { at: at, s: s });
+      spec_at = if sp == null { p.pos - 1 } else { sp ?? 0 };
+      add(p, SHole { at: at + 1, e: e, spec: spec_at, spec_end: p.pos - 1 })
+    },
+    _ => null
+  }
+}
+
+// A hole's `}` — absent when the lexer read the spec as text and resumed the string itself.
+fn hole_close(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [RBrace] => at,
+    _ => null
+  }
+}
+
+fn space(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Space] => at,
+    [LineEnd] => at,
+    _ => null
+  }
+}
+
+// A hole's expression: a `for` loop or an expression.
+fn hole_expr(p: Syntax) -> integer? {
+  match p {
+    [e: for_expr] => e,
+    [e: expr] => e,
+    _ => null
+  }
+}
+
+// `: spec` — the spec's tokens up to the hole's `}`, kept as written; the position of the
+// first one.  The elaboration reads them as `parse_string` does (fill, flags, width, radix).
+fn spec(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Colon, (_ts: spec_token)*] => at + 1,
+    _ => null
+  }
+}
+
+// Any token but the hole's closing `}`.
+fn spec_token(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [_open: not_hole_end, _] => at,
+    _ => null
+  }
+}
+
+fn not_hole_end(p: Syntax) -> integer? {
+  t = p.src[p.pos];
+  if t is RBrace || t is End || t is StrHole || t is Str { null } else { p.pos }
+}
+
+// ── match and patterns ───────────────────────────────────────────────────────────────────────
+
+// Match <- 'match' Expr '{' Arm* '}'                             control.rs parse_match_inner
+fn match_expr(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [KwMatch, s: head_expr, LBrace, (arms: match_arm)*, RBrace] => add(p, SMatch { at: at, subject: s, arms: arms }),
+    _ => null
+  }
+}
+
+// Arm <- TopPat (('|' / ',') TopPat)* ('if' Expr)? '=>' (Block / Expr) ','?
+fn match_arm(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [first: top_pat, (more: more_top_pat)*, (_c: trailing_comma)?, (g: guard)?, FatArrow, b: arm_body, (_s: trailing_comma)?] => {
+      pats = [first];
+      pats += more;
+      add(p, SArm { at: at, pats: pats, guard: g, body: b })
+    },
+    _ => null
+  }
+}
+
+fn more_top_pat(p: Syntax) -> integer? {
+  match p {
+    [Pipe, t: top_pat] => t,
+    [Comma, t: top_pat] => t,
+    _ => null
+  }
+}
+
+fn guard(p: Syntax) -> integer? {
+  match p {
+    [KwIf, e: expr] => e,
+    _ => null
+  }
+}
+
+fn arm_body(p: Syntax) -> integer? {
+  match p {
+    [b: block] => b,
+    [e: expr] => e,
+    _ => null
+  }
+}
+
+// TopPat <- 'null' / Ident ('@' / ':') Cap / Cap
+fn top_pat(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [KwNull] => add(p, PNull { at: at }),
+    [Ident { name }, At, c: cap_pat] => add(p, PCap { at: at, name: name, pat: c, at_sign: true }),
+    [c: cap_pat] => c,
+    _ => null
+  }
+}
+
+// Alt <- Cap ('|' Cap)*
+fn alt_pat(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [c: cap_pat, (cs: more_alt)+] => {
+      alts = [c];
+      alts += cs;
+      add(p, PAlt { at: at, alts: alts })
+    },
+    [c: cap_pat] => c,
+    _ => null
+  }
+}
+
+fn more_alt(p: Syntax) -> integer? {
+  match p {
+    [Pipe, c: cap_pat] => c,
+    _ => null
+  }
+}
+
+// Cap <- Ident ':' Cap / Postfix
+fn cap_pat(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Ident { name }, Colon, c: cap_pat] => add(p, PCap { at: at, name: name, pat: c, at_sign: false }),
+    [q: quant_pat] => q,
+    _ => null
+  }
+}
+
+// Postfix <- Group / Point ('*' / '+')?
+fn quant_pat(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [g: group_pat] => g,
+    [pt: point_pat, Star] => add(p, PQuant { at: at, pat: pt, quant: "*" }),
+    [pt: point_pat, Plus] => add(p, PQuant { at: at, pat: pt, quant: "+" }),
+    [pt: point_pat] => pt,
+    _ => null
+  }
+}
+
+// Group <- '(' Seq ('|' Seq)* ')' ('*' / '+' / '?')? RepSep?   (a tuple is tried first)
+fn group_pat(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [t: tuple_pat] => t,
+    [LParen, s: seq_pat, (ss: more_seq)*, RParen, q: quantifier, (sep: rep_sep)?] => {
+      seqs = [s];
+      seqs += ss;
+      add(p, PGroup { at: at, seqs: seqs, quant: name_of(p, q), sep: sep })
+    },
+    [LParen, s: seq_pat, (ss: more_seq)*, RParen] => {
+      seqs = [s];
+      seqs += ss;
+      add(p, PGroup { at: at, seqs: seqs, quant: "", sep: null })
+    },
+    _ => null
+  }
+}
+
+fn quantifier(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Star] => add(p, SName { at: at, name: "*", member: "" }),
+    [Plus] => add(p, SName { at: at, name: "+", member: "" }),
+    [Quest] => add(p, SName { at: at, name: "?", member: "" }),
+    _ => null
+  }
+}
+
+fn more_seq(p: Syntax) -> integer? {
+  match p {
+    [Pipe, s: seq_pat] => s,
+    _ => null
+  }
+}
+
+// Seq <- Cap+ — juxtaposition, no commas.
+fn seq_pat(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [(cs: cap_pat)+] => add(p, PSeq { at: at, items: cs }),
+    _ => null
+  }
+}
+
+// RepSep <- '(' (Literal / Path FieldBlock?) ')'
+fn rep_sep(p: Syntax) -> integer? {
+  match p {
+    [LParen, l: literal_pat, RParen] => l,
+    [LParen, n: name_pat, RParen] => n,
+    _ => null
+  }
+}
+
+// Point <- '_' / Slice / Range / Literal / Path FieldBlock? / Operand
+fn point_pat(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Ident { name: "_" }] => add(p, PWild { at: at }),
+    [s: slice_pat] => s,
+    [r: range_pat] => r,
+    [l: literal_pat] => l,
+    [n: name_pat] => n,
+    _ => null
+  }
+}
+
+// Path FieldBlock? — a variant, a struct, a binding, a constant, a rule: elaboration decides.
+fn name_pat(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [n: path, LBrace, (fs: field_pat)*(Comma), (_t: trailing_comma)?, RBrace] =>
+      add(p, PName { at: at, name: name_of(p, n), member: member_of(p, n), fields: fs, braces: true }),
+    [n: path] => add(p, PName { at: at, name: name_of(p, n), member: member_of(p, n), fields: [], braces: false }),
+    _ => null
+  }
+}
+
+fn member_of(p: Syntax, n: integer) -> text {
+  if p.nodes[n] is SName { member } { member } else { "" }
+}
+
+// PField <- Ident (':' Alt)?
+fn field_pat(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Ident { name }, Colon, a: alt_pat] => add(p, PFieldPat { at: at, name: name, pat: a }),
+    [Ident { name }] => add(p, PFieldPat { at: at, name: name, pat: null }),
+    _ => null
+  }
+}
+
+// Tuple <- '(' Cap (',' Cap)+ ')'
+fn tuple_pat(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [LParen, c: alt_pat, (cs: more_tuple_pat)+, RParen] => {
+      elems = [c];
+      elems += cs;
+      add(p, PTuple { at: at, elems: elems })
+    },
+    _ => null
+  }
+}
+
+fn more_tuple_pat(p: Syntax) -> integer? {
+  match p {
+    [Comma, c: alt_pat] => c,
+    _ => null
+  }
+}
+
+// Slice <- '[' (SliceElem ','?)* ']'      SliceElem <- '..' Ident? / Cap
+fn slice_pat(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [LBracket, (es: slice_elem)*, RBracket] => add(p, PSlice { at: at, elems: es }),
+    _ => null
+  }
+}
+
+fn slice_elem(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [DotDot, Ident { name }, (_c: trailing_comma)?] => add(p, PRest { at: at, name: name }),
+    [DotDot, (_c: trailing_comma)?] => add(p, PRest { at: at, name: "" }),
+    [c: alt_pat, (_c: trailing_comma)?] => c,
+    _ => null
+  }
+}
+
+// Range <- Bound '..' '='? Bound      Bound <- '-'? (Literal / Operand above the `|` level)
+fn range_pat(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [lo: bound_pat, DotDot, Assign, hi: bound_pat] => add(p, PRange { at: at, lo: lo, hi: hi, inclusive: true }),
+    [lo: bound_pat, DotDot, hi: bound_pat] => add(p, PRange { at: at, lo: lo, hi: hi, inclusive: false }),
+    _ => null
+  }
+}
+
+fn bound_pat(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Minus, e: xor_expr] => add(p, SUnary { at: at, op: "-", e: e }),
+    [e: xor_expr] => e,
+    _ => null
+  }
+}
+
+// Literal <- '-'? (Int / Float) / Str / Char / 'true' / 'false'
+fn literal_pat(p: Syntax) -> integer? {
+  at = p.pos;
+  match p {
+    [Minus, l: literal] => add(p, PLit { at: at, e: add(p, SUnary { at: at, op: "-", e: l }) }),
+    [l: literal] => add(p, PLit { at: at, e: l }),
+    _ => null
+  }
+}
+
