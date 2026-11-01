@@ -1090,11 +1090,21 @@ pub struct Parser {
     /// farthest-reached position — the token to point an error at.  `None` = the cursor has no such
     /// field (tracking is opt-in, so a plain `{ src, pos }` cursor is unaffected).
     pub(crate) match_cursor_farthest: Option<usize>,
-    /// @PLN35 PC3 — sub-rule invocation edges `(enclosing_rule, invoked_rule, site)` recorded on
-    /// pass 2, so a post-parse well-formedness pass can reject a left-recursive grammar (a cycle in
-    /// this graph) at compile time rather than hang at runtime.  Every PC2 invocation is at cursor
-    /// position 0 (whole-pattern), so any cycle is non-consuming — it cannot terminate.
-    pub(crate) subrule_edges: Vec<(u32, u32, Position)>,
+    /// @PLN35 PC3 — sub-rule invocation edges `(enclosing_rule, invoked_rule, site, consuming)`
+    /// recorded on pass 2, so a post-parse well-formedness pass can reject a left-recursive
+    /// grammar (a cycle of NON-consuming edges) at compile time rather than hang at runtime.  An
+    /// edge is consuming when a token is taken before the call: a fixed element earlier in its
+    /// pattern, or the arm whose body holds its match (`cursor_consumed`).
+    pub(crate) subrule_edges: Vec<(u32, u32, Position, bool)>,
+    /// `@FR-P-Rule` — the cursor variables whose arm BODY is being parsed after the arm's
+    /// pattern consumed a token: a sub-rule called on one of them there is a consuming edge.
+    pub(crate) cursor_consumed: Vec<u16>,
+    /// Set by `parse_slice_pattern`: the pattern just parsed holds a fixed element, so an arm
+    /// it heads consumes at least one token.
+    pub(crate) slice_consumes: bool,
+    /// Set while a slice pattern holds a sub-rule element: the arm then restores the cursor
+    /// when it fails.
+    pub(crate) slice_subrule: bool,
     vars: Function,
     /// Last seen line inside the source code, an increase inserts it in the internal code.
     line: u32,
@@ -2024,6 +2034,9 @@ impl Parser {
             match_cursor: None,
             match_cursor_farthest: None,
             subrule_edges: Vec::new(),
+            cursor_consumed: Vec::new(),
+            slice_consumes: false,
+            slice_subrule: false,
             vars: Function::new("", "none"),
             line: 0,
             lib_dirs: Vec::new(),

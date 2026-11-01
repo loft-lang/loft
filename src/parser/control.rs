@@ -12044,13 +12044,26 @@ impl Parser {
             self.lexer.cont(); // `:`
             if let LexItem::Identifier(rule) = self.lexer.peek().has.clone() {
                 let fn_nr = self.data.def_nr(&format!("n_{rule}"));
+                // On the first pass a rule written further down the file is not defined yet.
+                // A lower-case name that names nothing else cannot be a variant or a type here,
+                // so it is read as that rule: the binding it makes must be the same variable
+                // on both passes.
+                if fn_nr == u32::MAX
+                    && self.first_pass
+                    && rule.starts_with(|c: char| c.is_ascii_lowercase())
+                    && self.data.def_nr(&rule) == u32::MAX
+                {
+                    result = Some((name.clone(), u32::MAX, Type::Unknown(0)));
+                }
                 if fn_nr != u32::MAX {
                     // `@FR-N-Shape` — through the `?`: a sub-rule answers null for "no match",
                     // so `-> N?` is its honest declaration, and `(N-Join)` warns a `-> N` whose
                     // `_ => null` arm says otherwise (loft#1714).  The capture is bound only on
                     // the arm where the rule matched, so it is the non-null `N`.
+                    // `@FR-P-Rule` — the rule answers its node, of whatever type: a record, or
+                    // an index into an arena the cursor carries.
                     let ret = self.data.def(fn_nr).returned().base().clone();
-                    if matches!(ret, Type::Reference(..)) {
+                    if !matches!(ret, Type::Void | Type::Unknown(_) | Type::Never) {
                         result = Some((name, fn_nr, ret));
                     }
                 }
@@ -12060,70 +12073,177 @@ impl Parser {
         result
     }
 
-    /// @PLN35 PC2 — emit a sub-rule invocation slice element `[ name: rule ]` (cursor mode,
-    /// whole-pattern).  Desugars to the proven hand-form `r = rule(cursor); if r != null { name = r
-    /// … }`: the sub-rule prefix-matches over the SAME cursor (advancing its `pos` on a match,
-    /// leaving it on a miss), so no fixed-length gate or pos-advance is needed here (`multi_alt`
-    /// skips them).  The call is evaluated ONCE inside the arm cond (a side-effecting block) so a
-    /// miss never double-advances; `name` binds the (owned) result and the arm gates on `name != null`.
+    /// `@FR-P-Rule` — the fixed elements of the current cursor segment, tested and bound before
+    /// a sub-rule ends it: the length gate `base + k <= len`, then each element's condition in
+    /// order, ANDed onto `cond`; the bare names bind from `base + i`.  Their reads use the
+    /// segment's base, which the next segment replaces, so they are emitted now.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the slice pattern's own state, threaded"
+    )]
+    fn flush_cursor_segment(
+        &mut self,
+        subject: &SliceSubject,
+        head: &mut [String],
+        seg_start: usize,
+        cond: &mut Option<Value>,
+        elem_conds: &mut Vec<Value>,
+        conds_at_entry: usize,
+        bindings: &mut Vec<Value>,
+    ) {
+        let Some((_, _, _, base)) = self.match_cursor else {
+            return;
+        };
+        let k = (head.len() - seg_start) as i32;
+        let SliceSubject {
+            v,
+            elm_tp,
+            elm_size,
+            borrow_src,
+        } = *subject;
+        if k > 0 {
+            let need = self.conv_op(
+                "+",
+                Value::Var(base),
+                Value::Int(k),
+                I32.clone(),
+                I32.clone(),
+            );
+            let len_call = self.cursor_len(v);
+            let ispec = Type::Integer(IntegerSpec {
+                min: 0,
+                max: 0,
+                not_null: false,
+                forced_size: None,
+            });
+            let mut gate = Value::Null;
+            self.call_op(&mut gate, "<=", &[need, len_call], &[ispec.clone(), ispec]);
+            *cond = Some(match cond.take() {
+                Some(c) => v_if(c, gate, Value::Boolean(false)),
+                None => gate,
+            });
+        }
+        for ec in elem_conds.drain(conds_at_entry..) {
+            *cond = Some(match cond.take() {
+                Some(c) => v_if(c, ec, Value::Boolean(false)),
+                None => ec,
+            });
+        }
+        for (i, name) in head.iter_mut().enumerate().skip(seg_start) {
+            if name == "_" {
+                continue;
+            }
+            let bind_nr = self.pattern_binding(name, elm_tp);
+            self.vars.defined(bind_nr);
+            let at = Value::Int((i - seg_start) as i32);
+            let val = self.read_slice_elem(v, elm_size, elm_tp, at);
+            bindings.push(v_set(bind_nr, val));
+            self.mark_slice_element_view(bind_nr, elm_tp, borrow_src);
+            *name = "_".to_string();
+        }
+    }
+
+    /// `@FR-P-Rule` — a sub-rule element `name: rule` of a cursor pattern, `k` fixed elements
+    /// after the current segment's base.  ANDed onto the arm's `cond` it is
+    /// `{ cursor.pos = base + k; name = rule(cursor); if name != null { seg = cursor.pos; true }
+    /// else { false } }`: the rule runs only when everything before it matched, in arm order
+    /// (`(P-Alt)`), and the next segment is read from `seg`.  `name` and `seg` are declared at
+    /// the match's level (`prechain`), because the arm body reads them and a binding first made
+    /// inside a condition is scoped to it on native.  The arm restores the cursor when it fails
+    /// (`parse_slice_pattern`).  `consumed` says a fixed element of this pattern precedes the
+    /// call, which makes its edge a consuming one for the termination check.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the slice pattern's own state, threaded"
+    )]
     fn parse_subrule_slice_element(
         &mut self,
         name: &str,
         fn_nr: u32,
         ret_tp: &Type,
+        k: usize,
+        consumed: bool,
         cond: &mut Option<Value>,
         prechain: &mut Vec<Value>,
     ) {
-        let cursor_var = self.match_cursor.map_or(0, |(cv, ..)| cv);
-        // Re-read `name : rule` (the peek reverted); then require it be the whole pattern.
+        let Some((cursor_var, cursor_def, pos_field, base)) = self.match_cursor else {
+            return;
+        };
+        // Re-read `name : rule` (the peek reverted).
         self.lexer.has_identifier(); // name
         self.lexer.token(":");
-        // @PLN35 PC3 — record the sub-rule edge (enclosing rule -> invoked rule) at the invocation
-        // site, so the post-parse termination pass can reject a left-recursive cycle.
+        // @PLN35 PC3 — record the edge (enclosing rule -> invoked rule) at the invocation site for
+        // the post-parse termination pass; it is a consuming edge when a token is taken before
+        // the call, in this pattern or by the arm whose body holds this match.
         let site = self.lexer.peek().position;
         self.lexer.has_identifier(); // rule
         if !self.first_pass && self.context != u32::MAX {
-            self.subrule_edges.push((self.context, fn_nr, site));
+            let consuming = consumed || self.cursor_consumed.contains(&cursor_var);
+            self.subrule_edges
+                .push((self.context, fn_nr, site, consuming));
         }
-        if !self.first_pass && !self.lexer.peek_token("]") {
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "a sub-rule element `{name}: rule` must currently be the whole slice pattern \
-                 (mixing a sub-rule with fixed elements is deferred to a follow-up)"
-            );
-        }
-        while !self.lexer.peek_token("]") && !matches!(self.lexer.peek().has, LexItem::None) {
-            self.lexer.cont();
-        }
-        self.lexer.token("]");
+        self.slice_subrule = true;
         let name_var = self.pattern_binding(name, ret_tp);
         self.vars.defined(name_var);
+        let seg = self.create_unique("cursor_seg", &I32);
+        self.vars.defined(seg);
+        let none = self.null_value(ret_tp);
+        prechain.push(v_set(name_var, none));
+        prechain.push(v_set(seg, Value::Int(0)));
+        let at = self.conv_op(
+            "+",
+            Value::Var(base),
+            Value::Int(k as i32),
+            I32.clone(),
+            I32.clone(),
+        );
+        let set_pos = self.set_field(cursor_def, pos_field, 0, Value::Var(cursor_var), at);
         let cursor_tp = self.vars.tp(cursor_var).clone();
         let mut call = Value::Null;
-        self.call_nr(
-            &mut call,
-            fn_nr,
-            &[Value::Var(cursor_var)],
-            &[cursor_tp],
-            false,
-            &[],
-            None,
-        );
-        // Hoist `name = rule(cursor)` above the if-chain: the call runs ONCE (a miss leaves `pos`
-        // unchanged, so unconditional evaluation is safe), and `name` is a match-level binding
-        // visible to every arm body (a cond sub-block would scope it away on native).  The arm
-        // then gates on `name != null`.
-        prechain.push(v_set(name_var, call));
-        // Presence test == the hand-form `name != null`: `OpNeRef(name, OpNullRefSentinel())`.
-        // (NOT `OpRefIsNull` — that tests the store_nr sentinel, for `enum == null`, and misreads
-        // a fn-returned null struct on the interpreter; `OpNeRef` vs the sentinel is the ref path.)
-        let sentinel = self.cl("OpNullRefSentinel", &[]);
-        let present = self.cl("OpNeRef", &[Value::Var(name_var), sentinel]);
-        *cond = match cond.take() {
-            Some(existing) => Some(v_if(existing, present, Value::Boolean(false))),
-            None => Some(present),
+        if fn_nr != u32::MAX {
+            self.call_nr(
+                &mut call,
+                fn_nr,
+                &[Value::Var(cursor_var)],
+                &[cursor_tp],
+                false,
+                &[],
+                None,
+            );
+        }
+        // Presence: for a record the hand-form `name != null` — `OpNeRef(name,
+        // OpNullRefSentinel())` (NOT `OpRefIsNull`, which tests the store_nr sentinel and
+        // misreads a fn-returned null struct on the interpreter); for any other node type the
+        // representation's own not-null test.  A rule not defined yet (the first pass) has no
+        // type to test.
+        let present = if fn_nr == u32::MAX {
+            Value::Boolean(true)
+        } else if matches!(ret_tp, Type::Reference(..)) {
+            let sentinel = self.cl("OpNullRefSentinel", &[]);
+            self.cl("OpNeRef", &[Value::Var(name_var), sentinel])
+        } else {
+            self.coalesce_not_null(&Value::Var(name_var), ret_tp)
         };
+        let now = self.get_field(cursor_def, pos_field, Value::Var(cursor_var));
+        let matched = v_block(
+            vec![v_set(seg, now), Value::Boolean(true)],
+            Type::Boolean,
+            "sub-rule matched",
+        );
+        let step = v_block(
+            vec![
+                set_pos,
+                v_set(name_var, call),
+                v_if(present, matched, Value::Boolean(false)),
+            ],
+            Type::Boolean,
+            "sub-rule",
+        );
+        *cond = Some(match cond.take() {
+            Some(c) => v_if(c, step, Value::Boolean(false)),
+            None => step,
+        });
+        self.match_cursor = Some((cursor_var, cursor_def, pos_field, seg));
     }
 
     /// @PLN35 PC3+PC4 — well-formedness pass over the sub-rule invocation graph, run post-parse over
@@ -12140,8 +12260,12 @@ impl Parser {
         }
         let mut adj: std::collections::HashMap<u32, Vec<(u32, crate::lexer::Position)>> =
             std::collections::HashMap::new();
-        for (from, to, pos) in &edges {
-            adj.entry(*from).or_default().push((*to, *pos));
+        // `@FR-P-Rule` — only an edge that can run before any token is consumed can recurse
+        // without progress; a consuming edge ends a cycle's danger.
+        for (from, to, pos, consuming) in &edges {
+            if !consuming {
+                adj.entry(*from).or_default().push((*to, *pos));
+            }
         }
         let cycles = Self::find_subrule_cycles(&adj);
         for (site, cycle) in &cycles {
@@ -12165,7 +12289,7 @@ impl Parser {
         // a rejected cycle (that error stands).  One report per impure callee.
         let in_cycle: HashSet<u32> = cycles.iter().flat_map(|(_, c)| c.iter().copied()).collect();
         let mut checked: HashSet<u32> = HashSet::new();
-        for (_from, callee, site) in &edges {
+        for (_from, callee, site, _) in &edges {
             if in_cycle.contains(callee) || !checked.insert(*callee) {
                 continue;
             }
@@ -12432,6 +12556,8 @@ impl Parser {
             // bindings and condition; the body runs under whichever matched (loft#2107).
             let mut alternatives: Vec<(Vec<Value>, Vec<Value>)> = Vec::new();
             let mut arm_shapes: Vec<Option<SliceShape>> = Vec::new();
+            // Every pattern of the arm takes a token before its body runs.
+            let mut arm_consumes = false;
             if self.lexer.has_token("[") {
                 let subject = SliceSubject {
                     v,
@@ -12447,6 +12573,7 @@ impl Parser {
                     &mut elem_conds,
                     &mut prechain,
                 ));
+                arm_consumes = self.slice_consumes;
                 alternatives = self.parse_pattern_alternatives(
                     first_names,
                     &mut bindings,
@@ -12461,6 +12588,7 @@ impl Parser {
                             &mut elem_i,
                             &mut prechain,
                         ));
+                        arm_consumes &= p.slice_consumes;
                         conds.extend(cond_i);
                     },
                 );
@@ -12534,8 +12662,18 @@ impl Parser {
             // result expression (`{ c = 5; c }` → `c = 5; drop c`) — the block then yielded void,
             // so native delivered 0 (interpret happened to still surface the value).
             let arm_expected = self.match_arm_expected(&result_type);
+            // `@FR-P-Rule` — a sub-rule called on this cursor in the body runs after the arm took
+            // a token, so its edge is a consuming one.
+            let consumed_cursor = self
+                .match_cursor
+                .filter(|_| arm_consumes)
+                .map(|(cursor_var, ..)| cursor_var);
+            self.cursor_consumed.extend(consumed_cursor);
             let mut arm_type =
                 self.outside_cursor_mode(|p| p.parse_match_arm_body(&arm_expected, &mut arm_code));
+            if consumed_cursor.is_some() {
+                self.cursor_consumed.pop();
+            }
             // The alternatives run the BODY under their own bindings, so they take it before
             // the first pattern's bindings fold into it below.
             let mut bare_body = if alternatives.is_empty() {
@@ -12703,6 +12841,13 @@ impl Parser {
         let mut rest_label = String::new();
         // The fewest elements the rest may take: 1 for a scalar `xs:T+`, else 0.
         let mut rest_min: i32 = 0;
+        // `@FR-P-Rule` — a cursor pattern is read in SEGMENTS: the fixed elements up to a
+        // sub-rule are read from the position the segment starts at, and the sub-rule's own
+        // advance starts the next segment.  `seg_start` is the head index of the current
+        // segment's first element; outside a cursor, and before any sub-rule, it is 0 and every
+        // read is the one it always was.
+        let mut seg_start: usize = 0;
+        let entry_cursor = self.match_cursor;
         loop {
             if self.lexer.has_token("]") {
                 break;
@@ -12753,20 +12898,28 @@ impl Parser {
                 self.lexer.has_token(",");
                 tail_total = self.count_slice_tail_elements();
             } else if self.match_cursor.is_some()
-                && head.is_empty()
                 && !has_rest
                 && let Some((name, fn_nr, ret_tp)) = self.peek_subrule_capture()
             {
-                // @PLN35 PC2 — sub-rule invocation `[ name: rule ]` in cursor mode: call
-                // `rule(cursor)` (which prefix-matches over the SAME cursor, advancing its
-                // `pos` on a match and leaving it on a miss — PC1 semantics), bind `name` to
-                // the result, and gate the arm on `name != null`.  Whole-pattern only for
-                // now (the running-pos + revert needed to mix a variable-width sub-rule with
-                // fixed elements is deferred).  `multi_alt` skips the fixed length gate +
-                // pos-advance — the sub-rule owns the pos.
-                self.parse_subrule_slice_element(&name, fn_nr, &ret_tp, cond, prechain);
-                multi_alt = true;
-                break;
+                // `@FR-P-Rule` — a sub-rule invocation `name: rule` at any element of a cursor
+                // pattern.  The segment before it is tested and bound first, then the rule runs
+                // from the position after that segment, and the next segment is read from where
+                // the rule left the cursor.
+                self.flush_cursor_segment(
+                    subject,
+                    &mut head,
+                    seg_start,
+                    cond,
+                    elem_conds,
+                    conds_at_entry,
+                    bindings,
+                );
+                let k = head.len() - seg_start;
+                let consumed = !head.is_empty();
+                self.parse_subrule_slice_element(
+                    &name, fn_nr, &ret_tp, k, consumed, cond, prechain,
+                );
+                seg_start = head.len();
             } else if self.pattern_variant_enum(elm_tp).is_none()
                 && let Some(is_rep) = self.peek_scalar_type_capture()
                 && (is_rep || !has_rest)
@@ -12821,7 +12974,7 @@ impl Parser {
                 // Single `name:Type`: bind `name = v[pos]`; the annotation matches the
                 // element type so no condition is needed (a "_" keeps position alignment
                 // for following bare-name indices).
-                let position = head.len() as i32;
+                let position = (head.len() - seg_start) as i32;
                 let name = self.lexer.has_identifier().unwrap();
                 self.lexer.token(":");
                 let tname = self.lexer.has_identifier().unwrap_or_default();
@@ -12848,7 +13001,7 @@ impl Parser {
                 // sub-pattern branch does.
                 let name = self.lexer.has_identifier().unwrap();
                 self.lexer.token(":");
-                let position = head.len() as i32;
+                let position = (head.len() - seg_start) as i32;
                 // Bind name = v[position] — the same read as the head-binding loop below.
                 let bind_nr = self.pattern_binding(&name, elm_tp);
                 self.vars.defined(bind_nr);
@@ -12882,7 +13035,7 @@ impl Parser {
                 let position = if has_rest {
                     -(tail_total - tail.len() as i32)
                 } else {
-                    head.len() as i32
+                    (head.len() - seg_start) as i32
                 };
                 let read = self.read_slice_elem(v, elm_size, elm_tp, Value::Int(position));
                 let mut sub_conds: Vec<Value> = Vec::new();
@@ -12912,17 +13065,18 @@ impl Parser {
                 // `parse_slice_repetition` builds the run-loop cond + collection and
                 // consumes through `]`, so break the element loop.
                 if let Some((e_nr, true)) = self.pattern_variant_enum(elm_tp) {
-                    let head_len = head.len() as i32;
+                    let head_len = (head.len() - seg_start) as i32;
                     // Bind any BARE-NAME head element (a variant sub-pattern / literal
                     // already emitted its own bind/cond and left a "_").  These are safe:
                     // the arm's `cond` requires `len >= head_len` before bindings run.
-                    for (i, name) in head.iter().enumerate() {
+                    for (i, name) in head.iter().enumerate().skip(seg_start) {
                         if name == "_" {
                             continue;
                         }
                         let bind_nr = self.pattern_binding(name, elm_tp);
                         self.vars.defined(bind_nr);
-                        let val = self.read_slice_elem(v, elm_size, elm_tp, Value::Int(i as i32));
+                        let at = Value::Int((i - seg_start) as i32);
+                        let val = self.read_slice_elem(v, elm_size, elm_tp, at);
                         bindings.push(v_set(bind_nr, val));
                         self.mark_slice_element_view(bind_nr, elm_tp, borrow_src);
                     }
@@ -12953,14 +13107,15 @@ impl Parser {
                 if let Some((e_nr, true)) = self.pattern_variant_enum(elm_tp) {
                     // A fixed head before an optional group (loft#2048): its bare names
                     // bind as a repetition's head does — the arm's `cond` gates them.
-                    let head_len = head.len() as i32;
-                    for (i, name) in head.iter().enumerate() {
+                    let head_len = (head.len() - seg_start) as i32;
+                    for (i, name) in head.iter().enumerate().skip(seg_start) {
                         if name == "_" {
                             continue;
                         }
                         let bind_nr = self.pattern_binding(name, elm_tp);
                         self.vars.defined(bind_nr);
-                        let val = self.read_slice_elem(v, elm_size, elm_tp, Value::Int(i as i32));
+                        let at = Value::Int((i - seg_start) as i32);
+                        let val = self.read_slice_elem(v, elm_size, elm_tp, at);
                         bindings.push(v_set(bind_nr, val));
                         self.mark_slice_element_view(bind_nr, elm_tp, borrow_src);
                     }
@@ -12993,7 +13148,7 @@ impl Parser {
                 let position = if has_rest {
                     -(tail_total - tail.len() as i32)
                 } else {
-                    head.len() as i32
+                    (head.len() - seg_start) as i32
                 };
                 let tmp = self.create_unique("slice_tuple", elm_tp);
                 self.vars.defined(tmp);
@@ -13031,7 +13186,7 @@ impl Parser {
                 // matching variant's offsets. A `_` placeholder keeps position alignment
                 // for following bare-name indices, as the variant sub-pattern branch does.
                 if let Some((e_nr, true)) = self.pattern_variant_enum(elm_tp) {
-                    let position = head.len() as i32;
+                    let position = (head.len() - seg_start) as i32;
                     let read = self.read_slice_elem(v, elm_size, elm_tp, Value::Int(position));
                     self.parse_slice_alternation_element(
                         e_nr,
@@ -13066,7 +13221,7 @@ impl Parser {
                 let position = if has_rest {
                     -(tail_total - tail.len() as i32)
                 } else {
-                    head.len() as i32
+                    (head.len() - seg_start) as i32
                 };
                 let mut lit = Value::Null;
                 let lit_tp = self.expression(&mut lit);
@@ -13113,7 +13268,7 @@ impl Parser {
         // bindings itself (predictive dispatch), so skip the fixed-position length gate,
         // the head/tail binds, and the rest materialisation below.
         if !multi_alt {
-            let fixed = (head.len() + tail.len()) as i32;
+            let fixed = (head.len() - seg_start + tail.len()) as i32;
             // Generate length condition
             let len_call = self.cursor_len(v);
             if let Some((cursor_var, cursor_def, pos_field, pos_var)) = self.match_cursor {
@@ -13133,12 +13288,14 @@ impl Parser {
                     I32.clone(),
                     I32.clone(),
                 );
-                self.call_op(
-                    cond.get_or_insert(Value::Null),
-                    "<=",
-                    &[need, len_call],
-                    &[ispec.clone(), ispec],
-                );
+                // ANDed after what the earlier segments tested (`@FR-P-Rule`), when a sub-rule
+                // ended one.
+                let mut gate = Value::Null;
+                self.call_op(&mut gate, "<=", &[need, len_call], &[ispec.clone(), ispec]);
+                *cond = Some(match cond.take() {
+                    Some(c) => v_if(c, gate, Value::Boolean(false)),
+                    None => gate,
+                });
                 let new_pos = self.conv_op(
                     "+",
                     Value::Var(pos_var),
@@ -13214,14 +13371,15 @@ impl Parser {
                     ],
                 );
             }
-            // Bind head elements: head[i] = v[i]
-            for (i, name) in head.iter().enumerate() {
+            // Bind head elements: head[i] = v[i] (in a cursor, from the last segment's start)
+            for (i, name) in head.iter().enumerate().skip(seg_start) {
                 if name == "_" {
                     continue;
                 }
                 let bind_nr = self.pattern_binding(name, elm_tp);
                 self.vars.defined(bind_nr);
-                let val = self.read_slice_elem(v, elm_size, elm_tp, Value::Int(i as i32));
+                let at = Value::Int((i - seg_start) as i32);
+                let val = self.read_slice_elem(v, elm_size, elm_tp, at);
                 bindings.push(v_set(bind_nr, val));
                 self.mark_slice_element_view(bind_nr, elm_tp, borrow_src);
             }
@@ -13254,7 +13412,7 @@ impl Parser {
                 let rest_var = self.pattern_binding(&name, &vec_tp);
                 self.vars.defined(rest_var);
                 if !self.first_pass && rest_var != u16::MAX {
-                    let lo_val = Value::Int(head.len() as i32);
+                    let lo_val = Value::Int((head.len() - seg_start) as i32);
                     let len_c = self.cursor_len(v);
                     let hi_val = self.conv_op(
                         "-",
@@ -13280,6 +13438,29 @@ impl Parser {
                 None => *cond = Some(ec),
             }
         }
+        // `@FR-P-Atomic` — a sub-rule moved the cursor while the arm was tested, so an arm that
+        // fails puts it back where the match started.
+        if (seg_start > 0 || self.slice_subrule)
+            && let Some((cursor_var, cursor_def, pos_field, entry_pos)) = entry_cursor
+        {
+            let back = self.set_field(
+                cursor_def,
+                pos_field,
+                0,
+                Value::Var(cursor_var),
+                Value::Var(entry_pos),
+            );
+            let failed = v_block(
+                vec![back, Value::Boolean(false)],
+                Type::Boolean,
+                "sub-rule miss",
+            );
+            let tested = cond.take().unwrap_or(Value::Boolean(true));
+            *cond = Some(v_if(tested, Value::Boolean(true), failed));
+        }
+        self.slice_consumes = !head.is_empty();
+        self.slice_subrule = false;
+        self.match_cursor = entry_cursor;
         if multi_alt || self.match_cursor.is_some() {
             None
         } else {
