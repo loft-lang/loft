@@ -190,6 +190,14 @@ pub fn int_range(e: el::El, vars: el_vars::Vars, code: ir::Node) -> Range? {
   }
 }
 
+// A plain (not struct) enum's value.
+pub fn plain_enum(t: ir::TypeT) -> boolean {
+  match t {
+    TyEnum { n: _, is_ref } => !is_ref,
+    _ => false
+  }
+}
+
 // A scalar the elaboration converts: no record, text, collection or nullable spelling.
 pub fn plain_scalar(t: ir::TypeT) -> boolean {
   match t {
@@ -209,6 +217,24 @@ pub fn plain_scalar(t: ir::TypeT) -> boolean {
 pub fn convert(e: el::El, vars: el_vars::Vars, code: ir::Node, src: ir::TypeT, should: ir::TypeT, explicit: boolean) -> ir::Node? {
   if src is TyNever {
     return code;
+  }
+  // A plain enum's value is an `enumerate` to the conversions (`convert`'s `check_type`).
+  if plain_enum(src) {
+    if el_types::is_equal(e, src, should) || should == ir::TyEnum { n: 0, is_ref: false, dep: [] } {
+      return code;
+    }
+    check = ir::TyEnum { n: 0, is_ref: false, dep: [] };
+    for d in el::possible(e, "OpConv") {
+      def = el::def(e, d);
+      if ends_with(def.name, "FromNull") || len(def.attributes) != 1 {
+        continue;
+      }
+      at = def.attributes[0].typedef[0] ?? ir::TyVoid;
+      if (el_types::is_equal(e, at, check) || el_types::is_equal(e, at, src)) && el_types::is_equal(e, def.returned[0] ?? ir::TyVoid, should) {
+        return ir::NdCall { def_nr: d, args: [code] };
+      }
+    }
+    return null;
   }
   if !plain_scalar(src) || !plain_scalar(should) {
     return null;
@@ -324,6 +350,9 @@ pub fn convert_store(e: el::El, vars: el_vars::Vars, code: ir::Node, src: ir::Ty
       return if plain_scalar(inner) && plain_scalar(should) { convert(e, vars, code, inner, should, false) } else { null };
     },
     _ => {}
+  }
+  if plain_enum(src) {
+    return convert(e, vars, code, src, should, false);
   }
   if !plain_scalar(src) || !plain_scalar(should) {
     return if el_types::is_equal(e, src, should) { code } else { null };

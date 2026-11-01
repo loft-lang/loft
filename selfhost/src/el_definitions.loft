@@ -184,7 +184,10 @@ fn parse_enum(e: el::El, at: integer, name: text, tvars: vector<integer>, varian
 }
 
 // The variants, in order: each a definition whose parent is the enum.   parse_enum_values
+// A plain value (pass 1): typed as the enum, and an attribute of the enum of that type, constant,
+// valued its ordinal (1-based; the store type is stamped by `fill_all`).
 fn parse_enum_values(e: el::El, d: integer, variants: vector<integer>) {
+  nr = 0;
   for vn in variants {
     match e.p.nodes[vn] {
       SVariant { at, name, fields } => {
@@ -195,7 +198,15 @@ fn parse_enum_values(e: el::El, d: integer, variants: vector<integer>) {
         }
         if len(fields) > 0 {
           el::refuse(e, "a struct variant");
+        } else if e.first_pass {
+          tp = ir::TyEnum { n: d, is_ref: false, dep: [] };
+          el::set_returned(e, v, tp);
+          a = el::attribute(name, tp);
+          a.constant = true;
+          a.value = [ir::NdEnum { ord: nr + 1, tp: 65535 }];
+          e.b.data.definitions[d].attributes += [a];
         }
+        nr += 1;
       },
       _ => {}
     }

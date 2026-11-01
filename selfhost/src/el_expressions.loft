@@ -686,6 +686,18 @@ fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text) -> 
   }
   v = el_vars::var(vars, name);
   if v < 0 {
+    // A plain enum's value: its ordinal under the enum's store type (the attribute's value).
+    d = el::def_nr(e, name);
+    if d >= 0 && el::def(e, d).def_type == el::DT_ENUM_VALUE && el::def(e, d).parent >= 0 {
+      pd = el::def(e, d).parent;
+      if (el::def(e, pd).returned[0] ?? ir::TyVoid) == ir::TyEnum { n: pd, is_ref: false, dep: [] } {
+        a = attr_nr(el::def(e, pd), name);
+        if a >= 0 {
+          val = el::def(e, pd).attributes[a].value[0] ?? ir::NdNull;
+          return ex(val, ir::TyEnum { n: pd, is_ref: false, dep: [] });
+        }
+      }
+    }
     el::refuse(e, "a name that is not a variable");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -1910,6 +1922,7 @@ fn takes(e: el::El, param: ir::TypeT, arg: ir::TypeT) -> boolean {
 fn scalar(t: ir::TypeT) -> boolean {
   match t {
     TyVoid => true,
+    TyEnum { n: _, is_ref } => !is_ref,
     TyInteger { spec: _ } => true,
     TyBoolean => true,
     TyFloat => true,
