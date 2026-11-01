@@ -4495,8 +4495,9 @@ pub struct Definition {
     /// A standard-library operator's dispatch priority, from `#hot` / `#cold`: [`OP_HOT`] runs
     /// inline in the lean loop on its registers and takes a one-byte opcode, [`OP_COLD`] is
     /// rare and takes a two-byte one, [`OP_NORMAL`] is everything else.  Read at parse time
-    /// (`Data::op_code`) and by the `fill.rs` generator, both from a fresh parse of
-    /// `default/`, so it is not part of the persisted IR.
+    /// (`Data::op_code`) and by the `fill.rs` generator.  The image carries it as `op_hot` /
+    /// `op_cold` (`DEF_OP_HOT`, `DEF_OP_COLD`), so the loft interpreter numbers the operators
+    /// by the same rule.
     pub op_priority: u8,
     /// @PLN102 arc C — `#superseded "Y"`: the bare name of the successor symbol
     /// this callable is superseded by (e.g. `"write_through"`).  Empty = not

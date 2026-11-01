@@ -290,6 +290,8 @@ struct Definition {
   returned_fact: text, // @PLN187 where the declared result names a `type` alias; "" = nowhere
   returned_const: boolean, // @FR-Const-Foreign `-> const T`: the producer's data is value-const
   native_answer_tp: integer, // loft#2227 a #native heap answer's copy-out type id; 65535 = none
+  op_hot: boolean, // `#hot`: a standard-library operator numbered in the first class (`Data::op_code`)
+  op_cold: boolean, // `#cold`: one numbered in the last class; neither = the class between
 }
 
 // One retained import (src/data.rs::AppliedImport).  `rebuild_indices` can

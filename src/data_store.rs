@@ -348,6 +348,8 @@ pub(crate) const DEF_NULL_SAFE: u32 = 198; // @PLN46 W2 #null_safe; false = unan
 pub(crate) const DEF_BUILTIN: u32 = 199; // @PLN165 arc E #builtin; false = an ordinary body
 pub(crate) const DEF_OPERATOR_FORM: u32 = 200; // @PLN182 written `operator`; false = a plain `fn`
 pub(crate) const DEF_RETURNED_CONST: u32 = 201; // @FR-Const-Foreign `-> const T`; false = writable
+pub(crate) const DEF_OP_HOT: u32 = 202; // `#hot` — an operator's first-class priority (`Data::op_code`)
+pub(crate) const DEF_OP_COLD: u32 = 203; // `#cold` — its last-class priority; neither = normal
 pub(crate) const DEF_NATIVE_ANSWER_TP: u32 = 96; // loft#2227 a #native heap answer's copy-out type id
 pub(crate) const DEF_C_SYMBOL: u32 = 176; // @PLN24 #c "sym"; "" = not a C binding
 pub(crate) const DEF_C_SIG: u32 = 180; // @PLN24 the declared C signature; "" = none
@@ -1624,6 +1626,8 @@ mod tests {
             pos(ids.definition, "native_answer_tp"),
             DEF_NATIVE_ANSWER_TP
         );
+        assert_eq!(pos(ids.definition, "op_hot"), DEF_OP_HOT);
+        assert_eq!(pos(ids.definition, "op_cold"), DEF_OP_COLD);
 
         // Data record (root).
         assert_eq!(pos(ids.data, "source"), DATA_SOURCE);
