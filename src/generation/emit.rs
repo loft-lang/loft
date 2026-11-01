@@ -2710,8 +2710,13 @@ impl Output<'_> {
         w: &mut dyn Write,
         test: &Value,
     ) -> std::io::Result<()> {
+        // The test's SHAPE, its `?` peeled (`@FR-N-Shape`): an `if` whose arms answer
+        // `boolean?` is a `u8` like any nullable boolean, and was emitted bare where Rust
+        // wants a `bool` (loft#2316).
+        let tp = self.infer_type(IrNode::Native(test));
+        let shape = tp.as_ref().map(Type::base);
         let heap_dbref = matches!(
-            self.infer_type(IrNode::Native(test)),
+            shape,
             Some(
                 Type::Reference(_, _)
                     | Type::Vector(_, _)
@@ -2725,7 +2730,7 @@ impl Output<'_> {
         // form) or `bool` (comparison / `!` / `&&` result — expression form).
         // `((test) as u8) == 1` is the uniform truthiness coercion: idempotent for
         // a u8 (255 -> false, 1 -> true, 0 -> false), and 0/1 for a bool.
-        let is_boolean = matches!(self.infer_type(IrNode::Native(test)), Some(Type::Boolean));
+        let is_boolean = matches!(shape, Some(Type::Boolean));
         if heap_dbref {
             self.output_code_inner(w, test)?;
             write!(w, ".rec != 0")
