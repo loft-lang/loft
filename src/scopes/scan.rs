@@ -552,9 +552,7 @@ impl Scopes<'_> {
                         self.var_scope.insert(*v, outer_scope);
                     }
                     if !hoisted.is_empty() {
-                        ls.retain(|op| {
-                            scope_free_op_var(op, data).is_none_or(|v| !hoisted.contains(&v))
-                        });
+                        drop_tail_frees(&mut ls, &hoisted, data);
                     }
                 }
                 let block = Value::Block(Box::new(Block {
@@ -1331,5 +1329,23 @@ impl Scopes<'_> {
             }
             _ => None,
         }
+    }
+}
+
+/// Drop the block-exit frees of `hoisted` from a value block's operators — at its own level and
+/// down the chain of TAIL blocks: `insert_free` places an enclosing scope's frees into the
+/// block that is that scope's value, so a lift hoisted twice (out of a block, then out of the
+/// block whose value it is) had its first free planted inside the inner block ahead of the read
+/// that still needed it, beside the one the outer scope then emitted (loft#2327,
+/// `@FR-O-Detach`).  Only the tail chain: a block elsewhere in the list is a statement whose
+/// frees belong to its own scope.
+fn drop_tail_frees(ops: &mut Vec<Value>, hoisted: &[u16], data: &Data) {
+    ops.retain(|op| scope_free_op_var(op, data).is_none_or(|v| !hoisted.contains(&v)));
+    let tail = ops
+        .iter_mut()
+        .rev()
+        .find(|o| scope_free_op_var(o, data).is_none());
+    if let Some(Value::Block(bl)) = tail {
+        drop_tail_frees(&mut bl.operators, hoisted, data);
     }
 }
