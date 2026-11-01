@@ -120,6 +120,8 @@ fn test_the_small_integer_operators_answer_as_loft_does() {
   assert(ran("small_ops", "n_scalars", [5]) == 1161047353111, "scalars(5)");
   assert(ran("small_ops", "n_texted", [3]) == 11020505108117, "texted(3): text natives, a kept range, a byte copy");
   assert(ran("small_ops", "n_texted", [4]) == 11030909111117, "texted(4)");
+  assert(ran("small_ops", "n_narrowed", [3]) == 19600521, "narrowed(3): linked narrow locals hold their field encoding");
+  assert(ran("small_ops", "n_narrowed", [-5]) == 20400521, "narrowed(-5)");
   assert(ran("small_ops", "n_rem_or", [7, 3]) == 1, "rem_or(7, 3)");
   assert(ran("small_ops", "n_rem_or", [7, 0]) == -1, "rem_or(7, 0)");
   // |-6 / 4| = 1.5, as a float and as a single, each times 100.
@@ -307,6 +309,9 @@ fn test_a_tuple_lives_in_its_slot_member_by_member() {
   // parameter and freed — no store or stack left.
   assert(ran_clean(t, "n_named", 4) == 73444, "named(4)");
   assert(ran_clean(t, "n_named", 0) == 73040, "named(0)");
+  // Reference members: a record and a vector in the slot, three integers each on the stack.
+  assert(ran_clean(t, "n_held", 4) == 212552, "held(4)");
+  assert(ran_clean(t, "n_held", 0) == 200512, "held(0)");
 }
 
 // @PLN91 S3: `[x; n]` repeats a scalar and a record holding a text (`OpAppendCopy`), a count of 0

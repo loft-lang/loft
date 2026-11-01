@@ -39,8 +39,10 @@ strict comparison over every program the census passes (out, alloc, leak, binds,
 | natives `t_4text_find`, `t_4text_char_slice`, `t_4text_to_lowercase`, `t_4text_to_uppercase` | loft's own; a compiled stdlib body's text buffer (a `&text` after the visible arguments) gets the answer too | `texted` |
 | a struct enum's parent store (`OpDatabase` of a `PtEnum` type) | minted at its largest variant (`enum_parent_size`), the variant written after | the census (19 programs) |
 | natives `n_text_from_byte_range`, `n_text_from_bytes` | `loft_text_from_byte_range` over the store's vector (the whole range for the second); a compiled caller's text buffer gets the answer | `vectors.loft` `decoded` |
+| a linked narrow local and a `&` to a narrow integer (`@FR-L-Narrow-Linked`) | `narrow_access` ports `NarrowSlot::of_type` (stored width, kind, the minimum the bytes count from) into the access code — `1 + width + 16 * encoded minimum` — which every slot and place read and write decodes (`access_width`, `access_min`); width 9 is the full four-byte word | `small_ops.loft` `narrowed`; the L-Narrow-Linked cells |
+| a tuple member of a reference kind (a record, a struct enum, a collection) | twelve bytes in the slot, three integers on the stack, in every leaf loop (load, store, pop, argument, return) | `tuples.loft` `held` |
 
-**Measured** (2026-10-31): the census went from 297 to 549 programs passed over these rows,
+**Measured** (2026-10-31): the census went from 297 to 573 programs passed over these rows,
 none wrong, crashed or leaking, and every passing program equal to the Rust interpreter in
 every layer.
 

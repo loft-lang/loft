@@ -336,6 +336,7 @@ int64_t loft_crt_get_w(int64_t which, int64_t store, int64_t rec, int64_t pos, i
         return e == 255 ? LOFT_NULL : (int64_t) e;
     }
     case 8: return loft_get_int4_raw(r, f);
+    case 9: return loft_get_int4_full(r, f);
     default: return LOFT_NULL;
     }
 }
@@ -355,6 +356,8 @@ void loft_crt_set_w(int64_t which, int64_t store, int64_t rec, int64_t pos, int6
     case 6: loft_set_byte(r, f, is_null ? LOFT_BOOL_NULL : (uint8_t) v); break;
     case 7: loft_set_byte(r, f, is_null ? (uint8_t) 255 : (uint8_t) v); break;
     case 8: loft_set_int4_raw(r, f, x); break;
+    /* A full four-byte word reads without a null code and writes raw (`NarrowIntKind::Int4Full`). */
+    case 9: loft_set_int4_raw(r, f, x); break;
     default: break;
     }
 }

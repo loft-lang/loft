@@ -160,14 +160,14 @@ fn image_of(b: ir::Bundle, images: vector<vector<u8>>, imaged: vector<boolean>, 
 // The value a place holds as `access` reads it (`lower::Lowering.var_access`); a frame slot is
 // the place `(stk, 1, 8 + at)`.
 fn place_int(store: integer, rec: integer, pos: integer, access: integer) -> integer? {
-  if access == 0 { crt::get_int(store, rec, pos, 0) } else { crt::get_w(access - 1, store, rec, pos, 0, 0) }
+  if access == 0 { crt::get_int(store, rec, pos, 0) } else { crt::get_w(lower::access_width(access), store, rec, pos, 0, lower::access_min(access)) }
 }
 
 fn set_place_int(store: integer, rec: integer, pos: integer, access: integer, v: integer?) {
   if access == 0 {
     crt::set_int(store, rec, pos, 0, v);
   } else {
-    crt::set_w(access - 1, store, rec, pos, 0, 0, v);
+    crt::set_w(lower::access_width(access), store, rec, pos, 0, lower::access_min(access), v);
   }
 }
 
@@ -394,6 +394,9 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
           } else if leaf.kind == KFloat {
             put_float(floats, sp_float, slot_float(stk, base + op.a + leaf.at, leaf.access));
             sp_float += 1;
+          } else if leaf.kind == KRef {
+            push_slot_ref(io, ints, sp_int, stk, base + op.a + leaf.at);
+            sp_int += 3;
           } else {
             put_int(ints, sp_int, slot_int(stk, base + op.a + leaf.at, leaf.access));
             sp_int += 1;
@@ -411,6 +414,9 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
           } else if leaf.kind == KFloat {
             sp_float -= 1;
             set_slot_float(stk, base + op.a + leaf.at, leaf.access, floats[sp_float]);
+          } else if leaf.kind == KRef {
+            sp_int -= 3;
+            store_slot_ref(ints, sp_int, stk, base + op.a + leaf.at);
           } else {
             sp_int -= 1;
             set_slot_int(stk, base + op.a + leaf.at, leaf.access, ints[sp_int]);
@@ -420,7 +426,7 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
       }
       PopTuple => {
         for leaf in prog.shapes[op.b]!.leaves {
-          if leaf.kind == KText { sp_text -= 1; } else if leaf.kind == KFloat { sp_float -= 1; } else { sp_int -= 1; }
+          if leaf.kind == KText { sp_text -= 1; } else if leaf.kind == KFloat { sp_float -= 1; } else if leaf.kind == KRef { sp_int -= 3; } else { sp_int -= 1; }
         }
       }
       Pop => {
@@ -491,6 +497,9 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
               } else if leaf.kind == KFloat {
                 sp_float -= 1;
                 set_slot_float(stk, at + leaf.at, leaf.access, floats[sp_float]);
+              } else if leaf.kind == KRef {
+                sp_int -= 3;
+                store_slot_ref(ints, sp_int, stk, at + leaf.at);
               } else {
                 sp_int -= 1;
                 set_slot_int(stk, at + leaf.at, leaf.access, ints[sp_int]);
@@ -540,7 +549,7 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
           n_float = 0;
           n_text = 0;
           for leaf in prog.shapes[op.b]!.leaves {
-            if leaf.kind == KFloat { n_float += 1; } else if leaf.kind == KText { n_text += 1; } else { n_int += 1; }
+            if leaf.kind == KFloat { n_float += 1; } else if leaf.kind == KText { n_text += 1; } else if leaf.kind == KRef { n_int += 3; } else { n_int += 1; }
           }
           for ti in sp_int - n_int..sp_int { t_ints += [ints[ti]]; }
           for ti in sp_float - n_float..sp_float { t_floats += [floats[ti]]; }
