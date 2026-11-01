@@ -1060,6 +1060,9 @@ pub struct Parser {
     /// A destructuring `for (a, b) in …`'s binders, bound by the header like the loop variable
     /// and scoped to the body the next `for` block opens.
     pub(crate) pending_loop_binders: Vec<u16>,
+    /// The ended binding a `for` statement's spelling named before its variable took it,
+    /// handed from the header to the body's caller (`Parser::ended_spelling`, loft#2321).
+    pub(crate) loop_spelling: Option<(String, u16)>,
     pub(crate) block_ord: u32,
     /// The binding's block is kept as its INNERMOST ordinal (`None` = the function's own
     /// scope): ordinals are unique and a block's ancestors never change, so "the recorded
@@ -2013,6 +2016,7 @@ impl Parser {
             coalesce_defaults: Vec::new(),
             block_path: Vec::new(),
             pending_loop_binders: Vec::new(),
+            loop_spelling: None,
             block_ord: 0,
             bound_in_block: std::collections::HashMap::new(),
             block_rebinds: Vec::new(),

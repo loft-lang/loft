@@ -518,7 +518,7 @@ impl Parser {
     /// `@FR-B-Scope` — has the binding `var` last received ended?  True when the statement
     /// that bound it sits in a block this point is no longer inside.  Parameters and the
     /// compiler's own locals are bound for the whole function.
-    fn binding_ended(&self, var: u16) -> bool {
+    pub(crate) fn binding_ended(&self, var: u16) -> bool {
         if self.vars.is_argument(var) || self.vars.name(var).starts_with("__") {
             return false;
         }

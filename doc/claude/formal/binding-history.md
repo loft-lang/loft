@@ -1315,6 +1315,18 @@ Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), 
   refusal.  Guards `a-disturbed-keyed-view-keeps-the-value-at-its-bind.loft` and
   `a-keyed-link-refuses-a-reassigned-container.loft`.
 
+* **D-bind-69** *(opened 2026-11-01, CLOSED 2026-11-01; loft#2321)* — `(B-Scope)`: a loop
+  variable — a `for` statement's or a comprehension's — spelled like a local an earlier block had
+  bound and ENDED was refused: the statement loop as a shadow, because its check asked whether the
+  name had a non-loop binding rather than whether that binding was in scope; the comprehension as
+  a type change on the ended local's own bind, because a loop's variable kept the spelling after
+  its body and pass 2 opened the function with it.  The comprehension had no shadow check at all,
+  so over a LIVE local it reported the read after it as out of scope.  **Fix.**  One check for
+  both loop forms (`Parser::refuse_loop_shadow`, asking `binding_ended`), and a loop gives an ended
+  binding's spelling back after its body (`ended_spelling` / `restore_loop_spelling`).  Guards
+  `loft-suite rules/binding/B-Scope/2321-a-loop-variable-over-an-ended-blocks-name-is-a-new-binding.loft`,
+  `…/2321-a-comprehension-over-a-live-locals-name-is-refused-as-a-shadow.loft`.
+
 * **D-bind-68** *(opened 2026-09-28, CLOSED 2026-09-28; loft#1717)* — `(B-Scope)`: a `for f in
   x#fields` walk is unrolled at compile time and created its variable BY NAME, so it missed
   loft#915's per-loop binding twice over.  Pass 1 leaves the name naming the LAST walk's

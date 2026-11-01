@@ -3801,7 +3801,12 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             self.vars.defined(iv);
             (iv, None)
         };
+        // `@FR-B-Scope`, as a `for` statement's variable: no shadow of a local still in scope,
+        // and an ended binding its spelling named is given back after the body (loft#2321).
+        self.refuse_loop_shadow(&id, &src_id);
+        let prior = self.vars.var(&src_id);
         let for_var = self.create_loop_var(&id, &var_tp);
+        let spelling = self.ended_spelling(&src_id, prior, for_var);
         // The body reads the name the program wrote (loft#915).
         if id != src_id {
             self.vars.set_name(&src_id, for_var);
@@ -3888,6 +3893,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         let body_pos = *self.lexer.peek_pos();
         let mut body = Value::Null;
         let body_type = self.parse_block("for", &mut body, &body_expected);
+        self.restore_loop_spelling(spelling);
         Self::prepend_destructure(&mut body, destructure_setup, &body_type);
         // @PLN187 — the comprehension is a vector of what its body yields.
         if self.abstract_on() {
