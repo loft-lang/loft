@@ -1080,6 +1080,13 @@ impl Parser {
                     && let Some(d_nr) = self.vars.tp(*into).base().heap_def_nr()
                     && let Some(vd_nr) = self.vars.tp(v_nr).base().heap_def_nr()
                     && self.data.copies_as(d_nr, vd_nr)
+                    // `@FR-C-Var` runs one way, variant into enum.  A destination typed as a
+                    // VARIANT is no place for its enum's value: copied in as the variant, any
+                    // other variant lost its fields (`x = Short {…}; x = e` read garbage after a
+                    // `Long` arrived).  The source keeps its own type, so an inferred local
+                    // widens to the enum (`@FR-N-Join`) and a declared one is refused.
+                    && !(self.data.def_type(d_nr) == DefType::EnumValue
+                        && self.data.def(d_nr).parent == vd_nr)
                 {
                     // Don't create OpCopyRecord here: generate_set handles the copy when
                     // value=Var(src). Using Var(v_nr) directly lets method calls like
