@@ -779,16 +779,47 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
           sp_text -= 1;
           put_int(ints, sp_int, (texts[sp_text] ?? "").byte_at(i ?? 0));
           sp_int += 1;
-        } else if op.a == 6 {
-          // `t.find(v)`: loft's own.
-          sp_text -= 2;
-          put_int(ints, sp_int, (texts[sp_text] ?? "").find(texts[sp_text + 1] ?? ""));
+        } else if op.a >= 30 && op.a <= 36 {
+          // A text's class: loft's own predicate over the whole text.
+          sp_text -= 1;
+          ct = texts[sp_text] ?? "";
+          held = match op.a {
+            30 => ct.is_lowercase(),
+            31 => ct.is_uppercase(),
+            32 => ct.is_numeric(),
+            33 => ct.is_alphanumeric(),
+            34 => ct.is_alphabetic(),
+            35 => ct.is_whitespace(),
+            _ => ct.is_control(),
+          };
+          put_int(ints, sp_int, if held { 1 } else { 0 });
           sp_int += 1;
-        } else if op.a >= 7 && op.a <= 9 {
+        } else if op.a >= 23 && op.a <= 29 {
+          // A character's class: loft's own predicate (a character is its code point here).
+          cc = (ints[sp_int - 1] ?? 0) as character;
+          held = match op.a {
+            23 => cc.is_lowercase(),
+            24 => cc.is_uppercase(),
+            25 => cc.is_numeric(),
+            26 => cc.is_alphanumeric(),
+            27 => cc.is_alphabetic(),
+            28 => cc.is_whitespace(),
+            _ => cc.is_control(),
+          };
+          ints[sp_int - 1] = if held { 1 } else { 0 };
+        } else if op.a == 6 || op.a == 21 || op.a == 22 {
+          // `t.find(v)`, `t.rfind(v)`, `t.contains(v)`: loft's own.
+          sp_text -= 2;
+          ft = texts[sp_text] ?? "";
+          fv = texts[sp_text + 1] ?? "";
+          put_int(ints, sp_int, if op.a == 6 { ft.find(fv) } else if op.a == 21 { ft.rfind(fv) } else if ft.contains(fv) { 1 } else { 0 });
+          sp_int += 1;
+        } else if (op.a >= 7 && op.a <= 9) || (op.a >= 16 && op.a <= 18) || op.a == 20 {
           // Text answers, each loft's own: `t.char_slice(from, to)`, `t.to_lowercase()`,
-          // `t.to_uppercase()`.  A compiled stdlib body also takes the caller's text buffer (a
-          // `&text` after the visible arguments), and its answer is written there.
-          visible = if op.a == 7 { 3 } else { 1 };
+          // `t.to_uppercase()`, `t.trim()`, `t.trim_start()`, `t.trim_end()`.  A compiled stdlib
+          // body also takes the caller's text buffer (a `&text` after the visible arguments), and
+          // its answer is written there.
+          visible = if op.a == 7 || op.a == 20 { 3 } else { 1 };
           buf = -1;
           if op.b > visible {
             sp_int -= 1;
@@ -800,14 +831,89 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
             from = ints[sp_int] ?? 0;
             till = ints[sp_int + 1] ?? 0;
             answer = (texts[sp_text - 1] ?? "").char_slice(from, till);
+          } else if op.a == 20 {
+            // `t.replace(value, with)`.
+            sp_text -= 2;
+            rv = texts[sp_text] ?? "";
+            rw = texts[sp_text + 1] ?? "";
+            answer = (texts[sp_text - 1] ?? "").replace(rv, rw);
           } else {
             t = texts[sp_text - 1] ?? "";
-            answer = if op.a == 8 { t.to_lowercase() } else { t.to_uppercase() };
+            answer = match op.a {
+              8 => t.to_lowercase(),
+              9 => t.to_uppercase(),
+              16 => t.trim(),
+              17 => t.trim_start(),
+              _ => t.trim_end(),
+            };
           }
           if buf >= 0 {
             crt::set_slot_text(stk, buf, answer);
           }
           put_text(texts, sp_text - 1, answer);
+        } else if op.a == 19 {
+          // `v.join(sep)` of a vector of texts: each element read from the store, joined by
+          // loft's own `join`; a compiled caller's text buffer gets the answer too.
+          buf = -1;
+          if op.b > 2 {
+            sp_int -= 1;
+            buf = ints[sp_int] ?? -1;
+          }
+          sp_text -= 1;
+          jsep = texts[sp_text] ?? "";
+          sp_int -= 3;
+          js = ints[sp_int] ?? NULL_STORE;
+          jr = ints[sp_int + 1] ?? 0;
+          jp = ints[sp_int + 2] ?? 0;
+          words: vector<text> = [];
+          for wi in 0..crt::vec_len(js, jr, jp) {
+            crt::vec_get(io, js, jr, jp, 4, wi);
+            words += [crt::get_text(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, 0) ?? ""];
+          }
+          answer = words.join(jsep);
+          if buf >= 0 {
+            crt::set_slot_text(stk, buf, answer);
+          }
+          put_text(texts, sp_text, answer);
+          sp_text += 1;
+        } else if op.a == 15 {
+          // `t.split(c)`: the parts loft's own `split` answers, written into the caller's vector
+          // buffer as the compiled body writes them — the buffer emptied (made when it is none),
+          // then per part one slot reserved, appended, its text set, the length counted.
+          if !table_loaded {
+            load_table(b);
+            table_loaded = true;
+          }
+          sp_int -= 4;
+          sep = ints[sp_int] ?? 0;
+          bs = ints[sp_int + 1] ?? NULL_STORE;
+          br = ints[sp_int + 2] ?? 0;
+          bp = ints[sp_int + 3] ?? 0;
+          sp_text -= 1;
+          parts = (texts[sp_text] ?? "").split(sep as character);
+          if br != 0 {
+            crt::vec_clear(bs, br, bp);
+          }
+          if bs == NULL_STORE || br == 0 {
+            wrapper = types::named(b, "main_vector<text>") ?? 0;
+            vio: vector<integer> = [bs, br, bp];
+            crt::database(vio, types::enum_parent_size(b, wrapper), wrapper);
+            bs = vio[0] ?? NULL_STORE;
+            br = vio[1] ?? 0;
+            bp = vio[2] ?? 0;
+          } else {
+            crt::vec_clear(bs, br, bp);
+          }
+          for part in parts {
+            crt::vec_prealloc(bs, br, bp, 1, 4);
+            crt::vec_append(io, bs, br, bp, 4);
+            crt::set_text(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, 0, part);
+            crt::vec_finish(bs, br, bp);
+          }
+          put_int(ints, sp_int, bs);
+          put_int(ints, sp_int + 1, br);
+          put_int(ints, sp_int + 2, bp);
+          sp_int += 3;
         } else if op.a == 12 || op.a == 13 {
           // `now()`, `ticks()`: loft's own clocks.
           put_int(ints, sp_int, if op.a == 12 { now() } else { ticks() });
