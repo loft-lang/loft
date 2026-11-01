@@ -133,6 +133,11 @@ fn cc_flags(tier: Tier) -> Vec<String> {
     if env_on("LOFT_STRICT_STORES") {
         flags.push("-DLOFT_STRICT_STORES".into());
     }
+    // `LOFT_DOUBLE_FREE` (any value, as `keys::double_free_audit` reads it): the census of
+    // re-frees and of freed slots made again, each naming the sites (loft_rt.h).
+    if std::env::var_os("LOFT_DOUBLE_FREE").is_some() {
+        flags.push("-DLOFT_DOUBLE_FREE".into());
+    }
     // `LOFT_KEYED_VERIFY`: every keyed fast path the C has checked against its general form —
     // the hash one-probe insert, the index's exact descent (loft_hash.h, loft_btree.h).
     if env_on("LOFT_KEYED_VERIFY") {

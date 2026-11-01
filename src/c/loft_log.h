@@ -539,6 +539,9 @@ static void loft_leak_report(void) {
     loft_text out = { 0, 0, 0 };
     char buf[96];
     int check = getenv("LOFT_NATIVE_LEAK_CHECK") != 0;
+#ifdef LOFT_DOUBLE_FREE
+    loft_double_free_report();
+#endif
 #ifdef LOFT_STRICT_STORES
     int strict = 1;
 #else
