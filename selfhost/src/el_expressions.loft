@@ -653,6 +653,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SFor { binds, source, par, filter, body } => for_expr(e, vars, binds, source, par, filter, body),
     SWhile { cond, body } => while_expr(e, vars, cond, body),
     SMatch { at, subject, arms } => match_expr(e, vars, at, subject, arms),
+    SBlock { at: _ } => parse_block(e, vars, n, "block", ir::TyUnknown { n: 0 }),
     SJump { kind, e: je } => jump(e, vars, kind, je),
     SIndex { at, e: ie, keys, range, hi, limit, spatial } => index(e, vars, at, ie, keys, range || len(hi) > 0 || limit != null || spatial),
     SVecLit { items: _ } => vector_value(e, vars, n).x,
