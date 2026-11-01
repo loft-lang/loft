@@ -303,3 +303,17 @@ Opened and closed in the same change; the chapter's `OPEN:` line never carried i
   owns the loop variable.  A first version ran the unpack inside a block in the filter, and the
   scope pass freed the text binder at that block's end.  Guard
   `tests/scripts/a-filtered-destructure-reads-the-current-element.loft`.
+
+* **D-iter-15** *(opened 2026-11-01, CLOSED 2026-11-01; loft#2335)* — `(I-Comp)` /
+  `(E-Asgn-Compound)` for a LITERAL: a part that read its destination through a CALL lost what the
+  destination held.  Handed a place prefix (`tp(v, 0)` for the destination `v.vars[0].td`), the
+  callee read the destination after the build had cleared it — no read test saw a prefix, and no
+  snapshot rename can redirect a read made inside the callee; with the read inside an argument
+  (`wd(o.td[0] ?? TU, …)`), the snapshot was taken but released before the call read the view its
+  argument was lifted into.  Silent on both backends, on released builds.  **Fix.**  A
+  user-function argument whose place is a strict prefix of the destination's counts as a read,
+  and `snapshot_read_destination` STAGES — evaluates the part into a temp before the build, in
+  source order — a record element's part that is a call naming the destination, and any part read
+  through a prefix, whether or not the callee may write the destination.  A struct-enum element is
+  a record here as a struct is.  Guard
+  `loft-suite rules/iteration/I-Comp/2335-a-literal-whose-item-reads-its-destination-through-a-call-reads-what-it-held.loft`.
