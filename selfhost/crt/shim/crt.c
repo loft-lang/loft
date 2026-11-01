@@ -914,6 +914,17 @@ void loft_crt_append_text_bytes(int64_t store, int64_t rec, int64_t pos, const c
     loft_append_text_bytes(loft_crt_ref(store, rec, pos), loft_crt_str(val, bytes), lo, hi);
 }
 
+/* text_from_byte_range (`Stores::text_from_bytes_range`): the bytes [lo, hi) of a vector<u8> as a
+ * text, copied into `out` when it fits; answers the length in bytes. */
+int64_t loft_crt_text_from_byte_range(char *out, int64_t cap, int64_t store, int64_t rec,
+                                      int64_t pos, int64_t lo, int64_t hi) {
+    loft_text t = loft_text_from_byte_range(loft_crt_ref(store, rec, pos), lo, hi);
+    int64_t len = (int64_t) t.len;
+    if (len <= cap && len > 0) memcpy(out, t.p, (size_t) len);
+    loft_text_free(&t);
+    return len;
+}
+
 /* OpReverseVector: the elements of `size` bytes reversed in place. */
 void loft_crt_vec_reverse(int64_t store, int64_t rec, int64_t pos, int64_t size) {
     loft_vec_reverse(loft_crt_ref(store, rec, pos), (uint32_t) size);

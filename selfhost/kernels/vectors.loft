@@ -230,7 +230,17 @@ fn removed(n: integer) -> integer {
   s + size(v) * 100000 + size(bytes) * 10000000 + len(t) * 1000000000
 }
 
+// `text_from_bytes` and `text_from_byte_range` (natives 11 and 10) over a store's byte vector:
+// "hello" — 5 letters → 500; decoded(4): bytes 1..4 "ell" → 3 * 10 + 1 (it is "ell") = 531;
+// decoded(2): "e" → 10, 510.
+fn decoded(n: integer) -> integer {
+  b: vector<u8> = [104 as u8, 101 as u8, 108 as u8, 108 as u8, 111 as u8];
+  t = text_from_bytes(b);
+  r = text_from_byte_range(b, 1, n);
+  len(t) * 100 + len(r) * 10 + (if r == "ell" { 1 } else { 0 })
+}
+
 fn main() {
   println("{ints(4)} {records(4)} {texts(5)} {bagged(2)} {passed(3)} {through(4)} {refilled(7)} {defaults(5)} {rebound_param(5)}");
-  println("{appended_field(3)} {appended_field(1)} {added(3)} {added(0)} {texts_kept(3)} {texts_kept(0)} {retbuf_filled(2)} {retbuf_filled(1)} {removed(9)} {removed(0)}");
+  println("{appended_field(3)} {appended_field(1)} {added(3)} {added(0)} {texts_kept(3)} {texts_kept(0)} {retbuf_filled(2)} {retbuf_filled(1)} {removed(9)} {removed(0)} {decoded(4)} {decoded(2)}");
 }

@@ -511,6 +511,9 @@ fn c_vec_slice(v_store: integer, v_rec: integer, v_pos: integer, o_store: intege
 fn c_vec_append_copy(store: integer, rec: integer, pos: integer, ctp: integer, count: integer);
 #c "loft_crt_vec_append_copy" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
 
+fn c_text_from_byte_range(out: vector<u8>, store: integer, rec: integer, pos: integer, lo: integer, hi: integer) -> integer;
+#c "loft_crt_text_from_byte_range" "int64_t(char*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
 fn c_vec_keep(store: integer, rec: integer, pos: integer, tp: integer, size: integer, lo: integer, hi: integer);
 #c "loft_crt_vec_keep" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 
@@ -573,6 +576,17 @@ pub fn vec_slice(v_store: integer, v_rec: integer, v_pos: integer, o_store: inte
 // element type `ctp`; a `count` of 0 or less leaves it empty.  The type table must be loaded.
 pub fn vec_append_copy(store: integer, rec: integer, pos: integer, ctp: integer, count: integer) {
   c_vec_append_copy(store, rec, pos, ctp, count);
+}
+
+// `text_from_byte_range(bytes, lo, hi)` of a store's byte vector: the C runtime's own.
+pub fn vec_text_range(store: integer, rec: integer, pos: integer, lo: integer?, hi: integer?) -> text {
+  buf = room(64);
+  n = c_text_from_byte_range(buf, store, rec, pos, lo ?? 0, hi ?? 0);
+  if n > len(buf) {
+    buf = room(n);
+    n = c_text_from_byte_range(buf, store, rec, pos, lo ?? 0, hi ?? 0);
+  }
+  text_from_byte_range(buf, 0, n)
 }
 
 // `OpKeepVectorRange`: only the elements `lo..hi` kept (of element type `tp`, `size` bytes, 0 for a

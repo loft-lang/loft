@@ -37,8 +37,10 @@ strict comparison over every program the census passes (out, alloc, leak, binds,
 | `OpGetInt4Raw`, `OpSetInt4Raw`, `OpSizeHash`, `OpReverseVector` | `loft_get_int4_raw` / `loft_set_int4_raw` (width 8), `loft_hash_table_bytes`, `loft_vec_reverse` | `scalars`; the census |
 | `OpKeepVectorRange`, `OpAppendTextBytes`, `OpTextCharacter` | `loft_keep_vector_range` (size 0 for a linked element), `loft_append_text_bytes` (its growth step brought to `(Col-Capacity)`), the character as its nullable twin (the raising one only logs) | `small_ops.loft` `texted` |
 | natives `t_4text_find`, `t_4text_char_slice`, `t_4text_to_lowercase`, `t_4text_to_uppercase` | loft's own; a compiled stdlib body's text buffer (a `&text` after the visible arguments) gets the answer too | `texted` |
+| a struct enum's parent store (`OpDatabase` of a `PtEnum` type) | minted at its largest variant (`enum_parent_size`), the variant written after | the census (19 programs) |
+| natives `n_text_from_byte_range`, `n_text_from_bytes` | `loft_text_from_byte_range` over the store's vector (the whole range for the second); a compiled caller's text buffer gets the answer | `vectors.loft` `decoded` |
 
-**Measured** (2026-10-31): the census went from 297 to 529 programs passed over these rows,
+**Measured** (2026-10-31): the census went from 297 to 549 programs passed over these rows,
 none wrong, crashed or leaking, and every passing program equal to the Rust interpreter in
 every layer.
 
