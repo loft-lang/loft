@@ -1837,3 +1837,19 @@ Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), 
   The second half — `v[0].0 += 10` on a `vector<(u8, u8)>` refused as *"Not implemented
   operation +"* — is a tuple-in-a-container ROUTING question rather than a narrowing one and
   stays open on the issue.
+
+### D-types-37 — OPENED AND CLOSED (2026-11-01; loft#2336): an inferred local bound to a variant kept the variant when bound to its enum
+
+`(C-Var)` licenses `Reference(S) ⤳ Enum(E)` one way, and `(N-Join)` types an inferred local by
+the join of its binds, so `x = Short { … }` followed by `x = e` (an `Enum(E)` value: a match
+capture, a call's result) makes `x` an `E`.  The `@FR-B-Copy` whole-value bind arm
+(`parse_var`, reading the source name) took the copy whenever `Data::copies_as(dst, src)` held,
+and `copies_as` admits both directions — including a destination that is a variant of the
+source's enum.  The arm then reported the DESTINATION's type, the join never saw the enum, and
+the value was copied in through the variant's layout: any other variant lost its fields,
+silently, on both backends (garbage on one run, null on the next).  **Fix.**  The arm takes the
+copy in `(C-Var)`'s direction only; the source keeps its type, so an inferred local widens to the
+enum and a declared one is refused, as it already was.  Found porting the self-host elaborator,
+whose `inner = TyUnknown { n: 0 }; match … { TyVector { inner: i } => { inner = i; } }` corrupted
+a vector's element type.  Guard
+`loft-suite rules/types/C-Var/2336-a-variant-typed-local-widens-to-its-enum-and-keeps-every-variant.loft`.
