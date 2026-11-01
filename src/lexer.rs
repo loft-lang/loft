@@ -237,6 +237,66 @@ pub(crate) fn lex_trace(args: std::fmt::Arguments<'_>) {
     }
 }
 
+/// @PLN91 1a — `LOFT_TRACE_TOKENS=<file>` writes every token loft's own lexer scans from
+/// source, once per place, as one line `file<TAB>line<TAB>col<TAB>kind payload`: the token
+/// stream the selfhost lexer is diffed against.  A token replayed after a `revert` is not
+/// scanned again, and a place scanned twice (the second parser pass) is written once.  The
+/// stream is the one the PARSER saw, so a string's holes are lexed in the modes it set.
+fn trace_token(res: &LexResult, hole: bool) {
+    use std::fmt::Write as _;
+    use std::io::Write;
+    type Sink = Option<(std::fs::File, std::collections::HashSet<(String, u32, u32)>)>;
+    static SINK: std::sync::Mutex<Sink> = std::sync::Mutex::new(None);
+    let Some(path) =
+        crate::env_once!(@value Option<String>, std::env::var("LOFT_TRACE_TOKENS").ok())
+    else {
+        return;
+    };
+    let Ok(mut sink) = SINK.lock() else {
+        return;
+    };
+    if sink.is_none() {
+        let Ok(f) = crate::file_access::create(path.as_str()) else {
+            return;
+        };
+        *sink = Some((f, std::collections::HashSet::new()));
+    }
+    let Some((f, seen)) = sink.as_mut() else {
+        return;
+    };
+    let p = &res.position;
+    if !seen.insert((p.file.to_string(), p.line, p.pos)) {
+        return;
+    }
+    let esc = |t: &str| {
+        let mut o = String::new();
+        for c in t.chars() {
+            match c {
+                '\\' => o.push_str("\\\\"),
+                c if (c as u32) < 0x20 || c as u32 == 0x7f => {
+                    let _ = write!(o, "\\x{:02x}", c as u32);
+                }
+                c => o.push(c),
+            }
+        }
+        o
+    };
+    let item = match &res.has {
+        LexItem::Integer(v, z) => format!("int {v}{}", if *z { " 0" } else { "" }),
+        LexItem::Long(v) => format!("long {v}"),
+        LexItem::Float(v, z) => format!("float {:016x}{}", v.to_bits(), if *z { " 0" } else { "" }),
+        LexItem::Single(v) => format!("single {:08x}", v.to_bits()),
+        LexItem::Wide(v) => format!("wide {v}"),
+        LexItem::Double(v) => format!("double {:016x}", v.to_bits()),
+        LexItem::Token(t) => format!("tok {}", esc(t)),
+        LexItem::Identifier(t) => format!("id {}", esc(t)),
+        LexItem::CString(t) => format!("str{} {}", if hole { "+" } else { "" }, esc(t)),
+        LexItem::Character(c) => format!("char {c}"),
+        LexItem::None => "none".to_string(),
+    };
+    let _ = writeln!(f, "{}\t{}\t{}\t{item}", p.file, p.line, p.pos);
+}
+
 impl Debug for Position {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         self.format(fmt)
@@ -1225,6 +1285,15 @@ impl Lexer {
     fn put(&mut self, has: LexItem, position: Position) {
         self.peek.has = LexItem::None;
         self.peek = LexResult { has, position };
+        self.trace_peek();
+    }
+
+    /// The token just put, to the `LOFT_TRACE_TOKENS` stream — loft's own lexicon only.
+    #[inline]
+    fn trace_peek(&self) {
+        if self.interpolate_strings && !self.json_strings {
+            trace_token(&self.peek, self.mode == Mode::Formatting);
+        }
     }
 
     /// [`Self::put`] for a literal's text: `text` is moved into the token where it is kept.
@@ -1235,6 +1304,7 @@ impl Lexer {
             has: LexItem::CString(text),
             position,
         };
+        self.trace_peek();
     }
 
     /// [`Self::put`] for an identifier's name.
@@ -1245,6 +1315,7 @@ impl Lexer {
             has: LexItem::Identifier(name),
             position,
         };
+        self.trace_peek();
     }
 
     /// [`Self::put`] for a scan that found no token — after its diagnostic.
