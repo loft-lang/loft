@@ -883,8 +883,15 @@ fn format_text(e: el::El, w: ir::Node, val: ir::Node) -> ir::Node {
 // any other operator calls its `Op…` candidates on the operands as written.  A comparison with
 // `null` and an operand that orders through `compare` are refused by name.
 fn binary(e: el::El, vars: el_vars::Vars, op: text, l: integer, r: integer) -> Ex {
+  if op == "+" {
+    return plus_run(e, vars, l, r);
+  }
   a = expression(e, vars, l);
   b = expression(e, vars, r);
+  builtin_op(e, op, a, b)
+}
+
+fn builtin_op(e: el::El, op: text, a: Ex, b: Ex) -> Ex {
   if a.tp is TyNull || b.tp is TyNull {
     el::refuse(e, "a comparison with null");
     return ex(ir::NdNull, ir::TyBoolean);
@@ -896,6 +903,114 @@ fn binary(e: el::El, vars: el_vars::Vars, op: text, l: integer, r: integer) -> E
     return call_op(e, "<=", [b.code, a.code], [b.tp, a.tp]);
   }
   call_op(e, op, [a.code, b.code], [a.tp, b.tp])
+}
+
+// `Parser::level_run_inner`'s `+` arm: a run of `+` at one level (the tree nests it to the left)
+// whose FIRST operand is a text concatenates — every operand of the run read in order, then
+// `parse_append_text` — and any other run applies the builtin `+` left to right.
+fn plus_run(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
+  rights: vector<integer> = [r];
+  first = l;
+  more = true;
+  while more {
+    more = false;
+    match e.p.nodes[first] {
+      SBin { op: o, l: ll, r: rr } => {
+        if o == "+" {
+          rights = [rr] + rights;
+          first = ll;
+          more = true;
+        }
+      },
+      _ => {}
+    }
+  }
+  a = expression(e, vars, first);
+  if el_types::base(a.tp) is TyText && !(a.tp is TyOptional) {
+    parts: vector<Ex> = [];
+    for n in rights {
+      parts += [expression(e, vars, n)];
+    }
+    return append_text(e, vars, a, parts);
+  }
+  if a.tp is TyCharacter {
+    el::refuse(e, "a concatenation that starts with a character");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  acc = a;
+  for n in rights {
+    acc = builtin_op(e, "+", acc, expression(e, vars, n));
+  }
+  acc
+}
+
+// `Parser::parse_append_text` into a new work text: cleared, each operand appended
+// (`append_concat_operand`), the block answering the work text and typed as text that depends on
+// it.  The work text is made once every operand is read, as the Rust makes it at the run's end.
+fn append_text(e: el::El, vars: el_vars::Vars, first: Ex, parts: vector<Ex>) -> Ex {
+  w = el_vars::work_text(vars);
+  ops: vector<ir::Node> = [el_ir::cl(e, "OpClearText", [ir::NdVar { n: w }])];
+  concat_operand(e, ops, w, first);
+  for x in parts {
+    concat_operand(e, ops, w, x);
+  }
+  ops += [ir::NdVar { n: w }];
+  tp = ir::TyText { dep: [w] };
+  ex(el_ir::v_block(ops, tp, "Add text"), tp)
+}
+
+// `Parser::append_concat_operand`: a text appends as it is; any other value renders through its
+// format op (`append_data`), and on the second pass a null operand makes the concatenation null
+// (`@FR-E-NullArg`): the rendering is guarded by the operand's null test, and the whole step by
+// the accumulator still being present.  An operand that is not a variable or a literal is bound
+// first in the Rust, which is refused by name here.
+fn concat_operand(e: el::El, list: vector<ir::Node>, acc: integer, x: Ex) {
+  w = ir::NdVar { n: acc };
+  if el_types::base(x.tp) is TyText && !(x.tp is TyOptional) {
+    list += [el_ir::cl(e, "OpAppendText", [w, x.code])];
+    return;
+  }
+  if x.tp is TyOptional {
+    el::refuse(e, "a nullable concatenation operand");
+    return;
+  }
+  render: vector<ir::Node> = [];
+  append_data(e, render, acc, x.code, x.tp);
+  if e.first_pass {
+    for op in render {
+      list += [op];
+    }
+    return;
+  }
+  repeatable = match x.code {
+    NdVar { n: _ } => true,
+    NdInt { n: _ } => true,
+    NdLong { n: _ } => true,
+    NdFloat { f: _ } => true,
+    NdBoolean { b: _ } => true,
+    _ => false
+  };
+  if !repeatable {
+    el::refuse(e, "a concatenation operand bound before its null test");
+    return;
+  }
+  is_null = match x.tp {
+    TyFloat => el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromFloat", [x.code])]),
+    TyInteger { spec } => if spec.min == -2147483647 && spec.max == 2147483647 && spec.forced_size == 0 {
+      el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromInt", [x.code])])
+    } else {
+      ir::NdNull
+    },
+    TyCharacter => el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromCharacter", [x.code])]),
+    TyBoolean => el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpNeBool", [x.code, el_ir::cl(e, "OpConvBoolFromNull", [])])]),
+    _ => ir::NdNull
+  };
+  if is_null is NdNull {
+    el::refuse(e, "a concatenation operand of this type");
+    return;
+  }
+  step = el_ir::v_if(is_null, el_ir::cl(e, "OpAppendText", [w, el_ir::cl(e, "OpConvTextFromNull", [])]), el_ir::v_block(render, ir::TyVoid, "concat operand"));
+  list += [el_ir::v_if(el_ir::cl(e, "OpConvBoolFromText", [w]), step, ir::NdNull)];
 }
 
 // `IntegerSpec::signed32`, the type an integer literal answers.
