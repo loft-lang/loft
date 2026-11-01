@@ -139,6 +139,24 @@ fn emit_program_image(p: &mut parser::Parser, ships_live_tier: bool, out: &str) 
     std::process::exit(0);
 }
 
+/// `LOFT_EMIT_PARSED=<out>`: write the image of the program as the parser left it, before the
+/// scope pass, and exit without running it.  Exit 1, naming the path, when it cannot be written.
+#[cfg(feature = "mmap")]
+fn emit_parsed_image(p: &parser::Parser, out: &str) -> ! {
+    if let Err(e) = loft::ir_store::save_bundle(&p.data, &p.database, out) {
+        eprintln!("loft: cannot write the image to {out}: {e}");
+        std::process::exit(1);
+    }
+    std::process::exit(0);
+}
+
+/// A build without file-backed stores cannot write an image.
+#[cfg(not(feature = "mmap"))]
+fn emit_parsed_image(_p: &parser::Parser, _out: &str) -> ! {
+    eprintln!("loft: LOFT_EMIT_PARSED needs file-backed stores, which this build leaves out");
+    std::process::exit(1);
+}
+
 /// A build without file-backed stores (the browser build) cannot write an image.
 #[cfg(not(feature = "mmap"))]
 fn emit_program_image(_p: &mut parser::Parser, _ships_live_tier: bool, _out: &str) -> ! {
@@ -9925,6 +9943,12 @@ fn main() {
     // re-deriving it — the copy notice asks `place_result` (@PLN164 B2 units 2-3).
     let parse_user_ms = t_parse_user.elapsed().as_secs_f64() * 1000.0;
     let (mut scopes_ms, mut lints_ms) = (0.0, 0.0);
+    // @PLN91 1a — `LOFT_EMIT_PARSED=<out.store>`: the image of the program as the PARSER left
+    // it, before the scope pass and the program's close, the oracle the front end written in
+    // loft is diffed against before those passes are ported (1a-parser.md, gate E).
+    if let Some(out) = std::env::var_os("LOFT_EMIT_PARSED") {
+        emit_parsed_image(&p, &out.to_string_lossy());
+    }
     if p.diagnostics.level() < Level::Error {
         let t = std::time::Instant::now();
         scopes::check(&mut p.data, &mut p.database);
