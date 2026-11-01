@@ -288,7 +288,7 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
   }
   // A function body's tail is a store into its result (`convert_store`): converted to it.
   if context == "return from block" && len(l) > 0 && el_convert::plain_scalar(result) && el_convert::plain_scalar(t) && !el_types::is_equal(e, result, t) {
-    tc = el_convert::convert(e, l[len(l) - 1], t, result, false);
+    tc = el_convert::convert(e, vars, l[len(l) - 1], t, result, false);
     if tc == null {
       el::refuse(e, "a function's value its declared result converts: {type_kind(t)} to {type_kind(result)}");
     } else {
@@ -311,12 +311,12 @@ fn refuse_known(e: el::El, t: ir::TypeT, what: text) {
   }
 }
 
-fn stored(e: el::El, x: Ex, to: ir::TypeT) -> ir::Node? {
+fn stored(e: el::El, vars: el_vars::Vars, x: Ex, to: ir::TypeT) -> ir::Node? {
   if el_types::is_unknown(x.tp) || el_types::is_unknown(to) {
     return if e.first_pass { x.code } else { null };
   }
   if el_convert::plain_scalar(x.tp) && el_convert::plain_scalar(to) {
-    return el_convert::convert(e, x.code, x.tp, to, false);
+    return el_convert::convert(e, vars, x.code, x.tp, to, false);
   }
   if el_types::is_equal(e, to, x.tp) || x.tp is TyNever {
     return x.code;
@@ -570,7 +570,7 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
     }
   }
   x = expression(e, vars, rhs!);
-  c = stored(e, x, declared!);
+  c = stored(e, vars, x, declared!);
   if c == null {
     refuse_known(e, x.tp, "a value its declared type converts: {type_kind(x.tp)} to {type_kind(declared!)}");
     return ex(ir::NdNull, ir::TyVoid);
@@ -675,7 +675,7 @@ fn object_fields(e: el::El, vars: el_vars::Vars, v: integer, d: integer, fields:
           _ => {}
         }
         x = expression(e, vars, fe!);
-        fc = stored(e, x, at);
+        fc = stored(e, vars, x, at);
         if fc == null {
           refuse_known(e, x.tp, "a field value its type converts: {type_kind(x.tp)} to {type_kind(at)}");
           return null;
@@ -1422,7 +1422,7 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
     at = types[a#index] ?? ir::TyUnknown { n: 0 };
     arg = given[a#index] ?? ir::NdNull;
     if el_convert::plain_scalar(pt) && el_convert::plain_scalar(at) {
-      c = el_convert::convert(e, arg, at, pt, false);
+      c = el_convert::convert(e, vars, arg, at, pt, false);
       if c == null {
         el::refuse(e, "an argument converted to its parameter: {type_kind(at)} to {type_kind(pt)}");
         return null;
@@ -1742,7 +1742,7 @@ fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
       el::refuse(e, "a `return` with a value of this type: {type_kind(result)}");
       return ex(ir::NdNull, ir::TyNever);
     }
-    rc = stored(e, v, result);
+    rc = stored(e, vars, v, result);
     if rc == null {
       refuse_known(e, v.tp, "a `return` value its declared type converts: {type_kind(v.tp)} to {type_kind(result)}");
       return ex(ir::NdNull, ir::TyNever);
@@ -1864,11 +1864,11 @@ fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> Ex {
   if e.first_pass {
     return ex(ir::NdNull, to);
   }
-  if el_convert::narrowing_int(x.tp, to) && !el_convert::constant_fits(x.code, to) {
+  if el_convert::narrowing_int(x.tp, to) && !el_convert::value_fits(e, vars, x.code, to) {
     el::refuse(e, "a narrowing cast no constant answers");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  c = el_convert::convert(e, x.code, x.tp, to, true);
+  c = el_convert::convert(e, vars, x.code, x.tp, to, true);
   if c == null {
     c = el_convert::cast(e, x.code, x.tp, to);
   }

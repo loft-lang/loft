@@ -9,6 +9,7 @@ use ir;
 use el;
 use el_ir;
 use el_types;
+use el_vars;
 
 // `IntegerSpec::is_full_integer`: the one target nothing narrows to — no forced size, and either
 // full template's bounds (`signed32`, or the `wide` one ending at u32::MAX).
@@ -27,14 +28,165 @@ pub fn narrowing_int(src: ir::TypeT, dst: ir::TypeT) -> boolean {
   }
 }
 
-// `Parser::int_value_fits` for a constant: the literal lies in the target's range.
-pub fn constant_fits(code: ir::Node, dst: ir::TypeT) -> boolean {
+// `Parser::int_value_fits`: every value the expression can take lies in the target's range —
+// both arms of a conditional, a block's last statement, the integer null, else `int_range`.
+pub fn value_fits(e: el::El, vars: el_vars::Vars, code: ir::Node, dst: ir::TypeT) -> boolean {
   match dst {
     TyInteger { spec: d } => match code {
-      NdInt { n } => n >= d.min && n <= d.max,
-      _ => false
+      NdSpan { inner } => value_fits(e, vars, inner, dst),
+      NdIf { cond: _, t, f } => value_fits(e, vars, t, dst) && value_fits(e, vars, f, dst),
+      NdBlock { block } => {
+        bl = block[0];
+        n = len(bl.operators);
+        bl.name != "ncc" && n > 0 && value_fits(e, vars, bl.operators[n - 1] ?? ir::NdNull, dst)
+      },
+      NdCall { def_nr, args } => {
+        if len(args) == 0 && el::def(e, def_nr).name == "OpConvIntFromNull" {
+          return true;
+        }
+        r = int_range(e, vars, code);
+        r != null && r!.lo >= d.min && r!.hi <= d.max
+      },
+      _ => {
+        r = int_range(e, vars, code);
+        r != null && r!.lo >= d.min && r!.hi <= d.max
+      }
     },
     _ => false
+  }
+}
+
+pub struct Range {
+  pub lo: integer,
+  pub hi: integer
+}
+
+// `declared_range`: an integer type narrower than the full one says its range.
+fn declared_range(t: ir::TypeT) -> Range? {
+  match el_types::base(t) {
+    TyInteger { spec } => if spec.min > -2147483647 || spec.max < 2147483647 { Range { lo: spec.min, hi: spec.max } } else { null },
+    _ => null
+  }
+}
+
+// `Parser::const_int` over the folds `const_eval` makes of integer arithmetic: 32-bit wrapping,
+// as the IR's `Int` wraps.
+fn const_int(e: el::El, code: ir::Node) -> integer? {
+  match code {
+    NdInt { n } => n,
+    NdLong { n } => n,
+    NdSpan { inner } => const_int(e, inner),
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      a = if len(args) > 0 { const_int(e, args[0] ?? ir::NdNull) } else { null };
+      if a == null {
+        return null;
+      }
+      if nm == "OpMinSingleInt" && len(args) == 1 {
+        return wrap32(0 - a!);
+      }
+      if len(args) != 2 {
+        return null;
+      }
+      b = const_int(e, args[1] ?? ir::NdNull);
+      if b == null {
+        return null;
+      }
+      if nm == "OpAddInt" { return wrap32(a! + b!); }
+      if nm == "OpMinInt" { return wrap32(a! - b!); }
+      if nm == "OpMulInt" { return wrap32(a! * b!); }
+      null
+    },
+    _ => null
+  }
+}
+
+fn wrap32(x: integer) -> integer {
+  r = x & 4294967295;
+  if r >= 2147483648 { r - 4294967296 } else { r }
+}
+
+// `Parser::int_range` (`@FR-N-Arith`): the values an integer expression can take as far as its
+// own shape proves — a constant its value, a local or a call its declared range, a narrow field
+// read its width, `+ - *` the interval arithmetic, `a & c` (c ≥ 0) `[0, c]`, `a % c` by `|c|`.
+// Null is "anything an integer holds".
+pub fn int_range(e: el::El, vars: el_vars::Vars, code: ir::Node) -> Range? {
+  c = const_int(e, code);
+  if c != null {
+    return Range { lo: c!, hi: c! };
+  }
+  match code {
+    NdSpan { inner } => int_range(e, vars, inner),
+    NdVar { n } => declared_range(el_vars::tp(vars, n)),
+    NdIf { cond: _, t, f } => {
+      a = int_range(e, vars, t);
+      b = int_range(e, vars, f);
+      if a == null || b == null {
+        return null;
+      }
+      Range { lo: if a!.lo < b!.lo { a!.lo } else { b!.lo }, hi: if a!.hi > b!.hi { a!.hi } else { b!.hi } }
+    },
+    NdBlock { block } => {
+      bl = block[0];
+      n = len(bl.operators);
+      if n == 0 || bl.name == "ncc" { null } else { int_range(e, vars, bl.operators[n - 1] ?? ir::NdNull) }
+    },
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if nm == "OpGetByte" || nm == "OpGetByteNullable" {
+        m = const_int(e, args[2] ?? ir::NdNull);
+        return if m == null { null } else { Range { lo: m!, hi: m! + 255 } };
+      }
+      if nm == "OpGetShort" || nm == "OpGetShortRaw" || nm == "OpGetShortSpare" || nm == "OpGetShortFull" {
+        m = const_int(e, args[2] ?? ir::NdNull);
+        return if m == null { null } else { Range { lo: m!, hi: m! + 65535 } };
+      }
+      if nm == "OpAddInt" || nm == "OpMinInt" || nm == "OpMulInt" {
+        a = int_range(e, vars, args[0] ?? ir::NdNull);
+        b = int_range(e, vars, args[1] ?? ir::NdNull);
+        if a == null || b == null {
+          return null;
+        }
+        if nm == "OpAddInt" {
+          return Range { lo: a!.lo + b!.lo, hi: a!.hi + b!.hi };
+        }
+        if nm == "OpMinInt" {
+          return Range { lo: a!.lo - b!.hi, hi: a!.hi - b!.lo };
+        }
+        p1 = a!.lo * b!.lo;
+        p2 = a!.lo * b!.hi;
+        p3 = a!.hi * b!.lo;
+        p4 = a!.hi * b!.hi;
+        lo = p1;
+        hi = p1;
+        for p in [p2, p3, p4] {
+          if p < lo { lo = p; }
+          if p > hi { hi = p; }
+        }
+        return Range { lo: lo, hi: hi };
+      }
+      if nm == "OpLandInt" {
+        hi = -1;
+        for a in args {
+          r = int_range(e, vars, a);
+          if r != null && r!.lo >= 0 && (hi < 0 || r!.hi < hi) {
+            hi = r!.hi;
+          }
+        }
+        return if hi < 0 { null } else { Range { lo: 0, hi: hi } };
+      }
+      if nm == "OpRemInt" {
+        k = const_int(e, args[1] ?? ir::NdNull);
+        if k == null || k! == 0 {
+          return null;
+        }
+        m = (if k! < 0 { 0 - k! } else { k! }) - 1;
+        a = int_range(e, vars, args[0] ?? ir::NdNull);
+        return Range { lo: if a != null && a!.lo >= 0 { 0 } else { 0 - m }, hi: m };
+      }
+      declared_range(el::def(e, def_nr).returned[0] ?? ir::TyVoid)
+    },
+    _ => null
   }
 }
 
@@ -54,7 +206,7 @@ pub fn plain_scalar(t: ir::TypeT) -> boolean {
 // `(C-Int)`), a `Never` anywhere, and the first `OpConv` whose parameter and result are the pair
 // (`Data::converts_with`).  A narrowing integer store is the author's to write as a cast (null
 // unless a constant provably fits); `explicit` is the `as` that does so.
-pub fn convert(e: el::El, code: ir::Node, src: ir::TypeT, should: ir::TypeT, explicit: boolean) -> ir::Node? {
+pub fn convert(e: el::El, vars: el_vars::Vars, code: ir::Node, src: ir::TypeT, should: ir::TypeT, explicit: boolean) -> ir::Node? {
   if src is TyNever {
     return code;
   }
@@ -62,9 +214,9 @@ pub fn convert(e: el::El, code: ir::Node, src: ir::TypeT, should: ir::TypeT, exp
     return null;
   }
   if narrowing_int(src, should) {
-    return if constant_fits(code, should) { code } else { null };
+    return if value_fits(e, vars, code, should) { code } else { null };
   }
-  if !explicit && store_narrows(src, should) && !constant_fits(code, should) {
+  if !explicit && store_narrows(src, should) && !value_fits(e, vars, code, should) {
     return null;
   }
   if el_types::is_equal(e, src, should) {

@@ -48,30 +48,26 @@ fn fill_database(e: el::El, d: integer) {
     el::refuse(e, "a struct named like a type the schema already has");
     return;
   }
-  contents: vector<integer> = [];
+  // The structure first, then each field's content — a narrow Part is made after it.
+  s = structure(e, def.name);
+  e.b.data.definitions[d].known_type = s;
   for a in def.attributes {
     if a.constant {
       continue;
     }
-    c = content_type(e, a.typedef[0] ?? ir::TyUnknown { n: 0 });
+    c = -1;
+    match a.typedef[0] ?? ir::TyUnknown { n: 0 } {
+      TyInteger { spec } => { c = int_part(e, spec, a.alias_d_nr, a.nullable); },
+      _ => { c = content_type(e, a.typedef[0] ?? ir::TyUnknown { n: 0 }); }
+    }
     if c < 0 {
       el::refuse(e, "a struct field of this type");
       return;
     }
-    contents += [c];
-  }
-  s = structure(e, def.name);
-  e.b.data.definitions[d].known_type = s;
-  i = 0;
-  for a in def.attributes {
-    if a.constant {
-      continue;
-    }
-    f = field(e, s, a.name, contents[i] ?? 0);
+    f = field(e, s, a.name, c);
     if a.nullable {
       set_field_nullable(e, s, f);
     }
-    i += 1;
   }
 }
 
@@ -102,6 +98,64 @@ fn content_type(e: el::El, t: ir::TypeT) -> integer {
     },
     _ => -1
   }
+}
+
+// `fill_database`'s integer field: the width its alias's `size(n)`, its own forced size or its
+// range gives; the kind that width and the field's nullability pick (`NarrowIntKind::of`, never a
+// narrow-vector element here); the Part that kind stores, under its `min` (`part_min`) — the
+// wide kind keeps `integer`'s 8 bytes.
+fn int_part(e: el::El, spec: ir::IntegerSpec, alias: integer, nullable: boolean) -> integer {
+  s = 0;
+  if alias != el::NONE && el::def(e, alias).forced_size > 0 {
+    s = el::def(e, alias).forced_size;
+  } else if spec.forced_size > 0 {
+    s = spec.forced_size;
+  } else {
+    codes = spec.max - spec.min + 1 + if nullable { 1 } else { 0 };
+    s = if codes <= 256 { 1 } else if codes <= 65536 { 2 } else { 8 };
+  }
+  m = spec.min;
+  if nullable && (s == 1 || s == 2) && spec.min < 0 && ((spec.forced_size == 1 && spec.max - spec.min + 1 == 256) || (spec.forced_size == 2 && spec.max - spec.min + 1 == 65536)) {
+    m = spec.min + 1;
+  }
+  unsigned_wide = spec.min >= 0 && spec.max > 2147483647;
+  if s == 1 {
+    return narrow_part(e, if m == 0 && !nullable { "byte" } else { "byte<{m},{nullable}>" }, ir::PtByte { start: m, nullable: nullable }, 1);
+  }
+  if s == 2 {
+    if nullable {
+      return narrow_part(e, "short<{m},{nullable}>", ir::PtShort { start: m, nullable: nullable }, 2);
+    }
+    return narrow_part(e, "short_raw<{m},{nullable}>", ir::PtShortRaw { start: m, nullable: nullable }, 2);
+  }
+  if s == 4 {
+    if unsigned_wide {
+      return narrow_part(e, "int_raw<{m},{nullable}>", ir::PtIntRaw { start: m, nullable: nullable }, 4);
+    }
+    return narrow_part(e, "int<{m},{nullable}>", ir::PtInt { start: m, nullable: nullable }, 4);
+  }
+  schema_type(e, "integer")
+}
+
+// `Stores::byte` / `short` / `short_raw` / `int` / `int_raw`: the type of that name, made at the
+// end of the table the first time it is asked for, aligned to its size.
+fn narrow_part(e: el::El, name: text, part: ir::DbParts, size: integer) -> integer {
+  t = schema_type(e, name);
+  if t >= 0 {
+    return t;
+  }
+  num = len(e.b.types);
+  e.b.types += [ir::DbType {
+    name: name,
+    parts: [part],
+    keys: [],
+    complex: false,
+    linked: false,
+    size: size,
+    align: size,
+    field_groups: []
+  }];
+  num
 }
 
 fn known(e: el::El, name: text) -> integer {
