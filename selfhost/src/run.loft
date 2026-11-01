@@ -13,6 +13,7 @@ use crt;
 use types;
 use show;
 use consts;
+use eq;
 
 // The entry's result — a loft integer, so null when the program answers null — or the first
 // thing the interpreter does not carry.  `stores_left` is the leak check: how many of the C
@@ -918,6 +919,16 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
       VecReverse => {
         sp_int -= 3;
         crt::vec_reverse(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a);
+      }
+      EqContent => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 6;
+        equal = eq::eq_content(b, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0, op.a);
+        put_int(ints, sp_int, if equal != (op.b == 1) { 1 } else { 0 });
+        sp_int += 1;
       }
       IntFromText => {
         sp_text -= 1;
