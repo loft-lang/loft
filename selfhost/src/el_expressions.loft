@@ -286,6 +286,9 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
   if len(l) > 0 && el_ir::is_line(l[len(l) - 1]) {
     l = drop_last(l);
   }
+  if !e.first_pass {
+    l = defend_faults(e, l);
+  }
   // A function body that ends in a jump is typed as its declared result.
   if context == "return from block" && t is TyNever && !(result is TyVoid) && !el_types::is_unknown(result) {
     t = result;
@@ -400,6 +403,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SIf { cond, then, other } => if_expr(e, vars, cond, then, other),
     SStructLit { name, member, fields, base } => object_expr(e, vars, name, member, fields, base),
     SFor { binds, source, par, filter, body } => for_expr(e, vars, binds, source, par, filter, body),
+    SWhile { cond, body } => while_expr(e, vars, cond, body),
     SJump { kind, e: je } => jump(e, vars, kind, je),
     SIndex { at, e: ie, keys, range, hi, limit, spatial } => index(e, vars, at, ie, keys, range || len(hi) > 0 || limit != null || spatial),
     SVecLit { items: _ } => vector_value(e, vars, n).x,
@@ -1036,7 +1040,8 @@ fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text,
     _ => {}
   }
   if d < 0 || el::def(e, d).def_type != el::DT_STRUCT {
-    el::refuse(e, "a field of something other than a plain struct");
+    kind = if d >= 0 { "definition type {el::def(e, d).def_type}" } else { type_kind(x.tp) };
+    refuse_known(e, x.tp, "a field of something other than a plain struct: {kind}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   def = el::def(e, d);
@@ -1711,6 +1716,153 @@ fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
   ex(el_ir::v_block([el_ir::v_set(held, x.code), pick], result, "ncc"), rt)
 }
 
+// `Parser::rewrite_defended_fault_sites` (`(E-Report)`'s guarded half): a `Set(x, op)` whose
+// first later statement that mentions `x` is an `if` whose condition reads it — any reading
+// counts, it signals the defensive intent — or a block null-testing a copy of it (a `match`),
+// takes the silent `…Nullable` op; and in every `if` condition an `==`/`!=` against a written
+// `null` makes the other operand's op the nullable one (`rewrite_direct_null_test`).
+fn defend_faults(e: el::El, ops: vector<ir::Node>) -> vector<ir::Node> {
+  r = ops;
+  n = len(ops);
+  for op in ops {
+    match el_ir::unspan(op) {
+      NdSet { var, inner } => {
+        j = op#index + 1;
+        while j < n && (el_ir::is_line(ops[j] ?? ir::NdNull) || !el_ir::reads_var(ops[j] ?? ir::NdNull, var)) {
+          j += 1;
+        }
+        if j < n {
+          guarded = false;
+          match el_ir::unspan(ops[j] ?? ir::NdNull) {
+            NdIf { cond } => { guarded = el_ir::reads_var(cond, var); },
+            NdBlock { block } => { guarded = null_tests_a_copy(block[0].operators, var); },
+            _ => {}
+          }
+          if guarded {
+            r[op#index] = el_ir::v_set(var, nullable_arith(e, inner, true));
+          }
+        }
+      },
+      _ => {}
+    }
+  }
+  out: vector<ir::Node> = [];
+  for op in r {
+    out += [direct_null_test_stmt(e, op)];
+  }
+  out
+}
+
+fn direct_null_test_stmt(e: el::El, op: ir::Node) -> ir::Node {
+  match op {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: direct_null_test_stmt(e, inner) },
+    NdIf { cond, t, f } => ir::NdIf { cond: direct_null_test(e, cond), t: t, f: f },
+    _ => op
+  }
+}
+
+// `rewrite_direct_null_test`.
+fn direct_null_test(e: el::El, test: ir::Node) -> ir::Node {
+  match test {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: direct_null_test(e, inner) },
+    NdIf { cond, t, f } => ir::NdIf { cond: direct_null_test(e, cond), t: direct_null_test(e, t), f: direct_null_test(e, f) },
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if (starts_with(nm, "OpEq") || starts_with(nm, "OpNe")) && len(args) == 2 {
+        g = -1;
+        if null_literal(e, args[1] ?? ir::NdNull) {
+          g = 0;
+        } else if null_literal(e, args[0] ?? ir::NdNull) {
+          g = 1;
+        }
+        if g >= 0 {
+          a2 = args;
+          a2[g] = nullable_arith(e, args[g] ?? ir::NdNull, true);
+          return ir::NdCall { def_nr: def_nr, args: a2 };
+        }
+      }
+      a3: vector<ir::Node> = [];
+      for a in args {
+        a3 += [direct_null_test(e, a)];
+      }
+      ir::NdCall { def_nr: def_nr, args: a3 }
+    },
+    _ => test
+  }
+}
+
+// A written `null`: a nullary `OpConv…FromNull`.
+fn null_literal(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => len(args) == 0 && starts_with(el::def(e, def_nr).name, "OpConv") && ends_with(el::def(e, def_nr).name, "FromNull"),
+    _ => false
+  }
+}
+
+// `block_null_tests_a_copy`: a block that starts by copying `var` into a temp and null-tests
+// that temp in an `if`.
+fn null_tests_a_copy(ops: vector<ir::Node>, var: integer) -> boolean {
+  if len(ops) == 0 {
+    return false;
+  }
+  tmp = -1;
+  match el_ir::unspan(ops[0] ?? ir::NdNull) {
+    NdSet { var: t, inner } => {
+      match el_ir::unspan(inner) {
+        NdVar { n } => { if n == var { tmp = t; } },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  if tmp < 0 {
+    return false;
+  }
+  for op in ops {
+    if op#index > 0 {
+      match el_ir::unspan(op) {
+        NdIf { cond } => { if null_test_of(cond, tmp) { return true; } },
+        _ => {}
+      }
+    }
+  }
+  false
+}
+
+fn null_test_of(test: ir::Node, v: integer) -> boolean {
+  match el_ir::unspan(test) {
+    NdCall { args } => {
+      if len(args) == 1 {
+        match el_ir::unspan(args[0] ?? ir::NdNull) {
+          NdCall { args: inner } => {
+            if len(inner) == 1 {
+              match el_ir::unspan(inner[0] ?? ir::NdNull) {
+                NdVar { n } => { if n == v { return true; } },
+                _ => {}
+              }
+            }
+          },
+          _ => {}
+        }
+      }
+      if len(args) != 2 {
+        return false;
+      }
+      has_var = false;
+      has_nullary = false;
+      for a in args {
+        match el_ir::unspan(a) {
+          NdVar { n } => { if n == v { has_var = true; } },
+          NdCall { args: inner } => { if len(inner) == 0 { has_nullary = true; } },
+          _ => {}
+        }
+      }
+      has_var && has_nullary
+    },
+    _ => false
+  }
+}
+
 // `rewrite_outer_arith_to_nullable`: the fault-prone operation at the top of a `??` subject (or
 // the one a field or element read at the top reads through) becomes its `…Nullable` twin, which
 // answers null where the plain one would fault.  Spans are kept.
@@ -2048,6 +2200,26 @@ fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> Ex {
   ex(c!, to)
 }
 
+// `Parser::parse_while`: the condition (a boolean), then a loop that leaves where the condition
+// does not hold — `if !cond { break }` — and runs the body, a block expecting nothing.
+fn while_expr(e: el::El, vars: el_vars::Vars, cond: integer, body: integer?) -> Ex {
+  c = expression(e, vars, cond);
+  if !el_types::is_unknown(c.tp) && !(c.tp is TyBoolean) {
+    el::refuse(e, "a `while` condition that is not a boolean: {type_kind(c.tp)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  if body == null {
+    el::refuse(e, "a `while` without a body");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  b = parse_block(e, vars, body!, "while", ir::TyVoid);
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  brk = el_ir::v_if(el_ir::cl(e, "OpNot", [c.code]), el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break"), ir::NdNull);
+  ex(el_ir::v_loop([brk, b.code], "while"), ir::TyVoid)
+}
+
 // `Parser::literal_walk` (`@FR-R-LiteralWalk`): a `for` over a literal of 1 to 16 scalar items
 // walks them without the vector — each item into its own `_lit_N` before the loop, the index
 // `id#index` started at -1, and the "Iter literal" block steps it, leaves at the count, and
@@ -2281,7 +2453,7 @@ pub struct Built {
 }
 
 fn refused_build() -> Built {
-  Built { x: ex(ir::NdNull, ir::TyVoid), items: [], elem: ir::TyUnknown { n: 0 } }
+  Built { x: ex(ir::NdNull, ir::TyUnknown { n: 0 }), items: [], elem: ir::TyUnknown { n: 0 } }
 }
 
 fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT, append: boolean, value: boolean) -> Built {

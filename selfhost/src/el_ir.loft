@@ -43,3 +43,46 @@ pub fn is_line(n: ir::Node) -> boolean {
     _ => false
   }
 }
+
+// `Value::reads_var`: does any node of the tree name variable `v` (a read, a `Set`'s target, a
+// tuple member, a call through a fn-ref, an iterator, a fn-ref)?
+pub fn reads_var(n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdVar { n: x } => x == v,
+    NdSet { var, inner } => var == v || reads_var(inner, v),
+    NdSpan { inner } => reads_var(inner, v),
+    NdCall { args } => any_reads(args, v),
+    NdCallRef { var, args } => var == v || any_reads(args, v),
+    NdBlock { block } => any_reads(block[0].operators, v),
+    NdLoop { block } => any_reads(block[0].operators, v),
+    NdInsert { items } => any_reads(items, v),
+    NdTuple { items } => any_reads(items, v),
+    NdReturn { inner } => reads_var(inner, v),
+    NdDrop { inner } => reads_var(inner, v),
+    NdYield { inner } => reads_var(inner, v),
+    NdIf { cond, t, f } => reads_var(cond, v) || reads_var(t, v) || reads_var(f, v),
+    NdIter { var, create, next, init } => var == v || reads_var(create, v) || reads_var(next, v) || reads_var(init, v),
+    NdTupleGet { var } => var == v,
+    NdTuplePut { var, inner } => var == v || reads_var(inner, v),
+    NdFnRef { var } => var == v,
+    NdParallel { arms } => any_reads(arms, v),
+    _ => false
+  }
+}
+
+fn any_reads(l: vector<ir::Node>, v: integer) -> boolean {
+  for x in l {
+    if reads_var(x, v) {
+      return true;
+    }
+  }
+  false
+}
+
+// `Value::unspan`.
+pub fn unspan(n: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { inner } => unspan(inner),
+    _ => n
+  }
+}
