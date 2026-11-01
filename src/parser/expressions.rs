@@ -4679,12 +4679,14 @@ use a separate collection or add after the loop"
         // loft#1145's per-loop split owns a body local bound again in ANOTHER loop; that
         // program compiles today and keeps its binding (and its loop-record admission).
         // Asked by loop ORDINAL, which both passes agree on — loop numbers are not.
+        // A loop's VARIABLE is never that body local: its binding ended with its own loop.
         let ended_bind = self
             .bind_after_end
             .take()
-            .filter(|(_, ended_in)| {
+            .filter(|(v, ended_in)| {
                 let now = self.vars.current_loop_ord();
-                !(now.is_some() && ended_in.is_some() && now != *ended_in)
+                self.vars.was_loop_var(*v)
+                    || !(now.is_some() && ended_in.is_some() && now != *ended_in)
             })
             .map(|(v, _)| v);
         // A literal builds INTO the value it starts from, and retypes it on the way: into
@@ -4712,15 +4714,19 @@ use a separate collection or add after the loop"
         if compound_record {
             *code = Value::Null;
         }
-        let build_into =
-            if ended_bind == Some(var_nr) && crate::data::is_scalar(self.vars.tp(var_nr).base()) {
-                if matches!(code.unspan(), Value::Var(v) if *v == var_nr) {
-                    *code = Value::Null;
-                }
-                u16::MAX
-            } else {
-                var_nr
-            };
+        // An ended LOOP variable views an element of the collection it walked, so building
+        // into it would write that element: it starts from nothing too.
+        let build_into = if ended_bind == Some(var_nr)
+            && (crate::data::is_scalar(self.vars.tp(var_nr).base())
+                || self.vars.was_loop_var(var_nr))
+        {
+            if matches!(code.unspan(), Value::Var(v) if *v == var_nr) {
+                *code = Value::Null;
+            }
+            u16::MAX
+        } else {
+            var_nr
+        };
         let prev_target = std::mem::replace(&mut self.assign_target, build_into);
         let prev_replaces = std::mem::replace(&mut self.assign_replaces, op == "=");
         let prev_snapshot_len = std::mem::take(&mut self.build_snapshot_len);
@@ -4820,15 +4826,22 @@ use a separate collection or add after the loop"
         // binding refuses, is a new binding with a variable of its own.  Split HERE, as soon
         // as the value's type is known and before any route chooses by the target's type: a
         // collection on either side of the split takes a route of its own further down.
+        //
+        // A loop's VARIABLE splits at ANY type, on both passes whether or not pass 1 knows
+        // the value's type yet: it views an element of the walked collection, so a bind that
+        // reused it wrote the new value through that view into the collection, or made the
+        // view an owner that freed the walked store on every pass of an enclosing loop.
+        let ended_loop_var = ended_bind == Some(var_nr) && self.vars.was_loop_var(var_nr);
         let (new_binding, new_binding_type);
         let (to, f_type) = if op == "="
             && !self.amp_pending
-            && !s_type.is_unknown()
             && var_nr != u16::MAX
             && ended_bind == Some(var_nr)
-            && self
-                .vars
-                .retype_would_be_refused(var_nr, &s_type, &self.data)
+            && (ended_loop_var
+                || (!s_type.is_unknown()
+                    && self
+                        .vars
+                        .retype_would_be_refused(var_nr, &s_type, &self.data)))
         {
             var_nr = self.rebind_after_block(var_nr, &s_type);
             new_binding = Value::Var(var_nr);
@@ -9122,7 +9135,8 @@ use a separate collection or add after the loop"
                 // ended binding refuses, is a new binding like the undeclared one.
                 if !is_ref
                     && self.bind_after_end.is_some_and(|(v, _)| v == v_nr)
-                    && self.vars.retype_would_be_refused(v_nr, &tp, &self.data)
+                    && (self.vars.was_loop_var(v_nr)
+                        || self.vars.retype_would_be_refused(v_nr, &tp, &self.data))
                 {
                     self.bind_after_end = None;
                     v_nr = self.rebind_after_block(v_nr, &tp);

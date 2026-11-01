@@ -1315,6 +1315,19 @@ Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), 
   refusal.  Guards `a-disturbed-keyed-view-keeps-the-value-at-its-bind.loft` and
   `a-keyed-link-refuses-a-reassigned-container.loft`.
 
+* **D-bind-70** *(opened 2026-11-01, CLOSED 2026-11-01; loft#2332)* — `(B-Scope)`: a bind after a
+  `for` loop that spelled the loop variable's name at the SAME type reused the loop's variable,
+  because D-bind-67's split gives a bind after an ended binding its own variable only where the
+  ended one would refuse the type.  The loop variable views an element of the walked collection,
+  so the value was built through that view into the collection (`a = mk(…)` overwrote an element),
+  inside an enclosing loop the view became an owner that freed the walked store every pass, and
+  rebound in a later loop the interpreter hung.  A statement-bound local is not affected.
+  **Fix.**  An ended LOOP variable splits at any type, on both passes whether or not pass 1 knows
+  the value's type, in a later loop's body too (D-bind-67's other-loop filter is about body
+  locals), and the value is never built into it.  A `for` over the same spelling after such a bind
+  now meets a live local and is refused as a shadow, as it is after any other local.  Guard
+  `loft-suite rules/binding/B-Scope/2332-a-bind-after-a-loop-is-a-new-binding-at-the-loop-variables-type.loft`.
+
 * **D-bind-69** *(opened 2026-11-01, CLOSED 2026-11-01; loft#2321)* — `(B-Scope)`: a loop
   variable — a `for` statement's or a comprehension's — spelled like a local an earlier block had
   bound and ENDED was refused: the statement loop as a shadow, because its check asked whether the
