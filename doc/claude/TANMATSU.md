@@ -16,7 +16,7 @@ device.  How to add another device is in [HARDWARE_BACKENDS.md](HARDWARE_BACKEND
 |---|---|---|
 | Processor | ESP32-P4: two 32-bit RISC-V cores (RV32IMAFC), single-precision FPU only | Write under `#width 32` ([WIDTH32.md](WIDTH32.md)): a 64-bit operation is several instructions, a `float` (double) is software |
 | Memory | 768 KB of fast SRAM; 32 MB of PSRAM, slower | Compose a frame at 1x in SRAM and scale it up once (`tiles`) |
-| Display | 800x480 MIPI-DSI panel, mounted in portrait (480x800), framebuffer in PSRAM | `tiles::present(s, w, h, scale, rotate: true)` writes the rotated, scaled frame |
+| Display | A MIPI-DSI panel, 800x480 on the current boards, mounted in portrait (480x800), framebuffer in PSRAM; the BSP sets it up and reports its size, colour format and rotation | `tiles::present(s, w, h, scale, rotate: true)` writes the rotated, scaled frame, sized from what the BSP reports |
 | Audio | I2S, 16-bit stereo, into an ES8156 codec; one stream, no mixer in hardware | `audio` mixes every voice into that one stream |
 | Keys | A full keyboard, read as PC scancodes and navigation keys | `input::input_tick_device()` |
 | Random numbers | A hardware random source (`esp_fill_random`) | `random::seed_hw()` |
@@ -24,6 +24,20 @@ device.  How to add another device is in [HARDWARE_BACKENDS.md](HARDWARE_BACKEND
 The board support package is `badgeteam/badge-bsp`, from the ESP component registry
 (`bsp/audio.h`, `bsp/input.h`, `bsp/display.h`).  The Tanmatsu app template
 (`Nicolai-Electronics/tanmatsu-template`) names the version an app uses.
+
+**The BSP owns the differences between hardware batches.**  Boards from different batches can
+carry a different part that needs its own start-up code, a display panel for example.  Nicolai
+Electronics keeps the BSP working on every batch, so loft never sets up a part itself and never
+asks which batch it runs on.  What follows from that:
+
+- **Display code reads the panel from the BSP, never from constants.**  Width, height and
+  colour format come from `bsp_display_get_parameters`, the rotation from
+  `bsp_display_get_default_rotation`.  A new batch then needs a newer BSP and no loft change.
+- **A game is told the screen's dimensions, not shielded from them.**  The graphics library
+  passes the pixel size on (`Window::width()` / `height()` elsewhere), and `drawing` scales its
+  fractions-of-the-paper scenes to whatever `size` it is given.  The PHYSICAL size, which a game
+  needs to draw something the same size on every screen, is not available yet: the BSP reports
+  pixels only, and no platform of the graphics library reports millimetres or density.
 
 ## What runs there
 
@@ -68,4 +82,7 @@ behind the same loft API it has everywhere.
   runtime and the libraries' C parts.
 - The I2S output task and the key polling, which only real hardware (or
   `virtual-tanmatsu-graceloader`, with the `riscv32-esp-elf` toolchain) can run.
-- A display layer that hands `tiles::present` to the panel.
+- A display layer that hands `tiles::present` to the panel, sized from the BSP's parameters.
+- The screen's physical size, for a game that draws to scale: a loft call with a defined
+  "unknown" answer, filled on the Tanmatsu from the panel's specification until the BSP
+  reports it.
