@@ -8661,18 +8661,18 @@ impl Parser {
                 self.lexer.revert(link);
                 return None;
             };
-            let mut bind = Some(field);
+            let mut bind = field;
             if self.lexer.has_token(":") {
-                bind = if self.lexer.has_token("_") {
-                    None
-                } else if let Some(alias) = self.lexer.has_identifier() {
-                    Some(alias)
-                } else {
+                let Some(alias) = self.lexer.has_identifier() else {
                     self.lexer.revert(link);
                     return None;
                 };
+                bind = alias;
             }
-            binds.extend(bind);
+            // `_` lexes as a name, and binds nothing.
+            if bind != "_" {
+                binds.push(bind);
+            }
             if self.lexer.has_token("}") {
                 break;
             }
