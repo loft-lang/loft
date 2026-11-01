@@ -769,6 +769,35 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
           sp_text -= 1;
           put_int(ints, sp_int, (texts[sp_text] ?? "").byte_at(i ?? 0));
           sp_int += 1;
+        } else if op.a == 6 {
+          // `t.find(v)`: loft's own.
+          sp_text -= 2;
+          put_int(ints, sp_int, (texts[sp_text] ?? "").find(texts[sp_text + 1] ?? ""));
+          sp_int += 1;
+        } else if op.a >= 7 && op.a <= 9 {
+          // Text answers, each loft's own: `t.char_slice(from, to)`, `t.to_lowercase()`,
+          // `t.to_uppercase()`.  A compiled stdlib body also takes the caller's text buffer (a
+          // `&text` after the visible arguments), and its answer is written there.
+          visible = if op.a == 7 { 3 } else { 1 };
+          buf = -1;
+          if op.b > visible {
+            sp_int -= 1;
+            buf = ints[sp_int] ?? -1;
+          }
+          answer = "";
+          if op.a == 7 {
+            sp_int -= 2;
+            from = ints[sp_int] ?? 0;
+            till = ints[sp_int + 1] ?? 0;
+            answer = (texts[sp_text - 1] ?? "").char_slice(from, till);
+          } else {
+            t = texts[sp_text - 1] ?? "";
+            answer = if op.a == 8 { t.to_lowercase() } else { t.to_uppercase() };
+          }
+          if buf >= 0 {
+            crt::set_slot_text(stk, buf, answer);
+          }
+          put_text(texts, sp_text - 1, answer);
         }
       }
       // A format: the C runtime's routine for the value's kind renders it with the operands
@@ -836,6 +865,19 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
         sp_text -= 1;
         put_float(floats, sp_float, (texts[sp_text] ?? "") as float?);
         sp_float += 1;
+      }
+      VecKeep => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 5;
+        crt::vec_keep(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, op.b, ints[sp_int + 3], ints[sp_int + 4]);
+      }
+      AppendTextBytes => {
+        sp_int -= 5;
+        sp_text -= 1;
+        crt::append_text_bytes(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, texts[sp_text], ints[sp_int + 3], ints[sp_int + 4]);
       }
       VecReverse => {
         sp_int -= 3;

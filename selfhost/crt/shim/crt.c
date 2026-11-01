@@ -900,6 +900,20 @@ void loft_crt_vec_append_copy(int64_t store, int64_t rec, int64_t pos, int64_t c
     loft_vec_append_copy(loft_crt_types, (uint16_t) ctp, loft_crt_ref(store, rec, pos), count);
 }
 
+/* OpKeepVectorRange (`Stores::keep_vector_range`): only the elements `lo..hi` kept, what the
+ * dropped ones own released through the type table; `size` 0 for a linked element. */
+void loft_crt_vec_keep(int64_t store, int64_t rec, int64_t pos, int64_t tp, int64_t size, int64_t lo,
+                       int64_t hi) {
+    loft_keep_vector_range((const loft_tdesc *) loft_crt_types, (uint16_t) tp,
+                           loft_crt_ref(store, rec, pos), (uint32_t) size, lo, hi);
+}
+
+/* OpAppendTextBytes: the bytes `lo..hi` of a text appended to a byte vector. */
+void loft_crt_append_text_bytes(int64_t store, int64_t rec, int64_t pos, const char *val,
+                                int64_t bytes, int64_t lo, int64_t hi) {
+    loft_append_text_bytes(loft_crt_ref(store, rec, pos), loft_crt_str(val, bytes), lo, hi);
+}
+
 /* OpReverseVector: the elements of `size` bytes reversed in place. */
 void loft_crt_vec_reverse(int64_t store, int64_t rec, int64_t pos, int64_t size) {
     loft_vec_reverse(loft_crt_ref(store, rec, pos), (uint32_t) size);
