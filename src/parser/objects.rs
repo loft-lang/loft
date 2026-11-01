@@ -4547,8 +4547,12 @@ impl Parser {
                 *data = Value::Var(named);
             }
         }
-        // O8.5: capture range bounds for const-unroll detection.
-        self.last_range_from = Some(expr.clone());
+        // O8.5 (`@FR-I-Comp`): capture range bounds for const-unroll detection — of a RANGE
+        // only.  A slice's bounds (`data` set) are positions in a vector, an end below zero
+        // counting from its end; read as the integers `0..-1` they made
+        // `[for x in v[..-1] { x }]` an empty range, folded to `[]` (loft#2344).
+        let pure_range = *data == Value::Null;
+        self.last_range_from = pure_range.then(|| expr.clone());
         let mut till = Value::Null;
         // `@FR-I-RangeFrom` — `for i in a.. { … }` has no end: it counts up until the body
         // leaves (`break`, `return`), as a Rust `RangeFrom` does (loft#1813).  With nothing
@@ -4597,7 +4601,9 @@ impl Parser {
                 if last <= spec.max && last >= i64::from(spec.min))
         });
         // O8.5: store till value (adjusted for inclusive ranges).
-        if incl {
+        if !pure_range {
+            self.last_range_till = None;
+        } else if incl {
             // 0..=9 means till is 9, but the range includes 9.
             // Store till+1 so the unroller can use from..till_exclusive.
             if let Value::Int(t) = &till {
