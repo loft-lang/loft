@@ -128,6 +128,14 @@ fn drop_last(l: vector<ir::Node>) -> vector<ir::Node> {
 pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   match e.p.nodes[n] {
     SInt { v } => ex(ir::NdInt { n: v }, ir::TyInteger { spec: i32_spec() }),
+    SLong { v } => ex(ir::NdLong { n: v }, ir::TyInteger { spec: wide_spec() }),
+    SWide { v } => ex(ir::NdLong { n: v }, ir::TyInteger { spec: wide_spec() }),
+    SFloat { v } => ex(ir::NdFloat { f: v }, ir::TyFloat),
+    SDouble { v } => ex(ir::NdFloat { f: v }, ir::TyFloat),
+    SSingle { v } => ex(ir::NdSingle { f: v }, ir::TySingle),
+    SChar { c } => ex(el_ir::cl(e, "OpConvCharacterFromInt", [ir::NdInt { n: c }]), ir::TyCharacter),
+    SBool { b } => ex(ir::NdBoolean { b: b }, ir::TyBoolean),
+    SNull => ex(ir::NdNull, ir::TyNull),
     SName { name, member } => name_expression(e, vars, name, member),
     SAssign { fixed, op, target, e: rhs } => assignment(e, vars, fixed, op, target, rhs),
     SCall { at, f, args } => call_expression(e, vars, at, f, args),
@@ -465,6 +473,11 @@ fn format_text(e: el::El, w: ir::Node, val: ir::Node) -> ir::Node {
 // `IntegerSpec::signed32`, the type an integer literal answers.
 pub fn i32_spec() -> ir::IntegerSpec {
   ir::IntegerSpec { min: -2147483647, max: 2147483647, not_null: false, forced_size: 0 }
+}
+
+// `IntegerSpec::wide`, the type a 64-bit literal answers.
+pub fn wide_spec() -> ir::IntegerSpec {
+  ir::IntegerSpec { min: -2147483647, max: 4294967295, not_null: false, forced_size: 0 }
 }
 
 // `rename` (src/parser/mod.rs): an operator token's `Op…` name.
