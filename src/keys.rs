@@ -3117,9 +3117,11 @@ static STACK_FREE_REFUSALS: std::sync::atomic::AtomicUsize = std::sync::atomic::
 /// so the second free takes the ORDINARY path and silently releases its new owner's store.
 /// `LOFT_STRICT_STORES` is what converts that case into this one, by never recycling a slot.
 ///
-/// ⚠ **Interpreter only.**  `Stores::alloc_pc` is zero outside interpretation, so every free on
-/// `--native` carries the same pc and the audit would call all of it benign.  The report says so
-/// rather than printing a clean bill.
+/// ⚠ **The interpreter and the C backend, not rustc-native.**  `Stores::alloc_pc` is zero outside
+/// interpretation, so every free on `--native` carries the same pc and the audit would call all
+/// of it benign; the report says so rather than printing a clean bill.  The C runtime keeps the
+/// census by the loft frame and line of each free instead (`-DLOFT_DOUBLE_FREE`, loft_rt.h), and
+/// adds the freed slots a stale reference made again.
 #[must_use]
 pub fn double_free_audit() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
