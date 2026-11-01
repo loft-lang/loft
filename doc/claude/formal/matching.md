@@ -211,6 +211,12 @@ index `i` into a source `src`, with `elem(src,i)` / `len(src)` **null past the e
              the slice's ONE rest, typed: `xs:T*` ≡ `..xs`, and `xs:T+` ≡ `..xs` with ≥ 1
              element.  Whatever follows it is (P-Rest)'s fixed tail, read from the END — a
              literal, `_`, a bare name, a variant: `[xs:integer*, last]` binds last = v[len−1].
+  (P-Cursor) a match whose subject is a CURSOR — a struct whose first `vector` field is the source
+             and whose integer `pos` field is the position — reads each slice pattern from κ =
+             ⟨pos, source⟩ as a PREFIX (no `P-Whole`), and the arm that commits writes pos = i' of
+             its κ'; a failed arm leaves pos unchanged (P-Atomic).  The cursor reading belongs to
+             that match's PATTERNS: a `match` written in one of its guards or arm bodies is a
+             match of its own, read by its own subject's kind.
   (P-Multi)  a MULTI-PATTERN arm `pat_a | pat_b => body` (or `pat_a, pat_b`, the same arm): try
              pat_a from ⟨0,v⟩ (whole-match); else pat_b; the FIRST whole-match commits.  (P-Alt at
              arm granularity — no new cursor work.)  P-Alt holds at EVERY pattern position: the
@@ -335,9 +341,8 @@ arm (`|` and `,` alike, over slice patterns too), a tuple subject, a tuple eleme
 slice element, and the arm root's `name: pattern`.
 
 
-Cursor matches (a struct with a `vector` source and a `pos`, consumed as a PREFIX) and sub-rule
-invocation `[ name: rule ]` are shipped but have no rules here yet; a cursor match's tail
-follows `(P-Seq)` as a prefix reading of it.
+Sub-rule invocation `[ name: rule ]` is shipped but has no rule here yet; a cursor match is
+`(P-Cursor)`.
 
 - **PEG patterns are SHIPPED (@PLN35)** — the shipped implementation (phases 1–7 + PC1–PC5,
   [plans/35-match-peg](../plans/35-match-peg/)) conforms to the stated rules on both backends,
