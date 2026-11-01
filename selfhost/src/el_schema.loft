@@ -122,10 +122,23 @@ fn content_type(e: el::El, t: ir::TypeT) -> integer {
       k = el::def(e, n).known_type;
       if k == NO_TYPE || el::def(e, n).def_type != el::DT_STRUCT { -1 } else { k }
     },
-    // `database.vector(content)`, deduplicated by name: the rows the standard library has.
+    // `database.vector(content)`, deduplicated by name, made where it is missing; the element's
+    // `vector<T>` definition takes its number (`check_vector`).
     TyVector { inner } => {
       nm = el_types::elem_name(e, inner);
-      if nm == "" { -1 } else { schema_type(e, "vector<{nm}>") }
+      if nm == "" {
+        return -1;
+      }
+      c = content_type(e, inner);
+      if c < 0 {
+        return -1;
+      }
+      vt = vector_type(e, c);
+      vd = el::def_nr(e, "vector<{nm}>");
+      if vd >= 0 {
+        e.b.data.definitions[vd].known_type = vt;
+      }
+      vt
     },
     _ => -1
   }
@@ -184,6 +197,28 @@ fn narrow_part(e: el::El, name: text, part: ir::DbParts, size: integer) -> integ
     linked: false,
     size: size,
     align: size,
+    field_groups: []
+  }];
+  num
+}
+
+// `Stores::vector`: the store type `vector<name of content>`, made at the end of the table the
+// first time it is asked for — a 4-byte handle, complex.
+pub fn vector_type(e: el::El, content: integer) -> integer {
+  name = "vector<{e.b.types[content].name}>";
+  t = schema_type(e, name);
+  if t >= 0 {
+    return t;
+  }
+  num = len(e.b.types);
+  e.b.types += [ir::DbType {
+    name: name,
+    parts: [ir::PtVector { content: content }],
+    keys: [],
+    complex: true,
+    linked: false,
+    size: 4,
+    align: 4,
     field_groups: []
   }];
   num
