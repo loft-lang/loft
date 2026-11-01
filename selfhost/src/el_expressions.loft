@@ -2990,20 +2990,20 @@ fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
 // assembles them (the "For block" around the "For loop").  Destructuring, a filter, `par`, `_`
 // and any other iterated type are refused by name.
 fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer, par: integer?, filter: integer?, body: integer?) -> Ex {
-  if len(binds) != 1 || par != null || filter != null || body == null || binds[0] == "_" {
+  if len(binds) != 1 || par != null || body == null {
     el::refuse(e, "a `for` with destructuring, a filter, `par` or `_`");
     return ex(ir::NdNull, ir::TyVoid);
   }
   src_id = binds[0];
-  id = el_vars::loop_binding(vars, src_id);
+  id = if src_id == "_" { "_" } else { el_vars::loop_binding(vars, src_id) };
   if e.p.nodes[source] is SRange {
-    return range_for(e, vars, src_id, id, source, body!);
+    return range_for(e, vars, src_id, id, source, body!, filter);
   }
   x = ex(ir::NdNull, ir::TyUnknown { n: 0 });
   if e.p.nodes[source] is SVecLit {
     lit = vector_value(e, vars, source);
     if len(lit.items) >= 1 && len(lit.items) <= 16 && walkable_scalar(lit.elem) {
-      return literal_walk(e, vars, src_id, id, lit, body!);
+      return literal_walk(e, vars, src_id, id, lit, body!, filter);
     }
     x = lit.x;
   } else {
@@ -3039,14 +3039,10 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
   }
   // `for_type`: the element, borrowing the hoisted vector.
   var_tp = el_types::with_deps(elem, [vec]);
-  idx = el_vars::add_variable(vars, "{id}#index", ir::TyInteger { spec: i32_spec() });
-  el_vars::set_defined(vars, idx);
-  lv = el_vars::loop_variable(vars, id, var_tp);
-  if id != src_id {
-    el_vars::set_name(vars, src_id, lv);
-  }
-  el_vars::set_defined(vars, lv);
+  idx = loop_index(vars, id);
+  lv = loop_var(vars, src_id, id, var_tp);
   vars.active_loops += [lv];
+  fc = loop_filter(e, vars, filter);
   b = parse_block(e, vars, body, "for", ir::TyVoid);
   vars.active_loops = drop_last_int(vars.active_loops);
   if e.first_pass || el_types::is_unknown(elem) {
@@ -3073,7 +3069,12 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
   brk = el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break");
   past_end = el_ir::v_if(el_ir::cl(e, "OpLeInt", [el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: vec }]), i]), brk, ir::NdNull);
   before = el_ir::v_if(el_ir::cl(e, "OpLtInt", [i, ir::NdInt { n: 0 }]), brk, ir::NdNull);
-  lp = el_ir::v_loop([el_ir::v_set(lv, next), past_end, before, b.code], "For loop");
+  steps: vector<ir::Node> = [el_ir::v_set(lv, next), past_end, before];
+  if fc != null {
+    steps += [fc!];
+  }
+  steps += [b.code];
+  lp = el_ir::v_loop(steps, "For loop");
   ex(el_ir::v_block([el_ir::v_set(vec, x.code), el_ir::v_set(idx, ir::NdInt { n: -1 }), lp], ir::TyVoid, "For block"), ir::TyVoid)
 }
 
@@ -3421,7 +3422,7 @@ fn while_expr(e: el::El, vars: el_vars::Vars, cond: integer, body: integer?) -> 
 // walks them without the vector — each item into its own `_lit_N` before the loop, the index
 // `id#index` started at -1, and the "Iter literal" block steps it, leaves at the count, and
 // selects the item.  The literal was built first, so its temps are numbered as the vector walk's.
-fn literal_walk(e: el::El, vars: el_vars::Vars, src_id: text, id: text, lit: Built, body: integer) -> Ex {
+fn literal_walk(e: el::El, vars: el_vars::Vars, src_id: text, id: text, lit: Built, body: integer, filter: integer?) -> Ex {
   prelude: vector<ir::Node> = [];
   temps: vector<integer> = [];
   for it in lit.items {
@@ -3430,16 +3431,11 @@ fn literal_walk(e: el::El, vars: el_vars::Vars, src_id: text, id: text, lit: Bui
     prelude += [el_ir::v_set(t, it)];
     temps += [t];
   }
-  int_t = ir::TyInteger { spec: i32_spec() };
-  idx = el_vars::add_variable(vars, "{id}#index", int_t);
-  el_vars::set_defined(vars, idx);
+  idx = loop_index(vars, id);
   prelude += [el_ir::v_set(idx, ir::NdInt { n: -1 })];
-  lv = el_vars::loop_variable(vars, id, lit.elem);
-  if id != src_id {
-    el_vars::set_name(vars, src_id, lv);
-  }
-  el_vars::set_defined(vars, lv);
+  lv = loop_var(vars, src_id, id, lit.elem);
   vars.active_loops += [lv];
+  fc = loop_filter(e, vars, filter);
   b = parse_block(e, vars, body, "for", ir::TyVoid);
   vars.active_loops = drop_last_int(vars.active_loops);
   if e.first_pass {
@@ -3457,7 +3453,12 @@ fn literal_walk(e: el::El, vars: el_vars::Vars, src_id: text, id: text, lit: Bui
     el_ir::v_if(el_ir::cl(e, "OpLeInt", [ir::NdInt { n: len(temps) }, i]), ir::NdBreak { n: 0 }, ir::NdNull),
     sel
   ], lit.elem, "Iter literal");
-  lp = el_ir::v_loop([el_ir::v_set(lv, stepped), b.code], "For loop");
+  steps: vector<ir::Node> = [el_ir::v_set(lv, stepped)];
+  if fc != null {
+    steps += [fc!];
+  }
+  steps += [b.code];
+  lp = el_ir::v_loop(steps, "For loop");
   ex(el_ir::v_block([ir::NdInsert { items: prelude }, lp], ir::TyVoid, "For block"), ir::TyVoid)
 }
 
@@ -3476,7 +3477,7 @@ fn walkable_scalar(t: ir::TypeT) -> boolean {
 // `parse_in_range_body` for `lo..hi` with a literal start of zero or more and an exclusive end:
 // the index made before the loop's variable, a non-literal end hoisted into `_range_end_N`, the
 // index started one below `lo`; the "Iter range" block steps it, leaves at `hi`, and answers it.
-fn range_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, source: integer, body: integer) -> Ex {
+fn range_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, source: integer, body: integer, filter: integer?) -> Ex {
   lo = -1;
   hi = 0;
   inclusive = false;
@@ -3510,14 +3511,10 @@ fn range_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, source: int
     inits += [el_ir::v_set(re, h.code)];
     end = ir::NdVar { n: re };
   }
-  idx = el_vars::add_variable(vars, "{id}#index", int_t);
-  el_vars::set_defined(vars, idx);
-  lv = el_vars::loop_variable(vars, id, int_t);
-  if id != src_id {
-    el_vars::set_name(vars, src_id, lv);
-  }
-  el_vars::set_defined(vars, lv);
+  idx = loop_index(vars, id);
+  lv = loop_var(vars, src_id, id, int_t);
   vars.active_loops += [lv];
+  fc = loop_filter(e, vars, filter);
   b = parse_block(e, vars, body, "for", ir::TyVoid);
   vars.active_loops = drop_last_int(vars.active_loops);
   if e.first_pass {
@@ -3531,8 +3528,49 @@ fn range_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, source: int
     el_ir::v_if(el_ir::cl(e, "OpLeInt", [end, i]), ir::NdBreak { n: 0 }, ir::NdNull),
     i
   ], int_t, "Iter range");
-  lp = el_ir::v_loop([el_ir::v_set(lv, stepped), b.code], "For loop");
+  steps: vector<ir::Node> = [el_ir::v_set(lv, stepped)];
+  if fc != null {
+    steps += [fc!];
+  }
+  steps += [b.code];
+  lp = el_ir::v_loop(steps, "For loop");
   ex(el_ir::v_block([init, lp], ir::TyVoid, "For block"), ir::TyVoid)
+}
+
+// A loop's index: `id#index`, or a fresh `_index_N` for a `_` binding.
+fn loop_index(vars: el_vars::Vars, id: text) -> integer {
+  int_t = ir::TyInteger { spec: i32_spec() };
+  idx = if id == "_" { el_vars::create_unique(vars, "index", int_t) } else { el_vars::add_variable(vars, "{id}#index", int_t) };
+  el_vars::set_defined(vars, idx);
+  idx
+}
+
+// A loop's variable (`loop_variable`), or a fresh `___N` for a `_` binding, defined.
+fn loop_var(vars: el_vars::Vars, src_id: text, id: text, t: ir::TypeT) -> integer {
+  if id == "_" {
+    u = el_vars::create_unique(vars, "_", t);
+    el_vars::set_defined(vars, u);
+    return u;
+  }
+  lv = el_vars::loop_variable(vars, id, t);
+  if id != src_id {
+    el_vars::set_name(vars, src_id, lv);
+  }
+  el_vars::set_defined(vars, lv);
+  lv
+}
+
+// A `for … if cond` filter: the iteration continues where the condition does not hold.
+fn loop_filter(e: el::El, vars: el_vars::Vars, filter: integer?) -> ir::Node? {
+  if filter == null {
+    return null;
+  }
+  c = expression(e, vars, filter!);
+  if !el_types::is_unknown(c.tp) && !(c.tp is TyBoolean) {
+    el::refuse(e, "a `for` filter that is not a boolean: {type_kind(c.tp)}");
+    return null;
+  }
+  el_ir::v_if(c.code, ir::NdNull, ir::NdContinue { n: 0 })
 }
 
 fn drop_last_int(l: vector<integer>) -> vector<integer> {
@@ -3599,6 +3637,11 @@ fn vector_def(e: el::El, t: ir::TypeT, nm: text, lit: integer) {
       }
     }
     at += 1;
+  }
+  // An empty `[]` makes them before the literal is read: the lexer stands after the token
+  // before its `[`.
+  if at == lit + 1 {
+    at = lit - 1;
   }
   pos = el::pos_at(e, at);
   vt = ir::TyVector { inner: t, dep: [] };
