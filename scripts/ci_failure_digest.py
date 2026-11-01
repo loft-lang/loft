@@ -34,6 +34,8 @@ it only ever reaches an issue inside a code fence longer than any backtick run i
 with `@` mentions defused, and it is never passed to a shell.
 """
 
+from __future__ import annotations  # the `X | None` annotations on Python 3.9
+
 import hashlib
 import json
 import os

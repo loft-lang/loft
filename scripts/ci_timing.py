@@ -29,6 +29,8 @@ and not guessed at from the run's wall clock.
 
 BUDGET_MIN = 20.0
 
+from __future__ import annotations  # the `X | None` annotations on Python 3.9
+
 import datetime
 import json
 import os
