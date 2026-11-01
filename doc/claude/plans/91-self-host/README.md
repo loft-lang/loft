@@ -176,9 +176,10 @@ agree.  The comparison instrument is `selfhost/compare/` ([1b-compare.md](1b-com
    exist only in Rust today move to loft or, where they reach the system, to the C runtime
    (strand 9).  Gate: every layer of the comparison equal — opcodes, bytecode, slots,
    binds, out, alloc, leak.  **Speed is out of this stage's scope** (owner, 2026-11-01):
-   the expected near 3× the Rust interpreter's run time rests on the C optimisation layer
-   (the shared decisions in `src/opt/` and the C writer), which keeps optimising loft code
-   throughout the project as its own work, outside the interpreter's implementation.  The
+   the aim is an interpreter comparable in speed to the Rust one, and it rests on the C
+   optimisation layer (the shared decisions in `src/opt/` and the C writer), whose target
+   is every individual routine below 3× its rustc version (@C136) — work that continues
+   throughout the project on its own, outside the interpreter's implementation.  The
    interpreter is written as the faithful port, never hand-tuned in its source or its C.
    P-perf measures the inner loop against the Rust interpreter, as input to that layer; it
    does not decide whether 1b happens.
