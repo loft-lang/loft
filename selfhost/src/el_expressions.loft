@@ -535,7 +535,7 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
     if e.first_pass {
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
-    el::refuse(e, "a call of an unknown function");
+    el::refuse(e, "a call of an unknown function: {name}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   r = call_args(e, d, list, types);

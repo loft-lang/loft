@@ -84,6 +84,7 @@ def main():
     ap.add_argument("--loft", default="target/release/loft")
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
     ap.add_argument("--show", type=int, default=20, help="differing programs to list")
+    ap.add_argument("--details", type=int, default=3, help="details listed per refusal family")
     o = ap.parse_args()
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     loft = o.loft if os.path.isabs(o.loft) else os.path.join(root, o.loft)
@@ -111,6 +112,7 @@ def main():
     elab = build(loft, os.path.join(sh, "front", "elab.loft"), os.path.join(tmp, "elab"), env)
     per = collections.defaultdict(collections.Counter)
     reasons = collections.Counter()
+    families = collections.Counter()
     differs = []
     with cf.ThreadPoolExecutor(o.jobs) as ex:
         futs = {ex.submit(one, loft, defs, elab, std, f, tmp, env, i): (part, f)
@@ -121,6 +123,7 @@ def main():
             per[part][verdict] += 1
             if verdict == "refused":
                 reasons.update(set(detail))
+                families.update({d.split(": ", 1)[0] for d in detail})
             elif verdict == "differ":
                 differs.append((f, detail))
     tot = collections.Counter()
@@ -132,9 +135,14 @@ def main():
     for part in parts:
         c = per[part]
         print(f"  {part:8} {c['agree']} of {sum(c.values()) - c['noimage']}")
+    # A refusal may name its detail after `: ` (the operator, the type, the function): ranked by
+    # its family first, then the details of the families that lead.
     print("refusals, by the programs that meet them:")
-    for r, k in reasons.most_common(25):
-        print(f"  {k:5}  {r}")
+    for f, k in families.most_common(25):
+        print(f"  {k:5}  {f}")
+        details = [(r, n) for r, n in reasons.most_common() if r.startswith(f + ": ")]
+        for r, n in details[:o.details]:
+            print(f"         {n:5}  {r[len(f) + 2:]}")
     for f, d in sorted(differs)[:o.show]:
         print(f"DIFFER {os.path.relpath(f, os.path.dirname(root))}\n  {d}")
     sys.exit(0 if tot["agree"] == n else 1)
