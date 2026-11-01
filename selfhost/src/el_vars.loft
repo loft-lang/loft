@@ -242,6 +242,19 @@ pub fn change_var_type(e: el::El, v: Vars, nr: integer, t: ir::TypeT) -> boolean
     set_type(v, nr, t);
     return true;
   }
+  // A declared `τ?` takes a `τ` or a null, borrowing what the value borrows.
+  match cur {
+    TyOptional { inner } => {
+      if t is TyNull || el_types::is_equal(e, inner, el_types::base(t)) {
+        ds = el_types::deps(t);
+        if len(ds) > 0 {
+          set_type(v, nr, el_types::with_deps(cur, ds));
+        }
+        return true;
+      }
+    },
+    _ => {}
+  }
   false
 }
 
@@ -315,6 +328,18 @@ pub fn loop_variable(v: Vars, name: text, t: ir::TypeT) -> integer {
   set_name(v, name, nr);
   set_name(v, key, nr);
   nr
+}
+
+// `Function::make_independent`: the local no longer borrows `remove`.
+pub fn make_independent(v: Vars, nr: integer, remove: integer) {
+  t = tp(v, nr);
+  ds: vector<integer> = [];
+  for d in el_types::deps(t) {
+    if d != remove {
+      ds += [d];
+    }
+  }
+  set_type(v, nr, el_types::with_deps(t, ds));
 }
 
 pub fn set_var_type(v: Vars, nr: integer, t: ir::TypeT) {
