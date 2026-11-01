@@ -79,7 +79,7 @@ pub fn save_stdlib_cache(p: &Parser, default_dir: &str) {
     if let Some(parent) = path.parent() {
         let _ = crate::file_access::create_dir_all(parent);
     }
-    let _ = crate::ir_store::save_bundle(&p.data, &p.database.types, &path.to_string_lossy());
+    let _ = crate::ir_store::save_bundle(&p.data, &p.database, &path.to_string_lossy());
     crate::cache::prune_stdlib_images();
 }
 
@@ -818,7 +818,7 @@ pub fn save_program(
     if let Some(parent) = bundle.parent() {
         let _ = crate::file_access::create_dir_all(parent);
     }
-    if crate::ir_store::save_bundle(&p.data, &p.database.types, &bundle.to_string_lossy()).is_err()
+    if crate::ir_store::save_bundle(&p.data, &p.database, &bundle.to_string_lossy()).is_err()
     {
         return;
     }

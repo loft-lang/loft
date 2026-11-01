@@ -1267,7 +1267,7 @@ static loft_ref loft_read_bytes(loft_str raw) {
     free(path);
     if (!h) return loft_ref_null();
     loft_ref r = loft_ref_null();
-    loft_database(&r, 8);
+    loft_vector_store(&r);
     char buf[4096];
     size_t n;
     while ((n = fread(buf, 1, sizeof buf, h)) > 0) {
@@ -1388,7 +1388,7 @@ static loft_ref loft_list_dir(loft_str raw) {
     size_t n = 0;
     char **names = loft_dir_names(dir, &n);
     if (names) {
-        loft_database(&r, 8);
+        loft_vector_store(&r);
         for (size_t i = 0; i < n; i++) {
             loft_ref el = loft_vec_append(r, 4);
             loft_set_text(el, 0, loft_lit(names[i], strlen(names[i])));

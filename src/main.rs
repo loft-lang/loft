@@ -132,7 +132,7 @@ fn emit_program_image(p: &mut parser::Parser, ships_live_tier: bool, out: &str) 
         p.data.open_world = true;
     }
     compile::close_program(&mut p.data, &mut p.database);
-    if let Err(e) = loft::ir_store::save_bundle(&p.data, &p.database.types, out) {
+    if let Err(e) = loft::ir_store::save_bundle(&p.data, &p.database, out) {
         eprintln!("loft: cannot write the image to {out}: {e}");
         std::process::exit(1);
     }

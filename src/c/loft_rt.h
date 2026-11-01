@@ -1409,6 +1409,13 @@ static void loft_database(loft_ref *var, uint32_t bytes) {
 
 /* OpDatabase of a record type: the root carries the type it was minted as, which tells a move
  * (`loft_swap_in`) its own store from another. */
+/* A fresh store whose root is an empty vector, minted as `Stores::text_vector` and
+ * `Stores::fs_read_bytes` mint theirs — `Stores::database(4)`, a root of four words, which
+ * `loft_database` counts in bytes past the header. */
+static void loft_vector_store(loft_ref *var) {
+    loft_database(var, 24);
+}
+
 static void loft_database_typed(loft_ref *var, uint32_t bytes, uint16_t tp) {
     loft_database(var, bytes);
     loft_stores[var->store_nr].known = tp;
@@ -5050,7 +5057,7 @@ static char **loft_argv = 0;
 /* arguments(): a fresh `vector<text>` of them. */
 static loft_ref loft_arguments(void) {
     loft_ref r = loft_ref_null();
-    loft_database(&r, 8);
+    loft_vector_store(&r);
     for (int i = 1; i < loft_argc; i++) {
         loft_ref e = loft_vec_append(r, 4);
         loft_set_text(e, 0, loft_lit(loft_argv[i], strlen(loft_argv[i])));
