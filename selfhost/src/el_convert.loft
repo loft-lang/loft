@@ -301,6 +301,16 @@ pub fn cast(e: el::El, code: ir::Node, src: ir::TypeT, should: ir::TypeT) -> ir:
 // The null a type spells (`convert`'s `FromNull` arm): the first `OpConv…FromNull` answering that
 // type, the non-allocating sentinel for a record; null when there is none.
 pub fn null_of(e: el::El, t: ir::TypeT) -> ir::Node? {
+  // A plain enum's null names its store type (`Parser::null`).
+  match t {
+    TyEnum { n, is_ref } => {
+      if !is_ref {
+        d = el::def_nr(e, "OpConvEnumFromNull");
+        return if d < 0 { null } else { ir::NdCall { def_nr: d, args: [ir::NdInt { n: el::def(e, n).known_type }] } };
+      }
+    },
+    _ => {}
+  }
   if t is TyReference {
     d = el::def_nr(e, "OpNullRefSentinel");
     return if d < 0 { null } else { ir::NdCall { def_nr: d, args: [] } };
