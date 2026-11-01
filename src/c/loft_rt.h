@@ -731,7 +731,8 @@ static void loft_stack_overflow(const char *file, uint32_t line) {
 /* `stack_trace()` reads the frames, so a unit that reaches it keeps them in every build; any
  * other unit keeps them where the build asks for the call chain a fault prints
  * (`-DLOFT_CALL_CHAIN`, the semantics tier) and compiles the pushes away where it does not. */
-#if (defined(LOFT_FRAMES) || defined(LOFT_LEAK_SITES)) && !defined(LOFT_CALL_CHAIN)
+#if (defined(LOFT_FRAMES) || defined(LOFT_LEAK_SITES) || defined(LOFT_STRICT_STORES) || defined(LOFT_DOUBLE_FREE)) \
+    && !defined(LOFT_CALL_CHAIN)
 #define LOFT_CALL_CHAIN 1
 #endif
 #ifdef LOFT_CALL_CHAIN
@@ -1169,6 +1170,49 @@ static LOFT_COLD void loft_write_dropped(loft_ref r, const char *file, uint32_t 
  * store still live at exit is reported too (`loft_leak_report`).  Either makes the run exit 1.
  * The driver builds with it when `LOFT_STRICT_STORES` is set.  For probes: never reusing a slot
  * walks a long run off the end of the store table. */
+/* `strict_note_free` (keys.rs): where each store slot was last freed — the function running and
+ * the line it was at (`loft_frame_site`; a C unit has no bytecode position) — so a use after free
+ * names the free that killed it, and the re-free census (`LOFT_DOUBLE_FREE`) tells a re-free from
+ * the same site from one from another.  Kept by either instrument, as the interpreter keeps it. */
+#if defined(LOFT_STRICT_STORES) || defined(LOFT_DOUBLE_FREE)
+typedef struct { const char *fn, *file; uint32_t line; } loft_free_site;
+static LOFT_TLS loft_free_site *loft_freed_at = 0;
+static LOFT_TLS uint32_t loft_nfreed_at = 0;
+
+/* Where the program is now: the innermost frame and the line it is at. */
+static loft_free_site loft_site_here(void) {
+    loft_free_site w = { 0, 0, 0 };
+    if (loft_nframes) {
+        const loft_frame *f = &loft_frames[loft_nframes - 1];
+        w.fn = f->fn;
+        w.file = f->file;
+        w.line = f->site ? f->site : f->decl;
+    }
+    return w;
+}
+
+static void loft_note_free(uint32_t nr) {
+    if (nr >= loft_nfreed_at) {
+        uint32_t n = loft_nfreed_at ? loft_nfreed_at * 2 : 64;
+        if (n <= nr) n = nr + 1;
+        loft_freed_at = (loft_free_site *) realloc(loft_freed_at, (size_t) n * sizeof *loft_freed_at);
+        if (!loft_freed_at) { fputs("loft: out of memory\n", stderr); abort(); }
+        memset(loft_freed_at + loft_nfreed_at, 0, (size_t) (n - loft_nfreed_at) * sizeof *loft_freed_at);
+        loft_nfreed_at = n;
+    }
+    loft_freed_at[nr] = loft_site_here();
+}
+
+/* The free that last released slot `nr`, or 0 when none was recorded. */
+static const loft_free_site *loft_freed_site(uint32_t nr) {
+    return nr < loft_nfreed_at && loft_freed_at[nr].fn ? &loft_freed_at[nr] : 0;
+}
+
+static int loft_same_site(const loft_free_site *a, const loft_free_site *b) {
+    return a && b && a->fn == b->fn && a->line == b->line;
+}
+#endif
+
 #ifdef LOFT_STRICT_STORES
 static uint64_t loft_strict_violations = 0;
 static LOFT_TLS uint32_t loft_strict_floor = 0;
@@ -1177,12 +1221,18 @@ static LOFT_COLD void loft_strict_use_after_free(loft_ref r) {
     uint64_t n = loft_strict_violations++;
     if (n < 20) {
         uint16_t kt = loft_stores[r.store_nr].known;
+        const loft_free_site *w = loft_freed_site(r.store_nr);
+        loft_free_site here = loft_site_here();
         fflush(stdout);
-        fprintf(stderr,
-                "[strict-store] USE AFTER FREE (access) store #%u type=%s rec=%u pos=%u\n"
-                "  killed by the free of `<not recorded>`\n"
-                "  (no bytecode positions \xe2\x80\x94 native run; re-run with --interpret for pcs)\n",
+        fprintf(stderr, "[strict-store] USE AFTER FREE (access) store #%u type=%s rec=%u pos=%u\n",
                 (unsigned) r.store_nr, kt < loft_ntn ? loft_tn[kt] : "?", (unsigned) r.rec, (unsigned) r.pos);
+        if (w)
+            fprintf(stderr, "  killed by the free in fn %s() at %s:%u\n", w->fn, w->file, (unsigned) w->line);
+        else
+            fputs("  killed by the free of `<not recorded>`\n", stderr);
+        if (here.fn)
+            fprintf(stderr, "  accessed now in fn %s() at %s:%u\n", here.fn, here.file, (unsigned) here.line);
+        fputs("  (no bytecode positions \xe2\x80\x94 native run; re-run with --interpret for pcs)\n", stderr);
     } else if (n == 20) {
         fputs("[strict-store] ... further use-after-free reports suppressed\n", stderr);
     }
@@ -1366,6 +1416,54 @@ static void loft_perrs_deliver_vector(loft_ref data, loft_ref to, int whole);
 
 /* OpDatabase: a fresh record of `bytes` in the variable's store, cleared in place, or in a
  * new store when the variable holds none. */
+/* `LOFT_DOUBLE_FREE` (`keys::double_free_audit`, `@FR-H-FreeTwice`): a CENSUS of tolerated
+ * re-frees, split by whether the freeing site is the one that freed the slot first, and of FREED
+ * slots made again through a reference that still names them (`loft_database`'s "a freed one
+ * too").  Neither is a defect count: a branch join frees once per arm, and a loop's work-ref is
+ * freed at the end of a pass and re-made at the next.  But a revival is also the one place a
+ * STALE reference re-initialises a slot another store may have taken since — which is why each
+ * different-site line names both sites.  Printed at exit (`loft_double_free_report`). */
+#ifdef LOFT_DOUBLE_FREE
+static uint64_t loft_df_same = 0, loft_df_other = 0, loft_df_revived = 0;
+
+static void loft_note_double_free(uint32_t nr) {
+    const loft_free_site *w = loft_freed_site(nr);
+    loft_free_site here = loft_site_here();
+    if (loft_same_site(w, &here)) {
+        loft_df_same++;
+        return;
+    }
+    if (loft_df_other++ < 20) {
+        fflush(stdout);
+        fprintf(stderr, "[double-free] store #%u freed again in fn %s() at %s:%u, first freed in fn %s() at %s:%u\n",
+                (unsigned) nr, here.fn ? here.fn : "?", here.file ? here.file : "?", (unsigned) here.line,
+                w ? w->fn : "?", w ? w->file : "?", w ? (unsigned) w->line : 0u);
+    }
+}
+
+static void loft_note_revival(uint32_t nr) {
+    const loft_free_site *w = loft_freed_site(nr);
+    loft_free_site here = loft_site_here();
+    if (loft_df_revived++ < 20) {
+        fflush(stdout);
+        fprintf(stderr, "[double-free] store #%u made again in fn %s() at %s:%u, freed in fn %s() at %s:%u\n",
+                (unsigned) nr, here.fn ? here.fn : "?", here.file ? here.file : "?", (unsigned) here.line,
+                w ? w->fn : "?", w ? w->file : "?", w ? (unsigned) w->line : 0u);
+    }
+}
+
+static void loft_double_free_report(void) {
+    fflush(stdout);
+    fprintf(stderr,
+            "[double-free] %llu re-free(s) of an already-free slot: %llu from a DIFFERENT site and %llu from the "
+            "SAME site; %llu freed slot(s) made again through a reference that still named them.  A census, not "
+            "a defect count: run with LOFT_STRICT_STORES too, so a freed slot is never handed to another store "
+            "and a stale reference meets the store it named.\n",
+            (unsigned long long) (loft_df_same + loft_df_other), (unsigned long long) loft_df_other,
+            (unsigned long long) loft_df_same, (unsigned long long) loft_df_revived);
+}
+#endif
+
 static void loft_database(loft_ref *var, uint32_t bytes) {
     uint32_t nr;
     uint32_t *kept = 0, nkept = 0;
@@ -1380,6 +1478,9 @@ static void loft_database(loft_ref *var, uint32_t bytes) {
          * which keeps its serial — its tombstones kept. */
         nr = var->store_nr;
         loft_store_t *s = &loft_stores[nr];
+#ifdef LOFT_DOUBLE_FREE
+        if (!s->live && !s->pinned) loft_note_revival(nr);
+#endif
 #ifdef LOFT_FOREIGN
         /* A store made again while it serves a view stops serving it. */
         if (!s->pinned) loft_st_release_foreign(s);
@@ -1585,6 +1686,9 @@ static void loft_free_ref(loft_ref r) {
     if (r.store_nr == 0xFFFF || r.store_nr >= loft_nstores) return;
     if (loft_sp_n && loft_slice_give(r.store_nr)) return;
     loft_store_t *s = &loft_stores[r.store_nr];
+#ifdef LOFT_DOUBLE_FREE
+    if (!s->pinned && !s->live) loft_note_double_free(r.store_nr);
+#endif
     /* `Stores::free_named`: a store already free stays as it is. */
     if (s->pinned || !s->live) return;
     /* `@FR-G-Arg-Rebind`: a store a live generator frame names is released when the frame is
@@ -1605,6 +1709,9 @@ static void loft_free_ref(loft_ref r) {
     }
     if (loft_release_file_leases_hook) loft_release_file_leases_hook(r.store_nr);
     s->live = 0;
+#if defined(LOFT_STRICT_STORES) || defined(LOFT_DOUBLE_FREE)
+    loft_note_free(r.store_nr);
+#endif
 #ifdef LOFT_STRICT_STORES
     /* `Stores::trim_free_top`, as the interpreter's strict mode keeps it: a freed TOP slot
      * lowers the floor, down past every dead slot under it, so the next store takes that
