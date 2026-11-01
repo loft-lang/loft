@@ -207,10 +207,17 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
                  · `assert(t, …)` proves t after it: a failed assert HALTS (operational.md)
                    and `assert` is checked in every build.  (`debug_assert`, which a release
                    would elide, proves nothing.)
+                 · `if t₁ || … || tₙ { S }`, with S as above, proves every ¬tᵢ after it: the
+                   fall-through is where each test failed;
+                 · the right operand of `t && b` runs only where t holds, and of `t || b`
+                   only where it fails: b reads with what `if t`'s then side, or its else
+                   side, proves.  `i < len(v) && v[i] > 0` needs no discharge.
                A test of one name proves it: `v != null`, a truthy `v`, or `v == null` /
                `!v` on the side where it fails; a compound condition proves nothing.  The same
                tests feed the other facts a guard proves — an index in bounds, a divisor not
-               zero, a math operand's sign (`(N-Domain)`) — with the same polarity.  The
+               zero, a math operand's sign (`(N-Domain)`) — with the same polarity.  An `||` of
+               such tests in a guard is a list of them, as above; any other compound proves
+               nothing.  The
                proof ends at the block's `}` and at any write to `v`.  Under
                `LOFT_DEV_SOFT_HALT` (opt-in log-and-continue for debugging) a failed assert
                continues, and the null it did not stop flows on as an un-narrowed one would.

@@ -1366,14 +1366,21 @@ impl Parser {
             // UNCONDITIONALLY divergent body with no else. A body that can fall through, a
             // `v != null` / truthy `v` guard (fall-through is the NULL case), or a compound
             // condition all correctly decline to narrow (they still warn).
+            // `@FR-N-Guard` — a guard whose test is an `||` of tests (`if a || p == null {
+            // return … }`) fails every one of them on the fall-through, so each disjunct proves
+            // its else side there: one test is the one-disjunct case.
             if let Value::If(test, true_code, false_code) = n.unspan()
                 && matches!(false_code.unspan(), Value::Null)
                 && let Value::Block(bl) = true_code.unspan()
                 && guard_cannot_fall_through(&self.data, &bl.operators)
-                && let Some((v, false)) = self.narrowing_from_condition(test)
-                && !self.narrowed_non_null.contains(&v)
             {
-                self.narrowed_non_null.push(v);
+                for d in disjuncts(test) {
+                    if let Some((v, false)) = self.narrowing_from_condition(d)
+                        && !self.narrowed_non_null.contains(&v)
+                    {
+                        self.narrowed_non_null.push(v);
+                    }
+                }
             }
             // The INDEX twin of the guard clause above, on the same three conditions — no else,
             // an unconditionally divergent body, and a condition that proves the fact on the
@@ -1388,11 +1395,13 @@ impl Parser {
                 && guard_cannot_fall_through(&self.data, &bl.operators)
             {
                 let caps = std::collections::HashMap::new();
-                for pair in
-                    crate::parser::operators::collect_guard_pairs_negated(test, &self.data, &caps)
-                {
-                    if !self.index_bounded.contains(&pair) {
-                        self.index_bounded.push(pair);
+                for d in disjuncts(test) {
+                    for pair in
+                        crate::parser::operators::collect_guard_pairs_negated(d, &self.data, &caps)
+                    {
+                        if !self.index_bounded.contains(&pair) {
+                            self.index_bounded.push(pair);
+                        }
                     }
                 }
                 // The DIVISOR twin, and the reason all three of these sit together: `if d == 0 {
@@ -1401,17 +1410,19 @@ impl Parser {
                 // side" for `d == 0` — with nothing consuming it on the fall-through.  Walking
                 // `@FR-N-Domain` as a RULE rather than as a site is what turned that up: one
                 // promise, three families, three sets of admissible spellings.
-                if let Some((v, false)) = self.divisor_proof_from_condition(test)
-                    && !self.divisor_nonzero.contains(&v)
-                {
-                    self.divisor_nonzero.push(v);
-                }
-                // …and the MATH twin: `if x < 0.0 { return … } … sqrt(x)` is the same guard
-                // clause one family over.
-                if let Some((v, sg, false)) = self.math_sign_proof_from_condition(test)
-                    && !self.math_sign_proven.iter().any(|(slot, _)| *slot == v)
-                {
-                    self.math_sign_proven.push((v, sg));
+                for d in disjuncts(test) {
+                    if let Some((v, false)) = self.divisor_proof_from_condition(d)
+                        && !self.divisor_nonzero.contains(&v)
+                    {
+                        self.divisor_nonzero.push(v);
+                    }
+                    // …and the MATH twin: `if x < 0.0 { return … } … sqrt(x)` is the same
+                    // guard clause one family over.
+                    if let Some((v, sg, false)) = self.math_sign_proof_from_condition(d)
+                        && !self.math_sign_proven.iter().any(|(slot, _)| *slot == v)
+                    {
+                        self.math_sign_proven.push((v, sg));
+                    }
                 }
             }
             // `@FR-N-Guard` — an `assert` proves its condition on the fall-through: a failed
@@ -5780,7 +5791,10 @@ impl Parser {
     /// from measurement: `if x { … }` proves nothing about a sign, an arm for the divisor twin
     /// was written and reverted the same hour, and eliding on it answered a silent null through
     /// a non-null slot.  A comparison against a zero LITERAL is the whole admissible set.
-    fn math_sign_proof_from_condition(&self, test: &Value) -> Option<(u16, super::Sign, bool)> {
+    pub(super) fn math_sign_proof_from_condition(
+        &self,
+        test: &Value,
+    ) -> Option<(u16, super::Sign, bool)> {
         let Value::Call(op, args) = test.unspan() else {
             return None;
         };
@@ -5828,7 +5842,7 @@ impl Parser {
 
     /// The `(subject, discriminant)` an `is` test proves: the lowering `parse_is_variant`
     /// gives a struct-enum subject, `OpEqInt(OpConvIntFromEnum(OpGetEnum(s, 0)), disc)`.
-    fn variant_proof_from_condition(&self, test: &Value) -> Option<(Value, i32)> {
+    pub(super) fn variant_proof_from_condition(&self, test: &Value) -> Option<(Value, i32)> {
         let Value::Call(eq, args) = test.unspan() else {
             return None;
         };
@@ -5853,7 +5867,7 @@ impl Parser {
         get_args.first().map(|s| (s.unspan().clone(), *disc))
     }
 
-    fn divisor_proof_from_condition(&self, test: &Value) -> Option<(u16, bool)> {
+    pub(super) fn divisor_proof_from_condition(&self, test: &Value) -> Option<(u16, bool)> {
         let Value::Call(op, args) = test.unspan() else {
             return None;
         };
@@ -25043,4 +25057,17 @@ pub(super) fn is_match_wrapper(name: &str) -> bool {
             | "stream match"
             | "cursor match"
     )
+}
+
+/// The tests an `||` chain is made of — `a || b` lowers to `if a { true } else { b }` — or the
+/// test itself: what a guard clause's fall-through proves false, one by one (`@FR-N-Guard`).
+fn disjuncts(test: &Value) -> Vec<&Value> {
+    match test.unspan() {
+        Value::If(a, t, b) if matches!(t.unspan(), Value::Boolean(true)) => {
+            let mut out = disjuncts(a);
+            out.extend(disjuncts(b));
+            out
+        }
+        _ => vec![test],
+    }
 }

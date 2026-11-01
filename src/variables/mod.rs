@@ -215,6 +215,9 @@ pub struct Variable {
     name: String,
     type_def: Type,
     source: (u32, u32),
+    /// The line of the first assignment that gave this variable a nullable value, or 0: what
+    /// a warning about the variable being `τ?` names as the place to change (WARNING_FIXES.md).
+    nullable_line: u32,
     scope: u16,
     stack_pos: u16,
     uses: u16,
@@ -1067,6 +1070,7 @@ impl Function {
                 target_mentions: 0,
                 incoming_reported: false,
                 write_source: (0, 0),
+                nullable_line: 0,
                 defined: false,
                 const_binding: false,
                 amp_link: false,
@@ -3046,6 +3050,7 @@ impl Function {
             user_appended: false,
             copy_bound: false,
             write_source: (0, 0),
+            nullable_line: 0,
             argument: false,
             defined: false,
             const_binding: false,
@@ -3110,6 +3115,7 @@ impl Function {
             amp_linked_by: u16::MAX,
             amp_linked_many: false,
             write_source: (0, 0),
+            nullable_line: 0,
             argument: false,
             defined: self.variables[var as usize].defined,
             const_binding: self.variables[var as usize].const_binding,
@@ -3165,6 +3171,7 @@ impl Function {
             user_appended: false,
             copy_bound: false,
             write_source: (0, 0),
+            nullable_line: 0,
             argument: false,
             defined: false,
             const_binding: false,
@@ -3216,6 +3223,7 @@ impl Function {
             user_appended: false,
             copy_bound: false,
             write_source: (0, 0),
+            nullable_line: 0,
             argument: false,
             defined: true,
             const_binding: false,
@@ -3356,6 +3364,11 @@ impl Function {
         // type `Foo`) panics here instead of being diagnosed.
         if var_nr == u16::MAX || (var_nr as usize) >= self.variables.len() {
             return false;
+        }
+        if self.variables[var_nr as usize].nullable_line == 0
+            && matches!(type_def, Type::Optional(_))
+        {
+            self.variables[var_nr as usize].nullable_line = lexer.at().0;
         }
         let var_tp = &self.variables[var_nr as usize].type_def;
         // `_` is the universal unused variable — allow type changes silently.
@@ -6058,6 +6071,14 @@ impl Function {
     }
 
     #[track_caller]
+    /// The line of the first assignment that gave `var_nr` a nullable value, or 0.
+    #[must_use]
+    pub fn nullable_line(&self, var_nr: u16) -> u32 {
+        self.variables
+            .get(var_nr as usize)
+            .map_or(0, |v| v.nullable_line)
+    }
+
     pub fn set_type(&mut self, var_nr: u16, tp: Type) {
         self.trace_type_change(var_nr, &tp, "set_type");
         self.variables[var_nr as usize].type_def = tp;

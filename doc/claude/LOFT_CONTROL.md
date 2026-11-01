@@ -85,7 +85,7 @@ Inside a loop, the iteration variable supports several attributes using `#`:
 |-----------|----------|----------|---------|--------|
 | `#first`  | ✓        | ✓        | ✓       | ✓ (key order) |
 | `#count`  | ✓        | ✓        | ✓       | ✓ |
-| `#index`  | ✓ (0-based) | ✓ (0-based array position) | ✗ compile error | ✓ (0-based position in key order) |
+| `#index`  | ✓ (0-based; over a slice `v[a..b]` or `rev(…)`, the position in `v`) | ✓ (0-based array position) | ✗ compile error | ✓ (0-based position in key order) |
 | `#remove` | ✓ (filtered) | ✓ (filtered) | ✓ (filtered) | use `h[key] = null` |
 
 **Gotcha — `#index` does not mean the same thing on text and vector.** On a text
