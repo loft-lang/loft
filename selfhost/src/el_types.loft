@@ -189,7 +189,7 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
   match e.p.nodes[n] {
     STy { name, member, args, keys, deps, limit, not_null, assoc, nullable } => {
       if member != "" || len(args) > 0 || len(keys) > 0 || len(deps) > 0 || limit != null || not_null || assoc != "" {
-        el::refuse(e, "a type with arguments, keys, a limit or a member");
+        el::refuse(e, "a type with arguments, keys, a limit or a member: {name}");
         return null;
       }
       d = el::def_nr(e, name);
