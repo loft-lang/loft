@@ -161,6 +161,13 @@ enum Code {
   // A stored reference written (`OpSetDbRef`) and read (`OpGetDbRef`): `a` the field.
   SetDbRef,
   GetDbRef,
+  // `OpNarrow32`: an integer kept where it fits 32 bits, else null.
+  Narrow32,
+  // `OpReserveVector` (`a` the element size), `OpReserveHash` (`a` the type), `OpPrependVector`
+  // (`a` the element type, `b` 1 for a linked one).
+  VecReserve,
+  HashReserve,
+  VecPrepend,
   FloatFromText,
   // `pow` and `OpMathFunc2Float` (`a` 0 `atan2`, 1 `log`) on two floats: loft's own.
   Pow,
@@ -672,6 +679,8 @@ fn operator_op(name: text) -> Op? {
     "OpCastFloatFromText" => Op { code: FloatFromText, kind: KText, a: 0, b: 0 },
     "OpPowFloat" => Op { code: Pow, kind: KFloat, a: 0, b: 0 },
     "OpPowSingle" => Op { code: Pow, kind: KSingle, a: 0, b: 0 },
+    "OpPowInt" => Op { code: Pow, kind: KInt, a: 0, b: 0 },
+    "OpNarrow32" => Op { code: Narrow32, kind: KInt, a: 0, b: 0 },
     "OpPrint" => Op { code: Print, kind: KText, a: 0, b: 0 },
     _ => null,
   }
@@ -773,6 +782,10 @@ fn effect(code: Code, b: integer) -> integer {
     ArrayGet => -1,
     SetDbRef => -2,
     GetDbRef => 0,
+    Narrow32 => 0,
+    VecReserve => -2,
+    HashReserve => -2,
+    VecPrepend => -1,
     FloatFromText => 0,
     VecReverse => -1,
     VecKeep => -3,
@@ -1563,6 +1576,25 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
   } else if name == "OpSizeHash" {
     value(l, b, args[0]!, KRef);
     emit(l, HashBytes, KInt, 0, 0);
+  } else if name == "OpSizeStruct" {
+    // A record's size: the constant the parser filled in, its reference evaluated and dropped.
+    value(l, b, args[0]!, KRef);
+    emit(l, Pop, KRef, 0, 0);
+    emit(l, PushInt, KInt, literal(l, args[1]!), 0);
+  } else if name == "OpReserveVector" {
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KInt);
+    emit(l, VecReserve, KRef, literal(l, args[2]!), 0);
+  } else if name == "OpReserveHash" {
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KInt);
+    emit(l, HashReserve, KRef, literal(l, args[2]!), 0);
+  } else if name == "OpPrependVector" {
+    // `v.insert(0, …)` of a whole vector: `a` the element type, `b` 1 for a linked one.
+    tp = literal(l, args[2]!);
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KRef);
+    emit(l, VecPrepend, KInt, tp, if b.types[tp]?.linked ?? false { 1 } else { 0 });
   } else if name == "OpSetDbRef" {
     // A stored reference (`reference<T>`, @C91) written into a field: `a` the field.
     value(l, b, args[0]!, KRef);

@@ -205,6 +205,19 @@ fn worded(n: integer) -> integer {
   s + n * 10000000
 }
 
+// Two appends into a fresh vector bound back over the second (the census carries the prepend
+// rewrite this spelling can take); an integer power (`OpPowInt`, in the stdlib's `pow`).  grown(4): r = [7, 8, 9, 4, 5] → 5 * 1000 + 7 * 100 + r[3] 4 =
+// 5704, and 4 ** 3 = 64 → 640000: 645704.  grown(2): 5702 + 80000 = 85702.
+fn grown(n: integer) -> integer {
+  r: vector<integer> = [n, n + 1];
+  g: vector<integer> = [7, 8, 9];
+  t: vector<integer> = [];
+  t += g;
+  t += r;
+  r = t;
+  len(r) * 1000 + r[0] * 100 + r[3] + (n.pow(3) ?? 0) * 10000
+}
+
 fn main() {
-  println("{hue_number(0)} {hue_number(1)} {hue_number(2)} {div_or(7, 2)} {div_or(7, 0)} {rem_or(7, 3)} {rem_or(7, 0)} {abs_floats(-6)} {abs_floats(6)} {char_or_zero(0)} {char_or_zero(233)} {narrow(200)} {narrow(300)} {narrow_or_null(200)} {narrow_or_null(300)} {ops_or(7, 2)} {ops_or(-1, 2)} {enum_named(1)} {enum_named(2)} {text_walk(0)} {text_walk(1)} {affixed(3)} {affixed(5)} {tail_sum(100000)} {tail_sum(0)} {scalars(3)} {scalars(5)} {texted(3)} {texted(4)} {narrowed(3)} {narrowed(-5)} {clocked(4)} {worded(3)} {worded(0)}");
+  println("{hue_number(0)} {hue_number(1)} {hue_number(2)} {div_or(7, 2)} {div_or(7, 0)} {rem_or(7, 3)} {rem_or(7, 0)} {abs_floats(-6)} {abs_floats(6)} {char_or_zero(0)} {char_or_zero(233)} {narrow(200)} {narrow(300)} {narrow_or_null(200)} {narrow_or_null(300)} {ops_or(7, 2)} {ops_or(-1, 2)} {enum_named(1)} {enum_named(2)} {text_walk(0)} {text_walk(1)} {affixed(3)} {affixed(5)} {tail_sum(100000)} {tail_sum(0)} {scalars(3)} {scalars(5)} {texted(3)} {texted(4)} {narrowed(3)} {narrowed(-5)} {clocked(4)} {worded(3)} {worded(0)} {grown(4)} {grown(2)}");
 }

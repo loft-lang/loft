@@ -47,8 +47,9 @@ strict comparison over every program the census passes (out, alloc, leak, binds,
 | `OpAppendVector` of a linked element type | `loft_vec_add_array`, each id's record copied into one of the destination's own | `vectors.loft` `linked_ids` |
 | natives `n_now`, `n_ticks`, `n_panic` | loft's own (natives 12–14; `panic` handed the program's file and line, as `assert` is) | `small_ops.loft` `clocked`; the census for `panic` |
 | natives `split`, `join`, `trim*`, `replace`, `rfind`, `contains`, the character and text classes (15–36) | loft's own; `split` writes the caller's vector buffer step for step as the compiled body does (emptied or made, then per part a slot reserved, appended, set, counted), `join` reads the store vector's texts | `small_ops.loft` `worded` |
+| `OpPowInt`, `OpNarrow32`, `OpSizeStruct`, `OpReserveVector`, `OpReserveHash`, `OpPrependVector` | loft's own `pow`, the 32-bit range kept, the parser's constant; `loft_vec_reserve`, `loft_hash_reserve`, `loft_vec_prepend` (the element's linked flag beside it) | `small_ops.loft` `grown`, `stdlib.loft` `uses_pow`; the census for the reserves and the prepend rewrite |
 
-**Measured** (2026-10-31): the census went from 297 to 618 programs passed over these rows,
+**Measured** (2026-10-31): the census went from 297 to 623 programs passed over these rows,
 none wrong, crashed or leaking, and every passing program equal to the Rust interpreter in
 every layer.
 
