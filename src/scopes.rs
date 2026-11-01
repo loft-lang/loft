@@ -558,6 +558,9 @@ struct Scopes<'s> {
     /// VARIABLE flag both backends read at ALLOCATION time too, so stamping it here made
     /// the lift borrow instead of own and the append wrote into its own source.
     free_transferred: HashSet<u16>,
+    /// loft#2319 — the same temps in the order this pass met them, so the call that consumes
+    /// one can read it back as null after itself (`scan_args`' postamble).
+    consumed_lifts: Vec<u16>,
     /// loft#854 — the whole-function half of the ownership oracle, computed once
     /// for `d_nr` instead of once per question.
     ///
