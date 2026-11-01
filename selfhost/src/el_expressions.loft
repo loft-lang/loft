@@ -1229,7 +1229,22 @@ fn vector_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared:
     SVecLit { items: its } => { items = its; },
     _ => {}
   }
-  elm = el_vars::create_unique(vars, "elm", ir::TyUnknown { n: 0 });
+  // An empty `[]` into a local returns before `unique_elm_var`; otherwise the element local is
+  // typed as a record of the destination's content (definition 0 while that is unknown, as on a
+  // first bind's first pass), borrowing the destination.
+  elm = -1;
+  if len(items) > 0 {
+    content = 0;
+    match el_vars::tp(vars, v) {
+      TyVector { inner } => {
+        if !el_types::is_unknown(inner) {
+          content = type_def_nr(e, inner);
+        }
+      },
+      _ => {}
+    }
+    elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: content, dep: [v] });
+  }
   xs: vector<Ex> = [];
   for it in items {
     if e.p.nodes[it] is SRepeat {
