@@ -38,9 +38,13 @@ def build(loft, src, out, env):
 
 
 def one(loft, defs, elab, path, tmp, env, i):
-    """(verdict, detail): `agree`, `noimage` (the Rust front end refused it), `differ` (the
+    """(verdict, detail): `agree`, `noimage` (the Rust front end refuses it, or the program
+    says it expects a refusal), `differ` (the
     first differing line) or `refused` (the reasons)."""
     img = os.path.join(tmp, f"p{i}.store")
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        if "@EXPECT_ERROR" in fh.read():
+            return "noimage", ""
     try:
         r = subprocess.run([loft, path], env=dict(env, LOFT_EMIT_PARSED=img),
                            capture_output=True, timeout=180)
