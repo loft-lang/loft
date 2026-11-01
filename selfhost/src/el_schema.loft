@@ -1,0 +1,303 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The store schema a file's definitions register (src/typedef.rs `fill_all` / `fill_database`,
+// src/database/types.rs `Stores::structure` / `field` / `finish_type`, src/calc.rs
+// `calculate_positions`), over the image's `types`.  A type's number is its position in that
+// table, so registering in the Rust order is what makes the numbers agree.  What a struct field
+// needs beyond a scalar, a text or an already laid-out record is refused by name.
+use ir;
+use el;
+
+// One field's storage, as `finish_type` collects it.
+pub struct SizeAlign {
+  pub size: integer,
+  pub align: integer
+}
+
+pub struct Layout {
+  pub positions: vector<integer>,
+  pub size: integer,
+  pub align: integer
+}
+
+struct Gap {
+  pos: integer,
+  size: integer
+}
+
+pub const NO_TYPE = 65535;
+
+// `typedef::fill_all`, the part a plain struct reaches: every struct the file declared that has
+// no type number yet is registered, in definition order, then the schema is finished.
+pub fn fill_all(e: el::El) {
+  for d in e.b.data.definitions {
+    if d.def_type == el::DT_STRUCT && d.known_type == NO_TYPE {
+      fill_database(e, d#index);
+    }
+  }
+  finish(e);
+}
+
+// `typedef::fill_database` for a plain struct: a schema type under the struct's name, each
+// stored attribute a field of its content type, in declaration order.
+fn fill_database(e: el::El, d: integer) {
+  def = el::def(e, d);
+  if schema_type(e, def.name) >= 0 {
+    el::refuse(e, "a struct named like a type the schema already has");
+    return;
+  }
+  contents: vector<integer> = [];
+  for a in def.attributes {
+    if a.constant {
+      continue;
+    }
+    c = content_type(e, a.typedef[0] ?? ir::TyUnknown { n: 0 });
+    if c < 0 {
+      el::refuse(e, "a struct field of this type");
+      return;
+    }
+    contents += [c];
+  }
+  s = structure(e, def.name);
+  e.b.data.definitions[d].known_type = s;
+  i = 0;
+  for a in def.attributes {
+    if a.constant {
+      continue;
+    }
+    f = field(e, s, a.name, contents[i] ?? 0);
+    if a.nullable {
+      set_field_nullable(e, s, f);
+    }
+    i += 1;
+  }
+}
+
+// The schema type a field of type `t` stores, or -1: a plain `integer` stores `integer`'s
+// 8 bytes, a text, a boolean, a float, a single and a character store their own definitions'
+// types, a record its struct's.
+fn content_type(e: el::El, t: ir::TypeT) -> integer {
+  match t {
+    TyInteger { spec } => {
+      if spec.forced_size != 0 {
+        return -1;
+      }
+      schema_type(e, "integer")
+    },
+    TyText { dep: _ } => known(e, "text"),
+    TyBoolean => known(e, "boolean"),
+    TyFloat => known(e, "float"),
+    TySingle => known(e, "single"),
+    TyCharacter => known(e, "character"),
+    TyReference { n } => {
+      k = el::def(e, n).known_type;
+      if k == NO_TYPE || el::def(e, n).def_type != el::DT_STRUCT { -1 } else { k }
+    },
+    _ => -1
+  }
+}
+
+fn known(e: el::El, name: text) -> integer {
+  d = el::def_nr(e, name);
+  if d < 0 { -1 } else { el::def(e, d).known_type }
+}
+
+// `Stores::names`: the schema type of that name, or -1.
+pub fn schema_type(e: el::El, name: text) -> integer {
+  for t in e.b.types {
+    if t.name == name {
+      return t#index;
+    }
+  }
+  -1
+}
+
+// `Stores::structure`: a new struct type, not yet sized (`u16::MAX`), its number its position.
+fn structure(e: el::El, name: text) -> integer {
+  num = len(e.b.types);
+  e.b.types += [ir::DbType {
+    name: name,
+    parts: [ir::PtStruct { fields: [] }],
+    keys: [],
+    complex: false,
+    linked: false,
+    size: NO_TYPE,
+    align: 255,
+    field_groups: []
+  }];
+  num
+}
+
+// `Stores::field`, for a field that joins no group: appended unplaced; the struct becomes
+// complex past eight fields or with a record field.
+fn field(e: el::El, s: integer, name: text, content: integer) -> integer {
+  fields = struct_fields(e, s);
+  num = len(fields);
+  fields += [ir::DbField {
+    name: name,
+    content: content,
+    position: NO_TYPE,
+    default: [],
+    other_indexes: [],
+    nullable: false,
+    target: NO_TYPE
+  }];
+  e.b.types[s].parts = [ir::PtStruct { fields: fields }];
+  ct = e.b.types[content];
+  if num > 8 || ct.complex || is_record(ct) {
+    e.b.types[s].complex = true;
+  }
+  num
+}
+
+fn set_field_nullable(e: el::El, s: integer, f: integer) {
+  fields = struct_fields(e, s);
+  fields[f].nullable = true;
+  e.b.types[s].parts = [ir::PtStruct { fields: fields }];
+}
+
+fn struct_fields(e: el::El, s: integer) -> vector<ir::DbField> {
+  r: vector<ir::DbField> = [];
+  match e.b.types[s].parts[0] ?? ir::PtBase {
+    PtStruct { fields } => { r = fields; },
+    _ => {}
+  }
+  r
+}
+
+fn is_record(t: ir::DbType) -> boolean {
+  match t.parts[0] ?? ir::PtBase {
+    PtStruct { fields: _ } => true,
+    PtEnumValue { value: _ } => true,
+    _ => false
+  }
+}
+
+// `Stores::finish`, for the struct types: every one not sized yet is laid out.
+fn finish(e: el::El) {
+  for t in e.b.types {
+    if t.size == NO_TYPE && is_record(t) {
+      finish_type(e, t#index);
+    }
+  }
+}
+
+// `Stores::finish_type` for a struct without linked groups: its fields' contents first, then
+// the fields placed by `calculate_positions` from each content's size and alignment.
+fn finish_type(e: el::El, t: integer) {
+  if e.b.types[t].size != NO_TYPE {
+    return;
+  }
+  fields = struct_fields(e, t);
+  sizes: vector<SizeAlign> = [];
+  for f in fields {
+    if e.b.types[f.content].size == NO_TYPE && f.content != t {
+      finish_type(e, f.content);
+    }
+    sizes += [SizeAlign { size: e.b.types[f.content].size, align: e.b.types[f.content].align }];
+  }
+  size = 0;
+  align = 0;
+  if len(fields) > 0 {
+    l = calculate_positions(sizes, fields[0].name == "enum");
+    for f in fields {
+      fields[f#index].position = l.positions[f#index] ?? 0;
+    }
+    size = l.size;
+    align = l.align;
+  }
+  e.b.types[t].parts = [ir::PtStruct { fields: fields }];
+  e.b.types[t].size = size;
+  e.b.types[t].align = align;
+}
+
+// `calc::calculate_positions`: the fields placed by descending alignment (8, 4, 2, 1), each in
+// the first gap that holds it — its back end when the gap is wider — or after what is placed,
+// skipping to its alignment and keeping the skipped bytes as a gap.  `sub` keeps the first
+// byte for a variant's tag.  The size is rounded up to the alignment.
+pub fn calculate_positions(fields: vector<SizeAlign>, sub: boolean) -> Layout {
+  gaps: vector<Gap> = [];
+  positions: vector<integer> = [for _ in fields { -1 }];
+  pos = 0;
+  size = 0;
+  align = 0;
+  if sub {
+    pos = 8;
+    positions[0] = 0;
+    gaps = [Gap { pos: 1, size: 7 }];
+    size = 1;
+  }
+  for al in [8, 4, 2, 1] {
+    for f in fields {
+      nr = f#index;
+      if sub && nr == 0 {
+        continue;
+      }
+      if f.align != al {
+        continue;
+      }
+      if al > align {
+        align = al;
+      }
+      first = 0;
+      first_size = 0;
+      gi = -1;
+      for g in gaps {
+        if g.size >= f.size {
+          first = g.pos;
+          first_size = g.size;
+          gi = g#index;
+          break;
+        }
+      }
+      if gi >= 0 && first_size == f.size {
+        gaps = without(gaps, gi);
+        positions[nr] = first;
+        if size < first + f.size {
+          size = first + f.size;
+        }
+      } else if gi >= 0 && first_size > f.size {
+        new_size = first_size - f.size;
+        gaps[gi].size = new_size;
+        positions[nr] = first + new_size;
+        if size < first + new_size + f.size {
+          size = first + new_size + f.size;
+        }
+      } else {
+        aligned = (pos + al - 1) / al * al;
+        if aligned > pos {
+          gaps = with_gap(gaps, Gap { pos: pos, size: aligned - pos });
+          pos = aligned;
+        }
+        positions[nr] = pos;
+        pos += f.size;
+        size = pos;
+      }
+    }
+  }
+  a = if align < 1 { 1 } else { align };
+  size = (size + a - 1) / a * a;
+  Layout { positions: [for p in positions if p >= 0 { p }], size: size, align: align }
+}
+
+fn without(gaps: vector<Gap>, i: integer) -> vector<Gap> {
+  [for g in gaps if g#index != i { g }]
+}
+
+// A gap kept in position order, as the Rust `BTreeMap` keeps it.
+fn with_gap(gaps: vector<Gap>, n: Gap) -> vector<Gap> {
+  r: vector<Gap> = [];
+  placed = false;
+  for g in gaps {
+    if !placed && n.pos < g.pos {
+      r += [n];
+      placed = true;
+    }
+    r += [g];
+  }
+  if !placed {
+    r += [n];
+  }
+  r
+}

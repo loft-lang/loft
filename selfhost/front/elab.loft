@@ -19,7 +19,7 @@ fn main() {
     return;
   }
   if files[0].ends_with(".store") {
-    program(files[0], files[1] ?? "");
+    program(files[0], files[1] ?? "", files[2] ?? "");
     return;
   }
   stdlib(files);
@@ -28,7 +28,7 @@ fn main() {
 // `elab <image> <program>`: the program's definitions, elaborated over the standard library
 // the image holds (its source-0 definitions), both passes, as the Rust warm start parses a
 // program over the startup cache.
-fn program(image: text, f: text) {
+fn program(image: text, f: text, std_image: text) {
   base = load::load(image);
   if base == null {
     eprintln("no image at {image}");
@@ -43,7 +43,18 @@ fn program(image: text, f: text) {
   }
   e = el::new_el(p, f, false);
   upto = el::std_count(base!);
-  el::load_base(e, base!, upto);
+  // The standard library's types are those an empty program's image holds (`elab <image>
+  // <program> <empty image>`); the program registers its own after them.
+  types_upto = el::type_count(base!);
+  if len(std_image) > 0 {
+    std = load::load(std_image);
+    if std == null {
+      eprintln("no image at {std_image}");
+      exit(2);
+    }
+    types_upto = el::type_count(std!);
+  }
+  el::load_base(e, base!, upto, types_upto);
   e.source = el::MAIN_SOURCE;
   e.first_pass = true;
   e.line = 0;

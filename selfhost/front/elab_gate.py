@@ -37,7 +37,7 @@ def build(loft, src, out, env):
     return exe
 
 
-def one(loft, defs, elab, path, tmp, env, i):
+def one(loft, defs, elab, std, path, tmp, env, i):
     """(verdict, detail): `agree`, `noimage` (the Rust front end refuses it, or the program
     says it expects a refusal), `differ` (the
     first differing line) or `refused` (the reasons)."""
@@ -52,7 +52,7 @@ def one(loft, defs, elab, path, tmp, env, i):
             return "noimage", ""
         o = subprocess.run([defs, img, "program"], env=env, capture_output=True, text=True,
                            errors="replace", timeout=300)
-        m = subprocess.run([elab, img, path], env=env, capture_output=True, text=True,
+        m = subprocess.run([elab, img, path, std], env=env, capture_output=True, text=True,
                            errors="replace", timeout=300)
     except subprocess.TimeoutExpired:
         return "differ", "timed out"
@@ -98,13 +98,22 @@ def main():
         todo = [(part, os.path.abspath(f)) for part in parts for f in files[part]]
     tmp = tempfile.mkdtemp(prefix="loft-elab-", dir=os.environ.get("TMPDIR"))
     sh = os.path.join(root, "selfhost")
+    # The standard library's store types: what an empty program's image holds.
+    empty = os.path.join(tmp, "empty.loft")
+    with open(empty, "w", encoding="utf-8") as fh:
+        fh.write("fn main() {}\n")
+    std = os.path.join(tmp, "std.store")
+    subprocess.run([loft, empty], env=dict(env, LOFT_EMIT_PARSED=std), capture_output=True,
+                   timeout=180)
+    if not os.path.exists(std):
+        sys.exit("the empty program wrote no image")
     defs = build(loft, os.path.join(sh, "compare", "defs.loft"), os.path.join(tmp, "defs"), env)
     elab = build(loft, os.path.join(sh, "front", "elab.loft"), os.path.join(tmp, "elab"), env)
     per = collections.defaultdict(collections.Counter)
     reasons = collections.Counter()
     differs = []
     with cf.ThreadPoolExecutor(o.jobs) as ex:
-        futs = {ex.submit(one, loft, defs, elab, f, tmp, env, i): (part, f)
+        futs = {ex.submit(one, loft, defs, elab, std, f, tmp, env, i): (part, f)
                 for i, (part, f) in enumerate(todo)}
         for fut in cf.as_completed(futs):
             part, f = futs[fut]
