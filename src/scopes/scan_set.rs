@@ -922,7 +922,18 @@ impl Scopes<'_> {
         }
         // remember the scope of the variable
         let mut depend = Vec::new();
-        for d in function.tp(v).depend() {
+        // @FR-O-Borrow — a borrower must not outlive its source, and the source's source is a
+        // source too: a dep reserved here for `v` reserves ITS deps as well, or the owner at the
+        // end of the chain keeps the inner scope it was first assigned in and is freed at that
+        // scope's exit while `v` still reads through the chain (`ops = block[0].operators` for
+        // a `match` capture `block` of a call's result: `ops` → `_mv_block` → `_match_subj`).
+        let mut pending: Vec<u16> = function.tp(v).depend().clone();
+        let mut seen: Vec<u16> = Vec::new();
+        while let Some(d) = pending.pop() {
+            if seen.contains(&d) {
+                continue;
+            }
+            seen.push(d);
             // Skip deps that reference variables from another function's scope
             // (e.g., closure work vars embedded in a fn-ref return type).
             if d >= function.count() {
@@ -958,6 +969,7 @@ impl Scopes<'_> {
                 depend.push(d);
                 self.put_scope(d);
                 self.var_order.push(d);
+                pending.extend(function.tp(d).depend());
             }
         }
         let first_binding = !self.var_scope.contains_key(&v);
