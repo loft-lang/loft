@@ -267,6 +267,12 @@ impl Parser {
         if def.name() == "n_main" || def.is_corpus_entry_point() {
             return Some("an entry point");
         }
+        // A hook is called by the drop and copy sites the scope pass places after this, with
+        // the record alone (`Data::drop_hook_nr`, `lease::copy_hook_nr`): no caller there takes a
+        // buffer, so a hidden parameter would be one argument short (loft#2320).
+        if self.data.is_drop_function(d) || def.name().ends_with("_OpCopy") {
+            return Some("a drop or copy hook");
+        }
         if def.name().starts_with("n___lambda_") {
             return Some("a lambda");
         }

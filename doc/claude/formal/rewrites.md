@@ -3933,7 +3933,9 @@ declines — which is how the condition is falsified rather than asserted.  Swit
                  store the native emitter already keeps across the passes with a length
                  reset (R-LoopBuffer) cheaper than a clear, and whose invariant literal the
                  literal hoist builds once (R-LitHoist); a local written and never read, the
-                 dead-store lint's subject; an ENTRY POINT, which no caller hands a buffer;
+                 dead-store lint's subject; an ENTRY POINT, which no caller hands a buffer,
+                 and a HOOK (`OpDrop`, the cascade that calls it, `OpCopy`), whose calls the
+                 scope pass places after the rewrite with the record alone;
                  a local numbered before an argument in a function whose RETURN TYPE
                  carries deps — the swap that puts it after the arguments renumbers frame
                  numbers, and those deps are attribute-space (the debug-assertions gate
