@@ -48,6 +48,23 @@ fn named(n: integer) -> integer {
   label(t) * 100 + label(u) + len("{t.0}{u.0}") * 10000
 }
 
+// Reference members (a record, a vector): built by a call, handed to a tuple parameter, a member's
+// field written, a member read, the tuple destructured.  held(4): (Pt{4, 8}, [4, 5]) weighs
+// 4 + 8 + 2 * 100 = 212 → 212000; x set to 50, plus v[1] = 5 → 55 * 10; b's length 2: 212552.
+// held(0): 200000 + 51 * 10 + 2 = 200512.
+struct Pt { x: integer, y: integer }
+fn mk_pair(n: integer) -> (Pt, vector<integer>) { (Pt { x: n, y: n * 2 }, [n, n + 1]) }
+fn weigh(p: (Pt, vector<integer>)) -> integer { p.0.x + p.0.y + len(p.1) * 100 }
+fn held(n: integer) -> integer {
+  t = mk_pair(n);
+  s = weigh(t);
+  t.0.x = 50;
+  v = t.1;
+  s2 = t.0.x + v[1];
+  (a, b) = t;
+  s * 1000 + s2 * 10 + len(b) + a.y - a.y
+}
+
 fn main() {
-  println("{tuples(4)} {named(4)}");
+  println("{tuples(4)} {named(4)} {held(4)} {held(0)}");
 }

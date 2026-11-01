@@ -162,6 +162,26 @@ fn texted(n: integer) -> integer {
   s + len(buf) * 1000000000000
 }
 
+// `@FR-L-Narrow-Linked`: a narrow local a `&` names holds its FIELD encoding, and a link reads it
+// as a field.  An `i8` (signed), a `limit(1000, 1100)` (biased) and a `u8?` (a code for null):
+// narrowed(3): a = -1 - 3 = -4 → (a + 200) * 100000 = 19600000; b bumped twice through a `&`
+// parameter, 1052 → 52 * 10; c nulled through its link → 1: 19600521.  narrowed(-5): a = 4,
+// 20400521.
+type Lim = integer limit(1000, 1100);
+fn bump(p: &Lim) { p += 1; }
+fn narrowed(n: integer) -> integer {
+  a: i8 = -1;
+  ra = &a;
+  ra = (ra - n) ?? 0;
+  b: Lim = 1050;
+  bump(b);
+  bump(b);
+  c: u8? = 7;
+  rc = &c;
+  rc = null;
+  (a + 200) * 100000 + (b - 1000) * 10 + (if c == null { 1 } else { 0 })
+}
+
 fn main() {
-  println("{hue_number(0)} {hue_number(1)} {hue_number(2)} {div_or(7, 2)} {div_or(7, 0)} {rem_or(7, 3)} {rem_or(7, 0)} {abs_floats(-6)} {abs_floats(6)} {char_or_zero(0)} {char_or_zero(233)} {narrow(200)} {narrow(300)} {narrow_or_null(200)} {narrow_or_null(300)} {ops_or(7, 2)} {ops_or(-1, 2)} {enum_named(1)} {enum_named(2)} {text_walk(0)} {text_walk(1)} {affixed(3)} {affixed(5)} {tail_sum(100000)} {tail_sum(0)} {scalars(3)} {scalars(5)} {texted(3)} {texted(4)}");
+  println("{hue_number(0)} {hue_number(1)} {hue_number(2)} {div_or(7, 2)} {div_or(7, 0)} {rem_or(7, 3)} {rem_or(7, 0)} {abs_floats(-6)} {abs_floats(6)} {char_or_zero(0)} {char_or_zero(233)} {narrow(200)} {narrow(300)} {narrow_or_null(200)} {narrow_or_null(300)} {ops_or(7, 2)} {ops_or(-1, 2)} {enum_named(1)} {enum_named(2)} {text_walk(0)} {text_walk(1)} {affixed(3)} {affixed(5)} {tail_sum(100000)} {tail_sum(0)} {scalars(3)} {scalars(5)} {texted(3)} {texted(4)} {narrowed(3)} {narrowed(-5)}");
 }
