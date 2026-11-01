@@ -236,10 +236,8 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
         return null;
       }
       t = el::def(e, d).returned[0] ?? ir::TyUnknown { n: d };
-      if nullable {
-        el::refuse(e, "a nullable type");
-      }
-      t
+      // `T?`: the optional former over the base.
+      if nullable { ir::TyOptional { inner: t } } else { t }
     },
     _ => {
       el::refuse(e, "a tuple or function type");
