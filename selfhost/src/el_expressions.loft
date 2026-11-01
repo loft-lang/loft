@@ -216,6 +216,8 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SBin { at, op, l, r } => binary(e, vars, at, op, l, r),
     SUnary { op, e: ue } => unary(e, vars, op, ue),
     SIf { cond, then, other } => if_expr(e, vars, cond, then, other),
+    SFor { binds, source, par, filter, body } => for_expr(e, vars, binds, source, par, filter, body),
+    SJump { kind, e: je } => jump(e, kind, je),
     SIndex { at, e: ie, keys, range, hi, limit, spatial } => index(e, vars, at, ie, keys, range || len(hi) > 0 || limit != null || spatial),
     SParen { e: pe } => if pe == null { ex(ir::NdNull, ir::TyUnknown { n: 0 }) } else { expression(e, vars, pe!) },
     _ => {
@@ -1061,6 +1063,10 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   t = parse_block(e, vars, then, "if", ir::TyUnknown { n: 0 });
+  if other == null && t.tp is TyNever {
+    // A then arm that only jumps, with nothing after it: a statement.
+    return ex(el_ir::v_if(c.code, t.code, ir::NdNull), ir::TyVoid);
+  }
   if t.tp is TyNever || t.tp is TyNull {
     el::refuse(e, "an `if` arm that never finishes or is null");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -1135,6 +1141,168 @@ fn text_arm_into(c: integer, arm: ir::Node) -> ir::Node? {
     NdIf { cond: _ } => text_arms_into(c, arm),
     _ => null
   }
+}
+
+// ── loops (src/parser/collections.rs `parse_for`, `iterator`; objects.rs `parse_in_range_body`) ──
+
+// `break` and `continue` leave or restart the innermost loop (`Break(0)`, `Continue(0)`), typed
+// as never finishing.  A `break` with a value and a `return` are refused by name.
+fn jump(e: el::El, kind: text, x: integer?) -> Ex {
+  if kind == "break" && x == null {
+    return ex(ir::NdBreak { n: 0 }, ir::TyNever);
+  }
+  if kind == "continue" {
+    return ex(ir::NdContinue { n: 0 }, ir::TyNever);
+  }
+  el::refuse(e, "a `{kind}`{if x == null { "" } else { " with a value" }}");
+  ex(ir::NdNull, ir::TyNever)
+}
+
+// `Parser::parse_for` for one binding over a vector or an integer range.  The loop's variable
+// takes `loop_binding`'s name; the iterated value and the loop parts are built as `parse_for`
+// assembles them (the "For block" around the "For loop").  Destructuring, a filter, `par`, `_`
+// and any other iterated type are refused by name.
+fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer, par: integer?, filter: integer?, body: integer?) -> Ex {
+  if len(binds) != 1 || par != null || filter != null || body == null || binds[0] == "_" {
+    el::refuse(e, "a `for` with destructuring, a filter, `par` or `_`");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  src_id = binds[0];
+  id = el_vars::loop_binding(vars, src_id);
+  if e.p.nodes[source] is SRange {
+    return range_for(e, vars, src_id, id, source, body!);
+  }
+  x = expression(e, vars, source);
+  match el_types::base(x.tp) {
+    TyVector { inner: _ } => {},
+    TyUnknown { n: _ } => {
+      if !e.first_pass {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+    },
+    _ => {
+      el::refuse(e, "a `for` over this type: {type_kind(x.tp)}");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+  }
+  // The iterated value hoisted into `_vector_N`, borrowing what the source named (`depending`
+  // REPLACES the deps: a local source is named itself), and typed so on the second pass.
+  in_type = el_types::base(x.tp);
+  match x.code {
+    NdVar { n } => { in_type = el_types::with_deps(in_type, [n]); },
+    _ => {}
+  }
+  vec = el_vars::create_unique(vars, "vector", in_type);
+  if !e.first_pass {
+    el_vars::set_var_type(vars, vec, in_type);
+  }
+  elem = ir::TyUnknown { n: 0 };
+  match in_type {
+    TyVector { inner } => { elem = inner; },
+    _ => {}
+  }
+  // `for_type`: the element, borrowing the hoisted vector.
+  var_tp = el_types::with_deps(elem, [vec]);
+  idx = el_vars::add_variable(vars, "{id}#index", ir::TyInteger { spec: i32_spec() });
+  el_vars::set_defined(vars, idx);
+  lv = el_vars::loop_variable(vars, id, var_tp);
+  if id != src_id {
+    el_vars::set_name(vars, src_id, lv);
+  }
+  el_vars::set_defined(vars, lv);
+  vars.active_loops += [lv];
+  b = parse_block(e, vars, body, "for", ir::TyVoid);
+  vars.active_loops = drop_last_int(vars.active_loops);
+  if e.first_pass || el_types::is_unknown(elem) {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  size = elem_size(elem);
+  op = read_op(elem);
+  if size < 0 || op == "" {
+    el::refuse(e, "a `for` over a vector of records");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  i = ir::NdVar { n: idx };
+  step = el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: 1 }]);
+  get = el_ir::cl(e, op, [el_ir::cl(e, "OpGetVectorNullable", [ir::NdVar { n: vec }, ir::NdInt { n: size }, i]), ir::NdInt { n: 0 }]);
+  next = el_ir::v_block([el_ir::v_set(idx, step), get], el_types::without_deps(elem), "iter next");
+  brk = el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break");
+  past_end = el_ir::v_if(el_ir::cl(e, "OpLeInt", [el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: vec }]), i]), brk, ir::NdNull);
+  before = el_ir::v_if(el_ir::cl(e, "OpLtInt", [i, ir::NdInt { n: 0 }]), brk, ir::NdNull);
+  lp = el_ir::v_loop([el_ir::v_set(lv, next), past_end, before, b.code], "For loop");
+  ex(el_ir::v_block([el_ir::v_set(vec, x.code), el_ir::v_set(idx, ir::NdInt { n: -1 }), lp], ir::TyVoid, "For block"), ir::TyVoid)
+}
+
+// `parse_in_range_body` for `lo..hi` with a literal start of zero or more and an exclusive end:
+// the index made before the loop's variable, a non-literal end hoisted into `_range_end_N`, the
+// index started one below `lo`; the "Iter range" block steps it, leaves at `hi`, and answers it.
+fn range_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, source: integer, body: integer) -> Ex {
+  lo = -1;
+  hi = 0;
+  inclusive = false;
+  match e.p.nodes[source] {
+    SRange { lo: l, hi: h, inclusive: inc } => {
+      inclusive = inc;
+      if l != null && h != null {
+        match e.p.nodes[l!] {
+          SInt { v } => { lo = v; },
+          _ => {}
+        }
+        hi = h!;
+      }
+    },
+    _ => {}
+  }
+  if lo < 0 || inclusive {
+    el::refuse(e, "a range that is open, inclusive or starts at no literal");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  h = expression(e, vars, hi);
+  if !el_types::is_unknown(h.tp) && !(h.tp is TyInteger) {
+    el::refuse(e, "a range over this type: {type_kind(h.tp)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  int_t = ir::TyInteger { spec: i32_spec() };
+  end = h.code;
+  inits: vector<ir::Node> = [];
+  if !(h.code is NdInt) {
+    re = el_vars::create_unique(vars, "range_end", int_t);
+    inits += [el_ir::v_set(re, h.code)];
+    end = ir::NdVar { n: re };
+  }
+  idx = el_vars::add_variable(vars, "{id}#index", int_t);
+  el_vars::set_defined(vars, idx);
+  lv = el_vars::loop_variable(vars, id, int_t);
+  if id != src_id {
+    el_vars::set_name(vars, src_id, lv);
+  }
+  el_vars::set_defined(vars, lv);
+  vars.active_loops += [lv];
+  b = parse_block(e, vars, body, "for", ir::TyVoid);
+  vars.active_loops = drop_last_int(vars.active_loops);
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  i = ir::NdVar { n: idx };
+  inits += [el_ir::v_set(idx, ir::NdInt { n: lo - 1 })];
+  init = if len(inits) == 1 { inits[0] } else { ir::NdInsert { items: inits } };
+  stepped = el_ir::v_block([
+    el_ir::v_set(idx, el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: 1 }])),
+    el_ir::v_if(el_ir::cl(e, "OpLeInt", [end, i]), ir::NdBreak { n: 0 }, ir::NdNull),
+    i
+  ], int_t, "Iter range");
+  lp = el_ir::v_loop([el_ir::v_set(lv, stepped), b.code], "For loop");
+  ex(el_ir::v_block([init, lp], ir::TyVoid, "For block"), ir::TyVoid)
+}
+
+fn drop_last_int(l: vector<integer>) -> vector<integer> {
+  r: vector<integer> = [];
+  for x in l {
+    if x#index < len(l) - 1 {
+      r += [x];
+    }
+  }
+  r
 }
 
 // ── vectors (src/parser/vectors.rs, fields.rs) ───────────────────────────────────────────────

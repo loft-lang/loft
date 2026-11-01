@@ -14,6 +14,19 @@ pub struct VarName {
   pub nr: integer
 }
 
+// One spelling's loop count.  Its own element type: a second keyed collection of `VarName` in
+// `Vars` would be one record set with `names` (`@FR-Col-Group`).
+pub struct LoopCount {
+  pub name: text,
+  pub n: integer
+}
+
+// One `create_unique` name's count, its own element type for the same reason as `LoopCount`.
+pub struct UniqueCount {
+  pub name: text,
+  pub n: integer
+}
+
 pub struct Vars {
   pub name: text,
   pub file: text,
@@ -27,17 +40,20 @@ pub struct Vars {
   pub work_text: integer,
   // The record locals a struct literal has built in place on this pass.
   pub built: vector<integer>,
-  // `Function::unique`: the counter `create_unique` names `_<name>_<n>` locals by, per pass
-  pub unique: integer,
+  // `Function::unique`: the counters `create_unique` names `_<name>_<n>` locals by, one per
+  // name, per pass
+  pub unique: hash<UniqueCount[name]>,
   // `Function::work_vdb` and `work_references`: the `__vdb_N` vector stores this body minted
   pub work_vdb: integer,
   pub work_refs: vector<integer>,
   // `Function::loops`' variables, innermost last: the loops still open
-  pub active_loops: vector<integer>
+  pub active_loops: vector<integer>,
+  // `Function::loop_binds`: how many loops have bound each spelling, per pass
+  pub loop_binds: hash<LoopCount[name]>
 }
 
 pub fn new_vars(name: text, file: text) -> Vars {
-  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], unique: 0, work_vdb: 0, work_refs: [], active_loops: [] }
+  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], unique: [], work_vdb: 0, work_refs: [], active_loops: [], loop_binds: [] }
 }
 
 pub fn name_of(v: Vars, nr: integer) -> text {
@@ -217,10 +233,57 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   v.work_text = 0;
   v.work_texts = [];
   v.built = [];
-  v.unique = 0;
+  v.unique = [];
   v.work_vdb = 0;
   v.work_refs = [];
   v.active_loops = [];
+  v.loop_binds = [];
+}
+
+// `Function::loop_binding`: the name a loop's variable takes — the spelling itself for the
+// first loop of the function that binds it, `name#N` for the N-th after.
+pub fn loop_binding(v: Vars, name: text) -> text {
+  e = v.loop_binds[name];
+  if e == null {
+    v.loop_binds += [LoopCount { name: name, n: 1 }];
+    return name;
+  }
+  n = e!.n;
+  v.loop_binds[name].n = n + 1;
+  "{name}#{n}"
+}
+
+// `Function::set_name`: the spelling now names that variable.
+pub fn set_name(v: Vars, name: text, nr: integer) {
+  if v.names[name] == null {
+    v.names += [VarName { name: name, nr: nr }];
+  } else {
+    v.names[name].nr = nr;
+  }
+}
+
+// `Function::loop_variable`: the loop's variable, made on the first pass and met again on the
+// second by its `name#bind` key — the spelling itself may name a later loop's variable by then —
+// adopting the second pass's borrows where the first had none, the spelling pointed at it.
+pub fn loop_variable(v: Vars, name: text, t: ir::TypeT) -> integer {
+  key = "{name}#bind";
+  e = v.names[key];
+  if e != null {
+    nr = e!.nr;
+    if is_unknown(tp(v, nr)) || (len(el_types::deps(tp(v, nr))) == 0 && len(el_types::deps(t)) > 0) {
+      set_type(v, nr, t);
+    }
+    set_name(v, name, nr);
+    return nr;
+  }
+  nr = new_var(v, name, t);
+  set_name(v, name, nr);
+  set_name(v, key, nr);
+  nr
+}
+
+pub fn set_var_type(v: Vars, nr: integer, t: ir::TypeT) {
+  set_type(v, nr, t);
 }
 
 // `Function::is_active_loop_var`: the variable of a loop still open.
@@ -236,8 +299,15 @@ pub fn is_active_loop_var(v: Vars, nr: integer) -> boolean {
 // `Function::create_unique`: a compiler local `_<name>_<n>`, the same one met again by name on
 // the second pass (the counter restarts with each pass).
 pub fn create_unique(v: Vars, name: text, t: ir::TypeT) -> integer {
-  v.unique += 1;
-  add_variable(v, "_{name}_{v.unique}", t)
+  n = 1;
+  e = v.unique[name];
+  if e == null {
+    v.unique += [UniqueCount { name: name, n: 1 }];
+  } else {
+    n = e!.n + 1;
+    v.unique[name].n = n;
+  }
+  add_variable(v, "_{name}_{n}", t)
 }
 
 // `Function::work_vec_db`: the next `__vdb_N` store a vector literal builds in, noted among the
