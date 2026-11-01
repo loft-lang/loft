@@ -524,6 +524,50 @@ impl Parser {
         if !self.convert_condition(code, tp) && !self.first_pass {
             self.can_convert(tp, &Type::Boolean);
         }
+        // `@FR-N-Guard` — the right operand runs only where the left one decided it: `a && b`
+        // on a's THEN side, `a || b` on its ELSE side, so it reads with the facts `if a` gives
+        // that side — a name proven present, an index proven in bounds, a divisor proven
+        // non-zero, a sign, a variant.  `i < len(v) && v[i] == x` is the guard `if` already
+        // trusts, written as one condition.
+        let side = !is_or;
+        let bases = (
+            self.narrowed_non_null.len(),
+            self.narrowed_non_null_exprs.len(),
+            self.divisor_nonzero.len(),
+            self.math_sign_proven.len(),
+            self.variant_proven.len(),
+            self.index_bounded.len(),
+        );
+        if let Some((v, s)) = self.narrowing_from_condition(code)
+            && s == side
+        {
+            self.narrowed_non_null.push(v);
+        }
+        if let Some((e, s)) = self.projection_narrowing_from_condition(code)
+            && s == side
+        {
+            self.narrowed_non_null_exprs.push(e);
+        }
+        if let Some((v, s)) = self.divisor_proof_from_condition(code)
+            && s == side
+        {
+            self.divisor_nonzero.push(v);
+        }
+        if let Some((v, sg, s)) = self.math_sign_proof_from_condition(code)
+            && s == side
+        {
+            self.math_sign_proven.push((v, sg));
+        }
+        if side && let Some(pair) = self.variant_proof_from_condition(code) {
+            self.variant_proven.push(pair);
+        }
+        let caps = std::collections::HashMap::new();
+        let pairs = if side {
+            crate::parser::operators::collect_guard_pairs(code, &self.data, &caps)
+        } else {
+            crate::parser::operators::collect_guard_pairs_negated(code, &self.data, &caps)
+        };
+        self.index_bounded.extend(pairs);
         let mut second_code = Value::Null;
         let mut parent_tp = Type::Unknown(0);
         let second_pos = *self.lexer.peek_pos();
@@ -533,6 +577,12 @@ impl Parser {
             &mut parent_tp,
             precedence + 1,
         );
+        self.narrowed_non_null.truncate(bases.0);
+        self.narrowed_non_null_exprs.truncate(bases.1);
+        self.divisor_nonzero.truncate(bases.2);
+        self.math_sign_proven.truncate(bases.3);
+        self.variant_proven.truncate(bases.4);
+        self.index_bounded.truncate(bases.5);
         self.known_var_or_type(&second_code, &second_pos);
         if !self.convert_condition(&mut second_code, &second_type) && !self.first_pass {
             self.can_convert(&second_type, &Type::Boolean);
@@ -3823,6 +3873,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         let mut create_iter = expr;
         let it = Type::Iterator(Box::new(var_tp.clone()), Box::new(Type::Null));
         let errors_before_iterable = self.lexer.diagnostics().error_count();
+        super::collections::slice_counter_is_index(&mut create_iter, iter_var, pre_var);
         let iter_next = self.iterator(&mut create_iter, &in_type, &it, iter_var, pre_var);
         if !self.first_pass && iter_next == Value::Null {
             // The `for` statement's two recovery rules (loft#1453): the fallback line only

@@ -3665,12 +3665,14 @@ impl Parser {
             // what is warned is exactly what the pass leaves a call.
             if !self.data.definitions[ctx].is_operator() && !crate::tail_frame::off() {
                 let def = &self.data.definitions[ctx];
+                // At the call the refusal names, or — for a reason the whole frame carries —
+                // the first tail call.
                 let refused =
                     crate::tail_frame::tail_calls(&def.code, self.context, &self.vars, &self.data)
                         .into_iter()
                         .next()
                         .and_then(|call| {
-                            crate::tail_frame::admit_frame(
+                            crate::tail_frame::admit_frame_at(
                                 &self.vars,
                                 def.returned(),
                                 &def.code,
@@ -3679,7 +3681,7 @@ impl Parser {
                                 self.context,
                             )
                             .err()
-                            .map(|why| (call.at, why))
+                            .map(|(at, why)| (at.or(call.at), why))
                         });
                 if let Some((at, why)) = refused {
                     let fn_name = def.name().trim_start_matches("n_").to_string();

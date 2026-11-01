@@ -47,6 +47,10 @@ Uses [operational.md](operational.md)'s `⟨e, σ⟩ → ⟨e', σ'⟩` and [hea
                            body }
   (I-Next)     ⟨next(it), σ⟩ → ⟨elem(src, i), σ⟩   then i ← i+1        when i < len(src)
   (I-Done)     ⟨next(it), σ⟩ → ⟨done, σ⟩                                when i ≥ len(src)
+  (I-Index)    in the body, x#index is the position x was read at: the cursor i of (I-Next)
+               over a vector; over a slice v[a..b] — and rev of either — the position in v,
+               so v[x#index] reads x whichever part of v is walked.  (A text's c#index is
+               its byte offset, (I-Text).)
 ```
 
 **In words.** `for x in src { … }` runs the body once per element, **in index order 0, 1, 2, …**,

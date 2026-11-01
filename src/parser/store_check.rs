@@ -825,6 +825,24 @@ impl Parser {
                 }
                 _ => ", and so is what this computes from it",
             };
+            // Where the local BECAME nullable is the place to change, when it is not here: a
+            // value made non-null at its source needs no test at any of its uses.
+            if self.vars.is_argument(v) {
+                return Some(format!(
+                    "`{name}` is a parameter declared `{held}?`{field}: test it first (`if {name} \
+                     == null {{ … }}` makes it `{held}` after), or declare it `{held}` when every \
+                     caller passes one"
+                ));
+            }
+            let from = self.vars.nullable_line(v);
+            if from != 0 && from != self.lexer.at().0 {
+                return Some(format!(
+                    "`{name}` is `{held}?`{field} — line {from} gives it a value that may be \
+                     null: make that value non-null there (`!` when it cannot be null, an index \
+                     loft proves), or test `{name}` here (`if {name} == null {{ … }}` makes it \
+                     `{held}` after){declare}"
+                ));
+            }
             return Some(format!(
                 "`{name}` is `{held}?`{field}: test it first (`if {name} == null {{ … }}` makes it \
                  `{held}` after), or write `{name}!` when it cannot be null here{declare}"

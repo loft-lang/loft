@@ -3732,6 +3732,12 @@ use #count instead"
             Value::Null
         };
         let mut create_iter = expr;
+        // `@FR-I-Index` — a SLICE walk (`for x in v[a..b]`, `rev(v[..-1])`) counts with its own
+        // range counter, which holds each element's position in `v` — what `x#index` is for a
+        // walk over `v` itself, and what `v[x#index]` needs to read `x`.  The counter is renamed
+        // to the loop's `x#index`, so the loop sets it; left apart, `x#index` was never written
+        // and reading it stopped the code generator (no slot).
+        slice_counter_is_index(&mut create_iter, iter_var, pre_var);
         let it = Type::Iterator(Box::new(var_tp.clone()), Box::new(Type::Null));
         let iter_next = self.iterator(&mut create_iter, in_type, &it, iter_var, pre_var);
         Self::destructure_into_filter(&mut if_step, &mut destructure_setup);
@@ -8209,6 +8215,37 @@ use #count instead"
         *val = v_block(stmts, I32.clone(), "count_if");
         I32.clone()
     }
+}
+
+/// The rename the comment at its `for` call site explains: a slice walk's own counter becomes
+/// the loop's `x#index`.  The `for` statement and the comprehension both build their walk
+/// through here.
+pub(crate) fn slice_counter_is_index(create_iter: &mut Value, iter_var: u16, pre_var: Option<u16>) {
+    if let Value::Iter(_, _, next, _) = &*create_iter
+        && pre_var.is_none()
+        && matches!(next.unspan(), Value::Block(bl) if bl.name == "Vector Index")
+        && let Some(counter) = slice_counter(next)
+        && counter != iter_var
+    {
+        rename_var(create_iter, counter, iter_var);
+    }
+}
+
+/// The counter of a range walk inside `next` — the variable an `Iter range` block steps and
+/// answers — or `None`: the position a slice walk yields each element at.
+fn slice_counter(next: &Value) -> Option<u16> {
+    let mut found = None;
+    next.any_node(&mut |n| {
+        if let Value::Block(bl) = n
+            && bl.name == "Iter range"
+            && let Some(Value::Var(c)) = bl.operators.last().map(Value::unspan)
+        {
+            found = Some(*c);
+            return true;
+        }
+        false
+    });
+    found
 }
 
 /// Recursively rename variable `from` to `to` everywhere in `val` — as a READ

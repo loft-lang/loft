@@ -27,7 +27,7 @@ the caret on the expression when it has a position:
 | a keyed lookup (`h[k]`) | handle the miss with `match` or a guard, or `?? <value>` |
 | an `if` / `match` with a branch answering `null` | declare the slot `τ?` if null is a real answer; make that branch halt if it cannot happen |
 | a call of a function that answers `τ?` | decide what null means here: `!`, a guard or `match`, `?? <value>` — or declare the slot |
-| a local that is `τ?`, or a field or computation of one | test it first (`if x == null { … }` makes it `τ` after), or `x!` |
+| a local that is `τ?`, or a field or computation of one | make the value non-null at the line that gave it (named), or test it here (`if x == null { … }`), or `x!`; a parameter declared `τ?` is told to be declared `τ` when every caller passes one |
 
 Declaring the slot `τ?` is offered only where the slot is the author's to declare — never a
 parameter, which belongs to the function called.  `?` is named last, and only as the type's
@@ -44,7 +44,7 @@ usually an index it trusts, which states the guarantee in the code itself:
 | every element in turn | `for x in v { … x … }` | the loop variable is the element |
 | the element beside another vector's counter | `for x in v { … v[x#index] … }` | the counter of a loop over the SAME vector |
 | an element counted from a length you keep | `n = len(v); … v[n - 1]` | a length local: assigned once, `v` written nowhere that can run after it |
-| an element after a bounds test | `if i < len(v) { … v[i] … }`, `assert(i < len(v), …); v[i]`, `if i >= len(v) { return … }` | a guard (`(N-Guard)`) |
+| an element after a bounds test | `if i < len(v) { … v[i] … }`, `i < len(v) && v[i] > 0`, `assert(i < len(v), …); v[i]`, `if i < 0 \|\| i >= len(v) { return … }` | a guard (`(N-Guard)`): an `if`, the right side of `&&`/`\|\|`, an `assert`, a guard clause on one test or an `\|\|` of tests |
 | everything but the last, as a new vector | `v[..-1]` | a slice is a fresh value, with no element read to fail |
 
 Where no such shape fits but an invariant guarantees the element — a variable number the
@@ -80,7 +80,7 @@ one of the index constructions above, or `v[nr]!.name`.
 | warning | the construction that clears it |
 |---|---|
 | `never-read` | Delete the local, or the parameter (that changes the signature).  For a parameter an interface makes you keep, name it `_…`. |
-| `tail-call-not-jumped` | Write the recursion as a `while` loop, or pass a part of a parameter instead of a value made for the call.  To keep an ordinary call on purpose, bind its value first: `r = f(…); r`. |
+| `tail-call-not-jumped` | Pass a part of a parameter instead of a value made for the call (`v.ops[-1]`, not `last(v.ops)`), or write the recursion as a `while` loop.  To keep an ordinary call on purpose — a one-step re-entry — bind its value first: `r = f(…); r`.  The warning stands on the call that blocks the jump. |
 | `text-slice-char-bound` | Slice by bytes: `size(t)` for the byte length, `t[i..]` for the rest.  `t[..-1]` drops a final ONE-BYTE character such as `\r`; a bound inside a multi-byte character moves to that character's end, so it does not drop a final `€`. |
 | `shadowed-by-method` | If the method does the same work, delete your function and call the method; otherwise rename it, or call it qualified as `lib::f(…)`. |
 | `avoidable-copy` (advice) | Move the line that reads the source again above the copy, or drop that line when its value is never read.  When neither holds the copy is necessary and nothing is reported. |
@@ -89,6 +89,3 @@ one of the index constructions above, or `v[nr]!.name`.
 
 - A value with no position of its own (a local read, an `if` built by the parser) still puts
   the caret on the slot — the `{` after a return type, the `)` of a call.
-- A type annotation on a name an earlier branch bound as `τ?` (`ops: vector<T> = []` after
-  `ops = maybe()` elsewhere in the function) is silently not applied: the local stays `τ?`, and
-  the warning then lands on a later use that looks correct.
