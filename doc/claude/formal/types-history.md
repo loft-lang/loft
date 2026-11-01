@@ -1877,3 +1877,16 @@ tail.  The arm stayed a block typed `null` with no value beside value arms: the 
 the C backend refused the function.  **Fix.**  The recogniser and `set_arm_null_typed` follow a
 trailing block to its tail.  Found porting the self-host elaborator.  Guard
 `loft-suite rules/types/N-Join/2339-a-binding-arm-answering-a-null-block-takes-the-joins-null.loft`.
+
+### D-types-40 — OPENED AND CLOSED (2026-11-01; loft#2341): a null-typed `if`/`match` beside arms that return was converted whole
+
+`(N-Intro)` converts the value, and `(C-Never)` lets an arm that never finishes stand in any
+type.  In a function returning `τ?`, `if c { return x; } else { null }` (or a `match` whose
+other arms `return`) joins to `null`, and `Parser::convert`'s `null ⤳ τ?` arms replaced the
+WHOLE expression with the typed null — the `return` arms vanished and every call answered null,
+silently, on every result type and both backends.  The mirrored spelling `if c { null } else
+{ return x; }` adopted the else arm's `never`, so the `if` was typed as never finishing and its
+null arm pushed nothing.  **Fix.**  `convert` types the null LEAVES of a null-typed
+`if`/block/insert and keeps the expression; `parse_if_expecting` joins a `null` then arm with a
+`never` else to `null`.  Found porting the self-host elaborator.  Guard
+`loft-suite rules/types/N-Intro/2341-an-arm-that-returns-beside-a-null-arm-still-runs.loft`.
