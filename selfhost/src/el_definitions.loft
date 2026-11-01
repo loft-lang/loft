@@ -99,6 +99,17 @@ fn parse_struct(e: el::El, at: integer, value: boolean, name: text, tvars: vecto
         a = el::attribute(fname, tp);
         a.nullable = nullable;
         a.pub_field = public;
+        // The alias an integer field is named by (`u8`, `i32`), whose `size(n)` routes its slot.
+        if tp is TyInteger {
+          match e.p.nodes[tn!] {
+            STy { name: tname } => {
+              if tname != "integer" {
+                a.alias_d_nr = el::def_nr(e, tname);
+              }
+            },
+            _ => {}
+          }
+        }
         e.b.data.definitions[d].attributes += [a];
       },
       _ => {}

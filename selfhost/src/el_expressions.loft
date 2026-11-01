@@ -286,7 +286,42 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
   if len(l) > 0 && el_ir::is_line(l[len(l) - 1]) {
     l = drop_last(l);
   }
+  // A function body's tail is a store into its result (`convert_store`): converted to it.
+  if context == "return from block" && len(l) > 0 && el_convert::plain_scalar(result) && el_convert::plain_scalar(t) && !el_types::is_equal(e, result, t) {
+    tc = el_convert::convert(e, l[len(l) - 1], t, result, false);
+    if tc == null {
+      el::refuse(e, "a function's value its declared result converts: {type_kind(t)} to {type_kind(result)}");
+    } else {
+      l = drop_last(l);
+      l += [tc!];
+      t = result;
+    }
+  }
   ex(el_ir::v_block(l, t, "block"), t)
+}
+
+// A value meeting a declared slot (a local's annotation, a field, a return): as it is where its
+// type is the slot's, converted where both are plain scalars (`Parser::convert`), else null, which
+// the caller refuses.  An unknown on the first pass is taken as it is.
+// A refusal of a value whose type is unknown on the second pass is a cascade: the refusal that
+// left it unknown already stands.
+fn refuse_known(e: el::El, t: ir::TypeT, what: text) {
+  if !el_types::is_unknown(t) {
+    el::refuse(e, what);
+  }
+}
+
+fn stored(e: el::El, x: Ex, to: ir::TypeT) -> ir::Node? {
+  if el_types::is_unknown(x.tp) || el_types::is_unknown(to) {
+    return if e.first_pass { x.code } else { null };
+  }
+  if el_convert::plain_scalar(x.tp) && el_convert::plain_scalar(to) {
+    return el_convert::convert(e, x.code, x.tp, to, false);
+  }
+  if el_types::is_equal(e, to, x.tp) || x.tp is TyNever {
+    return x.code;
+  }
+  null
 }
 
 // The loop of `parse_block_inner` meets the closing `}` too: a later line moves the parser's
@@ -535,14 +570,17 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
     }
   }
   x = expression(e, vars, rhs!);
-  if !el_types::is_equal(e, declared!, x.tp) && !(e.first_pass && el_types::is_unknown(x.tp)) {
-    el::refuse(e, "a value its declared type converts");
+  c = stored(e, x, declared!);
+  if c == null {
+    refuse_known(e, x.tp, "a value its declared type converts: {type_kind(x.tp)} to {type_kind(declared!)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
   // `parse_assign_op`'s `change_var`: the local borrows what the value borrows.
-  el_vars::change_var_type(e, vars, v, x.tp);
+  if el_types::is_equal(e, declared!, x.tp) {
+    el_vars::change_var_type(e, vars, v, x.tp);
+  }
   el_vars::drop_use(vars, v);
-  ex(el_ir::v_set(v, x.code), ir::TyVoid)
+  ex(el_ir::v_set(v, c!), ir::TyVoid)
 }
 
 // `Parser::parse_object`'s in-place arm, a struct literal bound to a local that owns its store:
@@ -637,11 +675,12 @@ fn object_fields(e: el::El, vars: el_vars::Vars, v: integer, d: integer, fields:
           _ => {}
         }
         x = expression(e, vars, fe!);
-        if !el_types::is_equal(e, at, x.tp) && !(e.first_pass && el_types::is_unknown(x.tp)) {
-          el::refuse(e, "a field value its type converts");
+        fc = stored(e, x, at);
+        if fc == null {
+          refuse_known(e, x.tp, "a field value its type converts: {type_kind(x.tp)} to {type_kind(at)}");
           return null;
         }
-        list += [set_field(e, d, a, r, x.code)];
+        list += [set_field(e, d, a, r, fc!)];
         found += [fname];
       },
       _ => {}
@@ -709,12 +748,11 @@ fn field_default(e: el::El, d: integer, a: integer, r: ir::Node, base: integer) 
   if base == 0 {
     return [set_field(e, d, a, r, val)];
   }
-  op = write_op(at);
-  if op == "" {
-    el::refuse(e, "a field write of this type");
+  w = write_at(e, at, r, ir::NdInt { n: pos }, val);
+  if w is NdNull {
     return null;
   }
-  [el_ir::cl(e, op, [r, ir::NdInt { n: pos }, val])]
+  [w]
 }
 
 // Does struct `d` hold a record of struct `host`, directly or through its struct fields?
@@ -884,6 +922,21 @@ fn set_field(e: el::El, d: integer, a: integer, r: ir::Node, val: ir::Node) -> i
     },
     _ => {}
   }
+  write_at(e, at, r, pos, val)
+}
+
+// A plain field's write at `pos`: an integer through its slot's op, the rest through `write_op`.
+fn write_at(e: el::El, at: ir::Attribute, r: ir::Node, pos: ir::Node, val: ir::Node) -> ir::Node {
+  match el_types::base(at.typedef[0] ?? ir::TyVoid) {
+    TyInteger { spec } => {
+      sl = int_slot(e, spec, at.alias_d_nr, at.nullable);
+      if slot_takes_min(sl.kind) {
+        return el_ir::cl(e, slot_set_op(sl.kind), [r, pos, ir::NdInt { n: sl.min }, val]);
+      }
+      return el_ir::cl(e, slot_set_op(sl.kind), [r, pos, val]);
+    },
+    _ => {}
+  }
   op = write_op(at);
   if op == "" {
     el::refuse(e, "a field write of this type");
@@ -892,10 +945,65 @@ fn set_field(e: el::El, d: integer, a: integer, r: ir::Node, val: ir::Node) -> i
   el_ir::cl(e, op, [r, pos, val])
 }
 
+// `NarrowSlot::of_slot` for an integer field: its width (the alias's `size(n)`, else the spec's
+// `byte_width`), the kind that width, its nullability and its range pick, and the `min` a narrow
+// kind encodes against.  `kind` is the op's suffix ("Byte", "ShortRaw", "Int4", "Int", …).
+pub struct IntSlot {
+  pub kind: text,
+  pub min: integer
+}
+
+fn byte_width(spec: ir::IntegerSpec, nullable: boolean) -> integer {
+  if spec.forced_size > 0 {
+    return spec.forced_size;
+  }
+  codes = spec.max - spec.min + 1 + if nullable { 1 } else { 0 };
+  if codes <= 256 { 1 } else if codes <= 65536 { 2 } else { 8 }
+}
+
+fn int_slot(e: el::El, spec: ir::IntegerSpec, alias: integer, nullable: boolean) -> IntSlot {
+  w = byte_width(spec, nullable);
+  narrow_vec = alias == el::NONE && spec.forced_size > 0 && (w == 1 || w == 2 || w == 4);
+  s = w;
+  if alias != el::NONE && el::def(e, alias).forced_size > 0 {
+    s = el::def(e, alias).forced_size;
+  }
+  unsigned_wide = spec.min >= 0 && spec.max > 2147483647;
+  kind = if s == 1 {
+    if nullable { "ByteNullable" } else { "Byte" }
+  } else if s == 2 {
+    if nullable { "Short" } else if narrow_vec { "ShortRaw" } else { "ShortFull" }
+  } else if s == 4 {
+    if unsigned_wide && (nullable || narrow_vec) { "Int4Raw" } else if unsigned_wide { "Int4Full" } else { "Int4" }
+  } else {
+    "Int"
+  };
+  takes_min = kind == "Byte" || kind == "ByteNullable" || kind == "ShortRaw" || kind == "Short" || kind == "ShortFull";
+  m = 0;
+  if takes_min {
+    m = spec.min;
+    reserves = kind == "ByteNullable" || kind == "Short";
+    sentinel = reserves && ((spec.forced_size == 1 && spec.max - spec.min + 1 == 256) || (spec.forced_size == 2 && spec.max - spec.min + 1 == 65536));
+    if sentinel && spec.min < 0 {
+      m = spec.min + 1;
+    }
+  }
+  IntSlot { kind: kind, min: m }
+}
+
+fn slot_takes_min(k: text) -> boolean {
+  k == "Byte" || k == "ByteNullable" || k == "ShortRaw" || k == "Short" || k == "ShortFull"
+}
+
+// `NarrowIntKind::set_op`.
+fn slot_set_op(k: text) -> text {
+  if k == "ShortFull" { "OpSetShortRaw" } else if k == "Int4Full" { "OpSetInt4Raw" } else { "OpSet{k}" }
+}
+
 // The op a plain field of this attribute's type is written through, or "".
 fn write_op(at: ir::Attribute) -> text {
   match el_types::base(at.typedef[0] ?? ir::TyVoid) {
-    TyInteger { spec } => if spec.forced_size == 0 && at.alias_d_nr == el::NONE { "OpSetInt" } else { "" },
+    TyInteger { spec: _ } => "",
     TyText { dep: _ } => "OpSetText",
     TyBoolean => "OpSetBoolean",
     TyFloat => "OpSetFloat",
@@ -962,9 +1070,17 @@ fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text,
       }
       code = el_ir::cl(e, "OpGetField", [x.code, pos, ir::NdInt { n: el::def(e, fd).known_type }]);
     },
+    TyInteger { spec } => {
+      fa = def.attributes[a];
+      sl = int_slot(e, spec, fa.alias_d_nr, fa.nullable);
+      if slot_takes_min(sl.kind) {
+        code = el_ir::cl(e, "OpGet{sl.kind}", [x.code, pos, ir::NdInt { n: sl.min }]);
+      } else {
+        code = el_ir::cl(e, "OpGet{sl.kind}", [x.code, pos]);
+      }
+    },
     _ => {
       op = match ft {
-        TyInteger { spec } => if spec.forced_size == 0 && def.attributes[a].alias_d_nr == el::NONE { "OpGetInt" } else { "" },
         TyText { dep: _ } => "OpGetText",
         TyBoolean => "OpGetBoolean",
         TyFloat => "OpGetFloat",
@@ -1288,23 +1404,38 @@ fn receives(e: el::El, m: integer, tn: integer) -> boolean {
 // `Parser::call_nr` through `process_call_args`, for a definition whose parameters each take
 // their argument as it is (`convert`'s equal case) and whose result is a scalar: the call and
 // its declared result.  Defaults, hidden buffers, conversions and heap results are refused.
-fn call_args(e: el::El, vars: el_vars::Vars, d: integer, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex? {
+fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex? {
   def = el::def(e, d);
   n = len(def.attributes);
-  retbuf = n == len(list) + 1 && (def.attributes[n - 1].hidden) && def.attributes[n - 1].name == "__retbuf";
-  if n != len(list) && !retbuf {
+  retbuf = n == len(given) + 1 && (def.attributes[n - 1].hidden) && def.attributes[n - 1].name == "__retbuf";
+  if n != len(given) && !retbuf {
     el::refuse(e, "a call with defaulted or hidden parameters");
     return null;
   }
+  // `process_call_args`: each argument converted to its parameter (`Parser::convert`).
+  conv: vector<ir::Node> = [];
   for a in def.attributes {
     if retbuf && a#index == n - 1 {
       continue;
     }
-    if !takes(e, a.typedef[0] ?? ir::TyUnknown { n: 0 }, types[a#index] ?? ir::TyUnknown { n: 0 }) {
-      el::refuse(e, "an argument converted to its parameter");
+    pt = a.typedef[0] ?? ir::TyUnknown { n: 0 };
+    at = types[a#index] ?? ir::TyUnknown { n: 0 };
+    arg = given[a#index] ?? ir::NdNull;
+    if el_convert::plain_scalar(pt) && el_convert::plain_scalar(at) {
+      c = el_convert::convert(e, arg, at, pt, false);
+      if c == null {
+        el::refuse(e, "an argument converted to its parameter: {type_kind(at)} to {type_kind(pt)}");
+        return null;
+      }
+      conv += [c!];
+    } else if takes(e, pt, at) {
+      conv += [arg];
+    } else {
+      refuse_known(e, at, "an argument converted to its parameter: {type_kind(at)} to {type_kind(pt)}");
       return null;
     }
   }
+  list = conv;
   ret = def.returned[0] ?? ir::TyVoid;
   if retbuf {
     // `add_defaults`: the hidden return buffer is a fresh `__ref_N` of the result's record, and
@@ -1611,11 +1742,12 @@ fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
       el::refuse(e, "a `return` with a value of this type: {type_kind(result)}");
       return ex(ir::NdNull, ir::TyNever);
     }
-    if !el_types::is_unknown(v.tp) && !el_types::is_equal(e, result, v.tp) {
-      el::refuse(e, "a `return` value its declared type converts");
+    rc = stored(e, v, result);
+    if rc == null {
+      refuse_known(e, v.tp, "a `return` value its declared type converts: {type_kind(v.tp)} to {type_kind(result)}");
       return ex(ir::NdNull, ir::TyNever);
     }
-    return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+    return ex(ir::NdReturn { inner: rc! }, ir::TyNever);
   }
   el::refuse(e, "a `{kind}` with a value");
   ex(ir::NdNull, ir::TyNever)
