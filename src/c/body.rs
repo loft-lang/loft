@@ -4574,15 +4574,29 @@ impl<'a> FnWriter<'a> {
             let e = self.expr(x, ind)?;
             let r = self.temp(CType::Ref);
             self.line(ind, &format!("{r} = {};", as_ref(e)?));
+            // `@FR-O-Witness` — a witnessed destination's displaced store is released by its
+            // witness alone, and the slot may have held a VIEW.  `fresh_unless_owned` resets the
+            // slot, so a call handed the destination itself (`t = with_deps(t, …)`) that answers
+            // that very store must be recognised by the store the slot held, or the copy frees
+            // the store the local viewed.
+            let held = if frees && self.vars.owner_witness(var).is_some() {
+                let o = self.temp(CType::Ref);
+                self.line(ind, &format!("{o} = {name};"));
+                o
+            } else {
+                name.clone()
+            };
             self.fresh_unless_owned(var, x, first, &name, ind);
             if frees {
                 // The stores of the call's reference arguments are protected, as the bytecode
                 // writer protects them (`protectable_ref_args`): a result that is a view into
                 // one of them is not the callee's to give away.
-                let mut keep = vec![format!("{r}.store_nr != {name}.store_nr")];
+                let mut keep = vec![format!("{r}.store_nr != {held}.store_nr")];
                 for a in crate::use_analysis::protectable_ref_args(self.cx.data, self.d, x).0 {
-                    keep.push(format!("{r}.store_nr != {}.store_nr", self.var(a)));
+                    let arg = if a == var { held.clone() } else { self.var(a) };
+                    keep.push(format!("{r}.store_nr != {arg}.store_nr"));
                 }
+                keep.dedup();
                 let keep = keep.join(" && ");
                 // `@FR-H-SwapRebind`: a result the bind gives up is exchanged into the
                 // destination where the store allows; a fn-ref call's result may be a store it

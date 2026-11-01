@@ -3068,7 +3068,14 @@ impl State {
                     // callee answered (`cv = either(cv, h, c)` then wrote into `h`).  It takes
                     // the copy through a FRESH store, which `rhs_may_alias_v` arms below, so
                     // the answer being `v`'s own store is copied before the old one is freed.
+                    //
+                    // `@FR-O-Witness` — except a WITNESSED local: its witness adopts what this
+                    // bind gives it as a store of its own (`scopes::witness_set_kind`: a call
+                    // that does not adopt a fresh store is COPIED by both backends), so the
+                    // pass-through handed the witness the callee's argument — a view — and the
+                    // witness released it.  It copies, as the C backend does.
                     && !(rhs_reads_v
+                        && !witnessed
                         && stack.data.def(fn_nr).returns_borrowed_view()
                         && !(rhs_base == Some(u16::MAX) && stash_old_for_post_free))
                     // @PLN157 § V-g — the copy is elided: the plain `PutRef` below binds
@@ -3177,12 +3184,18 @@ impl State {
                     // free after it is then a no-op.
                     let fresh_path =
                         (witnessed && rhs_reads_v) || (stash_old_for_post_free && rhs_may_alias_v);
-                    let ref_args: Vec<u16> =
+                    // `@FR-O-Witness` — a WITNESSED `v` is the exception: its witness alone
+                    // releases the store it displaces, and that store may be a VIEW (`t =
+                    // with_deps(t, …)` over `t = df.attrs[0].tp`, where the callee answers `t`
+                    // itself).  Left out of the bracket, the copy's source-free released the
+                    // viewed store.  So its old store is protected like any argument's, and the
+                    // protection is lifted through a copy of the old reference stashed on the
+                    // stack, since `v` names the new store by then.
+                    let mut ref_args: Vec<u16> =
                         crate::use_analysis::protectable_ref_args(stack.data, stack.def_nr, value)
-                            .0
-                            .into_iter()
-                            .filter(|&a| !(fresh_path && a == v))
-                            .collect();
+                            .0;
+                    let protects_old = witnessed && rhs_reads_v && ref_args.contains(&v);
+                    ref_args.retain(|&a| !(fresh_path && a == v));
                     // @PLAN51 Cluster II Step 2 — collect caller-hidden-buf
                     // work-ref args.  After the OpCopyRecord wrap frees
                     // the source store (via 0x8000), the caller's slot
@@ -3218,6 +3231,11 @@ impl State {
                     // P290 panic).
                     let protect_fn = stack.data.def_nr("n_protect_store_frees");
                     let unprotect_fn = stack.data.def_nr("n_unprotect_store_frees");
+                    if protects_old {
+                        self.push_var_ref(stack, v);
+                        let prot = Value::Call(protect_fn, vec![Value::Var(v)]);
+                        self.generate(&prot, stack, false);
+                    }
                     for av in &ref_args {
                         let prot = Value::Call(protect_fn, vec![Value::Var(*av)]);
                         self.generate(&prot, stack, false);
@@ -3276,6 +3294,9 @@ impl State {
                     for av in &ref_args {
                         let unprot = Value::Call(unprotect_fn, vec![Value::Var(*av)]);
                         self.generate(&unprot, stack, false);
+                    }
+                    if protects_old {
+                        self.unprotect_stashed(stack);
                     }
                     // @PLAN51 Cluster II Step 2 — post-wrap sentinel reset.
                     // OpInitRefSentinel writes DbRef{store_nr: u16::MAX, ...}
@@ -3541,6 +3562,19 @@ impl State {
         let pos = stack.var_pos(var);
         stack.add_op("OpVarRef", self);
         self.code_add(pos);
+    }
+
+    /// Lift the free protection of the store whose reference is stashed on top of the stack
+    /// (`n_unprotect_store_frees` with its argument already pushed), consuming the stash.
+    fn unprotect_stashed(&mut self, stack: &mut Stack) {
+        let lib = self
+            .library_names
+            .get("n_unprotect_store_frees")
+            .copied()
+            .expect("n_unprotect_store_frees is a native");
+        stack.add_op("OpStaticCall", self);
+        self.code_add(lib);
+        stack.position -= stack.step(super::size_ref() as u16);
     }
 
     /// Free the store `v` held before its assignment, stashed on the stack, unless `v` now
