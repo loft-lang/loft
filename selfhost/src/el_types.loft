@@ -176,31 +176,32 @@ pub fn without_deps(t: ir::TypeT) -> ir::TypeT {
 // `Type::depend`: the variables a type borrows — through a `&` and a `τ?`, a tuple's the union of
 // its elements', without the share marker.
 pub fn deps(t: ir::TypeT) -> vector<integer> {
-  r: vector<integer> = [];
-  match t {
-    TyText { dep } => { r = dep; },
-    TyReference { dep } => { r = dep; },
-    TyEnum { dep } => { r = dep; },
-    TyIndex { dep } => { r = dep; },
-    TyRadix { dep } => { r = dep; },
-    TyTrie { dep } => { r = dep; },
-    TyHash { dep } => { r = dep; },
-    TySorted { dep } => { r = dep; },
-    TyVector { dep } => { r = dep; },
-    TyFunction { dep } => { r = dep; },
-    TyRefVar { inner } => { r = deps(inner); },
-    TyOptional { inner } => { r = deps(inner); },
+  r: vector<integer> = match t {
+    TyText { dep } => dep,
+    TyReference { dep } => dep,
+    TyEnum { dep } => dep,
+    TyIndex { dep } => dep,
+    TyRadix { dep } => dep,
+    TyTrie { dep } => dep,
+    TyHash { dep } => dep,
+    TySorted { dep } => dep,
+    TyVector { dep } => dep,
+    TyFunction { dep } => dep,
+    TyRefVar { inner } => deps(inner),
+    TyOptional { inner } => deps(inner),
     TyTuple { elems } => {
+      u: vector<integer> = [];
       for x in elems {
         for d in deps(x) {
-          if !contains(r, d) {
-            r += [d];
+          if !contains(u, d) {
+            u += [d];
           }
         }
       }
+      u
     },
-    _ => {}
-  }
+    _ => []
+  };
   [for d in r if d != 65535 { d }]
 }
 

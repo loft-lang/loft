@@ -27,6 +27,12 @@ pub struct UniqueCount {
   pub n: integer
 }
 
+// A local assigned a vector's length, and that vector (`length_locals`).
+pub struct LenLocal {
+  pub var: integer,
+  pub vec: ir::Node
+}
+
 pub struct Vars {
   pub name: text,
   pub file: text,
@@ -51,6 +57,11 @@ pub struct Vars {
   pub work_refs: vector<integer>,
   // `Function::loops`' variables, innermost last: the loops still open
   pub active_loops: vector<integer>,
+  // `Iterator::value` of each open loop, beside `active_loops`: the vector a `for` walks, or
+  // null for any other loop
+  pub active_values: vector<ir::Node>,
+  // The locals this pass assigned a vector's length (`n = len(v)`), with that vector
+  pub len_locals: vector<LenLocal>,
   // `Function::loop_binds`: how many loops have bound each spelling, per pass
   pub loop_binds: hash<LoopCount[name]>,
   // `Parser::divisor_nonzero`: the locals a condition proves non-zero where they are read
@@ -68,7 +79,7 @@ pub struct Vars {
 }
 
 pub fn new_vars(name: text, file: text) -> Vars {
-  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], loop_binds: [], nonzero: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [] }
+  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], active_values: [], len_locals: [], loop_binds: [], nonzero: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [] }
 }
 
 pub fn name_of(v: Vars, nr: integer) -> text {
@@ -290,6 +301,8 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   v.work_ref_p2 = 0;
   v.work_refs = [];
   v.active_loops = [];
+  v.active_values = [];
+  v.len_locals = [];
   v.loop_binds = [];
   v.nonzero = [];
   v.work_ctext = 0;
@@ -352,6 +365,24 @@ pub fn make_independent(v: Vars, nr: integer, remove: integer) {
 
 pub fn set_var_type(v: Vars, nr: integer, t: ir::TypeT) {
   set_type(v, nr, t);
+}
+
+// `Function::loop_value_of_index`: the vector the open `for` walks whose counter is `nr`
+// (`x#index` of `for x in v`), or null.
+pub fn loop_value_of_index(v: Vars, nr: integer) -> ir::Node {
+  nm = v.vars[nr].name;
+  if !nm.ends_with("#index") {
+    return ir::NdNull;
+  }
+  binder = nm[0..len(nm) - 6];
+  k = len(v.active_loops) - 1;
+  while k >= 0 {
+    if v.vars[v.active_loops[k]].name == binder {
+      return v.active_values[k];
+    }
+    k -= 1;
+  }
+  ir::NdNull
 }
 
 // `Function::is_active_loop_var`: the variable of a loop still open.
