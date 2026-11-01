@@ -730,6 +730,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SMatch { at, subject, arms } => match_expr(e, vars, at, subject, arms),
     SBlock { at: _ } => parse_block(e, vars, n, "block", ir::TyUnknown { n: 0 }),
     SPostfix { at, op, e: pe } => postfix(e, vars, at, op, pe),
+    SVarAttr { var, attr, arg, tp } => var_attr(e, vars, var, attr, arg, tp),
     SJump { kind, e: je } => jump(e, vars, kind, je),
     SIndex { at, e: ie, keys, range, hi, limit, spatial } => index(e, vars, at, ie, keys, range || len(hi) > 0 || limit != null || spatial),
     SVecLit { items: _ } => vector_value(e, vars, n).x,
@@ -2613,6 +2614,23 @@ fn nullable_arith(e: el::El, code: ir::Node, outer: boolean) -> ir::Node {
     },
     _ => code
   }
+}
+
+// `x#index` of a loop variable: the loop's own counter (the `x#index` local its `for` made).
+// The other attributes (`#first`, `#remove`, `#break`, a file's `#read`…) are refused by name.
+fn var_attr(e: el::El, vars: el_vars::Vars, var: text, attr: text, arg: integer?, tp: integer?) -> Ex {
+  if attr == "index" && arg == null && tp == null {
+    lv = el_vars::var(vars, var);
+    if lv >= 0 {
+      idx = el_vars::var(vars, "{el_vars::name_of(vars, lv)}#index");
+      if idx >= 0 {
+        el_vars::in_use(vars, idx, true);
+        return ex(ir::NdVar { n: idx }, ir::TyInteger { spec: i32_spec() });
+      }
+    }
+  }
+  el::refuse(e, "a variable attribute: #{attr}");
+  ex(ir::NdNull, ir::TyUnknown { n: 0 })
 }
 
 // The postfix discharges of a nullable scalar (`handle_default_fallback`, `handle_present`):
