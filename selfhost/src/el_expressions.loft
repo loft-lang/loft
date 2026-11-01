@@ -542,8 +542,8 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
     t = result;
   }
   // A function body's tail is a store into its result (`convert_store`): converted to it.
-  if context == "return from block" && len(l) > 0 && el_convert::plain_scalar(result) && el_convert::plain_scalar(t) && !el_types::is_equal(e, result, t) {
-    tc = el_convert::convert(e, vars, l[len(l) - 1], t, result, false);
+  if context == "return from block" && len(l) > 0 && el_convert::plain_scalar(result) && el_convert::plain_scalar(el_types::base(t)) && !el_types::is_equal(e, result, t) {
+    tc = el_convert::convert_store(e, vars, l[len(l) - 1], t, result);
     if tc == null {
       el::refuse(e, "a function's value its declared result converts: {type_kind(t)} to {type_kind(result)}");
     } else {
@@ -652,6 +652,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SStructLit { name, member, fields, base } => object_expr(e, vars, name, member, fields, base),
     SFor { binds, source, par, filter, body } => for_expr(e, vars, binds, source, par, filter, body),
     SWhile { cond, body } => while_expr(e, vars, cond, body),
+    SMatch { at, subject, arms } => match_expr(e, vars, at, subject, arms),
     SJump { kind, e: je } => jump(e, vars, kind, je),
     SIndex { at, e: ie, keys, range, hi, limit, spatial } => index(e, vars, at, ie, keys, range || len(hi) > 0 || limit != null || spatial),
     SVecLit { items: _ } => vector_value(e, vars, n).x,
@@ -2781,6 +2782,267 @@ fn cast_expr_to(e: el::El, vars: el_vars::Vars, x: Ex, to: ir::TypeT) -> Ex {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   ex(c!, to)
+}
+
+// ── match (src/parser/control.rs `parse_match`, `parse_scalar_match`) ──────────────────────────
+
+// One parsed arm: its condition (null for a wildcard), its code and its type.
+pub struct MArm {
+  pub cond: ir::Node?,
+  pub code: ir::Node,
+  pub tp: ir::TypeT
+}
+
+// `Parser::parse_match` for a scalar subject (`parse_scalar_match`) and a plain enum's: the
+// subject held in `_match_subj_N`; each arm's patterns read into a condition — a literal compared
+// with `==`, a range `lo <= s && s < hi`, alternatives or-ed, a variant's ordinal against the
+// subject's — its body read against the type the arms settled on; then the chain of `if`s from
+// the last arm back, ending in a wildcard arm's code or the result's null.  A guard, a binding, a
+// field pattern and any other subject are refused by name.
+fn match_expr(e: el::El, vars: el_vars::Vars, at: integer, subject: integer, arms: vector<integer>) -> Ex {
+  x = expression(e, vars, subject);
+  st = x.tp;
+  match st {
+    TyRefVar { inner } => { st = inner; },
+    _ => {}
+  }
+  scalar_subject = el_convert::plain_scalar(st) || st is TyText;
+  enum_subject = el_convert::plain_enum(st);
+  if !scalar_subject && !enum_subject {
+    if !el_types::is_unknown(st) {
+      el::refuse(e, "a match on this type: {type_kind(st)}");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    if !e.first_pass {
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+  }
+  v = -1;
+  if scalar_subject || enum_subject {
+    // A text read from a local borrows that local.
+    if st is TyText {
+      match x.code {
+        NdVar { n } => { st = ir::TyText { dep: [n] }; },
+        _ => {}
+      }
+    }
+    v = el_vars::create_unique(vars, "match_subj", st);
+    el_vars::set_defined(vars, v);
+  }
+  result = ir::TyVoid;
+  out: vector<MArm> = [];
+  has_wild = false;
+  null_arm = false;
+  for an in arms {
+    match e.p.nodes[an] {
+      SArm { pats, guard, body } => {
+        if guard != null {
+          el::refuse(e, "a match arm with a guard");
+          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+        cond: ir::Node? = null;
+        wild = false;
+        for pn in pats {
+          c = pattern_cond(e, vars, pn, v, st, enum_subject);
+          if c == null {
+            if !(e.p.nodes[pn] is PWild) {
+              return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+            }
+            wild = true;
+          } else if cond == null {
+            cond = c;
+          } else {
+            cond = el_ir::v_if(cond!, ir::NdBoolean { b: true }, c!);
+          }
+        }
+        if wild {
+          cond = null;
+        }
+        expected = if unsettled(result) { ir::TyUnknown { n: 0 } } else { arm_expectation(result) };
+        b = arm_body(e, vars, body, expected);
+        if b.tp is TyNull || el_ir::is_null(b.code) {
+          null_arm = true;
+        }
+        if unsettled(result) {
+          result = b.tp;
+        } else if b.tp is TyOptional && !(result is TyOptional) {
+          result = ir::TyOptional { inner: result };
+        }
+        out += [MArm { cond: cond, code: b.code, tp: b.tp }];
+        if wild {
+          has_wild = true;
+          break;
+        }
+      },
+      _ => {}
+    }
+  }
+  if e.first_pass || (!scalar_subject && !enum_subject) {
+    return ex(ir::NdNull, result);
+  }
+  if el_types::base(result) is TyText {
+    el::refuse(e, "a match answering a text");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  // `type_null_arms`: an arm that answers a written `null` answers the result's null.
+  rbase = el_types::base(result);
+  if !(rbase is TyVoid) && !(rbase is TyNull) {
+    nl = el_convert::null_of(e, rbase);
+    for a in out {
+      if nl != null && el_ir::is_null(a.code) {
+        out[a#index].code = nl!;
+      }
+    }
+  }
+  chain = ir::NdNull;
+  if !(rbase is TyVoid) && !(rbase is TyNull) {
+    fb = el_convert::null_of(e, rbase);
+    if fb == null {
+      el::refuse(e, "a match whose result has no null: {type_kind(result)}");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    chain = fb!;
+  }
+  yields_null = false;
+  k = len(out) - 1;
+  while k >= 0 {
+    a = out[k];
+    if a.cond == null {
+      chain = a.code;
+    } else {
+      chain = el_ir::v_if(a.cond!, a.code, chain);
+    }
+    k -= 1;
+  }
+  if scalar_subject {
+    // `dn1_widen_branch_null`: a non-null scalar result that a branch answers as null is `τ?`;
+    // the block keeps the type the arms settled on.
+    blk = el_ir::v_block([el_ir::v_set(v, x.code), chain], result, "scalar_match");
+    if (el_convert::plain_scalar(result) || result is TyText) && branch_yields_null(e, chain) {
+      return ex(blk, ir::TyOptional { inner: result });
+    }
+    return ex(blk, result);
+  }
+  if null_arm && el_convert::sentinel_value(result) {
+    result = ir::TyOptional { inner: result };
+  }
+  ex(el_ir::v_block([el_ir::v_set(v, x.code), chain], result, "match"), result)
+}
+
+fn unsettled(t: ir::TypeT) -> boolean {
+  b = el_types::base(t);
+  b is TyVoid || b is TyNull || b is TyNever || el_types::is_unknown(b)
+}
+
+// `branch_yields_null`: a written null, or a null literal call, at a branch's end.
+fn branch_yields_null(e: el::El, v: ir::Node) -> boolean {
+  match el_ir::unspan(v) {
+    NdNull => true,
+    NdBlock { block } => {
+      n = len(block[0].operators);
+      n > 0 && branch_yields_null(e, block[0].operators[n - 1] ?? ir::NdNull)
+    },
+    NdInsert { items } => len(items) > 0 && branch_yields_null(e, items[len(items) - 1] ?? ir::NdNull),
+    NdIf { cond: _, t, f } => branch_yields_null(e, t) || branch_yields_null(e, f),
+    NdCall { def_nr, args } => len(args) == 0 && starts_with(el::def(e, def_nr).name, "OpConv") && ends_with(el::def(e, def_nr).name, "FromNull"),
+    _ => false
+  }
+}
+
+// `parse_match_arm_body`: a block read as a "match_arm" block, or an expression converted to the
+// type the arms so far settled on.
+fn arm_body(e: el::El, vars: el_vars::Vars, body: integer?, expected: ir::TypeT) -> Ex {
+  if body == null {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  if e.p.nodes[body!] is SBlock {
+    return parse_block(e, vars, body!, "match_arm", expected);
+  }
+  x = expression(e, vars, body!);
+  if e.first_pass || el_types::is_unknown(expected) || x.tp is TyVoid || x.tp is TyNull || x.tp is TyNever {
+    return x;
+  }
+  c = el_convert::convert_admitting(e, vars, x.code, x.tp, expected);
+  if c == null {
+    refuse_known(e, x.tp, "a match arm of another type: {type_kind(x.tp)} for {type_kind(expected)}");
+    return x;
+  }
+  ex(c!, if x.tp is TyOptional { ir::TyOptional { inner: expected } } else { expected })
+}
+
+// One pattern's condition on the subject `v`, or null for a wildcard (and a refused pattern,
+// which has refused by name).
+fn pattern_cond(e: el::El, vars: el_vars::Vars, pn: integer, v: integer, st: ir::TypeT, enum_subject: boolean) -> ir::Node? {
+  match e.p.nodes[pn] {
+    PWild => null,
+    PName { name, member, fields, braces } => {
+      if enum_subject && member == "" && len(fields) == 0 && !braces {
+        n = 0;
+        match st {
+          TyEnum { n: en } => { n = en; },
+          _ => {}
+        }
+        a = attr_nr(el::def(e, n), name);
+        if a < 0 {
+          el::refuse(e, "a pattern that is not a variant of the enum: {name}");
+          return null;
+        }
+        ord = 0;
+        match el::def(e, n).attributes[a].value[0] ?? ir::NdNull {
+          NdEnum { ord: o } => { ord = o; },
+          _ => {}
+        }
+        return el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [ir::NdVar { n: v }]), ir::NdInt { n: ord }]);
+      }
+      el::refuse(e, "a pattern that binds or names a constant");
+      null
+    },
+    PLit { e: le } => {
+      if enum_subject || le == null {
+        el::refuse(e, "a literal pattern on an enum");
+        return null;
+      }
+      lit = pattern_literal(e, vars, le!);
+      r = call_op(e, vars, "==", [ir::NdVar { n: v }, lit.code], [st, st]);
+      if el_types::is_unknown(r.tp) {
+        return null;
+      }
+      r.code
+    },
+    PRange { lo, hi, inclusive } => {
+      if lo == null || hi == null || enum_subject {
+        el::refuse(e, "an open range pattern");
+        return null;
+      }
+      l = pattern_literal(e, vars, lo!);
+      h = expression(e, vars, hi!);
+      lc = call_op(e, vars, "<=", [l.code, ir::NdVar { n: v }], [st, st]);
+      hc = call_op(e, vars, if inclusive { "<=" } else { "<" }, [ir::NdVar { n: v }, h.code], [st, st]);
+      el_ir::v_if(lc.code, hc.code, ir::NdBoolean { b: false })
+    },
+    _ => {
+      el::refuse(e, "a pattern of this form: {syn_kind(e, pn)}");
+      null
+    }
+  }
+}
+
+// `parse_match_pattern`'s literal: a negated number folded into the literal.
+fn pattern_literal(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
+  match e.p.nodes[n] {
+    SUnary { op, e: inner } => {
+      if op == "-" && inner != null {
+        match e.p.nodes[inner!] {
+          SInt { v } => return ex(ir::NdInt { n: 0 - v }, ir::TyInteger { spec: i32_spec() }),
+          SLong { v } => return ex(ir::NdLong { n: 0 - v }, ir::TyInteger { spec: wide_spec() }),
+          SFloat { v } => return ex(ir::NdFloat { f: 0.0 - v }, ir::TyFloat),
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  expression(e, vars, n)
 }
 
 // `Parser::parse_while`: the condition (a boolean), then a loop that leaves where the condition
