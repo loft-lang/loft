@@ -40,12 +40,62 @@ pub fn fill_all(e: el::El) {
       register_enum(e, d#index);
     }
   }
+  // Each `vector<T>` field's `main_vector<T>` wrapper (and `vector<T>`) where no construct made
+  // it, at the position the lexer has reached: the end of the file.
+  eof = el::pos_at(e, len(e.p.src) - 1);
+  for d in e.b.data.definitions {
+    if d.def_type != el::DT_STRUCT || d.source != e.source {
+      continue;
+    }
+    for a in d.attributes {
+      match a.typedef[0] ?? ir::TyVoid {
+        TyVector { inner } => {
+          nm = el_types::elem_name(e, inner);
+          if nm != "" && el::def_nr(e, "main_vector<{nm}>") < 0 {
+            make_vector_def(e, inner, nm, eof, false);
+          }
+        },
+        _ => {}
+      }
+    }
+  }
   for d in e.b.data.definitions {
     if d.def_type == el::DT_STRUCT && d.known_type == NO_TYPE {
       fill_database(e, d#index);
     }
   }
   finish(e);
+}
+
+// `Data::vector_def`: the `vector<T>` definition where it is missing, and the `main_vector<T>`
+// wrapper struct a vector local's store is (one field, `vector`), both at `pos`; `typed` gives
+// the wrapper its record type, as a construct does (the schema's own pass leaves it unknown).
+pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typed: boolean) {
+  vt = ir::TyVector { inner: t, dep: [] };
+  if el::def_nr(e, "vector<{nm}>") < 0 {
+    vd = el::add_def(e, "vector<{nm}>", pos, el::DT_VECTOR);
+    e.b.data.definitions[vd].returned = [vt];
+    e.b.data.definitions[vd].parent = match t {
+      TyReference { n } => n,
+      _ => el::source_nr(e, 0, nm)
+    };
+  }
+  // The schema's own pass makes the `vector<T>` store type at once where `T` has one already.
+  if !typed {
+    kt = match t {
+      TyReference { n } => el::def(e, n).known_type,
+      _ => known(e, nm)
+    };
+    if kt >= 0 && kt != NO_TYPE {
+      vector_type(e, kt);
+    }
+  }
+  md = el::add_def(e, "main_vector<{nm}>", pos, el::DT_STRUCT);
+  e.b.data.definitions[md].source = 0;
+  if typed {
+    e.b.data.definitions[md].returned = [ir::TyReference { n: md, dep: [] }];
+  }
+  e.b.data.definitions[md].attributes += [el::attribute("vector", vt)];
 }
 
 fn register_enum(e: el::El, d: integer) {

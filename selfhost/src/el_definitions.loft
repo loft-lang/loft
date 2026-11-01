@@ -56,7 +56,7 @@ fn parse_struct(e: el::El, at: integer, value: boolean, name: text, tvars: vecto
     return;
   }
   nt = el::name_tok(e, at, name);
-  d = el::def_nr(e, name);
+  d = if e.first_pass && el::prelude_shadowed(e, name) { -1 } else { el::def_nr(e, name) };
   if e.first_pass {
     if d >= 0 {
       el::refuse(e, "a struct over an existing name");

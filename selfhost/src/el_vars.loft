@@ -58,11 +58,17 @@ pub struct Vars {
   // `Function::work_ctext`: the `__work_cN` text buffers a call hands a text-returning callee
   pub work_ctext: integer,
   // `Function::work_text_p2`: the `__work_p2_N` destinations a text-dest call is given
-  pub work_tp2: integer
+  pub work_tp2: integer,
+  // `child_allocs` on the first pass's code, which keeps every loop body: per record made
+  // through a local's field (one per appended literal), that local
+  pub allocs: vector<integer>,
+  // `Function::mark_inline_ref`: the `__ref_p2_N` a projection out of a call result is bound
+  // in, each set to null just before the statement that fills it
+  pub inline_refs: vector<integer>
 }
 
 pub fn new_vars(name: text, file: text) -> Vars {
-  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], loop_binds: [], nonzero: [], work_ctext: 0, work_tp2: 0 }
+  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], loop_binds: [], nonzero: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [] }
 }
 
 pub fn name_of(v: Vars, nr: integer) -> text {
@@ -276,6 +282,8 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   v.work_text = 0;
   v.work_texts = [];
   v.built = [];
+  v.allocs = [];
+  v.inline_refs = [];
   v.unique = [];
   v.work_vdb = 0;
   v.work_ref = 0;

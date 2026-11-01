@@ -105,7 +105,8 @@ pub enum Syn {
   SNull { pub at: integer },
   SString { pub at: integer, pub parts: vector<integer> },
   SText { pub at: integer, pub s: text },
-  // A hole `{e:spec}` of a string: the spec's tokens are kept as written, `spec` to `spec_end`.
+  // A hole `{e:spec}` of a string: the spec's tokens are kept as written, from `spec` up to (not
+  // including) `spec_end`; equal when the hole has no spec.
   SHole { pub at: integer, pub e: integer?, pub spec: integer, pub spec_end: integer },
   // ── patterns ──
   PWild { pub at: integer },
@@ -1790,10 +1791,13 @@ fn string_lit(p: Syntax) -> integer? {
 fn string_hole(p: Syntax) -> integer? {
   at = p.pos;
   match p {
-    [StrHole { s }, (_w: space)*, e: hole_expr, (_x: space)*, (sp: spec)?, (_r: hole_close)?] => {
+    [StrHole { s }, (_w: space)*, e: hole_expr, (_x: space)*, (sp: spec)?, (r: hole_close)?] => {
       add(p, SText { at: at, s: s });
-      spec_at = if sp == null { p.pos - 1 } else { sp ?? 0 };
-      add(p, SHole { at: at + 1, e: e, spec: spec_at, spec_end: p.pos - 1 })
+      // The spec's tokens end before the `}` — or before the string's next segment when the
+      // lexer read the `}` as part of it (`{p:j}`).
+      end = if r == null { p.pos } else { p.pos - 1 };
+      spec_at = if sp == null { end } else { sp ?? 0 };
+      add(p, SHole { at: at + 1, e: e, spec: spec_at, spec_end: end })
     },
     _ => null
   }

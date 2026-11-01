@@ -135,6 +135,17 @@ pub fn def_nr(el: El, name: text) -> integer {
   source_nr(el, STD_SOURCE, name)
 }
 
+// `Parser::prelude_shadowed`: a name this source has not defined yet that a standard library
+// definition holds (not an unresolved stub, not a standard type) — a declaration here makes a
+// definition of its own that shadows it.
+pub fn prelude_shadowed(el: El, name: text) -> boolean {
+  if el.source == STD_SOURCE || source_nr(el, el.source, name) >= 0 {
+    return false;
+  }
+  p = source_nr(el, STD_SOURCE, name);
+  p >= 0 && def(el, p).def_type != DT_UNKNOWN && !(def(el, p).def_type == DT_TYPE && def(el, p).source == STD_SOURCE)
+}
+
 pub fn def(el: El, d: integer) -> ir::Definition {
   el.b.data.definitions[d]
 }
