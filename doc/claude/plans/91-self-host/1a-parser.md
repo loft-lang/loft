@@ -134,7 +134,7 @@ language suite (`../loft-suite-91`).
 |---|---|---|
 | T tokens | 1845 of 1850 files | four `"\0"` literals (a one-NUL text is loft's null text), one script |
 | S syntax | 1836 of 1843 files | seven refusal cells, all `@EXPECT_ERROR` files |
-| E image | the program `twice` (a binding, a user call, an operator): both definitions; the standard library's first 39 definitions | format strings (`hello`), stdlib functions, structs, constants; then pass-2 bodies broadly |
+| E image | 6 of 1627 programs (`selfhost/front/elab_gate.py`): bindings, user calls, operators, literals, format strings, assert/panic, plain structs, struct literals, field reads | by the gate's refusal ranking: operators, formatted types, typed collections, `for`, `if`, `match`, methods |
 
 Elaboration is `selfhost/src/el*.loft`; gate E's runner is `selfhost/front/elab.loft` (`elab
 <image> <program>` over a `LOFT_EMIT_PARSED` image, or `elab <stdlib files>`), its oracle side
