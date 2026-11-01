@@ -28,8 +28,39 @@ fn ex(code: ir::Node, tp: ir::TypeT) -> Ex {
 pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   result = el::def(e, e.context).returned[0] ?? ir::TyVoid;
   b = parse_block(e, vars, body, "return from block", result);
-  text_return(e, vars, b.tp);
+  // A text local at the tail is what the body answers: the result borrows that local.
+  tt = b.tp;
+  match b.code {
+    NdBlock { block } => {
+      nb = len(block[0].operators);
+      if nb > 0 {
+        match el_ir::unspan(block[0].operators[nb - 1] ?? ir::NdNull) {
+          NdVar { n: tv } => {
+            tvt = el_vars::tp(vars, tv);
+            promoted = tvt == ir::TyRefVar { inner: ir::TyText { dep: [] } } && hidden_param(e, vars, tv);
+            if (el_types::base(tvt) is TyText && !vars.vars[tv].argument) || promoted {
+              tt = ir::TyText { dep: [tv] };
+            }
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  text_return(e, vars, tt);
   code = b.code;
+  // The body of a promoted text local answers a text borrowing it (`av_renumber_retbuf`).
+  if !e.first_pass && tt != b.tp {
+    match code {
+      NdBlock { block } => {
+        bl = block[0];
+        bl.result = [tt];
+        code = ir::NdBlock { block: [bl] };
+      },
+      _ => {}
+    }
+  }
   rb = el_vars::var(vars, "__retbuf");
   // `ref_return`'s `Rename` (pass 1): a tail that is a local record, or a call's hidden buffer,
   // becomes the return buffer itself; pass 2 then builds into it as the argument it is.
@@ -111,7 +142,7 @@ fn is_scalar(t: ir::TypeT) -> boolean {
 // parts into `t` — its leading text appended, each write retargeted — where every part is a write
 // of the format family into the work text that reads neither `t` nor the work text.  Null where
 // the format keeps its buffer.
-fn format_append(e: el::El, v: integer, code: ir::Node) -> ir::Node? {
+fn format_append(e: el::El, v: integer, code: ir::Node, stack: boolean) -> ir::Node? {
   ops: vector<ir::Node> = [];
   match el_ir::unspan(code) {
     NdBlock { block } => {
@@ -143,7 +174,7 @@ fn format_append(e: el::El, v: integer, code: ir::Node) -> ir::Node? {
   }
   parts: vector<ir::Node> = [];
   if prefix != "" {
-    parts += [el_ir::cl(e, "OpAppendText", [ir::NdVar { n: v }, ir::NdText { s: prefix }])];
+    parts += [el_ir::cl(e, if stack { "OpAppendStackText" } else { "OpAppendText" }, [ir::NdVar { n: v }, ir::NdText { s: prefix }])];
   }
   for o in ops {
     if o#index == 0 || o#index == n - 1 {
@@ -166,7 +197,16 @@ fn format_append(e: el::El, v: integer, code: ir::Node) -> ir::Node? {
           }
         }
         a2[0] = ir::NdVar { n: v };
-        parts += [ir::NdCall { def_nr: def_nr, args: a2 }];
+        // `refvar_text_stack_variant`: the write's twin for a `&text` destination.
+        dn = def_nr;
+        if stack {
+          tw = if nm == "OpAppendText" { "OpAppendStackText" } else if nm == "OpAppendCharacter" { "OpAppendStackCharacter" } else { "OpFormatStack{nm[8..len(nm)]}" };
+          dn = el::def_nr(e, tw);
+          if dn < 0 {
+            return null;
+          }
+        }
+        parts += [ir::NdCall { def_nr: dn, args: a2 }];
       },
       _ => { return null; }
     }
@@ -830,7 +870,8 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
     return ex(o.code, ir::TyVoid);
   }
   x = expression(e, vars, rhs!);
-  if !el_vars::change_var_type(e, vars, v, x.tp) {
+  promoted_text = el_vars::tp(vars, v) == ir::TyRefVar { inner: ir::TyText { dep: [] } } && el_types::base(x.tp) is TyText;
+  if !promoted_text && !el_vars::change_var_type(e, vars, v, x.tp) {
     el::refuse(e, "a local that changes type");
   }
   el_vars::drop_use(vars, v);
@@ -945,6 +986,17 @@ fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: inte
     return vector_append(e, vars, v, rhs);
   }
   x = expression(e, vars, rhs);
+  // A promoted text buffer (`&text`) appends through the stack ops.
+  stack = false;
+  match vt {
+    TyRefVar { inner } => {
+      if inner is TyText {
+        stack = true;
+        vt = inner;
+      }
+    },
+    _ => {}
+  }
   if el_types::base(vt) is TyText && !(vt is TyOptional) {
     if bin != "+" {
       el::refuse(e, "a text compound assignment other than `+=`");
@@ -953,12 +1005,18 @@ fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: inte
     el_vars::drop_use(vars, v);
     if el_types::base(x.tp) is TyText || el_types::is_unknown(x.tp) {
       // `parse_assign_op_inner`'s `change_var`: the local borrows what the appended text does.
-      el_vars::change_var_type(e, vars, v, x.tp);
-      fa = format_append(e, v, x.code);
+      if !stack {
+        el_vars::change_var_type(e, vars, v, x.tp);
+      }
+      fa = format_append(e, v, x.code, stack);
       if fa != null {
         return ex(fa!, ir::TyVoid);
       }
-      return ex(el_ir::cl(e, "OpAppendText", [ir::NdVar { n: v }, x.code]), ir::TyVoid);
+      return ex(el_ir::cl(e, if stack { "OpAppendStackText" } else { "OpAppendText" }, [ir::NdVar { n: v }, x.code]), ir::TyVoid);
+    }
+    if stack {
+      el::refuse(e, "a rendered append to a promoted text buffer");
+      return ex(ir::NdNull, ir::TyVoid);
     }
     ops: vector<ir::Node> = [];
     concat_operand(e, ops, v, x);
@@ -1652,7 +1710,8 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
   if e.first_pass {
     return if wrap { ex(c.code, ir::TyOptional { inner: c.tp }) } else { c };
   }
-  code = ir::NdSpan { pos: el::pos_at(e, after_paren(e, at)), inner: c.code };
+  // A call with no arguments returns before `parse_call`'s position wrap.
+  code = if len(args) == 0 { c.code } else { ir::NdSpan { pos: el::pos_at(e, after_paren(e, at)), inner: c.code } };
   if wrap {
     return null_transparent(e, vars, c.code, types, c.tp, code);
   }
@@ -3478,40 +3537,82 @@ fn walkable_scalar(t: ir::TypeT) -> boolean {
 // the index made before the loop's variable, a non-literal end hoisted into `_range_end_N`, the
 // index started one below `lo`; the "Iter range" block steps it, leaves at `hi`, and answers it.
 fn range_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, source: integer, body: integer, filter: integer?) -> Ex {
-  lo = -1;
-  hi = 0;
-  inclusive = false;
+  lo_n: integer? = null;
+  hi_n: integer? = null;
+  incl = false;
   match e.p.nodes[source] {
     SRange { lo: l, hi: h, inclusive: inc } => {
-      inclusive = inc;
-      if l != null && h != null {
-        match e.p.nodes[l!] {
-          SInt { v } => { lo = v; },
-          _ => {}
-        }
-        hi = h!;
-      }
+      incl = inc;
+      lo_n = l;
+      hi_n = h;
     },
     _ => {}
   }
-  if lo < 0 || inclusive {
+  if lo_n == null || hi_n == null {
     el::refuse(e, "a range that is open, inclusive or starts at no literal");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  h = expression(e, vars, hi);
-  if !el_types::is_unknown(h.tp) && !(h.tp is TyInteger) {
-    el::refuse(e, "a range over this type: {type_kind(h.tp)}");
+  l = expression(e, vars, lo_n!);
+  h = expression(e, vars, hi_n!);
+  if (!el_types::is_unknown(l.tp) && !(el_types::base(l.tp) is TyInteger)) || (!el_types::is_unknown(h.tp) && !(el_types::base(h.tp) is TyInteger)) {
+    el::refuse(e, "a range over this type: {type_kind(l.tp)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
   int_t = ir::TyInteger { spec: i32_spec() };
-  end = h.code;
-  inits: vector<ir::Node> = [];
-  if !(h.code is NdInt) {
+  // `parse_in_range_body`: a bound that folds to a constant is the constant; any other is held
+  // in `_range_start_N` / `_range_end_N`.
+  lc = el_convert::const_int(e, l.code);
+  hc = el_convert::const_int(e, h.code);
+  prelude: vector<ir::Node> = [];
+  lo_node = if lc != null { ir::NdInt { n: lc! } } else { l.code };
+  hi_node = if hc != null { ir::NdInt { n: hc! } } else { h.code };
+  rs = -1;
+  re = -1;
+  if lc == null {
+    rs = el_vars::create_unique(vars, "range_start", int_t);
+    prelude += [el_ir::v_set(rs, l.code)];
+    lo_node = ir::NdVar { n: rs };
+  }
+  if hc == null {
     re = el_vars::create_unique(vars, "range_end", int_t);
-    inits += [el_ir::v_set(re, h.code)];
-    end = ir::NdVar { n: re };
+    prelude += [el_ir::v_set(re, h.code)];
+    hi_node = ir::NdVar { n: re };
+  }
+  // A null start makes the range empty: past a constant end, or both bounds made `1, 0`.
+  if rs >= 0 {
+    guard: vector<ir::Node> = [];
+    s_null = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromInt", [ir::NdVar { n: rs }])]);
+    if hc != null {
+      guard += [el_ir::v_if(s_null, el_ir::v_set(rs, ir::NdInt { n: hc! + if incl { 1 } else { 0 } }), ir::NdNull)];
+    } else {
+      empty = el_ir::v_block([el_ir::v_set(rs, ir::NdInt { n: 1 }), el_ir::v_set(re, ir::NdInt { n: 0 })], ir::TyVoid, "empty range");
+      guard += [el_ir::v_if(s_null, empty, ir::NdNull)];
+      guard += [el_ir::v_if(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromInt", [ir::NdVar { n: re }])]), empty, ir::NdNull)];
+    }
+    prelude += [el_ir::v_block(guard, ir::TyVoid, "Range null guard")];
   }
   idx = loop_index(vars, id);
+  i = ir::NdVar { n: idx };
+  plain = lc != null && lc! >= 0;
+  cmp = if incl { "OpLtInt" } else { "OpLeInt" };
+  ls: vector<ir::Node> = [];
+  if incl && hc == null {
+    ls += [el_ir::v_if(el_ir::cl(e, "OpEqInt", [i, hi_node]), ir::NdBreak { n: 0 }, ir::NdNull)];
+  }
+  counter = el_ir::cl(e, "OpConvIntFromNull", []);
+  next_init: ir::Node? = null;
+  if plain {
+    counter = ir::NdInt { n: lc! - 1 };
+    ls += [el_ir::v_set(idx, el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: 1 }]))];
+    ls += [el_ir::v_if(el_ir::cl(e, cmp, [hi_node, i]), ir::NdBreak { n: 0 }, ir::NdNull)];
+  } else {
+    nx = el_vars::create_unique(vars, "next", int_t);
+    n_v = ir::NdVar { n: nx };
+    next_init = el_ir::v_set(nx, lo_node);
+    ls += [el_ir::v_if(el_ir::cl(e, cmp, [hi_node, n_v]), ir::NdBreak { n: 0 }, ir::NdNull)];
+    ls += [el_ir::v_set(idx, n_v), el_ir::v_set(nx, el_ir::cl(e, "OpAddInt", [n_v, ir::NdInt { n: 1 }]))];
+  }
+  ls += [i];
   lv = loop_var(vars, src_id, id, int_t);
   vars.active_loops += [lv];
   fc = loop_filter(e, vars, filter);
@@ -3520,14 +3621,16 @@ fn range_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, source: int
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
-  i = ir::NdVar { n: idx };
-  inits += [el_ir::v_set(idx, ir::NdInt { n: lo - 1 })];
-  init = if len(inits) == 1 { inits[0] } else { ir::NdInsert { items: inits } };
-  stepped = el_ir::v_block([
-    el_ir::v_set(idx, el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: 1 }])),
-    el_ir::v_if(el_ir::cl(e, "OpLeInt", [end, i]), ir::NdBreak { n: 0 }, ir::NdNull),
-    i
-  ], int_t, "Iter range");
+  if next_init != null {
+    prelude += [next_init!];
+  }
+  init_ivar = el_ir::v_set(idx, counter);
+  init = init_ivar;
+  if len(prelude) > 0 {
+    prelude += [init_ivar];
+    init = ir::NdInsert { items: prelude };
+  }
+  stepped = el_ir::v_block(ls, int_t, "Iter range");
   steps: vector<ir::Node> = [el_ir::v_set(lv, stepped)];
   if fc != null {
     steps += [fc!];
@@ -3594,7 +3697,7 @@ pub struct VecRows {
   pub vec_known: integer
 }
 
-fn vector_rows(e: el::El, t: ir::TypeT, lit: integer) -> VecRows? {
+fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> VecRows? {
   nm = el_types::elem_name(e, t);
   if nm == "" {
     el::refuse(e, "a vector of this element type: {type_kind(t)}");
@@ -3606,7 +3709,7 @@ fn vector_rows(e: el::El, t: ir::TypeT, lit: integer) -> VecRows? {
       SVecLit { at } => { tok = at; },
       _ => {}
     }
-    vector_def(e, t, nm, tok);
+    vector_def(e, t, nm, tok, declared);
   }
   md = el::def_nr(e, "main_vector<{nm}>");
   vk = el_schema::schema_type(e, "vector<{nm}>");
@@ -3624,7 +3727,7 @@ fn vector_rows(e: el::El, t: ir::TypeT, lit: integer) -> VecRows? {
 // definition (owned by the element's definition) and the global `main_vector<T>` struct whose one
 // field is the vector, both at the literal's `]` (the lexer's position there); their store types are made
 // by `fill_all`.
-fn vector_def(e: el::El, t: ir::TypeT, nm: text, lit: integer) {
+fn vector_def(e: el::El, t: ir::TypeT, nm: text, lit: integer, declared: boolean) {
   at = lit;
   depth = 0;
   while at < len(e.p.src) {
@@ -3640,7 +3743,9 @@ fn vector_def(e: el::El, t: ir::TypeT, nm: text, lit: integer) {
   }
   // An empty `[]` makes them before the literal is read: the lexer stands after the token
   // before its `[`.
-  if at == lit + 1 {
+  // A declared element type, or an empty `[]`, makes them before the literal is read: the lexer
+  // stands after the token before its `[`.
+  if at == lit + 1 || declared {
     at = lit - 1;
   }
   pos = el::pos_at(e, at);
@@ -3868,7 +3973,7 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   if len(xs) > 0 {
     vector_of(e, in_t);
   }
-  rows = vector_rows(e, in_t, n);
+  rows = vector_rows(e, in_t, n, !el_types::is_unknown(declared));
   if rows == null {
     return refused_build();
   }
