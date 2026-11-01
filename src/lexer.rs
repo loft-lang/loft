@@ -3548,6 +3548,17 @@ impl Lexer {
     }
 
     /// Shorthand test if the current element is an identifier and skip it if found.
+    /// A pattern's wildcard `_`, consumed when it is next.  `_` lexes as an identifier, so
+    /// `has_token("_")` never sees it.
+    pub fn has_wildcard(&mut self) -> bool {
+        if matches!(&self.peek().has, LexItem::Identifier(id) if id == "_") {
+            self.cont();
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn has_identifier(&mut self) -> Option<String> {
         if let LexItem::Identifier(n) = &self.peek.has {
             let n = n.clone();

@@ -8172,6 +8172,10 @@ impl Parser {
             },
             |p, binds, conds| p.parse_struct_pattern_fields(e_nr, subject_val, binds, conds),
         );
+        // @FR-P-Guard — `S { x } if x > 0 =>`: the guard reads the pattern's bindings and is
+        // ANDed onto the pattern's own tests below, so a false guard fails the arm and
+        // selection moves on, exactly as on an enum arm.
+        let user_guard = self.parse_optional_guard();
         self.expect_match_arm_arrow();
         let mut arm_code = Value::Null;
         let arm_expected = self.match_arm_expected(result_type);
@@ -8183,10 +8187,12 @@ impl Parser {
         let and_all = |conds: Vec<Value>| {
             conds
                 .into_iter()
+                .chain(user_guard.clone())
                 .reduce(|a, b| v_if(a, b, Value::Boolean(false)))
         };
         let guard = and_all(field_conditions);
-        // A pattern with no literal field always matches, so the arm covers the struct.
+        // A pattern with no literal field and no guard always matches, so the arm covers the
+        // struct (@FR-M-Total: a guarded arm covers nothing).
         let mut exhaustive = guard.is_none();
         if alternatives.is_empty() {
             // One pattern: its bindings are hoisted ahead of the chain, as they always were.
@@ -10273,9 +10279,20 @@ impl Parser {
         self.lexer.token("(");
         // branches[i] = the sequence for branch i: [(disc, variant_def, fields)] per position.
         let mut branches: Vec<Vec<(i32, u32, Vec<(String, usize, Type)>)>> = Vec::new();
+        let elem_tp = Type::Enum(e_nr, true, crate::data::Deps::none());
         loop {
             let mut branch: Vec<(i32, u32, Vec<(String, usize, Type)>)> = Vec::new();
-            while let Some(vid) = self.lexer.has_identifier() {
+            loop {
+                // `@FR-P-Cap` — `x: V` captures the element a position matched, as in a
+                // single-element alternation; `(x: A)?` binds `x : A?` (`@FR-P-Opt`).
+                let capture = self.lexer.peek_named_arg();
+                if capture.is_some() {
+                    self.lexer.has_identifier();
+                    self.lexer.token(":");
+                }
+                let Some(vid) = self.lexer.has_identifier() else {
+                    break;
+                };
                 let vname = if self.lexer.has_token("::") {
                     self.lexer.has_identifier().unwrap_or_else(|| vid.clone())
                 } else {
@@ -10303,6 +10320,9 @@ impl Parser {
                     0
                 };
                 let mut fields: Vec<(String, usize, Type)> = Vec::new();
+                if let Some(cap) = capture {
+                    fields.push((cap, usize::MAX, elem_tp.clone()));
+                }
                 if self.lexer.has_token("{") {
                     while let Some(fname) = self.lexer.has_identifier() {
                         let attr = if valid {
@@ -10542,7 +10562,7 @@ impl Parser {
         let total = self.count_slice_tail_elements();
         for k in 0..total {
             let pos = Value::Int(-(total - k));
-            if self.lexer.has_token("_") {
+            if self.lexer.has_wildcard() {
                 // a wildcard: the position only
             } else if self.lexer.peek_named_arg().is_none()
                 && let LexItem::Identifier(id) = self.lexer.peek().has.clone()
@@ -10643,7 +10663,11 @@ impl Parser {
                         elm_tp,
                         Value::Int(head_len + pos as i32),
                     );
-                    let read = self.pattern_field_value(vdef, attr, elem);
+                    let read = if attr == usize::MAX {
+                        elem
+                    } else {
+                        self.pattern_field_value(vdef, attr, elem)
+                    };
                     acc = v_if(branch_conds[bi].clone(), read, acc);
                 }
             }
@@ -10803,7 +10827,7 @@ impl Parser {
                     // after the `:` is the fixed element's form, refused here by name.
                     let mut bind = Some(fname.clone());
                     if self.lexer.has_token(":") {
-                        if self.lexer.has_token("_") {
+                        if self.lexer.has_wildcard() {
                             bind = None;
                         } else if let LexItem::Identifier(id) = self.lexer.peek().has.clone()
                             && id.chars().next().is_some_and(char::is_lowercase)
@@ -11461,24 +11485,32 @@ impl Parser {
             return None;
         }
         // Wildcard for non-enum fields.
-        if matches!(&self.lexer.peek().has, LexItem::Identifier(id) if id == "_") {
-            self.lexer.has_identifier(); // consume the `_`
+        if self.lexer.has_wildcard() {
             return None;
         }
-        // Scalar field: store in a temp and use parse_match_pattern.
+        // Scalar field: store in a temp and test it against each alternative in turn
+        // (`@FR-P-Alt` — `S { n: 1 | 2 }`: the first that matches wins, on the one read).
         let tmp = self.create_unique("fp_subj", field_type);
         self.vars.defined(tmp);
-        let (pat, pat_type) = self.parse_match_pattern(field_type, tmp);
-        // If parse_match_pattern returned a Block (range pattern or null pattern),
-        // use it directly as a condition.
-        if matches!(pat_type, Type::Boolean) || matches!(pat, Value::Block(_)) {
-            return Some(v_block(
-                vec![v_set(tmp, field_val), pat],
-                Type::Boolean,
-                "field_sub",
-            ));
+        let mut cond = self.scalar_field_test(field_type, tmp);
+        while self.lexer.has_token("|") {
+            let next = self.scalar_field_test(field_type, tmp);
+            cond = v_if(cond, Value::Boolean(true), next);
         }
-        // Otherwise it's a literal — generate an equality comparison.
+        Some(v_block(
+            vec![v_set(tmp, field_val), cond],
+            Type::Boolean,
+            "field_sub",
+        ))
+    }
+
+    /// One alternative of a scalar field pattern, tested against the field's value in `tmp`: a
+    /// range or a `null` pattern is its own test, a literal is compared with `==`.
+    fn scalar_field_test(&mut self, field_type: &Type, tmp: u16) -> Value {
+        let (pat, pat_type) = self.parse_match_pattern(field_type, tmp);
+        if matches!(pat_type, Type::Boolean) || matches!(pat, Value::Block(_)) {
+            return pat;
+        }
         let mut eq = Value::Null;
         self.call_op(
             &mut eq,
@@ -11486,11 +11518,7 @@ impl Parser {
             &[Value::Var(tmp), pat],
             &[field_type.clone(), field_type.clone()],
         );
-        Some(v_block(
-            vec![v_set(tmp, field_val), eq],
-            Type::Boolean,
-            "field_sub",
-        ))
+        eq
     }
 
     /// One operand of a scalar pattern — a literal, a constant, a range bound — parsed above the
@@ -13099,11 +13127,7 @@ impl Parser {
                 self.lexer.has_token(",");
                 break;
             }
-            if self.lexer.peek_token("}") {
-                self.lexer.has_token(",");
-            } else {
-                self.lexer.token(",");
-            }
+            self.match_arm_separator();
         }
         self.lexer.token("}");
 
