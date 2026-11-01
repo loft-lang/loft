@@ -73,10 +73,12 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       code = delivered!;
     } else if !e.first_pass {
       built = build_into_buffer(e, vars, code, rb, result);
-      if built == null {
-        el::refuse(e, "a function returning a record from something other than a literal");
-      } else {
+      kind = tail_kind(e, vars, code);
+      // A tail already refused is no second refusal.
+      if built != null {
         code = built!;
+      } else if !(kind == "null" && len(e.refused) > 0) {
+        el::refuse(e, "a function returning a record from something other than a literal: {kind}");
       }
     }
   } else if rb >= 0 && !e.first_pass {
@@ -709,6 +711,29 @@ fn heap_deps(t: ir::TypeT) -> boolean {
   }
 }
 
+// The shape of a body's tail, naming a refusal.
+fn tail_kind(e: el::El, vars: el_vars::Vars, code: ir::Node) -> text {
+  t = ir::NdNull;
+  match code {
+    NdBlock { block } => {
+      n = len(block[0].operators);
+      if n > 0 {
+        t = el_ir::unspan(block[0].operators[n - 1] ?? ir::NdNull);
+      }
+    },
+    _ => {}
+  }
+  match t {
+    NdVar { n } => if vars.vars[n].argument { "parameter" } else if len(el_types::deps(el_vars::tp(vars, n))) > 0 { "a borrowing local" } else { "an owned local" },
+    NdCall { def_nr } => "call {el::def(e, def_nr).name}",
+    NdBlock { block } => "block {block[0].name}",
+    NdIf { cond: _ } => "if",
+    NdReturn { inner: _ } => "return",
+    NdNull => "null",
+    _ => "other"
+  }
+}
+
 // `record_local_may_be_absent`: may this record local be null where it is returned — nullable,
 // a parameter, or built from nothing it can name.
 fn record_may_be_absent(vars: el_vars::Vars, v: integer, seen: vector<integer>) -> boolean {
@@ -1234,6 +1259,9 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
     }
     return ex(ir::NdNull, ir::TyVoid);
   }
+  if op == "+=" && e.p.nodes[rhs] is SVecLit && el_types::is_collection(p.tp) {
+    return field_append(e, vars, p, rhs);
+  }
   x = expression(e, vars, rhs);
   pt = p.tp;
   if op != "=" {
@@ -1262,6 +1290,123 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
     return ex(ir::NdNull, ir::TyVoid);
   }
   ex(w!, ir::TyVoid)
+}
+
+// `field += [items]` on a collection field of a record local (`parse_vector_inner` with
+// `is_field`): no room made first; a scalar item pushed onto the field's place; a text or a
+// struct literal item a record made through the owning struct's field (`OpNewRecord(r, struct,
+// field)`, its value or fields, `OpFinishRecord`) — a keyed collection indexes it there.
+fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
+  place = el_ir::unspan(p.code);
+  rec = -1;
+  pos = -1;
+  match place {
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name == "OpGetField" && len(args) == 3 {
+        match el_ir::unspan(args[0] ?? ir::NdNull) {
+          NdVar { n: rv } => { rec = rv; },
+          _ => {}
+        }
+        match el_ir::unspan(args[1] ?? ir::NdNull) {
+          NdInt { n: off } => { pos = off; },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  pd = if rec >= 0 { heap_def(el_vars::tp(vars, rec)) } else { -1 };
+  if !e.first_pass && (pd < 0 || el::def(e, pd).def_type != el::DT_STRUCT) {
+    el::refuse(e, "an append to a collection that is not a field of a record local");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  pkt = if pd >= 0 { el::def(e, pd).known_type } else { -1 };
+  fnr = -1;
+  if !e.first_pass {
+    for f in el_schema::struct_fields(e, pkt) {
+      if f.position == pos {
+        fnr = f#index;
+      }
+    }
+  }
+  inner = match el_types::base(p.tp) {
+    TyVector { inner: i } => i,
+    TyHash { n: hn } => ir::TyReference { n: hn, dep: [] },
+    TySorted { n: sn } => ir::TyReference { n: sn, dep: [] },
+    TyIndex { n: xn } => ir::TyReference { n: xn, dep: [] },
+    _ => ir::TyUnknown { n: 0 }
+  };
+  if (fnr < 0 && !e.first_pass) || el_types::is_unknown(inner) {
+    el::refuse(e, "an append to a collection of this type: {type_kind(p.tp)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  items: vector<integer> = [];
+  match e.p.nodes[n] {
+    SVecLit { items: its } => { items = its; },
+    _ => {}
+  }
+  elm = -1;
+  if len(items) > 0 {
+    elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [rec] });
+  }
+  r = ir::NdVar { n: rec };
+  at = ir::NdVar { n: elm };
+  push = push_op(inner);
+  ls: vector<ir::Node> = [];
+  for it in items {
+    if e.p.nodes[it] is SRepeat {
+      el::refuse(e, "a repeated vector item");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    sd = struct_literal_def(e, it);
+    if sd >= 0 {
+      if !el_types::is_equal(e, inner, ir::TyReference { n: sd, dep: [] }) {
+        el::refuse(e, "a vector item of another type than the field's");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      if e.first_pass {
+        literal_field_exprs(e, vars, it);
+        continue;
+      }
+      el_vars::set_var_type(vars, elm, ir::TyReference { n: sd, dep: [rec] });
+      fields: vector<integer> = [];
+      match e.p.nodes[it] {
+        SStructLit { fields: fs } => { fields = fs; },
+        _ => {}
+      }
+      fl = object_fields(e, vars, elm, sd, fields);
+      if fl == null {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }]))];
+      for op in fl! {
+        if op#index >= 2 {
+          ls += [op];
+        }
+      }
+      ls += [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }])];
+      continue;
+    }
+    x = expression(e, vars, it);
+    if !el_types::is_unknown(x.tp) && !el_types::is_equal(e, inner, x.tp) {
+      el::refuse(e, "a vector item of another type than the field's");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    if e.first_pass {
+      continue;
+    }
+    if push != "" {
+      ls += [el_ir::cl(e, push, [place, x.code])];
+    } else if inner is TyText {
+      ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }]))];
+      ls += [el_ir::cl(e, "OpSetText", [at, ir::NdInt { n: 0 }, x.code])];
+      ls += [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }])];
+    } else {
+      el::refuse(e, "a record item appended that is not a literal");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+  }
+  ex(ir::NdInsert { items: ls }, ir::TyVoid)
 }
 
 // The write twin of a place's read: `OpGet<T>(r, pos…)` becomes `OpSet<T>(r, pos…, value)`, a
@@ -1481,7 +1626,7 @@ fn object_fields(e: el::El, vars: el_vars::Vars, v: integer, d: integer, fields:
     match e.p.nodes[fi] {
       SFieldInit { name: fname } => {
         a = attr_nr(def, fname);
-        if a >= 0 && def.attributes[a].typedef[0] is TyVector {
+        if a >= 0 && el_types::is_collection(def.attributes[a].typedef[0] ?? ir::TyVoid) {
           list += [el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: field_position(e, d, fname) }, ir::NdInt { n: 0 }])];
         }
       },
@@ -1494,7 +1639,7 @@ fn object_fields(e: el::El, vars: el_vars::Vars, v: integer, d: integer, fields:
       SFieldInit { name: fname, quoted, e: fe } => {
         a = attr_nr(def, fname);
         if quoted || fe == null || a < 0 {
-          el::refuse(e, "a struct field that is quoted, valueless or not declared");
+          el::refuse(e, "a struct field that is quoted, valueless or not declared: {if quoted { "quoted" } else if fe == null { "valueless" } else { "undeclared" }}");
           return null;
         }
         at = def.attributes[a].typedef[0] ?? ir::TyUnknown { n: 0 };
@@ -1553,11 +1698,11 @@ fn field_default(e: el::El, d: integer, a: integer, r: ir::Node, base: integer) 
   at = def.attributes[a];
   pos = base + field_position(e, d, at.name);
   ft = at.typedef[0] ?? ir::TyVoid;
+  if el_types::is_collection(ft) {
+    z = el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: pos }, ir::NdInt { n: 0 }]);
+    return [z, z];
+  }
   match ft {
-    TyVector { inner: _ } => {
-      z = el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: pos }, ir::NdInt { n: 0 }]);
-      return [z, z];
-    },
     TyReference { n: fd } => {
       if el::def(e, fd).def_type != el::DT_STRUCT {
         el::refuse(e, "an omitted field of this type");
@@ -1922,6 +2067,9 @@ fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text,
       }
       code = el_ir::cl(e, "OpGetField", [x.code, pos, ir::NdInt { n: vk }]);
     },
+    TyHash { n: _ } => { code = el_ir::cl(e, "OpGetField", [x.code, pos, ir::NdInt { n: if e.first_pass { 0 } else { el_schema::keyed_type(e, ft) } }]); },
+    TySorted { n: _ } => { code = el_ir::cl(e, "OpGetField", [x.code, pos, ir::NdInt { n: if e.first_pass { 0 } else { el_schema::keyed_type(e, ft) } }]); },
+    TyIndex { n: _ } => { code = el_ir::cl(e, "OpGetField", [x.code, pos, ir::NdInt { n: if e.first_pass { 0 } else { el_schema::keyed_type(e, ft) } }]); },
     TyReference { n: fd } => {
       if el::def(e, fd).def_type != el::DT_STRUCT {
         el::refuse(e, "a field read of this type");
@@ -2500,6 +2648,9 @@ fn type_def_nr(e: el::El, t: ir::TypeT) -> integer {
     TyCharacter => el::source_nr(e, 0, "character"),
     TyRoutine { n } => n,
     TyVector { inner: _ } => el::source_nr(e, 0, "vector"),
+    TySorted { n: _ } => el::source_nr(e, 0, "sorted"),
+    TyIndex { n: _ } => el::source_nr(e, 0, "index"),
+    TyHash { n: _ } => el::source_nr(e, 0, "hash"),
     TyEnum { n } => n,
     TyReference { n } => n,
     TyUnknown { n } => n,
@@ -2662,8 +2813,14 @@ fn takes(e: el::El, param: ir::TypeT, arg: ir::TypeT) -> boolean {
   if el_types::is_equal(e, param, arg) {
     return true;
   }
+  // A bare collection parameter (`sorted`, `hash`, `index`) takes any instance of its kind.
   match param {
     TyVector { inner } => el_types::is_unknown(inner) && arg is TyVector,
+    TyReference { n } => {
+      a = el_types::base(arg);
+      nm = el::def(e, n).name;
+      (nm == "sorted" && a is TySorted) || (nm == "hash" && a is TyHash) || (nm == "index" && a is TyIndex)
+    },
     _ => false
   }
 }
@@ -4565,11 +4722,18 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
 // loop variable, arithmetic over those) types the element `τ?`, which is refused by name here, as
 // are a range, a key list and a container that is not a vector.
 fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vector<integer>, ranged: boolean) -> Ex {
-  if c == null || ranged || len(keys) != 1 {
+  if c == null || ranged || len(keys) == 0 {
     el::refuse(e, "an index that is a range, a key list or a limit");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   x = expression(e, vars, c!);
+  if keyed_kind(x.tp) {
+    return keyed_index(e, vars, at, x, keys);
+  }
+  if len(keys) != 1 {
+    el::refuse(e, "an index that is a range, a key list or a limit");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
   inner = ir::TyUnknown { n: 0 };
   match el_types::base(x.tp) {
     TyVector { inner: i } => { inner = i; },
@@ -4622,6 +4786,80 @@ fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vector<
     code = ir::NdSpan { pos: el::pos_at(e, at), inner: code };
   }
   ex(code, t)
+}
+
+fn keyed_kind(t: ir::TypeT) -> boolean {
+  match el_types::base(t) {
+    TyHash { n: _ } => true,
+    TySorted { n: _ } => true,
+    TyIndex { n: _ } => true,
+    _ => false
+  }
+}
+
+// `parse_index`'s keyed arms, a point lookup (`parse_key`'s last leg): each key converted to its
+// field's type, `OpGetRecord(c, type, n, keys…)` — the element `τ?` (`@FR-Col-Lookup`, a miss
+// answers null) borrowing what the container does.  A partial key of an ordered collection
+// (an iterator) and a tuple key are refused by name.
+fn keyed_index(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, keys: vector<integer>) -> Ex {
+  ct = el_types::base(x.tp);
+  el_d = -1;
+  names: vector<text> = [];
+  match ct {
+    TyHash { n, names: ns } => {
+      el_d = n;
+      for k in ns {
+        names += [k.name];
+      }
+    },
+    TySorted { n, keys: ks } => {
+      el_d = n;
+      for k in ks {
+        names += [k.name];
+      }
+    },
+    TyIndex { n, keys: ks } => {
+      el_d = n;
+      for k in ks {
+        names += [k.name];
+      }
+    },
+    _ => {}
+  }
+  if len(keys) != len(names) {
+    el::refuse(e, "a keyed lookup with a partial key");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  args: vector<ir::Node> = [x.code, ir::NdInt { n: if e.first_pass { 65535 } else { el_schema::keyed_type(e, ct) } }, ir::NdInt { n: len(names) }];
+  for k in keys {
+    a = attr_nr(el::def(e, el_d), names[k#index]);
+    kt = if a < 0 { ir::TyUnknown { n: 0 } } else { el::def(e, el_d).attributes[a].typedef[0] ?? ir::TyUnknown { n: 0 } };
+    if kt is TyTuple {
+      el::refuse(e, "a tuple key");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    kx = expression(e, vars, k);
+    v = stored(e, vars, kx, kt);
+    if v == null {
+      refuse_known(e, kx.tp, "a key its field's type converts: {type_kind(kx.tp)} to {type_kind(kt)}");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    args += [v!];
+  }
+  t = ir::TyReference { n: el_d, dep: [] };
+  ds = el_types::deps(ct);
+  if len(ds) > 0 {
+    t = el_types::with_deps(t, [ds[len(ds) - 1]]);
+  }
+  match x.code {
+    NdVar { n } => { t = el_types::with_deps(t, [n]); },
+    _ => {}
+  }
+  code = el_ir::cl(e, "OpGetRecord", args);
+  if !e.first_pass {
+    code = ir::NdSpan { pos: el::pos_at(e, at), inner: code };
+  }
+  ex(code, ir::TyOptional { inner: t })
 }
 
 // `index_provably_fit` without the `if i < len(v)` proof (`index_arith_trusted`): a constant,

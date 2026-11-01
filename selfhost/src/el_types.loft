@@ -213,6 +213,20 @@ fn contains(v: vector<integer>, x: integer) -> boolean {
   false
 }
 
+// `is_collection`: a vector or a keyed collection, through a `&`.
+pub fn is_collection(t: ir::TypeT) -> boolean {
+  match t {
+    TyRefVar { inner } => is_collection(inner),
+    TyVector { inner: _ } => true,
+    TyHash { n: _ } => true,
+    TySorted { n: _ } => true,
+    TyIndex { n: _ } => true,
+    TyRadix { n: _ } => true,
+    TyTrie { n: _ } => true,
+    _ => false
+  }
+}
+
 // `Parser::parse_type` of a named type with nothing after its name: the type a definition of
 // that name answers.  What it does not carry yet is refused by name.
 pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
@@ -225,6 +239,39 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
           return null;
         }
         return ir::TyVector { inner: inner!, dep: [] };
+      }
+      if (name == "hash" || name == "sorted" || name == "index") && member == "" && len(args) == 1 && !elem_null && len(keys) > 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" && !nullable {
+        // `sub_type_inner`'s keyed arms: a record element and its key fields (`-k` descending,
+        // which only `sorted` and `index` take).
+        inner = parse_type(e, args[0] ?? 0);
+        if inner == null {
+          return null;
+        }
+        sub = -1;
+        match inner! {
+          TyReference { n } => { sub = n; },
+          _ => {}
+        }
+        if sub < 0 {
+          el::refuse(e, "a keyed collection of this element: {name}");
+          return null;
+        }
+        if name == "hash" {
+          names: vector<ir::NameRef> = [];
+          for k in keys {
+            if starts_with(k, "-") {
+              el::refuse(e, "a descending hash key");
+              return null;
+            }
+            names += [ir::NameRef { name: k }];
+          }
+          return ir::TyHash { n: sub, names: names, dep: [] };
+        }
+        sk: vector<ir::SortKey> = [];
+        for k in keys {
+          sk += [if starts_with(k, "-") { ir::SortKey { name: k[1..], asc: false } } else { ir::SortKey { name: k, asc: true } }];
+        }
+        return if name == "sorted" { ir::TySorted { n: sub, keys: sk, dep: [] } } else { ir::TyIndex { n: sub, keys: sk, dep: [] } };
       }
       if member != "" || len(args) > 0 || len(keys) > 0 || len(deps) > 0 || limit != null || not_null || assoc != "" {
         el::refuse(e, "a type with arguments, keys, a limit or a member: {name}");
