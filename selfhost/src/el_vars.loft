@@ -342,11 +342,9 @@ pub fn depend(v: Vars, nr: integer, on: integer) {
   set_type(v, nr, el_types::with_deps(tp(v, nr), [on]));
 }
 
-// The variable's type replaced.  Built in a fresh list first: a literal assigned to the field
-// whose item reads that field through a call lost the field's contents (loft#2335).
+// The variable's type replaced.
 fn set_type(v: Vars, nr: integer, t: ir::TypeT) {
-  nt: vector<ir::TypeT> = [t];
-  v.vars[nr].type_def = nt;
+  v.vars[nr].type_def = [t];
 }
 
 // What the image keeps of the table (`ir::Function`).
