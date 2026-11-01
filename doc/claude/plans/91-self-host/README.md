@@ -175,8 +175,12 @@ agree.  The comparison instrument is `selfhost/compare/` ([1b-compare.md](1b-com
    `#hot` / normal / `#cold` classes) and the bytecode byte-identical.  The natives that
    exist only in Rust today move to loft or, where they reach the system, to the C runtime
    (strand 9).  Gate: every layer of the comparison equal — opcodes, bytecode, slots,
-   binds, out, alloc, leak.  P-perf measures the inner loop against the Rust interpreter;
-   it steers optimisation work and no longer decides whether 1b happens.
+   binds, out, alloc, leak.  **The expected speed is near 3× the Rust interpreter's run
+   time (owner, 2026-11-01), and it rests on the C optimisation layer** — the shared
+   decisions in `src/opt/` and the C writer, which keep optimising the interpreter's loft
+   code throughout the project.  A gap is closed there, for every loft program, never by
+   hand-tuning the interpreter's source or its C.  P-perf measures the inner loop against
+   the Rust interpreter; it steers that work and no longer decides whether 1b happens.
 3. **The C generator in loft (strand 12).**  `src/opt/`'s decisions and `src/c/`'s writer,
    the C byte-identical to the Rust generator's for every program.
 4. **Bootstrap.**  Stage 1: the loft-written compiler and interpreter, compiled to C by the
@@ -204,7 +208,7 @@ are its own.  P-cemit is done (@PLN200 B5, `scripts/c_sweep.py` the diff).
 - **Until stage 6 the stdlib has two authorings** — the 355 `#rust` bodies beside the C routines the generator maps them to; they go with the rustc backend.
 - **A compiler is the heaviest consumer of what the bars score lowest** — the OCaml bar reads closures 2/6, nullability 0/2, pattern depth 6/8, and @PLN179's register lists what tooling in loft hit (a character loop to tokenise, no set of scalars, no membership test, no `exit(code)`). 1a will surface these faster than any consumer; each is a language fix, not a compiler workaround.
 - **@C89 vs @C99 is a real fork** — @C99 (`stdint.h`, `long long`) maps i64/UTF-8 cleanly; true @C89 forces width typedefs + config. Decide before strand 5.
-- **ANSI-C is not a perf play** — the case is reach + trust + bootstrap.
+- **The C optimisation layer is the speed lever** — the interpreter in loft is as fast as the C it compiles to, so its ratio to the Rust interpreter moves with `src/opt/` and the C writer, then with their port (strand 12); reach, trust and bootstrap are the other half of the case.
 - **`DbRef` is used everywhere** (keys, store, `deps`/lifetime, fn-ref slots, vector/text addressing) — the narrowed profile must keep the `deps` system working at 8 bytes; it is a parameterization of an existing abstraction, but a broad one.
 
 ## Open design questions
