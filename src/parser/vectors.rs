@@ -5547,12 +5547,26 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             _ if is_field => Some(self.field_place(dest)?),
             _ => self.field_place(dest),
         };
+        // A place PREFIX handed to a function — `tp(v, 0)` for the destination `v.vars[0].td` —
+        // lets the callee read the destination through it, which no rename can redirect: such
+        // a part is a read, and only staging below carries it (loft#2335).
+        let reads_through = |this: &Self, n: &Value| match (&field_place, n) {
+            (Some(place), Value::Call(d, args)) if !this.data.def(*d).name().starts_with("Op") => {
+                args.iter().any(|a| {
+                    this.field_place(a)
+                        .is_some_and(|p| p.0 == place.0 && p.1.len() < place.1.len() && place.1.starts_with(&p.1))
+                })
+            }
+            _ => false,
+        };
         let reads = {
             let ro: Vec<&Value> = parts.iter().map(|p| &**p).collect();
             match &field_place {
-                Some(place) => ro
-                    .iter()
-                    .any(|v| v.any_node(&mut |n| self.field_place(n).is_some_and(|p| p == *place))),
+                Some(place) => ro.iter().any(|v| {
+                    v.any_node(&mut |n| {
+                        self.field_place(n).is_some_and(|p| p == *place) || reads_through(self, n)
+                    })
+                }),
                 None => {
                     self.comprehension_reads_target(vec, is_var, &ro)
                         || self.comprehension_needs_own_buffer(vec, dest, is_var, is_field, &ro)
@@ -5574,12 +5588,18 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // grown.  A record part of any other shape that names the destination — a record
         // literal reading it — keeps the snapshot, whose reads it needs under `=`.
         let scalar_elem = crate::data::is_scalar(in_t) || matches!(in_t.base(), Type::Text(_));
-        let record_elem = matches!(in_t.base(), Type::Reference(_, _) | Type::Vector(_, _));
+        // A struct-enum is a heap record exactly as a struct is (`Type::heap_def_nr`).
+        let record_elem = matches!(
+            in_t.base(),
+            Type::Reference(_, _) | Type::Enum(_, true, _) | Type::Vector(_, _)
+        );
         if literal && crate::keys::append_staging_enabled() && (scalar_elem || record_elem) {
             let mut names = vec![vec];
             names.extend(self.vector_link_partner_vars(vec));
             let names_dest = |this: &Self, n: &Value| match &field_place {
-                Some(place) => this.field_place(n).is_some_and(|p| p == *place),
+                Some(place) => {
+                    this.field_place(n).is_some_and(|p| p == *place) || reads_through(this, n)
+                }
                 None => names.iter().any(|v| Self::mentions_var(n, *v)),
             };
             let constant = |p: &Value| {
@@ -5625,7 +5645,20 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                     (user_call(p) && (!vector_elem || self.call_retbuf(p).is_some()))
                         || !p.any_node(&mut |n| names_dest(self, n))
                 });
-            if writes && stageable {
+            // A RECORD part that is a call naming the destination is staged whether or not
+            // the call may write it: the snapshot cannot carry a read made inside the callee
+            // through a place prefix, and the temps a call's arguments are lifted into outlive
+            // a snapshot the scope pass releases at the build (loft#2335).
+            let record_call_reads = record_elem
+                && parts
+                    .iter()
+                    .any(|p| user_call(p) && p.any_node(&mut |n| names_dest(self, n)));
+            // Any element type: a read through a place prefix is the callee's, so only an
+            // evaluation before the build sees what the destination held.
+            let prefix_reads = parts
+                .iter()
+                .any(|p| p.any_node(&mut |n| reads_through(self, n)));
+            if (writes || record_call_reads || prefix_reads) && stageable {
                 let mut temps: Vec<Value> = Vec::new();
                 for part in parts.iter_mut() {
                     if constant(part) {
