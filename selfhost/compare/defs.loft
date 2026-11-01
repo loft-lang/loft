@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // `defs <image> [from]` — every definition of a program image from number `from` (0) on, as
-// `report::defs_report` writes it: the Rust front end's side of gate E (1a-parser.md).
+// `report::defs_report` writes it: the Rust front end's side of gate E (1a-parser.md).  `from`
+// may be `program`: the first definition after the standard library's, where `elab <image>
+// <program>` starts its report.
 use load;
 use report;
+use el;
 
 fn main() {
   a = arguments();
@@ -13,6 +16,6 @@ fn main() {
     eprintln("no image at {a[0] ?? ""}");
     exit(2);
   }
-  from = (a[1] ?? "0") as integer ?? 0;
+  from = if a[1] == "program" { el::std_count(b!) } else { (a[1] ?? "0") as integer ?? 0 };
   print(report::defs_report(b!, from));
 }
