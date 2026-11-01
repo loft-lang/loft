@@ -5711,8 +5711,11 @@ impl Parser {
                 // `takes(|x| { x * 2 })` says, and used to be refused only because the `⇐`
                 // channel was never pushed here. `var_tp` (`td`, below) already carries the
                 // type for everything that reads it, but `lambda_hint` reads the channel.
+                // loft#2337 — and a COLLECTION field's type is what an empty `[]` inside the
+                // value builds (`(T-Chk-Vec)`): an `if`'s then arm `[]` asks this channel for its
+                // element, as it does under a declared local or a field assignment, which push it.
                 let saved_expected = std::mem::replace(&mut self.expected, Type::Unknown(0));
-                if Self::seeds_lambda_hint(&td) {
+                if Self::seeds_lambda_hint(&td) || crate::parser::vectors::is_collection(&td_base) {
                     self.expected = td.clone();
                 }
                 // A COLLECTION member of a literal rebuilt into a whole local is written through
