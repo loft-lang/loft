@@ -658,7 +658,9 @@ joins by calling `loft::net_profile::time(…)` from its Rust bridge, and the ar
 report says so rather than printing nothing (loft#1088). PERFORMANCE.md § LOFT_NET_PROFILE.
 
 **Diagnostics:** [DIAGNOSTICS.md](doc/claude/DIAGNOSTICS.md) the code index (`advice[avoidable-copy]`)
-+ `--explain` fix lines — a code is a FROZEN public surface, and a new one lands with its row.
++ `--explain` fix lines — a code is a FROZEN public surface, and a new one lands with its row ·
+[WARNING_FIXES.md](doc/claude/WARNING_FIXES.md) which construction clears each warning — a fix
+says more than the code did, never only silences it.
 
 **Testing / debug:** [TESTING.md](doc/claude/TESTING.md) where a test goes and how to write it (start here) ·
 [RUNNING_TESTS.md](doc/claude/RUNNING_TESTS.md) run the suite, read a failure, `LOFT_LOG`/LogConfig ·
