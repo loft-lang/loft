@@ -12,6 +12,7 @@ use el;
 use el_vars;
 use el_types;
 use el_expressions;
+use el_schema;
 
 // `Parser::parse_file`'s definition loop, over the file's items in order.
 pub fn elab_file(e: el::El, file: integer) {
@@ -23,6 +24,8 @@ pub fn elab_file(e: el::El, file: integer) {
     },
     _ => {}
   }
+  // The end of `parse_file`: the definitions this pass declared take their store types.
+  el_schema::fill_all(e);
 }
 
 fn top_item(e: el::El, it: integer) {
@@ -36,9 +39,82 @@ fn top_item(e: el::El, it: integer) {
     SFn { at, is_op, name, tvars, params, ret, ret_const, cap, body, annots } => {
       parse_function(e, at, is_op, name, tvars, params, ret, ret_const, cap, body, annots);
     },
-    SStruct { at } => { el::refuse(e, "struct"); },
+    SStruct { at, value, name, tvars, fields } => { parse_struct(e, at, value, name, tvars, fields); },
     SConst { at } => { el::refuse(e, "constant"); },
     _ => { el::refuse(e, "item"); }
+  }
+}
+
+// `struct Name { field: Type, … }`                       Parser::parse_struct, Parser::parse_field
+// Added on the first pass at the position after its name, answering a record of itself; each
+// field an attribute of its declared type, mutable, nullable only when the type is `τ?` (an
+// integer field's spec records it).  The second pass adds nothing.  A value struct, a template,
+// a field modifier, a default and a capture are refused by name.
+fn parse_struct(e: el::El, at: integer, value: boolean, name: text, tvars: vector<integer>, fields: vector<integer>) {
+  if value || len(tvars) > 0 {
+    el::refuse(e, "a value struct or a struct template");
+    return;
+  }
+  nt = el::name_tok(e, at, name);
+  d = el::def_nr(e, name);
+  if e.first_pass {
+    if d >= 0 {
+      el::refuse(e, "a struct over an existing name");
+      return;
+    }
+    d = el::add_def(e, name, el::pos_at(e, nt + 1), el::DT_STRUCT);
+    el::set_returned(e, d, ir::TyReference { n: d, dep: [] });
+  }
+  if d < 0 {
+    return;
+  }
+  ctx = e.context;
+  e.context = d;
+  for f in fields {
+    match e.p.nodes[f] {
+      SFieldDecl { public, lexeme, fixed, name: fname, mods } => {
+        tn = field_type_node(e, mods);
+        if lexeme || fixed || tn == null {
+          el::refuse(e, "a struct field with a modifier, a default or a capture");
+          continue;
+        }
+        t = el_types::parse_type(e, tn!);
+        if t == null || !e.first_pass {
+          continue;
+        }
+        tp = t!;
+        nullable = tp is TyOptional;
+        match tp {
+          TyInteger { spec } => {
+            spec.not_null = !nullable;
+            tp = ir::TyInteger { spec: spec };
+          },
+          _ => {}
+        }
+        for a in el::def(e, d).attributes {
+          if a.name == fname {
+            el::refuse(e, "a duplicate struct field");
+          }
+        }
+        a = el::attribute(fname, tp);
+        a.nullable = nullable;
+        a.pub_field = public;
+        e.b.data.definitions[d].attributes += [a];
+      },
+      _ => {}
+    }
+  }
+  e.context = ctx;
+}
+
+// A field declaration's one type, when it is nothing but a type.
+fn field_type_node(e: el::El, mods: vector<integer>) -> integer? {
+  if len(mods) != 1 {
+    return null;
+  }
+  match e.p.nodes[mods[0] ?? 0] {
+    SFieldType { tp, init, caps } => if init == null && len(caps) == 0 { tp } else { null },
+    _ => null
   }
 }
 

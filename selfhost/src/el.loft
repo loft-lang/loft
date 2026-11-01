@@ -242,14 +242,19 @@ pub fn is_operator(d: ir::Definition) -> boolean {
 
 // Start from the first `upto` definitions of `base` and its schema, with the indices a warm
 // load rebuilds: the name table and the operator candidates (`Data::rebuild_indices`).
-pub fn load_base(el: El, base: ir::Bundle, upto: integer) {
+pub fn load_base(el: El, base: ir::Bundle, upto: integer, types_upto: integer) {
   for d in base.data.definitions {
     if d#index >= upto {
       break;
     }
     el.b.data.definitions += [d];
   }
-  el.b.types = base.types;
+  for t in base.types {
+    if t#index >= types_upto {
+      break;
+    }
+    el.b.types += [t];
+  }
   for d in el.b.data.definitions {
     k = key(d.source, d.name);
     if el.names[k] == null {
@@ -296,6 +301,11 @@ pub fn attribute(name: text, tp: ir::TypeT) -> ir::Attribute {
     links: "",
     fact: ""
   }
+}
+
+// How many store types a bundle's schema holds.
+pub fn type_count(b: ir::Bundle) -> integer {
+  len(b.types)
 }
 
 // How many definitions the standard library owns at the start of `b` (source 0, before the
