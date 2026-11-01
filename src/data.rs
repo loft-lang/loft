@@ -250,6 +250,11 @@ impl DefIndex {
         self.get(name, source).is_some()
     }
 
+    /// The definition `name` was FIRST bound to, in whichever source.
+    pub(crate) fn first_bound(&self, name: &str) -> Option<u32> {
+        self.by_name.get(name).map(|b| b.first.1)
+    }
+
     /// Bound in ANY source.
     pub(crate) fn contains_name(&self, name: &str) -> bool {
         self.by_name.contains_key(name)
@@ -12447,6 +12452,13 @@ impl Data {
     }
 
     #[must_use]
+    /// The definition keyed `name` in ANY source, the first one made — for a key that names one
+    /// thing program-wide whichever source mints it: an instance of a generic (`@FR-G-Mono`).
+    #[must_use]
+    pub fn any_source_nr(&self, name: &str) -> u32 {
+        self.def_names.first_bound(name).unwrap_or(u32::MAX)
+    }
+
     pub fn source_nr(&self, source: u16, name: &str) -> u32 {
         if source == u16::MAX {
             return self.def_nr(name);

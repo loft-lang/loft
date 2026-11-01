@@ -9004,12 +9004,13 @@ use a separate collection or add after the loop"
                 self.length_locals.2.push(settled);
             }
             // …and a local bound from a read it made trusted is what pass 2 typed it, not the
-            // `τ?` pass 1 gave it without that fact — when nothing else assigns it.
+            // `τ?` pass 1 gave it without that fact — when the value IS that element read and
+            // nothing else assigns the local.
             if self.length_local_read.get()
-                && let Value::Set(e, _) = code.unspan()
+                && let Value::Set(e, rhs) = code.unspan()
+                && crate::parser::length_locals::is_element_read(rhs, &self.data)
                 && !self.vars.is_declared(*e)
                 && let Type::Optional(inner) = self.vars.tp(*e).clone()
-                && !matches!(tp.unrewritten(), Type::Optional(_))
                 && crate::parser::length_locals::assigned_once(
                     &self.data.def(self.context).code,
                     *e,
