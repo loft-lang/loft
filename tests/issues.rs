@@ -2256,33 +2256,38 @@ fn test() {
     // still prove by sorting the data correctly.
     .warning(concat!(
         "a nullable `integer?` is stored into element 0 of this vector literal of the ",
-        "non-null type `integer` — it becomes null there; discharge with `?` (the type's ",
-        "default), `?? <default>`, or `match` if that is not intended at ",
-        "issue_84_merge_sort_too_few_parameters:8:38"
+        "non-null type `integer` — it becomes null there; an index loft cannot prove in range ",
+        "may be past the end: index with a shape it proves (`v[-1]`, the loop's own element, ",
+        "`v[x#index]`, an index tested against `len(v)`), or write `!` after the read when the ",
+        "program guarantees the element at issue_84_merge_sort_too_few_parameters:8:34"
     ))
     .warning(concat!(
         "a nullable `integer?` is stored into element 0 of this vector literal of the ",
-        "non-null type `integer` — it becomes null there; discharge with `?` (the type's ",
-        "default), `?? <default>`, or `match` if that is not intended at ",
-        "issue_84_merge_sort_too_few_parameters:9:43"
+        "non-null type `integer` — it becomes null there; an index loft cannot prove in range ",
+        "may be past the end: index with a shape it proves (`v[-1]`, the loop's own element, ",
+        "`v[x#index]`, an index tested against `len(v)`), or write `!` after the read when the ",
+        "program guarantees the element at issue_84_merge_sort_too_few_parameters:9:39"
     ))
     .warning(concat!(
         "a nullable `integer?` is stored into element 0 of this vector literal of the ",
-        "non-null type `integer` — it becomes null there; discharge with `?` (the type's ",
-        "default), `?? <default>`, or `match` if that is not intended at ",
-        "issue_84_merge_sort_too_few_parameters:10:51"
+        "non-null type `integer` — it becomes null there; an index loft cannot prove in range ",
+        "may be past the end: index with a shape it proves (`v[-1]`, the loop's own element, ",
+        "`v[x#index]`, an index tested against `len(v)`), or write `!` after the read when the ",
+        "program guarantees the element at issue_84_merge_sort_too_few_parameters:10:47"
     ))
     .warning(concat!(
         "a nullable `integer?` is stored into element 0 of this vector literal of the ",
-        "non-null type `integer` — it becomes null there; discharge with `?` (the type's ",
-        "default), `?? <default>`, or `match` if that is not intended at ",
-        "issue_84_merge_sort_too_few_parameters:11:31"
+        "non-null type `integer` — it becomes null there; an index loft cannot prove in range ",
+        "may be past the end: index with a shape it proves (`v[-1]`, the loop's own element, ",
+        "`v[x#index]`, an index tested against `len(v)`), or write `!` after the read when the ",
+        "program guarantees the element at issue_84_merge_sort_too_few_parameters:11:27"
     ))
     .warning(concat!(
         "a nullable `integer?` is stored into element 0 of this vector literal of the ",
-        "non-null type `integer` — it becomes null there; discharge with `?` (the type's ",
-        "default), `?? <default>`, or `match` if that is not intended at ",
-        "issue_84_merge_sort_too_few_parameters:19:39"
+        "non-null type `integer` — it becomes null there; an index loft cannot prove in range ",
+        "may be past the end: index with a shape it proves (`v[-1]`, the loop's own element, ",
+        "`v[x#index]`, an index tested against `len(v)`), or write `!` after the read when the ",
+        "program guarantees the element at issue_84_merge_sort_too_few_parameters:19:35"
     ))
     .result(Value::Null);
 }

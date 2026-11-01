@@ -6681,6 +6681,7 @@ use a separate collection or add after the loop"
                 kept.then_some(
                     "when it is null the store does not happen, so the slot keeps the value it had",
                 ),
+                None,
             );
         }
         // @FR-O-Latest, loft#1466 — a CALL RESULT's borrow list is the CALLEE's answer, and on

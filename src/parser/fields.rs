@@ -1917,7 +1917,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
     ///
     /// Lint signal only: the element type is unchanged, so a constant index stays
     /// the trusted developer contract `index_provably_fit` makes it.
-    fn reads_a_collection_element(&self, code: &Value) -> bool {
+    pub(super) fn reads_a_collection_element(&self, code: &Value) -> bool {
         match code.unspan() {
             Value::Call(d, args) => {
                 let name = self.data.def(*d).name.as_str();

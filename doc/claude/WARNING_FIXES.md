@@ -1,9 +1,11 @@
 # What clears a warning
 
-A loft warning is meant to point at a construction that makes it go away **and says more than
-the code did before**: what the author knows, or what the program may meet.  A change that
-only silences the warning — a `?` on a value that should never be null, a dummy default — is
-not a fix: it turns a bug the warning saw into a quiet default nobody sees.
+A loft warning is written so that reading it makes you want to switch: it says what is wrong
+in the terms of YOUR code, and names a construction that makes it go away **and says more
+than the code did before** — what the author knows, or what the program may meet.  A change
+that only silences the warning — a `?` on a value that should never be null, a dummy default —
+is not a fix: it turns a bug the warning saw into a quiet default nobody sees.  A warning that
+cannot name such a construction for the code in front of it is a defect in the warning.
 
 This page lists, per warning, the constructions that clear it and when each one is the right
 one.  The code index with each warning's exact scope is [DIAGNOSTICS.md § The codes](DIAGNOSTICS.md#the-codes);
@@ -12,11 +14,24 @@ the rules the constructions rest on are cited inline.
 ## A nullable value stored into a non-null slot
 
 > warning: a nullable `τ?` is stored into *the slot* of the non-null type `τ` — it becomes null
-> there; …
+> there; *the construction for this source*
 
 `(N-Store)` (`formal/types.md`): a `τ?` must be discharged before it lands in a `τ` slot — a
-local declared `τ`, a parameter, a field, an element, a return value.  The question to answer
-first is **where the null comes from**, because that decides the construction.
+local declared `τ`, a parameter, a field, an element, a return value.  The warning reads where
+the null comes from and names the construction for that source (`Parser::null_cure`), with
+the caret on the expression when it has a position:
+
+| the value | the warning says |
+|---|---|
+| an element read by an index `(N-Index)` cannot prove | index with a shape it proves (`v[-1]`, the loop's own element, `v[x#index]`, an index tested against `len(v)`), or `!` after the read |
+| a keyed lookup (`h[k]`) | handle the miss with `match` or a guard, or `?? <value>` |
+| an `if` / `match` with a branch answering `null` | declare the slot `τ?` if null is a real answer; make that branch halt if it cannot happen |
+| a call of a function that answers `τ?` | decide what null means here: `!`, a guard or `match`, `?? <value>` — or declare the slot |
+| a local that is `τ?`, or a field or computation of one | test it first (`if x == null { … }` makes it `τ` after), or `x!` |
+
+Declaring the slot `τ?` is offered only where the slot is the author's to declare — never a
+parameter, which belongs to the function called.  `?` is named last, and only as the type's
+default when that default is the answer.  The sections below are the reasoning behind each.
 
 ### The null comes from an index the program guarantees
 
@@ -72,8 +87,8 @@ one of the index constructions above, or `v[nr]!.name`.
 
 ## Open
 
-- The nullable-store warning's caret marks the slot (the `{` after a return type, the `)` of a
-  call) rather than the nullable expression, so it does not yet point at the code to change.
-- Its message offers only `?`, `?? <default>` and `match`.  It does not yet name `!` for a
-  guaranteed value, an index shape `(N-Index)` trusts, or declaring the slot `τ?`, so the one
-  construction it suggests first (`?`) is the one that is most often wrong.
+- A value with no position of its own (a local read, an `if` built by the parser) still puts
+  the caret on the slot — the `{` after a return type, the `)` of a call.
+- A type annotation on a name an earlier branch bound as `τ?` (`ops: vector<T> = []` after
+  `ops = maybe()` elsewhere in the function) is silently not applied: the local stays `τ?`, and
+  the warning then lands on a later use that looks correct.
