@@ -375,6 +375,10 @@ warning does not buy any of them off.
 
 ## What remains open
 
+The later-use search, the cheap-copy threshold and the fix set are settled, and stated where
+the notice is documented: DIAGNOSTICS.md § Fix lines.  How they were settled:
+[COPY_DIAGNOSTICS-history.md](COPY_DIAGNOSTICS-history.md).
+
 1. **The per-file / per-function accept surface** has no syntax yet (decision 3 names the
    requirement; `#superseded "…"` is the only per-definition precedent). Until it exists, an
    unaccepted copy is simply reported — which is the state the model requires, so this blocks
@@ -414,18 +418,6 @@ warning does not buy any of them off.
    measured the not-found path — `loft` roots relative paths at the SCRIPT's directory, not
    the shell's cwd, so a probe in a scratch dir sees no project file. Size is now known;
    cost is not, and the two should not be conflated when picking what to drain.
-
-4. **The later-use search does not follow paths** (loft#2342).  A use in an arm exclusive with
-   the copy's arm, and a read after the variable is reassigned — across a loop's back edge
-   included — count as "still used after this point", so the advice fires where a move is
-   legal and its second fix names a line that does not use the value.  DIAGNOSTICS.md § Fix
-   lines already rules such a site out ("a site whose condition an author can see is false
-   should offer nothing"); the search is what does not keep it.
-5. **Copies no costlier than a move are reported** — a plain enum value or a small record with
-   no heap field (`NdVar { n }`), placed twice.  No rewrite makes such a copy cheaper, so the
-   advice names nothing the author can act on.  Whether the lint should stay silent below a
-   size is undecided; until it is, these advices are expected, and over half of a large
-   program's `avoidable-copy` output is this kind.
 
 ## Probes run while writing this (the prediction-vs-reality record)
 

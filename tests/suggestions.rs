@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 const AVOIDABLE: &str = "struct Holder { v: vector<integer> }\n\n\
      fn use_it(h: Holder) -> integer { len(h.v) }\n\n\
      fn main() {\n  src = [1, 2, 3];\n  h = Holder { v: src };\n  \
-     println(\"{use_it(h)} {len(src)}\");\n}\n";
+     n = len(src);\n  println(\"{use_it(h)} {n}\");\n}\n";
 
 fn probe(src: &str) -> std::path::PathBuf {
     static NEXT: AtomicU32 = AtomicU32::new(0);
@@ -78,26 +78,25 @@ fn fix_lines_are_opt_in() {
     );
 }
 
-/// `--explain` offers BOTH tiers, most-teaching first.
+/// `--explain` offers the rewrite usable at THIS site, and only that.
 ///
-/// Ranking is on what a fix opens up, not on how short it is: "build the value in place"
-/// introduces an idiom reusable everywhere, while "drop the later use" is a local deletion.
+/// `src` is read again on line 8 by a statement that can run before the copy on line 7, so
+/// moving it there makes the copy a move.  "Build the value in place" is not offered: with a
+/// later read of the source standing, there is nothing to build in place of.
 #[test]
-fn explain_offers_both_tiers_teaching_first() {
+fn explain_offers_the_rewrite_usable_here() {
     let out = run(AVOIDABLE, true);
-    let Some(build) = out.find("build the value in place") else {
-        panic!("the mechanical fix must be offered; output:\n{out}");
-    };
-    let Some(drop) = out.find("drop the later use") else {
-        panic!("the conditional fix must be offered; output:\n{out}");
-    };
     assert!(
-        build < drop,
-        "the fix that teaches an idiom must rank above the local deletion; output:\n{out}"
+        out.contains("fix  move line 8 above line 7"),
+        "the reorder must be offered, naming both lines; output:\n{out}"
+    );
+    assert!(
+        !out.contains("build the value in place") && !out.contains("drop the later use"),
+        "a fix that does not hold at this site must not be offered; output:\n{out}"
     );
 }
 
-/// The condition NAMES the surviving use, by line.
+/// The message NAMES the surviving use, by line, and the fix states the condition it affirms.
 ///
 /// This is @PLN131's Q6.1, and it is the difference between a veteran affirming a condition
 /// in one second and going hunting for it: the analysis holds the last use as a traversal
@@ -109,12 +108,12 @@ fn explain_offers_both_tiers_teaching_first() {
 fn the_condition_names_the_surviving_use_by_line() {
     let out = run(AVOIDABLE, true);
     assert!(
-        out.contains("needs:"),
+        out.contains("needs: line 8 does not need line 7 to run first"),
         "a conditional fix must state the condition it affirms; output:\n{out}"
     );
     assert!(
         out.contains("`src` is used again at line 8"),
-        "the condition must name WHERE the source survives, not just that it does; \
+        "the notice must name WHERE the source survives, not just that it does; \
          output:\n{out}"
     );
 }
@@ -128,7 +127,7 @@ fn the_condition_names_the_surviving_use_by_line() {
 #[test]
 fn the_message_does_not_repeat_its_own_fix() {
     let quiet = run(AVOIDABLE, false);
-    for cure in ["build the value in place", "drop the later use"] {
+    for cure in ["move line 8 above line 7"] {
         assert!(
             !quiet.contains(cure),
             "the message repeats its fix (\"{cure}\") — what is wrong belongs to the \

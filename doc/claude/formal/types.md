@@ -153,9 +153,10 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
                EXCEPT an index trusted BY CONTRACT — a constant, an active `for` variable, the
                counter `x#index` of a `for x in v` over the SAME v, a read guarded by
                `i < len(v)`, integer arithmetic over those and over `len(v)` of the same v or
-               a local holding it (`n = len(v)` assigned once, outside every loop, with v —
-               and every view of it — written by no statement after it; pass 2 reads this off
-               pass 1's whole body, `length_locals`) (@PLN102 D1, `index_provably_fit`) —
+               a local holding it (`n = len(v)` assigned once, with v — and every view of it
+               — written by no statement that can run after it: the rest of each enclosing
+               block, and each enclosing loop whole; pass 2 reads this off pass 1's whole
+               body, `length_locals`) (@PLN102 D1, `index_provably_fit`) —
                which reads τ NON-NULL; a genuine overrun there
                faults to null at run time (@C80) and no rule above the runtime sees it.  So a
                nullability cell built on `v[9]` measures nothing: it must index by a plain

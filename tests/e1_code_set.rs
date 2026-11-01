@@ -39,7 +39,7 @@ const CODES: &[(&str, &str)] = &[
     (
         "avoidable-copy",
         "struct H { v: vector<integer> }\nfn u(h: H) -> integer { len(h.v) }\n\
-         fn main() { s = [1, 2, 3]; h = H { v: s }; print(\"{u(h)} {len(s)}\"); }",
+         fn main() { s = [1, 2, 3]; h = H { v: s }; n = len(s); print(\"{u(h)} {n}\"); }",
     ),
     // The two API-design advices (@FR-R-Escape): per-call work a `pub` contract forces on
     // every caller and no rewrite can share — a parameter's collection answered by copy, and
@@ -581,7 +581,7 @@ const FIX_BLOCKED: &[(&str, &str)] = &[];
 const EDIT_BLOCKED: &[(&str, &str)] = &[
     (
         "avoidable-copy",
-        "the rewrite is 'build the value in place', which is a restructure of the construction site rather than an edit at the notice's own span",
+        "the rewrite drops or moves a whole statement elsewhere in the body, which an edit at the notice's own span cannot spell",
     ),
     (
         "c-binding-not-interpretable",
