@@ -635,7 +635,8 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
         } else {
           l += [x.code];
         }
-        if s#index < len(stmts) - 1 {
+        // A statement followed by `;` (or by another statement) leaves the block no value.
+        if s#index < len(stmts) - 1 || semi {
           if !(t is TyNever) {
             t = ir::TyVoid;
           }
@@ -817,7 +818,16 @@ fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text) -> 
         }
       }
     }
-    el::refuse(e, "a name that is not a variable");
+    d2 = el::def_nr(e, name);
+    kind = if d2 < 0 { "unknown" } else { "definition type {el::def(e, d2).def_type}" };
+    // A constant: its value inlined (a scalar's or a text's).
+    if d2 >= 0 && el::def(e, d2).def_type == el::DT_CONSTANT && len(el::def(e, d2).code) > 0 {
+      ct = el::def(e, d2).returned[0] ?? ir::TyUnknown { n: 0 };
+      if el_convert::plain_scalar(ct) || ct is TyText {
+        return ex(el::def(e, d2).code[0] ?? ir::NdNull, ct);
+      }
+    }
+    el::refuse(e, "a name that is not a variable: {kind}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   el_vars::in_use(vars, v, true);
@@ -1529,6 +1539,19 @@ fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text,
   if call || len(args) > 0 {
     return method_call(e, vars, at, re!, name, args);
   }
+  // `Enum.Value`: a plain enum's value named through its enum.
+  match e.p.nodes[re!] {
+    SName { name: en, member: em } => {
+      ed = el::def_nr(e, en);
+      if em == "" && el_vars::var(vars, en) < 0 && ed >= 0 && el::def(e, ed).def_type == el::DT_ENUM && (el::def(e, ed).returned[0] ?? ir::TyVoid) == ir::TyEnum { n: ed, is_ref: false, dep: [] } {
+        a = attr_nr(el::def(e, ed), name);
+        if a >= 0 {
+          return ex(el::def(e, ed).attributes[a].value[0] ?? ir::NdNull, ir::TyEnum { n: ed, is_ref: false, dep: [] });
+        }
+      }
+    },
+    _ => {}
+  }
   x = expression(e, vars, re!);
   d = -1;
   match el_types::base(x.tp) {
@@ -1696,6 +1719,14 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   c = r!;
+  // Phase 3.5 elision (`math_arg_in_domain`): a domain-partial math function whose argument
+  // is provably in its domain cannot answer null, so the `τ?` its declaration carries is peeled.
+  if c.tp is TyOptional {
+    cargs = match el_ir::unspan(c.code) { NdCall { args } => args, _ => [] };
+    if in_domain(e, name, cargs) {
+      c.tp = match c.tp { TyOptional { inner } => inner, _ => c.tp };
+    }
+  }
   // `wrap_null_transparent`: a nullable argument into one of the functions that propagate
   // null (`is_null_transparent`) with a non-null scalar result makes the call `τ?` — each such
   // argument held in a `__ntp_N`, the call made only where all are present.
@@ -1716,6 +1747,148 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
     return null_transparent(e, vars, c.code, types, c.tp, code);
   }
   ex(code, c.tp)
+}
+
+// The constant argument a domain check reads, or null.
+fn const_float(n: ir::Node) -> float {
+  match el_ir::unspan(n) {
+    NdFloat { f } => f,
+    NdSingle { f } => f as float,
+    NdInt { n } => n as float,
+    NdLong { n } => n as float,
+    _ => null
+  }
+}
+
+fn in_domain(e: el::El, name: text, args: vector<ir::Node>) -> boolean {
+  a0 = if len(args) > 0 { const_float(args[0]) } else { null };
+  a1 = if len(args) > 1 { const_float(args[1]) } else { null };
+  const_ok = if name == "sqrt" {
+    a0 != null && a0 >= 0.0
+  } else if name == "asin" || name == "acos" {
+    a0 != null && a0 >= -1.0 && a0 <= 1.0
+  } else if name == "ln" || name == "log2" || name == "log10" {
+    a0 != null && a0 > 0.0
+  } else if name == "log" {
+    a0 != null && a0 > 0.0 && a1 != null && a1 > 0.0 && a1 != 1.0
+  } else if name == "pow" {
+    (a0 != null && a0 >= 0.0) || (a1 != null && a1 == floor(a1))
+  } else {
+    false
+  };
+  if const_ok {
+    return true;
+  }
+  sg = if len(args) > 0 { domain_sign(e, args[0]) } else { SIGN_UNKNOWN };
+  if name == "sqrt" || name == "pow" {
+    return sg != SIGN_UNKNOWN;
+  }
+  if name == "ln" || name == "log2" || name == "log10" {
+    return sg == SIGN_POS;
+  }
+  if name == "log" {
+    return sg == SIGN_POS && a1 != null && a1 > 0.0 && a1 != 1.0;
+  }
+  if name == "asin" || name == "acos" {
+    if len(args) == 0 {
+      return false;
+    }
+    b = pm_bounds(e, args[0]);
+    return b.lo >= -1.0 && b.hi <= 1.0;
+  }
+  false
+}
+
+SIGN_UNKNOWN = 0;
+SIGN_NONNEG = 1;
+SIGN_POS = 2;
+
+// `domain_sign`: is a pure float expression provably > 0, >= 0, or unknown.  The flow-guard
+// licence (`math_sign_proven`) is not carried: a guarded variable reads unknown.
+fn domain_sign(e: el::El, n: ir::Node) -> integer {
+  f = const_float(n);
+  if f != null {
+    return if f > 0.0 { SIGN_POS } else if f == 0.0 { SIGN_NONNEG } else { SIGN_UNKNOWN };
+  }
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if len(args) == 2 && (nm == "OpMulFloat" || nm == "OpMulSingle") {
+        if "{el_ir::unspan(args[0])}" == "{el_ir::unspan(args[1])}" {
+          return SIGN_NONNEG;
+        }
+        a = domain_sign(e, args[0]);
+        b = domain_sign(e, args[1]);
+        return if a == SIGN_POS && b == SIGN_POS { SIGN_POS } else if a != SIGN_UNKNOWN && b != SIGN_UNKNOWN { SIGN_NONNEG } else { SIGN_UNKNOWN };
+      }
+      if len(args) == 2 && (nm == "OpAddFloat" || nm == "OpAddSingle") {
+        a = domain_sign(e, args[0]);
+        b = domain_sign(e, args[1]);
+        return if (a == SIGN_POS && b != SIGN_UNKNOWN) || (a == SIGN_NONNEG && b == SIGN_POS) { SIGN_POS } else if a == SIGN_NONNEG && b == SIGN_NONNEG { SIGN_NONNEG } else { SIGN_UNKNOWN };
+      }
+      if nm == "t_5float_abs" || nm == "t_6single_abs" || nm == "t_5float_sqrt" || nm == "t_6single_sqrt" {
+        return SIGN_NONNEG;
+      }
+      if len(args) == 2 && (nm == "t_5float_max" || nm == "t_6single_max") {
+        a = domain_sign(e, args[0]);
+        b = domain_sign(e, args[1]);
+        return if a == SIGN_POS || b == SIGN_POS { SIGN_POS } else if a == SIGN_NONNEG || b == SIGN_NONNEG { SIGN_NONNEG } else { SIGN_UNKNOWN };
+      }
+      if len(args) == 2 && (nm == "t_5float_min" || nm == "t_6single_min") {
+        a = domain_sign(e, args[0]);
+        b = domain_sign(e, args[1]);
+        return if a == SIGN_UNKNOWN || b == SIGN_UNKNOWN { SIGN_UNKNOWN } else if a == SIGN_NONNEG || b == SIGN_NONNEG { SIGN_NONNEG } else { SIGN_POS };
+      }
+      SIGN_UNKNOWN
+    }
+    _ => SIGN_UNKNOWN
+  }
+}
+
+struct Bounds {
+  lo: float not null,
+  hi: float not null
+}
+
+// `pm_bounds`: a provable interval for the two-sided `asin`/`acos` domain.
+fn pm_bounds(e: el::El, n: ir::Node) -> Bounds {
+  open = Bounds { lo: -1.0e308 * 10.0, hi: 1.0e308 * 10.0 };
+  f = const_float(n);
+  if f != null {
+    return Bounds { lo: f, hi: f };
+  }
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if len(args) == 1 && (nm == "OpMinSingleFloat" || nm == "OpMinSingleSingle") {
+        b = pm_bounds(e, args[0]);
+        return Bounds { lo: -b.hi, hi: -b.lo };
+      }
+      if nm == "t_5float_sin" || nm == "t_6single_sin" || nm == "t_5float_cos" || nm == "t_6single_cos" {
+        return Bounds { lo: -1.0, hi: 1.0 };
+      }
+      if len(args) == 3 && (nm == "t_5float_clamp" || nm == "t_6single_clamp") {
+        l = pm_bounds(e, args[1]);
+        h = pm_bounds(e, args[2]);
+        if l.lo == l.hi && h.lo == h.hi && l.lo <= h.hi {
+          return Bounds { lo: l.lo, hi: h.hi };
+        }
+        return open;
+      }
+      if len(args) == 2 && (nm == "t_5float_min" || nm == "t_6single_min") {
+        a = pm_bounds(e, args[0]);
+        b = pm_bounds(e, args[1]);
+        return Bounds { lo: min(a.lo, b.lo), hi: min(a.hi, b.hi) };
+      }
+      if len(args) == 2 && (nm == "t_5float_max" || nm == "t_6single_max") {
+        a = pm_bounds(e, args[0]);
+        b = pm_bounds(e, args[1]);
+        return Bounds { lo: max(a.lo, b.lo), hi: max(a.hi, b.hi) };
+      }
+      open
+    }
+    _ => open
+  }
 }
 
 fn null_transparent(e: el::El, vars: el_vars::Vars, call: ir::Node, types: vector<ir::TypeT>, ret: ir::TypeT, spanned: ir::Node) -> Ex {
