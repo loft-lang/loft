@@ -222,6 +222,7 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
   }
   t = ir::TyVoid;
   l: vector<ir::Node> = [];
+  dz = len(vars.nonzero);
   for s in stmts {
     match e.p.nodes[s] {
       SStmt { at, e: se, semi, orelse } => {
@@ -241,6 +242,7 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
         }
         x = expression(e, vars, se ?? 0);
         t = x.tp;
+        statement_proofs(e, vars, x.code);
         match x.code {
           NdInsert { items } => {
             // Spliced flat, its end marked by a line marker the next statement's replaces.
@@ -283,6 +285,7 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
     }
   }
   close_line(e, n);
+  truncate_nonzero(vars, dz);
   if len(l) > 0 && el_ir::is_line(l[len(l) - 1]) {
     l = drop_last(l);
   }
@@ -1182,10 +1185,64 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   c = r!;
-  if e.first_pass {
-    return c;
+  // `wrap_null_transparent`: a nullable argument into one of the functions that propagate
+  // null (`is_null_transparent`) with a non-null scalar result makes the call `τ?` — each such
+  // argument held in a `__ntp_N`, the call made only where all are present.
+  transparent = name == "abs" || name == "min" || name == "max" || name == "clamp" || name == "floor" || name == "ceil" || name == "round" || name == "sin" || name == "cos" || name == "tan" || name == "atan" || name == "exp";
+  nullable_arg = false;
+  for t in types {
+    if t is TyOptional {
+      nullable_arg = true;
+    }
   }
-  ex(ir::NdSpan { pos: el::pos_at(e, after_paren(e, at)), inner: c.code }, c.tp)
+  wrap = transparent && nullable_arg && el_convert::plain_scalar(c.tp);
+  if e.first_pass {
+    return if wrap { ex(c.code, ir::TyOptional { inner: c.tp }) } else { c };
+  }
+  code = ir::NdSpan { pos: el::pos_at(e, after_paren(e, at)), inner: c.code };
+  if wrap {
+    return null_transparent(e, vars, c.code, types, c.tp, code);
+  }
+  ex(code, c.tp)
+}
+
+fn null_transparent(e: el::El, vars: el_vars::Vars, call: ir::Node, types: vector<ir::TypeT>, ret: ir::TypeT, spanned: ir::Node) -> Ex {
+  opt = ir::TyOptional { inner: ret };
+  sets: vector<ir::Node> = [];
+  checks: vector<integer> = [];
+  d = 0;
+  args: vector<ir::Node> = [];
+  match call {
+    NdCall { def_nr, args: a } => { d = def_nr; args = a; },
+    _ => { return ex(spanned, opt); }
+  }
+  for t in types {
+    if t is TyOptional && t#index < len(args) {
+      tmp = el_vars::create_unique(vars, "_ntp", t);
+      sets += [el_ir::v_set(tmp, args[t#index] ?? ir::NdNull)];
+      args[t#index] = ir::NdVar { n: tmp };
+      checks += [tmp];
+    }
+  }
+  inner = ir::NdNull;
+  match spanned {
+    NdSpan { pos } => { inner = ir::NdSpan { pos: pos, inner: ir::NdCall { def_nr: d, args: args } }; },
+    _ => { inner = ir::NdCall { def_nr: d, args: args }; }
+  }
+  k = len(checks) - 1;
+  while k >= 0 {
+    tmp = checks[k];
+    test = el_convert::convert(e, vars, ir::NdVar { n: tmp }, el_types::base(el_vars::tp(vars, tmp)), ir::TyBoolean, false);
+    nl = el_convert::null_of(e, ret);
+    if test == null || nl == null {
+      el::refuse(e, "a null-transparent call of this type: {type_kind(ret)}");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    inner = el_ir::v_if(test!, inner, nl!);
+    k -= 1;
+  }
+  sets += [inner];
+  ex(el_ir::v_block(sets, opt, "null_transparent"), opt)
 }
 
 // `Parser::parse_method` for `x.name(args)`: the method the receiver's type selects
@@ -1646,7 +1703,150 @@ fn binary(e: el::El, vars: el_vars::Vars, at: integer, op: text, l: integer, r: 
   }
   a = expression(e, vars, l);
   b = expression(e, vars, r);
-  arithmetic_span(e, at, op, builtin_op(e, vars, op, a, b))
+  x = builtin_op(e, vars, op, a, b);
+  // `@FR-N-Div` / `@FR-N-Domain`: a quotient or remainder whose divisor is not provably
+  // non-zero is `τ?`; `@FR-N-Prop`: arithmetic over a nullable operand is too.
+  arith = op == "+" || op == "-" || op == "*" || op == "/" || op == "%" || op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>";
+  ab = el_types::base(a.tp);
+  rb = el_types::base(x.tp);
+  numeric = rb is TyInteger || rb is TyFloat || rb is TySingle;
+  if (op == "/" || op == "%") && (ab is TyInteger || ab is TyFloat || ab is TySingle) && !divisor_nonzero(e, vars, b.code) && !el_types::is_unknown(x.tp) {
+    x.tp = ir::TyOptional { inner: x.tp };
+  } else if arith && numeric && !(x.tp is TyOptional) && (a.tp is TyOptional || b.tp is TyOptional) {
+    x.tp = ir::TyOptional { inner: x.tp };
+  }
+  arithmetic_span(e, at, op, x)
+}
+
+// What a finished statement proves for the rest of its block (`parse_block_inner`): a guard
+// clause — an `if` with no else whose block cannot fall through — proves its condition false; an
+// `assert` proves its condition.
+fn statement_proofs(e: el::El, vars: el_vars::Vars, code: ir::Node) {
+  match el_ir::unspan(code) {
+    NdIf { cond, t, f } => {
+      if f is NdNull && cannot_fall_through(e, t) {
+        p = divisor_proof(e, cond);
+        if !p.then {
+          push_nonzero(vars, p.v);
+        }
+      }
+    },
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name == "n_assert" && len(args) > 0 {
+        p = divisor_proof(e, args[0] ?? ir::NdNull);
+        if p.then {
+          push_nonzero(vars, p.v);
+        }
+      }
+    },
+    _ => {}
+  }
+}
+
+// `guard_cannot_fall_through`: a block holding a `return`, `break` or `continue`, or a call of
+// `exit` or `panic`.
+fn cannot_fall_through(e: el::El, b: ir::Node) -> boolean {
+  match el_ir::unspan(b) {
+    NdBlock { block } => {
+      for op in block[0].operators {
+        if op is NdReturn || op is NdBreak || op is NdContinue {
+          return true;
+        }
+        match el_ir::unspan(op) {
+          NdCall { def_nr } => {
+            nm = el::def(e, def_nr).name;
+            if nm == "n_exit" || nm == "n_panic" {
+              return true;
+            }
+          },
+          _ => {}
+        }
+      }
+      false
+    },
+    _ => false
+  }
+}
+
+// `Parser::divisor_provably_nonzero`: a non-zero constant (folded), or a local a condition
+// proves non-zero here.
+fn divisor_nonzero(e: el::El, vars: el_vars::Vars, d: ir::Node) -> boolean {
+  match el_ir::unspan(d) {
+    NdInt { n } => n != 0,
+    NdLong { n } => n != 0,
+    NdFloat { f } => f != 0.0,
+    NdSingle { f } => f != 0.0f,
+    NdVar { n } => int_in(vars.nonzero, n),
+    _ => {
+      c = el_convert::const_int(e, d);
+      c != null && c! != 0
+    }
+  }
+}
+
+fn int_in(l: vector<integer>, x: integer) -> boolean {
+  for y in l {
+    if y == x {
+      return true;
+    }
+  }
+  false
+}
+
+// `Parser::divisor_proof_from_condition`: `v != 0` proves `v` non-zero in the then arm, `v == 0`
+// in the else arm (not the truthy spellings).  The local, and which arm; -1 for none.
+pub struct DivProof {
+  pub v: integer,
+  pub then: boolean
+}
+
+fn divisor_proof(e: el::El, test: ir::Node) -> DivProof {
+  none = DivProof { v: -1, then: false };
+  match el_ir::unspan(test) {
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      th = starts_with(nm, "OpNe");
+      if !(th || starts_with(nm, "OpEq")) || len(args) != 2 {
+        return none;
+      }
+      a0 = el_ir::unspan(args[0] ?? ir::NdNull);
+      a1 = el_ir::unspan(args[1] ?? ir::NdNull);
+      match a0 {
+        NdVar { n } => { if is_zero(a1) { return DivProof { v: n, then: th }; } },
+        _ => {}
+      }
+      match a1 {
+        NdVar { n } => { if is_zero(a0) { return DivProof { v: n, then: th }; } },
+        _ => {}
+      }
+      none
+    },
+    _ => none
+  }
+}
+
+fn is_zero(n: ir::Node) -> boolean {
+  match n {
+    NdInt { n: v } => v == 0,
+    NdLong { n: v } => v == 0,
+    _ => false
+  }
+}
+
+fn push_nonzero(vars: el_vars::Vars, v: integer) {
+  if v >= 0 && !int_in(vars.nonzero, v) {
+    vars.nonzero += [v];
+  }
+}
+
+fn truncate_nonzero(vars: el_vars::Vars, n: integer) {
+  r: vector<integer> = [];
+  for x in vars.nonzero {
+    if x#index < n {
+      r += [x];
+    }
+  }
+  vars.nonzero = r;
 }
 
 // `handle_null_coalesce` / `build_null_coalesce_default` for a plain scalar subject: the subject
@@ -1900,6 +2100,17 @@ fn arithmetic_span(e: el::El, at: integer, op: text, x: Ex) -> Ex {
 }
 
 fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex {
+  // A float compared with `null` is its null test (`null_test`): its truth, `!` of it for `==`.
+  if (op == "==" || op == "!=") && (a.tp is TyNull || b.tp is TyNull) {
+    v = if a.tp is TyNull { b } else { a };
+    vb = el_types::base(v.tp);
+    if vb is TyFloat || vb is TySingle {
+      t = el_convert::convert_admitting(e, vars, v.code, v.tp, ir::TyBoolean);
+      if t != null {
+        return ex(if op == "!=" { t! } else { el_ir::cl(e, "OpNot", [t!]) }, ir::TyBoolean);
+      }
+    }
+  }
   if op == ">" {
     return call_op(e, vars, "<", [b.code, a.code], [b.tp, a.tp]);
   }
@@ -1920,7 +2131,13 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
     el::refuse(e, "an `if` condition that is not a boolean: {type_kind(c.tp)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
+  proof = divisor_proof(e, c.code);
+  dz = len(vars.nonzero);
+  if proof.then {
+    push_nonzero(vars, proof.v);
+  }
   t = parse_block(e, vars, then, "if", ir::TyUnknown { n: 0 });
+  truncate_nonzero(vars, dz);
   if other == null && t.tp is TyNever {
     // A then arm that only jumps, with nothing after it: a statement.
     return ex(el_ir::v_if(c.code, t.code, ir::NdNull), ir::TyVoid);
@@ -1935,11 +2152,15 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
     }
     return ex(el_ir::v_if(c.code, t.code, ir::NdNull), t.tp);
   }
+  if !proof.then {
+    push_nonzero(vars, proof.v);
+  }
   f = if e.p.nodes[other!] is SIf {
     expression(e, vars, other!)
   } else {
     parse_block(e, vars, other!, "else", arm_expectation(t.tp))
   };
+  truncate_nonzero(vars, dz);
   // `@FR-N-Join`: a null else arm beside a scalar then arm is that scalar's null, read against
   // the then arm's type (`convert_admitting` at the block's tail), and the `if` is the scalar `?`.
   if f.tp is TyNull && el_convert::sentinel_value(t.tp) {
@@ -2172,6 +2393,23 @@ fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> Ex {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   to = t!;
+  // `as τ?` that narrows nothing: the cast to the base, typed `τ?`.  A checked narrowing (the
+  // `dn4cast` guard and the store's range default) is refused by name.
+  match to {
+    TyOptional { inner } => {
+      if el_convert::plain_scalar(inner) && !el_convert::narrowing_int(el_types::base(x.tp), inner) {
+        b = cast_expr_to(e, vars, x, inner);
+        return ex(b.code, if el_types::is_unknown(b.tp) { b.tp } else { to });
+      }
+      el::refuse(e, "a checked narrowing cast");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    },
+    _ => {}
+  }
+  cast_expr_to(e, vars, x, to)
+}
+
+fn cast_expr_to(e: el::El, vars: el_vars::Vars, x: Ex, to: ir::TypeT) -> Ex {
   if el_types::is_unknown(x.tp) {
     if !e.first_pass {
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -2594,10 +2832,8 @@ fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vector<
     el::refuse(e, "an index that is not an integer: {type_kind(i.tp)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  if !fits(e, vars, i.code, x.code) {
-    el::refuse(e, "an index that may not fit, read as a nullable element");
-    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-  }
+  // An index not provably in range reads the element as `τ?` (`@FR-N-Index`).
+  may_miss = !fits(e, vars, i.code, x.code);
   size = elem_size(inner);
   op = read_op(inner);
   if size < 0 || op == "" {
@@ -2608,6 +2844,9 @@ fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vector<
   match x.code {
     NdVar { n } => { t = el_types::with_deps(t, [n]); },
     _ => {}
+  }
+  if may_miss {
+    t = ir::TyOptional { inner: t };
   }
   code = el_ir::cl(e, op, [el_ir::cl(e, "OpGetVector", [x.code, ir::NdInt { n: size }, i.code]), ir::NdInt { n: 0 }]);
   if !e.first_pass {
