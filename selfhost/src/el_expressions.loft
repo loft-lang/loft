@@ -63,6 +63,7 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
     }
   }
   if len(stmts) == 0 {
+    close_line(e, n);
     return ex(el_ir::v_block([], ir::TyVoid, "empty block"), ir::TyVoid);
   }
   t = ir::TyVoid;
@@ -127,10 +128,39 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
       _ => {}
     }
   }
+  close_line(e, n);
   if len(l) > 0 && el_ir::is_line(l[len(l) - 1]) {
     l = drop_last(l);
   }
   ex(el_ir::v_block(l, t, "block"), t)
+}
+
+// The loop of `parse_block_inner` meets the closing `}` too: a later line moves the parser's
+// line on there (the marker it writes is the one the close removes), so a statement after the
+// `}` on that same line — an `else` block's — gets none.
+fn close_line(e: el::El, n: integer) {
+  at = 0;
+  match e.p.nodes[n] {
+    SBlock { at: a } => { at = a; },
+    _ => { return; }
+  }
+  depth = 0;
+  i = at;
+  while i < len(e.p.src) {
+    if e.p.src[i] is LBrace {
+      depth += 1;
+    } else if e.p.src[i] is RBrace {
+      depth -= 1;
+      if depth == 0 {
+        line = e.p.eline[i] ?? 0;
+        if line > e.line {
+          e.line = line;
+        }
+        return;
+      }
+    }
+    i += 1;
+  }
 }
 
 // `Parser::move_insert_elements`: an insert's elements appended in order, a nested insert's
@@ -177,6 +207,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SMember { e: re, name, args, call } => member(e, vars, re, name, args, call),
     SBin { op, l, r } => binary(e, vars, op, l, r),
     SUnary { op, e: ue } => unary(e, vars, op, ue),
+    SIf { cond, then, other } => if_expr(e, vars, cond, then, other),
     SParen { e: pe } => if pe == null { ex(ir::NdNull, ir::TyUnknown { n: 0 }) } else { expression(e, vars, pe!) },
     _ => {
       el::refuse(e, "an expression form: {syn_kind(e, n)}");
@@ -249,6 +280,12 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
     el::refuse(e, "a local that changes type");
   }
   el_vars::drop_use(vars, v);
+  if !e.first_pass && el_types::base(el_vars::tp(vars, v)) is TyText && x.code is NdIf {
+    arms = text_arms_into(v, x.code);
+    if arms != null {
+      return ex(ir::NdInsert { items: [el_ir::v_set(v, ir::NdText { s: "" }), arms!] }, ir::TyVoid);
+    }
+  }
   ex(el_ir::v_set(v, x.code), ir::TyVoid)
 }
 
@@ -921,6 +958,94 @@ fn builtin_op(e: el::El, op: text, a: Ex, b: Ex) -> Ex {
     return call_op(e, "<=", [b.code, a.code], [b.tp, a.tp]);
   }
   call_op(e, op, [a.code, b.code], [a.tp, b.tp])
+}
+
+// `Parser::parse_if_expecting`: the condition (a boolean, which `convert_condition` leaves as it
+// is); the then block expecting nothing; after `else` either a nested `if`, directly, or the else
+// block expecting the then arm's type (`arm_expectation`); `else null` without one.  The `if` is
+// typed as its then arm.  A condition that is not a boolean, a then arm that never finishes or is
+// null, arms of different types and a value without an `else` are refused by name.
+fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: integer?) -> Ex {
+  c = expression(e, vars, cond);
+  if !el_types::is_unknown(c.tp) && !(c.tp is TyBoolean) {
+    el::refuse(e, "an `if` condition that is not a boolean: {type_kind(c.tp)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  t = parse_block(e, vars, then, "if", ir::TyUnknown { n: 0 });
+  if t.tp is TyNever || t.tp is TyNull {
+    el::refuse(e, "an `if` arm that never finishes or is null");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if other == null {
+    if !(t.tp is TyVoid) && !el_types::is_unknown(t.tp) {
+      el::refuse(e, "an `if` with a value and no `else`");
+    }
+    return ex(el_ir::v_if(c.code, t.code, ir::NdNull), t.tp);
+  }
+  f = if e.p.nodes[other!] is SIf {
+    expression(e, vars, other!)
+  } else {
+    parse_block(e, vars, other!, "else", arm_expectation(t.tp))
+  };
+  if !e.first_pass && !el_types::is_equal(e, t.tp, f.tp) {
+    el::refuse(e, "`if` arms of different types: {type_kind(t.tp)}, {type_kind(f.tp)}");
+  }
+  ex(el_ir::v_if(c.code, t.code, f.code), t.tp)
+}
+
+// `Parser::arm_expectation`: what the else arm is read against — a plain integer as the
+// default integer, a sized one as nothing in particular, anything else as itself.
+fn arm_expectation(t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyInteger { spec } => if spec.forced_size == 0 { ir::TyInteger { spec: i32_spec() } } else { ir::TyUnknown { n: 0 } },
+    _ => t
+  }
+}
+
+// `Parser::try_branch_text_bind` (second pass): `c = if … { "x" } else { "y" }` binds the text
+// in each arm — the local set empty first, then each arm's tail written into it
+// (`push_text_arms_into`), every arm block typed void.  False where an arm does not end in a
+// value (`if_tail_yields_text`).
+fn text_arms_into(c: integer, code: ir::Node) -> ir::Node? {
+  match code {
+    NdIf { cond, t, f } => {
+      tt = text_arm_into(c, t);
+      ff = text_arm_into(c, f);
+      if tt == null || ff == null {
+        return null;
+      }
+      el_ir::v_if(cond, tt!, ff!)
+    },
+    _ => null
+  }
+}
+
+fn text_arm_into(c: integer, arm: ir::Node) -> ir::Node? {
+  match arm {
+    NdBlock { block } => {
+      bl = block[0];
+      n = len(bl.operators);
+      if n == 0 {
+        return null;
+      }
+      last = bl.operators[n - 1];
+      if last is NdNull || last is NdReturn || last is NdBreak || last is NdContinue {
+        return null;
+      }
+      ops: vector<ir::Node> = [];
+      for op in bl.operators {
+        if op#index < n - 1 {
+          ops += [op];
+        }
+      }
+      ops += [el_ir::v_set(c, last)];
+      bl.operators = ops;
+      bl.result = [ir::TyVoid];
+      ir::NdBlock { block: [bl] }
+    },
+    NdIf { cond: _ } => text_arms_into(c, arm),
+    _ => null
+  }
 }
 
 // `Parser::boolean_operator`: both operands are truthiness positions (`convert_condition`, which
