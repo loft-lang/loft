@@ -1610,6 +1610,19 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
       _ => {}
     }
   }
+  // `parse_call_diagnostic` for the log calls: the message (or an empty one) with the call's
+  // file and line, where the program declares no function of that name.
+  if name == "log_info" || name == "log_warn" || name == "log_error" || name == "log_fatal" {
+    ld = el::def_nr(e, "n_{name}");
+    if ld >= 0 && el::def(e, ld).source == 0 {
+      if e.first_pass {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      cp = el::pos_at(e, after_paren(e, at));
+      message = if len(list) == 0 { ir::NdText { s: "" } } else { list[0] };
+      return ex(el_ir::cl(e, "n_{name}", [message, ir::NdText { s: cp.file }, ir::NdInt { n: cp.line }]), ir::TyVoid);
+    }
+  }
   first = if len(types) > 0 { types[0] } else { ir::TyUnknown { n: 0 } };
   d = find_fn(e, name, first);
   if d < 0 {
