@@ -67,6 +67,13 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   if rb >= 0 && e.first_pass {
     rename_ret_buffer(e, vars, code, rb);
   }
+  // A tail local the first pass did not rename (two records made through it there) is renamed
+  // now — the signature takes its name; the body keeps its own build.
+  renamed_now = false;
+  if rb >= 0 && !e.first_pass && attr_nr(el::def(e, e.context), "__retbuf") >= 0 && !int_in(el_types::deps(el::def(e, e.context).returned[0] ?? ir::TyVoid), attr_nr(el::def(e, e.context), "__retbuf")) {
+    rename_ret_buffer(e, vars, code, rb);
+    renamed_now = attr_nr(el::def(e, e.context), "__retbuf") < 0;
+  }
   if rb >= 0 && attr_nr(el::def(e, e.context), "__retbuf") >= 0 {
     delivered = var_return(e, vars, code, rb, result);
     if delivered != null {
@@ -81,12 +88,24 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
         el::refuse(e, "a function returning a record from something other than a literal: {kind}");
       }
     }
-  } else if rb >= 0 && !e.first_pass {
+  } else if rb >= 0 && !e.first_pass && !renamed_now {
     // Delivered in the renamed buffer: the body answers a record of the placeholder's.
     match code {
       NdBlock { block } => {
         bl = block[0];
         bl.result = [el_types::with_deps(el_types::without_deps(result), [rb])];
+        code = ir::NdBlock { block: [bl] };
+      },
+      _ => {}
+    }
+  }
+  // The body of a record-returning function is typed as the declared result as the pass found
+  // it — the deps the first pass gave it, in attribute numbering.
+  if rb >= 0 && !e.first_pass && result is TyReference {
+    match code {
+      NdBlock { block } => {
+        bl = block[0];
+        bl.result = [result];
         code = ir::NdBlock { block: [bl] };
       },
       _ => {}
@@ -427,11 +446,15 @@ fn rename_ret_buffer(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
   v = -1;
   match tail {
     NdVar { n } => {
-      if !vars.vars[n].argument && !starts_with(el_vars::name_of(vars, n), "_") && len(el_types::deps(el_vars::tp(vars, n))) == 0 && el_vars::was_built(vars, n) {
+      // `SkipReassigned`: a local two records are made through (`child_allocs`) is no buffer.
+      if !vars.vars[n].argument && !starts_with(el_vars::name_of(vars, n), "_") && len(el_types::deps(el_vars::tp(vars, n))) == 0 && el_vars::was_built(vars, n) && child_allocs(e, vars, code, n) < 2 {
         v = n;
       }
     },
     NdCall { args } => {
+      if !e.first_pass {
+        return;
+      }
       la = len(args);
       if la > 0 {
         match el_ir::unspan(args[la - 1] ?? ir::NdNull) {
@@ -492,6 +515,10 @@ fn var_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, resul
       dep += [a];
     }
     e.b.data.definitions[d].returned = [el_types::with_deps(ret, dep)];
+    return code;
+  }
+  // `SkipReassigned`: two records made through the local — it is returned as it is.
+  if child_allocs(e, vars, code, v) >= 2 {
     return code;
   }
   ba = attr_nr(el::def(e, d), "__retbuf");
@@ -760,6 +787,50 @@ fn record_may_be_absent(vars: el_vars::Vars, v: integer, seen: vector<integer>) 
   false
 }
 
+// `child_allocs`: the distinct locals set from `OpNewRecord(v, …)` — each a record made
+// through `v`'s fields.
+fn child_allocs(e: el::El, vars: el_vars::Vars, code: ir::Node, v: integer) -> integer {
+  temps: vector<integer> = [];
+  if e.first_pass {
+    for a in vars.allocs {
+      if a == v {
+        temps += [a];
+      }
+    }
+    return len(temps);
+  }
+  alloc_temps(e, code, v, temps);
+  len(temps)
+}
+
+fn alloc_temps(e: el::El, n: ir::Node, v: integer, temps: vector<integer>) {
+  match n {
+    NdSet { var, inner } => {
+      match el_ir::unspan(inner) {
+        NdCall { def_nr, args } => {
+          if el::def(e, def_nr).name == "OpNewRecord" && len(args) > 0 && el_ir::unspan(args[0] ?? ir::NdNull) == ir::NdVar { n: v } && !int_in(temps, var) {
+            temps += [var];
+          }
+        },
+        _ => {}
+      }
+      alloc_temps(e, inner, v, temps);
+    },
+    NdCall { args } => { for a in args { alloc_temps(e, a, v, temps); } },
+    NdInsert { items } => { for a in items { alloc_temps(e, a, v, temps); } },
+    NdBlock { block } => { for o in block[0].operators { alloc_temps(e, o, v, temps); } },
+    NdLoop { block } => { for o in block[0].operators { alloc_temps(e, o, v, temps); } },
+    NdIf { cond, t, f } => {
+      alloc_temps(e, cond, v, temps);
+      alloc_temps(e, t, v, temps);
+      alloc_temps(e, f, v, temps);
+    },
+    NdReturn { inner } => alloc_temps(e, inner, v, temps),
+    NdSpan { inner } => alloc_temps(e, inner, v, temps),
+    _ => {}
+  }
+}
+
 // `RefDelivery::BuildIntoBuffer` (`build_into_return_buffer`): a body whose tail is a record
 // literal built in its own `__ref_p2_N` builds it into the hidden `__retbuf` instead — the
 // buffer's reset dropped, its mint guarded to reuse a buffer the caller handed in live, every
@@ -844,6 +915,7 @@ fn rename_var(n: ir::Node, from: integer, to: integer) -> ir::Node {
     NdSet { var, inner } => ir::NdSet { var: if var == from { to } else { var }, inner: rename_var(inner, from, to) },
     NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: rename_var(inner, from, to) },
     NdIf { cond, t, f } => ir::NdIf { cond: rename_var(cond, from, to), t: rename_var(t, from, to), f: rename_var(f, from, to) },
+    NdInsert { items } => ir::NdInsert { items: [for x in items { rename_var(x, from, to) }] },
     _ => n
   }
 }
@@ -866,7 +938,7 @@ fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
       // `work_references`, each set to null at the head, after the work texts in the same way —
       // a promoted return buffer is an argument and takes none.
       for wr in vars.work_refs {
-        if vars.vars[wr].argument {
+        if vars.vars[wr].argument || int_in(vars.inline_refs, wr) {
           continue;
         }
         ops: vector<ir::Node> = [el_ir::v_set(wr, ir::NdNull)];
@@ -875,9 +947,124 @@ fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
         }
         bl.operators = ops;
       }
+      // An inline container's buffer is nulled just before the first statement that fills it.
+      places: vector<integer> = [];
+      for r in vars.inline_refs {
+        at = -1;
+        for op in bl.operators {
+          if at < 0 && el_ir::reads_var(op, r) {
+            at = op#index;
+          }
+        }
+        if at < 0 {
+          at = 0;
+          while at < len(bl.operators) && (bl.operators[at] ?? ir::NdNull) is NdLine {
+            at += 1;
+          }
+          if at < len(bl.operators) && !(el_ir::unspan(bl.operators[at] ?? ir::NdNull) is NdReturn) {
+            at += 1;
+          }
+        }
+        places += [at];
+      }
+      done: vector<integer> = [];
+      while len(done) < len(places) {
+        best = -1;
+        for p in places {
+          i = p#index;
+          if !int_in(done, i) && (best < 0 || p > (places[best] ?? 0) || (p == (places[best] ?? 0) && (vars.inline_refs[i] ?? 0) > (vars.inline_refs[best] ?? 0))) {
+            best = i;
+          }
+        }
+        done += [best];
+        at = places[best] ?? 0;
+        ops: vector<ir::Node> = [];
+        for op in bl.operators {
+          if op#index == at {
+            ops += [el_ir::v_set(vars.inline_refs[best] ?? 0, ir::NdNull)];
+          }
+          ops += [op];
+        }
+        if at >= len(bl.operators) {
+          ops += [el_ir::v_set(vars.inline_refs[best] ?? 0, ir::NdNull)];
+        }
+        bl.operators = ops;
+      }
       ir::NdBlock { block: [bl] }
     },
     _ => code
+  }
+}
+
+// `container_dep`'s projection out of a call (`projection_root_mut`, `bind_inline_container`):
+// an index into a field of a loft function's record result binds that result in a `__ref_p2_N`
+// first, the container the element borrows.  -1 for any other container.
+fn inline_container(e: el::El, vars: el_vars::Vars, x: Ex) -> integer {
+  if e.first_pass {
+    return -1;
+  }
+  root = projection_root(e, x.code);
+  if root == null {
+    return -1;
+  }
+  w = -1;
+  match el_ir::unspan(root!) {
+    NdCall { def_nr } => {
+      d = el::def(e, def_nr);
+      if !((starts_with(d.name, "n_") || starts_with(d.name, "t_")) && !((d.code[0] ?? ir::NdNull) is NdNull)) {
+        return -1;
+      }
+      rt = d.returned[0] ?? ir::TyVoid;
+      w = el_vars::work_ref_p2(vars, rt);
+      vars.inline_refs += [w];
+    },
+    _ => {}
+  }
+  w
+}
+
+// The call a projection chain (`OpGetField`, `OpGetVector`, …) reads out of, or null.
+fn projection_root(e: el::El, n: ir::Node) -> ir::Node? {
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => {
+      if !projection_op(el::def(e, def_nr).name) || len(args) == 0 {
+        return null;
+      }
+      b = args[0] ?? ir::NdNull;
+      match el_ir::unspan(b) {
+        NdCall { def_nr: bd } => {
+          return if projection_op(el::def(e, bd).name) { projection_root(e, b) } else { b };
+        },
+        _ => {}
+      }
+      null
+    },
+    _ => null
+  }
+}
+
+fn projection_op(nm: text) -> boolean {
+  nm == "OpGetField" || nm == "OpGetVector" || nm == "OpVectorRef" || nm == "OpGetRecord" || nm == "OpRefFromChildRec"
+}
+
+// The projection chain with its root call replaced by the inline container `w`.
+fn bind_root(e: el::El, n: ir::Node, w: integer, rt: ir::TypeT) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: bind_root(e, inner, w, rt) },
+    NdCall { def_nr, args } => {
+      if projection_op(el::def(e, def_nr).name) && len(args) > 0 {
+        na = args;
+        b = args[0] ?? ir::NdNull;
+        is_proj = match el_ir::unspan(b) {
+          NdCall { def_nr: bd } => projection_op(el::def(e, bd).name),
+          _ => false
+        };
+        na[0] = if is_proj { bind_root(e, b, w, rt) } else { el_ir::v_block([el_ir::v_set(w, b), ir::NdVar { n: w }], el_types::with_deps(rt, [w]), "inline_container") };
+        return ir::NdCall { def_nr: def_nr, args: na };
+      }
+      n
+    },
+    _ => n
   }
 }
 
@@ -1353,6 +1540,11 @@ fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
   at = ir::NdVar { n: elm };
   push = push_op(inner);
   ls: vector<ir::Node> = [];
+  // The first pass makes each item through the record (`OpNewRecord`), scalars too: what
+  // `child_allocs` counts there.
+  if e.first_pass && elm >= 0 {
+    vars.allocs += [rec];
+  }
   for it in items {
     if e.p.nodes[it] is SRepeat {
       el::refuse(e, "a repeated vector item");
@@ -1616,6 +1808,42 @@ fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   ops = list!;
+  // `self_read_root` of an in-place build into a local the program names: a field value that
+  // reads the local, or anything that may view its store (for a parameter, every other heap
+  // parameter — the caller may hand one store twice), is computed into a `__ref_N` before the
+  // record is made; a collection or nested-literal field is built in place and never staged.
+  staged: vector<ir::Node> = [];
+  if !e.first_pass && !(starts_with(el_vars::name_of(vars, v), "_") && !vars.vars[v].user_named) {
+    viewers = store_viewers(vars, v);
+    viewers += [v];
+    for op in ops {
+      if op#index < 2 {
+        continue;
+      }
+      match op {
+        NdCall { def_nr, args } => {
+          if starts_with(el::def(e, def_nr).name, "OpSet") && len(args) >= 3 && el_ir::unspan(args[0] ?? ir::NdNull) == ir::NdVar { n: v } {
+            last = len(args) - 1;
+            reads = false;
+            for w in viewers {
+              if el_ir::reads_var(args[last] ?? ir::NdNull, w) {
+                reads = true;
+              }
+            }
+            if reads {
+              tp = el::def(e, def_nr).attributes[last].typedef[0] ?? ir::TyUnknown { n: 0 };
+              tmp = el_vars::work_ref(vars, tp);
+              staged += [el_ir::v_set(tmp, args[last] ?? ir::NdNull)];
+              na = args;
+              na[last] = ir::NdVar { n: tmp };
+              ops[op#index] = ir::NdCall { def_nr: def_nr, args: na };
+            }
+          }
+        },
+        _ => {}
+      }
+    }
+  }
   // A promoted return buffer (an argument) is built into: its mint guarded to reuse a buffer
   // the caller handed in live, and no reset.
   if vars.vars[v].argument && len(ops) >= 2 {
@@ -1629,7 +1857,8 @@ fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
     }
     ops = guarded;
   }
-  ex(ir::NdInsert { items: ops }, ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } })
+  staged += ops;
+  ex(ir::NdInsert { items: staged }, ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } })
 }
 
 // The literal's build into record local `v`: nulled, given a record of the struct's store type,
@@ -1672,8 +1901,9 @@ fn object_fields(e: el::El, vars: el_vars::Vars, v: integer, d: integer, fields:
             if built == null {
               return null;
             }
-            for op in built! {
-              list += [op];
+            // `handle_field` pushes the literal's build as one value (an insert).
+            if len(built!) > 0 {
+              list += [ir::NdInsert { items: built! }];
             }
             found += [fname];
             continue;
@@ -1803,6 +2033,9 @@ fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, d: integer, fname: t
   fnr = el_schema::field_nr(e, kt, fname);
   push = push_op(inner);
   r = ir::NdVar { n: v };
+  if e.first_pass && elm >= 0 {
+    vars.allocs += [v];
+  }
   for it in items {
     if e.p.nodes[it] is SRepeat {
       el::refuse(e, "a repeated vector item");
@@ -1845,16 +2078,7 @@ fn object_expr(e: el::El, vars: el_vars::Vars, name: text, member: text, fields:
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   if e.first_pass {
-    for fi in fields {
-      match e.p.nodes[fi] {
-        SFieldInit { e: fe } => {
-          if fe != null {
-            expression(e, vars, fe!);
-          }
-        },
-        _ => {}
-      }
-    }
+    first_pass_fields(e, vars, d, fields);
     return ex(ir::NdNull, ir::TyReference { n: d, dep: [] });
   }
   w = el_vars::work_ref_p2(vars, ir::TyReference { n: d, dep: [] });
@@ -2079,7 +2303,8 @@ fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text,
   code = ir::NdNull;
   match ft {
     TyVector { inner } => {
-      vk = el_schema::schema_type(e, "vector<{el_types::elem_name(e, inner)}>");
+      // The schema is laid out after the first pass, whose code is not kept.
+      vk = if e.first_pass { 0 } else { el_schema::schema_type(e, "vector<{el_types::elem_name(e, inner)}>") };
       if vk < 0 {
         el::refuse(e, "a field read of a vector the library has no rows for");
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -2933,6 +3158,37 @@ fn append_data_to(e: el::El, list: vector<ir::Node>, var: integer, val: ir::Node
     },
     TySingle => {
       list += [format_fp(e, "{start}Single", w, val)];
+    },
+    // A record or a vector renders through its store type (`OpFormatDatabase`, the default
+    // format); a struct with an operator `to_text` of its own is refused by name.
+    TyVector { inner } => {
+      nm = el_types::elem_name(e, inner);
+      vk = if nm == "" { -1 } else { el_schema::schema_type(e, "vector<{nm}>") };
+      narrow = match inner {
+        TyInteger { spec } => spec.forced_size != 0,
+        _ => false
+      };
+      if vk < 0 || narrow || el::def_nr(e, "vector<{nm}>") < 0 {
+        el::refuse(e, "a formatted vector with no rows yet");
+        return;
+      }
+      list += [el_ir::cl(e, "{start}Database", [w, val, ir::NdInt { n: vk }, ir::NdInt { n: 0 }])];
+    },
+    TyReference { n } => {
+      d = el::def(e, n);
+      if d.def_type != el::DT_STRUCT || el::def_nr(e, "t_{len(d.name)}{d.name}_to_text") >= 0 {
+        el::refuse(e, "a formatted record of this kind");
+        return;
+      }
+      list += [el_ir::cl(e, "{start}Database", [w, val, ir::NdInt { n: d.known_type }, ir::NdInt { n: 0 }])];
+    },
+    TyEnum { n, is_ref } => {
+      kt = el::def(e, n).known_type;
+      if kt == el_schema::NO_TYPE || !is_ref {
+        list += [format_text_to(e, start, w, el_ir::cl(e, "OpCastTextFromEnum", [val, ir::NdInt { n: kt }]))];
+      } else {
+        list += [el_ir::cl(e, "{start}Database", [w, val, ir::NdInt { n: kt }, ir::NdInt { n: 0 }])];
+      }
     },
     TyUnknown { n: _ } => {},
     // A value already refused where its type was lost.
@@ -4493,17 +4749,7 @@ fn vector_def(e: el::El, t: ir::TypeT, nm: text, lit: integer, declared: boolean
   if at == lit + 1 || declared {
     at = lit - 1;
   }
-  pos = el::pos_at(e, at);
-  vt = ir::TyVector { inner: t, dep: [] };
-  if el::def_nr(e, "vector<{nm}>") < 0 {
-    vd = el::add_def(e, "vector<{nm}>", pos, el::DT_VECTOR);
-    e.b.data.definitions[vd].returned = [vt];
-    e.b.data.definitions[vd].parent = type_def_nr(e, t);
-  }
-  md = el::add_def(e, "main_vector<{nm}>", pos, el::DT_STRUCT);
-  e.b.data.definitions[md].source = 0;
-  e.b.data.definitions[md].returned = [ir::TyReference { n: md, dep: [] }];
-  e.b.data.definitions[md].attributes += [el::attribute("vector", vt)];
+  el_schema::make_vector_def(e, t, nm, el::pos_at(e, at), true);
 }
 
 // A struct's record size, from its laid-out store type.
@@ -4632,19 +4878,41 @@ fn struct_literal_def(e: el::El, n: integer) -> integer {
 // The first pass of a struct literal: its field values read, for the locals they make.
 fn literal_field_exprs(e: el::El, vars: el_vars::Vars, n: integer) {
   match e.p.nodes[n] {
-    SStructLit { fields } => {
-      for fi in fields {
-        match e.p.nodes[fi] {
-          SFieldInit { e: fe } => {
-            if fe != null {
-              expression(e, vars, fe!);
-            }
-          },
-          _ => {}
-        }
-      }
-    },
+    SStructLit { name, fields } => { first_pass_fields(e, vars, el::def_nr(e, name), fields); },
     _ => {}
+  }
+}
+
+// A struct literal's field values read on the first pass: a collection field's literal is built
+// in the field, so only its items are read — it is no vector value of its own.
+fn first_pass_fields(e: el::El, vars: el_vars::Vars, d: integer, fields: vector<integer>) {
+  for fi in fields {
+    match e.p.nodes[fi] {
+      SFieldInit { name: fname, e: fe } => {
+        if fe == null {
+          continue;
+        }
+        a = if d >= 0 { attr_nr(el::def(e, d), fname) } else { -1 };
+        at = if a >= 0 { el::def(e, d).attributes[a].typedef[0] ?? ir::TyVoid } else { ir::TyVoid };
+        if el_types::is_collection(at) && e.p.nodes[fe!] is SVecLit {
+          match e.p.nodes[fe!] {
+            SVecLit { items } => {
+              for it in items {
+                if struct_literal_def(e, it) >= 0 {
+                  literal_field_exprs(e, vars, it);
+                } else if !(e.p.nodes[it] is SRepeat) {
+                  expression(e, vars, it);
+                }
+              }
+            },
+            _ => {}
+          }
+        } else {
+          expression(e, vars, fe!);
+        }
+      },
+      _ => {}
+    }
   }
 }
 
@@ -4839,6 +5107,10 @@ fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vector<
     }
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
+  cw = inline_container(e, vars, x);
+  if cw >= 0 {
+    x = ex(bind_root(e, x.code, cw, el_vars::tp(vars, cw)), x.tp);
+  }
   i = expression(e, vars, keys[0] ?? 0);
   if !el_types::is_unknown(i.tp) && !(i.tp is TyInteger) {
     el::refuse(e, "an index that is not an integer: {type_kind(i.tp)}");
@@ -4863,6 +5135,9 @@ fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vector<
   match x.code {
     NdVar { n } => { t = el_types::with_deps(t, [n]); },
     _ => {}
+  }
+  if cw >= 0 {
+    t = el_types::with_deps(t, [cw]);
   }
   if may_miss {
     t = ir::TyOptional { inner: t };
