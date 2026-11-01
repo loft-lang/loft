@@ -1,0 +1,202 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Bodies: blocks and statements (src/parser/control.rs `parse_block_inner`), expressions
+// (src/parser/expressions.rs, operators.rs) and operator calls (compare.rs `call_op_as`,
+// calls.rs `call_nr`), elaborated from the syntax tree.  Each answers the IR it built and its
+// type, as the Rust functions fill `code` and return the type.
+use ir;
+use syntax::*;
+use el;
+use el_ir;
+use el_vars;
+use el_types;
+
+// An expression's IR and type.
+pub struct Ex {
+  pub code: ir::Node,
+  pub tp: ir::TypeT
+}
+
+fn ex(code: ir::Node, tp: ir::TypeT) -> Ex {
+  Ex { code: code, tp: tp }
+}
+
+// `Parser::parse_code`: the body of the current definition, its result its declared return.
+pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
+  result = el::def(e, e.context).returned[0] ?? ir::TyVoid;
+  b = parse_block(e, vars, body, "return from block", result);
+  b.code
+}
+
+// `Parser::parse_block_inner` for a `{ … }`: a line marker where a statement starts on a later
+// line than the last marker, each statement, a statement's value dropped where a `;` follows it
+// or the block answers nothing, and the last statement's value the block's.
+pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, result: ir::TypeT) -> Ex {
+  stmts: vector<integer> = [];
+  match e.p.nodes[n] {
+    SBlock { stmts: ss } => { stmts = ss; },
+    _ => {
+      el::refuse(e, "a body that is not a block");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+  }
+  if len(stmts) == 0 {
+    return ex(el_ir::v_block([], ir::TyVoid, "empty block"), ir::TyVoid);
+  }
+  t = ir::TyVoid;
+  l: vector<ir::Node> = [];
+  for s in stmts {
+    match e.p.nodes[s] {
+      SStmt { at, e: se, semi, orelse } => {
+        line = e.p.eline[at] ?? 0;
+        if line > e.line {
+          if len(l) > 0 && el_ir::is_line(l[len(l) - 1]) {
+            l = drop_last(l);
+          }
+          l += [ir::NdLine { n: line }];
+          e.line = line;
+        }
+        if se == null {
+          continue;
+        }
+        if orelse != null {
+          el::refuse(e, "a store's `else` block");
+        }
+        x = expression(e, vars, se ?? 0);
+        t = x.tp;
+        valued = match t {
+          TyVoid => false,
+          TyNever => false,
+          TyUnknown { n: _ } => !e.first_pass,
+          _ => true
+        };
+        if valued && (semi || result is TyVoid) {
+          l += [ir::NdDrop { inner: x.code }];
+          if context == "return from block" {
+            t = ir::TyVoid;
+          }
+        } else {
+          l += [x.code];
+        }
+        if s#index < len(stmts) - 1 {
+          if !(t is TyNever) {
+            t = ir::TyVoid;
+          }
+        }
+      },
+      _ => {}
+    }
+  }
+  if len(l) > 0 && el_ir::is_line(l[len(l) - 1]) {
+    l = drop_last(l);
+  }
+  ex(el_ir::v_block(l, t, "block"), t)
+}
+
+fn drop_last(l: vector<ir::Node>) -> vector<ir::Node> {
+  r: vector<ir::Node> = [];
+  for x in l {
+    if x#index < len(l) - 1 {
+      r += [x];
+    }
+  }
+  r
+}
+
+// `Parser::expression`: one expression node.
+pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
+  match e.p.nodes[n] {
+    SInt { v } => ex(ir::NdInt { n: v }, ir::TyInteger { spec: i32_spec() }),
+    // An arm, not a block: a block arm binding the `text` fields frees the `Ex` it builds
+    // before it is read (loft#2327) — lifted once that is fixed.
+    SName { name, member } => name_expression(e, vars, name, member),
+    SBin { op, l, r } => {
+      a = expression(e, vars, l);
+      b = expression(e, vars, r);
+      call_op(e, vars, op, [a.code, b.code], [a.tp, b.tp])
+    },
+    _ => {
+      el::refuse(e, "an expression form");
+      ex(ir::NdNull, ir::TyUnknown { n: 0 })
+    }
+  }
+}
+
+// A name as a value: the variable it names (`Parser::parse_var`, the local case).
+fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text) -> Ex {
+  if member != "" {
+    el::refuse(e, "a qualified name");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  v = el_vars::var(vars, name);
+  if v < 0 {
+    el::refuse(e, "a name that is not a variable");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  el_vars::in_use(vars, v, true);
+  ex(ir::NdVar { n: v }, el_vars::tp(vars, v))
+}
+
+// `IntegerSpec::signed32`, the type an integer literal answers.
+pub fn i32_spec() -> ir::IntegerSpec {
+  ir::IntegerSpec { min: -2147483647, max: 2147483647, not_null: false, forced_size: 0 }
+}
+
+// `rename` (src/parser/mod.rs): an operator token's `Op…` name.
+fn rename(op: text) -> text {
+  if op == "*" { return "Mul"; }
+  if op == "+" { return "Add"; }
+  if op == "-" { return "Min"; }
+  if op == "/" { return "Div"; }
+  if op == "%" { return "Rem"; }
+  if op == "==" { return "Eq"; }
+  if op == "!=" { return "Ne"; }
+  if op == "<" { return "Lt"; }
+  if op == "<=" { return "Le"; }
+  if op == ">" { return "Gt"; }
+  if op == ">=" { return "Ge"; }
+  if op == "&" { return "Land"; }
+  if op == "|" { return "Lor"; }
+  if op == "^" { return "Eor"; }
+  if op == "<<" { return "SLeft"; }
+  if op == ">>" { return "SRight"; }
+  if op == "**" { return "Pow"; }
+  if op == "!" { return "Not"; }
+  op
+}
+
+// `Parser::call_op_as`, the builtin-operator path: the first `Op<name>…` candidate whose
+// parameters take these arguments.
+pub fn call_op(e: el::El, vars: el_vars::Vars, op: text, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  if e.first_pass {
+    for t in types {
+      if el_types::is_unknown(t) {
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+    }
+  }
+  for c in el::possible(e, "Op{rename(op)}") {
+    r = call_nr(e, c, list, types);
+    if r != null {
+      return r!;
+    }
+  }
+  el::refuse(e, "an operator with no builtin candidate");
+  ex(ir::NdNull, ir::TyUnknown { n: 0 })
+}
+
+// `Parser::call_nr` for a definition whose parameters take the arguments as they are: the call
+// and its declared result; null when they do not fit.
+pub fn call_nr(e: el::El, d: integer, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex? {
+  def = el::def(e, d);
+  if len(def.attributes) != len(list) {
+    return null;
+  }
+  for a in def.attributes {
+    if !el_types::is_same(a.typedef[0] ?? ir::TyUnknown { n: 0 }, types[a#index] ?? ir::TyUnknown { n: 0 }) {
+      return null;
+    }
+  }
+  ex(ir::NdCall { def_nr: d, args: list }, def.returned[0] ?? ir::TyVoid)
+}

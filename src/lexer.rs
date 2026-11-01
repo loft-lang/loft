@@ -238,11 +238,13 @@ pub(crate) fn lex_trace(args: std::fmt::Arguments<'_>) {
 }
 
 /// @PLN91 1a — `LOFT_TRACE_TOKENS=<file>` writes every token loft's own lexer scans from
-/// source, once per place, as one line `file<TAB>line<TAB>col<TAB>kind payload`: the token
+/// source, once per place, as one line `file<TAB>line<TAB>col<TAB>kind payload<TAB>eline:ecol`
+/// — the last the scan cursor after the token, what `Lexer::pos` answers while it is peeked,
+/// and so the position a definition made then records: the token
 /// stream the selfhost lexer is diffed against.  A token replayed after a `revert` is not
 /// scanned again, and a place scanned twice (the second parser pass) is written once.  The
 /// stream is the one the PARSER saw, so a string's holes are lexed in the modes it set.
-fn trace_token(res: &LexResult, hole: bool) {
+fn trace_token(res: &LexResult, hole: bool, end: &Position) {
     use std::fmt::Write as _;
     use std::io::Write;
     type Sink = Option<(std::fs::File, std::collections::HashSet<(String, u32, u32)>)>;
@@ -294,7 +296,11 @@ fn trace_token(res: &LexResult, hole: bool) {
         LexItem::Character(c) => format!("char {c}"),
         LexItem::None => "none".to_string(),
     };
-    let _ = writeln!(f, "{}\t{}\t{}\t{item}", p.file, p.line, p.pos);
+    let _ = writeln!(
+        f,
+        "{}\t{}\t{}\t{item}\t{}:{}",
+        p.file, p.line, p.pos, end.line, end.pos
+    );
 }
 
 impl Debug for Position {
@@ -1292,7 +1298,7 @@ impl Lexer {
     #[inline]
     fn trace_peek(&self) {
         if self.interpolate_strings && !self.json_strings {
-            trace_token(&self.peek, self.mode == Mode::Formatting);
+            trace_token(&self.peek, self.mode == Mode::Formatting, &self.position);
         }
     }
 

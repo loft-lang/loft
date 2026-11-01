@@ -1,0 +1,310 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Elaboration (@PLN91 stage 1, doc/claude/plans/91-self-host/1a-parser.md): the port of
+// `src/parser/`'s semantics over the syntax tree.  It walks the tree in source order, twice —
+// the Rust parser's first and second pass — and builds the same definitions, variable tables
+// and IR the Rust parser builds while it reads tokens, as the compiler's own IR records
+// (`ir.loft`).  This module holds the state (`El`, the Rust `Parser`'s fields that elaboration
+// needs) and the definition table (`src/data.rs`'s `Data`); the walk is in the `el_*` modules,
+// each named after the Rust file it ports.
+use ir;
+use lex::*;
+use syntax::*;
+
+// One `(source, name)` key of the definition table (`Data::def_names`).
+pub struct DefName {
+  pub key: text,
+  pub nr: integer
+}
+
+pub struct El {
+  // the definitions and the schema being built
+  pub b: ir::Bundle,
+  // the syntax tree and the token stream it was parsed from
+  pub p: syntax::Syntax,
+  // the file the tree came from, as positions name it
+  pub file: text,
+  // `Data::def_names`: `"{source}\t{name}"` -> definition number
+  pub names: hash<DefName[key]>,
+  // `Data::source`: 0 the standard library, 1 the program
+  pub source: integer,
+  pub first_pass: boolean,
+  // `Parser::default`: parsing the standard library
+  pub default: boolean,
+  // the definition whose body is being elaborated; -1 = none (`u32::MAX`)
+  pub context: integer,
+  // `Parser::line`: the last line a marker was written for
+  pub line: integer,
+  // what elaboration does not carry yet, by name: the gate counts a program that reaches one
+  pub refused: vector<text>
+}
+
+pub const STD_SOURCE = 0;
+pub const MAIN_SOURCE = 1;
+// `u32::MAX`, the "no definition" sentinel the image stores.
+pub const NONE = 4294967295;
+// `u16::MAX`, the "no type" sentinel of `known_type`.
+pub const NO_TYPE = 65535;
+
+// `DefType`'s ordinals (src/data.rs).
+pub const DT_UNKNOWN = 0;
+pub const DT_FUNCTION = 1;
+pub const DT_DYNAMIC = 2;
+pub const DT_ENUM = 3;
+pub const DT_ENUM_VALUE = 4;
+pub const DT_STRUCT = 5;
+pub const DT_VECTOR = 6;
+pub const DT_TYPE = 7;
+pub const DT_CONSTANT = 8;
+pub const DT_GENERIC = 9;
+pub const DT_INTERFACE = 10;
+pub const DT_TYPE_TEMPLATE = 11;
+
+pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
+  El {
+    b: ir::Bundle { data: ir::Data { definitions: [], source: 0 }, types: [], cwd: false },
+    p: p,
+    file: file,
+    names: [],
+    source: if default { STD_SOURCE } else { MAIN_SOURCE },
+    first_pass: true,
+    default: default,
+    context: -1,
+    line: 0,
+    refused: []
+  }
+}
+
+// What elaboration does not carry yet: recorded once, so the gate names the construct.
+pub fn refuse(el: El, what: text) {
+  for r in el.refused {
+    if r == what {
+      return;
+    }
+  }
+  el.refused += [what];
+}
+
+// ── positions ─────────────────────────────────────────────────────────────────────────────
+
+// `Lexer::pos` while token `i` is the parser's peek: the scan cursor after it.
+pub fn pos_at(el: El, i: integer) -> ir::Position {
+  j = if i >= len(el.p.src) { len(el.p.src) - 1 } else { i };
+  ir::Position { file: el.file, line: el.p.eline[j] ?? 0, pos: el.p.ecol[j] ?? 0 }
+}
+
+// The first `Ident { name }` token at or after `from`.
+pub fn name_tok(el: El, from: integer, name: text) -> integer {
+  i = from;
+  while i < len(el.p.src) {
+    match el.p.src[i] {
+      Ident { name: n } => {
+        if n == name {
+          return i;
+        }
+      },
+      _ => {}
+    }
+    i += 1;
+  }
+  from
+}
+
+// ── the definition table (src/data.rs `Data`) ─────────────────────────────────────────────
+
+fn key(source: integer, name: text) -> text {
+  "{source}\t{name}"
+}
+
+// `Data::source_nr`: the definition `name` of `source`, or -1.
+pub fn source_nr(el: El, source: integer, name: text) -> integer {
+  e = el.names[key(source, name)];
+  if e == null { -1 } else { e.nr }
+}
+
+// `Data::def_nr` (`get_or_std`): the current source's definition, else the standard library's.
+pub fn def_nr(el: El, name: text) -> integer {
+  d = source_nr(el, el.source, name);
+  if d >= 0 || el.source == STD_SOURCE {
+    return d;
+  }
+  source_nr(el, STD_SOURCE, name)
+}
+
+pub fn def(el: El, d: integer) -> ir::Definition {
+  el.b.data.definitions[d]
+}
+
+// `Data::add_def`: a new definition under the current source.  An enum variant keeps the first
+// definition of its name (two enums may share a variant name); any other kind is one name.
+pub fn add_def(el: El, name: text, position: ir::Position, def_type: integer) -> integer {
+  rec = len(el.b.data.definitions);
+  k = key(el.source, name);
+  if el.names[k] == null {
+    el.names += [DefName { key: k, nr: rec }];
+  }
+  el.b.data.definitions += [ir::Definition {
+    name: name,
+    source: el.source,
+    def_type: def_type,
+    parent: NONE,
+    position: position,
+    attributes: [],
+    code: [ir::NdNull],
+    returned: [ir::TyUnknown { n: rec }],
+    returned_not_null: false,
+    rust: "",
+    native: "",
+    op_code: NO_TYPE,
+    known_type: NO_TYPE,
+    variables: ir::Function { name: name, file: position.file, variables: [], names: [], inline_refs: [] },
+    pub_visible: false,
+    null_safe: false,
+    closure_record: NONE,
+    mutated_captures: [],
+    scalars_to_box: [],
+    bounds: [],
+    forced_size: 0,
+    purity: 0,
+    field_groups: [],
+    synthetic: "",
+    cap: "",
+    superseded: "",
+    c_symbol: "",
+    c_sig: "",
+    type_params: [],
+    instance_of: -1,
+    instance_args: [],
+    builtin: false,
+    operator_form: false,
+    returned_fact: "",
+    returned_const: false,
+    native_answer_tp: NO_TYPE,
+    op_hot: false,
+    op_cold: false
+  }];
+  rec
+}
+
+// `Data::set_returned`.
+pub fn set_returned(el: El, d: integer, tp: ir::TypeT) {
+  el.b.data.definitions[d].returned = [tp];
+}
+
+// `typedef::complete_definition`: the builtin types the standard library declares by name.
+pub fn complete_definition(el: El, d: integer) {
+  nm = def(el, d).name;
+  if nm == "vector" {
+    set_returned(el, d, ir::TyVector { inner: ir::TyUnknown { n: 0 }, dep: [] });
+    el.b.data.definitions[d].known_type = 7;
+  } else if nm == "integer" {
+    set_returned(el, d, ir::TyInteger { spec: ir::IntegerSpec { min: -2147483647, max: 2147483647, not_null: false, forced_size: 0 } });
+    el.b.data.definitions[d].known_type = 0;
+  } else if nm == "float" {
+    set_returned(el, d, ir::TyFloat);
+    el.b.data.definitions[d].known_type = 3;
+  } else if nm == "single" {
+    set_returned(el, d, ir::TySingle);
+    el.b.data.definitions[d].known_type = 2;
+  } else if nm == "text" {
+    set_returned(el, d, ir::TyText { dep: [] });
+    el.b.data.definitions[d].known_type = 5;
+  } else if nm == "boolean" {
+    set_returned(el, d, ir::TyBoolean);
+    el.b.data.definitions[d].known_type = 4;
+  } else if nm == "enumerate" {
+    set_returned(el, d, ir::TyEnum { n: 0, is_ref: false, dep: [] });
+  } else if nm == "function" {
+    set_returned(el, d, ir::TyRoutine { n: d });
+  } else if nm == "character" {
+    set_returned(el, d, ir::TyCharacter);
+    el.b.data.definitions[d].known_type = 6;
+  } else if nm == "radix" || nm == "hash" || nm == "reference" || nm == "index" || nm == "sorted" || nm == "spatial" || nm == "trie" {
+    set_returned(el, d, ir::TyReference { n: d, dep: [] });
+  } else if nm == "iterator" {
+    set_returned(el, d, ir::TyIterator { step: ir::TyUnknown { n: 0 }, inner: ir::TyNull });
+  } else if nm == "keys_definition" {
+    set_returned(el, d, ir::TyKeys);
+    el.b.data.definitions[d].known_type = 8;
+  }
+}
+
+// ── the standard library as a loaded base (the Rust warm start, `Data::rebuild_indices`) ──
+
+// The operator names `Data::possible` collects candidates under (src/data.rs `OPERATORS`).
+pub const OP_PREFIXES = ["OpAdd", "OpMin", "OpMul", "OpDiv", "OpRem", "OpPow", "OpNot", "OpBitNot", "OpLand", "OpLor", "OpEor", "OpSLeft", "OpSRight", "OpEq", "OpNe", "OpLt", "OpLe", "OpGt", "OpGe", "OpAppend", "OpConv", "OpCast"];
+
+// `Definition::is_operator`: a function named `Op` and a capital.
+pub fn is_operator(d: ir::Definition) -> boolean {
+  d.def_type == DT_FUNCTION && len(d.name) > 2 && d.name.starts_with("Op") && "{d.name[2]}" >= "A" && "{d.name[2]}" <= "Z"
+}
+
+// Start from the first `upto` definitions of `base` and its schema, with the indices a warm
+// load rebuilds: the name table and the operator candidates (`Data::rebuild_indices`).
+pub fn load_base(el: El, base: ir::Bundle, upto: integer) {
+  for d in base.data.definitions {
+    if d#index >= upto {
+      break;
+    }
+    el.b.data.definitions += [d];
+  }
+  el.b.types = base.types;
+  for d in el.b.data.definitions {
+    k = key(d.source, d.name);
+    if el.names[k] == null {
+      el.names += [DefName { key: k, nr: d#index }];
+    }
+  }
+}
+
+// `Data::get_possible`: the operator definitions named `prefix…`, in definition order.
+pub fn possible(el: El, prefix: text) -> vector<integer> {
+  r: vector<integer> = [];
+  for d in el.b.data.definitions {
+    if is_operator(d) && d.name.starts_with(prefix) {
+      for op in OP_PREFIXES {
+        if d.name.starts_with(op) && op == prefix {
+          r += [d#index];
+        }
+      }
+    }
+  }
+  r
+}
+
+// `Data::add_attribute`'s new attribute: mutable and nullable, everything else off.
+pub fn attribute(name: text, tp: ir::TypeT) -> ir::Attribute {
+  ir::Attribute {
+    name: name,
+    typedef: [tp],
+    mutable: true,
+    constant: false,
+    init: false,
+    nullable: true,
+    primary: false,
+    hidden: false,
+    const_field: false,
+    value_const: false,
+    work_buffer: false,
+    pub_field: false,
+    value: [ir::NdNull],
+    check: [ir::NdNull],
+    check_message: [ir::NdNull],
+    alias_d_nr: NONE,
+    assigned_lambda_d_nr: NONE,
+    links: "",
+    fact: ""
+  }
+}
+
+// How many definitions the standard library owns at the start of `b` (source 0, before the
+// first definition of another source).
+pub fn std_count(b: ir::Bundle) -> integer {
+  for d in b.data.definitions {
+    if d.source != STD_SOURCE {
+      return d#index;
+    }
+  }
+  len(b.data.definitions)
+}

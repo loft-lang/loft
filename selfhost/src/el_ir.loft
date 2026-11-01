@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Building IR the way the Rust parser builds `Value`s (src/data.rs `v_block`, `v_set`, `v_if`,
+// `v_loop`, and `Parser::cl`), as the records `ir.loft` stores.  A block is created with no
+// scope (`u16::MAX`): the scope pass assigns them, after parsing.
+use ir;
+use el;
+
+pub const NO_SCOPE = 65535;
+
+pub fn v_block(ops: vector<ir::Node>, result: ir::TypeT, name: text) -> ir::Node {
+  ir::NdBlock { block: [ir::Block { name: name, operators: ops, result: [result], scope: NO_SCOPE, var_size: 0 }] }
+}
+
+pub fn v_loop(ops: vector<ir::Node>, name: text) -> ir::Node {
+  ir::NdLoop { block: [ir::Block { name: name, operators: ops, result: [ir::TyVoid], scope: NO_SCOPE, var_size: 0 }] }
+}
+
+pub fn v_set(var: integer, value: ir::Node) -> ir::Node {
+  ir::NdSet { var: var, inner: value }
+}
+
+pub fn v_if(test: ir::Node, t: ir::Node, f: ir::Node) -> ir::Node {
+  ir::NdIf { cond: test, t: t, f: f }
+}
+
+// `Parser::cl`: a call of the definition named `op`.
+pub fn cl(e: el::El, op: text, args: vector<ir::Node>) -> ir::Node {
+  ir::NdCall { def_nr: el::def_nr(e, op), args: args }
+}
+
+pub fn is_null(n: ir::Node) -> boolean {
+  match n {
+    NdNull => true,
+    _ => false
+  }
+}
+
+pub fn is_line(n: ir::Node) -> boolean {
+  match n {
+    NdLine { n: _ } => true,
+    _ => false
+  }
+}

@@ -1,0 +1,79 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E's runner (@PLN91 stage 1, 1a-parser.md): `elab <file>…` elaborates the files in order
+// into one definition table — as `Parser::parse_dir` parses the standard library, each file
+// with its own two passes — and writes the definitions as `report::defs_report` writes them,
+// then one `refused: …` line per construct elaboration does not carry yet.
+#cwd
+use lex;
+use syntax;
+use el;
+use el_definitions;
+use report;
+use load;
+
+fn main() {
+  files = arguments();
+  if len(files) == 0 {
+    return;
+  }
+  if files[0].ends_with(".store") {
+    program(files[0], files[1] ?? "");
+    return;
+  }
+  stdlib(files);
+}
+
+// `elab <image> <program>`: the program's definitions, elaborated over the standard library
+// the image holds (its source-0 definitions), both passes, as the Rust warm start parses a
+// program over the startup cache.
+fn program(image: text, f: text) {
+  base = load::load(image);
+  if base == null {
+    eprintln("no image at {image}");
+    exit(2);
+  }
+  src = file(f).content() ?? "";
+  p = syntax::prepare(lex::lex(src));
+  tree = syntax::parse_file(p);
+  if tree == null {
+    eprintln("{f}: does not parse");
+    exit(2);
+  }
+  e = el::new_el(p, f, false);
+  upto = el::std_count(base!);
+  el::load_base(e, base!, upto);
+  e.source = el::MAIN_SOURCE;
+  e.first_pass = true;
+  e.line = 0;
+  el_definitions::elab_file(e, tree ?? 0);
+  e.first_pass = false;
+  e.line = 0;
+  el_definitions::elab_file(e, tree ?? 0);
+  print(report::defs_report(e.b, upto));
+  for r in e.refused {
+    println("refused: {r}");
+  }
+}
+
+fn stdlib(files: vector<text>) {
+  e = el::new_el(syntax::prepare(lex::lex("")), "", true);
+  for f in files {
+    src = file(f).content() ?? "";
+    p = syntax::prepare(lex::lex(src));
+    tree = syntax::parse_file(p);
+    if tree == null {
+      eprintln("{f}: does not parse");
+      exit(2);
+    }
+    e.p = p;
+    e.file = f;
+    e.first_pass = true;
+    el_definitions::elab_file(e, tree ?? 0);
+  }
+  print(report::defs_report(e.b, 0));
+  for r in e.refused {
+    println("refused: {r}");
+  }
+}

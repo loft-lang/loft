@@ -46,7 +46,10 @@ pub enum Tok {
 pub struct Toks {
   pub src: vector<Tok>,
   pub line: vector<integer>,
-  pub col: vector<integer>
+  pub col: vector<integer>,
+  // the scan cursor after each token: the position the Rust parser reads while it is peeked
+  pub eline: vector<integer>,
+  pub ecol: vector<integer>
 }
 
 // The punctuation or keyword token of record kind `k` (below 76).
@@ -229,13 +232,15 @@ fn uint(b: const vector<u8>, at: integer, n: integer) -> integer {
 // The tokens of `source`.
 pub fn lex(source: text) -> Toks {
   b = crt::lex(source);
-  r = Toks { src: [], line: [], col: [] };
+  r = Toks { src: [], line: [], col: [], eline: [], ecol: [] };
   at = 0;
   while at < len(b) {
     k = b[at] ?? 88;
     r.line += [uint(b, at + 1, 4)];
     r.col += [uint(b, at + 5, 4)];
-    at += 9;
+    r.eline += [uint(b, at + 9, 4)];
+    r.ecol += [uint(b, at + 13, 4)];
+    at += 17;
     t = if k < 76 {
       fixed(k)
     } else if k == 76 || k == 83 || k == 84 {
@@ -382,5 +387,5 @@ pub fn oracle_line(t: Toks, i: integer, file: text) -> text {
   if i > 0 && (t.src[i - 1] ?? Bad) is StrHole && k is Str {
     shown = "str+{shown[3..]}";
   }
-  "{file}\t{t.line[i]}\t{t.col[i]}\t{shown}"
+  "{file}\t{t.line[i]}\t{t.col[i]}\t{shown}\t{t.eline[i]}:{t.ecol[i]}"
 }

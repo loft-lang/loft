@@ -787,3 +787,39 @@ pub fn ctable(b: ir::Bundle) -> text {
   }
   r
 }
+
+// ── definitions: the front end's gate E (doc/claude/plans/91-self-host/1a-parser.md) ──
+
+// Every definition from number `from` on, one block each: its number, name, kind, parent,
+// source, position and known type, its attributes with their types and flags, its result, and
+// its code as `introspect` shows it.  The Rust front end's bundle and the loft front end's are
+// printed by this one function, so the two texts differ exactly where the two front ends do.
+pub fn defs_report(b: ir::Bundle, from: integer) -> text {
+  r = "";
+  for d in b.data.definitions {
+    i = d#index;
+    if i < from {
+      continue;
+    }
+    r += "#{i} {d.name} type={d.def_type} parent={d.parent} source={d.source} at={d.position.line}:{d.position.pos} known={d.known_type}\n";
+    for a in d.attributes {
+      r += "  {a.name}: {type_argument(b, d, a.typedef)}";
+      if a.mutable { r += " mutable"; }
+      if a.constant { r += " constant"; }
+      if a.nullable { r += " nullable"; }
+      if a.hidden { r += " hidden"; }
+      if a.work_buffer { r += " work_buffer"; }
+      r += "\n";
+    }
+    if len(d.returned) > 0 {
+      r += "  -> {type_argument(b, d, d.returned)}\n";
+    }
+    code = d.code[0];
+    if (d.def_type == 1 || d.def_type == 2) && code != null {
+      r += "  ";
+      show_code(b, d.variables, code, 1, false, r);
+      r += "\n";
+    }
+  }
+  r
+}

@@ -34,9 +34,12 @@ pub enum Syn {
   SEnum { pub at: integer, pub public: boolean, pub name: text, pub tvars: vector<integer>, pub variants: vector<integer> },
   SVariant { pub at: integer, pub name: text, pub fields: vector<integer> },
   SAlias { pub at: integer, pub public: boolean, pub name: text, pub tp: integer?, pub size: integer? },
-  SInterface { pub at: integer, pub public: boolean, pub name: text, pub members: vector<integer> },
+  // `end` is the token after the closing `}`, before an optional `;`.
+  SInterface { pub at: integer, pub public: boolean, pub name: text, pub members: vector<integer>, pub end: integer },
   SIType { pub at: integer, pub name: text, pub bounds: vector<text> },
-  SIFn { pub at: integer, pub kind: text, pub name: text, pub params: vector<integer>, pub ret: integer? },
+  // `end` is the token after the member (before its optional `;`): where the Rust parser stands
+  // when it records the member's definitions.
+  SIFn { pub at: integer, pub kind: text, pub name: text, pub params: vector<integer>, pub ret: integer?, pub end: integer },
   SConst { pub at: integer, pub public: boolean, pub fixed: boolean, pub name: text, pub tp: integer?, pub value: integer? },
   // ── types ──
   // A named type: `name[::member]<args>[deps] limit(lo, hi) not null .assoc ?`.  `keys` holds a
@@ -133,6 +136,8 @@ pub struct Syntax {
   pub nodes: vector<Syn>,
   pub line: vector<integer>,
   pub col: vector<integer>,
+  pub eline: vector<integer>,
+  pub ecol: vector<integer>,
   pub head: boolean
 }
 
@@ -142,23 +147,31 @@ pub struct Syntax {
 // `AssignGlued`, each half at its own column (the Rust parser splits them where a type's angle
 // closes, `has_closing_angle`).
 pub fn prepare(t: Toks) -> Syntax {
-  p = Syntax { src: [], pos: 0, farthest: 0, nodes: [], line: [], col: [], head: false };
+  p = Syntax { src: [], pos: 0, farthest: 0, nodes: [], line: [], col: [], eline: [], ecol: [], head: false };
   for i in 0..len(t.src) {
     k = t.src[i];
     ln = t.line[i];
     cl = t.col[i];
+    el = t.eline[i];
+    ec = t.ecol[i];
     if k is Shr {
       p.src += [Gt, GtGlued];
       p.line += [ln, ln];
       p.col += [cl, cl + 1];
+      p.eline += [ln, el];
+      p.ecol += [cl + 1, ec];
     } else if k is Ge {
       p.src += [Gt, AssignGlued];
       p.line += [ln, ln];
       p.col += [cl, cl + 1];
+      p.eline += [ln, el];
+      p.ecol += [cl + 1, ec];
     } else {
       p.src += [k];
       p.line += [ln];
       p.col += [cl];
+      p.eline += [el];
+      p.ecol += [ec];
     }
   }
   p
@@ -848,8 +861,8 @@ fn alias_size(p: Syntax) -> integer? {
 fn interface_decl(p: Syntax) -> integer? {
   at = p.pos;
   match p {
-    [(pb: pub_mark)?, KwInterface, Ident { name }, LBrace, (ms: interface_member)*, RBrace, (_s: semi)?] =>
-      add(p, SInterface { at: at, public: pb != null, name: name, members: ms }),
+    [(pb: pub_mark)?, KwInterface, Ident { name }, LBrace, (ms: interface_member)*, RBrace, (s: semi)?] =>
+      add(p, SInterface { at: at, public: pb != null, name: name, members: ms, end: if s == null { p.pos } else { p.pos - 1 } }),
     _ => null
   }
 }
@@ -865,14 +878,14 @@ fn interface_member(p: Syntax) -> integer? {
       add(p, SIType { at: at, name: name, bounds: texts(p, all) })
     },
     [KwType, Ident { name }, (_s: semi)?] => add(p, SIType { at: at, name: name, bounds: [] }),
-    [KwFn, Ident { name }, LParen, (ps: param)*(Comma), (_t: trailing_comma)?, RParen, (r: ret_type)?, (_s: semi)?] =>
-      add(p, SIFn { at: at, kind: "fn", name: name, params: ps, ret: r }),
-    [KwOperator, Ident { name }, LParen, (ps: param)*(Comma), (_t: trailing_comma)?, RParen, (r: ret_type)?, (_s: semi)?] =>
-      add(p, SIFn { at: at, kind: "operator", name: name, params: ps, ret: r }),
-    ["op", LBracket, RBracket, LParen, (ps: param)*(Comma), (_t: trailing_comma)?, RParen, (r: ret_type)?, (_s: semi)?] =>
-      add(p, SIFn { at: at, kind: "op", name: "[]", params: ps, ret: r }),
-    ["op", o: op_token, LParen, (ps: param)*(Comma), (_t: trailing_comma)?, RParen, (r: ret_type)?, (_s: semi)?] =>
-      add(p, SIFn { at: at, kind: "op", name: name_of(p, o), params: ps, ret: r }),
+    [KwFn, Ident { name }, LParen, (ps: param)*(Comma), (_t: trailing_comma)?, RParen, (r: ret_type)?, (s: semi)?] =>
+      add(p, SIFn { at: at, kind: "fn", name: name, params: ps, ret: r, end: if s == null { p.pos } else { p.pos - 1 } }),
+    [KwOperator, Ident { name }, LParen, (ps: param)*(Comma), (_t: trailing_comma)?, RParen, (r: ret_type)?, (s: semi)?] =>
+      add(p, SIFn { at: at, kind: "operator", name: name, params: ps, ret: r, end: if s == null { p.pos } else { p.pos - 1 } }),
+    ["op", LBracket, RBracket, LParen, (ps: param)*(Comma), (_t: trailing_comma)?, RParen, (r: ret_type)?, (s: semi)?] =>
+      add(p, SIFn { at: at, kind: "op", name: "[]", params: ps, ret: r, end: if s == null { p.pos } else { p.pos - 1 } }),
+    ["op", o: op_token, LParen, (ps: param)*(Comma), (_t: trailing_comma)?, RParen, (r: ret_type)?, (s: semi)?] =>
+      add(p, SIFn { at: at, kind: "op", name: name_of(p, o), params: ps, ret: r, end: if s == null { p.pos } else { p.pos - 1 } }),
     _ => null
   }
 }

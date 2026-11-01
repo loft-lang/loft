@@ -71,6 +71,7 @@ typedef struct {
     uint8_t zero;   /* an Int's or Float's spelling began with `0` */
     uint8_t fmt;    /* a string put while the lexer was in `Formatting` mode (the trace's `str+`) */
     uint32_t line, col;
+    uint32_t eline, ecol; /* the scan cursor after the token: what `Lexer::pos` answers */
     int64_t i;      /* Int, Long, Wide, Char */
     double f;       /* Float, Double, Single (exactly the `f32`) */
     size_t s_at, s_len; /* Ident, Str, StrHole: the text in `loft_lx_toks.txt` */
@@ -272,6 +273,8 @@ static loft_lx_tok *loft_lx_put(loft_lx *x, int kind, uint32_t line, uint32_t co
     t->kind = (uint8_t) kind;
     t->line = line;
     t->col = col;
+    t->eline = x->line;
+    t->ecol = x->pos;
     t->fmt = x->mode == LOFT_LX_FMT;
     return t;
 }

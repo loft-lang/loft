@@ -1416,7 +1416,8 @@ int64_t loft_crt_walk_remove(int64_t state, int64_t store, int64_t rec, int64_t 
 /* ── The lexer (@PLN91 stage 1): loft source text as the tokens src/lexer.rs reads from it, for the
  * front end written in loft.  `loft_lex` is the port (src/c/loft_lex.h); this only encodes its
  * tokens for the bridge, one record each, little-endian:
- *   kind u8 · line u32 · col u32 · then by kind:
+ *   kind u8 · line u32 · col u32 · end line u32 · end col u32 (the scan cursor after the
+ *   token) · then by kind:
  *   Ident, Str, StrHole  len u32 · its UTF-8 bytes
  *   Int                  value u32 · zero u8 (spelled with a leading `0`)
  *   Long, Wide           value u64
@@ -1448,6 +1449,8 @@ int64_t loft_crt_lex(char *out, int64_t cap, const char *src, int64_t bytes) {
         loft_lx_buf_byte(&e, t->kind);
         loft_crt_lex_u32(&e, t->line, 4);
         loft_crt_lex_u32(&e, t->col, 4);
+        loft_crt_lex_u32(&e, t->eline, 4);
+        loft_crt_lex_u32(&e, t->ecol, 4);
         switch (t->kind) {
         case LOFT_LX_IDENT: case LOFT_LX_STR: case LOFT_LX_STRHOLE:
             loft_crt_lex_u32(&e, t->s_len, 4);
