@@ -428,3 +428,11 @@ fn test_the_kernels_mains_run_whole() {
     assert(o.stores_left == 0, "{name} main: {o.stores_left} stores left live");
   }
 }
+
+// S6's files: a File record written and read through the C runtime's own routines, no store left.
+fn test_a_file_is_written_and_read_back() {
+  fl = kernel("files");
+  assert(ran_clean(fl, "n_bytes_back", 3) == 303099, "bytes_back(3): write_bytes, content, size, delete");
+  assert(ran_clean(fl, "n_binary", 5) == 48879074805, "binary(5): an integer, a record and a narrow local, little endian");
+  assert(ran_clean(fl, "n_lined", 2) == 332, "lined(2): lines through the compiled body's twin");
+}

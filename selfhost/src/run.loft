@@ -13,6 +13,7 @@ use crt;
 use types;
 use show;
 use consts;
+use files;
 use eq;
 
 // The entry's result — a loft integer, so null when the program answers null — or the first
@@ -914,6 +915,98 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
           put_int(ints, sp_int + 1, br);
           put_int(ints, sp_int + 2, bp);
           sp_int += 3;
+        } else if op.a == 37 {
+          // `write_bytes(path, bytes)`: the C runtime's own, over the store's byte vector.
+          sp_int -= 3;
+          sp_text -= 1;
+          put_int(ints, sp_int, if crt::write_bytes(texts[sp_text] ?? "", ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0) { 1 } else { 0 });
+          sp_int += 1;
+        } else if op.a == 38 {
+          // `os_temp_dir()`: loft's own temporary directory; a compiled caller's text buffer gets
+          // the answer too.
+          buf = -1;
+          if op.b > 0 {
+            sp_int -= 1;
+            buf = ints[sp_int] ?? -1;
+          }
+          answer = temp_dir() ?? "";
+          if buf >= 0 {
+            crt::set_slot_text(stk, buf, answer);
+          }
+          put_text(texts, sp_text, answer);
+          sp_text += 1;
+        } else if op.a == 39 || op.a == 42 {
+          // `read_bytes(path)`, `list_dir(path)`: the C runtime's own, a vector in a store of its own.
+          sp_text -= 1;
+          if op.a == 39 {
+            crt::read_bytes(io, texts[sp_text] ?? "");
+          } else {
+            crt::list_dir(io, texts[sp_text] ?? "");
+          }
+          put_int(ints, sp_int, io[0]);
+          put_int(ints, sp_int + 1, io[1]);
+          put_int(ints, sp_int + 2, io[2]);
+          sp_int += 3;
+        } else if op.a == 40 {
+          // `f.lines()` as the Rust interpreter runs it, its compiled body (`compiled_stdlib`): the
+          // caller's buffer is the result (`R-RetAdopt`) — emptied, made when it is none — and each
+          // line is appended to it as `split` appends a part.  The walk is the body's: a line ends
+          // at each '\n', a '\r' before it dropped, and what follows the last is a line when it is
+          // not empty.
+          if !table_loaded {
+            load_table(b);
+            table_loaded = true;
+          }
+          sp_int -= 6;
+          lfs = ints[sp_int] ?? NULL_STORE;
+          lfr = ints[sp_int + 1] ?? 0;
+          lfp = ints[sp_int + 2] ?? 0;
+          bs = ints[sp_int + 3] ?? NULL_STORE;
+          br = ints[sp_int + 4] ?? 0;
+          bp = ints[sp_int + 5] ?? 0;
+          if br != 0 {
+            crt::vec_clear(bs, br, bp);
+          }
+          if bs == NULL_STORE || br == 0 {
+            wrapper = types::named(b, "main_vector<text>") ?? 0;
+            vio: vector<integer> = [bs, br, bp];
+            crt::database(vio, types::enum_parent_size(b, wrapper), wrapper);
+            bs = vio[0] ?? NULL_STORE;
+            br = vio[1] ?? 0;
+            bp = vio[2] ?? 0;
+          } else {
+            crt::vec_clear(bs, br, bp);
+          }
+          lc = crt::file_content(lfs, lfr, lfp) ?? "";
+          lfrom = 0;
+          lprev_cr = false;
+          for lch in lc {
+            if lch == '\n' {
+              lend = lch#index;
+              crt::vec_prealloc(bs, br, bp, 1, 4);
+              crt::vec_append(io, bs, br, bp, 4);
+              crt::set_text(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, 0, if lprev_cr { lc[lfrom..lend - 1] } else { lc[lfrom..lend] });
+              crt::vec_finish(bs, br, bp);
+              lfrom = lch#next;
+            }
+            lprev_cr = lch == '\r';
+          }
+          if lfrom < lc.size() {
+            crt::vec_prealloc(bs, br, bp, 1, 4);
+            crt::vec_append(io, bs, br, bp, 4);
+            crt::set_text(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, 0, lc[lfrom..lc.size()]);
+            crt::vec_finish(bs, br, bp);
+          }
+          put_int(ints, sp_int, bs);
+          put_int(ints, sp_int + 1, br);
+          put_int(ints, sp_int + 2, bp);
+          sp_int += 3;
+        } else if op.a == 41 {
+          // `write_text_raw(file, v)`: the C runtime's own.
+          sp_text -= 1;
+          sp_int -= 3;
+          put_int(ints, sp_int, if crt::write_text_raw(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, texts[sp_text]) { 1 } else { 0 });
+          sp_int += 1;
         } else if op.a == 12 || op.a == 13 {
           // `now()`, `ticks()`: loft's own clocks.
           put_int(ints, sp_int, if op.a == 12 { now() } else { ticks() });
@@ -1054,6 +1147,63 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
         }
         sp_int -= 4;
         crt::hash_reserve(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, ints[sp_int + 3]);
+      }
+      GetFile => {
+        sp_int -= 3;
+        put_int(ints, sp_int, if crt::get_file(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0) { 1 } else { 0 });
+        sp_int += 1;
+      }
+      FileText => {
+        sp_int -= 4;
+        crt::file_text(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, stk, ints[sp_int + 3] ?? 0);
+      }
+      // A value written at, or read from, the File's next position: a text local's bytes as they
+      // are, any other value in its binary form (`files.loft`).
+      WriteFile => {
+        if op.b == 1 {
+          sp_int -= 4;
+          crt::ser_slot_text(stk, ints[sp_int + 3] ?? 0);
+          crt::ser_write(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0);
+        } else {
+          sp_int -= 6;
+          files::write(b, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0, op.a);
+        }
+      }
+      ReadFile => {
+        sp_int -= 1;
+        rn = ints[sp_int] ?? 0;
+        if op.b == 1 {
+          sp_int -= 4;
+          if crt::read_file(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, rn, true, 0) >= 0 {
+            crt::de_slot_text(stk, ints[sp_int + 3] ?? 0);
+          }
+        } else {
+          sp_int -= 6;
+          files::read(b, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0, rn, op.a);
+        }
+      }
+      FsOp => {
+        to_path: text? = null;
+        if op.a == 1 {
+          sp_text -= 1;
+          to_path = texts[sp_text];
+        }
+        sp_text -= 1;
+        put_int(ints, sp_int, crt::fs_op(op.a, texts[sp_text], to_path));
+        sp_int += 1;
+      }
+      FileOp => {
+        farg = 0;
+        if op.a == 1 || op.a == 2 {
+          sp_int -= 1;
+          farg = ints[sp_int] ?? 0;
+        }
+        sp_int -= 3;
+        fo_answer = crt::file_op(op.a, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, farg);
+        if op.a != 1 {
+          put_int(ints, sp_int, fo_answer);
+          sp_int += 1;
+        }
       }
       VecPrepend => {
         if !table_loaded {

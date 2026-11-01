@@ -25,6 +25,9 @@ fn main() {
     eprintln("refused: no image at {image}");
     exit(3);
   }
+  // A relative path of the program's resolves against its own directory, which the driver hands
+  // the run as `LOFT_SOURCE_DIR` (as `loft` hands a C program's run).
+  crt::fs_anchor();
   name = a[at + 1] ?? "n_main";
   entry = lower::find(b, name);
   if entry == null {

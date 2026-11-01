@@ -920,3 +920,181 @@ fn c_trace_mark();
 pub fn trace_mark() {
   c_trace_mark();
 }
+
+// ── Files (@PLN91 S6) ─────────────────────────────────────────────────────────────────────────
+// The interpreted program's File records, through the C runtime's own file routines; a relative
+// path resolves against `LOFT_SOURCE_DIR` as a C program's does.
+
+fn c_fs_anchor();
+#c "loft_crt_fs_anchor" "void()"
+
+fn c_get_file(store: integer, rec: integer, pos: integer) -> integer;
+#c "loft_crt_get_file" "int64_t(int64_t, int64_t, int64_t)"
+
+fn c_file_text(store: integer, rec: integer, pos: integer, stk: integer, at: integer);
+#c "loft_crt_file_text" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_write_bytes(path: text, bytes: integer, store: integer, rec: integer, pos: integer) -> integer;
+#c "loft_crt_write_bytes" "int64_t(const char*, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_file_le(store: integer, rec: integer, pos: integer) -> integer;
+#c "loft_crt_file_le" "int64_t(int64_t, int64_t, int64_t)"
+
+fn c_ser_at(store: integer, rec: integer, pos: integer, w: integer, le: boolean);
+#c "loft_crt_ser_at" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_ser_int(v: integer, w: integer, le: boolean);
+#c "loft_crt_ser_int" "void(int64_t, int64_t, int64_t)"
+
+fn c_ser_text(store: integer, rec: integer, pos: integer);
+#c "loft_crt_ser_text" "void(int64_t, int64_t, int64_t)"
+
+fn c_ser_slot_text(stk: integer, at: integer);
+#c "loft_crt_ser_slot_text" "void(int64_t, int64_t)"
+
+fn c_ser_write(store: integer, rec: integer, pos: integer);
+#c "loft_crt_ser_write" "void(int64_t, int64_t, int64_t)"
+
+fn c_read_file(store: integer, rec: integer, pos: integer, n: integer, is_text: boolean, width: integer) -> integer;
+#c "loft_crt_read_file" "int64_t(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_de_slot_text(stk: integer, at: integer);
+#c "loft_crt_de_slot_text" "void(int64_t, int64_t)"
+
+fn c_de_text(store: integer, rec: integer, pos: integer, off: integer, n: integer);
+#c "loft_crt_de_text" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_de_at(store: integer, rec: integer, pos: integer, off: integer, w: integer, le: boolean);
+#c "loft_crt_de_at" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_de_int(off: integer, w: integer, sgn: boolean, le: boolean) -> integer;
+#c "loft_crt_de_int" "int64_t(int64_t, int64_t, int64_t, int64_t)"
+
+// The run starts in the program's directory: relative paths resolve against it.
+pub fn fs_anchor() {
+  c_fs_anchor();
+}
+
+// `OpGetFile`: what the File's path names.
+pub fn get_file(store: integer, rec: integer, pos: integer) -> boolean {
+  c_get_file(store, rec, pos) != 0
+}
+
+// `OpGetFileText`: the whole file into the text local at byte `at` of stack store `stk`.
+pub fn file_text(store: integer, rec: integer, pos: integer, stk: integer, at: integer) {
+  c_file_text(store, rec, pos, stk, at);
+}
+
+// `write_bytes(path, bytes)` of a store's byte vector: the C runtime's own.
+pub fn write_bytes(path: text, store: integer, rec: integer, pos: integer) -> boolean {
+  c_write_bytes(path, path.size(), store, rec, pos) != 0
+}
+
+// Is a write or read through this File little-endian?
+pub fn file_le(store: integer, rec: integer, pos: integer) -> boolean {
+  c_file_le(store, rec, pos) != 0
+}
+
+// A value's binary form, gathered piece by piece: `w` raw bytes at a place, an integer's low `w`
+// bytes, a text field's or a text local's bytes; `ser_write` writes them at the File's next
+// position.
+pub fn ser_at(store: integer, rec: integer, pos: integer, w: integer, le: boolean) {
+  c_ser_at(store, rec, pos, w, le);
+}
+
+pub fn ser_int(v: integer, w: integer, le: boolean) {
+  c_ser_int(v, w, le);
+}
+
+pub fn ser_text(store: integer, rec: integer, pos: integer) {
+  c_ser_text(store, rec, pos);
+}
+
+pub fn ser_slot_text(stk: integer, at: integer) {
+  c_ser_slot_text(stk, at);
+}
+
+pub fn ser_write(store: integer, rec: integer, pos: integer) {
+  c_ser_write(store, rec, pos);
+}
+
+// `OpReadFile`: up to `n` bytes from the File's next position, held for the decoding below; how
+// many came, -1 when the File cannot be read.
+pub fn read_file(store: integer, rec: integer, pos: integer, n: integer, is_text: boolean, width: integer) -> integer {
+  c_read_file(store, rec, pos, n, is_text, width)
+}
+
+pub fn de_slot_text(stk: integer, at: integer) {
+  c_de_slot_text(stk, at);
+}
+
+pub fn de_text(store: integer, rec: integer, pos: integer, off: integer, n: integer) {
+  c_de_text(store, rec, pos, off, n);
+}
+
+pub fn de_at(store: integer, rec: integer, pos: integer, off: integer, w: integer, le: boolean) {
+  c_de_at(store, rec, pos, off, w, le);
+}
+
+pub fn de_int(off: integer, w: integer, sgn: boolean, le: boolean) -> integer {
+  c_de_int(off, w, sgn, le)
+}
+
+fn c_fs_op(which: integer, a: text, an: integer, b: text, bn: integer) -> integer;
+#c "loft_crt_fs_op" "int64_t(int64_t, const char*, int64_t, const char*, int64_t)"
+
+fn c_file_op(which: integer, store: integer, rec: integer, pos: integer, arg: integer) -> integer;
+#c "loft_crt_file_op" "int64_t(int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_read_bytes(out: vector<integer>, path: text, bytes: integer) -> integer;
+#c "loft_crt_read_bytes" "int64_t(int64_t*, int64_t, const char*, int64_t)"
+
+// `OpDelete`, `OpMoveFile`, `OpMkdir`, `OpMkdirAll`, `OpRmdir` by `which` (0–4): the FileResult code.
+pub fn fs_op(which: integer, a: text?, b: text?) -> integer {
+  c_fs_op(which, a ?? "", bytes_of(a), b ?? "", bytes_of(b))
+}
+
+// `OpSizeFile` (null when there is no file), `OpSeekFile`, `OpTruncateFile`, `OpSyncFile` by
+// `which` (0–3), on a File record.
+pub fn file_op(which: integer, store: integer, rec: integer, pos: integer, arg: integer) -> integer? {
+  c_file_op(which, store, rec, pos, arg)
+}
+
+// `read_bytes(path)`: the file's bytes in a store of their own, into `out`.
+pub fn read_bytes(out: vector<integer>, path: text) {
+  c_read_bytes(out, path, path.size());
+}
+
+fn c_file_content(out: vector<u8>, store: integer, rec: integer, pos: integer) -> integer;
+#c "loft_crt_file_content" "int64_t(char*, int64_t, int64_t, int64_t, int64_t)"
+
+// `File.content()` as the compiled body answers it: null for a missing path, a directory, or bytes
+// that are not text.
+pub fn file_content(store: integer, rec: integer, pos: integer) -> text? {
+  buf = room(64);
+  n = c_file_content(buf, store, rec, pos);
+  if n < 0 {
+    return null;
+  }
+  if n > len(buf) {
+    buf = room(n);
+    n = c_file_content(buf, store, rec, pos);
+  }
+  text_from_byte_range(buf, 0, n)
+}
+
+fn c_write_text_raw(store: integer, rec: integer, pos: integer, v: text, bytes: integer) -> integer;
+#c "loft_crt_write_text_raw" "int64_t(int64_t, int64_t, int64_t, const char*, int64_t)"
+
+fn c_list_dir(out: vector<integer>, path: text, bytes: integer) -> integer;
+#c "loft_crt_list_dir" "int64_t(int64_t*, int64_t, const char*, int64_t)"
+
+// `write_text_raw(file, v)`: the C runtime's own.
+pub fn write_text_raw(store: integer, rec: integer, pos: integer, v: text?) -> boolean {
+  c_write_text_raw(store, rec, pos, v ?? "", bytes_of(v)) != 0
+}
+
+// `list_dir(path)`: the names in a store of their own, into `out`.
+pub fn list_dir(out: vector<integer>, path: text) {
+  c_list_dir(out, path, path.size());
+}

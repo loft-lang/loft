@@ -350,7 +350,9 @@ def compare(spec, exe, reports, layers, keep):
             rust = run(rcmd, {"LOFT_ALLOC_TRACE": rtrace, "LOFT_TRACE_BIND": rbinds})
             lcmd = [exe, "--compare", img] + (["n_" + test] if test else [])
             lbinds = os.path.join(d, "loft.binds")
-            loft = run(lcmd, {"LOFT_CRT_ALLOC_TRACE": ltrace, "LOFT_TRACE_BIND": lbinds})
+            # The program's relative paths resolve where `loft` anchors a C program's.
+            loft = run(lcmd, {"LOFT_CRT_ALLOC_TRACE": ltrace, "LOFT_TRACE_BIND": lbinds,
+                              "LOFT_SOURCE_DIR": os.path.dirname(os.path.abspath(file))})
             if loft[0] == 3 and b"refused: " in loft[2]:
                 refused = text(loft[2]).split("refused: ", 1)[1].strip().splitlines()[0]
             rev = program_events(open(rtrace, encoding="utf-8")) if os.path.exists(rtrace) else None

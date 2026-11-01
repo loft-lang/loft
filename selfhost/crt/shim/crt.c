@@ -13,6 +13,10 @@
 #define LOFT_ALLOC_TRACE 1
 #define LOFT_ALLOC_TRACE_ENV "LOFT_CRT_ALLOC_TRACE"
 #include "../../../src/c/loft_crt.h"
+/* The file routines (@PLN91 S6's files): a File record of the interpreted program is read and
+ * written by the runtime's own `loft_get_file`, `loft_write_file`, `loft_read_file`, …, and a
+ * relative path resolves against the program's directory as a C program's does. */
+#include "../../../src/c/loft_io.h"
 
 /* A text that crossed the bridge: `bytes` long (an embedded NUL kept), or null when -1. */
 static loft_str loft_crt_str(const char *val, int64_t bytes) {
@@ -1012,4 +1016,162 @@ int64_t loft_crt_vec_remove(int64_t store, int64_t rec, int64_t pos, int64_t tp,
  * it enters the program (`State::execute_argv_shared`). */
 void loft_crt_trace_mark(void) {
     LOFT_TRACE("M\n");
+}
+
+/* ── Files (@PLN91 S6): the interpreted program's File records, through the runtime's own file
+ * routines.  A relative path resolves against `LOFT_SOURCE_DIR`, which the driver hands the run,
+ * as a C program anchors (`loft_set_anchor`). */
+void loft_crt_fs_anchor(void) {
+    loft_set_anchor(1);
+}
+
+/* OpGetFile: what the File's path names. */
+int64_t loft_crt_get_file(int64_t store, int64_t rec, int64_t pos) {
+    return loft_get_file(loft_crt_ref(store, rec, pos));
+}
+
+/* OpGetFileText: the whole file into the text local at byte `at` of the stack store. */
+void loft_crt_file_text(int64_t store, int64_t rec, int64_t pos, int64_t stk, int64_t at) {
+    loft_get_file_text(loft_crt_ref(store, rec, pos), (loft_text *) loft_crt_slot_at(stk, at));
+}
+
+/* `write_bytes(path, bytes)`: the file is the store vector's bytes. */
+int64_t loft_crt_write_bytes(const char *path, int64_t bytes, int64_t store, int64_t rec, int64_t pos) {
+    return loft_write_bytes(loft_crt_str(path, bytes), loft_crt_ref(store, rec, pos));
+}
+
+/* Is a write or read through this File little-endian? */
+int64_t loft_crt_file_le(int64_t store, int64_t rec, int64_t pos) {
+    return loft_file_le(loft_crt_ref(store, rec, pos));
+}
+
+/* A value's binary form (`Stores::read_data`) is gathered here, piece by piece as the loft side
+ * walks its type, then written at the File's next position in one `loft_write_file`. */
+static loft_text loft_crt_wbuf = { 0, 0, 0 };
+
+/* `w` raw bytes at a place, in the File's byte order. */
+void loft_crt_ser_at(int64_t store, int64_t rec, int64_t pos, int64_t w, int64_t le) {
+    loft_ref r = loft_crt_ref(store, rec, pos);
+    uint64_t v = 0;
+    memcpy(&v, loft_at(loft_store_of(r), r.rec, r.pos), (size_t) w);
+    loft_put(&loft_crt_wbuf, v, (int) w, (int) le);
+}
+
+/* An integer's low `w` bytes, in the File's byte order. */
+void loft_crt_ser_int(int64_t v, int64_t w, int64_t le) {
+    loft_put(&loft_crt_wbuf, (uint64_t) v, (int) w, (int) le);
+}
+
+/* A text field's bytes. */
+void loft_crt_ser_text(int64_t store, int64_t rec, int64_t pos) {
+    loft_text_append(&loft_crt_wbuf, loft_get_text(loft_crt_ref(store, rec, pos), 0));
+}
+
+/* A text local's bytes (the local at byte `at` of the stack store). */
+void loft_crt_ser_slot_text(int64_t stk, int64_t at) {
+    loft_text_append(&loft_crt_wbuf, loft_view((loft_text *) loft_crt_slot_at(stk, at)));
+}
+
+/* OpWriteFile: the gathered bytes at the File's next position; the buffer emptied. */
+void loft_crt_ser_write(int64_t store, int64_t rec, int64_t pos) {
+    loft_write_file(loft_crt_ref(store, rec, pos), &loft_crt_wbuf);
+    loft_crt_wbuf.len = 0;
+}
+
+/* OpReadFile: up to `n` bytes from the File's next position, kept here while the loft side
+ * decodes them into the value (`Stores::write_data`); how many came, -1 when it cannot read. */
+static uint8_t *loft_crt_rbuf = 0;
+static int64_t loft_crt_rlen = 0;
+
+int64_t loft_crt_read_file(int64_t store, int64_t rec, int64_t pos, int64_t n, int64_t text, int64_t width) {
+    free(loft_crt_rbuf);
+    loft_crt_rbuf = 0;
+    loft_crt_rlen = loft_read_file(loft_crt_ref(store, rec, pos), n, (int) text, width, &loft_crt_rbuf);
+    return loft_crt_rlen;
+}
+
+/* The read bytes as the text local at byte `at` of the stack store. */
+void loft_crt_de_slot_text(int64_t stk, int64_t at) {
+    loft_text_set((loft_text *) loft_crt_slot_at(stk, at),
+                  loft_lit((const char *) loft_crt_rbuf, (size_t) (loft_crt_rlen < 0 ? 0 : loft_crt_rlen)));
+}
+
+/* The read bytes `off..off+n` as a text field. */
+void loft_crt_de_text(int64_t store, int64_t rec, int64_t pos, int64_t off, int64_t n) {
+    loft_set_text(loft_crt_ref(store, rec, pos), 0, loft_lit((const char *) loft_crt_rbuf + off, (size_t) n));
+}
+
+/* The `w` read bytes at `off`, in the File's byte order, raw at a place. */
+void loft_crt_de_at(int64_t store, int64_t rec, int64_t pos, int64_t off, int64_t w, int64_t le) {
+    loft_ref r = loft_crt_ref(store, rec, pos);
+    uint64_t v = loft_take(loft_crt_rbuf + off, (int) w, (int) le);
+    memcpy(loft_at(loft_store_of(r), r.rec, r.pos), &v, (size_t) w);
+}
+
+/* The `w` read bytes at `off` as an integer, sign-extended from `w` bytes when `sgn`. */
+int64_t loft_crt_de_int(int64_t off, int64_t w, int64_t sgn, int64_t le) {
+    return loft_fcur_decode(loft_crt_rbuf + off, (int) w, (int) sgn, (int) le);
+}
+
+/* OpDelete, OpMoveFile, OpMkdir, OpMkdirAll, OpRmdir, by `which` (0–4): the runtime's own, each
+ * answering its FileResult code. */
+int64_t loft_crt_fs_op(int64_t which, const char *a, int64_t an, const char *b, int64_t bn) {
+    loft_str x = loft_crt_str(a, an);
+    switch (which) {
+    case 0: return loft_fs_delete(x);
+    case 1: return loft_fs_move(x, loft_crt_str(b, bn));
+    case 2: return loft_fs_mkdir(x, 0);
+    case 3: return loft_fs_mkdir(x, 1);
+    case 4: return loft_fs_rmdir(x);
+    default: return LOFT_FS_OTHER;
+    }
+}
+
+/* OpSizeFile, OpSeekFile, OpTruncateFile, OpSyncFile, by `which` (0–3), on a File record. */
+int64_t loft_crt_file_op(int64_t which, int64_t store, int64_t rec, int64_t pos, int64_t arg) {
+    loft_ref f = loft_crt_ref(store, rec, pos);
+    switch (which) {
+    case 0: return loft_size_file(f);
+    case 1: loft_seek_file(f, arg); return 0;
+    case 2: return loft_truncate_file(f, arg);
+    case 3: return loft_sync_file(f);
+    default: return 0;
+    }
+}
+
+/* `read_bytes(path)`: the whole file as a byte vector in a store of its own, into `out`; the null
+ * reference for a missing or unreadable file. */
+int64_t loft_crt_read_bytes(int64_t *out, int64_t no, const char *path, int64_t bytes) {
+    loft_crt_put_ref(out, no, loft_read_bytes(loft_crt_str(path, bytes)));
+    return 0;
+}
+
+/* `File.content()` as the compiled `t_4File_content` answers it, for a compiled body that calls it
+ * (`t_4File_lines`): null for a missing path or a directory, else the file's text through
+ * `loft_get_file_text` — null when a file with bytes gave none (they are not text).  The length,
+ * or -1 for null; nothing is written when it exceeds `cap`. */
+int64_t loft_crt_file_content(char *out, int64_t cap, int64_t store, int64_t rec, int64_t pos) {
+    loft_ref f = loft_crt_ref(store, rec, pos);
+    uint8_t format = loft_file_format(f);
+    if (format == 5 || format == 4) return -1;
+    loft_text t = { 0, 0, 0 };
+    loft_get_file_text(f, &t);
+    int64_t size = loft_file_long(f, 0);
+    if (t.len == 0 && size != LOFT_NULL && size > 0) {
+        loft_text_free(&t);
+        return -1;
+    }
+    return loft_crt_out(&t, out, cap);
+}
+
+/* `write_text_raw(file, v)`: `v` at the File's position, through the runtime's own. */
+int64_t loft_crt_write_text_raw(int64_t store, int64_t rec, int64_t pos, const char *v, int64_t bytes) {
+    return loft_write_text_raw(loft_crt_ref(store, rec, pos), loft_crt_str(v, bytes));
+}
+
+/* `list_dir(path)`: the entries' names in a store of their own, into `out`; the null reference for
+ * a path that is not a readable directory. */
+int64_t loft_crt_list_dir(int64_t *out, int64_t no, const char *path, int64_t bytes) {
+    loft_crt_put_ref(out, no, loft_list_dir(loft_crt_str(path, bytes)));
+    return 0;
 }
