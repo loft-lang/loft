@@ -25,14 +25,13 @@ use crate::variables::Function;
 pub(crate) fn length_locals(code: &Value, data: &Data, vars: &Function) -> Vec<(u16, u16)> {
     let mut sets: Vec<(u16, VecKey)> = Vec::new();
     code.walk(&mut |n| {
-        if let Value::Set(v, rhs) = n {
-            if let Value::Call(op, args) = rhs.unspan()
-                && args.len() == 1
-                && is_len_call(data, *op)
-                && let Some(key) = vec_key(&args[0], data)
-            {
-                sets.push((*v, key));
-            }
+        if let Value::Set(v, rhs) = n
+            && let Value::Call(op, args) = rhs.unspan()
+            && args.len() == 1
+            && is_len_call(data, *op)
+            && let Some(key) = vec_key(&args[0], data)
+        {
+            sets.push((*v, key));
         }
     });
     sets.retain(|(n, key)| {
@@ -185,4 +184,17 @@ pub(crate) fn assigned_once(code: &Value, v: u16) -> bool {
         }
     });
     count == 1
+}
+
+/// Is `v` a vector element read — `OpGetVector(v, size, i)`, or a plain element's read at 0 of
+/// one (`OpGetInt(OpGetVector(…), 0)`)?
+pub(crate) fn is_element_read(v: &Value, data: &Data) -> bool {
+    let Value::Call(op, args) = v.unspan() else {
+        return false;
+    };
+    let name = data.def(*op).name.as_str();
+    name == "OpGetVector"
+        || (name.starts_with("OpGet")
+            && matches!(args.first().map(Value::unspan),
+                Some(Value::Call(inner, _)) if data.def(*inner).name == "OpGetVector"))
 }

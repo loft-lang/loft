@@ -8949,7 +8949,7 @@ fn copy_statements(code: &Value, site: usize, src: u16) -> Option<(&[Value], usi
             }
             _ => return,
         };
-        let Some(i) = ops.iter().position(|op| holds_site(op)) else {
+        let Some(i) = ops.iter().position(&holds_site) else {
             return;
         };
         // A pre-order walk meets an outer list first: the innermost list that also holds a
@@ -9140,31 +9140,10 @@ pub fn warn_copies(data: &Data, diags: &mut crate::diagnostics::Diagnostics, fal
             // written and there is nothing to say (DIAGNOSTICS.md § Fix lines).
             let rewrite = if r.source != u16::MAX && r.site != 0 {
                 let frame = lease_frame.get_or_insert_with(|| crate::lease::Frame::new(data, def));
-                let trace = |why: &str| {
-                    if crate::env_once!(std::env::var_os("LOFT_TRACE_COPY_ADVICE").is_some()) {
-                        eprintln!(
-                            "copy-advice: {}:{} `{}` {why}",
-                            r.loc
-                                .as_ref()
-                                .map(|p| p.file.as_str())
-                                .filter(|f| !f.is_empty())
-                                .unwrap_or(def.position.file.as_str()),
-                            r.loc.as_ref().map_or(0, |p| p.line),
-                            def.variables.name(r.source)
-                        );
-                    }
-                };
-                if frame.read_after_addr(r.site, r.source) == Some(None) {
-                    trace("silent: no path reads it after the copy");
+                let Some(rw) = site_rewrite(data, def, frame, &r) else {
                     continue;
-                }
-                match copy_rewrite(data, def, frame, r.site, r.source) {
-                    Some(rw) => Some(rw),
-                    None => {
-                        trace("silent: no rewrite usable here — the copy is necessary");
-                        continue;
-                    }
-                }
+                };
+                Some(rw)
             } else {
                 None
             };
@@ -9247,49 +9226,94 @@ pub fn warn_copies(data: &Data, diags: &mut crate::diagnostics::Diagnostics, fal
             );
 
             // @PLN131 ship steps 1–2 — what to write instead: the one rewrite that holds here.
-            let copy_line = r.loc.as_ref().map_or(0, |p| p.line);
-            match rewrite {
-                Some(CopyRewrite::Reorder { use_line }) => {
-                    let name = def.variables.name(r.source);
-                    // Conditional: the analysis proves no variable conflict between the two
-                    // statements, not what the author MEANT by their order.
-                    let (title, condition) = if use_line == copy_line {
-                        (
-                            format!("move the statement that reads `{name}` again above the copy"),
-                            "the two statements may run in the other order".to_string(),
-                        )
-                    } else {
-                        (
-                            format!("move line {use_line} above line {copy_line}"),
-                            format!("line {use_line} does not need line {copy_line} to run first"),
-                        )
-                    };
-                    diags.fix_last(crate::diagnostics::Fix {
-                        kind: crate::diagnostics::FixKind::Conditional,
-                        title,
-                        condition: Some(condition),
-                        edit: None,
-                        concept: "move",
-                        concept_ref: "@F106",
-                    });
-                }
-                Some(CopyRewrite::DropDead { use_line, var }) => {
-                    diags.fix_last(crate::diagnostics::Fix {
-                        kind: crate::diagnostics::FixKind::Mechanical,
-                        title: format!(
-                            "drop line {use_line} — `{}` is never read",
-                            def.variables.name(var)
-                        ),
-                        condition: None,
-                        edit: None,
-                        concept: "move",
-                        concept_ref: "@F106",
-                    });
-                }
-                None => {}
+            if let Some(rw) = rewrite {
+                copy_fix(diags, def, &r, &rw);
             }
         }
     }
+}
+
+/// The rewrite usable at the copy `r` of a named source, or `None` when the notice says nothing
+/// there: no path reads the source after the copy (a move), or no rewrite holds (a necessary
+/// copy).  `LOFT_TRACE_COPY_ADVICE=1` names each silenced site and why.
+fn site_rewrite(
+    data: &Data,
+    def: &crate::data::Definition,
+    frame: &crate::lease::Frame,
+    r: &VerdictRow,
+) -> Option<CopyRewrite> {
+    let trace = |why: &str| {
+        if crate::env_once!(std::env::var_os("LOFT_TRACE_COPY_ADVICE").is_some()) {
+            eprintln!(
+                "copy-advice: {}:{} `{}` {why}",
+                r.loc
+                    .as_ref()
+                    .map(|p| p.file.as_str())
+                    .filter(|f| !f.is_empty())
+                    .unwrap_or(def.position.file.as_str()),
+                r.loc.as_ref().map_or(0, |p| p.line),
+                def.variables.name(r.source)
+            );
+        }
+    };
+    if frame.read_after_addr(r.site, r.source) == Some(None) {
+        trace("silent: no path reads it after the copy");
+        return None;
+    }
+    let rw = copy_rewrite(data, def, frame, r.site, r.source);
+    if rw.is_none() {
+        trace("silent: no rewrite usable here — the copy is necessary");
+    }
+    rw
+}
+
+/// The fix line of the copy notice just added: the rewrite `rw` usable at the copy `r`.
+fn copy_fix(
+    diags: &mut crate::diagnostics::Diagnostics,
+    def: &crate::data::Definition,
+    r: &VerdictRow,
+    rw: &CopyRewrite,
+) {
+    let copy_line = r.loc.as_ref().map_or(0, |p| p.line);
+    let (kind, title, condition) = match *rw {
+        CopyRewrite::Reorder { use_line } => {
+            let name = def.variables.name(r.source);
+            // Conditional: the analysis proves no variable conflict between the two
+            // statements, not what the author MEANT by their order.
+            let (title, condition) = if use_line == copy_line {
+                (
+                    format!("move the statement that reads `{name}` again above the copy"),
+                    "the two statements may run in the other order".to_string(),
+                )
+            } else {
+                (
+                    format!("move line {use_line} above line {copy_line}"),
+                    format!("line {use_line} does not need line {copy_line} to run first"),
+                )
+            };
+            (
+                crate::diagnostics::FixKind::Conditional,
+                title,
+                Some(condition),
+            )
+        }
+        CopyRewrite::DropDead { use_line, var } => (
+            crate::diagnostics::FixKind::Mechanical,
+            format!(
+                "drop line {use_line} — `{}` is never read",
+                def.variables.name(var)
+            ),
+            None,
+        ),
+    };
+    diags.fix_last(crate::diagnostics::Fix {
+        kind,
+        title,
+        condition,
+        edit: None,
+        concept: "move",
+        concept_ref: "@F106",
+    });
 }
 
 /// @PLN90 Step 5 — the USER-FACING copy report (`LOFT_REPORT_COPIES` / `--report-copies`).

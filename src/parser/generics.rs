@@ -665,8 +665,14 @@ impl Parser {
                 crate::data::Data::mangle_instance(&spelling.join("#"), self.data.def(g_nr).name())
             );
         }
-        // Return existing instantiation if already created.
-        let existing = self.data.def_nr(&mangled);
+        // Return existing instantiation if already created — by any source: `@FR-G-Mono` is
+        // one instance per distinct instantiation PROGRAM-wide, and two modules instantiating
+        // one template each minted their own under one key, which both native backends then
+        // emitted as two definitions of one function.
+        let existing = match self.data.def_nr(&mangled) {
+            u32::MAX => self.data.any_source_nr(&mangled),
+            found => found,
+        };
         if existing != u32::MAX {
             if crate::env_once!(std::env::var_os("LOFT_DBG_ACC").is_some()) {
                 eprintln!(
