@@ -350,11 +350,31 @@ fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vec
         el_vars::set_value_const(vars, a#index);
       }
     }
+    // `Parser::parse_function`'s return buffer (pass 1): a record, struct-enum or vector result
+    // is delivered through a last, hidden `__retbuf` parameter of the result's base type.
+    if e.first_pass && takes_ret_buffer(e, rt) {
+      d = e.context;
+      a = el::attribute("__retbuf", el_types::without_deps(rt));
+      a.hidden = true;
+      e.b.data.definitions[d].attributes += [a];
+      rb = el_vars::add_variable(vars, "__retbuf", el_types::without_deps(rt));
+      el_vars::become_argument(vars, rb);
+    }
     code = el_expressions::parse_code(e, vars, body ?? 0);
     e.b.data.definitions[e.context].code = [code];
   }
   e.b.data.definitions[e.context].variables = el_vars::stored(vars);
   e.context = -1;
+}
+
+// `Type::takes_ret_buffer`: a struct record, a struct-enum or a vector.
+fn takes_ret_buffer(e: el::El, t: ir::TypeT) -> boolean {
+  match t {
+    TyReference { n } => el::def(e, n).def_type == el::DT_STRUCT,
+    TyEnum { is_ref } => is_ref,
+    TyVector { inner: _ } => true,
+    _ => false
+  }
 }
 
 // `Data::add_fn`, a plain function: `n_<name>`, its parameters as attributes.
