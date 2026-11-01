@@ -69,6 +69,39 @@ does **not** null-guard: `if v[i] { … }` and `v[i] ?? d` only catch `i ≥ len
 `-1` "not-found" sentinel or a subtraction underflow.  Test `if i >= 0` first (or `?? d`
 only after a `>= 0` check) when `i` may be negative.
 
+**When `v[i]` reads as the element, and when as `τ?`.**  An index the compiler can trust
+reads as the element type; any other index reads as `τ?`, because it may be out of range
+(`formal/types.md` `(N-Index)`).  Trusted: a constant (`v[0]`, `v[-1]`), `len(v)` of the same
+vector minus a constant, the variable of an active `for` loop, an index a guard proves (`if i <
+len(v)`, `assert(i < len(v))`, `if i >= len(v) { return … }`), and integer arithmetic over
+those.  These need no `??`:
+
+<!-- from tests/reference/vector-index.loft -->
+```loft
+v = [P { x: 1 }, P { x: 2 }, P { x: 3 }];
+first = take(v[0]);                    // a constant
+last = take(v[len(v) - 1]);            // len of the same vector, minus a constant
+total = 0;
+for j in 0..len(v) {
+  total += take(v[j]);                 // the variable of a loop over 0..len(v)
+}
+i = 1;
+mid = if i < len(v) { take(v[i]) } else { 0 };   // a guard that proves the bound
+```
+
+Trust removes the `?` from the type, not the check: a trusted index that does overrun (`for j
+in 0..10` over a shorter vector) still answers null at run time.  Not trusted: a local that
+holds the length (`n = len(v); v[n - 1]`) and a `for x in v` loop's `x#index` — read `x` itself,
+or loop over `0..len(v)`.  Discharge an untrusted read with `!` where an invariant guarantees
+the element, `?` for the type's default, or `?? d` for a default you give:
+
+<!-- from tests/reference/vector-index.loft -->
+```loft
+a = take(v[n - 1]!);                   // present by an invariant: `!` halts when it is not
+b = take(v[5]?);                       // out of range: the type's default, P { x: 0 }
+c = (v[n] ?? P { x: 9 }).x;            // a default you give
+```
+
 **Struct elements: reads are views, writes are copies — never swap
 in-place via a temp (#338).**  For a `vector<STRUCT>`, `tmp = v[j]` yields
 a dep-tracked LINK to slot `j`'s record (writes through `tmp` mutate
