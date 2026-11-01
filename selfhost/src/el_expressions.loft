@@ -26,7 +26,27 @@ fn ex(code: ir::Node, tp: ir::TypeT) -> Ex {
 pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   result = el::def(e, e.context).returned[0] ?? ir::TyVoid;
   b = parse_block(e, vars, body, "return from block", result);
-  b.code
+  finish_body(vars, b.code)
+}
+
+// `Parser::finish_body`, the work texts: each `__work_N` the body minted starts empty at its
+// head, ahead of its first line marker — inserted at the front in ascending order, so the
+// highest comes first.
+fn finish_body(vars: el_vars::Vars, code: ir::Node) -> ir::Node {
+  match code {
+    NdBlock { block } => {
+      bl = block[0];
+      for wt in vars.work_texts {
+        ops: vector<ir::Node> = [el_ir::v_set(wt, ir::NdText { s: "" })];
+        for op in bl.operators {
+          ops += [op];
+        }
+        bl.operators = ops;
+      }
+      ir::NdBlock { block: [bl] }
+    },
+    _ => code
+  }
 }
 
 // `Parser::parse_block_inner` for a `{ … }`: a line marker where a statement starts on a later
@@ -111,6 +131,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SName { name, member } => name_expression(e, vars, name, member),
     SAssign { fixed, op, target, e: rhs } => assignment(e, vars, fixed, op, target, rhs),
     SCall { at, f, args } => call_expression(e, vars, at, f, args),
+    SString { parts } => string_expression(e, vars, parts),
     SBin { op, l, r } => {
       a = expression(e, vars, l);
       b = expression(e, vars, r);
@@ -358,6 +379,80 @@ fn scalar(t: ir::TypeT) -> boolean {
     TyCharacter => true,
     _ => false
   }
+}
+
+// `Parser::parse_string`: a string with no hole is its text; one with holes renders into a
+// `__work_N` text — set to the text before the first hole, each hole's value formatted onto it
+// (`append_data`), each literal part after a hole appended — and the block answers the work
+// text, typed as text that depends on it.  A hole with a format spec is refused by name.
+fn string_expression(e: el::El, vars: el_vars::Vars, parts: vector<integer>) -> Ex {
+  last = parts[len(parts) - 1] ?? 0;
+  if len(parts) == 1 {
+    return ex(ir::NdText { s: text_part(e, last) }, ir::TyText { dep: [] });
+  }
+  var = el_vars::work_text(vars);
+  list: vector<ir::Node> = [el_ir::v_set(var, ir::NdText { s: text_part(e, (parts[0] ?? 1) - 1) })];
+  for h in parts {
+    match e.p.nodes[h] {
+      SHole { e: he, spec, spec_end } => {
+        if spec != spec_end || he == null {
+          el::refuse(e, "a format spec");
+          return ex(ir::NdNull, ir::TyText { dep: [] });
+        }
+        x = expression(e, vars, he!);
+        tp = x.tp;
+        if !e.first_pass && el_types::is_unknown(tp) {
+          tp = ir::TyNever;
+        }
+        append_data(e, list, var, x.code, tp);
+        after = if h#index + 1 < len(parts) - 1 { (parts[h#index + 1] ?? 1) - 1 } else { last };
+        s = text_part(e, after);
+        if s != "" {
+          list += [el_ir::cl(e, "OpAppendText", [ir::NdVar { n: var }, ir::NdText { s: s }])];
+        }
+      },
+      _ => {}
+    }
+  }
+  list += [ir::NdVar { n: var }];
+  tp = ir::TyText { dep: [var] };
+  ex(el_ir::v_block(list, tp, "Formatted string"), tp)
+}
+
+fn text_part(e: el::El, n: integer) -> text {
+  match e.p.nodes[n] {
+    SText { s } => s,
+    _ => ""
+  }
+}
+
+// `Parser::append_data` with the default output state (radix 10, no width, a space to pad
+// with, no `+`, no `#`, alignment unset): the format op a value of this type renders through.
+// An untyped value (a callee the first pass has not met) renders nothing.
+fn append_data(e: el::El, list: vector<ir::Node>, var: integer, val: ir::Node, tp: ir::TypeT) {
+  w = ir::NdVar { n: var };
+  match el_types::base(tp) {
+    TyInteger { spec: _ } => {
+      list += [el_ir::cl(e, "OpFormatInt", [w, val, ir::NdInt { n: 10 }, ir::NdInt { n: 0 }, ir::NdInt { n: 32 }, ir::NdBoolean { b: false }, ir::NdBoolean { b: false }, ir::NdInt { n: 2 }])];
+    },
+    TyText { dep: _ } => {
+      list += [format_text(e, w, val)];
+    },
+    TyBoolean => {
+      list += [format_text(e, w, el_ir::cl(e, "OpCastTextFromBool", [val]))];
+    },
+    TyCharacter => {
+      list += [el_ir::cl(e, "OpAppendCharacter", [w, val])];
+    },
+    TyUnknown { n: _ } => {},
+    _ => el::refuse(e, "a formatted value of this type")
+  }
+}
+
+// `Parser::append_data_text` with the default state: the value, no width, alignment unset, a
+// space to pad with.
+fn format_text(e: el::El, w: ir::Node, val: ir::Node) -> ir::Node {
+  el_ir::cl(e, "OpFormatText", [w, val, ir::NdInt { n: 0 }, ir::NdInt { n: 2 }, ir::NdInt { n: 32 }])
 }
 
 // `IntegerSpec::signed32`, the type an integer literal answers.

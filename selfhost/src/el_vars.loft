@@ -116,6 +116,32 @@ pub fn in_use(v: Vars, nr: integer, plus: boolean) {
   }
 }
 
+// `Function::work_text`: the next `__work_N` text buffer of this body (the same variable the
+// first pass made, met again by name on the second), noted in the ordered set the body's head
+// initialises.
+pub fn work_text(v: Vars) -> integer {
+  v.work_text += 1;
+  nr = add_variable(v, "__work_{v.work_text}", ir::TyText { dep: [] });
+  at = 0;
+  while at < len(v.work_texts) && v.work_texts[at] < nr {
+    at += 1;
+  }
+  if at >= len(v.work_texts) || v.work_texts[at] != nr {
+    rest: vector<integer> = [];
+    for w in v.work_texts {
+      if w#index == at {
+        rest += [nr];
+      }
+      rest += [w];
+    }
+    if at >= len(v.work_texts) {
+      rest += [nr];
+    }
+    v.work_texts = rest;
+  }
+  nr
+}
+
 // `Parser::var_usages(nr, false)`: take back a use, never below none.
 pub fn drop_use(v: Vars, nr: integer) {
   if v.vars[nr].uses > 0 {
