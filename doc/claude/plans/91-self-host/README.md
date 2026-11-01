@@ -165,7 +165,11 @@ agree.  The comparison instrument is `selfhost/compare/` ([1b-compare.md](1b-com
    passes `close_program` runs for both backends (`compile.rs`: `ledger_sites`,
    `arg_copy`, `value_record`, … `text_len`), compiled through the C backend.  Gates: the
    token stream equals `src/lexer.rs`'s; the image equals the Rust front end's
-   `--emit-image`, before and after the IR passes.  P-front is this stage's probe: what
+   `--emit-image`, before and after the IR passes.  **The parser is written with PEG match
+   patterns** (@PLN35, [formal/matching.md](../../formal/matching.md)) over a token cursor
+   (owner, 2026-11-01).  The tokens may come from a lexer in the C runtime: the runtime
+   already ports `src/lexer.rs`'s JSON mode (`loft_json.h`, `loft_jl_*`), and that port is
+   extended to the full loft mode wherever the parser needs it.  P-front is this stage's probe: what
    the language lacks is filed on @PLN179's register and fixed in the language, never
    worked around in the compiler.
 2. **The interpreter in loft, complete (strand 1b, with strand 9).**  It reads the loft
