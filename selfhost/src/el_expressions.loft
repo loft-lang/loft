@@ -1017,9 +1017,12 @@ fn write_op(at: ir::Attribute) -> text {
 // `Parser::field` / `get_field` for a plain struct's field: the read op its type loads
 // through, typed as the field — borrowing what the record borrows, and the record's local.
 fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text, args: vector<integer>, call: boolean) -> Ex {
-  if call || len(args) > 0 || re == null {
-    el::refuse(e, "a method call");
+  if re == null {
+    el::refuse(e, "a method call: {name}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if call || len(args) > 0 {
+    return method_call(e, vars, at, re!, name, args);
   }
   x = expression(e, vars, re!);
   d = -1;
@@ -1178,6 +1181,48 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
     return c;
   }
   ex(ir::NdSpan { pos: el::pos_at(e, after_paren(e, at)), inner: c.code }, c.tp)
+}
+
+// `Parser::parse_method` for `x.name(args)`: the method the receiver's type selects
+// (`find_fn`'s rungs over the receiver), called with the receiver first, as the same call
+// spelled `name(x, args)` is; wrapped on the second pass in the `.`'s position (`wrap_chain`).
+fn method_call(e: el::El, vars: el_vars::Vars, at: integer, re: integer, name: text, args: vector<integer>) -> Ex {
+  x = expression(e, vars, re);
+  list: vector<ir::Node> = [x.code];
+  types: vector<ir::TypeT> = [x.tp];
+  for a in args {
+    match e.p.nodes[a] {
+      SArg { name: an, e: ae } => {
+        if an != "" || ae == null {
+          el::refuse(e, "a named argument");
+          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+        y = expression(e, vars, ae!);
+        list += [y.code];
+        types += [y.tp];
+      },
+      _ => {}
+    }
+  }
+  if el_types::is_unknown(x.tp) {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  d = find_fn(e, name, x.tp);
+  if d < 0 {
+    if !e.first_pass {
+      el::refuse(e, "a method call: {name}");
+    }
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  r = call_args(e, vars, d, list, types);
+  if r == null {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  c = r!;
+  if e.first_pass {
+    return c;
+  }
+  ex(ir::NdSpan { pos: el::pos_at(e, at), inner: c.code }, c.tp)
 }
 
 // `Parser::parse_intrinsic_call` and `parse_call_diagnostic`, for `assert` and `panic`: the
