@@ -12016,6 +12016,18 @@ impl Parser {
         result_tp
     }
 
+    /// `f` parsed with no cursor mode (`@FR-P-Cursor`): a cursor match's mode belongs to its
+    /// PATTERNS, so a guard or an arm body — where a `match` of its own may be written — is
+    /// parsed outside it, and a nested cursor match sets and clears only its own (loft#2322).
+    fn outside_cursor_mode<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let cursor = self.match_cursor.take();
+        let farthest = self.match_cursor_farthest.take();
+        let r = f(self);
+        self.match_cursor = cursor;
+        self.match_cursor_farthest = farthest;
+        r
+    }
+
     /// @PLN35 PC2 — is the upcoming slice element `name : rule`, where `rule` names a sub-rule
     /// FUNCTION (`n_<rule>` returning a struct)?  ONE save/revert look-ahead, mirroring
     /// `peek_scalar_type_capture`.  A variant name (`name : Variant`) has no `n_<...>` fn, so this
@@ -12480,7 +12492,7 @@ impl Parser {
             let mut guard_opt = if self.lexer.has_token("if") {
                 let at = *self.lexer.pos();
                 let mut guard = Value::Null;
-                let gt = self.expression(&mut guard);
+                let gt = self.outside_cursor_mode(|p| p.expression(&mut guard));
                 self.record_guard(&guard, at);
                 if !self.first_pass && gt != Type::Boolean {
                     self.convert(&mut guard, &gt, &Type::Boolean);
@@ -12522,7 +12534,8 @@ impl Parser {
             // result expression (`{ c = 5; c }` → `c = 5; drop c`) — the block then yielded void,
             // so native delivered 0 (interpret happened to still surface the value).
             let arm_expected = self.match_arm_expected(&result_type);
-            let mut arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_code);
+            let mut arm_type =
+                self.outside_cursor_mode(|p| p.parse_match_arm_body(&arm_expected, &mut arm_code));
             // The alternatives run the BODY under their own bindings, so they take it before
             // the first pattern's bindings fold into it below.
             let mut bare_body = if alternatives.is_empty() {
