@@ -6,6 +6,8 @@
 // keeps of it is `ir::Function`; `Vars` adds the working state the parser asks while it reads
 // the body.  A variable's number is its index, as in the Rust table.
 use ir;
+use el;
+use el_types;
 
 pub struct VarName {
   pub name: text,
@@ -112,6 +114,32 @@ pub fn in_use(v: Vars, nr: integer, plus: boolean) {
   } else {
     v.vars[nr].uses -= 1;
   }
+}
+
+// `Parser::var_usages(nr, false)`: take back a use, never below none.
+pub fn drop_use(v: Vars, nr: integer) {
+  if v.vars[nr].uses > 0 {
+    v.vars[nr].uses -= 1;
+  }
+}
+
+pub fn mark_user_named(v: Vars, nr: integer) {
+  v.vars[nr].user_named = true;
+}
+
+// `Function::change_var_type`, the cases a plain binding meets: a local still untyped takes the
+// value's type, and one already of that type keeps it.  False for any other change, which the
+// caller refuses by name.
+pub fn change_var_type(e: el::El, v: Vars, nr: integer, t: ir::TypeT) -> boolean {
+  cur = tp(v, nr);
+  if el_types::is_equal(e, cur, t) {
+    return true;
+  }
+  if is_unknown(cur) {
+    v.vars[nr].type_def = [t];
+    return true;
+  }
+  false
 }
 
 // `Function::append(other)`: this table takes over the one a definition kept from the pass

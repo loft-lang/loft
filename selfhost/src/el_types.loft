@@ -55,6 +55,65 @@ pub fn is_same(a: ir::TypeT, b: ir::TypeT) -> boolean {
   }
 }
 
+// `Type::is_equal`: the same type for a conversion or a variable's retype — an integer of any
+// width, a text with any deps, an enum or a record by definition, a `&` and a `τ?` through
+// their inner type where that carries deps; anything else by its whole value.  A vector's
+// element storage is not compared yet, so a vector is refused by name.
+pub fn is_equal(e: el::El, a: ir::TypeT, b: ir::TypeT) -> boolean {
+  match a {
+    TyRewritten { inner } => return is_equal(e, inner, b),
+    _ => {}
+  }
+  match b {
+    TyRewritten { inner } => return is_equal(e, a, inner),
+    _ => {}
+  }
+  match a {
+    TyRefVar { inner: ia } => match b {
+      TyRefVar { inner: ib } => is_equal(e, ia, ib),
+      _ => false
+    },
+    TyEnum { n: na, is_ref: ra } => match b {
+      TyEnum { n: nb, is_ref: rb } => na == nb && ra == rb,
+      _ => false
+    },
+    TyReference { n: na } => match b {
+      TyReference { n: nb } => na == nb,
+      _ => false
+    },
+    TyOptional { inner: ia } => match b {
+      TyOptional { inner: ib } => if has_deps(ia) && has_deps(ib) { is_equal(e, ia, ib) } else { a == b },
+      _ => false
+    },
+    TyInteger { spec: _ } => b is TyInteger,
+    TyText { dep: _ } => b is TyText,
+    TyVector { inner: _ } => {
+      el::refuse(e, "a vector type compared");
+      false
+    },
+    _ => a == b
+  }
+}
+
+// `Type::deps_ref` is some: the type carries a dependency list, through a `&` or a `τ?`.
+fn has_deps(t: ir::TypeT) -> boolean {
+  match t {
+    TyRefVar { inner } => has_deps(inner),
+    TyOptional { inner } => has_deps(inner),
+    TyText { dep: _ } => true,
+    TyEnum { n: _ } => true,
+    TyReference { n: _ } => true,
+    TyVector { inner: _ } => true,
+    TySorted { n: _ } => true,
+    TyIndex { n: _ } => true,
+    TyRadix { n: _ } => true,
+    TyHash { n: _ } => true,
+    TyTrie { n: _ } => true,
+    TyFunction { args: _ } => true,
+    _ => false
+  }
+}
+
 // `Parser::parse_type` of a named type with nothing after its name: the type a definition of
 // that name answers.  What it does not carry yet is refused by name.
 pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
