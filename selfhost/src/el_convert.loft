@@ -271,3 +271,72 @@ pub fn cast(e: el::El, code: ir::Node, src: ir::TypeT, should: ir::TypeT) -> ir:
   }
   null
 }
+
+// The null a type spells (`convert`'s `FromNull` arm): the first `OpConv…FromNull` answering that
+// type, the non-allocating sentinel for a record; null when there is none.
+pub fn null_of(e: el::El, t: ir::TypeT) -> ir::Node? {
+  if t is TyReference {
+    d = el::def_nr(e, "OpNullRefSentinel");
+    return if d < 0 { null } else { ir::NdCall { def_nr: d, args: [] } };
+  }
+  for d in el::possible(e, "OpConv") {
+    def = el::def(e, d);
+    if ends_with(def.name, "FromNull") && el_types::is_equal(e, def.returned[0] ?? ir::TyVoid, t) {
+      return ir::NdCall { def_nr: d, args: [] };
+    }
+  }
+  null
+}
+
+// A plain scalar or a text: the values whose null is a sentinel of their own type.
+pub fn sentinel_value(t: ir::TypeT) -> boolean {
+  plain_scalar(t) || t is TyText
+}
+
+// `convert` at a store, with the nullable arms (`@FR-N-Intro`): a bare `null` into a nullable
+// slot is the base's null, a value into one converts to the base; a nullable value into a
+// non-null slot is the unwrap `@FR-N-Store` refuses (null).  Otherwise as `convert`, a text taken
+// as it is.
+pub fn convert_store(e: el::El, vars: el_vars::Vars, code: ir::Node, src: ir::TypeT, should: ir::TypeT) -> ir::Node? {
+  match should {
+    TyOptional { inner } => {
+      if src is TyNull {
+        return if sentinel_value(inner) { null_of(e, inner) } else { null };
+      }
+      if el_types::is_equal(e, src, should) {
+        return code;
+      }
+      match src {
+        TyOptional { inner: si } => return convert_store(e, vars, code, si, inner),
+        _ => {}
+      }
+      return convert_store(e, vars, code, src, inner);
+    },
+    _ => {}
+  }
+  if src is TyNull || src is TyOptional {
+    return null;
+  }
+  if !plain_scalar(src) || !plain_scalar(should) {
+    return if el_types::is_equal(e, src, should) { code } else { null };
+  }
+  convert(e, vars, code, src, should, false)
+}
+
+// `convert_admitting`, an operator's argument: as a store, and a nullable value read as its base
+// (the unwrap a comparison makes), a bare `null` as the base's null.
+pub fn convert_admitting(e: el::El, vars: el_vars::Vars, code: ir::Node, src: ir::TypeT, should: ir::TypeT) -> ir::Node? {
+  match src {
+    TyOptional { inner } => {
+      if el_types::is_equal(e, src, should) {
+        return code;
+      }
+      return convert_admitting(e, vars, code, inner, should);
+    },
+    TyNull => {
+      return if sentinel_value(should) { null_of(e, should) } else { convert_store(e, vars, code, src, should) };
+    },
+    _ => {}
+  }
+  convert_store(e, vars, code, src, should)
+}

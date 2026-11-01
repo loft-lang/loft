@@ -286,6 +286,10 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
   if len(l) > 0 && el_ir::is_line(l[len(l) - 1]) {
     l = drop_last(l);
   }
+  // A function body that ends in a jump is typed as its declared result.
+  if context == "return from block" && t is TyNever && !(result is TyVoid) && !el_types::is_unknown(result) {
+    t = result;
+  }
   // A function body's tail is a store into its result (`convert_store`): converted to it.
   if context == "return from block" && len(l) > 0 && el_convert::plain_scalar(result) && el_convert::plain_scalar(t) && !el_types::is_equal(e, result, t) {
     tc = el_convert::convert(e, vars, l[len(l) - 1], t, result, false);
@@ -315,13 +319,10 @@ fn stored(e: el::El, vars: el_vars::Vars, x: Ex, to: ir::TypeT) -> ir::Node? {
   if el_types::is_unknown(x.tp) || el_types::is_unknown(to) {
     return if e.first_pass { x.code } else { null };
   }
-  if el_convert::plain_scalar(x.tp) && el_convert::plain_scalar(to) {
-    return el_convert::convert(e, vars, x.code, x.tp, to, false);
-  }
-  if el_types::is_equal(e, to, x.tp) || x.tp is TyNever {
+  if x.tp is TyNever {
     return x.code;
   }
-  null
+  el_convert::convert_store(e, vars, x.code, x.tp, to)
 }
 
 // The loop of `parse_block_inner` meets the closing `}` too: a later line moves the parser's
@@ -538,7 +539,7 @@ fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: inte
     el::refuse(e, "a compound assignment to a local of this type: {type_kind(vt)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  r = call_op(e, bin, [ir::NdVar { n: v }, x.code], [vt, x.tp]);
+  r = call_op(e, vars, bin, [ir::NdVar { n: v }, x.code], [vt, x.tp]);
   el_vars::drop_use(vars, v);
   ex(el_ir::v_set(v, r.code), ir::TyVoid)
 }
@@ -1337,7 +1338,7 @@ fn after_paren(e: el::El, from: integer) -> integer {
 // elaboration does not read generic bounds.
 fn find_fn(e: el::El, name: text, first: ir::TypeT) -> integer {
   free = el::def_nr(e, "n_{name}");
-  if el_types::is_unknown(first) {
+  if el_types::is_unknown(first) || first is TyNull {
     return free;
   }
   tn = type_def_nr(e, first);
@@ -1421,14 +1422,10 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
     pt = a.typedef[0] ?? ir::TyUnknown { n: 0 };
     at = types[a#index] ?? ir::TyUnknown { n: 0 };
     arg = given[a#index] ?? ir::NdNull;
-    if el_convert::plain_scalar(pt) && el_convert::plain_scalar(at) {
-      c = el_convert::convert(e, vars, arg, at, pt, false);
-      if c == null {
-        el::refuse(e, "an argument converted to its parameter: {type_kind(at)} to {type_kind(pt)}");
-        return null;
-      }
+    c = el_convert::convert_store(e, vars, arg, at, pt);
+    if c != null {
       conv += [c!];
-    } else if takes(e, pt, at) {
+    } else if takes(e, pt, at) && !(el_convert::plain_scalar(pt) && el_convert::plain_scalar(at)) {
       conv += [arg];
     } else {
       refuse_known(e, at, "an argument converted to its parameter: {type_kind(at)} to {type_kind(pt)}");
@@ -1464,7 +1461,7 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
     }
     return ex(ir::NdCall { def_nr: d, args: args }, el_types::with_deps(ret, ds));
   }
-  if !scalar(ret) {
+  if !scalar(el_types::base(ret)) {
     el::refuse(e, "a call returning a heap value");
     return null;
   }
@@ -1594,9 +1591,105 @@ fn binary(e: el::El, vars: el_vars::Vars, at: integer, op: text, l: integer, r: 
   if op == "&&" || op == "and" || op == "||" || op == "or" {
     return logical(e, vars, op == "||" || op == "or", l, r);
   }
+  if op == "??" {
+    return coalesce(e, vars, l, r);
+  }
   a = expression(e, vars, l);
   b = expression(e, vars, r);
-  arithmetic_span(e, at, op, builtin_op(e, op, a, b))
+  arithmetic_span(e, at, op, builtin_op(e, vars, op, a, b))
+}
+
+// `handle_null_coalesce` / `build_null_coalesce_default` for a plain scalar subject: the subject
+// read as its base, the default converted to the result (the base; the full integer where an
+// integer default does not fit a narrower one), and the subject's null test (`coalesce_not_null`:
+// its truth, a boolean's difference from the boolean null) choosing.  A local is tested where it
+// stands; anything else is held in a `__ncc_N` first, in an "ncc" block.  A default that is null
+// or nullable keeps the result nullable.  A `return`, `break` or `continue` default, arithmetic as
+// the subject and a subject that is not a plain scalar are refused by name.
+fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
+  x = expression(e, vars, l);
+  if e.p.nodes[r] is SJump {
+    el::refuse(e, "a `??` that returns, breaks or continues");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  d = expression(e, vars, r);
+  if el_types::is_unknown(x.tp) || el_types::is_unknown(d.tp) {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  lhs = el_types::base(x.tp);
+  if x.tp is TyNull {
+    return d;
+  }
+  if !el_convert::plain_scalar(lhs) {
+    el::refuse(e, "a `??` on this type: {type_kind(lhs)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if !e.first_pass {
+    x.code = nullable_arith(e, x.code, true);
+  }
+  result = lhs;
+  if lhs is TyInteger && d.tp is TyInteger && lhs != d.tp && !el_convert::value_fits(e, vars, d.code, lhs) {
+    result = ir::TyInteger { spec: wide_spec() };
+  }
+  dc = el_convert::convert_admitting(e, vars, d.code, d.tp, result);
+  if dc == null {
+    el::refuse(e, "a `??` default of another type: {type_kind(d.tp)} for {type_kind(result)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  nullable = d.tp is TyNull || d.tp is TyOptional;
+  rt = if nullable { ir::TyOptional { inner: result } } else { result };
+  if e.first_pass {
+    return ex(ir::NdNull, rt);
+  }
+  subject = x.code;
+  held = -1;
+  match x.code {
+    NdVar { n: _ } => {},
+    _ => {
+      held = el_vars::create_unique(vars, "_ncc", lhs);
+      subject = ir::NdVar { n: held };
+    }
+  }
+  check = el_convert::convert_admitting(e, vars, subject, lhs, ir::TyBoolean);
+  if lhs is TyBoolean {
+    check = el_ir::cl(e, "OpNeBool", [subject, el_ir::cl(e, "OpConvBoolFromNull", [])]);
+  }
+  taken = el_convert::convert_admitting(e, vars, subject, lhs, result);
+  if check == null || taken == null {
+    el::refuse(e, "a `??` on this type: {type_kind(lhs)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  pick = el_ir::v_if(check!, taken!, dc!);
+  if held < 0 {
+    return ex(pick, rt);
+  }
+  ex(el_ir::v_block([el_ir::v_set(held, x.code), pick], result, "ncc"), rt)
+}
+
+// `rewrite_outer_arith_to_nullable`: the fault-prone operation at the top of a `??` subject (or
+// the one a field or element read at the top reads through) becomes its `…Nullable` twin, which
+// answers null where the plain one would fault.  Spans are kept.
+fn nullable_arith(e: el::El, code: ir::Node, outer: boolean) -> ir::Node {
+  match code {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: nullable_arith(e, inner, outer) },
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if nm == "OpAddInt" || nm == "OpMinInt" || nm == "OpMulInt" || nm == "OpDivInt" || nm == "OpRemInt" || nm == "OpGetVector" || nm == "OpVectorRef" || nm == "OpTextCharacter" || nm == "OpDivFloat" || nm == "OpRemFloat" || nm == "OpDivSingle" || nm == "OpRemSingle" {
+        nd = el::def_nr(e, "{nm}Nullable");
+        if nd >= 0 {
+          return ir::NdCall { def_nr: nd, args: args };
+        }
+        return code;
+      }
+      if outer && len(args) > 0 && (nm == "OpGetInt" || nm == "OpGetInt4" || nm == "OpGetByte" || nm == "OpGetShortRaw" || nm == "OpGetShort" || nm == "OpGetText" || nm == "OpGetSingle" || nm == "OpGetFloat" || nm == "OpGetEnum" || nm == "OpGetBoolean" || nm == "OpGetCharacter" || nm == "OpGetField" || nm == "OpGetDbRef") {
+        a2 = args;
+        a2[0] = nullable_arith(e, args[0] ?? ir::NdNull, false);
+        return ir::NdCall { def_nr: def_nr, args: a2 };
+      }
+      code
+    },
+    _ => code
+  }
 }
 
 // `handle_operator` (Plan-07 1.B.1): on the second pass the fault-prone arithmetic — `+ - * / %`
@@ -1609,18 +1702,14 @@ fn arithmetic_span(e: el::El, at: integer, op: text, x: Ex) -> Ex {
   ex(ir::NdSpan { pos: el::pos_at(e, at), inner: x.code }, x.tp)
 }
 
-fn builtin_op(e: el::El, op: text, a: Ex, b: Ex) -> Ex {
-  if a.tp is TyNull || b.tp is TyNull {
-    el::refuse(e, "a comparison with null");
-    return ex(ir::NdNull, ir::TyBoolean);
-  }
+fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex {
   if op == ">" {
-    return call_op(e, "<", [b.code, a.code], [b.tp, a.tp]);
+    return call_op(e, vars, "<", [b.code, a.code], [b.tp, a.tp]);
   }
   if op == ">=" {
-    return call_op(e, "<=", [b.code, a.code], [b.tp, a.tp]);
+    return call_op(e, vars, "<=", [b.code, a.code], [b.tp, a.tp]);
   }
-  call_op(e, op, [a.code, b.code], [a.tp, b.tp])
+  call_op(e, vars, op, [a.code, b.code], [a.tp, b.tp])
 }
 
 // `Parser::parse_if_expecting`: the condition (a boolean, which `convert_condition` leaves as it
@@ -1654,10 +1743,45 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
   } else {
     parse_block(e, vars, other!, "else", arm_expectation(t.tp))
   };
+  // `@FR-N-Join`: a null else arm beside a scalar then arm is that scalar's null, read against
+  // the then arm's type (`convert_admitting` at the block's tail), and the `if` is the scalar `?`.
+  if f.tp is TyNull && el_convert::sentinel_value(t.tp) {
+    if e.first_pass {
+      return ex(ir::NdNull, ir::TyOptional { inner: t.tp });
+    }
+    nl = el_convert::null_of(e, t.tp);
+    fb = retail(f.code, nl, t.tp);
+    if nl != null && fb != null {
+      return ex(el_ir::v_if(c.code, t.code, fb!), ir::TyOptional { inner: t.tp });
+    }
+  }
   if !e.first_pass && !el_types::is_equal(e, t.tp, f.tp) {
     el::refuse(e, "`if` arms of different types: {type_kind(t.tp)}, {type_kind(f.tp)}");
   }
   ex(el_ir::v_if(c.code, t.code, f.code), t.tp)
+}
+
+// A block whose last statement is replaced by `tail`, typed `t`; null when `code` is no block or
+// has no statement, or `tail` is null.
+fn retail(code: ir::Node, tail: ir::Node?, t: ir::TypeT) -> ir::Node? {
+  if tail == null {
+    return null;
+  }
+  match code {
+    NdBlock { block } => {
+      bl = block[0];
+      n = len(bl.operators);
+      if n == 0 {
+        return null;
+      }
+      ops = drop_last(bl.operators);
+      ops += [tail!];
+      bl.operators = ops;
+      bl.result = [t];
+      ir::NdBlock { block: [bl] }
+    },
+    _ => null
+  }
 }
 
 // `Parser::arm_expectation`: what the else arm is read against — a plain integer as the
@@ -2359,7 +2483,7 @@ fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   x = expression(e, vars, n!);
-  call_op(e, op, [x.code], [x.tp])
+  call_op(e, vars, op, [x.code], [x.tp])
 }
 
 // `Parser::level_run_inner`'s `+` arm: a run of `+` at one level (the tree nests it to the left)
@@ -2398,7 +2522,7 @@ fn plus_run(e: el::El, vars: el_vars::Vars, at: integer, l: integer, r: integer)
   }
   acc = a;
   for n in rights {
-    acc = arithmetic_span(e, ats[n#index] ?? at, "+", builtin_op(e, "+", acc, expression(e, vars, n)));
+    acc = arithmetic_span(e, ats[n#index] ?? at, "+", builtin_op(e, vars, "+", acc, expression(e, vars, n)));
   }
   acc
 }
@@ -2508,7 +2632,7 @@ fn rename(op: text) -> text {
 
 // `Parser::call_op_as`, the builtin-operator path: the first `Op<name>…` candidate whose
 // parameters take these arguments.
-pub fn call_op(e: el::El, op: text, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+pub fn call_op(e: el::El, vars: el_vars::Vars, op: text, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
   // An untyped operand is a callee the first pass has not met, or — on the second pass — a
   // construct already refused by name, which this refusal would only count again.
   for t in types {
@@ -2517,7 +2641,7 @@ pub fn call_op(e: el::El, op: text, list: vector<ir::Node>, types: vector<ir::Ty
     }
   }
   for c in el::possible(e, "Op{rename(op)}") {
-    r = call_nr(e, c, list, types);
+    r = call_nr(e, vars, c, list, types);
     if r != null {
       return r!;
     }
@@ -2530,17 +2654,49 @@ pub fn call_op(e: el::El, op: text, list: vector<ir::Node>, types: vector<ir::Ty
   ex(ir::NdNull, ir::TyUnknown { n: 0 })
 }
 
-// `Parser::call_nr` for a definition whose parameters take the arguments as they are: the call
-// and its declared result; null when they do not fit.
-pub fn call_nr(e: el::El, d: integer, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex? {
+// `Parser::call_nr` for an operator candidate (`process_call_args` without a report): each
+// argument taken as it is where its type is the parameter's, else converted as an operator's
+// argument is (`convert_admitting`); null when one does not fit.  `OpEqBool` / `OpNeBool` are not
+// candidates for two values of which not both are booleans (nor a boolean and an integer), and
+// `OpEqInt` / `OpNeInt` not for an enum beside an integer.
+pub fn call_nr(e: el::El, vars: el_vars::Vars, d: integer, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex? {
   def = el::def(e, d);
   if len(def.attributes) != len(list) {
     return null;
   }
-  for a in def.attributes {
-    if !el_types::is_same(a.typedef[0] ?? ir::TyUnknown { n: 0 }, types[a#index] ?? ir::TyUnknown { n: 0 }) {
+  if len(types) >= 2 {
+    a0 = el_types::base(types[0] ?? ir::TyVoid);
+    b0 = el_types::base(types[1] ?? ir::TyVoid);
+    if def.name == "OpEqBool" || def.name == "OpNeBool" {
+      both_bool = a0 is TyBoolean && b0 is TyBoolean;
+      bool_int = (a0 is TyBoolean && b0 is TyInteger) || (a0 is TyInteger && b0 is TyBoolean);
+      if comparable_value(a0) && comparable_value(b0) && !both_bool && !bool_int {
+        return null;
+      }
+    }
+    if (def.name == "OpEqInt" || def.name == "OpNeInt") && ((a0 is TyEnum && b0 is TyInteger) || (a0 is TyInteger && b0 is TyEnum)) {
       return null;
     }
   }
-  ex(ir::NdCall { def_nr: d, args: list }, def.returned[0] ?? ir::TyVoid)
+  args: vector<ir::Node> = [];
+  for a in def.attributes {
+    pt = a.typedef[0] ?? ir::TyUnknown { n: 0 };
+    at = types[a#index] ?? ir::TyUnknown { n: 0 };
+    arg = list[a#index] ?? ir::NdNull;
+    if el_types::is_same(pt, at) {
+      args += [arg];
+      continue;
+    }
+    c = el_convert::convert_admitting(e, vars, arg, at, pt);
+    if c == null {
+      return null;
+    }
+    args += [c!];
+  }
+  ex(ir::NdCall { def_nr: d, args: args }, def.returned[0] ?? ir::TyVoid)
+}
+
+// The `value` test of `call_nr`'s `OpEqBool` rule.
+fn comparable_value(t: ir::TypeT) -> boolean {
+  t is TyInteger || t is TyFloat || t is TySingle || t is TyText || t is TyCharacter || t is TyBoolean || t is TyEnum
 }
