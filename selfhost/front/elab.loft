@@ -42,6 +42,9 @@ fn program(image: text, f: text, std_image: text) {
     exit(2);
   }
   e = el::new_el(p, f, false);
+  for ln in src.split('\n') {
+    e.lines += [ln];
+  }
   upto = el::std_count(base!);
   // The standard library's types are those an empty program's image holds (`elab <image>
   // <program> <empty image>`); the program registers its own after them.

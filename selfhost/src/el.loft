@@ -37,7 +37,9 @@ pub struct El {
   // `Parser::line`: the last line a marker was written for
   pub line: integer,
   // what elaboration does not carry yet, by name: the gate counts a program that reaches one
-  pub refused: vector<text>
+  pub refused: vector<text>,
+  // the source text, by line, for a message that quotes the program (`Lexer::text_between`)
+  pub lines: vector<text>
 }
 
 pub const STD_SOURCE = 0;
@@ -72,7 +74,8 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     default: default,
     context: -1,
     line: 0,
-    refused: []
+    refused: [],
+    lines: []
   }
 }
 

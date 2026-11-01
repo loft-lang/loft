@@ -729,6 +729,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SWhile { cond, body } => while_expr(e, vars, cond, body),
     SMatch { at, subject, arms } => match_expr(e, vars, at, subject, arms),
     SBlock { at: _ } => parse_block(e, vars, n, "block", ir::TyUnknown { n: 0 }),
+    SPostfix { at, op, e: pe } => postfix(e, vars, at, op, pe),
     SJump { kind, e: je } => jump(e, vars, kind, je),
     SIndex { at, e: ie, keys, range, hi, limit, spatial } => index(e, vars, at, ie, keys, range || len(hi) > 0 || limit != null || spatial),
     SVecLit { items: _ } => vector_value(e, vars, n).x,
@@ -2384,6 +2385,10 @@ fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   d = expression(e, vars, r);
+  coalesce_with(e, vars, x, d)
+}
+
+fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   if el_types::is_unknown(x.tp) || el_types::is_unknown(d.tp) {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -2608,6 +2613,118 @@ fn nullable_arith(e: el::El, code: ir::Node, outer: boolean) -> ir::Node {
     },
     _ => code
   }
+}
+
+// The postfix discharges of a nullable scalar (`handle_default_fallback`, `handle_present`):
+// `x?` is `x ?? <the type's default>`; `x!` holds `x` where it is present and halts naming it
+// (`panic("<x> is null")`) where it is not — an "ncr" block, the subject held in `_ncr_N` unless
+// it is a local.  The subject's fault-prone operation is made nullable first.
+fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: integer?) -> Ex {
+  if pe == null {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if op == "?" {
+    x = expression(e, vars, pe!);
+    if el_types::is_unknown(x.tp) {
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    b = el_types::base(x.tp);
+    if !el_convert::plain_scalar(b) {
+      el::refuse(e, "a `?` default of this type: {type_kind(b)}");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    d = scalar_default(e, b);
+    return coalesce_with(e, vars, x, ex(d, b));
+  }
+  shown = source_between(e, node_start(e, pe!), at);
+  x = expression(e, vars, pe!);
+  if el_types::is_unknown(x.tp) {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  b = el_types::base(x.tp);
+  if !el_convert::plain_scalar(b) {
+    el::refuse(e, "a `!` on this type: {type_kind(b)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if e.first_pass {
+    return ex(ir::NdNull, b);
+  }
+  code = nullable_arith(e, x.code, true);
+  held = -1;
+  subject = code;
+  match code {
+    NdVar { n: _ } => {},
+    _ => {
+      held = el_vars::create_unique(vars, "ncr", b);
+      subject = ir::NdVar { n: held };
+    }
+  }
+  check = el_convert::convert_admitting(e, vars, subject, b, ir::TyBoolean);
+  if b is TyBoolean {
+    check = el_ir::cl(e, "OpNeBool", [subject, el_ir::cl(e, "OpConvBoolFromNull", [])]);
+  }
+  if check == null {
+    el::refuse(e, "a `!` on this type: {type_kind(b)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  pos = el::pos_at(e, at);
+  halt = el_ir::cl(e, "n_panic", [ir::NdText { s: "{shown} is null" }, ir::NdText { s: pos.file }, ir::NdInt { n: el_line(e, at) }]);
+  test = el_ir::v_if(el_ir::cl(e, "OpNot", [check!]), halt, ir::NdNull);
+  ops: vector<ir::Node> = [];
+  if held >= 0 {
+    ops += [el_ir::v_set(held, code)];
+  }
+  ops += [test, subject];
+  ex(el_ir::v_block(ops, b, "ncr"), b)
+}
+
+// The line a token starts on.
+fn el_line(e: el::El, at: integer) -> integer {
+  e.p.line[at] ?? 0
+}
+
+// `to_default` / `build_default` for a plain scalar: zero, false, the null character.
+fn scalar_default(e: el::El, t: ir::TypeT) -> ir::Node {
+  match t {
+    TyFloat => ir::NdFloat { f: 0.0 },
+    TySingle => ir::NdSingle { f: 0.0f },
+    TyBoolean => ir::NdBoolean { b: false },
+    TyCharacter => el_ir::cl(e, "OpConvCharacterFromInt", [ir::NdInt { n: 0 }]),
+    _ => ir::NdInt { n: 0 }
+  }
+}
+
+// The first token of an expression: the leftmost node's own.
+fn node_start(e: el::El, n: integer) -> integer {
+  match e.p.nodes[n] {
+    SPostfix { e: x } => if x == null { 0 } else { node_start(e, x!) },
+    SMember { e: x } => if x == null { 0 } else { node_start(e, x!) },
+    SIndex { e: x } => if x == null { 0 } else { node_start(e, x!) },
+    SAs { e: x } => if x == null { 0 } else { node_start(e, x!) },
+    SCall { f } => if f == null { 0 } else { node_start(e, f!) },
+    SBin { l } => node_start(e, l),
+    SName { at } => at,
+    SInt { at } => at,
+    SParen { at } => at,
+    _ => 0
+  }
+}
+
+// `Lexer::text_between`: the program's text from one token's start to another's, on one line,
+// trimmed; "a value" across lines.
+fn source_between(e: el::El, from: integer, to: integer) -> text {
+  l1 = e.p.line[from] ?? 0;
+  l2 = e.p.line[to] ?? 0;
+  c1 = e.p.col[from] ?? 0;
+  c2 = e.p.col[to] ?? 0;
+  if l1 != l2 || l1 < 1 || c1 < 1 || c2 < c1 || l1 > len(e.lines) {
+    return "a value";
+  }
+  ln = e.lines[l1 - 1];
+  if c2 - 1 > len(ln) {
+    return "a value";
+  }
+  ln[c1 - 1..c2 - 1].trim()
 }
 
 // `handle_operator` (Plan-07 1.B.1): on the second pass the fault-prone arithmetic — `+ - * / %`
