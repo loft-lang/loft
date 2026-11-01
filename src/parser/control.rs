@@ -11455,6 +11455,19 @@ impl Parser {
         ))
     }
 
+    /// One operand of a scalar pattern — a literal, a constant, a range bound — parsed above the
+    /// `|` level: in a pattern `|` separates alternatives (`@FR-P-Alt`), so `1..3 | 7` is a range
+    /// and a second alternative, never `1..(3 | 7)` (loft#2324).
+    fn pattern_operand(&mut self, val: &mut Value) -> Type {
+        let mut parent_tp = Type::Null;
+        self.parse_operators(
+            &Type::Unknown(0),
+            val,
+            &mut parent_tp,
+            super::PATTERN_OPERAND_LEVEL,
+        )
+    }
+
     /// Parse a match pattern literal (integer, float, text, boolean) and optionally
     /// a range suffix `..` or `..=`. Returns the pattern Value and its type.
     #[expect(clippy::too_many_lines, reason = "inherited")]
@@ -11535,7 +11548,14 @@ impl Parser {
             lit = Value::Boolean(false);
             Type::Boolean
         } else {
-            self.expression(&mut lit)
+            // A constant or another operand (`@FR-P-Point`): read above the `|` level, which
+            // separates this pattern from the next alternative (loft#2324), and negated when a
+            // `-` was written before it (loft#2323).
+            let tp = self.pattern_operand(&mut lit);
+            if negate && !self.first_pass {
+                lit = self.single_op("-", lit, tp.clone());
+            }
+            tp
         };
         // #493 — a pattern whose type cannot convert to the subject type (a text
         // literal against an integer subject, say) can never match.  Track it and
@@ -11581,7 +11601,11 @@ impl Parser {
                 return (Value::Boolean(false), Type::Boolean);
             }
             let mut hi = Value::Null;
-            self.expression(&mut hi);
+            let hi_neg = self.lexer.has_token("-");
+            let hi_tp = self.pattern_operand(&mut hi);
+            if hi_neg && !self.first_pass {
+                hi = self.single_op("-", hi, hi_tp);
+            }
             let mut lo_cond = Value::Null;
             self.call_op(
                 &mut lo_cond,
@@ -12185,7 +12209,13 @@ impl Parser {
         }
         let mut ops = vec![v_set(seg, start)];
         if quant == '?' {
-            let opt_tp = Type::optional(ret_tp.clone());
+            // A rule not defined yet (the first pass) has no type to wrap: the binding stays
+            // unknown, as a single sub-rule's does, so the second pass can settle it.
+            let opt_tp = if fn_nr == u32::MAX {
+                Type::Unknown(0)
+            } else {
+                Type::optional(ret_tp.clone())
+            };
             let x = self.pattern_binding(name, &opt_tp);
             self.vars.defined(x);
             let none = self.null_value(ret_tp);
@@ -12231,17 +12261,20 @@ impl Parser {
         let Some((cursor_var, cursor_def, pos_field, _)) = self.match_cursor else {
             return Vec::new();
         };
-        let SliceSubject {
-            v,
-            elm_tp,
-            elm_size,
-            ..
-        } = *subject;
         let (name, fn_nr, ret_tp, quant) = (&group.name, group.fn_nr, &group.ret_tp, group.quant);
         let mut ops = Vec::new();
-        let vec_tp = Type::Vector(Box::new(ret_tp.clone()), Deps::none());
+        let vec_tp = if fn_nr == u32::MAX {
+            Type::Unknown(0)
+        } else {
+            Type::Vector(Box::new(ret_tp.clone()), Deps::none())
+        };
         let xs = self.pattern_binding(name, &vec_tp);
         self.vars.defined(xs);
+        if fn_nr == u32::MAX {
+            // The first pass, before the rule is defined: the binding exists, the run does not.
+            ops.push(Value::Boolean(true));
+            return ops;
+        }
         prechain.extend(self.vector_db(ret_tp, xs));
         let r = self.create_unique("rule_x", ret_tp);
         self.vars.defined(r);
@@ -12272,43 +12305,7 @@ impl Parser {
             }
         }
         let mut body = Vec::new();
-        // The separator, between two answers: consumed when present, else the run ends.
-        if let Some(sep) = sep {
-            let taken = self.cl("OpLengthVector", &[Value::Var(xs)]);
-            let some = self.conv_op("<", Value::Int(0), taken, I32.clone(), I32.clone());
-            let len_c = self.cursor_len(v);
-            let room = self.conv_op("<", Value::Var(seg), len_c, I32.clone(), I32.clone());
-            let at_sep = self.sep_match_cond(sep, v, elm_size, elm_tp, Value::Var(seg));
-            let is_sep = v_if(room, at_sep, Value::Boolean(false));
-            let past = self.conv_op(
-                "+",
-                Value::Var(seg),
-                Value::Int(1),
-                I32.clone(),
-                I32.clone(),
-            );
-            let set_past = self.set_field(cursor_def, pos_field, 0, Value::Var(cursor_var), past);
-            let set_here = self.set_field(
-                cursor_def,
-                pos_field,
-                0,
-                Value::Var(cursor_var),
-                Value::Var(seg),
-            );
-            body.push(v_if(
-                some,
-                v_if(is_sep, set_past, Value::Break(0)),
-                set_here,
-            ));
-        } else {
-            body.push(self.set_field(
-                cursor_def,
-                pos_field,
-                0,
-                Value::Var(cursor_var),
-                Value::Var(seg),
-            ));
-        }
+        body.push(self.subrule_separator_step(subject, sep, xs, seg));
         body.push(v_set(r, call));
         let present = self.subrule_present(fn_nr, r, ret_tp);
         let now = self.get_field(cursor_def, pos_field, Value::Var(cursor_var));
@@ -12328,9 +12325,55 @@ impl Parser {
         ops
     }
 
+    /// The step before each call of a run ([`Self::subrule_run`]): with a separator `*(Sep)`,
+    /// the separator between two answers is consumed when present and the run ends when it is
+    /// not; before the first answer, and with no separator, the cursor is set to `seg`.
+    fn subrule_separator_step(
+        &mut self,
+        subject: &SliceSubject,
+        sep: Option<&SepSpec>,
+        xs: u16,
+        seg: u16,
+    ) -> Value {
+        let Some((cursor_var, cursor_def, pos_field, _)) = self.match_cursor else {
+            return Value::Null;
+        };
+        let set_here = self.set_field(
+            cursor_def,
+            pos_field,
+            0,
+            Value::Var(cursor_var),
+            Value::Var(seg),
+        );
+        let Some(sep) = sep else {
+            return set_here;
+        };
+        let SliceSubject {
+            v,
+            elm_tp,
+            elm_size,
+            ..
+        } = *subject;
+        let taken = self.cl("OpLengthVector", &[Value::Var(xs)]);
+        let some = self.conv_op("<", Value::Int(0), taken, I32.clone(), I32.clone());
+        let len_c = self.cursor_len(v);
+        let room = self.conv_op("<", Value::Var(seg), len_c, I32.clone(), I32.clone());
+        let at_sep = self.sep_match_cond(sep, v, elm_size, elm_tp, Value::Var(seg));
+        let is_sep = v_if(room, at_sep, Value::Boolean(false));
+        let past = self.conv_op(
+            "+",
+            Value::Var(seg),
+            Value::Int(1),
+            I32.clone(),
+            I32.clone(),
+        );
+        let set_past = self.set_field(cursor_def, pos_field, 0, Value::Var(cursor_var), past);
+        v_if(some, v_if(is_sep, set_past, Value::Break(0)), set_here)
+    }
+
     /// `@FR-P-Rule` — "the rule answered": a record's `!= null` against the null-ref sentinel
     /// (`OpRefIsNull` tests the store_nr sentinel and misreads a fn-returned null struct on the
-    /// interpreter), any other node type's own not-null test.  A rule not defined yet (the first
+    /// interpreter), any other node type's `!= null`.  A rule not defined yet (the first
     /// pass) has no type to test.
     fn subrule_present(&mut self, fn_nr: u32, var: u16, ret_tp: &Type) -> Value {
         if fn_nr == u32::MAX {
@@ -12338,6 +12381,10 @@ impl Parser {
         } else if matches!(ret_tp, Type::Reference(..)) {
             let sentinel = self.cl("OpNullRefSentinel", &[]);
             self.cl("OpNeRef", &[Value::Var(var), sentinel])
+        } else if let Some(test) = self.null_test(Value::Var(var), ret_tp, true) {
+            // `!= null`, never the value's truth: a rule answering 0 (an arena index, a
+            // position) answered (`@FR-P-Rule`).
+            test
         } else {
             self.coalesce_not_null(&Value::Var(var), ret_tp)
         }
