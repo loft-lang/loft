@@ -20,6 +20,7 @@ use show;
 use own;
 use binds;
 use frame;
+use eq;
 
 // What kind of value a node, a variable or a result is, and so which stack holds it.
 enum Kind {
@@ -151,6 +152,8 @@ enum Code {
   VecRemove,
   // `OpCastIntFromText`: a text parsed as an integer, null when it is none.
   IntFromText,
+  // `OpEqContent` / `OpNeContent`: `a` the type, `b` 1 for the negation.
+  EqContent,
   FloatFromText,
   // `pow` and `OpMathFunc2Float` (`a` 0 `atan2`, 1 `log`) on two floats: loft's own.
   Pow,
@@ -757,6 +760,7 @@ fn effect(code: Code, b: integer) -> integer {
     VecRemove => -1,
     MathFunc => 0,
     IntFromText => 0,
+    EqContent => -1,
     FloatFromText => 0,
     VecReverse => -1,
     VecKeep => -3,
@@ -1461,6 +1465,16 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
   } else if name == "OpLengthVector" {
     value(l, b, args[0]!, KRef);
     emit(l, VecLen, KInt, 0, 0);
+  } else if name == "OpEqContent" || name == "OpNeContent" {
+    // Two values equal by content (`eq.loft`, `Stores::eq_content`): `a` the type, `b` 1 for `!=`.
+    tp = literal(l, args[2]!);
+    if eq::holds_unwalked(b, tp, []) {
+      refuse(l, "an equality of a type holding a collection the interpreter does not walk yet: {b.types[tp]?.name ?? "?"}");
+      return true;
+    }
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KRef);
+    emit(l, EqContent, KInt, tp, if name == "OpNeContent" { 1 } else { 0 });
   } else if name == "OpConvEnumFromNull" {
     // A plain enum's null (255 in the store): its operand is the enum's type, not a value.
     emit(l, PushNull, KInt, 0, 0);

@@ -160,6 +160,8 @@ fn test_a_struct_is_built_read_and_freed() {
   st = kernel("structs");
   assert(ran_clean(st, "n_built", 3) == 9, "built(3)");
   assert(ran_clean(st, "n_built", -4) == -12, "built(-4)");
+  assert(ran_clean(st, "n_equal", 3) == 311111, "equal(3): records and variants equal by content");
+  assert(ran_clean(st, "n_equal", 0) == 11111, "equal(0)");
 }
 
 fn test_a_field_written_through_a_parameter_is_seen_by_the_caller() {

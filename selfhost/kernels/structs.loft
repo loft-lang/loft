@@ -170,6 +170,30 @@ fn promoted(n: integer) -> integer {
   p.x + p.y + len(p.name)
 }
 
+// `==` and `!=` by content (`OpEqContent`, `eq.loft`): records with a text, a nullable float, a
+// nested record and a vector; struct-enum variants.  equal(3): x == y 1, x != z (a text) 10,
+// x != w (a float and a vector) 100, e1 == e2 1000, e1 != e3 (another variant) 10000, plus
+// 3 * 100000: 311111.  equal(0): 11111.
+struct EqIn { a: integer, t: text, f: float? }
+struct EqOut { k: integer, inner: EqIn, xs: vector<integer> }
+enum EqSh { Dot { r: integer }, Line { a: integer, b: integer } }
+fn equal(n: integer) -> integer {
+  x = EqOut { k: 1, inner: EqIn { a: n, t: "t{n}", f: null }, xs: [1, n] };
+  y = EqOut { k: 1, inner: EqIn { a: n, t: "t{n}", f: null }, xs: [1, n] };
+  z = EqOut { k: 1, inner: EqIn { a: n, t: "u", f: null }, xs: [1, n] };
+  w = EqOut { k: 1, inner: EqIn { a: n, t: "t{n}", f: 1.5 }, xs: [1, n, 3] };
+  s = 0;
+  if x == y { s += 1; }
+  if x != z { s += 10; }
+  if x != w { s += 100; }
+  e1: EqSh = Line { a: n, b: 2 };
+  e2: EqSh = Line { a: n, b: 2 };
+  e3: EqSh = Dot { r: n };
+  if e1 == e2 { s += 1000; }
+  if e1 != e3 { s += 10000; }
+  s + n * 100000
+}
+
 fn main() {
-  println("{built(3)} {shifted(4)} {copied(4)} {named(5)} {texts_apart(1)} {mixed(10)} {matched(1)} {matched(5)} {kept(4)} {wide(5)} {wide(-5)} {floats(3)} {rebound(5)} {looped(10)} {unbound(4)} {reset_kept(3)} {borrowed(6)} {promoted(4)}");
+  println("{built(3)} {shifted(4)} {copied(4)} {named(5)} {texts_apart(1)} {mixed(10)} {matched(1)} {matched(5)} {kept(4)} {wide(5)} {wide(-5)} {floats(3)} {rebound(5)} {looped(10)} {unbound(4)} {reset_kept(3)} {borrowed(6)} {promoted(4)} {equal(3)} {equal(0)}");
 }
