@@ -52,11 +52,13 @@ pub struct Vars {
   // `Function::loops`' variables, innermost last: the loops still open
   pub active_loops: vector<integer>,
   // `Function::loop_binds`: how many loops have bound each spelling, per pass
-  pub loop_binds: hash<LoopCount[name]>
+  pub loop_binds: hash<LoopCount[name]>,
+  // `Parser::divisor_nonzero`: the locals a condition proves non-zero where they are read
+  pub nonzero: vector<integer>
 }
 
 pub fn new_vars(name: text, file: text) -> Vars {
-  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], loop_binds: [] }
+  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], loop_binds: [], nonzero: [] }
 }
 
 pub fn name_of(v: Vars, nr: integer) -> text {
@@ -243,6 +245,7 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   v.work_refs = [];
   v.active_loops = [];
   v.loop_binds = [];
+  v.nonzero = [];
 }
 
 // `Function::loop_binding`: the name a loop's variable takes — the spelling itself for the

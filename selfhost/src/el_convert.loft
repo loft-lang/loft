@@ -71,7 +71,7 @@ fn declared_range(t: ir::TypeT) -> Range? {
 
 // `Parser::const_int` over the folds `const_eval` makes of integer arithmetic: 32-bit wrapping,
 // as the IR's `Int` wraps.
-fn const_int(e: el::El, code: ir::Node) -> integer? {
+pub fn const_int(e: el::El, code: ir::Node) -> integer? {
   match code {
     NdInt { n } => n,
     NdLong { n } => n,
@@ -314,8 +314,16 @@ pub fn convert_store(e: el::El, vars: el_vars::Vars, code: ir::Node, src: ir::Ty
     },
     _ => {}
   }
-  if src is TyNull || src is TyOptional {
+  if src is TyNull {
     return null;
+  }
+  // `@FR-N-Store`: a nullable scalar into a non-null slot is reported (a warning, beside the
+  // program) and stored as its base.
+  match src {
+    TyOptional { inner } => {
+      return if plain_scalar(inner) && plain_scalar(should) { convert(e, vars, code, inner, should, false) } else { null };
+    },
+    _ => {}
   }
   if !plain_scalar(src) || !plain_scalar(should) {
     return if el_types::is_equal(e, src, should) { code } else { null };
