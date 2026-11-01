@@ -3546,7 +3546,14 @@ impl<'a> FnWriter<'a> {
                 self.cx.data.def(site.callee).name()
             ));
         }
-        self.line(ind, &format!("{};", e.code));
+        // The twin answers the buffer it filled, which the statement does not read: discarded
+        // as the call-statement leg discards a value, or a strict `-Werror` build refuses the
+        // windowed spelling's comma expression (`-Wunused-value`).
+        if e.kind == K::Void {
+            self.line(ind, &format!("{};", e.code));
+        } else {
+            self.line(ind, &format!("(void) {};", e.code));
+        }
         Ok(true)
     }
 
