@@ -55,8 +55,6 @@ fn string_scope() {
     // null-test-and-choose ops (~4 apiece) and every later span starts earlier.
     // loft#1619 (I-For): the inner loop's end `n` is bound once to `_range_end_1`, so `n`
     // is last read there — its span ends at the bind and `__ncc_1` reuses its slot.
-    // loft#2327 (@FR-O-Detach): a value block's scope-exit frees follow its tail, so `b`'s
-    // free comes after the formatted string's value and its span ends one op later.
     .slots(
         "\
   block:1
@@ -68,7 +66,7 @@ fn string_scope() {
   test_value+24=128 [15..145]
   │ block:2
   │ a+8=152 [17..101]
-  │ b+24=160 [18..119]
+  │ b+24=160 [18..118]
   │ │ for:3
   │ │ n#index+8=184 [22..97]
   │ │ │ loop:4L [seq 23..98]
