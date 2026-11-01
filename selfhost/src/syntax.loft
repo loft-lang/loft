@@ -2101,11 +2101,13 @@ fn bound_pat(p: Syntax) -> integer? {
   }
 }
 
-// Literal <- '-'? (Int / Float) / Str / Char / 'true' / 'false'
+// Literal <- '-'? (Int / Float) / Str / Char / 'true' / 'false' / '-' Path   (a negated constant,
+//            control.rs `pattern_operand`)
 fn literal_pat(p: Syntax) -> integer? {
   at = p.pos;
   match p {
     [Minus, l: literal] => add(p, PLit { at: at, e: add(p, SUnary { at: at, op: "-", e: l }) }),
+    [Minus, n: path] => add(p, PLit { at: at, e: add(p, SUnary { at: at, op: "-", e: n }) }),
     [l: literal] => add(p, PLit { at: at, e: l }),
     _ => null
   }

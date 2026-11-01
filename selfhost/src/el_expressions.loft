@@ -138,10 +138,17 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       call_op(e, op, [a.code, b.code], [a.tp, b.tp])
     },
     _ => {
-      el::refuse(e, "an expression form");
+      el::refuse(e, "an expression form: {syn_kind(e, n)}");
       ex(ir::NdNull, ir::TyUnknown { n: 0 })
     }
   }
+}
+
+// The node's variant name, for a refusal that says which form it is.
+fn syn_kind(e: el::El, n: integer) -> text {
+  s = "{e.p.nodes[n]}";
+  cut = s.find(" ") ?? len(s);
+  s[0..cut]
 }
 
 // A name as a value: the variable it names (`Parser::parse_var`, the local case).
