@@ -229,6 +229,7 @@ pub(super) fn run_scan_phase(
         handle_views: HashSet::default(),
         owned_handle_members: HashSet::default(),
         free_transferred: HashSet::default(),
+        consumed_lifts: Vec::new(),
         fn_defs: None,
         written_out: Vec::new(),
     };
