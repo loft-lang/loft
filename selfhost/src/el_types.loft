@@ -15,6 +15,14 @@ pub fn base(t: ir::TypeT) -> ir::TypeT {
   }
 }
 
+// `Type::unrewritten`: the type behind the built-in-place marker.
+pub fn unrewritten(t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyRewritten { inner } => inner,
+    _ => t
+  }
+}
+
 pub fn is_unknown(t: ir::TypeT) -> boolean {
   match t {
     TyUnknown { n: _ } => true,

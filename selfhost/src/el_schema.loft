@@ -103,6 +103,16 @@ fn known(e: el::El, name: text) -> integer {
   if d < 0 { -1 } else { el::def(e, d).known_type }
 }
 
+// `Stores::position`: a field's byte offset in store type `t`, `u16::MAX` when it has none.
+pub fn field_position(e: el::El, t: integer, name: text) -> integer {
+  for f in struct_fields(e, t) {
+    if f.name == name {
+      return f.position;
+    }
+  }
+  NO_TYPE
+}
+
 // `Stores::names`: the schema type of that name, or -1.
 pub fn schema_type(e: el::El, name: text) -> integer {
   for t in e.b.types {

@@ -11,6 +11,7 @@ use el;
 use el_ir;
 use el_vars;
 use el_types;
+use el_schema;
 
 // An expression's IR and type.
 pub struct Ex {
@@ -85,6 +86,24 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
         }
         x = expression(e, vars, se ?? 0);
         t = x.tp;
+        match x.code {
+          NdInsert { items } => {
+            // Spliced flat, its end marked by a line marker the next statement's replaces.
+            spliced = len(items) > 0;
+            l = splice(l, items);
+            if spliced && !(len(l) > 0 && el_ir::is_line(l[len(l) - 1])) {
+              l += [ir::NdLine { n: e.line }];
+            }
+            if !(t is TyRewritten) && !(t is TyNever) {
+              t = ir::TyVoid;
+            }
+            if s#index < len(stmts) - 1 && !(t is TyNever) {
+              t = ir::TyVoid;
+            }
+            continue;
+          },
+          _ => {}
+        }
         valued = match t {
           TyVoid => false,
           TyNever => false,
@@ -112,6 +131,19 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
     l = drop_last(l);
   }
   ex(el_ir::v_block(l, t, "block"), t)
+}
+
+// `Parser::move_insert_elements`: an insert's elements appended in order, a nested insert's
+// spliced the same way.
+fn splice(l: vector<ir::Node>, items: vector<ir::Node>) -> vector<ir::Node> {
+  r = l;
+  for it in items {
+    match it {
+      NdInsert { items: inner } => { r = splice(r, inner); },
+      _ => { r += [it]; }
+    }
+  }
+  r
 }
 
 fn drop_last(l: vector<ir::Node>) -> vector<ir::Node> {
@@ -142,6 +174,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SCall { at, f, args } => call_expression(e, vars, at, f, args),
     SString { parts } => string_expression(e, vars, parts),
     SIntrinsic { at, kind, args } => intrinsic(e, vars, at, kind, args),
+    SMember { e: re, name, args, call } => member(e, vars, re, name, args, call),
     SBin { op, l, r } => binary(e, vars, op, l, r),
     _ => {
       el::refuse(e, "an expression form: {syn_kind(e, n)}");
@@ -193,6 +226,15 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
     el::refuse(e, "an assignment to a place that is not a plain local");
     return ex(ir::NdNull, ir::TyVoid);
   }
+  if e.p.nodes[rhs!] is SStructLit {
+    // Built in place in the local (`parse_object`): the statement is the build itself, with
+    // no `Set` around it.
+    o = object_into(e, vars, v, rhs!);
+    if !el_vars::change_var_type(e, vars, v, el_types::unrewritten(o.tp)) {
+      el::refuse(e, "a local that changes type");
+    }
+    return ex(o.code, ir::TyVoid);
+  }
   x = expression(e, vars, rhs!);
   if !el_vars::change_var_type(e, vars, v, x.tp) {
     el::refuse(e, "a local that changes type");
@@ -230,6 +272,196 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
   el_vars::change_var_type(e, vars, v, x.tp);
   el_vars::drop_use(vars, v);
   ex(el_ir::v_set(v, x.code), ir::TyVoid)
+}
+
+// `Parser::parse_object`'s in-place arm, a struct literal bound to a local that owns its store:
+// the local nulled and given a record of the struct's store type, each written field set in
+// literal order, and — on the second pass — each omitted field its type's default, in
+// declaration order (`object_init`).  The value is the build, typed as a record of the struct
+// rewritten in place.  A qualified name, an update (`..base`), a quoted field name, a field
+// value its type converts and a literal that rebinds a built local are refused by name.
+fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
+  name = "";
+  fields: vector<integer> = [];
+  match e.p.nodes[n] {
+    SStructLit { name: sn, member, fields: fs, base } => {
+      if member != "" || base != null {
+        el::refuse(e, "a qualified struct literal or an update");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      name = sn;
+      fields = fs;
+    },
+    _ => {}
+  }
+  d = el::def_nr(e, name);
+  if d < 0 || el::def(e, d).def_type != el::DT_STRUCT {
+    el::refuse(e, "a literal of something other than a declared struct");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  vt = el_vars::tp(vars, v);
+  matches = match vt {
+    TyUnknown { n: _ } => true,
+    TyReference { n: vd } => vd == d,
+    _ => false
+  };
+  if !matches || el_vars::was_built(vars, v) {
+    el::refuse(e, "a struct literal rebinding a local");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  el_vars::mark_built(vars, v);
+  def = el::def(e, d);
+  r = ir::NdVar { n: v };
+  list: vector<ir::Node> = [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpDatabase", [r, ir::NdInt { n: def.known_type }])];
+  found: vector<text> = [];
+  for fi in fields {
+    match e.p.nodes[fi] {
+      SFieldInit { name: fname, quoted, e: fe } => {
+        a = attr_nr(def, fname);
+        if quoted || fe == null || a < 0 {
+          el::refuse(e, "a struct field that is quoted, valueless or not declared");
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        x = expression(e, vars, fe!);
+        at = def.attributes[a].typedef[0] ?? ir::TyUnknown { n: 0 };
+        if !el_types::is_equal(e, at, x.tp) && !(e.first_pass && el_types::is_unknown(x.tp)) {
+          el::refuse(e, "a field value its type converts");
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        list += [set_field(e, d, a, r, x.code)];
+        found += [fname];
+      },
+      _ => {}
+    }
+  }
+  if !e.first_pass {
+    for a in def.attributes {
+      if a.constant || text_in(found, a.name) {
+        continue;
+      }
+      list += [set_field(e, d, a#index, r, to_default(e, a.typedef[0] ?? ir::TyVoid))];
+    }
+  }
+  ex(ir::NdInsert { items: list }, ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } })
+}
+
+fn text_in(v: vector<text>, x: text) -> boolean {
+  for y in v {
+    if y == x {
+      return true;
+    }
+  }
+  false
+}
+
+// `Data::attr`: the attribute of that name, or -1.
+fn attr_nr(def: ir::Definition, name: text) -> integer {
+  for a in def.attributes {
+    if a.name == name {
+      return a#index;
+    }
+  }
+  -1
+}
+
+// `data::to_default` for the field types a plain struct holds.
+fn to_default(e: el::El, t: ir::TypeT) -> ir::Node {
+  match t {
+    TyBoolean => ir::NdBoolean { b: false },
+    TyInteger { spec } => ir::NdInt { n: if spec.min > 0 { spec.min } else { 0 } },
+    TySingle => ir::NdSingle { f: 0.0f },
+    TyFloat => ir::NdFloat { f: 0.0 },
+    TyCharacter => ir::NdInt { n: 0 },
+    TyText { dep: _ } => ir::NdText { s: "" },
+    _ => {
+      el::refuse(e, "an omitted field of this type");
+      ir::NdNull
+    }
+  }
+}
+
+// `Parser::field_position`: a field's byte offset in its struct's store type — `u16::MAX`
+// while the struct has no type yet (the first pass).
+fn field_position(e: el::El, d: integer, name: text) -> integer {
+  k = el::def(e, d).known_type;
+  if k == el_schema::NO_TYPE {
+    return k;
+  }
+  el_schema::field_position(e, k, name)
+}
+
+// `Parser::set_field_check` for a field of a plain type: the write op its type stores through.
+fn set_field(e: el::El, d: integer, a: integer, r: ir::Node, val: ir::Node) -> ir::Node {
+  def = el::def(e, d);
+  at = def.attributes[a];
+  pos = ir::NdInt { n: field_position(e, d, at.name) };
+  op = match el_types::base(at.typedef[0] ?? ir::TyVoid) {
+    TyInteger { spec } => if spec.forced_size == 0 && at.alias_d_nr == el::NONE { "OpSetInt" } else { "" },
+    TyText { dep: _ } => "OpSetText",
+    TyBoolean => "OpSetBoolean",
+    TyFloat => "OpSetFloat",
+    TySingle => "OpSetSingle",
+    TyCharacter => "OpSetCharacter",
+    _ => ""
+  };
+  if op == "" {
+    el::refuse(e, "a field write of this type");
+    return ir::NdNull;
+  }
+  el_ir::cl(e, op, [r, pos, val])
+}
+
+// `Parser::field` / `get_field` for a plain struct's field: the read op its type loads
+// through, typed as the field — borrowing what the record borrows, and the record's local.
+fn member(e: el::El, vars: el_vars::Vars, re: integer?, name: text, args: vector<integer>, call: boolean) -> Ex {
+  if call || len(args) > 0 || re == null {
+    el::refuse(e, "a method call");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  x = expression(e, vars, re!);
+  d = -1;
+  match el_types::base(x.tp) {
+    TyReference { n } => { d = n; },
+    TyUnknown { n: _ } => {
+      if e.first_pass {
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+    },
+    _ => {}
+  }
+  if d < 0 || el::def(e, d).def_type != el::DT_STRUCT {
+    el::refuse(e, "a field of something other than a plain struct");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  def = el::def(e, d);
+  a = attr_nr(def, name);
+  if a < 0 {
+    el::refuse(e, "a field the struct does not declare");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  t = def.attributes[a].typedef[0] ?? ir::TyUnknown { n: 0 };
+  for on in el_types::deps(x.tp) {
+    t = el_types::with_deps(t, [on]);
+  }
+  match x.code {
+    NdVar { n } => { t = el_types::with_deps(t, [n]); },
+    _ => {}
+  }
+  pos = ir::NdInt { n: field_position(e, d, name) };
+  op = match el_types::base(def.attributes[a].typedef[0] ?? ir::TyVoid) {
+    TyInteger { spec } => if spec.forced_size == 0 && def.attributes[a].alias_d_nr == el::NONE { "OpGetInt" } else { "" },
+    TyText { dep: _ } => "OpGetText",
+    TyBoolean => "OpGetBoolean",
+    TyFloat => "OpGetFloat",
+    TySingle => "OpGetSingle",
+    TyCharacter => "OpGetCharacter",
+    _ => ""
+  };
+  if op == "" {
+    el::refuse(e, "a field read of this type");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  ex(el_ir::cl(e, op, [x.code, pos]), t)
 }
 
 // `Parser::parse_var` for the name a binding writes: on the first pass a name that is not a

@@ -24,11 +24,13 @@ pub struct Vars {
   pub defined: vector<boolean>,
   // `Function::work_texts`: the `__work_N` text buffers this body minted, in order
   pub work_texts: vector<integer>,
-  pub work_text: integer
+  pub work_text: integer,
+  // The record locals a struct literal has built in place on this pass.
+  pub built: vector<integer>
 }
 
 pub fn new_vars(name: text, file: text) -> Vars {
-  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0 }
+  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [] }
 }
 
 pub fn count(v: Vars) -> integer {
@@ -142,6 +144,19 @@ pub fn work_text(v: Vars) -> integer {
   nr
 }
 
+pub fn was_built(v: Vars, nr: integer) -> boolean {
+  for b in v.built {
+    if b == nr {
+      return true;
+    }
+  }
+  false
+}
+
+pub fn mark_built(v: Vars, nr: integer) {
+  v.built += [nr];
+}
+
 // `Parser::var_usages(nr, false)`: take back a use, never below none.
 pub fn drop_use(v: Vars, nr: integer) {
   if v.vars[nr].uses > 0 {
@@ -190,6 +205,7 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   }
   v.work_text = 0;
   v.work_texts = [];
+  v.built = [];
 }
 
 // What the image keeps of the table (`ir::Function`).
