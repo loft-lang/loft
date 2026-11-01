@@ -31,12 +31,27 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   text_return(e, vars, b.tp);
   code = b.code;
   rb = el_vars::var(vars, "__retbuf");
-  if rb >= 0 && !e.first_pass {
+  // `ref_return`'s `Rename` (pass 1): a tail that is a local record, or a call's hidden buffer,
+  // becomes the return buffer itself; pass 2 then builds into it as the argument it is.
+  if rb >= 0 && e.first_pass {
+    rename_ret_buffer(e, vars, code, rb);
+  }
+  if rb >= 0 && !e.first_pass && attr_nr(el::def(e, e.context), "__retbuf") >= 0 {
     built = build_into_buffer(e, code, rb, result);
     if built == null {
       el::refuse(e, "a function returning a record from something other than a literal");
     } else {
       code = built!;
+    }
+  } else if rb >= 0 && !e.first_pass {
+    // Delivered in the renamed buffer: the body answers a record of the placeholder's.
+    match code {
+      NdBlock { block } => {
+        bl = block[0];
+        bl.result = [el_types::with_deps(el_types::without_deps(result), [rb])];
+        code = ir::NdBlock { block: [bl] };
+      },
+      _ => {}
     }
   }
   if !e.first_pass && work_buffer_candidate(e, vars) {
@@ -335,6 +350,62 @@ fn text_dest_call(e: el::El, d: integer) -> boolean {
   def.c_sig != "" && rt is TyText
 }
 
+// A parameter the compiler added (a promoted return buffer, a text buffer).
+fn hidden_param(e: el::El, vars: el_vars::Vars, v: integer) -> boolean {
+  a = attr_nr(el::def(e, e.context), el_vars::name_of(vars, v));
+  a >= 0 && el::def(e, e.context).attributes[a].hidden
+}
+
+// `RetPromotion::Rename`: the `__retbuf` attribute takes the returned variable's name, the
+// placeholder `__retbuf` stops being an argument, the variable becomes one, and the result's deps
+// name the attribute.  Taken for a tail that is a plain local struct record bound once by a
+// literal outside any loop, or a call's hidden `__ref_N` buffer; the rest stays a literal
+// build (`BuildIntoBuffer`) or is refused there.
+fn rename_ret_buffer(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer) {
+  d = e.context;
+  a = attr_nr(el::def(e, d), "__retbuf");
+  if a < 0 {
+    return;
+  }
+  tail = ir::NdNull;
+  match code {
+    NdBlock { block } => {
+      n = len(block[0].operators);
+      if n > 0 {
+        tail = el_ir::unspan(block[0].operators[n - 1] ?? ir::NdNull);
+      }
+    },
+    _ => {}
+  }
+  v = -1;
+  match tail {
+    NdVar { n } => {
+      if !vars.vars[n].argument && !starts_with(el_vars::name_of(vars, n), "_") && len(el_types::deps(el_vars::tp(vars, n))) == 0 && el_vars::was_built(vars, n) {
+        v = n;
+      }
+    },
+    NdCall { args } => {
+      la = len(args);
+      if la > 0 {
+        match el_ir::unspan(args[la - 1] ?? ir::NdNull) {
+          NdVar { n } => { if starts_with(el_vars::name_of(vars, n), "__ref_") { v = n; } },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  if v < 0 {
+    return;
+  }
+  e.b.data.definitions[d].attributes[a].name = el_vars::name_of(vars, v);
+  vars.vars[rb].argument = false;
+  vars.vars[rb].skip_free = true;
+  el_vars::become_argument(vars, v);
+  rt = el::def(e, d).returned[0] ?? ir::TyVoid;
+  e.b.data.definitions[d].returned = [el_types::with_deps(rt, [a])];
+}
+
 // `RefDelivery::BuildIntoBuffer` (`build_into_return_buffer`): a body whose tail is a record
 // literal built in its own `__ref_p2_N` builds it into the hidden `__retbuf` instead — the
 // buffer's reset dropped, its mint guarded to reuse a buffer the caller handed in live, every
@@ -435,8 +506,12 @@ fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
         }
         bl.operators = ops;
       }
-      // `work_references`, each set to null at the head, after the work texts in the same way.
+      // `work_references`, each set to null at the head, after the work texts in the same way —
+      // a promoted return buffer is an argument and takes none.
       for wr in vars.work_refs {
+        if vars.vars[wr].argument {
+          continue;
+        }
         ops: vector<ir::Node> = [el_ir::v_set(wr, ir::NdNull)];
         for op in bl.operators {
           ops += [op];
@@ -736,7 +811,7 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
   }
   // A parameter of a heap type rebound whole takes the rebound-parameter road (an entry witness,
   // the detach before the bind) or, for a text, a shadow local — not carried yet.
-  if vars.vars[v].argument && !scalar(el_types::base(el_vars::tp(vars, v))) {
+  if vars.vars[v].argument && !scalar(el_types::base(el_vars::tp(vars, v))) && !hidden_param(e, vars, v) {
     el::refuse(e, "a rebound parameter of a heap type");
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -980,7 +1055,21 @@ fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
   if list == null {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  ex(ir::NdInsert { items: list! }, ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } })
+  ops = list!;
+  // A promoted return buffer (an argument) is built into: its mint guarded to reuse a buffer
+  // the caller handed in live, and no reset.
+  if vars.vars[v].argument && len(ops) >= 2 {
+    r = ir::NdVar { n: v };
+    live = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [r]), ir::NdBoolean { b: false }, el_ir::cl(e, "OpConvBoolFromRef", [r]));
+    guarded: vector<ir::Node> = [el_ir::v_if(live, ir::NdNull, ops[1] ?? ir::NdNull)];
+    for op in ops {
+      if op#index >= 2 {
+        guarded += [op];
+      }
+    }
+    ops = guarded;
+  }
+  ex(ir::NdInsert { items: ops }, ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } })
 }
 
 // The literal's build into record local `v`: nulled, given a record of the struct's store type,
@@ -1864,7 +1953,8 @@ fn receives(e: el::El, m: integer, tn: integer) -> boolean {
 fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex? {
   def = el::def(e, d);
   n = len(def.attributes);
-  retbuf = n == len(given) + 1 && (def.attributes[n - 1].hidden) && def.attributes[n - 1].name == "__retbuf";
+  // The hidden return buffer, whatever local it was renamed after (`RetPromotion::Rename`).
+  retbuf = n == len(given) + 1 && (def.attributes[n - 1].hidden) && (def.attributes[n - 1].typedef[0] ?? ir::TyVoid) is TyReference;
   // `add_defaults`' `&text` arm: each trailing hidden text buffer is a fresh `__work_cN` of
   // the caller's, set empty and handed as a stack reference ("default ref").
   bufs = !retbuf && n > len(given);
