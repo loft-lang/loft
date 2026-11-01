@@ -2914,9 +2914,11 @@ impl Function {
         // declared below) is built as a VALUE there, minting a `_vec_N`, and as the field on
         // pass 2, minting none, so a literal nested inside it takes the outer one's number at
         // another element shape.
+        // An accumulator is minted before its literal's items say its element, so its type
+        // here may still be unknown — and that is still this pass's, not pass 1's other site's.
         if (name == "elm" || name == "vec")
             && let Some(&v) = self.names.get(&full)
-            && !type_def.is_unknown()
+            && (name == "vec" || !type_def.is_unknown())
             && self.variables[v as usize].type_def.without_deps() != type_def.without_deps()
         {
             self.trace_type_change(v, type_def, "unique(elm)");
