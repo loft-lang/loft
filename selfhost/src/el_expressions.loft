@@ -27,7 +27,102 @@ fn ex(code: ir::Node, tp: ir::TypeT) -> Ex {
 pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   result = el::def(e, e.context).returned[0] ?? ir::TyVoid;
   b = parse_block(e, vars, body, "return from block", result);
-  finish_body(vars, b.code)
+  code = b.code;
+  rb = el_vars::var(vars, "__retbuf");
+  if rb >= 0 && !e.first_pass {
+    built = build_into_buffer(e, code, rb, result);
+    if built == null {
+      el::refuse(e, "a function returning a record from something other than a literal");
+    } else {
+      code = built!;
+    }
+  }
+  finish_body(vars, code)
+}
+
+// `RefDelivery::BuildIntoBuffer` (`build_into_return_buffer`): a body whose tail is a record
+// literal built in its own `__ref_p2_N` builds it into the hidden `__retbuf` instead — the
+// buffer's reset dropped, its mint guarded to reuse a buffer the caller handed in live, every
+// mention of the literal's buffer the return buffer's.  The body is typed as the declared result.
+// Null for any other tail.
+fn build_into_buffer(e: el::El, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node? {
+  match code {
+    NdBlock { block } => {
+      bl = block[0];
+      n = len(bl.operators);
+      if n == 0 {
+        return null;
+      }
+      tail = bl.operators[n - 1];
+      w = -1;
+      ops: vector<ir::Node> = [];
+      match tail {
+        NdBlock { block: ob } => {
+          if ob[0].name == "Object" {
+            for op in ob[0].operators {
+              match op {
+                NdSet { var, inner } => {
+                  if inner is NdNull && w < 0 {
+                    w = var;
+                    continue;
+                  }
+                },
+                _ => {}
+              }
+              ops += [op];
+            }
+          }
+        },
+        _ => {}
+      }
+      if w < 0 {
+        return null;
+      }
+      r = ir::NdVar { n: rb };
+      built: vector<ir::Node> = [];
+      for op in ops {
+        x = rename_var(op, w, rb);
+        match x {
+          NdCall { def_nr, args } => {
+            if el::def(e, def_nr).name == "OpDatabase" {
+              live = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [r]), ir::NdBoolean { b: false }, el_ir::cl(e, "OpConvBoolFromRef", [r]));
+              x = el_ir::v_if(live, ir::NdNull, x);
+            }
+          },
+          _ => {}
+        }
+        built += [x];
+      }
+      object = el_ir::v_block(built, el_types::with_deps(el_types::without_deps(result), [rb]), "Object");
+      body: vector<ir::Node> = [];
+      for op in bl.operators {
+        if op#index < n - 1 {
+          body += [op];
+        }
+      }
+      body += [object];
+      el_ir::v_block(body, el_types::without_deps(result), bl.name)
+    },
+    _ => null
+  }
+}
+
+// Every `Var(from)` in `n` as `Var(to)` (`substitute_work_ref`).
+fn rename_var(n: ir::Node, from: integer, to: integer) -> ir::Node {
+  match n {
+    NdVar { n: v } => if v == from { ir::NdVar { n: to } } else { n },
+    NdCall { def_nr, args } => {
+      na: vector<ir::Node> = [];
+      for a in args {
+        na += [rename_var(a, from, to)];
+      }
+      ir::NdCall { def_nr: def_nr, args: na }
+    },
+    NdSet { var, inner } => ir::NdSet { var: if var == from { to } else { var }, inner: rename_var(inner, from, to) },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: rename_var(inner, from, to) },
+    NdIf { cond, t, f } => ir::NdIf { cond: rename_var(cond, from, to), t: rename_var(t, from, to), f: rename_var(f, from, to) },
+    _ => n
+  }
 }
 
 // `Parser::finish_body`, the work texts: each `__work_N` the body minted starts empty at its
@@ -216,6 +311,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SBin { at, op, l, r } => binary(e, vars, at, op, l, r),
     SUnary { op, e: ue } => unary(e, vars, op, ue),
     SIf { cond, then, other } => if_expr(e, vars, cond, then, other),
+    SStructLit { name, member, fields, base } => object_expr(e, vars, name, member, fields, base),
     SFor { binds, source, par, filter, body } => for_expr(e, vars, binds, source, par, filter, body),
     SJump { kind, e: je } => jump(e, vars, kind, je),
     SIndex { at, e: ie, keys, range, hi, limit, spatial } => index(e, vars, at, ie, keys, range || len(hi) > 0 || limit != null || spatial),
@@ -432,6 +528,17 @@ fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
     return ex(ir::NdNull, ir::TyVoid);
   }
   el_vars::mark_built(vars, v);
+  list = object_fields(e, vars, v, d, fields);
+  if list == null {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  ex(ir::NdInsert { items: list! }, ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } })
+}
+
+// The literal's build into record local `v`: nulled, given a record of the struct's store type,
+// each written field set in literal order and — on the second pass — each omitted field its
+// type's default, in declaration order (`object_init`).  Null when a field is refused.
+fn object_fields(e: el::El, vars: el_vars::Vars, v: integer, d: integer, fields: vector<integer>) -> vector<ir::Node>? {
   def = el::def(e, d);
   r = ir::NdVar { n: v };
   list: vector<ir::Node> = [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpDatabase", [r, ir::NdInt { n: def.known_type }])];
@@ -442,13 +549,13 @@ fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
         a = attr_nr(def, fname);
         if quoted || fe == null || a < 0 {
           el::refuse(e, "a struct field that is quoted, valueless or not declared");
-          return ex(ir::NdNull, ir::TyVoid);
+          return null;
         }
         x = expression(e, vars, fe!);
         at = def.attributes[a].typedef[0] ?? ir::TyUnknown { n: 0 };
         if !el_types::is_equal(e, at, x.tp) && !(e.first_pass && el_types::is_unknown(x.tp)) {
           el::refuse(e, "a field value its type converts");
-          return ex(ir::NdNull, ir::TyVoid);
+          return null;
         }
         list += [set_field(e, d, a, r, x.code)];
         found += [fname];
@@ -464,7 +571,44 @@ fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
       list += [set_field(e, d, a#index, r, to_default(e, a.typedef[0] ?? ir::TyVoid))];
     }
   }
-  ex(ir::NdInsert { items: list }, ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } })
+  list
+}
+
+// `Parser::parse_object`'s fresh-record arm, a literal that is a value rather than a bind: on the
+// second pass built in its own `__ref_p2_N` ("Object", answering the buffer and typed as a
+// record borrowing it); on the first its fields are read and it answers the record's type.
+fn object_expr(e: el::El, vars: el_vars::Vars, name: text, member: text, fields: vector<integer>, base: integer?) -> Ex {
+  if member != "" || base != null {
+    el::refuse(e, "a qualified struct literal or an update");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  d = el::def_nr(e, name);
+  if d < 0 || el::def(e, d).def_type != el::DT_STRUCT {
+    el::refuse(e, "a literal of something other than a declared struct");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if e.first_pass {
+    for fi in fields {
+      match e.p.nodes[fi] {
+        SFieldInit { e: fe } => {
+          if fe != null {
+            expression(e, vars, fe!);
+          }
+        },
+        _ => {}
+      }
+    }
+    return ex(ir::NdNull, ir::TyReference { n: d, dep: [] });
+  }
+  w = el_vars::work_ref_p2(vars, ir::TyReference { n: d, dep: [] });
+  list = object_fields(e, vars, w, d, fields);
+  if list == null {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  ops = list!;
+  ops += [ir::NdVar { n: w }];
+  tp = ir::TyReference { n: d, dep: [w] };
+  ex(el_ir::v_block(ops, tp, "Object"), tp)
 }
 
 fn text_in(v: vector<text>, x: text) -> boolean {
@@ -652,7 +796,7 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
     el::refuse(e, "a call of an unknown function: {name}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  r = call_args(e, d, list, types);
+  r = call_args(e, vars, d, list, types);
   if r == null {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -888,19 +1032,51 @@ fn receives(e: el::El, m: integer, tn: integer) -> boolean {
 // `Parser::call_nr` through `process_call_args`, for a definition whose parameters each take
 // their argument as it is (`convert`'s equal case) and whose result is a scalar: the call and
 // its declared result.  Defaults, hidden buffers, conversions and heap results are refused.
-fn call_args(e: el::El, d: integer, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex? {
+fn call_args(e: el::El, vars: el_vars::Vars, d: integer, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex? {
   def = el::def(e, d);
-  if len(def.attributes) != len(list) {
+  n = len(def.attributes);
+  retbuf = n == len(list) + 1 && (def.attributes[n - 1].hidden) && def.attributes[n - 1].name == "__retbuf";
+  if n != len(list) && !retbuf {
     el::refuse(e, "a call with defaulted or hidden parameters");
     return null;
   }
   for a in def.attributes {
+    if retbuf && a#index == n - 1 {
+      continue;
+    }
     if !takes(e, a.typedef[0] ?? ir::TyUnknown { n: 0 }, types[a#index] ?? ir::TyUnknown { n: 0 }) {
       el::refuse(e, "an argument converted to its parameter");
       return null;
     }
   }
   ret = def.returned[0] ?? ir::TyVoid;
+  if retbuf {
+    // `add_defaults`: the hidden return buffer is a fresh `__ref_N` of the result's record, and
+    // the result borrows what its declared deps name among the arguments (`call_dependencies`,
+    // the hidden buffer itself left out).
+    rec = -1;
+    match ret {
+      TyReference { n: rn } => { rec = rn; },
+      _ => {}
+    }
+    if rec < 0 {
+      el::refuse(e, "a call returning a heap value other than a record");
+      return null;
+    }
+    buf = el_vars::work_ref(vars, ir::TyReference { n: rec, dep: [] });
+    args = list;
+    args += [ir::NdVar { n: buf }];
+    ds: vector<integer> = [];
+    for i in el_types::deps(ret) {
+      if i < len(list) {
+        match list[i] {
+          NdVar { n: av } => { ds += [av]; },
+          _ => {}
+        }
+      }
+    }
+    return ex(ir::NdCall { def_nr: d, args: args }, el_types::with_deps(ret, ds));
+  }
   if !scalar(ret) {
     el::refuse(e, "a call returning a heap value");
     return null;

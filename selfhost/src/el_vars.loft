@@ -45,6 +45,9 @@ pub struct Vars {
   pub unique: hash<UniqueCount[name]>,
   // `Function::work_vdb` and `work_references`: the `__vdb_N` vector stores this body minted
   pub work_vdb: integer,
+  // `Function::work_ref` and its second-pass twin: the `__ref_N` / `__ref_p2_N` record buffers
+  pub work_ref: integer,
+  pub work_ref_p2: integer,
   pub work_refs: vector<integer>,
   // `Function::loops`' variables, innermost last: the loops still open
   pub active_loops: vector<integer>,
@@ -53,7 +56,7 @@ pub struct Vars {
 }
 
 pub fn new_vars(name: text, file: text) -> Vars {
-  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], unique: [], work_vdb: 0, work_refs: [], active_loops: [], loop_binds: [] }
+  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], loop_binds: [] }
 }
 
 pub fn name_of(v: Vars, nr: integer) -> text {
@@ -235,6 +238,8 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   v.built = [];
   v.unique = [];
   v.work_vdb = 0;
+  v.work_ref = 0;
+  v.work_ref_p2 = 0;
   v.work_refs = [];
   v.active_loops = [];
   v.loop_binds = [];
@@ -335,6 +340,23 @@ fn sorted_in(l: vector<integer>, nr: integer) -> vector<integer> {
     r += [nr];
   }
   r
+}
+
+// `Function::work_refs`: the next `__ref_N` record buffer — a call's hidden return buffer — noted
+// among the work references the body's head sets to null.
+pub fn work_ref(v: Vars, t: ir::TypeT) -> integer {
+  v.work_ref += 1;
+  nr = add_variable(v, "__ref_{v.work_ref}", t);
+  v.work_refs = sorted_in(v.work_refs, nr);
+  nr
+}
+
+// `Function::work_refs_p2`: the second pass's `__ref_p2_N`, a record literal's own buffer.
+pub fn work_ref_p2(v: Vars, t: ir::TypeT) -> integer {
+  v.work_ref_p2 += 1;
+  nr = add_variable(v, "__ref_p2_{v.work_ref_p2}", t);
+  v.work_refs = sorted_in(v.work_refs, nr);
+  nr
 }
 
 // `Function::depend(nr, on)`: the variable borrows `on`, its earlier borrows replaced.
