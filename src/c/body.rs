@@ -4580,9 +4580,9 @@ impl<'a> FnWriter<'a> {
             // that very store must be recognised by the store the slot held, or the copy frees
             // the store the local viewed.
             let held = if frees && self.vars.owner_witness(var).is_some() {
-                let o = self.temp(CType::Ref);
-                self.line(ind, &format!("{o} = {name};"));
-                o
+                let prior = self.temp(CType::Ref);
+                self.line(ind, &format!("{prior} = {name};"));
+                prior
             } else {
                 name.clone()
             };

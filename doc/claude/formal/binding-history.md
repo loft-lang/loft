@@ -1315,6 +1315,20 @@ Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), 
   refusal.  Guards `a-disturbed-keyed-view-keeps-the-value-at-its-bind.loft` and
   `a-keyed-link-refuses-a-reassigned-container.loft`.
 
+* **D-bind-71** *(opened 2026-11-01, CLOSED 2026-11-01; loft#2334)* — `(B-Copy)`: a whole-value
+  bind of a variable copies in every spelling, but a BLOCK whose value is a variable — an enum
+  literal built in a compiler work-ref (`t = TVoid`, `{OpDatabase(__ref_N); …; __ref_N}`), an
+  unwrap (`tp = t!`) — was aliased.  Bound into a record local that owns its stores (a
+  materialised view, a whole-value unwrap) and is bound more than once, the local and the
+  variable's owner both owned the store: the local's next rebind freed it as displaced, the
+  allocator handed the slot on, and the work-ref's next literal re-made it in place over the new
+  owner's store — SIGBUS on `--native-c`, the C-built self-host elaborator on 60 corpus
+  programs; the interpreter held the same double owner unobserved.  **Fix.**  The scope pass
+  (`Scopes::copy_temp_held_bind`) writes such a bind as `{…}; t = r`, the bare whole-value form
+  both backends copy.  A local bound once keeps the alias, its exit free guarded by store
+  identity.  Guard
+  `loft-suite rules/binding/B-Copy/2334-an-owning-local-bound-to-a-block-valued-variable-copies-it.loft`.
+
 * **D-bind-70** *(opened 2026-11-01, CLOSED 2026-11-01; loft#2332)* — `(B-Scope)`: a bind after a
   `for` loop that spelled the loop variable's name at the SAME type reused the loop's variable,
   because D-bind-67's split gives a bind after an ended binding its own variable only where the

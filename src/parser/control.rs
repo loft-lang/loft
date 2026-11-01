@@ -10279,7 +10279,7 @@ impl Parser {
         self.lexer.token("(");
         // branches[i] = the sequence for branch i: [(disc, variant_def, fields)] per position.
         let mut branches: Vec<Vec<(i32, u32, Vec<(String, usize, Type)>)>> = Vec::new();
-        let elem_tp = Type::Enum(e_nr, true, crate::data::Deps::none());
+        let whole_tp = Type::Enum(e_nr, true, crate::data::Deps::none());
         loop {
             let mut branch: Vec<(i32, u32, Vec<(String, usize, Type)>)> = Vec::new();
             loop {
@@ -10321,7 +10321,7 @@ impl Parser {
                 };
                 let mut fields: Vec<(String, usize, Type)> = Vec::new();
                 if let Some(cap) = capture {
-                    fields.push((cap, usize::MAX, elem_tp.clone()));
+                    fields.push((cap, usize::MAX, whole_tp.clone()));
                 }
                 if self.lexer.has_token("{") {
                     while let Some(fname) = self.lexer.has_identifier() {
