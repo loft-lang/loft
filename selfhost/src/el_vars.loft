@@ -158,7 +158,12 @@ pub fn mark_user_named(v: Vars, nr: integer) {
 // caller refuses by name.
 pub fn change_var_type(e: el::El, v: Vars, nr: integer, t: ir::TypeT) -> boolean {
   cur = tp(v, nr);
-  if el_types::is_equal(e, cur, t) {
+  if el_types::is_unknown(t) || el_types::is_equal(e, cur, t) {
+    // `depend_all`: the local borrows what the value borrows.
+    ds = el_types::deps(t);
+    if len(ds) > 0 {
+      v.vars[nr].type_def = [el_types::with_deps(cur, ds)];
+    }
     return true;
   }
   if is_unknown(cur) {

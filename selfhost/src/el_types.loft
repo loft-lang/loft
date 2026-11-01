@@ -114,6 +114,67 @@ fn has_deps(t: ir::TypeT) -> boolean {
   }
 }
 
+// `Type::with_deps`: the same type carrying `deps` as its own borrow list — through a `&` and a
+// `τ?`, spread over a tuple's elements; a type with no list is unchanged.
+pub fn with_deps(t: ir::TypeT, deps: vector<integer>) -> ir::TypeT {
+  match t {
+    TyText { dep: _ } => ir::TyText { dep: deps },
+    TyReference { n } => ir::TyReference { n: n, dep: deps },
+    TyEnum { n, is_ref } => ir::TyEnum { n: n, is_ref: is_ref, dep: deps },
+    TyIndex { n, keys } => ir::TyIndex { n: n, keys: keys, dep: deps },
+    TyRadix { n, names } => ir::TyRadix { n: n, names: names, dep: deps },
+    TyTrie { n, key } => ir::TyTrie { n: n, key: key, dep: deps },
+    TyHash { n, names } => ir::TyHash { n: n, names: names, dep: deps },
+    TySorted { n, keys } => ir::TySorted { n: n, keys: keys, dep: deps },
+    TyVector { inner } => ir::TyVector { inner: inner, dep: deps },
+    TyFunction { args, result, consts } => ir::TyFunction { args: args, result: result, dep: deps, consts: consts },
+    TyRefVar { inner } => ir::TyRefVar { inner: with_deps(inner, deps) },
+    TyOptional { inner } => ir::TyOptional { inner: with_deps(inner, deps) },
+    TyTuple { elems } => ir::TyTuple { elems: [for x in elems { with_deps(x, deps) }] },
+    _ => t
+  }
+}
+
+// `Type::depend`: the variables a type borrows — through a `&` and a `τ?`, a tuple's the union of
+// its elements', without the share marker.
+pub fn deps(t: ir::TypeT) -> vector<integer> {
+  r: vector<integer> = [];
+  match t {
+    TyText { dep } => { r = dep; },
+    TyReference { dep } => { r = dep; },
+    TyEnum { dep } => { r = dep; },
+    TyIndex { dep } => { r = dep; },
+    TyRadix { dep } => { r = dep; },
+    TyTrie { dep } => { r = dep; },
+    TyHash { dep } => { r = dep; },
+    TySorted { dep } => { r = dep; },
+    TyVector { dep } => { r = dep; },
+    TyFunction { dep } => { r = dep; },
+    TyRefVar { inner } => { r = deps(inner); },
+    TyOptional { inner } => { r = deps(inner); },
+    TyTuple { elems } => {
+      for x in elems {
+        for d in deps(x) {
+          if !contains(r, d) {
+            r += [d];
+          }
+        }
+      }
+    },
+    _ => {}
+  }
+  [for d in r if d != 65535 { d }]
+}
+
+fn contains(v: vector<integer>, x: integer) -> boolean {
+  for y in v {
+    if y == x {
+      return true;
+    }
+  }
+  false
+}
+
 // `Parser::parse_type` of a named type with nothing after its name: the type a definition of
 // that name answers.  What it does not carry yet is refused by name.
 pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {

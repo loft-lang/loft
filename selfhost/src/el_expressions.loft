@@ -138,6 +138,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SNull => ex(ir::NdNull, ir::TyNull),
     SName { name, member } => name_expression(e, vars, name, member),
     SAssign { fixed, op, target, e: rhs } => assignment(e, vars, fixed, op, target, rhs),
+    SLet { fixed, name, amp, tfixed, tp, e: rhs } => declaration(e, vars, fixed || amp || tfixed, name, tp, rhs),
     SCall { at, f, args } => call_expression(e, vars, at, f, args),
     SString { parts } => string_expression(e, vars, parts),
     SIntrinsic { at, kind, args } => intrinsic(e, vars, at, kind, args),
@@ -196,6 +197,37 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
   if !el_vars::change_var_type(e, vars, v, x.tp) {
     el::refuse(e, "a local that changes type");
   }
+  el_vars::drop_use(vars, v);
+  ex(el_ir::v_set(v, x.code), ir::TyVoid)
+}
+
+// `Parser::parse_assign`'s annotation branch, `name: T = value`: the local is made as an
+// undeclared binding's is, takes the declared type (`change_var_type`), and the value — read
+// against it — must be of that type.  A `&` or `const` declaration, and a value the declared type
+// converts, are refused by name.
+fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn: integer?, rhs: integer?) -> Ex {
+  if special || tn == null || rhs == null {
+    el::refuse(e, "a `&` or `const` declaration, or one without a value");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  v = binding_var(e, vars, name);
+  if v < 0 {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  declared = el_types::parse_type(e, tn!);
+  if declared == null {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  if !el_vars::change_var_type(e, vars, v, declared!) {
+    el::refuse(e, "a declaration that changes a local's type");
+  }
+  x = expression(e, vars, rhs!);
+  if !el_types::is_equal(e, declared!, x.tp) && !(e.first_pass && el_types::is_unknown(x.tp)) {
+    el::refuse(e, "a value its declared type converts");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  // `parse_assign_op`'s `change_var`: the local borrows what the value borrows.
+  el_vars::change_var_type(e, vars, v, x.tp);
   el_vars::drop_use(vars, v);
   ex(el_ir::v_set(v, x.code), ir::TyVoid)
 }
@@ -591,9 +623,21 @@ fn append_data(e: el::El, list: vector<ir::Node>, var: integer, val: ir::Node, t
     TyCharacter => {
       list += [el_ir::cl(e, "OpAppendCharacter", [w, val])];
     },
+    TyFloat => {
+      list += [format_fp(e, "OpFormatFloat", w, val)];
+    },
+    TySingle => {
+      list += [format_fp(e, "OpFormatSingle", w, val)];
+    },
     TyUnknown { n: _ } => {},
     _ => el::refuse(e, "a formatted value of this type")
   }
+}
+
+// `append_data`'s float arm with the default state (`append_data_fp`): no width, no precision
+// (-1), a space to pad with, no `+`, alignment unset.
+fn format_fp(e: el::El, op: text, w: ir::Node, val: ir::Node) -> ir::Node {
+  el_ir::cl(e, op, [w, val, ir::NdInt { n: 0 }, ir::NdInt { n: -1 }, ir::NdInt { n: 32 }, ir::NdBoolean { b: false }, ir::NdInt { n: 2 }])
 }
 
 // `Parser::append_data_text` with the default state: the value, no width, alignment unset, a
