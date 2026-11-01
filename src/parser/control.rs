@@ -6947,8 +6947,17 @@ impl Parser {
                 }
                 // Skip this arm gracefully: its `{ … }` field pattern whole, whatever tokens
                 // it holds — a loop consuming only names and commas never advanced past
-                // anything else (`=>`, `:`, a literal), and hung the parser.
-                self.skip_braced();
+                // anything else (`=>`, `:`, a literal), and hung the parser.  A subject whose
+                // enum pass 1 cannot see yet still binds its captures for the body.
+                let forward = if self.first_pass && e_nr == u32::MAX {
+                    self.bind_forward_capture_list()
+                } else {
+                    None
+                };
+                match forward {
+                    Some(mut aliases) => self.pattern_binds_pending.append(&mut aliases),
+                    None => self.skip_braced(),
+                }
                 self.expect_match_arm_arrow();
                 let mut arm_code = Value::Null;
                 self.expression(&mut arm_code);
@@ -8627,39 +8636,68 @@ impl Parser {
         self.lexer.token("}");
     }
 
+    /// Pass 1 over a capture list whose subject's enum is not declared yet — `is V { a, b }`, or
+    /// a `match` arm `V { a, b: c } =>`: consume the braces when they have a capture list's
+    /// SHAPE — names, each optionally renamed, separated by `,` — and leave anything else (a
+    /// body, a sub-pattern) where it is, answering `None`.  The same lookahead the known-enum
+    /// path uses, minus the field names it cannot see yet.
+    ///
+    /// Each captured name is bound, for the body after it, to the capture the known-enum path
+    /// creates (`_mv_<name>_N`, created in the same order), at `Unknown`: pass 2 knows the
+    /// enum and refines that same variable's type.  Stepped over without a binding, the body
+    /// read the name as whatever it means OUTSIDE the arm — a function of that name became a
+    /// function value, and `limit + 1` was refused on pass 1, where pass 2 would have known
+    /// better (loft#2326).  A `_` binds nothing.  Answers the names re-pointed and what each
+    /// named before, for the caller's end of scope to restore.
+    fn bind_forward_capture_list(&mut self) -> Option<Vec<(String, Option<u16>)>> {
+        if !self.lexer.peek_token("{") {
+            return None;
+        }
+        let link = self.lexer.link();
+        self.lexer.token("{");
+        let mut binds: Vec<String> = Vec::new();
+        loop {
+            let Some(field) = self.lexer.has_identifier() else {
+                self.lexer.revert(link);
+                return None;
+            };
+            let mut bind = Some(field);
+            if self.lexer.has_token(":") {
+                bind = if self.lexer.has_token("_") {
+                    None
+                } else if let Some(alias) = self.lexer.has_identifier() {
+                    Some(alias)
+                } else {
+                    self.lexer.revert(link);
+                    return None;
+                };
+            }
+            binds.extend(bind);
+            if self.lexer.has_token("}") {
+                break;
+            }
+            if !self.lexer.has_token(",") {
+                self.lexer.revert(link);
+                return None;
+            }
+        }
+        let mut aliases = Vec::new();
+        for name in binds {
+            let v = self.create_unique(&format!("mv_{name}"), &Type::Unknown(0));
+            if v == u16::MAX {
+                continue;
+            }
+            self.vars.defined(v);
+            let old = self.vars.set_name(&name, v);
+            aliases.push((name, old));
+        }
+        Some(aliases)
+    }
+
     /// After `is V {`, is `field: name` (then `,` or `}`) an attempted RENAME of a field of `V`,
     /// rather than a body opening with a declaration?  Only when `field` is a field of the
     /// variant and `name` is not a type — `{ radius: integer }` stays a body.  Called inside a
     /// lookahead the caller reverts, after `field` has been read.
-    /// Pass 1 over `is V { a, b: c }` whose subject's enum is not declared yet: consume the
-    /// braces when they have a capture list's SHAPE — names, each optionally renamed, separated
-    /// by `,` — and leave anything else (a body) where it is.  The same lookahead the known-enum
-    /// path uses, minus the field names it cannot see yet.
-    fn skip_forward_capture_list(&mut self) {
-        if !self.lexer.peek_token("{") {
-            return;
-        }
-        let link = self.lexer.link();
-        self.lexer.token("{");
-        loop {
-            if self.lexer.has_identifier().is_none() {
-                self.lexer.revert(link);
-                return;
-            }
-            if self.lexer.has_token(":") && self.lexer.has_identifier().is_none() {
-                self.lexer.revert(link);
-                return;
-            }
-            if self.lexer.has_token("}") {
-                return;
-            }
-            if !self.lexer.has_token(",") {
-                self.lexer.revert(link);
-                return;
-            }
-        }
-    }
-
     fn is_capture_rename_attempt(&mut self, variant_def_nr: u32, field: Option<&str>) -> bool {
         let Some(field) = field else {
             return false;
@@ -14601,7 +14639,9 @@ impl Parser {
                     // capture list is still in the stream, and left there it was read as the
                     // body and reported as `Expect token ;` (loft#1790).  Step over it by its
                     // shape; pass 2 knows the enum and binds it for real.
-                    self.skip_forward_capture_list();
+                    if let Some(mut aliases) = self.bind_forward_capture_list() {
+                        self.is_capture_aliases.append(&mut aliases);
+                    }
                 }
                 return Type::Boolean;
             }

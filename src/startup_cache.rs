@@ -818,8 +818,7 @@ pub fn save_program(
     if let Some(parent) = bundle.parent() {
         let _ = crate::file_access::create_dir_all(parent);
     }
-    if crate::ir_store::save_bundle(&p.data, &p.database, &bundle.to_string_lossy()).is_err()
-    {
+    if crate::ir_store::save_bundle(&p.data, &p.database, &bundle.to_string_lossy()).is_err() {
         return;
     }
     // Manifest last + atomically, through a tmp name of THIS PROCESS's own — the same shape
