@@ -147,7 +147,7 @@ pub fn prelude_shadowed(el: El, name: text) -> boolean {
 }
 
 pub fn def(el: El, d: integer) -> ir::Definition {
-  el.b.data.definitions[d]
+  el.b.data.definitions[d]!
 }
 
 // `Data::add_def`: a new definition under the current source.  An enum variant keeps the first

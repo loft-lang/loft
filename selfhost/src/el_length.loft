@@ -108,11 +108,7 @@ fn statements_after(e: el::El, i: integer, name: text, after: vector<integer>) -
     SBlock { stmts } => {
       for s in stmts {
         if statements_after(e, s, name, after) {
-          k = s#index + 1;
-          while k < len(stmts) {
-            after += [stmts[k]];
-            k += 1;
-          }
+          after += stmts[s#index + 1..];
           return true;
         }
       }
@@ -160,7 +156,7 @@ fn writes(e: el::El, vars: el_vars::Vars, i: integer, bname: text, base: integer
   own = match e.p.nodes[i] {
     SAssign { target } => {
       t = root(e, target);
-      if t == bname { UNTRUSTED } else if views(e, vars, t, base) { UNDECIDED } else { TRUSTED }
+      if t == bname { UNTRUSTED } else if views(vars, t, base) { UNDECIDED } else { TRUSTED }
     },
     SLet { name: n } => if n == bname { UNTRUSTED } else { TRUSTED },
     SDestructure { places } => {
@@ -220,11 +216,11 @@ fn is_len_name(e: el::El, f: integer?) -> boolean {
 // Is the argument `a` the local `bname`, a part of it, or a local that may view it?
 fn handed(e: el::El, vars: el_vars::Vars, a: integer, bname: text, base: integer) -> boolean {
   t = root(e, a);
-  t == bname || views(e, vars, t, base)
+  t == bname || views(vars, t, base)
 }
 
 // May the local written `name` view `base`, or `base` view it — by their types' deps?
-fn views(e: el::El, vars: el_vars::Vars, name: text, base: integer) -> boolean {
+fn views(vars: el_vars::Vars, name: text, base: integer) -> boolean {
   if name == "" {
     return false;
   }

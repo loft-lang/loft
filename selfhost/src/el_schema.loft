@@ -262,13 +262,13 @@ pub fn key_descriptors(e: el::El, t: integer) -> vector<ir::Key> {
   }
   fields = struct_fields(e, c);
   for k in ks {
-    f = fields[k.nr];
+    f = fields[k.nr]!;
     tn = 7;
     start = 0;
     if f.content <= 5 {
       tn = 1 + f.content;
     } else {
-      match e.b.types[f.content].parts[0] {
+      match e.b.types[f.content]!.parts[0] {
         PtInt { start: _ } => { tn = 8; },
         PtShort { start: m } => { tn = 9; start = m; },
         PtByte { start: m } => { tn = 10; start = m; },
@@ -524,7 +524,7 @@ fn field(e: el::El, s: integer, name: text, content: integer) -> integer {
     target: NO_TYPE
   }];
   e.b.types[s].parts = [ir::PtStruct { fields: fields }];
-  ct = e.b.types[content];
+  ct = e.b.types[content]!;
   if num > 8 || ct.complex || is_record(ct) {
     e.b.types[s].complex = true;
   }
@@ -582,7 +582,8 @@ fn finish_type(e: el::El, t: integer) {
     if e.b.types[f.content].size == NO_TYPE && f.content != t {
       finish_type(e, f.content);
     }
-    sizes += [SizeAlign { size: e.b.types[f.content].size, align: e.b.types[f.content].align }];
+    ft = e.b.types[f.content]!;
+    sizes += [SizeAlign { size: ft.size, align: ft.align }];
   }
   size = 0;
   align = 0;
@@ -652,7 +653,8 @@ pub fn calculate_positions(fields: vector<SizeAlign>, sub: boolean) -> Layout {
           size = first + new_size + f.size;
         }
       } else {
-        aligned = (pos + al - 1) / al * al;
+        // Every alignment is a power of two, so rounding up to it is a mask: no division.
+        aligned = (pos + al - 1) & -al;
         if aligned > pos {
           gaps = with_gap(gaps, Gap { pos: pos, size: aligned - pos });
           pos = aligned;
@@ -664,7 +666,7 @@ pub fn calculate_positions(fields: vector<SizeAlign>, sub: boolean) -> Layout {
     }
   }
   a = if align < 1 { 1 } else { align };
-  size = (size + a - 1) / a * a;
+  size = (size + a - 1) & -a;
   Layout { positions: [for p in positions if p >= 0 { p }], size: size, align: align }
 }
 
