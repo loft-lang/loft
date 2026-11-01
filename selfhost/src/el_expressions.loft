@@ -3205,24 +3205,97 @@ pub struct VecRows {
   pub vec_known: integer
 }
 
-fn vector_rows(e: el::El, t: ir::TypeT) -> VecRows? {
+fn vector_rows(e: el::El, t: ir::TypeT, lit: integer) -> VecRows? {
   nm = el_types::elem_name(e, t);
   if nm == "" {
     el::refuse(e, "a vector of this element type: {type_kind(t)}");
     return null;
   }
+  if el::def_nr(e, "main_vector<{nm}>") < 0 {
+    tok = 0;
+    match e.p.nodes[lit] {
+      SVecLit { at } => { tok = at; },
+      _ => {}
+    }
+    vector_def(e, t, nm, tok);
+  }
   md = el::def_nr(e, "main_vector<{nm}>");
   vk = el_schema::schema_type(e, "vector<{nm}>");
   if md < 0 || vk < 0 || el::def(e, md).known_type == el_schema::NO_TYPE {
-    el::refuse(e, "a vector of an element type the library has no rows for: {nm}");
+    // Laid out by `fill_all` after the first pass.
+    if !e.first_pass {
+      el::refuse(e, "a vector of an element type the library has no rows for: {nm}");
+    }
     return null;
   }
   VecRows { main_def: md, main_known: el::def(e, md).known_type, vec_known: vk }
 }
 
+// `Data::vector_def` for an element the standard library has no rows for: the `vector<T>`
+// definition (owned by the element's definition) and the global `main_vector<T>` struct whose one
+// field is the vector, both at the literal's `]` (the lexer's position there); their store types are made
+// by `fill_all`.
+fn vector_def(e: el::El, t: ir::TypeT, nm: text, lit: integer) {
+  at = lit;
+  depth = 0;
+  while at < len(e.p.src) {
+    if e.p.src[at] is LBracket {
+      depth += 1;
+    } else if e.p.src[at] is RBracket {
+      depth -= 1;
+      if depth == 0 {
+        break;
+      }
+    }
+    at += 1;
+  }
+  pos = el::pos_at(e, at);
+  vt = ir::TyVector { inner: t, dep: [] };
+  if el::def_nr(e, "vector<{nm}>") < 0 {
+    vd = el::add_def(e, "vector<{nm}>", pos, el::DT_VECTOR);
+    e.b.data.definitions[vd].returned = [vt];
+    e.b.data.definitions[vd].parent = type_def_nr(e, t);
+  }
+  md = el::add_def(e, "main_vector<{nm}>", pos, el::DT_STRUCT);
+  e.b.data.definitions[md].source = 0;
+  e.b.data.definitions[md].returned = [ir::TyReference { n: md, dep: [] }];
+  e.b.data.definitions[md].attributes += [el::attribute("vector", vt)];
+}
+
+// A struct's record size, from its laid-out store type.
+fn record_size(e: el::El, t: ir::TypeT) -> integer {
+  match t {
+    TyReference { n } => {
+      k = el::def(e, n).known_type;
+      if k == el_schema::NO_TYPE { -1 } else { e.b.types[k].size }
+    },
+    _ => -1
+  }
+}
+
+// `Parser::vector_of` on the first pass: the store type `vector<T>` of an element that has one
+// already (a scalar), made where it is missing.  A record element is not laid out yet; its
+// placeholder `vector<integer>` exists.
+fn vector_of(e: el::El, t: ir::TypeT) {
+  kt = -1;
+  match t {
+    TyFloat => { kt = el::def(e, el::source_nr(e, 0, "float")).known_type; },
+    TySingle => { kt = el::def(e, el::source_nr(e, 0, "single")).known_type; },
+    TyBoolean => { kt = el::def(e, el::source_nr(e, 0, "boolean")).known_type; },
+    TyCharacter => { kt = el::def(e, el::source_nr(e, 0, "character")).known_type; },
+    TyText { dep: _ } => { kt = el::def(e, el::source_nr(e, 0, "text")).known_type; },
+    TyReference { n } => { kt = el::def(e, n).known_type; },
+    _ => {}
+  }
+  if kt >= 0 && kt != el_schema::NO_TYPE {
+    el_schema::vector_type(e, kt);
+  }
+}
+
 // `database.size` of an element's store type (`base_type`'s widths).
 fn elem_size(t: ir::TypeT) -> integer {
   match t {
+    TyReference { n: _ } => -2,
     TyInteger { spec: _ } => 8,
     TyFloat => 8,
     TySingle => 4,
@@ -3298,6 +3371,39 @@ pub struct Built {
   pub elem: ir::TypeT
 }
 
+// The struct a plain struct literal names, or -1.
+fn struct_literal_def(e: el::El, n: integer) -> integer {
+  match e.p.nodes[n] {
+    SStructLit { name, member, base } => {
+      if member != "" || base != null {
+        return -1;
+      }
+      d = el::def_nr(e, name);
+      if d >= 0 && el::def(e, d).def_type == el::DT_STRUCT { d } else { -1 }
+    },
+    _ => -1
+  }
+}
+
+// The first pass of a struct literal: its field values read, for the locals they make.
+fn literal_field_exprs(e: el::El, vars: el_vars::Vars, n: integer) {
+  match e.p.nodes[n] {
+    SStructLit { fields } => {
+      for fi in fields {
+        match e.p.nodes[fi] {
+          SFieldInit { e: fe } => {
+            if fe != null {
+              expression(e, vars, fe!);
+            }
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+}
+
 fn refused_build() -> Built {
   Built { x: ex(ir::NdNull, ir::TyUnknown { n: 0 }), items: [], elem: ir::TyUnknown { n: 0 } }
 }
@@ -3317,12 +3423,28 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
     elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: if value { [] } else { [v] } });
   }
   xs: vector<Ex> = [];
+  // A struct literal item is built into the element itself (`parse_item` with `elm`): typed here,
+  // its fields written where the element is made, below.
+  recs: vector<integer> = [];
   for it in items {
     if e.p.nodes[it] is SRepeat {
       el::refuse(e, "a repeated vector item");
       return refused_build();
     }
-    xs += [expression(e, vars, it)];
+    sd = struct_literal_def(e, it);
+    if sd >= 0 {
+      recs += [it];
+      if e.first_pass {
+        literal_field_exprs(e, vars, it);
+      }
+      xs += [ex(ir::NdNull, ir::TyReference { n: sd, dep: [] })];
+    } else {
+      xs += [expression(e, vars, it)];
+    }
+  }
+  if len(recs) > 0 && len(recs) != len(xs) {
+    el::refuse(e, "a vector literal mixing struct literals and other items");
+    return refused_build();
   }
   in_t = declared;
   if el_types::is_unknown(in_t) {
@@ -3349,7 +3471,10 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
     el::refuse(e, "a local that changes type");
     return refused_build();
   }
-  rows = vector_rows(e, in_t);
+  if len(xs) > 0 {
+    vector_of(e, in_t);
+  }
+  rows = vector_rows(e, in_t, n);
   if rows == null {
     return refused_build();
   }
@@ -3379,6 +3504,9 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   }
   if len(xs) > 0 {
     size = elem_size(in_t);
+    if size == -2 && len(recs) > 0 {
+      size = record_size(e, in_t);
+    }
     if size < 0 {
       el::refuse(e, "a vector literal of record items");
       return refused_build();
@@ -3386,6 +3514,31 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
     ls += [el_ir::cl(e, "OpPreAllocVector", [w, ir::NdInt { n: len(xs) }, ir::NdInt { n: size }])];
   }
   push = push_op(in_t);
+  if len(recs) > 0 {
+    rd = struct_literal_def(e, recs[0]);
+    el_vars::set_var_type(vars, elm, ir::TyReference { n: rd, dep: [v] });
+    at = ir::NdVar { n: elm };
+    for it in recs {
+      fields: vector<integer> = [];
+      match e.p.nodes[it] {
+        SStructLit { fields: fs } => { fields = fs; },
+        _ => {}
+      }
+      fl = object_fields(e, vars, elm, rd, fields);
+      if fl == null {
+        return refused_build();
+      }
+      ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
+      // `object_fields`' own header (a fresh record) is the element's `OpNewRecord` here.
+      for op in fl! {
+        if op#index >= 2 {
+          ls += [op];
+        }
+      }
+      ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
+    }
+    xs = [];
+  }
   for x in xs {
     if push != "" {
       ls += [el_ir::cl(e, push, [w, x.code])];
