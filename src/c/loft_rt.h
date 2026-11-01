@@ -4049,6 +4049,27 @@ static void loft_vec_sort(loft_ref v, uint32_t size, int is_float, int is_text) 
  * the buffer when the reservation grows it, so it is found again by its offset.  Where the room
  * is not there after the reservation — a locked store, an absent vector — each byte takes the
  * ordinary append, which answers those cases as before. */
+/* `@FR-Col-Capacity`'s growth step for a run of `needed` elements of `size` bytes: room claimed
+ * for an absent vector, or the record grown, to `loft_vec_grown(needed)` — only when the room
+ * runs out, as `vector::append_bytes` grows (a run of bytes is no known count to reserve
+ * exactly).  A locked store is left alone. */
+static void loft_vec_grow_for(loft_ref v, uint32_t needed, uint32_t size) {
+    loft_store_t *s = loft_store_of(v);
+    if (s->read_only) return;
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    if (r == 0) {
+        r = loft_claim(s, loft_vec_cap_words(loft_vec_grown(needed, size), size));
+        loft_set_u32(s, v.rec, v.pos, r);
+        loft_set_u32(s, r, 4, 0);
+        return;
+    }
+    int32_t claimed;
+    memcpy(&claimed, loft_at(s, r, 0), 4);
+    if (claimed <= 0 || needed <= ((uint32_t) claimed * 8 - 8) / size) return;
+    uint32_t nr = loft_st_resize(s, r, loft_vec_cap_words(loft_vec_grown(needed, size), size));
+    if (nr != r) loft_set_u32(s, v.rec, v.pos, nr);
+}
+
 static void loft_append_text_bytes(loft_ref v, loft_str t, int64_t lo, int64_t hi) {
     if (hi > (int64_t) t.len) hi = (int64_t) t.len;
     if (lo >= 0 && hi > lo && v.store_nr != 0xFFFF && v.rec != 0 && v.pos != 0) {
@@ -4057,7 +4078,10 @@ static void loft_append_text_bytes(loft_ref v, loft_str t, int64_t lo, int64_t h
         const uint8_t *src = (const uint8_t *) t.p + lo;
         int inside = src >= s->buf && src < s->buf + (size_t) s->size * 8;
         size_t off = inside ? (size_t) (src - s->buf) : 0;
-        loft_vec_reserve_more(v, (int64_t) n, 1);
+        uint32_t had = loft_collection_rec(s, v.rec, v.pos);
+        uint64_t needed = (uint64_t) (had == 0 ? 0 : loft_u32(s, had, 4)) + n;
+        if (needed > UINT32_MAX) return;
+        loft_vec_grow_for(v, (uint32_t) needed, 1);
         s = loft_store_of(v);
         uint32_t r = loft_collection_rec(s, v.rec, v.pos);
         if (r != 0 && !s->read_only) {
