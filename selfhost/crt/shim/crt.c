@@ -933,6 +933,42 @@ void loft_crt_vec_reverse(int64_t store, int64_t rec, int64_t pos, int64_t size)
     loft_vec_reverse(loft_crt_ref(store, rec, pos), (uint32_t) size);
 }
 
+/* OpSetDbRef (`Stores::set_db_ref`): a reference written into the twelve bytes at `fld`, the record
+ * it names marked referenced, so removing it leaves a tombstone. */
+void loft_crt_set_dbref(int64_t store, int64_t rec, int64_t pos, int64_t fld, int64_t r_store,
+                        int64_t r_rec, int64_t r_pos) {
+    loft_set_dbref(loft_crt_ref(store, rec, pos), (uint32_t) fld, loft_crt_ref(r_store, r_rec, r_pos));
+}
+
+/* OpGetDbRef: the reference stored at `fld`, into `out`; a removed record reads null. */
+int64_t loft_crt_get_dbref(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos,
+                           int64_t fld) {
+    loft_crt_put_ref(out, no, loft_get_dbref(loft_crt_ref(store, rec, pos), (uint32_t) fld));
+    return 0;
+}
+
+/* OpNewRecord in an array (a vector of linked records): a record of `size` bytes of its own in
+ * the collection's store (`loft_entry_new`), into `out`. */
+int64_t loft_crt_entry_new(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos,
+                           int64_t size) {
+    loft_crt_put_ref(out, no, loft_entry_new(loft_crt_ref(store, rec, pos), (uint32_t) size));
+    return 0;
+}
+
+/* OpFinishRecord in an array: the record's number joins the end. */
+void loft_crt_array_append(int64_t store, int64_t rec, int64_t pos, int64_t r_store, int64_t r_rec,
+                           int64_t r_pos) {
+    loft_array_append(loft_crt_ref(store, rec, pos), loft_crt_ref(r_store, r_rec, r_pos));
+}
+
+/* OpVectorRef / OpVectorRefNullable on an array: the record its slot `idx` names, into `out`; the
+ * null reference past either end. */
+int64_t loft_crt_array_get(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos,
+                           int64_t idx, int64_t is_null) {
+    loft_crt_put_ref(out, no, is_null ? loft_ref_null() : loft_array_get(loft_crt_ref(store, rec, pos), idx));
+    return 0;
+}
+
 /* OpRemoveVector (`Stores::remove_vector_at`): the element at `index` of element type `tp` taken
  * out, as the C generator picks the routine — `mode` 2 a linked element (its slot unlinked, its
  * record released), 1 an element owning heap (released first), 0 a plain one of `size` bytes.

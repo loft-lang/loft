@@ -523,6 +523,21 @@ fn c_append_text_bytes(store: integer, rec: integer, pos: integer, val: text, by
 fn c_vec_reverse(store: integer, rec: integer, pos: integer, size: integer);
 #c "loft_crt_vec_reverse" "void(int64_t, int64_t, int64_t, int64_t)"
 
+fn c_set_dbref(store: integer, rec: integer, pos: integer, fld: integer, r_store: integer, r_rec: integer, r_pos: integer);
+#c "loft_crt_set_dbref" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_get_dbref(out: vector<integer>, store: integer, rec: integer, pos: integer, fld: integer) -> integer;
+#c "loft_crt_get_dbref" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_entry_new(out: vector<integer>, store: integer, rec: integer, pos: integer, size: integer) -> integer;
+#c "loft_crt_entry_new" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_array_append(store: integer, rec: integer, pos: integer, r_store: integer, r_rec: integer, r_pos: integer);
+#c "loft_crt_array_append" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_array_get(out: vector<integer>, store: integer, rec: integer, pos: integer, idx: integer, is_null: boolean) -> integer;
+#c "loft_crt_array_get" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
 fn c_vec_remove(store: integer, rec: integer, pos: integer, tp: integer, size: integer, mode: integer, index: integer) -> integer;
 #c "loft_crt_vec_remove" "int64_t(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 
@@ -603,6 +618,32 @@ pub fn append_text_bytes(store: integer, rec: integer, pos: integer, t: text?, l
 // `OpReverseVector`: the elements of `size` bytes reversed in place.
 pub fn vec_reverse(store: integer, rec: integer, pos: integer, size: integer) {
   c_vec_reverse(store, rec, pos, size);
+}
+
+// `OpSetDbRef`: a stored reference written at `fld`, the record it names marked referenced.
+pub fn set_dbref(store: integer, rec: integer, pos: integer, fld: integer, r_store: integer, r_rec: integer, r_pos: integer) {
+  c_set_dbref(store, rec, pos, fld, r_store, r_rec, r_pos);
+}
+
+// `OpGetDbRef`: the reference stored at `fld`, into `out[0..3]`; a removed record reads null.
+pub fn get_dbref(out: vector<integer>, store: integer, rec: integer, pos: integer, fld: integer) {
+  c_get_dbref(out, store, rec, pos, fld);
+}
+
+// `OpNewRecord` in an array: a record of `size` bytes of its own in the collection's store, into
+// `out[0..3]`.
+pub fn entry_new(out: vector<integer>, store: integer, rec: integer, pos: integer, size: integer) {
+  c_entry_new(out, store, rec, pos, size);
+}
+
+// `OpFinishRecord` in an array: the record `r` joins the end.
+pub fn array_append(store: integer, rec: integer, pos: integer, r_store: integer, r_rec: integer, r_pos: integer) {
+  c_array_append(store, rec, pos, r_store, r_rec, r_pos);
+}
+
+// `OpVectorRef` on an array: the record slot `idx` names, into `out[0..3]`; null past either end.
+pub fn array_get(out: vector<integer>, store: integer, rec: integer, pos: integer, idx: integer?) {
+  c_array_get(out, store, rec, pos, idx ?? 0, idx == null);
 }
 
 // `OpRemoveVector`: the element at `index` (of element type `tp`, `size` bytes) taken out — `mode`

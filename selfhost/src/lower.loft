@@ -154,6 +154,13 @@ enum Code {
   IntFromText,
   // `OpEqContent` / `OpNeContent`: `a` the type, `b` 1 for the negation.
   EqContent,
+  // An array's element added (`a` its type, `b` its size), filed, and read.
+  ArrayNew,
+  ArrayAppend,
+  ArrayGet,
+  // A stored reference written (`OpSetDbRef`) and read (`OpGetDbRef`): `a` the field.
+  SetDbRef,
+  GetDbRef,
   FloatFromText,
   // `pow` and `OpMathFunc2Float` (`a` 0 `atan2`, 1 `log`) on two floats: loft's own.
   Pow,
@@ -761,6 +768,11 @@ fn effect(code: Code, b: integer) -> integer {
     MathFunc => 0,
     IntFromText => 0,
     EqContent => -1,
+    ArrayNew => 0,
+    ArrayAppend => -2,
+    ArrayGet => -1,
+    SetDbRef => -2,
+    GetDbRef => 0,
     FloatFromText => 0,
     VecReverse => -1,
     VecKeep => -3,
@@ -1317,6 +1329,18 @@ fn hash_element(b: ir::Bundle, tp: integer) -> integer? {
 }
 
 // The element type of `tp` when it is a plain vector, else null.
+// An array's element type (a vector of linked records), or null.
+fn array_element(b: ir::Bundle, tp: integer) -> integer? {
+  t = b.types[tp];
+  if t == null {
+    return null;
+  }
+  match t.parts[0]! {
+    PtArray { content } => content,
+    _ => null,
+  }
+}
+
 fn vector_element(b: ir::Bundle, tp: integer) -> integer? {
   t = b.types[tp];
   if t == null {
@@ -1514,6 +1538,19 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
   } else if name == "OpSizeHash" {
     value(l, b, args[0]!, KRef);
     emit(l, HashBytes, KInt, 0, 0);
+  } else if name == "OpSetDbRef" {
+    // A stored reference (`reference<T>`, @C91) written into a field: `a` the field.
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[2]!, KRef);
+    emit(l, SetDbRef, KRef, literal(l, args[1]!), 0);
+  } else if name == "OpGetDbRef" {
+    value(l, b, args[0]!, KRef);
+    emit(l, GetDbRef, KRef, literal(l, args[1]!), 0);
+  } else if name == "OpVectorRef" || name == "OpVectorRefNullable" {
+    // An array's element: the record its slot names (the raising twin's report only logs).
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KInt);
+    emit(l, ArrayGet, KRef, 0, 0);
   } else if name == "OpSizeVector" {
     // A vector's size in bytes: its length times the element stride the parser filled in.
     value(l, b, args[0]!, KRef);
@@ -1695,13 +1732,25 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     }
     elem = vector_element(b, vtp);
     helem = hash_element(b, vtp);
-    if (fld != 65535 && at == null) || (elem == null && helem == null) {
+    aelem = array_element(b, vtp);
+    if (fld != 65535 && at == null) || (elem == null && helem == null && aelem == null) {
       refuse(l, "a record added to a collection that is not a plain vector or a hash: {b.types[vtp]!.name}");
       return true;
     }
     value(l, b, args[0]!, KRef);
     if at != null {
       emit(l, FieldRef, KRef, at, 0);
+    }
+    if aelem != null {
+      // An array's element is a record of its own in the collection's store, filled with its
+      // type's defaults, then its number appended (`keyed_new` / `keyed_finish`'s array arm).
+      if name == "OpNewRecord" {
+        emit(l, ArrayNew, KRef, aelem!, b.types[aelem!]!.size);
+      } else {
+        value(l, b, args[1]!, KRef);
+        emit(l, ArrayAppend, KRef, 0, 0);
+      }
+      return true;
     }
     if helem != null {
       // `keyed_new` / `keyed_finish` (`src/c/body/keyed.rs`): an entry of the hash's table,

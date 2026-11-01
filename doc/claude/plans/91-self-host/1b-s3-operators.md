@@ -42,8 +42,10 @@ strict comparison over every program the census passes (out, alloc, leak, binds,
 | a linked narrow local and a `&` to a narrow integer (`@FR-L-Narrow-Linked`) | `narrow_access` ports `NarrowSlot::of_type` (stored width, kind, the minimum the bytes count from) into the access code — `1 + width + 16 * encoded minimum` — which every slot and place read and write decodes (`access_width`, `access_min`); width 9 is the full four-byte word | `small_ops.loft` `narrowed`; the L-Narrow-Linked cells |
 | a tuple member of a reference kind (a record, a struct enum, a collection) | twelve bytes in the slot, three integers on the stack, in every leaf loop (load, store, pop, argument, return) | `tuples.loft` `held` |
 | `OpEqContent`, `OpNeContent` | `eq.loft` ports `Stores::eq_content` over the C runtime's reads: fields, variants, the narrow kinds, references once per pair, child records as a loop, vectors and hashes element by element; an array or keyed collection other than a hash is refused by name until S4 | `structs.loft` `equal` |
+| an array (a vector of linked records): `OpNewRecord` / `OpFinishRecord`, `OpVectorRef`, `OpVectorRefNullable` | `loft_entry_new` filled with the element's defaults, `loft_array_append`, `loft_array_get` (the raising twin's report only logs) | `vectors.loft` `linked_ids` |
+| `OpSetDbRef`, `OpGetDbRef` (a stored `reference<T>`, @C91) | `loft_set_dbref` (the record named is marked referenced), `loft_get_dbref` (a removed record reads null); a closure's stored half waits for S5 with `TyFunction` | `linked_ids` |
 
-**Measured** (2026-10-31): the census went from 297 to 581 programs passed over these rows,
+**Measured** (2026-10-31): the census went from 297 to 601 programs passed over these rows,
 none wrong, crashed or leaking, and every passing program equal to the Rust interpreter in
 every layer.
 

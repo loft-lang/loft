@@ -266,6 +266,8 @@ fn test_a_vector_is_appended_as_element_copies() {
   assert(ran_clean(v, "n_removed", 0) == 2032405620, "removed(0)");
   assert(ran_clean(v, "n_decoded", 4) == 531, "decoded(4): text_from_bytes and text_from_byte_range");
   assert(ran_clean(v, "n_decoded", 2) == 510, "decoded(2)");
+  assert(ran_clean(v, "n_linked_ids", 4) == 12142, "linked_ids(4): an array of ids and a stored reference");
+  assert(ran_clean(v, "n_linked_ids", 0) == 12102, "linked_ids(0)");
   // census 2026-10-30: the callee filled a fresh store instead of the caller's buffer, and the
   // caller's adopted copy was swept.
   assert(ran_clean(v, "n_retbuf_filled", 2) == 231, "retbuf_filled(2): the caller's buffer is filled in place");
