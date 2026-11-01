@@ -394,7 +394,7 @@ fn an_unguarded_nullable_struct_enum_is_still_reported() {
     code!(
         "enum Sh { Ci { r: integer }, Do { n: integer } }\nfn size(s: Sh) -> integer { match s { Ci { r } => r, Do { n } => n } }\nfn pick(n: integer) -> Sh? { if n > 0 { Ci { r: n } } else { null } }\nfn test() {\n  a = pick(2);\n  assert(size(a) == 2, \"unguarded\");\n}"
     )
-    .warning("a nullable `Sh?` is stored into parameter 1 of `size` of the non-null type `Sh` — it becomes null there; discharge with `?` (the type's default), `?? <default>`, or `match` if that is not intended at an_unguarded_nullable_struct_enum_is_still_reported:6:20");
+    .warning("a nullable `Sh?` is stored into parameter 1 of `size` of the non-null type `Sh` — it becomes null there; `a` is `Sh?`: test it first (`if a == null { … }` makes it `Sh` after), or write `a!` when it cannot be null here at an_unguarded_nullable_struct_enum_is_still_reported:6:20");
 }
 
 /// @C148 — only a record or a vector comes out of a parse, so only those have errors to ask.

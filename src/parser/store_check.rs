@@ -729,13 +729,145 @@ impl Parser {
         at: Option<&Position>,
         never_error: bool,
     ) -> bool {
-        self.nstore_unwrap_report_as(inner, target_tp, what, at, never_error, None)
+        self.nstore_unwrap_report_as(inner, target_tp, what, at, never_error, None, None)
+    }
+
+    /// What to write instead of storing the `τ?` value `code` into a `τ` slot — chosen by
+    /// where its null comes from, so the warning names the construction that says more, and
+    /// never leads with `?`, which only hides a null that should not be there
+    /// (WARNING_FIXES.md).  `None` for a value whose source this cannot tell.
+    pub(super) fn null_cure(&self, code: &Value, what: &str, nm: &str) -> Option<String> {
+        // Declaring the slot nullable is a cure only where the slot is the author's to declare:
+        // not a parameter, which belongs to the function called — its caller decides.
+        let declare = if what.starts_with("parameter") {
+            String::new()
+        } else {
+            format!(", or declare {what} `{nm}?`")
+        };
+        if self.has_null_arm(code) {
+            return Some(format!(
+                "a branch here answers `null`: if that is a real answer{}; if it cannot happen, \
+                 make that branch halt (`panic(…)`)",
+                if declare.is_empty() {
+                    String::new()
+                } else {
+                    format!(", declare {what} `{nm}?`")
+                }
+            ));
+        }
+        self.leaf_cure(code, &declare)
+    }
+
+    /// [`Self::null_cure`] for the value positions of `code` — an `if`'s arms, a block's tail
+    /// — the first whose source it can tell.
+    fn leaf_cure(&self, code: &Value, declare: &str) -> Option<String> {
+        let leaf = code.unspan();
+        match leaf {
+            Value::Block(bl) => return self.leaf_cure(bl.operators.last()?, declare),
+            Value::If(_, a, b) => {
+                return self
+                    .leaf_cure(a, declare)
+                    .or_else(|| self.leaf_cure(b, declare));
+            }
+            _ => {}
+        }
+        // A keyed lookup (`h[k]`, `OpGetRecord`), or a field read off one.
+        let mut lookup = leaf;
+        while let Value::Call(d, args) = lookup
+            && self.data.def(*d).name.starts_with("OpGet")
+            && self.data.def(*d).name != "OpGetRecord"
+            && let Some(inner) = args.first()
+        {
+            lookup = inner.unspan();
+        }
+        let keyed = matches!(lookup, Value::Call(d, _) if self.data.def(*d).name == "OpGetRecord");
+        if keyed || self.reads_a_collection_element(leaf) {
+            let keyed = keyed
+                || leaf.any_node(&mut |n| {
+                    matches!(n, Value::Call(d, _) if matches!(self.data.def(*d).name.as_str(),
+                        "OpGetHash" | "OpGetSorted" | "OpGetIndex" | "OpGetRadix"))
+                });
+            return Some(if keyed {
+                "a lookup by key can miss: handle the miss with `match` or a guard (`if x == null \
+                 { … }`), or give a value for it with `?? <value>`"
+                    .to_string()
+            } else {
+                "an index loft cannot prove in range may be past the end: index with a shape it \
+                 proves (`v[-1]`, the loop's own element, `v[x#index]`, an index tested against \
+                 `len(v)`), or write `!` after the read when the program guarantees the element"
+                    .to_string()
+            });
+        }
+        // A local that is `τ?`, or a field read off one: the cure names the local, because a
+        // guard on it (`(N-Guard)`) is what makes it — and every field of it — `τ` after.
+        let mut local = None;
+        leaf.any_node(&mut |n| match n {
+            Value::Var(v)
+                if (*v as usize) < self.vars.count() as usize
+                    && matches!(self.vars.tp(*v), Type::Optional(_))
+                    && !self.vars.name(*v).starts_with('_') =>
+            {
+                local = Some(*v);
+                true
+            }
+            _ => false,
+        });
+        if let Some(v) = local {
+            let name = self.vars.written_name(v);
+            let held = self.vars.tp(v).base().source_name(&self.data);
+            let field = match leaf {
+                Value::Var(_) => "",
+                Value::Call(d, args)
+                    if self.data.def(*d).name.starts_with("OpGet")
+                        && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == v) =>
+                {
+                    ", and so is its field"
+                }
+                _ => ", and so is what this computes from it",
+            };
+            return Some(format!(
+                "`{name}` is `{held}?`{field}: test it first (`if {name} == null {{ … }}` makes it \
+                 `{held}` after), or write `{name}!` when it cannot be null here{declare}"
+            ));
+        }
+        if let Value::Call(d, _) = leaf {
+            let def = self.data.def(*d);
+            if matches!(def.def_type, crate::data::DefType::Function) && !def.name.starts_with("Op")
+            {
+                return Some(format!(
+                    "`{}` may answer null: decide what that means here — `!` when it cannot be \
+                     null at this call, a guard or `match` when it can, `?? <value>` for a \
+                     fallback{declare}",
+                    def.original_name()
+                ));
+            }
+        }
+        None
+    }
+
+    /// Does a value position of `v` — an `if` arm, a block's tail — answer `null`: a bare one,
+    /// or the null conversion a typed arm makes of it (`OpConvFloatFromNull`)?
+    fn has_null_arm(&self, v: &Value) -> bool {
+        match v.unspan() {
+            Value::Null => true,
+            Value::Call(d, args) => {
+                let n = self.data.def(*d).name.as_str();
+                args.is_empty() && n.starts_with("OpConv") && n.ends_with("FromNull")
+            }
+            Value::If(_, a, b) => self.has_null_arm(a) || self.has_null_arm(b),
+            Value::Block(bl) => bl.operators.last().is_some_and(|l| self.has_null_arm(l)),
+            _ => false,
+        }
     }
 
     /// [`Parser::nstore_unwrap_report`] with the CONSEQUENCE clause supplied by the caller,
     /// for the reason [`Parser::nstore_null_report_as`] gives: *"it becomes null there"* is
     /// what a handle or a scalar slot does, and a dense record slot has no null to hold — the
     /// store does not happen.  The position knows which; `None` keeps the pinned wording.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the slot, its wording and the value's cure — one report, passed whole"
+    )]
     pub(super) fn nstore_unwrap_report_as(
         &mut self,
         inner: &Type,
@@ -744,6 +876,7 @@ impl Parser {
         at: Option<&Position>,
         never_error: bool,
         consequence: Option<&str>,
+        cure: Option<&str>,
     ) -> bool {
         // `τ?` has a THIRD spelling, and this gate has to ask all three of one face.
         // A `&` parameter carries its nullability INSIDE the reference: `&integer?` is
@@ -786,11 +919,21 @@ impl Parser {
         // spends the whole width on real values, so a null there would silently corrupt.
         // Gate OFF → the current uniform hard error (this branch stays byte-identical).
         let narrow = Self::nstore_narrow(target_tp, never_error);
+        // The cure leads with what SAYS more (WARNING_FIXES.md): `!` where the value cannot be
+        // null, a guard / `match` / `?? <value>` where it can, a `τ?` slot where null is a real
+        // answer.  `?` comes last and conditional: it is right only when the type's default IS
+        // the answer, and as the first suggestion it taught hiding a null that is a bug.
+        let generic = format!(
+            "write `!` when it cannot be null here; handle null with a guard or `match`, or give \
+             `?? <value>`; or declare {what} `{nm}?` (`?` takes the type's default — only when \
+             that default is the answer)"
+        );
+        let cure = cure.map_or(generic, str::to_string);
         if crate::keys::nstore_softens(narrow) {
             let msg = diagnostic_format(
                 Level::Warning,
                 format_args!(
-                    "a nullable `{nm}?` is stored into {what} of the non-null type `{}` — {}; discharge with `?` (the type's default), `?? <default>`, or `match` if that is not intended",
+                    "a nullable `{nm}?` is stored into {what} of the non-null type `{}` — {}; {cure}",
                     target_tp.source_name(&self.data),
                     consequence.unwrap_or("it becomes null there")
                 ),
@@ -801,7 +944,7 @@ impl Parser {
         let msg = diagnostic_format(
             Level::Error,
             format_args!(
-                "a nullable `{nm}?` cannot be stored into {what} of the non-null type `{}` — discharge it first with `?` (the type's default), `?? <default>`, or `match`",
+                "a nullable `{nm}?` cannot be stored into {what} of the non-null type `{}` — {cure}",
                 target_tp.source_name(&self.data)
             ),
         );

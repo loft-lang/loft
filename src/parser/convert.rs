@@ -623,7 +623,19 @@ impl Parser {
                     });
                 if self.admit_unwrap == 0 && !self.in_explicit_cast && !sanctioned_tuple {
                     let (what, at, lenient) = self.store_slot();
-                    if self.nstore_unwrap_report(inner, should, &what, at.as_ref(), lenient) {
+                    // The caret goes on the value when it carries its own position: that is
+                    // the code the cure rewrites, where the slot is only where it lands.
+                    let at = code.span_pos().copied().or(at);
+                    let cure = self.null_cure(code, &what, &inner.source_name(&self.data));
+                    if self.nstore_unwrap_report_as(
+                        inner,
+                        should,
+                        &what,
+                        at.as_ref(),
+                        lenient,
+                        None,
+                        cure.as_deref(),
+                    ) {
                         return true;
                     }
                 }
