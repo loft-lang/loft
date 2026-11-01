@@ -38,7 +38,7 @@ pub fn value_fits(e: el::El, vars: el_vars::Vars, code: ir::Node, dst: ir::TypeT
       NdBlock { block } => {
         bl = block[0];
         n = len(bl.operators);
-        bl.name != "ncc" && n > 0 && value_fits(e, vars, bl.operators[n - 1] ?? ir::NdNull, dst)
+        bl.name != "ncc" && n > 0 && value_fits(e, vars, el_ir::last(bl.operators), dst)
       },
       NdCall { def_nr, args } => {
         if len(args) == 0 && el::def(e, def_nr).name == "OpConvIntFromNull" {
@@ -78,7 +78,7 @@ pub fn const_int(e: el::El, code: ir::Node) -> integer? {
     NdSpan { inner } => const_int(e, inner),
     NdCall { def_nr, args } => {
       nm = el::def(e, def_nr).name;
-      a = if len(args) > 0 { const_int(e, args[0] ?? ir::NdNull) } else { null };
+      a = if len(args) > 0 { const_int(e, args[0]) } else { null };
       if a == null {
         return null;
       }
@@ -129,7 +129,7 @@ pub fn int_range(e: el::El, vars: el_vars::Vars, code: ir::Node) -> Range? {
     NdBlock { block } => {
       bl = block[0];
       n = len(bl.operators);
-      if n == 0 || bl.name == "ncc" { null } else { int_range(e, vars, bl.operators[n - 1] ?? ir::NdNull) }
+      if n == 0 || bl.name == "ncc" { null } else { int_range(e, vars, el_ir::last(bl.operators)) }
     },
     NdCall { def_nr, args } => {
       nm = el::def(e, def_nr).name;
@@ -142,7 +142,7 @@ pub fn int_range(e: el::El, vars: el_vars::Vars, code: ir::Node) -> Range? {
         return if m == null { null } else { Range { lo: m!, hi: m! + 65535 } };
       }
       if nm == "OpAddInt" || nm == "OpMinInt" || nm == "OpMulInt" {
-        a = int_range(e, vars, args[0] ?? ir::NdNull);
+        a = int_range(e, vars, args[0]);
         b = int_range(e, vars, args[1] ?? ir::NdNull);
         if a == null || b == null {
           return null;
@@ -181,10 +181,10 @@ pub fn int_range(e: el::El, vars: el_vars::Vars, code: ir::Node) -> Range? {
           return null;
         }
         m = (if k! < 0 { 0 - k! } else { k! }) - 1;
-        a = int_range(e, vars, args[0] ?? ir::NdNull);
+        a = int_range(e, vars, args[0]);
         return Range { lo: if a != null && a!.lo >= 0 { 0 } else { 0 - m }, hi: m };
       }
-      declared_range(el::def(e, def_nr).returned[0] ?? ir::TyVoid)
+      declared_range(el::def(e, def_nr).returned[0])
     },
     _ => null
   }
@@ -229,8 +229,8 @@ pub fn convert(e: el::El, vars: el_vars::Vars, code: ir::Node, src: ir::TypeT, s
       if ends_with(def.name, "FromNull") || len(def.attributes) != 1 {
         continue;
       }
-      at = def.attributes[0].typedef[0] ?? ir::TyVoid;
-      if (el_types::is_equal(e, at, check) || el_types::is_equal(e, at, src)) && el_types::is_equal(e, def.returned[0] ?? ir::TyVoid, should) {
+      at = def.attributes[0].typedef[0];
+      if (el_types::is_equal(e, at, check) || el_types::is_equal(e, at, src)) && el_types::is_equal(e, def.returned[0], should) {
         return ir::NdCall { def_nr: d, args: [code] };
       }
     }
@@ -253,13 +253,13 @@ pub fn convert(e: el::El, vars: el_vars::Vars, code: ir::Node, src: ir::TypeT, s
     if ends_with(def.name, "FromNull") || len(def.attributes) != 1 {
       continue;
     }
-    if el_types::is_equal(e, def.attributes[0].typedef[0] ?? ir::TyVoid, src) && el_types::is_equal(e, def.returned[0] ?? ir::TyVoid, should) {
+    if el_types::is_equal(e, def.attributes[0].typedef[0], src) && el_types::is_equal(e, def.returned[0], should) {
       // A character literal read back as its code point is the code point.
       if def.name == "OpConvIntFromCharacter" {
         match code {
           NdCall { def_nr: inner, args } => {
             if el::def(e, inner).name == "OpConvCharacterFromInt" && len(args) == 1 {
-              match args[0] ?? ir::NdNull {
+              match args[0] {
                 NdInt { n } => if n > 0 && n < 1114112 && (n < 55296 || n > 57343) { return ir::NdInt { n: n }; },
                 _ => {}
               }
@@ -291,7 +291,7 @@ fn store_narrows(src: ir::TypeT, dst: ir::TypeT) -> boolean {
 pub fn cast(e: el::El, code: ir::Node, src: ir::TypeT, should: ir::TypeT) -> ir::Node? {
   for d in el::possible(e, "OpCast") {
     def = el::def(e, d);
-    if len(def.attributes) == 1 && el_types::is_same(def.attributes[0].typedef[0] ?? ir::TyVoid, src) && el_types::is_same(def.returned[0] ?? ir::TyVoid, should) {
+    if len(def.attributes) == 1 && el_types::is_same(def.attributes[0].typedef[0], src) && el_types::is_same(def.returned[0], should) {
       return ir::NdCall { def_nr: d, args: [code] };
     }
   }
@@ -317,7 +317,7 @@ pub fn null_of(e: el::El, t: ir::TypeT) -> ir::Node? {
   }
   for d in el::possible(e, "OpConv") {
     def = el::def(e, d);
-    if ends_with(def.name, "FromNull") && el_types::is_equal(e, def.returned[0] ?? ir::TyVoid, t) {
+    if ends_with(def.name, "FromNull") && el_types::is_equal(e, def.returned[0], t) {
       return ir::NdCall { def_nr: d, args: [] };
     }
   }

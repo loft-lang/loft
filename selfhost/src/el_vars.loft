@@ -86,7 +86,7 @@ pub fn var(v: Vars, name: text) -> integer {
 }
 
 pub fn tp(v: Vars, nr: integer) -> ir::TypeT {
-  v.vars[nr].type_def[0] ?? ir::TyUnknown { n: 0 }
+  v.vars[nr].type_def[0]
 }
 
 // `Function::new_var`: a fresh variable; the first variable of a spelling takes the name.
