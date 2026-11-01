@@ -84,6 +84,8 @@ def main():
     ap.add_argument("--loft", default="target/release/loft")
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
     ap.add_argument("--show", type=int, default=20, help="differing programs to list")
+    ap.add_argument("--plan", action="store_true",
+                    help="rank refusal families by the programs clearing them in turn would admit")
     ap.add_argument("--which", help="list the programs a refusal starting with this text blocks alone")
     ap.add_argument("--details", type=int, default=3, help="details listed per refusal family")
     o = ap.parse_args()
@@ -118,6 +120,7 @@ def main():
     alone = collections.Counter()
     which = []
     differs = []
+    blocked = []
     with cf.ThreadPoolExecutor(o.jobs) as ex:
         futs = {ex.submit(one, loft, defs, elab, std, f, tmp, env, i): (part, f)
                 for i, (part, f) in enumerate(todo)}
@@ -129,6 +132,7 @@ def main():
                 reasons.update(set(detail))
                 fams = {d.split(": ", 1)[0] for d in detail}
                 families.update(fams)
+                blocked.append(fams)
                 if o.which and any(d.startswith(o.which) for d in detail):
                     which.append((len(fams), f))
                 if len(fams) == 1:
@@ -156,6 +160,24 @@ def main():
         print("refusals that alone block a program:")
         for f, k in alone.most_common(15):
             print(f"  {k:5}  {f}")
+    if o.plan:
+        # Greedy cover: the family whose clearing admits the most programs next, counting a
+        # program once every family it meets is cleared.
+        print("families to clear, in the order that admits the most programs:")
+        left = [set(b) for b in blocked]
+        admitted = 0
+        for _ in range(25):
+            gain = collections.Counter()
+            for b in left:
+                gain.update(b)
+            if not gain:
+                break
+            def admits(f):
+                return sum(1 for b in left if b == {f})
+            best = max(gain, key=lambda f: (admits(f), gain[f]))
+            admitted += admits(best)
+            left = [b - {best} for b in left if b - {best}]
+            print(f"  {admitted:5}  {best}  (met by {gain[best]})")
     for k, f in sorted(which)[:o.show]:
         print(f"WHICH {k} {os.path.relpath(f, os.path.dirname(root))}")
     for f, d in sorted(differs)[:o.show]:
