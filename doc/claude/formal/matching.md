@@ -223,7 +223,12 @@ index `i` into a source `src`, with `elem(src,i)` / `len(src)` **null past the e
              answer v ≠ null binds name ↦ v (at type τ) and reads the next element from the
              position the rule left; a null answer is Fail.  A rule is called only when its arm
              is tried, in arm order (P-Alt), and an arm that fails after a rule moved the cursor
-             puts pos back where the match started (P-Atomic).
+             puts pos back where the match started (P-Atomic).  A GROUP quantifies one rule:
+             `(x: rule)?` binds x : τ? — the answer, or null with pos unmoved; `(xs: rule)*`
+             binds xs : vector<τ> — the rule run while it answers, each answer moved into xs, a
+             separator `*(Sep)` consumed between two answers and given back when none follows;
+             `+` asks for one answer.  An answer that consumed nothing ends a run without being
+             taken, so a rule that can match empty cannot loop.
   (WF-Term)  a cycle of sub-rule calls that can run before ANY token is consumed — no fixed element
              before the call in its pattern, and no arm on the same cursor around its match that
              took one — is left recursion and a STATIC error.  A call after a consumed token

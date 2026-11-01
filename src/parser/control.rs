@@ -42,6 +42,14 @@ enum SepSpec {
     Lexeme(Value, Type),
 }
 
+/// `@FR-P-Rule` — a sub-rule group `(name: rule)` with its quantifier (`*`, `+`, `?`).
+struct SubruleGroup {
+    name: String,
+    fn_nr: u32,
+    ret_tp: Type,
+    quant: char,
+}
+
 /// @PLN85 text-return analysis framework (SHADOW — not yet wired to codegen).
 ///
 /// The ONE property behind the stacked per-shape promotion predicates (2d
@@ -12073,6 +12081,268 @@ impl Parser {
         result
     }
 
+    /// `@FR-P-Rule` — is the upcoming slice element a sub-rule GROUP `( name : rule )` followed by
+    /// `*`, `+` or `?`?  One look-ahead, put back.  `rule` is recognised as
+    /// [`Self::peek_subrule_capture`] recognises it.  Returns the capture name, the rule, its
+    /// answer type and the quantifier.
+    fn peek_subrule_group(&mut self) -> Option<(String, u32, Type, char)> {
+        if !self.lexer.peek_token("(") {
+            return None;
+        }
+        let save = self.lexer.link();
+        self.lexer.cont(); // `(`
+        let mut result = None;
+        if let Some((name, fn_nr, ret_tp)) = self.peek_subrule_capture() {
+            self.lexer.cont(); // name
+            self.lexer.cont(); // `:`
+            self.lexer.cont(); // rule
+            if self.lexer.has_token(")") {
+                let quant = ['*', '+', '?']
+                    .into_iter()
+                    .find(|q| self.lexer.peek_token(&q.to_string()));
+                if let Some(q) = quant {
+                    result = Some((name, fn_nr, ret_tp, q));
+                }
+            }
+        }
+        self.lexer.revert(save);
+        result
+    }
+
+    /// `@FR-P-Rule` × `@FR-P-Rep` / `@FR-P-Opt` — a sub-rule group of a cursor pattern, `k`
+    /// fixed elements after the current segment's base.  ANDed onto the arm's `cond`:
+    ///
+    /// - `(x: rule)?` binds `x: τ?` — the rule's answer, or null with the cursor unmoved;
+    /// - `(xs: rule)*` / `+` binds `xs: vector<τ>` — the rule run while it answers, each answer
+    ///   MOVED into `xs`, with an optional separator `*(Sep)` consumed between two answers and
+    ///   given back when no answer follows it.  An answer that consumed nothing ends the run
+    ///   without being taken, so a rule that can match empty cannot loop.  `+` asks for one.
+    ///
+    /// The next segment is read from where the group stopped (`seg`).  The capture and the
+    /// temps are declared at the match's level (`prechain`), as a single sub-rule's are.
+    fn parse_subrule_group(
+        &mut self,
+        subject: &SliceSubject,
+        group: &SubruleGroup,
+        k: usize,
+        consumed: bool,
+        cond: &mut Option<Value>,
+        prechain: &mut Vec<Value>,
+    ) {
+        let Some((cursor_var, cursor_def, pos_field, base)) = self.match_cursor else {
+            return;
+        };
+        let SubruleGroup {
+            name,
+            fn_nr,
+            ret_tp,
+            quant,
+        } = group;
+        let (fn_nr, quant) = (*fn_nr, *quant);
+        let elm_tp = subject.elm_tp;
+        self.lexer.token("(");
+        self.lexer.has_identifier(); // name
+        self.lexer.token(":");
+        let site = self.lexer.peek().position;
+        self.lexer.has_identifier(); // rule
+        self.lexer.token(")");
+        self.lexer.cont(); // the quantifier
+        let sep = if quant == '?' {
+            None
+        } else if let Some((e_nr, _)) = self.pattern_variant_enum(elm_tp) {
+            self.parse_repetition_separator(e_nr)
+        } else {
+            None
+        };
+        if !self.first_pass && self.context != u32::MAX {
+            let consuming = consumed || self.cursor_consumed.contains(&cursor_var);
+            self.subrule_edges
+                .push((self.context, fn_nr, site, consuming));
+        }
+        self.slice_subrule = true;
+        let seg = self.create_unique("cursor_seg", &I32);
+        self.vars.defined(seg);
+        prechain.push(v_set(seg, Value::Int(0)));
+        let start = self.conv_op(
+            "+",
+            Value::Var(base),
+            Value::Int(k as i32),
+            I32.clone(),
+            I32.clone(),
+        );
+        let cursor_tp = self.vars.tp(cursor_var).clone();
+        let mut call = Value::Null;
+        if fn_nr != u32::MAX {
+            self.call_nr(
+                &mut call,
+                fn_nr,
+                &[Value::Var(cursor_var)],
+                &[cursor_tp],
+                false,
+                &[],
+                None,
+            );
+        }
+        let mut ops = vec![v_set(seg, start)];
+        if quant == '?' {
+            let opt_tp = Type::optional(ret_tp.clone());
+            let x = self.pattern_binding(name, &opt_tp);
+            self.vars.defined(x);
+            let none = self.null_value(ret_tp);
+            prechain.push(v_set(x, none));
+            let set_pos = self.set_field(
+                cursor_def,
+                pos_field,
+                0,
+                Value::Var(cursor_var),
+                Value::Var(seg),
+            );
+            ops.push(set_pos);
+            ops.push(v_set(x, call));
+            let present = self.subrule_present(fn_nr, x, ret_tp);
+            let now = self.get_field(cursor_def, pos_field, Value::Var(cursor_var));
+            ops.push(v_if(present, v_set(seg, now), Value::Null));
+            ops.push(Value::Boolean(true));
+        } else {
+            let run = self.subrule_run(subject, group, call, sep.as_ref(), seg, prechain);
+            ops.extend(run);
+        }
+        let test = v_block(ops, Type::Boolean, "sub-rule group");
+        *cond = Some(match cond.take() {
+            Some(c) => v_if(c, test, Value::Boolean(false)),
+            None => test,
+        });
+        self.match_cursor = Some((cursor_var, cursor_def, pos_field, seg));
+    }
+
+    /// The run of `(xs: rule)*` / `+` ([`Self::parse_subrule_group`]): `xs` declared and
+    /// minted at the match's level, then the loop that calls the rule from `seg`, takes the
+    /// separator between two answers, moves each answer that consumed something into `xs` and
+    /// moves `seg` past it.  The ops end with the group's test: true, or `len(xs) > 0` for `+`.
+    fn subrule_run(
+        &mut self,
+        subject: &SliceSubject,
+        group: &SubruleGroup,
+        call: Value,
+        sep: Option<&SepSpec>,
+        seg: u16,
+        prechain: &mut Vec<Value>,
+    ) -> Vec<Value> {
+        let Some((cursor_var, cursor_def, pos_field, _)) = self.match_cursor else {
+            return Vec::new();
+        };
+        let SliceSubject {
+            v,
+            elm_tp,
+            elm_size,
+            ..
+        } = *subject;
+        let (name, fn_nr, ret_tp, quant) = (&group.name, group.fn_nr, &group.ret_tp, group.quant);
+        let mut ops = Vec::new();
+        let vec_tp = Type::Vector(Box::new(ret_tp.clone()), Deps::none());
+        let xs = self.pattern_binding(name, &vec_tp);
+        self.vars.defined(xs);
+        prechain.extend(self.vector_db(ret_tp, xs));
+        let r = self.create_unique("rule_x", ret_tp);
+        self.vars.defined(r);
+        let held = matches!(
+            ret_tp.base(),
+            Type::Reference(_, _) | Type::Enum(_, true, _) | Type::Vector(_, _)
+        );
+        if held {
+            // `r` hands its record over to `xs` (the copy below frees r's store), so its
+            // own scope end releases nothing.
+            self.vars.set_skip_free(r);
+        }
+        prechain.push(v_set(r, self.null_value(ret_tp)));
+        let ed_nr = self.data.type_def_nr(ret_tp);
+        let elm = self.create_unique("rule_elm", &Type::Reference(ed_nr, Deps::none()));
+        self.vars.defined(elm);
+        self.vars.set_skip_free(elm);
+        let mut append = self.append_element_ops(xs, ret_tp, elm, Value::Var(r));
+        if held {
+            let copy_d = self.data.def_nr("OpCopyRecord");
+            for op in &mut append {
+                if let Value::Call(d, args) = op.unspan_mut()
+                    && *d == copy_d
+                    && let Some(Value::Int(tp)) = args.get_mut(2).map(Value::unspan_mut)
+                {
+                    *tp |= i32::from(crate::keys::COPY_FREE_SOURCE);
+                }
+            }
+        }
+        let mut body = Vec::new();
+        // The separator, between two answers: consumed when present, else the run ends.
+        if let Some(sep) = sep {
+            let taken = self.cl("OpLengthVector", &[Value::Var(xs)]);
+            let some = self.conv_op("<", Value::Int(0), taken, I32.clone(), I32.clone());
+            let len_c = self.cursor_len(v);
+            let room = self.conv_op("<", Value::Var(seg), len_c, I32.clone(), I32.clone());
+            let at_sep = self.sep_match_cond(sep, v, elm_size, elm_tp, Value::Var(seg));
+            let is_sep = v_if(room, at_sep, Value::Boolean(false));
+            let past = self.conv_op(
+                "+",
+                Value::Var(seg),
+                Value::Int(1),
+                I32.clone(),
+                I32.clone(),
+            );
+            let set_past = self.set_field(cursor_def, pos_field, 0, Value::Var(cursor_var), past);
+            let set_here = self.set_field(
+                cursor_def,
+                pos_field,
+                0,
+                Value::Var(cursor_var),
+                Value::Var(seg),
+            );
+            body.push(v_if(
+                some,
+                v_if(is_sep, set_past, Value::Break(0)),
+                set_here,
+            ));
+        } else {
+            body.push(self.set_field(
+                cursor_def,
+                pos_field,
+                0,
+                Value::Var(cursor_var),
+                Value::Var(seg),
+            ));
+        }
+        body.push(v_set(r, call));
+        let present = self.subrule_present(fn_nr, r, ret_tp);
+        let now = self.get_field(cursor_def, pos_field, Value::Var(cursor_var));
+        let moved = self.conv_op("<", Value::Var(seg), now, I32.clone(), I32.clone());
+        let taken = v_if(present, moved, Value::Boolean(false));
+        body.push(v_if(taken, Value::Null, Value::Break(0)));
+        body.extend(append);
+        let now = self.get_field(cursor_def, pos_field, Value::Var(cursor_var));
+        body.push(v_set(seg, now));
+        ops.push(v_loop(body, "sub-rule run"));
+        if quant == '+' {
+            let taken = self.cl("OpLengthVector", &[Value::Var(xs)]);
+            ops.push(self.conv_op("<", Value::Int(0), taken, I32.clone(), I32.clone()));
+        } else {
+            ops.push(Value::Boolean(true));
+        }
+        ops
+    }
+
+    /// `@FR-P-Rule` — "the rule answered": a record's `!= null` against the null-ref sentinel
+    /// (`OpRefIsNull` tests the store_nr sentinel and misreads a fn-returned null struct on the
+    /// interpreter), any other node type's own not-null test.  A rule not defined yet (the first
+    /// pass) has no type to test.
+    fn subrule_present(&mut self, fn_nr: u32, var: u16, ret_tp: &Type) -> Value {
+        if fn_nr == u32::MAX {
+            Value::Boolean(true)
+        } else if matches!(ret_tp, Type::Reference(..)) {
+            let sentinel = self.cl("OpNullRefSentinel", &[]);
+            self.cl("OpNeRef", &[Value::Var(var), sentinel])
+        } else {
+            self.coalesce_not_null(&Value::Var(var), ret_tp)
+        }
+    }
+
     /// `@FR-P-Rule` — the fixed elements of the current cursor segment, tested and bound before
     /// a sub-rule ends it: the length gate `base + k <= len`, then each element's condition in
     /// order, ANDed onto `cond`; the bare names bind from `base + i`.  Their reads use the
@@ -12211,19 +12481,7 @@ impl Parser {
                 None,
             );
         }
-        // Presence: for a record the hand-form `name != null` — `OpNeRef(name,
-        // OpNullRefSentinel())` (NOT `OpRefIsNull`, which tests the store_nr sentinel and
-        // misreads a fn-returned null struct on the interpreter); for any other node type the
-        // representation's own not-null test.  A rule not defined yet (the first pass) has no
-        // type to test.
-        let present = if fn_nr == u32::MAX {
-            Value::Boolean(true)
-        } else if matches!(ret_tp, Type::Reference(..)) {
-            let sentinel = self.cl("OpNullRefSentinel", &[]);
-            self.cl("OpNeRef", &[Value::Var(name_var), sentinel])
-        } else {
-            self.coalesce_not_null(&Value::Var(name_var), ret_tp)
-        };
+        let present = self.subrule_present(fn_nr, name_var, ret_tp);
         let now = self.get_field(cursor_def, pos_field, Value::Var(cursor_var));
         let matched = v_block(
             vec![v_set(seg, now), Value::Boolean(true)],
@@ -12897,6 +13155,32 @@ impl Parser {
                 // names used to be admitted.
                 self.lexer.has_token(",");
                 tail_total = self.count_slice_tail_elements();
+            } else if self.match_cursor.is_some()
+                && !has_rest
+                && let Some((name, fn_nr, ret_tp, quant)) = self.peek_subrule_group()
+            {
+                // `@FR-P-Rule` × `@FR-P-Rep` / `@FR-P-Opt` — `(name: rule)*`, `+` or `?`: the
+                // segment before it is tested and bound, the group runs the rule as often as it
+                // matches (once at most for `?`), and the next segment starts where it stopped.
+                self.flush_cursor_segment(
+                    subject,
+                    &mut head,
+                    seg_start,
+                    cond,
+                    elem_conds,
+                    conds_at_entry,
+                    bindings,
+                );
+                let k = head.len() - seg_start;
+                let consumed = !head.is_empty();
+                let group = SubruleGroup {
+                    name,
+                    fn_nr,
+                    ret_tp,
+                    quant,
+                };
+                self.parse_subrule_group(subject, &group, k, consumed, cond, prechain);
+                seg_start = head.len();
             } else if self.match_cursor.is_some()
                 && !has_rest
                 && let Some((name, fn_nr, ret_tp)) = self.peek_subrule_capture()
