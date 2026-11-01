@@ -1853,3 +1853,15 @@ enum and a declared one is refused, as it already was.  Found porting the self-h
 whose `inner = TyUnknown { n: 0 }; match … { TyVector { inner: i } => { inner = i; } }` corrupted
 a vector's element type.  Guard
 `loft-suite rules/types/C-Var/2336-a-variant-typed-local-widens-to-its-enum-and-keeps-every-variant.loft`.
+
+### D-types-38 — OPENED AND CLOSED (2026-11-01; loft#2337): a struct-literal field pushed no expected type into an empty `[]` arm
+
+`(T-Chk)` makes a declared field type the expected type of its value, pushed structurally into
+sub-expressions, and `(T-Chk-Vec)` is what an empty `[]` reads its element from.  The struct
+literal pushed the field type onto the `⇐` channel only for a function type (loft#1067's lambda
+hint), so `S { d: if c { [] } else { [v] } }` built an untyped placeholder for the then arm, the
+`if` answered `void`, and the field refused it — while a declared local, the field assignment
+`s.d = if …`, a return and an argument, which push their type, compiled.  **Fix.**
+`parse_object_field` pushes a collection field's type as well.  Found porting the self-host
+elaborator (`ir::TyReference { n: 0, dep: if value { [] } else { [v] } }`).  Guard
+`loft-suite rules/types/T-Chk/2337-an-empty-literal-arm-builds-its-fields-collection.loft`.
