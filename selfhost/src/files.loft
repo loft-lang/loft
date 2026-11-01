@@ -1,0 +1,256 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 S6 — a value's binary form in a file: `OpWriteFile` and `OpReadFile` (`State::write_file`,
+// `State::read_file`, src/state/io.rs) with `Stores::read_data` / `write_data`
+// (src/database/io.rs) ported over the bundle's types.  The walk is loft's; every byte is the C
+// runtime's — the shim gathers the pieces (`crt::ser_*`) and writes them with `loft_write_file`,
+// or reads them with `loft_read_file` and decodes each piece into its place (`crt::de_*`).  The C
+// backend emits a writer and a reader per type instead (`loft_ser<tp>`, `loft_de<tp>`).
+use ir;
+use crt;
+
+NULL_STORE = 65535;
+
+// `binary_size`: the bytes `ser` appends for a value of type `tp` — 0 for a text (its length is
+// its own) and for a kind with no fixed width.
+pub fn binary_size(b: ir::Bundle, tp: integer) -> integer {
+  if tp == 2 || tp == 6 {
+    return 4;
+  }
+  if tp == 0 || tp == 1 || tp == 3 {
+    return 8;
+  }
+  if tp == 4 {
+    return 1;
+  }
+  if tp == 5 {
+    return 0;
+  }
+  match b.types[tp]!.parts[0]! {
+    PtStruct { fields } => fields_size(b, fields),
+    PtEnumValue { value: _, fields } => fields_size(b, fields),
+    PtEnum { values: _ } => 1,
+    PtByte { start: _, nullable: _ } => 1,
+    PtShort { start: _, nullable: _ } => 2,
+    PtShortRaw { start: _, nullable: _ } => 2,
+    PtInt { start: _, nullable: _ } => 4,
+    PtIntRaw { start: _, nullable: _ } => 4,
+    _ => 0,
+  }
+}
+
+fn fields_size(b: ir::Bundle, fields: vector<ir::DbField>) -> integer {
+  n = 0;
+  for f in fields {
+    if placed(f) {
+      n += binary_size(b, f.content);
+    }
+  }
+  n
+}
+
+// A field that is part of a record's binary form: not a variant's tag, and placed.
+fn placed(f: ir::DbField) -> boolean {
+  f.name != "enum" && f.position != 65535
+}
+
+// The width of a narrow integer kind, or 0 for any other type.
+fn narrow_width(b: ir::Bundle, tp: integer) -> integer {
+  if tp <= 6 {
+    return 0;
+  }
+  match b.types[tp]!.parts[0]! {
+    PtByte { start: _, nullable: _ } => 1,
+    PtShort { start: _, nullable: _ } => 2,
+    PtShortRaw { start: _, nullable: _ } => 2,
+    PtInt { start: _, nullable: _ } => 4,
+    PtIntRaw { start: _, nullable: _ } => 4,
+    _ => 0,
+  }
+}
+
+// Is a narrow integer read back sign-extended?  A byte or short whose range starts below zero,
+// and the signed four-byte width; the unsigned one zero-extends.
+fn narrow_signed(b: ir::Bundle, tp: integer) -> boolean {
+  match b.types[tp]!.parts[0]! {
+    PtByte { start, nullable: _ } => start < 0,
+    PtShort { start, nullable: _ } => start < 0,
+    PtShortRaw { start, nullable: _ } => start < 0,
+    PtInt { start: _, nullable: _ } => true,
+    _ => false,
+  }
+}
+
+fn is_record(b: ir::Bundle, tp: integer) -> boolean {
+  if tp <= 6 {
+    return false;
+  }
+  match b.types[tp]!.parts[0]! {
+    PtStruct { fields: _ } => true,
+    PtEnumValue { value: _, fields: _ } => true,
+    PtVector { content: _ } => true,
+    _ => false,
+  }
+}
+
+fn unserialisable(b: ir::Bundle, tp: integer, what: text) {
+  panic("binary I/O not supported for type '{b.types[tp]!.name}': {what}");
+}
+
+// `OpWriteFile` of a value that is not a text: `assemble_write_data` — a narrow integer local is
+// its raw slot cut to its width, a vector or a record local is the value its slot names — then
+// the bytes at the File's next position.
+pub fn write(b: ir::Bundle, fs: integer, fr: integer, fp: integer, vs: integer, vr: integer, vp: integer, tp: integer) {
+  le = crt::file_le(fs, fr, fp);
+  w = narrow_width(b, tp);
+  if w > 0 {
+    crt::ser_at(vs, vr, vp, w, le);
+  } else if is_record(b, tp) {
+    x: vector<integer> = [0, 0, 0];
+    crt::place_ref(x, vs, vr, vp);
+    ser(b, x[0] ?? NULL_STORE, x[1] ?? 0, x[2] ?? 0, tp, le);
+  } else {
+    ser(b, vs, vr, vp, tp, le);
+  }
+  crt::ser_write(fs, fr, fp);
+}
+
+// `read_data`: the binary form of the value of type `tp` at a place.
+fn ser(b: ir::Bundle, s: integer, r: integer, p: integer, tp: integer, le: boolean) {
+  if tp == 0 || tp == 1 || tp == 3 {
+    crt::ser_at(s, r, p, 8, le);
+    return;
+  }
+  if tp == 2 || tp == 6 {
+    crt::ser_at(s, r, p, 4, le);
+    return;
+  }
+  if tp == 4 {
+    crt::ser_at(s, r, p, 1, le);
+    return;
+  }
+  if tp == 5 {
+    crt::ser_text(s, r, p);
+    return;
+  }
+  match b.types[tp]!.parts[0]! {
+    PtStruct { fields } => ser_fields(b, s, r, p, fields, le),
+    PtEnumValue { value: _, fields } => ser_fields(b, s, r, p, fields, le),
+    PtEnum { values: _ } => crt::ser_at(s, r, p, 1, le),
+    PtByte { start: _, nullable: _ } => crt::ser_at(s, r, p, 1, le),
+    PtShort { start: _, nullable: _ } => crt::ser_int(crt::get_w(3, s, r, p, 0, 0) ?? 0, 2, le),
+    PtShortRaw { start, nullable: _ } => crt::ser_int(crt::get_w(4, s, r, p, 0, start) ?? 0, 2, le),
+    PtInt { start: _, nullable: _ } => crt::ser_at(s, r, p, 4, le),
+    PtIntRaw { start: _, nullable: _ } => crt::ser_at(s, r, p, 4, le),
+    PtVector { content } => {
+      size = b.types[content]!.size;
+      e: vector<integer> = [0, 0, 0];
+      for i in 0..crt::vec_len(s, r, p) {
+        crt::vec_get(e, s, r, p, size, i);
+        ser(b, e[0] ?? NULL_STORE, e[1] ?? 0, e[2] ?? 0, content, le);
+      }
+    }
+    PtArray { content } => {
+      e: vector<integer> = [0, 0, 0];
+      for i in 0..crt::vec_len(s, r, p) {
+        crt::array_get(e, s, r, p, i);
+        ser(b, e[0] ?? NULL_STORE, e[1] ?? 0, e[2] ?? 0, content, le);
+      }
+    }
+    PtDbRef => unserialisable(b, tp, "stored DbRef pointers are store-internal and cannot be serialised"),
+    PtChildRec { content: _ } => unserialisable(b, tp, "child-record pointers (closures) are store-internal and cannot be serialised"),
+    _ => unserialisable(b, tp, "it contains a collection field with store-internal references that cannot be serialized"),
+  }
+}
+
+fn ser_fields(b: ir::Bundle, s: integer, r: integer, p: integer, fields: vector<ir::DbField>, le: boolean) {
+  for f in fields {
+    if placed(f) {
+      ser(b, s, r, p + f.position, f.content, le);
+    }
+  }
+}
+
+// `OpReadFile` into a value that is not a text: `n` bytes from the File's next position, decoded
+// only when all `n` came and no fewer than the type's width (`dispatch_read_data`) — a narrow
+// integer local as its raw slot, sign-extended by its range; a vector or a record local into the
+// value its slot names.
+pub fn read(b: ir::Bundle, fs: integer, fr: integer, fp: integer, vs: integer, vr: integer, vp: integer, n: integer, tp: integer) {
+  width = binary_size(b, tp);
+  got = crt::read_file(fs, fr, fp, n, false, width);
+  if got < width || got != n {
+    return;
+  }
+  le = crt::file_le(fs, fr, fp);
+  w = narrow_width(b, tp);
+  if w > 0 {
+    crt::set_int(vs, vr, vp, 0, crt::de_int(0, w, narrow_signed(b, tp), le));
+  } else if is_record(b, tp) {
+    x: vector<integer> = [0, 0, 0];
+    crt::place_ref(x, vs, vr, vp);
+    de(b, x[0] ?? NULL_STORE, x[1] ?? 0, x[2] ?? 0, tp, le, 0, got);
+  } else {
+    de(b, vs, vr, vp, tp, le, 0, got);
+  }
+}
+
+// `write_data`: the read bytes `off..end` decoded into the value of type `tp` at a place.
+fn de(b: ir::Bundle, s: integer, r: integer, p: integer, tp: integer, le: boolean, off: integer, end: integer) {
+  if tp == 0 || tp == 1 || tp == 3 {
+    crt::de_at(s, r, p, off, 8, le);
+    return;
+  }
+  if tp == 2 || tp == 6 {
+    crt::de_at(s, r, p, off, 4, le);
+    return;
+  }
+  if tp == 4 {
+    crt::de_at(s, r, p, off, 1, le);
+    return;
+  }
+  if tp == 5 {
+    crt::de_text(s, r, p, off, end - off);
+    return;
+  }
+  match b.types[tp]!.parts[0]! {
+    PtStruct { fields } => de_fields(b, s, r, p, fields, le, off, end),
+    PtEnumValue { value: _, fields } => de_fields(b, s, r, p, fields, le, off, end),
+    PtEnum { values: _ } => crt::de_at(s, r, p, off, 1, le),
+    PtByte { start: _, nullable: _ } => crt::de_at(s, r, p, off, 1, le),
+    PtShort { start: _, nullable: _ } => crt::set_w(3, s, r, p, 0, 0, crt::de_int(off, 2, true, le)),
+    PtShortRaw { start, nullable: _ } => crt::set_w(4, s, r, p, 0, start, crt::de_int(off, 2, true, le)),
+    PtInt { start: _, nullable: _ } => crt::de_at(s, r, p, off, 4, le),
+    PtIntRaw { start: _, nullable: _ } => crt::de_at(s, r, p, off, 4, le),
+    PtVector { content } => {
+      // Two widths (@C138): the element's stride in the store and its width on the wire.
+      size = b.types[content]!.size;
+      wire = binary_size(b, content);
+      if wire == 0 {
+        wire = size;
+      }
+      if size == 0 {
+        return;
+      }
+      e: vector<integer> = [0, 0, 0];
+      for i in 0..(end - off) / wire {
+        crt::vec_append(e, s, r, p, size);
+        de(b, e[0] ?? NULL_STORE, e[1] ?? 0, e[2] ?? 0, content, le, off + i * wire, off + (i + 1) * wire);
+        crt::vec_finish(s, r, p);
+      }
+    }
+    PtDbRef => unserialisable(b, tp, "stored DbRef pointers are store-internal and cannot be serialised"),
+    PtChildRec { content: _ } => unserialisable(b, tp, "child-record pointers (closures) are store-internal and cannot be serialised"),
+    _ => unserialisable(b, tp, "it contains a collection field with store-internal references that cannot be serialized"),
+  }
+}
+
+fn de_fields(b: ir::Bundle, s: integer, r: integer, p: integer, fields: vector<ir::DbField>, le: boolean, off: integer, end: integer) {
+  at = off;
+  for f in fields {
+    if placed(f) {
+      de(b, s, r, p + f.position, f.content, le, at, end);
+      at += binary_size(b, f.content);
+    }
+  }
+}

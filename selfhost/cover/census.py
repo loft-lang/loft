@@ -67,7 +67,9 @@ def judge(path, loft, runner, tmp, env, root):
     if code != 0:
         return path, "skip", "does not compile as a plain program"
     ecode, eout, eerr = run([loft, "--interpret"] + libs + [path], env, 300)
-    acode, aout, aerr = run([runner, img], env, 300)
+    # The runner anchors the program's relative paths where `loft` anchors a C program's.
+    renv = {**env, "LOFT_SOURCE_DIR": os.path.dirname(os.path.abspath(path))}
+    acode, aout, aerr = run([runner, img], renv, 300)
     if acode == 3 and "refused: " in aerr:
         reason = aerr.split("refused: ", 1)[1].strip().splitlines()[0].split(" — in ")[0]
         return path, "refused", re.sub(r"\b\d+\b", "N", reason)[:160]

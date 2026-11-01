@@ -168,6 +168,17 @@ enum Code {
   VecReserve,
   HashReserve,
   VecPrepend,
+  // A File record (S6's files, `files.loft`): `OpGetFile`, `OpGetFileText` into a `&text`, and
+  // `OpWriteFile` / `OpReadFile` of a variable's value (`a` its type, `b` 1 for a text local).
+  GetFile,
+  FileText,
+  WriteFile,
+  ReadFile,
+  // A path operator (`a`: 0 `OpDelete`, 1 `OpMoveFile`, 2 `OpMkdir`, 3 `OpMkdirAll`, 4 `OpRmdir`)
+  // and a File operator (`a`: 0 `OpSizeFile`, 1 `OpSeekFile`, 2 `OpTruncateFile`, 3
+  // `OpSyncFile`); `b` is the op's effect on the stacks.
+  FsOp,
+  FileOp,
   FloatFromText,
   // `pow` and `OpMathFunc2Float` (`a` 0 `atan2`, 1 `log`) on two floats: loft's own.
   Pow,
@@ -786,6 +797,12 @@ fn effect(code: Code, b: integer) -> integer {
     VecReserve => -2,
     HashReserve => -2,
     VecPrepend => -1,
+    GetFile => 0,
+    FileText => -2,
+    WriteFile => -2,
+    ReadFile => -3,
+    FsOp => b,
+    FileOp => b,
     FloatFromText => 0,
     VecReverse => -1,
     VecKeep => -3,
@@ -929,6 +946,12 @@ fn native_index(name: text) -> integer? {
     "t_4text_is_alphabetic" => 34,
     "t_4text_is_whitespace" => 35,
     "t_4text_is_control" => 36,
+    "n_write_bytes" => 37,
+    "n_os_temp_dir" => 38,
+    "n_read_bytes" => 39,
+    "t_4File_lines" => 40,
+    "n_write_text_raw" => 41,
+    "n_list_dir" => 42,
     _ => null,
   }
 }
@@ -1595,6 +1618,39 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     value(l, b, args[0]!, KRef);
     value(l, b, args[1]!, KRef);
     emit(l, VecPrepend, KInt, tp, if b.types[tp]?.linked ?? false { 1 } else { 0 });
+  } else if name == "OpGetFile" {
+    value(l, b, args[0]!, KRef);
+    emit(l, GetFile, KInt, 0, 0);
+  } else if name == "OpGetFileText" {
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KTextRef);
+    emit(l, FileText, KInt, 0, 0);
+  } else if name == "OpWriteFile" || name == "OpReadFile" {
+    // The value is a variable's (`OpCreateStack`): a text local's byte, else its slot's reference.
+    tp = literal(l, args[len(args) - 1]!);
+    value(l, b, args[0]!, KRef);
+    if tp == 5 {
+      value(l, b, args[1]!, KTextRef);
+    } else {
+      value(l, b, args[1]!, KRef);
+    }
+    if name == "OpReadFile" {
+      value(l, b, args[2]!, KInt);
+    }
+    emit(l, if name == "OpReadFile" { ReadFile } else { WriteFile }, KInt, tp, if tp == 5 { 1 } else { 0 });
+  } else if name == "OpDelete" || name == "OpMoveFile" || name == "OpMkdir" || name == "OpMkdirAll" || name == "OpRmdir" {
+    for arg in args {
+      value(l, b, arg, KText);
+    }
+    which = match name { "OpDelete" => 0, "OpMoveFile" => 1, "OpMkdir" => 2, "OpMkdirAll" => 3, _ => 4 };
+    emit(l, FsOp, KInt, which, 1 - len(args));
+  } else if name == "OpSizeFile" || name == "OpSeekFile" || name == "OpTruncateFile" || name == "OpSyncFile" {
+    value(l, b, args[0]!, KRef);
+    if len(args) > 1 {
+      value(l, b, args[1]!, KInt);
+    }
+    which = match name { "OpSizeFile" => 0, "OpSeekFile" => 1, "OpTruncateFile" => 2, _ => 3 };
+    emit(l, FileOp, KInt, which, if which == 1 { -2 } else if which == 2 { -1 } else { 0 });
   } else if name == "OpSetDbRef" {
     // A stored reference (`reference<T>`, @C91) written into a field: `a` the field.
     value(l, b, args[0]!, KRef);
@@ -3144,6 +3200,13 @@ fn is_operator(name: text) -> boolean {
 }
 
 // Does `d` have a body written in loft?  A definition with no code is a native.
+// A standard-library function the Rust interpreter runs as its compiled body (`compiled_stdlib`,
+// a `loft_shared_` symbol) and this one carries no native for: that body is its loft body, which
+// runs here as any other function's.
+fn compiled_body(d: ir::Definition) -> boolean {
+  d.native.starts_with("loft_shared_") && native_index(d.name) == null
+}
+
 fn has_body(d: ir::Definition) -> boolean {
   if len(d.code) == 0 {
     return false;
@@ -3262,7 +3325,7 @@ fn call(l: Lowering, b: ir::Bundle, def_nr: integer, args: vector<ir::Node>) {
     } else {
       refuse(l, "an operator the interpreter does not carry: {d.name}");
     }
-  } else if d.native != "" || !has_body(d) {
+  } else if (d.native != "" && !compiled_body(d)) || !has_body(d) {
     idx = native_index(d.name);
     if idx != null {
       emit(l, Native, kind_of_types(d.returned), idx, len(args));

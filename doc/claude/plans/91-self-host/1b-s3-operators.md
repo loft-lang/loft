@@ -48,10 +48,15 @@ strict comparison over every program the census passes (out, alloc, leak, binds,
 | natives `n_now`, `n_ticks`, `n_panic` | loft's own (natives 12–14; `panic` handed the program's file and line, as `assert` is) | `small_ops.loft` `clocked`; the census for `panic` |
 | natives `split`, `join`, `trim*`, `replace`, `rfind`, `contains`, the character and text classes (15–36) | loft's own; `split` writes the caller's vector buffer step for step as the compiled body does (emptied or made, then per part a slot reserved, appended, set, counted), `join` reads the store vector's texts | `small_ops.loft` `worded` |
 | `OpPowInt`, `OpNarrow32`, `OpSizeStruct`, `OpReserveVector`, `OpReserveHash`, `OpPrependVector` | loft's own `pow`, the 32-bit range kept, the parser's constant; `loft_vec_reserve`, `loft_hash_reserve`, `loft_vec_prepend` (the element's linked flag beside it) | `small_ops.loft` `grown`, `stdlib.loft` `uses_pow`; the census for the reserves and the prepend rewrite |
+| a File record (S6's files, carried here because the heap and binding chapters trace through a file): `OpGetFile`, `OpGetFileText`, `OpWriteFile`, `OpReadFile`, natives `write_bytes`, `read_bytes`, `list_dir`, `write_text_raw` | the shim includes `loft_io.h`; each operator is the runtime's own (`loft_get_file`, `loft_get_file_text` into the `&text` slot, `loft_write_file`, `loft_read_file`, …).  A value's binary form is `files.loft`, a port of `read_data` / `write_data` walking the bundle's types while the shim gathers or decodes each piece; a relative path resolves against `LOFT_SOURCE_DIR`, which the census and the comparison hand the runner as `loft` hands a C program | `kernels/files.loft` `bytes_back`, `binary` |
+| `OpDelete`, `OpMoveFile`, `OpMkdir`, `OpMkdirAll`, `OpRmdir`; `OpSizeFile`, `OpSeekFile`, `OpTruncateFile`, `OpSyncFile`; native `os_temp_dir` | the runtime's own (`loft_fs_*`, `loft_size_file`, …); `os_temp_dir` as loft's own `temp_dir()` | `bytes_back`; the census |
+| a compiled stdlib body (`compiled_stdlib`, a `loft_shared_` symbol) with no native here | its loft body, lowered as any function's — except `File.lines`, whose compiled body adopts the caller's buffer (`R-RetAdopt`, native-only): native 40 writes that buffer step for step as `split` does, over `File.content()` read through the record | `files.loft` `lined` |
 
-**Measured** (2026-10-31): the census went from 297 to 623 programs passed over these rows,
+**Measured** (2026-11-01): the census went from 297 to 694 programs passed over these rows,
 none wrong, crashed or leaking, and every passing program equal to the Rust interpreter in
-every layer.
+every layer but five, each naming its file by the clock: `ticks()` counts from each process's
+own start, the Rust interpreter's including its parse, so the path — and its claim — is a word
+longer there.
 
 **Design → code.**  Transcribed directly, with three findings fixed where they lived rather than
 routed around: `loft_crt.h` lacked `loft_keyed.h`; the C backend leaked the text temporaries a
@@ -60,4 +65,6 @@ vector bound from a `match` over an owned subject was returned as a view of it (
 fixed in the compiler.  Later: a match's arm gate peeled only the arm (loft#2315), a native
 `if` condition answering `boolean?` was not tested as one (loft#2316), and a `_dest`-only text
 native assigned to a `text?` local read back empty on the interpreter (loft#2317, silent) — each
-fixed where it lived.
+fixed where it lived.  The files rows found a drop or copy hook taking a hidden work buffer that
+its call sites, placed after `(R-WorkBuffer)`, never pass (loft#2320, an internal error), fixed
+by declining hooks as the rule declines entry points.
