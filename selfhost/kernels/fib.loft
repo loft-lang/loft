@@ -8,9 +8,15 @@ fn fib(n: integer) -> integer {
 
 // The Rust interpreter's side of the S1.4 measurement: the answer and the call's own time in
 // microseconds, start-up excluded.  The loft interpreter runs `fib` from the image instead.
+// A function value (S5's closures), which the lowering refuses by name until that phase.
+fn later(n: integer) -> integer {
+  inc = fn(x: integer) -> integer { x + 1 };
+  inc(n)
+}
+
 fn main() {
   t0 = ticks();
   r = fib(30);
   us = ticks() - t0;
-  println("{r} {us}");
+  println("{r} {us} {later(1)}");
 }

@@ -44,8 +44,10 @@ strict comparison over every program the census passes (out, alloc, leak, binds,
 | `OpEqContent`, `OpNeContent` | `eq.loft` ports `Stores::eq_content` over the C runtime's reads: fields, variants, the narrow kinds, references once per pair, child records as a loop, vectors and hashes element by element; an array or keyed collection other than a hash is refused by name until S4 | `structs.loft` `equal` |
 | an array (a vector of linked records): `OpNewRecord` / `OpFinishRecord`, `OpVectorRef`, `OpVectorRefNullable` | `loft_entry_new` filled with the element's defaults, `loft_array_append`, `loft_array_get` (the raising twin's report only logs) | `vectors.loft` `linked_ids` |
 | `OpSetDbRef`, `OpGetDbRef` (a stored `reference<T>`, @C91) | `loft_set_dbref` (the record named is marked referenced), `loft_get_dbref` (a removed record reads null); a closure's stored half waits for S5 with `TyFunction` | `linked_ids` |
+| `OpAppendVector` of a linked element type | `loft_vec_add_array`, each id's record copied into one of the destination's own | `vectors.loft` `linked_ids` |
+| natives `n_now`, `n_ticks`, `n_panic` | loft's own (natives 12–14; `panic` handed the program's file and line, as `assert` is) | `small_ops.loft` `clocked`; the census for `panic` |
 
-**Measured** (2026-10-31): the census went from 297 to 601 programs passed over these rows,
+**Measured** (2026-10-31): the census went from 297 to 611 programs passed over these rows,
 none wrong, crashed or leaking, and every passing program equal to the Rust interpreter in
 every layer.
 

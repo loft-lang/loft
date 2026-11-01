@@ -844,8 +844,14 @@ void loft_crt_free_scratch(int64_t store, int64_t rec, int64_t pos) {
 void loft_crt_vec_add(int64_t tp, int64_t store, int64_t rec, int64_t pos, int64_t o_store,
                       int64_t o_rec, int64_t o_pos) {
     if (!loft_crt_keyed(tp)) return;
-    loft_vec_add(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos),
-                 loft_crt_ref(o_store, o_rec, o_pos));
+    /* A linked element type is an array of record ids: each record copied into a record of its
+     * own (`loft_vec_add_array`). */
+    if (loft_crt_types[tp].linked)
+        loft_vec_add_array(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos),
+                           loft_crt_ref(o_store, o_rec, o_pos));
+    else
+        loft_vec_add(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos),
+                     loft_crt_ref(o_store, o_rec, o_pos));
 }
 
 /* ── Rendering a value (@PLN91 S3, `OpFormatDatabase`): the interpreter walks the schema in loft

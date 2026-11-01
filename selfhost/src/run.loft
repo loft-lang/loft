@@ -808,6 +808,19 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
             crt::set_slot_text(stk, buf, answer);
           }
           put_text(texts, sp_text - 1, answer);
+        } else if op.a == 12 || op.a == 13 {
+          // `now()`, `ticks()`: loft's own clocks.
+          put_int(ints, sp_int, if op.a == 12 { now() } else { ticks() });
+          sp_int += 1;
+        } else if op.a == 14 {
+          // `panic(message, file, line)`: loft's own, handed the program's file and line as
+          // `assert` is.
+          sp_int -= 1;
+          pline = ints[sp_int];
+          sp_text -= 1;
+          pfile = texts[sp_text];
+          sp_text -= 1;
+          panic(texts[sp_text] ?? "", pfile ?? "", pline ?? 0);
         } else if op.a == 10 || op.a == 11 {
           // `text_from_byte_range(bytes, lo, hi)` and `text_from_bytes(bytes)` (its whole range):
           // the C runtime's own, over the store's vector; a compiled caller's text buffer gets the

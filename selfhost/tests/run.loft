@@ -40,10 +40,10 @@ fn test_an_entry_given_the_wrong_arguments_is_refused() {
 
 fn test_a_function_the_lowering_refuses_is_named_not_run() {
   b = kernel("fib");
-  main = lower::find(b, "n_main");
-  assert(main != null, "the image has main");
-  o = run::run(b, main, []);
-  assert(o.refused != "", "main formats text, which S1 does not carry: {o.value}");
+  later = lower::find(b, "n_later");
+  assert(later != null, "the image has later");
+  o = run::run(b, later!, [1]);
+  assert(o.refused != "" && o.refused_in == "n_later", "later holds a function value, which S5 carries: {o.value} {o.refused}");
 }
 
 // One kernel's entry, run with `args`; the values are computed outside this code (Python, and
@@ -122,6 +122,7 @@ fn test_the_small_integer_operators_answer_as_loft_does() {
   assert(ran("small_ops", "n_texted", [4]) == 11030909111117, "texted(4)");
   assert(ran("small_ops", "n_narrowed", [3]) == 19600521, "narrowed(3): linked narrow locals hold their field encoding");
   assert(ran("small_ops", "n_narrowed", [-5]) == 20400521, "narrowed(-5)");
+  assert(ran("small_ops", "n_clocked", [4]) == 5, "clocked(4): now and ticks");
   assert(ran("small_ops", "n_rem_or", [7, 3]) == 1, "rem_or(7, 3)");
   assert(ran("small_ops", "n_rem_or", [7, 0]) == -1, "rem_or(7, 0)");
   // |-6 / 4| = 1.5, as a float and as a single, each times 100.
@@ -266,8 +267,8 @@ fn test_a_vector_is_appended_as_element_copies() {
   assert(ran_clean(v, "n_removed", 0) == 2032405620, "removed(0)");
   assert(ran_clean(v, "n_decoded", 4) == 531, "decoded(4): text_from_bytes and text_from_byte_range");
   assert(ran_clean(v, "n_decoded", 2) == 510, "decoded(2)");
-  assert(ran_clean(v, "n_linked_ids", 4) == 12142, "linked_ids(4): an array of ids and a stored reference");
-  assert(ran_clean(v, "n_linked_ids", 0) == 12102, "linked_ids(0)");
+  assert(ran_clean(v, "n_linked_ids", 4) == 716142, "linked_ids(4): an array of ids, a stored reference, an append");
+  assert(ran_clean(v, "n_linked_ids", 0) == 716102, "linked_ids(0)");
   // census 2026-10-30: the callee filled a fresh store instead of the caller's buffer, and the
   // caller's adopted copy was swept.
   assert(ran_clean(v, "n_retbuf_filled", 2) == 231, "retbuf_filled(2): the caller's buffer is filled in place");
