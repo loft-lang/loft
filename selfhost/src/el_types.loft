@@ -234,7 +234,7 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
     STy { name, member, args, elem_null, keys, deps, limit, not_null, assoc, nullable } => {
       if name == "vector" && member == "" && len(args) == 1 && !elem_null && len(keys) == 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" && !nullable {
         // `sub_type_inner`'s vector arm: the element read as a type, no deps yet.
-        inner = parse_type(e, args[0] ?? 0);
+        inner = parse_type(e, args[0]);
         if inner == null {
           return null;
         }
@@ -243,19 +243,17 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
       if (name == "hash" || name == "sorted" || name == "index") && member == "" && len(args) == 1 && !elem_null && len(keys) > 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" && !nullable {
         // `sub_type_inner`'s keyed arms: a record element and its key fields (`-k` descending,
         // which only `sorted` and `index` take).
-        inner = parse_type(e, args[0] ?? 0);
+        inner = parse_type(e, args[0]);
         if inner == null {
           return null;
         }
-        sub = -1;
-        match inner! {
-          TyReference { n } => { sub = n; },
-          _ => {}
-        }
-        if sub < 0 {
-          el::refuse(e, "a keyed collection of this element: {name}");
-          return null;
-        }
+        sub = match inner! {
+          TyReference { n } => n,
+          _ => {
+            el::refuse(e, "a keyed collection of this element: {name}");
+            return null;
+          }
+        };
         if name == "hash" {
           names: vector<ir::NameRef> = [];
           for k in keys {

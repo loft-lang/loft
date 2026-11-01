@@ -48,7 +48,7 @@ pub fn fill_all(e: el::El) {
       continue;
     }
     for a in d.attributes {
-      match a.typedef[0] ?? ir::TyVoid {
+      match a.typedef[0] {
         TyVector { inner } => {
           nm = el_types::elem_name(e, inner);
           if nm != "" && el::def_nr(e, "main_vector<{nm}>") < 0 {
@@ -112,7 +112,7 @@ fn register_enum(e: el::El, d: integer) {
   }];
   values: vector<ir::EnumPair> = [];
   for a in el::def(e, d).attributes {
-    if (a.typedef[0] ?? ir::TyVoid) is TyEnum {
+    if (a.typedef[0]) is TyEnum {
       values += [ir::EnumPair { nr: NO_TYPE, name: a.name }];
       e.b.data.definitions[d].attributes[a#index].value = [ir::NdEnum { ord: len(values), tp: num }];
     }
@@ -136,11 +136,10 @@ fn fill_database(e: el::El, d: integer) {
     if a.constant {
       continue;
     }
-    c = -1;
-    match a.typedef[0] ?? ir::TyUnknown { n: 0 } {
-      TyInteger { spec } => { c = int_part(e, spec, a.alias_d_nr, a.nullable); },
-      _ => { c = content_type(e, a.typedef[0] ?? ir::TyUnknown { n: 0 }); }
-    }
+    c = match a.typedef[0] {
+      TyInteger { spec } => int_part(e, spec, a.alias_d_nr, a.nullable),
+      _ => content_type(e, a.typedef[0])
+    };
     if c < 0 {
       el::refuse(e, "a struct field of this type");
       return;
@@ -247,7 +246,7 @@ pub fn key_descriptors(e: el::El, t: integer) -> vector<ir::Key> {
   r: vector<ir::Key> = [];
   c = -1;
   ks: vector<ir::KeyField> = [];
-  match e.b.types[t].parts[0] ?? ir::PtBase {
+  match e.b.types[t].parts[0] {
     PtHash { content, fields } => {
       c = content;
       for f in fields {
@@ -269,7 +268,7 @@ pub fn key_descriptors(e: el::El, t: integer) -> vector<ir::Key> {
     if f.content <= 5 {
       tn = 1 + f.content;
     } else {
-      match e.b.types[f.content].parts[0] ?? ir::PtBase {
+      match e.b.types[f.content].parts[0] {
         PtInt { start: _ } => { tn = 8; },
         PtShort { start: m } => { tn = 9; start = m; },
         PtByte { start: m } => { tn = 10; start = m; },
@@ -470,7 +469,7 @@ fn structure(e: el::El, name: text) -> integer {
 
 // The element store type of a collection store type, or -1 (`Stores::content`).
 fn element_of(e: el::El, t: integer) -> integer {
-  match e.b.types[t].parts[0] ?? ir::PtBase {
+  match e.b.types[t].parts[0] {
     PtVector { content } => content,
     PtArray { content } => content,
     PtSorted { content } => content,
@@ -484,7 +483,7 @@ fn element_of(e: el::El, t: integer) -> integer {
 }
 
 fn keyed_part(e: el::El, t: integer) -> boolean {
-  match e.b.types[t].parts[0] ?? ir::PtBase {
+  match e.b.types[t].parts[0] {
     PtSorted { content: _ } => true,
     PtOrdered { content: _ } => true,
     PtHash { content: _ } => true,
@@ -540,7 +539,7 @@ fn set_field_nullable(e: el::El, s: integer, f: integer) {
 
 pub fn struct_fields(e: el::El, s: integer) -> vector<ir::DbField> {
   r: vector<ir::DbField> = [];
-  match e.b.types[s].parts[0] ?? ir::PtBase {
+  match e.b.types[s].parts[0] {
     PtStruct { fields } => { r = fields; },
     _ => {}
   }
@@ -548,7 +547,7 @@ pub fn struct_fields(e: el::El, s: integer) -> vector<ir::DbField> {
 }
 
 fn is_record(t: ir::DbType) -> boolean {
-  match t.parts[0] ?? ir::PtBase {
+  match t.parts[0] {
     PtStruct { fields: _ } => true,
     PtEnumValue { value: _ } => true,
     _ => false
@@ -559,7 +558,7 @@ fn is_record(t: ir::DbType) -> boolean {
 fn finish(e: el::El) {
   // `finish_type`'s enum arm: one byte, where no variant has a record of its own.
   for t in e.b.types {
-    if t.size == NO_TYPE && (t.parts[0] ?? ir::PtBase) is PtEnum {
+    if t.size == NO_TYPE && (t.parts[0]) is PtEnum {
       e.b.types[t#index].size = 1;
       e.b.types[t#index].align = 1;
     }
