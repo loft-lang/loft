@@ -7,9 +7,10 @@
 //! exactly when `n` still equals `len(v)` at the read.  That holds, on every path, when:
 //!
 //! - `n` is assigned once in the function, by that `len(v)`, and never handed to a `&` parameter;
-//! - the assignment is inside no loop, so nothing written earlier in a loop body runs after it;
-//! - no statement after it writes `v` — the variable, or for a field `s.v` the record `s` — nor
-//!   any variable whose type views it, and no closure captures either.
+//! - no statement that can run after it writes `v` — the variable, or for a field `s.v` the
+//!   record `s` — nor any variable whose type views it, and no closure captures either.  What
+//!   can run after it is the rest of each enclosing statement list and, for a loop around it, the
+//!   whole loop: its next turn runs what stands before the assignment too.
 //!
 //! The answer is read off the function's PASS-1 body, which is whole when pass 2 parses the read
 //! (a read can come before a write in the source and after it at run time, inside a loop).
@@ -89,12 +90,12 @@ fn passed_by_reference(code: &Value, data: &Data, n: u16) -> bool {
             matches!(a.unspan(), Value::Var(x) if *x == n)
                 && attrs
                     .get(i)
-                    .is_some_and(|at| matches!(at.typedef, crate::data::Type::RefVar(_)))
+                    .is_some_and(|at| matches!(at.typedef.base(), crate::data::Type::RefVar(_)))
         })
     })
 }
 
-/// Is the assignment of `n` inside no loop, and does no statement after it write `base` — by a
+/// Does no statement that can run after the assignment of `n` write `base` — by a
 /// reassignment, or a write through `base`, a variable viewing it, or one it views?  Binding a
 /// new view of it (`e = v[i]`) writes nothing.
 fn stable_after(code: &Value, data: &Data, vars: &Function, n: u16, base: u16) -> bool {
@@ -129,9 +130,9 @@ fn stable_after(code: &Value, data: &Data, vars: &Function, n: u16, base: u16) -
                 args.iter().enumerate().any(|(i, a)| {
                     let writes = (i == 0 && crate::parser::op_writes_first_arg(def.name()))
                         || (i == 1 && def.name() == "OpCopyRecord")
-                        || attrs
-                            .get(i)
-                            .is_some_and(|at| matches!(at.typedef, crate::data::Type::RefVar(_)))
+                        || attrs.get(i).is_some_and(|at| {
+                            matches!(at.typedef.base(), crate::data::Type::RefVar(_))
+                        })
                         || callee.get(i).copied().unwrap_or(false);
                     writes && touches(a)
                 })
@@ -142,12 +143,20 @@ fn stable_after(code: &Value, data: &Data, vars: &Function, n: u16, base: u16) -
     })
 }
 
-/// Collect into `after` every statement that runs after the assignment of `n` in `node`, level
-/// by level up the blocks that hold it.  `false` when the assignment is not found outside a loop.
+/// Collect into `after` every statement that can run after the assignment of `n` in `node`,
+/// level by level up the statement lists that hold it — a loop's whole body.  `false` when the
+/// assignment is not found as a statement.
 fn statements_after<'a>(node: &'a Value, n: u16, after: &mut Vec<&'a Value>) -> bool {
     match node.unspan() {
         Value::Set(v, _) if *v == n => true,
         Value::Block(bl) => statements_after_in(&bl.operators, n, after),
+        Value::Loop(bl) => {
+            let found = statements_after_in(&bl.operators, n, after);
+            if found {
+                after.extend(&bl.operators);
+            }
+            found
+        }
         Value::Insert(ops) => statements_after_in(ops, n, after),
         Value::If(_, then, els) => {
             statements_after(then, n, after) || statements_after(els, n, after)

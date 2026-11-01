@@ -6,7 +6,14 @@
 //!
 //! A `value struct` (@PLN101) is stored INLINE wherever it lives, so writing one into a
 //! container writes its bytes into storage the container already has: nothing is allocated,
-//! and the rewrite the advice names buys exactly zero.
+//! and the rewrite the advice names buys exactly zero.  A plain record that owns no heap is
+//! the same once it lands IN a structure — a vector's element and a record's field are slots
+//! of the container — so its copy is silent there too (COPY_DIAGNOSTICS § What remains open).
+//!
+//! And a copy is advised only with a rewrite usable at its site (DIAGNOSTICS.md § Fix lines):
+//! each control below reads its source again in a statement of its own that can move above
+//! the copy — a read in the statement that also reads the copy's destination is a NECESSARY
+//! copy, and says nothing.
 //!
 //! **This is the gate; the `.loft` guard beside it is not.** The defect is a diagnostic that
 //! must NOT fire, and neither channel the corpus scores can see that — `check_diagnostics`
@@ -29,7 +36,7 @@ fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
 }
 
-/// The program under test: three inline-value copies that must be silent, and two copies that
+/// The program under test: four inline-value copies that must be silent, and one copy that
 /// must still be advised.
 const PROGRAM: &str = r#"
 value struct Stamp { ms: integer, tick: integer }
@@ -52,7 +59,8 @@ fn main() {
 
   h = Heapy { xs: [1, 2], n: 1 };
   hv = [h];
-  print("{len(hv[0].xs)}{h.n}");
+  hn = h.n;
+  print("{len(hv[0].xs)}{hn}");
 
   r = Recorded { ms: 1 };
   rv = [r];
@@ -101,21 +109,20 @@ fn assert_backend(backend: &str) {
         "[{backend}] the program must reach its output\n{stdout}"
     );
 
-    // The two that MUST still be advised. `Heapy` is the control that says the marker is not
+    // The one that MUST still be advised. `Heapy` is the control that says the marker is not
     // the whole answer: `value struct` says how the value is STORED, not what it OWNS, and a
-    // `vector` field beneath one is a real duplicated store. `Recorded` is a plain struct,
-    // which lives in a record reached by a `DbRef`, so its copy allocates one even though
-    // every field is a scalar.
-    for want in ["copy of Heapy", "copy of Recorded"] {
+    // `vector` field beneath one is a real duplicated store.
+    for want in ["copy of Heapy"] {
         assert!(
             diag.contains(want),
             "[{backend}] `{want}` must still be advised\n{diag}"
         );
     }
 
-    // The three that must be SILENT — an inline value with no heap part anywhere beneath it,
-    // as an element, as a field, and nested two deep.
-    for unwanted in ["copy of Stamp", "copy of Wrapped"] {
+    // The ones that must be SILENT — an inline value with no heap part anywhere beneath it,
+    // as an element, as a field, and nested two deep; and a plain record with none, placed
+    // as an element.
+    for unwanted in ["copy of Stamp", "copy of Wrapped", "copy of Recorded"] {
         assert!(
             !diag.contains(unwanted),
             "[{backend}] `{unwanted}` allocates nothing — there is no borrow to advise\n{diag}"
@@ -126,8 +133,8 @@ fn assert_backend(backend: &str) {
     // same type, is a regression this file exists to catch.
     let n = diag.matches("advice[avoidable-copy]").count();
     assert_eq!(
-        n, 2,
-        "[{backend}] want exactly 2 avoidable-copy notices (Heapy, Recorded), got {n}\n{diag}"
+        n, 1,
+        "[{backend}] want exactly 1 avoidable-copy notice (Heapy), got {n}\n{diag}"
     );
 }
 
@@ -184,8 +191,8 @@ fn assert_written_loop_names(backend: &str) {
         "[{backend}] the program must answer its values\n{stdout}"
     );
     for want in [
-        "copy of R — `f` is still used after this point",
-        "copy of Q — `f` is still used after this point",
+        "copy of R — `f` is used again at line",
+        "copy of Q — `f` is used again at line",
     ] {
         assert!(diag.contains(want), "[{backend}] want `{want}`\n{diag}");
     }
@@ -239,7 +246,8 @@ fn main() {
   xs[0] = r.inner;
   ks = [10, 11];
   k = H { v: ks };
-  print("{len(a.ks)} {len(a.vs)} {len(h.v)} {len(o.ks)} {len(xs[0].a)} {r.n} {len(k.v)} {len(ks)} {hold([12, 13, 14])}\n");
+  nk = len(ks);
+  print("{len(a.ks)} {len(a.vs)} {len(h.v)} {len(o.ks)} {len(xs[0].a)} {r.n} {len(k.v)} {nk} {hold([12, 13, 14])}\n");
 }
 "#;
 
@@ -271,7 +279,7 @@ fn assert_projection_copies(backend: &str) {
     }
     let n = diag.matches("advice[avoidable-copy]").count();
     assert!(
-        n == 1 && diag.contains("copy of vector<integer> — `ks` is still used after this point"),
+        n == 1 && diag.contains("copy of vector<integer> — `ks` is used again at line"),
         "[{backend}] want exactly the whole-variable control advised, got {n}\n{diag}"
     );
 }
@@ -304,7 +312,8 @@ fn use_it(s: vector<integer>) -> integer { len(s) }
 fn main() {
   a1(); a9(true); a9(false); a10(true); a10(false);
   src = [1, 2, 3]; h = Holder { v: src };
-  println("| {use_it(src)} {len(h.v)}");
+  n = use_it(src);
+  println("| {n} {len(h.v)}");
 }
 "#;
 
@@ -335,7 +344,7 @@ fn assert_moved_droppables(backend: &str) {
     );
     let n = diag.matches("advice[avoidable-copy]").count();
     assert!(
-        n == 1 && diag.contains("copy of vector<integer> — `src` is still used after this point"),
+        n == 1 && diag.contains("copy of vector<integer> — `src` is used again at line"),
         "[{backend}] want exactly the non-droppable control advised, got {n}\n{diag}"
     );
 }
@@ -348,4 +357,89 @@ fn a_moved_droppable_is_not_advised_as_a_copy_interpret() {
 #[test]
 fn a_moved_droppable_is_not_advised_as_a_copy_native() {
     assert_moved_droppables("--native");
+}
+
+/// loft#2342 — "still used after this point" is a PATH question.  A read in a `match` arm
+/// exclusive with the copy's, and a read of a loop variable on the loop's next turn after it is
+/// assigned again, are no later use: each copy is the source's last use on every path, so it is
+/// a move and says nothing.  The control reads the source again in its OWN arm, by a statement
+/// that can run before the copy, and is advised with that move.
+const PATHS: &str = r#"
+enum Node { NdNull, NdText { s: text }, NdCall { d: integer, args: vector<Node> } }
+struct Acc { src: vector<Node> }
+fn cl(d: integer, args: vector<Node>) -> Node { NdCall { d: d, args: args } }
+fn marm(k: integer, x: Node) -> Node {
+  pos = NdText { s: "p" };
+  code = NdNull;
+  match k {
+    1 => { code = cl(1, [x, pos]); },
+    2 => { code = cl(2, [x, pos]); },
+    _ => { code = cl(3, [x, pos]); }
+  }
+  code
+}
+fn lex(n: integer) -> Acc {
+  r = Acc { src: [] };
+  at = 0;
+  while at < n {
+    t = if at == 0 { NdNull } else { NdText { s: "{at}" } };
+    r.src += [t];
+    at += 1;
+  }
+  r
+}
+fn control(k: integer) -> integer {
+  w = NdText { s: "w" };
+  h = Acc { src: [] };
+  if k > 0 {
+    h.src += [w];
+    seen = w is NdText;
+    return if seen { len(h.src) } else { 0 };
+  }
+  0
+}
+fn main() {
+  c = marm(2, NdNull);
+  n = match c { NdCall { d, args } => d * 10 + len(args), _ => -1 };
+  print("{n} {len(lex(3).src)} {control(1)}\n");
+}
+"#;
+
+fn assert_paths(backend: &str) {
+    let dir = std::env::temp_dir().join(format!("loft_2342_paths_{}", backend.trim_matches('-')));
+    fa::create_dir_all(&dir).expect("scratch dir");
+    let path = dir.join("paths.loft");
+    fa::write(&path, PATHS).expect("write program");
+    let (stdout, diag, code) = run(backend, &path);
+    assert_eq!(
+        code,
+        Some(0),
+        "[{backend}] the program must run\n{stdout}\n---\n{diag}"
+    );
+    // marm(2): NdCall { d: 2, args: [x, pos] } → 22; lex(3) appends three; control(1) → 1.
+    assert!(
+        stdout.contains("22 3 1"),
+        "[{backend}] the program must answer its values\n{stdout}"
+    );
+    for unwanted in ["`pos`", "`t` is used again"] {
+        assert!(
+            !diag.contains(unwanted),
+            "[{backend}] {unwanted}: no path reads it after the copy, so the copy is a move\n{diag}"
+        );
+    }
+    let n = diag.matches("advice[avoidable-copy]").count();
+    assert!(
+        n == 1 && diag.contains("`w` is used again at line"),
+        "[{backend}] want exactly the same-arm control advised, got {n}\n{diag}"
+    );
+}
+
+#[test]
+fn a_read_no_path_reaches_is_no_later_use_interpret() {
+    assert_paths("--interpret");
+}
+
+#[test]
+fn a_read_no_path_reaches_is_no_later_use_native() {
+    assert_paths("--native");
 }

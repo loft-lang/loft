@@ -1680,9 +1680,23 @@ fn warn(src: &str, gated_on: bool) -> String {
 ///
 /// Emitted as `Advice`, not `Warning`: the program is CORRECT and merely pays a copy, and the
 /// repo rule is that a diagnostic gates only when ignoring it can produce a wrong result.
+/// The copy notice's own probe: `base` is copied into `a` and read again by the next statement
+/// alone, which can run before the copy — so the copy is avoidable AND the notice has a rewrite
+/// to offer.  (`REPORT_SRC` reads the source in the statement that also reads the copy's
+/// destination: a necessary copy, which the notice leaves alone.)
+const WARN_SRC: &str = r#"
+struct Item { tags: vector<integer> }
+fn main() {
+    base: vector<integer> = [1, 2, 3];
+    a = Item { tags: base };
+    first = base[0];
+    print("{a.tags[0]} {first}\n");
+}
+"#;
+
 #[test]
 fn warn_copies_is_default_on_advice() {
-    let off = warn(REPORT_SRC, false);
+    let off = warn(WARN_SRC, false);
     // @PLN131 gave the notice its code, so the level renders as `advice[avoidable-copy]:`.
     // Matching the tag rather than a bare `advice:` is the point: the code is the frozen
     // handle a fix and a doc section attach to, and losing it would be the regression.
@@ -1696,8 +1710,8 @@ fn warn_copies_is_default_on_advice() {
     );
     // The text must name what the author can DO, not what the analysis concluded.
     assert!(
-        off.contains("still used after this point"),
-        "the notice must name the lever (the surviving source); stderr:\n{off}"
+        off.contains("`base` is used again at line 6"),
+        "the notice must name the lever (the surviving source, by line); stderr:\n{off}"
     );
 }
 
@@ -1736,13 +1750,13 @@ fn a_dependency_copy_is_reported_against_the_dependency_file() {
     )
     .expect("write manifest");
 
-    // The copy is line 6 of the library: `xs` is named into the struct and used again
-    // on the next line, so it survives and cannot be moved.
+    // The copy is line 6 of the library: `xs` is named into the struct and read again by the
+    // next statement alone, so it survives — and that read could move above the copy.
     fa::write(
         lib.join("copier781.loft"),
         "// 1\npub struct Holder { v: vector<integer> }\n\n\
          pub fn make_it() -> integer {\n  xs = [1, 2, 3];\n  \
-         h = Holder { v: xs };\n  return len(xs) + len(h.v);\n}\n",
+         h = Holder { v: xs };\n  n = len(xs);\n  return n + len(h.v);\n}\n",
     )
     .expect("write lib");
 

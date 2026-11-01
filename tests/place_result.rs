@@ -156,16 +156,22 @@ fn the_cells_hold_on_both_backends_and_under_the_switch() {
 }
 
 /// The copy notice (`advice[avoidable-copy]`) asks the pass for its verdict, so a field
-/// the compiler relocates raises none — and under the switch the copies are real again and
-/// the notice returns.
+/// the compiler relocates is no copy row at all — and under the switch the copies are real
+/// again and reach the notice.  Counted with `LOFT_TRACE_COPY_ADVICE`, which names the rows the
+/// notice silences too: a relocated field's copy is also the source's last use, so the notice
+/// itself is quiet either way, and only the rows it weighed show the placement.
 #[test]
 fn the_copy_notice_is_silent_on_a_relocated_field_and_back_under_the_switch() {
-    let (_, on) = run("--interpret", &[]);
-    let (_, off) = run("--interpret", OFF);
-    let count = |s: &str| s.matches("advice[avoidable-copy]").count();
+    const TRACE: (&str, &str) = ("LOFT_TRACE_COPY_ADVICE", "1");
+    let (_, on) = run("--interpret", &[TRACE]);
+    let (_, off) = run("--interpret", &[TRACE, OFF[0]]);
+    let count = |s: &str| {
+        s.matches("advice[avoidable-copy]").count()
+            + s.lines().filter(|l| l.starts_with("copy-advice: ")).count()
+    };
     assert!(
         count(&on) < count(&off),
-        "the notice must drop where a copy became a move: {} with placement, {} under the switch\n--- on ---\n{on}\n--- off ---\n{off}",
+        "a relocated field must leave the copy rows: {} with placement, {} under the switch\n--- on ---\n{on}\n--- off ---\n{off}",
         count(&on),
         count(&off)
     );

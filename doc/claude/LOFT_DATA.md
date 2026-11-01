@@ -72,8 +72,9 @@ only after a `>= 0` check) when `i` may be negative.
 **When `v[i]` reads as the element, and when as `τ?`.**  An index the compiler can trust
 reads as the element type; any other index reads as `τ?`, because it may be out of range
 (`formal/types.md` `(N-Index)`).  Trusted: a constant (`v[0]`, `v[-1]`), `len(v)` of the same
-vector minus a constant, a local holding that length (`n = len(v)`, assigned once, outside any
-loop, with `v` written nowhere after it) minus a constant, the variable of an active `for` loop,
+vector minus a constant, a local holding that length (`n = len(v)`, assigned once, with `v`
+written nowhere that can run after it — inside a loop, nowhere in that loop) minus a constant,
+the variable of an active `for` loop,
 the counter of a loop over the same vector (`for x in v { v[x#index] }`), an index a guard proves
 (`if i < len(v)`, `assert(i < len(v))`, `if i >= len(v) { return … }`), and integer arithmetic
 over those.  These need no `??`:

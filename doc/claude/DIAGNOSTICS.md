@@ -123,13 +123,12 @@ A diagnostic says what is **wrong**. `--explain` (or `LOFT_EXPLAIN=1`) adds what
 **instead**:
 
 ```
-advice[avoidable-copy]: copy of vector<integer> — `src` is still used after this point …
+advice[avoidable-copy]: copy of vector<integer> — `src` is used again at line 8, so it could not be moved
   --> prog.loft:7:0
   |
 7 |   h = Holder { v: src };
   | ^
-  fix  build the value in place   [move · @F106]
-  fix  drop the later use of `src`   needs: `src` is used again at line 8 — you do not need that   [move · @F106]
+  fix  move line 8 above line 7   needs: line 8 does not need line 7 to run first   [move · @F106]
 ```
 
 Three homes, no repetition: the diagnostic says what is wrong, the fix says what to write
@@ -156,9 +155,20 @@ with fifty copy notices, which is the noise the opt-in exists to avoid. It disap
 `--explain` is on — nobody needs to be told about a flag they just used.
 
 **A message may only hand its cure away if a fix is there to catch it.** The copy notice
-shows both sides: with a named source it has two fixes and the prose says only what is wrong,
-and with no named source it has NO fix — so that branch keeps its resolution inline. The
-alternative is a reader left with nothing at all.
+shows both sides: with a named source it carries the rewrite that holds at its site and the
+prose says only what is wrong, and with no named source it has NO fix — so that branch keeps
+its resolution inline. The alternative is a reader left with nothing at all.
+
+**The copy notice fires only with a rewrite usable at its site.** "Still used after this
+point" is a PATH question: a read in an arm exclusive with the copy's, or after the source is
+assigned again (a loop's next turn), is no later use, and the copy is a move.  Where a later
+use remains, the notice offers moving that statement above the copy (it is the source's one
+later use, in the same statement list, writes nothing the copy's statements name and reads
+nothing they write, leaves no list, and at most one side calls anything), or dropping it when
+its result is never read.  With neither the copy is necessary as written, and nothing is
+reported.  A copy whose type has no heap part, landing in an existing structure, is silent
+too: the slot is inline, so a move writes the same bytes.  `LOFT_TRACE_COPY_ADVICE=1` names
+each silenced site and why.
 
 **Two tiers, and they gate who may affirm the condition, not whether a fix is clickable:**
 
