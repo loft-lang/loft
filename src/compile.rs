@@ -207,6 +207,7 @@ pub fn byte_code_from(
         build_const_vectors(state, data, program_store);
         state.database.allocations[crate::database::CONST_STORE as usize]
             .lock_with_origin("compile.rs::compile (CONST_STORE init)");
+        bytecode_trace(state, data);
     }
     if let Some(t_codegen) = t_codegen {
         eprintln!(
@@ -218,6 +219,63 @@ pub fn byte_code_from(
     // Reports (and drains) the ones no diagnostic accounts for; native generation records its
     // own sites later and reports them separately.  A no-op unless `LOFT_COPY_MANIFEST` is set.
     crate::copy_manifest::report(data);
+}
+
+/// `LOFT_TRACE_BYTECODE=<file>` — the strict comparison's opcodes and bytecode layers
+/// (doc/claude/plans/91-self-host/1b-compare.md): the operator table, one line per opcode in
+/// number order — its number, name, class (`hot`, `normal`, `cold`), result type and each
+/// argument as `name:c|m:type` (`c` an operand in the bytecode, `m` a value on the stack) —
+/// then every generated function in definition order as its name, its code length and the
+/// FNV-1a hash of its bytes.  The loft interpreter writes the same lines from its own
+/// numbering and its own bytecode writer, and the two files must be equal.
+fn bytecode_trace(state: &State, data: &Data) {
+    let Some(path) = std::env::var_os("LOFT_TRACE_BYTECODE").filter(|v| !v.is_empty()) else {
+        return;
+    };
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let mut ops: Vec<(u16, u32)> = (0..data.definitions())
+        .filter(|&d| data.def(d).is_operator() && data.def(d).op_code() != u16::MAX)
+        .map(|d| (data.def(d).op_code(), d))
+        .collect();
+    ops.sort_unstable();
+    for (code, d) in ops {
+        let def = data.def(d);
+        let class = ["hot", "normal", "cold"][usize::from(def.op_priority)];
+        let args: Vec<String> = def
+            .attributes()
+            .iter()
+            .map(|a| {
+                let kind = if a.mutable { "m" } else { "c" };
+                format!("{}:{kind}:{}", a.name, a.typedef.show(data, &def.variables))
+            })
+            .collect();
+        let _ = writeln!(
+            out,
+            "op\t{code}\t{}\t{class}\t{}\t{}",
+            def.name(),
+            def.returned().show(data, &def.variables),
+            args.join(" ")
+        );
+    }
+    for d in 0..data.definitions() {
+        let def = data.def(d);
+        if def.code_length == 0 {
+            continue;
+        }
+        let from = def.code_position as usize;
+        let bytes = &state.bytecode[from..from + def.code_length as usize];
+        let mut h = 0xcbf2_9ce4_8422_2325_u64;
+        for &b in bytes {
+            h ^= u64::from(b);
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        let _ = writeln!(out, "fn\t{}\t{}\t{h:016x}", def.name(), def.code_length);
+    }
+    if let Ok(mut f) = crate::file_access::create(path.to_string_lossy().as_ref()) {
+        use std::io::Write as _;
+        let _ = f.write_all(out.as_bytes());
+    }
 }
 
 /// Build the program's constant vectors (`const_literal::build_const_vectors`) and mirror

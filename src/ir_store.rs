@@ -459,6 +459,12 @@ fn write_definition(stores: &mut Stores, r: &Record, d: &Definition) {
     r.set_field_bool(stores, ds::DEF_NULL_SAFE, d.null_safe); // @PLN46 W2
     r.set_field_bool(stores, ds::DEF_BUILTIN, d.builtin); // @PLN165 arc E
     r.set_field_bool(stores, ds::DEF_OPERATOR_FORM, d.operator_form); // @PLN182
+    r.set_field_bool(stores, ds::DEF_OP_HOT, d.op_priority == crate::data::OP_HOT);
+    r.set_field_bool(
+        stores,
+        ds::DEF_OP_COLD,
+        d.op_priority == crate::data::OP_COLD,
+    );
     r.set_field_str(stores, ds::DEF_RETURNED_FACT, &d.returned_fact.encode()); // @PLN187
     r.set_field_bool(stores, ds::DEF_RETURNED_CONST, d.returned_const); // @FR-Const-Foreign
     r.set_field_int(stores, ds::DEF_CLOSURE_RECORD, i64::from(d.closure_record));
@@ -862,7 +868,13 @@ pub fn save_bundle(data: &Data, program: &Stores, path: &str) -> std::io::Result
             rec,
             pos: ds::IR_ROOT_POS,
         };
-        materialize_bundle(&mut stores, root, data, &program.types, !program.program_relative);
+        materialize_bundle(
+            &mut stores,
+            root,
+            data,
+            &program.types,
+            !program.program_relative,
+        );
         // Leaving the block drops `stores`: the file-backed Store unmaps and flushes
         // `tmp` fully before the atomic rename publishes it at `path`.
         nr
