@@ -26,6 +26,10 @@ worked example.  Two layers take part:
   `random::seed_hw()` is false.  A program can always ask and go on.  A call that cannot be
   made on a target at all (one that needs files on wasm) is refused when the program is
   built, never at run time.
+- **A device's own revisions are its SDK's.**  When batches of one device differ in a part (a
+  panel with its own start-up code), the board support package tells them apart and sets the
+  part up; a section calls the SDK and reads what it reports (a panel's size and format), and
+  never names a revision itself.
 - **The answers are the same.**  Computation shared by every platform lives outside the
   sections, so it is the same code everywhere.  `audio`'s mix is one function that every
   output layer calls; `input`'s terminal parser serves every platform's `device_feed`.
