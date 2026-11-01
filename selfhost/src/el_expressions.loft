@@ -1812,6 +1812,21 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
     }
   }
   list = conv;
+  // `copy_store_text_args` (pass 2): a text parameter handed a text that lives in a store (a
+  // field read, a slice of one) takes a `__work_p2_N` copy of it ("text argument copy").
+  if !e.first_pass && def.def_type == el::DT_FUNCTION && !is_op_name(def.name) && el::def(e, e.context).def_type == el::DT_FUNCTION {
+    copied: vector<ir::Node> = [];
+    for arg in list {
+      pt = el_types::base(def.attributes[arg#index].typedef[0] ?? ir::TyVoid);
+      if pt is TyText && store_text_view(e, arg) {
+        w = el_vars::work_text_p2(vars);
+        copied += [el_ir::v_block([el_ir::v_set(w, ir::NdText { s: "" }), el_ir::cl(e, "OpAppendText", [ir::NdVar { n: w }, arg]), ir::NdVar { n: w }], ir::TyText { dep: [w] }, "text argument copy")];
+      } else {
+        copied += [arg];
+      }
+    }
+    list = copied;
+  }
   ret = def.returned[0] ?? ir::TyVoid;
   if retbuf {
     // `add_defaults`: the hidden return buffer is a fresh `__ref_N` of the result's record, and
@@ -1859,6 +1874,25 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
     return null;
   }
   ex(ir::NdCall { def_nr: d, args: list }, ret)
+}
+
+// `is_op`: an operator definition's name, `Op` and a capital.
+fn is_op_name(n: text) -> boolean {
+  len(n) >= 3 && starts_with(n, "Op") && n[2..3] >= "A" && n[2..3] <= "Z"
+}
+
+// `store_text_view`: a text read out of a store — `OpGetText`, or a slice of one.
+fn store_text_view(e: el::El, v: ir::Node) -> boolean {
+  match el_ir::unspan(v) {
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if nm == "OpGetText" {
+        return true;
+      }
+      nm == "OpGetTextSub" && len(args) > 0 && store_text_view(e, args[0] ?? ir::NdNull)
+    },
+    _ => false
+  }
 }
 
 // `convert`'s cases that need no conversion op: the same type, or a vector of any element into
