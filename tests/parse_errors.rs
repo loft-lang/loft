@@ -3329,25 +3329,24 @@ fn field_capture_unknown_field() {
         .error("`nope` is not a field of Num at field_capture_unknown_field:2:61");
 }
 
-// @PLN35 PC2 — a sub-rule invocation `[ name: rule ]` in a cursor match must be the WHOLE slice
-// pattern for now; mixing it with fixed elements (the running-pos + revert) is deferred.
-#[test]
-fn subrule_mixing_deferred() {
-    code!("enum Tok { Id { x: integer }, LP { x: integer } }\nstruct Cur { src: vector<Tok>, pos: integer }\nstruct N { v: integer }\nfn parse_id(c: Cur) -> N? { match c { [ Id { x } ] => N { v: x }, _ => null } }\nfn f(c: Cur) -> integer { match c { [ e: parse_id, y ] => e.v, _ => -1 } }")
-        .error("a sub-rule element `e: rule` must currently be the whole slice pattern (mixing a sub-rule with fixed elements is deferred to a follow-up) at subrule_mixing_deferred:5:51");
-}
-
-// @PLN35 PC3 — a left-recursive sub-rule grammar (a cycle in the invocation graph) is a COMPILE
-// error, not a runtime hang: every cursor sub-rule invocation is at position 0, so a cycle cannot
-// consume and would recurse forever.
+// `@FR-WF-Term` — a left-recursive sub-rule grammar (a cycle of calls that can run before any
+// token is consumed) is a COMPILE error, not a runtime hang.
 #[test]
 fn subrule_left_recursion() {
     code!("enum Tok { Num { x: integer } }\nstruct Cur { src: vector<Tok>, pos: integer }\nstruct N { v: integer }\nfn expr(c: Cur) -> N? { match c { [ Num { x } ] => N { v: x }, [ e: expr ] => e, _ => null } }\nfn f(c: Cur) -> integer { r = match c { [ x: expr ] => x.v, _ => -1 }; r }")
         .error("sub-rule `expr` is left-recursive (expr -> expr): a cursor `match` invokes a sub-rule before consuming any input, so this cycle would recurse forever at subrule_left_recursion:4:69");
 }
 
-// @PLN35 PC4 — an invoked sub-rule must be pure: a cursor `match` hoists its call unconditionally
-// (runs even when the arm is not taken) and may backtrack over it, so any observable effect leaks.
+// `@FR-WF-Term` — a mutual cycle refused although a CALL precedes the recursion: a sub-rule may
+// match without consuming, so only a fixed element counts as progress.
+#[test]
+fn subrule_left_recursion_through_a_rule() {
+    code!("enum Tok { Num { x: integer }, Plus }\nstruct Cur { src: vector<Tok>, pos: integer }\nstruct N { v: integer }\nfn a(c: Cur) -> N? { match c { [ Num { x } ] => N { v: x }, [ l: b, Plus ] => l, _ => null } }\nfn b(c: Cur) -> N? { match c { [ x: a ] => x, [ Plus, y: a, z: a ] => N { v: y.v + z.v }, _ => null } }")
+        .error("sub-rule `a` is left-recursive (a -> b -> a): a cursor `match` invokes a sub-rule before consuming any input, so this cycle would recurse forever at subrule_left_recursion_through_a_rule:5:37");
+}
+
+// `@FR-WF-Pure` — an invoked sub-rule must be pure: an arm that fails after the call is undone by
+// resetting the cursor alone, so any observable effect of the call would leak.
 #[test]
 fn subrule_impure_rejected() {
     code!("enum Tok { Id { x: integer }, LP { x: integer } }\nstruct Cur { src: vector<Tok>, pos: integer }\nstruct N { v: integer }\nfn noisy(c: Cur) -> N? { print(\"hi\"); match c { [ Id { x } ] => N { v: x }, _ => null } }\nfn f(c: Cur) -> integer { r = match c { [ n: noisy ] => n.v, _ => -1 }; r }")

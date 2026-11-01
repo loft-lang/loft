@@ -217,6 +217,21 @@ index `i` into a source `src`, with `elem(src,i)` / `len(src)` **null past the e
              its κ'; a failed arm leaves pos unchanged (P-Atomic).  The cursor reading belongs to
              that match's PATTERNS: a `match` written in one of its guards or arm bodies is a
              match of its own, read by its own subject's kind.
+  (P-Rule)   in a cursor match, a slice element `name: rule` — `rule` a function taking the cursor
+             and answering `τ?` — runs once every element before it in the pattern matched: it
+             sets pos to the position those elements reached, calls rule(cursor), and on an
+             answer v ≠ null binds name ↦ v (at type τ) and reads the next element from the
+             position the rule left; a null answer is Fail.  A rule is called only when its arm
+             is tried, in arm order (P-Alt), and an arm that fails after a rule moved the cursor
+             puts pos back where the match started (P-Atomic).
+  (WF-Term)  a cycle of sub-rule calls that can run before ANY token is consumed — no fixed element
+             before the call in its pattern, and no arm on the same cursor around its match that
+             took one — is left recursion and a STATIC error.  A call after a consumed token
+             breaks the cycle's danger: every round consumes, so the recursion is bounded by the
+             source's length.
+  (WF-Pure)  a sub-rule is PURE — it advances the cursor and builds what it answers, and reaches no
+             I/O, host state or randomness — because an arm that fails after it ran is undone by
+             resetting pos alone.  An impure sub-rule is a STATIC error.
   (P-Multi)  a MULTI-PATTERN arm `pat_a | pat_b => body` (or `pat_a, pat_b`, the same arm): try
              pat_a from ⟨0,v⟩ (whole-match); else pat_b; the FIRST whole-match commits.  (P-Alt at
              arm granularity — no new cursor work.)  P-Alt holds at EVERY pattern position: the
@@ -341,8 +356,8 @@ arm (`|` and `,` alike, over slice patterns too), a tuple subject, a tuple eleme
 slice element, and the arm root's `name: pattern`.
 
 
-Sub-rule invocation `[ name: rule ]` is shipped but has no rule here yet; a cursor match is
-`(P-Cursor)`.
+A cursor match is `(P-Cursor)`; a sub-rule invocation is `(P-Rule)`, held well-formed by
+`(WF-Term)` and `(WF-Pure)`.
 
 - **PEG patterns are SHIPPED (@PLN35)** — the shipped implementation (phases 1–7 + PC1–PC5,
   [plans/35-match-peg](../plans/35-match-peg/)) conforms to the stated rules on both backends,
