@@ -645,7 +645,8 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
   first = if len(types) > 0 { types[0] } else { ir::TyUnknown { n: 0 } };
   d = find_fn(e, name, first);
   if d < 0 {
-    if e.first_pass {
+    // A receiver already refused (untyped on the second pass) chose no method: not refused again.
+    if e.first_pass || (el_types::is_unknown(first) && len(types) > 0) {
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
     el::refuse(e, "a call of an unknown function: {name}");
