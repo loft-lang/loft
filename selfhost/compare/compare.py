@@ -47,10 +47,11 @@ def run(cmd, env=None, timeout=300):
 
 def build(program, name):
     """A selfhost program compiled through the C backend into target/selfhost-compare/<name>;
-    rebuilt when a selfhost source is newer."""
+    rebuilt when a selfhost source or the compiler is newer — the C runtime the shim includes
+    is compiled into the build, so a compiler change alone makes it stale."""
     out = os.path.join(ROOT, "target", "selfhost-compare", name)
     exe = os.path.join(out, os.path.splitext(os.path.basename(program))[0])
-    newest = 0.0
+    newest = os.path.getmtime(LOFT)
     for d, _, fs in os.walk(os.path.join(ROOT, "selfhost")):
         if "native-auto" in d or os.sep + ".loft" in d:
             continue
