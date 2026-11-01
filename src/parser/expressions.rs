@@ -766,6 +766,15 @@ impl Parser {
         } else {
             self.data.def(self.context).returned().clone()
         };
+        // `(N-Index)` — the length locals, from the body pass 1 left.
+        if !self.first_pass && self.context != u32::MAX {
+            let found = crate::parser::length_locals::length_locals(
+                &self.data.def(self.context).code,
+                &self.data,
+                &self.vars,
+            );
+            self.length_locals = (self.context, found, Vec::new());
+        }
         self.parse_block("return from block", &mut v, &result);
         self.refuse_too_deep_tree(&mut v);
         self.check_result(&v);
@@ -8983,8 +8992,34 @@ use a separate collection or add after the loop"
 
     pub(crate) fn parse_assign(&mut self, code: &mut Value) -> Type {
         let outer_discharge = self.last_place_discharge;
+        let outer_read = self.length_local_read.replace(false);
         let tp = self.parse_assign_inner(code);
         self.last_place_discharge = outer_discharge;
+        if !self.first_pass && self.length_locals.0 == self.context {
+            // `(N-Index)` — a length local's assignment names its vector now it is laid out.
+            if !self.length_locals.1.is_empty()
+                && let Some(settled) =
+                    crate::parser::length_locals::settle(code, &self.data, &self.length_locals.1)
+            {
+                self.length_locals.2.push(settled);
+            }
+            // …and a local bound from a read it made trusted is what pass 2 typed it, not the
+            // `τ?` pass 1 gave it without that fact — when nothing else assigns it.
+            if self.length_local_read.get()
+                && let Value::Set(e, _) = code.unspan()
+                && !self.vars.is_declared(*e)
+                && let Type::Optional(inner) = self.vars.tp(*e).clone()
+                && !matches!(tp.unrewritten(), Type::Optional(_))
+                && crate::parser::length_locals::assigned_once(
+                    &self.data.def(self.context).code,
+                    *e,
+                )
+            {
+                self.vars.set_type(*e, *inner);
+            }
+        }
+        self.length_local_read
+            .set(outer_read || self.length_local_read.get());
         tp
     }
 

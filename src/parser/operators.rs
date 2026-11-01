@@ -1853,6 +1853,9 @@ impl Parser {
         } else {
             u16::MAX
         };
+        // A field destination (a literal's field, a field assignment): an operand literal is
+        // built straight into it, which a `+` chain then continues (`parse_append_vector`).
+        let orig_dest = self.is_field(code).then(|| code.clone());
         let operand_pos = *self.lexer.peek_pos();
         let mut current_type = self.parse_primary(var_tp, code, parent_tp);
         let mut ceiling = OPERATORS.len();
@@ -1878,6 +1881,7 @@ impl Parser {
                 level,
                 current_type,
                 orig_var,
+                orig_dest.as_ref(),
                 operand_pos,
             );
             ceiling = level;
@@ -2049,6 +2053,7 @@ impl Parser {
         precedence: usize,
         current_type: Type,
         orig_var: u16,
+        orig_dest: Option<&Value>,
         operand_pos: Position,
     ) -> Type {
         // The levels the run's operators took (`enter_depth`) end with the run.
@@ -2060,6 +2065,7 @@ impl Parser {
             precedence,
             current_type,
             orig_var,
+            orig_dest,
             operand_pos,
         );
         self.parse_depth = depth;
@@ -2084,6 +2090,7 @@ impl Parser {
         precedence: usize,
         mut current_type: Type,
         orig_var: u16,
+        orig_dest: Option<&Value>,
         operand_pos: Position,
     ) -> Type {
         let mut ls = Vec::new();
@@ -2292,11 +2299,17 @@ impl Parser {
                         }
                         return self.parse_append_text(code, &current_type, &ls, effective_orig);
                     } else if matches!(current_type, Type::Vector(_, _)) {
-                        return self.parse_append_vector(code, &current_type, &ls, orig_var);
+                        return self.parse_append_vector(
+                            code,
+                            &current_type,
+                            &ls,
+                            orig_var,
+                            orig_dest,
+                        );
                     } else if let Type::RefVar(inner) = &current_type
                         && matches!(**inner, Type::Vector(_, _))
                     {
-                        return self.parse_append_vector(code, inner, &ls, orig_var);
+                        return self.parse_append_vector(code, inner, &ls, orig_var, orig_dest);
                     } else if matches!(current_type.base(), Type::Vector(_, _)) {
                         // A NULLABLE vector reaches none of the arms above, and the
                         // fall-through returns the left operand — so `a + b` over two
@@ -2389,7 +2402,18 @@ impl Parser {
                     return Type::Unknown(0);
                 }
                 let mut second_code = Value::Null;
-                let tp = self.parse_operators(var_tp, &mut second_code, parent_tp, precedence + 1);
+                // @FR-Col-Concat — a vector operand is a value of its own, appended into the concat's
+                // accumulator: it is not built in the destination's store.  Parsed under the
+                // destination's parent (a struct field's record), a literal operand took that
+                // record as its store and never minted one (`S { v: a + [6] }`).
+                let mut own_parent = Type::Unknown(0);
+                let operand_parent = if matches!(eff_type_for_plus, Type::Vector(_, _)) {
+                    &mut own_parent
+                } else {
+                    &mut *parent_tp
+                };
+                let tp =
+                    self.parse_operators(var_tp, &mut second_code, operand_parent, precedence + 1);
                 // @FR-E-Concat — a character joins only with text or another character; with an
                 // integer it is arithmetic on the code point, on either side (`1 + 'a'` already
                 // was), so `'a' + 1` is 98 and not "a1" (loft#2046).

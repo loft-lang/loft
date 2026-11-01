@@ -20,13 +20,21 @@ fn test_a_trusted_index_reads_the_element_type() {
   }
   i = 1;
   mid = if i < len(v) { take(v[i]) } else { 0 };   // a guard that proves the bound
-  assert(first == 1 && last == 3 && total == 6 && mid == 2, "{first} {last} {total} {mid}");
+  n = len(v);
+  end = take(v[n - 1]);                  // a local holding the length, v unchanged since
+  each = 0;
+  for p in v {
+    each += take(v[p#index]);            // the counter of a loop over the same vector
+  }
+  assert(first == 1 && last == 3 && total == 6 && mid == 2 && end == 3 && each == 6,
+    "{first} {last} {total} {mid} {end} {each}");
 }
 
 fn test_any_other_index_is_discharged() {
   v = [P { x: 1 }, P { x: 2 }];
   n = len(v);
-  a = take(v[n - 1]!);                   // present by an invariant: `!` halts when it is not
+  k = n - 1;
+  a = take(v[k]!);                       // present by an invariant: `!` halts when it is not
   b = take(v[5]?);                       // out of range: the type's default, P { x: 0 }
   c = (v[n] ?? P { x: 9 }).x;            // a default you give
   assert(a == 2 && b == 0 && c == 9, "{a} {b} {c}");

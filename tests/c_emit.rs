@@ -2873,7 +2873,13 @@ fn a_strict_store_c_build_names_the_free_that_killed_a_store_and_the_census_its_
     let exe = dir.join("cell");
     fa::write(&src, &text).expect("write the cell");
     let cc = loft::platform::process::harness_command("cc")
-        .args(["-std=c99", "-O1", "-w", "-DLOFT_STRICT_STORES", "-DLOFT_DOUBLE_FREE"])
+        .args([
+            "-std=c99",
+            "-O1",
+            "-w",
+            "-DLOFT_STRICT_STORES",
+            "-DLOFT_DOUBLE_FREE",
+        ])
         .arg(&src)
         .arg("-o")
         .arg(&exe)
@@ -2901,7 +2907,11 @@ fn a_strict_store_c_build_names_the_free_that_killed_a_store_and_the_census_its_
     ] {
         assert!(err.contains(want), "missing {want:?} in:\n{err}");
     }
-    assert_eq!(out.status.code(), Some(1), "the use after free fails the run");
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "the use after free fails the run"
+    );
 }
 
 /// @PLN206 D31 — a test run leaves no store behind on the C, as on the interpreter, whose tests

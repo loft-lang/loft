@@ -1630,6 +1630,17 @@ pub struct Parser {
     /// NON-null. Pushed for the THEN branch in `parse_if`, truncated on exit — same discipline as
     /// `divisor_nonzero`, but keyed on the (index, vector) pair via `VecKey`.
     pub(crate) index_bounded: Vec<(u16, crate::parser::operators::VecKey)>,
+    /// `(N-Index)` — the locals of the definition being parsed (`.0`) that hold a vector's
+    /// length for the rest of it, read off its pass-1 body (`.1`: the local and the variable the
+    /// vector is reached through), and the vector each one's pass-2 assignment named (`.2`).
+    pub(crate) length_locals: (
+        u32,
+        Vec<(u16, u16)>,
+        Vec<(u16, crate::parser::operators::VecKey)>,
+    ),
+    /// Set when an index read was trusted through a length local: the assignment it stands in
+    /// may narrow the local pass 1 typed `τ?` without that fact (`parse_assign`).
+    pub(crate) length_local_read: std::cell::Cell<bool>,
     /// Plan-07 phase 4h — site of the most recently parsed field
     /// read.  Set by `Parser::field()` after each read, taken by
     /// `handle_null_coalesce` to mark the read as defended when
@@ -1806,6 +1817,7 @@ mod generic_writes;
 mod generics;
 mod hints;
 mod imports;
+mod length_locals;
 mod members;
 mod monomorph;
 mod nullable_slots;
@@ -2178,6 +2190,8 @@ impl Parser {
             text_payload_views: std::collections::HashMap::new(),
             last_index_fit: false,
             index_bounded: Vec::new(),
+            length_locals: (u32::MAX, Vec::new(), Vec::new()),
+            length_local_read: std::cell::Cell::new(false),
             last_field_read_site: None,
             #[cfg(feature = "registry")]
             advisory_checked: std::collections::HashSet::new(),

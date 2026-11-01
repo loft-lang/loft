@@ -583,7 +583,8 @@ fn arm_body_is_null(code: &Value) -> bool {
         Value::Null => true,
         Value::Block(bl) if bl.name == FORWARD_CALL => false,
         Value::Block(bl) => bl.operators.last().is_some_and(|o| {
-            matches!(o.unspan(), Value::Null) || (matches!(o, Value::Block(_)) && arm_body_is_null(o))
+            matches!(o.unspan(), Value::Null)
+                || (matches!(o, Value::Block(_)) && arm_body_is_null(o))
         }),
         _ => false,
     }

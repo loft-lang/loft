@@ -1640,6 +1640,27 @@ impl Function {
         0
     }
 
+    /// The collection the active loop iterates whose COUNTER is `var_nr` — `x#index` of
+    /// `for x in v` — or `Value::Null` when `var_nr` counts no active loop.
+    #[must_use]
+    pub fn loop_value_of_index(&self, var_nr: u16) -> &Value {
+        if var_nr == u16::MAX || (var_nr as usize) >= self.variables.len() {
+            return &Value::Null;
+        }
+        let Some(binder) = self.variables[var_nr as usize].name.strip_suffix("#index") else {
+            return &Value::Null;
+        };
+        let mut c = self.current_loop;
+        while c != u16::MAX {
+            let l = &self.loops[c as usize];
+            if l.variable != u16::MAX && self.variables[l.variable as usize].name == binder {
+                return &l.value;
+            }
+            c = l.inside;
+        }
+        &Value::Null
+    }
+
     pub fn loop_value(&self, var_nr: u16) -> &Value {
         let mut c = self.current_loop;
         while c != u16::MAX {
