@@ -59,14 +59,18 @@ pub fn is_same(a: ir::TypeT, b: ir::TypeT) -> boolean {
       TyOptional { inner: ib } => is_same(ia, ib),
       _ => false
     },
+    TyVector { inner: ia } => match b {
+      TyVector { inner: ib } => is_same(ia, ib),
+      _ => false
+    },
     _ => false
   }
 }
 
 // `Type::is_equal`: the same type for a conversion or a variable's retype — an integer of any
 // width, a text with any deps, an enum or a record by definition, a `&` and a `τ?` through
-// their inner type where that carries deps; anything else by its whole value.  A vector's
-// element storage is not compared yet, so a vector is refused by name.
+// their inner type where that carries deps, a vector by its element; anything else by its whole
+// value.
 pub fn is_equal(e: el::El, a: ir::TypeT, b: ir::TypeT) -> boolean {
   match a {
     TyRewritten { inner } => return is_equal(e, inner, b),
@@ -95,9 +99,10 @@ pub fn is_equal(e: el::El, a: ir::TypeT, b: ir::TypeT) -> boolean {
     },
     TyInteger { spec: _ } => b is TyInteger,
     TyText { dep: _ } => b is TyText,
-    TyVector { inner: _ } => {
-      el::refuse(e, "a vector type compared");
-      false
+    // The element types, whatever stores the two vectors borrow.
+    TyVector { inner: ia } => match b {
+      TyVector { inner: ib } => is_equal(e, ia, ib),
+      _ => false
     },
     _ => a == b
   }
@@ -141,6 +146,14 @@ pub fn with_deps(t: ir::TypeT, deps: vector<integer>) -> ir::TypeT {
     TyTuple { elems } => ir::TyTuple { elems: [for x in elems { with_deps(x, deps) }] },
     _ => t
   }
+}
+
+// `Type::without_deps`: the type with no borrows.
+pub fn without_deps(t: ir::TypeT) -> ir::TypeT {
+  if len(deps(t)) == 0 {
+    return t;
+  }
+  with_deps(t, [])
 }
 
 // `Type::depend`: the variables a type borrows — through a `&` and a `τ?`, a tuple's the union of
@@ -187,7 +200,15 @@ fn contains(v: vector<integer>, x: integer) -> boolean {
 // that name answers.  What it does not carry yet is refused by name.
 pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
   match e.p.nodes[n] {
-    STy { name, member, args, keys, deps, limit, not_null, assoc, nullable } => {
+    STy { name, member, args, elem_null, keys, deps, limit, not_null, assoc, nullable } => {
+      if name == "vector" && member == "" && len(args) == 1 && !elem_null && len(keys) == 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" && !nullable {
+        // `sub_type_inner`'s vector arm: the element read as a type, no deps yet.
+        inner = parse_type(e, args[0] ?? 0);
+        if inner == null {
+          return null;
+        }
+        return ir::TyVector { inner: inner!, dep: [] };
+      }
       if member != "" || len(args) > 0 || len(keys) > 0 || len(deps) > 0 || limit != null || not_null || assoc != "" {
         el::refuse(e, "a type with arguments, keys, a limit or a member: {name}");
         return null;

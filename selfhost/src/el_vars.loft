@@ -26,11 +26,22 @@ pub struct Vars {
   pub work_texts: vector<integer>,
   pub work_text: integer,
   // The record locals a struct literal has built in place on this pass.
-  pub built: vector<integer>
+  pub built: vector<integer>,
+  // `Function::unique`: the counter `create_unique` names `_<name>_<n>` locals by, per pass
+  pub unique: integer,
+  // `Function::work_vdb` and `work_references`: the `__vdb_N` vector stores this body minted
+  pub work_vdb: integer,
+  pub work_refs: vector<integer>,
+  // `Function::loops`' variables, innermost last: the loops still open
+  pub active_loops: vector<integer>
 }
 
 pub fn new_vars(name: text, file: text) -> Vars {
-  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [] }
+  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], unique: 0, work_vdb: 0, work_refs: [], active_loops: [] }
+}
+
+pub fn name_of(v: Vars, nr: integer) -> text {
+  v.vars[nr].name
 }
 
 pub fn count(v: Vars) -> integer {
@@ -177,12 +188,12 @@ pub fn change_var_type(e: el::El, v: Vars, nr: integer, t: ir::TypeT) -> boolean
     // `depend_all`: the local borrows what the value borrows.
     ds = el_types::deps(t);
     if len(ds) > 0 {
-      v.vars[nr].type_def = [el_types::with_deps(cur, ds)];
+      set_type(v, nr, el_types::with_deps(cur, ds));
     }
     return true;
   }
   if is_unknown(cur) {
-    v.vars[nr].type_def = [t];
+    set_type(v, nr, t);
     return true;
   }
   false
@@ -206,6 +217,66 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   v.work_text = 0;
   v.work_texts = [];
   v.built = [];
+  v.unique = 0;
+  v.work_vdb = 0;
+  v.work_refs = [];
+  v.active_loops = [];
+}
+
+// `Function::is_active_loop_var`: the variable of a loop still open.
+pub fn is_active_loop_var(v: Vars, nr: integer) -> boolean {
+  for l in v.active_loops {
+    if l == nr {
+      return true;
+    }
+  }
+  false
+}
+
+// `Function::create_unique`: a compiler local `_<name>_<n>`, the same one met again by name on
+// the second pass (the counter restarts with each pass).
+pub fn create_unique(v: Vars, name: text, t: ir::TypeT) -> integer {
+  v.unique += 1;
+  add_variable(v, "_{name}_{v.unique}", t)
+}
+
+// `Function::work_vec_db`: the next `__vdb_N` store a vector literal builds in, noted among the
+// work references the body's head sets to null.
+pub fn work_vec_db(v: Vars, t: ir::TypeT) -> integer {
+  v.work_vdb += 1;
+  nr = add_variable(v, "__vdb_{v.work_vdb}", t);
+  v.work_refs = sorted_in(v.work_refs, nr);
+  nr
+}
+
+fn sorted_in(l: vector<integer>, nr: integer) -> vector<integer> {
+  r: vector<integer> = [];
+  placed = false;
+  for x in l {
+    if x == nr {
+      placed = true;
+    } else if x > nr && !placed {
+      r += [nr];
+      placed = true;
+    }
+    r += [x];
+  }
+  if !placed {
+    r += [nr];
+  }
+  r
+}
+
+// `Function::depend(nr, on)`: the variable borrows `on`, its earlier borrows replaced.
+pub fn depend(v: Vars, nr: integer, on: integer) {
+  set_type(v, nr, el_types::with_deps(tp(v, nr), [on]));
+}
+
+// The variable's type replaced.  Built in a fresh list first: a literal assigned to the field
+// whose item reads that field through a call lost the field's contents (loft#2335).
+fn set_type(v: Vars, nr: integer, t: ir::TypeT) {
+  nt: vector<ir::TypeT> = [t];
+  v.vars[nr].type_def = nt;
 }
 
 // What the image keeps of the table (`ir::Function`).

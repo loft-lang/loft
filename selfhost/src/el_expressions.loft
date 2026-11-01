@@ -44,6 +44,14 @@ fn finish_body(vars: el_vars::Vars, code: ir::Node) -> ir::Node {
         }
         bl.operators = ops;
       }
+      // `work_references`, each set to null at the head, after the work texts in the same way.
+      for wr in vars.work_refs {
+        ops: vector<ir::Node> = [el_ir::v_set(wr, ir::NdNull)];
+        for op in bl.operators {
+          ops += [op];
+        }
+        bl.operators = ops;
+      }
       ir::NdBlock { block: [bl] }
     },
     _ => code
@@ -208,6 +216,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SBin { at, op, l, r } => binary(e, vars, at, op, l, r),
     SUnary { op, e: ue } => unary(e, vars, op, ue),
     SIf { cond, then, other } => if_expr(e, vars, cond, then, other),
+    SIndex { at, e: ie, keys, range, hi, limit, spatial } => index(e, vars, at, ie, keys, range || len(hi) > 0 || limit != null || spatial),
     SParen { e: pe } => if pe == null { ex(ir::NdNull, ir::TyUnknown { n: 0 }) } else { expression(e, vars, pe!) },
     _ => {
       el::refuse(e, "an expression form: {syn_kind(e, n)}");
@@ -268,6 +277,9 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
   if v < 0 {
     el::refuse(e, "an assignment to a place that is not a plain local");
     return ex(ir::NdNull, ir::TyVoid);
+  }
+  if e.p.nodes[rhs!] is SVecLit {
+    return vector_into(e, vars, v, rhs!, ir::TyUnknown { n: 0 });
   }
   if e.p.nodes[rhs!] is SStructLit {
     // Built in place in the local (`parse_object`): the statement is the build itself, with
@@ -356,6 +368,12 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
   }
   if !el_vars::change_var_type(e, vars, v, declared!) {
     el::refuse(e, "a declaration that changes a local's type");
+  }
+  if e.p.nodes[rhs!] is SVecLit {
+    match declared! {
+      TyVector { inner } => return vector_into(e, vars, v, rhs!, inner),
+      _ => {}
+    }
   }
   x = expression(e, vars, rhs!);
   if !el_types::is_equal(e, declared!, x.tp) && !(e.first_pass && el_types::is_unknown(x.tp)) {
@@ -835,6 +853,7 @@ fn type_def_nr(e: el::El, t: ir::TypeT) -> integer {
     TySingle => el::source_nr(e, 0, "single"),
     TyCharacter => el::source_nr(e, 0, "character"),
     TyRoutine { n } => n,
+    TyVector { inner: _ } => el::source_nr(e, 0, "vector"),
     TyEnum { n } => n,
     TyReference { n } => n,
     TyUnknown { n } => n,
@@ -865,7 +884,7 @@ fn call_args(e: el::El, d: integer, list: vector<ir::Node>, types: vector<ir::Ty
     return null;
   }
   for a in def.attributes {
-    if !el_types::is_equal(e, a.typedef[0] ?? ir::TyUnknown { n: 0 }, types[a#index] ?? ir::TyUnknown { n: 0 }) {
+    if !takes(e, a.typedef[0] ?? ir::TyUnknown { n: 0 }, types[a#index] ?? ir::TyUnknown { n: 0 }) {
       el::refuse(e, "an argument converted to its parameter");
       return null;
     }
@@ -876,6 +895,18 @@ fn call_args(e: el::El, d: integer, list: vector<ir::Node>, types: vector<ir::Ty
     return null;
   }
   ex(ir::NdCall { def_nr: d, args: list }, ret)
+}
+
+// `convert`'s cases that need no conversion op: the same type, or a vector of any element into
+// a parameter declared as a bare `vector` (an unknown element, convert.rs's vector arm).
+fn takes(e: el::El, param: ir::TypeT, arg: ir::TypeT) -> boolean {
+  if el_types::is_equal(e, param, arg) {
+    return true;
+  }
+  match param {
+    TyVector { inner } => el_types::is_unknown(inner) && arg is TyVector,
+    _ => false
+  }
 }
 
 fn scalar(t: ir::TypeT) -> boolean {
@@ -1103,6 +1134,273 @@ fn text_arm_into(c: integer, arm: ir::Node) -> ir::Node? {
     },
     NdIf { cond: _ } => text_arms_into(c, arm),
     _ => null
+  }
+}
+
+// ── vectors (src/parser/vectors.rs, fields.rs) ───────────────────────────────────────────────
+
+// What `Data::vector_def` answers for element type `t`, looked up where the standard library
+// registered it: the `main_vector<T>` wrapper (its definition and store type) and the `vector<T>`
+// store type.  An element type the library has no rows for yet is refused by name.
+pub struct VecRows {
+  pub main_def: integer,
+  pub main_known: integer,
+  pub vec_known: integer
+}
+
+fn elem_name(e: el::El, t: ir::TypeT) -> text {
+  match t {
+    TyInteger { spec } => if spec.forced_size == 0 && spec.min == -2147483647 && spec.max == 2147483647 { "integer" } else { "" },
+    TyText { dep: _ } => "text",
+    TyBoolean => "boolean",
+    TyFloat => "float",
+    TySingle => "single",
+    TyCharacter => "character",
+    TyReference { n } => if el::def(e, n).def_type == el::DT_STRUCT { el::def(e, n).name } else { "" },
+    _ => ""
+  }
+}
+
+fn vector_rows(e: el::El, t: ir::TypeT) -> VecRows? {
+  nm = elem_name(e, t);
+  if nm == "" {
+    el::refuse(e, "a vector of this element type: {type_kind(t)}");
+    return null;
+  }
+  md = el::def_nr(e, "main_vector<{nm}>");
+  vk = el_schema::schema_type(e, "vector<{nm}>");
+  if md < 0 || vk < 0 || el::def(e, md).known_type == el_schema::NO_TYPE {
+    el::refuse(e, "a vector of an element type the library has no rows for: {nm}");
+    return null;
+  }
+  VecRows { main_def: md, main_known: el::def(e, md).known_type, vec_known: vk }
+}
+
+// `database.size` of an element's store type (`base_type`'s widths).
+fn elem_size(t: ir::TypeT) -> integer {
+  match t {
+    TyInteger { spec: _ } => 8,
+    TyFloat => 8,
+    TySingle => 4,
+    TyText { dep: _ } => 4,
+    TyBoolean => 1,
+    TyCharacter => 4,
+    _ => -1
+  }
+}
+
+// `FUSED_PUSH_KINDS`: the one-op append a scalar element's build folds into; "" for a text,
+// which keeps its record build.
+fn push_op(t: ir::TypeT) -> text {
+  match t {
+    TyInteger { spec: _ } => "OpPushInt",
+    TyFloat => "OpPushFloat",
+    TySingle => "OpPushSingle",
+    TyBoolean => "OpPushBoolean",
+    TyCharacter => "OpPushCharacter",
+    _ => ""
+  }
+}
+
+// `get_val` for an element or field of a plain type at `pos`: the read op its type loads
+// through, or "".
+fn read_op(t: ir::TypeT) -> text {
+  match t {
+    TyInteger { spec } => if spec.forced_size == 0 { "OpGetInt" } else { "" },
+    TyText { dep: _ } => "OpGetText",
+    TyBoolean => "OpGetBoolean",
+    TyFloat => "OpGetFloat",
+    TySingle => "OpGetSingle",
+    TyCharacter => "OpGetCharacter",
+    _ => ""
+  }
+}
+
+// `Parser::parse_vector_inner` for a literal bound to a local (`is_var`: built into it) and
+// `build_vector_list` on the second pass: the local's store made (`vector_db_init`: a new
+// `__vdb_N`, the local borrowing it), room for the items (`OpPreAllocVector`), each item appended
+// — a scalar pushed (`fuse_scalar_append`), a text built as a record (`OpNewRecord`, its value,
+// `OpFinishRecord`).  The element type is the declared one or the first item's; an item of
+// another type, a repetition, a local that already has a store and an empty literal with no type
+// are refused by name.
+fn vector_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT) -> Ex {
+  items: vector<integer> = [];
+  match e.p.nodes[n] {
+    SVecLit { items: its } => { items = its; },
+    _ => {}
+  }
+  elm = el_vars::create_unique(vars, "elm", ir::TyUnknown { n: 0 });
+  xs: vector<Ex> = [];
+  for it in items {
+    if e.p.nodes[it] is SRepeat {
+      el::refuse(e, "a repeated vector item");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    xs += [expression(e, vars, it)];
+  }
+  in_t = declared;
+  if el_types::is_unknown(in_t) {
+    if len(xs) == 0 {
+      el::refuse(e, "an empty vector literal of no declared type");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    in_t = el_types::without_deps(xs[0].tp);
+  }
+  if el_types::is_unknown(in_t) {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  for x in xs {
+    if !el_types::is_unknown(x.tp) && !el_types::is_equal(e, in_t, x.tp) {
+      el::refuse(e, "a vector item of another type than the first");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+  }
+  if !el_vars::change_var_type(e, vars, v, ir::TyVector { inner: in_t, dep: [] }) {
+    el::refuse(e, "a local that changes type");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  rows = vector_rows(e, in_t);
+  if rows == null || e.first_pass {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  if len(el_types::deps(el_vars::tp(vars, v))) > 0 {
+    el::refuse(e, "a vector literal into a local that has a store");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  r = rows!;
+  db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
+  el_vars::depend(vars, v, db);
+  w = ir::NdVar { n: v };
+  ls: vector<ir::Node> = [
+    el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
+    el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
+    el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
+  ];
+  if len(xs) > 0 {
+    size = elem_size(in_t);
+    if size < 0 {
+      el::refuse(e, "a vector literal of record items");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    ls += [el_ir::cl(e, "OpPreAllocVector", [w, ir::NdInt { n: len(xs) }, ir::NdInt { n: size }])];
+  }
+  push = push_op(in_t);
+  for x in xs {
+    if push != "" {
+      ls += [el_ir::cl(e, push, [w, x.code])];
+    } else {
+      at = ir::NdVar { n: elm };
+      ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
+      ls += [el_ir::cl(e, "OpSetText", [at, ir::NdInt { n: 0 }, x.code])];
+      ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
+    }
+  }
+  ex(ir::NdInsert { items: ls }, ir::TyVoid)
+}
+
+// `Parser::parse_index` / `parse_vector_index` for one index into a vector, read as a value: the
+// element (`OpGetVector(v, size, i)`) and, for a plain element type, its read at 0 — typed as the
+// element borrowing what the container is named by, and wrapped on the second pass in the `[`'s
+// position.  An index that does not provably fit (`index_provably_fit`: a constant, an active
+// loop variable, arithmetic over those) types the element `τ?`, which is refused by name here, as
+// are a range, a key list and a container that is not a vector.
+fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vector<integer>, ranged: boolean) -> Ex {
+  if c == null || ranged || len(keys) != 1 {
+    el::refuse(e, "an index that is a range, a key list or a limit");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  x = expression(e, vars, c!);
+  inner = ir::TyUnknown { n: 0 };
+  match el_types::base(x.tp) {
+    TyVector { inner: i } => { inner = i; },
+    TyUnknown { n: _ } => {
+      if e.first_pass {
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+    },
+    _ => {}
+  }
+  if el_types::is_unknown(inner) {
+    if !el_types::is_unknown(x.tp) {
+      el::refuse(e, "an index into something other than a vector: {type_kind(x.tp)}");
+    }
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  i = expression(e, vars, keys[0] ?? 0);
+  if !el_types::is_unknown(i.tp) && !(i.tp is TyInteger) {
+    el::refuse(e, "an index that is not an integer: {type_kind(i.tp)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if !fits(e, vars, i.code, x.code) {
+    el::refuse(e, "an index that may not fit, read as a nullable element");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  size = elem_size(inner);
+  op = read_op(inner);
+  if size < 0 || op == "" {
+    el::refuse(e, "an index into a vector of records");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  t = inner;
+  match x.code {
+    NdVar { n } => { t = el_types::with_deps(t, [n]); },
+    _ => {}
+  }
+  code = el_ir::cl(e, op, [el_ir::cl(e, "OpGetVector", [x.code, ir::NdInt { n: size }, i.code]), ir::NdInt { n: 0 }]);
+  if !e.first_pass {
+    code = ir::NdSpan { pos: el::pos_at(e, at), inner: code };
+  }
+  ex(code, t)
+}
+
+// `index_provably_fit` without the `if i < len(v)` proof (`index_arith_trusted`): a constant,
+// a variable of a loop still open, `len` of the vector being indexed, or the integer arithmetic of
+// those — a negation of a constant included, which `const_eval` folds.
+fn fits(e: el::El, vars: el_vars::Vars, i: ir::Node, vec: ir::Node) -> boolean {
+  match i {
+    NdInt { n: _ } => true,
+    NdLong { n: _ } => true,
+    NdVar { n } => el_vars::is_active_loop_var(vars, n),
+    NdSpan { inner } => fits(e, vars, inner, vec),
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if nm == "OpMinSingleInt" || nm == "OpMinSingleLong" {
+        return len(args) == 1 && constant(args[0] ?? ir::NdNull);
+      }
+      if nm == "n_len" || (nm.starts_with("t_") && nm.ends_with("_len")) {
+        return len(args) == 1 && same_var(args[0] ?? ir::NdNull, vec);
+      }
+      if !(nm == "OpNarrow32" || nm == "OpAddInt" || nm == "OpMinInt" || nm == "OpMulInt" || nm == "OpDivInt" || nm == "OpModInt" || nm == "OpAddLong" || nm == "OpMinLong" || nm == "OpMulLong" || nm == "OpDivLong" || nm == "OpModLong") {
+        return false;
+      }
+      for a in args {
+        if !fits(e, vars, a, vec) {
+          return false;
+        }
+      }
+      true
+    },
+    _ => false
+  }
+}
+
+fn constant(i: ir::Node) -> boolean {
+  match i {
+    NdInt { n: _ } => true,
+    NdLong { n: _ } => true,
+    NdSpan { inner } => constant(inner),
+    _ => false
+  }
+}
+
+fn same_var(a: ir::Node, b: ir::Node) -> boolean {
+  match a {
+    NdSpan { inner } => same_var(inner, b),
+    NdVar { n: na } => match b {
+      NdVar { n: nb } => na == nb,
+      _ => false
+    },
+    _ => false
   }
 }
 
