@@ -327,8 +327,12 @@ fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: inte
   el_vars::mark_user_named(vars, v);
   el_vars::in_use(vars, v, true);
   vt = el_vars::tp(vars, v);
-  x = expression(e, vars, rhs);
   bin = op[0..len(op) - 1];
+  if vt is TyVector && bin == "+" && e.p.nodes[rhs] is SVecLit {
+    el_vars::drop_use(vars, v);
+    return vector_append(e, vars, v, rhs);
+  }
+  x = expression(e, vars, rhs);
   if el_types::base(vt) is TyText && !(vt is TyOptional) {
     if bin != "+" {
       el::refuse(e, "a text compound assignment other than `+=`");
@@ -341,6 +345,10 @@ fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: inte
     ops: vector<ir::Node> = [];
     concat_operand(e, ops, v, x);
     return ex(ir::NdInsert { items: ops }, ir::TyVoid);
+  }
+  if el_types::is_unknown(vt) {
+    // Already refused where its type was lost.
+    return ex(ir::NdNull, ir::TyVoid);
   }
   if !scalar(vt) || vt is TyVoid {
     el::refuse(e, "a compound assignment to a local of this type: {type_kind(vt)}");
@@ -1392,26 +1400,34 @@ fn read_op(t: ir::TypeT) -> text {
 // another type, a repetition, a local that already has a store and an empty literal with no type
 // are refused by name.
 fn vector_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT) -> Ex {
+  vector_build(e, vars, v, n, declared, false)
+}
+
+// `w += [items]` on a vector local that already has its store: the same build appended to it —
+// no new store, room for the items, each item appended (`parse_vector_inner` with `is_var`,
+// `build_vector_list` finding the destination's deps).
+fn vector_append(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
+  inner = ir::TyUnknown { n: 0 };
+  match el_vars::tp(vars, v) {
+    TyVector { inner: i } => { inner = i; },
+    _ => {}
+  }
+  vector_build(e, vars, v, n, inner, true)
+}
+
+fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT, append: boolean) -> Ex {
   items: vector<integer> = [];
   match e.p.nodes[n] {
     SVecLit { items: its } => { items = its; },
     _ => {}
   }
   // An empty `[]` into a local returns before `unique_elm_var`; otherwise the element local is
-  // typed as a record of the destination's content (definition 0 while that is unknown, as on a
-  // first bind's first pass), borrowing the destination.
+  // `Reference(type_def_nr(parent_tp.content()))` borrowing the destination, and a bind's
+  // `parent_tp` carries the destination's deps but no content — definition 0, a bind and an
+  // append alike.
   elm = -1;
   if len(items) > 0 {
-    content = 0;
-    match el_vars::tp(vars, v) {
-      TyVector { inner } => {
-        if !el_types::is_unknown(inner) {
-          content = type_def_nr(e, inner);
-        }
-      },
-      _ => {}
-    }
-    elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: content, dep: [v] });
+    elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
   }
   xs: vector<Ex> = [];
   for it in items {
@@ -1446,19 +1462,23 @@ fn vector_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared:
   if rows == null || e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
-  if len(el_types::deps(el_vars::tp(vars, v))) > 0 {
-    el::refuse(e, "a vector literal into a local that has a store");
+  has_store = len(el_types::deps(el_vars::tp(vars, v))) > 0;
+  if has_store != append {
+    el::refuse(e, if append { "a vector append to a local with no store yet" } else { "a vector literal into a local that has a store" });
     return ex(ir::NdNull, ir::TyVoid);
   }
   r = rows!;
-  db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
-  el_vars::depend(vars, v, db);
   w = ir::NdVar { n: v };
-  ls: vector<ir::Node> = [
-    el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
-    el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
-    el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
-  ];
+  ls: vector<ir::Node> = [];
+  if !append {
+    db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
+    el_vars::depend(vars, v, db);
+    ls += [
+      el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
+      el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
+      el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
+    ];
+  }
   if len(xs) > 0 {
     size = elem_size(in_t);
     if size < 0 {
