@@ -100,11 +100,18 @@ consuming, or null (`brace_next`, `no_else`, `empty_literal_allowed`).
 
 ## Open
 
-- **A rule answering a `vector` bound in a match that is a function's tail** loses the match's
-  value on the interpreter and is refused by the C backend ("an integer expected, a Void found"):
-  the scope pass assigns the binding's conditional free, not the match value, to the return
-  slot.  The grammar's list rules answer an `SList` node, so it does not block the parser; it is
-  this branch's own defect (the sub-rule lowering is new) and is fixed before the branch merges.
+- **A rule answering a `vector`, captured in a match that is a function's tail**, loses the
+  match's value on the interpreter and is refused by the C backend ("an integer expected, a Void
+  found") when the rule also takes a hidden work buffer.  Minimal shape: `[k: kw, (tv: tvars)?,
+  LParen] => 42` returns 0; the IR binds the match value nowhere and assigns the capture's
+  conditional free (`if OpDistinctStore(tv, __ref_1) if OpDistinctStore(tv, __ref_2)
+  OpFreeRef(tv)`, `get_free_vars.rs`'s witness-buffer arm) to `__ret_1`.  Hand-written twins
+  (the capture a plain local, its assignment inside a condition) are right, so the trigger is
+  the capture being a PATTERN binding (`pattern_binding`, an arm-scoped loop variable) that
+  adopts the callee's return buffer.  Repro: the scratch copy of the syntax layer before its
+  list rules answered `SList` nodes.  The grammar's list rules answer nodes, so it does not
+  block the parser; it is this branch's own defect (the sub-rule lowering is new) and is fixed
+  before the branch merges.
 - **Diagnostics** are part of the port (same text, same position), measured after gate E on the
   programs `tests/parse_errors.rs` and the suite's refusal cells carry.
 - **Scripts** (`src/script.rs`, a textual desugar before parsing) are not ported yet: gate S
