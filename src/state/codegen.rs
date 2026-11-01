@@ -6448,8 +6448,11 @@ impl State {
             }
             return;
         }
-        // destination-passing — avoid scratch buffer for text-returning natives.
-        if matches!(stack.function.tp(var), Type::Text(_))
+        // destination-passing — avoid scratch buffer for text-returning natives.  The target's
+        // SHAPE is asked, its `?` peeled (`@FR-N-Shape`): a `_dest`-only native (`to_lowercase`,
+        // `replace`, …) has no plain sibling, so a `text?` local that missed this route called
+        // the body-less definition and read back an empty text (loft#2317).
+        if matches!(stack.function.tp(var).base(), Type::Text(_))
             && let Value::Call(op, args) = value.unspan()
         {
             let name = stack.data.def(*op).name().to_owned();
