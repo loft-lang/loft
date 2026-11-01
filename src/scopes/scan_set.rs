@@ -252,6 +252,7 @@ impl Scopes<'_> {
         function: &Function,
     ) -> Option<Value> {
         if !self.multi_assigned.contains(&ov)
+            || function.is_compiler_generated(v)
             || function.is_argument(v)
             || function.is_skip_free(v)
             || function.owner_witness(v).is_some()
@@ -259,6 +260,7 @@ impl Scopes<'_> {
                 function.tp(v),
                 Type::Reference(_, _) | Type::Enum(_, true, _)
             )
+            // @FR-O-Proxy asks copy — an owner copies the block's variable, a view keeps it
             || !function.tp(v).depend().is_empty()
         {
             return None;

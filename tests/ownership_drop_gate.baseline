@@ -9,7 +9,7 @@ c_callproj_field DOUBLE,EARLY
 c_callproj_local DOUBLE,EARLY
 c_callproj_nullable DOUBLE,EARLY
 c_callproj_push DOUBLE,EARLY
-c_callproj_reassign DOUBLE,EARLY
+c_callproj_reassign DOUBLE
 c_callproj_ret DOUBLE,EARLY
 c_callproj_tuplem DOUBLE,EARLY
 c_callproj_veclit DOUBLE,EARLY
