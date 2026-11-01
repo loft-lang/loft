@@ -44,6 +44,8 @@ as not rerun and do not fail.
 Exit 0 when nothing is confirmed (or no baseline could be read — said loudly), 1 otherwise.
 """
 
+from __future__ import annotations  # the `X | None` annotations on Python 3.9
+
 import json
 import re
 import statistics
