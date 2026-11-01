@@ -97,6 +97,10 @@ pub struct VerdictRow {
     /// cannot decide the copy: ending `source`'s life moves nothing out of it, so such a copy
     /// is forced as written, and the type it copies is not `source`'s.
     pub projection: bool,
+    /// The address of the copy's node in the function body, for a survival-split row: the
+    /// site a path-aware question about the source is asked at ([`crate::lease::Frame::read_after_addr`]).
+    /// `0` for a row that has no single copy node.
+    pub site: usize,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -484,7 +488,7 @@ struct Uses {
     last_use_loc: HashMap<u16, Option<Position>>,
     /// @PLN90 — field-target appends `OpAppendVector(OpGetField(rec, fld), src)`:
     /// `(base record var, source base var, copy-site-end pos, loop-survives, source location,
-    /// source is a projection)`.
+    /// source is a projection, the copy node's address)`.
     /// This is the struct/enum-construction copy (`S { f: src }`) and `x.field += src` — the
     /// source is deep-copied into the field, which the var-buffer copy idiom above never sees.
     /// The position (taken AFTER the args are walked) + `loop_survives` (item 4: the source
@@ -497,9 +501,11 @@ struct Uses {
         bool,
         Option<Position>,
         bool,
+        usize,
     )>,
     /// @PLN90 — `OpCopyRecord` deep-copies: `(dest base var, SOURCE base var, copy-site-end pos,
-    /// loop-survives, source location, source is a projection)`. A record copy (`v[i] = e`, a
+    /// loop-survives, source location, source is a projection, the copy node's address, the
+    /// destination is a slot of an existing structure rather than a whole variable's fresh store)`. A record copy (`v[i] = e`, a
     /// `?? E{…}` default element,
     /// a struct copy) — not append-based, so the branches above miss it. The same-var no-op
     /// alias is excluded when recorded.
@@ -509,6 +515,8 @@ struct Uses {
         usize,
         bool,
         Option<Position>,
+        bool,
+        usize,
         bool,
     )>,
     /// Vars that appeared in a non-reader position (⇒ not borrow-eligible). The
@@ -794,6 +802,7 @@ impl Uses {
                             loop_surv,
                             self.cur_pos,
                             projection,
+                            std::ptr::from_ref(node.unspan()) as usize,
                         ));
                     }
                 }
@@ -835,6 +844,10 @@ impl Uses {
                 // (item 4) = the source outlives the enclosing loop (copied every iteration).
                 if record && !self.in_yield {
                     let loop_surv = self.loop_survives(src);
+                    let into_structure = !matches!(
+                        args.get(1).map(Value::unspan),
+                        Some(Value::Var(x)) if self.database_vars.contains(x)
+                    );
                     self.record_copy.push((
                         dest,
                         src,
@@ -842,6 +855,8 @@ impl Uses {
                         loop_surv,
                         self.cur_pos,
                         projection,
+                        std::ptr::from_ref(node.unspan()) as usize,
+                        into_structure,
                     ));
                 }
             }
@@ -1274,6 +1289,7 @@ fn analyze_fn_survival(
                     source_last_use: None,
                     survival: false,
                     projection: false,
+                    site: 0,
                 });
             }
             continue; // not a single-source local copy — not ours to elide
@@ -1423,6 +1439,7 @@ fn analyze_fn_survival(
             source_last_use: None,
             survival: false,
             projection: false,
+            site: 0,
         });
     }
 
@@ -1438,7 +1455,7 @@ fn analyze_fn_survival(
         // Flag OFF → the original phase-1 classification verbatim (byte-identical). Flag ON →
         // the bound-vs-unbound survival split.
         let (class, reason) = if survival_on {
-            survival_class(src, entry.5, copy_end, loop_surv, &u, function, data)
+            survival_class(src, entry.5, true, copy_end, loop_surv, &u, function, data)
         } else {
             (
                 CopyClass::Implicit,
@@ -1456,6 +1473,7 @@ fn analyze_fn_survival(
             source_last_use: src.and_then(|s| u.last_use_loc.get(&s).copied().flatten()),
             survival: true,
             projection: entry.5,
+            site: entry.6,
         });
     }
 
@@ -1468,7 +1486,9 @@ fn analyze_fn_survival(
         // Flag OFF → the original phase-1 classification verbatim (byte-identical). Flag ON →
         // the bound-vs-unbound survival split.
         let (class, reason) = if survival_on {
-            survival_class(src, entry.5, copy_end, loop_surv, &u, function, data)
+            survival_class(
+                src, entry.5, entry.7, copy_end, loop_surv, &u, function, data,
+            )
         } else {
             (CopyClass::Implicit, "record deep-copy (OpCopyRecord)")
         };
@@ -1483,6 +1503,7 @@ fn analyze_fn_survival(
             source_last_use: src.and_then(|s| u.last_use_loc.get(&s).copied().flatten()),
             survival: true,
             projection: entry.5,
+            site: entry.6,
         });
     }
 
@@ -1531,17 +1552,22 @@ fn analyze_fn_survival(
 /// container already has. Nothing is allocated, and there is no borrow to reach for instead:
 /// the destination's storage IS those bytes.
 ///
-/// **Two facts have to meet, and the marker is only the first.** `value struct` says how the
-/// value is STORED; it does not say what the value OWNS. A `value struct` may declare a
-/// `vector` or a `text` field, and copying that one really does duplicate a store — measured:
-/// `a = VH { xs: [1, 2] }; v = [a]; a.xs += [3]` leaves `v[0].xs` at 2 while `a.xs` is 3, which
-/// is a deep copy by any reading. So the fields are walked, and any heap-owning one anywhere
-/// beneath answers `false`.
+/// A plain record — a struct, or a struct-enum and its variants — is inline once it is IN a
+/// structure as well: a vector's element and a record's field are slots of the container
+/// (`record_new` hands out a vector slot, `@FR-R-FlatCopy` copies a record that owns no heap
+/// as its block alone).  So a copy INTO a structure (`into_structure`) writes the source's
+/// bytes into a slot that exists whether the source is moved or copied, and a move would write
+/// the same bytes: no rewrite makes it cheaper (COPY_DIAGNOSTICS § What remains open, the
+/// cheap-copy item).  Copied into a whole variable's FRESH store, the record is a store of its
+/// own, which the copy allocates — that keeps its notice.
 ///
-/// A plain (non-`value`) struct answers `false` even with all-scalar fields: it lives in a
-/// record reached by a `DbRef`, so a copy allocates that record. That is the `RS` half of
-/// loft#1190, and it keeps its notice.
-fn copy_allocates_nothing(data: &Data, tp: &Type) -> bool {
+/// **Two facts have to meet, and the storage is only the first.** How the value is STORED does
+/// not say what it OWNS. A record may declare a `vector` or a `text` field, and copying that
+/// one really does duplicate a store — measured:
+/// `a = VH { xs: [1, 2] }; v = [a]; a.xs += [3]` leaves `v[0].xs` at 2 while `a.xs` is 3, which
+/// is a deep copy by any reading. So the fields are walked — each variant's, for an enum — and
+/// any heap-owning one anywhere beneath answers `false`.
+fn copy_allocates_nothing(data: &Data, tp: &Type, into_structure: bool) -> bool {
     fn inline_and_free(data: &Data, tp: &Type, seen: &mut Vec<u32>) -> bool {
         match tp.base() {
             Type::Integer(_)
@@ -1550,31 +1576,38 @@ fn copy_allocates_nothing(data: &Data, tp: &Type) -> bool {
             | Type::Boolean
             | Type::Character
             | Type::Null => true,
-            // A plain enum is a discriminant; a STRUCT-enum (`Type::Enum(_, true, _)`) carries a
-            // record payload and is reached by a `DbRef`, so it allocates.
+            // A plain enum is a discriminant.
             Type::Enum(_, false, _) => true,
-            Type::Reference(d, _) => {
+            Type::Reference(d, _) | Type::Enum(d, true, _) => {
                 let d = *d;
-                if !data.is_value_struct(d) {
-                    return false;
-                }
                 if seen.contains(&d) {
-                    // A value struct cannot contain itself by value, so a cycle here means the
-                    // types are still being resolved. Answer the conservative way — a copy that
+                    // A record cannot contain itself inline, so a cycle here means the types
+                    // are still being resolved. Answer the conservative way — a copy that
                     // might allocate keeps its notice.
                     return false;
                 }
                 seen.push(d);
-                let ok = (0..data.attributes(d))
-                    .all(|a| inline_and_free(data, &data.attr_type(d, a), seen));
+                let fields_free = |def: u32, seen: &mut Vec<u32>| {
+                    (0..data.attributes(def))
+                        .all(|a| inline_and_free(data, &data.attr_type(def, a), seen))
+                };
+                let ok = fields_free(d, seen)
+                    && data
+                        .children_of(d)
+                        .filter(|&c| data.def_type(c) == DefType::EnumValue)
+                        .all(|c| fields_free(c, seen));
                 seen.pop();
                 ok
             }
             _ => false,
         }
     }
-    matches!(tp.base(), Type::Reference(d, _) if data.is_value_struct(*d))
-        && inline_and_free(data, tp, &mut Vec::new())
+    let inline = match tp.base() {
+        Type::Reference(d, _) => into_structure || data.is_value_struct(*d),
+        Type::Enum(_, true, _) => into_structure,
+        _ => false,
+    };
+    inline && inline_and_free(data, tp, &mut Vec::new())
 }
 
 /// @PLN90 — the bound-vs-unbound survival split for a construction / record copy. The
@@ -1593,9 +1626,11 @@ fn copy_allocates_nothing(data: &Data, tp: &Type) -> bool {
 ///
 /// Called only when `LOFT_COPY_SURVIVAL` is set — the flag-OFF path keeps the original
 /// phase-1 classification verbatim at the call site, so the default dump stays byte-identical.
+#[expect(clippy::too_many_arguments, reason = "one fact per copy-row column")]
 fn survival_class(
     src: Option<u16>,
     projection: bool,
+    into_structure: bool,
     copy_end: usize,
     loop_surv: bool,
     u: &Uses,
@@ -1632,7 +1667,7 @@ fn survival_class(
     // here: an inline value's storage IS the destination's bytes, so `[a, b]` writes them where
     // they belong and a move would save nothing.  Advice that names a rewrite buying zero is
     // what teaches a reader to stop reading the channel.
-    if copy_allocates_nothing(data, function.tp(s)) {
+    if copy_allocates_nothing(data, function.tp(s), into_structure) {
         return (
             CopyClass::Implicit,
             "inline value with no heap part — the copy allocates nothing and no borrow could avoid it",
@@ -8879,6 +8914,183 @@ pub fn superseded_fold_diagnostics(
     }
 }
 
+/// The rewrite an `avoidable-copy` can offer at its site (DIAGNOSTICS.md § Fix lines: a fix is
+/// a rewrite usable where it is offered, and a copy no rewrite removes is necessary, so it is
+/// not advised).
+enum CopyRewrite {
+    /// The source's one later use is a statement that can run before the copy's: moved there,
+    /// the copy is the source's last use and becomes a move.
+    Reorder { use_line: u32 },
+    /// The source's one later use is a statement whose result nothing reads.
+    DropDead { use_line: u32, var: u16 },
+}
+
+/// The statement list in `code` that holds the copy at `site` as one statement and the
+/// source's next read as a LATER one, innermost first: `(statements, copy index, use index)`.
+fn copy_statements(code: &Value, site: usize, src: u16) -> Option<(&[Value], usize, usize)> {
+    let holds_site = |op: &Value| op.any_node(&mut |n| std::ptr::from_ref(n) as usize == site);
+    let mut found = None;
+    code.walk(&mut |n| {
+        // A literal's own block (a record, a vector, an enum value, a format string) lowers
+        // ONE expression: its operators are not statements the author can reorder.
+        let ops: &[Value] = match n {
+            Value::Block(bl) | Value::Loop(bl)
+                if !matches!(
+                    bl.name,
+                    "Object"
+                        | "Vector"
+                        | "VectorRef"
+                        | "Vector Index"
+                        | "EnumUnitLit"
+                        | "Formatted string"
+                ) =>
+            {
+                &bl.operators
+            }
+            _ => return,
+        };
+        let Some(i) = ops.iter().position(|op| holds_site(op)) else {
+            return;
+        };
+        // A pre-order walk meets an outer list first: the innermost list that also holds a
+        // later read is the last one met.
+        if let Some(off) = ops[i + 1..].iter().position(|op| op.reads_var(src)) {
+            found = Some((ops, i, i + 1 + off));
+        }
+    });
+    found
+}
+
+/// The variables `ops` writes, with every variable a written one views and every variable
+/// that views a written one: a write through a view is a write of what it views.
+fn written_closure(ops: &[Value], data: &Data, function: &Function) -> HashSet<u16> {
+    let mut w = crate::fxhash::FxHashSet::default();
+    let mut cache = crate::fxhash::FxHashMap::default();
+    for op in ops {
+        crate::parser::find_written_vars(op, data, function, &mut w, &mut cache);
+    }
+    let mut out: HashSet<u16> = w.into_iter().collect();
+    loop {
+        let before = out.len();
+        let snapshot: Vec<u16> = out.iter().copied().collect();
+        for v in snapshot {
+            out.extend(function.tp(v).depend().iter().copied());
+        }
+        for v in 0..function.next_var() {
+            if function.tp(v).depend().iter().any(|d| out.contains(d)) {
+                out.insert(v);
+            }
+        }
+        if out.len() == before {
+            return out;
+        }
+    }
+}
+
+/// Every variable `ops` names.
+fn named_vars(ops: &[Value]) -> HashSet<u16> {
+    let mut out = HashSet::default();
+    for op in ops {
+        op.walk(&mut |n| {
+            if let Some(v) = n.var_named_here() {
+                out.insert(v);
+            }
+        });
+    }
+    out
+}
+
+/// Does `op` call a function — something with an effect a reorder could move — or leave the
+/// statement list (`return`, `break`, `continue`)?
+fn calls_or_leaves(op: &Value, data: &Data) -> (bool, bool) {
+    let mut calls = false;
+    let mut leaves = false;
+    op.walk(&mut |n| match n {
+        Value::Call(d, _) => {
+            let name = data.def(*d).name.as_str();
+            if !name.starts_with("Op") {
+                calls = true;
+            }
+        }
+        Value::CallRef(..) => calls = true,
+        Value::Return(_) | Value::Break(_) | Value::Continue(_) => leaves = true,
+        _ => {}
+    });
+    (calls, leaves)
+}
+
+/// The rewrite that removes the copy of `src` at `site`, or `None` when no rewrite usable at
+/// that site does — the copy is then necessary as written.
+fn copy_rewrite(
+    data: &Data,
+    def: &crate::data::Definition,
+    frame: &crate::lease::Frame,
+    site: usize,
+    src: u16,
+) -> Option<CopyRewrite> {
+    let function = &def.variables;
+    let (ops, i, j) = copy_statements(&def.code, site, src)?;
+    // The copy's own statement reads the source once — the copy.  A second read there (`[v, v]`)
+    // is a later use no statement move can separate.
+    let mut reads_here = 0;
+    ops[i].walk(&mut |n| {
+        if n.names_var_here(src) {
+            reads_here += 1;
+        }
+    });
+    if reads_here != 1 {
+        return None;
+    }
+    // The statement at `j` must be the source's LAST use, on every path.
+    if frame.read_after(&ops[j], src) != Some(None) {
+        return None;
+    }
+    let use_line = frame.read_after_addr(site, src).flatten()?;
+    // A dead use: `y = <reads of src>` with `y` read nowhere, and nothing called on the way.
+    if let Value::Set(y, rhs) = ops[j].unspan()
+        && *y != src
+        && !function.is_argument(*y)
+        && !def
+            .code
+            .any_node(&mut |n| matches!(n, Value::Var(x) if x == y))
+        && calls_or_leaves(rhs, data) == (false, false)
+    {
+        return Some(CopyRewrite::DropDead { use_line, var: *y });
+    }
+    // A reorder: the use moves above the copy.  Nothing between them (the copy included)
+    // writes what the use reads, the use writes nothing they name, no statement involved
+    // leaves the list, and at most one side calls anything.
+    let between = &ops[i..j];
+    let (use_calls, use_leaves) = calls_or_leaves(&ops[j], data);
+    let mut between_calls = false;
+    for op in between {
+        let (c, l) = calls_or_leaves(op, data);
+        if l {
+            return None;
+        }
+        between_calls |= c;
+    }
+    if use_leaves || (use_calls && between_calls) {
+        return None;
+    }
+    let use_ops = std::slice::from_ref(&ops[j]);
+    let use_names = named_vars(use_ops);
+    if written_closure(between, data, function)
+        .iter()
+        .any(|v| *v != src && use_names.contains(v))
+    {
+        return None;
+    }
+    let between_names = named_vars(between);
+    if written_closure(use_ops, data, function)
+        .iter()
+        .any(|v| between_names.contains(v))
+    {
+        return None;
+    }
+    Some(CopyRewrite::Reorder { use_line })
+}
+
 /// @PLN90 W5 — the ENFORCED copy lint (`LOFT_WARN_COPIES`). Routes every **Avoidable** unbound
 /// structure copy (a still-live value duplicated where a borrow/move would remove it — the
 /// worklist) through the normal `Level::Warning` diagnostics channel, so it surfaces during a
@@ -8919,6 +9131,43 @@ pub fn warn_copies(data: &Data, diags: &mut crate::diagnostics::Diagnostics, fal
             {
                 continue;
             }
+            // loft#2342 — "still used after this point" is a PATH question: a read in an arm
+            // exclusive with the copy's, or one after the source is assigned again (a loop's
+            // next turn included), is not a later use.  The liveness pass follows the paths;
+            // where none reads the source after the copy there is nothing to advise.  And a
+            // copy is advised only with a rewrite usable at its site — the later use moved
+            // above the copy, or a dead one dropped; with neither, the copy is necessary as
+            // written and there is nothing to say (DIAGNOSTICS.md § Fix lines).
+            let rewrite = if r.source != u16::MAX && r.site != 0 {
+                let frame = lease_frame.get_or_insert_with(|| crate::lease::Frame::new(data, def));
+                let trace = |why: &str| {
+                    if crate::env_once!(std::env::var_os("LOFT_TRACE_COPY_ADVICE").is_some()) {
+                        eprintln!(
+                            "copy-advice: {}:{} `{}` {why}",
+                            r.loc
+                                .as_ref()
+                                .map(|p| p.file.as_str())
+                                .filter(|f| !f.is_empty())
+                                .unwrap_or(def.position.file.as_str()),
+                            r.loc.as_ref().map_or(0, |p| p.line),
+                            def.variables.name(r.source)
+                        );
+                    }
+                };
+                if frame.read_after_addr(r.site, r.source) == Some(None) {
+                    trace("silent: no path reads it after the copy");
+                    continue;
+                }
+                match copy_rewrite(data, def, frame, r.site, r.source) {
+                    Some(rw) => Some(rw),
+                    None => {
+                        trace("silent: no rewrite usable here — the copy is necessary");
+                        continue;
+                    }
+                }
+            } else {
+                None
+            };
             let ty = if r.source == u16::MAX {
                 "a structure".to_string()
             } else {
@@ -8966,21 +9215,24 @@ pub fn warn_copies(data: &Data, diags: &mut crate::diagnostics::Diagnostics, fal
             } else {
                 format!(" `{}`", def.variables.written_name(r.source))
             };
-            let msg = if src_name.is_empty() {
+            let msg = match &rewrite {
                 // No named source, so no fix attaches below — this branch KEEPS its
                 // resolution in the prose. Handing the fix to `--explain` only works where
                 // there is a fix to hand it to; stripping it here would leave the reader
                 // with nothing at all (@PLN131).
-                format!(
+                None => format!(
                     "copy of {ty}{where_} — the value is still in use after this point, so it \
                      could not be moved. Build it in place, or stop using the source \
                      afterwards, and the copy becomes a move"
-                )
-            } else {
-                format!(
-                    "copy of {ty}{where_} —{src_name} is still used after this point, so it \
-                     could not be moved"
-                )
+                ),
+                Some(
+                    CopyRewrite::Reorder { use_line } | CopyRewrite::DropDead { use_line, .. },
+                ) => {
+                    format!(
+                        "copy of {ty}{where_} —{src_name} is used again at line {use_line}, so it \
+                         could not be moved"
+                    )
+                }
             };
             // @PLN131 prerequisite arc — the copy notice gets the FIRST code, because it is
             // the diagnostic the suggestions work builds on. The code is the frozen
@@ -8994,49 +9246,47 @@ pub fn warn_copies(data: &Data, diags: &mut crate::diagnostics::Diagnostics, fal
                 col,
             );
 
-            // @PLN131 ship steps 1–2 — what to write instead. Ranked most-teaching first.
-            //
-            // Only a NAMED source gets fixes: both rewrites are about a specific variable's
-            // later use, and neither can be stated without one.
-            if r.source != u16::MAX {
-                let name = def.variables.name(r.source);
-                // Mechanical: building the value where it belongs means there was never a
-                // first copy to elide. No condition — its meaning is fixed by the code.
-                //
-                // No `edit` is spelled. The IR desugars a construction and a `+=` append to
-                // the same node, so the compiler cannot yet tell which shape it is looking
-                // at — and the prototype measured that the append shape has NO
-                // build-in-place rewrite. Offering a synthesised edit for both would emit a
-                // fix that does not exist for the second-commonest avoidable shape in the
-                // corpus, which is worse than offering the title alone.
-                diags.fix_last(crate::diagnostics::Fix {
-                    kind: crate::diagnostics::FixKind::Mechanical,
-                    title: "build the value in place".to_string(),
-                    condition: None,
-                    edit: None,
-                    concept: "move",
-                    concept_ref: "@F106",
-                });
-                // Conditional: the condition NAMES the surviving use, which is the whole
-                // point of carrying its location (Q6.1). "after here" sends a veteran
-                // hunting; "at line 12" is affirmable in a second.
-                let where_used = r.source_last_use.as_ref().map_or_else(
-                    || format!("`{name}` is not needed after this point"),
-                    |p| {
-                        format!(
-                            "`{name}` is used again at line {} — you do not need that",
-                            p.line
+            // @PLN131 ship steps 1–2 — what to write instead: the one rewrite that holds here.
+            let copy_line = r.loc.as_ref().map_or(0, |p| p.line);
+            match rewrite {
+                Some(CopyRewrite::Reorder { use_line }) => {
+                    let name = def.variables.name(r.source);
+                    // Conditional: the analysis proves no variable conflict between the two
+                    // statements, not what the author MEANT by their order.
+                    let (title, condition) = if use_line == copy_line {
+                        (
+                            format!("move the statement that reads `{name}` again above the copy"),
+                            "the two statements may run in the other order".to_string(),
                         )
-                    },
-                );
-                diags.fix_last(crate::diagnostics::Fix {
-                    kind: crate::diagnostics::FixKind::Conditional,
-                    title: format!("drop the later use of `{name}`"),
-                    condition: Some(where_used),
-                    edit: None,
-                    concept: "move",
-                    concept_ref: "@F106",
-                });
+                    } else {
+                        (
+                            format!("move line {use_line} above line {copy_line}"),
+                            format!("line {use_line} does not need line {copy_line} to run first"),
+                        )
+                    };
+                    diags.fix_last(crate::diagnostics::Fix {
+                        kind: crate::diagnostics::FixKind::Conditional,
+                        title,
+                        condition: Some(condition),
+                        edit: None,
+                        concept: "move",
+                        concept_ref: "@F106",
+                    });
+                }
+                Some(CopyRewrite::DropDead { use_line, var }) => {
+                    diags.fix_last(crate::diagnostics::Fix {
+                        kind: crate::diagnostics::FixKind::Mechanical,
+                        title: format!(
+                            "drop line {use_line} — `{}` is never read",
+                            def.variables.name(var)
+                        ),
+                        condition: None,
+                        edit: None,
+                        concept: "move",
+                        concept_ref: "@F106",
+                    });
+                }
+                None => {}
             }
         }
     }
