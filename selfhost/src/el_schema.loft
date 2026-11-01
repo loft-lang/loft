@@ -32,12 +32,43 @@ pub const NO_TYPE = 65535;
 // `typedef::fill_all`, the part a plain struct reaches: every struct the file declared that has
 // no type number yet is registered, in definition order, then the schema is finished.
 pub fn fill_all(e: el::El) {
+  // `actual_types_deferred` before it: each enum the file declared, in definition order, a
+  // schema enum of its name whose values its variants are, each variant valued its position
+  // (`register_enum_db`, `stamp_enum_variants`).
+  for d in e.b.data.definitions {
+    if d.def_type == el::DT_ENUM && d.known_type == NO_TYPE && !starts_with(d.name, "__nullable<") {
+      register_enum(e, d#index);
+    }
+  }
   for d in e.b.data.definitions {
     if d.def_type == el::DT_STRUCT && d.known_type == NO_TYPE {
       fill_database(e, d#index);
     }
   }
   finish(e);
+}
+
+fn register_enum(e: el::El, d: integer) {
+  num = len(e.b.types);
+  e.b.types += [ir::DbType {
+    name: el::def(e, d).name,
+    parts: [ir::PtEnum { values: [] }],
+    keys: [],
+    complex: false,
+    linked: false,
+    size: NO_TYPE,
+    align: 255,
+    field_groups: []
+  }];
+  values: vector<ir::EnumPair> = [];
+  for a in el::def(e, d).attributes {
+    if (a.typedef[0] ?? ir::TyVoid) is TyEnum {
+      values += [ir::EnumPair { nr: NO_TYPE, name: a.name }];
+      e.b.data.definitions[d].attributes[a#index].value = [ir::NdEnum { ord: len(values), tp: num }];
+    }
+  }
+  e.b.types[num].parts = [ir::PtEnum { values: values }];
+  e.b.data.definitions[d].known_type = num;
 }
 
 // `typedef::fill_database` for a plain struct: a schema type under the struct's name, each
@@ -256,6 +287,13 @@ fn is_record(t: ir::DbType) -> boolean {
 
 // `Stores::finish`, for the struct types: every one not sized yet is laid out.
 fn finish(e: el::El) {
+  // `finish_type`'s enum arm: one byte, where no variant has a record of its own.
+  for t in e.b.types {
+    if t.size == NO_TYPE && (t.parts[0] ?? ir::PtBase) is PtEnum {
+      e.b.types[t#index].size = 1;
+      e.b.types[t#index].align = 1;
+    }
+  }
   for t in e.b.types {
     if t.size == NO_TYPE && is_record(t) {
       finish_type(e, t#index);
