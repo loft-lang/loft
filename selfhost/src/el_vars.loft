@@ -382,8 +382,11 @@ pub fn stored(v: Vars) -> ir::Function {
 }
 
 pub fn is_unknown(t: ir::TypeT) -> boolean {
+  // `Type::is_unknown`: a vector of an unknown element, and the placeholder `Reference(0)`, too.
   match t {
     TyUnknown { n: _ } => true,
+    TyVector { inner } => is_unknown(inner),
+    TyReference { n } => n == 0,
     _ => false
   }
 }

@@ -13,7 +13,7 @@ by reason: the constructs the port carries next.
 
   selfhost/front/elab_gate.py [--part NAME]… [--jobs N] [--show N] [FILE…]
 """
-import argparse, collections, concurrent.futures as cf, glob, os, subprocess, sys, tempfile
+import argparse, collections, concurrent.futures as cf, glob, os, shutil, subprocess, sys, tempfile
 
 PARTS = ["scripts", "docs", "suite", "lib"]
 
@@ -84,6 +84,7 @@ def main():
     ap.add_argument("--loft", default="target/release/loft")
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
     ap.add_argument("--show", type=int, default=20, help="differing programs to list")
+    ap.add_argument("--which", help="list the programs a refusal starting with this text blocks alone")
     ap.add_argument("--details", type=int, default=3, help="details listed per refusal family")
     o = ap.parse_args()
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -113,6 +114,9 @@ def main():
     per = collections.defaultdict(collections.Counter)
     reasons = collections.Counter()
     families = collections.Counter()
+    # The families that alone stand between a program and its comparison: what to port next.
+    alone = collections.Counter()
+    which = []
     differs = []
     with cf.ThreadPoolExecutor(o.jobs) as ex:
         futs = {ex.submit(one, loft, defs, elab, std, f, tmp, env, i): (part, f)
@@ -123,7 +127,12 @@ def main():
             per[part][verdict] += 1
             if verdict == "refused":
                 reasons.update(set(detail))
-                families.update({d.split(": ", 1)[0] for d in detail})
+                fams = {d.split(": ", 1)[0] for d in detail}
+                families.update(fams)
+                if o.which and any(d.startswith(o.which) for d in detail):
+                    which.append((len(fams), f))
+                if len(fams) == 1:
+                    alone.update(set(detail) if len(set(detail)) == 1 else fams)
             elif verdict == "differ":
                 differs.append((f, detail))
     tot = collections.Counter()
@@ -143,8 +152,17 @@ def main():
         details = [(r, n) for r, n in reasons.most_common() if r.startswith(f + ": ")]
         for r, n in details[:o.details]:
             print(f"         {n:5}  {r[len(f) + 2:]}")
+    if alone:
+        print("refusals that alone block a program:")
+        for f, k in alone.most_common(15):
+            print(f"  {k:5}  {f}")
+    for k, f in sorted(which)[:o.show]:
+        print(f"WHICH {k} {os.path.relpath(f, os.path.dirname(root))}")
     for f, d in sorted(differs)[:o.show]:
         print(f"DIFFER {os.path.relpath(f, os.path.dirname(root))}\n  {d}")
+    # `LOFT_ELAB_KEEP=1` keeps the built elaborator and the standard image for single runs.
+    if not os.environ.get("LOFT_ELAB_KEEP"):
+        shutil.rmtree(tmp, ignore_errors=True)
     sys.exit(0 if tot["agree"] == n else 1)
 
 
