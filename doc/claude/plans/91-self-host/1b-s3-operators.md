@@ -35,8 +35,10 @@ strict comparison over every program the census passes (out, alloc, leak, binds,
 | `OpHashRemove`, `OpSetKeyed` (a hash) | `loft_hash_remove` (a view member only unlinks), `loft_set_keyed` with the key parts from the key stack (`key_parts`, shared with `OpGetRecord`); other keyed kinds wait for S4 | `hashes.loft` `dropped` |
 | scalars: `<<` / `>>`, `OpMathFunc*` and `OpMathFunc2*` (float, single), `pow`, `PI` / `E`, `OpCastIntFromText` / `OpCastFloatFromText`, the float and single `Nullable` division twins, a plain enum's null and truth, a null reference, `t.byte_at(i)` | loft's own operator or function in each case (the twins are the plain `/` and `%`; an enum's absent discriminants 0 and 255 read false, `OpConvEnumFromNull`'s type operand is no value) | `small_ops.loft` `scalars` |
 | `OpGetInt4Raw`, `OpSetInt4Raw`, `OpSizeHash`, `OpReverseVector` | `loft_get_int4_raw` / `loft_set_int4_raw` (width 8), `loft_hash_table_bytes`, `loft_vec_reverse` | `scalars`; the census |
+| `OpKeepVectorRange`, `OpAppendTextBytes`, `OpTextCharacter` | `loft_keep_vector_range` (size 0 for a linked element), `loft_append_text_bytes` (its growth step brought to `(Col-Capacity)`), the character as its nullable twin (the raising one only logs) | `small_ops.loft` `texted` |
+| natives `t_4text_find`, `t_4text_char_slice`, `t_4text_to_lowercase`, `t_4text_to_uppercase` | loft's own; a compiled stdlib body's text buffer (a `&text` after the visible arguments) gets the answer too | `texted` |
 
-**Measured** (2026-10-31): the census went from 297 to 514 programs passed over these rows,
+**Measured** (2026-10-31): the census went from 297 to 529 programs passed over these rows,
 none wrong, crashed or leaking, and every passing program equal to the Rust interpreter in
 every layer.
 
@@ -44,4 +46,7 @@ every layer.
 routed around: `loft_crt.h` lacked `loft_keyed.h`; the C backend leaked the text temporaries a
 `return` inside a loop skipped (loft#2313); and the port's `char_walk` read freed memory because a
 vector bound from a `match` over an owned subject was returned as a view of it (loft#2314) — both
-fixed in the compiler.
+fixed in the compiler.  Later: a match's arm gate peeled only the arm (loft#2315), a native
+`if` condition answering `boolean?` was not tested as one (loft#2316), and a `_dest`-only text
+native assigned to a `text?` local read back empty on the interpreter (loft#2317, silent) — each
+fixed where it lived.

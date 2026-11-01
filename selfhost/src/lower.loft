@@ -157,6 +157,9 @@ enum Code {
   MathFunc2,
   // `OpReverseVector`: `a` the element size.
   VecReverse,
+  // `OpKeepVectorRange` (`a` the element type, `b` its size) and `OpAppendTextBytes`.
+  VecKeep,
+  AppendTextBytes,
   // `OpMathFuncFloat`: `a` the function (`loft_math1`'s numbering), loft's own on a float.
   MathFunc,
   // `OpSizeHash`: a hash's bucket table in bytes.
@@ -750,6 +753,8 @@ fn effect(code: Code, b: integer) -> integer {
     IntFromText => 0,
     FloatFromText => 0,
     VecReverse => -1,
+    VecKeep => -3,
+    AppendTextBytes => -4,
     HashBytes => 0,
     HashRemove => -2,
     SetKeyed => -2,
@@ -858,6 +863,10 @@ fn native_index(name: text) -> integer? {
     "t_4text_starts_with" => 3,
     "t_4text_ends_with" => 4,
     "t_4text_byte_at" => 5,
+    "t_4text_find" => 6,
+    "t_4text_char_slice" => 7,
+    "t_4text_to_lowercase" => 8,
+    "t_4text_to_uppercase" => 9,
     _ => null,
   }
 }
@@ -1389,6 +1398,24 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     value(l, b, args[1]!, k);
     value(l, b, args[2]!, k);
     emit(l, MathFunc2, k, literal(l, args[0]!), 0);
+  } else if name == "OpKeepVectorRange" {
+    // `v = v[lo..hi]` in place: `a` the element type, `b` its size (0 for a linked element).
+    tp = literal(l, args[1]!);
+    et = b.types[tp];
+    if et == null {
+      refuse(l, "a range kept of a vector of an unknown element type");
+      return true;
+    }
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[2]!, KInt);
+    value(l, b, args[3]!, KInt);
+    emit(l, VecKeep, KRef, tp, if et!.linked { 0 } else { et!.size });
+  } else if name == "OpAppendTextBytes" {
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KText);
+    value(l, b, args[2]!, KInt);
+    value(l, b, args[3]!, KInt);
+    emit(l, AppendTextBytes, KRef, 0, 0);
   } else if name == "OpReverseVector" {
     value(l, b, args[0]!, KRef);
     emit(l, VecReverse, KRef, literal(l, args[1]!), 0);
@@ -1490,7 +1517,8 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
   } else if name == "OpLengthCharacter" {
     value(l, b, args[0]!, KInt);
     emit(l, CharLen, KInt, 0, 0);
-  } else if name == "OpTextCharacterNullable" {
+  } else if name == "OpTextCharacterNullable" || name == "OpTextCharacter" {
+    // The raising twin answers the same character; its report (`raise_recoverable`) only logs.
     value(l, b, args[0]!, KText);
     value(l, b, args[1]!, KInt);
     emit(l, TextChar, KInt, 0, 0);

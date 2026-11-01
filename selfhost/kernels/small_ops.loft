@@ -125,6 +125,43 @@ fn scalars(n: integer) -> integer {
   s + (v[0] + "loft".byte_at(1)) * 10000000000
 }
 
+// Text natives and two vector rewrites, by hand.  t = "Hello, Loft": find("Loft") 7, a miss 0;
+// to_lowercase().char_slice(0, 5) == "hello" 10 (char_slice writes the caller's buffer);
+// to_uppercase() 100; t[n] (`OpTextCharacter`) * 1000; `kept` rebuilds rows 1..n in place
+// (`OpKeepVectorRange`), each row's w * 1000000 and name length * 100000000, their count * 1e10;
+// the byte copy (`OpAppendTextBytes`) of t's 11 bytes * 1e12.
+// texted(3): 117 + 'l' 108000 + rows w2 w3 (5000000 + 500000000) + 20000000000 + 11e12
+//   = 11020505108117.
+// texted(4): 117 + 'o' 111000 + rows w2 w3 w4 (9000000 + 900000000) + 30000000000 + 11e12
+//   = 11030909111117.
+struct Tr { w: integer, name: text }
+struct Kept { rows: vector<Tr> }
+fn kept(k: &Kept, n: integer) {
+  t: vector<Tr> = [];
+  for i in 1..n {
+    t += [k.rows[i]?];
+  }
+  k.rows = t;
+}
+fn texted(n: integer) -> integer {
+  t = "Hello, Loft";
+  s = (t.find("Loft") ?? 0) + (t.find("zz") ?? 0);
+  if t.to_lowercase().char_slice(0, 5) == "hello" { s += 10; }
+  if t.to_uppercase() == "HELLO, LOFT" { s += 100; }
+  s += (t[n] as integer) * 1000;
+  k = Kept { rows: [Tr { w: 1, name: "a" }, Tr { w: 2, name: "bb" }, Tr { w: 3, name: "ccc" }, Tr { w: 4, name: "dddd" }] };
+  kept(k, n);
+  for r in k.rows {
+    s += r.w * 1000000 + len(r.name) * 100000000;
+  }
+  s += len(k.rows) * 10000000000;
+  buf: vector<u8> = [];
+  for i in 0..size(t) {
+    buf += [(t.byte_at(i) & 255) as u8];
+  }
+  s + len(buf) * 1000000000000
+}
+
 fn main() {
-  println("{hue_number(0)} {hue_number(1)} {hue_number(2)} {div_or(7, 2)} {div_or(7, 0)} {rem_or(7, 3)} {rem_or(7, 0)} {abs_floats(-6)} {abs_floats(6)} {char_or_zero(0)} {char_or_zero(233)} {narrow(200)} {narrow(300)} {narrow_or_null(200)} {narrow_or_null(300)} {ops_or(7, 2)} {ops_or(-1, 2)} {enum_named(1)} {enum_named(2)} {text_walk(0)} {text_walk(1)} {affixed(3)} {affixed(5)} {tail_sum(100000)} {tail_sum(0)} {scalars(3)} {scalars(5)}");
+  println("{hue_number(0)} {hue_number(1)} {hue_number(2)} {div_or(7, 2)} {div_or(7, 0)} {rem_or(7, 3)} {rem_or(7, 0)} {abs_floats(-6)} {abs_floats(6)} {char_or_zero(0)} {char_or_zero(233)} {narrow(200)} {narrow(300)} {narrow_or_null(200)} {narrow_or_null(300)} {ops_or(7, 2)} {ops_or(-1, 2)} {enum_named(1)} {enum_named(2)} {text_walk(0)} {text_walk(1)} {affixed(3)} {affixed(5)} {tail_sum(100000)} {tail_sum(0)} {scalars(3)} {scalars(5)} {texted(3)} {texted(4)}");
 }

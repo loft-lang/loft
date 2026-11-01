@@ -118,6 +118,8 @@ fn test_the_small_integer_operators_answer_as_loft_does() {
   assert(ran("small_ops", "n_tail_sum", [0]) == 0, "tail_sum(0)");
   assert(ran("small_ops", "n_scalars", [3]) == 1141047353173, "scalars(3): shifts, math, parses, enum truth, reverse, byte_at");
   assert(ran("small_ops", "n_scalars", [5]) == 1161047353111, "scalars(5)");
+  assert(ran("small_ops", "n_texted", [3]) == 11020505108117, "texted(3): text natives, a kept range, a byte copy");
+  assert(ran("small_ops", "n_texted", [4]) == 11030909111117, "texted(4)");
   assert(ran("small_ops", "n_rem_or", [7, 3]) == 1, "rem_or(7, 3)");
   assert(ran("small_ops", "n_rem_or", [7, 0]) == -1, "rem_or(7, 0)");
   // |-6 / 4| = 1.5, as a float and as a single, each times 100.
