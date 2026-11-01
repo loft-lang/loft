@@ -2397,6 +2397,24 @@ fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   if x.tp is TyNull {
     return d;
   }
+  // A text local is tested where it stands; the result borrows it (`["t"]`).
+  if lhs is TyText {
+    match x.code {
+      NdVar { n: tv } => {
+        if !(el_types::base(d.tp) is TyText) {
+          refuse_known(e, d.tp, "a `??` default of another type: {type_kind(d.tp)} for TyText");
+          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+        tt = ir::TyText { dep: [tv] };
+        if e.first_pass {
+          return ex(ir::NdNull, tt);
+        }
+        check = el_ir::cl(e, "OpConvBoolFromText", [x.code]);
+        return ex(el_ir::v_if(check, x.code, d.code), tt);
+      },
+      _ => {}
+    }
+  }
   if !el_convert::plain_scalar(lhs) {
     el::refuse(e, "a `??` on this type: {type_kind(lhs)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -2909,7 +2927,10 @@ fn text_arm_into(c: integer, arm: ir::Node) -> ir::Node? {
       ir::NdBlock { block: [bl] }
     },
     NdIf { cond: _ } => text_arms_into(c, arm),
-    _ => null
+    // A bare arm (a `??`'s subject or default) is written into the local as it is.
+    NdNull => null,
+    NdReturn { inner: _ } => null,
+    _ => el_ir::v_set(c, arm)
   }
 }
 
