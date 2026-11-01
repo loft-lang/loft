@@ -1679,6 +1679,10 @@ static OPERATORS: &[&[&str]] = &[
     &["as"],
 ];
 
+/// The level of `OPERATORS` just tighter than `|`: a PATTERN operand is parsed from here, because
+/// in a pattern `|` separates alternatives and never means the bitwise or (`@FR-P-Alt`).
+pub(crate) const PATTERN_OPERAND_LEVEL: usize = 5;
+
 /// The binary operators that cannot BEGIN an expression, so one that follows an operand
 /// answering nothing belongs to that operand (`parse_operators`).  `-`, `+`, `|` and `&` are
 /// absent: each can open the NEXT statement (`-1`, a lambda, a reference).
