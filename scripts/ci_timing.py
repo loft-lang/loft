@@ -27,9 +27,9 @@ and whether it is over the budget — so a long leg is explained by its step, bu
 and not guessed at from the run's wall clock.
 """
 
-BUDGET_MIN = 20.0
-
 from __future__ import annotations  # the `X | None` annotations on Python 3.9
+
+BUDGET_MIN = 20.0
 
 import datetime
 import json
