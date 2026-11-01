@@ -1693,7 +1693,7 @@ impl State {
         let name = def.name().to_string();
         let pushed = data.fnref_text_buffers(def.fnref_visible_params(), def.returned());
         let buf_span = self.stack_step(size_ref());
-        let dest = if crate::state::codegen::is_text_dest_native(&name) {
+        let dest = if crate::text_calls::is_text_dest_def(def) {
             self.library_names.get(&format!("{name}_dest")).copied()
         } else {
             None

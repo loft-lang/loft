@@ -416,7 +416,14 @@ pub fn duplicate_fn_names(data: &Data) -> HashSet<String> {
 #[must_use]
 pub fn disambiguated_fn_ident(dups: &HashSet<String>, def: &crate::data::Definition) -> String {
     let name = def.name();
-    let base = if dups.contains(name) {
+    // A body-less standard-library definition is never emitted: its calls link to the function
+    // of that bare name the runtime provides (`codegen_runtime::n_vector_sum_int`).  A library
+    // may define a free function of the same name (@C97), and only the definitions this crate
+    // EMITS share its flat namespace — renaming the runtime's call left it calling a symbol
+    // nothing defines (rustc E0425).
+    let runtime_provided = *def.code() == crate::data::Value::Null
+        && crate::file_access::is_stdlib_source(def.position().file.as_str());
+    let base = if dups.contains(name) && !runtime_provided {
         // FNV-1a over the defining file path — deterministic across runs.
         let mut h: u32 = 0x811c_9dc5;
         for b in def.position().file.bytes() {

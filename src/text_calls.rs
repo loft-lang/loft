@@ -8,7 +8,21 @@
 //! (@PLN191).
 use crate::data::Type;
 
-/// Text-returning natives that accept a destination buffer instead of allocating one.
+/// Is `def` one of the standard library's destination-passing text natives?  The NAME alone
+/// is not the native: a library may define a free function under a standard-library name
+/// (@C97), and a call of the library's own `env_variable` routed to the stdlib's `_dest` native
+/// answered the wrong text — silently — and a `sum` beside a library `vector_sum_int` crashed the
+/// interpreter (loft#2318).  The definition decides — the standard library's own, or a
+/// declared `#native` (the engine-host kernel natives a library declares) — which the first
+/// pass already knows, where a library function's body is not parsed yet.
+pub(crate) fn is_text_dest_def(def: &crate::data::Definition) -> bool {
+    is_text_dest_native(def.name())
+        && (!def.native.is_empty()
+            || crate::file_access::is_stdlib_source(def.position().file.as_str()))
+}
+
+/// Text-returning natives that accept a destination buffer instead of allocating one — by name;
+/// ask [`is_text_dest_def`] of a definition.
 pub(crate) fn is_text_dest_native(name: &str) -> bool {
     matches!(
         name,
