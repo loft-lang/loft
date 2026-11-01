@@ -7,7 +7,7 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** — D-own-54 OPENED AND CLOSED 2026-09-30 (a native's fresh vector had no owner at a slice's name, a borrowing local's bind, a returned local's bind and an early literal return, below); D-own-48 OPENED AND CLOSED 2026-09-22 (loft#1599: a returned vector local rebound by a call in a loop or a branch answered a store its caller never handed in, in ownership.md); D-own-38 CLOSED 2026-09-06 (loft#1388: the release is by STORE IDENTITY now, `@FR-O-Witness`, with the hand-off at the closure build; below); D-own-39 OPENED AND CLOSED 2026-09-06 (loft#1398: the `is` payload binding recorded no borrow in its TYPE, so the empty-deps proxy read it as OWNED and `--native` copied where the interpreter aliased — #429's cure applied to one of its two sites, below); D-own-38 OPEN 2026-09-06 (loft#1388 residual: the release of a store a closure record adopted, and of one orphaned beside it, is decided per BINDING where the question is per STORE, below); D-own-37 OPENED AND CLOSED 2026-09-06 (loft#1389: the degenerate self-dep was stripped for one of the two RECORD kinds, so an annotated struct-enum local read as borrowed and never freed what a join displaced, below); D-own-36 OPENED AND CLOSED 2026-09-06 (the `@FR-O-Detach` walk: a collection literal's detach ran before its reads on every destination, and `--native` declined a value-`if`'s displaced free, below); D-own-35 OPENED AND CLOSED 2026-09-05 (loft#1370: the per-path fact had no home for a VECTOR local — every value-branch bind aliased the chosen arm — closed at the parser's selector, below); D-own-34 OPENED AND CLOSED 2026-09-05 (the owner witness did not survive the cache, and a nullable bind from a borrow-returning call aliased); D-own-33 OPENED AND CLOSED 2026-09-05 (the per-path fact was short of four homes, every one a nullable local not treated as the heap local it is: a literal buffer adopted inside a loop, the branch pre-init, the loop hoist, a keyed `match` bind, below; a fifth face is loft#1367, owned by @PLN153); D-own-32 OPENED AND CLOSED 2026-09-05 (the oracle called a minted variable Owned regardless of its other definitions, and its shadow re-derived the base translation, below); D-own-31 OPENED AND CLOSED 2026-09-05 (the never-free contract named one spelling of five and forbade a release the language ships, below); D-own-30 OPENED AND CLOSED 2026-09-05 (a nullable local holding a projection VIEW freed the store it displaced, below), after D-own-29 2026-09-04 (loft#1346, below) and D-own-28 the same day (loft#1335).  D-own-8 CLOSED 2026-09-03 (opened 2026-08-24, NARROWED 2026-08-25 to a
+OPEN: **0** — D-own-55 OPENED AND CLOSED 2026-11-01 (loft#2333: a witnessed local reassigned from a call that returns its argument adopted the view it held, below); D-own-54 OPENED AND CLOSED 2026-09-30 (a native's fresh vector had no owner at a slice's name, a borrowing local's bind, a returned local's bind and an early literal return, below); D-own-48 OPENED AND CLOSED 2026-09-22 (loft#1599: a returned vector local rebound by a call in a loop or a branch answered a store its caller never handed in, in ownership.md); D-own-38 CLOSED 2026-09-06 (loft#1388: the release is by STORE IDENTITY now, `@FR-O-Witness`, with the hand-off at the closure build; below); D-own-39 OPENED AND CLOSED 2026-09-06 (loft#1398: the `is` payload binding recorded no borrow in its TYPE, so the empty-deps proxy read it as OWNED and `--native` copied where the interpreter aliased — #429's cure applied to one of its two sites, below); D-own-38 OPEN 2026-09-06 (loft#1388 residual: the release of a store a closure record adopted, and of one orphaned beside it, is decided per BINDING where the question is per STORE, below); D-own-37 OPENED AND CLOSED 2026-09-06 (loft#1389: the degenerate self-dep was stripped for one of the two RECORD kinds, so an annotated struct-enum local read as borrowed and never freed what a join displaced, below); D-own-36 OPENED AND CLOSED 2026-09-06 (the `@FR-O-Detach` walk: a collection literal's detach ran before its reads on every destination, and `--native` declined a value-`if`'s displaced free, below); D-own-35 OPENED AND CLOSED 2026-09-05 (loft#1370: the per-path fact had no home for a VECTOR local — every value-branch bind aliased the chosen arm — closed at the parser's selector, below); D-own-34 OPENED AND CLOSED 2026-09-05 (the owner witness did not survive the cache, and a nullable bind from a borrow-returning call aliased); D-own-33 OPENED AND CLOSED 2026-09-05 (the per-path fact was short of four homes, every one a nullable local not treated as the heap local it is: a literal buffer adopted inside a loop, the branch pre-init, the loop hoist, a keyed `match` bind, below; a fifth face is loft#1367, owned by @PLN153); D-own-32 OPENED AND CLOSED 2026-09-05 (the oracle called a minted variable Owned regardless of its other definitions, and its shadow re-derived the base translation, below); D-own-31 OPENED AND CLOSED 2026-09-05 (the never-free contract named one spelling of five and forbade a release the language ships, below); D-own-30 OPENED AND CLOSED 2026-09-05 (a nullable local holding a projection VIEW freed the store it displaced, below), after D-own-29 2026-09-04 (loft#1346, below) and D-own-28 the same day (loft#1335).  D-own-8 CLOSED 2026-09-03 (opened 2026-08-24, NARROWED 2026-08-25 to a
 single cell, its Face B CLOSED the same day, that cell's one known SYMPTOM closed 2026-08-26
 with the FACT still wrong, loft#1098, and the fact itself closed by giving every path of a
 value branch its own binding — below).  D-own-26 CLOSED 2026-09-03: its gate existed all
@@ -3066,6 +3066,33 @@ calls peaked at 1 000 live stores and now at 1–3; no copy on the mint arm.
 Guard: `tests/scripts/1659-an-opaque-fn-ref-record-result-is-owned-once.loft` — 14 cells, ten of
 which fail on the build before (the 70 000-call cells on the store ceiling, the capture cells on
 the value; both backends).
+
+### D-own-55 — OPENED AND CLOSED (2026-11-01): a witnessed local reassigned from a call that returns its argument adopted the view it held
+
+`(O-Witness)`: a local whose assignments mix ownership is COPIED into when a call does not adopt a
+fresh store, and its witness owns the copy — `scopes::witness_set_kind` classifies such a call as
+a mint on exactly that promise.  With a callee that may answer its argument (`t =
+with_deps(t, [on])`, `-> Ty["t"]`, whose `_ => t` arm returns `t` itself) over a local first bound
+to a VIEW (`t = df.attributes[0].typedef[0] ?? TInt`), the result IS the viewed store, and each
+backend broke the promise its own way (loft#2333, silent on two of three, on released builds):
+
+1. **The interpreter** took the `#360` borrowed-view pass-through — a bare `PutRef`, no copy —
+   so the witness adopted the view and released it at scope exit (`b`'s store, when `df = b.defs[0]`;
+   the third call read a reset record and answered 312 for 336).  Taking the copy instead
+   exposed the second half: its fresh path left the destination out of the protect bracket, so
+   the copy's source-free released the viewed store.  The destination's old store is protected
+   now and released through a copy of its reference stashed on the stack (`unprotect_stashed`).
+2. **rustc-native**'s same-store `PASSTHROUGH` adopted `_src == _dst` — the store the local viewed.
+   A witnessed copy lands in a fresh store, so there is nothing for the passthrough to protect;
+   it adopts only a null result, and lifts the protection through `_dst`.
+3. **The C emitter** reset the destination (`fresh_unless_owned`) before the guard that asks
+   whether the result is an argument's store, so a result that was the destination's old store
+   was freed after the copy — the viewed record, or (with `df` an owned copy) the copy's source.
+   The guard reads the store the slot held, for a witnessed destination only: an owned one's
+   displaced store is the one being released.
+
+Found as the SIGBUS of the C-built self-host elaborator on 60 corpus programs.  Guard
+`loft-suite rules/ownership/O-Witness/2333-a-witnessed-local-reassigned-from-a-call-returning-its-argument-copies.loft`.
 
 ### D-own-54 — OPENED AND CLOSED (2026-09-30): a native's fresh vector had no owner wherever the bind that took it was not a plain owned local
 
