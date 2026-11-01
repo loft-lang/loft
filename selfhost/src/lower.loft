@@ -867,6 +867,8 @@ fn native_index(name: text) -> integer? {
     "t_4text_char_slice" => 7,
     "t_4text_to_lowercase" => 8,
     "t_4text_to_uppercase" => 9,
+    "n_text_from_byte_range" => 10,
+    "n_text_from_bytes" => 11,
     _ => null,
   }
 }
@@ -1163,7 +1165,9 @@ fn mintable(l: Lowering, b: ir::Bundle, tp: integer) {
     return;
   }
   p = t.parts[0];
-  if !(p is PtStruct) && !(p is PtEnumValue) && !(p is PtHash) {
+  // A struct enum's parent (`PtEnum`) is minted at its largest variant (`enum_parent_size`);
+  // its variant is written into the record after.
+  if !(p is PtStruct) && !(p is PtEnumValue) && !(p is PtHash) && !(p is PtEnum) {
     refuse(l, "a store of a type the interpreter does not carry yet: {t.name}");
   }
 }

@@ -798,6 +798,33 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
             crt::set_slot_text(stk, buf, answer);
           }
           put_text(texts, sp_text - 1, answer);
+        } else if op.a == 10 || op.a == 11 {
+          // `text_from_byte_range(bytes, lo, hi)` and `text_from_bytes(bytes)` (its whole range):
+          // the C runtime's own, over the store's vector; a compiled caller's text buffer gets the
+          // answer too.
+          visible = if op.a == 10 { 3 } else { 1 };
+          buf = -1;
+          if op.b > visible {
+            sp_int -= 1;
+            buf = ints[sp_int] ?? -1;
+          }
+          lo: integer? = 0;
+          hi: integer? = 0;
+          if op.a == 10 {
+            sp_int -= 2;
+            lo = ints[sp_int];
+            hi = ints[sp_int + 1];
+          }
+          sp_int -= 3;
+          if op.a == 11 {
+            hi = crt::vec_len(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0);
+          }
+          answer = crt::vec_text_range(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, lo, hi);
+          if buf >= 0 {
+            crt::set_slot_text(stk, buf, answer);
+          }
+          put_text(texts, sp_text, answer);
+          sp_text += 1;
         }
       }
       // A format: the C runtime's routine for the value's kind renders it with the operands
