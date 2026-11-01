@@ -103,6 +103,9 @@ fn stable_after(code: &Value, data: &Data, vars: &Function, n: u16, base: u16) -
     }
     let mut after: Vec<&Value> = Vec::new();
     if !statements_after(code, n, &mut after) {
+        if std::env::var_os("LOFT_DBG_LL").is_some() {
+            eprintln!("ll-not-a-statement n={n}");
+        }
         return false;
     }
     let reach = |w: u16| {
@@ -133,7 +136,11 @@ fn stable_after(code: &Value, data: &Data, vars: &Function, n: u16, base: u16) -
                             matches!(at.typedef.base(), crate::data::Type::RefVar(_))
                         })
                         || callee.get(i).copied().unwrap_or(false);
-                    writes && touches(a)
+                    let hit = writes && touches(a);
+                    if hit && std::env::var_os("LOFT_DBG_LL").is_some() {
+                        eprintln!("ll-write base={base} by {} arg {i}", def.name());
+                    }
+                    hit
                 })
             }
             Value::CallRef(..) => true,

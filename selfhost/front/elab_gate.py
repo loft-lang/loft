@@ -121,6 +121,8 @@ def main():
     which = []
     differs = []
     blocked = []
+    # `LOFT_ELAB_VERDICTS=<file>`: each program's verdict, one per line — what two runs diff.
+    verdicts = []
     with cf.ThreadPoolExecutor(o.jobs) as ex:
         futs = {ex.submit(one, loft, defs, elab, std, f, tmp, env, i): (part, f)
                 for i, (part, f) in enumerate(todo)}
@@ -128,6 +130,7 @@ def main():
             part, f = futs[fut]
             verdict, detail = fut.result()
             per[part][verdict] += 1
+            verdicts.append(f"{verdict}\t{os.path.relpath(f, os.path.dirname(root))}")
             if verdict == "refused":
                 reasons.update(set(detail))
                 fams = {d.split(": ", 1)[0] for d in detail}
@@ -139,6 +142,9 @@ def main():
                     alone.update(set(detail) if len(set(detail)) == 1 else fams)
             elif verdict == "differ":
                 differs.append((f, detail))
+    if os.environ.get("LOFT_ELAB_VERDICTS"):
+        with open(os.environ["LOFT_ELAB_VERDICTS"], "w", encoding="utf-8") as fh:
+            fh.write("\n".join(sorted(verdicts)) + "\n")
     tot = collections.Counter()
     for c in per.values():
         tot.update(c)

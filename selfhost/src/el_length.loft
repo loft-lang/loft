@@ -1,0 +1,312 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `(N-Index)`'s length locals (src/parser/length_locals.rs): is `n = len(v)` still `len(v)` where
+// `v[n - k]` reads it?  The Rust answers off pass 1's whole body: `n` assigned once, by that `len`,
+// and nothing that can run after it (the rest of each enclosing statement list, a loop around it
+// whole) writing `v` or a view of it.  The first pass here does not keep loop bodies, so the
+// question is asked of the syntax tree instead, and answered three ways: TRUSTED when nothing
+// after the assignment can write `v`, UNTRUSTED when a statement there assigns through `v`, and
+// UNDECIDED — refused by name by the caller — when the answer turns on what the Rust's IR knows
+// and the tree does not (a call or a closure that may write it, a write through another local
+// that may view it, a second binding of the name).
+use syntax::*;
+use el;
+use el_vars;
+use el_types;
+
+pub const TRUSTED = 1;
+pub const UNTRUSTED = 0;
+pub const UNDECIDED = -1;
+
+// The verdict on the length local `n` (written name `name`) over the vector reached through the
+// local `base`, in the body `body`.
+pub fn verdict(e: el::El, vars: el_vars::Vars, body: integer, name: text, base: integer) -> integer {
+  bname = el_vars::name_of(vars, base);
+  if assignments(e, body, name) != 1 || mentions_in_lambda(e, body, name) || mentions_in_lambda(e, body, bname) {
+    return UNDECIDED;
+  }
+  after: vector<integer> = [];
+  found = statements_after(e, body, name, after);
+  if !found {
+    return UNTRUSTED;
+  }
+  r = TRUSTED;
+  for s in after {
+    w = writes(e, vars, s, bname, base);
+    if w == UNTRUSTED {
+      return UNTRUSTED;
+    }
+    if w == UNDECIDED {
+      r = UNDECIDED;
+    }
+  }
+  r
+}
+
+// How many times `body` binds `name`: an assignment of any kind, a declaration, a loop binding, a
+// destructure.  A closure's body is its own function and is not counted.
+pub fn assignments(e: el::El, i: integer, name: text) -> integer {
+  c = match e.p.nodes[i] {
+    SAssign { target } => if root(e, target) == name && is_name(e, target) { 1 } else { 0 },
+    SLet { name: n } => if n == name { 1 } else { 0 },
+    SFor { binds } => if binds.contains(name) { 1 } else { 0 },
+    SComprehension { binds } => if binds.contains(name) { 1 } else { 0 },
+    SDestructure { places } => {
+      k = 0;
+      for p in places {
+        if is_name(e, p) && root(e, p) == name {
+          k += 1;
+        }
+      }
+      k
+    },
+    SLambda { at: _ } => { return 0; },
+    _ => 0
+  };
+  for ch in children(e, i) {
+    c += assignments(e, ch, name);
+  }
+  c
+}
+
+// Does a closure in `i` name `name`?
+fn mentions_in_lambda(e: el::El, i: integer, name: text) -> boolean {
+  if e.p.nodes[i] is SLambda {
+    return mentions(e, i, name);
+  }
+  for ch in children(e, i) {
+    if mentions_in_lambda(e, ch, name) {
+      return true;
+    }
+  }
+  false
+}
+
+// Does `i` name `name` anywhere?
+fn mentions(e: el::El, i: integer, name: text) -> boolean {
+  match e.p.nodes[i] {
+    SName { name: n } => { if n == name { return true; } },
+    SVarAttr { var } => { if var == name { return true; } },
+    _ => {}
+  }
+  for ch in children(e, i) {
+    if mentions(e, ch, name) {
+      return true;
+    }
+  }
+  false
+}
+
+// `statements_after`: into `after`, every statement that can run after `name`'s assignment in
+// `i`, list by list up to the body — a loop's whole body, its condition and filter.  False when the
+// assignment is not a statement reached through blocks, branches and loops.
+fn statements_after(e: el::El, i: integer, name: text, after: vector<integer>) -> boolean {
+  match e.p.nodes[i] {
+    SAssign { op, target } => op == "=" && is_name(e, target) && root(e, target) == name,
+    SStmt { e: x } => if x == null { false } else { statements_after(e, x!, name, after) },
+    SBlock { stmts } => {
+      for s in stmts {
+        if statements_after(e, s, name, after) {
+          k = s#index + 1;
+          while k < len(stmts) {
+            after += [stmts[k]];
+            k += 1;
+          }
+          return true;
+        }
+      }
+      false
+    },
+    SIf { then, other } => statements_after(e, then, name, after) || (other != null && statements_after(e, other!, name, after)),
+    SMatch { arms } => {
+      for a in arms {
+        match e.p.nodes[a] {
+          SArm { body } => {
+            if body != null && statements_after(e, body!, name, after) {
+              return true;
+            }
+          },
+          _ => {}
+        }
+      }
+      false
+    },
+    SFor { filter, body } => {
+      if body == null || !statements_after(e, body!, name, after) {
+        return false;
+      }
+      after += [body!];
+      if filter != null {
+        after += [filter!];
+      }
+      true
+    },
+    SWhile { cond, body } => {
+      if body == null || !statements_after(e, body!, name, after) {
+        return false;
+      }
+      after += [body!, cond];
+      true
+    },
+    _ => false
+  }
+}
+
+// What statement `i` may do to the local `bname` (number `base`): UNTRUSTED for an assignment
+// through it, UNDECIDED for a call handed it or a view of it (beyond `len`), an assignment through
+// a view, a `&` of it or a removal in a loop, TRUSTED for anything else.
+fn writes(e: el::El, vars: el_vars::Vars, i: integer, bname: text, base: integer) -> integer {
+  own = match e.p.nodes[i] {
+    SAssign { target } => {
+      t = root(e, target);
+      if t == bname { UNTRUSTED } else if views(e, vars, t, base) { UNDECIDED } else { TRUSTED }
+    },
+    SLet { name: n } => if n == bname { UNTRUSTED } else { TRUSTED },
+    SDestructure { places } => {
+      v = TRUSTED;
+      for p in places {
+        if root(e, p) == bname {
+          v = UNTRUSTED;
+        }
+      }
+      v
+    },
+    SCall { f, args } => {
+      pure = is_len_name(e, f);
+      v = TRUSTED;
+      if !pure {
+        for a in args {
+          if handed(e, vars, a, bname, base) {
+            v = UNDECIDED;
+          }
+        }
+      }
+      v
+    },
+    SMember { e: recv, name: m, call } => if call && m != "len" && recv != null && handed(e, vars, recv!, bname, base) { UNDECIDED } else { TRUSTED },
+    SUnary { op, e: x } => if op == "&" && x != null && handed(e, vars, x!, bname, base) { UNDECIDED } else { TRUSTED },
+    SName { member } => if member == "remove" { UNDECIDED } else { TRUSTED },
+    SVarAttr { attr } => if attr == "remove" { UNDECIDED } else { TRUSTED },
+    SLambda { at: _ } => { return TRUSTED; },
+    _ => TRUSTED
+  };
+  if own == UNTRUSTED {
+    return UNTRUSTED;
+  }
+  r = own;
+  for ch in children(e, i) {
+    w = writes(e, vars, ch, bname, base);
+    if w == UNTRUSTED {
+      return UNTRUSTED;
+    }
+    if w == UNDECIDED {
+      r = UNDECIDED;
+    }
+  }
+  r
+}
+
+fn is_len_name(e: el::El, f: integer?) -> boolean {
+  if f == null {
+    return false;
+  }
+  match e.p.nodes[f!] {
+    SName { name, member } => name == "len" && member == "",
+    _ => false
+  }
+}
+
+// Is the argument `a` the local `bname`, a part of it, or a local that may view it?
+fn handed(e: el::El, vars: el_vars::Vars, a: integer, bname: text, base: integer) -> boolean {
+  t = root(e, a);
+  t == bname || views(e, vars, t, base)
+}
+
+// May the local written `name` view `base`, or `base` view it — by their types' deps?
+fn views(e: el::El, vars: el_vars::Vars, name: text, base: integer) -> boolean {
+  if name == "" {
+    return false;
+  }
+  w = el_vars::var(vars, name);
+  if w < 0 || w == base {
+    return false;
+  }
+  el_types::deps(el_vars::tp(vars, w)).contains(base) || el_types::deps(el_vars::tp(vars, base)).contains(w)
+}
+
+// The local an expression is rooted at — through members, indexes, tuple members and
+// parentheses — or "".
+fn root(e: el::El, i: integer) -> text {
+  match e.p.nodes[i] {
+    SName { name } => name,
+    SMember { e: x } => if x == null { "" } else { root(e, x!) },
+    SIndex { e: x } => if x == null { "" } else { root(e, x!) },
+    STupleGet { e: x } => if x == null { "" } else { root(e, x!) },
+    SParen { e: x } => if x == null { "" } else { root(e, x!) },
+    SArg { e: x } => if x == null { "" } else { root(e, x!) },
+    _ => ""
+  }
+}
+
+// Is `i` a bare name (`n`, not `n.f` or `n[i]`)?
+fn is_name(e: el::El, i: integer) -> boolean {
+  match e.p.nodes[i] {
+    SName { member } => member == "",
+    _ => false
+  }
+}
+
+// The nodes directly under `i`, types left out.
+pub fn children(e: el::El, i: integer) -> vector<integer> {
+  r: vector<integer> = [];
+  match e.p.nodes[i] {
+    SBlock { stmts } => { r += stmts; },
+    SStmt { e: x, orelse } => { r += opt(x) + opt(orelse); },
+    SFor { source, par, filter, body } => { r += [source] + opt(par) + opt(filter) + opt(body); },
+    SPar { worker, threads } => { r += opt(worker) + opt(threads); },
+    SRange { lo, hi } => { r += opt(lo) + opt(hi); },
+    SIterWrap { e: x } => { r += opt(x); },
+    SWhile { cond, body } => { r += [cond] + opt(body); },
+    SJump { e: x } => { r += opt(x); },
+    SYield { e: x } => { r += opt(x); },
+    SParallel { items } => { r += items; },
+    SLet { e: x } => { r += opt(x); },
+    SAssign { target, e: x } => { r += [target] + opt(x); },
+    SDestructure { places, e: x } => { r += places + opt(x); },
+    SIf { cond, then, other } => { r += [cond, then] + opt(other); },
+    SBin { l, r: rr } => { r += [l, rr]; },
+    SOpTail { r: rr } => { r += [rr]; },
+    SIs { e: x } => { r += opt(x); },
+    SAs { e: x } => { r += opt(x); },
+    SUnary { e: x } => { r += opt(x); },
+    SMember { e: x, args } => { r += opt(x) + args; },
+    STupleGet { e: x } => { r += opt(x); },
+    SIndex { e: x, keys, hi, limit } => { r += opt(x) + keys + hi + opt(limit); },
+    SCall { f, args } => { r += opt(f) + args; },
+    SArg { e: x } => { r += opt(x); },
+    SPostfix { e: x } => { r += opt(x); },
+    SParen { e: x } => { r += opt(x); },
+    STupleLit { elems } => { r += elems; },
+    SStructLit { fields, base } => { r += fields + opt(base); },
+    SFieldInit { e: x } => { r += opt(x); },
+    SVecLit { items } => { r += items; },
+    SRepeat { e: x } => { r += opt(x); },
+    SComprehension { source, filter, body } => { r += [source] + opt(filter) + opt(body); },
+    SLambda { body } => { r += opt(body); },
+    SSizeof { e: x } => { r += opt(x); },
+    SIntrinsic { args } => { r += args; },
+    SVectorParse { args } => { r += args; },
+    SVarAttr { arg } => { r += opt(arg); },
+    SMatch { subject, arms } => { r += [subject] + arms; },
+    SArm { pats, guard, body } => { r += pats + opt(guard) + opt(body); },
+    SString { parts } => { r += parts; },
+    SHole { e: x } => { r += opt(x); },
+    _ => {}
+  }
+  r
+}
+
+fn opt(x: integer?) -> vector<integer> {
+  if x == null { [] } else { [x!] }
+}
