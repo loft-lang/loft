@@ -1,0 +1,386 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft source text as tokens (@PLN91 stage 1): the token vector the parser's PEG matches walk.
+// The C runtime lexes (`src/c/loft_lex.h`, a port of `src/lexer.rs`'s loft mode, reached through
+// `crt::lex`), and this reads its records (the format: `selfhost/crt/shim/crt.c`, `loft_crt_lex`)
+// into `Toks`: one `Tok` per token with its line and column, `End` last.  `oracle_line` writes a
+// token as `LOFT_TRACE_TOKENS` writes Rust's, so the two streams diff (`front/tokens_gate.py`).
+use crt;
+
+// Every enum variant name is a GLOBAL type name in loft, hence the `Kw` prefix on the keywords.
+pub enum Tok {
+  // punctuation, one per src/lexer.rs TOKENS entry (`//` is the comment marker, never a token)
+  Colon, Scope, Dot, DotDot, Comma, LBrace, RBrace, LParen, RParen, LBracket, RBracket, Semi,
+  Bang, Ne, Plus, PlusEq, Minus, MinusEq, Star, StarStar, StarEq, Slash, SlashEq, Percent, PercentEq,
+  Assign, EqEq, Lt, Le, Gt, Ge, Amp, AndAnd, Pipe, OrOr, Arrow, FatArrow,
+  Caret, Shl, Shr, Dollar, Hash, Quest, QuestQuest, At, Tilde,
+  // the second half of a `>>` / `>=` the syntax layer splits into `Gt` and this; never lexed
+  GtGlued, AssignGlued,
+  // ` ` (or a tab) read in a string hole's text mode
+  Space,
+  // keywords (KEYWORDS)
+  KwAs, KwIf, KwIn, KwElse, KwFor, KwWhile, KwContinue, KwBreak, KwReturn, KwYield, KwTrue, KwFalse,
+  KwNull, KwStruct, KwFn, KwType, KwEnum, KwInterface, KwPub, KwAnd, KwOr, KwUse, KwMatch, KwSizeof,
+  KwDebugAssert, KwAssert, KwPanic, KwIs, KwOperator,
+  // literals and names
+  Ident { #lexeme pub name: text },
+  Int { pub v: integer, pub zero: boolean },
+  Long { pub v: integer },
+  Float { pub v: float, pub zero: boolean },
+  Single { pub v: single },
+  Wide { pub v: integer },
+  Double { pub v: float },
+  // a string segment; `StrHole` is followed by a `{…}` hole
+  Str { pub s: text },
+  StrHole { pub s: text },
+  Char { pub c: integer },
+  // a line end read in a string hole's text mode (`LexItem::None` in `Formatting`)
+  LineEnd,
+  // a scan that found no token (its error is the lexer's)
+  Bad,
+  End
+}
+
+// Parallel vectors, one entry per token; `End` last.
+pub struct Toks {
+  pub src: vector<Tok>,
+  pub line: vector<integer>,
+  pub col: vector<integer>
+}
+
+// The punctuation or keyword token of record kind `k` (below 76).
+fn fixed(k: integer) -> Tok {
+  match k {
+    0 => Colon,
+    1 => Scope,
+    2 => Dot,
+    3 => DotDot,
+    4 => Comma,
+    5 => LBrace,
+    6 => RBrace,
+    7 => LParen,
+    8 => RParen,
+    9 => LBracket,
+    10 => RBracket,
+    11 => Semi,
+    12 => Bang,
+    13 => Ne,
+    14 => Plus,
+    15 => PlusEq,
+    16 => Minus,
+    17 => MinusEq,
+    18 => Star,
+    19 => StarStar,
+    20 => StarEq,
+    21 => Slash,
+    22 => SlashEq,
+    23 => Percent,
+    24 => PercentEq,
+    25 => Assign,
+    26 => EqEq,
+    27 => Lt,
+    28 => Le,
+    29 => Gt,
+    30 => Ge,
+    31 => Amp,
+    32 => AndAnd,
+    33 => Pipe,
+    34 => OrOr,
+    35 => Arrow,
+    36 => FatArrow,
+    37 => Caret,
+    38 => Shl,
+    39 => Shr,
+    40 => Dollar,
+    41 => Hash,
+    42 => Quest,
+    43 => QuestQuest,
+    44 => At,
+    45 => Tilde,
+    46 => Space,
+    47 => KwAs,
+    48 => KwIf,
+    49 => KwIn,
+    50 => KwElse,
+    51 => KwFor,
+    52 => KwWhile,
+    53 => KwContinue,
+    54 => KwBreak,
+    55 => KwReturn,
+    56 => KwYield,
+    57 => KwTrue,
+    58 => KwFalse,
+    59 => KwNull,
+    60 => KwStruct,
+    61 => KwFn,
+    62 => KwType,
+    63 => KwEnum,
+    64 => KwInterface,
+    65 => KwPub,
+    66 => KwAnd,
+    67 => KwOr,
+    68 => KwUse,
+    69 => KwMatch,
+    70 => KwSizeof,
+    71 => KwDebugAssert,
+    72 => KwAssert,
+    73 => KwPanic,
+    74 => KwIs,
+    75 => KwOperator,
+    _ => Bad
+  }
+}
+
+// The spelling of a punctuation or keyword token.
+fn spell(t: Tok) -> text {
+  match t {
+    Colon => ":",
+    Scope => "::",
+    Dot => ".",
+    DotDot => "..",
+    Comma => ",",
+    LBrace => "{{",
+    RBrace => "}}",
+    LParen => "(",
+    RParen => ")",
+    LBracket => "[",
+    RBracket => "]",
+    Semi => ";",
+    Bang => "!",
+    Ne => "!=",
+    Plus => "+",
+    PlusEq => "+=",
+    Minus => "-",
+    MinusEq => "-=",
+    Star => "*",
+    StarStar => "**",
+    StarEq => "*=",
+    Slash => "/",
+    SlashEq => "/=",
+    Percent => "%",
+    PercentEq => "%=",
+    Assign => "=",
+    EqEq => "==",
+    Lt => "<",
+    Le => "<=",
+    Gt => ">",
+    Ge => ">=",
+    Amp => "&",
+    AndAnd => "&&",
+    Pipe => "|",
+    OrOr => "||",
+    Arrow => "->",
+    FatArrow => "=>",
+    Caret => "^",
+    Shl => "<<",
+    Shr => ">>",
+    Dollar => "$",
+    Hash => "#",
+    Quest => "?",
+    QuestQuest => "??",
+    At => "@",
+    Tilde => "~",
+    GtGlued => ">",
+    AssignGlued => "=",
+    Space => " ",
+    KwAs => "as",
+    KwIf => "if",
+    KwIn => "in",
+    KwElse => "else",
+    KwFor => "for",
+    KwWhile => "while",
+    KwContinue => "continue",
+    KwBreak => "break",
+    KwReturn => "return",
+    KwYield => "yield",
+    KwTrue => "true",
+    KwFalse => "false",
+    KwNull => "null",
+    KwStruct => "struct",
+    KwFn => "fn",
+    KwType => "type",
+    KwEnum => "enum",
+    KwInterface => "interface",
+    KwPub => "pub",
+    KwAnd => "and",
+    KwOr => "or",
+    KwUse => "use",
+    KwMatch => "match",
+    KwSizeof => "sizeof",
+    KwDebugAssert => "debug_assert",
+    KwAssert => "assert",
+    KwPanic => "panic",
+    KwIs => "is",
+    KwOperator => "operator",
+    _ => ""
+  }
+}
+
+// `n` little-endian bytes of `b` from `at`.
+fn uint(b: const vector<u8>, at: integer, n: integer) -> integer {
+  v = 0;
+  for k in 0..n {
+    v = v | ((b[at + k] ?? 0) << (8 * k));
+  }
+  v
+}
+
+// The tokens of `source`.
+pub fn lex(source: text) -> Toks {
+  b = crt::lex(source);
+  r = Toks { src: [], line: [], col: [] };
+  at = 0;
+  while at < len(b) {
+    k = b[at] ?? 88;
+    r.line += [uint(b, at + 1, 4)];
+    r.col += [uint(b, at + 5, 4)];
+    at += 9;
+    t = if k < 76 {
+      fixed(k)
+    } else if k == 76 || k == 83 || k == 84 {
+      n = uint(b, at, 4);
+      s = text_from_byte_range(b, at + 4, at + 4 + n);
+      at += 4 + n;
+      if k == 76 { Ident { name: s } } else if k == 83 { Str { s: s } } else { StrHole { s: s } }
+    } else if k == 77 {
+      at += 5;
+      Int { v: uint(b, at - 5, 4), zero: (b[at - 1] ?? 0) == 1 }
+    } else if k == 78 || k == 81 {
+      at += 8;
+      if k == 78 { Long { v: uint(b, at - 8, 8) } } else { Wide { v: uint(b, at - 8, 8) } }
+    } else if k == 85 {
+      at += 4;
+      Char { c: uint(b, at - 4, 4) }
+    } else if k == 79 {
+      zero = (b[at] ?? 0) == 1;
+      n = b[at + 1] ?? 0;
+      at += 2 + n;
+      Float { v: text_from_byte_range(b, at - n, at) as float ?? 0.0, zero: zero }
+    } else if k == 80 || k == 82 {
+      n = b[at] ?? 0;
+      at += 1 + n;
+      f = text_from_byte_range(b, at - n, at) as float ?? 0.0;
+      if k == 80 { Single { v: f as single } } else { Double { v: f } }
+    } else if k == 86 {
+      LineEnd
+    } else if k == 87 {
+      Bad
+    } else {
+      End
+    };
+    r.src += [t];
+    if k == 88 {
+      break;
+    }
+  }
+  r
+}
+
+// 2^52, the weight of a double's lowest exponent step in its mantissa.
+const MANTISSA52 = 4503599627370496.0;
+// 2^23, the same for a single.
+const MANTISSA23 = 8388608.0;
+
+// The bits of a non-negative double (`f64::to_bits`): a literal is never negative.
+fn f64_bits(v: float) -> integer {
+  if v == 0.0 {
+    return 0;
+  }
+  if v > 1.7976931348623157e308 {
+    return 0x7ff0000000000000;
+  }
+  m = v;
+  e = 0;
+  while m >= 2.0 {
+    m = m / 2.0;
+    e += 1;
+  }
+  while m < 1.0 && e > -1022 {
+    m = m * 2.0;
+    e -= 1;
+  }
+  if m < 1.0 {
+    return (m * MANTISSA52) as integer;
+  }
+  ((e + 1023) << 52) | (((m - 1.0) * MANTISSA52) as integer)
+}
+
+// The bits of a non-negative single (`f32::to_bits`), from its exact value as a double.
+fn f32_bits(s: single) -> integer {
+  v = s as float;
+  if v == 0.0 {
+    return 0;
+  }
+  if v > 3.4028234663852886e38 {
+    return 0x7f800000;
+  }
+  m = v;
+  e = 0;
+  while m >= 2.0 {
+    m = m / 2.0;
+    e += 1;
+  }
+  while m < 1.0 && e > -126 {
+    m = m * 2.0;
+    e -= 1;
+  }
+  if m < 1.0 {
+    return (m * MANTISSA23) as integer;
+  }
+  ((e + 127) << 23) | (((m - 1.0) * MANTISSA23) as integer)
+}
+
+// A payload as the trace escapes it: `\\` doubled, a control byte as `\\xHH`.  Read by byte:
+// a NUL is the `character` null, so a walk over the characters cannot name it.
+fn esc(s: text) -> text {
+  o = "";
+  from = 0;
+  for i in 0..s.size() {
+    b = s.byte_at(i);
+    if b == 92 || b < 32 || b == 127 {
+      o += s[from..i];
+      if b == 92 {
+        o += "\\\\";
+      } else {
+        o += "\\x{b:02x}";
+      }
+      from = i + 1;
+    }
+  }
+  o += s[from..];
+  o
+}
+
+// The token as the trace writes it after its place (`trace_token`, src/lexer.rs).
+fn item(t: Tok) -> text {
+  match t {
+    Ident { name } => "id {esc(name)}",
+    Int { v, zero } => if zero { "int {v} 0" } else { "int {v}" },
+    Long { v } => "long {v}",
+    Float { v, zero } => if zero { "float {f64_bits(v):016x} 0" } else { "float {f64_bits(v):016x}" },
+    Single { v } => "single {f32_bits(v):08x}",
+    Wide { v } => "wide {v}",
+    Double { v } => "double {f64_bits(v):016x}",
+    Str { s } => "str {esc(s)}",
+    StrHole { s } => "str+ {esc(s)}",
+    Char { c } => "char {c}",
+    LineEnd => "none",
+    Bad => "bad",
+    End => "end",
+    _ => "tok {esc(spell(t))}"
+  }
+}
+
+// Token `i` as `LOFT_TRACE_TOKENS` writes it: `file<TAB>line<TAB>col<TAB>kind payload`.  The
+// trace's `str+` says the Rust lexer was in its `Formatting` mode when it put the string, which
+// is a hole's text mode as well as a hole opening: a string literal that is a hole's FIRST token
+// is read in it, and so traced `str+` with no hole of its own (`"{"South" as Direction}"`).
+pub fn oracle_line(t: Toks, i: integer, file: text) -> text {
+  k = t.src[i] ?? Bad;
+  shown = item(k);
+  if i > 0 && (t.src[i - 1] ?? Bad) is StrHole && k is Str {
+    shown = "str+{shown[3..]}";
+  }
+  "{file}\t{t.line[i]}\t{t.col[i]}\t{shown}"
+}

@@ -1412,3 +1412,64 @@ int64_t loft_crt_walk_remove(int64_t state, int64_t store, int64_t rec, int64_t 
     }
     return state;
 }
+
+/* ── The lexer (@PLN91 stage 1): loft source text as the tokens src/lexer.rs reads from it, for the
+ * front end written in loft.  `loft_lex` is the port (src/c/loft_lex.h); this only encodes its
+ * tokens for the bridge, one record each, little-endian:
+ *   kind u8 · line u32 · col u32 · then by kind:
+ *   Ident, Str, StrHole  len u32 · its UTF-8 bytes
+ *   Int                  value u32 · zero u8 (spelled with a leading `0`)
+ *   Long, Wide           value u64
+ *   Char                 code point u32
+ *   Float                zero u8 · len u8 · the value as `%.17g` (exact: it reads back as itself)
+ *   Double, Single       len u8 · the value as `%.17g` (a single's value is exact as a double)
+ *   every other kind     nothing
+ * The last record is `End` (kind 88), so a reader needs no count. */
+#define LOFT_LEX 1
+#include "../../../src/c/loft_lex.h"
+
+static void loft_crt_lex_u32(loft_lx_buf *e, uint64_t v, int bytes) {
+    for (int i = 0; i < bytes; i++) loft_lx_buf_byte(e, (uint8_t) (v >> (8 * i)));
+}
+
+static void loft_crt_lex_float(loft_lx_buf *e, double v) {
+    char s[40];
+    int n = snprintf(s, sizeof s, "%.17g", v);
+    loft_lx_buf_byte(e, (uint8_t) n);
+    loft_lx_buf_put(e, s, (size_t) n);
+}
+
+int64_t loft_crt_lex(char *out, int64_t cap, const char *src, int64_t bytes) {
+    loft_lx_toks toks = {0};
+    loft_lex((const uint8_t *) src, bytes < 0 ? 0 : (size_t) bytes, &toks);
+    loft_lx_buf e = {0};
+    for (size_t i = 0; i < toks.n; i++) {
+        const loft_lx_tok *t = &toks.t[i];
+        loft_lx_buf_byte(&e, t->kind);
+        loft_crt_lex_u32(&e, t->line, 4);
+        loft_crt_lex_u32(&e, t->col, 4);
+        switch (t->kind) {
+        case LOFT_LX_IDENT: case LOFT_LX_STR: case LOFT_LX_STRHOLE:
+            loft_crt_lex_u32(&e, t->s_len, 4);
+            loft_lx_buf_put(&e, toks.txt.p + t->s_at, t->s_len);
+            break;
+        case LOFT_LX_INT:
+            loft_crt_lex_u32(&e, (uint64_t) t->i, 4);
+            loft_lx_buf_byte(&e, t->zero);
+            break;
+        case LOFT_LX_LONG: case LOFT_LX_WIDE: loft_crt_lex_u32(&e, (uint64_t) t->i, 8); break;
+        case LOFT_LX_CHAR: loft_crt_lex_u32(&e, (uint64_t) t->i, 4); break;
+        case LOFT_LX_FLOAT:
+            loft_lx_buf_byte(&e, t->zero);
+            loft_crt_lex_float(&e, t->f);
+            break;
+        case LOFT_LX_DOUBLE: case LOFT_LX_SINGLE: loft_crt_lex_float(&e, t->f); break;
+        default: break;
+        }
+    }
+    loft_lx_toks_free(&toks);
+    int64_t n = (int64_t) e.len;
+    if (n <= cap && n > 0) memcpy(out, e.p, (size_t) n);
+    free(e.p);
+    return n;
+}
