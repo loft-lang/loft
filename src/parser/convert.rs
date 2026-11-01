@@ -320,6 +320,17 @@ impl Parser {
     #[track_caller]
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn convert(&mut self, code: &mut Value, is_type: &Type, should: &Type) -> bool {
+        // `@FR-N-Intro`, `@FR-C-Never` — a value typed `null` that is not the literal itself is
+        // an `if` or `match` whose other arms never finish (`if c { return x } else { null }`):
+        // the conversion is the null LEAF's, and the expression is still evaluated.  Replacing
+        // the whole expression with the typed null skipped the arms that return, so every call
+        // answered null.
+        if *is_type == Type::Null
+            && !matches!(code.unspan(), Value::Null)
+            && self.convert_null_leaves(code, should)
+        {
+            return true;
+        }
         // @FR-N-Reserve (loft#1796) — a CONSTANT stored into a NULLABLE narrow slot must lie in
         // its usable range: one code at the edge is the slot's null, so `255` into a `u8?`, or
         // `300`, could only ever be stored as null.  Asked at the top because a literal that
@@ -1687,6 +1698,67 @@ impl Parser {
                     "expected {want}, got {have} on {context}"
                 );
             }
+        }
+    }
+}
+
+impl Parser {
+    /// The null leaves of a `null`-typed control-flow value converted to `should` in place: an
+    /// `if`'s arms, a block's (or insert's) last operator, through spans.  A leaf that never
+    /// finishes (`return`, `break`, `continue`, a halt) stays.  False — nothing changed — when
+    /// a leaf is neither, so the caller converts the value whole as before.
+    fn convert_null_leaves(&mut self, code: &mut Value, should: &Type) -> bool {
+        let mut leaves = 0;
+        if !self.null_leaves_only(code, &mut leaves) || leaves == 0 {
+            return false;
+        }
+        self.retype_null_leaves(code, should);
+        true
+    }
+
+    fn null_leaves_only(&self, code: &Value, leaves: &mut usize) -> bool {
+        match code {
+            Value::Null => {
+                *leaves += 1;
+                true
+            }
+            Value::Span(b) => self.null_leaves_only(&b.1, leaves),
+            Value::If(_, t, f) => self.null_leaves_only(t, leaves) && self.null_leaves_only(f, leaves),
+            Value::Block(bl) => bl
+                .operators
+                .last()
+                .is_some_and(|o| self.null_leaves_only(o, leaves)),
+            Value::Insert(ops) => ops.last().is_some_and(|o| self.null_leaves_only(o, leaves)),
+            Value::Return(_) | Value::Break(_) | Value::Continue(_) => true,
+            other => crate::parser::control::ends_in_halt(&self.data, other),
+        }
+    }
+
+    fn retype_null_leaves(&mut self, code: &mut Value, should: &Type) {
+        match code {
+            Value::Null => {
+                self.convert(code, &Type::Null, should);
+            }
+            Value::Span(b) => self.retype_null_leaves(&mut b.1, should),
+            Value::If(_, t, f) => {
+                self.retype_null_leaves(t, should);
+                self.retype_null_leaves(f, should);
+            }
+            Value::Block(bl) => {
+                if let Some(last) = bl.operators.last_mut() {
+                    let yields = !matches!(last, Value::Return(_) | Value::Break(_) | Value::Continue(_));
+                    self.retype_null_leaves(last, should);
+                    if yields && matches!(bl.result, Type::Null) {
+                        bl.result = should.clone();
+                    }
+                }
+            }
+            Value::Insert(ops) => {
+                if let Some(last) = ops.last_mut() {
+                    self.retype_null_leaves(last, should);
+                }
+            }
+            _ => {}
         }
     }
 }

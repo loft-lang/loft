@@ -6196,7 +6196,18 @@ impl Parser {
                     true_type = joined;
                 }
             }
-            if true_type == Type::Unknown(0) {
+            if true_type == Type::Unknown(0)
+                && true_is_null
+                && then_tuple_nulls.is_none()
+                && matches!(false_type, Type::Never)
+            {
+                // `@FR-C-Never`, loft#2341 — an else that never finishes gives the then arm's
+                // `null` nothing to adopt: the join is `null` (`merge_dependencies` defers to
+                // it), and the `null` keeps its own type for the conversion that types it.
+                // Adopting the else's `never` typed the whole `if` as never finishing, so no
+                // conversion reached the null and the arm pushed nothing.
+                true_type = Type::Null;
+            } else if true_type == Type::Unknown(0) {
                 if let Some(orig) = &then_tuple_nulls {
                     // loft#1682 — both tails take the element-wise join.  A pair that does not
                     // join is REFUSED here, as the plain else arm is: the tail conversion below
