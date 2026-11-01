@@ -342,7 +342,26 @@ pub fn create_unique(v: Vars, name: text, t: ir::TypeT) -> integer {
     n = e!.n + 1;
     v.unique[name].n = n;
   }
+  // `Function::unique`: an element temp or a literal accumulator met again at another shape is a
+  // different site of the pass before, whose type is no fact — this pass's wins (loft#2340).
+  if name == "elm" || name == "vec" {
+    old = v.names["_{name}_{n}"];
+    if old != null && (name == "vec" || !is_unknown(t)) && shape(tp(v, old!.nr)) != shape(t) {
+      v.vars[old!.nr].type_def = [t];
+    }
+  }
   add_variable(v, "_{name}_{n}", t)
+}
+
+// A type without its borrows, for comparing shapes.
+fn shape(t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyVector { inner } => ir::TyVector { inner: shape(inner), dep: [] },
+    TyReference { n } => ir::TyReference { n: n, dep: [] },
+    TyText { dep: _ } => ir::TyText { dep: [] },
+    TyEnum { n, is_ref } => ir::TyEnum { n: n, is_ref: is_ref, dep: [] },
+    _ => t
+  }
 }
 
 // `Function::work_vec_db`: the next `__vdb_N` store a vector literal builds in, noted among the
