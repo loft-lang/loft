@@ -365,6 +365,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SFor { binds, source, par, filter, body } => for_expr(e, vars, binds, source, par, filter, body),
     SJump { kind, e: je } => jump(e, vars, kind, je),
     SIndex { at, e: ie, keys, range, hi, limit, spatial } => index(e, vars, at, ie, keys, range || len(hi) > 0 || limit != null || spatial),
+    SVecLit { items: _ } => vector_value(e, vars, n).x,
     SParen { e: pe } => if pe == null { ex(ir::NdNull, ir::TyUnknown { n: 0 }) } else { expression(e, vars, pe!) },
     _ => {
       el::refuse(e, "an expression form: {syn_kind(e, n)}");
@@ -1266,7 +1267,7 @@ fn type_def_nr(e: el::El, t: ir::TypeT) -> integer {
     TyReference { n } => n,
     TyUnknown { n } => n,
     _ => {
-      el::refuse(e, "a call whose first argument is a collection, a tuple or a function");
+      el::refuse(e, "a call whose first argument is a collection, a tuple or a function: {type_kind(t)}");
       -1
     }
   }
@@ -1632,7 +1633,16 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
   if e.p.nodes[source] is SRange {
     return range_for(e, vars, src_id, id, source, body!);
   }
-  x = expression(e, vars, source);
+  x = ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  if e.p.nodes[source] is SVecLit {
+    lit = vector_value(e, vars, source);
+    if len(lit.items) >= 1 && len(lit.items) <= 16 && walkable_scalar(lit.elem) {
+      return literal_walk(e, vars, src_id, id, lit, body!);
+    }
+    x = lit.x;
+  } else {
+    x = expression(e, vars, source);
+  }
   match el_types::base(x.tp) {
     TyVector { inner: _ } => {},
     TyUnknown { n: _ } => {
@@ -1691,6 +1701,62 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
   before = el_ir::v_if(el_ir::cl(e, "OpLtInt", [i, ir::NdInt { n: 0 }]), brk, ir::NdNull);
   lp = el_ir::v_loop([el_ir::v_set(lv, next), past_end, before, b.code], "For loop");
   ex(el_ir::v_block([el_ir::v_set(vec, x.code), el_ir::v_set(idx, ir::NdInt { n: -1 }), lp], ir::TyVoid, "For block"), ir::TyVoid)
+}
+
+// `Parser::literal_walk` (`@FR-R-LiteralWalk`): a `for` over a literal of 1 to 16 scalar items
+// walks them without the vector — each item into its own `_lit_N` before the loop, the index
+// `id#index` started at -1, and the "Iter literal" block steps it, leaves at the count, and
+// selects the item.  The literal was built first, so its temps are numbered as the vector walk's.
+fn literal_walk(e: el::El, vars: el_vars::Vars, src_id: text, id: text, lit: Built, body: integer) -> Ex {
+  prelude: vector<ir::Node> = [];
+  temps: vector<integer> = [];
+  for it in lit.items {
+    t = el_vars::create_unique(vars, "lit", lit.elem);
+    el_vars::set_defined(vars, t);
+    prelude += [el_ir::v_set(t, it)];
+    temps += [t];
+  }
+  int_t = ir::TyInteger { spec: i32_spec() };
+  idx = el_vars::add_variable(vars, "{id}#index", int_t);
+  el_vars::set_defined(vars, idx);
+  prelude += [el_ir::v_set(idx, ir::NdInt { n: -1 })];
+  lv = el_vars::loop_variable(vars, id, lit.elem);
+  if id != src_id {
+    el_vars::set_name(vars, src_id, lv);
+  }
+  el_vars::set_defined(vars, lv);
+  vars.active_loops += [lv];
+  b = parse_block(e, vars, body, "for", ir::TyVoid);
+  vars.active_loops = drop_last_int(vars.active_loops);
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  i = ir::NdVar { n: idx };
+  sel = ir::NdVar { n: temps[len(temps) - 1] };
+  k = len(temps) - 2;
+  while k >= 0 {
+    sel = el_ir::v_if(el_ir::cl(e, "OpEqInt", [i, ir::NdInt { n: k }]), ir::NdVar { n: temps[k] }, sel);
+    k -= 1;
+  }
+  stepped = el_ir::v_block([
+    el_ir::v_set(idx, el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: 1 }])),
+    el_ir::v_if(el_ir::cl(e, "OpLeInt", [ir::NdInt { n: len(temps) }, i]), ir::NdBreak { n: 0 }, ir::NdNull),
+    sel
+  ], lit.elem, "Iter literal");
+  lp = el_ir::v_loop([el_ir::v_set(lv, stepped), b.code], "For loop");
+  ex(el_ir::v_block([ir::NdInsert { items: prelude }, lp], ir::TyVoid, "For block"), ir::TyVoid)
+}
+
+// `is_walkable_scalar`: a plain scalar element, not nullable.
+fn walkable_scalar(t: ir::TypeT) -> boolean {
+  match t {
+    TyInteger { spec: _ } => true,
+    TyBoolean => true,
+    TyFloat => true,
+    TySingle => true,
+    TyCharacter => true,
+    _ => false
+  }
 }
 
 // `parse_in_range_body` for `lo..hi` with a literal start of zero or more and an exclusive end:
@@ -1839,7 +1905,14 @@ fn read_op(t: ir::TypeT) -> text {
 // another type, a repetition, a local that already has a store and an empty literal with no type
 // are refused by name.
 fn vector_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT) -> Ex {
-  vector_build(e, vars, v, n, declared, false)
+  vector_build(e, vars, v, n, declared, false, false).x
+}
+
+// A literal in value position (`parse_vector_inner` with no destination, `block`): built the
+// same way into a `_vec_N` of its own, the build a "Vector" block answering it.
+fn vector_value(e: el::El, vars: el_vars::Vars, n: integer) -> Built {
+  v = el_vars::create_unique(vars, "vec", ir::TyVector { inner: ir::TyUnknown { n: 0 }, dep: [] });
+  vector_build(e, vars, v, n, ir::TyUnknown { n: 0 }, false, true)
 }
 
 // `w += [items]` on a vector local that already has its store: the same build appended to it —
@@ -1851,10 +1924,22 @@ fn vector_append(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
     TyVector { inner: i } => { inner = i; },
     _ => {}
   }
-  vector_build(e, vars, v, n, inner, true)
+  vector_build(e, vars, v, n, inner, true, false).x
 }
 
-fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT, append: boolean) -> Ex {
+// A literal's build, the items' code and the element type, for a `for` that may walk the items
+// instead (`offer_literal_walk`).
+pub struct Built {
+  pub x: Ex,
+  pub items: vector<ir::Node>,
+  pub elem: ir::TypeT
+}
+
+fn refused_build() -> Built {
+  Built { x: ex(ir::NdNull, ir::TyVoid), items: [], elem: ir::TyUnknown { n: 0 } }
+}
+
+fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT, append: boolean, value: boolean) -> Built {
   items: vector<integer> = [];
   match e.p.nodes[n] {
     SVecLit { items: its } => { items = its; },
@@ -1866,45 +1951,56 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   // append alike.
   elm = -1;
   if len(items) > 0 {
-    elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
+    elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: if value { [] } else { [v] } });
   }
   xs: vector<Ex> = [];
   for it in items {
     if e.p.nodes[it] is SRepeat {
       el::refuse(e, "a repeated vector item");
-      return ex(ir::NdNull, ir::TyVoid);
+      return refused_build();
     }
     xs += [expression(e, vars, it)];
   }
   in_t = declared;
   if el_types::is_unknown(in_t) {
+    if len(xs) == 0 && value {
+      el::refuse(e, "an empty vector literal in value position");
+      return refused_build();
+    }
     if len(xs) == 0 {
       el::refuse(e, "an empty vector literal of no declared type");
-      return ex(ir::NdNull, ir::TyVoid);
+      return refused_build();
     }
     in_t = el_types::without_deps(xs[0].tp);
   }
   if el_types::is_unknown(in_t) {
-    return ex(ir::NdNull, ir::TyVoid);
+    return refused_build();
   }
   for x in xs {
     if !el_types::is_unknown(x.tp) && !el_types::is_equal(e, in_t, x.tp) {
       el::refuse(e, "a vector item of another type than the first");
-      return ex(ir::NdNull, ir::TyVoid);
+      return refused_build();
     }
   }
   if !el_vars::change_var_type(e, vars, v, ir::TyVector { inner: in_t, dep: [] }) {
     el::refuse(e, "a local that changes type");
-    return ex(ir::NdNull, ir::TyVoid);
+    return refused_build();
   }
   rows = vector_rows(e, in_t);
-  if rows == null || e.first_pass {
-    return ex(ir::NdNull, ir::TyVoid);
+  if rows == null {
+    return refused_build();
+  }
+  if e.first_pass {
+    codes1: vector<ir::Node> = [];
+    for x in xs {
+      codes1 += [x.code];
+    }
+    return Built { x: ex(ir::NdNull, if value { el_vars::tp(vars, v) } else { ir::TyVoid }), items: codes1, elem: in_t };
   }
   has_store = len(el_types::deps(el_vars::tp(vars, v))) > 0;
-  if has_store != append {
+  if has_store != append && !value {
     el::refuse(e, if append { "a vector append to a local with no store yet" } else { "a vector literal into a local that has a store" });
-    return ex(ir::NdNull, ir::TyVoid);
+    return refused_build();
   }
   r = rows!;
   w = ir::NdVar { n: v };
@@ -1922,7 +2018,7 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
     size = elem_size(in_t);
     if size < 0 {
       el::refuse(e, "a vector literal of record items");
-      return ex(ir::NdNull, ir::TyVoid);
+      return refused_build();
     }
     ls += [el_ir::cl(e, "OpPreAllocVector", [w, ir::NdInt { n: len(xs) }, ir::NdInt { n: size }])];
   }
@@ -1937,7 +2033,15 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
       ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
     }
   }
-  ex(ir::NdInsert { items: ls }, ir::TyVoid)
+  codes: vector<ir::Node> = [];
+  for x in xs {
+    codes += [x.code];
+  }
+  if value {
+    ls += [w];
+    return Built { x: ex(el_ir::v_block(ls, el_vars::tp(vars, v), "Vector"), el_vars::tp(vars, v)), items: codes, elem: in_t };
+  }
+  Built { x: ex(ir::NdInsert { items: ls }, ir::TyVoid), items: codes, elem: in_t }
 }
 
 // `Parser::parse_index` / `parse_vector_index` for one index into a vector, read as a value: the
