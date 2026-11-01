@@ -665,8 +665,7 @@ fn dep_closure(vars: el_vars::Vars, start: integer) -> vector<integer> {
 // whose borrows reach it, and, when it came from the caller, every other heap parameter (the
 // caller may hand in one store twice) and what views those.
 fn store_viewers(vars: el_vars::Vars, root: integer) -> vector<integer> {
-  roots = dep_closure(vars, root);
-  roots += [root];
+  roots = dep_closure(vars, root) + [root];
   from_caller = false;
   for r in roots {
     if vars.vars[r].argument {
@@ -1143,8 +1142,7 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
     if tc == null {
       el::refuse(e, "a function's value its declared result converts: {type_kind(t)} to {type_kind(result)}");
     } else {
-      l = drop_last(l);
-      l += [tc!];
+      l = drop_last(l) + [tc!];
       t = result;
     }
   }
@@ -1390,6 +1388,15 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
         el_vars::make_independent(vars, v, w);
         bare = el_types::without_deps(el_types::base(el_vars::tp(vars, v)));
         x.tp = if x.tp is TyOptional { ir::TyOptional { inner: bare } } else { bare };
+      }
+    },
+    _ => {}
+  }
+  // `length_locals`: a local given a vector's length, remembered with that vector.
+  match el_ir::unspan(x.code) {
+    NdCall { def_nr, args } => {
+      if !e.first_pass && len(args) == 1 && is_len(el::def(e, def_nr).name) {
+        vars.len_locals += [el_vars::LenLocal { var: v, vec: args[0] }];
       }
     },
     _ => {}
@@ -1790,8 +1797,7 @@ fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
   // record is made; a collection or nested-literal field is built in place and never staged.
   staged: vector<ir::Node> = [];
   if !e.first_pass && !(starts_with(el_vars::name_of(vars, v), "_") && !vars.vars[v].user_named) {
-    viewers = store_viewers(vars, v);
-    viewers += [v];
+    viewers = store_viewers(vars, v) + [v];
     for op in ops {
       if op#index < 2 {
         continue;
@@ -2062,10 +2068,8 @@ fn object_expr(e: el::El, vars: el_vars::Vars, name: text, member: text, fields:
   if list == null {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  ops = list!;
-  ops += [ir::NdVar { n: w }];
   tp = ir::TyReference { n: d, dep: [w] };
-  ex(el_ir::v_block(ops, tp, "Object"), tp)
+  ex(el_ir::v_block(list! + [ir::NdVar { n: w }], tp, "Object"), tp)
 }
 
 fn text_in(v: vector<text>, x: text) -> boolean {
@@ -2276,8 +2280,8 @@ fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text,
   ft = el_types::base(def.attributes[a].typedef[0]);
   // `get_val`: a collection or record field is the place itself (`OpGetField` with the field's
   // store type), a plain field its read.
-  code = ir::NdNull;
-  match ft {
+  keyed = ir::NdInt { n: if e.first_pass || !keyed_kind(ft) { 0 } else { el_schema::keyed_type(e, ft) } };
+  code = match ft {
     TyVector { inner } => {
       // The schema is laid out after the first pass, whose code is not kept.
       vk = if e.first_pass { 0 } else { el_schema::schema_type(e, "vector<{el_types::elem_name(e, inner)}>") };
@@ -2285,25 +2289,25 @@ fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text,
         el::refuse(e, "a field read of a vector the library has no rows for");
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
       }
-      code = el_ir::cl(e, "OpGetField", [x.code, pos, ir::NdInt { n: vk }]);
+      el_ir::cl(e, "OpGetField", [x.code, pos, ir::NdInt { n: vk }])
     },
-    TyHash { n: _ } => { code = el_ir::cl(e, "OpGetField", [x.code, pos, ir::NdInt { n: if e.first_pass { 0 } else { el_schema::keyed_type(e, ft) } }]); },
-    TySorted { n: _ } => { code = el_ir::cl(e, "OpGetField", [x.code, pos, ir::NdInt { n: if e.first_pass { 0 } else { el_schema::keyed_type(e, ft) } }]); },
-    TyIndex { n: _ } => { code = el_ir::cl(e, "OpGetField", [x.code, pos, ir::NdInt { n: if e.first_pass { 0 } else { el_schema::keyed_type(e, ft) } }]); },
+    TyHash { n: _ } => el_ir::cl(e, "OpGetField", [x.code, pos, keyed]),
+    TySorted { n: _ } => el_ir::cl(e, "OpGetField", [x.code, pos, keyed]),
+    TyIndex { n: _ } => el_ir::cl(e, "OpGetField", [x.code, pos, keyed]),
     TyReference { n: fd } => {
       if el::def(e, fd).def_type != el::DT_STRUCT {
         el::refuse(e, "a field read of this type");
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
       }
-      code = el_ir::cl(e, "OpGetField", [x.code, pos, ir::NdInt { n: el::def(e, fd).known_type }]);
+      el_ir::cl(e, "OpGetField", [x.code, pos, ir::NdInt { n: el::def(e, fd).known_type }])
     },
     TyInteger { spec } => {
       fa = def.attributes[a];
       sl = int_slot(e, spec, fa.alias_d_nr, fa.nullable);
       if slot_takes_min(sl.kind) {
-        code = el_ir::cl(e, "OpGet{sl.kind}", [x.code, pos, ir::NdInt { n: sl.min }]);
+        el_ir::cl(e, "OpGet{sl.kind}", [x.code, pos, ir::NdInt { n: sl.min }])
       } else {
-        code = el_ir::cl(e, "OpGet{sl.kind}", [x.code, pos]);
+        el_ir::cl(e, "OpGet{sl.kind}", [x.code, pos])
       }
     },
     _ => {
@@ -2319,9 +2323,9 @@ fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text,
         el::refuse(e, "a field read of this type");
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
       }
-      code = el_ir::cl(e, op, [x.code, pos]);
+      el_ir::cl(e, op, [x.code, pos])
     }
-  }
+  };
   // `wrap_chain`: on the second pass each `.` step is wrapped in the `.`'s position.
   if !e.first_pass {
     code = ir::NdSpan { pos: el::pos_at(e, at), inner: code };
@@ -2972,8 +2976,7 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
       }
     };
     buf = el_vars::work_ref(vars, ir::TyReference { n: rec, dep: [] });
-    args = list;
-    args += [ir::NdVar { n: buf }];
+    args = list + [ir::NdVar { n: buf }];
     ds: vector<integer> = [];
     for i in el_types::deps(ret) {
       if i < len(list) {
@@ -3843,9 +3846,7 @@ fn retail(code: ir::Node, tail: ir::Node?, t: ir::TypeT) -> ir::Node? {
       if n == 0 {
         return null;
       }
-      ops = drop_last(bl.operators);
-      ops += [tail!];
-      bl.operators = ops;
+      bl.operators = drop_last(bl.operators) + [tail!];
       bl.result = [t];
       ir::NdBlock { block: [bl] }
     },
@@ -4009,9 +4010,11 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
   idx = loop_index(vars, id);
   lv = loop_var(vars, src_id, id, var_tp);
   vars.active_loops += [lv];
+  vars.active_values += [x.code];
   fc = loop_filter(e, vars, filter);
   b = parse_block(e, vars, body, "for", ir::TyVoid);
   vars.active_loops = drop_last_int(vars.active_loops);
+  vars.active_values = drop_last_node(vars.active_values);
   if e.first_pass || el_types::is_unknown(elem) {
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -4073,9 +4076,11 @@ fn keyed_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, x: Ex, body
   el_vars::set_defined(vars, state);
   lv = loop_var(vars, src_id, id, elem);
   vars.active_loops += [lv];
+  vars.active_values += [ir::NdNull];
   fc = loop_filter(e, vars, filter);
   b = parse_block(e, vars, body, "for", ir::TyVoid);
   vars.active_loops = drop_last_int(vars.active_loops);
+  vars.active_values = drop_last_node(vars.active_values);
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -4469,9 +4474,11 @@ fn literal_walk(e: el::El, vars: el_vars::Vars, src_id: text, id: text, lit: Bui
   prelude += [el_ir::v_set(idx, ir::NdInt { n: -1 })];
   lv = loop_var(vars, src_id, id, lit.elem);
   vars.active_loops += [lv];
+  vars.active_values += [ir::NdNull];
   fc = loop_filter(e, vars, filter);
   b = parse_block(e, vars, body, "for", ir::TyVoid);
   vars.active_loops = drop_last_int(vars.active_loops);
+  vars.active_values = drop_last_node(vars.active_values);
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -4590,9 +4597,11 @@ fn range_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, source: int
   ls += [i];
   lv = loop_var(vars, src_id, id, int_t);
   vars.active_loops += [lv];
+  vars.active_values += [ir::NdNull];
   fc = loop_filter(e, vars, filter);
   b = parse_block(e, vars, body, "for", ir::TyVoid);
   vars.active_loops = drop_last_int(vars.active_loops);
+  vars.active_values = drop_last_node(vars.active_values);
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -4649,6 +4658,16 @@ fn loop_filter(e: el::El, vars: el_vars::Vars, filter: integer?) -> ir::Node? {
     return null;
   }
   el_ir::v_if(c.code, ir::NdNull, ir::NdContinue { n: 0 })
+}
+
+fn drop_last_node(l: vector<ir::Node>) -> vector<ir::Node> {
+  r: vector<ir::Node> = [];
+  for x in l {
+    if x#index < len(l) - 1 {
+      r += [x];
+    }
+  }
+  r
 }
 
 fn drop_last_int(l: vector<integer>) -> vector<integer> {
@@ -4741,16 +4760,15 @@ fn record_size(e: el::El, t: ir::TypeT) -> integer {
 // already (a scalar), made where it is missing.  A record element is not laid out yet; its
 // placeholder `vector<integer>` exists.
 fn vector_of(e: el::El, t: ir::TypeT) {
-  kt = -1;
-  match t {
-    TyFloat => { kt = el::def(e, el::source_nr(e, 0, "float")).known_type; },
-    TySingle => { kt = el::def(e, el::source_nr(e, 0, "single")).known_type; },
-    TyBoolean => { kt = el::def(e, el::source_nr(e, 0, "boolean")).known_type; },
-    TyCharacter => { kt = el::def(e, el::source_nr(e, 0, "character")).known_type; },
-    TyText { dep: _ } => { kt = el::def(e, el::source_nr(e, 0, "text")).known_type; },
-    TyReference { n } => { kt = el::def(e, n).known_type; },
-    _ => {}
-  }
+  kt = match t {
+    TyFloat => el::def(e, el::source_nr(e, 0, "float")).known_type,
+    TySingle => el::def(e, el::source_nr(e, 0, "single")).known_type,
+    TyBoolean => el::def(e, el::source_nr(e, 0, "boolean")).known_type,
+    TyCharacter => el::def(e, el::source_nr(e, 0, "character")).known_type,
+    TyText { dep: _ } => el::def(e, el::source_nr(e, 0, "text")).known_type,
+    TyReference { n } => el::def(e, n).known_type,
+    _ => -1
+  };
   if kt >= 0 && kt != el_schema::NO_TYPE {
     el_schema::vector_type(e, kt);
   }
@@ -5091,7 +5109,7 @@ fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vector<
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   // An index not provably in range reads the element as `τ?` (`@FR-N-Index`).
-  may_miss = !fits(e, vars, i.code, x.code);
+  may_miss = !fits(e, vars, i.code, x.code, false);
   size = elem_size(inner);
   op = read_op(inner);
   // A record element is the element itself (`OpGetVector`), a view of the container.
@@ -5256,31 +5274,69 @@ fn keyed_index(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, keys: vector<
 }
 
 // `index_provably_fit` without the `if i < len(v)` proof (`index_arith_trusted`): a constant,
-// a variable of a loop still open, `len` of the vector being indexed, or the integer arithmetic of
-// those — a negation of a constant included, which `const_eval` folds.
-fn fits(e: el::El, vars: el_vars::Vars, i: ir::Node, vec: ir::Node) -> boolean {
+// a variable of a loop still open, the counter of a `for` over the vector being indexed, `len` of
+// that vector, or the integer arithmetic of those (`arith`: inside it) — a negation of a constant
+// included, which `const_eval` folds.  A local holding the vector's length (`length_locals`) is
+// trusted by the Rust only where pass 1's whole body proves nothing writes the vector after it,
+// which the first pass here does not keep: such an index is refused by name.
+fn fits(e: el::El, vars: el_vars::Vars, i: ir::Node, vec: ir::Node, arith: boolean) -> boolean {
   match i {
     NdInt { n: _ } => true,
     NdLong { n: _ } => true,
-    NdVar { n } => el_vars::is_active_loop_var(vars, n),
-    NdSpan { inner } => fits(e, vars, inner, vec),
+    NdVar { n } => {
+      if el_vars::is_active_loop_var(vars, n) || same_vector(e, el_vars::loop_value_of_index(vars, n), vec) {
+        return true;
+      }
+      if arith {
+        for l in vars.len_locals {
+          if l.var == n && same_vector(e, l.vec, vec) {
+            el::refuse(e, "an index through a local holding the vector's length");
+          }
+        }
+      }
+      false
+    },
+    NdSpan { inner } => fits(e, vars, inner, vec, arith),
     NdCall { def_nr, args } => {
       nm = el::def(e, def_nr).name;
       if nm == "OpMinSingleInt" || nm == "OpMinSingleLong" {
         return len(args) == 1 && constant(args[0]);
       }
-      if nm == "n_len" || (nm.starts_with("t_") && nm.ends_with("_len")) {
-        return len(args) == 1 && same_var(args[0], vec);
+      if is_len(nm) {
+        return len(args) == 1 && same_vector(e, args[0], vec);
       }
       if !(nm == "OpNarrow32" || nm == "OpAddInt" || nm == "OpMinInt" || nm == "OpMulInt" || nm == "OpDivInt" || nm == "OpModInt" || nm == "OpAddLong" || nm == "OpMinLong" || nm == "OpMulLong" || nm == "OpDivLong" || nm == "OpModLong") {
         return false;
       }
       for a in args {
-        if !fits(e, vars, a, vec) {
+        if !fits(e, vars, a, vec, true) {
           return false;
         }
       }
       true
+    },
+    _ => false
+  }
+}
+
+// `Parser::is_len_call`: the free `len` or a collection's `len` method.
+fn is_len(nm: text) -> boolean {
+  nm == "n_len" || (nm.starts_with("t_") && nm.ends_with("_len"))
+}
+
+// `vec_key` equality: the same local, or the same field (offset and type) of the same local.
+fn same_vector(e: el::El, a: ir::Node, b: ir::Node) -> boolean {
+  x = el_ir::unspan(a);
+  y = el_ir::unspan(b);
+  match x {
+    NdVar { n: na } => y == ir::NdVar { n: na },
+    NdCall { def_nr: da, args: aa } => match y {
+      NdCall { def_nr: db, args: ab } => {
+        da == db && el::def(e, da).name == "OpGetField" && len(aa) == 3 && len(ab) == 3
+          && el_ir::unspan(aa[0]) is NdVar && el_ir::unspan(aa[0]) == el_ir::unspan(ab[0])
+          && el_ir::unspan(aa[1]) == el_ir::unspan(ab[1]) && el_ir::unspan(aa[2]) == el_ir::unspan(ab[2])
+      },
+      _ => false
     },
     _ => false
   }
@@ -5291,17 +5347,6 @@ fn constant(i: ir::Node) -> boolean {
     NdInt { n: _ } => true,
     NdLong { n: _ } => true,
     NdSpan { inner } => constant(inner),
-    _ => false
-  }
-}
-
-fn same_var(a: ir::Node, b: ir::Node) -> boolean {
-  match a {
-    NdSpan { inner } => same_var(inner, b),
-    NdVar { n: na } => match b {
-      NdVar { n: nb } => na == nb,
-      _ => false
-    },
     _ => false
   }
 }
