@@ -1235,3 +1235,22 @@ fn c_walk_remove(state: integer, store: integer, rec: integer, pos: integer, on:
 pub fn walk_remove(state: integer, store: integer, rec: integer, pos: integer, on: integer, tp: integer) -> integer {
   c_walk_remove(state, store, rec, pos, on, tp)
 }
+
+// ── The lexer (@PLN91 stage 1) ───────────────────────────────────────────────────────────
+// loft source text as the tokens `src/lexer.rs` reads from it, lexed by the C runtime's port
+// (`src/c/loft_lex.h`) and encoded one record per token (the format: `shim/crt.c`,
+// `loft_crt_lex`); `selfhost/src/lex.loft` reads them.
+
+fn c_lex(out: vector<u8>, source: text, bytes: integer) -> integer;
+#c "loft_crt_lex" "int64_t(char*, int64_t, const char*, int64_t)"
+
+// The encoded tokens of `source`, the last record an `End`.
+pub fn lex(source: text) -> vector<u8> {
+  buf = room(size(source) * 8 + 1024);
+  n = c_lex(buf, source, size(source));
+  if n > len(buf) {
+    buf = room(n);
+    c_lex(buf, source, size(source));
+  }
+  buf
+}
