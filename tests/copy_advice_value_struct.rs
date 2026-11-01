@@ -112,12 +112,10 @@ fn assert_backend(backend: &str) {
     // The one that MUST still be advised. `Heapy` is the control that says the marker is not
     // the whole answer: `value struct` says how the value is STORED, not what it OWNS, and a
     // `vector` field beneath one is a real duplicated store.
-    for want in ["copy of Heapy"] {
-        assert!(
-            diag.contains(want),
-            "[{backend}] `{want}` must still be advised\n{diag}"
-        );
-    }
+    assert!(
+        diag.contains("copy of Heapy"),
+        "[{backend}] `copy of Heapy` must still be advised\n{diag}"
+    );
 
     // The ones that must be SILENT — an inline value with no heap part anywhere beneath it,
     // as an element, as a field, and nested two deep; and a plain record with none, placed

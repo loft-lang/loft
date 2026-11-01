@@ -13,6 +13,7 @@ use el_vars;
 use el_types;
 use el_schema;
 use el_convert;
+use el_length;
 
 // An expression's IR and type.
 pub struct Ex {
@@ -26,6 +27,7 @@ fn ex(code: ir::Node, tp: ir::TypeT) -> Ex {
 
 // `Parser::parse_code`: the body of the current definition, its result its declared return.
 pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
+  vars.body = body;
   result = el::def(e, e.context).returned[0];
   b = parse_block(e, vars, body, "return from block", result);
   // A text local at the tail is what the body answers: the result borrows that local.
@@ -524,7 +526,7 @@ fn var_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, resul
   if record_may_be_absent(vars, v, []) {
     copy = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: v }]), el_ir::cl(e, "OpNullRefSentinel", []), copy);
   }
-  bl.operators[len(bl.operators) - 1] = copy;
+  bl.operators[-1] = copy;
   bl.result = [owned];
   ir::NdBlock { block: [bl] }
 }
@@ -603,20 +605,17 @@ fn rebind_safe_literal(e: el::El, vars: el_vars::Vars, ops: vector<ir::Node>, bu
       NdCall { def_nr, args } => {
         name = el::def(e, def_nr).name;
         if starts_with(name, "OpSet") && name != "OpSetText" && name != "OpSetRef" && name != "OpSetDbRef" && name != "OpSetEnum" && len(args) >= 3 && el_ir::unspan(args[0]) == ir::NdVar { n: buf } {
-          last = len(args) - 1;
           reads = false;
           for w in viewers {
-            if el_ir::reads_var(args[last] ?? ir::NdNull, w) {
+            if el_ir::reads_var(args[-1], w) {
               reads = true;
             }
           }
           if reads {
-            tp = el::def(e, def_nr).attributes[last].typedef[0];
+            tp = el::def(e, def_nr).attributes[len(args) - 1].typedef[0];
             tmp = el_vars::add_variable(vars, "__stg_p2_{el_vars::count(vars)}", tp);
-            staged += [el_ir::v_set(tmp, args[last] ?? ir::NdNull)];
-            na = args;
-            na[last] = ir::NdVar { n: tmp };
-            x = ir::NdCall { def_nr: def_nr, args: na };
+            staged += [el_ir::v_set(tmp, args[-1])];
+            x = ir::NdCall { def_nr: def_nr, args: args[..-1] + [ir::NdVar { n: tmp }] };
           }
         }
       },
@@ -649,8 +648,8 @@ fn dep_closure(vars: el_vars::Vars, start: integer) -> vector<integer> {
   seen: vector<integer> = [];
   stack = [start];
   while len(stack) > 0 {
-    v = stack[len(stack) - 1];
-    stack = stack[0..len(stack) - 1];
+    v = stack[-1];
+    stack = stack[..-1];
     for d in el_types::deps(el_vars::tp(vars, v)) {
       if d < el_vars::count(vars) && !int_in(seen, d) {
         seen += [d];
@@ -821,7 +820,7 @@ fn build_into_buffer(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
       if n == 0 {
         return null;
       }
-      tail = bl.operators[n - 1];
+      tail = bl.operators[-1];
       w = -1;
       ops: vector<ir::Node> = [];
       match tail {
@@ -1067,8 +1066,8 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
       SStmt { at, e: se, semi, orelse } => {
         line = e.p.eline[at] ?? 0;
         if line > e.line {
-          if len(l) > 0 && el_ir::is_line(l[len(l) - 1]) {
-            l = drop_last(l);
+          if len(l) > 0 && el_ir::is_line(l[-1]) {
+            l = l[..-1];
           }
           l += [ir::NdLine { n: line }];
           e.line = line;
@@ -1087,7 +1086,7 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
             // Spliced flat, its end marked by a line marker the next statement's replaces.
             spliced = len(items) > 0;
             l = splice(l, items);
-            if spliced && !(len(l) > 0 && el_ir::is_line(l[len(l) - 1])) {
+            if spliced && !(len(l) > 0 && el_ir::is_line(l[-1])) {
               l += [ir::NdLine { n: e.line }];
             }
             if !(t is TyRewritten) && !(t is TyNever) {
@@ -1126,8 +1125,8 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
   }
   close_line(e, n);
   truncate_nonzero(vars, dz);
-  if len(l) > 0 && el_ir::is_line(l[len(l) - 1]) {
-    l = drop_last(l);
+  if len(l) > 0 && el_ir::is_line(l[-1]) {
+    l = l[..-1];
   }
   if !e.first_pass {
     l = defend_faults(e, l);
@@ -1138,11 +1137,11 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
   }
   // A function body's tail is a store into its result (`convert_store`): converted to it.
   if context == "return from block" && len(l) > 0 && el_convert::plain_scalar(result) && el_convert::plain_scalar(el_types::base(t)) && !el_types::is_equal(e, result, t) {
-    tc = el_convert::convert_store(e, vars, l[len(l) - 1], t, result);
+    tc = el_convert::convert_store(e, vars, l[-1], t, result);
     if tc == null {
       el::refuse(e, "a function's value its declared result converts: {type_kind(t)} to {type_kind(result)}");
     } else {
-      l = drop_last(l) + [tc!];
+      l = l[..-1] + [tc!];
       t = result;
     }
   }
@@ -1206,16 +1205,6 @@ fn splice(l: vector<ir::Node>, items: vector<ir::Node>) -> vector<ir::Node> {
     match it {
       NdInsert { items: inner } => { r = splice(r, inner); },
       _ => { r += [it]; }
-    }
-  }
-  r
-}
-
-fn drop_last(l: vector<ir::Node>) -> vector<ir::Node> {
-  r: vector<ir::Node> = [];
-  for x in l {
-    if x#index < len(l) - 1 {
-      r += [x];
     }
   }
   r
@@ -1346,10 +1335,12 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
     return compound(e, vars, op, target, rhs!);
   }
   v = -1;
+  written = "";
   match e.p.nodes[target] {
     SName { name, member } => {
       if member == "" {
         v = binding_var(e, vars, name);
+        written = name;
       }
     },
     _ => {}
@@ -1376,7 +1367,11 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
     }
     return ex(o.code, ir::TyVoid);
   }
+  outer_read = vars.len_read;
+  vars.len_read = false;
   x = expression(e, vars, rhs!);
+  read_through_length = vars.len_read;
+  vars.len_read = outer_read || read_through_length;
   // A whole record local read into a record local COPIES (`parse_var`'s `into` arm): the
   // destination owns, so it borrows nothing from the source.
   match e.p.nodes[rhs!] {
@@ -1404,6 +1399,18 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
   promoted_text = el_vars::tp(vars, v) == ir::TyRefVar { inner: ir::TyText { dep: [] } } && el_types::base(x.tp) is TyText;
   if !promoted_text && !el_vars::change_var_type(e, vars, v, x.tp) {
     el::refuse(e, "a local that changes type");
+  }
+  // `parse_assign`: a local bound from a read a length local made trusted is what this pass
+  // typed it, not the `τ?` the first pass gave it — when nothing else assigns it.
+  if !e.first_pass && read_through_length && element_read(e, x.code) && !vars.vars[v].argument {
+    match el_vars::tp(vars, v) {
+      TyOptional { inner } => {
+        if el_length::assignments(e, vars.body, written) == 1 {
+          el_vars::set_var_type(vars, v, inner);
+        }
+      },
+      _ => {}
+    }
   }
   el_vars::drop_use(vars, v);
   if !e.first_pass && el_types::base(el_vars::tp(vars, v)) is TyText && x.code is NdIf {
@@ -1439,7 +1446,7 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
       el::refuse(e, "a compound assignment to a text place");
       return ex(ir::NdNull, ir::TyVoid);
     }
-    c = call_op(e, vars, op[0..len(op) - 1], [el_ir::unspan(p.code), x.code], [pt, x.tp]);
+    c = call_op(e, vars, op[..-1], [el_ir::unspan(p.code), x.code], [pt, x.tp]);
     x = c;
   }
   if e.first_pass {
@@ -1636,7 +1643,7 @@ fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: inte
   el_vars::mark_user_named(vars, v);
   el_vars::in_use(vars, v, true);
   vt = el_vars::tp(vars, v);
-  bin = op[0..len(op) - 1];
+  bin = op[..-1];
   if vt is TyVector && bin == "+" && e.p.nodes[rhs] is SVecLit {
     el_vars::drop_use(vars, v);
     return vector_append(e, vars, v, rhs);
@@ -1805,20 +1812,17 @@ fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
       match op {
         NdCall { def_nr, args } => {
           if starts_with(el::def(e, def_nr).name, "OpSet") && len(args) >= 3 && el_ir::unspan(args[0]) == ir::NdVar { n: v } {
-            last = len(args) - 1;
             reads = false;
             for w in viewers {
-              if el_ir::reads_var(args[last] ?? ir::NdNull, w) {
+              if el_ir::reads_var(args[-1], w) {
                 reads = true;
               }
             }
             if reads {
-              tp = el::def(e, def_nr).attributes[last].typedef[0];
+              tp = el::def(e, def_nr).attributes[len(args) - 1].typedef[0];
               tmp = el_vars::work_ref(vars, tp);
-              staged += [el_ir::v_set(tmp, args[last] ?? ir::NdNull)];
-              na = args;
-              na[last] = ir::NdVar { n: tmp };
-              ops[op#index] = ir::NdCall { def_nr: def_nr, args: na };
+              staged += [el_ir::v_set(tmp, args[-1])];
+              ops[op#index] = ir::NdCall { def_nr: def_nr, args: args[..-1] + [ir::NdVar { n: tmp }] };
             }
           }
         },
@@ -2744,7 +2748,7 @@ fn assert_text(pos: ir::Position) -> text {
   line = "";
   for l in src.split('\n') {
     if l#index == pos.line - 1 {
-      line = if l.ends_with("\r") { l[0..len(l) - 1] } else { l };
+      line = if l.ends_with("\r") { l[..-1] } else { l };
     }
   }
   start = line.find("assert(");
@@ -2902,7 +2906,7 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
   def = el::def(e, d);
   n = len(def.attributes);
   // The hidden return buffer, whatever local it was renamed after (`RetPromotion::Rename`).
-  retbuf = n == len(given) + 1 && (def.attributes[n - 1].hidden) && (def.attributes[n - 1].typedef[0]) is TyReference;
+  retbuf = n == len(given) + 1 && (def.attributes[-1].hidden) && (def.attributes[-1].typedef[0]) is TyReference;
   // `add_defaults`' `&text` arm: each trailing hidden text buffer is a fresh `__work_cN` of
   // the caller's, set empty and handed as a stack reference ("default ref").
   bufs = !retbuf && n > len(given);
@@ -3064,7 +3068,7 @@ fn scalar(t: ir::TypeT) -> boolean {
 // (`append_data`), each literal part after a hole appended — and the block answers the work
 // text, typed as text that depends on it.  A hole with a format spec is refused by name.
 fn string_expression(e: el::El, vars: el_vars::Vars, parts: vector<integer>) -> Ex {
-  last = parts[len(parts) - 1];
+  last = parts[-1];
   if len(parts) == 1 {
     return ex(ir::NdText { s: text_part(e, last) }, ir::TyText { dep: [] });
   }
@@ -3846,7 +3850,7 @@ fn retail(code: ir::Node, tail: ir::Node?, t: ir::TypeT) -> ir::Node? {
       if n == 0 {
         return null;
       }
-      bl.operators = drop_last(bl.operators) + [tail!];
+      bl.operators = bl.operators[..-1] + [tail!];
       bl.result = [t];
       ir::NdBlock { block: [bl] }
     },
@@ -3889,7 +3893,7 @@ fn text_arm_into(c: integer, arm: ir::Node) -> ir::Node? {
       if n == 0 {
         return null;
       }
-      last = bl.operators[n - 1];
+      last = bl.operators[-1];
       if last is NdNull || last is NdReturn || last is NdBreak || last is NdContinue {
         return null;
       }
@@ -4013,8 +4017,8 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
   vars.active_values += [x.code];
   fc = loop_filter(e, vars, filter);
   b = parse_block(e, vars, body, "for", ir::TyVoid);
-  vars.active_loops = drop_last_int(vars.active_loops);
-  vars.active_values = drop_last_node(vars.active_values);
+  vars.active_loops = vars.active_loops[..-1];
+  vars.active_values = vars.active_values[..-1];
   if e.first_pass || el_types::is_unknown(elem) {
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -4079,8 +4083,8 @@ fn keyed_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, x: Ex, body
   vars.active_values += [ir::NdNull];
   fc = loop_filter(e, vars, filter);
   b = parse_block(e, vars, body, "for", ir::TyVoid);
-  vars.active_loops = drop_last_int(vars.active_loops);
-  vars.active_values = drop_last_node(vars.active_values);
+  vars.active_loops = vars.active_loops[..-1];
+  vars.active_values = vars.active_values[..-1];
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -4477,13 +4481,13 @@ fn literal_walk(e: el::El, vars: el_vars::Vars, src_id: text, id: text, lit: Bui
   vars.active_values += [ir::NdNull];
   fc = loop_filter(e, vars, filter);
   b = parse_block(e, vars, body, "for", ir::TyVoid);
-  vars.active_loops = drop_last_int(vars.active_loops);
-  vars.active_values = drop_last_node(vars.active_values);
+  vars.active_loops = vars.active_loops[..-1];
+  vars.active_values = vars.active_values[..-1];
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
   i = ir::NdVar { n: idx };
-  sel = ir::NdVar { n: temps[len(temps) - 1] };
+  sel = ir::NdVar { n: temps[-1] };
   k = len(temps) - 2;
   while k >= 0 {
     sel = el_ir::v_if(el_ir::cl(e, "OpEqInt", [i, ir::NdInt { n: k }]), ir::NdVar { n: temps[k] }, sel);
@@ -4600,8 +4604,8 @@ fn range_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, source: int
   vars.active_values += [ir::NdNull];
   fc = loop_filter(e, vars, filter);
   b = parse_block(e, vars, body, "for", ir::TyVoid);
-  vars.active_loops = drop_last_int(vars.active_loops);
-  vars.active_values = drop_last_node(vars.active_values);
+  vars.active_loops = vars.active_loops[..-1];
+  vars.active_values = vars.active_values[..-1];
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -4658,26 +4662,6 @@ fn loop_filter(e: el::El, vars: el_vars::Vars, filter: integer?) -> ir::Node? {
     return null;
   }
   el_ir::v_if(c.code, ir::NdNull, ir::NdContinue { n: 0 })
-}
-
-fn drop_last_node(l: vector<ir::Node>) -> vector<ir::Node> {
-  r: vector<ir::Node> = [];
-  for x in l {
-    if x#index < len(l) - 1 {
-      r += [x];
-    }
-  }
-  r
-}
-
-fn drop_last_int(l: vector<integer>) -> vector<integer> {
-  r: vector<integer> = [];
-  for x in l {
-    if x#index < len(l) - 1 {
-      r += [x];
-    }
-  }
-  r
 }
 
 // ── vectors (src/parser/vectors.rs, fields.rs) ───────────────────────────────────────────────
@@ -5260,7 +5244,7 @@ fn keyed_index(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, keys: vector<
   t = ir::TyReference { n: el_d, dep: [] };
   ds = el_types::deps(ct);
   if len(ds) > 0 {
-    t = el_types::with_deps(t, [ds[len(ds) - 1]]);
+    t = el_types::with_deps(t, [ds[-1]]);
   }
   match x.code {
     NdVar { n } => { t = el_types::with_deps(t, [n]); },
@@ -5290,7 +5274,15 @@ fn fits(e: el::El, vars: el_vars::Vars, i: ir::Node, vec: ir::Node, arith: boole
       if arith {
         for l in vars.len_locals {
           if l.var == n && same_vector(e, l.vec, vec) {
-            el::refuse(e, "an index through a local holding the vector's length");
+            v = el_length::verdict(e, vars, vars.body, el_vars::name_of(vars, n), vector_base(l.vec));
+            if v == el_length::TRUSTED {
+              vars.len_read = true;
+              return true;
+            }
+            if v == el_length::UNDECIDED {
+              el::refuse(e, "an index through a length local the syntax cannot prove");
+            }
+            return false;
           }
         }
       }
@@ -5322,6 +5314,38 @@ fn fits(e: el::El, vars: el_vars::Vars, i: ir::Node, vec: ir::Node, arith: boole
 // `Parser::is_len_call`: the free `len` or a collection's `len` method.
 fn is_len(nm: text) -> boolean {
   nm == "n_len" || (nm.starts_with("t_") && nm.ends_with("_len"))
+}
+
+// `length_locals::is_element_read`: `OpGetVector(…)`, or a plain element's read of one.
+fn element_read(e: el::El, c: ir::Node) -> boolean {
+  match el_ir::unspan(c) {
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if nm == "OpGetVector" {
+        return true;
+      }
+      if !nm.starts_with("OpGet") || len(args) == 0 {
+        return false;
+      }
+      match el_ir::unspan(args[0]) {
+        NdCall { def_nr: inner } => el::def(e, inner).name == "OpGetVector",
+        _ => false
+      }
+    },
+    _ => false
+  }
+}
+
+// The local a `vec_key` vector is reached through: the local itself, or the record a field is of.
+fn vector_base(v: ir::Node) -> integer {
+  match el_ir::unspan(v) {
+    NdVar { n } => n,
+    NdCall { args } => match el_ir::unspan(args[0]) {
+      NdVar { n } => n,
+      _ => -1
+    },
+    _ => -1
+  }
 }
 
 // `vec_key` equality: the same local, or the same field (offset and type) of the same local.

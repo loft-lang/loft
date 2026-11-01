@@ -127,13 +127,12 @@ fn the_condition_names_the_surviving_use_by_line() {
 #[test]
 fn the_message_does_not_repeat_its_own_fix() {
     let quiet = run(AVOIDABLE, false);
-    for cure in ["move line 8 above line 7"] {
-        assert!(
-            !quiet.contains(cure),
-            "the message repeats its fix (\"{cure}\") — what is wrong belongs to the \
-             diagnostic, what to write instead belongs to the fix; output:\n{quiet}"
-        );
-    }
+    let cure = "move line 8 above line 7";
+    assert!(
+        !quiet.contains(cure),
+        "the message repeats its fix (\"{cure}\") — what is wrong belongs to the \
+         diagnostic, what to write instead belongs to the fix; output:\n{quiet}"
+    );
 }
 
 /// Moving the cure out of the message must not leave a reader with LESS than before.

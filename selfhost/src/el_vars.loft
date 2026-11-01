@@ -62,6 +62,10 @@ pub struct Vars {
   pub active_values: vector<ir::Node>,
   // The locals this pass assigned a vector's length (`n = len(v)`), with that vector
   pub len_locals: vector<LenLocal>,
+  // Set when an index read was trusted through a length local (`Parser::length_local_read`)
+  pub len_read: boolean,
+  // The syntax node of the body being elaborated
+  pub body: integer,
   // `Function::loop_binds`: how many loops have bound each spelling, per pass
   pub loop_binds: hash<LoopCount[name]>,
   // `Parser::divisor_nonzero`: the locals a condition proves non-zero where they are read
@@ -79,7 +83,7 @@ pub struct Vars {
 }
 
 pub fn new_vars(name: text, file: text) -> Vars {
-  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], active_values: [], len_locals: [], loop_binds: [], nonzero: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [] }
+  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [] }
 }
 
 pub fn name_of(v: Vars, nr: integer) -> text {
@@ -374,7 +378,7 @@ pub fn loop_value_of_index(v: Vars, nr: integer) -> ir::Node {
   if !nm.ends_with("#index") {
     return ir::NdNull;
   }
-  binder = nm[0..len(nm) - 6];
+  binder = nm[..-6];
   k = len(v.active_loops) - 1;
   while k >= 0 {
     if v.vars[v.active_loops[k]].name == binder {

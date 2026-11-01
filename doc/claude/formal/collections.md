@@ -387,8 +387,9 @@ carried either site, which is why it stayed correct and is the oracle a guard pa
                  default arm that BUILDS a value — is named first and every read goes through
                  that name.
                  The value is owed at EVERY vector-typed position, not only a bind: an
-                 argument, a return, a block tail, a struct field's value and a literal's
-                 element take the slice as the fresh vector a bind would make of it
+                 argument, a return, a block tail, a struct field's value, a literal's
+                 element and either operand of a vector `+` (`v[..-1] + [x]`, `(Col-Concat)`)
+                 take the slice as the fresh vector a bind would make of it
                  (`Parser::iterator_as_vector`, one home).  A scalar-element slice is
                  copied in ONE block (`OpSliceVector`, `Stores::vector_slice`); any other
                  element kind is copied element by element; both are the same fresh value.

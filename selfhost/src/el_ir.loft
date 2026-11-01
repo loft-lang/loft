@@ -82,7 +82,7 @@ fn any_reads(l: vector<ir::Node>, v: integer) -> boolean {
 // `Value::unspan`.
 // The last of a list of operators — a block's tail — or `NdNull` for an empty list.
 pub fn last(ops: vector<ir::Node>) -> ir::Node {
-  if len(ops) == 0 { ir::NdNull } else { ops[len(ops) - 1] }
+  if len(ops) == 0 { ir::NdNull } else { ops[-1] }
 }
 
 pub fn unspan(n: ir::Node) -> ir::Node {

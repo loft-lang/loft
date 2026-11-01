@@ -417,12 +417,16 @@ impl Parser {
                     // when `a` escapes (the N shape: `a = head()+head()`, returned).
                     // The adopt IS the body providing a's store, exactly like the
                     // literal-init `body_allocates` case — so skip `vector_db` too.
+                    // A slice that starts the concat (`v = v[..-1] + [x]`, `@FR-Slice-Value`)
+                    // is the same: its materialised block mints its own store, and it READS v
+                    // — a fresh backing allocated first would empty v before the slice runs.
                     let body_adopts_call = ls.first().is_some_and(|first| {
                         matches!(first.unspan(), Value::Set(s, rhs) if *s == var_nr
-                            && matches!(rhs.unspan(), Value::Call(d, _)
+                            && (matches!(rhs.unspan(), Value::Call(d, _)
                                 if self.data.def(*d).name().starts_with("n_")
                                     && *self.data.def(*d).code() != Value::Null
-                                    && !self.data.def(*d).returns_borrowed_view()))
+                                    && !self.data.def(*d).returns_borrowed_view())
+                                || matches!(rhs.unspan(), Value::Block(bl) if bl.name == "iter_vec")))
                     });
                     // The materialise prefix reads v while it is still intact, so
                     // it MUST precede the `vector_db` clear: insert prefix ++
@@ -2376,6 +2380,18 @@ impl Parser {
                     "'++' is not a valid operator — use '+' for concatenation or addition"
                 );
             }
+            // `@FR-Slice-Value` — a slice that starts a `+` is the fresh vector of its range,
+            // the copy a bind would make of it, so `v[..-1] + [x]` concatenates.
+            if operator == "+"
+                && ls.is_empty()
+                && let Type::Iterator(elm, _) = current_type.base()
+            {
+                let want = Type::Vector(elm.clone(), crate::data::Deps::none());
+                let is_tp = current_type.clone();
+                if let Some(vt) = self.iterator_as_vector(code, &is_tp, &want) {
+                    current_type = vt;
+                }
+            }
             // Unwrap RefVar(Text) for the + text concatenation check
             let eff_type_for_plus = if let Type::RefVar(inner) = &current_type {
                 if matches!(**inner, Type::Text(_)) {
@@ -2412,8 +2428,18 @@ impl Parser {
                 } else {
                     &mut *parent_tp
                 };
-                let tp =
+                let mut tp =
                     self.parse_operators(var_tp, &mut second_code, operand_parent, precedence + 1);
+                // …and so is a slice joined onto a vector (`[x] + v[1..]`).
+                if let Type::Vector(want, _) = &eff_type_for_plus
+                    && matches!(tp.base(), Type::Iterator(..))
+                {
+                    let want = Type::Vector(want.clone(), crate::data::Deps::none());
+                    let is_tp = tp.clone();
+                    if let Some(vt) = self.iterator_as_vector(&mut second_code, &is_tp, &want) {
+                        tp = vt;
+                    }
+                }
                 // @FR-E-Concat — a character joins only with text or another character; with an
                 // integer it is arithmetic on the code point, on either side (`1 + 'a'` already
                 // was), so `'a' + 1` is 98 and not "a1" (loft#2046).

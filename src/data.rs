@@ -12451,7 +12451,6 @@ impl Data {
         self.source_is_owned(self.source)
     }
 
-    #[must_use]
     /// The definition keyed `name` in ANY source, the first one made — for a key that names one
     /// thing program-wide whichever source mints it: an instance of a generic (`@FR-G-Mono`).
     #[must_use]
@@ -12459,6 +12458,7 @@ impl Data {
         self.def_names.first_bound(name).unwrap_or(u32::MAX)
     }
 
+    #[must_use]
     pub fn source_nr(&self, source: u16, name: &str) -> u32 {
         if source == u16::MAX {
             return self.def_nr(name);
