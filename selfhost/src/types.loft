@@ -600,3 +600,13 @@ pub fn enum_parent_size(b: ir::Bundle, tp: integer) -> integer {
 pub fn is_vector_wrapper(b: ir::Bundle, tp: integer) -> boolean {
   (b.types[tp]?.name ?? "").starts_with("main_vector<")
 }
+
+// The type the schema names `name`, or null.
+pub fn named(b: ir::Bundle, name: text) -> integer? {
+  for t in b.types {
+    if t.name == name {
+      return t#index;
+    }
+  }
+  null
+}

@@ -188,6 +188,23 @@ fn clocked(n: integer) -> integer {
   if now() > 0 && ticks() >= 0 { n + 1 } else { 0 }
 }
 
+// The text natives' second batch, each loft's own (split writes the caller's vector buffer as the
+// compiled body does; join reads a store vector of texts).  worded(3): "a,bb,,ccc" splits into 4
+// parts → 4; joined by "-" 9 letters → 90; "  pad 3  " trimmed 5 → 500; "banana" with "an"
+// replaced is "bANANa" → 1000; its last "an" at 3 → 30000; it contains "nan" → 100000; the
+// character and text classes hold → 1000000; plus 3 * 10000000: 31131594.  worded(0): 1131594.
+fn worded(n: integer) -> integer {
+  parts = "a,bb,,ccc".split(',');
+  s = len(parts);
+  s += len(parts.join("-")) * 10;
+  s += len("  pad {n}  ".trim()) * 100;
+  if "banana".replace("an", "AN") == "bANANa" { s += 1000; }
+  s += ("banana".rfind("an") ?? 0) * 10000;
+  if "banana".contains("nan") { s += 100000; }
+  if 'x'.is_alphabetic() && !'7'.is_alphabetic() && "123".is_numeric() { s += 1000000; }
+  s + n * 10000000
+}
+
 fn main() {
-  println("{hue_number(0)} {hue_number(1)} {hue_number(2)} {div_or(7, 2)} {div_or(7, 0)} {rem_or(7, 3)} {rem_or(7, 0)} {abs_floats(-6)} {abs_floats(6)} {char_or_zero(0)} {char_or_zero(233)} {narrow(200)} {narrow(300)} {narrow_or_null(200)} {narrow_or_null(300)} {ops_or(7, 2)} {ops_or(-1, 2)} {enum_named(1)} {enum_named(2)} {text_walk(0)} {text_walk(1)} {affixed(3)} {affixed(5)} {tail_sum(100000)} {tail_sum(0)} {scalars(3)} {scalars(5)} {texted(3)} {texted(4)} {narrowed(3)} {narrowed(-5)} {clocked(4)}");
+  println("{hue_number(0)} {hue_number(1)} {hue_number(2)} {div_or(7, 2)} {div_or(7, 0)} {rem_or(7, 3)} {rem_or(7, 0)} {abs_floats(-6)} {abs_floats(6)} {char_or_zero(0)} {char_or_zero(233)} {narrow(200)} {narrow(300)} {narrow_or_null(200)} {narrow_or_null(300)} {ops_or(7, 2)} {ops_or(-1, 2)} {enum_named(1)} {enum_named(2)} {text_walk(0)} {text_walk(1)} {affixed(3)} {affixed(5)} {tail_sum(100000)} {tail_sum(0)} {scalars(3)} {scalars(5)} {texted(3)} {texted(4)} {narrowed(3)} {narrowed(-5)} {clocked(4)} {worded(3)} {worded(0)}");
 }

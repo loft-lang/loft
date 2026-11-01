@@ -123,6 +123,8 @@ fn test_the_small_integer_operators_answer_as_loft_does() {
   assert(ran("small_ops", "n_narrowed", [3]) == 19600521, "narrowed(3): linked narrow locals hold their field encoding");
   assert(ran("small_ops", "n_narrowed", [-5]) == 20400521, "narrowed(-5)");
   assert(ran("small_ops", "n_clocked", [4]) == 5, "clocked(4): now and ticks");
+  assert(ran("small_ops", "n_worded", [3]) == 31131594, "worded(3): split, join, trim, replace, rfind, contains, classes");
+  assert(ran("small_ops", "n_worded", [0]) == 1131594, "worded(0)");
   assert(ran("small_ops", "n_rem_or", [7, 3]) == 1, "rem_or(7, 3)");
   assert(ran("small_ops", "n_rem_or", [7, 0]) == -1, "rem_or(7, 0)");
   // |-6 / 4| = 1.5, as a float and as a single, each times 100.
