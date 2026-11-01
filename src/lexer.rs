@@ -247,7 +247,7 @@ pub(crate) fn lex_trace(args: std::fmt::Arguments<'_>) {
 fn trace_token(res: &LexResult, hole: bool, end: &Position) {
     use std::fmt::Write as _;
     use std::io::Write;
-    type Sink = Option<(std::fs::File, std::collections::HashSet<(String, u32, u32)>)>;
+    type Sink = Option<(crate::file_access::File, std::collections::HashSet<(String, u32, u32)>)>;
     static SINK: std::sync::Mutex<Sink> = std::sync::Mutex::new(None);
     let Some(path) =
         crate::env_once!(@value Option<String>, std::env::var("LOFT_TRACE_TOKENS").ok())
