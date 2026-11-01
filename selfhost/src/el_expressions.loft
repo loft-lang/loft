@@ -37,7 +37,57 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       code = built!;
     }
   }
+  if !e.first_pass && work_buffer_candidate(e, vars) {
+    el::refuse(e, "a vector local the work-buffer pass may hand to its caller");
+  }
   finish_body(vars, code)
+}
+
+// The table test of `Parser::work_buffer_candidate` with the definition declines a body can
+// meet (`work_buffer_def_decline`): a plain local `v: vector<scalar>` viewing one `__vdb_N`, in
+// a function a caller hands arguments.  The promotion itself (src/parser/work_buffer.rs, after
+// pass 2) is not ported, so a body it may rewrite is refused rather than answered unpromoted.
+fn work_buffer_candidate(e: el::El, vars: el_vars::Vars) -> boolean {
+  d = el::def(e, e.context);
+  if d.name == "n_main" || starts_with(d.name, "n___lambda_") {
+    return false;
+  }
+  authored = false;
+  for a in d.attributes {
+    if !starts_with(a.name, "__work_") && !starts_with(a.name, "__ref_") {
+      authored = true;
+    }
+  }
+  if !authored && (d.returned[0] ?? ir::TyVoid) == ir::TyVoid {
+    return false;
+  }
+  for v in vars.vars {
+    if v.argument || starts_with(v.name, "_") {
+      continue;
+    }
+    match v.type_def[0] ?? ir::TyVoid {
+      TyVector { inner, dep } => {
+        if len(dep) == 1 && is_scalar(inner) && starts_with(vars.vars[dep[0]].name, "__vdb_") {
+          return true;
+        }
+      },
+      _ => {}
+    }
+  }
+  false
+}
+
+// `data::is_scalar`.
+fn is_scalar(t: ir::TypeT) -> boolean {
+  match t {
+    TyInteger { spec: _ } => true,
+    TyFloat => true,
+    TySingle => true,
+    TyCharacter => true,
+    TyBoolean => true,
+    TyEnum { n: _, is_ref, dep: _ } => !is_ref,
+    _ => false
+  }
 }
 
 // `RefDelivery::BuildIntoBuffer` (`build_into_return_buffer`): a body whose tail is a record
