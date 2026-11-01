@@ -573,14 +573,18 @@ struct PatternArm {
 /// `Return`/`Break`/`Continue` unspanned in block-operator position.
 /// The null-arm recogniser of @FR-N-Match: which arm of a `match` on `τ?` is the `null` arm,
 /// so the other arms bind the `τ`.
+///
+/// loft#2339 — a block ARM that binds names first (`PN { name } => { …; null }`) arrives as the
+/// `match_arm` block of its bindings whose last operator is the body BLOCK; the null is that
+/// block's tail.  Not followed, the arm was left a value-less block beside value arms: the
+/// interpreter answered null for every arm after it, the C backend refused it.
 fn arm_body_is_null(code: &Value) -> bool {
     match code {
         Value::Null => true,
         Value::Block(bl) if bl.name == FORWARD_CALL => false,
-        Value::Block(bl) => bl
-            .operators
-            .last()
-            .is_some_and(|o| matches!(o.unspan(), Value::Null)),
+        Value::Block(bl) => bl.operators.last().is_some_and(|o| {
+            matches!(o.unspan(), Value::Null) || (matches!(o, Value::Block(_)) && arm_body_is_null(o))
+        }),
         _ => false,
     }
 }
@@ -619,7 +623,11 @@ fn set_arm_null_typed(code: &mut Value, typed_null: &Value, result_type: &Type) 
     match code {
         Value::Block(bl) => {
             let last = bl.operators.len() - 1;
-            bl.operators[last] = typed_null.clone();
+            if matches!(bl.operators[last], Value::Block(_)) {
+                set_arm_null_typed(&mut bl.operators[last], typed_null, result_type);
+            } else {
+                bl.operators[last] = typed_null.clone();
+            }
             bl.result = result_type.clone();
         }
         other => *other = typed_null.clone(),

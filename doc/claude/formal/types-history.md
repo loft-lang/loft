@@ -1865,3 +1865,15 @@ hint), so `S { d: if c { [] } else { [v] } }` built an untyped placeholder for t
 `parse_object_field` pushes a collection field's type as well.  Found porting the self-host
 elaborator (`ir::TyReference { n: 0, dep: if value { [] } else { [v] } }`).  Guard
 `loft-suite rules/types/T-Chk/2337-an-empty-literal-arm-builds-its-fields-collection.loft`.
+
+### D-types-39 — OPENED AND CLOSED (2026-11-01; loft#2339): a binding match arm's null block tail was not the join's null
+
+`(N-Join)`: a `match` arm that answers `null` answers the null of the type the arms join to, and
+`type_null_arms` puts it there.  Its recogniser `arm_body_is_null` read the arm block's last
+operator, but an arm that binds names (`PN { name } => { if … { return 1; } null }`) arrives as the
+`match_arm` block of its bindings whose last operator is the body block, the null that block's
+tail.  The arm stayed a block typed `null` with no value beside value arms: the interpreter's
+`if` chain answered null for every later arm (`PL { v } => v * 2` answered null), silently, and
+the C backend refused the function.  **Fix.**  The recogniser and `set_arm_null_typed` follow a
+trailing block to its tail.  Found porting the self-host elaborator.  Guard
+`loft-suite rules/types/N-Join/2339-a-binding-arm-answering-a-null-block-takes-the-joins-null.loft`.
