@@ -109,10 +109,12 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   match e.p.nodes[n] {
     SInt { v } => ex(ir::NdInt { n: v }, ir::TyInteger { spec: i32_spec() }),
     SName { name, member } => name_expression(e, vars, name, member),
+    SAssign { fixed, op, target, e: rhs } => assignment(e, vars, fixed, op, target, rhs),
+    SCall { at, f, args } => call_expression(e, vars, at, f, args),
     SBin { op, l, r } => {
       a = expression(e, vars, l);
       b = expression(e, vars, r);
-      call_op(e, vars, op, [a.code, b.code], [a.tp, b.tp])
+      call_op(e, op, [a.code, b.code], [a.tp, b.tp])
     },
     _ => {
       el::refuse(e, "an expression form");
@@ -134,6 +136,228 @@ fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text) -> 
   }
   el_vars::in_use(vars, v, true);
   ex(ir::NdVar { n: v }, el_vars::tp(vars, v))
+}
+
+// `Parser::parse_assign` for a plain `name = value`: the left side names a local — created on
+// the first pass, found again on the second — the right side is read, the local takes the
+// value's type (`change_var`) and the statement is the `Set` (`towards_set`), typed void.
+fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: integer, rhs: integer?) -> Ex {
+  if fixed || op != "=" || rhs == null {
+    el::refuse(e, "a const binding or a compound assignment");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  v = -1;
+  match e.p.nodes[target] {
+    SName { name, member } => {
+      if member == "" {
+        v = binding_var(e, vars, name);
+      }
+    },
+    _ => {}
+  }
+  if v < 0 {
+    el::refuse(e, "an assignment to a place that is not a plain local");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  x = expression(e, vars, rhs!);
+  if !el_vars::change_var_type(e, vars, v, x.tp) {
+    el::refuse(e, "a local that changes type");
+  }
+  el_vars::drop_use(vars, v);
+  ex(el_ir::v_set(v, x.code), ir::TyVoid)
+}
+
+// `Parser::parse_var` for the name a binding writes: on the first pass a name that is not a
+// local yet becomes one, untyped (`create_var`); a known local counts a use; on the second
+// pass the assignment marks it defined.
+fn binding_var(e: el::El, vars: el_vars::Vars, name: text) -> integer {
+  v = el_vars::var(vars, name);
+  if v < 0 {
+    if !e.first_pass {
+      el::refuse(e, "a binding the first pass did not see");
+      return -1;
+    }
+    v = el_vars::add_variable(vars, name, ir::TyUnknown { n: 0 });
+    el_vars::mark_user_named(vars, v);
+    return v;
+  }
+  el_vars::mark_user_named(vars, v);
+  el_vars::in_use(vars, v, true);
+  if !e.first_pass {
+    el_vars::set_defined(vars, v);
+  }
+  v
+}
+
+// `Parser::parse_call` of a bare function name: the arguments read in order, then the
+// definition the name and the first argument's type select (`call`, `Data::candidates`), each
+// argument converted to its parameter (`process_call_args`).  On the second pass the call is
+// wrapped in its position: where the lexer stood after the token that follows `(`.
+fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, args: vector<integer>) -> Ex {
+  name = "";
+  match e.p.nodes[f ?? 0] {
+    SName { name: n, member } => {
+      if member == "" {
+        name = n;
+      }
+    },
+    _ => {}
+  }
+  if name == "" || el_vars::var(vars, name) >= 0 {
+    el::refuse(e, "a call that is not of a function by its bare name");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  list: vector<ir::Node> = [];
+  types: vector<ir::TypeT> = [];
+  for a in args {
+    match e.p.nodes[a] {
+      SArg { name: an, e: ae } => {
+        if an != "" || ae == null {
+          el::refuse(e, "a named argument");
+          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+        x = expression(e, vars, ae!);
+        list += [x.code];
+        types += [x.tp];
+      },
+      _ => {}
+    }
+  }
+  first = if len(types) > 0 { types[0] } else { ir::TyUnknown { n: 0 } };
+  d = find_fn(e, name, first);
+  if d < 0 {
+    if e.first_pass {
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    el::refuse(e, "a call of an unknown function");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  r = call_args(e, d, list, types);
+  if r == null {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  c = r!;
+  if e.first_pass {
+    return c;
+  }
+  ex(ir::NdSpan { pos: el::pos_at(e, after_paren(e, at)), inner: c.code }, c.tp)
+}
+
+// The token after a call's `(`: the parser's peek when `parse_call` starts.
+fn after_paren(e: el::El, from: integer) -> integer {
+  i = from;
+  while i < len(e.p.src) {
+    if e.p.src[i] is LParen {
+      return i + 1;
+    }
+    i += 1;
+  }
+  from
+}
+
+// `Data::candidates`, the rungs a plain receiver reaches: none for an untyped first argument,
+// else the method on the receiver's type under its own nullability spelling and then the
+// other, then the free `n_<name>`.  A receiver that is a variant or a generic instance is
+// refused by name, as is the operator fallback; a bound holder is never one yet, since the
+// elaboration does not read generic bounds.
+fn find_fn(e: el::El, name: text, first: ir::TypeT) -> integer {
+  free = el::def_nr(e, "n_{name}");
+  if el_types::is_unknown(first) {
+    return free;
+  }
+  tn = type_def_nr(e, first);
+  if tn < 0 {
+    return free;
+  }
+  td = el::def(e, tn);
+  if td.def_type == el::DT_ENUM_VALUE || td.instance_of >= 0 {
+    el::refuse(e, "a method receiver that is a variant or a generic instance");
+    return -1;
+  }
+  base = td.name;
+  optional = "{base}?";
+  spellings = if first is TyOptional { [optional, base] } else { [base, optional] };
+  for sp in spellings {
+    m = el::def_nr(e, "t_{len(sp)}{sp}_{name}");
+    if m >= 0 {
+      if receives(e, m, tn) {
+        return m;
+      }
+      el::refuse(e, "a method found in a foreign source");
+      return -1;
+    }
+  }
+  if free < 0 && len(el::possible(e, name)) > 0 {
+    el::refuse(e, "a call that falls back to a builtin operator");
+  }
+  free
+}
+
+// `Data::type_def_nr` for the scalar and record types: the definition a type is named by.
+fn type_def_nr(e: el::El, t: ir::TypeT) -> integer {
+  match t {
+    TyOptional { inner } => type_def_nr(e, inner),
+    TyRewritten { inner } => type_def_nr(e, inner),
+    TyInteger { spec: _ } => el::source_nr(e, 0, "integer"),
+    TyBoolean => el::source_nr(e, 0, "boolean"),
+    TyFloat => el::source_nr(e, 0, "float"),
+    TyText { dep: _ } => el::source_nr(e, 0, "text"),
+    TySingle => el::source_nr(e, 0, "single"),
+    TyCharacter => el::source_nr(e, 0, "character"),
+    TyRoutine { n } => n,
+    TyEnum { n } => n,
+    TyReference { n } => n,
+    TyUnknown { n } => n,
+    _ => {
+      el::refuse(e, "a call whose first argument is a collection, a tuple or a function");
+      -1
+    }
+  }
+}
+
+// `Data::method_receives`: the method's first parameter takes this receiver's definition.
+fn receives(e: el::El, m: integer, tn: integer) -> boolean {
+  d = el::def(e, m);
+  if len(d.attributes) == 0 {
+    return true;
+  }
+  declared = type_def_nr(e, d.attributes[0].typedef[0] ?? ir::TyUnknown { n: 0 });
+  declared < 0 || declared == tn
+}
+
+// `Parser::call_nr` through `process_call_args`, for a definition whose parameters each take
+// their argument as it is (`convert`'s equal case) and whose result is a scalar: the call and
+// its declared result.  Defaults, hidden buffers, conversions and heap results are refused.
+fn call_args(e: el::El, d: integer, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex? {
+  def = el::def(e, d);
+  if len(def.attributes) != len(list) {
+    el::refuse(e, "a call with defaulted or hidden parameters");
+    return null;
+  }
+  for a in def.attributes {
+    if !el_types::is_equal(e, a.typedef[0] ?? ir::TyUnknown { n: 0 }, types[a#index] ?? ir::TyUnknown { n: 0 }) {
+      el::refuse(e, "an argument converted to its parameter");
+      return null;
+    }
+  }
+  ret = def.returned[0] ?? ir::TyVoid;
+  if !scalar(ret) {
+    el::refuse(e, "a call returning a heap value");
+    return null;
+  }
+  ex(ir::NdCall { def_nr: d, args: list }, ret)
+}
+
+fn scalar(t: ir::TypeT) -> boolean {
+  match t {
+    TyVoid => true,
+    TyInteger { spec: _ } => true,
+    TyBoolean => true,
+    TyFloat => true,
+    TySingle => true,
+    TyCharacter => true,
+    _ => false
+  }
 }
 
 // `IntegerSpec::signed32`, the type an integer literal answers.
@@ -166,7 +390,7 @@ fn rename(op: text) -> text {
 
 // `Parser::call_op_as`, the builtin-operator path: the first `Op<name>…` candidate whose
 // parameters take these arguments.
-pub fn call_op(e: el::El, vars: el_vars::Vars, op: text, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+pub fn call_op(e: el::El, op: text, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
   if e.first_pass {
     for t in types {
       if el_types::is_unknown(t) {
