@@ -1723,7 +1723,9 @@ impl Parser {
                 true
             }
             Value::Span(b) => self.null_leaves_only(&b.1, leaves),
-            Value::If(_, t, f) => self.null_leaves_only(t, leaves) && self.null_leaves_only(f, leaves),
+            Value::If(_, t, f) => {
+                self.null_leaves_only(t, leaves) && self.null_leaves_only(f, leaves)
+            }
             Value::Block(bl) => bl
                 .operators
                 .last()
@@ -1746,7 +1748,10 @@ impl Parser {
             }
             Value::Block(bl) => {
                 if let Some(last) = bl.operators.last_mut() {
-                    let yields = !matches!(last, Value::Return(_) | Value::Break(_) | Value::Continue(_));
+                    let yields = !matches!(
+                        last,
+                        Value::Return(_) | Value::Break(_) | Value::Continue(_)
+                    );
                     self.retype_null_leaves(last, should);
                     if yields && matches!(bl.result, Type::Null) {
                         bl.result = should.clone();

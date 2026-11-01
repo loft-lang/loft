@@ -4225,7 +4225,11 @@ impl Parser {
     ///
     /// Deliberately not `Lexer::recover_to`, whose depth walk this otherwise mirrors:
     /// recovery may cross anything, and this stops at the statement's end.
-    pub(crate) fn peek_tuple_literal(&mut self) -> bool {
+    ///
+    /// The same holds for a parenthesised value a POSTFIX follows — `(v + [9]).len()`,
+    /// `(a + b)[0]` — whose value is the postfix's operand, not the destination: so the walk
+    /// also answers `true` when the closer is followed by `.` or `[`.
+    pub(crate) fn peek_paren_value_apart(&mut self) -> bool {
         let saved = self.lexer.link();
         let mut depth: i32 = 0;
         // The depth to return to as each open interpolation hole closes.
@@ -4281,6 +4285,10 @@ impl Parser {
                 || self.lexer.peek_token("}")
             {
                 if depth == 0 {
+                    if self.lexer.peek_token(")") {
+                        self.lexer.cont();
+                        found = self.lexer.peek_token(".") || self.lexer.peek_token("[");
+                    }
                     break;
                 }
                 depth -= 1;

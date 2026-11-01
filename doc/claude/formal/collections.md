@@ -124,11 +124,17 @@ owns their *operations + order*).
                 insert, an absent collection and an empty one are the same place, so this is a
                 DEFINED semantic and not a discharge the author forgot.  It is the ONE write
                 that applies types.md (N-Default) implicitly (owner ruling 2026-09-07, loft#1434).
+  (Col-Concat)  a + b  over  vector<τ>         a NEW vector: a's elements, then b's.  A value
+                wherever an expression stands — an argument, a field's value, a return, a
+                tuple member, the operand of a postfix (`(a + b).len()`, `(a + b)[i]`) — and
+                neither operand is changed.  An operand literal written in a field's
+                destination (`S { v: [1] + b }`) is that destination's first part.
   (Col-Len)     c.len()                        element count; O(1) (verified O(1) for spatial).
                 An ABSENT collection counts 0 at every kind — a `<kind>?` handed to `len` is
                 `(N-Store)`'s store (a warning), and 0 is the one value @C80 leaves it.
 ```
-*Anchor:* loft-suite/attic/scripts/48-spatial-construct-free.loft (construct/append/len).
+*Anchor:* loft-suite/attic/scripts/48-spatial-construct-free.loft (construct/append/len);
+`rules/collections/Col-Concat/` (the concat in every expression position, both backends).
 
 **An absent destination is instantiated, not refused (`Col-Insert-Absent`).**  `s.items:
 vector<It>?` holding null and then `s.items += [x]` leaves `s.items` holding `[x]`; a local, an

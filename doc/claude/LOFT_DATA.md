@@ -72,9 +72,11 @@ only after a `>= 0` check) when `i` may be negative.
 **When `v[i]` reads as the element, and when as `τ?`.**  An index the compiler can trust
 reads as the element type; any other index reads as `τ?`, because it may be out of range
 (`formal/types.md` `(N-Index)`).  Trusted: a constant (`v[0]`, `v[-1]`), `len(v)` of the same
-vector minus a constant, the variable of an active `for` loop, an index a guard proves (`if i <
-len(v)`, `assert(i < len(v))`, `if i >= len(v) { return … }`), and integer arithmetic over
-those.  These need no `??`:
+vector minus a constant, a local holding that length (`n = len(v)`, assigned once, outside any
+loop, with `v` written nowhere after it) minus a constant, the variable of an active `for` loop,
+the counter of a loop over the same vector (`for x in v { v[x#index] }`), an index a guard proves
+(`if i < len(v)`, `assert(i < len(v))`, `if i >= len(v) { return … }`), and integer arithmetic
+over those.  These need no `??`:
 
 <!-- from tests/reference/vector-index.loft -->
 ```loft
@@ -87,17 +89,25 @@ for j in 0..len(v) {
 }
 i = 1;
 mid = if i < len(v) { take(v[i]) } else { 0 };   // a guard that proves the bound
+n = len(v);
+end = take(v[n - 1]);                  // a local holding the length, v unchanged since
+each = 0;
+for p in v {
+  each += take(v[p#index]);            // the counter of a loop over the same vector
+}
 ```
 
 Trust removes the `?` from the type, not the check: a trusted index that does overrun (`for j
-in 0..10` over a shorter vector) still answers null at run time.  Not trusted: a local that
-holds the length (`n = len(v); v[n - 1]`) and a `for x in v` loop's `x#index` — read `x` itself,
-or loop over `0..len(v)`.  Discharge an untrusted read with `!` where an invariant guarantees
-the element, `?` for the type's default, or `?? d` for a default you give:
+in 0..10` over a shorter vector) still answers null at run time.  Not trusted: any other local
+(`k = n - 1; v[k]`), a length local whose vector is written after it or that is assigned again,
+a bare length (`v[n]` is always past the end), and one vector's length or counter used on
+another.  Discharge an untrusted read with `!` where an invariant guarantees the element, `?`
+for the type's default, or `?? d` for a default you give:
 
 <!-- from tests/reference/vector-index.loft -->
 ```loft
-a = take(v[n - 1]!);                   // present by an invariant: `!` halts when it is not
+k = n - 1;
+a = take(v[k]!);                       // present by an invariant: `!` halts when it is not
 b = take(v[5]?);                       // out of range: the type's default, P { x: 0 }
 c = (v[n] ?? P { x: 9 }).x;            // a default you give
 ```

@@ -150,9 +150,13 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
   NEVER wrap, saturate, or an out-of-range value (that would be UB).  Nullability is
   RANGE-DRIVEN: an op is non-null when its result provably fits, τ? when it could miss.
   (N-Index)    Γ ⊢ v ⇒ vector<τ>, Γ ⊢ i ⇒ Integer   ⟹   Γ ⊢ v[i]  ⇒ τ?       (OOB — no elem)
-               EXCEPT an index trusted BY CONTRACT — a constant, an active `for` variable, a
-               read guarded by `i < len(v)`, integer arithmetic over those (@PLN102 D1,
-               `index_provably_fit`) — which reads τ NON-NULL; a genuine overrun there
+               EXCEPT an index trusted BY CONTRACT — a constant, an active `for` variable, the
+               counter `x#index` of a `for x in v` over the SAME v, a read guarded by
+               `i < len(v)`, integer arithmetic over those and over `len(v)` of the same v or
+               a local holding it (`n = len(v)` assigned once, outside every loop, with v —
+               and every view of it — written by no statement after it; pass 2 reads this off
+               pass 1's whole body, `length_locals`) (@PLN102 D1, `index_provably_fit`) —
+               which reads τ NON-NULL; a genuine overrun there
                faults to null at run time (@C80) and no rule above the runtime sees it.  So a
                nullability cell built on `v[9]` measures nothing: it must index by a plain
                variable.

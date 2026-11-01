@@ -210,6 +210,7 @@ impl Parser {
         tp: &Type,
         parts: &[(Value, Type)],
         orig_var: u16,
+        dest: Option<&Value>,
     ) -> Type {
         let mut ls = Vec::new();
         // Cluster I-d (@PLN85 cluster V / @PLN85 single-dep) — the store `orig_var` ends up
@@ -226,22 +227,31 @@ impl Parser {
         } else {
             i32::MIN
         };
+        // @FR-Col-Concat — a first operand built straight into a FIELD destination (a
+        // literal under `S { v: [1] + b }` or `s.v = [1] + b`) has already written its
+        // elements there and answers nothing: the chain continues in that field, which is
+        // where the value belongs.
+        if orig_var == u16::MAX
+            && let Some(dest) = dest
+            && let Value::Insert(elms) = code
+        {
+            let mut ops = std::mem::take(elms);
+            for (val, part_tp) in parts {
+                self.refuse_mixed_element_encoding(tp, part_tp);
+                ops.push(self.cl(
+                    "OpAppendVector",
+                    &[dest.clone(), val.clone(), Value::Int(rec_tp)],
+                ));
+            }
+            *code = Value::Insert(ops);
+            return tp.clone();
+        }
         let var_nr = if orig_var == u16::MAX {
             let vec = self.create_unique("vec", tp);
             let elm_tp = tp.content();
             let db_ops = self.vector_db(&elm_tp, vec);
-            // vector concat as an inline expression (not assigned to a variable)
-            // creates a temporary with database allocation that corrupts the stack when
-            // the result is used inside a compound assignment expression.
-            // Emit an error so the user assigns to a variable first.
-            if !db_ops.is_empty() && !self.first_pass {
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "vector concatenation in an expression creates a temporary; \
-                     assign to a variable first for correct results in compound expressions"
-                );
-            }
+            // @FR-Col-Concat — a concat in an expression is a value of its own: a fresh
+            // vector the parts are appended to, read like any other block value.
             for l in db_ops {
                 ls.push(l);
             }
@@ -863,8 +873,10 @@ impl Parser {
             // member built through the append path instead, left the tuple element reading
             // null with no diagnostic at all (`t = (x + y, 9)`).  Ask the lexer first and
             // give a member its own temp; the built value returns on the normal channel, so
-            // everything downstream is unchanged.
-            let divert = matches!(val, Value::Var(_)) && self.peek_tuple_literal();
+            // everything downstream is unchanged.  A value a postfix follows (`(v + [9]).len()`)
+            // is the postfix's operand, not the destination, and is diverted the same way: it
+            // was built into the destination and read back as a void insert (P395).
+            let divert = matches!(val, Value::Var(_)) && self.peek_paren_value_apart();
             let mut member0 = Value::Null;
             let t = if divert {
                 let t = self.expression(&mut member0);
@@ -987,35 +999,6 @@ impl Parser {
                     self.expected = saved_expected;
                 }
                 self.lexer.token(")");
-                // @P395 — a parenthesised vector concat consumed by a trailing
-                // `.method()` reused the OUTER assignment LHS as its accumulator
-                // (the inner concat inherited `orig_var` from the live `val`),
-                // lowering to a void `Value::Insert` that leaves no stack value;
-                // the method then reads a misaligned slot → garbage value / the
-                // `codegen.rs:2669` +8 drift.  This is the same shape the P103
-                // guard in `parse_append_vector` already rejects for
-                // `f([1,2] + [3])` (loft-suite/rules/closures/L-FnAbsent/102-expected-errors.loft):
-                // inline vector concat consumed by a call/sub-expression must be
-                // assigned to a variable first.  Fire the same clean error here
-                // instead of silently corrupting.  Direct assignment `v = (a+c)`
-                // (no trailing `.`) keeps its reuse path; `(a+c)[i]` indexing
-                // already lowers correctly and is not guarded.
-                if !self.first_pass && matches!(val, Value::Insert(_)) && self.lexer.peek_token(".")
-                {
-                    let tv = if let Type::Rewritten(inner) = &t {
-                        (**inner).clone()
-                    } else {
-                        t.clone()
-                    };
-                    if matches!(tv, Type::Vector(_, _)) {
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "vector concatenation in an expression creates a temporary; \
-                             assign to a variable first for correct results in compound expressions"
-                        );
-                    }
-                }
                 t
             }
         } else if self.lexer.peek_token("{") {
@@ -5553,8 +5536,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         let reads_through = |this: &Self, n: &Value| match (&field_place, n) {
             (Some(place), Value::Call(d, args)) if !this.data.def(*d).name().starts_with("Op") => {
                 args.iter().any(|a| {
-                    this.field_place(a)
-                        .is_some_and(|p| p.0 == place.0 && p.1.len() < place.1.len() && place.1.starts_with(&p.1))
+                    this.field_place(a).is_some_and(|p| {
+                        p.0 == place.0 && p.1.len() < place.1.len() && place.1.starts_with(&p.1)
+                    })
                 })
             }
             _ => false,

@@ -1972,6 +1972,14 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 if self.vars.is_active_loop_var(*v) {
                     return true;
                 }
+                // @FR-N-Index — the counter of a `for` over this same vector.
+                if self.index_leaf_of(
+                    *v,
+                    crate::parser::operators::vec_key(vec, &self.data).as_ref(),
+                    false,
+                ) {
+                    return true;
+                }
                 // An `if idx < len(vec) { vec[idx] }` guard proved the (idx, vec) pair in-bounds
                 // for this branch — match `v` AND the indexed vector's `VecKey`.
                 crate::parser::operators::vec_key(vec, &self.data).is_some_and(|vk| {
@@ -1999,8 +2007,39 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
     /// spelling carries the receiver type's name inside it (`t_<LEN><Type>_len`), so a literal
     /// list would have to grow with every collection kind.
     fn is_len_call(&self, op: u32) -> bool {
-        let n = self.data.def(op).name.as_str();
-        n == "n_len" || (n.starts_with("t_") && n.ends_with("_len"))
+        crate::parser::length_locals::is_len_call(&self.data, op)
+    }
+
+    /// `(N-Index)` — is `v` a by-contract leaf for an index into the vector keyed `vec`: the
+    /// counter of a `for` over that same vector (`for x in vec { vec[x#index] }`), or (inside
+    /// index arithmetic only, `arith`) a local holding its length (`length_locals`)?  Both are
+    /// keyed on the vector's identity: a counter or a length of ONE vector says nothing about
+    /// the domain of ANOTHER.
+    fn index_leaf_of(
+        &self,
+        v: u16,
+        vec: Option<&crate::parser::operators::VecKey>,
+        arith: bool,
+    ) -> bool {
+        let Some(key) = vec else {
+            return false;
+        };
+        if crate::parser::operators::vec_key(self.vars.loop_value_of_index(v), &self.data).as_ref()
+            == Some(key)
+        {
+            return true;
+        }
+        let trusted = arith
+            && self.length_locals.0 == self.context
+            && self
+                .length_locals
+                .2
+                .iter()
+                .any(|(n, k)| *n == v && k == key);
+        if trusted {
+            self.length_local_read.set(true);
+        }
+        trusted
     }
 
     /// @PLN102 D1 — is `index` an integer-arithmetic expression built purely from trusted leaves
@@ -2018,7 +2057,9 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             return true;
         }
         match index.unspan() {
-            Value::Var(v) => self.vars.is_active_loop_var(*v),
+            // @FR-N-Index — a loop variable, this vector's `for` counter, or a local holding
+            // its length (`n = len(v); v[n - 1]`).
+            Value::Var(v) => self.vars.is_active_loop_var(*v) || self.index_leaf_of(*v, vec, true),
             Value::Call(op, args) if self.is_index_arith_op(*op) => {
                 args.iter().all(|a| self.index_arith_trusted(a, vec))
             }
