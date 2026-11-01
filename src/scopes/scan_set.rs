@@ -233,6 +233,60 @@ impl Scopes<'_> {
         self.paired_witness.retain(|_, w| w != tmp);
     }
 
+    /// `@FR-B-Copy` / `@FR-O-Witness` — an OWNING record local bound more than once, handed a
+    /// block whose value is another VARIABLE, takes a COPY of it, as the bare whole-value bind
+    /// does: a literal built in a compiler work-ref (`t = TVoid` is `{OpDatabase(__ref_N); …;
+    /// __ref_N}`), an unwrap (`tp = t!` is `{if t == null { panic }; t}`).  Aliased, the local
+    /// and the variable's owner both owned the store: the local's next rebind freed it as the
+    /// store it displaced, the work-ref re-made the freed slot at its next literal, and once the
+    /// allocator had handed that slot to another store the re-make wiped it (the C-built
+    /// self-host elaborator's `parse_block`).  A store a compiler temp holds is the temp's
+    /// (`(O-Witness)`), and a local that owns its stores — a materialised view is one — cannot
+    /// also view it.  Written as the whole-value bind `{…}; t = r`, which both backends copy.
+    /// A local bound once keeps the alias: its exit free is guarded by store identity.
+    fn copy_temp_held_bind(
+        &self,
+        ov: u16,
+        v: u16,
+        value: &Value,
+        function: &Function,
+    ) -> Option<Value> {
+        if !self.multi_assigned.contains(&ov)
+            || function.is_argument(v)
+            || function.is_skip_free(v)
+            || function.owner_witness(v).is_some()
+            || !matches!(
+                function.tp(v),
+                Type::Reference(_, _) | Type::Enum(_, true, _)
+            )
+            || !function.tp(v).depend().is_empty()
+        {
+            return None;
+        }
+        let ops = match value.unspan() {
+            Value::Block(b) => &b.operators,
+            Value::Insert(ops) => ops,
+            _ => return None,
+        };
+        let (last, init) = ops.split_last()?;
+        let Value::Var(r) = last.unspan() else {
+            return None;
+        };
+        // Only a value's own statements (a work-ref's reset among them): a block that binds
+        // locals keeps its scope.
+        if *r == v
+            || *r == ov
+            || init
+                .iter()
+                .any(|op| matches!(op.unspan(), Value::Set(x, _) if x != r))
+        {
+            return None;
+        }
+        let mut out = init.to_vec();
+        out.push(crate::data::v_set(ov, Value::Var(*r)));
+        Some(Value::Insert(out))
+    }
+
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn scan_set(
         &mut self,
@@ -314,6 +368,9 @@ impl Scopes<'_> {
             function.set_skip_free(v);
             function.set_owner_witness(v, w);
             self.owner_witness.insert(v, w);
+        }
+        if let Some(copy) = self.copy_temp_held_bind(ov, v, value, function) {
+            return self.scan(&copy, function, data);
         }
         // `@FR-O-Complete` / `@FR-B-Copy` — a REASSIGNMENT of a heap local from a value
         // branch is lowered to the statement form, `if c { x = a } else { x = b }`, so each
