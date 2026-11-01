@@ -217,7 +217,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SUnary { op, e: ue } => unary(e, vars, op, ue),
     SIf { cond, then, other } => if_expr(e, vars, cond, then, other),
     SFor { binds, source, par, filter, body } => for_expr(e, vars, binds, source, par, filter, body),
-    SJump { kind, e: je } => jump(e, kind, je),
+    SJump { kind, e: je } => jump(e, vars, kind, je),
     SIndex { at, e: ie, keys, range, hi, limit, spatial } => index(e, vars, at, ie, keys, range || len(hi) > 0 || limit != null || spatial),
     SParen { e: pe } => if pe == null { ex(ir::NdNull, ir::TyUnknown { n: 0 }) } else { expression(e, vars, pe!) },
     _ => {
@@ -1155,15 +1155,37 @@ fn text_arm_into(c: integer, arm: ir::Node) -> ir::Node? {
 // ── loops (src/parser/collections.rs `parse_for`, `iterator`; objects.rs `parse_in_range_body`) ──
 
 // `break` and `continue` leave or restart the innermost loop (`Break(0)`, `Continue(0)`), typed
-// as never finishing.  A `break` with a value and a `return` are refused by name.
-fn jump(e: el::El, kind: text, x: integer?) -> Ex {
+// as never finishing; `return` leaves the function with its value — nothing (`return null`) from
+// a void function, a scalar of the declared return type as it is.  A `break` with a value, and a
+// return of a text or heap value (a hidden return buffer) or of a type it converts, are refused
+// by name.
+fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
   if kind == "break" && x == null {
     return ex(ir::NdBreak { n: 0 }, ir::TyNever);
   }
   if kind == "continue" {
     return ex(ir::NdContinue { n: 0 }, ir::TyNever);
   }
-  el::refuse(e, "a `{kind}`{if x == null { "" } else { " with a value" }}");
+  if kind == "return" {
+    result = el::def(e, e.context).returned[0] ?? ir::TyVoid;
+    if x == null {
+      if !(result is TyVoid) {
+        el::refuse(e, "a `return` without a value from a function with one");
+      }
+      return ex(ir::NdReturn { inner: ir::NdNull }, ir::TyNever);
+    }
+    v = expression(e, vars, x!);
+    if !scalar(result) || result is TyVoid {
+      el::refuse(e, "a `return` with a value of this type: {type_kind(result)}");
+      return ex(ir::NdNull, ir::TyNever);
+    }
+    if !el_types::is_unknown(v.tp) && !el_types::is_equal(e, result, v.tp) {
+      el::refuse(e, "a `return` value its declared type converts");
+      return ex(ir::NdNull, ir::TyNever);
+    }
+    return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+  }
+  el::refuse(e, "a `{kind}` with a value");
   ex(ir::NdNull, ir::TyNever)
 }
 
