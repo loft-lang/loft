@@ -87,7 +87,7 @@ pub fn new_vars(name: text, file: text) -> Vars {
 }
 
 pub fn name_of(v: Vars, nr: integer) -> text {
-  v.vars[nr].name
+  v.vars[nr]!.name
 }
 
 pub fn count(v: Vars) -> integer {
@@ -101,7 +101,7 @@ pub fn var(v: Vars, name: text) -> integer {
 }
 
 pub fn tp(v: Vars, nr: integer) -> ir::TypeT {
-  v.vars[nr].type_def[0]
+  v.vars[nr]!.type_def[0]
 }
 
 // `Function::new_var`: a fresh variable; the first variable of a spelling takes the name.
@@ -374,15 +374,15 @@ pub fn set_var_type(v: Vars, nr: integer, t: ir::TypeT) {
 // `Function::loop_value_of_index`: the vector the open `for` walks whose counter is `nr`
 // (`x#index` of `for x in v`), or null.
 pub fn loop_value_of_index(v: Vars, nr: integer) -> ir::Node {
-  nm = v.vars[nr].name;
+  nm = name_of(v, nr);
   if !nm.ends_with("#index") {
     return ir::NdNull;
   }
   binder = nm[..-6];
   k = len(v.active_loops) - 1;
   while k >= 0 {
-    if v.vars[v.active_loops[k]].name == binder {
-      return v.active_values[k];
+    if name_of(v, v.active_loops[k]!) == binder {
+      return v.active_values[k]!;
     }
     k -= 1;
   }

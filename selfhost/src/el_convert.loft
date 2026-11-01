@@ -38,7 +38,7 @@ pub fn value_fits(e: el::El, vars: el_vars::Vars, code: ir::Node, dst: ir::TypeT
       NdBlock { block } => {
         bl = block[0];
         n = len(bl.operators);
-        bl.name != "ncc" && n > 0 && value_fits(e, vars, el_ir::last(bl.operators), dst)
+        bl.name != "ncc" && n > 0 && value_fits(e, vars, bl.operators[-1], dst)
       },
       NdCall { def_nr, args } => {
         if len(args) == 0 && el::def(e, def_nr).name == "OpConvIntFromNull" {
@@ -129,7 +129,7 @@ pub fn int_range(e: el::El, vars: el_vars::Vars, code: ir::Node) -> Range? {
     NdBlock { block } => {
       bl = block[0];
       n = len(bl.operators);
-      if n == 0 || bl.name == "ncc" { null } else { int_range(e, vars, el_ir::last(bl.operators)) }
+      if n == 0 || bl.name == "ncc" { null } else { int_range(e, vars, bl.operators[-1]) }
     },
     NdCall { def_nr, args } => {
       nm = el::def(e, def_nr).name;
@@ -180,9 +180,9 @@ pub fn int_range(e: el::El, vars: el_vars::Vars, code: ir::Node) -> Range? {
         if k == null || k! == 0 {
           return null;
         }
-        m = (if k! < 0 { 0 - k! } else { k! }) - 1;
+        bound = (if k! < 0 { 0 - k! } else { k! }) - 1;
         a = int_range(e, vars, args[0]);
-        return Range { lo: if a != null && a!.lo >= 0 { 0 } else { 0 - m }, hi: m };
+        return Range { lo: if a != null && a!.lo >= 0 { 0 } else { 0 - bound }, hi: bound };
       }
       declared_range(el::def(e, def_nr).returned[0])
     },

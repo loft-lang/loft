@@ -193,7 +193,7 @@ pub fn deps(t: ir::TypeT) -> vector<integer> {
       u: vector<integer> = [];
       for x in elems {
         for d in deps(x) {
-          if !contains(u, d) {
+          if !u.contains(d) {
             u += [d];
           }
         }
@@ -205,14 +205,6 @@ pub fn deps(t: ir::TypeT) -> vector<integer> {
   [for d in r if d != 65535 { d }]
 }
 
-fn contains(v: vector<integer>, x: integer) -> boolean {
-  for y in v {
-    if y == x {
-      return true;
-    }
-  }
-  false
-}
 
 // `is_collection`: a vector or a keyed collection, through a `&`.
 pub fn is_collection(t: ir::TypeT) -> boolean {
