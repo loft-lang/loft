@@ -3496,6 +3496,9 @@ pub fn capture_take() -> String {
 /// loop waiting rather than returning with nothing to wait on.  The process ends when the program
 /// does: 0 when it returns, 1 when it panics (the hook has printed the message) — what joining
 /// the thread answered.
+///
+/// # Panics
+/// When the program's thread cannot be spawned.
 #[cfg(target_os = "macos")]
 pub fn run_beside_main_queue<F: FnOnce() + Send + 'static>(run: F) -> ! {
     use std::ffi::c_void;
