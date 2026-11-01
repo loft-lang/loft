@@ -54,11 +54,15 @@ pub struct Vars {
   // `Function::loop_binds`: how many loops have bound each spelling, per pass
   pub loop_binds: hash<LoopCount[name]>,
   // `Parser::divisor_nonzero`: the locals a condition proves non-zero where they are read
-  pub nonzero: vector<integer>
+  pub nonzero: vector<integer>,
+  // `Function::work_ctext`: the `__work_cN` text buffers a call hands a text-returning callee
+  pub work_ctext: integer,
+  // `Function::work_text_p2`: the `__work_p2_N` destinations a text-dest call is given
+  pub work_tp2: integer
 }
 
 pub fn new_vars(name: text, file: text) -> Vars {
-  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], loop_binds: [], nonzero: [] }
+  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], loop_binds: [], nonzero: [], work_ctext: 0, work_tp2: 0 }
 }
 
 pub fn name_of(v: Vars, nr: integer) -> text {
@@ -156,6 +160,28 @@ pub fn in_use(v: Vars, nr: integer, plus: boolean) {
 pub fn work_text(v: Vars) -> integer {
   v.work_text += 1;
   nr = add_variable(v, "__work_{v.work_text}", ir::TyText { dep: [] });
+  add_work_text(v, nr);
+  nr
+}
+
+// `Function::caller_text_buf`: the next `__work_cN`, a work text of its own counter.
+pub fn caller_text_buf(v: Vars) -> integer {
+  v.work_ctext += 1;
+  nr = add_variable(v, "__work_c{v.work_ctext}", ir::TyText { dep: [] });
+  add_work_text(v, nr);
+  nr
+}
+
+// `Function::work_text_p2`: the next `__work_p2_N`.
+pub fn work_text_p2(v: Vars) -> integer {
+  v.work_tp2 += 1;
+  nr = add_variable(v, "__work_p2_{v.work_tp2}", ir::TyText { dep: [] });
+  add_work_text(v, nr);
+  nr
+}
+
+// `work_texts.insert`: kept in variable order.
+fn add_work_text(v: Vars, nr: integer) {
   at = 0;
   while at < len(v.work_texts) && v.work_texts[at] < nr {
     at += 1;
@@ -173,7 +199,6 @@ pub fn work_text(v: Vars) -> integer {
     }
     v.work_texts = rest;
   }
-  nr
 }
 
 pub fn was_built(v: Vars, nr: integer) -> boolean {
@@ -246,6 +271,8 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   v.active_loops = [];
   v.loop_binds = [];
   v.nonzero = [];
+  v.work_ctext = 0;
+  v.work_tp2 = 0;
 }
 
 // `Function::loop_binding`: the name a loop's variable takes — the spelling itself for the

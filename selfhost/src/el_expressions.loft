@@ -28,6 +28,7 @@ fn ex(code: ir::Node, tp: ir::TypeT) -> Ex {
 pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   result = el::def(e, e.context).returned[0] ?? ir::TyVoid;
   b = parse_block(e, vars, body, "return from block", result);
+  text_return(e, vars, b.tp);
   code = b.code;
   rb = el_vars::var(vars, "__retbuf");
   if rb >= 0 && !e.first_pass {
@@ -41,7 +42,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   if !e.first_pass && work_buffer_candidate(e, vars) {
     el::refuse(e, "a vector local the work-buffer pass may hand to its caller");
   }
-  finish_body(vars, code)
+  finish_body(e, vars, code)
 }
 
 // The table test of `Parser::work_buffer_candidate` with the definition declines a body can
@@ -89,6 +90,249 @@ fn is_scalar(t: ir::TypeT) -> boolean {
     TyEnum { n: _, is_ref, dep: _ } => !is_ref,
     _ => false
   }
+}
+
+// `Parser::format_append_in_place` (`@FR-R-FormatAppend`): `t += "…{x}…"` writes the format's
+// parts into `t` — its leading text appended, each write retargeted — where every part is a write
+// of the format family into the work text that reads neither `t` nor the work text.  Null where
+// the format keeps its buffer.
+fn format_append(e: el::El, v: integer, code: ir::Node) -> ir::Node? {
+  ops: vector<ir::Node> = [];
+  match el_ir::unspan(code) {
+    NdBlock { block } => {
+      if block[0].name != "Formatted string" {
+        return null;
+      }
+      ops = block[0].operators;
+    },
+    _ => { return null; }
+  }
+  n = len(ops);
+  work = -1;
+  prefix = "";
+  match el_ir::unspan(ops[0] ?? ir::NdNull) {
+    NdSet { var, inner } => {
+      match inner {
+        NdText { s: p } => { work = var; prefix = p; },
+        _ => { return null; }
+      }
+    },
+    _ => { return null; }
+  }
+  if n < 2 {
+    return null;
+  }
+  match el_ir::unspan(ops[n - 1] ?? ir::NdNull) {
+    NdVar { n: w } => { if w != work { return null; } },
+    _ => { return null; }
+  }
+  parts: vector<ir::Node> = [];
+  if prefix != "" {
+    parts += [el_ir::cl(e, "OpAppendText", [ir::NdVar { n: v }, ir::NdText { s: prefix }])];
+  }
+  for o in ops {
+    if o#index == 0 || o#index == n - 1 {
+      continue;
+    }
+    match el_ir::unspan(o) {
+      NdCall { def_nr, args } => {
+        nm = el::def(e, def_nr).name;
+        if !(nm == "OpAppendText" || nm == "OpAppendCharacter" || nm == "OpFormatText" || nm == "OpFormatInt" || nm == "OpFormatFloat" || nm == "OpFormatSingle" || nm == "OpFormatDatabase") {
+          return null;
+        }
+        match el_ir::unspan(args[0] ?? ir::NdNull) {
+          NdVar { n: w } => { if w != work { return null; } },
+          _ => { return null; }
+        }
+        a2 = args;
+        for a in args {
+          if a#index > 0 && (el_ir::reads_var(a, v) || el_ir::reads_var(a, work)) {
+            return null;
+          }
+        }
+        a2[0] = ir::NdVar { n: v };
+        parts += [ir::NdCall { def_nr: def_nr, args: a2 }];
+      },
+      _ => { return null; }
+    }
+  }
+  ir::NdInsert { items: parts }
+}
+
+// `Parser::text_return` for a body whose tail is a text: each variable the tail borrows becomes
+// part of the result's deps — a parameter by its number; a text local (on the first pass, or a
+// compiler buffer on either) promoted to a hidden `&text` parameter (`PromoteHidden`), the caller's
+// buffer, which the body then writes through.  The declared result takes those deps.
+fn text_return(e: el::El, vars: el_vars::Vars, t: ir::TypeT) {
+  d = e.context;
+  ret = el::def(e, d).returned[0] ?? ir::TyVoid;
+  opt = ret is TyOptional;
+  rt = el_types::base(ret);
+  ls: vector<integer> = [];
+  match rt {
+    TyText { dep: _ } => {},
+    _ => { return; }
+  }
+  match el_types::base(t) {
+    TyText { dep } => { ls = dep; },
+    _ => { return; }
+  }
+  dep = el_types::deps(rt);
+  stack = ir::TyRefVar { inner: ir::TyText { dep: [] } };
+  for v in ls {
+    nm = el_vars::name_of(vars, v);
+    a = attr_nr(el::def(e, d), nm);
+    if a >= 0 {
+      if !int_in(dep, a) {
+        dep += [a];
+      }
+      at = el::def(e, d).attributes[a];
+      if at.hidden && (at.typedef[0] ?? ir::TyVoid) is TyRefVar {
+        el_vars::become_argument(vars, v);
+        el_vars::set_var_type(vars, v, stack);
+      }
+    } else if el_types::base(el_vars::tp(vars, v)) is TyText {
+      if !e.first_pass && !starts_with(nm, "_") {
+        continue;
+      }
+      na = el::attribute(nm, stack);
+      na.hidden = true;
+      e.b.data.definitions[d].attributes += [na];
+      el_vars::become_argument(vars, v);
+      dep += [len(el::def(e, d).attributes) - 1];
+      el_vars::set_var_type(vars, v, stack);
+    }
+  }
+  nt = ir::TyText { dep: dep };
+  e.b.data.definitions[d].returned = [if opt { ir::TyOptional { inner: nt } } else { nt }];
+}
+
+// `Parser::wrap_value_text_dest` (@PLN10): a call of a text-dest native (or of a native or
+// C binding answering text) in VALUE position gets a `__work_p2_N` destination of its own —
+// the call stored into it in a "synth text dest" block answering it — so its result lives in a
+// freed temp.  A call that is itself the value a `Set` stores, or the text an `OpAppendText`
+// appends, needs none (`descend_skip_direct`); its arguments are walked.
+fn text_dest(e: el::El, vars: el_vars::Vars, v: ir::Node) -> ir::Node {
+  match v {
+    NdCall { def_nr, args } => {
+      a2: vector<ir::Node> = [];
+      if el::def(e, def_nr).name == "OpAppendText" && len(args) == 2 {
+        a2 += [text_dest(e, vars, args[0] ?? ir::NdNull)];
+        a2 += [skip_direct(e, vars, args[1] ?? ir::NdNull)];
+        return ir::NdCall { def_nr: def_nr, args: a2 };
+      }
+      for a in args {
+        a2 += [text_dest(e, vars, a)];
+      }
+      c = ir::NdCall { def_nr: def_nr, args: a2 };
+      if text_dest_call(e, def_nr) {
+        w = el_vars::work_text_p2(vars);
+        return el_ir::v_block([el_ir::v_set(w, c), ir::NdVar { n: w }], ir::TyText { dep: [w] }, "synth text dest");
+      }
+      c
+    },
+    NdCallRef { var, args } => {
+      a2: vector<ir::Node> = [];
+      for a in args {
+        a2 += [text_dest(e, vars, a)];
+      }
+      ir::NdCallRef { var: var, args: a2 }
+    },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: skip_direct(e, vars, inner) },
+    NdBlock { block } => {
+      bl = block[0];
+      ops: vector<ir::Node> = [];
+      for o in bl.operators {
+        ops += [text_dest(e, vars, o)];
+      }
+      bl.operators = ops;
+      ir::NdBlock { block: [bl] }
+    },
+    NdLoop { block } => {
+      bl = block[0];
+      ops: vector<ir::Node> = [];
+      for o in bl.operators {
+        ops += [text_dest(e, vars, o)];
+      }
+      bl.operators = ops;
+      ir::NdLoop { block: [bl] }
+    },
+    NdInsert { items } => {
+      ops: vector<ir::Node> = [];
+      for o in items {
+        ops += [text_dest(e, vars, o)];
+      }
+      ir::NdInsert { items: ops }
+    },
+    NdIf { cond, t, f } => ir::NdIf { cond: text_dest(e, vars, cond), t: text_dest(e, vars, t), f: text_dest(e, vars, f) },
+    NdReturn { inner } => ir::NdReturn { inner: text_dest(e, vars, inner) },
+    NdDrop { inner } => ir::NdDrop { inner: text_dest(e, vars, inner) },
+    NdYield { inner } => ir::NdYield { inner: text_dest(e, vars, inner) },
+    NdTuplePut { var, idx, inner } => ir::NdTuplePut { var: var, idx: idx, inner: text_dest(e, vars, inner) },
+    NdIter { var, create, next, init } => ir::NdIter { var: var, create: text_dest(e, vars, create), next: text_dest(e, vars, next), init: text_dest(e, vars, init) },
+    NdTuple { items } => {
+      ops: vector<ir::Node> = [];
+      for o in items {
+        ops += [text_dest(e, vars, o)];
+      }
+      ir::NdTuple { items: ops }
+    },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: text_dest(e, vars, inner) },
+    _ => v
+  }
+}
+
+fn skip_direct(e: el::El, vars: el_vars::Vars, v: ir::Node) -> ir::Node {
+  match v {
+    NdSpan { pos, inner } => {
+      match el_ir::unspan(inner) {
+        NdCall { def_nr } => {
+          if text_dest_call(e, def_nr) {
+            return ir::NdSpan { pos: pos, inner: dest_args(e, vars, inner) };
+          }
+        },
+        _ => {}
+      }
+    },
+    NdCall { def_nr } => {
+      if text_dest_call(e, def_nr) {
+        return dest_args(e, vars, v);
+      }
+    },
+    _ => {}
+  }
+  text_dest(e, vars, v)
+}
+
+// The arguments of a direct call walked, the call itself kept.
+fn dest_args(e: el::El, vars: el_vars::Vars, v: ir::Node) -> ir::Node {
+  match v {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: dest_args(e, vars, inner) },
+    NdCall { def_nr, args } => {
+      a2: vector<ir::Node> = [];
+      for a in args {
+        a2 += [text_dest(e, vars, a)];
+      }
+      ir::NdCall { def_nr: def_nr, args: a2 }
+    },
+    _ => v
+  }
+}
+
+// `is_text_dest_def`, `is_cdylib_text_call`, `is_c_text_call` (a library bridge's bufferless
+// text function is not reached here).
+fn text_dest_call(e: el::El, d: integer) -> boolean {
+  def = el::def(e, d);
+  rt = el_types::base(def.returned[0] ?? ir::TyVoid);
+  nm = def.name;
+  named = nm == "t_4text_replace" || nm == "t_4text_to_lowercase" || nm == "t_4text_to_uppercase" || nm == "n_source_dir" || nm == "n_directory" || nm == "n_user_directory" || nm == "n_program_directory" || nm == "n_os_temp_dir" || nm == "n_os_cache_dir" || nm == "n_kernel_event_payload" || nm == "n_kernel_sync_payload" || nm == "n_kernel_client_event_payload" || nm == "n_kernel_client_sync_payload" || nm == "n_kernel_default_host" || nm == "n_kernel_rebuild_artifact" || nm == "n_json_errors" || nm == "t_9JsonValue_kind" || nm == "t_9JsonValue_to_json" || nm == "t_9JsonValue_to_json_pretty" || nm == "n_ymd_days_ago" || nm == "n_store_memory" || nm == "n_store_lazy_error" || nm == "n_struct_to_json" || nm == "n_struct_to_json_pretty" || nm == "n_parallel_buf_get_text" || nm == "t_9JsonValue_as_text" || nm == "n_env_variable" || nm == "n_host_input" || nm == "n_text_from_bytes" || nm == "n_text_from_byte_range";
+  if named && (def.native != "" || def.source == 0) {
+    return true;
+  }
+  if def.native != "" && (def.returned[0] ?? ir::TyVoid) is TyText {
+    return true;
+  }
+  def.c_sig != "" && rt is TyText
 }
 
 // `RefDelivery::BuildIntoBuffer` (`build_into_return_buffer`): a body whose tail is a record
@@ -179,7 +423,8 @@ fn rename_var(n: ir::Node, from: integer, to: integer) -> ir::Node {
 // `Parser::finish_body`, the work texts: each `__work_N` the body minted starts empty at its
 // head, ahead of its first line marker — inserted at the front in ascending order, so the
 // highest comes first.
-fn finish_body(vars: el_vars::Vars, code: ir::Node) -> ir::Node {
+fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
+  code = if e.first_pass { body } else { text_dest(e, vars, body) };
   match code {
     NdBlock { block } => {
       bl = block[0];
@@ -532,6 +777,12 @@ fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: inte
     }
     el_vars::drop_use(vars, v);
     if el_types::base(x.tp) is TyText || el_types::is_unknown(x.tp) {
+      // `parse_assign_op_inner`'s `change_var`: the local borrows what the appended text does.
+      el_vars::change_var_type(e, vars, v, x.tp);
+      fa = format_append(e, v, x.code);
+      if fa != null {
+        return ex(fa!, ir::TyVoid);
+      }
       return ex(el_ir::cl(e, "OpAppendText", [ir::NdVar { n: v }, x.code]), ir::TyVoid);
     }
     ops: vector<ir::Node> = [];
@@ -1516,6 +1767,27 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
   def = el::def(e, d);
   n = len(def.attributes);
   retbuf = n == len(given) + 1 && (def.attributes[n - 1].hidden) && def.attributes[n - 1].name == "__retbuf";
+  // `add_defaults`' `&text` arm: each trailing hidden text buffer is a fresh `__work_cN` of
+  // the caller's, set empty and handed as a stack reference ("default ref").
+  bufs = !retbuf && n > len(given);
+  for a in def.attributes {
+    if a#index >= len(given) && !(a.hidden && (a.typedef[0] ?? ir::TyVoid) == ir::TyRefVar { inner: ir::TyText { dep: [] } }) {
+      bufs = false;
+    }
+  }
+  if bufs {
+    g2 = given;
+    t2 = types;
+    for a in def.attributes {
+      if a#index >= len(given) {
+        // Minted on both passes, as `add_defaults` mints it, so the buffers number alike.
+        wv = el_vars::caller_text_buf(vars);
+        g2 += [el_ir::v_block([el_ir::v_set(wv, ir::NdText { s: "" }), el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: wv }])], ir::TyReference { n: el::def_nr(e, "reference"), dep: [wv] }, "default ref")];
+        t2 += [a.typedef[0] ?? ir::TyVoid];
+      }
+    }
+    return call_args(e, vars, d, g2, t2);
+  }
   if n != len(given) && !retbuf {
     el::refuse(e, "a call with defaulted or hidden parameters");
     return null;
@@ -1568,8 +1840,22 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
     }
     return ex(ir::NdCall { def_nr: d, args: args }, el_types::with_deps(ret, ds));
   }
+  // `call_dependencies` for a text result: it borrows what the arguments its declared deps name
+  // borrow (`resolve_deps`); a hidden text buffer (`text_return`) is not carried yet.
+  if el_types::base(ret) is TyText {
+    ds: vector<integer> = [];
+    for i in el_types::deps(el_types::base(ret)) {
+      for x in el_types::deps(types[i] ?? ir::TyVoid) {
+        if !int_in(ds, x) {
+          ds += [x];
+        }
+      }
+    }
+    tt = ir::TyText { dep: ds };
+    return ex(ir::NdCall { def_nr: d, args: list }, if ret is TyOptional { ir::TyOptional { inner: tt } } else { tt });
+  }
   if !scalar(el_types::base(ret)) {
-    el::refuse(e, "a call returning a heap value");
+    el::refuse(e, "a call returning a heap value: {type_kind(el_types::base(ret))}");
     return null;
   }
   ex(ir::NdCall { def_nr: d, args: list }, ret)
@@ -1622,11 +1908,12 @@ fn string_expression(e: el::El, vars: el_vars::Vars, parts: vector<integer>) -> 
         if !e.first_pass && el_types::is_unknown(tp) {
           tp = ir::TyNever;
         }
-        append_data(e, list, var, x.code, tp);
+        stack = el_vars::tp(vars, var) is TyRefVar;
+        append_data_to(e, list, var, x.code, tp, stack);
         after = if h#index + 1 < len(parts) - 1 { (parts[h#index + 1] ?? 1) - 1 } else { last };
         s = text_part(e, after);
         if s != "" {
-          list += [el_ir::cl(e, "OpAppendText", [ir::NdVar { n: var }, ir::NdText { s: s }])];
+          list += [el_ir::cl(e, if stack { "OpAppendStackText" } else { "OpAppendText" }, [ir::NdVar { n: var }, ir::NdText { s: s }])];
         }
       },
       _ => {}
@@ -1648,25 +1935,32 @@ fn text_part(e: el::El, n: integer) -> text {
 // with, no `+`, no `#`, alignment unset): the format op a value of this type renders through.
 // An untyped value (a callee the first pass has not met) renders nothing.
 fn append_data(e: el::El, list: vector<ir::Node>, var: integer, val: ir::Node, tp: ir::TypeT) {
+  append_data_to(e, list, var, val, tp, false);
+}
+
+// `append_data`'s `start`: a `&text` accumulator (a promoted return buffer) takes the
+// `OpFormatStack…` ops.
+fn append_data_to(e: el::El, list: vector<ir::Node>, var: integer, val: ir::Node, tp: ir::TypeT, stack: boolean) {
+  start = if stack { "OpFormatStack" } else { "OpFormat" };
   w = ir::NdVar { n: var };
   match el_types::base(tp) {
     TyInteger { spec: _ } => {
-      list += [el_ir::cl(e, "OpFormatInt", [w, val, ir::NdInt { n: 10 }, ir::NdInt { n: 0 }, ir::NdInt { n: 32 }, ir::NdBoolean { b: false }, ir::NdBoolean { b: false }, ir::NdInt { n: 2 }])];
+      list += [el_ir::cl(e, "{start}Int", [w, val, ir::NdInt { n: 10 }, ir::NdInt { n: 0 }, ir::NdInt { n: 32 }, ir::NdBoolean { b: false }, ir::NdBoolean { b: false }, ir::NdInt { n: 2 }])];
     },
     TyText { dep: _ } => {
-      list += [format_text(e, w, val)];
+      list += [format_text_to(e, start, w, val)];
     },
     TyBoolean => {
-      list += [format_text(e, w, el_ir::cl(e, "OpCastTextFromBool", [val]))];
+      list += [format_text_to(e, start, w, el_ir::cl(e, "OpCastTextFromBool", [val]))];
     },
     TyCharacter => {
       list += [el_ir::cl(e, "OpAppendCharacter", [w, val])];
     },
     TyFloat => {
-      list += [format_fp(e, "OpFormatFloat", w, val)];
+      list += [format_fp(e, "{start}Float", w, val)];
     },
     TySingle => {
-      list += [format_fp(e, "OpFormatSingle", w, val)];
+      list += [format_fp(e, "{start}Single", w, val)];
     },
     TyUnknown { n: _ } => {},
     // A value already refused where its type was lost.
@@ -1684,7 +1978,11 @@ fn format_fp(e: el::El, op: text, w: ir::Node, val: ir::Node) -> ir::Node {
 // `Parser::append_data_text` with the default state: the value, no width, alignment unset, a
 // space to pad with.
 fn format_text(e: el::El, w: ir::Node, val: ir::Node) -> ir::Node {
-  el_ir::cl(e, "OpFormatText", [w, val, ir::NdInt { n: 0 }, ir::NdInt { n: 2 }, ir::NdInt { n: 32 }])
+  format_text_to(e, "OpFormat", w, val)
+}
+
+fn format_text_to(e: el::El, start: text, w: ir::Node, val: ir::Node) -> ir::Node {
+  el_ir::cl(e, "{start}Text", [w, val, ir::NdInt { n: 0 }, ir::NdInt { n: 2 }, ir::NdInt { n: 32 }])
 }
 
 // The binary-operator site of `Parser::parse_operators` for a builtin comparison or arithmetic:
