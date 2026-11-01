@@ -12416,7 +12416,8 @@ impl Parser {
     fn subrule_present(&mut self, fn_nr: u32, var: u16, ret_tp: &Type) -> Value {
         if fn_nr == u32::MAX {
             Value::Boolean(true)
-        } else if matches!(ret_tp, Type::Reference(..)) {
+        } else if matches!(ret_tp.base(), Type::Reference(..)) {
+            // A rule answering `S?` stores its record as `S` does (`@FR-N-Shape`).
             let sentinel = self.cl("OpNullRefSentinel", &[]);
             self.cl("OpNeRef", &[Value::Var(var), sentinel])
         } else if let Some(test) = self.null_test(Value::Var(var), ret_tp, true) {

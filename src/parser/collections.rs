@@ -3597,7 +3597,7 @@ use #count instead"
             // `text_return` converts text variables to `RefVar(Text)` work buffers for the
             // return path.  A loop variable converted this way IS the work buffer, so the
             // iterator writing into it is correct, not a shadow.
-            && !matches!(self.vars.var_type(existing_var), Type::RefVar(_))
+            && !matches!(self.vars.var_type(existing_var).base(), Type::RefVar(_))
         {
             diagnostic!(
                 self.lexer,
