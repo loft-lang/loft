@@ -362,6 +362,22 @@ pub(super) struct ViewWalk<'a> {
     maybe_own: HashSet<u16>,
 }
 
+/// Does this `if` arm end by leaving the function — its last statement a `return`?
+///
+/// Only `return`: a `break` or `continue` carries the arm's state on to the loop's exit or its
+/// back edge, where the views it disturbed are still read.
+fn arm_returns(branch: &Value) -> bool {
+    let ops = match branch {
+        Value::Block(b) => &b.operators,
+        Value::Insert(ops) => ops,
+        other => return matches!(other.unspan(), Value::Return(_)),
+    };
+    ops.iter()
+        .rev()
+        .find(|o| !matches!(o.unspan(), Value::Line(_)))
+        .is_some_and(|o| matches!(o.unspan(), Value::Return(_)))
+}
+
 impl ViewWalk<'_> {
     /// Walk `code` in source order and answer which views were used after their container was
     /// disturbed.
@@ -454,99 +470,7 @@ impl ViewWalk<'_> {
             Value::Insert(ops) => self.walk_block(ops),
             Value::Block(b) => self.scoped(&b.operators),
             Value::Loop(b) => self.walk_loop(stmt, b),
-            Value::If(cond, t, e) => {
-                // The condition is evaluated before either branch and is not part of one.
-                self.leaf(cond);
-                // The arms are ALTERNATIVES (`(B-Disturb)` holds per path), so each starts from
-                // the views open before the `if`, and a rebind in one arm does not end a view
-                // the other arm binds.  What is open or shaken afterwards is what EITHER path
-                // leaves; a literal key survives only where both paths agree, because a key may
-                // only spare a view it proves names a different record (loft#1460).
-                let open_before = self.open.clone();
-                let shaken_before = self.shaken.clone();
-                let keys_before = self.view_keys.clone();
-                let depth_before = self.view_depth.clone();
-                let index_before = self.view_index.clone();
-                let own_before = self.maybe_own.clone();
-                let mut owns: [HashSet<u16>; 2] = Default::default();
-                // Two arms, two slots: an `if` is walked in every function of every program,
-                // the standard library's included, so its bookkeeping allocates nothing.
-                let mut indices: [HashMap<u16, (u32, i32)>; 2] = Default::default();
-                let mut depths: [HashMap<u16, u8>; 2] = Default::default();
-                let mut ends = Vec::with_capacity(2);
-                for (arm, branch) in [t.unspan(), e.unspan()].into_iter().enumerate() {
-                    self.open.clone_from(&open_before);
-                    self.shaken.clone_from(&shaken_before);
-                    self.view_keys.clone_from(&keys_before);
-                    self.view_depth.clone_from(&depth_before);
-                    self.view_index.clone_from(&index_before);
-                    self.maybe_own.clone_from(&own_before);
-                    match branch {
-                        Value::Block(b) => self.scoped(&b.operators),
-                        Value::Insert(ops) => self.scoped(ops),
-                        // An `else if` chain: the else side is itself an `if`, and a `match`
-                        // lowers to one, so every arm after the first sits here.  Read whole
-                        // by `leaf`, an arm's bind, its container's reassignment and a later
-                        // use were one indivisible step, and the view was never condemned —
-                        // `match at { Leaf {…} => …, Call { args } => { at = pick(args[0]);
-                        // len(args) } }` read the released store on both backends, while
-                        // the same arm written first was materialised.
-                        Value::If(_, _, _) => self.walk_stmt(branch),
-                        other => self.leaf(other),
-                    }
-                    ends.push((
-                        std::mem::take(&mut self.open),
-                        std::mem::take(&mut self.shaken),
-                        std::mem::take(&mut self.view_keys),
-                    ));
-                    depths[arm] = std::mem::take(&mut self.view_depth);
-                    indices[arm] = std::mem::take(&mut self.view_index);
-                    owns[arm] = std::mem::take(&mut self.maybe_own);
-                }
-                let (e_open, e_shaken, e_keys) = ends.pop().expect("an else arm");
-                let (mut open, mut shaken, t_keys) = ends.pop().expect("a then arm");
-                // A view open at the end of one arm and not the other is a view on one path only.
-                let [t_own, e_own] = owns;
-                self.maybe_own = t_own;
-                self.maybe_own.extend(e_own);
-                for (view, _, _) in open.iter().flatten().chain(e_open.iter().flatten()) {
-                    let in_t = open.iter().flatten().any(|(w, _, _)| w == view);
-                    let in_e = e_open.iter().flatten().any(|(w, _, _)| w == view);
-                    if in_t != in_e {
-                        self.maybe_own.insert(*view);
-                    }
-                }
-                for (frame, extra) in open.iter_mut().zip(e_open) {
-                    for item in extra {
-                        if !frame.contains(&item) {
-                            frame.push(item);
-                        }
-                    }
-                }
-                for (v, d) in e_shaken {
-                    shaken.entry(v).or_insert(d);
-                }
-                self.open = open;
-                self.shaken = shaken;
-                // A view either arm leaves open keeps the DEEPER reading: it is the one more
-                // disturbances end, which is the safe direction for a view that may be either.
-                let [t_depth, mut depth] = depths;
-                for (v, d) in t_depth {
-                    let e = depth.entry(v).or_insert(d);
-                    *e = (*e).max(d);
-                }
-                self.view_depth = depth;
-                // An index survives only where both paths agree, as a key does.
-                let [t_index, e_index] = indices;
-                self.view_index = t_index
-                    .into_iter()
-                    .filter(|(v, i)| e_index.get(v) == Some(i))
-                    .collect();
-                self.view_keys = t_keys
-                    .into_iter()
-                    .filter(|(v, k)| e_keys.get(v) == Some(k))
-                    .collect();
-            }
+            Value::If(cond, t, e) => self.walk_if(cond, t, e),
             // A `Set` whose VALUE carries statements — a value `if` or `match`, a block —
             // runs them BEFORE the target is written, so they are walked in that order and
             // the target is recorded after.  Read whole by `leaf` instead, a view bound
@@ -575,6 +499,121 @@ impl ViewWalk<'_> {
             }
             other => self.leaf(other),
         }
+    }
+
+    /// An `if`: the condition, then each arm from the state before the `if`, then the state
+    /// either path leaves.
+    fn walk_if(&mut self, cond: &Value, t: &Value, e: &Value) {
+        // The condition is evaluated before either branch and is not part of one.
+        self.leaf(cond);
+        // The arms are ALTERNATIVES (`(B-Disturb)` holds per path), so each starts from
+        // the views open before the `if`, and a rebind in one arm does not end a view
+        // the other arm binds.  What is open or shaken afterwards is what EITHER path
+        // leaves; a literal key survives only where both paths agree, because a key may
+        // only spare a view it proves names a different record (loft#1460).
+        let open_before = self.open.clone();
+        let shaken_before = self.shaken.clone();
+        let keys_before = self.view_keys.clone();
+        let depth_before = self.view_depth.clone();
+        let index_before = self.view_index.clone();
+        let own_before = self.maybe_own.clone();
+        let mut owns: [HashSet<u16>; 2] = Default::default();
+        // Two arms, two slots: an `if` is walked in every function of every program,
+        // the standard library's included, so its bookkeeping allocates nothing.
+        let mut indices: [HashMap<u16, (u32, i32)>; 2] = Default::default();
+        let mut depths: [HashMap<u16, u8>; 2] = Default::default();
+        let mut ends = Vec::with_capacity(2);
+        let mut returns = [false; 2];
+        for (arm, branch) in [t.unspan(), e.unspan()].into_iter().enumerate() {
+            returns[arm] = arm_returns(branch);
+            self.open.clone_from(&open_before);
+            self.shaken.clone_from(&shaken_before);
+            self.view_keys.clone_from(&keys_before);
+            self.view_depth.clone_from(&depth_before);
+            self.view_index.clone_from(&index_before);
+            self.maybe_own.clone_from(&own_before);
+            match branch {
+                Value::Block(b) => self.scoped(&b.operators),
+                Value::Insert(ops) => self.scoped(ops),
+                // An `else if` chain: the else side is itself an `if`, and a `match`
+                // lowers to one, so every arm after the first sits here.  Read whole
+                // by `leaf`, an arm's bind, its container's reassignment and a later
+                // use were one indivisible step, and the view was never condemned —
+                // `match at { Leaf {…} => …, Call { args } => { at = pick(args[0]);
+                // len(args) } }` read the released store on both backends, while
+                // the same arm written first was materialised.
+                Value::If(_, _, _) => self.walk_stmt(branch),
+                other => self.leaf(other),
+            }
+            ends.push((
+                std::mem::take(&mut self.open),
+                std::mem::take(&mut self.shaken),
+                std::mem::take(&mut self.view_keys),
+            ));
+            depths[arm] = std::mem::take(&mut self.view_depth);
+            indices[arm] = std::mem::take(&mut self.view_index);
+            owns[arm] = std::mem::take(&mut self.maybe_own);
+        }
+        // An arm that ends in `return` leaves the function: nothing it disturbed or
+        // left open reaches the statements after the `if`, so the state there is the
+        // other arm's alone.  Merged in, a view the returning path disturbed read as
+        // live afterwards, and was copied though no path uses it across the event —
+        // a write through it then missed the container (`@FR-B-View`).
+        let kept = match returns {
+            [true, false] => Some(1),
+            [false, true] => Some(0),
+            _ => None,
+        };
+        if let Some(k) = kept {
+            (self.open, self.shaken, self.view_keys) = ends.swap_remove(k);
+            self.view_depth = std::mem::take(&mut depths[k]);
+            self.view_index = std::mem::take(&mut indices[k]);
+            self.maybe_own = std::mem::take(&mut owns[k]);
+            return;
+        }
+        let (e_open, e_shaken, e_keys) = ends.pop().expect("an else arm");
+        let (mut open, mut shaken, t_keys) = ends.pop().expect("a then arm");
+        // A view open at the end of one arm and not the other is a view on one path only.
+        let [t_own, e_own] = owns;
+        self.maybe_own = t_own;
+        self.maybe_own.extend(e_own);
+        for (view, _, _) in open.iter().flatten().chain(e_open.iter().flatten()) {
+            let in_t = open.iter().flatten().any(|(w, _, _)| w == view);
+            let in_e = e_open.iter().flatten().any(|(w, _, _)| w == view);
+            if in_t != in_e {
+                self.maybe_own.insert(*view);
+            }
+        }
+        for (frame, extra) in open.iter_mut().zip(e_open) {
+            for item in extra {
+                if !frame.contains(&item) {
+                    frame.push(item);
+                }
+            }
+        }
+        for (v, d) in e_shaken {
+            shaken.entry(v).or_insert(d);
+        }
+        self.open = open;
+        self.shaken = shaken;
+        // A view either arm leaves open keeps the DEEPER reading: it is the one more
+        // disturbances end, which is the safe direction for a view that may be either.
+        let [t_depth, mut depth] = depths;
+        for (v, d) in t_depth {
+            let e = depth.entry(v).or_insert(d);
+            *e = (*e).max(d);
+        }
+        self.view_depth = depth;
+        // An index survives only where both paths agree, as a key does.
+        let [t_index, e_index] = indices;
+        self.view_index = t_index
+            .into_iter()
+            .filter(|(v, i)| e_index.get(v) == Some(i))
+            .collect();
+        self.view_keys = t_keys
+            .into_iter()
+            .filter(|(v, k)| e_keys.get(v) == Some(k))
+            .collect();
     }
 
     /// Walk a nested block in its own frame: a view bound inside one dies with it.
