@@ -974,6 +974,17 @@ struct never earns a header) beside `o.vals[i % 4]?` answered `null` on --native
 `LOFT_NO_RECORD_PUSH=1` a plain struct element answered 3 200 425 for it.  Every mint counts
 now.  Cell r1, pin `a_mint_left_on_its_templates_is_still_a_growth`.
 
+**The counter clause.**  In `for i in 0..len(v)` — the range's end read from `v`'s length in
+the statement before the loop, its counter seeded at the start, the body assigning no counter —
+with `v` held for the loop, so its length is fixed there, every counter value lies in
+`[0, len(v))`, and an element read or field read of `v` at a counter takes no index test:
+`loft_vh_at_ref`, `loft_vh_at_int`, `loft_vh_at_float`, `loft_vh_at_addr`, each proving the
+index under `LOFT_VERIFY`.  A read of ANOTHER held vector at the same counter keeps its test,
+since nothing ties the counter to that vector's length.  zttext `locate` with the field clause
+of `(R-InRange)` and the held-element clause of `(R-RecPtr)`: 3.61× → 1.15× (clang), 1.26×
+(gcc).  Switch `LOFT_NO_COUNTER_IN_RANGE`.  Site: `FnWriter::counters_in_range`.  Guard
+`tests/scripts/an-element-at-a-range-counter-is-read-in-range.loft` (r9, falsified on the verify build's proof).
+
 ### A record local declared in a loop keeps its store
 
 ```
@@ -1767,6 +1778,14 @@ Cells `tests/scripts/158-enum-record.loft`, pins `tests/enum_record.rs`.  Sites:
 `Stores::is_struct_enum`, `hoist::mint_push_qualifies`, `hoist::struct_enum_view`,
 `hoist::TAG_GETTER`, `hoist::iteration_head` (the wrapper), `hoist::mint_window`, the
 registry's `NewRecordEmitter`, `Output::write_elem_first_mint`.
+
+**The held-element clause (C).**  A record bound from an element of a vector held for the loop
+— `p = v[i]`, or its `?` discharge — takes its address from the held base on a hit
+(`loft_vh_addr`, or `loft_vh_at_addr` under `(R-Base)`'s counter clause), and the store lookup
+only on a miss, where the discharge minted a default record; the two are the same address, which
+`LOFT_VERIFY` checks.  Without it clang reloaded the store table on every round after the miss
+branch could have grown it.  Switch `LOFT_NO_RECPTR_HELD`.  Site: `FnWriter::held_element_bind`.
+Guard `tests/scripts/an-element-at-a-range-counter-is-read-in-range.loft` (r7, r8).
 
 ### A stdlib one-op wrapper is its op
 
@@ -6635,6 +6654,14 @@ conversion test — the second is defensive, its plant passes.  Measured on `rec
 the hand-written form: −20 % cycles.  `LOFT_NO_IN_RANGE=1`, `LOFT_TRACE_IN_RANGE=1`.  Guards
 `tests/scripts/a-record-element-its-loop-proves-in-range-reads-plainly.loft` and
 `tests/in_range.rs`.
+
+**The field clause.**  The walked vector may be a FIELD of a variable, `for i in 0..len(d.f)`
+reading `d.f[i]?`, when the body neither reassigns `d`, hands `d` whole to a call (which could
+change `d.f`), names `d.f` other than as the vector a read operator reads, nor uses a vector
+local that is a view into `d` (a write through it would name no `d` at all); a `&` parameter
+that could be `d` declines, one holding a text or a scalar (a result buffer) does not.  It
+dropped the `?` in ten of zttext's walks over `d.pieces`.  Guard
+`tests/scripts/an-element-at-a-range-counter-is-read-in-range.loft` (r1, r2, r4, r5).
 
 ### A computed range start is one counter, stepped at the test
 

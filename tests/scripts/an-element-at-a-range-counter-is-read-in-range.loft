@@ -14,7 +14,14 @@
 // The interpreter applies the first rule too (it is IR); the C writer applies the other two.
 // Hand-computed in each cell's comment.
 //
-// @falsified-at: PENDING
+// @falsified-at: 312286c41 — by hand, each plant alone failing a cell: the field clause's body
+//   check struck (r4: the `?` dropped while the body empties the vector — the interpreter's read
+//   of a missing element answers no zero record, and the cell fails); the counter clause taking
+//   a counter of one vector as inside another (r9: d.other read at counters past its one element
+//   — the read lands on store memory that happens to hold 0, so the value holds, and the
+//   LOFT_VERIFY build stops on the clause's own proof "R-Base counter: element"); the
+//   held-element clause using the held address on a miss too (r8: the minted default's fields
+//   read through the null address, 109 → not 109).
 struct Pc { start: integer, count: integer }
 struct Dc { pieces: vector<Pc>, other: vector<Pc> }
 
@@ -97,6 +104,14 @@ fn r8(d: Dc) -> integer {
   b
 }
 
+// r9: both vectors read in the loop, so both are held: the counter is inside d.pieces (3 + 5 + 2)
+// but not inside d.other past its one element (9, then two misses): 10 + 9 = 19.
+fn r9(d: Dc) -> integer {
+  n = 0;
+  for j in 0..len(d.pieces) { n += (d.pieces[j]?).count + (d.other[j]?).count; }
+  n
+}
+
 fn main() {
   assert(r1(dc()) == 10, "r1 {r1(dc())}");
   assert(r2(dc(), 9) == 21, "r2 {r2(dc(), 9)}");
@@ -107,5 +122,6 @@ fn main() {
   assert(r6(dc()) == 7, "r6 {r6(dc())}");
   assert(r7(dc().pieces) == 38, "r7 {r7(dc().pieces)}");
   assert(r8(dc()) == 109, "r8 {r8(dc())}");
+  assert(r9(dc()) == 19, "r9 {r9(dc())}");
   println("ok");
 }
