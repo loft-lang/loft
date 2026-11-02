@@ -857,7 +857,7 @@ impl State {
             );
         }
         let mut s = String::new();
-        ShowDb {
+        let top = ShowDb {
             stores: &self.database,
             store: val.store_nr,
             rec: val.rec,
@@ -870,8 +870,9 @@ impl State {
             compact: false,
             max_depth: u16::MAX,
             max_elements: u16::MAX,
-        }
-        .write(&mut s, 0);
+        };
+        // `@FR-F-Render-Ref` — references render as pointers, `$refs` beside them.
+        self.database.render_top(&mut s, &top);
         s
     }
 

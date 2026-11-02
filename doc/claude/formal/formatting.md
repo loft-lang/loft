@@ -164,6 +164,40 @@ reads back to the same value.  Inside a record or a vector a null of every type 
               as a loop, so a list of any length takes no stack per link.
 ```
 
+### A reference renders as a pointer to its target
+
+```
+  (F-Render-Ref)  a stored `reference<T>` (non-null) renders as a POINTER to the record it names,
+              never as the store's own numbers: `{"$ref":"#/leaves/1"}` in every form — the reserved
+              keys `$ref`, `$refs` and `$value` are quoted, being no loft names.  The pointer is an RFC 6901 JSON Pointer from the top of the
+              document: a field contributes its name, an element of a vector, a hash, a sorted, an
+              index, a spatial or a trie its POSITION in the list the collection renders as.
+  (F-Render-Refs) a reference whose target the written value does not reach brings the target
+              along: the document gains ONE reserved member, `$refs`, a list of those targets in the
+              order a reference first meets them, each rendered as its own record (and by this rule,
+              so a target's references are resolved the same way), and the reference points into
+              it (`#/$refs/0`).  Without such a reference the document has no `$refs` and is what
+              (F-Render) writes.  A value that renders as an object gains `$refs` as its last
+              member; any other value is wrapped as `{"$value": …, "$refs": […]}`.  Nothing here
+              is an error, at compile time or at run time: every reference names a record that
+              can be written.
+  (F-Read-Ref)    the text parse reads both forms back: `$refs` targets are built inside the
+              result's own store, and every pointer resolves to the record it names, so two
+              references to one target name one record again.
+```
+
+**In words.** A reference is a link, so its text form is a link: the place of the target in the
+same document, written as a standard JSON Pointer.  A reference into another value's store (the
+common case — every heap value owns its own store) has no place in the document until the writer
+adds one: the target is written once more under `$refs`, at the end, and the reference points
+there.  Only what the written value can reach is added, which is the target itself and what it in
+turn refers to; the rest of the other value is not part of this document.  What a document cannot
+carry is the identity of the original variable: read back, a `$refs` target is a record of the
+result, shared by every reference to it, not the record in `other` it was written from.
+Two consequences of writing the collection's list form: a pointer into a keyed collection is the
+element's position in key order, and a group of collections over one element type
+(collections.md `Col-Group`) is written, and pointed into, through its first member.
+
 ### A float as text, and text as a float
 
 ```
