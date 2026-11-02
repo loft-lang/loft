@@ -1702,7 +1702,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SJump { kind, e: je } => jump(e, vars, kind, je),
     SIndex { at, e: ie, keys, range, inclusive, hi, limit, spatial } => {
       if range && limit == null && !spatial && len(keys) <= 1 && len(hi) <= 1 {
-        slice(e, vars, at, ie, keys, hi, inclusive, n == vars.slice_node)
+        slice(e, vars, n)
       } else {
         index(e, vars, at, ie, keys, range || len(hi) > 0 || limit != null || spatial)
       }
@@ -6740,7 +6740,18 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
 // `Parser::parse_text_index`'s range: `s[lo..hi]` is `OpGetTextSub(s, lo, hi)` — an open start
 // `0`, an open end `i32::MAX`, `..=` one past its bound.  A range over anything but a text (a
 // vector slice: `Slice-Value`'s iterator lowering) is refused by name.
-fn slice(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, lo: vector<integer>, hi: vector<integer>, inclusive: boolean, bound: boolean) -> Ex {
+fn slice(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
+  at = 0;
+  c: integer? = null;
+  lo: vector<integer> = [];
+  hi: vector<integer> = [];
+  inclusive = false;
+  match e.p.nodes[n] {
+    SIndex { at: a, e: ie, keys, hi: h, inclusive: inc } => { at = a; c = ie; lo = keys; hi = h; inclusive = inc; },
+    _ => {}
+  }
+  // The bind or the `for` about to lower this node asked for its vector slice (`slice_node`).
+  bound = n == vars.slice_node;
   if c == null {
     el::refuse(e, "an index that is a range, a key list or a limit");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
