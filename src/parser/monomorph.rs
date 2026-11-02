@@ -1720,7 +1720,7 @@ impl Parser {
                     .collect();
                 let mut out = Value::Null;
                 if bl.name == Self::TV_INSERT {
-                    self.parse_insert(&mut out, &list, std::slice::from_ref(&bl.result));
+                    self.parse_insert(&mut out, &list, std::slice::from_ref(&bl.result), &[]);
                 } else if bl.name == Self::TV_REVERSE {
                     self.parse_reverse(&mut out, &list, std::slice::from_ref(&bl.result));
                 } else {
@@ -1964,7 +1964,7 @@ impl Parser {
                 continue;
             }
             if let Some(bulk) =
-                self.handle_field(d, &mut code, &mut list, &name, &mut value, &value_tp)
+                self.handle_field(d, &mut code, &mut list, &name, &mut value, &value_tp, None)
             {
                 fills.push(bulk);
             }

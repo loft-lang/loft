@@ -3,7 +3,8 @@
 // @I58 — Parser (two-pass recursive descent)
 
 use super::{
-    DefType, I32, Level, Parser, Parts, Type, Value, diagnostic_format, v_block, v_if, v_set,
+    DefType, I32, Level, Parser, Parts, Position, Type, Value, diagnostic_format, v_block, v_if,
+    v_set,
 };
 
 // Field access, indexing, and iterator operations.
@@ -1673,13 +1674,14 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 elm_type = Type::optional(elm_type);
             }
         } else if matches!(t, Type::Text(_)) {
+            let index_start = *self.lexer.peek_pos();
             let index_t = if self.lexer.peek_token("..") {
                 p = Value::Int(0);
                 I32.clone()
             } else {
                 self.expression(&mut p)
             };
-            if self.parse_text_index(code, &mut p, &index_t) == Type::Character {
+            if self.parse_text_index(code, &mut p, &index_t, &index_start) == Type::Character {
                 elm_type = Type::Character;
             }
         } else if let Some((el_nr, keys)) = match &t {
@@ -2214,6 +2216,8 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         // is the vector arm, so `etp` IS the element and the dep list belongs to the name's
         // SOURCE, which borrows (`skip_free`) and frees nothing.
         let subject_tp = Type::Vector(Box::new(etp.clone()), crate::data::Deps::none());
+        // The index's first token, for a diagnostic about a value with no span of its own.
+        let index_start = *self.lexer.peek_pos();
         let index_t = self.parse_in_range(&mut p, code, &subject_tp, "$");
         // @PLN25 — a nullable `τ?` INDEX is ACCEPTED (not an (N-Store) violation): `v[i]`
         // is already `τ?` (out-of-bounds → null), so the caller must null-check the result
@@ -2375,7 +2379,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         // @FR-N-Store — an index is a slot: `v[i]` with `i: integer?` reads null on a null
         // index, and nothing said so (the eighth hole of @PLN153 phase 3's census).
         if !self.first_pass
-            && !self.convert_store_lenient(&mut p, &index_t, &I32, "the index", None)
+            && !self.convert_store_lenient(&mut p, &index_t, &I32, "the index", Some(&index_start))
         {
             diagnostic!(
                 self.lexer,
@@ -3080,6 +3084,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         code: &mut Value,
         p: &mut Value,
         index_t: &Type,
+        index_start: &Position,
     ) -> Type {
         // @PLN110 3a — snapshot the raw index BEFORE `convert` may wrap it, so the
         // strict-index lint below can still recognise a bare loop variable.
@@ -3094,7 +3099,9 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         // non-integer index, which is the case this message is for.
         let deferred = self.first_pass && index_t.is_unknown();
         // @FR-N-Store — the index is a slot (see the vector index above).
-        if !self.convert_store_lenient(p, index_t, &I32, "the index", None) && !deferred {
+        if !self.convert_store_lenient(p, index_t, &I32, "the index", Some(index_start))
+            && !deferred
+        {
             // Name the offending type: the bare "invalid index" this used to
             // print reads as "indexing text is unsupported" and sent a consumer
             // hunting for a missing feature instead of at their index expression.
@@ -3140,8 +3147,13 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 // unresolved, which is why guarding only the start left the shape still
                 // refused — with a different message, from four lines down.
                 let end_deferred = self.first_pass && ot_type.is_unknown();
-                if !self.convert_store_lenient(&mut other, &ot_type, &I32, "the index", None)
-                    && !end_deferred
+                if !self.convert_store_lenient(
+                    &mut other,
+                    &ot_type,
+                    &I32,
+                    "the index",
+                    Some(&bound_start),
+                ) && !end_deferred
                 {
                     diagnostic!(
                         self.lexer,
@@ -3599,12 +3611,15 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // is pushed on the one `⇐` channel, so a bare variant (`h[Green]`) resolves
             // against the key's enum exactly as `f(Green)` does against a parameter's.
             let saved_expected = std::mem::replace(&mut self.expected, key_0.clone());
+            let key_at = *self.lexer.peek_pos();
             let t = self.expression(&mut p);
             let first_fact = std::mem::take(&mut self.operand_fact);
             self.check_key_fact(0, &first_fact); // @PLN187
             self.expected = saved_expected;
             // @FR-N-Store — a lookup KEY is a slot like an index: a null key reads null.
-            if !self.convert_store_lenient(&mut p, &t, key_0, "the key", None) && !self.first_pass {
+            if !self.convert_store_lenient(&mut p, &t, key_0, "the key", Some(&key_at))
+                && !self.first_pass
+            {
                 // A tuple key is the one place the arity is worth naming: `h[(1, 2, 3)]` on
                 // a `(integer, integer)` key is a plain miscount, and "Invalid index key"
                 // leaves the reader comparing the two spellings by eye.
@@ -3644,12 +3659,18 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 }
                 let mut ex = Value::Null;
                 let saved_expected = std::mem::replace(&mut self.expected, key_types[nr].clone());
+                let key_at = *self.lexer.peek_pos();
                 let ex_t = self.expression(&mut ex);
                 let ex_fact = std::mem::take(&mut self.operand_fact);
                 self.check_key_fact(nr, &ex_fact); // @PLN187
                 self.expected = saved_expected;
-                if !self.convert_store_lenient(&mut ex, &ex_t, &key_types[nr], "the key", None)
-                    && !self.first_pass
+                if !self.convert_store_lenient(
+                    &mut ex,
+                    &ex_t,
+                    &key_types[nr],
+                    "the key",
+                    Some(&key_at),
+                ) && !self.first_pass
                 {
                     diagnostic!(self.lexer, Level::Error, "Invalid index key");
                 }
@@ -3724,9 +3745,15 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             let mut nr = 0;
             if !open_end {
                 let mut n = Value::Null;
+                let key_at = *self.lexer.peek_pos();
                 let n_t = self.expression(&mut n);
-                if !self.convert_store_lenient(&mut n, &n_t, &key_types[0], "the key", None)
-                    && !self.first_pass
+                if !self.convert_store_lenient(
+                    &mut n,
+                    &n_t,
+                    &key_types[0],
+                    "the key",
+                    Some(&key_at),
+                ) && !self.first_pass
                 {
                     diagnostic!(self.lexer, Level::Error, "Invalid index key");
                 }
@@ -3740,9 +3767,15 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                         break;
                     }
                     let mut ex = Value::Null;
+                    let key_at = *self.lexer.peek_pos();
                     let ex_t = self.expression(&mut ex);
-                    if !self.convert_store_lenient(&mut ex, &ex_t, &key_types[nr], "the key", None)
-                        && !self.first_pass
+                    if !self.convert_store_lenient(
+                        &mut ex,
+                        &ex_t,
+                        &key_types[nr],
+                        "the key",
+                        Some(&key_at),
+                    ) && !self.first_pass
                     {
                         diagnostic!(self.lexer, Level::Error, "Invalid index key");
                     }

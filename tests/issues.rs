@@ -13585,7 +13585,7 @@ fn run() -> integer {
     .warning(concat!(
         "`null` is stored into element 0 of this vector literal of the non-null scalar type ",
         "`text` — the slot holds null; declare it `text?` to make that explicit at ",
-        "p220_null_text_preserved_through_struct_field:4:17"
+        "p220_null_text_preserved_through_struct_field:4:12"
     ))
     .expr("run()")
     .result(Value::Int(1));
@@ -16662,7 +16662,7 @@ fn run() -> integer {
     .warning(
         "`null` is stored into the field of the non-null type `reference<Leaf>` — the slot \
          holds null; declare it `reference<Leaf>?` to make that explicit at \
-         issue_328_reference_field_pointer_semantics:14:38",
+         issue_328_reference_field_pointer_semantics:14:32",
     )
     .result(Value::Int(4_102_413));
 }
@@ -19133,7 +19133,7 @@ fn test() {
     .warning(
         "`null` is stored into the field of the non-null type `reference<RefNode>` — the slot \
          holds null; declare it `reference<RefNode>?` to make that explicit at \
-         a_reference_self_field_is_not_a_cycle:3:39",
+         a_reference_self_field_is_not_a_cycle:3:33",
     )
     .result(Value::Null);
 }

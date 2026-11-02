@@ -323,7 +323,12 @@ impl Parser {
             // @PLN204 — a 64-bit caller's argument for a 32-bit library's parameter.
             let narrowed = self.width32_call_argument(&mut actual_code, actual_type, &tp, d_nr);
             let actual_type = narrowed.as_ref().unwrap_or(actual_type);
-            let arg_at = actual_code.span_pos().copied();
+            // The argument's own span, else its first token (`arg_pos`, captured in
+            // `parse_call`): a local read carries no span, and the cursor has moved to `)`.
+            let arg_at = actual_code
+                .span_pos()
+                .copied()
+                .or_else(|| arg_pos.get(nr).copied());
             // A scalar PLACE is linked, not stored, so @FR-N-Store's "a nullable value becomes
             // null there" does not describe it, and its cure (`?`) would turn the place into a
             // value.  What can go wrong is that the element is absent: a link to an absent place

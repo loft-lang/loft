@@ -1585,10 +1585,17 @@ impl Parser {
                 let mut v_tp = v_tp;
                 if let Type::Iterator(elem_tp, _) = r_type.base() {
                     let elem = (**elem_tp).clone();
+                    let value_at = Some(&expr_start.position);
                     if v_tp == Type::Null {
-                        self.n_store_violation(&v_tp, &elem, "the yielded value", None);
+                        self.n_store_violation(&v_tp, &elem, "the yielded value", value_at);
                         v = self.null_value(&elem);
-                    } else if !self.convert_store_dense(&mut v, &v_tp, &elem, "the yielded value") {
+                    } else if !self.convert_store_dense(
+                        &mut v,
+                        &v_tp,
+                        &elem,
+                        "the yielded value",
+                        value_at,
+                    ) {
                         self.validate_convert("yield", &v_tp, &elem, &expr_start.position);
                     } else if matches!(elem.base(), Type::Tuple(_)) {
                         v_tp = elem;
@@ -4747,10 +4754,15 @@ use a separate collection or add after the loop"
         let expect = link_tuple.as_ref().unwrap_or(f_type);
         let prev_bind_rhs =
             std::mem::replace(&mut self.in_bind_rhs, op == "=" && var_nr != u16::MAX);
+        // The right-hand side's first token: where a diagnostic about the stored value goes
+        // when the value carries no span of its own (a local read).  A preset value was parsed
+        // elsewhere and has none here.
+        let mut rhs_at: Option<crate::lexer::Position> = None;
         let mut s_type = if let Some((value, tp)) = self.preset_rhs.take() {
             *code = value;
             tp
         } else {
+            rhs_at = Some(*self.lexer.peek_pos());
             self.parse_operators(expect, code, &mut parent_tp, 0)
         };
         self.in_bind_rhs = prev_bind_rhs;
@@ -5628,7 +5640,7 @@ use a separate collection or add after the loop"
                     },
                     self.vars.name(var_nr)
                 );
-                self.convert_store(code, &Type::Null, f_type, &what, None);
+                self.convert_store(code, &Type::Null, f_type, &what, rhs_at.as_ref());
                 s_type = f_type.clone();
             } else if !Self::nstore_narrow(f_type, false) {
                 // The join is the local's OWN type made nullable.  `f_type` is the type of a
@@ -5636,7 +5648,13 @@ use a separate collection or add after the loop"
                 // the local's type that dep makes it a borrower of itself, and nothing
                 // releases what such a local holds.
                 let joined = Type::optional(self.vars.tp(var_nr).clone());
-                self.convert_store(code, &Type::Null, &joined, "the assignment target", None);
+                self.convert_store(
+                    code,
+                    &Type::Null,
+                    &joined,
+                    "the assignment target",
+                    rhs_at.as_ref(),
+                );
                 s_type = joined;
             }
         }
@@ -5660,7 +5678,13 @@ use a separate collection or add after the loop"
             } else {
                 f_type.clone()
             };
-            self.convert_store(code, &Type::Null, &slot, "the assignment target", None);
+            self.convert_store(
+                code,
+                &Type::Null,
+                &slot,
+                "the assignment target",
+                rhs_at.as_ref(),
+            );
         }
         if var_nr == u16::MAX && !skip_validate {
             // Use the LHS target's parent type saved BEFORE the RHS parse — the RHS
@@ -6637,7 +6661,7 @@ use a separate collection or add after the loop"
                 },
                 self.vars.name(var_nr)
             );
-            if self.convert_store(code, &s_type, slot_tp, &what, None) {
+            if self.convert_store(code, &s_type, slot_tp, &what, rhs_at.as_ref()) {
                 slot_tp.clone()
             } else {
                 s_type
@@ -8104,7 +8128,7 @@ use a separate collection or add after the loop"
         if typed_scalar_store
             && !matches!(s_type, Type::Null)
             && !f_type.is_equal(&s_type)
-            && !self.convert_store(code, &s_type, f_type, "the assignment target", None)
+            && !self.convert_store(code, &s_type, f_type, "the assignment target", rhs_at.as_ref())
             // A FIELD target was already refused at loft#893's chokepoint above, in these
             // words; reporting it here too printed the same error twice at one position.
             && !self.field_store_mismatch(op, var_nr, f_type, &s_type)
@@ -9642,6 +9666,7 @@ use a separate collection or add after the loop"
             } else {
                 None
             };
+            let rhs_at = *self.lexer.peek_pos();
             let rhs_tp = self.expression(&mut rhs);
             if let Some(prev) = saved_expected {
                 self.expected = prev;
@@ -9664,7 +9689,7 @@ use a separate collection or add after the loop"
                 // them: this branch returns before the general assign path that asks.  So
                 // `s.i = null` on a non-null field warned while `c.1 = null` on a non-null
                 // element said nothing, for the same store into the same kind of slot.
-                self.n_store_violation(&rhs_tp, member, "the tuple element", None);
+                self.n_store_violation(&rhs_tp, member, "the tuple element", Some(&rhs_at));
                 // loft#1282 — and the null itself becomes the ELEMENT TYPE's sentinel.  The
                 // warning above is about whether the slot SHOULD hold null; this is what
                 // makes it hold null rather than whatever the eval stack had.

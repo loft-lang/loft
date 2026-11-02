@@ -85,7 +85,9 @@ one of the index constructions above, or `v[nr]!.name`.
 | `shadowed-by-method` | If the method does the same work, delete your function and call the method; otherwise rename it, or call it qualified as `lib::f(…)`. |
 | `avoidable-copy` (advice) | Move the line that reads the source again above the copy, or drop that line when its value is never read.  When neither holds the copy is necessary and nothing is reported. |
 
-## Open
+## Where the caret stands
 
-- A value with no position of its own (a local read, an `if` built by the parser) still puts
-  the caret on the slot — the `{` after a return type, the `)` of a call.
+A warning about a stored value stands on the VALUE — the code the cure rewrites — never on the
+slot it lands in.  A value with no position of its own (a local read, an `if` the parser built)
+is anchored on its first token, or on the `if` arm the cure describes; each store site hands
+that position to the store check.  `tests/nstore_caret.rs` holds every store site to it.

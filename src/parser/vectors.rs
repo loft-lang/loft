@@ -6291,6 +6291,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // a Block, not a bare FnRef); a non-capturing lambda / non-lambda leaves
         // it MAX.  Reset first so a prior element's value can't leak in.
         self.last_closure_work_var = u16::MAX;
+        // The element's first token: where a diagnostic about the element goes when it carries
+        // no span of its own (a local read).
+        let item_at = *self.lexer.peek_pos();
         let mut t = if self.lexer.peek_token("for") {
             // The early return ends the whole literal, so its `]` is consumed here.
             self.refuse_mixed_comprehension();
@@ -6487,7 +6490,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // two spellings of the SAME type — an error that aborted the run before pass 2
             // could re-check against the resolved element.  Say nothing; pass 2 decides.
             // The struct-field store guard (`objects.rs`) already works this way.
-        } else if !self.convert_store_lenient(&mut p, &t, in_t, &elem_slot, None) {
+        } else if !self.convert_store_lenient(&mut p, &t, in_t, &elem_slot, Some(&item_at)) {
             if declared {
                 // @P315 — the element type is DECLARED (typed local / struct
                 // field).  A value that does not convert TO it must be cast

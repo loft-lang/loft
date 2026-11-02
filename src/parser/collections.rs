@@ -7633,7 +7633,13 @@ use #count instead"
 
     /// Compiler special-case for `insert(v: vector<T>, idx: integer, elem: T)`.
     /// Emits `OpInsertVector` to create space, then the appropriate `OpSet*` to write the value.
-    pub(crate) fn parse_insert(&mut self, val: &mut Value, list: &[Value], types: &[Type]) -> Type {
+    pub(crate) fn parse_insert(
+        &mut self,
+        val: &mut Value,
+        list: &[Value],
+        types: &[Type],
+        arg_pos: &[crate::lexer::Position],
+    ) -> Type {
         if self.first_pass {
             return Type::Void;
         }
@@ -7678,7 +7684,7 @@ use #count instead"
             &elem_given,
             &elm_tp,
             "the element `insert` stores",
-            None,
+            arg_pos.get(2),
         ) {
             diagnostic!(
                 self.lexer,

@@ -1933,11 +1933,13 @@ impl Parser {
             // program; which lowering the compiler picks for it cannot decide whether the
             // program is diagnosed.
             if nullable_into_nonnull {
+                // The tail's own span, else its first token: a tail with no span (a local
+                // read, an `if` the parser built) is the value, where the slot is the signature.
                 let at = l
                     .last()
                     .and_then(Value::span_pos)
                     .copied()
-                    .or_else(|| Some(*self.data.def(self.context).position()));
+                    .or(Some(last_expr_peek.position));
                 self.n_store_violation(&t, result, "the return value", at.as_ref());
             }
             // The accumulator IS the return value, so it carries the declared
@@ -2748,13 +2750,11 @@ impl Parser {
             // unified `if`, a vector match, a sibling variant) is asked here.  Anchored to
             // the tail's OWN span, because this runs at block FINALIZATION with `self.lexer`
             // on the `}` — reporting the NEXT function otherwise (nstore-position-fix.md);
-            // a bare-var tail has no span and falls back to the enclosing function's.
+            // a tail with no span of its own (a local read, an `if` the parser built) is
+            // anchored on its first token, which is the value the cure rewrites.
             let is_return = context == "return from block";
             let ret_at = if is_return {
-                l[last]
-                    .span_pos()
-                    .copied()
-                    .or_else(|| Some(*self.data.def(self.context).position()))
+                l[last].span_pos().copied().or(Some(*tail_pos))
             } else {
                 None
             };
@@ -21666,13 +21666,14 @@ impl Parser {
             // slot.  The store face asks where the value converts; the two lowerings that do
             // not convert — a bare `null` (the sentinel) and a tuple rewritten into its
             // synthetic struct — are asked at the site.
+            let value_at = Some(&expr_start.position);
             if t == Type::Null || tuple_rewritten {
-                self.n_store_violation(&t, &r_type, "the return value", None);
+                self.n_store_violation(&t, &r_type, "the return value", value_at);
             }
             if t == Type::Null {
                 v = self.null_value(&r_type);
             } else if !tuple_rewritten
-                && !self.convert_store(&mut v, &t, &r_type, "the return value", None)
+                && !self.convert_store(&mut v, &t, &r_type, "the return value", value_at)
             {
                 self.validate_convert("return", &t, &r_type, &expr_start.position);
             }
@@ -22920,7 +22921,7 @@ impl Parser {
                 *val = Value::Insert(ops);
                 return Type::Void;
             }
-            "insert" => return self.parse_insert(val, list, types),
+            "insert" => return self.parse_insert(val, list, types, arg_pos),
             "reverse" => return self.parse_reverse(val, list, types),
             "reserve" => return self.parse_reserve(val, list, types),
             "any" => return self.parse_any(val, list, types),

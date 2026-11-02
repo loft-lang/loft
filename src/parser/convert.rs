@@ -141,10 +141,11 @@ impl Parser {
         is_type: &Type,
         should: &Type,
         what: &str,
+        at: Option<&Position>,
     ) -> bool {
         let ctx = StoreCtx {
             what: what.to_string(),
-            at: None,
+            at: at.copied(),
             never_error: false,
             dense: true,
         };
@@ -623,10 +624,15 @@ impl Parser {
                     });
                 if self.admit_unwrap == 0 && !self.in_explicit_cast && !sanctioned_tuple {
                     let (what, at, lenient) = self.store_slot();
-                    // The caret goes on the value when it carries its own position: that is
-                    // the code the cure rewrites, where the slot is only where it lands.
-                    let at = code.span_pos().copied().or(at);
+                    // The caret goes on the value when it carries its own position — the arm
+                    // the cure describes first, then the value itself: that is the code the
+                    // cure rewrites, where the slot is only where it lands.
                     let cure = self.null_cure(code, &what, &inner.source_name(&self.data));
+                    let at = cure
+                        .as_ref()
+                        .and_then(|(_, at)| *at)
+                        .or_else(|| code.span_pos().copied())
+                        .or(at);
                     if self.nstore_unwrap_report_as(
                         inner,
                         should,
@@ -634,7 +640,7 @@ impl Parser {
                         at.as_ref(),
                         lenient,
                         None,
-                        cure.as_deref(),
+                        cure.as_ref().map(|(text, _)| text.as_str()),
                     ) {
                         return true;
                     }

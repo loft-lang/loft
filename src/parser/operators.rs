@@ -3955,10 +3955,16 @@ impl Parser {
             // slot — the store face asks; a bare `null` return takes the sentinel path below
             // and is asked at the site.
             if t == Type::Null {
-                self.n_store_violation(&t, &r_type, "the return value", None);
+                self.n_store_violation(&t, &r_type, "the return value", Some(&ret_pos));
             }
             if t != Type::Null
-                && !self.convert_store(&mut ret_val, &t, &r_type, "the return value", None)
+                && !self.convert_store(
+                    &mut ret_val,
+                    &t,
+                    &r_type,
+                    "the return value",
+                    Some(&ret_pos),
+                )
                 && !self.first_pass
             {
                 self.validate_convert("return", &t, &r_type, &ret_pos);

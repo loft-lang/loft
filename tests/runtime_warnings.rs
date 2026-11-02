@@ -1166,8 +1166,8 @@ fn main() {
 /// doc/claude/plans/102-stability-contract/nstore-position-fix.md: `n_store_violation`
 /// used the lexer cursor, which at BLOCK FINALIZATION sits on the next `fn` (the implicit
 /// tail is checked after the block is fully parsed).  The nullable tail (`self.w[i]`, a
-/// guard on a DIFFERENT field) lives in `read_off` at line 2; the warning must point at
-/// line 2, never line 5 (`other_fn`).
+/// guard on a DIFFERENT field) lives in `read_off`; the warning points at its tail on line 3,
+/// never at line 5 (`other_fn`).
 #[test]
 fn nstore_return_position_names_offending_fn() {
     let source = "\
@@ -1188,9 +1188,10 @@ fn main() {
         diag.contains("stored into the return value"),
         "the nullable tail produces a return-value N-Store; got stderr={diag:?}"
     );
+    // On the tail itself (line 3): the value the cure rewrites, inside `read_off`.
     assert!(
-        diag.contains(".loft:2:") && !diag.contains(".loft:5:"),
-        "the diagnostic must anchor to the OFFENDING fn `read_off` (line 2), not the \
+        diag.contains(".loft:3:3") && !diag.contains(".loft:5:"),
+        "the diagnostic must anchor to the OFFENDING fn's tail `if` (line 3), not the \
          FOLLOWING `other_fn` (line 5); got stderr={diag:?}"
     );
 }

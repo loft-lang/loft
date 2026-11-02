@@ -736,7 +736,15 @@ impl Parser {
     /// where its null comes from, so the warning names the construction that says more, and
     /// never leads with `?`, which only hides a null that should not be there
     /// (WARNING_FIXES.md).  `None` for a value whose source this cannot tell.
-    pub(super) fn null_cure(&self, code: &Value, what: &str, nm: &str) -> Option<String> {
+    /// The cure for a nullable `code` stored into `what`, and where the caret belongs: the value
+    /// position the cure describes (an `if`'s arm, a block's tail) when that has a position of
+    /// its own, so the caret and the sentence name the same code.
+    pub(super) fn null_cure(
+        &self,
+        code: &Value,
+        what: &str,
+        nm: &str,
+    ) -> Option<(String, Option<Position>)> {
         // Declaring the slot nullable is a cure only where the slot is the author's to declare:
         // not a parameter, which belongs to the function called — its caller decides.
         let declare = if what.starts_with("parameter") {
@@ -745,7 +753,7 @@ impl Parser {
             format!(", or declare {what} `{nm}?`")
         };
         if self.has_null_arm(code) {
-            return Some(format!(
+            let text = format!(
                 "a branch here answers `null`: if that is a real answer{}; if it cannot happen, \
                  make that branch halt (`panic(…)`)",
                 if declare.is_empty() {
@@ -753,24 +761,29 @@ impl Parser {
                 } else {
                     format!(", declare {what} `{nm}?`")
                 }
-            ));
+            );
+            return Some((text, code.span_pos().copied()));
         }
         self.leaf_cure(code, &declare)
     }
 
     /// [`Self::null_cure`] for the value positions of `code` — an `if`'s arms, a block's tail
-    /// — the first whose source it can tell.
-    fn leaf_cure(&self, code: &Value, declare: &str) -> Option<String> {
-        let leaf = code.unspan();
-        match leaf {
-            Value::Block(bl) => return self.leaf_cure(bl.operators.last()?, declare),
-            Value::If(_, a, b) => {
-                return self
-                    .leaf_cure(a, declare)
-                    .or_else(|| self.leaf_cure(b, declare));
-            }
-            _ => {}
-        }
+    /// — the first whose source it can tell, with that position's own place in the source
+    /// (else the nearest enclosing one that has a place).
+    fn leaf_cure(&self, code: &Value, declare: &str) -> Option<(String, Option<Position>)> {
+        let here = code.span_pos().copied();
+        let inner = match code.unspan() {
+            Value::Block(bl) => self.leaf_cure(bl.operators.last()?, declare),
+            Value::If(_, a, b) => self
+                .leaf_cure(a, declare)
+                .or_else(|| self.leaf_cure(b, declare)),
+            leaf => return self.leaf_text(leaf, declare).map(|text| (text, here)),
+        };
+        inner.map(|(text, at)| (text, at.or(here)))
+    }
+
+    /// The cure [`Self::leaf_cure`] gives one value position that is not an `if` or a block.
+    fn leaf_text(&self, leaf: &Value, declare: &str) -> Option<String> {
         // A keyed lookup (`h[k]`, `OpGetRecord`), or a field read off one.
         let mut lookup = leaf;
         while let Value::Call(d, args) = lookup

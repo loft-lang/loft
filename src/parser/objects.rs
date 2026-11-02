@@ -5672,6 +5672,9 @@ impl Parser {
                 }
                 empty
             };
+            // The value's first token: where a diagnostic about the value goes when the value
+            // carries no span of its own (a local read).
+            let value_at = *self.lexer.peek_pos();
             let exp_tp = if empty_braces {
                 // Pass 2 only: the field is parsed in both passes, so an ungated notice is
                 // reported twice at one position — which reads as two findings and, now that
@@ -5893,7 +5896,15 @@ impl Parser {
                 let prev = std::mem::replace(&mut value, Value::Var(tmp));
                 sinks.hoists.push(v_set(tmp, prev));
             }
-            if let Some(bulk) = self.handle_field(td_nr, code, list, &field, &mut value, &exp_tp) {
+            if let Some(bulk) = self.handle_field(
+                td_nr,
+                code,
+                list,
+                &field,
+                &mut value,
+                &exp_tp,
+                Some(&value_at),
+            ) {
                 sinks.group_fills.push(bulk);
             }
         }
@@ -7913,6 +7924,7 @@ impl Parser {
         field: &str,
         value: &mut Value,
         exp_tp: &Type,
+        value_at: Option<&Position>,
     ) -> Option<Value> {
         let nr = self.data.attr(td_nr, field);
         let td = self.data.attr_type(td_nr, nr);
@@ -8033,7 +8045,7 @@ impl Parser {
             // @FR-N-Store — this lowering never reaches `convert`, so it asks for itself:
             // `H { f: w[i] }` with `w[i]: vector<integer>?` was the one struct-field cell of
             // loft#1366's matrix that said nothing.
-            self.n_store_violation(exp_tp, &td, "the field", None);
+            self.n_store_violation(exp_tp, &td, "the field", value_at);
             //
             // the same holds for any non-Insert vector-typed
             // expression (e.g. `C { v: build() }` where `build` returns a
@@ -8244,7 +8256,7 @@ impl Parser {
             {
                 // A constant that lands on a nullable narrow field's null code is refused
                 // by the store face (`nullable_narrow_constant_refusal`, loft#1796).
-                if !self.convert_store(value, exp_tp, &td, "the field", None) {
+                if !self.convert_store(value, exp_tp, &td, "the field", value_at) {
                     // @FR-N-Store is asked inside the store face; this arm is the plain
                     // type mismatch.
                     // Plan-07 phase 6 (partial) — name the value side first
