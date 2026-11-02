@@ -3499,7 +3499,7 @@ impl Output<'_> {
             self.data,
             self.def_nr,
             Some(self.stores),
-            &mut self.hoist_cache,
+            &mut crate::opt::facts::Facts::over(&mut self.hoist_cache),
         ) {
             crate::rewrite_census::declined(
                 "R-PushFill",
@@ -3580,7 +3580,7 @@ impl Output<'_> {
             self.data,
             self.def_nr,
             Some(self.stores),
-            &mut self.hoist_cache,
+            &mut crate::opt::facts::Facts::over(&mut self.hoist_cache),
             facts.as_ref(),
         ) {
             crate::rewrite_census::declined(
@@ -3678,7 +3678,7 @@ impl Output<'_> {
             self.data,
             self.def_nr,
             Some(self.stores),
-            &mut self.hoist_cache,
+            &mut crate::opt::facts::Facts::over(&mut self.hoist_cache),
         ) {
             crate::rewrite_census::declined(
                 "R-PushFill",
@@ -3805,7 +3805,7 @@ impl Output<'_> {
             self.data,
             self.def_nr,
             Some(self.stores),
-            &mut self.hoist_cache,
+            &mut crate::opt::facts::Facts::over(&mut self.hoist_cache),
         ) {
             if std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() {
                 eprintln!(
@@ -4234,7 +4234,7 @@ impl Output<'_> {
                     this.data,
                     this.stores,
                     this.def_nr,
-                    &mut this.hoist_cache,
+                    &mut crate::opt::facts::Facts::over(&mut this.hoist_cache),
                     !this.switches.write_hoist_disabled,
                     &twin_params,
                     Some(&hoist::StoreFacts {
@@ -4267,10 +4267,12 @@ impl Output<'_> {
             self.data,
             self.stores,
             self.def_nr,
-            &mut self.hoist_cache,
-            &mut self.scalar_write_cache,
+            &mut crate::opt::facts::Facts::with(
+                &mut self.hoist_cache,
+                &mut self.scalar_write_cache,
+                (!self.switches.callee_inputs_disabled).then_some(&mut self.input_cache),
+            ),
             tiers,
-            (!self.switches.callee_inputs_disabled).then_some(&mut self.input_cache),
             Some(&self.hoist_owned),
             (!self.switches.distinct_growth_disabled)
                 .then_some(hoist::StoreFacts {
@@ -4788,7 +4790,7 @@ impl Output<'_> {
             at,
             self.data,
             self.def_nr,
-            &mut self.hoist_cache,
+            &mut crate::opt::facts::Facts::over(&mut self.hoist_cache),
             !self.switches.write_hoist_disabled,
         ) else {
             return Ok(false);
@@ -4926,9 +4928,11 @@ impl Output<'_> {
             def_nr,
             self.data,
             self.stores,
-            &mut self.hoist_cache,
-            &mut self.scalar_write_cache,
-            &mut self.input_cache,
+            &mut crate::opt::facts::Facts::with(
+                &mut self.hoist_cache,
+                &mut self.scalar_write_cache,
+                Some(&mut self.input_cache),
+            ),
         )
     }
 
@@ -5276,7 +5280,7 @@ impl Output<'_> {
             self.data,
             self.stores,
             self.def_nr,
-            &mut self.hoist_cache,
+            &mut crate::opt::facts::Facts::over(&mut self.hoist_cache),
             !self.switches.write_hoist_disabled,
             &twin_params,
             (!self.switches.distinct_growth_disabled)
@@ -5303,7 +5307,7 @@ impl Output<'_> {
                     self.data,
                     self.stores,
                     self.def_nr,
-                    &mut self.hoist_cache,
+                    &mut crate::opt::facts::Facts::over(&mut self.hoist_cache),
                     !self.switches.write_hoist_disabled,
                     Some(&self.hoist_owned),
                 ) {
@@ -5440,7 +5444,7 @@ impl Output<'_> {
                 self.data,
                 self.stores,
                 self.def_nr,
-                &mut self.hoist_cache,
+                &mut crate::opt::facts::Facts::over(&mut self.hoist_cache),
                 !self.switches.write_hoist_disabled,
                 &twin_params,
                 (!self.switches.distinct_growth_disabled)
@@ -5893,7 +5897,7 @@ impl Output<'_> {
             self.data,
             self.stores,
             self.def_nr,
-            &mut self.hoist_cache,
+            &mut crate::opt::facts::Facts::over(&mut self.hoist_cache),
             tiers,
             Some(&self.hoist_owned),
         ) else {

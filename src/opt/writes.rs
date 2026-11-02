@@ -9,6 +9,7 @@
 
 use crate::data::{Data, DefType, Type, Value};
 use crate::database::Stores;
+use crate::opt::facts::Facts;
 use crate::opt::loop_records::{IN_PLACE_SET_OPS, all_scalar_record, is_scalar};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -635,15 +636,14 @@ pub(crate) fn in_place_copy_enabled() -> bool {
 /// `cache` memoises per definition. A `true` may have come from a broken recursion cycle
 /// and is still sound to reuse (it only declines a hoist); a `false` cannot have, because
 /// a cycle contributes `true` and any caller of it answers `true` too.
-pub fn may_write_store(node: &Value, data: &Data, cache: &mut HashMap<u32, bool>) -> bool {
-    writes_store(node, data, cache, &mut HashSet::new(), None, None)
+pub fn may_write_store(node: &Value, data: &Data, fx: &mut Facts) -> bool {
+    fx.fresh_guard(|fx| writes_store(node, data, fx, None, None))
 }
 
 pub(crate) fn writes_store(
     node: &Value,
     data: &Data,
-    cache: &mut HashMap<u32, bool>,
-    active: &mut HashSet<u32>,
+    fx: &mut Facts,
     vars: Option<&crate::variables::Function>,
     owned: Option<&HoistOwned>,
 ) -> bool {
@@ -651,8 +651,7 @@ pub(crate) fn writes_store(
         node,
         data,
         None,
-        cache,
-        active,
+        fx,
         vars,
         HoistTiers::default(),
         &mut HashSet::new(),
@@ -899,8 +898,7 @@ pub(crate) fn blocks_header_hoist(
     node: &Value,
     data: &Data,
     stores: Option<&Stores>,
-    cache: &mut HashMap<u32, bool>,
-    active: &mut HashSet<u32>,
+    fx: &mut Facts,
     vars: Option<&crate::variables::Function>,
     tiers: HoistTiers,
     fresh: &mut HashSet<u16>,
@@ -1036,7 +1034,7 @@ pub(crate) fn blocks_header_hoist(
                 || (known && tiers.text_set && is_text_set(data.def(*d).name()))
             {
                 false
-            } else if call_writes_store(*d, data, cache, active, owned) {
+            } else if call_writes_store(*d, data, fx, owned) {
                 // @PLN157 § V-l — a USER callee that writes, but only in place: admitted
                 // under the same tier as a direct in-place setter, for the same reason
                 // (its writes move nothing).  The arguments still walk below this node,
@@ -1044,7 +1042,7 @@ pub(crate) fn blocks_header_hoist(
                 !(known
                     && tiers.in_place
                     && crate::keys::inplace_callee_hoist_enabled()
-                    && in_place_only_writer(*d, data, cache, active, owned))
+                    && in_place_only_writer(*d, data, fx, owned))
             } else {
                 false
             }
@@ -1057,28 +1055,26 @@ pub(crate) fn blocks_header_hoist(
 pub(crate) fn call_writes_store(
     d_nr: u32,
     data: &Data,
-    cache: &mut HashMap<u32, bool>,
-    active: &mut HashSet<u32>,
+    fx: &mut Facts,
     owned: Option<&HoistOwned>,
 ) -> bool {
     if (d_nr as usize) >= data.definitions.len() {
         return true;
     }
-    if let Some(known) = cache.get(&d_nr) {
+    if let Some(known) = fx.stores_written.get(&d_nr) {
         return *known;
     }
     let def = data.def(d_nr);
     let writes = if matches!(def.code(), Value::Null) {
         !native_op_is_store_free(def)
-    } else if active.insert(d_nr) {
+    } else if fx.active.insert(d_nr) {
         // The callee's OWN dead buffers are exempt in its walk (`(R-ValueRecord)`: a tuple
         // answer's buffer is never minted), read off the program-wide table.
         let callee_owned = owned.map(|o| o.for_callee(d_nr));
         let inner = writes_store(
             def.code(),
             data,
-            cache,
-            active,
+            fx,
             Some(def.variables()),
             callee_owned.as_ref(),
         );
@@ -1086,8 +1082,8 @@ pub(crate) fn call_writes_store(
         // buffer moves no header a caller could have hoisted.
         let inner = inner
             && !(crate::keys::retbuf_hoist_enabled()
-                && retbuf_only_writer(d_nr, data, cache, active, callee_owned.as_ref()));
-        active.remove(&d_nr);
+                && retbuf_only_writer(d_nr, data, fx, callee_owned.as_ref()));
+        fx.active.remove(&d_nr);
         inner
     } else {
         true // recursion — the conservative answer rather than a fixed point
@@ -1096,7 +1092,7 @@ pub(crate) fn call_writes_store(
     // from that branch); a `true` reached WITHOUT the emitter's facts (no dead buffer
     // exempt) may be pessimistic and is not memoised, so a later ask with them can answer.
     if !writes || owned.is_some() {
-        cache.insert(d_nr, writes);
+        fx.stores_written.insert(d_nr, writes);
     }
     writes
 }
@@ -1105,16 +1101,15 @@ pub(crate) fn call_writes_store(
 pub(crate) fn in_place_only_writer(
     d_nr: u32,
     data: &Data,
-    cache: &mut HashMap<u32, bool>,
-    active: &mut HashSet<u32>,
+    fx: &mut Facts,
     owned: Option<&HoistOwned>,
 ) -> bool {
     let key = d_nr | IN_PLACE_KEY;
-    if let Some(known) = cache.get(&key) {
+    if let Some(known) = fx.stores_written.get(&key) {
         return *known;
     }
     let def = data.def(d_nr);
-    if matches!(def.code(), Value::Null) || !active.insert(d_nr) {
+    if matches!(def.code(), Value::Null) || !fx.active.insert(d_nr) {
         return false;
     }
     let only_in_place = !def.code().any_node(&mut |n| match n {
@@ -1131,19 +1126,19 @@ pub(crate) fn in_place_only_writer(
                     || callee_allowance(callee.name(), args, def.variables(), data, owned))
             } else {
                 let inner = owned.map(|o| o.for_callee(*op));
-                call_writes_store(*op, data, cache, active, inner.as_ref())
-                    && !in_place_only_writer(*op, data, cache, active, inner.as_ref())
+                call_writes_store(*op, data, fx, inner.as_ref())
+                    && !in_place_only_writer(*op, data, fx, inner.as_ref())
             }
         }
         Value::CallRef(_, _) | Value::Parallel(_) | Value::Yield(_) => true,
         _ => false,
     });
-    active.remove(&d_nr);
+    fx.active.remove(&d_nr);
     // A verdict reached while a cycle was open is `false` on the recursive edge only, which
     // never admits a hoist.  A `false` reached WITHOUT the emitter's facts (no dead buffer
     // exempt) may be pessimistic and is not memoised; a `true`, or any verdict with them, is.
     if only_in_place || owned.is_some() {
-        cache.insert(key, only_in_place);
+        fx.stores_written.insert(key, only_in_place);
     }
     only_in_place
 }
@@ -1164,8 +1159,7 @@ pub(crate) fn in_place_only_writer(
 pub(crate) fn retbuf_only_writer(
     d_nr: u32,
     data: &Data,
-    cache: &mut HashMap<u32, bool>,
-    active: &mut HashSet<u32>,
+    fx: &mut Facts,
     owned: Option<&HoistOwned>,
 ) -> bool {
     let def = data.def(d_nr);
@@ -1199,7 +1193,7 @@ pub(crate) fn retbuf_only_writer(
                     && !callee_allowance(name, args, def.variables(), data, owned)
             } else {
                 let inner = owned.map(|o| o.for_callee(*op));
-                call_writes_store(*op, data, cache, active, inner.as_ref())
+                call_writes_store(*op, data, fx, inner.as_ref())
             }
         }
         Value::CallRef(_, _) | Value::Parallel(_) | Value::Yield(_) => true,

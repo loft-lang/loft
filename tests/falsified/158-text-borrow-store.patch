@@ -5,8 +5,8 @@ diff --git a/src/opt/store_text_borrow.rs b/src/opt/store_text_borrow.rs
              continue;
          }
          let scope = mention_scope(body, v);
--        if let Some(w) = foreign_store_writer(scope, data, &minted, &mut cache, &mut active, None) {
-+        if let Some(w) = foreign_store_writer(scope, data, &minted, &mut cache, &mut active, None)
+-        if let Some(w) = foreign_store_writer(scope, data, &minted, &mut fx, None) {
++        if let Some(w) = foreign_store_writer(scope, data, &minted, &mut fx, None)
 +            .filter(|_| false)
 +        {
              // The tested clause: a local whose only other writers name the return buffer

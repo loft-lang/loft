@@ -231,8 +231,7 @@ pub fn borrowed_store_texts(
         .then(|| retbuf_var(data, def_nr))
         .flatten()
         .map(|rb| frame_minted_locals(data, vars, body, &[rb]));
-    let mut cache: HashMap<u32, bool> = HashMap::new();
-    let mut active: HashSet<u32> = HashSet::new();
+    let mut fx = crate::opt::facts::Facts::fresh();
     for v in temps
         .iter()
         .chain(locals.iter())
@@ -258,7 +257,7 @@ pub fn borrowed_store_texts(
             continue;
         }
         let scope = mention_scope(body, v);
-        if let Some(w) = foreign_store_writer(scope, data, &minted, &mut cache, &mut active, None) {
+        if let Some(w) = foreign_store_writer(scope, data, &minted, &mut fx, None) {
             // The tested clause: a local whose only other writers name the return buffer
             // (or a callee's buffer it is handed) borrows while its parameters' stores are
             // not the buffer's — a run-time test at each bind, a copy where it fails.
@@ -266,14 +265,7 @@ pub fn borrowed_store_texts(
                 && locals.contains(&v)
             {
                 let narrow = tested_scope(body, v, data);
-                let tested = match foreign_store_writer(
-                    narrow,
-                    data,
-                    m,
-                    &mut cache,
-                    &mut active,
-                    Some(vars),
-                ) {
+                let tested = match foreign_store_writer(narrow, data, m, &mut fx, Some(vars)) {
                     Some(w2) => Err(w2),
                     None => param_roots_of(body, v, data, vars)
                         .ok_or("a binding not rooted in a parameter"),
@@ -872,8 +864,7 @@ fn callee_writes_only_its_buffer(
     args: &[Value],
     data: &Data,
     minted: &HashSet<u16>,
-    cache: &mut HashMap<u32, bool>,
-    active: &mut HashSet<u32>,
+    fx: &mut crate::opt::facts::Facts,
 ) -> bool {
     let def = data.def(d);
     let Some(attr) = def.hidden_return_buffer_attr() else {
@@ -893,8 +884,7 @@ fn callee_writes_only_its_buffer(
     }
     let cvars = def.variables();
     let inner = frame_minted_locals(data, cvars, def.code(), &[rb]);
-    let clean =
-        foreign_store_writer(def.code(), data, &inner, cache, active, Some(cvars)).is_none();
+    let clean = foreign_store_writer(def.code(), data, &inner, fx, Some(cvars)).is_none();
     BUFFER_WRITERS_OPEN.with(|o| o.borrow_mut().remove(&d));
     clean
 }
@@ -912,8 +902,7 @@ pub(crate) fn foreign_store_writer(
     node: &Value,
     data: &Data,
     minted: &HashSet<u16>,
-    cache: &mut HashMap<u32, bool>,
-    active: &mut HashSet<u32>,
+    fx: &mut crate::opt::facts::Facts,
     vars: Option<&crate::variables::Function>,
 ) -> Option<&'static str> {
     let mut why = None;
@@ -934,10 +923,10 @@ pub(crate) fn foreign_store_writer(
             let def = data.def(*d);
             let name = def.name();
             if !matches!(def.code(), Value::Null) {
-                if call_writes_store(*d, data, cache, active, None)
-                    && !in_place_only_writer(*d, data, cache, active, None)
+                if call_writes_store(*d, data, fx, None)
+                    && !in_place_only_writer(*d, data, fx, None)
                     && !(vars.is_some()
-                        && callee_writes_only_its_buffer(*d, args, data, minted, cache, active))
+                        && callee_writes_only_its_buffer(*d, args, data, minted, fx))
                 {
                     why = Some("a callee that writes a store in its scope");
                     return true;

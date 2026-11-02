@@ -1670,10 +1670,12 @@ impl<'a> FnWriter<'a> {
             self.cx.data,
             self.cx.stores,
             self.d,
-            &mut cache,
-            &mut memo.writes,
+            &mut crate::opt::facts::Facts::with(
+                &mut cache,
+                &mut memo.writes,
+                (!sw.callee_inputs_disabled).then_some(&mut memo.inputs),
+            ),
             tiers,
-            (!sw.callee_inputs_disabled).then_some(&mut memo.inputs),
             None,
             facts.as_ref(),
         );
@@ -1685,7 +1687,7 @@ impl<'a> FnWriter<'a> {
             self.cx.data,
             self.d,
             facts.as_ref(),
-            &mut cache,
+            &mut crate::opt::facts::Facts::over(&mut cache),
             None,
         );
         // Held alone — as the apart clause holds its own — the stores they live in grow
@@ -1717,7 +1719,7 @@ impl<'a> FnWriter<'a> {
                 self.cx.data,
                 self.d,
                 facts.as_ref(),
-                &mut cache,
+                &mut crate::opt::facts::Facts::over(&mut cache),
                 None,
             );
             for (path, expr) in grown {
@@ -2017,7 +2019,7 @@ impl<'a> FnWriter<'a> {
             data,
             self.d,
             Some(self.cx.stores),
-            &mut cache,
+            &mut crate::opt::facts::Facts::over(&mut cache),
             facts.as_ref(),
         );
         self.hoist_cache = cache;
@@ -2061,7 +2063,7 @@ impl<'a> FnWriter<'a> {
                 data,
                 self.d,
                 Some(self.cx.stores),
-                &mut self.hoist_cache,
+                &mut crate::opt::facts::Facts::over(&mut self.hoist_cache),
             )
             .ok()?;
             return Some(WindowLoop {
@@ -2095,7 +2097,7 @@ impl<'a> FnWriter<'a> {
             data,
             self.d,
             Some(self.cx.stores),
-            &mut self.hoist_cache,
+            &mut crate::opt::facts::Facts::over(&mut self.hoist_cache),
         )
         .ok()?;
         Some(WindowLoop {
@@ -2852,7 +2854,7 @@ impl<'a> FnWriter<'a> {
             at,
             self.cx.data,
             self.d,
-            &mut cache,
+            &mut crate::opt::facts::Facts::over(&mut cache),
             !self.cx.switches.write_hoist_disabled,
         );
         self.hoist_cache = cache;
@@ -2925,7 +2927,7 @@ impl<'a> FnWriter<'a> {
                     data,
                     self.cx.stores,
                     self.d,
-                    &mut cache,
+                    &mut crate::opt::facts::Facts::over(&mut cache),
                     true,
                     &std::collections::HashSet::new(),
                     facts.as_ref(),
@@ -3024,7 +3026,7 @@ impl<'a> FnWriter<'a> {
                 self.cx.data,
                 self.cx.stores,
                 self.d,
-                &mut cache,
+                &mut crate::opt::facts::Facts::over(&mut cache),
                 true,
                 &std::collections::HashSet::new(),
                 facts.as_ref(),
@@ -8098,7 +8100,10 @@ impl<'a> FnWriter<'a> {
                     self.line(ind, &format!("{s} = {src};"));
                     self.line(ind, &format!("{d} = {dst};"));
                     let copy = call(&s, &d, false);
-                    self.line(ind, &format!("if ({s}.store_nr == 0xFFFF) {{ {null_arm} }} else {{ {copy}; }}"));
+                    self.line(
+                        ind,
+                        &format!("if ({s}.store_nr == 0xFFFF) {{ {null_arm} }} else {{ {copy}; }}"),
+                    );
                     return Ok(E::new("((void) 0)", K::Void));
                 }
                 Ok(E::new(call(&src, &dst, true), K::Void))

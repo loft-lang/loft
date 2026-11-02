@@ -539,8 +539,7 @@ impl KeptWalk<'_> {
             || !call_writes_store(
                 d,
                 self.data,
-                &mut self.cache.writes,
-                &mut HashSet::new(),
+                &mut crate::opt::facts::Facts::over(&mut self.cache.writes),
                 None,
             )
             || IN_PLACE_SET_OPS.contains(&name)

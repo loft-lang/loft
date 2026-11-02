@@ -10,8 +10,9 @@
 use crate::data::{Block, Data, Type, Value};
 use crate::database::Stores;
 use crate::opt::body_writes::{is_element_address, rebound_vars};
+use crate::opt::facts::Facts;
 use crate::opt::writes::{HoistOwned, HoistTiers, PathKey, blocks_header_hoist, vector_path};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 /// The vector paths whose header `body` may derive once up front, each with a clone of
 /// the operand expression the prelude evaluates.
@@ -25,14 +26,14 @@ pub fn hoistable_vectors(
     body: &Block,
     data: &Data,
     def_nr: u32,
-    cache: &mut HashMap<u32, bool>,
+    fx: &mut Facts,
     allow_in_place: bool,
 ) -> Vec<(PathKey, Value)> {
     let tiers = HoistTiers {
         in_place: allow_in_place,
         ..HoistTiers::default()
     };
-    if body_blocks_hoist(body, data, None, def_nr, cache, tiers, None, true) {
+    if body_blocks_hoist(body, data, None, def_nr, fx, tiers, None, true) {
         return Vec::new();
     }
     vector_candidates(body, data, def_nr)
@@ -44,7 +45,7 @@ fn innermost_blocking<'a>(
     op: &'a Value,
     data: &Data,
     stores: Option<&Stores>,
-    cache: &mut HashMap<u32, bool>,
+    fx: &mut Facts,
     vars: Option<&crate::variables::Function>,
     tiers: HoistTiers,
     owned: Option<&HoistOwned>,
@@ -62,17 +63,18 @@ fn innermost_blocking<'a>(
                 let mut next: Option<&'a Value> = None;
                 other.for_each_child(&mut |c: &'a Value| {
                     if next.is_none()
-                        && blocks_header_hoist(
-                            c,
-                            data,
-                            stores,
-                            cache,
-                            &mut HashSet::new(),
-                            vars,
-                            tiers,
-                            &mut HashSet::new(),
-                            owned,
-                        )
+                        && fx.fresh_guard(|fx| {
+                            blocks_header_hoist(
+                                c,
+                                data,
+                                stores,
+                                fx,
+                                vars,
+                                tiers,
+                                &mut HashSet::new(),
+                                owned,
+                            )
+                        })
                     {
                         next = Some(c);
                     }
@@ -93,17 +95,9 @@ fn innermost_blocking<'a>(
                 inner_line = *n;
                 continue;
             }
-            if blocks_header_hoist(
-                o,
-                data,
-                stores,
-                cache,
-                &mut HashSet::new(),
-                vars,
-                tiers,
-                &mut HashSet::new(),
-                owned,
-            ) {
+            if fx.fresh_guard(|fx| {
+                blocks_header_hoist(o, data, stores, fx, vars, tiers, &mut HashSet::new(), owned)
+            }) {
                 next = Some(o);
                 break;
             }
@@ -131,7 +125,7 @@ pub(crate) fn body_blocks_hoist(
     data: &Data,
     stores: Option<&Stores>,
     def_nr: u32,
-    cache: &mut HashMap<u32, bool>,
+    fx: &mut Facts,
     tiers: HoistTiers,
     owned: Option<&HoistOwned>,
     traced: bool,
@@ -139,17 +133,18 @@ pub(crate) fn body_blocks_hoist(
     let mut fresh: HashSet<u16> = HashSet::new();
     let trace = traced && std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok();
     body.operators.iter().any(|op| {
-        let blocks = blocks_header_hoist(
-            op,
-            data,
-            stores,
-            cache,
-            &mut HashSet::new(),
-            Some(data.def(def_nr).variables()),
-            tiers,
-            &mut fresh,
-            owned,
-        );
+        let blocks = fx.fresh_guard(|fx| {
+            blocks_header_hoist(
+                op,
+                data,
+                stores,
+                fx,
+                Some(data.def(def_nr).variables()),
+                tiers,
+                &mut fresh,
+                owned,
+            )
+        });
         if blocks && trace {
             // The INNERMOST statement the admission declines, with the source line before
             // it — the one to read when a loop that should hoist does not.  A loop body is
@@ -158,7 +153,7 @@ pub(crate) fn body_blocks_hoist(
                 op,
                 data,
                 stores,
-                cache,
+                fx,
                 Some(data.def(def_nr).variables()),
                 tiers,
                 owned,

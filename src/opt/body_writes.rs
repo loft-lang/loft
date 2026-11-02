@@ -10,6 +10,7 @@
 use crate::data::{Block, Data, Type, Value};
 use crate::database::{Parts, Stores};
 use crate::ir_shape::call_named;
+use crate::opt::facts::Facts;
 use crate::opt::loop_records::{IN_PLACE_SET_OPS, is_scalar};
 use crate::opt::writes::{
     FUSABLE_PUSHES, HoistOwned, RECORD_FREE_OPS, call_writes_store, discharge_buffer_set,
@@ -470,9 +471,7 @@ pub(crate) fn body_writes(
     data: &Data,
     stores: &Stores,
     vars: &crate::variables::Function,
-    cache: &mut HashMap<u32, bool>,
-    writes: &mut WriteCache,
-    active: &mut HashSet<u32>,
+    fx: &mut Facts,
     fresh: &mut HashSet<u16>,
     owned: Option<&HoistOwned>,
 ) -> Option<WriteSet> {
@@ -655,11 +654,9 @@ pub(crate) fn body_writes(
                     trace_write_decline(n);
                     return true;
                 }
-            } else if call_writes_store(*d, data, cache, active, owned) {
+            } else if call_writes_store(*d, data, fx, owned) {
                 let inner = owned.map(|o| o.for_callee(*d));
-                let Some(w) =
-                    callee_writes(*d, data, stores, cache, writes, active, inner.as_ref())
-                else {
+                let Some(w) = callee_writes(*d, data, stores, fx, inner.as_ref()) else {
                     ok = false;
                     trace_write_decline(n);
                     return true;
@@ -689,19 +686,17 @@ pub(crate) fn callee_writes(
     d_nr: u32,
     data: &Data,
     stores: &Stores,
-    cache: &mut HashMap<u32, bool>,
-    writes: &mut WriteCache,
-    active: &mut HashSet<u32>,
+    fx: &mut Facts,
     owned: Option<&HoistOwned>,
 ) -> Option<Rc<WriteSet>> {
-    if let Some(known) = writes.get(&d_nr) {
+    if let Some(known) = fx.writes.get(&d_nr) {
         return known.clone();
     }
     let def = data.def(d_nr);
-    let answer = if matches!(def.code(), Value::Null) || !active.insert(d_nr) {
+    let answer = if matches!(def.code(), Value::Null) || !fx.active.insert(d_nr) {
         None
     } else {
-        let inner = if in_place_only_writer(d_nr, data, cache, active, owned) {
+        let inner = if in_place_only_writer(d_nr, data, fx, owned) {
             // A callee's body: its own emitter-owned mints are not this frame's, so none
             // is admitted here (the conservative side — an untyped mint declines).
             body_writes(
@@ -709,13 +704,11 @@ pub(crate) fn callee_writes(
                 data,
                 stores,
                 def.variables(),
-                cache,
-                writes,
-                active,
+                fx,
                 &mut HashSet::new(),
                 None,
             )
-        } else if retbuf_only_writer(d_nr, data, cache, active, owned) {
+        } else if retbuf_only_writer(d_nr, data, fx, owned) {
             def.hidden_return_buffer_attr()
                 .and_then(|attr| plain_record_type(data, &def.attributes()[attr].typedef))
                 .map(|tp| WriteSet {
@@ -727,12 +720,12 @@ pub(crate) fn callee_writes(
         } else {
             None
         };
-        active.remove(&d_nr);
+        fx.active.remove(&d_nr);
         inner.map(Rc::new)
     };
     // A `None` reached on a recursive edge is memoised too: it only ever withholds a hoist.
     crate::rewrite_census::fired("R-Callee", usize::from(answer.is_some()));
-    writes.insert(d_nr, answer.clone());
+    fx.writes.insert(d_nr, answer.clone());
     answer
 }
 

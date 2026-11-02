@@ -1357,9 +1357,11 @@ impl Cx<'_> {
             d,
             self.data,
             self.stores,
-            &mut memo.stores_written,
-            &mut memo.writes,
-            &mut memo.inputs,
+            &mut crate::opt::facts::Facts::with(
+                &mut memo.stores_written,
+                &mut memo.writes,
+                Some(&mut memo.inputs),
+            ),
         )
     }
 
@@ -1416,12 +1418,10 @@ impl Cx<'_> {
 
     pub(crate) fn call_keeps_stores(&self, d: u32) -> bool {
         let memo = &mut *self.hoist_memo.borrow_mut();
-        let mut active = std::collections::HashSet::new();
         !crate::opt::writes::call_writes_store(
             d,
             self.data,
-            &mut memo.stores_written,
-            &mut active,
+            &mut crate::opt::facts::Facts::over(&mut memo.stores_written),
             None,
         )
     }

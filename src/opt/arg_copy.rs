@@ -22,7 +22,6 @@
 use crate::data::{Data, DefType, TEXT_ARG_COPY, Value};
 use crate::opt::writes::writes_store;
 use crate::variables::Function;
-use std::collections::{HashMap, HashSet};
 
 fn is_copy(v: &Value) -> bool {
     matches!(v.unspan(), Value::Block(b) if b.name == TEXT_ARG_COPY)
@@ -51,8 +50,8 @@ fn view_of<'a>(v: &'a Value, data: &Data) -> Option<&'a Value> {
     }
 }
 
-fn rewrite(node: &mut Value, data: &Data, vars: &Function, cache: &mut HashMap<u32, bool>) {
-    node.for_each_child_mut(&mut |c| rewrite(c, data, vars, cache));
+fn rewrite(node: &mut Value, data: &Data, vars: &Function, fx: &mut crate::opt::facts::Facts) {
+    node.for_each_child_mut(&mut |c| rewrite(c, data, vars, fx));
     let Value::Call(d, args) = node.unspan_mut() else {
         return;
     };
@@ -72,7 +71,7 @@ fn rewrite(node: &mut Value, data: &Data, vars: &Function, cache: &mut HashMap<u
     let probe = Value::Call(*d, views);
     // Judged with the caller's variables, so the hidden `&text` buffer a text-returning callee
     // is handed (`OpCreateStack` of a text local) reads as the frame address it is.
-    let keep = writes_store(&probe, data, cache, &mut HashSet::new(), Some(vars), None);
+    let keep = fx.fresh_guard(|fx| writes_store(&probe, data, fx, Some(vars), None));
     if std::env::var_os("LOFT_TRACE_ARG_COPY").is_some() {
         let verdict = if keep {
             "kept: the call can write a store"
@@ -99,7 +98,7 @@ pub fn rewrite_program(data: &mut Data) {
     if std::env::var("LOFT_KEEP_ARG_COPY").is_ok_and(|v| v != "0") {
         return;
     }
-    let mut cache = HashMap::new();
+    let mut fx = crate::opt::facts::Facts::fresh();
     for f in 0..data.definitions() {
         let def = data.def(f);
         if !matches!(def.def_type, DefType::Function) || !def.code().any_node(&mut |n| is_copy(n)) {
@@ -107,7 +106,7 @@ pub fn rewrite_program(data: &mut Data) {
         }
         // A clone, so the callee summaries read every body — this one included — as written.
         let mut code = def.code().clone();
-        rewrite(&mut code, data, &def.variables, &mut cache);
+        rewrite(&mut code, data, &def.variables, &mut fx);
         data.definitions[f as usize].code = code;
     }
 }

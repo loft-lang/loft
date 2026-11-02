@@ -14,6 +14,7 @@ pub mod arg_copy;
 pub mod attrs;
 pub mod body_writes;
 pub mod char_walk;
+pub mod facts;
 pub mod frame_calls;
 pub mod header;
 pub mod hoist;

@@ -186,8 +186,7 @@ impl ApartWalk<'_, '_> {
             && !super::hoist::call_writes_store(
                 d,
                 self.data,
-                self.cache,
-                &mut HashSet::new(),
+                &mut crate::opt::facts::Facts::over(self.cache),
                 self.owned,
             )
     }
