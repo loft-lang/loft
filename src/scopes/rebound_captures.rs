@@ -350,6 +350,141 @@ fn insert_in_loops(code: &mut Value, in_loop: bool, pick: &mut dyn FnMut(&Value)
     code.for_each_child_mut(&mut |ch| insert_in_loops(ch, inner, pick));
 }
 
+/// The record locals whose record LEAVES the frame: a fn field's record whose host the
+/// function returns (`W = OpChildRec(OpGetField(h, …), …)`, `return h`), or a fn-ref local's
+/// record the function returns (`g = { …; FnRef(_, W) }`, `return g`).
+fn leaving_records(code: &Value, vars: &Function, data: &Data) -> HashSet<u16> {
+    let child_rec = data.def_nr("OpChildRec");
+    let get_field = data.def_nr("OpGetField");
+    let mut holder: HashMap<u16, u16> = HashMap::default();
+    let mut returned: HashSet<u16> = HashSet::default();
+    code.any_node(&mut |n| {
+        match n.unspan() {
+            Value::Set(w, rhs) if vars.name(*w).starts_with("___clos_") => {
+                if let Value::Call(d, args) = rhs.unspan()
+                    && *d == child_rec
+                    && let Some(Value::Call(g, gargs)) = args.first().map(Value::unspan)
+                    && *g == get_field
+                    && let Some(Value::Var(h)) = gargs.first().map(Value::unspan)
+                {
+                    holder.insert(*w, *h);
+                }
+            }
+            Value::Set(g, rhs) => {
+                rhs.any_node(&mut |m| {
+                    if let Value::FnRef(_, w, _) = m.unspan()
+                        && *w != u16::MAX
+                        && vars.name(*w).starts_with("___clos_")
+                    {
+                        holder.insert(*w, *g);
+                    }
+                    false
+                });
+            }
+            Value::Return(v) => {
+                if let Value::Var(x) = v.unspan() {
+                    returned.insert(*x);
+                }
+            }
+            _ => {}
+        }
+        false
+    });
+    holder
+        .into_iter()
+        .filter(|(_, h)| returned.contains(h))
+        .map(|(w, _)| w)
+        .collect()
+}
+
+/// The local a frame release frees: `OpFreeRef(x)`, `OpFreeRefIfDistinct(x, …)`, or the
+/// conditional `if <a record is there> null else OpFreeRef(x)` a loop build's capture gets.
+fn released_local(op: &Value, data: &Data) -> Option<u16> {
+    let free = data.def_nr("OpFreeRef");
+    let free_distinct = data.def_nr("OpFreeRefIfDistinct");
+    match op.unspan() {
+        Value::Call(d, args) if *d == free || *d == free_distinct => {
+            match args.first().map(Value::unspan) {
+                Some(Value::Var(x)) => Some(*x),
+                _ => None,
+            }
+        }
+        Value::If(_, t, e) if matches!(t.unspan(), Value::Null) => released_local(e, data),
+        _ => None,
+    }
+}
+
+/// Let-go point 3 — the FRAME's end: a release of the captured local or one of its backings
+/// stands down where a record that LEAVES the frame holds that store (its cascade is the
+/// release, `@FR-L-CapOwn`), decided by identity rather than by the record's presence — the
+/// loop's last pass may have re-assigned the local after its build, or built it after the
+/// re-assignment.  Only releases outside the loop are frame-end ones.
+fn keep_leaving_captures(code: &mut Value, facts: &Rebound, leaving: &HashSet<u16>, data: &Data) {
+    let distinct = data.def_nr("OpDistinctStore");
+    let free = data.def_nr("OpFreeRef");
+    // released local -> the leaving slots that can hold its store.
+    let mut kept_by: HashMap<u16, Vec<Slot>> = HashMap::default();
+    for (c, ss) in &facts.slots {
+        let leave: Vec<Slot> = ss
+            .iter()
+            .filter(|s| leaving.contains(&s.record))
+            .copied()
+            .collect();
+        if leave.is_empty() {
+            continue;
+        }
+        let mut names = vec![*c];
+        names.extend(facts.backings.get(c).into_iter().flatten().copied());
+        for x in names {
+            let e = kept_by.entry(x).or_default();
+            for s in &leave {
+                if !e.contains(s) {
+                    e.push(*s);
+                }
+            }
+        }
+    }
+    if kept_by.is_empty() {
+        return;
+    }
+    wrap_outside_loops(code, &mut |op| {
+        let x = released_local(op, data)?;
+        let slots = kept_by.get(&x)?;
+        // The presence-decided form: its release is the plain one, decided here by identity.
+        let release = match op.unspan() {
+            Value::If(..) => Value::Call(free, vec![Value::Var(x)]),
+            _ => op.clone(),
+        };
+        Some(slots.iter().rev().fold(release, |rest, &s| {
+            let same = v_if(
+                Value::Call(distinct, vec![Value::Var(x), slot_read(s, data)]),
+                Value::Boolean(false),
+                Value::Boolean(true),
+            );
+            v_if(
+                v_if(record_live(s.record, data), same, Value::Boolean(false)),
+                Value::Null,
+                rest,
+            )
+        }))
+    });
+}
+
+/// Replace every statement outside a `Loop` that `wrap` answers for with its answer.
+fn wrap_outside_loops(code: &mut Value, wrap: &mut dyn FnMut(&Value) -> Option<Value>) {
+    if matches!(code.unspan(), Value::Loop(_)) {
+        return;
+    }
+    if let Value::Block(bl) = code.unspan_mut() {
+        for op in &mut bl.operators {
+            if let Some(w) = wrap(op) {
+                *op = w;
+            }
+        }
+    }
+    code.for_each_child_mut(&mut |ch| wrap_outside_loops(ch, wrap));
+}
+
 /// loft#2357's three let-go points, over every function whose closures capture a local the
 /// loop re-assigns.  Runs after the scope pass, which placed every other release.
 pub(super) fn release_rebound_captures(data: &mut Data) {
@@ -364,6 +499,10 @@ pub(super) fn release_rebound_captures(data: &mut Data) {
         let mut code = data.def(d_nr).code.clone();
         detach_held_backing(&mut code, &facts, data);
         release_on_rebuild(&mut code, &facts, data);
+        let leaving = leaving_records(&code, data.def(d_nr).variables(), data);
+        if !leaving.is_empty() {
+            keep_leaving_captures(&mut code, &facts, &leaving, data);
+        }
         data.definitions[d_nr as usize].code = code;
     }
 }
