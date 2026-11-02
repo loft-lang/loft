@@ -20,7 +20,12 @@
 // w4  a copy of the inner record has its kid 1 set to 50; the source's kid 1 is still 1: 1.
 //     Written through the copy's shared elements, it would read 50.
 //
-// @falsified-at: pending
+// @falsified-at: 1b740742f — by hand on the C writer (the interpreter and native build no
+//   transient value, so `falsify.sh` reads them INERT), each plant alone failing its own cell:
+//   the write rule struck (w4: the copy's element written through the source's shared array,
+//   1 → 50), and a record copy left unsealed (w3: the second push lands in the first copy's
+//   slot, 1020 → 2020).  w1 and w2 keep the store form today (their producers' twins decline);
+//   they stay as the cells those shapes owe once admitted.
 
 struct Kid {
   n: integer

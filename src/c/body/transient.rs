@@ -489,6 +489,10 @@ fn producer_buffer(cx: &Cx, f: u32, args: &[Value]) -> Option<u16> {
 }
 
 /// Write twin `key` as `name`: its signature and body.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one twin: its result, its parameters, its locals' forms, its owned set, its signature"
+)]
 fn write_twin(cx: &Cx, key: TrKey, name: &str) -> Result<(String, String), String> {
     let data = cx.data;
     let def = data.def(key.d);
@@ -519,7 +523,7 @@ fn write_twin(cx: &Cx, key: TrKey, name: &str) -> Result<(String, String), Strin
             .ok_or("a transient result with no return buffer")?;
         let b = args[i];
         let tv = cx.tr_var(vars.tp(b));
-        let (Some(TrVar::Rec(g)) | Some(TrVar::Vec(Elem::Rec(g)))) = tv else {
+        let Some(TrVar::Rec(g) | TrVar::Vec(Elem::Rec(g))) = tv else {
             return Err("a transient result that is not a record".into());
         };
         let tv = tv.ok_or("a transient result of no shape")?;
@@ -786,7 +790,7 @@ fn lives(cx: &Cx, code: &Value, roots: &[u16], owner: &HashMap<u16, u16>) -> Res
     w.go(code);
     let mut spans: Vec<(usize, usize)> = Vec::new();
     for r in roots {
-        let [(bind, blk)] = w.binds.get(r).map(Vec::as_slice).unwrap_or(&[]) else {
+        let [(bind, blk)] = w.binds.get(r).map_or(&[][..], Vec::as_slice) else {
             return Err("a root bound more than once".into());
         };
         let mut last = *bind;
@@ -828,11 +832,11 @@ fn work_buffer(x: &Value) -> Option<u16> {
 impl Cx<'_> {
     /// `d` answers its `&text` parameter — every `return` and its tail name it: that
     /// parameter's position.
-    pub(crate) fn work_return(&self, d: u32) -> Option<usize> {
-        if (d as usize) >= self.data.definitions.len() {
+    pub(crate) fn work_return(&self, func: u32) -> Option<usize> {
+        if (func as usize) >= self.data.definitions.len() {
             return None;
         }
-        let def = self.data.def(d);
+        let def = self.data.def(func);
         if !def.name().starts_with("n_")
             || matches!(def.code(), Value::Null)
             || !matches!(def.returned().base(), Type::Text(_))
@@ -842,32 +846,32 @@ impl Cx<'_> {
         let vars = def.variables();
         let args = vars.arguments();
         let mut found = None;
-        for (i, &a) in args.iter().enumerate() {
-            if matches!(vars.tp(a).base(), Type::RefVar(t) if matches!(t.base(), Type::Text(_))) {
+        for (pos, &arg) in args.iter().enumerate() {
+            if matches!(vars.tp(arg).base(), Type::RefVar(t) if matches!(t.base(), Type::Text(_))) {
                 if found.is_some() {
                     return None;
                 }
-                found = Some((i, a));
+                found = Some((pos, arg));
             }
         }
-        let (i, p) = found?;
+        let (at, param) = found?;
         let mut ok = true;
         def.code().walk(&mut |n| {
             if let Value::Return(x) = n
-                && !matches!(x.unspan(), Value::Var(w) if *w == p)
+                && !matches!(x.unspan(), Value::Var(w) if *w == param)
             {
                 ok = false;
             }
         });
-        let Value::Block(b) = def.code() else {
+        let Value::Block(body) = def.code() else {
             return None;
         };
-        let tail_ok = match b.operators.last()?.unspan() {
-            Value::Return(x) => matches!(x.unspan(), Value::Var(w) if *w == p),
-            Value::Var(w) => *w == p,
+        let tail_ok = match body.operators.last()?.unspan() {
+            Value::Return(x) => matches!(x.unspan(), Value::Var(w) if *w == param),
+            Value::Var(w) => *w == param,
             _ => false,
         };
-        (ok && tail_ok).then_some(i)
+        (ok && tail_ok).then_some(at)
     }
 
     /// `d`'s `__wr` twin: its body, answering nothing — the caller reads the buffer it filled.
@@ -943,46 +947,46 @@ fn is_mint(cx: &Cx, x: &Value) -> bool {
 
 /// `x` is the record a `?` builds where its read misses — `{ OpDatabase(r, tp); OpSet…(r, off,
 /// zero)…; r }` of a type whose default is all zeros — and answers that type.
-fn default_object(cx: &Cx, x: &Value) -> Option<u16> {
-    let Value::Block(b) = x.unspan() else {
+fn default_object(cx: &Cx, value: &Value) -> Option<u16> {
+    let Value::Block(block) = value.unspan() else {
         return None;
     };
-    let ops: Vec<&Value> = b
+    let ops: Vec<&Value> = block
         .operators
         .iter()
         .filter(|o| !matches!(o.unspan(), Value::Line(_)))
         .collect();
     let (last, body) = ops.split_last()?;
-    let Value::Var(r) = last.unspan() else {
+    let Value::Var(rec) = last.unspan() else {
         return None;
     };
-    let is_r = |v: &Value| matches!(v.unspan(), Value::Var(w) if w == r);
-    let zero = |v: &Value| {
+    let is_r = |v: &Value| matches!(v.unspan(), Value::Var(w) if w == rec);
+    let zero = |lit: &Value| {
         matches!(
-            v.unspan(),
+            lit.unspan(),
             Value::Int(0) | Value::Long(0) | Value::Boolean(false) | Value::Null
-        ) || matches!(v.unspan(), Value::Text(t) if t.is_empty())
-            || matches!(v.unspan(), Value::Float(f) if *f == 0.0)
+        ) || matches!(lit.unspan(), Value::Text(t) if t.is_empty())
+            || matches!(lit.unspan(), Value::Float(fl) if *fl == 0.0)
     };
     let mut tp = None;
     for op in body {
-        let Value::Call(f, a) = op.unspan() else {
+        let Value::Call(func, opargs) = op.unspan() else {
             return None;
         };
-        if (*f as usize) >= cx.data.definitions.len() {
+        if (*func as usize) >= cx.data.definitions.len() {
             return None;
         }
-        match (cx.data.def(*f).name(), a.as_slice()) {
-            ("OpDatabase" | "OpDatabaseNP", [v, t]) if is_r(v) && tp.is_none() => {
-                let Value::Int(t) = t.unspan() else {
+        match (cx.data.def(*func).name(), opargs.as_slice()) {
+            ("OpDatabase" | "OpDatabaseNP", [target, ty]) if is_r(target) && tp.is_none() => {
+                let Value::Int(ty) = ty.unspan() else {
                     return None;
                 };
-                tp = Some(u16::try_from(*t).ok()?);
+                tp = Some(u16::try_from(*ty).ok()?);
             }
             (
                 "OpSetInt" | "OpSetText" | "OpSetBoolean" | "OpSetFloat" | "OpSetInt4",
-                [v, _, val],
-            ) if is_r(v) && zero(val) && tp.is_some() => {}
+                [target, _, val],
+            ) if is_r(target) && zero(val) && tp.is_some() => {}
             _ => return None,
         }
     }
@@ -1117,6 +1121,10 @@ impl FnWriter<'_> {
     }
 
     /// Where transient value `v` lives.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per place a transient value has"
+    )]
     fn tr_place(&mut self, v: &Value, ind: usize) -> Result<Place, String> {
         match v.unspan() {
             Value::Var(w) => {
@@ -1144,33 +1152,33 @@ impl FnWriter<'_> {
                 self.tr_place(b.operators.last().ok_or("an empty block")?, ind)
             }
             // `v[i]?` read in place: the element, or the zero record nothing writes.
-            Value::If(c, a, b) => {
-                let (arm, tp, first) = if let Some(tp) = default_object(self.cx, b) {
-                    (a, tp, true)
-                } else if let Some(tp) = default_object(self.cx, a) {
-                    (b, tp, false)
+            Value::If(cond, yes, no) => {
+                let (arm, tp, first) = if let Some(tp) = default_object(self.cx, no) {
+                    (yes, tp, true)
+                } else if let Some(tp) = default_object(self.cx, yes) {
+                    (no, tp, false)
                 } else {
                     return Err("a choice between two transient values".into());
                 };
                 let g = self.cx.tr_group(tp);
-                let t = format!("trp{}", self.decls.len() + 1);
-                self.decls.push(format!("lt_{g} *{t} = 0;"));
-                let zero = format!("{t} = (lt_{g} *) loft_ta_zero(sizeof(lt_{g}));");
-                let cond = super::as_cond(self.expr(c, ind)?)?;
-                self.line(ind, &format!("if ({}) {{", super::bare(&cond)));
+                let tmp = format!("trp{}", self.decls.len() + 1);
+                self.decls.push(format!("lt_{g} *{tmp} = 0;"));
+                let zero = format!("{tmp} = (lt_{g} *) loft_ta_zero(sizeof(lt_{g}));");
+                let test = super::as_cond(self.expr(cond, ind)?)?;
+                self.line(ind, &format!("if ({}) {{", super::bare(&test)));
                 if first {
                     let p = self.tr_ptr(arm, ind + 1)?;
-                    self.line(ind + 1, &format!("{t} = {p};"));
+                    self.line(ind + 1, &format!("{tmp} = {p};"));
                     self.line(ind, "} else {");
                     self.line(ind + 1, &zero);
                 } else {
                     self.line(ind + 1, &zero);
                     self.line(ind, "} else {");
                     let p = self.tr_ptr(arm, ind + 1)?;
-                    self.line(ind + 1, &format!("{t} = {p};"));
+                    self.line(ind + 1, &format!("{tmp} = {p};"));
                 }
                 self.line(ind, "}");
-                Ok(Place::Rec(format!("(*{t})"), g))
+                Ok(Place::Rec(format!("(*{tmp})"), g))
             }
             Value::Call(op, a) if self.cx.data.def(*op).name() == "OpGetField" => {
                 let [base, off, tp] = a.as_slice() else {
@@ -1823,21 +1831,21 @@ impl FnWriter<'_> {
             _ => {}
         });
         self.code.walk(&mut |n| {
-            let Value::Block(b) = n else { return };
-            for (i, op) in b.operators.iter().enumerate() {
-                let Value::Set(v, x) = op.unspan() else { continue };
+            let Value::Block(blk) = n else { return };
+            for (at, op) in blk.operators.iter().enumerate() {
+                let Value::Set(v, bound) = op.unspan() else { continue };
                 if self.params[*v as usize] || sets.get(v) != Some(&1) {
                     continue;
                 }
                 // A copied transient text, or a call that answers the caller's work buffer.
-                let (src, copy, buffer) = match x.unspan() {
+                let (src, copy, buffer) = match bound.unspan() {
                     Value::Block(cb) => match self.tr_text_copy(cb) {
                         Some(src) => (src.clone(), true, None),
                         None => continue,
                     },
-                    Value::Call(f, cargs) => {
-                        let Some(i) = self.cx.work_return(*f) else { continue };
-                        let Some(w) = cargs.get(i).and_then(work_buffer) else { continue };
+                    Value::Call(callee, cargs) => {
+                        let Some(pos) = self.cx.work_return(*callee) else { continue };
+                        let Some(w) = cargs.get(pos).and_then(work_buffer) else { continue };
                         if self.params[w as usize] {
                             continue;
                         }
@@ -1848,7 +1856,7 @@ impl FnWriter<'_> {
                 // Every later mention in this block, none of a root's bind or free between.
                 let mut seen = 0usize;
                 let mut clean = true;
-                for later in &b.operators[i + 1..] {
+                for later in &blk.operators[at + 1..] {
                     let mut here = 0usize;
                     later.walk(&mut |m| {
                         if let Value::Var(w) = m
@@ -1863,11 +1871,11 @@ impl FnWriter<'_> {
                             Value::Set(w, _) if roots.contains(w) => touches_root = true,
                             // The buffer itself, before the result's last read: another fill.
                             Value::Var(w) if Some(*w) == buffer => touches_root = true,
-                            Value::Call(f, a)
+                            Value::Call(op, opargs)
                                 if matches!(
-                                    self.cx.data.def(*f).name(),
+                                    self.cx.data.def(*op).name(),
                                     "OpFreeRef" | "OpFreeRefIfDistinct"
-                                ) && matches!(a.first().map(Value::unspan), Some(Value::Var(w)) if roots.contains(w)) =>
+                                ) && matches!(opargs.first().map(Value::unspan), Some(Value::Var(w)) if roots.contains(w)) =>
                             {
                                 touches_root = true;
                             }

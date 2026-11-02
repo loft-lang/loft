@@ -5903,6 +5903,7 @@ impl<'a> FnWriter<'a> {
     }
 
     /// A C expression for `v`'s value; the statements it needs are emitted first.
+    #[expect(clippy::too_many_lines, reason = "one arm per IR node a value can be")]
     fn expr(&mut self, v: &Value, ind: usize) -> Result<E, String> {
         if self.invariants.iter().any(|f| !f.is_empty())
             && let Some(memo) = self.invariant_of(v)

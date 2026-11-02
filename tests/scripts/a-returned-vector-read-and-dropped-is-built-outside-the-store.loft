@@ -27,7 +27,13 @@
 // v9 a run text built from two fills of the work buffer, the first read after the second:
 //    [2, 9) pairs each run with its first character — "cdc", "klmk", "efe" — 3 + 4 + 3 = 10.
 //
-// @falsified-at: pending
+// @falsified-at: 8c055a38c — by hand on the C writer (the interpreter and native build no
+//   transient value, so `falsify.sh` reads them INERT), each plant alone failing its own cell:
+//   the lives check struck (v8: the second root's bind gives the arena back under the first,
+//   43 → 33), and an arena element read without counting a negative index from the end (v4:
+//   the last run misses, 3 → 0).  The work-buffer check — the buffer touched again before the
+//   result's last read — has no cell: each call site's work buffer is its own, so the parser
+//   never writes a second fill before the read.
 
 struct Piece {
   start: integer,
