@@ -59,3 +59,29 @@ JSON parse forms disagree about `#errors`.
 
 `M-file-split` (the two picks), the two @PLN174 library branches decided, the `[cand]` sweeps on the
 candidate, and loft#2024..#2028 fixed.
+
+## The pre-tag pass (opened 2026-11-02 on `tuxedo-release-2026-11`)
+
+**The release waits for @PLN210** (owner, 2026-11-02): 2026.11.0 ships WITH the C performance
+work that brings the test programs under 3x their Rust twins.  The rule is **under 3x**; 2x is the
+nice-to-have (the plan's stretch target: every library bench routine under 2x on the C ship lane,
+gcc and clang).  That work is in development on
+`laptop-c-perf`; the tag candidate is cut after it joins.  Until then this branch works the rows
+that do not depend on the candidate: `[pre]` and `[mid+pre]` rows are finished here, the `[cand]`
+rows (`M-valgrind`, `M-wasm`) and the release-window rows wait for the candidate.
+
+Forked from `tuxedo-pr2366-next` @ `fa32f6013`: PR #2366 (the 2026-11-02 join and the open-issue
+batch) plus the fixes for its red steps.
+
+| row | state | evidence |
+|---|---|---|
+| `A-version` | waits | Cargo.toml says 2026.10.0; bumped at the candidate cut |
+| `A-ci` | waits | the candidate's gate |
+| `A-deviations` | open | D-clo-52 (loft#2284) and D-fact-1..3 (@PLN210) |
+| `A-docs-lint` | open | 37 findings over the baseline |
+| `A-reference-review` | open | 12 of 40 chapters owe a read |
+| `A-skills-review` | open | one cited path no longer resolves |
+| `A-pdf` / `A-pdf-version` | waits | rebuilt at the candidate |
+| `M-doc-validation` | open | over what moved since the halfway pass |
+| `M-windows-parity` | open | the report, read |
+
