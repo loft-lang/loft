@@ -4699,6 +4699,9 @@ fn binary(e: el::El, vars: el_vars::Vars, at: integer, op: text, l: integer, r: 
   if op == "??" {
     return coalesce(e, vars, l, r);
   }
+  if (op == "==" || op == "!=") && amp_operand(e, l) >= 0 && amp_operand(e, r) >= 0 {
+    return identity_compare(e, vars, op, amp_operand(e, l), amp_operand(e, r));
+  }
   a = expression(e, vars, l);
   b = expression(e, vars, r);
   x = builtin_op(e, vars, op, a, b);
@@ -4714,6 +4717,33 @@ fn binary(e: el::El, vars: el_vars::Vars, at: integer, op: text, l: integer, r: 
     x.tp = ir::TyOptional { inner: x.tp };
   }
   arithmetic_span(e, at, op, x)
+}
+
+// The operand of a whole `&<operand>` side, or -1.
+fn amp_operand(e: el::El, n: integer) -> integer {
+  match e.p.nodes[n] {
+    SUnary { op, e: inner } => if op == "&" && inner != null { inner! } else { -1 },
+    _ => -1
+  }
+}
+
+// `Parser::identity_compare` (`@FR-E-Eq`, @C91): `&a == &b` asks whether two places are ONE
+// record — `OpEqRef` / `OpNeRef` of the two handles as they are.  Both sides must be a place
+// (a variable or a projection) of one heap type; anything else is refused by name.
+fn identity_compare(e: el::El, vars: el_vars::Vars, op: text, l: integer, r: integer) -> Ex {
+  a = expression(e, vars, l);
+  b = expression(e, vars, r);
+  code = el_ir::cl(e, if op == "==" { "OpEqRef" } else { "OpNeRef" }, [a.code, b.code]);
+  if e.first_pass {
+    return ex(code, ir::TyBoolean);
+  }
+  places = place_root(e, a.code) >= 0 && place_root(e, b.code) >= 0;
+  at = el_types::base(a.tp);
+  if !places || !(at is TyReference || at is TyVector || keyed_kind(at)) || !el_types::is_equal(e, at, el_types::base(b.tp)) {
+    el::refuse(e, "an identity comparison of something other than two places of one heap type");
+    return ex(ir::NdNull, ir::TyBoolean);
+  }
+  ex(code, ir::TyBoolean)
 }
 
 // What a finished statement proves for the rest of its block (`parse_block_inner`): a guard
