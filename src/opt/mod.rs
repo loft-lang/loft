@@ -31,10 +31,10 @@ pub mod range;
 pub mod ret_adopt;
 pub mod store_text_borrow;
 pub mod tabulate;
-pub mod version;
 pub mod tail_self;
 pub mod text_borrow;
 pub mod value_records;
+pub mod version;
 pub mod writes;
 
 /// Forget every analysis memo: the range analysis's call memo (keyed by a definition's

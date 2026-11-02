@@ -2523,15 +2523,18 @@ static inline int64_t loft_vg_neg(int64_t a, int *ok) {
     return -a;
 }
 /* The counter's last value from its first, `first`: `end` itself (`inclusive`) or the value
- * below it; 0 when the range is empty. */
-static inline int loft_vg_span(int64_t first, int64_t end, int inclusive, int64_t *last) {
+ * below it; 0 when the range holds fewer than `min` values, where asking the precondition twice
+ * costs more than the tests it saves. */
+static inline int loft_vg_span(int64_t first, int64_t end, int inclusive, int64_t min, int64_t *last) {
+    int64_t d;
     if (inclusive) {
         *last = end;
     } else {
         if (end == LOFT_NULL) return 0;
         *last = end - 1;
     }
-    return first <= *last;
+    if (first > *last) return 0;
+    return LOFT_SUB_OVF(*last, first, &d) || d >= min - 1;
 }
 /* An argument `x + c * t` at counter value `t`: 0 where it does not fit or is null, or where
  * `x` is null (a checked argument that answered null does not move with the counter). */

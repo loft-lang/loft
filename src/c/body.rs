@@ -2385,7 +2385,7 @@ impl<'a> FnWriter<'a> {
                 let index = self.expr(&idx, ind)?;
                 if name == "OpGetInt" && self.version_raw(args) {
                     let index = as_int(index)?;
-                    let code = self.version_access(name, &held, size, fld, &index, None);
+                    let code = version::version_access(name, &held, size, fld, &index, None);
                     return Ok(Some(E::new(code, K::Int)));
                 }
                 let (f, k) = if name == "OpGetInt" {
@@ -2415,7 +2415,8 @@ impl<'a> FnWriter<'a> {
                 let (index, value) = self.two(name, &[&idx, val], ind)?;
                 if name == "OpSetInt" && self.version_raw(args) {
                     let (index, value) = (as_int(index)?, as_int(value)?);
-                    let code = self.version_access(name, &held, size, fld, &index, Some(&value));
+                    let code =
+                        version::version_access(name, &held, size, fld, &index, Some(&value));
                     return Ok(Some(E::new(code, K::Void)));
                 }
                 let (f, value) = if name == "OpSetInt" {
@@ -4266,7 +4267,11 @@ impl<'a> FnWriter<'a> {
             }
             Value::If(..) if self.apv_stmt(v, ind) => Ok(()),
             Value::If(c, t, e) if self.vf.is_some() && self.version_decided(c).is_some() => {
-                let arm = if self.version_decided(c) == Some(true) { t } else { e };
+                let arm = if self.version_decided(c) == Some(true) {
+                    t
+                } else {
+                    e
+                };
                 self.stmt(arm, ind)?;
                 self.flush(ind);
                 Ok(())
@@ -6500,7 +6505,9 @@ impl<'a> FnWriter<'a> {
         }
         let call = match &version {
             // `@FR-R-Version`: the fast twin where the flag holds, the twin as written elsewhere.
-            Some(flag) if mask & super::INV_BIT != 0 && mask & super::AP_BIT == 0 && fresh.is_none() => {
+            Some(flag)
+                if mask & super::INV_BIT != 0 && mask & super::AP_BIT == 0 && fresh.is_none() =>
+            {
                 cx.request_twin(d, mask | super::VF_BIT);
                 let fast = super::twin_name(cx.data, d, mask | super::VF_BIT);
                 let xs = xs.join(", ");

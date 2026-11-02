@@ -263,20 +263,52 @@ impl Walk<'_> {
         }
     }
 
-    /// The tests that make condition `c` answer `want`, or `None` where it cannot be decided.
-    fn tests(&self, c: &Value, want: bool) -> Option<Vec<Test>> {
-        match c.unspan() {
+    /// The tests that make condition `cond` answer `want`, or `None` where it cannot be decided.
+    fn tests(&self, cond: &Value, want: bool) -> Option<Vec<Test>> {
+        match cond.unspan() {
             Value::Call(d, a) if a.len() == 2 => {
                 let (lo, hi) = (self.lin(&a[0])?, self.lin(&a[1])?);
                 let t = match (op_name(self.data, *d), want) {
-                    ("OpLtInt", true) => Test { lo, hi, strict: true },
-                    ("OpLtInt", false) => Test { lo: hi, hi: lo, strict: false },
-                    ("OpLeInt", true) => Test { lo, hi, strict: false },
-                    ("OpLeInt", false) => Test { lo: hi, hi: lo, strict: true },
-                    ("OpGtInt", true) => Test { lo: hi, hi: lo, strict: true },
-                    ("OpGtInt", false) => Test { lo, hi, strict: false },
-                    ("OpGeInt", true) => Test { lo: hi, hi: lo, strict: false },
-                    ("OpGeInt", false) => Test { lo, hi, strict: true },
+                    ("OpLtInt", true) => Test {
+                        lo,
+                        hi,
+                        strict: true,
+                    },
+                    ("OpLtInt", false) => Test {
+                        lo: hi,
+                        hi: lo,
+                        strict: false,
+                    },
+                    ("OpLeInt", true) => Test {
+                        lo,
+                        hi,
+                        strict: false,
+                    },
+                    ("OpLeInt", false) => Test {
+                        lo: hi,
+                        hi: lo,
+                        strict: true,
+                    },
+                    ("OpGtInt", true) => Test {
+                        lo: hi,
+                        hi: lo,
+                        strict: true,
+                    },
+                    ("OpGtInt", false) => Test {
+                        lo,
+                        hi,
+                        strict: false,
+                    },
+                    ("OpGeInt", true) => Test {
+                        lo: hi,
+                        hi: lo,
+                        strict: false,
+                    },
+                    ("OpGeInt", false) => Test {
+                        lo,
+                        hi,
+                        strict: true,
+                    },
                     _ => return None,
                 };
                 Some(vec![t])
@@ -285,16 +317,20 @@ impl Walk<'_> {
                 self.tests(&a[0], !want)
             }
             // `a or b` decided false: both false.
-            Value::If(a, t, b) if matches!(t.unspan(), Value::Boolean(true)) && !want => {
-                let mut x = self.tests(a, false)?;
-                x.extend(self.tests(b, false)?);
-                Some(x)
+            Value::If(first, yes, second)
+                if matches!(yes.unspan(), Value::Boolean(true)) && !want =>
+            {
+                let mut both = self.tests(first, false)?;
+                both.extend(self.tests(second, false)?);
+                Some(both)
             }
             // `a and b` decided true: both true.
-            Value::If(a, b, f) if matches!(f.unspan(), Value::Boolean(false)) && want => {
-                let mut x = self.tests(a, true)?;
-                x.extend(self.tests(b, true)?);
-                Some(x)
+            Value::If(first, second, no)
+                if matches!(no.unspan(), Value::Boolean(false)) && want =>
+            {
+                let mut both = self.tests(first, true)?;
+                both.extend(self.tests(second, true)?);
+                Some(both)
             }
             _ => None,
         }
@@ -309,7 +345,11 @@ impl Walk<'_> {
         let Value::Call(g, ga) = elem.unspan() else {
             return;
         };
-        if ga.len() != 3 || !matches!(op_name(self.data, *g), "OpGetVector" | "OpGetVectorNullable")
+        if ga.len() != 3
+            || !matches!(
+                op_name(self.data, *g),
+                "OpGetVector" | "OpGetVectorNullable"
+            )
         {
             return;
         }
@@ -319,8 +359,16 @@ impl Walk<'_> {
         let (Some((p, offs)), Some(idx)) = (self.header(&ga[0]), self.lin(&ga[2])) else {
             return;
         };
-        self.leaf.tests.push(Test { lo: Lin::Const(0), hi: idx.clone(), strict: false });
-        self.leaf.tests.push(Test { lo: idx, hi: Lin::Len(p, offs), strict: true });
+        self.leaf.tests.push(Test {
+            lo: Lin::Const(0),
+            hi: idx.clone(),
+            strict: false,
+        });
+        self.leaf.tests.push(Test {
+            lo: idx,
+            hi: Lin::Len(p, offs),
+            strict: true,
+        });
         self.leaf.raw.insert(args.as_ptr() as usize);
     }
 
@@ -341,9 +389,10 @@ impl Walk<'_> {
             }
             Value::Set(x, e) => {
                 self.walk(e)?;
-                let local = self.lin(e).map(Local::Lin).or_else(|| {
-                    self.header(e).map(|(p, o)| Local::Header(p, o))
-                });
+                let local = self
+                    .lin(e)
+                    .map(Local::Lin)
+                    .or_else(|| self.header(e).map(|(p, o)| Local::Header(p, o)));
                 match local {
                     Some(l) => {
                         self.env.insert(*x, l);
@@ -463,8 +512,10 @@ pub fn leaf(data: &Data, d: u32, inputs: &Inputs) -> Option<Leaf> {
             for t in &leaf.tests {
                 for side in [&t.lo, &t.hi] {
                     side.walk(&mut |n| {
-                        if let Lin::Add(_, _, at) | Lin::Sub(_, _, at) | Lin::Mul(_, _, at) | Lin::Neg(_, at) =
-                            n
+                        if let Lin::Add(_, _, at)
+                        | Lin::Sub(_, _, at)
+                        | Lin::Mul(_, _, at)
+                        | Lin::Neg(_, at) = n
                         {
                             plain.insert(*at);
                         }

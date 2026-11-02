@@ -34,6 +34,11 @@ pub(crate) struct VLoop {
     flags: HashMap<usize, (String, Vec<String>)>,
 }
 
+/// The counter values a loop must have left for its guard to be asked: the precondition is
+/// asked twice per entry, which a shorter loop does not repay — drawing's `fill_gradient`
+/// rows measured +3-4 % (gcc) versioned without a floor, unchanged at eight.
+const MIN_TRIPS: i64 = 8;
+
 /// What a counter's facts say of one argument: its invariant part (`None` for none) and the
 /// counter's coefficient, -1, 0 or 1.
 type ArgShape<'v> = (Option<&'v Value>, i64);
@@ -106,7 +111,7 @@ impl Cx<'_> {
             );
         }
         out.push_str("    return ok;\n}\n");
-        self.version_fns.borrow_mut().push_str(&out);
+        self.gen_decls.borrow_mut().push_str(&out);
         name
     }
 }
@@ -119,9 +124,21 @@ fn pre_expr(l: &Lin, leaves: &[Lin]) -> String {
             let i = leaves.iter().position(|x| x == l).unwrap_or(0);
             format!("a{i}")
         }
-        Lin::Add(a, b, _) => format!("loft_vg_add({}, {}, &ok)", pre_expr(a, leaves), pre_expr(b, leaves)),
-        Lin::Sub(a, b, _) => format!("loft_vg_sub({}, {}, &ok)", pre_expr(a, leaves), pre_expr(b, leaves)),
-        Lin::Mul(a, b, _) => format!("loft_vg_mul({}, {}, &ok)", pre_expr(a, leaves), pre_expr(b, leaves)),
+        Lin::Add(a, b, _) => format!(
+            "loft_vg_add({}, {}, &ok)",
+            pre_expr(a, leaves),
+            pre_expr(b, leaves)
+        ),
+        Lin::Sub(a, b, _) => format!(
+            "loft_vg_sub({}, {}, &ok)",
+            pre_expr(a, leaves),
+            pre_expr(b, leaves)
+        ),
+        Lin::Mul(a, b, _) => format!(
+            "loft_vg_mul({}, {}, &ok)",
+            pre_expr(a, leaves),
+            pre_expr(b, leaves)
+        ),
         Lin::Neg(a, _) => format!("loft_vg_neg({}, &ok)", pre_expr(a, leaves)),
     }
 }
@@ -231,9 +248,9 @@ impl FnWriter<'_> {
                         | "OpMulInt" | "OpMulIntNullable",
                         2,
                     )
-                    | ("OpMinSingleInt", 1) => {
-                        a.iter().all(|y| self.version_invariant(rebound, counters, y))
-                    }
+                    | ("OpMinSingleInt", 1) => a
+                        .iter()
+                        .all(|y| self.version_invariant(rebound, counters, y)),
                     _ => crate::opt::hoist::scalar_read(name, a)
                         .is_some_and(|key| self.held_scalar(&key).is_some()),
                 }
@@ -264,16 +281,25 @@ impl FnWriter<'_> {
         }
         let inv = |y: &Value| self.version_invariant(rebound, counters, y);
         match self.cx.data.def(*d).name() {
-            "OpAddInt" | "OpAddIntNullable" if counter(&a[1]) && inv(&a[0]) => Some((Some(&a[0]), 1)),
-            "OpAddInt" | "OpAddIntNullable" if counter(&a[0]) && inv(&a[1]) => Some((Some(&a[1]), 1)),
-            "OpMinInt" | "OpMinIntNullable" if counter(&a[1]) && inv(&a[0]) => Some((Some(&a[0]), -1)),
+            "OpAddInt" | "OpAddIntNullable" if counter(&a[1]) && inv(&a[0]) => {
+                Some((Some(&a[0]), 1))
+            }
+            "OpAddInt" | "OpAddIntNullable" if counter(&a[0]) && inv(&a[1]) => {
+                Some((Some(&a[1]), 1))
+            }
+            "OpMinInt" | "OpMinIntNullable" if counter(&a[1]) && inv(&a[0]) => {
+                Some((Some(&a[0]), -1))
+            }
             _ => None,
         }
     }
 
     /// One call site, at the loop's prelude: its flag decided, and the held inputs its
     /// precondition read; `None` where it is not versioned.
-    #[expect(clippy::too_many_lines, reason = "one guard: the inputs, the arguments, the two ends")]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one guard: the inputs, the arguments, the two ends"
+    )]
     fn version_site(
         &mut self,
         rc: &RangeCounters,
@@ -380,22 +406,22 @@ impl FnWriter<'_> {
                     }
                     None => "INT64_C(0)".to_string(),
                 },
-                Lin::Input(v, f) => {
-                    let p = pos(*v).ok_or("a leaf input of no parameter")?;
-                    let k = scalar_keys
+                Lin::Input(var, fld) => {
+                    let at = pos(*var).ok_or("a leaf input of no parameter")?;
+                    let which = scalar_keys
                         .iter()
-                        .position(|(q, g)| *q as usize == p && g == f)
+                        .position(|(q, g)| *q as usize == at && g == fld)
                         .ok_or("a leaf input the twin does not take")?;
-                    inputs[k].clone()
+                    inputs[which].clone()
                 }
-                Lin::Len(v, offs) => {
-                    let p = pos(*v).ok_or("a leaf length of no parameter")?;
-                    let k = fi
+                Lin::Len(var, offs) => {
+                    let at = pos(*var).ok_or("a leaf length of no parameter")?;
+                    let which = fi
                         .headers
                         .iter()
-                        .position(|(q, o, _)| *q as usize == p && o == offs)
+                        .position(|(q, o, _)| *q as usize == at && o == offs)
                         .ok_or("a leaf length the twin does not take")?;
-                    format!("{}.len", inputs[scalar_keys.len() + k])
+                    format!("{}.len", inputs[scalar_keys.len() + which])
                 }
                 _ => return Err("a precondition leaf that is no parameter, input or length".into()),
             });
@@ -407,7 +433,7 @@ impl FnWriter<'_> {
         let mut guard = vec![
             first,
             format!(
-                "loft_vg_span({flag}_f, {end}, {}, &{flag}_l)",
+                "loft_vg_span({flag}_f, {end}, {}, {MIN_TRIPS}, &{flag}_l)",
                 i32::from(rc.inclusive)
             ),
         ];
@@ -459,21 +485,22 @@ impl FnWriter<'_> {
         }
         None
     }
+}
 
-    /// A proven element read or write in a fast twin, through the held header `held`.
-    pub(super) fn version_access(
-        &self,
-        name: &str,
-        held: &str,
-        size: i64,
-        fld: i64,
-        index: &str,
-        value: Option<&str>,
-    ) -> String {
-        match (name, value) {
-            ("OpSetInt", Some(v)) => format!("loft_vh_put_int({held}, {size}, {index}, {fld}, {v})"),
-            _ => format!("loft_vh_at_int({held}, {size}, {index}, {fld})"),
+/// A proven element read or write in a fast twin, through the held header `held`.
+pub(super) fn version_access(
+    name: &str,
+    held: &str,
+    size: i64,
+    fld: i64,
+    index: &str,
+    value: Option<&str>,
+) -> String {
+    match (name, value) {
+        ("OpSetInt", Some(v)) => {
+            format!("loft_vh_put_int({held}, {size}, {index}, {fld}, {v})")
         }
+        _ => format!("loft_vh_at_int({held}, {size}, {index}, {fld})"),
     }
 }
 

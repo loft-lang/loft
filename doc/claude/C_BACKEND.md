@@ -329,7 +329,14 @@ function-local table of those evaluations; `LOFT_NO_TABULATE=1` keeps the body. 
 consumed once as a field of an appended record literal is built inside the element
 (`hoist::element_first`, `@FR-R-ElemFirst`, `c::body::elem_first`): the element minted and its
 vector fields zeroed at the temp's declaration, the temp bound to its field slot, the append
-keeping only its scalar sets and finish; `LOFT_NO_ELEMENT_FIRST=1` turns it off.
+keeping only its scalar sets and finish; `LOFT_NO_ELEMENT_FIRST=1` turns it off.  An
+innermost counted loop that calls a leaf's held-inputs twin — an accessor whose bounds tests
+are linear in its arguments (`opt::version::leaf`, `@FR-R-Version`, `c::body::version`) —
+decides at its prelude whether the leaf's precondition (`f__vp`) holds at the counter's first
+and last values; the call is then `vg ? f__inv__vf(…) : f__inv(…)`, the `__vf` twin
+([`VF_BIT`]) taking its decided tests, reading its elements at the proven index and doing the
+tested arithmetic plain.  Fewer than eight counter values left: not versioned.
+`LOFT_NO_VERSION=1` turns it off, `LOFT_TRACE_VERSION=1` names each leaf and call.
 
 **Held file cursors.**  A loop that reads one `File` through fixed-width integer reads, where
 nothing else in it can see the record (`lower::file_hold::held_file`, `@FR-R-FileHold`), keeps

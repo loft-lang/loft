@@ -236,12 +236,12 @@ pub(crate) struct Cx<'a> {
     pub(crate) gen_decls: std::cell::RefCell<String>,
     /// The generators' resume and release functions, written after them.
     pub(crate) gen_bodies: std::cell::RefCell<String>,
-    /// `@FR-R-Version`: each function's leaf plan, the leaves whose precondition is written,
-    /// and those preconditions' text (`body::version`).
-    pub(crate) version_leaves:
-        std::cell::RefCell<std::collections::HashMap<u32, Option<std::rc::Rc<crate::opt::version::Leaf>>>>,
+    /// `@FR-R-Version`: each function's leaf plan, and the leaves whose precondition is written
+    /// (into `gen_decls`, `body::version`).
+    pub(crate) version_leaves: std::cell::RefCell<
+        std::collections::HashMap<u32, Option<std::rc::Rc<crate::opt::version::Leaf>>>,
+    >,
     pub(crate) version_pres: std::cell::RefCell<std::collections::HashSet<u32>>,
-    pub(crate) version_fns: std::cell::RefCell<String>,
     /// `@FR-R-Transient`'s twins and the structs they use (`body::transient`).
     pub(crate) tr: std::cell::RefCell<body::transient::TrState>,
     /// `@FR-R-AppendTwin`'s window clause: per function, the element size its append twin's
@@ -361,8 +361,9 @@ pub(crate) const VF_BIT: u64 = 1 << 56;
 pub(crate) const NN_SHIFT: u32 = 32;
 pub(crate) const NN_PARAMS: usize = 24;
 pub(crate) const NN_MASK: u64 = ((1u64 << NN_PARAMS) - 1) << NN_SHIFT;
-const _: () =
-    assert!(NN_MASK & (VF_BIT | DS_BIT | AP_BIT | KH_BIT | APV_BIT | APR_BIT | NK_BIT | INV_BIT) == 0);
+const _: () = assert!(
+    NN_MASK & (VF_BIT | DS_BIT | AP_BIT | KH_BIT | APV_BIT | APR_BIT | NK_BIT | INV_BIT) == 0
+);
 
 /// The record collections beside a plain vector the C carries; each layout is described in
 /// `loft_keyed.h`.  An `array` and an `ordered` are the forms a vector and a sorted take when
@@ -410,7 +411,6 @@ impl<'a> Cx<'a> {
             gen_bodies: std::cell::RefCell::new(String::new()),
             version_leaves: std::cell::RefCell::new(std::collections::HashMap::new()),
             version_pres: std::cell::RefCell::new(std::collections::HashSet::new()),
-            version_fns: std::cell::RefCell::new(String::new()),
             tr: std::cell::RefCell::new(body::transient::TrState::default()),
             ap_windows: std::cell::RefCell::new(std::collections::HashMap::new()),
             hot_candidates: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -1409,8 +1409,16 @@ pub(crate) fn type_word(tp: &Type) -> String {
 /// — `--native`'s `_st` twins.  Mask 0 is the function itself.
 /// An `__inv` twin ([`INV_BIT`]) adds `__inv` after the place mask's name.
 pub(crate) fn twin_name(data: &Data, d: u32, mask: u64) -> String {
-    let places =
-        mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT & !KH_BIT & !AP_BIT & !DS_BIT & !VF_BIT & !NN_MASK;
+    let places = mask
+        & !INV_BIT
+        & !NK_BIT
+        & !APR_BIT
+        & !APV_BIT
+        & !KH_BIT
+        & !AP_BIT
+        & !DS_BIT
+        & !VF_BIT
+        & !NN_MASK;
     let inv = if mask & INV_BIT == 0 { "" } else { "__inv" };
     let kh = if mask & KH_BIT == 0 { "" } else { "__kh" };
     let nn_bits = (mask & NN_MASK) >> NN_SHIFT;
@@ -1975,7 +1983,6 @@ pub fn emit_unit_for(
         out.push_str(REFLECT_ENTRY);
     }
     out.push_str(&cx.gen_decls.borrow());
-    out.push_str(&cx.version_fns.borrow());
     out.push_str(&protos);
     out.push_str(&dispatch);
     out.push_str(&cx.drop_code(&fns));
@@ -2809,8 +2816,16 @@ fn hot_twin(mask: u64, statements: usize) -> bool {
 #[expect(clippy::too_many_lines)]
 fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     let data = cx.data;
-    let places =
-        mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT & !KH_BIT & !AP_BIT & !DS_BIT & !VF_BIT & !NN_MASK;
+    let places = mask
+        & !INV_BIT
+        & !NK_BIT
+        & !APR_BIT
+        & !APV_BIT
+        & !KH_BIT
+        & !AP_BIT
+        & !DS_BIT
+        & !VF_BIT
+        & !NN_MASK;
     let def = data.def(d);
     // A `#c` binding (@PLN24): the C function itself, called by its declared signature.
     if def.code() == &Value::Null && !def.c_sig.is_empty() {

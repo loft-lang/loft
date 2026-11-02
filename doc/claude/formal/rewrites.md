@@ -6096,10 +6096,13 @@ each decline.  Site: `opt::tabulate::table`.
                  held-inputs twin `(R-Inputs)` of a LEAF — a function with no loop and no
                  call but operators — calls its FAST TWIN when the leaf's PRECONDITION
                  holds at the call's arguments where the call first runs in this entry of
-                 the loop, and at the arguments the counter's last value gives them.  Each
+                 the loop, and at the arguments the counter's last value gives them, when
+                 the range holds at least eight values.  Each
                  argument the precondition reads is invariant over the loop, or invariant
                  plus a literal multiple of the counter; the inputs it reads are the twin's
-                 held scalars and held headers' lengths.  The precondition is the leaf's
+                 held scalars and held headers' lengths.  The guard is decided at the
+                 loop's prelude, so each such argument is `X`, `X + i`, `i + X` or `X - i`
+                 with `X` invariant.  The precondition is the leaf's
                  DECIDED TESTS — an `if` whose condition is integer comparisons of linear
                  expressions over the parameters and inputs (an `and` decided true, an `or`
                  decided false) and one of whose arms alone reads or writes an element of a
@@ -6116,18 +6119,25 @@ checks the index arithmetic for overflow and tests the index against the data's 
 twin clips once per quad.  The arguments are `x0 + px` and an invariant row, so every expression
 the tests read is LINEAR in the counter with a constant coefficient (a product of two
 counter-dependent factors declines), and a linear value over an interval takes its extremes at
-the ends: a comparison that holds at the first call's counter and at the last holds at every
-counter between, and an operation that fits at both ends fits between.  Taken at the first call
-rather than at the loop's entry, the guard needs no argument evaluated outside the body, and a
-call under a condition is covered from where it first runs (the counter only grows).  A null
+the ends: a comparison that holds at the counter's first value and at its last holds at every
+value between, and an operation that fits at both ends fits between.  The guard is decided at
+the loop's prelude, where `X` is evaluated and the argument at a counter value is `X ± i`
+refused where it does not fit; the flag is then invariant in the loop and both compilers
+unswitch on it (decided at the first call instead, inside the loop, it measured 2.8× / 3.1×).
+A loop with fewer than eight values left is not versioned: asking the precondition twice per
+entry cost drawing's short `fill_gradient` rows +3–4 % (gcc), and nothing at eight.  A null
 operand is refused, since the checked operator answers null where the plain one would not; a
 null compared is compared as the twin compares it.  The fast twin changes nothing else, so a
 loop that breaks early, or a canvas that is the sheet, runs the same reads and writes in the
-same order.  The flag is `fast ? f__vf(…) : f__inv(…)`, cleared at the loop's prelude; the
-compilers keep it as a predicted branch.  Measured by hand: `draw_quads` 3.46× → 1.52× (gcc),
-3.76× → 1.60× (clang); with the checked operator or the checked element access kept in the fast
-twin, 2.1× / 2.9×.  Switch `LOFT_NO_VERSION`; `LOFT_TRACE_VERSION=1` names each leaf admitted or
-declined and each call versioned.  Sites: `opt::version::leaf`, `c::body::version`.
+same order.  The call is `vg ? f__inv__vf(…) : f__inv(…)`.  Measured (switch A/B, gcc / clang):
+text2d `draw_quads` −36 % / −52 % (≈ 2.0× / 2.2× its twin, from 3.16× / 3.50×), stage
+`render_stage` −35 % / −49 %, `write_text` −13 % (gcc), drawing `composite` −19 % (clang); the
+other rows unchanged but for code placement (stage `blur_region` +8 % on gcc with its kernel's C
+identical, text2d `layout` and `atlas_cell` +5–7 % on clang with no versioned call in their timed
+loops).  With the checked operator or the checked element access kept in the fast twin the hand
+form measured 2.1× / 2.9×.  Switch `LOFT_NO_VERSION`; `LOFT_TRACE_VERSION=1` names each leaf
+admitted or declined and each call versioned.  Sites: `opt::version::leaf`, `c::body::version`.
+Guard `tests/scripts/a-leaf-bounds-test-is-taken-once-per-loop.loft`.
 
 ### A self-call in tail position is a jump
 

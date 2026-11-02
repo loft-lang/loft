@@ -7,30 +7,47 @@
 // index, its index arithmetic plain) only where it holds over the whole range.  Everywhere
 // else the accessor runs as written, so every cell below answers what the interpreter does.
 //
-// The C writer applies it; the interpreter applies nothing and is the oracle.  Every value is
-// hand-computed from the sheet `src` = 3x3 with pixel (x, y) = 1 + 100y + x:
-//   row 0: 1 2 3 · row 1: 101 102 103 · row 2: 201 202 203 · sum 918, data index 3y + x.
+// The C writer applies it; the interpreter applies nothing and is the oracle.  A loop with
+// fewer than eight counter values left is never versioned (asking the precondition twice would
+// cost more than it saves), so the cells' rows are ten wide; c16 is a short one.  Every value
+// is hand-computed from the sheet `src` = 10x3 with pixel (x, y) = 1 + 100y + x, data index
+// 10y + x: row y sums to 55 + 1000y (55, 1055, 2055), 3165 in all.
 //
-// c1  in range at (2, 1): all nine copied — 918; (4, 3) = 203, (2, 1) = 1.
-// c2  at (6, 0) on an 8-wide canvas: x = 8 is off, columns 0-1 copied — 1+2+101+102+201+202 = 609.
-// c3  at (-1, 0): x = -1 is off, columns 1-2 — 2+3+102+103+202+203 = 615.
-// c4  at (0, 4) on a 6-high canvas: y = 6 is off, rows 0-1 — 6+306 = 312.
-// c5  read from (1, 1): x = 3 and y = 3 read 0 and are not copied — 102+103+202+203 = 610.
-// c6  a row that is its own sheet, shifted right by one, left to right: each read sees the
-//     write before it, so the row becomes all 1 — sum 5.
-// c7  the first x of row 1 over 101 is 1 (the loop breaks there); none of row 0 is over 50: -1.
-// c8  `0..=2` of row 2 = 606; `1..=3` = 202+203+0 = 405.
-// c9  `w - 1 - i` (the counter subtracted): row 0 weighted by i + 1 = 3·1 + 2·2 + 1·3 = 10.
+// c1  in range at (2, 1) on 16x6: all thirty copied — 3165; (4, 3) = 203, (2, 1) = 1.
+// c2  at (8, 0): x = 16, 17 are off, columns 0-7 — (36) + (836) + (1636) = 2508.
+// c3  at (-2, 0): x = -2, -1 are off, columns 2-9 — 52 + 852 + 1652 = 2556.
+// c4  at (0, 4) on a 6-high canvas: y = 6 is off, rows 0-1 — 55 + 1055 = 1110.
+// c5  read from (1, 1): x = 10 and y = 3 read 0 and are not copied — rows 1-2 over x 1..9:
+//     954 + 1854 = 2808.
+// c6  a 12-wide row that is its own sheet, shifted right by one, left to right: each read sees
+//     the write before it, so the row becomes all 1 — sum 12.
+// c7  the first x of row 1 over 104 is 4 (the loop breaks there); none of row 0 is over 50: -1.
+// c8  `0..=9` of row 2 = 2055; `2..=10` = (201+2)+…+(201+9) + 1000 = 1652 + 1000 = 2652
+//     (`getd` answers 1000 off the sheet).
+// c9  `w - 1 - i` (the counter subtracted), row 0 weighted by i + 1: the sum over i of
+//     (10 - i)(i + 1) = 10+18+24+28+30+30+28+24+18+10 = 220.
 // c10 x from 2^63 - 8: the sum overflows past i = 7 (null), every read is off the canvas: 0.
 // c11 an empty range answers 0, both forms.
-// c12 `x * x` is no linear index (the leaf declines): d[0] + d[1] + d[4] + 0 = 1+2+102 = 105.
-// c13 a negative index counts from the end: d[-2] + d[-1] + d[0] + d[1] = 202+203+1+2 = 408;
-//     0..3 = 1+2+3 = 6.
-// c14 a computed start: row 1 over 1..3 = 205; over -1..2 = 0+101+102 = 203.
-// c15 `x * (4 - x)` over 0..5 on [1 2 3 4] is 0 3 4 3 0: both ends in range, the middle not —
-//     1 + 4 + 0 + 4 + 1 = 10 (a product of two terms the counter moves declines).
+// c12 `x * x` is no linear index (the leaf declines): x in 0..12 reads d[0 1 4 9 16 25] =
+//     1+2+5+10+107+206 = 331, the rest past the end: 0.
+// c13 a negative index counts from the end: -2..8 reads d[28] + d[29] + d[0..8] = 209 + 210 +
+//     36 = 455; 0..10 = 55.
+// c14 a computed start: row 1 over 1..10 = 9·101 + 45 = 954; over -1..9 = 0 + 9·101 + 36 = 945.
+// c15 `x * (8 - x)` over 0..9 on [1 … 16] is 0 7 12 15 16 15 12 7 0: both ends in range, the
+//     middle not — 1+8+13+16+1000+16+13+8+1 = 1076 (a product of two terms the counter moves
+//     declines).
+// c16 a row three wide (below the floor) copies as written: 6 + 306 + 606 = 918.
+// An accessor's answer off its vector is 1000 where a read one past the end must not pass for
+// it: the store's spare capacity reads 0.
 //
-// @falsified-at: pending
+// @falsified-at: 912c07ba1 — by hand on the C writer (the interpreter and native version
+//   nothing, so `falsify.sh` reads them INERT), each plant alone failing its own cell: the
+//   access's `0 <= index` test dropped (c13: a negative index read before the base), the
+//   precondition asked at the first end only (c2: x = 8 written past the row), the linearity
+//   check struck (c15: the hump's middle read past the end), and an inclusive range read as
+//   exclusive (c8: x = 3 read off the sheet).  The null refusal has no cell: a null argument is
+//   the most negative value, which every admitted shape's lower bound or index test already
+//   refuses.
 
 struct Cv {
   w: integer,
@@ -58,6 +75,16 @@ fn get(self: const Cv, x: integer, y: integer) -> integer {
   }
 }
 
+fn getd(self: const Cv, x: integer, y: integer) -> integer {
+  if x < 0 or x >= self.w or y < 0 or y >= self.h {
+    1000
+  } else {
+    di = y * self.w + x;
+    dd = &self.d;
+    if di < len(dd) { dd[di] ?? 0 } else { 1000 }
+  }
+}
+
 fn put(self: Cv, x: integer, y: integer, v: integer) {
   if x >= 0 and x < self.w and y >= 0 and y < self.h {
     pi = y * self.w + x;
@@ -75,14 +102,14 @@ fn sq(self: const Cv, x: integer) -> integer {
 }
 
 fn hump(self: const Cv, x: integer) -> integer {
-  hi = x * (4 - x);
+  hi = x * (8 - x);
   hd = &self.d;
-  if hi < len(hd) { hd[hi] ?? 0 } else { 0 }
+  if hi < len(hd) { hd[hi] ?? 0 } else { 1000 }
 }
 
 fn hump_sum(c: const Cv) -> integer {
   s = 0;
-  for x in 0..5 {
+  for x in 0..9 {
     s += c.hump(x);
   }
   s
@@ -133,7 +160,7 @@ fn first_over(c: const Cv, y: integer, lim: integer) -> integer {
 fn row_sum_incl(c: const Cv, y: integer, a: integer, b: integer) -> integer {
   s = 0;
   for x in a..=b {
-    s += c.get(x, y);
+    s += c.getd(x, y);
   }
   s
 }
@@ -165,7 +192,7 @@ fn far(c: const Cv) -> integer {
 
 fn sq_sum(c: const Cv) -> integer {
   s = 0;
-  for x in 0..4 {
+  for x in 0..12 {
     s += c.sq(x);
   }
   s
@@ -180,40 +207,43 @@ fn at_sum(c: const Cv, a: integer, b: integer) -> integer {
 }
 
 fn main() {
-  src = mk(3, 3, 1);
-  assert(total(src) == 918, "sheet");
-  d1 = mk(8, 6, 0);
-  blit(d1, src, 0, 0, 2, 1, 3, 3);
-  assert(total(d1) == 918, "c1 sum {total(d1)}");
+  src = mk(10, 3, 1);
+  assert(total(src) == 3165, "sheet");
+  d1 = mk(16, 6, 0);
+  blit(d1, src, 0, 0, 2, 1, 10, 3);
+  assert(total(d1) == 3165, "c1 sum {total(d1)}");
   assert(d1.get(4, 3) == 203 && d1.get(2, 1) == 1, "c1 pixels");
-  d2 = mk(8, 6, 0);
-  blit(d2, src, 0, 0, 6, 0, 3, 3);
-  assert(total(d2) == 609, "c2 {total(d2)}");
-  d3 = mk(8, 6, 0);
-  blit(d3, src, 0, 0, -1, 0, 3, 3);
-  assert(total(d3) == 615, "c3 {total(d3)}");
-  d4 = mk(8, 6, 0);
-  blit(d4, src, 0, 0, 0, 4, 3, 3);
-  assert(total(d4) == 312, "c4 {total(d4)}");
-  d5 = mk(8, 6, 0);
-  blit(d5, src, 1, 1, 0, 0, 3, 3);
-  assert(total(d5) == 610, "c5 {total(d5)}");
-  row = mk(5, 1, 1);
-  shift_self(row, 4);
-  assert(total(row) == 5, "c6 {total(row)}");
-  assert(first_over(src, 1, 101) == 1, "c7 break");
+  d2 = mk(16, 6, 0);
+  blit(d2, src, 0, 0, 8, 0, 10, 3);
+  assert(total(d2) == 2508, "c2 {total(d2)}");
+  d3 = mk(16, 6, 0);
+  blit(d3, src, 0, 0, -2, 0, 10, 3);
+  assert(total(d3) == 2556, "c3 {total(d3)}");
+  d4 = mk(16, 6, 0);
+  blit(d4, src, 0, 0, 0, 4, 10, 3);
+  assert(total(d4) == 1110, "c4 {total(d4)}");
+  d5 = mk(16, 6, 0);
+  blit(d5, src, 1, 1, 0, 0, 10, 3);
+  assert(total(d5) == 2808, "c5 {total(d5)}");
+  row = mk(12, 1, 1);
+  shift_self(row, 11);
+  assert(total(row) == 12, "c6 {total(row)}");
+  assert(first_over(src, 1, 104) == 4, "c7 break");
   assert(first_over(src, 0, 50) == -1, "c7 none");
-  assert(row_sum_incl(src, 2, 0, 2) == 606, "c8 in");
-  assert(row_sum_incl(src, 2, 1, 3) == 405, "c8 edge");
-  assert(mirror_sum(src, 0) == 10, "c9 {mirror_sum(src, 0)}");
+  assert(row_sum_incl(src, 2, 0, 9) == 2055, "c8 in {row_sum_incl(src, 2, 0, 9)}");
+  assert(row_sum_incl(src, 2, 2, 10) == 2652, "c8 edge {row_sum_incl(src, 2, 2, 10)}");
+  assert(mirror_sum(src, 0) == 220, "c9 {mirror_sum(src, 0)}");
   assert(far(src) == 0, "c10 {far(src)}");
   assert(row_sum_incl(src, 0, 2, 1) == 0 && row_sum(src, 0, 2, 2) == 0, "c11");
-  assert(sq_sum(src) == 105, "c12 {sq_sum(src)}");
-  assert(at_sum(src, -2, 2) == 408, "c13 negative {at_sum(src, -2, 2)}");
-  assert(at_sum(src, 0, 3) == 6, "c13 in");
-  assert(row_sum(src, 1, 1, 3) == 205, "c14 {row_sum(src, 1, 1, 3)}");
-  assert(row_sum(src, 1, -1, 2) == 203, "c14 edge {row_sum(src, 1, -1, 2)}");
-  four = mk(4, 1, 1);
-  assert(hump_sum(four) == 10, "c15 {hump_sum(four)}");
+  assert(sq_sum(src) == 331, "c12 {sq_sum(src)}");
+  assert(at_sum(src, -2, 8) == 455, "c13 negative {at_sum(src, -2, 8)}");
+  assert(at_sum(src, 0, 10) == 55, "c13 in {at_sum(src, 0, 10)}");
+  assert(row_sum(src, 1, 1, 10) == 954, "c14 {row_sum(src, 1, 1, 10)}");
+  assert(row_sum(src, 1, -1, 9) == 945, "c14 edge {row_sum(src, 1, -1, 9)}");
+  wide = mk(16, 1, 1);
+  assert(hump_sum(wide) == 1076, "c15 {hump_sum(wide)}");
+  d16 = mk(16, 6, 0);
+  blit(d16, src, 0, 0, 0, 0, 3, 3);
+  assert(total(d16) == 918, "c16 {total(d16)}");
   println("ok");
 }
