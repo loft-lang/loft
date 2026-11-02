@@ -3941,12 +3941,11 @@ impl<'a> FnWriter<'a> {
         let Some(hdr) = self.held_path(&f.path) else {
             return Ok(None);
         };
-        let lo = match f.next_var {
-            Some(nx) => self.var(nx),
-            None => {
-                let step = self.counter_step(Value::Var(f.index_var));
-                as_int(self.expr(&step, ind)?)?
-            }
+        let lo = if let Some(nx) = f.next_var {
+            self.var(nx)
+        } else {
+            let step = self.counter_step(Value::Var(f.index_var));
+            as_int(self.expr(&step, ind)?)?
         };
         let base = match f.base {
             Some(v) => as_int(self.expr(v, ind)?)?,
@@ -4007,24 +4006,15 @@ impl<'a> FnWriter<'a> {
         };
         self.line(ind, "} else {");
         self.flush(ind + 1);
+        // `#index` takes the last index; the counter that steps (`next`, or `#index` itself in
+        // the single-counter form) takes the step past it.
         let idx = self.var(f.index_var);
-        match f.next_var {
-            Some(nx) => {
-                let next = self.var(nx);
-                self.line(ind + 1, &format!("{idx} = {last};"));
-                let past = self.counter_step(Value::Var(f.index_var));
-                let past = as_int(self.expr(&past, ind + 1)?)?;
-                self.flush(ind + 1);
-                self.line(ind + 1, &format!("{next} = {past};"));
-            }
-            None => {
-                self.line(ind + 1, &format!("{idx} = {last};"));
-                let past = self.counter_step(Value::Var(f.index_var));
-                let past = as_int(self.expr(&past, ind + 1)?)?;
-                self.flush(ind + 1);
-                self.line(ind + 1, &format!("{idx} = {past};"));
-            }
-        }
+        self.line(ind + 1, &format!("{idx} = {last};"));
+        let past = self.counter_step(Value::Var(f.index_var));
+        let past = as_int(self.expr(&past, ind + 1)?)?;
+        self.flush(ind + 1);
+        let stepped = f.next_var.map_or(idx, |nx| self.var(nx));
+        self.line(ind + 1, &format!("{stepped} = {past};"));
         self.line(ind, "}");
         Ok(())
     }
