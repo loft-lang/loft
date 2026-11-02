@@ -244,18 +244,36 @@ impl Scopes<'_> {
     /// (`(O-Witness)`), and a local that owns its stores — a materialised view is one — cannot
     /// also view it.  Written as the whole-value bind `{…}; t = r`, which both backends copy.
     /// A local bound once keeps the alias: its exit free is guarded by store identity.
+    ///
+    /// A WITNESSED local — rebound from a call anywhere in the function, so its stores are its
+    /// owner witness's to account for — takes the same rewrite (loft#2372).  Left aliased, the
+    /// witness never claimed the block's store, and an unwrap of a block-local optional
+    /// (`code = delivered!`) left the local naming the store that block's end freed.  The
+    /// whole-value bind it becomes is one the witness already accounts for.  So does a local
+    /// renamed onto the hidden return buffer: it is an argument by slot, and the same unwrap left
+    /// the caller's buffer naming the freed store.
     fn copy_temp_held_bind(
         &self,
         ov: u16,
         v: u16,
         value: &Value,
         function: &Function,
+        data: &Data,
     ) -> Option<Value> {
+        // A local renamed onto the hidden return buffer (`RetPromotion::Rename`) is an argument
+        // by slot and takes the rewrite as the local it was (loft#2372); a parameter keeps the
+        // caller's value.
+        let return_buffer = function.is_argument(v)
+            && data
+                .def(self.d_nr)
+                .attributes()
+                .iter()
+                .any(|a| a.hidden && a.name == function.name(v));
         if !self.multi_assigned.contains(&ov)
             || function.is_compiler_generated(v)
-            || function.is_argument(v)
-            || function.is_skip_free(v)
-            || function.owner_witness(v).is_some()
+            || (function.is_argument(v) && !return_buffer)
+            // A witnessed local is never-free too, and takes the rewrite all the same (loft#2372).
+            || (function.is_skip_free(v) && function.owner_witness(v).is_none() && !return_buffer)
             || !matches!(
                 function.tp(v),
                 Type::Reference(_, _) | Type::Enum(_, true, _)
@@ -276,8 +294,13 @@ impl Scopes<'_> {
         };
         // Only a value's own statements (a work-ref's reset among them): a block that binds
         // locals keeps its scope.
+        // A witnessed local and the return buffer already adopt a store a compiler temp built
+        // fresh (a literal's work-ref); only a variable the program named hands them a store
+        // another owner still frees (loft#2372).
         if *r == v
             || *r == ov
+            || ((function.owner_witness(v).is_some() || return_buffer)
+                && function.is_compiler_generated(*r))
             || init
                 .iter()
                 .any(|op| matches!(op.unspan(), Value::Set(x, _) if x != r))
@@ -371,7 +394,7 @@ impl Scopes<'_> {
             function.set_owner_witness(v, w);
             self.owner_witness.insert(v, w);
         }
-        if let Some(copy) = self.copy_temp_held_bind(ov, v, value, function) {
+        if let Some(copy) = self.copy_temp_held_bind(ov, v, value, function, data) {
             return self.scan(&copy, function, data);
         }
         // `@FR-O-Complete` / `@FR-B-Copy` — a REASSIGNMENT of a heap local from a value
