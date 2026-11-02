@@ -849,7 +849,7 @@ fn report_unresolved_natives(data: &crate::data::Data, unresolved: &[String]) {
 #[cfg(feature = "native-extensions")]
 fn dest_served(state: &crate::state::State, data: &crate::data::Data, d: u32) -> bool {
     let def = data.def(d);
-    crate::state::codegen::is_text_dest_native(def.name())
+    crate::text_calls::is_text_dest_def(def)
         && state
             .library_names
             .contains_key(&format!("{}_dest", def.native))

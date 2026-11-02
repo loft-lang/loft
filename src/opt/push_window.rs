@@ -12,6 +12,7 @@ use crate::database::Stores;
 use crate::loop_shape::{plain_for_body, range_counters};
 use crate::opt::attrs::retbuf_var;
 use crate::opt::body_writes::owned_local;
+use crate::opt::facts::Facts;
 use crate::opt::loop_records::is_scalar;
 use crate::opt::loop_records::{IN_PLACE_SET_OPS, SCALAR_GETTERS};
 use crate::opt::writes::plain_record_type;
@@ -20,7 +21,7 @@ use crate::opt::writes::{
     push_operands, vector_path,
 };
 use crate::opt::writes::{blocks_header_hoist, scalar_file_read};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 /// `@FR-R-Base`'s growth clause and `@FR-R-RecPtr`'s remainder clause — can two variables'
 /// records be proven to live in DIFFERENT stores, so a growth of the one cannot move the
@@ -493,7 +494,7 @@ pub fn push_window_ok(
     data: &Data,
     def_nr: u32,
     stores: Option<&Stores>,
-    cache: &mut HashMap<u32, bool>,
+    fx: &mut Facts,
 ) -> Result<(), String> {
     if p.fill.is_some() {
         return Err("the loop is one fill".to_string());
@@ -535,7 +536,7 @@ pub fn push_window_ok(
         vars,
         data,
         stores,
-        cache,
+        fx,
         None,
     )
 }
@@ -558,7 +559,7 @@ pub(crate) fn window_parts_ok(
     vars: &crate::variables::Function,
     data: &Data,
     stores: Option<&Stores>,
-    cache: &mut HashMap<u32, bool>,
+    fx: &mut Facts,
     facts: Option<&StoreFacts>,
 ) -> Result<(), String> {
     // The variables that COULD name the root's store: asked per variable through the one
@@ -615,20 +616,21 @@ pub(crate) fn window_parts_ok(
         // default writes, the frame's own return buffer, a record free, a scalar set in
         // place.  None reallocates the root's store, which is all the window's address
         // stands on; the root's LENGTH is protected by the naming tests above.
-        if blocks_header_hoist(
-            part,
-            data,
-            stores,
-            cache,
-            &mut HashSet::new(),
-            Some(vars),
-            HoistTiers {
-                in_place: true,
-                ..HoistTiers::default()
-            },
-            &mut HashSet::new(),
-            None,
-        ) {
+        if fx.fresh_guard(|fx| {
+            blocks_header_hoist(
+                part,
+                data,
+                stores,
+                fx,
+                Some(vars),
+                HoistTiers {
+                    in_place: true,
+                    ..HoistTiers::default()
+                },
+                &mut HashSet::new(),
+                None,
+            )
+        }) {
             return Err("the body writes a store beside its pushes".to_string());
         }
     }
@@ -861,7 +863,7 @@ pub fn mint_window_ok(
     data: &Data,
     def_nr: u32,
     stores: Option<&Stores>,
-    cache: &mut HashMap<u32, bool>,
+    fx: &mut Facts,
 ) -> Result<(), String> {
     let vars = data.def(def_nr).variables();
     let root = m.path.0;
@@ -972,7 +974,7 @@ pub fn mint_window_ok(
         vars,
         data,
         stores,
-        cache,
+        fx,
         None,
     )
 }

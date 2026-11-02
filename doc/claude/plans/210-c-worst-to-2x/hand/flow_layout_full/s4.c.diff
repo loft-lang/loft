@@ -1,0 +1,325 @@
+--- base.c
++++ s4.c
+@@ -26260,6 +26260,43 @@
+     return t1_out;
+ }
+ 
++static inline void bst_into(loft_ref v0_buf, int64_t start, int64_t count, loft_text *out, loft_vh hi0) {
++    loft_text_set(out, loft_lit("", 0));
++    for (int64_t j = start; j < start + count; j++) {
++        uint32_t c = loft_get_char(loft_vh_get(hi0, 4, j), 0);
++        loft_push_code(out, c != 0 ? c : loft_char_of(INT64_C(0)));
++    }
++}
++
++typedef struct { loft_text str; int64_t style; } tr_run;
++typedef struct { tr_run *a; int32_t n, init, cap; } tr_runs;
++static inline tr_run *tr_push(tr_runs *r) {
++    if (r->n == r->cap) { r->cap = r->cap ? r->cap * 2 : 4; r->a = realloc(r->a, (size_t) r->cap * sizeof(tr_run)); }
++    if (r->n == r->init) { r->a[r->init].str = (loft_text) { 0, 0, 0 }; r->init++; }
++    return &r->a[r->n++];
++}
++static void slice_runs_tr(loft_ref d, int64_t a, int64_t b, tr_runs *out) {
++    out->n = 0;
++    if (b <= a) return;
++    int64_t cum = 0;
++    loft_ref pv = loft_field(d, 4);
++    int64_t np = t_6vector_len(pv);
++    loft_vh hp = loft_vh_of(pv);
++    loft_ref bv = loft_field(d, 0);
++    loft_vh hb = loft_vh_of(bv);
++    for (int64_t i = 0; i < np; i++) {
++        uint8_t *pa = loft_rec_ptr(loft_vh_get(hp, 24, i));
++        int64_t ps = cum, pe = loft_wrap_add(cum, loft_pa_i64(pa, 8));
++        int64_t lo = n_clampi(a, ps, pe), hi = n_clampi(b, ps, pe);
++        if (lo < hi) {
++            tr_run *e = tr_push(out);
++            bst_into(bv, loft_pa_i64(pa, 0) + (lo - ps), hi - lo, &e->str, hb);
++            e->style = loft_pa_i64(pa, 16);
++        }
++        cum = pe;
++    }
++}
++
+ static loft_ref n_slice_runs__fr(loft_ref v0_d, int64_t v1_a, int64_t v2_b, loft_ref v18___vdb_1) {
+     loft_ref v3___retbuf = { 0xFFFF, 0, 0 };
+     loft_ref v4_runs = { 0xFFFF, 0, 0 };
+@@ -26355,14 +26392,11 @@
+             t7 = loft_wrap_sub(v13_lo, v11_ps);
+             t8 = loft_wrap_add(t6, t7);
+             t9 = loft_wrap_sub(v14_hi, v13_lo);
+-            loft_text_free(&t10);
+-            t10 = n_buf_slice_text__inv(t5, t8, t9, &v16___work_c1, h2);
+-            loft_text_move(&v15_s, &t10);
+-            loft_text_free(&t10);
++            bst_into(t5, t8, t9, &v16___work_c1, h2);
+             ((void) 0);
+             t11 = (LOFT_PROVED(loft_ph_same(ph3, 16), "slice_runs:ph3"), loft_ph_new(&ph3, 16));
+             v17__elm_1 = t11;
+-            loft_set_text(v17__elm_1, 8, loft_view(&v15_s));
++            loft_set_text(v17__elm_1, 8, loft_view(&v16___work_c1));
+             t12 = loft_pa_i64(loft_pa9_3, 16);
+             loft_set_int(v17__elm_1, 0, t12);
+             loft_ph_finish(&ph3);
+@@ -26791,119 +26825,27 @@
+ }
+ 
+ static double n_token_width__fr(loft_ref v0_d, loft_ref v1_tok, loft_fn v2_resolve, loft_fn v3_measure, loft_ref v6___ref_1) {
+-    double v4_w = (double) NAN;
+-    loft_ref v5_runs = { 0xFFFF, 0, 0 };
+-    int64_t v7__range_end_1 = LOFT_NULL;
+-    int64_t v8_i_index = LOFT_NULL;
+-    int64_t v9_i = LOFT_NULL;
+-    loft_ref v10_r = { 0xFFFF, 0, 0 };
+-    loft_ref v11___ncc_1 = { 0xFFFF, 0, 0 };
+-    loft_ref v12___ref_p2_1 = { 0xFFFF, 0, 0 };
+-    loft_text v13___work_p2_1 = { 0, 0, 0 };
+-    loft_ref v14___ref_2 = { 0xFFFF, 0, 0 };
+-    loft_ref v15___vdb_1 = { 0xFFFF, 0, 0 };
+-    double v16___ret_1 = (double) NAN;
+-    loft_ref v17___lift_1 = { 0xFFFF, 0, 0 };
+-    loft_text v18___lift_2 = { 0, 0, 0 };
+-    double t1;
+-    double t2;
+-    int64_t t3;
+-    int64_t t4;
+-    loft_ref t5;
+-    loft_ref t6;
+-    int64_t t7;
+-    int64_t t8;
+-    double t9;
+-    double t10;
+-    double t11;
+-    loft_vh h1 = { 0xFFFF, 0, 0, 0 };
+-    LOFT_HOLD(2, &v13___work_p2_1, &v18___lift_2);
+-    v17___lift_1 = loft_ref_null();
+-    v14___ref_2 = loft_ref_null();
+-    v15___vdb_1 = loft_ref_null();
+-    v12___ref_p2_1 = loft_ref_null();
+-    v5_runs = loft_ref_null();
+-    v11___ncc_1 = loft_ref_null();
+-    v14___ref_2 = v6___ref_1;
+-    loft_text_set(&v13___work_p2_1, loft_lit("", 0));
+-    if (loft_get_bool(v1_tok, 17) == 1) {
+-        v16___ret_1 = loft_f64(UINT64_C(0x0));
+-        loft_text_free(&v13___work_p2_1);
+-        loft_free_var(&v12___ref_p2_1);
+-        loft_free_var_distinct(&v6___ref_1, v14___ref_2);
+-        t2 = v16___ret_1;
+-        loft_text_free(&v13___work_p2_1);
+-        loft_text_free(&v18___lift_2);
+-        return t2;
+-    }
+-    v4_w = loft_f64(UINT64_C(0x0));
+-    if (v6___ref_1.store_nr == 0xFFFF) {
+-        loft_free_var_distinct(&v6___ref_1, v14___ref_2);
+-        loft_database_room(loft_types, loft_ntypes, &v15___vdb_1, 4, 110);
+-        v6___ref_1 = loft_field(v15___vdb_1, 0);
+-        ((void) 0);
+-    }
+-    loft_frame_site(477);
+-    t3 = loft_get_int(v1_tok, 0);
+-    t4 = loft_get_int(v1_tok, 8);
+-    v5_runs = n_slice_runs(v0_d, t3, t4, v6___ref_1);
+-    loft_frame_site(478);
+-    v7__range_end_1 = t_6vector_len(v5_runs);
+-    v8_i_index = INT64_C(-1);
+-    loft_frame_site(478);
+-    h1 = loft_vh_of(v5_runs);
+-    for (;;) {
+-        v8_i_index = ((v8_i_index) + (INT64_C(1)));
+-        if (v7__range_end_1 <= v8_i_index) {
+-            goto brk_1;
+-        }
+-        v9_i = v8_i_index;
+-        v11___ncc_1 = (LOFT_PROVED(loft_vh_same(h1, v5_runs), "token_width:h1"), loft_vh_get(h1, 16, v9_i));
+-        if (v11___ncc_1.rec != 0) {
+-            v10_r = v11___ncc_1;
+-        } else {
+-            loft_database_typed(&v12___ref_p2_1, 16, 106);
+-            loft_set_text(v12___ref_p2_1, 8, loft_lit("", 0));
+-            loft_set_int(v12___ref_p2_1, 0, INT64_C(0));
+-            v10_r = v12___ref_p2_1;
+-        }
+-        loft_text_set(&v13___work_p2_1, loft_lit("", 0));
+-        loft_text_concat(&v13___work_p2_1, loft_get_text(v10_r, 8));
+-        loft_text_set(&v18___lift_2, loft_view(&v13___work_p2_1));
+-        loft_frame_site(480);
+-        t5 = v17___lift_1;
+-        t7 = (int64_t) loft_stores_allocated;
+-        t8 = loft_get_int(v10_r, 0);
+-        t6 = loft_call0b(v2_resolve, t8, v17___lift_1);
+-        if (t6.store_nr != 0xFFFF && t6.store_nr == v17___lift_1.store_nr && t6.rec == v17___lift_1.rec && t6.pos == v17___lift_1.pos) {
+-        } else
+-        if (loft_fnref_minted(t6, (uint64_t) t7, v2_resolve.clos)) {
++    static tr_runs runs; static loft_ref keep_st = { 0xFFFF, 0, 0 };
++    (void) v6___ref_1;
++    if (loft_get_bool(v1_tok, 17) == 1) return 0.0;
++    double w = 0.0;
++    slice_runs_tr(v0_d, loft_get_int(v1_tok, 0), loft_get_int(v1_tok, 8), &runs);
++    for (int32_t i = 0; i < runs.n; i++) {
++        loft_ref t5 = keep_st;
++        int64_t t7 = (int64_t) loft_stores_allocated;
++        loft_ref t6 = loft_call0b(v2_resolve, runs.a[i].style, keep_st);
++        if (t6.store_nr != 0xFFFF && t6.store_nr == keep_st.store_nr && t6.rec == keep_st.rec && t6.pos == keep_st.pos) {
++        } else if (loft_fnref_minted(t6, (uint64_t) t7, v2_resolve.clos)) {
+             loft_fnref_adopt(t6);
+             if (t5.store_nr != 0xFFFF && t5.store_nr != t6.store_nr) loft_free_ref(t5);
+-            v17___lift_1 = t6;
++            keep_st = t6;
+         } else {
+-            loft_database_typed(&v17___lift_1, 32, 118);
+-            loft_copy_record(loft_types, 118, t6, v17___lift_1, 4);
+-        }
+-        loft_frame_site(480);
+-        t9 = v4_w;
+-        t10 = loft_call1(v3_measure, loft_view(&v18___lift_2), v17___lift_1);
+-        v4_w = (t9 + t10);
+-        loft_text_free(&v18___lift_2);
+-    cont_1:;
+-    }
+-    brk_1:;
+-    loft_free_var(&v17___lift_1);
+-    loft_text_free(&v13___work_p2_1);
+-    loft_free_var(&v12___ref_p2_1);
+-    loft_free_var_distinct(&v6___ref_1, v14___ref_2);
+-    t11 = v4_w;
+-    loft_text_free(&v13___work_p2_1);
+-    loft_text_free(&v18___lift_2);
+-    return t11;
+-    loft_text_free(&v13___work_p2_1);
+-    loft_text_free(&v18___lift_2);
+-    return t1;
++            loft_database_typed(&keep_st, 32, 118);
++            loft_copy_record(loft_types, 118, t6, keep_st, 4);
++        }
++        w += loft_call1(v3_measure, loft_view(&runs.a[i].str), keep_st);
++    }
++    return w;
+ }
+ 
+ static loft_tup0 n_next_line__fr(loft_ref v0_d, loft_ref v1_toks, int64_t v2_from, double v3_w_col, loft_fn v4_resolve, loft_fn v5_measure, loft_ref v18___ref_1) {
+@@ -27198,7 +27140,9 @@
+     uint8_t *loft_pa58_4 = 0;
+     int loft_pl58_4 = 0;
+     LOFT_HOLD(4, &v64___work_p2_1, &v65___work_p2_2, &v66___work_p2_3, &v67___work_p2_4);
+-    v77___lift_1 = loft_ref_null();
++    static tr_runs pl_runs;
++    static loft_ref keep_l1 = { 0xFFFF, 0, 0 }; static loft_ref keep_st = { 0xFFFF, 0, 0 };
++    v77___lift_1 = keep_l1; v45_st = keep_st;
+     v75___ref_7 = loft_ref_null();
+     v76___vdb_4 = loft_ref_null();
+     v73___ref_6 = loft_ref_null();
+@@ -27276,12 +27220,11 @@
+             loft_frame_site(587);
+             t5 = loft_get_int(v16_tok, 0);
+             t6 = loft_get_int(v16_tok, 8);
+-            v18_hruns = n_slice_runs(v0_d, t5, t6, v19___ref_1);
++            slice_runs_tr(v0_d, t5, t6, &pl_runs);
+             loft_frame_site(588);
+-            v20__range_end_2 = t_6vector_len(v18_hruns);
++            v20__range_end_2 = pl_runs.n;
+             v21_ri_index = INT64_C(-1);
+             loft_frame_site(588);
+-            h1 = loft_vh_of(v18_hruns);
+             for (;;) {
+                 v21_ri_index = ((v21_ri_index) + (INT64_C(1)));
+                 if (v20__range_end_2 <= v21_ri_index) {
+@@ -27291,16 +27234,7 @@
+                 loft_frame_site(589);
+                 t7 = v77___lift_1;
+                 t9 = (int64_t) loft_stores_allocated;
+-                v24___ncc_2 = (LOFT_PROVED(loft_vh_same(h1, v18_hruns), "place_line:h1"), loft_vh_get(h1, 16, v22_ri));
+-                if (v24___ncc_2.rec != 0) {
+-                    t10 = v24___ncc_2;
+-                } else {
+-                    loft_database_typed(&v60___ref_p2_2, 16, 106);
+-                    loft_set_text(v60___ref_p2_2, 8, loft_lit("", 0));
+-                    loft_set_int(v60___ref_p2_2, 0, INT64_C(0));
+-                    t10 = v60___ref_p2_2;
+-                }
+-                t11 = loft_get_int(t10, 0);
++                t11 = pl_runs.a[v22_ri].style;
+                 t8 = loft_call0b(v7_resolve, t11, v77___lift_1);
+                 if (t8.store_nr != 0xFFFF && t8.store_nr == v77___lift_1.store_nr && t8.rec == v77___lift_1.rec && t8.pos == v77___lift_1.pos) {
+                 } else
+@@ -27324,7 +27258,7 @@
+     cont_1:;
+     }
+     brk_1:;
+-    loft_free_var(&v77___lift_1);
++    keep_l1 = v77___lift_1;
+     if (v9___retbuf.store_nr == 0xFFFF) {
+         t12 = (uint8_t) (0);
+     } else {
+@@ -27388,32 +27322,23 @@
+             loft_frame_site(601);
+             t17 = loft_get_int(v35_tok2, 0);
+             t18 = loft_get_int(v35_tok2, 8);
+-            v37_pruns = n_slice_runs(v0_d, t17, t18, v25___ref_2);
++            slice_runs_tr(v0_d, t17, t18, &pl_runs);
+             v39_roff = loft_get_int(v35_tok2, 0);
+             loft_frame_site(603);
+-            v40__range_end_4 = t_6vector_len(v37_pruns);
++            v40__range_end_4 = pl_runs.n;
+             v41_rj_index = INT64_C(-1);
+             loft_frame_site(603);
+-            h2 = loft_vh_of(v37_pruns);
+             for (;;) {
+                 v41_rj_index = ((v41_rj_index) + (INT64_C(1)));
+                 if (v40__range_end_4 <= v41_rj_index) {
+                     goto brk_4;
+                 }
+                 v42_rj = v41_rj_index;
+-                v44___ncc_4 = (LOFT_PROVED(loft_vh_same(h2, v37_pruns), "place_line:h2"), loft_vh_get(h2, 16, v42_rj));
+-                if (v44___ncc_4.rec != 0) {
+-                    v43_r = v44___ncc_4;
+-                } else {
+-                    loft_database_typed(&v63___ref_p2_4, 16, 106);
+-                    loft_set_text(v63___ref_p2_4, 8, loft_lit("", 0));
+-                    loft_set_int(v63___ref_p2_4, 0, INT64_C(0));
+-                    v43_r = v63___ref_p2_4;
+-                }
++                tr_run *trr = &pl_runs.a[v42_rj];
+                 loft_frame_site(605);
+                 t19 = v45_st;
+                 t21 = (int64_t) loft_stores_allocated;
+-                t22 = loft_get_int(v43_r, 0);
++                t22 = trr->style;
+                 t20 = loft_call0b(v7_resolve, t22, v45_st);
+                 if (t20.store_nr != 0xFFFF && t20.store_nr == v45_st.store_nr && t20.rec == v45_st.rec && t20.pos == v45_st.pos) {
+                 } else
+@@ -27426,9 +27351,7 @@
+                     loft_copy_record(loft_types, 118, t20, v45_st, 4);
+                 }
+                 loft_frame_site(606);
+-                loft_text_set(&v64___work_p2_1, loft_lit("", 0));
+-                loft_text_concat(&v64___work_p2_1, loft_get_text(v43_r, 8));
+-                v46_rw = loft_call1(v8_measure, loft_view(&v64___work_p2_1), v45_st);
++                v46_rw = loft_call1(v8_measure, loft_view(&trr->str), v45_st);
+                 loft_frame_site(607);
+                 v47_rh = n_run_height(v45_st);
+                 if (v28_line_cs < loft_w64(INT32_C(0))) {
+@@ -27451,11 +27374,11 @@
+                 loft_pa_set(loft_pa48_2, loft_pl48_2, 32, &t28, sizeof(int64_t));
+                 loft_frame_site(609);
+                 t29 = v39_roff;
+-                t30 = t_4text_len(loft_get_text(v43_r, 8));
++                t30 = t_4text_len(loft_view(&trr->str));
+                 v78__same_read_78 = loft_wrap_add(t29, t30);
+                 t31 = (int64_t) (v78__same_read_78);
+                 loft_pa_set(loft_pa48_2, loft_pl48_2, 40, &t31, sizeof(int64_t));
+-                t32 = (int64_t) (loft_get_int(v43_r, 0));
++                t32 = (int64_t) (trr->style);
+                 loft_pa_set(loft_pa48_2, loft_pl48_2, 48, &t32, sizeof(int64_t));
+                 loft_set_byte(v48__elm_1, 56, (uint8_t) (0));
+                 loft_vec_finish(v26_boxes);
+@@ -27469,7 +27392,7 @@
+     cont_3:;
+     }
+     brk_3:;
+-    loft_free_var(&v45_st);
++    keep_st = v45_st;
+     if (v38___ref_3.store_nr == 0xFFFF) {
+         loft_free_var_distinct(&v38___ref_3, v75___ref_7);
+         loft_database_room(loft_types, loft_ntypes, &v76___vdb_4, 4, 110);

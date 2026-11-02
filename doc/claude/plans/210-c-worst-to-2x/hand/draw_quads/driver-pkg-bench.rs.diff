@@ -1,0 +1,12 @@
+--- library/bench/bench.rs
++++ pkg/bench/bench.rs
+@@ -552,9 +552,5 @@
+     let mut sink = 0i64;
+     for r in [
+-        bench_write_text(n),
+-        bench_atlas_cell(n),
+-        bench_layout(n),
+         bench_draw_quads(n),
+-        bench_wrap(n),
+     ] {
+         print_row(&r);

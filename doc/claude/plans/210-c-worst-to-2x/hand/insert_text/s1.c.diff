@@ -1,0 +1,29 @@
+--- base.c
++++ s1.c
+@@ -26260,7 +26260,7 @@
+             ((void) 0);
+             t12 = (LOFT_PROVED(loft_win_same(pw4, pv4, 24), "insert_text:pw4"), loft_win_slot(&pw4, pv4, 24));
+             v29__elm_4 = t12;
+-            loft_copy_record(loft_types, 103, v18_newp, v29__elm_4, 6);
++            memcpy(loft_rec_ptr(v29__elm_4), loft_rec_ptr(v18_newp), 24);
+             loft_win_finish(&pw4, pv4, 24);
+             t13 = loft_pa_i64(loft_pa26_5, 8);
+             if (v21_ro < t13) {
+@@ -26283,7 +26283,7 @@
+             ((void) 0);
+             t20 = (LOFT_PROVED(loft_win_same(pw4, pv4, 24), "insert_text:pw4"), loft_win_slot(&pw4, pv4, 24));
+             v31__elm_6 = t20;
+-            loft_copy_record(loft_types, 103, v26_p, v31__elm_6, 6);
++            memcpy(loft_rec_ptr(v31__elm_6), loft_pa26_5, 24);
+             loft_win_finish(&pw4, pv4, 24);
+         }
+     cont_2:;
+@@ -26298,7 +26298,7 @@
+         loft_vec_prealloc(v22_np, 1, 24);
+         t23 = loft_vec_append(v22_np, 24);
+         v32__elm_7 = t23;
+-        loft_copy_record(loft_types, 103, v18_newp, v32__elm_7, 6);
++        memcpy(loft_rec_ptr(v32__elm_7), loft_rec_ptr(v18_newp), 24);
+         loft_vec_finish(v22_np);
+     }
+     if (v4___retbuf.store_nr == 0xFFFF) {

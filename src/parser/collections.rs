@@ -427,17 +427,33 @@ impl Parser {
     /// The index is pre-incremented from `-1` by the `{#iter next}` block, so at the test
     /// it is the 0-based index just READ, and `len <= idx` is exactly "past the end".
     /// Re-read each iteration rather than hoisted, so an in-loop `#remove` — which shrinks
-    /// the vector and steps the index back — still terminates. Forward-only: these
-    /// builtins have no reverse form, so the `for` statement's `idx < 0` companion test
-    /// has nothing to answer here.
-    pub(crate) fn vector_loop_break(&mut self, coll: &Value, index_var: u16) -> Vec<Value> {
+    /// the vector and steps the index back — still terminates.  `@FR-I-Comp` — a walk that
+    /// can run BACKWARDS (`rev(v)`, the comprehension's only reverse form) also takes the `for`
+    /// statement's `idx < 0` companion test: the reverse step parks the index at `i32::MIN`
+    /// past the first element, and without it `[for x in rev(v) { x }]` read below zero for
+    /// ever (loft#2345).  The builtins have no reverse form and pay nothing for it.
+    pub(crate) fn vector_loop_break(
+        &mut self,
+        coll: &Value,
+        index_var: u16,
+        reversible: bool,
+    ) -> Vec<Value> {
         let len = self.cl("OpLengthVector", std::slice::from_ref(coll));
         let past_end = self.cl("OpLeInt", &[len, Value::Var(index_var)]);
-        vec![v_if(
+        let mut out = vec![v_if(
             past_end,
             v_block(vec![Value::Break(0)], Type::Void, "break"),
             Value::Null,
-        )]
+        )];
+        if reversible {
+            let before_start = self.cl("OpLtInt", &[Value::Var(index_var), Value::Int(0)]);
+            out.push(v_if(
+                before_start,
+                v_block(vec![Value::Break(0)], Type::Void, "break"),
+                Value::Null,
+            ));
+        }
+        out
     }
 
     /// The ONE home for a vector's per-element ITERATION stride — the byte
@@ -3567,63 +3583,37 @@ use #count instead"
         }
     }
 
-    #[allow(clippy::type_complexity)]
-    pub(crate) fn parse_for_iter_setup(
-        &mut self,
-        id: &str,
-        src_id: &str,
-        in_type: &Type,
-        expr: Value,
-        destructure_names: Option<&[String]>,
-    ) -> (u16, Option<u16>, u16, Value, Value, Value, Vec<Value>) {
-        let var_tp = self.for_type(in_type);
-        let var_tp = self.struct_value_loop_type(in_type, &expr, var_tp);
-        // For text loops: {id}#next drives the loop; {id}#index is saved per-iteration.
-        let (iter_var, pre_var) = if walks_text(in_type) {
-            let pos_var = self.create_var(&format!("{id}#next"), &I32);
-            self.vars.defined(pos_var);
-            let index_var = self.create_var(&format!("{id}#index"), &I32);
-            self.vars.defined(index_var);
-            (pos_var, Some(index_var))
-        } else {
-            let iv = self.create_var(&format!("{id}#index"), &I32);
-            self.vars.defined(iv);
-            (iv, None)
-        };
-        // A loop variable that lands on a name the function already uses for something
-        // else is rejected, in two shapes that both silently produced wrong values.
-        //
-        //   * Outer-local shadow (`x = 5; for x in …`) — the loop clobbers `x`, whatever
-        //     the two types are.  Caught on PASS 1: the prior binding is unambiguously a
-        //     plain local, because a preceding loop's binding carries `was_loop_var`.
-        //   * Nested same-name loops (`for i { for i { … } }`) — the inner loop re-points
-        //     `i` at its own variable for the body and never restores it, so the outer
-        //     loop's remaining body would read the inner one.  Caught on PASS 2, via the
-        //     active-loop chain.
-        //
-        // Both ask what the SOURCE spelling denotes right now.  `_` is exempt: it is the
-        // universal discard and must work across element types in one function.
-        //
-        // SEQUENTIAL same-name loops are legal, and loft#915 is why they need no check:
-        // each loop binds its own variable, so the second inherits no type, dep or storage
-        // from the first.  That replaces loft#690's diagnostic — *"loop variable 'i' has
-        // type text but was previously used as integer"* — which existed because
-        // `add_variable` handed the second loop the FIRST binding and its body then read
-        // B's records through A's layout (`m=8589934636` for a sum of 3).  The corruption
-        // is now unreachable by construction rather than by report, so the diagnostic is
-        // gone and the shape it rejected compiles.  The local collision it ALSO covered is
-        // the case above, which no longer needs a type comparison to state: any non-loop
-        // binding of the name is the shadow, whatever its type.
+    /// `@FR-B-Scope` — a loop variable (a `for` statement's or a comprehension's) may not take
+    /// the name of a local still in scope: the loop would clobber it, whatever the two types
+    /// are.  Two shapes, both silently wrong once:
+    ///
+    ///   * Outer-local shadow (`x = 5; for x in …`).  Caught on PASS 1: the prior binding is
+    ///     unambiguously a plain local, because a preceding loop's binding carries
+    ///     `was_loop_var`.  A local whose block has ENDED is no shadow — the loop's variable
+    ///     is a new binding, as a statement's bind after the block is (loft#1700, loft#2321).
+    ///   * Nested same-name loops (`for i { for i { … } }`) — the inner loop re-points `i` at
+    ///     its own variable for the body and never restores it, so the outer loop's remaining
+    ///     body would read the inner one.  Caught on PASS 2, via the active-loop chain.
+    ///
+    /// Both ask what the SOURCE spelling denotes right now.  `_` is exempt: it is the
+    /// universal discard and must work across element types in one function.
+    ///
+    /// SEQUENTIAL same-name loops are legal, and loft#915 is why they need no check: each
+    /// loop binds its own variable, so the second inherits no type, dep or storage from the
+    /// first.  That replaces loft#690's diagnostic, which existed because `add_variable`
+    /// handed the second loop the FIRST binding.
+    pub(crate) fn refuse_loop_shadow(&mut self, id: &str, src_id: &str) {
         let existing_var = self.vars.var(src_id);
         if id != "_"
             && existing_var != u16::MAX
             && self.first_pass
             && !self.vars.was_loop_var(existing_var)
             && !self.vars.is_active_loop_var(existing_var)
+            && !self.binding_ended(existing_var)
             // `text_return` converts text variables to `RefVar(Text)` work buffers for the
             // return path.  A loop variable converted this way IS the work buffer, so the
             // iterator writing into it is correct, not a shadow.
-            && !matches!(self.vars.var_type(existing_var), Type::RefVar(_))
+            && !matches!(self.vars.var_type(existing_var).base(), Type::RefVar(_))
         {
             diagnostic!(
                 self.lexer,
@@ -3647,6 +3637,57 @@ use #count instead"
                  not support nested same-name loops"
             );
         }
+    }
+
+    /// `@FR-B-Scope`, loft#2321 — the binding a loop variable's spelling named before the loop
+    /// (`prior`), when that binding has ENDED.  The loop's body takes the spelling; its end
+    /// gives it back ([`Self::restore_loop_spelling`]), so the code after the loop meets the
+    /// ended binding it met before, and pass 2 opens the function on the binding pass 1
+    /// opened it on.  Left pointing at the loop's variable, pass 2 resolved an earlier
+    /// sibling block's `t = "a"` to it — a loop variable it had not bound yet — and refused
+    /// the bind as a type change.
+    pub(crate) fn ended_spelling(
+        &self,
+        src_id: &str,
+        prior: u16,
+        for_var: u16,
+    ) -> Option<(String, u16)> {
+        (src_id != "_" && prior != u16::MAX && prior != for_var && self.binding_ended(prior))
+            .then(|| (src_id.to_string(), prior))
+    }
+
+    /// The spelling [`Self::ended_spelling`] kept, given back after the loop's body.
+    pub(crate) fn restore_loop_spelling(&mut self, spelling: Option<(String, u16)>) {
+        if let Some((name, prior)) = spelling {
+            self.vars.set_name(&name, prior);
+        }
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn parse_for_iter_setup(
+        &mut self,
+        id: &str,
+        src_id: &str,
+        in_type: &Type,
+        expr: Value,
+        destructure_names: Option<&[String]>,
+    ) -> (u16, Option<u16>, u16, Value, Value, Value, Vec<Value>) {
+        let var_tp = self.for_type(in_type);
+        let var_tp = self.struct_value_loop_type(in_type, &expr, var_tp);
+        // For text loops: {id}#next drives the loop; {id}#index is saved per-iteration.
+        let (iter_var, pre_var) = if walks_text(in_type) {
+            let pos_var = self.create_var(&format!("{id}#next"), &I32);
+            self.vars.defined(pos_var);
+            let index_var = self.create_var(&format!("{id}#index"), &I32);
+            self.vars.defined(index_var);
+            (pos_var, Some(index_var))
+        } else {
+            let iv = self.create_var(&format!("{id}#index"), &I32);
+            self.vars.defined(iv);
+            (iv, None)
+        };
+        // A loop variable may not take the name of a local still in scope (`@FR-B-Scope`).
+        self.refuse_loop_shadow(id, src_id);
         // loft#762 — `_` gets its OWN slot per loop.
         //
         // `_` is the universal discard, so `change_var_type` retypes it silently and
@@ -3662,14 +3703,17 @@ use #count instead"
         // The name stays bound to this slot for the body (the caller rebinds it around
         // `parse_block` and restores the outer one after), because `_` IS readable —
         // `for _ in 0..4 { r = r + _ }` is pinned in `anon-loop-counters.loft`.
+        let prior = self.vars.var(src_id);
         let for_var = if id == "_" {
             self.create_unique("_", &var_tp)
         } else {
             self.create_loop_var(id, &var_tp)
         };
-        // Point the source spelling at THIS loop's binding, and leave it there: the body
-        // reads `i` as this loop's variable, and so does the code after the loop, which is
-        // the value `i` held before loop variables were split per loop (loft#915).
+        let spelling = self.ended_spelling(src_id, prior, for_var);
+        // Point the source spelling at THIS loop's binding: the body reads `i` as this loop's
+        // variable, and so does the code after the loop — the value `i` held before loop
+        // variables were split per loop (loft#915) — unless the spelling named an ended
+        // binding before it, which the loop gives back after its body (`ended_spelling`).
         if id != src_id {
             self.vars.set_name(src_id, for_var);
         }
@@ -3704,9 +3748,17 @@ use #count instead"
             Value::Null
         };
         let mut create_iter = expr;
+        // `@FR-I-Index` — a SLICE walk (`for x in v[a..b]`, `rev(v[..-1])`) counts with its own
+        // range counter, which holds each element's position in `v` — what `x#index` is for a
+        // walk over `v` itself, and what `v[x#index]` needs to read `x`.  The counter is renamed
+        // to the loop's `x#index`, so the loop sets it; left apart, `x#index` was never written
+        // and reading it stopped the code generator (no slot).
+        slice_counter_is_index(&mut create_iter, iter_var, pre_var);
         let it = Type::Iterator(Box::new(var_tp.clone()), Box::new(Type::Null));
         let iter_next = self.iterator(&mut create_iter, in_type, &it, iter_var, pre_var);
         Self::destructure_into_filter(&mut if_step, &mut destructure_setup);
+        // Handed to the caller last, so a loop in the filter or the iterable cannot take it.
+        self.loop_spelling = spelling;
         (
             iter_var,
             pre_var,
@@ -4636,12 +4688,14 @@ use #count instead"
             let mut block = Value::Null;
             let loop_write_state = self.vars.save_and_clear_write_state();
             self.vars.clear_write_state();
+            let spelling = self.loop_spelling.take();
             self.parse_block("for", &mut block, &Type::Void);
             if id == "_"
                 && let Some(prev) = outer_discard
             {
                 self.vars.set_name("_", prev);
             }
+            self.restore_loop_spelling(spelling);
             // P235 step 3: prepend the destructure Set ops so each
             // iteration unpacks the loop var into the user-named binders
             // before the user's body runs.
@@ -7579,7 +7633,13 @@ use #count instead"
 
     /// Compiler special-case for `insert(v: vector<T>, idx: integer, elem: T)`.
     /// Emits `OpInsertVector` to create space, then the appropriate `OpSet*` to write the value.
-    pub(crate) fn parse_insert(&mut self, val: &mut Value, list: &[Value], types: &[Type]) -> Type {
+    pub(crate) fn parse_insert(
+        &mut self,
+        val: &mut Value,
+        list: &[Value],
+        types: &[Type],
+        arg_pos: &[crate::lexer::Position],
+    ) -> Type {
         if self.first_pass {
             return Type::Void;
         }
@@ -7624,7 +7684,7 @@ use #count instead"
             &elem_given,
             &elm_tp,
             "the element `insert` stores",
-            None,
+            arg_pos.get(2),
         ) {
             diagnostic!(
                 self.lexer,
@@ -8021,7 +8081,7 @@ use #count instead"
 
         // loft#1000 — a VECTOR ends on its length, not on the element's value.
         let break_if_done = if matches!(in_type, Type::Vector(_, _)) {
-            let brk = self.vector_loop_break(&Value::Var(vec_var), iter_var);
+            let brk = self.vector_loop_break(&Value::Var(vec_var), iter_var, false);
             Value::Insert(brk)
         } else {
             let mut test_for = Value::Var(for_var);
@@ -8177,6 +8237,37 @@ use #count instead"
         *val = v_block(stmts, I32.clone(), "count_if");
         I32.clone()
     }
+}
+
+/// The rename the comment at its `for` call site explains: a slice walk's own counter becomes
+/// the loop's `x#index`.  The `for` statement and the comprehension both build their walk
+/// through here.
+pub(crate) fn slice_counter_is_index(create_iter: &mut Value, iter_var: u16, pre_var: Option<u16>) {
+    if let Value::Iter(_, _, next, _) = &*create_iter
+        && pre_var.is_none()
+        && matches!(next.unspan(), Value::Block(bl) if bl.name == "Vector Index")
+        && let Some(counter) = slice_counter(next)
+        && counter != iter_var
+    {
+        rename_var(create_iter, counter, iter_var);
+    }
+}
+
+/// The counter of a range walk inside `next` — the variable an `Iter range` block steps and
+/// answers — or `None`: the position a slice walk yields each element at.
+fn slice_counter(next: &Value) -> Option<u16> {
+    let mut found = None;
+    next.any_node(&mut |n| {
+        if let Value::Block(bl) = n
+            && bl.name == "Iter range"
+            && let Some(Value::Var(c)) = bl.operators.last().map(Value::unspan)
+        {
+            found = Some(*c);
+            return true;
+        }
+        false
+    });
+    found
 }
 
 /// Recursively rename variable `from` to `to` everywhere in `val` — as a READ

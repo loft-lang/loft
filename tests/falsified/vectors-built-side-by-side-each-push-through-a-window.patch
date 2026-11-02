@@ -4,7 +4,7 @@ index 0e97f7187..5ff5dedec 100644
 +++ b/src/opt/hoist.rs
 @@ -5798,6 +5798,9 @@ pub fn push_windows_ok(
      stores: Option<&Stores>,
-     cache: &mut HashMap<u32, bool>,
+     fx: &mut Facts,
  ) -> Result<(), String> {
 +    if true {
 +        return Ok(());

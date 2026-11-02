@@ -618,9 +618,8 @@ borrowed; a witnessed destination is reset as before, since its old store has to
 same bind (`c/body.rs`, the call-copy statement) and gated at compile time by the type walk
 (`Cx::swap_safe`), with `-DLOFT_NO_SWAP_REBIND` the switch.  The C's copy mints its destination
 TYPED (`loft_bind_copy` over `loft_database_typed`), as `OpDatabase(tp)` does, so the next
-rebind finds the typed root the exchange asks for.  Measured on zttext `invert` (one `Doc`
-rebound per step of a 1 000-step walk): the per-step deep copy of the whole document was 43 %
-of the routine.  Guards `tests/scripts/a-rebind-exchanges-into-a-destination-it-does-not-reset.loft`
+rebind finds the typed root the exchange asks for ([heap-history.md](heap-history.md) has the
+pricing).  Guards `tests/scripts/a-rebind-exchanges-into-a-destination-it-does-not-reset.loft`
 and `tests/scripts/a-rebind-from-a-fresh-result-moves-on-both-backends.loft` (the matrix: a
 loop, a view of the old value, a stored reference, a callee answering its argument or a view
 into one, a first bind, a fn-ref, a locked destination), pin `tests/swap_rebind.rs`.
@@ -649,6 +648,11 @@ and take every later claim off the bump path (@PLN157 § V-ai).
                  last fill reached — exactly as (H-ClearRelease)'s reset does, and
                  releases what the elements owned as that reset does.  The vector
                  reads empty and present; nothing else of the store survives.
+                 THE PROLOGUE CLAUSE: a clear of the buffer (`OpClearVector(x)`) directly
+                 before such a mint of it — line markers only between — is not written;
+                 the mint empties the vector and releases what its elements owned.  A
+                 buffer a live generator frame names is ORPHANED by the mint (G-Arg-Rebind);
+                 its clear would empty the value that frame was handed, so it is dropped too.
 ```
 
 **In words.**  A capacity is no value: a vector of length zero with room for 16 000 bytes and
@@ -688,10 +692,8 @@ every caller (loft#1287, `scopes::scan_args`). Nothing widens: the mark names on
 parameter's ENTRY store, so a REPEATED call still releases the fresh store the previous one
 installed, which the frame does own.
 
-> `(H-FreeLIFO)` is retired: `(H-FreeAny)` states that a free needs no nesting order and `(H-FreeAll)`
-> the completeness obligation.  Nesting is not a HEAP rule — single ownership is discharged by
-> [ownership.md](ownership.md).  The measurement and the ruling: [heap-history.md](heap-history.md)
-> § D-heap-LIFO.
+> `(H-FreeLIFO)` is retired: a free needs no nesting order (`(H-FreeAny)`; completeness is `(H-FreeAll)`), and single
+> ownership is [ownership.md](ownership.md)'s — [heap-history.md](heap-history.md) § D-heap-LIFO.
 
 ### Drop — a structure's lease is released once, at that structure's death
 
@@ -921,9 +923,8 @@ OPEN: **0**.  The entries the register closed, and how each closed, are in
 `tests/ownership_drop_gate.rs` gives every generated cell a lease verdict and ties each cell
 that must release once, and does not, to exactly one open entry.
 
-Writing these rules **shrinks** [operational.md](operational.md)'s D-op-1 — the heap/store
-steps it named as *"unwritten … the interpreter remains their spec"* now have a written
-contract (this file). What remains is the SAME meta-deviation, not a heap-specific one:
+Against [operational.md](operational.md)'s D-op-1 what remains is the SAME meta-deviation,
+not a heap-specific one:
 
 - **Conformance is differential, not definitional** — the heap steps here are enforced across
   the two backends by the @PLN89 **differential oracle** (D-op-1), whose corpus deliberately
@@ -992,8 +993,7 @@ The rules are checkable directly, and every check is a program both backends mus
 - **Free discipline (`H-Free*`)** — the `LOFT_POISON` suite + the ownership fuzz gate are the
   standing falsifiers: any `H-FreeTwice` / use-after-free / out-of-LIFO free surfaces as a
   poisoned read or a leak-count mismatch. The register that guarantees they never fire is
-  [ownership.md](ownership.md)'s — read its own `OPEN` line, which is not zero (this row said
-  "0 open" while that register carried an open entry).
+  [ownership.md](ownership.md)'s — read its own `OPEN` line rather than a restatement here.
 
 D-op-1's falsifier applies here too: any program where the interpreter and `--native` diverge
 on a heap step is the definitional error, and this doc is the definition it fails against.

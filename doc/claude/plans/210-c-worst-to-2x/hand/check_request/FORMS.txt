@@ -1,0 +1,18 @@
+loft commit   3cfb11fb9
+library       pluginabi @ 14fb3fe
+emit          LOFT_RELEASE_PASS_PROBE=1 loft --emit-c base.c bench/bench.loft (in the driver package)
+
+base  base.c
+base  base_pad.c
+skip  rv.c  (no edit of a kept base)
+skip  rvd.c  (no edit of a kept base)
+edit  s1.c  from base.c
+edit  s2.c  from base.c
+edit  s2_pad.c  from base_pad.c
+same  s3.c  as s2_pad.c
+edit  s4.c  from base_pad.c
+edit  s5.c  from base_pad.c
+edit  s6.c  from base_pad.c
+edit  s6b.c  from base.c
+edit  s7a.c  from base.c
+edit  s7m.c  from base.c

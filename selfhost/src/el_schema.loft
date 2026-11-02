@@ -1,0 +1,721 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The store schema a file's definitions register (src/typedef.rs `fill_all` / `fill_database`,
+// src/database/types.rs `Stores::structure` / `field` / `finish_type`, src/calc.rs
+// `calculate_positions`), over the image's `types`.  A type's number is its position in that
+// table, so registering in the Rust order is what makes the numbers agree.  What a struct field
+// needs beyond a scalar, a text or an already laid-out record is refused by name.
+use ir;
+use el;
+use el_types;
+
+// One field's storage, as `finish_type` collects it.
+pub struct SizeAlign {
+  pub size: integer,
+  pub align: integer
+}
+
+pub struct Layout {
+  pub positions: vector<integer>,
+  pub size: integer,
+  pub align: integer
+}
+
+struct Gap {
+  pos: integer,
+  size: integer
+}
+
+pub const NO_TYPE = 65535;
+
+// `typedef::fill_all`, the part a plain struct reaches: every struct the file declared that has
+// no type number yet is registered, in definition order, then the schema is finished.
+pub fn fill_all(e: el::El) {
+  // `actual_types_deferred` before it: each enum the file declared, in definition order, a
+  // schema enum of its name whose values its variants are, each variant valued its position
+  // (`register_enum_db`, `stamp_enum_variants`).
+  for d in e.b.data.definitions {
+    if d.def_type == el::DT_ENUM && d.known_type == NO_TYPE && !starts_with(d.name, "__nullable<") {
+      register_enum(e, d#index);
+    }
+  }
+  // Each `vector<T>` field's `main_vector<T>` wrapper (and `vector<T>`) where no construct made
+  // it, at the position the lexer has reached: the end of the file.
+  eof = el::pos_at(e, len(e.p.src) - 1);
+  for d in e.b.data.definitions {
+    if d.def_type != el::DT_STRUCT || d.source != e.source {
+      continue;
+    }
+    for a in d.attributes {
+      match a.typedef[0] {
+        TyVector { inner } => {
+          nm = el_types::elem_name(e, inner);
+          if nm != "" && el::def_nr(e, "main_vector<{nm}>") < 0 {
+            make_vector_def(e, inner, nm, eof, false);
+          }
+        },
+        _ => {}
+      }
+    }
+  }
+  for d in e.b.data.definitions {
+    if d.def_type == el::DT_STRUCT && d.known_type == NO_TYPE {
+      fill_database(e, d#index);
+    }
+  }
+  // P191: each keyed local's store type — a `hash` or `index`, through a `?` — registered before
+  // the schema is finished, in function and variable order; a `sorted` is made where it is met.
+  for d in e.b.data.definitions {
+    if d.def_type != el::DT_FUNCTION || d.source != e.source {
+      continue;
+    }
+    for v in d.variables.variables {
+      t = el_types::base(v.type_def[0] ?? ir::TyVoid);
+      if (t is TyHash || t is TyIndex) && keyed_content_known(e, t) {
+        keyed_type(e, t);
+      }
+    }
+  }
+  finish(e);
+}
+
+// The pre-registration's guard: the element struct already has its store type.
+fn keyed_content_known(e: el::El, t: ir::TypeT) -> boolean {
+  n = match t {
+    TyHash { n } => n,
+    TyIndex { n } => n,
+    _ => -1
+  };
+  n >= 0 && el::def(e, n).known_type != NO_TYPE
+}
+
+// `Data::vector_def`: the `vector<T>` definition where it is missing, and the `main_vector<T>`
+// wrapper struct a vector local's store is (one field, `vector`), both at `pos`; `typed` gives
+// the wrapper its record type, as a construct does (the schema's own pass leaves it unknown).
+pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typed: boolean) {
+  vt = ir::TyVector { inner: t, dep: [] };
+  if el::def_nr(e, "vector<{nm}>") < 0 {
+    vd = el::add_def(e, "vector<{nm}>", pos, el::DT_VECTOR);
+    e.b.data.definitions[vd].returned = [vt];
+    e.b.data.definitions[vd].parent = match t {
+      TyReference { n } => n,
+      _ => el::source_nr(e, 0, nm)
+    };
+  }
+  // The schema's own pass makes the `vector<T>` store type at once where `T` has one already.
+  if !typed {
+    kt = match t {
+      TyReference { n } => el::def(e, n).known_type,
+      _ => known(e, nm)
+    };
+    if kt >= 0 && kt != NO_TYPE {
+      vector_type(e, kt);
+    }
+  }
+  md = el::add_def(e, "main_vector<{nm}>", pos, el::DT_STRUCT);
+  e.b.data.definitions[md].source = 0;
+  if typed {
+    e.b.data.definitions[md].returned = [ir::TyReference { n: md, dep: [] }];
+  }
+  e.b.data.definitions[md].attributes += [el::attribute("vector", vt)];
+}
+
+fn register_enum(e: el::El, d: integer) {
+  num = len(e.b.types);
+  e.b.types += [ir::DbType {
+    name: el::def(e, d).name,
+    parts: [ir::PtEnum { values: [] }],
+    keys: [],
+    complex: false,
+    linked: false,
+    size: NO_TYPE,
+    align: 255,
+    field_groups: []
+  }];
+  values: vector<ir::EnumPair> = [];
+  for a in el::def(e, d).attributes {
+    if (a.typedef[0]) is TyEnum {
+      values += [ir::EnumPair { nr: NO_TYPE, name: a.name }];
+      e.b.data.definitions[d].attributes[a#index].value = [ir::NdEnum { ord: len(values), tp: num }];
+    }
+  }
+  e.b.types[num].parts = [ir::PtEnum { values: values }];
+  e.b.data.definitions[d].known_type = num;
+}
+
+// `typedef::fill_database` for a plain struct: a schema type under the struct's name, each
+// stored attribute a field of its content type, in declaration order.
+fn fill_database(e: el::El, d: integer) {
+  def = el::def(e, d);
+  if schema_type(e, def.name) >= 0 {
+    el::refuse(e, "a struct named like a type the schema already has");
+    return;
+  }
+  // The structure first, then each field's content — a narrow Part is made after it.
+  s = structure(e, def.name);
+  e.b.data.definitions[d].known_type = s;
+  for a in def.attributes {
+    if a.constant {
+      continue;
+    }
+    c = match a.typedef[0] {
+      TyInteger { spec } => int_part(e, spec, a.alias_d_nr, a.nullable),
+      _ => content_type(e, a.typedef[0])
+    };
+    if c < 0 {
+      el::refuse(e, "a struct field of this type");
+      return;
+    }
+    if joins_group(e, s, c) {
+      el::refuse(e, "a struct with a linked collection group");
+      return;
+    }
+    f = field(e, s, a.name, c);
+    if a.nullable {
+      set_field_nullable(e, s, f);
+    }
+  }
+}
+
+// The schema type a field of type `t` stores, or -1: a plain `integer` stores `integer`'s
+// 8 bytes, a text, a boolean, a float, a single and a character store their own definitions'
+// types, a record its struct's.
+// The store type of a keyed collection type, made where it is missing.
+pub fn keyed_type(e: el::El, t: ir::TypeT) -> integer {
+  store_type(e, t, false)
+}
+
+fn content_type(e: el::El, t: ir::TypeT) -> integer {
+  store_type(e, t, true)
+}
+
+// `field`: a struct field's keyed collection makes its key fields immutable; a local's does not.
+fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
+  match t {
+    TyInteger { spec } => {
+      if spec.forced_size != 0 {
+        return -1;
+      }
+      schema_type(e, "integer")
+    },
+    TyText { dep: _ } => known(e, "text"),
+    TyBoolean => known(e, "boolean"),
+    TyFloat => known(e, "float"),
+    TySingle => known(e, "single"),
+    TyCharacter => known(e, "character"),
+    TyReference { n } => {
+      k = el::def(e, n).known_type;
+      if k == NO_TYPE || el::def(e, n).def_type != el::DT_STRUCT { -1 } else { k }
+    },
+    // `database.vector(content)`, deduplicated by name, made where it is missing; the element's
+    // `vector<T>` definition takes its number (`check_vector`).
+    TyVector { inner } => {
+      nm = el_types::elem_name(e, inner);
+      if nm == "" {
+        return -1;
+      }
+      c = content_type(e, inner);
+      if c < 0 {
+        return -1;
+      }
+      vt = vector_type(e, c);
+      vd = el::def_nr(e, "vector<{nm}>");
+      if vd >= 0 {
+        e.b.data.definitions[vd].known_type = vt;
+      }
+      vt
+    },
+    // `database.hash` / `sorted` / `index` over the element's store type, its key fields made
+    // immutable in the element's definition (`set_mutable`).
+    TyHash { n, names } => {
+      c = keyed_content(e, n);
+      if c < 0 {
+        return -1;
+      }
+      nm = "hash<{e.b.types[c].name}[";
+      nrs: vector<integer> = [];
+      for k in names {
+        if k#index > 0 {
+          nm += ",";
+        }
+        nm += k.name;
+        f = field_nr(e, c, k.name);
+        if f >= 0 {
+          nrs += [f];
+        }
+        if field {
+          immutable(e, n, k.name);
+        }
+      }
+      nm += "]>";
+      ht = schema_type(e, nm);
+      if ht >= 0 {
+        return ht;
+      }
+      num = len(e.b.types);
+      e.b.types += [ir::DbType { name: nm, parts: [ir::PtHash { content: c, fields: nrs }], keys: [], complex: true, linked: false, size: 4, align: 4, field_groups: [] }];
+      num
+    },
+    TySorted { n, keys } => sorted_type(e, "sorted", n, keys, field),
+    TyIndex { n, keys } => sorted_type(e, "index", n, keys, field),
+    _ => -1
+  }
+}
+
+// `Stores::determine_keys_for`: a keyed store type's key descriptors — per key field its
+// content's code (`key_descriptor_for_content`, negated when descending), position and start.
+pub fn key_descriptors(e: el::El, t: integer) -> vector<ir::Key> {
+  r: vector<ir::Key> = [];
+  c = -1;
+  ks: vector<ir::KeyField> = [];
+  match e.b.types[t].parts[0] {
+    PtHash { content, fields } => {
+      c = content;
+      for f in fields {
+        ks += [ir::KeyField { nr: f, asc: true }];
+      }
+    },
+    PtSorted { content, keys } => { c = content; ks = keys; },
+    PtIndex { content, keys } => { c = content; ks = keys; },
+    _ => {}
+  }
+  if c < 0 {
+    return r;
+  }
+  fields = struct_fields(e, c);
+  for k in ks {
+    f = fields[k.nr]!;
+    tn = 7;
+    start = 0;
+    if f.content <= 5 {
+      tn = 1 + f.content;
+    } else {
+      match e.b.types[f.content]!.parts[0] {
+        PtInt { start: _ } => { tn = 8; },
+        PtShort { start: m } => { tn = 9; start = m; },
+        PtByte { start: m } => { tn = 10; start = m; },
+        PtShortRaw { start: m } => { tn = 11; start = m; },
+        PtIntRaw { start: _ } => { tn = 12; },
+        _ => {}
+      }
+    }
+    r += [ir::Key { type_nr: if k.asc { tn } else { -tn }, position: f.position, start: start }];
+  }
+  r
+}
+
+// The element store type of a keyed collection, registered first where it is missing.
+fn keyed_content(e: el::El, n: integer) -> integer {
+  if el::def(e, n).def_type != el::DT_STRUCT {
+    return -1;
+  }
+  if el::def(e, n).known_type == NO_TYPE {
+    fill_database(e, n);
+  }
+  el::def(e, n).known_type
+}
+
+fn immutable(e: el::El, d: integer, name: text) {
+  for a in el::def(e, d).attributes {
+    if a.name == name {
+      e.b.data.definitions[d].attributes[a#index].mutable = false;
+    }
+  }
+}
+
+// `Stores::sorted` / `Stores::index` (`create_key`): named by the element and its directed keys.
+fn sorted_type(e: el::El, kind: text, n: integer, keys: vector<ir::SortKey>, field: boolean) -> integer {
+  c = keyed_content(e, n);
+  if c < 0 {
+    return -1;
+  }
+  nm = "{kind}<{e.b.types[c].name}[";
+  nrs: vector<ir::KeyField> = [];
+  for k in keys {
+    if k#index > 0 {
+      nm += ",";
+    }
+    if !k.asc {
+      nm += "-";
+    }
+    nm += k.name;
+    f = field_nr(e, c, k.name);
+    if f >= 0 {
+      nrs += [ir::KeyField { nr: f, asc: k.asc }];
+    }
+    if field {
+      immutable(e, n, k.name);
+    }
+  }
+  nm += "]>";
+  t = schema_type(e, nm);
+  if t >= 0 {
+    return t;
+  }
+  num = len(e.b.types);
+  part = if kind == "sorted" { ir::PtSorted { content: c, keys: nrs } } else { ir::PtIndex { content: c, keys: nrs } };
+  e.b.types += [ir::DbType { name: nm, parts: [part], keys: [], complex: false, linked: false, size: 4, align: 4, field_groups: [] }];
+  num
+}
+
+// `fill_database`'s integer field: the width its alias's `size(n)`, its own forced size or its
+// range gives; the kind that width and the field's nullability pick (`NarrowIntKind::of`, never a
+// narrow-vector element here); the Part that kind stores, under its `min` (`part_min`) — the
+// wide kind keeps `integer`'s 8 bytes.
+fn int_part(e: el::El, spec: ir::IntegerSpec, alias: integer, nullable: boolean) -> integer {
+  s = 0;
+  if alias != el::NONE && el::def(e, alias).forced_size > 0 {
+    s = el::def(e, alias).forced_size;
+  } else if spec.forced_size > 0 {
+    s = spec.forced_size;
+  } else {
+    codes = spec.max - spec.min + 1 + if nullable { 1 } else { 0 };
+    s = if codes <= 256 { 1 } else if codes <= 65536 { 2 } else { 8 };
+  }
+  m = spec.min;
+  if nullable && (s == 1 || s == 2) && spec.min < 0 && ((spec.forced_size == 1 && spec.max - spec.min + 1 == 256) || (spec.forced_size == 2 && spec.max - spec.min + 1 == 65536)) {
+    m = spec.min + 1;
+  }
+  unsigned_wide = spec.min >= 0 && spec.max > 2147483647;
+  if s == 1 {
+    return narrow_part(e, if m == 0 && !nullable { "byte" } else { "byte<{m},{nullable}>" }, ir::PtByte { start: m, nullable: nullable }, 1);
+  }
+  if s == 2 {
+    if nullable {
+      return narrow_part(e, "short<{m},{nullable}>", ir::PtShort { start: m, nullable: nullable }, 2);
+    }
+    return narrow_part(e, "short_raw<{m},{nullable}>", ir::PtShortRaw { start: m, nullable: nullable }, 2);
+  }
+  if s == 4 {
+    if unsigned_wide {
+      return narrow_part(e, "int_raw<{m},{nullable}>", ir::PtIntRaw { start: m, nullable: nullable }, 4);
+    }
+    return narrow_part(e, "int<{m},{nullable}>", ir::PtInt { start: m, nullable: nullable }, 4);
+  }
+  schema_type(e, "integer")
+}
+
+// `Stores::byte` / `short` / `short_raw` / `int` / `int_raw`: the type of that name, made at the
+// end of the table the first time it is asked for, aligned to its size.
+fn narrow_part(e: el::El, name: text, part: ir::DbParts, size: integer) -> integer {
+  t = schema_type(e, name);
+  if t >= 0 {
+    return t;
+  }
+  num = len(e.b.types);
+  e.b.types += [ir::DbType {
+    name: name,
+    parts: [part],
+    keys: [],
+    complex: false,
+    linked: false,
+    size: size,
+    align: size,
+    field_groups: []
+  }];
+  num
+}
+
+// `Stores::vector`: the store type `vector<name of content>`, made at the end of the table the
+// first time it is asked for — a 4-byte handle, complex.
+pub fn vector_type(e: el::El, content: integer) -> integer {
+  name = "vector<{e.b.types[content].name}>";
+  t = schema_type(e, name);
+  if t >= 0 {
+    return t;
+  }
+  num = len(e.b.types);
+  e.b.types += [ir::DbType {
+    name: name,
+    parts: [ir::PtVector { content: content }],
+    keys: [],
+    complex: true,
+    linked: false,
+    size: 4,
+    align: 4,
+    field_groups: []
+  }];
+  num
+}
+
+fn known(e: el::El, name: text) -> integer {
+  d = el::def_nr(e, name);
+  if d < 0 { -1 } else { el::def(e, d).known_type }
+}
+
+// `Stores::position`: a field's byte offset in store type `t`, `u16::MAX` when it has none.
+pub fn field_position(e: el::El, t: integer, name: text) -> integer {
+  for f in struct_fields(e, t) {
+    if f.name == name {
+      return f.position;
+    }
+  }
+  NO_TYPE
+}
+
+// `Stores::field_nr`: the number of the field named `name` in store type `t`, or -1.
+pub fn field_nr(e: el::El, t: integer, name: text) -> integer {
+  for f in struct_fields(e, t) {
+    if f.name == name {
+      return f#index;
+    }
+  }
+  -1
+}
+
+// `Stores::names`: the schema type of that name, or -1.
+pub fn schema_type(e: el::El, name: text) -> integer {
+  for t in e.b.types {
+    if t.name == name {
+      return t#index;
+    }
+  }
+  -1
+}
+
+// `Stores::structure`: a new struct type, not yet sized (`u16::MAX`), its number its position.
+fn structure(e: el::El, name: text) -> integer {
+  num = len(e.b.types);
+  e.b.types += [ir::DbType {
+    name: name,
+    parts: [ir::PtStruct { fields: [] }],
+    keys: [],
+    complex: false,
+    linked: false,
+    size: NO_TYPE,
+    align: 255,
+    field_groups: []
+  }];
+  num
+}
+
+// The element store type of a collection store type, or -1 (`Stores::content`).
+fn element_of(e: el::El, t: integer) -> integer {
+  match e.b.types[t].parts[0] {
+    PtVector { content } => content,
+    PtArray { content } => content,
+    PtSorted { content } => content,
+    PtOrdered { content } => content,
+    PtHash { content } => content,
+    PtIndex { content } => content,
+    PtRadix { content } => content,
+    PtTrie { content } => content,
+    _ => -1
+  }
+}
+
+fn keyed_part(e: el::El, t: integer) -> boolean {
+  match e.b.types[t].parts[0] {
+    PtSorted { content: _ } => true,
+    PtOrdered { content: _ } => true,
+    PtHash { content: _ } => true,
+    PtIndex { content: _ } => true,
+    PtRadix { content: _ } => true,
+    PtTrie { content: _ } => true,
+    _ => false
+  }
+}
+
+// Would a field of store type `c` link with an earlier one (`@FR-Col-Group`): two collections of
+// one element, one of them keyed.
+fn joins_group(e: el::El, s: integer, c: integer) -> boolean {
+  elem = element_of(e, c);
+  if elem < 0 {
+    return false;
+  }
+  for f in struct_fields(e, s) {
+    if element_of(e, f.content) == elem && (keyed_part(e, c) || keyed_part(e, f.content)) {
+      return true;
+    }
+  }
+  false
+}
+
+// `Stores::field`, for a field that joins no group: appended unplaced; the struct becomes
+// complex past eight fields or with a record field.
+fn field(e: el::El, s: integer, name: text, content: integer) -> integer {
+  fields = struct_fields(e, s);
+  num = len(fields);
+  fields += [ir::DbField {
+    name: name,
+    content: content,
+    position: NO_TYPE,
+    default: [],
+    other_indexes: [],
+    nullable: false,
+    target: NO_TYPE
+  }];
+  e.b.types[s].parts = [ir::PtStruct { fields: fields }];
+  ct = e.b.types[content]!;
+  if num > 8 || ct.complex || is_record(ct) {
+    e.b.types[s].complex = true;
+  }
+  num
+}
+
+fn set_field_nullable(e: el::El, s: integer, f: integer) {
+  fields = struct_fields(e, s);
+  fields[f].nullable = true;
+  e.b.types[s].parts = [ir::PtStruct { fields: fields }];
+}
+
+pub fn struct_fields(e: el::El, s: integer) -> vector<ir::DbField> {
+  r: vector<ir::DbField> = [];
+  match e.b.types[s].parts[0] {
+    PtStruct { fields } => { r = fields; },
+    _ => {}
+  }
+  r
+}
+
+fn is_record(t: ir::DbType) -> boolean {
+  match t.parts[0] {
+    PtStruct { fields: _ } => true,
+    PtEnumValue { value: _ } => true,
+    _ => false
+  }
+}
+
+// `Stores::finish`, for the struct types: every one not sized yet is laid out.
+fn finish(e: el::El) {
+  // `finish_type`'s enum arm: one byte, where no variant has a record of its own.
+  for t in e.b.types {
+    if t.size == NO_TYPE && (t.parts[0]) is PtEnum {
+      e.b.types[t#index].size = 1;
+      e.b.types[t#index].align = 1;
+    }
+  }
+  for t in e.b.types {
+    if t.size == NO_TYPE && is_record(t) {
+      finish_type(e, t#index);
+    }
+  }
+  // `determine_keys`, once every record is laid out: each keyed type's key descriptors.
+  for t in e.b.types {
+    if t.parts[0] is PtHash || t.parts[0] is PtSorted || t.parts[0] is PtIndex {
+      e.b.types[t#index].keys = key_descriptors(e, t#index);
+    }
+  }
+}
+
+// `Stores::finish_type` for a struct without linked groups: its fields' contents first, then
+// the fields placed by `calculate_positions` from each content's size and alignment.
+fn finish_type(e: el::El, t: integer) {
+  if e.b.types[t].size != NO_TYPE {
+    return;
+  }
+  fields = struct_fields(e, t);
+  sizes: vector<SizeAlign> = [];
+  for f in fields {
+    if e.b.types[f.content].size == NO_TYPE && f.content != t {
+      finish_type(e, f.content);
+    }
+    ft = e.b.types[f.content]!;
+    sizes += [SizeAlign { size: ft.size, align: ft.align }];
+  }
+  size = 0;
+  align = 0;
+  if len(fields) > 0 {
+    l = calculate_positions(sizes, fields[0].name == "enum");
+    for f in fields {
+      fields[f#index].position = l.positions[f#index] ?? 0;
+    }
+    size = l.size;
+    align = l.align;
+  }
+  e.b.types[t].parts = [ir::PtStruct { fields: fields }];
+  e.b.types[t].size = size;
+  e.b.types[t].align = align;
+}
+
+// `calc::calculate_positions`: the fields placed by descending alignment (8, 4, 2, 1), each in
+// the first gap that holds it — its back end when the gap is wider — or after what is placed,
+// skipping to its alignment and keeping the skipped bytes as a gap.  `sub` keeps the first
+// byte for a variant's tag.  The size is rounded up to the alignment.
+pub fn calculate_positions(fields: vector<SizeAlign>, sub: boolean) -> Layout {
+  gaps: vector<Gap> = [];
+  positions: vector<integer> = [for _ in fields { -1 }];
+  pos = 0;
+  size = 0;
+  align = 0;
+  if sub {
+    pos = 8;
+    positions[0] = 0;
+    gaps = [Gap { pos: 1, size: 7 }];
+    size = 1;
+  }
+  for al in [8, 4, 2, 1] {
+    for f in fields {
+      nr = f#index;
+      if sub && nr == 0 {
+        continue;
+      }
+      if f.align != al {
+        continue;
+      }
+      if al > align {
+        align = al;
+      }
+      first = 0;
+      first_size = 0;
+      gi = -1;
+      for g in gaps {
+        if g.size >= f.size {
+          first = g.pos;
+          first_size = g.size;
+          gi = g#index;
+          break;
+        }
+      }
+      if gi >= 0 && first_size == f.size {
+        gaps = without(gaps, gi);
+        positions[nr] = first;
+        if size < first + f.size {
+          size = first + f.size;
+        }
+      } else if gi >= 0 && first_size > f.size {
+        new_size = first_size - f.size;
+        gaps[gi].size = new_size;
+        positions[nr] = first + new_size;
+        if size < first + new_size + f.size {
+          size = first + new_size + f.size;
+        }
+      } else {
+        // Every alignment is a power of two, so rounding up to it is a mask: no division.
+        aligned = (pos + al - 1) & -al;
+        if aligned > pos {
+          gaps = with_gap(gaps, Gap { pos: pos, size: aligned - pos });
+          pos = aligned;
+        }
+        positions[nr] = pos;
+        pos += f.size;
+        size = pos;
+      }
+    }
+  }
+  a = if align < 1 { 1 } else { align };
+  size = (size + a - 1) & -a;
+  Layout { positions: [for p in positions if p >= 0 { p }], size: size, align: align }
+}
+
+fn without(gaps: vector<Gap>, i: integer) -> vector<Gap> {
+  [for g in gaps if g#index != i { g }]
+}
+
+// A gap kept in position order, as the Rust `BTreeMap` keeps it.
+fn with_gap(gaps: vector<Gap>, n: Gap) -> vector<Gap> {
+  r: vector<Gap> = [];
+  placed = false;
+  for g in gaps {
+    if !placed && n.pos < g.pos {
+      r += [n];
+      placed = true;
+    }
+    r += [g];
+  }
+  if !placed {
+    r += [n];
+  }
+  r
+}

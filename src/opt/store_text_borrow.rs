@@ -18,11 +18,6 @@ use crate::opt::writes::{
     call_writes_store, in_place_only_writer, native_op_is_store_free, text_stack_ref,
 };
 
-thread_local! {
-    static BUFFER_WRITERS_OPEN: std::cell::RefCell<HashSet<u32>> =
-        std::cell::RefCell::new(HashSet::new());
-}
-
 /// What [`borrowed_store_texts`] admits: the discharge temps and the statement-bound text
 /// locals that borrow a text read out of a PARAMETER's store.
 #[derive(Default)]
@@ -231,8 +226,7 @@ pub fn borrowed_store_texts(
         .then(|| retbuf_var(data, def_nr))
         .flatten()
         .map(|rb| frame_minted_locals(data, vars, body, &[rb]));
-    let mut cache: HashMap<u32, bool> = HashMap::new();
-    let mut active: HashSet<u32> = HashSet::new();
+    let mut fx = crate::opt::facts::Facts::fresh();
     for v in temps
         .iter()
         .chain(locals.iter())
@@ -258,7 +252,7 @@ pub fn borrowed_store_texts(
             continue;
         }
         let scope = mention_scope(body, v);
-        if let Some(w) = foreign_store_writer(scope, data, &minted, &mut cache, &mut active, None) {
+        if let Some(w) = foreign_store_writer(scope, data, &minted, &mut fx, None) {
             // The tested clause: a local whose only other writers name the return buffer
             // (or a callee's buffer it is handed) borrows while its parameters' stores are
             // not the buffer's — a run-time test at each bind, a copy where it fails.
@@ -266,14 +260,7 @@ pub fn borrowed_store_texts(
                 && locals.contains(&v)
             {
                 let narrow = tested_scope(body, v, data);
-                let tested = match foreign_store_writer(
-                    narrow,
-                    data,
-                    m,
-                    &mut cache,
-                    &mut active,
-                    Some(vars),
-                ) {
+                let tested = match foreign_store_writer(narrow, data, m, &mut fx, Some(vars)) {
                     Some(w2) => Err(w2),
                     None => param_roots_of(body, v, data, vars)
                         .ok_or("a binding not rooted in a parameter"),
@@ -872,8 +859,7 @@ fn callee_writes_only_its_buffer(
     args: &[Value],
     data: &Data,
     minted: &HashSet<u16>,
-    cache: &mut HashMap<u32, bool>,
-    active: &mut HashSet<u32>,
+    fx: &mut crate::opt::facts::Facts,
 ) -> bool {
     let def = data.def(d);
     let Some(attr) = def.hidden_return_buffer_attr() else {
@@ -882,21 +868,53 @@ fn callee_writes_only_its_buffer(
     if !matches!(args.get(attr).map(Value::unspan), Some(Value::Var(x)) if minted.contains(x)) {
         return false;
     }
-    let Some(rb) = retbuf_var(data, d) else {
+    if retbuf_var(data, d).is_none() {
         return false;
-    };
-    // A recursive call answers yes while its own body is being checked: the property is
-    // that every write lands in the buffer handed in, so a write that breaks it is in a
-    // body this walk reads (the greatest fixpoint, as `in_place_only_writer` assumes none).
-    if !BUFFER_WRITERS_OPEN.with(|o| o.borrow_mut().insert(d)) {
-        return true;
     }
-    let cvars = def.variables();
-    let inner = frame_minted_locals(data, cvars, def.code(), &[rb]);
-    let clean =
-        foreign_store_writer(def.code(), data, &inner, cache, active, Some(cvars)).is_none();
-    BUFFER_WRITERS_OPEN.with(|o| o.borrow_mut().remove(&d));
-    clean
+    fx.ask(&BufferOnly, data, d, None)
+}
+
+/// `@FR-Fact-Kind` — does every write of the function land in the hidden return buffer it is
+/// handed (MUST, its own cycle scope; nothing kept).  A recursive call answers yes while its
+/// own body is being checked: the property is that every write lands in the buffer handed
+/// in, so a write that breaks it is in a body this walk reads (the greatest fixpoint, as
+/// `in_place_only_writer` assumes none).
+struct BufferOnly;
+
+impl crate::opt::facts::Kind for BufferOnly {
+    type Fact = bool;
+    type Ctx = ();
+    const SCOPE: crate::opt::facts::Scope = crate::opt::facts::Scope::BufferOnly;
+    fn memo<'a>(&self, fx: &'a mut crate::opt::facts::Facts<'_>) -> &'a mut HashMap<u32, bool> {
+        &mut fx.buffer_only
+    }
+    fn unknown(&self) -> bool {
+        false
+    }
+    fn native(&self, _def: &crate::data::Definition) -> bool {
+        false
+    }
+    fn on_cycle(&self) -> bool {
+        true
+    }
+    fn keep(&self, _origin: crate::opt::facts::Origin, _clean: &bool, _ctx: Option<&()>) -> bool {
+        false
+    }
+    fn body(
+        &self,
+        fx: &mut crate::opt::facts::Facts,
+        data: &Data,
+        d: u32,
+        _ctx: Option<&()>,
+    ) -> bool {
+        let def = data.def(d);
+        let Some(rb) = retbuf_var(data, d) else {
+            return false;
+        };
+        let cvars = def.variables();
+        let inner = frame_minted_locals(data, cvars, def.code(), &[rb]);
+        foreign_store_writer(def.code(), data, &inner, fx, Some(cvars)).is_none()
+    }
 }
 
 /// The first reason running `node` might grow, free or rewrite a text block of a store the
@@ -912,8 +930,7 @@ pub(crate) fn foreign_store_writer(
     node: &Value,
     data: &Data,
     minted: &HashSet<u16>,
-    cache: &mut HashMap<u32, bool>,
-    active: &mut HashSet<u32>,
+    fx: &mut crate::opt::facts::Facts,
     vars: Option<&crate::variables::Function>,
 ) -> Option<&'static str> {
     let mut why = None;
@@ -934,10 +951,10 @@ pub(crate) fn foreign_store_writer(
             let def = data.def(*d);
             let name = def.name();
             if !matches!(def.code(), Value::Null) {
-                if call_writes_store(*d, data, cache, active, None)
-                    && !in_place_only_writer(*d, data, cache, active, None)
+                if call_writes_store(*d, data, fx, None)
+                    && !in_place_only_writer(*d, data, fx, None)
                     && !(vars.is_some()
-                        && callee_writes_only_its_buffer(*d, args, data, minted, cache, active))
+                        && callee_writes_only_its_buffer(*d, args, data, minted, fx))
                 {
                     why = Some("a callee that writes a store in its scope");
                     return true;

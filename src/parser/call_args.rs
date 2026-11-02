@@ -132,6 +132,13 @@ impl Parser {
             // links to it through the lowering the `&` bind uses (`scalar_place_ref`, in
             // `convert`) — except a narrow integer store place, which no link can honour yet
             // (D-bind-39), refused here in the bind's own words.
+            // A heap member of a tuple local handed to a `&` parameter: the local is built as its
+            // record, whose field the parameter then links (`record_heap_member_link`).
+            if matches!(tp.base(), Type::RefVar(_))
+                && let Value::TupleGet(t, i) = actual_code.unspan()
+            {
+                self.record_heap_member_link(*t, *i);
+            }
             let scalar_place = matches!(tp.base(), Type::RefVar(inner) if crate::data::is_scalar(inner))
                 && !matches!(actual_code.unspan(), Value::Var(_))
                 && Self::is_amp_place(&actual_code, &self.data);
@@ -154,15 +161,19 @@ impl Parser {
                 all_types[nr] = tp.clone();
                 continue;
             }
-            // A tuple local's TEXT member is a place as well, and no `&text` link reaches it
-            // yet: refused rather than handed a work copy that would drop the callee's write
-            // (`(B-Ref-Reshape)`, as the `&` bind of the same member refuses).
-            if matches!(tp.base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
+            // A tuple member no link can honour: refused by name rather than handed a work copy
+            // that would drop the callee's write (`(B-Ref-Reshape)`, as the `&` bind of the same
+            // member refuses).
+            if matches!(tp.base(), Type::RefVar(_))
                 && let Value::TupleGet(t, i) = actual_code.unspan()
                 && let Err(elem) = self.linkable_tuple_member(*t, *i)
             {
-                let i = *i;
-                self.refuse_tuple_member_link(&elem, i);
+                let (t, i) = (*t, *i);
+                self.refuse_tuple_member_link(t, &elem, i);
+                if !self.first_pass {
+                    actual.push(actual_code);
+                    continue;
+                }
             }
             if let Type::RefVar(inner) = &tp
                 && !matches!(inner.as_ref(), Type::Text(_))
@@ -312,7 +323,12 @@ impl Parser {
             // @PLN204 — a 64-bit caller's argument for a 32-bit library's parameter.
             let narrowed = self.width32_call_argument(&mut actual_code, actual_type, &tp, d_nr);
             let actual_type = narrowed.as_ref().unwrap_or(actual_type);
-            let arg_at = actual_code.span_pos().copied();
+            // The argument's own span, else its first token (`arg_pos`, captured in
+            // `parse_call`): a local read carries no span, and the cursor has moved to `)`.
+            let arg_at = actual_code
+                .span_pos()
+                .copied()
+                .or_else(|| arg_pos.get(nr).copied());
             // A scalar PLACE is linked, not stored, so @FR-N-Store's "a nullable value becomes
             // null there" does not describe it, and its cure (`?`) would turn the place into a
             // value.  What can go wrong is that the element is absent: a link to an absent place

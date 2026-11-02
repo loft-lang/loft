@@ -382,6 +382,8 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False,
             code, out, err = run(host_build(flags + (ASAN if asan else []), c, exe, links), 120)
             # `cl` says its errors on stdout, after a line naming the source.
             err = err or out
+        if code == "timeout":
+            return path, "cc-error", f"[{mode}] the compiler did not finish in its time limit", None, times
         if code != 0:
             lines = [l for l in err.decode(errors="replace").strip().split("\n") if l.strip()]
             first = next((l for l in lines if "error" in l), lines[0] if lines else "")
@@ -559,7 +561,10 @@ def main(argv: list[str]) -> int:
             (ic, io, ie), (cc, co, ce) = outs
             print(f"      interpreter exit {ic}: {io[:300]!r}")
             print(f"      C           exit {cc}: {co[:300]!r}")
-            if "--stderr" in argv:
+            # Both stderrs under --verbose too: a side that exits 1 with no output says why
+            # only there (an assertion, a fault), and the log is all a host this box does not
+            # have leaves to read.
+            if "--stderr" in argv or verbose:
                 print(f"      interpreter stderr: {scrubbed(ie)[:400]!r}")
                 print(f"      C           stderr: {scrubbed(ce)[:400]!r}")
     report_times(timings, label)

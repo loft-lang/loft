@@ -16,7 +16,7 @@ fn kernel(name: text) -> ir::Bundle {
 fn test_fib_answers_what_the_interpreter_answers() {
   b = kernel("fib");
   fib = lower::find(b, "n_fib");
-  assert(fib >= 0, "the image has fib");
+  assert(fib != null, "the image has fib");
   got = "";
   for n in 0..11 {
     o = run::run(b, fib, [n]);
@@ -24,23 +24,26 @@ fn test_fib_answers_what_the_interpreter_answers() {
     got += "{o.value} ";
   }
   assert(got == "0 1 1 2 3 5 8 13 21 34 55 ", "fib(0..10): {got}");
+  // PF5: 242785 calls deep and wide, each frame given back — the base and the evaluation
+  // stacks where the entry found them.
   o = run::run(b, fib, [25]);
   assert(o.value == 75025, "fib(25): {o.value} {o.refused}");
+  assert(o.stack_left == 0, "fib(25) left {o.stack_left} on the stack");
 }
 
 fn test_an_entry_given_the_wrong_arguments_is_refused() {
   b = kernel("fib");
-  fib = lower::find(b, "n_fib");
+  fib = lower::find(b, "n_fib")!;
   o = run::run(b, fib, []);
   assert(o.refused == "the entry takes 1 arguments, given 0", "refused: {o.refused}");
 }
 
 fn test_a_function_the_lowering_refuses_is_named_not_run() {
   b = kernel("fib");
-  main = lower::find(b, "n_main");
-  assert(main >= 0, "the image has main");
-  o = run::run(b, main, []);
-  assert(o.refused != "", "main formats text, which S1 does not carry: {o.value}");
+  later = lower::find(b, "n_later");
+  assert(later != null, "the image has later");
+  o = run::run(b, later!, [1]);
+  assert(o.refused != "" && o.refused_in == "n_later", "later holds a function value, which S5 carries: {o.value} {o.refused}");
 }
 
 // One kernel's entry, run with `args`; the values are computed outside this code (Python, and
@@ -48,7 +51,7 @@ fn test_a_function_the_lowering_refuses_is_named_not_run() {
 fn ran(kernel_name: text, entry: text, args: vector<integer>) -> integer? {
   b = kernel(kernel_name);
   d = lower::find(b, entry);
-  assert(d >= 0, "the image has {entry}");
+  assert(d != null, "the image has {entry}");
   o = run::run(b, d, args);
   assert(o.refused == "", "{entry} refused: {o.refused}");
   o.value
@@ -70,11 +73,13 @@ fn test_a_loop_with_break_remainder_and_division_runs() {
   assert(ran("collatz", "n_longest", [1, 2000]) == 1161182, "longest(1, 2000)");
 }
 
-fn test_a_break_with_a_value_pending_is_refused() {
+// S1.5: a `break` taken while `t` and `1` are pending leaves the stacks as the loop found them;
+// by hand, rounds 0 to 2 add 2 each, round 3 breaks.
+fn test_a_break_with_values_pending_gives_them_back() {
   b = kernel("pending");
-  d = lower::find(b, "n_pending");
-  o = run::run(b, d, [10]);
-  assert(o.refused == "a break or continue with values pending, which S1 does not carry", "refused: {o.refused}");
+  assert(ran_clean(b, "n_pending", 10) == 6, "pending(10)");
+  assert(ran_clean(b, "n_pending", 2) == 4, "pending(2)");
+  assert(ran_clean(b, "n_pending", 0) == 0, "pending(0)");
 }
 
 fn test_the_stdlibs_own_loft_functions_run_from_the_image() {
@@ -87,9 +92,11 @@ fn test_the_stdlibs_own_loft_functions_run_from_the_image() {
 
 fn test_an_operator_the_interpreter_does_not_carry_is_refused_by_name() {
   b = kernel("stdlib");
-  d = lower::find(b, "n_uses_pow");
+  d = lower::find(b, "n_parsed")!;
   o = run::run(b, d, [3]);
-  assert(o.refused == "an operator the interpreter does not carry: OpPowInt", "refused: {o.refused}");
+  assert(o.refused == "an operator the interpreter does not carry: OpCastVectorFromText", "refused: {o.refused}");
+  // An integer power runs (`OpPowInt`, in the stdlib's `pow`): 3 ** 2.
+  assert(ran("stdlib", "n_uses_pow", [3]) == 9, "uses_pow(3)");
 }
 
 fn test_the_small_integer_operators_answer_as_loft_does() {
@@ -101,6 +108,27 @@ fn test_the_small_integer_operators_answer_as_loft_does() {
   assert(ran("small_ops", "n_hue_number", [2]) == 3, "hue_number(2)");
   assert(ran("small_ops", "n_div_or", [7, 2]) == 3, "div_or(7, 2)");
   assert(ran("small_ops", "n_div_or", [7, 0]) == -1, "div_or(7, 0)");
+  assert(ran("small_ops", "n_ops_or", [7, 2]) == 9064, "ops_or(7, 2)");
+  assert(ran("small_ops", "n_ops_or", [-1, 2]) == -1023, "ops_or(-1, 2)");
+  assert(ran("small_ops", "n_enum_named", [1]) == 500, "enum_named(1)");
+  assert(ran("small_ops", "n_enum_named", [2]) == 401, "enum_named(2)");
+  assert(ran("small_ops", "n_text_walk", [0]) == 97098099, "text_walk(0)");
+  assert(ran("small_ops", "n_text_walk", [1]) == 97233, "text_walk(1)");
+  assert(ran("small_ops", "n_affixed", [3]) == 101111, "affixed(3): starts_with and ends_with");
+  assert(ran("small_ops", "n_affixed", [5]) == 101011, "affixed(5)");
+  assert(ran("small_ops", "n_tail_sum", [100000]) == 5000050000, "tail_sum(100000): a jump, not 100000 frames");
+  assert(ran("small_ops", "n_tail_sum", [0]) == 0, "tail_sum(0)");
+  assert(ran("small_ops", "n_scalars", [3]) == 1141047353173, "scalars(3): shifts, math, parses, enum truth, reverse, byte_at");
+  assert(ran("small_ops", "n_scalars", [5]) == 1161047353111, "scalars(5)");
+  assert(ran("small_ops", "n_texted", [3]) == 11020505108117, "texted(3): text natives, a kept range, a byte copy");
+  assert(ran("small_ops", "n_texted", [4]) == 11030909111117, "texted(4)");
+  assert(ran("small_ops", "n_narrowed", [3]) == 19600521, "narrowed(3): linked narrow locals hold their field encoding");
+  assert(ran("small_ops", "n_narrowed", [-5]) == 20400521, "narrowed(-5)");
+  assert(ran("small_ops", "n_clocked", [4]) == 5, "clocked(4): now and ticks");
+  assert(ran("small_ops", "n_worded", [3]) == 31131594, "worded(3): split, join, trim, replace, rfind, contains, classes");
+  assert(ran("small_ops", "n_worded", [0]) == 1131594, "worded(0)");
+  assert(ran("small_ops", "n_grown", [4]) == 645704, "grown(4): a prepend and an integer power");
+  assert(ran("small_ops", "n_grown", [2]) == 85702, "grown(2)");
   assert(ran("small_ops", "n_rem_or", [7, 3]) == 1, "rem_or(7, 3)");
   assert(ran("small_ops", "n_rem_or", [7, 0]) == -1, "rem_or(7, 0)");
   // |-6 / 4| = 1.5, as a float and as a single, each times 100.
@@ -127,10 +155,11 @@ fn test_every_format_spec_renders_through_the_c_runtime() {
 // `entry(arg)` of the kernel image `b`, which must leave no store live.  A test loads its kernel once and runs every entry of it: an image is megabytes.
 fn ran_clean(b: ir::Bundle, entry: text, arg: integer) -> integer? {
   d = lower::find(b, entry);
-  assert(d >= 0, "the image has {entry}");
+  assert(d != null, "the image has {entry}");
   o = run::run(b, d, [arg]);
   assert(o.refused == "", "{entry} refused: {o.refused} in {o.refused_in}");
   assert(o.stores_left == 0, "{entry}({arg}) left {o.stores_left} stores live");
+  assert(o.stack_left == 0, "{entry}({arg}) left {o.stack_left} on the stack");
   o.value
 }
 
@@ -138,6 +167,8 @@ fn test_a_struct_is_built_read_and_freed() {
   st = kernel("structs");
   assert(ran_clean(st, "n_built", 3) == 9, "built(3)");
   assert(ran_clean(st, "n_built", -4) == -12, "built(-4)");
+  assert(ran_clean(st, "n_equal", 3) == 311111, "equal(3): records and variants equal by content");
+  assert(ran_clean(st, "n_equal", 0) == 11111, "equal(0)");
 }
 
 fn test_a_field_written_through_a_parameter_is_seen_by_the_caller() {
@@ -238,6 +269,12 @@ fn test_a_vector_is_appended_as_element_copies() {
   assert(ran_clean(v, "n_added", 0) == 320, "added(0): an empty append changes nothing");
   assert(ran_clean(v, "n_texts_kept", 3) == 740, "texts_kept(3): the source cleared after");
   assert(ran_clean(v, "n_texts_kept", 0) == 110, "texts_kept(0)");
+  assert(ran_clean(v, "n_removed", 9) == 2033205630, "removed(9): out of range removes nothing");
+  assert(ran_clean(v, "n_removed", 0) == 2032405620, "removed(0)");
+  assert(ran_clean(v, "n_decoded", 4) == 531, "decoded(4): text_from_bytes and text_from_byte_range");
+  assert(ran_clean(v, "n_decoded", 2) == 510, "decoded(2)");
+  assert(ran_clean(v, "n_linked_ids", 4) == 716142, "linked_ids(4): an array of ids, a stored reference, an append");
+  assert(ran_clean(v, "n_linked_ids", 0) == 716102, "linked_ids(0)");
   // census 2026-10-30: the callee filled a fresh store instead of the caller's buffer, and the
   // caller's adopted copy was swept.
   assert(ran_clean(v, "n_retbuf_filled", 2) == 231, "retbuf_filled(2): the caller's buffer is filled in place");
@@ -249,6 +286,77 @@ fn test_a_vector_is_appended_as_element_copies() {
 // `is`, a text payload copied and its source freed, a struct holding an enum field, and a vector
 // of them built from a literal, a call and a unit variant.  A copy of a `Word` owns its text only
 // because the type table hands the runtime the enum's variants.
+// @PLN91 F-1: a recursion 3000 deep through the stack store, which grows several times past its
+// first size; each level's integer, boolean and float local written and read at its width, and
+// (PF5, `ran_clean`) the stack given back when the entry returns.
+fn test_a_deep_recursion_grows_the_stack_store() {
+  f = kernel("frames");
+  assert(ran_clean(f, "n_depth", 3000) == 12852, "depth(3000)");
+  assert(ran_clean(f, "n_depth", 7) == 30, "depth(7)");
+  // S1.5: a break with the vector pending, a return from a marked loop.
+  assert(ran_clean(f, "n_unwind", 4) == 905, "unwind(4)");
+  assert(ran_clean(f, "n_unwind", 0) == 1, "unwind(0)");
+}
+
+// @PLN91 F-1 PF3: a `&` parameter of every width written through by the callee, read back by
+// the caller — each a reference into the caller's frame — and a `&` of a field, an element and
+// a local link, with the record a whole-value write displaces released.
+fn test_a_reference_to_a_local_writes_into_the_callers_frame() {
+  r = kernel("refs");
+  assert(ran_clean(r, "n_refs", 10) == 2541, "refs(10)");
+  assert(ran_clean(r, "n_refs", 0) == 1531, "refs(0)");
+  assert(ran_clean(r, "n_linked", 10) == 15891, "linked(10)");
+  assert(ran_clean(r, "n_linked", 0) == 5891, "linked(0)");
+}
+
+// @PLN91 F-T1: a tuple local in the frame — a literal, member reads and writes, a nested tuple,
+// a tuple argument, a tuple result destructured, every scalar kind of member and a text one;
+// the stack given back.  `kernels/tuples.loft` has the sum by hand.
+fn test_a_tuple_lives_in_its_slot_member_by_member() {
+  t = kernel("tuples");
+  assert(ran_clean(t, "n_tuples", 4) == 17978494, "tuples(4)");
+  assert(ran_clean(t, "n_tuples", 2) == 14774292, "tuples(2)");
+  // F-T2: text members built, appended to, copied with the whole tuple, handed to a tuple
+  // parameter and freed — no store or stack left.
+  assert(ran_clean(t, "n_named", 4) == 73444, "named(4)");
+  assert(ran_clean(t, "n_named", 0) == 73040, "named(0)");
+  // Reference members: a record and a vector in the slot, three integers each on the stack.
+  assert(ran_clean(t, "n_held", 4) == 212552, "held(4)");
+  assert(ran_clean(t, "n_held", 0) == 200512, "held(0)");
+}
+
+// @PLN91 S3: `[x; n]` repeats a scalar and a record holding a text (`OpAppendCopy`), a count of 0
+// leaves the vector empty, and a null vector is absent where an empty one is present
+// (`OpVectorIsNull`); a slice copies its clamped span (`OpSliceView`, `OpSliceVector`).
+fn test_a_repeat_fills_and_an_absent_vector_is_null() {
+  r = kernel("repeats");
+  assert(ran_clean(r, "n_rep", 3) == 3669, "rep(3)");
+  assert(ran_clean(r, "n_rep", 0) == 0, "rep(0)");
+  assert(ran_clean(r, "n_absent", 0) == 1, "absent(0)");
+  assert(ran_clean(r, "n_absent", 2) == 0, "absent(2)");
+  assert(ran_clean(r, "n_slices", 3) == 717250, "slices(3)");
+  assert(ran_clean(r, "n_slices", 0) == 717000, "slices(0)");
+  assert(ran_clean(r, "n_summed", 4) == 1007, "summed(4): the vector_sum_int kernel");
+  assert(ran_clean(r, "n_summed", -6) == 7, "summed(-6)");
+}
+
+// @PLN91 1b: vector constants built at load (`consts.loft`) — every field kind, values spelled as
+// arithmetic, a copy appended to — read through `OpConstRef`, nothing left live but the pinned
+// constants.  `kernels/constants.loft` has the sums by hand.
+fn test_a_vector_constant_is_built_once_and_read() {
+  c = kernel("constants");
+  assert(ran_clean(c, "n_consts", 3) == 1252058667, "consts(3)");
+  assert(ran_clean(c, "n_consts", 0) == 52058667, "consts(0)");
+}
+
+// @PLN91 S3: a record placed in the store of the vector it takes, the vector moved into its field
+// (`OpPlaceRecord`, `OpMoveVector`), nothing left live.
+fn test_a_record_is_placed_where_its_vector_lives() {
+  p = kernel("places");
+  assert(ran_clean(p, "n_moved", 4) == 4024, "moved(4)");
+  assert(ran_clean(p, "n_moved", 0) == 0, "moved(0)");
+}
+
 fn test_struct_enums_build_match_and_copy() {
   e = kernel("enums");
   assert(ran_clean(e, "n_arms", 7) == 26, "arms(7)");
@@ -293,6 +401,11 @@ fn test_hashes_walk() {
   assert(ran_clean(h, "n_order", 7) == 712, "order(7)");
   assert(ran_clean(h, "n_field_walk", 5) == 503, "field_walk(5)");
   assert(ran_clean(h, "n_field_walk", 2) == 202, "field_walk(2)");
+  // A keyed field cleared and a keyed local rebound from a call, nothing left live.
+  assert(ran_clean(h, "n_keyed", 4) == 10208, "keyed(4)");
+  assert(ran_clean(h, "n_keyed", 0) == 10200, "keyed(0)");
+  assert(ran_clean(h, "n_dropped", 3) == 307030, "dropped(3): removed, then written back");
+  assert(ran_clean(h, "n_dropped", 4) == 306027, "dropped(4): an entry replaced under its key");
   assert(ran_clean(h, "n_bumped", 3) == 101303, "bumped(3): the walked element is a view");
   assert(ran_clean(h, "n_bumped", 1) == 100, "bumped(1)");
   assert(ran_clean(h, "n_early", 5) == 300105, "early(5): return and break leave the hash whole");
@@ -310,8 +423,33 @@ fn test_hashes_walk() {
 fn test_the_kernels_mains_run_whole() {
   for name in ["structs", "vectors", "enums", "hashes", "shown"] {
     b = kernel(name);
-    o = run::run(b, lower::find(b, "n_main"), []);
+    o = run::run(b, lower::find(b, "n_main")!, []);
     assert(o.refused == "", "{name} main refused: {o.refused} in {o.refused_in}");
     assert(o.stores_left == 0, "{name} main: {o.stores_left} stores left live");
   }
+}
+
+// S6's files: a File record written and read through the C runtime's own routines, no store left.
+fn test_a_file_is_written_and_read_back() {
+  fl = kernel("files");
+  assert(ran_clean(fl, "n_bytes_back", 3) == 303099, "bytes_back(3): write_bytes, content, size, delete");
+  assert(ran_clean(fl, "n_binary", 5) == 48879074805, "binary(5): an integer, a record and a narrow local, little endian");
+  assert(ran_clean(fl, "n_lined", 2) == 332, "lined(2): lines through the compiled body's twin");
+}
+
+// The store natives through the C runtime: a lock, the memory report, the arguments.
+fn test_the_store_natives_answer_as_the_runtime_does() {
+  sn = kernel("stores");
+  assert(ran_clean(sn, "n_locked", 3) == 310, "locked(3): get_store_lock and #lock");
+  assert(ran_clean(sn, "n_reported", 4) == 4, "reported(4): store_memory's report");
+  assert(ran_clean(sn, "n_argc", 5) == 5, "argc(5): no arguments");
+}
+
+// S4: a sorted, an index, a spatial index and a trie through the C runtime's keyed routines.
+fn test_keyed_collections_beyond_a_hash_run() {
+  ky = kernel("keyed");
+  assert(ran_clean(ky, "n_sorted_walk", 1) == 300503, "sorted_walk(1): find, a bounded walk, a removal");
+  assert(ran_clean(ky, "n_index_walk", 1) == 5009, "index_walk(1): a descending index");
+  assert(ran_clean(ky, "n_spatial_find", 1) == 233, "spatial_find(1)");
+  assert(ran_clean(ky, "n_trie_find", 1) == 202, "trie_find(1)");
 }

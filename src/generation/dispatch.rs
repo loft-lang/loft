@@ -1444,11 +1444,19 @@ impl Output<'_> {
                 // An argument this frame holds as a TUPLE (`@FR-R-ValueLocal`) names no
                 // store: the callee received its fields, and nothing it frees is the
                 // argument's.
+                // `@FR-O-Witness` — a WITNESSED destination names a fresh store once the copy
+                // lands, so its protection is lifted through `_dst`, the store it held.
                 crate::use_analysis::protectable_ref_args(self.data, self.def_nr, to)
                     .0
                     .iter()
                     .filter(|av| !self.value_record_locals.contains_key(av))
-                    .map(|&av| format!("var_{}", sanitize(variables.name(av))))
+                    .map(|&av| {
+                        if witnessed && av == var {
+                            "_dst".to_string()
+                        } else {
+                            format!("var_{}", sanitize(variables.name(av)))
+                        }
+                    })
                     .collect()
             } else {
                 Vec::new()
@@ -1621,6 +1629,11 @@ impl Output<'_> {
                     None if is_borrowed_view && variables.is_skip_free(var) && !witnessed => {
                         "true".to_string()
                     }
+                    // `@FR-O-Witness` — a WITNESSED local's copy lands in a fresh store, so the
+                    // same-store passthrough has nothing to protect, and adopting there handed
+                    // the witness the store the local VIEWED (`t = with_deps(t, …)` answering
+                    // `t`): the witness released it.  It adopts only a null result.
+                    None if witnessed => "_src.store_nr == u16::MAX".to_string(),
                     None => PASSTHROUGH.to_string(),
                 }
             };

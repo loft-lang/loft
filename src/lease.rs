@@ -332,6 +332,17 @@ impl<'a> Frame<'a> {
         }
     }
 
+    /// [`Self::read_after`] at the node whose address is `site` — a site recorded by a walk
+    /// over this same body (`use_analysis`'s copy rows), which keeps no reference to it.
+    #[must_use]
+    pub fn read_after_addr(&self, site: usize, var: u16) -> Option<Option<u32>> {
+        match self.live_at(site as *const Value, var, self.readers_of(var)) {
+            AtSite::Unreached => None,
+            AtSite::Dead => Some(None),
+            AtSite::Live(line) => Some(Some(line)),
+        }
+    }
+
     /// [`Self::read_after`] for `var` ITSELF: a read through a view of it does not count.  The
     /// question to ask of a reference that is moved on its own — a view of it that is read
     /// later is moved too, and its reads are its own.
@@ -643,13 +654,18 @@ impl<'a> Frame<'a> {
 
     /// [`Self::live_after`] counting only the reads of the variables in `uses`.
     fn live_after_through(&self, site: &Value, var: u16, uses: HashSet<u16>) -> AtSite {
+        self.live_at(std::ptr::from_ref(site.unspan()), var, uses)
+    }
+
+    /// [`Self::live_after_through`] at the node whose address is `target`.
+    fn live_at(&self, target: *const Value, var: u16, uses: HashSet<u16>) -> AtSite {
         let mut pass = Pass {
             data: self.data,
             func: self.func,
             ops: self.ops,
             var,
             uses,
-            target: std::ptr::from_ref(site.unspan()),
+            target,
             lines: HashMap::new(),
             loops: Vec::new(),
             found: AtSite::Unreached,
@@ -765,6 +781,7 @@ struct Ops {
     database: u32,
     create_stack: u32,
     conv_bool_from_ref: u32,
+    distinct_store: u32,
     null_ref_sentinel: u32,
 }
 
@@ -775,6 +792,7 @@ impl Ops {
             database: data.def_nr("OpDatabase"),
             create_stack: data.def_nr("OpCreateStack"),
             conv_bool_from_ref: data.def_nr("OpConvBoolFromRef"),
+            distinct_store: data.def_nr("OpDistinctStore"),
             null_ref_sentinel: data.def_nr("OpNullRefSentinel"),
         }
     }
@@ -906,7 +924,7 @@ impl Pass<'_> {
                     || matches!(rhs.unspan(), Value::Call(op, _) if *op == self.ops.null_ref_sentinel)
             }
             Value::If(cond, then, els) => {
-                self.is_guard(cond)
+                self.is_guard(cond, then, els)
                     && self.scaffold_or_null(then)
                     && self.scaffold_or_null(els)
                     && (self.has_release(then) || self.has_release(els))
@@ -927,9 +945,22 @@ impl Pass<'_> {
         matches!(node, Value::Null) || self.is_scaffold(node)
     }
 
-    /// A release guard: a null check of a reference, or a hand-off flag.
-    fn is_guard(&self, cond: &Value) -> bool {
+    /// A release guard: a null check of a reference, a hand-off flag, or a test that a
+    /// reference does not share another's store before it is released (the free of a variable
+    /// a join may have given a temp's store).  The store test reads the store of each operand,
+    /// so it is the release's own work only for an operand the guarded code releases: a
+    /// followed value it merely compares against decides whether something ELSE is freed, and
+    /// that read is a use.
+    fn is_guard(&self, cond: &Value, then: &Value, els: &Value) -> bool {
         match cond.unspan() {
+            Value::Call(op, args) if *op == self.ops.distinct_store => {
+                args.iter().all(|a| match a.unspan() {
+                    Value::Var(w) if self.uses.contains(w) => {
+                        self.releases(then, *w) || self.releases(els, *w)
+                    }
+                    _ => true,
+                })
+            }
             Value::Call(op, _) => *op == self.ops.conv_bool_from_ref,
             Value::Var(w) => self.func.name(*w).starts_with("__hoff_"),
             _ => false,
@@ -942,6 +973,14 @@ impl Pass<'_> {
         node.any_node(&mut |n| {
             matches!(n, Value::Call(op, args) if releases_first_arg(self.data, *op)
                 || (*op == self.ops.copy_record && self.names_prefix(args.get(1), "__disp_")))
+        })
+    }
+
+    /// Does `node` release the variable `w`?
+    fn releases(&self, node: &Value, w: u16) -> bool {
+        node.any_node(&mut |n| {
+            matches!(n, Value::Call(op, args) if releases_first_arg(self.data, *op)
+                && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == w))
         })
     }
 

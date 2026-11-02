@@ -9,7 +9,7 @@
 use crate::data::{Data, Type, Value};
 use crate::database::Stores;
 use crate::opt::body_writes::{
-    Target, WriteCache, WriteSet, body_writes, fresh_rooted, rebound_vars, setter_target,
+    Target, WriteSet, body_writes, fresh_rooted, rebound_vars, setter_target,
 };
 use crate::opt::loop_records::{IN_PLACE_SET_OPS, is_scalar};
 use crate::opt::writes::{
@@ -722,8 +722,7 @@ pub(crate) fn tuple_param_candidates(
         return out;
     }
     let trace = std::env::var("LOFT_TRACE_VALUEREC").is_ok();
-    let mut cache: HashMap<u32, bool> = HashMap::new();
-    let mut writes: WriteCache = HashMap::new();
+    let mut fx = crate::opt::facts::Facts::fresh();
     for d_nr in 0..data.definitions.len() as u32 {
         let def = data.def(d_nr);
         if !matches!(def.def_type, crate::data::DefType::Function)
@@ -789,10 +788,10 @@ pub(crate) fn tuple_param_candidates(
                 continue;
             }
             let written = written.get_or_insert_with(|| {
-                let mut active = HashSet::new();
-                if !call_writes_store(d_nr, data, &mut cache, &mut active, None)
-                    || retbuf_only_writer(d_nr, data, &mut cache, &mut active, None)
-                {
+                if fx.fresh_guard(|fx| {
+                    !call_writes_store(d_nr, data, fx, None)
+                        || retbuf_only_writer(d_nr, data, fx, None)
+                }) {
                     return Some(WriteSet::default());
                 }
                 let mut set = WriteSet::default();
@@ -811,17 +810,9 @@ pub(crate) fn tuple_param_candidates(
                 // setter whose only write of its own type is that copy takes the tuple.
                 let pruned = without_terminal_copies(&body.operators, data);
                 for op in &pruned {
-                    let w = body_writes(
-                        op,
-                        data,
-                        stores,
-                        vars,
-                        &mut cache,
-                        &mut writes,
-                        &mut HashSet::new(),
-                        &mut fresh,
-                        None,
-                    )?;
+                    let w = fx.fresh_guard(|fx| {
+                        body_writes(op, data, stores, vars, fx, &mut fresh, None)
+                    })?;
                     set.extend(&w);
                 }
                 Some(set)

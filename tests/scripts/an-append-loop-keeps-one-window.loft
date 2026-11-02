@@ -1,0 +1,118 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-AppendTwin`'s loop clause — a loop that touches a buffer only through its append
+// sites (`buf += enc(i)`, written as the twin `enc__ap(i, buf, &w)`) holds ONE window over the
+// buffer from before the loop to after its end, where every site used to open and sync its
+// own.  A loop that names the buffer anywhere else (a length read, a rebind), or that can
+// leave by a `return`, keeps a window per site: the shared one would be stale or unsynced.
+// An inner loop appending to the buffer an outer loop holds uses the outer window.
+//
+// The C writer applies it; the interpreter applies nothing and is the oracle.  `enc(i)` is
+// `[i, i + 100]`; each cell checks the length and `ck`, the sum of (position + 1) * byte, by
+// hand: a = i in 0..10 (20 bytes, 12275); b = while the length is under 15 (i 0..7: 16, 7844);
+// c = return at i 5 (i 0..4: 10, 3150); d = rebound at i 6 (i 6..9: 8, 2290); e = j in 0..3
+// then k in 0..2 inside (18, 10398); f = break at i 4 (i 0..3: 8, 2074); g = i 0..9, then
+// i 0..2 and out of both loops (26, 12275 + 7349 = 19624).  `LOFT_NO_APPEND_LOOP_WINDOW=1`
+// answers the same.
+//
+// @falsified-at: ee17fafe7 — by hand on the C writer (`falsify.sh` scores the interpreter and
+//   native, where no window is held, so both read INERT); each planted alone fails it
+//   (c_sweep: differ): a buffer named elsewhere in the loop admitted (`reads_len` reads a
+//   stale length), an exit past the loop admitted (`breaks_out` leaves unsynced), a rebind
+//   not counted as a mention (`rebinds` keeps appending to the old record), a second window
+//   opened inside one an outer loop holds (`nested`).
+// HOLDS: the interpreter's and rustc-native's answers, which no plant reaches (INERT there).
+
+fn enc(x: integer) -> vector<u8> {
+  o: vector<u8> = [];
+  o += [(x & 255) as u8];
+  o += [((x + 100) & 255) as u8];
+  o
+}
+
+fn ck(v: vector<u8>) -> integer {
+  s = 0;
+  for i in 0..len(v) { s += (i + 1) * (v[i] as integer); }
+  s
+}
+
+fn plain(n: integer) -> vector<u8> {
+  buf: vector<u8> = [];
+  for i in 0..n { buf += enc(i); }
+  buf
+}
+
+fn reads_len(n: integer) -> vector<u8> {
+  buf: vector<u8> = [];
+  for i in 0..n { if len(buf) < 15 { buf += enc(i); } }
+  buf
+}
+
+fn returns_early(n: integer) -> vector<u8> {
+  buf: vector<u8> = [];
+  for i in 0..n {
+    if i == 5 { return buf; }
+    buf += enc(i);
+  }
+  buf
+}
+
+fn rebinds(n: integer) -> vector<u8> {
+  buf: vector<u8> = [];
+  for i in 0..n {
+    if i == 6 { buf = []; }
+    buf += enc(i);
+  }
+  buf
+}
+
+fn nested() -> vector<u8> {
+  buf: vector<u8> = [];
+  for j in 0..3 {
+    buf += enc(j);
+    for k in 0..2 { buf += enc(10 + k); }
+  }
+  buf
+}
+
+fn breaks(n: integer) -> vector<u8> {
+  buf: vector<u8> = [];
+  for i in 0..n {
+    if i == 4 { break; }
+    buf += enc(i);
+  }
+  buf
+}
+
+// The outer loop reads the length, so it holds no window; the inner one appends and leaves
+// BOTH loops at j 1, i 3 — a window there would skip its sync.
+fn breaks_out() -> vector<u8> {
+  buf: vector<u8> = [];
+  for j in 0..3 {
+    if len(buf) > 100 { break; }
+    for i in 0..10 {
+      if i == 3 && j == 1 { j#break; }
+      buf += enc(i);
+    }
+  }
+  buf
+}
+
+fn main() {
+  a = plain(10);
+  assert(len(a) == 20 && ck(a) == 12275, "plain: {len(a)} {ck(a)}");
+  b = reads_len(10);
+  assert(len(b) == 16 && ck(b) == 7844, "reads_len: {len(b)} {ck(b)}");
+  c = returns_early(10);
+  assert(len(c) == 10 && ck(c) == 3150, "returns_early: {len(c)} {ck(c)}");
+  d = rebinds(10);
+  assert(len(d) == 8 && ck(d) == 2290, "rebinds: {len(d)} {ck(d)}");
+  e = nested();
+  assert(len(e) == 18 && ck(e) == 10398, "nested: {len(e)} {ck(e)}");
+  f = breaks(10);
+  assert(len(f) == 8 && ck(f) == 2074, "breaks: {len(f)} {ck(f)}");
+  g = breaks_out();
+  assert(len(g) == 26 && ck(g) == 19624, "breaks_out: {len(g)} {ck(g)}");
+  println("{ck(a)} {ck(b)} {ck(c)} {ck(d)} {ck(e)} {ck(f)} {ck(g)}");
+}

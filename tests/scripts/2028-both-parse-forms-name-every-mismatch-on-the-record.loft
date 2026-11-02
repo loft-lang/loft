@@ -8,7 +8,9 @@
 // @falsified-at: d50460de7 — interpret and native: one-step answered 1 of 3, staged 0 of 3;
 //   the mixed record read `ok=false email=` after the misfit (nothing after it was written),
 //   the misfit vector read `[1]` for `[1,null,3,null]`
-// @falsified-by: tests/falsified/2028-both-parse-forms-name-every-mismatch-on-the-record.patch
+// @falsified-by: tests/falsified/2028-both-parse-forms-name-every-mismatch-on-the-record.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0; native INERT (expected for a
+//   backend-divergence guard — only one side can move): the C leg reads text through its own
+//   runtime, which the patch does not reach
 //   — the text read keeps only its first misfit (`failed.truncate(1)`), the narrowest form of
 //   the one-error read the fix replaced; the `--patch` run is the runner's
 // CHANNEL: assertion — the counts and the values read differ, nothing crashes.

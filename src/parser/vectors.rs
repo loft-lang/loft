@@ -210,6 +210,7 @@ impl Parser {
         tp: &Type,
         parts: &[(Value, Type)],
         orig_var: u16,
+        dest: Option<&Value>,
     ) -> Type {
         let mut ls = Vec::new();
         // Cluster I-d (@PLN85 cluster V / @PLN85 single-dep) — the store `orig_var` ends up
@@ -226,22 +227,31 @@ impl Parser {
         } else {
             i32::MIN
         };
+        // @FR-Col-Concat — a first operand built straight into a FIELD destination (a
+        // literal under `S { v: [1] + b }` or `s.v = [1] + b`) has already written its
+        // elements there and answers nothing: the chain continues in that field, which is
+        // where the value belongs.
+        if orig_var == u16::MAX
+            && let Some(dest) = dest
+            && let Value::Insert(elms) = code
+        {
+            let mut ops = std::mem::take(elms);
+            for (val, part_tp) in parts {
+                self.refuse_mixed_element_encoding(tp, part_tp);
+                ops.push(self.cl(
+                    "OpAppendVector",
+                    &[dest.clone(), val.clone(), Value::Int(rec_tp)],
+                ));
+            }
+            *code = Value::Insert(ops);
+            return tp.clone();
+        }
         let var_nr = if orig_var == u16::MAX {
             let vec = self.create_unique("vec", tp);
             let elm_tp = tp.content();
             let db_ops = self.vector_db(&elm_tp, vec);
-            // vector concat as an inline expression (not assigned to a variable)
-            // creates a temporary with database allocation that corrupts the stack when
-            // the result is used inside a compound assignment expression.
-            // Emit an error so the user assigns to a variable first.
-            if !db_ops.is_empty() && !self.first_pass {
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "vector concatenation in an expression creates a temporary; \
-                     assign to a variable first for correct results in compound expressions"
-                );
-            }
+            // @FR-Col-Concat — a concat in an expression is a value of its own: a fresh
+            // vector the parts are appended to, read like any other block value.
             for l in db_ops {
                 ls.push(l);
             }
@@ -514,6 +524,50 @@ impl Parser {
         if !self.convert_condition(code, tp) && !self.first_pass {
             self.can_convert(tp, &Type::Boolean);
         }
+        // `@FR-N-Guard` — the right operand runs only where the left one decided it: `a && b`
+        // on a's THEN side, `a || b` on its ELSE side, so it reads with the facts `if a` gives
+        // that side — a name proven present, an index proven in bounds, a divisor proven
+        // non-zero, a sign, a variant.  `i < len(v) && v[i] == x` is the guard `if` already
+        // trusts, written as one condition.
+        let side = !is_or;
+        let bases = (
+            self.narrowed_non_null.len(),
+            self.narrowed_non_null_exprs.len(),
+            self.divisor_nonzero.len(),
+            self.math_sign_proven.len(),
+            self.variant_proven.len(),
+            self.index_bounded.len(),
+        );
+        if let Some((v, s)) = self.narrowing_from_condition(code)
+            && s == side
+        {
+            self.narrowed_non_null.push(v);
+        }
+        if let Some((e, s)) = self.projection_narrowing_from_condition(code)
+            && s == side
+        {
+            self.narrowed_non_null_exprs.push(e);
+        }
+        if let Some((v, s)) = self.divisor_proof_from_condition(code)
+            && s == side
+        {
+            self.divisor_nonzero.push(v);
+        }
+        if let Some((v, sg, s)) = self.math_sign_proof_from_condition(code)
+            && s == side
+        {
+            self.math_sign_proven.push((v, sg));
+        }
+        if side && let Some(pair) = self.variant_proof_from_condition(code) {
+            self.variant_proven.push(pair);
+        }
+        let caps = std::collections::HashMap::new();
+        let pairs = if side {
+            crate::parser::operators::collect_guard_pairs(code, &self.data, &caps)
+        } else {
+            crate::parser::operators::collect_guard_pairs_negated(code, &self.data, &caps)
+        };
+        self.index_bounded.extend(pairs);
         let mut second_code = Value::Null;
         let mut parent_tp = Type::Unknown(0);
         let second_pos = *self.lexer.peek_pos();
@@ -523,6 +577,12 @@ impl Parser {
             &mut parent_tp,
             precedence + 1,
         );
+        self.narrowed_non_null.truncate(bases.0);
+        self.narrowed_non_null_exprs.truncate(bases.1);
+        self.divisor_nonzero.truncate(bases.2);
+        self.math_sign_proven.truncate(bases.3);
+        self.variant_proven.truncate(bases.4);
+        self.index_bounded.truncate(bases.5);
         self.known_var_or_type(&second_code, &second_pos);
         if !self.convert_condition(&mut second_code, &second_type) && !self.first_pass {
             self.can_convert(&second_type, &Type::Boolean);
@@ -863,8 +923,10 @@ impl Parser {
             // member built through the append path instead, left the tuple element reading
             // null with no diagnostic at all (`t = (x + y, 9)`).  Ask the lexer first and
             // give a member its own temp; the built value returns on the normal channel, so
-            // everything downstream is unchanged.
-            let divert = matches!(val, Value::Var(_)) && self.peek_tuple_literal();
+            // everything downstream is unchanged.  A value a postfix follows (`(v + [9]).len()`)
+            // is the postfix's operand, not the destination, and is diverted the same way: it
+            // was built into the destination and read back as a void insert (P395).
+            let divert = matches!(val, Value::Var(_)) && self.peek_paren_value_apart();
             let mut member0 = Value::Null;
             let t = if divert {
                 let t = self.expression(&mut member0);
@@ -987,35 +1049,6 @@ impl Parser {
                     self.expected = saved_expected;
                 }
                 self.lexer.token(")");
-                // @P395 — a parenthesised vector concat consumed by a trailing
-                // `.method()` reused the OUTER assignment LHS as its accumulator
-                // (the inner concat inherited `orig_var` from the live `val`),
-                // lowering to a void `Value::Insert` that leaves no stack value;
-                // the method then reads a misaligned slot → garbage value / the
-                // `codegen.rs:2669` +8 drift.  This is the same shape the P103
-                // guard in `parse_append_vector` already rejects for
-                // `f([1,2] + [3])` (loft-suite/rules/closures/L-FnAbsent/102-expected-errors.loft):
-                // inline vector concat consumed by a call/sub-expression must be
-                // assigned to a variable first.  Fire the same clean error here
-                // instead of silently corrupting.  Direct assignment `v = (a+c)`
-                // (no trailing `.`) keeps its reuse path; `(a+c)[i]` indexing
-                // already lowers correctly and is not guarded.
-                if !self.first_pass && matches!(val, Value::Insert(_)) && self.lexer.peek_token(".")
-                {
-                    let tv = if let Type::Rewritten(inner) = &t {
-                        (**inner).clone()
-                    } else {
-                        t.clone()
-                    };
-                    if matches!(tv, Type::Vector(_, _)) {
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "vector concatenation in an expression creates a temporary; \
-                             assign to a variable first for correct results in compound expressions"
-                        );
-                    }
-                }
                 t
             }
         } else if self.lexer.peek_token("{") {
@@ -3224,6 +3257,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             if v_nr == u16::MAX || !matches!(self.vars.tp(v_nr), Type::RefVar(_)) {
                 continue;
             }
+            if self.withdraw_written_text_buffer(parent_d, v_nr, &name) {
+                continue;
+            }
             let inline_tp = match self.vars.tp(v_nr) {
                 Type::RefVar(inner) => (**inner).clone(),
                 other => other.clone(),
@@ -3244,6 +3280,39 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 }
             }
         }
+    }
+
+    /// loft#2350, `@FR-L-CapWrite` — a text local that pass 1 made the HIDDEN `&text` return
+    /// buffer, at a `return s` it met before any closure of the function was parsed, and that a
+    /// closure then WRITES.  As the buffer it is a `RefVar` the scalar-capture flip never boxes,
+    /// so the closure would write its own copy and the frame return the original.  The buffer
+    /// keeps its place in the signature (callers lower against it on pass 2) under a compiler
+    /// name, the author's name becomes an ordinary local again (pass 2 binds only names pass 1
+    /// created), and the closures' boxed capture stays boxed: pass 2's flip boxes the local, and
+    /// each `return` delivers into the buffer pass 1 published
+    /// (`text_buffer_published_under_another_name`).  `false` for any other `RefVar` binding —
+    /// a user's `&` parameter, refused where it is written.
+    fn withdraw_written_text_buffer(&mut self, parent_d: u32, v_nr: u16, name: &str) -> bool {
+        let Some(a) = self.data.def(parent_d).attr_names.get(name).copied() else {
+            return false;
+        };
+        let attr = &self.data.def(parent_d).attributes()[a];
+        if !attr.hidden
+            || !matches!(attr.typedef.base(), Type::RefVar(t) if matches!(t.base(), Type::Text(_)))
+        {
+            return false;
+        }
+        let new_name = format!("__tret_w_{name}");
+        let def = &mut self.data.definitions[parent_d as usize];
+        def.attributes[a].name.clone_from(&new_name);
+        def.attr_names.remove(name);
+        def.attr_names.insert(new_name.clone(), a);
+        self.vars.rename_binding(v_nr, &new_name);
+        let local = self
+            .vars
+            .add_variable(name, &Type::Text(Deps::none()), &mut self.lexer);
+        self.vars.mark_used(local);
+        true
     }
 
     /// `@FR-L-CapOwn`, `@FR-O-Witness` (loft#2131, loft#2132) — give each record-typed capture
@@ -3801,7 +3870,12 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             self.vars.defined(iv);
             (iv, None)
         };
+        // `@FR-B-Scope`, as a `for` statement's variable: no shadow of a local still in scope,
+        // and an ended binding its spelling named is given back after the body (loft#2321).
+        self.refuse_loop_shadow(&id, &src_id);
+        let prior = self.vars.var(&src_id);
         let for_var = self.create_loop_var(&id, &var_tp);
+        let spelling = self.ended_spelling(&src_id, prior, for_var);
         // The body reads the name the program wrote (loft#915).
         if id != src_id {
             self.vars.set_name(&src_id, for_var);
@@ -3835,6 +3909,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         let mut create_iter = expr;
         let it = Type::Iterator(Box::new(var_tp.clone()), Box::new(Type::Null));
         let errors_before_iterable = self.lexer.diagnostics().error_count();
+        super::collections::slice_counter_is_index(&mut create_iter, iter_var, pre_var);
         let iter_next = self.iterator(&mut create_iter, &in_type, &it, iter_var, pre_var);
         if !self.first_pass && iter_next == Value::Null {
             // The `for` statement's two recovery rules (loft#1453): the fallback line only
@@ -3888,6 +3963,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         let body_pos = *self.lexer.peek_pos();
         let mut body = Value::Null;
         let body_type = self.parse_block("for", &mut body, &body_expected);
+        self.restore_loop_spelling(spelling);
         Self::prepend_destructure(&mut body, destructure_setup, &body_type);
         // @PLN187 — the comprehension is a vector of what its body yields.
         if self.abstract_on() {
@@ -4336,6 +4412,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             Some((_, handle)) => handle.clone(),
             None => vec_expr.clone(),
         };
+        // Only a walk whose step goes backwards (`rev(v)`, its `rev step`) can pass the start.
+        let reversible =
+            for_next.any_node(&mut |n| matches!(n, Value::Block(bl) if bl.name == "rev step"));
         let mut lp = vec![for_next];
         if matches!(in_type.base(), Type::Text(_))
             && let Some(idx) = pre_var
@@ -4358,8 +4437,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // a null the vector really holds shares the out-of-bounds sentinel, and a
             // `value struct` element is deep-copied into a fresh record on bind (@PLN101),
             // so the bound local is never null and a null test can never fire at all.
-            // `map`, `filter` and the comprehension all route their break through here.
-            for step in self.vector_loop_break(&src, index_var) {
+            // `map`, `filter` and the comprehension all route their break through here; only a
+            // walk whose step goes backwards (`rev(v)`, its `rev step`) can pass the start.
+            for step in self.vector_loop_break(&src, index_var, reversible) {
                 lp.push(step);
             }
         } else if !matches!(in_type.base(), Type::Iterator(_, _)) {
@@ -5541,12 +5621,27 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             _ if is_field => Some(self.field_place(dest)?),
             _ => self.field_place(dest),
         };
+        // A place PREFIX handed to a function — `tp(v, 0)` for the destination `v.vars[0].td` —
+        // lets the callee read the destination through it, which no rename can redirect: such
+        // a part is a read, and only staging below carries it (loft#2335).
+        let reads_through = |this: &Self, n: &Value| match (&field_place, n) {
+            (Some(place), Value::Call(d, args)) if !this.data.def(*d).name().starts_with("Op") => {
+                args.iter().any(|a| {
+                    this.field_place(a).is_some_and(|p| {
+                        p.0 == place.0 && p.1.len() < place.1.len() && place.1.starts_with(&p.1)
+                    })
+                })
+            }
+            _ => false,
+        };
         let reads = {
             let ro: Vec<&Value> = parts.iter().map(|p| &**p).collect();
             match &field_place {
-                Some(place) => ro
-                    .iter()
-                    .any(|v| v.any_node(&mut |n| self.field_place(n).is_some_and(|p| p == *place))),
+                Some(place) => ro.iter().any(|v| {
+                    v.any_node(&mut |n| {
+                        self.field_place(n).is_some_and(|p| p == *place) || reads_through(self, n)
+                    })
+                }),
                 None => {
                     self.comprehension_reads_target(vec, is_var, &ro)
                         || self.comprehension_needs_own_buffer(vec, dest, is_var, is_field, &ro)
@@ -5568,12 +5663,18 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // grown.  A record part of any other shape that names the destination — a record
         // literal reading it — keeps the snapshot, whose reads it needs under `=`.
         let scalar_elem = crate::data::is_scalar(in_t) || matches!(in_t.base(), Type::Text(_));
-        let record_elem = matches!(in_t.base(), Type::Reference(_, _) | Type::Vector(_, _));
+        // A struct-enum is a heap record exactly as a struct is (`Type::heap_def_nr`).
+        let record_elem = matches!(
+            in_t.base(),
+            Type::Reference(_, _) | Type::Enum(_, true, _) | Type::Vector(_, _)
+        );
         if literal && crate::keys::append_staging_enabled() && (scalar_elem || record_elem) {
             let mut names = vec![vec];
             names.extend(self.vector_link_partner_vars(vec));
             let names_dest = |this: &Self, n: &Value| match &field_place {
-                Some(place) => this.field_place(n).is_some_and(|p| p == *place),
+                Some(place) => {
+                    this.field_place(n).is_some_and(|p| p == *place) || reads_through(this, n)
+                }
                 None => names.iter().any(|v| Self::mentions_var(n, *v)),
             };
             let constant = |p: &Value| {
@@ -5619,7 +5720,20 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                     (user_call(p) && (!vector_elem || self.call_retbuf(p).is_some()))
                         || !p.any_node(&mut |n| names_dest(self, n))
                 });
-            if writes && stageable {
+            // A RECORD part that is a call naming the destination is staged whether or not
+            // the call may write it: the snapshot cannot carry a read made inside the callee
+            // through a place prefix, and the temps a call's arguments are lifted into outlive
+            // a snapshot the scope pass releases at the build (loft#2335).
+            let record_call_reads = record_elem
+                && parts
+                    .iter()
+                    .any(|p| user_call(p) && p.any_node(&mut |n| names_dest(self, n)));
+            // Any element type: a read through a place prefix is the callee's, so only an
+            // evaluation before the build sees what the destination held.
+            let prefix_reads = parts
+                .iter()
+                .any(|p| p.any_node(&mut |n| reads_through(self, n)));
+            if (writes || record_call_reads || prefix_reads) && stageable {
                 let mut temps: Vec<Value> = Vec::new();
                 for part in parts.iter_mut() {
                     if constant(part) {
@@ -6213,6 +6327,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // a Block, not a bare FnRef); a non-capturing lambda / non-lambda leaves
         // it MAX.  Reset first so a prior element's value can't leak in.
         self.last_closure_work_var = u16::MAX;
+        // The element's first token: where a diagnostic about the element goes when it carries
+        // no span of its own (a local read).
+        let item_at = *self.lexer.peek_pos();
         let mut t = if self.lexer.peek_token("for") {
             // The early return ends the whole literal, so its `]` is consumed here.
             self.refuse_mixed_comprehension();
@@ -6409,7 +6526,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // two spellings of the SAME type — an error that aborted the run before pass 2
             // could re-check against the resolved element.  Say nothing; pass 2 decides.
             // The struct-field store guard (`objects.rs`) already works this way.
-        } else if !self.convert_store_lenient(&mut p, &t, in_t, &elem_slot, None) {
+        } else if !self.convert_store_lenient(&mut p, &t, in_t, &elem_slot, Some(&item_at)) {
             if declared {
                 // @P315 — the element type is DECLARED (typed local / struct
                 // field).  A value that does not convert TO it must be cast

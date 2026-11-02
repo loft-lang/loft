@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The lexer gate's runner (@PLN91 stage 1): `tokens <file>…` (or `tokens @<list>`, one path a
+// line) lexes each source file with the loft front end's lexer (`src/lex.loft`) and writes every
+// token as `LOFT_TRACE_TOKENS` writes the Rust lexer's — `file<TAB>line<TAB>col<TAB>kind payload`
+// — so `tokens_gate.py` can diff the two streams.  A file it cannot read is reported on stderr.
+#cwd
+use lex;
+
+fn emit(path: text) {
+  src = file(path).content();
+  if src == null {
+    eprintln("unreadable: {path}");
+    return;
+  }
+  t = lex::lex(src!);
+  out = "";
+  for i in 0..len(t.src) {
+    if t.src[i] is End {
+      break;
+    }
+    out += lex::oracle_line(t, i, path);
+    out += "\n";
+  }
+  print(out);
+}
+
+fn main() {
+  for a in arguments() {
+    if a.starts_with("@") {
+      for p in (file(a[1..]).content() ?? "").split('\n') {
+        if p != "" {
+          emit(p);
+        }
+      }
+    } else {
+      emit(a);
+    }
+  }
+}

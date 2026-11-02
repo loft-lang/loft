@@ -40,6 +40,8 @@
 //   ARMED: `LOFT_TEXT_TIMELINE=1` for the interpret half — every value is right on both trees,
 //   so the scored channels see only the native compile; the orphan count is the leak channel.
 //   HOLDS: interpret exit, assertions, store leaks and panic are clean on both trees.
+//   ARMED: `FALSIFY_NATIVE=rust` for the native half — the E0425 was the rustc writer's; the C
+//   leg compiles on both trees, so a C-leg score reads INERT.
 
 fn name(k: integer) -> text? { if k % 2 == 0 { "n{k}" } else { null } }
 

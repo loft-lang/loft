@@ -691,7 +691,7 @@ pub fn validate_slots(function: &Function, data: &Data, def_nr: u32, scope_blind
     );
     eprintln!("  {}", "-".repeat(96));
     for (idx, var) in vars.iter().enumerate() {
-        let vs = size(&var.type_def, &Context::Variable);
+        let vs = slot_width(var);
         let slot_str = if var.stack_pos == u16::MAX {
             "-".to_string()
         } else {
@@ -824,6 +824,20 @@ pub fn dump_var_tables(data: &Data, from: u32) {
     }
 }
 
+/// The bytes variable `var` occupies in its frame: an argument its ARGUMENT size, as the bytecode
+/// writer lays the arguments out (`codegen.rs`), and a local its own — a text argument is a
+/// 16-byte view where a text local is 24 (loft#2309).
+fn slot_width(var: &Variable) -> u16 {
+    size(
+        &var.type_def,
+        if var.argument {
+            &Context::Argument
+        } else {
+            &Context::Variable
+        },
+    )
+}
+
 pub fn dump_variables(f: &mut dyn Write, function: &Function, data: &Data) -> Result<(), Error> {
     writeln!(
         f,
@@ -832,7 +846,7 @@ pub fn dump_variables(f: &mut dyn Write, function: &Function, data: &Data) -> Re
     )?;
     writeln!(f, "  {}", "-".repeat(70))?;
     for (idx, var) in function.variables.iter().enumerate() {
-        let vs = size(&var.type_def, &Context::Variable);
+        let vs = slot_width(var);
         let slot_str = if var.stack_pos == u16::MAX {
             "-".to_string()
         } else {

@@ -53,6 +53,8 @@ const RUNTIME: &str = concat!(
     include_str!("loft_parse.h"),
     include_str!("loft_reflect.h"),
     include_str!("loft_io.h"),
+    include_str!("loft_host_io.h"),
+    include_str!("loft_web_page.h"),
     include_str!("loft_log.h"),
     include_str!("loft_lazy.h"),
     include_str!("loft_sock.h"),
@@ -82,6 +84,23 @@ pub struct Refusal {
 impl std::fmt::Display for Refusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}: {}", self.function, self.why)
+    }
+}
+
+/// The start of a refusal's `why` that is a CONTRACT — the program asks for something no
+/// backend gives on this target (a `#c` call on wasm) — rather than a construct
+/// the C backend does not carry yet.  [`Refusal::message`] says it as the sentence alone.
+pub(crate) const CONTRACT: &str = "\u{0}contract:";
+
+impl Refusal {
+    /// What the author reads: a contract refusal's own sentence, or that the C backend does
+    /// not carry this program yet, naming the function and the construct.
+    #[must_use]
+    pub fn message(&self) -> String {
+        match self.why.split_once(CONTRACT) {
+            Some((_, sentence)) => sentence.to_string(),
+            None => format!("the C backend does not carry this program yet: {self}"),
+        }
     }
 }
 
@@ -197,6 +216,9 @@ pub(crate) struct Cx<'a> {
     /// The signatures the unit calls function values through: `loft_call{n}`.
     /// The dispatcher signatures: each parameter's shape and whether it is a `&` link.
     fn_sigs: std::cell::RefCell<Vec<(Vec<(CType, u8)>, CType)>>,
+    /// `@FR-R-FnRefBuffer`: the signatures a call asked for with the caller's record buffer —
+    /// each gets a `loft_call{n}b` dispatcher beside `loft_call{n}`.
+    pub(crate) fn_sigs_buf: std::cell::RefCell<std::collections::BTreeSet<usize>>,
     /// Every function the unit uses as a value, by definition number.
     fn_values: std::cell::RefCell<std::collections::BTreeSet<u32>>,
     /// Every type the unit compares by content (`loft_eq{tp}`), by type number.
@@ -242,6 +264,9 @@ pub(crate) struct Cx<'a> {
     /// ([`emit_program_with_source_lines`]).
     pub(crate) source_lines: bool,
     pub(crate) browser: bool,
+    /// The unit is compiled to wasm32 — a page's module or a `--native-wasm` program
+    /// ([`emit_wasm_program`]): no shared library can be opened there.
+    pub(crate) wasm: bool,
     /// The `par` sites written on threads so far, which numbers each one's body and context.
     pub(crate) par_sites: std::cell::Cell<u32>,
     /// The keyed collection types a `sqlite:` plan was written for (`loft_sqlplan{tp}`).
@@ -342,6 +367,7 @@ impl<'a> Cx<'a> {
             data,
             stores,
             browser,
+            wasm: browser || WASM_UNIT.with(std::cell::Cell::get),
             source_lines: SOURCE_LINES.with(std::cell::Cell::get),
             tuples: std::cell::RefCell::new(Vec::new()),
             copy_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -355,6 +381,7 @@ impl<'a> Cx<'a> {
             deliver_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             consts: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             fn_sigs: std::cell::RefCell::new(Vec::new()),
+            fn_sigs_buf: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             fn_values: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             eq_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             key_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -1330,9 +1357,11 @@ impl Cx<'_> {
             d,
             self.data,
             self.stores,
-            &mut memo.stores_written,
-            &mut memo.writes,
-            &mut memo.inputs,
+            &mut crate::opt::facts::Facts::with(
+                &mut memo.stores_written,
+                &mut memo.writes,
+                Some(&mut memo.inputs),
+            ),
         )
     }
 
@@ -1389,12 +1418,10 @@ impl Cx<'_> {
 
     pub(crate) fn call_keeps_stores(&self, d: u32) -> bool {
         let memo = &mut *self.hoist_memo.borrow_mut();
-        let mut active = std::collections::HashSet::new();
         !crate::opt::writes::call_writes_store(
             d,
             self.data,
-            &mut memo.stores_written,
-            &mut active,
+            &mut crate::opt::facts::Facts::over(&mut memo.stores_written),
             None,
         )
     }
@@ -1501,6 +1528,8 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         | "t_9character_is_control" => Some("loft_unicode"),
         "n_unprotect_store_frees" => Some("loft_unprotect"),
         "n_ticks" => Some("loft_ticks"),
+        "n_host_input" => Some("loft_host_input"),
+        "n_host_output" => Some("loft_host_output"),
         "n_arguments" => Some("loft_arguments"),
         "n_vector_sum_int" => Some("loft_vector_sum_int"),
         "n_text_from_bytes" => Some("loft_text_from_bytes"),
@@ -2704,6 +2733,13 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         {
             return browser_import_native(cx, d, ret, &imp);
         }
+        // The web library's natives are loft's own in a page too (`loft_web_page.h`, the C
+        // twin of `web_browser.rs`), over the `loft_web` imports the page script provides.
+        if cx.browser
+            && let Some(runtime) = page_web_native(def.native())
+        {
+            return forwarded_native(cx, d, ret, runtime);
+        }
         // …and a library native it has no import for cannot be called from a page: refused at
         // build, as the Rust writer refuses it (`compile_error!` naming the function).
         if cx.browser && cx.data.native_symbol_crates.contains_key(def.native()) {
@@ -2895,6 +2931,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
             .write()?,
     };
     let (body, statements) = body;
+    let body = tabulated(cx, d, ret, &params, body);
     // `@FR-R-Inline`: a small function is declared `inline`, its frame wrapper with it.
     let inline = small_function(statements) || hot_twin(mask, statements);
     let helper = !inline && hot_helper_size(mask, statements);
@@ -3013,6 +3050,36 @@ fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
     let sig = cs::of(data, d, cs::CTarget::host())
         .ok_or("a C binding without a signature")?
         .map_err(|e| format!("a C binding whose signature does not parse: {e}"))?;
+    // PACKAGES_C_BINDING.md § The wasm and browser targets: on wasm only a
+    // package's `[c] shim` is compiled into the module; any other `#c` call is refused by name
+    // — the sentence the Rust writer gives.  A symbol the WASI libc happens to export would
+    // otherwise link and trap, and an absent one fail at the link naming no package.
+    if cx.wasm {
+        let owner = data.c_owner_pkg(def.position().file.as_str());
+        let shim = owner.is_some_and(|pkg| {
+            data.c_libraries
+                .iter()
+                .any(|l| l.pkg_dir == pkg && !l.shim.is_empty())
+        });
+        if !shim {
+            let name = def.name().strip_prefix("n_").unwrap_or(def.name());
+            let (which, flag) = if cx.browser {
+                ("browser", "--html")
+            } else {
+                ("wasm (wasip2)", "--native-wasm")
+            };
+            let from = owner.map_or_else(String::new, |pkg| {
+                format!(" (package `{}`)", crate::file_access::name_of(pkg))
+            });
+            return Err(format!(
+                "{CONTRACT}`{name}` is bound to the C symbol '{}' with #c{from}, and the {which} \
+                 target has no C ABI to reach it — a wasm module cannot open a shared library.  \
+                 Give the library a wasm implementation (a `[c] shim`), host it out of process, \
+                 or drop the {flag} claim",
+                sig.symbol
+            ));
+        }
+    }
     let params: Vec<Type> = def.attributes().iter().map(|a| a.typedef.clone()).collect();
     let plan = cs::plan(&params, &sig).map_err(|_| "a C binding whose arguments do not fit")?;
     // The author's spelling: `<ret>(<param>, …)`.
@@ -3206,6 +3273,36 @@ fn c_binding_result(
 /// The runtime function behind a native of an `in_binary` library — one whose natives live in
 /// loft's own binary (`[native] in_binary = true`, `native.rs`' table): the C runtime carries
 /// each one the C programs reach.
+/// The page's C twin of a web-library native (`loft_web_page.h`), as `web_browser.rs` is the
+/// Rust writer's.
+fn page_web_native(native: &str) -> Option<&'static str> {
+    Some(match native {
+        "n_http_do" => "loft_wp_http_do",
+        "n_http_body" => "loft_wp_http_body",
+        "n_http_headers" => "loft_wp_http_headers",
+        "n_http_head_size" => "loft_wp_http_head_size",
+        "n_ws_connect" => "loft_wp_ws_connect",
+        "n_ws_client_send" => "loft_wp_ws_client_send",
+        "n_ws_client_send_binary" => "loft_wp_ws_client_send_binary",
+        "n_ws_client_recv" => "loft_wp_ws_client_recv",
+        "n_ws_client_message" => "loft_wp_ws_client_message",
+        "n_ws_client_opcode" => "loft_wp_ws_client_opcode",
+        "n_ws_client_close" => "loft_wp_ws_client_close",
+        "n_sleep_ms" => "loft_wp_sleep_ms",
+        "n_frame_yield" => "loft_wp_frame_yield",
+        "n_pack_reset" => "loft_wp_pack_reset",
+        "n_pack_u8" => "loft_wp_pack_u8",
+        "n_pack_u16_le" => "loft_wp_pack_u16_le",
+        "n_pack_u32_le" => "loft_wp_pack_u32_le",
+        "n_pack_take" => "loft_wp_pack_take",
+        "n_byte_at" => "loft_wp_byte_at",
+        "n_ws_group_clear" => "loft_wp_ws_group_clear",
+        "n_ws_group_add" => "loft_wp_ws_group_add",
+        "n_ws_group_poll" => "loft_wp_ws_group_poll",
+        _ => return None,
+    })
+}
+
 fn in_binary_native(native: &str) -> Option<&'static str> {
     match native {
         "n_process_run" => Some("loft_process_run"),
@@ -3903,6 +4000,31 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
 /// A function as the unit writes it: its body becomes `<name>__fr`, and the function
 /// pushes its frame (`cr_call_push`'s name and file), calls the body and pops the frame, so
 /// every return of the body leaves the frame stack as it found it.
+/// `@FR-R-Tabulate` — a classifier of a byte reads its answer from the table the compiler
+/// evaluated (`opt::tabulate::table`) when its one parameter is in the table's range, and runs
+/// its body otherwise.  Only where the parameter and the result are the 64-bit integers the
+/// table holds.
+fn tabulated(cx: &Cx, d: u32, ret: CType, params: &str, body: String) -> String {
+    let [param] = params.split(", ").collect::<Vec<_>>()[..] else {
+        return body;
+    };
+    let Some(p) = param.strip_prefix("int64_t ") else {
+        return body;
+    };
+    if held(ret) != "int64_t" {
+        return body;
+    }
+    let Some(tab) = crate::opt::tabulate::table(cx.data, d) else {
+        return body;
+    };
+    let entries: Vec<String> = tab.iter().map(|v| format!("INT64_C({v})")).collect();
+    format!(
+        "    static const int64_t loft_tab[{n}] = {{ {} }}; /* @FR-R-Tabulate */\n    if ((uint64_t) {p} < {n}) return loft_tab[{p}];\n{body}",
+        entries.join(", "),
+        n = crate::opt::tabulate::DOMAIN,
+    )
+}
+
 fn framed(
     cx: &Cx,
     d: u32,
@@ -3976,6 +4098,30 @@ thread_local! {
     /// Set for the length of one [`emit_program_with_source_lines`]: the unit marks its statements
     /// with their loft lines (`Cx::source_lines`).
     static SOURCE_LINES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Set for the length of one [`emit_wasm_program`]: the unit is compiled to wasm32.
+    static WASM_UNIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// [`emit_program`] for a `--native-wasm` module: the same unit, written knowing it is compiled
+/// to wasm32, so a `#c` binding no `[c] shim` provides is refused by name rather
+/// than failing at the wasm link.
+///
+/// # Errors
+/// As [`emit_program`].
+pub fn emit_wasm_program(
+    data: &Data,
+    stores: &Stores,
+    expected: &dyn Fn(&str) -> Vec<String>,
+) -> Result<String, Refusal> {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            WASM_UNIT.with(|s| s.set(false));
+        }
+    }
+    WASM_UNIT.with(|s| s.set(true));
+    let _reset = Reset;
+    emit_program(data, stores, expected)
 }
 
 /// The comment that ends a function's run of `#line` markers in a unit written with source

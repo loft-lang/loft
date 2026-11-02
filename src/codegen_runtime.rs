@@ -924,7 +924,7 @@ pub fn OpFormatDatabase(
 ) {
     let stores: &mut Stores = unsafe { &mut *cell.get() };
     let mut s = String::new();
-    ShowDb {
+    let top = ShowDb {
         stores,
         store: record.store_nr,
         rec: record.rec,
@@ -937,8 +937,9 @@ pub fn OpFormatDatabase(
         compact: false,
         max_depth: u16::MAX,
         max_elements: u16::MAX,
-    }
-    .write(&mut s, 0);
+    };
+    // `@FR-F-Render-Ref` — references render as pointers, `$refs` beside them.
+    stores.render_top(&mut s, &top);
     output.push_str(&s);
 }
 

@@ -1,0 +1,10 @@
+twin_bytes instr=1275460 cycles_min=282632
+base_bytes instr=2542463 cycles_min=1236130
+ro_bytes instr=2548456 cycles_min=670927
+s2_bytes instr=2131455 cycles_min=448635
+s3_bytes instr=2092255 cycles_min=446437
+b3_bytes instr=2085965 cycles_min=1071252
+cl_base_bytes instr=2287002 cycles_min=434420
+cl_ro_bytes instr=2375983 cycles_min=470841
+cl_s3_bytes instr=2044384 cycles_min=420540
+cl_b3_bytes instr=1949002 cycles_min=391755

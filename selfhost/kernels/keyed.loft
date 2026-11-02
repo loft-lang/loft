@@ -1,0 +1,78 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 S4 — keyed collections beyond a hash, through the C runtime's keyed routines: a sorted
+// (find, a bounded walk, a removal), an index, a spatial index and a trie.  Every value is
+// hand-computed beside its kernel.
+struct S {
+  k: integer,
+  v: integer,
+}
+
+struct P {
+  x: integer,
+  y: integer,
+  n: integer,
+}
+
+struct W {
+  w: text,
+  n: integer,
+}
+
+// A sorted filled out of order: s[3].v = 30, the walk from 2 up to 4 (excluded) visits 2 and 3,
+// the length after removing k = 1 is 3.  sorted_walk(1) = 30 * 10000 + (2 + 3) * 100 + 3 = 300503.
+fn sorted_walk(n: integer) -> integer {
+  s: sorted<S[k]> = [S { k: 3, v: 30 }, S { k: 1, v: 10 }, S { k: 4, v: 40 }, S { k: 2, v: 20 }];
+  walked = 0;
+  for e in s[2..4] {
+    walked += e.k;
+  }
+  f = s[3]?.v ?? 0;
+  for e in s if e.k == 1 {
+    e#remove;
+  }
+  r = f * 10000 + walked * 100 + len(s);
+  r * n
+}
+
+// An index on a descending key: the first visited is the largest, a lookup of 5 finds v 50.
+// index_walk(1) = 50 * 100 + 9 = 5009.
+fn index_walk(n: integer) -> integer {
+  ix: index<S[-k]> = [S { k: 5, v: 50 }, S { k: 9, v: 90 }, S { k: 2, v: 20 }];
+  first = 0;
+  for e in ix {
+    if first == 0 {
+      first = e.k;
+    }
+  }
+  ((ix[5]?.v ?? 0) * 100 + first) * n
+}
+
+// A spatial index: the point (2, 3) is found; three points are walked.
+// spatial_find(1) = 23 * 10 + 3 = 233.
+fn spatial_find(n: integer) -> integer {
+  sp: spatial<P[x, y]> = [P { x: 1, y: 1, n: 11 }, P { x: 2, y: 3, n: 23 }, P { x: 5, y: 0, n: 50 }];
+  count = 0;
+  for _ in sp {
+    count += 1;
+  }
+  ((sp[2, 3]?.n ?? 0) * 10 + count) * n
+}
+
+// A trie: "bc" is found, "ab" and "abc" share the prefix "ab".
+// trie_find(1) = 2 * 100 + 2 = 202.
+fn trie_find(n: integer) -> integer {
+  t: trie<W[w]> = [W { w: "abc", n: 1 }, W { w: "bc", n: 2 }, W { w: "ab", n: 3 }];
+  under = 0;
+  for e in t {
+    if e.w.starts_with("ab") {
+      under += 1;
+    }
+  }
+  ((t["bc"]?.n ?? 0) * 100 + under) * n
+}
+
+fn main() {
+  println("{sorted_walk(1)} {index_walk(1)} {spatial_find(1)} {trie_find(1)}");
+}

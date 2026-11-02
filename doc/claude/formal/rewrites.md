@@ -885,6 +885,28 @@ which hex_recover's `forms_upto` builds per candidate: −7.3 % (gcc ship).  Swi
 and a value block's `assign_seq`), `loft_vec_reserve_run` (`src/c/loft_rt.h`).  Native's run
 clause is the byte form above, which opens a window for the run.
 
+**The run's header clause (the C).**  After the reservation, a
+run whose every pushed value meets native's run conditions — it reads neither P's root nor any
+non-scalar local, and calls nothing but an operator — writes its k elements through ONE push
+header (`loft_ph_of` once, `loft_ph_putb<w>` per element: a bounds test against the held
+capacity, the element and the length stored at the held record address), where the plain run
+called `loft_vec_push_<w>` k times, each re-resolving the store, the vector's record, its length
+and its claim and testing the lock.  Nothing between the header's derivation and the run's last
+write can move the store's memory: the values are computed from scalars and operators, and the
+run's own growth is the reservation before it.  A push the header has no room for takes the
+header's growth step, which is the runtime's own append — so a vector the reservation could not
+grow (absent, locked) refuses exactly where the plain push refused.  Priced in hex_recover's
+`forms_upto` (gcc, a driver running only that routine): 0.30 s → 0.17 s, **−43 %**, the answer
+unchanged — the six pushes of `Form { fm_len: [la, lb, lc], fm_turn: [ea, eb, ec] }` were
+out-of-line calls around which gcc spilled the six loop counters of the enumeration.  Built
+to the hand form (the same 0.17 s): `reserve_push_run` opens a one-path frame in `push_heads`
+after the reservation, both statement loops close it at the run's end, and the pushes take the
+header path they take in a loop.  The value test is native's, lifted to
+`opt::hoist::run_value_plain` so both backends read one predicate.  Switch
+`LOFT_NO_PUSH_RUN_HEADER=1`; census `R-PushFill/run-header`.  Guard: the run cells
+(`a-run-of-pushes-reserves-its-room-once.loft`) — a header put that never bumps the length
+fails r1 with lengths 0 for 3.
+
 **(R-PushFill)'s record clause, in words.**
 (`bench/portal/analysis/round-3.md` § Built).  The consumer bench's `enum_match` builds
 its edits as `for i in 0..3000 { if i % 3 == 0 { edits += [SetHeight { … }] } else if … {
@@ -1006,6 +1028,30 @@ and capacity, so a literal of vectors refills them where the plain form claimed 
 every pass.  Sites `hoist::loop_record_zeros` (the groups and their zeros) and the
 `(R-RefillBuffer)` empty in `emit.rs`; cells `tests/scripts/157-a-loop-record-keeps-its-vectors.loft`,
 pins `tests/ctor_literal.rs`.
+
+**On the C (a port).**  The C writer does not ask
+`crate::opt::loop_records::loop_records`, so a record literal in a loop mints a store, claims
+its vectors and frees it every pass.  The port is the same three moves in the C's spelling: the
+mint is taken only where the local holds no store (`if (r.store_nr == 0xFFFF)`), a refill
+record's literal zero of a vector field (`loft_set_int4(r, off, 0)`, in `field_zeros`) becomes
+`loft_vec_clear` of that field on a kept pass — length 0, block kept — and the end-of-body
+free moves after the loop.  Priced on hex_recover's `forms_upto` (gcc), on top of the run's
+header clause: 0.17 s → 0.11 s, **−35 %**; together 0.30 → 0.11 s (0.37×, ≈ 6.3× → ≈ 2.3×
+the Rust twin).  Resetting the store (`loft_reset_pool_root`) instead measured NOTHING — the
+cost is the two vectors' claims, not the store — and so did skipping the run's reservation on
+a kept pass and hinting `head_step` inline.  Built to the hand form (0.12 s against 0.11:
+the fresh flag below): `src/c/body/loop_record.rs` reads the shared analysis once per
+function; the mint is `((v.store_nr == 0xFFFF) ? (mint, lrf = 1) : (lrf = 0))`, each vector-field
+zero `if (lrf) zero; else loft_vec_clear(field)` — a fresh mint keeps its zero, because the C's
+claim is not promised to be zeroed — and the declaring block's `Set(v, null)` and end-of-pass
+free are skipped by node address, with one free after every copy of the keeping loop
+(`loop_stmt`).  The refill records only: a plain no-heap record keeps the plain mint on the C,
+where a reset measured nothing.  Bench (A/B, both clauses off against on): hex_recover
+`forms_upto` **0.302×** gcc (1045 → 315 µs, ≈ 2.5× the twin), **0.234×** clang (799 → 187 µs,
+≈ 1.5×).  Switch `LOFT_NO_LOOP_RECORD_REFILL=1` (and `LOFT_NO_LOOP_RECORD`); census
+`R-LoopRecord/refill`.  Guard: `157-a-loop-record-keeps-its-vectors.loft` and
+`157-loop-record.loft` now run on the C too (both pass, and under `LOFT_NATIVE_LEAK_CHECK`) —
+a kept pass that does not empty its vectors fails r1 with 102280.
 
 ### A return buffer refills the store a rebind released
 
@@ -3706,7 +3752,8 @@ second statement keep the loop.  Switch `LOFT_NO_FILL_HOIST`; falsifier
 loop.  The guarded clause's span floor is a measurement, not a rule: every span through the
 fill made graphics' `fill_triangle` slower (an empty one pays the fill's setup and then the
 loop), spans from eight took it −27 %.  Switch `LOFT_NO_GUARDED_FILL`.  Sites:
-`hoist::fill_loop`, `Output::fill_fast_path`, `Stores::fill_hoisted`.
+`hoist::fill_loop`, `Output::fill_fast_path`, `Stores::fill_hoisted`; on the C writer
+`FnWriter::fill_head` / `fill_tail` and `loft_vh_fill_*`, with the same switches.
 
 ### A nest whose arithmetic cannot fault runs plain
 
@@ -3933,7 +3980,9 @@ declines — which is how the condition is falsified rather than asserted.  Swit
                  store the native emitter already keeps across the passes with a length
                  reset (R-LoopBuffer) cheaper than a clear, and whose invariant literal the
                  literal hoist builds once (R-LitHoist); a local written and never read, the
-                 dead-store lint's subject; an ENTRY POINT, which no caller hands a buffer;
+                 dead-store lint's subject; an ENTRY POINT, which no caller hands a buffer,
+                 and a HOOK (`OpDrop`, the cascade that calls it, `OpCopy`), whose calls the
+                 scope pass places after the rewrite with the record alone;
                  a local numbered before an argument in a function whose RETURN TYPE
                  carries deps — the swap that puts it after the arguments renumbers frame
                  numbers, and those deps are attribute-space (the debug-assertions gate
@@ -4094,12 +4143,55 @@ reads such a `main` as a possible leak, and it is a working set.
 ### A leaf carries no frame
 
 ```
+  (R-FnRefBuffer) on the C, a function value whose call answers a record is
+                 handed the binding's own store as its return buffer: the dispatcher
+                 sees every target the program can pass (a closed world), and a target
+                 that takes a hidden record buffer is passed the caller's where it was
+                 passed null.  The bind keeps `(O-Unknown)`'s protocol for every other
+                 answer — a store the call minted is adopted, one that predates the call
+                 is copied — and adds the third: an answer IN the handed store is the
+                 binding already, nothing to adopt or copy.  The binding — a local
+                 bound only by such calls inside a loop, read in place or handed to a
+                 call whose return cannot borrow it — keeps its store across the passes
+                 (the per-pass free dropped, one free after the outermost loop), so the
+                 target fills one store per frame instead of minting one per call.  A
+                 target that keeps or returns some other record is unaffected: its
+                 answer is not the handed store, and the protocol takes it as before.
+
   (R-Leaf)       a function whose body calls no user function and no fn-ref (a store
                  bracket, as in (R-LeafChain), is none) — a LEAF — is emitted without a shadow-stack frame push and without a fn-ref
                  buffer guard: it cannot recurse, cannot reach stack_trace / assert /
                  panic, and cannot sit between the frame that pushed a buffer and
                  the one that releases it.  The live-flip check stays.
 ```
+
+**(R-FnRefBuffer), in words.**  zttext's layout takes its style
+resolver as a function value, `resolve: fn(integer) -> Style`, and calls it for every run of
+every token, three times a token; each call minted a `Style` store (`default_style`'s
+`loft_database`), adopted it and freed it at the end of the pass — 15 % of the routine.  The
+Rust twin is generic over the resolver and calls it directly.  Priced by hand on the C
+(`flow_layout_full`, gcc, after `(H-KeepRoom)`'s prologue clause): the dispatcher passing the
+caller's store and every resolver site taking it, kept across the inner loop only, 0.31 → 0.29 s
+(−6.5 %) — the inner loop walks a token's RUNS, one per token here — and kept across the whole
+frame, 0.29 → 0.26 s: **−16 %** in all.  Not priced: the buffer handed down from caller to
+callee across frames (`token_width` is called once per token), which is `(R-WorkBuffer)`'s
+result clause made transitive.  Built (`src/c/fnval.rs` — the `loft_call{n}b` dispatcher,
+asked for per signature through `Cx::fn_sigs_buf`; `FnWriter::opaque_callref_stmt` — the handed
+store and the in-place branch; `src/c/body/loop_record.rs` `fnref_kept` — the admission, the
+per-pass frees dropped, one free after the outermost loop): 0.27 s against the hand form's 0.26,
+the difference the call site's adopt-or-copy branches, which a resolver answering a table
+record needs.  Building to the hand form found three defects of the build's own: the target's
+buffer slot was matched by its whole `Type` (the deps differ — no buffer was ever passed), the
+in-place test compared store and record but not position (a vector's elements share one
+record), and the buffer dispatcher kept the hold bookkeeping its caller does not need (−0.02 s
+when dropped).  A record held apart (`@FR-R-Apart`) is no loop record to keep (`lr_kept`): the
+sweep's strict mode found a flag used and never declared there.  Bench (A/B, gcc, both clauses
+of this pass off against on): zttext `flow_layout_full` **0.735×** gcc, **0.777×** clang; all
+libraries 2 faster, 112 the same; zttext `seg` and `locate` +3.5–5 % on gcc only (the whole
+run executes 8 % FEWER instructions — the dropped clear's work moved, gcc inlined the mint into
+`seg`; clang reads them the same).  Switch `LOFT_NO_FNREF_BUFFER=1`, trace
+`LOFT_TRACE_FNREF_BUFFER=1`, census `R-FnRefBuffer`.  Guard
+`tests/scripts/a-function-value-fills-its-callers-record.loft`.
 
 **In words.** @PLN157 N4.  A runtime fault inside a leaf keeps its exact position
 and loses only the innermost frame NAME from the chain.  Switch
@@ -4738,7 +4830,8 @@ the hand price), which is `insert_text`'s `np += [p]` per piece
 (`bench/portal/analysis/over-9x.md`).  Same switch.  Cells
 `tests/scripts/a-record-that-owns-no-heap-is-copied-as-its-bytes.loft`.  Sites:
 `hoist::flat_copy` (the admission), `hoist::copy_serves_view`, `ref_ops::emit_flat_copy`,
-`Stores::copy_flat_record`.
+`Stores::copy_flat_record`; on the C writer `loft_copy_flat`, the bytes from one record to the
+other, a null end and a parse result's root taking `loft_copy_record`.
 
 ### A result is built where it will live, moved at its last use, and written over a place
 
@@ -5931,6 +6024,59 @@ fault inside the body keeps its exact position and loses only the leaf's frame, 
 body's lines, runs `open_world` and keeps the call.  It reaches the stdlib too (`clamp`,
 `approx` inline their `min`/`max`).  `LOFT_NO_INLINE_LEAF=1`; `LOFT_TRACE_INLINE_LEAF=1` names
 each inlined call, each decline and each reduction below.
+
+### An append loop holds one window
+
+```
+  (R-AppendTwin)'s loop clause
+                 a loop that names a buffer X — a plain local or the return buffer —
+                 only as the destination of its append sites (`X += f(…)`, each written
+                 as the window twin `f__ap(…, X, &w)`) and that leaves only by its own
+                 end holds ONE window over X from before the loop to after its end; every
+                 site in it, an inner loop's included, takes that window.  A loop that
+                 names X or a view of X anywhere else (a read, a length, a rebind, a fn-ref
+                 call through it), or that can leave by a `return` or a jump past itself,
+                 keeps a window per site.  A buffer an enclosing loop holds a window for
+                 keeps that window.  APPLIED BY the C writer; the interpreter is the oracle.
+```
+
+**In words.**  @PLN210 P8.  A window holds the buffer's length in a register and writes it to
+the record only when it grows or closes; between two sites of one loop nothing reads the
+record, so the close and the reopen in between were all cost.  cbor's array arm calls
+`encode__ap` per item; hand-priced, `encode_bytes` 2.37× → 1.59× its twin.  Every condition is
+what keeps the record unread between the sites, or the close certain to run.  Switch
+`LOFT_NO_APPEND_LOOP_WINDOW`.  Guard `tests/scripts/an-append-loop-keeps-one-window.loft`.  Site:
+`FnWriter::open_loop_windows`.
+
+### A branchy classifier of a byte is a table
+
+```
+  (R-Tabulate)   a loft function of ONE integer parameter answering an integer, whose body
+                 the compiler can EVALUATE — literals, the parameter, `if`, blocks, `return`,
+                 the integer comparisons, `+ - *` and negation with their checks, the bit
+                 operators — answers from a 256-entry table for an argument in [0, 256) and
+                 runs its body for every other argument, when for EVERY argument in that
+                 range the evaluation answers a value that is not the null sentinel, with no
+                 overflow on the way, and the body takes at least eight branches.  The
+                 table is the evaluation's answers; the body is unchanged.  APPLIED BY the C
+                 writer; the interpreter is the oracle.
+```
+
+**In words.**  @PLN210 P9.  crypto's `b64_value` is a chain of range tests over a byte, and on
+random base64 every test is a data-dependent branch: 36 M mispredictions per `request` run
+where a table lookup has none (hand price: `request` 5.2× → 3.5× its twin).  The evaluation
+replays the body in the compiler with loft's checked arithmetic, so an entry is exactly what
+the body answers for that argument, and an argument whose evaluation would overflow, answer
+null or reach anything the evaluator does not model declines the whole rewrite — no fault
+moves from a call to compile time (@C120), and none is lost.  The domain is the byte because
+the shape is a byte classifier: a lexer's character class, a hex or base64 digit, a table of
+escapes.  The floor of eight branches is measured: the hex libraries' five- and six-branch
+direction maps (`corner_k`, `between_k`, gridmesh's `axial_dq`) are called from loops that
+walk the six directions in order, where the chain is predicted and the table's range test and
+load are extra work — hex_field `trace` +7 % on gcc with them tabulated, the same as untouched
+at eight.  `b64_value`'s ten branches on random input are not predicted: `request` −35 % (gcc),
+−49 % (clang).  Switch `LOFT_NO_TABULATE`; `LOFT_TRACE_TABULATE=1` names each admitted function and
+each decline.  Site: `opt::tabulate::table`.
 
 ### A self-call in tail position is a jump
 

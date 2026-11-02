@@ -58,21 +58,19 @@ fn fixture(name: &str, aged: usize) -> (PathBuf, u32, u32) {
         fa::write(dir.join(format!("loft_native_bin_{pid}")), "").unwrap();
         fa::write(dir.join(format!("loft_native_{pid}.rs")), "").unwrap();
     }
-    let mut old = Vec::new();
     for i in 0..aged {
-        let e = dir.join(format!("loft_old_{i}"));
-        fa::create_dir_all(e.join("inner")).unwrap();
-        old.push(e);
+        fa::create_dir_all(dir.join(format!("loft_old_{i}")).join("inner")).unwrap();
     }
     fa::create_dir_all(dir.join("loft_fresh")).unwrap();
     fa::create_dir_all(dir.join("other_old")).unwrap();
-    old.push(dir.join("other_old"));
     // A week old, a directory included: `touch -t` with the stamp from GNU `date -d` (Linux,
-    // Git Bash) or BSD `date -v` (macOS).
-    let paths: Vec<&Path> = old.iter().map(PathBuf::as_path).collect();
+    // Git Bash) or BSD `date -v` (macOS), the entries found by `find` in the directory, so no
+    // command line carries hundreds of paths (Windows refuses one past 32 KiB).
     bash(
-        "t=$(date -d '7 days ago' +%Y%m%d%H%M 2>/dev/null || date -v-7d +%Y%m%d%H%M) && touch -t \"$t\" \"$@\"",
-        &paths,
+        "t=$(date -d '7 days ago' +%Y%m%d%H%M 2>/dev/null || date -v-7d +%Y%m%d%H%M) && \
+         cd \"$1\" && find . -maxdepth 1 \\( -name 'loft_old_*' -o -name other_old \\) \
+         -exec touch -t \"$t\" {} +",
+        &[&dir],
     );
     (dir, live, dead)
 }

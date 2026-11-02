@@ -1,0 +1,19 @@
+--- library/bench/bench.rs
++++ pkg/bench/bench.rs
+@@ -986,14 +986,6 @@
+     let d0 = piece_doc(PIECES, PIECE_LEN, 0);
+     let d1 = piece_doc(PIECES, PIECE_LEN, 1);
+-    let rows = [
+-        bench_seg(n, &d0, &d1),
+-        bench_insert(n),
+-        bench_flow(n),
+-        bench_materialise(n, &d0, &d1),
+-        bench_delete(n, &d0, &d1),
+-        bench_locate(n, &d0),
+-        bench_invert(n),
+-        bench_patch(n),
+-    ];
++    let _ = (&d0, &d1);
++    let rows = [bench_invert(n)];
+     let mut sink = 0i64;
+     for row in &rows {

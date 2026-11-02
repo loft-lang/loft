@@ -1,7 +1,8 @@
 diff --git a/src/scopes/args.rs b/src/scopes/args.rs
+index 2cb33b147..2a931b523 100644
 --- a/src/scopes/args.rs
 +++ b/src/scopes/args.rs
-@@ -217,15 +217,7 @@
+@@ -218,16 +218,8 @@ impl Scopes<'_> {
                  if *d == create_stack_nr
                      && matches!(cargs.first().map(Value::unspan), Some(Value::Var(_))))
          });
@@ -9,6 +10,7 @@ diff --git a/src/scopes/args.rs b/src/scopes/args.rs
 -        // It stays unallocated while nothing is hoisted — every start is 0 then — because this
 -        // runs for every call the scope pass scans, the stdlib's included, on every compile.
 -        let mut hoisted_from: Vec<usize> = Vec::new();
+         let consumed_from = self.consumed_lifts.len();
          for (arg_idx, a) in args.iter().enumerate() {
 -            if !preamble.is_empty() {
 -                hoisted_from.resize(arg_idx, 0);
@@ -17,7 +19,7 @@ diff --git a/src/scopes/args.rs b/src/scopes/args.rs
              // loft#1320 — a branch VALUE consumed by this call (`total(if c { g(a) } else { g(n) })`)
              // never reaches `scan_set`, so its arms get their owners here, homed in this statement's
              // scope: the call reads the temp and the scope's exit frees it by identity.
-@@ -600,11 +592,6 @@
+@@ -602,11 +594,6 @@ impl Scopes<'_> {
                  ls.push(scanned);
              }
          }
@@ -29,7 +31,7 @@ diff --git a/src/scopes/args.rs b/src/scopes/args.rs
          if outer_call != u32::MAX && ls.len() == args.len() {
              self.keep_viewed_displaced(
                  outer_call,
-@@ -728,143 +715,6 @@
+@@ -738,143 +725,6 @@ impl Scopes<'_> {
          }
      }
  

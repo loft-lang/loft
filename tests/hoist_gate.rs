@@ -18,7 +18,6 @@ extern crate loft;
 use loft::data::{Data, Value};
 use loft::generation::hoist;
 use loft::parser::Parser;
-use std::collections::HashMap;
 
 /// Parse `script` against the stdlib and hand back its `Data`.
 fn parse(script: &str) -> Data {
@@ -36,7 +35,11 @@ fn parse(script: &str) -> Data {
 fn writes(data: &Data, name: &str) -> bool {
     let d_nr = data.def_nr(name);
     assert!(d_nr != u32::MAX, "`{name}` is not defined");
-    hoist::may_write_store(&Value::Call(d_nr, Vec::new()), data, &mut HashMap::new())
+    hoist::may_write_store(
+        &Value::Call(d_nr, Vec::new()),
+        data,
+        &mut loft::opt::facts::Facts::fresh(),
+    )
 }
 
 /// The verdict "this op cannot name a store" is read off its declared parameters, so an
@@ -139,11 +142,11 @@ fn hoistable_tier(script: &str, fn_name: &str, allow_in_place: bool) -> usize {
     let data = parse(script);
     let d_nr = data.def_nr(fn_name);
     assert!(d_nr != u32::MAX, "`{fn_name}` is not defined");
-    let mut cache = HashMap::new();
+    let mut fx = loft::opt::facts::Facts::fresh();
     let mut total = 0;
     data.def(d_nr).code().any_node(&mut |n| {
         if let Value::Loop(body) = n {
-            total += hoist::hoistable_vectors(body, &data, d_nr, &mut cache, allow_in_place).len();
+            total += hoist::hoistable_vectors(body, &data, d_nr, &mut fx, allow_in_place).len();
         }
         false
     });

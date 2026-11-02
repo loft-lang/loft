@@ -150,9 +150,14 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
   NEVER wrap, saturate, or an out-of-range value (that would be UB).  Nullability is
   RANGE-DRIVEN: an op is non-null when its result provably fits, τ? when it could miss.
   (N-Index)    Γ ⊢ v ⇒ vector<τ>, Γ ⊢ i ⇒ Integer   ⟹   Γ ⊢ v[i]  ⇒ τ?       (OOB — no elem)
-               EXCEPT an index trusted BY CONTRACT — a constant, an active `for` variable, a
-               read guarded by `i < len(v)`, integer arithmetic over those (@PLN102 D1,
-               `index_provably_fit`) — which reads τ NON-NULL; a genuine overrun there
+               EXCEPT an index trusted BY CONTRACT — a constant, an active `for` variable, the
+               counter `x#index` of a `for x in v` over the SAME v, a read guarded by
+               `i < len(v)`, integer arithmetic over those and over `len(v)` of the same v or
+               a local holding it (`n = len(v)` assigned once, with v — and every view of it
+               — written by no statement that can run after it: the rest of each enclosing
+               block, and each enclosing loop whole; pass 2 reads this off pass 1's whole
+               body, `length_locals`) (@PLN102 D1, `index_provably_fit`) —
+               which reads τ NON-NULL; a genuine overrun there
                faults to null at run time (@C80) and no rule above the runtime sees it.  So a
                nullability cell built on `v[9]` measures nothing: it must index by a plain
                variable.
@@ -202,10 +207,17 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
                  · `assert(t, …)` proves t after it: a failed assert HALTS (operational.md)
                    and `assert` is checked in every build.  (`debug_assert`, which a release
                    would elide, proves nothing.)
+                 · `if t₁ || … || tₙ { S }`, with S as above, proves every ¬tᵢ after it: the
+                   fall-through is where each test failed;
+                 · the right operand of `t && b` runs only where t holds, and of `t || b`
+                   only where it fails: b reads with what `if t`'s then side, or its else
+                   side, proves.  `i < len(v) && v[i] > 0` needs no discharge.
                A test of one name proves it: `v != null`, a truthy `v`, or `v == null` /
                `!v` on the side where it fails; a compound condition proves nothing.  The same
                tests feed the other facts a guard proves — an index in bounds, a divisor not
-               zero, a math operand's sign (`(N-Domain)`) — with the same polarity.  The
+               zero, a math operand's sign (`(N-Domain)`) — with the same polarity.  An `||` of
+               such tests in a guard is a list of them, as above; any other compound proves
+               nothing.  The
                proof ends at the block's `}` and at any write to `v`.  Under
                `LOFT_DEV_SOFT_HALT` (opt-in log-and-continue for debugging) a failed assert
                continues, and the null it did not stop flows on as an un-narrowed one would.

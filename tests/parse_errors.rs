@@ -394,7 +394,7 @@ fn an_unguarded_nullable_struct_enum_is_still_reported() {
     code!(
         "enum Sh { Ci { r: integer }, Do { n: integer } }\nfn size(s: Sh) -> integer { match s { Ci { r } => r, Do { n } => n } }\nfn pick(n: integer) -> Sh? { if n > 0 { Ci { r: n } } else { null } }\nfn test() {\n  a = pick(2);\n  assert(size(a) == 2, \"unguarded\");\n}"
     )
-    .warning("a nullable `Sh?` is stored into parameter 1 of `size` of the non-null type `Sh` — it becomes null there; discharge with `?` (the type's default), `?? <default>`, or `match` if that is not intended at an_unguarded_nullable_struct_enum_is_still_reported:6:20");
+    .warning("a nullable `Sh?` is stored into parameter 1 of `size` of the non-null type `Sh` — it becomes null there; `a` is `Sh?` — line 5 gives it a value that may be null: make that value non-null there (`!` when it cannot be null, an index loft proves), or test `a` here (`if a == null { … }` makes it `Sh` after) at an_unguarded_nullable_struct_enum_is_still_reported:6:15");
 }
 
 /// @C148 — only a record or a vector comes out of a parse, so only those have errors to ask.
@@ -3329,25 +3329,24 @@ fn field_capture_unknown_field() {
         .error("`nope` is not a field of Num at field_capture_unknown_field:2:61");
 }
 
-// @PLN35 PC2 — a sub-rule invocation `[ name: rule ]` in a cursor match must be the WHOLE slice
-// pattern for now; mixing it with fixed elements (the running-pos + revert) is deferred.
-#[test]
-fn subrule_mixing_deferred() {
-    code!("enum Tok { Id { x: integer }, LP { x: integer } }\nstruct Cur { src: vector<Tok>, pos: integer }\nstruct N { v: integer }\nfn parse_id(c: Cur) -> N? { match c { [ Id { x } ] => N { v: x }, _ => null } }\nfn f(c: Cur) -> integer { match c { [ e: parse_id, y ] => e.v, _ => -1 } }")
-        .error("a sub-rule element `e: rule` must currently be the whole slice pattern (mixing a sub-rule with fixed elements is deferred to a follow-up) at subrule_mixing_deferred:5:51");
-}
-
-// @PLN35 PC3 — a left-recursive sub-rule grammar (a cycle in the invocation graph) is a COMPILE
-// error, not a runtime hang: every cursor sub-rule invocation is at position 0, so a cycle cannot
-// consume and would recurse forever.
+// `@FR-WF-Term` — a left-recursive sub-rule grammar (a cycle of calls that can run before any
+// token is consumed) is a COMPILE error, not a runtime hang.
 #[test]
 fn subrule_left_recursion() {
     code!("enum Tok { Num { x: integer } }\nstruct Cur { src: vector<Tok>, pos: integer }\nstruct N { v: integer }\nfn expr(c: Cur) -> N? { match c { [ Num { x } ] => N { v: x }, [ e: expr ] => e, _ => null } }\nfn f(c: Cur) -> integer { r = match c { [ x: expr ] => x.v, _ => -1 }; r }")
         .error("sub-rule `expr` is left-recursive (expr -> expr): a cursor `match` invokes a sub-rule before consuming any input, so this cycle would recurse forever at subrule_left_recursion:4:69");
 }
 
-// @PLN35 PC4 — an invoked sub-rule must be pure: a cursor `match` hoists its call unconditionally
-// (runs even when the arm is not taken) and may backtrack over it, so any observable effect leaks.
+// `@FR-WF-Term` — a mutual cycle refused although a CALL precedes the recursion: a sub-rule may
+// match without consuming, so only a fixed element counts as progress.
+#[test]
+fn subrule_left_recursion_through_a_rule() {
+    code!("enum Tok { Num { x: integer }, Plus }\nstruct Cur { src: vector<Tok>, pos: integer }\nstruct N { v: integer }\nfn a(c: Cur) -> N? { match c { [ Num { x } ] => N { v: x }, [ l: b, Plus ] => l, _ => null } }\nfn b(c: Cur) -> N? { match c { [ x: a ] => x, [ Plus, y: a, z: a ] => N { v: y.v + z.v }, _ => null } }")
+        .error("sub-rule `a` is left-recursive (a -> b -> a): a cursor `match` invokes a sub-rule before consuming any input, so this cycle would recurse forever at subrule_left_recursion_through_a_rule:5:37");
+}
+
+// `@FR-WF-Pure` — an invoked sub-rule must be pure: an arm that fails after the call is undone by
+// resetting the cursor alone, so any observable effect of the call would leak.
 #[test]
 fn subrule_impure_rejected() {
     code!("enum Tok { Id { x: integer }, LP { x: integer } }\nstruct Cur { src: vector<Tok>, pos: integer }\nstruct N { v: integer }\nfn noisy(c: Cur) -> N? { print(\"hi\"); match c { [ Id { x } ] => N { v: x }, _ => null } }\nfn f(c: Cur) -> integer { r = match c { [ n: noisy ] => n.v, _ => -1 }; r }")
@@ -6081,4 +6080,45 @@ fn f(e: Arm) -> integer {
 }"
     )
     .error("Expect token , at an_expression_bodied_match_arm_still_needs_its_comma:5:53");
+}
+
+// loft#2312 — `(F-Block)` asks a `;` only of a construct that ends in a VALUE.  A `match`
+// statement in a block parsed against void (a loop body here) whose last arm calls a function
+// that returns nothing, declared further down, was taken for a value on the first pass — the
+// callee's type is not known there yet — and refused with `Expect token ;`.  The value twin
+// below keeps its refusal: that one ends in a value.
+#[test]
+fn a_match_statement_ending_in_a_void_call_below_needs_no_semicolon() {
+    code!(
+        "enum N2312 { A, B, C }
+fn f(n: N2312) -> integer {
+  d = 0;
+  for _ in 0..1 {
+    match n { A => { d = 1; } _ => g(n), }
+    d += 100;
+  }
+  d + 10
+}
+fn g(n: N2312) { println(\"g {n}\"); }"
+    )
+    .expr("f(N2312.A) * 1000 + f(N2312.C)")
+    .result(Value::Int(111110));
+}
+
+#[test]
+fn a_match_statement_ending_in_a_value_below_needs_its_semicolon() {
+    code!(
+        "enum N2312 { A, B, C }
+fn f(n: N2312) -> integer {
+  d = 0;
+  for _ in 0..1 {
+    match n { A => { d = 1; } _ => h(n), }
+    d += 100;
+  }
+  d + 10
+}
+fn h(n: N2312) -> integer { 5 }"
+    )
+    .error("Expect token ; at a_match_statement_ending_in_a_value_below_needs_its_semicolon:5:43")
+    .warning("Parameter n is never read at a_match_statement_ending_in_a_value_below_needs_its_semicolon:10:28");
 }

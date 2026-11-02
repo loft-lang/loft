@@ -132,11 +132,29 @@ fn emit_program_image(p: &mut parser::Parser, ships_live_tier: bool, out: &str) 
         p.data.open_world = true;
     }
     compile::close_program(&mut p.data, &mut p.database);
-    if let Err(e) = loft::ir_store::save_bundle(&p.data, &p.database.types, out) {
+    if let Err(e) = loft::ir_store::save_bundle(&p.data, &p.database, out) {
         eprintln!("loft: cannot write the image to {out}: {e}");
         std::process::exit(1);
     }
     std::process::exit(0);
+}
+
+/// `LOFT_EMIT_PARSED=<out>`: write the image of the program as the parser left it, before the
+/// scope pass, and exit without running it.  Exit 1, naming the path, when it cannot be written.
+#[cfg(feature = "mmap")]
+fn emit_parsed_image(p: &parser::Parser, out: &str) -> ! {
+    if let Err(e) = loft::ir_store::save_bundle(&p.data, &p.database, out) {
+        eprintln!("loft: cannot write the image to {out}: {e}");
+        std::process::exit(1);
+    }
+    std::process::exit(0);
+}
+
+/// A build without file-backed stores cannot write an image.
+#[cfg(not(feature = "mmap"))]
+fn emit_parsed_image(_p: &parser::Parser, _out: &str) -> ! {
+    eprintln!("loft: LOFT_EMIT_PARSED needs file-backed stores, which this build leaves out");
+    std::process::exit(1);
 }
 
 /// A build without file-backed stores (the browser build) cannot write an image.
@@ -9341,6 +9359,28 @@ fn main() {
             native_requested = true;
         }
     }
+    // `LOFT_NO_RUSTC=1`: nothing this run builds goes through rustc.  Decided here, before
+    // any cache or fast path, so a cached binary cannot answer for a run that would have
+    // compiled.  An explicit request for a rustc build is refused; a default run interprets,
+    // as it does on a machine without rustc.  Writing the Rust (`--native-emit`) runs no rustc.
+    let rustc_build = !native_c
+        && native_emit.is_none()
+        && (native_mode || html_out.is_some() || native_wasm.is_some() || native_android.is_some());
+    if rustc_build && loft::native_build::rustc_off() {
+        if native_requested
+            || html_out.is_some()
+            || native_wasm.is_some()
+            || native_android.is_some()
+        {
+            eprintln!(
+                "loft: rustc is off for this run (LOFT_NO_RUSTC=1), and this build goes \
+                 through it — build through the C backend instead (`--native-c`, or \
+                 LOFT_NATIVE_BACKEND=c)"
+            );
+            std::process::exit(2);
+        }
+        native_mode = false;
+    }
     if let Some(ref mut p) = native_emit
         && p.is_empty()
         && !file_name.is_empty()
@@ -9925,6 +9965,12 @@ fn main() {
     // re-deriving it — the copy notice asks `place_result` (@PLN164 B2 units 2-3).
     let parse_user_ms = t_parse_user.elapsed().as_secs_f64() * 1000.0;
     let (mut scopes_ms, mut lints_ms) = (0.0, 0.0);
+    // @PLN91 1a — `LOFT_EMIT_PARSED=<out.store>`: the image of the program as the PARSER left
+    // it, before the scope pass and the program's close, the oracle the front end written in
+    // loft is diffed against before those passes are ported (1a-parser.md, gate E).
+    if let Some(out) = std::env::var_os("LOFT_EMIT_PARSED") {
+        emit_parsed_image(&p, &out.to_string_lossy());
+    }
     if p.diagnostics.level() < Level::Error {
         let t = std::time::Instant::now();
         scopes::check(&mut p.data, &mut p.database);
@@ -10043,7 +10089,8 @@ fn main() {
     // N1/Phase D).
     // `LOFT_NO_NATIVE_LIBS=1` forces ALL `use`d libraries to interpret — the parity
     // reference (a library run native ≡ run interpreted) and a manual escape hatch.
-    let native_libs_off = std::env::var_os("LOFT_NO_NATIVE_LIBS").is_some();
+    let native_libs_off =
+        std::env::var_os("LOFT_NO_NATIVE_LIBS").is_some() || loft::native_build::rustc_off();
     let force_build_fail = std::env::var_os("LOFT_FORCE_NATIVE_BUILD_FAIL").is_some();
     // Crawler / efficiency aid (`LOFT_REQUIRE_NATIVE=1`, the inverse of
     // `LOFT_NO_NATIVE_LIBS`): turn every native→interpreter fallback below into a
@@ -10684,10 +10731,10 @@ fn main() {
             let ann =
                 test_runner::parse_annotations(&fa::read_to_string(&abs_file).unwrap_or_default());
             let expected = |name: &str| ann.expected_failure(name);
-            let c = match loft::c::emit_program(&p.data, &state.database, &expected) {
+            let c = match loft::c::emit_wasm_program(&p.data, &state.database, &expected) {
                 Ok(c) => c,
                 Err(r) => {
-                    eprintln!("loft: the C backend does not carry this program yet: {r}");
+                    eprintln!("loft: {}", r.message());
                     std::process::exit(2);
                 }
             };
@@ -10702,6 +10749,7 @@ fn main() {
                 std::path::Path::new(wasm_out),
                 &shim_sources,
                 ship_build,
+                false,
                 false,
             ) {
                 eprintln!("loft: {e}");
@@ -10945,7 +10993,7 @@ fn main() {
             let c = match loft::c::emit_browser_program(&p.data, &state.database) {
                 Ok(c) => c,
                 Err(r) => {
-                    eprintln!("loft: the C backend does not carry this program yet: {r}");
+                    eprintln!("loft: {}", r.message());
                     std::process::exit(2);
                 }
             };
@@ -10956,7 +11004,9 @@ fn main() {
                 .flat_map(|l| l.shim.iter().cloned())
                 .collect();
             let wasm = build_dir.join("prog.wasm");
-            if let Err(e) = c_driver::build_wasm(&c, &wasm, &shim_sources, ship_build, true) {
+            if let Err(e) =
+                c_driver::build_wasm(&c, &wasm, &shim_sources, ship_build, true, html_names)
+            {
                 eprintln!("loft: {e}");
                 std::process::exit(1);
             }
@@ -12050,7 +12100,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             let c = match emitted {
                 Ok(c) => c,
                 Err(r) => {
-                    let reason = format!("the C backend does not carry this program yet: {r}");
+                    let reason = r.message();
                     if native_requested || native_required {
                         eprintln!("loft: {reason}");
                         std::process::exit(2);
@@ -13093,10 +13143,10 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             round
                 .map_err(|e| format!("the program image did not round-trip: {e}"))
                 .and_then(|(data, db)| {
-                    loft::c::emit_program(&data, &db, &expected).map_err(|r| r.to_string())
+                    loft::c::emit_program(&data, &db, &expected).map_err(|r| r.message())
                 })
         } else {
-            loft::c::emit_program(&p.data, &state.database, &expected).map_err(|r| r.to_string())
+            loft::c::emit_program(&p.data, &state.database, &expected).map_err(|r| r.message())
         };
         match emitted {
             Ok(c) => {
@@ -13107,7 +13157,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 return;
             }
             Err(r) => {
-                eprintln!("loft: the C backend does not carry this program yet: {r}");
+                eprintln!("loft: {r}");
                 std::process::exit(2);
             }
         }

@@ -493,8 +493,7 @@ impl FnWriter<'_> {
                 && crate::opt::writes::call_writes_store(
                     *op,
                     data,
-                    &mut memo,
-                    &mut HashSet::new(),
+                    &mut crate::opt::facts::Facts::over(&mut memo),
                     None,
                 )
                 && !args.iter().all(|a| super::mentions_apart(a, data, &apart))

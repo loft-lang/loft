@@ -42,6 +42,14 @@ enum SepSpec {
     Lexeme(Value, Type),
 }
 
+/// `@FR-P-Rule` — a sub-rule group `(name: rule)` with its quantifier (`*`, `+`, `?`).
+struct SubruleGroup {
+    name: String,
+    fn_nr: u32,
+    ret_tp: Type,
+    quant: char,
+}
+
 /// @PLN85 text-return analysis framework (SHADOW — not yet wired to codegen).
 ///
 /// The ONE property behind the stacked per-shape promotion predicates (2d
@@ -422,6 +430,32 @@ pub(crate) fn is_halt_call(data: &crate::data::Data, v: &Value) -> bool {
     matches!(v.unspan(), Value::Call(d, _) if matches!(data.def(*d).name(), "n_exit" | "n_panic"))
 }
 
+/// `@FR-C-Never` — does `code` END in a halt: the halt call itself, or a block whose last
+/// operator does.  Such a value never arrives, so it fits wherever a value is wanted.
+pub(crate) fn ends_in_halt(data: &crate::data::Data, code: &Value) -> bool {
+    match code.unspan() {
+        Value::Block(bl) => bl.operators.last().is_some_and(|o| ends_in_halt(data, o)),
+        other => is_halt_call(data, other),
+    }
+}
+
+/// Give a value that ends in a halt ([`ends_in_halt`]) the value of type `tp` after the halt,
+/// which no run reaches: the halt stays a statement, and every emitter types the result.
+fn give_halt_a_value(code: &mut Value, value: Value, tp: &Type) {
+    if let Value::Block(bl) = code {
+        bl.operators.push(value);
+        bl.result = tp.clone();
+    } else {
+        let halt = std::mem::replace(code, Value::Null);
+        *code = v_block(vec![halt, value], tp.clone(), "halt");
+    }
+}
+
+/// Does `ops` reach its last operator only past a halt — the value behind it is never read?
+fn behind_a_halt(data: &crate::data::Data, ops: &[Value]) -> bool {
+    ops.len() > 1 && ops[..ops.len() - 1].iter().any(|o| is_halt_call(data, o))
+}
+
 /// `@FR-N-Guard` — can the body of a guard clause NOT fall through: it ends in `return`,
 /// `break` or `continue`, or in a halt ([`is_halt_call`]).  Only the guard's narrowing asks
 /// this; a block's TAIL conversion keeps asking [`is_block_divergent`], where a halt still
@@ -539,14 +573,46 @@ struct PatternArm {
 /// `Return`/`Break`/`Continue` unspanned in block-operator position.
 /// The null-arm recogniser of @FR-N-Match: which arm of a `match` on `τ?` is the `null` arm,
 /// so the other arms bind the `τ`.
+///
+/// loft#2339 — a block ARM that binds names first (`PN { name } => { …; null }`) arrives as the
+/// `match_arm` block of its bindings whose last operator is the body BLOCK; the null is that
+/// block's tail.  Not followed, the arm was left a value-less block beside value arms: the
+/// interpreter answered null for every arm after it, the C backend refused it.
 fn arm_body_is_null(code: &Value) -> bool {
     match code {
         Value::Null => true,
-        Value::Block(bl) => bl
-            .operators
-            .last()
-            .is_some_and(|o| matches!(o.unspan(), Value::Null)),
+        Value::Block(bl) if bl.name == FORWARD_CALL => false,
+        Value::Block(bl) => bl.operators.last().is_some_and(|o| {
+            matches!(o.unspan(), Value::Null)
+                || (matches!(o, Value::Block(_)) && arm_body_is_null(o))
+        }),
         _ => false,
+    }
+}
+
+/// The name of the block that spells a pass-1 PLACEHOLDER arm: a `match` arm calling a function
+/// declared further down, which pass 1 cannot type and builds no IR for.  Left as the bare
+/// `Value::Null` it was handed, it read as the `null` literal — to the arm joins (loft#2305) and to
+/// the text-accumulator gate (`if_tail_yields_text`), which then answered differently on the two
+/// passes and left a `text?` match to native's mixed-arm join (E0308).  Spelled apart, each
+/// recogniser answers by the notion: no null arm, and an arm that yields a value, as the call
+/// will on pass 2.  Pass-1 IR is never emitted, so nothing downstream sees it.
+const FORWARD_CALL: &str = "forward_call";
+
+/// Spell a placeholder arm apart from the `null` literal (`FORWARD_CALL`), where
+/// [`arm_body_is_null`] finds its bare `Value::Null`.
+fn mark_forward_call(code: &mut Value) {
+    let stand_in = v_block(vec![Value::Null], Type::Unknown(0), FORWARD_CALL);
+    match code {
+        Value::Block(bl) if bl.name != FORWARD_CALL => {
+            if let Some(last) = bl.operators.last_mut()
+                && matches!(last.unspan(), Value::Null)
+            {
+                *last = stand_in;
+            }
+        }
+        Value::Null => *code = stand_in,
+        _ => {}
     }
 }
 
@@ -558,7 +624,11 @@ fn set_arm_null_typed(code: &mut Value, typed_null: &Value, result_type: &Type) 
     match code {
         Value::Block(bl) => {
             let last = bl.operators.len() - 1;
-            bl.operators[last] = typed_null.clone();
+            if matches!(bl.operators[last], Value::Block(_)) {
+                set_arm_null_typed(&mut bl.operators[last], typed_null, result_type);
+            } else {
+                bl.operators[last] = typed_null.clone();
+            }
             bl.result = result_type.clone();
         }
         other => *other = typed_null.clone(),
@@ -1296,14 +1366,21 @@ impl Parser {
             // UNCONDITIONALLY divergent body with no else. A body that can fall through, a
             // `v != null` / truthy `v` guard (fall-through is the NULL case), or a compound
             // condition all correctly decline to narrow (they still warn).
+            // `@FR-N-Guard` — a guard whose test is an `||` of tests (`if a || p == null {
+            // return … }`) fails every one of them on the fall-through, so each disjunct proves
+            // its else side there: one test is the one-disjunct case.
             if let Value::If(test, true_code, false_code) = n.unspan()
                 && matches!(false_code.unspan(), Value::Null)
                 && let Value::Block(bl) = true_code.unspan()
                 && guard_cannot_fall_through(&self.data, &bl.operators)
-                && let Some((v, false)) = self.narrowing_from_condition(test)
-                && !self.narrowed_non_null.contains(&v)
             {
-                self.narrowed_non_null.push(v);
+                for d in disjuncts(test) {
+                    if let Some((v, false)) = self.narrowing_from_condition(d)
+                        && !self.narrowed_non_null.contains(&v)
+                    {
+                        self.narrowed_non_null.push(v);
+                    }
+                }
             }
             // The INDEX twin of the guard clause above, on the same three conditions — no else,
             // an unconditionally divergent body, and a condition that proves the fact on the
@@ -1318,11 +1395,13 @@ impl Parser {
                 && guard_cannot_fall_through(&self.data, &bl.operators)
             {
                 let caps = std::collections::HashMap::new();
-                for pair in
-                    crate::parser::operators::collect_guard_pairs_negated(test, &self.data, &caps)
-                {
-                    if !self.index_bounded.contains(&pair) {
-                        self.index_bounded.push(pair);
+                for d in disjuncts(test) {
+                    for pair in
+                        crate::parser::operators::collect_guard_pairs_negated(d, &self.data, &caps)
+                    {
+                        if !self.index_bounded.contains(&pair) {
+                            self.index_bounded.push(pair);
+                        }
                     }
                 }
                 // The DIVISOR twin, and the reason all three of these sit together: `if d == 0 {
@@ -1331,17 +1410,19 @@ impl Parser {
                 // side" for `d == 0` — with nothing consuming it on the fall-through.  Walking
                 // `@FR-N-Domain` as a RULE rather than as a site is what turned that up: one
                 // promise, three families, three sets of admissible spellings.
-                if let Some((v, false)) = self.divisor_proof_from_condition(test)
-                    && !self.divisor_nonzero.contains(&v)
-                {
-                    self.divisor_nonzero.push(v);
-                }
-                // …and the MATH twin: `if x < 0.0 { return … } … sqrt(x)` is the same guard
-                // clause one family over.
-                if let Some((v, sg, false)) = self.math_sign_proof_from_condition(test)
-                    && !self.math_sign_proven.iter().any(|(slot, _)| *slot == v)
-                {
-                    self.math_sign_proven.push((v, sg));
+                for d in disjuncts(test) {
+                    if let Some((v, false)) = self.divisor_proof_from_condition(d)
+                        && !self.divisor_nonzero.contains(&v)
+                    {
+                        self.divisor_nonzero.push(v);
+                    }
+                    // …and the MATH twin: `if x < 0.0 { return … } … sqrt(x)` is the same
+                    // guard clause one family over.
+                    if let Some((v, sg, false)) = self.math_sign_proof_from_condition(d)
+                        && !self.math_sign_proven.iter().any(|(slot, _)| *slot == v)
+                    {
+                        self.math_sign_proven.push((v, sg));
+                    }
                 }
             }
             // `@FR-N-Guard` — an `assert` proves its condition on the fall-through: a failed
@@ -1406,8 +1487,16 @@ impl Parser {
                 if !matches!(t, Type::Rewritten(_) | Type::Never) {
                     t = Type::Void;
                 }
-            } else if !matches!(t, Type::Void | Type::Never)
-                && (self.lexer.peek_token(";") || *result == Type::Void)
+            } else if match t {
+                Type::Void | Type::Never => false,
+                // On the first pass a call to a function declared further down is typed
+                // `Unknown`: whether the statement yields a value is not known yet, and taking
+                // it for one wrapped a `match` whose arms return nothing in a `Drop` and
+                // demanded the `;` (F-Block) asks only of a value (loft#2312).  The second
+                // pass knows the type and decides.
+                Type::Unknown(_) => !self.first_pass,
+                _ => true,
+            } && (self.lexer.peek_token(";") || *result == Type::Void)
             {
                 l.push(Value::Drop(Box::new(n)));
                 // A DROPPED value is not the block's value.  Every statement but the LAST
@@ -1844,11 +1933,13 @@ impl Parser {
             // program; which lowering the compiler picks for it cannot decide whether the
             // program is diagnosed.
             if nullable_into_nonnull {
+                // The tail's own span, else its first token: a tail with no span (a local
+                // read, an `if` the parser built) is the value, where the slot is the signature.
                 let at = l
                     .last()
                     .and_then(Value::span_pos)
                     .copied()
-                    .or_else(|| Some(*self.data.def(self.context).position()));
+                    .or(Some(last_expr_peek.position));
                 self.n_store_violation(&t, result, "the return value", at.as_ref());
             }
             // The accumulator IS the return value, so it carries the declared
@@ -2254,7 +2345,10 @@ impl Parser {
             // `unrewritten` as well as `without_deps`: a struct-literal tail carries the
             // `Rewritten` marker that says it was built in place, and a marker is a fact
             // about the EXPRESSION, not a type a signature can name (loft#943).
-            adopted = t.unrewritten().without_deps();
+            // A lifetime-bearing tuple is boxed as a declared one is (`boxed_tuple_return`,
+            // loft#1349): handed up bare, its text member is a `__ret_text_N` the callee cannot
+            // free and the caller only copies from.
+            adopted = self.boxed_tuple_return(t.unrewritten().without_deps());
             self.data.definitions[self.context as usize].returned = adopted.clone();
             // Remembered past the body, where `infer_ret_defs` is cleared: the late
             // buffer reservation between the passes admits a lambda only if its return
@@ -2264,6 +2358,20 @@ impl Parser {
         } else {
             result
         };
+        // `@FR-C-Never` — a halt (`exit`, `panic`) never returns, so it fits wherever a value is
+        // wanted, as `?? panic(…)` already reads it.  The tail keeps the halt as a statement and
+        // answers the expected type's null after it, which no run reaches: every arm then has
+        // a value of the joined type, and every emitter types the block (loft#2260).
+        if matches!(t.base(), Type::Void | Type::Never)
+            && !matches!(result.base(), Type::Void | Type::Never | Type::Unknown(_))
+            && let Some(last) = l.len().checked_sub(1)
+            && ends_in_halt(&self.data, &l[last])
+        {
+            let value = self.null_value(result);
+            give_halt_a_value(&mut l[last], value, result);
+            let typed = result.clone();
+            return self.block_result(context, &typed, &typed, l, tail_pos);
+        }
         let mut tp = t.clone();
         // loft#2188 — a block VALUE whose tail is a call that may hand back an argument.
         if context != "return from block"
@@ -2645,13 +2753,11 @@ impl Parser {
             // unified `if`, a vector match, a sibling variant) is asked here.  Anchored to
             // the tail's OWN span, because this runs at block FINALIZATION with `self.lexer`
             // on the `}` — reporting the NEXT function otherwise (nstore-position-fix.md);
-            // a bare-var tail has no span and falls back to the enclosing function's.
+            // a tail with no span of its own (a local read, an `if` the parser built) is
+            // anchored on its first token, which is the value the cure rewrites.
             let is_return = context == "return from block";
             let ret_at = if is_return {
-                l[last]
-                    .span_pos()
-                    .copied()
-                    .or_else(|| Some(*self.data.def(self.context).position()))
+                l[last].span_pos().copied().or(Some(*tail_pos))
             } else {
                 None
             };
@@ -4969,10 +5075,7 @@ impl Parser {
                 *tail = Value::Tuple(members);
             }
         }
-        if let Value::Var(v) = tail.unspan()
-            && let Type::Tuple(elems) = self.vars.tp(*v).base()
-        {
-            let elems = elems.clone();
+        if let Some(elems) = Self::stack_tuple_leaf_in(tail, &self.vars) {
             let src = tail.clone();
             let mut ops = vec![
                 crate::data::v_set(w, Value::Null),
@@ -5159,7 +5262,10 @@ impl Parser {
     /// code separates the two.  The source does.
     fn branch_yields_null(&self, v: &Value) -> bool {
         match v.unspan() {
-            Value::Null => true,
+            Value::Null => !self.first_pass,
+            Value::Block(bl) if bl.name == FORWARD_CALL => false,
+            // `@FR-C-Never` — a value behind a halt (`give_halt_a_value`) is never answered.
+            Value::Block(bl) if behind_a_halt(&self.data, &bl.operators) => false,
             Value::Block(bl) => bl
                 .operators
                 .last()
@@ -5173,6 +5279,33 @@ impl Parser {
             Value::Call(d, args) => self.is_null_literal_call(*d, args),
             _ => false,
         }
+    }
+
+    /// `@FR-N-Join` on pass 1 — does an arm the SOURCE wrote as `null` make the join `τ?`?
+    ///
+    /// On pass 1 a bare `Value::Null` is two things: the `null` literal, and the placeholder of
+    /// an expression pass 1 cannot type yet — a call to a function declared below the caller,
+    /// which leaves no IR until pass 2.  [`Self::branch_yields_null`] and
+    /// [`Self::arm_yields_direct_null`] therefore do not count a bare `Value::Null` on pass 1,
+    /// and the arm's own record of what was written (`block_tail_null_literal`, a `null`-typed
+    /// arm, `null_literal_arms`) answers instead.  Counting the placeholder joined `later(x)`
+    /// with `false` to `boolean?`, and pass 1 keeps the type of an inferred local: `ok = if c
+    /// { later(x) } else { false }` stayed `boolean?` and warned when returned as `boolean`
+    /// (loft#2305).
+    fn first_pass_null_arm(first_pass: bool, written_null: bool) -> bool {
+        first_pass && written_null
+    }
+
+    /// A `match` arm whose body is a bare `Value::Null` it was not WRITTEN as: on pass 1 the arm
+    /// of a call pass 1 cannot type yet (`first_pass_null_arm`), typed `Unknown` where a written
+    /// `null` arm is typed `Null`.  Taking the result type's null would make it a `null` arm.
+    fn is_placeholder_arm(first_pass: bool, tp: &Type) -> bool {
+        first_pass && matches!(tp.base(), Type::Unknown(_))
+    }
+
+    /// A `match` arm that answers `null`: its body is the null and it is no placeholder.
+    fn is_null_arm(first_pass: bool, code: &Value, tp: &Type) -> bool {
+        arm_body_is_null(code) && !Self::is_placeholder_arm(first_pass, tp)
     }
 
     /// @PLN25 DN1 — like [`Self::branch_yields_null`] but does NOT descend into a nested
@@ -5190,7 +5323,9 @@ impl Parser {
     /// than an escape, and pass through it.
     fn arm_yields_direct_null(&self, v: &Value) -> bool {
         match v.unspan() {
-            Value::Null => true,
+            Value::Null => !self.first_pass,
+            Value::Block(bl) if bl.name == FORWARD_CALL => false,
+            Value::Block(bl) if behind_a_halt(&self.data, &bl.operators) => false,
             Value::Block(bl) => bl
                 .operators
                 .last()
@@ -5656,7 +5791,10 @@ impl Parser {
     /// from measurement: `if x { … }` proves nothing about a sign, an arm for the divisor twin
     /// was written and reverted the same hour, and eliding on it answered a silent null through
     /// a non-null slot.  A comparison against a zero LITERAL is the whole admissible set.
-    fn math_sign_proof_from_condition(&self, test: &Value) -> Option<(u16, super::Sign, bool)> {
+    pub(super) fn math_sign_proof_from_condition(
+        &self,
+        test: &Value,
+    ) -> Option<(u16, super::Sign, bool)> {
         let Value::Call(op, args) = test.unspan() else {
             return None;
         };
@@ -5704,7 +5842,7 @@ impl Parser {
 
     /// The `(subject, discriminant)` an `is` test proves: the lowering `parse_is_variant`
     /// gives a struct-enum subject, `OpEqInt(OpConvIntFromEnum(OpGetEnum(s, 0)), disc)`.
-    fn variant_proof_from_condition(&self, test: &Value) -> Option<(Value, i32)> {
+    pub(super) fn variant_proof_from_condition(&self, test: &Value) -> Option<(Value, i32)> {
         let Value::Call(eq, args) = test.unspan() else {
             return None;
         };
@@ -5729,7 +5867,7 @@ impl Parser {
         get_args.first().map(|s| (s.unspan().clone(), *disc))
     }
 
-    fn divisor_proof_from_condition(&self, test: &Value) -> Option<(u16, bool)> {
+    pub(super) fn divisor_proof_from_condition(&self, test: &Value) -> Option<(u16, bool)> {
         let Value::Call(op, args) = test.unspan() else {
             return None;
         };
@@ -5855,6 +5993,9 @@ impl Parser {
         let true_fact = std::mem::take(&mut self.operand_fact); // @PLN187
         let mut false_fact = crate::data::AliasFact::Empty;
         let true_is_null_literal = self.block_tail_null_literal;
+        // The then arm IS a null: the literal, or a value typed `null` (a constant).  On pass 1
+        // the code cannot say so — see `first_pass_null_arm`.
+        let true_is_null = true_is_null_literal || matches!(true_type.base(), Type::Null);
         if !is_bindings.is_empty()
             && let Value::Block(bl) = &mut true_code
         {
@@ -5926,6 +6067,11 @@ impl Parser {
             } else {
                 None
             };
+            // `@FR-C-Never` — a then arm that ends in a halt answers nothing: it takes the
+            // sibling's type, as a `null` arm does, and the value behind its halt below.
+            if matches!(true_type.base(), Type::Void) && ends_in_halt(&self.data, &true_code) {
+                true_type = Type::Never;
+            }
             if matches!(true_type, Type::Null | Type::Never) || then_tuple_nulls.is_some() {
                 true_type = Type::Unknown(0);
             }
@@ -6065,7 +6211,18 @@ impl Parser {
                     true_type = joined;
                 }
             }
-            if true_type == Type::Unknown(0) {
+            if true_type == Type::Unknown(0)
+                && true_is_null
+                && then_tuple_nulls.is_none()
+                && matches!(false_type, Type::Never)
+            {
+                // `@FR-C-Never`, loft#2341 — an else that never finishes gives the then arm's
+                // `null` nothing to adopt: the join is `null` (`merge_dependencies` defers to
+                // it), and the `null` keeps its own type for the conversion that types it.
+                // Adopting the else's `never` typed the whole `if` as never finishing, so no
+                // conversion reached the null and the arm pushed nothing.
+                true_type = Type::Null;
+            } else if true_type == Type::Unknown(0) {
                 if let Some(orig) = &then_tuple_nulls {
                     // loft#1682 — both tails take the element-wise join.  A pair that does not
                     // join is REFUSED here, as the plain else arm is: the tail conversion below
@@ -6098,7 +6255,18 @@ impl Parser {
                     false_type = joined;
                 } else if let Value::Block(bl) = &mut true_code {
                     let p = bl.operators.len() - 1;
-                    if !is_block_divergent(&bl.operators) {
+                    // A then arm of no type yet is a `null`, or on pass 1 an expression pass 1
+                    // cannot type (`first_pass_null_arm`): only the null takes the sibling's null.
+                    if bl
+                        .operators
+                        .last()
+                        .is_some_and(|o| ends_in_halt(&self.data, o))
+                    {
+                        // `@FR-C-Never` — the halt stays, the sibling's null goes behind it.
+                        bl.operators.push(self.null_value(&false_type));
+                    } else if !is_block_divergent(&bl.operators)
+                        && (true_is_null || !self.first_pass)
+                    {
                         // loft#936 — `null_value`, not `null`: the arm's null travels
                         // to the merge on the eval stack, so a COLLECTION arm needs the
                         // DbRef sentinel.  `null`'s catch-all answers a bare
@@ -6191,8 +6359,10 @@ impl Parser {
             result_tp = Type::optional(result_tp);
         }
         if had_else && crate::keys::pln25_dn1_enabled() && !matches!(result_tp, Type::Optional(_)) {
-            let t_null = self.branch_yields_null(&true_code);
-            let f_null = self.branch_yields_null(&false_code);
+            let t_null = self.branch_yields_null(&true_code)
+                || Self::first_pass_null_arm(self.first_pass, true_is_null);
+            let f_null = self.branch_yields_null(&false_code)
+                || Self::first_pass_null_arm(self.first_pass, false_is_null_literal);
             if t_null != f_null {
                 let other = if t_null { &false_type } else { &true_type };
                 if Self::is_non_null_scalar(other) {
@@ -6811,8 +6981,17 @@ impl Parser {
                 }
                 // Skip this arm gracefully: its `{ … }` field pattern whole, whatever tokens
                 // it holds — a loop consuming only names and commas never advanced past
-                // anything else (`=>`, `:`, a literal), and hung the parser.
-                self.skip_braced();
+                // anything else (`=>`, `:`, a literal), and hung the parser.  A subject whose
+                // enum pass 1 cannot see yet still binds its captures for the body.
+                let forward = if self.first_pass && e_nr == u32::MAX {
+                    self.bind_forward_capture_list()
+                } else {
+                    None
+                };
+                match forward {
+                    Some(mut aliases) => self.pattern_binds_pending.append(&mut aliases),
+                    None => self.skip_braced(),
+                }
                 self.expect_match_arm_arrow();
                 let mut arm_code = Value::Null;
                 self.expression(&mut arm_code);
@@ -7346,10 +7525,25 @@ impl Parser {
         let base = if matches!(result_type, Type::Void | Type::Null) {
             Value::Null
         } else {
-            for arm in arms.iter_mut().filter(|a| arm_body_is_null(&a.code)) {
+            let first_pass = self.first_pass;
+            for arm in arms
+                .iter_mut()
+                .filter(|a| Self::is_null_arm(first_pass, &a.code, &a.tp))
+            {
                 arm.tp = result_type.clone();
             }
-            self.type_null_arms(arms.iter_mut().map(|a| &mut a.code), &result_type);
+            self.type_null_arms(
+                arms.iter_mut()
+                    .filter(|a| !Self::is_placeholder_arm(first_pass, &a.tp))
+                    .map(|a| &mut a.code),
+                &result_type,
+            );
+            for arm in arms
+                .iter_mut()
+                .filter(|a| Self::is_placeholder_arm(first_pass, &a.tp))
+            {
+                mark_forward_call(&mut arm.code);
+            }
             let typed_null = self.null_value(&result_type);
             // Seed the chain base with the typed null too: an exhaustive enum
             // match's innermost else is unreachable, but codegen still emits it
@@ -7552,6 +7746,14 @@ impl Parser {
         self.vars.clear_write_state();
         let block_arm = self.lexer.peek_token("{");
         let tp = self.parse_match_arm_body_inner(expected, arm_code);
+        // `@FR-C-Never` — a halt arm (`_ => panic(…)`) never returns: it is no void arm, and it
+        // settles nothing about the match's type.  `type_null_arms` gives it the result type's
+        // null after the halt once that type is known (loft#2260).
+        let tp = if matches!(tp.base(), Type::Void) && ends_in_halt(&self.data, arm_code) {
+            Type::Never
+        } else {
+            tp
+        };
         // `(Slice-Value)` — an arm's value is a value position, so a vector slice there is the
         // fresh vector (loft#1941).
         let tp = self.slice_arm_as_vector(arm_code, tp);
@@ -7716,9 +7918,15 @@ impl Parser {
             return;
         }
         let mut typed_null = None;
-        for code in codes.filter(|c| arm_body_is_null(c)) {
-            let typed_null = typed_null.get_or_insert_with(|| self.null_value(result_type));
-            set_arm_null_typed(code, typed_null, result_type);
+        for code in codes {
+            if arm_body_is_null(code) {
+                let typed_null = typed_null.get_or_insert_with(|| self.null_value(result_type));
+                set_arm_null_typed(code, typed_null, result_type);
+            } else if ends_in_halt(&self.data, code) {
+                // `@FR-C-Never` — the halt, then a value of the result type no run reaches.
+                let typed_null = typed_null.get_or_insert_with(|| self.null_value(result_type));
+                give_halt_a_value(code, typed_null.clone(), result_type);
+            }
         }
     }
 
@@ -7815,6 +8023,7 @@ impl Parser {
                             self.vars.defined(v);
                             let bound = self.pattern_field_value(s_nr, attr_idx, subject.clone());
                             arm_stmts.push(v_set(v, bound));
+                            self.mark_field_capture_view(v, &field_type, subject);
                         } else if let Some(cond) = self.parse_field_sub_pattern(
                             field_val,
                             &field_type,
@@ -7829,6 +8038,7 @@ impl Parser {
                         self.vars.defined(v);
                         let bound = self.pattern_field_value(s_nr, attr_idx, subject.clone());
                         arm_stmts.push(v_set(v, bound));
+                        self.mark_field_capture_view(v, &field_type, subject);
                     }
                 }
             }
@@ -7928,6 +8138,7 @@ impl Parser {
                             let bound =
                                 self.pattern_field_value(e_nr, attr_idx, subject_val.clone());
                             binds.push(v_set(v, bound));
+                            self.mark_field_capture_view(v, &field_type, subject_val);
                         } else if let Some(cond) = self.parse_field_sub_pattern(
                             field_val,
                             &field_type,
@@ -7945,6 +8156,7 @@ impl Parser {
                         self.vars.defined(v);
                         let bound = self.pattern_field_value(e_nr, attr_idx, subject_val.clone());
                         binds.push(v_set(v, bound));
+                        self.mark_field_capture_view(v, &field_type, subject_val);
                     }
                 } else if !self.first_pass {
                     diagnostic!(
@@ -7998,6 +8210,10 @@ impl Parser {
             },
             |p, binds, conds| p.parse_struct_pattern_fields(e_nr, subject_val, binds, conds),
         );
+        // @FR-P-Guard — `S { x } if x > 0 =>`: the guard reads the pattern's bindings and is
+        // ANDed onto the pattern's own tests below, so a false guard fails the arm and
+        // selection moves on, exactly as on an enum arm.
+        let user_guard = self.parse_optional_guard();
         self.expect_match_arm_arrow();
         let mut arm_code = Value::Null;
         let arm_expected = self.match_arm_expected(result_type);
@@ -8009,10 +8225,12 @@ impl Parser {
         let and_all = |conds: Vec<Value>| {
             conds
                 .into_iter()
+                .chain(user_guard.clone())
                 .reduce(|a, b| v_if(a, b, Value::Boolean(false)))
         };
         let guard = and_all(field_conditions);
-        // A pattern with no literal field always matches, so the arm covers the struct.
+        // A pattern with no literal field and no guard always matches, so the arm covers the
+        // struct (@FR-M-Total: a guarded arm covers nothing).
         let mut exhaustive = guard.is_none();
         if alternatives.is_empty() {
             // One pattern: its bindings are hoisted ahead of the chain, as they always were.
@@ -8366,6 +8584,32 @@ impl Parser {
         self.vars.set_type(bind_nr, bound_tp);
     }
 
+    /// `@FR-P-Cap-View` (loft#2353) — a plain-struct arm's field capture (`N { xs } =>`, and
+    /// `N { xs: q }`, at the arm root or in a sub-pattern) names an interior place of the
+    /// subject: a HEAP field is a borrowed view, so it skips its free and carries the borrow
+    /// dep on the subject's source var — the marks `bind_match_field_capture` gives a
+    /// struct-enum arm's capture.  Without them the capture's dep list was empty, which
+    /// `(O-Proxy)` reads as an owner, and its `OpFreeRef` released the store the subject
+    /// lives in: `match s.nodes[0] { N { xs } => len(xs) }` freed the caller's `s`.  A text
+    /// field is an owned copy (`OpGetText`) and a scalar holds no store, so both keep their
+    /// own treatment; a subject with no source variable still skips the free, as the enum
+    /// arm's does — what it names belongs to the subject.
+    fn mark_field_capture_view(&mut self, v: u16, field_type: &Type, subject_val: &Value) {
+        if v == u16::MAX
+            || !matches!(
+                field_type.base(),
+                Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
+            )
+        {
+            return;
+        }
+        self.vars.set_skip_free(v);
+        if let Some(src) = self.match_borrow_source(subject_val) {
+            let bound_tp = Self::element_view_of(&self.vars.tp(v).clone(), src);
+            self.vars.set_type(v, bound_tp);
+        }
+    }
+
     /// Parse field bindings for a struct-enum match arm.
     fn parse_match_enum_field_bindings(
         &mut self,
@@ -8462,39 +8706,69 @@ impl Parser {
         self.lexer.token("}");
     }
 
+    /// Pass 1 over a capture list whose subject's enum is not declared yet — `is V { a, b }`, or
+    /// a `match` arm `V { a, b: c } =>`: consume the braces when they have a capture list's
+    /// SHAPE — names, each optionally renamed, separated by `,` — and leave anything else (a
+    /// body, a sub-pattern) where it is, answering `None`.  The same lookahead the known-enum
+    /// path uses, minus the field names it cannot see yet.
+    ///
+    /// Each captured name is bound, for the body after it, to the capture the known-enum path
+    /// creates (`_mv_<name>_N`, created in the same order), at `Unknown`: pass 2 knows the
+    /// enum and refines that same variable's type.  Stepped over without a binding, the body
+    /// read the name as whatever it means OUTSIDE the arm — a function of that name became a
+    /// function value, and `limit + 1` was refused on pass 1, where pass 2 would have known
+    /// better (loft#2326).  A `_` binds nothing.  Answers the names re-pointed and what each
+    /// named before, for the caller's end of scope to restore.
+    fn bind_forward_capture_list(&mut self) -> Option<Vec<(String, Option<u16>)>> {
+        if !self.lexer.peek_token("{") {
+            return None;
+        }
+        let link = self.lexer.link();
+        self.lexer.token("{");
+        let mut binds: Vec<String> = Vec::new();
+        loop {
+            let Some(field) = self.lexer.has_identifier() else {
+                self.lexer.revert(link);
+                return None;
+            };
+            let mut bind = field;
+            if self.lexer.has_token(":") {
+                let Some(alias) = self.lexer.has_identifier() else {
+                    self.lexer.revert(link);
+                    return None;
+                };
+                bind = alias;
+            }
+            // `_` lexes as a name, and binds nothing.
+            if bind != "_" {
+                binds.push(bind);
+            }
+            if self.lexer.has_token("}") {
+                break;
+            }
+            if !self.lexer.has_token(",") {
+                self.lexer.revert(link);
+                return None;
+            }
+        }
+        let mut aliases = Vec::new();
+        for name in binds {
+            let v = self.create_unique(&format!("mv_{name}"), &Type::Unknown(0));
+            self.vars.mark_blind_capture(v);
+            if v == u16::MAX {
+                continue;
+            }
+            self.vars.defined(v);
+            let old = self.vars.set_name(&name, v);
+            aliases.push((name, old));
+        }
+        Some(aliases)
+    }
+
     /// After `is V {`, is `field: name` (then `,` or `}`) an attempted RENAME of a field of `V`,
     /// rather than a body opening with a declaration?  Only when `field` is a field of the
     /// variant and `name` is not a type — `{ radius: integer }` stays a body.  Called inside a
     /// lookahead the caller reverts, after `field` has been read.
-    /// Pass 1 over `is V { a, b: c }` whose subject's enum is not declared yet: consume the
-    /// braces when they have a capture list's SHAPE — names, each optionally renamed, separated
-    /// by `,` — and leave anything else (a body) where it is.  The same lookahead the known-enum
-    /// path uses, minus the field names it cannot see yet.
-    fn skip_forward_capture_list(&mut self) {
-        if !self.lexer.peek_token("{") {
-            return;
-        }
-        let link = self.lexer.link();
-        self.lexer.token("{");
-        loop {
-            if self.lexer.has_identifier().is_none() {
-                self.lexer.revert(link);
-                return;
-            }
-            if self.lexer.has_token(":") && self.lexer.has_identifier().is_none() {
-                self.lexer.revert(link);
-                return;
-            }
-            if self.lexer.has_token("}") {
-                return;
-            }
-            if !self.lexer.has_token(",") {
-                self.lexer.revert(link);
-                return;
-            }
-        }
-    }
-
     fn is_capture_rename_attempt(&mut self, variant_def_nr: u32, field: Option<&str>) -> bool {
         let Some(field) = field else {
             return false;
@@ -10070,9 +10344,20 @@ impl Parser {
         self.lexer.token("(");
         // branches[i] = the sequence for branch i: [(disc, variant_def, fields)] per position.
         let mut branches: Vec<Vec<(i32, u32, Vec<(String, usize, Type)>)>> = Vec::new();
+        let whole_tp = Type::Enum(e_nr, true, crate::data::Deps::none());
         loop {
             let mut branch: Vec<(i32, u32, Vec<(String, usize, Type)>)> = Vec::new();
-            while let Some(vid) = self.lexer.has_identifier() {
+            loop {
+                // `@FR-P-Cap` — `x: V` captures the element a position matched, as in a
+                // single-element alternation; `(x: A)?` binds `x : A?` (`@FR-P-Opt`).
+                let capture = self.lexer.peek_named_arg();
+                if capture.is_some() {
+                    self.lexer.has_identifier();
+                    self.lexer.token(":");
+                }
+                let Some(vid) = self.lexer.has_identifier() else {
+                    break;
+                };
                 let vname = if self.lexer.has_token("::") {
                     self.lexer.has_identifier().unwrap_or_else(|| vid.clone())
                 } else {
@@ -10100,6 +10385,9 @@ impl Parser {
                     0
                 };
                 let mut fields: Vec<(String, usize, Type)> = Vec::new();
+                if let Some(cap) = capture {
+                    fields.push((cap, usize::MAX, whole_tp.clone()));
+                }
                 if self.lexer.has_token("{") {
                     while let Some(fname) = self.lexer.has_identifier() {
                         let attr = if valid {
@@ -10339,7 +10627,7 @@ impl Parser {
         let total = self.count_slice_tail_elements();
         for k in 0..total {
             let pos = Value::Int(-(total - k));
-            if self.lexer.has_token("_") {
+            if self.lexer.has_wildcard() {
                 // a wildcard: the position only
             } else if self.lexer.peek_named_arg().is_none()
                 && let LexItem::Identifier(id) = self.lexer.peek().has.clone()
@@ -10440,7 +10728,11 @@ impl Parser {
                         elm_tp,
                         Value::Int(head_len + pos as i32),
                     );
-                    let read = self.pattern_field_value(vdef, attr, elem);
+                    let read = if attr == usize::MAX {
+                        elem
+                    } else {
+                        self.pattern_field_value(vdef, attr, elem)
+                    };
                     acc = v_if(branch_conds[bi].clone(), read, acc);
                 }
             }
@@ -10600,7 +10892,7 @@ impl Parser {
                     // after the `:` is the fixed element's form, refused here by name.
                     let mut bind = Some(fname.clone());
                     if self.lexer.has_token(":") {
-                        if self.lexer.has_token("_") {
+                        if self.lexer.has_wildcard() {
                             bind = None;
                         } else if let LexItem::Identifier(id) = self.lexer.peek().has.clone()
                             && id.chars().next().is_some_and(char::is_lowercase)
@@ -11258,24 +11550,33 @@ impl Parser {
             return None;
         }
         // Wildcard for non-enum fields.
-        if matches!(&self.lexer.peek().has, LexItem::Identifier(id) if id == "_") {
-            self.lexer.has_identifier(); // consume the `_`
+        if self.lexer.has_wildcard() {
             return None;
         }
-        // Scalar field: store in a temp and use parse_match_pattern.
+        // Scalar field: store in a temp and test it against each alternative in turn
+        // (`@FR-P-Alt` — `S { n: 1 | 2 }`: the first that matches wins, on the one read).
         let tmp = self.create_unique("fp_subj", field_type);
         self.vars.defined(tmp);
-        let (pat, pat_type) = self.parse_match_pattern(field_type, tmp);
-        // If parse_match_pattern returned a Block (range pattern or null pattern),
-        // use it directly as a condition.
-        if matches!(pat_type, Type::Boolean) || matches!(pat, Value::Block(_)) {
-            return Some(v_block(
-                vec![v_set(tmp, field_val), pat],
-                Type::Boolean,
-                "field_sub",
-            ));
+        let mut cond = self.scalar_field_test(field_type, tmp);
+        while self.lexer.has_token("|") {
+            let next = self.scalar_field_test(field_type, tmp);
+            cond = v_if(cond, Value::Boolean(true), next);
         }
-        // Otherwise it's a literal — generate an equality comparison.
+        Some(v_block(
+            vec![v_set(tmp, field_val), cond],
+            Type::Boolean,
+            "field_sub",
+        ))
+    }
+
+    /// One alternative of a scalar field pattern, tested against the field's value in `tmp`: a
+    /// range or a `null` pattern is its own test, a literal is compared with `==`.
+    fn scalar_field_test(&mut self, field_type: &Type, tmp: u16) -> Value {
+        let (pat, pat_type) = self.parse_match_pattern(field_type, tmp);
+        // A pattern that is already a test answers a boolean, nullable or not.
+        if matches!(pat_type.base(), Type::Boolean) || matches!(pat, Value::Block(_)) {
+            return pat;
+        }
         let mut eq = Value::Null;
         self.call_op(
             &mut eq,
@@ -11283,11 +11584,20 @@ impl Parser {
             &[Value::Var(tmp), pat],
             &[field_type.clone(), field_type.clone()],
         );
-        Some(v_block(
-            vec![v_set(tmp, field_val), eq],
-            Type::Boolean,
-            "field_sub",
-        ))
+        eq
+    }
+
+    /// One operand of a scalar pattern — a literal, a constant, a range bound — parsed above the
+    /// `|` level: in a pattern `|` separates alternatives (`@FR-P-Alt`), so `1..3 | 7` is a range
+    /// and a second alternative, never `1..(3 | 7)` (loft#2324).
+    fn pattern_operand(&mut self, val: &mut Value) -> Type {
+        let mut parent_tp = Type::Null;
+        self.parse_operators(
+            &Type::Unknown(0),
+            val,
+            &mut parent_tp,
+            super::PATTERN_OPERAND_LEVEL,
+        )
     }
 
     /// Parse a match pattern literal (integer, float, text, boolean) and optionally
@@ -11370,7 +11680,14 @@ impl Parser {
             lit = Value::Boolean(false);
             Type::Boolean
         } else {
-            self.expression(&mut lit)
+            // A constant or another operand (`@FR-P-Point`): read above the `|` level, which
+            // separates this pattern from the next alternative (loft#2324), and negated when a
+            // `-` was written before it (loft#2323).
+            let tp = self.pattern_operand(&mut lit);
+            if negate && !self.first_pass {
+                lit = self.single_op("-", lit, tp.clone());
+            }
+            tp
         };
         // #493 — a pattern whose type cannot convert to the subject type (a text
         // literal against an integer subject, say) can never match.  Track it and
@@ -11416,7 +11733,11 @@ impl Parser {
                 return (Value::Boolean(false), Type::Boolean);
             }
             let mut hi = Value::Null;
-            self.expression(&mut hi);
+            let hi_neg = self.lexer.has_token("-");
+            let hi_tp = self.pattern_operand(&mut hi);
+            if hi_neg && !self.first_pass {
+                hi = self.single_op("-", hi, hi_tp);
+            }
             let mut lo_cond = Value::Null;
             self.call_op(
                 &mut lo_cond,
@@ -11859,6 +12180,18 @@ impl Parser {
         result_tp
     }
 
+    /// `f` parsed with no cursor mode (`@FR-P-Cursor`): a cursor match's mode belongs to its
+    /// PATTERNS, so a guard or an arm body — where a `match` of its own may be written — is
+    /// parsed outside it, and a nested cursor match sets and clears only its own (loft#2322).
+    fn outside_cursor_mode<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let cursor = self.match_cursor.take();
+        let farthest = self.match_cursor_farthest.take();
+        let r = f(self);
+        self.match_cursor = cursor;
+        self.match_cursor_farthest = farthest;
+        r
+    }
+
     /// @PLN35 PC2 — is the upcoming slice element `name : rule`, where `rule` names a sub-rule
     /// FUNCTION (`n_<rule>` returning a struct)?  ONE save/revert look-ahead, mirroring
     /// `peek_scalar_type_capture`.  A variant name (`name : Variant`) has no `n_<...>` fn, so this
@@ -11875,13 +12208,26 @@ impl Parser {
             self.lexer.cont(); // `:`
             if let LexItem::Identifier(rule) = self.lexer.peek().has.clone() {
                 let fn_nr = self.data.def_nr(&format!("n_{rule}"));
+                // On the first pass a rule written further down the file is not defined yet.
+                // A lower-case name that names nothing else cannot be a variant or a type here,
+                // so it is read as that rule: the binding it makes must be the same variable
+                // on both passes.
+                if fn_nr == u32::MAX
+                    && self.first_pass
+                    && rule.starts_with(|c: char| c.is_ascii_lowercase())
+                    && self.data.def_nr(&rule) == u32::MAX
+                {
+                    result = Some((name.clone(), u32::MAX, Type::Unknown(0)));
+                }
                 if fn_nr != u32::MAX {
                     // `@FR-N-Shape` — through the `?`: a sub-rule answers null for "no match",
                     // so `-> N?` is its honest declaration, and `(N-Join)` warns a `-> N` whose
                     // `_ => null` arm says otherwise (loft#1714).  The capture is bound only on
                     // the arm where the rule matched, so it is the non-null `N`.
+                    // `@FR-P-Rule` — the rule answers its node, of whatever type: a record, or
+                    // an index into an arena the cursor carries.
                     let ret = self.data.def(fn_nr).returned().base().clone();
-                    if matches!(ret, Type::Reference(..)) {
+                    if !matches!(ret, Type::Void | Type::Unknown(_) | Type::Never) {
                         result = Some((name, fn_nr, ret));
                     }
                 }
@@ -11891,70 +12237,451 @@ impl Parser {
         result
     }
 
-    /// @PLN35 PC2 — emit a sub-rule invocation slice element `[ name: rule ]` (cursor mode,
-    /// whole-pattern).  Desugars to the proven hand-form `r = rule(cursor); if r != null { name = r
-    /// … }`: the sub-rule prefix-matches over the SAME cursor (advancing its `pos` on a match,
-    /// leaving it on a miss), so no fixed-length gate or pos-advance is needed here (`multi_alt`
-    /// skips them).  The call is evaluated ONCE inside the arm cond (a side-effecting block) so a
-    /// miss never double-advances; `name` binds the (owned) result and the arm gates on `name != null`.
+    /// `@FR-P-Rule` — is the upcoming slice element a sub-rule GROUP `( name : rule )` followed by
+    /// `*`, `+` or `?`?  One look-ahead, put back.  `rule` is recognised as
+    /// [`Self::peek_subrule_capture`] recognises it.  Returns the capture name, the rule, its
+    /// answer type and the quantifier.
+    fn peek_subrule_group(&mut self) -> Option<(String, u32, Type, char)> {
+        if !self.lexer.peek_token("(") {
+            return None;
+        }
+        let save = self.lexer.link();
+        self.lexer.cont(); // `(`
+        let mut result = None;
+        if let Some((name, fn_nr, ret_tp)) = self.peek_subrule_capture() {
+            self.lexer.cont(); // name
+            self.lexer.cont(); // `:`
+            self.lexer.cont(); // rule
+            if self.lexer.has_token(")") {
+                let quant = ['*', '+', '?']
+                    .into_iter()
+                    .find(|q| self.lexer.peek_token(&q.to_string()));
+                if let Some(q) = quant {
+                    result = Some((name, fn_nr, ret_tp, q));
+                }
+            }
+        }
+        self.lexer.revert(save);
+        result
+    }
+
+    /// `@FR-P-Rule` × `@FR-P-Rep` / `@FR-P-Opt` — a sub-rule group of a cursor pattern, `k`
+    /// fixed elements after the current segment's base.  ANDed onto the arm's `cond`:
+    ///
+    /// - `(x: rule)?` binds `x: τ?` — the rule's answer, or null with the cursor unmoved;
+    /// - `(xs: rule)*` / `+` binds `xs: vector<τ>` — the rule run while it answers, each answer
+    ///   MOVED into `xs`, with an optional separator `*(Sep)` consumed between two answers and
+    ///   given back when no answer follows it.  An answer that consumed nothing ends the run
+    ///   without being taken, so a rule that can match empty cannot loop.  `+` asks for one.
+    ///
+    /// The next segment is read from where the group stopped (`seg`).  The capture and the
+    /// temps are declared at the match's level (`prechain`), as a single sub-rule's are.
+    fn parse_subrule_group(
+        &mut self,
+        subject: &SliceSubject,
+        group: &SubruleGroup,
+        k: usize,
+        consumed: bool,
+        cond: &mut Option<Value>,
+        prechain: &mut Vec<Value>,
+    ) {
+        let Some((cursor_var, cursor_def, pos_field, base)) = self.match_cursor else {
+            return;
+        };
+        let SubruleGroup {
+            name,
+            fn_nr,
+            ret_tp,
+            quant,
+        } = group;
+        let (fn_nr, quant) = (*fn_nr, *quant);
+        let elm_tp = subject.elm_tp;
+        self.lexer.token("(");
+        self.lexer.has_identifier(); // name
+        self.lexer.token(":");
+        let site = self.lexer.peek().position;
+        self.lexer.has_identifier(); // rule
+        self.lexer.token(")");
+        self.lexer.cont(); // the quantifier
+        let sep = if quant == '?' {
+            None
+        } else if let Some((e_nr, _)) = self.pattern_variant_enum(elm_tp) {
+            self.parse_repetition_separator(e_nr)
+        } else {
+            None
+        };
+        if !self.first_pass && self.context != u32::MAX {
+            let consuming = consumed || self.cursor_consumed.contains(&cursor_var);
+            self.subrule_edges
+                .push((self.context, fn_nr, site, consuming));
+        }
+        self.slice_subrule = true;
+        let seg = self.create_unique("cursor_seg", &I32);
+        self.vars.defined(seg);
+        prechain.push(v_set(seg, Value::Int(0)));
+        let start = self.conv_op(
+            "+",
+            Value::Var(base),
+            Value::Int(k as i32),
+            I32.clone(),
+            I32.clone(),
+        );
+        let cursor_tp = self.vars.tp(cursor_var).clone();
+        let mut call = Value::Null;
+        if fn_nr != u32::MAX {
+            self.call_nr(
+                &mut call,
+                fn_nr,
+                &[Value::Var(cursor_var)],
+                &[cursor_tp],
+                false,
+                &[],
+                None,
+            );
+        }
+        let mut ops = vec![v_set(seg, start)];
+        if quant == '?' {
+            // A rule not defined yet (the first pass) has no type to wrap: the binding stays
+            // unknown, as a single sub-rule's does, so the second pass can settle it.
+            let opt_tp = if fn_nr == u32::MAX {
+                Type::Unknown(0)
+            } else {
+                Type::optional(ret_tp.clone())
+            };
+            let x = self.pattern_binding(name, &opt_tp);
+            self.vars.defined(x);
+            let none = self.null_value(ret_tp);
+            prechain.push(v_set(x, none));
+            let set_pos = self.set_field(
+                cursor_def,
+                pos_field,
+                0,
+                Value::Var(cursor_var),
+                Value::Var(seg),
+            );
+            ops.push(set_pos);
+            ops.push(v_set(x, call));
+            let present = self.subrule_present(fn_nr, x, ret_tp);
+            let now = self.get_field(cursor_def, pos_field, Value::Var(cursor_var));
+            ops.push(v_if(present, v_set(seg, now), Value::Null));
+            ops.push(Value::Boolean(true));
+        } else {
+            let run = self.subrule_run(subject, group, call, sep.as_ref(), seg, prechain);
+            ops.extend(run);
+        }
+        let test = v_block(ops, Type::Boolean, "sub-rule group");
+        *cond = Some(match cond.take() {
+            Some(c) => v_if(c, test, Value::Boolean(false)),
+            None => test,
+        });
+        self.match_cursor = Some((cursor_var, cursor_def, pos_field, seg));
+    }
+
+    /// The run of `(xs: rule)*` / `+` ([`Self::parse_subrule_group`]): `xs` declared and
+    /// minted at the match's level, then the loop that calls the rule from `seg`, takes the
+    /// separator between two answers, moves each answer that consumed something into `xs` and
+    /// moves `seg` past it.  The ops end with the group's test: true, or `len(xs) > 0` for `+`.
+    fn subrule_run(
+        &mut self,
+        subject: &SliceSubject,
+        group: &SubruleGroup,
+        call: Value,
+        sep: Option<&SepSpec>,
+        seg: u16,
+        prechain: &mut Vec<Value>,
+    ) -> Vec<Value> {
+        let Some((cursor_var, cursor_def, pos_field, _)) = self.match_cursor else {
+            return Vec::new();
+        };
+        let (name, fn_nr, ret_tp, quant) = (&group.name, group.fn_nr, &group.ret_tp, group.quant);
+        let mut ops = Vec::new();
+        let vec_tp = if fn_nr == u32::MAX {
+            Type::Unknown(0)
+        } else {
+            Type::Vector(Box::new(ret_tp.clone()), Deps::none())
+        };
+        let xs = self.pattern_binding(name, &vec_tp);
+        self.vars.defined(xs);
+        if fn_nr == u32::MAX {
+            // The first pass, before the rule is defined: the binding exists, the run does not.
+            ops.push(Value::Boolean(true));
+            return ops;
+        }
+        prechain.extend(self.vector_db(ret_tp, xs));
+        let r = self.create_unique("rule_x", ret_tp);
+        self.vars.defined(r);
+        let held = matches!(
+            ret_tp.base(),
+            Type::Reference(_, _) | Type::Enum(_, true, _) | Type::Vector(_, _)
+        );
+        if held {
+            // `r` hands its record over to `xs` (the copy below frees r's store), so its
+            // own scope end releases nothing.
+            self.vars.set_skip_free(r);
+        }
+        prechain.push(v_set(r, self.null_value(ret_tp)));
+        let ed_nr = self.data.type_def_nr(ret_tp);
+        let elm = self.create_unique("rule_elm", &Type::Reference(ed_nr, Deps::none()));
+        self.vars.defined(elm);
+        self.vars.set_skip_free(elm);
+        let mut append = self.append_element_ops(xs, ret_tp, elm, Value::Var(r));
+        if held {
+            let copy_d = self.data.def_nr("OpCopyRecord");
+            for op in &mut append {
+                if let Value::Call(d, args) = op.unspan_mut()
+                    && *d == copy_d
+                    && let Some(Value::Int(tp)) = args.get_mut(2).map(Value::unspan_mut)
+                {
+                    *tp |= i32::from(crate::keys::COPY_FREE_SOURCE);
+                }
+            }
+        }
+        let mut body = Vec::new();
+        body.push(self.subrule_separator_step(subject, sep, xs, seg));
+        body.push(v_set(r, call));
+        let present = self.subrule_present(fn_nr, r, ret_tp);
+        let now = self.get_field(cursor_def, pos_field, Value::Var(cursor_var));
+        let moved = self.conv_op("<", Value::Var(seg), now, I32.clone(), I32.clone());
+        let taken = v_if(present, moved, Value::Boolean(false));
+        body.push(v_if(taken, Value::Null, Value::Break(0)));
+        body.extend(append);
+        let now = self.get_field(cursor_def, pos_field, Value::Var(cursor_var));
+        body.push(v_set(seg, now));
+        ops.push(v_loop(body, "sub-rule run"));
+        if quant == '+' {
+            let taken = self.cl("OpLengthVector", &[Value::Var(xs)]);
+            ops.push(self.conv_op("<", Value::Int(0), taken, I32.clone(), I32.clone()));
+        } else {
+            ops.push(Value::Boolean(true));
+        }
+        ops
+    }
+
+    /// The step before each call of a run ([`Self::subrule_run`]): with a separator `*(Sep)`,
+    /// the separator between two answers is consumed when present and the run ends when it is
+    /// not; before the first answer, and with no separator, the cursor is set to `seg`.
+    fn subrule_separator_step(
+        &mut self,
+        subject: &SliceSubject,
+        sep: Option<&SepSpec>,
+        xs: u16,
+        seg: u16,
+    ) -> Value {
+        let Some((cursor_var, cursor_def, pos_field, _)) = self.match_cursor else {
+            return Value::Null;
+        };
+        let set_here = self.set_field(
+            cursor_def,
+            pos_field,
+            0,
+            Value::Var(cursor_var),
+            Value::Var(seg),
+        );
+        let Some(sep) = sep else {
+            return set_here;
+        };
+        let SliceSubject {
+            v,
+            elm_tp,
+            elm_size,
+            ..
+        } = *subject;
+        let taken = self.cl("OpLengthVector", &[Value::Var(xs)]);
+        let some = self.conv_op("<", Value::Int(0), taken, I32.clone(), I32.clone());
+        let len_c = self.cursor_len(v);
+        let room = self.conv_op("<", Value::Var(seg), len_c, I32.clone(), I32.clone());
+        let at_sep = self.sep_match_cond(sep, v, elm_size, elm_tp, Value::Var(seg));
+        let is_sep = v_if(room, at_sep, Value::Boolean(false));
+        let past = self.conv_op(
+            "+",
+            Value::Var(seg),
+            Value::Int(1),
+            I32.clone(),
+            I32.clone(),
+        );
+        let set_past = self.set_field(cursor_def, pos_field, 0, Value::Var(cursor_var), past);
+        v_if(some, v_if(is_sep, set_past, Value::Break(0)), set_here)
+    }
+
+    /// `@FR-P-Rule` — "the rule answered": a record's `!= null` against the null-ref sentinel
+    /// (`OpRefIsNull` tests the store_nr sentinel and misreads a fn-returned null struct on the
+    /// interpreter), any other node type's `!= null`.  A rule not defined yet (the first
+    /// pass) has no type to test.
+    fn subrule_present(&mut self, fn_nr: u32, var: u16, ret_tp: &Type) -> Value {
+        if fn_nr == u32::MAX {
+            Value::Boolean(true)
+        } else if matches!(ret_tp.base(), Type::Reference(..)) {
+            // A rule answering `S?` stores its record as `S` does (`@FR-N-Shape`).
+            let sentinel = self.cl("OpNullRefSentinel", &[]);
+            self.cl("OpNeRef", &[Value::Var(var), sentinel])
+        } else if let Some(test) = self.null_test(Value::Var(var), ret_tp, true) {
+            // `!= null`, never the value's truth: a rule answering 0 (an arena index, a
+            // position) answered (`@FR-P-Rule`).
+            test
+        } else {
+            self.coalesce_not_null(&Value::Var(var), ret_tp)
+        }
+    }
+
+    /// `@FR-P-Rule` — the fixed elements of the current cursor segment, tested and bound before
+    /// a sub-rule ends it: the length gate `base + k <= len`, then each element's condition in
+    /// order, ANDed onto `cond`; the bare names bind from `base + i`.  Their reads use the
+    /// segment's base, which the next segment replaces, so they are emitted now.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the slice pattern's own state, threaded"
+    )]
+    fn flush_cursor_segment(
+        &mut self,
+        subject: &SliceSubject,
+        head: &mut [String],
+        seg_start: usize,
+        cond: &mut Option<Value>,
+        elem_conds: &mut Vec<Value>,
+        conds_at_entry: usize,
+        bindings: &mut Vec<Value>,
+    ) {
+        let Some((_, _, _, base)) = self.match_cursor else {
+            return;
+        };
+        let k = (head.len() - seg_start) as i32;
+        let SliceSubject {
+            v,
+            elm_tp,
+            elm_size,
+            borrow_src,
+        } = *subject;
+        if k > 0 {
+            let need = self.conv_op(
+                "+",
+                Value::Var(base),
+                Value::Int(k),
+                I32.clone(),
+                I32.clone(),
+            );
+            let len_call = self.cursor_len(v);
+            let ispec = Type::Integer(IntegerSpec {
+                min: 0,
+                max: 0,
+                not_null: false,
+                forced_size: None,
+            });
+            let mut gate = Value::Null;
+            self.call_op(&mut gate, "<=", &[need, len_call], &[ispec.clone(), ispec]);
+            *cond = Some(match cond.take() {
+                Some(c) => v_if(c, gate, Value::Boolean(false)),
+                None => gate,
+            });
+        }
+        for ec in elem_conds.drain(conds_at_entry..) {
+            *cond = Some(match cond.take() {
+                Some(c) => v_if(c, ec, Value::Boolean(false)),
+                None => ec,
+            });
+        }
+        for (i, name) in head.iter_mut().enumerate().skip(seg_start) {
+            if name == "_" {
+                continue;
+            }
+            let bind_nr = self.pattern_binding(name, elm_tp);
+            self.vars.defined(bind_nr);
+            let at = Value::Int((i - seg_start) as i32);
+            let val = self.read_slice_elem(v, elm_size, elm_tp, at);
+            bindings.push(v_set(bind_nr, val));
+            self.mark_slice_element_view(bind_nr, elm_tp, borrow_src);
+            *name = "_".to_string();
+        }
+    }
+
+    /// `@FR-P-Rule` — a sub-rule element `name: rule` of a cursor pattern, `k` fixed elements
+    /// after the current segment's base.  ANDed onto the arm's `cond` it is
+    /// `{ cursor.pos = base + k; name = rule(cursor); if name != null { seg = cursor.pos; true }
+    /// else { false } }`: the rule runs only when everything before it matched, in arm order
+    /// (`(P-Alt)`), and the next segment is read from `seg`.  `name` and `seg` are declared at
+    /// the match's level (`prechain`), because the arm body reads them and a binding first made
+    /// inside a condition is scoped to it on native.  The arm restores the cursor when it fails
+    /// (`parse_slice_pattern`).  `consumed` says a fixed element of this pattern precedes the
+    /// call, which makes its edge a consuming one for the termination check.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the slice pattern's own state, threaded"
+    )]
     fn parse_subrule_slice_element(
         &mut self,
         name: &str,
         fn_nr: u32,
         ret_tp: &Type,
+        k: usize,
+        consumed: bool,
         cond: &mut Option<Value>,
         prechain: &mut Vec<Value>,
     ) {
-        let cursor_var = self.match_cursor.map_or(0, |(cv, ..)| cv);
-        // Re-read `name : rule` (the peek reverted); then require it be the whole pattern.
+        let Some((cursor_var, cursor_def, pos_field, base)) = self.match_cursor else {
+            return;
+        };
+        // Re-read `name : rule` (the peek reverted).
         self.lexer.has_identifier(); // name
         self.lexer.token(":");
-        // @PLN35 PC3 — record the sub-rule edge (enclosing rule -> invoked rule) at the invocation
-        // site, so the post-parse termination pass can reject a left-recursive cycle.
+        // @PLN35 PC3 — record the edge (enclosing rule -> invoked rule) at the invocation site for
+        // the post-parse termination pass; it is a consuming edge when a token is taken before
+        // the call, in this pattern or by the arm whose body holds this match.
         let site = self.lexer.peek().position;
         self.lexer.has_identifier(); // rule
         if !self.first_pass && self.context != u32::MAX {
-            self.subrule_edges.push((self.context, fn_nr, site));
+            let consuming = consumed || self.cursor_consumed.contains(&cursor_var);
+            self.subrule_edges
+                .push((self.context, fn_nr, site, consuming));
         }
-        if !self.first_pass && !self.lexer.peek_token("]") {
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "a sub-rule element `{name}: rule` must currently be the whole slice pattern \
-                 (mixing a sub-rule with fixed elements is deferred to a follow-up)"
-            );
-        }
-        while !self.lexer.peek_token("]") && !matches!(self.lexer.peek().has, LexItem::None) {
-            self.lexer.cont();
-        }
-        self.lexer.token("]");
+        self.slice_subrule = true;
         let name_var = self.pattern_binding(name, ret_tp);
         self.vars.defined(name_var);
+        let seg = self.create_unique("cursor_seg", &I32);
+        self.vars.defined(seg);
+        let none = self.null_value(ret_tp);
+        prechain.push(v_set(name_var, none));
+        prechain.push(v_set(seg, Value::Int(0)));
+        let at = self.conv_op(
+            "+",
+            Value::Var(base),
+            Value::Int(k as i32),
+            I32.clone(),
+            I32.clone(),
+        );
+        let set_pos = self.set_field(cursor_def, pos_field, 0, Value::Var(cursor_var), at);
         let cursor_tp = self.vars.tp(cursor_var).clone();
         let mut call = Value::Null;
-        self.call_nr(
-            &mut call,
-            fn_nr,
-            &[Value::Var(cursor_var)],
-            &[cursor_tp],
-            false,
-            &[],
-            None,
+        if fn_nr != u32::MAX {
+            self.call_nr(
+                &mut call,
+                fn_nr,
+                &[Value::Var(cursor_var)],
+                &[cursor_tp],
+                false,
+                &[],
+                None,
+            );
+        }
+        let present = self.subrule_present(fn_nr, name_var, ret_tp);
+        let now = self.get_field(cursor_def, pos_field, Value::Var(cursor_var));
+        let matched = v_block(
+            vec![v_set(seg, now), Value::Boolean(true)],
+            Type::Boolean,
+            "sub-rule matched",
         );
-        // Hoist `name = rule(cursor)` above the if-chain: the call runs ONCE (a miss leaves `pos`
-        // unchanged, so unconditional evaluation is safe), and `name` is a match-level binding
-        // visible to every arm body (a cond sub-block would scope it away on native).  The arm
-        // then gates on `name != null`.
-        prechain.push(v_set(name_var, call));
-        // Presence test == the hand-form `name != null`: `OpNeRef(name, OpNullRefSentinel())`.
-        // (NOT `OpRefIsNull` — that tests the store_nr sentinel, for `enum == null`, and misreads
-        // a fn-returned null struct on the interpreter; `OpNeRef` vs the sentinel is the ref path.)
-        let sentinel = self.cl("OpNullRefSentinel", &[]);
-        let present = self.cl("OpNeRef", &[Value::Var(name_var), sentinel]);
-        *cond = match cond.take() {
-            Some(existing) => Some(v_if(existing, present, Value::Boolean(false))),
-            None => Some(present),
-        };
+        let step = v_block(
+            vec![
+                set_pos,
+                v_set(name_var, call),
+                v_if(present, matched, Value::Boolean(false)),
+            ],
+            Type::Boolean,
+            "sub-rule",
+        );
+        *cond = Some(match cond.take() {
+            Some(c) => v_if(c, step, Value::Boolean(false)),
+            None => step,
+        });
+        self.match_cursor = Some((cursor_var, cursor_def, pos_field, seg));
     }
 
     /// @PLN35 PC3+PC4 — well-formedness pass over the sub-rule invocation graph, run post-parse over
@@ -11971,8 +12698,12 @@ impl Parser {
         }
         let mut adj: std::collections::HashMap<u32, Vec<(u32, crate::lexer::Position)>> =
             std::collections::HashMap::new();
-        for (from, to, pos) in &edges {
-            adj.entry(*from).or_default().push((*to, *pos));
+        // `@FR-P-Rule` — only an edge that can run before any token is consumed can recurse
+        // without progress; a consuming edge ends a cycle's danger.
+        for (from, to, pos, consuming) in &edges {
+            if !consuming {
+                adj.entry(*from).or_default().push((*to, *pos));
+            }
         }
         let cycles = Self::find_subrule_cycles(&adj);
         for (site, cycle) in &cycles {
@@ -11996,7 +12727,7 @@ impl Parser {
         // a rejected cycle (that error stands).  One report per impure callee.
         let in_cycle: HashSet<u32> = cycles.iter().flat_map(|(_, c)| c.iter().copied()).collect();
         let mut checked: HashSet<u32> = HashSet::new();
-        for (_from, callee, site) in &edges {
+        for (_from, callee, site, _) in &edges {
             if in_cycle.contains(callee) || !checked.insert(*callee) {
                 continue;
             }
@@ -12263,6 +12994,8 @@ impl Parser {
             // bindings and condition; the body runs under whichever matched (loft#2107).
             let mut alternatives: Vec<(Vec<Value>, Vec<Value>)> = Vec::new();
             let mut arm_shapes: Vec<Option<SliceShape>> = Vec::new();
+            // Every pattern of the arm takes a token before its body runs.
+            let mut arm_consumes = false;
             if self.lexer.has_token("[") {
                 let subject = SliceSubject {
                     v,
@@ -12278,6 +13011,7 @@ impl Parser {
                     &mut elem_conds,
                     &mut prechain,
                 ));
+                arm_consumes = self.slice_consumes;
                 alternatives = self.parse_pattern_alternatives(
                     first_names,
                     &mut bindings,
@@ -12292,6 +13026,7 @@ impl Parser {
                             &mut elem_i,
                             &mut prechain,
                         ));
+                        arm_consumes &= p.slice_consumes;
                         conds.extend(cond_i);
                     },
                 );
@@ -12323,7 +13058,7 @@ impl Parser {
             let mut guard_opt = if self.lexer.has_token("if") {
                 let at = *self.lexer.pos();
                 let mut guard = Value::Null;
-                let gt = self.expression(&mut guard);
+                let gt = self.outside_cursor_mode(|p| p.expression(&mut guard));
                 self.record_guard(&guard, at);
                 if !self.first_pass && gt != Type::Boolean {
                     self.convert(&mut guard, &gt, &Type::Boolean);
@@ -12365,7 +13100,18 @@ impl Parser {
             // result expression (`{ c = 5; c }` → `c = 5; drop c`) — the block then yielded void,
             // so native delivered 0 (interpret happened to still surface the value).
             let arm_expected = self.match_arm_expected(&result_type);
-            let mut arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_code);
+            // `@FR-P-Rule` — a sub-rule called on this cursor in the body runs after the arm took
+            // a token, so its edge is a consuming one.
+            let consumed_cursor = self
+                .match_cursor
+                .filter(|_| arm_consumes)
+                .map(|(cursor_var, ..)| cursor_var);
+            self.cursor_consumed.extend(consumed_cursor);
+            let mut arm_type =
+                self.outside_cursor_mode(|p| p.parse_match_arm_body(&arm_expected, &mut arm_code));
+            if consumed_cursor.is_some() {
+                self.cursor_consumed.pop();
+            }
             // The alternatives run the BODY under their own bindings, so they take it before
             // the first pattern's bindings fold into it below.
             let mut bare_body = if alternatives.is_empty() {
@@ -12447,11 +13193,7 @@ impl Parser {
                 self.lexer.has_token(",");
                 break;
             }
-            if self.lexer.peek_token("}") {
-                self.lexer.has_token(",");
-            } else {
-                self.lexer.token(",");
-            }
+            self.match_arm_separator();
         }
         self.lexer.token("}");
 
@@ -12533,6 +13275,13 @@ impl Parser {
         let mut rest_label = String::new();
         // The fewest elements the rest may take: 1 for a scalar `xs:T+`, else 0.
         let mut rest_min: i32 = 0;
+        // `@FR-P-Rule` — a cursor pattern is read in SEGMENTS: the fixed elements up to a
+        // sub-rule are read from the position the segment starts at, and the sub-rule's own
+        // advance starts the next segment.  `seg_start` is the head index of the current
+        // segment's first element; outside a cursor, and before any sub-rule, it is 0 and every
+        // read is the one it always was.
+        let mut seg_start: usize = 0;
+        let entry_cursor = self.match_cursor;
         loop {
             if self.lexer.has_token("]") {
                 break;
@@ -12583,20 +13332,54 @@ impl Parser {
                 self.lexer.has_token(",");
                 tail_total = self.count_slice_tail_elements();
             } else if self.match_cursor.is_some()
-                && head.is_empty()
+                && !has_rest
+                && let Some((name, fn_nr, ret_tp, quant)) = self.peek_subrule_group()
+            {
+                // `@FR-P-Rule` × `@FR-P-Rep` / `@FR-P-Opt` — `(name: rule)*`, `+` or `?`: the
+                // segment before it is tested and bound, the group runs the rule as often as it
+                // matches (once at most for `?`), and the next segment starts where it stopped.
+                self.flush_cursor_segment(
+                    subject,
+                    &mut head,
+                    seg_start,
+                    cond,
+                    elem_conds,
+                    conds_at_entry,
+                    bindings,
+                );
+                let k = head.len() - seg_start;
+                let consumed = !head.is_empty();
+                let group = SubruleGroup {
+                    name,
+                    fn_nr,
+                    ret_tp,
+                    quant,
+                };
+                self.parse_subrule_group(subject, &group, k, consumed, cond, prechain);
+                seg_start = head.len();
+            } else if self.match_cursor.is_some()
                 && !has_rest
                 && let Some((name, fn_nr, ret_tp)) = self.peek_subrule_capture()
             {
-                // @PLN35 PC2 — sub-rule invocation `[ name: rule ]` in cursor mode: call
-                // `rule(cursor)` (which prefix-matches over the SAME cursor, advancing its
-                // `pos` on a match and leaving it on a miss — PC1 semantics), bind `name` to
-                // the result, and gate the arm on `name != null`.  Whole-pattern only for
-                // now (the running-pos + revert needed to mix a variable-width sub-rule with
-                // fixed elements is deferred).  `multi_alt` skips the fixed length gate +
-                // pos-advance — the sub-rule owns the pos.
-                self.parse_subrule_slice_element(&name, fn_nr, &ret_tp, cond, prechain);
-                multi_alt = true;
-                break;
+                // `@FR-P-Rule` — a sub-rule invocation `name: rule` at any element of a cursor
+                // pattern.  The segment before it is tested and bound first, then the rule runs
+                // from the position after that segment, and the next segment is read from where
+                // the rule left the cursor.
+                self.flush_cursor_segment(
+                    subject,
+                    &mut head,
+                    seg_start,
+                    cond,
+                    elem_conds,
+                    conds_at_entry,
+                    bindings,
+                );
+                let k = head.len() - seg_start;
+                let consumed = !head.is_empty();
+                self.parse_subrule_slice_element(
+                    &name, fn_nr, &ret_tp, k, consumed, cond, prechain,
+                );
+                seg_start = head.len();
             } else if self.pattern_variant_enum(elm_tp).is_none()
                 && let Some(is_rep) = self.peek_scalar_type_capture()
                 && (is_rep || !has_rest)
@@ -12651,7 +13434,7 @@ impl Parser {
                 // Single `name:Type`: bind `name = v[pos]`; the annotation matches the
                 // element type so no condition is needed (a "_" keeps position alignment
                 // for following bare-name indices).
-                let position = head.len() as i32;
+                let position = (head.len() - seg_start) as i32;
                 let name = self.lexer.has_identifier().unwrap();
                 self.lexer.token(":");
                 let tname = self.lexer.has_identifier().unwrap_or_default();
@@ -12678,7 +13461,7 @@ impl Parser {
                 // sub-pattern branch does.
                 let name = self.lexer.has_identifier().unwrap();
                 self.lexer.token(":");
-                let position = head.len() as i32;
+                let position = (head.len() - seg_start) as i32;
                 // Bind name = v[position] — the same read as the head-binding loop below.
                 let bind_nr = self.pattern_binding(&name, elm_tp);
                 self.vars.defined(bind_nr);
@@ -12712,7 +13495,7 @@ impl Parser {
                 let position = if has_rest {
                     -(tail_total - tail.len() as i32)
                 } else {
-                    head.len() as i32
+                    (head.len() - seg_start) as i32
                 };
                 let read = self.read_slice_elem(v, elm_size, elm_tp, Value::Int(position));
                 let mut sub_conds: Vec<Value> = Vec::new();
@@ -12742,17 +13525,18 @@ impl Parser {
                 // `parse_slice_repetition` builds the run-loop cond + collection and
                 // consumes through `]`, so break the element loop.
                 if let Some((e_nr, true)) = self.pattern_variant_enum(elm_tp) {
-                    let head_len = head.len() as i32;
+                    let head_len = (head.len() - seg_start) as i32;
                     // Bind any BARE-NAME head element (a variant sub-pattern / literal
                     // already emitted its own bind/cond and left a "_").  These are safe:
                     // the arm's `cond` requires `len >= head_len` before bindings run.
-                    for (i, name) in head.iter().enumerate() {
+                    for (i, name) in head.iter().enumerate().skip(seg_start) {
                         if name == "_" {
                             continue;
                         }
                         let bind_nr = self.pattern_binding(name, elm_tp);
                         self.vars.defined(bind_nr);
-                        let val = self.read_slice_elem(v, elm_size, elm_tp, Value::Int(i as i32));
+                        let at = Value::Int((i - seg_start) as i32);
+                        let val = self.read_slice_elem(v, elm_size, elm_tp, at);
                         bindings.push(v_set(bind_nr, val));
                         self.mark_slice_element_view(bind_nr, elm_tp, borrow_src);
                     }
@@ -12783,14 +13567,15 @@ impl Parser {
                 if let Some((e_nr, true)) = self.pattern_variant_enum(elm_tp) {
                     // A fixed head before an optional group (loft#2048): its bare names
                     // bind as a repetition's head does — the arm's `cond` gates them.
-                    let head_len = head.len() as i32;
-                    for (i, name) in head.iter().enumerate() {
+                    let head_len = (head.len() - seg_start) as i32;
+                    for (i, name) in head.iter().enumerate().skip(seg_start) {
                         if name == "_" {
                             continue;
                         }
                         let bind_nr = self.pattern_binding(name, elm_tp);
                         self.vars.defined(bind_nr);
-                        let val = self.read_slice_elem(v, elm_size, elm_tp, Value::Int(i as i32));
+                        let at = Value::Int((i - seg_start) as i32);
+                        let val = self.read_slice_elem(v, elm_size, elm_tp, at);
                         bindings.push(v_set(bind_nr, val));
                         self.mark_slice_element_view(bind_nr, elm_tp, borrow_src);
                     }
@@ -12823,7 +13608,7 @@ impl Parser {
                 let position = if has_rest {
                     -(tail_total - tail.len() as i32)
                 } else {
-                    head.len() as i32
+                    (head.len() - seg_start) as i32
                 };
                 let tmp = self.create_unique("slice_tuple", elm_tp);
                 self.vars.defined(tmp);
@@ -12861,7 +13646,7 @@ impl Parser {
                 // matching variant's offsets. A `_` placeholder keeps position alignment
                 // for following bare-name indices, as the variant sub-pattern branch does.
                 if let Some((e_nr, true)) = self.pattern_variant_enum(elm_tp) {
-                    let position = head.len() as i32;
+                    let position = (head.len() - seg_start) as i32;
                     let read = self.read_slice_elem(v, elm_size, elm_tp, Value::Int(position));
                     self.parse_slice_alternation_element(
                         e_nr,
@@ -12896,7 +13681,7 @@ impl Parser {
                 let position = if has_rest {
                     -(tail_total - tail.len() as i32)
                 } else {
-                    head.len() as i32
+                    (head.len() - seg_start) as i32
                 };
                 let mut lit = Value::Null;
                 let lit_tp = self.expression(&mut lit);
@@ -12943,7 +13728,7 @@ impl Parser {
         // bindings itself (predictive dispatch), so skip the fixed-position length gate,
         // the head/tail binds, and the rest materialisation below.
         if !multi_alt {
-            let fixed = (head.len() + tail.len()) as i32;
+            let fixed = (head.len() - seg_start + tail.len()) as i32;
             // Generate length condition
             let len_call = self.cursor_len(v);
             if let Some((cursor_var, cursor_def, pos_field, pos_var)) = self.match_cursor {
@@ -12963,12 +13748,14 @@ impl Parser {
                     I32.clone(),
                     I32.clone(),
                 );
-                self.call_op(
-                    cond.get_or_insert(Value::Null),
-                    "<=",
-                    &[need, len_call],
-                    &[ispec.clone(), ispec],
-                );
+                // ANDed after what the earlier segments tested (`@FR-P-Rule`), when a sub-rule
+                // ended one.
+                let mut gate = Value::Null;
+                self.call_op(&mut gate, "<=", &[need, len_call], &[ispec.clone(), ispec]);
+                *cond = Some(match cond.take() {
+                    Some(c) => v_if(c, gate, Value::Boolean(false)),
+                    None => gate,
+                });
                 let new_pos = self.conv_op(
                     "+",
                     Value::Var(pos_var),
@@ -13044,14 +13831,15 @@ impl Parser {
                     ],
                 );
             }
-            // Bind head elements: head[i] = v[i]
-            for (i, name) in head.iter().enumerate() {
+            // Bind head elements: head[i] = v[i] (in a cursor, from the last segment's start)
+            for (i, name) in head.iter().enumerate().skip(seg_start) {
                 if name == "_" {
                     continue;
                 }
                 let bind_nr = self.pattern_binding(name, elm_tp);
                 self.vars.defined(bind_nr);
-                let val = self.read_slice_elem(v, elm_size, elm_tp, Value::Int(i as i32));
+                let at = Value::Int((i - seg_start) as i32);
+                let val = self.read_slice_elem(v, elm_size, elm_tp, at);
                 bindings.push(v_set(bind_nr, val));
                 self.mark_slice_element_view(bind_nr, elm_tp, borrow_src);
             }
@@ -13084,7 +13872,7 @@ impl Parser {
                 let rest_var = self.pattern_binding(&name, &vec_tp);
                 self.vars.defined(rest_var);
                 if !self.first_pass && rest_var != u16::MAX {
-                    let lo_val = Value::Int(head.len() as i32);
+                    let lo_val = Value::Int((head.len() - seg_start) as i32);
                     let len_c = self.cursor_len(v);
                     let hi_val = self.conv_op(
                         "-",
@@ -13110,6 +13898,29 @@ impl Parser {
                 None => *cond = Some(ec),
             }
         }
+        // `@FR-P-Atomic` — a sub-rule moved the cursor while the arm was tested, so an arm that
+        // fails puts it back where the match started.
+        if (seg_start > 0 || self.slice_subrule)
+            && let Some((cursor_var, cursor_def, pos_field, entry_pos)) = entry_cursor
+        {
+            let back = self.set_field(
+                cursor_def,
+                pos_field,
+                0,
+                Value::Var(cursor_var),
+                Value::Var(entry_pos),
+            );
+            let failed = v_block(
+                vec![back, Value::Boolean(false)],
+                Type::Boolean,
+                "sub-rule miss",
+            );
+            let tested = cond.take().unwrap_or(Value::Boolean(true));
+            *cond = Some(v_if(tested, Value::Boolean(true), failed));
+        }
+        self.slice_consumes = !head.is_empty();
+        self.slice_subrule = false;
+        self.match_cursor = entry_cursor;
         if multi_alt || self.match_cursor.is_some() {
             None
         } else {
@@ -13772,7 +14583,19 @@ impl Parser {
         // this one tested only the bare form, so `match n { 0 => { null }, _ => { [n] } }`
         // answered null for EVERY n while the bare-arm spelling of the same function was
         // right — a wrong value with no diagnostic, on both backends.
-        self.type_null_arms(arms.iter_mut().map(|a| &mut a.1), result_type);
+        let first_pass = self.first_pass;
+        self.type_null_arms(
+            arms.iter_mut()
+                .filter(|a| !Self::is_placeholder_arm(first_pass, &a.2))
+                .map(|a| &mut a.1),
+            result_type,
+        );
+        for arm in arms
+            .iter_mut()
+            .filter(|a| Self::is_placeholder_arm(first_pass, &a.2))
+        {
+            mark_forward_call(&mut arm.1);
+        }
         // The same repair one width up, for the fn-ref result type.  A non-capturing
         // lambda arm is a bare `Value::Int(d_nr)` — eight bytes — where the join reads
         // the full twenty-byte fn-ref, so the arms of one choice leave different depths
@@ -13907,7 +14730,9 @@ impl Parser {
                     // capture list is still in the stream, and left there it was read as the
                     // body and reported as `Expect token ;` (loft#1790).  Step over it by its
                     // shape; pass 2 knows the enum and binds it for real.
-                    self.skip_forward_capture_list();
+                    if let Some(mut aliases) = self.bind_forward_capture_list() {
+                        self.is_capture_aliases.append(&mut aliases);
+                    }
                 }
                 return Type::Boolean;
             }
@@ -14343,6 +15168,22 @@ impl Parser {
         // would shift `__closure` to a wrong stack position).
         if self.captured_names.iter().any(|(name, _)| name == n) {
             return TextDep::SkipCaptured;
+        }
+        // `@FR-L-CapWrite` — a text LOCAL a closure writes is boxed into a cell
+        // (`flip_scalars_to_box_types`), the one place both the frame and the closure write.
+        // As the hidden `&text` return buffer it would stay unboxed and the closure would
+        // write its own copy (loft#2297), so it stays a local, delivered by copy like
+        // `SkipOwnedLocal`.  The list is filled as each lambda is parsed, before the tail
+        // asks, on both passes.
+        if !self.vars.is_argument(v)
+            && self
+                .data
+                .def(self.context)
+                .scalars_to_box()
+                .iter()
+                .any(|s| s == n)
+        {
+            return TextDep::SkipOwnedLocal;
         }
         let tp = self.vars.tp(v);
         // A text local promotes to a HIDDEN RefVar(Text) out-param buffer.
@@ -14819,9 +15660,11 @@ impl Parser {
         match v.unspan() {
             Value::Return(inner) => Self::yields_stack_tuple(inner, vars, true),
             Value::Tuple(_) => tail,
-            Value::Var(x) => {
-                tail && (*x as usize) < vars.count() as usize
-                    && matches!(vars.tp(*x).base(), Type::Tuple(_))
+            // A local of tuple type, and a CALL answering a stack tuple — a callback
+            // `f: fn(T) -> U` at a pure-value tuple keeps the bare tuple ABI, so `-> U { f(x) }`
+            // hands one up where the instance returns the record.
+            Value::Var(_) | Value::CallRef(..) => {
+                tail && Self::stack_tuple_leaf_in(v, vars).is_some()
             }
             Value::If(_, t, e) => {
                 Self::yields_stack_tuple(t, vars, tail) || Self::yields_stack_tuple(e, vars, tail)
@@ -14842,6 +15685,26 @@ impl Parser {
             _ => false,
         }
     }
+    /// The member types of a LEAF that is a stack tuple without being written as one: a local
+    /// of tuple type, or a fn-ref call whose function type answers a stack tuple.  `None` for
+    /// anything else, a tuple literal included (the literal path writes it member by member).
+    fn stack_tuple_leaf_in(v: &Value, vars: &crate::variables::Function) -> Option<Vec<Type>> {
+        let tp = match v.unspan() {
+            Value::Var(x) if (*x as usize) < vars.count() as usize => vars.tp(*x).clone(),
+            Value::CallRef(f, _) if (*f as usize) < vars.count() as usize => {
+                match vars.tp(*f).base() {
+                    Type::Function(_, ret, ..) => (**ret).clone(),
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
+        match tp.base() {
+            Type::Tuple(elems) => Some(elems.clone()),
+            _ => None,
+        }
+    }
+
     /// Rewrite every `return <tuple>` reachable from `node` into the synthetic record `w`
     /// — the early-return half of [`Self::promote_monomorph_tuple_return`]; the tail is the
     /// caller's own `rewrite_tail_tuple_with_work_ref`.
@@ -16485,10 +17348,13 @@ impl Parser {
     /// `Reference(S) ⤳ Enum(E)` exactly there.  The arm keeps its own variant type on
     /// purpose (`arm_joins_to_enum` returns before converting it, so the join can still
     /// see the two differ), which is why the gate cannot read the arm's type alone.
+    /// Both sides are peeled (`@FR-N-Shape`): an optional enum result (`E?`) meets its
+    /// variant as `E` does, and whether the join is optional is `join_arm_into`'s question
+    /// (loft#2315).
     fn match_arms_unify(&self, result: &Type, arm: &Type) -> bool {
         match_arm_types_unify(result, arm)
             || matches!(
-                (self.variant_parent_enum(arm), result),
+                (self.variant_parent_enum(arm), result.base()),
                 (Some(Type::Enum(a, _, _)), Type::Enum(b, _, _)) if a == *b
             )
     }
@@ -17038,6 +17904,15 @@ impl Parser {
         self.vars.is_compiler_generated(d) && self.vars.owns_store(d)
     }
 
+    /// Is `d` a vector's OWN backing — a compiler-generated record of a `main_vector<T>`
+    /// wrapper, whose one field is the vector (`__vdb_N`)?  A projection rooted there is the
+    /// vector itself, not a view into another value; the mint @FR-O-Proxy means.
+    fn var_is_vector_backing(&self, d: u16) -> bool {
+        self.vars.is_compiler_generated(d)
+            && matches!(self.vars.tp(d).base(), Type::Reference(t, _)
+                if self.data.def(*t).name().starts_with("main_vector<"))
+    }
+
     /// Does expression `e` READ OUT OF a store this function frees — an element or field
     /// of a local, or of an inline call's temporary?
     ///
@@ -17057,8 +17932,13 @@ impl Parser {
         match e.unspan() {
             Value::Call(d, args) if *d == get_field || *d == get_vector => {
                 match args.first().map(Self::projection_base) {
+                    // Only the binding's OWN backing is exempt: a vector wrapper mint
+                    // (`__vdb_N`), whose one field IS the vector.  A projection into any
+                    // other local — a match subject, a work-ref — reads a PART of a store
+                    // the function frees: a borrow (loft#2314).  Decided on the base's type,
+                    // which both passes agree on.
                     Some(Value::Var(base)) => {
-                        !self.vars.is_argument(*base) && !self.var_is_mint(*base)
+                        !self.vars.is_argument(*base) && !self.var_is_vector_backing(*base)
                     }
                     Some(inner @ Value::Call(bd, _)) if *bd == get_field || *bd == get_vector => {
                         self.expr_borrows_local(inner)
@@ -17071,21 +17951,6 @@ impl Parser {
             }
             _ => false,
         }
-    }
-
-    /// The expression `body` most recently ASSIGNS to `v`, seen through the statement
-    /// wrappers a body carries.  Walked in reverse so a rebound variable answers with the
-    /// assignment that survives to the tail, not the first one.
-    fn var_defining_expr(body: &[Value], v: u16) -> Option<&Value> {
-        fn walk(node: &Value, v: u16) -> Option<&Value> {
-            match node.unspan() {
-                Value::Set(w, rhs) if *w == v => Some(rhs),
-                Value::Insert(ops) => ops.iter().rev().find_map(|o| walk(o, v)),
-                Value::Block(bl) => bl.operators.iter().rev().find_map(|o| walk(o, v)),
-                _ => None,
-            }
-        }
-        body.iter().rev().find_map(|s| walk(s, v))
     }
 
     /// Is `v` DEFINED by a projection into something this function frees?  The same
@@ -17101,7 +17966,21 @@ impl Parser {
     /// `OpFreeRef(__lift_1)` two statements later frees what it now points at.
     /// @FR-O-Borrow — the borrow is real whether or not a dep records it.
     fn var_defined_by_projection(&self, body: &[Value], v: u16) -> bool {
-        Self::var_defining_expr(body, v).is_some_and(|rhs| self.expr_borrows_local(rhs))
+        // Every assignment counts, an arm's too: a `match` binds its arm's capture inside the
+        // `If` that tests the arm, and any one of them borrowing makes the value a view on
+        // that path (loft#2314).
+        fn any_def(node: &Value, v: u16, f: &mut dyn FnMut(&Value) -> bool) -> bool {
+            match node.unspan() {
+                Value::Set(w, rhs) if *w == v => f(rhs),
+                Value::Insert(ops) => ops.iter().any(|o| any_def(o, v, f)),
+                Value::Block(bl) => bl.operators.iter().any(|o| any_def(o, v, f)),
+                Value::If(_, t, e) => any_def(t, v, f) || any_def(e, v, f),
+                Value::Set(_, rhs) => any_def(rhs, v, f),
+                _ => false,
+            }
+        }
+        body.iter()
+            .any(|s| any_def(s, v, &mut |rhs| self.expr_borrows_local(rhs)))
     }
 
     /// Does `v` BORROW another local's store?  The BINDING form of the view a tail
@@ -17931,7 +18810,7 @@ impl Parser {
         match tail.unspan() {
             Value::Call(op, _) => {
                 let def = self.data.def(*op);
-                crate::text_calls::is_text_dest_native(def.name()) || self.crosses_text_bridge(*op)
+                crate::text_calls::is_text_dest_def(def) || self.crosses_text_bridge(*op)
             }
             Value::Return(inner) => self.native_text_call_tail(inner),
             _ => false,
@@ -18008,6 +18887,8 @@ impl Parser {
         match arm.unspan() {
             Value::Return(_) | Value::Break(_) | Value::Continue(_) => false,
             Value::Null => false,
+            // A pass-1 placeholder: the call pass 2 builds here yields the arm's value.
+            Value::Block(bl) if bl.name == FORWARD_CALL => true,
             Value::Block(bl) => bl.operators.last().is_some_and(Self::arm_yields_text),
             Value::Insert(ops) => ops.last().is_some_and(Self::arm_yields_text),
             Value::If(_, then, els) => Self::arm_yields_text(then) && Self::arm_yields_text(els),
@@ -20809,13 +21690,14 @@ impl Parser {
             // slot.  The store face asks where the value converts; the two lowerings that do
             // not convert — a bare `null` (the sentinel) and a tuple rewritten into its
             // synthetic struct — are asked at the site.
+            let value_at = Some(&expr_start.position);
             if t == Type::Null || tuple_rewritten {
-                self.n_store_violation(&t, &r_type, "the return value", None);
+                self.n_store_violation(&t, &r_type, "the return value", value_at);
             }
             if t == Type::Null {
                 v = self.null_value(&r_type);
             } else if !tuple_rewritten
-                && !self.convert_store(&mut v, &t, &r_type, "the return value", None)
+                && !self.convert_store(&mut v, &t, &r_type, "the return value", value_at)
             {
                 self.validate_convert("return", &t, &r_type, &expr_start.position);
             }
@@ -22063,7 +22945,7 @@ impl Parser {
                 *val = Value::Insert(ops);
                 return Type::Void;
             }
-            "insert" => return self.parse_insert(val, list, types),
+            "insert" => return self.parse_insert(val, list, types, arg_pos),
             "reverse" => return self.parse_reverse(val, list, types),
             "reserve" => return self.parse_reserve(val, list, types),
             "any" => return self.parse_any(val, list, types),
@@ -22840,7 +23722,7 @@ impl Parser {
         // element is deep-copied into a fresh record on bind (@PLN101), so the bound local
         // is never null and the test could never fire — `reduce` hung forever.
         let break_if_null = if matches!(in_type, Type::Vector(_, _)) {
-            Value::Insert(self.vector_loop_break(&Value::Var(vec_copy_var), iter_var))
+            Value::Insert(self.vector_loop_break(&Value::Var(vec_copy_var), iter_var, false))
         } else {
             let mut test_for = Value::Var(for_var);
             self.convert(&mut test_for, &var_tp, &Type::Boolean);
@@ -24246,4 +25128,17 @@ pub(super) fn is_match_wrapper(name: &str) -> bool {
             | "stream match"
             | "cursor match"
     )
+}
+
+/// The tests an `||` chain is made of — `a || b` lowers to `if a { true } else { b }` — or the
+/// test itself: what a guard clause's fall-through proves false, one by one (`@FR-N-Guard`).
+fn disjuncts(test: &Value) -> Vec<&Value> {
+    match test.unspan() {
+        Value::If(a, t, b) if matches!(t.unspan(), Value::Boolean(true)) => {
+            let mut out = disjuncts(a);
+            out.extend(disjuncts(b));
+            out
+        }
+        _ => vec![test],
+    }
 }

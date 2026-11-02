@@ -9,7 +9,7 @@
 use super::capture_builds::{CaptureBuilds, capture_build_backings};
 use super::insert_free::expr_ends_in_return;
 use super::returns::{collect_return_sources, last_non_free_result};
-use crate::data::{Data, DefType, Type, Value, v_if};
+use crate::data::{Data, DefType, Type, Value, v_if, v_set};
 use crate::fxhash::FxHashMap as HashMap;
 use crate::variables::Function;
 
@@ -104,6 +104,8 @@ fn cascade_before_record_frees(data: &mut Data) {
         free_ref: data.def_nr("OpFreeRef"),
         live: data.def_nr("OpStoreLive"),
         conv: data.def_nr("OpConvBoolFromRef"),
+        eq_ref: data.def_nr("OpEqRef"),
+        null_ref: data.def_nr("OpNullRefSentinel"),
     };
     // Paid only where a closure record can owe a release: this runs over every function the
     // scope pass checked — the whole stdlib on every compile — so a program, or a function,
@@ -134,6 +136,10 @@ struct ReleaseOps {
     /// a store twice (`@FR-H-FreeTwice`) must not run its cascade twice.
     live: u32,
     conv: u32,
+    /// loft#2284 — the record a fn-field reset displaces is compared with this frame's own
+    /// builds of its type, by identity.
+    eq_ref: u32,
+    null_ref: u32,
 }
 
 impl ReleaseOps {
@@ -161,11 +167,12 @@ impl ReleaseOps {
         for op in std::mem::take(list) {
             if let Some((t, c)) = Self::old_record(&op, data, vars) {
                 out.push(op);
-                out.push(v_if(
+                let cascade = v_if(
                     Value::Call(self.conv, vec![Value::Var(t)]),
                     Value::Call(c, vec![Value::Var(t)]),
                     Value::Null,
-                ));
+                );
+                out.push(self.unless_own_build(t, cascade, vars));
                 continue;
             }
             if let Some((v, c)) = self.owed(data, vars, &op) {
@@ -215,9 +222,14 @@ impl ReleaseOps {
     /// field's overwrite (loft#1877).  Its cascade runs right after the bind, and releases
     /// what the record adopted.
     fn old_record(op: &Value, data: &Data, vars: &Function) -> Option<(u16, u32)> {
-        let Value::Set(t, _) = op.unspan() else {
+        let Value::Set(t, rhs) = op.unspan() else {
             return None;
         };
+        // A null pre-init displaces nothing (and the interpreter lowers a borrowed reference's
+        // null as a stack-frame DbRef, which a liveness test reads as a record).
+        if matches!(rhs.unspan(), Value::Null) {
+            return None;
+        }
         if *t >= vars.count() || !vars.name(*t).trim_start_matches('_').starts_with("oldrec") {
             return None;
         }
@@ -226,6 +238,35 @@ impl ReleaseOps {
         };
         let c = data.drop_cascade_nr(*r);
         (c != u32::MAX).then_some((*t, c))
+    }
+
+    /// loft#2284, `@FR-L-CapOwn` — a displaced fn-field record `t` that is one this frame
+    /// BUILT (a `___clos_N` of its type, by identity) is left behind: its captures are the
+    /// frame's to release, at its end, conditional on the record local
+    /// (`capture_builds::captures_of_displaced_records`).  So its cascade does not run, and the
+    /// record local is emptied — the record it named is about to be cleared, and an empty one
+    /// is what tells the frame's release it is the one.  Any other displaced record cascades.
+    /// The record's own bytes are freed by the reset's clear either way.
+    fn unless_own_build(&self, t: u16, cascade: Value, vars: &Function) -> Value {
+        if self.eq_ref == u32::MAX || self.null_ref == u32::MAX {
+            return cascade;
+        }
+        let Type::Reference(r, _) = vars.tp(t).base() else {
+            return cascade;
+        };
+        let r = *r;
+        (0..vars.count())
+            .filter(|&w| {
+                super::capture_builds::is_record_local(vars, w)
+                    && matches!(vars.tp(w).base(), Type::Reference(x, _) if *x == r)
+            })
+            .fold(cascade, |rest, w| {
+                v_if(
+                    Value::Call(self.eq_ref, vec![Value::Var(t), Value::Var(w)]),
+                    v_set(w, Value::Call(self.null_ref, Vec::new())),
+                    rest,
+                )
+            })
     }
 
     fn guarded(&self, v: u16, c: u32) -> Value {

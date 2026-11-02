@@ -32,6 +32,7 @@ use crate::database::Stores;
 pub(crate) use crate::ir_shape::split_call;
 pub use crate::ir_shape::{WrapperOperand, one_op_wrapper};
 use crate::ir_shape::{as_int, as_var, call_named};
+use crate::opt::facts::Facts;
 use crate::opt::lazy_split::buffer_serves_one_call;
 pub use crate::opt::lazy_split::{LazySplit, lazy_splits};
 pub use crate::opt::store_text_borrow::{StoreTextBorrows, borrowed_store_texts};
@@ -683,7 +684,7 @@ fn apart_hoist(
     data: &Data,
     def_nr: u32,
     facts: Option<&StoreFacts>,
-    cache: &mut HashMap<u32, bool>,
+    fx: &mut Facts,
     owned: Option<&HoistOwned>,
 ) -> LoopHoist {
     let Some(facts) = facts.filter(|_| crate::keys::apart_headers_enabled()) else {
@@ -696,7 +697,7 @@ fn apart_hoist(
         &|t| work_buffer_arg(data, def_nr, t),
         vector_candidates(body, data, def_nr),
         super::apart::Callees {
-            cache,
+            cache: &mut fx.stores_written,
             owned,
             code: data.def(def_nr).code(),
         },
@@ -736,7 +737,7 @@ pub(crate) fn rebound_apart_headers(
     data: &Data,
     def_nr: u32,
     facts: Option<&StoreFacts>,
-    cache: &mut HashMap<u32, bool>,
+    fx: &mut Facts,
     owned: Option<&HoistOwned>,
 ) -> Vec<(PathKey, Value)> {
     let Some(facts) = facts.filter(|_| crate::keys::apart_headers_enabled()) else {
@@ -801,7 +802,7 @@ pub(crate) fn rebound_apart_headers(
         &|t| work_buffer_arg(data, def_nr, t),
         candidates,
         super::apart::Callees {
-            cache,
+            cache: &mut fx.stores_written,
             owned,
             code: data.def(def_nr).code(),
         },
@@ -829,7 +830,7 @@ pub(crate) fn grown_apart_headers(
     data: &Data,
     def_nr: u32,
     facts: Option<&StoreFacts>,
-    cache: &mut HashMap<u32, bool>,
+    fx: &mut Facts,
     owned: Option<&HoistOwned>,
 ) -> Vec<(PathKey, Value)> {
     let Some(facts) = facts.filter(|_| crate::keys::apart_headers_enabled()) else {
@@ -854,7 +855,7 @@ pub(crate) fn grown_apart_headers(
         &|t| work_buffer_arg(data, def_nr, t),
         candidates,
         super::apart::Callees {
-            cache,
+            cache: &mut fx.stores_written,
             owned,
             code: data.def(def_nr).code(),
         },
@@ -894,59 +895,49 @@ pub fn hoistable(
     data: &Data,
     stores: &Stores,
     def_nr: u32,
-    cache: &mut HashMap<u32, bool>,
-    writes: &mut WriteCache,
+    fx: &mut Facts,
     tiers: HoistTiers,
-    inputs: Option<&mut InputCache>,
     owned: Option<&HoistOwned>,
     facts: Option<&StoreFacts>,
 ) -> LoopHoist {
     // `(R-Header)`'s text clause: a loop the gate declines is asked again with its text sets
     // admitted, so a loop that hoisted without the clause hoists exactly as it did.
     let clause = crate::keys::text_set_header_enabled();
-    let text_grown = if !body_blocks_hoist(
-        body,
-        data,
-        Some(stores),
-        def_nr,
-        cache,
-        tiers,
-        owned,
-        !clause,
-    ) {
-        None
-    } else if clause
-        && !body_blocks_hoist(
-            body,
-            data,
-            Some(stores),
-            def_nr,
-            cache,
-            HoistTiers {
-                text_set: true,
-                ..tiers
-            },
-            owned,
-            true,
-        )
-    {
-        Some(text_set_roots(body, data))
-    } else {
-        let apart = apart_hoist(body, data, def_nr, facts, cache, owned);
-        // `@FR-R-PushRec`'s apart-call clause — only where the apart headers hold nothing,
-        // so a loop that keeps them keeps exactly them.
-        if apart.vectors.is_empty()
-            && let Some((path, expr)) = apart_mint(body, data, stores, def_nr, tiers)
+    let text_grown =
+        if !body_blocks_hoist(body, data, Some(stores), def_nr, fx, tiers, owned, !clause) {
+            None
+        } else if clause
+            && !body_blocks_hoist(
+                body,
+                data,
+                Some(stores),
+                def_nr,
+                fx,
+                HoistTiers {
+                    text_set: true,
+                    ..tiers
+                },
+                owned,
+                true,
+            )
         {
-            return LoopHoist {
-                movers: vec![path.0],
-                mint_pushes: vec![(path, expr)],
-                apart_mint: true,
-                ..LoopHoist::default()
-            };
-        }
-        return apart;
-    };
+            Some(text_set_roots(body, data))
+        } else {
+            let apart = apart_hoist(body, data, def_nr, facts, fx, owned);
+            // `@FR-R-PushRec`'s apart-call clause — only where the apart headers hold nothing,
+            // so a loop that keeps them keeps exactly them.
+            if apart.vectors.is_empty()
+                && let Some((path, expr)) = apart_mint(body, data, stores, def_nr, tiers)
+            {
+                return LoopHoist {
+                    movers: vec![path.0],
+                    mint_pushes: vec![(path, expr)],
+                    apart_mint: true,
+                    ..LoopHoist::default()
+                };
+            }
+            return apart;
+        };
     let mut out = LoopHoist {
         vectors: vector_candidates(body, data, def_nr),
         scalars: Vec::new(),
@@ -982,13 +973,13 @@ pub fn hoistable(
     // @PLN157 § V-p (`@FR-R-Inputs`) — what an admitted callee reads of a record the body
     // passes it as a plain variable joins the candidates, re-spelled over that variable; the
     // eviction below then judges each, since the write set carries what the callee writes.
-    if let Some(inputs) = inputs {
+    if fx.inputs.is_some() {
         for op in &body.operators {
             op.any_node(&mut |n| {
                 if let Value::Call(f, args) = n
                     && (*f as usize) < data.definitions.len()
                     && matches!(data.def(*f).code(), Value::Block(_))
-                    && let Some(fi) = callee_inputs(*f, data, stores, cache, writes, inputs)
+                    && let Some(fi) = callee_inputs(*f, data, stores, fx)
                 {
                     for (pf, offs, path) in &fi.headers {
                         if let Some((key, expr)) = args
@@ -1155,7 +1146,7 @@ pub fn hoistable(
                     body.scope
                 );
             }
-            return apart_hoist(body, data, def_nr, facts, cache, owned);
+            return apart_hoist(body, data, def_nr, facts, fx, owned);
         }
         crate::rewrite_census::fired("R-Header/text", 1);
         out.movers = roots.clone().unwrap_or_default();
@@ -1175,7 +1166,7 @@ pub fn hoistable(
                     .iter()
                     .all(|r| rebinds_alias_free(body, *r, data, owned))
             {
-                return apart_hoist(body, data, def_nr, facts, cache, owned);
+                return apart_hoist(body, data, def_nr, facts, fx, owned);
             }
             dropped_mover = true;
             pushes.retain(|(p, _)| !rebound_movers.contains(&p.0));
@@ -1191,7 +1182,7 @@ pub fn hoistable(
             if !pushes.iter().map(|(p, _)| p).chain(mints.iter()).all(|p| {
                 owned_local(vars, p.0) || Some(p.0) == retbuf || work_buffer_arg(data, def_nr, p.0)
             }) {
-                return apart_hoist(body, data, def_nr, facts, cache, owned);
+                return apart_hoist(body, data, def_nr, facts, fx, owned);
             }
             let any_retbuf = pushes
                 .iter()
@@ -1252,17 +1243,9 @@ pub fn hoistable(
     // binds its element variable in one statement and the field writes follow in the next.
     let mut fresh: HashSet<u16> = HashSet::new();
     for op in &body.operators {
-        let Some(w) = body_writes(
-            op,
-            data,
-            stores,
-            vars,
-            cache,
-            writes,
-            &mut HashSet::new(),
-            &mut fresh,
-            owned,
-        ) else {
+        let Some(w) =
+            fx.fresh_guard(|fx| body_writes(op, data, stores, vars, fx, &mut fresh, owned))
+        else {
             // A statement the write-set walk cannot type: no scalar hoists in this loop.
             crate::rewrite_census::declined(
                 "R-Header/scalars",
@@ -1441,23 +1424,51 @@ pub struct InputCache {
 /// a view the rest of its block indexes, is a header input.  A callee this body passes `p` on
 /// to contributes ITS inputs re-spelled over `p` — transitively, and a cycle contributes
 /// nothing — filtered by this body's write set, which already carries what that callee
-/// writes.  Memoised per definition; the memo is seeded `None` while the walk is open, so a
-/// recursive edge sees no inputs and only ever withholds a twin.
+/// writes.  Memoised per definition (the [`Inputs`] kind); a recursive edge sees no inputs
+/// and only ever withholds a twin.
 pub fn callee_inputs(
     d_nr: u32,
     data: &Data,
     stores: &Stores,
-    cache: &mut HashMap<u32, bool>,
-    writes: &mut WriteCache,
-    inputs: &mut InputCache,
+    fx: &mut Facts,
 ) -> Option<Rc<CalleeInputs>> {
-    if let Some(known) = inputs.memo.get(&d_nr) {
-        return known.clone();
+    fx.ask(&Inputs { stores }, data, d_nr, None)
+}
+
+/// `@FR-Fact-Kind` — the invariant inputs a call of the function reads (MAY, its own cycle
+/// scope).  A native, an unknown number and a function on a cycle have none; every answer is
+/// kept, the cycle's `None` until the walk that met it answers.
+pub(crate) struct Inputs<'s> {
+    pub(crate) stores: &'s Stores,
+}
+
+impl crate::opt::facts::Kind for Inputs<'_> {
+    type Fact = Option<Rc<CalleeInputs>>;
+    type Ctx = ();
+    const SCOPE: crate::opt::facts::Scope = crate::opt::facts::Scope::Inputs;
+    fn memo<'a>(&self, fx: &'a mut Facts<'_>) -> &'a mut HashMap<u32, Self::Fact> {
+        &mut fx.inputs().memo
     }
-    inputs.memo.insert(d_nr, None);
-    let answer = callee_inputs_inner(d_nr, data, stores, cache, writes, inputs).map(Rc::new);
-    inputs.memo.insert(d_nr, answer.clone());
-    answer
+    fn unknown(&self) -> Self::Fact {
+        None
+    }
+    fn native(&self, _def: &crate::data::Definition) -> Self::Fact {
+        None
+    }
+    fn on_cycle(&self) -> Self::Fact {
+        None
+    }
+    fn keep(
+        &self,
+        _origin: crate::opt::facts::Origin,
+        _fact: &Self::Fact,
+        _ctx: Option<&()>,
+    ) -> bool {
+        true
+    }
+    fn body(&self, fx: &mut Facts, data: &Data, d_nr: u32, _ctx: Option<&()>) -> Self::Fact {
+        callee_inputs_inner(d_nr, data, self.stores, fx).map(Rc::new)
+    }
 }
 
 #[expect(clippy::too_many_lines, reason = "inherited")]
@@ -1465,9 +1476,7 @@ fn callee_inputs_inner(
     d_nr: u32,
     data: &Data,
     stores: &Stores,
-    cache: &mut HashMap<u32, bool>,
-    writes: &mut WriteCache,
-    inputs: &mut InputCache,
+    fx: &mut Facts,
 ) -> Option<CalleeInputs> {
     if (d_nr as usize) >= data.definitions.len() {
         return None;
@@ -1480,9 +1489,8 @@ fn callee_inputs_inner(
     if !def.rust().is_empty() || matches!(def.returned().base(), Type::Iterator(_, _)) {
         return None;
     }
-    let mut active = HashSet::new();
-    if call_writes_store(d_nr, data, cache, &mut active, None)
-        && !in_place_only_writer(d_nr, data, cache, &mut active, None)
+    if fx.fresh_guard(|fx| call_writes_store(d_nr, data, fx, None))
+        && !fx.fresh_guard(|fx| in_place_only_writer(d_nr, data, fx, None))
     {
         return None;
     }
@@ -1494,7 +1502,7 @@ fn callee_inputs_inner(
     // reaches its buffer's record type WHOLE, which no parameter's field shares; any other
     // admitted body has a typed set of its own, or no twin.
     let written = if def.hidden_return_buffer_attr().is_some()
-        && retbuf_only_writer(d_nr, data, cache, &mut active, None)
+        && fx.fresh_guard(|fx| retbuf_only_writer(d_nr, data, fx, None))
     {
         let attr = def.hidden_return_buffer_attr()?;
         WriteSet {
@@ -1507,24 +1515,16 @@ fn callee_inputs_inner(
         let mut written = WriteSet::default();
         let mut fresh_elems: HashSet<u16> = HashSet::new();
         for op in &body.operators {
-            written.extend(&body_writes(
-                op,
-                data,
-                stores,
-                vars,
-                cache,
-                writes,
-                &mut HashSet::new(),
-                &mut fresh_elems,
-                None,
-            )?);
+            written.extend(&fx.fresh_guard(|fx| {
+                body_writes(op, data, stores, vars, fx, &mut fresh_elems, None)
+            })?);
         }
         written
     };
     // A parameter (never rebound) as a candidate root: its plain record type, or — for a
     // header — whether it names a vector at all.  A TUPLE parameter (`(R-ValueLocal)`)
     // is no root: its fields are scalars the call already hands over.
-    let tuple_params = tuple_param_vars(data, d_nr, &inputs.params);
+    let tuple_params = tuple_param_vars(data, d_nr, &fx.inputs().params);
     let record_param = |p: u16| -> Option<u16> {
         if p < params && !rebound.contains(&p) && !tuple_params.contains_key(&p) {
             plain_record_type(data, vars.tp(p))
@@ -1559,7 +1559,7 @@ fn callee_inputs_inner(
             }
             Value::Block(b) => {
                 for at in 0..b.operators.len() {
-                    if view_def_header(&b.operators, at, data, d_nr, cache, true).is_some()
+                    if view_def_header(&b.operators, at, data, d_nr, fx, true).is_some()
                         && let Value::Set(_, rhs) = b.operators[at].unspan()
                         && let Some((root, offs)) = vector_path(data, rhs)
                         && path_root(root, &offs)
@@ -1578,7 +1578,7 @@ fn callee_inputs_inner(
         if let Value::Call(f, args) = n
             && (*f as usize) < data.definitions.len()
             && matches!(data.def(*f).code(), Value::Block(_))
-            && let Some(fi) = callee_inputs(*f, data, stores, cache, writes, inputs)
+            && let Some(fi) = callee_inputs(*f, data, stores, fx)
         {
             for (pf, fld, getter) in &fi.scalars {
                 if let Some(Value::Var(p)) = args.get(*pf as usize).map(Value::unspan)
@@ -1689,7 +1689,7 @@ pub fn view_def_header(
     at: usize,
     data: &Data,
     def_nr: u32,
-    cache: &mut HashMap<u32, bool>,
+    fx: &mut Facts,
     allow_in_place: bool,
 ) -> Option<u16> {
     let Value::Set(d, rhs) = stmts.get(at)?.unspan() else {
@@ -1705,20 +1705,21 @@ pub fn view_def_header(
     }
     let rest = &stmts[at + 1..];
     if rest.iter().any(|op| {
-        blocks_header_hoist(
-            op,
-            data,
-            None,
-            cache,
-            &mut HashSet::new(),
-            Some(vars),
-            HoistTiers {
-                in_place: allow_in_place,
-                ..HoistTiers::default()
-            },
-            &mut HashSet::new(),
-            None,
-        )
+        fx.fresh_guard(|fx| {
+            blocks_header_hoist(
+                op,
+                data,
+                None,
+                fx,
+                Some(vars),
+                HoistTiers {
+                    in_place: allow_in_place,
+                    ..HoistTiers::default()
+                },
+                &mut HashSet::new(),
+                None,
+            )
+        })
     }) {
         return None;
     }
@@ -1800,7 +1801,7 @@ pub fn record_view_ptr(
     data: &Data,
     stores: &Stores,
     def_nr: u32,
-    cache: &mut HashMap<u32, bool>,
+    fx: &mut Facts,
     allow_in_place: bool,
     twin_params: &HashSet<(u32, u16)>,
     facts: Option<&StoreFacts>,
@@ -1836,7 +1837,7 @@ pub fn record_view_ptr(
         data,
         stores,
         def_nr,
-        cache,
+        fx,
         allow_in_place,
         twin_params,
         facts,
@@ -1869,7 +1870,7 @@ pub fn param_view_ptr(
     data: &Data,
     stores: &Stores,
     def_nr: u32,
-    cache: &mut HashMap<u32, bool>,
+    fx: &mut Facts,
     allow_in_place: bool,
     twin_params: &HashSet<(u32, u16)>,
     facts: Option<&StoreFacts>,
@@ -1889,7 +1890,7 @@ pub fn param_view_ptr(
         data,
         stores,
         def_nr,
-        cache,
+        fx,
         allow_in_place,
         twin_params,
         facts,
@@ -1956,7 +1957,7 @@ pub fn mint_window(
     data: &Data,
     stores: &Stores,
     def_nr: u32,
-    cache: &mut HashMap<u32, bool>,
+    fx: &mut Facts,
     allow_in_place: bool,
     owned: Option<&HoistOwned>,
 ) -> Result<(u16, usize), &'static str> {
@@ -1994,7 +1995,7 @@ pub fn mint_window(
         data,
         stores,
         def_nr,
-        cache,
+        fx,
         allow_in_place,
         &HashSet::new(),
         None,
@@ -2216,7 +2217,7 @@ fn view_extent_verdict(
     data: &Data,
     stores: &Stores,
     def_nr: u32,
-    cache: &mut HashMap<u32, bool>,
+    fx: &mut Facts,
     allow_in_place: bool,
     twin_params: &HashSet<(u32, u16)>,
     facts: Option<&StoreFacts>,
@@ -2230,7 +2231,7 @@ fn view_extent_verdict(
         data,
         stores,
         def_nr,
-        cache,
+        fx,
         allow_in_place,
         twin_params,
         facts,
@@ -2260,7 +2261,7 @@ fn view_extent_verdict_inner(
     data: &Data,
     stores: &Stores,
     def_nr: u32,
-    cache: &mut HashMap<u32, bool>,
+    fx: &mut Facts,
     allow_in_place: bool,
     twin_params: &HashSet<(u32, u16)>,
     facts: Option<&StoreFacts>,
@@ -2344,22 +2345,23 @@ fn view_extent_verdict_inner(
         !roots.is_empty() && roots.iter().all(|m| f.distinct(*r, *m))
     });
     if let Some(op) = rest.iter().find(|op| {
-        blocks_header_hoist(
-            op,
-            data,
-            Some(stores),
-            cache,
-            &mut HashSet::new(),
-            Some(vars),
-            HoistTiers {
-                in_place: allow_in_place,
-                push: movers_apart,
-                mint: movers_apart,
-                ..HoistTiers::default()
-            },
-            &mut fresh,
-            owned,
-        )
+        fx.fresh_guard(|fx| {
+            blocks_header_hoist(
+                op,
+                data,
+                Some(stores),
+                fx,
+                Some(vars),
+                HoistTiers {
+                    in_place: allow_in_place,
+                    push: movers_apart,
+                    mint: movers_apart,
+                    ..HoistTiers::default()
+                },
+                &mut fresh,
+                owned,
+            )
+        })
     }) {
         if std::env::var("LOFT_TRACE_RECPTR").is_ok() {
             let shown = format!("{op:?}");
@@ -2422,22 +2424,23 @@ fn view_extent_verdict_inner(
                 rest,
                 &mut grown,
                 &mut |o: &Value| {
-                    blocks_header_hoist(
-                        o,
-                        data,
-                        Some(stores),
-                        cache,
-                        &mut HashSet::new(),
-                        Some(vars),
-                        HoistTiers {
-                            in_place: allow_in_place,
-                            push: movers_apart,
-                            mint: movers_apart,
-                            ..HoistTiers::default()
-                        },
-                        &mut fresh_walk,
-                        owned,
-                    )
+                    fx.fresh_guard(|fx| {
+                        blocks_header_hoist(
+                            o,
+                            data,
+                            Some(stores),
+                            fx,
+                            Some(vars),
+                            HoistTiers {
+                                in_place: allow_in_place,
+                                push: movers_apart,
+                                mint: movers_apart,
+                                ..HoistTiers::default()
+                            },
+                            &mut fresh_walk,
+                            owned,
+                        )
+                    })
                 },
                 &|n: &Value| address_use(n, *r, data, stores, owned, twin_params),
             );
@@ -2801,6 +2804,35 @@ pub struct PushRun<'a> {
 
 /// Recognise a [`PushRun`] starting at statement `at`.
 #[must_use]
+/// `@FR-R-PushFill`'s run clause: whether `val`, pushed onto a vector rooted at `root`, can be
+/// written while the vector's header is held — it reads neither `root` nor any non-scalar local
+/// (a view could reach the store and read a length not yet written back) and calls nothing but
+/// an operator, so nothing it does can move the store's memory.
+pub fn run_value_plain(
+    data: &Data,
+    vars: &crate::variables::Function,
+    root: u16,
+    val: &Value,
+) -> bool {
+    let mut ok = true;
+    val.walk(&mut |n| match n {
+        Value::Var(x) if *x == root || !crate::data::is_scalar(vars.tp(*x).base()) => {
+            ok = false;
+        }
+        Value::Call(d, _) if !data.def(*d).name().starts_with("Op") => ok = false,
+        // A value with statements of its own — a `??` temp bound in a block, a branch —
+        // is emitted with pre-evaluations a held header's single expression cannot carry.
+        Value::CallRef(..)
+        | Value::Block(_)
+        | Value::Loop(_)
+        | Value::Insert(_)
+        | Value::Set(..)
+        | Value::If(..) => ok = false,
+        _ => {}
+    });
+    ok
+}
+
 pub fn push_run<'a>(
     ops: &'a [Value],
     at: usize,
@@ -2838,25 +2870,7 @@ pub fn push_run<'a>(
     };
     let (vector, min, first, mut next) = one(at)?;
     let (root, _) = vector_path(data, vector)?;
-    let plain = |val: &Value| {
-        let mut ok = true;
-        val.walk(&mut |n| match n {
-            Value::Var(x) if *x == root || !crate::data::is_scalar(vars.tp(*x).base()) => {
-                ok = false;
-            }
-            Value::Call(d, _) if !data.def(*d).name().starts_with("Op") => ok = false,
-            // A value with statements of its own — a `??` temp bound in a block, a branch —
-            // is emitted with pre-evaluations the window's single expression cannot carry.
-            Value::CallRef(..)
-            | Value::Block(_)
-            | Value::Loop(_)
-            | Value::Insert(_)
-            | Value::Set(..)
-            | Value::If(..) => ok = false,
-            _ => {}
-        });
-        ok
-    };
+    let plain = |val: &Value| run_value_plain(data, vars, root, val);
     if !plain(first) {
         return None;
     }
@@ -2941,6 +2955,12 @@ pub fn repeat_literal<'a>(
     })
 }
 
+/// `@FR-R-Fill`'s guarded clause: the shortest span the fill takes, on every writer.  Measured
+/// on graphics' rows (interleaved, hashes equal): every span through the fill made
+/// `fill_triangle` 10 % SLOWER, an empty span paying the fill's setup and then the loop; spans
+/// from 1 took it −18 %, from 8 −27 %, from 32 −8 %.
+pub const FILL_MIN_SPAN: i64 = 8;
+
 /// @PLN157 § V-ae (`@FR-R-Fill`) — a loop that is ONE fill: `for i in lo..hi { v[base + i]
 /// = val }` with `base` and `val` invariant, over a pure path a header may serve.
 pub struct FillLoop<'a> {
@@ -3018,8 +3038,7 @@ pub fn versioned_text_walks(
         }
         None
     };
-    let mut cache: HashMap<u32, bool> = HashMap::new();
-    let mut active: HashSet<u32> = HashSet::new();
+    let mut fx = Facts::fresh();
     body.any_node(&mut |n| {
         let Value::Loop(lp) = n else {
             return false;
@@ -3037,7 +3056,7 @@ pub fn versioned_text_walks(
             .iter()
             .map(|s| as_emitted_by_tables(s, tables, data))
             .collect();
-        if !rest.iter().any(|s| may_write_store(s, data, &mut cache)) {
+        if !rest.iter().any(|s| may_write_store(s, data, &mut fx)) {
             return false; // the walk clause's own: no copy needed
         }
         let verdict = match root(vec) {
@@ -3047,9 +3066,10 @@ pub fn versioned_text_walks(
                     .find_map(|s| text_escapes(s, p, data))
                 {
                     Err(why)
-                } else if let Some(why) = rest.iter().find_map(|s| {
-                    foreign_store_writer(s, data, &minted, &mut cache, &mut active, Some(vars))
-                }) {
+                } else if let Some(why) = rest
+                    .iter()
+                    .find_map(|s| foreign_store_writer(s, data, &minted, &mut fx, Some(vars)))
+                {
                     Err(why)
                 } else {
                     Ok(r)
@@ -3783,7 +3803,7 @@ pub fn push_windows_ok(
     data: &Data,
     def_nr: u32,
     stores: Option<&Stores>,
-    cache: &mut HashMap<u32, bool>,
+    fx: &mut Facts,
 ) -> Result<(), String> {
     let vars = data.def(def_nr).variables();
     let retbuf = retbuf_var(data, def_nr);
@@ -3823,7 +3843,7 @@ pub fn push_windows_ok(
         }
     }
     let any_retbuf = roots.iter().any(|r| retbuf == Some(*r));
-    window_parts_ok(&parts, &roots, any_retbuf, vars, data, stores, cache, None)
+    window_parts_ok(&parts, &roots, any_retbuf, vars, data, stores, fx, None)
 }
 
 /// `@FR-R-PushFill`'s DEEP window clause — a loop whose pushes to `paths` stand at any depth
@@ -3850,7 +3870,7 @@ pub fn deep_window_ok(
     data: &Data,
     def_nr: u32,
     stores: Option<&Stores>,
-    cache: &mut HashMap<u32, bool>,
+    fx: &mut Facts,
     facts: Option<&StoreFacts>,
 ) -> Result<(), String> {
     fn collect<'v>(
@@ -3919,7 +3939,7 @@ pub fn deep_window_ok(
         vars,
         data,
         stores,
-        cache,
+        fx,
         facts,
     )
 }
@@ -4101,7 +4121,7 @@ pub fn mint_group(
     data: &Data,
     stores: &Stores,
     def_nr: u32,
-    cache: &mut HashMap<u32, bool>,
+    fx: &mut Facts,
     tiers: HoistTiers,
     owned: Option<&HoistOwned>,
 ) -> Option<(PathKey, usize)> {
@@ -4185,17 +4205,16 @@ pub fn mint_group(
         // A statement of the group that is not one of its mints or finishes: admitted on
         // the same terms as a loop body's — and a mint or finish on P NESTED in it (inside an
         // `if`) is one the count above cannot see, so it declines.
-        if blocks_header_hoist(
+        if fx.fresh_guard(|fx| blocks_header_hoist(
             op,
             data,
             Some(stores),
-            cache,
-            &mut HashSet::new(),
+            fx,
             Some(vars),
             tiers,
             &mut fresh,
             owned,
-        )
+        ))
             || op.any_node(&mut |x| matches!(x, Value::Call(xd, xargs)
                 if (*xd as usize) < data.definitions.len()
                     && matches!(data.def(*xd).name(), "OpNewRecord" | "OpFinishRecord" | "OpPreAllocVector")

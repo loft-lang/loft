@@ -12,6 +12,9 @@ use lower;
 use crt;
 use types;
 use show;
+use consts;
+use files;
+use eq;
 
 // The entry's result — a loft integer, so null when the program answers null — or the first
 // thing the interpreter does not carry.  `stores_left` is the leak check: how many of the C
@@ -22,6 +25,9 @@ pub struct Outcome {
   pub refused: text,
   pub refused_in: text,
   pub stores_left: integer,
+  // What the entry's return left on the stack: its frame base and the evaluation stacks'
+  // depths, 0 when every call gave back what it took (PF5); 0 for a refused run.
+  pub stack_left: integer,
 }
 
 NULL_STORE = 65535;
@@ -85,7 +91,8 @@ fn abs_float(v: float?) -> float? {
 }
 
 // `t[from..till]`, which compiles to `OpGetTextSub(t, from, till)`: a negative bound counts
-// from the end, a null `till` takes the one character at `from`.
+// from the end, a `till` of `i32::MIN` (the op's one-character form, a value and not a null)
+// takes the character at `from`, and a null bound answers null (`@FR-N-Store`, loft#2306).
 fn sub_text(t: text?, from: integer?, till: integer?) -> text? {
   t[from..till]
 }
@@ -129,7 +136,109 @@ fn load_table(b: ir::Bundle) {
 }
 
 // Definition `entry` called with the integer `args`.
+// ── The frame (@PLN91 F-1, 1b-frame.md) ──
+// Every variable lives at its byte of the Rust interpreter's frame, in one store of the run
+// (`State::stack_cur`): frame byte `at` is field `at` of the store's primary record, read and
+// written as the variable is held there (`lower::Lowering.var_access`) — a text local as the
+// runtime's `loft_text`, a text argument as a view of a copy the call made.  A `&text` is the
+// absolute byte of the text it names.  The evaluation stacks hold the temporaries only.
+
+// The stack store's first size, grown as a call needs (`State::grow_stack`).
+STACK_START = 4096;
+
+// Element type `tp`'s default image (`types::default_image`), derived once a run and kept in
+// `images`; the cache grows to the type on first use.
+fn image_of(b: ir::Bundle, images: vector<vector<u8>>, imaged: vector<boolean>, tp: integer) -> vector<u8> {
+  while len(imaged) <= tp {
+    images += [[]];
+    imaged += [false];
+  }
+  if !(imaged[tp] ?? false) {
+    images[tp] = types::default_image(b, tp);
+    imaged[tp] = true;
+  }
+  images[tp]!
+}
+
+// The value a place holds as `access` reads it (`lower::Lowering.var_access`); a frame slot is
+// the place `(stk, 1, 8 + at)`.
+fn place_int(store: integer, rec: integer, pos: integer, access: integer) -> integer? {
+  if access == 0 { crt::get_int(store, rec, pos, 0) } else { crt::get_w(lower::access_width(access), store, rec, pos, 0, lower::access_min(access)) }
+}
+
+fn set_place_int(store: integer, rec: integer, pos: integer, access: integer, v: integer?) {
+  if access == 0 {
+    crt::set_int(store, rec, pos, 0, v);
+  } else {
+    crt::set_w(lower::access_width(access), store, rec, pos, 0, lower::access_min(access), v);
+  }
+}
+
+fn place_float(store: integer, rec: integer, pos: integer, access: integer) -> float? {
+  crt::get_float(store, rec, pos, 0, access == 1)
+}
+
+fn set_place_float(store: integer, rec: integer, pos: integer, access: integer, v: float?) {
+  crt::set_float(store, rec, pos, 0, v, access == 1);
+}
+
+fn slot_int(stk: integer, at: integer, access: integer) -> integer? {
+  place_int(stk, 1, 8 + at, access)
+}
+
+fn set_slot_int(stk: integer, at: integer, access: integer, v: integer?) {
+  set_place_int(stk, 1, 8 + at, access, v);
+}
+
+fn slot_float(stk: integer, at: integer, access: integer) -> float? {
+  place_float(stk, 1, 8 + at, access)
+}
+
+fn set_slot_float(stk: integer, at: integer, access: integer, v: float?) {
+  set_place_float(stk, 1, 8 + at, access, v);
+}
+
+// The reference a slot holds, pushed as three integers at `sp`.
+fn push_slot_ref(io: vector<integer>, ints: vector<integer?>, sp: integer, stk: integer, at: integer) {
+  crt::slot_ref(io, stk, at);
+  put_int(ints, sp, io[0]);
+  put_int(ints, sp + 1, io[1]);
+  put_int(ints, sp + 2, io[2]);
+}
+
+// The three integers at `sp` written into a reference slot.
+fn store_slot_ref(ints: vector<integer?>, sp: integer, stk: integer, at: integer) {
+  crt::set_slot_ref(stk, at, ints[sp] ?? NULL_STORE, ints[sp + 1] ?? 0, ints[sp + 2] ?? 0);
+}
+
+// The byte of the text a text-writing op writes: its variable's slot, or through a `&text`, the
+// byte that holds.
+fn text_at(stk: integer, base: integer, op: lower::Op) -> integer {
+  if op.kind == KTextRef { slot_int(stk, base + op.a, 0) ?? 0 } else { base + op.a }
+}
+
+// A run on a stack store and constant stores of its own, released after it.
 pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
+  consts = consts::build(b);
+  stk = new_stack();
+  o = run_on(b, entry, args, stk, consts);
+  crt::stack_free(stk);
+  consts::release(consts);
+  o
+}
+
+// A stack store of the run's first size (`State::new`'s): a runner that marks where the program
+// starts mints it first, as the Rust interpreter has its stack before the program enters.
+pub fn new_stack() -> integer {
+  stack: vector<integer> = [NULL_STORE, 0, 0];
+  crt::stack_new(stack, STACK_START);
+  stack[0] ?? NULL_STORE
+}
+
+// A run on stack store `stk`, which the caller releases (`crt::stack_free`), with the constant
+// stores `consts::build` made.
+pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer, consts: vector<integer>) -> Outcome {
+  stk_cap = STACK_START;
   progs: vector<lower::Lowering> = [];
   lowered: vector<boolean> = [];
   for _ in 0..len(b.data.definitions) {
@@ -138,7 +247,7 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
   }
   first = lower::lower(b, entry);
   if first.refused != "" {
-    return Outcome { value: 0, refused: first.refused, refused_in: first.refused_in, stores_left: 0 };
+    return Outcome { value: 0, refused: first.refused, refused_in: first.refused_in, stores_left: 0, stack_left: 0 };
   }
   // The entry's visible parameters are the given integers; a hidden one after them (a buffer
   // the compiler added) starts null, as a caller with no buffer to offer passes it.
@@ -153,12 +262,13 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
     }
     visible += 1;
   }
-  if visible != len(args) || !hidden_after || first.params_float + first.params_text != 0 {
+  if visible != len(args) || !hidden_after || first.params_float + first.params_text + first.params_tuple != 0 || first.result == KTuple {
     return Outcome {
       value: 0,
       refused: "the entry takes {visible} arguments, given {len(args)}",
       refused_in: "",
       stores_left: 0,
+      stack_left: 0,
     };
   }
   progs[entry] = first;
@@ -179,50 +289,52 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
   sp_int = 0;
   sp_float = 0;
   sp_text = 0;
-  for a in args {
-    put_int(ints, sp_int, a);
-    sp_int += 1;
+  // The entry's frame at the foot of the stack store: its visible arguments the given integers,
+  // a hidden vector buffer handed in as a caller hands it — minted before the call
+  // (`owned_vector_null`) and released after it.  A frame's locals are not started: each
+  // first assignment's positional init writes its slot, as the Rust interpreter's do
+  // (`OpReserveFrame` moves the top only).
+  if first.frame_bytes > stk_cap {
+    stk_cap = first.frame_bytes * 2;
+    crt::stack_grow(stk, stk_cap);
   }
-  for _ in len(args)..first.slots_int {
-    put_int(ints, sp_int, null);
-    sp_int += 1;
-  }
-  // A hidden vector buffer is handed in as a caller hands it: minted before the call
-  // (`owned_vector_null`) and released after it.
-  at = len(args);
+  given = 0;
   for a in b.data.definitions[entry]!.attributes {
-    if !a.hidden {
+    arg_nr = first.arg_vars[a#index] ?? -1;
+    at = first.var_slot[arg_nr] ?? -1;
+    if at < 0 {
       continue;
     }
+    if !a.hidden {
+      set_slot_int(stk, at, first.var_access[arg_nr] ?? 0, args[given]);
+      given += 1;
+      continue;
+    }
+    crt::set_slot_ref(stk, at, NULL_STORE, 0, 0);
     w = lower::main_vector_of(b, a.typedef);
-    if w >= 0 {
-      ref_in(io, ints, at);
-      crt::database(io, b.types[w]!.size, w);
-      ref_out(io, ints, at);
+    if w != null {
+      buf = crt::null_ref();
+      crt::database(buf, b.types[w]!.size, w);
+      crt::set_slot_ref(stk, at, buf[0] ?? NULL_STORE, buf[1] ?? 0, buf[2] ?? 0);
       entry_bufs += [at];
     }
-    at += if lower::is_ref_kind(a.typedef) { 3 } else { 1 };
   }
-  for _ in 0..first.slots_float {
-    put_float(floats, sp_float, null);
-    sp_float += 1;
-  }
-  for _ in 0..first.slots_text {
-    put_text(texts, sp_text, null);
-    sp_text += 1;
-  }
-  // The saved frames: the caller's definition, its next op, and its three bases.
+  // The saved frames: the caller's definition, its next op, its frame's base, and how deep its
+  // evaluation stacks were under the call's arguments.
   f_def: vector<integer> = [];
   f_pc: vector<integer> = [];
-  f_int: vector<integer> = [];
-  f_float: vector<integer> = [];
-  f_text: vector<integer> = [];
+  f_base: vector<integer> = [];
+  f_sp_int: vector<integer> = [];
+  f_sp_float: vector<integer> = [];
+  f_sp_text: vector<integer> = [];
+  f_marks: vector<integer> = [];
+  // The loops' marks (S1.5): three stack pointers each, `n_marks` of them live.
+  marks: vector<integer?> = [];
+  n_marks = 0;
   fp = 0;
   def = entry;
   pc = 0;
-  base_int = 0;
-  base_float = 0;
-  base_text = 0;
+  base = 0;
   prog = progs[entry]!;
   while true {
     op = prog.ops[pc]!;
@@ -235,10 +347,11 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         match op.kind {
           KFloat => { put_float(floats, sp_float, null); sp_float += 1; }
           KText => { put_text(texts, sp_text, null); sp_text += 1; }
+          // A null reference; `a` its position — 0, or `OpNullReported`'s mark.
           KRef => {
             put_int(ints, sp_int, 65535);
             put_int(ints, sp_int + 1, 0);
-            put_int(ints, sp_int + 2, 0);
+            put_int(ints, sp_int + 2, op.a);
             sp_int += 3;
           }
           _ => { put_int(ints, sp_int, null); sp_int += 1; }
@@ -246,39 +359,78 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
       }
       Load => {
         match op.kind {
-          KFloat => { put_float(floats, sp_float, floats[base_float + op.a]); sp_float += 1; }
-          KText => { put_text(texts, sp_text, texts[base_text + op.a]); sp_text += 1; }
-          // A `&text` reads the text whose index its slot holds.
+          KFloat => { put_float(floats, sp_float, slot_float(stk, base + op.a, op.b)); sp_float += 1; }
+          KText => { put_text(texts, sp_text, crt::slot_text(stk, base + op.a, op.b == 1)); sp_text += 1; }
+          // A `&text` reads the text at the byte its slot holds.
           KTextRef => {
-            put_text(texts, sp_text, texts[ints[base_int + op.a]!]);
+            put_text(texts, sp_text, crt::slot_text(stk, slot_int(stk, base + op.a, 0)!, false));
             sp_text += 1;
           }
           KRef => {
-            at = base_int + op.a;
-            put_int(ints, sp_int, ints[at]);
-            put_int(ints, sp_int + 1, ints[at + 1]);
-            put_int(ints, sp_int + 2, ints[at + 2]);
+            push_slot_ref(io, ints, sp_int, stk, base + op.a);
             sp_int += 3;
           }
-          _ => { put_int(ints, sp_int, ints[base_int + op.a]); sp_int += 1; }
+          _ => { put_int(ints, sp_int, slot_int(stk, base + op.a, op.b)); sp_int += 1; }
         }
       }
       Store => {
         match op.kind {
-          KFloat => { sp_float -= 1; floats[base_float + op.a] = floats[sp_float]; }
-          KText => { sp_text -= 1; texts[base_text + op.a] = texts[sp_text]; }
+          KFloat => { sp_float -= 1; set_slot_float(stk, base + op.a, op.b, floats[sp_float]); }
+          KText => { sp_text -= 1; crt::set_slot_text(stk, base + op.a, texts[sp_text]); }
           KTextRef => {
             sp_text -= 1;
-            texts[ints[base_int + op.a]!] = texts[sp_text];
+            crt::set_slot_text(stk, slot_int(stk, base + op.a, 0)!, texts[sp_text]);
           }
           KRef => {
             sp_int -= 3;
-            at = base_int + op.a;
-            ints[at] = ints[sp_int];
-            ints[at + 1] = ints[sp_int + 1];
-            ints[at + 2] = ints[sp_int + 2];
+            store_slot_ref(ints, sp_int, stk, base + op.a);
           }
-          _ => { sp_int -= 1; ints[base_int + op.a] = ints[sp_int]; }
+          _ => { sp_int -= 1; set_slot_int(stk, base + op.a, op.b, ints[sp_int]); }
+        }
+      }
+      // A whole tuple (F-T1): its leaves read from, or written into, its slot by its shape;
+      // the last leaf is on top.
+      LoadTuple => {
+        for leaf in prog.shapes[op.b]!.leaves {
+          if leaf.kind == KText {
+            put_text(texts, sp_text, crt::slot_text(stk, base + op.a + leaf.at, leaf.access == 1));
+            sp_text += 1;
+          } else if leaf.kind == KFloat {
+            put_float(floats, sp_float, slot_float(stk, base + op.a + leaf.at, leaf.access));
+            sp_float += 1;
+          } else if leaf.kind == KRef {
+            push_slot_ref(io, ints, sp_int, stk, base + op.a + leaf.at);
+            sp_int += 3;
+          } else {
+            put_int(ints, sp_int, slot_int(stk, base + op.a + leaf.at, leaf.access));
+            sp_int += 1;
+          }
+        }
+      }
+      StoreTuple => {
+        leaves = prog.shapes[op.b]!.leaves;
+        li = len(leaves) - 1;
+        while li >= 0 {
+          leaf = leaves[li]!;
+          if leaf.kind == KText {
+            sp_text -= 1;
+            crt::set_slot_text(stk, base + op.a + leaf.at, texts[sp_text]);
+          } else if leaf.kind == KFloat {
+            sp_float -= 1;
+            set_slot_float(stk, base + op.a + leaf.at, leaf.access, floats[sp_float]);
+          } else if leaf.kind == KRef {
+            sp_int -= 3;
+            store_slot_ref(ints, sp_int, stk, base + op.a + leaf.at);
+          } else {
+            sp_int -= 1;
+            set_slot_int(stk, base + op.a + leaf.at, leaf.access, ints[sp_int]);
+          }
+          li -= 1;
+        }
+      }
+      PopTuple => {
+        for leaf in prog.shapes[op.b]!.leaves {
+          if leaf.kind == KText { sp_text -= 1; } else if leaf.kind == KFloat { sp_float -= 1; } else if leaf.kind == KRef { sp_int -= 3; } else { sp_int -= 1; }
         }
       }
       Pop => {
@@ -309,41 +461,79 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
             refused: callee_prog.refused,
             refused_in: callee_prog.refused_in,
             stores_left: crt::live_stores() - stores_before,
+            stack_left: 0,
           };
+        }
+        // The callee's frame starts at the top of this one; its arguments, the last on top of
+        // its kind's stack, go into their bytes of it.  Its locals hold what an earlier frame
+        // left until their positional inits write them.
+        callee_base = base + prog.frame_bytes;
+        if callee_base + callee_prog.frame_bytes > stk_cap {
+          stk_cap = (callee_base + callee_prog.frame_bytes) * 2;
+          crt::stack_grow(stk, stk_cap);
+        }
+        arg_at = len(callee_prog.arg_vars) - 1;
+        while arg_at >= 0 {
+          arg_nr = callee_prog.arg_vars[arg_at] ?? 0;
+          at = callee_base + (callee_prog.var_slot[arg_nr] ?? 0);
+          k = lower::stack_of(callee_prog.var_kind[arg_nr] ?? KOther);
+          if k == KRef {
+            sp_int -= 3;
+            store_slot_ref(ints, sp_int, stk, at);
+          } else if k == KText {
+            sp_text -= 1;
+            crt::set_slot_arg(stk, at, texts[sp_text]);
+          } else if k == KFloat {
+            sp_float -= 1;
+            set_slot_float(stk, at, callee_prog.var_access[arg_nr] ?? 0, floats[sp_float]);
+          } else if k == KInt {
+            sp_int -= 1;
+            set_slot_int(stk, at, callee_prog.var_access[arg_nr] ?? 0, ints[sp_int]);
+          } else if k == KTuple {
+            // A tuple argument's leaves into its slot, the last leaf first (F-T1).
+            leaves = callee_prog.shapes[callee_prog.var_shape[arg_nr] ?? 0]!.leaves;
+            li = len(leaves) - 1;
+            while li >= 0 {
+              leaf = leaves[li]!;
+              if leaf.kind == KText {
+                sp_text -= 1;
+                crt::set_slot_arg(stk, at + leaf.at, texts[sp_text]);
+              } else if leaf.kind == KFloat {
+                sp_float -= 1;
+                set_slot_float(stk, at + leaf.at, leaf.access, floats[sp_float]);
+              } else if leaf.kind == KRef {
+                sp_int -= 3;
+                store_slot_ref(ints, sp_int, stk, at + leaf.at);
+              } else {
+                sp_int -= 1;
+                set_slot_int(stk, at + leaf.at, leaf.access, ints[sp_int]);
+              }
+              li -= 1;
+            }
+          }
+          arg_at -= 1;
         }
         if fp < len(f_def) {
           f_def[fp] = def;
           f_pc[fp] = pc;
-          f_int[fp] = base_int;
-          f_float[fp] = base_float;
-          f_text[fp] = base_text;
+          f_base[fp] = base;
+          f_sp_int[fp] = sp_int;
+          f_sp_float[fp] = sp_float;
+          f_sp_text[fp] = sp_text;
+          f_marks[fp] = n_marks;
         } else {
           f_def += [def];
           f_pc += [pc];
-          f_int += [base_int];
-          f_float += [base_float];
-          f_text += [base_text];
+          f_base += [base];
+          f_sp_int += [sp_int];
+          f_sp_float += [sp_float];
+          f_sp_text += [sp_text];
+          f_marks += [n_marks];
         }
         fp += 1;
         def = callee;
         pc = 0;
-        // The arguments are the top values of their kinds' stacks: each part of the frame
-        // starts where they do, and the rest of its slots start null.
-        base_int = sp_int - callee_prog.params_int;
-        base_float = sp_float - callee_prog.params_float;
-        base_text = sp_text - callee_prog.params_text;
-        for _ in callee_prog.params_int..callee_prog.slots_int {
-          put_int(ints, sp_int, null);
-          sp_int += 1;
-        }
-        for _ in callee_prog.params_float..callee_prog.slots_float {
-          put_float(floats, sp_float, null);
-          sp_float += 1;
-        }
-        for _ in callee_prog.params_text..callee_prog.slots_text {
-          put_text(texts, sp_text, null);
-          sp_text += 1;
-        }
+        base = callee_base;
         prog = callee_prog;
       }
       Ret => {
@@ -353,7 +543,27 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         vt: text? = null;
         vr1: integer? = null;
         vr2: integer? = null;
+        // A tuple's leaves, carried past the frame (F-T1): the top of each kind's stack, as many
+        // values as it has leaves of that kind, in stack order.
+        t_ints: vector<integer?> = [];
+        t_floats: vector<float?> = [];
+        t_texts: vector<text?> = [];
+        if op.kind == KTuple {
+          n_int = 0;
+          n_float = 0;
+          n_text = 0;
+          for leaf in prog.shapes[op.b]!.leaves {
+            if leaf.kind == KFloat { n_float += 1; } else if leaf.kind == KText { n_text += 1; } else if leaf.kind == KRef { n_int += 3; } else { n_int += 1; }
+          }
+          for ti in sp_int - n_int..sp_int { t_ints += [ints[ti]]; }
+          for ti in sp_float - n_float..sp_float { t_floats += [floats[ti]]; }
+          for ti in sp_text - n_text..sp_text { t_texts += [texts[ti]]; }
+          sp_int -= n_int;
+          sp_float -= n_float;
+          sp_text -= n_text;
+        }
         match op.kind {
+          KTuple => {}
           KFloat => { sp_float -= 1; vf = floats[sp_float]; }
           KText => { sp_text -= 1; vt = texts[sp_text]; }
           KRef => {
@@ -367,27 +577,46 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         if fp == 0 {
           write_binds(progs);
           for e in entry_bufs {
-            crt::free_ref(ints[e] ?? NULL_STORE, ints[e + 1] ?? 0, ints[e + 2] ?? 0);
+            crt::slot_ref(io, stk, e);
+            crt::free_ref(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
           }
           return Outcome {
             value: vi,
             refused: "",
             refused_in: "",
             stores_left: crt::live_stores() - stores_before,
+            stack_left: base + sp_int + sp_float + sp_text,
           };
         }
-        sp_int = base_int;
-        sp_float = base_float;
-        sp_text = base_text;
+        // The frame's text arguments were copies the call made.
+        for a in prog.arg_vars {
+          if (prog.var_access[a] ?? 0) == 1 && prog.var_kind[a] == KText {
+            crt::slot_arg_free(stk, base + (prog.var_slot[a] ?? 0));
+          } else if prog.var_kind[a] == KTuple {
+            // A tuple argument's text members, copies too (F-T2).
+            for leaf in prog.shapes[prog.var_shape[a] ?? 0]!.leaves {
+              if leaf.kind == KText {
+                crt::slot_arg_free(stk, base + (prog.var_slot[a] ?? 0) + leaf.at);
+              }
+            }
+          }
+        }
         fp -= 1;
         // Every frame below the top was saved by the call that entered the one above it.
         def = f_def[fp]!;
         pc = f_pc[fp]!;
-        base_int = f_int[fp]!;
-        base_float = f_float[fp]!;
-        base_text = f_text[fp]!;
+        base = f_base[fp]!;
+        sp_int = f_sp_int[fp]!;
+        sp_float = f_sp_float[fp]!;
+        sp_text = f_sp_text[fp]!;
+        n_marks = f_marks[fp]!;
         prog = progs[def]!;
         match op.kind {
+          KTuple => {
+            for tv in t_ints { put_int(ints, sp_int, tv); sp_int += 1; }
+            for tf in t_floats { put_float(floats, sp_float, tf); sp_float += 1; }
+            for tt in t_texts { put_text(texts, sp_text, tt); sp_text += 1; }
+          }
           KFloat => { put_float(floats, sp_float, vf); sp_float += 1; }
           KText => { put_text(texts, sp_text, vt); sp_text += 1; }
           KRef => {
@@ -455,23 +684,66 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
       }
       // A text-writing op's destination: a text slot of this frame, or through a `&text`.
       Append => {
-        at = if op.kind == KTextRef { ints[base_int + op.a]! } else { base_text + op.a };
         sp_text -= 1;
-        texts[at] = (texts[at] ?? "") + (texts[sp_text] ?? "");
+        crt::slot_text_append(stk, text_at(stk, base, op), texts[sp_text]);
       }
       AppendChar => {
-        at = if op.kind == KTextRef { ints[base_int + op.a]! } else { base_text + op.a };
         sp_int -= 1;
         c = ints[sp_int] as character?;
-        t = texts[at] ?? "";
-        if c != null {
-          t += c;
-        }
-        texts[at] = t;
+        crt::slot_text_append(stk, text_at(stk, base, op), if c != null { "{c}" } else { "" });
       }
-      Clear => {
-        at = if op.kind == KTextRef { ints[base_int + op.a]! } else { base_text + op.a };
-        texts[at] = "";
+      Clear => { crt::slot_text_clear(stk, text_at(stk, base, op)); }
+      FreeText => { crt::slot_text_free(stk, text_at(stk, base, op)); }
+      // `OpInitText`: a text local's slot made the empty text, whatever an earlier frame left.
+      InitText => { crt::slot_text_init(stk, base + op.a); }
+      // `OpCreateStack(v)`: the reference to `v`'s slot of this frame.
+      StackRef => {
+        put_int(ints, sp_int, stk);
+        put_int(ints, sp_int + 1, 1);
+        put_int(ints, sp_int + 2, 8 + base + op.a);
+        sp_int += 3;
+      }
+      // A read through a `&`: what the place it names holds — a frame slot, a field, an element —
+      // at the width of the type it names (`OpGetInt` … `OpGetStackRef` with field 0).
+      Deref => {
+        sp_int -= 3;
+        p_store = ints[sp_int] ?? NULL_STORE;
+        p_rec = ints[sp_int + 1] ?? 0;
+        p_pos = ints[sp_int + 2] ?? 0;
+        if op.kind == KFloat {
+          put_float(floats, sp_float, place_float(p_store, p_rec, p_pos, op.b));
+          sp_float += 1;
+        } else if op.kind == KRef {
+          crt::place_ref(io, p_store, p_rec, p_pos);
+          put_int(ints, sp_int, io[0]);
+          put_int(ints, sp_int + 1, io[1]);
+          put_int(ints, sp_int + 2, io[2]);
+          sp_int += 3;
+        } else {
+          put_int(ints, sp_int, place_int(p_store, p_rec, p_pos, op.b));
+          sp_int += 1;
+        }
+      }
+      // A write through a `&`: the value into the place the reference under it names.
+      Through => {
+        if op.kind == KFloat {
+          sp_float -= 1;
+          sp_int -= 3;
+        } else if op.kind == KRef {
+          sp_int -= 6;
+        } else {
+          sp_int -= 4;
+        }
+        p_store = ints[sp_int] ?? NULL_STORE;
+        p_rec = ints[sp_int + 1] ?? 0;
+        p_pos = ints[sp_int + 2] ?? 0;
+        if op.kind == KFloat {
+          set_place_float(p_store, p_rec, p_pos, op.b, floats[sp_float]);
+        } else if op.kind == KRef {
+          crt::set_place_ref(p_store, p_rec, p_pos, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0);
+        } else {
+          set_place_int(p_store, p_rec, p_pos, op.b, ints[sp_int + 3]);
+        }
       }
       // A native the interpreter carries, as loft's own function of that name; its arguments
       // are on their kinds' stacks, the last one on top.
@@ -491,6 +763,327 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
           sp_text -= 1;
           put_text(texts, sp_text, env_variable(texts[sp_text] ?? ""));
           sp_text += 1;
+        } else if op.a == 2 {
+          // `vector_sum_int(v, acc)`, the C runtime's own kernel.
+          sp_int -= 4;
+          put_int(ints, sp_int, crt::vector_sum_int(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3]));
+          sp_int += 1;
+        } else if op.a == 3 || op.a == 4 {
+          // `t.starts_with(v)`, `t.ends_with(v)`: loft's own.
+          sp_text -= 2;
+          t = texts[sp_text] ?? "";
+          v = texts[sp_text + 1] ?? "";
+          put_int(ints, sp_int, if (if op.a == 3 { t.starts_with(v) } else { t.ends_with(v) }) { 1 } else { 0 });
+          sp_int += 1;
+        } else if op.a == 5 {
+          // `t.byte_at(i)`: loft's own.
+          sp_int -= 1;
+          i = ints[sp_int];
+          sp_text -= 1;
+          put_int(ints, sp_int, (texts[sp_text] ?? "").byte_at(i ?? 0));
+          sp_int += 1;
+        } else if op.a >= 30 && op.a <= 36 {
+          // A text's class: loft's own predicate over the whole text.
+          sp_text -= 1;
+          ct = texts[sp_text] ?? "";
+          held = match op.a {
+            30 => ct.is_lowercase(),
+            31 => ct.is_uppercase(),
+            32 => ct.is_numeric(),
+            33 => ct.is_alphanumeric(),
+            34 => ct.is_alphabetic(),
+            35 => ct.is_whitespace(),
+            _ => ct.is_control(),
+          };
+          put_int(ints, sp_int, if held { 1 } else { 0 });
+          sp_int += 1;
+        } else if op.a >= 23 && op.a <= 29 {
+          // A character's class: loft's own predicate (a character is its code point here).
+          cc = (ints[sp_int - 1] ?? 0) as character;
+          held = match op.a {
+            23 => cc.is_lowercase(),
+            24 => cc.is_uppercase(),
+            25 => cc.is_numeric(),
+            26 => cc.is_alphanumeric(),
+            27 => cc.is_alphabetic(),
+            28 => cc.is_whitespace(),
+            _ => cc.is_control(),
+          };
+          ints[sp_int - 1] = if held { 1 } else { 0 };
+        } else if op.a == 6 || op.a == 21 || op.a == 22 {
+          // `t.find(v)`, `t.rfind(v)`, `t.contains(v)`: loft's own.
+          sp_text -= 2;
+          ft = texts[sp_text] ?? "";
+          fv = texts[sp_text + 1] ?? "";
+          put_int(ints, sp_int, if op.a == 6 { ft.find(fv) } else if op.a == 21 { ft.rfind(fv) } else if ft.contains(fv) { 1 } else { 0 });
+          sp_int += 1;
+        } else if (op.a >= 7 && op.a <= 9) || (op.a >= 16 && op.a <= 18) || op.a == 20 {
+          // Text answers, each loft's own: `t.char_slice(from, to)`, `t.to_lowercase()`,
+          // `t.to_uppercase()`, `t.trim()`, `t.trim_start()`, `t.trim_end()`.  A compiled stdlib
+          // body also takes the caller's text buffer (a `&text` after the visible arguments), and
+          // its answer is written there.
+          visible = if op.a == 7 || op.a == 20 { 3 } else { 1 };
+          buf = -1;
+          if op.b > visible {
+            sp_int -= 1;
+            buf = ints[sp_int] ?? -1;
+          }
+          answer = "";
+          if op.a == 7 {
+            sp_int -= 2;
+            from = ints[sp_int] ?? 0;
+            till = ints[sp_int + 1] ?? 0;
+            answer = (texts[sp_text - 1] ?? "").char_slice(from, till);
+          } else if op.a == 20 {
+            // `t.replace(value, with)`.
+            sp_text -= 2;
+            rv = texts[sp_text] ?? "";
+            rw = texts[sp_text + 1] ?? "";
+            answer = (texts[sp_text - 1] ?? "").replace(rv, rw);
+          } else {
+            t = texts[sp_text - 1] ?? "";
+            answer = match op.a {
+              8 => t.to_lowercase(),
+              9 => t.to_uppercase(),
+              16 => t.trim(),
+              17 => t.trim_start(),
+              _ => t.trim_end(),
+            };
+          }
+          if buf >= 0 {
+            crt::set_slot_text(stk, buf, answer);
+          }
+          put_text(texts, sp_text - 1, answer);
+        } else if op.a == 19 {
+          // `v.join(sep)` of a vector of texts: each element read from the store, joined by
+          // loft's own `join`; a compiled caller's text buffer gets the answer too.
+          buf = -1;
+          if op.b > 2 {
+            sp_int -= 1;
+            buf = ints[sp_int] ?? -1;
+          }
+          sp_text -= 1;
+          jsep = texts[sp_text] ?? "";
+          sp_int -= 3;
+          js = ints[sp_int] ?? NULL_STORE;
+          jr = ints[sp_int + 1] ?? 0;
+          jp = ints[sp_int + 2] ?? 0;
+          words: vector<text> = [];
+          for wi in 0..crt::vec_len(js, jr, jp) {
+            crt::vec_get(io, js, jr, jp, 4, wi);
+            words += [crt::get_text(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, 0) ?? ""];
+          }
+          answer = words.join(jsep);
+          if buf >= 0 {
+            crt::set_slot_text(stk, buf, answer);
+          }
+          put_text(texts, sp_text, answer);
+          sp_text += 1;
+        } else if op.a == 15 {
+          // `t.split(c)`: the parts loft's own `split` answers, written into the caller's vector
+          // buffer as the compiled body writes them — the buffer emptied (made when it is none),
+          // then per part one slot reserved, appended, its text set, the length counted.
+          if !table_loaded {
+            load_table(b);
+            table_loaded = true;
+          }
+          sp_int -= 4;
+          sep = ints[sp_int] ?? 0;
+          bs = ints[sp_int + 1] ?? NULL_STORE;
+          br = ints[sp_int + 2] ?? 0;
+          bp = ints[sp_int + 3] ?? 0;
+          sp_text -= 1;
+          parts = (texts[sp_text] ?? "").split(sep as character);
+          if br != 0 {
+            crt::vec_clear(bs, br, bp);
+          }
+          if bs == NULL_STORE || br == 0 {
+            wrapper = types::named(b, "main_vector<text>") ?? 0;
+            vio: vector<integer> = [bs, br, bp];
+            crt::database(vio, types::enum_parent_size(b, wrapper), wrapper);
+            bs = vio[0] ?? NULL_STORE;
+            br = vio[1] ?? 0;
+            bp = vio[2] ?? 0;
+          } else {
+            crt::vec_clear(bs, br, bp);
+          }
+          for part in parts {
+            crt::vec_prealloc(bs, br, bp, 1, 4);
+            crt::vec_append(io, bs, br, bp, 4);
+            crt::set_text(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, 0, part);
+            crt::vec_finish(bs, br, bp);
+          }
+          put_int(ints, sp_int, bs);
+          put_int(ints, sp_int + 1, br);
+          put_int(ints, sp_int + 2, bp);
+          sp_int += 3;
+        } else if op.a == 37 {
+          // `write_bytes(path, bytes)`: the C runtime's own, over the store's byte vector.
+          sp_int -= 3;
+          sp_text -= 1;
+          put_int(ints, sp_int, if crt::write_bytes(texts[sp_text] ?? "", ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0) { 1 } else { 0 });
+          sp_int += 1;
+        } else if op.a == 38 {
+          // `os_temp_dir()`: loft's own temporary directory; a compiled caller's text buffer gets
+          // the answer too.
+          buf = -1;
+          if op.b > 0 {
+            sp_int -= 1;
+            buf = ints[sp_int] ?? -1;
+          }
+          answer = temp_dir() ?? "";
+          if buf >= 0 {
+            crt::set_slot_text(stk, buf, answer);
+          }
+          put_text(texts, sp_text, answer);
+          sp_text += 1;
+        } else if op.a == 39 || op.a == 42 {
+          // `read_bytes(path)`, `list_dir(path)`: the C runtime's own, a vector in a store of its own.
+          sp_text -= 1;
+          if op.a == 39 {
+            crt::read_bytes(io, texts[sp_text] ?? "");
+          } else {
+            crt::list_dir(io, texts[sp_text] ?? "");
+          }
+          put_int(ints, sp_int, io[0]);
+          put_int(ints, sp_int + 1, io[1]);
+          put_int(ints, sp_int + 2, io[2]);
+          sp_int += 3;
+        } else if op.a == 40 {
+          // `f.lines()` as the Rust interpreter runs it, its compiled body (`compiled_stdlib`): the
+          // caller's buffer is the result (`R-RetAdopt`) — emptied, made when it is none — and each
+          // line is appended to it as `split` appends a part.  The walk is the body's: a line ends
+          // at each '\n', a '\r' before it dropped, and what follows the last is a line when it is
+          // not empty.
+          if !table_loaded {
+            load_table(b);
+            table_loaded = true;
+          }
+          sp_int -= 6;
+          lfs = ints[sp_int] ?? NULL_STORE;
+          lfr = ints[sp_int + 1] ?? 0;
+          lfp = ints[sp_int + 2] ?? 0;
+          bs = ints[sp_int + 3] ?? NULL_STORE;
+          br = ints[sp_int + 4] ?? 0;
+          bp = ints[sp_int + 5] ?? 0;
+          if br != 0 {
+            crt::vec_clear(bs, br, bp);
+          }
+          if bs == NULL_STORE || br == 0 {
+            wrapper = types::named(b, "main_vector<text>") ?? 0;
+            vio: vector<integer> = [bs, br, bp];
+            crt::database(vio, types::enum_parent_size(b, wrapper), wrapper);
+            bs = vio[0] ?? NULL_STORE;
+            br = vio[1] ?? 0;
+            bp = vio[2] ?? 0;
+          } else {
+            crt::vec_clear(bs, br, bp);
+          }
+          lc = crt::file_content(lfs, lfr, lfp) ?? "";
+          lfrom = 0;
+          lprev_cr = false;
+          for lch in lc {
+            if lch == '\n' {
+              lend = lch#index;
+              crt::vec_prealloc(bs, br, bp, 1, 4);
+              crt::vec_append(io, bs, br, bp, 4);
+              crt::set_text(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, 0, if lprev_cr { lc[lfrom..lend - 1] } else { lc[lfrom..lend] });
+              crt::vec_finish(bs, br, bp);
+              lfrom = lch#next;
+            }
+            lprev_cr = lch == '\r';
+          }
+          if lfrom < lc.size() {
+            crt::vec_prealloc(bs, br, bp, 1, 4);
+            crt::vec_append(io, bs, br, bp, 4);
+            crt::set_text(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, 0, lc[lfrom..lc.size()]);
+            crt::vec_finish(bs, br, bp);
+          }
+          put_int(ints, sp_int, bs);
+          put_int(ints, sp_int + 1, br);
+          put_int(ints, sp_int + 2, bp);
+          sp_int += 3;
+        } else if op.a == 41 {
+          // `write_text_raw(file, v)`: the C runtime's own.
+          sp_text -= 1;
+          sp_int -= 3;
+          put_int(ints, sp_int, if crt::write_text_raw(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, texts[sp_text]) { 1 } else { 0 });
+          sp_int += 1;
+        } else if op.a >= 43 && op.a <= 47 {
+          // The store natives: the C runtime's own, on the store the reference names.
+          sarg = 0;
+          if op.a == 46 {
+            sp_int -= 1;
+            sarg = ints[sp_int] ?? 0;
+          }
+          sp_int -= 3;
+          sanswer = crt::store_native(op.a - 43, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, sarg);
+          if op.a == 45 || op.a == 47 {
+            put_int(ints, sp_int, sanswer);
+            sp_int += 1;
+          }
+        } else if op.a == 48 {
+          // `arguments()`: the C runtime's own, over the command line the runner handed on.
+          crt::arguments_into(io);
+          put_int(ints, sp_int, io[0]);
+          put_int(ints, sp_int + 1, io[1]);
+          put_int(ints, sp_int + 2, io[2]);
+          sp_int += 3;
+        } else if op.a == 49 {
+          // `store_memory()`: the C runtime's own report, its types named as the bundle names them;
+          // a compiled caller's text buffer gets the answer too.
+          buf = -1;
+          if op.b > 0 {
+            sp_int -= 1;
+            buf = ints[sp_int] ?? -1;
+          }
+          crt::type_names([for tn in b.types { tn.name }]);
+          answer = crt::store_memory();
+          if buf >= 0 {
+            crt::set_slot_text(stk, buf, answer);
+          }
+          put_text(texts, sp_text, answer);
+          sp_text += 1;
+        } else if op.a == 12 || op.a == 13 {
+          // `now()`, `ticks()`: loft's own clocks.
+          put_int(ints, sp_int, if op.a == 12 { now() } else { ticks() });
+          sp_int += 1;
+        } else if op.a == 14 {
+          // `panic(message, file, line)`: loft's own, handed the program's file and line as
+          // `assert` is.
+          sp_int -= 1;
+          pline = ints[sp_int];
+          sp_text -= 1;
+          pfile = texts[sp_text];
+          sp_text -= 1;
+          panic(texts[sp_text] ?? "", pfile ?? "", pline ?? 0);
+        } else if op.a == 10 || op.a == 11 {
+          // `text_from_byte_range(bytes, lo, hi)` and `text_from_bytes(bytes)` (its whole range):
+          // the C runtime's own, over the store's vector; a compiled caller's text buffer gets the
+          // answer too.
+          visible = if op.a == 10 { 3 } else { 1 };
+          buf = -1;
+          if op.b > visible {
+            sp_int -= 1;
+            buf = ints[sp_int] ?? -1;
+          }
+          lo: integer? = 0;
+          hi: integer? = 0;
+          if op.a == 10 {
+            sp_int -= 2;
+            lo = ints[sp_int];
+            hi = ints[sp_int + 1];
+          }
+          sp_int -= 3;
+          if op.a == 11 {
+            hi = crt::vec_len(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0);
+          }
+          answer = crt::vec_text_range(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, lo, hi);
+          if buf >= 0 {
+            crt::set_slot_text(stk, buf, answer);
+          }
+          put_text(texts, sp_text, answer);
+          sp_text += 1;
         }
       }
       // A format: the C runtime's routine for the value's kind renders it with the operands
@@ -498,7 +1091,7 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
       // renders it.  The operands are on the int stack, the last on top; an integer value sits
       // under them there, a float or text value on its own stack.
       Format => {
-        at = if op.kind == KTextRef { ints[base_int + op.a]! } else { base_text + op.a };
+        at = text_at(stk, base, op);
         piece = "";
         if op.b == 0 {
           sp_int -= 7;
@@ -528,7 +1121,7 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
             op.b == 2
           );
         }
-        texts[at] = (texts[at] ?? "") + piece;
+        crt::slot_text_append(stk, at, piece);
       }
       // A single is carried as a float, and its absolute value is exact in either.
       Abs => {
@@ -554,6 +1147,175 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
           _ => { ints[sp_int - 1] = -ints[sp_int - 1]; }
         }
       }
+      FloatFromText => {
+        sp_text -= 1;
+        put_float(floats, sp_float, (texts[sp_text] ?? "") as float?);
+        sp_float += 1;
+      }
+      VecKeep => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 5;
+        crt::vec_keep(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, op.b, ints[sp_int + 3], ints[sp_int + 4]);
+      }
+      AppendTextBytes => {
+        sp_int -= 5;
+        sp_text -= 1;
+        crt::append_text_bytes(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, texts[sp_text], ints[sp_int + 3], ints[sp_int + 4]);
+      }
+      VecReverse => {
+        sp_int -= 3;
+        crt::vec_reverse(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a);
+      }
+      Narrow32 => {
+        nv = ints[sp_int - 1];
+        ints[sp_int - 1] = if nv != null && nv! > -2147483648 && nv! <= 2147483647 { nv } else { null };
+      }
+      VecReserve => {
+        sp_int -= 4;
+        crt::vec_reserve(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3], op.a);
+      }
+      HashReserve => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 4;
+        crt::hash_reserve(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, ints[sp_int + 3]);
+      }
+      GetFile => {
+        sp_int -= 3;
+        put_int(ints, sp_int, if crt::get_file(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0) { 1 } else { 0 });
+        sp_int += 1;
+      }
+      FileText => {
+        sp_int -= 4;
+        crt::file_text(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, stk, ints[sp_int + 3] ?? 0);
+      }
+      // A value written at, or read from, the File's next position: a text local's bytes as they
+      // are, any other value in its binary form (`files.loft`).
+      WriteFile => {
+        if op.b == 1 {
+          sp_int -= 4;
+          crt::ser_slot_text(stk, ints[sp_int + 3] ?? 0);
+          crt::ser_write(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0);
+        } else {
+          sp_int -= 6;
+          files::write(b, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0, op.a);
+        }
+      }
+      ReadFile => {
+        sp_int -= 1;
+        rn = ints[sp_int] ?? 0;
+        if op.b == 1 {
+          sp_int -= 4;
+          if crt::read_file(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, rn, true, 0) >= 0 {
+            crt::de_slot_text(stk, ints[sp_int + 3] ?? 0);
+          }
+        } else {
+          sp_int -= 6;
+          files::read(b, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0, rn, op.a);
+        }
+      }
+      FsOp => {
+        to_path: text? = null;
+        if op.a == 1 {
+          sp_text -= 1;
+          to_path = texts[sp_text];
+        }
+        sp_text -= 1;
+        put_int(ints, sp_int, crt::fs_op(op.a, texts[sp_text], to_path));
+        sp_int += 1;
+      }
+      FileOp => {
+        farg = 0;
+        if op.a == 1 || op.a == 2 {
+          sp_int -= 1;
+          farg = ints[sp_int] ?? 0;
+        }
+        sp_int -= 3;
+        fo_answer = crt::file_op(op.a, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, farg);
+        if op.a != 1 {
+          put_int(ints, sp_int, fo_answer);
+          sp_int += 1;
+        }
+      }
+      VecPrepend => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 6;
+        put_int(ints, sp_int, if crt::vec_prepend(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0, op.a, op.b == 1) { 1 } else { 0 });
+        sp_int += 1;
+      }
+      SetDbRef => {
+        sp_int -= 6;
+        crt::set_dbref(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0);
+      }
+      GetDbRef => {
+        sp_int -= 3;
+        crt::get_dbref(io, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a);
+        ref_out(io, ints, sp_int);
+        sp_int += 3;
+      }
+      ArrayNew => {
+        sp_int -= 3;
+        crt::entry_new(io, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b);
+        crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, image_of(b, images, imaged, op.a));
+        ref_out(io, ints, sp_int);
+        sp_int += 3;
+      }
+      ArrayAppend => {
+        sp_int -= 6;
+        crt::array_append(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0);
+      }
+      ArrayGet => {
+        sp_int -= 4;
+        crt::array_get(io, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3]);
+        ref_out(io, ints, sp_int);
+        sp_int += 3;
+      }
+      EqContent => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 6;
+        equal = eq::eq_content(b, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0, op.a);
+        put_int(ints, sp_int, if equal != (op.b == 1) { 1 } else { 0 });
+        sp_int += 1;
+      }
+      IntFromText => {
+        sp_text -= 1;
+        put_int(ints, sp_int, (texts[sp_text] ?? "") as integer?);
+        sp_int += 1;
+      }
+      // `OpMathFuncFloat`: loft's own function of that number.
+      MathFunc => {
+        f = floats[sp_float - 1];
+        if op.kind == KSingle {
+          g = f as single?;
+          floats[sp_float - 1] = (match op.a {
+            0 => g.cos(), 1 => g.sin(), 2 => g.tan(), 3 => g.acos(), 4 => g.asin(),
+            5 => g.atan(), 6 => g.ceil(), 7 => g.floor(), 8 => g.round(), 9 => g.sqrt(),
+            _ => null,
+          }) as float?;
+        } else {
+          floats[sp_float - 1] = match op.a {
+            0 => f.cos(), 1 => f.sin(), 2 => f.tan(), 3 => f.acos(), 4 => f.asin(),
+            5 => f.atan(), 6 => f.ceil(), 7 => f.floor(), 8 => f.round(), 9 => f.sqrt(),
+            _ => null,
+          };
+        }
+      }
+      HashBytes => {
+        sp_int -= 3;
+        put_int(ints, sp_int, crt::hash_bytes(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0));
+        sp_int += 1;
+      }
       // A text's length in characters and its size in bytes: loft's own `len` and `size`.
       LenText => {
         sp_text -= 1;
@@ -573,7 +1335,7 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
       Nop => {}
       Round => { floats[sp_float - 1] = (floats[sp_float - 1] as single?) as float?; }
       // A reference to a text slot of this frame: its absolute index on the text stack.
-      RefOf => { put_int(ints, sp_int, base_text + op.a); sp_int += 1; }
+      RefOf => { put_int(ints, sp_int, base + op.a); sp_int += 1; }
       Print => {
         sp_text -= 1;
         print(texts[sp_text] ?? "");
@@ -586,8 +1348,8 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
       // the sentinel; a struct-enum variant at its enum's size; a vector wrapper keeps a buffer
       // that is a place.
       Database => {
-        at = base_int + op.a;
-        ref_in(io, ints, at);
+        at = base + op.a;
+        crt::slot_ref(io, stk, at);
         bytes = types::enum_parent_size(b, op.b);
         if types::is_vector_wrapper(b, op.b) {
           // A place's collection is released through the type table.
@@ -599,13 +1361,13 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         } else {
           crt::database(io, bytes, op.b);
         }
-        ref_out(io, ints, at);
+        crt::set_slot_ref(stk, at, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
       }
       // `OpVarRef(v); OpFreeRef` (`free_named`): the store `v` names released — a null and an
       // already free store are no-ops; the slot keeps what it held.
       FreeVar => {
-        at = base_int + op.a;
-        crt::free_ref(ints[at] ?? NULL_STORE, ints[at + 1] ?? 0, ints[at + 2] ?? 0);
+        crt::slot_ref(io, stk, base + op.a);
+        crt::free_ref(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
       }
       // `OpFreeRef` of a value.
       FreeRef => {
@@ -616,8 +1378,8 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
       // it is the witness's, absent or protected.
       FreeVarDistinct => {
         sp_int -= 3;
-        at = base_int + op.a;
-        crt::free_displaced(ints[at] ?? NULL_STORE, ints[at + 1] ?? 0, ints[at + 2] ?? 0, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0);
+        crt::slot_ref(io, stk, base + op.a);
+        crt::free_displaced(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0);
       }
       // `OpFreeRefIfDistinct` of two values: the displaced one, then its witness.
       FreeRefDistinct => {
@@ -638,7 +1400,7 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
       // type plus 65536 times the copy's flags.
       BindOrCopy => {
         sp_int -= 6;
-        at = base_int + op.a;
+        at = base + op.a;
         rs = ints[sp_int] ?? NULL_STORE;
         if rs != NULL_STORE && rs == (ints[sp_int + 3] ?? NULL_STORE) {
           if !table_loaded {
@@ -646,32 +1408,29 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
             table_loaded = true;
           }
           tp = op.b % 65536;
-          ref_in(io, ints, at);
+          crt::slot_ref(io, stk, at);
           crt::database(io, types::enum_parent_size(b, tp), tp);
-          ref_out(io, ints, at);
-          crt::copy_record(rs, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[at] ?? NULL_STORE, ints[at + 1] ?? 0, ints[at + 2] ?? 0, tp, op.b / 65536);
+          crt::set_slot_ref(stk, at, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+          crt::copy_record(rs, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, tp, op.b / 65536);
         } else {
-          ints[at] = ints[sp_int];
-          ints[at + 1] = ints[sp_int + 1];
-          ints[at + 2] = ints[sp_int + 2];
+          store_slot_ref(ints, sp_int, stk, at);
         }
       }
       // `OpCopyRefOrNull(v, tp)` (`state/io.rs:1961`): an absent result (`rec == 0`) releases
       // the record `v` was given and binds the sentinel; any other is copied into it.
       CopyRefOrNull => {
         sp_int -= 3;
-        at = base_int + op.a;
+        at = base + op.a;
+        crt::slot_ref(io, stk, at);
         if (ints[sp_int + 1] ?? 0) == 0 {
-          crt::free_ref(ints[at] ?? NULL_STORE, ints[at + 1] ?? 0, ints[at + 2] ?? 0);
-          ints[at] = NULL_STORE;
-          ints[at + 1] = 0;
-          ints[at + 2] = 0;
+          crt::free_ref(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+          crt::set_slot_ref(stk, at, NULL_STORE, 0, 0);
         } else {
           if !table_loaded {
             load_table(b);
             table_loaded = true;
           }
-          crt::copy_record(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[at] ?? NULL_STORE, ints[at + 1] ?? 0, ints[at + 2] ?? 0, op.b % 65536, op.b / 65536);
+          crt::copy_record(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, op.b % 65536, op.b / 65536);
         }
       }
       // `n_protect_store_frees` (`b` 1) and `n_unprotect_store_frees` (`b` 0) of a reference.
@@ -769,6 +1528,190 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         put_int(ints, sp_int, crt::vec_len(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0));
         sp_int += 1;
       }
+      VecAbsent => {
+        sp_int -= 3;
+        put_int(ints, sp_int, if crt::vec_absent(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0) { 1 } else { 0 });
+        sp_int += 1;
+      }
+      // A vector constant's store, built before the run (`consts.loft`); one the builder could
+      // not read is refused by name.
+      ConstRef => {
+        cs = consts[op.a] ?? NULL_STORE;
+        if cs == NULL_STORE {
+          return Outcome {
+            value: 0,
+            refused: "a constant the interpreter could not build: {b.data.definitions[op.a]!.name}",
+            refused_in: b.data.definitions[prog.def_nr]!.name,
+            stores_left: crt::live_stores() - stores_before,
+            stack_left: 0,
+          };
+        }
+        put_int(ints, sp_int, cs);
+        put_int(ints, sp_int + 1, 1);
+        put_int(ints, sp_int + 2, 8);
+        sp_int += 3;
+      }
+      // Two sentinels name the same (absent) store: a witness that never took one releases nothing.
+      DistinctStore => {
+        sp_int -= 6;
+        put_int(ints, sp_int, if (ints[sp_int] ?? NULL_STORE) != (ints[sp_int + 3] ?? NULL_STORE) { 1 } else { 0 });
+        sp_int += 1;
+      }
+      // `OpCastTextFromEnum` (`Stores::enum_val`): the absent discriminant (0, 255, null) casts
+      // to the null text, a value past the names to "null", any other to its variant's name.
+      EnumName => {
+        sp_int -= 1;
+        ev = ints[sp_int];
+        nm: text? = if ev == null || ev == 0 || ev == 255 {
+          null
+        } else if ev > op.b {
+          "null"
+        } else {
+          prog.texts[op.a + ev! - 1]
+        };
+        put_text(texts, sp_text, nm);
+        sp_text += 1;
+      }
+      // `ops::text_character`: the character holding byte `i` (negative from the end), null — the
+      // character 0 — out of range.
+      TextChar => {
+        sp_int -= 1;
+        ci = ints[sp_int] ?? 0;
+        sp_text -= 1;
+        ct = texts[sp_text] ?? "";
+        at = if ci < 0 { ci + ct.size() } else { ci };
+        cp: integer? = if at < 0 || at >= ct.size() { null } else { ct[at] as integer };
+        put_int(ints, sp_int, if cp == 0 { null } else { cp });
+        sp_int += 1;
+      }
+      // `OpTextWalkStep` (`State::text_walk_step`): `#index` takes `#next`; the loop variable the
+      // character there, null past the end; `#next` moves by its width, at least by one.
+      TextWalkStep => {
+        ws = prog.walk_slots[op.b]!;
+        wat = slot_int(stk, base + ws.next, 0) ?? 0;
+        wt = crt::slot_text(stk, base + ws.src, ws.src_arg) ?? "";
+        wi = if wat < 0 { wat + wt.size() } else { wat };
+        wcp: integer = if wi < 0 || wi >= wt.size() { 0 } else { wt[wi] as integer };
+        wwidth = if wcp <= 0 { 0 } else if wcp < 128 { 1 } else if wcp < 2048 { 2 } else if wcp < 65536 { 3 } else { 4 };
+        moved = wat + wwidth;
+        if moved <= wat {
+          moved = wat + 1;
+        }
+        set_slot_int(stk, base + ws.index, 0, wat);
+        set_slot_int(stk, base + ws.next, 0, moved);
+        set_slot_int(stk, base + op.a, ws.c_access, if wcp == 0 { null } else { wcp });
+      }
+      // `State::length_character`: the UTF-8 length of the character, 0 for the null character.
+      CharLen => {
+        cc = ints[sp_int - 1] ?? 0;
+        ints[sp_int - 1] = if cc <= 0 { 0 } else if cc < 128 { 1 } else if cc < 2048 { 2 } else if cc < 65536 { 3 } else { 4 };
+      }
+      PlaceRecord => {
+        sp_int -= 3;
+        crt::place_record(io, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, op.b / 2, image_of(b, images, imaged, op.a), op.b % 2 == 1);
+        put_int(ints, sp_int, io[0]);
+        put_int(ints, sp_int + 1, io[1]);
+        put_int(ints, sp_int + 2, io[2]);
+        sp_int += 3;
+      }
+      MoveVec => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 6;
+        crt::move_vector(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0, op.a, op.b == 1);
+      }
+      ReplaceVec => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 6;
+        crt::vec_replace(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0, op.a, op.b == 1);
+      }
+      MoveField => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 6;
+        crt::move_field(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0, op.a, op.b == 1);
+      }
+      FreeRecordIn => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 3;
+        crt::free_record_in(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a);
+      }
+      ClearKeyed => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 3;
+        if op.b == 1 {
+          crt::clear_view(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a);
+        } else {
+          crt::clear(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a);
+        }
+      }
+      ReplaceKeyed => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 6;
+        crt::replace_keyed(
+          ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0,
+          ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0,
+          op.a, op.b
+        );
+      }
+      // S1.5: a loop's mark of the three stack pointers, its drop, and a leave to the mark
+      // `op.a` loops out — the marks of the loops inside it dropped, its own kept.
+      LoopMark => {
+        put_int(marks, n_marks * 3, sp_int);
+        put_int(marks, n_marks * 3 + 1, sp_float);
+        put_int(marks, n_marks * 3 + 2, sp_text);
+        n_marks += 1;
+      }
+      LoopUnmark => { n_marks -= 1; }
+      Unwind => {
+        target = n_marks - 1 - op.a;
+        sp_int = marks[target * 3] ?? 0;
+        sp_float = marks[target * 3 + 1] ?? 0;
+        sp_text = marks[target * 3 + 2] ?? 0;
+        n_marks = target + 1;
+      }
+      SliceVec => {
+        sp_int -= 8;
+        crt::vec_slice(
+          ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0,
+          ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0,
+          ints[sp_int + 6] ?? 0, ints[sp_int + 7] ?? 0, op.a, op.b == 1
+        );
+      }
+      VecRemove => {
+        if op.b > 0 && !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 4;
+        size = b.types[op.a]!.size;
+        put_int(ints, sp_int, if crt::vec_remove(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, size, op.b, ints[sp_int + 3]) { 1 } else { 0 });
+        sp_int += 1;
+      }
+      AppendCopy => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 4;
+        crt::vec_append_copy(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, ints[sp_int + 3] ?? 0);
+      }
       VecGet => {
         sp_int -= 4;
         crt::vec_get(io, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, ints[sp_int + 3]);
@@ -797,17 +1740,9 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
       }
       // `OpNewRecord`: the element appended, then filled with its type's default image.
       VecNew => {
-        while len(imaged) <= op.a {
-          images += [[]];
-          imaged += [false];
-        }
-        if !imaged[op.a] {
-          images[op.a] = types::default_image(b, op.a);
-          imaged[op.a] = true;
-        }
         sp_int -= 3;
         crt::vec_append(io, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b);
-        crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, images[op.a]!);
+        crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, image_of(b, images, imaged, op.a));
         ref_out(io, ints, sp_int);
         sp_int += 3;
       }
@@ -827,19 +1762,28 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
       // so none of these changes who owns a store.  The key parts a find reads come from the
       // loaded table, so the table is loaded first.
       HashNew => {
-        while len(imaged) <= op.a {
-          images += [[]];
-          imaged += [false];
-        }
-        if !imaged[op.a] {
-          images[op.a] = types::default_image(b, op.a);
-          imaged[op.a] = true;
-        }
         sp_int -= 3;
         crt::hash_entry(io, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b / 2, op.b % 2 == 1);
-        crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, images[op.a]!);
+        crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, image_of(b, images, imaged, op.a));
         ref_out(io, ints, sp_int);
         sp_int += 3;
+      }
+      HashRemove => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 6;
+        crt::hash_remove(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0, types::content_of(b, op.a) ?? 0, op.a, op.b == 1);
+      }
+      SetKeyed => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 6;
+        tp = op.a % 32768;
+        crt::set_keyed(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0, types::content_of(b, tp) ?? 0, tp, op.b % 256, op.a >= 32768, op.b / 256);
       }
       HashInsert => {
         if !table_loaded {
@@ -889,11 +1833,11 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
           load_table(b);
           table_loaded = true;
         }
-        at = if op.kind == KTextRef { ints[base_int + op.a]! } else { base_text + op.a };
+        at = text_at(stk, base, op);
         sp_int -= 3;
         piece = "";
         show::render(b, op.b / 4, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b % 4, 0, piece);
-        texts[at] = (texts[at] ?? "") + piece;
+        crt::slot_text_append(stk, at, piece);
       }
       // `v += other`: the copies are claims of `v`'s store, so no owner changes; the claims are
       // copied by the type table, loaded first.
@@ -928,9 +1872,107 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
       }
       ScratchStep => {
         sp_int -= 3;
-        at = base_int + op.a;
-        crt::scratch_step(step_io, ints[at] ?? 0, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b == 1);
-        ints[at] = step_io[3];
+        at = base + op.a;
+        crt::scratch_step(step_io, slot_int(stk, at, 0) ?? 0, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b == 1);
+        set_slot_int(stk, at, 0, step_io[3]);
+        ref_out(step_io, ints, sp_int);
+        sp_int += 3;
+      }
+      // S4's keyed collections, through the shim's keyed routines (1 sorted, 2 ordered, 3 index).
+      KeyedNew => {
+        sp_int -= 3;
+        crt::keyed_new(io, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b, b.types[op.a]!.size);
+        crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, image_of(b, images, imaged, op.a));
+        ref_out(io, ints, sp_int);
+        sp_int += 3;
+      }
+      KeyedFinish => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 6;
+        crt::keyed_finish(
+          ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0,
+          ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0,
+          op.b % 8, op.b / 8, op.a
+        );
+      }
+      KeyedFind => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 3;
+        crt::keyed_find(io, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b % 8, op.a, op.b / 8);
+        ref_out(io, ints, sp_int);
+        sp_int += 3;
+      }
+      KeyedRemove => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 6;
+        crt::keyed_remove(
+          ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0,
+          ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0,
+          op.b % 8, op.b / 8, op.a & 32767, op.a & 32768 != 0
+        );
+      }
+      IndexLen => {
+        sp_int -= 3;
+        put_int(ints, sp_int, crt::index_len(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a));
+        sp_int += 1;
+      }
+      RadixSnap => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        rints: vector<integer> = [];
+        rpre: text? = null;
+        if op.b == 1 {
+          sp_int -= 8;
+          rints = [for ri in 0..8 { ints[sp_int + ri] ?? 0 }];
+        } else if op.b == 2 {
+          sp_int -= 1;
+          rints = [ints[sp_int] ?? 0];
+          sp_text -= 1;
+          rpre = texts[sp_text];
+        }
+        sp_int -= 3;
+        crt::radix_snap(io, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b, op.a, rints, rpre);
+        ref_out(io, ints, sp_int);
+        sp_int += 3;
+      }
+      WalkRemove => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 3;
+        wat = base + op.a;
+        set_slot_int(stk, wat, 0, crt::walk_remove(slot_int(stk, wat, 0) ?? 0, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b % 256, op.b / 256));
+      }
+      WalkKey => {
+        sp_int -= 3;
+        crt::walk_key(ints[sp_int] ?? 0, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0);
+      }
+      KeyedIterate => {
+        sp_int -= 3;
+        put_int(ints, sp_int, crt::keyed_iterate(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, op.b / 65536, (op.b / 256) % 256, op.b % 256));
+        sp_int += 1;
+      }
+      KeyedStep => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 3;
+        kat = base + op.a;
+        crt::keyed_step(step_io, slot_int(stk, kat, 0) ?? 0, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b % 256, op.b / 256);
+        set_slot_int(stk, kat, 0, step_io[3]);
         ref_out(step_io, ints, sp_int);
         sp_int += 3;
       }
@@ -959,15 +2001,7 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         sp_int -= 3;
         reset = false;
         if op.b == 1 {
-          while len(imaged) <= op.a {
-            images += [[]];
-            imaged += [false];
-          }
-          if !imaged[op.a] {
-            images[op.a] = types::default_image(b, op.a);
-            imaged[op.a] = true;
-          }
-          reset = crt::reset_pool_root(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, types::enum_parent_size(b, op.a), images[op.a] ?? []);
+          reset = crt::reset_pool_root(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a, types::enum_parent_size(b, op.a), image_of(b, images, imaged, op.a));
         }
         if !reset {
           crt::clear(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.a);
@@ -976,10 +2010,7 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
       // `OpPutRef`: the reference stored into the variable's slot; nothing is freed.
       Bind => {
         sp_int -= 3;
-        at = base_int + op.a;
-        ints[at] = ints[sp_int];
-        ints[at + 1] = ints[sp_int + 1];
-        ints[at + 2] = ints[sp_int + 2];
+        store_slot_ref(ints, sp_int, stk, base + op.a);
       }
       _ => {
         match op.kind {
@@ -991,6 +2022,13 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
             if op.code == Add || op.code == Sub || op.code == Mul || op.code == Div || op.code == Rem {
               r = match op.code { Add => x + y, Sub => x - y, Mul => x * y, Div => x / y, _ => x % y };
               put_float(floats, sp_float, r);
+              sp_float += 1;
+            } else if op.code == Pow || op.code == MathFunc2 {
+              // `pow`, `atan2`, `log`: loft's own.
+              fx = x ?? 0.0;
+              fy = y ?? 0.0;
+              pr: float? = if x == null || y == null { null } else if op.code == Pow { fx.pow(fy) } else if op.a == 0 { fx.atan2(fy) } else if op.a == 1 { fx.log(fy) } else { null };
+              put_float(floats, sp_float, pr);
               sp_float += 1;
             } else {
               put_int(ints, sp_int, bit(match op.code {
@@ -1007,6 +2045,12 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
             if op.code == Add || op.code == Sub || op.code == Mul || op.code == Div || op.code == Rem {
               r = match op.code { Add => x + y, Sub => x - y, Mul => x * y, Div => x / y, _ => x % y };
               put_float(floats, sp_float, r as float?);
+              sp_float += 1;
+            } else if op.code == Pow || op.code == MathFunc2 {
+              sx = x ?? 0.0f;
+              sy = y ?? 0.0f;
+              ps: single? = if x == null || y == null { null } else if op.code == Pow { sx.pow(sy) } else if op.a == 0 { sx.atan2(sy) } else if op.a == 1 { sx.log(sy) } else { null };
+              put_float(floats, sp_float, ps as float?);
               sp_float += 1;
             } else {
               put_int(ints, sp_int, bit(match op.code {
@@ -1039,6 +2083,9 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
               BitAnd => x & y,
               BitOr => x | y,
               BitXor => x ^ y,
+              Pow => if x == null || y == null { null } else { (x!).pow(y!) },
+              Shl => x << y,
+              Shr => x >> y,
               Eq => bit(x == y),
               Ne => bit(x != y),
               Lt => bit(x < y),
@@ -1054,5 +2101,5 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
       }
     }
   }
-  Outcome { value: 0, refused: "the program ran off its last op", refused_in: "", stores_left: 0 }
+  Outcome { value: 0, refused: "the program ran off its last op", refused_in: "", stores_left: 0, stack_left: 0 }
 }

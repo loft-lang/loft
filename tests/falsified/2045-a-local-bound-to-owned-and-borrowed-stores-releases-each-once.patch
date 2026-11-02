@@ -98,10 +98,10 @@ index 577e664b0..d404b7335 100644
      }
  
 diff --git a/src/scopes/buffers.rs b/src/scopes/buffers.rs
-index 481b84b5b..06df726db 100644
+index c13a3f61e..f14457ee8 100644
 --- a/src/scopes/buffers.rs
 +++ b/src/scopes/buffers.rs
-@@ -216,20 +216,6 @@ pub(super) fn reuse_record_buffers(
+@@ -236,20 +236,6 @@ pub(super) fn reuse_record_buffers(
              );
              continue;
          }
@@ -123,10 +123,10 @@ index 481b84b5b..06df726db 100644
              decline(av, "no top-level null-init");
              continue;
 diff --git a/src/scopes/scan_set.rs b/src/scopes/scan_set.rs
-index fac1abac2..45e43627d 100644
+index 8f04c4b0b..7d23f6f8b 100644
 --- a/src/scopes/scan_set.rs
 +++ b/src/scopes/scan_set.rs
-@@ -190,34 +190,6 @@ impl Scopes<'_> {
+@@ -205,34 +205,6 @@ impl Scopes<'_> {
                  if per_path_stops(function, data, v, *src) == Some(v))
      }
  
@@ -158,10 +158,10 @@ index fac1abac2..45e43627d 100644
 -        self.paired_witness.retain(|_, w| w != tmp);
 -    }
 -
-     #[expect(clippy::too_many_lines, reason = "inherited")]
-     pub(super) fn scan_set(
-         &mut self,
-@@ -2053,7 +2025,6 @@ impl Scopes<'_> {
+     /// `@FR-B-Copy` / `@FR-O-Witness` — an OWNING record local bound more than once, handed a
+     /// block whose value is another VARIABLE, takes a COPY of it, as the bare whole-value bind
+     /// does: a literal built in a compiler work-ref (`t = TVoid` is `{OpDatabase(__ref_N); …;
+@@ -2155,7 +2127,6 @@ impl Scopes<'_> {
                  // a mint that reads the local does.  Every copy into a witnessed local lands in
                  // a fresh store (`(O-Witness)`), so the identity guard declines nothing here.
                  WitnessSet::Mint | WitnessSet::MintReading => {
@@ -232,10 +232,10 @@ index c15338500..cdb161816 100644
  /// unit, because `OpFreeRef` of a variable does not reset its slot on the interpreter, and a
  /// witness left naming a freed store would release whatever the allocator hands that slot
 diff --git a/src/state/codegen.rs b/src/state/codegen.rs
-index 398bab9c1..7d0a85c17 100644
+index 1b1a8ac6b..d85b95b19 100644
 --- a/src/state/codegen.rs
 +++ b/src/state/codegen.rs
-@@ -4634,23 +4634,6 @@ impl State {
+@@ -4750,23 +4750,6 @@ impl State {
              self.code_add(var_pos);
              return Type::Void;
          }

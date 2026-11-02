@@ -17,16 +17,12 @@
 // Environment switches are read at their DEFAULTS (nothing set), each named where it is read.
 //
 // A node is never RETURNED from a function here (a returned record is a deep copy): where the
-// Rust hands back `value.unspan()`, the port matches through the span instead.  A variable or
-// definition number is never negative in the Rust; -1 here is its `None`, and every index is
-// guarded against it, because a negative index counts from the END of a loft vector.
+// Rust hands back `value.unspan()`, the port matches through the span instead.  A fact the Rust
+// answers as an `Option` answers `integer?` here, null for `None`; `u16::MAX` (no variable, no
+// attribute) and `u32::MAX` (a fn-ref naming two targets) stay values, `own::MAX` and
+// `own::UMAX`, where the Rust keeps them as values.
 use ir;
 use own;
-
-// `u16::MAX`: no variable, no attribute.
-const NO_VAR = 65535;
-// `u32::MAX`: a fn-ref variable naming TWO targets (`collect_fnref_targets`).
-const TWO_TARGETS = 4294967295;
 
 // ── `Type` questions (src/data.rs) ──
 
@@ -134,7 +130,7 @@ fn var_named(f: ir::Function, nm: text) -> integer {
       return e.nr;
     }
   }
-  NO_VAR
+  own::MAX
 }
 
 // src/variables/mod.rs:2341 fn uses — indexes unguarded, as the Rust does.
@@ -174,7 +170,7 @@ fn rebind_orig(f: ir::Function, v: integer) -> integer? {
     return null;
   }
   w = f.variables[v]!.rebind_orig;
-  if w == NO_VAR { null } else { w }
+  if w == own::MAX { null } else { w }
 }
 
 // src/variables/mod.rs:4516 fn owner_witness — stored per variable (`u16::MAX` none); null for
@@ -184,7 +180,7 @@ fn owner_witness(f: ir::Function, v: integer) -> integer? {
     return null;
   }
   w = f.variables[v]!.owner_witness;
-  if w == NO_VAR { null } else { w }
+  if w == own::MAX { null } else { w }
 }
 
 // src/variables/mod.rs:4524 fn entry_witness_name.
@@ -199,7 +195,7 @@ fn entry_witness(f: ir::Function, v: integer) -> integer? {
     return null;
   }
   w = var_named(f, entry_witness_name(own::var_name(f, v)));
-  if w != NO_VAR { w } else { null }
+  if w != own::MAX { w } else { null }
 }
 
 // src/variables/mod.rs:5720 fn is_compiler_generated — indexes unguarded, as the Rust does.
@@ -288,11 +284,14 @@ fn buffer_witness_of_call(b: ir::Bundle, f: ir::Function, v: integer, call: ir::
         return null;
       }
       buf = hidden_return_buffer_attr(def(b, def_nr));
-      if buf < 0 || buf >= len(args) {
+      if buf == null {
+        return null;
+      }
+      if buf >= len(args) {
         return null;
       }
       w = own::var_of(args[buf]!);
-      if w >= 0 && w != v && is_compiler_generated(f, w) { w } else { null }
+      if w != null && w != v && is_compiler_generated(f, w!) { w } else { null }
     }
     _ => null,
   }
@@ -317,10 +316,10 @@ fn returned(d: ir::Definition) -> ir::TypeT {
   d.returned[0]!
 }
 
-// The attribute index `attr_names` maps `nm` to, -1 for none.  A warm load derives the map from
-// the attribute list (`src/ir_read.rs:697`), so a repeated name maps to its LAST attribute.
-fn attr_index(d: ir::Definition, nm: text) -> integer {
-  at = -1;
+// The attribute index `attr_names` maps `nm` to, null for none.  A warm load derives the map
+// from the attribute list (`src/ir_read.rs:697`), so a repeated name maps to its LAST attribute.
+fn attr_index(d: ir::Definition, nm: text) -> integer? {
+  at: integer? = null;
   for a in d.attributes {
     if a.name == nm {
       at = a#index;
@@ -332,12 +331,12 @@ fn attr_index(d: ir::Definition, nm: text) -> integer {
 // `attr_names.get(nm).is_some_and(|&a| attributes()[a].hidden)`.
 fn names_hidden_attr(d: ir::Definition, nm: text) -> boolean {
   a = attr_index(d, nm);
-  a >= 0 && d.attributes[a]!.hidden
+  a != null && d.attributes[a!]!.hidden
 }
 
 // src/data.rs:4812 fn hidden_return_buffer_attr — the index of the hidden RETURN BUFFER
-// attribute, its type read BARE; -1 for `None`.
-fn hidden_return_buffer_attr(d: ir::Definition) -> integer {
+// attribute, its type read BARE; null for `None`.
+fn hidden_return_buffer_attr(d: ir::Definition) -> integer? {
   for a in d.attributes {
     if !a.hidden || a.work_buffer {
       continue;
@@ -352,7 +351,7 @@ fn hidden_return_buffer_attr(d: ir::Definition) -> integer {
       return a#index;
     }
   }
-  -1
+  null
 }
 
 // src/data.rs:5387 fn return_adopts_fresh_store — an empty return dep, or the lone `["??"]`
@@ -362,7 +361,7 @@ fn return_adopts_fresh_store(d: ir::Definition) -> boolean {
   if len(deps) == 0 {
     return true;
   }
-  len(deps) == 1 && deps[0] == NO_VAR
+  len(deps) == 1 && deps[0] == own::MAX
 }
 
 // src/data.rs:4339 enum KeyKind, as `split_key` answers it: 0 for `None`.
@@ -446,27 +445,27 @@ fn has_nullable_struct_payload(b: ir::Bundle, t: ir::TypeT) -> boolean {
 
 // ── node questions, read through any `Span` (`Value::unspan`, src/data.rs:654) ──
 
-// `Value::Call(d, _)` → d, else -1.
-fn call_of(n: ir::Node) -> integer {
+// `Value::Call(d, _)` → d, else null.
+fn call_of(n: ir::Node) -> integer? {
   match n {
     NdSpan { pos: _, inner } => call_of(inner),
     NdCall { def_nr, args: _ } => def_nr,
-    _ => -1,
+    _ => null,
   }
 }
 
-// `Value::CallRef(v, _)` → v, else -1.
-fn callref_var(n: ir::Node) -> integer {
+// `Value::CallRef(v, _)` → v, else null.
+fn callref_var(n: ir::Node) -> integer? {
   match n {
     NdSpan { pos: _, inner } => callref_var(inner),
     NdCallRef { var, args: _ } => var,
-    _ => -1,
+    _ => null,
   }
 }
 
 // src/data.rs:857 fn var_named_here — the variable THIS node names: `Var`, `Set`, `TupleGet`,
-// `TuplePut`, `FnRefDnr`, `CallRef`, `Iter` and `FnRef`; -1 for none.
-fn var_named_here(n: ir::Node) -> integer {
+// `TuplePut`, `FnRefDnr`, `CallRef`, `Iter` and `FnRef`; null for none.
+fn var_named_here(n: ir::Node) -> integer? {
   match n {
     NdVar { n: x } => x,
     NdSet { var, inner: _ } => var,
@@ -476,7 +475,7 @@ fn var_named_here(n: ir::Node) -> integer {
     NdCallRef { var, args: _ } => var,
     NdIter { var, create: _, next: _, init: _ } => var,
     NdFnRef { def_nr: _, var, t: _ } => var,
-    _ => -1,
+    _ => null,
   }
 }
 
@@ -571,10 +570,10 @@ fn rhs_may_alias_v(b: ir::Bundle, ops: own::Ops, d: integer, f: ir::Function, v:
   rhs_base = own::base_of(own::ownership_of(b, ops, d, value));
   if rhs_base == null {
     false
-  } else if rhs_base! == NO_VAR {
+  } else if rhs_base == own::MAX {
     reads_var(value, v)
   } else {
-    rhs_base! == v || own::has(own::tp_depend(f, rhs_base!), v)
+    rhs_base == v || own::has(own::tp_depend(f, rhs_base), v)
   }
 }
 
@@ -582,7 +581,7 @@ fn rhs_may_alias_v(b: ir::Bundle, ops: own::Ops, d: integer, f: ir::Function, v:
 // ref into an existing container's store.
 fn rhs_is_new_record(b: ir::Bundle, value: ir::Node) -> boolean {
   c = call_of(value);
-  c >= 0 && own::def_name(b, c) == "OpNewRecord"
+  c != null && own::def_name(b, c!) == "OpNewRecord"
 }
 
 // src/state/codegen.rs:2770 `nullable_local` — `v`'s own type is the nullability marker (no
@@ -639,16 +638,12 @@ fn owned_ref(b: ir::Bundle, d: integer, f: ir::Function, v: integer, value: ir::
 fn projection_container_var(b: ir::Bundle, value: ir::Node) -> integer? {
   match value {
     NdSpan { pos: _, inner } => projection_container_var(b, inner),
-    NdIf { cond: _, t, f } => {
-      s = own::variant_check_subject(b, t, f);
-      if s >= 0 { s } else { null }
-    }
+    NdIf { cond: _, t, f } => own::variant_check_subject(b, t, f),
     NdCall { def_nr, args } => {
       if !own::is_projection_op(b, def_nr) || len(args) == 0 {
         return null;
       }
-      c = own::var_of(args[0]!);
-      if c >= 0 { c } else { projection_container_var(b, args[0]) }
+      own::var_of(args[0]!) ?? projection_container_var(b, args[0])
     }
     _ => null,
   }
@@ -695,11 +690,10 @@ fn protectable_ref_args(b: ir::Bundle, defs: own::Defs, call: ir::Node) -> Prote
 }
 
 fn protectable_args_of(b: ir::Bundle, defs: own::Defs, call: ir::Node, args: vector<ir::Node>, r: ProtectableArgs) {
-  callee = callee_of(b, defs, call);
-  if callee == null {
+  fn_nr = callee_of(b, defs, call);
+  if fn_nr == null {
     return;
   }
-  fn_nr = callee!;
   attrs = def(b, fn_nr).attributes;
   r.covers_all = true;
   for arg in args {
@@ -768,7 +762,7 @@ fn fnref_return_borrows_closure(d: ir::Definition) -> boolean {
   }
   buffer = hidden_return_buffer_attr(d);
   for a in own::depend_of(returned(d)) {
-    if a == NO_VAR || (a >= visible && buffer != a) {
+    if a == own::MAX || (a >= visible && buffer != a) {
       return true;
     }
   }
@@ -791,7 +785,7 @@ fn callee_of(b: ir::Bundle, defs: own::Defs, value: ir::Node) -> integer? {
         }
       }
       t = own::fnref_target_of(rhss);
-      if t < 0 {
+      if t == null {
         return null;
       }
       td = def(b, t);
@@ -808,7 +802,7 @@ fn closure_attr(d: ir::Definition) -> integer {
       return a#index;
     }
   }
-  NO_VAR
+  own::MAX
 }
 
 // src/use_analysis.rs:4790 fn callref_captures — a fn-ref call whose closure HOLDS A STORE: a
@@ -816,7 +810,7 @@ fn closure_attr(d: ir::Definition) -> integer {
 // `d` is the calling function.
 fn callref_captures(b: ir::Bundle, d: integer, call: ir::Node) -> boolean {
   v = callref_var(call);
-  if v < 0 {
+  if v == null {
     return false;
   }
   vars = def(b, d).variables;
@@ -826,11 +820,11 @@ fn callref_captures(b: ir::Bundle, d: integer, call: ir::Node) -> boolean {
     _ => { return false; }
   }
   for x in deps {
-    clos = match base(tp(vars, x)) {
+    clos: integer? = match base(tp(vars, x)) {
       TyReference { n, dep: _ } => n,
-      _ => -1,
+      _ => null,
     };
-    if clos < 0 {
+    if clos == null {
       return true;
     }
     for a in def(b, clos).attributes {
@@ -847,11 +841,14 @@ fn callref_captures(b: ir::Bundle, d: integer, call: ir::Node) -> boolean {
 // which `own::function_defs` carries; an unresolved target keeps the conservative yes.
 fn capture_can_be_returned(b: ir::Bundle, defs: own::Defs, call: ir::Node) -> boolean {
   v = callref_var(call);
-  if v < 0 {
+  if v == null {
     return false;
   }
   callee = own::fnref_target(defs, v);
-  if callee < 0 || callee == TWO_TARGETS {
+  if callee == null {
+    return true;
+  }
+  if callee == own::UMAX {
     return true;
   }
   cd = def(b, callee);
@@ -866,7 +863,7 @@ fn may_hand_back_a_caller_store(b: ir::Bundle, ops: own::Ops, fn_nr: integer) ->
     return false;
   }
   attrs = def(b, fn_nr).attributes;
-  base! == NO_VAR || (base! < len(attrs) && !attrs[base!]!.hidden)
+  base! == own::MAX || (base! < len(attrs) && !attrs[base!]!.hidden)
 }
 
 // src/use_analysis.rs:3826 fn may_return_a_borrow — the return dep (the proxy) or the oracle
@@ -879,14 +876,13 @@ fn may_return_a_borrow(b: ir::Bundle, ops: own::Ops, fn_nr: integer) -> boolean 
 // `OpCopyRecord`'s `0x8000` source-free bit on the store the call returned?  `d` is the calling
 // function, `defs` its `own::function_defs`.
 fn call_return_frees_source(b: ir::Bundle, ops: own::Ops, d: integer, defs: own::Defs, call: ir::Node) -> boolean {
-  if call_of(call) < 0 && callref_var(call) < 0 {
+  if call_of(call) == null && callref_var(call) == null {
     return false;
   }
-  callee = callee_of(b, defs, call);
-  if callee == null {
+  fn_nr = callee_of(b, defs, call);
+  if fn_nr == null {
     return false;
   }
-  fn_nr = callee!;
   if callref_captures(b, d, call) && capture_can_be_returned(b, defs, call) {
     return false;
   }
@@ -933,7 +929,7 @@ fn binds_the_minted_store_of_call(b: ir::Bundle, ops: own::Ops, f: ir::Function,
     return false;
   }
   buf = hidden_return_buffer_attr(dd);
-  if buf < 0 {
+  if buf == null {
     return false;
   }
   deps = own::depend_of(ret);

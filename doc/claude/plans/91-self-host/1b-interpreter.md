@@ -8,10 +8,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 ## Status
 
 **Open — design, no implementation (owner, 2026-10-27).**  A child document of
-[@PLN91](README.md).  It changes the strand order the README records (1a, the front end,
-first): the owner starts with the INTERPRETER, written in loft, reading the IR the Rust
-front end already writes.  The README's strand table and phase ordering are to be updated
-to match.  Every "measured" line below was run on 2026-10-27 with the installed `loft`
+[@PLN91](README.md), its stage 2 ([README.md § The path](README.md#the-path--stages-and-gates)):
+the INTERPRETER, written in loft, reading the IR the front end writes.  It went first from
+2026-10-27 to 2026-11-01; the lexer and the parser (stage 1) go first now.  Every "measured" line below was run on 2026-10-27 with the installed `loft`
 2026.10.0 (`origin/main`), on `--interpret`, from a scratch directory.
 
 ## Goal
@@ -48,7 +47,10 @@ It holds four constraints:
    port of `fill.rs`/`state`, through the C runtime routines that are their port).  No part is
    a separate decision and nothing is a mechanism of its own: no owner table, no sweep, no
    layout or choice the Rust interpreter does not have.  A shape not ported yet is refused by
-   name.  The owner's reason: *"the loft language is not easy to write or maintain, but it is
+   name.  A difference from the Rust interpreter is therefore never a question for the owner:
+   what Rust does is the answer.  Only what Rust itself cannot define (a bytecode position in an
+   image run) may be one, and even then what the Rust side does elsewhere comes first
+   (`--native` writes `bc:0`).  The owner's reason: *"the loft language is not easy to write or maintain, but it is
    the only way to combine ease of use with optimal code"* — so its intricacy is ported, not
    redesigned.  This retires the run-time ownership of 1b-s3.md (2026-10-28).  The gate that
    follows from it: the loft-written bytecode equals `loft introspect`'s, byte for byte, and so
@@ -280,6 +282,28 @@ cannot quietly shrink.
 | **S7** | the interpreter runs itself | S1's benchmarks through the self-run |
 | **O** (beside S1–S6) | ownership ported, not redesigned (owner, 2026-10-30): the bytecode writer's bind decisions and the facts they read (`ownership_of`, `owns_displaced_store`, …) in loft, each guarded against its Rust home; in 1a the scope pass itself | the same decisions as the Rust implementation on every corpus program ([ownership.md](ownership.md)) |
 
+### S5's closures — after S3 and S4, by direction (owner, 2026-10-31)
+
+Closures come after the store and the collections are carried, not beside them: they are a
+separate part of the language, and the last to be stabilised — their capture and release rules
+(`formal/closures.md`, the `(L-Cap…)` family) settled late, and the history beside them
+(`closures-history.md`) is the longest record of lifetime defects in the formal chapters.  A
+function value is the largest single refusal in the census (`TyFunction`, with `OpSetDbRef` for a
+stored closure half), and stays refused by name until then.
+
+When S5 is designed:
+- **The rules first.**  The design starts from `formal/closures.md` and its history, not from the
+  code: each capture rule — `(L-CapScalar)`, `(L-CapHeap)`, `(L-CapWrite)`, `(L-CapBox)`,
+  `(L-CapOwn)`, `(L-CapKeep)`, `(L-CapOne)`, `(L-CapRef)`, `(L-CapRebind)` — gets a probe with
+  values by hand before any code, and the chapter's `OPEN: 0` is re-measured, not trusted.
+- **Reproduced, not reinvented.**  The interpreter carries the Rust model as it is: the fn-ref's
+  twenty bytes in the frame (the definition number and the closure record), the closure record as
+  a store of its own, and the release protocol — a closure record's free cascading to what it
+  captured, guarded by `OpStoreLive` where a store can be reached twice (`(L-CapOwn)`).
+- **Measured by the comparison.**  The alloc and leak layers check every closure record's store
+  event against the Rust interpreter's; a disagreement is a defect on one side, fixed where it
+  lives — in the Rust implementation too, as today's store work found four.
+
 ## Steps
 
 Phase S0 (the bundle opens in loft: S0.1 to S0.3d) is built; each step's design and its
@@ -442,6 +466,9 @@ with ownership decided at run time by one owner table (owner, 2026-10-28; 1b-s3.
 at run time), and so are the second, vectors, the third, struct enums, and the fourth, hashes
 and their walks, appending a vector and rendering a value: **the census: 1 027 programs, 199 pass, 0 leak, 0 wrong, 0 crash, none
 swept.**
+
+**S4 has begun ([1b-s4.md](1b-s4.md)):** the keyed collections beyond a hash — sorted, ordered,
+index, spatial, trie — and their walks, under S3's invariant unchanged.
 
 ### SU1 — `store_load` maps the image instead of copying it — DESIGNED 2026-10-28
 
@@ -806,7 +833,7 @@ absence.
 
 ## Documentation this plan owes
 
-- [ ] `91-self-host/README.md`: strand table and phase ordering (1b first, S0–S7), link here.
+- [x] `91-self-host/README.md`: strand table and § The path, stage 2, link here.
 - [ ] `tools/ir_schema/README.md`: the new home of `ir.loft`.
 - [ ] `scripts/rule_tags.py`: citations from `selfhost/**/*.loft`; `formal/README.md` § Rule tags.
 - [ ] `doc/claude/bars/OCAML_BAR.md`: the register's rows that are bar entries (X3, X4, X5, X7).

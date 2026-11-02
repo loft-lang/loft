@@ -1474,7 +1474,9 @@ impl Parser {
     /// is the functional-update idiom `(R-Rebind)` serves for the `x = f(x, …)` caller and a
     /// needed copy for the caller that keeps both; a no-heap intermediate is carried in
     /// registers `(R-ValueRecord)`; a stdlib producer (`split`) is idiomatic and cheap; a
-    /// function that is not `pub` has no unseen callers.  The fallback is silence: a shape
+    /// function that is not `pub` has no unseen callers; a producer answering a view of its
+    /// parameter builds nothing; an intermediate built from a local differs per build; a
+    /// function answering nothing answers no value of it.  The fallback is silence: a shape
     /// the two walks below do not name is one whose cost a rewrite may still reach.
     fn warn_api_per_call_work(&mut self) {
         if !crate::keys::api_advice_enabled() || self.context == u32::MAX {
@@ -1549,7 +1551,10 @@ impl Parser {
             }
             return;
         }
-        if self.type_owns_heap(&returned) && !matches!(returned.base(), Type::Text(_)) {
+        // A function that answers nothing answers no value of the intermediate either.
+        if matches!(returned.base(), Type::Void)
+            || (self.type_owns_heap(&returned) && !matches!(returned.base(), Type::Text(_)))
+        {
             return;
         }
         if let Some((g, p)) = self.intermediate_rebuilt_per_call(&code, &params) {
@@ -1675,6 +1680,10 @@ impl Parser {
             });
             hit
         };
+        // A producer whose result depends on one of its own parameters answers a VIEW of it
+        // (`fn item(b: Bag, i: integer) -> Item { b.items[i]! }`): it builds nothing, and the
+        // copy a call of it may cost is the call's (`(R-ViewReturn)`), paid however the caller
+        // reads the result — answering the record once does not remove it.
         let library_producer = |g: u32| -> bool {
             let def = data.def(g);
             let name = def.name();
@@ -1683,11 +1692,30 @@ impl Parser {
                 && def.rust().is_empty()
                 && !def.position().file.contains("default/")
                 && self.type_owns_heap(def.returned())
+                && !def.returns_borrowed_view()
+        };
+        // The intermediate is the SAME for every call with the same arguments only when the
+        // producer reads nothing but the parameters: one built from a local (a loop variable
+        // walking the parameter, `row(b, tp)`) is a different intermediate each time, so a
+        // caller asking for three values would not build one thing three times.
+        let reads_only_parameters = |g_args: &[Value]| -> bool {
+            let mut only = true;
+            for a in g_args {
+                a.walk(&mut |n| {
+                    if let Value::Var(x) = n
+                        && !self.vars.is_argument(*x)
+                        && !self.vars.is_compiler_generated(*x)
+                    {
+                        only = false;
+                    }
+                });
+            }
+            only
         };
         let scalar_or_text =
             |tp: &Type| -> bool { !self.type_owns_heap(tp) && !matches!(tp.base(), Type::Void) };
         let mut found: Option<(u32, u16)> = None;
-        code.walk(&mut |n| {
+        let mut visit = |n: &Value| {
             if found.is_some() {
                 return;
             }
@@ -1706,14 +1734,69 @@ impl Parser {
                 }
                 if let Value::Call(g, g_args) = a.unspan()
                     && library_producer(*g)
+                    && reads_only_parameters(g_args)
                     && let Some(p) = g_args.iter().find_map(&mentions_param)
                 {
                     found = Some((*g, p));
                     return;
                 }
             }
-        });
+        };
+        // Only what the function ANSWERS: a reader in a condition, or in a statement whose
+        // value is dropped, is not "one value of it" handed to the caller.
+        for answer in Self::answered_values(code) {
+            answer.walk(&mut visit);
+        }
         found
+    }
+
+    /// The expressions a body answers: its tail and each `return`'s value — through an `if`
+    /// only its arms, since a condition picks the answer and is not one, and through a tail
+    /// variable each value assigned to it (`___tret_1 = …; ___tret_1`).
+    fn answered_values(code: &Value) -> Vec<&Value> {
+        fn tails<'a>(v: &'a Value, out: &mut Vec<&'a Value>) {
+            match v {
+                Value::Span(b) => tails(&b.1, out),
+                Value::Block(bl) => {
+                    if let Some(last) = bl.operators.last() {
+                        tails(last, out);
+                    }
+                }
+                Value::If(_, t, f) => {
+                    tails(t, out);
+                    tails(f, out);
+                }
+                Value::Return(x) => tails(x, out),
+                _ => out.push(v),
+            }
+        }
+        let mut out = Vec::new();
+        tails(code, &mut out);
+        code.walk(&mut |n| {
+            if let Value::Return(x) = n {
+                tails(x, &mut out);
+            }
+        });
+        let vars: Vec<u16> = out
+            .iter()
+            .filter_map(|v| {
+                if let Value::Var(x) = v {
+                    Some(*x)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if !vars.is_empty() {
+            code.walk(&mut |n| {
+                if let Value::Set(x, val) = n
+                    && vars.contains(x)
+                {
+                    tails(val, &mut out);
+                }
+            });
+        }
+        out
     }
 
     /// The one vector literal a body consists of, or `None`: every other statement of the
@@ -1861,7 +1944,13 @@ impl Parser {
             );
             return want;
         }
-        if !self.narrow_store_checks(val, &want, tp) {
+        // The narrowing a declared local's store refuses is refused once: a refusal here
+        // leaves the value unconverted, as the assignment seam leaves it (the second report
+        // from `convert` failed the release corpus's one-error-per-expectation check).
+        let errors = self.lexer.diagnostics().error_count();
+        if !self.narrow_store_checks(val, &want, tp)
+            && self.lexer.diagnostics().error_count() == errors
+        {
             self.convert(val, tp, &want);
         }
         want
@@ -3665,12 +3754,14 @@ impl Parser {
             // what is warned is exactly what the pass leaves a call.
             if !self.data.definitions[ctx].is_operator() && !crate::tail_frame::off() {
                 let def = &self.data.definitions[ctx];
+                // At the call the refusal names, or — for a reason the whole frame carries —
+                // the first tail call.
                 let refused =
                     crate::tail_frame::tail_calls(&def.code, self.context, &self.vars, &self.data)
                         .into_iter()
                         .next()
                         .and_then(|call| {
-                            crate::tail_frame::admit_frame(
+                            crate::tail_frame::admit_frame_at(
                                 &self.vars,
                                 def.returned(),
                                 &def.code,
@@ -3679,7 +3770,7 @@ impl Parser {
                                 self.context,
                             )
                             .err()
-                            .map(|why| (call.at, why))
+                            .map(|(at, why)| (at.or(call.at), why))
                         });
                 if let Some((at, why)) = refused {
                     let fn_name = def.name().trim_start_matches("n_").to_string();

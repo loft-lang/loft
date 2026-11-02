@@ -1,0 +1,168 @@
+--- cbase.c
++++ f1.c
+@@ -26581,7 +26581,6 @@
+     }
+     loft_database_room(loft_types, loft_ntypes, &v45___vdb_1, 4, 155);
+     v3_pg_table = loft_field(v45___vdb_1, 0);
+-    ((void) 0);
+     t2 = loft_get_int(v0_cv, 8);
+     v4_pg_ymin = loft_wrap_sub(t2, INT64_C(1));
+     v5_pg_ymax = INT64_C(0);
+@@ -26622,7 +26621,6 @@
+             n_pil_hline__inv(v0_cv, t7, t8, t9, v2_ink, s1, s2, h4);
+             goto cont_1;
+         }
+-        ((void) 0);
+         t10 = (LOFT_PROVED(loft_ph_same(ph5, 56), "polygon_generic:ph5"), loft_ph_new(&ph5, 56));
+         v9__elm_1 = t10;
+         loft_copy_record(loft_types, 154, v8_e, v9__elm_1, 6);
+@@ -26651,7 +26649,6 @@
+         loft_free_var_distinct(&v11_pg_xx, v49___ref_1);
+         loft_database_room(loft_types, loft_ntypes, &v46___vdb_2, 4, 112);
+         v11_pg_xx = loft_field(v46___vdb_2, 0);
+-        ((void) 0);
+     } else {
+         loft_frame_site(167);
+         t_6vector_clear(v11_pg_xx);
+@@ -26667,7 +26664,6 @@
+             goto brk_2;
+         }
+         v15____1 = v13__index_1;
+-        ((void) 0);
+         (LOFT_PROVED(loft_win_same(pw8, pv8, 4), "polygon_generic:pw8"), loft_win_put4(&pw8, pv8, loft_f32_bits(loft_f32(UINT32_C(0x0)))));
+     cont_2:;
+     }
+@@ -27219,8 +27215,6 @@
+     if (v3_fp_count <= loft_w64(INT32_C(0))) {
+         loft_free_var(&v43___vdb_3);
+         loft_free_var(&v44___ref_p2_1);
+-        ((void) 0);
+-        ((void) 0);
+         loft_free_var_distinct(&v4_fp_xs, v59___ref_15);
+         loft_free_var_distinct(&v5_fp_ys, v60___ref_16);
+         return;
+@@ -27230,7 +27224,6 @@
+         loft_free_var_distinct(&v4_fp_xs, v59___ref_15);
+         loft_database_room(loft_types, loft_ntypes, &v41___vdb_1, 4, 20);
+         v4_fp_xs = loft_field(v41___vdb_1, 0);
+-        ((void) 0);
+     } else {
+         loft_frame_site(243);
+         t_6vector_clear(v4_fp_xs);
+@@ -27240,7 +27233,6 @@
+         loft_free_var_distinct(&v5_fp_ys, v60___ref_16);
+         loft_database_room(loft_types, loft_ntypes, &v42___vdb_2, 4, 20);
+         v5_fp_ys = loft_field(v42___vdb_2, 0);
+-        ((void) 0);
+     } else {
+         loft_frame_site(244);
+         t_6vector_clear(v5_fp_ys);
+@@ -27259,10 +27251,8 @@
+         v63__walk_at_63 = v7_p_index;
+         v8_p = (LOFT_PROVED(loft_vh_same(h1, v6__vector_1), "fill_poly:h1"), loft_vh_get(h1, 16, v63__walk_at_63));
+         loft_pa8_3 = loft_rec_ptr(v8_p);
+-        ((void) 0);
+         t1 = loft_pa_f64(loft_pa8_3, 0);
+         (LOFT_PROVED(loft_ph_same(ph2, 8), "fill_poly:ph2"), loft_ph_put8(&ph2, (uint64_t) loft_f2i(t1)));
+-        ((void) 0);
+         t2 = loft_pa_f64(loft_pa8_3, 8);
+         (LOFT_PROVED(loft_ph_same(ph3, 8), "fill_poly:ph3"), loft_ph_put8(&ph3, (uint64_t) loft_f2i(t2)));
+     cont_1:;
+@@ -27270,7 +27260,6 @@
+     brk_1:;
+     loft_database_room(loft_types, loft_ntypes, &v43___vdb_3, 4, 155);
+     v11_fp_edges = loft_field(v43___vdb_3, 0);
+-    ((void) 0);
+     v12_fp_i = INT64_C(0);
+     loft_frame_site(251);
+     ia6_set = 0;
+@@ -27432,7 +27421,6 @@
+         v28__elm_3 = loft_ref_null();
+         loft_frame_site(275);
+         if (!(v21_fp_merged == 1)) {
+-            ((void) 0);
+             t29 = (LOFT_PROVED(loft_ph_same(ph9, 56), "fill_poly:ph9"), loft_ph_new(&ph9, 56));
+             v28__elm_3 = t29;
+             loft_frame_site(276);
+@@ -27448,7 +27436,6 @@
+                     memcpy(loft_w + 32, &v56___ref_p2_2.f5, 8);
+                     memcpy(loft_w + 40, &v56___ref_p2_2.f6, 8);
+                 } }
+-                ((void) 0);
+             }
+             loft_ph_finish(&ph9);
+         }
+@@ -27537,7 +27524,6 @@
+                 memcpy(loft_w + 32, &v58___ref_p2_3.f5, 8);
+                 memcpy(loft_w + 40, &v58___ref_p2_3.f6, 8);
+             } }
+-            ((void) 0);
+         }
+         loft_vec_finish(v11_fp_edges);
+     }
+@@ -27546,8 +27532,6 @@
+     n_polygon_generic(v0_cv, v11_fp_edges, v2_ink, v61___ref_17);
+     loft_free_var(&v43___vdb_3);
+     loft_free_var(&v44___ref_p2_1);
+-    ((void) 0);
+-    ((void) 0);
+     loft_free_var_distinct(&v4_fp_xs, v59___ref_15);
+     loft_free_var_distinct(&v5_fp_ys, v60___ref_16);
+ }
+@@ -27806,7 +27790,6 @@
+             LOFT_COLD_PATH();
+             v9_cx_a = loft_f64(UINT64_C(0x0));
+         }
+-        ((void) 0);
+         t8 = (LOFT_PROVED(loft_win_same(pw1, pv1, 16), "circle_px:pw1"), loft_win_slot(&pw1, pv1, 16));
+         v11__elm_1 = t8;
+         loft_frame_site(247);
+@@ -27827,14 +27810,12 @@
+                 memcpy(loft_w + 0, &v13___ref_p2_1.f0, 8);
+                 memcpy(loft_w + 8, &v13___ref_p2_1.f1, 8);
+             } }
+-            ((void) 0);
+         }
+         loft_win_finish(&pw1, pv1, 16);
+     cont_1:;
+     }
+     brk_1:;
+     loft_win_sync(pw1);
+-    ((void) 0);
+     t20 = v5_cx_out;
+     return t20;
+     return t1;
+@@ -28003,23 +27984,16 @@
+         v9__range_start_1 = INT64_C(1);
+         v10__range_end_1 = INT64_C(0);
+     }
+-    v12__next_1 = v9__range_start_1;
+-    v11_hl_x_index = LOFT_NULL;
+-    for (;;) {
+-        if (v11_hl_x_index == v10__range_end_1) {
+-            goto brk_1;
+-        }
+-        if (v10__range_end_1 < v12__next_1) {
+-            goto brk_1;
+-        }
+-        v11_hl_x_index = v12__next_1;
+-        v12__next_1 = loft_wrap_add(v12__next_1, INT64_C(1));
+-        v13_hl_x = v11_hl_x_index;
+-        t9 = loft_wrap_add(v8_hl_base, v13_hl_x);
+-        (LOFT_PROVED(loft_vh_same(h3, v7_hl_d), "pil_hline:h3"), loft_vh_set_int(h3, 8, t9, 0, v4_ink));
+-    cont_1:;
+-    }
+-    brk_1:;
++    if (v9__range_start_1 <= v10__range_end_1) {
++        int64_t lo_i = v8_hl_base + v9__range_start_1, hi_i = v8_hl_base + v10__range_end_1;
++        if (lo_i >= 0 && hi_i < h3.len) {
++            int64_t *dp = (int64_t *) h3.base;
++            for (int64_t x = lo_i; x <= hi_i; x++) dp[x] = v4_ink;
++        } else {
++            for (int64_t x = v9__range_start_1; x <= v10__range_end_1; x++)
++                loft_vh_set_int(h3, 8, v8_hl_base + x, 0, v4_ink);
++        }
++    }
+ }
+ 
+ static void n_main(void) {

@@ -127,7 +127,7 @@ pub fn borrowed_text_walks(
     if body.any_node(&mut |n| matches!(n, Value::Yield(_))) {
         return out;
     }
-    let mut cache: HashMap<u32, bool> = HashMap::new();
+    let mut fx = crate::opt::facts::Facts::fresh();
     body.any_node(&mut |n| {
         let Value::Loop(lp) = n else {
             return false;
@@ -144,7 +144,7 @@ pub fn borrowed_text_walks(
         } else if !sliced.contains(&vec)
             && rest
                 .iter()
-                .any(|s| may_write_store(&as_emitted_by_tables(s, tables, data), data, &mut cache))
+                .any(|s| may_write_store(&as_emitted_by_tables(s, tables, data), data, &mut fx))
         {
             Err("the body may write a store")
         } else if let Some(why) = rest.iter().find_map(|s| text_escapes(s, p, data)) {

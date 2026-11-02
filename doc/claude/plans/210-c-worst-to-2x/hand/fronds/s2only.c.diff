@@ -1,0 +1,928 @@
+--- b0.c
++++ s2only.c
+@@ -26147,6 +26147,897 @@
+     return t1;
+ }
+ 
++static loft_ref n_fronds__ap(double v0_x1, double v1_y1, double v2_x2, double v3_y2, loft_ref v4_sp, int64_t v5_pw, int64_t v6_ph, loft_ref v7___retbuf);
++static loft_ref n_fronds__ap(double v0_x1, double v1_y1, double v2_x2, double v3_y2, loft_ref v4_sp, int64_t v5_pw, int64_t v6_ph, loft_ref v7___retbuf) {
++    loft_ref v8_fd_out = { 0xFFFF, 0, 0 };
++    double v9_fd_p1x = (double) NAN;
++    double v10_fd_p1y = (double) NAN;
++    double v11_fd_dx = (double) NAN;
++    double v12_fd_dy = (double) NAN;
++    double v13_fd_ln = (double) NAN;
++    double v14_fd_ux = (double) NAN;
++    double v15___ncc_1 = (double) NAN;
++    double v16_fd_uy = (double) NAN;
++    double v17___ncc_2 = (double) NAN;
++    double v18_fd_nx = (double) NAN;
++    double v19_fd_ny = (double) NAN;
++    int64_t v20_fd_n = LOFT_NULL;
++    int64_t v21__range_end_1 = LOFT_NULL;
++    int64_t v22_i_index = LOFT_NULL;
++    int64_t v23_i = LOFT_NULL;
++    double v24_fd_ub = (double) NAN;
++    double v25___ncc_3 = (double) NAN;
++    double v26_fd_u = (double) NAN;
++    double v27___ncc_4 = (double) NAN;
++    double v28_fd_ltr = (double) NAN;
++    double v29_fd_dte = (double) NAN;
++    double v30_fd_edge = (double) NAN;
++    double v31___ncc_5 = (double) NAN;
++    double v32_fd_lpx = (double) NAN;
++    double v33_fd_an = (double) NAN;
++    double v34_fd_phi = (double) NAN;
++    double v35_fd_wi = (double) NAN;
++    double v36_fd_rx = (double) NAN;
++    double v37_fd_ry = (double) NAN;
++    loft_ref v38_fd_sides = { 0xFFFF, 0, 0 };
++    loft_ref v39__vec_1 = { 0xFFFF, 0, 0 };
++    int64_t v40__elm_1 = LOFT_NULL;
++    loft_ref v41__vec_2 = { 0xFFFF, 0, 0 };
++    int64_t v42__elm_2 = LOFT_NULL;
++    loft_ref v43__vector_1 = { 0xFFFF, 0, 0 };
++    int64_t v44_s_index = LOFT_NULL;
++    double v45_s = (double) NAN;
++    double v46_fd_fx = (double) NAN;
++    double v47_fd_fy = (double) NAN;
++    double v48_fd_tx = (double) NAN;
++    double v49_fd_ty = (double) NAN;
++    double v50_fd_tip = (double) NAN;
++    loft_ref v51_fd_pts = { 0xFFFF, 0, 0 };
++    loft_ref v52_fd_wid = { 0xFFFF, 0, 0 };
++    double v53_fd_mx = (double) NAN;
++    double v54_fd_my = (double) NAN;
++    loft_ref v55__elm_3 = { 0xFFFF, 0, 0 };
++    double v56___ncc_6 = (double) NAN;
++    double v57___ncc_7 = (double) NAN;
++    loft_ref v58___ref_1 = { 0xFFFF, 0, 0 };
++    double v59___ncc_8 = (double) NAN;
++    double v60___ncc_9 = (double) NAN;
++    loft_ref v61___ref_2 = { 0xFFFF, 0, 0 };
++    double v62___ncc_10 = (double) NAN;
++    double v63___ncc_11 = (double) NAN;
++    loft_ref v64___ref_3 = { 0xFFFF, 0, 0 };
++    int64_t v65__elm_4 = LOFT_NULL;
++    loft_ref v66__elm_5 = { 0xFFFF, 0, 0 };
++    double v67___ncc_12 = (double) NAN;
++    double v68___ncc_13 = (double) NAN;
++    loft_ref v69___ref_4 = { 0xFFFF, 0, 0 };
++    double v70___ncc_14 = (double) NAN;
++    double v71___ncc_15 = (double) NAN;
++    loft_ref v72___ref_5 = { 0xFFFF, 0, 0 };
++    int64_t v73__elm_6 = LOFT_NULL;
++    loft_ref v74__elm_7 = { 0xFFFF, 0, 0 };
++    int64_t v75_fd_base = LOFT_NULL;
++    int64_t v76_fd_cn = LOFT_NULL;
++    int64_t v77__range_end_2 = LOFT_NULL;
++    int64_t v78_k_index = LOFT_NULL;
++    int64_t v79_k = LOFT_NULL;
++    loft_ref v80_fd_f = { 0xFFFF, 0, 0 };
++    loft_ref v81___ncc_16 = { 0xFFFF, 0, 0 };
++    loft_ref v82_fd_a = { 0xFFFF, 0, 0 };
++    loft_ref v83___ncc_17 = { 0xFFFF, 0, 0 };
++    loft_ref v84_fd_b = { 0xFFFF, 0, 0 };
++    loft_ref v85___ncc_18 = { 0xFFFF, 0, 0 };
++    loft_ref v86_fd_sub = { 0xFFFF, 0, 0 };
++    loft_ref v87___ref_6 = { 0xFFFF, 0, 0 };
++    loft_ref v88__vector_2 = { 0xFFFF, 0, 0 };
++    int64_t v89_f_index = LOFT_NULL;
++    loft_ref v90_f = { 0xFFFF, 0, 0 };
++    loft_ref v91__elm_8 = { 0xFFFF, 0, 0 };
++    loft_ref v92___vdb_1 = { 0xFFFF, 0, 0 };
++    loft_ref v93___vdb_2 = { 0xFFFF, 0, 0 };
++    loft_ref v94___vdb_3 = { 0xFFFF, 0, 0 };
++    loft_ref v95___vdb_4 = { 0xFFFF, 0, 0 };
++    loft_ref v96___vdb_5 = { 0xFFFF, 0, 0 };
++    loft_tup0 v97___ref_p2_1 = { (double) NAN, (double) NAN };
++    loft_tup0 v98___ref_p2_2 = { (double) NAN, (double) NAN };
++    loft_tup0 v99___ref_p2_3 = { (double) NAN, (double) NAN };
++    loft_tup0 v100___ref_p2_4 = { (double) NAN, (double) NAN };
++    loft_tup0 v101___ref_p2_5 = { (double) NAN, (double) NAN };
++    loft_ref v102___ref_p2_6 = { 0xFFFF, 0, 0 };
++    loft_ref v103___ref_p2_7 = { 0xFFFF, 0, 0 };
++    loft_ref v104___ref_p2_8 = { 0xFFFF, 0, 0 };
++    int64_t v105__walk_len_105 = LOFT_NULL;
++    int64_t v106__walk_at_106 = LOFT_NULL;
++    double v107__same_read_107 = (double) NAN;
++    loft_ref t1;
++    double t2;
++    double t3;
++    double t4;
++    double t5;
++    double t6;
++    double t7;
++    double t8;
++    double t9;
++    double t10;
++    double t11;
++    double t12;
++    double t13;
++    double t14;
++    double t15;
++    double t16;
++    double t17;
++    int64_t t18;
++    double t19;
++    double t20;
++    double t21;
++    double t22;
++    double t23;
++    double t24;
++    double t25;
++    double t26;
++    double t27;
++    double t28;
++    double t29;
++    double t30;
++    double t31;
++    double t32;
++    double t33;
++    double t34;
++    double t35;
++    double t36;
++    double t37;
++    double t38;
++    double t39;
++    double t40;
++    double t41;
++    double t42;
++    double t43;
++    double t44;
++    double t45;
++    double t46;
++    double t47;
++    int64_t t48;
++    double t49;
++    double t50;
++    double t51;
++    double t52;
++    double t53;
++    double t54;
++    double t55;
++    double t56;
++    double t57;
++    double t58;
++    double t59;
++    double t60;
++    double t61;
++    double t62;
++    int64_t t63;
++    double t64;
++    double t65;
++    double t66;
++    double t67;
++    double t68;
++    double t69;
++    double t70;
++    double t71;
++    double t72;
++    double t73;
++    double t74;
++    double t75;
++    double t76;
++    double t77;
++    double t78;
++    int64_t t79;
++    double t80;
++    double t81;
++    double t82;
++    double t83;
++    double t84;
++    double t85;
++    double t86;
++    double t87;
++    double t88;
++    double t89;
++    double t90;
++    double t91;
++    double t92;
++    double t93;
++    double t94;
++    double t95;
++    double t96;
++    double t97;
++    double t98;
++    double t99;
++    double t100;
++    double t101;
++    double t102;
++    double t103;
++    double t104;
++    double t105;
++    double t106;
++    double t107;
++    double t108;
++    double t109;
++    double t110;
++    double t111;
++    double t112;
++    double t113;
++    double t114;
++    loft_ref t115;
++    double t116;
++    double t117;
++    double t118;
++    double t119;
++    loft_ref t120;
++    loft_ref t121;
++    double t122;
++    double t123;
++    double t124;
++    double t125;
++    loft_ref t126;
++    loft_ref t127;
++    double t128;
++    double t129;
++    double t130;
++    double t131;
++    loft_ref t132;
++    double t133;
++    double t134;
++    double t135;
++    loft_ref t136;
++    double t137;
++    double t138;
++    double t139;
++    double t140;
++    loft_ref t141;
++    loft_ref t142;
++    double t143;
++    double t144;
++    double t145;
++    double t146;
++    loft_ref t147;
++    loft_ref t148;
++    loft_ref t149;
++    loft_ref t150;
++    int64_t t151;
++    loft_ref t152;
++    double t153;
++    double t154;
++    double t155;
++    double t156;
++    loft_ref t157;
++    double t158;
++    double t159;
++    loft_ref t160;
++    loft_ref t161;
++    int64_t t162;
++    int64_t t163;
++    double t164;
++    double t165;
++    double t166;
++    double t167;
++    double t168;
++    double t169;
++    double t170;
++    double t171;
++    double t172;
++    double t173;
++    double t174;
++    double t175;
++    double t176;
++    loft_ref t177;
++    double t178;
++    double t179;
++    double t180;
++    double t181;
++    double t182;
++    double t183;
++    double t184;
++    double t185;
++    double t186;
++    double t187;
++    double t188;
++    double t189;
++    double t190;
++    int64_t t191;
++    int64_t t192;
++    int64_t t193;
++    int64_t t194;
++    int64_t t195;
++    int64_t t196;
++    double t197;
++    double t198;
++    double t199;
++    double t200;
++    double t201;
++    int64_t t202;
++    loft_ref t203;
++    loft_ref t204;
++    loft_ph ph1 = { { 0xFFFF, 0, 0 }, 0, 0, 0, 0 };
++    loft_ph ph2 = { { 0xFFFF, 0, 0 }, 0, 0, 0, 0 };
++    v104___ref_p2_8 = loft_ref_null();
++    v103___ref_p2_7 = loft_ref_null();
++    v102___ref_p2_6 = loft_ref_null();
++    v101___ref_p2_5 = (loft_tup0) { (double) NAN, (double) NAN };
++    v100___ref_p2_4 = (loft_tup0) { (double) NAN, (double) NAN };
++    v99___ref_p2_3 = (loft_tup0) { (double) NAN, (double) NAN };
++    v98___ref_p2_2 = (loft_tup0) { (double) NAN, (double) NAN };
++    v97___ref_p2_1 = (loft_tup0) { (double) NAN, (double) NAN };
++    v96___vdb_5 = loft_ref_null();
++    v95___vdb_4 = loft_ref_null();
++    v94___vdb_3 = loft_ref_null();
++    v93___vdb_2 = loft_ref_null();
++    v92___vdb_1 = loft_ref_null();
++    v87___ref_6 = loft_ref_null();
++    loft_database_typed(&v87___ref_6, 4, 184);
++    v80_fd_f = loft_ref_null();
++    v85___ncc_18 = loft_ref_null();
++    v83___ncc_17 = loft_ref_null();
++    v8_fd_out = loft_ref_null();
++    v81___ncc_16 = loft_ref_null();
++    v8_fd_out = v7___retbuf;
++    int64_t ap_base0 = loft_vec_len(v8_fd_out);
++    t2 = loft_i2f(v5_pw);
++    v9_fd_p1x = (v0_x1 * t2);
++    t3 = loft_i2f(v6_ph);
++    v10_fd_p1y = (v1_y1 * t3);
++    t4 = loft_i2f(v5_pw);
++    t5 = (v2_x2 * t4);
++    v11_fd_dx = (t5 - v9_fd_p1x);
++    t6 = loft_i2f(v6_ph);
++    t7 = (v3_y2 * t6);
++    v12_fd_dy = (t7 - v10_fd_p1y);
++    loft_frame_site(1615);
++    t8 = (v11_fd_dx * v11_fd_dx);
++    t9 = (v12_fd_dy * v12_fd_dy);
++    t10 = (t8 + t9);
++    v13_fd_ln = t_5float_sqrt(t10);
++    t11 = loft_f64(UINT64_C(0x0));
++    if ((v13_fd_ln) == (t11)) {
++        v13_fd_ln = loft_f64(UINT64_C(0x3e112e0be826d695));
++    }
++    v15___ncc_1 = (v11_fd_dx / v13_fd_ln);
++    if (!isnan(v15___ncc_1)) {
++        v14_fd_ux = v15___ncc_1;
++    } else {
++        LOFT_COLD_PATH();
++        v14_fd_ux = loft_f64(UINT64_C(0x0));
++    }
++    v17___ncc_2 = (v12_fd_dy / v13_fd_ln);
++    if (!isnan(v17___ncc_2)) {
++        v16_fd_uy = v17___ncc_2;
++    } else {
++        LOFT_COLD_PATH();
++        v16_fd_uy = loft_f64(UINT64_C(0x0));
++    }
++    v18_fd_nx = (-(v16_fd_uy));
++    v19_fd_ny = v14_fd_ux;
++    v20_fd_n = loft_get_int(v4_sp, 0);
++    v21__range_end_1 = v20_fd_n;
++    v22_i_index = INT64_C(-1);
++    loft_frame_site(1622);
++    for (;;) {
++        v22_i_index = loft_wrap_add(v22_i_index, INT64_C(1));
++        if (v21__range_end_1 <= v22_i_index) {
++            goto brk_1;
++        }
++        v23_i = v22_i_index;
++        t12 = loft_i2f(v23_i);
++        t13 = loft_f64(UINT64_C(0x3fe0000000000000));
++        t14 = (t12 + t13);
++        t15 = loft_i2f(v20_fd_n);
++        v25___ncc_3 = (t14 / t15);
++        if (!isnan(v25___ncc_3)) {
++            v24_fd_ub = v25___ncc_3;
++        } else {
++            LOFT_COLD_PATH();
++            v24_fd_ub = loft_f64(UINT64_C(0x0));
++        }
++        loft_frame_site(1624);
++        t16 = v24_fd_ub;
++        t17 = loft_get_float(v4_sp, 64);
++        t18 = loft_get_int(v4_sp, 88);
++        t19 = n_lowfreq(t18, v24_fd_ub);
++        t20 = (t17 * t19);
++        t22 = loft_f64(UINT64_C(0x3fe0000000000000));
++        t23 = loft_i2f(v20_fd_n);
++        v27___ncc_4 = (t22 / t23);
++        if (!isnan(v27___ncc_4)) {
++            t21 = v27___ncc_4;
++        } else {
++            LOFT_COLD_PATH();
++            t21 = loft_f64(UINT64_C(0x0));
++        }
++        t24 = (t20 * t21);
++        v26_fd_u = (t16 + t24);
++        t25 = loft_f64(UINT64_C(0x0));
++        if ((v26_fd_u) < (t25)) {
++            v26_fd_u = loft_f64(UINT64_C(0x0));
++        }
++        t26 = loft_f64(UINT64_C(0x3ff0000000000000));
++        if ((t26) < (v26_fd_u)) {
++            v26_fd_u = loft_f64(UINT64_C(0x3ff0000000000000));
++        }
++        t27 = loft_get_float(v4_sp, 8);
++        t28 = loft_get_float(v4_sp, 16);
++        t29 = loft_get_float(v4_sp, 8);
++        t30 = (t28 - t29);
++        t31 = (t30 * v26_fd_u);
++        v28_fd_ltr = (t27 + t31);
++        t32 = loft_f64(UINT64_C(0x3ff0000000000000));
++        t33 = (t32 - v26_fd_u);
++        if ((v26_fd_u) < (t33)) {
++            v29_fd_dte = v26_fd_u;
++        } else {
++            t34 = loft_f64(UINT64_C(0x3ff0000000000000));
++            v29_fd_dte = (t34 - v26_fd_u);
++        }
++        t35 = loft_f64(UINT64_C(0x3ff0000000000000));
++        t37 = loft_f64(UINT64_C(0x3fd0000000000000));
++        v31___ncc_5 = (v29_fd_dte / t37);
++        if (!isnan(v31___ncc_5)) {
++            t36 = v31___ncc_5;
++        } else {
++            LOFT_COLD_PATH();
++            t36 = loft_f64(UINT64_C(0x0));
++        }
++        v30_fd_edge = (t35 - t36);
++        t38 = loft_f64(UINT64_C(0x0));
++        if ((v30_fd_edge) < (t38)) {
++            v30_fd_edge = loft_f64(UINT64_C(0x0));
++        }
++        loft_frame_site(1631);
++        t39 = loft_f64(UINT64_C(0x3ff0000000000000));
++        t40 = loft_get_float(v4_sp, 72);
++        t41 = (t40 * v30_fd_edge);
++        t42 = (t39 - t41);
++        t43 = (v28_fd_ltr * t42);
++        t44 = loft_f64(UINT64_C(0x3ff0000000000000));
++        t45 = loft_get_float(v4_sp, 56);
++        t46 = loft_f64(UINT64_C(0x3fd999999999999a));
++        t47 = (t45 * t46);
++        t48 = loft_get_int(v4_sp, 88);
++        t49 = n_hash01(t48, v23_i, INT64_C(1));
++        t50 = (t47 * t49);
++        t51 = (t44 + t50);
++        t52 = (t43 * t51);
++        t53 = loft_i2f(v5_pw);
++        v32_fd_lpx = (t52 * t53);
++        loft_frame_site(1633);
++        t54 = loft_get_float(v4_sp, 40);
++        t55 = loft_get_float(v4_sp, 48);
++        t56 = loft_get_float(v4_sp, 40);
++        t57 = (t55 - t56);
++        t58 = (t57 * v26_fd_u);
++        t59 = (t54 + t58);
++        t60 = loft_get_float(v4_sp, 56);
++        t61 = loft_f64(UINT64_C(0x402e000000000000));
++        t62 = (t60 * t61);
++        t63 = loft_get_int(v4_sp, 88);
++        t64 = n_hash01(t63, v23_i, INT64_C(2));
++        t65 = (t62 * t64);
++        v33_fd_an = (t59 + t65);
++        t66 = loft_f64(UINT64_C(0x400921fb54442d18));
++        t67 = (v33_fd_an * t66);
++        t68 = loft_f64(UINT64_C(0x4066800000000000));
++        v34_fd_phi = (t67 / t68);
++        loft_frame_site(1635);
++        t69 = loft_get_float(v4_sp, 24);
++        t70 = loft_get_float(v4_sp, 32);
++        t71 = loft_get_float(v4_sp, 24);
++        t72 = (t70 - t71);
++        t73 = (t72 * v26_fd_u);
++        t74 = (t69 + t73);
++        t75 = loft_f64(UINT64_C(0x3ff0000000000000));
++        t76 = loft_get_float(v4_sp, 56);
++        t77 = loft_f64(UINT64_C(0x3fd3333333333333));
++        t78 = (t76 * t77);
++        t79 = loft_get_int(v4_sp, 88);
++        t80 = n_hash01(t79, v23_i, INT64_C(3));
++        t81 = (t78 * t80);
++        t82 = (t75 + t81);
++        v35_fd_wi = (t74 * t82);
++        t83 = (v26_fd_u * v11_fd_dx);
++        v36_fd_rx = (v9_fd_p1x + t83);
++        t84 = (v26_fd_u * v12_fd_dy);
++        v37_fd_ry = (v10_fd_p1y + t84);
++        v39__vec_1 = loft_ref_null();
++        v41__vec_2 = loft_ref_null();
++        if (loft_get_bool(v4_sp, 112) == 1) {
++            loft_database_room(loft_types, loft_ntypes, &v93___vdb_2, 4, 105);
++            v39__vec_1 = loft_field(v93___vdb_2, 0);
++            loft_vec_reserve_run(v39__vec_1, INT64_C(2), 8);
++            ph1 = loft_ph_of(v39__vec_1, 8);
++            (LOFT_PROVED(loft_phb_same(ph1, 8), "fronds:ph1"), loft_ph_putb8(&ph1, loft_f64_bits(loft_f64(UINT64_C(0x3ff0000000000000)))));
++            t85 = loft_f64(UINT64_C(0x3ff0000000000000));
++            (LOFT_PROVED(loft_phb_same(ph1, 8), "fronds:ph1"), loft_ph_putb8(&ph1, loft_f64_bits((-(t85)))));
++            v38_fd_sides = v39__vec_1;
++        } else {
++            loft_database_room(loft_types, loft_ntypes, &v94___vdb_3, 4, 105);
++            v41__vec_2 = loft_field(v94___vdb_3, 0);
++            loft_vec_prealloc(v41__vec_2, 1, 8);
++            t86 = loft_f64(UINT64_C(0x3ff0000000000000));
++            loft_vec_push_float(v41__vec_2, t86);
++            v38_fd_sides = v41__vec_2;
++        }
++        v43__vector_1 = v38_fd_sides;
++        v105__walk_len_105 = loft_vec_len(v43__vector_1);
++        v44_s_index = INT64_C(-1);
++        loft_frame_site(1640);
++        for (;;) {
++            v44_s_index = ((v44_s_index) + (INT64_C(1)));
++            if (v105__walk_len_105 <= v44_s_index) {
++                goto brk_2;
++            }
++            v106__walk_at_106 = v44_s_index;
++            v45_s = loft_get_float(loft_vec_get(v43__vector_1, 8, v106__walk_at_106), 0);
++            t87 = (v18_fd_nx * v45_s);
++            t88 = loft_math1(0, v34_fd_phi);
++            t89 = (t87 * t88);
++            t90 = v14_fd_ux;
++            t91 = loft_math1(1, v34_fd_phi);
++            t92 = (t90 * t91);
++            v46_fd_fx = (t89 + t92);
++            t93 = (v19_fd_ny * v45_s);
++            t94 = loft_math1(0, v34_fd_phi);
++            t95 = (t93 * t94);
++            t96 = v16_fd_uy;
++            t97 = loft_math1(1, v34_fd_phi);
++            t98 = (t96 * t97);
++            v47_fd_fy = (t95 + t98);
++            t99 = (v32_fd_lpx * v46_fd_fx);
++            v48_fd_tx = (v36_fd_rx + t99);
++            t100 = (v32_fd_lpx * v47_fd_fy);
++            v49_fd_ty = (v37_fd_ry + t100);
++            t101 = loft_f64(UINT64_C(0x3fc3333333333333));
++            v50_fd_tip = (v35_fd_wi * t101);
++            t102 = loft_f64(UINT64_C(0x3fe0000000000000));
++            if ((v50_fd_tip) < (t102)) {
++                v50_fd_tip = loft_f64(UINT64_C(0x3fe0000000000000));
++            }
++            loft_database_room(loft_types, loft_ntypes, &v95___vdb_4, 4, 175);
++            v51_fd_pts = loft_field(v95___vdb_4, 0);
++            loft_database_room(loft_types, loft_ntypes, &v96___vdb_5, 4, 105);
++            v52_fd_wid = loft_field(v96___vdb_5, 0);
++            v55__elm_3 = loft_ref_null();
++            v66__elm_5 = loft_ref_null();
++            loft_frame_site(1649);
++            t103 = loft_get_float(v4_sp, 80);
++            t104 = loft_f64(UINT64_C(0x0));
++            if ((t103) != (t104)) {
++                t105 = loft_get_float(v4_sp, 80);
++                v107__same_read_107 = (t105 * v32_fd_lpx);
++                t106 = (v36_fd_rx + v48_fd_tx);
++                t107 = loft_f64(UINT64_C(0x4000000000000000));
++                t108 = (t106 / t107);
++                t109 = (-(v47_fd_fy));
++                t110 = (v107__same_read_107 * t109);
++                v53_fd_mx = (t108 + t110);
++                t111 = (v37_fd_ry + v49_fd_ty);
++                t112 = loft_f64(UINT64_C(0x4000000000000000));
++                t113 = (t111 / t112);
++                t114 = (v107__same_read_107 * v46_fd_fx);
++                v54_fd_my = (t113 + t114);
++                loft_vec_prealloc(v51_fd_pts, 3, 16);
++                t115 = loft_vec_append(v51_fd_pts, 16);
++                v55__elm_3 = t115;
++                loft_frame_site(1652);
++                t117 = loft_i2f(v5_pw);
++                v56___ncc_6 = (v36_fd_rx / t117);
++                if (!isnan(v56___ncc_6)) {
++                    t116 = v56___ncc_6;
++                } else {
++                    LOFT_COLD_PATH();
++                    t116 = loft_f64(UINT64_C(0x0));
++                }
++                t119 = loft_i2f(v6_ph);
++                v57___ncc_7 = (v37_fd_ry / t119);
++                if (!isnan(v57___ncc_7)) {
++                    t118 = v57___ncc_7;
++                } else {
++                    LOFT_COLD_PATH();
++                    t118 = loft_f64(UINT64_C(0x0));
++                }
++                v97___ref_p2_1 = n_pt(t116, t118);
++                if (1) {
++                    t120 = v55__elm_3;
++                    { uint8_t *loft_w = loft_rec_w(t120); if (loft_w) {
++                        memcpy(loft_w + 0, &v97___ref_p2_1.f0, 8);
++                        memcpy(loft_w + 8, &v97___ref_p2_1.f1, 8);
++                    } }
++                }
++                loft_vec_finish(v51_fd_pts);
++                t121 = loft_vec_append(v51_fd_pts, 16);
++                v55__elm_3 = t121;
++                loft_frame_site(1652);
++                t123 = loft_i2f(v5_pw);
++                v59___ncc_8 = (v53_fd_mx / t123);
++                if (!isnan(v59___ncc_8)) {
++                    t122 = v59___ncc_8;
++                } else {
++                    LOFT_COLD_PATH();
++                    t122 = loft_f64(UINT64_C(0x0));
++                }
++                t125 = loft_i2f(v6_ph);
++                v60___ncc_9 = (v54_fd_my / t125);
++                if (!isnan(v60___ncc_9)) {
++                    t124 = v60___ncc_9;
++                } else {
++                    LOFT_COLD_PATH();
++                    t124 = loft_f64(UINT64_C(0x0));
++                }
++                v98___ref_p2_2 = n_pt(t122, t124);
++                if (1) {
++                    t126 = v55__elm_3;
++                    { uint8_t *loft_w = loft_rec_w(t126); if (loft_w) {
++                        memcpy(loft_w + 0, &v98___ref_p2_2.f0, 8);
++                        memcpy(loft_w + 8, &v98___ref_p2_2.f1, 8);
++                    } }
++                }
++                loft_vec_finish(v51_fd_pts);
++                t127 = loft_vec_append(v51_fd_pts, 16);
++                v55__elm_3 = t127;
++                loft_frame_site(1652);
++                t129 = loft_i2f(v5_pw);
++                v62___ncc_10 = (v48_fd_tx / t129);
++                if (!isnan(v62___ncc_10)) {
++                    t128 = v62___ncc_10;
++                } else {
++                    LOFT_COLD_PATH();
++                    t128 = loft_f64(UINT64_C(0x0));
++                }
++                t131 = loft_i2f(v6_ph);
++                v63___ncc_11 = (v49_fd_ty / t131);
++                if (!isnan(v63___ncc_11)) {
++                    t130 = v63___ncc_11;
++                } else {
++                    LOFT_COLD_PATH();
++                    t130 = loft_f64(UINT64_C(0x0));
++                }
++                v99___ref_p2_3 = n_pt(t128, t130);
++                if (1) {
++                    t132 = v55__elm_3;
++                    { uint8_t *loft_w = loft_rec_w(t132); if (loft_w) {
++                        memcpy(loft_w + 0, &v99___ref_p2_3.f0, 8);
++                        memcpy(loft_w + 8, &v99___ref_p2_3.f1, 8);
++                    } }
++                }
++                loft_vec_finish(v51_fd_pts);
++                loft_vec_prealloc(v52_fd_wid, 3, 8);
++                loft_vec_push_float(v52_fd_wid, v35_fd_wi);
++                t133 = (v35_fd_wi + v50_fd_tip);
++                t134 = loft_f64(UINT64_C(0x4000000000000000));
++                t135 = (t133 / t134);
++                loft_vec_push_float(v52_fd_wid, t135);
++                loft_vec_push_float(v52_fd_wid, v50_fd_tip);
++            } else {
++                loft_vec_prealloc(v51_fd_pts, 2, 16);
++                t136 = loft_vec_append(v51_fd_pts, 16);
++                v66__elm_5 = t136;
++                loft_frame_site(1657);
++                t138 = loft_i2f(v5_pw);
++                v67___ncc_12 = (v36_fd_rx / t138);
++                if (!isnan(v67___ncc_12)) {
++                    t137 = v67___ncc_12;
++                } else {
++                    LOFT_COLD_PATH();
++                    t137 = loft_f64(UINT64_C(0x0));
++                }
++                t140 = loft_i2f(v6_ph);
++                v68___ncc_13 = (v37_fd_ry / t140);
++                if (!isnan(v68___ncc_13)) {
++                    t139 = v68___ncc_13;
++                } else {
++                    LOFT_COLD_PATH();
++                    t139 = loft_f64(UINT64_C(0x0));
++                }
++                v100___ref_p2_4 = n_pt(t137, t139);
++                if (1) {
++                    t141 = v66__elm_5;
++                    { uint8_t *loft_w = loft_rec_w(t141); if (loft_w) {
++                        memcpy(loft_w + 0, &v100___ref_p2_4.f0, 8);
++                        memcpy(loft_w + 8, &v100___ref_p2_4.f1, 8);
++                    } }
++                }
++                loft_vec_finish(v51_fd_pts);
++                t142 = loft_vec_append(v51_fd_pts, 16);
++                v66__elm_5 = t142;
++                loft_frame_site(1657);
++                t144 = loft_i2f(v5_pw);
++                v70___ncc_14 = (v48_fd_tx / t144);
++                if (!isnan(v70___ncc_14)) {
++                    t143 = v70___ncc_14;
++                } else {
++                    LOFT_COLD_PATH();
++                    t143 = loft_f64(UINT64_C(0x0));
++                }
++                t146 = loft_i2f(v6_ph);
++                v71___ncc_15 = (v49_fd_ty / t146);
++                if (!isnan(v71___ncc_15)) {
++                    t145 = v71___ncc_15;
++                } else {
++                    LOFT_COLD_PATH();
++                    t145 = loft_f64(UINT64_C(0x0));
++                }
++                v101___ref_p2_5 = n_pt(t143, t145);
++                if (1) {
++                    t147 = v66__elm_5;
++                    { uint8_t *loft_w = loft_rec_w(t147); if (loft_w) {
++                        memcpy(loft_w + 0, &v101___ref_p2_5.f0, 8);
++                        memcpy(loft_w + 8, &v101___ref_p2_5.f1, 8);
++                    } }
++                }
++                loft_vec_finish(v51_fd_pts);
++                loft_vec_prealloc(v52_fd_wid, 2, 8);
++                loft_vec_push_float(v52_fd_wid, v35_fd_wi);
++                loft_vec_push_float(v52_fd_wid, v50_fd_tip);
++            }
++            loft_vec_prealloc(v8_fd_out, 1, 8);
++            t148 = loft_vec_append(v8_fd_out, 8);
++            v74__elm_7 = t148;
++            loft_set_int4(v74__elm_7, 0, INT64_C(0));
++            loft_set_int4(v74__elm_7, 4, INT64_C(0));
++            t149 = loft_field(v74__elm_7, 0);
++            loft_vec_add(loft_types, 153, t149, v51_fd_pts);
++            t150 = loft_field(v74__elm_7, 4);
++            loft_vec_add(loft_types, 3, t150, v52_fd_wid);
++            loft_vec_finish(v8_fd_out);
++        cont_2:;
++        }
++        brk_2:;
++    cont_1:;
++    }
++    brk_1:;
++    t151 = loft_get_int(v4_sp, 96);
++    if (t151 <= loft_w64(INT32_C(1))) {
++        loft_free_var(&v96___vdb_5);
++        loft_free_var(&v95___vdb_4);
++        loft_free_var(&v94___vdb_3);
++        loft_free_var(&v93___vdb_2);
++        loft_free_var(&v87___ref_6);
++        loft_free_var(&v92___vdb_1);
++        loft_free_var(&v102___ref_p2_6);
++        loft_free_var(&v103___ref_p2_7);
++        loft_free_var(&v104___ref_p2_8);
++        t152 = v7___retbuf;
++        return t152;
++    }
++    loft_frame_site(1669);
++    v75_fd_base = t_6vector_len(v8_fd_out) - ap_base0;
++    loft_frame_site(1670);
++    t153 = loft_i2f(v20_fd_n);
++    t154 = loft_f64(UINT64_C(0x3fe199999999999a));
++    t155 = (t153 * t154);
++    t156 = n_round_half_even(t155);
++    v76_fd_cn = loft_f2i(t156);
++    if (v76_fd_cn < loft_w64(INT32_C(2))) {
++        v76_fd_cn = INT64_C(2);
++    }
++    v77__range_end_2 = v75_fd_base;
++    v78_k_index = INT64_C(-1);
++    loft_frame_site(1672);
++    for (;;) {
++        v78_k_index = ((v78_k_index) + (INT64_C(1)));
++        if (v77__range_end_2 <= v78_k_index) {
++            goto brk_3;
++        }
++        v79_k = v78_k_index;
++        v81___ncc_16 = loft_vec_get(v8_fd_out, 8, ap_base0 + v79_k);
++        if (v81___ncc_16.rec != 0) {
++            v80_fd_f = v81___ncc_16;
++        } else {
++            loft_database_typed(&v102___ref_p2_6, 8, 183);
++            loft_set_int4(v102___ref_p2_6, 0, INT64_C(0));
++            loft_set_int4(v102___ref_p2_6, 0, INT64_C(0));
++            loft_set_int4(v102___ref_p2_6, 4, INT64_C(0));
++            loft_set_int4(v102___ref_p2_6, 4, INT64_C(0));
++            v80_fd_f = v102___ref_p2_6;
++        }
++        t157 = loft_field(v80_fd_f, 0);
++        v83___ncc_17 = loft_vec_get(t157, 16, INT64_C(0));
++        if (v83___ncc_17.rec != 0) {
++            v82_fd_a = v83___ncc_17;
++        } else {
++            loft_database_typed(&v103___ref_p2_7, 16, 153);
++            t158 = loft_f64(UINT64_C(0x0));
++            loft_set_float(v103___ref_p2_7, 0, t158);
++            t159 = loft_f64(UINT64_C(0x0));
++            loft_set_float(v103___ref_p2_7, 8, t159);
++            v82_fd_a = v103___ref_p2_7;
++        }
++        loft_frame_site(1675);
++        loft_frame_site(1675);
++        t160 = loft_field(v80_fd_f, 0);
++        t161 = loft_field(v80_fd_f, 0);
++        t162 = t_6vector_len(t161);
++        t163 = ((t162) - (INT64_C(1)));
++        v85___ncc_18 = loft_vec_get(t160, 16, t163);
++        if (v85___ncc_18.rec != 0) {
++            v84_fd_b = v85___ncc_18;
++        } else {
++            loft_database_typed(&v104___ref_p2_8, 16, 153);
++            t164 = loft_f64(UINT64_C(0x0));
++            loft_set_float(v104___ref_p2_8, 0, t164);
++            t165 = loft_f64(UINT64_C(0x0));
++            loft_set_float(v104___ref_p2_8, 8, t165);
++            v84_fd_b = v104___ref_p2_8;
++        }
++        v86_fd_sub = loft_ref_null();
++        loft_database_typed(&v86_fd_sub, 120, 163);
++        loft_set_int(v86_fd_sub, 0, v76_fd_cn);
++        t166 = loft_get_float(v4_sp, 8);
++        t167 = loft_get_float(v4_sp, 104);
++        t168 = (t166 * t167);
++        loft_set_float(v86_fd_sub, 8, t168);
++        t169 = loft_get_float(v4_sp, 8);
++        t170 = loft_get_float(v4_sp, 104);
++        t171 = (t169 * t170);
++        t172 = loft_f64(UINT64_C(0x3fe0000000000000));
++        t173 = (t171 * t172);
++        loft_set_float(v86_fd_sub, 16, t173);
++        t174 = loft_get_float(v4_sp, 24);
++        t175 = loft_f64(UINT64_C(0x3fe0000000000000));
++        t176 = (t174 * t175);
++        loft_set_float(v86_fd_sub, 24, t176);
++        t177 = v86_fd_sub;
++        t179 = loft_f64(UINT64_C(0x3fe3333333333333));
++        t180 = loft_get_float(v4_sp, 32);
++        t181 = loft_f64(UINT64_C(0x3fe0000000000000));
++        t182 = (t180 * t181);
++        if ((t179) < (t182)) {
++            t183 = loft_get_float(v4_sp, 32);
++            t184 = loft_f64(UINT64_C(0x3fe0000000000000));
++            t178 = (t183 * t184);
++        } else {
++            t178 = loft_f64(UINT64_C(0x3fe3333333333333));
++        }
++        loft_set_float(t177, 32, t178);
++        t185 = loft_get_float(v4_sp, 40);
++        loft_set_float(v86_fd_sub, 40, t185);
++        t186 = loft_get_float(v4_sp, 48);
++        loft_set_float(v86_fd_sub, 48, t186);
++        loft_set_byte(v86_fd_sub, 112, (uint8_t) (1));
++        t187 = loft_get_float(v4_sp, 56);
++        loft_set_float(v86_fd_sub, 56, t187);
++        t188 = loft_get_float(v4_sp, 64);
++        loft_set_float(v86_fd_sub, 64, t188);
++        t189 = loft_get_float(v4_sp, 72);
++        loft_set_float(v86_fd_sub, 72, t189);
++        t190 = loft_get_float(v4_sp, 80);
++        loft_set_float(v86_fd_sub, 80, t190);
++        t191 = loft_get_int(v4_sp, 88);
++        t192 = loft_wrap_mul(t191, INT64_C(31));
++        t193 = loft_wrap_add(t192, v79_k);
++        t194 = loft_wrap_add(t193, INT64_C(1));
++        loft_set_int(v86_fd_sub, 88, t194);
++        t195 = loft_get_int(v4_sp, 96);
++        t196 = loft_wrap_sub(t195, INT64_C(1));
++        loft_set_int(v86_fd_sub, 96, t196);
++        t197 = loft_get_float(v4_sp, 104);
++        loft_set_float(v86_fd_sub, 104, t197);
++        loft_frame_site(1683);
++        t198 = loft_get_float(v82_fd_a, 0);
++        t199 = loft_get_float(v82_fd_a, 8);
++        t200 = loft_get_float(v84_fd_b, 0);
++        t201 = loft_get_float(v84_fd_b, 8);
++        n_fronds__ap(t198, t199, t200, t201, v86_fd_sub, v5_pw, v6_ph, v8_fd_out);
++        loft_free_var(&v86_fd_sub);
++    cont_3:;
++    }
++    brk_3:;
++    loft_free_var(&v87___ref_6);
++    loft_free_var(&v96___vdb_5);
++    loft_free_var(&v95___vdb_4);
++    loft_free_var(&v94___vdb_3);
++    loft_free_var(&v93___vdb_2);
++    loft_free_var(&v92___vdb_1);
++    loft_free_var(&v102___ref_p2_6);
++    loft_free_var(&v103___ref_p2_7);
++    loft_free_var(&v104___ref_p2_8);
++    t204 = v7___retbuf;
++    return t204;
++    return t1;
++}
+ static loft_ref n_fronds__fr(double v0_x1, double v1_y1, double v2_x2, double v3_y2, loft_ref v4_sp, int64_t v5_pw, int64_t v6_ph, loft_ref v7___retbuf) {
+     loft_ref v8_fd_out = { 0xFFFF, 0, 0 };
+     double v9_fd_p1x = (double) NAN;
+@@ -27021,26 +27912,7 @@
+         t199 = loft_get_float(v82_fd_a, 8);
+         t200 = loft_get_float(v84_fd_b, 0);
+         t201 = loft_get_float(v84_fd_b, 8);
+-        v88__vector_2 = n_fronds(t198, t199, t200, t201, v86_fd_sub, v5_pw, v6_ph, v87___ref_6);
+-        v89_f_index = INT64_C(-1);
+-        ph2 = loft_ph_of(v8_fd_out, 8);
+-        for (;;) {
+-            v89_f_index = loft_wrap_add(v89_f_index, INT64_C(1));
+-            v90_f = loft_vec_get(v88__vector_2, 8, v89_f_index);
+-            t202 = loft_vec_len(v88__vector_2);
+-            if (t202 <= v89_f_index) {
+-                goto brk_4;
+-            }
+-            if (v89_f_index < loft_w64(INT32_C(0))) {
+-                goto brk_4;
+-            }
+-            t203 = (LOFT_PROVED(loft_ph_same(ph2, 8), "fronds:ph2"), loft_ph_new(&ph2, 8));
+-            v91__elm_8 = t203;
+-            loft_copy_record(loft_types, 183, v90_f, v91__elm_8, 6);
+-            loft_ph_finish(&ph2);
+-        cont_4:;
+-        }
+-        brk_4:;
++        n_fronds__ap(t198, t199, t200, t201, v86_fd_sub, v5_pw, v6_ph, v8_fd_out);
+         loft_free_var(&v86_fd_sub);
+     cont_3:;
+     }

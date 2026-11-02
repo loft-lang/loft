@@ -210,16 +210,20 @@ fn a_scalar_program_written_as_c_answers_what_the_interpreter_answers() {
 
 #[test]
 fn a_construct_outside_the_scalar_subset_is_refused_by_name() {
-    // A stdlib native the runtime has not ported is refused by its name, never written as C
-    // that answers differently.
-    // `host_output` is the browser host's channel, which the C runtime has not ported (@PLN203 C6).
-    let p = parsed("fn up() -> integer { host_output(\"up\"); 1 }\n");
+    // A native the C runtime has not ported is refused by its name, never written as C that
+    // answers differently.  Every native a program can call from the standard library has a C
+    // port, so the subject is one of loft's own binary that the runtime does not carry:
+    // `lib/engine_host`'s build swap (`in_binary_native`).
+    let p = parsed(
+        "fn swap_start(artifact: text) -> boolean;\n#native\n\
+         fn up() -> integer { if swap_start(\"x\") { 1 } else { 0 } }\n",
+    );
     let d = p.data.def_nr("n_up");
     let refusal = loft::c::emit_unit(&p.data, &p.database, &[d])
         .expect_err("a native without a C port is not carried");
-    assert_eq!(refusal.function, "host_output");
+    assert_eq!(refusal.function, "swap_start");
     assert!(
-        refusal.why.contains("native host_output"),
+        refusal.why.contains("native swap_start"),
         "names the construct: {refusal}"
     );
 }
@@ -232,9 +236,6 @@ fn every_stdlib_native_has_a_c_arm_or_a_named_refusal() {
     let p = parsed("fn main() {}\n");
     let unported = loft::c::unported_natives(&p.data);
     let refused: &[&str] = &[
-        // The browser host's channel (`--html`, `--native-wasm`): @PLN203 C6.
-        "n_host_input",
-        "n_host_output",
         // The test ledger's builtins (@PLN201 step 2): the C records no ledger yet.
         "n___ledger",
         "n___ledger_div",
@@ -1377,14 +1378,16 @@ fn main() {
     // TWIN (`@FR-R-AppendTwin`), a second body of `build`: one more held call and versioned
     // loop wherever `build` has one.  Its `pix` is the caller's vector, written through the
     // caller's push window (the window clause), so the twin holds no push header of its own:
-    // four scalar push headers, five under `LOFT_NO_APPEND_WINDOW`.
+    // four scalar push headers, five under `LOFT_NO_APPEND_WINDOW` — plus one in `main` for the
+    // literal `v: [2, 4, 6, 8, 10]`, a straight run written through one header
+    // (`@FR-R-PushFill`'s header clause).
     for (mode, switch, twins, fresh, versioned, pushed, scalar_pushed, scalars) in [
-        ("held", "", 3, 3, 2, 2, 4, 1),
-        ("no-window", "LOFT_NO_APPEND_WINDOW", 3, 3, 2, 2, 5, 1),
-        ("no-inputs", "LOFT_NO_CALLEE_INPUTS", 0, 3, 0, 2, 4, 1),
-        ("no-version", "LOFT_NO_DISTINCT_VERSION", 1, 3, 0, 2, 4, 1),
-        ("no-record-push", "LOFT_NO_RECORD_PUSH", 3, 3, 2, 0, 4, 1),
-        ("no-scalar", "LOFT_NO_SCALAR_HOIST", 1, 3, 2, 2, 4, 0),
+        ("held", "", 3, 3, 2, 2, 5, 1),
+        ("no-window", "LOFT_NO_APPEND_WINDOW", 3, 3, 2, 2, 6, 1),
+        ("no-inputs", "LOFT_NO_CALLEE_INPUTS", 0, 3, 0, 2, 5, 1),
+        ("no-version", "LOFT_NO_DISTINCT_VERSION", 1, 3, 0, 2, 5, 1),
+        ("no-record-push", "LOFT_NO_RECORD_PUSH", 3, 3, 2, 0, 5, 1),
+        ("no-scalar", "LOFT_NO_SCALAR_HOIST", 1, 3, 2, 2, 5, 0),
         ("unheld", "LOFT_NO_VECTOR_HOIST", 0, 0, 0, 0, 0, 0),
     ] {
         let c = dir.join(format!("{mode}.c"));
@@ -2331,9 +2334,12 @@ int main(int argc, char **argv) {
     );
 }
 
-/// A seeded LCG, the same sequence on every run and every machine.
+/// A seeded LCG, the same sequence on every run and every machine.  Only the mapped-store
+/// sequences draw from it, so it is built where they are.
+#[cfg(feature = "mmap")]
 struct Lcg(u64);
 
+#[cfg(feature = "mmap")]
 impl Lcg {
     fn next(&mut self, n: u64) -> u64 {
         self.0 = self
@@ -2807,6 +2813,110 @@ fn a_strict_store_c_build_names_a_use_after_free_and_a_store_never_freed() {
     let _ = fa::remove_dir_all(&dir);
 }
 
+/// `LOFT_STRICT_STORES` names the FREE that killed a store, and `LOFT_DOUBLE_FREE` builds the
+/// interpreter's re-free census on C (`strict_note_free`, `keys::double_free_audit`): a cell in
+/// one loft frame frees a store at line 9, reads it at line 11, frees it again at line 12 and
+/// makes it again through the same reference at line 13.  The use after free names both the
+/// free and the access; the census names the re-free and the revival with both their sites, and
+/// counts them.  Falsified: no site recorded at the free (`<not recorded>`), the revival not
+/// noted, and the re-free classified by store alone each fail it.
+#[test]
+fn a_strict_store_c_build_names_the_free_that_killed_a_store_and_the_census_its_sites() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("strict-free-sites");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let file = dir.join("sites.loft");
+    fa::write(
+        &file,
+        "struct P { x: integer, name: text }\nfn main() {\n  p = P { x: 41, name: \"a\" };\n  \
+         println(\"{p.x} {p.name}\");\n}\n",
+    )
+    .expect("write program");
+    let c = dir.join("sites.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "emit: {}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let unit = fa::read_to_string(&c).expect("read the C");
+    let tp: u32 = unit
+        .split("loft_database_typed(&v0_p, 16, ")
+        .nth(1)
+        .and_then(|t| t.split(')').next())
+        .and_then(|t| t.parse().ok())
+        .expect("the type of P in the unit");
+    let mut text = unit.replacen(
+        "int main(int argc, char **argv) {",
+        "static int loft_program_main(int argc, char **argv) {",
+        1,
+    );
+    let _ = write!(
+        text,
+        "\nint main(void) {{\n    loft_bind_tables();\n    loft_start(0, 0);\n    \
+         loft_frame_push(\"cell\", \"cell.loft\", 3);\n    \
+         loft_ref r = loft_ref_null();\n    loft_database_typed(&r, 16, {tp});\n    \
+         loft_ref k = loft_ref_null();\n    loft_database_typed(&k, 16, {tp});\n    \
+         loft_frame_site(9);\n    loft_free_ref(r);\n    \
+         loft_frame_site(11);\n    printf(\"stale %lld\\n\", (long long) loft_get_int(r, 0));\n    \
+         loft_frame_site(12);\n    loft_free_ref(r);\n    \
+         loft_frame_site(13);\n    loft_database_typed(&r, 16, {tp});\n    \
+         loft_free_ref(r);\n    loft_free_ref(k);\n    loft_frame_pop();\n    \
+         loft_leak_report();\n    return 0;\n}}\n"
+    );
+    let src = dir.join("cell.c");
+    let exe = dir.join("cell");
+    fa::write(&src, &text).expect("write the cell");
+    let cc = loft::platform::process::harness_command("cc")
+        .args([
+            "-std=c99",
+            "-O1",
+            "-w",
+            "-DLOFT_STRICT_STORES",
+            "-DLOFT_DOUBLE_FREE",
+        ])
+        .arg(&src)
+        .arg("-o")
+        .arg(&exe)
+        .args(unit_links(&src))
+        .arg("-lm")
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc: {}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .output()
+        .expect("run the cell");
+    let err = String::from_utf8_lossy(&out.stderr);
+    for want in [
+        "[strict-store] USE AFTER FREE (access) store #0 type=P rec=1 pos=8",
+        "  killed by the free in fn cell() at cell.loft:9",
+        "  accessed now in fn cell() at cell.loft:11",
+        "[double-free] store #0 freed again in fn cell() at cell.loft:12, first freed in fn cell() at cell.loft:9",
+        "[double-free] store #0 made again in fn cell() at cell.loft:13, freed in fn cell() at cell.loft:9",
+        "[double-free] 1 re-free(s) of an already-free slot: 1 from a DIFFERENT site and 0 from the SAME site; \
+         1 freed slot(s) made again through a reference that still named them.",
+    ] {
+        assert!(err.contains(want), "missing {want:?} in:\n{err}");
+    }
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "the use after free fails the run"
+    );
+}
+
 /// @PLN206 D31 — a test run leaves no store behind on the C, as on the interpreter, whose tests
 /// each run in a fork of their own.  Three ways it did not, each a cell here:
 /// - a default lowered into a function of its own (`__dflt_f_b`, loft#699) has no parameter,
@@ -3272,9 +3382,11 @@ fn the_c_debug_build_names_loft_lines_in_its_line_table() {
         .expect("the kept C");
     let c = fa::read_to_string(kept).expect("read the kept C");
     let _ = fa::remove_file(kept);
-    let total = file.to_string_lossy().replace('\\', "\\\\");
+    // The file as the driver resolved it: macOS spells a temp path through `/private`, Windows
+    // through its short names, so the marker is matched by its line and the file's own name.
     assert!(
-        c.contains(&format!("#line 3 \"{total}\"")),
+        c.lines()
+            .any(|l| l.starts_with("#line 3 \"") && l.trim_end().ends_with("total.loft\"")),
         "no marker for line 3 of total.loft"
     );
     // The line table, where binutils reads it.
@@ -7575,5 +7687,69 @@ fn a_unit_that_locks_nothing_keeps_no_locked_write_discard() {
         String::from_utf8_lossy(&run.stdout),
         "7\n",
         "the C build's answer"
+    );
+}
+
+/// loft#2313 — a `return` frees every text the function holds, including the temporaries a
+/// LATER statement of the same loop declares: they hold the previous round's buffer when a
+/// return in an earlier statement is taken.  Read off the emitted C: before each `return` of
+/// the function, the frees name every text temporary it declares.
+#[test]
+fn a_return_inside_a_loop_frees_the_texts_a_later_statement_declares() {
+    let p = parsed(
+        "fn f(name: text) -> integer {\n  for stem in [\"a\", \"b\"] {\n    \
+         if name == \"{stem}x\" { return 1; }\n    if name == \"{stem}y\" { return 2; }\n  }\n  0\n}\n",
+    );
+    let c = loft::c::emit_unit(&p.data, &p.database, &[p.data.def_nr("n_f")])
+        .unwrap_or_else(|r| panic!("f is carried: {r}"));
+    // The definition that holds the body: the frame-carrying `__fr` twin where there is one,
+    // the line that opens a brace (a prototype ends in `;`).
+    let lines: Vec<&str> = c.lines().collect();
+    let opens = |name: &str| {
+        lines
+            .iter()
+            .position(|l| l.starts_with(&format!("static int64_t {name}(")) && l.ends_with('{'))
+    };
+    let start = opens("n_f__fr")
+        .or_else(|| opens("n_f"))
+        .expect("the function's body");
+    let body: Vec<&str> = lines[start..]
+        .iter()
+        .take_while(|l| **l != "}")
+        .copied()
+        .collect();
+    let temps: Vec<String> = body
+        .iter()
+        .filter_map(|l| l.trim().strip_prefix("loft_text "))
+        .filter_map(|r| r.split(' ').next())
+        .filter(|n| n.starts_with('t'))
+        .map(str::to_string)
+        .collect();
+    assert!(temps.len() >= 2, "two text temporaries, one per `if`\n{c}");
+    let mut returns = 0;
+    for (i, l) in body.iter().enumerate() {
+        if !l.trim_start().starts_with("return ") {
+            continue;
+        }
+        returns += 1;
+        let freed: Vec<&str> = body[..i]
+            .iter()
+            .rev()
+            .take_while(|p| p.contains("loft_text_free(&") || p.starts_with("#line "))
+            .copied()
+            .collect();
+        for t in &temps {
+            assert!(
+                freed
+                    .iter()
+                    .any(|f| f.contains(&format!("loft_text_free(&{t});"))),
+                "return {returns} frees {t}\n{}",
+                body.join("\n")
+            );
+        }
+    }
+    assert!(
+        returns >= 3,
+        "the two returns in the loop and the tail\n{c}"
     );
 }

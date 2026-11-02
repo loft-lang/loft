@@ -1,0 +1,77 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 S6 — files: a File record of the interpreted program read and written through the C
+// runtime's own routines (`crt`, `files.loft`).  Every path is under the temporary directory,
+// so the kernel needs no anchor.  Every value is hand-computed beside its kernel.
+struct Pt {
+  x: integer,
+  y: i32,
+  tag: u8,
+}
+
+fn path_of(n: integer) -> text {
+  "{temp_dir() ?? "/tmp"}/loft_selfhost_files_{n}.bin"
+}
+
+// `write_bytes`, `file`, `content`, the size, `delete`: n letters written as bytes and read back as
+// text.  bytes_back(3) = "abc": 3 * 1000 + 'c' (99) + size 3 * 100000 = 303099.
+fn bytes_back(n: integer) -> integer {
+  p = path_of(n);
+  b: vector<u8> = [];
+  for i in 0..n {
+    b += [(97 + i % 26) as u8];
+  }
+  if !write_bytes(p, b) {
+    return -1;
+  }
+  f = file(p);
+  c = f.content() ?? "";
+  r = len(c) * 1000 + c.byte_at(n - 1) + f.size * 100000;
+  delete(p);
+  if file(p).exists() { -2 } else { r }
+}
+
+// A value's binary form: a 32-bit integer, a record (8 + 4 + 1 bytes) and a narrow local, little
+// endian, read back field by field.  binary(5): 5 + (5 * 10 - 2) * 100 + 7 * 10000 + 0xBEEF
+// (48879) * 1000000 = 48879074805.
+fn binary(n: integer) -> integer {
+  p = path_of(100 + n);
+  {
+    f = file(p);
+    f#format = LittleEndian;
+    f.set_file_size(0);
+    f += (n as i32);
+    f += Pt { x: n * 10, y: -2, tag: 7 };
+    f += (0xBEEF as u16);
+  }
+  g = file(p);
+  g#format = LittleEndian;
+  a = g#read(4) as i32;
+  pt = g#read(13) as Pt;
+  w = g#read as u16;
+  delete(p);
+  a + (pt.x + pt.y) * 100 + pt.tag * 10000 + w * 1000000
+}
+
+// `f.lines()` (the compiled body's twin), a text written through the File and read back.
+// lined(2): "l0\nl1\r\n" plus "end" -> 3 lines, the last "end" (3 bytes), the first "l0":
+// 3 * 100 + 3 * 10 + len("l0") = 332.
+fn lined(n: integer) -> integer {
+  p = path_of(200 + n);
+  {
+    f = file(p);
+    f.set_file_size(0);
+    for i in 0..n {
+      f += if i % 2 == 0 { "l{i}\n" } else { "l{i}\r\n" };
+    }
+    f += "end";
+  }
+  ls = file(p).lines();
+  delete(p);
+  len(ls) * 100 + len(ls[len(ls) - 1]) * 10 + len(ls[0])
+}
+
+fn main() {
+  println("{bytes_back(3)} {binary(5)} {lined(2)}");
+}

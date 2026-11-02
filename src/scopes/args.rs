@@ -105,6 +105,7 @@ impl Scopes<'_> {
         }
         if moved_arg == Some(arg_idx) {
             self.free_transferred.insert(tmp);
+            self.consumed_lifts.push(tmp);
         }
     }
 
@@ -221,6 +222,7 @@ impl Scopes<'_> {
         // It stays unallocated while nothing is hoisted — every start is 0 then — because this
         // runs for every call the scope pass scans, the stdlib's included, on every compile.
         let mut hoisted_from: Vec<usize> = Vec::new();
+        let consumed_from = self.consumed_lifts.len();
         for (arg_idx, a) in args.iter().enumerate() {
             if !preamble.is_empty() {
                 hoisted_from.resize(arg_idx, 0);
@@ -614,6 +616,14 @@ impl Scopes<'_> {
                 function,
                 data,
             );
+        }
+        // loft#2319 — a lift whose store this call consumes (the `0x8000` move frees it inside
+        // the op) names a freed store once the call returns.  Read back as null after the call,
+        // so its next bind — the next turn of a loop — starts from nothing instead of
+        // rebinding into a store number the allocator may have handed to another local: the
+        // native rebind re-minted that store in place over the other local's record.
+        for tmp in self.consumed_lifts.drain(consumed_from..) {
+            postamble.push(v_set(tmp, Value::Null));
         }
         for (i, orig) in amp_foreign.iter().enumerate() {
             preamble.insert(

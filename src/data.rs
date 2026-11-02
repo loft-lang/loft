@@ -250,6 +250,11 @@ impl DefIndex {
         self.get(name, source).is_some()
     }
 
+    /// The definition `name` was FIRST bound to, in whichever source.
+    pub(crate) fn first_bound(&self, name: &str) -> Option<u32> {
+        self.by_name.get(name).map(|b| b.first.1)
+    }
+
     /// Bound in ANY source.
     pub(crate) fn contains_name(&self, name: &str) -> bool {
         self.by_name.contains_key(name)
@@ -4495,8 +4500,9 @@ pub struct Definition {
     /// A standard-library operator's dispatch priority, from `#hot` / `#cold`: [`OP_HOT`] runs
     /// inline in the lean loop on its registers and takes a one-byte opcode, [`OP_COLD`] is
     /// rare and takes a two-byte one, [`OP_NORMAL`] is everything else.  Read at parse time
-    /// (`Data::op_code`) and by the `fill.rs` generator, both from a fresh parse of
-    /// `default/`, so it is not part of the persisted IR.
+    /// (`Data::op_code`) and by the `fill.rs` generator.  The image carries it as `op_hot` /
+    /// `op_cold` (`DEF_OP_HOT`, `DEF_OP_COLD`), so the loft interpreter numbers the operators
+    /// by the same rule.
     pub op_priority: u8,
     /// @PLN102 arc C — `#superseded "Y"`: the bare name of the successor symbol
     /// this callable is superseded by (e.g. `"write_through"`).  Empty = not
@@ -12443,6 +12449,13 @@ impl Data {
     #[must_use]
     pub fn caller_source_is_owned(&self) -> bool {
         self.source_is_owned(self.source)
+    }
+
+    /// The definition keyed `name` in ANY source, the first one made — for a key that names one
+    /// thing program-wide whichever source mints it: an instance of a generic (`@FR-G-Mono`).
+    #[must_use]
+    pub fn any_source_nr(&self, name: &str) -> u32 {
+        self.def_names.first_bound(name).unwrap_or(u32::MAX)
     }
 
     #[must_use]

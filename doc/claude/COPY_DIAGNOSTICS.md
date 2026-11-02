@@ -375,6 +375,10 @@ warning does not buy any of them off.
 
 ## What remains open
 
+The later-use search, the cheap-copy threshold and the fix set are settled, and stated where
+the notice is documented: DIAGNOSTICS.md § Fix lines.  How they were settled:
+[COPY_DIAGNOSTICS-history.md](COPY_DIAGNOSTICS-history.md).
+
 1. **The per-file / per-function accept surface** has no syntax yet (decision 3 names the
    requirement; `#superseded "…"` is the only per-definition precedent). Until it exists, an
    unaccepted copy is simply reported — which is the state the model requires, so this blocks

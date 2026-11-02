@@ -1060,6 +1060,9 @@ pub struct Parser {
     /// A destructuring `for (a, b) in …`'s binders, bound by the header like the loop variable
     /// and scoped to the body the next `for` block opens.
     pub(crate) pending_loop_binders: Vec<u16>,
+    /// The ended binding a `for` statement's spelling named before its variable took it,
+    /// handed from the header to the body's caller (`Parser::ended_spelling`, loft#2321).
+    pub(crate) loop_spelling: Option<(String, u16)>,
     pub(crate) block_ord: u32,
     /// The binding's block is kept as its INNERMOST ordinal (`None` = the function's own
     /// scope): ordinals are unique and a block's ancestors never change, so "the recorded
@@ -1087,11 +1090,21 @@ pub struct Parser {
     /// farthest-reached position — the token to point an error at.  `None` = the cursor has no such
     /// field (tracking is opt-in, so a plain `{ src, pos }` cursor is unaffected).
     pub(crate) match_cursor_farthest: Option<usize>,
-    /// @PLN35 PC3 — sub-rule invocation edges `(enclosing_rule, invoked_rule, site)` recorded on
-    /// pass 2, so a post-parse well-formedness pass can reject a left-recursive grammar (a cycle in
-    /// this graph) at compile time rather than hang at runtime.  Every PC2 invocation is at cursor
-    /// position 0 (whole-pattern), so any cycle is non-consuming — it cannot terminate.
-    pub(crate) subrule_edges: Vec<(u32, u32, Position)>,
+    /// @PLN35 PC3 — sub-rule invocation edges `(enclosing_rule, invoked_rule, site, consuming)`
+    /// recorded on pass 2, so a post-parse well-formedness pass can reject a left-recursive
+    /// grammar (a cycle of NON-consuming edges) at compile time rather than hang at runtime.  An
+    /// edge is consuming when a token is taken before the call: a fixed element earlier in its
+    /// pattern, or the arm whose body holds its match (`cursor_consumed`).
+    pub(crate) subrule_edges: Vec<(u32, u32, Position, bool)>,
+    /// `@FR-P-Rule` — the cursor variables whose arm BODY is being parsed after the arm's
+    /// pattern consumed a token: a sub-rule called on one of them there is a consuming edge.
+    pub(crate) cursor_consumed: Vec<u16>,
+    /// Set by `parse_slice_pattern`: the pattern just parsed holds a fixed element, so an arm
+    /// it heads consumes at least one token.
+    pub(crate) slice_consumes: bool,
+    /// Set while a slice pattern holds a sub-rule element: the arm then restores the cursor
+    /// when it fails.
+    pub(crate) slice_subrule: bool,
     vars: Function,
     /// Last seen line inside the source code, an increase inserts it in the internal code.
     line: u32,
@@ -1319,6 +1332,10 @@ pub struct Parser {
     /// the return buffers of the calls it made, which [`Parser::fill_monomorph_body`] declares
     /// at the instance's top level as the function parse declares its own (@PLN165 B3b).
     pub(crate) set_call_refs: Vec<u16>,
+    /// The fn-typed variables of the instance being filled whose return the substitution
+    /// boxed (`Parser::box_fn_tuple_return`): a call through one answers the `__tuple<…>`
+    /// record where the template's code reads a stack tuple, so the instance unboxes it.
+    pub(crate) boxed_fn_vars: Vec<u16>,
     /// @PLN165 D7 — instances of generic structs found to contain themselves when first laid
     /// out on pass 2, each reported once.
     pub(crate) cyclic_instances: std::collections::HashSet<u32>,
@@ -1617,6 +1634,17 @@ pub struct Parser {
     /// NON-null. Pushed for the THEN branch in `parse_if`, truncated on exit — same discipline as
     /// `divisor_nonzero`, but keyed on the (index, vector) pair via `VecKey`.
     pub(crate) index_bounded: Vec<(u16, crate::parser::operators::VecKey)>,
+    /// `(N-Index)` — the locals of the definition being parsed (`.0`) that hold a vector's
+    /// length for the rest of it, read off its pass-1 body (`.1`: the local and the variable the
+    /// vector is reached through), and the vector each one's pass-2 assignment named (`.2`).
+    pub(crate) length_locals: (
+        u32,
+        Vec<(u16, u16)>,
+        Vec<(u16, crate::parser::operators::VecKey)>,
+    ),
+    /// Set when an index read was trusted through a length local: the assignment it stands in
+    /// may narrow the local pass 1 typed `τ?` without that fact (`parse_assign`).
+    pub(crate) length_local_read: std::cell::Cell<bool>,
     /// Plan-07 phase 4h — site of the most recently parsed field
     /// read.  Set by `Parser::field()` after each read, taken by
     /// `handle_null_coalesce` to mark the read as defended when
@@ -1665,6 +1693,10 @@ static OPERATORS: &[&[&str]] = &[
     &["**"],
     &["as"],
 ];
+
+/// The level of `OPERATORS` just tighter than `|`: a PATTERN operand is parsed from here, because
+/// in a pattern `|` separates alternatives and never means the bitwise or (`@FR-P-Alt`).
+pub(crate) const PATTERN_OPERAND_LEVEL: usize = 5;
 
 /// The binary operators that cannot BEGIN an expression, so one that follows an operand
 /// answering nothing belongs to that operand (`parse_operators`).  `-`, `+`, `|` and `&` are
@@ -1789,6 +1821,7 @@ mod generic_writes;
 mod generics;
 mod hints;
 mod imports;
+mod length_locals;
 mod members;
 mod monomorph;
 mod nullable_slots;
@@ -2013,6 +2046,7 @@ impl Parser {
             coalesce_defaults: Vec::new(),
             block_path: Vec::new(),
             pending_loop_binders: Vec::new(),
+            loop_spelling: None,
             block_ord: 0,
             bound_in_block: std::collections::HashMap::new(),
             block_rebinds: Vec::new(),
@@ -2020,6 +2054,9 @@ impl Parser {
             match_cursor: None,
             match_cursor_farthest: None,
             subrule_edges: Vec::new(),
+            cursor_consumed: Vec::new(),
+            slice_consumes: false,
+            slice_subrule: false,
             vars: Function::new("", "none"),
             line: 0,
             lib_dirs: Vec::new(),
@@ -2096,6 +2133,7 @@ impl Parser {
             cur_type_vars: Vec::new(),
             instance_bindings: Vec::new(),
             set_call_refs: Vec::new(),
+            boxed_fn_vars: Vec::new(),
             cyclic_instances: std::collections::HashSet::new(),
             forward_template_args: false,
             pending_forward_return: None,
@@ -2157,6 +2195,8 @@ impl Parser {
             text_payload_views: std::collections::HashMap::new(),
             last_index_fit: false,
             index_bounded: Vec::new(),
+            length_locals: (u32::MAX, Vec::new(), Vec::new()),
+            length_local_read: std::cell::Cell::new(false),
             last_field_read_site: None,
             #[cfg(feature = "registry")]
             advisory_checked: std::collections::HashSet::new(),

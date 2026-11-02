@@ -793,6 +793,8 @@ jobs:
     # MinGW-w64 gcc (all three macro modes) and MSVC `cl` (the default mode: strict C99 is the
     # gcc legs' question, and `cl` holds no `-pedantic`).  Six shards each: measured 2026-10-30,
     # a sixth of the corpus is ~9 min on macOS, ~26 min on MinGW, ~11 min on `cl` in one mode.
+    # `--verbose`: a differing program's two outputs are in the log, the one place a host this
+    # box does not have can be read.
     name: C backend sweep, ${{ matrix.leg }} (${{ matrix.shard }}/6)
     if: github.event_name != 'pull_request'
     runs-on: ${{ matrix.leg == 'macos' && 'macos-latest' || 'windows-latest' }}
@@ -812,11 +814,11 @@ jobs:
         run: cargo build --release --bin loft
       - name: Sweep this shard (Apple clang)
         if: matrix.leg == 'macos'
-        run: python3 scripts/c_sweep.py --shard ${{ matrix.shard }}/6
+        run: python3 scripts/c_sweep.py --verbose --shard ${{ matrix.shard }}/6
       - name: Sweep this shard (MinGW-w64 gcc)
         if: matrix.leg == 'mingw'
         shell: bash
-        run: LOFT_CC=gcc python scripts/c_sweep.py --shard ${{ matrix.shard }}/6
+        run: LOFT_CC=gcc python scripts/c_sweep.py --verbose --shard ${{ matrix.shard }}/6
       # `cl` needs a developer prompt's environment: the newest Visual Studio's, found as
       # vswhere finds it.
       - name: Sweep this shard (MSVC cl)
@@ -825,7 +827,7 @@ jobs:
         run: |
           for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do call "%%i\VC\Auxiliary\Build\vcvars64.bat"
           set LOFT_CC=cl
-          python scripts\c_sweep.py --mode default --shard ${{ matrix.shard }}/6
+          python scripts\c_sweep.py --verbose --mode default --shard ${{ matrix.shard }}/6
 
   poison-claim:
     # @windows-exempt: a platform-independent invariant sweep (unwritten claims); the corpus runs on windows-latest daily

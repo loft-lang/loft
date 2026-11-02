@@ -1,8 +1,8 @@
 diff --git a/src/data.rs b/src/data.rs
-index 668a7df3c..7984ffe46 100644
+index 3bf43eead..f8e7a84fc 100644
 --- a/src/data.rs
 +++ b/src/data.rs
-@@ -2681,15 +2681,6 @@ impl Type {
+@@ -2783,15 +2783,6 @@ impl Type {
                      && (a_w >= 8 || a.part_min(a_w, a_null) == b.part_min(b_w, b_null))
              }
              (Type::Vector(a, _), Type::Vector(b, _)) => a.same_element_storage(b),
@@ -19,10 +19,10 @@ index 668a7df3c..7984ffe46 100644
          }
      }
 diff --git a/src/parser/objects.rs b/src/parser/objects.rs
-index db27d377e..833c2e354 100644
+index 060035ce6..0346eb696 100644
 --- a/src/parser/objects.rs
 +++ b/src/parser/objects.rs
-@@ -7289,15 +7289,6 @@ impl Parser {
+@@ -8111,15 +8111,6 @@ impl Parser {
              // uninitialised.
              if let Type::Vector(ref content, _) = td_base {
                  if !self.first_pass && !matches!(value, Value::Insert(_) | Value::Null) {
@@ -39,10 +39,10 @@ index db27d377e..833c2e354 100644
                          .database
                          .position(self.data.def(td_nr).known_type(), field);
 diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
-index 475ce7e30..b86af1505 100644
+index 48320da8a..114039e9d 100644
 --- a/src/parser/vectors.rs
 +++ b/src/parser/vectors.rs
-@@ -3539,10 +3539,6 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -3792,10 +3792,6 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
          block: bool,
          parent_tp: &Type,
      ) -> Type {
@@ -53,7 +53,7 @@ index 475ce7e30..b86af1505 100644
          // `(I-Comp)` — the comprehension's header IS a `for` loop's, so it destructures as one
          // does: `[for (a, b) in v { … }]` binds the members, through the loop statement's own
          // binder code (`destructure_binders`).
-@@ -3674,24 +3670,16 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -3943,24 +3939,16 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
          // bare `S` that then mismatches the rewritten vector type.  Other element
          // types keep `Unknown` — no behaviour change for non-nullable
          // comprehensions.
@@ -80,8 +80,8 @@ index 475ce7e30..b86af1505 100644
 -        let body_pos = *self.lexer.peek_pos();
          let mut body = Value::Null;
          let body_type = self.parse_block("for", &mut body, &body_expected);
-         Self::prepend_destructure(&mut body, destructure_setup, &body_type);
-@@ -3705,7 +3693,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+         self.restore_loop_spelling(spelling);
+@@ -3975,7 +3963,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
          // leaking it into the vector's element type broke every later
          // `qs[i] ?? …` on the comprehension result (the ncc temp lost its
          // dep chain and stack slot — "Incorrect var __ncc_N[65535]").
@@ -90,7 +90,7 @@ index 475ce7e30..b86af1505 100644
              *t
          } else {
              body_type
-@@ -3715,7 +3703,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -3985,7 +3973,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
          // downstream lifetime/codegen reads as an Unknown definition
          // (`control.rs` block_result, `data.rs::def`) and panics.  Report it
          // cleanly and recover with a dense element type so later passes don't crash.
@@ -99,7 +99,7 @@ index 475ce7e30..b86af1505 100644
              if !self.first_pass {
                  diagnostic!(
                      self.lexer,
-@@ -3724,58 +3712,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -3994,58 +3982,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                       `for … in …` cannot be empty"
                  );
              }
@@ -159,7 +159,7 @@ index 475ce7e30..b86af1505 100644
          }
          self.in_loop = in_loop;
          self.vars.finish_loop(loop_nr);
-@@ -4396,7 +4333,8 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -4670,7 +4607,8 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
          // pass 2 refuse its own resolved literal: "cannot store (integer, Q) elements in a
          // vector<(integer, unknown)>".  `is_unknown()` alone sees only the bare and
          // vector-wrapped forms.
@@ -169,7 +169,7 @@ index 475ce7e30..b86af1505 100644
          let is_field = self.is_field(val);
          let is_var = matches!(val, Value::Var(_));
          // Empty `[]`.  A new variable / struct field keeps the lightweight
-@@ -8428,15 +8366,6 @@ impl Parser {
+@@ -8936,15 +8874,6 @@ impl Parser {
      }
  }
  

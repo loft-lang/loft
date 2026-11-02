@@ -52,20 +52,39 @@ pub(crate) fn admit_frame(
     params: &[u16],
     d: u32,
 ) -> Result<(), String> {
+    admit_frame_at(vars, result, code, data, params, d).map_err(|(_, why)| why)
+}
+
+/// [`admit_frame`] with WHERE it was refused: the self-call whose argument blocks the jump,
+/// or `None` for a reason the whole frame carries (its result, a `&` local, a rebound
+/// parameter, a generator).  The refusal is reported at that call, because its text names
+/// that call's argument — reported at another tail call, it told the author to write what
+/// that call already wrote.
+pub(crate) fn admit_frame_at(
+    vars: &Function,
+    result: &Type,
+    code: &Value,
+    data: &Data,
+    params: &[u16],
+    d: u32,
+) -> Result<(), (Option<Position>, String)> {
     let delivered = is_scalar(result)
         || matches!(result.base(), Type::Void | Type::Null | Type::Text(_))
         || crate::data::is_dbref(result.base());
     if !delivered {
-        return Err(format!(
-            "its result is a `{}`, which the jump cannot yet deliver",
-            result.source_name(data)
+        return Err((
+            None,
+            format!(
+                "its result is a `{}`, which the jump cannot yet deliver",
+                result.source_name(data)
+            ),
         ));
     }
     // A `&` LOCAL has no raw pointer move; the hidden `&text` buffer of a text result is an
     // argument (hidden, so not a declared parameter) and the delivery place, not a local.
     for v in 0..vars.count() {
         if matches!(vars.tp(v).base(), Type::RefVar(_)) && !vars.is_argument(v) {
-            return Err(format!("local `{}` is a `&` reference", vars.name(v)));
+            return Err((None, format!("local `{}` is a `&` reference", vars.name(v))));
         }
     }
     for call in tail_calls(code, d, vars, data) {
@@ -81,24 +100,33 @@ pub(crate) fn admit_frame(
             if identity {
                 continue;
             }
+            // The refusal is about this ARGUMENT, so it stands on the argument when it has a
+            // position of its own; the call's position is the token after its `(`.
+            let at = arg.span_pos().copied().or(call.at);
             // A text and a `&` parameter have no raw pointer move in the bytecode (a text's
             // assignment owns, a `&` assignment writes through), so they pass through only
             // as themselves.
             if !crate::data::is_dbref_slot(tp.base()) {
-                return Err(format!(
-                    "parameter `{}` (a `{}`) can only be passed through as itself here",
-                    vars.name(p),
-                    tp.source_name(data)
+                return Err((
+                    at,
+                    format!(
+                        "parameter `{}` (a `{}`) can only be passed through as itself here",
+                        vars.name(p),
+                        tp.source_name(data)
+                    ),
                 ));
             }
             if !borrows_from_params(arg, params, code, data) {
-                return Err(format!(
-                    "the call's argument for parameter `{}` (a `{}`) makes a value this frame \
-                     would have to own — a fresh value, or a local the jump releases — where a \
-                     call only shares; pass the parameter itself or a part of it (`{0}`, \
-                     `{0}.field`, `{0}[i]`, a `match` binding of one)",
-                    vars.name(p),
-                    tp.source_name(data)
+                return Err((
+                    at,
+                    format!(
+                        "the call's argument for parameter `{}` (a `{}`) makes a value this \
+                         frame would have to own — a fresh value, or a local the jump releases \
+                         — where a call only shares; pass the parameter itself or a part of it \
+                         (`{0}`, `{0}.field`, `{0}[i]`, a `match` binding of one)",
+                        vars.name(p),
+                        tp.source_name(data)
+                    ),
                 ));
             }
         }
@@ -113,10 +141,13 @@ pub(crate) fn admit_frame(
             continue;
         }
         if writes_variable(code, p, data) {
-            return Err(format!(
-                "parameter `{}` (a `{}`) is rebound in the body, so this frame owns its store",
-                vars.name(p),
-                tp.source_name(data)
+            return Err((
+                None,
+                format!(
+                    "parameter `{}` (a `{}`) is rebound in the body, so this frame owns its store",
+                    vars.name(p),
+                    tp.source_name(data)
+                ),
             ));
         }
     }
@@ -127,7 +158,10 @@ pub(crate) fn admit_frame(
         )
     });
     if blocked {
-        return Err("the body holds a generator, a `parallel` block or a closure".to_string());
+        return Err((
+            None,
+            "the body holds a generator, a `parallel` block or a closure".to_string(),
+        ));
     }
     Ok(())
 }

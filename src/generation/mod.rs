@@ -313,11 +313,7 @@ pub struct ByteRead<'a> {
     pub base: String,
 }
 
-/// `@FR-R-Fill`'s guarded clause: the shortest span the fill takes.  Measured on graphics'
-/// rows (interleaved, hashes equal): every span through the fill made `fill_triangle` 10 %
-/// SLOWER, an empty span paying the fill's setup and then the loop; spans from 1 took it
-/// −18 %, from 8 −27 %, from 32 −8 %.
-const FILL_MIN_SPAN: i64 = 8;
+use crate::opt::hoist::FILL_MIN_SPAN;
 
 /// `@FR-R-RecPtr`'s index clause — one `v[i]?` binding served from a held header and base:
 /// the prelude's index and in-range names, and what the binding and the address read.
@@ -2216,6 +2212,19 @@ impl Output<'_> {
     /// this (#305).
     #[must_use]
     pub fn fn_ident(&self, def: &crate::data::Definition) -> String {
+        // The program's ENTRY keeps the bare `n_main`: every bootstrap template calls it by
+        // that name.  A library the program uses may declare a `main` of its own (a demo, a
+        // fixture run on its own); the two then share a name, and disambiguating BOTH renamed
+        // the entry too, so the bootstrap's `n_main(&cell)` named nothing (rustc E0425 under
+        // `loft --tests --native`).  The other `main` keeps its file-hashed identifier.
+        let entry = self.data.def_nr("n_main");
+        if def.name() == "n_main" && entry != u32::MAX && std::ptr::eq(def, self.data.def(entry)) {
+            return if self.dv_renames(def) {
+                "n_main__dv".to_string()
+            } else {
+                "n_main".to_string()
+            };
+        }
         let id = disambiguated_fn_ident(&self.dup_fn_names, def);
         if self.dv_renames(def) {
             format!("{id}__dv")
@@ -3490,7 +3499,7 @@ impl Output<'_> {
             self.data,
             self.def_nr,
             Some(self.stores),
-            &mut self.hoist_cache,
+            &mut crate::opt::facts::Facts::over(&mut self.hoist_cache),
         ) {
             crate::rewrite_census::declined(
                 "R-PushFill",
@@ -3571,7 +3580,7 @@ impl Output<'_> {
             self.data,
             self.def_nr,
             Some(self.stores),
-            &mut self.hoist_cache,
+            &mut crate::opt::facts::Facts::over(&mut self.hoist_cache),
             facts.as_ref(),
         ) {
             crate::rewrite_census::declined(
@@ -3669,7 +3678,7 @@ impl Output<'_> {
             self.data,
             self.def_nr,
             Some(self.stores),
-            &mut self.hoist_cache,
+            &mut crate::opt::facts::Facts::over(&mut self.hoist_cache),
         ) {
             crate::rewrite_census::declined(
                 "R-PushFill",
@@ -3796,7 +3805,7 @@ impl Output<'_> {
             self.data,
             self.def_nr,
             Some(self.stores),
-            &mut self.hoist_cache,
+            &mut crate::opt::facts::Facts::over(&mut self.hoist_cache),
         ) {
             if std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() {
                 eprintln!(
@@ -4225,7 +4234,7 @@ impl Output<'_> {
                     this.data,
                     this.stores,
                     this.def_nr,
-                    &mut this.hoist_cache,
+                    &mut crate::opt::facts::Facts::over(&mut this.hoist_cache),
                     !this.switches.write_hoist_disabled,
                     &twin_params,
                     Some(&hoist::StoreFacts {
@@ -4258,10 +4267,12 @@ impl Output<'_> {
             self.data,
             self.stores,
             self.def_nr,
-            &mut self.hoist_cache,
-            &mut self.scalar_write_cache,
+            &mut crate::opt::facts::Facts::with(
+                &mut self.hoist_cache,
+                &mut self.scalar_write_cache,
+                (!self.switches.callee_inputs_disabled).then_some(&mut self.input_cache),
+            ),
             tiers,
-            (!self.switches.callee_inputs_disabled).then_some(&mut self.input_cache),
             Some(&self.hoist_owned),
             (!self.switches.distinct_growth_disabled)
                 .then_some(hoist::StoreFacts {
@@ -4779,7 +4790,7 @@ impl Output<'_> {
             at,
             self.data,
             self.def_nr,
-            &mut self.hoist_cache,
+            &mut crate::opt::facts::Facts::over(&mut self.hoist_cache),
             !self.switches.write_hoist_disabled,
         ) else {
             return Ok(false);
@@ -4917,9 +4928,11 @@ impl Output<'_> {
             def_nr,
             self.data,
             self.stores,
-            &mut self.hoist_cache,
-            &mut self.scalar_write_cache,
-            &mut self.input_cache,
+            &mut crate::opt::facts::Facts::with(
+                &mut self.hoist_cache,
+                &mut self.scalar_write_cache,
+                Some(&mut self.input_cache),
+            ),
         )
     }
 
@@ -5267,7 +5280,7 @@ impl Output<'_> {
             self.data,
             self.stores,
             self.def_nr,
-            &mut self.hoist_cache,
+            &mut crate::opt::facts::Facts::over(&mut self.hoist_cache),
             !self.switches.write_hoist_disabled,
             &twin_params,
             (!self.switches.distinct_growth_disabled)
@@ -5294,7 +5307,7 @@ impl Output<'_> {
                     self.data,
                     self.stores,
                     self.def_nr,
-                    &mut self.hoist_cache,
+                    &mut crate::opt::facts::Facts::over(&mut self.hoist_cache),
                     !self.switches.write_hoist_disabled,
                     Some(&self.hoist_owned),
                 ) {
@@ -5431,7 +5444,7 @@ impl Output<'_> {
                 self.data,
                 self.stores,
                 self.def_nr,
-                &mut self.hoist_cache,
+                &mut crate::opt::facts::Facts::over(&mut self.hoist_cache),
                 !self.switches.write_hoist_disabled,
                 &twin_params,
                 (!self.switches.distinct_growth_disabled)
@@ -5884,7 +5897,7 @@ impl Output<'_> {
             self.data,
             self.stores,
             self.def_nr,
-            &mut self.hoist_cache,
+            &mut crate::opt::facts::Facts::over(&mut self.hoist_cache),
             tiers,
             Some(&self.hoist_owned),
         ) else {
@@ -6513,6 +6526,15 @@ impl Output<'_> {
         let vars = self.data.def(self.def_nr).variables();
         let is_text = matches!(vars.tp(*x).base(), Type::Text(_));
         vars.scope(*x) != scope && is_text && !self.text_borrowed(*x)
+    }
+
+    /// A text local of block scope `scope` the block owns (no borrowed view): the value a
+    /// text block may hand out by value (loft#2359).
+    pub fn own_text_local(&self, x: u16, scope: u16) -> bool {
+        let vars = self.data.def(self.def_nr).variables();
+        vars.scope(x) == scope
+            && matches!(vars.tp(x).base(), Type::Text(_))
+            && !self.text_borrowed(x)
     }
 
     /// Is text variable `v` of the function being emitted BORROWED — its Rust slot a `&str` —

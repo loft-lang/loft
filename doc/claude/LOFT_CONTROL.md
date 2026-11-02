@@ -85,7 +85,7 @@ Inside a loop, the iteration variable supports several attributes using `#`:
 |-----------|----------|----------|---------|--------|
 | `#first`  | ✓        | ✓        | ✓       | ✓ (key order) |
 | `#count`  | ✓        | ✓        | ✓       | ✓ |
-| `#index`  | ✓ (0-based) | ✓ (0-based array position) | ✗ compile error | ✓ (0-based position in key order) |
+| `#index`  | ✓ (0-based; over a slice `v[a..b]` or `rev(…)`, the position in `v`) | ✓ (0-based array position) | ✗ compile error | ✓ (0-based position in key order) |
 | `#remove` | ✓ (filtered) | ✓ (filtered) | ✓ (filtered) | use `h[key] = null` |
 
 **Gotcha — `#index` does not mean the same thing on text and vector.** On a text
@@ -367,6 +367,23 @@ An alternative may also stand inside one tuple element — `(Circle { r } | Squa
 r + k` — and a plain-struct subject lists patterns the same way: `P { x: 0, y: v } | P { x: v,
 y: 0 } => v` (a field's bare name, `y: v`, binds it).  A field's pattern lists alternatives the
 same way as a tuple element's: `Box { s: Circle { r } | Square { r }, n } => r + n`.
+
+**Bind a variant's fields or leave.**  A `match` is a value, and an arm that leaves — `return`,
+`break`, `continue` — fits any type (`(C-Never)`), so one line takes a field out of the variant
+you expect and leaves on any other.  It is loft's `let … else`, and the shape tree-walking code
+needs most:
+
+<!-- from tests/reference/match-bind-or-leave.loft -->
+```loft
+fn pair_sum(n: Node) -> integer? {
+  r = match n { Pair { r } => r, _ => return null };
+  l = match n { Pair { l } => l, _ => return null };
+  l + r
+}
+```
+
+For a nullable value the same is `x = lookup(k) ?? return null` (§ Return), and when the
+variant's fields are only needed inside a block, `if n is Pair { l, r } { … }` (§ `is`).
 
 `name:` before an arm's pattern binds the matched value itself, beside the pattern's own names —
 `whole: Rect { w, h } => w * h + area(whole)` — and `other: _ => area(other)` is the catch-all that

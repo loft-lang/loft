@@ -1,0 +1,183 @@
+--- base.c
++++ s4.c
+@@ -5020,6 +5020,17 @@
+ LOFT_PH_PUTB(4, uint32_t)
+ LOFT_PH_PUTB(1, uint8_t)
+ 
++
++LOFT_HOT_INLINE void loft_ph_wput8(loft_ph *h, uint64_t bits) {
++    if (LOFT_LIKELY(h->len < h->cap)) {
++        memcpy(h->base + 8 + (size_t) h->len * 8, &bits, 8);
++        h->len++;
++        return;
++    }
++    if (h->base && h->cap) memcpy(h->base + 4, &h->len, 4);
++    loft_ph_put8(h, bits);
++}
++static inline void loft_ph_wsync(loft_ph *h) { if (h->base && h->cap) memcpy(h->base + 4, &h->len, 4); }
+ /* `LOFT_VERIFY`'s proof for a push header: a fresh derivation answers its record, length and room. */
+ static int loft_ph_same(loft_ph h, uint32_t size) {
+     loft_ph f = loft_ph_of(h.v, size);
+@@ -27159,71 +27170,10 @@
+     return t1_out;
+ }
+ 
++static const int8_t loft_tab_b64_value[256] = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 62, -1, 62, -1, 63, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, -1, -1, -1, -1, -1, -1, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, -1, -1, -1, -1, 63, -1, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+ static int64_t n_b64_value__fr(int64_t v0_c) {
+-    int64_t t1;
+-    uint8_t t2;
+-    int64_t t3;
+-    uint8_t t4;
+-    int64_t t5;
+-    int64_t t6;
+-    uint8_t t7;
+-    int64_t t8;
+-    int64_t t9;
+-    uint8_t t10;
+-    int64_t t11;
+-    uint8_t t12;
+-    int64_t t13;
+-    int64_t t14;
+-    if (loft_w64(INT32_C(65)) <= v0_c) {
+-        t2 = (uint8_t) (v0_c <= loft_w64(INT32_C(90)));
+-    } else {
+-        t2 = (uint8_t) (0);
+-    }
+-    if (t2 == 1) {
+-        t3 = loft_wrap_sub(v0_c, INT64_C(65));
+-        return t3;
+-    }
+-    if (loft_w64(INT32_C(97)) <= v0_c) {
+-        t4 = (uint8_t) (v0_c <= loft_w64(INT32_C(122)));
+-    } else {
+-        t4 = (uint8_t) (0);
+-    }
+-    if (t4 == 1) {
+-        t6 = loft_wrap_sub(v0_c, INT64_C(97));
+-        t5 = loft_wrap_add(t6, INT64_C(26));
+-        return t5;
+-    }
+-    if (loft_w64(INT32_C(48)) <= v0_c) {
+-        t7 = (uint8_t) (v0_c <= loft_w64(INT32_C(57)));
+-    } else {
+-        t7 = (uint8_t) (0);
+-    }
+-    if (t7 == 1) {
+-        t9 = loft_wrap_sub(v0_c, INT64_C(48));
+-        t8 = loft_wrap_add(t9, INT64_C(52));
+-        return t8;
+-    }
+-    if (v0_c == loft_w64(INT32_C(43))) {
+-        t10 = (uint8_t) (1);
+-    } else {
+-        t10 = (uint8_t) (v0_c == loft_w64(INT32_C(45)));
+-    }
+-    if (t10 == 1) {
+-        t11 = INT64_C(62);
+-        return t11;
+-    }
+-    if (v0_c == loft_w64(INT32_C(47))) {
+-        t12 = (uint8_t) (1);
+-    } else {
+-        t12 = (uint8_t) (v0_c == loft_w64(INT32_C(95)));
+-    }
+-    if (t12 == 1) {
+-        t13 = INT64_C(63);
+-        return t13;
+-    }
+-    t14 = (-(INT64_C(1)));
+-    return t14;
+-    return t1;
++    if ((uint64_t) v0_c < 256) return loft_tab_b64_value[v0_c];
++    return (-(INT64_C(1)));
+ }
+ 
+ static loft_ref n_b64_decode__fr(loft_str v0_b64, loft_ref v1___retbuf, loft_ref v2_vals) {
+@@ -27335,6 +27285,7 @@
+             goto cont_1;
+         }
+         if (loft_w64(INT32_C(0)) < v3_pad) {
++            loft_ph_wsync(&ph1);
+             v34___ret_tail_1 = loft_ref_null();
+             loft_free_var(&v29___vdb_2);
+             loft_free_var_distinct(&v2_vals, v33___ref_1);
+@@ -27344,6 +27295,7 @@
+         loft_frame_site(138);
+         v8_v = n_b64_value(v7_c);
+         if (v8_v < loft_w64(INT32_C(0))) {
++            loft_ph_wsync(&ph1);
+             v35___ret_tail_2 = loft_ref_null();
+             loft_free_var(&v29___vdb_2);
+             loft_free_var_distinct(&v2_vals, v33___ref_1);
+@@ -27351,10 +27303,11 @@
+             return t4;
+         }
+         ((void) 0);
+-        (LOFT_PROVED(loft_phb_same(ph1, 8), "b64_decode:ph1"), loft_ph_putb8(&ph1, (uint64_t) v8_v));
++        (LOFT_PROVED(loft_phb_same(ph1, 8), "b64_decode:ph1"), loft_ph_wput8(&ph1, (uint64_t) v8_v));
+     cont_1:;
+     }
+     brk_1:;
++    loft_ph_wsync(&ph1);
+     loft_frame_site(142);
+     v10_n = t_6vector_len(v2_vals);
+     if (loft_w64(INT32_C(2)) < v3_pad) {
+@@ -27381,8 +27334,8 @@
+         t10 = v36___ret_tail_3;
+         return t10;
+     }
+-    loft_database_room(loft_types, loft_ntypes, &v29___vdb_2, 4, 112);
+-    v11_out = loft_field(v29___vdb_2, 0);
++    loft_vec_clear_release(loft_types, loft_ntypes, v1___retbuf);
++    v11_out = v1___retbuf;
+     ((void) 0);
+     v37_i = INT64_C(0);
+     h2 = loft_vh_of(v2_vals);
+@@ -27443,7 +27396,7 @@
+         t19 = loft_wrap_add(t17, t18);
+         v38_v = loft_wrap_add(t19, v18_v3);
+         ((void) 0);
+-        v21___ncc_5 = loft_div(v38_v, INT64_C(65536));
++        v21___ncc_5 = (v38_v / INT64_C(65536));
+         if (v21___ncc_5 != LOFT_NULL) {
+             t21 = v21___ncc_5;
+         } else {
+@@ -27470,7 +27423,7 @@
+         t22 = loft_wrap_add(v37_i, INT64_C(2));
+         if (t22 < v10_n) {
+             ((void) 0);
+-            v24___ncc_7 = loft_div(v38_v, INT64_C(256));
++            v24___ncc_7 = (v38_v / INT64_C(256));
+             if (v24___ncc_7 != LOFT_NULL) {
+                 t24 = v24___ncc_7;
+             } else {
+@@ -27524,9 +27477,6 @@
+     if (loft_vec_absent(v11_out)) {
+         v39___ret_tail_4 = loft_ref_null();
+     } else {
+-        loft_vec_clear_release(loft_types, loft_ntypes, v1___retbuf);
+-        loft_vec_add(loft_types, 30, v1___retbuf, v11_out);
+-        loft_free_var(&v29___vdb_2);
+         v39___ret_tail_4 = v1___retbuf;
+     }
+     loft_free_var(&v29___vdb_2);
+@@ -27579,18 +27529,11 @@
+     loft_ref t4;
+     v6___vdb_1 = loft_ref_null();
+     v3___ref_1 = loft_ref_null();
+-    if (v3___ref_1.store_nr == 0xFFFF) {
+-        v3___ref_1 = loft_ref_null();
+-        loft_database_typed(&v3___ref_1, 4, 112);
+-    }
+     loft_frame_site(405);
+-    v2_r = n_b64_decode(v0_b64, v3___ref_1, v7___ref_2);
++    v2_r = n_b64_decode(v0_b64, v1___retbuf, v7___ref_2);
+     v4__vec_1 = loft_ref_null();
+     t2 = (uint8_t) (loft_vec_absent(v2_r));
+     if (!(t2 == 1)) {
+-        loft_vec_clear_release(loft_types, loft_ntypes, v1___retbuf);
+-        loft_vec_add(loft_types, 30, v1___retbuf, v2_r);
+-        loft_free_var(&v3___ref_1);
+         loft_free_var(&v4__vec_1);
+     } else {
+         loft_database_room(loft_types, loft_ntypes, &v6___vdb_1, 4, 112);

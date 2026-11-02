@@ -1,12 +1,15 @@
 diff --git a/src/opt/store_text_borrow.rs b/src/opt/store_text_borrow.rs
+index 54ba0649e..263d63919 100644
 --- a/src/opt/store_text_borrow.rs
 +++ b/src/opt/store_text_borrow.rs
-@@ -273,7 +273,7 @@
-                     &mut cache,
-                     &mut active,
-                     Some(vars),
--                ) {
-+                ).filter(|_| false) {
+@@ -260,7 +260,9 @@ pub fn borrowed_store_texts(
+                 && locals.contains(&v)
+             {
+                 let narrow = tested_scope(body, v, data);
+-                let tested = match foreign_store_writer(narrow, data, m, &mut fx, Some(vars)) {
++                let tested = match foreign_store_writer(narrow, data, m, &mut fx, Some(vars))
++                    .filter(|_| false)
++                {
                      Some(w2) => Err(w2),
                      None => param_roots_of(body, v, data, vars)
                          .ok_or("a binding not rooted in a parameter"),

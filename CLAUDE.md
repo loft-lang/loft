@@ -387,6 +387,8 @@ src/main.rs            CLI; loads default/ then user file
   then a one-line summary of the rest; no long dumps.
 - **Advice vs action:** asked for advice/evaluation → give the recommendation (best option + why),
   don't bounce it back. Asked a question → answer it. Act/edit only on an explicit do-it instruction.
+  A decision met while working is not a multiple-choice question: take the sensible default, say
+  it in one line and continue, so the owner can redirect in prose; ask only at a real fork.
   A recommended RULE or design is probed before it is recommended: build the cell that would
   falsify its premise first — answering feels like advice, so the check gets skipped, and an
   approved wrong rule is built on (`design-protocol` § When you RECOMMEND it).
@@ -658,7 +660,9 @@ joins by calling `loft::net_profile::time(…)` from its Rust bridge, and the ar
 report says so rather than printing nothing (loft#1088). PERFORMANCE.md § LOFT_NET_PROFILE.
 
 **Diagnostics:** [DIAGNOSTICS.md](doc/claude/DIAGNOSTICS.md) the code index (`advice[avoidable-copy]`)
-+ `--explain` fix lines — a code is a FROZEN public surface, and a new one lands with its row.
++ `--explain` fix lines — a code is a FROZEN public surface, and a new one lands with its row ·
+[WARNING_FIXES.md](doc/claude/WARNING_FIXES.md) which construction clears each warning — a fix
+says more than the code did, never only silences it.
 
 **Testing / debug:** [TESTING.md](doc/claude/TESTING.md) where a test goes and how to write it (start here) ·
 [RUNNING_TESTS.md](doc/claude/RUNNING_TESTS.md) run the suite, read a failure, `LOFT_LOG`/LogConfig ·

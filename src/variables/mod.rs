@@ -215,6 +215,13 @@ pub struct Variable {
     name: String,
     type_def: Type,
     source: (u32, u32),
+    /// The line of the first assignment that gave this variable a nullable value, or 0: what
+    /// a warning about the variable being `τ?` names as the place to change (WARNING_FIXES.md).
+    nullable_line: u32,
+    /// loft#2326 — a match capture pass 1 bound at `Unknown` (its subject's enum not declared
+    /// yet): pass 2 types it by its field ([`Function::unique`]).  On the variable, which is
+    /// what carries over between the passes.
+    blind_capture: bool,
     scope: u16,
     stack_pos: u16,
     uses: u16,
@@ -411,15 +418,30 @@ pub struct Variable {
 
 /// The name an author WROTE for a compiler-renamed binding, for a message the author reads.
 ///
-/// A `match`/`is` payload binding is lowered to `_mv_<field>_<n>`; the author wrote `<field>`.
-/// Every other name is answered as it is.
+/// A `match`/`is` payload binding is lowered to `_mv_<field>_<n>`, and a second loop or arm
+/// binding of one name to `<name>#<n>` ([`Function::loop_binding`]); the author wrote `<field>`
+/// and `<name>`.  Every other name is answered as it is.
 #[must_use]
 pub fn author_spelling(name: &str) -> String {
+    let name = without_binding_number(name);
     match name.strip_prefix("_mv_") {
         Some(rest) => rest
             .rsplit_once('_')
             .map_or_else(|| rest.to_string(), |(n, _)| n.to_string()),
         None => name.to_string(),
+    }
+}
+
+/// `f#1` → `f`: the numeric suffix [`Function::loop_binding`] gives a second binding of one
+/// name.  Only that suffix: `f#index` and `f#count` are names the author writes themselves.
+fn without_binding_number(name: &str) -> &str {
+    match name.rsplit_once('#') {
+        Some((written, nr))
+            if !written.is_empty() && !nr.is_empty() && nr.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            written
+        }
+        _ => name,
     }
 }
 
@@ -455,6 +477,10 @@ pub(crate) struct CaptureBuilds {
     /// Captures whose closure BUILD sits inside a loop, so the record's slot is rewritten on
     /// every pass and only the LAST adoption is the one it still holds.
     pub(crate) rebuilt_in_loop: crate::fxhash::FxHashSet<u16>,
+    /// loft#2352 — the captures among `rebuilt_in_loop` that are also ASSIGNED inside a loop
+    /// holding their build, so each pass's record may adopt a different store.  A capture
+    /// assigned only outside the loop hands every pass's record the same store.
+    pub(crate) rebound_in_loop: crate::fxhash::FxHashSet<u16>,
     /// loft#1610, `@FR-L-CapOwn` — the closure record TYPES confined to one pass of a loop: built
     /// inside a loop body into a fn-ref local that appears nowhere outside that loop and there
     /// only as a call's callee, so no value of it survives the pass.  Such a record cannot
@@ -1067,6 +1093,8 @@ impl Function {
                 target_mentions: 0,
                 incoming_reported: false,
                 write_source: (0, 0),
+                nullable_line: 0,
+                blind_capture: false,
                 defined: false,
                 const_binding: false,
                 amp_link: false,
@@ -1640,6 +1668,27 @@ impl Function {
         0
     }
 
+    /// The collection the active loop iterates whose COUNTER is `var_nr` — `x#index` of
+    /// `for x in v` — or `Value::Null` when `var_nr` counts no active loop.
+    #[must_use]
+    pub fn loop_value_of_index(&self, var_nr: u16) -> &Value {
+        if var_nr == u16::MAX || (var_nr as usize) >= self.variables.len() {
+            return &Value::Null;
+        }
+        let Some(binder) = self.variables[var_nr as usize].name.strip_suffix("#index") else {
+            return &Value::Null;
+        };
+        let mut c = self.current_loop;
+        while c != u16::MAX {
+            let l = &self.loops[c as usize];
+            if l.variable != u16::MAX && self.variables[l.variable as usize].name == binder {
+                return &l.value;
+            }
+            c = l.inside;
+        }
+        &Value::Null
+    }
+
     pub fn loop_value(&self, var_nr: u16) -> &Value {
         let mut c = self.current_loop;
         while c != u16::MAX {
@@ -1750,17 +1799,7 @@ impl Function {
     /// names the author writes themselves.
     #[must_use]
     pub fn written_name(&self, var_nr: u16) -> &str {
-        let name = self.name(var_nr);
-        match name.rsplit_once('#') {
-            Some((written, nr))
-                if !written.is_empty()
-                    && !nr.is_empty()
-                    && nr.bytes().all(|b| b.is_ascii_digit()) =>
-            {
-                written
-            }
-            _ => name,
-        }
+        without_binding_number(self.name(var_nr))
     }
 
     pub fn set_scope(&mut self, var_nr: u16, scope: u16) {
@@ -2907,17 +2946,45 @@ impl Function {
         // discarded, so that type is no fact: pass 2's wins.  Kept the old way, a correct
         // program was refused — `c = v` on a `vector<vector<integer>>` followed by a deeper
         // literal: "Variable '_elm_5' cannot change type" (found by loft#1739's guard).  Only
-        // a SHAPE conflict, and only this family: another family can mint the same site twice
-        // on purpose and read pass 1's type (a multi-pattern capture keeps its local `τ?`).
-        if name == "elm"
+        // a SHAPE conflict, and only these families: another family can mint the same site
+        // twice on purpose and read pass 1's type (a multi-pattern capture keeps its local `τ?`).
+        // loft#2340 — a value literal's accumulator `_vec_N` is the same case: a literal written
+        // into a field whose type pass 1 does not know yet (its holder comes from a function
+        // declared below) is built as a VALUE there, minting a `_vec_N`, and as the field on
+        // pass 2, minting none, so a literal nested inside it takes the outer one's number at
+        // another element shape.
+        // An accumulator is minted before its literal's items say its element, so its type
+        // here may still be unknown — and that is still this pass's, not pass 1's other site's.
+        // A match CAPTURE pass 1 bound BLIND is the same: at `Unknown`, because the subject's
+        // enum was not declared yet (`bind_forward_capture_list`, loft#2326), after which the
+        // arm's body gave it whatever its first write says — `items += [121]` made a
+        // `vector<u8>` field's capture `vector<integer>`, and an append through it wrote 8-byte
+        // elements into the byte vector it views.  Only those: a capture pass 1 typed from a
+        // known enum keeps pass 1's type, which the arm refines (`Pt?` over the field's
+        // `__nullable<Pt>` layout).
+        if (name == "elm"
+            || name == "vec"
+            || (name.starts_with("mv_")
+                && self
+                    .names
+                    .get(&full)
+                    .is_some_and(|v| self.variables[*v as usize].blind_capture)))
             && let Some(&v) = self.names.get(&full)
-            && !type_def.is_unknown()
+            && (name == "vec" || !type_def.is_unknown())
             && self.variables[v as usize].type_def.without_deps() != type_def.without_deps()
         {
             self.trace_type_change(v, type_def, "unique(elm)");
             self.variables[v as usize].type_def = type_def.clone();
         }
         self.add_variable(&full, type_def, lexer)
+    }
+
+    /// loft#2326 — `v` is a match capture pass 1 bound at `Unknown` (its subject's enum not
+    /// declared yet); pass 2 types it by its field ([`Self::unique`]).
+    pub fn mark_blind_capture(&mut self, v: u16) {
+        if let Some(var) = self.variables.get_mut(v as usize) {
+            var.blind_capture = true;
+        }
     }
 
     /// Mark a variable as carrying an EXPLICIT `: Type` annotation (vs an inferred type).
@@ -3018,6 +3085,8 @@ impl Function {
             user_appended: false,
             copy_bound: false,
             write_source: (0, 0),
+            nullable_line: 0,
+            blind_capture: false,
             argument: false,
             defined: false,
             const_binding: false,
@@ -3082,6 +3151,8 @@ impl Function {
             amp_linked_by: u16::MAX,
             amp_linked_many: false,
             write_source: (0, 0),
+            nullable_line: 0,
+            blind_capture: false,
             argument: false,
             defined: self.variables[var as usize].defined,
             const_binding: self.variables[var as usize].const_binding,
@@ -3137,6 +3208,8 @@ impl Function {
             user_appended: false,
             copy_bound: false,
             write_source: (0, 0),
+            nullable_line: 0,
+            blind_capture: false,
             argument: false,
             defined: false,
             const_binding: false,
@@ -3188,6 +3261,8 @@ impl Function {
             user_appended: false,
             copy_bound: false,
             write_source: (0, 0),
+            nullable_line: 0,
+            blind_capture: false,
             argument: false,
             defined: true,
             const_binding: false,
@@ -3328,6 +3403,11 @@ impl Function {
         // type `Foo`) panics here instead of being diagnosed.
         if var_nr == u16::MAX || (var_nr as usize) >= self.variables.len() {
             return false;
+        }
+        if self.variables[var_nr as usize].nullable_line == 0
+            && matches!(type_def, Type::Optional(_))
+        {
+            self.variables[var_nr as usize].nullable_line = lexer.at().0;
         }
         let var_tp = &self.variables[var_nr as usize].type_def;
         // `_` is the universal unused variable — allow type changes silently.
@@ -4631,6 +4711,17 @@ impl Function {
     }
 
     pub fn rename(&mut self, v: u16, new_name: &str) {
+        self.variables[v as usize].name = new_name.to_string();
+    }
+
+    /// Rename variable `v` AND the binding that finds it: the old name then names nothing, so
+    /// the next bind of it makes a new variable (`Parser::withdraw_written_text_buffer`).
+    pub fn rename_binding(&mut self, v: u16, new_name: &str) {
+        let old = self.variables[v as usize].name.clone();
+        if self.names.get(&old) == Some(&v) {
+            self.names.remove(&old);
+        }
+        self.names.insert(new_name.to_string(), v);
         self.variables[v as usize].name = new_name.to_string();
     }
 
@@ -6030,6 +6121,14 @@ impl Function {
     }
 
     #[track_caller]
+    /// The line of the first assignment that gave `var_nr` a nullable value, or 0.
+    #[must_use]
+    pub fn nullable_line(&self, var_nr: u16) -> u32 {
+        self.variables
+            .get(var_nr as usize)
+            .map_or(0, |v| v.nullable_line)
+    }
+
     pub fn set_type(&mut self, var_nr: u16, tp: Type) {
         self.trace_type_change(var_nr, &tp, "set_type");
         self.variables[var_nr as usize].type_def = tp;

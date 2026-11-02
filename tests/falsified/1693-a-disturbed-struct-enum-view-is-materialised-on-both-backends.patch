@@ -1,20 +1,20 @@
-diff --git b/src/state/codegen.rs a/src/state/codegen.rs
-index b2ee71871..3c36570b6 100644
---- b/src/state/codegen.rs
-+++ a/src/state/codegen.rs
-@@ -3098,8 +3098,7 @@ impl State {
-                 // from the FINAL dep list, which its per-`Set` witness cannot follow, so such
-                 // a local keeps every projection an alias on both backends.
+diff --git a/src/state/codegen.rs b/src/state/codegen.rs
+index 1b1a8ac6b..6132f79a7 100644
+--- a/src/state/codegen.rs
++++ b/src/state/codegen.rs
+@@ -3413,8 +3413,7 @@ impl State {
+                 // `x` reassigned, read the freed record as null, loft#2362).  The stash is
+                 // released after the copy, as on every other stashed arm.
                  if owned_ref
 -                    // loft#1693 — `heap_def_nr`, as the first-bind arm below and native ask it.
 -                    && let Some(d_nr) = stack.function.tp(v).base().heap_def_nr()
 +                    && let Type::Reference(d_nr, _) = stack.function.tp(v).base().clone()
-                     && !stash_old_for_post_free
+                     && !rhs_reads_v
+                     && !rhs_is_new_record
                      && crate::use_analysis::projection_container_var(stack.data, value).is_some()
-                 {
-@@ -3295,13 +3294,7 @@ impl State {
-             // says a whole-value bind is INDEPENDENT (`c2 = ns; ns.v = 99` then read 99
+@@ -3656,13 +3655,7 @@ impl State {
              // through `c2`, loft#1319).
+             note_bind("F3");
              self.gen_set_first_ref_var_copy(stack, v, *src, d_nr);
 -        } else if let Some(d_nr) = stack.function.tp(v).base().heap_def_nr()
 -            // loft#1693 — `heap_def_nr`, native's own test (`dispatch.rs`), so a struct-ENUM

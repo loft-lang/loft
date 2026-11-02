@@ -104,6 +104,35 @@ fn prefill_trace_enabled() -> bool {
     *F.get_or_init(|| std::env::var("LOFT_TRACE_PREFILL").is_ok_and(|v| v != "0"))
 }
 
+/// `@FR-F-Read-Ref` — what one top-level text read knows about places and references: the
+/// path it is at, the record each pointer names, and every reference field read so far as
+/// `(its slot, its pointer, the type it names)`.
+#[derive(Default)]
+pub(super) struct ReadRefs {
+    pub path: Vec<String>,
+    pub at: std::collections::HashMap<String, DbRef>,
+    pub pending: Vec<(DbRef, String, u16)>,
+}
+
+thread_local! {
+    pub(super) static READ_REFS: std::cell::RefCell<Option<ReadRefs>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+pub(super) fn with_read_refs<R>(f: impl FnOnce(&mut ReadRefs) -> R) -> Option<R> {
+    READ_REFS.with(|c| c.borrow_mut().as_mut().map(f))
+}
+
+/// The pointer of `path`, as the writer spells it (`format::json_pointer`).
+pub(super) fn read_pointer(path: &[String]) -> String {
+    let mut p = String::from("#");
+    for seg in path {
+        p.push('/');
+        p.push_str(&seg.replace('~', "~0").replace('/', "~1"));
+    }
+    p
+}
+
 /// Walker-native diagnostic for `walk_parsed_into` failures.
 ///
 /// `at` is a byte offset into the original input; `path` is the
@@ -2942,7 +2971,10 @@ impl Stores {
         while let Some(value_at) = next {
             let res = self.record_new(to, rec_tp, field);
             let seen = failed.len();
+            // `@FR-F-Read-Ref` — an element's position is its segment of the path.
+            with_read_refs(|r| r.path.push(idx.to_string()));
             self.read_into(rd, failed, value_at, content, content, u16::MAX, &res, at)?;
+            with_read_refs(|r| r.path.pop());
             // An element that did not fit keeps its slot, so the elements after it keep
             // their positions: a leaf holds null — what the `JsonValue` walk writes for
             // it — and a record keeps the fields that fit beside the defaults of those
@@ -2968,6 +3000,10 @@ impl Stores {
     /// its field by name and read into it, a key the type does not have is read and
     /// dropped, the last of a repeated key stands, and a field no member named
     /// takes its absent value.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the member loop with its `@FR-F-Read-Ref` arms ($refs, a reference field)"
+    )]
     fn read_struct(
         &mut self,
         rd: &mut crate::json::JParser,
@@ -2992,8 +3028,53 @@ impl Stores {
         // vector only for a record with more.
         let mut found = 0u64;
         let mut found_more: Vec<u16> = Vec::new();
+        // `@FR-F-Read-Ref` — this record's pointer is the path it is read at, first one wins.
+        let top_level = with_read_refs(|r| {
+            let p = read_pointer(&r.path);
+            r.at.entry(p).or_insert(DbRef {
+                store_nr: to.store_nr,
+                rec,
+                pos: fld,
+            });
+            r.path.is_empty()
+        });
         while more {
             let (name, key_at, value_at) = rd.member(start)?;
+            if top_level == Some(true) && name == "$refs" {
+                self.read_refs_list(rd, failed, to, value_at)?;
+                more = rd.next_member(start)?;
+                continue;
+            }
+            with_read_refs(|r| r.path.push(name.clone()));
+            if top_level.is_some()
+                && let Some(f_nr) = self.record_fields(tp).iter().position(|f| f.name == name)
+                && matches!(
+                    self.types[self.record_fields(tp)[f_nr].content as usize].parts,
+                    Parts::DbRef
+                )
+                && self.read_reference_field(
+                    rd,
+                    failed,
+                    tp,
+                    f_nr,
+                    &DbRef {
+                        store_nr: to.store_nr,
+                        rec,
+                        pos: fld,
+                    },
+                    value_at,
+                    key_at,
+                )?
+            {
+                if f_nr < 64 {
+                    found |= 1 << f_nr;
+                } else {
+                    found_more.push(f_nr as u16);
+                }
+                with_read_refs(|r| r.path.pop());
+                more = rd.next_member(start)?;
+                continue;
+            }
             let hit = self
                 .record_fields(tp)
                 .iter()
@@ -3034,6 +3115,7 @@ impl Stores {
             } else {
                 rd.parse_value(value_at)?;
             }
+            with_read_refs(|r| r.path.pop());
             more = rd.next_member(start)?;
         }
         let base = DbRef {
@@ -3043,6 +3125,125 @@ impl Stores {
         };
         self.write_absent_fields(tp, &base, found, &found_more);
         Ok(())
+    }
+
+    /// `@FR-F-Read-Ref` — a top-level `$refs` list: each entry is the target of the pointers
+    /// that name `#/$refs/i`, built as a fresh record of the type they expect, in `to`'s store —
+    /// the result's own, so it lives and dies with the result.  An entry nothing points at is
+    /// read and dropped.
+    pub(super) fn read_refs_list(
+        &mut self,
+        rd: &mut crate::json::JParser,
+        failed: &mut Vec<WalkErr>,
+        to: &DbRef,
+        list_at: usize,
+    ) -> Result<(), crate::json::Fault> {
+        if !matches!(rd.opening(), crate::json::Opening::Array) {
+            rd.parse_value(list_at)?;
+            return Ok(());
+        }
+        let (start, mut next) = rd.open_array();
+        let mut idx = 0usize;
+        while let Some(value_at) = next {
+            let ptr = format!("#/$refs/{idx}");
+            let tp = with_read_refs(|r| {
+                r.pending
+                    .iter()
+                    .find(|(_, p, _)| *p == ptr)
+                    .map(|(_, _, t)| *t)
+            })
+            .flatten();
+            match tp {
+                Some(tp) if (tp as usize) < self.types.len() => {
+                    let words = 1 + u32::from(self.types[tp as usize].size).div_ceil(8);
+                    let rec = self.claim(to, words);
+                    self.set_default_value(tp, &rec);
+                    with_read_refs(|r| r.path = vec!["$refs".to_string(), idx.to_string()]);
+                    self.read_into(rd, failed, value_at, tp, tp, u16::MAX, &rec, value_at)?;
+                }
+                _ => {
+                    rd.parse_value(value_at)?;
+                }
+            }
+            next = rd.next_item(start)?;
+            idx += 1;
+        }
+        with_read_refs(|r| r.path.clear());
+        Ok(())
+    }
+
+    /// `@FR-F-Read-Ref` — write every parked reference: the record its pointer names, or a
+    /// misfit naming the pointer nothing in the document holds.
+    pub(super) fn resolve_read_refs(&mut self, failed: &mut Vec<WalkErr>) {
+        let Some(ctx) = READ_REFS.with(|c| c.borrow_mut().take()) else {
+            return;
+        };
+        for (slot, ptr, _) in &ctx.pending {
+            match ctx.at.get(ptr) {
+                Some(target) => {
+                    let store = self.store_mut(slot);
+                    store.set_u32_raw(slot.rec, slot.pos, u32::from(target.store_nr));
+                    store.set_u32_raw(slot.rec, slot.pos + 4, target.rec);
+                    store.set_u32_raw(slot.rec, slot.pos + 8, target.pos);
+                }
+                None => failed.push(WalkErr {
+                    at: 0,
+                    path: vec![format!("$ref \"{ptr}\" names no record of the document")],
+                }),
+            }
+        }
+    }
+
+    /// `@FR-F-Read-Ref` — a reference field's member: `{"$ref": "#/…"}` is parked until the
+    /// whole document is read (its target may come later), the slot holding null meanwhile.
+    /// `false` leaves any other member (a `null`) to the ordinary read.
+    #[allow(clippy::too_many_arguments)] // the struct read's position, passed through
+    fn read_reference_field(
+        &mut self,
+        rd: &mut crate::json::JParser,
+        failed: &mut Vec<WalkErr>,
+        tp: u16,
+        f_nr: usize,
+        base: &DbRef,
+        value_at: usize,
+        key_at: usize,
+    ) -> Result<bool, crate::json::Fault> {
+        if !matches!(rd.opening(), crate::json::Opening::Object) {
+            return Ok(false);
+        }
+        let value = rd.parse_value(value_at)?;
+        let (position, target, name) = {
+            let f = &self.record_fields(tp)[f_nr];
+            (f.position, f.target, f.name.clone())
+        };
+        let slot = DbRef {
+            store_nr: base.store_nr,
+            rec: base.rec,
+            pos: base.pos + u32::from(position),
+        };
+        // Null until resolved (`@FR-H-Removed`'s null spelling: no store, no record).
+        {
+            let store = self.store_mut(&slot);
+            store.set_u32_raw(slot.rec, slot.pos, u32::from(u16::MAX));
+            store.set_u32_raw(slot.rec, slot.pos + 4, 0);
+            store.set_u32_raw(slot.rec, slot.pos + 8, 0);
+        }
+        let pointer = match &value {
+            crate::json::Parsed::Object(members) => match members.as_slice() {
+                [(key, _, crate::json::Parsed::Str(p))] if key == "$ref" => Some(p.clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(p) = pointer {
+            with_read_refs(|r| r.pending.push((slot, p, target)));
+        } else {
+            failed.push(WalkErr {
+                at: key_at,
+                path: vec![name],
+            });
+        }
+        Ok(true)
     }
 
     /// The fields of record type `tp`; none for a type that is not a record.
@@ -3142,11 +3343,13 @@ impl Stores {
                     // The element's segment joins the error's path as it unwinds: pushed per
                     // element on the way in, it was a formatted `String` per array item that
                     // only a failing walk reads.
-                    self.walk_parsed_into(item, c, c, u16::MAX, &res, path, at)
-                        .map_err(|mut e| {
-                            e.path.insert(0, format!("[{idx}]"));
-                            e
-                        })?;
+                    with_read_refs(|r| r.path.push(idx.to_string()));
+                    let walked = self.walk_parsed_into(item, c, c, u16::MAX, &res, path, at);
+                    with_read_refs(|r| r.path.pop());
+                    walked.map_err(|mut e| {
+                        e.path.insert(0, format!("[{idx}]"));
+                        e
+                    })?;
                     self.record_finish(to, &res, rec_tp, field);
                 }
                 Ok(())
@@ -3362,12 +3565,54 @@ impl Stores {
         // The fields a member named, by field number ([`Self::write_absent_fields`]).
         let mut found = 0u64;
         let mut found_more: Vec<u16> = Vec::new();
+        // `@FR-F-Read-Ref` — the tree walk (an out-of-line child's members, a `JsonValue`
+        // read) keeps the same path and parks the same references as `read_struct`.
+        let tracked = with_read_refs(|r| {
+            let p = read_pointer(&r.path);
+            r.at.entry(p).or_insert(DbRef {
+                store_nr: to.store_nr,
+                rec,
+                pos: fld,
+            });
+        })
+        .is_some();
         for (name, key_at, value) in entries {
             // A key no field has matches nothing here and is skipped, not refused — as
             // the `JsonValue` walker (`populate_struct_from_jsonvalue`) does.  Refusing it
             // would empty a whole `vector<Struct>` whenever its text carries one extra key.
             for (f_nr, f) in object.iter().enumerate() {
                 if f.name == *name {
+                    if tracked
+                        && matches!(self.types[f.content as usize].parts, Parts::DbRef)
+                        && let crate::json::Parsed::Object(members) = value
+                    {
+                        let slot = DbRef {
+                            store_nr: to.store_nr,
+                            rec,
+                            pos: fld + u32::from(f.position),
+                        };
+                        let store = self.store_mut(&slot);
+                        store.set_u32_raw(slot.rec, slot.pos, u32::from(u16::MAX));
+                        store.set_u32_raw(slot.rec, slot.pos + 4, 0);
+                        store.set_u32_raw(slot.rec, slot.pos + 8, 0);
+                        if f_nr < 64 {
+                            found |= 1 << f_nr;
+                        } else {
+                            found_more.push(f_nr as u16);
+                        }
+                        if let [(key, _, crate::json::Parsed::Str(ptr))] = members.as_slice()
+                            && key == "$ref"
+                        {
+                            let target = f.target;
+                            with_read_refs(|r| r.pending.push((slot, ptr.clone(), target)));
+                            break;
+                        }
+                        return Err(WalkErr {
+                            at: *key_at,
+                            path: vec![name.clone()],
+                        });
+                    }
+                    with_read_refs(|r| r.path.push(name.clone()));
                     let res = if self.content(f.content) == u16::MAX {
                         let slot = DbRef {
                             store_nr: to.store_nr,
@@ -3386,6 +3631,7 @@ impl Stores {
                     } else {
                         self.walk_parsed_into(value, f.content, tp, f_nr as u16, to, path, *key_at)
                     };
+                    with_read_refs(|r| r.path.pop());
                     if f_nr < 64 {
                         found |= 1 << f_nr;
                     } else {

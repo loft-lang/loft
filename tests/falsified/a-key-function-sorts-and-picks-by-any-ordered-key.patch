@@ -1,8 +1,8 @@
-diff --git b/default/01_code.loft a/default/01_code.loft
-index db80060d6..45c4a0d67 100644
---- b/default/01_code.loft
-+++ a/default/01_code.loft
-@@ -2123,85 +2123,6 @@ pub fn sort < T: Ordered > (self: vector<T>) {
+diff --git a/default/01_code.loft b/default/01_code.loft
+index 3fc366b10..7ca591fdd 100644
+--- a/default/01_code.loft
++++ b/default/01_code.loft
+@@ -2386,55 +2386,6 @@ pub fn sort < T: Ordered > (self: vector<T>) {
  }
  #builtin
  
@@ -48,43 +48,13 @@ index db80060d6..45c4a0d67 100644
 -  }
 -  out: vector<T> = [];
 -  for p in pos { out += self[p..p + 1]; }
--  clear(self);
--  self += out;
--}
--
--/// The element with the smallest key, or null when the vector is empty:
--/// `v.min_by(fn(d: Date) -> integer { d.ms })`.  Of several with that key, the FIRST.
--pub fn min_by < T, K: Ordered > (self: vector<T>, key: fn(T) -> K) -> T? {
--  at = -1;
--  keys: vector<K> = [];
--  for x in self {
--    keys += [key(x)];
--    if at < 0 || keys[x#index] < keys[at] { at = x#index; }
+-  // Each place takes its sorted element (`sort`'s note).
+-  at = 0;
+-  for e in out {
+-    self[at] = e;
+-    at += 1;
 -  }
--  self[at]
 -}
--
--/// The element with the largest key, or null when the vector is empty:
--/// `v.max_by(fn(d: Date) -> integer { d.ms })`.  Of several with that key, the FIRST.
--pub fn max_by < T, K: Ordered > (self: vector<T>, key: fn(T) -> K) -> T? {
--  at = -1;
--  keys: vector<K> = [];
--  for x in self {
--    keys += [key(x)];
--    if at < 0 || keys[at] < keys[x#index] { at = x#index; }
--  }
--  self[at]
--}
--
--/// The sum of a key over the elements: `v.sum_by(fn(o: Order) -> float { o.price })`.  The
--/// key is any `Addable` value; `init` is the identity to start from, and left out it is the
--/// key type's own zero (0, 0.0), so an empty vector sums to it.
--pub fn sum_by < T, K: Addable > (self: vector<T>, key: fn(T) -> K, init: K? = null) -> K {
--  result = init?;
--  for x in self { result = result + key(x) };
--  result
--}
--
- /// Keep the elements `f` answers true for, in order: `filter(v, f)` or `v.filter(f)`.
- pub fn filter < T > (self: vector<T>, f: fn(T) -> boolean) -> vector<T> {
-   filter(self, f)
+ 
+ /// The element with the smallest key, or null when the vector is empty:
+ /// `v.min_by(fn(d: Date) -> integer { d.ms })`.  Of several with that key, the FIRST.

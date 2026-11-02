@@ -82,7 +82,8 @@ def recorded(guard, name):
 def armed(guard, name):
     """The switches the receipt for patch `name` says its score needs: every `LOFT_X=value`
     on the `ARMED:` label inside that patch's own `@falsified-by:` block (GUARDS.md § The patch
-    receipt).  A label owns its wrapped continuation lines, up to the next label or the next
+    receipt), and `FALSIFY_NATIVE=rust` there — a defect of the rustc writer alone, which the
+    default C leg cannot see.  A label owns its wrapped continuation lines, up to the next label or the next
     receipt.  A switch named without `=` ("ran without `LOFT_STRICT_STORES`") arms nothing."""
     lines = (ROOT / guard).read_text(encoding="utf-8", errors="replace").splitlines()
     head = f"@falsified-by: tests/falsified/{name}"
@@ -100,7 +101,7 @@ def armed(guard, name):
         if m:
             label = m.group(1)
         if label == "ARMED":
-            env.update(re.findall(r"\b(LOFT_[A-Z0-9_]+)=([^\s`.,;)]+)", body))
+            env.update(re.findall(r"\b(LOFT_[A-Z0-9_]+|FALSIFY_NATIVE)=([^\s`.,;)]+)", body))
     return env
 
 

@@ -1,8 +1,8 @@
 diff --git a/src/parser/control.rs b/src/parser/control.rs
-index ed64bd6e9..98fe371d3 100644
+index 6af4be7f9..a7431904a 100644
 --- a/src/parser/control.rs
 +++ b/src/parser/control.rs
-@@ -5670,14 +5670,6 @@ impl Parser {
+@@ -6043,14 +6043,6 @@ impl Parser {
          // already an error and synthesises a `null` else for recovery; the DN1 widening below must
          // NOT treat that synthesised null as a nullable branch (it would add a spurious `τ?`).
          let had_else = self.lexer.has_token("else");
@@ -17,7 +17,7 @@ index ed64bd6e9..98fe371d3 100644
          // Where the else arm starts: a tuple arm pair that does not join is reported there.
          let else_pos = *self.lexer.pos();
          if had_else {
-@@ -7180,56 +7172,6 @@ impl Parser {
+@@ -7650,56 +7642,6 @@ impl Parser {
  
      /// The type a match arm is expected to answer in: what the arms have agreed on so
      /// far, or `Unknown` while nothing is settled yet.
@@ -74,10 +74,10 @@ index ed64bd6e9..98fe371d3 100644
      fn match_arm_expected(&self, result_type: &Type) -> Type {
          if result_type.is_unknown()
              || Self::match_result_unsettled(result_type)
-@@ -7266,9 +7208,6 @@ impl Parser {
-         self.vars.clear_write_state();
-         let block_arm = self.lexer.peek_token("{");
-         let tp = self.parse_match_arm_body_inner(expected, arm_code);
+@@ -7754,9 +7696,6 @@ impl Parser {
+         } else {
+             tp
+         };
 -        // `(Slice-Value)` — an arm's value is a value position, so a vector slice there is the
 -        // fresh vector (loft#1941).
 -        let tp = self.slice_arm_as_vector(arm_code, tp);

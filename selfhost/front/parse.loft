@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The syntax gate's runner (@PLN91 stage 1, gate S): `parse <file>…` (or `parse @<list>`) lexes
+// and parses each source file with the loft front end and writes one line per file: `ok
+// <nodes>` or `fail <line>:<col>` at the farthest token a rule reached, with that token.
+#cwd
+use lex;
+use syntax;
+
+fn check(path: text) {
+  src = file(path).content();
+  if src == null {
+    println("{path}\tunreadable");
+    return;
+  }
+  p = syntax::prepare(lex::lex(src!));
+  r = syntax::parse_file(p);
+  if r != null {
+    println("{path}\tok {len(p.nodes)}");
+  } else {
+    f = p.farthest;
+    if f >= len(p.src) {
+      f = len(p.src) - 1;
+    }
+    println("{path}\tfail {p.line[f]}:{p.col[f]} {p.src[f]}");
+  }
+}
+
+fn main() {
+  for a in arguments() {
+    if a.starts_with("@") {
+      for p in (file(a[1..]).content() ?? "").split('\n') {
+        if p != "" {
+          check(p);
+        }
+      }
+    } else {
+      check(a);
+    }
+  }
+}

@@ -1,8 +1,8 @@
-diff --git b/src/scopes/scan.rs a/src/scopes/scan.rs
-index 9095333f7..3374f9574 100644
---- b/src/scopes/scan.rs
-+++ a/src/scopes/scan.rs
-@@ -363,38 +363,6 @@ impl Scopes<'_> {
+diff --git a/src/scopes/scan.rs b/src/scopes/scan.rs
+index 60c23c590..973601133 100644
+--- a/src/scopes/scan.rs
++++ b/src/scopes/scan.rs
+@@ -455,44 +455,6 @@ impl Scopes<'_> {
                          hoisted_ref = Some(ret_v);
                      }
                  }
@@ -21,11 +21,17 @@ index 9095333f7..3374f9574 100644
 -                // one buffer and the function-exit sweep frees it once.  Registered first, so
 -                // an exit INSIDE the block (`?? continue` / `?? break`) does not free it on its
 -                // way out and leave the next pass, or the function exit, a second free.
+-                // The tail is looked for THROUGH trailing value blocks: a struct match's
+-                // field capture is bound in the match block and handed out by the arm's
+-                // `struct_match` block inside it, so the match block's last operator is that
+-                // block, not the capture — `x = match n { N { nm } => nm }; x` leaked `nm`
+-                // once per call (the loft#2353 cell under valgrind).
 -                if hoisted_ref.is_none()
 -                    && self.scope >= 1
 -                    && matches!(bl.result.base(), Type::Text(_))
--                    && let Some(Value::Var(orig_ret)) = bl.operators.last().map(Value::unspan)
+-                    && let Some(orig_ret) = bl.operators.last().and_then(tail_var_through_blocks)
 -                {
+-                    let orig_ret = &orig_ret;
 -                    let ret_v = *self.var_mapping.get(orig_ret).unwrap_or(orig_ret);
 -                    if !self.var_scope.contains_key(&ret_v)
 -                        && !function.is_argument(ret_v)

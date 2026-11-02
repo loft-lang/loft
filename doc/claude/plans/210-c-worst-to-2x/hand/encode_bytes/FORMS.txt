@@ -1,0 +1,19 @@
+loft commit   3cfb11fb9
+library       cbor @ 4263924
+emit          LOFT_RELEASE_PASS_PROBE=1 loft --emit-c base.c bench/bench.loft (in the driver package)
+
+edit  b2_bytes.c  from base_bytes.c
+edit  b3_bytes.c  from base_bytes.c
+base  base_bytes.c
+base  base_decode.c
+base  base_encode.c
+edit  des_bytes.c  from base_bytes.c
+edit  ro_bytes.c  from base_bytes.c
+edit  ro_decode.c  from base_decode.c
+edit  ro_encode.c  from base_encode.c
+edit  s2_bytes.c  from base_bytes.c
+edit  s3_bytes.c  from base_bytes.c
+edit  s4_bytes.c  from base_bytes.c
+edit  sp_bytes.c  from base_bytes.c
+edit  sp_decode.c  from base_decode.c
+edit  sp_encode.c  from base_encode.c

@@ -1,8 +1,8 @@
 diff --git a/src/database/structures.rs b/src/database/structures.rs
-index 4c6fae104..3b818291c 100644
+index c88426044..688aa12bd 100644
 --- a/src/database/structures.rs
 +++ b/src/database/structures.rs
-@@ -2368,12 +2368,10 @@ impl Stores {
+@@ -2929,12 +2929,10 @@ impl Stores {
              (Some(c), _, Opening::Array) => {
                  return self.read_array(rd, failed, tp, c, rec_tp, field, to, at);
              }
@@ -17,7 +17,7 @@ index 4c6fae104..3b818291c 100644
                  (word, _, _) => self.walk_parsed_into(&word, tp, rec_tp, field, to, &mut path, at),
              },
              _ => {
-@@ -2441,14 +2439,9 @@ impl Stores {
+@@ -3009,14 +3007,9 @@ impl Stores {
          rd: &mut crate::json::JParser,
          failed: &mut Vec<WalkErr>,
          tp: u16,
@@ -32,8 +32,8 @@ index 4c6fae104..3b818291c 100644
          let fld = if to.rec == 0 { 0 } else { to.pos };
          let rec = if to.rec == 0 {
              let size = self.types[tp as usize].size;
-@@ -2504,12 +2497,28 @@ impl Stores {
-             }
+@@ -3118,12 +3111,28 @@ impl Stores {
+             with_read_refs(|r| r.path.pop());
              more = rd.next_member(start)?;
          }
 -        let base = DbRef {
@@ -67,7 +67,7 @@ index 4c6fae104..3b818291c 100644
          Ok(())
      }
  
-@@ -2539,12 +2548,6 @@ impl Stores {
+@@ -3272,12 +3281,6 @@ impl Stores {
      /// Together they form the only `text → struct` path in the
      /// crate; the legacy hand-rolled scanner was removed when
      /// every Parts arm gained walker coverage.
@@ -80,27 +80,7 @@ index 4c6fae104..3b818291c 100644
      #[allow(clippy::ptr_arg, clippy::too_many_arguments)] // arg-count is intrinsic to the dispatch
      #[expect(clippy::too_many_lines, reason = "inherited")]
      pub(super) fn walk_parsed_into(
-@@ -2562,7 +2565,18 @@ impl Stores {
-         // default is the FIELD's question, not the type's, and
-         // [`Self::write_absent_value`] is where that question is answered.
-         if matches!(parsed, crate::json::Parsed::Null) {
--            self.write_absent_at(tp, rec_tp, field, to);
-+            // A COLLECTION field arrives with `to` at the struct BASE and its index in
-+            // `field` (`walk_parsed_struct`'s `else` arm, as the non-null path below feeds
-+            // `record_new`), so its absent marker belongs at the field's own slot.  Written
-+            // at `to` it landed on the FIRST field: `{"p":{"x":1},"v":null}` read `p.x`
-+            // back as 4294967295 (`DbRef::ABSENT_REC`) — reachable from every `{r:j}` of a
-+            // record with a null collection field once null fields are written (@C143).
-+            let slot = if self.content(tp) == u16::MAX {
-+                *to
-+            } else {
-+                self.field_ref(to, rec_tp, field)
-+            };
-+            self.write_absent_value(tp, rec_tp, field, &slot);
-             return Ok(());
-         }
-         let mismatch = || WalkErr {
-@@ -2629,11 +2643,6 @@ impl Stores {
+@@ -3364,11 +3367,6 @@ impl Stores {
                      crate::json::Parsed::Constructor(_tag, _, inner) => inner.as_ref(),
                      other => other,
                  };
@@ -112,7 +92,7 @@ index 4c6fae104..3b818291c 100644
                  self.walk_parsed_struct(body, tp, to, &object, path, at)
              }
              Parts::Enum(fields) => {
-@@ -2730,15 +2739,12 @@ impl Stores {
+@@ -3473,15 +3471,12 @@ impl Stores {
                      return Ok(());
                  }
                  // Variant-with-payload (hand-written struct-enum): recurse so the payload
@@ -134,31 +114,7 @@ index 4c6fae104..3b818291c 100644
                  }
                  Ok(())
              }
-@@ -2765,23 +2771,6 @@ impl Stores {
-         }
-     }
- 
--    /// The absent value of the `tp` that `(to, rec_tp, field)` names, written to its slot.
--    ///
--    /// A COLLECTION field arrives with `to` at the struct BASE and its index in `field`
--    /// (`walk_parsed_struct`'s `else` arm, as the non-null path feeds `record_new`), so
--    /// its absent marker belongs at the field's own slot.  Written at `to` it landed on
--    /// the FIRST field: `{"p":{"x":1},"v":null}` read `p.x` back as 4294967295
--    /// (`DbRef::ABSENT_REC`) — reachable from every `{r:j}` of a record with a null
--    /// collection field once null fields are written (@C143).
--    fn write_absent_at(&mut self, tp: u16, rec_tp: u16, field: u16, to: &DbRef) {
--        let slot = if self.content(tp) == u16::MAX {
--            *to
--        } else {
--            self.field_ref(to, rec_tp, field)
--        };
--        self.write_absent_value(tp, rec_tp, field, &slot);
--    }
--
-     /// Schema-driven struct fill from a [`crate::json::Parsed::Object`].
-     /// Matches fields by name, recurses into the walker for each
-     /// value (passing the field's key byte offset as the recursion's
-@@ -2811,9 +2800,9 @@ impl Stores {
+@@ -3562,9 +3557,9 @@ impl Stores {
          } else {
              to.rec
          };
@@ -168,13 +124,25 @@ index 4c6fae104..3b818291c 100644
 +        // Fx, not the default SipHash: a per-object set of field names, never adversarial input
 +        // to a hash table that outlives the call — SipHash was 7 % of a JSON-parse row.
 +        let mut found_fields: crate::fxhash::FxHashSet<&str> = crate::fxhash::FxHashSet::default();
-         for (name, key_at, value) in entries {
-             // A key no field has matches nothing here and is skipped, not refused — as
-             // the `JsonValue` walker (`populate_struct_from_jsonvalue`) does.  Refusing it
-@@ -2838,11 +2827,6 @@ impl Stores {
-                     } else {
+         // `@FR-F-Read-Ref` — the tree walk (an out-of-line child's members, a `JsonValue`
+         // read) keeps the same path and parks the same references as `read_struct`.
+         let tracked = with_read_refs(|r| {
+@@ -3595,11 +3590,6 @@ impl Stores {
+                         store.set_u32_raw(slot.rec, slot.pos, u32::from(u16::MAX));
+                         store.set_u32_raw(slot.rec, slot.pos + 4, 0);
+                         store.set_u32_raw(slot.rec, slot.pos + 8, 0);
+-                        if f_nr < 64 {
+-                            found |= 1 << f_nr;
+-                        } else {
+-                            found_more.push(f_nr as u16);
+-                        }
+                         if let [(key, _, crate::json::Parsed::Str(ptr))] = members.as_slice()
+                             && key == "$ref"
+                         {
+@@ -3632,11 +3622,6 @@ impl Stores {
                          self.walk_parsed_into(value, f.content, tp, f_nr as u16, to, path, *key_at)
                      };
+                     with_read_refs(|r| r.path.pop());
 -                    if f_nr < 64 {
 -                        found |= 1 << f_nr;
 -                    } else {
@@ -183,7 +151,7 @@ index 4c6fae104..3b818291c 100644
                      // The key's segment joins the error's path as it unwinds (see the array arm).
                      res.map_err(|mut e| {
                          e.path.insert(0, name.clone());
-@@ -2851,49 +2835,24 @@ impl Stores {
+@@ -3645,49 +3630,24 @@ impl Stores {
                      break;
                  }
              }

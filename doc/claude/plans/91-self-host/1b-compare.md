@@ -6,9 +6,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 # @PLN91 strand 1b — the strict comparison: one program, every output, both implementations
 
 A child document of [1b-interpreter.md](1b-interpreter.md).  Status: **built** — out, alloc,
-leak, binds and the compile-time layers ir, types, schema, ctable and ownership (§ C-1, § C-1b,
-§ B-2's layer, § C-2); slots, lifetimes and bytecode wait on F-1/F-2, ownership-overlays on
-their ports, resolution on strand 1a.
+leak, binds and the compile-time layers ir, types, schema, ctable, ownership and slots (§ C-1,
+§ C-1b, § B-2's layer, § C-2, § C-3); lifetimes and bytecode wait on the `compute_intervals`
+port and F-2, ownership-overlays on their ports, resolution on strand 1a.
 
 ## Why (owner, 2026-10-30)
 
@@ -55,18 +55,19 @@ differently shows as the row where it does.
 | **resolution** | `introspect --show-resolution`: per source, the names it defines and reaches, every import alias | the loft front end (strand 1a) | none |
 | **schema** | `LOFT_DUMP_TYPES=1 loft --check` (nothing run): every store type (`Stores::show_type`) — size and alignment, the derived parents, the parts: fields with positions, variants, keys | the image's schema (`Bundle.types`) in the same text, the parents derived as the Rust side derives them | the closing `ok` line `--check` prints after the dump; nothing else |
 | **ctable** | the C type table the C generator writes for the program (`--emit-c`, read as `tests/selfhost.rs`'s `c_type_table` reads it) | `types::render` of the loft-derived table (P5) | the rows of the types the C describes (it writes a row only for a type the program uses); and where a row's key pointer is `0` — the C describes a type's keys only when the program's code reads them (`keys_of`) — the loft row's `keys=` part is not compared.  Keys the C does describe are |
-| **slots** | `introspect`'s variable table: `slot [a, b)` per variable | the slot and width every access addresses (from F-1 the image's `stack_pos`) | none |
+| **slots** | `introspect`'s variable table, every column but `live` | `reports slots`: the frame the interpreter addresses (`frame::slot`: a local's `stack_pos`, an argument's laid-out position, each at its width), the name, `short_type` and scope | the `live` column, which is the lifetimes layer's |
 | **lifetimes** | `introspect`'s variable table: `live [a, b]` per variable (`compute_intervals`) | a port of `compute_intervals` over the image's IR | none |
 | **out** | `loft --interpret` (`--tests FILE::ENTRY` for a test) | the runner on the emitted image, in its comparison mode (no census lines) | stdout byte for byte; the exit code; stderr byte for byte after removing the front end's diagnostics, which the tool takes from `--emit-image`'s stderr (the same front end, nothing run) and requires as an exact PREFIX of the run's stderr — PC4 measured it so; `--check` is not that source, it also prints toolchain noise.  For a test entry, the harness's block (from the `ok`/`FAIL` line of the file on) is cut from the Rust stdout, and its verdict and failure message are compared with the runner's |
 | **alloc** | `LOFT_ALLOC_TRACE` from the `op-census` build (`store_census::alloc_event`: `N`, `F`, `C`, `D`, `R`, `M`) | the same lines from the `crt` shim's runtime, compiled with the trace on | the events after `M` on stores made after it, each store named by the order it first appears — exactly `c_alloc_diff.py`'s `program_events` (the Rust value stack and constant stores are setup) |
 | **leak** | the stores live at exit (the alloc layer's `N` without `F`) | the same | none: the two sets, by name, must be equal (a store both sides leak is equal; one side only is a difference) |
 | **binds** | `LOFT_TRACE_BIND` from `generate_set` (1b-s3.md § The comparison): one row per assignment the bytecode writer lowers, `function⇥variable⇥first\|re⇥arm`, a reassignment's row carrying B2's facts (`b2=stash\|pre\|none`, `owned_ref`, `s1`, `reads_v`, `witnessed`, `entry_w`, `buffer_w`) before its arm | the lowering's bind table, written to the same variable in the same form | the functions the loft side lowered, matched by name, each one's rows in order — the Rust writer lowers every function of the image (the stdlib's too), the loft lowering only those the run reaches; a function the loft side lowered and the Rust side did not is a difference |
-| **bytecode** | `loft introspect`'s bytecode listing | the lowering's output in the same form | none, byte for byte |
+| **opcodes** | `LOFT_TRACE_BYTECODE=<file>`'s `op` lines (`compile.rs::bytecode_trace`): per operator in number order its number, name, class (`hot`, `normal`, `cold`), result type and each argument as `name:c\|m:type` (`c` an operand in the bytecode, `m` a value on the stack) | the same lines from the loft side's own numbering — `Data::op_code`'s rule over the image's definitions: the operators in their `default/*.loft` declaration order, numbered within their class (`op_hot` / `op_cold` on `Definition`), hot first, cold last | none, byte for byte |
+| **bytecode** | `LOFT_TRACE_BYTECODE`'s `fn` lines: per generated function in definition order its name, code length and the FNV-1a hash of `bytecode[code_position..+code_length]` — the listing (`loft introspect`) to read a difference by | the bytecode writer's port (1b-frame.md F-2), its bytes hashed the same way | none: every function the Rust writer generates, the stdlib's included — a call operand is an absolute code position, so one function's bytes depend on every function before it |
 
 Until the loft interpreter builds a layer's producer, that layer is `MISSING loft`: ir,
 types and schema from C-1 (the image is already read; the displays are ported), ctable from C-1
 (P5's table already exists), binds from 1b-s3.md's B-1,
-slots from 1b-frame.md's F-1, lifetimes with the port of `compute_intervals`, bytecode from F-2,
+slots from 1b-frame.md's F-1, lifetimes with the port of `compute_intervals`, opcodes and bytecode from F-2,
 ownership from B-2, resolution from strand 1a.  The compile-time reports cover the program's own
 functions, as `introspect` lists them (no operator, nothing from `default/`); `--all-fns` on
 both sides is a later option.  The tool is complete from the
@@ -80,8 +81,12 @@ start; the interpreter fills it in.
     image, the check and the run — so both sides see one front end.
   - The runner (`selfhost/cover/run_program.loft`) takes the entry to run (`run_program IMAGE
     [ENTRY]`, `n_main` by default), writes `M` before it starts (a `crt::trace_mark` over the
-    runtime's `LOFT_TRACE("M")`), and exits with what the Rust interpreter exits with for a
-    failed assertion or a panic.
+    runtime's `LOFT_TRACE("M")`) — after minting the stack store (F-1), which the Rust
+    interpreter also has before its program enters, so neither trace counts it — and exits with what the Rust interpreter exits with for a
+    failed assertion or a panic.  Like every loft program it resolves a RELATIVE path against its own
+    directory (STDLIB_FILES.md § Path resolution), so `IMAGE` — and the `reports` tool's — is
+    given absolute: a relative one is refused as an image with no layout sidecar, and a
+    measurement that passes one compares 521 refusals.
   - The shim's runtime writes the alloc trace under its OWN variable, `LOFT_CRT_ALLOC_TRACE`, so
     the interpreter's own stores (the runner's runtime copy) never mix into it: `loft_store.h`
     reads the variable's name from `LOFT_ALLOC_TRACE_ENV` (default `"LOFT_ALLOC_TRACE"`,
@@ -94,9 +99,9 @@ start; the interpreter fills it in.
     of the types table, in `selfhost/src/show_ir.loft`.
 - **C-2 — binds** (with 1b-s3.md's B-0/B-1): `LOFT_TRACE_BIND` in `generate_set`, the lowering's
   table, `--dump-binds` on the runner.
-- **C-3 — slots, lifetimes and bytecode** (with F-1, the `compute_intervals` port, F-2): the
-  runner's `--dump-slots`, `--dump-lifetimes` and `--dump-code`, in the forms `introspect`
-  prints.
+- **C-3 — slots, lifetimes and bytecode** (with F-1, the `compute_intervals` port, F-2): each
+  in the form `introspect` prints.  **Slots built**: `reports slots` (`report::slots_report`)
+  against `introspect --show-slots`; lifetimes and bytecode wait on their producers.
 
 ## Probes before building (each can fail on its own)
 

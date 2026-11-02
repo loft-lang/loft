@@ -21,6 +21,17 @@ import { readLoftValue } from "../doc/loft-deliver.js";
 // is a LinkError the moment a program under test touches a file.
 import { loftFSImports } from '../doc/loft-fs.js';
 
+// A module the C backend wrote imports the WASI its libc runs on: the layer a page carries
+// (`doc/loft-wasi.js`), loaded as `wasm_repro.mjs` loads it.  A Rust page imports none of it.
+(0, eval)(fs.readFileSync(new URL('../doc/loft-wasi.js', import.meta.url), 'utf8'));
+async function instantiateWithWasi(bytes, imports) {
+  let inst = null;
+  for (const reg of globalThis.LOFT_WASM_EXTENSIONS || []) reg(imports, {}, () => inst.exports.memory);
+  const out = await WebAssembly.instantiate(bytes, imports);
+  inst = out.instance;
+  return out;
+}
+
 const wasmPath = process.argv[2];
 if (!wasmPath) {
   console.error("usage: node deliver_repro.mjs <wasm_file>");
@@ -121,7 +132,7 @@ const loft_io = {
 
 try {
   const bytes = fs.readFileSync(wasmPath);
-  const { instance } = await WebAssembly.instantiate(bytes, { loft_io });
+  const { instance } = await instantiateWithWasi(bytes, { loft_io });
   mem = instance.exports.memory;
   if (typeof instance.exports.loft_start === "function") instance.exports.loft_start();
   else if (typeof instance.exports.main === "function") instance.exports.main();

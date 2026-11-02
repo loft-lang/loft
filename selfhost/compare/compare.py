@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """The strict comparison of the two interpreters (@PLN91, doc/claude/plans/91-self-host/1b-compare.md).
 
-    selfhost/compare/compare.py FILE[::test_name] … [--layers out,alloc,…] [--keep]
+    selfhost/compare/compare.py FILE[::test_name] … [--layers out,alloc,…] [--keep] [--jobs N]
 
 For each entry — a program's `main`, or one test function — every output both implementations
 produce is compared, one LAYER per line: `EQUAL`, `DIFFERENT` (the first differing row, with
@@ -16,7 +16,7 @@ The Rust side is the `op-census` build (`LOFT_BIN`, default target/op-census/rel
 writes the allocator trace; the loft side is `selfhost/cover/run_program.loft`, compiled through
 the C backend into target/selfhost-compare/ and rebuilt when a selfhost source is newer.  Not a
 test: it is run by hand, on any program, test script or suite cell."""
-import argparse, os, re, subprocess, sys, tempfile, shutil
+import argparse, concurrent.futures as cf, os, re, subprocess, sys, tempfile, shutil
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
@@ -28,7 +28,6 @@ LAYERS = ["out", "alloc", "leak", "ir", "types", "schema", "ctable", "ownership"
 # The layers the loft side does not produce yet, and the step that builds each (1b-compare.md).
 NOT_YET = {
     "ownership-overlays": "after the oracle: per_iteration_frees, text_return_orphan_risk, free_before_dependent_read, return_source_freed, ref_param_publish_freed, heap_return_delivery",
-    "slots": "C-3, with 1b-frame.md F-1",
     "lifetimes": "C-3, the compute_intervals port",
     "bytecode": "C-3, with 1b-frame.md F-2",
 }
@@ -48,10 +47,14 @@ def run(cmd, env=None, timeout=300):
 
 def build(program, name):
     """A selfhost program compiled through the C backend into target/selfhost-compare/<name>;
-    rebuilt when a selfhost source is newer."""
+    rebuilt when a selfhost source, the compiler or a C runtime header is newer — the C runtime
+    the shim includes is compiled into the build, so either change alone makes it stale."""
     out = os.path.join(ROOT, "target", "selfhost-compare", name)
     exe = os.path.join(out, os.path.splitext(os.path.basename(program))[0])
-    newest = 0.0
+    newest = os.path.getmtime(LOFT)
+    for f in os.listdir(os.path.join(ROOT, "src", "c")):
+        if f.endswith(".h"):
+            newest = max(newest, os.path.getmtime(os.path.join(ROOT, "src", "c", f)))
     for d, _, fs in os.walk(os.path.join(ROOT, "selfhost")):
         if "native-auto" in d or os.sep + ".loft" in d:
             continue
@@ -160,6 +163,29 @@ def introspect_sections(file):
     while types and types[0] == "":
         types.pop(0)
     return {"ir": ir, "types": types}, None
+
+
+def slots_layer(file, img, reports):
+    """`introspect --show-slots`'s tables against the frame the loft side reads off the image, the
+    one normalisation the live column: the lifetimes layer compares it (compute_intervals)."""
+    rc, out, err = run([LOFT, "introspect", "--show-slots"] + LIBS + [file])
+    if rc != 0:
+        return "MISSING rust", text(err).splitlines()[-3:]
+    rows, inside = [], False
+    for ln in text(out).split("\n"):
+        if ln.startswith("=== "):
+            inside = ln == "=== slots ==="
+            continue
+        if inside:
+            ln = re.sub(r"\s+live$", "", ln)
+            ln = re.sub(r"^(  \d.*?)\s+(\[\d+, \d+\]|-)$", r"\1", ln)
+            rows.append(ln.rstrip())
+    lc, loft, lerr = run([reports, "slots", img])
+    if lc != 0:
+        return "MISSING loft", text(lerr).splitlines()[-3:]
+    while rows and rows[0] == "":
+        rows.pop(0)
+    return differ("slots", trimmed(rows), trimmed([x.rstrip() for x in text(loft).split("\n")]))
 
 
 def ownership_sections(file):
@@ -327,7 +353,9 @@ def compare(spec, exe, reports, layers, keep):
             rust = run(rcmd, {"LOFT_ALLOC_TRACE": rtrace, "LOFT_TRACE_BIND": rbinds})
             lcmd = [exe, "--compare", img] + (["n_" + test] if test else [])
             lbinds = os.path.join(d, "loft.binds")
-            loft = run(lcmd, {"LOFT_CRT_ALLOC_TRACE": ltrace, "LOFT_TRACE_BIND": lbinds})
+            # The program's relative paths resolve where `loft` anchors a C program's.
+            loft = run(lcmd, {"LOFT_CRT_ALLOC_TRACE": ltrace, "LOFT_TRACE_BIND": lbinds,
+                              "LOFT_SOURCE_DIR": os.path.dirname(os.path.abspath(file))})
             if loft[0] == 3 and b"refused: " in loft[2]:
                 refused = text(loft[2]).split("refused: ", 1)[1].strip().splitlines()[0]
             rev = program_events(open(rtrace, encoding="utf-8")) if os.path.exists(rtrace) else None
@@ -353,6 +381,8 @@ def compare(spec, exe, reports, layers, keep):
                 v, detail = ctable_layer(file, d, img, reports)
             elif layer == "ownership":
                 v, detail = ownership_layer(file, img, reports)
+            elif layer == "slots":
+                v, detail = slots_layer(file, img, reports)
             elif layer in ("ir", "types"):
                 v, detail = report_layer(layer, file, img, reports)
             else:
@@ -371,6 +401,8 @@ def main():
     ap.add_argument("entries", nargs="+", help="FILE or FILE::test_name")
     ap.add_argument("--layers", default=",".join(LAYERS))
     ap.add_argument("--keep", action="store_true", help="keep each entry's scratch directory")
+    ap.add_argument("--jobs", type=int, default=os.cpu_count() or 1,
+                    help="entries compared at once (each in its own scratch directory)")
     a = ap.parse_args()
     layers = [x for x in a.layers.split(",") if x]
     unknown = [x for x in layers if x not in LAYERS]
@@ -382,15 +414,17 @@ def main():
     exe = build(os.path.join("cover", "run_program.loft"), "runner")
     reports = build(os.path.join("compare", "reports.loft"), "reports")
     equal = 0
-    for spec in a.entries:
-        print(f"== {spec}")
-        report = compare(spec, exe, reports, layers, a.keep)
-        ok = all(v == "EQUAL" for _, v, _ in report)
-        equal += ok
-        for layer, v, detail in report:
-            print(f"   {layer:<10} {v}")
-            for row in detail:
-                print(f"              {row}")
+    # Entries run in parallel; their reports print in the order given.
+    with cf.ThreadPoolExecutor(max(1, a.jobs)) as ex:
+        done = ex.map(lambda spec: compare(spec, exe, reports, layers, a.keep), a.entries)
+        for spec, report in zip(a.entries, done):
+            print(f"== {spec}", flush=True)
+            ok = all(v == "EQUAL" for _, v, _ in report)
+            equal += ok
+            for layer, v, detail in report:
+                print(f"   {layer:<10} {v}")
+                for row in detail:
+                    print(f"              {row}")
     print(f"{equal} of {len(a.entries)} entries equal in every layer ({', '.join(layers)})")
     sys.exit(0 if equal == len(a.entries) else 1)
 

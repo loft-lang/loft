@@ -255,6 +255,140 @@ impl Parser {
         matches!(tmpl_returned.base(), Type::Reference(d, _) if *d == tv_nr)
     }
 
+    /// `@FR-F-Ret` / loft#2190 — a function TYPE whose return a substitution made a
+    /// lifetime-bearing tuple names the boxed `__tuple<…>` record, exactly as the declared type
+    /// `fn(…) -> (integer, text)` does (`parse_fn_type` boxes it there, and defers a return
+    /// shaped by a type variable to here).  Left bare, the instance called its callback with
+    /// the stack-tuple ABI, whose text member the callee could only hand up orphaned.
+    pub(super) fn box_fn_tuple_return(&mut self, t: Type) -> Type {
+        match t {
+            // A nullable fn type boxes the function it may hold (`@FR-N-Shape`).
+            Type::Optional(inner) => Type::Optional(Box::new(self.box_fn_tuple_return(*inner))),
+            Type::Function(args, ret, deps, consts) if matches!(ret.base(), Type::Tuple(_)) => {
+                let ret = self.boxed_tuple_return(*ret);
+                Type::Function(args, Box::new(ret), deps, consts)
+            }
+            other => other,
+        }
+    }
+
+    /// The calls through a boxed callback (`boxed_fn_vars`) that read no stack tuple: one a
+    /// statement discards, and one that is instance `d_nr`'s own result.
+    fn settle_boxed_callback_calls(&self, code: &mut Value, d_nr: u32) {
+        if self.boxed_fn_vars.is_empty() {
+            return;
+        }
+        Self::keep_discarded_callback_calls(code, &self.boxed_fn_vars);
+        if let Type::Reference(ret_d, _) = self.data.def(d_nr).returned().base() {
+            self.keep_returned_callback_calls(code, *ret_d, true);
+        }
+    }
+
+    /// A boxed callback's call whose value a STATEMENT discards (`f(c);`) stays the bare call,
+    /// as its concrete twin does — the scope pass lifts and frees the record it answers.
+    /// Unboxed, the statement left a tuple expression nothing reads, which the C writer does
+    /// not carry.  Only a block's statements are asked: its tail is its value.
+    fn keep_discarded_callback_calls(code: &mut Value, boxed: &[u16]) {
+        if let Value::Block(bl) = code.unspan_mut() {
+            let count = bl.operators.len();
+            let tail_is_value = !matches!(bl.result.base(), Type::Void);
+            for (idx, op) in bl.operators.iter_mut().enumerate() {
+                if tail_is_value && idx + 1 == count {
+                    continue;
+                }
+                let bare = match op.unspan() {
+                    Value::Drop(inner) => Self::boxed_callback_call(inner, boxed)
+                        .map(|call| Value::Drop(Box::new(call))),
+                    other => Self::boxed_callback_call(other, boxed),
+                };
+                if let Some(bare) = bare {
+                    *op = bare;
+                }
+            }
+        }
+        code.for_each_child_mut(&mut |child| Self::keep_discarded_callback_calls(child, boxed));
+    }
+
+    /// A boxed callback's call that IS the instance's result — the body's tail or a `return`'s
+    /// value — when the instance returns the same `__tuple<…>` record: it hands up the record
+    /// the call answers, as the twin `fn last(f: fn(integer) -> (integer, text)) -> (integer,
+    /// text) { f(3) }` does, instead of unboxing it into a stack tuple for the return to box
+    /// again.  `tail` says whether `code` stands in result position.
+    fn keep_returned_callback_calls(&self, code: &mut Value, ret_d: u32, tail: bool) {
+        let returned_call = |me: &Self, x: &Value| -> Option<Value> {
+            let call = Self::boxed_callback_call(x, &me.boxed_fn_vars)?;
+            let Value::Block(blk) = x.unspan() else {
+                return None;
+            };
+            let Some(Value::Set(tmp, _)) = blk.operators.first() else {
+                return None;
+            };
+            matches!(me.vars.tp(*tmp).base(), Type::Reference(d, _) if *d == ret_d).then_some(call)
+        };
+        match code {
+            Value::Return(inner) => {
+                if let Some(call) = returned_call(self, inner) {
+                    **inner = call;
+                } else {
+                    self.keep_returned_callback_calls(inner, ret_d, false);
+                }
+            }
+            Value::Block(bl) if tail => {
+                if let Some(last) = bl.operators.last_mut()
+                    && let Some(call) = returned_call(self, last)
+                {
+                    *last = call;
+                    // The block yields the record now, as the instance's signature says.
+                    bl.result = Type::Reference(ret_d, Deps::none());
+                }
+                for op in &mut bl.operators {
+                    self.keep_returned_callback_calls(op, ret_d, false);
+                }
+            }
+            Value::Span(sp) => self.keep_returned_callback_calls(&mut sp.1, ret_d, tail),
+            other => other.for_each_child_mut(&mut |child| {
+                self.keep_returned_callback_calls(child, ret_d, false);
+            }),
+        }
+    }
+
+    /// The call inside an unbox of a boxed callback's answer (`tuple_unbox` whose first
+    /// statement binds `CallRef(f, …)` with `f` in `boxed`), or `None`.
+    fn boxed_callback_call(unbox: &Value, boxed: &[u16]) -> Option<Value> {
+        let Value::Block(blk) = unbox.unspan() else {
+            return None;
+        };
+        if blk.name != "tuple_unbox" {
+            return None;
+        }
+        let Some(Value::Set(_, call)) = blk.operators.first() else {
+            return None;
+        };
+        match call.unspan() {
+            Value::CallRef(fv, _) if boxed.contains(fv) => Some(call.unspan().clone()),
+            _ => None,
+        }
+    }
+
+    /// The fn-typed variables of an instance whose return the substitution made a
+    /// lifetime-bearing tuple, retyped to name the boxed record as the instance's signature
+    /// does (`box_fn_tuple_return`); a call through one is unboxed where the template's code
+    /// reads the tuple.
+    fn box_instance_fn_vars(&mut self, vars: &mut Function) -> Vec<u16> {
+        let mut boxed = Vec::new();
+        for var in 0..vars.count() {
+            let tp = vars.tp(var).clone();
+            if matches!(tp.base(), Type::Function(..)) {
+                let retyped = self.box_fn_tuple_return(tp.clone());
+                if retyped != tp {
+                    vars.set_type(var, retyped);
+                    boxed.push(var);
+                }
+            }
+        }
+        boxed
+    }
+
     pub(super) fn tuple_return_rewrite(&mut self, returned: Type, from_type_var: bool) -> Type {
         // `τ?` is a SECOND SPELLING of the shape this rewrites, and matching only the first
         // is what loft#1451 was.  A `-> T?` instantiated at a tuple arrives as
@@ -665,8 +799,14 @@ impl Parser {
                 crate::data::Data::mangle_instance(&spelling.join("#"), self.data.def(g_nr).name())
             );
         }
-        // Return existing instantiation if already created.
-        let existing = self.data.def_nr(&mangled);
+        // Return existing instantiation if already created — by any source: `@FR-G-Mono` is
+        // one instance per distinct instantiation PROGRAM-wide, and two modules instantiating
+        // one template each minted their own under one key, which both native backends then
+        // emitted as two definitions of one function.
+        let existing = match self.data.def_nr(&mangled) {
+            u32::MAX => self.data.any_source_nr(&mangled),
+            found => found,
+        };
         if existing != u32::MAX {
             if crate::env_once!(std::env::var_os("LOFT_DBG_ACC").is_some()) {
                 eprintln!(
@@ -691,12 +831,25 @@ impl Parser {
         // Clone the template data before mutating self.data.
         let tmpl_code = self.data.definitions[g_nr as usize].code.clone();
         let tmpl_returned = self.data.definitions[g_nr as usize].returned.clone();
+        let tmpl_attr_types: Vec<Type> = self.data.definitions[g_nr as usize]
+            .attributes
+            .iter()
+            .map(|a| a.typedef.clone())
+            .collect();
+        let inst_attr_types: Vec<Type> = tmpl_attr_types
+            .into_iter()
+            .map(|t| {
+                let t = Self::substitute_all(t, &bindings);
+                self.box_fn_tuple_return(t)
+            })
+            .collect();
         let tmpl_attrs: Vec<_> = self.data.definitions[g_nr as usize]
             .attributes
             .iter()
-            .map(|a| Argument {
+            .zip(inst_attr_types)
+            .map(|(a, typedef)| Argument {
                 name: a.name.clone(),
-                typedef: Self::substitute_all(a.typedef.clone(), &bindings),
+                typedef,
                 default: a.value.clone(),
                 // C124 — a parameter's `const` is part of the SIGNATURE a call is judged by, so
                 // the monomorph keeps the template's: `sum<T>(v: const vector<T>)` answered a
@@ -1364,6 +1517,7 @@ impl Parser {
         for (holder, bound_to) in bindings {
             vars.substitute_type(*holder, bound_to);
         }
+        let boxed_fn_vars = self.box_instance_fn_vars(&mut vars);
         // loft#2156 — and each vector backing's wrapper, which names the variable only
         // through its field (`Self::instance_vector_wrapper`).
         for v in 0..vars.count() {
@@ -1427,6 +1581,7 @@ impl Parser {
         let before_work: std::collections::HashSet<u16> =
             self.vars.work_texts().into_iter().collect();
         let outer_set_call_refs = std::mem::take(&mut self.set_call_refs);
+        let outer_boxed_fn_vars = std::mem::replace(&mut self.boxed_fn_vars, boxed_fn_vars);
         let mut code = code;
         // Inside the instance's own frame (its variables, its context), so a comparison that
         // needs a temporary — a tuple's element-wise one — makes it in the right function.
@@ -1439,9 +1594,11 @@ impl Parser {
             Self::keep_returned_tuple_reads(&mut code, true, &returned);
         }
         let mut code = self.rewrite_generic_type_defaults(code);
+        self.settle_boxed_callback_calls(&mut code, d_nr);
         self.settle_parametric_yield_copies(&mut code);
         self.stage_text_self_reads(&mut code, tmpl_vars);
         let set_call_refs = std::mem::replace(&mut self.set_call_refs, outer_set_call_refs);
+        self.boxed_fn_vars = outer_boxed_fn_vars;
         self.instance_bindings = outer_bindings;
         self.closure_param = outer_closure_param;
         self.assign_target = outer_assign_target;

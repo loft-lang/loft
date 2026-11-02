@@ -1,8 +1,8 @@
 diff --git a/src/parser/collections.rs b/src/parser/collections.rs
-index 574bc4b3f..6f173f96b 100644
+index f9832e51f..994190ac3 100644
 --- a/src/parser/collections.rs
 +++ b/src/parser/collections.rs
-@@ -3528,35 +3528,6 @@ use #count instead"
+@@ -3554,35 +3554,6 @@ use #count instead"
      /// program wrote.  They differ only from the second loop over a name onward, and the
      /// two are read for different questions: companions and the binding itself are keyed
      /// off `id`, while the shadow guards ask what `src_id` denotes right now.
@@ -35,10 +35,10 @@ index 574bc4b3f..6f173f96b 100644
 -        }
 -    }
 -
-     #[allow(clippy::type_complexity)]
-     pub(crate) fn parse_for_iter_setup(
-         &mut self,
-@@ -3567,7 +3538,6 @@ use #count instead"
+     /// `@FR-B-Scope` — a loop variable (a `for` statement's or a comprehension's) may not take
+     /// the name of a local still in scope: the loop would clobber it, whatever the two types
+     /// are.  Two shapes, both silently wrong once:
+@@ -3673,7 +3644,6 @@ use #count instead"
          destructure_names: Option<&[String]>,
      ) -> (u16, Option<u16>, u16, Value, Value, Value, Vec<Value>) {
          let var_tp = self.for_type(in_type);

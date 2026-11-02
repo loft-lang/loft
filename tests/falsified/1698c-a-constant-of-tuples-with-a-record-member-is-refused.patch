@@ -1,8 +1,8 @@
 diff --git a/src/parser/definitions.rs b/src/parser/definitions.rs
-index aa119db8f..2649f095d 100644
+index fae6f840f..3ffe99a4c 100644
 --- a/src/parser/definitions.rs
 +++ b/src/parser/definitions.rs
-@@ -1745,17 +1745,6 @@ impl Parser {
+@@ -1860,17 +1860,6 @@ impl Parser {
          if crate::parser::vectors::is_collection(elem.base()) {
              return Some("a collection as its element".to_string());
          }
@@ -21,10 +21,10 @@ index aa119db8f..2649f095d 100644
              return None;
          };
 diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index 8a61ac81e..85fbfbf9a 100644
+index e2acebffe..6f1ec53a4 100644
 --- a/src/parser/expressions.rs
 +++ b/src/parser/expressions.rs
-@@ -459,21 +459,6 @@ fn ir_mentions_var(val: &Value, target: u16) -> bool {
+@@ -451,21 +451,6 @@ fn ir_mentions_var(val: &Value, target: u16) -> bool {
      }
  }
  
@@ -46,7 +46,7 @@ index 8a61ac81e..85fbfbf9a 100644
  pub(crate) fn substitute_value(into: &mut Value, from: &Value, to: &Value) {
      if into == from {
          *into = to.clone();
-@@ -4306,7 +4291,7 @@ use a separate collection or add after the loop"
+@@ -4919,7 +4904,7 @@ use a separate collection or add after the loop"
          } else if op == "="
              && !self.amp_pending
              && matches!(to, Value::Var(_))
@@ -55,7 +55,7 @@ index 8a61ac81e..85fbfbf9a 100644
              && let Type::Tuple(elems) = s_type.base().clone()
              && elems.iter().any(|e| !crate::data::is_scalar(e.base()))
          {
-@@ -4319,13 +4304,12 @@ use a separate collection or add after the loop"
+@@ -4932,13 +4917,12 @@ use a separate collection or add after the loop"
              // showed through `t`, and writing a member through the record panicked.  Each
              // member takes `@FR-T-Cons`'s copy, which is idempotent on a literal (its members
              // were copied, or are fresh, when it was parsed).  A COPY, not the `(H-Move)`
@@ -74,7 +74,7 @@ index 8a61ac81e..85fbfbf9a 100644
              for (i, t) in elems.iter().enumerate() {
                  if let Some(m) = members.get_mut(i)
                      && let Some(owned) = self.tuple_member_owned_copy(m, t)
-@@ -4333,9 +4317,7 @@ use a separate collection or add after the loop"
+@@ -4946,9 +4930,7 @@ use a separate collection or add after the loop"
                      types[i] = owned;
                  }
              }
@@ -85,7 +85,7 @@ index 8a61ac81e..85fbfbf9a 100644
              // `@FR-N-Shape`: the shape was read through `?`, so a `?` it carried is kept.
              s_type = if s_type.peel_optional().1 {
                  Type::optional(Type::Tuple(types))
-@@ -8366,17 +8348,8 @@ use a separate collection or add after the loop"
+@@ -9413,17 +9395,8 @@ use a separate collection or add after the loop"
                  // struct member VIEWS (`@FR-B-View`), and off a BORROWED base — a parameter, a
                  // linked local — every member views.  Decided on the source before the temp
                  // takes its place: the temp is never an argument. (loft#1361)
@@ -105,10 +105,10 @@ index 8a61ac81e..85fbfbf9a 100644
                  let tmp_tp = rhs_type.clone();
                  let tmp = self.vars.work_refs(&tmp_tp, &mut self.lexer);
 diff --git a/src/parser/fields.rs b/src/parser/fields.rs
-index 36c8817de..7179372be 100644
+index febd4bd27..9eee26585 100644
 --- a/src/parser/fields.rs
 +++ b/src/parser/fields.rs
-@@ -2566,80 +2566,6 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
+@@ -2736,18 +2736,6 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
          Some(self.get_field(open, idx, dbref))
      }
  
@@ -124,10 +124,13 @@ index 36c8817de..7179372be 100644
 -    /// the same answer for the element spelling.  Only where the element is READ FROM A
 -    /// PLACE (a borrowing cursor): an element of a call's result has no place to write
 -    /// and its temp owns the store it frees, so it keeps the copy.
--    pub(crate) fn stored_tuple_member_place(&self, code: &Value, idx: usize) -> Option<Value> {
--        let Value::Block(b) = code.unspan() else {
--            return None;
--        };
+     pub(crate) fn stored_tuple_member_place(&self, code: &Value, idx: usize) -> Option<Value> {
+         let Value::Block(b) = code.unspan() else {
+             return None;
+@@ -2761,62 +2749,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
+         {
+             return members.get(idx).cloned();
+         }
 -        if b.name != "tuple_unbox" || b.operators.len() != 2 {
 -            return None;
 -        }
@@ -184,24 +187,7 @@ index 36c8817de..7179372be 100644
 -            _ => {}
 -        });
 -        ok
--    }
--
++        None
+     }
+ 
      /// loft#1072 — the PLACE a `fn_ref_field_read` block reads from: the host reference,
-     /// the byte offset the 4-byte d_nr sits at, and whether the field carries a
-     /// `__closure_rec` half at `pos + 4`.
-diff --git a/src/parser/operators.rs b/src/parser/operators.rs
-index 50dd8a7e8..2b7f40bfe 100644
---- a/src/parser/operators.rs
-+++ b/src/parser/operators.rs
-@@ -2371,11 +2371,6 @@ impl Parser {
-                                 // loft#1868 — the member of an element of a tuple of a type
-                                 // variable: its record's field, deferred to each monomorph.
-                                 *code = place;
--                            } else if let Some(place) =
--                                self.stored_tuple_member_place(&unspanned, idx)
--                            {
--                                // loft#1698 — a stored tuple's member is its record's field.
--                                *code = place;
-                             } else {
-                                 // Temporary tuple — store in work var first.
-                                 let tmp_tp = Type::Tuple(elems.clone());

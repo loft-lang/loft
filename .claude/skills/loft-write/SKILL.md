@@ -95,6 +95,21 @@ plain `integer` for ordinary arithmetic — it has the full 64-bit range.
 Read [references/null-and-casts.md](references/null-and-casts.md) when a slot may hold null,
 when you discharge a `τ?` or parse text, or when the default `x?` picks matters.
 
+### Idioms for tree-walking and lookup code — reach for these before writing a `??`
+
+- **Bind a variant or leave:** `args = match c { NdCall { args } => args, _ => return null };`
+  — loft's `let … else` ([LOFT_CONTROL.md § Match](../../../doc/claude/LOFT_CONTROL.md#match-expressions)).
+  Inside one block, `if c is NdCall { args } { … }`.
+- **Bind a nullable or leave:** `x = lookup(k) ?? return null` (also `?? break`, `?? continue`).
+- **An index needs no `??` when the compiler trusts it:** a constant (`args[0]`, `v[-1]`),
+  `v[len(v) - 1]`, a `for j in 0..len(v)` variable, or an index a guard proved (`if i < len(v)`).
+  `n = len(v); v[n - 1]` and `v[x#index]` are not trusted — write `v[len(v) - 1]`, read `x`
+  ([LOFT_DATA.md § Vectors](../../../doc/claude/LOFT_DATA.md#vectors)).
+- **Discharge the rest by intent:** `v[i]!` when an invariant guarantees it (halts otherwise),
+  `v[i]?` for the type's default, `v[i] ?? d` for your own default.
+- **Order:** `v.sort()`, `v.sort_by(fn)` for a one-off order; `sorted<T[-key]>` when records
+  are added over time and must stay ordered.
+
 ---
 
 ## Field modifiers (struct fields only)

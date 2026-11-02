@@ -282,7 +282,10 @@ number of them.  Each is one coherent change:
 - a test written before its implementation, in a separate commit, is marked
   `#[ignore = "<reason>"]` or `@EXPECT_FAIL` and enabled in the commit that makes it pass;
 - a behaviour-neutral refactor gets its own commit;
-- documentation gets its own commit, on the same branch ([Documentation updates](#documentation-updates)).
+- documentation gets its own commit, on the same branch ([Documentation updates](#documentation-updates));
+- a tool's output is committed only when its ANSWER changed: a run that only re-stamps files
+  (every finding's `checked:` line, a re-run sha) is noise, and a stamping tool writes only on a
+  changed verdict.
 
 When one branch carries several items, or several phases of one item, each gets its own
 commits, so the history pins a change to one item.

@@ -417,12 +417,16 @@ impl Parser {
                     // when `a` escapes (the N shape: `a = head()+head()`, returned).
                     // The adopt IS the body providing a's store, exactly like the
                     // literal-init `body_allocates` case — so skip `vector_db` too.
+                    // A slice that starts the concat (`v = v[..-1] + [x]`, `@FR-Slice-Value`)
+                    // is the same: its materialised block mints its own store, and it READS v
+                    // — a fresh backing allocated first would empty v before the slice runs.
                     let body_adopts_call = ls.first().is_some_and(|first| {
                         matches!(first.unspan(), Value::Set(s, rhs) if *s == var_nr
-                            && matches!(rhs.unspan(), Value::Call(d, _)
+                            && (matches!(rhs.unspan(), Value::Call(d, _)
                                 if self.data.def(*d).name().starts_with("n_")
                                     && *self.data.def(*d).code() != Value::Null
-                                    && !self.data.def(*d).returns_borrowed_view()))
+                                    && !self.data.def(*d).returns_borrowed_view())
+                                || matches!(rhs.unspan(), Value::Block(bl) if bl.name == "iter_vec")))
                     });
                     // The materialise prefix reads v while it is still intact, so
                     // it MUST precede the `vector_db` clear: insert prefix ++
@@ -1853,6 +1857,9 @@ impl Parser {
         } else {
             u16::MAX
         };
+        // A field destination (a literal's field, a field assignment): an operand literal is
+        // built straight into it, which a `+` chain then continues (`parse_append_vector`).
+        let orig_dest = self.is_field(code).then(|| code.clone());
         let operand_pos = *self.lexer.peek_pos();
         let mut current_type = self.parse_primary(var_tp, code, parent_tp);
         let mut ceiling = OPERATORS.len();
@@ -1878,6 +1885,7 @@ impl Parser {
                 level,
                 current_type,
                 orig_var,
+                orig_dest.as_ref(),
                 operand_pos,
             );
             ceiling = level;
@@ -1894,6 +1902,14 @@ impl Parser {
         // `(&a)`, a call receiver) consumes it too — that is what makes the `&`
         // arriving later a sub-expression use rather than the whole RHS.
         let at_head = std::mem::take(&mut self.amp_head);
+        // @PLN46/@PLN25 — `expr_not_null` says "the field access JUST parsed is non-null", for
+        // the operator right after that access; a new operand is never that access.  Without
+        // this reset the marker a `d.items` read left set rode into the next operand — a call
+        // argument `h(d.items, k ?? 7)`, a tuple element, `d.items += [k ?? 7]` — and the `??`
+        // on a plain `k` was reported redundant under the name 'items' while its default was
+        // in use (loft#2302).  The `=>` and statement boundaries reset it for the same reason.
+        self.expr_not_null = false;
+        self.expr_not_null_name.clear();
         // @PLN87 — a PREFIX `&<lvalue>` is a reference-to, distinct from the binary
         // `&` (bitwise-and "Land"). The binary form only ever sits BETWEEN operands,
         // so a `&` seen here at an operand START is the prefix: it flags the `&`-ness
@@ -2041,6 +2057,7 @@ impl Parser {
         precedence: usize,
         current_type: Type,
         orig_var: u16,
+        orig_dest: Option<&Value>,
         operand_pos: Position,
     ) -> Type {
         // The levels the run's operators took (`enter_depth`) end with the run.
@@ -2052,6 +2069,7 @@ impl Parser {
             precedence,
             current_type,
             orig_var,
+            orig_dest,
             operand_pos,
         );
         self.parse_depth = depth;
@@ -2076,6 +2094,7 @@ impl Parser {
         precedence: usize,
         mut current_type: Type,
         orig_var: u16,
+        orig_dest: Option<&Value>,
         operand_pos: Position,
     ) -> Type {
         let mut ls = Vec::new();
@@ -2284,11 +2303,17 @@ impl Parser {
                         }
                         return self.parse_append_text(code, &current_type, &ls, effective_orig);
                     } else if matches!(current_type, Type::Vector(_, _)) {
-                        return self.parse_append_vector(code, &current_type, &ls, orig_var);
+                        return self.parse_append_vector(
+                            code,
+                            &current_type,
+                            &ls,
+                            orig_var,
+                            orig_dest,
+                        );
                     } else if let Type::RefVar(inner) = &current_type
                         && matches!(**inner, Type::Vector(_, _))
                     {
-                        return self.parse_append_vector(code, inner, &ls, orig_var);
+                        return self.parse_append_vector(code, inner, &ls, orig_var, orig_dest);
                     } else if matches!(current_type.base(), Type::Vector(_, _)) {
                         // A NULLABLE vector reaches none of the arms above, and the
                         // fall-through returns the left operand — so `a + b` over two
@@ -2355,6 +2380,18 @@ impl Parser {
                     "'++' is not a valid operator — use '+' for concatenation or addition"
                 );
             }
+            // `@FR-Slice-Value` — a slice that starts a `+` is the fresh vector of its range,
+            // the copy a bind would make of it, so `v[..-1] + [x]` concatenates.
+            if operator == "+"
+                && ls.is_empty()
+                && let Type::Iterator(elm, _) = current_type.base()
+            {
+                let want = Type::Vector(elm.clone(), crate::data::Deps::none());
+                let is_tp = current_type.clone();
+                if let Some(vt) = self.iterator_as_vector(code, &is_tp, &want) {
+                    current_type = vt;
+                }
+            }
             // Unwrap RefVar(Text) for the + text concatenation check
             let eff_type_for_plus = if let Type::RefVar(inner) = &current_type {
                 if matches!(**inner, Type::Text(_)) {
@@ -2381,7 +2418,28 @@ impl Parser {
                     return Type::Unknown(0);
                 }
                 let mut second_code = Value::Null;
-                let tp = self.parse_operators(var_tp, &mut second_code, parent_tp, precedence + 1);
+                // @FR-Col-Concat — a vector operand is a value of its own, appended into the concat's
+                // accumulator: it is not built in the destination's store.  Parsed under the
+                // destination's parent (a struct field's record), a literal operand took that
+                // record as its store and never minted one (`S { v: a + [6] }`).
+                let mut own_parent = Type::Unknown(0);
+                let operand_parent = if matches!(eff_type_for_plus, Type::Vector(_, _)) {
+                    &mut own_parent
+                } else {
+                    &mut *parent_tp
+                };
+                let mut tp =
+                    self.parse_operators(var_tp, &mut second_code, operand_parent, precedence + 1);
+                // …and so is a slice joined onto a vector (`[x] + v[1..]`).
+                if let Type::Vector(want, _) = &eff_type_for_plus
+                    && matches!(tp.base(), Type::Iterator(..))
+                {
+                    let want = Type::Vector(want.clone(), crate::data::Deps::none());
+                    let is_tp = tp.clone();
+                    if let Some(vt) = self.iterator_as_vector(&mut second_code, &is_tp, &want) {
+                        tp = vt;
+                    }
+                }
                 // @FR-E-Concat — a character joins only with text or another character; with an
                 // integer it is arithmetic on the code point, on either side (`1 + 'a'` already
                 // was), so `'a' + 1` is 98 and not "a1" (loft#2046).
@@ -3897,10 +3955,16 @@ impl Parser {
             // slot — the store face asks; a bare `null` return takes the sentinel path below
             // and is asked at the site.
             if t == Type::Null {
-                self.n_store_violation(&t, &r_type, "the return value", None);
+                self.n_store_violation(&t, &r_type, "the return value", Some(&ret_pos));
             }
             if t != Type::Null
-                && !self.convert_store(&mut ret_val, &t, &r_type, "the return value", None)
+                && !self.convert_store(
+                    &mut ret_val,
+                    &t,
+                    &r_type,
+                    "the return value",
+                    Some(&ret_pos),
+                )
                 && !self.first_pass
             {
                 self.validate_convert("return", &t, &r_type, &ret_pos);
@@ -4523,11 +4587,13 @@ impl Parser {
             // merely borrowed on the other.  A projection subject (`o.inner ?? d`) stays the
             // view it is (`@FR-B-View`), and a bare variable is never hoisted at all.
             let owned_record = self.owned_record_subject(lhs_type, code);
-            if matches!(
-                lhs_type,
-                Type::Text(_) | Type::Sorted(_, _, _) | Type::Hash(_, _, _) | Type::Index(_, _, _)
-            ) || (matches!(lhs_type, Type::Reference(_, _) | Type::Enum(_, true, _))
-                && !owned_record)
+            // Every KEYED kind takes the hand-off, asked through the one kind list (`is_keyed`):
+            // its consumer (`OpReplaceKeyed`'s source free) releases the store, and a temp freed
+            // at the block's exit is freed before that consumer reads it (`@FR-H-FreeAll`).
+            if matches!(lhs_type, Type::Text(_))
+                || crate::parser::vectors::is_keyed(lhs_type)
+                || (matches!(lhs_type, Type::Reference(_, _) | Type::Enum(_, true, _))
+                    && !owned_record)
                 || (matches!(lhs_type, Type::Vector(_, _)) && !owned_vector)
             {
                 self.vars.set_skip_free(tmp);
@@ -6146,15 +6212,27 @@ impl Parser {
                 );
                 *ctp = Type::Boolean;
             } else if vec_null || float_null || enum_null || ref_null || senum_null || tuple_null {
-                if !self.first_pass {
-                    let (n_code, n_tp) = if *ctp == Type::Null {
-                        (second_code, second_type.clone())
+                let (n_code, n_tp) = if *ctp == Type::Null {
+                    (second_code, second_type.clone())
+                } else {
+                    (code.clone(), ctp.clone())
+                };
+                if self.first_pass {
+                    // `@FR-N-Guard` reads its proof off the condition on BOTH passes, and pass 1
+                    // keeps the type of an inferred local.  The operand alone is the truthy
+                    // `if v` to `narrowing_from_condition` — present on the THEN side — which
+                    // is `!= null`'s polarity and the opposite of `== null`'s.  Left bare, a
+                    // guard `if e == null { return … }` proved nothing after it (a struct-enum
+                    // `e == Owned` was refused there) and its null branch proved `e` PRESENT
+                    // (`y = f` there typed `y` non-null, then warned on the store), loft#2303.
+                    // The negation states the polarity in the shape the negation arm reads.
+                    *code = if operator == "==" {
+                        self.cl("OpNot", &[n_code])
                     } else {
-                        (code.clone(), ctp.clone())
+                        n_code
                     };
-                    if let Some(test) = self.null_test(n_code, &n_tp, operator == "!=") {
-                        *code = test;
-                    }
+                } else if let Some(test) = self.null_test(n_code, &n_tp, operator == "!=") {
+                    *code = test;
                 }
                 *ctp = Type::Boolean;
             } else if matches!(operator, "<" | "<=" | ">" | ">=")

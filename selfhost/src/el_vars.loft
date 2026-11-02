@@ -1,0 +1,515 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A function's variable table while it is elaborated (src/variables/mod.rs `Function`): the
+// variables in creation order and the name each spelling currently means.  What the image
+// keeps of it is `ir::Function`; `Vars` adds the working state the parser asks while it reads
+// the body.  A variable's number is its index, as in the Rust table.
+use ir;
+use el;
+use el_types;
+
+pub struct VarName {
+  pub name: text,
+  pub nr: integer
+}
+
+// One spelling's loop count.  Its own element type: a second keyed collection of `VarName` in
+// `Vars` would be one record set with `names` (`@FR-Col-Group`).
+pub struct LoopCount {
+  pub name: text,
+  pub n: integer
+}
+
+// One `create_unique` name's count, its own element type for the same reason as `LoopCount`.
+pub struct UniqueCount {
+  pub name: text,
+  pub n: integer
+}
+
+// A local assigned a vector's length, and that vector (`length_locals`).
+pub struct LenLocal {
+  pub var: integer,
+  pub vec: ir::Node
+}
+
+pub struct Vars {
+  pub name: text,
+  pub file: text,
+  pub vars: vector<ir::Variable>,
+  // `Function::names`: the variable a spelling names now
+  pub names: hash<VarName[name]>,
+  // `Variable::defined`, per variable
+  pub defined: vector<boolean>,
+  // `Function::work_texts`: the `__work_N` text buffers this body minted, in order
+  pub work_texts: vector<integer>,
+  pub work_text: integer,
+  // The record locals a struct literal has built in place on this pass.
+  pub built: vector<integer>,
+  // `Function::unique`: the counters `create_unique` names `_<name>_<n>` locals by, one per
+  // name, per pass
+  pub unique: hash<UniqueCount[name]>,
+  // `Function::work_vdb` and `work_references`: the `__vdb_N` vector stores this body minted
+  pub work_vdb: integer,
+  // `Function::work_ref` and its second-pass twin: the `__ref_N` / `__ref_p2_N` record buffers
+  pub work_ref: integer,
+  pub work_ref_p2: integer,
+  pub work_refs: vector<integer>,
+  // `Function::loops`' variables, innermost last: the loops still open
+  pub active_loops: vector<integer>,
+  // `Iterator::value` of each open loop, beside `active_loops`: the vector a `for` walks, or
+  // null for any other loop
+  pub active_values: vector<ir::Node>,
+  // The locals this pass assigned a vector's length (`n = len(v)`), with that vector
+  pub len_locals: vector<LenLocal>,
+  // Set when an index read was trusted through a length local (`Parser::length_local_read`)
+  pub len_read: boolean,
+  // The syntax node of the body being elaborated
+  pub body: integer,
+  // `Function::loop_binds`: how many loops have bound each spelling, per pass
+  pub loop_binds: hash<LoopCount[name]>,
+  // `Parser::divisor_nonzero`: the locals a condition proves non-zero where they are read
+  pub nonzero: vector<integer>,
+  // `Function::work_ctext`: the `__work_cN` text buffers a call hands a text-returning callee
+  pub work_ctext: integer,
+  // `Function::work_text_p2`: the `__work_p2_N` destinations a text-dest call is given
+  pub work_tp2: integer,
+  // `child_allocs` on the first pass's code, which keeps every loop body: per record made
+  // through a local's field (one per appended literal), that local
+  pub allocs: vector<integer>,
+  // `Function::mark_inline_ref`: the `__ref_p2_N` a projection out of a call result is bound
+  // in, each set to null just before the statement that fills it
+  pub inline_refs: vector<integer>
+}
+
+pub fn new_vars(name: text, file: text) -> Vars {
+  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [] }
+}
+
+pub fn name_of(v: Vars, nr: integer) -> text {
+  v.vars[nr]!.name
+}
+
+pub fn count(v: Vars) -> integer {
+  len(v.vars)
+}
+
+// `Function::var`: the variable `name` names, or -1 (`u16::MAX`).
+pub fn var(v: Vars, name: text) -> integer {
+  e = v.names[name];
+  if e == null { -1 } else { e.nr }
+}
+
+pub fn tp(v: Vars, nr: integer) -> ir::TypeT {
+  v.vars[nr]!.type_def[0]
+}
+
+// `Function::new_var`: a fresh variable; the first variable of a spelling takes the name.
+pub fn new_var(v: Vars, name: text, tp: ir::TypeT) -> integer {
+  nr = len(v.vars);
+  if v.names[name] == null {
+    v.names += [VarName { name: name, nr: nr }];
+  }
+  v.vars += [ir::Variable {
+    name: name,
+    type_def: [tp],
+    stack_pos: 65535,
+    uses: 1,
+    argument: false,
+    stack_allocated: false,
+    skip_free: false,
+    captured: false,
+    caller_hidden_buf: false,
+    view_elided: false,
+    lazy_buffer: false,
+    deferred_first_bind: false,
+    linked_narrow: false,
+    store_text_link: false,
+    user_named: false,
+    user_appended: false,
+    copy_bound: false,
+    buffer_witnessed: false,
+    value_const: false,
+    owner_witness: 65535,
+    rebind_orig: 65535,
+    scope: 65535
+  }];
+  v.defined += [false];
+  nr
+}
+
+// `Function::add_variable`: the variable `name` already names (its type settled when it was
+// still unknown), or a fresh one.
+pub fn add_variable(v: Vars, name: text, t: ir::TypeT) -> integer {
+  e = v.names[name];
+  if e != null {
+    nr = e.nr;
+    if is_unknown(tp(v, nr)) {
+      v.vars[nr].type_def = [t];
+    }
+    return nr;
+  }
+  new_var(v, name, t)
+}
+
+pub fn become_argument(v: Vars, nr: integer) {
+  v.vars[nr].argument = true;
+  v.defined[nr] = true;
+  v.vars[nr].stack_allocated = true;
+}
+
+pub fn set_defined(v: Vars, nr: integer) {
+  v.defined[nr] = true;
+}
+
+pub fn set_value_const(v: Vars, nr: integer) {
+  v.vars[nr].value_const = true;
+}
+
+// `Function::in_use`: count a use (or take one back).
+pub fn in_use(v: Vars, nr: integer, plus: boolean) {
+  if plus {
+    v.vars[nr].uses += 1;
+  } else {
+    v.vars[nr].uses -= 1;
+  }
+}
+
+// `Function::work_text`: the next `__work_N` text buffer of this body (the same variable the
+// first pass made, met again by name on the second), noted in the ordered set the body's head
+// initialises.
+pub fn work_text(v: Vars) -> integer {
+  v.work_text += 1;
+  nr = add_variable(v, "__work_{v.work_text}", ir::TyText { dep: [] });
+  add_work_text(v, nr);
+  nr
+}
+
+// `Function::caller_text_buf`: the next `__work_cN`, a work text of its own counter.
+pub fn caller_text_buf(v: Vars) -> integer {
+  v.work_ctext += 1;
+  nr = add_variable(v, "__work_c{v.work_ctext}", ir::TyText { dep: [] });
+  add_work_text(v, nr);
+  nr
+}
+
+// `Function::work_text_p2`: the next `__work_p2_N`.
+pub fn work_text_p2(v: Vars) -> integer {
+  v.work_tp2 += 1;
+  nr = add_variable(v, "__work_p2_{v.work_tp2}", ir::TyText { dep: [] });
+  add_work_text(v, nr);
+  nr
+}
+
+// `work_texts.insert`: kept in variable order.
+fn add_work_text(v: Vars, nr: integer) {
+  at = 0;
+  while at < len(v.work_texts) && v.work_texts[at] < nr {
+    at += 1;
+  }
+  if at >= len(v.work_texts) || v.work_texts[at] != nr {
+    rest: vector<integer> = [];
+    for w in v.work_texts {
+      if w#index == at {
+        rest += [nr];
+      }
+      rest += [w];
+    }
+    if at >= len(v.work_texts) {
+      rest += [nr];
+    }
+    v.work_texts = rest;
+  }
+}
+
+pub fn was_built(v: Vars, nr: integer) -> boolean {
+  for b in v.built {
+    if b == nr {
+      return true;
+    }
+  }
+  false
+}
+
+pub fn mark_built(v: Vars, nr: integer) {
+  v.built += [nr];
+}
+
+// `Parser::var_usages(nr, false)`: take back a use, never below none.
+pub fn drop_use(v: Vars, nr: integer) {
+  if v.vars[nr].uses > 0 {
+    v.vars[nr].uses -= 1;
+  }
+}
+
+pub fn mark_user_named(v: Vars, nr: integer) {
+  v.vars[nr].user_named = true;
+}
+
+// `Function::is_compiler_generated`: a local the parser made (`__ref_p2_1`, `_elm_1`), which the
+// program cannot name and so cannot read.
+pub fn is_compiler_generated(v: Vars, nr: integer) -> boolean {
+  name_of(v, nr).starts_with("_") && !v.vars[nr].user_named
+}
+
+// `Function::change_var_type`, the cases a plain binding meets: a local still untyped takes the
+// value's type, and one already of that type keeps it.  False for any other change, which the
+// caller refuses by name.
+pub fn change_var_type(e: el::El, v: Vars, nr: integer, t: ir::TypeT) -> boolean {
+  cur = tp(v, nr);
+  if el_types::is_unknown(t) || el_types::is_equal(e, cur, t) {
+    // `depend_all`: the local borrows what the value borrows.
+    ds = el_types::deps(t);
+    if len(ds) > 0 {
+      set_type(v, nr, el_types::with_deps(cur, ds));
+    }
+    return true;
+  }
+  if is_unknown(cur) {
+    set_type(v, nr, t);
+    return true;
+  }
+  // A declared `τ?` takes a `τ` or a null, borrowing what the value borrows.
+  match cur {
+    TyOptional { inner } => {
+      if t is TyNull || el_types::is_equal(e, inner, el_types::base(t)) {
+        ds = el_types::deps(t);
+        if len(ds) > 0 {
+          set_type(v, nr, el_types::with_deps(cur, ds));
+        }
+        return true;
+      }
+    },
+    _ => {}
+  }
+  false
+}
+
+// `Function::append(other)`: this table takes over the one a definition kept from the pass
+// before — its variables with their uses reset, and its names.
+pub fn take_over(v: Vars, kept: ir::Function) {
+  v.vars = [];
+  v.defined = [];
+  for x in kept.variables {
+    y = x;
+    y.uses = 0;
+    v.vars += [y];
+    v.defined += [false];
+  }
+  v.names = [];
+  for n in kept.names {
+    v.names += [VarName { name: n.name, nr: n.nr }];
+  }
+  v.work_text = 0;
+  v.work_texts = [];
+  v.built = [];
+  v.allocs = [];
+  v.inline_refs = [];
+  v.unique = [];
+  v.work_vdb = 0;
+  v.work_ref = 0;
+  v.work_ref_p2 = 0;
+  v.work_refs = [];
+  v.active_loops = [];
+  v.active_values = [];
+  v.len_locals = [];
+  v.loop_binds = [];
+  v.nonzero = [];
+  v.work_ctext = 0;
+  v.work_tp2 = 0;
+}
+
+// `Function::loop_binding`: the name a loop's variable takes — the spelling itself for the
+// first loop of the function that binds it, `name#N` for the N-th after.
+pub fn loop_binding(v: Vars, name: text) -> text {
+  e = v.loop_binds[name];
+  if e == null {
+    v.loop_binds += [LoopCount { name: name, n: 1 }];
+    return name;
+  }
+  n = e!.n;
+  v.loop_binds[name].n = n + 1;
+  "{name}#{n}"
+}
+
+// `Function::set_name`: the spelling now names that variable.
+pub fn set_name(v: Vars, name: text, nr: integer) {
+  if v.names[name] == null {
+    v.names += [VarName { name: name, nr: nr }];
+  } else {
+    v.names[name].nr = nr;
+  }
+}
+
+// `Function::loop_variable`: the loop's variable, made on the first pass and met again on the
+// second by its `name#bind` key — the spelling itself may name a later loop's variable by then —
+// adopting the second pass's borrows where the first had none, the spelling pointed at it.
+pub fn loop_variable(v: Vars, name: text, t: ir::TypeT) -> integer {
+  key = "{name}#bind";
+  e = v.names[key];
+  if e != null {
+    nr = e!.nr;
+    if is_unknown(tp(v, nr)) || (len(el_types::deps(tp(v, nr))) == 0 && len(el_types::deps(t)) > 0) {
+      set_type(v, nr, t);
+    }
+    set_name(v, name, nr);
+    return nr;
+  }
+  nr = new_var(v, name, t);
+  set_name(v, name, nr);
+  set_name(v, key, nr);
+  nr
+}
+
+// `Function::make_independent`: the local no longer borrows `remove`.
+pub fn make_independent(v: Vars, nr: integer, remove: integer) {
+  t = tp(v, nr);
+  ds: vector<integer> = [];
+  for d in el_types::deps(t) {
+    if d != remove {
+      ds += [d];
+    }
+  }
+  set_type(v, nr, el_types::with_deps(t, ds));
+}
+
+pub fn set_var_type(v: Vars, nr: integer, t: ir::TypeT) {
+  set_type(v, nr, t);
+}
+
+// `Function::loop_value_of_index`: the vector the open `for` walks whose counter is `nr`
+// (`x#index` of `for x in v`), or null.
+pub fn loop_value_of_index(v: Vars, nr: integer) -> ir::Node {
+  nm = name_of(v, nr);
+  if !nm.ends_with("#index") {
+    return ir::NdNull;
+  }
+  binder = nm[..-6];
+  k = len(v.active_loops) - 1;
+  while k >= 0 {
+    if name_of(v, v.active_loops[k]!) == binder {
+      return v.active_values[k]!;
+    }
+    k -= 1;
+  }
+  ir::NdNull
+}
+
+// `Function::is_active_loop_var`: the variable of a loop still open.
+pub fn is_active_loop_var(v: Vars, nr: integer) -> boolean {
+  for l in v.active_loops {
+    if l == nr {
+      return true;
+    }
+  }
+  false
+}
+
+// `Function::create_unique`: a compiler local `_<name>_<n>`, the same one met again by name on
+// the second pass (the counter restarts with each pass).
+pub fn create_unique(v: Vars, name: text, t: ir::TypeT) -> integer {
+  n = 1;
+  e = v.unique[name];
+  if e == null {
+    v.unique += [UniqueCount { name: name, n: 1 }];
+  } else {
+    n = e!.n + 1;
+    v.unique[name].n = n;
+  }
+  // `Function::unique`: an element temp or a literal accumulator met again at another shape is a
+  // different site of the pass before, whose type is no fact — this pass's wins (loft#2340).
+  if name == "elm" || name == "vec" {
+    old = v.names["_{name}_{n}"];
+    if old != null && (name == "vec" || !is_unknown(t)) && shape(tp(v, old!.nr)) != shape(t) {
+      v.vars[old!.nr].type_def = [t];
+    }
+  }
+  add_variable(v, "_{name}_{n}", t)
+}
+
+// A type without its borrows, for comparing shapes.
+fn shape(t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyVector { inner } => ir::TyVector { inner: shape(inner), dep: [] },
+    TyReference { n } => ir::TyReference { n: n, dep: [] },
+    TyText { dep: _ } => ir::TyText { dep: [] },
+    TyEnum { n, is_ref } => ir::TyEnum { n: n, is_ref: is_ref, dep: [] },
+    _ => t
+  }
+}
+
+// `Function::work_vec_db`: the next `__vdb_N` store a vector literal builds in, noted among the
+// work references the body's head sets to null.
+pub fn work_vec_db(v: Vars, t: ir::TypeT) -> integer {
+  v.work_vdb += 1;
+  nr = add_variable(v, "__vdb_{v.work_vdb}", t);
+  v.work_refs = sorted_in(v.work_refs, nr);
+  nr
+}
+
+fn sorted_in(l: vector<integer>, nr: integer) -> vector<integer> {
+  r: vector<integer> = [];
+  placed = false;
+  for x in l {
+    if x == nr {
+      placed = true;
+    } else if x > nr && !placed {
+      r += [nr];
+      placed = true;
+    }
+    r += [x];
+  }
+  if !placed {
+    r += [nr];
+  }
+  r
+}
+
+// `Function::work_refs`: the next `__ref_N` record buffer — a call's hidden return buffer — noted
+// among the work references the body's head sets to null.
+pub fn work_ref(v: Vars, t: ir::TypeT) -> integer {
+  v.work_ref += 1;
+  nr = add_variable(v, "__ref_{v.work_ref}", t);
+  v.work_refs = sorted_in(v.work_refs, nr);
+  nr
+}
+
+// `Function::work_refs_p2`: the second pass's `__ref_p2_N`, a record literal's own buffer.
+pub fn work_ref_p2(v: Vars, t: ir::TypeT) -> integer {
+  v.work_ref_p2 += 1;
+  nr = add_variable(v, "__ref_p2_{v.work_ref_p2}", t);
+  v.work_refs = sorted_in(v.work_refs, nr);
+  nr
+}
+
+// `Function::depend(nr, on)`: the variable borrows `on`, its earlier borrows replaced.
+pub fn depend(v: Vars, nr: integer, on: integer) {
+  set_type(v, nr, el_types::with_deps(tp(v, nr), [on]));
+}
+
+// The variable's type replaced.
+fn set_type(v: Vars, nr: integer, t: ir::TypeT) {
+  v.vars[nr].type_def = [t];
+}
+
+// What the image keeps of the table (`ir::Function`).
+pub fn stored(v: Vars) -> ir::Function {
+  f = ir::Function { name: v.name, file: v.file, variables: [], names: [], inline_refs: [] };
+  for x in v.vars {
+    f.variables += [x];
+  }
+  for n in v.names {
+    f.names += [ir::NameNr { name: n.name, nr: n.nr }];
+  }
+  f
+}
+
+pub fn is_unknown(t: ir::TypeT) -> boolean {
+  // `Type::is_unknown`: a vector of an unknown element, and the placeholder `Reference(0)`, too.
+  match t {
+    TyUnknown { n: _ } => true,
+    TyVector { inner } => is_unknown(inner),
+    TyReference { n } => n == 0,
+    _ => false
+  }
+}

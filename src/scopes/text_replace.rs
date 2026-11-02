@@ -304,36 +304,97 @@ fn collect_calls<'a>(
     }
 }
 
-/// Is every `text` parameter of `def` mentioned only as the value of a text-field assignment?
-/// Such a parameter is read once, into the write, before the block it may borrow is released
-/// (`OpSetTextReplace` copies its value first on both backends); any other mention — a read
-/// after the write, a rebind, a walk, a capture — keeps the borrow alive past the release.
+/// Is no `text` parameter of `def` read, on any path, after a text-field assignment could have
+/// released a block it borrows?  The VALUE of a replace is trusted wherever it stands
+/// (`OpSetTextReplace` copies its value first on both backends, and `@FR-F-ParamText` copies at
+/// the call a text argument that views a store the callee writes).  Any OTHER read — a copy
+/// into a fresh element, an argument, a comparison — is admitted where no release precedes it
+/// on its path: the reads are counted per path and in order (loft#2310), an `if` taking the
+/// worse of its arms and a loop body taken twice, so its second round sees the first round's
+/// release.  A rebind of the parameter is refused wherever it stands.  Counted by MENTION
+/// instead, `if … { stack[sp] = v } else { stack += [v] }` declined every release through
+/// `stack`, and a loop over it kept every text it ever wrote.
 fn value_only_text_params(def: &Definition, replace: u32) -> bool {
     let vars = &def.variables;
     (0..vars.count())
         .filter(|&v| vars.is_argument(v) && matches!(vars.tp(v).base(), Type::Text(_)))
         .all(|p| {
-            let mut total = 0usize;
-            let mut as_value = 0usize;
-            def.code.walk(&mut |n| match n {
-                Value::Var(x)
-                | Value::Set(x, _)
-                | Value::TupleGet(x, _)
-                | Value::TuplePut(x, _, _)
-                | Value::Iter(x, _, _, _)
-                | Value::CallRef(x, _)
-                    if *x == p =>
-                {
-                    total += 1;
-                }
-                Value::Call(d, args)
-                    if *d == replace
-                        && matches!(args.get(2).map(Value::unspan), Some(Value::Var(x)) if *x == p) =>
-                {
-                    as_value += 1;
-                }
-                _ => {}
-            });
-            total == as_value
+            let mut walk = ReadAfterRelease {
+                param: p,
+                replace,
+                read_after: false,
+            };
+            walk.value(&def.code, false);
+            !walk.read_after
         })
+}
+
+/// [`value_only_text_params`]'s walk for one parameter, in evaluation order.  `released` says
+/// a replace may have run on the path that reaches a node; each step answers the same for the
+/// path that leaves it.
+struct ReadAfterRelease {
+    param: u16,
+    replace: u32,
+    read_after: bool,
+}
+
+impl ReadAfterRelease {
+    fn value(&mut self, n: &Value, released: bool) -> bool {
+        match n {
+            Value::Span(b) => self.value(&b.1, released),
+            Value::Set(x, val) => {
+                let after = self.value(val, released);
+                if *x == self.param {
+                    self.read_after = true;
+                }
+                after
+            }
+            Value::Var(x)
+            | Value::TupleGet(x, _)
+            | Value::TuplePut(x, _, _)
+            | Value::Iter(x, _, _, _)
+            | Value::CallRef(x, _)
+                if *x == self.param =>
+            {
+                if released {
+                    self.read_after = true;
+                }
+                self.children(n, released)
+            }
+            Value::If(cond, then, other) => {
+                let at = self.value(cond, released);
+                let a = self.value(then, at);
+                let b = self.value(other, at);
+                a || b
+            }
+            Value::Loop(_) => {
+                let once = self.children(n, released);
+                self.children(n, once)
+            }
+            Value::Call(d, args) => {
+                let mut at = released;
+                for (i, a) in args.iter().enumerate() {
+                    // The VALUE of a replace is read into the write before its own release, and
+                    // a release before it on the path cannot have freed what it reads: a text
+                    // argument that views a store the callee writes is a copy at the call
+                    // (`@FR-F-ParamText`).  So it is trusted wherever it stands, as it was.
+                    if *d == self.replace
+                        && i == 2
+                        && matches!(a.unspan(), Value::Var(x) if *x == self.param)
+                    {
+                        continue;
+                    }
+                    at = self.value(a, at);
+                }
+                at || *d == self.replace
+            }
+            _ => self.children(n, released),
+        }
+    }
+
+    fn children(&mut self, n: &Value, released: bool) -> bool {
+        let mut at = released;
+        n.for_each_child(&mut |c| at = self.value(c, at));
+        at
+    }
 }

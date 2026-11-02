@@ -144,6 +144,45 @@ fn the_advice_names_the_callee_the_disturbance_came_through() {
     }
 }
 
+/// The advice names a `match` payload binding as the author WROTE it.  The binding is lowered
+/// to `xs#1` (a second binding of one name), and the sentence used to print that — a name the
+/// author cannot find in the source or type back.
+#[test]
+fn the_advice_names_a_payload_binding_as_written() {
+    let dir = std::env::temp_dir().join(format!("loft-disturb-name-{}", std::process::id()));
+    loft::file_access::create_dir_all(&dir).expect("scratch dir");
+    let file = dir.join("payload.loft");
+    loft::file_access::write(
+        &file,
+        "struct N { xs: vector<integer> }\n\
+         struct S { nodes: vector<N> }\n\
+         fn add(s: S, n: N) -> integer { s.nodes += [n]; len(s.nodes) - 1 }\n\
+         fn live_after(s: S) -> integer {\n\
+           match s.nodes[0] { N { xs } => { k = add(s, N { xs: [] }); k + len(xs) } }\n\
+         }\n\
+         fn main() { s = S { nodes: [N { xs: [1, 2] }] }; assert(live_after(s) == 3, \"k + len\"); }\n",
+    )
+    .expect("write probe");
+    let out = loft()
+        .arg("--interpret")
+        .arg(&file)
+        .env("LOFT_NO_CACHE", "1")
+        .output()
+        .expect("failed to invoke loft");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "the probe must run:\n{err}");
+    assert!(
+        err.contains(
+            "in `live_after`, `xs` was copied out of `s` because `s` grows inside the call to `add`"
+        ),
+        "the advice must name the binding `xs`:\n{err}"
+    );
+    assert!(
+        !err.contains("xs#"),
+        "no internal binding name may reach the author:\n{err}"
+    );
+}
+
 /// The summary admits exactly the callees that disturb a caller's container through a parameter.
 /// `mk` is the control that matters most: it GROWS `__retbuf.els` building its own result, and
 /// counting a hidden return buffer as a caller's container would report a disturbance at every
@@ -190,4 +229,179 @@ fn the_summary_admits_the_disturbing_callees_and_no_others() {
          report a disturbance at every call to every record-returning function; \
          `n_touch_nothing` and `n_write_other_field` do nothing to a container at all:\n{err}"
     );
+}
+
+/// loft#2349 (`@FR-B-View`: a view materialises only where it is LIVE ACROSS the event) — a
+/// call's arguments are evaluated before its callee runs, so a view read only into an argument
+/// that cannot carry it into the callee — a record literal built from it, a scalar parameter —
+/// is dead when the callee grows, removes from or reassigns the container: no copy, no advice.
+/// Read as disturb-then-use, `add(s, N { xs: xs })` deep-copied `xs` and told the author it was
+/// "in use" across the growth.  The other arguments keep both — the view itself, a text built
+/// from it, a read after the call (the next statement or the same one), a second disturbing
+/// call, a loop — and those notices must survive.  Values (every callee reads what it was
+/// handed after its disturbance) are asserted under the strict falsifiers on both backends;
+/// the suite cell `rules/binding/B-Disturb/2349-…` carries the wider value matrix.
+const ARGUMENT_READS: &str = r#"
+struct N { xs: vector<integer> }
+struct S { nodes: vector<N> }
+fn mk() -> S { S { nodes: [N { xs: [1, 2] }, N { xs: [3, 4] }] } }
+fn grow(s: S) { for k in 0..20 { s.nodes += [N { xs: [100 + k] }]; } }
+fn add(s: S, n: N) -> integer { grow(s); len(s.nodes) * 100 + n.xs[0] * 10 + n.xs[1] }
+fn add_vec(s: S, v: vector<integer>) -> integer { grow(s); len(s.nodes) * 100 + v[0] * 10 + v[1] }
+fn add_int(s: S, k: integer) -> integer { grow(s); len(s.nodes) * 100 + k }
+fn add_text(s: S, t: text) -> integer { grow(s); len(s.nodes) * 100 + len(t) }
+fn rm(s: S, n: N) -> integer { s.nodes.remove(0); len(s.nodes) * 100 + n.xs[0] * 10 + n.xs[1] }
+fn reset(s: &S, n: N) -> integer { s = S { nodes: [N { xs: [9] }] }; len(s.nodes) * 100 + n.xs[0] * 10 + n.xs[1] }
+fn g_lit(s: S) -> integer { match s.nodes[0] { N { xs } => add(s, N { xs: xs }) } }
+fn g_elem(s: S) -> integer { match s.nodes[0] { N { xs } => add_int(s, xs[1]) } }
+fn g_len(s: S) -> integer { match s.nodes[0] { N { xs } => add_int(s, len(xs)) } }
+fn g_plain(s: S) -> integer { nd = s.nodes[0]; add(s, N { xs: nd.xs }) }
+fn r_lit(s: S) -> integer { match s.nodes[0] { N { xs } => rm(s, N { xs: xs }) } }
+fn a_lit(s: &S) -> integer { match s.nodes[0] { N { xs } => reset(s, N { xs: xs }) } }
+fn k_view(s: S) -> integer { match s.nodes[0] { N { xs } => add_vec(s, xs) } }
+fn k_text(s: S) -> integer { match s.nodes[0] { N { xs } => add_text(s, "{xs}") } }
+fn k_next(s: S) -> integer { match s.nodes[0] { N { xs } => { r = add(s, N { xs: xs }); r + xs[1] } } }
+fn k_same(s: S) -> integer { match s.nodes[0] { N { xs } => add(s, N { xs: xs }) + xs[1] } }
+fn k_two(s: S) -> integer { match s.nodes[0] { N { xs } => add(s, N { xs: xs }) + add(s, N { xs: xs }) } }
+fn k_loop(s: S) -> integer { t = 0; match s.nodes[0] { N { xs } => { for _ in 0..2 { t += add(s, N { xs: xs }); } } } t }
+fn k_rm_next(s: S) -> integer { match s.nodes[0] { N { xs } => { r = rm(s, N { xs: xs }); r * 10 + xs[1] } } }
+fn main() {
+  s1 = mk(); s2 = mk(); s3 = mk(); s4 = mk(); s5 = mk(); s6 = mk(); s7 = mk();
+  s8 = mk(); s9 = mk(); s10 = mk(); s11 = mk(); s12 = mk(); s13 = mk();
+  print("{g_lit(s1)} {g_elem(s2)} {g_len(s3)} {g_plain(s4)} {r_lit(s5)} {a_lit(s6)} {s6.nodes[0].xs} ");
+  print("{k_view(s7)} {k_text(s8)} {k_next(s9)} {k_same(s10)} {k_two(s11)} {k_loop(s12)} {k_rm_next(s13)}\n");
+}
+"#;
+
+fn assert_argument_reads(mode: &str, env: &[(&str, &str)]) {
+    let dir = std::env::temp_dir().join(format!(
+        "loft_2349_argument_reads_{}",
+        mode.trim_matches('-')
+    ));
+    loft::file_access::create_dir_all(&dir).expect("scratch dir");
+    let path = dir.join("argument_reads.loft");
+    loft::file_access::write(&path, ARGUMENT_READS).expect("write program");
+    let mut cmd = loft();
+    cmd.arg(mode).arg(&path);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let out = cmd.output().expect("spawn loft");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "[{mode}] the program must run clean\n{stdout}\n---\n{err}"
+    );
+    // grow: 2 + 20 nodes (a second grow 42); rm leaves 1; reset leaves 1.  A dead argument
+    // read answers the record it was built from; `k_text` counts "[1,2]".
+    assert!(
+        stdout.contains("2212 2202 2202 2212 112 112 [9] 2212 2205 2214 2214 6424 6424 1122"),
+        "[{mode}] the program must answer its hand-computed values\n{stdout}"
+    );
+    for dead in ["g_lit", "g_elem", "g_len", "g_plain", "r_lit", "a_lit"] {
+        assert!(
+            !err.contains(&format!("in `{dead}`,")),
+            "[{mode}] `{dead}` reads its view only into an argument the callee cannot keep — \
+             no copy, no notice\n{err}"
+        );
+    }
+    for live in [
+        "k_view",
+        "k_text",
+        "k_next",
+        "k_same",
+        "k_two",
+        "k_loop",
+        "k_rm_next",
+    ] {
+        assert!(
+            err.contains(&format!("in `{live}`,")),
+            "[{mode}] `{live}` holds its view across the callee's disturbance — the copy and \
+             its notice stay\n{err}"
+        );
+    }
+}
+
+#[test]
+fn a_view_read_only_into_an_argument_is_not_live_across_the_callee_interpret() {
+    assert_argument_reads("--interpret", STRICT);
+}
+
+#[test]
+fn a_view_read_only_into_an_argument_is_not_live_across_the_callee_native_c() {
+    assert_argument_reads("--native-c", STRICT_NATIVE);
+}
+
+/// loft#2358 (`@FR-B-Disturb`, `@FR-C-Ref`) — a `&` PARAMETER is a container its views point
+/// into, as a local is: reassigning it, in a callee it is passed on to or inline, ends the
+/// places inside it, so a view live across that is copied at its bind and the author is told.
+/// The walk asked `.base()` whether the reassigned variable held a record, which keeps the
+/// `&`, so the parameter spelling alone kept its alias and read the released record.  The
+/// control reads its view before the reassignment and must stay silent.
+const REF_PARAM_REASSIGN: &str = r#"
+struct N { xs: vector<integer> }
+struct S { nodes: vector<N> }
+fn mk() -> S { S { nodes: [N { xs: [1, 2] }, N { xs: [3, 4] }] } }
+fn fresh() -> S { S { nodes: [N { xs: [9] }] } }
+fn reset(s: &S) -> integer { s = fresh(); len(s.nodes) * 100 }
+fn p_callee(s: &S) -> integer { xs = s.nodes[0].xs; r = reset(s); r + xs[0] * 10 + xs[1] }
+fn p_inline(s: &S) -> integer { xs = s.nodes[0].xs; s = fresh(); len(s.nodes) * 100 + xs[0] * 10 + xs[1] }
+fn p_loop(s: &S) -> integer { xs = s.nodes[0].xs; t = 0; for _ in 0..2 { t += reset(s) + xs[0]; } t }
+fn c_dead(s: &S) -> integer { xs = s.nodes[0].xs; a = xs[0] * 10 + xs[1]; r = reset(s); r + a }
+fn main() {
+  s1 = mk(); s2 = mk(); s3 = mk(); s4 = mk();
+  print("{p_callee(s1)} {p_inline(s2)} {p_loop(s3)} {c_dead(s4)} {s1.nodes[0].xs}\n");
+}
+"#;
+
+fn assert_ref_param_reassign(mode: &str, env: &[(&str, &str)]) {
+    let dir = std::env::temp_dir().join(format!(
+        "loft_2358_ref_param_reassign_{}",
+        mode.trim_matches('-')
+    ));
+    loft::file_access::create_dir_all(&dir).expect("scratch dir");
+    let path = dir.join("ref_param_reassign.loft");
+    loft::file_access::write(&path, REF_PARAM_REASSIGN).expect("write program");
+    let mut cmd = loft();
+    cmd.arg(mode).arg(&path);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let out = cmd.output().expect("spawn loft");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "[{mode}] the program must run clean\n{stdout}\n---\n{err}"
+    );
+    // reset leaves one node (100); each view holds the record as it was at its bind.
+    assert!(
+        stdout.contains("112 112 202 112 [9]"),
+        "[{mode}] the program must answer its hand-computed values\n{stdout}"
+    );
+    for live in ["p_callee", "p_inline", "p_loop"] {
+        assert!(
+            err.contains(&format!(
+                "in `{live}`, `xs` was copied out of `s` because `s` is reassigned while `xs` \
+                 is in use"
+            )),
+            "[{mode}] `{live}` reads its view after `s` is reassigned — the copy is owed and \
+             the author is told\n{err}"
+        );
+    }
+    assert!(
+        !err.contains("in `c_dead`,"),
+        "[{mode}] `c_dead` reads its view before the reassignment — no copy\n{err}"
+    );
+}
+
+#[test]
+fn a_view_of_a_ref_parameter_materialises_when_it_is_reassigned_interpret() {
+    assert_ref_param_reassign("--interpret", STRICT);
+}
+
+#[test]
+fn a_view_of_a_ref_parameter_materialises_when_it_is_reassigned_native_c() {
+    assert_ref_param_reassign("--native-c", STRICT_NATIVE);
 }

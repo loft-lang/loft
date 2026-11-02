@@ -1837,3 +1837,56 @@ Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), 
   The second half — `v[0].0 += 10` on a `vector<(u8, u8)>` refused as *"Not implemented
   operation +"* — is a tuple-in-a-container ROUTING question rather than a narrowing one and
   stays open on the issue.
+
+### D-types-37 — OPENED AND CLOSED (2026-11-01; loft#2336): an inferred local bound to a variant kept the variant when bound to its enum
+
+`(C-Var)` licenses `Reference(S) ⤳ Enum(E)` one way, and `(N-Join)` types an inferred local by
+the join of its binds, so `x = Short { … }` followed by `x = e` (an `Enum(E)` value: a match
+capture, a call's result) makes `x` an `E`.  The `@FR-B-Copy` whole-value bind arm
+(`parse_var`, reading the source name) took the copy whenever `Data::copies_as(dst, src)` held,
+and `copies_as` admits both directions — including a destination that is a variant of the
+source's enum.  The arm then reported the DESTINATION's type, the join never saw the enum, and
+the value was copied in through the variant's layout: any other variant lost its fields,
+silently, on both backends (garbage on one run, null on the next).  **Fix.**  The arm takes the
+copy in `(C-Var)`'s direction only; the source keeps its type, so an inferred local widens to the
+enum and a declared one is refused, as it already was.  Found porting the self-host elaborator,
+whose `inner = TyUnknown { n: 0 }; match … { TyVector { inner: i } => { inner = i; } }` corrupted
+a vector's element type.  Guard
+`loft-suite rules/types/C-Var/2336-a-variant-typed-local-widens-to-its-enum-and-keeps-every-variant.loft`.
+
+### D-types-38 — OPENED AND CLOSED (2026-11-01; loft#2337): a struct-literal field pushed no expected type into an empty `[]` arm
+
+`(T-Chk)` makes a declared field type the expected type of its value, pushed structurally into
+sub-expressions, and `(T-Chk-Vec)` is what an empty `[]` reads its element from.  The struct
+literal pushed the field type onto the `⇐` channel only for a function type (loft#1067's lambda
+hint), so `S { d: if c { [] } else { [v] } }` built an untyped placeholder for the then arm, the
+`if` answered `void`, and the field refused it — while a declared local, the field assignment
+`s.d = if …`, a return and an argument, which push their type, compiled.  **Fix.**
+`parse_object_field` pushes a collection field's type as well.  Found porting the self-host
+elaborator (`ir::TyReference { n: 0, dep: if value { [] } else { [v] } }`).  Guard
+`loft-suite rules/types/T-Chk/2337-an-empty-literal-arm-builds-its-fields-collection.loft`.
+
+### D-types-39 — OPENED AND CLOSED (2026-11-01; loft#2339): a binding match arm's null block tail was not the join's null
+
+`(N-Join)`: a `match` arm that answers `null` answers the null of the type the arms join to, and
+`type_null_arms` puts it there.  Its recogniser `arm_body_is_null` read the arm block's last
+operator, but an arm that binds names (`PN { name } => { if … { return 1; } null }`) arrives as the
+`match_arm` block of its bindings whose last operator is the body block, the null that block's
+tail.  The arm stayed a block typed `null` with no value beside value arms: the interpreter's
+`if` chain answered null for every later arm (`PL { v } => v * 2` answered null), silently, and
+the C backend refused the function.  **Fix.**  The recogniser and `set_arm_null_typed` follow a
+trailing block to its tail.  Found porting the self-host elaborator.  Guard
+`loft-suite rules/types/N-Join/2339-a-binding-arm-answering-a-null-block-takes-the-joins-null.loft`.
+
+### D-types-40 — OPENED AND CLOSED (2026-11-01; loft#2341): a null-typed `if`/`match` beside arms that return was converted whole
+
+`(N-Intro)` converts the value, and `(C-Never)` lets an arm that never finishes stand in any
+type.  In a function returning `τ?`, `if c { return x; } else { null }` (or a `match` whose
+other arms `return`) joins to `null`, and `Parser::convert`'s `null ⤳ τ?` arms replaced the
+WHOLE expression with the typed null — the `return` arms vanished and every call answered null,
+silently, on every result type and both backends.  The mirrored spelling `if c { null } else
+{ return x; }` adopted the else arm's `never`, so the `if` was typed as never finishing and its
+null arm pushed nothing.  **Fix.**  `convert` types the null LEAVES of a null-typed
+`if`/block/insert and keeps the expression; `parse_if_expecting` joins a `null` then arm with a
+`never` else to `null`.  Found porting the self-host elaborator.  Guard
+`loft-suite rules/types/N-Intro/2341-an-arm-that-returns-beside-a-null-arm-still-runs.loft`.

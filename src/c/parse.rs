@@ -46,7 +46,15 @@ impl Cx<'_> {
                 if !self.stores.zero_default(tp) {
                     self.default_image(tp);
                 }
-                fields.iter().try_for_each(|f| self.parse_type(f.content))
+                // `@FR-F-Read-Ref` — a reference field's target type is read too: a `$refs`
+                // entry is built as a record of it.
+                fields.iter().try_for_each(|f| {
+                    self.parse_type(f.content)?;
+                    if self.reference_target(f).is_some() {
+                        self.parse_type(f.target)?;
+                    }
+                    Ok(())
+                })
             }
             Parts::Vector(c) => self.parse_type(*c),
             // `@FR-L-OutOfLine` — an out-of-line field reads its content's value.
@@ -84,6 +92,63 @@ impl Cx<'_> {
             | Parts::DbRef
             | Parts::ChildRec(_)
             | Parts::Base => Ok(()),
+        }
+    }
+
+    /// The record type a stored `reference<T>` field names, when it is one this parse can build
+    /// (`@FR-F-Read-Ref`); `None` for any other field.
+    fn reference_target(&self, f: &crate::database::Field) -> Option<u16> {
+        let is_ref = matches!(
+            self.stores.types.get(f.content as usize).map(|t| &t.parts),
+            Some(Parts::DbRef)
+        );
+        let target_is_record = matches!(
+            self.stores.types.get(f.target as usize).map(|t| &t.parts),
+            Some(Parts::Struct(_) | Parts::EnumValue(..))
+        );
+        (is_ref && target_is_record).then_some(f.target)
+    }
+
+    /// A record's row (a struct or an enum's variant): its field table `loft_pf{tp}`, written
+    /// into `out`, and the row's members.
+    fn record_row(&self, out: &mut String, tp: u16, fields: &[crate::database::Field]) -> String {
+        let mut field_rows = Vec::new();
+        for (i, f) in fields.iter().enumerate() {
+            field_rows.push(self.parse_field(f, &self.parse_group(out, tp, i)));
+        }
+        let _ = writeln!(
+            out,
+            "static const loft_pfield loft_pf{tp}[] = {{ {} }};",
+            if field_rows.is_empty() {
+                "{ \"\", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }".to_string()
+            } else {
+                field_rows.join(", ")
+            }
+        );
+        let zero = self.stores.zero_default(tp);
+        let prefill = if zero {
+            String::new()
+        } else {
+            format!(", .prefill = {}", self.default_image(tp).0)
+        };
+        format!(
+            ".kind = LOFT_P_RECORD, .n = {}, .fields = loft_pf{tp}, .variant = {}, .zero_default = {}{prefill}",
+            fields.len(),
+            u8::from(matches!(
+                self.stores.types[tp as usize].parts,
+                Parts::EnumValue(..)
+            )),
+            u8::from(zero)
+        )
+    }
+
+    /// `@FR-F-Read-Ref` — the row's `.refs` member for a type a value of which can hold a
+    /// stored reference (its parse reads pointers, `$refs` and `$value`); empty otherwise.
+    fn refs_flag(&self, tp: u16) -> &'static str {
+        if tp > 6 && self.stores.reaches_reference(tp, &mut Vec::new()) {
+            ", .refs = 1"
+        } else {
+            ""
         }
     }
 
@@ -157,31 +222,7 @@ impl Cx<'_> {
             let row = match &t.parts {
                 _ if tp <= 6 => format!(".kind = {tp}"),
                 Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
-                    let mut field_rows = Vec::new();
-                    for (i, f) in fields.iter().enumerate() {
-                        field_rows.push(self.parse_field(f, &self.parse_group(&mut out, tp, i)));
-                    }
-                    let _ = writeln!(
-                        out,
-                        "static const loft_pfield loft_pf{tp}[] = {{ {} }};",
-                        if field_rows.is_empty() {
-                            "{ \"\", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }".to_string()
-                        } else {
-                            field_rows.join(", ")
-                        }
-                    );
-                    let zero = self.stores.zero_default(tp);
-                    let prefill = if zero {
-                        String::new()
-                    } else {
-                        format!(", .prefill = {}", self.default_image(tp).0)
-                    };
-                    format!(
-                        ".kind = LOFT_P_RECORD, .n = {}, .fields = loft_pf{tp}, .variant = {}, .zero_default = {}{prefill}",
-                        fields.len(),
-                        u8::from(matches!(t.parts, Parts::EnumValue(..))),
-                        u8::from(zero)
-                    )
+                    self.record_row(&mut out, tp, fields)
                 }
                 Parts::Vector(c) => format!(".kind = LOFT_P_VECTOR, .elem = {c}"),
                 Parts::Hash(c, _)
@@ -228,7 +269,11 @@ impl Cx<'_> {
                 ),
                 Parts::Base => ".kind = LOFT_P_OTHER".to_string(),
             };
-            let row = format!("{{ {row}, .size = {size}, .name = {} }}", c_string(&t.name));
+            let row = format!(
+                "{{ {row}, .size = {size}, .name = {}{} }}",
+                c_string(&t.name),
+                self.refs_flag(tp)
+            );
             rows.push(format!("[{tp}] = {row}"));
         }
         let _ = writeln!(
@@ -316,8 +361,11 @@ impl Cx<'_> {
             }
             Some(Content::Str(s)) => ("LOFT_PD_STR", 0, 0, s.str().to_string()),
         };
+        let target = self
+            .reference_target(f)
+            .map_or_else(String::new, |t| format!(", .target = {t}"));
         format!(
-            "{{ {}, {}, {}, {}, {}, {}, {dkind}, {}, UINT64_C({dbits:#x}), {}, {}{group} }}",
+            "{{ {}, {}, {}, {}, {}, {}, {dkind}, {}, UINT64_C({dbits:#x}), {}, {}{group}{target} }}",
             c_string(&f.name),
             f.content,
             f.position,

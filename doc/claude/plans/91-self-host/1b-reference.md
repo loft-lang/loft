@@ -80,13 +80,15 @@ a known-equal baseline.
   buffer-reusing bench row decides only if its reset proves better).  B-1 first made the C reset
   as the Rust side does; that went the wrong way under STORE_MODEL's rule and is undone, and the
   loft interpreter, on the C runtime, agrees once this step lands.
-- **E-4 — the swap gates, decided once** (STORE_MODEL **D8**).  `(H-SwapIn)` settles the
-  protection half — *"a free protection refuses only the side the exchange releases"* — so the
-  C moves there; the live-scratch-walk gate the Rust side has is in no rule, so the rule states
-  it or the gate goes.  `loft_swap_in` declines a protected DESTINATION
-  where `swap_stores_in_as` declines only a protected source, and does not decline while a
-  scratch walk is live where the Rust side does; the three backends are then made equal to the
-  rule.
+- **E-4 — the swap gates, decided once** (STORE_MODEL **D8**).  The protection half is built:
+  `(H-SwapIn)`'s *"a free protection refuses only the side the exchange releases"* holds on
+  both backends (`loft_swap_in` refuses `a->protect`, the released source, as
+  `swap_stores_in_as` does).  The live-state gates agree between the backends
+  (`loft_swap_blocked_hook` mirrors them) and not with the rule, which is the open half and
+  the owner's call: `(H-SwapIn)` pins a constant and a lazy binding per STORE, where both
+  backends refuse every exchange while ANY lazy source or error exists, and refuse while any
+  scratch walk is live, which no rule states.  Either the rule states the gates (a store a live
+  walk reads is pinned, as a lazy binding's is) and the code narrows to them, or the gates go.
 
 Each step is one PR-sized unit; a step whose cell shows a defect on `main` is that defect's fix
 and follows the bug-filing policy.

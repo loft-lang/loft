@@ -1,0 +1,78 @@
+--- base.c
++++ s2.c
+@@ -4077,6 +4077,9 @@
+     return e;
+ }
+ 
++
++LOFT_HOT_INLINE int64_t loft_vh_get_int_in(loft_vh h, int64_t f) { int64_t v; memcpy(&v, h.base + (size_t) f * 8, 8); return v; }
++LOFT_HOT_INLINE void loft_vh_set_int_in(loft_vh h, int64_t f, int64_t v) { memcpy(h.base + (size_t) f * 8, &v, 8); }
+ LOFT_HOT_INLINE int64_t loft_vh_get_int(loft_vh h, uint32_t size, int64_t from, uint32_t fld) {
+     int64_t f = loft_vh_index(h, from);
+     if (f < 0) return LOFT_NULL;
+@@ -26143,13 +26146,13 @@
+     } else {
+         t8 = loft_pa_i64(loft_pa0_0, 0);
+         t9 = loft_wrap_mul(v2_gy, t8);
+-        v3_gp_idx = loft_add(t9, v1_gx);
++        v3_gp_idx = loft_wrap_add(t9, v1_gx);
+         v4_gp_d = loft_field(v0_self, 16);
+         h3 = loft_vh_of(v4_gp_d);
+         t10 = v3_gp_idx;
+         t11 = h3.len;
+         if (t10 < t11) {
+-            v5___ncc_1 = (LOFT_PROVED(loft_vh_same(h3, v4_gp_d), "get_pixel:h3"), loft_vh_get_int(h3, 8, v3_gp_idx, 0));
++            v5___ncc_1 = (LOFT_PROVED(loft_vh_same(h3, v4_gp_d), "get_pixel:h3"), loft_vh_get_int_in(h3, v3_gp_idx));
+             if (v5___ncc_1 != LOFT_NULL) {
+                 t2 = v5___ncc_1;
+             } else {
+@@ -26201,14 +26204,14 @@
+     if (t1 == 1) {
+         t6 = loft_pa_i64(loft_pa0_0, 0);
+         t7 = loft_wrap_mul(v2_sy, t6);
+-        v4_sp_idx = loft_add(t7, v1_sx);
++        v4_sp_idx = loft_wrap_add(t7, v1_sx);
+         v5_sp_d = loft_field(v0_self, 16);
+         h3 = loft_vh_of(v5_sp_d);
+         loft_frame_site(148);
+         t8 = v4_sp_idx;
+         t9 = h3.len;
+         if (t8 < t9) {
+-            (LOFT_PROVED(loft_vh_same(h3, v5_sp_d), "set_pixel:h3"), loft_vh_set_int(h3, 8, v4_sp_idx, 0, v3_color));
++            (LOFT_PROVED(loft_vh_same(h3, v5_sp_d), "set_pixel:h3"), loft_vh_set_int_in(h3, v4_sp_idx, v3_color));
+         }
+     }
+ }
+@@ -27482,14 +27485,14 @@
+     if (t1 == 1) {
+         t6 = is0;
+         t7 = loft_wrap_mul(v2_sy, t6);
+-        v4_sp_idx = loft_add(t7, v1_sx);
++        v4_sp_idx = loft_wrap_add(t7, v1_sx);
+         v5_sp_d = loft_field(v0_self, 16);
+         h3 = hi0;
+         loft_frame_site(148);
+         t8 = v4_sp_idx;
+         t9 = h3.len;
+         if (t8 < t9) {
+-            (LOFT_PROVED(loft_vh_same(h3, v5_sp_d), "set_pixel:h3"), loft_vh_set_int(h3, 8, v4_sp_idx, 0, v3_color));
++            (LOFT_PROVED(loft_vh_same(h3, v5_sp_d), "set_pixel:h3"), loft_vh_set_int_in(h3, v4_sp_idx, v3_color));
+         }
+     }
+ }
+@@ -27537,13 +27540,13 @@
+     } else {
+         t8 = is0;
+         t9 = loft_wrap_mul(v2_gy, t8);
+-        v3_gp_idx = loft_add(t9, v1_gx);
++        v3_gp_idx = loft_wrap_add(t9, v1_gx);
+         v4_gp_d = loft_field(v0_self, 16);
+         h3 = hi0;
+         t10 = v3_gp_idx;
+         t11 = h3.len;
+         if (t10 < t11) {
+-            v5___ncc_1 = (LOFT_PROVED(loft_vh_same(h3, v4_gp_d), "get_pixel:h3"), loft_vh_get_int(h3, 8, v3_gp_idx, 0));
++            v5___ncc_1 = (LOFT_PROVED(loft_vh_same(h3, v4_gp_d), "get_pixel:h3"), loft_vh_get_int_in(h3, v3_gp_idx));
+             if (v5___ncc_1 != LOFT_NULL) {
+                 t2 = v5___ncc_1;
+             } else {

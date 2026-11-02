@@ -4284,9 +4284,12 @@ fn a_test_run_opens_a_relative_lib_librarys_c_libraries() -> std::io::Result<()>
     )?;
     let beside = tree.join("libs").join("beside");
     fa::create_dir_all(beside.join("src"))?;
+    // The host's spelling of a shared library: a Windows program finds a DLL only beside it,
+    // and the driver stages one there by its `.dll` name.
+    let lib = format!("libbeside_c.{}", loft::platform::dll_extension());
     fa::write(
         beside.join("loft.toml"),
-        manifest("beside", "libs = [\"libbeside_c.so\"]"),
+        manifest("beside", &format!("libs = [\"{lib}\"]")),
     )?;
     let c_src = tree.join("beside.c");
     fa::write(
@@ -4298,7 +4301,7 @@ fn a_test_run_opens_a_relative_lib_librarys_c_libraries() -> std::io::Result<()>
         .args(["-shared", "-fPIC"])
         .arg(&c_src)
         .arg("-o")
-        .arg(beside.join("libbeside_c.so"))
+        .arg(beside.join(&lib))
         .status()?;
     assert!(built.success(), "cc could not build the beside library");
     fa::write(

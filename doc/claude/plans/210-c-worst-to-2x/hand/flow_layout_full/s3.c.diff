@@ -1,0 +1,70 @@
+--- base.c
++++ s3.c
+@@ -26260,6 +26260,14 @@
+     return t1_out;
+ }
+ 
++static inline void bst_into(loft_ref v0_buf, int64_t start, int64_t count, loft_text *out, loft_vh hi0) {
++    loft_text_set(out, loft_lit("", 0));
++    for (int64_t j = start; j < start + count; j++) {
++        uint32_t c = loft_get_char(loft_vh_get(hi0, 4, j), 0);
++        loft_push_code(out, c != 0 ? c : loft_char_of(INT64_C(0)));
++    }
++}
++
+ static loft_ref n_slice_runs__fr(loft_ref v0_d, int64_t v1_a, int64_t v2_b, loft_ref v18___vdb_1) {
+     loft_ref v3___retbuf = { 0xFFFF, 0, 0 };
+     loft_ref v4_runs = { 0xFFFF, 0, 0 };
+@@ -26355,14 +26363,11 @@
+             t7 = loft_wrap_sub(v13_lo, v11_ps);
+             t8 = loft_wrap_add(t6, t7);
+             t9 = loft_wrap_sub(v14_hi, v13_lo);
+-            loft_text_free(&t10);
+-            t10 = n_buf_slice_text__inv(t5, t8, t9, &v16___work_c1, h2);
+-            loft_text_move(&v15_s, &t10);
+-            loft_text_free(&t10);
++            bst_into(t5, t8, t9, &v16___work_c1, h2);
+             ((void) 0);
+             t11 = (LOFT_PROVED(loft_ph_same(ph3, 16), "slice_runs:ph3"), loft_ph_new(&ph3, 16));
+             v17__elm_1 = t11;
+-            loft_set_text(v17__elm_1, 8, loft_view(&v15_s));
++            loft_set_text(v17__elm_1, 8, loft_view(&v16___work_c1));
+             t12 = loft_pa_i64(loft_pa9_3, 16);
+             loft_set_int(v17__elm_1, 0, t12);
+             loft_ph_finish(&ph3);
+@@ -26818,7 +26823,8 @@
+     double t11;
+     loft_vh h1 = { 0xFFFF, 0, 0, 0 };
+     LOFT_HOLD(2, &v13___work_p2_1, &v18___lift_2);
+-    v17___lift_1 = loft_ref_null();
++    static loft_ref keep_st = { 0xFFFF, 0, 0 };
++    v17___lift_1 = keep_st;
+     v14___ref_2 = loft_ref_null();
+     v15___vdb_1 = loft_ref_null();
+     v12___ref_p2_1 = loft_ref_null();
+@@ -26867,9 +26873,6 @@
+             loft_set_int(v12___ref_p2_1, 0, INT64_C(0));
+             v10_r = v12___ref_p2_1;
+         }
+-        loft_text_set(&v13___work_p2_1, loft_lit("", 0));
+-        loft_text_concat(&v13___work_p2_1, loft_get_text(v10_r, 8));
+-        loft_text_set(&v18___lift_2, loft_view(&v13___work_p2_1));
+         loft_frame_site(480);
+         t5 = v17___lift_1;
+         t7 = (int64_t) loft_stores_allocated;
+@@ -26887,13 +26890,13 @@
+         }
+         loft_frame_site(480);
+         t9 = v4_w;
+-        t10 = loft_call1(v3_measure, loft_view(&v18___lift_2), v17___lift_1);
++        t10 = loft_call1(v3_measure, loft_get_text(v10_r, 8), v17___lift_1);
+         v4_w = (t9 + t10);
+         loft_text_free(&v18___lift_2);
+     cont_1:;
+     }
+     brk_1:;
+-    loft_free_var(&v17___lift_1);
++    keep_st = v17___lift_1;
+     loft_text_free(&v13___work_p2_1);
+     loft_free_var(&v12___ref_p2_1);
+     loft_free_var_distinct(&v6___ref_1, v14___ref_2);

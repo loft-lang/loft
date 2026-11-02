@@ -252,49 +252,70 @@ fn proven_params(data: &Data) -> std::rc::Rc<HashMap<u32, Vec<bool>>> {
             assumed.insert(d, flags);
         }
     }
-    loop {
-        PARAMS.with(|m| *m.borrow_mut() = ParamState::Computing(std::rc::Rc::new(assumed.clone())));
-        RETURNS.with(|m| m.borrow_mut().clear());
-        let mut changed = false;
-        for c in 0..n as u32 {
-            let def = data.def(c);
-            if !matches!(def.code(), Value::Block(_)) {
-                continue;
-            }
-            let mut sites: Vec<(u32, Vec<Value>)> = Vec::new();
-            def.code().walk(&mut |v| {
-                if let Value::Call(f, args) = v
-                    && assumed.contains_key(f)
-                {
-                    sites.push((*f, args.clone()));
-                }
-            });
-            if sites.is_empty() {
-                continue;
-            }
-            let facts = non_sentinel_vars(data, def.variables(), def.code());
-            for (f, args) in sites {
-                let flags = assumed.get_mut(&f).expect("a candidate");
-                for (i, flag) in flags.iter_mut().enumerate() {
-                    if *flag && !args.get(i).is_some_and(|a| non_sentinel(data, &facts, a)) {
-                        *flag = false;
-                        changed = true;
-                        if crate::env_once!(std::env::var("LOFT_TRACE_NN_PARAMS").is_ok()) {
-                            eprintln!(
-                                "nn-params: {} parameter {i} dropped by a call in {}: {:?}",
-                                data.def(f).name(),
-                                def.name(),
-                                args.get(i).map(Value::unspan)
-                            );
-                        }
-                    }
-                }
-            }
+    // The call sites of every candidate — callers in definition order, a caller's sites in
+    // walk order — which a parameter's fact is read against.
+    let mut sites: HashMap<u32, Vec<(u32, Vec<Value>)>> = HashMap::new();
+    for c in 0..n as u32 {
+        let def = data.def(c);
+        if !matches!(def.code(), Value::Block(_)) {
+            continue;
         }
-        if !changed {
-            break;
-        }
+        def.code().walk(&mut |v| {
+            if let Value::Call(f, args) = v
+                && assumed.contains_key(f)
+            {
+                sites.entry(*f).or_default().push((c, args.clone()));
+            }
+        });
     }
+    let mut cands: Vec<(u32, usize)> = assumed
+        .iter()
+        .flat_map(|(d, flags)| {
+            flags
+                .iter()
+                .enumerate()
+                .filter(|(_, x)| **x)
+                .map(move |(i, _)| (*d, i))
+        })
+        .collect();
+    cands.sort_unstable();
+    let shape = assumed;
+    // `@FR-Fact-Reach` CYCLES `solve`, greatest: each round publishes the assumption it reads
+    // (the queries of `non_sentinel_vars` see it) and works out each caller's facts once.
+    let mut round_len = usize::MAX;
+    let mut caller_facts: HashMap<u32, HashMap<u16, bool>> = HashMap::new();
+    let proven: std::collections::HashSet<(u32, usize)> = crate::opt::facts::solve(
+        &cands,
+        crate::opt::facts::Fixpoint::Greatest,
+        |(f, i), set: &std::collections::HashSet<(u32, usize)>| {
+            if set.len() != round_len {
+                round_len = set.len();
+                let now = as_flags(&shape, set);
+                PARAMS.with(|m| *m.borrow_mut() = ParamState::Computing(std::rc::Rc::new(now)));
+                RETURNS.with(|m| m.borrow_mut().clear());
+                caller_facts.clear();
+            }
+            for (c, args) in sites.get(&f).map_or(&[][..], Vec::as_slice) {
+                let facts = caller_facts.entry(*c).or_insert_with(|| {
+                    let def = data.def(*c);
+                    non_sentinel_vars(data, def.variables(), def.code())
+                });
+                if !args.get(i).is_some_and(|a| non_sentinel(data, facts, a)) {
+                    if crate::env_once!(std::env::var("LOFT_TRACE_NN_PARAMS").is_ok()) {
+                        eprintln!(
+                            "nn-params: {} parameter {i} dropped by a call in {}: {:?}",
+                            data.def(f).name(),
+                            data.def(*c).name(),
+                            args.get(i).map(Value::unspan)
+                        );
+                    }
+                    return false;
+                }
+            }
+            true
+        },
+    );
+    let mut assumed = as_flags(&shape, &proven);
     RETURNS.with(|m| m.borrow_mut().clear());
     assumed.retain(|_, f| f.iter().any(|x| *x));
     crate::rewrite_census::fired(
@@ -307,6 +328,17 @@ fn proven_params(data: &Data) -> std::rc::Rc<HashMap<u32, Vec<bool>>> {
     let k = std::rc::Rc::new(assumed);
     PARAMS.with(|m| *m.borrow_mut() = ParamState::Known(k.clone()));
     k
+}
+
+/// The flags `shape` has, set where `set` holds the (function, parameter) pair.
+fn as_flags(
+    shape: &HashMap<u32, Vec<bool>>,
+    set: &std::collections::HashSet<(u32, usize)>,
+) -> HashMap<u32, Vec<bool>> {
+    shape
+        .iter()
+        .map(|(d, f)| (*d, (0..f.len()).map(|i| set.contains(&(*d, i))).collect()))
+        .collect()
 }
 
 /// The parameters of `d` the non-sentinel proof may seed: a scalar (integer or float)

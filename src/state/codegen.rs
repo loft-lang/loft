@@ -19,7 +19,7 @@ use crate::data_store::ValueType;
 use crate::database::Stores;
 use crate::ir_node::{IrBlock, IrNode, IrNodeList};
 use crate::stack::Stack;
-pub(crate) use crate::text_calls::{is_c_text_call, is_cdylib_text_call, is_text_dest_native};
+pub(crate) use crate::text_calls::{is_c_text_call, is_cdylib_text_call, is_text_dest_def};
 use crate::type_schema::StoreTypeOf;
 #[cfg(debug_assertions)]
 use crate::variables::Function;
@@ -275,8 +275,20 @@ impl State {
                 self.generate(&dflt, &mut stack, false);
             }
             self.add_return(&mut stack, start);
+            // The arguments were placed on the generator's copy of the variable table; the
+            // table the frame is read from (`introspect --show-slots`, a debugger) takes their
+            // positions too, as the regular path's write-back gives it (loft#2311).
+            let arg_pos: Vec<(u16, u16)> = args
+                .iter()
+                .map(|v| (*v, stack.function.stack(*v)))
+                .collect();
             data.definitions[def_nr as usize].code_position = start;
             data.definitions[def_nr as usize].code_length = self.code_pos - start;
+            for (v_nr, pos) in arg_pos {
+                data.definitions[def_nr as usize]
+                    .variables
+                    .set_stack(v_nr, pos);
+            }
             self.record_frame_headroom(def_nr);
             return;
         }
@@ -1849,24 +1861,17 @@ impl State {
                 self.code_add(slot_offset);
             }
         } else {
-            // Pre-init a borrowed Reference with a null-state DbRef pointing
-            // into dep's slot.  The DbRef uses stack_cur.store_nr (the
-            // stack-frame store) — it is NOT a valid data-store pointer and
-            // must be overwritten by OpPutRef before any field access.
-            let dep_pos = stack.function.stack(dep[0]);
-            if dep_pos > stack.position {
-                // Dependency not yet on the stack — use a sentinel instead of
-                // CreateStack.  The variable will be overwritten by OpPutRef
-                // before any field access (e.g. loop variable assigned from
-                // iterator next).
-                stack.add_op("OpInitRefSentinel", self);
-                self.code_add(slot_offset);
-            } else {
-                stack.add_op("OpInitCreateStack", self);
-                self.code_add(slot_offset);
-                let dep_offset = stack.position - dep_pos;
-                self.code_add(dep_offset);
-            }
+            // A borrowed Reference before its first bind holds the null sentinel, as native
+            // and C hold `DbRef::NULL`: a liveness test on it (`OpConvBoolFromRef`,
+            // `OpStoreLive`) answers null on every backend.  It used to be a stack-frame
+            // DbRef pointing into dep's slot — no data-store pointer, overwritten before any
+            // field access — which those tests read as a record: the scope pass's cascade
+            // after a displaced fn-field record's null pre-init ran on stack bytes and
+            // released the store they named, on the interpreter only (loft#2354).  Measured
+            // before the change: over the corpus and the language suite (3078 programs)
+            // no outcome depended on the stack-frame value.
+            stack.add_op("OpInitRefSentinel", self);
+            self.code_add(slot_offset);
         }
     }
 
@@ -2159,14 +2164,11 @@ impl State {
                 self.code_add(slot_offset);
                 self.gen_owned_vector_store(stack, v, &elm_tp);
             } else {
-                // Borrowed view: a stack-frame DbRef pointing into dep's
-                // slot.  Must be overwritten by OpPutRef before any field
-                // access.
-                let dep_pos = stack.function.stack(dep[0]);
-                let dep_offset = stack.position - dep_pos;
-                stack.add_op("OpInitCreateStack", self);
+                // Borrowed view before its first bind: the null sentinel, as native and C
+                // hold it, so a liveness test answers alike on every backend (loft#2354's
+                // class — see `gen_set_first_ref_null`).
+                stack.add_op("OpInitRefSentinel", self);
                 self.code_add(slot_offset);
-                self.code_add(dep_offset);
             }
         }
     }
@@ -3056,7 +3058,14 @@ impl State {
                     // callee answered (`cv = either(cv, h, c)` then wrote into `h`).  It takes
                     // the copy through a FRESH store, which `rhs_may_alias_v` arms below, so
                     // the answer being `v`'s own store is copied before the old one is freed.
+                    //
+                    // `@FR-O-Witness` — except a WITNESSED local: its witness adopts what this
+                    // bind gives it as a store of its own (`scopes::witness_set_kind`: a call
+                    // that does not adopt a fresh store is COPIED by both backends), so the
+                    // pass-through handed the witness the callee's argument — a view — and the
+                    // witness released it.  It copies, as the C backend does.
                     && !(rhs_reads_v
+                        && !witnessed
                         && stack.data.def(fn_nr).returns_borrowed_view()
                         && !(rhs_base == Some(u16::MAX) && stash_old_for_post_free))
                     // @PLN157 § V-g — the copy is elided: the plain `PutRef` below binds
@@ -3165,12 +3174,18 @@ impl State {
                     // free after it is then a no-op.
                     let fresh_path =
                         (witnessed && rhs_reads_v) || (stash_old_for_post_free && rhs_may_alias_v);
-                    let ref_args: Vec<u16> =
+                    // `@FR-O-Witness` — a WITNESSED `v` is the exception: its witness alone
+                    // releases the store it displaces, and that store may be a VIEW (`t =
+                    // with_deps(t, …)` over `t = df.attrs[0].tp`, where the callee answers `t`
+                    // itself).  Left out of the bracket, the copy's source-free released the
+                    // viewed store.  So its old store is protected like any argument's, and the
+                    // protection is lifted through a copy of the old reference stashed on the
+                    // stack, since `v` names the new store by then.
+                    let mut ref_args: Vec<u16> =
                         crate::use_analysis::protectable_ref_args(stack.data, stack.def_nr, value)
-                            .0
-                            .into_iter()
-                            .filter(|&a| !(fresh_path && a == v))
-                            .collect();
+                            .0;
+                    let protects_old = witnessed && rhs_reads_v && ref_args.contains(&v);
+                    ref_args.retain(|&a| !(fresh_path && a == v));
                     // @PLAN51 Cluster II Step 2 — collect caller-hidden-buf
                     // work-ref args.  After the OpCopyRecord wrap frees
                     // the source store (via 0x8000), the caller's slot
@@ -3206,6 +3221,11 @@ impl State {
                     // P290 panic).
                     let protect_fn = stack.data.def_nr("n_protect_store_frees");
                     let unprotect_fn = stack.data.def_nr("n_unprotect_store_frees");
+                    if protects_old {
+                        self.push_var_ref(stack, v);
+                        let prot = Value::Call(protect_fn, vec![Value::Var(v)]);
+                        self.generate(&prot, stack, false);
+                    }
                     for av in &ref_args {
                         let prot = Value::Call(protect_fn, vec![Value::Var(*av)]);
                         self.generate(&prot, stack, false);
@@ -3264,6 +3284,9 @@ impl State {
                     for av in &ref_args {
                         let unprot = Value::Call(unprotect_fn, vec![Value::Var(*av)]);
                         self.generate(&unprot, stack, false);
+                    }
+                    if protects_old {
+                        self.unprotect_stashed(stack);
                     }
                     // @PLAN51 Cluster II Step 2 — post-wrap sentinel reset.
                     // OpInitRefSentinel writes DbRef{store_nr: u16::MAX, ...}
@@ -3382,14 +3405,25 @@ impl State {
                 // Not for a witnessed local (loft#1336): the materialise clause is decided
                 // from the FINAL dep list, which its per-`Set` witness cannot follow, so such
                 // a local keeps every projection an alias on both backends.
+                // A stashed displaced store bars the copy only when the value reads `v` or is
+                // built in place: the copy resets `v`'s slot before it evaluates the value.  A
+                // NULLABLE local stashes for neither reason — its slot may hold no store of its
+                // own — and (B-View) materialises its view as it does a dense one's: "the
+                // nullability of the bound value changes nothing" (`t: Ty? …; t = x.tp`, then
+                // `x` reassigned, read the freed record as null, loft#2362).  The stash is
+                // released after the copy, as on every other stashed arm.
                 if owned_ref
                     // loft#1693 — `heap_def_nr`, as the first-bind arm below and native ask it.
                     && let Some(d_nr) = stack.function.tp(v).base().heap_def_nr()
-                    && !stash_old_for_post_free
+                    && !rhs_reads_v
+                    && !rhs_is_new_record
                     && crate::use_analysis::projection_container_var(stack.data, value).is_some()
                 {
                     note_bind("R2d");
                     self.gen_set_first_ref_elem_copy(stack, v, value, d_nr);
+                    if stash_old_for_post_free {
+                        self.free_stashed(stack, v, entry_w);
+                    }
                     return;
                 }
             }
@@ -3529,6 +3563,19 @@ impl State {
         let pos = stack.var_pos(var);
         stack.add_op("OpVarRef", self);
         self.code_add(pos);
+    }
+
+    /// Lift the free protection of the store whose reference is stashed on top of the stack
+    /// (`n_unprotect_store_frees` with its argument already pushed), consuming the stash.
+    fn unprotect_stashed(&mut self, stack: &mut Stack) {
+        let lib = self
+            .library_names
+            .get("n_unprotect_store_frees")
+            .copied()
+            .expect("n_unprotect_store_frees is a native");
+        stack.add_op("OpStaticCall", self);
+        self.code_add(lib);
+        stack.position -= stack.step(super::size_ref() as u16);
     }
 
     /// Free the store `v` held before its assignment, stashed on the stack, unless `v` now
@@ -4539,7 +4586,7 @@ impl State {
                 return true;
             }
         }
-        if !is_text_dest_native(&inner_name) {
+        if !is_text_dest_def(stack.data.def(*inner_op)) {
             return false;
         }
         let dest_name = inner_name.clone() + "_dest";
@@ -6241,7 +6288,7 @@ impl State {
                 // fires and the call fell back to the scratch producer (`n_kind`).
                 if let Value::Call(op, args) = value.unspan() {
                     let name = stack.data.def(*op).name().to_owned();
-                    if is_text_dest_native(&name)
+                    if is_text_dest_def(stack.data.def(*op))
                         && let Some(&lib_nr) = self.library_names.get(&(name + "_dest"))
                     {
                         let var_pos = stack.var_pos(var);
@@ -6436,12 +6483,15 @@ impl State {
             }
             return;
         }
-        // destination-passing — avoid scratch buffer for text-returning natives.
-        if matches!(stack.function.tp(var), Type::Text(_))
+        // destination-passing — avoid scratch buffer for text-returning natives.  The target's
+        // SHAPE is asked, its `?` peeled (`@FR-N-Shape`): a `_dest`-only native (`to_lowercase`,
+        // `replace`, …) has no plain sibling, so a `text?` local that missed this route called
+        // the body-less definition and read back an empty text (loft#2317).
+        if matches!(stack.function.tp(var).base(), Type::Text(_))
             && let Value::Call(op, args) = value.unspan()
         {
             let name = stack.data.def(*op).name().to_owned();
-            if is_text_dest_native(&name) {
+            if is_text_dest_def(stack.data.def(*op)) {
                 let dest_name = name.clone() + "_dest";
                 if let Some(&lib_nr) = self.library_names.get(&dest_name) {
                     self.gen_text_dest_call(stack, var, *op, args, lib_nr);

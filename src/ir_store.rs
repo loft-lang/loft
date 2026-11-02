@@ -459,6 +459,12 @@ fn write_definition(stores: &mut Stores, r: &Record, d: &Definition) {
     r.set_field_bool(stores, ds::DEF_NULL_SAFE, d.null_safe); // @PLN46 W2
     r.set_field_bool(stores, ds::DEF_BUILTIN, d.builtin); // @PLN165 arc E
     r.set_field_bool(stores, ds::DEF_OPERATOR_FORM, d.operator_form); // @PLN182
+    r.set_field_bool(stores, ds::DEF_OP_HOT, d.op_priority == crate::data::OP_HOT);
+    r.set_field_bool(
+        stores,
+        ds::DEF_OP_COLD,
+        d.op_priority == crate::data::OP_COLD,
+    );
     r.set_field_str(stores, ds::DEF_RETURNED_FACT, &d.returned_fact.encode()); // @PLN187
     r.set_field_bool(stores, ds::DEF_RETURNED_CONST, d.returned_const); // @FR-Const-Foreign
     r.set_field_int(stores, ds::DEF_CLOSURE_RECORD, i64::from(d.closure_record));
@@ -798,7 +804,13 @@ pub fn save_data(data: &Data, path: &str) -> std::io::Result<()> {
 /// `BUNDLE_TYPES`.  The whole root is zeroed HERE: `materialize_data_at` clears
 /// only its own `DATA_STRIDE` bytes, and the schema vector's header sits past
 /// them, so an uncleared header is a junk record id on the first push.
-pub fn materialize_bundle(stores: &mut Stores, root: DbRef, data: &Data, schema: &[SchemaType]) {
+pub fn materialize_bundle(
+    stores: &mut Stores,
+    root: DbRef,
+    data: &Data,
+    schema: &[SchemaType],
+    cwd: bool,
+) {
     stores
         .store_mut(&root)
         .zero_range(root.rec, root.pos, ds::BUNDLE_STRIDE);
@@ -808,6 +820,7 @@ pub fn materialize_bundle(stores: &mut Stores, root: DbRef, data: &Data, schema:
     };
     materialize_data_at(stores, data_root, data);
     materialize_schema(stores, &Record::new(root), ds::BUNDLE_TYPES, schema);
+    Record::new(root).set_field_bool(stores, ds::BUNDLE_CWD, cwd);
 }
 
 /// Serialize a bundle (`data` + database type `schema`) to a file-backed store
@@ -833,7 +846,7 @@ pub fn materialize_bundle(stores: &mut Stores, root: DbRef, data: &Data, schema:
 /// # Panics
 /// If the materialized root does not land at [`ds::IR_ROOT_REC`].
 #[cfg(feature = "mmap")]
-pub fn save_bundle(data: &Data, schema: &[SchemaType], path: &str) -> std::io::Result<()> {
+pub fn save_bundle(data: &Data, program: &Stores, path: &str) -> std::io::Result<()> {
     let tmp = format!("{path}.{}.tmp", std::process::id());
     match crate::file_access::remove_file(&tmp) {
         Ok(()) => {}
@@ -855,7 +868,13 @@ pub fn save_bundle(data: &Data, schema: &[SchemaType], path: &str) -> std::io::R
             rec,
             pos: ds::IR_ROOT_POS,
         };
-        materialize_bundle(&mut stores, root, data, schema);
+        materialize_bundle(
+            &mut stores,
+            root,
+            data,
+            &program.types,
+            !program.program_relative,
+        );
         // Leaving the block drops `stores`: the file-backed Store unmaps and flushes
         // `tmp` fully before the atomic rename publishes it at `path`.
         nr

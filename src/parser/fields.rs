@@ -3,7 +3,8 @@
 // @I58 — Parser (two-pass recursive descent)
 
 use super::{
-    DefType, I32, Level, Parser, Parts, Type, Value, diagnostic_format, v_block, v_if, v_set,
+    DefType, I32, Level, Parser, Parts, Position, Type, Value, diagnostic_format, v_block, v_if,
+    v_set,
 };
 
 // Field access, indexing, and iterator operations.
@@ -1673,13 +1674,14 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 elm_type = Type::optional(elm_type);
             }
         } else if matches!(t, Type::Text(_)) {
+            let index_start = *self.lexer.peek_pos();
             let index_t = if self.lexer.peek_token("..") {
                 p = Value::Int(0);
                 I32.clone()
             } else {
                 self.expression(&mut p)
             };
-            if self.parse_text_index(code, &mut p, &index_t) == Type::Character {
+            if self.parse_text_index(code, &mut p, &index_t, &index_start) == Type::Character {
                 elm_type = Type::Character;
             }
         } else if let Some((el_nr, keys)) = match &t {
@@ -1917,7 +1919,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
     ///
     /// Lint signal only: the element type is unchanged, so a constant index stays
     /// the trusted developer contract `index_provably_fit` makes it.
-    fn reads_a_collection_element(&self, code: &Value) -> bool {
+    pub(super) fn reads_a_collection_element(&self, code: &Value) -> bool {
         match code.unspan() {
             Value::Call(d, args) => {
                 let name = self.data.def(*d).name.as_str();
@@ -1972,6 +1974,14 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 if self.vars.is_active_loop_var(*v) {
                     return true;
                 }
+                // @FR-N-Index — the counter of a `for` over this same vector.
+                if self.index_leaf_of(
+                    *v,
+                    crate::parser::operators::vec_key(vec, &self.data).as_ref(),
+                    false,
+                ) {
+                    return true;
+                }
                 // An `if idx < len(vec) { vec[idx] }` guard proved the (idx, vec) pair in-bounds
                 // for this branch — match `v` AND the indexed vector's `VecKey`.
                 crate::parser::operators::vec_key(vec, &self.data).is_some_and(|vk| {
@@ -1999,8 +2009,39 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
     /// spelling carries the receiver type's name inside it (`t_<LEN><Type>_len`), so a literal
     /// list would have to grow with every collection kind.
     fn is_len_call(&self, op: u32) -> bool {
-        let n = self.data.def(op).name.as_str();
-        n == "n_len" || (n.starts_with("t_") && n.ends_with("_len"))
+        crate::parser::length_locals::is_len_call(&self.data, op)
+    }
+
+    /// `(N-Index)` — is `v` a by-contract leaf for an index into the vector keyed `vec`: the
+    /// counter of a `for` over that same vector (`for x in vec { vec[x#index] }`), or (inside
+    /// index arithmetic only, `arith`) a local holding its length (`length_locals`)?  Both are
+    /// keyed on the vector's identity: a counter or a length of ONE vector says nothing about
+    /// the domain of ANOTHER.
+    fn index_leaf_of(
+        &self,
+        v: u16,
+        vec: Option<&crate::parser::operators::VecKey>,
+        arith: bool,
+    ) -> bool {
+        let Some(key) = vec else {
+            return false;
+        };
+        if crate::parser::operators::vec_key(self.vars.loop_value_of_index(v), &self.data).as_ref()
+            == Some(key)
+        {
+            return true;
+        }
+        let trusted = arith
+            && self.length_locals.0 == self.context
+            && self
+                .length_locals
+                .2
+                .iter()
+                .any(|(n, k)| *n == v && k == key);
+        if trusted {
+            self.length_local_read.set(true);
+        }
+        trusted
     }
 
     /// @PLN102 D1 — is `index` an integer-arithmetic expression built purely from trusted leaves
@@ -2018,7 +2059,9 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             return true;
         }
         match index.unspan() {
-            Value::Var(v) => self.vars.is_active_loop_var(*v),
+            // @FR-N-Index — a loop variable, this vector's `for` counter, or a local holding
+            // its length (`n = len(v); v[n - 1]`).
+            Value::Var(v) => self.vars.is_active_loop_var(*v) || self.index_leaf_of(*v, vec, true),
             Value::Call(op, args) if self.is_index_arith_op(*op) => {
                 args.iter().all(|a| self.index_arith_trusted(a, vec))
             }
@@ -2173,6 +2216,8 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         // is the vector arm, so `etp` IS the element and the dep list belongs to the name's
         // SOURCE, which borrows (`skip_free`) and frees nothing.
         let subject_tp = Type::Vector(Box::new(etp.clone()), crate::data::Deps::none());
+        // The index's first token, for a diagnostic about a value with no span of its own.
+        let index_start = *self.lexer.peek_pos();
         let index_t = self.parse_in_range(&mut p, code, &subject_tp, "$");
         // @PLN25 — a nullable `τ?` INDEX is ACCEPTED (not an (N-Store) violation): `v[i]`
         // is already `τ?` (out-of-bounds → null), so the caller must null-check the result
@@ -2334,7 +2379,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         // @FR-N-Store — an index is a slot: `v[i]` with `i: integer?` reads null on a null
         // index, and nothing said so (the eighth hole of @PLN153 phase 3's census).
         if !self.first_pass
-            && !self.convert_store_lenient(&mut p, &index_t, &I32, "the index", None)
+            && !self.convert_store_lenient(&mut p, &index_t, &I32, "the index", Some(&index_start))
         {
             diagnostic!(
                 self.lexer,
@@ -2707,6 +2752,15 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         let Value::Block(b) = code.unspan() else {
             return None;
         };
+        // A struct field of tuple type read while a `&` link parses (`TUPLE_FIELD_PLACE`): each
+        // member is already its own read of the field's record, so the member IS that read
+        // (`c = &w.pair.0` links the field's member as `flip(w.pair.0)` does).
+        if b.name == Self::TUPLE_FIELD_PLACE
+            && let [Value::Drop(_), members] = b.operators.as_slice()
+            && let Value::Tuple(members) = members.unspan()
+        {
+            return members.get(idx).cloned();
+        }
         if b.name != "tuple_unbox" || b.operators.len() != 2 {
             return None;
         }
@@ -3025,11 +3079,28 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         });
     }
 
+    /// The type of a text slice `code` over bounds typed `from` and `till` (`@FR-N-Store`: "a
+    /// null index reads null").  A nullable bound makes the slice `text?`, answering null when
+    /// the bound is, through `(N-Prop)`'s guard; without it the runtime read a null bound as the
+    /// position 0 — `t[1..maybe(0)]` answered "" and `t[maybe(0)..2]` the first two characters
+    /// (loft#2306).
+    fn text_slice_type(&mut self, code: &mut Value, from: &Type, till: Type) -> Type {
+        let text = Type::Text(crate::data::Deps::none());
+        if !matches!(from, Type::Optional(_)) && !matches!(till, Type::Optional(_)) {
+            return text;
+        }
+        if self.first_pass {
+            return Type::optional(text);
+        }
+        self.wrap_null_transparent(code, &[text.clone(), from.clone(), till], &text)
+    }
+
     pub(crate) fn parse_text_index(
         &mut self,
         code: &mut Value,
         p: &mut Value,
         index_t: &Type,
+        index_start: &Position,
     ) -> Type {
         // @PLN110 3a — snapshot the raw index BEFORE `convert` may wrap it, so the
         // strict-index lint below can still recognise a bare loop variable.
@@ -3044,7 +3115,9 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         // non-integer index, which is the case this message is for.
         let deferred = self.first_pass && index_t.is_unknown();
         // @FR-N-Store — the index is a slot (see the vector index above).
-        if !self.convert_store_lenient(p, index_t, &I32, "the index", None) && !deferred {
+        if !self.convert_store_lenient(p, index_t, &I32, "the index", Some(index_start))
+            && !deferred
+        {
             // Name the offending type: the bare "invalid index" this used to
             // print reads as "indexing text is unsupported" and sent a consumer
             // hunting for a missing feature instead of at their index expression.
@@ -3058,6 +3131,8 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         let mut other = Value::Null;
         if self.lexer.has_token("..") {
             let incl = self.lexer.has_token("=");
+            // The end bound's type; an open end is the non-null `i32::MAX`.
+            let mut end_t = I32.clone();
             if self.lexer.peek_token("]") {
                 *code = self.cl(
                     "OpGetTextSub",
@@ -3090,8 +3165,13 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 // unresolved, which is why guarding only the start left the shape still
                 // refused — with a different message, from four lines down.
                 let end_deferred = self.first_pass && ot_type.is_unknown();
-                if !self.convert_store_lenient(&mut other, &ot_type, &I32, "the index", None)
-                    && !end_deferred
+                if !self.convert_store_lenient(
+                    &mut other,
+                    &ot_type,
+                    &I32,
+                    "the index",
+                    Some(&bound_start),
+                ) && !end_deferred
                 {
                     diagnostic!(
                         self.lexer,
@@ -3112,8 +3192,9 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                     other = self.cl("OpAddInt", &[other.clone(), Value::Int(1)]);
                 }
                 *code = self.cl("OpGetTextSub", &[code.clone(), p.clone(), other]);
+                end_t = ot_type;
             }
-            Type::Text(crate::data::Deps::none())
+            self.text_slice_type(code, index_t, end_t)
         } else {
             // @PLN110 3a — `for i in 0..len(s) { s[i] }` is a units error: `len(s)` is a
             // CHARACTER count but `s[i]` is byte-indexed, so the loop walks char-count byte
@@ -3549,12 +3630,15 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // is pushed on the one `⇐` channel, so a bare variant (`h[Green]`) resolves
             // against the key's enum exactly as `f(Green)` does against a parameter's.
             let saved_expected = std::mem::replace(&mut self.expected, key_0.clone());
+            let key_at = *self.lexer.peek_pos();
             let t = self.expression(&mut p);
             let first_fact = std::mem::take(&mut self.operand_fact);
             self.check_key_fact(0, &first_fact); // @PLN187
             self.expected = saved_expected;
             // @FR-N-Store — a lookup KEY is a slot like an index: a null key reads null.
-            if !self.convert_store_lenient(&mut p, &t, key_0, "the key", None) && !self.first_pass {
+            if !self.convert_store_lenient(&mut p, &t, key_0, "the key", Some(&key_at))
+                && !self.first_pass
+            {
                 // A tuple key is the one place the arity is worth naming: `h[(1, 2, 3)]` on
                 // a `(integer, integer)` key is a plain miscount, and "Invalid index key"
                 // leaves the reader comparing the two spellings by eye.
@@ -3594,12 +3678,18 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 }
                 let mut ex = Value::Null;
                 let saved_expected = std::mem::replace(&mut self.expected, key_types[nr].clone());
+                let key_at = *self.lexer.peek_pos();
                 let ex_t = self.expression(&mut ex);
                 let ex_fact = std::mem::take(&mut self.operand_fact);
                 self.check_key_fact(nr, &ex_fact); // @PLN187
                 self.expected = saved_expected;
-                if !self.convert_store_lenient(&mut ex, &ex_t, &key_types[nr], "the key", None)
-                    && !self.first_pass
+                if !self.convert_store_lenient(
+                    &mut ex,
+                    &ex_t,
+                    &key_types[nr],
+                    "the key",
+                    Some(&key_at),
+                ) && !self.first_pass
                 {
                     diagnostic!(self.lexer, Level::Error, "Invalid index key");
                 }
@@ -3674,9 +3764,15 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             let mut nr = 0;
             if !open_end {
                 let mut n = Value::Null;
+                let key_at = *self.lexer.peek_pos();
                 let n_t = self.expression(&mut n);
-                if !self.convert_store_lenient(&mut n, &n_t, &key_types[0], "the key", None)
-                    && !self.first_pass
+                if !self.convert_store_lenient(
+                    &mut n,
+                    &n_t,
+                    &key_types[0],
+                    "the key",
+                    Some(&key_at),
+                ) && !self.first_pass
                 {
                     diagnostic!(self.lexer, Level::Error, "Invalid index key");
                 }
@@ -3690,9 +3786,15 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                         break;
                     }
                     let mut ex = Value::Null;
+                    let key_at = *self.lexer.peek_pos();
                     let ex_t = self.expression(&mut ex);
-                    if !self.convert_store_lenient(&mut ex, &ex_t, &key_types[nr], "the key", None)
-                        && !self.first_pass
+                    if !self.convert_store_lenient(
+                        &mut ex,
+                        &ex_t,
+                        &key_types[nr],
+                        "the key",
+                        Some(&key_at),
+                    ) && !self.first_pass
                     {
                         diagnostic!(self.lexer, Level::Error, "Invalid index key");
                     }

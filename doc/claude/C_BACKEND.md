@@ -292,6 +292,12 @@ above stay sound beside it: the verdict knows the adopted local as the buffer (`
 copy, whose entry tested the stores apart.  `LOFT_NO_RETBUF_ADOPT=1` keeps the copies, as for the
 Rust writer; `tests/c_emit.rs` counts the adopted binds both ways against hand-computed values.
 
+**A clear before a mint.**  A vector buffer cleared (`OpClearVector(x)`) directly before it is
+minted again as a vector wrapper is not cleared: the mint empties the vector and releases what
+its elements owned (`@FR-H-KeepRoom`'s prologue clause, `FnWriter::clear_before_mint`), and a
+buffer a live generator frame names keeps its clear.  `LOFT_NO_PROLOGUE_CLEAR_DROP=1` writes
+every clear.
+
 **Push windows.**  A counted push loop the Rust writer's admission passes
 (`hoist::push_loop` + `push_window_ok`, or `mint_loop` + `mint_window_ok` for record mint groups)
 reserves its pushes once and opens a `loft_win` on the vector — element 0's address, the length
@@ -308,7 +314,17 @@ nothing else in the body naming it or writing a store, no exit but the loop's ow
 reservation: a push that does not fit takes the growth arm.  Native builds its deep window on
 a held push header, so it opens fewer; the soundness question is the analysis's, and the C
 answers it the same.  `LOFT_NO_DEEP_WINDOW=1` keeps the counted windows only.  `[x; n]` fills
-as the Rust runtime does: one exact resize, the template copied in doubling blocks.
+as the Rust runtime does: one exact resize, the template copied in doubling blocks — except a
+scalar template of width 1, 2, 4 or 8, which is stored into every slot, so each is written
+once and nothing is read back.  A counted
+loop that is ONE fill over a held vector (`hoist::fill_loop`, `@FR-R-Fill`, its guarded clause
+included) is one range test and one store run through the header (`loft_vh_fill_*`), the loop
+its fallback and the counters left as the loop leaves them; `LOFT_NO_FILL_HOIST=1` and
+`LOFT_NO_GUARDED_FILL=1` turn it off, as on native.  A record copy of a type that owns no heap,
+its source kept (`hoist::flat_copy`, `@FR-R-FlatCopy`), is `loft_copy_flat`: its bytes, a null
+end and a parse result's root taking the general copy.  A function of one integer the compiler
+can evaluate for every byte (`opt::tabulate`, `@FR-R-Tabulate`) answers a byte argument from a
+function-local table of those evaluations; `LOFT_NO_TABULATE=1` keeps the body.
 
 **Held file cursors.**  A loop that reads one `File` through fixed-width integer reads, where
 nothing else in it can see the record (`lower::file_hold::held_file`, `@FR-R-FileHold`), keeps
@@ -673,7 +689,8 @@ path is not removed while a **port** row is open.  The store rows are also numbe
 
 | Capability (interpreter switch) | For | C has | Proposed verdict | Check owed |
 |---|---|---|---|---|
-| use-after-free generations (`LOFT_UAF`, `LOFT_UAF_GEN`) | R | `LOFT_STRICT_STORES` (`-DLOFT_STRICT_STORES`, the driver's build under the variable): no freed slot made again, an access through a freed store named at `loft_store_of`, a store live at exit named, either one exit 1 — the interpreter's ground truth rather than the generation stamps (those ride its operand stack, which a C unit does not have) | **ported** | `tests/c_emit.rs` `a_strict_store_c_build_names_a_use_after_free_and_a_store_never_freed`; `scripts/c_sweep.py --strict-stores` over the corpus against the interpreter under the same switch |
+| use-after-free generations (`LOFT_UAF`, `LOFT_UAF_GEN`) | R | `LOFT_STRICT_STORES` (`-DLOFT_STRICT_STORES`, the driver's build under the variable): no freed slot made again, an access through a freed store named at `loft_store_of` together with the free that killed it (the frame and line each slot was freed at — the interpreter's `strict_note_free`, a C unit having no pc), a store live at exit named, either one exit 1 — the interpreter's ground truth rather than the generation stamps (those ride its operand stack, which a C unit does not have) | **ported** | `tests/c_emit.rs` `a_strict_store_c_build_names_a_use_after_free_and_a_store_never_freed`; `scripts/c_sweep.py --strict-stores` over the corpus against the interpreter under the same switch |
+| the re-free census (`LOFT_DOUBLE_FREE`) | R | `-DLOFT_DOUBLE_FREE` (the driver's build under the variable): each re-free of an already-free slot classified by whether its site is the first free's, and each FREED slot made again through a reference that still named it (`loft_database`'s adoption — where a stale reference re-initialises a slot another store may hold), each line naming both sites; the counts at exit | **ported** | `tests/c_emit.rs` `a_strict_store_c_build_names_the_free_that_killed_a_store_and_the_census_its_sites` |
 | frame-slot verification (`LOFT_VERIFY_STACK`) | R | the C stack; the MemorySanitizer lane | covered | an uninitialised-slot cell MSan flags on C |
 | keyed fast-path verifier (`LOFT_KEYED_VERIFY`) | R | `-DLOFT_KEYED_VERIFY` (the driver's build under the variable): each keyed fast path the C has — the index's exact descent, the typed hash lookups, the one-probe entry and insert — checked against its general form, a disagreement stops the run naming both answers; the interpreter-only fast paths (pre-resolved comparison, decorated sort, inline key-order walk) have no C twin to check | **ported** | `tests/c_emit.rs` `a_keyed_verify_c_build_names_a_fast_path_that_answers_wrong` (corrupted descent and typed lookup) and the hash differential built with it (corrupted insert bucket and duplicate); `scripts/c_sweep.py --keyed-verify` |
 | key-list verifier (`LOFT_KEY_LIST_VERIFY`) | R | the emitter writes each type's keys as a constant table (`static const loft_key loft_keys<N>[]`) | **drop** (decided): the cached list it re-derives (`@FR-R-KeyList`) does not exist in a C unit | — |

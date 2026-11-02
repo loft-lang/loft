@@ -26,13 +26,15 @@ loft uses **slugs, not numbers** (`avoidable-copy`, not `E0142`). A slug is self
 ## The codes
 
 The **fix** column says what `--explain` offers at that code: `M` a mechanical fix, `C` a
-conditional one (each is one fix line), and the concept door they open onto.
+conditional one (each is one fix line), and the concept door they open onto.  Which
+construction clears a warning, and when each is the right one — including the uncoded
+nullable-store warning: [WARNING_FIXES.md](WARNING_FIXES.md).
 
 | code | level | what it says | what to write instead | fix |
 |---|---|---|---|---|
-| `avoidable-copy` | advice | A structure was deep-copied because its source is still used after the copy site, so it could not be moved. | Build the value in place, or stop using the source afterwards. Both take the copy to zero — see `@F106`. | M C · `@F106` |
+| `avoidable-copy` | advice | A structure was deep-copied because its source is used again after the copy on some path, so it could not be moved — and a rewrite at the site removes the copy.  Silent for a copy with no heap part placed in a structure, and for a copy no rewrite removes (§ Fix lines). | Move the line that reads the source again above the copy, or drop it when its value is never read. | C or M · `@F106` |
 | `api-copies-collection` | advice | A `pub` function taking a record by value answers a collection of it (`pub fn pieces(d: Doc) -> vector<Piece> { d.pieces }`). A caller cannot borrow across an API, so every call copies every element, and a caller that reads it per element copies it per element — per-call work the contract forces and no rewrite can share (`@FR-R-Escape`). Reaches the library's author only. | Expose the field, or answer an index and read the elements where they live. | C · `@F106` |
-| `api-redoes-per-field` | advice | A `pub` function builds a heap-owning intermediate from its parameter with a library call and answers ONE scalar or text of it (`return pa_text(pa_decode(frame), "op")`): a caller that needs three values builds it three times. Measured 11–55× against the Rust twin on the pluginabi accessors; a no-heap intermediate, a stdlib producer, an intermediate that is answered, and a function that is not `pub` stay silent. | Answer the built record once, and let the caller read its fields where it needs them — make the record, then read it. | C · `@F106` |
+| `api-redoes-per-field` | advice | A `pub` function builds a heap-owning intermediate from its parameter with a library call and answers ONE scalar or text of it (`return pa_text(pa_decode(frame), "op")`): a caller that needs three values builds it three times. Measured 11–55× against the Rust twin on the pluginabi accessors; a no-heap intermediate, a stdlib producer, an intermediate that is answered, a function that is not `pub`, a producer answering a VIEW of its parameter (it builds nothing, and the copy a call of it costs is `(R-ViewReturn)`'s, which answering once does not remove), an intermediate built from a local such as a loop variable, one read only where the function does not answer it (a condition, a dropped statement), and a function that answers nothing stay silent. | Answer the built record once, and let the caller read its fields where it needs them — make the record, then read it. | C · `@F106` |
 | `double-move` | warning | One droppable value reaches TWO owners, and each owner releases what it owns, so the value is released twice. Three shapes. (1) One value handed to two owners: two containers, or a plain whole-value copy `t = s`, which owns what it copies; it fires only where both hand-offs certainly run (@PLN139). (2) A MEMBER of a container copied into another container (`Hold { h: s.h }`, `v += [vs[0]]`, `Hold { h: t.0 }`) while the source container still owns that member: it fires where the source's release is certain — its scope end, a rebind of it, or a `return` — and stays silent when the member is overwritten first (even on one path only) or when the rebind's value reads the source (heap-history.md D-heap-7 family 4). (3) A PARAMETER, or a member of one, copied into a container, or a parameter's member returned (`return p.h`): the caller still owns what it passed (heap-history.md D-heap-7 family 2). A local that holds the caller's record (`x = p`, never written through) counts as the parameter. Shapes (2) and (3) fire only when the copied record has a release to run. A whole parameter returned, a loop variable, a `match` payload binding and a tuple member copied into a tuple are outside it. | Build a second value for the second container, or give it to one container only and read it back from there; for a member, read it where it lives, or overwrite the member after the copy so the new container is its only owner; for a parameter, build a new value, or let the caller build the container from its own. | C C · `@F106` |
 | `copy-of-droppable` | error | A line writes a COPY of a value whose type owns a resource — it declares `OpDrop`, or holds a member that does — and the type declares no `OpCopy` to give the copy its own lease, so the two structures would release one resource twice (`formal/heap.md` `(H-Copy-Refuse)`, @PLN163). A copy places an EXISTING value — a variable, a parameter, a loop variable, a `match` binding, a member, a member of a call result — into a new structure: bound as a whole value, written into a field, enum payload, element or tuple member of a literal, appended, returned where `(H-Move)` does not allow it, or chosen by `??` or a join in one of those positions. The verdict is read off that line and the declared types alone, so no later line changes it. Legal, because no second structure is made: a fresh value anywhere, passing a value as an argument, a `&` bind, and a view of a member. | Use the value where it is, pass it as an argument, build it where it belongs, or return the owner. | C C · `@F106` |
 | `read-after-move` | error | A line reads a name whose value an earlier statement MOVED into a new structure — the function owned it and placed it in a field, element or tuple member, appended it, bound it to another name, or returned it — so the new structure releases the value now (`formal/heap.md` `(H-Spent)`, @PLN163). Placing the name a second time is such a read. A move under a branch spends the name on that path, and a read any such path reaches is refused. Reads inside the moving statement are not late, and a reassignment refills the name. | Read it through the structure it moved into, or give the name a new value before the read. | C C · `@F106` |
@@ -123,13 +125,12 @@ A diagnostic says what is **wrong**. `--explain` (or `LOFT_EXPLAIN=1`) adds what
 **instead**:
 
 ```
-advice[avoidable-copy]: copy of vector<integer> — `src` is still used after this point …
+advice[avoidable-copy]: copy of vector<integer> — `src` is used again at line 8, so it could not be moved
   --> prog.loft:7:0
   |
 7 |   h = Holder { v: src };
   | ^
-  fix  build the value in place   [move · @F106]
-  fix  drop the later use of `src`   needs: `src` is used again at line 8 — you do not need that   [move · @F106]
+  fix  move line 8 above line 7   needs: line 8 does not need line 7 to run first   [move · @F106]
 ```
 
 Three homes, no repetition: the diagnostic says what is wrong, the fix says what to write
@@ -156,9 +157,20 @@ with fifty copy notices, which is the noise the opt-in exists to avoid. It disap
 `--explain` is on — nobody needs to be told about a flag they just used.
 
 **A message may only hand its cure away if a fix is there to catch it.** The copy notice
-shows both sides: with a named source it has two fixes and the prose says only what is wrong,
-and with no named source it has NO fix — so that branch keeps its resolution inline. The
-alternative is a reader left with nothing at all.
+shows both sides: with a named source it carries the rewrite that holds at its site and the
+prose says only what is wrong, and with no named source it has NO fix — so that branch keeps
+its resolution inline. The alternative is a reader left with nothing at all.
+
+**The copy notice fires only with a rewrite usable at its site.** "Still used after this
+point" is a PATH question: a read in an arm exclusive with the copy's, or after the source is
+assigned again (a loop's next turn), is no later use, and the copy is a move.  Where a later
+use remains, the notice offers moving that statement above the copy (it is the source's one
+later use, in the same statement list, writes nothing the copy's statements name and reads
+nothing they write, leaves no list, and at most one side calls anything), or dropping it when
+its result is never read.  With neither the copy is necessary as written, and nothing is
+reported.  A copy whose type has no heap part, landing in an existing structure, is silent
+too: the slot is inline, so a move writes the same bytes.  `LOFT_TRACE_COPY_ADVICE=1` names
+each silenced site and why.
 
 **Two tiers, and they gate who may affirm the condition, not whether a fix is clickable:**
 
@@ -378,7 +390,9 @@ There are **two independent axes**, and a new diagnostic answers both.
 > **A diagnostic reaches only whoever can act on its cure.**
 
 Every `warning` and `advice` loft emits names a cure that is an edit to the code it points
-at — rename the field, declare the default, split the function. Pointing one at a reader who
+at — rename the field, declare the default, split the function — and the cure is a
+construction that says MORE than the code did, chosen for where the problem comes from, never
+only a silencer ([WARNING_FIXES.md](WARNING_FIXES.md)). Pointing one at a reader who
 cannot make that edit is noise by construction, and noise that reads as *their* defect: the
 Parser chapter of the reference, whose whole content is four `parser::parse` calls, printed
 **eleven** notes about the internals of two libraries the reader did not write (loft#1260).

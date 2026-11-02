@@ -1093,8 +1093,8 @@ fn write_definition(out: &mut String, d: &Definition) {
     write_str(out, &d.c_sig);
     let _ = write!(
         out,
-        ",\"op_code\":{},\"known_type\":{},\"pub_visible\":{},\"null_safe\":{},\"closure_record\":{}",
-        d.op_code, d.known_type, d.pub_visible, d.null_safe, d.closure_record
+        ",\"op_code\":{},\"op_priority\":{},\"known_type\":{},\"pub_visible\":{},\"null_safe\":{},\"closure_record\":{}",
+        d.op_code, d.op_priority, d.known_type, d.pub_visible, d.null_safe, d.closure_record
     );
     out.push_str(",\"mutated_captures\":");
     write_str_list(out, &d.mutated_captures);
@@ -1406,7 +1406,7 @@ fn definition_from_parsed(p: &Parsed) -> Result<Definition, TypeDecodeError> {
         known_type: as_u16(field(p, "known_type")?)?,
         pub_visible: as_bool(field(p, "pub_visible")?)?,
         null_safe: as_bool(field(p, "null_safe")?)?, // @PLN46 W2
-        op_priority: crate::data::OP_NORMAL,
+        op_priority: as_u8(field(p, "op_priority")?)?,
         closure_record: as_u32(field(p, "closure_record")?)?,
         mutated_captures: str_list(field(p, "mutated_captures")?)?,
         scalars_to_box: str_list(field(p, "scalars_to_box")?)?,

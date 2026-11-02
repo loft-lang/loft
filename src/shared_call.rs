@@ -59,20 +59,11 @@ pub(crate) fn pure_native(data: &Data, d: u32) -> bool {
 /// The effect-free functions of `free` that are TOTAL (the least fixed point: a function joins
 /// once everything it calls is total, so a recursive one never does).
 pub fn total(data: &Data, free: &HashSet<u32>) -> HashSet<u32> {
-    let mut total = HashSet::default();
     let mut order: Vec<u32> = free.iter().copied().collect();
     order.sort_unstable();
-    loop {
-        let add: Vec<u32> = order
-            .iter()
-            .copied()
-            .filter(|f| !total.contains(f) && body_total(data, *f, &total))
-            .collect();
-        if add.is_empty() {
-            return total;
-        }
-        total.extend(add);
-    }
+    crate::fixpoint::solve(&order, crate::fixpoint::Fixpoint::Least, |f, total| {
+        body_total(data, f, total)
+    })
 }
 
 fn body_total(data: &Data, f: u32, total: &HashSet<u32>) -> bool {

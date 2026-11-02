@@ -55,8 +55,13 @@ fn trace_switches() -> Vec<String> {
 fn run(backend: &str, file: &Path, traces: &[String]) -> (String, String, bool) {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    // A switch whose value is a PATH (`LOFT_TRACE_BYTECODE=<file>`) takes `1` as a file name,
+    // so the run stands in a scratch directory and writes it there, never in the checkout.
+    let cwd = fa::with_extension(file, "cwd");
+    fa::create_dir_all(&cwd).expect("scratch working directory");
     cmd.arg(backend)
         .arg(file)
+        .current_dir(&cwd)
         .env("LOFT_TIMEOUT", "300")
         .env("LOFT_NO_CACHE", "1")
         .env("LOFT_NATIVE_NO_CACHE", "1");
@@ -96,4 +101,5 @@ fn every_trace_switch_at_once_leaves_the_program_unchanged() {
         );
     }
     let _ = fa::remove_file(&file);
+    let _ = fa::remove_dir_all(fa::with_extension(&file, "cwd"));
 }

@@ -1,0 +1,38 @@
+--- base.c
++++ s1.c
+@@ -26143,7 +26143,7 @@
+     } else {
+         t8 = loft_pa_i64(loft_pa0_0, 0);
+         t9 = loft_wrap_mul(v2_gy, t8);
+-        v3_gp_idx = loft_add(t9, v1_gx);
++        v3_gp_idx = loft_wrap_add(t9, v1_gx);
+         v4_gp_d = loft_field(v0_self, 16);
+         h3 = loft_vh_of(v4_gp_d);
+         t10 = v3_gp_idx;
+@@ -26201,7 +26201,7 @@
+     if (t1 == 1) {
+         t6 = loft_pa_i64(loft_pa0_0, 0);
+         t7 = loft_wrap_mul(v2_sy, t6);
+-        v4_sp_idx = loft_add(t7, v1_sx);
++        v4_sp_idx = loft_wrap_add(t7, v1_sx);
+         v5_sp_d = loft_field(v0_self, 16);
+         h3 = loft_vh_of(v5_sp_d);
+         loft_frame_site(148);
+@@ -27482,7 +27482,7 @@
+     if (t1 == 1) {
+         t6 = is0;
+         t7 = loft_wrap_mul(v2_sy, t6);
+-        v4_sp_idx = loft_add(t7, v1_sx);
++        v4_sp_idx = loft_wrap_add(t7, v1_sx);
+         v5_sp_d = loft_field(v0_self, 16);
+         h3 = hi0;
+         loft_frame_site(148);
+@@ -27537,7 +27537,7 @@
+     } else {
+         t8 = is0;
+         t9 = loft_wrap_mul(v2_gy, t8);
+-        v3_gp_idx = loft_add(t9, v1_gx);
++        v3_gp_idx = loft_wrap_add(t9, v1_gx);
+         v4_gp_d = loft_field(v0_self, 16);
+         h3 = hi0;
+         t10 = v3_gp_idx;

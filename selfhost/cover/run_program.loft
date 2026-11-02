@@ -7,10 +7,14 @@
 // trace's `M` line (`LOFT_CRT_ALLOC_TRACE`), as the Rust interpreter does on entering a program.  A construct it does not carry yet is reported on stderr as
 // `refused: <reason>` with exit 3, so the census can rank what blocks the most programs.  A run
 // that leaves records of the C runtime's stores live is reported as `leak: <n>` with exit 4.
+// The runner keeps the working directory it was started in: the interpreted program's anchor is
+// the shim's (`crt::fs_anchor`), which moves into the program's directory unless it declared `#cwd`.
+#cwd
 use load;
 use lower;
 use run;
 use crt;
+use consts;
 
 fn main() {
   a = arguments();
@@ -24,14 +28,29 @@ fn main() {
     eprintln("refused: no image at {image}");
     exit(3);
   }
+  // A relative path of the program's resolves against its own directory, which the driver hands
+  // the run as `LOFT_SOURCE_DIR` (as `loft` hands a C program's run) — or against the working
+  // directory, when the program declared `#cwd`.
+  crt::fs_anchor(load::program_relative(b));
   name = a[at + 1] ?? "n_main";
+  // The program's own arguments follow its entry: what its `arguments()` answers.
+  for extra in a[at + 2..] {
+    crt::add_arg(extra);
+  }
   entry = lower::find(b, name);
-  if entry < 0 {
+  if entry == null {
     eprintln("refused: the image has no {name}");
     exit(3);
   }
+  // The constant stores and the stack store before the mark: the Rust interpreter builds its
+  // constants at compile time and has its stack before the program enters, so neither side's
+  // trace counts them among the program's stores.
+  cs = consts::build(b);
+  stk = run::new_stack();
   crt::trace_mark();
-  o = run::run(b, entry, []);
+  o = run::run_on(b, entry, [], stk, cs);
+  crt::stack_free(stk);
+  consts::release(cs);
   if o.refused != "" {
     eprintln("refused: {o.refused} — in {o.refused_in}");
     exit(3);

@@ -6,7 +6,14 @@
 //!
 //! A `value struct` (@PLN101) is stored INLINE wherever it lives, so writing one into a
 //! container writes its bytes into storage the container already has: nothing is allocated,
-//! and the rewrite the advice names buys exactly zero.
+//! and the rewrite the advice names buys exactly zero.  A plain record that owns no heap is
+//! the same once it lands IN a structure — a vector's element and a record's field are slots
+//! of the container — so its copy is silent there too (COPY_DIAGNOSTICS § What remains open).
+//!
+//! And a copy is advised only with a rewrite usable at its site (DIAGNOSTICS.md § Fix lines):
+//! each control below reads its source again in a statement of its own that can move above
+//! the copy — a read in the statement that also reads the copy's destination is a NECESSARY
+//! copy, and says nothing.
 //!
 //! **This is the gate; the `.loft` guard beside it is not.** The defect is a diagnostic that
 //! must NOT fire, and neither channel the corpus scores can see that — `check_diagnostics`
@@ -29,7 +36,7 @@ fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
 }
 
-/// The program under test: three inline-value copies that must be silent, and two copies that
+/// The program under test: four inline-value copies that must be silent, and one copy that
 /// must still be advised.
 const PROGRAM: &str = r#"
 value struct Stamp { ms: integer, tick: integer }
@@ -52,7 +59,8 @@ fn main() {
 
   h = Heapy { xs: [1, 2], n: 1 };
   hv = [h];
-  print("{len(hv[0].xs)}{h.n}");
+  hn = h.n;
+  print("{len(hv[0].xs)}{hn}");
 
   r = Recorded { ms: 1 };
   rv = [r];
@@ -101,21 +109,18 @@ fn assert_backend(backend: &str) {
         "[{backend}] the program must reach its output\n{stdout}"
     );
 
-    // The two that MUST still be advised. `Heapy` is the control that says the marker is not
+    // The one that MUST still be advised. `Heapy` is the control that says the marker is not
     // the whole answer: `value struct` says how the value is STORED, not what it OWNS, and a
-    // `vector` field beneath one is a real duplicated store. `Recorded` is a plain struct,
-    // which lives in a record reached by a `DbRef`, so its copy allocates one even though
-    // every field is a scalar.
-    for want in ["copy of Heapy", "copy of Recorded"] {
-        assert!(
-            diag.contains(want),
-            "[{backend}] `{want}` must still be advised\n{diag}"
-        );
-    }
+    // `vector` field beneath one is a real duplicated store.
+    assert!(
+        diag.contains("copy of Heapy"),
+        "[{backend}] `copy of Heapy` must still be advised\n{diag}"
+    );
 
-    // The three that must be SILENT — an inline value with no heap part anywhere beneath it,
-    // as an element, as a field, and nested two deep.
-    for unwanted in ["copy of Stamp", "copy of Wrapped"] {
+    // The ones that must be SILENT — an inline value with no heap part anywhere beneath it,
+    // as an element, as a field, and nested two deep; and a plain record with none, placed
+    // as an element.
+    for unwanted in ["copy of Stamp", "copy of Wrapped", "copy of Recorded"] {
         assert!(
             !diag.contains(unwanted),
             "[{backend}] `{unwanted}` allocates nothing — there is no borrow to advise\n{diag}"
@@ -126,8 +131,8 @@ fn assert_backend(backend: &str) {
     // same type, is a regression this file exists to catch.
     let n = diag.matches("advice[avoidable-copy]").count();
     assert_eq!(
-        n, 2,
-        "[{backend}] want exactly 2 avoidable-copy notices (Heapy, Recorded), got {n}\n{diag}"
+        n, 1,
+        "[{backend}] want exactly 1 avoidable-copy notice (Heapy), got {n}\n{diag}"
     );
 }
 
@@ -184,8 +189,8 @@ fn assert_written_loop_names(backend: &str) {
         "[{backend}] the program must answer its values\n{stdout}"
     );
     for want in [
-        "copy of R — `f` is still used after this point",
-        "copy of Q — `f` is still used after this point",
+        "copy of R — `f` is used again at line",
+        "copy of Q — `f` is used again at line",
     ] {
         assert!(diag.contains(want), "[{backend}] want `{want}`\n{diag}");
     }
@@ -239,7 +244,8 @@ fn main() {
   xs[0] = r.inner;
   ks = [10, 11];
   k = H { v: ks };
-  print("{len(a.ks)} {len(a.vs)} {len(h.v)} {len(o.ks)} {len(xs[0].a)} {r.n} {len(k.v)} {len(ks)} {hold([12, 13, 14])}\n");
+  nk = len(ks);
+  print("{len(a.ks)} {len(a.vs)} {len(h.v)} {len(o.ks)} {len(xs[0].a)} {r.n} {len(k.v)} {nk} {hold([12, 13, 14])}\n");
 }
 "#;
 
@@ -271,7 +277,7 @@ fn assert_projection_copies(backend: &str) {
     }
     let n = diag.matches("advice[avoidable-copy]").count();
     assert!(
-        n == 1 && diag.contains("copy of vector<integer> — `ks` is still used after this point"),
+        n == 1 && diag.contains("copy of vector<integer> — `ks` is used again at line"),
         "[{backend}] want exactly the whole-variable control advised, got {n}\n{diag}"
     );
 }
@@ -304,7 +310,8 @@ fn use_it(s: vector<integer>) -> integer { len(s) }
 fn main() {
   a1(); a9(true); a9(false); a10(true); a10(false);
   src = [1, 2, 3]; h = Holder { v: src };
-  println("| {use_it(src)} {len(h.v)}");
+  n = use_it(src);
+  println("| {n} {len(h.v)}");
 }
 "#;
 
@@ -335,7 +342,7 @@ fn assert_moved_droppables(backend: &str) {
     );
     let n = diag.matches("advice[avoidable-copy]").count();
     assert!(
-        n == 1 && diag.contains("copy of vector<integer> — `src` is still used after this point"),
+        n == 1 && diag.contains("copy of vector<integer> — `src` is used again at line"),
         "[{backend}] want exactly the non-droppable control advised, got {n}\n{diag}"
     );
 }
@@ -348,4 +355,197 @@ fn a_moved_droppable_is_not_advised_as_a_copy_interpret() {
 #[test]
 fn a_moved_droppable_is_not_advised_as_a_copy_native() {
     assert_moved_droppables("--native");
+}
+
+/// loft#2342 — "still used after this point" is a PATH question.  A read in a `match` arm
+/// exclusive with the copy's, and a read of a loop variable on the loop's next turn after it is
+/// assigned again, are no later use: each copy is the source's last use on every path, so it is
+/// a move and says nothing.  The control reads the source again in its OWN arm, by a statement
+/// that can run before the copy, and is advised with that move.
+const PATHS: &str = r#"
+enum Node { NdNull, NdText { s: text }, NdCall { d: integer, args: vector<Node> } }
+struct Acc { src: vector<Node> }
+fn cl(d: integer, args: vector<Node>) -> Node { NdCall { d: d, args: args } }
+fn marm(k: integer, x: Node) -> Node {
+  pos = NdText { s: "p" };
+  code = NdNull;
+  match k {
+    1 => { code = cl(1, [x, pos]); },
+    2 => { code = cl(2, [x, pos]); },
+    _ => { code = cl(3, [x, pos]); }
+  }
+  code
+}
+fn lex(n: integer) -> Acc {
+  r = Acc { src: [] };
+  at = 0;
+  while at < n {
+    t = if at == 0 { NdNull } else { NdText { s: "{at}" } };
+    r.src += [t];
+    at += 1;
+  }
+  r
+}
+fn control(k: integer) -> integer {
+  w = NdText { s: "w" };
+  h = Acc { src: [] };
+  if k > 0 {
+    h.src += [w];
+    seen = w is NdText;
+    return if seen { len(h.src) } else { 0 };
+  }
+  0
+}
+fn main() {
+  c = marm(2, NdNull);
+  n = match c { NdCall { d, args } => d * 10 + len(args), _ => -1 };
+  print("{n} {len(lex(3).src)} {control(1)}\n");
+}
+"#;
+
+fn assert_paths(backend: &str) {
+    let dir = std::env::temp_dir().join(format!("loft_2342_paths_{}", backend.trim_matches('-')));
+    fa::create_dir_all(&dir).expect("scratch dir");
+    let path = dir.join("paths.loft");
+    fa::write(&path, PATHS).expect("write program");
+    let (stdout, diag, code) = run(backend, &path);
+    assert_eq!(
+        code,
+        Some(0),
+        "[{backend}] the program must run\n{stdout}\n---\n{diag}"
+    );
+    // marm(2): NdCall { d: 2, args: [x, pos] } → 22; lex(3) appends three; control(1) → 1.
+    assert!(
+        stdout.contains("22 3 1"),
+        "[{backend}] the program must answer its values\n{stdout}"
+    );
+    for unwanted in ["`pos`", "`t` is used again"] {
+        assert!(
+            !diag.contains(unwanted),
+            "[{backend}] {unwanted}: no path reads it after the copy, so the copy is a move\n{diag}"
+        );
+    }
+    let n = diag.matches("advice[avoidable-copy]").count();
+    assert!(
+        n == 1 && diag.contains("`w` is used again at line"),
+        "[{backend}] want exactly the same-arm control advised, got {n}\n{diag}"
+    );
+}
+
+#[test]
+fn a_read_no_path_reaches_is_no_later_use_interpret() {
+    assert_paths("--interpret");
+}
+
+#[test]
+fn a_read_no_path_reaches_is_no_later_use_native() {
+    assert_paths("--native");
+}
+
+/// loft#2328 — a `return` ENDS its path, so a read of the source further down the function is
+/// on another path and is no later use of the copy the return makes.  Ordered by position,
+/// `return c` in an `if` said *"`c` is still used after this point"* of the read after the
+/// `if`, telling the author to stop a use they cannot stop.  The four returns — after the `if`,
+/// in an `else`, inside a loop body with the read later in the same turn, in a `match` arm with
+/// the read in another arm — are each the source's last use on their path and say nothing.
+/// The control copies into a fresh variable and reads the source again on the SAME path, and
+/// is advised with that true reason.
+const RETURNS: &str = r#"
+struct Ex { code: integer, tag: text }
+fn mk(n: integer) -> Ex? { if n > 0 { Ex { code: n, tag: "t" } } else { null } }
+fn pick(n: integer, early: boolean) -> Ex {
+  r = mk(n);
+  if r == null { return Ex { code: 0, tag: "" }; }
+  c = r!;
+  if early {
+    return c;
+  }
+  Ex { code: c.code + 1, tag: c.tag }
+}
+fn pick_else(n: integer, early: boolean) -> Ex {
+  r = mk(n);
+  if r == null { return Ex { code: 0, tag: "" }; }
+  c = r!;
+  if early {
+    return c;
+  } else {
+    return Ex { code: c.code + 2, tag: c.tag };
+  }
+}
+fn pick_loop(n: integer) -> Ex {
+  r = mk(n);
+  if r == null { return Ex { code: 0, tag: "" }; }
+  c = r!;
+  s = 0;
+  for i in 0..4 {
+    if i == 2 { return c; }
+    s += c.code;
+  }
+  Ex { code: s, tag: c.tag }
+}
+fn pick_match(n: integer, k: integer) -> Ex {
+  r = mk(n);
+  if r == null { return Ex { code: 0, tag: "" }; }
+  c = r!;
+  match k {
+    0 => { return c; },
+    _ => { return Ex { code: c.code * 10, tag: c.tag }; }
+  }
+}
+fn copy_then_read(n: integer) -> integer {
+  r = mk(n);
+  if r == null { return 0; }
+  c = r!;
+  holder = [c];
+  t = c.code;
+  len(holder) + t
+}
+fn main() {
+  a = pick(3, true);
+  b = pick(3, false);
+  e1 = pick_else(3, true);
+  e2 = pick_else(3, false);
+  l = pick_loop(3);
+  m0 = pick_match(3, 0);
+  m1 = pick_match(3, 1);
+  print("{a.code} {b.code}{b.tag} {e1.code} {e2.code} {l.code} {m0.code} {m1.code}{m1.tag} {copy_then_read(5)}\n");
+}
+"#;
+
+fn assert_returns(backend: &str) {
+    let dir = std::env::temp_dir().join(format!("loft_2328_returns_{}", backend.trim_matches('-')));
+    fa::create_dir_all(&dir).expect("scratch dir");
+    let path = dir.join("returns.loft");
+    fa::write(&path, RETURNS).expect("write program");
+    let (stdout, diag, code) = run(backend, &path);
+    assert_eq!(
+        code,
+        Some(0),
+        "[{backend}] the program must run\n{stdout}\n---\n{diag}"
+    );
+    // pick: 3 / 3+1; pick_else: 3 / 3+2; pick_loop returns c at i == 2; pick_match: 3 / 3*10;
+    // copy_then_read(5): one element + 5.
+    assert!(
+        stdout.contains("3 4t 3 5 3 3 30t 6"),
+        "[{backend}] the program must answer its values\n{stdout}"
+    );
+    assert!(
+        !diag.contains("still used after this point"),
+        "[{backend}] a return ends its path: no read after it is a later use\n{diag}"
+    );
+    let n = diag.matches("advice[avoidable-copy]").count();
+    assert!(
+        n == 1 && diag.contains("`c` is used again at line"),
+        "[{backend}] want exactly the same-path control advised, got {n}\n{diag}"
+    );
+}
+
+#[test]
+fn a_read_past_a_return_is_no_later_use_interpret() {
+    assert_returns("--interpret");
+}
+
+#[test]
+fn a_read_past_a_return_is_no_later_use_native_c() {
+    assert_returns("--native-c");
 }

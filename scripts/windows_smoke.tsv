@@ -1,6 +1,7 @@
 # @PLN184 D4 — each script's cheapest invocation, run nightly on windows-latest (.github/workflows/windows-scripts.yml).
 # A script not listed is counted by src/platform_census.rs (only falls).  Format: <script><TAB><arguments>
 bench/portal/ab.py	--help
+bench/portal/hand_forms.py	--help
 bench/portal/analysis/gap-sweep/mechanisms.py	--help
 bench/portal/analysis/gap-sweep/summary.py	--help
 bench/portal/analysis/gap-sweep/sweep.sh	--help
@@ -98,6 +99,8 @@ scripts/worst.py	--help
 selfhost/bench/measure.py	--help
 selfhost/compare/compare.py	--help
 selfhost/cover/census.py	--help
+selfhost/front/elab_gate.py	--help
+selfhost/front/tokens_gate.py	--help
 tests/comparisons/scripts/replay_tool.sh	tests/comparisons/scripts/bin/true
 tools/audience-demo/run-demo.sh	--help
 tools/indexer/fix_broken_links.py	--help

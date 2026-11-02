@@ -1,0 +1,67 @@
+--- base_canvas.c
++++ s1_canvas.c
+@@ -25931,57 +25931,14 @@
+ }
+ 
+ static loft_ref n_filled__fr(int64_t v0_count, int64_t v1_value, loft_ref v3_fi_out) {
+-    loft_ref v2___retbuf = { 0xFFFF, 0, 0 };
+-    int64_t v4_fi_top = LOFT_NULL;
+-    int64_t v5_fi_i = LOFT_NULL;
+-    int64_t v6__elm_1 = LOFT_NULL;
+-    loft_ref t1;
+-    loft_ref t2;
+-    int64_t t3;
+-    int64_t t4;
+-    uint8_t t5;
+-    uint8_t t6;
+-    int64_t t7;
+-    int64_t t8;
+-    loft_ref t9;
+     loft_vec_clear_release(loft_types, loft_ntypes, v3_fi_out);
+-    loft_vec_clear_release(loft_types, loft_ntypes, v3_fi_out);
+-    if (v0_count <= loft_w64(INT32_C(0))) {
+-        t2 = v3_fi_out;
+-        return t2;
+-    }
+-    v4_fi_top = INT64_C(0);
+-    for (;;) {
+-        t3 = loft_wrap_add(v4_fi_top, INT64_C(1));
+-        t4 = loft_shr(v0_count, t3);
+-        t5 = (uint8_t) (t4 != loft_w64(INT32_C(0)));
+-        if (!(t5 == 1)) {
+-            goto brk_1;
+-        }
+-        v4_fi_top = loft_wrap_add(v4_fi_top, INT64_C(1));
+-    cont_1:;
+-    }
+-    brk_1:;
+-    v5_fi_i = v4_fi_top;
+-    for (;;) {
+-        t6 = (uint8_t) (loft_w64(INT32_C(0)) <= v5_fi_i);
+-        if (!(t6 == 1)) {
+-            goto brk_2;
+-        }
+-        loft_vec_add(loft_types, 0, v3_fi_out, v3_fi_out);
+-        t7 = loft_shr(v0_count, v5_fi_i);
+-        t8 = ((t7) & (INT64_C(1)));
+-        if (t8 == loft_w64(INT32_C(1))) {
+-            loft_vec_prealloc(v3_fi_out, 1, 8);
+-            loft_vec_push_int(v3_fi_out, v1_value);
+-        }
+-        v5_fi_i = loft_wrap_sub(v5_fi_i, INT64_C(1));
+-    cont_2:;
+-    }
+-    brk_2:;
+-    t9 = v3_fi_out;
+-    return t9;
+-    return t1;
++    if (v0_count <= 0) return v3_fi_out;
++    loft_vec_reserve_run(v3_fi_out, v0_count, 8);
++    loft_vh h = loft_vh_of(v3_fi_out);
++    uint8_t *p = h.base;
++    for (int64_t i = 0; i < v0_count; i++) memcpy(p + (size_t) i * 8, &v1_value, 8);
++    loft_set_u32(loft_store_of(v3_fi_out), h.rec, 4, (uint32_t) v0_count);
++    return v3_fi_out;
+ }
+ 
+ static loft_ref n_canvas__fr(int64_t v0_cw, int64_t v1_ch, int64_t v2_fill_color, loft_ref v3___retbuf) {

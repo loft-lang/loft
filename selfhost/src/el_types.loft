@@ -1,0 +1,289 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Types as the parser asks them (src/data.rs `Type`'s methods, src/parser/definitions.rs
+// `parse_type`), over `ir::TypeT` — the same variants under the image's names.
+use ir;
+use syntax::*;
+use el;
+
+// The `Deps` entry that names no variable: a `reference<T>` field's pointer marker, a share
+// marker (`Deps::is_pointer_marker`).
+pub const MARKER = 65535;
+
+// `Type::base`: the type behind a nullability marker.
+pub fn base(t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyOptional { inner } => inner,
+    _ => t
+  }
+}
+
+// `Type::unrewritten`: the type behind the built-in-place marker.
+pub fn unrewritten(t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyRewritten { inner } => inner,
+    _ => t
+  }
+}
+
+pub fn is_unknown(t: ir::TypeT) -> boolean {
+  // `Type::is_unknown`: a vector of an unknown element, and the placeholder `Reference(0)`, too.
+  match t {
+    TyUnknown { n: _ } => true,
+    TyVector { inner } => is_unknown(inner),
+    TyReference { n } => n == 0,
+    _ => false
+  }
+}
+
+// `Type::is_same`: one type, ignoring dependencies (the shapes compared, not the stores).
+pub fn is_same(a: ir::TypeT, b: ir::TypeT) -> boolean {
+  match a {
+    TyInteger { spec: sa } => match b {
+      TyInteger { spec: sb } => true,
+      _ => false
+    },
+    TyBoolean => b is TyBoolean,
+    TyFloat => b is TyFloat,
+    TySingle => b is TySingle,
+    TyCharacter => b is TyCharacter,
+    TyText { dep: _ } => match b {
+      TyText { dep: _ } => true,
+      _ => false
+    },
+    TyVoid => b is TyVoid,
+    TyNull => b is TyNull,
+    TyEnum { n: na, is_ref: ra } => match b {
+      TyEnum { n: nb, is_ref: rb } => na == nb && ra == rb,
+      _ => false
+    },
+    TyReference { n: na } => match b {
+      TyReference { n: nb } => na == nb,
+      _ => false
+    },
+    TyOptional { inner: ia } => match b {
+      TyOptional { inner: ib } => is_same(ia, ib),
+      _ => false
+    },
+    TyVector { inner: ia } => match b {
+      TyVector { inner: ib } => is_same(ia, ib),
+      _ => false
+    },
+    _ => false
+  }
+}
+
+// `Type::is_equal`: the same type for a conversion or a variable's retype — an integer of any
+// width, a text with any deps, an enum or a record by definition, a `&` and a `τ?` through
+// their inner type where that carries deps, a vector by its element; anything else by its whole
+// value.
+pub fn is_equal(e: el::El, a: ir::TypeT, b: ir::TypeT) -> boolean {
+  match a {
+    TyRewritten { inner } => return is_equal(e, inner, b),
+    _ => {}
+  }
+  match b {
+    TyRewritten { inner } => return is_equal(e, a, inner),
+    _ => {}
+  }
+  match a {
+    TyRefVar { inner: ia } => match b {
+      TyRefVar { inner: ib } => is_equal(e, ia, ib),
+      _ => false
+    },
+    TyEnum { n: na, is_ref: ra } => match b {
+      TyEnum { n: nb, is_ref: rb } => na == nb && ra == rb,
+      _ => false
+    },
+    TyReference { n: na } => match b {
+      TyReference { n: nb } => na == nb,
+      _ => false
+    },
+    TyOptional { inner: ia } => match b {
+      TyOptional { inner: ib } => if has_deps(ia) && has_deps(ib) { is_equal(e, ia, ib) } else { a == b },
+      _ => false
+    },
+    TyInteger { spec: _ } => b is TyInteger,
+    TyText { dep: _ } => b is TyText,
+    // The element types, whatever stores the two vectors borrow.
+    TyVector { inner: ia } => match b {
+      TyVector { inner: ib } => is_equal(e, ia, ib),
+      _ => false
+    },
+    _ => a == b
+  }
+}
+
+// `Type::deps_ref` is some: the type carries a dependency list, through a `&` or a `τ?`.
+fn has_deps(t: ir::TypeT) -> boolean {
+  match t {
+    TyRefVar { inner } => has_deps(inner),
+    TyOptional { inner } => has_deps(inner),
+    TyText { dep: _ } => true,
+    TyEnum { n: _ } => true,
+    TyReference { n: _ } => true,
+    TyVector { inner: _ } => true,
+    TySorted { n: _ } => true,
+    TyIndex { n: _ } => true,
+    TyRadix { n: _ } => true,
+    TyHash { n: _ } => true,
+    TyTrie { n: _ } => true,
+    TyFunction { args: _ } => true,
+    _ => false
+  }
+}
+
+// `Type::with_deps`: the same type carrying `deps` as its own borrow list — through a `&` and a
+// `τ?`, spread over a tuple's elements; a type with no list is unchanged.
+pub fn with_deps(t: ir::TypeT, deps: vector<integer>) -> ir::TypeT {
+  match t {
+    TyText { dep: _ } => ir::TyText { dep: deps },
+    TyReference { n } => ir::TyReference { n: n, dep: deps },
+    TyEnum { n, is_ref } => ir::TyEnum { n: n, is_ref: is_ref, dep: deps },
+    TyIndex { n, keys } => ir::TyIndex { n: n, keys: keys, dep: deps },
+    TyRadix { n, names } => ir::TyRadix { n: n, names: names, dep: deps },
+    TyTrie { n, key } => ir::TyTrie { n: n, key: key, dep: deps },
+    TyHash { n, names } => ir::TyHash { n: n, names: names, dep: deps },
+    TySorted { n, keys } => ir::TySorted { n: n, keys: keys, dep: deps },
+    TyVector { inner } => ir::TyVector { inner: inner, dep: deps },
+    TyFunction { args, result, consts } => ir::TyFunction { args: args, result: result, dep: deps, consts: consts },
+    TyRefVar { inner } => ir::TyRefVar { inner: with_deps(inner, deps) },
+    TyOptional { inner } => ir::TyOptional { inner: with_deps(inner, deps) },
+    TyTuple { elems } => ir::TyTuple { elems: [for x in elems { with_deps(x, deps) }] },
+    _ => t
+  }
+}
+
+// The name a vector of `t` is registered under (`vector<integer>`, `main_vector<P>`), or "".
+pub fn elem_name(e: el::El, t: ir::TypeT) -> text {
+  match t {
+    TyInteger { spec } => if spec.forced_size == 0 && spec.min == -2147483647 && spec.max == 2147483647 { "integer" } else { "" },
+    TyText { dep: _ } => "text",
+    TyBoolean => "boolean",
+    TyFloat => "float",
+    TySingle => "single",
+    TyCharacter => "character",
+    TyReference { n } => if el::def(e, n).def_type == el::DT_STRUCT { el::def(e, n).name } else { "" },
+    _ => ""
+  }
+}
+
+// `Type::without_deps`: the type with no borrows.
+pub fn without_deps(t: ir::TypeT) -> ir::TypeT {
+  if len(deps(t)) == 0 {
+    return t;
+  }
+  with_deps(t, [])
+}
+
+// `Type::depend`: the variables a type borrows — through a `&` and a `τ?`, a tuple's the union of
+// its elements', without the share marker.
+pub fn deps(t: ir::TypeT) -> vector<integer> {
+  r: vector<integer> = match t {
+    TyText { dep } => dep,
+    TyReference { dep } => dep,
+    TyEnum { dep } => dep,
+    TyIndex { dep } => dep,
+    TyRadix { dep } => dep,
+    TyTrie { dep } => dep,
+    TyHash { dep } => dep,
+    TySorted { dep } => dep,
+    TyVector { dep } => dep,
+    TyFunction { dep } => dep,
+    TyRefVar { inner } => deps(inner),
+    TyOptional { inner } => deps(inner),
+    TyTuple { elems } => {
+      u: vector<integer> = [];
+      for x in elems {
+        for d in deps(x) {
+          if !u.contains(d) {
+            u += [d];
+          }
+        }
+      }
+      u
+    },
+    _ => []
+  };
+  [for d in r if d != MARKER { d }]
+}
+
+
+// `is_collection`: a vector or a keyed collection, through a `&`.
+pub fn is_collection(t: ir::TypeT) -> boolean {
+  match t {
+    TyRefVar { inner } => is_collection(inner),
+    TyVector { inner: _ } => true,
+    TyHash { n: _ } => true,
+    TySorted { n: _ } => true,
+    TyIndex { n: _ } => true,
+    TyRadix { n: _ } => true,
+    TyTrie { n: _ } => true,
+    _ => false
+  }
+}
+
+// `Parser::parse_type` of a named type with nothing after its name: the type a definition of
+// that name answers.  What it does not carry yet is refused by name.
+pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
+  match e.p.nodes[n] {
+    STy { name, member, args, elem_null, keys, deps, limit, not_null, assoc, nullable } => {
+      if name == "vector" && member == "" && len(args) == 1 && !elem_null && len(keys) == 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" && !nullable {
+        // `sub_type_inner`'s vector arm: the element read as a type, no deps yet.
+        inner = parse_type(e, args[0]);
+        if inner == null {
+          return null;
+        }
+        return ir::TyVector { inner: inner!, dep: [] };
+      }
+      if (name == "hash" || name == "sorted" || name == "index") && member == "" && len(args) == 1 && !elem_null && len(keys) > 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" && !nullable {
+        // `sub_type_inner`'s keyed arms: a record element and its key fields (`-k` descending,
+        // which only `sorted` and `index` take).
+        inner = parse_type(e, args[0]);
+        if inner == null {
+          return null;
+        }
+        sub = match inner! {
+          TyReference { n } => n,
+          _ => {
+            el::refuse(e, "a keyed collection of this element: {name}");
+            return null;
+          }
+        };
+        if name == "hash" {
+          names: vector<ir::NameRef> = [];
+          for k in keys {
+            if starts_with(k, "-") {
+              el::refuse(e, "a descending hash key");
+              return null;
+            }
+            names += [ir::NameRef { name: k }];
+          }
+          return ir::TyHash { n: sub, names: names, dep: [] };
+        }
+        sk: vector<ir::SortKey> = [];
+        for k in keys {
+          sk += [if starts_with(k, "-") { ir::SortKey { name: k[1..], asc: false } } else { ir::SortKey { name: k, asc: true } }];
+        }
+        return if name == "sorted" { ir::TySorted { n: sub, keys: sk, dep: [] } } else { ir::TyIndex { n: sub, keys: sk, dep: [] } };
+      }
+      if member != "" || len(args) > 0 || len(keys) > 0 || len(deps) > 0 || limit != null || not_null || assoc != "" {
+        el::refuse(e, "a type with arguments, keys, a limit or a member: {name}");
+        return null;
+      }
+      d = el::def_nr(e, name);
+      if d < 0 {
+        el::refuse(e, "a forward type reference");
+        return null;
+      }
+      t = el::def(e, d).returned[0] ?? ir::TyUnknown { n: d };
+      // `T?`: the optional former over the base.
+      if nullable { ir::TyOptional { inner: t } } else { t }
+    },
+    _ => {
+      el::refuse(e, "a tuple or function type");
+      null
+    }
+  }
+}

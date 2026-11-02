@@ -470,11 +470,17 @@ impl Scopes<'_> {
                 // one buffer and the function-exit sweep frees it once.  Registered first, so
                 // an exit INSIDE the block (`?? continue` / `?? break`) does not free it on its
                 // way out and leave the next pass, or the function exit, a second free.
+                // The tail is looked for THROUGH trailing value blocks: a struct match's
+                // field capture is bound in the match block and handed out by the arm's
+                // `struct_match` block inside it, so the match block's last operator is that
+                // block, not the capture — `x = match n { N { nm } => nm }; x` leaked `nm`
+                // once per call (the loft#2353 cell under valgrind).
                 if hoisted_ref.is_none()
                     && self.scope >= 1
                     && matches!(bl.result.base(), Type::Text(_))
-                    && let Some(Value::Var(orig_ret)) = bl.operators.last().map(Value::unspan)
+                    && let Some(orig_ret) = bl.operators.last().and_then(tail_var_through_blocks)
                 {
+                    let orig_ret = &orig_ret;
                     let ret_v = *self.var_mapping.get(orig_ret).unwrap_or(orig_ret);
                     if !self.var_scope.contains_key(&ret_v)
                         && !function.is_argument(ret_v)
@@ -552,9 +558,7 @@ impl Scopes<'_> {
                         self.var_scope.insert(*v, outer_scope);
                     }
                     if !hoisted.is_empty() {
-                        ls.retain(|op| {
-                            scope_free_op_var(op, data).is_none_or(|v| !hoisted.contains(&v))
-                        });
+                        drop_tail_frees(&mut ls, &hoisted, data);
                     }
                 }
                 let block = Value::Block(Box::new(Block {
@@ -1331,5 +1335,36 @@ impl Scopes<'_> {
             }
             _ => None,
         }
+    }
+}
+
+/// Drop the block-exit frees of `hoisted` from a value block's operators — at its own level and
+/// down the chain of TAIL blocks: `insert_free` places an enclosing scope's frees into the
+/// block that is that scope's value, so a lift hoisted twice (out of a block, then out of the
+/// block whose value it is) had its first free planted inside the inner block ahead of the read
+/// that still needed it, beside the one the outer scope then emitted (loft#2327,
+/// `@FR-O-Detach`).  Only the tail chain: a block elsewhere in the list is a statement whose
+/// frees belong to its own scope.
+fn drop_tail_frees(ops: &mut Vec<Value>, hoisted: &[u16], data: &Data) {
+    ops.retain(|op| scope_free_op_var(op, data).is_none_or(|v| !hoisted.contains(&v)));
+    let tail = ops
+        .iter_mut()
+        .rev()
+        .find(|o| scope_free_op_var(o, data).is_none());
+    if let Some(Value::Block(bl)) = tail {
+        drop_tail_frees(&mut bl.operators, hoisted, data);
+    }
+}
+
+/// The local a value expression ends in, looked for through trailing value blocks: `v`, or the
+/// last operator of a non-void block, recursively.  `None` for any other tail — a call, a
+/// literal, a branch — whose value is no local the block could leave unreleased.
+fn tail_var_through_blocks(v: &Value) -> Option<u16> {
+    match v.unspan() {
+        Value::Var(x) => Some(*x),
+        Value::Block(bl) if !matches!(bl.result.base(), Type::Void | Type::Never) => {
+            bl.operators.last().and_then(tail_var_through_blocks)
+        }
+        _ => None,
     }
 }

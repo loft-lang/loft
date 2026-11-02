@@ -39,7 +39,7 @@ LOFT_HOT_INLINE loft_ref loft_entry_new(loft_ref c, uint32_t size) {
     if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
     /* A locked collection gains no entry: the null record, whose writes are skipped. */
     if (LOFT_WRITE_REFUSED(loft_store_of(c))) return loft_ref_null();
-    loft_ref e;
+    loft_ref e = {0};
     e.store_nr = c.store_nr;
     e.rec = loft_claim(loft_store_of(c), 1 + (size + 7) / 8);
     e.pos = 8;
@@ -118,7 +118,7 @@ static loft_ref loft_seq_find(loft_ref c, uint32_t size, const loft_key *keys, i
     int found;
     uint32_t p = loft_seq_search(&q, loft_seq_len(&q), 1, kv, n, 0, 0, keys, nk, &found);
     if (!found) return loft_ref_null();
-    loft_ref e;
+    loft_ref e = {0};
     e.store_nr = c.store_nr;
     loft_seq_at(&q, p, &e.rec, &e.pos);
     return e;
@@ -291,7 +291,7 @@ static loft_ref loft_seq_step(int64_t *state, loft_ref c, uint32_t size, int rev
     if (at < 0 || c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
     loft_seq q = loft_seq_of(c, size);
     if ((uint32_t) at >= loft_seq_len(&q)) return loft_ref_null();
-    loft_ref e;
+    loft_ref e = {0};
     e.store_nr = c.store_nr;
     loft_seq_at(&q, (uint32_t) at, &e.rec, &e.pos);
     return e;
@@ -346,7 +346,10 @@ static void loft_show_refs(loft_text *s, const loft_ref *e, uint32_t n, int fmt,
             loft_push_char(s, ',');
             if (pretty) { if (struct_elem) loft_nl(s, ind + 1); else loft_push_char(s, ' '); }
         }
+        /* `@FR-F-Render-Ref` — a keyed element's segment is its POSITION in this list. */
+        loft_rr_push_index(i);
         f(s, e[i], fmt, ind + 1);
+        loft_rr_pop();
     }
     if (pretty) loft_push_char(s, ' ');
     loft_push_char(s, ']');
@@ -1606,6 +1609,11 @@ static void loft_par_job_run(loft_par_job *j) {
     }
     loft_stores = 0;
     loft_nstores = 0;
+    /* The thread's own queue of child records a copy or a release walks (loft_rt.h): it dies
+     * with the thread, so it is freed here, or every worker that copied a tree leaks it. */
+    free(loft_child_jobs);
+    loft_child_jobs = 0;
+    loft_child_njobs = loft_child_cap = 0;
 #if defined(LOFT_CALL_CHAIN)
     free(loft_frames);
     loft_frames = 0;

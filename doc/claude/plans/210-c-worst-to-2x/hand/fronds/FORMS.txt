@@ -1,0 +1,12 @@
+loft commit   3cfb11fb9
+library       drawing @ aa86b6b
+emit          LOFT_RELEASE_PASS_PROBE=1 loft --emit-c base.c bench/bench.loft (in the driver package)
+
+base  b0.c
+base  base.c
+edit  c0.c  from cbase.c
+base  cbase.c
+edit  f1.c  from cbase.c
+edit  s1.c  from b0.c
+edit  s2.c  from b0.c
+edit  s2only.c  from b0.c

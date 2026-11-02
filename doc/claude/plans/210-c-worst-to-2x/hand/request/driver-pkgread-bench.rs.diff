@@ -1,0 +1,9 @@
+--- library/bench/bench.rs
++++ pkgread/bench/bench.rs
+@@ -466,5 +466,5 @@
+     let t0 = Instant::now();
+     println!("routine\titers\tus\tns_op\tpx\tns_px\thash");
+-    let rows = [bench_check(n), bench_read(n), bench_request(n)];
++    let rows = [bench_read(n)];
+     let mut sink = 0i64;
+     for row in &rows {

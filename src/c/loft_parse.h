@@ -52,6 +52,8 @@ typedef struct {
     uint8_t ngrp;
     uint16_t gelem;
     uint8_t gheld, gnull;
+    /* `@FR-F-Read-Ref` — a stored reference field: the record type it names (0: none). */
+    uint16_t target;
 } loft_pfield;
 
 typedef struct {
@@ -75,6 +77,7 @@ typedef struct {
     uint8_t linked;              /* its record type is linked (`loft_hash_entry`) */
     uint8_t some;                /* a `__nullable<S>`'s `Some` value; 0 for any other enum */
     uint16_t payload_tp, payload_pos; /* the `Some` variant's `payload` field */
+    uint8_t refs;                /* a value of it can hold a stored reference (`@FR-F-Read-Ref`) */
 } loft_ptype;
 
 /* The program's type table (`loft_types`), which a keyed collection's insert releases a
@@ -628,6 +631,147 @@ static int loft_pw_walk(loft_pw *w, const loft_jv *v, uint16_t tp, uint16_t rec_
 #define LOFT_OPEN_OBJECT 1
 #define LOFT_OPEN_WORD 2
 #define LOFT_OPEN_OTHER 3
+/* `@FR-F-Read-Ref` (structures.rs `ReadRefs`) — what one top-level text read of a type that can
+ * hold a reference knows: the path it is at, the record each pointer names (first one wins),
+ * and every reference field read so far as (its slot, its pointer, the type it names), written
+ * once the whole document is read. */
+static LOFT_TLS int loft_rd_on;
+static LOFT_TLS loft_text loft_rd_path;            /* "/leaves/1" */
+static LOFT_TLS size_t *loft_rd_marks;
+static LOFT_TLS size_t loft_rd_nmarks, loft_rd_cmarks;
+typedef struct { size_t at, len; loft_ref r; } loft_rd_place;
+static LOFT_TLS loft_rd_place *loft_rd_at;
+static LOFT_TLS size_t loft_rd_nat, loft_rd_cat;
+static LOFT_TLS size_t *loft_rd_tab;
+static LOFT_TLS size_t loft_rd_ctab;
+static LOFT_TLS loft_text loft_rd_pool;
+typedef struct { loft_ref slot; size_t at, len; uint16_t tp; } loft_rd_pend;
+static LOFT_TLS loft_rd_pend *loft_rd_pending;
+static LOFT_TLS size_t loft_rd_npend, loft_rd_cpend;
+
+static void loft_rd_push_raw(const char *seg, size_t n) {
+    if (!loft_rd_on) return;
+    if (loft_rd_nmarks == loft_rd_cmarks) {
+        loft_rd_cmarks = loft_rd_cmarks ? loft_rd_cmarks * 2 : 32;
+        loft_rd_marks = (size_t *) realloc(loft_rd_marks, loft_rd_cmarks * sizeof(size_t));
+        if (!loft_rd_marks) abort();
+    }
+    loft_rd_marks[loft_rd_nmarks++] = loft_rd_path.len;
+    loft_push_char(&loft_rd_path, '/');
+    for (size_t i = 0; i < n; i++) {
+        if (seg[i] == '~') loft_push(&loft_rd_path, "~0", 2);
+        else if (seg[i] == '/') loft_push(&loft_rd_path, "~1", 2);
+        else loft_push_char(&loft_rd_path, seg[i]);
+    }
+}
+
+static void loft_rd_push_index(size_t i) {
+    if (!loft_rd_on) return;
+    char b[24];
+    int n = snprintf(b, sizeof b, "%zu", i);
+    loft_rd_push_raw(b, (size_t) n);
+}
+
+static void loft_rd_pop(void) {
+    if (loft_rd_on && loft_rd_nmarks) loft_rd_path.len = loft_rd_marks[--loft_rd_nmarks];
+}
+
+static size_t loft_rd_hash(const char *p, size_t n) {
+    uint64_t h = 1469598103934665603ULL;
+    for (size_t i = 0; i < n; i++) { h ^= (uint8_t) p[i]; h *= 1099511628211ULL; }
+    return (size_t) h;
+}
+
+/* The record pointer `p` (without its '#') names, or NULL. */
+static const loft_rd_place *loft_rd_find(const char *p, size_t n) {
+    if (!loft_rd_ctab) return 0;
+    size_t m = loft_rd_ctab - 1;
+    for (size_t i = loft_rd_hash(p, n) & m;; i = (i + 1) & m) {
+        size_t k = loft_rd_tab[i];
+        if (k == 0) return 0;
+        const loft_rd_place *e = &loft_rd_at[k - 1];
+        if (e->len == n && (n == 0 || memcmp(loft_rd_pool.p + e->at, p, n) == 0)) return e;
+    }
+}
+
+/* A record is read here: the path names it, unless an earlier record took the path. */
+static void loft_rd_record(loft_ref r) {
+    if (!loft_rd_on) return;
+    const char *p = loft_rd_path.len ? loft_rd_path.p : "";
+    size_t n = loft_rd_path.len;
+    if (loft_rd_find(p, n)) return;
+    if (loft_rd_nat == loft_rd_cat) {
+        loft_rd_cat = loft_rd_cat ? loft_rd_cat * 2 : 64;
+        loft_rd_at = (loft_rd_place *) realloc(loft_rd_at, loft_rd_cat * sizeof(loft_rd_place));
+        if (!loft_rd_at) abort();
+    }
+    if (2 * (loft_rd_nat + 1) > loft_rd_ctab) {
+        size_t c = loft_rd_ctab ? loft_rd_ctab * 2 : 128;
+        free(loft_rd_tab);
+        loft_rd_tab = (size_t *) calloc(c, sizeof(size_t));
+        if (!loft_rd_tab) abort();
+        loft_rd_ctab = c;
+        for (size_t k = 0; k < loft_rd_nat; k++) {
+            const loft_rd_place *e = &loft_rd_at[k];
+            size_t i = loft_rd_hash(e->len ? loft_rd_pool.p + e->at : "", e->len) & (c - 1);
+            while (loft_rd_tab[i]) i = (i + 1) & (c - 1);
+            loft_rd_tab[i] = k + 1;
+        }
+    }
+    loft_rd_place e = { loft_rd_pool.len, n, r };
+    if (n) loft_push(&loft_rd_pool, p, n);
+    loft_rd_at[loft_rd_nat++] = e;
+    size_t i = loft_rd_hash(p, n) & (loft_rd_ctab - 1);
+    while (loft_rd_tab[i]) i = (i + 1) & (loft_rd_ctab - 1);
+    loft_rd_tab[i] = loft_rd_nat;
+}
+
+/* A reference field's pointer, parked until the document is read: `ptr` is the text after '#'. */
+static void loft_rd_park(loft_ref slot, const char *ptr, size_t n, uint16_t tp) {
+    if (loft_rd_npend == loft_rd_cpend) {
+        loft_rd_cpend = loft_rd_cpend ? loft_rd_cpend * 2 : 16;
+        loft_rd_pending = (loft_rd_pend *) realloc(loft_rd_pending, loft_rd_cpend * sizeof(loft_rd_pend));
+        if (!loft_rd_pending) abort();
+    }
+    loft_rd_pend e = { slot, loft_rd_pool.len, n, tp };
+    if (n) loft_push(&loft_rd_pool, ptr, n);
+    loft_rd_pending[loft_rd_npend++] = e;
+}
+
+static void loft_rd_start(void) {
+    loft_rd_on = 1;
+    loft_rd_path.len = 0;
+    loft_rd_nmarks = 0;
+    loft_rd_nat = 0;
+    loft_rd_npend = 0;
+    loft_rd_pool.len = 0;
+    if (loft_rd_ctab) memset(loft_rd_tab, 0, loft_rd_ctab * sizeof(size_t));
+}
+
+/* `resolve_read_refs`: every parked reference takes the record its pointer names, or a misfit
+ * names the pointer nothing in the document holds. */
+static void loft_rd_resolve(loft_werrs *errs) {
+    for (size_t k = 0; k < loft_rd_npend; k++) {
+        const loft_rd_pend *e = &loft_rd_pending[k];
+        const char *ptr = e->len ? loft_rd_pool.p + e->at : "";
+        const loft_rd_place *t = 0;
+        if (e->len >= 1 && ptr[0] == '#') t = loft_rd_find(ptr + 1, e->len - 1);
+        if (t) {
+            uint32_t w[3] = { t->r.store_nr, t->r.rec, t->r.pos };
+            memcpy(loft_at(loft_store_of(e->slot), e->slot.rec, e->slot.pos), w, 12);
+        } else {
+            loft_werr *we = loft_werrs_push(errs, 0);
+            loft_text m = { 0, 0, 0 };
+            loft_push_cstr(&m, "$ref \"");
+            if (e->len) loft_push(&m, ptr, e->len);
+            loft_push_cstr(&m, "\" names no record of the document");
+            loft_werr_front(we, m.p, m.len);
+            loft_text_free(&m);
+        }
+    }
+    loft_rd_on = 0;
+}
+
 static int loft_jp_opening(const loft_jp *p) {
     if (loft_jp_is(p, '[')) return LOFT_OPEN_ARRAY;
     if (loft_jp_is(p, '{')) return LOFT_OPEN_OBJECT;
@@ -637,6 +781,118 @@ static int loft_jp_opening(const loft_jp *p) {
 
 static int loft_pr_into(loft_pw *w, loft_jp *p, loft_werrs *errs, size_t value_at, uint16_t tp, uint16_t rec_tp,
                         uint16_t field, loft_ref to, size_t at, loft_jfault *f);
+
+/* `@FR-F-Read-Ref` (`read_reference_field`) — a reference field's member `{"$ref": "#/…"}` is
+ * parked until the whole document is read (its target may come later), the slot holding null
+ * meanwhile; any other object is a misfit of the field.  0 leaves a member that is no object
+ * (a `null`) to the ordinary read. */
+static int loft_rd_reference_field(loft_jp *p, loft_werrs *errs, const loft_pfield *fd, loft_ref slot,
+                                   size_t value_at, size_t key_at, int *ok, loft_jfault *f) {
+    *ok = 1;
+    if (loft_jp_opening(p) != LOFT_OPEN_OBJECT) return 0;
+    loft_jv v;
+    memset(&v, 0, sizeof v);
+    if (!loft_jp_value(p, value_at, &v, f)) { loft_jv_free(&v); *ok = 0; return 1; }
+    uint32_t nul[3] = { 0xFFFFu, 0, 0 };
+    memcpy(loft_at(loft_store_of(slot), slot.rec, slot.pos), nul, 12);
+    const char *ptr = 0;
+    size_t plen = 0;
+    if (v.kind == LOFT_JV_OBJECT && v.nkids == 1 && v.keys[0].len == 4 && memcmp(v.keys[0].p, "$ref", 4) == 0
+        && v.kids[0].kind == LOFT_JV_STR) {
+        ptr = v.kids[0].s.p ? v.kids[0].s.p : "";
+        plen = v.kids[0].s.len;
+    }
+    if (ptr) {
+        loft_rd_park(slot, ptr, plen, fd->target);
+    } else {
+        loft_werr *we = loft_werrs_push(errs, key_at);
+        loft_werr_front(we, fd->name, strlen(fd->name));
+    }
+    loft_jv_free(&v);
+    return 1;
+}
+
+/* `read_refs_list`: a top-level `$refs` list — each entry the target of the pointers naming
+ * `#/$refs/i`, built as a fresh record of the type they expect in `to`'s store (the result's
+ * own, so it lives and dies with the result); an entry nothing points at is read past. */
+static int loft_rd_refs_list(loft_pw *w, loft_jp *p, loft_werrs *errs, loft_ref to, size_t list_at, loft_jfault *f) {
+    if (loft_jp_opening(p) != LOFT_OPEN_ARRAY) {
+        loft_jv skip;
+        memset(&skip, 0, sizeof skip);
+        int r = loft_jp_value(p, list_at, &skip, f);
+        loft_jv_free(&skip);
+        return r;
+    }
+    size_t start, next;
+    int more = loft_jp_open_array(p, &start, &next);
+    size_t idx = 0;
+    while (more) {
+        char want[40];
+        int wn = snprintf(want, sizeof want, "#/$refs/%zu", idx);
+        uint16_t tp = 0xFFFF;
+        for (size_t k = 0; k < loft_rd_npend; k++) {
+            const loft_rd_pend *e = &loft_rd_pending[k];
+            if (e->len == (size_t) wn && memcmp(loft_rd_pool.p + e->at, want, (size_t) wn) == 0) { tp = e->tp; break; }
+        }
+        if (tp != 0 && tp != 0xFFFF && w->P[tp].kind == LOFT_P_RECORD) {
+            uint32_t nr = loft_claim(loft_store_of(to), 1 + (w->P[tp].size + 7u) / 8u);
+            loft_ref rec = { to.store_nr, nr, 8 };
+            loft_pw_default(w, tp, 0, 0, rec);
+            loft_rd_path.len = 0;
+            loft_rd_nmarks = 0;
+            loft_rd_push_raw("$refs", 5);
+            loft_rd_push_index(idx);
+            if (!loft_pr_into(w, p, errs, next, tp, tp, 0xFFFF, rec, next, f)) return 0;
+        } else {
+            loft_jv skip;
+            memset(&skip, 0, sizeof skip);
+            int r = loft_jp_value(p, next, &skip, f);
+            loft_jv_free(&skip);
+            if (!r) return 0;
+        }
+        int r = loft_jp_next_item(p, start, &next, f);
+        if (r < 0) return 0;
+        more = r;
+        idx++;
+    }
+    loft_rd_path.len = 0;
+    loft_rd_nmarks = 0;
+    return 1;
+}
+
+/* `read_value_wrapper`: `{"$value": …, "$refs": […]}`, the form a value that is no object takes
+ * when it brings targets along. */
+static int loft_rd_value_wrapper(loft_pw *w, loft_jp *p, loft_werrs *errs, uint16_t tp, loft_ref to, loft_jfault *f) {
+    size_t start;
+    int more = loft_jp_open_object(p, &start);
+    while (more) {
+        loft_text name = { 0, 0, 0 };
+        size_t key_at, value_at;
+        if (!loft_jp_member(p, &name, &key_at, &value_at, f)) { loft_text_free(&name); return 0; }
+        int ok;
+        if (name.len == 6 && memcmp(name.p, "$value", 6) == 0) {
+            loft_rd_path.len = 0;
+            loft_rd_nmarks = 0;
+            loft_rd_push_raw("$value", 6);
+            ok = loft_pr_into(w, p, errs, value_at, tp, tp, 0xFFFF, to, value_at, f);
+            loft_rd_path.len = 0;
+            loft_rd_nmarks = 0;
+        } else if (name.len == 5 && memcmp(name.p, "$refs", 5) == 0) {
+            ok = loft_rd_refs_list(w, p, errs, to, value_at, f);
+        } else {
+            loft_jv skip;
+            memset(&skip, 0, sizeof skip);
+            ok = loft_jp_value(p, value_at, &skip, f);
+            loft_jv_free(&skip);
+        }
+        loft_text_free(&name);
+        if (!ok) return 0;
+        int r = loft_jp_next_member(p, start, f);
+        if (r < 0) return 0;
+        more = r;
+    }
+    return 1;
+}
 
 /* `read_array`: the `[` is at the cursor. */
 static int loft_pr_array(loft_pw *w, loft_jp *p, loft_werrs *errs, uint16_t tp, uint16_t content, uint16_t rec_tp,
@@ -649,7 +905,10 @@ static int loft_pr_array(loft_pw *w, loft_jp *p, loft_werrs *errs, uint16_t tp, 
     while (more) {
         loft_ref res = loft_pw_new(w, to, rec_tp, field);
         size_t seen = errs->n;
+        /* `@FR-F-Read-Ref` — an element's position is its segment of the path. */
+        loft_rd_push_index(idx);
         if (!loft_pr_into(w, p, errs, next, content, content, 0xFFFF, res, at, f)) return 0;
+        loft_rd_pop();
         /* The element itself did not fit when an error's path is still empty. */
         int misfit = 0;
         for (size_t k = seen; k < errs->n; k++) {
@@ -687,6 +946,7 @@ typedef struct {
     loft_text name;
     size_t seen;
     uint16_t hit;
+    uint8_t top;         /* `@FR-F-Read-Ref`: the document's top record, which may hold `$refs` */
 } loft_pr_frame;
 
 static void loft_pr_frame_open(loft_pw *w, loft_pr_frame *fr, loft_jp *p, uint16_t tp, uint16_t rec_tp,
@@ -703,6 +963,12 @@ static void loft_pr_frame_open(loft_pw *w, loft_pr_frame *fr, loft_jp *p, uint16
     const loft_ptype *t = &w->P[tp];
     fr->fld = to.rec == 0 ? 0 : to.pos;
     fr->rec = to.rec == 0 ? loft_claim(loft_store_of(to), (t->size + 7u) / 8u) : to.rec;
+    /* `@FR-F-Read-Ref` — this record's pointer is the path it is read at, first one wins. */
+    if (loft_rd_on) {
+        loft_ref me = { to.store_nr, fr->rec, fr->fld };
+        loft_rd_record(me);
+        fr->top = loft_rd_path.len == 0;
+    }
     if (t->n > sizeof fr->found_local) {
         fr->found_heap = (uint8_t *) calloc(t->n, 1);
         if (!fr->found_heap) { fputs("loft: out of memory\n", stderr); abort(); }
@@ -754,6 +1020,7 @@ static int loft_pr_struct(loft_pw *w, loft_jp *p, loft_werrs *errs, uint16_t tp,
             if (!misfit) loft_pr_found(fr)[fr->hit] = 1;
             fr->hit = 0xFFFF;
             loft_text_free(&fr->name);
+            loft_rd_pop();
             int r = loft_jp_next_member(p, fr->start, f);
             if (r < 0) { ok = 0; break; }
             fr->more = r;
@@ -790,6 +1057,15 @@ static int loft_pr_struct(loft_pw *w, loft_jp *p, loft_werrs *errs, uint16_t tp,
         loft_text name = { 0, 0, 0 };
         size_t key_at, value_at;
         if (!loft_jp_member(p, &name, &key_at, &value_at, f)) { loft_text_free(&name); ok = 0; break; }
+        /* `@FR-F-Read-Ref` — the document's `$refs` list, its targets built in the result. */
+        if (fr->top && name.len == 5 && memcmp(name.p, "$refs", 5) == 0) {
+            loft_text_free(&name);
+            if (!loft_rd_refs_list(w, p, errs, fr->to, value_at, f)) { ok = 0; break; }
+            int r = loft_jp_next_member(p, fr->start, f);
+            if (r < 0) { ok = 0; break; }
+            fr->more = r;
+            continue;
+        }
         uint16_t hit = 0xFFFF;
         for (uint16_t j = 0; j < t->n; j++) {
             uint16_t k = (uint16_t) (fr->next + j < t->n ? fr->next + j : fr->next + j - t->n);
@@ -819,6 +1095,21 @@ static int loft_pr_struct(loft_pw *w, loft_jp *p, loft_werrs *errs, uint16_t tp,
         }
         size_t seen = errs->n;
         const loft_ptype *ct = &w->P[fd->content];
+        /* `@FR-F-Read-Ref` — the member's name is its segment of the path. */
+        loft_rd_push_raw(name.p ? name.p : "", name.len);
+        if (loft_rd_on && ct->kind == LOFT_P_DBREF) {
+            int okr;
+            if (loft_rd_reference_field(p, errs, fd, target, value_at, key_at, &okr, f)) {
+                loft_text_free(&name);
+                loft_rd_pop();
+                if (!okr) { ok = 0; break; }
+                loft_pr_found(fr)[hit] = 1;
+                int r = loft_jp_next_member(p, fr->start, f);
+                if (r < 0) { ok = 0; break; }
+                fr->more = r;
+                continue;
+            }
+        }
         if (ct->kind == LOFT_P_CHILD && ct->elem != 0xFFFF && loft_jp_opening(p) == LOFT_OPEN_OBJECT) {
             const loft_ptype *et = &w->P[ct->elem];
             if (et->kind == LOFT_P_RECORD
@@ -864,6 +1155,7 @@ static int loft_pr_struct(loft_pw *w, loft_jp *p, loft_werrs *errs, uint16_t tp,
                         }
                         if (!misfit) loft_pr_found(fr)[hit] = 1;
                         loft_text_free(&name);
+                        loft_rd_pop();
                         int nx = loft_jp_next_member(p, fr->start, f);
                         if (nx < 0) { ok = 0; break; }
                         fr->more = nx;
@@ -901,6 +1193,7 @@ static int loft_pr_struct(loft_pw *w, loft_jp *p, loft_werrs *errs, uint16_t tp,
         }
         if (!misfit) loft_pr_found(fr)[hit] = 1;
         loft_text_free(&name);
+        loft_rd_pop();
         int r = loft_jp_next_member(p, fr->start, f);
         if (r < 0) { ok = 0; break; }
         fr->more = r;
@@ -1163,7 +1456,15 @@ static loft_ref loft_record_from_text(const loft_ptype *P, loft_str text, uint16
     loft_jfault f;
     loft_jp p;
     size_t value_at = loft_jp_open(&p, b, text.len, 1);
-    int ok = loft_pr_into(&w, &p, &errs, value_at, tp, tp, 0xFFFF, into, 0, &f) && loft_jp_finish(&p, &f);
+    /* `@FR-F-Read-Ref` — a type that can hold a reference reads pointers, `$refs` and the
+     * `$value` wrapper a value that is no object takes. */
+    int refs = P[tp].refs;
+    if (refs) loft_rd_start();
+    int read = refs && P[tp].kind != LOFT_P_RECORD && loft_jp_opening(&p) == LOFT_OPEN_OBJECT
+                   ? loft_rd_value_wrapper(&w, &p, &errs, tp, into, &f)
+                   : loft_pr_into(&w, &p, &errs, value_at, tp, tp, 0xFFFF, into, 0, &f);
+    if (refs) loft_rd_resolve(&errs);
+    int ok = read && loft_jp_finish(&p, &f);
     loft_jp_close(&p);
     loft_text *msgs = 0;
     size_t nmsg = 0;
@@ -1387,7 +1688,7 @@ static void loft_jsv_struct(loft_pw *w, loft_ref dest, uint16_t kt, loft_ref src
         const loft_pfield *fd = &t->fields[f];
         loft_ref slot = dest;
         slot.pos += fd->pos;
-        loft_ref sub;
+        loft_ref sub = {0};
         int found = loft_jsv_lookup(src, fd->name, &sub);
         uint8_t d = found ? loft_jd(sub) : LOFT_JD_NULL;
         /* An omitted key and an explicit `null` are the declaration's question. */

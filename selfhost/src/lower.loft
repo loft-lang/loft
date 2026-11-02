@@ -19,6 +19,8 @@ use types;
 use show;
 use own;
 use binds;
+use frame;
+use eq;
 
 // What kind of value a node, a variable or a result is, and so which stack holds it.
 enum Kind {
@@ -27,7 +29,12 @@ enum Kind {
   KSingle,
   KText,
   KTextRef,
+  // A `&` of a variable that is not a text: a reference into the frame of the variable it names
+  // (@PLN91 F-1); a read and a write go through it, at the width of what it names.
+  KVarRef,
   KRef,
+  // A tuple (@PLN91 F-T1): its leaves on their kinds' stacks, laid out in its slot by its shape.
+  KTuple,
   KNone,
   KOther,
 }
@@ -55,6 +62,9 @@ enum Code {
   BitAnd,
   BitOr,
   BitXor,
+  // `<<`, `>>` on integers (loft's own).
+  Shl,
+  Shr,
   Not,
   NonNull,
   PushNull,
@@ -67,6 +77,14 @@ enum Code {
   Append,
   AppendChar,
   Clear,
+  FreeText,
+  InitText,
+  // `OpCreateStack(v)` of a variable that is not a text: the reference to its frame slot.
+  StackRef,
+  // A read through a `&` (`KVarRef`): the reference on top answered by what it names.
+  Deref,
+  // A write through a `&`: the reference, then the value, both taken.
+  Through,
   Print,
   RefOf,
   Round,
@@ -115,6 +133,27 @@ enum Code {
   HashSorted,
   ScratchIterate,
   ScratchStep,
+  // S4's keyed collections (`keyed_kind`: 1 sorted, 2 ordered, 3 index, 4 spatial, 5 trie).
+  // `KeyedNew` (`a` the element type, `b` the kind), `KeyedFinish` (`a` the collection type, `b`
+  // kind + 8 * element), `KeyedFind` (`a` the type, `b` kind + 8 * parts), `KeyedRemove` (`a` the
+  // raw type, `b` kind + 8 * element); a walk's key list one `WalkKey` at a time, `KeyedIterate` (`a` the walk's
+  // `on`, `b` its argument * 65536 + lower parts * 256 + upper parts) and `KeyedStep` (`a` the
+  // state's slot, `b` the argument * 256 + `on`).
+  KeyedNew,
+  KeyedFinish,
+  KeyedFind,
+  KeyedRemove,
+  WalkKey,
+  KeyedIterate,
+  KeyedStep,
+  // `OpLengthIndex` (`a` 0), `OpSizeIndex` (1), `OpLengthSpatial` / `OpLengthTrie` (2),
+  // `OpSizeSpatial` (3).
+  IndexLen,
+  // A spatial or trie snapshot: `b` 0 all of it (`n_radix_sorted`), 1 a range (`n_spatial_range`,
+  // eight integers), 2 a prefix (`n_trie_prefix`, a text and a limit); `a` the collection type.
+  RadixSnap,
+  // `OpRemove` in a walk: `a` the state's slot, `b` the type * 256 + the walk's `on`.
+  WalkRemove,
   FreeScratch,
   RefEq,
   VecAdd,
@@ -124,6 +163,91 @@ enum Code {
   BindOrCopy,
   CopyRefOrNull,
   Protect,
+  // `OpVectorIsNull`, `OpDistinctStore`, `OpAppendCopy` (S3: `a` the element type).
+  VecAbsent,
+  DistinctStore,
+  AppendCopy,
+  // `OpConstRef(d)`: the reference to constant `d`'s store (`consts.loft`).
+  ConstRef,
+  // `OpRemoveVector`: `a` the element type, `b` the mode (2 linked, 1 owning heap, 0 plain).
+  VecRemove,
+  // `OpCastIntFromText`: a text parsed as an integer, null when it is none.
+  IntFromText,
+  // `OpEqContent` / `OpNeContent`: `a` the type, `b` 1 for the negation.
+  EqContent,
+  // An array's element added (`a` its type, `b` its size), filed, and read.
+  ArrayNew,
+  ArrayAppend,
+  ArrayGet,
+  // A stored reference written (`OpSetDbRef`) and read (`OpGetDbRef`): `a` the field.
+  SetDbRef,
+  GetDbRef,
+  // `OpNarrow32`: an integer kept where it fits 32 bits, else null.
+  Narrow32,
+  // `OpReserveVector` (`a` the element size), `OpReserveHash` (`a` the type), `OpPrependVector`
+  // (`a` the element type, `b` 1 for a linked one).
+  VecReserve,
+  HashReserve,
+  VecPrepend,
+  // A File record (S6's files, `files.loft`): `OpGetFile`, `OpGetFileText` into a `&text`, and
+  // `OpWriteFile` / `OpReadFile` of a variable's value (`a` its type, `b` 1 for a text local).
+  GetFile,
+  FileText,
+  WriteFile,
+  ReadFile,
+  // A path operator (`a`: 0 `OpDelete`, 1 `OpMoveFile`, 2 `OpMkdir`, 3 `OpMkdirAll`, 4 `OpRmdir`)
+  // and a File operator (`a`: 0 `OpSizeFile`, 1 `OpSeekFile`, 2 `OpTruncateFile`, 3
+  // `OpSyncFile`); `b` is the op's effect on the stacks.
+  FsOp,
+  FileOp,
+  FloatFromText,
+  // `pow` and `OpMathFunc2Float` (`a` 0 `atan2`, 1 `log`) on two floats: loft's own.
+  Pow,
+  MathFunc2,
+  // `OpReverseVector`: `a` the element size.
+  VecReverse,
+  // `OpKeepVectorRange` (`a` the element type, `b` its size) and `OpAppendTextBytes`.
+  VecKeep,
+  AppendTextBytes,
+  // `OpMathFuncFloat`: `a` the function (`loft_math1`'s numbering), loft's own on a float.
+  MathFunc,
+  // `OpSizeHash`: a hash's bucket table in bytes.
+  HashBytes,
+  // `OpHashRemove` (`a` the hash type, `b` 1 for a view member) and `OpSetKeyed` (`a` the raw
+  // type operand, `b` the key parts on the key stack).
+  HashRemove,
+  SetKeyed,
+  // `OpSliceVector` / `OpSliceView`: `a` the element size, `b` 1 for the view.
+  SliceVec,
+  // `OpPlaceRecord`: `a` the record type, `b` twice its size plus 1 for a foreign root.
+  PlaceRecord,
+  // The rest of the placement family: `a` the type, `b` 1 for a linked element (`MoveVec`,
+  // `ReplaceVec`) or a move out to a returned record (`MoveField`).
+  MoveVec,
+  MoveField,
+  FreeRecordIn,
+  ReplaceVec,
+  // `OpClearKeyed` (`a` the type, `b` 1 for a linked group's view) and `OpReplaceKeyed` (`a` the
+  // type, `b` the flags).
+  ClearKeyed,
+  ReplaceKeyed,
+  // `OpCastTextFromEnum`: `a` the first of the enum's names in `texts`, `b` how many.
+  EnumName,
+  // `OpTextCharacterNullable`: the character holding a byte, null out of range.
+  TextChar,
+  // `OpLengthCharacter`: a character's UTF-8 byte length.
+  CharLen,
+  // `OpTextWalkStep` (`@FR-R-CharWalk`): a text walk's step, `a` the loop variable's slot, `b`
+  // the walk in `Lowering.walks`.
+  TextWalkStep,
+  // S1.5: a loop's mark of the stack pointers, its drop, and a leave to the mark `a` loops out.
+  LoopMark,
+  LoopUnmark,
+  Unwind,
+  // A whole tuple (F-T1): `a` its slot, `b` its shape in `Lowering.shapes`.
+  LoadTuple,
+  StoreTuple,
+  PopTuple,
 }
 
 // One op: `kind` is the kind of value it works on; `a` is a value, a slot, a jump target, a
@@ -137,9 +261,45 @@ struct Op {
   b: integer,
 }
 
+// One scalar of a tuple (F-T1): its byte in the tuple's slot, the stack its value is on, and how
+// the frame holds it (`var_access`'s codes).
+// `@FR-R-CharWalk` (`opt::char_walk::CharWalk`): a `for c in T` walk over a text variable — the
+// loop variable, the `#index` and `#next` the step keeps, the block's result temp, the text.
+struct CharWalk {
+  loop_var: integer,
+  index: integer,
+  next: integer,
+  result: integer,
+  src: integer,
+}
+
+// A fused walk step's frame bytes (`OpTextWalkStep`'s operands): `#index`, `#next`, the text,
+// whether it is an argument's view, and how the loop variable is held (`var_access`).
+struct WalkSlots {
+  index: integer,
+  next: integer,
+  src: integer,
+  src_arg: boolean,
+  c_access: integer,
+}
+
+struct Leaf {
+  at: integer,
+  kind: Kind,
+  access: integer,
+}
+
+// A tuple type's leaves, first member first, a nested tuple's flattened in place.
+struct Shape {
+  leaves: vector<Leaf>,
+}
+
 // A function's ops, or the first construct it holds that the interpreter does not carry.  The
-// frame has a part per kind: `slots_*` slots, the first `params_*` of them the caller's
-// arguments; each variable's kind and its slot in that part are `var_kind` and `var_slot`.
+// frame is the Rust interpreter's (@PLN91 F-1, `frame.loft`): every variable at its byte in the
+// stack store (`var_slot`), read and written as it is held there (`var_access`: 0 an
+// eight-byte integer, a float or a text local's `loft_text`; 1 + the runtime's width for a
+// narrow integer; 1 a single, or a text argument's `loft_str` view), in a frame of
+// `frame_bytes`; the arguments are `arg_vars`, in order, and `params_text` of them texts.
 // Float and text constants are kept in `floats` and `texts`, named by index.  While lowering,
 // `depth` is how many values the ops so far leave on the stacks, and the open loops are a
 // stack: each one's first op and the depth at its start, and every `break` still to be pointed
@@ -150,14 +310,17 @@ struct Lowering {
   refused_in: text,
   var_type: vector<text>,
   result: Kind,
-  slots_int: integer,
-  slots_float: integer,
-  slots_text: integer,
   params_int: integer,
   params_float: integer,
   params_text: integer,
   var_kind: vector<Kind>,
   var_slot: vector<integer>,
+  var_access: vector<integer>,
+  // What a `KVarRef` variable names (`named_kind`); `KNone` for any other.
+  var_inner: vector<Kind>,
+  frame_bytes: integer,
+  arg_vars: vector<integer>,
+  local_vars: vector<integer>,
   floats: vector<float>,
   texts: vector<text>,
   depth: integer,
@@ -169,6 +332,9 @@ struct Lowering {
   // level, `cont_at` the op): a rotated loop's `loop_start` is -1.
   cont_loop: vector<integer>,
   cont_at: vector<integer>,
+  // S1.5: each open loop's mark placeholder and whether a leave marked it.
+  loop_mark_at: vector<integer>,
+  loop_marked: vector<boolean>,
   def_nr: integer,
   // The bind table (1b-compare.md, the binds layer): one row per `set`, in the form
   // `LOFT_TRACE_BIND` writes from `generate_set` — `function⇥variable⇥first|re⇥notes` — and the
@@ -180,6 +346,15 @@ struct Lowering {
   owned_reassigned: vector<boolean>,
   own_ops: own::Ops,
   defs: own::Defs,
+  // The text walks of the loops being lowered (`@FR-R-CharWalk`), and the fused steps' slots.
+  walks: vector<CharWalk>,
+  walk_slots: vector<WalkSlots>,
+  // The tuple shapes the ops name (F-T1), each tuple variable's (-1 for any other), the
+  // result's, and how many parameters are tuples.
+  shapes: vector<Shape>,
+  var_shape: vector<integer>,
+  result_shape: integer,
+  params_tuple: integer,
 }
 
 // A lowering with nothing in it: what a function not yet lowered holds.
@@ -190,14 +365,16 @@ pub fn empty() -> Lowering {
     refused_in: "",
     var_type: [],
     result: KNone,
-    slots_int: 0,
-    slots_float: 0,
-    slots_text: 0,
     params_int: 0,
     params_float: 0,
     params_text: 0,
     var_kind: [],
     var_slot: [],
+    var_access: [],
+    var_inner: [],
+    frame_bytes: 0,
+    arg_vars: [],
+    local_vars: [],
     floats: [],
     texts: [],
     depth: 0,
@@ -207,12 +384,20 @@ pub fn empty() -> Lowering {
     brk_at: [],
     cont_loop: [],
     cont_at: [],
+    loop_mark_at: [],
+    loop_marked: [],
     def_nr: -1,
     binds: [],
     notes: [],
     owned_reassigned: [],
     own_ops: own::ops_of(ir::empty_bundle()),
     defs: own::new_defs(),
+    walks: [],
+    walk_slots: [],
+    shapes: [],
+    var_shape: [],
+    result_shape: -1,
+    params_tuple: 0,
   }
 }
 
@@ -227,17 +412,166 @@ fn kind_of_type(t: ir::TypeT) -> Kind {
     TyFloat => KFloat,
     TySingle => KSingle,
     TyText { dep: _ } => KText,
-    TyRefVar { inner } => if kind_of_type(inner) == KText { KTextRef } else { KOther },
+    // A `&` to a narrow integer place reads through the width's own op and minimum
+    // (`NarrowSlot::of_type`), which this lowering does not carry yet.
+    // A `&` to a narrow integer reads and writes the FIELD encoding (`access_for`), as a link
+    // to a field does (`@FR-B-Ref-Uniform`, `@FR-L-Narrow-Linked`).
+    TyRefVar { inner } => var_ref_kind(kind_of_type(inner)),
     TyReference { n: _, dep: _ } => KRef,
     TyVector { inner: _, dep: _ } => KRef,
     TyHash { n: _, names: _, dep: _ } => KRef,
+    TySorted { n: _, keys: _, dep: _ } => KRef,
+    TyIndex { n: _, keys: _, dep: _ } => KRef,
+    TyRadix { n: _, names: _, dep: _ } => KRef,
+    TyTrie { n: _, key: _, dep: _ } => KRef,
     TyVoid => KNone,
     TyNull => KNone,
     TyNever => KNone,
     TyOptional { inner } => kind_of_type(inner),
     TyRewritten { inner } => kind_of_type(inner),
+    TyTuple { elems: _ } => KTuple,
     _ => KOther,
   }
+}
+
+// The kind of a `&` of a variable of kind `inner`: a `&text` keeps its own; any other carried
+// kind is a reference into the frame (`KVarRef`).
+fn var_ref_kind(inner: Kind) -> Kind {
+  if inner == KText {
+    KTextRef
+  } else if inner == KInt || inner == KFloat || inner == KSingle || inner == KRef {
+    KVarRef
+  } else {
+    KOther
+  }
+}
+
+// Is `t` an integer stored narrower than eight bytes (`IntegerSpec::byte_width`): a declared
+// size, or a range that fits two bytes with the null's code reserved?
+fn narrow_integer(t: ir::TypeT, nullable: boolean) -> boolean {
+  match t {
+    TyOptional { inner } => narrow_integer(inner, true),
+    TyInteger { spec } => if spec.forced_size > 0 {
+      spec.forced_size < 8
+    } else {
+      spec.max - spec.min + 1 + if nullable { 1 } else { 0 } <= 65536
+    },
+    _ => false,
+  }
+}
+
+// The kind a `&` names (`&integer` an integer); `KNone` for a type that is no `&`.
+fn named_kind(t: ir::TypeT) -> Kind {
+  match t {
+    TyOptional { inner } => named_kind(inner),
+    TyRefVar { inner } => kind_of_type(inner),
+    _ => KNone,
+  }
+}
+
+// ── Tuples in the frame (@PLN91 F-T1, 1b-frame.md) ──
+
+// The members of tuple type `t` (a `?` peeled), or none when `t` is no tuple.
+fn tuple_elems(t: ir::TypeT) -> vector<ir::TypeT> {
+  match t {
+    TyOptional { inner } => tuple_elems(inner),
+    TyTuple { elems } => elems,
+    _ => [],
+  }
+}
+
+// The type of member `idx` of tuple variable `var` of definition `d_nr`.
+fn member_type(b: ir::Bundle, d_nr: integer, var: integer, idx: integer) -> ir::TypeT {
+  tuple_elems(fvar(b, d_nr, var).type_def[0] ?? ir::TypeT.TyVoid)[idx] ?? ir::TypeT.TyVoid
+}
+
+// Member `idx`'s byte in a tuple of `elems` (`data::element_stack_offsets_in`); `owned` for a
+// tuple local, whose text members are its own.
+fn member_at(elems: vector<ir::TypeT>, idx: integer, owned: boolean) -> integer {
+  at = 0;
+  for e in elems {
+    if e#index == idx {
+      break;
+    }
+    at += frame::member_step(e, owned);
+  }
+  at
+}
+
+// The leaves of `elems` laid out from byte `at`, added to `out`; false at the first member this
+// step does not carry (a text, a reference, a collection, a function), named in the refusal.
+fn add_leaves(l: Lowering, elems: vector<ir::TypeT>, at: integer, owned: boolean, out: vector<Leaf>) -> boolean {
+  pos = at;
+  for e in elems {
+    inner = tuple_elems(e);
+    if len(inner) > 0 {
+      if !add_leaves(l, inner, pos, owned, out) {
+        return false;
+      }
+    } else {
+      k = kind_of_type(e);
+      if k == KText {
+        // F-T2: a local's own text, an argument's view of a copy.
+        out += [Leaf { at: pos, kind: KText, access: if owned { 0 } else { 1 } }];
+      } else if k == KRef {
+        // A reference member — a record, a struct enum, a collection — is its twelve bytes in
+        // the slot and three integers on the stack.
+        out += [Leaf { at: pos, kind: KRef, access: 0 }];
+      } else if k != KInt && k != KFloat && k != KSingle {
+        refuse(l, "a tuple member of a kind the interpreter does not carry yet: {e}");
+        return false;
+      } else {
+        out += [Leaf { at: pos, kind: stack_of(k), access: access_for(e) }];
+      }
+    }
+    pos += frame::member_step(e, owned);
+  }
+  true
+}
+
+// The shape of tuple type `t` in `l.shapes` — a new entry each time it is asked — or -1 when a
+// member is not carried (the function is refused).  A local holds its text members (`owned`).
+fn shape_of(l: Lowering, t: ir::TypeT, owned: boolean) -> integer {
+  leaves: vector<Leaf> = [];
+  if !add_leaves(l, tuple_elems(t), 0, owned, leaves) {
+    return -1;
+  }
+  l.shapes += [Shape { leaves: leaves }];
+  len(l.shapes) - 1
+}
+
+// A tuple value of type `t` onto the stacks, its leaves in order: a literal's items each as its
+// member's value, a null as null leaves (`@FR-T-Absent`: an absent tuple is a tuple of null
+// members), anything else as the expression it is.  It counts as one value on the stacks.
+fn tuple_value(l: Lowering, b: ir::Bundle, n: ir::Node, t: ir::TypeT) {
+  before = l.depth;
+  elems = tuple_elems(t);
+  match unspan(n) {
+    NdTuple { items } => {
+      if len(items) != len(elems) {
+        refuse(l, "a tuple literal of {len(items)} items for a tuple of {len(elems)}");
+        return;
+      }
+      for item in items {
+        e = elems[item#index]!;
+        if len(tuple_elems(e)) > 0 {
+          tuple_value(l, b, item, e);
+        } else {
+          value(l, b, item, stack_of(kind_of_type(e)));
+        }
+      }
+    }
+    NdNull => {
+      sh = shape_of(l, t, false);
+      if sh >= 0 {
+        for leaf in l.shapes[sh]!.leaves {
+          emit(l, PushNull, leaf.kind, 0, 0);
+        }
+      }
+    }
+    _ => expr(l, b, n),
+  }
+  l.depth = before + 1;
 }
 
 // The kind of a box-of-one type, as the IR stores a child type.
@@ -260,9 +594,9 @@ fn kind_of(l: Lowering, b: ir::Bundle, n: ir::Node) -> Kind {
     NdSingle { f: _ } => KSingle,
     NdText { s: _ } => KText,
     NdVar { n: var } => {
-      // Reading a `&text` variable reads the text it refers to.
+      // Reading a `&` variable reads what it refers to.
       k = l.var_kind[var] ?? KOther;
-      if k == KTextRef { KText } else { k }
+      if k == KTextRef { KText } else if k == KVarRef { l.var_inner[var] ?? KOther } else { k }
     }
     NdSpan { inner } => kind_of(l, b, inner),
     NdBlock { block } => kind_of_types(block[0]?.result),
@@ -271,6 +605,9 @@ fn kind_of(l: Lowering, b: ir::Bundle, n: ir::Node) -> Kind {
       if k == KNone { kind_of(l, b, f) } else { k }
     }
     NdCall { def_nr, args: _ } => kind_of_types(b.data.definitions[def_nr]?.returned),
+    NdTuple { items: _ } => KTuple,
+    NdTupleGet { var, idx } => kind_of_type(member_type(b, l.def_nr, var, idx)),
+    NdInsert { items } => if len(items) == 0 { KNone } else { kind_of(l, b, items[len(items) - 1]!) },
     _ => KNone,
   }
 }
@@ -278,8 +615,8 @@ fn kind_of(l: Lowering, b: ir::Bundle, n: ir::Node) -> Kind {
 // The stack a kind's values are on: a single is carried as a float, and rounded by its ops; a
 // `&text` is the absolute index of the text it refers to, an integer.  A reference keeps its
 // kind: it is three integers on the integer stack, and every op that moves one moves three.
-fn stack_of(k: Kind) -> Kind {
-  if k == KSingle { KFloat } else if k == KTextRef { KInt } else { k }
+pub fn stack_of(k: Kind) -> Kind {
+  if k == KSingle { KFloat } else if k == KTextRef { KInt } else if k == KVarRef { KRef } else { k }
 }
 
 // How many integer slots a value of kind `k` takes: three for a reference, else one.
@@ -316,7 +653,18 @@ fn operator_op(name: text) -> Op? {
     // Equal to `OpDivInt` and `OpRemInt` for every pair: both answer null for a null operand
     // or a zero divisor, and no other pair overflows, since the one that would divides null.
     "OpDivIntNullable" => Op { code: Div, kind: KInt, a: 0, b: 0 },
+    // The float and single twins are `@v1 / @v2` and `@v1 % @v2`, as the plain operators.
+    "OpDivFloatNullable" => Op { code: Div, kind: KFloat, a: 0, b: 0 },
+    "OpRemFloatNullable" => Op { code: Rem, kind: KFloat, a: 0, b: 0 },
+    "OpDivSingleNullable" => Op { code: Div, kind: KSingle, a: 0, b: 0 },
+    "OpRemSingleNullable" => Op { code: Rem, kind: KSingle, a: 0, b: 0 },
     "OpRemIntNullable" => Op { code: Rem, kind: KInt, a: 0, b: 0 },
+    // The `??`-operand twins of `+`, `-`, `*` (C54.G-hybrid): the same values; the Rust plain
+    // ops report an overflow and these do not, and the C runtime's, which this runs on, report
+    // none either way (`loft_add` for both).
+    "OpAddIntNullable" => Op { code: Add, kind: KInt, a: 0, b: 0 },
+    "OpMinIntNullable" => Op { code: Sub, kind: KInt, a: 0, b: 0 },
+    "OpMulIntNullable" => Op { code: Mul, kind: KInt, a: 0, b: 0 },
     "OpAbsFloat" => Op { code: Abs, kind: KFloat, a: 0, b: 0 },
     "OpAbsSingle" => Op { code: Abs, kind: KSingle, a: 0, b: 0 },
     // A plain enum is its number on the integer stack, and its null is null.
@@ -331,11 +679,18 @@ fn operator_op(name: text) -> Op? {
     "OpSizeText" => Op { code: SizeText, kind: KText, a: 0, b: 0 },
     "OpGetTextSub" => Op { code: SubText, kind: KText, a: 0, b: 0 },
     "OpLandInt" => Op { code: BitAnd, kind: KInt, a: 0, b: 0 },
+    // `<<` and `>>`: loft's own, so a null operand and a shift out of range answer as it does.
+    "OpSLeftInt" => Op { code: Shl, kind: KInt, a: 0, b: 0 },
+    "OpSLeftLong" => Op { code: Shl, kind: KInt, a: 0, b: 0 },
+    "OpSRightInt" => Op { code: Shr, kind: KInt, a: 0, b: 0 },
+    "OpSRightLong" => Op { code: Shr, kind: KInt, a: 0, b: 0 },
     "OpLorInt" => Op { code: BitOr, kind: KInt, a: 0, b: 0 },
     "OpEorInt" => Op { code: BitXor, kind: KInt, a: 0, b: 0 },
     "OpNot" => Op { code: Not, kind: KInt, a: 0, b: 0 },
     "OpConvBoolFromInt" => Op { code: NonNull, kind: KInt, a: 0, b: 0 },
     "OpConvBoolFromCharacter" => Op { code: NonNull, kind: KInt, a: 1, b: 0 },
+    // A plain enum's absent discriminants are 0 and its null (255 in the store).
+    "OpConvBoolFromEnum" => Op { code: NonNull, kind: KInt, a: 1, b: 0 },
     "OpConvBoolFromFloat" => Op { code: NonNull, kind: KFloat, a: 0, b: 0 },
     "OpConvBoolFromSingle" => Op { code: NonNull, kind: KFloat, a: 0, b: 0 },
     "OpConvBoolFromText" => Op { code: NonNull, kind: KText, a: 0, b: 0 },
@@ -345,6 +700,7 @@ fn operator_op(name: text) -> Op? {
     "OpConvFloatFromNull" => Op { code: PushNull, kind: KFloat, a: 0, b: 0 },
     "OpConvSingleFromNull" => Op { code: PushNull, kind: KFloat, a: 0, b: 0 },
     "OpConvTextFromNull" => Op { code: PushNull, kind: KText, a: 0, b: 0 },
+    "OpConvRefFromNull" => Op { code: PushNull, kind: KRef, a: 0, b: 0 },
     "OpConvFloatFromInt" => Op { code: ToFloat, kind: KFloat, a: 0, b: 0 },
     "OpConvSingleFromInt" => Op { code: ToFloat, kind: KSingle, a: 0, b: 0 },
     "OpCastIntFromFloat" => Op { code: ToInt, kind: KFloat, a: 0, b: 0 },
@@ -354,6 +710,13 @@ fn operator_op(name: text) -> Op? {
     "OpCastSingleFromFloat" => Op { code: Round, kind: KSingle, a: 0, b: 0 },
     "OpConvIntFromCharacter" => Op { code: FromChar, kind: KInt, a: 0, b: 0 },
     "OpCastTextFromBool" => Op { code: TextFromBool, kind: KText, a: 0, b: 0 },
+    // `t as integer`: loft's own.
+    "OpCastIntFromText" => Op { code: IntFromText, kind: KText, a: 0, b: 0 },
+    "OpCastFloatFromText" => Op { code: FloatFromText, kind: KText, a: 0, b: 0 },
+    "OpPowFloat" => Op { code: Pow, kind: KFloat, a: 0, b: 0 },
+    "OpPowSingle" => Op { code: Pow, kind: KSingle, a: 0, b: 0 },
+    "OpPowInt" => Op { code: Pow, kind: KInt, a: 0, b: 0 },
+    "OpNarrow32" => Op { code: Narrow32, kind: KInt, a: 0, b: 0 },
     "OpPrint" => Op { code: Print, kind: KText, a: 0, b: 0 },
     _ => null,
   }
@@ -365,7 +728,7 @@ fn writer_code(name: text) -> Code? {
     "OpAppendText" => Append,
     "OpAppendCharacter" => AppendChar,
     "OpClearText" => Clear,
-    "OpFreeText" => Clear,
+    "OpFreeText" => FreeText,
     "OpAppendStackText" => Append,
     "OpAppendStackCharacter" => AppendChar,
     "OpClearStackText" => Clear,
@@ -434,10 +797,63 @@ fn effect(code: Code, b: integer) -> integer {
     Append => -1,
     AppendChar => -1,
     Clear => 0,
+    FreeText => 0,
+    InitText => 0,
+    StackRef => 1,
+    Deref => 0,
+    Through => -2,
     Print => -1,
     RefOf => 1,
     Round => 0,
     Nop => 0,
+    VecAbsent => 0,
+    DistinctStore => -1,
+    ConstRef => 1,
+    VecRemove => -1,
+    MathFunc => 0,
+    IntFromText => 0,
+    EqContent => -1,
+    ArrayNew => 0,
+    ArrayAppend => -2,
+    ArrayGet => -1,
+    SetDbRef => -2,
+    GetDbRef => 0,
+    Narrow32 => 0,
+    VecReserve => -2,
+    HashReserve => -2,
+    VecPrepend => -1,
+    GetFile => 0,
+    FileText => -2,
+    WriteFile => -2,
+    ReadFile => -3,
+    FsOp => b,
+    FileOp => b,
+    FloatFromText => 0,
+    VecReverse => -1,
+    VecKeep => -3,
+    AppendTextBytes => -4,
+    HashBytes => 0,
+    HashRemove => -2,
+    SetKeyed => -2,
+    AppendCopy => -2,
+    SliceVec => -4,
+    ClearKeyed => -1,
+    PlaceRecord => 0,
+    MoveVec => -2,
+    MoveField => -2,
+    FreeRecordIn => -1,
+    ReplaceVec => -2,
+    EnumName => 0,
+    TextChar => -1,
+    CharLen => 0,
+    TextWalkStep => 0,
+    ReplaceKeyed => -2,
+    LoopMark => 0,
+    LoopUnmark => 0,
+    Unwind => 0,
+    LoadTuple => 1,
+    StoreTuple => -1,
+    PopTuple => -1,
     Format => -1 - format_operands(b),
     FromChar => 0,
     Neg => 0,
@@ -479,6 +895,16 @@ fn effect(code: Code, b: integer) -> integer {
     HashNew => 0,
     HashInsert => -2,
     KeyPart => -1,
+    KeyedNew => 0,
+    KeyedFinish => -2,
+    KeyedFind => 0,
+    KeyedRemove => -2,
+    WalkKey => -3,
+    KeyedIterate => 0,
+    KeyedStep => 0,
+    IndexLen => 0,
+    WalkRemove => -1,
+    RadixSnap => if b == 1 { -8 } else if b == 2 { -2 } else { 0 },
     HashFind => 0,
     HashLen => 0,
     // A hash walk: the snapshot from its hash, a walk's state from the snapshot, the next
@@ -516,17 +942,65 @@ fn emit(l: Lowering, code: Code, kind: Kind, a: integer, b: integer) {
 
 // The natives the interpreter carries, by the index a `Native` op names: each runs as loft's
 // own function of that name (`run.loft`), so its behaviour is the stdlib's.
-fn native_index(name: text) -> integer {
+fn native_index(name: text) -> integer? {
   match name {
     "n_assert" => 0,
     "n_env_variable" => 1,
-    _ => -1,
+    "n_vector_sum_int" => 2,
+    "t_4text_starts_with" => 3,
+    "t_4text_ends_with" => 4,
+    "t_4text_byte_at" => 5,
+    "t_4text_find" => 6,
+    "t_4text_char_slice" => 7,
+    "t_4text_to_lowercase" => 8,
+    "t_4text_to_uppercase" => 9,
+    "n_text_from_byte_range" => 10,
+    "n_text_from_bytes" => 11,
+    "n_now" => 12,
+    "n_ticks" => 13,
+    "n_panic" => 14,
+    "t_4text_split" => 15,
+    "t_4text_trim" => 16,
+    "t_4text_trim_start" => 17,
+    "t_4text_trim_end" => 18,
+    "t_6vector_join" => 19,
+    "t_4text_replace" => 20,
+    "t_4text_rfind" => 21,
+    "t_4text_contains" => 22,
+    "t_9character_is_lowercase" => 23,
+    "t_9character_is_uppercase" => 24,
+    "t_9character_is_numeric" => 25,
+    "t_9character_is_alphanumeric" => 26,
+    "t_9character_is_alphabetic" => 27,
+    "t_9character_is_whitespace" => 28,
+    "t_9character_is_control" => 29,
+    "t_4text_is_lowercase" => 30,
+    "t_4text_is_uppercase" => 31,
+    "t_4text_is_numeric" => 32,
+    "t_4text_is_alphanumeric" => 33,
+    "t_4text_is_alphabetic" => 34,
+    "t_4text_is_whitespace" => 35,
+    "t_4text_is_control" => 36,
+    "n_write_bytes" => 37,
+    "n_os_temp_dir" => 38,
+    "n_read_bytes" => 39,
+    "t_4File_lines" => 40,
+    "n_write_text_raw" => 41,
+    "n_list_dir" => 42,
+    "n_protect_store_frees" => 43,
+    "n_unprotect_store_frees" => 44,
+    "n_get_store_lock" => 45,
+    "n_set_store_lock" => 46,
+    "n_store_reclaim" => 47,
+    "n_arguments" => 48,
+    "n_store_memory" => 49,
+    _ => null,
   }
 }
 
-// The level of the loop `n` loops out from the innermost, or -1 when there is none.
-fn loop_level(l: Lowering, n: integer) -> integer {
-  len(l.loop_start) - 1 - n
+// The level of the loop `n` loops out from the innermost, or null when there is none.
+fn loop_level(l: Lowering, n: integer) -> integer? {
+  if n < len(l.loop_start) { len(l.loop_start) - 1 - n } else { null }
 }
 
 // A note of the set being lowered: the arm it took, or B2's facts (`note_bind`).
@@ -561,29 +1035,117 @@ fn var_kind(l: Lowering, var: integer) -> Kind {
   l.var_kind[var] ?? KOther
 }
 
-// Variable `var`'s slot in its kind's part of the frame, or refused when its kind is not
-// carried yet.
+// Variable `var`'s slot — its byte in the frame, or a text's slot in its own part — or refused
+// when its kind is not carried yet or the compiler gave it no slot.
 fn slot_of(l: Lowering, var: integer) -> integer {
   k = l.var_kind[var] ?? KOther;
   if k == KOther || k == KNone {
     refuse(l, "a variable of a kind the interpreter does not carry yet: {l.var_type[var] ?? "?"}");
     return 0;
   }
-  l.var_slot[var] ?? 0
+  slot = l.var_slot[var] ?? -1;
+  if slot < 0 {
+    refuse(l, "a variable the compiler gave no slot: {l.var_type[var] ?? "?"}");
+    return 0;
+  }
+  slot
+}
+
+// How variable `var`'s slot is read and written (`var_access`).
+fn access_of(l: Lowering, var: integer) -> integer {
+  l.var_access[var] ?? 0
+}
+
+// `var_access` of a variable of type `t`: 0 an eight-byte integer or a float; a boolean, a
+// character and a plain enum 1 + the runtime's width (`crt::W_*`); a single 1.
+fn access_for(t: ir::TypeT) -> integer {
+  match t {
+    TyOptional { inner } => access_for(inner),
+    TyBoolean => 1 + crt::W_BOOLEAN,
+    TyCharacter => 1 + crt::W_CHARACTER,
+    TyEnum { n: _, is_ref, dep: _ } => if is_ref { 0 } else { 1 + crt::W_ENUM },
+    TySingle => 1,
+    TyRefVar { inner } => narrow_access(inner) ?? access_for(inner),
+    _ => 0,
+  }
+}
+
+// An access code (`Lowering.var_access`): 0 a full integer, otherwise `1 + width` with the
+// narrow encoding's minimum above it — `16 * (min + 2^20)` where the minimum is not 0, so every
+// code without one keeps its meaning.
+pub fn access_width(access: integer) -> integer {
+  (access - 1) % 16
+}
+
+pub fn access_min(access: integer) -> integer {
+  m = (access - 1) / 16;
+  if m == 0 { 0 } else { m - 1048576 }
+}
+
+fn access_code(width: integer, min: integer) -> integer {
+  1 + width + 16 * (if min == 0 { 0 } else { min + 1048576 })
+}
+
+// `@FR-L-Narrow-Linked` (`NarrowSlot::of_type`): the access code of a narrow local a `&` can
+// reach, which holds its FIELD encoding — the stored width, the kind (a nullable one keeps a
+// code for null), the minimum the bytes are counted from — or null for a wide integer, which
+// keeps the 8-byte slot every local has.
+fn narrow_access(t: ir::TypeT) -> integer? {
+  nullable = t is TyOptional;
+  inner = match t {
+    TyOptional { inner } => inner,
+    _ => t,
+  };
+  match inner {
+    TyInteger { spec } => {
+      range = spec.max - spec.min + 1;
+      width = if spec.forced_size > 0 {
+        spec.forced_size
+      } else if range + (if nullable { 1 } else { 0 }) <= 256 {
+        1
+      } else if range + (if nullable { 1 } else { 0 }) <= 65536 {
+        2
+      } else {
+        8
+      };
+      if width >= 8 {
+        return null;
+      }
+      // `NarrowIntKind::of`: the crt width code of each kind.
+      unsigned_wide = spec.min >= 0 && spec.max > 2147483647;
+      code = if width == 1 {
+        if nullable { 2 } else { 1 }
+      } else if width == 2 {
+        if nullable { 3 } else { 4 }
+      } else if unsigned_wide {
+        if nullable { 8 } else { 9 }
+      } else {
+        0
+      };
+      // `takes_min`: the byte and short kinds; `usable_min` drops the bottom code of a signed
+      // range that fills its fixed width when the kind reserves one for null.
+      takes_min = width <= 2;
+      reserves = (code == 2 || code == 3)
+        && ((spec.forced_size == 1 && range == 256) || (spec.forced_size == 2 && range == 65536));
+      min = if !takes_min { 0 } else if reserves && spec.min < 0 { spec.min + 1 } else { spec.min };
+      access_code(code, min)
+    }
+    _ => null,
+  }
 }
 
 // `n`, an expression whose value goes where a `k` is expected: a bare null takes that kind,
-// and a `&text` variable handed to a `&text` parameter is handed on as the reference itself.
+// and a `&` variable handed to a `&` parameter is handed on as the reference itself.
 fn value(l: Lowering, b: ir::Bundle, n: ir::Node, k: Kind) {
   if n is NdNull {
     emit(l, PushNull, stack_of(k), 0, 0);
     return;
   }
-  if k == KTextRef {
+  if k == KTextRef || k == KVarRef {
     match n {
       NdVar { n: var } => {
-        if var_kind(l, var) == KTextRef {
-          emit(l, Load, KInt, slot_of(l, var), 0);
+        if var_kind(l, var) == k {
+          emit(l, Load, if k == KTextRef { KInt } else { KRef }, slot_of(l, var), 0);
           return;
         }
       }
@@ -616,8 +1178,16 @@ fn expr(l: Lowering, b: ir::Bundle, n: ir::Node) {
     NdVar { n: var } => {
       slot = slot_of(l, var);
       k = var_kind(l, var);
-      // A `&text` reads the text it refers to (`Load` of kind `KTextRef`).
-      emit(l, Load, if k == KTextRef { KTextRef } else { stack_of(k) }, slot, 0);
+      // A `&text` reads the text it refers to (`Load` of kind `KTextRef`); any other `&` reads
+      // through the reference its slot holds, at the width of what it names.
+      if k == KVarRef {
+        emit(l, Load, KRef, slot, 0);
+        emit(l, Deref, stack_of(l.var_inner[var] ?? KOther), 0, access_of(l, var));
+      } else if k == KTuple {
+        emit(l, LoadTuple, KTuple, slot, l.var_shape[var] ?? -1);
+      } else {
+        emit(l, Load, if k == KTextRef { KTextRef } else { stack_of(k) }, slot, access_of(l, var));
+      }
     }
     NdSpan { inner } => expr(l, b, inner),
     NdBlock { block } => block_value(l, b, block[0]?),
@@ -638,8 +1208,75 @@ fn expr(l: Lowering, b: ir::Bundle, n: ir::Node) {
     }
     NdCall { def_nr, args } => call(l, b, def_nr, args),
     NdReturn { inner } => {
-      value(l, b, inner, l.result);
-      emit(l, Ret, stack_of(l.result), 0, 0);
+      if l.result == KTuple {
+        tuple_value(l, b, inner, b.data.definitions[l.def_nr]!.returned[0] ?? ir::TypeT.TyVoid);
+        emit(l, Ret, KTuple, 0, l.result_shape);
+      } else {
+        value(l, b, inner, l.result);
+        emit(l, Ret, stack_of(l.result), 0, 0);
+      }
+    }
+    // A loop as a value — a self-call in tail position rewritten as a jump to the body's head
+    // (`tail_self`, `@FR-R-TailSelf`) — leaves only by `return`, so it never completes and lands
+    // no value, as the bytecode's loop does not.  One a `break` leaves would complete.
+    NdLoop { block } => {
+      if breaks_to_in(block[0]!.operators, 0) {
+        refuse(l, "a loop as a value that a break leaves");
+        return;
+      }
+      statement(l, b, n);
+    }
+    // A jump in value position (an arm typed `never`) lands no value either.
+    NdBreak { n: out } => leave_loop(l, out, true),
+    NdContinue { n: out } => leave_loop(l, out, false),
+    // Statements the compiler inserted in place of a value (`Value::Insert`): all but the last
+    // are statements, the last is the value.
+    NdInsert { items } => {
+      if len(items) == 0 {
+        refuse(l, "an inserted value with no items");
+        return;
+      }
+      for i in 0..len(items) - 1 {
+        statement(l, b, items[i]!);
+      }
+      expr(l, b, items[len(items) - 1]!);
+    }
+    // A tuple literal where no tuple type is handed down (a block's tail, an arm): each item at
+    // its own kind; one value on the stacks.  A bare `null` item needs its member's type, which
+    // only `tuple_value` has.
+    NdTuple { items } => {
+      before = l.depth;
+      for item in items {
+        k = kind_of(l, b, item);
+        if k == KNone {
+          refuse(l, "a tuple member whose type is not known here: {item}");
+          return;
+        }
+        if k == KTuple {
+          expr(l, b, item);
+        } else {
+          value(l, b, item, stack_of(k));
+        }
+      }
+      l.depth = before + 1;
+    }
+    // A member of a tuple variable: a scalar is read at its byte of the slot as the frame holds
+    // it, a nested tuple as the tuple at its offset.
+    NdTupleGet { var, idx } => {
+      slot = slot_of(l, var);
+      if var_kind(l, var) != KTuple {
+        refuse(l, "a tuple member of a variable that is not a tuple: {l.var_type[var] ?? "?"}");
+        return;
+      }
+      v = fvar(b, l.def_nr, var);
+      elems = tuple_elems(v.type_def[0] ?? ir::TypeT.TyVoid);
+      at = slot + member_at(elems, idx, !v.argument);
+      e = elems[idx] ?? ir::TypeT.TyVoid;
+      if len(tuple_elems(e)) > 0 {
+        emit(l, LoadTuple, KTuple, at, shape_of(l, e, !v.argument));
+      } else {
+        emit(l, Load, stack_of(kind_of_type(e)), at, access_for(e));
+      }
     }
     _ => refuse(l, "an expression the interpreter does not carry: {n}"),
   }
@@ -647,7 +1284,7 @@ fn expr(l: Lowering, b: ir::Bundle, n: ir::Node) {
 
 // `n` without the source spans around it (`Value::unspan`): a node whose SHAPE decides what
 // it lowers to is read through them, as the generators read it.
-fn unspan(n: ir::Node) -> ir::Node {
+pub fn unspan(n: ir::Node) -> ir::Node {
   at = n;
   while at is NdSpan {
     match at {
@@ -677,9 +1314,12 @@ fn literal(l: Lowering, n: ir::Node) -> integer {
 // less than the 88-byte start room, one element at least)?  Any other count is reserved
 // exactly (`@FR-Col-Capacity`) and stays.
 fn first_claim_count(count: ir::Node, size: ir::Node) -> boolean {
-  c = match unspan(count) { NdInt { n } => n, _ => -1 };
-  sz = match unspan(size) { NdInt { n } => n, _ => -1 };
-  if c < 0 || sz < 0 {
+  c = match unspan(count) { NdInt { n } => n, _ => null };
+  if c == null {
+    return false;
+  }
+  sz = match unspan(size) { NdInt { n } => n, _ => null };
+  if sz == null {
     return false;
   }
   start = 88 / (if sz > 1 { sz } else { 1 });
@@ -714,17 +1354,22 @@ fn mintable(l: Lowering, b: ir::Bundle, tp: integer) {
     return;
   }
   p = t.parts[0];
-  if !(p is PtStruct) && !(p is PtEnumValue) && !(p is PtHash) {
+  // A struct enum's parent (`PtEnum`) is minted at its largest variant (`enum_parent_size`);
+  // its variant is written into the record after.
+  if !(p is PtStruct) && !(p is PtEnumValue) && !(p is PtHash) && !(p is PtEnum) && keyed_kind(b, tp) == null {
     refuse(l, "a store of a type the interpreter does not carry yet: {t.name}");
   }
 }
 
-// The field width a get or set operator names, as `crt::W_*` numbers it, or -1.  A float and a
-// single go through `crt::get_float` instead (`float_width`).
-fn width_of(name: text) -> integer {
+// The field width a get or set operator names, as `crt::W_*` numbers it, or null.  A float and
+// a single go through `crt::get_float` instead (`float_width`).
+fn width_of(name: text) -> integer? {
   match name {
     "OpGetInt4" => 0,
     "OpSetInt4" => 0,
+    // `OpGetInt4Raw` / `OpSetInt4Raw`: four bytes as an unsigned word, null as all ones.
+    "OpGetInt4Raw" => 8,
+    "OpSetInt4Raw" => 8,
     "OpGetByte" => 1,
     "OpSetByte" => 1,
     "OpGetByteNullable" => 2,
@@ -741,7 +1386,7 @@ fn width_of(name: text) -> integer {
     "OpSetBoolean" => 6,
     "OpGetEnum" => 7,
     "OpSetEnum" => 7,
-    _ => -1,
+    _ => null,
   }
 }
 
@@ -750,19 +1395,19 @@ fn width_has_min(w: integer) -> boolean {
   w >= 1 && w <= 4
 }
 
-// 0 for `OpGetFloat`/`OpSetFloat`, 1 for the single pair, -1 for any other operator.
-fn float_width(name: text) -> integer {
+// 0 for `OpGetFloat`/`OpSetFloat`, 1 for the single pair, null for any other operator.
+fn float_width(name: text) -> integer? {
   if name == "OpGetFloat" || name == "OpSetFloat" {
     0
   } else if name == "OpGetSingle" || name == "OpSetSingle" {
     1
   } else {
-    -1
+    null
   }
 }
 
-// The scalar pushes, as `crt::P_*` numbers them, or -1.
-fn push_of(name: text) -> integer {
+// The scalar pushes, as `crt::P_*` numbers them, or null.
+fn push_of(name: text) -> integer? {
   match name {
     "OpPushInt" => 0,
     "OpPushInt4" => 1,
@@ -770,31 +1415,103 @@ fn push_of(name: text) -> integer {
     "OpPushByte" => 3,
     "OpPushEnum" => 4,
     "OpPushBoolean" => 5,
-    _ => -1,
+    _ => null,
   }
 }
 
-// The element type of `tp` when it is a hash, else -1.
-fn hash_element(b: ir::Bundle, tp: integer) -> integer {
+// The element type of `tp` when it is a hash, else null.
+fn hash_element(b: ir::Bundle, tp: integer) -> integer? {
   t = b.types[tp];
   if t == null {
-    return -1;
+    return null;
   }
   match t.parts[0]! {
     PtHash { content, fields: _ } => content,
-    _ => -1,
+    _ => null,
   }
 }
 
-// The element type of `tp` when it is a plain vector, else -1.
-fn vector_element(b: ir::Bundle, tp: integer) -> integer {
+// The element type of `tp` when it is a plain vector, else null.
+// An array's element type (a vector of linked records), or null.
+fn array_element(b: ir::Bundle, tp: integer) -> integer? {
   t = b.types[tp];
   if t == null {
-    return -1;
+    return null;
+  }
+  match t.parts[0]! {
+    PtArray { content } => content,
+    _ => null,
+  }
+}
+
+fn vector_element(b: ir::Bundle, tp: integer) -> integer? {
+  t = b.types[tp];
+  if t == null {
+    return null;
   }
   match t.parts[0]! {
     PtVector { content } => content,
-    _ => -1,
+    _ => null,
+  }
+}
+
+// S4's keyed collections, by the kind the shim's keyed routines take: 1 a sorted, 2 an ordered (a
+// sorted of linked records), 3 an index, 4 a spatial index, 5 a trie; null for any other type.
+fn keyed_kind(b: ir::Bundle, tp: integer) -> integer? {
+  t = b.types[tp];
+  if t == null {
+    return null;
+  }
+  match t.parts[0]! {
+    PtSorted { content: _, keys: _ } => 1,
+    PtOrdered { content: _, keys: _ } => 2,
+    PtIndex { content: _, keys: _ } => 3,
+    PtRadix { content: _, fields: _ } => 4,
+    PtTrie { content: _, key: _ } => 5,
+    _ => null,
+  }
+}
+
+// The element type of a keyed collection of S4's, or null.
+fn keyed_element(b: ir::Bundle, tp: integer) -> integer? {
+  t = b.types[tp];
+  if t == null {
+    return null;
+  }
+  match t.parts[0]! {
+    PtSorted { content, keys: _ } => content,
+    PtOrdered { content, keys: _ } => content,
+    PtIndex { content, keys: _ } => content,
+    PtRadix { content, fields: _ } => content,
+    PtTrie { content, key: _ } => content,
+    _ => null,
+  }
+}
+
+// The key parts `args[from..]` of a lookup or a keyed write, each pushed onto the key stack as
+// its key's type converts it (`key_value`, `src/c/body/keyed.rs`).
+fn key_parts(l: Lowering, b: ir::Bundle, keys: vector<ir::Key>, args: vector<ir::Node>, from: integer) {
+  key_parts_n(l, b, keys, args, from, len(args) - from);
+}
+
+// The `n` key parts `args[from..from + n]`, as `key_parts` pushes them.
+fn key_parts_n(l: Lowering, b: ir::Bundle, keys: vector<ir::Key>, args: vector<ir::Node>, from: integer, n: integer) {
+  for i in from..from + n {
+    kt = (keys[i - from]!.type_nr).abs();
+    arg = args[i]!;
+    if kt == 3 {
+      value(l, b, arg, KSingle);
+      emit(l, KeyPart, KFloat, 0, 2);
+    } else if kt == 4 {
+      value(l, b, arg, KFloat);
+      emit(l, KeyPart, KFloat, 0, 1);
+    } else if kt == 6 {
+      value(l, b, arg, KText);
+      emit(l, KeyPart, KText, 0, 3);
+    } else {
+      value(l, b, arg, KInt);
+      emit(l, KeyPart, KInt, 0, 0);
+    }
   }
 }
 
@@ -803,6 +1520,10 @@ fn vector_element(b: ir::Bundle, tp: integer) -> integer {
 // unchanged; an operator that writes a VARIABLE (`OpDatabase`, `OpFreeRef` of one,
 // `OpFreeRefIfDistinct`) names its slot, because the runtime routine changes the variable.
 fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) -> boolean {
+  // The three operator families numbered by name, each null for an operator outside it.
+  w = width_of(name);
+  single = float_width(name);
+  which = push_of(name);
   if name == "OpDatabase" {
     slot = ref_var_slot(l, args[0]!);
     tp = literal(l, args[1]!);
@@ -870,10 +1591,9 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
       value(l, b, args[2]!, KText);
       emit(l, if name == "OpSetText" { SetText } else { RefillText }, KText, fld, 0);
     }
-  } else if width_of(name) >= 0 {
+  } else if w != null {
     // A field of another width: the record, the field, a narrow integer's minimum, and for a
     // write the value; the width is the operator's.
-    w = width_of(name);
     value(l, b, args[0]!, KRef);
     fld = literal(l, args[1]!);
     next = 2;
@@ -887,8 +1607,7 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     } else {
       emit(l, GetW, KInt, fld, w);
     }
-  } else if float_width(name) >= 0 {
-    single = float_width(name);
+  } else if single != null {
     value(l, b, args[0]!, KRef);
     fld = literal(l, args[1]!);
     if name.starts_with("OpSet") {
@@ -911,6 +1630,257 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
   } else if name == "OpLengthVector" {
     value(l, b, args[0]!, KRef);
     emit(l, VecLen, KInt, 0, 0);
+  } else if name == "OpEqContent" || name == "OpNeContent" {
+    // Two values equal by content (`eq.loft`, `Stores::eq_content`): `a` the type, `b` 1 for `!=`.
+    tp = literal(l, args[2]!);
+    if eq::holds_unwalked(b, tp, []) {
+      refuse(l, "an equality of a type holding a collection the interpreter does not walk yet: {b.types[tp]?.name ?? "?"}");
+      return true;
+    }
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KRef);
+    emit(l, EqContent, KInt, tp, if name == "OpNeContent" { 1 } else { 0 });
+  } else if name == "OpConvEnumFromNull" {
+    // A plain enum's null (255 in the store): its operand is the enum's type, not a value.
+    emit(l, PushNull, KInt, 0, 0);
+  } else if name == "OpMathPiFloat" || name == "OpMathEFloat" {
+    l.floats += [if name == "OpMathPiFloat" { PI } else { E }];
+    emit(l, PushFloat, KFloat, len(l.floats) - 1, 0);
+  } else if name == "OpMathFunc2Float" || name == "OpMathFunc2Single" {
+    k = if name == "OpMathFunc2Single" { KSingle } else { KFloat };
+    value(l, b, args[1]!, k);
+    value(l, b, args[2]!, k);
+    emit(l, MathFunc2, k, literal(l, args[0]!), 0);
+  } else if name == "OpKeepVectorRange" {
+    // `v = v[lo..hi]` in place: `a` the element type, `b` its size (0 for a linked element).
+    tp = literal(l, args[1]!);
+    et = b.types[tp];
+    if et == null {
+      refuse(l, "a range kept of a vector of an unknown element type");
+      return true;
+    }
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[2]!, KInt);
+    value(l, b, args[3]!, KInt);
+    emit(l, VecKeep, KRef, tp, if et!.linked { 0 } else { et!.size });
+  } else if name == "OpAppendTextBytes" {
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KText);
+    value(l, b, args[2]!, KInt);
+    value(l, b, args[3]!, KInt);
+    emit(l, AppendTextBytes, KRef, 0, 0);
+  } else if name == "OpReverseVector" {
+    value(l, b, args[0]!, KRef);
+    emit(l, VecReverse, KRef, literal(l, args[1]!), 0);
+  } else if name == "OpMathFuncFloat" || name == "OpMathFuncSingle" {
+    k = if name == "OpMathFuncSingle" { KSingle } else { KFloat };
+    value(l, b, args[1]!, k);
+    emit(l, MathFunc, k, literal(l, args[0]!), 0);
+  } else if name == "OpSizeHash" {
+    value(l, b, args[0]!, KRef);
+    emit(l, HashBytes, KInt, 0, 0);
+  } else if name == "OpSizeStruct" {
+    // A record's size: the constant the parser filled in, its reference evaluated and dropped.
+    value(l, b, args[0]!, KRef);
+    emit(l, Pop, KRef, 0, 0);
+    emit(l, PushInt, KInt, literal(l, args[1]!), 0);
+  } else if name == "OpReserveVector" {
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KInt);
+    emit(l, VecReserve, KRef, literal(l, args[2]!), 0);
+  } else if name == "OpReserveHash" {
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KInt);
+    emit(l, HashReserve, KRef, literal(l, args[2]!), 0);
+  } else if name == "OpPrependVector" {
+    // `v.insert(0, …)` of a whole vector: `a` the element type, `b` 1 for a linked one.
+    tp = literal(l, args[2]!);
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KRef);
+    emit(l, VecPrepend, KInt, tp, if b.types[tp]?.linked ?? false { 1 } else { 0 });
+  } else if name == "OpNullReported" {
+    // `@FR-E-Report`: the null reference a store-else write hands its setter, its position
+    // marking the fault as reported (`loft_ref_null_reported`).
+    emit(l, PushNull, KRef, 2147483648, 0);
+  } else if name == "OpGetFile" {
+    value(l, b, args[0]!, KRef);
+    emit(l, GetFile, KInt, 0, 0);
+  } else if name == "OpGetFileText" {
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KTextRef);
+    emit(l, FileText, KInt, 0, 0);
+  } else if name == "OpWriteFile" || name == "OpReadFile" {
+    // The value is a variable's (`OpCreateStack`): a text local's byte, else its slot's reference.
+    tp = literal(l, args[len(args) - 1]!);
+    value(l, b, args[0]!, KRef);
+    if tp == 5 {
+      value(l, b, args[1]!, KTextRef);
+    } else {
+      value(l, b, args[1]!, KRef);
+    }
+    if name == "OpReadFile" {
+      value(l, b, args[2]!, KInt);
+    }
+    emit(l, if name == "OpReadFile" { ReadFile } else { WriteFile }, KInt, tp, if tp == 5 { 1 } else { 0 });
+  } else if name == "OpDelete" || name == "OpMoveFile" || name == "OpMkdir" || name == "OpMkdirAll" || name == "OpRmdir" {
+    for arg in args {
+      value(l, b, arg, KText);
+    }
+    which = match name { "OpDelete" => 0, "OpMoveFile" => 1, "OpMkdir" => 2, "OpMkdirAll" => 3, _ => 4 };
+    emit(l, FsOp, KInt, which, 1 - len(args));
+  } else if name == "OpSizeFile" || name == "OpSeekFile" || name == "OpTruncateFile" || name == "OpSyncFile" {
+    value(l, b, args[0]!, KRef);
+    if len(args) > 1 {
+      value(l, b, args[1]!, KInt);
+    }
+    which = match name { "OpSizeFile" => 0, "OpSeekFile" => 1, "OpTruncateFile" => 2, _ => 3 };
+    emit(l, FileOp, KInt, which, if which == 1 { -2 } else if which == 2 { -1 } else { 0 });
+  } else if name == "OpSetDbRef" {
+    // A stored reference (`reference<T>`, @C91) written into a field: `a` the field.
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[2]!, KRef);
+    emit(l, SetDbRef, KRef, literal(l, args[1]!), 0);
+  } else if name == "OpGetDbRef" {
+    value(l, b, args[0]!, KRef);
+    emit(l, GetDbRef, KRef, literal(l, args[1]!), 0);
+  } else if name == "OpVectorRef" || name == "OpVectorRefNullable" {
+    // An array's element: the record its slot names (the raising twin's report only logs).
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KInt);
+    emit(l, ArrayGet, KRef, 0, 0);
+  } else if name == "OpSizeVector" {
+    // A vector's size in bytes: its length times the element stride the parser filled in.
+    value(l, b, args[0]!, KRef);
+    emit(l, VecLen, KInt, 0, 0);
+    emit(l, PushInt, KInt, literal(l, args[1]!), 0);
+    emit(l, Mul, KInt, 0, 0);
+  } else if name == "OpRemoveVector" {
+    // `v.remove(i)`, by element type as the C generator picks it (`a` the type, `b` the mode:
+    // 2 linked, 1 owning heap, 0 plain).
+    tp = literal(l, args[1]!);
+    et = b.types[tp];
+    if et == null {
+      refuse(l, "a removal from a vector of an unknown element type");
+      return true;
+    }
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[2]!, KInt);
+    mode = if et!.linked { 2 } else if types::owns_heap(b, tp) { 1 } else { 0 };
+    emit(l, VecRemove, KInt, tp, mode);
+  } else if name == "OpVectorIsNull" {
+    value(l, b, args[0]!, KRef);
+    emit(l, VecAbsent, KInt, 0, 0);
+  } else if name == "OpConstRef" {
+    // A vector constant: its store, built at load (`consts.loft`).
+    emit(l, ConstRef, KRef, literal(l, args[0]!), 0);
+  } else if name == "OpDistinctStore" {
+    // A runtime owner witness's test: do the two references name different stores?
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KRef);
+    emit(l, DistinctStore, KInt, 0, 0);
+  } else if name == "OpSliceVector" || name == "OpSliceView" {
+    // `v = src[lo..hi]`, the bounds already clamped by the slice prelude; the parser emits it for
+    // scalar elements only, and anything else is refused as the C backend refuses it.
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KRef);
+    value(l, b, args[2]!, KInt);
+    value(l, b, args[3]!, KInt);
+    tp = literal(l, args[4]!);
+    if !scalar_element(b, tp) {
+      refuse(l, "a slice of elements that are not scalars");
+    } else {
+      emit(l, SliceVec, KRef, b.types[tp]!.size, if name == "OpSliceView" { 1 } else { 0 });
+    }
+  } else if name == "OpPlaceRecord" {
+    // A call's return buffer claimed in the store of the record its result lands in
+    // (`@FR-R-Place`), prefilled with its type's defaults.  `foreign` as the C backend decides
+    // it: the host variable's store root is a vector of another element type.
+    value(l, b, args[0]!, KRef);
+    tp = literal(l, args[1]!);
+    foreign = false;
+    match unspan(args[0]!) {
+      NdVar { n: host } => {
+        kt = root_type(b, fvar(b, l.def_nr, host).type_def[0] ?? ir::TypeT.TyVoid);
+        if kt != null {
+          elem = types::root_vector_element(b, kt!);
+          foreign = elem != null && elem != tp;
+        }
+      }
+      _ => {}
+    }
+    emit(l, PlaceRecord, KRef, tp, types::enum_parent_size(b, tp) * 2 + (if foreign { 1 } else { 0 }));
+  } else if name == "OpMoveVector" || name == "OpReplaceVector" || name == "OpMoveField" || name == "OpMoveRecord" {
+    // The two references in the operator's order, the element or record type last.
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KRef);
+    tp = literal(l, args[2]!);
+    linked = b.types[tp]?.linked ?? false;
+    if name == "OpMoveVector" {
+      emit(l, MoveVec, KRef, tp, if linked { 1 } else { 0 });
+    } else if name == "OpReplaceVector" {
+      emit(l, ReplaceVec, KRef, tp, if linked { 1 } else { 0 });
+    } else {
+      emit(l, MoveField, KRef, tp, if name == "OpMoveRecord" { 1 } else { 0 });
+    }
+  } else if name == "OpFreeRecordIn" {
+    value(l, b, args[0]!, KRef);
+    emit(l, FreeRecordIn, KRef, literal(l, args[1]!), 0);
+  } else if name == "OpCastTextFromEnum" {
+    // A plain enum's name (`Stores::enum_val`): the names are the function's text constants.
+    value(l, b, args[0]!, KInt);
+    tp = literal(l, args[1]!);
+    names = types::enum_names(b, tp);
+    if names == null {
+      refuse(l, "an enum name of a type that is no plain enum");
+    } else {
+      emit(l, EnumName, KText, len(l.texts), len(names!));
+      l.texts += names!;
+    }
+  } else if name == "OpLengthCharacter" {
+    value(l, b, args[0]!, KInt);
+    emit(l, CharLen, KInt, 0, 0);
+  } else if name == "OpTextCharacterNullable" || name == "OpTextCharacter" {
+    // The raising twin answers the same character; its report (`raise_recoverable`) only logs.
+    value(l, b, args[0]!, KText);
+    value(l, b, args[1]!, KInt);
+    emit(l, TextChar, KInt, 0, 0);
+  } else if name == "OpClearKeyed" {
+    // `s.h = []` of a field: its claims released, of whatever type (`remove_claims_keyed`); a
+    // linked group's secondary view (`CLEAR_KEYED_VIEW`, 0x8000), always a keyed collection,
+    // drops only its own route.
+    value(l, b, args[0]!, KRef);
+    raw = literal(l, args[1]!);
+    tp = raw & 32767;
+    view = raw & 32768 != 0;
+    if view && !types::is_keyed(b, tp) {
+      refuse(l, "a keyed view clear of a type that is not a keyed collection");
+    } else {
+      emit(l, ClearKeyed, KRef, tp, if view { 1 } else { 0 });
+    }
+  } else if name == "OpReplaceKeyed" {
+    // A keyed local rebound from a call (`h = f()`): `dest` filled again from `src`.  Bit 0 is
+    // the operator's own flag, bit 1 whether the element tree may move whole (`Cx::swap_safe`).
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KRef);
+    raw = literal(l, args[2]!);
+    tp = raw & 32767;
+    if !types::is_keyed(b, tp) {
+      refuse(l, "a keyed replace of a type that is not a keyed collection");
+    } else {
+      flags = (if raw & 32768 != 0 { 1 } else { 0 }) + (if types::swap_safe(b, tp) { 2 } else { 0 });
+      emit(l, ReplaceKeyed, KRef, tp, flags);
+    }
+  } else if name == "OpAppendCopy" {
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KInt);
+    tp = literal(l, args[2]!);
+    ctp = types::content_of(b, tp);
+    if ctp == null || (b.types[ctp!]?.linked ?? false) {
+      // A repeat of a linked element is refused as the C backend refuses it.
+      refuse(l, "a repeat of an element type the interpreter does not carry");
+    } else {
+      emit(l, AppendCopy, KRef, ctp!, 0);
+    }
   } else if name == "OpGetVector" || name == "OpGetVectorNullable" {
     value(l, b, args[0]!, KRef);
     size = literal(l, args[1]!);
@@ -922,9 +1892,8 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
   } else if name == "OpPreAllocVector" {
     value(l, b, args[0]!, KRef);
     emit(l, VecPrealloc, KRef, literal(l, args[1]!), literal(l, args[2]!));
-  } else if push_of(name) >= 0 {
+  } else if which != null {
     // A push of a scalar: the vector, a byte's minimum, the value.
-    which = push_of(name);
     value(l, b, args[0]!, KRef);
     if which == 3 {
       value(l, b, args[1]!, KInt);
@@ -945,7 +1914,7 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     ptp = literal(l, args[last - 1]!);
     fld = literal(l, args[last]!);
     vtp = ptp;
-    at = -1;
+    at: integer? = null;
     if fld != 65535 {
       match b.types[ptp]!.parts[0]! {
         PtStruct { fields } => {
@@ -960,15 +1929,41 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     }
     elem = vector_element(b, vtp);
     helem = hash_element(b, vtp);
-    if (fld != 65535 && at < 0) || (elem < 0 && helem < 0) {
+    aelem = array_element(b, vtp);
+    kelem = keyed_element(b, vtp);
+    if (fld != 65535 && at == null) || (elem == null && helem == null && aelem == null && kelem == null) {
       refuse(l, "a record added to a collection that is not a plain vector or a hash: {b.types[vtp]!.name}");
       return true;
     }
     value(l, b, args[0]!, KRef);
-    if at >= 0 {
+    if at != null {
       emit(l, FieldRef, KRef, at, 0);
     }
-    if helem >= 0 {
+    if aelem != null {
+      // An array's element is a record of its own in the collection's store, filled with its
+      // type's defaults, then its number appended (`keyed_new` / `keyed_finish`'s array arm).
+      if name == "OpNewRecord" {
+        emit(l, ArrayNew, KRef, aelem!, b.types[aelem!]!.size);
+      } else {
+        value(l, b, args[1]!, KRef);
+        emit(l, ArrayAppend, KRef, 0, 0);
+      }
+      return true;
+    }
+    if kelem != null {
+      // `keyed_new` / `keyed_finish` (S4): a sorted stages its element past its end, an ordered
+      // or an index gives it a record of its own, each filled with the element's defaults; the
+      // finish files it under its key, an equal key's element replaced (`@FR-Col-Insert`).
+      kind = keyed_kind(b, vtp) ?? 0;
+      if name == "OpNewRecord" {
+        emit(l, KeyedNew, KRef, kelem!, kind);
+      } else {
+        value(l, b, args[1]!, KRef);
+        emit(l, KeyedFinish, KRef, vtp, kind + 8 * kelem!);
+      }
+      return true;
+    }
+    if helem != null {
       // `keyed_new` / `keyed_finish` (`src/c/body/keyed.rs`): an entry of the hash's table,
       // filled with the element's default image, then filed under its key.
       et = b.types[helem]!;
@@ -980,8 +1975,9 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
       }
       return true;
     }
+    // Not a hash, so the refusal above leaves a plain vector's element.
     if name == "OpNewRecord" {
-      emit(l, VecNew, KRef, elem, b.types[elem]!.size);
+      emit(l, VecNew, KRef, elem!, b.types[elem!]!.size);
     } else {
       value(l, b, args[1]!, KRef);
       emit(l, VecFinish, KRef, 0, 0);
@@ -990,8 +1986,9 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     // `OpGetRecord(data, tp, n, value…)` on a hash: the collection, then each key part as its
     // key's type converts it (`key_value`, `src/c/body/keyed.rs`), then the find.
     tp = literal(l, args[1]!);
-    if hash_element(b, tp) < 0 {
-      refuse(l, "a lookup in a keyed collection that is not a hash: {b.types[tp]!.name}");
+    kind = keyed_kind(b, tp);
+    if hash_element(b, tp) == null && kind == null {
+      refuse(l, "a lookup in a keyed collection that is not a hash, a sorted or an index: {b.types[tp]!.name}");
       return true;
     }
     keys = b.types[tp]!.keys;
@@ -1001,24 +1998,83 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
       return true;
     }
     value(l, b, args[0]!, KRef);
-    for i in 0..n {
-      kt = (keys[i]!.type_nr).abs();
-      arg = args[3 + i]!;
-      if kt == 3 {
-        value(l, b, arg, KSingle);
-        emit(l, KeyPart, KFloat, 0, 2);
-      } else if kt == 4 {
-        value(l, b, arg, KFloat);
-        emit(l, KeyPart, KFloat, 0, 1);
-      } else if kt == 6 {
-        value(l, b, arg, KText);
-        emit(l, KeyPart, KText, 0, 3);
-      } else {
-        value(l, b, arg, KInt);
-        emit(l, KeyPart, KInt, 0, 0);
-      }
+    key_parts(l, b, keys, args, 3);
+    if kind != null {
+      emit(l, KeyedFind, KRef, tp, kind! + 8 * n);
+    } else {
+      emit(l, HashFind, KRef, tp, n);
     }
-    emit(l, HashFind, KRef, tp, n);
+  } else if name == "OpHashRemove" {
+    // `OpHashRemove(data, rec, tp)`: the entry unlinked and released; the type's top bit
+    // (`CLEAR_KEYED_VIEW`) marks a linked group's view member, which only unlinks.
+    raw = literal(l, args[2]!);
+    tp = raw & 32767;
+    elem = hash_element(b, tp);
+    kelem = keyed_element(b, tp);
+    if elem == null && kelem == null {
+      refuse(l, "a removal from a keyed collection that is not a hash, a sorted or an index: {b.types[tp]!.name}");
+      return true;
+    }
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KRef);
+    if kelem != null {
+      // `keyed_remove`'s other arms: what the element owns is released, a view member only
+      // unlinks.
+      emit(l, KeyedRemove, KRef, raw, (keyed_kind(b, tp) ?? 0) + 8 * kelem!);
+    } else {
+      emit(l, HashRemove, KRef, tp, if raw & 32768 != 0 { 1 } else { 0 });
+    }
+  } else if name == "OpSetKeyed" {
+    // `OpSetKeyed(coll, value, tp, no_keys, value…)` (`c[k…] = v`) on a hash: the collection, the
+    // value, each key part, then the write; the type's top bit releases the value after.
+    raw = literal(l, args[2]!);
+    tp = raw & 32767;
+    kind = keyed_kind(b, tp) ?? 0;
+    if hash_element(b, tp) == null && kind == 0 {
+      refuse(l, "a keyed write into a collection that is not a hash, a sorted or an index: {b.types[tp]!.name}");
+      return true;
+    }
+    keys = b.types[tp]!.keys;
+    n = len(args) - 4;
+    if n > len(keys) {
+      refuse(l, "a keyed write with more values than keys");
+      return true;
+    }
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[1]!, KRef);
+    key_parts(l, b, keys, args, 4);
+    emit(l, SetKeyed, KRef, raw, n + 256 * kind);
+  } else if name == "OpLengthSorted" {
+    // A sorted is laid out as a vector: its length is the vector's.
+    value(l, b, args[0]!, KRef);
+    emit(l, VecLen, KInt, 0, 0);
+  } else if name == "OpLengthSpatial" || name == "OpLengthTrie" || name == "OpSizeSpatial" {
+    value(l, b, args[0]!, KRef);
+    emit(l, IndexLen, KInt, if name == "OpSizeSpatial" { 3 } else { 2 }, 0);
+  } else if name == "n_radix_sorted" {
+    // A spatial or trie walk's snapshot, its elements in key order (a scratch vector).
+    value(l, b, args[0]!, KRef);
+    emit(l, RadixSnap, KRef, 0, 0);
+  } else if name == "n_spatial_range" {
+    // `s[lo..hi]` of a spatial index: the elements in range as a snapshot; `a` the index type.
+    if len(args) != 10 {
+      refuse(l, "a spatial range with {len(args)} arguments");
+      return true;
+    }
+    value(l, b, args[0]!, KRef);
+    for i in 2..10 {
+      value(l, b, args[i]!, KInt);
+    }
+    emit(l, RadixSnap, KRef, literal(l, args[1]!), 1);
+  } else if name == "n_trie_prefix" {
+    // The trie's elements under a prefix, at most `limit`, as a snapshot; `a` the trie type.
+    value(l, b, args[0]!, KRef);
+    value(l, b, args[2]!, KText);
+    value(l, b, args[3]!, KInt);
+    emit(l, RadixSnap, KRef, literal(l, args[1]!), 2);
+  } else if name == "OpLengthIndex" || name == "OpSizeIndex" {
+    value(l, b, args[0]!, KRef);
+    emit(l, IndexLen, KInt, if name == "OpSizeIndex" { 1 } else { 0 }, 0);
   } else if name == "OpLengthHash" {
     value(l, b, args[0]!, KRef);
     emit(l, HashLen, KInt, 0, 0);
@@ -1045,13 +2101,9 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     value(l, b, args[1]!, KRef);
     emit(l, FormatDb, dest_kind, dest, tp * 4 + fmt);
   } else if name == "OpAppendVector" {
-    // `v += other`: element copies, the claims copied by the type table (`loft_vec_add`).  A
-    // linked element type is `loft_vec_add_array`, a later step.
+    // `v += other`: element copies, the claims copied by the type table (`loft_vec_add`; a
+    // linked element type's ids each a record of its own, `loft_vec_add_array`).
     tp = literal(l, args[2]!);
-    if b.types[tp]!.linked {
-      refuse(l, "an append of a linked element type");
-      return true;
-    }
     value(l, b, args[0]!, KRef);
     value(l, b, args[1]!, KRef);
     emit(l, VecAdd, KRef, tp, 0);
@@ -1090,20 +2142,53 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     value(l, b, args[0]!, KRef);
     emit(l, HashSorted, KRef, literal(l, args[1]!), if name == "n_hash_unsorted" { 1 } else { 0 });
   } else if name == "OpIterate" || name == "OpStep" {
-    // A walk over a snapshot (kind 4) is the one carried; an index, a sorted or a spatial walk,
-    // and a walk with key bounds, are refused by name.
+    // A walk: over a snapshot (kind 4, no key bounds), or over an index (1), a sorted (2) or an
+    // ordered (3) — its state an integer, as the C generator's `loft_*_iterate` / `_step` keep
+    // it.  A spatial walk is refused by name.
     on = literal(l, args[if name == "OpIterate" { 1 } else { 2 }]!);
-    if on & 63 != 4 {
-      refuse(l, "a walk of kind {on & 63}");
+    kind = on & 63;
+    if kind < 1 || kind > 4 {
+      refuse(l, "a walk of kind {kind}");
       return true;
     }
     if name == "OpIterate" {
-      if len(args) != 6 || literal(l, args[4]!) != 0 || literal(l, args[5]!) != 0 {
-        refuse(l, "a walk with key bounds");
+      arg = literal(l, args[2]!);
+      nfrom = literal(l, args[4]!);
+      ntill = literal(l, args[5 + nfrom]!);
+      if kind == 4 {
+        if nfrom != 0 || ntill != 0 {
+          refuse(l, "a walk with key bounds");
+          return true;
+        }
+        value(l, b, args[0]!, KRef);
+        emit(l, ScratchIterate, KInt, 0, 0);
+        return true;
+      }
+      keys: vector<ir::Key> = [];
+      match args[3]! {
+        NdKeys { keys: ks } => {
+          keys = ks;
+        }
+        _ => {
+          refuse(l, "a walk without its keys");
+          return true;
+        }
+      }
+      if nfrom > len(keys) || ntill > len(keys) {
+        refuse(l, "a walk bound with more values than keys");
         return true;
       }
       value(l, b, args[0]!, KRef);
-      emit(l, ScratchIterate, KInt, 0, 0);
+      // The walk's key list, then its bounds' parts onto the key stack, the lower ones first.
+      for k in keys {
+        emit(l, PushInt, KInt, k.type_nr, 0);
+        emit(l, PushInt, KInt, k.position, 0);
+        emit(l, PushInt, KInt, k.start, 0);
+        emit(l, WalkKey, KInt, 0, 0);
+      }
+      key_parts_n(l, b, keys, args, 5, nfrom);
+      key_parts_n(l, b, keys, args, 6 + nfrom, ntill);
+      emit(l, KeyedIterate, KInt, on, arg * 65536 + nfrom * 256 + ntill);
     } else {
       state = 0;
       match unspan(args[0]!) {
@@ -1117,8 +2202,33 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
         _ => refuse(l, "a walk state that is not a variable"),
       }
       value(l, b, args[1]!, KRef);
-      emit(l, ScratchStep, KRef, state, if on & 64 != 0 { 1 } else { 0 });
+      if kind == 4 {
+        emit(l, ScratchStep, KRef, state, if on & 64 != 0 { 1 } else { 0 });
+      } else {
+        emit(l, KeyedStep, KRef, state, literal(l, args[3]!) * 256 + on);
+      }
     }
+  } else if name == "OpRemove" {
+    // `e#remove` in a walk (`OpRemove(state, data, on, tp)`): the walk's state variable, the
+    // collection, then the removal by the walk's kind.
+    on = literal(l, args[2]!);
+    if on & 63 > 3 {
+      refuse(l, "a removal in a walk of kind {on & 63}");
+      return true;
+    }
+    state = 0;
+    match unspan(args[0]!) {
+      NdVar { n: var } => {
+        if var_kind(l, var) == KInt {
+          state = slot_of(l, var);
+        } else {
+          refuse(l, "a walk state that is not an integer variable");
+        }
+      }
+      _ => refuse(l, "a walk state that is not a variable"),
+    }
+    value(l, b, args[1]!, KRef);
+    emit(l, WalkRemove, KRef, state, literal(l, args[3]!) * 256 + on);
   } else if name == "OpFreeScratch" {
     value(l, b, args[0]!, KRef);
     emit(l, FreeScratch, KRef, 0, 0);
@@ -1134,27 +2244,6 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     return false;
   }
   true
-}
-
-// The record definition a reference or struct-enum type names (`Type::heap_def_nr`), through a
-// nullability marker; -1 for another type.
-fn record_of(ts: vector<ir::TypeT>) -> integer {
-  t = ts[0];
-  if t == null {
-    return -1;
-  }
-  match t {
-    TyReference { n, dep: _ } => n,
-    TyEnum { n, is_ref, dep: _ } => if is_ref { n } else { -1 },
-    TyOptional { inner } => {
-      match inner {
-        TyReference { n, dep: _ } => n,
-        TyEnum { n, is_ref, dep: _ } => if is_ref { n } else { -1 },
-        _ => -1,
-      }
-    }
-    _ => -1,
-  }
 }
 
 // `Data::copies_as`: a record copies into a variable of its own definition, and a variant and
@@ -1195,86 +2284,168 @@ fn is_vector(ts: vector<ir::TypeT>) -> boolean {
   }
 }
 
-// The known type of a vector's element type, or -1: a record or plain enum by its definition, a
-// base type by its number (`integer` 0, `long` 1, `single` 2, `float` 3, `boolean` 4, `text` 5,
-// `character` 6).  A narrow integer has a type of its own and is not resolved here.
-fn element_type(b: ir::Bundle, t: ir::TypeT) -> integer {
+// The `main_vector<T>` wrapper of vector type `ts` (`Data::owned_vector_type`): the type of the
+// definition named `main_vector<` the element's key name `>`; null when the image has none.
+pub fn main_vector_of(b: ir::Bundle, ts: vector<ir::TypeT>) -> integer? {
+  t = ts[0];
+  if t == null {
+    return null;
+  }
+  key = match binds::base(t) {
+    TyVector { inner: i, dep: _ } => type_key(b, i),
+    _ => null,
+  };
+  if key == null {
+    return null;
+  }
+  name = "main_vector<{key}>";
+  for d in b.data.definitions {
+    if d.name == name {
+      return d.known_type;
+    }
+  }
+  null
+}
+
+// `Type::name`: the type as the definition table keys it (`render` with `source` false), or
+// null for a keyed collection, whose key spells its key list as a Rust value.
+fn type_key(b: ir::Bundle, t: ir::TypeT) -> text? {
   match t {
-    TyReference { n, dep: _ } => b.data.definitions[n]!.known_type,
-    TyEnum { n, is_ref: _, dep: _ } => b.data.definitions[n]!.known_type,
-    TyInteger { spec } => if spec.min == -2147483647 && spec.max == 2147483647 && spec.forced_size == 0 { 0 } else { -1 },
-    TySingle => 2,
-    TyFloat => 3,
-    TyBoolean => 4,
-    TyText { dep: _ } => 5,
-    TyCharacter => 6,
-    _ => -1,
+    TyOptional { inner } => {
+      k = type_key(b, inner);
+      if k == null { null } else { "{k}?" }
+    }
+    TyRewritten { inner } => type_key(b, inner),
+    TyRefVar { inner } => {
+      k = type_key(b, inner);
+      if k == null { null } else { "&{k}" }
+    }
+    TyEnum { n, is_ref: _, dep: _ } => b.data.definitions[n]?.name,
+    TyReference { n, dep: _ } => b.data.definitions[n]?.name,
+    TyText { dep: _ } => "text",
+    TyVector { inner, dep: _ } => if inner is TyUnknown {
+      "vector"
+    } else {
+      k = type_key(b, inner);
+      if k == null { null } else { "vector<{k}>" }
+    },
+    TyInteger { spec } => integer_key(spec),
+    TyBoolean => "boolean",
+    TyFloat => "float",
+    TySingle => "single",
+    TyCharacter => "character",
+    TyKeys => "keys",
+    TyTuple { elems } => {
+      r = "";
+      for e in elems {
+        k = type_key(b, e);
+        if k == null {
+          return null;
+        }
+        r += if e#index > 0 { ", {k}" } else { k! };
+      }
+      "({r})"
+    }
+    _ => null,
   }
 }
 
-// The `main_vector<T>` wrapper of vector type `ts` (`Data::owned_vector_type`): the struct whose
-// one field is the plain vector of `T`.  Found by that shape in the image's schema; -1 when
-// there is none.
-pub fn main_vector_of(b: ir::Bundle, ts: vector<ir::TypeT>) -> integer {
-  t = ts[0];
+// `Cx::root_type`: the store type a value of type `t` is minted as — a record's or struct enum's
+// own, a vector's `main_vector<T>` wrapper — or null for any other.
+fn root_type(b: ir::Bundle, t: ir::TypeT) -> integer? {
+  match t {
+    TyOptional { inner } => root_type(b, inner),
+    TyReference { n, dep: _ } => b.data.definitions[n]?.known_type,
+    TyEnum { n, is_ref, dep: _ } => if is_ref { b.data.definitions[n]?.known_type } else { null },
+    TyVector { inner: _, dep: _ } => main_vector_of(b, [t]),
+    _ => null,
+  }
+}
+
+// Is type `tp` a scalar a slice copies as one block: a base type but text (`integer` 0 to
+// `character` 6), or a narrow integer's encoding?
+fn scalar_element(b: ir::Bundle, tp: integer) -> boolean {
+  if tp <= 6 && tp != 5 {
+    return true;
+  }
+  t = b.types[tp];
   if t == null {
-    return -1;
+    return false;
   }
-  elem = match t {
-    TyVector { inner: i, dep: _ } => element_type(b, i),
-    TyOptional { inner: o } => {
-      match o {
-        TyVector { inner: i, dep: _ } => element_type(b, i),
-        _ => -1,
-      }
-    }
-    _ => -1,
-  };
-  if elem < 0 {
-    return -1;
+  match t.parts[0]! {
+    PtByte { start: _, nullable: _ } => true,
+    PtShort { start: _, nullable: _ } => true,
+    PtShortRaw { start: _, nullable: _ } => true,
+    PtInt { start: _, nullable: _ } => true,
+    PtIntRaw { start: _, nullable: _ } => true,
+    _ => false,
   }
-  for w in b.types {
-    if !w.name.starts_with("main_vector<") {
-      continue;
-    }
-    match w.parts[0]! {
-      PtStruct { fields } => {
-        if len(fields) == 1 && vector_element(b, fields[0]!.content) == elem {
-          return w#index;
-        }
-      }
-      _ => {}
-    }
+}
+
+// `IntegerSpec::source_name`, else `integer(min, max)`: the plain and the wide template are
+// `integer`, the `0..256` range `byte`.
+fn integer_key(s: ir::IntegerSpec) -> text {
+  if s.min == -2147483647 && (s.max == 2147483647 || s.max == 4294967295) {
+    "integer"
+  } else if s.min == 0 && s.max == 256 {
+    "byte"
+  } else {
+    "integer({s.min}, {s.max})"
   }
-  -1
 }
 
 // The schema type of a hash variable's collection, by the name `Stores::hash` gives it:
-// `hash<{content}[{key},…]>`, through a nullability marker; -1 for another type, or a hash the
+// `hash<{content}[{key},…]>`, through a nullability marker; null for another type, or a hash the
 // image has no type for.
-pub fn hash_type_of(b: ir::Bundle, ts: vector<ir::TypeT>) -> integer {
+pub fn hash_type_of(b: ir::Bundle, ts: vector<ir::TypeT>) -> integer? {
   t = ts[0];
   if t == null {
-    return -1;
+    return null;
   }
-  def = -1;
-  names: vector<ir::NameRef> = [];
-  match t {
-    TyHash { n, names: ns, dep: _ } => {
-      def = n;
-      names = ns;
-    }
-    TyOptional { inner } => {
-      match inner {
-        TyHash { n, names: ns, dep: _ } => {
-          def = n;
-          names = ns;
-        }
-        _ => { return -1; }
-      }
-    }
-    _ => { return -1; }
+  match binds::base(t) {
+    TyHash { n, names, dep: _ } => hash_type_named(b, n, names),
+    // S4: `Stores::sorted` / `Stores::index` name theirs `sorted<{content}[{key},-{key}…]>` and
+    // `index<…>`, a descending key marked `-`; a sorted of linked records is laid out as an
+    // `ordered<…>` of the same tail.
+    TySorted { n, keys, dep: _ } => types::named(b, "sorted<" + key_tail(b, n, keys)) ?? types::named(b, "ordered<" + key_tail(b, n, keys)),
+    TyIndex { n, keys, dep: _ } => types::named(b, "index<" + key_tail(b, n, keys)),
+    // `Stores::spatial` and `Stores::trie`: `spatial<{content}[{field},…]>`, `trie<{content}[{field}]>`.
+    TyRadix { n, names, dep: _ } => types::named(b, "spatial<{b.types[b.data.definitions[n]!.known_type]!.name}[{names_joined(names)}]>"),
+    TyTrie { n, key, dep: _ } => types::named(b, "trie<{b.types[b.data.definitions[n]!.known_type]!.name}[{key}]>"),
+    _ => null,
   }
+}
+
+// Field names joined by `,`, as `Stores::field_name` writes them.
+fn names_joined(names: vector<ir::NameRef>) -> text {
+  out = "";
+  for k in names {
+    if k#index > 0 {
+      out += ",";
+    }
+    out += k.name;
+  }
+  out
+}
+
+// `{content}[{key},-{key}…]>`: the tail of a sorted or index type's name.
+fn key_tail(b: ir::Bundle, def: integer, keys: vector<ir::SortKey>) -> text {
+  out = "{b.types[b.data.definitions[def]!.known_type]!.name}[";
+  for k in keys {
+    if k#index > 0 {
+      out += ",";
+    }
+    if !k.asc {
+      out += "-";
+    }
+    out += k.name;
+  }
+  out + "]>"
+}
+
+
+// The schema type `Stores::hash` names for the hash of definition `def` keyed on `names`.
+fn hash_type_named(b: ir::Bundle, def: integer, names: vector<ir::NameRef>) -> integer? {
   content = b.data.definitions[def]!.known_type;
   want = "hash<{b.types[content]!.name}[";
   for k in names {
@@ -1286,7 +2457,7 @@ pub fn hash_type_of(b: ir::Bundle, ts: vector<ir::TypeT>) -> integer {
       return w#index;
     }
   }
-  -1
+  null
 }
 
 // Is `ts` a hash type, through a nullability marker?
@@ -1418,8 +2589,213 @@ fn known_type(b: ir::Bundle, d: integer) -> integer {
   b.data.definitions[d]!.known_type
 }
 
+// `@FR-B-Ref-Repoint` (`scopes::link_set_repoints`): does a set of a link of type `t` with
+// `x` RE-POINT it rather than write through it?  `p = &q` installs (`OpCreateStack`,
+// `OpVarRef`); for a link to a scalar a PLACE does too (`c = &v[0]`, `f = &o.y`), which arrives
+// as the place operator, declared to return a reference where a value read out of a place is
+// typed as the scalar.  For a record or collection link an element's value is a reference as
+// well, so only the install operators count there; anything else is a value written through.
+fn repoints(b: ir::Bundle, t: ir::TypeT, x: ir::Node) -> boolean {
+  match x {
+    NdSpan { inner } => repoints(b, t, inner),
+    NdCall { def_nr, args: _ } => {
+      d = b.data.definitions[def_nr]!;
+      d.name == "OpCreateStack" || d.name == "OpVarRef" || (scalar(t) && is_reference(d.returned[0] ?? ir::TypeT.TyVoid))
+    }
+    _ => false,
+  }
+}
+
+// Is `t` — what a link names, a `&` peeled — a scalar: an integer, boolean, float, single,
+// character or plain enum?
+fn scalar(t: ir::TypeT) -> boolean {
+  match t {
+    TyOptional { inner } => scalar(inner),
+    TyRefVar { inner } => scalar(inner),
+    TyInteger { spec: _ } => true,
+    TyBoolean => true,
+    TyFloat => true,
+    TySingle => true,
+    TyCharacter => true,
+    TyEnum { n: _, is_ref, dep: _ } => !is_ref,
+    _ => false,
+  }
+}
+
+// Is `t` (a nullable one too) a record reference?
+fn is_reference(t: ir::TypeT) -> boolean {
+  match t {
+    TyOptional { inner } => is_reference(inner),
+    TyReference { n: _, dep: _ } => true,
+    _ => false,
+  }
+}
+
+// `opt::char_walk::char_walks`, for one loop: the parser's lowering of `for c in T` matched
+// whole — the loop's first statement binds `c` to a `for text next` block of five statements
+// (`index = next`; the character at `next`; `next` advanced by its width; the zero-width
+// guard; the character), its second the null test `if !T { break }`, and T a text VARIABLE.
+fn char_walk(b: ir::Bundle, d_nr: integer, lp: ir::Block) -> CharWalk? {
+  if lp.name != "For loop" || len(lp.operators) < 2 {
+    return null;
+  }
+  loop_var = -1;
+  it: ir::Block? = null;
+  match unspan(lp.operators[0]!) {
+    NdSet { var, inner } => {
+      loop_var = var;
+      match unspan(inner) {
+        NdBlock { block } => { it = block[0]; }
+        _ => {}
+      }
+    }
+    _ => {}
+  }
+  if it == null || it!.name != "for text next" {
+    return null;
+  }
+  ops: vector<ir::Node> = [];
+  for o in it!.operators {
+    if !(unspan(o) is NdLine) {
+      ops += [unspan(o)];
+    }
+  }
+  if len(ops) != 5 {
+    return null;
+  }
+  // index = next
+  index = set_target(ops[0]!);
+  next = var_value(set_value(ops[0]!));
+  // res = OpTextCharacterNullable(src, next)
+  res = set_target(ops[1]!);
+  read = call_args(b, set_value(ops[1]!), "OpTextCharacterNullable");
+  if index == null || next == null || res == null || read == null || len(read!) != 2 {
+    return null;
+  }
+  src = var_value(read![0]!);
+  if src == null || var_value(read![1]!) != next || !(binds::base(fvar(b, d_nr, src!).type_def[0]!) is TyText) {
+    return null;
+  }
+  // next = next + OpLengthCharacter(res)
+  stepped = call_args(b, set_value(ops[2]!), "OpAddInt");
+  if set_target(ops[2]!) != next || stepped == null || var_value(stepped![0]!) != next {
+    return null;
+  }
+  width = call_args(b, stepped![1]!, "OpLengthCharacter");
+  if width == null || var_value(width![0]!) != res {
+    return null;
+  }
+  // if next <= index { next = index + 1 }
+  if !guard_shape(b, ops[3]!, next!, index!) || var_value(ops[4]!) != res {
+    return null;
+  }
+  // the null test: if !T { break }
+  if !null_test_shape(b, lp.operators[1]!, src!) {
+    return null;
+  }
+  CharWalk { loop_var: loop_var, index: index!, next: next!, result: res!, src: src! }
+}
+
+// The variable a `Set` writes, its value, a variable read's number, a call's operands when it
+// calls the operator named: the pieces `char_walk` matches, each null for any other shape.
+fn set_target(n: ir::Node) -> integer? {
+  match unspan(n) {
+    NdSet { var, inner: _ } => var,
+    _ => null,
+  }
+}
+
+fn set_value(n: ir::Node) -> ir::Node {
+  match unspan(n) {
+    NdSet { var: _, inner } => unspan(inner),
+    _ => ir::Node.NdNull,
+  }
+}
+
+fn var_value(n: ir::Node) -> integer? {
+  match unspan(n) {
+    NdVar { n: v } => v,
+    _ => null,
+  }
+}
+
+fn call_args(b: ir::Bundle, n: ir::Node, name: text) -> vector<ir::Node>? {
+  match unspan(n) {
+    NdCall { def_nr, args } => if b.data.definitions[def_nr]?.name == name { args } else { null },
+    _ => null,
+  }
+}
+
+// `if next <= index { next = index + 1 }`, the walk's zero-width guard.
+fn guard_shape(b: ir::Bundle, n: ir::Node, next: integer, index: integer) -> boolean {
+  match unspan(n) {
+    NdIf { cond, t, f } => {
+      le = call_args(b, cond, "OpLeInt");
+      bump = call_args(b, set_value(t), "OpAddInt");
+      le != null && var_value(le![0]!) == next && var_value(le![1]!) == index
+        && set_target(t) == next && bump != null && var_value(bump![0]!) == index
+        && unspan(bump![1]!) == NdInt { n: 1 } && unspan(f) is NdNull
+    }
+    _ => false,
+  }
+}
+
+// `if !T { break }`, the walk's null test.
+fn null_test_shape(b: ir::Bundle, n: ir::Node, src: integer) -> boolean {
+  match unspan(n) {
+    NdIf { cond, t: _, f } => {
+      not = call_args(b, cond, "OpNot");
+      if not == null || !(unspan(f) is NdNull) {
+        return false;
+      }
+      conv = call_args(b, not![0]!, "OpConvBoolFromText");
+      conv != null && var_value(conv![0]!) == src
+    }
+    _ => false,
+  }
+}
+
+// `Codegen::emit_walk_step`: the loop variable of a walk of the loop being lowered, set from its
+// step block, is one `TextWalkStep` — when `#index`, `#next` and the text are allocated and
+// placed, the variable a character and the text a text.  The block's result temp is not written:
+// the character goes straight to the loop variable.
+fn walk_step(l: Lowering, b: ir::Bundle, c: integer) -> boolean {
+  w: CharWalk? = null;
+  for x in l.walks {
+    if x.loop_var == c {
+      w = x;
+    }
+  }
+  if w == null || !(binds::base(fvar(b, l.def_nr, c).type_def[0]!) is TyCharacter) {
+    return false;
+  }
+  for v in [w!.index, w!.next, w!.src] {
+    if !fvar(b, l.def_nr, v).stack_allocated || (l.var_slot[v] ?? -1) < 0 {
+      return false;
+    }
+  }
+  if (l.var_slot[c] ?? -1) < 0 {
+    return false;
+  }
+  mark(b, l.def_nr, c, true);
+  emit(l, TextWalkStep, KInt, slot_of(l, c), len(l.walk_slots));
+  l.walk_slots += [WalkSlots {
+    index: slot_of(l, w!.index),
+    next: slot_of(l, w!.next),
+    src: slot_of(l, w!.src),
+    src_arg: (l.var_access[w!.src] ?? 0) == 1,
+    c_access: access_of(l, c),
+  }];
+  true
+}
+
 // `generate_set_inner` (`codegen.rs:2467`).
 fn set_inner(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
+  // `@FR-R-CharWalk`: a text walk's loop variable set from its step block is one fused step.
+  if unspan(x) is NdBlock && walk_step(l, b, var) {
+    note(l, "walk-step");
+    return;
+  }
   v = fvar(b, l.def_nr, var);
   // `@FR-R-LoopSlot`: a counted loop's variable on its range index's slot — the bytecode
   // writer drops the copy; the loft frame keeps every variable apart until F-1, so the value
@@ -1491,13 +2867,13 @@ fn set_again(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
     l.owned_reassigned[var] = true;
   }
   // R1 — a join: bound or copied by the store it comes back in (`join_own_enabled`, on).
-  d = match t { TyReference { n, dep: _ } => n, _ => -1 };
+  d = match t { TyReference { n, dep: _ } => n, _ => null };
   jb = own::named_join_base(own);
-  if owned_ref && !s1 && !stash && !(u is NdVar) && !v.view_elided && jb != null && d >= 0 {
+  if owned_ref && !s1 && !stash && !(u is NdVar) && !v.view_elided && jb != null && d != null {
     note(l, "R1");
     value(l, b, x, KRef);
     emit(l, Load, KRef, slot_of(l, jb!), 0);
-    emit(l, BindOrCopy, KRef, slot, copy_operand(b, known_type(b, d)));
+    emit(l, BindOrCopy, KRef, slot, copy_operand(b, known_type(b, d!)));
     return;
   }
   if (owned_ref || witnessed) && !s1 {
@@ -1506,17 +2882,17 @@ fn set_again(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
       refuse(l, "a record bound from a call through a function value");
       return;
     }
-    hd = match binds::base(t) { TyReference { n, dep: _ } => n, TyEnum { n, is_ref, dep: _ } => if is_ref { n } else { -1 }, _ => -1 };
+    hd = own::heap_def_nr(t);
     callee = binds::callee_of(b, l.defs, x);
     cd = binds::def(b, callee ?? l.def_nr);
-    if hd >= 0 && (!v.argument || (binds::is_promoted_return_buffer(b, l.def_nr, f, var) && !reads_v))
+    if hd != null && (!v.argument || (binds::is_promoted_return_buffer(b, l.def_nr, f, var) && !reads_v))
         && ((u is NdCall) || (u is NdCallRef)) && callee != null && binds::is_loft_defined(cd)
         && !binds::return_adopts_fresh_store(cd)
         && !(reads_v && own::returns_borrowed_view(cd) && !(rhs_base == 65535 && stash))
         && !v.view_elided
         && !(v.deferred_first_bind && binds::adopts_minted_at_bind(b, l.own_ops, f, var, x)) {
       // R2b — the call copy (`codegen.rs:2953–3036`).
-      tp = known_type(b, hd);
+      tp = known_type(b, hd!);
       alloc_after = stash || (witnessed && reads_v);
       if !alloc_after {
         init_ref(l, slot);
@@ -1554,15 +2930,15 @@ fn set_again(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
       }
       return;
     }
-    src = match u { NdVar { n } => n, _ => -1 };
+    src = match u { NdVar { n } => n, _ => null };
     hh = own::heap_def_nr(t);
-    if hh != null && src >= 0 && src != var {
-      sd = own::record_copy_source(b, f, var, src);
+    if hh != null && src != null && src != var {
+      sd = own::record_copy_source(b, f, var, src!);
       if sd != null && own::copies_as(b, hh!, sd!) {
         // R2c — a whole record variable copied in.
         init_ref(l, slot);
-        emit(l, Load, KRef, slot_of(l, src), 0);
-        emit(l, Load, KRef, slot_of(l, src), 0);
+        emit(l, Load, KRef, slot_of(l, src!), 0);
+        emit(l, Load, KRef, slot_of(l, src!), 0);
         note(l, "R2c");
         emit(l, BindOrCopy, KRef, slot, copy_operand(b, known_type(b, hh!)));
         if stash {
@@ -1594,7 +2970,7 @@ fn flag(x: boolean) -> integer {
 fn free_stashed(l: Lowering, var: integer, entry_w: integer?) {
   emit(l, Load, KRef, slot_of(l, var), 0);
   if entry_w != null {
-    emit(l, Load, KRef, slot_of(l, entry_w!), 0);
+    emit(l, Load, KRef, slot_of(l, entry_w), 0);
     emit(l, FreeRefUnlessEntry, KRef, 0, 0);
   } else {
     emit(l, FreeRefDistinct, KRef, 0, 0);
@@ -1626,8 +3002,15 @@ fn set_first(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
   is_null = x is NdNull;
   slot = if var_kind(l, var) == KRef { slot_of(l, var) } else { -1 };
   if base is TyText {
+    // `gen_set_first_text` (`codegen.rs:1769`): the positional init — the empty text written at
+    // the slot, which holds what an earlier frame left — then the set, which the empty literal
+    // needs none of.  A text view (@PLN198) owns no text and takes no init; the loft
+    // interpreter holds every text loop variable as its own copy, so it never is one here.
     note(l, "first-text");
-    plain_set(l, b, var, x);
+    emit(l, InitText, KText, slot_of(l, var), 0);
+    if !(u is NdText && u == NdText { s: "" }) {
+      plain_set(l, b, var, x);
+    }
     return;
   }
   if (base is TyReference || is_struct_enum(base)) && is_null {
@@ -1642,19 +3025,19 @@ fn set_first(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
     init_ref(l, slot);
     return;
   }
-  d = match t { TyReference { n, dep: _ } => n, _ => -1 };
-  if d >= 0 && is_call_of(b, u, "OpCopyRecord") {
+  d = match t { TyReference { n, dep: _ } => n, _ => null };
+  if d != null && is_call_of(b, u, "OpCopyRecord") {
     note(l, "F2");
-    first_copy(l, b, var, d, u);
+    first_copy(l, b, var, d!, u);
     return;
   }
   hd = own::heap_def_nr(t);
-  src = match x { NdVar { n } => n, _ => -1 };
-  if hd != null && src >= 0 {
-    sd = own::record_copy_source(b, f, var, src);
+  src = match x { NdVar { n } => n, _ => null };
+  if hd != null && src != null {
+    sd = own::record_copy_source(b, f, var, src!);
     if sd != null && own::copies_as(b, hd!, sd!) {
       note(l, "F3");
-      var_copy(l, b, var, src, hd!);
+      var_copy(l, b, var, src!, hd!);
       return;
     }
   }
@@ -1663,10 +3046,10 @@ fn set_first(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
     elem_copy(l, b, var, x, hd!);
     return;
   }
-  if d >= 0 && (x is NdTupleGet) && binds::has_no_deps(t) && binds::owner_witness(f, var) == null {
+  if d != null && (x is NdTupleGet) && binds::has_no_deps(t) && binds::owner_witness(f, var) == null {
     // F5 (`gen_set_first_ref_tuple_copy`): a tuple member copied into a record of its own.
     note(l, "F5");
-    kt = known_type(b, d);
+    kt = known_type(b, d!);
     init_ref(l, slot);
     emit(l, Database, KRef, slot, kt);
     value(l, b, x, KRef);
@@ -1680,23 +3063,23 @@ fn set_first(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
     return;
   }
   shape = binds::first_bind_shape(t);
-  sd2 = match shape { TyReference { n, dep: _ } => n, TyEnum { n, is_ref, dep: _ } => if is_ref { n } else { -1 }, _ => -1 };
+  sd2 = own::heap_def_nr_bare(shape);
   callee = binds::callee_of(b, l.defs, x);
-  if sd2 >= 0 && callee != null && binds::is_loft_defined(binds::def(b, callee!)) {
+  if sd2 != null && callee != null && binds::is_loft_defined(binds::def(b, callee!)) {
     jb = own::named_join_base(own::ownership_of(b, l.own_ops, l.def_nr, x));
     if (shape is TyReference) && !v.view_elided && jb != null {
       note(l, "F9a");
       value(l, b, x, KRef);
       emit(l, Load, KRef, slot_of(l, jb!), 0);
       init_ref_under(l, slot);
-      emit(l, BindOrCopy, KRef, slot, copy_operand(b, known_type(b, sd2)));
+      emit(l, BindOrCopy, KRef, slot, copy_operand(b, known_type(b, sd2!)));
     } else if binds::return_adopts_fresh_store(binds::def(b, callee!)) || v.view_elided || binds::adopts_minted_at_bind(b, l.own_ops, f, var, x) {
       note(l, "F9b");
       value(l, b, x, KRef);
       emit(l, Store, KRef, slot, 0);
     } else {
       note(l, "F9c");
-      call_copy(l, b, var, x, sd2);
+      call_copy(l, b, var, x, sd2!);
     }
     return;
   }
@@ -1717,6 +3100,7 @@ fn set_first(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
   }
   if is_null && base is TyTuple {
     note(l, "first-tuple-null");
+    init_tuple_texts(l, var);
     plain_set(l, b, var, x);
     return;
   }
@@ -1725,12 +3109,15 @@ fn set_first(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
     plain_set(l, b, var, x);
     return;
   }
-  if (t is TyRefVar) && src >= 0 && (binds::tp(f, src) is TyRefVar) {
+  if (t is TyRefVar) && src != null && (binds::tp(f, src!) is TyRefVar) {
     note(l, "first-refvar");
     plain_set(l, b, var, x);
     return;
   }
   note(l, "F13");
+  if var_kind(l, var) == KTuple {
+    init_tuple_texts(l, var);
+  }
   plain_set(l, b, var, x);
 }
 
@@ -1855,7 +3242,7 @@ fn release_caller_hidden_arg(l: Lowering, b: ir::Bundle, a: integer) {
       return;
     }
     emit(l, Load, KRef, slot, 0);
-    emit(l, Load, KRef, slot_of(l, w!), 0);
+    emit(l, Load, KRef, slot_of(l, w), 0);
     emit(l, FreeRefDistinct, KRef, 0, 0);
   } else {
     emit(l, Load, KRef, slot, 0);
@@ -1945,7 +3332,7 @@ fn vector_null(l: Lowering, b: ir::Bundle, var: integer) {
 // `OpGetField(…, 0)` names it, `(H-ClearRelease)`), and that field zeroed.
 fn owned_vector(l: Lowering, b: ir::Bundle, var: integer) {
   w = main_vector_of(b, fvar(b, l.def_nr, var).type_def);
-  if w < 0 {
+  if w == null {
     refuse(l, "an owned vector whose wrapper type the image does not name: {fvar(b, l.def_nr, var).name}");
     return;
   }
@@ -1953,7 +3340,7 @@ fn owned_vector(l: Lowering, b: ir::Bundle, var: integer) {
   emit(l, Database, KRef, slot, w);
   emit(l, Load, KRef, slot, 0);
   emit(l, PushInt, KInt, 0, 0);
-  emit(l, SetW, KInt, 0, width_of("OpSetInt4"));
+  emit(l, SetW, KInt, 0, width_of("OpSetInt4")!);
 }
 
 // `gen_keyed_null` (`codegen.rs:2264`): a keyed local bound to null is minted AS its
@@ -1969,9 +3356,14 @@ fn keyed_null(l: Lowering, b: ir::Bundle, var: integer, first: boolean) {
     return;
   }
   ht = hash_type_of(b, v.type_def);
-  if ht < 0 {
+  if ht == null {
     refuse(l, "a keyed collection whose type the image does not name: {v.name}");
     return;
+  }
+  // First assignment: the slot nulled before the mint, which would otherwise remake whatever
+  // store an earlier frame left there (`OpInitRef`, then `OpDatabase`).
+  if first {
+    init_ref(l, slot);
   }
   emit(l, Database, KRef, slot, ht);
 }
@@ -1979,6 +3371,41 @@ fn keyed_null(l: Lowering, b: ir::Bundle, var: integer, first: boolean) {
 // `set_var` (`codegen.rs:6172`), R3 and every plain arm: the value stored into the variable.
 // A lazy buffer's null is its mint.
 fn plain_set(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
+  // A `&` of a variable that is not a text is written through, as `set_var` writes through
+  // the reference its slot holds — unless the set binds it (`@FR-B-Ref-Repoint`): the
+  // reference then goes into its own slot, and nothing is written through it or freed.
+  if var_kind(l, var) == KTextRef && repoints(b, fvar(b, l.def_nr, var).type_def[0] ?? ir::TypeT.TyVoid, x) {
+    // A `&text` bound: the byte of the text it names.
+    value(l, b, x, KTextRef);
+    emit(l, Store, KInt, slot_of(l, var), 0);
+    return;
+  }
+  if var_kind(l, var) == KVarRef {
+    if repoints(b, fvar(b, l.def_nr, var).type_def[0] ?? ir::TypeT.TyVoid, x) {
+      value(l, b, x, KRef);
+      emit(l, Store, KRef, slot_of(l, var), 0);
+      return;
+    }
+    inner = l.var_inner[var] ?? KOther;
+    // A fresh OWNED store written through a link to a store-backed place displaces the store
+    // the place held: kept by value before the write, released after it unless the place
+    // still names it (`amp_owned_writeback`, `codegen.rs`) — a self-reading value keeps the
+    // old store live while it is built.
+    displaces = inner == KRef && own::ownership_of(b, l.own_ops, l.def_nr, x) is Owned;
+    if displaces {
+      emit(l, Load, KRef, slot_of(l, var), 0);
+      emit(l, Deref, KRef, 0, 0);
+    }
+    emit(l, Load, KRef, slot_of(l, var), 0);
+    value(l, b, x, inner);
+    emit(l, Through, stack_of(inner), 0, access_of(l, var));
+    if displaces {
+      emit(l, Load, KRef, slot_of(l, var), 0);
+      emit(l, Deref, KRef, 0, 0);
+      emit(l, FreeRefDistinct, KRef, 0, 0);
+    }
+    return;
+  }
   k = var_kind(l, var);
   slot = slot_of(l, var);
   if k == KRef {
@@ -1991,9 +3418,15 @@ fn plain_set(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
     emit(l, Store, KRef, slot, 0);
     return;
   }
+  // A tuple: its value's leaves into the slot, by the variable's shape (F-T1).
+  if k == KTuple {
+    tuple_value(l, b, x, fvar(b, l.def_nr, var).type_def[0] ?? ir::TypeT.TyVoid);
+    emit(l, StoreTuple, KTuple, slot, l.var_shape[var] ?? -1);
+    return;
+  }
   // A `&text` is written through (`Store` of kind `KTextRef`): its value is a text.
   value(l, b, x, if k == KTextRef { KText } else { k });
-  emit(l, Store, if k == KTextRef { KTextRef } else { stack_of(k) }, slot, 0);
+  emit(l, Store, if k == KTextRef { KTextRef } else { stack_of(k) }, slot, access_of(l, var));
 }
 
 
@@ -2003,6 +3436,13 @@ fn is_operator(name: text) -> boolean {
 }
 
 // Does `d` have a body written in loft?  A definition with no code is a native.
+// A standard-library function the Rust interpreter runs as its compiled body (`compiled_stdlib`,
+// a `loft_shared_` symbol) and this one carries no native for: that body is its loft body, which
+// runs here as any other function's.
+fn compiled_body(d: ir::Definition) -> boolean {
+  d.native.starts_with("loft_shared_") && native_index(d.name) == null
+}
+
 fn has_body(d: ir::Definition) -> boolean {
   if len(d.code) == 0 {
     return false;
@@ -2043,6 +3483,10 @@ fn call(l: Lowering, b: ir::Bundle, def_nr: integer, args: vector<ir::Node>) {
         dest = slot_of(l, var);
         dest_kind = var_kind(l, var);
       }
+      // F-T2: a text member of a local tuple, at its byte of the slot.
+      NdTupleGet { var, idx } => {
+        dest = member_text(l, b, var, idx);
+      }
       _ => { refuse(l, "a text-writing operator on a destination that is not a variable"); }
     }
     for i in 1..len(args) {
@@ -2081,12 +3525,18 @@ fn call(l: Lowering, b: ir::Bundle, def_nr: integer, args: vector<ir::Node>) {
   if d.name == "OpCreateStack" {
     match args[0]! {
       NdVar { n: var } => {
-        if var_kind(l, var) == KText {
+        k = var_kind(l, var);
+        if k == KText {
           emit(l, RefOf, KText, slot_of(l, var), 0);
-        } else if var_kind(l, var) == KTextRef {
+        } else if k == KTextRef {
           emit(l, Load, KInt, slot_of(l, var), 0);
+        } else if k == KVarRef {
+          // A `&` handed on is the reference it holds.
+          emit(l, Load, KRef, slot_of(l, var), 0);
+        } else if k == KInt || k == KFloat || k == KSingle || k == KRef {
+          emit(l, StackRef, KRef, slot_of(l, var), 0);
         } else {
-          refuse(l, "a reference to a variable that is not a text");
+          refuse(l, "a reference to a variable of a kind the interpreter does not carry yet");
         }
       }
       _ => refuse(l, "a reference to something that is not a variable"),
@@ -2094,11 +3544,15 @@ fn call(l: Lowering, b: ir::Bundle, def_nr: integer, args: vector<ir::Node>) {
     return;
   }
   // A hash snapshot is a native that reads the store, so it is lowered beside the operators.
-  if (is_operator(d.name) || d.name == "n_hash_sorted" || d.name == "n_hash_unsorted") && store_call(l, b, d.name, args) {
+  if (is_operator(d.name) || d.name == "n_hash_sorted" || d.name == "n_hash_unsorted" || d.name == "n_radix_sorted" || d.name == "n_spatial_range" || d.name == "n_trie_prefix") && store_call(l, b, d.name, args) {
     return;
   }
   for i in 0..len(args) {
-    value(l, b, args[i]?, kinds[i] ?? KOther);
+    if (kinds[i] ?? KOther) == KTuple && !is_operator(d.name) {
+      tuple_value(l, b, args[i]?, d.attributes[i]!.typedef[0] ?? ir::TypeT.TyVoid);
+    } else {
+      value(l, b, args[i]?, kinds[i] ?? KOther);
+    }
   }
   if is_operator(d.name) {
     op = operator_op(d.name);
@@ -2107,9 +3561,9 @@ fn call(l: Lowering, b: ir::Bundle, def_nr: integer, args: vector<ir::Node>) {
     } else {
       refuse(l, "an operator the interpreter does not carry: {d.name}");
     }
-  } else if d.native != "" || !has_body(d) {
+  } else if (d.native != "" && !compiled_body(d)) || !has_body(d) {
     idx = native_index(d.name);
-    if idx >= 0 {
+    if idx != null {
       emit(l, Native, kind_of_types(d.returned), idx, len(args));
     } else {
       refuse(l, "a native the interpreter does not carry: {d.name}");
@@ -2144,10 +3598,67 @@ fn is_free(b: ir::Bundle, n: ir::Node) -> boolean {
   false
 }
 
+// The position of the last operator of `ops` that is not a line, or -1.
+fn last_non_line(ops: vector<ir::Node>) -> integer {
+  at = len(ops) - 1;
+  while at >= 0 && unspan(ops[at]!) is NdLine {
+    at -= 1;
+  }
+  at
+}
+
+// A value the scope pass left on the bytecode's stack for the function to answer: `[value,
+// frees…, return null]`, where `OpReturn` answers the stack top (`tail_capture`,
+// `src/c/body.rs`).  The value's position, when `ops` ends that way and the value is of the
+// function's result kind; the return is `last_non_line`.
+fn tail_capture(l: Lowering, b: ir::Bundle, ops: vector<ir::Node>) -> integer? {
+  if l.result == KNone || l.result == KTuple {
+    return null;
+  }
+  ret = last_non_line(ops);
+  if ret < 0 {
+    return null;
+  }
+  match unspan(ops[ret]!) {
+    NdReturn { inner } => {
+      if !(unspan(inner) is NdNull) && !is_free(b, inner) {
+        return null;
+      }
+    }
+    _ => { return null; }
+  }
+  at = ret - 1;
+  while at >= 0 && (unspan(ops[at]!) is NdLine || is_free(b, ops[at]!)) {
+    at -= 1;
+  }
+  if at < 0 || stack_of(kind_of(l, b, ops[at]!)) != stack_of(l.result) {
+    return null;
+  }
+  at
+}
+
 // A block as an expression.  Its value is the last operator that is neither a line, a `Set`
 // nor a free (`assign_seq`, `src/c/body.rs`): the operators before it are statements, and the
 // frees after it run once the value is taken, as they run under it on the bytecode's stack.
+// A `tail_capture` answers its value after the frees.
 fn block_value(l: Lowering, b: ir::Bundle, blk: ir::Block) {
+  tc = tail_capture(l, b, blk.operators);
+  if tc != null {
+    ret = last_non_line(blk.operators);
+    for i in 0..tc! {
+      statement(l, b, blk.operators[i]!);
+    }
+    value(l, b, blk.operators[tc!]!, l.result);
+    for i in tc! + 1..ret {
+      statement(l, b, blk.operators[i]!);
+    }
+    match unspan(blk.operators[ret]!) {
+      NdReturn { inner } => if !(unspan(inner) is NdNull) { statement(l, b, inner); },
+      _ => {}
+    }
+    emit(l, Ret, stack_of(l.result), 0, 0);
+    return;
+  }
   at = len(blk.operators) - 1;
   while at >= 0 {
     o = unspan(blk.operators[at]!);
@@ -2180,13 +3691,17 @@ fn block_statement(l: Lowering, b: ir::Bundle, blk: ir::Block) {
 // it would leave values on the stack, which only a loop inside an operand could do.
 fn leave_loop(l: Lowering, n: integer, is_break: boolean) {
   level = loop_level(l, n);
-  if level < 0 {
+  if level == null {
     refuse(l, "a break or continue outside a loop");
     return;
   }
-  if l.depth != l.loop_depth[level] {
-    refuse(l, "a break or continue with values pending, which S1 does not carry");
-    return;
+  // S1.5: values pending, or loops between this one and the target: the stacks go back to the
+  // target's mark and the marks of the loops inside it go (`Unwind`).
+  if l.depth != l.loop_depth[level] || n > 0 {
+    for lv in level..len(l.loop_marked) {
+      l.loop_marked[lv] = true;
+    }
+    emit(l, Unwind, KInt, n, 0);
   }
   if is_break {
     l.brk_loop += [level];
@@ -2207,16 +3722,27 @@ fn leave_loop(l: Lowering, n: integer, is_break: boolean) {
 // jumps back.  Its iterator's statements are lowered in that order, so the binds are too.
 
 // `Rotation` (`codegen.rs:7290`): the statements before the exit test, the test, those after
-// it, the loop variable and the index it takes (`store`, -1 when none), and `(index, next)`
-// when the start step seeds one counter from the other (`seed`, -1 when none).
+// it, the loop variable and the index it takes (`store`), and the counter the start step seeds
+// from the other (`seed`).  The Rust's two `Option<(u16, u16)>`; a tuple has no `?` of its own
+// (`@FR-T-Absent`), so each pair is a record.
 struct Rotation {
   pre: vector<ir::Node>,
   test: vector<ir::Node>,
   post: vector<ir::Node>,
-  store_lv: integer,
-  store_ix: integer,
-  seed_ix: integer,
-  seed_nxt: integer,
+  store: LoopVar?,
+  seed: Seed?,
+}
+
+// The loop variable `lv` and the range index `ix` it takes each round.
+struct LoopVar {
+  lv: integer,
+  ix: integer,
+}
+
+// `index` seeded from `next` before the loop (`start_step`).
+struct Seed {
+  ix: integer,
+  nxt: integer,
 }
 
 // `exit_test` (`codegen.rs:7303`): `if c { break }` of the innermost loop, answering `c`.
@@ -2267,6 +3793,36 @@ fn holds_jump(n: ir::Node) -> boolean {
   }
 }
 
+// Does `n` hold a `break` to the end of the loop `level` loops out from it?
+fn breaks_to(n: ir::Node, level: integer) -> boolean {
+  match n {
+    NdBreak { n: out } => out == level,
+    NdLoop { block } => breaks_to_in(block[0]!.operators, level + 1),
+    NdSpan { pos: _, inner } => breaks_to(inner, level),
+    NdCall { def_nr: _, args } => breaks_to_in(args, level),
+    NdCallRef { var: _, args } => breaks_to_in(args, level),
+    NdInsert { items } => breaks_to_in(items, level),
+    NdTuple { items } => breaks_to_in(items, level),
+    NdBlock { block } => breaks_to_in(block[0]!.operators, level),
+    NdSet { var: _, inner } => breaks_to(inner, level),
+    NdReturn { inner } => breaks_to(inner, level),
+    NdDrop { inner } => breaks_to(inner, level),
+    NdTuplePut { var: _, idx: _, inner } => breaks_to(inner, level),
+    NdIf { cond, t, f } => breaks_to(cond, level) || breaks_to(t, level) || breaks_to(f, level),
+    NdIter { var: _, create, next, init } => breaks_to(create, level) || breaks_to(next, level) || breaks_to(init, level),
+    _ => false,
+  }
+}
+
+fn breaks_to_in(ns: vector<ir::Node>, level: integer) -> boolean {
+  for n in ns {
+    if breaks_to(n, level) {
+      return true;
+    }
+  }
+  false
+}
+
 fn holds_jump_in(ns: vector<ir::Node>) -> boolean {
   for n in ns {
     if holds_jump(n) {
@@ -2276,13 +3832,12 @@ fn holds_jump_in(ns: vector<ir::Node>) -> boolean {
   false
 }
 
-// `rotation` (`codegen.rs:7324`): a loop's first statement read as a rotatable exit, or the
-// rotation with an empty test when it is none.
-fn rotation(first: ir::Node) -> Rotation {
-  none = Rotation { pre: [], test: [], post: [], store_lv: -1, store_ix: -1, seed_ix: -1, seed_nxt: -1 };
+// `rotation` (`codegen.rs:7324`): a loop's first statement read as a rotatable exit, or null
+// when it is none.
+fn rotation(first: ir::Node) -> Rotation? {
   c = exit_test(first);
   if len(c) > 0 {
-    return Rotation { pre: [], test: c, post: [], store_lv: -1, store_ix: -1, seed_ix: -1, seed_nxt: -1 };
+    return Rotation { pre: [], test: c, post: [], store: null, seed: null };
   }
   match unspan(first) {
     NdSet { var: lv, inner } => {
@@ -2291,27 +3846,27 @@ fn rotation(first: ir::Node) -> Rotation {
           bl = block[0]!;
           n = len(bl.operators);
           if bl.name != "Iter range" || n == 0 {
-            return none;
+            return null;
           }
-          ix = match unspan(bl.operators[n - 1]!) { NdVar { n: x } => x, _ => -1 };
-          if ix < 0 {
-            return none;
+          ix = own::var_of(bl.operators[n - 1]!);
+          if ix == null {
+            return null;
           }
-          k = -1;
+          k: integer? = null;
           for i in 0..n - 1 {
             if len(exit_test(bl.operators[i]!)) > 0 {
               k = i;
             }
           }
-          if k < 0 {
-            return none;
+          if k == null {
+            return null;
           }
           for i in 0..n - 1 {
             if i != k && holds_jump(bl.operators[i]!) {
-              return none;
+              return null;
             }
           }
-          r = Rotation { pre: [], test: exit_test(bl.operators[k]!), post: [], store_lv: lv, store_ix: ix, seed_ix: -1, seed_nxt: -1 };
+          r = Rotation { pre: [], test: exit_test(bl.operators[k]!), post: [], store: LoopVar { lv: lv, ix: ix }, seed: null };
           for i in 0..k {
             r.pre += [bl.operators[i]!];
           }
@@ -2320,76 +3875,74 @@ fn rotation(first: ir::Node) -> Rotation {
           }
           r
         }
-        _ => none,
+        _ => null,
       }
     }
-    _ => none,
+    _ => null,
   }
 }
 
 // `start_step` (`codegen.rs:7377`, `@FR-R-StartStep`): `{if c(next) break; index = next;
-// next = next + 1; index}` stepped as one counter, `index` seeded from `next`.  An empty test
-// when it does not apply.
-fn start_step(r: Rotation) -> Rotation {
-  none = Rotation { pre: [], test: [], post: [], store_lv: -1, store_ix: -1, seed_ix: -1, seed_nxt: -1 };
-  ix = r.store_ix;
-  if ix < 0 || len(r.pre) != 0 || r.seed_ix >= 0 || len(r.post) != 2 {
-    return none;
+// next = next + 1; index}` stepped as one counter, `index` seeded from `next`; null when it does
+// not apply.
+fn start_step(r: Rotation) -> Rotation? {
+  st = r.store;
+  if st == null {
+    return null;
   }
-  copy = unspan(r.post[0]!);
-  step = unspan(r.post[1]!);
-  cix = -1;
-  nxt = -1;
-  match copy {
-    NdSet { var, inner } => {
-      cix = var;
-      nxt = match unspan(inner) { NdVar { n } => n, _ => -1 };
-    }
-    _ => {}
+  if len(r.pre) != 0 || r.seed != null || len(r.post) != 2 {
+    return null;
   }
-  if nxt < 0 || cix != ix || nxt == ix {
-    return none;
+  ix = st.ix;
+  // `index = next`, then `next = next + 1`.
+  nxt = match unspan(r.post[0]!) {
+    NdSet { var, inner } => if var == ix { own::var_of(inner) } else { null },
+    _ => null,
+  };
+  if nxt == null {
+    return null;
   }
-  add = -1;
-  match step {
-    NdSet { var, inner } => {
-      if var != nxt {
-        return none;
-      }
-      match unspan(inner) {
-        NdCall { def_nr, args } => {
-          if len(args) == 2 && is_var(args[0]!, nxt) && is_int(args[1]!, 1) {
-            add = def_nr;
-          }
-        }
-        _ => {}
-      }
-    }
-    _ => {}
+  if nxt == ix {
+    return null;
   }
-  if add < 0 {
-    return none;
+  add = increment_of(r.post[1]!, nxt);
+  if add == null {
+    return null;
   }
   match unspan(r.test[0]!) {
     NdCall { def_nr: cmp, args: targs } => {
       if len(targs) != 2 {
-        return none;
+        return null;
       }
       end = targs[0]!;
       if !is_var(targs[1]!, nxt) || binds::reads_var(end, nxt) || binds::reads_var(end, ix) {
-        return none;
+        return null;
       }
       Rotation {
         pre: [NdSet { var: ix, inner: NdCall { def_nr: add, args: [NdVar { n: ix }, NdInt { n: 1 }] } }],
         test: [NdCall { def_nr: cmp, args: [end, NdVar { n: ix }] }],
         post: [],
-        store_lv: r.store_lv,
-        store_ix: r.store_ix,
-        seed_ix: ix,
-        seed_nxt: nxt,
+        store: st,
+        seed: Seed { ix: ix, nxt: nxt },
       }
     }
-    _ => none,
+    _ => null,
+  }
+}
+
+// The operator of `v = v + 1` for counter `v`, or null when `step` is not that.
+fn increment_of(step: ir::Node, v: integer) -> integer? {
+  match unspan(step) {
+    NdSet { var, inner } => {
+      if var != v {
+        return null;
+      }
+      match unspan(inner) {
+        NdCall { def_nr, args } => if len(args) == 2 && is_var(args[0]!, v) && is_int(args[1]!, 1) { def_nr } else { null },
+        _ => null,
+      }
+    }
+    _ => null,
   }
 }
 
@@ -2410,11 +3963,19 @@ fn is_int(n: ir::Node, v: integer) -> boolean {
 // `start_step_holds` (`codegen.rs:1276`): the body never reads `next`, nor `index` unless the
 // loop variable shares its slot.
 fn start_step_holds(b: ir::Bundle, d: integer, ops: vector<ir::Node>, s: Rotation) -> boolean {
-  pos = fvar(b, d, s.store_lv).stack_pos;
-  shared = pos != 65535 && pos == fvar(b, d, s.seed_ix).stack_pos;
+  sd = s.seed;
+  if sd == null {
+    return false;
+  }
+  st = s.store;
+  if st == null {
+    return false;
+  }
+  pos = fvar(b, d, st.lv).stack_pos;
+  shared = pos != 65535 && pos == fvar(b, d, sd.ix).stack_pos;
   for i in 1..len(ops) {
     o = ops[i]!;
-    if binds::reads_var(o, s.seed_nxt) || (!shared && binds::reads_var(o, s.seed_ix)) {
+    if binds::reads_var(o, sd.nxt) || (!shared && binds::reads_var(o, sd.ix)) {
       return false;
     }
   }
@@ -2425,10 +3986,12 @@ fn start_step_holds(b: ir::Bundle, d: integer, ops: vector<ir::Node>, s: Rotatio
 // test); the body: the post statements, the loop variable, the rest; the step; the test, which
 // jumps back to the body while it is false.  A `continue` goes to the step.
 fn rotated_loop(l: Lowering, b: ir::Bundle, ops: vector<ir::Node>, r: Rotation) {
-  if r.seed_ix >= 0 {
-    set(l, b, r.seed_ix, NdVar { n: r.seed_nxt });
+  sd = r.seed;
+  if sd != null {
+    set(l, b, sd.ix, NdVar { n: sd.nxt });
   }
   level = len(l.loop_start);
+  open_mark(l);
   l.loop_start += [-1];
   l.loop_depth += [l.depth];
   entry = len(l.ops);
@@ -2437,23 +4000,20 @@ fn rotated_loop(l: Lowering, b: ir::Bundle, ops: vector<ir::Node>, r: Rotation) 
   for p in r.post {
     statement(l, b, p);
   }
-  if r.store_lv >= 0 {
-    pos = fvar(b, l.def_nr, r.store_lv).stack_pos;
-    if pos != 65535 && pos == fvar(b, l.def_nr, r.store_ix).stack_pos {
-      // The loop variable IS its index's slot: no set (`set_stack_allocated`); the loft frame
-      // keeps the two apart until F-1, so the value is copied here.
-      mark(b, l.def_nr, r.store_lv, true);
-      k = var_kind(l, r.store_ix);
-      emit(l, Load, stack_of(k), slot_of(l, r.store_ix), 0);
-      emit(l, Store, stack_of(k), slot_of(l, r.store_lv), 0);
+  st = r.store;
+  if st != null {
+    pos = fvar(b, l.def_nr, st.lv).stack_pos;
+    if pos != 65535 && pos == fvar(b, l.def_nr, st.ix).stack_pos {
+      // The loop variable IS its index's slot: no set (`set_stack_allocated`).
+      mark(b, l.def_nr, st.lv, true);
     } else {
-      statement(l, b, NdSet { var: r.store_lv, inner: NdVar { n: r.store_ix } });
+      statement(l, b, NdSet { var: st.lv, inner: NdVar { n: st.ix } });
     }
   }
   for i in 1..len(ops) {
     statement(l, b, ops[i]!);
   }
-  if r.seed_ix < 0 {
+  if sd == null {
     l.ops[entry].a = len(l.ops);
   }
   step = len(l.ops);
@@ -2466,7 +4026,7 @@ fn rotated_loop(l: Lowering, b: ir::Bundle, ops: vector<ir::Node>, r: Rotation) 
   for p in r.pre {
     statement(l, b, p);
   }
-  if r.seed_ix >= 0 {
+  if sd != null {
     l.ops[entry].a = len(l.ops);
   }
   expr(l, b, r.test[0]!);
@@ -2478,8 +4038,26 @@ fn rotated_loop(l: Lowering, b: ir::Bundle, ops: vector<ir::Node>, r: Rotation) 
       l.brk_loop[i] = -1;
     }
   }
+  close_mark(l, level);
   l.loop_start.remove(level);
   l.loop_depth.remove(level);
+}
+
+// S1.5: a loop's mark placeholder, made `LoopMark` at its end if a leave marked the loop.
+fn open_mark(l: Lowering) {
+  l.loop_mark_at += [len(l.ops)];
+  l.loop_marked += [false];
+  emit(l, Nop, KInt, 0, 0);
+}
+
+// The end of loop `level`, where its breaks land: a marked loop drops its mark here.
+fn close_mark(l: Lowering, level: integer) {
+  if l.loop_marked[level] ?? false {
+    l.ops[l.loop_mark_at[level]!].code = LoopMark;
+    emit(l, LoopUnmark, KInt, 0, 0);
+  }
+  l.loop_mark_at.remove(level);
+  l.loop_marked.remove(level);
 }
 
 // `n`, a statement: its ops leave the stacks as they found them.
@@ -2493,6 +4071,10 @@ fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
       set(l, b, var, inner);
     }
     NdBlock { block } => block_statement(l, b, block[0]?),
+    // A variable read for nothing: the tail of a value block standing as a statement (the
+    // scope pass's `one_buffer_chain`).  The Rust writer pushes it and drops it later; reading
+    // a variable has no effect, so nothing is lowered.
+    NdVar { n: _ } => {}
     NdIf { cond, t, f } => {
       expr(l, b, cond);
       to_else = len(l.ops);
@@ -2511,12 +4093,16 @@ fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
     }
     NdLoop { block } => {
       ops = block[0]!.operators;
+      w = char_walk(b, l.def_nr, block[0]!);
+      if w != null {
+        l.walks += [w!];
+      }
       if len(ops) > 0 {
         r = rotation(ops[0]!);
-        if len(r.test) > 0 {
+        if r != null {
           s = start_step(r);
-          if len(s.test) > 0 && start_step_holds(b, l.def_nr, ops, s) {
-            rotated_loop(l, b, ops, s);
+          if s != null && start_step_holds(b, l.def_nr, ops, s!) {
+            rotated_loop(l, b, ops, s!);
           } else {
             rotated_loop(l, b, ops, r);
           }
@@ -2524,6 +4110,7 @@ fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
         }
       }
       level = len(l.loop_start);
+      open_mark(l);
       l.loop_start += [len(l.ops)];
       l.loop_depth += [l.depth];
       block_statement(l, b, block[0]?);
@@ -2535,6 +4122,7 @@ fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
           l.brk_loop[i] = -1;
         }
       }
+      close_mark(l, level);
       l.loop_start.remove(level);
       l.loop_depth.remove(level);
     }
@@ -2543,13 +4131,35 @@ fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
       before = l.depth;
       expr(l, b, inner);
       if l.depth > before {
-        emit(l, Pop, stack_of(kind_of(l, b, inner)), 0, 0);
+        discard(l, b, inner);
       }
     }
     // Statements the compiler inserted in place of one (`Value::Insert`).
     NdInsert { items } => {
       for item in items {
         statement(l, b, item);
+      }
+    }
+    // `t.i = v`: the member written at its byte of the slot, a nested tuple whole.
+    NdTuplePut { var, idx, inner } => {
+      slot = slot_of(l, var);
+      if var_kind(l, var) != KTuple {
+        refuse(l, "a tuple member of a variable that is not a tuple: {l.var_type[var] ?? "?"}");
+        return;
+      }
+      v = fvar(b, l.def_nr, var);
+      elems = tuple_elems(v.type_def[0] ?? ir::TypeT.TyVoid);
+      at = slot + member_at(elems, idx, !v.argument);
+      e = elems[idx] ?? ir::TypeT.TyVoid;
+      if len(tuple_elems(e)) > 0 {
+        tuple_value(l, b, inner, e);
+        emit(l, StoreTuple, KTuple, at, shape_of(l, e, !v.argument));
+      } else if v.argument && kind_of_type(e) == KText {
+        refuse(l, "a text member of a tuple argument written");
+      } else {
+        k = stack_of(kind_of_type(e));
+        value(l, b, inner, k);
+        emit(l, Store, k, at, access_for(e));
       }
     }
     NdBreak { n: out } => leave_loop(l, out, true),
@@ -2559,50 +4169,133 @@ fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
       expr(l, b, n);
       // A call that leaves a value drops it; a text-writing operator or `OpPrint` leaves none.
       if l.depth > before {
-        emit(l, Pop, stack_of(kind_of(l, b, n)), 0, 0);
+        discard(l, b, n);
       }
     }
     _ => refuse(l, "a statement the interpreter does not carry: {n}"),
   }
 }
 
-// The ops of definition `def_nr`'s body.
+// The byte of text member `idx` of local tuple `var`, written in place by a text-writing
+// operator; an argument tuple's member is a view of the caller's text, so it is refused.
+fn member_text(l: Lowering, b: ir::Bundle, var: integer, idx: integer) -> integer {
+  slot = slot_of(l, var);
+  v = fvar(b, l.def_nr, var);
+  elems = tuple_elems(v.type_def[0] ?? ir::TypeT.TyVoid);
+  member = elems[idx] ?? ir::TypeT.TyVoid;
+  if var_kind(l, var) != KTuple || v.argument || kind_of_type(member) != KText {
+    refuse(l, "a text-writing operator on a member that is not a local tuple's text");
+    return 0;
+  }
+  slot + member_at(elems, idx, true)
+}
+
+// The first set of a tuple local: each text member made the empty text at its byte, whatever an
+// earlier frame left there, before the store writes it (F-T2; PF2's `InitText`).
+fn init_tuple_texts(l: Lowering, var: integer) {
+  sh = l.var_shape[var] ?? -1;
+  if sh < 0 {
+    return;
+  }
+  slot = slot_of(l, var);
+  for leaf in l.shapes[sh]!.leaves {
+    if leaf.kind == KText {
+      emit(l, InitText, KText, slot + leaf.at, 0);
+    }
+  }
+}
+
+// The value expression `n` left, dropped: a tuple's leaves by the shape of the type the call
+// answers.
+fn discard(l: Lowering, b: ir::Bundle, n: ir::Node) {
+  k = stack_of(kind_of(l, b, n));
+  if k != KTuple {
+    emit(l, Pop, k, 0, 0);
+    return;
+  }
+  match unspan(n) {
+    NdCall { def_nr, args: _ } => {
+      emit(l, PopTuple, KTuple, 0, shape_of(l, b.data.definitions[def_nr]!.returned[0] ?? ir::TypeT.TyVoid, false));
+    }
+    _ => refuse(l, "a tuple dropped that is not a call's"),
+  }
+}
+
+// The ops of definition `def_nr`'s body.  The walk marks variables as the bytecode writer does
+// (`mark`: `set_stack_allocated`, `set_skip_free`), for every reader in this walk; the image's
+// own flags are put back after it, so a later lowering of the same function — the next run's —
+// walks from where this one did.
 pub fn lower(b: ir::Bundle, def_nr: integer) -> Lowering {
   d = b.data.definitions[def_nr]?;
+  was_allocated: vector<boolean> = [];
+  was_skipped: vector<boolean> = [];
+  for v in d.variables.variables {
+    was_allocated += [v.stack_allocated];
+    was_skipped += [v.skip_free];
+  }
+  l = lower_walk(b, def_nr, d);
+  for v in b.data.definitions[def_nr]!.variables.variables {
+    v.stack_allocated = was_allocated[v#index] ?? false;
+    v.skip_free = was_skipped[v#index] ?? false;
+  }
+  l
+}
+
+fn lower_walk(b: ir::Bundle, def_nr: integer, d: ir::Definition) -> Lowering {
   l = empty();
   l.def_nr = def_nr;
   l.own_ops = own::ops_of(b);
   l.defs = own::function_defs(b, def_nr, l.own_ops);
   l.result = kind_of_types(d.returned);
-  // Each variable gets the next slot of its kind.  The parameters take theirs FIRST, in order,
-  // so they fill the slots the caller's arguments land in — a hidden one too (a text result's
-  // return buffer), which the scope pass creates after the locals, at a higher number.
-  for v in d.variables.variables {
-    l.var_kind += [kind_of_types(v.type_def)];
-    l.var_slot += [0];
+  // Every variable lives at its byte of the Rust interpreter's frame (`frame::position`); the
+  // frame is as large as its furthest variable reaches.
+  f = d.variables;
+  for v in f.variables {
+    // Two link shapes are not carried yet: a narrow local a `&` names, which holds its FIELD
+    // encoding (`linked_narrow`, `@FR-L-Narrow-Linked`), and a `&text` to a text field or
+    // element (`store_text_link`) — a `&text` here is the byte of a text in the frame.
+    // A `&text` to a text field or element (`store_text_link`) is not carried yet; a narrow
+    // local a `&` names holds its FIELD encoding (`narrow_access`, `@FR-L-Narrow-Linked`).
+    linked = if v.linked_narrow { narrow_access(v.type_def[0] ?? ir::TypeT.TyVoid) } else { null };
+    l.var_kind += [if v.store_text_link { KOther } else { kind_of_types(v.type_def) }];
+    l.var_slot += [-1];
+    l.var_access += [linked ?? access_for(v.type_def[0] ?? ir::TypeT.TyVoid)];
+    l.var_inner += [named_kind(v.type_def[0] ?? ir::TypeT.TyVoid)];
+    l.var_shape += [if l.var_kind[v#index] == KTuple { shape_of(l, v.type_def[0] ?? ir::TypeT.TyVoid, !v.argument) } else { -1 }];
     l.owned_reassigned += [false];
     shown = "{v.type_def[0] ?? ir::TypeT.TyVoid}";
     l.var_type += [shown.split(' ')[0] ?? shown];
-  }
-  for pass in 0..2 {
-    for v in d.variables.variables {
-      if v.argument != (pass == 0) {
-        continue;
-      }
-      k = stack_of(kind_of_types(v.type_def));
-      if k == KInt || k == KRef {
-        l.var_slot[v#index] = l.slots_int;
-        l.slots_int += int_width(k);
-      } else if k == KFloat {
-        l.var_slot[v#index] = l.slots_float;
-        l.slots_float += 1;
-      } else if k == KText {
-        l.var_slot[v#index] = l.slots_text;
-        l.slots_text += 1;
+    if v.argument {
+      l.arg_vars += [v#index];
+    }
+    k = stack_of(kind_of_types(v.type_def));
+    if k == KText && v.argument {
+      l.var_access[v#index] = 1;
+    }
+    if k == KInt || k == KRef || k == KFloat || k == KText || k == KTuple {
+      at = frame::position(f, v#index);
+      if at != null {
+        l.var_slot[v#index] = at;
+        if !v.argument {
+          l.local_vars += [v#index];
+        }
+        reach = at + frame::width(v.type_def[0]!, v.argument);
+        if reach > l.frame_bytes {
+          l.frame_bytes = reach;
+        }
       }
     }
   }
-  for pk in param_kinds(d) {
+  // The return address's slot follows the arguments (`codegen.rs`: `stack.step(4)`).
+  args_end = 0;
+  for a in l.arg_vars {
+    args_end += frame::stepped(frame::width(f.variables[a]!.type_def[0]!, true));
+  }
+  if args_end + 8 > l.frame_bytes {
+    l.frame_bytes = args_end + 8;
+  }
+  for a in d.attributes {
+    pk = kind_of_types(a.typedef);
     s = stack_of(pk);
     if s == KInt || s == KRef {
       l.params_int += int_width(s);
@@ -2610,12 +4303,18 @@ pub fn lower(b: ir::Bundle, def_nr: integer) -> Lowering {
       l.params_float += 1;
     } else if s == KText {
       l.params_text += 1;
+    } else if s == KTuple {
+      l.params_tuple += 1;
     } else {
-      refuse(l, "a parameter of a kind the interpreter does not carry yet");
+      shown = "{a.typedef[0] ?? ir::TypeT.TyVoid}";
+      refuse(l, "a parameter of a kind the interpreter does not carry yet: {shown.split(' ')[0] ?? shown}");
     }
   }
   if l.result == KTextRef {
     l.result = KText;
+  }
+  if l.result == KTuple {
+    l.result_shape = shape_of(l, d.returned[0] ?? ir::TypeT.TyVoid, false);
   }
   if l.result == KNone {
     statement(l, b, d.code[0]?);
@@ -2632,12 +4331,12 @@ pub fn lower(b: ir::Bundle, def_nr: integer) -> Lowering {
   l
 }
 
-// The definition number of the function the compiler named `name`, or -1.
-pub fn find(b: ir::Bundle, name: text) -> integer {
+// The definition number of the function the compiler named `name`, or null.
+pub fn find(b: ir::Bundle, name: text) -> integer? {
   for d in b.data.definitions {
     if d.name == name {
       return d#index;
     }
   }
-  -1
+  null
 }

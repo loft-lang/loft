@@ -518,7 +518,7 @@ impl Parser {
     /// `@FR-B-Scope` — has the binding `var` last received ended?  True when the statement
     /// that bound it sits in a block this point is no longer inside.  Parameters and the
     /// compiler's own locals are bound for the whole function.
-    fn binding_ended(&self, var: u16) -> bool {
+    pub(crate) fn binding_ended(&self, var: u16) -> bool {
         if self.vars.is_argument(var) || self.vars.name(var).starts_with("__") {
             return false;
         }
@@ -1080,6 +1080,13 @@ impl Parser {
                     && let Some(d_nr) = self.vars.tp(*into).base().heap_def_nr()
                     && let Some(vd_nr) = self.vars.tp(v_nr).base().heap_def_nr()
                     && self.data.copies_as(d_nr, vd_nr)
+                    // `@FR-C-Var` runs one way, variant into enum.  A destination typed as a
+                    // VARIANT is no place for its enum's value: copied in as the variant, any
+                    // other variant lost its fields (`x = Short {…}; x = e` read garbage after a
+                    // `Long` arrived).  The source keeps its own type, so an inferred local
+                    // widens to the enum (`@FR-N-Join`) and a declared one is refused.
+                    && !(self.data.def_type(d_nr) == DefType::EnumValue
+                        && self.data.def(d_nr).parent == vd_nr)
                 {
                     // Don't create OpCopyRecord here: generate_set handles the copy when
                     // value=Var(src). Using Var(v_nr) directly lets method calls like
@@ -4218,7 +4225,11 @@ impl Parser {
     ///
     /// Deliberately not `Lexer::recover_to`, whose depth walk this otherwise mirrors:
     /// recovery may cross anything, and this stops at the statement's end.
-    pub(crate) fn peek_tuple_literal(&mut self) -> bool {
+    ///
+    /// The same holds for a parenthesised value a POSTFIX follows — `(v + [9]).len()`,
+    /// `(a + b)[0]` — whose value is the postfix's operand, not the destination: so the walk
+    /// also answers `true` when the closer is followed by `.` or `[`.
+    pub(crate) fn peek_paren_value_apart(&mut self) -> bool {
         let saved = self.lexer.link();
         let mut depth: i32 = 0;
         // The depth to return to as each open interpolation hole closes.
@@ -4274,6 +4285,10 @@ impl Parser {
                 || self.lexer.peek_token("}")
             {
                 if depth == 0 {
+                    if self.lexer.peek_token(")") {
+                        self.lexer.cont();
+                        found = self.lexer.peek_token(".") || self.lexer.peek_token("[");
+                    }
                     break;
                 }
                 depth -= 1;
@@ -4532,8 +4547,12 @@ impl Parser {
                 *data = Value::Var(named);
             }
         }
-        // O8.5: capture range bounds for const-unroll detection.
-        self.last_range_from = Some(expr.clone());
+        // O8.5 (`@FR-I-Comp`): capture range bounds for const-unroll detection — of a RANGE
+        // only.  A slice's bounds (`data` set) are positions in a vector, an end below zero
+        // counting from its end; read as the integers `0..-1` they made
+        // `[for x in v[..-1] { x }]` an empty range, folded to `[]` (loft#2344).
+        let pure_range = *data == Value::Null;
+        self.last_range_from = pure_range.then(|| expr.clone());
         let mut till = Value::Null;
         // `@FR-I-RangeFrom` — `for i in a.. { … }` has no end: it counts up until the body
         // leaves (`break`, `return`), as a Rust `RangeFrom` does (loft#1813).  With nothing
@@ -4556,6 +4575,8 @@ impl Parser {
                 open_end_tp = Some(in_type.base().clone());
             }
         }
+        // Where the end bound was WRITTEN, for a diagnostic about it; an open end has none.
+        let mut till_at: Option<Position> = None;
         let mut till_tp = if let Some(tp) = open_end_tp {
             tp
         } else if till != Value::Null {
@@ -4568,6 +4589,7 @@ impl Parser {
             };
             in_type.clone()
         } else {
+            till_at = Some(*self.lexer.peek_pos());
             self.expression(&mut till)
         };
         // The end's type as written, for the element type's join below (`till_tp` is moved
@@ -4582,7 +4604,9 @@ impl Parser {
                 if last <= spec.max && last >= i64::from(spec.min))
         });
         // O8.5: store till value (adjusted for inclusive ranges).
-        if incl {
+        if !pure_range {
+            self.last_range_till = None;
+        } else if incl {
             // 0..=9 means till is 9, but the range includes 9.
             // Store till+1 so the unroller can use from..till_exclusive.
             if let Value::Int(t) = &till {
@@ -4735,12 +4759,56 @@ impl Parser {
                 len_var,
                 self.cl("OpLengthVector", std::slice::from_ref(data)),
             ));
+            // @FR-N-Store — a slice bound is an index, and "a null index reads null": a bound
+            // whose type is `τ?` is read ONCE into a temp of its own type and tested before the
+            // clamp, which would read the null as a position.  A null bound leaves the pair
+            // empty, so a walk takes no round (`@FR-I-RangeNull`), and `_slice_null` tells a bind
+            // to leave its local ABSENT (`Parser::materialize_iterator`, loft#2306).
+            let mut null_flag = None;
+            let mut null_tests = Vec::new();
+            for (bound, tp, name, at) in [
+                (&mut *expr, &in_type, "slice_from", None),
+                (&mut till, &till_tp, "slice_till", till_at),
+            ] {
+                if matches!(tp, Type::Optional(_)) {
+                    // The end bound is a slot, as a single index and a text slice's bound are:
+                    // a `τ?` stored into it warns, on the bound as written (an open end has
+                    // none).  The start is asked where it is parsed, in `parse_in_range`.
+                    if let Some(at) = at {
+                        let mut probe = bound.clone();
+                        self.convert_store_lenient(&mut probe, tp, &I32, "the index", Some(&at));
+                    }
+                    let raw = self.create_unique(name, tp);
+                    iter_prelude.push(v_set(raw, std::mem::replace(bound, Value::Var(raw))));
+                    null_tests.push(self.single_op("!", Value::Var(raw), tp.clone()));
+                }
+            }
+            if let Some(last) = null_tests.pop() {
+                let flag = self.create_unique("slice_null", &Type::Boolean);
+                let test = null_tests
+                    .into_iter()
+                    .rev()
+                    .fold(last, |rest, t| v_if(t, Value::Boolean(true), rest));
+                iter_prelude.push(v_set(flag, test));
+                null_flag = Some(flag);
+            }
             iter_prelude.push(v_set(lo_var, expr.clone()));
             let lo = self.slice_clamp_bound(Value::Var(lo_var), len_var, false);
             iter_prelude.push(v_set(lo_var, lo));
             iter_prelude.push(v_set(hi_var, till.clone()));
             let hi = self.slice_clamp_bound(Value::Var(hi_var), len_var, incl);
             iter_prelude.push(v_set(hi_var, hi));
+            if let Some(flag) = null_flag {
+                iter_prelude.push(v_if(
+                    Value::Var(flag),
+                    v_block(
+                        vec![v_set(lo_var, Value::Int(0)), v_set(hi_var, Value::Int(0))],
+                        Type::Void,
+                        "null slice bound",
+                    ),
+                    Value::Null,
+                ));
+            }
             *expr = Value::Var(lo_var);
             till = Value::Var(hi_var);
             till_tp = I32.clone();
@@ -5069,11 +5137,13 @@ impl Parser {
         // later by the caller sees it false — `x = coll[lo..hi]` in a body is still rejected.
         let prev_iterable_context = self.iterable_context;
         self.iterable_context = true;
+        let mut start_at = None;
         let in_type = if self.lexer.peek_token("..") || self.lexer.peek_token("..=") {
             // Open-start range: treat missing start as 0.
             *expr = Value::Int(0);
             I32.clone()
         } else {
+            start_at = Some(*self.lexer.peek_pos());
             self.expression(expr)
         };
         self.iterable_context = prev_iterable_context;
@@ -5119,6 +5189,15 @@ impl Parser {
                 self.lexer.token(")");
             }
             return in_type;
+        }
+        // A slice's start bound is a slot, as a single index is: a `τ?` stored into it warns, on
+        // the bound as written (`@FR-N-Store`).
+        if *data != Value::Null
+            && matches!(in_type, Type::Optional(_))
+            && let Some(at) = start_at
+        {
+            let mut probe = expr.clone();
+            self.convert_store_lenient(&mut probe, &in_type, &I32, "the index", Some(&at));
         }
         self.parse_in_range_body(expr, data, subject_tp, name, in_type, reverse)
     }
@@ -5651,6 +5730,9 @@ impl Parser {
                 }
                 empty
             };
+            // The value's first token: where a diagnostic about the value goes when the value
+            // carries no span of its own (a local read).
+            let value_at = *self.lexer.peek_pos();
             let exp_tp = if empty_braces {
                 // Pass 2 only: the field is parsed in both passes, so an ungated notice is
                 // reported twice at one position — which reads as two findings and, now that
@@ -5704,8 +5786,11 @@ impl Parser {
                 // `takes(|x| { x * 2 })` says, and used to be refused only because the `⇐`
                 // channel was never pushed here. `var_tp` (`td`, below) already carries the
                 // type for everything that reads it, but `lambda_hint` reads the channel.
+                // loft#2337 — and a COLLECTION field's type is what an empty `[]` inside the
+                // value builds (`(T-Chk-Vec)`): an `if`'s then arm `[]` asks this channel for its
+                // element, as it does under a declared local or a field assignment, which push it.
                 let saved_expected = std::mem::replace(&mut self.expected, Type::Unknown(0));
-                if Self::seeds_lambda_hint(&td) {
+                if Self::seeds_lambda_hint(&td) || crate::parser::vectors::is_collection(&td_base) {
                     self.expected = td.clone();
                 }
                 // A COLLECTION member of a literal rebuilt into a whole local is written through
@@ -5869,7 +5954,15 @@ impl Parser {
                 let prev = std::mem::replace(&mut value, Value::Var(tmp));
                 sinks.hoists.push(v_set(tmp, prev));
             }
-            if let Some(bulk) = self.handle_field(td_nr, code, list, &field, &mut value, &exp_tp) {
+            if let Some(bulk) = self.handle_field(
+                td_nr,
+                code,
+                list,
+                &field,
+                &mut value,
+                &exp_tp,
+                Some(&value_at),
+            ) {
                 sinks.group_fills.push(bulk);
             }
         }
@@ -7889,6 +7982,7 @@ impl Parser {
         field: &str,
         value: &mut Value,
         exp_tp: &Type,
+        value_at: Option<&Position>,
     ) -> Option<Value> {
         let nr = self.data.attr(td_nr, field);
         let td = self.data.attr_type(td_nr, nr);
@@ -8009,7 +8103,7 @@ impl Parser {
             // @FR-N-Store — this lowering never reaches `convert`, so it asks for itself:
             // `H { f: w[i] }` with `w[i]: vector<integer>?` was the one struct-field cell of
             // loft#1366's matrix that said nothing.
-            self.n_store_violation(exp_tp, &td, "the field", None);
+            self.n_store_violation(exp_tp, &td, "the field", value_at);
             //
             // the same holds for any non-Insert vector-typed
             // expression (e.g. `C { v: build() }` where `build` returns a
@@ -8220,7 +8314,7 @@ impl Parser {
             {
                 // A constant that lands on a nullable narrow field's null code is refused
                 // by the store face (`nullable_narrow_constant_refusal`, loft#1796).
-                if !self.convert_store(value, exp_tp, &td, "the field", None) {
+                if !self.convert_store(value, exp_tp, &td, "the field", value_at) {
                     // @FR-N-Store is asked inside the store face; this arm is the plain
                     // type mismatch.
                     // Plan-07 phase 6 (partial) — name the value side first

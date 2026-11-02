@@ -55,6 +55,156 @@ thread_local! {
     static RENDER_TAIL: std::cell::Cell<Option<(u32, u16, u16)>> = const { std::cell::Cell::new(None) };
     /// The closing text of the records a pending chain is inside, innermost last.
     static RENDER_CLOSERS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// `@FR-F-Render-Ref` — the reference context of the top-level render in progress, or
+    /// `None` outside one (and for a value whose type reaches no reference).
+    static REF_RENDER: std::cell::RefCell<Option<RefRender>> = const { std::cell::RefCell::new(None) };
+}
+
+/// `@FR-F-Render-Ref` / `@FR-F-Render-Refs` — what one top-level render knows about places and
+/// references: the path the walk is at, the pointer of every record it has written, and the
+/// target of every reference it met (marker `k` names `targets[k]`).
+#[derive(Default)]
+struct RefRender {
+    path: Vec<String>,
+    at: std::collections::HashMap<(u16, u32, u32), String>,
+    targets: Vec<(DbRef, u16)>,
+    /// The path of the out-of-line child `RENDER_TAIL` holds, for `write`'s loop.
+    tail_path: Option<Vec<String>>,
+}
+
+/// The marker a reference leaves in the text until its target's pointer is known.  Control
+/// characters no renderer writes raw (text is escaped in every form), so the patch cannot meet
+/// one inside a value.
+const REF_MARK_OPEN: &str = "\u{1}\u{2}R";
+const REF_MARK_CLOSE: char = '\u{2}';
+
+fn with_refs<R>(f: impl FnOnce(&mut RefRender) -> R) -> Option<R> {
+    REF_RENDER.with(|c| c.borrow_mut().as_mut().map(f))
+}
+
+/// RFC 6901: `~` is `~0` and `/` is `~1` inside a segment.
+fn json_pointer(path: &[String]) -> String {
+    let mut p = String::from("#");
+    for seg in path {
+        p.push('/');
+        p.push_str(&seg.replace('~', "~0").replace('/', "~1"));
+    }
+    p
+}
+
+impl Stores {
+    /// Can a value of type `tp` hold a stored reference anywhere inside it?  The render pays
+    /// for paths only where one can.  The C backend asks the same question per format site
+    /// (`c::show::show_top_call`), so both runtimes track references for exactly these types.
+    pub(crate) fn reaches_reference(&self, tp: u16, seen: &mut Vec<u16>) -> bool {
+        if (tp as usize) >= self.types.len() || seen.contains(&tp) {
+            return false;
+        }
+        seen.push(tp);
+        match &self.types[tp as usize].parts {
+            Parts::DbRef => true,
+            Parts::Struct(fields) | Parts::EnumValue(_, fields) => fields
+                .iter()
+                .any(|f| self.reaches_reference(f.content, seen)),
+            Parts::Enum(variants) => variants
+                .iter()
+                .any(|(v, _)| self.reaches_reference(*v, seen)),
+            Parts::Vector(c)
+            | Parts::Array(c)
+            | Parts::Sorted(c, _)
+            | Parts::Ordered(c, _)
+            | Parts::Hash(c, _)
+            | Parts::Index(c, _)
+            | Parts::Radix(c, _)
+            | Parts::Trie(c, _)
+            | Parts::ChildRec(c) => self.reaches_reference(*c, seen),
+            _ => false,
+        }
+    }
+
+    /// `@FR-F-Render-Ref` / `@FR-F-Render-Refs` — render `top` with every reference written as a
+    /// pointer, and the targets the value does not reach appended under `$refs`.  A nested call
+    /// (a render inside a render) and a value that reaches no reference render as before.
+    pub fn render_top(&self, s: &mut String, top: &ShowDb) {
+        let nested = REF_RENDER.with(|c| c.borrow().is_some());
+        if nested || !self.reaches_reference(top.known_type, &mut Vec::new()) {
+            top.write(s, 0);
+            return;
+        }
+        REF_RENDER.with(|c| *c.borrow_mut() = Some(RefRender::default()));
+        let mut body = String::new();
+        top.write(&mut body, 0);
+        let mut refs: Vec<String> = Vec::new();
+        let mut k = 0;
+        while let Some((target, tp)) = with_refs(|r| r.targets.get(k).copied()).flatten() {
+            k += 1;
+            let key = (target.store_nr, target.rec, target.pos);
+            if tp == u16::MAX || with_refs(|r| r.at.contains_key(&key)).unwrap_or(true) {
+                continue;
+            }
+            let path = vec!["$refs".to_string(), refs.len().to_string()];
+            with_refs(|r| {
+                r.at.insert(key, json_pointer(&path));
+                r.path = path;
+            });
+            let mut out = String::new();
+            ShowDb {
+                store: target.store_nr,
+                rec: target.rec,
+                pos: target.pos,
+                known_type: tp,
+                ..*top
+            }
+            .write(&mut out, 1);
+            refs.push(out);
+        }
+        let ctx = REF_RENDER
+            .with(|c| c.borrow_mut().take())
+            .unwrap_or_default();
+        // The reserved keys are no loft names, so every form quotes them (the text forms' reader
+        // takes a quoted key).
+        let quote = "\"";
+        let mut wrapped = false;
+        if !refs.is_empty() {
+            let colon = if top.pretty { ": " } else { ":" };
+            let list = format!("{quote}$refs{quote}{colon}[{}]", refs.join(","));
+            let trimmed = body.trim_end();
+            if let Some(open) = trimmed.strip_suffix('}') {
+                let open = open.trim_end();
+                let sep = if open.ends_with('{') { "" } else { "," };
+                let nl = if top.pretty { "\n  " } else { "" };
+                body = format!(
+                    "{open}{sep}{nl}{list}{}}}",
+                    if top.pretty { "\n" } else { "" }
+                );
+            } else {
+                wrapped = true;
+                body = format!("{{{quote}$value{quote}{colon}{body},{list}}}");
+            }
+        }
+        // Patch every marker with its target's pointer.
+        let mut rest = body.as_str();
+        while let Some(at) = rest.find(REF_MARK_OPEN) {
+            s.push_str(&rest[..at]);
+            let after = &rest[at + REF_MARK_OPEN.len()..];
+            let end = after.find(REF_MARK_CLOSE).unwrap_or(after.len());
+            let k: usize = after[..end].parse().unwrap_or(usize::MAX);
+            match ctx
+                .targets
+                .get(k)
+                .and_then(|(t, _)| ctx.at.get(&(t.store_nr, t.rec, t.pos)))
+            {
+                // Under the `$value` wrapper a place inside the value is one level down.
+                Some(p) if wrapped && !p.starts_with("#/$refs/") => {
+                    write!(s, "{{{quote}$ref{quote}:\"#/$value{}\"}}", &p[1..]).unwrap();
+                }
+                Some(p) => write!(s, "{{{quote}$ref{quote}:\"{p}\"}}").unwrap(),
+                None => s.push_str("null"),
+            }
+            rest = &after[(end + REF_MARK_CLOSE.len_utf8()).min(after.len())..];
+        }
+        s.push_str(rest);
+    }
 }
 
 /// Render a walker / unified-parser failure as `"line N:M path:X"`.
@@ -238,7 +388,7 @@ impl Stores {
 
     pub fn show(&self, s: &mut String, db: &DbRef, tp: u16, pretty: bool) {
         self.valid(db);
-        ShowDb {
+        let top = ShowDb {
             stores: self,
             store: db.store_nr,
             rec: db.rec,
@@ -251,8 +401,8 @@ impl Stores {
             compact: false,
             max_depth: u16::MAX,
             max_elements: u16::MAX,
-        }
-        .write(s, 0);
+        };
+        self.render_top(s, &top);
     }
 
     /// Serialise a record to **native loft source** — `TypeName{field: value}`,
@@ -264,7 +414,7 @@ impl Stores {
     /// REPL value-snapshot and live data migration (@PLN12 REPL.X).
     pub fn show_loft(&self, s: &mut String, db: &DbRef, tp: u16) {
         self.valid(db);
-        ShowDb {
+        let top = ShowDb {
             stores: self,
             store: db.store_nr,
             rec: db.rec,
@@ -277,8 +427,8 @@ impl Stores {
             compact: false,
             max_depth: u16::MAX,
             max_elements: u16::MAX,
-        }
-        .write(s, 0);
+        };
+        self.render_top(s, &top);
     }
 
     /// `show_loft` bounded to `max_depth` nesting levels and `max_elements` per vector —
@@ -323,7 +473,7 @@ impl Stores {
     /// 2-space-indent multi-line form mirroring `to_json_pretty`.
     pub fn show_json(&self, s: &mut String, db: &DbRef, tp: u16, pretty: bool) {
         self.valid(db);
-        ShowDb {
+        let top = ShowDb {
             stores: self,
             store: db.store_nr,
             rec: db.rec,
@@ -336,8 +486,8 @@ impl Stores {
             compact: false,
             max_depth: u16::MAX,
             max_elements: u16::MAX,
-        }
-        .write(s, 0);
+        };
+        self.render_top(s, &top);
     }
 
     /**
@@ -573,10 +723,29 @@ impl Stores {
 
     /// [`Self::read_text`] on the current thread's stack.
     fn read_text_here(&mut self, text: &str, tp: u16, result: &DbRef) -> Result<(), TextErr> {
+        use super::structures::{READ_REFS, ReadRefs};
         let (mut rd, value_at) = crate::json::JParser::open(text, crate::json::Dialect::Lenient);
         let mut failed = Vec::new();
-        self.read_into(&mut rd, &mut failed, value_at, tp, tp, u16::MAX, result, 0)
-            .and_then(|()| rd.finish())
+        // `@FR-F-Read-Ref` — a type that can hold a reference reads pointers and `$refs`.
+        let refs = self.reaches_reference(tp, &mut Vec::new());
+        if refs {
+            READ_REFS.with(|c| *c.borrow_mut() = Some(ReadRefs::default()));
+        }
+        let wrapped =
+            refs && !matches!(
+                self.types[tp as usize].parts,
+                Parts::Struct(_) | Parts::EnumValue(_, _)
+            ) && matches!(rd.opening(), crate::json::Opening::Object);
+        let read = if wrapped {
+            self.read_value_wrapper(&mut rd, &mut failed, tp, result)
+        } else {
+            self.read_into(&mut rd, &mut failed, value_at, tp, tp, u16::MAX, result, 0)
+        };
+        if refs {
+            self.resolve_read_refs(&mut failed);
+        }
+        READ_REFS.with(|c| c.borrow_mut().take());
+        read.and_then(|()| rd.finish())
             .map_err(|(_, at)| TextErr::Malformed(format_walk_err(text, at, &[])))?;
         if failed.is_empty() {
             Ok(())
@@ -588,6 +757,33 @@ impl Stores {
                     .collect(),
             ))
         }
+    }
+
+    /// `@FR-F-Render-Refs` / `@FR-F-Read-Ref` — `{"$value": …, "$refs": […]}`, the form a
+    /// value that is not an object takes when it brings targets along.
+    fn read_value_wrapper(
+        &mut self,
+        rd: &mut crate::json::JParser,
+        failed: &mut Vec<super::structures::WalkErr>,
+        tp: u16,
+        result: &DbRef,
+    ) -> Result<(), crate::json::Fault> {
+        use super::structures::with_read_refs;
+        let (start, mut more) = rd.open_object();
+        while more {
+            let (name, _, value_at) = rd.member(start)?;
+            if name == "$value" {
+                with_read_refs(|r| r.path = vec!["$value".to_string()]);
+                self.read_into(rd, failed, value_at, tp, tp, u16::MAX, result, value_at)?;
+                with_read_refs(|r| r.path.clear());
+            } else if name == "$refs" {
+                self.read_refs_list(rd, failed, result, value_at)?;
+            } else {
+                rd.parse_value(value_at)?;
+            }
+            more = rd.next_member(start)?;
+        }
+        Ok(())
     }
 
     /// The store a `T.parse` fills: one record of `tp` holding the type's final defaults,
@@ -1435,8 +1631,15 @@ impl ShowDb<'_> {
         // field's child is left in `RENDER_TAIL` by the frame that met it, and the closing
         // text of every frame it leaves waits in `RENDER_CLOSERS` until the chain ends.
         let mark = RENDER_CLOSERS.with(|c| c.borrow().len());
+        // `@FR-F-Render-Ref` — a chained child is written at the path its field had.
+        let saved_path = with_refs(|r| r.path.clone());
         self.write_one(s, indent);
         while let Some((rec, known_type, ind)) = RENDER_TAIL.with(std::cell::Cell::take) {
+            with_refs(|r| {
+                if let Some(p) = r.tail_path.take() {
+                    r.path = p;
+                }
+            });
             let sub = ShowDb {
                 rec,
                 pos: 8,
@@ -1452,6 +1655,9 @@ impl ShowDb<'_> {
                 s.push_str(&text);
             }
         });
+        if let Some(p) = saved_path {
+            with_refs(|r| r.path = p);
+        }
     }
 
     /// Closing text of a record: written now, or — while a child chain is pending in
@@ -1474,6 +1680,19 @@ impl ShowDb<'_> {
         if self.rec == 0 {
             write!(s, "null").unwrap();
             return;
+        }
+        // `@FR-F-Render-Ref` — a record's pointer is the path the walk wrote it at, first one wins.
+        if matches!(
+            self.stores
+                .types
+                .get(self.known_type as usize)
+                .map(|t| &t.parts),
+            Some(Parts::Struct(_) | Parts::EnumValue(_, _) | Parts::Enum(_))
+        ) {
+            with_refs(|r| {
+                r.at.entry((self.store, self.rec, self.pos))
+                    .or_insert_with(|| json_pointer(&r.path));
+            });
         }
         if self.known_type == 0 || self.known_type == 1 {
             // A wide integer's null IS `i64::MIN` — the sentinel `Stores::is_null` reads,
@@ -1826,9 +2045,9 @@ impl ShowDb<'_> {
                     let rec = store.get_u32_raw(self.rec, self.pos + 4);
                     let pos = store.get_u32_raw(self.rec, self.pos + 8);
                     // `@FR-H-Removed` — a reference whose record was removed reads null.
-                    if (store_nr == u16::MAX && rec == 0)
-                        || self.stores.reference_removed(store_nr, rec)
-                    {
+                    // Record 0 is no record: a reference holding it is null, whatever store
+                    // number the slot's default left beside it.
+                    if rec == 0 || self.stores.reference_removed(store_nr, rec) {
                         s.push_str("null");
                     } else if is_generator_handle(store_nr) {
                         s.push_str("iterator");
@@ -1970,6 +2189,16 @@ impl ShowDb<'_> {
             if self.pretty {
                 s.push(' ');
             }
+            // `@FR-F-Render-Ref` — the field's name is its segment of the path; a reference field
+            // leaves a marker its target's pointer replaces once the render knows it.
+            let tracked = with_refs(|r| r.path.push(fld.name.clone())).is_some();
+            if tracked
+                && matches!(self.stores.types[fld.content as usize].parts, Parts::DbRef)
+                && self.write_reference_marker(s, u32::from(fld.position), fld.target)
+            {
+                with_refs(|r| r.path.pop());
+                continue;
+            }
             // `@FR-L-OutOfLine` — the LAST field's child is rendered by `write`'s loop.
             if Some(f_nr) == last
                 && let Parts::ChildRec(content) = self.stores.types[fld.content as usize].parts
@@ -1980,6 +2209,10 @@ impl ShowDb<'_> {
                     .get_u32_raw(self.rec, self.pos + u32::from(fld.position));
                 if rec != 0 {
                     RENDER_TAIL.with(|t| t.set(Some((rec, content, indent.saturating_add(1)))));
+                    with_refs(|r| {
+                        r.tail_path = Some(r.path.clone());
+                        r.path.pop();
+                    });
                     continue;
                 }
             }
@@ -1998,7 +2231,35 @@ impl ShowDb<'_> {
                 max_elements: self.max_elements,
             };
             sub.write(s, indent.saturating_add(1));
+            with_refs(|r| r.path.pop());
         }
+    }
+
+    /// `@FR-F-Render-Ref` — write the reference stored at field offset `at` as a marker naming
+    /// its target (of known type `target`), under a render that tracks references.  `false`
+    /// leaves the slot to the ordinary renderer: a null or removed reference (`null`,
+    /// `@FR-H-Removed`) and a generator handle (`iterator`) are no pointers.
+    fn write_reference_marker(&self, s: &mut String, at: u32, target: u16) -> bool {
+        let store = self.store();
+        let store_nr = store.get_u32_raw(self.rec, self.pos + at) as u16;
+        let rec = store.get_u32_raw(self.rec, self.pos + at + 4);
+        let pos = store.get_u32_raw(self.rec, self.pos + at + 8);
+        if rec == 0
+            || store_nr == u16::MAX
+            || self.stores.reference_removed(store_nr, rec)
+            || is_generator_handle(store_nr)
+        {
+            return false;
+        }
+        let k = with_refs(|r| {
+            r.targets.push((DbRef { store_nr, rec, pos }, target));
+            r.targets.len() - 1
+        });
+        let Some(k) = k else {
+            return false;
+        };
+        write!(s, "{REF_MARK_OPEN}{k}{REF_MARK_CLOSE}").unwrap();
+        true
     }
 
     fn new_line(indent: u16) -> String {
@@ -2114,7 +2375,10 @@ impl ShowDb<'_> {
                 max_depth: self.max_depth,
                 max_elements: self.max_elements,
             };
+            // `@FR-F-Render-Ref` — an element's position is its segment of the path.
+            with_refs(|r| r.path.push(count.to_string()));
             sub.write(s, indent.saturating_add(1));
+            with_refs(|r| r.path.pop());
             count += 1;
         }
         if self.pretty {
@@ -2180,7 +2444,10 @@ impl ShowDb<'_> {
                 max_depth: self.max_depth,
                 max_elements: self.max_elements,
             };
+            // `@FR-F-Render-Ref` — a keyed element's segment is its POSITION in this list.
+            with_refs(|r| r.path.push(n.to_string()));
             sub.write(s, indent.saturating_add(1));
+            with_refs(|r| r.path.pop());
         }
         if self.pretty {
             s.push(' ');

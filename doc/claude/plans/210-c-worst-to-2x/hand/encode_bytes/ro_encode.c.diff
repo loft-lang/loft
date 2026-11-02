@@ -1,0 +1,1336 @@
+--- base_encode.c
++++ ro_encode.c
+@@ -3019,7 +3019,7 @@
+ /* A function value: the definition it names (LOFT_NULL for the absent one) and the closure
+  * record a capturing lambda reads.  A call goes through the emitted dispatcher of its
+  * signature, `loft_call{n}`, which switches on `d` (State::fn_call_ref). */
+-typedef struct { uint16_t store_nr; uint32_t rec; uint32_t pos; } loft_ref;
++typedef struct { uint32_t rec; uint32_t pos; uint16_t store_nr; } loft_ref;
+ typedef struct { int64_t d; loft_ref clos; } loft_fn;
+ 
+ /* ── Stores ────────────────────────────────────────────────────────────────────────────────
+@@ -3518,7 +3518,7 @@
+     loft_st_resync(s);
+     s->pinned = 1;
+     s->read_only = 1; /* `Store::lock_constant`: constant data is read-only, as on the interpreter */
+-    loft_ref r = { (uint16_t) nr, 1, 8 };
++    loft_ref r = { .store_nr = (uint16_t) nr, .rec = 1, .pos = 8 };
+     return r;
+ }
+ 
+@@ -4516,8 +4516,8 @@
+         uint32_t size = T[d->elem].size;
+         uint32_t into = loft_st_claim(loft_store_of(to), 1 + (uint32_t) (((uint64_t) size * len + 7) / 8));
+         loft_set_u32(loft_store_of(to), to.rec, to.pos, into);
+-        loft_ref src_v = { from.store_nr, cur, 0 };
+-        loft_ref dst_v = { to.store_nr, into, 0 };
++        loft_ref src_v = { .store_nr = from.store_nr, .rec = cur, .pos = 0 };
++        loft_ref dst_v = { .store_nr = to.store_nr, .rec = into, .pos = 0 };
+         loft_copy_bytes(dst_v, 4, src_v, 4, (size_t) len * size + 4);
+         /* Stores::zero_element_tails: into a DEFINED store (an image's), a struct element's
+          * tail past its last field is zeroed — the bulk copy brought the source's leftover
+@@ -4536,8 +4536,8 @@
+          * block copy — no element has a claim to copy. */
+         if (!T[d->elem].owns_heap) return;
+         for (uint32_t i = 0; i < len; i++) {
+-            loft_ref a = { from.store_nr, cur, 8 + i * size };
+-            loft_ref b = { to.store_nr, into, 8 + i * size };
++            loft_ref a = { .store_nr = from.store_nr, .rec = cur, .pos = 8 + i * size };
++            loft_ref b = { .store_nr = to.store_nr, .rec = into, .pos = 8 + i * size };
+             loft_copy_claims(T, d->elem, a, b);
+         }
+         return;
+@@ -4572,8 +4572,8 @@
+                 loft_set_u32(loft_store_of(to), into, 8 + 4 * i, 0);
+                 continue;
+             }
+-            loft_ref a = { from.store_nr, elm, 8 };
+-            loft_ref b = { to.store_nr, loft_st_claim(loft_store_of(to), 1 + (size + 7) / 8), 8 };
++            loft_ref a = { .store_nr = from.store_nr, .rec = elm, .pos = 8 };
++            loft_ref b = { .store_nr = to.store_nr, .rec = loft_st_claim(loft_store_of(to), 1 + (size + 7) / 8), .pos = 8 };
+             loft_copy_bytes(b, 0, a, 0, size);
+             loft_set_u32(loft_store_of(to), into, 8 + 4 * i, b.rec);
+             loft_copy_claims(T, d->elem, a, b);
+@@ -4585,8 +4585,8 @@
+         if (cur == 0) { loft_set_u32(loft_store_of(to), to.rec, to.pos, 0); return; }
+         uint32_t size = T[d->elem].size;
+         uint32_t into = loft_st_claim(loft_store_of(to), size);
+-        loft_ref a = { from.store_nr, cur, 8 };
+-        loft_ref b = { to.store_nr, into, 8 };
++        loft_ref a = { .store_nr = from.store_nr, .rec = cur, .pos = 8 };
++        loft_ref b = { .store_nr = to.store_nr, .rec = into, .pos = 8 };
+         loft_copy_bytes(b, 0, a, 0, size);
+         loft_copy_claims(T, d->elem, a, b);
+         loft_set_u32(loft_store_of(to), to.rec, to.pos, into);
+@@ -4753,7 +4753,7 @@
+                     (size_t) (len - real) * size);
+     }
+     loft_set_u32(s, r, 4, nl);
+-    loft_ref e = { v.store_nr, r, 8 + (uint32_t) real * size };
++    loft_ref e = { .store_nr = v.store_nr, .rec = r, .pos = 8 + (uint32_t) real * size };
+     return e;
+ }
+ 
+@@ -5173,9 +5173,9 @@
+         done += n;
+     }
+     if (T[ctp].kind != LOFT_T_SCALAR && T[ctp].kind != LOFT_T_DBREF) {
+-        loft_ref a = { v.store_nr, r, from };
++        loft_ref a = { .store_nr = v.store_nr, .rec = r, .pos = from };
+         for (uint32_t i = 1; i <= extra; i++) {
+-            loft_ref e = { v.store_nr, r, from + i * size };
++            loft_ref e = { .store_nr = v.store_nr, .rec = r, .pos = from + i * size };
+             loft_copy_claims(T, ctp, a, e);
+         }
+     }
+@@ -5225,7 +5225,7 @@
+             uint32_t len = loft_u32(s, cur, 4), size = T[d->elem].size;
+             if (T[d->elem].owns_heap) {
+                 for (uint32_t i = 0; i < len; i++) {
+-                    loft_ref e = { r.store_nr, cur, 8 + i * size };
++                    loft_ref e = { .store_nr = r.store_nr, .rec = cur, .pos = 8 + i * size };
+                     loft_remove_claims(T, d->elem, e);
+                 }
+             }
+@@ -5237,7 +5237,7 @@
+     case LOFT_T_CHILD: {
+         uint32_t cur = loft_u32(s, r.rec, r.pos);
+         if (cur != 0) {
+-            loft_ref c = { r.store_nr, cur, 8 };
++            loft_ref c = { .store_nr = r.store_nr, .rec = cur, .pos = 8 };
+             loft_remove_claims(T, d->elem, c);
+             loft_st_delete(loft_store_of(r), cur);
+         }
+@@ -5267,7 +5267,7 @@
+                 for (uint32_t i = 0; i < loft_u32(s, cur, 4); i++) {
+                     uint32_t elm = loft_u32(s, cur, 8 + 4 * i);
+                     if (elm == 0) continue;
+-                    loft_ref e = { r.store_nr, elm, 8 };
++                    loft_ref e = { .store_nr = r.store_nr, .rec = elm, .pos = 8 };
+                     loft_remove_claims(T, d->elem, e);
+                     loft_st_delete(s, elm);
+                 }
+@@ -5356,7 +5356,7 @@
+             if (r != 0) {
+                 uint32_t len = loft_u32(s, r, 4);
+                 for (uint32_t i = 0; i < len; i++) {
+-                    loft_ref e = { v.store_nr, r, 8 + i * size };
++                    loft_ref e = { .store_nr = v.store_nr, .rec = r, .pos = 8 + i * size };
+                     loft_remove_claims(T, elem, e);
+                 }
+             }
+@@ -5435,7 +5435,7 @@
+         uint32_t len = loft_u32(s, d_rec, 4);
+         uint32_t cap = (uint32_t) (((uint64_t) (claimed > 0 ? claimed : 0) * 8 - 8) / size);
+         if (claimed > 0 && (uint64_t) len + n <= cap) {
+-            loft_ref dst = { v.store_nr, d_rec, 0 }, src = { o.store_nr, o_rec, 0 };
++            loft_ref dst = { .store_nr = v.store_nr, .rec = d_rec, .pos = 0 }, src = { .store_nr = o.store_nr, .rec = o_rec, .pos = 0 };
+             loft_copy_bytes(dst, 8 + len * size, src, 8, (size_t) n * size);
+             loft_set_u32(s, d_rec, 4, len + n);
+             return;
+@@ -5451,12 +5451,12 @@
+     loft_vec_set_size(v, n, size);
+     uint32_t dest = loft_u32(s, v.rec, v.pos);
+     if (v.store_nr == o.store_nr) o_rec = loft_u32(loft_store_of(o), o.rec, o.pos);
+-    loft_ref dst = { v.store_nr, dest, 0 }, src = { o.store_nr, o_rec, 0 };
++    loft_ref dst = { .store_nr = v.store_nr, .rec = dest, .pos = 0 }, src = { .store_nr = o.store_nr, .rec = o_rec, .pos = 0 };
+     loft_copy_bytes(dst, append_pos, src, 8, (size_t) n * size);
+     if (!T[tp].owns_heap) return;
+     for (uint32_t i = 0; i < n; i++) {
+-        loft_ref a = { o.store_nr, o_rec, 8 + i * size };
+-        loft_ref b = { v.store_nr, dest, append_pos + i * size };
++        loft_ref a = { .store_nr = o.store_nr, .rec = o_rec, .pos = 8 + i * size };
++        loft_ref b = { .store_nr = v.store_nr, .rec = dest, .pos = append_pos + i * size };
+         loft_copy_claims(T, tp, a, b);
+     }
+ }
+@@ -5779,7 +5779,7 @@
+             if ((int64_t) i >= lo && (int64_t) i < hi) continue;
+             uint32_t rec = loft_u32(s, r, 8 + i * 4);
+             if (rec == 0) continue;
+-            loft_ref elem = { v.store_nr, rec, 8 };
++            loft_ref elem = { .store_nr = v.store_nr, .rec = rec, .pos = 8 };
+             loft_remove_claims(T, tp, elem);
+             loft_remove_record(loft_store_of(v), rec);
+         }
+@@ -5789,7 +5789,7 @@
+     } else if (T[tp].owns_heap) {
+         for (uint32_t i = 0; i < len; i++) {
+             if ((int64_t) i >= lo && (int64_t) i < hi) continue;
+-            loft_ref elem = { v.store_nr, r, 8 + i * size };
++            loft_ref elem = { .store_nr = v.store_nr, .rec = r, .pos = 8 + i * size };
+             loft_remove_claims(T, tp, elem);
+         }
+         s = loft_store_of(v);
+@@ -5859,8 +5859,8 @@
+         if (T[e].kind == LOFT_T_SCALAR || T[e].kind == LOFT_T_DBREF || T[e].kind == LOFT_T_TEXT) return 0;
+         uint32_t len = loft_u32(fs, cur, 4), size = T[e].size;
+         for (uint32_t i = 0; i < len; i++) {
+-            loft_ref a = { from.store_nr, cur, 8 + i * size };
+-            loft_ref b = { to.store_nr, into, 8 + i * size };
++            loft_ref a = { .store_nr = from.store_nr, .rec = cur, .pos = 8 + i * size };
++            loft_ref b = { .store_nr = to.store_nr, .rec = into, .pos = 8 + i * size };
+             if (loft_dc_find(T, e, a, b, y, out)) return 1;
+         }
+         return 0;
+@@ -6528,7 +6528,7 @@
+             loft_push_char(s, ',');
+             if (pretty) { if (struct_elem) loft_nl(s, ind + 1); else loft_push_char(s, ' '); }
+         }
+-        loft_ref e = { r.store_nr, vr, 8 + i * size };
++        loft_ref e = { .store_nr = r.store_nr, .rec = vr, .pos = 8 + i * size };
+         f(s, e, fmt, ind + 1);
+     }
+     if (pretty) loft_push_char(s, ' ');
+@@ -7280,8 +7280,8 @@
+ static int loft_eq_child(loft_ref a, loft_ref b, loft_eq_fn f) {
+     int s = loft_eq_start(a, b);
+     if (s >= 0) return s;
+-    loft_ref ca = { a.store_nr, loft_u32(loft_store_of(a), a.rec, a.pos), 8 };
+-    loft_ref cb = { b.store_nr, loft_u32(loft_store_of(b), b.rec, b.pos), 8 };
++    loft_ref ca = { .store_nr = a.store_nr, .rec = loft_u32(loft_store_of(a), a.rec, a.pos), .pos = 8 };
++    loft_ref cb = { .store_nr = b.store_nr, .rec = loft_u32(loft_store_of(b), b.rec, b.pos), .pos = 8 };
+     return f(ca, cb);
+ }
+ 
+@@ -7301,7 +7301,7 @@
+         loft_eq_seen = (loft_ref *) realloc(loft_eq_seen, loft_eq_seen_cap * sizeof *loft_eq_seen);
+         if (!loft_eq_seen) { fputs("loft: out of memory\n", stderr); abort(); }
+     }
+-    loft_ref t = { 0, target, 0 };
++    loft_ref t = { .store_nr = 0, .rec = target, .pos = 0 };
+     loft_eq_seen[loft_eq_seen_n++] = ra;
+     loft_eq_seen[loft_eq_seen_n++] = rb;
+     loft_eq_seen[loft_eq_seen_n++] = t;
+@@ -7455,7 +7455,7 @@
+         uint32_t len = loft_u32(s, d_rec, 4);
+         uint64_t cap = claimed > 0 ? ((uint64_t) claimed * 8 - 8) / size : 0;
+         if ((uint64_t) len + n <= cap) {
+-            loft_ref dst = { v.store_nr, d_rec, 0 }, src = { o.store_nr, o_rec, 0 };
++            loft_ref dst = { .store_nr = v.store_nr, .rec = d_rec, .pos = 0 }, src = { .store_nr = o.store_nr, .rec = o_rec, .pos = 0 };
+             loft_copy_bytes(dst, 8 + len * size, src, from, (size_t) n * size);
+             loft_set_u32(s, d_rec, 4, len + n);
+             return;
+@@ -7465,7 +7465,7 @@
+     loft_vec_set_size(v, n, size);
+     uint32_t dest = loft_u32(loft_store_of(v), v.rec, v.pos);
+     if (v.store_nr == o.store_nr) o_rec = loft_collection_rec(loft_store_of(o), o.rec, o.pos);
+-    loft_ref dst = { v.store_nr, dest, 0 }, src = { o.store_nr, o_rec, 0 };
++    loft_ref dst = { .store_nr = v.store_nr, .rec = dest, .pos = 0 }, src = { .store_nr = o.store_nr, .rec = o_rec, .pos = 0 };
+     loft_copy_bytes(dst, at, src, from, (size_t) n * size);
+ }
+ 
+@@ -9408,7 +9408,7 @@
+     if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
+     if (linked) {
+         loft_store_t *s = loft_store_of(c);
+-        loft_ref e = { c.store_nr, loft_st_claim(s, 1 + (size + 7) / 8), 8 };
++        loft_ref e = { .store_nr = c.store_nr, .rec = loft_st_claim(s, 1 + (size + 7) / 8), .pos = 8 };
+         loft_set_u32(s, e.rec, 4, c.rec);
+         return e;
+     }
+@@ -9449,7 +9449,7 @@
+         loft_free_hash_entry(c, e, slot);
+         return;
+     }
+-    loft_ref rec = { e.store_nr, e.rec, 8 };
++    loft_ref rec = { .store_nr = e.store_nr, .rec = e.rec, .pos = 8 };
+     loft_remove_claims(T, elem, rec);
+     loft_st_delete(loft_store_of(c), e.rec);
+ }
+@@ -9647,7 +9647,7 @@
+     loft_set_u32(s, header, 4, vec);
+     loft_set_u32(s, header, 8, c.store_nr);
+     loft_set_u32(s, header, 12, LOFT_SCRATCH_MARK | width);
+-    loft_ref x = { home, header, 4 };
++    loft_ref x = { .store_nr = home, .rec = header, .pos = 4 };
+     if (loft_nscratches == loft_scratch_cap) {
+         loft_scratch_cap = loft_scratch_cap ? loft_scratch_cap * 2 : 8;
+         loft_scratches = (loft_live_scratch *) realloc(loft_scratches, (size_t) loft_scratch_cap * sizeof *loft_scratches);
+@@ -9691,7 +9691,7 @@
+     uint32_t vec = loft_u32(s, x.rec, 4);
+     /* A snapshot in a store of its own goes with it. */
+     if (loft_u32(s, x.rec, 8) != x.store_nr) {
+-        loft_ref whole = { x.store_nr, 1, 8 };
++        loft_ref whole = { .store_nr = x.store_nr, .rec = 1, .pos = 8 };
+         loft_free_ref(whole);
+         return;
+     }
+@@ -9991,9 +9991,9 @@
+ 
+ /* Probe::full: the probe against the record `rec`, on every part it carries. */
+ static int loft_bt_full(const loft_bt_probe *p, uint32_t rec, const loft_key *keys, int nk) {
+-    loft_ref other = { p->store_nr, rec, 8 };
++    loft_ref other = { .store_nr = p->store_nr, .rec = rec, .pos = 8 };
+     if (p->rec != 0) {
+-        loft_ref mine = { p->store_nr, p->rec, 8 };
++        loft_ref mine = { .store_nr = p->store_nr, .rec = p->rec, .pos = 8 };
+         return loft_key_cmp_refs(mine, other, keys, nk);
+     }
+     return loft_key_cmp_val(p->kv, p->n, loft_stores + p->store_nr, rec, 8, keys);
+@@ -10614,7 +10614,7 @@
+ /* Stores::find_index: the record whose key parts equal the `n` given — a whole key by its exact
+  * descent, a partial one by the boundary walk (the lowest it matches). */
+ static loft_ref loft_ix_find(loft_ref data, const loft_key *keys, int nk, const loft_kv *kv, int n) {
+-    loft_ref r = { data.store_nr, 0, 8 };
++    loft_ref r = { .store_nr = data.store_nr, .rec = 0, .pos = 8 };
+     if (data.store_nr == 0xFFFF || data.rec == 0) return loft_ref_null();
+     if (n == nk) {
+         r.rec = loft_bt_find_exact(data, keys, nk, kv, n);
+@@ -10634,7 +10634,7 @@
+     if (LOFT_WRITE_REFUSED(loft_store_of(data))) return loft_ref_null();
+     uint32_t dup = loft_bt_add(data, rec.rec, keys, nk);
+     if (dup == 0) return loft_ref_null();
+-    loft_ref existing = { data.store_nr, dup, 8 };
++    loft_ref existing = { .store_nr = data.store_nr, .rec = dup, .pos = 8 };
+     (void) loft_bt_remove(data, dup, keys, nk);
+     if (!secondary) {
+         loft_remove_claims(T, elem, existing);
+@@ -10651,7 +10651,7 @@
+     if (e.rec == 0 || data.store_nr == 0xFFFF || data.rec == 0) return;
+     (void) loft_bt_remove(data, e.rec, keys, nk);
+     if (view) return;
+-    loft_ref rec = { e.store_nr, e.rec, 8 };
++    loft_ref rec = { .store_nr = e.store_nr, .rec = e.rec, .pos = 8 };
+     loft_remove_claims(T, elem, rec);
+     loft_st_delete(loft_store_of(data), e.rec);
+ }
+@@ -10684,7 +10684,7 @@
+     if (n == finish) finish = UINT32_MAX;
+     *state = (int64_t) ((uint64_t) finish << 32 | n);
+     if (n == 0) return loft_ref_null();
+-    loft_ref e = { data.store_nr, n, 8 };
++    loft_ref e = { .store_nr = data.store_nr, .rec = n, .pos = 8 };
+     return e;
+ }
+ 
+@@ -10697,7 +10697,7 @@
+     if (cur == 0 || data.store_nr == 0xFFFF || data.rec == 0) return;
+     uint32_t after = loft_bt_step_record(data, keys, nk, cur, reverse);
+     int removed_the_last = cur == finish;
+-    loft_ref e = { data.store_nr, cur, 8 };
++    loft_ref e = { .store_nr = data.store_nr, .rec = cur, .pos = 8 };
+     loft_ix_remove(T, elem, data, e, keys, nk, 0);
+     if (after == 0 || removed_the_last) {
+         finish = UINT32_MAX;
+@@ -10719,8 +10719,8 @@
+     uint32_t *recs = loft_bt_records(from, &n);
+     for (uint32_t i = 0; i < n; i++) {
+         loft_store_t *ts = loft_store_of(to);
+-        loft_ref a = { from.store_nr, recs[i], 8 };
+-        loft_ref b = { to.store_nr, loft_st_claim(ts, 1 + (size + 7) / 8), 8 };
++        loft_ref a = { .store_nr = from.store_nr, .rec = recs[i], .pos = 8 };
++        loft_ref b = { .store_nr = to.store_nr, .rec = loft_st_claim(ts, 1 + (size + 7) / 8), .pos = 8 };
+         loft_set_u32(ts, b.rec, 4, to.rec);
+         loft_copy_bytes(b, 0, a, 0, size);
+         loft_copy_claims(T, d->elem, a, b);
+@@ -10739,7 +10739,7 @@
+             uint32_t n;
+             uint32_t *recs = loft_bt_records(r, &n);
+             for (uint32_t i = 0; i < n; i++) {
+-                loft_ref e = { r.store_nr, recs[i], 8 };
++                loft_ref e = { .store_nr = r.store_nr, .rec = recs[i], .pos = 8 };
+                 loft_remove_claims(T, T[tp].elem, e);
+                 loft_st_delete(s, recs[i]);
+             }
+@@ -11368,7 +11368,7 @@
+     uint32_t t = loft_rx_tree(c);
+     if (t == 0) return loft_ref_null();
+     loft_rx_key p = loft_rx_probe(keys, nk, text, kv, n);
+-    loft_ref e = { c.store_nr, loft_rx_get(loft_store_of(c), t, &p), 8 };
++    loft_ref e = { .store_nr = c.store_nr, .rec = loft_rx_get(loft_store_of(c), t, &p), .pos = 8 };
+     return e.rec == 0 ? loft_ref_null() : e;
+ }
+ 
+@@ -11477,7 +11477,7 @@
+ static void loft_rx_remove_owned(const loft_tdesc *T, uint16_t elem, loft_ref c, loft_ref e, const loft_key *keys, int nk,
+                                  int text, int view) {
+     if (e.rec == 0 || c.store_nr == 0xFFFF || c.rec == 0) return;
+-    loft_ref rec = { e.store_nr, e.rec, 8 };
++    loft_ref rec = { .store_nr = e.store_nr, .rec = e.rec, .pos = 8 };
+     (void) loft_rx_unlink(c, rec, keys, nk, text);
+     if (view) return;
+     loft_remove_claims(T, elem, rec);
+@@ -11518,8 +11518,8 @@
+     uint32_t *recs = loft_rx_records(from, &n);
+     for (uint32_t i = 0; i < n; i++) {
+         loft_store_t *ts = loft_store_of(to);
+-        loft_ref a = { from.store_nr, recs[i], 8 };
+-        loft_ref b = { to.store_nr, loft_st_claim(ts, 1 + (size + 7) / 8), 8 };
++        loft_ref a = { .store_nr = from.store_nr, .rec = recs[i], .pos = 8 };
++        loft_ref b = { .store_nr = to.store_nr, .rec = loft_st_claim(ts, 1 + (size + 7) / 8), .pos = 8 };
+         loft_set_u32(ts, b.rec, 4, to.rec);
+         loft_copy_bytes(b, 0, a, 0, size);
+         loft_copy_claims(T, d->elem, a, b);
+@@ -11538,7 +11538,7 @@
+             uint32_t n;
+             uint32_t *recs = loft_rx_records(r, &n);
+             for (uint32_t i = 0; i < n; i++) {
+-                loft_ref e = { r.store_nr, recs[i], 8 };
++                loft_ref e = { .store_nr = r.store_nr, .rec = recs[i], .pos = 8 };
+                 loft_remove_claims(T, T[tp].elem, e);
+                 loft_st_delete(s, recs[i]);
+             }
+@@ -11779,14 +11779,14 @@
+         if (cur == 0) return 0;
+         uint32_t len = loft_u32(s, cur, 4), size = T[d->elem].size;
+         for (uint32_t i = 0; i < len; i++) {
+-            loft_ref e = { r.store_nr, cur, 8 + i * size };
++            loft_ref e = { .store_nr = r.store_nr, .rec = cur, .pos = 8 + i * size };
+             done += loft_relayout_walk(T, ntypes, d->elem, e, budget);
+         }
+         return done;
+     }
+     case LOFT_T_CHILD: {
+         cur = loft_u32(s, r.rec, r.pos);
+-        loft_ref e = { r.store_nr, cur, 8 };
++        loft_ref e = { .store_nr = r.store_nr, .rec = cur, .pos = 8 };
+         return cur == 0 ? 0 : loft_relayout_walk(T, ntypes, d->elem, e, budget);
+     }
+     case LOFT_T_HASH: {
+@@ -11800,7 +11800,7 @@
+         uint32_t n;
+         uint32_t *recs = loft_bt_records(r, &n);
+         for (uint32_t i = 0; i < n; i++) {
+-            loft_ref e = { r.store_nr, recs[i], 8 };
++            loft_ref e = { .store_nr = r.store_nr, .rec = recs[i], .pos = 8 };
+             done += loft_relayout_walk(T, ntypes, d->elem, e, budget);
+         }
+         free(recs);
+@@ -11810,7 +11810,7 @@
+         cur = loft_collection_rec(s, r.rec, r.pos);
+         if (cur == 0) return 0;
+         for (uint32_t i = 0; i < loft_u32(s, cur, 4); i++) {
+-            loft_ref e = { r.store_nr, loft_u32(s, cur, 8 + 4 * i), 8 };
++            loft_ref e = { .store_nr = r.store_nr, .rec = loft_u32(s, cur, 8 + 4 * i), .pos = 8 };
+             if (e.rec != 0) done += loft_relayout_walk(T, ntypes, d->elem, e, budget);
+         }
+         return done;
+@@ -11899,14 +11899,14 @@
+         if (d->nk && loft_key_reorders(d->keys, d->nk)) loft_rekey_sort(s, cur, size, 0, d->keys, d->nk);
+         uint32_t len = loft_u32(s, cur, 4);
+         for (uint32_t i = 0; i < len; i++) {
+-            loft_ref e = { r.store_nr, cur, 8 + i * size };
++            loft_ref e = { .store_nr = r.store_nr, .rec = cur, .pos = 8 + i * size };
+             loft_rekey_walk(T, ntypes, d->elem, e, budget);
+         }
+         return;
+     }
+     case LOFT_T_CHILD: {
+         cur = loft_u32(s, r.rec, r.pos);
+-        loft_ref e = { r.store_nr, cur, 8 };
++        loft_ref e = { .store_nr = r.store_nr, .rec = cur, .pos = 8 };
+         if (cur != 0) loft_rekey_walk(T, ntypes, d->elem, e, budget);
+         return;
+     }
+@@ -11927,7 +11927,7 @@
+             for (uint32_t i = 0; i < n; i++) (void) loft_bt_add(r, recs[i], d->keys, d->nk);
+         }
+         for (uint32_t i = 0; i < n; i++) {
+-            loft_ref e = { r.store_nr, recs[i], 8 };
++            loft_ref e = { .store_nr = r.store_nr, .rec = recs[i], .pos = 8 };
+             loft_rekey_walk(T, ntypes, d->elem, e, budget);
+         }
+         free(recs);
+@@ -11938,7 +11938,7 @@
+         if (cur == 0) return;
+         if (d->nk && loft_key_reorders(d->keys, d->nk)) loft_rekey_sort(s, cur, 4, 1, d->keys, d->nk);
+         for (uint32_t i = 0; i < loft_u32(s, cur, 4); i++) {
+-            loft_ref e = { r.store_nr, loft_u32(s, cur, 8 + 4 * i), 8 };
++            loft_ref e = { .store_nr = r.store_nr, .rec = loft_u32(s, cur, 8 + 4 * i), .pos = 8 };
+             if (e.rec != 0) loft_rekey_walk(T, ntypes, d->elem, e, budget);
+         }
+         return;
+@@ -12026,7 +12026,7 @@
+     int32_t dst_header = loft_st_i32(d, 1, 0);
+     memcpy(d->buf + 8, loft_stores[r.store_nr].buf + 8, (size_t) header * 8);
+     loft_st_set_i32(d, 1, 0, dst_header);
+-    loft_ref src = { r.store_nr, 1, 8 }, to = { dst, 1, 8 };
++    loft_ref src = { .store_nr = r.store_nr, .rec = 1, .pos = 8 }, to = { .store_nr = dst, .rec = 1, .pos = 8 };
+     loft_copy_claims(T, tp, src, to);
+     d = &loft_stores[dst];
+     d->known = tp;
+@@ -12329,18 +12329,18 @@
+     uint32_t cur = loft_u32(s, at.rec, at.pos);
+     if (cur == 0 || cur == 0xFFFFFFFFu) return;
+     if (d->kind == LOFT_T_CHILD) {
+-        loft_ref c = { at.store_nr, cur, 8 };
++        loft_ref c = { .store_nr = at.store_nr, .rec = cur, .pos = 8 };
+         loft_ref_slots(T, d->elem, c, out, depth + 1);
+     } else if (d->kind == LOFT_T_VECTOR) {
+         uint32_t len = loft_u32(s, cur, 4), size = T[d->elem].size;
+         for (uint32_t i = 0; i < len; i++) {
+-            loft_ref e = { at.store_nr, cur, 8 + i * size };
++            loft_ref e = { .store_nr = at.store_nr, .rec = cur, .pos = 8 + i * size };
+             loft_ref_slots(T, d->elem, e, out, depth + 1);
+         }
+     } else if (d->kind == LOFT_T_ORDERED) {
+         uint32_t len = loft_u32(s, cur, 4);
+         for (uint32_t i = 0; i < len; i++) {
+-            loft_ref e = { at.store_nr, loft_u32(loft_store_of(at), cur, 8 + 4 * i), 8 };
++            loft_ref e = { .store_nr = at.store_nr, .rec = loft_u32(loft_store_of(at), cur, 8 + 4 * i), .pos = 8 };
+             loft_ref_slots(T, d->elem, e, out, depth + 1);
+         }
+     } else if (d->kind == LOFT_T_HASH) {
+@@ -12351,7 +12351,7 @@
+     } else if (d->kind == LOFT_T_INDEX || d->kind == LOFT_T_RADIX || d->kind == LOFT_T_TRIE) {
+         uint32_t n = 0, *ids = d->kind == LOFT_T_INDEX ? loft_bt_records(at, &n) : loft_rx_records(at, &n);
+         for (uint32_t i = 0; i < n; i++) {
+-            loft_ref e = { at.store_nr, ids[i], 8 };
++            loft_ref e = { .store_nr = at.store_nr, .rec = ids[i], .pos = 8 };
+             loft_ref_slots(T, d->elem, e, out, depth + 1);
+         }
+         free(ids);
+@@ -12363,7 +12363,7 @@
+  * nothing rewritten, for a reference into any other store — not part of the file — or for
+  * references a sidecar recording no slot cannot tell apart. */
+ static int loft_rebase_refs(const loft_sidecar *sc, uint16_t nr, long recorded, const char **why) {
+-    loft_ref root = { nr, LOFT_ST_PRIMARY, 8 };
++    loft_ref root = { .store_nr = nr, .rec = LOFT_ST_PRIMARY, .pos = 8 };
+     loft_refs all = { 0, 0, 0 };
+     loft_ref_slots(sc->types, sc->tp, root, &all, 0);
+     loft_store_t *s = &loft_stores[nr];
+@@ -12402,7 +12402,7 @@
+  * whose key order moved filed again in this build's (`loft_rekey_walk` from the root). */
+ static void loft_rekey_image(const loft_sidecar *sc, loft_ref r) {
+     uint32_t budget = 1u << 30;
+-    loft_ref root = { r.store_nr, 1, 8 };
++    loft_ref root = { .store_nr = r.store_nr, .rec = 1, .pos = 8 };
+     loft_rekey_walk(sc->rekey, sc->rekey_n, sc->tp, root, &budget);
+ }
+ 
+@@ -12562,7 +12562,7 @@
+     }
+     case LOFT_T_STRUCT:
+         for (uint16_t i = 0; i < d->n; i++) {
+-            loft_ref f = { r.store_nr, r.rec, r.pos + d->fields[i].pos };
++            loft_ref f = { .store_nr = r.store_nr, .rec = r.rec, .pos = r.pos + d->fields[i].pos };
+             loft_validate_claims(T, nt, d->fields[i].type, f, problems);
+         }
+         return;
+@@ -12583,7 +12583,7 @@
+             return;
+         }
+         for (uint32_t i = 0; i < len && i < 16; i++) {
+-            loft_ref e = { r.store_nr, cur, 8 + size * i };
++            loft_ref e = { .store_nr = r.store_nr, .rec = cur, .pos = 8 + size * i };
+             loft_validate_claims(T, nt, d->elem, e, problems);
+         }
+         return;
+@@ -12597,7 +12597,7 @@
+             (*problems)++;
+             return;
+         }
+-        loft_ref e = { r.store_nr, c, 8 };
++        loft_ref e = { .store_nr = r.store_nr, .rec = c, .pos = 8 };
+         loft_validate_claims(T, nt, d->elem, e, problems);
+         return;
+     }
+@@ -12658,7 +12658,7 @@
+                 if (*problems > 8) return;
+                 continue;
+             }
+-            loft_ref e = { r.store_nr, entry, pos };
++            loft_ref e = { .store_nr = r.store_nr, .rec = entry, .pos = pos };
+             loft_validate_claims(T, nt, d->elem, e, problems);
+         }
+         return;
+@@ -12688,7 +12688,7 @@
+                 (*problems)++;
+                 return;
+             }
+-            loft_ref e = { r.store_nr, elm, 8 };
++            loft_ref e = { .store_nr = r.store_nr, .rec = elm, .pos = 8 };
+             loft_validate_claims(T, nt, d->elem, e, problems);
+         }
+         return;
+@@ -13796,7 +13796,7 @@
+     if (LOFT_WRITE_REFUSED(loft_store_of(c))) return loft_ref_null();
+     loft_store_t *s = loft_store_of(c);
+     uint32_t r = loft_collection_rec(s, c.rec, c.pos);
+-    loft_ref e = { c.store_nr, 0, 8 };
++    loft_ref e = { .store_nr = c.store_nr, .rec = 0, .pos = 8 };
+     if (r == 0) {
+         r = loft_st_claim(s, loft_vec_cap_words(loft_vec_grown(2, size), size));
+         loft_set_u32(s, c.rec, c.pos, r);
+@@ -13889,7 +13889,7 @@
+                                     int nk, int secondary) {
+     uint32_t gone = loft_ordered_finish(c, e, keys, nk);
+     if (gone == 0) return loft_ref_null();
+-    loft_ref old = { c.store_nr, gone, 8 };
++    loft_ref old = { .store_nr = c.store_nr, .rec = gone, .pos = 8 };
+     if (!secondary) {
+         loft_remove_claims(T, elem, old);
+         loft_st_delete(loft_store_of(c), gone);
+@@ -13929,7 +13929,7 @@
+         return;
+     }
+     loft_index_remove(c, e);
+-    loft_ref rec = { e.store_nr, e.rec, 8 };
++    loft_ref rec = { .store_nr = e.store_nr, .rec = e.rec, .pos = 8 };
+     loft_remove_claims(T, elem, rec);
+     loft_st_delete(loft_store_of(c), e.rec);
+ }
+@@ -14510,7 +14510,7 @@
+         if (linked) {
+             uint32_t rec = loft_u32(loft_store_of(slot), slot.rec, slot.pos);
+             if (rec == 0) continue;
+-            loft_ref r = { src.store_nr, rec, 8 };
++            loft_ref r = { .store_nr = src.store_nr, .rec = rec, .pos = 8 };
+             recs[n++] = r;
+         } else {
+             recs[n++] = slot;
+@@ -14553,7 +14553,7 @@
+     if (f.store_nr == 0xFFFF || f.rec == 0) return loft_ref_null();
+     uint32_t rec = loft_u32(loft_store_of(f), f.rec, f.pos);
+     if (rec == 0) return loft_ref_null();
+-    loft_ref r = { f.store_nr, rec, 8 };
++    loft_ref r = { .store_nr = f.store_nr, .rec = rec, .pos = 8 };
+     return r;
+ }
+ 
+@@ -14565,12 +14565,12 @@
+     if (f.store_nr == 0xFFFF || f.rec == 0) return loft_ref_null();
+     uint32_t old = loft_u32(loft_store_of(f), f.rec, f.pos);
+     if (old != 0) {
+-        loft_ref o = { f.store_nr, old, 8 };
++        loft_ref o = { .store_nr = f.store_nr, .rec = old, .pos = 8 };
+         loft_remove_claims(T, tp, o);
+         loft_st_delete(loft_store_of(f), old);
+     }
+     uint32_t rec = loft_claim(loft_store_of(f), T[tp].size);
+-    loft_ref db = { f.store_nr, rec, 8 };
++    loft_ref db = { .store_nr = f.store_nr, .rec = rec, .pos = 8 };
+     loft_fill(db, image, n);
+     loft_set_u32(loft_store_of(f), f.rec, f.pos, rec);
+     return db;
+@@ -14592,7 +14592,7 @@
+             loft_set_u32(loft_store_of(v), slot.rec, slot.pos, 0);
+         } else {
+             uint32_t nr = loft_claim(loft_store_of(v), words);
+-            loft_ref from = { o.store_nr, src, 8 }, to = { v.store_nr, nr, 8 };
++            loft_ref from = { .store_nr = o.store_nr, .rec = src, .pos = 8 }, to = { .store_nr = v.store_nr, .rec = nr, .pos = 8 };
+             loft_copy_bytes(to, 0, from, 0, size);
+             loft_copy_claims(T, tp, from, to);
+             loft_set_u32(loft_store_of(v), slot.rec, slot.pos, nr);
+@@ -14644,7 +14644,7 @@
+     uint32_t nr = loft_claim(s, 1 + (size + 7) / 8);
+     loft_set_u32(s, nr, 4, v.rec);
+     loft_set_u32(s, slot.rec, slot.pos, nr);
+-    loft_ref e = { v.store_nr, nr, 8 };
++    loft_ref e = { .store_nr = v.store_nr, .rec = nr, .pos = 8 };
+     return e;
+ }
+ 
+@@ -14657,7 +14657,7 @@
+     uint32_t rec = loft_u32(loft_store_of(v), slot.rec, slot.pos);
+     int shifted = loft_vec_remove(v, 4, index);
+     if (rec != 0) {
+-        loft_ref elem = { v.store_nr, rec, 8 };
++        loft_ref elem = { .store_nr = v.store_nr, .rec = rec, .pos = 8 };
+         loft_remove_claims(T, tp, elem);
+         loft_st_delete(loft_store_of(v), rec);
+     }
+@@ -14696,7 +14696,7 @@
+     if (slot.rec == 0) return;
+     (void) loft_vec_remove(v, 4, *state);
+     if (rec != 0) {
+-        loft_ref e = { v.store_nr, rec, 8 };
++        loft_ref e = { .store_nr = v.store_nr, .rec = rec, .pos = 8 };
+         loft_remove_claims(T, elem, e);
+         loft_st_delete(loft_store_of(v), rec);
+     }
+@@ -14709,7 +14709,7 @@
+     if (c.store_nr != 0xFFFF && c.rec != 0 && LOFT_WRITE_REFUSED(loft_store_of(c))) return;
+     uint32_t at, r = loft_keyed_rec(c), size = T[elem].size;
+     if (r == 0 || !loft_walk_removed_at(*state, reverse, &at) || at >= loft_u32(loft_store_of(c), r, 4)) return;
+-    loft_ref e = { c.store_nr, r, 8 + at * size };
++    loft_ref e = { .store_nr = c.store_nr, .rec = r, .pos = 8 + at * size };
+     loft_remove_claims(T, elem, e);
+     loft_seq_remove(state, c, size, reverse);
+ }
+@@ -14730,7 +14730,7 @@
+     uint32_t rec = loft_u32(loft_store_of(c), r, 8 + at * 4);
+     loft_seq_remove(state, c, 0, reverse);
+     if (rec != 0) {
+-        loft_ref e = { c.store_nr, rec, 8 };
++        loft_ref e = { .store_nr = c.store_nr, .rec = rec, .pos = 8 };
+         loft_remove_claims(T, elem, e);
+         loft_st_delete(loft_store_of(c), rec);
+     }
+@@ -14748,7 +14748,7 @@
+     if (slot.store_nr == 0xFFFF || slot.rec == 0) return loft_ref_null();
+     uint32_t r = loft_u32(loft_store_of(slot), slot.rec, slot.pos);
+     if (r == 0) return loft_ref_null();
+-    loft_ref e = { slot.store_nr, r, 8 };
++    loft_ref e = { .store_nr = slot.store_nr, .rec = r, .pos = 8 };
+     return e;
+ }
+ 
+@@ -14837,7 +14837,7 @@
+         if (!seen) gone[ng++] = d;
+     }
+     for (int g = 0; g < ng; g++) {
+-        loft_ref dr = { rec.store_nr, gone[g], 8 };
++        loft_ref dr = { .store_nr = rec.store_nr, .rec = gone[g], .pos = 8 };
+         loft_group_unfile(parent, dr, m, n);
+         /* No vector member holds the displaced record: nothing names it any more. */
+         if (!held) {
+@@ -14856,14 +14856,14 @@
+ static void loft_index_group(loft_ref primary, uint32_t prim, int nullable, const loft_member *v, const loft_member *m,
+                              int n) {
+     if (primary.store_nr == 0xFFFF || primary.rec == 0 || primary.pos < prim) return;
+-    loft_ref parent = { primary.store_nr, primary.rec, primary.pos - prim };
++    loft_ref parent = { .store_nr = primary.store_nr, .rec = primary.rec, .pos = primary.pos - prim };
+     int64_t len = loft_vec_len(primary);
+     loft_store_t *s = loft_store_of(primary);
+     uint32_t arr = loft_collection_rec(s, primary.rec, primary.pos);
+     if (len == 0 || arr == 0) return;
+     loft_ref c = loft_field(parent, v->pos);
+     for (int64_t i = 0; i < len; i++) {
+-        loft_ref r = { primary.store_nr, loft_u32(loft_store_of(primary), arr, 8 + 4 * (uint32_t) i), 8 };
++        loft_ref r = { .store_nr = primary.store_nr, .rec = loft_u32(loft_store_of(primary), arr, 8 + 4 * (uint32_t) i), .pos = 8 };
+         if (r.rec == 0 || (nullable && *loft_at(loft_store_of(r), r.rec, 8) != 2)) continue;
+         if (v->kind == LOFT_M_HASH) (void) loft_hash_insert(0, 0, c, r, v->keys, v->nk, 1);
+         else if (v->kind == LOFT_M_INDEX) (void) loft_ix_insert(0, 0, c, r, v->keys, v->nk, 1);
+@@ -14872,7 +14872,7 @@
+         else (void) loft_ordered_insert(0, 0, c, r, v->keys, v->nk, 1);
+     }
+     for (int64_t i = 0; i < len; i++) {
+-        loft_ref r = { primary.store_nr, loft_u32(loft_store_of(primary), arr, 8 + 4 * (uint32_t) i), 8 };
++        loft_ref r = { .store_nr = primary.store_nr, .rec = loft_u32(loft_store_of(primary), arr, 8 + 4 * (uint32_t) i), .pos = 8 };
+         if (r.rec == 0 || (nullable && *loft_at(loft_store_of(r), r.rec, 8) != 2)) continue;
+         int displaced = 0;
+         for (int j = 0; j < n && !displaced; j++) {
+@@ -14930,7 +14930,7 @@
+             for (int64_t i = 0; i < len; i++) ids[n++] = loft_u32(loft_store_of(owner), arr, 8 + 4 * (uint32_t) i);
+         }
+         for (uint32_t i = 0; i < n; i++) {
+-            loft_ref r = { owner.store_nr, ids[i], 8 };
++            loft_ref r = { .store_nr = owner.store_nr, .rec = ids[i], .pos = 8 };
+             if (r.rec != 0) loft_relink_record(T, d, o, to, r);
+         }
+         free(ids);
+@@ -18677,7 +18677,7 @@
+     loft_store_t *s = &loft_stores[nr];
+     uint16_t tp = s->known;
+     if (tp >= loft_T_n || !loft_T[tp].file || s->size < 3 || loft_u32(s, 1, 4) != tp) return;
+-    loft_ref root = { nr, 1, 8 };
++    loft_ref root = { .store_nr = nr, .rec = 1, .pos = 8 };
+     s->read_only = 0;
+     loft_remove_claims_mode(loft_T, tp, root, 0);
+ }
+@@ -21084,7 +21084,7 @@
+ #endif
+             for (uint32_t i = 0; i < loft_nstores; i++)
+                 if (loft_stores[i].live && loft_stores[i].serial > serial0) {
+-                    loft_ref r = { (uint16_t) i, 0, 0 };
++                    loft_ref r = { .store_nr = (uint16_t) i, .rec = 0, .pos = 0 };
+                     loft_free_ref(r);
+                 }
+ #if defined(LOFT_CALL_CHAIN)
+@@ -22934,7 +22934,7 @@
+  * >= 0 a child still running then is stopped with its tree and the code is -2. */
+ static void loft_run_live(loft_words *w, const char *in, size_t inlen, int64_t limit_ms, loft_proc_answer *a) {
+     loft_child c;
+-    loft_text out = { 0, 0, 0 }, err = { 0, 0, 0 }, why = { 0, 0, 0 };
++    loft_text out = { 0, 0, 0 }, err = { .store_nr = 0, .rec = 0, .pos = 0 }, why = { .store_nr = 0, .rec = 0, .pos = 0 };
+     if (!loft_spawn(w->v, w->len, w->n, inlen > 0, 1, 1, &c, &why)) {
+         a->code = -1;
+         loft_push(&a->err, why.p, why.len);
+@@ -23063,7 +23063,7 @@
+     char **matching = (char **) malloc((n + 1) * sizeof *matching);
+     if (!matching) { fputs("loft: out of memory\n", stderr); abort(); }
+     for (size_t i = 0; i < n; i++) {
+-        loft_text argv = { 0, 0, 0 }, stdin_ = { 0, 0, 0 };
++        loft_text argv = { 0, 0, 0 }, stdin_ = { .store_nr = 0, .rec = 0, .pos = 0 };
+         int ok = loft_rec_read(all[i], "argv", &argv) && argv.len == key.len &&
+                  (key.len == 0 || memcmp(argv.p, key.p, key.len) == 0);
+         loft_rec_read(all[i], "stdin", &stdin_);
+@@ -23391,7 +23391,7 @@
+         loft_push(out, a.p, a.len);
+         loft_push_cstr(out, "' cannot be a git ref — a ref may not begin with '-'");
+     } else {
+-        loft_text got = { 0, 0, 0 }, why = { 0, 0, 0 };
++        loft_text got = { 0, 0, 0 }, why = { .store_nr = 0, .rec = 0, .pos = 0 };
+         if (!loft_git_run(sd, w, nw, &got, &code, &why)) {
+             code = -1;
+             loft_push_cstr(out, "cannot run git: ");
+@@ -23403,7 +23403,7 @@
+         } else {
+             /* Asked in an exit status (`rev-parse --git-dir`), never read from git's prose. */
+             char *probe[2] = { (char *) "rev-parse", (char *) "--git-dir" };
+-            loft_text o = { 0, 0, 0 }, y = { 0, 0, 0 };
++            loft_text o = { 0, 0, 0 }, y = { .store_nr = 0, .rec = 0, .pos = 0 };
+             int64_t pc = -1;
+             if (loft_git_run(sd, probe, 2, &o, &pc, &y) && pc == 0) {
+                 loft_push_lossy(out, got.p, got.len);
+@@ -25522,12 +25522,12 @@
+     loft_store_t *s = &loft_stores[r.store_nr];
+     uint32_t h = loft_claim(s, 1);
+     loft_set_u32(s, h, 4, r.rec);
+-    loft_ref v = { r.store_nr, h, 4 };
++    loft_ref v = { .store_nr = r.store_nr, .rec = h, .pos = 4 };
+     return v;
+ }
+ 
+ static loft_ref loft_ffi_record_answer(loft_ffi_ref r) {
+-    loft_ref v = { r.store_nr, r.rec, r.pos };
++    loft_ref v = { .store_nr = r.store_nr, .rec = r.rec, .pos = r.pos };
+     return v;
+ }
+ 
+@@ -25611,7 +25611,7 @@
+ /* The copy a call was given goes once its answer is copied out. */
+ static void loft_ffi_drop_call_store(uint16_t cs, uint16_t pn) {
+     if (cs != pn) {
+-        loft_ref m = { cs, 0, 0 };
++        loft_ref m = { .store_nr = cs, .rec = 0, .pos = 0 };
+         loft_free_ref(m);
+     }
+ }
+@@ -25633,7 +25633,7 @@
+     uint16_t ns = (uint16_t) loft_store_new();
+     uint32_t root = loft_claim(&loft_stores[ns], 1);
+     loft_set_u32(&loft_stores[ns], root, 4, 0);
+-    loft_ref v = { ns, root, 4 };
++    loft_ref v = { .store_nr = ns, .rec = root, .pos = 4 };
+     loft_vec_add(T, elem_tp, v, h);
+     loft_ffi_log_drop(h.store_nr);
+     loft_st_delete(&loft_stores[h.store_nr], h.rec);
+@@ -25642,7 +25642,7 @@
+ 
+ static loft_ref loft_ffi_own_record(const loft_tdesc *T, uint16_t tp, loft_ref r) {
+     if (r.rec == 0) { loft_ffi_log_on = 0; return r; }
+-    loft_ref d = { 0xFFFF, 0, 0 };
++    loft_ref d = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     loft_database_typed(&d, T[tp].size, tp);
+     loft_copy_record(T, tp, r, d, 4);
+     loft_ffi_log_drop(r.store_nr);
+@@ -25797,23 +25797,23 @@
+ 
+ static void n_main__fr(void) {
+     int64_t v0_mn_n = LOFT_NULL;
+-    loft_ref v1_mn_args = { 0xFFFF, 0, 0 };
++    loft_ref v1_mn_args = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t v2_mn_i = LOFT_NULL;
+     loft_text v3___ncc_1 = { 0, 0, 0 };
+     loft_text v4___ncc_2 = { 0, 0, 0 };
+     int64_t v5___ncc_3 = LOFT_NULL;
+     int64_t v6_mn_t0 = LOFT_NULL;
+-    loft_ref v7_mn_rows = { 0xFFFF, 0, 0 };
+-    loft_ref v8__elm_1 = { 0xFFFF, 0, 0 };
+-    loft_ref v9___ref_1 = { 0xFFFF, 0, 0 };
++    loft_ref v7_mn_rows = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v8__elm_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v9___ref_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t v10_mn_sink = LOFT_NULL;
+-    loft_ref v11__vector_1 = { 0xFFFF, 0, 0 };
++    loft_ref v11__vector_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t v12_row_index = LOFT_NULL;
+-    loft_ref v13_row = { 0xFFFF, 0, 0 };
++    loft_ref v13_row = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     loft_text v14___work_1 = { 0, 0, 0 };
+-    loft_ref v15___vdb_1 = { 0xFFFF, 0, 0 };
+-    loft_ref v16___ref_p2_1 = { 0xFFFF, 0, 0 };
+-    loft_ref v17___ref_2 = { 0xFFFF, 0, 0 };
++    loft_ref v15___vdb_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v16___ref_p2_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v17___ref_2 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     uint8_t v18___cond_1 = LOFT_BOOL_NULL;
+     int64_t v19__walk_len_19 = LOFT_NULL;
+     int64_t v20__walk_at_20 = LOFT_NULL;
+@@ -26004,8 +26004,8 @@
+ }
+ 
+ static loft_ref n_head__fr(int64_t v0_major, int64_t v1_arg, loft_ref v24___vdb_1) {
+-    loft_ref v2___retbuf = { 0xFFFF, 0, 0 };
+-    loft_ref v3_buf = { 0xFFFF, 0, 0 };
++    loft_ref v2___retbuf = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v3_buf = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t v4__elm_1 = LOFT_NULL;
+     int64_t v5__elm_2 = LOFT_NULL;
+     int64_t v6__elm_3 = LOFT_NULL;
+@@ -26026,7 +26026,7 @@
+     int64_t v21__elm_18 = LOFT_NULL;
+     int64_t v22__elm_19 = LOFT_NULL;
+     int64_t v23__elm_20 = LOFT_NULL;
+-    loft_ref v25___rbw___vdb_1 = { 0xFFFF, 0, 0 };
++    loft_ref v25___rbw___vdb_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     loft_ref t1;
+     int64_t t2;
+     int64_t t3;
+@@ -26272,13 +26272,13 @@
+ }
+ 
+ static loft_ref n_encode_map__fr(loft_ref v0_entries, loft_ref v4___ref_1, loft_ref v5_keybuf, loft_ref v6_koff, loft_ref v7_klen, loft_ref v14_ranks) {
+-    loft_ref v1___retbuf = { 0xFFFF, 0, 0 };
++    loft_ref v1___retbuf = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t v2_n = LOFT_NULL;
+-    loft_ref v3_buf = { 0xFFFF, 0, 0 };
++    loft_ref v3_buf = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t v8__range_end_1 = LOFT_NULL;
+     int64_t v9_i_index = LOFT_NULL;
+     int64_t v10_i = LOFT_NULL;
+-    loft_ref v11_k = { 0xFFFF, 0, 0 };
++    loft_ref v11_k = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t v12__elm_1 = LOFT_NULL;
+     int64_t v13__elm_2 = LOFT_NULL;
+     int64_t v15__range_end_2 = LOFT_NULL;
+@@ -26311,17 +26311,17 @@
+     int64_t v42_t = LOFT_NULL;
+     int64_t v43__elm_4 = LOFT_NULL;
+     int64_t v44___ncc_8 = LOFT_NULL;
+-    loft_ref v45___vdb_1 = { 0xFFFF, 0, 0 };
+-    loft_ref v46___vdb_2 = { 0xFFFF, 0, 0 };
+-    loft_ref v47___vdb_3 = { 0xFFFF, 0, 0 };
+-    loft_ref v48___ref_2 = { 0xFFFF, 0, 0 };
+-    loft_ref v49___vdb_4 = { 0xFFFF, 0, 0 };
++    loft_ref v45___vdb_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v46___vdb_2 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v47___vdb_3 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v48___ref_2 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v49___vdb_4 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t v50___dn4_1 = LOFT_NULL;
+-    loft_ref v51___ref_3 = { 0xFFFF, 0, 0 };
+-    loft_ref v52___ref_4 = { 0xFFFF, 0, 0 };
+-    loft_ref v53___ref_5 = { 0xFFFF, 0, 0 };
+-    loft_ref v54___ref_6 = { 0xFFFF, 0, 0 };
+-    loft_ref v55___ref_7 = { 0xFFFF, 0, 0 };
++    loft_ref v51___ref_3 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v52___ref_4 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v53___ref_5 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v54___ref_6 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v55___ref_7 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t v56__ba_b0_56 = LOFT_NULL;
+     int64_t v57__ba_kl_57 = LOFT_NULL;
+     int64_t v58_oi = LOFT_NULL;
+@@ -26348,7 +26348,7 @@
+     loft_vh h3 = { 0xFFFF, 0, 0, 0 };
+     loft_vh h4 = { 0xFFFF, 0, 0, 0 };
+     loft_win pw5 = { 0, 0, 0, 0, 0xFFFF };
+-    loft_ref pv5 = { 0xFFFF, 0, 0 };
++    loft_ref pv5 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     loft_vh h7 = { 0xFFFF, 0, 0, 0 };
+     loft_vh h8 = { 0xFFFF, 0, 0, 0 };
+     loft_vh h9 = { 0xFFFF, 0, 0, 0 };
+@@ -26651,35 +26651,35 @@
+ }
+ 
+ static loft_ref n_encode__fr(loft_ref v0_v, loft_ref v1___retbuf) {
+-    loft_ref v2___ref_1 = { 0xFFFF, 0, 0 };
++    loft_ref v2___ref_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     uint8_t v3__mv_value_1 = LOFT_BOOL_NULL;
+-    loft_ref v4___ref_2 = { 0xFFFF, 0, 0 };
++    loft_ref v4___ref_2 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t v5__mv_value_2 = LOFT_NULL;
+-    loft_ref v6___ref_3 = { 0xFFFF, 0, 0 };
+-    loft_ref v7___ref_4 = { 0xFFFF, 0, 0 };
+-    loft_ref v8__mv_value_3 = { 0xFFFF, 0, 0 };
+-    loft_ref v9_buf = { 0xFFFF, 0, 0 };
+-    loft_ref v10___ref_5 = { 0xFFFF, 0, 0 };
++    loft_ref v6___ref_3 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v7___ref_4 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v8__mv_value_3 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v9_buf = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v10___ref_5 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     loft_str v11__mv_value_4 = { 0, 0 };
+     int64_t v12_n = LOFT_NULL;
+-    loft_ref v13___ref_6 = { 0xFFFF, 0, 0 };
++    loft_ref v13___ref_6 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t v14__range_end_1 = LOFT_NULL;
+     int64_t v15_i_index = LOFT_NULL;
+     int64_t v16_i = LOFT_NULL;
+     int64_t v17__elm_1 = LOFT_NULL;
+-    loft_ref v18__mv_items_1 = { 0xFFFF, 0, 0 };
+-    loft_ref v19___ref_7 = { 0xFFFF, 0, 0 };
++    loft_ref v18__mv_items_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v19___ref_7 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t v20__range_end_2 = LOFT_NULL;
+     int64_t v21_i_1_index = LOFT_NULL;
+     int64_t v22_i_1 = LOFT_NULL;
+-    loft_ref v23___ref_8 = { 0xFFFF, 0, 0 };
+-    loft_ref v24__mv_entries_1 = { 0xFFFF, 0, 0 };
+-    loft_ref v25___ref_9 = { 0xFFFF, 0, 0 };
+-    loft_ref v26___ref_10 = { 0xFFFF, 0, 0 };
+-    loft_ref v27___ref_11 = { 0xFFFF, 0, 0 };
+-    loft_ref v28___ref_12 = { 0xFFFF, 0, 0 };
+-    loft_ref v29___ref_13 = { 0xFFFF, 0, 0 };
+-    loft_ref v30___ret_tail_1 = { 0xFFFF, 0, 0 };
++    loft_ref v23___ref_8 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v24__mv_entries_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v25___ref_9 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v26___ref_10 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v27___ref_11 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v28___ref_12 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v29___ref_13 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v30___ret_tail_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     loft_ref t1;
+     uint8_t t2;
+     int64_t t3;
+@@ -26709,7 +26709,7 @@
+     loft_ref t27;
+     loft_text loft_own11 = { 0, 0, 0 };
+     loft_win pw2 = { 0, 0, 0, 0, 0xFFFF };
+-    loft_ref pv2 = { 0xFFFF, 0, 0 };
++    loft_ref pv2 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     loft_win loft_aw3;
+     LOFT_HOLD(1, &loft_own11);
+     v29___ref_13 = loft_ref_null();
+@@ -26892,7 +26892,7 @@
+ 
+ static int64_t n_fnv_bytes__fr(int64_t v0_h0, loft_ref v1_v) {
+     int64_t v2_fb_h = LOFT_NULL;
+-    loft_ref v3__vector_1 = { 0xFFFF, 0, 0 };
++    loft_ref v3__vector_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t v4_b_index = LOFT_NULL;
+     int64_t v5_b = LOFT_NULL;
+     int64_t v6__walk_len_6 = LOFT_NULL;
+@@ -27006,7 +27006,7 @@
+ }
+ 
+ static inline loft_ref n_tkey__fr(loft_str v0_k, loft_ref v1___retbuf) {
+-    loft_ref v2___ref_p2_1 = { 0xFFFF, 0, 0 };
++    loft_ref v2___ref_p2_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     loft_ref t1;
+     loft_ref t2;
+     uint8_t t3;
+@@ -27030,7 +27030,7 @@
+ }
+ 
+ static loft_ref n_entry__fr(loft_str v0_k, loft_ref v1_v, loft_ref v2___retbuf) {
+-    loft_ref v3___ref_p2_1 = { 0xFFFF, 0, 0 };
++    loft_ref v3___ref_p2_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     loft_ref t1;
+     loft_ref t2;
+     uint8_t t3;
+@@ -27064,65 +27064,65 @@
+ 
+ static loft_ref n_make_map__fr(int64_t v0_r, loft_ref v1___retbuf) {
+     int64_t v2_mm_s = LOFT_NULL;
+-    loft_ref v3_mm_nested = { 0xFFFF, 0, 0 };
++    loft_ref v3_mm_nested = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t v4_mm_i_index = LOFT_NULL;
+     int64_t v5_mm_i = LOFT_NULL;
+     int64_t v6_mm_k = LOFT_NULL;
+-    loft_ref v7__elm_1 = { 0xFFFF, 0, 0 };
++    loft_ref v7__elm_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     loft_text v8___work_1 = { 0, 0, 0 };
+-    loft_ref v9___ref_1 = { 0xFFFF, 0, 0 };
+-    loft_ref v10_mm_payload = { 0xFFFF, 0, 0 };
++    loft_ref v9___ref_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v10_mm_payload = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t v11_mm_j_index = LOFT_NULL;
+     int64_t v12_mm_j = LOFT_NULL;
+     int64_t v13__elm_2 = LOFT_NULL;
+-    loft_ref v14__elm_3 = { 0xFFFF, 0, 0 };
+-    loft_ref v15___ref_2 = { 0xFFFF, 0, 0 };
+-    loft_ref v16___ref_3 = { 0xFFFF, 0, 0 };
++    loft_ref v14__elm_3 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v15___ref_2 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v16___ref_3 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     loft_text v17___work_2 = { 0, 0, 0 };
+-    loft_ref v18___ref_4 = { 0xFFFF, 0, 0 };
+-    loft_ref v19___ref_5 = { 0xFFFF, 0, 0 };
+-    loft_ref v20___ref_6 = { 0xFFFF, 0, 0 };
+-    loft_ref v21___ref_7 = { 0xFFFF, 0, 0 };
+-    loft_ref v22__elm_4 = { 0xFFFF, 0, 0 };
+-    loft_ref v23___ref_8 = { 0xFFFF, 0, 0 };
+-    loft_ref v24___ref_9 = { 0xFFFF, 0, 0 };
+-    loft_ref v25___ref_10 = { 0xFFFF, 0, 0 };
+-    loft_ref v26___ref_11 = { 0xFFFF, 0, 0 };
+-    loft_ref v27___ref_12 = { 0xFFFF, 0, 0 };
+-    loft_ref v28___ref_13 = { 0xFFFF, 0, 0 };
+-    loft_ref v29___ref_14 = { 0xFFFF, 0, 0 };
+-    loft_ref v30___ref_15 = { 0xFFFF, 0, 0 };
+-    loft_ref v31___vdb_1 = { 0xFFFF, 0, 0 };
+-    loft_ref v32___ref_p2_1 = { 0xFFFF, 0, 0 };
+-    loft_ref v33___vdb_2 = { 0xFFFF, 0, 0 };
+-    loft_ref v34___ref_p2_2 = { 0xFFFF, 0, 0 };
+-    loft_ref v35___ref_p2_3 = { 0xFFFF, 0, 0 };
+-    loft_ref v36___ref_p2_4 = { 0xFFFF, 0, 0 };
+-    loft_ref v37___ref_p2_5 = { 0xFFFF, 0, 0 };
+-    loft_ref v38___ref_p2_6 = { 0xFFFF, 0, 0 };
+-    loft_ref v39___ref_p2_7 = { 0xFFFF, 0, 0 };
+-    loft_ref v40___ref_p2_8 = { 0xFFFF, 0, 0 };
+-    loft_ref v41___ref_p2_9 = { 0xFFFF, 0, 0 };
+-    loft_ref v42___ref_p2_10 = { 0xFFFF, 0, 0 };
+-    loft_ref v43___ref_p2_11 = { 0xFFFF, 0, 0 };
+-    loft_ref v44___ref_p2_12 = { 0xFFFF, 0, 0 };
+-    loft_ref v45___ref_p2_13 = { 0xFFFF, 0, 0 };
+-    loft_ref v46___ref_16 = { 0xFFFF, 0, 0 };
+-    loft_ref v47___lift_1 = { 0xFFFF, 0, 0 };
+-    loft_ref v48___lift_2 = { 0xFFFF, 0, 0 };
+-    loft_ref v49___lift_3 = { 0xFFFF, 0, 0 };
+-    loft_ref v50___lift_4 = { 0xFFFF, 0, 0 };
+-    loft_ref v51___lift_5 = { 0xFFFF, 0, 0 };
+-    loft_ref v52___lift_6 = { 0xFFFF, 0, 0 };
+-    loft_ref v53___lift_7 = { 0xFFFF, 0, 0 };
+-    loft_ref v54___lift_8 = { 0xFFFF, 0, 0 };
+-    loft_ref v55___lift_9 = { 0xFFFF, 0, 0 };
+-    loft_ref v56___lift_10 = { 0xFFFF, 0, 0 };
+-    loft_ref v57___lift_11 = { 0xFFFF, 0, 0 };
+-    loft_ref v58___lift_12 = { 0xFFFF, 0, 0 };
+-    loft_ref v59___lift_13 = { 0xFFFF, 0, 0 };
+-    loft_ref v60___lift_14 = { 0xFFFF, 0, 0 };
+-    loft_ref v61___lift_15 = { 0xFFFF, 0, 0 };
++    loft_ref v18___ref_4 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v19___ref_5 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v20___ref_6 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v21___ref_7 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v22__elm_4 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v23___ref_8 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v24___ref_9 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v25___ref_10 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v26___ref_11 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v27___ref_12 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v28___ref_13 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v29___ref_14 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v30___ref_15 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v31___vdb_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v32___ref_p2_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v33___vdb_2 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v34___ref_p2_2 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v35___ref_p2_3 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v36___ref_p2_4 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v37___ref_p2_5 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v38___ref_p2_6 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v39___ref_p2_7 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v40___ref_p2_8 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v41___ref_p2_9 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v42___ref_p2_10 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v43___ref_p2_11 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v44___ref_p2_12 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v45___ref_p2_13 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v46___ref_16 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v47___lift_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v48___lift_2 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v49___lift_3 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v50___lift_4 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v51___lift_5 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v52___lift_6 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v53___lift_7 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v54___lift_8 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v55___lift_9 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v56___lift_10 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v57___lift_11 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v58___lift_12 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v59___lift_13 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v60___lift_14 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v61___lift_15 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     loft_ref t1;
+     loft_ref t2;
+     loft_text t3 = { 0, 0, 0 };
+@@ -27187,7 +27187,7 @@
+     uint8_t t62;
+     loft_ref t63;
+     loft_win pw1 = { 0, 0, 0, 0, 0xFFFF };
+-    loft_ref pv1 = { 0xFFFF, 0, 0 };
++    loft_ref pv1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     LOFT_HOLD(3, &v8___work_1, &v17___work_2, &t3);
+     v47___lift_1 = loft_ref_null();
+     v48___lift_2 = loft_ref_null();
+@@ -27527,15 +27527,15 @@
+ }
+ 
+ static int64_t n_encode_op__fr(int64_t v0_r, loft_ref v7___ref_2) {
+-    loft_ref v1_eo_m = { 0xFFFF, 0, 0 };
+-    loft_ref v2___ref_1 = { 0xFFFF, 0, 0 };
++    loft_ref v1_eo_m = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v2___ref_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t v3_eo_sink = LOFT_NULL;
+     int64_t v4_eo_k_index = LOFT_NULL;
+     int64_t v5_eo_k = LOFT_NULL;
+-    loft_ref v6_eo_out = { 0xFFFF, 0, 0 };
++    loft_ref v6_eo_out = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t v8___ncc_1 = LOFT_NULL;
+-    loft_ref v9___ref_3 = { 0xFFFF, 0, 0 };
+-    loft_ref v10___vdb_1 = { 0xFFFF, 0, 0 };
++    loft_ref v9___ref_3 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v10___vdb_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t t1;
+     int64_t t2;
+     int64_t t3;
+@@ -27597,10 +27597,10 @@
+     int64_t v5_r_index = LOFT_NULL;
+     int64_t v6_r = LOFT_NULL;
+     int64_t v7_be_us = LOFT_NULL;
+-    loft_ref v8___ref_1 = { 0xFFFF, 0, 0 };
+-    loft_ref v9___ref_2 = { 0xFFFF, 0, 0 };
+-    loft_ref v10___ref_p2_1 = { 0xFFFF, 0, 0 };
+-    loft_ref v12___lift_1 = { 0xFFFF, 0, 0 };
++    loft_ref v8___ref_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v9___ref_2 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v10___ref_p2_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v12___lift_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     loft_ref t1;
+     int64_t t2;
+     int64_t t3;
+@@ -27753,35 +27753,35 @@
+ }
+ 
+ static loft_ref n_encode__ap__fr(loft_ref v0_v, loft_ref v1___retbuf, loft_win *loft_apw) {
+-    loft_ref v2___ref_1 = { 0xFFFF, 0, 0 };
++    loft_ref v2___ref_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     uint8_t v3__mv_value_1 = LOFT_BOOL_NULL;
+-    loft_ref v4___ref_2 = { 0xFFFF, 0, 0 };
++    loft_ref v4___ref_2 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t v5__mv_value_2 = LOFT_NULL;
+-    loft_ref v6___ref_3 = { 0xFFFF, 0, 0 };
+-    loft_ref v7___ref_4 = { 0xFFFF, 0, 0 };
+-    loft_ref v8__mv_value_3 = { 0xFFFF, 0, 0 };
+-    loft_ref v9_buf = { 0xFFFF, 0, 0 };
+-    loft_ref v10___ref_5 = { 0xFFFF, 0, 0 };
++    loft_ref v6___ref_3 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v7___ref_4 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v8__mv_value_3 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v9_buf = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v10___ref_5 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     loft_str v11__mv_value_4 = { 0, 0 };
+     int64_t v12_n = LOFT_NULL;
+-    loft_ref v13___ref_6 = { 0xFFFF, 0, 0 };
++    loft_ref v13___ref_6 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t v14__range_end_1 = LOFT_NULL;
+     int64_t v15_i_index = LOFT_NULL;
+     int64_t v16_i = LOFT_NULL;
+     int64_t v17__elm_1 = LOFT_NULL;
+-    loft_ref v18__mv_items_1 = { 0xFFFF, 0, 0 };
+-    loft_ref v19___ref_7 = { 0xFFFF, 0, 0 };
++    loft_ref v18__mv_items_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v19___ref_7 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t v20__range_end_2 = LOFT_NULL;
+     int64_t v21_i_1_index = LOFT_NULL;
+     int64_t v22_i_1 = LOFT_NULL;
+-    loft_ref v23___ref_8 = { 0xFFFF, 0, 0 };
+-    loft_ref v24__mv_entries_1 = { 0xFFFF, 0, 0 };
+-    loft_ref v25___ref_9 = { 0xFFFF, 0, 0 };
+-    loft_ref v26___ref_10 = { 0xFFFF, 0, 0 };
+-    loft_ref v27___ref_11 = { 0xFFFF, 0, 0 };
+-    loft_ref v28___ref_12 = { 0xFFFF, 0, 0 };
+-    loft_ref v29___ref_13 = { 0xFFFF, 0, 0 };
+-    loft_ref v30___ret_tail_1 = { 0xFFFF, 0, 0 };
++    loft_ref v23___ref_8 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v24__mv_entries_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v25___ref_9 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v26___ref_10 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v27___ref_11 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v28___ref_12 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v29___ref_13 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v30___ret_tail_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     loft_ref t1;
+     uint8_t t2;
+     int64_t t3;
+@@ -28056,8 +28056,8 @@
+ }
+ 
+ static loft_ref n_head__nn2__fr(int64_t v0_major, int64_t v1_arg, loft_ref v24___vdb_1) {
+-    loft_ref v2___retbuf = { 0xFFFF, 0, 0 };
+-    loft_ref v3_buf = { 0xFFFF, 0, 0 };
++    loft_ref v2___retbuf = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v3_buf = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t v4__elm_1 = LOFT_NULL;
+     int64_t v5__elm_2 = LOFT_NULL;
+     int64_t v6__elm_3 = LOFT_NULL;
+@@ -28078,7 +28078,7 @@
+     int64_t v21__elm_18 = LOFT_NULL;
+     int64_t v22__elm_19 = LOFT_NULL;
+     int64_t v23__elm_20 = LOFT_NULL;
+-    loft_ref v25___rbw___vdb_1 = { 0xFFFF, 0, 0 };
++    loft_ref v25___rbw___vdb_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     loft_ref t1;
+     int64_t t2;
+     int64_t t3;
+@@ -28251,8 +28251,8 @@
+ }
+ 
+ static loft_ref n_head__nn2__ap__fr(int64_t v0_major, int64_t v1_arg, loft_ref v24___vdb_1, loft_win *loft_apw) {
+-    loft_ref v2___retbuf = { 0xFFFF, 0, 0 };
+-    loft_ref v3_buf = { 0xFFFF, 0, 0 };
++    loft_ref v2___retbuf = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v3_buf = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t v4__elm_1 = LOFT_NULL;
+     int64_t v5__elm_2 = LOFT_NULL;
+     int64_t v6__elm_3 = LOFT_NULL;
+@@ -28273,7 +28273,7 @@
+     int64_t v21__elm_18 = LOFT_NULL;
+     int64_t v22__elm_19 = LOFT_NULL;
+     int64_t v23__elm_20 = LOFT_NULL;
+-    loft_ref v25___rbw___vdb_1 = { 0xFFFF, 0, 0 };
++    loft_ref v25___rbw___vdb_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     loft_ref t1;
+     int64_t t2;
+     int64_t t3;
+@@ -28407,8 +28407,8 @@
+ }
+ 
+ static loft_ref n_head__ap__fr(int64_t v0_major, int64_t v1_arg, loft_ref v24___vdb_1, loft_win *loft_apw) {
+-    loft_ref v2___retbuf = { 0xFFFF, 0, 0 };
+-    loft_ref v3_buf = { 0xFFFF, 0, 0 };
++    loft_ref v2___retbuf = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v3_buf = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t v4__elm_1 = LOFT_NULL;
+     int64_t v5__elm_2 = LOFT_NULL;
+     int64_t v6__elm_3 = LOFT_NULL;
+@@ -28429,7 +28429,7 @@
+     int64_t v21__elm_18 = LOFT_NULL;
+     int64_t v22__elm_19 = LOFT_NULL;
+     int64_t v23__elm_20 = LOFT_NULL;
+-    loft_ref v25___rbw___vdb_1 = { 0xFFFF, 0, 0 };
++    loft_ref v25___rbw___vdb_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     loft_ref t1;
+     int64_t t2;
+     int64_t t3;
+@@ -28563,13 +28563,13 @@
+ }
+ 
+ static loft_ref n_encode_map__ap__fr(loft_ref v0_entries, loft_ref v4___ref_1, loft_ref v5_keybuf, loft_ref v6_koff, loft_ref v7_klen, loft_ref v14_ranks, loft_win *loft_apw) {
+-    loft_ref v1___retbuf = { 0xFFFF, 0, 0 };
++    loft_ref v1___retbuf = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t v2_n = LOFT_NULL;
+-    loft_ref v3_buf = { 0xFFFF, 0, 0 };
++    loft_ref v3_buf = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t v8__range_end_1 = LOFT_NULL;
+     int64_t v9_i_index = LOFT_NULL;
+     int64_t v10_i = LOFT_NULL;
+-    loft_ref v11_k = { 0xFFFF, 0, 0 };
++    loft_ref v11_k = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t v12__elm_1 = LOFT_NULL;
+     int64_t v13__elm_2 = LOFT_NULL;
+     int64_t v15__range_end_2 = LOFT_NULL;
+@@ -28602,17 +28602,17 @@
+     int64_t v42_t = LOFT_NULL;
+     int64_t v43__elm_4 = LOFT_NULL;
+     int64_t v44___ncc_8 = LOFT_NULL;
+-    loft_ref v45___vdb_1 = { 0xFFFF, 0, 0 };
+-    loft_ref v46___vdb_2 = { 0xFFFF, 0, 0 };
+-    loft_ref v47___vdb_3 = { 0xFFFF, 0, 0 };
+-    loft_ref v48___ref_2 = { 0xFFFF, 0, 0 };
+-    loft_ref v49___vdb_4 = { 0xFFFF, 0, 0 };
++    loft_ref v45___vdb_1 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v46___vdb_2 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v47___vdb_3 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v48___ref_2 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v49___vdb_4 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t v50___dn4_1 = LOFT_NULL;
+-    loft_ref v51___ref_3 = { 0xFFFF, 0, 0 };
+-    loft_ref v52___ref_4 = { 0xFFFF, 0, 0 };
+-    loft_ref v53___ref_5 = { 0xFFFF, 0, 0 };
+-    loft_ref v54___ref_6 = { 0xFFFF, 0, 0 };
+-    loft_ref v55___ref_7 = { 0xFFFF, 0, 0 };
++    loft_ref v51___ref_3 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v52___ref_4 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v53___ref_5 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v54___ref_6 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
++    loft_ref v55___ref_7 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     int64_t v56__ba_b0_56 = LOFT_NULL;
+     int64_t v57__ba_kl_57 = LOFT_NULL;
+     int64_t v58_oi = LOFT_NULL;
+@@ -28637,7 +28637,7 @@
+     loft_vh h3 = { 0xFFFF, 0, 0, 0 };
+     loft_vh h4 = { 0xFFFF, 0, 0, 0 };
+     loft_win pw5 = { 0, 0, 0, 0, 0xFFFF };
+-    loft_ref pv5 = { 0xFFFF, 0, 0 };
++    loft_ref pv5 = { .store_nr = 0xFFFF, .rec = 0, .pos = 0 };
+     loft_vh h7 = { 0xFFFF, 0, 0, 0 };
+     loft_vh h8 = { 0xFFFF, 0, 0, 0 };
+     loft_vh h9 = { 0xFFFF, 0, 0, 0 };

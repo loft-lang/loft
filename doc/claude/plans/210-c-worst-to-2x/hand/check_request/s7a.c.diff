@@ -1,0 +1,168 @@
+--- base.c
++++ s7a.c
+@@ -29431,7 +29431,165 @@
+     return t1;
+ }
+ 
++/* Hand-priced (R-Transient) twin of cbor's read_value: the decoded tree outside the store.
++ * Scalars in a C struct, texts and bytes as views of the frame, one child array per
++ * array/map (the twin's Vec).  Mirrors read_value's answers exactly. */
++typedef struct lt_val {
++    uint8_t kind;      /* 0 CNull 1 CBool 2 CInt 3 CBytes 4 CText 5 CArray 6 CMap */
++    uint8_t b;
++    int64_t i;
++    const uint8_t *p;  /* bytes / text view */
++    uint32_t n;        /* view length; child count (pairs for a map) */
++    struct lt_val *kids;
++} lt_val;
++
++typedef struct { lt_val v; int64_t next; uint8_t ok; } lt_dec;
++
++static void lt_free(lt_val *v) {
++    if (v->kids) {
++        uint32_t m = v->kind == 6 ? 2 * v->n : v->n;
++        for (uint32_t k = 0; k < m; k++) lt_free(&v->kids[k]);
++        v->kids = NULL;
++    }
++}
++
++#define LT_ARENA 1
++#define LT_ALLOC(sz) loft_ta_alloc(sz)
++#ifndef LT_ARENA
++#define LT_ALLOC(sz) malloc(sz)
++#define LT_GROW(p, sz) realloc(p, sz)
++#endif
++
++static lt_dec lt_read(const uint8_t *bytes, int64_t n, int64_t pos, int64_t depth) {
++    lt_dec bad = { { 0 }, pos, 0 };
++    if (pos >= n || depth > 256) return bad;
++    int64_t b = bytes[pos];
++    int64_t major = b / 32, info = b % 32, arg = 0, argpos = pos + 1;
++    if (info < 24) arg = info;
++    else if (info == 24) {
++        if (argpos >= n) return bad;
++        arg = bytes[argpos]; argpos += 1; if (arg < 24) return bad;
++    } else if (info == 25) {
++        if (argpos + 1 >= n) return bad;
++        arg = bytes[argpos] * 256 + bytes[argpos + 1]; argpos += 2; if (arg < 256) return bad;
++    } else if (info == 26) {
++        if (argpos + 3 >= n) return bad;
++        arg = (((int64_t) bytes[argpos] * 256 + bytes[argpos + 1]) * 256 + bytes[argpos + 2]) * 256 + bytes[argpos + 3];
++        argpos += 4; if (arg < 65536) return bad;
++    } else if (info == 27) {
++        if (argpos + 7 >= n) return bad;
++        if (bytes[argpos] >= 128) return bad;
++        arg = bytes[argpos];
++        for (int k = 1; k < 8; k++) arg = arg * 256 + bytes[argpos + k];
++        argpos += 8; if (arg < 4294967296LL) return bad;
++    } else return bad;
++    lt_dec d = { { 0 }, argpos, 1 };
++    if (major == 0) { d.v.kind = 2; d.v.i = arg; return d; }
++    if (major == 1) { d.v.kind = 2; d.v.i = 0 - arg - 1; return d; }
++    if (major == 2 || major == 3) {
++        if (argpos + arg > n) return bad;
++        d.v.kind = major == 2 ? 3 : 4;
++        d.v.p = bytes + argpos; d.v.n = (uint32_t) arg;
++        /* text_from_bytes: bytes that are not UTF-8 read as the empty text */
++        if (major == 3 && !loft_utf8_valid(d.v.p, (size_t) arg)) d.v.n = 0;
++        d.next = argpos + arg;
++        return d;
++    }
++    if (major == 4 || major == 5) {
++        int per = major == 5 ? 2 : 1;
++        int64_t cap = arg < n - argpos ? arg : n - argpos;
++        lt_val *kids = cap ? (lt_val *) LT_ALLOC((size_t) (cap * per) * sizeof(lt_val)) : NULL;
++        int64_t p = argpos;
++        uint32_t got = 0;
++        for (int64_t k = 0; k < arg; k++) {
++            lt_dec kd = lt_read(bytes, n, p, depth + 1);
++            if (!kd.ok) goto fail;
++            if (per == 1) { kids[got++] = kd.v; p = kd.next; continue; }
++            lt_dec vd = lt_read(bytes, n, kd.next, depth + 1);
++            if (!vd.ok) { lt_free(&kd.v); goto fail; }
++            kids[2 * got] = kd.v; kids[2 * got + 1] = vd.v; got++;
++            p = vd.next;
++        }
++        d.v.kind = major == 5 ? 6 : 5; d.v.n = got; d.v.kids = kids; d.next = p;
++        return d;
++fail:
++        { lt_val t = { major == 5 ? 6 : 5, 0, 0, 0, got, kids }; lt_free(&t); }
++        return bad;
++    }
++    if (major == 7) {
++        if (info == 20) { d.v.kind = 1; d.v.b = 0; return d; }
++        if (info == 21) { d.v.kind = 1; d.v.b = 1; return d; }
++        if (info == 22) { return d; }
++    }
++    return bad;
++}
++
++static const uint8_t *lt_frame(loft_ref v, int64_t *n) {
++    *n = loft_vec_len(v);
++    if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0 || *n == 0) { *n = 0; return NULL; }
++    loft_store_t *s = loft_store_of(v);
++    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
++    if (r == 0) { *n = 0; return NULL; }
++    return loft_elem_base(s, r);
++}
++
++/* decode(bytes): read_value at 0, trailing bytes refused */
++static lt_dec lt_decode(loft_ref frame) {
++    int64_t n; const uint8_t *p = lt_frame(frame, &n);
++    lt_dec d = lt_read(p, n, 0, 0);
++    if (d.ok && d.next != n) { lt_free(&d.v); d.v.kind = 0; d.ok = 0; }
++    return d;
++}
++
++static uint8_t lt_decode_ok(loft_ref frame) {
++    lt_dec d = lt_decode(frame);
++    lt_free(&d.v);
++    return d.ok;
++}
++
++/* pa_text(pa_decode(frame), key) */
++static loft_text lt_pa_text(loft_ref frame, const char *key, size_t klen) {
++    loft_text out = { 0, 0, 0 };
++    lt_dec d = lt_decode(frame);
++    if (d.v.kind == 6) {
++        for (uint32_t k = 0; k < d.v.n; k++) {
++            lt_val *kv = &d.v.kids[2 * k];
++            if (kv->kind == 4 && kv->n == klen && memcmp(kv->p, key, klen) == 0) {
++                lt_val *vv = &d.v.kids[2 * k + 1];
++                if (vv->kind == 4 && vv->n) loft_push(&out, (const char *) vv->p, vv->n);
++                break;
++            }
++        }
++    }
++    lt_free(&d.v);
++    return out;
++}
++
++static loft_text lt_check_request(loft_ref frame) {
++    loft_ta_mark_t m = loft_ta_mark();
++
++    lt_dec d = lt_decode(frame);
++    loft_text res;
++    if (!d.ok) res = loft_text_own(loft_lit("malformed-frame", 15));
++    else {
++        loft_text op = { 0, 0, 0 };
++        if (d.v.kind == 6)
++            for (uint32_t k = 0; k < d.v.n; k++) {
++                lt_val *kv = &d.v.kids[2 * k];
++                if (kv->kind == 4 && kv->n == 2 && memcmp(kv->p, "op", 2) == 0) {
++                    lt_val *vv = &d.v.kids[2 * k + 1];
++                    if (vv->kind == 4 && vv->n) loft_push(&op, (const char *) vv->p, vv->n);
++                    break;
++                }
++            }
++        res = n_valid_op__fr(loft_view(&op)) ? loft_text_own(loft_lit("", 0)) : loft_text_own(loft_lit("unknown-op", 10));
++        loft_text_free(&op);
++    }
++    loft_ta_back(m);
++    return res;
++}
+ static loft_text n_check_request__fr(loft_ref v0_frame) {
++    return lt_check_request(v0_frame);
+     loft_text v1_op = { 0, 0, 0 };
+     loft_ref v2___ref_1 = { 0xFFFF, 0, 0 };
+     loft_text v3___work_c1 = { 0, 0, 0 };

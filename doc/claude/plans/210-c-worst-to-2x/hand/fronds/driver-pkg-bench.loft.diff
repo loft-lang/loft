@@ -1,0 +1,21 @@
+--- library/bench/bench.loft
++++ pkg/bench/bench.loft
+@@ -381,17 +381,4 @@
+   if mn_n < 1 { mn_n = 1; }
+   println("routine\titers\tus\tns_op\tpx\tns_px\thash");
+-  print_row(bench_hash(mn_n));
+-  print_row(bench_hair(mn_n));
+-  print_row(bench_smooth(mn_n));
+   print_row(bench_fronds(mn_n));
+-  print_row(bench_lock(mn_n));
+-  print_row(bench_lock_curved(mn_n));
+-  print_row(bench_composite(mn_n));
+-  print_row(bench_fill(mn_n, "fill_circle", circle_px(128.0, 128.0, 100.0, 28)));
+-  print_row(bench_fill(mn_n, "fill_star", pentagram_px()));
+-  print_row(bench_wide_line(mn_n));
+-  print_row(bench_parse(mn_n));
+-  print_row(bench_render(mn_n, "render_lock", lock_scene()));
+-  print_row(bench_render(mn_n, "render_marks", marks_scene()));
+-  print_row(bench_resize(mn_n));
+-}
++}

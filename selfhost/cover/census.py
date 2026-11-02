@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """@PLN91 S2.1 — how much of the repository's programs the loft interpreter runs.
 
-    python3 selfhost/cover/census.py [--loft target/release/loft] [--jobs 8]
+    python3 selfhost/cover/census.py [--loft target/release/loft] [--jobs N, default: every core]
                                      [--chapter operational --chapter calls …] [--scripts-only]
 
 Each program (tests/scripts/*.loft, and the language suite's cells under LOFT_SUITE_DIR) is
@@ -67,7 +67,9 @@ def judge(path, loft, runner, tmp, env, root):
     if code != 0:
         return path, "skip", "does not compile as a plain program"
     ecode, eout, eerr = run([loft, "--interpret"] + libs + [path], env, 300)
-    acode, aout, aerr = run([runner, img], env, 300)
+    # The runner anchors the program's relative paths where `loft` anchors a C program's.
+    renv = {**env, "LOFT_SOURCE_DIR": os.path.dirname(os.path.abspath(path))}
+    acode, aout, aerr = run([runner, img], renv, 300)
     if acode == 3 and "refused: " in aerr:
         reason = aerr.split("refused: ", 1)[1].strip().splitlines()[0].split(" — in ")[0]
         return path, "refused", re.sub(r"\b\d+\b", "N", reason)[:160]
@@ -83,7 +85,7 @@ def judge(path, loft, runner, tmp, env, root):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--loft", default="target/release/loft")
-    ap.add_argument("--jobs", type=int, default=6)
+    ap.add_argument("--jobs", type=int, default=os.cpu_count() or 1)
     ap.add_argument("--chapter", action="append", default=[])
     ap.add_argument("--scripts-only", action="store_true")
     o = ap.parse_args()

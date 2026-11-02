@@ -99,10 +99,12 @@ mod join_rewrite;
 mod last_use;
 mod leak_check;
 mod move_elide;
+mod owner_handover;
 mod par_safety;
 mod par_writes;
 mod phase;
 mod places;
+mod rebound_captures;
 mod reshape_refusals;
 mod returns;
 mod scan;
@@ -558,6 +560,9 @@ struct Scopes<'s> {
     /// VARIABLE flag both backends read at ALLOCATION time too, so stamping it here made
     /// the lift borrow instead of own and the append wrote into its own source.
     free_transferred: HashSet<u16>,
+    /// loft#2319 — the same temps in the order this pass met them, so the call that consumes
+    /// one can read it back as null after itself (`scan_args`' postamble).
+    consumed_lifts: Vec<u16>,
     /// loft#854 — the whole-function half of the ownership oracle, computed once
     /// for `d_nr` instead of once per question.
     ///
@@ -900,6 +905,12 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     if crate::keys::buffer_detach_enabled() {
         buffer_detach::detach_owned_buffers(data);
     }
+    // loft#2357, `@FR-L-CapKeep` — a capture whose local the loop re-assigns is released by the
+    // last of its names to let go, decided by store identity at each let-go point.
+    rebound_captures::release_rebound_captures(data);
+    // loft#2363, `@FR-L-CapOne` — a record that owns a capture through its owner slot passes
+    // that ownership to another record holding the same store when it is released first.
+    owner_handover::hand_over_owned_captures(data);
     crate::ownership_cfg::oracle_free_checks(data);
     // #682 — record which closure captures the record ADOPTS, now that every dep
     // rewrite above has settled.  Must run after the loop, not inside it: the
