@@ -108,6 +108,11 @@ NAME="loft-$VERSION-$TARGET"
 echo "== verifying $NAME =="
 
 rm -rf "$ROOT"; mkdir -p "$ROOT"
+# The root RESOLVED, symlinks and all: on macOS `/tmp` is `/private/tmp`, and cargo records the
+# resolved path of every crate it compiles under `$CARGO_HOME` — so a `--remap-path-prefix` for
+# the unresolved `/tmp/loft-repro/cargo` (repro-flags.sh reads `$CARGO_HOME` as given) matched
+# nothing, the registry paths stayed in the binary, and every macOS rebuild differed in size.
+ROOT="$(cd "$ROOT" && pwd -P)"
 [ "$KEEP" = 1 ] || trap 'rm -rf "$ROOT"' EXIT INT TERM
 
 # 1. The published bundle, and what it says it was built with.

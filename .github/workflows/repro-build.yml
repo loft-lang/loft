@@ -158,9 +158,9 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          # A fixed root, so the absolute paths a build embeds are the same ones the
-          # release build embedded.  Per-runner temp dirs would differ and guarantee a
-          # byte mismatch that says nothing about the source.
+          # Where the rebuild works.  Any directory will do: scripts/repro-flags.sh erases the
+          # absolute paths on both sides (the release's and this rebuild's), and
+          # repro-verify.sh resolves this root's symlinks before anything derives from it.
           LOFT_REPRO_ROOT: ${{ runner.os == 'Windows' && 'C:\loft-repro' || '/tmp/loft-repro' }}
         run: |
           set +e
