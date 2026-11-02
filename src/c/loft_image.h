@@ -10,16 +10,14 @@
 
 /* What a converting load needs of the program (`loft_upgrade.h`, @PLN196): its own layout
  * description of the store's root, each `upgrade` routine's `old` struct and the `Release` —
- * the dump with its facts after a `--facts--` line, the type number of every name in it — its
- * release, and the tables its records are built through (`loft_ptypes`, `loft_types`). */
+ * the dump with its facts after a `--facts--` line, the type number of every name in it — and
+ * its release.  The records are built through the parse table (`loft_up_ptypes`). */
 typedef struct loft_upgrade_s {
     const char *desc;
     const char *const *names;
     const uint16_t *types;
     uint32_t n;
     const char *version;
-    const void *P;
-    const loft_tdesc *T;
 } loft_upgrade;
 
 /* One persisted type's sidecar text (`LayoutIdentity::of_store(..).to_sidecar()`), split where
@@ -41,6 +39,17 @@ typedef struct {
     /* A whole load of an image of another layout converts it (`loft_up_load`); 0 refuses it. */
     const loft_upgrade *up;
 } loft_sidecar;
+
+#ifdef LOFT_UPGRADE
+/* The converter (`loft_upgrade.h`), and the text buffer its reasons are written in. */
+typedef struct { char *p; size_t n, cap; } loft_ub;
+static void loft_ub_puts(loft_ub *b, const char *s);
+static const char *loft_ub_str(const loft_ub *b);
+static void loft_ub_free(loft_ub *b);
+static int loft_up_load(loft_ref r, const loft_sidecar *sc, const char *sidecar, uint8_t *bytes, size_t n,
+                        const char *what, loft_ub *why);
+static uint16_t loft_up_rebuild(uint16_t slot, const loft_sidecar *sc, loft_ub *why);
+#endif
 
 /* ── radix_tree::rtree_relayout: the nodes renumbered in van Emde Boas order ── */
 
@@ -485,20 +494,43 @@ static int loft_image_write(const loft_tdesc *T, uint32_t ntypes, loft_ref r, lo
     uint16_t tp = loft_stores[r.store_nr].known;
     int32_t header = loft_st_i32(&loft_stores[r.store_nr], 1, 0);
     if (tp == 0xFFFF || header <= 0 || sc == 0 || sc->tp != tp) return 0;
-    /* A stored reference cannot be carried by the copy below: refused, not written wrong. */
-    if (loft_type_has_dbref(T, ntypes, tp, 0)) return 0;
-    uint16_t dst = loft_store_scratch((uint32_t) header + 2);
-    loft_store_t *d = &loft_stores[dst];
-    if (loft_st_claim(d, (uint32_t) header) != 1) {
-        loft_store_drop(dst);
+    uint16_t dst;
+    loft_ref to;
+    if (loft_type_has_dbref(T, ntypes, tp, 0)) {
+        /* The deep copy below moves records and rewrites no pointer, so a stored reference
+         * would still name the LIVE store: such a type is carried through the converter at the
+         * program's own layout instead (`image_rebuild`), and refused where there is none. */
+#ifdef LOFT_UPGRADE
+        if (!sc->up) return 0;
+        loft_ub why = { 0, 0, 0 };
+        dst = loft_up_rebuild(r.store_nr, sc, &why);
+        if (dst == 0xFFFF && getenv("LOFT_LOADER_STATS"))
+            fprintf(stderr, "store_persist_copy: not written \xe2\x80\x94 %s\n", loft_ub_str(&why));
+        loft_ub_free(&why);
+        if (dst == 0xFFFF) return 0;
+        to.store_nr = dst;
+        to.rec = 1;
+        to.pos = 8;
+#else
         return 0;
+#endif
+    } else {
+        dst = loft_store_scratch((uint32_t) header + 2);
+        loft_store_t *d0 = &loft_stores[dst];
+        if (loft_st_claim(d0, (uint32_t) header) != 1) {
+            loft_store_drop(dst);
+            return 0;
+        }
+        int32_t dst_header = loft_st_i32(d0, 1, 0);
+        memcpy(d0->buf + 8, loft_stores[r.store_nr].buf + 8, (size_t) header * 8);
+        loft_st_set_i32(d0, 1, 0, dst_header);
+        loft_ref src = { r.store_nr, 1, 8 };
+        to.store_nr = dst;
+        to.rec = 1;
+        to.pos = 8;
+        loft_copy_claims(T, tp, src, to);
     }
-    int32_t dst_header = loft_st_i32(d, 1, 0);
-    memcpy(d->buf + 8, loft_stores[r.store_nr].buf + 8, (size_t) header * 8);
-    loft_st_set_i32(d, 1, 0, dst_header);
-    loft_ref src = { r.store_nr, 1, 8 }, to = { dst, 1, 8 };
-    loft_copy_claims(T, tp, src, to);
-    d = &loft_stores[dst];
+    loft_store_t *d = &loft_stores[dst];
     d->known = tp;
     if (loft_type_has_tree(T, ntypes, tp, 0)) {
         uint32_t budget = 200000;
@@ -737,9 +769,6 @@ static char *loft_up_dup_text(const char *t) {
     memcpy(c, t, n + 1);
     return c;
 }
-
-/* The sidecar text a URL gate kept for a converting load (`loft_net_gate`, gate 3). */
-static LOFT_TLS char *loft_net_gate_kept;
 
 /* The sidecar `<path>.dschema` read whole, malloc'd and NUL-terminated, or 0. */
 static char *loft_image_sidecar(const char *path) {
@@ -986,15 +1015,6 @@ static void loft_rekey_image(const loft_sidecar *sc, loft_ref r) {
     loft_rekey_walk(sc->rekey, sc->rekey_n, sc->tp, root, &budget);
 }
 
-#ifdef LOFT_UPGRADE
-/* The converter (`loft_upgrade.h`), and the text buffer its reasons are written in. */
-typedef struct { char *p; size_t n, cap; } loft_ub;
-static void loft_ub_puts(loft_ub *b, const char *s);
-static const char *loft_ub_str(const loft_ub *b);
-static void loft_ub_free(loft_ub *b);
-static int loft_up_load(loft_ref r, const loft_sidecar *sc, const char *sidecar, uint8_t *bytes, size_t n,
-                        const char *what, loft_ub *why);
-#endif
 
 static int loft_image_load(loft_ref r, loft_str path, const loft_sidecar *sc, int untrusted) {
     const char *who = untrusted ? "store_load_untrusted" : "store_load";

@@ -734,7 +734,7 @@ impl<'a> Cx<'a> {
         );
         let _ = writeln!(
             out,
-            "static const loft_upgrade loft_up{tp} = {{ loft_upd{tp}, loft_upn{tp}, loft_upt{tp}, {}, {}, 0, loft_types }};",
+            "static const loft_upgrade loft_up{tp} = {{ loft_upd{tp}, loft_upn{tp}, loft_upt{tp}, {}, {} }};",
             names.len(),
             body::c_string(&self.stores.release().version)
         );

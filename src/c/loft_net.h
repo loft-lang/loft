@@ -220,6 +220,9 @@ static void loft_sha256_hex(const uint8_t *p, size_t n, char hex[65]) {
 /* The layout gate of an image at `u` (`check_sidecar` over HTTP): `<u>.dschema` fetched and
  * classified.  A host's own "not there" (`loft_fetch_absent`) refuses it as a bare image, a request
  * that failed refuses naming why; `recorded` gets the sidecar's slot.  1 when it may be read. */
+/* The sidecar text a URL gate kept for a converting load (gate 3). */
+static LOFT_TLS char *loft_net_gate_kept;
+
 static int loft_net_gate(const char *u, const loft_sidecar *sc, const char *who, long *recorded, int convert) {
     char err[1024];
     loft_bytes b;

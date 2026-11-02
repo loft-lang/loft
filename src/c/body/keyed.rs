@@ -454,6 +454,11 @@ impl FnWriter<'_> {
                 // is refused here, as every copy refuses it.
                 self.cx.copy_type(tp)?;
                 self.cx.name_types();
+                // A store holding a stored reference is written through the converter, which
+                // re-points each reference at the copy (`image_rebuild`, `loft_up_rebuild`).
+                if self.cx.holds_stored_refs(tp) {
+                    self.cx.upgrade_of(tp);
+                }
                 let sc = self.cx.sidecar_of(tp);
                 let (r, path) = self.two(name, &[r, path], ind)?;
                 Ok(Some(E::new(

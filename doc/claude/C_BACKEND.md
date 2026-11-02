@@ -177,6 +177,7 @@ module and the C header and compare every answer and every byte of the store.
 | `loft_keyed.h` | sorted and ordered (`src/vector.rs`), the walks, renders and keyed writes |
 | `loft_json.h` | `src/json.rs`' `JParser` and the lexer's JSON mode, ported; the JsonValue tree in a store and its natives (`LOFT_JSON`, `LOFT_JV_*`) |
 | `loft_parse.h` | `T.parse(text)` and `T.parse(JsonValue)`: the walks into a type, read from the `loft_ptypes` table `parse.rs` writes, and the per-store `#errors` (`LOFT_PARSE`) |
+| `loft_upgrade.h` | the store upgrade (`src/database/upgrade_map.rs`, `upgrade.rs`, `layout_parse.rs`): a sidecar's dump read back, the upgrade map, the converter and the owed fills its drain takes (`LOFT_UPGRADE`) |
 | `loft_io.h` | files and the filesystem |
 | `loft_lazy.h` | lazy stores: the bindings, their pins, the fault channel, the miss path (`LOFT_LAZY`) |
 | `loft_https.h` | the client connection (a socket, TLS over it), the one HTTP/1.1 client, the WebSocket handshake's SHA-1 and accept key |
@@ -389,19 +390,27 @@ hash keyed by one to four integer parts whose element owns no heap, into the ent
 finds or files (`@FR-R-KeyedEntry`'s subscript clause, `loft_keyed_entry_ints`).
 
 **Store images.**  `store_persist_copy` is `Stores::persist_copy` ported: the root deep-copied
-into a scratch store, its trees laid out in van Emde Boas order (`rtree_relayout`), the store
+into a scratch store (a type holding a stored reference goes through the store converter at the
+program's own layout instead, `image_rebuild`, which re-points each reference at the copy), its
+trees laid out in van Emde Boas order (`rtree_relayout`), the store
 written from word 0 to past its last live record, padded to the 1024-word floor, and the
 `.dschema` sidecar beside it — its text prepared at emit time per root type
 (`LayoutIdentity::of_store`), the slot line filled in at run time.  `store_load` is `load_path`:
 the sidecar gated (`classify`: the same hash and dump, `Release::admits`), the image adopted
 into the slot as `Store::load` builds one (no parked lists, no lazy frees, the allocator state
-re-derived from the blocks).  A file of another layout is refused, where the interpreter
-converts it — except two, which a whole load converts.  One written before the null-first key
-order (`placement::KEY_ORDER`): the gate admits a layout that differs only by `,order=1` and
+re-derived from the blocks).  A file of another layout is converted, as the interpreter
+converts it (`@FR-L-Sound`, `loft_upgrade.h`): the sidecar's dump read back into a layout
+description, the upgrade map derived against the program's own description (`loft_up<tp>`, the
+root and each `upgrade` routine's `old` struct, written beside the sidecar), and a new store
+built record by record through the parse writer's `record_new` / `record_finish`; an added
+field and an `upgrade` routine are owed to the `__upgrade_drain` the parser puts after every
+load.  The URL loaders convert the same way, from the sidecar text their gate fetched.  Two
+older layouts take a shorter path: one written before the null-first key order
+(`placement::KEY_ORDER`), where the gate admits a layout that differs only by `,order=1` and
 `loft_rekey_walk` files every `sorted`, `ordered` and `index` whose key moved again in this
-build's order (a paged load still refuses it, as the interpreter's does).  And tries written
-under placement token 1: `loft_trie_refile` files each trie's records again (a paged load reads
-them as written).  A store holding references has them re-pointed at its slot from the slot its
+build's order (a paged load still refuses it, as the interpreter's does), and tries written
+under placement token 1, whose records `loft_trie_refile` files again (a paged load reads them
+as written).  A store holding references has them re-pointed at its slot from the slot its
 sidecar recorded (`rebase_stored_refs`), read off the image's bytes before it is adopted, so a
 refusal leaves the store as it was; `store_load_untrusted` validates the block structure first
 (`Store::validate_structure`); compaction on load is not done (it declines for an image
@@ -675,11 +684,7 @@ the way a build without it answers: HTTPS on a host without
 sockets (wasm) or whose compiler could not build the TLS client; SQLite where the system has no
 `libsqlite3`.  Refused at emit time: a link re-pointed to a narrow or a text store place,
 and a par row of a tuple holding a reference — each by name.  Not
-refused and not carried: a `#native` function (above).  An image needs the store converter the
-interpreter has (`Stores::upgrade_store`, [STORE_MODEL.md](STORE_MODEL.md) D30): `store_load` of
-an image of another layout is refused by name, and `store_persist_copy` of a type holding a
-stored reference answers `false` — the C writer's deep copy would leave the reference naming the
-live store, an image no reader can load.
+refused and not carried: a `#native` function (above).
 
 ### What switching to C loses (@PLN206 P0b)
 

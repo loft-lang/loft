@@ -825,6 +825,9 @@ typedef struct {
     uint32_t *proj_pair;
     uint32_t nproj;
     char **cl_old, **cl_new;
+    /* `whole_copies`: an unchanged record or collection may be copied as it is; off, only a
+     * leaf is, and everything else is carried through the description. */
+    int whole_copies;
     /* The first refusal, `path: reason`; the converter runs no map that has one. */
     loft_ub refusal;
 } loft_upmap;
@@ -1418,7 +1421,7 @@ static int64_t loft_um_pair_as(loft_upmap *m, uint16_t old, uint16_t nw, const c
         loft_ub_free(&why);
         return -1;
     }
-    if (loft_um_same_name(m, old, nw) && (whole || loft_um_leaf(on)) &&
+    if (loft_um_same_name(m, old, nw) && ((m->whole_copies && whole) || loft_um_leaf(on)) &&
         strcmp(loft_um_closure(m, 0, old), loft_um_closure(m, 1, nw)) == 0)
         return loft_um_push(m, old, nw, LOFT_HOW_SAME);
     (void) nn;
@@ -1429,8 +1432,9 @@ static int64_t loft_um_pair_as(loft_upmap *m, uint16_t old, uint16_t nw, const c
 
 /* `UpgradeMap::derive_with` from `old` (rooted at `old_root`) to `nw` (at `new_root`). */
 static void loft_um_derive(loft_upmap *m, const loft_ld *old, uint16_t old_root, const loft_ld *nw, uint16_t new_root,
-                           const uint16_t *rt_new, const uint16_t *rt_old, uint32_t nrt) {
+                           const uint16_t *rt_new, const uint16_t *rt_old, uint32_t nrt, int whole_copies) {
     memset(m, 0, sizeof *m);
+    m->whole_copies = whole_copies;
     m->od = old;
     m->nd = nw;
     m->rt_new = rt_new;
@@ -1966,6 +1970,116 @@ static int loft_up_newer(const char *mine, const char *written) {
     return w[0] < me[0] || (w[0] == me[0] && (w[1] < me[1] || (w[1] == me[1] && w[2] < me[2])));
 }
 
+/* The program's own description (`loft_upgrade::desc`) read into `nd`, each type given its type
+ * number, and its node for type `tp` in `*root`; 0 with `why` set. */
+static int loft_up_own(const loft_upgrade *up, uint16_t tp, loft_ld *nd, uint16_t *root, loft_ub *why) {
+    const char *facts = strstr(up->desc, "--facts--\n");
+    char *dtext = loft_up_dup(up->desc, facts ? (size_t) (facts - up->desc) : strlen(up->desc));
+    loft_ub perr = { 0, 0, 0 };
+    int ok = loft_ld_parse(nd, dtext, &perr) && (!facts || loft_ld_facts(nd, facts + 10, &perr));
+    free(dtext);
+    if (!ok) {
+        loft_ub_printf(why, "this program's own layout does not read: %s", loft_ub_str(&perr));
+        loft_ub_free(&perr);
+        return 0;
+    }
+    loft_ub_free(&perr);
+    for (uint16_t i = 0; i < nd->count; i++)
+        for (uint32_t k = 0; k < up->n; k++)
+            if (strcmp(up->names[k], nd->n[i].name) == 0) { nd->n[i].prog = up->types[k]; break; }
+    *root = LOFT_LD_NONE;
+    for (uint16_t i = 0; i < nd->count && *root == LOFT_LD_NONE; i++)
+        if (nd->n[i].prog == tp && nd->n[i].kind != LOFT_LN_NAME) *root = i;
+    if (*root == LOFT_LD_NONE) {
+        loft_ub_printf(why, "this program does not describe the store's root type");
+        return 0;
+    }
+    return 1;
+}
+
+/* `upgrade_into_new_store` with `repoint_references`' checks: the store `old_nr` (rooted at
+ * `old_root` of `m`'s old description) converted into a fresh store of root type `tp`, answered;
+ * 0xFFFF with `why` set and nothing left allocated.  The references are not written yet: the
+ * caller names the store they land in (`loft_up_repoint`). */
+static uint16_t loft_up_convert(loft_urun *run, const loft_upmap *m, const loft_ld *od, const loft_ld *nd,
+                                uint16_t new_root, uint16_t tp, uint16_t old_nr, long self_slot, const char *from,
+                                loft_ub *why) {
+    uint32_t words = (8 + (uint32_t) nd->n[new_root].size + 7) / 8;
+    if (words < 2) words = 2;
+    uint16_t dst_nr = loft_store_scratch(words + 3);
+    loft_store_t *d = &loft_stores[dst_nr];
+    uint32_t root = loft_st_claim(d, words);
+    if (root != LOFT_ST_PRIMARY) {
+        loft_ub_puts(why, "a fresh store did not hand out its first record");
+        loft_store_drop(dst_nr);
+        return 0xFFFF;
+    }
+    loft_zero_fill(d, root);
+    /* The root record's back-pointer word travels with it. */
+    loft_set_u32(d, root, 4, loft_u32(&loft_stores[old_nr], LOFT_ST_PRIMARY, 4));
+    run->m = m;
+    run->od = od;
+    run->nd = nd;
+    run->P = loft_up_ptypes();
+    run->T = loft_parse_types();
+    run->w.P = run->P;
+    run->w.unfilled = 0;
+    run->self_slot = self_slot;
+    run->old_nr = old_nr;
+    run->dst_nr = dst_nr;
+    run->from = from;
+    loft_ref src = { old_nr, LOFT_ST_PRIMARY, 8 }, to = { dst_nr, LOFT_ST_PRIMARY, 8 };
+    loft_ucont at = { to, tp, 0xFFFF };
+    int ok = loft_uc_convert(run, 0, src, to, at);
+    if (!ok) loft_ub_puts(why, run->err.n ? loft_ub_str(&run->err) : "the conversion did not finish");
+    /* Each converted reference must name a record the new store holds. */
+    for (size_t i = 0; ok && i < run->nfix; i++) {
+        loft_ufix *f = &run->fix[i];
+        loft_ref named = { old_nr, f->rec, f->pos };
+        if (loft_record_removed(named)) { f->sn = 0xFFFFFFFFu; continue; }
+        if (self_slot < 0 || (long) (uint16_t) f->sn != self_slot) {
+            loft_ub_puts(why, self_slot < 0 ? "the store holds references and does not record which store they name"
+                                            : "the store holds a reference into another store");
+            ok = 0;
+        } else if (f->pos != 8) {
+            loft_ub_puts(why, "a reference names a field inside a record, which an upgrade does not carry yet");
+            ok = 0;
+        } else if (!loft_uc_rec_get(run, f->rec)) {
+            loft_ub_puts(why, "a reference names a record the store no longer holds");
+            ok = 0;
+        }
+    }
+    if (!ok) {
+        loft_store_drop(dst_nr);
+        return 0xFFFF;
+    }
+    loft_stores[dst_nr].known = tp;
+    return dst_nr;
+}
+
+/* `repoint_references`: every converted reference written, its holder and the record it names
+ * moved from the store they were built in (`built`) to the one they now live in (`lives`). */
+static void loft_up_repoint(loft_urun *run, uint16_t built, uint16_t lives) {
+    for (size_t i = 0; i < run->nfix; i++) {
+        loft_ufix *f = &run->fix[i];
+        loft_ref holder = f->holder;
+        if (holder.store_nr == built) holder.store_nr = lives;
+        loft_ref target = loft_ref_null();
+        if (f->sn != 0xFFFFFFFFu) {
+            target = loft_uc_rec_get(run, f->rec)->nw;
+            if (target.store_nr == built) target.store_nr = lives;
+        }
+        loft_set_dbref(holder, 0, target);
+    }
+}
+
+static void loft_up_run_free(loft_urun *run) {
+    free(run->recs);
+    free(run->fix);
+    loft_ub_free(&run->err);
+    memset(run, 0, sizeof *run);
+}
+
 /* `load_upgraded_from`: the image `bytes` (`n` long, taken over), whose `.dschema` text is
  * `sidecar` and records another layout, converted into the store `r` names.  1 when it took;
  * 0 with `why` set, `r`'s store left as it was and nothing owed. */
@@ -1983,36 +2097,13 @@ static int loft_up_load(loft_ref r, const loft_sidecar *sc, const char *sidecar,
     memset(&run, 0, sizeof run);
     uint16_t *rt_new = 0, *rt_old = 0;
     uint32_t nrt = 0;
-    int ok = 0, have_map = 0, routines = 0;
+    int ok = 0, have_map = 0;
     uint16_t old_nr = 0xFFFF, dst_nr = 0xFFFF, new_root = LOFT_LD_NONE;
     if (!loft_ld_read_sidecar(&od, sidecar, what, &h, why)) goto done;
-    {
-        /* The program's own description, each of its types given its type number. */
-        const char *facts = strstr(up->desc, "--facts--\n");
-        char *dtext = loft_up_dup(up->desc, facts ? (size_t) (facts - up->desc) : strlen(up->desc));
-        loft_ub perr = { 0, 0, 0 };
-        int pok = loft_ld_parse(&nd, dtext, &perr) && (!facts || loft_ld_facts(&nd, facts + 10, &perr));
-        free(dtext);
-        if (!pok) {
-            loft_ub_printf(why, "this program's own layout does not read: %s", loft_ub_str(&perr));
-            loft_ub_free(&perr);
-            goto done;
-        }
-        loft_ub_free(&perr);
-        for (uint16_t i = 0; i < nd.count; i++)
-            for (uint32_t k = 0; k < up->n; k++)
-                if (strcmp(up->names[k], nd.n[i].name) == 0) { nd.n[i].prog = up->types[k]; break; }
-        for (uint16_t i = 0; i < nd.count && new_root == LOFT_LD_NONE; i++)
-            if (nd.n[i].prog == sc->tp && nd.n[i].kind != LOFT_LN_NAME) new_root = i;
-        if (new_root == LOFT_LD_NONE) {
-            loft_ub_printf(why, "this program does not describe the store's root type");
-            goto done;
-        }
-    }
+    if (!loft_up_own(up, sc->tp, &nd, &new_root, why)) goto done;
     /* A store older than this program goes through the routines; one this release or a later
      * one wrote is converted by name alone. */
-    routines = loft_up_newer(up->version, h.version);
-    if (routines && loft_ur_n) {
+    if (loft_up_newer(up->version, h.version) && loft_ur_n) {
         rt_new = (uint16_t *) malloc(loft_ur_n * sizeof *rt_new);
         rt_old = (uint16_t *) malloc(loft_ur_n * sizeof *rt_old);
         if (!rt_new || !rt_old) { fputs("loft: out of memory\n", stderr); abort(); }
@@ -2035,7 +2126,7 @@ static int loft_up_load(loft_ref r, const loft_sidecar *sc, const char *sidecar,
             goto done;
         }
     }
-    loft_um_derive(&m, &od, h.root, &nd, new_root, rt_new, rt_old, nrt);
+    loft_um_derive(&m, &od, h.root, &nd, new_root, rt_new, rt_old, nrt, 1);
     have_map = 1;
     if (m.refusal.n) {
         loft_ub_puts(why, loft_ub_str(&m.refusal));
@@ -2052,66 +2143,14 @@ static int loft_up_load(loft_ref r, const loft_sidecar *sc, const char *sidecar,
             goto done;
         }
     }
-    {
-        uint32_t words = (8 + (uint32_t) nd.n[new_root].size + 7) / 8;
-        if (words < 2) words = 2;
-        dst_nr = loft_store_scratch(words + 3);
-        loft_store_t *d = &loft_stores[dst_nr];
-        uint32_t root = loft_st_claim(d, words);
-        if (root != LOFT_ST_PRIMARY) {
-            loft_ub_puts(why, "a fresh store did not hand out its first record");
-            goto done;
-        }
-        loft_zero_fill(d, root);
-        /* The root record's back-pointer word travels with it. */
-        loft_set_u32(d, root, 4, loft_u32(&loft_stores[old_nr], LOFT_ST_PRIMARY, 4));
-    }
-    run.m = &m;
-    run.od = &od;
-    run.nd = &nd;
-    run.P = loft_up_ptypes();
-    run.T = up->T;
-    run.w.P = run.P;
-    run.w.unfilled = 0;
-    run.self_slot = h.slot;
-    run.old_nr = old_nr;
-    run.dst_nr = dst_nr;
-    run.from = h.version;
-    {
-        loft_ref from = { old_nr, LOFT_ST_PRIMARY, 8 }, to = { dst_nr, LOFT_ST_PRIMARY, 8 };
-        loft_ucont at = { to, sc->tp, 0xFFFF };
-        if (!loft_uc_convert(&run, 0, from, to, at)) {
-            loft_ub_puts(why, run.err.n ? loft_ub_str(&run.err) : "the conversion did not finish");
-            goto done;
-        }
-    }
-    /* `repoint_references`: each converted reference names a record the new store holds. */
-    for (size_t i = 0; i < run.nfix; i++) {
-        loft_ufix *f = &run.fix[i];
-        loft_ref named = { (uint16_t) f->sn, f->rec, f->pos };
-        named.store_nr = old_nr;
-        if (loft_record_removed(named)) { f->sn = 0xFFFFFFFFu; continue; }
-        if (run.self_slot < 0 || (long) (uint16_t) f->sn != run.self_slot) {
-            loft_ub_puts(why, run.self_slot < 0 ? "the store holds references and does not record which store they name"
-                                                : "the store holds a reference into another store");
-            goto done;
-        }
-        if (f->pos != 8) {
-            loft_ub_puts(why, "a reference names a field inside a record, which an upgrade does not carry yet");
-            goto done;
-        }
-        if (!loft_uc_rec_get(&run, f->rec)) {
-            loft_ub_puts(why, "a reference names a record the store no longer holds");
-            goto done;
-        }
-    }
+    dst_nr = loft_up_convert(&run, &m, &od, &nd, new_root, sc->tp, old_nr, h.slot, h.version, why);
+    if (dst_nr == 0xFFFF) goto done;
     loft_store_drop(old_nr);
     old_nr = 0xFFFF;
     {
         /* `place_converted`: the new store's image adopted as `r`'s store, which keeps its type
          * and its liveness. */
         loft_store_t *d = &loft_stores[dst_nr];
-        d->known = sc->tp;
         uint32_t live_end = loft_image_live_end(d);
         if (live_end == 0) {
             loft_ub_puts(why, "the converted store does not hold together");
@@ -2135,17 +2174,7 @@ static int loft_up_load(loft_ref r, const loft_sidecar *sc, const char *sidecar,
         if (loft_uo[i].rec.store_nr == dst_nr) loft_uo[i].rec.store_nr = r.store_nr;
         if (loft_uo[i].old.store_nr == dst_nr) loft_uo[i].old.store_nr = r.store_nr;
     }
-    for (size_t i = 0; i < run.nfix; i++) {
-        loft_ufix *f = &run.fix[i];
-        loft_ref holder = f->holder;
-        if (holder.store_nr == dst_nr) holder.store_nr = r.store_nr;
-        loft_ref target = loft_ref_null();
-        if (f->sn != 0xFFFFFFFFu) {
-            target = loft_uc_rec_get(&run, f->rec)->nw;
-            if (target.store_nr == dst_nr) target.store_nr = r.store_nr;
-        }
-        loft_set_dbref(holder, 0, target);
-    }
+    loft_up_repoint(&run, dst_nr, r.store_nr);
     dst_nr = 0xFFFF;
     ok = 1;
 done:
@@ -2168,13 +2197,44 @@ done:
     free(bytes);
     free(rt_new);
     free(rt_old);
-    free(run.recs);
-    free(run.fix);
-    loft_ub_free(&run.err);
+    loft_up_run_free(&run);
     if (have_map) loft_um_free(&m);
     loft_ld_free(&od);
     loft_ld_free(&nd);
     return ok;
+}
+
+/* `image_rebuild` for a type holding a stored reference: the live store `slot` carried through
+ * the converter at the program's own layout, element by element (`whole_copies` off), so every
+ * reference is re-pointed at the copy it lands in; the copy answered, 0xFFFF with `why` set. */
+static uint16_t loft_up_rebuild(uint16_t slot, const loft_sidecar *sc, loft_ub *why) {
+    loft_ld od, nd;
+    memset(&od, 0, sizeof od);
+    memset(&nd, 0, sizeof nd);
+    uint16_t old_root, new_root, dst = 0xFFFF;
+    if (!loft_up_own(sc->up, sc->tp, &od, &old_root, why) || !loft_up_own(sc->up, sc->tp, &nd, &new_root, why)) {
+        loft_ld_free(&od);
+        loft_ld_free(&nd);
+        return 0xFFFF;
+    }
+    loft_upmap m;
+    loft_um_derive(&m, &od, old_root, &nd, new_root, 0, 0, 0, 0);
+    if (m.refusal.n) {
+        loft_ub_puts(why, loft_ub_str(&m.refusal));
+    } else {
+        loft_urun run;
+        memset(&run, 0, sizeof run);
+        size_t owed = loft_uo_n;
+        dst = loft_up_convert(&run, &m, &od, &nd, new_root, sc->tp, slot, slot, "", why);
+        if (dst != 0xFFFF) loft_up_repoint(&run, dst, dst);
+        /* The identity conversion adds no field, so it owes nothing. */
+        loft_uo_n = owed;
+        loft_up_run_free(&run);
+    }
+    loft_um_free(&m);
+    loft_ld_free(&od);
+    loft_ld_free(&nd);
+    return dst;
 }
 #else
 /* A unit that converts no store owes nothing (`Stores::owed_next` over an empty list). */
