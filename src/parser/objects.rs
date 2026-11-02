@@ -7573,6 +7573,8 @@ impl Parser {
             return;
         }
         let mut omitted: Vec<String> = Vec::new();
+        // The fix spells a default for the first omitted field, in the program's own names.
+        let mut example: Option<String> = None;
         for a_nr in 0..self.data.attributes(td_nr) {
             let nm = self.data.attr_name(td_nr, a_nr);
             if found_fields.contains(&nm) {
@@ -7636,6 +7638,13 @@ impl Parser {
                 continue;
             }
             omitted.push(nm);
+            if example.is_none() {
+                example = Some(format!(
+                    "{}: {} = …",
+                    omitted[0],
+                    tp.source_name(&self.data)
+                ));
+            }
         }
         if omitted.is_empty() {
             return;
@@ -7654,8 +7663,10 @@ impl Parser {
         );
         self.lexer.fix_last(crate::diagnostics::Fix {
             kind: crate::diagnostics::FixKind::Conditional,
-            title: "declare the field's default on the type (`palette_pick: integer = -1`)"
-                .to_string(),
+            title: format!(
+                "declare the field's default on `{type_name}` (`{}`)",
+                example.unwrap_or_default()
+            ),
             condition: Some(
                 "the zero is not what an omitting caller should get — adding a default is \
                  additive, so existing callers keep working"
