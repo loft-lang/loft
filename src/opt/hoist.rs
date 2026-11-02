@@ -2952,6 +2952,12 @@ pub fn repeat_literal<'a>(
     })
 }
 
+/// `@FR-R-Fill`'s guarded clause: the shortest span the fill takes, on every writer.  Measured
+/// on graphics' rows (interleaved, hashes equal): every span through the fill made
+/// `fill_triangle` 10 % SLOWER, an empty span paying the fill's setup and then the loop; spans
+/// from 1 took it −18 %, from 8 −27 %, from 32 −8 %.
+pub const FILL_MIN_SPAN: i64 = 8;
+
 /// @PLN157 § V-ae (`@FR-R-Fill`) — a loop that is ONE fill: `for i in lo..hi { v[base + i]
 /// = val }` with `base` and `val` invariant, over a pure path a header may serve.
 pub struct FillLoop<'a> {

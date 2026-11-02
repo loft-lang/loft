@@ -2463,6 +2463,69 @@ LOFT_HOT_INLINE void loft_vh_set_float(loft_vh h, uint32_t size, int64_t from, u
     memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
 
+/* @FR-R-Fill — the run `base + lo ..= base + last` of a held vector, as `Stores::fill_hoisted`
+ * takes it: refused (0) when it is empty, when `base + i` overflows on the way, or when any
+ * index falls outside [0, len) — the cases the loop answers itself (a negative index counts
+ * from the end), so the caller runs the loop there.  `hi` is the range's end, `inclusive` its
+ * form. */
+static inline int loft_fill_run(loft_vh h, int64_t base, int64_t lo, int64_t hi, int inclusive,
+                                int64_t *first, int64_t *count) {
+    int64_t last, f, e;
+    if (inclusive) last = hi;
+    else if (hi == INT64_MIN) return 0;
+    else last = hi - 1;
+    if (lo > last || LOFT_ADD_OVF(base, lo, &f) || LOFT_ADD_OVF(base, last, &e)) return 0;
+    if (f < 0 || e >= h.len) return 0;
+    *first = f;
+    *count = e - f + 1;
+    return 1;
+}
+
+LOFT_HOT_INLINE int loft_vh_fill_i64(loft_vh h, int64_t base, int64_t lo, int64_t hi, int inclusive,
+                                     int64_t v) {
+    int64_t f, n;
+    if (!loft_fill_run(h, base, lo, hi, inclusive, &f, &n)) return 0;
+    uint8_t *p = h.base + (size_t) f * 8;
+    for (int64_t i = 0; i < n; i++) memcpy(p + (size_t) i * 8, &v, 8);
+    return 1;
+}
+
+LOFT_HOT_INLINE int loft_vh_fill_f64(loft_vh h, int64_t base, int64_t lo, int64_t hi, int inclusive,
+                                     double v) {
+    int64_t f, n;
+    if (!loft_fill_run(h, base, lo, hi, inclusive, &f, &n)) return 0;
+    uint8_t *p = h.base + (size_t) f * 8;
+    for (int64_t i = 0; i < n; i++) memcpy(p + (size_t) i * 8, &v, 8);
+    return 1;
+}
+
+LOFT_HOT_INLINE int loft_vh_fill_f32(loft_vh h, int64_t base, int64_t lo, int64_t hi, int inclusive,
+                                     float v) {
+    int64_t f, n;
+    if (!loft_fill_run(h, base, lo, hi, inclusive, &f, &n)) return 0;
+    uint8_t *p = h.base + (size_t) f * 4;
+    for (int64_t i = 0; i < n; i++) memcpy(p + (size_t) i * 4, &v, 4);
+    return 1;
+}
+
+/* @FR-R-Fill's guarded clause: a body `t = base + i; if t < bound { v[t] = c }` writes exactly
+ * the indexes below `bound`, so the range it fills ends at min(end, bound - base), saturating
+ * where native's `saturating_sub` / `saturating_add` do. */
+static inline int64_t loft_fill_guard_end(int64_t hi, int inclusive, int64_t bound, int64_t base) {
+    int64_t end, lim;
+    if (!inclusive) end = hi;
+    else if (LOFT_ADD_OVF(hi, (int64_t) 1, &end)) end = INT64_MAX;
+    if (LOFT_SUB_OVF(bound, base, &lim)) lim = base > 0 ? INT64_MIN : INT64_MAX;
+    return end < lim ? end : lim;
+}
+
+/* The guarded span's length, saturating: the fill is tried from FILL_MIN_SPAN elements. */
+static inline int64_t loft_fill_span(int64_t end, int64_t lo) {
+    int64_t n;
+    if (LOFT_SUB_OVF(end, lo, &n)) return lo > 0 ? INT64_MIN : INT64_MAX;
+    return n;
+}
+
 /* ops::op_negate_long: null stays null. */
 LOFT_HOT_INLINE int64_t loft_neg(int64_t a) {
     return a == LOFT_NULL ? a : -a;
@@ -3194,6 +3257,26 @@ static void loft_copy_record_at(const loft_tdesc *T, uint16_t tp, loft_ref src, 
     loft_copy_record(T, tp, src, dst, flags);
 }
 
+
+/* @FR-R-FlatCopy (`hoist::flat_copy`) — a copy of a record type that owns no heap and keeps its
+ * source is its bytes: the release of the destination's claims and the walk of the source's
+ * claims both find nothing for such a type.  `size` is the type's width, a constant at the
+ * site.  A null end and a parse result's root record (where `loft_perrs_deliver` acts) take the
+ * general copy, which answers them. */
+LOFT_HOT_INLINE void loft_copy_flat(const loft_tdesc *T, uint16_t tp, loft_ref src, loft_ref dst,
+                                    int flags, uint32_t size, const char *file, uint32_t line) {
+    int general = src.store_nr == 0xFFFF || dst.store_nr == 0xFFFF || src.rec == 0 || dst.rec == 0;
+#ifdef LOFT_PARSE
+    general = general || (dst.rec == 1 && dst.pos == 8);
+#endif
+    if (LOFT_UNLIKELY(general)) {
+        loft_copy_record_at(T, tp, src, dst, flags, file, line);
+        return;
+    }
+    loft_store_t *ds = loft_store_of(dst);
+    if (LOFT_WRITE_REFUSED(ds)) return;
+    memmove(loft_at(ds, dst.rec, dst.pos), loft_at(loft_store_of(src), src.rec, src.pos), size);
+}
 
 #ifdef LOFT_FRAMES
 /* stack_trace (codegen_runtime::n_stack_trace): a StackFrame per live frame, outermost first; a

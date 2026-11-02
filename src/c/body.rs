@@ -3859,26 +3859,36 @@ impl<'a> FnWriter<'a> {
             self.hash_reserve(b, ind)?;
         }
         self.hold_pushes(b, mints, ind)?;
-        match self.chain_guard(b, ind)? {
+        // `@FR-R-Fill`: the fill is tried before a guard that writes a second copy of the loop,
+        // so both copies are its fallback.
+        let fill = self.fill_head(b, ind)?;
+        let ind_loop = if fill.is_some() { ind + 1 } else { ind };
+        if let Some(flag) = &fill {
+            self.line(ind, &format!("if (!{flag}) {{"));
+        }
+        match self.chain_guard(b, ind_loop)? {
             Some((guard, admitted, true)) => {
                 // An innermost loop: the guarded copy plain, the checked loop as the `else`.
-                self.line(ind, &format!("if ({guard}) {{"));
+                self.line(ind_loop, &format!("if ({guard}) {{"));
                 self.plain_chains.push((admitted, None));
-                let r = self.loop_core(b, ind + 1);
+                let r = self.loop_core(b, ind_loop + 1);
                 self.plain_chains.pop();
                 r?;
-                self.line(ind, "} else {");
-                self.loop_core(b, ind + 1)?;
-                self.line(ind, "}");
+                self.line(ind_loop, "} else {");
+                self.loop_core(b, ind_loop + 1)?;
+                self.line(ind_loop, "}");
             }
             Some((guard, admitted, false)) => {
                 // Loops inside: written once, each admitted operator branching on the guard.
                 self.plain_chains.push((admitted, Some(guard)));
-                let r = self.loop_core(b, ind);
+                let r = self.loop_core(b, ind_loop);
                 self.plain_chains.pop();
                 r?;
             }
-            None => self.loop_core(b, ind)?,
+            None => self.loop_core(b, ind_loop)?,
+        }
+        if fill.is_some() {
+            self.fill_tail(b, ind)?;
         }
         self.headers.pop();
         self.loop_calls.pop();
@@ -3906,6 +3916,121 @@ impl<'a> FnWriter<'a> {
             self.line(ind, &format!("loft_fcur_release(&{c}, {c}p);"));
         }
         Ok(())
+    }
+
+    /// `@FR-R-Fill` — loop `b` is ONE fill (`hoist::fill_loop`, native's analysis) over a
+    /// vector a header is held for here: write the fill as one range test and one store run
+    /// over the header (`loft_vh_fill_*`), and answer the flag that is true when it took the
+    /// range.  The caller runs the loop under `if (!flag)` and [`Self::fill_tail`] leaves the
+    /// counters where the loop would.  The start is the `next` counter's value (§ V-ab) or
+    /// `#index + 1` (P3b, seeded one below a literal start); the guarded clause fills
+    /// `lo..min(end, N - base)` from `FILL_MIN_SPAN` elements.  Switches `LOFT_NO_FILL_HOIST`,
+    /// `LOFT_NO_GUARDED_FILL` (native's).
+    fn fill_head(&mut self, b: &Block, ind: usize) -> Result<Option<String>, String> {
+        if self.cx.switches.fill_hoist_disabled {
+            return Ok(None);
+        }
+        let Some(f) = crate::opt::hoist::fill_loop(b, self.cx.data) else {
+            return Ok(None);
+        };
+        if f.bound.is_some() && self.cx.switches.guarded_fill_disabled {
+            return Ok(None);
+        }
+        let Some(hdr) = self.held_path(&f.path) else {
+            return Ok(None);
+        };
+        let lo = match f.next_var {
+            Some(nx) => self.var(nx),
+            None => {
+                let step = self.counter_step(Value::Var(f.index_var));
+                as_int(self.expr(&step, ind)?)?
+            }
+        };
+        let base = match f.base {
+            Some(v) => as_int(self.expr(v, ind)?)?,
+            None => "(int64_t) 0".to_string(),
+        };
+        let hi = as_int(self.expr(f.hi, ind)?)?;
+        let val = self.expr(f.val, ind)?;
+        let (func, val) = match f.rust_type {
+            "i64" => ("loft_vh_fill_i64", as_int(val)?),
+            "f64" => ("loft_vh_fill_f64", as_float(val)?),
+            "f32" => ("loft_vh_fill_f32", as_single(val)?),
+            _ => return Ok(None),
+        };
+        let bound = match f.bound {
+            Some(n) => Some(as_int(self.expr(n, ind)?)?),
+            None => None,
+        };
+        self.flush(ind);
+        crate::rewrite_census::fired("R-Fill", 1);
+        let s = b.scope;
+        let incl = i32::from(f.inclusive);
+        if let Some(n) = bound {
+            crate::rewrite_census::fired("R-Fill/guarded", 1);
+            self.line(
+                ind,
+                &format!(
+                    "int64_t flhi_{s} = loft_fill_guard_end({hi}, {incl}, {n}, {base}); int64_t fllo_{s} = {lo};"
+                ),
+            );
+            self.line(
+                ind,
+                &format!(
+                    "int fill_{s} = loft_fill_span(flhi_{s}, fllo_{s}) >= {} && {func}({hdr}, {base}, fllo_{s}, flhi_{s}, 0, {val}); /* @FR-R-Fill guarded */",
+                    crate::opt::hoist::FILL_MIN_SPAN
+                ),
+            );
+        } else {
+            self.line(
+                ind,
+                &format!("int fill_{s} = {func}({hdr}, {base}, {lo}, {hi}, {incl}, {val}); /* @FR-R-Fill */"),
+            );
+        }
+        Ok(Some(format!("fill_{s}")))
+    }
+
+    /// The `else` arm of [`Self::fill_head`]'s test: the counters as the whole range leaves
+    /// them — `#index` at the last index yielded (P3b's single counter one past it), the `next`
+    /// counter one past.  An inclusive range's step past `hi` is the loop's own step (the null
+    /// sentinel at the top, `@FR-I-RangeIncl`); an exclusive `hi - 1` cannot underflow here,
+    /// because the fill took the range and so proved `lo <= hi - 1`.
+    fn fill_tail(&mut self, b: &Block, ind: usize) -> Result<(), String> {
+        let f = crate::opt::hoist::fill_loop(b, self.cx.data).ok_or("the fill's own loop")?;
+        let hi = as_int(self.expr(f.hi, ind + 1)?)?;
+        let last = if f.inclusive {
+            format!("({hi})")
+        } else {
+            format!("(({hi}) - 1)")
+        };
+        self.line(ind, "} else {");
+        self.flush(ind + 1);
+        let idx = self.var(f.index_var);
+        match f.next_var {
+            Some(nx) => {
+                let next = self.var(nx);
+                self.line(ind + 1, &format!("{idx} = {last};"));
+                let past = self.counter_step(Value::Var(f.index_var));
+                let past = as_int(self.expr(&past, ind + 1)?)?;
+                self.flush(ind + 1);
+                self.line(ind + 1, &format!("{next} = {past};"));
+            }
+            None => {
+                self.line(ind + 1, &format!("{idx} = {last};"));
+                let past = self.counter_step(Value::Var(f.index_var));
+                let past = as_int(self.expr(&past, ind + 1)?)?;
+                self.flush(ind + 1);
+                self.line(ind + 1, &format!("{idx} = {past};"));
+            }
+        }
+        self.line(ind, "}");
+        Ok(())
+    }
+
+    /// The counted loop's step `e + 1`, as the loop spells it: the IR's own `OpAddInt`, so the
+    /// checked lane writes `loft_add` and the probe lane its wrapping add — one spelling.
+    fn counter_step(&self, e: Value) -> Value {
+        Value::Call(self.cx.data.def_nr("OpAddInt"), vec![e, Value::Int(1)])
     }
 
     /// The loop itself: its labels, its `for (;;)` (or a character walk's) and its body.
@@ -7949,12 +8074,21 @@ impl<'a> FnWriter<'a> {
                 let free = u8::from(raw & crate::keys::COPY_FREE_SOURCE != 0)
                     | (u8::from(self.cx.swap_safe(tp)) << 1)
                     | (u8::from(raw & crate::keys::COPY_FRESH_DEST != 0) << 2);
+                // `@FR-R-FlatCopy`: a type that owns no heap, its source kept, is its bytes.
+                let flat = crate::opt::hoist::flat_copy(self.cx.stores, name, args);
                 let (src, dst) = self.two(name, &[src, dst], ind)?;
                 let (src, dst) = (as_ref(src)?, as_ref(dst)?);
-                let copy = format!(
-                    "loft_copy_record_at(loft_types, {tp}, {src}, {dst}, {free}, {})",
-                    self.site()
-                );
+                // The general site reports a write dropped into a null destination
+                // (`loft_copy_record_at`); a fresh field's destination is never null.
+                let site = self.site();
+                let call = |s: &str, d: &str, at: bool| match flat {
+                    Some(size) => {
+                        crate::rewrite_census::fired("R-FlatCopy", 1);
+                        format!("loft_copy_flat(loft_types, {tp}, {s}, {d}, {free}, {size}, {site})")
+                    }
+                    None if at => format!("loft_copy_record_at(loft_types, {tp}, {s}, {d}, {free}, {site})"),
+                    None => format!("loft_copy_record(loft_types, {tp}, {s}, {d}, {free})"),
+                };
                 // A copy into a field of an element being built: its null arm is the default.
                 if self.is_fresh_field_copy(args) {
                     let (s, d) = (self.temp(CType::Ref), self.temp(CType::Ref));
@@ -7963,10 +8097,11 @@ impl<'a> FnWriter<'a> {
                         .ok_or("a fresh field without its type")?;
                     self.line(ind, &format!("{s} = {src};"));
                     self.line(ind, &format!("{d} = {dst};"));
-                    self.line(ind, &format!("if ({s}.store_nr == 0xFFFF) {{ {null_arm} }} else {{ loft_copy_record(loft_types, {tp}, {s}, {d}, {free}); }}"));
+                    let copy = call(&s, &d, false);
+                    self.line(ind, &format!("if ({s}.store_nr == 0xFFFF) {{ {null_arm} }} else {{ {copy}; }}"));
                     return Ok(E::new("((void) 0)", K::Void));
                 }
-                Ok(E::new(copy, K::Void))
+                Ok(E::new(call(&src, &dst, true), K::Void))
             }
             ("OpMoveRecord" | "OpMoveField", [src, dst, tp]) => {
                 self.move_op(name, src, dst, tp, ind)

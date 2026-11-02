@@ -313,11 +313,7 @@ pub struct ByteRead<'a> {
     pub base: String,
 }
 
-/// `@FR-R-Fill`'s guarded clause: the shortest span the fill takes.  Measured on graphics'
-/// rows (interleaved, hashes equal): every span through the fill made `fill_triangle` 10 %
-/// SLOWER, an empty span paying the fill's setup and then the loop; spans from 1 took it
-/// −18 %, from 8 −27 %, from 32 −8 %.
-const FILL_MIN_SPAN: i64 = 8;
+use crate::opt::hoist::FILL_MIN_SPAN;
 
 /// `@FR-R-RecPtr`'s index clause — one `v[i]?` binding served from a held header and base:
 /// the prelude's index and in-range names, and what the binding and the address read.
