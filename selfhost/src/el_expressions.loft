@@ -2218,6 +2218,19 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
     },
     _ => {}
   }
+  // `@FR-T-Sub` (loft#1932): a plain enum written into a local DECLARED `integer` converts to
+  // its tag, as at every other checking position.
+  if vars.annotated.contains(v) && el_types::base(el_vars::tp(vars, v)) is TyInteger && !(x.tp is TyOptional) {
+    match el_types::base(x.tp) {
+      TyEnum { n: _, is_ref } => {
+        if !is_ref {
+          x.code = el_ir::cl(e, "OpConvIntFromEnum", [x.code]);
+          x.tp = ir::TyInteger { spec: wide_spec() };
+        }
+      },
+      _ => {}
+    }
+  }
   // `Parser::change_var`: a record local never borrows itself — `d = step(d, k)` answers a
   // borrow of `d`, and that dep is left out of `d`'s own type.
   bound_tp = x.tp;
@@ -2877,6 +2890,9 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
   if !el_vars::change_var_type(e, vars, v, declared!) {
     el::refuse(e, "a declaration that changes a local's type");
   }
+  if !vars.annotated.contains(v) {
+    vars.annotated += [v];
+  }
   if e.p.nodes[rhs!] is SVecLit {
     match declared! {
       TyVector { inner } => return vector_into(e, vars, v, rhs!, inner),
@@ -3505,7 +3521,9 @@ fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text,
       if em == "" && el_vars::var(vars, en) < 0 && ed >= 0 && el::def(e, ed).def_type == el::DT_ENUM && (el::def(e, ed).returned[0]) == ir::TyEnum { n: ed, is_ref: false, dep: [] } {
         a = attr_nr(el::def(e, ed), name);
         if a >= 0 {
-          return ex(el::def(e, ed).attributes[a]!.value[0], ir::TyEnum { n: ed, is_ref: false, dep: [] });
+          // Wrapped in the `.`'s position on the second pass, as every chain step is.
+          val = el::def(e, ed).attributes[a]!.value[0];
+          return ex(if e.first_pass { val } else { ir::NdSpan { pos: el::pos_at(e, at), inner: val } }, ir::TyEnum { n: ed, is_ref: false, dep: [] });
         }
       }
     },

@@ -87,11 +87,14 @@ pub struct Vars {
   pub allocs: vector<integer>,
   // `Function::mark_inline_ref`: the `__ref_p2_N` a projection out of a call result is bound
   // in, each set to null just before the statement that fills it
-  pub inline_refs: vector<integer>
+  pub inline_refs: vector<integer>,
+  // `Function::set_annotated`: the locals declared with a written `: τ` — this pass's
+  // declarations, which precede any assignment the mark is read at
+  pub annotated: vector<integer>
 }
 
 pub fn new_vars(name: text, file: text) -> Vars {
-  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], adopted: [], mid_params: [], slice_node: -1, unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [] }
+  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], adopted: [], mid_params: [], slice_node: -1, unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [], annotated: [] }
 }
 
 pub fn name_of(v: Vars, nr: integer) -> text {
@@ -344,6 +347,7 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   v.allocs = [];
   // `append` keeps the inline marks: a work-ref the first pass marked stays marked.
   v.inline_refs = kept.inline_refs;
+  v.annotated = [];
   v.unique = [];
   v.work_vdb = 0;
   v.work_ref = 0;
