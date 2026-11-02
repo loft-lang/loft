@@ -31,6 +31,21 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   vars.body = body;
   result = el::def(e, e.context).returned[0];
   b = parse_block(e, vars, body, "return from block", result);
+  // `block_result`'s conversion of a `null` tail to the declared result: the type's own null
+  // (`Parser::null_value`) — the sentinel of a record or a vector, a scalar's `OpConv…FromNull`.
+  // A text result answers it through a hidden `___tret_N` buffer, not carried yet.
+  if !e.first_pass && b.tp is TyNull && !(result is TyVoid) && !el_types::is_unknown(result) {
+    rbase = el_types::base(result);
+    nl = if rbase is TyVector { el_convert::null_of(e, ir::TyReference { n: 0, dep: [] }) } else { el_convert::null_of(e, rbase) };
+    if rbase is TyText || nl == null {
+      el::refuse(e, "a `null` answered at the tail of a function of this type: {type_kind(rbase)}");
+    } else {
+      fixed = retail(b.code, nl, el_types::without_deps(rbase));
+      if fixed != null {
+        b = ex(fixed!, el_types::without_deps(rbase));
+      }
+    }
+  }
   // A text local at the tail is what the body answers: the result borrows that local.
   tt = b.tp;
   match b.code {
@@ -96,6 +111,10 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       built = build_into_buffer(e, vars, code, rb, result);
       if built == null && buffer_bound(e) {
         built = bind_tail_call(e, vars, code, rb);
+      }
+      // A `null` tail answers the sentinel and delivers nothing into the buffer.
+      if built == null && null_sentinel_tail(e, code) {
+        built = code;
       }
       kind = tail_kind(e, vars, code);
       // A tail already refused is no second refusal.
@@ -860,6 +879,22 @@ fn alloc_temps(e: el::El, n: ir::Node, v: integer, temps: vector<integer>) {
     NdReturn { inner } => alloc_temps(e, inner, v, temps),
     NdSpan { inner } => alloc_temps(e, inner, v, temps),
     _ => {}
+  }
+}
+
+// A body whose tail is the null sentinel (`OpNullRefSentinel()`, a `null` tail converted).
+fn null_sentinel_tail(e: el::El, code: ir::Node) -> boolean {
+  match code {
+    NdBlock { block } => {
+      if len(block[0].operators) == 0 {
+        return false;
+      }
+      match el_ir::unspan(block[0].operators[-1]) {
+        NdCall { def_nr, args } => len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel",
+        _ => false
+      }
+    },
+    _ => false
   }
 }
 
@@ -3366,7 +3401,10 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
   def = el::def(e, d);
   n = len(def.attributes);
   // The hidden return buffer, whatever local it was renamed after (`RetPromotion::Rename`).
-  retbuf = n == len(given) + 1 && (def.attributes[-1].hidden) && (def.attributes[-1].typedef[0]) is TyReference;
+  // A hidden vector buffer (`add_defaults`' vector arm): a fresh `__ref_N` the result is
+  // delivered into.  A pooled work buffer (`work_buffer`) is not carried.
+  last_t = if n > 0 { def.attributes[-1].typedef[0] ?? ir::TyVoid } else { ir::TyVoid };
+  retbuf = n == len(given) + 1 && (def.attributes[-1].hidden) && (last_t is TyReference || (last_t is TyVector && !(def.attributes[-1].work_buffer)));
   // `add_defaults`' `&text` arm: each trailing hidden text buffer is a fresh `__work_cN` of
   // the caller's, set empty and handed as a stack reference ("default ref").
   bufs = !retbuf && n > len(given);
@@ -3391,7 +3429,7 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
     return filled;
   }
   if n != len(given) && !retbuf {
-    el::refuse(e, "a call with defaulted or hidden parameters");
+    el::refuse(e, "a call with defaulted or hidden parameters: {def.name}");
     return null;
   }
   // `process_call_args`: each argument converted to its parameter (`Parser::convert`).
@@ -3434,6 +3472,9 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
     // `add_defaults`: the hidden return buffer is a fresh `__ref_N` of the result's record, and
     // the result borrows what its declared deps name among the arguments (`call_dependencies`,
     // the hidden buffer itself left out).
+    if last_t is TyVector {
+      return vector_buffer_call(e, vars, d, list, last_t, len(given));
+    }
     rec = match ret {
       TyReference { n } => n,
       _ => {
@@ -3473,6 +3514,31 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
     return null;
   }
   ex(ir::NdCall { def_nr: d, args: list }, ret)
+}
+
+// A call of a function whose last, hidden parameter is a vector buffer (`add_defaults`): a fresh
+// `__ref_N` of that vector handed to it, the result borrowing that buffer.  A result that also
+// borrows a visible parameter, and an element type with no vector definition yet, are refused
+// by name.
+fn vector_buffer_call(e: el::El, vars: el_vars::Vars, d: integer, list: vector<ir::Node>, bt: ir::TypeT, visible: integer) -> Ex? {
+  inner = match bt { TyVector { inner } => inner, _ => ir::TyVoid };
+  ret = el::def(e, d).returned[0];
+  for i in el_types::deps(el_types::base(ret)) {
+    if i < visible {
+      el::refuse(e, "a call whose vector result borrows a parameter");
+      return null;
+    }
+  }
+  nm = el_types::elem_name(e, inner);
+  if !(el_types::base(ret) is TyVector) || nm == "" || el::def_nr(e, "vector<{nm}>") < 0 {
+    el::refuse(e, "a call delivering into a vector buffer of this type: {type_kind(ret)}");
+    return null;
+  }
+  buf = el_vars::work_ref(vars, ir::TyVector { inner: inner, dep: [] });
+  // The declared result names the buffer when the callee delivers into it; one answering
+  // something else (a `null`) declares no borrow, and the call borrows nothing.
+  rt = if len(el_types::deps(el_types::base(ret))) > 0 { el_types::with_deps(ret, [buf]) } else { ret };
+  ex(ir::NdCall { def_nr: d, args: list + [ir::NdVar { n: buf }] }, rt)
 }
 
 // `is_op`: an operator definition's name, `Op` and a capital.
@@ -5083,7 +5149,7 @@ fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) ->
     elem = ss!.elem;
   } else if !ranged {
     in_type = el_types::base(x.tp);
-    if !(in_type is TyVector) || x.tp is TyOptional || el_ir::unspan(x.code) is NdCall {
+    if !(in_type is TyVector) || x.tp is TyOptional {
       if !el_types::is_unknown(x.tp) {
         el::refuse(e, "a comprehension over this source: {type_kind(x.tp)}");
       }
