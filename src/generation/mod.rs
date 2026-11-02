@@ -6528,6 +6528,15 @@ impl Output<'_> {
         vars.scope(*x) != scope && is_text && !self.text_borrowed(*x)
     }
 
+    /// A text local of block scope `scope` the block owns (no borrowed view): the value a
+    /// text block may hand out by value (loft#2359).
+    pub fn own_text_local(&self, x: u16, scope: u16) -> bool {
+        let vars = self.data.def(self.def_nr).variables();
+        vars.scope(x) == scope
+            && matches!(vars.tp(x).base(), Type::Text(_))
+            && !self.text_borrowed(x)
+    }
+
     /// Is text variable `v` of the function being emitted BORROWED — its Rust slot a `&str` —
     /// rather than an owned `String`?  A text PARAMETER is: the caller's text arrives
     /// borrowed.  A text LOCAL is not, unless a rewrite admitted it to borrow what it reads

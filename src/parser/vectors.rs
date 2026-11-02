@@ -3298,7 +3298,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         };
         let attr = &self.data.def(parent_d).attributes()[a];
         if !attr.hidden
-            || !matches!(&attr.typedef, Type::RefVar(t) if matches!(t.base(), Type::Text(_)))
+            || !matches!(attr.typedef.base(), Type::RefVar(t) if matches!(t.base(), Type::Text(_)))
         {
             return false;
         }

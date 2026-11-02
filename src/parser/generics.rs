@@ -262,7 +262,9 @@ impl Parser {
     /// the stack-tuple ABI, whose text member the callee could only hand up orphaned.
     pub(super) fn box_fn_tuple_return(&mut self, t: Type) -> Type {
         match t {
-            Type::Function(args, ret, deps, consts) if matches!(*ret, Type::Tuple(_)) => {
+            // A nullable fn type boxes the function it may hold (`@FR-N-Shape`).
+            Type::Optional(inner) => Type::Optional(Box::new(self.box_fn_tuple_return(*inner))),
+            Type::Function(args, ret, deps, consts) if matches!(ret.base(), Type::Tuple(_)) => {
                 let ret = self.boxed_tuple_return(*ret);
                 Type::Function(args, Box::new(ret), deps, consts)
             }
@@ -289,7 +291,7 @@ impl Parser {
     fn keep_discarded_callback_calls(code: &mut Value, boxed: &[u16]) {
         if let Value::Block(bl) = code.unspan_mut() {
             let count = bl.operators.len();
-            let tail_is_value = !matches!(bl.result, Type::Void);
+            let tail_is_value = !matches!(bl.result.base(), Type::Void);
             for (idx, op) in bl.operators.iter_mut().enumerate() {
                 if tail_is_value && idx + 1 == count {
                     continue;
@@ -376,7 +378,7 @@ impl Parser {
         let mut boxed = Vec::new();
         for var in 0..vars.count() {
             let tp = vars.tp(var).clone();
-            if matches!(tp, Type::Function(..)) {
+            if matches!(tp.base(), Type::Function(..)) {
                 let retyped = self.box_fn_tuple_return(tp.clone());
                 if retyped != tp {
                     vars.set_type(var, retyped);

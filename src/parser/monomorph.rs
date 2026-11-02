@@ -1810,7 +1810,7 @@ impl Parser {
                 // `__tuple<…>` record; the template's code reads the stack tuple, so the call
                 // is unboxed here as a concrete call through that fn type is.
                 if self.boxed_fn_vars.contains(&v_nr)
-                    && let Type::Function(_, ret, ..) = self.vars.tp(v_nr).clone()
+                    && let Type::Function(_, ret, ..) = self.vars.tp(v_nr).base().clone()
                     && let Type::Reference(d, _) = ret.base()
                     && self.data.def(*d).name().starts_with("__tuple<")
                 {

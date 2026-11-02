@@ -4477,12 +4477,7 @@ impl Output<'_> {
             && matches!(bl.result.base(), Type::Text(_))
             && return_idx.is_some_and(|i| {
                 matches!(operators[i].unspan(), Value::Block(_) | Value::Insert(_))
-                    && matches!(operators[i].tail(), Value::Var(x) if {
-                        let vars = self.data.def(self.def_nr).variables();
-                        vars.scope(*x) == bl.scope
-                            && matches!(vars.tp(*x).base(), Type::Text(_))
-                            && !self.text_borrowed(*x)
-                    })
+                    && matches!(operators[i].tail(), Value::Var(x) if self.own_text_local(*x, bl.scope))
             });
         let has_trailing_void = return_idx.is_some_and(|i| i < last_op_idx)
             || has_ncc_skip_free_temp

@@ -15690,10 +15690,12 @@ impl Parser {
     fn stack_tuple_leaf_in(v: &Value, vars: &crate::variables::Function) -> Option<Vec<Type>> {
         let tp = match v.unspan() {
             Value::Var(x) if (*x as usize) < vars.count() as usize => vars.tp(*x).clone(),
-            Value::CallRef(f, _) if (*f as usize) < vars.count() as usize => match vars.tp(*f) {
-                Type::Function(_, ret, ..) => (**ret).clone(),
-                _ => return None,
-            },
+            Value::CallRef(f, _) if (*f as usize) < vars.count() as usize => {
+                match vars.tp(*f).base() {
+                    Type::Function(_, ret, ..) => (**ret).clone(),
+                    _ => return None,
+                }
+            }
             _ => return None,
         };
         match tp.base() {
