@@ -178,7 +178,16 @@ echo "   building $TARGET"
 if [ -f "$SRC/scripts/lean_build.sh" ]; then
   build=(bash "$SRC/scripts/lean_build.sh" --bin loft --target "$TARGET"); out="target/install-lib"
 else
-  build=(cargo build --release --bin loft --target "$TARGET"); out="target"
+  # That older make-release.sh passed `--target` only for a triple other than its host's,
+  # and `--target` is not cosmetic: without it cargo builds the build scripts' and the
+  # binary's dependencies as ONE set, with their features unified, so the code differs
+  # (v2026.10.0's Windows bundle: .text 592 bytes apart).  Rebuild as it did.
+  host=$(rustup run "$RUSTC_VER" rustc -vV | sed -n 's/^host: //p' | tr -d '\r')
+  if [ "$TARGET" = "$host" ]; then
+    build=(cargo build --release --bin loft); out="target"; host_build=1
+  else
+    build=(cargo build --release --bin loft --target "$TARGET"); out="target"
+  fi
 fi
 ( cd "$SRC" && . "$SRC/scripts/repro-flags.sh" \
     && LOFT_BUILD_ID="$BUILD_COMMIT" CARGO_INCREMENTAL=0 \
@@ -187,6 +196,7 @@ fi
 
 exe="loft"; case "$TARGET" in *windows*) exe="loft.exe" ;; esac
 rebuilt="$SRC/$out/$TARGET/release/$exe"
+[ "${host_build:-0}" = 1 ] && rebuilt="$SRC/$out/release/$exe"
 published="$pub_root/bin/$exe"
 [ -f "$rebuilt" ]   || die "no rebuilt binary at $rebuilt"
 [ -f "$published" ] || die "no published binary at $published"
@@ -199,6 +209,35 @@ if [ "$a" = "$b" ]; then
   echo "IDENTICAL — v$VERSION/$TARGET reproduces from source"
   exit 0
 fi
+# A Mach-O binary's LC_UUID is the one field no path remap reaches: the linker derives it
+# from the debug map it writes before the strip, which names each object file by its
+# absolute path on the machine that linked.  v2026.10.0's x86_64-apple-darwin rebuild
+# matched in every byte but those 16.  So a Mach-O that differs is compared again with that
+# field zeroed on both sides, and the verdict says the UUID was left out.
+case "$TARGET" in
+  *apple-darwin)
+    if python3 - "$rebuilt" "$published" <<'PY'
+import struct, sys
+def masked(path):
+    b = bytearray(open(path, "rb").read())
+    if struct.unpack_from("<I", b, 0)[0] != 0xFEEDFACF:
+        sys.exit(2)
+    ncmds = struct.unpack_from("<I", b, 16)[0]
+    off = 32
+    for _ in range(ncmds):
+        cmd, size = struct.unpack_from("<II", b, off)
+        if cmd == 0x1B:  # LC_UUID
+            b[off + 8:off + 24] = bytes(16)
+        off += size
+    return bytes(b)
+sys.exit(0 if masked(sys.argv[1]) == masked(sys.argv[2]) else 1)
+PY
+    then
+      echo "IDENTICAL apart from the Mach-O LC_UUID — v$VERSION/$TARGET reproduces from source"
+      echo "  (the linker derives the UUID from the absolute object paths of the machine that linked)"
+      exit 0
+    fi ;;
+esac
 # Size first: a size match with differing bytes points at embedded paths or timestamps,
 # a size mismatch at a genuinely different build.  Saying which saves the next reader a
 # bisect.
