@@ -885,16 +885,23 @@ static int loft_is_dir(const char *path) {
 }
 
 /* Close this program's own handles on `path`; answers whether there was one.  A later read or
- * write through a closed handle reopens by path, as after a truncate. */
+ * write through a closed handle reopens by path, as after a truncate.  The paths compare in
+ * normal form: a relative `../x` resolves to `<anchor>/../x` (the anchor is joined after the
+ * fold) while `<anchor>/../x` written absolutely folds to `<parent>/x`, and both name one file. */
 static int loft_close_handles_on(const char *path) {
     int closed = 0;
+    char *want = loft_normalize(loft_lit(path, strlen(path)), "", 0);
     for (int32_t i = 0; i < loft_nfiles; i++) {
-        if (loft_files[i] && strcmp(loft_files_path[i], path) == 0) {
+        if (!loft_files[i]) continue;
+        char *held = loft_normalize(loft_lit(loft_files_path[i], strlen(loft_files_path[i])), "", 0);
+        if (strcmp(held, want) == 0) {
             fclose(loft_files[i]);
             loft_files[i] = 0;
             closed = 1;
         }
+        free(held);
     }
+    free(want);
     return closed;
 }
 
