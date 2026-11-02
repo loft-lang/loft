@@ -3343,11 +3343,13 @@ impl Stores {
                     // The element's segment joins the error's path as it unwinds: pushed per
                     // element on the way in, it was a formatted `String` per array item that
                     // only a failing walk reads.
-                    self.walk_parsed_into(item, c, c, u16::MAX, &res, path, at)
-                        .map_err(|mut e| {
-                            e.path.insert(0, format!("[{idx}]"));
-                            e
-                        })?;
+                    with_read_refs(|r| r.path.push(idx.to_string()));
+                    let walked = self.walk_parsed_into(item, c, c, u16::MAX, &res, path, at);
+                    with_read_refs(|r| r.path.pop());
+                    walked.map_err(|mut e| {
+                        e.path.insert(0, format!("[{idx}]"));
+                        e
+                    })?;
                     self.record_finish(to, &res, rec_tp, field);
                 }
                 Ok(())
@@ -3563,12 +3565,54 @@ impl Stores {
         // The fields a member named, by field number ([`Self::write_absent_fields`]).
         let mut found = 0u64;
         let mut found_more: Vec<u16> = Vec::new();
+        // `@FR-F-Read-Ref` — the tree walk (an out-of-line child's members, a `JsonValue`
+        // read) keeps the same path and parks the same references as `read_struct`.
+        let tracked = with_read_refs(|r| {
+            let p = read_pointer(&r.path);
+            r.at.entry(p).or_insert(DbRef {
+                store_nr: to.store_nr,
+                rec,
+                pos: fld,
+            });
+        })
+        .is_some();
         for (name, key_at, value) in entries {
             // A key no field has matches nothing here and is skipped, not refused — as
             // the `JsonValue` walker (`populate_struct_from_jsonvalue`) does.  Refusing it
             // would empty a whole `vector<Struct>` whenever its text carries one extra key.
             for (f_nr, f) in object.iter().enumerate() {
                 if f.name == *name {
+                    if tracked
+                        && matches!(self.types[f.content as usize].parts, Parts::DbRef)
+                        && let crate::json::Parsed::Object(members) = value
+                    {
+                        let slot = DbRef {
+                            store_nr: to.store_nr,
+                            rec,
+                            pos: fld + u32::from(f.position),
+                        };
+                        let store = self.store_mut(&slot);
+                        store.set_u32_raw(slot.rec, slot.pos, u32::from(u16::MAX));
+                        store.set_u32_raw(slot.rec, slot.pos + 4, 0);
+                        store.set_u32_raw(slot.rec, slot.pos + 8, 0);
+                        if f_nr < 64 {
+                            found |= 1 << f_nr;
+                        } else {
+                            found_more.push(f_nr as u16);
+                        }
+                        if let [(key, _, crate::json::Parsed::Str(ptr))] = members.as_slice()
+                            && key == "$ref"
+                        {
+                            let target = f.target;
+                            with_read_refs(|r| r.pending.push((slot, ptr.clone(), target)));
+                            break;
+                        }
+                        return Err(WalkErr {
+                            at: *key_at,
+                            path: vec![name.clone()],
+                        });
+                    }
+                    with_read_refs(|r| r.path.push(name.clone()));
                     let res = if self.content(f.content) == u16::MAX {
                         let slot = DbRef {
                             store_nr: to.store_nr,
@@ -3587,6 +3631,7 @@ impl Stores {
                     } else {
                         self.walk_parsed_into(value, f.content, tp, f_nr as u16, to, path, *key_at)
                     };
+                    with_read_refs(|r| r.path.pop());
                     if f_nr < 64 {
                         found |= 1 << f_nr;
                     } else {
