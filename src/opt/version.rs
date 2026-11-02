@@ -161,7 +161,10 @@ fn op_name(data: &Data, d: u32) -> &str {
 
 /// Plain `integer`: the 64-bit value the writers carry, null its sentinel.
 fn plain_integer(tp: &Type) -> bool {
-    matches!(tp, Type::Integer(s) if s.is_signed32_template() || s.is_wide_template())
+    // `integer?` is refused by name (`@FR-N-Shape`): the guard compares bound VALUES, and a
+    // null has none to compare.
+    !matches!(tp, Type::Optional(_))
+        && matches!(tp.base(), Type::Integer(s) if s.is_signed32_template() || s.is_wide_template())
 }
 
 /// The variables an expression assigns anywhere inside it.

@@ -2381,6 +2381,10 @@ impl<'a> FnWriter<'a> {
 
     /// An element access of a held vector: `OpGetVector(v, size, i)` itself, or a scalar read
     /// or in-place write of a field of one — through the held base.  `None` for any other.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per held access: the read, the guarded read, the field read and write"
+    )]
     fn held_access(&mut self, name: &str, args: &[Value], ind: usize) -> Result<Option<E>, String> {
         // The element read, and — `@FR-E-Report` — the site an unguarded one (`OpGetVector`,
         // not its `Nullable` twin) reports a missing element at, as `_at` and its arguments.
@@ -5903,7 +5907,6 @@ impl<'a> FnWriter<'a> {
     }
 
     /// A C expression for `v`'s value; the statements it needs are emitted first.
-    #[expect(clippy::too_many_lines, reason = "one arm per IR node a value can be")]
     fn expr(&mut self, v: &Value, ind: usize) -> Result<E, String> {
         if self.invariants.iter().any(|f| !f.is_empty())
             && let Some(memo) = self.invariant_of(v)
@@ -5919,6 +5922,7 @@ impl<'a> FnWriter<'a> {
     }
 
     /// [`Self::expr`] once no loop invariant holds the value.
+    #[expect(clippy::too_many_lines, reason = "one arm per IR node a value can be")]
     fn expr_value(&mut self, v: &Value, ind: usize) -> Result<E, String> {
         match v.unspan() {
             Value::RawExpr(code) if self.raw.contains_key(code) => {
