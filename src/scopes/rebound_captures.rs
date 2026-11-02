@@ -31,6 +31,9 @@ struct Rebound {
     /// Per captured local: the frame's backing locals — the variables whose `OpDatabase` mints
     /// the store the local names.
     backings: HashMap<u16, Vec<u16>>,
+    /// A record capture's OWNER slot (`<capture>__own`, filled from the local's owner witness
+    /// `__own_<capture>`): per `(record local, captured local)`, its offset.
+    owners: HashMap<(u16, u16), i32>,
 }
 
 fn rebound_facts(code: &Value, vars: &Function, data: &Data) -> Option<Rebound> {
@@ -44,9 +47,20 @@ fn rebound_facts(code: &Value, vars: &Function, data: &Data) -> Option<Rebound> 
     let get_field = data.def_nr("OpGetField");
     let mut slots: HashMap<u16, Vec<Slot>> = HashMap::default();
     let mut backings: HashMap<u16, Vec<u16>> = HashMap::default();
+    let mut owners: HashMap<(u16, u16), i32> = HashMap::default();
     code.any_node(&mut |n| {
         match n.unspan() {
             Value::Call(d, args) if *d == set_dbref => {
+                if let (Some(Value::Var(w)), Some(Value::Int(off)), Some(Value::Var(x))) = (
+                    args.first().map(Value::unspan),
+                    args.get(1).map(Value::unspan),
+                    args.get(2).map(Value::unspan),
+                ) && vars.name(*w).starts_with("___clos_")
+                    && let Some(cap) = vars.name(*x).strip_prefix("__own_")
+                    && let Some(c) = rebound.iter().find(|c| vars.name(**c) == cap)
+                {
+                    owners.insert((*w, *c), *off);
+                }
                 if let (Some(Value::Var(w)), Some(Value::Int(off)), Some(Value::Var(c))) = (
                     args.first().map(Value::unspan),
                     args.get(1).map(Value::unspan),
@@ -64,15 +78,13 @@ fn rebound_facts(code: &Value, vars: &Function, data: &Data) -> Option<Rebound> 
                     }
                 }
             }
-            // `c = OpGetField(__vdb_N, 0, …)`: a collection local backed by a literal buffer.
+            // `c = OpGetField(__vdb_N, 0, …)`: a collection local backed by a literal buffer;
+            // `c = { OpDatabase(__ref_N, …); …; __ref_N }`: a record built in a work-ref.
             Value::Set(c, rhs) if rebound.contains(c) => {
-                if let Value::Call(d, args) = rhs.unspan()
-                    && *d == get_field
-                    && let Some(Value::Var(b)) = args.first().map(Value::unspan)
-                {
+                if let Some(b) = built_backing(rhs, database, get_field) {
                     let e = backings.entry(*c).or_default();
-                    if !e.contains(b) {
-                        e.push(*b);
+                    if !e.contains(&b) {
+                        e.push(b);
                     }
                 }
             }
@@ -95,7 +107,35 @@ fn rebound_facts(code: &Value, vars: &Function, data: &Data) -> Option<Rebound> 
     if slots.is_empty() {
         return None;
     }
-    Some(Rebound { slots, backings })
+    Some(Rebound {
+        slots,
+        backings,
+        owners,
+    })
+}
+
+/// The backing local an assignment's right-hand side mints into: a collection's literal buffer
+/// (`OpGetField(__vdb_N, 0, …)`) or a record built in a work-ref
+/// (`{ OpDatabase(__ref_N, …); …; __ref_N }`).
+fn built_backing(rhs: &Value, database: u32, get_field: u32) -> Option<u16> {
+    match rhs.unspan() {
+        Value::Call(d, args) if *d == get_field => match args.first().map(Value::unspan) {
+            Some(Value::Var(b)) => Some(*b),
+            _ => None,
+        },
+        Value::Block(bl) => match bl.operators.last().map(Value::unspan) {
+            Some(Value::Var(b))
+                if bl.operators.iter().any(|op| {
+                    matches!(op.unspan(), Value::Call(d, a) if *d == database
+                        && matches!(a.first().map(Value::unspan), Some(Value::Var(x)) if x == b))
+                }) =>
+            {
+                Some(*b)
+            }
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// `record` is there and its store is live: a slot read through it is safe.
@@ -122,15 +162,15 @@ fn detach_held_backing(code: &mut Value, facts: &Rebound, data: &Data) {
     let database = data.def_nr("OpDatabase");
     let sentinel = data.def_nr("OpNullRefSentinel");
     let distinct = data.def_nr("OpDistinctStore");
-    // backing -> every slot that can hold its store.
-    let mut held_by: HashMap<u16, Vec<Slot>> = HashMap::default();
+    // backing -> every slot that can hold its store, with the local it captures.
+    let mut held_by: HashMap<u16, Vec<(Slot, u16)>> = HashMap::default();
     for (c, bs) in &facts.backings {
         if let Some(ss) = facts.slots.get(c) {
             for b in bs {
                 let e = held_by.entry(*b).or_default();
                 for s in ss {
-                    if !e.contains(s) {
-                        e.push(*s);
+                    if !e.contains(&(*s, *c)) {
+                        e.push((*s, *c));
                     }
                 }
             }
@@ -151,9 +191,18 @@ fn detach_held_backing(code: &mut Value, facts: &Rebound, data: &Data) {
         };
         slots
             .iter()
-            .map(|&s| {
+            .map(|&(s, c)| {
                 let same = Value::Call(distinct, vec![Value::Var(*b), slot_read(s, data)]);
-                let detach = v_set(*b, Value::Call(sentinel, Vec::new()));
+                let mut detach = v_set(*b, Value::Call(sentinel, Vec::new()));
+                // A record capture with an OWNER slot takes the store over there, so its
+                // cascade releases it (`@FR-L-CapOwn`): the frame no longer names it.
+                if let Some(&own) = facts.owners.get(&(s.record, c)) {
+                    let take = Value::Call(
+                        data.def_nr("OpSetDbRef"),
+                        vec![Value::Var(s.record), Value::Int(own), slot_read(s, data)],
+                    );
+                    detach = Value::Insert(vec![take, detach]);
+                }
                 v_if(
                     record_live(s.record, data),
                     v_if(same, Value::Null, detach),
@@ -161,6 +210,125 @@ fn detach_held_backing(code: &mut Value, facts: &Rebound, data: &Data) {
                 )
             })
             .collect()
+    });
+}
+
+/// The capture slots a BUILD statement writes: a fn-ref local's build
+/// (`g = { OpDatabase(W); OpSetDbRef(W, off, c); …; FnRef }`) or a fn field's
+/// (`fn_ref_field_set`), each `(slot, captured local)`.
+fn slots_written_by(op: &Value, facts: &Rebound, data: &Data) -> Vec<(Slot, u16)> {
+    let build = match op.unspan() {
+        Value::Set(_, rhs) => match rhs.unspan() {
+            Value::Block(b) if b.name == "fn_ref_with_closure" => rhs.unspan(),
+            _ => return Vec::new(),
+        },
+        Value::Block(b) if b.name == "fn_ref_field_set" => op.unspan(),
+        _ => return Vec::new(),
+    };
+    let set_dbref = data.def_nr("OpSetDbRef");
+    let get_dbref = data.def_nr("OpGetDbRef");
+    let free_distinct = data.def_nr("OpFreeRefIfDistinct");
+    // The slots the build already releases itself (a record capture's rebuild,
+    // `OpFreeRefIfDistinct(OpGetDbRef(old, off), c)`): those are not released twice.
+    let mut released: Vec<i32> = Vec::new();
+    build.any_node(&mut |n| {
+        if let Value::Call(d, args) = n.unspan()
+            && *d == free_distinct
+            && let Some(Value::Call(g, gargs)) = args.first().map(Value::unspan)
+            && *g == get_dbref
+            && let Some(Value::Int(off)) = gargs.get(1).map(Value::unspan)
+        {
+            released.push(*off);
+        }
+        false
+    });
+    let mut out = Vec::new();
+    build.any_node(&mut |n| {
+        if let Value::Call(d, args) = n.unspan()
+            && *d == set_dbref
+            && let (Some(Value::Var(w)), Some(Value::Int(off)), Some(Value::Var(c))) = (
+                args.first().map(Value::unspan),
+                args.get(1).map(Value::unspan),
+                args.get(2).map(Value::unspan),
+            )
+        {
+            let s = Slot {
+                record: *w,
+                off: *off,
+            };
+            if facts.slots.get(c).is_some_and(|ss| ss.contains(&s))
+                && !released.contains(off)
+                && !out.contains(&(s, *c))
+            {
+                out.push((s, *c));
+            }
+        }
+        false
+    });
+    out
+}
+
+/// Let-go point 2 — the REBUILD of a record (each run of the build is its own record,
+/// `@FR-L-CapKeep`): the store the record captured on its previous run is released here unless
+/// another name still holds it — the captured local itself, one of its backings, or another
+/// record's slot for it.  Placed before the build statement, where the record local still
+/// names the previous run's record.
+fn release_on_rebuild(code: &mut Value, facts: &Rebound, data: &Data) {
+    let distinct = data.def_nr("OpDistinctStore");
+    let held = data.def_nr("OpConvBoolFromRef");
+    let live = data.def_nr("OpStoreLive");
+    let free = data.def_nr("OpFreeRef");
+    insert_in_loops(code, false, &mut |op| {
+        let mut out = Vec::new();
+        for (s, c) in slots_written_by(op, facts, data) {
+            let old = slot_read(s, data);
+            let mut others: Vec<Value> = vec![Value::Var(c)];
+            others.extend(
+                facts
+                    .backings
+                    .get(&c)
+                    .into_iter()
+                    .flatten()
+                    .filter(|b| **b != c)
+                    .map(|b| Value::Var(*b)),
+            );
+            // Distinct from every frame name, folded as `&&` lowers.
+            let mut test = Value::Call(free, vec![old.clone()]);
+            for other in others.into_iter().rev() {
+                test = v_if(
+                    Value::Call(distinct, vec![old.clone(), other]),
+                    test,
+                    Value::Null,
+                );
+            }
+            // …and from every other record's slot for the same local.
+            for o in facts.slots.get(&c).into_iter().flatten().rev() {
+                if *o == s {
+                    continue;
+                }
+                let same = v_if(
+                    Value::Call(distinct, vec![old.clone(), slot_read(*o, data)]),
+                    Value::Boolean(false),
+                    Value::Boolean(true),
+                );
+                test = v_if(
+                    v_if(record_live(o.record, data), same, Value::Boolean(false)),
+                    Value::Null,
+                    test,
+                );
+            }
+            let present = v_if(
+                Value::Call(held, vec![old.clone()]),
+                Value::Call(live, vec![old.clone()]),
+                Value::Boolean(false),
+            );
+            out.push(v_if(
+                record_live(s.record, data),
+                v_if(present, test, Value::Null),
+                Value::Null,
+            ));
+        }
+        out
     });
 }
 
@@ -195,6 +363,7 @@ pub(super) fn release_rebound_captures(data: &mut Data) {
         };
         let mut code = data.def(d_nr).code.clone();
         detach_held_backing(&mut code, &facts, data);
+        release_on_rebuild(&mut code, &facts, data);
         data.definitions[d_nr as usize].code = code;
     }
 }
