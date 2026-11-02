@@ -9,7 +9,7 @@ A child document of [1b-interpreter.md](1b-interpreter.md).  Status: **F-1 built
 variable in the stack store at its Rust byte (PF1 its layout guard, `selfhost/tests/frame.loft`);
 PF2 built (no frame is initialised; each first assignment's positional init writes its slot);
 PF3 built (a `&` of any local is a reference into the frame, read and written through at any
-place); PF4 measured (loft#2310); PF5 built (the stack given back); F-T1 and F-T2 built (tuple
+place); PF4 measured flat (loft#2310); PF5 built (the stack given back); F-T1 and F-T2 built (tuple
 locals, text members too); F-2 not built.**
 
 ## The rule
@@ -145,11 +145,10 @@ never a gate (the order of the goals, 1b-interpreter.md).
     releases — F-2 makes it a view of the caller's own value, once the temporaries live in the
     store; a `&text` is the absolute byte of the text it names.  The text part of the frame is
     gone: the loft-side text stack holds the temporaries only.
-  - **PF4 (measured)**: a text loop's peak memory grows with its round count — before F-1 too
-    (15 → 84 MB from 20 000 to 200 000 rounds; F-1b 14 → 68 MB).  The cause is not the frame:
-    the interpreter's text stack is written by `put_text`, whose release `@FR-H-TextReplace`
-    declines because its parameter is also appended on the other branch (loft#2310), so every
-    text the run evaluates stays in that vector's store.
+  - **PF4 (measured)**: a text loop's peak memory is flat with its round count — 8.2 → 8.3 MB
+    from 20 000 to 200 000 rounds, answers agreeing with the Rust interpreter.  The text stack is
+    written by `put_text`, whose write releases the text it replaces (`@FR-H-TextReplace`, read
+    by path since loft#2310).  The earlier growth: [1b-frame-history.md](1b-frame-history.md).
   - **PF2 (built)**: no frame is initialised, as `OpReserveFrame` initialises nothing — a slot
     holds what an earlier frame left until its first assignment's positional init writes it.
     Two inits the port lacked and the null-started frame hid: `gen_set_first_text`'s
