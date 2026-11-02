@@ -244,9 +244,9 @@ static loft_bt_probe loft_bt_of_key(uint16_t store_nr, const loft_kv *kv, int n,
 
 /* Probe::full: the probe against the record `rec`, on every part it carries. */
 static int loft_bt_full(const loft_bt_probe *p, uint32_t rec, const loft_key *keys, int nk) {
-    loft_ref other = { p->store_nr, rec, 8 };
+    loft_ref other = { p->store_nr, rec, 8, 0 };
     if (p->rec != 0) {
-        loft_ref mine = { p->store_nr, p->rec, 8 };
+        loft_ref mine = { p->store_nr, p->rec, 8, 0 };
         return loft_key_cmp_refs(mine, other, keys, nk);
     }
     return loft_key_cmp_val(p->kv, p->n, loft_stores + p->store_nr, rec, 8, keys);
@@ -867,7 +867,7 @@ static uint32_t *loft_bt_records(loft_ref data, uint32_t *n) {
 /* Stores::find_index_boundary: the first record at or above the key, and one comparison to say
  * whether it matches — the lowest of the records a partial key names. */
 static loft_ref loft_ix_find_boundary(loft_ref data, const loft_key *keys, int nk, const loft_kv *kv, int n) {
-    loft_ref r = { data.store_nr, 0, 8 };
+    loft_ref r = { data.store_nr, 0, 8, 0 };
     uint32_t below = loft_bt_record(data, loft_bt_find(data, 1, keys, nk, kv, n));
     r.rec = below == 0 ? loft_bt_record(data, loft_bt_first(data)) : loft_bt_step_record(data, keys, nk, below, 0);
     if (r.rec != 0 && loft_key_cmp_val(kv, n, loft_store_of(data), r.rec, 8, keys) == 0) return r;
@@ -878,7 +878,7 @@ static loft_ref loft_ix_find_boundary(loft_ref data, const loft_key *keys, int n
  * descent, a partial one by the boundary walk (the lowest it matches).  `LOFT_KEYED_VERIFY`
  * checks the descent against the walk. */
 static loft_ref loft_ix_find(loft_ref data, const loft_key *keys, int nk, const loft_kv *kv, int n) {
-    loft_ref r = { data.store_nr, 0, 8 };
+    loft_ref r = { data.store_nr, 0, 8, 0 };
     if (data.store_nr == 0xFFFF || data.rec == 0) return loft_ref_null();
     if (n == nk) {
         r.rec = loft_bt_find_exact(data, keys, nk, kv, n);
@@ -904,7 +904,7 @@ static loft_ref loft_ix_insert(const loft_tdesc *T, uint16_t elem, loft_ref data
     if (LOFT_WRITE_REFUSED(loft_store_of(data))) return loft_ref_null();
     uint32_t dup = loft_bt_add(data, rec.rec, keys, nk);
     if (dup == 0) return loft_ref_null();
-    loft_ref existing = { data.store_nr, dup, 8 };
+    loft_ref existing = { data.store_nr, dup, 8, 0 };
     (void) loft_bt_remove(data, dup, keys, nk);
     if (!secondary) {
         loft_remove_claims(T, elem, existing);
@@ -921,7 +921,7 @@ static void loft_ix_remove(const loft_tdesc *T, uint16_t elem, loft_ref data, lo
     if (e.rec == 0 || data.store_nr == 0xFFFF || data.rec == 0) return;
     (void) loft_bt_remove(data, e.rec, keys, nk);
     if (view) return;
-    loft_ref rec = { e.store_nr, e.rec, 8 };
+    loft_ref rec = { e.store_nr, e.rec, 8, 0 };
     loft_remove_claims(T, elem, rec);
     loft_st_delete(loft_store_of(data), e.rec);
 }
@@ -954,7 +954,7 @@ static loft_ref loft_ix_step(int64_t *state, loft_ref data, const loft_key *keys
     if (n == finish) finish = UINT32_MAX;
     *state = (int64_t) ((uint64_t) finish << 32 | n);
     if (n == 0) return loft_ref_null();
-    loft_ref e = { data.store_nr, n, 8 };
+    loft_ref e = { data.store_nr, n, 8, 0 };
     return e;
 }
 
@@ -967,7 +967,7 @@ static void loft_ix_walk_remove(const loft_tdesc *T, uint16_t elem, int64_t *sta
     if (cur == 0 || data.store_nr == 0xFFFF || data.rec == 0) return;
     uint32_t after = loft_bt_step_record(data, keys, nk, cur, reverse);
     int removed_the_last = cur == finish;
-    loft_ref e = { data.store_nr, cur, 8 };
+    loft_ref e = { data.store_nr, cur, 8, 0 };
     loft_ix_remove(T, elem, data, e, keys, nk, 0);
     if (after == 0 || removed_the_last) {
         finish = UINT32_MAX;
@@ -989,8 +989,8 @@ static void loft_ix_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from,
     uint32_t *recs = loft_bt_records(from, &n);
     for (uint32_t i = 0; i < n; i++) {
         loft_store_t *ts = loft_store_of(to);
-        loft_ref a = { from.store_nr, recs[i], 8 };
-        loft_ref b = { to.store_nr, loft_st_claim(ts, 1 + (size + 7) / 8), 8 };
+        loft_ref a = { from.store_nr, recs[i], 8, 0 };
+        loft_ref b = { to.store_nr, loft_st_claim(ts, 1 + (size + 7) / 8), 8, 0 };
         loft_set_u32(ts, b.rec, 4, to.rec);
         loft_copy_bytes(b, 0, a, 0, size);
         loft_copy_claims(T, d->elem, a, b);
@@ -1009,7 +1009,7 @@ static void loft_ix_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r, 
             uint32_t n;
             uint32_t *recs = loft_bt_records(r, &n);
             for (uint32_t i = 0; i < n; i++) {
-                loft_ref e = { r.store_nr, recs[i], 8 };
+                loft_ref e = { r.store_nr, recs[i], 8, 0 };
                 loft_remove_claims(T, T[tp].elem, e);
                 loft_st_delete(s, recs[i]);
             }

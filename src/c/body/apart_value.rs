@@ -113,8 +113,10 @@ impl FnWriter<'_> {
             && let Some(rb) = self.av_rb
             && !self.av_holds(rb)
         {
-            self.decls
-                .push(format!("loft_ref {} = {{ 0xFFFF, 0, 0 }};", self.var(rb)));
+            self.decls.push(format!(
+                "loft_ref {} = {{ 0xFFFF, 0, 0, 0 }};",
+                self.var(rb)
+            ));
         }
     }
 

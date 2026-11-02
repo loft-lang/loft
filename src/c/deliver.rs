@@ -94,11 +94,11 @@ impl Cx<'_> {
                 s
             }
             Parts::Vector(e) => format!(
-                "    uint32_t v = loft_u32(loft_store_of(r), r.rec, r.pos), n = v ? loft_u32(loft_store_of(r), v, 4) : 0;\n    for (uint32_t i = 0; i < n; i++) {{\n        loft_ref x = {{ r.store_nr, v, 8 + {} * i }};\n        const char *e = loft_dlv{e}(o, x);\n        if (e) return e;\n    }}\n    return 0;\n",
+                "    uint32_t v = loft_u32(loft_store_of(r), r.rec, r.pos), n = v ? loft_u32(loft_store_of(r), v, 4) : 0;\n    for (uint32_t i = 0; i < n; i++) {{\n        loft_ref x = {{ r.store_nr, v, 8 + {} * i, 0 }};\n        const char *e = loft_dlv{e}(o, x);\n        if (e) return e;\n    }}\n    return 0;\n",
                 stores.size(*e)
             ),
             Parts::Array(e) => format!(
-                "    uint32_t v = loft_u32(loft_store_of(r), r.rec, r.pos), n = v ? loft_u32(loft_store_of(r), v, 4) : 0;\n    for (uint32_t i = 0; i < n; i++) {{\n        loft_ref x = {{ r.store_nr, loft_u32(loft_store_of(r), v, 8 + 4 * i), 8 }};\n        const char *e = loft_dlv{e}(o, x);\n        if (e) return e;\n    }}\n    return 0;\n"
+                "    uint32_t v = loft_u32(loft_store_of(r), r.rec, r.pos), n = v ? loft_u32(loft_store_of(r), v, 4) : 0;\n    for (uint32_t i = 0; i < n; i++) {{\n        loft_ref x = {{ r.store_nr, loft_u32(loft_store_of(r), v, 8 + 4 * i), 8, 0 }};\n        const char *e = loft_dlv{e}(o, x);\n        if (e) return e;\n    }}\n    return 0;\n"
             ),
             _ => format!(
                 "    (void) o; (void) r;\n    return {};\n",

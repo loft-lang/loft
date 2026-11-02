@@ -21,8 +21,13 @@ loft --native-c prog.loft [args]   # emit, build with LOFT_CC / CC / cc, cache t
                                    #   makes --native mean this; LOFT_KEEP_NATIVE_C=1 keeps the .c
 LOFT_C_LINT=1 loft --native-c p.loft  # compile afresh with -Wall -Wextra (minus the unused
                                    #   family) instead of -w and print the warnings; =strict makes
-                                   #   each an error.  On request only, never in a build or a gate:
-                                   #   the instrument for a large C99 program once there is a reason
+                                   #   each an error, =all adds the unused family.  Never in a
+                                   #   build.  A warning can mean a wrong program, so the count is
+                                   #   held at zero: `make c-lint-census` compiles the corpus so
+                                   #   and exits 1 on any (ARGS="--sample 200", "--unused"), and
+                                   #   tests/c_emit.rs keeps three units that reach the converter,
+                                   #   the engine host and `par` at zero (Linux, gcc — each
+                                   #   compiler warns its own set)
 loft --emit-c out.c prog.loft      # write the C; exit 2 with "does not carry this program
                                    #   yet: <fn>: <why>" for a construct not carried
 cc -std=c99 out.c -o prog -lm && ./prog

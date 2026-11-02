@@ -1035,7 +1035,7 @@ impl<'a> FnWriter<'a> {
             let c = self.shapes[v];
             if self.store_links[v] {
                 let name = var_name(self.vars.name(v as u16), v as u16);
-                let _ = writeln!(out, "    loft_ref {name} = {{ 0xFFFF, 0, 0 }};");
+                let _ = writeln!(out, "    loft_ref {name} = {{ 0xFFFF, 0, 0, 0 }};");
                 continue;
             }
             if self.links[v] {
@@ -1510,7 +1510,7 @@ impl<'a> FnWriter<'a> {
             let e = self.nested(|w| w.expr(&expr, ind))?;
             let h = format!("ph{}", self.decls.len() + 1);
             self.decls.push(format!(
-                "loft_ph {h} = {{ {{ 0xFFFF, 0, 0 }}, 0, 0, 0, 0 }};"
+                "loft_ph {h} = {{ {{ 0xFFFF, 0, 0, 0 }}, 0, 0, 0, 0 }};"
             ));
             self.line(ind, &format!("{h} = loft_ph_of({}, {size});", as_ref(e)?));
             crate::rewrite_census::fired("R-Push", 1);
@@ -1530,7 +1530,7 @@ impl<'a> FnWriter<'a> {
             let e = self.nested(|w| w.expr(&expr, ind))?;
             let h = format!("ph{}", self.decls.len() + 1);
             self.decls.push(format!(
-                "loft_ph {h} = {{ {{ 0xFFFF, 0, 0 }}, 0, 0, 0, 0 }};"
+                "loft_ph {h} = {{ {{ 0xFFFF, 0, 0, 0 }}, 0, 0, 0, 0 }};"
             ));
             self.line(ind, &format!("{h} = loft_ph_of({}, {size});", as_ref(e)?));
             crate::rewrite_census::fired("R-PushRec", 1);
@@ -1990,7 +1990,7 @@ impl<'a> FnWriter<'a> {
         self.decls
             .push(format!("loft_win {w} = {{ 0, 0, 0, 0, 0xFFFF }};"));
         self.decls
-            .push(format!("loft_ref {pv} = {{ 0xFFFF, 0, 0 }};"));
+            .push(format!("loft_ref {pv} = {{ 0xFFFF, 0, 0, 0 }};"));
         let vector = self.expr(&p.vector, ind)?;
         self.line(ind, &format!("{pv} = {};", as_ref(vector)?));
         // The trip count: the range's end less its start (the `next` counter, or the index
@@ -2110,7 +2110,7 @@ impl<'a> FnWriter<'a> {
         self.decls
             .push(format!("loft_win {w} = {{ 0, 0, 0, 0, 0xFFFF }};"));
         self.decls
-            .push(format!("loft_ref {pv} = {{ 0xFFFF, 0, 0 }};"));
+            .push(format!("loft_ref {pv} = {{ 0xFFFF, 0, 0, 0 }};"));
         let v = self.expr(&vector, ind)?;
         self.line(ind, &format!("{pv} = {};", as_ref(v)?));
         self.flush(ind);
@@ -2924,7 +2924,7 @@ impl<'a> FnWriter<'a> {
         if header {
             let h = format!("ph{}", self.decls.len() + 1);
             self.decls.push(format!(
-                "loft_ph {h} = {{ {{ 0xFFFF, 0, 0 }}, 0, 0, 0, 0 }};"
+                "loft_ph {h} = {{ {{ 0xFFFF, 0, 0, 0 }}, 0, 0, 0, 0 }};"
             ));
             self.line(ind, &format!("{h} = loft_ph_of({v}, {});", first.size));
             self.push_heads
@@ -5600,7 +5600,15 @@ impl<'a> FnWriter<'a> {
                 let s = match c {
                     CType::Text => format!("loft_text_set(&{target}, {});", as_view(e)?),
                     CType::Void => format!("{};", e.code),
-                    c => format!("{target} = {};", as_shape(e, c)?),
+                    c => {
+                        // An arm that keeps the value (`lo = if lo < 0 { lo + n } else { lo }`)
+                        // assigns the target to itself: nothing to write.
+                        let value = as_shape(e, c)?;
+                        if value == target {
+                            return Ok(());
+                        }
+                        format!("{target} = {value};")
+                    }
                 };
                 self.line(ind, &s);
                 Ok(())

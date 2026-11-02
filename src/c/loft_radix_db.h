@@ -171,10 +171,10 @@ static loft_ref loft_rx_find(loft_ref c, const loft_key *keys, int nk, int text,
     if (t == 0) return loft_ref_null();
     loft_rx_key p = loft_rx_probe(keys, nk, text, kv, n);
     if (text && loft_rx_null_key(p.bytes, p.len)) {
-        loft_ref e = { c.store_nr, loft_rx_null_rec(loft_store_of(c), t), 8 };
+        loft_ref e = { c.store_nr, loft_rx_null_rec(loft_store_of(c), t), 8, 0 };
         return e.rec == 0 ? loft_ref_null() : e;
     }
-    loft_ref e = { c.store_nr, loft_rx_get(loft_store_of(c), t, &p), 8 };
+    loft_ref e = { c.store_nr, loft_rx_get(loft_store_of(c), t, &p), 8, 0 };
     return e.rec == 0 ? loft_ref_null() : e;
 }
 
@@ -289,7 +289,7 @@ static int loft_rx_unlink(loft_ref c, loft_ref e, const loft_key *keys, int nk, 
 static void loft_rx_remove_owned(const loft_tdesc *T, uint16_t elem, loft_ref c, loft_ref e, const loft_key *keys, int nk,
                                  int text, int view) {
     if (e.rec == 0 || c.store_nr == 0xFFFF || c.rec == 0) return;
-    loft_ref rec = { e.store_nr, e.rec, 8 };
+    loft_ref rec = { e.store_nr, e.rec, 8, 0 };
     (void) loft_rx_unlink(c, rec, keys, nk, text);
     if (view) return;
     loft_remove_claims(T, elem, rec);
@@ -330,8 +330,8 @@ static void loft_rx_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from,
     uint32_t *recs = loft_rx_records(from, &n);
     for (uint32_t i = 0; i < n; i++) {
         loft_store_t *ts = loft_store_of(to);
-        loft_ref a = { from.store_nr, recs[i], 8 };
-        loft_ref b = { to.store_nr, loft_st_claim(ts, 1 + (size + 7) / 8), 8 };
+        loft_ref a = { from.store_nr, recs[i], 8, 0 };
+        loft_ref b = { to.store_nr, loft_st_claim(ts, 1 + (size + 7) / 8), 8, 0 };
         loft_set_u32(ts, b.rec, 4, to.rec);
         loft_copy_bytes(b, 0, a, 0, size);
         loft_copy_claims(T, d->elem, a, b);
@@ -350,7 +350,7 @@ static void loft_rx_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r, 
             uint32_t n;
             uint32_t *recs = loft_rx_records(r, &n);
             for (uint32_t i = 0; i < n; i++) {
-                loft_ref e = { r.store_nr, recs[i], 8 };
+                loft_ref e = { r.store_nr, recs[i], 8, 0 };
                 loft_remove_claims(T, T[tp].elem, e);
                 loft_st_delete(s, recs[i]);
             }

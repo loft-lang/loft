@@ -1429,7 +1429,7 @@ static loft_ref loft_hash_entry(loft_ref c, uint32_t size, int linked) {
     if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
     if (linked) {
         loft_store_t *s = loft_store_of(c);
-        loft_ref e = { c.store_nr, loft_st_claim(s, 1 + (size + 7) / 8), 8 };
+        loft_ref e = { c.store_nr, loft_st_claim(s, 1 + (size + 7) / 8), 8, 0 };
         loft_set_u32(s, e.rec, 4, c.rec);
         return e;
     }
@@ -1470,7 +1470,7 @@ static void loft_hash_remove(const loft_tdesc *T, uint16_t elem, loft_ref c, lof
         loft_free_hash_entry(c, e, slot);
         return;
     }
-    loft_ref rec = { e.store_nr, e.rec, 8 };
+    loft_ref rec = { e.store_nr, e.rec, 8, 0 };
     loft_remove_claims(T, elem, rec);
     loft_st_delete(loft_store_of(c), e.rec);
 }
@@ -1687,7 +1687,7 @@ static loft_ref loft_scratch_of(loft_ref c, const loft_ref *e, const uint32_t *r
     loft_set_u32(s, header, 4, vec);
     loft_set_u32(s, header, 8, c.store_nr);
     loft_set_u32(s, header, 12, LOFT_SCRATCH_MARK | width);
-    loft_ref x = { home, header, 4 };
+    loft_ref x = { home, header, 4, 0 };
     if (loft_nscratches == loft_scratch_cap) {
         loft_scratch_cap = loft_scratch_cap ? loft_scratch_cap * 2 : 8;
         loft_scratches = (loft_live_scratch *) realloc(loft_scratches, (size_t) loft_scratch_cap * sizeof *loft_scratches);
@@ -1731,7 +1731,7 @@ static void loft_free_scratch(loft_ref x) {
     uint32_t vec = loft_u32(s, x.rec, 4);
     /* A snapshot in a store of its own goes with it. */
     if (loft_u32(s, x.rec, 8) != x.store_nr) {
-        loft_ref whole = { x.store_nr, 1, 8 };
+        loft_ref whole = { x.store_nr, 1, 8, 0 };
         loft_free_ref(whole);
         return;
     }

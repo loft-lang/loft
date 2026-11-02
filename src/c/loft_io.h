@@ -558,7 +558,7 @@ static void loft_release_file_leases(uint16_t nr) {
     loft_store_t *s = &loft_stores[nr];
     uint16_t tp = s->known;
     if (tp >= loft_T_n || !loft_T[tp].file || s->size < 3 || loft_u32(s, 1, 4) != tp) return;
-    loft_ref root = { nr, 1, 8 };
+    loft_ref root = { nr, 1, 8, 0 };
     s->read_only = 0;
     loft_remove_claims_mode(loft_T, tp, root, 0);
 }

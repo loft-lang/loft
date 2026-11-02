@@ -1455,7 +1455,7 @@ static const loft_ptype *loft_up_ptypes(void);
 typedef struct { loft_ref rec; int64_t key; loft_ref old; } loft_uowe;
 static LOFT_TLS loft_uowe *loft_uo;
 static LOFT_TLS size_t loft_uo_n, loft_uo_cap, loft_uo_at;
-static LOFT_TLS loft_ref loft_uo_from = { 0xFFFF, 0, 0 };
+static LOFT_TLS loft_ref loft_uo_from = { 0xFFFF, 0, 0, 0 };
 static LOFT_TLS int loft_uo_scratch = -1;
 
 /* The `upgrade` routines the drain's wrapper registered (`Stores::upgrade_routine`). */
@@ -1669,13 +1669,13 @@ static loft_ref *loft_uc_old_elements(loft_urun *r, const loft_ln *on, loft_ref 
         uint32_t size = on->elem < r->od->count ? r->od->n[on->elem].size : 0, len = loft_u32(s, cur, 4);
         out = (loft_ref *) malloc(((size_t) len + 1) * sizeof *out);
         if (!out) { fputs("loft: out of memory\n", stderr); abort(); }
-        for (uint32_t i = 0; i < len; i++) { loft_ref e = { from.store_nr, cur, 8 + size * i }; out[i] = e; }
+        for (uint32_t i = 0; i < len; i++) { loft_ref e = { from.store_nr, cur, 8 + size * i, 0 }; out[i] = e; }
         *n = len;
     } else if (k == LOFT_LN_ARRAY || k == LOFT_LI_ORDERED + 100) {
         uint32_t len = loft_u32(s, cur, 4);
         out = (loft_ref *) malloc(((size_t) len + 1) * sizeof *out);
         if (!out) { fputs("loft: out of memory\n", stderr); abort(); }
-        for (uint32_t i = 0; i < len; i++) { loft_ref e = { from.store_nr, loft_u32(s, cur, 8 + 4 * i), 8 }; out[i] = e; }
+        for (uint32_t i = 0; i < len; i++) { loft_ref e = { from.store_nr, loft_u32(s, cur, 8 + 4 * i), 8, 0 }; out[i] = e; }
         *n = len;
     } else if (k == LOFT_LI_HASH + 100) {
         /* In the source's own record order; an inline table lists its entries in insertion
@@ -1692,7 +1692,7 @@ static loft_ref *loft_uc_old_elements(loft_urun *r, const loft_ln *on, loft_ref 
         uint32_t cnt = 0, *recs = k == LOFT_LI_INDEX + 100 ? loft_bt_records(from, &cnt) : loft_rx_records(from, &cnt);
         out = (loft_ref *) malloc(((size_t) cnt + 1) * sizeof *out);
         if (!out) { fputs("loft: out of memory\n", stderr); abort(); }
-        for (uint32_t i = 0; i < cnt; i++) { loft_ref e = { from.store_nr, recs[i], 8 }; out[i] = e; }
+        for (uint32_t i = 0; i < cnt; i++) { loft_ref e = { from.store_nr, recs[i], 8, 0 }; out[i] = e; }
         free(recs);
         *n = cnt;
     }
@@ -1851,7 +1851,7 @@ static uint16_t loft_uc_scratch(loft_urun *r, uint16_t version_tp) {
     }
     s->known = version_tp;
     loft_uo_scratch = nr;
-    loft_ref from = { nr, rec, 8 };
+    loft_ref from = { nr, rec, 8, 0 };
     loft_uo_from = from;
     return nr;
 }
@@ -1870,7 +1870,7 @@ static int loft_uc_owe_routine(loft_urun *r, uint32_t proj, loft_ref from, loft_
     if (words < 2) words = 2;
     uint32_t rec = loft_st_claim(s, words);
     loft_zero_fill(&loft_stores[sc], rec);
-    loft_ref old = { sc, rec, 8 };
+    loft_ref old = { sc, rec, 8, 0 };
     int was = r->projecting;
     r->projecting = 1;
     loft_ucont at = { old, old_tp, 0xFFFF };
@@ -2028,14 +2028,14 @@ static uint16_t loft_up_convert(loft_urun *run, const loft_upmap *m, const loft_
     run->old_nr = old_nr;
     run->dst_nr = dst_nr;
     run->from = from;
-    loft_ref src = { old_nr, LOFT_ST_PRIMARY, 8 }, to = { dst_nr, LOFT_ST_PRIMARY, 8 };
+    loft_ref src = { old_nr, LOFT_ST_PRIMARY, 8, 0 }, to = { dst_nr, LOFT_ST_PRIMARY, 8, 0 };
     loft_ucont at = { to, tp, 0xFFFF };
     int ok = loft_uc_convert(run, 0, src, to, at);
     if (!ok) loft_ub_puts(why, run->err.n ? loft_ub_str(&run->err) : "the conversion did not finish");
     /* Each converted reference must name a record the new store holds. */
     for (size_t i = 0; ok && i < run->nfix; i++) {
         loft_ufix *f = &run->fix[i];
-        loft_ref named = { old_nr, f->rec, f->pos };
+        loft_ref named = { old_nr, f->rec, f->pos, 0 };
         if (loft_record_removed(named)) { f->sn = 0xFFFFFFFFu; continue; }
         if (self_slot < 0 || (long) (uint16_t) f->sn != self_slot) {
             loft_ub_puts(why, self_slot < 0 ? "the store holds references and does not record which store they name"
@@ -2135,7 +2135,7 @@ static int loft_up_load(loft_ref r, const loft_sidecar *sc, const char *sidecar,
     /* The old image in a slot of its own, read only through the old description. */
     old_nr = loft_store_scratch(4);
     {
-        loft_ref o = { old_nr, LOFT_ST_PRIMARY, 8 };
+        loft_ref o = { old_nr, LOFT_ST_PRIMARY, 8, 0 };
         uint8_t *own = bytes;
         bytes = 0;
         if (!loft_image_adopt(o, own, n, 1, 0, -1, what, "store upgrade")) {

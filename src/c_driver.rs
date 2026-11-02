@@ -103,6 +103,7 @@ fn cc_flags(tier: Tier) -> Vec<String> {
     let mut flags: Vec<String> = vec!["-std=c99".into()];
     match lint() {
         Lint::Off => flags.push("-w".into()),
+        Lint::All => flags.extend(["-Wall".to_string(), "-Wextra".to_string()]),
         on => {
             flags.extend(LINT_WARNINGS.iter().map(|w| (*w).to_string()));
             if on == Lint::Strict {
@@ -172,20 +173,24 @@ fn cc_flags(tier: Tier) -> Vec<String> {
 }
 
 /// `LOFT_C_LINT`: the C a program is written as compiled with the warnings below instead of
-/// `-w`, on request — `1` reports them, `strict` makes each one an error.  Never on by default:
-/// a user does not read warnings about C they did not write, and a lint of every build is time
-/// spent for no reader.  It is the instrument for a larger C99 program the moment there is a
-/// reason to look (a new compiler, a new platform, a crash that smells of UB).
+/// `-w`, on request — `1` reports them, `strict` makes each one an error, `all` adds the
+/// `unused` family.  Never on by default: a user does not read warnings about C they did not
+/// write, and a lint of every build is time spent for no reader.  The count over the corpus is
+/// held at zero by `scripts/c_lint_census.py` (`make c-lint-census`), because a warning can mean
+/// a wrong program.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Lint {
     Off,
     Report,
     Strict,
+    /// `-Wall -Wextra` whole, the `unused` family included (`scripts/c_lint_census.py --unused`).
+    All,
 }
 
 fn lint() -> Lint {
     match std::env::var("LOFT_C_LINT").as_deref() {
         Ok("strict") => Lint::Strict,
+        Ok("all") => Lint::All,
         Ok("1" | "true" | "report") => Lint::Report,
         _ => Lint::Off,
     }
@@ -202,6 +207,7 @@ const LINT_WARNINGS: &[&str] = &[
     "-Wno-unused-function",
     "-Wno-unused-variable",
     "-Wno-unused-but-set-variable",
+    "-Wno-unused-but-set-parameter",
     "-Wno-unused-label",
     "-Wno-unused-value",
 ];

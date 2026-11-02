@@ -112,7 +112,7 @@ impl Cx<'_> {
             Parts::Vector(elem) => {
                 let _ = writeln!(
                     out,
-                    "    uint32_t v = loft_collection_rec(s, r.rec, r.pos);\n    uint32_t n = v == 0 ? 0 : loft_u32(s, v, 4);\n    for (uint32_t i = 0; i < n; i++) {{\n        loft_ref e = {{ r.store_nr, v, 8 + i * {} }};\n        loft_ser{elem}(b, e, le);\n    }}",
+                    "    uint32_t v = loft_collection_rec(s, r.rec, r.pos);\n    uint32_t n = v == 0 ? 0 : loft_u32(s, v, 4);\n    for (uint32_t i = 0; i < n; i++) {{\n        loft_ref e = {{ r.store_nr, v, 8 + i * {}, 0 }};\n        loft_ser{elem}(b, e, le);\n    }}",
                     self.stores.size(*elem)
                 );
             }

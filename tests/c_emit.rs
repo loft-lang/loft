@@ -7755,3 +7755,60 @@ fn a_return_inside_a_loop_frees_the_texts_a_later_statement_declares() {
         "the two returns in the loop and the tail\n{c}"
     );
 }
+
+/// The C the backend writes compiles without a lint warning (`LOFT_C_LINT=strict`: the
+/// `-Wall -Wextra` set minus the `unused` family, as errors) — over units that reach the
+/// runtime's store converter and its drain, the engine host with its build swap and rebuild, a
+/// `par` loop and slice bounds.  A positional `loft_ref` initializer that leaves out its pad is
+/// the warning this held at zero first; the census across the corpus is the same compile.  On
+/// Linux only, where it is measured: each compiler warns its own set, so another host's `cc`
+/// is no evidence about this one's.
+#[test]
+#[cfg(target_os = "linux")]
+fn the_written_c_compiles_without_a_lint_warning() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("lib");
+    let dir = scratch("lint");
+    let programs = [
+        (
+            "upgrade",
+            "struct T { k: integer, n: text, m: integer = len($.n) }\n\
+             struct W { a: integer, items: vector<T>, h: hash<T[k]> }\n\
+             fn main() {\n  w = W {};\n  if !store_load(w, \"a.store\") { println(\"not loaded\"); return; }\n  \
+             println(\"{len(w.items)} {store_persist_copy(w, \\\"b.store\\\")}\");\n}\n",
+        ),
+        (
+            "swap",
+            "use engine_host;\nstruct W { n: integer }\nfn main() {\n  w = W { n: 0 };\n  \
+             r = engine_host::swap_world(w);\n  \
+             println(\"{r} {engine_host::rebuild_status()} {engine_host::rebuild_artifact()} {engine_host::swap_retired()}\");\n  \
+             if r { println(\"{engine_host::rebuild_start()} {engine_host::swap_start(\\\"x\\\")}\"); }\n}\n",
+        ),
+        (
+            "par",
+            "fn sq(x: integer) -> integer { x * x }\nfn main() {\n  v = [1, 2, 3, 4, 5];\n  s = 0;\n  \
+             for x in v par(r = sq(x), 2) { s += r; }\n  w = v[1..-1];\n  println(\"{s} {len(w)} {v[-2..]}\");\n}\n",
+        ),
+    ];
+    for (name, src) in programs {
+        let file = dir.join(format!("{name}.loft"));
+        fa::write(&file, src).expect("write program");
+        let out = loft::platform::process::harness_command(loft)
+            .args(["--no-warnings", "--check", "--native-c", "--lib"])
+            .arg(&lib)
+            .arg(&file)
+            .env("LOFT_C_LINT", "strict")
+            .env("LOFT_TIMEOUT", "300")
+            .output()
+            .expect("run loft");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            out.status.success() && !err.contains("warning:") && !err.contains("error:"),
+            "{name}: the C did not compile cleanly under the lint:\n{err}"
+        );
+    }
+}

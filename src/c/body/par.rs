@@ -412,7 +412,7 @@ impl FnWriter<'_> {
             );
             "loft_res"
         } else {
-            "{ 0xFFFF, 0, 0 }"
+            "{ 0xFFFF, 0, 0, 0 }"
         };
         let mut init = format!("loft_parctx{id} loft_c = {{ {input}, {slots}, {res}");
         for x in extra {
@@ -643,7 +643,7 @@ fn par_adopt_fn(id: u32, kt: u16, size: u32) -> String {
                  for (int64_t loft_i = loft_lo; loft_i < loft_hi; loft_i++) {{\n        \
                  loft_ref loft_r = loft_b[loft_i].r;\n        \
                  if (loft_r.store_nr == 0xFFFF || loft_r.rec == 0 || loft_r.store_nr < loft_pn) {{ loft_b[loft_i].adopted = 0; continue; }}\n        \
-                 loft_ref loft_d = {{ loft_c->res.store_nr, loft_c->res.rec, loft_c->res.pos + (uint32_t) loft_i * {size}u }};\n        \
+                 loft_ref loft_d = {{ loft_c->res.store_nr, loft_c->res.rec, loft_c->res.pos + (uint32_t) loft_i * {size}u, 0 }};\n        \
                  loft_copy_bytes(loft_d, 0, loft_r, 0, {size});\n        \
                  loft_copy_claims(loft_types, {kt}, loft_r, loft_d);\n        \
                  loft_b[loft_i].r = loft_d;\n        \

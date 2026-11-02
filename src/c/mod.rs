@@ -955,12 +955,12 @@ impl<'a> Cx<'a> {
             CType::Int32 => "LOFT_NULL32".into(),
             CType::Bool => "LOFT_BOOL_NULL".into(),
             CType::Text => "{ 0, 0, 0 }".into(),
-            CType::Ref => "{ 0xFFFF, 0, 0 }".into(),
+            CType::Ref => "{ 0xFFFF, 0, 0, 0 }".into(),
             CType::Enum => "255".into(),
             CType::Float => "(double) NAN".into(),
             CType::Single => "(float) NAN".into(),
             CType::Char => "0".into(),
-            CType::Fn => "{ LOFT_NULL, { 0xFFFF, 0, 0 } }".into(),
+            CType::Fn => "{ LOFT_NULL, { 0xFFFF, 0, 0, 0 } }".into(),
             CType::Tuple(id) => {
                 let fields: Vec<String> = self
                     .tuple_shapes(id)
@@ -3923,7 +3923,7 @@ fn foreign_vector_args(
     } else {
         let _ = writeln!(
             post,
-            "    if (pminted) loft_free_ref((loft_ref) {{ (uint16_t) pin, 1, 0 }});"
+            "    if (pminted) loft_free_ref((loft_ref) {{ (uint16_t) pin, 1, 0, 0 }});"
         );
         let _ = writeln!(post, "    else if (!loft_stores[pin].read_only) {{");
     }
@@ -4369,10 +4369,14 @@ pub fn emit_tests_of(
     );
     let _ = write!(
         out,
-        "\nint main(int argc, char **argv) {{\n    int failed = 0;\n    volatile uint64_t loft_mark = 0;\n    const char *loft_only = argc > 1 ? argv[1] : 0;\n    loft_bind_tables();\n    loft_start(argc, argv);\n    {}\n    loft_in_test = 1;\n",
+        "\nint main(int argc, char **argv) {{\n    volatile int failed = 0;\n    volatile uint64_t loft_mark = 0;\n    const char *volatile loft_only = argc > 1 ? argv[1] : 0;\n    loft_bind_tables();\n    loft_start(argc, argv);\n    {}\n    loft_in_test = 1;\n",
         anchor(stores)
     );
-    for &d in tests {
+    // Each test runs in a wrapper of its own, called through a `volatile` pointer that no
+    // compiler inlines through: the test's locals then live in a frame the failed assert's
+    // `longjmp` unwinds past, never in `main`'s, where a `setjmp` would leave them clobbered.
+    let mut wrappers = String::new();
+    for (i, &d) in tests.iter().enumerate() {
         let name = data.def(d).original_name();
         let subs = expected(&name);
         let _ = writeln!(
@@ -4395,6 +4399,8 @@ pub fn emit_tests_of(
             Type::Text(_) => format!("loft_text loft_r = {call}(); loft_text_free(&loft_r);"),
             _ => format!("{call}();"),
         };
+        let _ = writeln!(wrappers, "static void loft_test_run{i}(void) {{ {run} }}");
+        let run = format!("{{ void (*volatile loft_f)(void) = loft_test_run{i}; loft_f(); }}");
         if subs.is_empty() {
             let _ = writeln!(
                 out,
@@ -4418,5 +4424,10 @@ pub fn emit_tests_of(
         out.push_str("    }\n");
     }
     out.push_str("    if (!failed) loft_leak_report();\n    return failed ? 1 : 0;\n}\n");
+    // The wrappers go before `main`, which names them.
+    let at = out
+        .rfind("\nint main(int argc, char **argv) {")
+        .unwrap_or(out.len());
+    out.insert_str(at, &format!("\n{wrappers}"));
     Ok(out)
 }

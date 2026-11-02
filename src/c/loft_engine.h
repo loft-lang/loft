@@ -1536,7 +1536,7 @@ static struct {
     char *artifact, *ready, *snap;
     long pid;
     int64_t deadline;
-} loft_sw = { 0, { 0xFFFF, 0, 0 }, 0, 0, 0, 0, LOFT_SW_IDLE, 0, 0, 0, -1, 0 };
+} loft_sw = { 0, { 0xFFFF, 0, 0, 0 }, 0, 0, 0, 0, LOFT_SW_IDLE, 0, 0, 0, -1, 0 };
 
 static char *loft_sw_join(const char *a, const char *b) {
     size_t n = strlen(a), m = strlen(b);

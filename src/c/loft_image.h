@@ -255,14 +255,14 @@ static uint32_t loft_relayout_walk(const loft_tdesc *T, uint32_t ntypes, uint16_
         if (cur == 0) return 0;
         uint32_t len = loft_u32(s, cur, 4), size = T[d->elem].size;
         for (uint32_t i = 0; i < len; i++) {
-            loft_ref e = { r.store_nr, cur, 8 + i * size };
+            loft_ref e = { r.store_nr, cur, 8 + i * size, 0 };
             done += loft_relayout_walk(T, ntypes, d->elem, e, budget);
         }
         return done;
     }
     case LOFT_T_CHILD: {
         cur = loft_u32(s, r.rec, r.pos);
-        loft_ref e = { r.store_nr, cur, 8 };
+        loft_ref e = { r.store_nr, cur, 8, 0 };
         return cur == 0 ? 0 : loft_relayout_walk(T, ntypes, d->elem, e, budget);
     }
     case LOFT_T_HASH: {
@@ -276,7 +276,7 @@ static uint32_t loft_relayout_walk(const loft_tdesc *T, uint32_t ntypes, uint16_
         uint32_t n;
         uint32_t *recs = loft_bt_records(r, &n);
         for (uint32_t i = 0; i < n; i++) {
-            loft_ref e = { r.store_nr, recs[i], 8 };
+            loft_ref e = { r.store_nr, recs[i], 8, 0 };
             done += loft_relayout_walk(T, ntypes, d->elem, e, budget);
         }
         free(recs);
@@ -286,7 +286,7 @@ static uint32_t loft_relayout_walk(const loft_tdesc *T, uint32_t ntypes, uint16_
         cur = loft_collection_rec(s, r.rec, r.pos);
         if (cur == 0) return 0;
         for (uint32_t i = 0; i < loft_u32(s, cur, 4); i++) {
-            loft_ref e = { r.store_nr, loft_u32(s, cur, 8 + 4 * i), 8 };
+            loft_ref e = { r.store_nr, loft_u32(s, cur, 8 + 4 * i), 8, 0 };
             if (e.rec != 0) done += loft_relayout_walk(T, ntypes, d->elem, e, budget);
         }
         return done;
@@ -375,14 +375,14 @@ static void loft_rekey_walk(const loft_tdesc *T, uint32_t ntypes, uint16_t tp, l
         if (d->nk && loft_key_reorders(d->keys, d->nk)) loft_rekey_sort(s, cur, size, 0, d->keys, d->nk);
         uint32_t len = loft_u32(s, cur, 4);
         for (uint32_t i = 0; i < len; i++) {
-            loft_ref e = { r.store_nr, cur, 8 + i * size };
+            loft_ref e = { r.store_nr, cur, 8 + i * size, 0 };
             loft_rekey_walk(T, ntypes, d->elem, e, budget);
         }
         return;
     }
     case LOFT_T_CHILD: {
         cur = loft_u32(s, r.rec, r.pos);
-        loft_ref e = { r.store_nr, cur, 8 };
+        loft_ref e = { r.store_nr, cur, 8, 0 };
         if (cur != 0) loft_rekey_walk(T, ntypes, d->elem, e, budget);
         return;
     }
@@ -403,7 +403,7 @@ static void loft_rekey_walk(const loft_tdesc *T, uint32_t ntypes, uint16_t tp, l
             for (uint32_t i = 0; i < n; i++) (void) loft_bt_add(r, recs[i], d->keys, d->nk);
         }
         for (uint32_t i = 0; i < n; i++) {
-            loft_ref e = { r.store_nr, recs[i], 8 };
+            loft_ref e = { r.store_nr, recs[i], 8, 0 };
             loft_rekey_walk(T, ntypes, d->elem, e, budget);
         }
         free(recs);
@@ -414,7 +414,7 @@ static void loft_rekey_walk(const loft_tdesc *T, uint32_t ntypes, uint16_t tp, l
         if (cur == 0) return;
         if (d->nk && loft_key_reorders(d->keys, d->nk)) loft_rekey_sort(s, cur, 4, 1, d->keys, d->nk);
         for (uint32_t i = 0; i < loft_u32(s, cur, 4); i++) {
-            loft_ref e = { r.store_nr, loft_u32(s, cur, 8 + 4 * i), 8 };
+            loft_ref e = { r.store_nr, loft_u32(s, cur, 8 + 4 * i), 8, 0 };
             if (e.rec != 0) loft_rekey_walk(T, ntypes, d->elem, e, budget);
         }
         return;
@@ -524,7 +524,7 @@ static int loft_image_write(const loft_tdesc *T, uint32_t ntypes, loft_ref r, lo
         int32_t dst_header = loft_st_i32(d0, 1, 0);
         memcpy(d0->buf + 8, loft_stores[r.store_nr].buf + 8, (size_t) header * 8);
         loft_st_set_i32(d0, 1, 0, dst_header);
-        loft_ref src = { r.store_nr, 1, 8 };
+        loft_ref src = { r.store_nr, 1, 8, 0 };
         to.store_nr = dst;
         to.rec = 1;
         to.pos = 8;
@@ -909,18 +909,18 @@ static void loft_kind_slots(const loft_tdesc *T, uint16_t tp, loft_ref at, loft_
     if (cur == 0 || cur == 0xFFFFFFFFu) return;
     if (d->kind == want) loft_refs_push_tp(out, at, tp);
     if (d->kind == LOFT_T_CHILD) {
-        loft_ref c = { at.store_nr, cur, 8 };
+        loft_ref c = { at.store_nr, cur, 8, 0 };
         loft_kind_slots(T, d->elem, c, out, depth + 1, want);
     } else if (d->kind == LOFT_T_VECTOR) {
         uint32_t len = loft_u32(s, cur, 4), size = T[d->elem].size;
         for (uint32_t i = 0; i < len; i++) {
-            loft_ref e = { at.store_nr, cur, 8 + i * size };
+            loft_ref e = { at.store_nr, cur, 8 + i * size, 0 };
             loft_kind_slots(T, d->elem, e, out, depth + 1, want);
         }
     } else if (d->kind == LOFT_T_ORDERED) {
         uint32_t len = loft_u32(s, cur, 4);
         for (uint32_t i = 0; i < len; i++) {
-            loft_ref e = { at.store_nr, loft_u32(loft_store_of(at), cur, 8 + 4 * i), 8 };
+            loft_ref e = { at.store_nr, loft_u32(loft_store_of(at), cur, 8 + 4 * i), 8, 0 };
             loft_kind_slots(T, d->elem, e, out, depth + 1, want);
         }
     } else if (d->kind == LOFT_T_HASH) {
@@ -931,7 +931,7 @@ static void loft_kind_slots(const loft_tdesc *T, uint16_t tp, loft_ref at, loft_
     } else if (d->kind == LOFT_T_INDEX || d->kind == LOFT_T_RADIX || d->kind == LOFT_T_TRIE) {
         uint32_t n = 0, *ids = d->kind == LOFT_T_INDEX ? loft_bt_records(at, &n) : loft_rx_records(at, &n);
         for (uint32_t i = 0; i < n; i++) {
-            loft_ref e = { at.store_nr, ids[i], 8 };
+            loft_ref e = { at.store_nr, ids[i], 8, 0 };
             loft_kind_slots(T, d->elem, e, out, depth + 1, want);
         }
         free(ids);
@@ -947,7 +947,7 @@ static void loft_ref_slots(const loft_tdesc *T, uint16_t tp, loft_ref at, loft_r
  * escape would not look, and an old null key goes to the slot.  The walk is key-free and an old
  * tree's slot word carries no tag, so the old tree reads as one with no null record. */
 static void loft_trie_refile(const loft_tdesc *T, uint16_t tp, uint16_t nr) {
-    loft_ref root = { nr, LOFT_ST_PRIMARY, 8 };
+    loft_ref root = { nr, LOFT_ST_PRIMARY, 8, 0 };
     loft_refs tries = { 0, 0, 0, 0 };
     tries.tp = (uint16_t *) malloc(16 * sizeof *tries.tp);
     if (!tries.tp) { fputs("loft: out of memory\n", stderr); abort(); }
@@ -972,7 +972,7 @@ static void loft_trie_refile(const loft_tdesc *T, uint16_t tp, uint16_t nr) {
  * nothing rewritten, for a reference into any other store — not part of the file — or for
  * references a sidecar recording no slot cannot tell apart. */
 static int loft_rebase_refs(const loft_sidecar *sc, uint16_t nr, long recorded, const char **why) {
-    loft_ref root = { nr, LOFT_ST_PRIMARY, 8 };
+    loft_ref root = { nr, LOFT_ST_PRIMARY, 8, 0 };
     loft_refs all = { 0, 0, 0, 0 };
     loft_ref_slots(sc->types, sc->tp, root, &all, 0);
     loft_store_t *s = &loft_stores[nr];
@@ -1011,7 +1011,7 @@ static int loft_image_adopt(loft_ref r, uint8_t *bytes, size_t n, int untrusted,
  * whose key order moved filed again in this build's (`loft_rekey_walk` from the root). */
 static void loft_rekey_image(const loft_sidecar *sc, loft_ref r) {
     uint32_t budget = 1u << 30;
-    loft_ref root = { r.store_nr, 1, 8 };
+    loft_ref root = { r.store_nr, 1, 8, 0 };
     loft_rekey_walk(sc->rekey, sc->rekey_n, sc->tp, root, &budget);
 }
 
@@ -1190,7 +1190,7 @@ static void loft_validate_claims(const loft_tdesc *T, uint32_t nt, uint16_t tp, 
     }
     case LOFT_T_STRUCT:
         for (uint16_t i = 0; i < d->n; i++) {
-            loft_ref f = { r.store_nr, r.rec, r.pos + d->fields[i].pos };
+            loft_ref f = { r.store_nr, r.rec, r.pos + d->fields[i].pos, 0 };
             loft_validate_claims(T, nt, d->fields[i].type, f, problems);
         }
         return;
@@ -1211,7 +1211,7 @@ static void loft_validate_claims(const loft_tdesc *T, uint32_t nt, uint16_t tp, 
             return;
         }
         for (uint32_t i = 0; i < len && i < 16; i++) {
-            loft_ref e = { r.store_nr, cur, 8 + size * i };
+            loft_ref e = { r.store_nr, cur, 8 + size * i, 0 };
             loft_validate_claims(T, nt, d->elem, e, problems);
         }
         return;
@@ -1225,7 +1225,7 @@ static void loft_validate_claims(const loft_tdesc *T, uint32_t nt, uint16_t tp, 
             (*problems)++;
             return;
         }
-        loft_ref e = { r.store_nr, c, 8 };
+        loft_ref e = { r.store_nr, c, 8, 0 };
         loft_validate_claims(T, nt, d->elem, e, problems);
         return;
     }
@@ -1286,7 +1286,7 @@ static void loft_validate_claims(const loft_tdesc *T, uint32_t nt, uint16_t tp, 
                 if (*problems > 8) return;
                 continue;
             }
-            loft_ref e = { r.store_nr, entry, pos };
+            loft_ref e = { r.store_nr, entry, pos, 0 };
             loft_validate_claims(T, nt, d->elem, e, problems);
         }
         return;
@@ -1316,7 +1316,7 @@ static void loft_validate_claims(const loft_tdesc *T, uint32_t nt, uint16_t tp, 
                 (*problems)++;
                 return;
             }
-            loft_ref e = { r.store_nr, elm, 8 };
+            loft_ref e = { r.store_nr, elm, 8, 0 };
             loft_validate_claims(T, nt, d->elem, e, problems);
         }
         return;
