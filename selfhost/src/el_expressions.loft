@@ -140,7 +140,10 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   }
   // `ref_return`'s `Rename` (pass 1): a tail that is a local record, or a call's hidden buffer,
   // becomes the return buffer itself; pass 2 then builds into it as the argument it is.
-  if rb >= 0 && e.first_pass {
+  // A tail call answering a view of this function's own parameters merges that borrow
+  // (`MergeAttr`) on this pass already, so the second types the body by it; it hands back no
+  // record of its own to rename onto.
+  if rb >= 0 && e.first_pass && merge_view_call(e, vars, code) == null {
     rename_ret_buffer(e, vars, code, rb);
   }
   // A tail local the first pass did not rename (two records made through it there) is renamed
@@ -159,6 +162,9 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       built = build_into_buffer(e, vars, code, rb, result);
       if built == null && buffer_bound(e) {
         built = bind_tail_call(e, vars, code, rb);
+      }
+      if built == null {
+        built = merge_view_call(e, vars, code);
       }
       // A `null` tail answers the sentinel and delivers nothing into the buffer.
       if built == null && null_sentinel_tail(e, code) {
@@ -2541,6 +2547,15 @@ fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
     } else if inner is TyText {
       ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }]))];
       ls += [el_ir::cl(e, "OpSetText", [at, ir::NdInt { n: 0 }, x.code])];
+      ls += [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }])];
+    } else if struct_ref(e, inner) >= 0 {
+      el_vars::set_var_type(vars, elm, ir::TyReference { n: struct_ref(e, inner), dep: [rec] });
+      copy = record_item_copy(e, vars, elm, struct_ref(e, inner), x);
+      if copy == null {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }]))];
+      ls += copy!;
       ls += [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }])];
     } else {
       el::refuse(e, "a record item appended that is not a literal");
@@ -5606,6 +5621,40 @@ fn bind_tail_call(e: el::El, vars: el_vars::Vars, code: ir::Node, buf: integer) 
   }
 }
 
+// `RetPromotion::MergeAttr` for a tail call answering a view of its argument: the result
+// borrows the parameters the call's answer borrows, the buffer left as it is.  Null when the
+// answer borrows anything but this function's visible parameters.
+fn merge_view_call(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::Node? {
+  bl = match code { NdBlock { block } => block[0], _ => return null };
+  if len(bl.operators) == 0 {
+    return null;
+  }
+  d = e.context;
+  match el_ir::unspan(bl.operators[-1]) {
+    NdCall { def_nr } => {
+      if !returns_argument_view(el::def(e, def_nr)) {
+        return null;
+      }
+    },
+    _ => return null
+  }
+  tp = bl.result[0] ?? ir::TyVoid;
+  attrs: vector<integer> = [];
+  for v in el_types::deps(tp) {
+    a = if vars.vars[v].argument { attr_nr(el::def(e, d), el_vars::name_of(vars, v)) } else { -1 };
+    if a < 0 || el::def(e, d).attributes[a].hidden {
+      return null;
+    }
+    attrs += [a];
+  }
+  if len(attrs) == 0 {
+    return null;
+  }
+  ret = el::def(e, d).returned[0];
+  e.b.data.definitions[d].returned = [el_types::with_deps(ret, attrs)];
+  code
+}
+
 // `Parser::return_buffer`: the variable of the function's hidden record return buffer, by
 // whatever name a rename gave it, or -1.
 fn return_buffer(e: el::El, vars: el_vars::Vars) -> integer {
@@ -5700,6 +5749,36 @@ fn has_nullable_field(e: el::El, td: integer) -> boolean {
     }
   }
   false
+}
+
+// `build_vector_list`'s record arm for one item that is no literal: what fills the element `elm`
+// once it is made (`OpNewRecord`) and before it is finished.  A local is copied in as a fresh
+// destination (`COPY_FRESH_DEST`); a call answering a fresh record
+// (`element_call_takes_record_buffer`) is handed the element as its return buffer, its answer
+// copied only when it lands elsewhere (`OpDistinctStore`), its store freed after when it gives it
+// away (`call_gives_away_its_store`).  Null, refused by name, for any other item.
+fn record_item_copy(e: el::El, vars: el_vars::Vars, elm: integer, rd: integer, x: Ex) -> vector<ir::Node>? {
+  at = ir::NdVar { n: elm };
+  kt = el::def(e, rd).known_type;
+  match el_ir::unspan(x.code) {
+    NdVar { n: _ } => {
+      return [el_ir::cl(e, "OpCopyRecord", [x.code, at, ir::NdInt { n: kt + 16384 }])];
+    },
+    NdCall { def_nr, args } => {
+      if len(args) > 0 && takes_record_buffer(e, def_nr, rd) {
+        a2 = args;
+        a2[len(a2) - 1] = at;
+        rr = el_vars::work_ref_p2(vars, ir::TyReference { n: rd, dep: [] });
+        vars.vars[rr].skip_free = true;
+        bit = if returns_argument_view(el::def(e, def_nr)) { 0 } else { 32768 };
+        copy = el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: rr }, at, ir::NdInt { n: kt + bit + 16384 }]);
+        return [el_ir::v_set(rr, ir::NdCall { def_nr: def_nr, args: a2 }), el_ir::v_if(el_ir::cl(e, "OpDistinctStore", [ir::NdVar { n: rr }, at]), copy, ir::NdNull)];
+      }
+    },
+    _ => {}
+  }
+  el::refuse(e, "a record item that is neither a local nor a call answering a fresh record");
+  null
 }
 
 // The plain struct a type references, or -1.
@@ -7141,35 +7220,13 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
     rd = struct_ref(e, in_t);
     el_vars::set_var_type(vars, elm, ir::TyReference { n: rd, dep: [v] });
     at = ir::NdVar { n: elm };
-    kt = el::def(e, rd).known_type;
     for x in xs {
       ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
-      item = el_ir::unspan(x.code);
-      copied = false;
-      match item {
-        NdVar { n: _ } => {
-          ls += [el_ir::cl(e, "OpCopyRecord", [x.code, at, ir::NdInt { n: kt + 16384 }])];
-          copied = true;
-        },
-        NdCall { def_nr, args } => {
-          if len(args) > 0 && takes_record_buffer(e, def_nr, rd) {
-            a2 = args;
-            a2[len(a2) - 1] = at;
-            rr = el_vars::work_ref_p2(vars, ir::TyReference { n: rd, dep: [] });
-            vars.vars[rr].skip_free = true;
-            ls += [el_ir::v_set(rr, ir::NdCall { def_nr: def_nr, args: a2 })];
-            bit = if returns_argument_view(el::def(e, def_nr)) { 0 } else { 32768 };
-            copy = el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: rr }, at, ir::NdInt { n: kt + bit + 16384 }]);
-            ls += [el_ir::v_if(el_ir::cl(e, "OpDistinctStore", [ir::NdVar { n: rr }, at]), copy, ir::NdNull)];
-            copied = true;
-          }
-        },
-        _ => {}
-      }
-      if !copied {
-        el::refuse(e, "a record item that is neither a local nor a call answering a fresh record");
+      copy = record_item_copy(e, vars, elm, rd, x);
+      if copy == null {
         return refused_build();
       }
+      ls += copy!;
       ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
     }
     xs = [];
