@@ -1,0 +1,237 @@
+--- base_canvas.c
++++ v_comp.c
+@@ -25693,6 +25693,7 @@
+ static const char *const *const loft_clibsyms[] = { 0 };
+ static const char *const loft_clibs[] = { 0 };
+ static const uint32_t loft_nclibs = 0;
++static const loft_fld loft_fields20[] = { { 0, 7, 0, 0, 0 } };
+ static const loft_fld loft_fields133[] = { { 0, 0, 0, 0, 0 }, { 8, 0, 0, 0, 0 }, { 16, 7, 0, 0, 0 } };
+ static const loft_fld loft_fields141[] = { { 40, 5, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 8, 0, 0, 0, 0 }, { 16, 0, 0, 0, 0 }, { 24, 0, 0, 0, 0 }, { 32, 0, 0, 0, 0 } };
+ static const loft_fld loft_fields145[] = { { 0, 146, 0, 0, 0 } };
+@@ -25700,6 +25701,7 @@
+     [0] = { LOFT_T_SCALAR, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+     [5] = { LOFT_T_TEXT, 4, 0, 0, 0, 0, 1, 0, 0, 0, 0 },
+     [7] = { LOFT_T_VECTOR, 4, 0, 0, 0, 0, 1, 0, 0, 0, 0 },
++    [20] = { LOFT_T_STRUCT, 4, 0, 1, loft_fields20, 0, 1, 0, 0, 0, 0 },
+     [133] = { LOFT_T_STRUCT, 24, 0, 3, loft_fields133, 0, 1, 0, 0, 0, 0 },
+     [141] = { LOFT_T_STRUCT, 48, 0, 6, loft_fields141, 0, 1, 0, 0, 0, 0 },
+     [145] = { LOFT_T_STRUCT, 4, 0, 1, loft_fields145, 0, 1, 0, 0, 0, 0 },
+@@ -25715,7 +25717,7 @@
+ static void n_main__fr(void);
+ static inline int64_t t_6vector_len__fr(loft_ref v0_self);
+ static inline void n_println__fr(loft_str v0_v1);
+-static loft_ref n_filled__fr(int64_t v0_count, int64_t v1_value, loft_ref v3_fi_out);
++static loft_ref n_filled__fr(int64_t v0_count, int64_t v1_value, loft_ref v10___vdb_1);
+ static loft_ref n_canvas__fr(int64_t v0_cw, int64_t v1_ch, int64_t v2_fill_color, loft_ref v3___retbuf);
+ static int64_t t_6Canvas_get_pixel__fr(loft_ref v0_self, int64_t v1_gx, int64_t v2_gy);
+ static int64_t n_fnv__fr(int64_t v0_h0, loft_ref v1_v);
+@@ -25726,7 +25728,7 @@
+ static void n_main(void);
+ static inline int64_t t_6vector_len(loft_ref v0_self);
+ static inline void n_println(loft_str v0_v1);
+-static loft_ref n_filled(int64_t v0_count, int64_t v1_value, loft_ref v3_fi_out);
++static loft_ref n_filled(int64_t v0_count, int64_t v1_value, loft_ref v10___vdb_1);
+ static loft_ref n_canvas(int64_t v0_cw, int64_t v1_ch, int64_t v2_fill_color, loft_ref v3___retbuf);
+ static int64_t t_6Canvas_get_pixel(loft_ref v0_self, int64_t v1_gx, int64_t v2_gy);
+ static int64_t n_fnv(int64_t v0_h0, loft_ref v1_v);
+@@ -25930,57 +25932,44 @@
+     loft_text_free(&v1___work_1);
+ }
+ 
+-static loft_ref n_filled__fr(int64_t v0_count, int64_t v1_value, loft_ref v3_fi_out) {
++static loft_ref n_filled__fr(int64_t v0_count, int64_t v1_value, loft_ref v10___vdb_1) {
+     loft_ref v2___retbuf = { 0xFFFF, 0, 0 };
+-    int64_t v4_fi_top = LOFT_NULL;
+-    int64_t v5_fi_i = LOFT_NULL;
+-    int64_t v6__elm_1 = LOFT_NULL;
++    loft_ref v3__vec_1 = { 0xFFFF, 0, 0 };
++    int64_t v4__elm_1 = LOFT_NULL;
++    int64_t v5__range_end_1 = LOFT_NULL;
++    int64_t v6__index_1 = LOFT_NULL;
++    int64_t v7___index = LOFT_NULL;
++    int64_t v8__ = LOFT_NULL;
++    int64_t v9__comp_1 = LOFT_NULL;
++    loft_ref v11___rbw___vdb_1 = { 0xFFFF, 0, 0 };
+     loft_ref t1;
+     loft_ref t2;
+-    int64_t t3;
+-    int64_t t4;
+-    uint8_t t5;
+-    uint8_t t6;
+-    int64_t t7;
+-    int64_t t8;
+-    loft_ref t9;
+-    loft_vec_clear_release(loft_types, loft_ntypes, v3_fi_out);
+-    loft_vec_clear_release(loft_types, loft_ntypes, v3_fi_out);
+-    if (v0_count <= loft_w64(INT32_C(0))) {
+-        t2 = v3_fi_out;
+-        return t2;
+-    }
+-    v4_fi_top = INT64_C(0);
++    loft_win pw1 = { 0, 0, 0, 0, 0xFFFF };
++    loft_ref pv1 = { 0xFFFF, 0, 0 };
++    v11___rbw___vdb_1 = v10___vdb_1;
++    loft_vec_clear_release(loft_types, loft_ntypes, v10___vdb_1);
++    loft_database_room(loft_types, loft_ntypes, &v10___vdb_1, 4, 20);
++    v3__vec_1 = loft_field(v10___vdb_1, 0);
++    ((void) 0);
++    v5__range_end_1 = v0_count;
++    v6__index_1 = INT64_C(-1);
++    pv1 = v3__vec_1;
++    loft_vec_reserve_more(pv1, loft_mul(loft_add(loft_sub(v5__range_end_1, loft_add(v6__index_1, INT64_C(1))), INT64_C(0)), INT64_C(1)), 8);
++    pw1 = loft_win_of(pv1, 8);
+     for (;;) {
+-        t3 = loft_wrap_add(v4_fi_top, INT64_C(1));
+-        t4 = loft_shr(v0_count, t3);
+-        t5 = (uint8_t) (t4 != loft_w64(INT32_C(0)));
+-        if (!(t5 == 1)) {
++        v6__index_1 = loft_wrap_add(v6__index_1, INT64_C(1));
++        if (v5__range_end_1 <= v6__index_1) {
+             goto brk_1;
+         }
+-        v4_fi_top = loft_wrap_add(v4_fi_top, INT64_C(1));
++        v8__ = v6__index_1;
++        v9__comp_1 = v1_value;
++        (LOFT_PROVED(loft_win_same(pw1, pv1, 8), "filled:pw1"), loft_win_put8(&pw1, pv1, (uint64_t) v9__comp_1));
+     cont_1:;
+     }
+     brk_1:;
+-    v5_fi_i = v4_fi_top;
+-    for (;;) {
+-        t6 = (uint8_t) (loft_w64(INT32_C(0)) <= v5_fi_i);
+-        if (!(t6 == 1)) {
+-            goto brk_2;
+-        }
+-        loft_vec_add(loft_types, 0, v3_fi_out, v3_fi_out);
+-        t7 = loft_shr(v0_count, v5_fi_i);
+-        t8 = ((t7) & (INT64_C(1)));
+-        if (t8 == loft_w64(INT32_C(1))) {
+-            loft_vec_prealloc(v3_fi_out, 1, 8);
+-            loft_vec_push_int(v3_fi_out, v1_value);
+-        }
+-        v5_fi_i = loft_wrap_sub(v5_fi_i, INT64_C(1));
+-    cont_2:;
+-    }
+-    brk_2:;
+-    t9 = v3_fi_out;
+-    return t9;
++    loft_win_sync(pw1);
++    t2 = v3__vec_1;
++    return t2;
+     return t1;
+ }
+ 
+@@ -25993,7 +25982,7 @@
+     int64_t t4;
+     v5___ref_p2_1 = loft_ref_null();
+     v4___ref_1 = loft_ref_null();
+-    loft_frame_site(120);
++    loft_frame_site(109);
+     if (v3___retbuf.store_nr == 0xFFFF) {
+         t3 = (uint8_t) (0);
+     } else {
+@@ -26007,8 +25996,8 @@
+     loft_set_int(v3___retbuf, 0, v0_cw);
+     loft_set_int(v3___retbuf, 8, v1_ch);
+     v4___ref_1 = loft_field(v3___retbuf, 16);
+-    loft_frame_site(120);
+-    loft_frame_site(120);
++    loft_frame_site(109);
++    loft_frame_site(109);
+     t4 = loft_wrap_mul(v0_cw, v1_ch);
+     (void) n_filled(t4, v2_fill_color, v4___ref_1);
+     t2 = v3___retbuf;
+@@ -26036,7 +26025,7 @@
+     loft_vh h3 = { 0xFFFF, 0, 0, 0 };
+     loft_pa0_0 = loft_rec_ptr(v0_self);
+     v4_gp_d = loft_ref_null();
+-    loft_frame_site(129);
++    loft_frame_site(118);
+     if (v1_gx < loft_w64(INT32_C(0))) {
+         t5 = (uint8_t) (1);
+     } else {
+@@ -26446,7 +26435,7 @@
+ }
+ 
+ static void n_main(void) {
+-    loft_frame_push("main", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg/bench/b_canvas.loft", 329);
++    loft_frame_push("main", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg_comp/bench/b_canvas.loft", 329);
+     LOFT_HOLD_MARK(hm);
+     size_t fm = loft_nfnrefs;
+     n_main__fr();
+@@ -26476,17 +26465,17 @@
+     loft_frame_pop();
+ }
+ 
+-static loft_ref n_filled(int64_t v0_count, int64_t v1_value, loft_ref v3_fi_out) {
+-    loft_frame_push("filled", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg/src/graphics.loft", 101);
++static loft_ref n_filled(int64_t v0_count, int64_t v1_value, loft_ref v10___vdb_1) {
++    loft_frame_push("filled", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg_comp/src/graphics.loft", 101);
+     LOFT_HOLD_MARK(hm);
+-    loft_ref r = n_filled__fr(v0_count, v1_value, v3_fi_out);
++    loft_ref r = n_filled__fr(v0_count, v1_value, v10___vdb_1);
+     LOFT_HOLD_BACK(hm);
+     loft_frame_pop();
+     return r;
+ }
+ 
+ static loft_ref n_canvas(int64_t v0_cw, int64_t v1_ch, int64_t v2_fill_color, loft_ref v3___retbuf) {
+-    loft_frame_push("canvas", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg/src/graphics.loft", 117);
++    loft_frame_push("canvas", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg_comp/src/graphics.loft", 106);
+     LOFT_HOLD_MARK(hm);
+     loft_ref r = n_canvas__fr(v0_cw, v1_ch, v2_fill_color, v3___retbuf);
+     LOFT_HOLD_BACK(hm);
+@@ -26495,7 +26484,7 @@
+ }
+ 
+ static int64_t t_6Canvas_get_pixel(loft_ref v0_self, int64_t v1_gx, int64_t v2_gy) {
+-    loft_frame_push("t_6Canvas_get_pixel", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg/src/graphics.loft", 128);
++    loft_frame_push("t_6Canvas_get_pixel", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg_comp/src/graphics.loft", 117);
+     LOFT_HOLD_MARK(hm);
+     size_t fm = loft_nfnrefs;
+     int64_t r = t_6Canvas_get_pixel__fr(v0_self, v1_gx, v2_gy);
+@@ -26506,7 +26495,7 @@
+ }
+ 
+ static int64_t n_fnv(int64_t v0_h0, loft_ref v1_v) {
+-    loft_frame_push("fnv", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg/bench/b_canvas.loft", 46);
++    loft_frame_push("fnv", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg_comp/bench/b_canvas.loft", 46);
+     LOFT_HOLD_MARK(hm);
+     size_t fm = loft_nfnrefs;
+     int64_t r = n_fnv__fr(v0_h0, v1_v);
+@@ -26517,7 +26506,7 @@
+ }
+ 
+ static inline void n_print_row(loft_ref v0_r) {
+-    loft_frame_push("print_row", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg/bench/b_canvas.loft", 58);
++    loft_frame_push("print_row", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg_comp/bench/b_canvas.loft", 58);
+     LOFT_HOLD_MARK(hm);
+     size_t fm = loft_nfnrefs;
+     n_print_row__fr(v0_r);
+@@ -26527,7 +26516,7 @@
+ }
+ 
+ static int64_t n_ink(int64_t v0_r, int64_t v1_k) {
+-    loft_frame_push("ink", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg/bench/b_canvas.loft", 67);
++    loft_frame_push("ink", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg_comp/bench/b_canvas.loft", 67);
+     LOFT_HOLD_MARK(hm);
+     size_t fm = loft_nfnrefs;
+     int64_t r = n_ink__fr(v0_r, v1_k);
+@@ -26538,7 +26527,7 @@
+ }
+ 
+ static loft_ref n_bench_canvas(int64_t v0_n, loft_ref v1___retbuf) {
+-    loft_frame_push("bench_canvas", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg/bench/b_canvas.loft", 96);
++    loft_frame_push("bench_canvas", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg_comp/bench/b_canvas.loft", 96);
+     LOFT_HOLD_MARK(hm);
+     loft_ref r = n_bench_canvas__fr(v0_n, v1___retbuf);
+     LOFT_HOLD_BACK(hm);
+@@ -26547,7 +26536,7 @@
+ }
+ 
+ static inline void n_print_row__inv(loft_ref v0_r, int64_t is0, int64_t is1, int64_t is2, int64_t is3) {
+-    loft_frame_push("print_row", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg/bench/b_canvas.loft", 58);
++    loft_frame_push("print_row", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg_comp/bench/b_canvas.loft", 58);
+     LOFT_HOLD_MARK(hm);
+     size_t fm = loft_nfnrefs;
+     n_print_row__inv__fr(v0_r, is0, is1, is2, is3);

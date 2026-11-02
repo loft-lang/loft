@@ -1,0 +1,21 @@
+--- library/bench/bench.rs
++++ pkgc/bench/bench.rs
+@@ -1126,18 +1126,5 @@
+     }
+     println!("routine\titers\tus\tns_op\tpx\tns_px\thash");
+-    print_row(&bench_hash(n));
+-    print_row(&bench_hair(n));
+-    print_row(&bench_smooth(n));
+-    print_row(&bench_fronds(n));
+-    print_row(&bench_lock(n));
+-    print_row(&bench_lock_curved(n));
+-    print_row(&bench_composite(n));
+     print_row(&bench_fill(n, "fill_circle", &circle_px(128.0, 128.0, 100.0, 28)));
+-    print_row(&bench_fill(n, "fill_star", &pentagram_px()));
+-    print_row(&bench_wide_line(n));
+-    print_row(&bench_parse(n));
+-    print_row(&bench_render(n, "render_lock", lock_scene()));
+-    print_row(&bench_render(n, "render_marks", marks_scene()));
+-    print_row(&bench_resize(n));
+ }
+ 

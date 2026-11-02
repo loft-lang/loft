@@ -1,0 +1,33 @@
+--- base_rect.c
++++ s3_rect.c
+@@ -26699,6 +26699,13 @@
+             v17__range_start_2 = INT64_C(1);
+             v18__range_end_2 = INT64_C(0);
+         }
++        if (is0 >= 0) {
++            int64_t row = loft_wrap_mul(v16_fr_y, is0);
++            int64_t xe = v18__range_end_2;
++            if (v11_fr_n - row < xe) xe = v11_fr_n - row;
++            uint8_t *p = h3.base + (size_t) row * 8;
++            for (int64_t x = v17__range_start_2; x < xe; x++) memcpy(p + (size_t) x * 8, &v5_color, 8);
++        } else {
+         v20__next_2 = v17__range_start_2;
+         v19_fr_x_index = LOFT_NULL;
+         for (;;) {
+@@ -26710,13 +26717,14 @@
+             v21_fr_x = v19_fr_x_index;
+             t9 = is0;
+             t10 = loft_wrap_mul(v16_fr_y, t9);
+-            v22_fr_idx = loft_add(t10, v21_fr_x);
++            v22_fr_idx = loft_wrap_add(t10, v21_fr_x);
+             if (v22_fr_idx < v11_fr_n) {
+-                (LOFT_PROVED(loft_vh_same(h3, v10_fr_d), "fill_rect:h3"), loft_vh_set_int(h3, 8, v22_fr_idx, 0, v5_color));
++                if (is0 >= 0) memcpy(h3.base + (size_t) v22_fr_idx * 8, &v5_color, 8); else loft_vh_set_int(h3, 8, v22_fr_idx, 0, v5_color);
+             }
+         cont_2:;
+         }
+         brk_2:;
++        }
+     cont_1:;
+     }
+     brk_1:;

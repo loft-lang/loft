@@ -1,0 +1,85 @@
+--- base.c
++++ s2.c
+@@ -26159,8 +26159,17 @@
+         t2 = v0_d;
+         return t2;
+     }
+-    loft_database_room(loft_types, loft_ntypes, &v33___vdb_1, 4, 107);
+-    v6_nb = loft_field(v33___vdb_1, 0);
++    if (v4___retbuf.store_nr == 0xFFFF) {
++        t24 = (uint8_t) (0);
++    } else {
++        t24 = (uint8_t) (v4___retbuf.rec != 0);
++    }
++    if (t24 == 1) {
++    } else {
++        loft_database_typed(&v4___retbuf, 8, 104);
++    }
++    { loft_store_t *hs_ = loft_store_of(v4___retbuf); uint32_t hr_ = loft_st_claim(hs_, 2); loft_set_u32(hs_, hr_, 8, 0); v6_nb = (loft_ref){ v4___retbuf.store_nr, hr_, 8 }; }
++
+     ((void) 0);
+     t3 = loft_field(v0_d, 0);
+     loft_vec_add(loft_types, 6, v6_nb, t3);
+@@ -26210,8 +26219,8 @@
+     v19_loc = n_locate(v0_d, v1_a);
+     v20_pi = v19_loc.f0;
+     v21_ro = v19_loc.f1;
+-    loft_database_room(loft_types, loft_ntypes, &v34___vdb_2, 4, 108);
+-    v22_np = loft_field(v34___vdb_2, 0);
++    { loft_store_t *hs_ = loft_store_of(v4___retbuf); uint32_t hr_ = loft_st_claim(hs_, 2); loft_set_u32(hs_, hr_, 8, 0); v22_np = (loft_ref){ v4___retbuf.store_nr, hr_, 8 }; }
++
+     ((void) 0);
+     loft_frame_site(135);
+     t7 = loft_field(v0_d, 4);
+@@ -26260,7 +26269,7 @@
+             ((void) 0);
+             t12 = (LOFT_PROVED(loft_win_same(pw4, pv4, 24), "insert_text:pw4"), loft_win_slot(&pw4, pv4, 24));
+             v29__elm_4 = t12;
+-            loft_copy_record(loft_types, 103, v18_newp, v29__elm_4, 6);
++            memcpy(loft_rec_ptr(v29__elm_4), loft_rec_ptr(v18_newp), 24);
+             loft_win_finish(&pw4, pv4, 24);
+             t13 = loft_pa_i64(loft_pa26_5, 8);
+             if (v21_ro < t13) {
+@@ -26283,7 +26292,7 @@
+             ((void) 0);
+             t20 = (LOFT_PROVED(loft_win_same(pw4, pv4, 24), "insert_text:pw4"), loft_win_slot(&pw4, pv4, 24));
+             v31__elm_6 = t20;
+-            loft_copy_record(loft_types, 103, v26_p, v31__elm_6, 6);
++            memcpy(loft_rec_ptr(v31__elm_6), loft_pa26_5, 24);
+             loft_win_finish(&pw4, pv4, 24);
+         }
+     cont_2:;
+@@ -26298,22 +26307,19 @@
+         loft_vec_prealloc(v22_np, 1, 24);
+         t23 = loft_vec_append(v22_np, 24);
+         v32__elm_7 = t23;
+-        loft_copy_record(loft_types, 103, v18_newp, v32__elm_7, 6);
++        memcpy(loft_rec_ptr(v32__elm_7), loft_rec_ptr(v18_newp), 24);
+         loft_vec_finish(v22_np);
+     }
+-    if (v4___retbuf.store_nr == 0xFFFF) {
+-        t24 = (uint8_t) (0);
+-    } else {
+-        t24 = (uint8_t) (v4___retbuf.rec != 0);
+-    }
+-    if (t24 == 1) {
+-    } else {
+-        loft_database_typed(&v4___retbuf, 8, 104);
+-    }
+-    t25 = loft_field(v4___retbuf, 0);
+-    loft_vec_replace(loft_types, loft_ntypes, 6, t25, v6_nb);
+-    t26 = loft_field(v4___retbuf, 4);
+-    loft_vec_replace(loft_types, loft_ntypes, 103, t26, v22_np);
++    { loft_store_t *ms_ = loft_store_of(v4___retbuf); loft_ref f_ = loft_field(v4___retbuf, 0);
++      uint32_t old_ = loft_u32(ms_, f_.rec, f_.pos), new_ = loft_u32(ms_, v6_nb.rec, v6_nb.pos);
++      loft_set_u32(ms_, f_.rec, f_.pos, new_);
++      if (old_ != 0 && old_ != 0xFFFFFFFFu && old_ != new_) loft_st_delete(ms_, old_);
++      loft_st_delete(ms_, v6_nb.rec); }
++    { loft_store_t *ms_ = loft_store_of(v4___retbuf); loft_ref f_ = loft_field(v4___retbuf, 4);
++      uint32_t old_ = loft_u32(ms_, f_.rec, f_.pos), new_ = loft_u32(ms_, v22_np.rec, v22_np.pos);
++      loft_set_u32(ms_, f_.rec, f_.pos, new_);
++      if (old_ != 0 && old_ != 0xFFFFFFFFu && old_ != new_) loft_st_delete(ms_, old_);
++      loft_st_delete(ms_, v22_np.rec); }
+     loft_free_var_distinct(&v34___vdb_2, v4___retbuf);
+     loft_free_var_distinct(&v18_newp, v4___retbuf);
+     loft_free_var_distinct(&v33___vdb_1, v4___retbuf);

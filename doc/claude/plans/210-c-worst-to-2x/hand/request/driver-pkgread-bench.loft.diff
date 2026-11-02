@@ -1,0 +1,9 @@
+--- library/bench/bench.loft
++++ pkgread/bench/bench.loft
+@@ -214,5 +214,5 @@
+   mn_t0 = ticks();
+   println("routine\titers\tus\tns_op\tpx\tns_px\thash");
+-  mn_rows: vector<Row> = [bench_check(mn_n), bench_read(mn_n), bench_request(mn_n)];
++  mn_rows: vector<Row> = [bench_read(mn_n)];
+   mn_sink = 0;
+   for row in mn_rows {

@@ -1,0 +1,120 @@
+--- base_canvas.c
++++ v_res.c
+@@ -25950,6 +25950,7 @@
+         t2 = v3_fi_out;
+         return t2;
+     }
++    loft_vec_reserve(v3_fi_out, v0_count, 8);
+     v4_fi_top = INT64_C(0);
+     for (;;) {
+         t3 = loft_wrap_add(v4_fi_top, INT64_C(1));
+@@ -25993,7 +25994,7 @@
+     int64_t t4;
+     v5___ref_p2_1 = loft_ref_null();
+     v4___ref_1 = loft_ref_null();
+-    loft_frame_site(120);
++    loft_frame_site(121);
+     if (v3___retbuf.store_nr == 0xFFFF) {
+         t3 = (uint8_t) (0);
+     } else {
+@@ -26007,8 +26008,8 @@
+     loft_set_int(v3___retbuf, 0, v0_cw);
+     loft_set_int(v3___retbuf, 8, v1_ch);
+     v4___ref_1 = loft_field(v3___retbuf, 16);
+-    loft_frame_site(120);
+-    loft_frame_site(120);
++    loft_frame_site(121);
++    loft_frame_site(121);
+     t4 = loft_wrap_mul(v0_cw, v1_ch);
+     (void) n_filled(t4, v2_fill_color, v4___ref_1);
+     t2 = v3___retbuf;
+@@ -26036,7 +26037,7 @@
+     loft_vh h3 = { 0xFFFF, 0, 0, 0 };
+     loft_pa0_0 = loft_rec_ptr(v0_self);
+     v4_gp_d = loft_ref_null();
+-    loft_frame_site(129);
++    loft_frame_site(130);
+     if (v1_gx < loft_w64(INT32_C(0))) {
+         t5 = (uint8_t) (1);
+     } else {
+@@ -26446,7 +26447,7 @@
+ }
+ 
+ static void n_main(void) {
+-    loft_frame_push("main", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg/bench/b_canvas.loft", 329);
++    loft_frame_push("main", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg_res/bench/b_canvas.loft", 329);
+     LOFT_HOLD_MARK(hm);
+     size_t fm = loft_nfnrefs;
+     n_main__fr();
+@@ -26477,7 +26478,7 @@
+ }
+ 
+ static loft_ref n_filled(int64_t v0_count, int64_t v1_value, loft_ref v3_fi_out) {
+-    loft_frame_push("filled", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg/src/graphics.loft", 101);
++    loft_frame_push("filled", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg_res/src/graphics.loft", 101);
+     LOFT_HOLD_MARK(hm);
+     loft_ref r = n_filled__fr(v0_count, v1_value, v3_fi_out);
+     LOFT_HOLD_BACK(hm);
+@@ -26486,7 +26487,7 @@
+ }
+ 
+ static loft_ref n_canvas(int64_t v0_cw, int64_t v1_ch, int64_t v2_fill_color, loft_ref v3___retbuf) {
+-    loft_frame_push("canvas", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg/src/graphics.loft", 117);
++    loft_frame_push("canvas", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg_res/src/graphics.loft", 118);
+     LOFT_HOLD_MARK(hm);
+     loft_ref r = n_canvas__fr(v0_cw, v1_ch, v2_fill_color, v3___retbuf);
+     LOFT_HOLD_BACK(hm);
+@@ -26495,7 +26496,7 @@
+ }
+ 
+ static int64_t t_6Canvas_get_pixel(loft_ref v0_self, int64_t v1_gx, int64_t v2_gy) {
+-    loft_frame_push("t_6Canvas_get_pixel", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg/src/graphics.loft", 128);
++    loft_frame_push("t_6Canvas_get_pixel", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg_res/src/graphics.loft", 129);
+     LOFT_HOLD_MARK(hm);
+     size_t fm = loft_nfnrefs;
+     int64_t r = t_6Canvas_get_pixel__fr(v0_self, v1_gx, v2_gy);
+@@ -26506,7 +26507,7 @@
+ }
+ 
+ static int64_t n_fnv(int64_t v0_h0, loft_ref v1_v) {
+-    loft_frame_push("fnv", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg/bench/b_canvas.loft", 46);
++    loft_frame_push("fnv", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg_res/bench/b_canvas.loft", 46);
+     LOFT_HOLD_MARK(hm);
+     size_t fm = loft_nfnrefs;
+     int64_t r = n_fnv__fr(v0_h0, v1_v);
+@@ -26517,7 +26518,7 @@
+ }
+ 
+ static inline void n_print_row(loft_ref v0_r) {
+-    loft_frame_push("print_row", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg/bench/b_canvas.loft", 58);
++    loft_frame_push("print_row", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg_res/bench/b_canvas.loft", 58);
+     LOFT_HOLD_MARK(hm);
+     size_t fm = loft_nfnrefs;
+     n_print_row__fr(v0_r);
+@@ -26527,7 +26528,7 @@
+ }
+ 
+ static int64_t n_ink(int64_t v0_r, int64_t v1_k) {
+-    loft_frame_push("ink", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg/bench/b_canvas.loft", 67);
++    loft_frame_push("ink", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg_res/bench/b_canvas.loft", 67);
+     LOFT_HOLD_MARK(hm);
+     size_t fm = loft_nfnrefs;
+     int64_t r = n_ink__fr(v0_r, v1_k);
+@@ -26538,7 +26539,7 @@
+ }
+ 
+ static loft_ref n_bench_canvas(int64_t v0_n, loft_ref v1___retbuf) {
+-    loft_frame_push("bench_canvas", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg/bench/b_canvas.loft", 96);
++    loft_frame_push("bench_canvas", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg_res/bench/b_canvas.loft", 96);
+     LOFT_HOLD_MARK(hm);
+     loft_ref r = n_bench_canvas__fr(v0_n, v1___retbuf);
+     LOFT_HOLD_BACK(hm);
+@@ -26547,7 +26548,7 @@
+ }
+ 
+ static inline void n_print_row__inv(loft_ref v0_r, int64_t is0, int64_t is1, int64_t is2, int64_t is3) {
+-    loft_frame_push("print_row", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg/bench/b_canvas.loft", 58);
++    loft_frame_push("print_row", "/home/jurjen/workspace/loft-c-perf/target-exp/wt-rebase/target-exp/hand/graphics/pkg_res/bench/b_canvas.loft", 58);
+     LOFT_HOLD_MARK(hm);
+     size_t fm = loft_nfnrefs;
+     n_print_row__inv__fr(v0_r, is0, is1, is2, is3);

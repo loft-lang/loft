@@ -1,0 +1,11 @@
+--- base_rect.c
++++ s1_rect.c
+@@ -26710,7 +26710,7 @@
+             v21_fr_x = v19_fr_x_index;
+             t9 = is0;
+             t10 = loft_wrap_mul(v16_fr_y, t9);
+-            v22_fr_idx = loft_add(t10, v21_fr_x);
++            v22_fr_idx = loft_wrap_add(t10, v21_fr_x);
+             if (v22_fr_idx < v11_fr_n) {
+                 (LOFT_PROVED(loft_vh_same(h3, v10_fr_d), "fill_rect:h3"), loft_vh_set_int(h3, 8, v22_fr_idx, 0, v5_color));
+             }

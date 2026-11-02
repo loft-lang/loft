@@ -1,0 +1,8 @@
+loft commit   3cfb11fb9
+library       zttext @ 4263924
+emit          LOFT_RELEASE_PASS_PROBE=1 loft --emit-c base.c bench/bench.loft (in the driver package)
+
+base  base.c
+edit  only2.c  from base.c
+edit  s1.c  from base.c
+edit  s2.c  from base.c

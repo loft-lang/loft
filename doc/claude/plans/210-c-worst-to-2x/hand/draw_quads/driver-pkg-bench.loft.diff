@@ -1,0 +1,10 @@
+--- library/bench/bench.loft
++++ pkg/bench/bench.loft
+@@ -276,6 +276,5 @@
+   // `wrap` needs loft with loft#1657 fixed: before it, `lines += [flush_word(…, lines)]`
+   // lost the line `flush_word` itself appended, and the hash disagreed with the twin's.
+-  for r in [bench_write_text(mn_n), bench_atlas_cell(mn_n), bench_layout(mn_n),
+-            bench_draw_quads(mn_n), bench_wrap(mn_n)] {
++  for r in [bench_draw_quads(mn_n)] {
+     print_row(r);
+     mn_sink += r.sink;

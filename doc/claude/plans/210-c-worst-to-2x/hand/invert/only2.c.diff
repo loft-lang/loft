@@ -1,0 +1,11 @@
+--- base.c
++++ only2.c
+@@ -26390,7 +26390,7 @@
+             ((void) 0);
+             t20 = (LOFT_PROVED(loft_win_same(pw4, pv4, 24), "insert_text:pw4"), loft_win_slot(&pw4, pv4, 24));
+             v31__elm_6 = t20;
+-            loft_copy_record(loft_types, 103, v26_p, v31__elm_6, 6);
++            memcpy(loft_rec_ptr(v31__elm_6), loft_pa26_5, 24);
+             loft_win_finish(&pw4, pv4, 24);
+         }
+     cont_2:;

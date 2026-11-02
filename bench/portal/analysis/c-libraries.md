@@ -74,6 +74,9 @@ a row are `R-Destination`, `R-AppendTwin`, `R-RefillBuffer` and (already built) 
 
 ## Order from here
 
+The routines over 3× are hand-priced to about 2× in [@PLN210](../../../doc/claude/plans/210-c-worst-to-2x/README.md):
+its phase table is the build order, and its hand forms are the targets.
+
 The goal stays the worst rows, fixed by general optimisations with the memory model first
 ([`README.md`](README.md)).  pluginabi's three rows (measurable since crypto 0.4.0), profiled
 2026-10-30:

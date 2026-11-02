@@ -1,0 +1,18 @@
+loft commit   3cfb11fb9
+library       graphics @ aa86b6b
+emit          LOFT_RELEASE_PASS_PROBE=1 loft --emit-c base.c bench/bench.loft (in the driver package)
+
+base  base_canvas.c
+base  base_poly.c
+base  base_rect.c
+edit  s1_canvas.c  from base_canvas.c
+edit  s1_poly.c  from base_poly.c
+edit  s1_rect.c  from base_rect.c
+edit  s2_poly.c  from base_poly.c
+edit  s2_rect.c  from base_rect.c
+edit  s2a_poly.c  from base_poly.c
+edit  s3_poly.c  from base_poly.c
+edit  s3_rect.c  from base_rect.c
+edit  s4_poly.c  from base_poly.c
+edit  v_comp.c  from base_canvas.c
+edit  v_res.c  from base_canvas.c

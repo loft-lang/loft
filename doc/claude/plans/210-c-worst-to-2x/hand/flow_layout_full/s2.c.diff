@@ -1,0 +1,38 @@
+--- base.c
++++ s2.c
+@@ -26818,7 +26818,8 @@
+     double t11;
+     loft_vh h1 = { 0xFFFF, 0, 0, 0 };
+     LOFT_HOLD(2, &v13___work_p2_1, &v18___lift_2);
+-    v17___lift_1 = loft_ref_null();
++    static loft_ref keep_st = { 0xFFFF, 0, 0 };
++    v17___lift_1 = keep_st;
+     v14___ref_2 = loft_ref_null();
+     v15___vdb_1 = loft_ref_null();
+     v12___ref_p2_1 = loft_ref_null();
+@@ -26867,9 +26868,6 @@
+             loft_set_int(v12___ref_p2_1, 0, INT64_C(0));
+             v10_r = v12___ref_p2_1;
+         }
+-        loft_text_set(&v13___work_p2_1, loft_lit("", 0));
+-        loft_text_concat(&v13___work_p2_1, loft_get_text(v10_r, 8));
+-        loft_text_set(&v18___lift_2, loft_view(&v13___work_p2_1));
+         loft_frame_site(480);
+         t5 = v17___lift_1;
+         t7 = (int64_t) loft_stores_allocated;
+@@ -26887,13 +26885,13 @@
+         }
+         loft_frame_site(480);
+         t9 = v4_w;
+-        t10 = loft_call1(v3_measure, loft_view(&v18___lift_2), v17___lift_1);
++        t10 = loft_call1(v3_measure, loft_get_text(v10_r, 8), v17___lift_1);
+         v4_w = (t9 + t10);
+         loft_text_free(&v18___lift_2);
+     cont_1:;
+     }
+     brk_1:;
+-    loft_free_var(&v17___lift_1);
++    keep_st = v17___lift_1;
+     loft_text_free(&v13___work_p2_1);
+     loft_free_var(&v12___ref_p2_1);
+     loft_free_var_distinct(&v6___ref_1, v14___ref_2);

@@ -1,0 +1,11 @@
+--- library/bench/bench.loft
++++ pkg/bench/bench.loft
+@@ -428,7 +428,5 @@
+   mn_d0 = piece_doc(PIECES, PIECE_LEN, 0);
+   mn_d1 = piece_doc(PIECES, PIECE_LEN, 1);
+-  mn_rows: vector<Row> = [bench_seg(mn_n, mn_d0, mn_d1), bench_insert(mn_n), bench_flow(mn_n),
+-                          bench_materialise(mn_n, mn_d0, mn_d1), bench_delete(mn_n, mn_d0, mn_d1),
+-                          bench_locate(mn_n, mn_d0), bench_invert(mn_n), bench_patch(mn_n)];
++  mn_rows: vector<Row> = [bench_invert(mn_n)];
+   mn_sink = 0;
+   for row in mn_rows {

@@ -1,0 +1,131 @@
+--- base_poly.c
++++ s2_poly.c
+@@ -3559,6 +3559,7 @@
+     memcpy(&v, p + off, 8);
+     return v;
+ }
++LOFT_HOT_INLINE int64_t loft_pa_i64nn(const uint8_t *p, uint32_t off) { int64_t v; memcpy(&v, p + off, 8); return v; }
+ LOFT_HOT_INLINE double loft_pa_f64(const uint8_t *p, uint32_t off) {
+     double v;
+     if (!p) return (double) NAN;
+@@ -26490,16 +26491,7 @@
+                 goto brk_1;
+             }
+             v8_i = v7_i_index;
+-            v10___ncc_1 = (LOFT_PROVED(loft_vh_same(h1, v0_pc_pts), "polygon_crossings:h1"), loft_vh_get(h1, 16, v8_i));
+-            if (v10___ncc_1.rec != 0) {
+-                v9_pc_a = v10___ncc_1;
+-            } else {
+-                loft_database_typed(&v28___ref_p2_1, 16, 134);
+-                loft_set_int(v28___ref_p2_1, 0, INT64_C(0));
+-                loft_set_int(v28___ref_p2_1, 8, INT64_C(0));
+-                v9_pc_a = v28___ref_p2_1;
+-            }
+-            loft_pa9_3 = loft_rec_ptr(v9_pc_a);
++            loft_pa9_3 = h1.base + (size_t) v8_i * 16;
+             t3 = ((v8_i) + (INT64_C(1)));
+             v12___ncc_2 = loft_rem(t3, v5_pc_n);
+             if (v12___ncc_2 != LOFT_NULL) {
+@@ -26508,29 +26500,20 @@
+                 LOFT_COLD_PATH();
+                 t2 = INT64_C(0);
+             }
+-            v13___ncc_3 = (LOFT_PROVED(loft_vh_same(h1, v0_pc_pts), "polygon_crossings:h1"), loft_vh_get(h1, 16, t2));
+-            if (v13___ncc_3.rec != 0) {
+-                v11_pc_b = v13___ncc_3;
++            loft_pa11_5 = h1.base + (size_t) t2 * 16;
++            t4 = loft_pa_i64nn(loft_pa9_3, 8);
++            t5 = loft_pa_i64nn(loft_pa11_5, 8);
++            if (t4 < t5) {
++                v14_pc_ylo = loft_pa_i64nn(loft_pa9_3, 8);
+             } else {
+-                loft_database_typed(&v29___ref_p2_2, 16, 134);
+-                loft_set_int(v29___ref_p2_2, 0, INT64_C(0));
+-                loft_set_int(v29___ref_p2_2, 8, INT64_C(0));
+-                v11_pc_b = v29___ref_p2_2;
++                v14_pc_ylo = loft_pa_i64nn(loft_pa11_5, 8);
+             }
+-            loft_pa11_5 = loft_rec_ptr(v11_pc_b);
+-            t4 = loft_pa_i64(loft_pa9_3, 8);
+-            t5 = loft_pa_i64(loft_pa11_5, 8);
+-            if (t4 < t5) {
+-                v14_pc_ylo = loft_pa_i64(loft_pa9_3, 8);
++            t6 = loft_pa_i64nn(loft_pa9_3, 8);
++            t7 = loft_pa_i64nn(loft_pa11_5, 8);
++            if (t6 < t7) {
++                v15_pc_yhi = loft_pa_i64nn(loft_pa11_5, 8);
+             } else {
+-                v14_pc_ylo = loft_pa_i64(loft_pa11_5, 8);
+-            }
+-            t6 = loft_pa_i64(loft_pa9_3, 8);
+-            t7 = loft_pa_i64(loft_pa11_5, 8);
+-            if (t6 < t7) {
+-                v15_pc_yhi = loft_pa_i64(loft_pa11_5, 8);
+-            } else {
+-                v15_pc_yhi = loft_pa_i64(loft_pa9_3, 8);
++                v15_pc_yhi = loft_pa_i64nn(loft_pa9_3, 8);
+             }
+             if (v14_pc_ylo == v15_pc_yhi) {
+                 goto cont_1;
+@@ -26549,32 +26532,30 @@
+             if (t8 == 1) {
+                 goto cont_1;
+             }
+-            t9 = loft_pa_i64(loft_pa9_3, 8);
+-            t10 = loft_pa_i64(loft_pa11_5, 8);
++            t9 = loft_pa_i64nn(loft_pa9_3, 8);
++            t10 = loft_pa_i64nn(loft_pa11_5, 8);
+             if (t9 < t10) {
+-                v16_pc_ty = v9_pc_a;
++                loft_pa16_7 = loft_pa9_3;
+             } else {
+-                v16_pc_ty = v11_pc_b;
++                loft_pa16_7 = loft_pa11_5;
+             }
+-            loft_pa16_7 = loft_rec_ptr(v16_pc_ty);
+-            t11 = loft_pa_i64(loft_pa9_3, 8);
+-            t12 = loft_pa_i64(loft_pa11_5, 8);
++            t11 = loft_pa_i64nn(loft_pa9_3, 8);
++            t12 = loft_pa_i64nn(loft_pa11_5, 8);
+             if (t11 < t12) {
+-                v17_pc_by = v11_pc_b;
++                loft_pa17_9 = loft_pa11_5;
+             } else {
+-                v17_pc_by = v9_pc_a;
++                loft_pa17_9 = loft_pa9_3;
+             }
+-            loft_pa17_9 = loft_rec_ptr(v17_pc_by);
+             ((void) 0);
+-            t13 = loft_pa_i64(loft_pa16_7, 0);
+-            t15 = loft_pa_i64(loft_pa17_9, 0);
+-            t16 = loft_pa_i64(loft_pa16_7, 0);
++            t13 = loft_pa_i64nn(loft_pa16_7, 0);
++            t15 = loft_pa_i64nn(loft_pa17_9, 0);
++            t16 = loft_pa_i64nn(loft_pa16_7, 0);
+             t17 = loft_wrap_sub(t15, t16);
+-            t18 = loft_pa_i64(loft_pa16_7, 8);
++            t18 = loft_pa_i64nn(loft_pa16_7, 8);
+             t19 = loft_wrap_sub(v1_pc_y, t18);
+             t20 = loft_wrap_mul(t17, t19);
+-            t21 = loft_pa_i64(loft_pa17_9, 8);
+-            t22 = loft_pa_i64(loft_pa16_7, 8);
++            t21 = loft_pa_i64nn(loft_pa17_9, 8);
++            t22 = loft_pa_i64nn(loft_pa16_7, 8);
+             t23 = loft_wrap_sub(t21, t22);
+             v19___ncc_4 = loft_div(t20, t23);
+             if (v19___ncc_4 != LOFT_NULL) {
+@@ -27497,6 +27478,14 @@
+         v9__range_start_1 = INT64_C(1);
+         v10__range_end_1 = INT64_C(0);
+     }
++    if (is1 >= 0) {
++        int64_t row = loft_wrap_mul(v3_hy, is1);
++        int64_t xe = v10__range_end_1;
++        if (v8_hl_n - row < xe) xe = v8_hl_n - row;
++        uint8_t *p = h3.base + (size_t) row * 8;
++        for (int64_t x = v9__range_start_1; x < xe; x++) memcpy(p + (size_t) x * 8, &v4_color, 8);
++        return;
++    }
+     v12__next_1 = v9__range_start_1;
+     v11_hl_x_index = LOFT_NULL;
+     for (;;) {

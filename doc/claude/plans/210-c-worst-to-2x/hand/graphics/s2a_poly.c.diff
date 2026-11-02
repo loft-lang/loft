@@ -1,0 +1,59 @@
+--- base_poly.c
++++ s2a_poly.c
+@@ -26499,7 +26499,7 @@
+                 loft_set_int(v28___ref_p2_1, 8, INT64_C(0));
+                 v9_pc_a = v28___ref_p2_1;
+             }
+-            loft_pa9_3 = loft_rec_ptr(v9_pc_a);
++            loft_pa9_3 = v10___ncc_1.rec != 0 ? h1.base + (size_t) v8_i * 16 : loft_rec_ptr(v9_pc_a);
+             t3 = ((v8_i) + (INT64_C(1)));
+             v12___ncc_2 = loft_rem(t3, v5_pc_n);
+             if (v12___ncc_2 != LOFT_NULL) {
+@@ -26517,7 +26517,7 @@
+                 loft_set_int(v29___ref_p2_2, 8, INT64_C(0));
+                 v11_pc_b = v29___ref_p2_2;
+             }
+-            loft_pa11_5 = loft_rec_ptr(v11_pc_b);
++            loft_pa11_5 = v13___ncc_3.rec != 0 ? h1.base + (size_t) t2 * 16 : loft_rec_ptr(v11_pc_b);
+             t4 = loft_pa_i64(loft_pa9_3, 8);
+             t5 = loft_pa_i64(loft_pa11_5, 8);
+             if (t4 < t5) {
+@@ -26552,19 +26552,17 @@
+             t9 = loft_pa_i64(loft_pa9_3, 8);
+             t10 = loft_pa_i64(loft_pa11_5, 8);
+             if (t9 < t10) {
+-                v16_pc_ty = v9_pc_a;
++                loft_pa16_7 = loft_pa9_3;
+             } else {
+-                v16_pc_ty = v11_pc_b;
++                loft_pa16_7 = loft_pa11_5;
+             }
+-            loft_pa16_7 = loft_rec_ptr(v16_pc_ty);
+             t11 = loft_pa_i64(loft_pa9_3, 8);
+             t12 = loft_pa_i64(loft_pa11_5, 8);
+             if (t11 < t12) {
+-                v17_pc_by = v11_pc_b;
++                loft_pa17_9 = loft_pa11_5;
+             } else {
+-                v17_pc_by = v9_pc_a;
++                loft_pa17_9 = loft_pa9_3;
+             }
+-            loft_pa17_9 = loft_rec_ptr(v17_pc_by);
+             ((void) 0);
+             t13 = loft_pa_i64(loft_pa16_7, 0);
+             t15 = loft_pa_i64(loft_pa17_9, 0);
+@@ -27497,6 +27495,14 @@
+         v9__range_start_1 = INT64_C(1);
+         v10__range_end_1 = INT64_C(0);
+     }
++    if (is1 >= 0) {
++        int64_t row = loft_wrap_mul(v3_hy, is1);
++        int64_t xe = v10__range_end_1;
++        if (v8_hl_n - row < xe) xe = v8_hl_n - row;
++        uint8_t *p = h3.base + (size_t) row * 8;
++        for (int64_t x = v9__range_start_1; x < xe; x++) memcpy(p + (size_t) x * 8, &v4_color, 8);
++        return;
++    }
+     v12__next_1 = v9__range_start_1;
+     v11_hl_x_index = LOFT_NULL;
+     for (;;) {

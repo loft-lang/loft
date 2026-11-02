@@ -1,0 +1,10 @@
+twin_encode instr=28570446 cycles_min=5709490
+base_encode instr=51173988 cycles_min=15954328
+ro_encode instr=51100084 cycles_min=11225741
+cl_base_encode instr=55506010 cycles_min=11115849
+cl_ro_encode instr=56607194 cycles_min=11456758
+twin_decode instr=22461661 cycles_min=6935480
+base_decode instr=55679996 cycles_min=19855779
+ro_decode instr=54355407 cycles_min=9348999
+cl_base_decode instr=60014793 cycles_min=9265742
+cl_ro_decode instr=71252168 cycles_min=11014635

@@ -1,0 +1,17 @@
+--- base_poly.c
++++ s1_poly.c
+@@ -27497,6 +27497,14 @@
+         v9__range_start_1 = INT64_C(1);
+         v10__range_end_1 = INT64_C(0);
+     }
++    if (is1 >= 0) {
++        int64_t row = loft_wrap_mul(v3_hy, is1);
++        int64_t xe = v10__range_end_1;
++        if (v8_hl_n - row < xe) xe = v8_hl_n - row;
++        uint8_t *p = h3.base + (size_t) row * 8;
++        for (int64_t x = v9__range_start_1; x < xe; x++) memcpy(p + (size_t) x * 8, &v4_color, 8);
++        return;
++    }
+     v12__next_1 = v9__range_start_1;
+     v11_hl_x_index = LOFT_NULL;
+     for (;;) {

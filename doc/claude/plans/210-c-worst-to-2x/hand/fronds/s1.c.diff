@@ -1,0 +1,38 @@
+--- b0.c
++++ s1.c
+@@ -26695,10 +26695,14 @@
+             if ((v50_fd_tip) < (t102)) {
+                 v50_fd_tip = loft_f64(UINT64_C(0x3fe0000000000000));
+             }
+-            loft_database_room(loft_types, loft_ntypes, &v95___vdb_4, 4, 175);
+-            v51_fd_pts = loft_field(v95___vdb_4, 0);
+-            loft_database_room(loft_types, loft_ntypes, &v96___vdb_5, 4, 105);
+-            v52_fd_wid = loft_field(v96___vdb_5, 0);
++            loft_vec_prealloc(v8_fd_out, 1, 8);
++            t148 = loft_vec_append(v8_fd_out, 8);
++            v74__elm_7 = t148;
++            loft_set_int4(v74__elm_7, 0, INT64_C(0));
++            loft_set_int4(v74__elm_7, 4, INT64_C(0));
++            loft_vec_finish(v8_fd_out);
++            v51_fd_pts = loft_field(v74__elm_7, 0);
++            v52_fd_wid = loft_field(v74__elm_7, 4);
+             v55__elm_3 = loft_ref_null();
+             v66__elm_5 = loft_ref_null();
+             loft_frame_site(1649);
+@@ -26872,16 +26876,6 @@
+                 loft_vec_push_float(v52_fd_wid, v35_fd_wi);
+                 loft_vec_push_float(v52_fd_wid, v50_fd_tip);
+             }
+-            loft_vec_prealloc(v8_fd_out, 1, 8);
+-            t148 = loft_vec_append(v8_fd_out, 8);
+-            v74__elm_7 = t148;
+-            loft_set_int4(v74__elm_7, 0, INT64_C(0));
+-            loft_set_int4(v74__elm_7, 4, INT64_C(0));
+-            t149 = loft_field(v74__elm_7, 0);
+-            loft_vec_add(loft_types, 153, t149, v51_fd_pts);
+-            t150 = loft_field(v74__elm_7, 4);
+-            loft_vec_add(loft_types, 3, t150, v52_fd_wid);
+-            loft_vec_finish(v8_fd_out);
+         cont_2:;
+         }
+         brk_2:;
