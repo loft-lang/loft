@@ -81,7 +81,7 @@ both compilers, and (d) the C corpus sweep (`scripts/c_sweep.py`) and the C test
 | P7 | **a record element's address from the held header, the index PROVEN in range** (`(R-InRange)` extended to a bound held in a local and to `(i + 1) % n`) — static, no run-time test per access | extension | `fill_polygon` 1.83 → 1.69 gcc, 2.29 → 1.28 clang | open |
 | P8 | **`(R-AppendTwin)`'s window clause across a loop** of window-twin calls, and no call buffer for a call the window twin replaced | extension | `encode_bytes` 2.37 → 1.58 | **BUILT** (the loop clause, `FnWriter::open_loop_windows`): cbor `encode_bytes` −27 % gcc / −7 % clang, `encode` −2 %; the dead call buffer not yet |
 | P9 | **a pure if-chain classifier over a byte argument as a 256-entry table** | NEW | `request` 5.2 → 3.5 (branch misses 36 M → 1.8 M) | **BUILT** as `(R-Tabulate)` (`opt::tabulate`): the body evaluated in the compiler for every byte, eight branches the floor (the hex libraries' six-branch direction maps measured +7 % on hex_field `trace`); `request` −35 % gcc / −49 % clang, crypto `base64_to_bytes` −22 % / −33 % |
-| P10 | **a comprehension with an invariant body as reserve + fill** | NEW | `canvas` 3.1 → 2.1 | LIBRARY: `[x; n]` with a run-time `n` is already one resize and a block fill on the C, so graphics `filled(count, value)` can be `[value; count]`; the comprehension clause only if another routine needs it |
+| P10 | **a comprehension with an invariant body as reserve + fill** | NEW | `canvas` 3.1 → 2.1 | **BUILT** another way: the C runtime stores a scalar `[x; n]` template into every slot (`219a9210c`), and graphics 0.11.1 spells `filled` as `[value; count]` (loft-libs-graphics#74): `canvas` −19 % gcc / −18 % clang.  The rest is the 8-byte pixel (an API change) |
 | P11 | **a returned literal's vector field built in the caller's buffer** (a block swap inside one store at the return) | NEW | `insert_text` 1.10 → 0.91 | open; the destination store grows inside the callee, so a header held into it is derived again after growth |
 | P12 | smaller ones: `(R-Push)`'s length kept in the header and written at loop exit; `(R-Destination)` for a vector across a two-level return chain; `(R-LitDiv)` on the C | port / extension | `request` −2 to −7 % each | open |
 | P13 | **`(R-FnRefBuffer)` across frames**: the resolver's result record kept across `token_width` calls (undoing it at the end costs +27 % cycles) | extension | `flow_layout_full` −7 % instructions | open |
@@ -110,11 +110,11 @@ instructions, +15–20 % cycles on gcc: the ref spills and stalls again).
 
 ## Library-side (the library's own stream; not this plan's code)
 
-- pluginabi `request` decodes every argument twice (`pa_is_base64`, then `pa_cbytes`): 3.2× → 2.1×.
+- pluginabi `request` decoded every argument twice (`pa_is_base64`, then `pa_cbytes`): **done** in pluginabi 0.1.10 (loft-libs-plugins#11), `request` −34 % on gcc and clang (≈ 2.2× / 2.0× its twin).
 - graphics `Canvas.data` holds 8-byte pixels where the twin holds 4-byte ones; the rest of
   `fill_rect`'s and `canvas`' gap is that bandwidth (a twin with 8-byte pixels matches the hand C).
-- graphics `filled()` doubles because comprehensions were slow on the interpreter; after P10
-  it can go back to the comprehension.
+- graphics `filled()` doubled because comprehensions were slow on the interpreter: **done** in
+  graphics 0.11.1 (loft-libs-graphics#74), now `[value; count]`, with P10's runtime fill.
 
 ## Open questions
 
