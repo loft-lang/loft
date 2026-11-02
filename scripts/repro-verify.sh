@@ -112,7 +112,10 @@ rm -rf "$ROOT"; mkdir -p "$ROOT"
 # resolved path of every crate it compiles under `$CARGO_HOME` — so a `--remap-path-prefix` for
 # the unresolved `/tmp/loft-repro/cargo` (repro-flags.sh reads `$CARGO_HOME` as given) matched
 # nothing, the registry paths stayed in the binary, and every macOS rebuild differed in size.
-ROOT="$(cd "$ROOT" && pwd -P)"
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*) ;;   # Git Bash's `pwd -P` answers /c/…, a form the native cargo does not see
+  *) ROOT="$(cd "$ROOT" && pwd -P)" ;;
+esac
 [ "$KEEP" = 1 ] || trap 'rm -rf "$ROOT"' EXIT INT TERM
 
 # 1. The published bundle, and what it says it was built with.
@@ -201,6 +204,11 @@ fi
 # bisect.
 sa=$(wc -c < "$rebuilt"); sb=$(wc -c < "$published")
 echo "DIFFERS — rebuilt $sa bytes, published $sb bytes"
+# The rebuilt binary kept for a byte-level diff against the published one, where the caller
+# names a place for it (repro-build.yml uploads it as an artifact).
+if [ -n "${LOFT_REPRO_OUT:-}" ]; then
+  mkdir -p "$LOFT_REPRO_OUT" && cp "$rebuilt" "$LOFT_REPRO_OUT/" && echo "   rebuilt binary kept in $LOFT_REPRO_OUT"
+fi
 [ "$sa" = "$sb" ] && echo "  (same size: look for embedded absolute paths or timestamps)"
 # A difference is the SOURCE's only when the rebuild used the release's platform C
 # toolchain (scripts/repro-toolchain.sh): `ring`'s C code is compiled by it, and two
