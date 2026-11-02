@@ -441,3 +441,114 @@ fn a_read_no_path_reaches_is_no_later_use_interpret() {
 fn a_read_no_path_reaches_is_no_later_use_native() {
     assert_paths("--native");
 }
+
+/// loft#2328 — a `return` ENDS its path, so a read of the source further down the function is
+/// on another path and is no later use of the copy the return makes.  Ordered by position,
+/// `return c` in an `if` said *"`c` is still used after this point"* of the read after the
+/// `if`, telling the author to stop a use they cannot stop.  The four returns — after the `if`,
+/// in an `else`, inside a loop body with the read later in the same turn, in a `match` arm with
+/// the read in another arm — are each the source's last use on their path and say nothing.
+/// The control copies into a fresh variable and reads the source again on the SAME path, and
+/// is advised with that true reason.
+const RETURNS: &str = r#"
+struct Ex { code: integer, tag: text }
+fn mk(n: integer) -> Ex? { if n > 0 { Ex { code: n, tag: "t" } } else { null } }
+fn pick(n: integer, early: boolean) -> Ex {
+  r = mk(n);
+  if r == null { return Ex { code: 0, tag: "" }; }
+  c = r!;
+  if early {
+    return c;
+  }
+  Ex { code: c.code + 1, tag: c.tag }
+}
+fn pick_else(n: integer, early: boolean) -> Ex {
+  r = mk(n);
+  if r == null { return Ex { code: 0, tag: "" }; }
+  c = r!;
+  if early {
+    return c;
+  } else {
+    return Ex { code: c.code + 2, tag: c.tag };
+  }
+}
+fn pick_loop(n: integer) -> Ex {
+  r = mk(n);
+  if r == null { return Ex { code: 0, tag: "" }; }
+  c = r!;
+  s = 0;
+  for i in 0..4 {
+    if i == 2 { return c; }
+    s += c.code;
+  }
+  Ex { code: s, tag: c.tag }
+}
+fn pick_match(n: integer, k: integer) -> Ex {
+  r = mk(n);
+  if r == null { return Ex { code: 0, tag: "" }; }
+  c = r!;
+  match k {
+    0 => { return c; },
+    _ => { return Ex { code: c.code * 10, tag: c.tag }; }
+  }
+}
+fn copy_then_read(n: integer) -> integer {
+  r = mk(n);
+  if r == null { return 0; }
+  c = r!;
+  holder = [c];
+  t = c.code;
+  len(holder) + t
+}
+fn main() {
+  a = pick(3, true);
+  b = pick(3, false);
+  e1 = pick_else(3, true);
+  e2 = pick_else(3, false);
+  l = pick_loop(3);
+  m0 = pick_match(3, 0);
+  m1 = pick_match(3, 1);
+  print("{a.code} {b.code}{b.tag} {e1.code} {e2.code} {l.code} {m0.code} {m1.code}{m1.tag} {copy_then_read(5)}\n");
+}
+"#;
+
+fn assert_returns(backend: &str) {
+    let dir = std::env::temp_dir().join(format!(
+        "loft_2328_returns_{}",
+        backend.trim_matches('-')
+    ));
+    fa::create_dir_all(&dir).expect("scratch dir");
+    let path = dir.join("returns.loft");
+    fa::write(&path, RETURNS).expect("write program");
+    let (stdout, diag, code) = run(backend, &path);
+    assert_eq!(
+        code,
+        Some(0),
+        "[{backend}] the program must run\n{stdout}\n---\n{diag}"
+    );
+    // pick: 3 / 3+1; pick_else: 3 / 3+2; pick_loop returns c at i == 2; pick_match: 3 / 3*10;
+    // copy_then_read(5): one element + 5.
+    assert!(
+        stdout.contains("3 4t 3 5 3 3 30t 6"),
+        "[{backend}] the program must answer its values\n{stdout}"
+    );
+    assert!(
+        !diag.contains("still used after this point"),
+        "[{backend}] a return ends its path: no read after it is a later use\n{diag}"
+    );
+    let n = diag.matches("advice[avoidable-copy]").count();
+    assert!(
+        n == 1 && diag.contains("`c` is used again at line"),
+        "[{backend}] want exactly the same-path control advised, got {n}\n{diag}"
+    );
+}
+
+#[test]
+fn a_read_past_a_return_is_no_later_use_interpret() {
+    assert_returns("--interpret");
+}
+
+#[test]
+fn a_read_past_a_return_is_no_later_use_native_c() {
+    assert_returns("--native-c");
+}
