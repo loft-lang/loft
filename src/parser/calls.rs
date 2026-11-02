@@ -146,6 +146,21 @@ impl Parser {
                     self.data.select_fn(source, name, types)
                 }
             };
+            // loft#2331 (`@FR-B-Scope`: a file's declarations hold in any order) — pass 1
+            // has not registered a function this file declares BELOW the call, so the name
+            // reaches another file's definition of it: a library's own `type_named(a, b)`
+            // was matched against the standard library's `type_named(name)` and refused,
+            // or typed as its `TypeInfo?`.  While the file still declares one ahead, the
+            // call waits for pass 2 as any call of a later definition does — the special
+            // forms in `dispatch_call` already wait on the same scan.  A definition from
+            // this file is left alone: it is the program's own, whichever comes later.
+            if self.first_pass
+                && d != u32::MAX
+                && self.data.def(d).position().file != self.lexer.pos().file
+                && self.file_has_pending_fn(name)
+            {
+                return Type::Unknown(0);
+            }
             // @FR-F-Surface (loft#2115) — `lib::m(x)` reaches a METHOD by its receiver's key,
             // which `Data::qualified_refusal`, asking by name, cannot see.
             if source != u16::MAX && source != self.data.source {
