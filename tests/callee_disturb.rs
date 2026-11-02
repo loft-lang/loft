@@ -191,3 +191,105 @@ fn the_summary_admits_the_disturbing_callees_and_no_others() {
          `n_touch_nothing` and `n_write_other_field` do nothing to a container at all:\n{err}"
     );
 }
+
+/// loft#2349 (`@FR-B-View`: a view materialises only where it is LIVE ACROSS the event) — a
+/// call's arguments are evaluated before its callee runs, so a view read only into an argument
+/// that cannot carry it into the callee — a record literal built from it, a scalar parameter —
+/// is dead when the callee grows, removes from or reassigns the container: no copy, no advice.
+/// Read as disturb-then-use, `add(s, N { xs: xs })` deep-copied `xs` and told the author it was
+/// "in use" across the growth.  The other arguments keep both — the view itself, a text built
+/// from it, a read after the call (the next statement or the same one), a second disturbing
+/// call, a loop — and those notices must survive.  Values (every callee reads what it was
+/// handed after its disturbance) are asserted under the strict falsifiers on both backends;
+/// the suite cell `rules/binding/B-Disturb/2349-…` carries the wider value matrix.
+const ARGUMENT_READS: &str = r#"
+struct N { xs: vector<integer> }
+struct S { nodes: vector<N> }
+fn mk() -> S { S { nodes: [N { xs: [1, 2] }, N { xs: [3, 4] }] } }
+fn grow(s: S) { for k in 0..20 { s.nodes += [N { xs: [100 + k] }]; } }
+fn add(s: S, n: N) -> integer { grow(s); len(s.nodes) * 100 + n.xs[0] * 10 + n.xs[1] }
+fn add_vec(s: S, v: vector<integer>) -> integer { grow(s); len(s.nodes) * 100 + v[0] * 10 + v[1] }
+fn add_int(s: S, k: integer) -> integer { grow(s); len(s.nodes) * 100 + k }
+fn add_text(s: S, t: text) -> integer { grow(s); len(s.nodes) * 100 + len(t) }
+fn rm(s: S, n: N) -> integer { s.nodes.remove(0); len(s.nodes) * 100 + n.xs[0] * 10 + n.xs[1] }
+fn reset(s: &S, n: N) -> integer { s = S { nodes: [N { xs: [9] }] }; len(s.nodes) * 100 + n.xs[0] * 10 + n.xs[1] }
+fn g_lit(s: S) -> integer { match s.nodes[0] { N { xs } => add(s, N { xs: xs }) } }
+fn g_elem(s: S) -> integer { match s.nodes[0] { N { xs } => add_int(s, xs[1]) } }
+fn g_len(s: S) -> integer { match s.nodes[0] { N { xs } => add_int(s, len(xs)) } }
+fn g_plain(s: S) -> integer { nd = s.nodes[0]; add(s, N { xs: nd.xs }) }
+fn r_lit(s: S) -> integer { match s.nodes[0] { N { xs } => rm(s, N { xs: xs }) } }
+fn a_lit(s: &S) -> integer { match s.nodes[0] { N { xs } => reset(s, N { xs: xs }) } }
+fn k_view(s: S) -> integer { match s.nodes[0] { N { xs } => add_vec(s, xs) } }
+fn k_text(s: S) -> integer { match s.nodes[0] { N { xs } => add_text(s, "{xs}") } }
+fn k_next(s: S) -> integer { match s.nodes[0] { N { xs } => { r = add(s, N { xs: xs }); r + xs[1] } } }
+fn k_same(s: S) -> integer { match s.nodes[0] { N { xs } => add(s, N { xs: xs }) + xs[1] } }
+fn k_two(s: S) -> integer { match s.nodes[0] { N { xs } => add(s, N { xs: xs }) + add(s, N { xs: xs }) } }
+fn k_loop(s: S) -> integer { t = 0; match s.nodes[0] { N { xs } => { for _ in 0..2 { t += add(s, N { xs: xs }); } } } t }
+fn k_rm_next(s: S) -> integer { match s.nodes[0] { N { xs } => { r = rm(s, N { xs: xs }); r * 10 + xs[1] } } }
+fn main() {
+  s1 = mk(); s2 = mk(); s3 = mk(); s4 = mk(); s5 = mk(); s6 = mk(); s7 = mk();
+  s8 = mk(); s9 = mk(); s10 = mk(); s11 = mk(); s12 = mk(); s13 = mk();
+  print("{g_lit(s1)} {g_elem(s2)} {g_len(s3)} {g_plain(s4)} {r_lit(s5)} {a_lit(s6)} {s6.nodes[0].xs} ");
+  print("{k_view(s7)} {k_text(s8)} {k_next(s9)} {k_same(s10)} {k_two(s11)} {k_loop(s12)} {k_rm_next(s13)}\n");
+}
+"#;
+
+fn assert_argument_reads(mode: &str, env: &[(&str, &str)]) {
+    let dir = std::env::temp_dir().join(format!(
+        "loft_2349_argument_reads_{}",
+        mode.trim_matches('-')
+    ));
+    loft::file_access::create_dir_all(&dir).expect("scratch dir");
+    let path = dir.join("argument_reads.loft");
+    loft::file_access::write(&path, ARGUMENT_READS).expect("write program");
+    let mut cmd = loft();
+    cmd.arg(mode).arg(&path);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let out = cmd.output().expect("spawn loft");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "[{mode}] the program must run clean\n{stdout}\n---\n{err}"
+    );
+    // grow: 2 + 20 nodes (a second grow 42); rm leaves 1; reset leaves 1.  A dead argument
+    // read answers the record it was built from; `k_text` counts "[1,2]".
+    assert!(
+        stdout.contains("2212 2202 2202 2212 112 112 [9] 2212 2205 2214 2214 6424 6424 1122"),
+        "[{mode}] the program must answer its hand-computed values\n{stdout}"
+    );
+    for dead in ["g_lit", "g_elem", "g_len", "g_plain", "r_lit", "a_lit"] {
+        assert!(
+            !err.contains(&format!("in `{dead}`,")),
+            "[{mode}] `{dead}` reads its view only into an argument the callee cannot keep — \
+             no copy, no notice\n{err}"
+        );
+    }
+    for live in [
+        "k_view",
+        "k_text",
+        "k_next",
+        "k_same",
+        "k_two",
+        "k_loop",
+        "k_rm_next",
+    ] {
+        assert!(
+            err.contains(&format!("in `{live}`,")),
+            "[{mode}] `{live}` holds its view across the callee's disturbance — the copy and \
+             its notice stay\n{err}"
+        );
+    }
+}
+
+#[test]
+fn a_view_read_only_into_an_argument_is_not_live_across_the_callee_interpret() {
+    assert_argument_reads("--interpret", STRICT);
+}
+
+#[test]
+fn a_view_read_only_into_an_argument_is_not_live_across_the_callee_native_c() {
+    assert_argument_reads("--native-c", STRICT_NATIVE);
+}
