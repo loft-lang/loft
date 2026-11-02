@@ -262,6 +262,11 @@ pub(crate) struct FnWriter<'a> {
     versions: Vec<Option<version::VLoop>>,
     /// `@FR-R-Peel` — the constants the statements just before a loop gave its counters.
     peel_seeds: Vec<(u16, i64)>,
+    /// `@FR-R-Base`'s counter clause: the vector whose length the statements just before a
+    /// loop gave its range end (`end = len(v)`), and per enclosing such loop the counters
+    /// proven inside the held vector (counter, header).
+    range_lens: Vec<(u16, Value)>,
+    in_range: Vec<(u16, String)>,
     /// `@FR-R-Transient`'s work clause: the `&text` parameter a `__wr` twin answers (its result
     /// is the caller's buffer), and the call a transient body sends to such a twin.
     work_ret: Option<u16>,
@@ -722,6 +727,8 @@ impl<'a> FnWriter<'a> {
             vf: None,
             versions: Vec::new(),
             peel_seeds: Vec::new(),
+            range_lens: Vec::new(),
+            in_range: Vec::new(),
             work_ret: None,
             wr_call: None,
             chain_guards: 0,
@@ -2471,6 +2478,14 @@ impl<'a> FnWriter<'a> {
                     return Ok(None);
                 };
                 let size = Self::literal(size, "element size")?;
+                if let Some(i) = self.counter_index(idx, &h) {
+                    let proof = self.held_proof(v, &h);
+                    crate::rewrite_census::fired("R-Base/counter", 1);
+                    return Ok(Some(E::new(
+                        format!("({proof}, loft_vh_at_ref({h}, {size}, {i}))"),
+                        K::Ref,
+                    )));
+                }
                 let i = self.expr(idx, ind)?;
                 let proof = self.held_proof(v, &h);
                 let (at, tail) = at(name == "OpGetVector");
@@ -2499,6 +2514,19 @@ impl<'a> FnWriter<'a> {
                     let index = as_int(index)?;
                     let code = version::version_access(name, &held, size, fld, &index, None);
                     return Ok(Some(E::new(code, K::Int)));
+                }
+                if let Some(i) = self.counter_index(&idx, &held) {
+                    let (f, k) = if name == "OpGetInt" {
+                        ("loft_vh_at_int", K::Int)
+                    } else {
+                        ("loft_vh_at_float", K::Float)
+                    };
+                    let proof = self.held_proof(&vec, &held);
+                    crate::rewrite_census::fired("R-Base/counter", 1);
+                    return Ok(Some(E::new(
+                        format!("({proof}, {f}({held}, {size}, {i}, {fld}))"),
+                        k,
+                    )));
                 }
                 let (f, k) = if name == "OpGetInt" {
                     ("loft_vh_get_int", K::Int)
@@ -2541,7 +2569,13 @@ impl<'a> FnWriter<'a> {
                 let index = as_int(self.expr(&idx, ind)?)?;
                 let proof = self.held_proof(&vec, &held);
                 let (at, tail) = at(report);
-                let addr = format!("loft_vh_addr{at}({held}, {size}, {index}{tail})");
+                let addr = match self.counter_index(&idx, &held) {
+                    Some(i) => {
+                        crate::rewrite_census::fired("R-Base/counter", 1);
+                        format!("loft_vh_at_addr({held}, {size}, {i})")
+                    }
+                    None => format!("loft_vh_addr{at}({held}, {size}, {index}{tail})"),
+                };
                 let call = if let [_, _, min] = args {
                     let min = c_long(Self::literal(min, "minimum")?);
                     format!("{f}({addr}, {fld}, {min})")
@@ -2780,6 +2814,7 @@ impl<'a> FnWriter<'a> {
                 continue;
             }
             self.peel_seeds = peel::seeds(ops, i);
+            self.range_lens = peel::range_lens(self.cx.data, ops, i);
             self.stmt(&ops[i], ind)?;
             self.bind_record_ptr(ops, i, ind);
             self.bind_view_header(ops, i, ind);
@@ -3259,8 +3294,12 @@ impl<'a> FnWriter<'a> {
             // The held-element clause: the record is element `idx` of a vector held for this
             // loop, so on a hit its address is the held base's; the store lookup is left to
             // the miss (a discharge's minted default), and the address is the same either way.
-            Some((held, size, idx, ncc)) => {
-                let addr = format!("loft_vh_addr({held}, {size}, {idx})");
+            Some((held, size, idx, ncc, raw)) => {
+                let addr = if raw {
+                    format!("loft_vh_at_addr({held}, {size}, {idx})")
+                } else {
+                    format!("loft_vh_addr({held}, {size}, {idx})")
+                };
                 match ncc {
                     Some(ncc) => self.line(
                         ind,
@@ -3303,11 +3342,76 @@ impl<'a> FnWriter<'a> {
         self.rec_ptrs.push((r, pa, pl));
     }
 
+    /// `@FR-R-Base`'s counter clause: in `for i in 0..len(v)`, `v` held for the loop (so its
+    /// length is fixed there) and the range's end read from that length, the counters are
+    /// inside `v` — at least 0 (the range starts at 0) and below the end — when the body assigns
+    /// none of them.  Recorded for the loop's duration; `counter_index` reads it.
+    /// `LOFT_NO_COUNTER_IN_RANGE=1` records nothing.
+    fn counters_in_range(&mut self, b: &Block) {
+        if crate::env_once!(std::env::var("LOFT_NO_COUNTER_IN_RANGE").is_ok_and(|v| v != "0")) {
+            return;
+        }
+        let Ok(rc) = crate::loop_shape::range_counters(b, self.cx.data) else {
+            return;
+        };
+        if rc.inclusive {
+            return;
+        }
+        let Value::Var(end) = rc.hi.unspan() else {
+            return;
+        };
+        let Some(vec) = self
+            .range_lens
+            .iter()
+            .find(|(e, _)| e == end)
+            .map(|(_, v)| v.clone())
+        else {
+            return;
+        };
+        let Some(h) = self.held_vector(&vec) else {
+            return;
+        };
+        let counter = rc.next.unwrap_or(rc.index);
+        let start = if rc.next.is_some() { 0 } else { -1 };
+        if !self
+            .peel_seeds
+            .iter()
+            .any(|(v, k)| *v == counter && *k == start)
+        {
+            return;
+        }
+        let counters = [Some(rc.index), Some(rc.loop_var), rc.next];
+        let mut assigned = false;
+        for op in &b.operators[1..] {
+            op.walk(&mut |n| {
+                if let Value::Set(x, _) = n {
+                    assigned |= counters.contains(&Some(*x));
+                }
+            });
+        }
+        if assigned {
+            return;
+        }
+        self.in_range.push((rc.index, h.clone()));
+        self.in_range.push((rc.loop_var, h));
+    }
+
+    /// The counter `idx` names when it is proven inside the held vector `h` (`counters_in_range`).
+    fn counter_index(&self, idx: &Value, h: &str) -> Option<String> {
+        let Value::Var(i) = idx.unspan() else {
+            return None;
+        };
+        self.in_range
+            .iter()
+            .any(|(c, hh)| c == i && hh == h)
+            .then(|| self.var(*i))
+    }
+
     /// `@FR-R-RecPtr`'s held-element clause: the bind `p = v[i]` (an `OpGetVector[Nullable]`)
     /// or its `?` discharge (`__ncc = v[i]; if __ncc { __ncc } else { a minted default }`), `v`
     /// held for the loop and `i` a variable: the header, the element size, the index, and the
     /// discharge's tested temporary.  `None` for any other bind.
-    fn held_element_bind(&self, op: &Value) -> Option<(String, i64, String, Option<String>)> {
+    fn held_element_bind(&self, op: &Value) -> Option<(String, i64, String, Option<String>, bool)> {
         if crate::env_once!(std::env::var("LOFT_NO_RECPTR_HELD").is_ok_and(|v| v != "0")) {
             return None;
         }
@@ -3315,7 +3419,7 @@ impl<'a> FnWriter<'a> {
             return None;
         };
         let data = self.cx.data;
-        let read = |v: &Value| -> Option<(String, i64, String)> {
+        let read = |v: &Value| -> Option<(String, i64, String, bool)> {
             let Value::Call(d, a) = v.unspan() else {
                 return None;
             };
@@ -3331,10 +3435,12 @@ impl<'a> FnWriter<'a> {
             let Value::Var(i) = a[2].unspan() else {
                 return None;
             };
-            Some((self.held_vector(&a[0])?, i64::from(*size), self.var(*i)))
+            let h = self.held_vector(&a[0])?;
+            let raw = self.counter_index(&a[2], &h).is_some();
+            Some((h, i64::from(*size), self.var(*i), raw))
         };
-        if let Some((h, size, idx)) = read(x) {
-            return Some((h, size, idx, None));
+        if let Some((h, size, idx, raw)) = read(x) {
+            return Some((h, size, idx, None, raw));
         }
         let Value::Block(b) = x.unspan() else {
             return None;
@@ -3350,7 +3456,7 @@ impl<'a> FnWriter<'a> {
         let Value::Set(ncc, e) = first.unspan() else {
             return None;
         };
-        let (h, size, idx) = read(e)?;
+        let (h, size, idx, raw) = read(e)?;
         let Value::If(c, hit, _) = last.unspan() else {
             return None;
         };
@@ -3359,7 +3465,7 @@ impl<'a> FnWriter<'a> {
             && data.def(*d).name() == "OpConvBoolFromRef"
             && matches!(a[0].unspan(), Value::Var(v) if v == ncc));
         let answers_ncc = matches!(Self::arm_value(hit).unspan(), Value::Var(v) if v == ncc);
-        (tests_ncc && answers_ncc).then(|| (h, size, idx, Some(self.var(*ncc))))
+        (tests_ncc && answers_ncc).then(|| (h, size, idx, Some(self.var(*ncc)), raw))
     }
 
     /// A scalar field read or in-place write of a record view whose address an enclosing block
@@ -4165,6 +4271,8 @@ impl<'a> FnWriter<'a> {
         self.hold_invariants(b, ind);
         let mints = self.hold_vectors(b, ind)?;
         self.hold_versions(b, ind)?;
+        let in_range_at = self.in_range.len();
+        self.counters_in_range(b);
         let window = self.open_window(b, ind)?;
         if !window {
             self.hash_reserve(b, ind)?;
@@ -4209,6 +4317,7 @@ impl<'a> FnWriter<'a> {
                 .expect("the window this loop opened");
             self.line(ind, &format!("loft_win_sync({w});"));
         }
+        self.in_range.truncate(in_range_at);
         self.headers.pop();
         self.loop_calls.pop();
         self.push_heads.pop();

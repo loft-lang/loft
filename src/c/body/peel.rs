@@ -48,6 +48,26 @@ pub(super) fn seeds(ops: &[Value], i: usize) -> Vec<(u16, i64)> {
     out
 }
 
+/// The range ends the (at most two) statements before `ops[i]` set to a vector's length
+/// (`end = len(v)`), when `ops[i]` is a loop: `@FR-R-Base`'s counter clause reads them.
+pub(super) fn range_lens(data: &crate::data::Data, ops: &[Value], i: usize) -> Vec<(u16, Value)> {
+    if !matches!(ops[i].unspan(), Value::Loop(_)) {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for op in ops[i.saturating_sub(2)..i].iter().rev() {
+        if let Value::Set(v, x) = op.unspan()
+            && let Value::Call(d, a) = x.unspan()
+            && a.len() == 1
+            && (*d as usize) < data.definitions.len()
+            && matches!(data.def(*d).name(), "t_6vector_len" | "OpLengthVector")
+        {
+            out.push((*v, a[0].clone()));
+        }
+    }
+    out
+}
+
 fn disabled() -> bool {
     crate::env_once!(std::env::var("LOFT_NO_PEEL").is_ok_and(|v| v != "0"))
 }

@@ -2527,6 +2527,22 @@ LOFT_HOT_INLINE void loft_vh_put_int(loft_vh h, uint32_t size, int64_t f, uint32
     memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
 
+/* @FR-R-Base's counter clause — an element of a held vector at a range counter proven in
+ * [0, len): its float, its reference and its address, no index test. */
+LOFT_HOT_INLINE double loft_vh_at_float(loft_vh h, uint32_t size, int64_t f, uint32_t fld) {
+    double v;
+    memcpy(&v, h.base + (size_t) f * size + fld, 8);
+    return v;
+}
+LOFT_HOT_INLINE loft_ref loft_vh_at_ref(loft_vh h, uint32_t size, int64_t f) {
+    loft_ref e = loft_ref_null();
+    e.store_nr = h.store_nr;
+    e.rec = h.rec;
+    e.pos = (uint32_t) (8 + (uint64_t) f * size);
+    return e;
+}
+LOFT_HOT_INLINE uint8_t *loft_vh_at_addr(loft_vh h, uint32_t size, int64_t f) { return h.base + (size_t) f * size; }
+
 /* @FR-R-Version — a precondition's arithmetic: a null operand, an overflow or a null result
  * clears `*ok` (the checked operator would answer null where the plain one does not). */
 static inline int64_t loft_vg_add(int64_t a, int64_t b, int *ok) {
