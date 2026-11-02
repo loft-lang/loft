@@ -39,15 +39,13 @@ fn the_warning_stands_on_the_argument_it_names() {
         err.contains("argument for parameter `n`"),
         "the warning names the argument for `n`:\n{err}"
     );
-    let name = file.to_string_lossy().to_string();
+    // Matched by the file's NAME: on Windows the temp directory may print in its long form
+    // while `temp_dir()` answered the 8.3 short one (`RUNNER~1`).
+    let name = "tail.loft:";
     let at = err
         .lines()
         .filter_map(|l| l.trim_start().strip_prefix("--> "))
-        .find_map(|a| {
-            a.strip_prefix(name.as_str())?
-                .strip_prefix(':')
-                .map(str::to_string)
-        })
+        .find_map(|a| a.rfind(name).map(|i| a[i + name.len()..].to_string()))
         .unwrap_or_else(|| panic!("no position printed:\n{err}"));
     let (line, col) = at.split_once(':').expect("line:col");
     let line: usize = line.parse().expect("line");
