@@ -2389,6 +2389,37 @@ fn has_keyed_field(e: el::El, d: integer) -> boolean {
   false
 }
 
+// Does `n` read field `pos` of record local `rec` (`OpGetField(rec, pos, …)`)?
+fn reads_field(n: ir::Node, rec: integer, pos: integer) -> boolean {
+  match n {
+    NdCall { def_nr: _, args } => {
+      if len(args) == 3 {
+        match el_ir::unspan(args[0]) {
+          NdVar { n: rv } => {
+            match el_ir::unspan(args[1] ?? ir::NdNull) {
+              NdInt { n: off } => { if rv == rec && off == pos { return true; } },
+              _ => {}
+            }
+          },
+          _ => {}
+        }
+      }
+      for a in args {
+        if reads_field(a, rec, pos) {
+          return true;
+        }
+      }
+      false
+    },
+    NdSpan { inner } => reads_field(inner, rec, pos),
+    NdSet { inner } => reads_field(inner, rec, pos),
+    NdBlock { block } => { for o in block[0].operators { if reads_field(o, rec, pos) { return true; } } false },
+    NdInsert { items } => { for o in items { if reads_field(o, rec, pos) { return true; } } false },
+    NdIf { cond, t, f } => reads_field(cond, rec, pos) || reads_field(t, rec, pos) || reads_field(f, rec, pos),
+    _ => false
+  }
+}
+
 // `field += [items]` on a collection field of a record local (`parse_vector_inner` with
 // `is_field`): no room made first; a scalar item pushed onto the field's place; a text or a
 // struct literal item a record made through the owning struct's field (`OpNewRecord(r, struct,
@@ -2479,6 +2510,14 @@ fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
       fl = object_fields(e, vars, elm, sd, fields);
       if fl == null {
         return ex(ir::NdNull, ir::TyVoid);
+      }
+      // `snapshot_read_destination`: an item reading the field it is appended to is built from
+      // a snapshot of the field, its values staged first (`stage_append_fields`) — not carried.
+      for op in fl! {
+        if reads_field(op, rec, pos) {
+          el::refuse(e, "a field append whose item reads the field");
+          return ex(ir::NdNull, ir::TyVoid);
+        }
       }
       ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }]))];
       for op in fl! {
@@ -4718,9 +4757,8 @@ fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   }
   nullable = d.tp is TyNull || d.tp is TyOptional;
   rt = if nullable { ir::TyOptional { inner: result } } else { result };
-  if e.first_pass {
-    return ex(ir::NdNull, rt);
-  }
+  // The holder is minted on both passes, as the Rust mints it, so a later record subject's
+  // `__ncc_N` keeps its number.
   subject = x.code;
   held = -1;
   match x.code {
@@ -4729,6 +4767,9 @@ fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       held = el_vars::create_unique(vars, "_ncc", lhs);
       subject = ir::NdVar { n: held };
     }
+  }
+  if e.first_pass {
+    return ex(ir::NdNull, rt);
   }
   check = el_convert::convert_admitting(e, vars, subject, lhs, ir::TyBoolean);
   if lhs is TyBoolean {
@@ -5659,6 +5700,29 @@ fn has_nullable_field(e: el::El, td: integer) -> boolean {
     }
   }
   false
+}
+
+// The plain struct a type references, or -1.
+fn struct_ref(e: el::El, t: ir::TypeT) -> integer {
+  match t {
+    TyReference { n } => if n > 0 && el::def(e, n).def_type == el::DT_STRUCT { n } else { -1 },
+    _ => -1
+  }
+}
+
+// `element_call_takes_record_buffer`: a loft function answering a non-null record of struct `rd`
+// in a fresh store (`return_adopts_fresh_store`: no borrow) through its last, hidden parameter of
+// that struct.
+fn takes_record_buffer(e: el::El, d: integer, rd: integer) -> boolean {
+  def = el::def(e, d);
+  if !starts_with(def.name, "n_") || len(def.attributes) == 0 || def.returned[0] is TyOptional {
+    return false;
+  }
+  if struct_ref(e, el_types::base(def.returned[0])) != rd || len(el_types::deps(def.returned[0])) > 0 {
+    return false;
+  }
+  last = def.attributes[-1];
+  last.hidden && struct_ref(e, last.typedef[0] ?? ir::TyVoid) == rd
 }
 
 // `Definition::returns_borrowed_view`: the result borrows one of the function's visible
@@ -7033,7 +7097,7 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   }
   if len(xs) > 0 {
     size = elem_size(in_t);
-    if size == -2 && len(recs) > 0 {
+    if size == -2 && (len(recs) > 0 || struct_ref(e, in_t) >= 0) {
       size = record_size(e, in_t);
     }
     if size < 0 {
@@ -7063,6 +7127,48 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
         if op#index >= 2 {
           ls += [op];
         }
+      }
+      ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
+    }
+    xs = [];
+  }
+  // A record item that is no literal (`build_vector_list`'s record arm): the element made through
+  // the vector and the item copied into it as a fresh destination (`COPY_FRESH_DEST`).  A call
+  // answering a fresh record (`element_call_takes_record_buffer`) is handed the element as its
+  // return buffer, its answer copied only when it lands elsewhere (`OpDistinctStore`), its store
+  // freed after when it gives it away (`call_gives_away_its_store`).  Any other item is refused.
+  if len(recs) == 0 && len(xs) > 0 && push == "" && struct_ref(e, in_t) >= 0 {
+    rd = struct_ref(e, in_t);
+    el_vars::set_var_type(vars, elm, ir::TyReference { n: rd, dep: [v] });
+    at = ir::NdVar { n: elm };
+    kt = el::def(e, rd).known_type;
+    for x in xs {
+      ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
+      item = el_ir::unspan(x.code);
+      copied = false;
+      match item {
+        NdVar { n: _ } => {
+          ls += [el_ir::cl(e, "OpCopyRecord", [x.code, at, ir::NdInt { n: kt + 16384 }])];
+          copied = true;
+        },
+        NdCall { def_nr, args } => {
+          if len(args) > 0 && takes_record_buffer(e, def_nr, rd) {
+            a2 = args;
+            a2[len(a2) - 1] = at;
+            rr = el_vars::work_ref_p2(vars, ir::TyReference { n: rd, dep: [] });
+            vars.vars[rr].skip_free = true;
+            ls += [el_ir::v_set(rr, ir::NdCall { def_nr: def_nr, args: a2 })];
+            bit = if returns_argument_view(el::def(e, def_nr)) { 0 } else { 32768 };
+            copy = el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: rr }, at, ir::NdInt { n: kt + bit + 16384 }]);
+            ls += [el_ir::v_if(el_ir::cl(e, "OpDistinctStore", [ir::NdVar { n: rr }, at]), copy, ir::NdNull)];
+            copied = true;
+          }
+        },
+        _ => {}
+      }
+      if !copied {
+        el::refuse(e, "a record item that is neither a local nor a call answering a fresh record");
+        return refused_build();
       }
       ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
     }
@@ -7466,7 +7572,12 @@ fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vector<
   t = inner;
   match x.code {
     NdVar { n } => { t = el_types::with_deps(t, [n]); },
-    _ => {}
+    _ => {
+      // A vector read off a record (`f.ins[0]`): the element borrows what that read borrows.
+      if record && len(el_types::deps(x.tp)) > 0 {
+        t = el_types::with_deps(t, el_types::deps(x.tp));
+      }
+    }
   }
   if cw >= 0 {
     t = el_types::with_deps(t, [cw]);
