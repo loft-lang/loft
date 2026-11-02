@@ -138,16 +138,110 @@ fn pure(init: &str) -> bool {
     !s.contains('(') && !s.contains('"') && !s.contains('\'')
 }
 
-/// An assignment statement alone on its line (`    name = rhs;`, or to a member of it,
-/// `name.f0 = rhs;`): the name, the indent and the right-hand side.
-fn assignment(line: &str) -> Option<(&str, &str, &str)> {
-    let body = line.trim_start();
-    let indent = &line[..line.len() - body.len()];
-    let body = body.strip_suffix(';')?;
-    let (target, rhs) = body.split_once(" = ")?;
-    let name = target.split('.').next()?;
-    let members_ok = target.split('.').skip(1).all(is_ident);
-    (is_ident(name) && members_ok && !rhs.contains(" = ")).then_some((name, indent, rhs))
+/// Is `rhs` a constant — no name a program declares (they are lower case: locals, functions),
+/// only literals and the writer's constants (`LOFT_NULL`, `INT64_C(3)`)?  Dropping a constant
+/// right-hand side leaves nothing unread behind; one that reads a local keeps the read.
+fn constant(rhs: &str) -> bool {
+    pure(rhs)
+        && identifier_counts(rhs)
+            .keys()
+            .all(|n| n.starts_with(|c: char| c.is_ascii_uppercase()) || *n == "loft_ref_null")
+}
+
+/// Every assignment statement on `line` — at its start, or after a `{` or `;` — as (byte range
+/// of the whole statement, the name assigned, the right-hand side).  The statement ends at the
+/// first `;` outside brackets and literals.
+fn assignment_spans(line: &str) -> Vec<(usize, usize, &str, &str)> {
+    let b = line.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    let mut depth = 0i32;
+    let mut stmt_start = true;
+    while i < b.len() {
+        let c = b[i];
+        if c == b'"' || c == b'\'' {
+            let q = c;
+            i += 1;
+            while i < b.len() && b[i] != q {
+                if b[i] == b'\\' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            i += 1;
+            stmt_start = false;
+            continue;
+        }
+        if c == b' ' {
+            i += 1;
+            continue;
+        }
+        if stmt_start && depth == 0 && (c.is_ascii_alphabetic() || c == b'_') {
+            let s0 = i;
+            let mut j = i;
+            while j < b.len() && (b[j].is_ascii_alphanumeric() || b[j] == b'_' || b[j] == b'.') {
+                j += 1;
+            }
+            let target = &line[s0..j];
+            if line[j..].starts_with(" = ") {
+                let r0 = j + 3;
+                let (mut k, mut d) = (r0, 0i32);
+                while k < b.len() {
+                    match b[k] {
+                        b'(' | b'[' | b'{' => d += 1,
+                        b')' | b']' | b'}' => d -= 1,
+                        b'"' | b'\'' => {
+                            let q = b[k];
+                            k += 1;
+                            while k < b.len() && b[k] != q {
+                                if b[k] == b'\\' {
+                                    k += 1;
+                                }
+                                k += 1;
+                            }
+                        }
+                        b';' if d == 0 => break,
+                        _ => {}
+                    }
+                    k += 1;
+                }
+                let name = target.split('.').next().unwrap_or("");
+                if k < b.len()
+                    && is_ident(name)
+                    && target.split('.').skip(1).all(is_ident)
+                    && !line[r0..k].contains(" = ")
+                {
+                    out.push((s0, k + 1, name, &line[r0..k]));
+                    i = k + 1;
+                    stmt_start = true;
+                    continue;
+                }
+            }
+            i = j;
+            stmt_start = false;
+            continue;
+        }
+        match c {
+            b'{' | b';' => {
+                stmt_start = true;
+                if c == b'{' {
+                    depth = 0;
+                }
+            }
+            b'(' | b'[' => {
+                depth += 1;
+                stmt_start = false;
+            }
+            b')' | b']' => {
+                depth -= 1;
+                stmt_start = false;
+            }
+            b'}' => stmt_start = true,
+            _ => stmt_start = false,
+        }
+        i += 1;
+    }
+    out
 }
 
 /// `body` (the lines between the function's braces) without the labels, locals and
@@ -174,10 +268,10 @@ fn tidy_once(params: &[String], body: &str) -> String {
     // of a whole-line assignment whose right-hand side does not name it.
     let mut assigned: HashMap<&str, usize> = HashMap::new();
     for l in &lines {
-        if let Some((name, _, rhs)) = assignment(l)
-            && !identifier_counts(rhs).contains_key(name)
-        {
-            *assigned.entry(name).or_insert(0) += 1;
+        for (_, _, name, rhs) in assignment_spans(l) {
+            if !identifier_counts(rhs).contains_key(name) {
+                *assigned.entry(name).or_insert(0) += 1;
+            }
         }
     }
     let mut set_only: Vec<&str> = Vec::new();
@@ -228,15 +322,26 @@ fn tidy_once(params: &[String], body: &str) -> String {
         if !keep {
             continue;
         }
-        if let Some((name, indent, rhs)) = assignment(l)
-            && set_only.contains(&name)
-        {
+        let spans: Vec<_> = assignment_spans(l)
+            .into_iter()
+            .filter(|(_, _, name, _)| set_only.contains(name))
+            .collect();
+        if !spans.is_empty() {
             // Nothing reads the local: the value is not kept, its computation still runs.
-            if !pure(rhs) {
-                out.push_str(indent);
-                out.push_str("(void) (");
-                out.push_str(rhs);
-                out.push_str(");");
+            let mut text = String::with_capacity(l.len());
+            let mut at = 0;
+            for (s0, e, _, rhs) in &spans {
+                text.push_str(&l[at..*s0]);
+                if !constant(rhs) {
+                    text.push_str("(void) (");
+                    text.push_str(rhs);
+                    text.push_str(");");
+                }
+                at = *e;
+            }
+            text.push_str(&l[at..]);
+            if !text.trim().is_empty() {
+                out.push_str(text.trim_end());
                 if !last {
                     out.push('\n');
                 }
@@ -307,7 +412,10 @@ fn defined_name(l: &str) -> Option<(&str, bool)> {
         return is_ident(name).then_some((name, l.ends_with(") {")));
     }
     if l.starts_with("static const ") && l.ends_with(';') {
-        let name = l.split_once('[')?.0.rsplit(' ').next()?;
+        // `static const T name[…] = …;` or `static const T name = …;`
+        let head = l.split_once(" = ")?.0;
+        let head = head.split_once('[').map_or(head, |(h, _)| h);
+        let name = head.rsplit([' ', '*']).next()?;
         return is_ident(name).then_some((name, false));
     }
     None
@@ -334,9 +442,25 @@ pub(crate) fn drop_unnamed(program: &str, runtime_end: &str) -> String {
                 *decls.entry(name).or_insert(0) += 1;
             }
         }
+        // A function's mentions inside its own body (it calls itself) are no use of it either.
+        let mut own: HashMap<&str, usize> = HashMap::new();
+        let mut k = 0;
+        while k < lines.len() {
+            if let Some((name, true)) = defined_name(lines[k])
+                && let Some(end) = (k + 1..lines.len()).find(|&e| lines[e] == "}")
+            {
+                let body = lines[k + 1..end].join("\n");
+                *own.entry(name).or_insert(0) +=
+                    identifier_counts(&body).get(name).copied().unwrap_or(0);
+                k = end + 1;
+                continue;
+            }
+            k += 1;
+        }
         let unused = |name: &str| {
             name != "main"
-                && counts.get(name).copied().unwrap_or(0) <= decls.get(name).copied().unwrap_or(0)
+                && counts.get(name).copied().unwrap_or(0)
+                    <= decls.get(name).copied().unwrap_or(0) + own.get(name).copied().unwrap_or(0)
         };
         let mut out = String::with_capacity(written.len());
         let mut changed = false;
@@ -414,6 +538,8 @@ mod tests {
     #[test]
     fn a_function_and_a_table_nothing_names_are_dropped() {
         let p = "RT\n/*end*/\nstatic const uint8_t loft_dflt4[2] = { 0, 0 };\n\
+                 static const loft_rtype loft_rnone = { \"\", 1 };\n\
+                 static int n_r(int k);\nstatic int n_r(int k) {\n    return k ? n_r(k - 1) : 0;\n}\n\
                  static int n_a(void);\nstatic int n_b(void);\n\
                  static int n_a(void) {\n    return n_b();\n}\nstatic int n_b(void) {\n    return 1;\n}\n\
                  static int n_c(void) {\n    return 2;\n}\nint main(void) {\n    return n_c();\n}\n";
@@ -441,6 +567,16 @@ mod tests {
     fn a_pointer_local_nothing_reads_goes() {
         let body = "    lt_103 * v2___ref_p2_1 = 0;\n    uint8_t *loft_pa0_0 = 0;\n    v2___ref_p2_1 = 0;\n    return 1;\n";
         assert_eq!(tidy(&[], body), "    return 1;\n");
+    }
+
+    #[test]
+    fn a_write_only_local_in_a_compound_line_keeps_its_effect() {
+        let body = "    int64_t v4_r = LOFT_NULL;\n    if (n > 0) { uint64_t u = n_t(); v4_r = u > 1 ? 2 : 3; }\n    return 0;\n";
+        let t = tidy(&[], body);
+        assert_eq!(
+            t,
+            "    if (n > 0) { uint64_t u = n_t(); (void) (u > 1 ? 2 : 3); }\n    return 0;\n"
+        );
     }
 
     #[test]

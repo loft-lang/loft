@@ -2444,7 +2444,10 @@ fn main() {{
 /// (`local_init` touches the ready file).  The whole cycle in one run:
 /// rebuild → swap_start → the new incarnation restores the world
 /// (`RESUMED`) → the old loop exits with `swap_retired() == true` → the
-/// resumed process runs on and exits by itself.
+/// resumed process runs on and exits by itself.  The first incarnation's loop allows 400 ticks
+/// (8 s) for the rebuild, which parses (its world check is the parser's): under a loaded
+/// machine 100 ticks did not cover it, and the cell failed with nothing wrong in the swap.  The
+/// resumed one stops at its first tick, so a quick machine pays nothing for the margin.
 // @speed 2.8
 #[test]
 fn s5_local_swap_hands_over() {
@@ -2476,7 +2479,7 @@ fn main() {
             if started && !swapped && engine_host::rebuild_status() == 2 {
                 swapped = engine_host::swap_start(engine_host::rebuild_artifact());
             }
-            if w.ticks >= 100 {
+            if w.ticks >= 400 || w.gen > 1 {
                 engine_host::client_stop();
             }
         });
@@ -2514,9 +2517,8 @@ fn main() {
 }
 
 /// @PLN18 08-S5, LOCAL role, on the C backend: the same cycle as its twin above with every
-/// incarnation a C build.  The loop runs 400 ticks rather than 100: the rebuild parses (its
-/// world check is the parser's) and writes the whole C unit for its cache key, which takes about
-/// a second on a dev driver, close to the twin's two-second window.
+/// incarnation a C build, and the same margin for the rebuild, which also writes the whole C
+/// unit for its cache key.
 #[test]
 fn s5_c_local_swap_hands_over() {
     if !fa::exists(loft_bin()) {
@@ -2547,7 +2549,7 @@ fn main() {
             if started && !swapped && engine_host::rebuild_status() == 2 {
                 swapped = engine_host::swap_start(engine_host::rebuild_artifact());
             }
-            if w.ticks >= 400 {
+            if w.ticks >= 400 || w.gen > 1 {
                 engine_host::client_stop();
             }
         });
