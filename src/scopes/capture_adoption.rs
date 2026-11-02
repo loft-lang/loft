@@ -222,9 +222,14 @@ impl ReleaseOps {
     /// field's overwrite (loft#1877).  Its cascade runs right after the bind, and releases
     /// what the record adopted.
     fn old_record(op: &Value, data: &Data, vars: &Function) -> Option<(u16, u32)> {
-        let Value::Set(t, _) = op.unspan() else {
+        let Value::Set(t, rhs) = op.unspan() else {
             return None;
         };
+        // A null pre-init displaces nothing (and the interpreter lowers a borrowed reference's
+        // null as a stack-frame DbRef, which a liveness test reads as a record).
+        if matches!(rhs.unspan(), Value::Null) {
+            return None;
+        }
         if *t >= vars.count() || !vars.name(*t).trim_start_matches('_').starts_with("oldrec") {
             return None;
         }
