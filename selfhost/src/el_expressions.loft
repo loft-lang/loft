@@ -1671,6 +1671,14 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
     return slice_bind(e, vars, v, x);
   }
   read_through_length = vars.len_read;
+  if x.tp is TyIterator {
+    sb = slice_block_value(e, vars, x);
+    if sb == null {
+      el::refuse(e, "an iterator value bound to a local");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    x = sb!;
+  }
   vars.len_read = outer_read || read_through_length;
   // A whole record local read into a record local COPIES (`parse_var`'s `into` arm): the
   // destination owns, so it borrows nothing from the source.
@@ -6349,6 +6357,16 @@ fn slice_target(e: el::El, n: integer) -> integer {
   match e.p.nodes[n] {
     SParen { e: pe } => if pe == null { -1 } else { slice_target(e, pe!) },
     SIndex { range } => if range { n } else { -1 },
+    // A block's value is its last statement, when no `;` ends it (`slice_shaped`).
+    SBlock { stmts } => {
+      if len(stmts) == 0 {
+        return -1;
+      }
+      match e.p.nodes[stmts[-1]] {
+        SStmt { e: se, semi, orelse } => if se == null || semi || orelse != null { -1 } else { slice_target(e, se!) },
+        _ => -1
+      }
+    },
     _ => -1
   }
 }
@@ -6447,50 +6465,89 @@ fn slice_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
+  copy = slice_copy(e, vars, v, x);
+  if copy == null {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  ex(copy!, ir::TyVoid)
+}
+
+// The second pass of `materialize_iterator` + `slice_copy_form` into the local `v`: the element
+// temps minted (`unique_elm_var`, `slice_elm`), the local's store allocated, the slice's preamble
+// kept, its range copied in by `OpSliceView`.  Null (refused by name) for a local that already
+// holds a store or an element type with no rows.
+fn slice_copy(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> ir::Node? {
+  elem = match x.tp { TyIterator { step } => step, _ => ir::TyVoid };
   el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
   el_vars::create_unique(vars, "slice_elm", elem);
   if len(el_types::deps(el_vars::tp(vars, v))) > 0 || vars.vars[v].argument {
     el::refuse(e, "a vector slice bound to a local that has a store");
-    return ex(ir::NdNull, ir::TyVoid);
+    return null;
   }
-  init: vector<ir::Node> = [];
+  init = ir::NdNull;
   subj = ir::NdNull;
-  match x.code {
-    NdIter { create, init: ii } => {
-      subj = create;
-      match ii { NdInsert { items } => { init = items; }, _ => {} }
-    },
-    _ => {}
-  }
+  match x.code { NdIter { create, init: ii } => { subj = create; init = ii; }, _ => {} }
   lov = -1;
   hiv = -1;
-  for st in init {
-    match st {
-      NdSet { var } => {
-        if starts_with(el_vars::name_of(vars, var), "_slice_lo") { lov = var; }
-        if starts_with(el_vars::name_of(vars, var), "_slice_hi") { hiv = var; }
-      },
-      _ => {}
-    }
+  match init {
+    NdInsert { items } => {
+      for st in items {
+        match st {
+          NdSet { var } => {
+            if starts_with(el_vars::name_of(vars, var), "_slice_lo") { lov = var; }
+            if starts_with(el_vars::name_of(vars, var), "_slice_hi") { hiv = var; }
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
   }
   nm = el_types::elem_name(e, elem);
   rows = vector_rows(e, elem, 0, true);
   rec = if nm == "" { -1 } else { el_schema::schema_type(e, nm) };
   if rows == null || rec < 0 || lov < 0 || hiv < 0 {
     el::refuse(e, "a vector slice of this element type: {type_kind(elem)}");
-    return ex(ir::NdNull, ir::TyVoid);
+    return null;
   }
   r = rows!;
   db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
   el_vars::depend(vars, v, db);
-  stmts: vector<ir::Node> = [
+  ir::NdInsert { items: [
     el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
     el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
-    el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
-  ];
-  stmts += init;
-  stmts += [el_ir::cl(e, "OpSliceView", [ir::NdVar { n: v }, subj, ir::NdVar { n: lov }, ir::NdVar { n: hiv }, ir::NdInt { n: rec }])];
-  ex(ir::NdInsert { items: stmts }, ir::TyVoid)
+    el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]),
+    init,
+    el_ir::cl(e, "OpSliceView", [ir::NdVar { n: v }, subj, ir::NdVar { n: lov }, ir::NdVar { n: hiv }, ir::NdInt { n: rec }])
+  ] }
+}
+
+// `Parser::iterator_as_vector` for a block whose value is a vector slice: the slice materialised
+// into a fresh `___iter_vec_N` on the second pass (`materialise_slice_leaves`), the block
+// answering that vector.  Null for any other shape.
+fn slice_block_value(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex? {
+  bl = match x.code { NdBlock { block } => block[0], _ => return null };
+  if len(bl.operators) == 0 {
+    return null;
+  }
+  t = el_ir::unspan(bl.operators[-1]);
+  if !(t is NdIter) {
+    return null;
+  }
+  it = match bl.result[0] ?? ir::TyVoid { TyIterator { step } => step, _ => ir::TyVoid };
+  vec_t = ir::TyVector { inner: it, dep: [] };
+  if e.first_pass {
+    return ex(x.code, vec_t);
+  }
+  tmp = el_vars::create_unique(vars, "__iter_vec", vec_t);
+  el_vars::set_defined(vars, tmp);
+  copy = slice_copy(e, vars, tmp, ex(t, ir::TyIterator { step: it, inner: ir::TyNull }));
+  if copy == null {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  bl.operators[-1] = el_ir::v_block([copy!, ir::NdVar { n: tmp }], vec_t, "iter_vec");
+  bl.result = [vec_t];
+  ex(ir::NdBlock { block: [bl] }, vec_t)
 }
 
 // `Parser::parse_index` / `parse_vector_index` for one index into a vector, read as a value: the
