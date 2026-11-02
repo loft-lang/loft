@@ -51,6 +51,16 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     },
     _ => {}
   }
+  // A text join at the tail borrowing the body's locals is answered through a hidden `&text`
+  // accumulator (`___acc_N`, `text_return`'s join arm) — not carried yet.
+  match b.code {
+    NdBlock { block } => {
+      if !e.first_pass && len(block[0].operators) > 0 && el_ir::unspan(el_ir::last(block[0].operators)) is NdIf && el_types::base(b.tp) is TyText && len(el_types::deps(b.tp)) > 0 {
+        el::refuse(e, "a text `if` at a text function's tail, answered through an accumulator");
+      }
+    },
+    _ => {}
+  }
   text_return(e, vars, tt);
   code = b.code;
   // The body of a promoted text local answers a text borrowing it (`av_renumber_retbuf`).
@@ -1291,7 +1301,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SJump { kind, e: je } => jump(e, vars, kind, je),
     SIndex { at, e: ie, keys, range, inclusive, hi, limit, spatial } => {
       if range && limit == null && !spatial && len(keys) <= 1 && len(hi) <= 1 {
-        slice(e, vars, ie, keys, hi, inclusive)
+        slice(e, vars, at, ie, keys, hi, inclusive)
       } else {
         index(e, vars, at, ie, keys, range || len(hi) > 0 || limit != null || spatial)
       }
@@ -1810,6 +1820,12 @@ fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: inte
       return ex(ir::NdNull, ir::TyVoid);
     }
     el_vars::drop_use(vars, v);
+    // An appended text `if` whose arms answer a variable (bare or sliced) makes the local borrow
+    // it, and what the function's tail then answers follows rules not carried yet.
+    if !e.first_pass && el_ir::unspan(x.code) is NdIf && len(text_arm_deps(e, vars, x.code)) > 0 {
+      el::refuse(e, "an append of a text `if` whose arm answers a variable");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
     if el_types::base(x.tp) is TyText || el_types::is_unknown(x.tp) {
       // `parse_assign_op_inner`'s `change_var`: the local borrows what the appended text does.
       if !stack {
@@ -4224,26 +4240,67 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
   if !e.first_pass && !el_types::is_equal(e, t.tp, f.tp) {
     el::refuse(e, "`if` arms of different types: {type_kind(t.tp)}, {type_kind(f.tp)}");
   }
-  // A read of a text variable borrows it (`parse_var`'s `depending`), so a text `if` whose arm
-  // answers one — bare or sliced — is typed as borrowing that variable (`merge_dependencies`);
-  // the elaborator reads a text without that dep, so the join is refused by name until it does.
-  if !e.first_pass && el_types::base(t.tp) is TyText && (reads_text_var(e, vars, t.code) || reads_text_var(e, vars, f.code)) {
-    el::refuse(e, "a text `if` whose arm answers a text variable or a slice of one");
-    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  // A read of a text variable borrows it (`parse_var`'s `depending`), so an arm that answers one
+  // — bare or sliced — is typed as borrowing it, and the join as borrowing what either arm does
+  // (`merge_dependencies`).  A bind of the join keeps that type.
+  if !e.first_pass && el_types::base(t.tp) is TyText {
+    td = text_arm_deps(e, vars, t.code);
+    fd = text_arm_deps(e, vars, f.code);
+    deps = td;
+    for x in fd {
+      if !deps.contains(x) {
+        deps += [x];
+      }
+    }
+    if len(deps) > 0 {
+      return ex(el_ir::v_if(c.code, borrowing_arm(t.code, td), borrowing_arm(f.code, fd)), el_types::with_deps(t.tp, deps));
+    }
   }
   ex(el_ir::v_if(c.code, t.code, f.code), t.tp)
 }
 
-// Does an `if` arm (its block's tail, through nested arms) answer a text variable, or a slice of
-// one?
-fn reads_text_var(e: el::El, vars: el_vars::Vars, arm: ir::Node) -> boolean {
+// The text variables an `if` arm answers (its block's tail, through nested arms), bare or sliced,
+// then-arm first: what the arm's value borrows.
+fn text_arm_deps(e: el::El, vars: el_vars::Vars, arm: ir::Node) -> vector<integer> {
   match arm {
-    NdSpan { inner } => reads_text_var(e, vars, inner),
-    NdBlock { block } => len(block[0].operators) > 0 && reads_text_var(e, vars, block[0].operators[-1]),
-    NdIf { cond: _, t, f } => reads_text_var(e, vars, t) || reads_text_var(e, vars, f),
-    NdVar { n } => el_types::base(el_vars::tp(vars, n)) is TyText,
-    NdCall { def_nr, args } => el::def(e, def_nr).name == "OpGetTextSub" && (el_ir::unspan(args[0] ?? ir::NdNull) is NdVar),
-    _ => false
+    NdSpan { inner } => text_arm_deps(e, vars, inner),
+    NdBlock { block } => if len(block[0].operators) > 0 { text_arm_deps(e, vars, block[0].operators[-1]) } else { [] },
+    NdIf { cond: _, t, f } => {
+      ds = text_arm_deps(e, vars, t);
+      for x in text_arm_deps(e, vars, f) {
+        if !ds.contains(x) {
+          ds += [x];
+        }
+      }
+      ds
+    },
+    NdVar { n } => if el_types::base(el_vars::tp(vars, n)) is TyText { [n] } else { [] },
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name == "OpGetTextSub" && len(args) > 0 {
+        match el_ir::unspan(args[0]) {
+          NdVar { n } => [n],
+          _ => []
+        }
+      } else {
+        []
+      }
+    },
+    _ => []
+  }
+}
+
+// An arm block typed as borrowing `deps`, the variables its tail answers.
+fn borrowing_arm(arm: ir::Node, deps: vector<integer>) -> ir::Node {
+  if len(deps) == 0 {
+    return arm;
+  }
+  match arm {
+    NdBlock { block } => {
+      bl = block[0];
+      bl.result = [el_types::with_deps(bl.result[0] ?? ir::TyText { dep: [] }, deps)];
+      ir::NdBlock { block: [bl] }
+    },
+    _ => arm
   }
 }
 
@@ -4313,7 +4370,7 @@ fn text_arm_into(c: integer, arm: ir::Node) -> ir::Node? {
           ops += [op];
         }
       }
-      ops += [el_ir::v_set(c, last)];
+      ops += [el_ir::respan(last, el_ir::v_set(c, el_ir::unspan(last)))];
       bl.operators = ops;
       bl.result = [ir::TyVoid];
       ir::NdBlock { block: [bl] }
@@ -4448,6 +4505,73 @@ fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -> Ex
   }
   refuse_known(e, v.tp, "a `return` of a record that is not a literal: {tail_kind(e, vars, el_ir::v_block([v.code], v.tp, ""))}");
   ex(ir::NdNull, ir::TyNever)
+}
+
+// The `_build_val` route's test (`literal_reads_dest`): a plain local destination no `&` links
+// to, a scalar element type, and items whose every call is a primitive or `#pure` — a user call
+// could reach the vector, and the order of its effects against the appends is the snapshot's.
+fn build_vals_carry(e: el::El, vars: el_vars::Vars, v: integer, in_t: ir::TypeT, xs: vector<Ex>) -> boolean {
+  if vars.vars[v].argument {
+    return false;
+  }
+  match el_types::base(in_t) {
+    TyInteger { spec: _ } => {},
+    TyFloat => {},
+    TySingle => {},
+    TyBoolean => {},
+    TyCharacter => {},
+    _ => { return false; }
+  }
+  for x in vars.vars {
+    if (x.type_def[0] ?? ir::TyVoid) is TyRefVar {
+      return false;
+    }
+  }
+  for x in xs {
+    if !hoistable(e, x.code) {
+      return false;
+    }
+  }
+  true
+}
+
+// `Parser::literal_part_hoistable`: no call through a reference, function reference, `par` or
+// `yield`, and every call a primitive (no body, a Rust one) or `#pure`.
+fn hoistable(e: el::El, n: ir::Node) -> boolean {
+  match n {
+    NdCallRef { var: _ } => false,
+    NdFnRef { var: _ } => false,
+    NdParallel { arms: _ } => false,
+    NdYield { inner: _ } => false,
+    NdCall { def_nr, args } => {
+      d = el::def(e, def_nr);
+      body = d.code[0] ?? ir::NdNull;
+      if !((body is NdNull && d.rust != "") || d.purity == 1) {
+        return false;
+      }
+      for a in args {
+        if !hoistable(e, a) {
+          return false;
+        }
+      }
+      true
+    },
+    NdSpan { inner } => hoistable(e, inner),
+    NdBlock { block } => all_hoistable(e, block[0].operators),
+    NdInsert { items } => all_hoistable(e, items),
+    NdIf { cond, t, f } => hoistable(e, cond) && hoistable(e, t) && hoistable(e, f),
+    NdSet { var: _, inner } => hoistable(e, inner),
+    _ => true
+  }
+}
+
+fn all_hoistable(e: el::El, l: vector<ir::Node>) -> boolean {
+  for x in l {
+    if !hoistable(e, x) {
+      return false;
+    }
+  }
+  true
 }
 
 // `chain_site_set_shape`: a call that delivers into buffer `w`, made to answer it —
@@ -5582,14 +5706,11 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
     el::refuse(e, "a vector literal mixing struct literals and other items");
     return refused_build();
   }
-  // `(I-Comp)`: an item that reads the vector it is appended to sees the vector as the statement
-  // began — Rust evaluates each such item into a `_build_val_N` first, or snapshots the vector
-  // (`literal_reads_dest`).  Not carried yet.
+  reads_dest = false;
   if append && !e.first_pass {
     for x in xs {
       if el_ir::reads_var(x.code, v) {
-        el::refuse(e, "an appended item that reads the vector it is appended to");
-        return refused_build();
+        reads_dest = true;
       }
     }
   }
@@ -5613,6 +5734,29 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
       el::refuse(e, "a vector item of another type than the first");
       return refused_build();
     }
+  }
+  // `(I-Comp)` (`literal_reads_dest`): an item that reads the vector it is appended to sees the
+  // vector as the statement began.  For scalar items on a plain local, whose calls are all
+  // primitives or `#pure`, each such item is evaluated into a `_build_val_N` before anything
+  // grows (@PLN157 § V-w); the staging of a call that may write the vector and the whole-vector
+  // snapshot (`_build_src`) are not carried yet.
+  staged: vector<ir::Node> = [];
+  if reads_dest {
+    if !build_vals_carry(e, vars, v, in_t, xs) {
+      el::refuse(e, "an appended item that reads the vector it is appended to, staged or snapshotted");
+      return refused_build();
+    }
+    carried: vector<Ex> = [];
+    for x in xs {
+      if el_ir::reads_var(x.code, v) {
+        tmp = el_vars::create_unique(vars, "build_val", in_t);
+        staged += [el_ir::v_set(tmp, x.code)];
+        carried += [ex(ir::NdVar { n: tmp }, x.tp)];
+      } else {
+        carried += [x];
+      }
+    }
+    xs = carried;
   }
   if !el_vars::change_var_type(e, vars, v, ir::TyVector { inner: in_t, dep: [] }) {
     el::refuse(e, "a local that changes type");
@@ -5639,7 +5783,7 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   }
   r = rows!;
   w = ir::NdVar { n: v };
-  ls: vector<ir::Node> = [];
+  ls: vector<ir::Node> = staged;
   if !append {
     db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
     el_vars::depend(vars, v, db);
@@ -5710,7 +5854,7 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
 // `Parser::parse_text_index`'s range: `s[lo..hi]` is `OpGetTextSub(s, lo, hi)` — an open start
 // `0`, an open end `i32::MAX`, `..=` one past its bound.  A range over anything but a text (a
 // vector slice: `Slice-Value`'s iterator lowering) is refused by name.
-fn slice(e: el::El, vars: el_vars::Vars, c: integer?, lo: vector<integer>, hi: vector<integer>, inclusive: boolean) -> Ex {
+fn slice(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, lo: vector<integer>, hi: vector<integer>, inclusive: boolean) -> Ex {
   if c == null {
     el::refuse(e, "an index that is a range, a key list or a limit");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -5741,7 +5885,12 @@ fn slice(e: el::El, vars: el_vars::Vars, c: integer?, lo: vector<integer>, hi: v
     }
     bounds += [if b#index == 1 && inclusive { el_ir::cl(e, "OpAddInt", [y.code, ir::NdInt { n: 1 }]) } else { y.code }];
   }
-  ex(el_ir::cl(e, "OpGetTextSub", [x.code] + bounds), ir::TyText { dep: [] })
+  code = el_ir::cl(e, "OpGetTextSub", [x.code] + bounds);
+  // `wrap_chain`: the `[` step is wrapped in its position on the second pass, as an index is.
+  if !e.first_pass {
+    code = ir::NdSpan { pos: el::pos_at(e, at), inner: code };
+  }
+  ex(code, ir::TyText { dep: [] })
 }
 
 // `Parser::parse_index` / `parse_vector_index` for one index into a vector, read as a value: the
