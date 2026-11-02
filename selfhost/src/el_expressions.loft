@@ -216,7 +216,41 @@ fn work_buffer_admits(e: el::El, code: ir::Node, v: integer, db: integer) -> boo
   if trios(e, code, v, db, false) != 1 || trios(e, code, v, db, true) > 0 {
     return false;
   }
-  sets(code, v) == 1 && sets(code, db) == 0 && el_ir::mentions(code, db) == 3 && !bare_mention(code, v) && !copied_whole(e, code, v)
+  sets(code, v) == 1 && sets(code, db) == 0 && el_ir::mentions(code, db) == 3 && !bare_mention(code, v) && !copied_whole(e, code, v) && !copy_bound(e, code, v)
+}
+
+// The walk's "bound as a copy of another vector" (`copy_bound`): the local filled by exactly one
+// `OpAppendVector` / `OpReplaceVector` outside a loop, and never pushed or inserted into — the
+// whole-vector copy bind.
+fn copy_bound(e: el::El, code: ir::Node, v: integer) -> boolean {
+  counts: vector<integer> = [0, 0];
+  fills(e, code, v, false, counts);
+  counts[0] == 1 && counts[1] == 0
+}
+
+// Into `counts`: [copies outside a loop, builds] of the local `v` — a copy inside a loop builds.
+fn fills(e: el::El, n: ir::Node, v: integer, looped: boolean, counts: vector<integer>) {
+  match n {
+    NdCall { def_nr, args } => {
+      if len(args) > 0 && el_ir::unspan(args[0]) == ir::NdVar { n: v } {
+        nm = el::def(e, def_nr).name;
+        if nm == "OpAppendVector" || nm == "OpReplaceVector" {
+          if looped { counts[1] += 1; } else { counts[0] += 1; }
+        } else if starts_with(nm, "OpPush") || nm == "OpInsertVector" {
+          counts[1] += 1;
+        }
+      }
+      for a in args { fills(e, a, v, looped, counts); }
+    },
+    NdSpan { inner } => fills(e, inner, v, looped, counts),
+    NdSet { inner } => fills(e, inner, v, looped, counts),
+    NdBlock { block } => { for o in block[0].operators { fills(e, o, v, looped, counts); } },
+    NdLoop { block } => { for o in block[0].operators { fills(e, o, v, true, counts); } },
+    NdInsert { items } => { for o in items { fills(e, o, v, looped, counts); } },
+    NdIf { cond, t, f } => { fills(e, cond, v, looped, counts); fills(e, t, v, looped, counts); fills(e, f, v, looped, counts); },
+    NdReturn { inner } => fills(e, inner, v, looped, counts),
+    _ => {}
+  }
 }
 
 // The walk's "copied whole into another place": the local as the source (operand 1) of an
