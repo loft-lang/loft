@@ -1523,6 +1523,9 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
   if e.p.nodes[rhs!] is SVecLit {
     return vector_into(e, vars, v, rhs!, ir::TyUnknown { n: 0 });
   }
+  if e.p.nodes[rhs!] is SComprehension {
+    return comprehension_into(e, vars, v, rhs!);
+  }
   if e.p.nodes[rhs!] is SStructLit {
     // Built in place in the local (`parse_object`): the statement is the build itself, with
     // no `Set` around it.
@@ -4834,26 +4837,15 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
   if e.first_pass || el_types::is_unknown(elem) {
     return ex(ir::NdNull, ir::TyVoid);
   }
-  size = elem_size(elem);
-  op = read_op(elem);
-  record = false;
-  if size == -2 {
-    size = if e.first_pass { 0 } else { record_size(e, elem) };
-    record = size >= 0;
-  }
-  if size < 0 || (op == "" && !record) {
+  nx = vector_step(e, vec, idx, elem);
+  if nx == null {
     el::refuse(e, "a `for` over a vector of records");
     return ex(ir::NdNull, ir::TyVoid);
   }
+  next = nx!;
   i = ir::NdVar { n: idx };
-  step = el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: 1 }]);
-  get = el_ir::cl(e, "OpGetVectorNullable", [ir::NdVar { n: vec }, ir::NdInt { n: size }, i]);
-  if !record {
-    get = el_ir::cl(e, op, [get, ir::NdInt { n: 0 }]);
-  }
-  next = el_ir::v_block([el_ir::v_set(idx, step), get], el_types::without_deps(elem), "iter next");
   brk = el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break");
-  past_end = el_ir::v_if(el_ir::cl(e, "OpLeInt", [el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: vec }]), i]), brk, ir::NdNull);
+  past_end = vector_past_end(e, vec, idx);
   before = el_ir::v_if(el_ir::cl(e, "OpLtInt", [i, ir::NdInt { n: 0 }]), brk, ir::NdNull);
   steps: vector<ir::Node> = [el_ir::v_set(lv, next), past_end, before];
   if fc != null {
@@ -4862,6 +4854,181 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
   steps += [b.code];
   lp = el_ir::v_loop(steps, "For loop");
   ex(el_ir::v_block([el_ir::v_set(vec, x.code), el_ir::v_set(idx, ir::NdInt { n: -1 }), lp], ir::TyVoid, "For block"), ir::TyVoid)
+}
+
+// `iterator`'s vector arm, one step: `{ i = i + 1; <element i of the hoisted vector> }` — a plain
+// element read at 0, a record element as its reference.  Null for an element with no size.
+fn vector_step(e: el::El, vec: integer, idx: integer, elem: ir::TypeT) -> ir::Node? {
+  size = elem_size(elem);
+  op = read_op(elem);
+  record = false;
+  if size == -2 {
+    size = if e.first_pass { 0 } else { record_size(e, elem) };
+    record = size >= 0;
+  }
+  if size < 0 || (op == "" && !record) {
+    return null;
+  }
+  i = ir::NdVar { n: idx };
+  get = el_ir::cl(e, "OpGetVectorNullable", [ir::NdVar { n: vec }, ir::NdInt { n: size }, i]);
+  if !record {
+    get = el_ir::cl(e, op, [get, ir::NdInt { n: 0 }]);
+  }
+  el_ir::v_block([el_ir::v_set(idx, el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: 1 }])), get], el_types::without_deps(elem), "iter next")
+}
+
+// `vector_loop_break`'s forward test: the walk ends past the hoisted vector's last element.
+fn vector_past_end(e: el::El, vec: integer, idx: integer) -> ir::Node {
+  brk = el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break");
+  el_ir::v_if(el_ir::cl(e, "OpLeInt", [el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: vec }]), ir::NdVar { n: idx }]), brk, ir::NdNull)
+}
+
+// `Parser::parse_vector_for` + `build_comprehension_code` for `v = [for x in src (if f)? { body }]`
+// into a plain local `v`: the destination's element temp (`unique_elm_var`, both passes), the
+// source hoisted into `_vector_N` and walked as a `for` walks it, each body value bound to
+// `_comp_N` (the second pass) and pushed (`fuse_scalar_append`), the local given its store first
+// (`insert_new`).  A range walks as a range `for` does.  A literal source, a reversed or sliced
+// walk, a constant fill or unroll, and an element that is not a plain scalar are refused by name.
+fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
+  binds: vector<text> = [];
+  source = 0;
+  filter: integer? = null;
+  body: integer? = null;
+  match e.p.nodes[n] {
+    SComprehension { binds: bs, source: sc, filter: fl, body: bd } => { binds = bs; source = sc; filter = fl; body = bd; },
+    _ => {}
+  }
+  // The destination's element temp, minted on both passes as the literal path mints it.
+  el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
+  if len(binds) != 1 || body == null || binds[0] == "_" || e.p.nodes[source] is SVecLit {
+    el::refuse(e, "a comprehension over a literal, or with destructuring or `_`");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  src_id = binds[0];
+  id = el_vars::loop_binding(vars, src_id);
+  ranged = e.p.nodes[source] is SRange;
+  // The walk: a range's own step, or the source hoisted into `_vector_N` and walked as a `for`
+  // walks it.
+  rw: RangeWalk? = null;
+  x = ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  vec = -1;
+  elem = ir::TyInteger { spec: i32_spec() };
+  if ranged {
+    rw = range_walk(e, vars, id, source);
+    if rw == null {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+  } else {
+    x = expression(e, vars, source);
+    in_type = el_types::base(x.tp);
+    if !(in_type is TyVector) || x.tp is TyOptional || el_ir::unspan(x.code) is NdCall {
+      if !el_types::is_unknown(x.tp) {
+        el::refuse(e, "a comprehension over this source: {type_kind(x.tp)}");
+      }
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    match x.code {
+      NdVar { n: sv } => { in_type = el_types::with_deps(in_type, [sv]); },
+      _ => {}
+    }
+    vec = el_vars::create_unique(vars, "vector", in_type);
+    if !e.first_pass {
+      el_vars::set_var_type(vars, vec, in_type);
+    }
+    elem = match in_type { TyVector { inner } => inner, _ => ir::TyUnknown { n: 0 } };
+  }
+  idx = if ranged { rw!.idx } else { loop_index(vars, id) };
+  lv = loop_var(vars, src_id, id, if ranged { elem } else { el_types::with_deps(elem, [vec]) });
+  vars.active_loops += [lv];
+  vars.active_values += [x.code];
+  fc = loop_filter(e, vars, filter);
+  b = parse_block(e, vars, body!, "for", ir::TyUnknown { n: 0 });
+  vars.active_loops = vars.active_loops[..-1];
+  vars.active_values = vars.active_values[..-1];
+  in_t = el_types::without_deps(b.tp);
+  if el_types::is_unknown(in_t) || el_types::is_unknown(elem) {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  // A range comprehension whose body is one constant fills (`try_const_fill_comprehension`),
+  // and one over constant bounds may unroll (`try_const_unroll_comprehension`) — not carried.
+  if ranged && (constant_body(e, b.code) || (filter != null && rw!.constant)) {
+    el::refuse(e, "a range comprehension that fills or unrolls a constant");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  push = push_op(in_t);
+  if push == "" || in_t is TyOptional {
+    el::refuse(e, "a comprehension of this element type: {type_kind(in_t)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  if !el_vars::change_var_type(e, vars, v, ir::TyVector { inner: in_t, dep: [] }) {
+    el::refuse(e, "a local that changes type");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  // `vector_def` on both passes; the element's store type (`vector_of`) on the second, in
+  // `build_comprehension_code` — the order the schema numbers them in.
+  rows = vector_rows(e, in_t, n, false);
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  vector_of(e, in_t);
+  if len(el_types::deps(el_vars::tp(vars, v))) > 0 || vars.vars[v].argument {
+    el::refuse(e, "a comprehension into a local that has a store");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  nx: ir::Node? = if ranged { el_ir::v_block(rw!.steps, elem, "Iter range") } else { vector_step(e, vec, idx, elem) };
+  if nx == null || rows == null {
+    el::refuse(e, "a comprehension over a vector of records");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  comp = el_vars::create_unique(vars, "comp", in_t);
+  steps: vector<ir::Node> = [el_ir::v_set(lv, nx!)];
+  if !ranged {
+    steps += [vector_past_end(e, vec, idx)];
+  }
+  if fc != null {
+    steps += [fc!];
+  }
+  steps += [el_ir::v_set(comp, b.code), el_ir::cl(e, push, [ir::NdVar { n: v }, ir::NdVar { n: comp }])];
+  r = rows!;
+  db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
+  el_vars::depend(vars, v, db);
+  items: vector<ir::Node> = [
+    el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
+    el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
+    el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
+  ];
+  items += if ranged { range_init(rw!) } else { [el_ir::v_set(vec, x.code), el_ir::v_set(idx, ir::NdInt { n: -1 })] };
+  items += [el_ir::v_loop(steps, "For comprehension")];
+  ex(ir::NdInsert { items: items }, ir::TyVoid)
+}
+
+// A block whose one statement is a constant (`const_eval` answers it): the body a constant fill
+// repeats.
+fn constant_body(e: el::El, code: ir::Node) -> boolean {
+  ops: vector<ir::Node> = [];
+  match code {
+    NdBlock { block } => {
+      for o in block[0].operators {
+        if !el_ir::is_line(o) {
+          ops += [o];
+        }
+      }
+    },
+    _ => { ops = [code]; }
+  }
+  if len(ops) != 1 {
+    return false;
+  }
+  match el_ir::unspan(ops[0]) {
+    NdInt { n: _ } => true,
+    NdLong { n: _ } => true,
+    NdFloat { f: _ } => true,
+    NdSingle { f: _ } => true,
+    NdBoolean { b: _ } => true,
+    NdText { s: _ } => true,
+    NdNull => true,
+    _ => el_convert::const_int(e, el_ir::unspan(ops[0])) != null
+  }
 }
 
 // `iterator`'s keyed arm: a walk over a hash, sorted or index from its first record
@@ -5343,10 +5510,22 @@ fn walkable_scalar(t: ir::TypeT) -> boolean {
   }
 }
 
+// The parts of a range walk the loop around it assembles: the hoisted bounds and their null
+// guard, the "Iter range" step, the index's start (`counter`) and, for a start that is no
+// literal, `_next_N`'s first value.  `constant`: both bounds fold.
+struct RangeWalk {
+  prelude: vector<ir::Node>,
+  steps: vector<ir::Node>,
+  counter: ir::Node,
+  next_init: vector<ir::Node>,
+  idx: integer,
+  constant: boolean
+}
+
 // `parse_in_range_body` for `lo..hi` with a literal start of zero or more and an exclusive end:
 // the index made before the loop's variable, a non-literal end hoisted into `_range_end_N`, the
 // index started one below `lo`; the "Iter range" block steps it, leaves at `hi`, and answers it.
-fn range_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, source: integer, body: integer, filter: integer?) -> Ex {
+fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer) -> RangeWalk? {
   lo_n: integer? = null;
   hi_n: integer? = null;
   incl = false;
@@ -5360,13 +5539,13 @@ fn range_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, source: int
   }
   if lo_n == null || hi_n == null {
     el::refuse(e, "a range that is open, inclusive or starts at no literal");
-    return ex(ir::NdNull, ir::TyVoid);
+    return null;
   }
   l = expression(e, vars, lo_n!);
   h = expression(e, vars, hi_n!);
   if (!el_types::is_unknown(l.tp) && !(el_types::base(l.tp) is TyInteger)) || (!el_types::is_unknown(h.tp) && !(el_types::base(h.tp) is TyInteger)) {
     el::refuse(e, "a range over this type: {type_kind(l.tp)}");
-    return ex(ir::NdNull, ir::TyVoid);
+    return null;
   }
   int_t = ir::TyInteger { spec: i32_spec() };
   // `parse_in_range_body`: a bound that folds to a constant is the constant; any other is held
@@ -5423,6 +5602,21 @@ fn range_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, source: int
     ls += [el_ir::v_set(idx, n_v), el_ir::v_set(nx, el_ir::cl(e, "OpAddInt", [n_v, ir::NdInt { n: 1 }]))];
   }
   ls += [i];
+  RangeWalk { prelude: prelude, steps: ls, counter: counter, next_init: if next_init == null { [] } else { [next_init!] }, idx: idx, constant: lc != null && hc != null }
+}
+
+// The statements that start a range walk: the hoisted bounds, `_next_N`'s first value, the index.
+fn range_init(rw: RangeWalk) -> vector<ir::Node> {
+  rw.prelude + rw.next_init + [el_ir::v_set(rw.idx, rw.counter)]
+}
+
+fn range_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, source: integer, body: integer, filter: integer?) -> Ex {
+  rwo = range_walk(e, vars, id, source);
+  if rwo == null {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  rw = rwo!;
+  int_t = ir::TyInteger { spec: i32_spec() };
   lv = loop_var(vars, src_id, id, int_t);
   vars.active_loops += [lv];
   vars.active_values += [ir::NdNull];
@@ -5433,23 +5627,14 @@ fn range_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, source: int
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
-  if next_init != null {
-    prelude += [next_init!];
-  }
-  init_ivar = el_ir::v_set(idx, counter);
-  init = init_ivar;
-  if len(prelude) > 0 {
-    prelude += [init_ivar];
-    init = ir::NdInsert { items: prelude };
-  }
-  stepped = el_ir::v_block(ls, int_t, "Iter range");
-  steps: vector<ir::Node> = [el_ir::v_set(lv, stepped)];
+  starts = range_init(rw);
+  init = if len(starts) == 1 { starts[0] } else { ir::NdInsert { items: starts } };
+  steps: vector<ir::Node> = [el_ir::v_set(lv, el_ir::v_block(rw.steps, int_t, "Iter range"))];
   if fc != null {
     steps += [fc!];
   }
   steps += [b.code];
-  lp = el_ir::v_loop(steps, "For loop");
-  ex(el_ir::v_block([init, lp], ir::TyVoid, "For block"), ir::TyVoid)
+  ex(el_ir::v_block([init, el_ir::v_loop(steps, "For loop")], ir::TyVoid, "For block"), ir::TyVoid)
 }
 
 // A loop's index: `id#index`, or a fresh `_index_N` for a `_` binding.
@@ -5509,6 +5694,7 @@ fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> VecR
     tok = 0;
     match e.p.nodes[lit] {
       SVecLit { at } => { tok = at; },
+      SComprehension { at } => { tok = at; },
       _ => {}
     }
     vector_def(e, t, nm, tok, declared);
