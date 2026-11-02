@@ -3405,14 +3405,25 @@ impl State {
                 // Not for a witnessed local (loft#1336): the materialise clause is decided
                 // from the FINAL dep list, which its per-`Set` witness cannot follow, so such
                 // a local keeps every projection an alias on both backends.
+                // A stashed displaced store bars the copy only when the value reads `v` or is
+                // built in place: the copy resets `v`'s slot before it evaluates the value.  A
+                // NULLABLE local stashes for neither reason — its slot may hold no store of its
+                // own — and (B-View) materialises its view as it does a dense one's: "the
+                // nullability of the bound value changes nothing" (`t: Ty? …; t = x.tp`, then
+                // `x` reassigned, read the freed record as null, loft#2362).  The stash is
+                // released after the copy, as on every other stashed arm.
                 if owned_ref
                     // loft#1693 — `heap_def_nr`, as the first-bind arm below and native ask it.
                     && let Some(d_nr) = stack.function.tp(v).base().heap_def_nr()
-                    && !stash_old_for_post_free
+                    && !rhs_reads_v
+                    && !rhs_is_new_record
                     && crate::use_analysis::projection_container_var(stack.data, value).is_some()
                 {
                     note_bind("R2d");
                     self.gen_set_first_ref_elem_copy(stack, v, value, d_nr);
+                    if stash_old_for_post_free {
+                        self.free_stashed(stack, v, entry_w);
+                    }
                     return;
                 }
             }
