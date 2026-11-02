@@ -2684,8 +2684,25 @@ static inline void loft_park_take(loft_ref *slot, loft_ref *v) {
     slot->rec = 0;
     slot->pos = 0;
 }
+/* The slots a store was ever parked in, so the program's end can give their stores back
+ * (`loft_parks_drain`): a parked store is a cache of the next call's, and at exit there is no
+ * next call — left in its slot it reads as a store never freed.  `par` workers never park
+ * (`loft_no_park`), so the main thread's list holds every slot. */
+static LOFT_TLS loft_ref **loft_park_slots = 0;
+static LOFT_TLS uint32_t loft_npark_slots = 0, loft_park_slots_cap = 0;
+static void loft_park_register(loft_ref *slot) {
+    for (uint32_t i = 0; i < loft_npark_slots; i++)
+        if (loft_park_slots[i] == slot) return;
+    if (loft_npark_slots == loft_park_slots_cap) {
+        loft_park_slots_cap = loft_park_slots_cap ? loft_park_slots_cap * 2 : 8;
+        loft_park_slots = (loft_ref **) realloc(loft_park_slots, loft_park_slots_cap * sizeof *loft_park_slots);
+        if (!loft_park_slots) { fputs("loft: out of memory\n", stderr); abort(); }
+    }
+    loft_park_slots[loft_npark_slots++] = slot;
+}
 static inline void loft_park_put(loft_ref *slot, loft_ref *v) {
     if (!loft_no_park && slot->store_nr == 0xFFFF && v->store_nr != 0xFFFF) {
+        loft_park_register(slot);
         *slot = *v;
         v->store_nr = 0xFFFF;
         v->rec = 0;
@@ -2693,6 +2710,15 @@ static inline void loft_park_put(loft_ref *slot, loft_ref *v) {
     } else {
         loft_free_var(v);
     }
+}
+
+/* The program's end: every parked store given back, so a store kept for a next call that never
+ * comes is not reported as never freed (`loft_leak_report`). */
+static void loft_parks_drain(void) {
+    for (uint32_t i = 0; i < loft_npark_slots; i++) loft_free_var(loft_park_slots[i]);
+    free(loft_park_slots);
+    loft_park_slots = 0;
+    loft_npark_slots = loft_park_slots_cap = 0;
 }
 
 /* OpFreeRefIfDistinct of a variable: released and reset when it names another store than the

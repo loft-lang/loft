@@ -535,6 +535,7 @@ static int loft_log_locked_write(void) {
  * A `LOFT_STRICT_STORES` build (loft_rt.h) reports the same list as never freed, counts it with
  * the uses after free, and exits 1 when either happened (`NATIVE_STRICT_STORE_TAIL`). */
 static void loft_leak_report(void) {
+    loft_parks_drain();
     uint32_t *kt, *count, nk = 0, i, j, total = 0;
     loft_text out = { 0, 0, 0 };
     char buf[96];
