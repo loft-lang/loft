@@ -2257,8 +2257,8 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
   }
   // `try_branch_text_bind`: a text branch is delivered per arm into the local — unless it reads
   // the local, which then takes the self-reference arm below.
-  if !e.first_pass && el_types::base(el_vars::tp(vars, v)) is TyText && x.code is NdIf && !el_ir::reads_var(x.code, v) {
-    arms = text_arms_into(v, x.code);
+  if !e.first_pass && el_types::base(el_vars::tp(vars, v)) is TyText && !el_ir::reads_var(x.code, v) {
+    arms = text_branch_into(v, x.code);
     if arms != null {
       return ex(ir::NdInsert { items: [el_ir::v_set(v, ir::NdText { s: "" }), arms!] }, ir::TyVoid);
     }
@@ -4202,6 +4202,12 @@ fn receives(e: el::El, m: integer, tn: integer) -> boolean {
 // its declared result.  Defaults, hidden buffers, conversions and heap results are refused.
 fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex? {
   def = el::def(e, d);
+  // `synth_upgrade_drain` (@PLN196): every store load is wrapped in a synthesised
+  // `__upgrade_drain(…)` after the parse, with the fill functions it calls — not carried.
+  if def.name == "n_store_load" || def.name == "n_store_load_untrusted" || def.name == "n_store_load_url" || def.name == "n_store_load_url_trusted" || def.name == "n_swap_world" {
+    el::refuse(e, "a store load, which the layout-upgrade drain wraps");
+    return null;
+  }
   n = len(def.attributes);
   // The hidden return buffer, whatever local it was renamed after (`RetPromotion::Rename`).
   // A hidden vector buffer (`add_defaults`' vector arm): a fresh `__ref_N` the result is
@@ -4367,13 +4373,14 @@ fn takes(e: el::El, param: ir::TypeT, arg: ir::TypeT) -> boolean {
   if el_types::is_equal(e, param, arg) {
     return true;
   }
-  // A bare collection parameter (`sorted`, `hash`, `index`) takes any instance of its kind.
+  // A bare collection parameter (`sorted`, `hash`, `index`) takes any instance of its kind, and
+  // a bare `reference` any keyed collection, whose handle is a `DbRef` (the store builtins).
   match param {
     TyVector { inner } => el_types::is_unknown(inner) && arg is TyVector,
     TyReference { n } => {
       a = el_types::base(arg);
       nm = el::def(e, n).name;
-      (nm == "sorted" && a is TySorted) || (nm == "hash" && a is TyHash) || (nm == "index" && a is TyIndex)
+      (nm == "reference" && keyed_kind(a)) || (nm == "sorted" && a is TySorted) || (nm == "hash" && a is TyHash) || (nm == "index" && a is TyIndex)
     },
     _ => false
   }
@@ -5573,6 +5580,29 @@ fn arm_expectation(t: ir::TypeT) -> ir::TypeT {
 // in each arm — the local set empty first, then each arm's tail written into it
 // (`push_text_arms_into`), every arm block typed void.  False where an arm does not end in a
 // value (`if_tail_yields_text`).
+// `if_tail_yields_text` with `push_text_arms`: a text `if`, or a `??` coalesce (`ncc`, and
+// `?? return`'s `ncr`) whose selecting `if` is its tail, delivered per arm into `c` — the
+// coalesce block keeping its preamble and answering nothing.  Null for any other value.
+fn text_branch_into(c: integer, code: ir::Node) -> ir::Node? {
+  match code {
+    NdIf { cond: _ } => text_arms_into(c, code),
+    NdBlock { block } => {
+      bl = block[0];
+      if (bl.name != "ncc" && bl.name != "ncr") || len(bl.operators) == 0 {
+        return null;
+      }
+      tail = text_arms_into(c, el_ir::unspan(bl.operators[-1] ?? ir::NdNull));
+      if tail == null {
+        return null;
+      }
+      bl.operators[len(bl.operators) - 1] = el_ir::respan(bl.operators[-1] ?? ir::NdNull, tail!);
+      bl.result = [ir::TyVoid];
+      ir::NdBlock { block: [bl] }
+    },
+    _ => null
+  }
+}
+
 fn text_arms_into(c: integer, code: ir::Node) -> ir::Node? {
   match code {
     NdIf { cond, t, f } => {
