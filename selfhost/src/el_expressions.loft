@@ -1309,11 +1309,64 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SVecLit { items: _ } => vector_value(e, vars, n).x,
     SAs { at, e: ae, tp: at_tp, checked } => cast_expr(e, vars, ae, at_tp),
     SParen { e: pe } => if pe == null { ex(ir::NdNull, ir::TyUnknown { n: 0 }) } else { expression(e, vars, pe!) },
+    SSizeof { kind, tp: st } => sizeof_expr(e, vars, kind, st),
+    SIs { e: ie, variant, caps, has_caps } => is_expr(e, vars, ie, variant, len(caps) > 0 || has_caps),
     _ => {
       el::refuse(e, "an expression form: {syn_kind(e, n)}");
       ex(ir::NdNull, ir::TyUnknown { n: 0 })
     }
   }
+}
+
+// `Parser::parse_size` for `sizeof(<struct>)`: the packed size of the struct's store type, a
+// constant on the second pass.  A value, a type that is no plain declared struct (an alias with
+// a forced size, an enum, a collection, a tuple, a type variable) and `type_name` are refused
+// by name.
+fn sizeof_expr(e: el::El, vars: el_vars::Vars, kind: text, st: integer?) -> Ex {
+  int_t = ir::TyInteger { spec: i32_spec() };
+  name = "";
+  plain = false;
+  if kind == "sizeof" && st != null {
+    match e.p.nodes[st!] {
+      STy { name: nm, member, args, keys, limit, nullable } => {
+        name = nm;
+        plain = member == "" && len(args) == 0 && len(keys) == 0 && limit == null && !nullable;
+      },
+      _ => {}
+    }
+  }
+  d = if plain && el_vars::var(vars, name) < 0 { el::def_nr(e, name) } else { -1 };
+  if d < 0 || el::def(e, d).def_type != el::DT_STRUCT || el::def(e, d).forced_size != 0 {
+    el::refuse(e, "a `{kind}` of a value or of a type that is no plain struct");
+    return ex(ir::NdNull, int_t);
+  }
+  if e.first_pass {
+    return ex(ir::NdNull, int_t);
+  }
+  ex(ir::NdInt { n: e.b.types[el::def(e, d).known_type]!.size }, int_t)
+}
+
+// `Parser::parse_is_variant` for a plain enum: `x is V` compares the subject's ordinal with the
+// variant's (`OpEqInt(OpConvIntFromEnum(x), ord)`).  A struct-enum subject, captures and a
+// nullable subject are refused by name.
+fn is_expr(e: el::El, vars: el_vars::Vars, ie: integer?, variant: text, captures: boolean) -> Ex {
+  if ie == null {
+    el::refuse(e, "an `is` with no subject");
+    return ex(ir::NdNull, ir::TyBoolean);
+  }
+  x = expression(e, vars, ie!);
+  en = match x.tp { TyEnum { n, is_ref } => if is_ref { -1 } else { n }, _ => -1 };
+  if en < 0 || captures {
+    refuse_known(e, x.tp, "an `is` on this subject, or with captures: {type_kind(x.tp)}");
+    return ex(ir::NdNull, ir::TyBoolean);
+  }
+  a = attr_nr(el::def(e, en), variant);
+  if a < 0 {
+    el::refuse(e, "an `is` naming no variant of the enum: {variant}");
+    return ex(ir::NdNull, ir::TyBoolean);
+  }
+  ord = match el::def(e, en).attributes[a].value[0] { NdEnum { ord: o } => o, _ => 0 };
+  ex(el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [x.code]), ir::NdInt { n: ord }]), ir::TyBoolean)
 }
 
 // A type's variant name, for a refusal that says which operands it met.
