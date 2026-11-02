@@ -1095,7 +1095,13 @@ static void loft_push_code(loft_text *t, uint32_t c) {
 /* A function value: the definition it names (LOFT_NULL for the absent one) and the closure
  * record a capturing lambda reads.  A call goes through the emitted dispatcher of its
  * signature, `loft_call{n}`, which switches on `d` (State::fn_call_ref). */
-typedef struct { uint16_t store_nr; uint32_t rec; uint32_t pos; } loft_ref;
+/* A reference (`DbRef`).  The trailing pad makes it 16 bytes, so `rec` and `pos` travel in
+ * separate eightbytes of the calling convention: at 12 bytes gcc passes `store_nr|rec` and
+ * `pos` in two registers, spills them as an 8-byte and a 4-byte store, and reloads `rec|pos`
+ * with one 8-byte load spanning both — a store-forwarding stall on every reference a call
+ * takes.  The pad is never read; a positional initialiser leaves it zero.  Measured over the
+ * library benches: gcc −3 % (cbor decode −35 %), clang neutral (@PLN210 P1). */
+typedef struct { uint16_t store_nr; uint32_t rec; uint32_t pos; uint32_t pad_; } loft_ref;
 typedef struct { int64_t d; loft_ref clos; } loft_fn;
 
 /* ── Stores ────────────────────────────────────────────────────────────────────────────────
