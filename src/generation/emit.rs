@@ -4467,8 +4467,26 @@ impl Output<'_> {
                     self.data.def(self.def_nr).variables().name(*v).starts_with("__ncc_")
                     && self.data.def(self.def_nr).variables().is_skip_free(*v))
             });
-        let has_trailing_void =
-            return_idx.is_some_and(|i| i < last_op_idx) || has_ncc_skip_free_temp;
+        // A text value block whose value is a NESTED block ending in one of THIS block's own
+        // text locals — a `match` binding a struct's text field, `x = match n { N { nm } => nm }`:
+        // the capture `nm` is declared here and the arm block yields `&var_nm`, a borrow that
+        // outlives this block's `}` (E0597).  `own_text_tail` below hands the local out by value
+        // only when it is this block's own tail; one block down it is the arm's, whose scope
+        // does not own it.  Materialise here, where the local is alive (loft#2359).
+        let tail_borrows_own_text = !is_text_result
+            && matches!(bl.result.base(), Type::Text(_))
+            && return_idx.is_some_and(|i| {
+                matches!(operators[i].unspan(), Value::Block(_) | Value::Insert(_))
+                    && matches!(operators[i].tail(), Value::Var(x) if {
+                        let vars = self.data.def(self.def_nr).variables();
+                        vars.scope(*x) == bl.scope
+                            && matches!(vars.tp(*x).base(), Type::Text(_))
+                            && !self.text_borrowed(*x)
+                    })
+            });
+        let has_trailing_void = return_idx.is_some_and(|i| i < last_op_idx)
+            || has_ncc_skip_free_temp
+            || tail_borrows_own_text;
         // If the captured "return value" DIVERGES — it is a `Return(…)` OR a
         // Block/Insert whose TAIL is a `Return` — we emit it directly and skip the
         // `_ret` tail.  loft#500: a `??`-value-block that allocates (`(v[i] ?? E{…})
