@@ -6025,6 +6025,29 @@ body's lines, runs `open_world` and keeps the call.  It reaches the stdlib too (
 `approx` inline their `min`/`max`).  `LOFT_NO_INLINE_LEAF=1`; `LOFT_TRACE_INLINE_LEAF=1` names
 each inlined call, each decline and each reduction below.
 
+### An append loop holds one window
+
+```
+  (R-AppendTwin)'s loop clause
+                 a loop that names a buffer X — a plain local or the return buffer —
+                 only as the destination of its append sites (`X += f(…)`, each written
+                 as the window twin `f__ap(…, X, &w)`) and that leaves only by its own
+                 end holds ONE window over X from before the loop to after its end; every
+                 site in it, an inner loop's included, takes that window.  A loop that
+                 names X or a view of X anywhere else (a read, a length, a rebind, a fn-ref
+                 call through it), or that can leave by a `return` or a jump past itself,
+                 keeps a window per site.  A buffer an enclosing loop holds a window for
+                 keeps that window.  APPLIED BY the C writer; the interpreter is the oracle.
+```
+
+**In words.**  @PLN210 P8.  A window holds the buffer's length in a register and writes it to
+the record only when it grows or closes; between two sites of one loop nothing reads the
+record, so the close and the reopen in between were all cost.  cbor's array arm calls
+`encode__ap` per item; hand-priced, `encode_bytes` 2.37× → 1.59× its twin.  Every condition is
+what keeps the record unread between the sites, or the close certain to run.  Switch
+`LOFT_NO_APPEND_LOOP_WINDOW`.  Guard `tests/scripts/an-append-loop-keeps-one-window.loft`.  Site:
+`FnWriter::open_loop_windows`.
+
 ### A branchy classifier of a byte is a table
 
 ```

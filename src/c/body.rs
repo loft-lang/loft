@@ -235,6 +235,9 @@ pub(crate) struct FnWriter<'a> {
     window_parents: std::collections::HashMap<String, String>,
     ap_site: Option<(u32, usize)>,
     ap_memo: std::collections::HashMap<u32, bool>,
+    /// `@FR-R-AppendTwin`'s loop clause: the buffers a loop around their append sites holds
+    /// ONE window for, and that window's name, innermost loop last.
+    ap_loop_windows: Vec<(u16, String)>,
     /// `@FR-R-Destination` — in a `__d` twin, the shape (its buffer is the caller's element,
     /// its scalar fields the locals `loft_ds<k>`); the call site's rewritten call, matched by
     /// callee and argument slice so its emission asks for the callee's twin.
@@ -691,6 +694,7 @@ impl<'a> FnWriter<'a> {
             window_parents: std::collections::HashMap::new(),
             ap_site: None,
             ap_memo: std::collections::HashMap::new(),
+            ap_loop_windows: Vec::new(),
             ds: None,
             ds_site: None,
             nk_call: None,
@@ -3861,6 +3865,7 @@ impl<'a> FnWriter<'a> {
             self.hash_reserve(b, ind)?;
         }
         self.hold_pushes(b, mints, ind)?;
+        let ap_windows = self.open_loop_windows(b, ind);
         // `@FR-R-Fill`: the fill is tried before a guard that writes a second copy of the loop,
         // so both copies are its fallback.
         let fill = self.fill_head(b, ind)?;
@@ -3892,6 +3897,13 @@ impl<'a> FnWriter<'a> {
         if fill.is_some() {
             self.fill_tail(b, ind)?;
         }
+        for _ in 0..ap_windows {
+            let (_, w) = self
+                .ap_loop_windows
+                .pop()
+                .expect("the window this loop opened");
+            self.line(ind, &format!("loft_win_sync({w});"));
+        }
         self.headers.pop();
         self.loop_calls.pop();
         self.push_heads.pop();
@@ -3918,6 +3930,76 @@ impl<'a> FnWriter<'a> {
             self.line(ind, &format!("loft_fcur_release(&{c}, {c}p);"));
         }
         Ok(())
+    }
+
+    /// `@FR-R-AppendTwin`'s loop clause — open ONE window, before loop `b`, for each buffer the
+    /// loop touches only through its append sites (`X += f(…)` written as `f__ap(…, X, &w)`),
+    /// and answer how many it opened; the caller syncs them after the loop's end.  The window
+    /// stands for the buffer between the calls, so the loop may name the buffer, or a view of
+    /// it, nowhere else, and may leave only by its own end: a `return`, or a `break` or
+    /// `continue` past `b`, would skip the sync.  A twin handed its caller's window keeps that.
+    fn open_loop_windows(&mut self, b: &Block, ind: usize) -> usize {
+        if !crate::keys::append_twin_enabled()
+            || self.gen_elem.is_some()
+            || self.tr.is_some()
+            || crate::env_once!(std::env::var("LOFT_NO_APPEND_LOOP_WINDOW").is_ok_and(|v| v != "0"))
+        {
+            return 0;
+        }
+        let data = self.cx.data;
+        let vars = data.def(self.d).variables();
+        let mut memo = std::mem::take(&mut self.ap_memo);
+        let mut sites: Vec<(u16, u32)> = Vec::new();
+        let mut leaves = false;
+        let mut stmts: Vec<&Value> = Vec::new();
+        for op in &b.operators {
+            loop_statements(op, 0, &mut stmts, &mut leaves);
+        }
+        let mut site_nodes: std::collections::HashSet<*const Value> =
+            std::collections::HashSet::new();
+        for st in &stmts {
+            if let Some(site) = crate::opt::append_twin::call_site(st, data, self.d, &mut memo)
+                && let Value::Var(x) = site.dest.unspan()
+                && let Some(size) = self.cx.ap_window(site.callee)
+                && !(self.apw.is_some() && self.ap_views.contains(x))
+            {
+                sites.push((*x, size));
+                site_nodes.insert(std::ptr::from_ref(*st));
+            }
+        }
+        self.ap_memo = memo;
+        if leaves || sites.is_empty() {
+            return 0;
+        }
+        let mut opened = 0;
+        let mut seen: Vec<u16> = Vec::new();
+        for (x, size) in sites.clone() {
+            // A buffer an enclosing loop already holds a window for keeps that one: a second,
+            // opened over the record the first has not synced, would read a stale length.
+            if seen.contains(&x) || self.ap_loop_windows.iter().any(|(v, _)| *v == x) {
+                continue;
+            }
+            seen.push(x);
+            if sites.iter().any(|(y, z)| *y == x && *z != size) {
+                continue;
+            }
+            let reach = crate::opt::body_writes::views(vars, x);
+            let mut elsewhere = false;
+            for op in &b.operators {
+                mentions_outside(op, &reach, &site_nodes, &mut elsewhere);
+            }
+            if elsewhere {
+                continue;
+            }
+            let w = format!("loft_aw{}", self.decls.len());
+            self.decls.push(format!("loft_win {w};"));
+            let xv = self.var(x);
+            self.line(ind, &format!("{w} = loft_win_of({xv}, {size});"));
+            self.ap_loop_windows.push((x, w));
+            crate::rewrite_census::fired("R-AppendTwin/loop-window", 1);
+            opened += 1;
+        }
+        opened
     }
 
     /// `@FR-R-Fill` — loop `b` is ONE fill (`hoist::fill_loop`, native's analysis) over a
@@ -6336,8 +6418,19 @@ impl<'a> FnWriter<'a> {
                 .ok_or("an append twin without its buffer")?;
             let handed = self.apw.is_some()
                 && matches!(args.get(at).map(Value::unspan), Some(Value::Var(x)) if self.ap_views.contains(x));
+            let held = match args.get(at).map(Value::unspan) {
+                Some(Value::Var(x)) => self
+                    .ap_loop_windows
+                    .iter()
+                    .rev()
+                    .find(|(v, _)| v == x)
+                    .map(|(_, w)| w.clone()),
+                _ => None,
+            };
             if handed {
                 xs.push("loft_apw".to_string());
+            } else if let Some(w) = held {
+                xs.push(format!("&{w}"));
             } else {
                 let w = format!("loft_aw{}", self.decls.len());
                 self.decls.push(format!("loft_win {w};"));
@@ -9781,4 +9874,61 @@ fn slice_carrier(data: &crate::data::Data, arg: &Value) -> Option<u16> {
         }
     }
     (bound && sliced).then_some(wrapper)
+}
+
+/// The statements of a loop body, nested blocks, arms and inner loops included, and whether
+/// any of them leaves the loop other than by its end: a `return`, or a `break` or `continue`
+/// past the loop (`depth` counts the loops nested inside it).
+fn loop_statements<'v>(v: &'v Value, depth: u16, out: &mut Vec<&'v Value>, leaves: &mut bool) {
+    out.push(v);
+    match v.unspan() {
+        Value::Return(_) => *leaves = true,
+        Value::Break(n) | Value::Continue(n) if *n > depth => *leaves = true,
+        Value::Block(bl) => {
+            for o in &bl.operators {
+                loop_statements(o, depth, out, leaves);
+            }
+        }
+        Value::Loop(bl) => {
+            for o in &bl.operators {
+                loop_statements(o, depth + 1, out, leaves);
+            }
+        }
+        Value::If(c, t, e) => {
+            loop_statements(c, depth, out, leaves);
+            loop_statements(t, depth, out, leaves);
+            loop_statements(e, depth, out, leaves);
+        }
+        other => other.for_each_child(&mut |c: &'v Value| {
+            loop_statements(c, depth, out, leaves);
+        }),
+    }
+}
+
+/// Does `v` name a variable of `reach` outside the append sites in `sites`?
+fn mentions_outside(
+    v: &Value,
+    reach: &std::collections::HashSet<u16>,
+    sites: &std::collections::HashSet<*const Value>,
+    found: &mut bool,
+) {
+    if *found || sites.contains(&std::ptr::from_ref(v)) {
+        return;
+    }
+    // Every spelling that names a variable: a read, a rebind, a tuple's part, a fn-ref call
+    // through it, an iteration over it.
+    let named = match v {
+        Value::Var(x)
+        | Value::Set(x, _)
+        | Value::TupleGet(x, _)
+        | Value::TuplePut(x, _, _)
+        | Value::CallRef(x, _)
+        | Value::Iter(x, _, _, _) => Some(*x),
+        _ => None,
+    };
+    if named.is_some_and(|x| reach.contains(&x)) {
+        *found = true;
+        return;
+    }
+    v.for_each_child(&mut |c: &Value| mentions_outside(c, reach, sites, found));
 }
