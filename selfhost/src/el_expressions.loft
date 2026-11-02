@@ -5070,7 +5070,58 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
       return ex(el_ir::v_if(c.code, borrowing_arm(t.code, td), borrowing_arm(f.code, fd)), el_types::with_deps(t.tp, deps));
     }
   }
+  // `arm_join_type` with `joined_deps` (loft#978): a record arm's dep on a store the arm itself
+  // mints (a literal's `__ref_p2_N`) is its ownership marker, not a borrow — the arm block is
+  // typed without it, and the `if` borrows what either arm still names.
+  if el_types::base(t.tp) is TyReference && !(t.tp is TyOptional) && !(f.tp is TyOptional) {
+    td = outside_deps(t.code, el_types::deps(t.tp));
+    fd = outside_deps(f.code, el_types::deps(f.tp));
+    deps = td;
+    for x in fd {
+      if !deps.contains(x) {
+        deps += [x];
+      }
+    }
+    return ex(el_ir::v_if(c.code, arm_typed(t.code, td), arm_typed(f.code, fd)), el_types::with_deps(t.tp, deps));
+  }
   ex(el_ir::v_if(c.code, t.code, f.code), t.tp)
+}
+
+// The deps of an arm that it does not mint itself (`use_analysis::minted_vars`: set inside it).
+fn outside_deps(arm: ir::Node, deps: vector<integer>) -> vector<integer> {
+  kept: vector<integer> = [];
+  for d in deps {
+    if !sets_var(arm, d) {
+      kept += [d];
+    }
+  }
+  kept
+}
+
+// Is `v` set anywhere in `n`?
+fn sets_var(n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdSet { var, inner } => var == v || sets_var(inner, v),
+    NdSpan { inner } => sets_var(inner, v),
+    NdBlock { block } => { for o in block[0].operators { if sets_var(o, v) { return true; } } false },
+    NdLoop { block } => { for o in block[0].operators { if sets_var(o, v) { return true; } } false },
+    NdInsert { items } => { for o in items { if sets_var(o, v) { return true; } } false },
+    NdIf { cond, t, f } => sets_var(cond, v) || sets_var(t, v) || sets_var(f, v),
+    NdCall { args } => { for a in args { if sets_var(a, v) { return true; } } false },
+    _ => false
+  }
+}
+
+// An arm block re-typed as borrowing exactly `deps`.
+fn arm_typed(arm: ir::Node, deps: vector<integer>) -> ir::Node {
+  match arm {
+    NdBlock { block } => {
+      bl = block[0];
+      bl.result = [el_types::with_deps(bl.result[0] ?? ir::TyVoid, deps)];
+      ir::NdBlock { block: [bl] }
+    },
+    _ => arm
+  }
 }
 
 // The text variables an `if` arm answers (its block's tail, through nested arms), bare or sliced,
