@@ -1429,8 +1429,11 @@ impl<'a> FnWriter<'a> {
                     continue;
                 }
                 let name = format!("ia{}", self.decls.len() + 1);
-                self.decls
-                    .push(format!("int64_t {name} = LOFT_NULL; int {name}_set = 0;"));
+                // One entry, two lines: the memo and its flag each stand alone, so a memo no
+                // use reaches is seen as unused by itself (`tidy.rs`).
+                self.decls.push(format!(
+                    "int64_t {name} = LOFT_NULL;\n    int {name}_set = 0;"
+                ));
                 self.line(ind, &format!("{name}_set = 0;"));
                 let memo = std::rc::Rc::new((name, ch.chain));
                 for a in ch.nodes {
