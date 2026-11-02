@@ -3115,6 +3115,8 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         let mut other = Value::Null;
         if self.lexer.has_token("..") {
             let incl = self.lexer.has_token("=");
+            // The end bound's type; an open end is the non-null `i32::MAX`.
+            let mut end_t = I32.clone();
             if self.lexer.peek_token("]") {
                 *code = self.cl(
                     "OpGetTextSub",
@@ -3174,6 +3176,22 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                     other = self.cl("OpAddInt", &[other.clone(), Value::Int(1)]);
                 }
                 *code = self.cl("OpGetTextSub", &[code.clone(), p.clone(), other]);
+                end_t = ot_type;
+            }
+            // @FR-N-Store — "a null index reads null": a slice with a nullable bound is `text?`
+            // and answers null when a bound is (`(N-Prop)`'s guard).  Without it the runtime read
+            // a null bound as the position 0 — `t[1..maybe(0)]` answered "" and
+            // `t[maybe(0)..2]` the first two characters (loft#2306).
+            if matches!(index_t, Type::Optional(_)) || matches!(end_t, Type::Optional(_)) {
+                let text = Type::Text(crate::data::Deps::none());
+                if self.first_pass {
+                    return Type::optional(text);
+                }
+                return self.wrap_null_transparent(
+                    code,
+                    &[text.clone(), index_t.clone(), end_t],
+                    &text,
+                );
             }
             Type::Text(crate::data::Deps::none())
         } else {

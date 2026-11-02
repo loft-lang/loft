@@ -5478,6 +5478,12 @@ fn slice(e: el::El, vars: el_vars::Vars, c: integer?, lo: vector<integer>, hi: v
       continue;
     }
     y = expression(e, vars, b[0]!);
+    // A nullable bound makes the slice `text?`, answering null through `(N-Prop)`'s guard
+    // (`wrap_null_transparent`, loft#2306) — not carried yet.
+    if y.tp is TyOptional {
+      el::refuse(e, "a text slice with a nullable bound");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
     if !el_types::is_unknown(y.tp) && !(y.tp is TyInteger) {
       el::refuse(e, "a text slice bound that is not an integer: {type_kind(y.tp)}");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });

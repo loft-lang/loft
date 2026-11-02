@@ -91,7 +91,8 @@ fn abs_float(v: float?) -> float? {
 }
 
 // `t[from..till]`, which compiles to `OpGetTextSub(t, from, till)`: a negative bound counts
-// from the end, a null `till` takes the one character at `from`.
+// from the end, a `till` of `i32::MIN` (the op's one-character form, a value and not a null)
+// takes the character at `from`, and a null bound answers null (`@FR-N-Store`, loft#2306).
 fn sub_text(t: text?, from: integer?, till: integer?) -> text? {
   t[from..till]
 }
