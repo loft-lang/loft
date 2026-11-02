@@ -72,7 +72,8 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // A tail local the first pass did not rename (two records made through it there) is renamed
   // now — the signature takes its name; the body keeps its own build.
   renamed_now = false;
-  if rb >= 0 && !e.first_pass && attr_nr(el::def(e, e.context), "__retbuf") >= 0 && !int_in(el_types::deps(el::def(e, e.context).returned[0]), attr_nr(el::def(e, e.context), "__retbuf")) {
+  ba = attr_nr(el::def(e, e.context), "__retbuf");
+  if rb >= 0 && !e.first_pass && ba >= 0 && !el_types::deps(el::def(e, e.context).returned[0]).contains(ba) {
     rename_ret_buffer(e, vars, code, rb);
     renamed_now = attr_nr(el::def(e, e.context), "__retbuf") < 0;
   }
@@ -266,7 +267,7 @@ fn text_return(e: el::El, vars: el_vars::Vars, t: ir::TypeT) {
     nm = el_vars::name_of(vars, v);
     a = attr_nr(el::def(e, d), nm);
     if a >= 0 {
-      if !int_in(dep, a) {
+      if !dep.contains(a) {
         dep += [a];
       }
       at = el::def(e, d).attributes[a];
@@ -491,7 +492,7 @@ fn var_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer) -> ir
   dep = el_types::deps(ret);
   a = attr_nr(el::def(e, d), el_vars::name_of(vars, v));
   if a >= 0 {
-    if !int_in(dep, a) {
+    if !dep.contains(a) {
       dep += [a];
     }
     e.b.data.definitions[d].returned = [el_types::with_deps(ret, dep)];
@@ -510,10 +511,10 @@ fn var_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer) -> ir
       return null;
     }
   }
-  if !(views_argument || (!e.first_pass && int_in(dep, ba))) {
+  if !(views_argument || (!e.first_pass && dep.contains(ba))) {
     return null;
   }
-  if !int_in(dep, ba) {
+  if !dep.contains(ba) {
     dep += [ba];
   }
   e.b.data.definitions[d].returned = [el_types::with_deps(ret, dep)];
@@ -553,7 +554,7 @@ fn rebind_safe_literal(e: el::El, vars: el_vars::Vars, ops: vector<ir::Node>, bu
   viewers = params;
   for p in params {
     for w in store_viewers(vars, p) {
-      if !int_in(viewers, w) {
+      if !viewers.contains(w) {
         viewers += [w];
       }
     }
@@ -583,7 +584,7 @@ fn rebind_safe_literal(e: el::El, vars: el_vars::Vars, ops: vector<ir::Node>, bu
       NdCall { def_nr, args } => {
         if el::def(e, def_nr).name == "OpSetInt4" && len(args) == 3 && el_ir::unspan(args[0]) == ir::NdVar { n: buf } {
           match el_ir::unspan(args[1] ?? ir::NdNull) {
-            NdInt { n: off } => { drop = int_in(replaced, off) && el_ir::unspan(args[2] ?? ir::NdNull) == ir::NdInt { n: 0 }; },
+            NdInt { n: off } => { drop = replaced.contains(off) && el_ir::unspan(args[2] ?? ir::NdNull) == ir::NdInt { n: 0 }; },
             _ => {}
           }
         }
@@ -651,7 +652,7 @@ fn dep_closure(vars: el_vars::Vars, start: integer) -> vector<integer> {
     v = stack[-1];
     stack = stack[..-1];
     for d in el_types::deps(el_vars::tp(vars, v)) {
-      if d < el_vars::count(vars) && !int_in(seen, d) {
+      if d < el_vars::count(vars) && !seen.contains(d) {
         seen += [d];
         stack += [d];
       }
@@ -684,10 +685,10 @@ fn store_viewers(vars: el_vars::Vars, root: integer) -> vector<integer> {
     if w == root {
       continue;
     }
-    hit = int_in(foreign, w);
+    hit = foreign.contains(w);
     if !hit {
       for d in dep_closure(vars, w) {
-        if int_in(roots, d) || int_in(foreign, d) {
+        if roots.contains(d) || foreign.contains(d) {
           hit = true;
         }
       }
@@ -744,7 +745,7 @@ fn record_may_be_absent(vars: el_vars::Vars, v: integer, seen: vector<integer>) 
   if t is TyOptional {
     return true;
   }
-  if !(el_types::base(t) is TyReference) || int_in(seen, v) {
+  if !(el_types::base(t) is TyReference) || seen.contains(v) {
     return false;
   }
   if vars.vars[v].argument {
@@ -784,7 +785,7 @@ fn alloc_temps(e: el::El, n: ir::Node, v: integer, temps: vector<integer>) {
     NdSet { var, inner } => {
       match el_ir::unspan(inner) {
         NdCall { def_nr, args } => {
-          if el::def(e, def_nr).name == "OpNewRecord" && len(args) > 0 && el_ir::unspan(args[0]) == ir::NdVar { n: v } && !int_in(temps, var) {
+          if el::def(e, def_nr).name == "OpNewRecord" && len(args) > 0 && el_ir::unspan(args[0]) == ir::NdVar { n: v } && !temps.contains(var) {
             temps += [var];
           }
         },
@@ -914,7 +915,7 @@ fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
       // `work_references`, each set to null at the head, after the work texts in the same way —
       // a promoted return buffer is an argument and takes none.
       for wr in vars.work_refs {
-        if vars.vars[wr].argument || int_in(vars.inline_refs, wr) {
+        if vars.vars[wr].argument || vars.inline_refs.contains(wr) {
           continue;
         }
         ops: vector<ir::Node> = [el_ir::v_set(wr, ir::NdNull)];
@@ -1956,7 +1957,7 @@ fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer
   }
   if !e.first_pass {
     for a in def.attributes {
-      if a.constant || text_in(found, a.name) {
+      if a.constant || found.contains(a.name) {
         continue;
       }
       defaults = field_default(e, d, a#index, r, 0);
@@ -2128,14 +2129,6 @@ fn object_expr(e: el::El, vars: el_vars::Vars, name: text, member: text, fields:
   ex(el_ir::v_block(list! + [ir::NdVar { n: w }], tp, "Object"), tp)
 }
 
-fn text_in(v: vector<text>, x: text) -> boolean {
-  for y in v {
-    if y == x {
-      return true;
-    }
-  }
-  false
-}
 
 // `Data::attr`: the attribute of that name, or -1.
 fn attr_nr(def: ir::Definition, name: text) -> integer {
@@ -3049,7 +3042,7 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
     ds: vector<integer> = [];
     for i in el_types::deps(el_types::base(ret)) {
       for x in el_types::deps(types[i] ?? ir::TyVoid) {
-        if !int_in(ds, x) {
+        if !ds.contains(x) {
           ds += [x];
         }
       }
@@ -3341,7 +3334,7 @@ fn divisor_nonzero(e: el::El, vars: el_vars::Vars, d: ir::Node) -> boolean {
     NdLong { n } => n != 0,
     NdFloat { f } => f != 0.0,
     NdSingle { f } => f != 0.0f,
-    NdVar { n } => int_in(vars.nonzero, n),
+    NdVar { n } => vars.nonzero.contains(n),
     _ => {
       c = el_convert::const_int(e, d);
       c != null && c! != 0
@@ -3349,14 +3342,6 @@ fn divisor_nonzero(e: el::El, vars: el_vars::Vars, d: ir::Node) -> boolean {
   }
 }
 
-fn int_in(l: vector<integer>, x: integer) -> boolean {
-  for y in l {
-    if y == x {
-      return true;
-    }
-  }
-  false
-}
 
 // `Parser::divisor_proof_from_condition`: `v != 0` proves `v` non-zero in the then arm, `v == 0`
 // in the else arm (not the truthy spellings).  The local, and which arm; -1 for none.
@@ -3399,7 +3384,7 @@ fn is_zero(n: ir::Node) -> boolean {
 }
 
 fn push_nonzero(vars: el_vars::Vars, v: integer) {
-  if v >= 0 && !int_in(vars.nonzero, v) {
+  if v >= 0 && !vars.nonzero.contains(v) {
     vars.nonzero += [v];
   }
 }
