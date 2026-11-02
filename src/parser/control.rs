@@ -5075,10 +5075,7 @@ impl Parser {
                 *tail = Value::Tuple(members);
             }
         }
-        if let Value::Var(v) = tail.unspan()
-            && let Type::Tuple(elems) = self.vars.tp(*v).base()
-        {
-            let elems = elems.clone();
+        if let Some(elems) = Self::stack_tuple_leaf_in(tail, &self.vars) {
             let src = tail.clone();
             let mut ops = vec![
                 crate::data::v_set(w, Value::Null),
@@ -15662,9 +15659,11 @@ impl Parser {
         match v.unspan() {
             Value::Return(inner) => Self::yields_stack_tuple(inner, vars, true),
             Value::Tuple(_) => tail,
-            Value::Var(x) => {
-                tail && (*x as usize) < vars.count() as usize
-                    && matches!(vars.tp(*x).base(), Type::Tuple(_))
+            // A local of tuple type, and a CALL answering a stack tuple — a callback
+            // `f: fn(T) -> U` at a pure-value tuple keeps the bare tuple ABI, so `-> U { f(x) }`
+            // hands one up where the instance returns the record.
+            Value::Var(_) | Value::CallRef(..) => {
+                tail && Self::stack_tuple_leaf_in(v, vars).is_some()
             }
             Value::If(_, t, e) => {
                 Self::yields_stack_tuple(t, vars, tail) || Self::yields_stack_tuple(e, vars, tail)
@@ -15685,6 +15684,24 @@ impl Parser {
             _ => false,
         }
     }
+    /// The member types of a LEAF that is a stack tuple without being written as one: a local
+    /// of tuple type, or a fn-ref call whose function type answers a stack tuple.  `None` for
+    /// anything else, a tuple literal included (the literal path writes it member by member).
+    fn stack_tuple_leaf_in(v: &Value, vars: &crate::variables::Function) -> Option<Vec<Type>> {
+        let tp = match v.unspan() {
+            Value::Var(x) if (*x as usize) < vars.count() as usize => vars.tp(*x).clone(),
+            Value::CallRef(f, _) if (*f as usize) < vars.count() as usize => match vars.tp(*f) {
+                Type::Function(_, ret, ..) => (**ret).clone(),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        match tp.base() {
+            Type::Tuple(elems) => Some(elems.clone()),
+            _ => None,
+        }
+    }
+
     /// Rewrite every `return <tuple>` reachable from `node` into the synthetic record `w`
     /// — the early-return half of [`Self::promote_monomorph_tuple_return`]; the tail is the
     /// caller's own `rewrite_tail_tuple_with_work_ref`.
