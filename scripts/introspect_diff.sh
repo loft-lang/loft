@@ -9,6 +9,11 @@
 #
 # Usage:
 #   scripts/introspect_diff.sh <before-loft> <after-loft> [--env VAR=VALUE]... [--jobs N] [--root DIR]
+#                              [--c] [--extra LIST]
+# `--c` compares the C writer's output instead (`--emit-c`, once checked and once under
+# `LOFT_RELEASE_PASS_PROBE=1`, the ship lane's unit); `--extra LIST` adds the programs LIST
+# names, one path per line, each run from its package root (a library's `bench/bench.loft`
+# is emitted from the directory above `bench/`, as `bench/stats.py` builds it).
 # Prints one line per DIFFERING file and `IDENTICAL <n>/<m>` or `DIFFERENT <k> of <m>`;
 # exit 0 when identical, 1 when not, 2 on a usage error — read it from the SCRIPT, not
 # from a pipeline: `introspect_diff.sh a b | tail` reports tail's 0 (`PIPESTATUS` is
@@ -28,12 +33,14 @@
 set -u
 root="$(cd "$(dirname "$0")/.." && pwd)"
 before="${1:?before binary}"; after="${2:?after binary}"; shift 2
-jobs=6; envs=()
+jobs=6; envs=(); cmode=0; extra=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --env) envs+=("$2"); shift 2 ;;
     --jobs) jobs="$2"; shift 2 ;;
     --root) root="$2"; shift 2 ;;
+    --c) cmode=1; shift ;;
+    --extra) extra="$2"; shift 2 ;;
     *) echo "introspect_diff: unknown option '$1'" >&2; exit 2 ;;
   esac
 done
@@ -43,16 +50,26 @@ done
 before="$(readlink -f "$before")"; after="$(readlink -f "$after")"
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 one() {
-  local f="$1" bin="$2" out="$3"
-  ( cd "$(dirname "$f")" && env LOFT_NO_CACHE=1 ${envs[@]+"${envs[@]}"} LOFT_TIMEOUT=120 "$bin" --path "$root" introspect "$(basename "$f")" >"$out" 2>"$out.err" )
+  local f="$1" bin="$2" out="$3" dir name
+  dir="$(dirname "$f")"; name="$(basename "$f")"
+  # A library bench builds from its package root, where its `loft.toml` and `src/` resolve.
+  if [ "$(basename "$dir")" = bench ] && [ -f "$dir/../loft.toml" ]; then dir="$dir/.."; name="bench/$name"; fi
+  if [ "$cmode" = 1 ]; then
+    ( cd "$dir" && env LOFT_NO_CACHE=1 ${envs[@]+"${envs[@]}"} LOFT_TIMEOUT=120 "$bin" --path "$root" --emit-c "$out" "$name" >/dev/null 2>"$out.err"
+      env LOFT_NO_CACHE=1 LOFT_RELEASE_PASS_PROBE=1 ${envs[@]+"${envs[@]}"} LOFT_TIMEOUT=120 "$bin" --path "$root" --emit-c "$out.ship" "$name" >/dev/null 2>>"$out.err"
+      [ -f "$out.ship" ] && cat "$out.ship" >> "$out"; rm -f "$out.ship"; true )
+  else
+    ( cd "$dir" && env LOFT_NO_CACHE=1 ${envs[@]+"${envs[@]}"} LOFT_TIMEOUT=120 "$bin" --path "$root" introspect "$name" >"$out" 2>"$out.err" )
+  fi
 }
-export -f one; export root; export envs
+export -f one; export root; export envs; export cmode
 # tests/scripts, tests/docs, examples and every program of the language suite beside the
 # tree (@PLN193) — `scripts/corpus_files.sh` is the one list.
 # A path the list gives ABSOLUTE — the language suite's, when `LOFT_SUITE_DIR` names a checkout
 # outside this tree — is taken as it is; prefixing it with the root made a path that does not
 # exist, both runs wrote nothing, and `cmp` on two missing files read as a DIFFERENCE.
 "$(dirname "$0")/corpus_files.sh" --root "$root" --examples | sed "s#^\([^/]\)#$root/\1#" > "$work/files"
+[ -n "$extra" ] && cat "$extra" >> "$work/files"
 m=$(wc -l < "$work/files"); n=0; k=0; e=0
 [ "$m" -gt 0 ] || { echo "introspect_diff: no corpus under '$root' (tests/scripts, tests/docs, examples) — use --root" >&2; exit 2; }
 while IFS= read -r f; do
