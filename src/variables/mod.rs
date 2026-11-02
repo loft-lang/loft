@@ -2950,7 +2950,12 @@ impl Function {
         // another element shape.
         // An accumulator is minted before its literal's items say its element, so its type
         // here may still be unknown — and that is still this pass's, not pass 1's other site's.
-        if (name == "elm" || name == "vec")
+        // A match CAPTURE (`_mv_<field>_N`) is the same: pass 1 binds it at `Unknown` when the
+        // subject's enum is not declared yet (`bind_forward_capture_list`, loft#2326), and the
+        // arm's body then gives it whatever its first write says — `items += [121]` makes a
+        // `vector<u8>` field's capture `vector<integer>`, and an append through it wrote 8-byte
+        // elements into the byte vector it views.  The field's type is pass 2's.
+        if (name == "elm" || name == "vec" || name.starts_with("mv_"))
             && let Some(&v) = self.names.get(&full)
             && (name == "vec" || !type_def.is_unknown())
             && self.variables[v as usize].type_def.without_deps() != type_def.without_deps()
