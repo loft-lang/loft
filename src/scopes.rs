@@ -103,6 +103,7 @@ mod par_safety;
 mod par_writes;
 mod phase;
 mod places;
+mod rebound_captures;
 mod reshape_refusals;
 mod returns;
 mod scan;
@@ -903,6 +904,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     if crate::keys::buffer_detach_enabled() {
         buffer_detach::detach_owned_buffers(data);
     }
+    // loft#2357, `@FR-L-CapKeep` — a capture whose local the loop re-assigns is released by the
+    // last of its names to let go, decided by store identity at each let-go point.
+    rebound_captures::release_rebound_captures(data);
     crate::ownership_cfg::oracle_free_checks(data);
     // #682 — record which closure captures the record ADOPTS, now that every dep
     // rewrite above has settled.  Must run after the loop, not inside it: the

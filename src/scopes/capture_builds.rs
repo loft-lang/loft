@@ -1086,7 +1086,7 @@ fn captures_built_in_a_loop(node: &Value, set_dbref: u32, in_loop: bool, out: &m
 /// only outside the loop, or assigned before an unconditional build on every pass, names at
 /// the end exactly the store the last record holds.  Collected per loop, so an assignment in
 /// one loop and a build in another do not pair.
-fn captures_rebound_in_a_loop(node: &Value, set_dbref: u32, out: &mut HashSet<u16>) {
+pub(super) fn captures_rebound_in_a_loop(node: &Value, set_dbref: u32, out: &mut HashSet<u16>) {
     if let Value::Loop(_) = node.unspan() {
         let mut first_build: HashMap<u16, usize> = HashMap::default();
         let mut sets: Vec<(u16, usize)> = Vec::new();
