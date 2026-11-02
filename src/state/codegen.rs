@@ -1861,24 +1861,17 @@ impl State {
                 self.code_add(slot_offset);
             }
         } else {
-            // Pre-init a borrowed Reference with a null-state DbRef pointing
-            // into dep's slot.  The DbRef uses stack_cur.store_nr (the
-            // stack-frame store) — it is NOT a valid data-store pointer and
-            // must be overwritten by OpPutRef before any field access.
-            let dep_pos = stack.function.stack(dep[0]);
-            if dep_pos > stack.position {
-                // Dependency not yet on the stack — use a sentinel instead of
-                // CreateStack.  The variable will be overwritten by OpPutRef
-                // before any field access (e.g. loop variable assigned from
-                // iterator next).
-                stack.add_op("OpInitRefSentinel", self);
-                self.code_add(slot_offset);
-            } else {
-                stack.add_op("OpInitCreateStack", self);
-                self.code_add(slot_offset);
-                let dep_offset = stack.position - dep_pos;
-                self.code_add(dep_offset);
-            }
+            // A borrowed Reference before its first bind holds the null sentinel, as native
+            // and C hold `DbRef::NULL`: a liveness test on it (`OpConvBoolFromRef`,
+            // `OpStoreLive`) answers null on every backend.  It used to be a stack-frame
+            // DbRef pointing into dep's slot — no data-store pointer, overwritten before any
+            // field access — which those tests read as a record: the scope pass's cascade
+            // after a displaced fn-field record's null pre-init ran on stack bytes and
+            // released the store they named, on the interpreter only (loft#2354).  Measured
+            // before the change: over the corpus and the language suite (3078 programs)
+            // no outcome depended on the stack-frame value.
+            stack.add_op("OpInitRefSentinel", self);
+            self.code_add(slot_offset);
         }
     }
 
@@ -2171,14 +2164,11 @@ impl State {
                 self.code_add(slot_offset);
                 self.gen_owned_vector_store(stack, v, &elm_tp);
             } else {
-                // Borrowed view: a stack-frame DbRef pointing into dep's
-                // slot.  Must be overwritten by OpPutRef before any field
-                // access.
-                let dep_pos = stack.function.stack(dep[0]);
-                let dep_offset = stack.position - dep_pos;
-                stack.add_op("OpInitCreateStack", self);
+                // Borrowed view before its first bind: the null sentinel, as native and C
+                // hold it, so a liveness test answers alike on every backend (loft#2354's
+                // class — see `gen_set_first_ref_null`).
+                stack.add_op("OpInitRefSentinel", self);
                 self.code_add(slot_offset);
-                self.code_add(dep_offset);
             }
         }
     }
