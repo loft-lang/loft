@@ -19,6 +19,7 @@
 //   without its range test (`tab[c & 255]`) fails the out-of-range cells, and a table built
 //   for `scale` (the overflow decline struck) answers a wrapped product where the body answers
 //   null at 200 — each one alone: 1 differ.
+// HOLDS: the interpreter's and rustc-native's answers, which no plant reaches (INERT there).
 
 fn b64v(c: integer) -> integer {
   if c >= 65 && c <= 90 { return c - 65; }

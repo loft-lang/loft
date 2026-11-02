@@ -22,6 +22,7 @@
 //   stale length), an exit past the loop admitted (`breaks_out` leaves unsynced), a rebind
 //   not counted as a mention (`rebinds` keeps appending to the old record), a second window
 //   opened inside one an outer loop holds (`nested`).
+// HOLDS: the interpreter's and rustc-native's answers, which no plant reaches (INERT there).
 
 fn enc(x: integer) -> vector<u8> {
   o: vector<u8> = [];

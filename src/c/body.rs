@@ -8165,13 +8165,17 @@ impl<'a> FnWriter<'a> {
                 let (src, dst) = (as_ref(src)?, as_ref(dst)?);
                 // The general site reports a write dropped into a null destination
                 // (`loft_copy_record_at`); a fresh field's destination is never null.
-                let site = self.site();
+                let at_site = self.site();
                 let call = |s: &str, d: &str, at: bool| match flat {
                     Some(size) => {
                         crate::rewrite_census::fired("R-FlatCopy", 1);
-                        format!("loft_copy_flat(loft_types, {tp}, {s}, {d}, {free}, {size}, {site})")
+                        format!(
+                            "loft_copy_flat(loft_types, {tp}, {s}, {d}, {free}, {size}, {at_site})"
+                        )
                     }
-                    None if at => format!("loft_copy_record_at(loft_types, {tp}, {s}, {d}, {free}, {site})"),
+                    None if at => format!(
+                        "loft_copy_record_at(loft_types, {tp}, {s}, {d}, {free}, {at_site})"
+                    ),
                     None => format!("loft_copy_record(loft_types, {tp}, {s}, {d}, {free})"),
                 };
                 // A copy into a field of an element being built: its null arm is the default.
