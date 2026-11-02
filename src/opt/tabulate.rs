@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — shared by the native Rust and the C99 generators
 
 //! `@FR-R-Tabulate` — a branchy classifier of a byte answered from a table.
 //!

@@ -87,7 +87,9 @@ def export(work, out, pkg, commit):
         p = os.path.join(work, f)
         if os.path.isfile(p) and f.endswith(KEEP_SUFFIXES) and not f.startswith(SKIP_PREFIXES) \
                 and os.path.getsize(p) < 200_000:
-            shutil.copy2(p, os.path.join(out, f))
+            # A step script is a record of the pricing, not a tool of this repo: kept as text.
+            name = f + ".txt" if f.endswith((".py", ".sh")) else f
+            shutil.copy2(p, os.path.join(out, name))
     for d in sorted(os.listdir(work)):
         drv = os.path.join(work, d, "bench")
         if not (d.startswith("pkg") and os.path.isdir(drv)):
@@ -99,8 +101,8 @@ def export(work, out, pkg, commit):
                                                  fromfile=f"library/bench/{b}",
                                                  tofile=f"{d}/bench/{b}", n=2))
                 if diff:
-                    with open(os.path.join(out, f"driver-{d}-{b}.diff"), "w",
-                              encoding="utf-8") as o:
+                    path = os.path.join(out, f"driver-{d}-{b}.diff")
+                    with open(path, "w", encoding="utf-8") as o:
                         o.writelines(diff)
     lib_sha = subprocess.run(["git", "-C", pkg, "rev-parse", "--short", "HEAD"],
                              capture_output=True, text=True).stdout.strip()
@@ -131,6 +133,9 @@ def restore(hand, base_dir, out):
 
 
 if __name__ == "__main__":
+    if len(sys.argv) == 2 and sys.argv[1] in ("-h", "--help"):
+        print(__doc__)
+        sys.exit(0)
     if len(sys.argv) >= 5 and sys.argv[1] == "export":
         commit = sys.argv[sys.argv.index("--commit") + 1] if "--commit" in sys.argv else "?"
         export(sys.argv[2], sys.argv[3], sys.argv[4], commit)

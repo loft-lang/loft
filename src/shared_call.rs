@@ -61,7 +61,7 @@ pub(crate) fn pure_native(data: &Data, d: u32) -> bool {
 pub fn total(data: &Data, free: &HashSet<u32>) -> HashSet<u32> {
     let mut order: Vec<u32> = free.iter().copied().collect();
     order.sort_unstable();
-    crate::opt::facts::solve(&order, crate::opt::facts::Fixpoint::Least, |f, total| {
+    crate::fixpoint::solve(&order, crate::fixpoint::Fixpoint::Least, |f, total| {
         body_total(data, f, total)
     })
 }

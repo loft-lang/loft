@@ -222,7 +222,7 @@ fn body_ok(data: &Data, f: u32, free: &HashSet<u32>, cands: &HashSet<u32>) -> bo
 pub fn effect_free(data: &Data) -> HashSet<u32> {
     let cands: Vec<u32> = candidates(data);
     let all: HashSet<u32> = cands.iter().copied().collect();
-    crate::opt::facts::solve(&cands, crate::opt::facts::Fixpoint::Greatest, |f, free| {
+    crate::fixpoint::solve(&cands, crate::fixpoint::Fixpoint::Greatest, |f, free| {
         body_ok(data, f, free, &all)
     })
 }
