@@ -68,6 +68,12 @@ cbor decoder's bench (`--ship`, this box): decode 42.6 ms → 34.7 ms per op.
 tmp`) a deep copy — with it off, `y` is given up to `x`, the stores exchanged.  It is the first
 bisect step for a wrong or emptied vector after such a rebind; `LOFT_TRACE_PLACE=1` names each
 decision (`[take-local]`).
+**`LOFT_NO_REBOUND_CAPTURES=1`** (`@FR-L-CapKeep`, after the scope pass, BOTH backends) leaves
+a closure built in a loop over a local the loop re-assigns with the releases the scope pass
+placed alone — with it off (`scopes/rebound_captures.rs`), the re-mint of a backing a record
+holds mints fresh, a rebuild frees the capture no other name holds, and the frame's end leaves a
+returned record its capture, each by store identity.  Not an optimisation: it is the bisect step
+for a stale or freed capture in that shape, and the A/B its emission diff is taken with.
 **`LOFT_NO_EXIT_RECORD=1`** (`(R-ExitVector)`'s record clause, the scope pass right after it,
 BOTH backends) keeps a local RECORD returned inside the exit literal (`lb = ListBox { … };
 Panel { list: lb, … }`) in a store of its own, deep-copied into the return buffer's field —

@@ -103,7 +103,16 @@ fn rebound_facts(code: &Value, vars: &Function, data: &Data) -> Option<Rebound> 
         }
         false
     });
-    slots.retain(|c, _| backings.contains_key(c));
+    // A record confined to its loop pass dies with the pass and BORROWS what it captured: the
+    // frame's own release stands (`closure_keep::pass_confined_records`), so it is no name here.
+    let confined = super::closure_keep::pass_confined_records(data, vars, code);
+    for ss in slots.values_mut() {
+        ss.retain(|s| {
+            !matches!(vars.tp(s.record).base(), crate::data::Type::Reference(rec, _)
+                if confined.contains(rec))
+        });
+    }
+    slots.retain(|c, ss| !ss.is_empty() && backings.contains_key(c));
     if slots.is_empty() {
         return None;
     }
@@ -488,6 +497,10 @@ fn wrap_outside_loops(code: &mut Value, wrap: &mut dyn FnMut(&Value) -> Option<V
 /// loft#2357's three let-go points, over every function whose closures capture a local the
 /// loop re-assigns.  Runs after the scope pass, which placed every other release.
 pub(super) fn release_rebound_captures(data: &mut Data) {
+    // The A/B switch for a bisect: the scope pass's releases as they stood without this pass.
+    if crate::env_once!(std::env::var_os("LOFT_NO_REBOUND_CAPTURES").is_some()) {
+        return;
+    }
     for d_nr in 0..data.definitions() {
         if !matches!(data.def(d_nr).def_type, DefType::Function) {
             continue;
