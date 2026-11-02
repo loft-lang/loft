@@ -9,7 +9,11 @@
 // The C writer applies it; the interpreter applies nothing and is the oracle.  Hand-computed in
 // each cell's comment.
 //
-// @falsified-at: PENDING
+// @falsified-at: 061c4cab8 — by hand on the C writer (the interpreter and native build hold no
+//   vector header, so `falsify.sh` reads them INERT), each plant alone failing a cell: the
+//   element's address taken without the bounds test (n3: the read past the end is no miss,
+//   2510 → 0), and the field offset dropped (n4: each `cs[k].w` reads the record's first byte,
+//   140374 → 70382).
 enum Mood { Calm, Busy, Lost }
 struct Cell { b: u8, w: i32, s: single, m: Mood, h: integer }
 // n1: u8 elements summed in a loop: 7 + 200 + 255 = 462

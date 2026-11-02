@@ -2895,7 +2895,9 @@ gives it back at every root's bind and free: sound because each root is bound on
 of it — and of a local derived from it, `v[i]?` included, whose miss reads a zero record nothing
 writes — lies in the block of its bind and after it, and the roots' spans from bind to last read
 are apart; a site that fails this keeps the store form.  A buffer the caller handed the
-producer is dead at a transient site (its mint branch statically skipped).  Two copies are
+producer is dead at a transient site (its mint branch statically skipped).  A function
+`(R-ValueRecord)` admits — its record result a struct already — gets no twin, and a twin keeps
+the ordinary writer's shapes for its value-record locals and pointer parameters.  Two copies are
 gone where the source is transient: a `text argument copy` of a transient text is the text
 itself (nothing writes the tree while it lives), and a call whose callee answers the caller's
 `&text` work buffer goes to that callee's `__wr` twin, its result read from the buffer, when it
@@ -6189,6 +6191,40 @@ loops).  With the checked operator or the checked element access kept in the fas
 form measured 2.1× / 2.9×.  Switch `LOFT_NO_VERSION`; `LOFT_TRACE_VERSION=1` names each leaf
 admitted or declined and each call versioned.  Sites: `opt::version::leaf`, `c::body::version`.
 Guard `tests/scripts/a-leaf-bounds-test-is-taken-once-per-loop.loft`.
+
+### A short counted loop is written once per trip
+
+```
+  (R-Peel)       A counted loop `for t in a..b` whose `a` the statements just before it
+                 seed with a constant, whose `b` is a constant, with 1 ≤ b − a ≤ 8 and a
+                 body (times the trips) of at most 1200 IR nodes holding no `break`,
+                 `continue`, yield or `par` and assigning no counter, is written as b − a
+                 blocks, block k setting the counters to a + k and running the body; after
+                 the blocks the counters are as the range leaves them.  APPLIED BY the C
+                 writer.
+```
+
+**In words.**  hex_field's `edgeset_count` walks the three canonical edge slots of each cell
+(`for s in 0..3`, a direction chosen by `s`) and finds each edge's slot with a six-way search
+(`for i in 0..6`, comparing `nb_q`/`nb_r` at `i` with the edge's far cell).  With the counter a
+constant the search folds to the one direction that matches; clang unrolls and folds such loops
+itself, gcc unrolls them only after the passes that fold, so the comparisons survive
+(`#pragma GCC unroll` measured −15 % of the instructions, the peel −43 %).  The copies are the
+loop's own statements in order, so what each trip reads and writes is unchanged; a body that
+leaves its trip early (`break`, `continue`, a filter) keeps its loop, since a copy has no loop
+to name, and a `return` from a copy returns as from the loop.  Measured with the narrow clause
+of (R-Header) below (gcc / clang): `edgeset_count` 3.75× → 2.47× / 1.26× its twin.  Switch
+`LOFT_NO_PEEL`.  Site: `c::body::peel`.  Guard
+`tests/scripts/a-short-counted-loop-is-written-once-per-trip.loft`.
+
+**The narrow clause of (R-Header).**  A `u8`, `i32`, `single` or enum element of a held vector,
+or such a field of a held vector's element, is read at its address through the held base —
+`loft_vh_addr` answering the null address outside the vector — and decoded by the reader a
+record field at a known address uses (`loft_pa_*`), with no store lookup per read; `i64` and
+`float` reads already were (`loft_vh_get_int`/`_float`).  `edgeset_count` reads its `vector<u8>`
+of materials this way: 54.0M → 45.9M instructions per op alone (gcc).  Site:
+`FnWriter::held_access`.  Guard
+`tests/scripts/a-narrow-element-of-a-held-vector-is-read-through-its-base.loft`.
 
 ### A self-call in tail position is a jump
 

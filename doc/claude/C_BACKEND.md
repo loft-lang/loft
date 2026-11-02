@@ -341,7 +341,9 @@ decides at its prelude whether the leaf's precondition (`f__vp`) holds at the co
 and last values; the call is then `vg ? f__inv__vf(…) : f__inv(…)`, the `__vf` twin
 ([`VF_BIT`]) taking its decided tests, reading its elements at the proven index and doing the
 tested arithmetic plain.  Fewer than eight counter values left: not versioned.
-`LOFT_NO_VERSION=1` turns it off, `LOFT_TRACE_VERSION=1` names each leaf and call.  A record
+`LOFT_NO_VERSION=1` turns it off, `LOFT_TRACE_VERSION=1` names each leaf and call.  A counted
+loop of at most eight trips with constant bounds is written once per trip, its counters set to
+the trip's constant (`c::body::peel`, `@FR-R-Peel`); `LOFT_NO_PEEL=1` writes every loop.  A record
 value built by a producer, read and dropped (`c::body::transient`, `@FR-R-Transient`) is built in
 a per-thread arena instead of a store: the producer's twin `f__tr…` holds its records as
 `lt_<group>` structs, the site takes an arena mark where it binds the value and gives it back
@@ -639,7 +641,10 @@ then by the native's own name (`loft_ffi_lookup`).
 in_binary = true`: its natives live in loft's own binary, `native::FUNCTIONS`) is a call into
 the C runtime when the runtime carries it (`in_binary_native` in `mod.rs`), and refuses the unit
 by name when it does not — never the "not loaded" stub, which the interpreter cannot give for a
-native of its own binary.  `loft_process.h` carries `lib/process` (`process_run`: one `poll`
+native of its own binary.  `loft_rt.h` carries web's byte builder and reader (`pack_*`,
+`byte_at`): a per-thread buffer in the program, where the component call cost a crossing and a
+dynamic thread-local lookup per byte.  A `main(args: vector<text>)` is called with the program's
+arguments (`loft_arguments()`), as the interpreter calls it.  `loft_process.h` carries `lib/process` (`process_run`: one `poll`
 drains every pipe, a child leads its own process group, the timeout stops the tree) and
 `lib/git` (`git_query`).  The web, server and ssh libraries' natives are not the runtime's:
 they are the `net` component (`loft_web.h`, `loft_server.h`, `loft_ssh.h` and the HTTP client

@@ -120,10 +120,13 @@ impl FnWriter<'_> {
         let next = p.next.map(|n| self.var(n));
         for &k in &p.values {
             self.line(ind, "{");
-            let mut set = format!("{idx} = INT64_C({k}); {var} = INT64_C({k});");
-            if let Some(n) = &next {
-                set.push_str(&format!(" {n} = INT64_C({});", k + 1));
-            }
+            let set = match &next {
+                Some(n) => format!(
+                    "{idx} = INT64_C({k}); {var} = INT64_C({k}); {n} = INT64_C({});",
+                    k + 1
+                ),
+                None => format!("{idx} = INT64_C({k}); {var} = INT64_C({k});"),
+            };
             self.line(ind + 1, &set);
             self.stmts(&b.operators[1..], ind + 1)?;
             self.line(ind, "}");

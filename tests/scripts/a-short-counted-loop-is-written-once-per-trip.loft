@@ -10,7 +10,12 @@
 // each cell's comment.  Peeled: p1 p2 p3 p4 p9 p10, the eight-trip and one-trip loops of p6
 // and p7, one level of p5; not peeled: the nine-trip loop of p6, the empty one of p7, p8.
 //
-// @falsified-at: PENDING
+// @falsified-at: 061c4cab8 — by hand on the C writer (the interpreter and native build run every
+//   loop as written, so `falsify.sh` reads them INERT), each plant alone failing a cell: the
+//   single-counter start taken one trip early (p2: 3..7 sums from 2, 18 → 20), and a body with
+//   a `continue` admitted (p8: the C writer refuses the program, the copy's `continue` naming
+//   no loop).  The counters left after the copies have no cell: no loft program reads a range's
+//   counters after its loop.
 fn dir(s: integer) -> integer {
   if s == 1 { return 2; }
   if s == 2 { return 3; }
