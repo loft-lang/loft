@@ -1,0 +1,126 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-Transient` — a value read and dropped may be built outside the store, where records
+// are SHARED that the store form copied: a reader handed back an element is handed a pointer
+// into the tree, and a record copy shares its vectors' elements with its source.  So a twin
+// writes only the records it builds itself, a copy's vectors are sealed (a push into one moves
+// it first), and an element read counts a negative index from the end as a store vector does.
+// Every cell answers what the interpreter answers; each would answer otherwise without its
+// rule.
+//
+// The C writer applies it; the interpreter applies nothing and is the oracle.  Hand-computed:
+// w1  [7, 8, 9] read at -1 is 9, at -3 is 7, at -4 is past the start: -1 (the reader's miss).
+// w2  `first(t)` is a copy of kid 0 (n = 0) in the store form: the reader sets the copy's n to
+//     99 and reads kid 0 again, still 0 — 0 * 1000 + 99 = 99.  A write through the shared kid
+//     would read 99 again: 99099.
+// w3  two copies of one inner record (kids 0 1 2), each given a fourth kid (10, then 20): each
+//     keeps its own — 10 * 100 + 20 = 1020.  Unsealed, the second push lands in the first's
+//     slot: 2020.
+//
+// @falsified-at: pending
+
+struct Kid {
+  n: integer
+}
+
+struct Tree {
+  kids: vector<Kid>,
+  tag: integer
+}
+
+struct Inner {
+  ks: vector<Kid>
+}
+
+struct Outer {
+  inner: Inner,
+  tag: integer
+}
+
+fn build(k: integer) -> Tree {
+  t = Tree { kids: [], tag: k };
+  for i in 0..k {
+    t.kids += [Kid { n: i }];
+  }
+  t
+}
+
+fn build_seq(a: integer, b: integer, c: integer) -> Tree {
+  t = Tree { kids: [], tag: 0 };
+  t.kids += [Kid { n: a }];
+  t.kids += [Kid { n: b }];
+  t.kids += [Kid { n: c }];
+  t
+}
+
+fn at(t: Tree, i: integer) -> integer {
+  e = t.kids[i];
+  if e { e.n } else { -1 }
+}
+
+fn first(t: Tree) -> Kid {
+  for c in t.kids {
+    return c;
+  }
+  Kid { n: -1 }
+}
+
+fn poke(t: Tree) -> integer {
+  c = first(t);
+  c.n = 99;
+  f2 = first(t);
+  f2.n * 1000 + c.n
+}
+
+fn mk_outer(k: integer) -> Outer {
+  o = Outer { inner: Inner { ks: [] }, tag: k };
+  for i in 0..k {
+    o.inner.ks += [Kid { n: i }];
+  }
+  o
+}
+
+fn two(t: Outer) -> integer {
+  a = Outer { inner: t.inner, tag: 1 };
+  b = Outer { inner: t.inner, tag: 2 };
+  a.inner.ks += [Kid { n: 10 }];
+  b.inner.ks += [Kid { n: 20 }];
+  ea = a.inner.ks[3];
+  eb = b.inner.ks[3];
+  (if ea { ea.n } else { -1 }) * 100 + (if eb { eb.n } else { -1 })
+}
+
+fn w1a() -> integer {
+  t = build_seq(7, 8, 9);
+  at(t, -1)
+}
+
+fn w1b() -> integer {
+  t = build_seq(7, 8, 9);
+  at(t, -3)
+}
+
+fn w1c() -> integer {
+  t = build_seq(7, 8, 9);
+  at(t, -4)
+}
+
+fn w2() -> integer {
+  t = build(3);
+  poke(t)
+}
+
+fn w3() -> integer {
+  o = mk_outer(3);
+  two(o)
+}
+
+fn main() {
+  assert(w1a() == 9, "w1 -1: {w1a()}");
+  assert(w1b() == 7, "w1 -3: {w1b()}");
+  assert(w1c() == -1, "w1 -4: {w1c()}");
+  assert(w2() == 99, "w2: {w2()}");
+  assert(w3() == 1020, "w3: {w3()}");
+  println("ok");
+}

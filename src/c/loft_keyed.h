@@ -1598,6 +1598,7 @@ static void loft_par_free_table(loft_store_t *table, uint32_t from, uint32_t n) 
 /* A worker's end: the stores it made are destroyed with its table and its frames — or, when it
  * keeps them, its table as it now stands handed back for the caller to adopt from. */
 static void loft_par_job_run(loft_par_job *j) {
+    loft_no_park = 1;
     loft_stores = j->table;
     loft_nstores = j->n;
     j->body(j->ctx, j->lo, j->hi);

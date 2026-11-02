@@ -1666,10 +1666,19 @@ static inline void *loft_ta_vec_push(loft_ta_vec *v, size_t size) {
     return e;
 }
 
-/* Element `i` of `v`, or 0 past either end — what a store vector's read answers as null. */
+/* Element `i` of `v` — a negative `i` counting from the end, as a store vector's read does —
+ * or 0 past either end, what that read answers as null. */
 static inline void *loft_ta_vec_at(const loft_ta_vec *v, int64_t i, size_t size) {
+    if (i < 0) i += (int64_t) v->n;
     if (i < 0 || i >= (int64_t) v->n) return 0;
     return (unsigned char *) v->p + (size_t) i * size;
+}
+
+/* A zeroed record nothing writes: what a `v[i]?` that missed answers in a transient tree (a
+ * type whose default is all zeros).  One past the static block's size takes arena room. */
+static inline void *loft_ta_zero(size_t n) {
+    static const uint64_t z[128];
+    return n <= sizeof z ? (void *) z : loft_ta_alloc(n);
 }
 
 /* A text's bytes copied into the arena. */
@@ -2653,6 +2662,27 @@ LOFT_HOT_INLINE void loft_free_var(loft_ref *v) {
     if (v->store_nr == 0xFFFF) return;
     loft_free_ref(*v);
     v->store_nr = 0xFFFF;
+}
+
+/* @FR-R-FnRefBuffer's frame clause: a kept record store parked between calls of the function
+ * that keeps it, one slot per function and thread.  Taking empties the slot, so a recursive or
+ * re-entered frame mints its own; parking into a full slot frees instead. */
+static inline void loft_park_take(loft_ref *slot, loft_ref *v) {
+    if (v->store_nr != 0xFFFF || slot->store_nr == 0xFFFF) return;
+    *v = *slot;
+    slot->store_nr = 0xFFFF;
+    slot->rec = 0;
+    slot->pos = 0;
+}
+static inline void loft_park_put(loft_ref *slot, loft_ref *v) {
+    if (!loft_no_park && slot->store_nr == 0xFFFF && v->store_nr != 0xFFFF) {
+        *slot = *v;
+        v->store_nr = 0xFFFF;
+        v->rec = 0;
+        v->pos = 0;
+    } else {
+        loft_free_var(v);
+    }
 }
 
 /* OpFreeRefIfDistinct of a variable: released and reset when it names another store than the

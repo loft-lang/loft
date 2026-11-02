@@ -204,6 +204,33 @@ static void loft_text_free(loft_text *t) {
     t->cap = 0;
 }
 
+/* Nothing is parked on a `par` worker: its thread ends with the job (its slots with it), and
+ * the job runs on a store table of its own. */
+static LOFT_TLS int loft_no_park = 0;
+
+/* A frame's work text kept between its calls (`FnWriter::park_work_texts`): taken empty from
+ * its slot at entry — the slot left empty, so a recursive frame takes nothing — and parked
+ * back at each release, or freed when the slot is taken again meanwhile. */
+static inline loft_text loft_wpark_take(loft_text *slot) {
+    loft_text t = *slot;
+    t.len = 0;
+    slot->p = 0;
+    slot->len = 0;
+    slot->cap = 0;
+    return t;
+}
+static inline void loft_wpark_put(loft_text *slot, loft_text *t) {
+    if (!loft_no_park && !slot->p && t->p) {
+        *slot = *t;
+        slot->len = 0;
+        t->p = 0;
+        t->len = 0;
+        t->cap = 0;
+    } else {
+        loft_text_free(t);
+    }
+}
+
 /* `*to = *from` for a `from` nothing else names: `to` releases what it held and takes `from`'s
  * buffer, which is left empty — the value `loft_text_set` would copy, without the copy. */
 static void loft_text_move(loft_text *to, loft_text *from) {

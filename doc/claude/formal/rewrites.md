@@ -2884,16 +2884,29 @@ the store itself, but we can introduce short lived objects as long as the end re
 same"*) the tree need not be in a store while nothing stores it.  `(R-ValueRecord)` already
 returns a scalar record in registers and `(O-ViewField)` a record whose vector field is a view;
 this rule is the same idea for a whole tree: depth, variants, vectors of records, and texts and
-bytes that view the frame.  It is the rule `check_request` needs to approach 2×: the tree's
-claims, copies and the frame's releases all belong to the store-built tree.  NOT BUILT
-(designed, not yet implemented).  Open in the design: the C representation of a transient vector of
-records (a stack array with a heap spill), how the twin is cut from the producer (every
-`OpNewRecord` / `OpSetText` / `OpAppendVector` into the result mapped to its struct form), and
-the decline list's proof on the sites — `(O-ViewField)`'s sites' half is the model.  Priced by
-hand on `read_value` (the emitted C, same hashes): `check_request` 0.109× on gcc,
-0.129× on clang, and 0.087× with the arrays in a bump arena the site owns — 0.7× the twin; the
-`.ok` decode alone, building no tree at all, 0.537×.  The design, the arena and the steps:
-`bench/portal/analysis/transient.md`.
+bytes that view the frame.
+
+**As built (C, on by default).**  A twin `f__tr<params>[r]` is `f` written with its transient
+locals as arena structs (`lt_<group>`, one member per `(offset, kind)` the twins touch); a ROOT
+SITE binds a local from a producer whose twin can be written, takes an arena mark there and
+gives it back where the scope pass frees the local.  The writer is the allow-list: an
+operation on a transient value no arm answers declines the twin, and the function keeps the
+store form.  Texts are COPIED into the arena (the views of the frame are a later step).  Two
+consequences of sharing, enforced in the writer: a transient tree may share records the store
+form copied — a reader handed back an element gets a pointer into the tree, and a record copy
+shares its vectors' elements — so (1) a twin WRITES only the records it builds itself (every
+binding a mint, or a field of such a record), and a site writes none; and (2) a record copy
+SEALS its vectors (room cut to the length), so a push into the copy moves it rather than
+writing into the source's spare room.  An element read counts a negative index from the end, as
+a store vector's does.  `(R-Destination)`'s rewrite is not applied inside a twin: the placed
+buffer and the move are what its arms answer.  Measured: pluginabi `check_request` 955 → 553 µs
+on gcc (4.35× → 2.1× its twin), 965 → 673 µs on clang (3.82× → 2.6×), same hash.  Switch
+`LOFT_NO_TRANSIENT=1`; `LOFT_TRACE_TRANSIENT=1` names each twin and site written and each
+declined, with the reason.  Sites: `c::body::transient`; guards
+`tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft`,
+`tests/scripts/a-transient-twin-writes-only-what-it-built.loft`.  Priced by hand on
+`read_value` (2026-10-30): with texts as views of the frame and the arrays in the site's arena,
+0.087× on gcc.  The design and the steps: `bench/portal/analysis/transient.md`.
 
 ### A slice handed to a `const` parameter needs no store of its own
 

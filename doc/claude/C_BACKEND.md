@@ -336,7 +336,13 @@ decides at its prelude whether the leaf's precondition (`f__vp`) holds at the co
 and last values; the call is then `vg ? f__inv__vf(…) : f__inv(…)`, the `__vf` twin
 ([`VF_BIT`]) taking its decided tests, reading its elements at the proven index and doing the
 tested arithmetic plain.  Fewer than eight counter values left: not versioned.
-`LOFT_NO_VERSION=1` turns it off, `LOFT_TRACE_VERSION=1` names each leaf and call.
+`LOFT_NO_VERSION=1` turns it off, `LOFT_TRACE_VERSION=1` names each leaf and call.  A record
+value built by a producer, read and dropped (`c::body::transient`, `@FR-R-Transient`) is built in
+a per-thread arena instead of a store: the producer's twin `f__tr…` holds its records as
+`lt_<group>` structs, the site takes an arena mark where it binds the value and gives it back
+where it frees it.  A twin writes only records it built, a copy seals its vectors, and an
+operation the writer has no transient arm for declines the twin (the store form stays).
+`LOFT_NO_TRANSIENT=1` turns it off, `LOFT_TRACE_TRANSIENT=1` names each twin and site.
 
 **Held file cursors.**  A loop that reads one `File` through fixed-width integer reads, where
 nothing else in it can see the record (`lower::file_hold::held_file`, `@FR-R-FileHold`), keeps

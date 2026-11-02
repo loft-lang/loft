@@ -256,6 +256,10 @@ pub(crate) struct FnWriter<'a> {
     /// facts of an innermost counted one (`None` for any other loop).
     vf: Option<std::rc::Rc<crate::opt::version::Leaf>>,
     versions: Vec<Option<version::VLoop>>,
+    /// `@FR-R-Transient`'s work clause: the `&text` parameter a `__wr` twin answers (its result
+    /// is the caller's buffer), and the call a transient body sends to such a twin.
+    work_ret: Option<u16>,
+    wr_call: Option<usize>,
     /// The guards written so far, which numbers each one's flag.
     chain_guards: u32,
     /// `@FR-R-RecPtr` — the record views whose address the enclosing blocks hold: the view,
@@ -710,6 +714,8 @@ impl<'a> FnWriter<'a> {
             plain_chains: Vec::new(),
             vf: None,
             versions: Vec::new(),
+            work_ret: None,
+            wr_call: None,
             chain_guards: 0,
             rec_ptrs: Vec::new(),
             work_alias: None,
@@ -1088,7 +1094,50 @@ impl<'a> FnWriter<'a> {
         if self.marked_line != 0 {
             let _ = writeln!(out, "{}", super::LINE_RESET);
         }
-        Ok((out, statements))
+        Ok((self.park_work_texts(out), statements))
+    }
+
+    /// A frame's work texts — the `__work…` texts the parser builds a text into, owned by
+    /// this frame — keep their room between its calls: each is taken from a slot of its own
+    /// (per function and thread) at entry, empty, and parked there at each release instead of
+    /// freed.  Taking empties the slot, so a recursive frame takes nothing and frees its own;
+    /// a taken text is an empty text, as a fresh one is.  `LOFT_NO_WORK_PARK=1` frees them.
+    fn park_work_texts(&self, mut out: String) -> String {
+        if crate::env_once!(std::env::var("LOFT_NO_WORK_PARK").is_ok_and(|v| v != "0"))
+            || self.gen_elem.is_some()
+        {
+            return out;
+        }
+        let mut n = 0usize;
+        for v in 0..self.shapes.len() {
+            if self.params[v]
+                || self.shapes[v] != CType::Text
+                || self.store_links[v]
+                || !self.vars.name(v as u16).starts_with("__work")
+            {
+                continue;
+            }
+            let name = var_name(self.vars.name(v as u16), v as u16);
+            let decl = format!("    loft_text {name} = {{ 0, 0, 0 }};\n");
+            if out.matches(&decl).count() != 1 {
+                continue;
+            }
+            let slot = format!("loft_wp{}_{v}", self.d);
+            out = out.replacen(
+                &decl,
+                &format!(
+                    "    static LOFT_TLS loft_text {slot} = {{ 0, 0, 0 }};\n    loft_text {name} = loft_wpark_take(&{slot});\n"
+                ),
+                1,
+            );
+            out = out.replace(
+                &format!("loft_text_free(&{name});"),
+                &format!("loft_wpark_put(&{slot}, &{name});"),
+            );
+            n += 1;
+        }
+        crate::rewrite_census::fired("R-WorkPark", n);
+        out
     }
 
     /// `v`'s C spelling.  A link holds its source's ADDRESS, so every use dereferences it and
@@ -2451,13 +2500,21 @@ impl<'a> FnWriter<'a> {
     /// Return `v`'s value (or nothing): copy it out, free the function's texts, return.
     fn ret_value(&mut self, v: Option<&Value>, ind: usize) -> Result<(), String> {
         let v = v.filter(|v| !matches!(v.unspan(), Value::Null));
-        if let CType::Tr(_) = self.ret {
+        if let CType::Tr(_) | CType::TrVec = self.ret {
             return match v {
                 Some(v) => self.tr_return(v, ind),
                 None => Err("a transient result answered by nothing".into()),
             };
         }
         match (self.ret, v) {
+            // A `__wr` twin answers its caller's buffer: nothing to hand back.
+            (CType::Void, Some(v))
+                if self.work_ret.is_some()
+                    && matches!(v.unspan(), Value::Var(p) if Some(*p) == self.work_ret) =>
+            {
+                self.epilogue(ind);
+                self.line(ind, "return;");
+            }
             (CType::Void, Some(v)) => {
                 self.stmt(v, ind)?;
                 self.epilogue(ind);
@@ -3527,7 +3584,9 @@ impl<'a> FnWriter<'a> {
         i: usize,
         ind: usize,
     ) -> Result<Option<usize>, String> {
-        if !crate::lower::destination::enabled() || self.gen_elem.is_some() {
+        // A transient twin builds its elements outside the store: the plain form's placed buffer
+        // and move are what its arms answer (`body::transient`).
+        if !crate::lower::destination::enabled() || self.gen_elem.is_some() || self.tr.is_some() {
             return Ok(None);
         }
         let site = {
@@ -3847,8 +3906,6 @@ impl<'a> FnWriter<'a> {
     /// that assumes the parameters apart from the return buffer runs when a test of their
     /// store numbers says so at its entry, the plain one otherwise.
     fn loop_stmt(&mut self, b: &Block, ind: usize) -> Result<(), String> {
-        self.loop_stmt_inner(b, ind)?;
-        // `@FR-R-LoopRecord`: the records this loop keeps are freed once, after every copy of it.
         let mut kept: Vec<u16> = self
             .lr
             .recs
@@ -3857,9 +3914,42 @@ impl<'a> FnWriter<'a> {
             .map(|(v, _)| *v)
             .collect();
         kept.sort_unstable();
+        // `@FR-R-FnRefBuffer`'s frame clause: a function value's kept record store is parked
+        // between calls of this function — taken before the loop, parked after it — so the
+        // target fills one store per thread rather than one per call.
+        let d = self.d;
+        let park = move |v: u16| -> String { format!("loft_park{d}_{v}") };
+        let parked: Vec<u16> =
+            if crate::env_once!(std::env::var("LOFT_NO_FNREF_PARK").is_ok_and(|v| v != "0"))
+                || self.gen_elem.is_some()
+            {
+                Vec::new()
+            } else {
+                kept.iter()
+                    .copied()
+                    .filter(|v| self.lr.fnref_bufs.contains(v))
+                    .collect()
+            };
+        for &v in &parked {
+            let (var, slot) = (self.var(v), park(v));
+            self.decls.push(format!(
+                "static LOFT_TLS loft_ref {slot} = {{ 0xFFFF, 0, 0 }};"
+            ));
+            self.line(ind, &format!("loft_park_take(&{slot}, &{var});"));
+        }
+        if !parked.is_empty() {
+            crate::rewrite_census::fired("R-FnRefBuffer/frame", parked.len());
+        }
+        self.loop_stmt_inner(b, ind)?;
+        // `@FR-R-LoopRecord`: the records this loop keeps are freed once, after every copy of it.
         for v in kept {
             let var = self.var(v);
-            self.line(ind, &format!("loft_free_var(&{var});"));
+            if parked.contains(&v) {
+                let slot = park(v);
+                self.line(ind, &format!("loft_park_put(&{slot}, &{var});"));
+            } else {
+                self.line(ind, &format!("loft_free_var(&{var});"));
+            }
         }
         Ok(())
     }
@@ -4238,6 +4328,24 @@ impl<'a> FnWriter<'a> {
             Value::Block(b) => self.block_stmt(b, ind),
             Value::Insert(ops) => ops.iter().try_for_each(|o| self.stmt(o, ind)),
             Value::Set(var, x) => {
+                // `@FR-R-Transient`: a lifted text argument served by the transient text it
+                // copies is not bound at all.
+                if self.tr.is_some() && self.tr_text_lift(*var).is_some() {
+                    self.bound[*var as usize] = true;
+                    // A work-buffer result: the call fills the buffer, through its `__wr` twin.
+                    if let Value::Call(_, cargs) = x.unspan()
+                        && !self.tr_lift_is_copy(*var)
+                    {
+                        self.wr_call = Some(cargs.as_ptr() as usize);
+                        let e = self.expr(x, ind)?;
+                        if self.wr_call.take().is_some() {
+                            return Err("a work-buffer call written without its twin".into());
+                        }
+                        self.line(ind, &format!("{};", e.code));
+                        self.flush(ind);
+                    }
+                    return Ok(());
+                }
                 if self.tr.is_some()
                     && let Some(r) = self.tr_set(*var, x, ind)
                 {
@@ -5835,9 +5943,18 @@ impl<'a> FnWriter<'a> {
             // `@FR-R-Apart` instance 4: an apart value is its buffers — what a twin call takes, and
             // a C type error anywhere a record was meant.
             Value::Var(var) if let Some(buf) = self.apr_buf(*var) => Ok(E::new(buf, K::Ref)),
+            Value::Var(var) if self.tr.is_some() && self.tr_text_lift(*var).is_some() => {
+                let src = self.tr_text_lift(*var).cloned().ok_or("a text lift")?;
+                self.expr(&src, ind)
+            }
             // `@FR-R-Transient`: a transient value read where a store value is meant.
-            Value::Var(var) if self.tr_is(*var) || self.tr_dead(*var) => {
-                Err("a transient value read as a store value".into())
+            Value::Var(var)
+                if self.tr_is(*var) || (self.tr_dead(*var) && !self.params[*var as usize]) =>
+            {
+                Err(format!(
+                    "a transient value read as a store value (`{}`)",
+                    self.vars.name(*var)
+                ))
             }
             Value::Var(var) if self.apv_vec(*var) => Ok(E::new(format!("loft_apv{var}"), K::Ref)),
             Value::Var(var) if let Some(val) = self.av_val(*var) => Ok(E::new(val, K::Ref)),
@@ -5888,6 +6005,10 @@ impl<'a> FnWriter<'a> {
                         K::Fn,
                     ))
                 }
+            }
+            Value::Block(b) if self.tr.is_some() && self.tr_text_copy(b).is_some() => {
+                let src = self.tr_text_copy(b).cloned().ok_or("a text copy")?;
+                self.expr(&src, ind)
             }
             compound @ (Value::Block(_) | Value::Insert(_) | Value::If(..) | Value::Tuple(_)) => {
                 if let Some(e) = self.view_choice(compound, ind)? {
@@ -6288,6 +6409,9 @@ impl<'a> FnWriter<'a> {
         if let Some(e) = self.apr_length(route, args) {
             return Ok(e);
         }
+        if let Some(e) = self.tr_length(route, args, ind)? {
+            return Ok(e);
+        }
         if is_operator(cx.data, d) {
             return self.call_operator(d, args, ind);
         }
@@ -6452,6 +6576,7 @@ impl<'a> FnWriter<'a> {
                 mask |= super::APR_BIT;
             }
         }
+        let tr_named = tr_name.is_some();
         let name = if let Some(n) = tr_name {
             n
         } else if mask == 0 {
@@ -6503,6 +6628,14 @@ impl<'a> FnWriter<'a> {
                 fresh = Some((w, x, size));
             }
         }
+        // `@FR-R-Transient`'s work clause: the result is read from the caller's buffer.
+        let wr = self.wr_call == Some(args.as_ptr() as usize) && mask == 0 && !tr_named;
+        let name = if wr {
+            self.wr_call = None;
+            cx.work_twin(d).ok_or("no work twin")?
+        } else {
+            name
+        };
         let call = match &version {
             // `@FR-R-Version`: the fast twin where the flag holds, the twin as written elsewhere.
             Some(flag)
@@ -6526,6 +6659,9 @@ impl<'a> FnWriter<'a> {
             && let Some(buf) = self.vr_forward_target(args, dropped)
         {
             return self.vr_forward(&call, key, buf, ind);
+        }
+        if wr {
+            return Ok(E::new(call, K::Void));
         }
         Ok(match ret {
             CType::Text => {

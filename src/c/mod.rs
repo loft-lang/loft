@@ -1968,8 +1968,8 @@ pub fn emit_unit_for(
     out.push_str(RUNTIME);
     out.push('\n');
     out.push_str(&c_libraries(data, &cx.ffi_libs.borrow()));
+    out.push_str(&cx.tr_typedefs()); // runtime types alone; a tuple may point at one
     out.push_str(&cx.typedefs());
-    out.push_str(&cx.tr_typedefs());
     out.push_str(&cx.tr_protos());
     if parses {
         out.push_str(&cx.parse_table());
@@ -2651,7 +2651,7 @@ fn anchor(stores: &Stores) -> String {
 
 /// The C shape of each of a function's variables, in number order: a `&` parameter its target's,
 /// a local nothing binds or one only ever bound to `null` the integer null's.
-fn variable_shapes(
+pub(crate) fn variable_shapes(
     cx: &Cx,
     vars: &crate::variables::Function,
     args: &[u16],
