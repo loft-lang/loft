@@ -94,6 +94,11 @@ def lint(path: str, unused: bool) -> tuple[str, list[tuple[str, str, str]], str]
         return path, [], "timeout"
     lines = r.stderr.split("\n")
     out = []
+    # A build that fails is the worst count of all: its error may carry no `[-W…]` tag.  An emit
+    # refusal (exit 2, an expected-error program) is no build.
+    if r.returncode != 0 and "rejected the C" in r.stderr:
+        first = next((l for l in lines if ": error: " in l), "the build failed")
+        out.append(("build-failed", re.sub(r"^[^:]*:\d+:\d+: ", "", first)[:200], ""))
     for i, line in enumerate(lines):
         m = LINE.match(line)
         if m:

@@ -105,6 +105,11 @@ fn declaration_at(line: &str) -> Option<(&str, Option<&str>, bool)> {
         return None;
     }
     let rest = &rest[..rest.len() - 1];
+    // One declaration per line: `int64_t m = LOFT_NULL; int m_set = 0;` is two, and is left
+    // alone (dropping it for the first would lose the second).
+    if rest.contains(';') {
+        return None;
+    }
     let (head, init) = match rest.split_once(" = ") {
         Some((h, i)) => (h, Some(i)),
         None => (rest, None),
@@ -577,6 +582,13 @@ mod tests {
             t,
             "    if (n > 0) { uint64_t u = n_t(); (void) (u > 1 ? 2 : 3); }\n    return 0;\n"
         );
+    }
+
+    #[test]
+    fn a_line_of_two_declarations_is_left_alone() {
+        let body =
+            "    int64_t ia1 = LOFT_NULL; int ia1_set = 0;\n    if (!ia1_set) { ia1_set = 1; }\n";
+        assert_eq!(tidy(&[], body), body);
     }
 
     #[test]
