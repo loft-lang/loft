@@ -762,6 +762,13 @@ pub(crate) fn run_tests(
             Ok(b) => b,
             Err(e) => return all(e.to_string()),
         };
+        // Windows has no RPATH: a C library that ships beside its package (a built `[c]
+        // shim`, a `[c] libs` file) is found only beside the binary, so it is staged there
+        // as a plain `--native-c` run stages it (`exec_native_binary`).  Without it the
+        // test binary died before main with STATUS_DLL_NOT_FOUND.  No-op off Windows.
+        if let Some(exe_dir) = built.binary.parent() {
+            crate::native_utils::stage_native_dlls(exe_dir, data);
+        }
         let run_one = |only: Option<&str>| -> Result<(), String> {
             let mut cmd = Spawn::new(Program::os(&built.binary));
             if let Some(name) = only {
