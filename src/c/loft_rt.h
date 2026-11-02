@@ -3753,6 +3753,28 @@ static void loft_vec_append_copy(const loft_tdesc *T, uint16_t ctp, loft_ref v, 
     r = loft_collection_rec(s, v.rec, v.pos);
     uint32_t from = 8 + (length - 1) * size;
     uint8_t *base = (uint8_t *) loft_at(s, r, 0);
+    /* A scalar template of a machine width is stored into every slot: the doubling reads back
+     * each block it wrote to copy it, a store loop only writes (a 1920x1080 canvas of integers:
+     * the doubling's memmove was 93 % of building it), and the compiler widens the loop. */
+    if (T[ctp].kind == LOFT_T_SCALAR && (size == 8 || size == 4 || size == 2 || size == 1)) {
+        uint8_t *dst = base + from + size;
+        if (size == 1) {
+            memset(dst, base[from], (size_t) extra);
+        } else if (size == 8) {
+            uint64_t t;
+            memcpy(&t, base + from, 8);
+            for (uint32_t i = 0; i < extra; i++) memcpy(dst + (size_t) i * 8, &t, 8);
+        } else if (size == 4) {
+            uint32_t t;
+            memcpy(&t, base + from, 4);
+            for (uint32_t i = 0; i < extra; i++) memcpy(dst + (size_t) i * 4, &t, 4);
+        } else {
+            uint16_t t;
+            memcpy(&t, base + from, 2);
+            for (uint32_t i = 0; i < extra; i++) memcpy(dst + (size_t) i * 2, &t, 2);
+        }
+        return;
+    }
     for (uint32_t done = 1; done < multiply;) {
         uint32_t n = done < multiply - done ? done : multiply - done;
         memcpy(base + from + (size_t) done * size, base + from, (size_t) n * size);

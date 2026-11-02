@@ -314,7 +314,9 @@ nothing else in the body naming it or writing a store, no exit but the loop's ow
 reservation: a push that does not fit takes the growth arm.  Native builds its deep window on
 a held push header, so it opens fewer; the soundness question is the analysis's, and the C
 answers it the same.  `LOFT_NO_DEEP_WINDOW=1` keeps the counted windows only.  `[x; n]` fills
-as the Rust runtime does: one exact resize, the template copied in doubling blocks.  A counted
+as the Rust runtime does: one exact resize, the template copied in doubling blocks — except a
+scalar template of width 1, 2, 4 or 8, which is stored into every slot, so each is written
+once and nothing is read back.  A counted
 loop that is ONE fill over a held vector (`hoist::fill_loop`, `@FR-R-Fill`, its guarded clause
 included) is one range test and one store run through the header (`loft_vh_fill_*`), the loop
 its fallback and the counters left as the loop leaves them; `LOFT_NO_FILL_HOIST=1` and
