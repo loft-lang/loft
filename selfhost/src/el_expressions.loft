@@ -5063,7 +5063,17 @@ fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) ->
       return ex(ir::NdNull, ir::TyVoid);
     }
   } else {
+    outer_slice = vars.slice_node;
+    vars.slice_node = slice_target(e, source);
     x = expression(e, vars, source);
+    vars.slice_node = outer_slice;
+  }
+  sliced = x.code is NdIter;
+  ss: SliceStart? = null;
+  if sliced {
+    ss = slice_start(vars, x, id);
+    elem = ss!.elem;
+  } else if !ranged {
     in_type = el_types::base(x.tp);
     if !(in_type is TyVector) || x.tp is TyOptional || el_ir::unspan(x.code) is NdCall {
       if !el_types::is_unknown(x.tp) {
@@ -5081,10 +5091,10 @@ fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) ->
     }
     elem = match in_type { TyVector { inner } => inner, _ => ir::TyUnknown { n: 0 } };
   }
-  idx = if ranged { rw!.idx } else { loop_index(vars, id) };
-  lv = loop_var(vars, src_id, id, if ranged { elem } else { el_types::with_deps(elem, [vec]) });
+  idx = if ranged { rw!.idx } else if sliced { ss!.idx } else { loop_index(vars, id) };
+  lv = loop_var(vars, src_id, id, if ranged || sliced { elem } else { el_types::with_deps(elem, [vec]) });
   vars.active_loops += [lv];
-  vars.active_values += [x.code];
+  vars.active_values += [if sliced { ir::NdNull } else { x.code }];
   fc = loop_filter(e, vars, filter);
   b = parse_block(e, vars, body!, "for", ir::TyUnknown { n: 0 });
   vars.active_loops = vars.active_loops[..-1];
@@ -5119,14 +5129,14 @@ fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) ->
     el::refuse(e, "a comprehension into a local that has a store");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  nx: ir::Node? = if ranged { el_ir::v_block(rw!.steps, elem, "Iter range") } else { vector_step(e, vec, idx, elem) };
+  nx: ir::Node? = if ranged { el_ir::v_block(rw!.steps, elem, "Iter range") } else if sliced { slice_read(e, vars, ss!) } else { vector_step(e, vec, idx, elem) };
   if nx == null || rows == null {
     el::refuse(e, "a comprehension over a vector of records");
     return ex(ir::NdNull, ir::TyVoid);
   }
   comp = el_vars::create_unique(vars, "comp", in_t);
   steps: vector<ir::Node> = [el_ir::v_set(lv, nx!)];
-  if !ranged {
+  if !ranged && !sliced {
     steps += [vector_past_end(e, vec, idx)];
   }
   if fc != null {
@@ -5141,7 +5151,7 @@ fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) ->
     el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
     el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
   ];
-  items += if ranged { range_init(rw!) } else { [el_ir::v_set(vec, x.code), el_ir::v_set(idx, ir::NdInt { n: -1 })] };
+  items += if ranged { range_init(rw!) } else if sliced { match ss!.init { NdInsert { items: si } => si, _ => [] } } else { [el_ir::v_set(vec, x.code), el_ir::v_set(idx, ir::NdInt { n: -1 })] };
   items += [el_ir::v_loop(steps, "For comprehension")];
   ex(ir::NdInsert { items: items }, ir::TyVoid)
 }
@@ -6343,35 +6353,35 @@ fn slice_target(e: el::El, n: integer) -> integer {
   }
 }
 
-// A `for` over a vector slice (`parse_for` with the range's preamble as its start, its walk index
-// the loop's `x#index`): each step
-// reads the element at the walk's next position, the range step inside the element read — a
-// break past the clamped end, the index taking the position (`Vector Index`).
-fn slice_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, x: Ex, body: integer, filter: integer?) -> Ex {
+// A walk over a vector slice: the slice's preamble with its start retargeted to the walk's own
+// index, made after it (the loop's `x#index`), the subject, and the element type.
+struct SliceStart {
+  init: ir::Node,
+  subj: ir::Node,
+  idx: integer,
+  elem: ir::TypeT
+}
+
+fn slice_start(vars: el_vars::Vars, x: Ex, id: text) -> SliceStart {
   elem = match x.tp { TyIterator { step } => step, _ => ir::TyVoid };
   init = ir::NdNull;
   subj = ir::NdNull;
   walk = -1;
   match x.code { NdIter { var, create, init: ii } => { walk = var; subj = create; init = ii; }, _ => {} }
-  // The loop's own index, made after the slice's: the preamble's start retargeted to it.
   idx = loop_index(vars, id);
-  init = rename_var(init, walk, idx);
-  lv = loop_var(vars, src_id, id, elem);
-  vars.active_loops += [lv];
-  vars.active_values += [ir::NdNull];
-  fc = loop_filter(e, vars, filter);
-  b = parse_block(e, vars, body, "for", ir::TyVoid);
-  vars.active_loops = vars.active_loops[..-1];
-  vars.active_values = vars.active_values[..-1];
-  if e.first_pass {
-    return ex(ir::NdNull, ir::TyVoid);
-  }
+  SliceStart { init: rename_var(init, walk, idx), subj: subj, idx: idx, elem: elem }
+}
+
+// Each step of a walk over a vector slice: the element at the walk's next position, the range
+// step inside the element read — a break past the clamped end, the index taking the position
+// (`Vector Index`).  Null for an element type with no plain read.
+fn slice_read(e: el::El, vars: el_vars::Vars, st: SliceStart) -> ir::Node? {
   hiv = -1;
   nxt = -1;
-  match init {
+  match st.init {
     NdInsert { items } => {
-      for st in items {
-        match st {
+      for x in items {
+        match x {
           NdSet { var } => {
             if starts_with(el_vars::name_of(vars, var), "_slice_hi") { hiv = var; }
             if starts_with(el_vars::name_of(vars, var), "_next") { nxt = var; }
@@ -6382,27 +6392,45 @@ fn slice_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, x: Ex, body
     },
     _ => {}
   }
-  size = elem_size(elem);
-  op = read_op(elem);
+  size = elem_size(st.elem);
+  op = read_op(st.elem);
   if hiv < 0 || nxt < 0 || size < 0 || op == "" {
-    el::refuse(e, "a `for` over a vector slice of this element type: {type_kind(elem)}");
-    return ex(ir::NdNull, ir::TyVoid);
+    return null;
   }
-  int_t = ir::TyInteger { spec: i32_spec() };
   n_v = ir::NdVar { n: nxt };
   step = el_ir::v_block([
     el_ir::v_if(el_ir::cl(e, "OpLeInt", [ir::NdVar { n: hiv }, n_v]), ir::NdBreak { n: 0 }, ir::NdNull),
-    el_ir::v_set(idx, n_v),
+    el_ir::v_set(st.idx, n_v),
     el_ir::v_set(nxt, el_ir::cl(e, "OpAddInt", [n_v, ir::NdInt { n: 1 }])),
-    ir::NdVar { n: idx }
-  ], int_t, "Iter range");
-  read = el_ir::cl(e, op, [el_ir::cl(e, "OpGetVectorNullable", [subj, ir::NdInt { n: size }, step]), ir::NdInt { n: 0 }]);
-  steps: vector<ir::Node> = [el_ir::v_set(lv, el_ir::v_block([read], elem, "Vector Index"))];
+    ir::NdVar { n: st.idx }
+  ], ir::TyInteger { spec: i32_spec() }, "Iter range");
+  el_ir::v_block([el_ir::cl(e, op, [el_ir::cl(e, "OpGetVectorNullable", [st.subj, ir::NdInt { n: size }, step]), ir::NdInt { n: 0 }])], st.elem, "Vector Index")
+}
+
+// A `for` over a vector slice (`parse_for` with the range's preamble as its start).
+fn slice_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, x: Ex, body: integer, filter: integer?) -> Ex {
+  st = slice_start(vars, x, id);
+  lv = loop_var(vars, src_id, id, st.elem);
+  vars.active_loops += [lv];
+  vars.active_values += [ir::NdNull];
+  fc = loop_filter(e, vars, filter);
+  b = parse_block(e, vars, body, "for", ir::TyVoid);
+  vars.active_loops = vars.active_loops[..-1];
+  vars.active_values = vars.active_values[..-1];
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  read = slice_read(e, vars, st);
+  if read == null {
+    el::refuse(e, "a `for` over a vector slice of this element type: {type_kind(st.elem)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  steps: vector<ir::Node> = [el_ir::v_set(lv, read!)];
   if fc != null {
     steps += [fc!];
   }
   steps += [b.code];
-  ex(el_ir::v_block([init, el_ir::v_loop(steps, "For loop")], ir::TyVoid, "For block"), ir::TyVoid)
+  ex(el_ir::v_block([st.init, el_ir::v_loop(steps, "For loop")], ir::TyVoid, "For block"), ir::TyVoid)
 }
 
 // `Parser::materialize_iterator` + `slice_copy_form` for `v = <vector slice>` into a fresh local of
