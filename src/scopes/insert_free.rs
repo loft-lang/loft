@@ -455,14 +455,29 @@ impl Scopes<'_> {
                         let mut tail = o.clone();
                         push_frees_into_arms(&mut tail, &ret_frees);
                         ls.push(Value::Return(Box::new(tail)));
+                    } else if hoist_tmp.is_none() && !is_return {
+                        // loft#2353 — a NESTED value block's tail is not hoisted (that is the
+                        // return leg's), so a free of a local the tail still READS cannot run
+                        // in front of it: a `match` whose plain-struct arm captures a `text`
+                        // field (`N { nm } => len(nm)`) put the capture's `OpFreeText` before
+                        // `len(nm)` and answered 0.  Those frees follow the value, as
+                        // `free_vars`'s non-block leg places them (`ls.insert(0, expr)`):
+                        // a trailing scope-exit cleanup is not the block's value
+                        // (`is_scope_exit_cleanup`).  A free the tail does not read keeps its
+                        // place in front.
+                        let (after, before): (Vec<Value>, Vec<Value>) =
+                            ret_frees.into_iter().partition(|f| {
+                                scope_free_op_var(f, data).is_some_and(|fv| o.reads_var(fv))
+                            });
+                        ls.extend(before);
+                        ls.push(o.clone());
+                        ls.extend(after);
                     } else {
                         ls.extend(ret_frees);
                         if let Some(tmp) = hoist_tmp {
                             ls.push(Value::Return(Box::new(Value::Var(tmp))));
-                        } else if is_return {
-                            ls.push(Value::Return(Box::new(o.clone())));
                         } else {
-                            ls.push(o.clone());
+                            ls.push(Value::Return(Box::new(o.clone())));
                         }
                     }
                 }

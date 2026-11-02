@@ -8023,6 +8023,7 @@ impl Parser {
                             self.vars.defined(v);
                             let bound = self.pattern_field_value(s_nr, attr_idx, subject.clone());
                             arm_stmts.push(v_set(v, bound));
+                            self.mark_field_capture_view(v, &field_type, subject);
                         } else if let Some(cond) = self.parse_field_sub_pattern(
                             field_val,
                             &field_type,
@@ -8037,6 +8038,7 @@ impl Parser {
                         self.vars.defined(v);
                         let bound = self.pattern_field_value(s_nr, attr_idx, subject.clone());
                         arm_stmts.push(v_set(v, bound));
+                        self.mark_field_capture_view(v, &field_type, subject);
                     }
                 }
             }
@@ -8136,6 +8138,7 @@ impl Parser {
                             let bound =
                                 self.pattern_field_value(e_nr, attr_idx, subject_val.clone());
                             binds.push(v_set(v, bound));
+                            self.mark_field_capture_view(v, &field_type, subject_val);
                         } else if let Some(cond) = self.parse_field_sub_pattern(
                             field_val,
                             &field_type,
@@ -8153,6 +8156,7 @@ impl Parser {
                         self.vars.defined(v);
                         let bound = self.pattern_field_value(e_nr, attr_idx, subject_val.clone());
                         binds.push(v_set(v, bound));
+                        self.mark_field_capture_view(v, &field_type, subject_val);
                     }
                 } else if !self.first_pass {
                     diagnostic!(
@@ -8578,6 +8582,32 @@ impl Parser {
         // allocated next — `101` where its dense twin answers `7`, on both backends (loft#1414).
         let bound_tp = Self::element_view_of(&self.vars.tp(bind_nr).clone(), src);
         self.vars.set_type(bind_nr, bound_tp);
+    }
+
+    /// `@FR-P-Cap-View` (loft#2353) — a plain-struct arm's field capture (`N { xs } =>`, and
+    /// `N { xs: q }`, at the arm root or in a sub-pattern) names an interior place of the
+    /// subject: a HEAP field is a borrowed view, so it skips its free and carries the borrow
+    /// dep on the subject's source var — the marks `bind_match_field_capture` gives a
+    /// struct-enum arm's capture.  Without them the capture's dep list was empty, which
+    /// `(O-Proxy)` reads as an owner, and its `OpFreeRef` released the store the subject
+    /// lives in: `match s.nodes[0] { N { xs } => len(xs) }` freed the caller's `s`.  A text
+    /// field is an owned copy (`OpGetText`) and a scalar holds no store, so both keep their
+    /// own treatment; a subject with no source variable still skips the free, as the enum
+    /// arm's does — what it names belongs to the subject.
+    fn mark_field_capture_view(&mut self, v: u16, field_type: &Type, subject_val: &Value) {
+        if v == u16::MAX
+            || !matches!(
+                field_type.base(),
+                Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
+            )
+        {
+            return;
+        }
+        self.vars.set_skip_free(v);
+        if let Some(src) = self.match_borrow_source(subject_val) {
+            let bound_tp = Self::element_view_of(&self.vars.tp(v).clone(), src);
+            self.vars.set_type(v, bound_tp);
+        }
     }
 
     /// Parse field bindings for a struct-enum match arm.

@@ -1,0 +1,109 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-P-Cap-View` — a plain-struct arm's field capture (`N { xs } =>`) names an interior
+// place of the subject.  A HEAP field is a VIEW: it carries the subject's borrow dep and is
+// never freed by the arm.  The plain-struct arm gave it neither mark, and `(O-Proxy)` reads
+// an empty dep list as an owner, so its `OpFreeRef` released the store the subject lives in:
+// `match s.nodes[0] { N { xs } => len(xs) }` freed the CALLER's `s`, and the next record
+// allocated took its place — `s.nodes[0].xs` read `[70,80,90,100]` (loft#2353).  A `text`
+// field is an owned copy, and where the arm body was a bare expression the match's value
+// its free ran BEFORE the body read it: `N { nm } => len(nm)` answered 0.
+//
+// Axes: the subject (an element of a parameter, a nested field, a local view, an owned
+// local, a call result), the field kind (vector, `vector?`, record, struct-enum, text,
+// scalar), the capture spelling (shorthand, renamed, two at once), and what the arm does
+// with it (reads, a value tail, a bound value, a write through it, returns it).  Every
+// function is checked against its hand-computed answer AND against the subject left whole
+// after a fresh allocation (`churn`), which is what tells a freed store from a live one.
+//
+// @ARMED: LOFT_POISON=1
+// @falsified-at: 0e95172cd (loft#2353) — interpret: `o_vec`, `c_vec` and `main` read a poisoned
+//   store; native-c: `o_vec`, `o_struct`, `c_vec` and `c_text` die on signal 11, `main` with them.
+
+struct In { k: integer }
+enum Sh { Sq { side: integer }, Ci { r: integer } }
+struct N { xs: vector<integer>, nm: text, inr: In, sh: Sh, ox: vector<integer>?, c: integer }
+struct W { n: N }
+struct S { nodes: vector<N>, w: W }
+
+fn mk_n() -> N { N { xs: [4, 5, 6], nm: "call", inr: In { k: 8 }, sh: Ci { r: 2 }, ox: [1], c: 3 } }
+fn mk() -> S {
+  S { nodes: [N { xs: [1, 2], nm: "ab", inr: In { k: 7 }, sh: Sq { side: 4 }, ox: [9, 9, 9], c: 5 }],
+      w: W { n: N { xs: [5, 6, 7], nm: "w", inr: In { k: 11 }, sh: Ci { r: 3 }, ox: null, c: 6 } } }
+}
+
+// An element of a parameter, every field kind.
+fn e_vec(s: S) -> integer { match s.nodes[0] { N { xs } => len(xs) } }
+fn e_text(s: S) -> integer { match s.nodes[0] { N { nm } => len(nm) } }
+fn e_struct(s: S) -> integer { match s.nodes[0] { N { inr } => inr.k } }
+fn e_enum(s: S) -> integer { match s.nodes[0] { N { sh } => match sh { Sq { side } => side, Ci { r } => r * 100 } } }
+fn e_opt(s: S) -> integer { match s.nodes[0] { N { ox } => if ox == null { -1 } else { len(ox) } } }
+fn e_scalar(s: S) -> integer { match s.nodes[0] { N { c } => c } }
+fn e_rename(s: S) -> integer { match s.nodes[0] { N { xs: q } => len(q) * 10 } }
+fn e_two(s: S) -> integer { match s.nodes[0] { N { xs, inr } => len(xs) + inr.k } }
+// A nested field of a parameter.
+fn f_vec(s: S) -> integer { match s.w.n { N { xs } => len(xs) } }
+fn f_struct(s: S) -> integer { match s.w.n { N { inr } => inr.k } }
+fn f_text(s: S) -> integer { match s.w.n { N { nm } => len(nm) } }
+// A local view, an owned local, a call result.
+fn l_vec(s: S) -> integer { n = s.nodes[0]; match n { N { xs } => len(xs) } }
+fn o_vec() -> integer { n = mk_n(); match n { N { xs } => len(xs) } }
+fn o_struct() -> integer { n = mk_n(); match n { N { inr } => inr.k } }
+fn c_vec() -> integer { match mk_n() { N { xs } => len(xs) } }
+fn c_text() -> integer { match mk_n() { N { nm } => len(nm) } }
+// The text capture's tail shapes.
+fn t_bound(n: N) -> integer { x = match n { N { nm } => len(nm) }; x }
+fn t_value(n: N) -> text { match n { N { nm } => nm } }
+fn t_value_bound(n: N) -> text { x = match n { N { nm } => nm }; x }
+fn t_fmt(n: N) -> text { match n { N { nm } => "<{nm}>" } }
+fn t_cmp(n: N) -> boolean { match n { N { nm } => nm == "call" } }
+fn t_rename(n: N) -> integer { match n { N { nm: q } => len(q) } }
+// A write through the capture reaches the subject; a returned capture names its element.
+fn w_vec(s: S) { match s.nodes[0] { N { xs } => { xs += [3]; } } }
+fn w_struct(s: S) { match s.w.n { N { inr } => { inr.k = 99; } } }
+fn r_vec(s: S) -> vector<integer> { match s.nodes[0] { N { xs } => xs } }
+
+fn intact(s: S) -> boolean {
+  len(s.nodes) == 1 && "{s.nodes[0].xs}" == "[1,2]" && s.nodes[0].nm == "ab" && s.nodes[0].inr.k == 7
+    && "{s.w.n.xs}" == "[5,6,7]" && s.w.n.nm == "w" && s.w.n.inr.k == 11
+}
+
+// A fresh allocation: it takes a freed store's place, so a subject that was released reads it.
+fn churn() -> integer {
+  t = S { nodes: [N { xs: [70, 80, 90, 100], nm: "zzzz", inr: In { k: 1 }, sh: Sq { side: 1 }, ox: null, c: 0 }], w: W { n: mk_n() } };
+  len(t.nodes[0].xs)
+}
+
+fn check(tag: text, got: integer, want: integer, s: S) {
+  z = churn();
+  assert(got == want && z == 4 && intact(s), "{tag}: got {got} want {want}, subject intact {intact(s)}");
+}
+
+fn main() {
+  s = mk(); check("e_vec", e_vec(s), 2, s);
+  s = mk(); check("e_text", e_text(s), 2, s);
+  s = mk(); check("e_struct", e_struct(s), 7, s);
+  s = mk(); check("e_enum", e_enum(s), 4, s);
+  s = mk(); check("e_opt", e_opt(s), 3, s);
+  s = mk(); check("e_scalar", e_scalar(s), 5, s);
+  s = mk(); check("e_rename", e_rename(s), 20, s);
+  s = mk(); check("e_two", e_two(s), 9, s);
+  s = mk(); check("f_vec", f_vec(s), 3, s);
+  s = mk(); check("f_struct", f_struct(s), 11, s);
+  s = mk(); check("f_text", f_text(s), 1, s);
+  s = mk(); check("l_vec", l_vec(s), 2, s);
+  s = mk(); check("o_vec", o_vec(), 3, s);
+  s = mk(); check("o_struct", o_struct(), 8, s);
+  s = mk(); check("c_vec", c_vec(), 3, s);
+  s = mk(); check("c_text", c_text(), 4, s);
+  n = mk_n();
+  r = "{t_bound(n)} {t_value(n)} {t_value_bound(n)} {t_fmt(n)} {t_cmp(n)} {t_rename(n)} {n.nm}";
+  assert(r == "4 call call <call> true 4 call", "text tails: {r}");
+  s = mk(); w_vec(s); z = churn();
+  assert("{s.nodes[0].xs}" == "[1,2,3]" && z == 4, "w_vec {s.nodes[0].xs}");
+  s = mk(); w_struct(s); z = churn();
+  assert(s.w.n.inr.k == 99 && z == 4, "w_struct {s.w.n.inr.k}");
+  s = mk(); rv = r_vec(s); z = churn();
+  assert("{rv}" == "[1,2]" && intact(s) && z == 4, "r_vec {rv}");
+}
