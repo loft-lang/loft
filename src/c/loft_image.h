@@ -166,6 +166,38 @@ static int loft_type_has_tree(const loft_tdesc *T, uint32_t ntypes, uint16_t tp,
     }
 }
 
+/* Stores::type_is_compactable's `Parts::DbRef` arm: can a value of `tp` hold a stored reference?
+ * The image writer's deep copy moves records within one store and rewrites no pointer, so a
+ * reference would still name the LIVE store and no reader could load the image.  The Rust
+ * writer carries a same-store reference through the converter at the program's own layout
+ * (`upgrade_store`, @PLN203 C3), which this runtime does not have yet. */
+static int loft_type_has_dbref(const loft_tdesc *T, uint32_t ntypes, uint16_t tp, int depth) {
+    if (tp >= ntypes || depth > 64) return 0;
+    const loft_tdesc *d = &T[tp];
+    switch (d->kind) {
+    case LOFT_T_DBREF:
+        return 1;
+    case LOFT_T_STRUCT:
+        for (uint16_t i = 0; i < d->n; i++)
+            if (loft_type_has_dbref(T, ntypes, d->fields[i].type, depth + 1)) return 1;
+        return 0;
+    case LOFT_T_ENUM:
+        for (uint16_t i = 0; i < d->n; i++)
+            if (d->variants[i] != 0xFFFF && loft_type_has_dbref(T, ntypes, d->variants[i], depth + 1)) return 1;
+        return 0;
+    case LOFT_T_VECTOR:
+    case LOFT_T_CHILD:
+    case LOFT_T_HASH:
+    case LOFT_T_INDEX:
+    case LOFT_T_ORDERED:
+    case LOFT_T_RADIX:
+    case LOFT_T_TRIE:
+        return loft_type_has_dbref(T, ntypes, d->elem, depth + 1);
+    default:
+        return 0;
+    }
+}
+
 /* Stores::relayout_trees' walk (`tree_roots`): every spatial or trie field the value at `r`
  * holds, each laid out where it stands.  `*budget` bounds the walk as the Rust one bounds it. */
 static uint32_t loft_relayout_walk(const loft_tdesc *T, uint32_t ntypes, uint16_t tp, loft_ref r, uint32_t *budget) {
@@ -435,6 +467,8 @@ static int loft_image_write(const loft_tdesc *T, uint32_t ntypes, loft_ref r, lo
     uint16_t tp = loft_stores[r.store_nr].known;
     int32_t header = loft_st_i32(&loft_stores[r.store_nr], 1, 0);
     if (tp == 0xFFFF || header <= 0 || sc == 0 || sc->tp != tp) return 0;
+    /* A stored reference cannot be carried by the copy below: refused, not written wrong. */
+    if (loft_type_has_dbref(T, ntypes, tp, 0)) return 0;
     uint16_t dst = loft_store_scratch((uint32_t) header + 2);
     loft_store_t *d = &loft_stores[dst];
     if (loft_st_claim(d, (uint32_t) header) != 1) {

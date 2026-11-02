@@ -675,7 +675,11 @@ the way a build without it answers: HTTPS on a host without
 sockets (wasm) or whose compiler could not build the TLS client; SQLite where the system has no
 `libsqlite3`.  Refused at emit time: a link re-pointed to a narrow or a text store place,
 and a par row of a tuple holding a reference — each by name.  Not
-refused and not carried: a `#native` function (above).
+refused and not carried: a `#native` function (above).  An image needs the store converter the
+interpreter has (`Stores::upgrade_store`, [STORE_MODEL.md](STORE_MODEL.md) D30): `store_load` of
+an image of another layout is refused by name, and `store_persist_copy` of a type holding a
+stored reference answers `false` — the C writer's deep copy would leave the reference naming the
+live store, an image no reader can load.
 
 ### What switching to C loses (@PLN206 P0b)
 
