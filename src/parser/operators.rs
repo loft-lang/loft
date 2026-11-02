@@ -4581,11 +4581,13 @@ impl Parser {
             // merely borrowed on the other.  A projection subject (`o.inner ?? d`) stays the
             // view it is (`@FR-B-View`), and a bare variable is never hoisted at all.
             let owned_record = self.owned_record_subject(lhs_type, code);
-            if matches!(
-                lhs_type,
-                Type::Text(_) | Type::Sorted(_, _, _) | Type::Hash(_, _, _) | Type::Index(_, _, _)
-            ) || (matches!(lhs_type, Type::Reference(_, _) | Type::Enum(_, true, _))
-                && !owned_record)
+            // Every KEYED kind takes the hand-off, asked through the one kind list (`is_keyed`):
+            // its consumer (`OpReplaceKeyed`'s source free) releases the store, and a temp freed
+            // at the block's exit is freed before that consumer reads it (`@FR-H-FreeAll`).
+            if matches!(lhs_type, Type::Text(_))
+                || crate::parser::vectors::is_keyed(lhs_type)
+                || (matches!(lhs_type, Type::Reference(_, _) | Type::Enum(_, true, _))
+                    && !owned_record)
                 || (matches!(lhs_type, Type::Vector(_, _)) && !owned_vector)
             {
                 self.vars.set_skip_free(tmp);

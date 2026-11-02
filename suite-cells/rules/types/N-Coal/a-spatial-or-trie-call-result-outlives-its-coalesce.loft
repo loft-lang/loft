@@ -1,0 +1,80 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-N-Coal / @FR-H-FreeAll — a `??` or `?` whose subject is a CALL answering a keyed
+// collection binds the call's store to a temp, and the bind `s = g() ?? d` copies the chosen
+// arm into `s` and releases the subject's store itself (`OpReplaceKeyed`'s source free).  The
+// temp therefore takes the hand-off and is never freed at the block's exit.  `hash`, `sorted`
+// and `index` took it by a hand-spelled kind list; `spatial` and `trie` were not on it, so their
+// temp was freed at the block's exit, BEFORE the copy read it: every answer below was read out
+// of a freed store (right only while nothing reused it — `LOFT_STRICT_STORES` named the free,
+// `LOFT_POISON` read 0xDEADBEEF, the C under `-DLOFT_POISON` crashed).
+//
+// The axes moved: the keyed kind (spatial, trie; hash, sorted, index as the controls), the
+// discharge (`??` with a local default, `?` with the type's empty default, a `??` chain whose
+// middle link answers), the arm taken (present, absent), and the statement context (straight
+// line, a loop that rebinds every round).  Every value is hand-computed: the present arm holds
+// the call's one record (n 99), the default the local's three (12 + 34 + 56 = 102).
+//
+// @falsified-at: 869816dff — interpret under LOFT_POISON=1 exit 1 -> 0 (3 of 4 tests: the
+//   spatial and trie ones), C under -DLOFT_POISON exit -11 -> 0 (scripts/c_sweep.py --poison)
+// CHANNEL: LOFT_POISON=1 on the interpreter, `-DLOFT_POISON` on the C — a plain run reads the
+//   freed bytes before anything reuses them, so it answers right on both trees.
+// ARMED: the store poison above; the values are asserted on every run.
+// HOLDS: the controls (hash, sorted, index) answer the same on both trees.
+
+struct Cp { x: integer, y: integer, n: integer }
+struct Cw { w: text, n: integer }
+
+fn sp_of(i: integer) -> spatial<Cp[x, y]>? { if i == 0 { [Cp { x: 9, y: 9, n: 99 }] } else { null } }
+fn tr_of(i: integer) -> trie<Cw[w]>? { if i == 0 { [Cw { w: "ab", n: 99 }] } else { null } }
+fn hs_of(i: integer) -> hash<Cp[x]>? { if i == 0 { [Cp { x: 9, y: 9, n: 99 }] } else { null } }
+fn so_of(i: integer) -> sorted<Cp[x]>? { if i == 0 { [Cp { x: 9, y: 9, n: 99 }] } else { null } }
+fn ix_of(i: integer) -> index<Cp[x]>? { if i == 0 { [Cp { x: 9, y: 9, n: 99 }] } else { null } }
+
+fn test_a_spatial_subject_bound_through_a_default() {
+  d: spatial<Cp[x, y]> = [Cp { x: 1, y: 2, n: 12 }, Cp { x: 3, y: 4, n: 34 }, Cp { x: -5, y: 6, n: 56 }];
+  s = sp_of(0) ?? d;
+  assert(len(s) == 1 && (s[9, 9].n ?? -1) == 99 && len(d) == 3, "present: {len(s)} {len(d)}");
+  a = sp_of(1) ?? d;
+  assert(len(a) == 3 && (a[3, 4].n ?? -1) == 34, "absent: {len(a)}");
+  c = sp_of(1) ?? sp_of(0) ?? d;
+  assert(len(c) == 1 && (c[9, 9].n ?? -1) == 99, "the chain's middle link: {len(c)}");
+  e = sp_of(0)?;
+  t = 0;
+  for q in e { t += q.n; }
+  assert(len(e) == 1 && t == 99, "`?`: {len(e)} {t}");
+}
+
+fn test_a_spatial_subject_rebound_every_round() {
+  d: spatial<Cp[x, y]> = [Cp { x: 1, y: 2, n: 12 }, Cp { x: 3, y: 4, n: 34 }, Cp { x: -5, y: 6, n: 56 }];
+  all = "";
+  for i in 0..4 {
+    s = sp_of(i % 2) ?? d;
+    t = 0;
+    for q in s { t += q.n; }
+    all += "{len(s)}:{t},";
+  }
+  assert(all == "1:99,3:102,1:99,3:102," && len(d) == 3, "rounds: {all}");
+}
+
+fn test_a_trie_subject() {
+  d: trie<Cw[w]> = [Cw { w: "zz", n: 12 }];
+  s = tr_of(0) ?? d;
+  assert(len(s) == 1 && (s["ab"].n ?? -1) == 99 && len(d) == 1, "present: {len(s)}");
+  a = tr_of(1) ?? d;
+  assert(len(a) == 1 && (a["zz"].n ?? -1) == 12, "absent: {len(a)}");
+  e = tr_of(0)?;
+  assert(len(e) == 1 && (e["ab"].n ?? -1) == 99, "`?`: {len(e)}");
+}
+
+fn test_the_hash_sorted_and_index_controls() {
+  h: hash<Cp[x]> = [Cp { x: 1, y: 2, n: 12 }];
+  o: sorted<Cp[x]> = [Cp { x: 1, y: 2, n: 12 }];
+  k: index<Cp[x]> = [Cp { x: 1, y: 2, n: 12 }];
+  hs = hs_of(0) ?? h;
+  so = so_of(0) ?? o;
+  ix = ix_of(0) ?? k;
+  assert((hs[9].n ?? -1) == 99 && (so[9].n ?? -1) == 99 && (ix[9].n ?? -1) == 99, "present");
+  assert(len(hs) == 1 && len(so) == 1 && len(ix) == 1 && len(h) == 1 && len(o) == 1 && len(k) == 1, "lengths");
+}
