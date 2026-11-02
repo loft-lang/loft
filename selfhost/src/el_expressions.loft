@@ -77,6 +77,12 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     _ => {}
   }
   text_return(e, vars, tt);
+  // `report_tret_promotions`: a text function with no buffer of its own whose answer is a call's,
+  // delivered into a `__work_cN` of this frame, is promoted to a hidden `___tret_N` after the
+  // second pass and its callers patched — not carried yet.
+  if !e.first_pass && el_types::base(result) is TyText && !has_text_buffer(el::def(e, e.context)) && answers_call_buffer(b.code, true) {
+    el::refuse(e, "a text answered from a call's buffer in this frame (a `___tret` promotion)");
+  }
   code = b.code;
   // A text answered through a hidden `&text` the body's own work text became: the body is typed
   // as the declared result, its dep in attribute numbering — as a record body is (below).  A
@@ -2104,6 +2110,21 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
     }
     return ex(o.code, ir::TyVoid);
   }
+  // `parse_operators`' `orig_var`: a concatenation whose first operand is the bound text local
+  // itself is built into it (`parse_append_text`), and `assign_text` drops the leading
+  // self-append — `x = x + a + b` appends `a` and `b` to `x`, which then borrows itself.
+  tail_parts = self_concat_parts(e, rhs!, written);
+  vt0 = el_vars::tp(vars, v);
+  if len(tail_parts) > 0 && vt0 is TyText && !vars.vars[v].argument {
+    ops: vector<ir::Node> = [];
+    for n in tail_parts {
+      concat_operand(e, ops, v, expression(e, vars, n));
+    }
+    if !el_vars::change_var_type(e, vars, v, ir::TyText { dep: [v] }) {
+      el::refuse(e, "a local that changes type");
+    }
+    return ex(ir::NdInsert { items: ops }, ir::TyVoid);
+  }
   outer_read = vars.len_read;
   vars.len_read = false;
   outer_slice = vars.slice_node;
@@ -2209,11 +2230,24 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
     },
     _ => {}
   }
-  if !e.first_pass && el_types::base(el_vars::tp(vars, v)) is TyText && x.code is NdIf {
+  // `try_branch_text_bind`: a text branch is delivered per arm into the local — unless it reads
+  // the local, which then takes the self-reference arm below.
+  if !e.first_pass && el_types::base(el_vars::tp(vars, v)) is TyText && x.code is NdIf && !el_ir::reads_var(x.code, v) {
     arms = text_arms_into(v, x.code);
     if arms != null {
       return ex(ir::NdInsert { items: [el_ir::v_set(v, ir::NdText { s: "" }), arms!] }, ir::TyVoid);
     }
+  }
+  // `assign_text`'s self-reference arm: a text value that reads the local it is bound to
+  // (`t = "{t}!"`, `t = f(t)`) is built in a work text first, so the bind's clear cannot destroy
+  // what the value still reads.
+  if el_types::base(el_vars::tp(vars, v)) is TyText && el_ir::reads_var(x.code, v) {
+    w = el_vars::work_text(vars);
+    return ex(ir::NdInsert { items: [
+      el_ir::cl(e, "OpClearText", [ir::NdVar { n: w }]),
+      el_ir::cl(e, "OpAppendText", [ir::NdVar { n: w }, x.code]),
+      el_ir::v_set(v, ir::NdVar { n: w })
+    ] }, ir::TyVoid);
   }
   ex(el_ir::v_set(v, x.code), ir::TyVoid)
 }
@@ -5471,6 +5505,9 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
   if keyed_kind(x.tp) && !(x.tp is TyOptional) {
     return keyed_for(e, vars, src_id, id, x, body!, filter);
   }
+  if x.tp is TyText {
+    return text_for(e, vars, src_id, id, x, body!, filter);
+  }
   match el_types::base(x.tp) {
     TyVector { inner: _ } => {},
     TyUnknown { n: _ } => {
@@ -5714,6 +5751,59 @@ fn constant_body(e: el::El, code: ir::Node) -> boolean {
     NdNull => true,
     _ => el_convert::const_int(e, el_ir::unspan(ops[0])) != null
   }
+}
+
+// `parse_for` over a text (`walks_text`, `iter_text`): the loop's `x#next` (the byte position)
+// and `x#index` (where the character starts), the text held in `_for_text_N` — borrowing a local
+// it names — and each step reading the character there (`OpTextCharacterNullable`) and moving
+// past it, one byte at least.  The walk ends at an absent text and past its size.  A `_`
+// binding and a `&text` source are refused by name.
+fn text_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, x: Ex, body: integer, filter: integer?) -> Ex {
+  if id == "_" {
+    el::refuse(e, "a `for _` over a text");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  int_t = ir::TyInteger { spec: i32_spec() };
+  pos = el_vars::add_variable(vars, "{id}#next", int_t);
+  el_vars::set_defined(vars, pos);
+  idx = el_vars::add_variable(vars, "{id}#index", int_t);
+  el_vars::set_defined(vars, idx);
+  lv = loop_var(vars, src_id, id, ir::TyCharacter);
+  vars.active_loops += [lv];
+  vars.active_values += [ir::NdNull];
+  fc = loop_filter(e, vars, filter);
+  src_tp = match el_ir::unspan(x.code) { NdVar { n } => ir::TyText { dep: [n] }, _ => x.tp };
+  tv = el_vars::create_unique(vars, "for_text", src_tp);
+  res = el_vars::create_unique(vars, "for_result", ir::TyCharacter);
+  b = parse_block(e, vars, body, "for", ir::TyVoid);
+  vars.active_loops = vars.active_loops[..-1];
+  vars.active_values = vars.active_values[..-1];
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  t = ir::NdVar { n: tv };
+  p = ir::NdVar { n: pos };
+  i = ir::NdVar { n: idx };
+  r = ir::NdVar { n: res };
+  next = el_ir::v_block([
+    el_ir::v_set(idx, p),
+    el_ir::v_set(res, el_ir::cl(e, "OpTextCharacterNullable", [t, p])),
+    el_ir::v_set(pos, el_ir::cl(e, "OpAddInt", [p, el_ir::cl(e, "OpLengthCharacter", [r])])),
+    el_ir::v_if(el_ir::cl(e, "OpLeInt", [p, i]), el_ir::v_set(pos, el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: 1 }])), ir::NdNull),
+    r
+  ], ir::TyCharacter, "for text next");
+  brk = el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break");
+  steps: vector<ir::Node> = [
+    el_ir::v_set(lv, next),
+    el_ir::v_if(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromText", [t])]), brk, ir::NdNull),
+    el_ir::v_if(el_ir::cl(e, "OpLeInt", [el_ir::cl(e, "OpSizeText", [t]), i]), brk, ir::NdNull)
+  ];
+  if fc != null {
+    steps += [fc!];
+  }
+  steps += [b.code];
+  init: vector<ir::Node> = [el_ir::v_set(idx, ir::NdInt { n: 0 }), el_ir::v_set(tv, x.code), el_ir::v_set(pos, ir::NdInt { n: 0 })];
+  ex(el_ir::v_block(init + [el_ir::v_loop(steps, "For loop")], ir::TyVoid, "For block"), ir::TyVoid)
 }
 
 // `iterator`'s keyed arm: a walk over a hash, sorted or index from its first record
@@ -7517,6 +7607,73 @@ fn plus_run(e: el::El, vars: el_vars::Vars, at: integer, l: integer, r: integer)
     acc = arithmetic_span(e, ats[n#index] ?? at, "+", builtin_op(e, vars, "+", acc, expression(e, vars, n)));
   }
   acc
+}
+
+// The operands after the first of a `+` chain whose first operand is the local `name`, or none.
+fn self_concat_parts(e: el::El, n: integer, name: text) -> vector<integer> {
+  parts: vector<integer> = [];
+  first = n;
+  more = true;
+  while more {
+    more = false;
+    match e.p.nodes[first] {
+      SBin { op, l, r } => {
+        if op == "+" {
+          parts = [r] + parts;
+          first = l;
+          more = true;
+        }
+      },
+      _ => {}
+    }
+  }
+  match e.p.nodes[first] {
+    SName { name: fname, member } => if name != "" && fname == name && member == "" { parts } else { [] },
+    _ => []
+  }
+}
+
+// Does the definition carry a hidden `&text` buffer (`text_work_buffers`)?
+fn has_text_buffer(def: ir::Definition) -> boolean {
+  for a in def.attributes {
+    if a.hidden && (a.typedef[0]) is TyRefVar {
+      return true;
+    }
+  }
+  false
+}
+
+// Is a call handed a caller's text buffer (`"default ref"`) what `n` answers — at the tail of
+// the body when `tail`, or in any `return`?
+fn answers_call_buffer(n: ir::Node, tail: boolean) -> boolean {
+  match n {
+    NdSpan { inner } => answers_call_buffer(inner, tail),
+    NdReturn { inner } => answers_call_buffer(inner, true),
+    NdCall { args } => {
+      if tail {
+        for a in args {
+          match a {
+            NdBlock { block } => { if block[0].name == "default ref" { return true; } },
+            _ => {}
+          }
+        }
+      }
+      false
+    },
+    NdBlock { block } => {
+      for o in block[0].operators {
+        if answers_call_buffer(o, tail && o#index == len(block[0].operators) - 1) {
+          return true;
+        }
+      }
+      false
+    },
+    NdLoop { block } => { for o in block[0].operators { if answers_call_buffer(o, false) { return true; } } false },
+    NdInsert { items } => { for o in items { if answers_call_buffer(o, false) { return true; } } false },
+    NdIf { cond, t, f } => answers_call_buffer(t, tail) || answers_call_buffer(f, tail),
+    NdSet { inner } => answers_call_buffer(inner, false),
+    _ => false
+  }
 }
 
 // `Parser::parse_append_text` into a new work text: cleared, each operand appended
