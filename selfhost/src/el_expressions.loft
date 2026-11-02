@@ -2286,6 +2286,9 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
     el::refuse(e, "an assignment to a nullable place");
     return ex(ir::NdNull, ir::TyVoid);
   }
+  if op == "=" && el_types::base(pt) is TyVector {
+    return vector_field_bind(e, vars, el_ir::unspan(p.code), pt, x);
+  }
   v = stored(e, vars, x, pt);
   if v == null {
     refuse_known(e, x.tp, "a place assignment its type converts: {type_kind(x.tp)} to {type_kind(pt)}");
@@ -2297,6 +2300,93 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
     return ex(ir::NdNull, ir::TyVoid);
   }
   ex(w!, ir::TyVoid)
+}
+
+// `parse_assign_op_inner`'s whole-vector arm for a vector field of a record local (P154): the
+// field cleared (`clear_vector_field`: a plain field, no keyed sibling, no field index) and the
+// value appended.  An owned local is appended as it is; a borrowing local, and a call, are first
+// copied into a `__p154_rhs_N` of their own (a call borrowing nothing is held there as it is),
+// so clearing the field cannot destroy what the value still reads.  A call whose return buffer
+// could be the field itself (`buffer_is_the_place`) and any other value are refused by name.
+fn vector_field_bind(e: el::El, vars: el_vars::Vars, place: ir::Node, pt: ir::TypeT, x: Ex) -> Ex {
+  base = -1;
+  match place {
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name == "OpGetField" && len(args) == 3 {
+        match el_ir::unspan(args[0]) { NdVar { n } => { base = n; }, _ => {} }
+      }
+    },
+    _ => {}
+  }
+  pd = if base >= 0 { heap_def(el_vars::tp(vars, base)) } else { -1 };
+  inner = match el_types::base(pt) { TyVector { inner: i } => i, _ => ir::TyUnknown { n: 0 } };
+  if pd < 0 || el::def(e, pd).def_type != el::DT_STRUCT || has_keyed_field(e, pd) || x.tp is TyOptional || !(el_types::base(x.tp) is TyVector) || !el_types::is_equal(e, x.tp, ir::TyVector { inner: inner, dep: [] }) {
+    refuse_known(e, x.tp, "a vector field of this record bound whole: {type_kind(x.tp)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  nm = el_types::elem_name(e, inner);
+  rec = match el_types::base(inner) { TyReference { n: rn } => el::def(e, rn).known_type, _ => if nm == "" { -1 } else { el_schema::schema_type(e, nm) } };
+  if rec < 0 {
+    el::refuse(e, "a vector field of this element type bound whole: {type_kind(inner)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  rt = ir::NdInt { n: rec };
+  clear = el_ir::cl(e, "OpClearVector", [place]);
+  val = el_ir::unspan(x.code);
+  match val {
+    NdVar { n: rv } => {
+      if len(el_types::deps(el_vars::tp(vars, rv))) == 0 {
+        return ex(ir::NdInsert { items: [clear, el_ir::cl(e, "OpAppendVector", [place, x.code, rt])] }, ir::TyVoid);
+      }
+      tmp = el_vars::create_unique(vars, "_p154_rhs", ir::TyVector { inner: inner, dep: [] });
+      return ex(ir::NdInsert { items: [el_ir::v_set(tmp, ir::NdNull), el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: tmp }, x.code, rt]), clear, el_ir::cl(e, "OpAppendVector", [place, ir::NdVar { n: tmp }, rt])] }, ir::TyVoid);
+    },
+    NdCall { def_nr, args } => {
+      // `place_buffer_of`: a call handed a hidden buffer whose other arguments leave the record
+      // alone could be delivered straight into the field — not carried yet.
+      if len(args) > 0 {
+        match el_ir::unspan(args[-1]) {
+          NdVar { n: bv } => {
+            if starts_with(el_vars::name_of(vars, bv), "__ref_") {
+              reads_base = false;
+              for a in args[..-1] {
+                if el_ir::reads_var(a, base) {
+                  reads_base = true;
+                }
+              }
+              if !reads_base {
+                el::refuse(e, "a vector field bound from a call that could fill it in place");
+                return ex(ir::NdNull, ir::TyVoid);
+              }
+            }
+          },
+          _ => {}
+        }
+      }
+      tmp = el_vars::create_unique(vars, "_p154_rhs", ir::TyVector { inner: inner, dep: [] });
+      fill: vector<ir::Node> = [];
+      if len(el_types::deps(x.tp)) > 0 {
+        fill = [el_ir::v_set(tmp, ir::NdNull), el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: tmp }, x.code, rt])];
+      } else {
+        el::refuse(e, "a vector field bound from a call that answers its own vector");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      return ex(ir::NdInsert { items: fill + [clear, el_ir::cl(e, "OpAppendVector", [place, ir::NdVar { n: tmp }, rt])] }, ir::TyVoid);
+    },
+    _ => {}
+  }
+  refuse_known(e, x.tp, "a vector field bound whole from this value");
+  ex(ir::NdNull, ir::TyVoid)
+}
+
+// Does the struct hold a keyed collection (whose views a clear of a sibling resets)?
+fn has_keyed_field(e: el::El, d: integer) -> boolean {
+  for a in el::def(e, d).attributes {
+    if keyed_kind(a.typedef[0] ?? ir::TyVoid) {
+      return true;
+    }
+  }
+  false
 }
 
 // `field += [items]` on a collection field of a record local (`parse_vector_inner` with
