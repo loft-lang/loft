@@ -1097,7 +1097,7 @@ impl<'a> FnWriter<'a> {
         Ok((self.park_work_texts(out), statements))
     }
 
-    /// A frame's work texts — the `__work…` texts the parser builds a text into, owned by
+    /// `@FR-R-WorkPark`: a frame's work texts — the `__work…` texts the parser builds a text into, owned by
     /// this frame — keep their room between its calls: each is taken from a slot of its own
     /// (per function and thread) at entry, empty, and parked there at each release instead of
     /// freed.  Taking empties the slot, so a recursive frame takes nothing and frees its own;

@@ -134,9 +134,19 @@ static int loft_text_le(loft_str a, loft_str b) {
     return loft_str_cmp(a, b) <= 0;
 }
 
+/* The compare reads `len` bytes of both only where both hold `len`; gcc's overread check, which
+ * cannot see a text's length beside its pointer (a parked work text made it look at the empty
+ * literal's one byte), would fail strict mode on a read that does not run. */
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 11
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overread"
+#endif
 static int loft_str_eq(loft_str a, loft_str b) {
     return a.len == b.len && (a.len == 0 || memcmp(a.p, b.p, a.len) == 0);
 }
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 11
+#pragma GCC diagnostic pop
+#endif
 
 /* Unicode scalar values in `s`: the bytes that do not continue a UTF-8 sequence. */
 static size_t loft_chars(loft_str s) {

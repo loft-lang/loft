@@ -17,6 +17,8 @@
 // w3  two copies of one inner record (kids 0 1 2), each given a fourth kid (10, then 20): each
 //     keeps its own — 10 * 100 + 20 = 1020.  Unsealed, the second push lands in the first's
 //     slot: 2020.
+// w4  a copy of the inner record has its kid 1 set to 50; the source's kid 1 is still 1: 1.
+//     Written through the copy's shared elements, it would read 50.
 //
 // @falsified-at: pending
 
@@ -91,6 +93,19 @@ fn two(t: Outer) -> integer {
   (if ea { ea.n } else { -1 }) * 100 + (if eb { eb.n } else { -1 })
 }
 
+fn bump(t: Outer) -> integer {
+  a = Outer { inner: t.inner, tag: 1 };
+  e = a.inner.ks[1];
+  e.n = 50;
+  f = t.inner.ks[1];
+  f.n
+}
+
+fn w4() -> integer {
+  o = mk_outer(3);
+  bump(o)
+}
+
 fn w1a() -> integer {
   t = build_seq(7, 8, 9);
   at(t, -1)
@@ -122,5 +137,6 @@ fn main() {
   assert(w1c() == -1, "w1 -4: {w1c()}");
   assert(w2() == 99, "w2: {w2()}");
   assert(w3() == 1020, "w3: {w3()}");
+  assert(w4() == 1, "w4: {w4()}");
   println("ok");
 }

@@ -2887,9 +2887,19 @@ this rule is the same idea for a whole tree: depth, variants, vectors of records
 bytes that view the frame.
 
 **As built (C, on by default).**  A twin `f__tr<params>[r]` is `f` written with its transient
-locals as arena structs (`lt_<group>`, one member per `(offset, kind)` the twins touch); a ROOT
-SITE binds a local from a producer whose twin can be written, takes an arena mark there and
-gives it back where the scope pass frees the local.  The writer is the allow-list: an
+locals as arena structs (`lt_<group>`, one member per `(offset, kind)` the twins touch) and its
+vectors of records as arena vectors; a producer answers a record or a `vector` of records (the
+latter through its `main_vector` record, whose field 0 the twin answers).  A ROOT SITE binds a
+local from a producer whose twin can be written.  The frame takes ONE arena mark at entry and
+gives it back at every root's bind and free: sound because each root is bound once, every read
+of it — and of a local derived from it, `v[i]?` included, whose miss reads a zero record nothing
+writes — lies in the block of its bind and after it, and the roots' spans from bind to last read
+are apart; a site that fails this keeps the store form.  A buffer the caller handed the
+producer is dead at a transient site (its mint branch statically skipped).  Two copies are
+gone where the source is transient: a `text argument copy` of a transient text is the text
+itself (nothing writes the tree while it lives), and a call whose callee answers the caller's
+`&text` work buffer goes to that callee's `__wr` twin, its result read from the buffer, when it
+is read in the bind's block before the buffer is touched again.  The writer is the allow-list: an
 operation on a transient value no arm answers declines the twin, and the function keeps the
 store form.  Texts are COPIED into the arena (the views of the frame are a later step).  Two
 consequences of sharing, enforced in the writer: a transient tree may share records the store
@@ -2900,7 +2910,9 @@ SEALS its vectors (room cut to the length), so a push into the copy moves it rat
 writing into the source's spare room.  An element read counts a negative index from the end, as
 a store vector's does.  `(R-Destination)`'s rewrite is not applied inside a twin: the placed
 buffer and the move are what its arms answer.  Measured: pluginabi `check_request` 955 → 553 µs
-on gcc (4.35× → 2.1× its twin), 965 → 673 µs on clang (3.82× → 2.6×), same hash.  Switch
+on gcc (4.35× → 2.1× its twin), 965 → 673 µs on clang (3.82× → 2.6×); zttext
+`flow_layout_full`, with `(R-FnRefBuffer)`'s frame clause and `(R-WorkPark)`, 6.55 → 3.98 ms on
+gcc (4.51× → 2.74×), 6.83 → 4.01 ms on clang (4.50× → 2.76×); same hashes.  Switch
 `LOFT_NO_TRANSIENT=1`; `LOFT_TRACE_TRANSIENT=1` names each twin and site written and each
 declined, with the reason.  Sites: `c::body::transient`; guards
 `tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft`,
@@ -4170,6 +4182,19 @@ reads such a `main` as a possible leak, and it is a working set.
                  target fills one store per frame instead of minting one per call.  A
                  target that keeps or returns some other record is unaffected: its
                  answer is not the handed store, and the protocol takes it as before.
+                 THE FRAME CLAUSE: the kept store survives the call — taken from a slot of
+                 the function's own (per thread) before the loop and parked there after
+                 it, in place of the free; taking empties the slot, so a recursive or
+                 re-entered frame mints its own, and parking into a full slot frees.
+                 Nothing is parked on a `par` worker.
+
+  (R-WorkPark)   on the C, a frame's WORK TEXTS — the `__work…` texts the parser builds
+                 a text into, owned by the frame — keep their room between its calls:
+                 taken EMPTY from a slot of the function's own (per thread) at entry, and
+                 parked there at each release in place of the free.  A taken text is an
+                 empty text, as a fresh one is; taking empties the slot, so a recursive
+                 frame takes nothing.  Nothing is parked on a `par` worker, whose thread
+                 ends with its job.
 
   (R-Leaf)       a function whose body calls no user function and no fn-ref (a store
                  bracket, as in (R-LeafChain), is none) — a LEAF — is emitted without a shadow-stack frame push and without a fn-ref
@@ -4205,6 +4230,19 @@ run executes 8 % FEWER instructions — the dropped clear's work moved, gcc inli
 `seg`; clang reads them the same).  Switch `LOFT_NO_FNREF_BUFFER=1`, trace
 `LOFT_TRACE_FNREF_BUFFER=1`, census `R-FnRefBuffer`.  Guard
 `tests/scripts/a-function-value-fills-its-callers-record.loft`.
+
+**The frame clause and `(R-WorkPark)`, in words.**  @PLN210 P13.  zttext's `token_width` runs once
+per token and mints the resolver's `Style` store each call, since `(R-FnRefBuffer)` kept it only
+across the loop inside one call; and every text builder (`buf_slice_text`'s caller, the layout's
+argument copies) freed its work text at exit and grew it again, character by character, on the
+next call.  Both now keep their room in a per-function, per-thread slot.  The values cannot move:
+the kept store is the binding's alone and the target refills it, as across passes; a taken work
+text is empty, as a fresh one is.  A slot taken by one frame is empty for a frame below it, so
+recursion and re-entry mint their own.  A `par` worker parks nothing (`loft_no_park`): its thread
+ends with the job and the job runs on its own store table.  Measured on `flow_layout_full` by
+hand: the work park −6.8 % instructions; the frame clause 88.7 → 78.5 M instructions a run (gcc).
+Switches `LOFT_NO_FNREF_PARK`, `LOFT_NO_WORK_PARK`.  Sites: `FnWriter::loop_stmt`,
+`FnWriter::park_work_texts`, `loft_park_*` / `loft_wpark_*` in the C runtime.
 
 **In words.** @PLN157 N4.  A runtime fault inside a leaf keeps its exact position
 and loses only the innermost frame NAME from the chain.  Switch

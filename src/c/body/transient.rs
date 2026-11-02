@@ -67,7 +67,8 @@ impl Member {
             Member::Enum => "e",
             Member::Text => "t",
             Member::Vector => "v",
-            Member::Record(_) => "r",
+            // Two variants may hold different records at one offset: the group names it.
+            Member::Record(g) => return format!("r{off}_{g}"),
         };
         format!("{p}{off}")
     }
@@ -272,6 +273,20 @@ impl Cx<'_> {
 
     /// Is group `g` one of `groups`, or the holder record of a vector of one (the store a
     /// collection local is built in, `main_vector<T>`)?
+    /// A record of scalars and texts alone — the element a vector producer may build in the
+    /// arena (zttext's `Run`); one that holds a vector or a record keeps the store form.
+    fn tr_flat(&self, g: u16) -> bool {
+        match &self.stores.types[g as usize].parts {
+            Parts::Struct(fs) => fs.iter().all(|f| {
+                !matches!(
+                    self.stores.types[f.content as usize].parts,
+                    Parts::Vector(_) | Parts::Struct(_) | Parts::EnumValue(..) | Parts::Enum(_)
+                )
+            }),
+            _ => false,
+        }
+    }
+
     fn tr_in_groups(&self, v: TrVar, groups: &BTreeSet<u16>) -> bool {
         match v {
             TrVar::Rec(g) => {
@@ -623,10 +638,11 @@ pub(crate) fn site_plan(cx: &Cx, d: u32) -> Option<TrFn> {
         if let Value::Set(v, x) = n
             && let Value::Call(f, args) = x.unspan()
             && let Some(b) = producer_buffer(cx, *f, args)
-            && matches!(
-                cx.tr_var(cx.data.def(*f).returned()),
-                Some(TrVar::Rec(_) | TrVar::Vec(Elem::Rec(_)))
-            )
+            && match cx.tr_var(cx.data.def(*f).returned()) {
+                Some(TrVar::Rec(_)) => true,
+                Some(TrVar::Vec(Elem::Rec(g))) => cx.tr_flat(g),
+                _ => false,
+            }
             && args
                 .iter()
                 .all(|a| !a.any_node(&mut |m| matches!(m, Value::Var(w) if *w == *v)))
@@ -641,13 +657,6 @@ pub(crate) fn site_plan(cx: &Cx, d: u32) -> Option<TrFn> {
     let mut root_vars: Vec<u16> = roots.iter().map(|(v, _)| *v).collect();
     root_vars.sort_unstable();
     root_vars.dedup();
-    for f in &calls {
-        cx.tr_twin(TrKey {
-            d: *f,
-            params: 0,
-            result: true,
-        })?;
-    }
     let vars = def.variables();
     let mut tf = TrFn::default();
     // One arena mark for the frame, taken at its entry: every root's bind and free give it
@@ -692,6 +701,14 @@ pub(crate) fn site_plan(cx: &Cx, d: u32) -> Option<TrFn> {
             eprintln!("[transient] site in {} declined: {why}", def.name());
         }
         return None;
+    }
+    // The producers' twins only for a site that can hold them: a declined site leaves none.
+    for f in &calls {
+        cx.tr_twin(TrKey {
+            d: *f,
+            params: 0,
+            result: true,
+        })?;
     }
     Some(tf)
 }
@@ -1019,6 +1036,14 @@ impl FnWriter<'_> {
     pub(crate) fn transient(mut self, tf: TrFn) -> Self {
         if let Some(p) = tf.phantom {
             self.params[p as usize] = false;
+            // A vector result the IR never mints — its local promoted into the caller's
+            // buffer, which exists already — is the twin's own from its entry.
+            if matches!(tf.vars.get(&p), Some(TrVar::Vec(_))) {
+                let n = self.var(p);
+                self.decls.push(format!(
+                    "{n} = (loft_ta_vec *) loft_ta_alloc(sizeof(loft_ta_vec));"
+                ));
+            }
         }
         if !tf.roots.is_empty() {
             self.decls
@@ -1216,6 +1241,11 @@ impl FnWriter<'_> {
                 return Err("an element of a record".into());
             };
             return Ok(lv);
+        }
+        // An element appended to a record's vector field: not taken yet — its twins reach
+        // enum layouts whose variants overlap, which the struct derivation does not merge.
+        if crate::env_once!(std::env::var("LOFT_TRANSIENT_FIELD_APPEND").is_err()) {
+            return Err("an element of a record's vector field".into());
         }
         let Some(Value::Int(parent)) = cargs.get(1).map(Value::unspan) else {
             return Err("an element of a record of no known type".into());
@@ -1540,12 +1570,12 @@ impl FnWriter<'_> {
                 let Place::Vec(lv, _) = self.tr_place(&args[0], ind)? else {
                     return Err("a clear of a record".into());
                 };
-                // Before its mint the vector is no vector yet: nothing to clear.
-                let p = lv.trim_start_matches("(*").trim_end_matches(')');
-                if lv.starts_with("(*") {
-                    self.line(ind, &format!("if ({p}) {lv}.n = 0;"));
-                } else {
-                    self.line(ind, &format!("{lv}.n = 0;"));
+                // A vector local before its mint is no vector yet: nothing to clear.
+                match lv.strip_prefix("(*").and_then(|r| r.strip_suffix(')')) {
+                    Some(p) if p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') => {
+                        self.line(ind, &format!("if ({p}) {lv}.n = 0;"));
+                    }
+                    _ => self.line(ind, &format!("{lv}.n = 0;")),
                 }
                 void()
             }
@@ -1615,7 +1645,7 @@ impl FnWriter<'_> {
                             let ptr = self.tr_ptr(&cargs[0], ind)?;
                             self.line(ind, &format!("{lhs} = {ptr};"));
                         }
-                        ("OpGetVectorNullable", TrVar::Rec(g)) => {
+                        ("OpGetVectorNullable" | "OpGetVector", TrVar::Rec(g)) => {
                             let Place::Vec(lv, _) = self.tr_place(&cargs[0], ind)? else {
                                 return Err("an element of a record".into());
                             };
