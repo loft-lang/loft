@@ -144,6 +144,45 @@ fn the_advice_names_the_callee_the_disturbance_came_through() {
     }
 }
 
+/// The advice names a `match` payload binding as the author WROTE it.  The binding is lowered
+/// to `xs#1` (a second binding of one name), and the sentence used to print that — a name the
+/// author cannot find in the source or type back.
+#[test]
+fn the_advice_names_a_payload_binding_as_written() {
+    let dir = std::env::temp_dir().join(format!("loft-disturb-name-{}", std::process::id()));
+    loft::file_access::create_dir_all(&dir).expect("scratch dir");
+    let file = dir.join("payload.loft");
+    loft::file_access::write(
+        &file,
+        "struct N { xs: vector<integer> }\n\
+         struct S { nodes: vector<N> }\n\
+         fn add(s: S, n: N) -> integer { s.nodes += [n]; len(s.nodes) - 1 }\n\
+         fn live_after(s: S) -> integer {\n\
+           match s.nodes[0] { N { xs } => { k = add(s, N { xs: [] }); k + len(xs) } }\n\
+         }\n\
+         fn main() { s = S { nodes: [N { xs: [1, 2] }] }; assert(live_after(s) == 3, \"k + len\"); }\n",
+    )
+    .expect("write probe");
+    let out = loft()
+        .arg("--interpret")
+        .arg(&file)
+        .env("LOFT_NO_CACHE", "1")
+        .output()
+        .expect("failed to invoke loft");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "the probe must run:\n{err}");
+    assert!(
+        err.contains(
+            "in `live_after`, `xs` was copied out of `s` because `s` grows inside the call to `add`"
+        ),
+        "the advice must name the binding `xs`:\n{err}"
+    );
+    assert!(
+        !err.contains("xs#"),
+        "no internal binding name may reach the author:\n{err}"
+    );
+}
+
 /// The summary admits exactly the callees that disturb a caller's container through a parameter.
 /// `mk` is the control that matters most: it GROWS `__retbuf.els` building its own result, and
 /// counting a hidden return buffer as a caller's container would report a disturbance at every

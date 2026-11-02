@@ -414,15 +414,30 @@ pub struct Variable {
 
 /// The name an author WROTE for a compiler-renamed binding, for a message the author reads.
 ///
-/// A `match`/`is` payload binding is lowered to `_mv_<field>_<n>`; the author wrote `<field>`.
-/// Every other name is answered as it is.
+/// A `match`/`is` payload binding is lowered to `_mv_<field>_<n>`, and a second loop or arm
+/// binding of one name to `<name>#<n>` ([`Function::loop_binding`]); the author wrote `<field>`
+/// and `<name>`.  Every other name is answered as it is.
 #[must_use]
 pub fn author_spelling(name: &str) -> String {
+    let name = without_binding_number(name);
     match name.strip_prefix("_mv_") {
         Some(rest) => rest
             .rsplit_once('_')
             .map_or_else(|| rest.to_string(), |(n, _)| n.to_string()),
         None => name.to_string(),
+    }
+}
+
+/// `f#1` → `f`: the numeric suffix [`Function::loop_binding`] gives a second binding of one
+/// name.  Only that suffix: `f#index` and `f#count` are names the author writes themselves.
+fn without_binding_number(name: &str) -> &str {
+    match name.rsplit_once('#') {
+        Some((written, nr))
+            if !written.is_empty() && !nr.is_empty() && nr.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            written
+        }
+        _ => name,
     }
 }
 
@@ -1779,17 +1794,7 @@ impl Function {
     /// names the author writes themselves.
     #[must_use]
     pub fn written_name(&self, var_nr: u16) -> &str {
-        let name = self.name(var_nr);
-        match name.rsplit_once('#') {
-            Some((written, nr))
-                if !written.is_empty()
-                    && !nr.is_empty()
-                    && nr.bytes().all(|b| b.is_ascii_digit()) =>
-            {
-                written
-            }
-            _ => name,
-        }
+        without_binding_number(self.name(var_nr))
     }
 
     pub fn set_scope(&mut self, var_nr: u16, scope: u16) {
