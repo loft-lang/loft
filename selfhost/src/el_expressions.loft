@@ -1242,7 +1242,13 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SPostfix { at, op, e: pe } => postfix(e, vars, at, op, pe),
     SVarAttr { var, attr, arg, tp } => var_attr(e, vars, var, attr, arg, tp),
     SJump { kind, e: je } => jump(e, vars, kind, je),
-    SIndex { at, e: ie, keys, range, hi, limit, spatial } => index(e, vars, at, ie, keys, range || len(hi) > 0 || limit != null || spatial),
+    SIndex { at, e: ie, keys, range, inclusive, hi, limit, spatial } => {
+      if range && limit == null && !spatial && len(keys) <= 1 && len(hi) <= 1 {
+        slice(e, vars, ie, keys, hi, inclusive)
+      } else {
+        index(e, vars, at, ie, keys, range || len(hi) > 0 || limit != null || spatial)
+      }
+    },
     SVecLit { items: _ } => vector_value(e, vars, n).x,
     SAs { at, e: ae, tp: at_tp, checked } => cast_expr(e, vars, ae, at_tp),
     SParen { e: pe } => if pe == null { ex(ir::NdNull, ir::TyUnknown { n: 0 }) } else { expression(e, vars, pe!) },
@@ -4173,7 +4179,27 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
   if !e.first_pass && !el_types::is_equal(e, t.tp, f.tp) {
     el::refuse(e, "`if` arms of different types: {type_kind(t.tp)}, {type_kind(f.tp)}");
   }
+  // A read of a text variable borrows it (`parse_var`'s `depending`), so a text `if` whose arm
+  // answers one — bare or sliced — is typed as borrowing that variable (`merge_dependencies`);
+  // the elaborator reads a text without that dep, so the join is refused by name until it does.
+  if !e.first_pass && el_types::base(t.tp) is TyText && (reads_text_var(e, vars, t.code) || reads_text_var(e, vars, f.code)) {
+    el::refuse(e, "a text `if` whose arm answers a text variable or a slice of one");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
   ex(el_ir::v_if(c.code, t.code, f.code), t.tp)
+}
+
+// Does an `if` arm (its block's tail, through nested arms) answer a text variable, or a slice of
+// one?
+fn reads_text_var(e: el::El, vars: el_vars::Vars, arm: ir::Node) -> boolean {
+  match arm {
+    NdSpan { inner } => reads_text_var(e, vars, inner),
+    NdBlock { block } => len(block[0].operators) > 0 && reads_text_var(e, vars, block[0].operators[-1]),
+    NdIf { cond: _, t, f } => reads_text_var(e, vars, t) || reads_text_var(e, vars, f),
+    NdVar { n } => el_types::base(el_vars::tp(vars, n)) is TyText,
+    NdCall { def_nr, args } => el::def(e, def_nr).name == "OpGetTextSub" && (el_ir::unspan(args[0] ?? ir::NdNull) is NdVar),
+    _ => false
+  }
 }
 
 // A block whose last statement is replaced by `tail`, typed `t`; null when `code` is no block or
@@ -5428,6 +5454,37 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
     return Built { x: ex(el_ir::v_block(ls, el_vars::tp(vars, v), "Vector"), el_vars::tp(vars, v)), items: codes, elem: in_t };
   }
   Built { x: ex(ir::NdInsert { items: ls }, ir::TyVoid), items: codes, elem: in_t }
+}
+
+// `Parser::parse_text_index`'s range: `s[lo..hi]` is `OpGetTextSub(s, lo, hi)` — an open start
+// `0`, an open end `i32::MAX`, `..=` one past its bound.  A range over anything but a text (a
+// vector slice: `Slice-Value`'s iterator lowering) is refused by name.
+fn slice(e: el::El, vars: el_vars::Vars, c: integer?, lo: vector<integer>, hi: vector<integer>, inclusive: boolean) -> Ex {
+  if c == null {
+    el::refuse(e, "an index that is a range, a key list or a limit");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  x = expression(e, vars, c!);
+  if !(el_types::base(x.tp) is TyText) {
+    if !el_types::is_unknown(x.tp) {
+      el::refuse(e, "an index that is a range, a key list or a limit");
+    }
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  bounds: vector<ir::Node> = [];
+  for b in [lo, hi] {
+    if len(b) == 0 {
+      bounds += [ir::NdInt { n: if b#index == 0 { 0 } else { 2147483647 } }];
+      continue;
+    }
+    y = expression(e, vars, b[0]!);
+    if !el_types::is_unknown(y.tp) && !(y.tp is TyInteger) {
+      el::refuse(e, "a text slice bound that is not an integer: {type_kind(y.tp)}");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    bounds += [if b#index == 1 && inclusive { el_ir::cl(e, "OpAddInt", [y.code, ir::NdInt { n: 1 }]) } else { y.code }];
+  }
+  ex(el_ir::cl(e, "OpGetTextSub", [x.code] + bounds), ir::TyText { dep: [] })
 }
 
 // `Parser::parse_index` / `parse_vector_index` for one index into a vector, read as a value: the
