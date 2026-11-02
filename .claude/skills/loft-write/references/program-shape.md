@@ -17,9 +17,11 @@ fn find_min<T: Comparable>(v: vector<T>) -> T { ... }
 ```
 
 Structural satisfaction: if the methods exist, the type satisfies the interface.
-No `impl` block needed. Built-in types satisfy `Ordered`, `Equatable`, `Addable`,
-`Numeric`, `Scalable`, `Printable` automatically, and EVERY type — a struct, vector,
-tuple, enum — is `Equatable` (@C91).
+No `impl` block needed. The built-in interfaces are `Ordered`, `Equatable`, `Addable`,
+`Numeric`, `Subtractable`, `Scalable`, `Printable` and `Walkable`; each permits exactly the
+operations the Generics chapter's table lists (`tests/docs/25-generics.loft` — `Addable` is
+`+` only, `Numeric` is `*` and unary `-`, and no built-in type is `Scalable`).  EVERY type — a
+struct, vector, tuple, enum — is `Equatable` (@C91).
 
 ## Backtick strings (`` `...` ``)
 

@@ -89,11 +89,13 @@ consumer's loft itself carries the needed compiler support.)
      `published` ISO-8601 UTC timestamp), bumps the top-level `updated`, then hands off to
      `registry-sign.sh`, which stages `index.json` + `index.json.sig` **together**, signs, and
      **commits + pushes DIRECTLY to `main` — no PR**.
-   - **Foreign submissions** (an author without signing access): the current route is a
-     **staging file** `submissions/<name>-<version>.json` in a PR against
+   - **Foreign submissions** (an author without signing access): either a **staging file**
+     `submissions/<name>-<version>.json` in a PR against
      `loft-lang/registry` — it never touches `index.json`; the maintainer run vets it
-     (`scripts/vet-lib.sh`) and folds + re-signs atomically (REGISTRY_SUBMIT.md § 4 (recommended); a
-     direct `index.json` PR still works but is the older route). Preview your entry
+     (`scripts/vet-lib.sh`) and folds + re-signs atomically — or the direct `index.json`
+     PR the registry repo's own `SUBMITTING.md` still documents; only the maintainer half
+     of the staging route is wired (REGISTRY_SUBMIT.md § 4 says what that means for a
+     submitter). Preview your entry
      first with `loft publish --dry-run`; the maintainer-side wrapper for the whole
      fold-and-sign run is `loft maintain-registry`.
    Either way, editing the JSON:

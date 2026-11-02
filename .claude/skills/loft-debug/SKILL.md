@@ -27,8 +27,9 @@ Reach for these before reading code or adding an `eprintln` (homes: CLAUDE.md §
 switches, [RUN_BOUNDS.md](../../../doc/claude/RUN_BOUNDS.md)):
 
 - *Which line gave this variable its type or its deps?* `LOFT_LOG=type_timeline:<var>`,
-  with `LOFT_TIMELINE_BT=1` for the stack; it shows pass 1 and pass 2 separately, which is
-  where a dep that "keeps coming back" usually comes from.
+  with `LOFT_TIMELINE_BT=1` for the stack; it logs every write in both parser passes, in
+  order and unlabelled, each with the compiler site that made it (`origin=… at file:line`)
+  — a dep that "keeps coming back" is usually a second-pass write.
 - *What does the function's variable table really hold?* `LOFT_VAR_TABLE=<fn>` — every
   dep resolved to `name(index)`, with OWNS / skipfree flags.
 - *Which free released the store a later read touched?* `LOFT_POISON=1` (freed bytes read
@@ -220,7 +221,7 @@ are evaluated only when the branch fires.
 |---|---|---|
 | `call` | `Parser::call` after `find_fn` | "Which def did the parser resolve, and was it skipped as Generic?" |
 | `field` | `Parser::field` after attr lookup | "Did method dispatch find the attribute, what's the receiver type?" |
-| `generic` | `predict_generic_return_type` + `try_generic_instantiation` | "What did first-pass predict?  What did second-pass instantiate?" |
+| `generic` | `predict_generic_return_type` + `try_generic_instantiation` + `derive_monomorph_return_deps` | "What did first-pass predict?  What did second-pass instantiate?  Which return deps did the instance get?" |
 | `match` | `expect_match_arm_arrow` | "What arrow did the parser see at the arm boundary?" |
 
 ### Adding a new category — selective rule

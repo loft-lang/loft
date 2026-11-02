@@ -7,10 +7,6 @@ landing, the standard shape in SKILL.md is the right one.*
 
 ## Opening one
 
-Use when the deliverable is **mechanism understanding before fix design** —
-multiple failure clusters to catalogue, where source-reading alone won't converge
-and the fix-design decision can't be made without the catalogue.
-
 1. Identity + flat directory as above, README from the **investigation** template;
    add a `probes/` subdirectory.
 2. **Stage A first — write probes before reading source.**  Probes are the
