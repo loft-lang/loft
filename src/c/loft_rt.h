@@ -1109,17 +1109,22 @@ static uint32_t loft_text_char(loft_str t, int64_t from) {
 }
 
 /* OpAppendCharacter: the null character appends nothing.  An ASCII character into a buffer with
- * room is one store and a length bump (`-DLOFT_NO_SHORT_APPEND` encodes and pushes it). */
-static void loft_push_code(loft_text *t, uint32_t c) {
+ * room is one store and a length bump (`-DLOFT_NO_SHORT_APPEND` encodes and pushes it), always
+ * inlined: in a large unit clang left the whole function a call per character (zttext's
+ * `materialise` 3.7x its twin, 2.3x inlined); the encoding and the growth stay out of line. */
+LOFT_COLD static void loft_push_code_slow(loft_text *t, uint32_t c) {
+    char buf[8]; /* loft_utf8 writes at most 4; the room keeps gcc's bounds check quiet */
+    size_t n = c == 0 ? 0 : loft_utf8(c, buf);
+    loft_push(t, buf, n);
+}
+LOFT_HOT_INLINE void loft_push_code(loft_text *t, uint32_t c) {
 #ifndef LOFT_NO_SHORT_APPEND
-    if (c - 1u < 0x7Fu && t->len < t->cap) {
+    if (LOFT_LIKELY(c - 1u < 0x7Fu && t->len < t->cap)) {
         t->p[t->len++] = (char) c;
         return;
     }
 #endif
-    char buf[8]; /* loft_utf8 writes at most 4; the room keeps gcc's bounds check quiet */
-    size_t n = c == 0 ? 0 : loft_utf8(c, buf);
-    loft_push(t, buf, n);
+    loft_push_code_slow(t, c);
 }
 
 /* A function value: the definition it names (LOFT_NULL for the absent one) and the closure
