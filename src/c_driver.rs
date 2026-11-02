@@ -313,6 +313,12 @@ struct WasmToolchain {
     /// or no WASI libc links under neither, and is a toolchain to install, said before the
     /// program's own C is compiled.
     links: bool,
+    /// Whether this clang takes `-mllvm -wasm-use-legacy-eh=false` (LLVM 19 and later).  An
+    /// older one has only the legacy encoding, and a WASI host that refuses it says so when
+    /// the program runs.
+    standard_eh: bool,
+    /// Whether this clang's driver takes `--no-wasm-opt` (an older one is refused by it).
+    no_wasm_opt: bool,
 }
 
 /// Measured on each runner's packages (C10): Debian's wasi-libc lays its headers out for
@@ -366,12 +372,31 @@ fn wasm_toolchain() -> &'static WasmToolchain {
         } else {
             ("wasm32-wasi", reaches("wasm32-wasi"))
         };
+        // An optional flag is passed only where this clang knows it: a compile of an empty
+        // unit with the flag, which an older clang refuses as an unknown argument.
+        let takes = |flags: &[&str]| {
+            let mut probe = Spawn::new(Program::os(&cc));
+            probe.push_arg(format!("--target={triple}"));
+            probe.push_args(flags.iter().copied());
+            probe
+                .push_args(["-c", "-x", "c", "-", "-o"])
+                .push_arg(&probe_out);
+            let ok = probe
+                .run(b"int loft_probe(void) { return 0; }\n")
+                .is_ok_and(|r| r.status.success());
+            let _ = fa::remove_file(&probe_out);
+            ok
+        };
+        let standard_eh = takes(&["-mllvm", "-wasm-use-legacy-eh=false"]);
+        let no_wasm_opt = takes(&["--no-wasm-opt"]);
         WasmToolchain {
             cc,
             sysroot,
             ld,
             triple,
             links,
+            standard_eh,
+            no_wasm_opt,
         }
     })
 }
@@ -423,7 +448,7 @@ pub(crate) fn build_wasm(
     // current browser runs.
     if jumps {
         cmd.push_args(["-mllvm", "-wasm-enable-sjlj"]);
-        if !browser {
+        if !browser && tc.standard_eh {
             cmd.push_args(["-mllvm", "-wasm-use-legacy-eh=false"]);
         }
     }
@@ -435,8 +460,15 @@ pub(crate) fn build_wasm(
     // own `wasm-opt` (`--strip-dwarf -g` under `--names`), so clang's pass is skipped here.
     // And each loft function stays a frame of its own, so a trap's backtrace names the function
     // the author wrote, not the caller it was inlined into.
+    // A clang whose driver does not take `--no-wasm-opt` runs `wasm-opt` only for an
+    // optimised link, so a `--names` build there is unoptimised (the last `-O` wins).
     if names {
-        cmd.push_args(["--no-wasm-opt", "-fno-inline"]);
+        cmd.push_arg(if tc.no_wasm_opt {
+            "--no-wasm-opt"
+        } else {
+            "-O0"
+        });
+        cmd.push_arg("-fno-inline");
     }
     // A shim built for a page sees `LOFT_BROWSER`, as `c_shim::wasm_objects` defines it for
     // the Rust writer's page: there it can call the page's `loft_gl` imports.

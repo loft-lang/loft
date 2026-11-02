@@ -210,16 +210,20 @@ fn a_scalar_program_written_as_c_answers_what_the_interpreter_answers() {
 
 #[test]
 fn a_construct_outside_the_scalar_subset_is_refused_by_name() {
-    // A stdlib native the runtime has not ported is refused by its name, never written as C
-    // that answers differently.
-    // `host_output` is the browser host's channel, which the C runtime has not ported (@PLN203 C6).
-    let p = parsed("fn up() -> integer { host_output(\"up\"); 1 }\n");
+    // A native the C runtime has not ported is refused by its name, never written as C that
+    // answers differently.  Every native a program can call from the standard library has a C
+    // port, so the subject is one of loft's own binary that the runtime does not carry:
+    // `lib/engine_host`'s build swap (`in_binary_native`).
+    let p = parsed(
+        "fn swap_start(artifact: text) -> boolean;\n#native\n\
+         fn up() -> integer { if swap_start(\"x\") { 1 } else { 0 } }\n",
+    );
     let d = p.data.def_nr("n_up");
     let refusal = loft::c::emit_unit(&p.data, &p.database, &[d])
         .expect_err("a native without a C port is not carried");
-    assert_eq!(refusal.function, "host_output");
+    assert_eq!(refusal.function, "swap_start");
     assert!(
-        refusal.why.contains("native host_output"),
+        refusal.why.contains("native swap_start"),
         "names the construct: {refusal}"
     );
 }
