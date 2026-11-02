@@ -321,57 +321,19 @@ struct WasmToolchain {
     no_wasm_opt: bool,
 }
 
-/// Measured on each runner's packages (C10): Debian's wasi-libc lays its headers out for
-/// `wasm32-wasi` (and Ubuntu's clang keeps its wasm32 builtins under that name too), wasi-sdk ≥
-/// 25 and Homebrew's wasi-libc for `wasm32-wasip1` alone — so the triple is the first one a
-/// small program links under, `wasm32-wasip1` before `wasm32-wasi`, rather than assumed.  A clang named by
-/// `LOFT_WASM_CC` wins; on macOS Homebrew's LLVM comes before Apple's clang, which has no wasm
-/// target, with Homebrew's `wasm-ld` (a keg of its own) and wasi-libc's sysroot.
+/// The wasm32 C toolchain, from [`loft::platform::wasm_c_toolchain`] (which clang, sysroot and
+/// triple a WASI program links under), plus the optional flags this clang takes.
 fn wasm_toolchain() -> &'static WasmToolchain {
     static TC: std::sync::OnceLock<WasmToolchain> = std::sync::OnceLock::new();
     TC.get_or_init(|| {
-        let named = std::env::var("LOFT_WASM_CC").ok().filter(|s| !s.is_empty());
-        let (cc, ld) = match named {
-            Some(cc) => (cc, None),
-            None => {
-                loft::platform::host_wasm_clang().unwrap_or_else(|| ("clang".to_string(), None))
-            }
+        let found = loft::platform::wasm_c_toolchain();
+        let (cc, ld, sysroot) = (found.cc.clone(), found.ld.clone(), found.sysroot.clone());
+        let (triple, links) = match found.triple {
+            Some(t) => (t, true),
+            None => ("wasm32-wasi", false),
         };
-        let sysroot = std::env::var("WASI_SYSROOT")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .or_else(|| {
-                loft::platform::wasi_sysroot_candidates()
-                    .iter()
-                    .find(|p| fa::exists(p))
-                    .map(|p| (*p).to_string())
-            });
-        // A whole link, not the headers alone: a sysroot can answer to one triple while the
-        // compiler's builtins live under the other's directory (Ubuntu: headers for both,
-        // `libclang_rt.builtins` under `lib/wasi` only).
         let probe_out = loft::platform::scratch_dir()
             .join(format!("loft_wasm_probe_{}.wasm", std::process::id()));
-        let reaches = |triple: &str| {
-            let mut probe = Spawn::new(Program::os(&cc));
-            probe.push_arg(format!("--target={triple}"));
-            if let Some(root) = &sysroot {
-                probe.push_arg(format!("--sysroot={root}"));
-            }
-            if let Some(ld) = &ld {
-                probe.push_arg(format!("--ld-path={ld}"));
-            }
-            probe.push_args(["-x", "c", "-", "-o"]).push_arg(&probe_out);
-            let linked = probe
-                .run(b"#include <stdio.h>\nint main(void) { puts(\"\"); return 0; }\n")
-                .is_ok_and(|r| r.status.success());
-            let _ = fa::remove_file(&probe_out);
-            linked
-        };
-        let (triple, links) = if reaches("wasm32-wasip1") {
-            ("wasm32-wasip1", true)
-        } else {
-            ("wasm32-wasi", reaches("wasm32-wasi"))
-        };
         // An optional flag is passed only where this clang knows it: a compile of an empty
         // unit with the flag, which an older clang refuses as an unknown argument.
         let takes = |flags: &[&str]| {

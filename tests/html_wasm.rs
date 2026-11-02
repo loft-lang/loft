@@ -64,8 +64,11 @@ fn rustup_target_installed(triple: &str) -> bool {
 
 /// Can this machine build a C page (`--native-c --html`)?  Says why not, for the skip line.
 fn c_page_toolchain() -> bool {
-    if which("clang").is_none() || which("wasm-ld").is_none() {
-        eprintln!("SKIP: clang / wasm-ld not installed (the C page's toolchain)");
+    // The driver's own question — does a WASI program LINK — not "are clang and wasm-ld on
+    // PATH": a Windows runner image carries both with no WASI sysroot, and the C page then
+    // failed instead of skipping.
+    if loft::platform::wasm_c_toolchain().triple.is_none() {
+        eprintln!("SKIP: no wasm32 C toolchain that links a WASI program (the C page's toolchain)");
         return false;
     }
     true

@@ -1906,6 +1906,74 @@ pub fn wasi_sysroot_candidates() -> &'static [&'static str] {
     ]
 }
 
+/// The wasm32 C toolchain this host has, and the triple a small WASI program LINKS under:
+/// `(cc, wasm-ld, sysroot, triple)`, with `triple` `None` when it links under neither.  A
+/// clang named by `LOFT_WASM_CC` wins, then [`host_wasm_clang`], then `clang`; the sysroot is
+/// `WASI_SYSROOT` or the first of [`wasi_sysroot_candidates`] that exists.  Measured on each
+/// runner's packages (C10): Debian's wasi-libc lays its headers out for `wasm32-wasi`,
+/// wasi-sdk ≥ 25 and Homebrew's wasi-libc for `wasm32-wasip1` alone — so the triple is the
+/// first one a program links under, `wasm32-wasip1` before `wasm32-wasi`, rather than
+/// assumed.  A whole link, not the headers alone: a sysroot can answer to one triple while the
+/// compiler's builtins live under the other's directory, and a Windows runner image carries
+/// clang and `wasm-ld` with no WASI sysroot at all.  Asked once per process; the C driver
+/// and every test that needs the toolchain read this one answer.
+#[must_use]
+pub fn wasm_c_toolchain() -> &'static WasmC {
+    static TC: OnceLock<WasmC> = OnceLock::new();
+    TC.get_or_init(|| {
+        use process::{Program, Spawn};
+        let named = std::env::var("LOFT_WASM_CC").ok().filter(|s| !s.is_empty());
+        let (cc, ld) = match named {
+            Some(cc) => (cc, None),
+            None => host_wasm_clang().unwrap_or_else(|| ("clang".to_string(), None)),
+        };
+        let sysroot = std::env::var("WASI_SYSROOT")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                wasi_sysroot_candidates()
+                    .iter()
+                    .find(|p| crate::file_access::exists(p))
+                    .map(|p| (*p).to_string())
+            });
+        let probe_out = scratch_dir().join(format!("loft_wasm_probe_{}.wasm", std::process::id()));
+        let reaches = |triple: &str| {
+            let mut probe = Spawn::new(Program::os(&cc));
+            probe.push_arg(format!("--target={triple}"));
+            if let Some(root) = &sysroot {
+                probe.push_arg(format!("--sysroot={root}"));
+            }
+            if let Some(ld) = &ld {
+                probe.push_arg(format!("--ld-path={ld}"));
+            }
+            probe.push_args(["-x", "c", "-", "-o"]).push_arg(&probe_out);
+            let linked = probe
+                .run(b"#include <stdio.h>\nint main(void) { puts(\"\"); return 0; }\n")
+                .is_ok_and(|r| r.status.success());
+            let _ = crate::file_access::remove_file(&probe_out);
+            linked
+        };
+        let triple = ["wasm32-wasip1", "wasm32-wasi"]
+            .into_iter()
+            .find(|t| reaches(t));
+        WasmC {
+            cc,
+            ld,
+            sysroot,
+            triple,
+        }
+    })
+}
+
+/// [`wasm_c_toolchain`]'s answer.
+pub struct WasmC {
+    pub cc: String,
+    pub ld: Option<String>,
+    pub sysroot: Option<String>,
+    /// The triple a small WASI program links under; `None` when the toolchain is incomplete.
+    pub triple: Option<&'static str>,
+}
+
 /// How to install `wasm-opt` (binaryen), which a page that yields a frame needs for asyncify —
 /// what the `--html` driver says when it is missing, per host (C10, measured on each runner).
 #[must_use]
