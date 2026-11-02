@@ -90,6 +90,11 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     }
   }
   rb = el_vars::var(vars, "__retbuf");
+  // A vector result has its own delivery; the record delivery below does not apply to it.
+  if rb >= 0 && el_types::base(result) is TyVector {
+    code = vector_return(e, vars, code, rb, result);
+    rb = -1;
+  }
   // `ref_return`'s `Rename` (pass 1): a tail that is a local record, or a call's hidden buffer,
   // becomes the return buffer itself; pass 2 then builds into it as the argument it is.
   if rb >= 0 && e.first_pass {
@@ -895,6 +900,137 @@ fn null_sentinel_tail(e: el::El, code: ir::Node) -> boolean {
       }
     },
     _ => false
+  }
+}
+
+// `ref_return` at the body tail of a function returning a plain vector through its hidden
+// buffer.  A vector literal tail takes the buffer (`Rename` onto the literal's own `__vdb_N`, a
+// literal backing); a local built in two or more steps keeps its store and is copied into the
+// buffer at the tail (`Bind`, `materialize_vector_return_into`).  Either way the result borrows
+// the buffer — declared on the first pass, which callers read — and the body opens by clearing
+// it (`OpClearVector`, the first statement moved into that insert).  Any other tail is refused
+// by name.
+fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node {
+  d = e.context;
+  ba = attr_nr(el::def(e, d), "__retbuf");
+  if result is TyOptional || ba < 0 {
+    if !e.first_pass {
+      el::refuse(e, "a function returning a nullable vector, or one whose buffer is renamed");
+    }
+    return code;
+  }
+  lit = tail_syntax(e, vars.body);
+  literal = lit >= 0 && e.p.nodes[lit] is SVecLit;
+  // A body that is one vector literal of constants is hoisted into a `__const_<fn>` definition
+  // (`sole_vector_literal`, `const_vector_blocker`) — not carried yet.
+  if literal && constant_literal(e, lit) {
+    if !e.first_pass {
+      el::refuse(e, "a function answering a constant vector literal");
+    }
+    return code;
+  }
+  bl = match code { NdBlock { block } => block[0], _ => return code };
+  tail = if len(bl.operators) > 0 { el_ir::unspan(bl.operators[-1]) } else { ir::NdNull };
+  // A local built in two or more steps, counted on the first pass (`child_allocs` reads that
+  // pass's code); the second acts on the borrow the first declared.
+  local = match tail { NdVar { n } => if !vars.vars[n].argument && el_vars::tp(vars, n) is TyVector && (!e.first_pass || child_allocs(e, vars, code, n) >= 2) { n } else { -1 }, _ => -1 };
+  ret = el::def(e, d).returned[0];
+  if e.first_pass {
+    if (literal || local >= 0) && !el_types::deps(ret).contains(ba) {
+      e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
+    }
+    return code;
+  }
+  // A `null` tail answers the sentinel and delivers nothing into the buffer.
+  if null_sentinel_tail(e, code) {
+    return code;
+  }
+  if len(bl.operators) == 0 || !el_types::deps(ret).contains(ba) {
+    el::refuse(e, "a function returning a vector from this tail: {tail_kind(e, vars, code)}");
+    return code;
+  }
+  elem = match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid };
+  buf = rb;
+  if literal {
+    db = match tail {
+      NdBlock { block: tb } => if tb[0].name == "Vector" { el_types::deps(tb[0].result[0] ?? ir::TyVoid) } else { [] },
+      _ => []
+    };
+    if len(db) != 1 || !starts_with(el_vars::name_of(vars, db[0]), "__vdb_") {
+      el::refuse(e, "a function returning a vector literal not built in its own store");
+      return code;
+    }
+    rename_onto(e, vars, rb, db[0]);
+    buf = db[0];
+    bl.result = [el_types::without_deps(el_types::base(result))];
+  } else if local >= 0 {
+    nm = el_types::elem_name(e, elem);
+    rec = match el_types::base(elem) { TyReference { n } => el::def(e, n).known_type, _ => if nm == "" { -1 } else { el_schema::schema_type(e, nm) } };
+    if rec < 0 {
+      el::refuse(e, "a function returning a vector of this element type: {type_kind(elem)}");
+      return code;
+    }
+    own = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
+    b = ir::NdVar { n: rb };
+    bl.operators[-1] = el_ir::v_block([el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, ir::NdVar { n: local }, ir::NdInt { n: rec }]), b], own, "one_buffer_vec_copy");
+    bl.result = [own];
+  } else {
+    el::refuse(e, "a function returning a vector from this tail: {tail_kind(e, vars, code)}");
+    return code;
+  }
+  bl.operators[0] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [ir::NdVar { n: buf }]), bl.operators[0]] };
+  ir::NdBlock { block: [bl] }
+}
+
+// A vector literal whose items are made of literals and operators only — no variable, call or
+// nested literal: what `const_vector_blocker` admits, read conservatively.
+fn constant_literal(e: el::El, n: integer) -> boolean {
+  match e.p.nodes[n] {
+    SVecLit { items } => {
+      for it in items {
+        if !constant_expr(e, it) {
+          return false;
+        }
+      }
+      len(items) > 0
+    },
+    _ => false
+  }
+}
+
+fn constant_expr(e: el::El, n: integer) -> boolean {
+  match e.p.nodes[n] {
+    SInt { at: _ } => true,
+    SLong { at: _ } => true,
+    SWide { at: _ } => true,
+    SFloat { at: _ } => true,
+    SDouble { at: _ } => true,
+    SSingle { at: _ } => true,
+    SChar { at: _ } => true,
+    SBool { at: _ } => true,
+    SText { at: _ } => true,
+    SUnary { e: ue } => ue != null && constant_expr(e, ue!),
+    SParen { e: pe } => pe != null && constant_expr(e, pe!),
+    _ => false
+  }
+}
+
+// The expression a body's last statement is, when no `;` ends it, or -1.
+fn tail_syntax(e: el::El, body: integer) -> integer {
+  if body < 0 {
+    return -1;
+  }
+  match e.p.nodes[body] {
+    SBlock { stmts } => {
+      if len(stmts) == 0 {
+        return -1;
+      }
+      match e.p.nodes[stmts[-1]] {
+        SStmt { e: se, semi, orelse } => if se == null || semi || orelse != null { -1 } else { se! },
+        _ => -1
+      }
+    },
+    _ => -1
   }
 }
 
@@ -2460,6 +2596,9 @@ fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: inte
   push = push_op(inner);
   if e.first_pass && elm >= 0 {
     vars.allocs += [v];
+    // `new_record` on the first pass, before the struct has its layout, takes the element's
+    // vector store type through `vector_of` — the order the schema numbers it in.
+    vector_of(e, inner);
   }
   for it in items {
     if e.p.nodes[it] is SRepeat {
@@ -6147,6 +6286,11 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   elm = -1;
   if len(items) > 0 {
     elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: if value { [] } else { [v] } });
+    // The first pass makes each item through the local (`OpNewRecord(v, …)` into this temp):
+    // one record made through it, what `child_allocs` counts.
+    if e.first_pass && !value {
+      vars.allocs += [v];
+    }
   }
   xs: vector<Ex> = [];
   // A struct literal item is built into the element itself (`parse_item` with `elm`): typed here,
