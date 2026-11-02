@@ -60,6 +60,21 @@ pub(crate) struct FieldSinks {
     decline_place: bool,
 }
 impl Parser {
+    /// An abandoned construction's work-refs, marked skip-free so nothing frees what it never
+    /// built — on the SECOND pass only.  The marks go by NAME and the names persist from pass 1
+    /// into pass 2, so a pass-1 mark lands on whatever pass 2 mints under that name: an update
+    /// nested in an update's fields is reverted on pass 1 alone (pass 2 goes straight to the
+    /// update), and its mark fell on the function's first literal temporary, which then leaked
+    /// (loft#2371).  Where pass 2 reverts at the same site it marks for itself; the frees are
+    /// computed from pass 2.
+    pub(super) fn abandon_work_refs(&mut self, work: u16, work_p2: u16) {
+        if self.first_pass {
+            return;
+        }
+        self.vars.clean_work_refs(work);
+        self.vars.clean_work_refs_p2(work_p2);
+    }
+
     /// Does `name` name a TYPE — a collection former (`hash`, `vector`, …), a struct, an enum?
     /// `hash<Row[id]>()` is a type written where a value is, which has a refusal of its own; it
     /// is not a call given type arguments.
@@ -5832,8 +5847,7 @@ impl Parser {
                         && (self.lexer.peek_token(",") || self.lexer.peek_token("}")))
                 {
                     self.lexer.revert(nested_link);
-                    self.vars.clean_work_refs(nested_work);
-                    self.vars.clean_work_refs_p2(nested_work_p2);
+                    self.abandon_work_refs(nested_work, nested_work_p2);
                     value = Value::Null;
                     parent_tp = Type::Reference(td_nr, crate::data::Deps::none());
                     if let Value::Var(v) = code
@@ -6789,8 +6803,7 @@ impl Parser {
                 self.update_literals
                     .insert((self.context, literal_pos.line, literal_pos.pos));
                 self.lexer.revert(link);
-                self.vars.clean_work_refs(work);
-                self.vars.clean_work_refs_p2(work_p2);
+                self.abandon_work_refs(work, work_p2);
                 return self.parse_object_update(td_nr, code, update_dest, &literal_pos);
             }
             if !self.parse_object_field(
@@ -6802,8 +6815,7 @@ impl Parser {
                 &mut sinks,
             ) {
                 self.lexer.revert(link);
-                self.vars.clean_work_refs(work);
-                self.vars.clean_work_refs_p2(work_p2);
+                self.abandon_work_refs(work, work_p2);
                 return Type::Unknown(0);
             }
             if !self.lexer.has_token(",") {
@@ -6837,8 +6849,7 @@ impl Parser {
                     || self.lexer.peek_token(")")))
         {
             self.lexer.revert(link);
-            self.vars.clean_work_refs(work);
-            self.vars.clean_work_refs_p2(work_p2);
+            self.abandon_work_refs(work, work_p2);
             *code = Value::Var(v_nr);
             let outer = std::mem::replace(&mut self.inplace_hint_declined, true);
             let tp = self.parse_object(td_nr, code);
@@ -6853,8 +6864,7 @@ impl Parser {
             && let Some(hint) = place_hint.take()
         {
             self.lexer.revert(link);
-            self.vars.clean_work_refs(work);
-            self.vars.clean_work_refs_p2(work_p2);
+            self.abandon_work_refs(work, work_p2);
             *code = hint;
             self.inplace_place_declined = true;
             return self.parse_object(td_nr, code);
@@ -7165,8 +7175,7 @@ impl Parser {
             || self.lexer.peek_token(")");
         if !fresh && (!ends_here || reads_dest) {
             self.lexer.revert(link);
-            self.vars.clean_work_refs(work);
-            self.vars.clean_work_refs_p2(work_p2);
+            self.abandon_work_refs(work, work_p2);
             return self.parse_object_update(td_nr, code, None, literal_pos);
         }
         // The bind `dest = base`, first — the copy the named fields are written over.  A base
