@@ -34,6 +34,7 @@
 //   the last run misses, 3 → 0).  The work-buffer check — the buffer touched again before the
 //   result's last read — has no cell: each call site's work buffer is its own, so the parser
 //   never writes a second fill before the read.
+// HOLDS: the interpreter's and rustc-native's answers, which no plant reaches (INERT there).
 
 struct Piece {
   start: integer,

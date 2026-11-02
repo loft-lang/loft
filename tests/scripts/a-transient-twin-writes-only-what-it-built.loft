@@ -26,6 +26,7 @@
 //   1 → 50), and a record copy left unsealed (w3: the second push lands in the first copy's
 //   slot, 1020 → 2020).  w1 and w2 keep the store form today (their producers' twins decline);
 //   they stay as the cells those shapes owe once admitted.
+// HOLDS: the interpreter's and rustc-native's answers, which no plant reaches (INERT there).
 
 struct Kid {
   n: integer

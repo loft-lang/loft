@@ -48,6 +48,7 @@
 //   exclusive (c8: x = 3 read off the sheet).  The null refusal has no cell: a null argument is
 //   the most negative value, which every admitted shape's lower bound or index test already
 //   refuses.
+// HOLDS: the interpreter's and rustc-native's answers, which no plant reaches (INERT there).
 
 struct Cv {
   w: integer,
