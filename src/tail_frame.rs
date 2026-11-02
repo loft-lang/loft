@@ -100,12 +100,15 @@ pub(crate) fn admit_frame_at(
             if identity {
                 continue;
             }
+            // The refusal is about this ARGUMENT, so it stands on the argument when it has a
+            // position of its own; the call's position is the token after its `(`.
+            let at = arg.span_pos().copied().or(call.at);
             // A text and a `&` parameter have no raw pointer move in the bytecode (a text's
             // assignment owns, a `&` assignment writes through), so they pass through only
             // as themselves.
             if !crate::data::is_dbref_slot(tp.base()) {
                 return Err((
-                    call.at,
+                    at,
                     format!(
                         "parameter `{}` (a `{}`) can only be passed through as itself here",
                         vars.name(p),
@@ -115,7 +118,7 @@ pub(crate) fn admit_frame_at(
             }
             if !borrows_from_params(arg, params, code, data) {
                 return Err((
-                    call.at,
+                    at,
                     format!(
                         "the call's argument for parameter `{}` (a `{}`) makes a value this \
                          frame would have to own — a fresh value, or a local the jump releases \
