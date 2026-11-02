@@ -105,14 +105,14 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     }
   }
   rb = el_vars::var(vars, "__retbuf");
-  // A record tail that goes through `ref_return` — a local or a call — recomputes the result's
-  // borrows, so the one parameter a mid-body `return` merged is dropped again; a literal built
-  // into the buffer leaves them as they are.
+  // A call at a record tail goes through `ref_return`'s `Bind`, which recomputes the result's
+  // borrows: the one parameter a mid-body `return` merged is dropped again.  A parameter or a
+  // literal at the tail leaves them as they are (`pick`, R-Rebind against #1888's cell).
   if rb >= 0 && len(vars.mid_params) == 1 && el_types::base(result) is TyReference {
     match code {
       NdBlock { block } => {
         t = if len(block[0].operators) > 0 { el_ir::unspan(block[0].operators[-1]) } else { ir::NdNull };
-        if t is NdVar || t is NdCall {
+        if t is NdCall {
           pa = attr_nr(el::def(e, e.context), el_vars::name_of(vars, vars.mid_params[0]));
           r0 = el::def(e, e.context).returned[0];
           kept: vector<integer> = [];
@@ -743,11 +743,12 @@ fn buffer_bound(e: el::El) -> boolean {
 
 // The variable a returned value `x` hands the return buffer to, or -1: a plain local struct
 // record bound by a literal or from a buffered call (`SkipReassigned` counts the records made
-// through it in `code`), or — on the first pass — a call's hidden `__ref_N` buffer.
+// through it in `code`; one built by a literal and rebound from a call is no candidate), or —
+// on the first pass — a call's hidden `__ref_N` buffer.
 fn rename_candidate(e: el::El, vars: el_vars::Vars, code: ir::Node, x: ir::Node) -> integer {
   match x {
     NdVar { n } => {
-      if !vars.vars[n].argument && !starts_with(el_vars::name_of(vars, n), "_") && len(el_types::deps(el_vars::tp(vars, n))) == 0 && (el_vars::was_built(vars, n) || el_vars::was_adopted(vars, n)) && child_allocs(e, vars, code, n) < 2 {
+      if !vars.vars[n].argument && !starts_with(el_vars::name_of(vars, n), "_") && len(el_types::deps(el_vars::tp(vars, n))) == 0 && (el_vars::was_built(vars, n) || el_vars::was_adopted(vars, n)) && child_allocs(e, vars, code, n) < 2 && !(el_vars::was_built(vars, n) && bound_from_call(code, n)) {
         return n;
       }
     },
@@ -1142,6 +1143,23 @@ fn null_sentinel_tail(e: el::El, code: ir::Node) -> boolean {
 // by name.
 fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node {
   d = e.context;
+  if !e.first_pass {
+    bl = match code { NdBlock { block } => block[0], _ => return code };
+    tail = if len(bl.operators) > 0 { el_ir::unspan(bl.operators[-1]) } else { ir::NdNull };
+    // The buffer renamed onto the tail local on the first pass: the body answers the vector the
+    // caller handed in, and opens by clearing it.  A local bound from a call (which Rust hands
+    // the buffer itself) is refused by name.
+    renamed = match tail { NdVar { n } => if vars.vars[n].argument && attr_nr(el::def(e, d), el_vars::name_of(vars, n)) >= 0 && el::def(e, d).attributes[attr_nr(el::def(e, d), el_vars::name_of(vars, n))].hidden { n } else { -1 }, _ => -1 };
+    if renamed >= 0 {
+      if bound_from_call(code, renamed) {
+        el::refuse(e, "a vector local that takes the return buffer, bound from a call");
+        return code;
+      }
+      bl.result = [el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb])];
+      bl.operators[0] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [ir::NdVar { n: renamed }]), bl.operators[0]] };
+      return ir::NdBlock { block: [bl] };
+    }
+  }
   ba = attr_nr(el::def(e, d), "__retbuf");
   if result is TyOptional || ba < 0 {
     if !e.first_pass {
@@ -1168,6 +1186,17 @@ fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, re
   if e.first_pass {
     if (literal || local >= 0) && !el_types::deps(ret).contains(ba) {
       e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
+    } else if !literal && local < 0 {
+      // A vector local built in fewer than two steps takes the buffer (`Rename`): it becomes the
+      // hidden parameter, its binds then refill the caller's vector.
+      match tail {
+        NdVar { n } => {
+          if !vars.vars[n].argument && !starts_with(el_vars::name_of(vars, n), "_") && el_vars::tp(vars, n) is TyVector {
+            rename_onto(e, vars, rb, n);
+          }
+        },
+        _ => {}
+      }
     }
     return code;
   }
@@ -1241,6 +1270,19 @@ fn constant_expr(e: el::El, n: integer) -> boolean {
     SText { at: _ } => true,
     SUnary { e: ue } => ue != null && constant_expr(e, ue!),
     SParen { e: pe } => pe != null && constant_expr(e, pe!),
+    _ => false
+  }
+}
+
+// Is `v` set from a call anywhere in `n`?
+fn bound_from_call(n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdSet { var, inner } => (var == v && el_ir::unspan(inner) is NdCall) || bound_from_call(inner, v),
+    NdSpan { inner } => bound_from_call(inner, v),
+    NdBlock { block } => { for o in block[0].operators { if bound_from_call(o, v) { return true; } } false },
+    NdLoop { block } => { for o in block[0].operators { if bound_from_call(o, v) { return true; } } false },
+    NdInsert { items } => { for o in items { if bound_from_call(o, v) { return true; } } false },
+    NdIf { cond, t, f } => bound_from_call(cond, v) || bound_from_call(t, v) || bound_from_call(f, v),
     _ => false
   }
 }
@@ -6662,15 +6704,19 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
     }
     return Built { x: ex(ir::NdNull, if value { el_vars::tp(vars, v) } else { ir::TyVoid }), items: codes1, elem: in_t };
   }
-  has_store = len(el_types::deps(el_vars::tp(vars, v))) > 0;
-  if has_store != append && !value {
+  // A vector parameter holds the caller's store (`vector_may_own_db`): a literal bound into it
+  // clears and refills it.
+  has_store = len(el_types::deps(el_vars::tp(vars, v))) > 0 || vars.vars[v].argument;
+  if has_store != append && !value && !vars.vars[v].argument {
     el::refuse(e, if append { "a vector append to a local with no store yet" } else { "a vector literal into a local that has a store" });
     return refused_build();
   }
   r = rows!;
   w = ir::NdVar { n: v };
   ls: vector<ir::Node> = staged;
-  if !append {
+  if !append && vars.vars[v].argument {
+    ls += [el_ir::cl(e, "OpClearVector", [w])];
+  } else if !append {
     db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
     el_vars::depend(vars, v, db);
     ls += [
@@ -6715,6 +6761,11 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
       ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
     }
     xs = [];
+  }
+  // An element made through the vector (`elm = OpNewRecord(v, …)`) borrows it — the bind's
+  // `depend_all`; a bind's element was typed so when it was made.
+  if value && elm >= 0 && (push == "" || len(recs) > 0) {
+    el_vars::depend(vars, elm, v);
   }
   for x in xs {
     if push != "" {
