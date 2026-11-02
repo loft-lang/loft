@@ -25,6 +25,7 @@ mod fnval;
 mod parse;
 mod reflect;
 mod show;
+mod tidy;
 pub(crate) mod tls;
 mod unicode;
 
@@ -1965,8 +1966,16 @@ pub fn emit_unit_for(
     let reached = crate::opt::names::reachable_functions(data, &all);
     let (defines, parses, reflects) = unit_defines(data, stores, &cx, &reached);
     out.push_str(&defines);
+    // The runtime is a library every unit carries whole: a helper this program does not call
+    // is no defect of it, so gcc and clang are told not to report one there — and only there,
+    // the program's own functions after it are reported.  `LOFT_C_LINT=all` lifts it.
+    out.push_str(
+        "#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic push\n#pragma GCC diagnostic ignored \"-Wunused-function\"\n#endif\n",
+    );
     out.push_str(RUNTIME);
-    out.push('\n');
+    out.push_str(
+        "\n#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic pop\n#endif\n",
+    );
     out.push_str(&c_libraries(data, &cx.ffi_libs.borrow()));
     out.push_str(&cx.tr_typedefs()); // runtime types alone; a tuple may point at one
     out.push_str(&cx.typedefs());
@@ -1985,7 +1994,19 @@ pub fn emit_unit_for(
     out.push_str(&cx.gen_decls.borrow());
     out.push_str(&protos);
     out.push_str(&dispatch);
-    out.push_str(&cx.drop_code(&fns));
+    // The closure release only where something calls it: a unit with no function value
+    // holding a closure writes none.
+    let calls_drop = [
+        &bodies,
+        &*cx.gen_bodies.borrow(),
+        &dispatch,
+        &cx.tr_bodies(),
+    ]
+    .iter()
+    .any(|t| t.contains("loft_drop_closure("));
+    if calls_drop {
+        out.push_str(&cx.drop_code(&fns));
+    }
     out.push_str(&cx.gen_bodies.borrow());
     out.push_str(&bodies);
     out.push_str(&cx.tr_bodies());
@@ -2015,6 +2036,14 @@ pub fn emit_unit_for(
     }
     bind.push_str("}\n");
     out.push_str(&bind);
+    // What the written functions left unnamed — a label, a local, a parameter, a key table — is
+    // not written (`tidy.rs`).  The runtime before it is the library's, written as it stands.
+    let runtime_end = "\n#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic pop\n#endif\n";
+    if let Some(at) = out.find(runtime_end).map(|a| a + runtime_end.len()) {
+        let written = tidy::tidy_unit(&out[at..]);
+        out.truncate(at);
+        out.push_str(&written);
+    }
     Ok(out)
 }
 
@@ -4056,8 +4085,10 @@ fn forwarded_native(
     runtime: &str,
 ) -> Result<(String, String), String> {
     let params = declared_params(cx, d)?;
+    // A one-line forward to the runtime: `inline`, and so quiet in a unit whose calls of it are
+    // all written another way (`swap_world_call`).
     let sig = format!(
-        "static {} {}({})",
+        "static inline {} {}({})",
         held(ret),
         c_name(cx.data, d),
         if params.is_empty() {

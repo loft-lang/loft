@@ -266,7 +266,10 @@ impl FnWriter<'_> {
         };
         self.line(ind, "{");
         self.line(ind + 1, "loft_text loft_b = { 0, 0, 0 };");
-        self.line(ind + 1, &format!("int loft_le = loft_file_le({fr});"));
+        // The byte order only where the encoding reads it (a text appends as it stands).
+        if ser.contains("loft_le") {
+            self.line(ind + 1, &format!("int loft_le = loft_file_le({fr});"));
+        }
         self.line(ind + 1, &ser);
         self.line(ind + 1, &format!("loft_write_file({fr}, &loft_b);"));
         self.line(ind + 1, "loft_text_free(&loft_b);");

@@ -47,12 +47,6 @@ LOFT_HOT_INLINE loft_ref loft_entry_new(loft_ref c, uint32_t size) {
     return e;
 }
 
-/* OpClearKeyed on a view member: the collection holds nothing. */
-static void loft_keyed_clear(loft_ref c) {
-    if (c.store_nr == 0xFFFF || c.rec == 0) return;
-    loft_set_u32(loft_store_of(c), c.rec, c.pos, 0);
-}
-
 /* ── sorted and index: one key-ordered sequence each ── */
 
 /* An ordered sequence: a sorted's inline elements of `size`, or (size 0) an index's record

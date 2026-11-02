@@ -7812,8 +7812,8 @@ fn a_return_inside_a_loop_frees_the_texts_a_later_statement_declares() {
     );
 }
 
-/// The C the backend writes compiles without a lint warning (`LOFT_C_LINT=strict`: the
-/// `-Wall -Wextra` set minus the `unused` family, as errors) — over units that reach the
+/// The C the backend writes compiles without a lint warning (`LOFT_C_LINT=strict`: `-Wall
+/// -Wextra` as errors, a local or label nothing names included) — over units that reach the
 /// runtime's store converter and its drain, the engine host with its build swap and rebuild, a
 /// `par` loop and slice bounds.  A positional `loft_ref` initializer that leaves out its pad is
 /// the warning this held at zero first; the census across the corpus is the same compile.  On

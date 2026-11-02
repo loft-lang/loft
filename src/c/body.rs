@@ -178,6 +178,9 @@ pub(crate) struct FnWriter<'a> {
     body: String,
     /// Every temporary: its name and shape, declared at the top.
     temps: Vec<(String, CType)>,
+    /// The temporaries only a `LOFT_VERIFY` proof reads (`invariant_use`): declared under the
+    /// same `#ifdef`, or every other build would hold a local nothing names.
+    verify_temps: std::collections::HashSet<String>,
     /// The owned text temporaries the current statement made.
     pending: Vec<String>,
     /// The label number of each enclosing loop, innermost last.
@@ -686,6 +689,7 @@ impl<'a> FnWriter<'a> {
             ret,
             body: String::new(),
             temps: Vec::new(),
+            verify_temps: std::collections::HashSet::new(),
             pending: Vec::new(),
             loops: Vec::new(),
             labels: 0,
@@ -1079,10 +1083,17 @@ impl<'a> FnWriter<'a> {
                     | CType::Single
                     | CType::Char
             );
+            let verify = self.verify_temps.contains(t);
+            if verify {
+                out.push_str("#ifdef LOFT_VERIFY\n");
+            }
             if plain {
                 let _ = writeln!(out, "    {} {t};", held(*c));
             } else {
                 let _ = writeln!(out, "    {} {t} = {};", held(*c), self.cx.initial(*c));
+            }
+            if verify {
+                out.push_str("#endif\n");
             }
         }
         for d in &self.decls {
@@ -1460,7 +1471,23 @@ impl<'a> FnWriter<'a> {
         self.line(ind + 1, &format!("{name}_set = 1;"));
         self.line(ind, "}");
         self.line(ind, "#ifdef LOFT_VERIFY");
+        let before = self.temps.len();
         let fresh = self.expr(chain, ind)?;
+        // A plain temporary only this check reads is declared under its `#ifdef` too; one that
+        // owns something keeps its declaration, which the exit's release names.
+        for (t, c) in &self.temps[before..] {
+            if matches!(
+                c,
+                CType::Int
+                    | CType::Int32
+                    | CType::Bool
+                    | CType::Float
+                    | CType::Single
+                    | CType::Char
+            ) {
+                self.verify_temps.insert(t.clone());
+            }
+        }
         self.line(
             ind,
             &format!(

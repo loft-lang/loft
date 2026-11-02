@@ -188,7 +188,9 @@ LOFT_COLD static void loft_proof_failed(const char *site) {
 }
 #define LOFT_PROVED(cond, site) ((cond) ? (void) 0 : loft_proof_failed(site))
 #else
-#define LOFT_PROVED(cond, site) ((void) 0)
+/* The condition is never evaluated (`0 &&` short-circuits it), but what it names counts as read:
+ * a parameter only a proof reads is no unused one. */
+#define LOFT_PROVED(cond, site) ((void) (0 && (cond)))
 #endif
 
 #define LOFT_PLAIN_ADD(a, b, site) ((int64_t) ((uint64_t) (a) + (uint64_t) (b)))

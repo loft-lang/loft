@@ -103,7 +103,11 @@ fn cc_flags(tier: Tier) -> Vec<String> {
     let mut flags: Vec<String> = vec!["-std=c99".into()];
     match lint() {
         Lint::Off => flags.push("-w".into()),
-        Lint::All => flags.extend(["-Wall".to_string(), "-Wextra".to_string()]),
+        Lint::All => flags.extend([
+            "-Wall".to_string(),
+            "-Wextra".to_string(),
+            "-DLOFT_LINT_RUNTIME_UNUSED".to_string(),
+        ]),
         on => {
             flags.extend(LINT_WARNINGS.iter().map(|w| (*w).to_string()));
             if on == Lint::Strict {
@@ -196,21 +200,11 @@ fn lint() -> Lint {
     }
 }
 
-/// The lint's warnings: everything `-Wall -Wextra` reports that can mean a wrong program (a
-/// conversion, an uninitialised read, a missing declaration, a format), without the `unused`
-/// family, which generated code trips by design (a parameter the body ignores, a helper the
-/// unit does not call).
-const LINT_WARNINGS: &[&str] = &[
-    "-Wall",
-    "-Wextra",
-    "-Wno-unused-parameter",
-    "-Wno-unused-function",
-    "-Wno-unused-variable",
-    "-Wno-unused-but-set-variable",
-    "-Wno-unused-but-set-parameter",
-    "-Wno-unused-label",
-    "-Wno-unused-value",
-];
+/// The lint's warnings: everything `-Wall -Wextra` reports, the `unused` family included — a
+/// local nothing reads can be a lost value.  The written code names nothing it does not use
+/// (`src/c/tidy.rs`); the one exception is the runtime's helpers a unit does not call, which a
+/// pragma around the runtime keeps out (`LOFT_C_LINT=all` lifts it).
+const LINT_WARNINGS: &[&str] = &["-Wall", "-Wextra"];
 
 fn env_on(name: &str) -> bool {
     std::env::var(name).is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
