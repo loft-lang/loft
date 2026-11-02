@@ -12,6 +12,7 @@ mod apart;
 mod apart_value;
 mod chain;
 mod deferred;
+mod elem_first;
 mod files;
 mod generator;
 mod keyed;
@@ -158,6 +159,8 @@ pub(crate) struct FnWriter<'a> {
     dc: deferred::DeferredCopies,
     /// `@FR-R-LoopRecord`'s refill clause: the loop records this function keeps.
     lr: loop_record::LoopRecordPort,
+    /// `@FR-R-ElemFirst`: the element-first pairs and the statements they rewrite.
+    ef: elem_first::ElemFirstPort,
     /// `@FR-R-FnRefBuffer`: the store the next function-value call is handed, set by the bind.
     callref_buf: Option<String>,
     /// Which value-record parameters arrive as `const loft_tupN *` (`Cx::vr_ptr_params`,
@@ -655,6 +658,7 @@ impl<'a> FnWriter<'a> {
             vr_ptr: vr_ptr_flags(cx, d),
             dc: deferred::DeferredCopies::default(),
             lr: loop_record::LoopRecordPort::of(cx, d),
+            ef: elem_first::ElemFirstPort::of(cx, d),
             callref_buf: None,
             // A store instance's text parameter (`n_app@st1`, `parser/store_text.rs`) is a
             // store link: the IR reads and writes it as the field it names.
@@ -3677,6 +3681,9 @@ impl<'a> FnWriter<'a> {
     fn stmt(&mut self, v: &Value, ind: usize) -> Result<(), String> {
         if self.nk_skip == Some(std::ptr::from_ref(v.unspan()) as usize) {
             return Ok(());
+        }
+        if let Some(r) = self.elem_first_stmt(v, ind) {
+            return r;
         }
         if !self.lr.is_empty() && self.loop_record_stmt(v, ind) {
             return Ok(());

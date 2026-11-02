@@ -4418,6 +4418,17 @@ line in `Output::output_function`'s prelude.
                  group stands in the body of the LOOP that builds the outer vector, so
                  a loop body's statements consult the same overrides a block's do.
 
+  (R-ElemFirst)'s C clause
+                 the C writer applies the literal-built temp appended into a local
+                 vector: at the first temp's declaration the append site's own
+                 reservation, mint and vector-field zeros run (a fresh C slot is not
+                 zeroed, so the zeros move with the mint), each temp is bound to its
+                 field slot, and the append site skips them and the paired copies.  A
+                 pair whose container the writer holds a header, push header or window
+                 for keeps the plain form, as do an append in each arm, a call-filled
+                 temp and the comprehension clause.  `fronds` −39 % (gcc) / −40 %
+                 (clang).  Site: `c::body::elem_first`; switch `LOFT_NO_ELEMENT_FIRST`.
+
   (R-ValueRecord) a function whose result is a PLAIN NO-HEAP RECORD of at most eight
                  scalars (an `integer` only at its 8-byte width), an INLINE sub-record
                  contributing its own scalars at the summed offset, returns those

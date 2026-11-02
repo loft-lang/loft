@@ -325,7 +325,11 @@ its fallback and the counters left as the loop leaves them; `LOFT_NO_FILL_HOIST=
 its source kept (`hoist::flat_copy`, `@FR-R-FlatCopy`), is `loft_copy_flat`: its bytes, a null
 end and a parse result's root taking the general copy.  A function of one integer the compiler
 can evaluate for every byte (`opt::tabulate`, `@FR-R-Tabulate`) answers a byte argument from a
-function-local table of those evaluations; `LOFT_NO_TABULATE=1` keeps the body.
+function-local table of those evaluations; `LOFT_NO_TABULATE=1` keeps the body.  A local vector
+consumed once as a field of an appended record literal is built inside the element
+(`hoist::element_first`, `@FR-R-ElemFirst`, `c::body::elem_first`): the element minted and its
+vector fields zeroed at the temp's declaration, the temp bound to its field slot, the append
+keeping only its scalar sets and finish; `LOFT_NO_ELEMENT_FIRST=1` turns it off.
 
 **Held file cursors.**  A loop that reads one `File` through fixed-width integer reads, where
 nothing else in it can see the record (`lower::file_hold::held_file`, `@FR-R-FileHold`), keeps
