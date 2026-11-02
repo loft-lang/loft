@@ -910,7 +910,17 @@ static size_t loft_utf8(uint32_t c, char *out);
  * gives the same byte, since an ASCII byte starts a character and the next byte, tested here,
  * does not continue it.  Its length is then the constant 1, which the append after it folds
  * on (`loft_text_concat`).  `-DLOFT_NO_SHORT_APPEND` takes the general path. */
-LOFT_TEXT_INLINE loft_str loft_text_sub(loft_str v, int64_t from64, int64_t till64) {
+/* MSVC (cl 19.51, /O1 and /O2) answers a wrong slice once this function is inlined into a
+ * program of any size — `"abcé"[3..4]` came back one byte, while a unit holding only the function
+ * is right and gcc and clang are right everywhere — so on `cl` it stays out of line.  Measured
+ * on the Windows runner, the 749 slice cell: inlined wrong, out of line right, reading the bytes
+ * as `unsigned char` changes nothing. */
+#if defined(_MSC_VER) && !defined(__clang__)
+#define LOFT_TEXT_SUB_INLINE static __declspec(noinline)
+#else
+#define LOFT_TEXT_SUB_INLINE LOFT_TEXT_INLINE
+#endif
+LOFT_TEXT_SUB_INLINE loft_str loft_text_sub(loft_str v, int64_t from64, int64_t till64) {
 #ifndef LOFT_NO_SHORT_APPEND
     if ((uint64_t) till64 == (uint64_t) from64 + 1 && (uint64_t) from64 < v.len && from64 < INT32_MAX
         && (unsigned char) v.p[from64] < 0x80
