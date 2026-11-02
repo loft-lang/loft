@@ -195,9 +195,14 @@ fn show_type(b: ir::Bundle, tp: integer, ps: vector<integer>) -> text {
 
 // The whole schema, `Stores::dump_types`: `{tp}:{show_type(tp, true)}` for every type.
 pub fn schema(b: ir::Bundle) -> text {
+  schema_from(b, 0)
+}
+
+// The schema from type `from` on — a program's own types, after the standard library's.
+pub fn schema_from(b: ir::Bundle, from: integer) -> text {
   ps = parents(b);
   r = "";
-  for tp in 0..len(b.types) {
+  for tp in from..len(b.types) {
     r += "{tp}:{show_type(b, tp, ps[tp] ?? [])}";
   }
   r

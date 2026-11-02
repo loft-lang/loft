@@ -66,6 +66,9 @@ fn program(image: text, f: text, std_image: text) {
   e.line = 0;
   el_definitions::elab_file(e, tree ?? 0);
   print(report::defs_report(e.b, upto));
+  if len(std_image) > 0 {
+    print(report::schema_from(e.b, types_upto));
+  }
   for r in e.refused {
     println("refused: {r}");
   }

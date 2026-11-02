@@ -591,6 +591,12 @@ fn finish(e: el::El) {
       finish_type(e, t#index);
     }
   }
+  // `determine_keys`, once every record is laid out: each keyed type's key descriptors.
+  for t in e.b.types {
+    if t.parts[0] is PtHash || t.parts[0] is PtSorted || t.parts[0] is PtIndex {
+      e.b.types[t#index].keys = key_descriptors(e, t#index);
+    }
+  }
 }
 
 // `Stores::finish_type` for a struct without linked groups: its fields' contents first, then

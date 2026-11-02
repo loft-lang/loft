@@ -112,12 +112,6 @@ consuming, or null (`brace_next`, `no_else`, `empty_literal_allowed`).
   list rules answered `SList` nodes.  The grammar's list rules answer nodes, so it does not
   block the parser; it is this branch's own defect (the sub-rule lowering is new) and is fixed
   before the branch merges.
-- **Gate E compares definitions, not the schema.**  The image's type table is part of what
-  `--emit-image` writes, and the two differ where no definition shows it: the elaborator's keyed
-  types (`hash`, `sorted`, `index`) carry no key descriptors (`DbType.keys`, which Rust's
-  `determine_keys_for` fills).  Found by `report::schema` over both bundles; the comparison
-  belongs in the gate, then the descriptors in `el_schema` (`key_descriptors` already computes
-  them).
 - **Diagnostics** are part of the port (same text, same position), measured after gate E on the
   programs `tests/parse_errors.rs` and the suite's refusal cells carry.
 - **Scripts** (`src/script.rs`, a textual desugar before parsing) are not ported yet: gate S
@@ -129,7 +123,7 @@ consuming, or null (`brace_next`, `no_else`, `empty_literal_allowed`).
 |---|---|---|
 | **T** tokens | the C lexer's stream equals `src/lexer.rs`'s, per file | `LOFT_TRACE_TOKENS=<file>` (the Rust stream the parser scanned) against `selfhost/front/tokens.loft`; `selfhost/front/tokens_gate.py` counts files that agree |
 | **S** syntax | every corpus file parses with no error; the tree's tokens, in order, are the file's tokens | the syntax tree printer, round-tripped against the token stream |
-| **E** elaboration | the image equals `--emit-image`, per definition | `selfhost/compare/`; HOW MANY programs agree |
+| **E** elaboration | the image equals `--emit-image`: each definition, and the program's part of the schema | `selfhost/compare/`; HOW MANY programs agree |
 
 The corpus for every gate: `default/*.loft`, `tests/scripts/`, `tests/docs/`, `lib/`, and the
 language suite (`../loft-suite-91`).
@@ -140,7 +134,7 @@ language suite (`../loft-suite-91`).
 |---|---|---|
 | T tokens | 1845 of 1850 files | four `"\0"` literals (a one-NUL text is loft's null text), one script |
 | S syntax | 1836 of 1843 files | seven refusal cells, all `@EXPECT_ERROR` files |
-| E image | 63 of 1649 programs agree, none differs (`selfhost/front/elab_gate.py`); 224 more are programs the Rust front end itself refuses | the families `elab_gate.py --plan` ranks first; the schema comparison (Open) |
+| E image | 63 of 1649 programs agree, none differs (`selfhost/front/elab_gate.py`); 224 more are programs the Rust front end itself refuses | the families `elab_gate.py --plan` ranks first |
 
 Elaboration is `selfhost/src/el*.loft`; gate E's runner is `selfhost/front/elab.loft` (`elab
 <image> <program>` over a `LOFT_EMIT_PARSED` image, or `elab <stdlib files>`), its oracle side

@@ -6,8 +6,8 @@ as loft's own parser does?
 
 For each corpus program the Rust front end writes the image as its parser left it
 (`LOFT_EMIT_PARSED`, before the scope pass); `compare/defs.loft` reports that image's program
-definitions and `front/elab.loft` elaborates the program over the image's standard library and
-reports its own.  A program AGREES when the two reports are equal and the elaboration refused
+definitions and the program's part of its schema (the types after the standard library's), and
+`front/elab.loft` elaborates the program over the image's standard library and reports its own.  A program AGREES when the two reports are equal and the elaboration refused
 nothing.  Both runners are built through the C backend once per run.  The refusals are counted
 by reason: the constructs the port carries next.
 
@@ -50,7 +50,7 @@ def one(loft, defs, elab, std, path, tmp, env, i):
                            capture_output=True, timeout=180)
         if r.returncode != 0 or not os.path.exists(img):
             return "noimage", ""
-        o = subprocess.run([defs, img, "program"], env=env, capture_output=True, text=True,
+        o = subprocess.run([defs, img, "program", std], env=env, capture_output=True, text=True,
                            errors="replace", timeout=300)
         m = subprocess.run([elab, img, path, std], env=env, capture_output=True, text=True,
                            errors="replace", timeout=300)
