@@ -60,11 +60,11 @@ def runtime_names() -> dict:
     # (`src/c/component.rs`): nothing in a unit names them, and none of them is dead for it.
     exported = {"loft_web.h", "loft_server.h", "loft_ssh.h"}
     every = sorted((ROOT / "src" / "c").glob("*.h"))
-    own = "\n".join(p.read_text(errors="replace") for p in every if p.name not in exported)
-    text = "\n".join(p.read_text(errors="replace") for p in every)
+    own = "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in every if p.name not in exported)
+    text = "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in every)
     # The emitter, and the C that includes the runtime outside a unit (the self-host's shim).
-    emit = "\n".join(p.read_text(errors="replace") for p in (ROOT / "src" / "c").rglob("*.rs"))
-    emit += "\n".join(p.read_text(errors="replace") for p in (ROOT / "selfhost").rglob("*.c"))
+    emit = "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in (ROOT / "src" / "c").rglob("*.rs"))
+    emit += "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in (ROOT / "selfhost").rglob("*.c"))
     defs = set(re.findall(r"^(?:static|LOFT_\w+)[^;{=(]*?\b(loft_\w+)\s*\(", own, re.M))
     used = {}
     for f in defs:
