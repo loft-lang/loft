@@ -466,9 +466,9 @@ static int loft_pw_primitive(const loft_jv *v, uint16_t kind, loft_ref to, size_
 }
 
 /* `write_narrow_value`: `n` through the slot's encoding (a value out of range takes the
- * type's default, as the setters do). */
+ * type's default, as the setters do); the wide null is every width's null (`@FR-L-Null`). */
 static void loft_pw_narrow(const loft_ptype *t, int64_t n, loft_ref to) {
-    int32_t v = (int32_t) (uint32_t) (uint64_t) n;
+    int32_t v = n == INT64_MIN ? INT32_MIN : (int32_t) (uint32_t) (uint64_t) n;
     switch (t->kind) {
     case LOFT_P_BYTE: loft_set_byte_v(to, 0, t->min, v == INT32_MIN ? LOFT_NULL : v); break;
     case LOFT_P_SHORT: loft_set_short(to, 0, t->min, v == INT32_MIN ? LOFT_NULL : v); break;

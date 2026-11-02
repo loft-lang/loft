@@ -3961,8 +3961,10 @@ impl Stores {
             Parts::IntRaw(_, _) => Enc::IntRaw,
             _ => return false,
         };
+        // `i64::MIN` is the wide null (`@FR-L-Null`): every width's setter is handed its own
+        // null, `i32::MIN`, never the truncated `0`, which would store a live value.
         #[allow(clippy::cast_possible_truncation)]
-        let v = n as i32;
+        let v = if n == i64::MIN { i32::MIN } else { n as i32 };
         let store = self.store_mut(slot);
         // The setters answer whether the value FIT the slot's range; out-of-range is
         // theirs to handle (they store the slot's default) and both walkers have always

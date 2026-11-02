@@ -516,6 +516,22 @@ fn cell_number_widened() {
 }
 
 #[test]
+fn cell_a_null_narrow_number_widens_to_null() {
+    // `@FR-L-Null`: u8? 5, null, 250 → u16?: the null arrives as the new encoding's null, not
+    // as the live value 0 a truncated wide null would store.
+    let writer = "struct T { q: u8? }\nstruct W { items: vector<T> }\nfn main() {\n  w = W {};\n  w.items += [T { q: 5 }, T { q: null }, T { q: 250 }];\n  println(\"saved {store_persist_copy(w, \\\"a.store\\\")}\");\n}\n";
+    upgrades(
+        "widen_null",
+        writer,
+        &reader(
+            "struct T { q: u16? }\nstruct W { items: vector<T> }\n",
+            "  for t in w.items { if t.q == null { println(\"null\"); } else { println(\"{t.q}\"); } }\n",
+        ),
+        "5\nnull\n250\n",
+    );
+}
+
+#[test]
 fn cell_enum_variant_added_and_removed() {
     let writer = "enum C { Red, Green, Blue }\nstruct W { cs: vector<C?> }\nfn main() {\n  w = W {};\n  w.cs += [Red, Green, Blue];\n  println(\"saved {store_persist_copy(w, \\\"a.store\\\")}\");\n}\n";
     // Green is gone: its value reads null; Red and Blue keep their names although Blue's
