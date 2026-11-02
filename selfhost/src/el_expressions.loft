@@ -1508,8 +1508,8 @@ fn inline_container(e: el::El, vars: el_vars::Vars, x: Ex) -> integer {
       if !((starts_with(d.name, "n_") || starts_with(d.name, "t_")) && !((d.code[0]) is NdNull)) {
         return -1;
       }
-      rt = d.returned[0];
-      w = el_vars::work_ref_p2(vars, rt);
+      // The result's deps are the callee's attribute numbers, which name nothing here.
+      w = el_vars::work_ref_p2(vars, el_types::without_deps(d.returned[0]));
       vars.inline_refs += [w];
     },
     _ => {}
@@ -2314,6 +2314,9 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
   if op == "=" && el_types::base(pt) is TyVector {
     return vector_field_bind(e, vars, el_ir::unspan(p.code), pt, x);
   }
+  if op == "=" && struct_ref(e, el_types::base(pt)) >= 0 {
+    return record_place_write(e, el_ir::unspan(p.code), el_types::base(pt), rhs, x);
+  }
   v = stored(e, vars, x, pt);
   if v == null {
     refuse_known(e, x.tp, "a place assignment its type converts: {type_kind(x.tp)} to {type_kind(pt)}");
@@ -2321,10 +2324,69 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
   }
   w = place_write(e, el_ir::unspan(p.code), v!);
   if w == null {
-    el::refuse(e, "an assignment to a place that is not a plain local");
+    el::refuse(e, "an assignment to a place that is not a plain local: {place_read(e, el_ir::unspan(p.code))}");
     return ex(ir::NdNull, ir::TyVoid);
   }
   ex(w!, ir::TyVoid)
+}
+
+// `Parser::copy_ref` for a whole record written into a record field or a vector element
+// (`w.p = v`, `xs[i] = mk(9)`): the value copied into the place (`OpCopyRecord`), the source's
+// store freed after when the value is a call that gives it away (`call_gives_away_its_store`).
+// A record literal is built in the place itself, which is not carried yet; a `null`, another
+// record's value and a record holding a closure are refused by name.
+fn record_place_write(e: el::El, place: ir::Node, pt: ir::TypeT, rhs: integer, x: Ex) -> Ex {
+  rd = struct_ref(e, pt);
+  if e.p.nodes[rhs] is SStructLit {
+    el::refuse(e, "a record literal written into a field or an element");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  if !(place is NdCall) || !(calls(e, place, "OpGetField") || calls(e, place, "OpGetVector")) {
+    el::refuse(e, "an assignment to a place that is not a plain local: {place_read(e, place)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  src = struct_ref(e, el_types::base(x.tp));
+  if src < 0 || !copies_as(e, rd, src) {
+    el::refuse(e, "a record place given a value of another type: {type_kind(x.tp)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  if holds_closure(e, rd, []) {
+    el::refuse(e, "a record place whose record holds a closure");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  kt = el::def(e, rd).known_type;
+  bit = 0;
+  match el_ir::unspan(x.code) {
+    NdCall { def_nr } => {
+      d = el::def(e, def_nr);
+      if starts_with(d.name, "n_") && !el_ir::is_null(d.code[0] ?? ir::NdNull) && !returns_argument_view(d) {
+        bit = 32768;
+      }
+    },
+    _ => {}
+  }
+  ex(el_ir::cl(e, "OpCopyRecord", [x.code, place, ir::NdInt { n: kt + bit }]), ir::TyVoid)
+}
+
+// Does record `rd` hold a closure, itself or in a record field it holds inline
+// (`release_displaced_closures`' walk)?
+fn holds_closure(e: el::El, rd: integer, seen: vector<integer>) -> boolean {
+  for x in seen {
+    if x == rd {
+      return false;
+    }
+  }
+  for a in el::def(e, rd).attributes {
+    t = el_types::base(a.typedef[0] ?? ir::TyVoid);
+    if t is TyFunction {
+      return true;
+    }
+    inner = struct_ref(e, t);
+    if inner >= 0 && len(el_types::deps(t)) == 0 && holds_closure(e, inner, seen + [rd]) {
+      return true;
+    }
+  }
+  false
 }
 
 // `parse_assign_op_inner`'s whole-vector arm for a vector field of a record local (P154): the
@@ -2586,6 +2648,14 @@ fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
 
 // The write twin of a place's read: `OpGet<T>(r, pos…)` becomes `OpSet<T>(r, pos…, value)`, a
 // text read `OpSetTextReplace`; null for a read with no plain twin.
+// The read a place assignment found no write for, named for its refusal: the read's operator.
+fn place_read(e: el::El, read: ir::Node) -> text {
+  match read {
+    NdCall { def_nr } => el::def(e, def_nr).name,
+    _ => "{read}"[..20]
+  }
+}
+
 fn place_write(e: el::El, read: ir::Node, val: ir::Node) -> ir::Node? {
   match read {
     NdCall { def_nr, args } => {
@@ -5263,9 +5333,45 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
         deps += [x];
       }
     }
-    return ex(el_ir::v_if(c.code, arm_typed(t.code, td), arm_typed(f.code, fd)), el_types::with_deps(t.tp, deps));
+    jt = el_types::with_deps(t.tp, deps);
+    joined = el_ir::v_if(c.code, arm_typed(t.code, td), arm_typed(f.code, fd));
+    if !e.first_pass && len(deps) > 0 {
+      joined = own_join_arm(e, vars, joined, jt);
+    }
+    return ex(joined, jt);
   }
   ex(el_ir::v_if(c.code, t.code, f.code), t.tp)
+}
+
+// `Parser::own_joined_call_arms` (loft#1019): a record join that borrows gives each arm whose
+// value is a call answering a fresh record a home in this frame — the call's hidden `__ref_N`
+// buffer, or else a fresh inline `__ref_p2_N` — as `{ buf = call; buf }`, so the store the
+// arm made is freed.  Descends through nested `if`s and to a block's tail.
+fn own_join_arm(e: el::El, vars: el_vars::Vars, arm: ir::Node, tp: ir::TypeT) -> ir::Node {
+  match arm {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: own_join_arm(e, vars, inner, tp) },
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: own_join_arm(e, vars, t, tp), f: own_join_arm(e, vars, f, tp) },
+    NdBlock { block } => {
+      bl = block[0];
+      if len(bl.operators) > 0 {
+        bl.operators[len(bl.operators) - 1] = own_join_arm(e, vars, bl.operators[-1] ?? ir::NdNull, tp);
+      }
+      ir::NdBlock { block: [bl] }
+    },
+    NdCall { def_nr, args } => {
+      d = el::def(e, def_nr);
+      if !(starts_with(d.name, "n_") || starts_with(d.name, "t_")) || el_ir::is_null(d.code[0] ?? ir::NdNull) || returns_argument_view(d) {
+        return arm;
+      }
+      buf = hidden_ref_arg(vars, args);
+      if buf < 0 {
+        buf = el_vars::work_ref_p2(vars, el_types::without_deps(tp));
+        vars.inline_refs += [buf];
+      }
+      el_ir::v_block([el_ir::v_set(buf, arm), ir::NdVar { n: buf }], tp, "join-arm-owner")
+    },
+    _ => arm
+  }
 }
 
 // The deps of an arm that it does not mint itself (`use_analysis::minted_vars`: set inside it).
