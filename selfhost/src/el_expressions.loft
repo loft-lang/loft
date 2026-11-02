@@ -4387,10 +4387,13 @@ fn keyed_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, x: Ex, body
   ex(el_ir::v_block(pre, ir::TyVoid, "For block"), ir::TyVoid)
 }
 
-// `handle_operator`'s `as` for plain scalars: the target read as a type, the value converted the
-// way an implicit store converts it (`convert` in its explicit-cast mode: a narrowing that a
-// constant provably fits needs no op) or else cast (`OpCast…`), typed as the target.  A checked
-// `as τ?`, a nullable or non-scalar side and a narrowing no constant answers are refused by name.
+// `handle_operator`'s `as`: the target read as a type, the value converted the way an implicit
+// store converts it (`convert` in its explicit-cast mode: a narrowing that a constant provably
+// fits needs no op) or else cast (`OpCast…`), typed as the target.  `as text` renders through its
+// cast (`true as text`).  The checked `as τ?` takes the value's base — a nullable value converts
+// as its base does and stays nullable — a `null` is the target's null, and a text is parsed
+// (`OpCastIntFromText`, null when it does not parse).  A checked narrowing, a non-scalar side and
+// a narrowing no constant answers are refused by name.
 fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> Ex {
   if ae == null || tn == null {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -4405,12 +4408,31 @@ fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> Ex {
   // `dn4cast` guard and the store's range default) is refused by name.
   match to {
     TyOptional { inner } => {
-      if el_convert::plain_scalar(inner) && !el_convert::narrowing_int(el_types::base(x.tp), inner) {
-        b = cast_expr_to(e, vars, x, inner);
+      src = el_types::base(x.tp);
+      if el_convert::plain_scalar(inner) && x.tp is TyNull {
+        n = el_convert::null_of(e, inner);
+        if n != null {
+          return ex(if e.first_pass { ir::NdNull } else { n! }, to);
+        }
+      } else if el_convert::plain_scalar(inner) && src is TyText {
+        c = el_convert::cast(e, x.code, src, inner);
+        if c != null {
+          return ex(if e.first_pass { ir::NdNull } else { c! }, to);
+        }
+      } else if el_convert::plain_scalar(inner) && !el_convert::narrowing_int(src, inner) {
+        b = cast_expr_to(e, vars, ex(x.code, src), inner);
         return ex(b.code, if el_types::is_unknown(b.tp) { b.tp } else { to });
       }
       el::refuse(e, "a checked narrowing cast");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    },
+    TyText { dep: _ } => {
+      if el_convert::plain_scalar(x.tp) {
+        c = el_convert::cast(e, x.code, x.tp, to);
+        if c != null {
+          return ex(if e.first_pass { ir::NdNull } else { c! }, to);
+        }
+      }
     },
     _ => {}
   }
