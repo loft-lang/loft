@@ -1494,9 +1494,8 @@ struct InlineNull {
 // an index into a field of a loft function's record result binds that result in a `__ref_p2_N`
 // first, the container the element borrows.  -1 for any other container.
 fn inline_container(e: el::El, vars: el_vars::Vars, x: Ex) -> integer {
-  if e.first_pass {
-    return -1;
-  }
+  // Bound on both passes, as `container_dep` binds: a first-pass mint takes a `__ref_p2_N`
+  // name the second pass may hand to another work-ref (723's default literals).
   root = projection_root(e, x.code);
   if root == null {
     return -1;
@@ -1510,7 +1509,7 @@ fn inline_container(e: el::El, vars: el_vars::Vars, x: Ex) -> integer {
       }
       // The result's deps are the callee's attribute numbers, which name nothing here.
       w = el_vars::work_ref_p2(vars, el_types::without_deps(d.returned[0]));
-      vars.inline_refs += [w];
+      el_vars::mark_inline(vars, w);
     },
     _ => {}
   }
@@ -3248,7 +3247,7 @@ fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: inte
     dep: vector<integer> = if r is NdVar { [v] } else { [] };
     elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: dep });
     if len(dep) == 0 {
-      vars.inline_refs += [elm];
+      el_vars::mark_inline(vars, elm);
     }
   }
   out: vector<ir::Node> = [];
@@ -3264,10 +3263,38 @@ fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: inte
     // vector store type through `vector_of` — the order the schema numbers it in.
     vector_of(e, inner);
   }
+  ird = struct_ref(e, inner);
   for it in items {
     if e.p.nodes[it] is SRepeat {
       el::refuse(e, "a repeated vector item");
       return null;
+    }
+    // `new_record` for a literal item of a record element: the element made in the field's
+    // vector, the literal's fields written into it, the element finished.
+    if ird >= 0 && e.p.nodes[it] is SStructLit && struct_literal_def(e, it) == ird {
+      fs: vector<integer> = [];
+      match e.p.nodes[it] {
+        SStructLit { member, fields: lf, base } => {
+          if member != "" || base != null {
+            el::refuse(e, "a qualified struct literal or an update");
+            return null;
+          }
+          fs = lf;
+        },
+        _ => {}
+      }
+      el_vars::set_var_type(vars, elm, ir::TyReference { n: ird, dep: el_types::deps(el_vars::tp(vars, elm)) });
+      if e.first_pass {
+        first_pass_fields(e, vars, ird, fs);
+        continue;
+      }
+      at = ir::NdVar { n: elm };
+      body = fields_at(e, vars, elm, at, ird, fs);
+      if body == null {
+        return null;
+      }
+      out += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: kt }, ir::NdInt { n: fnr }]))] + body! + [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: kt }, ir::NdInt { n: fnr }])];
+      continue;
     }
     x = expression(e, vars, it);
     if !el_types::is_unknown(x.tp) && !el_types::is_equal(e, inner, x.tp) {
@@ -3285,7 +3312,7 @@ fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: inte
       out += [el_ir::cl(e, "OpSetText", [at, ir::NdInt { n: 0 }, x.code])];
       out += [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: kt }, ir::NdInt { n: fnr }])];
     } else {
-      el::refuse(e, "a vector field of records written from a literal");
+      el::refuse(e, "a vector field of records written from a literal: an item that is no literal");
       return null;
     }
   }
@@ -4928,6 +4955,9 @@ fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   if e.first_pass {
     return ex(ir::NdNull, lhs);
   }
+  // It borrows what the subject borrows — on this pass, which mints an inline container the
+  // first did not.
+  el_vars::set_var_type(vars, held, lhs);
   x.code = nullable_arith(e, x.code, true);
   subject = ir::NdVar { n: held };
   test = el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [subject]), subject, d.code);
@@ -5486,7 +5516,7 @@ fn own_join_arm(e: el::El, vars: el_vars::Vars, arm: ir::Node, tp: ir::TypeT) ->
       buf = hidden_ref_arg(vars, args);
       if buf < 0 {
         buf = el_vars::work_ref_p2(vars, el_types::without_deps(tp));
-        vars.inline_refs += [buf];
+        el_vars::mark_inline(vars, buf);
       }
       el_ir::v_block([el_ir::v_set(buf, arm), ir::NdVar { n: buf }], tp, "join-arm-owner")
     },

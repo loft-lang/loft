@@ -342,7 +342,8 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   v.adopted = [];
   v.mid_params = [];
   v.allocs = [];
-  v.inline_refs = [];
+  // `append` keeps the inline marks: a work-ref the first pass marked stays marked.
+  v.inline_refs = kept.inline_refs;
   v.unique = [];
   v.work_vdb = 0;
   v.work_ref = 0;
@@ -513,9 +514,30 @@ pub fn work_ref(v: Vars, t: ir::TypeT) -> integer {
 }
 
 // `Function::work_refs_p2`: the second pass's `__ref_p2_N`, a record literal's own buffer.
+// `Function::mark_inline_ref`: the work-ref is nulled where it is first used, never at the top
+// — a set, so a mark the first pass made and the second makes again counts once.
+pub fn mark_inline(v: Vars, nr: integer) {
+  if !v.inline_refs.contains(nr) {
+    v.inline_refs += [nr];
+  }
+}
+
 pub fn work_ref_p2(v: Vars, t: ir::TypeT) -> integer {
-  v.work_ref_p2 += 1;
-  nr = add_variable(v, "__ref_p2_{v.work_ref_p2}", t);
+  // `Function::work_refs_p2`: a name the table already holds is retyped and handed out — a
+  // first-pass mint under it is reused, its marks kept — unless it is an argument of another
+  // type (`retypes_argument`), which takes the next name.
+  nr = -1;
+  while nr < 0 {
+    v.work_ref_p2 += 1;
+    n = "__ref_p2_{v.work_ref_p2}";
+    e = v.names[n];
+    if e == null {
+      nr = new_var(v, n, t);
+    } else if !(v.vars[e.nr].argument && el_types::without_deps(tp(v, e.nr)) != el_types::without_deps(t)) {
+      nr = e.nr;
+      set_type(v, nr, t);
+    }
+  }
   v.work_refs = sorted_in(v.work_refs, nr);
   nr
 }
@@ -539,6 +561,7 @@ pub fn stored(v: Vars) -> ir::Function {
   for n in v.names {
     f.names += [ir::NameNr { name: n.name, nr: n.nr }];
   }
+  f.inline_refs = v.inline_refs;
   f
 }
 
