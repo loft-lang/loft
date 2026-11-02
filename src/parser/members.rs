@@ -726,7 +726,14 @@ impl Parser {
             }
             self.vars.make_independent(base, dep);
             let fname = self.data.def(self.context).original_name();
-            crate::copy_manifest::note_rekeyed_view(&vname, &cname, &field, &fname);
+            let at = self.lexer.pos();
+            crate::copy_manifest::note_rekeyed_view(
+                &vname,
+                &cname,
+                &field,
+                &fname,
+                (at.file.as_str(), at.line),
+            );
         }
     }
 

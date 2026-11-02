@@ -505,9 +505,10 @@ fn a_warm_run_renders_the_same_diagnostics_including_their_fixes() {
     let _ = fa::remove_dir_all(&cache);
     let _ = fa::remove_dir_all(&cache_x);
 }
-/// The `advice:` lines naming a view copied out of its container come from the scope pass,
-/// which a warm load does not run: a program said on its first run what it never said again
-/// (`scripts/warm_diff.sh`, 46 corpus files).  The manifest's `mview` lines replay them.
+/// The `advice[view-copied]` lines naming a view copied out of its container come from the
+/// scope pass, which a warm load does not run: a program said on its first run what it never
+/// said again (`scripts/warm_diff.sh`, 46 corpus files).  They are diagnostics, so the
+/// manifest's `diag` lines replay them.
 #[test]
 fn a_warm_run_says_which_views_were_copied_out() {
     let pid = std::process::id();

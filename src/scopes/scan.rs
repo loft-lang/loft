@@ -7,7 +7,7 @@
 
 use super::Scopes;
 use super::backings::member_backing;
-use super::disturbance::{disturbance_via, report_materialised_view};
+use super::disturbance::{disturbance_site, disturbance_via, report_materialised_view};
 use super::free_vars::Delivered;
 use super::handoff::collect_drop_transferred;
 use super::insert_free::scope_free_op_var;
@@ -282,6 +282,7 @@ impl Scopes<'_> {
                         &cname,
                         &fname,
                         via.as_deref(),
+                        disturbance_site(data, self.d_nr, &cause),
                     );
                 }
                 Value::Null

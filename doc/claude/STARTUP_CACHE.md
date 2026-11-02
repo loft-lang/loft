@@ -22,9 +22,8 @@ every `default/*.loft` file, every `use`-d library, and the user script.  It is
 keyed on a drift manifest holding a SHA-256 of each parsed source's bytes
 (`cache::file_hash`), so any source edit invalidates the cache automatically.
 Beside the parse, the manifest carries what the cold run SAID: its diagnostics (`diag`
-lines) and the views the scope pass copied out of their containers (`mview` lines, the
-`advice:` sentences `copy_manifest` prints), replayed on a warm load so a program reports
-the same on every run — the parser and the scope pass do not run on one.
+lines, the scope pass's `advice[view-copied]` among them), replayed on a warm load so a
+program reports the same on every run — the parser and the scope pass do not run on one.
 
 ## Default-on behaviour and the off switch
 

@@ -9,7 +9,7 @@ use super::backings::{
 };
 use super::buffers::{coalesce_tail_calls, tail_calls};
 use super::capture_builds::adopted_work_refs;
-use super::disturbance::{disturbance_via, report_materialised_view};
+use super::disturbance::{disturbance_site, disturbance_via, report_materialised_view};
 use super::drops::drop_hook;
 use super::handles::{handle_rhs_kinds, tag_handle_leaves};
 use super::handoff::{copy_moves_drop_from, per_path_stops, var_copy_owns};
@@ -1516,6 +1516,7 @@ impl Scopes<'_> {
                 &cname,
                 &fname,
                 via.as_deref(),
+                disturbance_site(data, self.d_nr, &cause),
             );
         }
         // Companion to the !adopts_fresh_store (deep-copy) branch above for the
@@ -1598,6 +1599,7 @@ impl Scopes<'_> {
                     function.name(cause.container),
                     &data.def(self.d_nr).original_name(),
                     via.as_deref(),
+                    disturbance_site(data, self.d_nr, &cause),
                 );
             }
             rewritten_arms = rw;

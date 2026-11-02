@@ -33,31 +33,42 @@ pub(super) fn report_materialised_view(
     cname: &str,
     fname: &str,
     via: Option<&str>,
+    at: (&str, u32),
 ) {
     // The advice is the author's to read, so a payload binding is named as they wrote it.
     let vname = crate::variables::author_spelling(vname);
     let vname = vname.as_str();
     match cause {
         ViewCause::Reshaped => {
-            crate::copy_manifest::note_materialised_view(vname, cname, fname, via);
+            crate::copy_manifest::note_materialised_view(vname, cname, fname, via, at);
         }
         // loft#1373 — the fourth invalidator: the container GREW, so the elements may
         // have moved to a larger record. Same materialise, different sentence: a
         // reader told "removing an element renumbers the others" goes looking for a
         // `remove` that is not in the function.
         ViewCause::Grown => {
-            crate::copy_manifest::note_grown_view(vname, cname, fname, via);
+            crate::copy_manifest::note_grown_view(vname, cname, fname, via, at);
         }
         // @PLN130 F8 — the third invalidator: the container VARIABLE is reassigned,
         // so the dep still names `bx` while the store it named is gone. Different
         // cause, different way out, so a distinct advice line.
         ViewCause::Reassigned => {
-            crate::copy_manifest::note_reassigned_view(vname, cname, fname, via);
+            crate::copy_manifest::note_reassigned_view(vname, cname, fname, via, at);
         }
         ViewCause::Released => {
-            crate::copy_manifest::note_released_view(vname, cname, fname, via);
+            crate::copy_manifest::note_released_view(vname, cname, fname, via, at);
         }
     }
+}
+
+/// Where the advice for a copied view points: the statement that disturbed the container, in
+/// the function's own file — its definition line when the walk recorded none.
+pub(super) fn disturbance_site(data: &Data, d_nr: u32, cause: &Disturbance) -> (&'static str, u32) {
+    let at = data.def(d_nr).position();
+    (
+        at.file.as_str(),
+        if cause.line == 0 { at.line } else { cause.line },
+    )
 }
 
 /// The user-facing name of the callee a disturbance travelled through, if it did.
