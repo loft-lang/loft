@@ -238,6 +238,67 @@ PY
       exit 0
     fi ;;
 esac
+# A PE binary's import HINTS are the Windows counterpart: each imported name carries a 2-byte
+# guess at its index in the DLL's export table, copied from the SDK's import library, and the
+# loader falls back to the name when the guess misses.  v2026.10.0's x86_64-pc-windows-msvc
+# rebuild matched in every byte but its hints (all +5 — the runner's kernel32.lib numbers
+# its exports apart under the same SDK version) and the /Brepro stamp, a hash over the image
+# that therefore moved with them (the COFF header and the debug directory's copy).  So a
+# differing PE is compared again with exactly those fields zeroed, and the verdict says so.
+case "$TARGET" in
+  *windows-msvc)
+    if python3 - "$rebuilt" "$published" <<'PY'
+import struct, sys
+def masked(path):
+    b = bytearray(open(path, "rb").read())
+    pe = struct.unpack_from("<I", b, 0x3C)[0]
+    if b[pe:pe + 4] != b"PE\0\0" or struct.unpack_from("<H", b, pe + 24)[0] != 0x20B:
+        sys.exit(2)
+    nsec = struct.unpack_from("<H", b, pe + 6)[0]
+    optsz = struct.unpack_from("<H", b, pe + 20)[0]
+    opt = pe + 24
+    secs = []
+    o = opt + optsz
+    for _ in range(nsec):
+        vs, va, _rs, rp = struct.unpack_from("<IIII", b, o + 8)
+        secs.append((va, vs, rp))
+        o += 40
+    def off(rva):
+        for va, vs, rp in secs:
+            if va <= rva < va + vs:
+                return rva - va + rp
+        return None
+    b[pe + 8:pe + 12] = bytes(4)                       # COFF TimeDateStamp (/Brepro hash)
+    drva, dsize = struct.unpack_from("<II", b, opt + 112 + 8 * 6)
+    p = off(drva) if drva else None
+    for i in range(dsize // 28 if p is not None else 0):
+        b[p + 28 * i + 4:p + 28 * i + 8] = bytes(4)     # each debug entry's TimeDateStamp
+    irva = struct.unpack_from("<I", b, opt + 112 + 8)[0]
+    p = off(irva)
+    while p is not None:
+        ilt, _ts, _fc, name, iat = struct.unpack_from("<IIIII", b, p)
+        if name == 0:
+            break
+        q = off(ilt or iat)
+        while q is not None:
+            e = struct.unpack_from("<Q", b, q)[0]
+            if e == 0:
+                break
+            if not e >> 63:
+                h = off(e & 0x7FFFFFFF)
+                if h is not None:
+                    b[h:h + 2] = bytes(2)               # the import's hint
+            q += 8
+        p += 20
+    return bytes(b)
+sys.exit(0 if masked(sys.argv[1]) == masked(sys.argv[2]) else 1)
+PY
+    then
+      echo "IDENTICAL apart from the PE import hints and the /Brepro stamp — v$VERSION/$TARGET reproduces from source"
+      echo "  (a hint is the loader's guess at an export index, taken from the SDK's import library)"
+      exit 0
+    fi ;;
+esac
 # Size first: a size match with differing bytes points at embedded paths or timestamps,
 # a size mismatch at a genuinely different build.  Saying which saves the next reader a
 # bisect.
