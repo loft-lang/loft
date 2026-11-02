@@ -1765,7 +1765,7 @@ impl Parser {
                         Value::Return(_) | Value::Break(_) | Value::Continue(_)
                     );
                     self.retype_null_leaves(last, should);
-                    if yields && matches!(bl.result, Type::Null) {
+                    if yields && matches!(bl.result.base(), Type::Null) {
                         bl.result = should.clone();
                     }
                 }

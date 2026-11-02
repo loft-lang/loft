@@ -11542,7 +11542,7 @@ impl Parser {
     /// range or a `null` pattern is its own test, a literal is compared with `==`.
     fn scalar_field_test(&mut self, field_type: &Type, tmp: u16) -> Value {
         let (pat, pat_type) = self.parse_match_pattern(field_type, tmp);
-        if matches!(pat_type, Type::Boolean) || matches!(pat, Value::Block(_)) {
+        if matches!(pat_type.base(), Type::Boolean) || matches!(pat, Value::Block(_)) {
             return pat;
         }
         let mut eq = Value::Null;
