@@ -77,7 +77,12 @@ concurrency:
 # `nightly-status` (PR-only, so skipped too), `actions: read` is the daily digest.
 permissions:
   contents: read
-  actions: read
+  # `write`, not `read`: a called workflow may not ask for more than its caller grants, and
+  # GitHub checks that at STARTUP for every job, skipped or not.  miri.yml's red-steps digest
+  # asks for `actions: write` (it hands its run to the tracked-issue digest) and skips itself
+  # on a gate run (`inputs.from_gate`) — with `read` here every gate run since that job landed
+  # ended in `startup_failure` before a single job ran.
+  actions: write
   issues: write
   pull-requests: write
 
