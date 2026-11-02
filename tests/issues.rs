@@ -18493,8 +18493,8 @@ fn issue_685_mutated_scalar_param_is_boxed_like_a_local() {
 /// reuse.  Both halves now ask the binding: `RefVar` means "already has one".
 ///
 /// The fixture puts BOTH bindings in ONE text-returning function, which is what no
-/// per-function condition can get right: `keep` is returned (stays inline + write-back),
-/// `side` is not (takes a shared cell).  Values live in
+/// per-function condition can get right.  Since loft#2297 both take a shared cell — `keep`
+/// (returned) no longer becomes the hidden `&text` return buffer, so it has one indirection.  Values live in
 /// `tests/scripts/687-mutated-text-param-capture.loft`; this asserts the storage, because
 /// mixing the two representations for one binding is what used to segfault, and a value
 /// test cannot see which one a green run picked.
@@ -18530,14 +18530,23 @@ fn issue_687_mutated_text_capture_storage_is_per_binding() {
     // All three functions return text, so the retired per-function proxy gave all three
     // the same answer.  Each binding needs a different one.
 
-    // `keep` IS the returned text, so the return machinery already gave it a hidden
-    // `&text` out-parameter.  Boxing it too is the mismatch that segfaulted: the record
-    // would hold a cell DbRef while the binding stayed a `&text` stack pointer.
+    // `keep` IS the returned text.  Two indirections for one binding is the crash: a cell in
+    // the record while the binding stays a `&text` stack pointer.  loft#2297 keeps a text
+    // local the closure WRITES out of the hidden `&text` return buffer (inline, the closure
+    // wrote its own copy and the write was lost), so it takes the cell — and the function
+    // must then carry no hidden `&text` attribute for it.
     assert!(
-        !is_cell("__closure_ret687_0", "keep"),
-        "#687: a text local that is the function's RETURN SOURCE must stay INLINE in the \
-         record — it already has a hidden `&text` out-parameter, and two indirections for \
-         one binding is the crash"
+        is_cell("__closure_ret687_0", "keep"),
+        "#687 / loft#2297: a returned text local a closure writes takes a shared cell"
+    );
+    let ret = p.data.def_nr("n_ret687");
+    assert!(
+        !p.data
+            .def(ret)
+            .attributes()
+            .iter()
+            .any(|a| a.hidden && a.name == "keep"),
+        "#687: a boxed `keep` must not ALSO be the hidden `&text` return buffer"
     );
     // `side` is not returned, so nothing else claims it and the shared cell is right.
     // The retired proxy skipped this one purely as collateral — the "too wide" half.

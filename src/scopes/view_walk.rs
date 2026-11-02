@@ -1403,7 +1403,7 @@ impl ViewWalk<'_> {
 /// Every other shape answers yes — the safe direction, since a `yes` only keeps a view's copy.
 fn argument_cannot_carry_a_view(data: &Data, d: u32, i: usize, arg: &Value) -> bool {
     if let Some(attr) = data.def(d).attributes.get(i)
-        && !matches!(attr.typedef, Type::RefVar(_))
+        && !matches!(attr.typedef.base(), Type::RefVar(_))
         && crate::data::is_scalar(&attr.typedef)
     {
         return true;

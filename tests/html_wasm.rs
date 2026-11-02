@@ -1546,6 +1546,13 @@ fn pln24_a_reachable_c_binding_is_refused_end_to_end_on_wasm() {
         // must not reject an otherwise-valid wasm program (the shape @PLN26 /
         // P269 already settled for `#native`).
         let (ok2, err2) = build(flag, &format!("un_{artifact}"), &unused);
+        // The refusal above compiles no C; this build does, and a WASI sysroot without
+        // wasm32 setjmp (Ubuntu 24.04's clang 18 and wasi-libc) is the same missing
+        // toolchain, reported the same way.
+        if !ok2 && err2.contains("toolchain is incomplete") {
+            eprintln!("SKIP {flag} (unused): the wasm32 toolchain cannot build loft's C unit");
+            continue;
+        }
         assert!(ok2, "{flag} must build an UNUSED #c declaration: {err2}");
     }
     let _ = fa::remove_dir_all(&tmp);
