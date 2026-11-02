@@ -4575,6 +4575,8 @@ impl Parser {
                 open_end_tp = Some(in_type.base().clone());
             }
         }
+        // Where the end bound was WRITTEN, for a diagnostic about it; an open end has none.
+        let mut till_at: Option<Position> = None;
         let mut till_tp = if let Some(tp) = open_end_tp {
             tp
         } else if till != Value::Null {
@@ -4587,6 +4589,7 @@ impl Parser {
             };
             in_type.clone()
         } else {
+            till_at = Some(*self.lexer.peek_pos());
             self.expression(&mut till)
         };
         // The end's type as written, for the element type's join below (`till_tp` is moved
@@ -4756,12 +4759,56 @@ impl Parser {
                 len_var,
                 self.cl("OpLengthVector", std::slice::from_ref(data)),
             ));
+            // @FR-N-Store — a slice bound is an index, and "a null index reads null": a bound
+            // whose type is `τ?` is read ONCE into a temp of its own type and tested before the
+            // clamp, which would read the null as a position.  A null bound leaves the pair
+            // empty, so a walk takes no round (`@FR-I-RangeNull`), and `_slice_null` tells a bind
+            // to leave its local ABSENT (`Parser::materialize_iterator`, loft#2306).
+            let mut null_flag = None;
+            let mut null_tests = Vec::new();
+            for (bound, tp, name, at) in [
+                (&mut *expr, &in_type, "slice_from", None),
+                (&mut till, &till_tp, "slice_till", till_at),
+            ] {
+                if matches!(tp, Type::Optional(_)) {
+                    // The end bound is a slot, as a single index and a text slice's bound are:
+                    // a `τ?` stored into it warns, on the bound as written (an open end has
+                    // none).  The start is asked where it is parsed, in `parse_in_range`.
+                    if let Some(at) = at {
+                        let mut probe = bound.clone();
+                        self.convert_store_lenient(&mut probe, tp, &I32, "the index", Some(&at));
+                    }
+                    let raw = self.create_unique(name, tp);
+                    iter_prelude.push(v_set(raw, std::mem::replace(bound, Value::Var(raw))));
+                    null_tests.push(self.single_op("!", Value::Var(raw), tp.clone()));
+                }
+            }
+            if let Some(last) = null_tests.pop() {
+                let flag = self.create_unique("slice_null", &Type::Boolean);
+                let test = null_tests
+                    .into_iter()
+                    .rev()
+                    .fold(last, |rest, t| v_if(t, Value::Boolean(true), rest));
+                iter_prelude.push(v_set(flag, test));
+                null_flag = Some(flag);
+            }
             iter_prelude.push(v_set(lo_var, expr.clone()));
             let lo = self.slice_clamp_bound(Value::Var(lo_var), len_var, false);
             iter_prelude.push(v_set(lo_var, lo));
             iter_prelude.push(v_set(hi_var, till.clone()));
             let hi = self.slice_clamp_bound(Value::Var(hi_var), len_var, incl);
             iter_prelude.push(v_set(hi_var, hi));
+            if let Some(flag) = null_flag {
+                iter_prelude.push(v_if(
+                    Value::Var(flag),
+                    v_block(
+                        vec![v_set(lo_var, Value::Int(0)), v_set(hi_var, Value::Int(0))],
+                        Type::Void,
+                        "null slice bound",
+                    ),
+                    Value::Null,
+                ));
+            }
             *expr = Value::Var(lo_var);
             till = Value::Var(hi_var);
             till_tp = I32.clone();
@@ -5090,11 +5137,13 @@ impl Parser {
         // later by the caller sees it false — `x = coll[lo..hi]` in a body is still rejected.
         let prev_iterable_context = self.iterable_context;
         self.iterable_context = true;
+        let mut start_at = None;
         let in_type = if self.lexer.peek_token("..") || self.lexer.peek_token("..=") {
             // Open-start range: treat missing start as 0.
             *expr = Value::Int(0);
             I32.clone()
         } else {
+            start_at = Some(*self.lexer.peek_pos());
             self.expression(expr)
         };
         self.iterable_context = prev_iterable_context;
@@ -5140,6 +5189,15 @@ impl Parser {
                 self.lexer.token(")");
             }
             return in_type;
+        }
+        // A slice's start bound is a slot, as a single index is: a `τ?` stored into it warns, on
+        // the bound as written (`@FR-N-Store`).
+        if *data != Value::Null
+            && matches!(in_type, Type::Optional(_))
+            && let Some(at) = start_at
+        {
+            let mut probe = expr.clone();
+            self.convert_store_lenient(&mut probe, &in_type, &I32, "the index", Some(&at));
         }
         self.parse_in_range_body(expr, data, subject_tp, name, in_type, reverse)
     }

@@ -5750,9 +5750,11 @@ use a separate collection or add after the loop"
         // on the destination — the temp breaks the alias.  Scoped to TRUE aliasing
         // (`ir_mentions_var`) so the non-aliased `t = v[a..b]` keeps the direct
         // fast path; `+=` never clears, so it stays on the direct path below too.
+        // Read through `base()` here and below: a `vector<T>?` destination is a vector
+        // (`@FR-L-Null`), and a slice with a nullable bound binds one (loft#2306).
         if materialisable_iter_shape
             && let Some(elm_tp) = iter_elm_tp.clone()
-            && matches!(f_type, Type::Unknown(_) | Type::Vector(_, _))
+            && matches!(f_type.base(), Type::Unknown(_) | Type::Vector(_, _))
             && var_nr != u16::MAX
             && op == "="
             && !self.first_pass
@@ -5809,7 +5811,7 @@ use a separate collection or add after the loop"
         // is a whole-value write-back and keeps the routes above.
         if materialisable_iter_shape
             && let Some(elm_tp) = iter_elm_tp.clone()
-            && (matches!(f_type, Type::Unknown(_) | Type::Vector(_, _))
+            && (matches!(f_type.base(), Type::Unknown(_) | Type::Vector(_, _))
                 || (op == "+=" && matches!(f_type.peel_link(), Type::Vector(_, _))))
             && var_nr != u16::MAX
             && matches!(op, "=" | "+=")
@@ -12511,6 +12513,26 @@ use a separate collection or add after the loop"
         Some((subject?, lo?, hi?))
     }
 
+    /// The `_slice_null` flag a slice prelude sets when one of its nullable bounds is null
+    /// (`Parser::parse_in_range_body`), or `None` for a slice whose bounds cannot be.
+    fn slice_null_flag(&self, init: &Value) -> Option<u16> {
+        let Value::Insert(stmts) = init.unspan() else {
+            return None;
+        };
+        stmts.iter().find_map(|st| match st.unspan() {
+            Value::Set(v, _)
+                if self
+                    .vars
+                    .name(*v)
+                    .trim_start_matches('_')
+                    .starts_with("slice_null") =>
+            {
+                Some(*v)
+            }
+            _ => None,
+        })
+    }
+
     /// The block-copy form of a scalar-element slice bound to `var_nr` (@PLN174 F4a): the
     /// slice prelude `init` (the clamped bounds), then ONE `OpSliceVector` from `subject`
     /// over `lo_var..hi_var` into the local — the statements `materialize_iterator` puts
@@ -12647,7 +12669,19 @@ use a separate collection or add after the loop"
         };
         let elm_tp = *elm_tp;
         let vec_tp = Type::Vector(Box::new(elm_tp.clone()), Deps::none());
-        self.change_var(to, &vec_tp);
+        // A slice with a nullable bound may be ABSENT (`@FR-N-Store`, loft#2306): the local is
+        // `vector<T>?`, and where the prelude's `_slice_null` says a bound was null it is left
+        // pointing at an absent slot instead of a copy.
+        let null_flag = match code.unspan() {
+            Value::Iter(_, init, _, _) => self.slice_null_flag(init),
+            _ => None,
+        };
+        let bind_tp = if null_flag.is_some() {
+            Type::optional(vec_tp.clone())
+        } else {
+            vec_tp.clone()
+        };
+        self.change_var(to, &bind_tp);
         if !self.first_pass
             && let Value::Iter(_, init, next, _) = code.clone()
             && matches!(*next, Value::Block(_))
@@ -12678,7 +12712,11 @@ use a separate collection or add after the loop"
                 && !self.is_type_var_element(&elm_tp)
                 && let Some(plan) = self.slice_plan(&init)
             {
+                let prelude = (*init).clone();
                 *code = self.slice_copy_form(*init, &elm_tp, var_nr, elm_var, op, plan);
+                if let Some(flag) = null_flag {
+                    self.absent_unless(code, &prelude, flag, &elm_tp, var_nr);
+                }
                 return;
             }
             let for_next = v_set(for_var, *next);
@@ -12701,6 +12739,7 @@ use a separate collection or add after the loop"
             if op == "=" && !needs_db {
                 stmts.push(self.cl("OpClearVector", &[Value::Var(var_nr)]));
             }
+            let prelude = (*init).clone();
             stmts.push(*init);
             // #493 — null-init the transient accumulator BEFORE the loop.  The
             // slice iterator's exhaustion branch frees the accumulator
@@ -12719,7 +12758,51 @@ use a separate collection or add after the loop"
                 self.vars.depend(var_nr, db);
             }
             *code = Value::Insert(stmts);
+            if let Some(flag) = null_flag {
+                self.absent_unless(code, &prelude, flag, &elm_tp, var_nr);
+            }
         }
+    }
+
+    /// [`Self::materialize_iterator`]'s absent form: `code` is the built copy, whose statements
+    /// hold the slice prelude `init` whole; everything after it — the copy — runs only where
+    /// `flag` says no bound was null, and otherwise the local takes a backing of its own with
+    /// an ABSENT slot (`vector_db_init`, the one home of a null vector local).
+    fn absent_unless(
+        &mut self,
+        code: &mut Value,
+        init: &Value,
+        flag: u16,
+        elm_tp: &Type,
+        var_nr: u16,
+    ) {
+        let Value::Insert(stmts) = code else {
+            return;
+        };
+        let Some(at) = stmts.iter().position(|st| st == init) else {
+            return;
+        };
+        let copy = stmts.split_off(at + 1);
+        #[allow(clippy::cast_possible_wrap)]
+        let absent = crate::keys::DbRef::ABSENT_REC as i32;
+        // The local names one of two backings — the copy's, or this absent one — so it borrows
+        // both: `vector_db_init`'s `depend` REPLACES the list, and a backing the local no
+        // longer names is one the free analysis may release while the local still reads it.
+        let held = self.vars.tp(var_nr).depend();
+        let absent_form = self.vector_db_init(elm_tp, var_nr, absent, false);
+        let mut both = held;
+        for d in self.vars.tp(var_nr).depend() {
+            if !both.contains(&d) {
+                both.push(d);
+            }
+        }
+        let tp = self.vars.tp(var_nr).with_deps(&Deps::frame(both));
+        self.vars.set_type(var_nr, tp);
+        stmts.push(v_if(
+            Value::Var(flag),
+            Value::Insert(absent_form),
+            Value::Insert(copy),
+        ));
     }
 }
 

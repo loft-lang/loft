@@ -3079,6 +3079,22 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         });
     }
 
+    /// The type of a text slice `code` over bounds typed `from` and `till` (`@FR-N-Store`: "a
+    /// null index reads null").  A nullable bound makes the slice `text?`, answering null when
+    /// the bound is, through `(N-Prop)`'s guard; without it the runtime read a null bound as the
+    /// position 0 — `t[1..maybe(0)]` answered "" and `t[maybe(0)..2]` the first two characters
+    /// (loft#2306).
+    fn text_slice_type(&mut self, code: &mut Value, from: &Type, till: Type) -> Type {
+        let text = Type::Text(crate::data::Deps::none());
+        if !matches!(from, Type::Optional(_)) && !matches!(till, Type::Optional(_)) {
+            return text;
+        }
+        if self.first_pass {
+            return Type::optional(text);
+        }
+        self.wrap_null_transparent(code, &[text.clone(), from.clone(), till], &text)
+    }
+
     pub(crate) fn parse_text_index(
         &mut self,
         code: &mut Value,
@@ -3178,22 +3194,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 *code = self.cl("OpGetTextSub", &[code.clone(), p.clone(), other]);
                 end_t = ot_type;
             }
-            // @FR-N-Store — "a null index reads null": a slice with a nullable bound is `text?`
-            // and answers null when a bound is (`(N-Prop)`'s guard).  Without it the runtime read
-            // a null bound as the position 0 — `t[1..maybe(0)]` answered "" and
-            // `t[maybe(0)..2]` the first two characters (loft#2306).
-            if matches!(index_t, Type::Optional(_)) || matches!(end_t, Type::Optional(_)) {
-                let text = Type::Text(crate::data::Deps::none());
-                if self.first_pass {
-                    return Type::optional(text);
-                }
-                return self.wrap_null_transparent(
-                    code,
-                    &[text.clone(), index_t.clone(), end_t],
-                    &text,
-                );
-            }
-            Type::Text(crate::data::Deps::none())
+            self.text_slice_type(code, index_t, end_t)
         } else {
             // @PLN110 3a — `for i in 0..len(s) { s[i] }` is a units error: `len(s)` is a
             // CHARACTER count but `s[i]` is byte-indexed, so the loop walks char-count byte
