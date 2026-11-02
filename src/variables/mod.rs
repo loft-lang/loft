@@ -4714,6 +4714,17 @@ impl Function {
         self.variables[v as usize].name = new_name.to_string();
     }
 
+    /// Rename variable `v` AND the binding that finds it: the old name then names nothing, so
+    /// the next bind of it makes a new variable (`Parser::withdraw_written_text_buffer`).
+    pub fn rename_binding(&mut self, v: u16, new_name: &str) {
+        let old = self.variables[v as usize].name.clone();
+        if self.names.get(&old) == Some(&v) {
+            self.names.remove(&old);
+        }
+        self.names.insert(new_name.to_string(), v);
+        self.variables[v as usize].name = new_name.to_string();
+    }
+
     pub fn mark_used(&mut self, v: u16) {
         self.variables[v as usize].uses += 1;
     }

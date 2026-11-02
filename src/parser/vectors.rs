@@ -3257,6 +3257,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             if v_nr == u16::MAX || !matches!(self.vars.tp(v_nr), Type::RefVar(_)) {
                 continue;
             }
+            if self.withdraw_written_text_buffer(parent_d, v_nr, &name) {
+                continue;
+            }
             let inline_tp = match self.vars.tp(v_nr) {
                 Type::RefVar(inner) => (**inner).clone(),
                 other => other.clone(),
@@ -3277,6 +3280,39 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 }
             }
         }
+    }
+
+    /// loft#2350, `@FR-L-CapWrite` — a text local that pass 1 made the HIDDEN `&text` return
+    /// buffer, at a `return s` it met before any closure of the function was parsed, and that a
+    /// closure then WRITES.  As the buffer it is a `RefVar` the scalar-capture flip never boxes,
+    /// so the closure would write its own copy and the frame return the original.  The buffer
+    /// keeps its place in the signature (callers lower against it on pass 2) under a compiler
+    /// name, the author's name becomes an ordinary local again (pass 2 binds only names pass 1
+    /// created), and the closures' boxed capture stays boxed: pass 2's flip boxes the local, and
+    /// each `return` delivers into the buffer pass 1 published
+    /// (`text_buffer_published_under_another_name`).  `false` for any other `RefVar` binding —
+    /// a user's `&` parameter, refused where it is written.
+    fn withdraw_written_text_buffer(&mut self, parent_d: u32, v_nr: u16, name: &str) -> bool {
+        let Some(a) = self.data.def(parent_d).attr_names.get(name).copied() else {
+            return false;
+        };
+        let attr = &self.data.def(parent_d).attributes()[a];
+        if !attr.hidden
+            || !matches!(&attr.typedef, Type::RefVar(t) if matches!(t.base(), Type::Text(_)))
+        {
+            return false;
+        }
+        let new_name = format!("__tret_w_{name}");
+        let def = &mut self.data.definitions[parent_d as usize];
+        def.attributes[a].name.clone_from(&new_name);
+        def.attr_names.remove(name);
+        def.attr_names.insert(new_name.clone(), a);
+        self.vars.rename_binding(v_nr, &new_name);
+        let local = self
+            .vars
+            .add_variable(name, &Type::Text(Deps::none()), &mut self.lexer);
+        self.vars.mark_used(local);
+        true
     }
 
     /// `@FR-L-CapOwn`, `@FR-O-Witness` (loft#2131, loft#2132) — give each record-typed capture
