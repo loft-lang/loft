@@ -2748,6 +2748,15 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         let Value::Block(b) = code.unspan() else {
             return None;
         };
+        // A struct field of tuple type read while a `&` link parses (`TUPLE_FIELD_PLACE`): each
+        // member is already its own read of the field's record, so the member IS that read
+        // (`c = &w.pair.0` links the field's member as `flip(w.pair.0)` does).
+        if b.name == Self::TUPLE_FIELD_PLACE
+            && let [Value::Drop(_), members] = b.operators.as_slice()
+            && let Value::Tuple(members) = members.unspan()
+        {
+            return members.get(idx).cloned();
+        }
         if b.name != "tuple_unbox" || b.operators.len() != 2 {
             return None;
         }

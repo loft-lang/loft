@@ -1081,7 +1081,7 @@ impl Parser {
                         *code = place;
                     } else {
                         if let Err(elem) = self.linkable_tuple_member(t, i) {
-                            self.refuse_tuple_member_link(&elem, i);
+                            self.refuse_tuple_member_link(t, &elem, i);
                         }
                         *code = orig;
                     }
@@ -1128,8 +1128,8 @@ impl Parser {
                     // A tuple member no link can honour: refused, never copied (the copy would
                     // take the callee's write and drop it).  The argument stays in the call, so
                     // the refusal is the only diagnostic.
-                    let i = *i;
-                    self.refuse_tuple_member_link(&elem, i);
+                    let (t, i) = (*t, *i);
+                    self.refuse_tuple_member_link(t, &elem, i);
                     *code = orig;
                 } else {
                     // produce a `Value::Insert` so that scope

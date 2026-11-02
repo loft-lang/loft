@@ -5282,6 +5282,7 @@ use a separate collection or add after the loop"
             };
             if let Some((t, i)) = member_src {
                 amp_unlowered = false;
+                self.record_heap_member_link(t, i);
                 // A link to a text member of a by-value PARAMETER can write it: the parameter
                 // takes its owned copy first (loft#1278), and on this pass the link names it.
                 let mut t = t;
@@ -5307,7 +5308,7 @@ use a separate collection or add after the loop"
                             self.ref_var_type(elem)
                         };
                     }
-                    Err(elem) => self.refuse_tuple_member_link(&elem, i),
+                    Err(elem) => self.refuse_tuple_member_link(t, &elem, i),
                 }
             } else if let Some(src) = link_src {
                 amp_unlowered = false;
@@ -11031,7 +11032,8 @@ use a separate collection or add after the loop"
     /// (`tuple_links::linked_narrow_members`, both backends), as a linked narrow LOCAL does.
     /// A narrow member reached through a `&(…)` link is still refused: that tuple is the
     /// caller's, in either of its two representations, and neither encodes the member.  A heap
-    /// member is not a scalar place at all.
+    /// member is no frame-slot place: it is linked through the tuple's RECORD
+    /// ([`Parser::record_heap_member_link`]), so this answers `Err` for it.
     pub(crate) fn linkable_tuple_member(&self, t: u16, i: u16) -> Result<Type, Type> {
         // A member of a `&(…)` link (a parameter, or a local link) is the CALLER's tuple at the
         // member's offset: the link's reference plus that offset, as the member read through
@@ -11059,6 +11061,33 @@ use a separate collection or add after the loop"
         }
     }
 
+    /// `@FR-T-Record` / `@FR-B-Ref-Lvalue` — a link names a HEAP member of a by-value tuple
+    /// LOCAL (`flip(t.0)`, `c = &t.0`, the member a struct, a struct-enum or a collection) as
+    /// `&r.f` names a record's field: the local is built as its `__tuple<…>` record — the
+    /// representation `@FR-T-Ref-Rep` gives a tuple local a `&(…)` names — and the member is
+    /// then that record's field, linked the way every field is.  Recorded on pass 1, where the
+    /// link is seen, so pass 2's bind builds the record before any link reads it.  A member
+    /// the record cannot lay out (`ref_tuple_is_record`) is left to the refusal.
+    pub(crate) fn record_heap_member_link(&mut self, t: u16, i: u16) {
+        if t >= self.vars.count() || self.vars.is_argument(t) {
+            return;
+        }
+        let Type::Tuple(elems) = self.vars.tp(t).base() else {
+            return;
+        };
+        let heap_member = elems
+            .get(i as usize)
+            .is_some_and(|e| !crate::data::is_scalar(e) && !matches!(e.base(), Type::Text(_)));
+        if heap_member && crate::data::ref_tuple_is_record(elems) {
+            // The record's definition is minted here, on the pass that sees the link, so its
+            // layout is computed between the passes as every record's is.
+            let elems = elems.clone();
+            self.data.tuple_def(&mut self.lexer, &elems);
+            let name = self.vars.name(t).to_string();
+            self.ref_linked_tuple_locals.insert((self.context, name));
+        }
+    }
+
     /// `@FR-T-Ref-Src` — the source of a `&(…)` is a tuple PLACE: a variable, a vector element
     /// or a struct field.  A literal or a call result is a value that names no place; refused
     /// at a `&` bind and at a `&(…)` argument alike, with the cure, never copied
@@ -11076,13 +11105,17 @@ use a separate collection or add after the loop"
     /// The refusal for a tuple member [`Parser::linkable_tuple_member`] declines, at a `&` bind
     /// and at a `&` argument alike.  `(B-Ref-Reshape)`: never downgraded to a copy that would
     /// drop the write.
-    pub(crate) fn refuse_tuple_member_link(&mut self, elem: &Type, i: u16) {
+    pub(crate) fn refuse_tuple_member_link(&mut self, t: u16, elem: &Type, i: u16) {
         if self.first_pass {
             return;
         }
         let tp = self.data.written_type_name(elem);
-        let why = if !crate::data::is_scalar(elem) {
-            "a link to a member names a scalar place, and this member is not a scalar"
+        let why = if !crate::data::is_scalar(elem) && self.vars.is_argument(t) {
+            "the tuple is a by-value parameter, and a link to a heap member of it is not \
+             supported; take the parameter as `&(…)` to write the caller's tuple"
+        } else if !crate::data::is_scalar(elem) {
+            "a link names a heap member through the tuple's record, and this tuple holds a \
+             member a record cannot lay out (a nullable, a fn-ref or a nested tuple)"
         } else if crate::data::NarrowSlot::of_type(elem).is_some() {
             "the tuple is reached through a `&` link, and a link to a narrow member of a linked \
              tuple is not supported"
