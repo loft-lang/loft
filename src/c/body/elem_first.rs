@@ -277,7 +277,7 @@ impl super::FnWriter<'_> {
             let (t, e) = (self.var(tmp), self.var(self.ef.pairs[pi].elm));
             self.line(
                 ind,
-                &format!("{t} = (loft_ref) {{ {e}.store_nr, {e}.rec, {e}.pos + {off} }}; /* @FR-R-ElemFirst */"),
+                &format!("{t} = (loft_ref) {{ {e}.store_nr, {e}.rec, {e}.pos + {off}, 0 }}; /* @FR-R-ElemFirst */"),
             );
             return Some(Ok(()));
         }

@@ -3937,7 +3937,7 @@ impl<'a> FnWriter<'a> {
         for &v in &parked {
             let (var, slot) = (self.var(v), park(v));
             self.decls.push(format!(
-                "static LOFT_TLS loft_ref {slot} = {{ 0xFFFF, 0, 0 }};"
+                "static LOFT_TLS loft_ref {slot} = {{ 0xFFFF, 0, 0, 0 }};"
             ));
             self.line(ind, &format!("loft_park_take(&{slot}, &{var});"));
         }
