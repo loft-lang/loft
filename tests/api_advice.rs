@@ -3,8 +3,9 @@
 // @I60 — Scope & dependency/lifetime tracker (deps)
 //! `@FR-R-Escape` — the two API-design advices: which `pub` functions they name and, as
 //! importantly, which they leave alone.  A shape a rewrite still reaches, a no-heap
-//! intermediate, a stdlib producer, an answered intermediate and a private function are the
-//! negatives; the switch silences both.
+//! intermediate, a stdlib producer, an answered intermediate, a private function, a producer
+//! answering a view of its parameter, an intermediate built from a loop variable, one read only in
+//! a condition and a function answering nothing are the negatives; the switch silences both.
 
 use loft::file_access as fa;
 use std::path::PathBuf;
@@ -32,9 +33,19 @@ pub fn area(d: Doc) -> float { bounds(d).w * bounds(d).h }
 pub fn first_word(s: text) -> text { s.split(' ')[0] ?? "" }
 pub fn drop_first(d: Doc) -> Doc { np: vector<Piece> = []; for i in 1..len(d.pieces) { np += [d.pieces[i]?]; } return Doc { buf: d.buf, pieces: np, title: d.title }; }
 pub fn decoded(frame: vector<integer>) -> Decoded { decode(frame) }
+struct Shelf { items: vector<Decoded> }
+pub fn entry(s: Shelf, i: integer) -> Decoded { s.items[i]! }
+pub fn entry_op(s: Shelf, i: integer) -> text { entry(s, i).op }
+pub fn print_op(frame: vector<integer>) { println(decode(frame).op) }
+fn decode_at(frame: vector<integer>, k: integer) -> Decoded { Decoded { op: "op{frame[k] ?? 0}", fields: [k] } }
+pub fn all_ops(frame: vector<integer>) -> text { t = ""; for k in 0..len(frame) { t += decode_at(frame, k).op; } t }
+pub fn has_fields(frame: vector<integer>, k: integer) -> integer { if len(decode(frame).fields) > 1 { k } else { 0 } }
 fn main() {
   d = Doc { buf: [1, 2, 3], pieces: [Piece { start: 0, count: 3 }], title: "t" };
   println("{len(pieces(d))} {len(d.buffer())} {len(kept(d))} {len(pieces_private(d))} {len(starts(d))} {req_op([7])} {req_n([7])} {area(d)} {first_word("a b")} {len(drop_first(d).pieces)} {decoded([1]).op}");
+  sh = Shelf { items: [decode([4])] };
+  println("{entry_op(sh, 0)} {all_ops([5, 6])} {has_fields([9], 2)}");
+  print_op([8]);
 }
 "#;
 
@@ -93,6 +104,14 @@ fn the_two_shapes_are_named_and_the_negatives_stay_silent() {
         "first_word",
         "drop_first",
         "decoded",
+        // A producer answering a view of its parameter builds nothing; a function answering
+        // nothing answers no value; an intermediate built from a loop variable differs per
+        // build; one read in a condition is not what the function answers.  All four were
+        // named before, by text that was not true of them.
+        "entry_op",
+        "print_op",
+        "all_ops",
+        "has_fields",
     ] {
         assert!(
             !got.iter().any(|(_, n)| n == silent),
