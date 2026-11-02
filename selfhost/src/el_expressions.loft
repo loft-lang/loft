@@ -97,6 +97,13 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     match code {
       NdBlock { block } => {
         bl = block[0];
+        cb = chain_buffer(e, vars, bl.operators);
+        if cb >= 0 {
+          built = object_into_buffer(e, vars, bl.operators[-1], cb, result);
+          if built != null {
+            bl.operators[-1] = built!;
+          }
+        }
         bl.result = [el_types::with_deps(el_types::without_deps(result), [rb])];
         code = ir::NdBlock { block: [bl] };
       },
@@ -432,9 +439,7 @@ fn hidden_param(e: el::El, vars: el_vars::Vars, v: integer) -> boolean {
 // literal outside any loop, or a call's hidden `__ref_N` buffer; the rest stays a literal
 // build (`BuildIntoBuffer`) or is refused there.
 fn rename_ret_buffer(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer) {
-  d = e.context;
-  a = attr_nr(el::def(e, d), "__retbuf");
-  if a < 0 {
+  if attr_nr(el::def(e, e.context), "__retbuf") < 0 {
     return;
   }
   tail = ir::NdNull;
@@ -447,31 +452,51 @@ fn rename_ret_buffer(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     },
     _ => {}
   }
-  v = -1;
-  match tail {
+  v = rename_candidate(e, vars, code, tail);
+  if v >= 0 {
+    rename_onto(e, vars, rb, v);
+  }
+}
+
+// The variable a returned value `x` hands the return buffer to, or -1: a plain local struct
+// record bound once by a literal (`SkipReassigned` counts the records made through it in
+// `code`), or — on the first pass — a call's hidden `__ref_N` buffer.
+fn rename_candidate(e: el::El, vars: el_vars::Vars, code: ir::Node, x: ir::Node) -> integer {
+  match x {
     NdVar { n } => {
-      // `SkipReassigned`: a local two records are made through (`child_allocs`) is no buffer.
       if !vars.vars[n].argument && !starts_with(el_vars::name_of(vars, n), "_") && len(el_types::deps(el_vars::tp(vars, n))) == 0 && el_vars::was_built(vars, n) && child_allocs(e, vars, code, n) < 2 {
-        v = n;
+        return n;
       }
     },
     NdCall { args } => {
-      if !e.first_pass {
-        return;
-      }
-      la = len(args);
-      if la > 0 {
-        match el_ir::unspan(el_ir::last(args)) {
-          NdVar { n } => { if starts_with(el_vars::name_of(vars, n), "__ref_") { v = n; } },
-          _ => {}
+      if e.first_pass {
+        w = hidden_ref_arg(vars, args);
+        if w >= 0 {
+          return w;
         }
       }
     },
     _ => {}
   }
-  if v < 0 {
-    return;
+  -1
+}
+
+// The call's hidden `__ref_N` return buffer — its last argument — or -1.
+fn hidden_ref_arg(vars: el_vars::Vars, args: vector<ir::Node>) -> integer {
+  if len(args) > 0 {
+    match el_ir::unspan(el_ir::last(args)) {
+      NdVar { n } => { if starts_with(el_vars::name_of(vars, n), "__ref_") { return n; } },
+      _ => {}
+    }
   }
+  -1
+}
+
+// `RetPromotion::Rename` itself: the `__retbuf` attribute takes `v`'s name, the placeholder
+// stops being an argument, `v` becomes one, and the result's deps name the attribute.
+fn rename_onto(e: el::El, vars: el_vars::Vars, rb: integer, v: integer) {
+  d = e.context;
+  a = attr_nr(el::def(e, d), "__retbuf");
   e.b.data.definitions[d].attributes[a].name = el_vars::name_of(vars, v);
   vars.vars[rb].argument = false;
   vars.vars[rb].skip_free = true;
@@ -4326,21 +4351,120 @@ fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
 }
 
 // A mid-body `return` of a record (`parse_return` → `ref_return` with the value as a one-element
-// body): a literal is built into the hidden `__retbuf`, as a literal tail is.  Any other record
-// value is refused by name.
+// body, `RetSite::MidReturn`):
+// - a literal is built into the hidden `__retbuf`, as a literal tail is;
+// - a local bound once by a literal takes the buffer (`Rename`, pass 1) and is returned as the
+//   attribute it then is (`MergeAttr`) — outside any loop only, where `declared_in_loop` cannot
+//   apply;
+// - a call hands its hidden `__ref_N` the buffer, and the call becomes the chain that answers
+//   it (`chain_site_set_shape`), unless the callee answers a view of its arguments.
+// Any other record value is refused by name.
 fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -> Ex {
   rb = el_vars::var(vars, "__retbuf");
-  if e.first_pass || rb < 0 {
+  if rb < 0 {
     return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
   }
-  if attr_nr(el::def(e, e.context), "__retbuf") >= 0 {
-    built = object_into_buffer(e, vars, el_ir::unspan(v.code), rb, result);
+  d = e.context;
+  unrenamed = attr_nr(el::def(e, d), "__retbuf") >= 0;
+  x = el_ir::unspan(v.code);
+  if !e.first_pass && unrenamed {
+    built = object_into_buffer(e, vars, x, rb, result);
     if built != null {
       return ex(ir::NdReturn { inner: built! }, ir::TyNever);
     }
   }
+  w = -1;
+  chain = false;
+  match x {
+    NdVar { n } => {
+      if len(vars.active_loops) == 0 {
+        w = n;
+      }
+    },
+    NdCall { def_nr, args } => {
+      if !returns_argument_view(el::def(e, def_nr)) {
+        w = hidden_ref_arg(vars, args);
+        chain = true;
+      }
+    },
+    _ => {}
+  }
+  if w >= 0 && e.first_pass && unrenamed && rename_candidate(e, vars, v.code, x) == w {
+    rename_onto(e, vars, rb, w);
+  }
+  a = if w >= 0 { attr_nr(el::def(e, d), el_vars::name_of(vars, w)) } else { -1 };
+  if a >= 0 && el::def(e, d).attributes[a].hidden {
+    ret = el::def(e, d).returned[0];
+    dep = el_types::deps(ret);
+    if !dep.contains(a) {
+      e.b.data.definitions[d].returned = [el_types::with_deps(ret, dep + [a])];
+    }
+    if chain {
+      own = el_types::with_deps(el_types::without_deps(el_types::base(result)), [w]);
+      return ex(ir::NdReturn { inner: el_ir::v_block([el_ir::v_set(w, x), ir::NdVar { n: w }], own, "one_buffer_chain") }, ir::TyNever);
+    }
+    return ex(ir::NdReturn { inner: x }, ir::TyNever);
+  }
+  if e.first_pass {
+    return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+  }
   refuse_known(e, v.tp, "a `return` of a record that is not a literal: {tail_kind(e, vars, el_ir::v_block([v.code], v.tp, ""))}");
   ex(ir::NdNull, ir::TyNever)
+}
+
+// `Parser::chain_return_buffer_var` (@PLN164 B2): the buffer only chain exits renamed — a hidden
+// `__ref_N` the body names nowhere but inside a `one_buffer_chain` — is the caller's too, so a
+// literal tail builds into it.  -1 for any other function.  A record with a `__nullable<…>`
+// field is left out (`record_is_fully_written_by_a_literal`): its literal relies on a zeroed
+// record.
+fn chain_buffer(e: el::El, vars: el_vars::Vars, ops: vector<ir::Node>) -> integer {
+  def = el::def(e, e.context);
+  if def.def_type != el::DT_FUNCTION || len(ops) == 0 || def.name.contains("__lambda") {
+    return -1;
+  }
+  for a in def.attributes {
+    if a.hidden && el_types::base(a.typedef[0]) is TyReference {
+      if !starts_with(a.name, "__ref_") || starts_with(a.name, "__ref_p2_") || has_nullable_field(e, heap_def(a.typedef[0])) {
+        return -1;
+      }
+      w = el_vars::var(vars, a.name);
+      if w < 0 || !vars.vars[w].argument {
+        return -1;
+      }
+      for op in ops {
+        if el_ir::names_outside_chain(op, w) {
+          return -1;
+        }
+      }
+      return w;
+    }
+  }
+  -1
+}
+
+fn has_nullable_field(e: el::El, td: integer) -> boolean {
+  if td < 0 {
+    return true;
+  }
+  for a in el::def(e, td).attributes {
+    match el_types::base(a.typedef[0]) {
+      TyEnum { n } => { if starts_with(el::def(e, n).name, "__nullable<") { return true; } },
+      _ => {}
+    }
+  }
+  false
+}
+
+// `Definition::returns_borrowed_view`: the result borrows one of the function's visible
+// parameters (a hidden buffer is no borrow).
+fn returns_argument_view(def: ir::Definition) -> boolean {
+  for x in el_types::deps(def.returned[0]) {
+    a = def.attributes[x];
+    if a == null || !a.hidden {
+      return true;
+    }
+  }
+  false
 }
 
 // `Parser::parse_for` for one binding over a vector or an integer range.  The loop's variable

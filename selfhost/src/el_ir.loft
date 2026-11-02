@@ -47,32 +47,42 @@ pub fn is_line(n: ir::Node) -> boolean {
 // `Value::reads_var`: does any node of the tree name variable `v` (a read, a `Set`'s target, a
 // tuple member, a call through a fn-ref, an iterator, a fn-ref)?
 pub fn reads_var(n: ir::Node, v: integer) -> boolean {
+  names(n, v, true)
+}
+
+// `Parser::names_outside_a_chain`: `reads_var`, the inside of a `one_buffer_chain` block left
+// out — a chain names its buffer only to answer through it.
+pub fn names_outside_chain(n: ir::Node, v: integer) -> boolean {
+  names(n, v, false)
+}
+
+fn names(n: ir::Node, v: integer, chains: boolean) -> boolean {
   match n {
     NdVar { n: x } => x == v,
-    NdSet { var, inner } => var == v || reads_var(inner, v),
-    NdSpan { inner } => reads_var(inner, v),
-    NdCall { args } => any_reads(args, v),
-    NdCallRef { var, args } => var == v || any_reads(args, v),
-    NdBlock { block } => any_reads(block[0].operators, v),
-    NdLoop { block } => any_reads(block[0].operators, v),
-    NdInsert { items } => any_reads(items, v),
-    NdTuple { items } => any_reads(items, v),
-    NdReturn { inner } => reads_var(inner, v),
-    NdDrop { inner } => reads_var(inner, v),
-    NdYield { inner } => reads_var(inner, v),
-    NdIf { cond, t, f } => reads_var(cond, v) || reads_var(t, v) || reads_var(f, v),
-    NdIter { var, create, next, init } => var == v || reads_var(create, v) || reads_var(next, v) || reads_var(init, v),
+    NdSet { var, inner } => var == v || names(inner, v, chains),
+    NdSpan { inner } => names(inner, v, chains),
+    NdCall { args } => any_names(args, v, chains),
+    NdCallRef { var, args } => var == v || any_names(args, v, chains),
+    NdBlock { block } => (chains || block[0].name != "one_buffer_chain") && any_names(block[0].operators, v, chains),
+    NdLoop { block } => any_names(block[0].operators, v, chains),
+    NdInsert { items } => any_names(items, v, chains),
+    NdTuple { items } => any_names(items, v, chains),
+    NdReturn { inner } => names(inner, v, chains),
+    NdDrop { inner } => names(inner, v, chains),
+    NdYield { inner } => names(inner, v, chains),
+    NdIf { cond, t, f } => names(cond, v, chains) || names(t, v, chains) || names(f, v, chains),
+    NdIter { var, create, next, init } => var == v || names(create, v, chains) || names(next, v, chains) || names(init, v, chains),
     NdTupleGet { var } => var == v,
-    NdTuplePut { var, inner } => var == v || reads_var(inner, v),
+    NdTuplePut { var, inner } => var == v || names(inner, v, chains),
     NdFnRef { var } => var == v,
-    NdParallel { arms } => any_reads(arms, v),
+    NdParallel { arms } => any_names(arms, v, chains),
     _ => false
   }
 }
 
-fn any_reads(l: vector<ir::Node>, v: integer) -> boolean {
+fn any_names(l: vector<ir::Node>, v: integer, chains: boolean) -> boolean {
   for x in l {
-    if reads_var(x, v) {
+    if names(x, v, chains) {
       return true;
     }
   }
