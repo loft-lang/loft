@@ -458,6 +458,10 @@ pub(crate) struct CaptureBuilds {
     /// Captures whose closure BUILD sits inside a loop, so the record's slot is rewritten on
     /// every pass and only the LAST adoption is the one it still holds.
     pub(crate) rebuilt_in_loop: crate::fxhash::FxHashSet<u16>,
+    /// loft#2352 — the captures among `rebuilt_in_loop` that are also ASSIGNED inside a loop
+    /// holding their build, so each pass's record may adopt a different store.  A capture
+    /// assigned only outside the loop hands every pass's record the same store.
+    pub(crate) rebound_in_loop: crate::fxhash::FxHashSet<u16>,
     /// loft#1610, `@FR-L-CapOwn` — the closure record TYPES confined to one pass of a loop: built
     /// inside a loop body into a fn-ref local that appears nowhere outside that loop and there
     /// only as a call's callee, so no value of it survives the pass.  Such a record cannot

@@ -321,6 +321,7 @@ pub(crate) fn capture_build_backings(
     let mut generation: HashMap<u16, u32> = HashMap::default();
     let mut out = CaptureBuilds::default();
     captures_built_in_a_loop(code, set_dbref, false, &mut out.rebuilt_in_loop);
+    captures_rebound_in_a_loop(code, set_dbref, &mut out.rebound_in_loop);
     out.pass_confined = pass_confined_records(data, function, code);
     captures_built_conditionally(code, set_dbref, false, &mut out.built_conditionally);
     captures_of_displaced_records(function, code, set_dbref, &mut out.built_conditionally);
@@ -777,7 +778,11 @@ pub(crate) fn backs_an_adopted_capture(
             // record outlives the frame; declining there frees the store the escaped closure
             // still reads, which `1324-a-reassigned-capture-suppresses-the-store-the-record-\
             // holds` catches as `null(oob)`.
-            && !built_with.rebuilt_in_loop.contains(&c)
+            // loft#2352 — and only where the capture is assigned inside that loop: a capture
+            // assigned once before it hands every pass's record the same store, the last
+            // record holds it, and the frame's release of it is made conditional on that
+            // record (`adoption_build_is_conditional`, a loop build being conditional).
+            && !built_with.rebound_in_loop.contains(&c)
             && capture_is_adopted(data, function, built_with, c)
             && match built_with.backing.get(&c) {
                 // @FR-O-Latest — the record holds the store this capture named AT THE BUILD, so
@@ -1072,6 +1077,61 @@ fn captures_built_in_a_loop(node: &Value, set_dbref: u32, in_loop: bool, out: &m
     }
     node.unspan()
         .for_each_child(&mut |ch| captures_built_in_a_loop(ch, set_dbref, inner, out));
+}
+
+/// loft#2352 — the captures built inside a loop whose local, at the loop's end, may name a
+/// store no record holds: it is ASSIGNED in that loop after a build of it (in walk order, an
+/// assignment whose right-hand side holds the build counting as after it), or
+/// the build sits in a branch of the loop body while the loop assigns it.  A capture assigned
+/// only outside the loop, or assigned before an unconditional build on every pass, names at
+/// the end exactly the store the last record holds.  Collected per loop, so an assignment in
+/// one loop and a build in another do not pair.
+fn captures_rebound_in_a_loop(node: &Value, set_dbref: u32, out: &mut HashSet<u16>) {
+    if let Value::Loop(_) = node.unspan() {
+        let mut first_build: HashMap<u16, usize> = HashMap::default();
+        let mut sets: Vec<(u16, usize)> = Vec::new();
+        let mut at = 0usize;
+        node.walk(&mut |n| {
+            at += 1;
+            match n.unspan() {
+                Value::Call(d, args) if *d == set_dbref => {
+                    if let Some(Value::Var(c)) = args.get(2).map(Value::unspan) {
+                        first_build.entry(*c).or_insert(at);
+                    }
+                }
+                // A build inside the assignment's OWN right-hand side captures the value the
+                // local held before it: the assignment completes after that build.
+                Value::Set(v, rhs) => {
+                    let mut inside = false;
+                    rhs.walk(&mut |m| {
+                        if let Value::Call(d, args) = m.unspan()
+                            && *d == set_dbref
+                            && matches!(args.get(2).map(Value::unspan), Some(Value::Var(c)) if c == v)
+                        {
+                            inside = true;
+                        }
+                    });
+                    sets.push((*v, if inside { usize::MAX } else { at }));
+                }
+                _ => {}
+            }
+        });
+        // Branched WITHIN the loop body: from the loop's children, since the walk counts
+        // every build under a `Loop` node as conditional.
+        let mut branched: HashSet<u16> = HashSet::default();
+        node.unspan().for_each_child(&mut |ch| {
+            captures_built_conditionally(ch, set_dbref, false, &mut branched);
+        });
+        for (v, i) in sets {
+            if let Some(&b) = first_build.get(&v)
+                && (i > b || branched.contains(&v))
+            {
+                out.insert(v);
+            }
+        }
+    }
+    node.unspan()
+        .for_each_child(&mut |ch| captures_rebound_in_a_loop(ch, set_dbref, out));
 }
 
 /// Does the build that adopted `v`'s store sit in a branch?
