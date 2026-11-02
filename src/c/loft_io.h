@@ -884,16 +884,35 @@ static int loft_is_dir(const char *path) {
     return loft_stat(path, &size) == 4;
 }
 
+/* A path's form for telling two spellings of one file apart: a relative path is put under the
+ * working directory (under `#cwd`, or wherever the program anchor is empty, a resolved path is
+ * still relative), then folded — `../x` and `<cwd>/../x` and `<parent>/x` are one key. */
+static char *loft_path_key(const char *path) {
+    char buf[4096];
+    const char *cwd = "";
+#if defined(LOFT_POSIX)
+    if (getcwd(buf, sizeof buf)) cwd = buf;
+#elif defined(_WIN32)
+    if (_getcwd(buf, (int) sizeof buf)) cwd = buf;
+#else
+    (void) buf;
+#endif
+    char *joined = loft_normalize(loft_lit(path, strlen(path)), cwd, 0);
+    char *key = loft_normalize(loft_lit(joined, strlen(joined)), "", 0);
+    free(joined);
+    return key;
+}
+
 /* Close this program's own handles on `path`; answers whether there was one.  A later read or
- * write through a closed handle reopens by path, as after a truncate.  The paths compare in
- * normal form: a relative `../x` resolves to `<anchor>/../x` (the anchor is joined after the
- * fold) while `<anchor>/../x` written absolutely folds to `<parent>/x`, and both name one file. */
+ * write through a closed handle reopens by path, as after a truncate.  The paths compare by
+ * `loft_path_key`: the handle holds the path it was opened under and the delete names its own,
+ * and a relative `../x` is the same file as `<anchor>/../x` written absolutely. */
 static int loft_close_handles_on(const char *path) {
     int closed = 0;
-    char *want = loft_normalize(loft_lit(path, strlen(path)), "", 0);
+    char *want = loft_path_key(path);
     for (int32_t i = 0; i < loft_nfiles; i++) {
         if (!loft_files[i]) continue;
-        char *held = loft_normalize(loft_lit(loft_files_path[i], strlen(loft_files_path[i])), "", 0);
+        char *held = loft_path_key(loft_files_path[i]);
         if (strcmp(held, want) == 0) {
             fclose(loft_files[i]);
             loft_files[i] = 0;
