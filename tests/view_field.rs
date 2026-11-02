@@ -206,7 +206,10 @@ fn a_pooled_caller_mints_nothing_for_a_tuple() {
     // and both its mint and its release are emitted as nothing (@PLN164 E-1); the release
     // alone used to keep a heap-owning buffer alive.
     let src = emitted(ON);
-    let start = src.find("fn n_main(").expect("main is emitted");
+    // The e family's own function (the file's main is split by cell family).
+    let start = src
+        .find("fn n_a_pooled_callee_in_a_loop(")
+        .expect("the e family is emitted");
     let main = &src[start..];
     let main = &main[..main.find("  } /*block_1").unwrap_or(main.len())];
     assert!(
