@@ -387,6 +387,8 @@ src/main.rs            CLI; loads default/ then user file
   then a one-line summary of the rest; no long dumps.
 - **Advice vs action:** asked for advice/evaluation → give the recommendation (best option + why),
   don't bounce it back. Asked a question → answer it. Act/edit only on an explicit do-it instruction.
+  A decision met while working is not a multiple-choice question: take the sensible default, say
+  it in one line and continue, so the owner can redirect in prose; ask only at a real fork.
   A recommended RULE or design is probed before it is recommended: build the cell that would
   falsify its premise first — answering feels like advice, so the check gets skipped, and an
   approved wrong rule is built on (`design-protocol` § When you RECOMMEND it).

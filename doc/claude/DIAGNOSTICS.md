@@ -390,7 +390,9 @@ There are **two independent axes**, and a new diagnostic answers both.
 > **A diagnostic reaches only whoever can act on its cure.**
 
 Every `warning` and `advice` loft emits names a cure that is an edit to the code it points
-at — rename the field, declare the default, split the function. Pointing one at a reader who
+at — rename the field, declare the default, split the function — and the cure is a
+construction that says MORE than the code did, chosen for where the problem comes from, never
+only a silencer ([WARNING_FIXES.md](WARNING_FIXES.md)). Pointing one at a reader who
 cannot make that edit is noise by construction, and noise that reads as *their* defect: the
 Parser chapter of the reference, whose whole content is four `parser::parse` calls, printed
 **eleven** notes about the internals of two libraries the reader did not write (loft#1260).

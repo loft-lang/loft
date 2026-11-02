@@ -47,7 +47,10 @@ It holds four constraints:
    port of `fill.rs`/`state`, through the C runtime routines that are their port).  No part is
    a separate decision and nothing is a mechanism of its own: no owner table, no sweep, no
    layout or choice the Rust interpreter does not have.  A shape not ported yet is refused by
-   name.  The owner's reason: *"the loft language is not easy to write or maintain, but it is
+   name.  A difference from the Rust interpreter is therefore never a question for the owner:
+   what Rust does is the answer.  Only what Rust itself cannot define (a bytecode position in an
+   image run) may be one, and even then what the Rust side does elsewhere comes first
+   (`--native` writes `bc:0`).  The owner's reason: *"the loft language is not easy to write or maintain, but it is
    the only way to combine ease of use with optimal code"* — so its intricacy is ported, not
    redesigned.  This retires the run-time ownership of 1b-s3.md (2026-10-28).  The gate that
    follows from it: the loft-written bytecode equals `loft introspect`'s, byte for byte, and so

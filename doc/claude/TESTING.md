@@ -514,7 +514,9 @@ named condition removes the entry. Each class has one home and a guard.
   `native.rs::{NATIVE_SKIP, SCRIPTS_NATIVE_SKIP, LIB_PKGS_NATIVE_SKIP, LIB_TESTS_NATIVE_SKIP}`,
   `html_wasm.rs::{LIB_PKGS_WASM_SKIP, LIB_TESTS_WASM_SKIP, LIB_PKGS_NODE_SKIP,
   LIB_PKGS_WASMTIME_SKIP}`. An entry carries the open issue that explains it and the
-  condition that removes it. Today every list is empty except the `html_wasm` platform
+  condition that removes it.  A test that fails on one backend and passes on the other is
+  never simplified, split or rephrased to pass: the failure is the signal of the backend's
+  gap, so the backend is fixed or the test takes a skip entry. Today every list is empty except the `html_wasm` platform
   limits: `server` (a listener; a browser/WASI guest has no accept — by
   construction), `hex_world` on node (no filesystem; ends with a JS-host VirtFS bridge),
   `imaging` on wasmtime (no canvas codec; ends with a pure-wasm PNG decoder), `input` on

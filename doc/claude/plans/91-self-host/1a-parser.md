@@ -134,12 +134,24 @@ language suite (`../loft-suite-91`).
 |---|---|---|
 | T tokens | 1845 of 1850 files | four `"\0"` literals (a one-NUL text is loft's null text), one script |
 | S syntax | 1836 of 1843 files | seven refusal cells, all `@EXPECT_ERROR` files |
-| E image | 6 of 1627 programs (`selfhost/front/elab_gate.py`): bindings, user calls, operators, literals, format strings, assert/panic, plain structs, struct literals, field reads | by the gate's refusal ranking: operators, formatted types, typed collections, `for`, `if`, `match`, methods |
+| E image | 60 of 1649 programs agree, 1 differs (`selfhost/front/elab_gate.py`); 224 more are programs the Rust front end itself refuses | the differ (R-ValueRecord, the `__ref_p2_N` order of a sub-record literal inside a literal), then the families `elab_gate.py --plan` ranks first |
 
 Elaboration is `selfhost/src/el*.loft`; gate E's runner is `selfhost/front/elab.loft` (`elab
 <image> <program>` over a `LOFT_EMIT_PARSED` image, or `elab <stdlib files>`), its oracle side
 `selfhost/compare/defs.loft`.  A construct elaboration does not carry yet is refused BY NAME
 (`refused: …`), never approximated.
+
+**Measuring a change against gate E.**  The count alone hides a swap (one program gained, one
+lost).  Run the gate with `LOFT_ELAB_VERDICTS=<file>` on the change and on its base — the base
+from a `git worktree add <scratch>/head HEAD`, built there — and diff the two files: every line
+that moved is a program to read.  `--plan` ranks the refusal families by how many programs each
+alone blocks; `--which TEXT` lists the programs that meet one; `LOFT_ELAB_KEEP=1` keeps the
+build directory for a single-program diff.
+
+**When the elaborator's own output goes wrong** — a vector that empties, a C refusal, a helper
+answering null — suspect the LANGUAGE first: reduce it to a minimal probe, run it on both
+backends and on installed main.  Most such failures in this port were language defects
+(loft#2337–#2346), each fixed on the branch with a suite cell rather than spelled around.
 
 The syntax layer is `selfhost/src/syntax.loft` (the rules, one per production of
 [1a-grammar.md](1a-grammar.md)); gate S's runner is `selfhost/front/parse.loft`.
