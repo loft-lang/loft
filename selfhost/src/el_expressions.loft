@@ -70,18 +70,19 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // accumulator (`___acc_N`, `text_return`'s join arm) — not carried yet.
   match b.code {
     NdBlock { block } => {
-      if !e.first_pass && len(block[0].operators) > 0 && el_ir::unspan(el_ir::last(block[0].operators)) is NdIf && el_types::base(b.tp) is TyText && len(el_types::deps(b.tp)) > 0 {
+      if !e.first_pass && len(block[0].operators) > 0 && el_ir::unspan(el_ir::last(block[0].operators)) is NdIf && el_types::base(b.tp) is TyText && len(el_types::deps(el_types::base(b.tp))) > 0 {
         el::refuse(e, "a text `if` at a text function's tail, answered through an accumulator");
       }
     },
     _ => {}
   }
   text_return(e, vars, tt);
-  // `report_tret_promotions`: a text function with no buffer of its own whose answer is a call's,
-  // delivered into a `__work_cN` of this frame, is promoted to a hidden `___tret_N` after the
-  // second pass and its callers patched — not carried yet.
-  if !e.first_pass && el_types::base(result) is TyText && !has_text_buffer(el::def(e, e.context)) && answers_call_buffer(b.code, true) {
-    el::refuse(e, "a text answered from a call's buffer in this frame (a `___tret` promotion)");
+  // `report_tret_promotions` (`text_return_orphan_risk`): a text function with no buffer of its
+  // own whose answer is not a borrow of the caller's arguments — a literal, a call's buffer in
+  // this frame, anything it owns — is promoted to a hidden `___tret_N` after the second pass and
+  // its callers patched: not carried yet.
+  if !e.first_pass && el_types::base(result) is TyText && !has_text_buffer(el::def(e, e.context)) && !borrows_arguments_only(el::def(e, e.context)) {
+    el::refuse(e, "a text answered by value with no buffer of its own (a `___tret` promotion)");
   }
   code = b.code;
   // A text answered through a hidden `&text` the body's own work text became: the body is typed
@@ -99,7 +100,12 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       _ => {}
     }
   }
-  // The body of a promoted text local answers a text borrowing it (`av_renumber_retbuf`).
+  // The body of a promoted text local answers a text borrowing it (`av_renumber_retbuf`).  A
+  // local bound to a record local's text field (`s = r.name; s`) keeps the record's borrow
+  // there instead — not carried: refused by name.
+  if !e.first_pass && tt != b.tp && len(el_types::deps(tt)) == 1 && field_view_bind(e, vars, code, el_types::deps(tt)[0]) {
+    el::refuse(e, "a text function answering a local bound to a record's text field");
+  }
   if !e.first_pass && tt != b.tp {
     match code {
       NdBlock { block } => {
@@ -1657,6 +1663,19 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
     } else {
       l = l[..-1] + [tc!];
       t = result;
+    }
+  }
+  // A value block whose tail is a text local the block defines answers a borrow of that local,
+  // not of what the local borrows (`{ r = R {…}; s = r.name; s }` is `text["s"]`).
+  if context != "return from block" && len(l) > 0 && el_types::base(t) is TyText {
+    match el_ir::unspan(l[-1]) {
+      NdVar { n: tv } => {
+        if !vars.vars[tv].argument && el_types::base(el_vars::tp(vars, tv)) is TyText && sets_var(el_ir::v_block(l[..-1], ir::TyVoid, ""), tv) {
+          bt = ir::TyText { dep: [tv] };
+          t = if t is TyOptional { ir::TyOptional { inner: bt } } else { bt };
+        }
+      },
+      _ => {}
     }
   }
   ex(el_ir::v_block(l, t, "block"), t)
@@ -4748,7 +4767,23 @@ fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
         has_text = el_ir::cl(e, "OpConvBoolFromText", [x.code]);
         return ex(el_ir::v_if(has_text, x.code, d.code), tt);
       },
-      _ => {}
+      _ => {
+        // Anything else is held in a `__ncc_N` that borrows what the subject borrows, never
+        // freed, minted on both passes as the Rust mints it; the "ncc" block answers it or the
+        // default.
+        if !(el_types::base(d.tp) is TyText) || d.tp is TyOptional {
+          refuse_known(e, d.tp, "a `??` default of another type: {type_kind(d.tp)} for TyText");
+          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+        held = el_vars::create_unique(vars, "_ncc", lhs);
+        vars.vars[held].skip_free = true;
+        if e.first_pass {
+          return ex(ir::NdNull, lhs);
+        }
+        h = ir::NdVar { n: held };
+        test = el_ir::v_if(el_ir::cl(e, "OpConvBoolFromText", [h]), h, d.code);
+        return ex(el_ir::v_block([el_ir::v_set(held, nullable_arith(e, x.code, true)), test], lhs, "ncc"), lhs);
+      }
     }
   }
   if lhs is TyReference {
@@ -8027,37 +8062,45 @@ fn has_text_buffer(def: ir::Definition) -> boolean {
   false
 }
 
-// Is a call handed a caller's text buffer (`"default ref"`) what `n` answers — at the tail of
-// the body when `tail`, or in any `return`?
-fn answers_call_buffer(n: ir::Node, tail: boolean) -> boolean {
+// Is `v` bound anywhere in `n` to a text field read off a record local (`OpGetText(r, …)`)?
+fn field_view_bind(e: el::El, vars: el_vars::Vars, n: ir::Node, v: integer) -> boolean {
   match n {
-    NdSpan { inner } => answers_call_buffer(inner, tail),
-    NdReturn { inner } => answers_call_buffer(inner, true),
-    NdCall { args } => {
-      if tail {
-        for a in args {
-          match a {
-            NdBlock { block } => { if block[0].name == "default ref" { return true; } },
-            _ => {}
-          }
+    NdSet { var, inner } => {
+      if var == v {
+        match el_ir::unspan(inner) {
+          NdCall { def_nr, args } => {
+            if el::def(e, def_nr).name == "OpGetText" && len(args) > 0 {
+              match el_ir::unspan(args[0]) {
+                NdVar { n: r } => { return heap_def(el_vars::tp(vars, r)) >= 0; },
+                _ => {}
+              }
+            }
+          },
+          _ => {}
         }
       }
       false
     },
-    NdBlock { block } => {
-      for o in block[0].operators {
-        if answers_call_buffer(o, tail && o#index == len(block[0].operators) - 1) {
-          return true;
-        }
-      }
-      false
-    },
-    NdLoop { block } => { for o in block[0].operators { if answers_call_buffer(o, false) { return true; } } false },
-    NdInsert { items } => { for o in items { if answers_call_buffer(o, false) { return true; } } false },
-    NdIf { cond, t, f } => answers_call_buffer(t, tail) || answers_call_buffer(f, tail),
-    NdSet { inner } => answers_call_buffer(inner, false),
+    NdSpan { inner } => field_view_bind(e, vars, inner, v),
+    NdBlock { block } => { for o in block[0].operators { if field_view_bind(e, vars, o, v) { return true; } } false },
+    NdInsert { items } => { for o in items { if field_view_bind(e, vars, o, v) { return true; } } false },
     _ => false
   }
+}
+
+// The result borrows something, and only the function's visible parameters.
+fn borrows_arguments_only(def: ir::Definition) -> boolean {
+  ds = el_types::deps(el_types::base(def.returned[0]));
+  if len(ds) == 0 {
+    return false;
+  }
+  for x in ds {
+    a = def.attributes[x];
+    if a == null || a.hidden {
+      return false;
+    }
+  }
+  true
 }
 
 // `Parser::parse_append_text` into a new work text: cleared, each operand appended
