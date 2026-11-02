@@ -589,8 +589,8 @@ impl ViewWalk<'_> {
         self.disturb_parts(stmt, true);
     }
 
-    /// [`Self::disturb`], with the shake a CALLEE makes through its parameters
-    /// ([`Self::disturb_via_calls`]) left out when `via_calls` is false — [`Self::leaf`] then
+    /// [`Self::disturb`], with every shake a CALLEE makes through its parameters
+    /// ([`Self::disturb_callees`]) left out when `via_calls` is false — [`Self::leaf`] then
     /// makes it itself, after the uses its arguments read (loft#2349).
     fn disturb_parts(&mut self, stmt: &Value, via_calls: bool) {
         if let Value::Set(v, _) = stmt.unspan()
@@ -656,6 +656,19 @@ impl ViewWalk<'_> {
         for (place, at) in grown_containers(stmt, self.data, self.function, self.database) {
             self.shake_places_deeper(place, at.depth, at.index, ViewCause::Grown, None);
         }
+        let established = established_stores(stmt, self.function, self.data, Establish::Inline);
+        if via_calls {
+            self.disturb_callees(stmt);
+        }
+        self.shake(&established, ViewCause::Reassigned, None);
+    }
+
+    /// The disturbances `stmt` makes ONE FRAME DOWN, in one place so a call's order can be
+    /// honoured as a whole ([`Self::leaf`]): a removal through a `&` argument
+    /// ([`reshaped_via_call`]), a growth or removal through any argument
+    /// ([`Self::disturb_via_calls`]), and a `&` argument the callee REASSIGNS
+    /// ([`reassigned_ref_params`] — the caller's store is released, loft#2358).
+    fn disturb_callees(&mut self, stmt: &Value) {
         if let Some(removed) = self.cross_frame {
             for (container, callee) in reshaped_via_call(stmt, self.data, removed) {
                 self.shake(
@@ -665,10 +678,8 @@ impl ViewWalk<'_> {
                 );
             }
         }
-        if via_calls {
-            self.disturb_via_calls(stmt);
-        }
-        let established = established_stores(stmt, self.function, self.data);
+        self.disturb_via_calls(stmt);
+        let established = established_stores(stmt, self.function, self.data, Establish::Callees);
         self.shake(&established, ViewCause::Reassigned, None);
     }
 
@@ -805,7 +816,7 @@ impl ViewWalk<'_> {
             // after them; the callee's comes after the uses its arguments read.
             self.disturb_parts(stmt, false);
             self.note_uses(stmt, &HashMap::default());
-            self.disturb_via_calls(stmt);
+            self.disturb_callees(stmt);
             self.note_uses(stmt, &early);
         } else {
             self.disturb(stmt);
@@ -830,15 +841,18 @@ impl ViewWalk<'_> {
     /// callee still naming the container's storage, so a read there stays a use across the
     /// callee's disturbance.  Answering too little only keeps a copy; answering too much
     /// would let a view the callee holds read moved storage.
+    ///
+    /// "Disturbs" is every event [`Self::disturb_callees`] shakes — the one predicate
+    /// [`Self::call_disturbs_below`] — so a second disturbing call can never go uncounted while
+    /// its shake still lands after the reads this discounts.
     fn callee_argument_uses(&self, stmt: &Value) -> Option<HashMap<u16, usize>> {
-        let disturbed = self.disturbed?;
         let data = self.data;
         let mut calls = 0usize;
         let mut has_loop = false;
         let mut early: HashMap<u16, usize> = HashMap::default();
         stmt.walk(&mut |v| match v {
             Value::Loop(_) => has_loop = true,
-            Value::Call(d, args) if disturbed.contains_key(d) => {
+            Value::Call(d, args) if self.call_disturbs_below(*d, args) => {
                 calls += 1;
                 for (i, arg) in args.iter().enumerate() {
                     if argument_cannot_carry_a_view(data, *d, i, arg) {
@@ -853,6 +867,22 @@ impl ViewWalk<'_> {
             _ => {}
         });
         (calls == 1 && !has_loop && !early.is_empty()).then_some(early)
+    }
+
+    /// Does a call to `d` with `args` disturb anything one frame down — the events
+    /// [`Self::disturb_callees`] shakes for: a growth or removal through a parameter
+    /// ([`DisturbedParams`]), a removal through a `&` argument (the cross-frame set), or a `&`
+    /// argument the callee reassigns ([`reassigned_ref_params`]).  Over-answering only keeps a
+    /// statement in [`Self::leaf`]'s coarse order; under-answering would let a disturbance go
+    /// uncounted, so every source is asked.
+    fn call_disturbs_below(&self, d: u32, args: &[Value]) -> bool {
+        self.disturbed.is_some_and(|m| m.contains_key(&d))
+            || self.cross_frame.is_some_and(|m| m.contains_key(&d))
+            || (self.data.def(d).is_loft_defined()
+                && reassigned_ref_params(self.data, d).iter().any(|i| {
+                    args.get(usize::from(*i))
+                        .is_some_and(|a| matches!(peel_stack_ref(a, self.data), Value::Var(_)))
+                }))
     }
 
     /// What a `Set` does to the walk's state once its VALUE has been accounted for — the last
@@ -1425,11 +1455,30 @@ pub(super) fn is_place_link(function: &Function, v: u16) -> bool {
     !function.is_argument(v) && matches!(function.tp(v).base(), Type::RefVar(_))
 }
 
+/// Which half of [`established_stores`] to answer.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Establish {
+    /// Establishments in this frame: a literal built into the variable, a bind, a whole fill.
+    Inline,
+    /// A `&` argument a callee reassigns wholesale.
+    Callees,
+}
+
 /// Every variable whose store `stmt` establishes, at any depth.
 ///
 /// Nested blocks are included deliberately: `if flag { bx = T{…} }` establishes `bx` as far
 /// as a view bound outside the `if` is concerned.
-fn established_stores(stmt: &Value, function: &Function, data: &Data) -> HashSet<u16> {
+///
+/// `which` splits the answer by WHERE the store is established: in this frame
+/// ([`Establish::Inline`]) or by a callee that reassigns a `&` argument
+/// ([`Establish::Callees`]), which [`ViewWalk::disturb_callees`] shakes after the uses a
+/// call's arguments read.  The two together are every establishment.
+fn established_stores(
+    stmt: &Value,
+    function: &Function,
+    data: &Data,
+    which: Establish,
+) -> HashSet<u16> {
     let mut out: HashSet<u16> = HashSet::default();
     // @FR-L-Null — `.base()` at each of the three record tests below: a `?` is a compile-time
     // bit over the SAME storage, so `S?` establishes a store exactly as `S` does.  Asked bare,
@@ -1441,17 +1490,35 @@ fn established_stores(stmt: &Value, function: &Function, data: &Data) -> HashSet
     // clears and refills that store in place; asked records-only, the rebind ended no view:
     // a keyed view read the new collection, and a droppable element was used after its
     // release (loft#2037).
+    // @FR-C-Ref — and through a `&`: a `&S` PARAMETER is a container too, and reassigning it,
+    // inline or in a callee it is passed on to, installs a new store in the caller's slot and
+    // releases the one its views name.  Asked of `.base()`, which keeps the `&`, a view of a
+    // `&` parameter's field survived `s = fresh()` and read the released record (loft#2358).
     let note = |v: u16, out: &mut HashSet<u16>| {
         if (matches!(
-            function.tp(v).base(),
+            function.tp(v).peel_link(),
             Type::Reference(_, _) | Type::Enum(_, true, _)
-        ) || crate::data::is_collection(function.tp(v).base()))
+        ) || crate::data::is_collection(function.tp(v).peel_link()))
             && !function.is_compiler_generated(v)
         {
             out.insert(v);
         }
     };
+    let inline = which == Establish::Inline;
     stmt.walk(&mut |v| match v {
+        // A call that reassigns one of its `&` parameters displaces the caller's store.
+        Value::Call(d, args) if data.def(*d).is_loft_defined() && !inline => {
+            let reassigned = reassigned_ref_params(data, *d);
+            for (i, arg) in args.iter().enumerate() {
+                if !u16::try_from(i).is_ok_and(|i| reassigned.contains(&i)) {
+                    continue;
+                }
+                if let Value::Var(t) = peel_stack_ref(arg, data) {
+                    note(*t, &mut out);
+                }
+            }
+        }
+        _ if !inline => {}
         Value::Call(d, args) if data.def(*d).name() == "OpDatabase" => {
             if let Some(Value::Var(t)) = args.first().map(Value::unspan) {
                 note(*t, &mut out);
@@ -1467,18 +1534,6 @@ fn established_stores(stmt: &Value, function: &Function, data: &Data) -> HashSet
             let dest = usize::from(data.def(*d).name() == "OpReplaceKeyed");
             if let Some(Value::Var(t)) = args.get(dest).map(|a| peel_stack_ref(a, data)) {
                 note(*t, &mut out);
-            }
-        }
-        // A call that reassigns one of its `&` parameters displaces the caller's store.
-        Value::Call(d, args) if data.def(*d).is_loft_defined() => {
-            let reassigned = reassigned_ref_params(data, *d);
-            for (i, arg) in args.iter().enumerate() {
-                if !u16::try_from(i).is_ok_and(|i| reassigned.contains(&i)) {
-                    continue;
-                }
-                if let Value::Var(t) = peel_stack_ref(arg, data) {
-                    note(*t, &mut out);
-                }
             }
         }
         Value::Set(t, rhs) => {

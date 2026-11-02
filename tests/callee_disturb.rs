@@ -293,3 +293,76 @@ fn a_view_read_only_into_an_argument_is_not_live_across_the_callee_interpret() {
 fn a_view_read_only_into_an_argument_is_not_live_across_the_callee_native_c() {
     assert_argument_reads("--native-c", STRICT_NATIVE);
 }
+
+/// loft#2358 (`@FR-B-Disturb`, `@FR-C-Ref`) — a `&` PARAMETER is a container its views point
+/// into, as a local is: reassigning it, in a callee it is passed on to or inline, ends the
+/// places inside it, so a view live across that is copied at its bind and the author is told.
+/// The walk asked `.base()` whether the reassigned variable held a record, which keeps the
+/// `&`, so the parameter spelling alone kept its alias and read the released record.  The
+/// control reads its view before the reassignment and must stay silent.
+const REF_PARAM_REASSIGN: &str = r#"
+struct N { xs: vector<integer> }
+struct S { nodes: vector<N> }
+fn mk() -> S { S { nodes: [N { xs: [1, 2] }, N { xs: [3, 4] }] } }
+fn fresh() -> S { S { nodes: [N { xs: [9] }] } }
+fn reset(s: &S) -> integer { s = fresh(); len(s.nodes) * 100 }
+fn p_callee(s: &S) -> integer { xs = s.nodes[0].xs; r = reset(s); r + xs[0] * 10 + xs[1] }
+fn p_inline(s: &S) -> integer { xs = s.nodes[0].xs; s = fresh(); len(s.nodes) * 100 + xs[0] * 10 + xs[1] }
+fn p_loop(s: &S) -> integer { xs = s.nodes[0].xs; t = 0; for _ in 0..2 { t += reset(s) + xs[0]; } t }
+fn c_dead(s: &S) -> integer { xs = s.nodes[0].xs; a = xs[0] * 10 + xs[1]; r = reset(s); r + a }
+fn main() {
+  s1 = mk(); s2 = mk(); s3 = mk(); s4 = mk();
+  print("{p_callee(s1)} {p_inline(s2)} {p_loop(s3)} {c_dead(s4)} {s1.nodes[0].xs}\n");
+}
+"#;
+
+fn assert_ref_param_reassign(mode: &str, env: &[(&str, &str)]) {
+    let dir = std::env::temp_dir().join(format!(
+        "loft_2358_ref_param_reassign_{}",
+        mode.trim_matches('-')
+    ));
+    loft::file_access::create_dir_all(&dir).expect("scratch dir");
+    let path = dir.join("ref_param_reassign.loft");
+    loft::file_access::write(&path, REF_PARAM_REASSIGN).expect("write program");
+    let mut cmd = loft();
+    cmd.arg(mode).arg(&path);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let out = cmd.output().expect("spawn loft");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "[{mode}] the program must run clean\n{stdout}\n---\n{err}"
+    );
+    // reset leaves one node (100); each view holds the record as it was at its bind.
+    assert!(
+        stdout.contains("112 112 202 112 [9]"),
+        "[{mode}] the program must answer its hand-computed values\n{stdout}"
+    );
+    for live in ["p_callee", "p_inline", "p_loop"] {
+        assert!(
+            err.contains(&format!(
+                "in `{live}`, `xs` was copied out of `s` because `s` is reassigned while `xs` \
+                 is in use"
+            )),
+            "[{mode}] `{live}` reads its view after `s` is reassigned — the copy is owed and \
+             the author is told\n{err}"
+        );
+    }
+    assert!(
+        !err.contains("in `c_dead`,"),
+        "[{mode}] `c_dead` reads its view before the reassignment — no copy\n{err}"
+    );
+}
+
+#[test]
+fn a_view_of_a_ref_parameter_materialises_when_it_is_reassigned_interpret() {
+    assert_ref_param_reassign("--interpret", STRICT);
+}
+
+#[test]
+fn a_view_of_a_ref_parameter_materialises_when_it_is_reassigned_native_c() {
+    assert_ref_param_reassign("--native-c", STRICT_NATIVE);
+}
