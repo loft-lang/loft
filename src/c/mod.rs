@@ -2561,26 +2561,37 @@ fn emit_program_counted(
     if main >= data.definitions() {
         return emit_tests(data, stores, expected);
     }
-    let main = program_main(data, main)?;
+    let (main, call) = program_main(data, main)?;
     let mut out = emit_unit(data, stores, &[main])?;
     let _ = write!(
         out,
-        "\nint main(int argc, char **argv) {{\n    loft_bind_tables();\n    loft_start(argc, argv);\n    {}\n    {}();\n    loft_leak_report();\n    return loft_had_fatal;\n}}\n",
+        "\nint main(int argc, char **argv) {{\n    loft_bind_tables();\n    loft_start(argc, argv);\n    {}\n    {call}\n    loft_leak_report();\n    return loft_had_fatal;\n}}\n",
         anchor(stores),
-        c_name(data, main)
     );
     Ok(out)
 }
 
-/// The program's `main`, refused when it takes arguments.
-fn program_main(data: &Data, main: u32) -> Result<u32, Refusal> {
-    if data.def(main).attributes().is_empty() {
-        Ok(main)
-    } else {
-        Err(Refusal {
+/// The program's `main` and the C statement that calls it: with nothing, or — as the
+/// interpreter's `State::execute_argv` and native's entry hand it — the program's arguments as
+/// a `vector<text>` (`loft_arguments`, the ones after its name), freed when `main` returns.
+/// Any other parameter is refused.
+fn program_main(data: &Data, main: u32) -> Result<(u32, String), Refusal> {
+    let attrs = data.def(main).attributes();
+    let name = c_name(data, main);
+    match attrs {
+        [] => Ok((main, format!("{name}();"))),
+        [a] if !a.hidden
+            && matches!(a.typedef.base(), Type::Vector(e, _) if matches!(e.base(), Type::Text(_))) =>
+        {
+            Ok((
+                main,
+                format!("{{ loft_ref loft_main_args = loft_arguments(); {name}(loft_main_args); loft_free_ref(loft_main_args); }}"),
+            ))
+        }
+        _ => Err(Refusal {
             function: "main".into(),
-            why: "a main that takes arguments".into(),
-        })
+            why: "a main that takes arguments other than `vector<text>`".into(),
+        }),
     }
 }
 
@@ -2601,7 +2612,7 @@ pub fn emit_browser_program(data: &Data, stores: &Stores) -> Result<String, Refu
             why: "a page without a main".into(),
         });
     }
-    let main = program_main(data, main)?;
+    let (main, call) = program_main(data, main)?;
     let mut out = emit_unit_for(data, stores, &[main], true)?;
     out.push_str(ASYNCIFY_REGION);
     let _ = write!(
@@ -2609,11 +2620,10 @@ pub fn emit_browser_program(data: &Data, stores: &Stores) -> Result<String, Refu
         "\nextern void __wasm_call_ctors(void);\n\
          __attribute__((export_name(\"loft_start\"))) void loft_page_start(void) {{\n    \
          static int started = 0;\n    if (!started) {{ started = 1; __wasm_call_ctors(); }}\n    \
-         loft_bind_tables();\n    loft_start(0, 0);\n    {}\n    {}();\n    loft_leak_report();\n    \
+         loft_bind_tables();\n    loft_start(0, 0);\n    {}\n    {call}\n    loft_leak_report();\n    \
          fflush(stdout);\n    fflush(stderr);\n}}\n\
          int main(void) {{ return 0; }}\n",
         anchor(stores),
-        c_name(data, main)
     );
     Ok(out)
 }
@@ -3430,6 +3440,15 @@ fn page_web_native(native: &str) -> Option<&'static str> {
 fn in_binary_native(native: &str) -> Option<&'static str> {
     match native {
         "n_process_run" => Some("loft_process_run"),
+        // web's byte builder and reader (`src/web_bytes.rs`): a per-thread buffer in the
+        // binary, so a byte costs a store where the component call cost a crossing and a
+        // dynamic thread-local lookup.
+        "n_pack_reset" => Some("loft_pack_reset"),
+        "n_pack_u8" => Some("loft_pack_u8"),
+        "n_pack_u16_le" => Some("loft_pack_u16_le"),
+        "n_pack_u32_le" => Some("loft_pack_u32_le"),
+        "n_pack_take" => Some("loft_pack_take"),
+        "n_byte_at" => Some("loft_web_byte_at"),
         "n_git_query" => Some("loft_git_query"),
         // `lib/engine_host`'s kernel (`loft_engine.h`), its build swap and background rebuild
         // included.  A `swap_world` call whose world type is known is written at its call site

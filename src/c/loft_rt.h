@@ -5737,6 +5737,49 @@ static loft_ref loft_arguments(void) {
     return r;
 }
 
+/* web's byte builder (`src/web_bytes.rs`, the `pack_*` natives) in the binary: a per-thread
+ * buffer the appends grow and `pack_take` hands over as a text, bytes verbatim, emptying it. */
+static LOFT_TLS uint8_t *loft_pk_p = 0;
+static LOFT_TLS size_t loft_pk_n = 0, loft_pk_cap = 0;
+static void loft_pk_push(const uint8_t *b, size_t n) {
+    if (loft_pk_n + n > loft_pk_cap) {
+        size_t cap = loft_pk_cap ? loft_pk_cap * 2 : 64;
+        while (cap < loft_pk_n + n) cap *= 2;
+        uint8_t *p = (uint8_t *) realloc(loft_pk_p, cap);
+        if (!p) { fputs("loft: out of memory\n", stderr); abort(); }
+        loft_pk_p = p;
+        loft_pk_cap = cap;
+    }
+    memcpy(loft_pk_p + loft_pk_n, b, n);
+    loft_pk_n += n;
+}
+static inline void loft_pack_reset(void) { loft_pk_n = 0; }
+static inline void loft_pack_u8(int64_t b) {
+    if (loft_pk_n < loft_pk_cap) {
+        loft_pk_p[loft_pk_n++] = (uint8_t) b;
+    } else {
+        uint8_t x = (uint8_t) b;
+        loft_pk_push(&x, 1);
+    }
+}
+static void loft_pack_u16_le(int64_t v) {
+    uint8_t x[2] = { (uint8_t) v, (uint8_t) (v >> 8) };
+    loft_pk_push(x, 2);
+}
+static void loft_pack_u32_le(int64_t v) {
+    uint8_t x[4] = { (uint8_t) v, (uint8_t) (v >> 8), (uint8_t) (v >> 16), (uint8_t) (v >> 24) };
+    loft_pk_push(x, 4);
+}
+static loft_text loft_pack_take(void) {
+    loft_text t = loft_text_own(loft_lit(loft_pk_n ? (const char *) loft_pk_p : "", loft_pk_n));
+    loft_pk_n = 0;
+    return t;
+}
+/* byte_at(idx, t): the byte at `idx`, or -1 outside the text. */
+static inline int64_t loft_web_byte_at(int64_t idx, loft_str t) {
+    return idx < 0 || (uint64_t) idx >= (uint64_t) t.len ? -1 : (int64_t) (uint8_t) t.p[idx];
+}
+
 /* ticks(): microseconds since the program started, monotonic; LOFT_FAKE_TICKS_US pins it. */
 static int64_t loft_start_us = -1;
 
