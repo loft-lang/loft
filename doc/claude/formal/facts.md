@@ -57,7 +57,12 @@ and the boundaries are decided; a new analysis is a new `kind`, not a new walk.
                      routine applies a call by binding the callee's summary (UP) or by
                      reading the argument's fact (DOWN), never the kind;
                  (f) its SEED — for a DOWN kind, the assumption a twin may be built on
-                     (Fact-Twin).
+                     (Fact-Twin);
+                 (g) its CYCLE SCOPE — the kinds whose questions share one guard, so a
+                     question about a function another kind of the scope is evaluating
+                     gets the cycle answer — and its MEMO POLICY, which answers are kept
+                     (a conclusive one always; an inconclusive one only where it cannot
+                     depend on the asker).
 ```
 
 ```
@@ -95,7 +100,9 @@ and the boundaries are decided; a new analysis is a new `kind`, not a new walk.
                            deep, a deeper call answers top) or `all` (the whole call graph);
                            default `all`, because summaries compose: depth costs nothing
                            per query once each function is summarised.
-                 CYCLES  — always solved together, a strongly connected set at a time:
+                 CYCLES  — `cut` (a call into a function under evaluation answers the
+                           kind's conservative fact: top for MAY, bottom for MUST) or `solve`
+                           (the target): solved together, a strongly connected set at a time,
                            a MAY kind from bottom upward (a cycle adds no effect its bodies
                            do not have), a MUST kind from top downward (every candidate
                            assumed, each round dropping what one site does not prove — the
