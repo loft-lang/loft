@@ -580,7 +580,8 @@ static void loft_leak_report(void) {
         sprintf(buf, "\xc3\x97%u", (unsigned) count[i]);
         loft_push(&out, buf, strlen(buf));
     }
-    total = nk;
+    /* The headline counts stores, not type rows: one row of forty records is forty. */
+    for (i = 0; i < nk; i++) total += count[i];
     if (nk > 5) {
         sprintf(buf, " ... and %u more", (unsigned) (nk - 5));
         loft_push(&out, buf, strlen(buf));

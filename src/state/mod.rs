@@ -8179,11 +8179,12 @@ impl State {
             );
         }
         if !leaked.is_empty() {
-            let count = leaked.len();
-            let preview = if count <= 5 {
+            let rows = leaked.len();
+            let count = crate::database::Stores::leak_total(&leaked);
+            let preview = if rows <= 5 {
                 leaked.join(", ")
             } else {
-                format!("{} ... and {} more", leaked[..5].join(", "), count - 5)
+                format!("{} ... and {} more", leaked[..5].join(", "), rows - 5)
             };
             // `@FR-H-FreeAll` — the completeness half of the free rules, and the only one
             // checked at RUNTIME rather than discharged statically: every store is freed

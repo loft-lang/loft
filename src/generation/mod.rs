@@ -61,7 +61,7 @@ type PreEvalEntry = (String, String, String, u32, bool);
 /// runs stay silent, but tests (and a curious developer) can opt in to
 /// the same store-leak report the interpreter prints unconditionally —
 /// giving leak regressions a guard on `--native`, not just `--interpret`.
-const NATIVE_LEAK_CHECK_TAIL: &str = "    if std::env::var(\"LOFT_NATIVE_LEAK_CHECK\").is_ok() {\n        let stores: &Stores = unsafe { &*cell.get() };\n        let leaks = stores.collect_store_leaks();\n        if !leaks.is_empty() {\n            let count = leaks.len();\n            let preview = if count <= 5 { leaks.join(\", \") } else { format!(\"{} ... and {} more\", leaks[..5].join(\", \"), count - 5) };\n            eprintln!(\"Warning: {count} stores not freed at program exit: {preview}\");\n        }\n    }\n";
+const NATIVE_LEAK_CHECK_TAIL: &str = "    if std::env::var(\"LOFT_NATIVE_LEAK_CHECK\").is_ok() {\n        let stores: &Stores = unsafe { &*cell.get() };\n        let leaks = stores.collect_store_leaks();\n        if !leaks.is_empty() {\n            let rows = leaks.len();\n            let preview = if rows <= 5 { leaks.join(\", \") } else { format!(\"{} ... and {} more\", leaks[..5].join(\", \"), rows - 5) };\n            eprintln!(\"Warning: {} stores not freed at program exit: {preview}\", Stores::leak_total(&leaks));\n        }\n    }\n";
 
 /// @PLN130 F8 — the `LOFT_STRICT_STORES` tail for the native `main` bootstrap.
 ///
@@ -78,7 +78,7 @@ const NATIVE_LEAK_CHECK_TAIL: &str = "    if std::env::var(\"LOFT_NATIVE_LEAK_CH
 /// the wasm targets link a SEPARATELY built `libloft` rlib — so a tail referencing a symbol
 /// added to `loft::keys` fails to compile there whenever that rlib is stale, which is a
 /// build break in the generated program rather than anything a probe wanted to know.
-const NATIVE_STRICT_STORE_TAIL: &str = "    #[cfg(not(target_arch = \"wasm32\"))]\n    if std::env::var(\"LOFT_STRICT_STORES\").is_ok() {\n        loft::keys::strict_store_notice();\n        let stores: &Stores = unsafe { &*cell.get() };\n        let leaks = stores.collect_store_leaks();\n        if !leaks.is_empty() {\n            eprintln!(\"[strict-store] NEVER FREED: {} stores not freed at program exit: {}\", leaks.len(), leaks.join(\", \"));\n            loft::keys::strict_store_leaks(leaks.len());\n        }\n        let n = loft::keys::strict_store_violations();\n        if n > 0 {\n            eprintln!(\"[strict-store] FAILED: {n} store-lifetime violation(s)\");\n            std::process::exit(1);\n        }\n    }\n";
+const NATIVE_STRICT_STORE_TAIL: &str = "    #[cfg(not(target_arch = \"wasm32\"))]\n    if std::env::var(\"LOFT_STRICT_STORES\").is_ok() {\n        loft::keys::strict_store_notice();\n        let stores: &Stores = unsafe { &*cell.get() };\n        let leaks = stores.collect_store_leaks();\n        if !leaks.is_empty() {\n            eprintln!(\"[strict-store] NEVER FREED: {} stores not freed at program exit: {}\", Stores::leak_total(&leaks), leaks.join(\", \"));\n            loft::keys::strict_store_leaks(Stores::leak_total(&leaks));\n        }\n        let n = loft::keys::strict_store_violations();\n        if n > 0 {\n            eprintln!(\"[strict-store] FAILED: {n} store-lifetime violation(s)\");\n            std::process::exit(1);\n        }\n    }\n";
 
 /// Walk the Value IR tree and collect all function definition numbers
 /// referenced by `Value::Call(def_nr, _)` nodes.
