@@ -84,6 +84,14 @@ source "$(dirname "${BASH_SOURCE[0]}")/sccache_env.sh"
 # — named by their checkout, so two agents in sibling checkouts (e.g. `loft` and `loft2`) never
 # share a file and `--stop` only ever touches THIS checkout's run.
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# One checkout per run: the rebuilds below `cd` to the SCRIPT's checkout while the tests run in
+# the CURRENT one, so another checkout's script, run from here, rebuilt that checkout's
+# `target/release/loft` under whoever was using it and tested this tree against a stale build.
+HERE=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+if [[ "$(cd "$HERE" && pwd -P)" != "$(cd "$REPO_ROOT" && pwd -P)" ]]; then
+  echo "find_problems.sh: this is $REPO_ROOT's script, run from $HERE — run $HERE/scripts/find_problems.sh" >&2
+  exit 2
+fi
 REPO_HASH=$(printf '%s' "$REPO_ROOT" | cksum | cut -d' ' -f1)
 REPO_SLUG=$(printf '%s' "$(basename "$REPO_ROOT")" | tr -c 'A-Za-z0-9._-' '_')
 REPO_TAG="$REPO_SLUG.$REPO_HASH"
