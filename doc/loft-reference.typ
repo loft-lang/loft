@@ -5170,6 +5170,9 @@ enum Shade { Red, Green }
 struct Flag   { on: Shade }
 struct Pair   { p: (integer, text) }
 struct Holder { n: integer, rows: vector<Item>? }
+struct Leaf   { name: text }
+struct Pick   { leaves: vector<Leaf>, best: reference<Leaf>? }
+struct Link   { label: text, to: reference<Leaf> }
 ```
 
 ```rust
@@ -5302,17 +5305,22 @@ Building a document without a struct to describe it.
 
 === The shapes on the wire
 
-Four encodings a reader interoperating with another system needs, none of which the field declaration makes obvious:
+Five encodings a reader interoperating with another system needs, none of which the field declaration makes obvious:
 
 ```
 * a plain enum variant is an OBJECT keyed by the variant name — `Green`
-  is `{{"Green":{{}}}}`, not the string `"Green"`;
+  is `{"Green":{}}`, not the string `"Green"`;
 * a tuple is an object with `_0`, `_1` … keys, not a JSON array;
 * an absent field is written `null`, an absent `vector<T>?` too — it is
   not `[]`, which is the present-but-empty collection and a different value;
 * a keyed member of a linked collection group is left out as well, because
   it is an INDEX on the same rows rather than data of its own — and parsing
-  the document back rebuilds it from them.
+  the document back rebuilds it from them;
+* a `reference<T>` field is a LINK, so it is written as one: a JSON Pointer
+  to the record it names, `{"$ref":"#/leaves/1"}`. A record the written
+  value does not contain is written once under a last member `$refs`, and
+  the reference points there. Parsing reads both back, and two references
+  to one record name one record again.
 ```
 
 ```rust
@@ -5337,6 +5345,29 @@ The index is derived, so it costs nothing on the wire and is rebuilt on the way 
   back = Catalogue.parse("{cat2:j}");
   assert(len(back.by_key) == 1, "…and is rebuilt on the way in: {len(back.by_key)}");
   assert(back.by_key["a"].count == 1, "the rebuilt index answers a lookup");
+```
+
+A reference into the same value points at its place in the document.
+
+```rust
+  pick = Pick { leaves: [Leaf { name: "a" }, Leaf { name: "b" }] };
+  pick.best = &pick.leaves[1];
+  assert("{pick:j}" == `{{"leaves":[{{"name":"a"}},{{"name":"b"}}],"best":{{"$ref":"#/leaves/1"}}}}`,
+         "a reference is a pointer: {pick:j}");
+  picked = Pick.parse("{pick:j}");
+  picked.best.name = "B";
+  assert(picked.leaves[1].name == "B", "…which reads back as a link to that element");
+```
+
+A reference to a record outside the value brings the record along.
+
+```rust
+  far = Leaf { name: "far" };
+  link = Link { label: "x", to: &far };
+  assert("{link:j}" == `{{"label":"x","to":{{"$ref":"#/$refs/0"}},"$refs":[{{"name":"far"}}]}}`,
+         "an outside target is written under $refs: {link:j}");
+  linked = Link.parse("{link:j}");
+  assert(linked.to.name == "far", "…and is read back: {linked.to.name}");
 }
 ```
 
