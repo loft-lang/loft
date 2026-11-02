@@ -1133,7 +1133,7 @@ typedef struct { int64_t d; loft_ref clos; } loft_fn;
  * `Stores`: the lowest free slot is made again, a new slot starts at 100 words and a reused one
  * keeps its capacity, and a store's serial is the order it was made. */
 LOFT_HOT_INLINE loft_ref loft_ref_null(void) {
-    loft_ref r;
+    loft_ref r = {0};
     r.store_nr = 0xFFFF;
     r.rec = 0;
     r.pos = 0;
@@ -1809,7 +1809,7 @@ static loft_ref loft_gen_new(void *frame, void (*resume)(void *, void *), void (
     loft_gens[i].resume = resume;
     loft_gens[i].release = release;
     loft_gens[i].holds = 1;
-    loft_ref r;
+    loft_ref r = {0};
     r.store_nr = 0xFFFE;
     r.rec = i + 1;
     r.pos = 0;
@@ -2162,7 +2162,7 @@ static int loft_record_removed(loft_ref x) {
 static loft_ref loft_get_dbref(loft_ref r, uint32_t fld) {
     if (r.rec == 0) return loft_ref_null();
     loft_store_t *s = loft_store_of(r);
-    loft_ref x;
+    loft_ref x = {0};
     x.store_nr = (uint16_t) loft_u32(s, r.rec, r.pos + fld);
     x.rec = loft_u32(s, r.rec, r.pos + fld + 4);
     x.pos = loft_u32(s, r.rec, r.pos + fld + 8);
@@ -2286,7 +2286,7 @@ LOFT_HOT_INLINE loft_ref loft_vec_append(loft_ref v, uint32_t size) {
             if ((uint64_t) (len + 1) * size + 8 <= (uint64_t) claimed * 8) {
                 /* `@FR-H-WriteLocked-Whole`: a refused push answers no slot, as the slow path. */
                 if (LOFT_WRITE_REFUSED(s)) return loft_ref_null();
-                loft_ref e;
+                loft_ref e = {0};
                 e.store_nr = v.store_nr;
                 e.rec = r;
                 e.pos = 8 + len * size;
@@ -2321,7 +2321,7 @@ static loft_ref loft_vec_append_slow(loft_ref v, uint32_t size) {
             }
         }
     }
-    loft_ref e;
+    loft_ref e = {0};
     e.store_nr = v.store_nr;
     e.rec = r;
     e.pos = 8 + len * size;
@@ -2454,7 +2454,7 @@ LOFT_HOT_INLINE int64_t loft_vh_index(loft_vh h, int64_t from) {
 LOFT_HOT_INLINE loft_ref loft_vh_get(loft_vh h, uint32_t size, int64_t from) {
     int64_t f = loft_vh_index(h, from);
     if (f < 0) return loft_ref_null();
-    loft_ref e;
+    loft_ref e = {0};
     e.store_nr = h.store_nr;
     e.rec = h.rec;
     e.pos = (uint32_t) (8 + (uint64_t) f * size);
@@ -3516,7 +3516,7 @@ LOFT_HOT_INLINE loft_ref loft_win_slot(loft_win *w, loft_ref v, uint32_t size) {
         *w = loft_win_room(*w, v, size);
         if (w->len >= w->cap) return loft_vec_append(v, size);
     }
-    loft_ref e;
+    loft_ref e = {0};
     e.store_nr = w->store_nr;
     e.rec = w->rec;
     e.pos = 8 + w->len * size;
@@ -3577,7 +3577,7 @@ LOFT_COLD static loft_ref loft_ph_grow(loft_ph *h, uint32_t size) {
 
 LOFT_HOT_INLINE loft_ref loft_ph_new(loft_ph *h, uint32_t size) {
     if (LOFT_UNLIKELY(h->len >= h->cap)) return loft_ph_grow(h, size);
-    loft_ref e;
+    loft_ref e = {0};
     e.store_nr = h->v.store_nr;
     e.rec = h->rec;
     e.pos = 8 + h->len * size;
@@ -4535,7 +4535,7 @@ static int loft_dc_find(const loft_tdesc *T, uint16_t tp, loft_ref from, loft_re
 }
 
 static loft_ref loft_dc_remap(const loft_tdesc *T, uint16_t tp, loft_ref from, loft_ref to, loft_ref y) {
-    loft_ref out;
+    loft_ref out = {0};
     if (y.store_nr != from.store_nr || y.rec == 0 || from.rec == 0) return y;
     return loft_dc_find(T, tp, from, to, y, &out) ? out : y;
 }
@@ -6595,7 +6595,7 @@ static void loft_vec_slice_view(loft_ref v, loft_ref o, int64_t lo, int64_t hi, 
  * (`@FR-H-RootExtent`). */
 static loft_ref loft_place_record(loft_ref host, uint16_t tp, uint32_t size, const uint8_t *image, uint32_t n,
                                   int foreign) {
-    loft_ref r;
+    loft_ref r = {0};
     if (host.store_nr == 0xFFFF || host.rec == 0 || host.store_nr >= loft_nstores) {
         r = loft_ref_null();
         loft_database(&r, size);

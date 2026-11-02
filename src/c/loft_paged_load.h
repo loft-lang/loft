@@ -250,7 +250,7 @@ static int loft_pg_copy_entry(loft_pg *r, const loft_tdesc *T, loft_ref local, u
                               int nk, int kind, uint32_t src_rec, uint32_t src_pos) {
     loft_store_t *s = &loft_stores[local.store_nr];
     uint32_t bytes;
-    loft_ref e;
+    loft_ref e = {0};
     if (kind == LOFT_PG_HASH) {
         bytes = loft_h_stride_for(T[content].size);
         e = loft_hash_entry(local, T[content].size, T[content].linked);

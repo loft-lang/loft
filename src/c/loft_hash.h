@@ -338,7 +338,7 @@ LOFT_HOT_INLINE void loft_h_at_bucket(const loft_hents *e, loft_store_t *s, uint
 }
 
 LOFT_HOT_INLINE loft_ref loft_h_entry(const loft_hents *e, loft_store_t *s, uint32_t slot) {
-    loft_ref r;
+    loft_ref r = {0};
     r.store_nr = e->store_nr;
     loft_h_at(e, s, slot, &r.rec, &r.pos);
     return r;
@@ -407,7 +407,7 @@ static uint32_t loft_h_ensure_table(loft_ref c, uint32_t stride) {
 static loft_ref loft_h_alloc_entry(loft_ref c, uint32_t stride, uint32_t owner) {
     uint32_t claim = loft_h_ensure_table(c, stride);
     loft_store_t *s = loft_store_of(c);
-    loft_ref e;
+    loft_ref e = {0};
     e.store_nr = c.store_nr;
     if (loft_h_is_inline(s, claim)) {
         e.rec = loft_st_claim(s, 1 + (stride + 7) / 8);
@@ -551,7 +551,7 @@ static loft_ref loft_h_inline_file(loft_store_t *s, uint16_t store_nr, uint32_t 
     loft_set_u32(s, claim, LOFT_AR_NEXT_FLD, seq + 1);
     loft_h_put_slot(s, claim, 8, at, seq, tag);
     loft_set_u32(s, claim, LOFT_H_INLINE_LEN_FLD, loft_u32(s, claim, LOFT_H_INLINE_LEN_FLD) + 1);
-    loft_ref e;
+    loft_ref e = {0};
     e.store_nr = store_nr;
     e.rec = claim;
     e.pos = loft_h_ent0(h.count) + at * h.stride;
@@ -578,7 +578,7 @@ static void loft_h_inline_demote(loft_ref c, uint32_t claim, const loft_key *key
         uint32_t seq = loft_u32(s, claim, LOFT_H_BUCKET0 + at * 8);
         if (seq == 0 || seq == LOFT_H_TOMB) continue;
         memcpy(bytes, s->buf + (size_t) claim * 8 + e0 + at * h.stride, h.stride);
-        loft_ref e;
+        loft_ref e = {0};
         e.store_nr = c.store_nr;
         (void) loft_ar_alloc_at(s, loft_u32(s, c.rec, c.pos), h.stride, owner, &e.rec, &e.pos);
         memcpy(s->buf + (size_t) e.rec * 8 + e.pos, bytes, h.stride);
@@ -743,7 +743,7 @@ static loft_ref loft_h_find(loft_ref c, const loft_key *keys, const loft_kv *kv,
         uint32_t slot = loft_u32(s, claim, LOFT_H_BUCKET0 + index * sb);
         if (slot == 0) break;
         if (!(ents.inl && slot == LOFT_H_TOMB) && !loft_h_tag_differs(s, claim, sb, index, tag)) {
-            loft_ref e;
+            loft_ref e = {0};
             e.store_nr = c.store_nr;
             loft_h_at_bucket(&ents, s, slot, index, &e.rec, &e.pos);
             if (loft_key_cmp_val(kv, n, s, e.rec, e.pos, keys) == 0) return e;
@@ -788,7 +788,7 @@ static loft_ref LOFT_H_TYPED(loft_h_find_i64)(loft_ref c, const loft_key *keys, 
         uint32_t slot = loft_u32(s, claim, LOFT_H_BUCKET0 + index * sb);
         if (slot == 0) break;
         if (!(ents.inl && slot == LOFT_H_TOMB) && !loft_h_tag_differs(s, claim, sb, index, tag)) {
-            loft_ref e;
+            loft_ref e = {0};
             int64_t have;
             e.store_nr = c.store_nr;
             loft_h_at_bucket(&ents, s, slot, index, &e.rec, &e.pos);
@@ -819,7 +819,7 @@ LOFT_HOT_INLINE loft_ref LOFT_H_TYPED(loft_h_find_ints)(loft_ref c, const loft_k
         uint32_t slot = loft_u32(s, claim, LOFT_H_BUCKET0 + index * sb);
         if (slot == 0) break;
         if (!(ents.inl && slot == LOFT_H_TOMB) && !loft_h_tag_differs(s, claim, sb, index, tag)) {
-            loft_ref e;
+            loft_ref e = {0};
             e.store_nr = c.store_nr;
             loft_h_at_bucket(&ents, s, slot, index, &e.rec, &e.pos);
             if (e.rec != 0) {
@@ -860,7 +860,7 @@ static loft_ref loft_h_entry_ints(loft_ref c, const loft_key *keys, int n, const
             break;
         }
         if (!(ents.inl && slot == LOFT_H_TOMB) && !loft_h_tag_differs(s, claim, sb, at, tag)) {
-            loft_ref e;
+            loft_ref e = {0};
             e.store_nr = c.store_nr;
             loft_h_at_bucket(&ents, s, slot, at, &e.rec, &e.pos);
             int same = e.rec != 0;
@@ -874,7 +874,7 @@ static loft_ref loft_h_entry_ints(loft_ref c, const loft_key *keys, int n, const
         if (++at >= count) at = 0;
     }
     if (bucket == 0 || s->read_only) return loft_ref_null();
-    loft_ref e;
+    loft_ref e = {0};
     if (ents.inl) {
         /* The probe ended on the bucket the inline walk would choose from the same home, unless
          * the table must grow first. */
@@ -913,7 +913,7 @@ static loft_ref loft_h_entry_text(loft_ref c, const loft_key *keys, loft_str key
             break;
         }
         if (!(ents.inl && slot == LOFT_H_TOMB) && !loft_h_tag_differs(s, claim, sb, at, tag)) {
-            loft_ref e;
+            loft_ref e = {0};
             e.store_nr = c.store_nr;
             loft_h_at_bucket(&ents, s, slot, at, &e.rec, &e.pos);
             if (e.rec != 0) {
@@ -929,7 +929,7 @@ static loft_ref loft_h_entry_text(loft_ref c, const loft_key *keys, loft_str key
         own = loft_text_own(key);
         key = loft_view(&own);
     }
-    loft_ref e;
+    loft_ref e = {0};
     if (ents.inl) {
         /* The probe ended on the bucket the inline walk would choose from the same home, unless
          * the table must grow first. */
@@ -965,7 +965,7 @@ static loft_ref LOFT_H_TYPED(loft_h_find_text)(loft_ref c, const loft_key *keys,
         uint32_t slot = loft_u32(s, claim, LOFT_H_BUCKET0 + index * sb);
         if (slot == 0) break;
         if (!(ents.inl && slot == LOFT_H_TOMB) && !loft_h_tag_differs(s, claim, sb, index, tag)) {
-            loft_ref e;
+            loft_ref e = {0};
             e.store_nr = c.store_nr;
             loft_h_at_bucket(&ents, s, slot, index, &e.rec, &e.pos);
             if (e.rec != 0) {
@@ -1778,7 +1778,7 @@ static loft_ref loft_scratch_step(int64_t *state, loft_ref x, int reverse) {
         uint32_t vec = loft_u32(s, x.rec, 4), width = loft_u32(s, x.rec, 12) & 0xFFFFu;
         uint32_t r = loft_u32(s, vec, 8 + (uint32_t) at * width);
         if (r == 0) continue;
-        loft_ref e;
+        loft_ref e = {0};
         e.store_nr = (uint16_t) loft_u32(s, x.rec, 8);
         e.rec = r;
         e.pos = width == 8 ? loft_u32(s, vec, 12 + (uint32_t) at * 8) : 8;

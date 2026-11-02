@@ -1688,7 +1688,7 @@ static void loft_jsv_struct(loft_pw *w, loft_ref dest, uint16_t kt, loft_ref src
         const loft_pfield *fd = &t->fields[f];
         loft_ref slot = dest;
         slot.pos += fd->pos;
-        loft_ref sub;
+        loft_ref sub = {0};
         int found = loft_jsv_lookup(src, fd->name, &sub);
         uint8_t d = found ? loft_jd(sub) : LOFT_JD_NULL;
         /* An omitted key and an explicit `null` are the declaration's question. */
