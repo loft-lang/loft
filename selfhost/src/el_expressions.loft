@@ -78,6 +78,21 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   }
   text_return(e, vars, tt);
   code = b.code;
+  // A text answered through a hidden `&text` the body's own work text became: the body is typed
+  // as the declared result, its dep in attribute numbering — as a record body is (below).  A
+  // local at the tail keeps the borrow of that local (`av_renumber_retbuf`, just below).
+  if !e.first_pass && el_types::base(result) is TyText && len(el_types::deps(el::def(e, e.context).returned[0])) > 0 {
+    match code {
+      NdBlock { block } => {
+        if len(block[0].operators) > 0 && !(el_ir::unspan(block[0].operators[-1]) is NdVar) {
+          bl = block[0];
+          bl.result = [el::def(e, e.context).returned[0]];
+          code = ir::NdBlock { block: [bl] };
+        }
+      },
+      _ => {}
+    }
+  }
   // The body of a promoted text local answers a text borrowing it (`av_renumber_retbuf`).
   if !e.first_pass && tt != b.tp {
     match code {
@@ -90,6 +105,28 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     }
   }
   rb = el_vars::var(vars, "__retbuf");
+  // A record tail that goes through `ref_return` — a local or a call — recomputes the result's
+  // borrows, so the one parameter a mid-body `return` merged is dropped again; a literal built
+  // into the buffer leaves them as they are.
+  if rb >= 0 && len(vars.mid_params) == 1 && el_types::base(result) is TyReference {
+    match code {
+      NdBlock { block } => {
+        t = if len(block[0].operators) > 0 { el_ir::unspan(block[0].operators[-1]) } else { ir::NdNull };
+        if t is NdVar || t is NdCall {
+          pa = attr_nr(el::def(e, e.context), el_vars::name_of(vars, vars.mid_params[0]));
+          r0 = el::def(e, e.context).returned[0];
+          kept: vector<integer> = [];
+          for x in el_types::deps(r0) {
+            if x != pa {
+              kept += [x];
+            }
+          }
+          e.b.data.definitions[e.context].returned = [el_types::with_deps(r0, kept)];
+        }
+      },
+      _ => {}
+    }
+  }
   // A vector result has its own delivery; the record delivery below does not apply to it.
   if rb >= 0 && el_types::base(result) is TyVector {
     code = vector_return(e, vars, code, rb, result);
@@ -2094,7 +2131,19 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
     },
     _ => {}
   }
-  if !promoted_text && !el_vars::change_var_type(e, vars, v, x.tp) {
+  // `Parser::change_var`: a record local never borrows itself — `d = step(d, k)` answers a
+  // borrow of `d`, and that dep is left out of `d`'s own type.
+  bound_tp = x.tp;
+  if (el_types::base(bound_tp) is TyReference || heap_def(bound_tp) >= 0) && el_types::deps(bound_tp).contains(v) {
+    kept: vector<integer> = [];
+    for x2 in el_types::deps(bound_tp) {
+      if x2 != v {
+        kept += [x2];
+      }
+    }
+    bound_tp = el_types::with_deps(bound_tp, kept);
+  }
+  if !promoted_text && !el_vars::change_var_type(e, vars, v, bound_tp) {
     el::refuse(e, "a local that changes type");
   }
   // `parse_assign`: a local bound from a read a length local made trusted is what this pass
@@ -2627,8 +2676,13 @@ fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer
         match at {
           TyVector { inner } => {
             if !(e.p.nodes[fe!] is SVecLit) {
-              el::refuse(e, "a vector field written from something other than a literal");
-              return null;
+              c = field_vector_copy(e, vars, r, d, fname, inner, fe!);
+              if c == null {
+                return null;
+              }
+              list += c!;
+              found += [fname];
+              continue;
             }
             built = field_vector(e, vars, v, r, d, fname, inner, fe!);
             if built == null {
@@ -2763,6 +2817,31 @@ fn contains_struct(e: el::El, d: integer, host: integer, depth: integer) -> bool
 // A vector field written from a literal, built into the field of the record at `r` (the local
 // `v`, or a place inside it) — `parse_vector_inner` with `is_field`: no room made first; a scalar item pushed onto the field's place, a text item a
 // record made through the owning struct's field (`OpNewRecord(r, struct, field)`).
+// A vector field written from a vector place — a local, a parameter, a field read off an owned
+// record (`copies_whole_vector`): the source's elements appended into the field the header prime
+// emptied (`OpAppendVector`), a copy as a whole-value bind is (`(B-Copy)`).  A call (delivered
+// into the field through its buffer), a slice, a nullable source and any other value are refused
+// by name.
+fn field_vector_copy(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer, fname: text, inner: ir::TypeT, n: integer) -> vector<ir::Node>? {
+  x = expression(e, vars, n);
+  if e.first_pass {
+    return [];
+  }
+  if x.tp is TyOptional || !(el_types::base(x.tp) is TyVector) || !copies_whole_vector(e, vars, x.code) || !el_types::is_equal(e, x.tp, ir::TyVector { inner: inner, dep: [] }) {
+    refuse_known(e, x.tp, "a vector field written from something other than a literal or a vector place");
+    return null;
+  }
+  nm = el_types::elem_name(e, inner);
+  rec = match el_types::base(inner) { TyReference { n: rn } => el::def(e, rn).known_type, _ => if nm == "" { -1 } else { el_schema::schema_type(e, nm) } };
+  vk = el_schema::schema_type(e, "vector<{nm}>");
+  if rec < 0 || vk < 0 {
+    el::refuse(e, "a vector field of this element type written from a vector place: {type_kind(inner)}");
+    return null;
+  }
+  place = el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: field_position(e, d, fname) }, ir::NdInt { n: vk }]);
+  [el_ir::cl(e, "OpAppendVector", [place, x.code, ir::NdInt { n: rec }])]
+}
+
 fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer, fname: text, inner: ir::TypeT, n: integer) -> vector<ir::Node>? {
   items: vector<integer> = [];
   match e.p.nodes[n] {
@@ -5066,15 +5145,19 @@ fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -> Ex
     rename_onto(e, vars, rb, w);
   }
   a = if w >= 0 { attr_nr(el::def(e, d), el_vars::name_of(vars, w)) } else { -1 };
-  // `MergeAttr` of a visible parameter: handed back as it is.  The tail's prune keeps such a
-  // borrow in the signature only when two parameters are returned so (`mid_return_param_deps`),
-  // which is not carried yet: a second one is refused by name.
+  // `MergeAttr` of a visible parameter: handed back as it is, the result borrowing it.  A tail
+  // that goes through `ref_return` recomputes the borrows and keeps such a parameter only when
+  // two are returned so (`mid_return_param_deps`, not carried: a second is refused by name).
   if a >= 0 && !chain && !el::def(e, d).attributes[a].hidden {
     if !vars.mid_params.contains(w) {
       vars.mid_params += [w];
     }
     if len(vars.mid_params) > 1 {
       el::refuse(e, "a function that returns two of its parameters by `return`");
+    }
+    ret = el::def(e, d).returned[0];
+    if !el_types::deps(ret).contains(a) {
+      e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [a])];
     }
     return ex(ir::NdReturn { inner: x }, ir::TyNever);
   }
