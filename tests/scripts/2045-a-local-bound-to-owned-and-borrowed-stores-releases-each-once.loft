@@ -27,7 +27,8 @@
 // in place, so their values pass without `LOFT_POISON=1`, and only the poison sweep (or strict
 // stores) reads that half; g2-g4 are leaks, read by the leak check.
 //
-// @falsified-by: tests/falsified/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.patch — interpret exit 101 -> 0, interpret panicked -> clean, native exit 1 -> 0, native panicked -> clean
+// @falsified-by: tests/falsified/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.patch — interpret exit 101 -> 0, interpret panicked -> clean, native exit 1 -> 0
+//   ARMED: `LOFT_POISON=1` — unarmed, the C leg moves the leak channel instead (`Bt×6`, `Sq×2`).
 //   CHANNEL: the PANIC on both backends under `LOFT_POISON=1` — g1 reads the poison pattern in
 //     the call buffer the witness freed.  Scored cell by cell on the control, every cell but
 //     the controls moves on both backends: g1 panics, g2a/g2b/g3/g4 leak one store each

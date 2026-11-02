@@ -17,7 +17,8 @@
 // passes without `LOFT_POISON=1`, and only the poison sweep (or strict stores) reads that half.
 // r2 and r3 are the shapes the rewrite still admits, r4 one it declines.
 //
-// @falsified-by: tests/falsified/2051-a-returned-local-is-handed-over-only-when-every-bind-views-its-root.patch — interpret exit 1 -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/2051-a-returned-local-is-handed-over-only-when-every-bind-views-its-root.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   ARMED: `LOFT_POISON=1` — unarmed, the interpreter moves the leak channel instead (`W2×2`).
 //   CHANNEL: an ASSERTION on native; on the interpreter the strict-store report (`USE AFTER
 //     FREE (read) … type=Ht`) and its exit.
 //   WITNESS: native under `LOFT_POISON=1`: *r1 the default: null* — the default's store was
