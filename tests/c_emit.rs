@@ -68,6 +68,21 @@ const CASES: &[(&str, &[i64], &str)] = &[
     ("square", &[3_037_000_500], "null"),
 ];
 
+/// Where the body of the function `name` opens in `text` (its definition, `… name(…) {`, not a
+/// prototype): the byte of the `{` line's end.
+fn definition_of(text: &str, name: &str) -> Option<usize> {
+    let mut from = 0;
+    while let Some(i) = text[from..].find(&format!("{name}(")) {
+        let at = from + i;
+        let eol = text[at..].find('\n').map_or(text.len(), |e| at + e);
+        if text[at..eol].ends_with(") {") {
+            return Some(eol - 1);
+        }
+        from = eol;
+    }
+    None
+}
+
 fn have_cc() -> bool {
     loft::platform::process::harness_command("cc")
         .arg("--version")
@@ -1463,7 +1478,9 @@ fn main() {
             String::from_utf8_lossy(&emit.stderr)
         );
         let text = fa::read_to_string(&c).expect("read the C");
-        let body = &text[text.find("static void loft_drop_closure").unwrap_or(0)..];
+        // The written code: everything after the runtime's pragma region (whose close is the
+        // last line naming `LOFT_LINT_RUNTIME_UNUSED`; the runtime has pragmas of its own).
+        let body = &text[text.rfind("LOFT_LINT_RUNTIME_UNUSED").unwrap_or(0)..];
         let calls = body
             .lines()
             .filter(|l| l.contains("__inv(") && !l.trim_start().starts_with("static"))
@@ -1487,7 +1504,7 @@ fn main() {
             .count();
         let mints_headers = body
             .find("n_mints__fr(")
-            .and_then(|at| body[at..].find("{\n").map(|o| at + o))
+            .and_then(|_| definition_of(body, "n_mints__fr"))
             .map_or(0, |at| {
                 body[at..at + body[at..].find("\n}\n").unwrap_or(0)]
                     .lines()
@@ -1502,7 +1519,7 @@ fn main() {
         );
         let scal = body
             .find("n_scal__fr(")
-            .and_then(|at| body[at..].find("{\n").map(|o| at + o))
+            .and_then(|_| definition_of(body, "n_scal__fr"))
             .map_or("", |at| {
                 &body[at..at + body[at..].find("\n}\n").unwrap_or(0)]
             });

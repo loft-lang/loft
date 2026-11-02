@@ -157,79 +157,81 @@ fn constant(rhs: &str) -> bool {
 /// of the whole statement, the name assigned, the right-hand side).  The statement ends at the
 /// first `;` outside brackets and literals.
 fn assignment_spans(line: &str) -> Vec<(usize, usize, &str, &str)> {
-    let b = line.as_bytes();
+    let bytes = line.as_bytes();
     let mut out = Vec::new();
-    let mut i = 0;
+    let mut at = 0;
     let mut depth = 0i32;
     let mut stmt_start = true;
-    while i < b.len() {
-        let c = b[i];
-        if c == b'"' || c == b'\'' {
-            let q = c;
-            i += 1;
-            while i < b.len() && b[i] != q {
-                if b[i] == b'\\' {
-                    i += 1;
+    while at < bytes.len() {
+        let ch = bytes[at];
+        if ch == b'"' || ch == b'\'' {
+            let quote = ch;
+            at += 1;
+            while at < bytes.len() && bytes[at] != quote {
+                if bytes[at] == b'\\' {
+                    at += 1;
                 }
-                i += 1;
+                at += 1;
             }
-            i += 1;
+            at += 1;
             stmt_start = false;
             continue;
         }
-        if c == b' ' {
-            i += 1;
+        if ch == b' ' {
+            at += 1;
             continue;
         }
-        if stmt_start && depth == 0 && (c.is_ascii_alphabetic() || c == b'_') {
-            let s0 = i;
-            let mut j = i;
-            while j < b.len() && (b[j].is_ascii_alphanumeric() || b[j] == b'_' || b[j] == b'.') {
-                j += 1;
+        if stmt_start && depth == 0 && (ch.is_ascii_alphabetic() || ch == b'_') {
+            let s0 = at;
+            let mut end = at;
+            while end < bytes.len()
+                && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_' || bytes[end] == b'.')
+            {
+                end += 1;
             }
-            let target = &line[s0..j];
-            if line[j..].starts_with(" = ") {
-                let r0 = j + 3;
-                let (mut k, mut d) = (r0, 0i32);
-                while k < b.len() {
-                    match b[k] {
-                        b'(' | b'[' | b'{' => d += 1,
-                        b')' | b']' | b'}' => d -= 1,
+            let target = &line[s0..end];
+            if line[end..].starts_with(" = ") {
+                let r0 = end + 3;
+                let (mut pos, mut nest) = (r0, 0i32);
+                while pos < bytes.len() {
+                    match bytes[pos] {
+                        b'(' | b'[' | b'{' => nest += 1,
+                        b')' | b']' | b'}' => nest -= 1,
                         b'"' | b'\'' => {
-                            let q = b[k];
-                            k += 1;
-                            while k < b.len() && b[k] != q {
-                                if b[k] == b'\\' {
-                                    k += 1;
+                            let quote = bytes[pos];
+                            pos += 1;
+                            while pos < bytes.len() && bytes[pos] != quote {
+                                if bytes[pos] == b'\\' {
+                                    pos += 1;
                                 }
-                                k += 1;
+                                pos += 1;
                             }
                         }
-                        b';' if d == 0 => break,
+                        b';' if nest == 0 => break,
                         _ => {}
                     }
-                    k += 1;
+                    pos += 1;
                 }
                 let name = target.split('.').next().unwrap_or("");
-                if k < b.len()
+                if pos < bytes.len()
                     && is_ident(name)
                     && target.split('.').skip(1).all(is_ident)
-                    && !line[r0..k].contains(" = ")
+                    && !line[r0..pos].contains(" = ")
                 {
-                    out.push((s0, k + 1, name, &line[r0..k]));
-                    i = k + 1;
+                    out.push((s0, pos + 1, name, &line[r0..pos]));
+                    at = pos + 1;
                     stmt_start = true;
                     continue;
                 }
             }
-            i = j;
+            at = end;
             stmt_start = false;
             continue;
         }
-        match c {
+        match ch {
             b'{' | b';' => {
                 stmt_start = true;
-                if c == b'{' {
+                if ch == b'{' {
                     depth = 0;
                 }
             }
@@ -244,7 +246,7 @@ fn assignment_spans(line: &str) -> Vec<(usize, usize, &str, &str)> {
             b'}' => stmt_start = true,
             _ => stmt_start = false,
         }
-        i += 1;
+        at += 1;
     }
     out
 }

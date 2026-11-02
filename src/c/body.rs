@@ -1063,39 +1063,7 @@ impl<'a> FnWriter<'a> {
                 self.cx.initial(c)
             );
         }
-        // A temporary holds one expression's value between the statement that computes it and
-        // the one that reads it, so it is written whole before it is read on every path: one of
-        // a plain type takes no initial value, which the compiler could not drop in a large
-        // function (cbor's `read_value`: 116 of them, 15 % of its calls).  A temporary that owns
-        // or may contain something keeps it — a text (the exit and the statement flush free it),
-        // a function value (its closure record), a tuple (a text field is SET in place, which
-        // reads and frees the old one).  Checked by clang's flow analysis and MemorySanitizer
-        // over the corpus.
-        for (t, c) in &self.temps {
-            let plain = matches!(
-                c,
-                CType::Int
-                    | CType::Int32
-                    | CType::Bool
-                    | CType::Ref
-                    | CType::Enum
-                    | CType::Float
-                    | CType::Single
-                    | CType::Char
-            );
-            let verify = self.verify_temps.contains(t);
-            if verify {
-                out.push_str("#ifdef LOFT_VERIFY\n");
-            }
-            if plain {
-                let _ = writeln!(out, "    {} {t};", held(*c));
-            } else {
-                let _ = writeln!(out, "    {} {t} = {};", held(*c), self.cx.initial(*c));
-            }
-            if verify {
-                out.push_str("#endif\n");
-            }
-        }
+        self.declare_temps(&mut out);
         for d in &self.decls {
             let _ = writeln!(out, "    {d}");
         }
@@ -1188,6 +1156,43 @@ impl<'a> FnWriter<'a> {
         let t = format!("t{}", self.temps.len() + 1);
         self.temps.push((t.clone(), c));
         t
+    }
+
+    /// Every temporary's declaration, as `write` puts it at the function's top.
+    fn declare_temps(&self, out: &mut String) {
+        // A temporary holds one expression's value between the statement that computes it and
+        // the one that reads it, so it is written whole before it is read on every path: one of
+        // a plain type takes no initial value, which the compiler could not drop in a large
+        // function (cbor's `read_value`: 116 of them, 15 % of its calls).  A temporary that owns
+        // or may contain something keeps it — a text (the exit and the statement flush free it),
+        // a function value (its closure record), a tuple (a text field is SET in place, which
+        // reads and frees the old one).  Checked by clang's flow analysis and MemorySanitizer
+        // over the corpus.
+        for (t, c) in &self.temps {
+            let plain = matches!(
+                c,
+                CType::Int
+                    | CType::Int32
+                    | CType::Bool
+                    | CType::Ref
+                    | CType::Enum
+                    | CType::Float
+                    | CType::Single
+                    | CType::Char
+            );
+            let verify = self.verify_temps.contains(t);
+            if verify {
+                out.push_str("#ifdef LOFT_VERIFY\n");
+            }
+            if plain {
+                let _ = writeln!(out, "    {} {t};", held(*c));
+            } else {
+                let _ = writeln!(out, "    {} {t} = {};", held(*c), self.cx.initial(*c));
+            }
+            if verify {
+                out.push_str("#endif\n");
+            }
+        }
     }
 
     /// Free the owned text temporaries the statement just finished made.
