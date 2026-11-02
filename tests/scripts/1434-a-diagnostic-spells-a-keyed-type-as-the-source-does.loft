@@ -31,7 +31,7 @@ struct It { k: integer, v: integer }
 
 fn take(h: hash<It[k]>) -> integer { len(h) }
 
-// @EXPECT_WARNING: a nullable `hash<It[k]>?` is stored into parameter 1 of `take` of the non-null type `hash<It[k]>` — it becomes null there; discharge with `?` (the type's default), `?? <default>`, or `match` if that is not intended
+// @EXPECT_WARNING: a nullable `hash<It[k]>?` is stored into parameter 1 of `take` of the non-null type `hash<It[k]>` — it becomes null there; `h` is declared `hash<It[k]>?` on line 36: declare it `hash<It[k]>` when it always holds one, or test `h` here (`if h == null { … }` makes it `hash<It[k]>` after)
 fn a_keyed_type_is_named_as_the_source_writes_it() {
   h: hash<It[k]>? = [It { k: 2, v: 20 }];
   assert_eq("{take(h)}", "1", "the store proceeds — this cell is about the MESSAGE");

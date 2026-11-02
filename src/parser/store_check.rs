@@ -835,6 +835,21 @@ impl Parser {
                 ));
             }
             let from = self.vars.nullable_line(v);
+            // A local the author DECLARED `τ?` is nullable by its declaration, not by the
+            // value it was given there (`h: τ? = [..]` holds a non-null value), so the
+            // declaration is the place to change.
+            if self.vars.is_annotated(v) {
+                let at = if from == 0 {
+                    String::new()
+                } else {
+                    format!(" on line {from}")
+                };
+                return Some(format!(
+                    "`{name}` is declared `{held}?`{at}{field}: declare it `{held}` when it \
+                     always holds one, or test `{name}` here (`if {name} == null {{ … }}` makes \
+                     it `{held}` after)"
+                ));
+            }
             if from != 0 && from != self.lexer.at().0 {
                 return Some(format!(
                     "`{name}` is `{held}?`{field} — line {from} gives it a value that may be \
