@@ -3569,7 +3569,10 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             if !self.data.def(*d_nr).is_loft_defined() {
                 return None;
             }
-            let root_tp = self.data.def(*d_nr).returned().clone();
+            // The return type's deps are the CALLEE's attribute numbers, which name nothing in
+            // this frame: read as a caller variable they made the work-ref look borrowed, so the
+            // scope pass gave the copy a borrowing callee's bind makes no owner (loft#2376).
+            let root_tp = self.data.def(*d_nr).returned().without_deps();
             return Some(self.bind_inline_container(root, &root_tp));
         }
         let Value::Call(d_nr, _) = code.unspan() else {
