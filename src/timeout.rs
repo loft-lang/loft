@@ -50,10 +50,40 @@ use std::time::{Duration, Instant};
 /// breadcrumb update is skipped entirely.
 static ARMED: AtomicBool = AtomicBool::new(false);
 
-/// When was the timeout armed?  `None` once means timeout disabled —
-/// `deadline_reached` always returns `false`, the watchdog never
-/// fires.  Set once via `arm`.
-static DEADLINE: OnceLock<Instant> = OnceLock::new();
+/// The instant `arm` ran; the deadline is kept as nanoseconds after it, so [`restart`] can
+/// move it with one atomic store and `deadline_reached` stays one load and one compare.
+/// `None` means the timeout is disabled — `deadline_reached` always returns `false`, the
+/// watchdog never fires.
+static BASE: OnceLock<Instant> = OnceLock::new();
+
+/// The deadline, in nanoseconds after [`BASE`].
+static DEADLINE_NS: AtomicU64 = AtomicU64::new(u64::MAX);
+
+/// The current deadline, when armed.
+fn deadline() -> Option<Instant> {
+    BASE.get()
+        .map(|b| *b + Duration::from_nanos(DEADLINE_NS.load(Ordering::SeqCst)))
+}
+
+fn set_deadline_from_now(secs: u64) {
+    if let Some(b) = BASE.get() {
+        let at = Instant::now().saturating_duration_since(*b) + Duration::from_secs(secs);
+        DEADLINE_NS.store(
+            u64::try_from(at.as_nanos()).unwrap_or(u64::MAX),
+            Ordering::SeqCst,
+        );
+    }
+}
+
+/// Give the run a fresh `timeout` from now — the test runner calls this before each FILE, so
+/// the guard bounds one test file's compile and run as it is documented to, not a whole
+/// suite (dryopea's 152 files outgrew one 600 s deadline, killed while healthy at whichever
+/// file the clock ran out in).  Inert when no timeout is armed.
+pub fn restart() {
+    if ARMED.load(Ordering::Relaxed) {
+        set_deadline_from_now(TIMEOUT_SECS.load(Ordering::SeqCst));
+    }
+}
 
 /// The configured timeout in seconds, stored at `arm` so the cooperative
 /// (T2) exit can report it.  `0` while disarmed.
@@ -135,23 +165,36 @@ pub fn arm(timeout_secs: u64, grace_secs: u64) {
         return;
     }
     TIMEOUT_SECS.store(timeout_secs, Ordering::SeqCst);
-    let now = Instant::now();
-    let deadline = now + Duration::from_secs(timeout_secs);
-    let hard = deadline + Duration::from_secs(grace_secs);
-    let _ = DEADLINE.set(deadline);
+    let _ = BASE.set(Instant::now());
+    set_deadline_from_now(timeout_secs);
+    let grace = Duration::from_secs(grace_secs);
     std::thread::Builder::new()
         .name("loft-watchdog".to_string())
         .spawn(move || {
-            // Two sleeps, not a polling loop.  At the deadline the running interpreter is
+            // Sleeps to the deadline, not a polling loop; each wake re-reads it, because
+            // [`restart`] may have moved it.  At the deadline the running interpreter is
             // asked to stop: its dispatch loop tests one flag after every op, so a loop
             // stops gracefully whether or not it calls anything.  At the hard deadline the
             // process is aborted, for code that never returns to the dispatch loop.
-            if let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
-                std::thread::sleep(remaining);
-            }
-            request_stop();
-            if let Some(remaining) = hard.checked_duration_since(Instant::now()) {
-                std::thread::sleep(remaining);
+            'watch: loop {
+                let Some(d) = deadline() else { return };
+                if let Some(left) = d.checked_duration_since(Instant::now()) {
+                    std::thread::sleep(left);
+                    continue;
+                }
+                request_stop();
+                loop {
+                    let Some(d) = deadline() else { return };
+                    let now = Instant::now();
+                    if d > now {
+                        // Restarted during the grace: the next file has its own budget.
+                        continue 'watch;
+                    }
+                    match (d + grace).checked_duration_since(now) {
+                        Some(left) if !left.is_zero() => std::thread::sleep(left),
+                        _ => break 'watch,
+                    }
+                }
             }
             print_breadcrumb_and_abort(timeout_secs, grace_secs);
         })
@@ -229,7 +272,7 @@ pub fn deadline_reached() -> bool {
     if !ARMED.load(Ordering::Relaxed) {
         return false;
     }
-    DEADLINE.get().is_some_and(|d| Instant::now() >= *d)
+    deadline().is_some_and(|d| Instant::now() >= d)
 }
 
 /// @PLAN49 T2 — cooperative graceful exit.  A `checkpoint_*` on the
@@ -283,9 +326,7 @@ pub fn blocked_on(what: &str) {
 /// Time left before the armed deadline, or `None` when no timeout is armed.
 #[must_use]
 pub fn remaining() -> Option<std::time::Duration> {
-    DEADLINE
-        .get()
-        .map(|d| d.saturating_duration_since(Instant::now()))
+    deadline().map(|d| d.saturating_duration_since(Instant::now()))
 }
 
 /// Has this process already reported giving up on `key`?  One report per subject per process.

@@ -258,3 +258,45 @@ fn a_compiled_program_past_its_deadline_stops_gracefully() {
         "the graceful stop's exit code\n{text}"
     );
 }
+
+/// The guard bounds ONE test file, not a suite: under `loft test` every file starts with the
+/// whole budget (`timeout::restart`).  Three files of ~2 s each under a 3 s bound take ~6 s
+/// together and all pass; before, the one deadline armed at start killed the healthy suite
+/// in its second file (dryopea's 152 files under a 600 s bound, red on every consumer run).
+#[test]
+fn each_test_file_gets_the_whole_budget() {
+    let dir = std::env::temp_dir().join(format!("loft_timeout_suite_{}", std::process::id()));
+    fa::create_dir_all(dir.join("tests")).expect("scratch package");
+    fa::write(
+        dir.join("loft.toml"),
+        "[package]\nname = \"suite\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write manifest");
+    for n in 1..=3 {
+        fa::write(
+            dir.join("tests").join(format!("t{n}.loft")),
+            "fn spin(ms: integer) -> integer { t0 = ticks(); n = 0; \
+             for _i in 0..2000000000 { n += 1; if ticks() - t0 > ms * 1000 { break; } } n }\n\
+             fn test_waits() { assert(spin(2000) > 0, \"spun\"); }\n",
+        )
+        .expect("write test file");
+    }
+    let out = loft::platform::process::harness_command(loft_bin())
+        .arg("test")
+        .arg("--interpret")
+        .current_dir(&dir)
+        .env("LOFT_TIMEOUT", "3")
+        .env("LOFT_TIMEOUT_GRACE", "1")
+        .output()
+        .expect("spawn loft");
+    let _ = fa::remove_dir_all(&dir);
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !text.contains("[timeout]") && text.contains("3 passed"),
+        "three files, each inside the bound, all run to their verdict\n{text}"
+    );
+}

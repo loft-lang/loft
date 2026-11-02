@@ -1063,6 +1063,9 @@ pub(crate) fn run_tests(
         let mut bases: BTreeMap<(Vec<String>, String), BaseSlot> = BTreeMap::new();
 
         for file_path in files {
+            // The hang guard bounds ONE file's compile and run (RUN_BOUNDS.md § Execution
+            // timeout), so each file starts with the whole budget.
+            loft::timeout::restart();
             let abs_file = crate::file_access::plain_canonical(file_path)
                 .to_str()
                 .unwrap_or("")

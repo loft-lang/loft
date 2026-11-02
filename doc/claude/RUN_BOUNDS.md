@@ -339,6 +339,11 @@ layered:
 | Env var | (off) | `LOFT_TIMEOUT=<secs> loft <program.loft>` |
 | Auto-arming under `--tests` / `loft test` | **on, 300s** | `loft --tests <file>` arms 300s unless explicitly overridden |
 
+Under `--tests` / `loft test` the bound is **per test file**: the runner restarts the deadline
+before each file (`timeout::restart`), so a suite of many healthy files is never killed for
+its total, and one hung file still is (`tests/timeout_breadcrumb.rs`
+`each_test_file_gets_the_whole_budget`).
+
 ⚠ **`--tests` takes its path as the next NON-FLAG argument, and it only steps over
 `--native`, `--no-warnings` and `--deny-warnings` on the way.**  `--interpret` is not in that
 list, so `loft --tests --interpret <file>` does not run `<file>` — the path stays at its default
