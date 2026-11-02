@@ -1606,6 +1606,11 @@ static void loft_par_job_run(loft_par_job *j) {
     }
     loft_stores = 0;
     loft_nstores = 0;
+    /* The thread's own queue of child records a copy or a release walks (loft_rt.h): it dies
+     * with the thread, so it is freed here, or every worker that copied a tree leaks it. */
+    free(loft_child_jobs);
+    loft_child_jobs = 0;
+    loft_child_njobs = loft_child_cap = 0;
 #if defined(LOFT_CALL_CHAIN)
     free(loft_frames);
     loft_frames = 0;
