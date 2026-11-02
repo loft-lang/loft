@@ -93,6 +93,7 @@ fn local_type(t: &str) -> bool {
             | "int"
             | "size_t"
     ) || t.starts_with("loft_")
+        || t.starts_with("lt_")
 }
 
 /// A declaration alone on its line (`T name = init;` or `T name;`, at any indent): the name,
@@ -108,7 +109,10 @@ fn declaration_at(line: &str) -> Option<(&str, Option<&str>, bool)> {
         Some((h, i)) => (h, Some(i)),
         None => (rest, None),
     };
+    // `T name`, `T *name` or `T * name`: the pointer belongs to the declarator.
     let (ty, name) = head.rsplit_once(' ')?;
+    let name = name.trim_start_matches('*');
+    let ty = ty.trim_end_matches(['*', ' ']);
     (local_type(ty) && is_ident(name)).then_some((name, init, top))
 }
 
@@ -153,13 +157,13 @@ fn assignment(line: &str) -> Option<(&str, &str, &str)> {
 pub(crate) fn tidy(params: &[String], body: &str) -> String {
     let mut now = body.to_string();
     for _ in 0..8 {
-        let next = tidy_once(&[], &now);
+        let next = tidy_once(params, &now);
         if next == now {
             break;
         }
         now = next;
     }
-    tidy_once(params, &now)
+    now
 }
 
 fn tidy_once(params: &[String], body: &str) -> String {
@@ -177,6 +181,16 @@ fn tidy_once(params: &[String], body: &str) -> String {
         }
     }
     let mut set_only: Vec<&str> = Vec::new();
+    // A parameter the body only ever assigns: its value is never read.
+    for p in params {
+        if let Some((_, name)) = p.rsplit_once(' ') {
+            let name = name.trim_start_matches('*');
+            if is_ident(name) && n(name) > 0 && assigned.get(name).copied().unwrap_or(0) == n(name)
+            {
+                set_only.push(name);
+            }
+        }
+    }
     for l in &lines {
         if let Some((name, init)) = declaration(l)
             && init.is_none_or(pure)
@@ -191,7 +205,7 @@ fn tidy_once(params: &[String], body: &str) -> String {
     for p in params {
         if let Some((_, name)) = p.rsplit_once(' ') {
             let name = name.trim_start_matches('*');
-            if is_ident(name) && n(name) == 0 {
+            if is_ident(name) && n(name) == 0 && !body.contains(&format!("(void) {name};")) {
                 out.push_str("    (void) ");
                 out.push_str(name);
                 out.push_str(";\n");
@@ -239,11 +253,9 @@ fn tidy_once(params: &[String], body: &str) -> String {
 
 /// The written part of a unit (everything after the runtime) with every function body tidied
 /// ([`tidy`]) — the program's functions, their twins and dispatchers, generator resumes and the
-/// render functions alike — and the key tables (`static const loft_key loft_keysN[]`) nothing
-/// names left out.  A function is a line at column 0 that ends in `) {` and the next line that is
-/// `}` alone; anything else (a table, a type) is passed over as it is.
+/// render functions alike.  A function is a line at column 0 that ends in `) {` and the next
+/// line that is `}` alone; anything else (a table, a type) is passed over as it is.
 pub(crate) fn tidy_unit(written: &str) -> String {
-    let counts = identifier_counts(written);
     let lines: Vec<&str> = written.split('\n').collect();
     let mut out = String::with_capacity(written.len());
     let mut i = 0;
@@ -255,15 +267,6 @@ pub(crate) fn tidy_unit(written: &str) -> String {
     };
     while i < lines.len() {
         let l = lines[i];
-        if let Some(name) = l
-            .strip_prefix("static const loft_key ")
-            .and_then(|r| r.split_once("[]"))
-            .map(|(n, _)| n)
-            && counts.get(name).copied().unwrap_or(0) == 1
-        {
-            i += 1;
-            continue;
-        }
         let signature = !l.starts_with(char::is_whitespace)
             && l.ends_with(") {")
             && l.contains('(')
@@ -289,6 +292,89 @@ pub(crate) fn tidy_unit(written: &str) -> String {
         i += 1;
     }
     out
+}
+
+/// The name a column-0 line defines or declares: a function (`static T name(…) {` or its
+/// prototype `…);`), or a one-line table (`static const T name[…] = …;`).
+fn defined_name(l: &str) -> Option<(&str, bool)> {
+    if !l.starts_with("static ") {
+        return None;
+    }
+    if let Some(open) = l.find('(')
+        && (l.ends_with(") {") || l.ends_with(");"))
+    {
+        let name = l[..open].rsplit([' ', '*']).next()?;
+        return is_ident(name).then_some((name, l.ends_with(") {")));
+    }
+    if l.starts_with("static const ") && l.ends_with(';') {
+        let name = l.split_once('[')?.0.rsplit(' ').next()?;
+        return is_ident(name).then_some((name, false));
+    }
+    None
+}
+
+/// The finished program (`main` included) without the written functions and one-line tables
+/// nothing names: a twin the writer declined, a default function no constructor calls, a
+/// default image or key table no code reads.  Only the part after `runtime_end` is touched;
+/// the whole text is what names them.  Repeated until nothing changes, since a function dropped
+/// may have been its callee's last caller.
+pub(crate) fn drop_unnamed(program: &str, runtime_end: &str) -> String {
+    let Some(at) = program.find(runtime_end).map(|a| a + runtime_end.len()) else {
+        return program.to_string();
+    };
+    let (runtime, mut written) = (program[..at].to_string(), program[at..].to_string());
+    for _ in 0..8 {
+        let all = format!("{runtime}{written}");
+        let counts = identifier_counts(&all);
+        let lines: Vec<&str> = written.split('\n').collect();
+        // How many lines of the program define or declare each name: those are no use of it.
+        let mut decls: HashMap<&str, usize> = HashMap::new();
+        for l in all.split('\n') {
+            if let Some((name, _)) = defined_name(l) {
+                *decls.entry(name).or_insert(0) += 1;
+            }
+        }
+        let unused = |name: &str| {
+            name != "main"
+                && counts.get(name).copied().unwrap_or(0) <= decls.get(name).copied().unwrap_or(0)
+        };
+        let mut out = String::with_capacity(written.len());
+        let mut changed = false;
+        let mut i = 0;
+        while i < lines.len() {
+            let l = lines[i];
+            let next = |out: &mut String, l: &str, i: usize| {
+                out.push_str(l);
+                if i + 1 < lines.len() {
+                    out.push('\n');
+                }
+            };
+            match defined_name(l) {
+                Some((name, true)) if unused(name) => {
+                    changed = true;
+                    let end = (i + 1..lines.len()).find(|&k| lines[k] == "}").unwrap_or(i);
+                    i = end + 1;
+                    // The blank line the function was written after goes with it.
+                    if out.ends_with("\n\n") {
+                        out.pop();
+                    }
+                }
+                Some((name, false)) if unused(name) => {
+                    changed = true;
+                    i += 1;
+                }
+                _ => {
+                    next(&mut out, l, i);
+                    i += 1;
+                }
+            }
+        }
+        written = out;
+        if !changed {
+            break;
+        }
+    }
+    format!("{runtime}{written}")
 }
 
 #[cfg(test)]
@@ -323,6 +409,38 @@ mod tests {
     fn a_name_in_a_string_or_comment_is_no_use() {
         let body = "    int64_t v0_x = 0;\n    /* v0_x */ n_p(\"v0_x\");\n";
         assert_eq!(tidy(&[], body), "    /* v0_x */ n_p(\"v0_x\");\n");
+    }
+
+    #[test]
+    fn a_function_and_a_table_nothing_names_are_dropped() {
+        let p = "RT\n/*end*/\nstatic const uint8_t loft_dflt4[2] = { 0, 0 };\n\
+                 static int n_a(void);\nstatic int n_b(void);\n\
+                 static int n_a(void) {\n    return n_b();\n}\nstatic int n_b(void) {\n    return 1;\n}\n\
+                 static int n_c(void) {\n    return 2;\n}\nint main(void) {\n    return n_c();\n}\n";
+        let t = super::drop_unnamed(p, "/*end*/\n");
+        assert!(
+            !t.contains("loft_dflt4") && !t.contains("n_a") && !t.contains("n_b"),
+            "{t}"
+        );
+        assert!(
+            t.contains("static int n_c(void) {") && t.contains("int main"),
+            "{t}"
+        );
+    }
+
+    #[test]
+    fn a_parameter_only_assigned_keeps_its_effect() {
+        let t = tidy(
+            &["int64_t v0_b".into()],
+            "    v0_b = n_f(1);\n    return 0;\n",
+        );
+        assert_eq!(t, "    (void) v0_b;\n    (void) (n_f(1));\n    return 0;\n");
+    }
+
+    #[test]
+    fn a_pointer_local_nothing_reads_goes() {
+        let body = "    lt_103 * v2___ref_p2_1 = 0;\n    uint8_t *loft_pa0_0 = 0;\n    v2___ref_p2_1 = 0;\n    return 1;\n";
+        assert_eq!(tidy(&[], body), "    return 1;\n");
     }
 
     #[test]

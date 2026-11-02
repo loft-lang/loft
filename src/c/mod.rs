@@ -1973,9 +1973,7 @@ pub fn emit_unit_for(
         "#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic push\n#pragma GCC diagnostic ignored \"-Wunused-function\"\n#endif\n",
     );
     out.push_str(RUNTIME);
-    out.push_str(
-        "\n#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic pop\n#endif\n",
-    );
+    out.push_str(RUNTIME_END);
     out.push_str(&c_libraries(data, &cx.ffi_libs.borrow()));
     out.push_str(&cx.tr_typedefs()); // runtime types alone; a tuple may point at one
     out.push_str(&cx.typedefs());
@@ -2038,8 +2036,7 @@ pub fn emit_unit_for(
     out.push_str(&bind);
     // What the written functions left unnamed — a label, a local, a parameter, a key table — is
     // not written (`tidy.rs`).  The runtime before it is the library's, written as it stands.
-    let runtime_end = "\n#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic pop\n#endif\n";
-    if let Some(at) = out.find(runtime_end).map(|a| a + runtime_end.len()) {
+    if let Some(at) = out.find(RUNTIME_END).map(|a| a + RUNTIME_END.len()) {
         let written = tidy::tidy_unit(&out[at..]);
         out.truncate(at);
         out.push_str(&written);
@@ -2597,7 +2594,8 @@ fn emit_program_counted(
         "\nint main(int argc, char **argv) {{\n    loft_bind_tables();\n    loft_start(argc, argv);\n    {}\n    {call}\n    loft_leak_report();\n    return loft_had_fatal;\n}}\n",
         anchor(stores),
     );
-    Ok(out)
+    // The finished program names what it uses: what nothing names is not written.
+    Ok(tidy::drop_unnamed(&out, RUNTIME_END))
 }
 
 /// The program's `main` and the C statement that calls it: with nothing, or — as the
@@ -3467,6 +3465,10 @@ fn page_web_native(native: &str) -> Option<&'static str> {
         _ => return None,
     })
 }
+
+/// Where the runtime ends in a unit and the written code starts: the close of the pragma region
+/// that keeps the runtime's uncalled helpers quiet.
+const RUNTIME_END: &str = "\n#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic pop\n#endif\n";
 
 fn in_binary_native(native: &str) -> Option<&'static str> {
     match native {
@@ -4481,5 +4483,5 @@ pub fn emit_tests_of(
         .rfind("\nint main(int argc, char **argv) {")
         .unwrap_or(out.len());
     out.insert_str(at, &format!("\n{wrappers}"));
-    Ok(out)
+    Ok(tidy::drop_unnamed(&out, RUNTIME_END))
 }
