@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator: a second compiled target, C
 //! `@FR-R-LoopRecord`'s refill clause on the C: a record literal bound inside a loop, whose
 //! heap is vectors of no-heap elements, keeps its store and those vectors' blocks across the
 //! passes.

@@ -292,6 +292,12 @@ above stay sound beside it: the verdict knows the adopted local as the buffer (`
 copy, whose entry tested the stores apart.  `LOFT_NO_RETBUF_ADOPT=1` keeps the copies, as for the
 Rust writer; `tests/c_emit.rs` counts the adopted binds both ways against hand-computed values.
 
+**A clear before a mint.**  A vector buffer cleared (`OpClearVector(x)`) directly before it is
+minted again as a vector wrapper is not cleared: the mint empties the vector and releases what
+its elements owned (`@FR-H-KeepRoom`'s prologue clause, `FnWriter::clear_before_mint`), and a
+buffer a live generator frame names keeps its clear.  `LOFT_NO_PROLOGUE_CLEAR_DROP=1` writes
+every clear.
+
 **Push windows.**  A counted push loop the Rust writer's admission passes
 (`hoist::push_loop` + `push_window_ok`, or `mint_loop` + `mint_window_ok` for record mint groups)
 reserves its pushes once and opens a `loft_win` on the vector — element 0's address, the length

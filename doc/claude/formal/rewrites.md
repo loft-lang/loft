@@ -885,7 +885,7 @@ which hex_recover's `forms_upto` builds per candidate: −7.3 % (gcc ship).  Swi
 and a value block's `assign_seq`), `loft_vec_reserve_run` (`src/c/loft_rt.h`).  Native's run
 clause is the byte form above, which opens a window for the run.
 
-**The run's header clause (the C) — BUILT 2026-10-31.**  After the reservation, a
+**The run's header clause (the C).**  After the reservation, a
 run whose every pushed value meets native's run conditions — it reads neither P's root nor any
 non-scalar local, and calls nothing but an operator — writes its k elements through ONE push
 header (`loft_ph_of` once, `loft_ph_putb<w>` per element: a bounds test against the held
@@ -1029,7 +1029,7 @@ every pass.  Sites `hoist::loop_record_zeros` (the groups and their zeros) and t
 `(R-RefillBuffer)` empty in `emit.rs`; cells `tests/scripts/157-a-loop-record-keeps-its-vectors.loft`,
 pins `tests/ctor_literal.rs`.
 
-**On the C — BUILT 2026-10-31 (a port).**  The C writer does not ask
+**On the C (a port).**  The C writer does not ask
 `crate::opt::loop_records::loop_records`, so a record literal in a loop mints a store, claims
 its vectors and frees it every pass.  The port is the same three moves in the C's spelling: the
 mint is taken only where the local holds no store (`if (r.store_nr == 0xFFFF)`), a refill
@@ -4164,7 +4164,7 @@ reads such a `main` as a possible leak, and it is a working set.
                  the one that releases it.  The live-flip check stays.
 ```
 
-**(R-FnRefBuffer), in words — BUILT 2026-10-31.**  zttext's layout takes its style
+**(R-FnRefBuffer), in words.**  zttext's layout takes its style
 resolver as a function value, `resolve: fn(integer) -> Style`, and calls it for every run of
 every token, three times a token; each call minted a `Style` store (`default_style`'s
 `loft_database`), adopted it and freed it at the end of the pass — 15 % of the routine.  The

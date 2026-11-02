@@ -813,55 +813,7 @@ impl Parser {
             _ => false,
         });
         if let Some(v) = local {
-            let name = self.vars.written_name(v);
-            let held = self.vars.tp(v).base().source_name(&self.data);
-            let field = match leaf {
-                Value::Var(_) => "",
-                Value::Call(d, args)
-                    if self.data.def(*d).name.starts_with("OpGet")
-                        && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == v) =>
-                {
-                    ", and so is its field"
-                }
-                _ => ", and so is what this computes from it",
-            };
-            // Where the local BECAME nullable is the place to change, when it is not here: a
-            // value made non-null at its source needs no test at any of its uses.
-            if self.vars.is_argument(v) {
-                return Some(format!(
-                    "`{name}` is a parameter declared `{held}?`{field}: test it first (`if {name} \
-                     == null {{ … }}` makes it `{held}` after), or declare it `{held}` when every \
-                     caller passes one"
-                ));
-            }
-            let from = self.vars.nullable_line(v);
-            // A local the author DECLARED `τ?` is nullable by its declaration, not by the
-            // value it was given there (`h: τ? = [..]` holds a non-null value), so the
-            // declaration is the place to change.
-            if self.vars.is_annotated(v) {
-                let at = if from == 0 {
-                    String::new()
-                } else {
-                    format!(" on line {from}")
-                };
-                return Some(format!(
-                    "`{name}` is declared `{held}?`{at}{field}: declare it `{held}` when it \
-                     always holds one, or test `{name}` here (`if {name} == null {{ … }}` makes \
-                     it `{held}` after)"
-                ));
-            }
-            if from != 0 && from != self.lexer.at().0 {
-                return Some(format!(
-                    "`{name}` is `{held}?`{field} — line {from} gives it a value that may be \
-                     null: make that value non-null there (`!` when it cannot be null, an index \
-                     loft proves), or test `{name}` here (`if {name} == null {{ … }}` makes it \
-                     `{held}` after){declare}"
-                ));
-            }
-            return Some(format!(
-                "`{name}` is `{held}?`{field}: test it first (`if {name} == null {{ … }}` makes it \
-                 `{held}` after), or write `{name}!` when it cannot be null here{declare}"
-            ));
+            return Some(self.local_cure(v, leaf, declare));
         }
         if let Value::Call(d, _) = leaf {
             let def = self.data.def(*d);
@@ -876,6 +828,60 @@ impl Parser {
             }
         }
         None
+    }
+
+    /// The cure for a `τ?` local, or a field read off one: where it BECAME nullable is the
+    /// place to change — its declaration, the line that gave it a nullable value; a value made
+    /// non-null at its source needs no test at any of its uses — else a guard here
+    /// (`(N-Guard)`), which makes it and every field of it `τ` after.
+    fn local_cure(&self, v: u16, leaf: &Value, declare: &str) -> String {
+        let name = self.vars.written_name(v);
+        let held = self.vars.tp(v).base().source_name(&self.data);
+        let field = match leaf {
+            Value::Var(_) => "",
+            Value::Call(d, args)
+                if self.data.def(*d).name.starts_with("OpGet")
+                    && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == v) =>
+            {
+                ", and so is its field"
+            }
+            _ => ", and so is what this computes from it",
+        };
+        if self.vars.is_argument(v) {
+            return format!(
+                "`{name}` is a parameter declared `{held}?`{field}: test it first (`if {name} \
+                 == null {{ … }}` makes it `{held}` after), or declare it `{held}` when every \
+                 caller passes one"
+            );
+        }
+        let from = self.vars.nullable_line(v);
+        // A local the author DECLARED `τ?` is nullable by its declaration, not by the
+        // value it was given there (`h: τ? = [..]` holds a non-null value), so the
+        // declaration is the place to change.
+        if self.vars.is_annotated(v) {
+            let at = if from == 0 {
+                String::new()
+            } else {
+                format!(" on line {from}")
+            };
+            return format!(
+                "`{name}` is declared `{held}?`{at}{field}: declare it `{held}` when it \
+                 always holds one, or test `{name}` here (`if {name} == null {{ … }}` makes \
+                 it `{held}` after)"
+            );
+        }
+        if from != 0 && from != self.lexer.at().0 {
+            return format!(
+                "`{name}` is `{held}?`{field} — line {from} gives it a value that may be \
+                 null: make that value non-null there (`!` when it cannot be null, an index \
+                 loft proves), or test `{name}` here (`if {name} == null {{ … }}` makes it \
+                 `{held}` after){declare}"
+            );
+        }
+        format!(
+            "`{name}` is `{held}?`{field}: test it first (`if {name} == null {{ … }}` makes it \
+             `{held}` after), or write `{name}!` when it cannot be null here{declare}"
+        )
     }
 
     /// Does a value position of `v` — an `if` arm, a block's tail — answer `null`: a bare one,

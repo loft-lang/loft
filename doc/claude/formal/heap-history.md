@@ -3036,3 +3036,14 @@ interpreter 35.2 → 31.0 MB, of which the rule alone (`LOFT_NO_TAIL_GROW=1` aga
 `save_scene_glb` unchanged; the C ship lane's `save_glb` read about 10 % faster with less
 spread, on single runs (an alternating A/B was too noisy at its calibrated `--n` to call).
 
+## H-SwapRebind: what the exchange saves (moved from the working rules, 2026-11-02)
+
+Measured on zttext `invert` (one `Doc` rebound per step of a 1 000-step walk): the per-step
+deep copy of the whole document was 43 % of the routine.
+
+## The heap register and D-op-1 (moved from the working rules, 2026-11-02)
+
+Writing heap.md's rules shrank operational.md's D-op-1: the heap/store steps it named as
+*"unwritten … the interpreter remains their spec"* gained a written contract.  The
+free-discipline conformance row once said "0 open" while ownership.md's register carried an
+open entry, which is why it now points at that register's own `OPEN` line.

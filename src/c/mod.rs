@@ -88,7 +88,7 @@ impl std::fmt::Display for Refusal {
 }
 
 /// The start of a refusal's `why` that is a CONTRACT — the program asks for something no
-/// backend gives on this target (a `#c` call on wasm, @PLN24 arc E) — rather than a construct
+/// backend gives on this target (a `#c` call on wasm) — rather than a construct
 /// the C backend does not carry yet.  [`Refusal::message`] says it as the sentence alone.
 pub(crate) const CONTRACT: &str = "\u{0}contract:";
 
@@ -3049,7 +3049,7 @@ fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
     let sig = cs::of(data, d, cs::CTarget::host())
         .ok_or("a C binding without a signature")?
         .map_err(|e| format!("a C binding whose signature does not parse: {e}"))?;
-    // @PLN24 arc E (PACKAGES_C_BINDING.md § The wasm and browser targets): on wasm only a
+    // PACKAGES_C_BINDING.md § The wasm and browser targets: on wasm only a
     // package's `[c] shim` is compiled into the module; any other `#c` call is refused by name
     // — the sentence the Rust writer gives.  A symbol the WASI libc happens to export would
     // otherwise link and trap, and an absent one fail at the link naming no package.
@@ -4077,7 +4077,7 @@ thread_local! {
 }
 
 /// [`emit_program`] for a `--native-wasm` module: the same unit, written knowing it is compiled
-/// to wasm32, so a `#c` binding no `[c] shim` provides is refused by name (@PLN24 arc E) rather
+/// to wasm32, so a `#c` binding no `[c] shim` provides is refused by name rather
 /// than failing at the wasm link.
 ///
 /// # Errors

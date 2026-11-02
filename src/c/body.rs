@@ -2739,11 +2739,8 @@ impl<'a> FnWriter<'a> {
             return false;
         };
         match (m.first().map(Value::unspan), m.get(1).map(Value::unspan)) {
-            (Some(Value::Var(y)), Some(Value::Int(tp))) if y == x => {
-                u16::try_from(*tp).is_ok_and(|tp| {
-                    self.cx.stores.is_vector_wrapper(tp) && !self.lr_kept(*x)
-                })
-            }
+            (Some(Value::Var(y)), Some(Value::Int(tp))) if y == x => u16::try_from(*tp)
+                .is_ok_and(|tp| self.cx.stores.is_vector_wrapper(tp) && !self.lr_kept(*x)),
             _ => false,
         }
     }
