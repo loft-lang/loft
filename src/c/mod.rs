@@ -236,6 +236,12 @@ pub(crate) struct Cx<'a> {
     pub(crate) gen_decls: std::cell::RefCell<String>,
     /// The generators' resume and release functions, written after them.
     pub(crate) gen_bodies: std::cell::RefCell<String>,
+    /// `@FR-R-Version`: each function's leaf plan, the leaves whose precondition is written,
+    /// and those preconditions' text (`body::version`).
+    pub(crate) version_leaves:
+        std::cell::RefCell<std::collections::HashMap<u32, Option<std::rc::Rc<crate::opt::version::Leaf>>>>,
+    pub(crate) version_pres: std::cell::RefCell<std::collections::HashSet<u32>>,
+    pub(crate) version_fns: std::cell::RefCell<String>,
     /// `@FR-R-Transient`'s twins and the structs they use (`body::transient`).
     pub(crate) tr: std::cell::RefCell<body::transient::TrState>,
     /// `@FR-R-AppendTwin`'s window clause: per function, the element size its append twin's
@@ -341,6 +347,11 @@ pub(crate) const AP_BIT: u64 = 1 << 58;
 /// and its scalar fields answered as a tuple (`lower::destination::shape`).
 pub(crate) const DS_BIT: u64 = 1 << 57;
 
+/// The mask bit of a `__vf` twin (`@FR-R-Version`): a leaf's held-inputs twin written again
+/// with its decided tests taken, its proven element accesses at their index and its tested
+/// operations plain — called where the leaf's precondition holds over a loop's remaining range.
+pub(crate) const VF_BIT: u64 = 1 << 56;
+
 /// The bits of a `__nn` twin (`@FR-R-NonSentinelParam`'s twin clause), one per parameter from
 /// bit 32: the function written again with those parameters seeded as non-sentinel, called by
 /// a call site whose arguments prove them where the program-wide fact cannot (another caller
@@ -351,7 +362,7 @@ pub(crate) const NN_SHIFT: u32 = 32;
 pub(crate) const NN_PARAMS: usize = 24;
 pub(crate) const NN_MASK: u64 = ((1u64 << NN_PARAMS) - 1) << NN_SHIFT;
 const _: () =
-    assert!(NN_MASK & (DS_BIT | AP_BIT | KH_BIT | APV_BIT | APR_BIT | NK_BIT | INV_BIT) == 0);
+    assert!(NN_MASK & (VF_BIT | DS_BIT | AP_BIT | KH_BIT | APV_BIT | APR_BIT | NK_BIT | INV_BIT) == 0);
 
 /// The record collections beside a plain vector the C carries; each layout is described in
 /// `loft_keyed.h`.  An `array` and an `ordered` are the forms a vector and a sorted take when
@@ -397,6 +408,9 @@ impl<'a> Cx<'a> {
             unicode: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             gen_decls: std::cell::RefCell::new(String::new()),
             gen_bodies: std::cell::RefCell::new(String::new()),
+            version_leaves: std::cell::RefCell::new(std::collections::HashMap::new()),
+            version_pres: std::cell::RefCell::new(std::collections::HashSet::new()),
+            version_fns: std::cell::RefCell::new(String::new()),
             tr: std::cell::RefCell::new(body::transient::TrState::default()),
             ap_windows: std::cell::RefCell::new(std::collections::HashMap::new()),
             hot_candidates: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -1396,7 +1410,7 @@ pub(crate) fn type_word(tp: &Type) -> String {
 /// An `__inv` twin ([`INV_BIT`]) adds `__inv` after the place mask's name.
 pub(crate) fn twin_name(data: &Data, d: u32, mask: u64) -> String {
     let places =
-        mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT & !KH_BIT & !AP_BIT & !DS_BIT & !NN_MASK;
+        mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT & !KH_BIT & !AP_BIT & !DS_BIT & !VF_BIT & !NN_MASK;
     let inv = if mask & INV_BIT == 0 { "" } else { "__inv" };
     let kh = if mask & KH_BIT == 0 { "" } else { "__kh" };
     let nn_bits = (mask & NN_MASK) >> NN_SHIFT;
@@ -1410,11 +1424,12 @@ pub(crate) fn twin_name(data: &Data, d: u32, mask: u64) -> String {
     let apv = if mask & APV_BIT == 0 { "" } else { "__apv" };
     let ap = if mask & AP_BIT == 0 { "" } else { "__ap" };
     let ds = if mask & DS_BIT == 0 { "" } else { "__d" };
+    let vf = if mask & VF_BIT == 0 { "" } else { "__vf" };
     if places == 0 {
-        format!("{}{inv}{nk}{apr}{apv}{kh}{ap}{ds}", c_name(data, d))
+        format!("{}{inv}{nk}{apr}{apv}{kh}{ap}{ds}{vf}", c_name(data, d))
     } else {
         format!(
-            "{}_pl{places}{inv}{nk}{apr}{apv}{kh}{ap}{ds}",
+            "{}_pl{places}{inv}{nk}{apr}{apv}{kh}{ap}{ds}{vf}",
             c_name(data, d)
         )
     }
@@ -1960,6 +1975,7 @@ pub fn emit_unit_for(
         out.push_str(REFLECT_ENTRY);
     }
     out.push_str(&cx.gen_decls.borrow());
+    out.push_str(&cx.version_fns.borrow());
     out.push_str(&protos);
     out.push_str(&dispatch);
     out.push_str(&cx.drop_code(&fns));
@@ -2794,7 +2810,7 @@ fn hot_twin(mask: u64, statements: usize) -> bool {
 fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     let data = cx.data;
     let places =
-        mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT & !KH_BIT & !AP_BIT & !DS_BIT & !NN_MASK;
+        mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT & !KH_BIT & !AP_BIT & !DS_BIT & !VF_BIT & !NN_MASK;
     let def = data.def(d);
     // A `#c` binding (@PLN24): the C function itself, called by its declared signature.
     if def.code() == &Value::Null && !def.c_sig.is_empty() {
@@ -3020,6 +3036,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
             .apart_value(mask & APV_BIT != 0)
             .append_twin(mask & AP_BIT != 0)
             .destination(mask & DS_BIT != 0)
+            .version_fast(mask & VF_BIT != 0)?
             .write()?,
     };
     let (body, statements) = body;

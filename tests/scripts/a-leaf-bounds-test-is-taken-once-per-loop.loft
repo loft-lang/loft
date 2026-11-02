@@ -1,0 +1,219 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-Version` — in an innermost counted loop, an accessor's bounds tests are taken once:
+// the C writer asks the accessor's precondition at the arguments the counter's first and last
+// values give, and calls a fast copy (its decided tests taken, its element access at the
+// index, its index arithmetic plain) only where it holds over the whole range.  Everywhere
+// else the accessor runs as written, so every cell below answers what the interpreter does.
+//
+// The C writer applies it; the interpreter applies nothing and is the oracle.  Every value is
+// hand-computed from the sheet `src` = 3x3 with pixel (x, y) = 1 + 100y + x:
+//   row 0: 1 2 3 · row 1: 101 102 103 · row 2: 201 202 203 · sum 918, data index 3y + x.
+//
+// c1  in range at (2, 1): all nine copied — 918; (4, 3) = 203, (2, 1) = 1.
+// c2  at (6, 0) on an 8-wide canvas: x = 8 is off, columns 0-1 copied — 1+2+101+102+201+202 = 609.
+// c3  at (-1, 0): x = -1 is off, columns 1-2 — 2+3+102+103+202+203 = 615.
+// c4  at (0, 4) on a 6-high canvas: y = 6 is off, rows 0-1 — 6+306 = 312.
+// c5  read from (1, 1): x = 3 and y = 3 read 0 and are not copied — 102+103+202+203 = 610.
+// c6  a row that is its own sheet, shifted right by one, left to right: each read sees the
+//     write before it, so the row becomes all 1 — sum 5.
+// c7  the first x of row 1 over 101 is 1 (the loop breaks there); none of row 0 is over 50: -1.
+// c8  `0..=2` of row 2 = 606; `1..=3` = 202+203+0 = 405.
+// c9  `w - 1 - i` (the counter subtracted): row 0 weighted by i + 1 = 3·1 + 2·2 + 1·3 = 10.
+// c10 x from 2^63 - 8: the sum overflows past i = 7 (null), every read is off the canvas: 0.
+// c11 an empty range answers 0, both forms.
+// c12 `x * x` is no linear index (the leaf declines): d[0] + d[1] + d[4] + 0 = 1+2+102 = 105.
+// c13 a negative index counts from the end: d[-2] + d[-1] + d[0] + d[1] = 202+203+1+2 = 408;
+//     0..3 = 1+2+3 = 6.
+// c14 a computed start: row 1 over 1..3 = 205; over -1..2 = 0+101+102 = 203.
+// c15 `x * (4 - x)` over 0..5 on [1 2 3 4] is 0 3 4 3 0: both ends in range, the middle not —
+//     1 + 4 + 0 + 4 + 1 = 10 (a product of two terms the counter moves declines).
+//
+// @falsified-at: pending
+
+struct Cv {
+  w: integer,
+  h: integer,
+  d: vector<integer>
+}
+
+fn mk(w: integer, h: integer, base: integer) -> Cv {
+  c = Cv { w: w, h: h, d: [] };
+  for y in 0..h {
+    for x in 0..w {
+      c.d += [if base == 0 { 0 } else { base + y * 100 + x }];
+    }
+  }
+  c
+}
+
+fn get(self: const Cv, x: integer, y: integer) -> integer {
+  if x < 0 or x >= self.w or y < 0 or y >= self.h {
+    0
+  } else {
+    gi = y * self.w + x;
+    gd = &self.d;
+    if gi < len(gd) { gd[gi] ?? 0 } else { 0 }
+  }
+}
+
+fn put(self: Cv, x: integer, y: integer, v: integer) {
+  if x >= 0 and x < self.w and y >= 0 and y < self.h {
+    pi = y * self.w + x;
+    pd = &self.d;
+    if pi < len(pd) {
+      pd[pi] = v;
+    }
+  }
+}
+
+fn sq(self: const Cv, x: integer) -> integer {
+  qi = x * x;
+  qd = &self.d;
+  if qi < len(qd) { qd[qi] ?? 0 } else { 0 }
+}
+
+fn hump(self: const Cv, x: integer) -> integer {
+  hi = x * (4 - x);
+  hd = &self.d;
+  if hi < len(hd) { hd[hi] ?? 0 } else { 0 }
+}
+
+fn hump_sum(c: const Cv) -> integer {
+  s = 0;
+  for x in 0..5 {
+    s += c.hump(x);
+  }
+  s
+}
+
+fn at(self: const Cv, i: integer) -> integer {
+  ad = &self.d;
+  if i < len(ad) { ad[i] ?? 0 } else { 0 }
+}
+
+fn total(c: const Cv) -> integer {
+  s = 0;
+  for v in c.d {
+    s += v;
+  }
+  s
+}
+
+fn blit(dst: Cv, src: const Cv, sx: integer, sy: integer, dx: integer, dy: integer, bw: integer, bh: integer) {
+  for py in 0..bh {
+    for px in 0..bw {
+      v = src.get(sx + px, sy + py);
+      if v != 0 {
+        dst.put(dx + px, dy + py, v);
+      }
+    }
+  }
+}
+
+fn shift_self(c: Cv, n: integer) {
+  for px in 0..n {
+    v = c.get(px, 0);
+    c.put(px + 1, 0, v);
+  }
+}
+
+fn first_over(c: const Cv, y: integer, lim: integer) -> integer {
+  r = -1;
+  for x in 0..c.w {
+    if c.get(x, y) > lim {
+      r = x;
+      break;
+    }
+  }
+  r
+}
+
+fn row_sum_incl(c: const Cv, y: integer, a: integer, b: integer) -> integer {
+  s = 0;
+  for x in a..=b {
+    s += c.get(x, y);
+  }
+  s
+}
+
+fn row_sum(c: const Cv, y: integer, a: integer, b: integer) -> integer {
+  s = 0;
+  for x in a..b {
+    s += c.get(x, y);
+  }
+  s
+}
+
+fn mirror_sum(c: const Cv, y: integer) -> integer {
+  s = 0;
+  for i in 0..c.w {
+    s += c.get(c.w - 1 - i, y) * (i + 1);
+  }
+  s
+}
+
+fn far(c: const Cv) -> integer {
+  s = 0;
+  big = 9223372036854775800;
+  for i in 0..12 {
+    s += c.get(big + i, 0);
+  }
+  s
+}
+
+fn sq_sum(c: const Cv) -> integer {
+  s = 0;
+  for x in 0..4 {
+    s += c.sq(x);
+  }
+  s
+}
+
+fn at_sum(c: const Cv, a: integer, b: integer) -> integer {
+  s = 0;
+  for i in a..b {
+    s += c.at(i);
+  }
+  s
+}
+
+fn main() {
+  src = mk(3, 3, 1);
+  assert(total(src) == 918, "sheet");
+  d1 = mk(8, 6, 0);
+  blit(d1, src, 0, 0, 2, 1, 3, 3);
+  assert(total(d1) == 918, "c1 sum {total(d1)}");
+  assert(d1.get(4, 3) == 203 && d1.get(2, 1) == 1, "c1 pixels");
+  d2 = mk(8, 6, 0);
+  blit(d2, src, 0, 0, 6, 0, 3, 3);
+  assert(total(d2) == 609, "c2 {total(d2)}");
+  d3 = mk(8, 6, 0);
+  blit(d3, src, 0, 0, -1, 0, 3, 3);
+  assert(total(d3) == 615, "c3 {total(d3)}");
+  d4 = mk(8, 6, 0);
+  blit(d4, src, 0, 0, 0, 4, 3, 3);
+  assert(total(d4) == 312, "c4 {total(d4)}");
+  d5 = mk(8, 6, 0);
+  blit(d5, src, 1, 1, 0, 0, 3, 3);
+  assert(total(d5) == 610, "c5 {total(d5)}");
+  row = mk(5, 1, 1);
+  shift_self(row, 4);
+  assert(total(row) == 5, "c6 {total(row)}");
+  assert(first_over(src, 1, 101) == 1, "c7 break");
+  assert(first_over(src, 0, 50) == -1, "c7 none");
+  assert(row_sum_incl(src, 2, 0, 2) == 606, "c8 in");
+  assert(row_sum_incl(src, 2, 1, 3) == 405, "c8 edge");
+  assert(mirror_sum(src, 0) == 10, "c9 {mirror_sum(src, 0)}");
+  assert(far(src) == 0, "c10 {far(src)}");
+  assert(row_sum_incl(src, 0, 2, 1) == 0 && row_sum(src, 0, 2, 2) == 0, "c11");
+  assert(sq_sum(src) == 105, "c12 {sq_sum(src)}");
+  assert(at_sum(src, -2, 2) == 408, "c13 negative {at_sum(src, -2, 2)}");
+  assert(at_sum(src, 0, 3) == 6, "c13 in");
+  assert(row_sum(src, 1, 1, 3) == 205, "c14 {row_sum(src, 1, 1, 3)}");
+  assert(row_sum(src, 1, -1, 2) == 203, "c14 edge {row_sum(src, 1, -1, 2)}");
+  four = mk(4, 1, 1);
+  assert(hump_sum(four) == 10, "c15 {hump_sum(four)}");
+  println("ok");
+}

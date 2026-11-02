@@ -21,6 +21,7 @@ mod misc;
 mod par;
 pub(super) mod transient;
 mod value;
+mod version;
 
 use super::{CType, Cx, c_name, held, is_operator, type_word};
 use crate::data::{Block, Value};
@@ -251,6 +252,10 @@ pub(crate) struct FnWriter<'a> {
     /// chain operators, and the guard they branch on (`None` in the plain copy of an innermost
     /// loop, where every one is plain).
     plain_chains: Vec<(std::collections::HashSet<usize>, Option<String>)>,
+    /// `@FR-R-Version` — a fast twin's leaf plan (`super::VF_BIT`), and per enclosing loop the
+    /// facts of an innermost counted one (`None` for any other loop).
+    vf: Option<std::rc::Rc<crate::opt::version::Leaf>>,
+    versions: Vec<Option<version::VLoop>>,
     /// The guards written so far, which numbers each one's flag.
     chain_guards: u32,
     /// `@FR-R-RecPtr` — the record views whose address the enclosing blocks hold: the view,
@@ -703,6 +708,8 @@ impl<'a> FnWriter<'a> {
             ds_site: None,
             nk_call: None,
             plain_chains: Vec::new(),
+            vf: None,
+            versions: Vec::new(),
             chain_guards: 0,
             rec_ptrs: Vec::new(),
             work_alias: None,
@@ -878,6 +885,20 @@ impl<'a> FnWriter<'a> {
             self.adopt = None;
         }
         self
+    }
+
+    /// A fast twin (`super::VF_BIT`, `@FR-R-Version`): each decided `if` its arm, each proven
+    /// element access at its index, each tested operation plain.
+    pub(crate) fn version_fast(mut self, on: bool) -> Result<Self, String> {
+        if on {
+            let leaf = self
+                .cx
+                .version_leaf(self.d)
+                .ok_or("a fast twin of a function that is no leaf")?;
+            self.plain_chains.push((leaf.plain.clone(), None));
+            self.vf = Some(leaf);
+        }
+        Ok(self)
     }
 
     /// A `__nk` twin (`super::NK_BIT`): the body without its keep statement.
@@ -2362,6 +2383,11 @@ impl<'a> FnWriter<'a> {
                 let size = Self::literal(&size, "element size")?;
                 let fld = Self::literal(fld, "field")?;
                 let index = self.expr(&idx, ind)?;
+                if name == "OpGetInt" && self.version_raw(args) {
+                    let index = as_int(index)?;
+                    let code = self.version_access(name, &held, size, fld, &index, None);
+                    return Ok(Some(E::new(code, K::Int)));
+                }
                 let (f, k) = if name == "OpGetInt" {
                     ("loft_vh_get_int", K::Int)
                 } else {
@@ -2387,6 +2413,11 @@ impl<'a> FnWriter<'a> {
                 let size = Self::literal(&size, "element size")?;
                 let fld = Self::literal(fld, "field")?;
                 let (index, value) = self.two(name, &[&idx, val], ind)?;
+                if name == "OpSetInt" && self.version_raw(args) {
+                    let (index, value) = (as_int(index)?, as_int(value)?);
+                    let code = self.version_access(name, &held, size, fld, &index, Some(&value));
+                    return Ok(Some(E::new(code, K::Void)));
+                }
                 let (f, value) = if name == "OpSetInt" {
                     ("loft_vh_set_int", as_int(value)?)
                 } else {
@@ -3867,6 +3898,7 @@ impl<'a> FnWriter<'a> {
         self.loop_calls.push(calls);
         self.hold_invariants(b, ind);
         let mints = self.hold_vectors(b, ind)?;
+        self.hold_versions(b, ind)?;
         let window = self.open_window(b, ind)?;
         if !window {
             self.hash_reserve(b, ind)?;
@@ -3916,6 +3948,7 @@ impl<'a> FnWriter<'a> {
         self.push_heads.pop();
         self.scalars.pop();
         self.invariants.pop();
+        self.versions.pop();
         if window {
             // The loop's one exit: the counted push loop has no break, return or
             // continue of its own (`hoist::push_loop`).
@@ -4232,6 +4265,12 @@ impl<'a> FnWriter<'a> {
                 Ok(())
             }
             Value::If(..) if self.apv_stmt(v, ind) => Ok(()),
+            Value::If(c, t, e) if self.vf.is_some() && self.version_decided(c).is_some() => {
+                let arm = if self.version_decided(c) == Some(true) { t } else { e };
+                self.stmt(arm, ind)?;
+                self.flush(ind);
+                Ok(())
+            }
             Value::If(c, t, e) => {
                 let null_test = self.null_test(c);
                 // The test first; each arm inside its braces (`@FR-E-And`, `@FR-E-Or`, as in
@@ -6348,6 +6387,7 @@ impl<'a> FnWriter<'a> {
         // `@FR-R-Header`'s kept-twin clause: a callee handed a vector this body holds a GROWN
         // header for takes that header by pointer and keeps it current; no refresh follows.
         let mut mask = places;
+        let mut version: Option<String> = None;
         // A transient twin takes no other twin's arguments.
         if tr_name.is_none() {
             if places == 0
@@ -6367,6 +6407,10 @@ impl<'a> FnWriter<'a> {
                 && !self.apr_twin_call(d, args)
                 && let Some(inputs) = self.twin_inputs(d, args, ind)?
             {
+                // `@FR-R-Version`: the call in an innermost counted loop may take the fast twin.
+                if dropped.is_none() && xs.len() == args.len() {
+                    version = self.version_flag(args, &inputs);
+                }
                 xs.extend(inputs);
                 mask |= super::INV_BIT;
             }
@@ -6454,7 +6498,16 @@ impl<'a> FnWriter<'a> {
                 fresh = Some((w, x, size));
             }
         }
-        let call = format!("{name}({})", xs.join(", "));
+        let call = match &version {
+            // `@FR-R-Version`: the fast twin where the flag holds, the twin as written elsewhere.
+            Some(flag) if mask & super::INV_BIT != 0 && mask & super::AP_BIT == 0 && fresh.is_none() => {
+                cx.request_twin(d, mask | super::VF_BIT);
+                let fast = super::twin_name(cx.data, d, mask | super::VF_BIT);
+                let xs = xs.join(", ");
+                format!("({flag} ? {fast}({xs}) : {name}({xs}))")
+            }
+            _ => format!("{name}({})", xs.join(", ")),
+        };
         if let Some((w, x, size)) = fresh {
             let t = self.temp(CType::Ref);
             return Ok(E::new(
@@ -7137,6 +7190,9 @@ impl<'a> FnWriter<'a> {
         c: CType,
         ind: usize,
     ) -> Result<(), String> {
+        if let Some(want) = self.version_decided(cond) {
+            return self.assign(if want { t } else { e }, target, c, ind);
+        }
         let null_test = self.null_test(cond);
         // Only the test is evaluated before the `if`; each arm's work — its call temporaries
         // included — is emitted inside that arm's braces, so it runs only when the arm does.

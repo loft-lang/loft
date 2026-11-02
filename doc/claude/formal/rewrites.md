@@ -6089,6 +6089,46 @@ at eight.  `b64_value`'s ten branches on random input are not predicted: `reques
 −49 % (clang).  Switch `LOFT_NO_TABULATE`; `LOFT_TRACE_TABULATE=1` names each admitted function and
 each decline.  Site: `opt::tabulate::table`.
 
+### A leaf's bounds tests are taken once per loop
+
+```
+  (R-Version)    In an innermost counted loop `for t in a..b` (or `a..=b`), a call of the
+                 held-inputs twin `(R-Inputs)` of a LEAF — a function with no loop and no
+                 call but operators — calls its FAST TWIN when the leaf's PRECONDITION
+                 holds at the call's arguments where the call first runs in this entry of
+                 the loop, and at the arguments the counter's last value gives them.  Each
+                 argument the precondition reads is invariant over the loop, or invariant
+                 plus a literal multiple of the counter; the inputs it reads are the twin's
+                 held scalars and held headers' lengths.  The precondition is the leaf's
+                 DECIDED TESTS — an `if` whose condition is integer comparisons of linear
+                 expressions over the parameters and inputs (an `and` decided true, an `or`
+                 decided false) and one of whose arms alone reads or writes an element of a
+                 held vector, decided toward that arm — every element index on the way lying
+                 in [0, len), and no operation of those expressions overflowing or taking a
+                 null operand.  The fast twin is the leaf with each decided `if` its decided
+                 arm, each such element read or written at its index, and each such
+                 operation C's plain operator.  APPLIED BY the C writer.
+```
+
+**In words.**  @PLN210 P5.  text2d's `draw_quads` reads the sheet with `get_pixel` and writes the
+canvas with `set_pixel` per texel; each accessor tests both coordinates against its canvas,
+checks the index arithmetic for overflow and tests the index against the data's length, and the
+twin clips once per quad.  The arguments are `x0 + px` and an invariant row, so every expression
+the tests read is LINEAR in the counter with a constant coefficient (a product of two
+counter-dependent factors declines), and a linear value over an interval takes its extremes at
+the ends: a comparison that holds at the first call's counter and at the last holds at every
+counter between, and an operation that fits at both ends fits between.  Taken at the first call
+rather than at the loop's entry, the guard needs no argument evaluated outside the body, and a
+call under a condition is covered from where it first runs (the counter only grows).  A null
+operand is refused, since the checked operator answers null where the plain one would not; a
+null compared is compared as the twin compares it.  The fast twin changes nothing else, so a
+loop that breaks early, or a canvas that is the sheet, runs the same reads and writes in the
+same order.  The flag is `fast ? f__vf(…) : f__inv(…)`, cleared at the loop's prelude; the
+compilers keep it as a predicted branch.  Measured by hand: `draw_quads` 3.46× → 1.52× (gcc),
+3.76× → 1.60× (clang); with the checked operator or the checked element access kept in the fast
+twin, 2.1× / 2.9×.  Switch `LOFT_NO_VERSION`; `LOFT_TRACE_VERSION=1` names each leaf admitted or
+declined and each call versioned.  Sites: `opt::version::leaf`, `c::body::version`.
+
 ### A self-call in tail position is a jump
 
 ```

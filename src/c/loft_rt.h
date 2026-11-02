@@ -2489,6 +2489,58 @@ LOFT_HOT_INLINE void loft_vh_set_float(loft_vh h, uint32_t size, int64_t from, u
     memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
 
+/* @FR-R-Version — a fast twin's element read and write at an index its precondition proved in
+ * [0, len). */
+LOFT_HOT_INLINE int64_t loft_vh_at_int(loft_vh h, uint32_t size, int64_t f, uint32_t fld) {
+    int64_t v;
+    memcpy(&v, h.base + (size_t) f * size + fld, 8);
+    return v;
+}
+
+LOFT_HOT_INLINE void loft_vh_put_int(loft_vh h, uint32_t size, int64_t f, uint32_t fld, int64_t v) {
+    memcpy(h.base + (size_t) f * size + fld, &v, 8);
+}
+
+/* @FR-R-Version — a precondition's arithmetic: a null operand, an overflow or a null result
+ * clears `*ok` (the checked operator would answer null where the plain one does not). */
+static inline int64_t loft_vg_add(int64_t a, int64_t b, int *ok) {
+    int64_t r;
+    if (a == LOFT_NULL || b == LOFT_NULL || LOFT_ADD_OVF(a, b, &r) || r == LOFT_NULL) { *ok = 0; return 0; }
+    return r;
+}
+static inline int64_t loft_vg_sub(int64_t a, int64_t b, int *ok) {
+    int64_t r;
+    if (a == LOFT_NULL || b == LOFT_NULL || LOFT_SUB_OVF(a, b, &r) || r == LOFT_NULL) { *ok = 0; return 0; }
+    return r;
+}
+static inline int64_t loft_vg_mul(int64_t a, int64_t b, int *ok) {
+    int64_t r;
+    if (a == LOFT_NULL || b == LOFT_NULL || LOFT_MUL_OVF(a, b, &r) || r == LOFT_NULL) { *ok = 0; return 0; }
+    return r;
+}
+static inline int64_t loft_vg_neg(int64_t a, int *ok) {
+    if (a == LOFT_NULL) { *ok = 0; return 0; }
+    return -a;
+}
+/* The counter's last value from its first, `first`: `end` itself (`inclusive`) or the value
+ * below it; 0 when the range is empty. */
+static inline int loft_vg_span(int64_t first, int64_t end, int inclusive, int64_t *last) {
+    if (inclusive) {
+        *last = end;
+    } else {
+        if (end == LOFT_NULL) return 0;
+        *last = end - 1;
+    }
+    return first <= *last;
+}
+/* An argument `x + c * t` at counter value `t`: 0 where it does not fit or is null, or where
+ * `x` is null (a checked argument that answered null does not move with the counter). */
+static inline int loft_vg_lin(int64_t x, int64_t c, int64_t t, int64_t *out) {
+    int64_t m;
+    if (x == LOFT_NULL || LOFT_MUL_OVF(c, t, &m) || LOFT_ADD_OVF(x, m, out)) return 0;
+    return *out != LOFT_NULL;
+}
+
 /* @FR-R-Fill — the run `base + lo ..= base + last` of a held vector, as `Stores::fill_hoisted`
  * takes it: refused (0) when it is empty, when `base + i` overflows on the way, or when any
  * index falls outside [0, len) — the cases the loop answers itself (a negative index counts
