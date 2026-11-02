@@ -85,3 +85,9 @@ batch) plus the fixes for its red steps.
 | `M-doc-validation` | open | over what moved since the halfway pass |
 | `M-windows-parity` | open | the report, read |
 
+**Nice-to-have (owner, 2026-11-02):** the C backend's store upgrade (@PLN203 C3, the
+`store_upgrade_owed_*` port), which `../loft2` is building.  Both halves are new this cycle — the C
+backend and store upgrade each came after v2026.10.0 — so no release carries the gap and it is not
+filed.  If the port is not in by the candidate, `store_load`'s doc says the upgrade is
+interpreter-only so far, so 2026.11.0 does not promise it on `--native-c`.
+
