@@ -1301,7 +1301,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SJump { kind, e: je } => jump(e, vars, kind, je),
     SIndex { at, e: ie, keys, range, inclusive, hi, limit, spatial } => {
       if range && limit == null && !spatial && len(keys) <= 1 && len(hi) <= 1 {
-        slice(e, vars, at, ie, keys, hi, inclusive)
+        slice(e, vars, at, ie, keys, hi, inclusive, n == vars.slice_node)
       } else {
         index(e, vars, at, ie, keys, range || len(hi) > 0 || limit != null || spatial)
       }
@@ -1663,7 +1663,13 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
   }
   outer_read = vars.len_read;
   vars.len_read = false;
+  outer_slice = vars.slice_node;
+  vars.slice_node = slice_target(e, rhs!);
   x = expression(e, vars, rhs!);
+  vars.slice_node = outer_slice;
+  if x.code is NdIter {
+    return slice_bind(e, vars, v, x);
+  }
   read_through_length = vars.len_read;
   vars.len_read = outer_read || read_through_length;
   // A whole record local read into a record local COPIES (`parse_var`'s `into` arm): the
@@ -2076,7 +2082,13 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
       return ex(ir::NdInsert { items: list }, ir::TyVoid);
     }
   }
+  outer_slice = vars.slice_node;
+  vars.slice_node = if declared! is TyVector { slice_target(e, rhs!) } else { -1 };
   x = expression(e, vars, rhs!);
+  vars.slice_node = outer_slice;
+  if x.code is NdIter {
+    return slice_bind(e, vars, v, x);
+  }
   c = stored(e, vars, x, declared!);
   if c == null {
     refuse_known(e, x.tp, "a value its declared type converts: {type_kind(x.tp)} to {type_kind(declared!)}");
@@ -4917,7 +4929,13 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
     }
     x = lit.x;
   } else {
+    outer_slice = vars.slice_node;
+    vars.slice_node = slice_target(e, source);
     x = expression(e, vars, source);
+    vars.slice_node = outer_slice;
+    if x.code is NdIter {
+      return slice_for(e, vars, src_id, id, x, body!, filter);
+    }
   }
   if keyed_kind(x.tp) && !(x.tp is TyOptional) {
     return keyed_for(e, vars, src_id, id, x, body!, filter);
@@ -6218,12 +6236,15 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
 // `Parser::parse_text_index`'s range: `s[lo..hi]` is `OpGetTextSub(s, lo, hi)` — an open start
 // `0`, an open end `i32::MAX`, `..=` one past its bound.  A range over anything but a text (a
 // vector slice: `Slice-Value`'s iterator lowering) is refused by name.
-fn slice(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, lo: vector<integer>, hi: vector<integer>, inclusive: boolean) -> Ex {
+fn slice(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, lo: vector<integer>, hi: vector<integer>, inclusive: boolean, bound: boolean) -> Ex {
   if c == null {
     el::refuse(e, "an index that is a range, a key list or a limit");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   x = expression(e, vars, c!);
+  if bound && el_types::base(x.tp) is TyVector {
+    return vector_slice(e, vars, x, lo, hi, inclusive);
+  }
   if !(el_types::base(x.tp) is TyText) {
     if !el_types::is_unknown(x.tp) {
       el::refuse(e, "an index that is a range, a key list or a limit");
@@ -6255,6 +6276,193 @@ fn slice(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, lo: vector<in
     code = ir::NdSpan { pos: el::pos_at(e, at), inner: code };
   }
   ex(code, ir::TyText { dep: [] })
+}
+
+// `parse_in_range_body` for a slice of a vector local with plain scalar elements, read where an
+// assignment binds it: the range's preamble — the length, the two bounds as written and then
+// clamped (`slice_clamp_bound`), the walk's `_next_N` and `_index_N` — carried as an `NdIter`
+// whose `init` the bind keeps (`materialize_iterator`).  Any other subject, a record element and
+// a nullable bound are refused by name.
+fn vector_slice(e: el::El, vars: el_vars::Vars, x: Ex, lo: vector<integer>, hi: vector<integer>, inclusive: boolean) -> Ex {
+  elem = match el_types::base(x.tp) { TyVector { inner } => inner, _ => ir::TyVoid };
+  sv = match el_ir::unspan(x.code) { NdVar { n } => n, _ => -1 };
+  if sv < 0 || x.tp is TyOptional || !is_scalar(elem) {
+    el::refuse(e, "a slice of a vector that is no local of plain scalars");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  subj = ir::NdVar { n: sv };
+  int_t = ir::TyInteger { spec: i32_spec() };
+  bounds: vector<ir::Node> = [];
+  for b in [lo, hi] {
+    if len(b) == 0 {
+      bounds += [if b#index == 0 { ir::NdInt { n: 0 } } else { el_ir::cl(e, "OpLengthVector", [subj]) }];
+      continue;
+    }
+    y = expression(e, vars, b[0]!);
+    if y.tp is TyOptional || (!el_types::is_unknown(y.tp) && !(y.tp is TyInteger)) {
+      el::refuse(e, "a vector slice bound that is nullable or no integer");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    bounds += [y.code];
+  }
+  lv = el_vars::create_unique(vars, "slice_len", int_t);
+  lov = el_vars::create_unique(vars, "slice_lo", int_t);
+  hiv = el_vars::create_unique(vars, "slice_hi", int_t);
+  items: vector<ir::Node> = [
+    el_ir::v_set(lv, el_ir::cl(e, "OpLengthVector", [subj])),
+    el_ir::v_set(lov, bounds[0]!),
+    el_ir::v_set(lov, slice_clamp(e, lov, lv, false)),
+    el_ir::v_set(hiv, bounds[1]!),
+    el_ir::v_set(hiv, slice_clamp(e, hiv, lv, inclusive))
+  ];
+  idx = el_vars::create_unique(vars, "index", int_t);
+  nxt = el_vars::create_unique(vars, "next", int_t);
+  items += [el_ir::v_set(nxt, ir::NdVar { n: lov }), el_ir::v_set(idx, el_ir::cl(e, "OpConvIntFromNull", []))];
+  ex(ir::NdIter { var: idx, create: subj, next: ir::NdNull, init: ir::NdInsert { items: items } }, ir::TyIterator { step: elem, inner: ir::TyNull })
+}
+
+// `Parser::slice_clamp_bound`: a bound below zero counts from the end, an inclusive end is one
+// past, and the result is held inside `0..=len`.
+fn slice_clamp(e: el::El, b: integer, len_v: integer, inclusive: boolean) -> ir::Node {
+  bv = ir::NdVar { n: b };
+  ln = ir::NdVar { n: len_v };
+  resolved = el_ir::v_if(el_ir::cl(e, "OpLtInt", [bv, ir::NdInt { n: 0 }]), el_ir::cl(e, "OpAddInt", [bv, ln]), bv);
+  if inclusive {
+    resolved = el_ir::cl(e, "OpAddInt", [resolved, ir::NdInt { n: 1 }]);
+  }
+  top = el_ir::v_if(el_ir::cl(e, "OpLtInt", [ln, resolved]), ln, resolved);
+  el_ir::v_if(el_ir::cl(e, "OpLtInt", [top, ir::NdInt { n: 0 }]), ir::NdInt { n: 0 }, top)
+}
+
+// The `SIndex` node a bind's right side is, through parentheses: the one slice it may lower.
+fn slice_target(e: el::El, n: integer) -> integer {
+  match e.p.nodes[n] {
+    SParen { e: pe } => if pe == null { -1 } else { slice_target(e, pe!) },
+    SIndex { range } => if range { n } else { -1 },
+    _ => -1
+  }
+}
+
+// A `for` over a vector slice (`parse_for` with the range's preamble as its start, its walk index
+// the loop's `x#index`): each step
+// reads the element at the walk's next position, the range step inside the element read — a
+// break past the clamped end, the index taking the position (`Vector Index`).
+fn slice_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, x: Ex, body: integer, filter: integer?) -> Ex {
+  elem = match x.tp { TyIterator { step } => step, _ => ir::TyVoid };
+  init = ir::NdNull;
+  subj = ir::NdNull;
+  walk = -1;
+  match x.code { NdIter { var, create, init: ii } => { walk = var; subj = create; init = ii; }, _ => {} }
+  // The loop's own index, made after the slice's: the preamble's start retargeted to it.
+  idx = loop_index(vars, id);
+  init = rename_var(init, walk, idx);
+  lv = loop_var(vars, src_id, id, elem);
+  vars.active_loops += [lv];
+  vars.active_values += [ir::NdNull];
+  fc = loop_filter(e, vars, filter);
+  b = parse_block(e, vars, body, "for", ir::TyVoid);
+  vars.active_loops = vars.active_loops[..-1];
+  vars.active_values = vars.active_values[..-1];
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  hiv = -1;
+  nxt = -1;
+  match init {
+    NdInsert { items } => {
+      for st in items {
+        match st {
+          NdSet { var } => {
+            if starts_with(el_vars::name_of(vars, var), "_slice_hi") { hiv = var; }
+            if starts_with(el_vars::name_of(vars, var), "_next") { nxt = var; }
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  size = elem_size(elem);
+  op = read_op(elem);
+  if hiv < 0 || nxt < 0 || size < 0 || op == "" {
+    el::refuse(e, "a `for` over a vector slice of this element type: {type_kind(elem)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  int_t = ir::TyInteger { spec: i32_spec() };
+  n_v = ir::NdVar { n: nxt };
+  step = el_ir::v_block([
+    el_ir::v_if(el_ir::cl(e, "OpLeInt", [ir::NdVar { n: hiv }, n_v]), ir::NdBreak { n: 0 }, ir::NdNull),
+    el_ir::v_set(idx, n_v),
+    el_ir::v_set(nxt, el_ir::cl(e, "OpAddInt", [n_v, ir::NdInt { n: 1 }])),
+    ir::NdVar { n: idx }
+  ], int_t, "Iter range");
+  read = el_ir::cl(e, op, [el_ir::cl(e, "OpGetVectorNullable", [subj, ir::NdInt { n: size }, step]), ir::NdInt { n: 0 }]);
+  steps: vector<ir::Node> = [el_ir::v_set(lv, el_ir::v_block([read], elem, "Vector Index"))];
+  if fc != null {
+    steps += [fc!];
+  }
+  steps += [b.code];
+  ex(el_ir::v_block([init, el_ir::v_loop(steps, "For loop")], ir::TyVoid, "For block"), ir::TyVoid)
+}
+
+// `Parser::materialize_iterator` + `slice_copy_form` for `v = <vector slice>` into a fresh local of
+// plain scalars: the local typed as the vector; on the second pass the element temps minted
+// (`unique_elm_var`, `slice_elm`), the slice's preamble kept, its range copied in by
+// `OpSliceView`, the local's store allocated in front (`insert_new`).  A local that already holds
+// a store is refused by name.
+fn slice_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
+  elem = match x.tp { TyIterator { step } => step, _ => ir::TyVoid };
+  if !el_vars::change_var_type(e, vars, v, ir::TyVector { inner: elem, dep: [] }) {
+    el::refuse(e, "a local that changes type");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
+  el_vars::create_unique(vars, "slice_elm", elem);
+  if len(el_types::deps(el_vars::tp(vars, v))) > 0 || vars.vars[v].argument {
+    el::refuse(e, "a vector slice bound to a local that has a store");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  init: vector<ir::Node> = [];
+  subj = ir::NdNull;
+  match x.code {
+    NdIter { create, init: ii } => {
+      subj = create;
+      match ii { NdInsert { items } => { init = items; }, _ => {} }
+    },
+    _ => {}
+  }
+  lov = -1;
+  hiv = -1;
+  for st in init {
+    match st {
+      NdSet { var } => {
+        if starts_with(el_vars::name_of(vars, var), "_slice_lo") { lov = var; }
+        if starts_with(el_vars::name_of(vars, var), "_slice_hi") { hiv = var; }
+      },
+      _ => {}
+    }
+  }
+  nm = el_types::elem_name(e, elem);
+  rows = vector_rows(e, elem, 0, true);
+  rec = if nm == "" { -1 } else { el_schema::schema_type(e, nm) };
+  if rows == null || rec < 0 || lov < 0 || hiv < 0 {
+    el::refuse(e, "a vector slice of this element type: {type_kind(elem)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  r = rows!;
+  db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
+  el_vars::depend(vars, v, db);
+  stmts: vector<ir::Node> = [
+    el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
+    el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
+    el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
+  ];
+  stmts += init;
+  stmts += [el_ir::cl(e, "OpSliceView", [ir::NdVar { n: v }, subj, ir::NdVar { n: lov }, ir::NdVar { n: hiv }, ir::NdInt { n: rec }])];
+  ex(ir::NdInsert { items: stmts }, ir::TyVoid)
 }
 
 // `Parser::parse_index` / `parse_vector_index` for one index into a vector, read as a value: the
