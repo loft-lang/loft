@@ -64,7 +64,30 @@ pub fn fill_all(e: el::El) {
       fill_database(e, d#index);
     }
   }
+  // P191: each keyed local's store type — a `hash` or `index`, through a `?` — registered before
+  // the schema is finished, in function and variable order; a `sorted` is made where it is met.
+  for d in e.b.data.definitions {
+    if d.def_type != el::DT_FUNCTION || d.source != e.source {
+      continue;
+    }
+    for v in d.variables.variables {
+      t = el_types::base(v.type_def[0] ?? ir::TyVoid);
+      if (t is TyHash || t is TyIndex) && keyed_content_known(e, t) {
+        keyed_type(e, t);
+      }
+    }
+  }
   finish(e);
+}
+
+// The pre-registration's guard: the element struct already has its store type.
+fn keyed_content_known(e: el::El, t: ir::TypeT) -> boolean {
+  n = match t {
+    TyHash { n } => n,
+    TyIndex { n } => n,
+    _ => -1
+  };
+  n >= 0 && el::def(e, n).known_type != NO_TYPE
 }
 
 // `Data::vector_def`: the `vector<T>` definition where it is missing, and the `main_vector<T>`

@@ -2458,6 +2458,12 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
     if e.first_pass || (el_types::is_unknown(first) && len(types) > 0) {
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
+    if len(types) == 1 {
+      b = by_receiver_type(e, name, list, first);
+      if b != null {
+        return b!;
+      }
+    }
     el::refuse(e, "a call of an unknown function: {name}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -2593,8 +2599,8 @@ fn domain_sign(e: el::El, n: ir::Node) -> integer {
 }
 
 struct Bounds {
-  lo: float not null,
-  hi: float not null
+  lo: float,
+  hi: float
 }
 
 // `pm_bounds`: a provable interval for the two-sided `asin`/`acos` domain.
@@ -2903,6 +2909,67 @@ fn find_fn(e: el::El, name: text, first: ir::TypeT) -> integer {
     el::refuse(e, "a call that falls back to a builtin operator");
   }
   free
+}
+
+// `Parser::parse_call`'s builtins whose answer the receiver's TYPE decides, met where no
+// definition of the name takes the argument: `len(ix)` counts an `index`'s entries
+// (`index_len`, `OpLengthIndex`), and `size(x)` is a width known at compile time — a record's
+// packed size (`OpSizeStruct`), or a vector's or sorted's buffer as its element count times the
+// element's stride (`OpSizeVector`, @PLN110).  The argument is still evaluated; the width rides
+// as a second operand.  Null for any other call.
+fn by_receiver_type(e: el::El, name: text, list: vector<ir::Node>, t: ir::TypeT) -> Ex? {
+  wide = ir::TyInteger { spec: wide_spec() };
+  if name == "len" && el_types::base(t) is TyIndex {
+    if t is TyOptional {
+      el::refuse(e, "a `len` of a nullable index");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    return ex(el_ir::cl(e, "OpLengthIndex", list), wide);
+  }
+  if name != "size" {
+    return null;
+  }
+  match t {
+    TyReference { n: d } => {
+      df = el::def(e, d);
+      if df.def_type != el::DT_STRUCT || df.known_type == el_schema::NO_TYPE {
+        return null;
+      }
+      return ex(el_ir::cl(e, "OpSizeStruct", list + [ir::NdInt { n: e.b.types[df.known_type]!.size }]), wide);
+    },
+    TyVector { inner } => {
+      w = elem_stride(e, inner);
+      return if w < 0 { null } else { ex(el_ir::cl(e, "OpSizeVector", list + [ir::NdInt { n: w }]), wide) };
+    },
+    TySorted { n: d } => {
+      w = elem_stride(e, ir::TyReference { n: d, dep: [] });
+      return if w < 0 { null } else { ex(el_ir::cl(e, "OpSizeVector", list + [ir::NdInt { n: w }]), wide) };
+    },
+    _ => {}
+  }
+  null
+}
+
+// `Parser::vector_elem_iter_stride`: the bytes one element takes in a vector's buffer — a linked
+// record's 4-byte pointer, a narrow integer's width, else the element type's size.  -1 for an
+// element this port does not size yet.
+fn elem_stride(e: el::El, t: ir::TypeT) -> integer {
+  match t {
+    TyReference { n: d } => {
+      k = el::def(e, d).known_type;
+      if el::def(e, d).def_type != el::DT_STRUCT || k == el_schema::NO_TYPE {
+        return -1;
+      }
+      kt = e.b.types[k]!;
+      if kt.linked { 4 } else { kt.size }
+    },
+    TyInteger { spec } => {
+      w = byte_width(spec, false);
+      if w == 1 || w == 2 || w == 4 { w } else { 8 }
+    },
+    TyFloat => 8,
+    _ => -1
+  }
 }
 
 // `Data::type_def_nr` for the scalar and record types: the definition a type is named by.
