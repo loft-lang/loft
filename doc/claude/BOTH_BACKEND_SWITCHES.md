@@ -74,6 +74,11 @@ placed alone — with it off (`scopes/rebound_captures.rs`), the re-mint of a ba
 holds mints fresh, a rebuild frees the capture no other name holds, and the frame's end leaves a
 returned record its capture, each by store identity.  Not an optimisation: it is the bisect step
 for a stale or freed capture in that shape, and the A/B its emission diff is taken with.
+**`LOFT_NO_OWNER_HANDOVER=1`** (`@FR-L-CapOne`, after the scope pass, BOTH backends) leaves a
+closure record that owns a capture through its owner slot (`<capture>__own`) releasing it at its
+cascade — with it off (`scopes/owner_handover.rs`), a record released while another live record
+captures the same store hands the ownership over.  The bisect step for a closure that reads a
+store an earlier sibling closure released.
 **`LOFT_NO_EXIT_RECORD=1`** (`(R-ExitVector)`'s record clause, the scope pass right after it,
 BOTH backends) keeps a local RECORD returned inside the exit literal (`lb = ListBox { … };
 Panel { list: lb, … }`) in a store of its own, deep-copied into the return buffer's field —
