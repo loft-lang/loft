@@ -16,6 +16,7 @@
 //   a `continue` admitted (p8: the C writer refuses the program, the copy's `continue` naming
 //   no loop).  The counters left after the copies have no cell: no loft program reads a range's
 //   counters after its loop.
+// HOLDS: the interpreter's and rustc-native's answers, which no plant reaches (INERT there).
 fn dir(s: integer) -> integer {
   if s == 1 { return 2; }
   if s == 2 { return 3; }

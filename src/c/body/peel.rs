@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator: a second compiled target, C
 
 //! `@FR-R-Peel` — a counted loop of a few trips with constant bounds (`for s in 0..3`) written
 //! once per trip, its counters set to that trip's constant.  The C compiler folds what the

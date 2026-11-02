@@ -14,6 +14,7 @@
 //   element's address taken without the bounds test (n3: the read past the end is no miss,
 //   2510 → 0), and the field offset dropped (n4: each `cs[k].w` reads the record's first byte,
 //   140374 → 70382).
+// HOLDS: the interpreter's and rustc-native's answers, which no plant reaches (INERT there).
 enum Mood { Calm, Busy, Lost }
 struct Cell { b: u8, w: i32, s: single, m: Mood, h: integer }
 // n1: u8 elements summed in a loop: 7 + 200 + 255 = 462
