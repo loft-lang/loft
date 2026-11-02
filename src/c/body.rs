@@ -5147,6 +5147,11 @@ impl<'a> FnWriter<'a> {
                 // one of them is not the callee's to give away.
                 let mut keep = vec![format!("{r}.store_nr != {held}.store_nr")];
                 for a in crate::use_analysis::protectable_ref_args(self.cx.data, self.d, x).0 {
+                    // `@FR-R-Transient`: an argument held in the arena has no store for the
+                    // result to share — a pointer, where `.store_nr` is not even C.
+                    if a != var && self.tr_is(a) {
+                        continue;
+                    }
                     let arg = if a == var { held.clone() } else { self.var(a) };
                     keep.push(format!("{r}.store_nr != {arg}.store_nr"));
                 }
