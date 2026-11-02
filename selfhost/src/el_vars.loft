@@ -250,6 +250,11 @@ pub fn mark_adopted(v: Vars, nr: integer) {
   }
 }
 
+// `Function::register_work_ref`: a work reference the body's head sets to null.
+pub fn register_work_ref(v: Vars, nr: integer) {
+  v.work_refs = sorted_in(v.work_refs, nr);
+}
+
 // `Function::unregister_work_ref`: a work ref substituted out by the return buffer gets no null
 // at the head.
 pub fn unregister_work_ref(v: Vars, nr: integer) {

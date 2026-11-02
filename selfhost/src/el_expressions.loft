@@ -4533,6 +4533,54 @@ fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
   coalesce_with(e, vars, x, d)
 }
 
+// `build_null_coalesce_default` for a record subject: the result is the subject's type (its
+// borrows kept), the default converted to it.  A local is tested where it stands; anything else
+// is held in a `__ncc_N` — a never-freed work reference the head sets to null — in an "ncc"
+// block.  A record a loft function answers (`owned_record_subject`, a view of the holder) and a
+// default that is a call or of another record type are refused by name.
+fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
+  lhs = el_types::base(x.tp);
+  rd = match lhs { TyReference { n } => n, _ => -1 };
+  dd = match el_types::base(d.tp) { TyReference { n } => n, _ => -2 };
+  if rd <= 0 || el::def(e, rd).def_type != el::DT_STRUCT || dd != rd {
+    refuse_known(e, d.tp, "a `??` on a record with a default of another type: {type_kind(d.tp)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  match el_ir::unspan(x.code) {
+    NdCall { def_nr } => {
+      if !starts_with(el::def(e, def_nr).name, "Op") {
+        el::refuse(e, "a `??` on a record a function answers");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+    },
+    _ => {}
+  }
+  if el_ir::unspan(d.code) is NdCall {
+    el::refuse(e, "a `??` on a record with a call as its default");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  // A local tested where it stands answers a plain `if`, which a bind types by its arms: the
+  // literal's arm borrows nothing, so neither does the result.
+  if x.code is NdVar {
+    vt = el_types::without_deps(lhs);
+    if e.first_pass {
+      return ex(ir::NdNull, vt);
+    }
+    return ex(el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [x.code]), x.code, d.code), vt);
+  }
+  // Minted on both passes, as the Rust mints it, so it numbers before the second pass's buffers.
+  held = el_vars::create_unique(vars, "_ncc", lhs);
+  vars.vars[held].skip_free = true;
+  el_vars::register_work_ref(vars, held);
+  if e.first_pass {
+    return ex(ir::NdNull, lhs);
+  }
+  x.code = nullable_arith(e, x.code, true);
+  subject = ir::NdVar { n: held };
+  test = el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [subject]), subject, d.code);
+  ex(el_ir::v_block([el_ir::v_set(held, x.code), test], lhs, "ncc"), lhs)
+}
+
 fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   if el_types::is_unknown(x.tp) || el_types::is_unknown(d.tp) {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -4558,6 +4606,9 @@ fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       },
       _ => {}
     }
+  }
+  if lhs is TyReference {
+    return record_coalesce(e, vars, x, d);
   }
   if !el_convert::plain_scalar(lhs) {
     el::refuse(e, "a `??` on this type: {type_kind(lhs)}");
@@ -4809,6 +4860,15 @@ fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: integer?) 
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
     b = el_types::base(x.tp);
+    // `build_default`'s record arm: a plain struct defaults to `S {}`, every field its default.
+    match b {
+      TyReference { n: rd } => {
+        if rd > 0 && el::def(e, rd).def_type == el::DT_STRUCT {
+          return coalesce_with(e, vars, x, object_expr(e, vars, el::def(e, rd).name, "", [], null));
+        }
+      },
+      _ => {}
+    }
     if !el_convert::plain_scalar(b) {
       el::refuse(e, "a `?` default of this type: {type_kind(b)}");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -6491,19 +6551,7 @@ fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> VecR
 // field is the vector, both at the literal's `]` (the lexer's position there); their store types are made
 // by `fill_all`.
 fn vector_def(e: el::El, t: ir::TypeT, nm: text, lit: integer, declared: boolean) {
-  at = lit;
-  depth = 0;
-  while at < len(e.p.src) {
-    if e.p.src[at] is LBracket {
-      depth += 1;
-    } else if e.p.src[at] is RBracket {
-      depth -= 1;
-      if depth == 0 {
-        break;
-      }
-    }
-    at += 1;
-  }
+  at = closing_bracket(e, lit);
   // An empty `[]` makes them before the literal is read: the lexer stands after the token
   // before its `[`.
   // A declared element type, or an empty `[]`, makes them before the literal is read: the lexer
@@ -6512,6 +6560,24 @@ fn vector_def(e: el::El, t: ir::TypeT, nm: text, lit: integer, declared: boolean
     at = lit - 1;
   }
   el_schema::make_vector_def(e, t, nm, el::pos_at(e, at), true);
+}
+
+// The token closing the `[` at token `lit`.
+fn closing_bracket(e: el::El, lit: integer) -> integer {
+  at = lit;
+  depth = 0;
+  while at < len(e.p.src) {
+    if e.p.src[at] is LBracket {
+      depth += 1;
+    } else if e.p.src[at] is RBracket {
+      depth -= 1;
+      if depth == 0 {
+        return at;
+      }
+    }
+    at += 1;
+  }
+  at
 }
 
 // A struct's record size, from its laid-out store type.
@@ -6610,6 +6676,15 @@ fn vector_append(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
   match el_vars::tp(vars, v) {
     TyVector { inner: i } => { inner = i; },
     _ => {}
+  }
+  // `parse_append_vector` makes the definitions where a value literal does, at its `]` — not
+  // before the literal, as a declared element type would.
+  nm = el_types::elem_name(e, inner);
+  if nm != "" && el::def_nr(e, "main_vector<{nm}>") < 0 {
+    match e.p.nodes[n] {
+      SVecLit { at } => { el_schema::make_vector_def(e, inner, nm, el::pos_at(e, closing_bracket(e, at)), true); },
+      _ => {}
+    }
   }
   vector_build(e, vars, v, n, inner, true, false).x
 }
