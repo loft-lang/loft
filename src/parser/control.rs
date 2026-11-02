@@ -2345,7 +2345,10 @@ impl Parser {
             // `unrewritten` as well as `without_deps`: a struct-literal tail carries the
             // `Rewritten` marker that says it was built in place, and a marker is a fact
             // about the EXPRESSION, not a type a signature can name (loft#943).
-            adopted = t.unrewritten().without_deps();
+            // A lifetime-bearing tuple is boxed as a declared one is (`boxed_tuple_return`,
+            // loft#1349): handed up bare, its text member is a `__ret_text_N` the callee cannot
+            // free and the caller only copies from.
+            adopted = self.boxed_tuple_return(t.unrewritten().without_deps());
             self.data.definitions[self.context as usize].returned = adopted.clone();
             // Remembered past the body, where `infer_ret_defs` is cleared: the late
             // buffer reservation between the passes admits a lambda only if its return

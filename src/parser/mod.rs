@@ -1332,6 +1332,10 @@ pub struct Parser {
     /// the return buffers of the calls it made, which [`Parser::fill_monomorph_body`] declares
     /// at the instance's top level as the function parse declares its own (@PLN165 B3b).
     pub(crate) set_call_refs: Vec<u16>,
+    /// The fn-typed variables of the instance being filled whose return the substitution
+    /// boxed (`Parser::box_fn_tuple_return`): a call through one answers the `__tuple<…>`
+    /// record where the template's code reads a stack tuple, so the instance unboxes it.
+    pub(crate) boxed_fn_vars: Vec<u16>,
     /// @PLN165 D7 — instances of generic structs found to contain themselves when first laid
     /// out on pass 2, each reported once.
     pub(crate) cyclic_instances: std::collections::HashSet<u32>,
@@ -2129,6 +2133,7 @@ impl Parser {
             cur_type_vars: Vec::new(),
             instance_bindings: Vec::new(),
             set_call_refs: Vec::new(),
+            boxed_fn_vars: Vec::new(),
             cyclic_instances: std::collections::HashSet::new(),
             forward_template_args: false,
             pending_forward_return: None,

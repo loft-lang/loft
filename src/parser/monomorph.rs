@@ -1806,6 +1806,29 @@ impl Parser {
                     .map(|a| self.rewrite_generic_type_defaults(a))
                     .collect();
                 self.push_deferred_fnref_buffers(v_nr, &mut args);
+                // `@FR-F-Ret` — a callback whose return the instance boxed answers the
+                // `__tuple<…>` record; the template's code reads the stack tuple, so the call
+                // is unboxed here as a concrete call through that fn type is.
+                if self.boxed_fn_vars.contains(&v_nr)
+                    && let Type::Function(_, ret, ..) = self.vars.tp(v_nr).clone()
+                    && let Type::Reference(d, _) = ret.base()
+                    && self.data.def(*d).name().starts_with("__tuple<")
+                {
+                    let elems: Vec<Type> = self
+                        .data
+                        .def(*d)
+                        .attributes()
+                        .iter()
+                        .map(|a| self.source_spelling(&a.typedef))
+                        .collect();
+                    // The record the call answers is held by a work-ref the unbox mints; it is
+                    // declared at the instance's top level, as the function parse declares its
+                    // own, so it outlives the member reads that borrow from it.
+                    let before = self.vars.count();
+                    let read = self.unbox_tuple_from_dbref(Value::CallRef(v_nr, args), &elems);
+                    self.set_call_refs.extend(before..self.vars.count());
+                    return read;
+                }
                 Value::CallRef(v_nr, args)
             }
             // Everything else just carries children.  Recursion goes through the
