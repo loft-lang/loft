@@ -8757,6 +8757,7 @@ impl Parser {
         let mut aliases = Vec::new();
         for name in binds {
             let v = self.create_unique(&format!("mv_{name}"), &Type::Unknown(0));
+            self.vars.mark_blind_capture(v);
             if v == u16::MAX {
                 continue;
             }

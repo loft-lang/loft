@@ -218,6 +218,10 @@ pub struct Variable {
     /// The line of the first assignment that gave this variable a nullable value, or 0: what
     /// a warning about the variable being `τ?` names as the place to change (WARNING_FIXES.md).
     nullable_line: u32,
+    /// loft#2326 — a match capture pass 1 bound at `Unknown` (its subject's enum not declared
+    /// yet): pass 2 types it by its field ([`Function::unique`]).  On the variable, which is
+    /// what carries over between the passes.
+    blind_capture: bool,
     scope: u16,
     stack_pos: u16,
     uses: u16,
@@ -1090,6 +1094,7 @@ impl Function {
                 incoming_reported: false,
                 write_source: (0, 0),
                 nullable_line: 0,
+                blind_capture: false,
                 defined: false,
                 const_binding: false,
                 amp_link: false,
@@ -2950,12 +2955,20 @@ impl Function {
         // another element shape.
         // An accumulator is minted before its literal's items say its element, so its type
         // here may still be unknown — and that is still this pass's, not pass 1's other site's.
-        // A match CAPTURE (`_mv_<field>_N`) is the same: pass 1 binds it at `Unknown` when the
-        // subject's enum is not declared yet (`bind_forward_capture_list`, loft#2326), and the
-        // arm's body then gives it whatever its first write says — `items += [121]` makes a
+        // A match CAPTURE pass 1 bound BLIND is the same: at `Unknown`, because the subject's
+        // enum was not declared yet (`bind_forward_capture_list`, loft#2326), after which the
+        // arm's body gave it whatever its first write says — `items += [121]` made a
         // `vector<u8>` field's capture `vector<integer>`, and an append through it wrote 8-byte
-        // elements into the byte vector it views.  The field's type is pass 2's.
-        if (name == "elm" || name == "vec" || name.starts_with("mv_"))
+        // elements into the byte vector it views.  Only those: a capture pass 1 typed from a
+        // known enum keeps pass 1's type, which the arm refines (`Pt?` over the field's
+        // `__nullable<Pt>` layout).
+        if (name == "elm"
+            || name == "vec"
+            || (name.starts_with("mv_")
+                && self
+                    .names
+                    .get(&full)
+                    .is_some_and(|v| self.variables[*v as usize].blind_capture)))
             && let Some(&v) = self.names.get(&full)
             && (name == "vec" || !type_def.is_unknown())
             && self.variables[v as usize].type_def.without_deps() != type_def.without_deps()
@@ -2964,6 +2977,14 @@ impl Function {
             self.variables[v as usize].type_def = type_def.clone();
         }
         self.add_variable(&full, type_def, lexer)
+    }
+
+    /// loft#2326 — `v` is a match capture pass 1 bound at `Unknown` (its subject's enum not
+    /// declared yet); pass 2 types it by its field ([`Self::unique`]).
+    pub fn mark_blind_capture(&mut self, v: u16) {
+        if let Some(var) = self.variables.get_mut(v as usize) {
+            var.blind_capture = true;
+        }
     }
 
     /// Mark a variable as carrying an EXPLICIT `: Type` annotation (vs an inferred type).
@@ -3065,6 +3086,7 @@ impl Function {
             copy_bound: false,
             write_source: (0, 0),
             nullable_line: 0,
+            blind_capture: false,
             argument: false,
             defined: false,
             const_binding: false,
@@ -3130,6 +3152,7 @@ impl Function {
             amp_linked_many: false,
             write_source: (0, 0),
             nullable_line: 0,
+            blind_capture: false,
             argument: false,
             defined: self.variables[var as usize].defined,
             const_binding: self.variables[var as usize].const_binding,
@@ -3186,6 +3209,7 @@ impl Function {
             copy_bound: false,
             write_source: (0, 0),
             nullable_line: 0,
+            blind_capture: false,
             argument: false,
             defined: false,
             const_binding: false,
@@ -3238,6 +3262,7 @@ impl Function {
             copy_bound: false,
             write_source: (0, 0),
             nullable_line: 0,
+            blind_capture: false,
             argument: false,
             defined: true,
             const_binding: false,
