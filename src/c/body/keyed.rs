@@ -351,6 +351,8 @@ impl FnWriter<'_> {
             self.cx.copy_type(tp)?;
             self.cx.name_types();
         }
+        // An image of another layout is converted (@PLN196, `loft_upgrade.h`).
+        self.cx.upgrade_of(tp);
         let sc = self.cx.sidecar_of(tp);
         let mut all: Vec<&Value> = vec![r, url];
         all.extend(rest.iter());
@@ -475,6 +477,8 @@ impl FnWriter<'_> {
                     self.cx.copy_type(tp)?;
                     self.cx.name_types();
                 }
+                // An image of another layout is converted (@PLN196, `loft_upgrade.h`).
+                self.cx.upgrade_of(tp);
                 let sc = self.cx.sidecar_of(tp);
                 let (r, path) = self.two(name, &[r, path], ind)?;
                 Ok(Some(E::new(

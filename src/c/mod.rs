@@ -51,6 +51,7 @@ const RUNTIME: &str = concat!(
     include_str!("loft_keyed.h"),
     include_str!("loft_json.h"),
     include_str!("loft_parse.h"),
+    include_str!("loft_upgrade.h"),
     include_str!("loft_reflect.h"),
     include_str!("loft_io.h"),
     include_str!("loft_host_io.h"),
@@ -248,6 +249,9 @@ pub(crate) struct Cx<'a> {
     pub(crate) loop_callees: std::cell::RefCell<std::collections::BTreeSet<u32>>,
     /// The types a `T.parse` reaches (`parse.rs`): their rows of `loft_ptypes`.
     parse_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
+    /// The store root types a whole-image load converts from another layout (@PLN196,
+    /// `loft_upgrade.h`): each one's sidecar carries the program's own description.
+    upgrades: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// The unit reaches `stack_trace()`: every function keeps a frame (`loft_frame_push`).
     pub(crate) frames: std::cell::Cell<bool>,
     /// The unit binds a collection to a lazy source (`store_bind_lazy`): every keyed lookup
@@ -395,6 +399,7 @@ impl<'a> Cx<'a> {
             hot_candidates: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             loop_callees: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             parse_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            upgrades: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             frames: std::cell::Cell::new(false),
             lazy: std::cell::Cell::new(false),
             ffi_libs: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -677,6 +682,64 @@ impl<'a> Cx<'a> {
         format!("&loft_sidecar{tp}")
     }
 
+    /// A whole-image load of a store minted as `tp` converts an image of another layout
+    /// (`@FR-L-Sound`, @PLN196): the converter builds its records through the parse table and
+    /// copies through the type table, so `tp`'s closure is in both — with each `upgrade`
+    /// routine's record, `old` struct and `Release`, which a converted record is handed to.
+    ///
+    /// A closure neither table can describe keeps the load refusing such an image, as it did.
+    pub(crate) fn upgrade_of(&self, tp: u16) {
+        if self.upgrades.borrow().contains(&tp) {
+            return;
+        }
+        let mut types = vec![tp];
+        for (item, r) in crate::parser::Parser::upgrade_routines(self.data) {
+            types.extend([item, r.old, r.version]);
+        }
+        if types
+            .iter()
+            .all(|&t| self.parse_type(t).is_ok() && self.copy_type(t).is_ok())
+        {
+            self.upgrades.borrow_mut().insert(tp);
+            self.name_types();
+        }
+    }
+
+    /// The program's description of root `tp` for a converting load (`loft_upgrade`): the
+    /// layout the interpreter's converter derives its map against (`Stores::upgrade_map`, the
+    /// root and every routine's `old`), its type numbers by name, and the release.
+    fn upgrade_table(&self, out: &mut String, tp: u16) {
+        let mut roots = vec![tp];
+        roots.extend(
+            crate::parser::Parser::upgrade_routines(self.data)
+                .values()
+                .map(|r| r.old),
+        );
+        let desc = self.stores.layout_descriptor(&roots);
+        let text = format!("{}--facts--\n{}", desc.render_dump(), desc.render_facts());
+        let mut v: Vec<String> = text.bytes().map(|b| b.to_string()).collect();
+        v.push("0".into());
+        let _ = writeln!(
+            out,
+            "static const char loft_upd{tp}[] = {{ {} }};",
+            v.join(", ")
+        );
+        let names: Vec<String> = desc.names.values().map(|n| body::c_string(n)).collect();
+        let ids: Vec<String> = desc.names.keys().map(u16::to_string).collect();
+        let _ = writeln!(
+            out,
+            "static const char *const loft_upn{tp}[] = {{ {} }};\nstatic const uint16_t loft_upt{tp}[] = {{ {} }};",
+            names.join(", "),
+            ids.join(", ")
+        );
+        let _ = writeln!(
+            out,
+            "static const loft_upgrade loft_up{tp} = {{ loft_upd{tp}, loft_upn{tp}, loft_upt{tp}, {}, {}, 0, loft_types }};",
+            names.len(),
+            body::c_string(&self.stores.release().version)
+        );
+    }
+
     /// Always written: the heap ceiling's report (`loft_heap_moved`) names a type by it too.
     fn type_name_table(&self) -> String {
         let names: Vec<String> = self
@@ -737,11 +800,18 @@ impl<'a> Cx<'a> {
                 "static const char loft_scd{tp}[] = {};",
                 bytes(&id.dump)
             );
+            let up = if self.upgrades.borrow().contains(&tp) {
+                self.upgrade_table(&mut out, tp);
+                format!("&loft_up{tp}")
+            } else {
+                "0".to_string()
+            };
             let _ = writeln!(
                 out,
-                "static const loft_sidecar loft_sidecar{tp} = {{ {tp}, loft_scb{tp}, loft_sca{tp}, UINT64_C({}), loft_scd{tp}, {}, {}, {} }};",
+                "static const loft_sidecar loft_sidecar{tp} = {{ {tp}, loft_scb{tp}, loft_sca{tp}, UINT64_C({}), loft_scd{tp}, {}, {}, {}, {}, {up} }};",
                 id.layout_hash,
                 body::c_string(&self.stores.release().oldest),
+                body::c_string(&self.stores.release().bridge),
                 if self.load_walks_type(tp) {
                     "loft_types"
                 } else {
@@ -1871,6 +1941,9 @@ pub fn emit_unit_for(
         out.push_str(&cx.parse_table());
         out.push_str(&cx.main_vector_test());
     }
+    if !cx.upgrades.borrow().is_empty() {
+        out.push_str("static const loft_ptype *loft_up_ptypes(void) { return loft_ptypes; }\n");
+    }
     if reflects {
         out.push_str(&cx.reflect_table());
         out.push_str(REFLECT_ENTRY);
@@ -2275,6 +2348,11 @@ fn unit_defines(
     }
     if parses {
         out.push_str("#define LOFT_PARSE 1\n");
+    }
+    // A unit that converts a store of another layout on load (@PLN196) carries the converter;
+    // it builds records through the parse writer, which `upgrade_of` made this unit hold.
+    if parses && !cx.upgrades.borrow().is_empty() {
+        out.push_str("#define LOFT_UPGRADE 1\n");
     }
     let reflects = reached.iter().any(|&d| {
         matches!(

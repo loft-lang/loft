@@ -245,7 +245,14 @@ static int loft_net_gate(const char *u, const loft_sidecar *sc, const char *who,
     if (!text) { fputs("loft: out of memory\n", stderr); abort(); }
     text[b.n] = 0;
     if (recorded) *recorded = loft_sidecar_slot(text);
-    return loft_image_gate_text(u, text, sc, who, convert);
+    /* A layout the load converts (3) needs the text the gate consumes: a copy is kept for it
+     * (`url_layout_gate`'s `Ok(Some(sidecar))`), so the sidecar is fetched once. */
+    char *copy = convert ? loft_up_dup_text(text) : 0;
+    int verdict = loft_image_gate_text(u, text, sc, who, convert);
+    free(loft_net_gate_kept);
+    loft_net_gate_kept = verdict == 3 ? copy : 0;
+    if (verdict != 3) free(copy);
+    return verdict;
 }
 
 /* `load_url_verified` (with `sha`) and `load_url`: the image's layout gated by `<url>.dschema`
@@ -274,6 +281,7 @@ static int loft_image_load_url(loft_ref r, loft_str url, const char *sha, const 
     }
     if (sha) {
         char hex[65];
+        /* The pin is the fetched image's own, checked before anything is converted. */
         loft_sha256_hex(b.p, b.n, hex);
         size_t i = 0;
         while (sha[i] && i < 64) {
@@ -289,6 +297,29 @@ static int loft_image_load_url(loft_ref r, loft_str url, const char *sha, const 
             return 0;
         }
     }
+#ifdef LOFT_UPGRADE
+    if (gate == 3) {
+        /* An image of another layout converted in memory, as `store_load` converts a file. */
+        char *text = loft_net_gate_kept;
+        loft_net_gate_kept = 0;
+        loft_ub why = { 0, 0, 0 };
+        int ok = loft_up_load(r, sc, text, b.p, b.n, u, &why);
+        if (!ok)
+            fprintf(stderr, "%s: refusing %s \xe2\x80\x94 it was written with a different layout, and it cannot be converted to this program's: %s.\n",
+                    who, u, loft_ub_str(&why));
+        loft_ub_free(&why);
+        free(text);
+        free(u);
+        return ok;
+    }
+#else
+    /* No converter in this unit: an image of another layout is never read raw. */
+    if (gate == 3) {
+        free(b.p);
+        free(u);
+        return 0;
+    }
+#endif
     int ok = loft_image_adopt(r, b.p, b.n, 1, sc, recorded, u, who);
     free(u);
     if (ok && trie_v1) loft_trie_refile(sc->types, sc->tp, r.store_nr);
