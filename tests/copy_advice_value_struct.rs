@@ -513,10 +513,7 @@ fn main() {
 "#;
 
 fn assert_returns(backend: &str) {
-    let dir = std::env::temp_dir().join(format!(
-        "loft_2328_returns_{}",
-        backend.trim_matches('-')
-    ));
+    let dir = std::env::temp_dir().join(format!("loft_2328_returns_{}", backend.trim_matches('-')));
     fa::create_dir_all(&dir).expect("scratch dir");
     let path = dir.join("returns.loft");
     fa::write(&path, RETURNS).expect("write program");
