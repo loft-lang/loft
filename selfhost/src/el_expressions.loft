@@ -7,6 +7,7 @@
 // type, as the Rust functions fill `code` and return the type.
 use ir;
 use syntax::*;
+use lex;
 use el;
 use el_ir;
 use el_vars;
@@ -3184,7 +3185,8 @@ fn scalar(t: ir::TypeT) -> boolean {
 // `Parser::parse_string`: a string with no hole is its text; one with holes renders into a
 // `__work_N` text — set to the text before the first hole, each hole's value formatted onto it
 // (`append_data`), each literal part after a hole appended — and the block answers the work
-// text, typed as text that depends on it.  A hole with a format spec is refused by name.
+// text, typed as text that depends on it.  A hole's format spec (`{x:>8.2}`) tunes how its value
+// renders (`hole_spec`); a spec this port does not read yet is refused by name.
 fn string_expression(e: el::El, vars: el_vars::Vars, parts: vector<integer>) -> Ex {
   last = parts[-1];
   if len(parts) == 1 {
@@ -3195,17 +3197,21 @@ fn string_expression(e: el::El, vars: el_vars::Vars, parts: vector<integer>) -> 
   for h in parts {
     match e.p.nodes[h] {
       SHole { e: he, spec, spec_end } => {
-        if spec != spec_end || he == null {
-          el::refuse(e, "a format spec");
+        if he == null {
+          el::refuse(e, "a hole with no value");
           return ex(ir::NdNull, ir::TyText { dep: [] });
         }
         x = expression(e, vars, he!);
+        f = hole_spec(e, vars, spec, spec_end);
+        if f == null {
+          return ex(ir::NdNull, ir::TyText { dep: [] });
+        }
         tp = x.tp;
         if !e.first_pass && el_types::is_unknown(tp) {
           tp = ir::TyNever;
         }
         stack = el_vars::tp(vars, var) is TyRefVar;
-        append_data_to(e, list, var, x.code, tp, stack);
+        append_spec(e, list, var, x.code, tp, stack, f!);
         after = if h#index + 1 < len(parts) - 1 { (parts[h#index + 1] ?? 1) - 1 } else { last };
         s = text_part(e, after);
         if s != "" {
@@ -3227,36 +3233,176 @@ fn text_part(e: el::El, n: integer) -> text {
   }
 }
 
-// `Parser::append_data` with the default output state (radix 10, no width, a space to pad
-// with, no `+`, no `#`, alignment unset): the format op a value of this type renders through.
-// An untyped value (a callee the first pass has not met) renders nothing.
-fn append_data(e: el::El, list: vector<ir::Node>, var: integer, val: ir::Node, tp: ir::TypeT) {
-  append_data_to(e, list, var, val, tp, false);
+// `OutputState`: how a hole renders — the radix (`10`; `-1` JSON, `1` exponent, `17` upper hex),
+// the width (a literal; a float for the dotted `W.P`), the byte padding it, `+`, `#` (`note`),
+// the alignment (`dir`: -1 left, 0 centre, 1 right, 2 unset) and a `.` before the width (`float`:
+// the literal is the precision).
+struct Fmt {
+  radix: integer,
+  width: ir::Node,
+  pad: integer,
+  plus: boolean,
+  note: boolean,
+  dir: integer,
+  float: boolean
 }
 
-// `append_data`'s `start`: a `&text` accumulator (a promoted return buffer) takes the
-// `OpFormatStack…` ops.
-fn append_data_to(e: el::El, list: vector<ir::Node>, var: integer, val: ir::Node, tp: ir::TypeT, stack: boolean) {
+// `OUTPUT_DEFAULT`.
+fn plain_fmt() -> Fmt {
+  Fmt { radix: 10, width: ir::NdInt { n: 0 }, pad: 32, plus: false, note: false, dir: 2, float: false }
+}
+
+// `Parser::parse_string`'s spec reading over a hole's tokens `from`..`to` (`string_states`,
+// `starts_format_width`, `get_radix`): a pad character, the flags in any order, a width — whose
+// leading zero, before any `.`, makes `0` the pad; a name that is no radix letter is read as the
+// width — and a radix letter.  Null when the spec holds what this port does not read yet (a
+// width written as a longer expression), refused by name.
+fn hole_spec(e: el::El, vars: el_vars::Vars, from: integer, to: integer) -> Fmt? {
+  f = plain_fmt();
+  i = from;
+  if i < to {
+    c = pad_char(e.p.src[i]!);
+    if c >= 0 {
+      f.pad = c;
+      i += 1;
+    }
+  }
+  while i < to {
+    t = e.p.src[i]!;
+    if t is Lt {
+      f.dir = -1;
+    } else if t is Caret {
+      f.dir = 0;
+    } else if t is Gt {
+      f.dir = 1;
+    } else if t is Plus {
+      f.plus = true;
+    } else if t is Hash {
+      f.note = true;
+    } else if t is Dot {
+      f.float = true;
+    } else {
+      break;
+    }
+    i += 1;
+  }
+  if i < to {
+    match e.p.src[i]! {
+      Int { v, zero } => {
+        f.width = ir::NdInt { n: v };
+        if zero && !f.float {
+          f.pad = 48;
+        }
+        i += 1;
+      },
+      Float { v, zero } => {
+        f.width = ir::NdFloat { f: v };
+        if zero && !f.float {
+          f.pad = 48;
+        }
+        i += 1;
+      },
+      Ident { name } => {
+        if radix_for(name) == null {
+          f.width = name_expression(e, vars, name, "").code;
+          i += 1;
+        }
+      },
+      _ => {}
+    }
+  }
+  if i < to {
+    match e.p.src[i]! {
+      Ident { name } => {
+        r = radix_for(name);
+        if r != null {
+          f.radix = r!;
+          i += 1;
+        }
+      },
+      _ => {}
+    }
+  }
+  if i < to {
+    el::refuse(e, "a format spec this port does not read: a width written as an expression");
+    return null;
+  }
+  f
+}
+
+// The punctuation token that opens a spec pads the hole with its first byte — any but `SKIP_TOKEN`
+// (`}`, `.`, the alignments, `+`, `-`, `#`), which are flags or end the spec.  -1 for none.
+fn pad_char(t: lex::Tok) -> integer {
+  sp = lex::spell(t);
+  if sp == "" || t is Space || (sp[0] >= 'a' && sp[0] <= 'z') {
+    return -1;
+  }
+  for skip in ["}}", ".", "<", ">", "^", "+", "-", "#"] {
+    if sp == skip {
+      return -1;
+    }
+  }
+  sp[0] as integer
+}
+
+// `radix_for`: the letter that closes a spec.
+fn radix_for(id: text) -> integer? {
+  low = id.to_lowercase();
+  if low == "j" || low == "json" {
+    -1
+  } else if id == "x" {
+    16
+  } else if id == "X" {
+    17
+  } else if id == "b" {
+    2
+  } else if id == "o" {
+    8
+  } else if id == "e" {
+    1
+  } else if id == "d" || id == "f" {
+    10
+  } else {
+    null
+  }
+}
+
+// `Parser::append_data` with the default output state: the format op a value of this type
+// renders through.  An untyped value (a callee the first pass has not met) renders nothing.
+fn append_data(e: el::El, list: vector<ir::Node>, var: integer, val: ir::Node, tp: ir::TypeT) {
+  append_spec(e, list, var, val, tp, false, plain_fmt());
+}
+
+// `append_data` under a spec; `stack`: a `&text` accumulator (a promoted return buffer) takes the
+// `OpFormatStack…` ops.  A width on a value that renders through no padded op (a character, a
+// record, a vector, an enum: `append_data`'s scratch-text composition) is refused by name.
+fn append_spec(e: el::El, list: vector<ir::Node>, var: integer, val: ir::Node, tp: ir::TypeT, stack: boolean, f: Fmt) {
   start = if stack { "OpFormatStack" } else { "OpFormat" };
   w = ir::NdVar { n: var };
-  match el_types::base(tp) {
+  b = el_types::base(tp);
+  if f.width != ir::NdInt { n: 0 } && (b is TyCharacter || b is TyVector || b is TyReference || b is TyEnum) {
+    el::refuse(e, "a padded value of this type: {type_kind(b)}");
+    return;
+  }
+  db = (if f.note { 1 } else { 0 }) + (if f.radix < 0 { 2 } else { 0 });
+  match b {
     TyInteger { spec: _ } => {
-      list += [el_ir::cl(e, "{start}Int", [w, val, ir::NdInt { n: 10 }, ir::NdInt { n: 0 }, ir::NdInt { n: 32 }, ir::NdBoolean { b: false }, ir::NdBoolean { b: false }, ir::NdInt { n: 2 }])];
+      list += [el_ir::cl(e, "{start}Int", [w, val, ir::NdInt { n: f.radix }, f.width, ir::NdInt { n: f.pad }, ir::NdBoolean { b: f.plus }, ir::NdBoolean { b: f.note }, ir::NdInt { n: f.dir }])];
     },
     TyText { dep: _ } => {
-      list += [format_text_to(e, start, w, val)];
+      list += [format_text_as(e, start, w, val, f)];
     },
     TyBoolean => {
-      list += [format_text_to(e, start, w, el_ir::cl(e, "OpCastTextFromBool", [val]))];
+      list += [format_text_as(e, start, w, el_ir::cl(e, "OpCastTextFromBool", [val]), f)];
     },
     TyCharacter => {
       list += [el_ir::cl(e, "OpAppendCharacter", [w, val])];
     },
     TyFloat => {
-      list += [format_fp(e, "{start}Float", w, val)];
+      list += [format_fp(e, "{start}Float", w, val, f)];
     },
     TySingle => {
-      list += [format_fp(e, "{start}Single", w, val)];
+      list += [format_fp(e, "{start}Single", w, val, f)];
     },
     // A record or a vector renders through its store type (`OpFormatDatabase`, the default
     // format); a struct with an operator `to_text` of its own is refused by name.
@@ -3271,7 +3417,7 @@ fn append_data_to(e: el::El, list: vector<ir::Node>, var: integer, val: ir::Node
         el::refuse(e, "a formatted vector with no rows yet");
         return;
       }
-      list += [el_ir::cl(e, "{start}Database", [w, val, ir::NdInt { n: vk }, ir::NdInt { n: 0 }])];
+      list += [el_ir::cl(e, "{start}Database", [w, val, ir::NdInt { n: vk }, ir::NdInt { n: db }])];
     },
     TyReference { n } => {
       d = el::def(e, n);
@@ -3279,14 +3425,14 @@ fn append_data_to(e: el::El, list: vector<ir::Node>, var: integer, val: ir::Node
         el::refuse(e, "a formatted record of this kind");
         return;
       }
-      list += [el_ir::cl(e, "{start}Database", [w, val, ir::NdInt { n: d.known_type }, ir::NdInt { n: 0 }])];
+      list += [el_ir::cl(e, "{start}Database", [w, val, ir::NdInt { n: d.known_type }, ir::NdInt { n: db }])];
     },
     TyEnum { n, is_ref } => {
       kt = el::def(e, n).known_type;
       if kt == el_schema::NO_TYPE || !is_ref {
-        list += [format_text_to(e, start, w, el_ir::cl(e, "OpCastTextFromEnum", [val, ir::NdInt { n: kt }]))];
+        list += [format_text_as(e, start, w, el_ir::cl(e, "OpCastTextFromEnum", [val, ir::NdInt { n: kt }]), f)];
       } else {
-        list += [el_ir::cl(e, "{start}Database", [w, val, ir::NdInt { n: kt }, ir::NdInt { n: 0 }])];
+        list += [el_ir::cl(e, "{start}Database", [w, val, ir::NdInt { n: kt }, ir::NdInt { n: db }])];
       }
     },
     TyUnknown { n: _ } => {},
@@ -3296,20 +3442,30 @@ fn append_data_to(e: el::El, list: vector<ir::Node>, var: integer, val: ir::Node
   }
 }
 
-// `append_data`'s float arm with the default state (`append_data_fp`): no width, no precision
-// (-1), a space to pad with, no `+`, alignment unset.
-fn format_fp(e: el::El, op: text, w: ir::Node, val: ir::Node) -> ir::Node {
-  el_ir::cl(e, op, [w, val, ir::NdInt { n: 0 }, ir::NdInt { n: -1 }, ir::NdInt { n: 32 }, ir::NdBoolean { b: false }, ir::NdInt { n: 2 }])
+// `append_data`'s float arm (`append_data_fp`): the width and the precision (-1 for none) — a
+// dotted `W.P` literal split at its `.` as it displays (`8.0` displays `8`: precision 0), and
+// after a `.` flag the literal is the precision alone — then the pad byte, `+`, the alignment.
+fn format_fp(e: el::El, op: text, w: ir::Node, val: ir::Node, f: Fmt) -> ir::Node {
+  width = f.width;
+  prec: ir::Node = ir::NdInt { n: -1 };
+  match f.width {
+    NdFloat { f: v } => {
+      parts = "{v}".split('.');
+      width = ir::NdInt { n: parts[0] as integer ?? 0 };
+      prec = ir::NdInt { n: if len(parts) > 1 { parts[1] as integer ?? 0 } else { 0 } };
+    },
+    _ => {}
+  }
+  if f.float {
+    prec = width;
+    width = ir::NdInt { n: 0 };
+  }
+  el_ir::cl(e, op, [w, val, width, prec, ir::NdInt { n: f.pad }, ir::NdBoolean { b: f.plus }, ir::NdInt { n: f.dir }])
 }
 
-// `Parser::append_data_text` with the default state: the value, no width, alignment unset, a
-// space to pad with.
-fn format_text(e: el::El, w: ir::Node, val: ir::Node) -> ir::Node {
-  format_text_to(e, "OpFormat", w, val)
-}
-
-fn format_text_to(e: el::El, start: text, w: ir::Node, val: ir::Node) -> ir::Node {
-  el_ir::cl(e, "{start}Text", [w, val, ir::NdInt { n: 0 }, ir::NdInt { n: 2 }, ir::NdInt { n: 32 }])
+// `Parser::append_data_text`: the value, the width, the alignment, the pad byte.
+fn format_text_as(e: el::El, start: text, w: ir::Node, val: ir::Node, f: Fmt) -> ir::Node {
+  el_ir::cl(e, "{start}Text", [w, val, f.width, ir::NdInt { n: f.dir }, ir::NdInt { n: f.pad }])
 }
 
 // The binary-operator site of `Parser::parse_operators` for a builtin comparison or arithmetic:

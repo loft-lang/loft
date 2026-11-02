@@ -136,7 +136,7 @@ fn fixed(k: integer) -> Tok {
 }
 
 // The spelling of a punctuation or keyword token.
-fn spell(t: Tok) -> text {
+pub fn spell(t: Tok) -> text {
   match t {
     Colon => ":",
     Scope => "::",
