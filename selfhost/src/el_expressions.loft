@@ -1380,6 +1380,60 @@ fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text) -> 
 
 // `collection_bind_source`'s copy verdicts for a vector source: a bare variable, or a one-level
 // field read off a record local that owns its store.
+// `Parser::lower_vec_copy_bind` for a dense local `v` given a copy of the vector place `x`: the
+// local made independent of the source, given a store of its own as a literal bind is, then
+// filled with the source's elements (`OpAppendVector`).  The `_elm_N` it mints keeps `create_unique`'s counter in step with the
+// Rust passes: a field read mints on both, a variable source on the second.  A nullable source
+// (`OpReplaceVector`), a parameter destination and an element type with no rows are refused by
+// name.
+fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
+  elm = match el_types::base(x.tp) { TyVector { inner } => inner, _ => ir::TyVoid };
+  field_read = !(el_ir::unspan(x.code) is NdVar);
+  if x.tp is TyOptional || el_vars::tp(vars, v) is TyOptional || vars.vars[v].argument {
+    el::refuse(e, "a whole-vector copy bind of a nullable vector or into a parameter");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  if !el_vars::change_var_type(e, vars, v, ir::TyVector { inner: elm, dep: [] }) {
+    el::refuse(e, "a local that changes type");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  if e.first_pass {
+    if field_read {
+      for d in el_types::deps(el_vars::tp(vars, v)) {
+        el_vars::make_independent(vars, v, d);
+      }
+      el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
+    }
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  // The bind's read gives the local the source's borrow, which the copy then strips: the local
+  // arrives owning nothing, so it is always given a store of its own.
+  el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), []));
+  nm = el_types::elem_name(e, elm);
+  rec = match el_types::base(elm) {
+    TyReference { n } => el::def(e, n).known_type,
+    _ => if nm == "" { -1 } else { el_schema::schema_type(e, nm) }
+  };
+  if nm == "" || el::def_nr(e, "main_vector<{nm}>") < 0 || rec < 0 {
+    el::refuse(e, "a whole-vector copy bind of this element type: {type_kind(elm)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
+  rows = vector_rows(e, elm, 0, true);
+  if rows == null {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  r = rows!;
+  db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
+  el_vars::depend(vars, v, db);
+  ex(ir::NdInsert { items: [
+    el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
+    el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
+    el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]),
+    el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: v }, x.code, ir::NdInt { n: rec }])
+  ] }, ir::TyVoid)
+}
+
 fn copies_whole_vector(e: el::El, vars: el_vars::Vars, code: ir::Node) -> boolean {
   match el_ir::unspan(code) {
     NdVar { n: _ } => true,
@@ -1500,11 +1554,9 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
   }
   // `@FR-B-Copy` (`collection_bind_source`): a whole vector local, or a vector field read off an
   // owned record, bound to a local is COPIED into a store of the local's own
-  // (`lower_vec_copy_bind`) — not carried yet, so refused rather than bound as a view.  A `&`
-  // asks for the view.
-  if !e.first_pass && el_types::base(x.tp) is TyVector && copies_whole_vector(e, vars, x.code) && !is_link(e, rhs!) {
-    el::refuse(e, "a whole-vector copy bind");
-    return ex(ir::NdNull, ir::TyVoid);
+  // (`lower_vec_copy_bind`).  A `&` asks for the view.
+  if el_types::base(x.tp) is TyVector && copies_whole_vector(e, vars, x.code) && !is_link(e, rhs!) {
+    return vec_copy_bind(e, vars, v, x);
   }
   // `length_locals`: a local given a vector's length, remembered with that vector.
   match el_ir::unspan(x.code) {
