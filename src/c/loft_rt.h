@@ -21,6 +21,16 @@
 #include <string.h>
 #ifndef LOFT_NO_JUMPS
 #include <setjmp.h>
+/* MinGW-w64 on 64-bit Windows spells `setjmp(b)` as `_setjmp(b, <frame>)`, which makes the
+ * `longjmp` out of a failed test run Windows' SEH unwind through every frame in between — and
+ * that unwind faults on frames gcc optimised (2121's halted tests, strict build, -O1: a jump to
+ * nowhere; -O0, `-fno-inline` or a null frame: right).  A null frame is MinGW's own way to ask
+ * for the plain register restore every other platform's `longjmp` does; no loft frame has a
+ * destructor for the unwind to run. */
+#if defined(__MINGW32__) && defined(_WIN64)
+#undef setjmp
+#define setjmp(b) _setjmp((b), NULL)
+#endif
 #define LOFT_JMP_BUF jmp_buf
 #define LOFT_LONGJMP(b) longjmp(b, 1)
 #else
