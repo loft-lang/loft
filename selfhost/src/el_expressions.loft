@@ -1300,10 +1300,56 @@ fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text) -> 
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   el_vars::in_use(vars, v, true);
-  // A read of a heap local borrows the local (`depending`); a text keeps its own deps.
+  // A read of a heap local borrows the local (`depending`); a text keeps its own deps.  A link
+  // to a scalar (`link = &a`) reads as the scalar it names (`@FR-B-Ref-Uniform`).
   t = el_vars::tp(vars, v);
+  match t {
+    TyRefVar { inner } => {
+      if el_convert::plain_scalar(inner) {
+        return ex(ir::NdVar { n: v }, inner);
+      }
+    },
+    _ => {}
+  }
   is_text = el_types::base(t) is TyText;
   ex(ir::NdVar { n: v }, if is_text { t } else { el_types::with_deps(t, [v]) })
+}
+
+// `collection_bind_source`'s copy verdicts for a vector source: a bare variable, or a one-level
+// field read off a record local that owns its store.
+fn copies_whole_vector(e: el::El, vars: el_vars::Vars, code: ir::Node) -> boolean {
+  match el_ir::unspan(code) {
+    NdVar { n: _ } => true,
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name != "OpGetField" {
+        return false;
+      }
+      match el_ir::unspan(args[0] ?? ir::NdNull) {
+        NdVar { n: bv } => {
+          bt = el_types::unrewritten(el_types::base(el_vars::tp(vars, bv)));
+          bt is TyReference && len(el_types::deps(bt)) == 0
+        },
+        _ => false
+      }
+    },
+    _ => false
+  }
+}
+
+// Is syntax node `n` a `&` of something (a link, not a copy)?
+fn is_link(e: el::El, n: integer) -> boolean {
+  match e.p.nodes[n] {
+    SUnary { op } => op == "&",
+    _ => false
+  }
+}
+
+// Is `n` (through its span) a call of the definition named `name`?
+fn calls(e: el::El, n: ir::Node, name: text) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr } => el::def(e, def_nr).name == name,
+    _ => false
+  }
 }
 
 // `Type::heap_def_nr`: the record a type names, or -1.
@@ -1389,6 +1435,14 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
     },
     _ => {}
   }
+  // `@FR-B-Copy` (`collection_bind_source`): a whole vector local, or a vector field read off an
+  // owned record, bound to a local is COPIED into a store of the local's own
+  // (`lower_vec_copy_bind`) — not carried yet, so refused rather than bound as a view.  A `&`
+  // asks for the view.
+  if !e.first_pass && el_types::base(x.tp) is TyVector && copies_whole_vector(e, vars, x.code) && !is_link(e, rhs!) {
+    el::refuse(e, "a whole-vector copy bind");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
   // `length_locals`: a local given a vector's length, remembered with that vector.
   match el_ir::unspan(x.code) {
     NdCall { def_nr, args } => {
@@ -1399,6 +1453,25 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
     _ => {}
   }
   promoted_text = el_vars::tp(vars, v) == ir::TyRefVar { inner: ir::TyText { dep: [] } } && el_types::base(x.tp) is TyText;
+  // A value stored into a link to a scalar writes the place it names (`link = 7`); a `&`
+  // re-points it (`@FR-B-Ref-Repoint`).
+  match el_vars::tp(vars, v) {
+    TyRefVar { inner } => {
+      if el_convert::plain_scalar(inner) && !(x.tp is TyRefVar) {
+        el_vars::drop_use(vars, v);
+        if e.first_pass {
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        w = stored(e, vars, x, inner);
+        if w == null {
+          refuse_known(e, x.tp, "a write through a link its type converts: {type_kind(x.tp)} to {type_kind(inner)}");
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        return ex(el_ir::v_set(v, w!), ir::TyVoid);
+      }
+    },
+    _ => {}
+  }
   if !promoted_text && !el_vars::change_var_type(e, vars, v, x.tp) {
     el::refuse(e, "a local that changes type");
   }
@@ -5232,6 +5305,17 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
     el::refuse(e, "a vector literal mixing struct literals and other items");
     return refused_build();
   }
+  // `(I-Comp)`: an item that reads the vector it is appended to sees the vector as the statement
+  // began — Rust evaluates each such item into a `_build_val_N` first, or snapshots the vector
+  // (`literal_reads_dest`).  Not carried yet.
+  if append && !e.first_pass {
+    for x in xs {
+      if el_ir::reads_var(x.code, v) {
+        el::refuse(e, "an appended item that reads the vector it is appended to");
+        return refused_build();
+      }
+    }
+  }
   in_t = declared;
   if el_types::is_unknown(in_t) {
     if len(xs) == 0 && value {
@@ -5699,10 +5783,27 @@ fn logical(e: el::El, vars: el_vars::Vars, is_or: boolean, l: integer, r: intege
 }
 
 // `Parser::parse_single`'s prefix operators: `-x`, `!x` and `~x` call the one-operand builtin
-// candidates (`OpMinSingle…`, `OpNot`, `OpBitNotSingle…`) on the operand.  A `&` there is refused.
+// candidates (`OpMinSingle…`, `OpNot`, `OpBitNotSingle…`) on the operand.  `&a` of a scalar local
+// is a link to it (`OpCreateStack`, typed `&τ`); any other `&` is refused by name.
 fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
-  if op == "&" || n == null {
-    el::refuse(e, "a `&` reference");
+  if n == null {
+    el::refuse(e, "a prefix operator with no operand");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if op == "&" {
+    a = expression(e, vars, n!);
+    if a.code is NdVar && el_convert::plain_scalar(a.tp) {
+      return ex(el_ir::cl(e, "OpCreateStack", [a.code]), ir::TyRefVar { inner: a.tp });
+    }
+    // A link to a vector is the vector's view itself — a local or a field of one, typed as
+    // borrowing it — where a bare bind would copy (`@FR-B-Copy`).
+    if a.tp is TyVector && (a.code is NdVar || calls(e, a.code, "OpGetField")) && len(el_types::deps(a.tp)) > 0 {
+      return a;
+    }
+    if e.first_pass && el_types::is_unknown(a.tp) {
+      return a;
+    }
+    el::refuse(e, "a `&` reference to something other than a scalar or a vector place");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   x = expression(e, vars, n!);
