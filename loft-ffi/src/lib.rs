@@ -1421,7 +1421,10 @@ mod tests {
         data.iter().sum::<i32>() + offset
     }
 
-    vec_wrapper!(n_test_sum, loft_test_sum(data: vec<i32>, offset: i32) -> i32);
+    vec_wrapper!(
+        n_test_sum,
+        loft_test_sum(data: vec<i32>, offset: i32) -> i32
+    );
 
     #[test]
     fn vec_wrapper_generates_n_function() {
