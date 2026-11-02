@@ -319,8 +319,11 @@ impl Cx<'_> {
             (st.protos.len(), st.bodies.len(), st.order.len() - 1)
         };
         match write_twin(self, key, &name) {
-            Ok((sig, body)) => {
+            Ok((sig, body, inner)) => {
                 let mut st = self.tr.borrow_mut();
+                if let Some(inner) = inner {
+                    let _ = writeln!(st.protos, "{inner};");
+                }
                 let _ = writeln!(st.protos, "{sig};");
                 let _ = write!(st.bodies, "\n{sig} {{\n{body}}}\n");
                 if trace() {
@@ -493,7 +496,7 @@ fn producer_buffer(cx: &Cx, f: u32, args: &[Value]) -> Option<u16> {
     clippy::too_many_lines,
     reason = "one twin: its result, its parameters, its locals' forms, its owned set, its signature"
 )]
-fn write_twin(cx: &Cx, key: TrKey, name: &str) -> Result<(String, String), String> {
+fn write_twin(cx: &Cx, key: TrKey, name: &str) -> Result<(String, String, Option<String>), String> {
     let data = cx.data;
     let def = data.def(key.d);
     if matches!(def.code(), Value::Null) || !def.name().starts_with("n_") {
@@ -616,16 +619,44 @@ fn write_twin(cx: &Cx, key: TrKey, name: &str) -> Result<(String, String), Strin
             }
         })
         .collect();
+    let call_args: Vec<String> = args
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| phantom_at != Some(*i))
+        .map(|(_, &a)| var_name(vars.name(a), a))
+        .collect();
     let params = if params.is_empty() {
         "void".to_string()
     } else {
         params.join(", ")
     };
-    let sig = format!("static {} {name}({params})", held(ret));
+    let rtype = held(ret);
+    let sig = format!("static {rtype} {name}({params})");
     let (body, _) = FnWriter::new(cx, key.d, shapes, ret)
         .transient(tf)
         .write()?;
-    Ok((sig, body))
+    // A twin that holds texts for a halt (`LOFT_HOLD`) gives them back on its way out, as the
+    // ordinary function's wrapper does (`LOFT_HOLD_MARK` / `LOFT_HOLD_BACK`): left on the held
+    // list, a halt after the twin returned freed texts in a frame that no longer exists (a
+    // stack-use-after-scope under ASan, the halted-test C cell).
+    if body.contains("LOFT_HOLD(") {
+        let inner = format!("{name}__in");
+        let call = format!("{inner}({})", call_args.join(", "));
+        let wrapper = if rtype == "void" {
+            format!("    LOFT_HOLD_MARK(hm);\n    {call};\n    LOFT_HOLD_BACK(hm);\n")
+        } else {
+            format!(
+                "    LOFT_HOLD_MARK(hm);\n    {rtype} r = {call};\n    LOFT_HOLD_BACK(hm);\n    return r;\n"
+            )
+        };
+        let inner_sig = format!("static {rtype} {inner}({params})");
+        return Ok((
+            sig,
+            format!("{wrapper}}}\n\n{inner_sig} {{\n{body}"),
+            Some(inner_sig),
+        ));
+    }
+    Ok((sig, body, None))
 }
 
 /// The site plan of ordinary function `d`: its one root local — bound from a call to a
