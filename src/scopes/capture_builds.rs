@@ -1088,6 +1088,14 @@ fn captures_built_in_a_loop(node: &Value, set_dbref: u32, in_loop: bool, out: &m
 /// one loop and a build in another do not pair.
 pub(super) fn captures_rebound_in_a_loop(node: &Value, set_dbref: u32, out: &mut HashSet<u16>) {
     if let Value::Loop(_) = node.unspan() {
+        // A loop that builds no closure record re-binds no capture, nor does any loop inside
+        // it: answered before the walk collects the loop's assignments (one per function on
+        // the stdlib's own loops, otherwise).
+        let builds =
+            node.any_node(&mut |n| matches!(n.unspan(), Value::Call(d, _) if *d == set_dbref));
+        if !builds {
+            return;
+        }
         let mut first_build: HashMap<u16, usize> = HashMap::default();
         let mut sets: Vec<(u16, usize)> = Vec::new();
         let mut at = 0usize;
