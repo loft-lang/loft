@@ -6939,6 +6939,26 @@ use a separate collection or add after the loop"
         // writing it back addresses it twice, which `(E-Asgn-Compound)` permits here: a tuple
         // root is a plain variable and the index is a constant, so there is no addressing to
         // duplicate.
+        // `@FR-L-CapWrite` — `s += x` on a text a closure writes.  The local is a cell, so the
+        // text branch below (which appends into a destination VARIABLE) does not apply and the
+        // general path has no text `+=` (loft#2297).  The tuple element's sequence serves: a
+        // work text gets the current value and the operand, and the cell takes it back.
+        if op == "+="
+            && is_boxed_text_lhs
+            && let Some(cell) = self.extract_boxed_var_from_lhs(to)
+        {
+            let work = self.vars.work_text(&mut self.lexer);
+            *code = Value::Insert(vec![
+                self.cl("OpClearText", &[Value::Var(work)]),
+                self.cl("OpAppendText", &[Value::Var(work), to.clone()]),
+                self.cl("OpAppendText", &[Value::Var(work), code.clone()]),
+                self.cl(
+                    "OpSetText",
+                    &[Value::Var(cell), Value::Int(0), Value::Var(work)],
+                ),
+            ]);
+            return Type::Void;
+        }
         if op == "+="
             && matches!(f_type.base(), Type::Text(_))
             && !self.first_pass

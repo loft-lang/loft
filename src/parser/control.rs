@@ -15137,6 +15137,22 @@ impl Parser {
         if self.captured_names.iter().any(|(name, _)| name == n) {
             return TextDep::SkipCaptured;
         }
+        // `@FR-L-CapWrite` — a text LOCAL a closure writes is boxed into a cell
+        // (`flip_scalars_to_box_types`), the one place both the frame and the closure write.
+        // As the hidden `&text` return buffer it would stay unboxed and the closure would
+        // write its own copy (loft#2297), so it stays a local, delivered by copy like
+        // `SkipOwnedLocal`.  The list is filled as each lambda is parsed, before the tail
+        // asks, on both passes.
+        if !self.vars.is_argument(v)
+            && self
+                .data
+                .def(self.context)
+                .scalars_to_box()
+                .iter()
+                .any(|s| s == n)
+        {
+            return TextDep::SkipOwnedLocal;
+        }
         let tp = self.vars.tp(v);
         // A text local promotes to a HIDDEN RefVar(Text) out-param buffer.
         // @PLN25 DN1 (#487 / 449): `.base()` peel — an `Optional(Text)` local
