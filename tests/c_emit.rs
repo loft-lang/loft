@@ -553,6 +553,94 @@ fn main() {
     }
 }
 
+/// Every hash table draws its own unpredictable seed (the hash-DoS defence), from keys the
+/// program reads from `/dev/urandom` ONCE at start-up: making 500 tables opens it at most once.
+/// Read per table it cost an open, an fstat, a read and a close each — a third of gridmesh's
+/// `collect_dirty_inputs` was kernel time.  `fopen` is routed through a counter compiled apart.
+/// Hand-computed: each call holds four entries and reads `v = 3` back, `3 + 4` per call, 3500.
+#[test]
+fn a_program_reads_its_hash_seed_entropy_once() {
+    if !have_cc() || !cfg!(unix) {
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("seed-once");
+    let file = dir.join("h.loft");
+    fa::write(
+        &file,
+        "struct E { k: integer, v: integer }\n\
+         fn one(i: integer) -> integer {\n  h: hash<E[k]> = [];\n  \
+         for j in 0..4 { h += [E { k: i * 10 + j, v: j }]; }\n  e = h[i * 10 + 3];\n  \
+         if e { e.v + len(h) } else { -1 }\n}\n\
+         fn main() {\n  t = 0;\n  for i in 0..500 { t += one(i); }\n  println(\"{t}\");\n}\n",
+    )
+    .expect("write program");
+    let counter = dir.join("count.c");
+    fa::write(
+        &counter,
+        "#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\
+         static int n;\nstatic void report(void) { fprintf(stderr, \"urandom opens %d\\n\", n); }\n\
+         FILE *loft_test_fopen(const char *p, const char *m) {\n    static int armed;\n    \
+         if (!armed) { armed = 1; atexit(report); }\n    \
+         if (strcmp(p, \"/dev/urandom\") == 0) n++;\n    return fopen(p, m);\n}\n",
+    )
+    .expect("write counter");
+    let c = dir.join("h.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let obj = dir.join("count.o");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O1", "-c", "-o"])
+        .arg(&obj)
+        .arg(&counter)
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let exe = dir.join("h");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O1", "-Dfopen=loft_test_fopen"])
+        .arg(&c)
+        .args(unit_links(&c))
+        .arg(&obj)
+        .arg("-o")
+        .arg(&exe)
+        .args(["-lm", "-ldl", "-pthread"])
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .output()
+        .expect("run the C program");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "3500\n");
+    let err = String::from_utf8_lossy(&out.stderr);
+    let opens: u32 = err
+        .lines()
+        .find_map(|l| l.strip_prefix("urandom opens "))
+        .and_then(|n| n.trim().parse().ok())
+        .unwrap_or_else(|| panic!("no count reported:\n{err}"));
+    assert!(
+        opens <= 1,
+        "a program of 500 hash tables opened /dev/urandom {opens} times"
+    );
+}
+
 /// A `main` that takes `vector<text>` gets the program's arguments, as the interpreter's does:
 /// "alpha" and "b c" are two arguments of 5 + 3 characters, the last "b c"; with none the
 /// vector is empty and its last element null.  Hand-computed; the interpreter answers the same.

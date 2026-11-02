@@ -385,7 +385,10 @@ static uint64_t loft_ref_digest(loft_ref e, const loft_key *keys, int n, uint64_
 
 /* keys::fresh_seed: a new table's seed — LOFT_HASH_SEED's value (decimal or 0x hex) when set, so
  * a persisted store is byte-reproducible, else an unpredictable one (the hash-DoS defence).
- * Never 0, which marks an unseeded table. */
+ * Never 0, which marks an unseeded table.  Each seed is a per-thread counter mixed (splitmix64)
+ * under the two keys `loft_start` read from the operating system's entropy once: distinct and
+ * unpredictable per table, with no system call in a hash's life.  Read per table,
+ * `/dev/urandom` cost an open, an fstat, a read and a close for every hash made. */
 static uint64_t loft_fresh_seed(void) {
     static LOFT_TLS int fixed_read = 0, fixed_set = 0;
     static LOFT_TLS uint64_t fixed = 0, counter = 0;
@@ -412,17 +415,15 @@ static uint64_t loft_fresh_seed(void) {
     }
     uint64_t s = fixed;
     if (!fixed_set) {
-        FILE *f = fopen("/dev/urandom", "rb");
-        if (!f || fread(&s, 1, 8, f) != 8) {
-            /* No entropy source: the clock, an address and a count, mixed (splitmix64). */
-            s = (uint64_t) time(0) ^ ((uint64_t) clock() << 20) ^ (uint64_t) (size_t) &counter ^ ++counter * UINT64_C(0x9E3779B97F4A7C15);
-            s ^= s >> 30;
-            s *= UINT64_C(0xBF58476D1CE4E5B9);
-            s ^= s >> 27;
-            s *= UINT64_C(0x94D049BB133111EB);
-            s ^= s >> 31;
-        }
-        if (f) fclose(f);
+        if (loft_seed_k0 == 0) loft_seed_keys();
+        /* The counter is per thread and its address differs per thread, so two threads never
+         * draw the same seed. */
+        s = (loft_seed_k0 + ++counter * UINT64_C(0x9E3779B97F4A7C15)) ^ loft_seed_k1 ^ (uint64_t) (size_t) &counter;
+        s ^= s >> 30;
+        s *= UINT64_C(0xBF58476D1CE4E5B9);
+        s ^= s >> 27;
+        s *= UINT64_C(0x94D049BB133111EB);
+        s ^= s >> 31;
     }
     return s == 0 ? UINT64_C(0x9E3779B97F4A7C15) : s;
 }

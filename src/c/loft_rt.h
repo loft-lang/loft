@@ -6418,6 +6418,23 @@ static void loft_c_bind_libraries(void) {
 }
 #endif
 
+/* The keys every hash table's seed is drawn under (`loft_fresh_seed`, loft_keys.h): the
+ * operating system's entropy, read ONCE, at start-up — a hash made or grown never touches
+ * `/dev/urandom`.  A unit that never runs `loft_start` (a library replayed by a test) reads them
+ * at its first seed instead.  Without an entropy source: the clock and an address. */
+static uint64_t loft_seed_k0 = 0, loft_seed_k1 = 0;
+static void loft_seed_keys(void) {
+    uint64_t k[2] = { 0, 0 };
+    FILE *f = fopen("/dev/urandom", "rb");
+    if (!f || fread(k, 1, sizeof k, f) != sizeof k) {
+        k[0] = (uint64_t) time(0) ^ ((uint64_t) clock() << 20) ^ (uint64_t) (size_t) &loft_seed_k0;
+        k[1] = (uint64_t) (size_t) &loft_seed_k1 * UINT64_C(0x9E3779B97F4A7C15);
+    }
+    if (f) fclose(f);
+    loft_seed_k1 = k[1];
+    loft_seed_k0 = k[0] | 1;
+}
+
 static void loft_start(int argc, char **argv) {
 #if defined(_WIN32)
     /* The bytes a program writes are the bytes the other backends write: no `\r\n` for `\n`. */
@@ -6428,6 +6445,7 @@ static void loft_start(int argc, char **argv) {
     loft_argv = argv;
     loft_start_us = loft_now_us();
     loft_heap_read_limit();
+    loft_seed_keys();
     loft_arm_timeout();
 #if defined(LOFT_POSIX_HOST)
     signal(SIGPIPE, SIG_IGN);
