@@ -2488,6 +2488,13 @@ LOFT_HOT_INLINE int64_t loft_vh_get_int(loft_vh h, uint32_t size, int64_t from, 
     return v;
 }
 
+/* The address of element `from` (negative from the end) through the held base, or the null
+ * address outside the vector — the `loft_pa_*` readers answer null there. */
+LOFT_HOT_INLINE uint8_t *loft_vh_addr(loft_vh h, uint32_t size, int64_t from) {
+    int64_t f = loft_vh_index(h, from);
+    return f < 0 ? (uint8_t *) 0 : h.base + (size_t) f * size;
+}
+
 LOFT_HOT_INLINE void loft_vh_set_int(loft_vh h, uint32_t size, int64_t from, uint32_t fld, int64_t v) {
     int64_t f = loft_vh_index(h, from);
     if (f < 0) return;
@@ -6978,6 +6985,10 @@ LOFT_HOT_INLINE loft_ref loft_vh_get_at(loft_vh h, uint32_t size, int64_t from, 
         return loft_ref_null_reported();
     }
     return loft_vh_get(h, size, from);
+}
+LOFT_HOT_INLINE uint8_t *loft_vh_addr_at(loft_vh h, uint32_t size, int64_t from, const char *file, uint32_t line) {
+    if (LOFT_UNLIKELY(loft_vh_index(h, from) < 0)) loft_index_miss(from, h.len, file, line);
+    return loft_vh_addr(h, size, from);
 }
 LOFT_HOT_INLINE int64_t loft_vh_get_int_at(loft_vh h, uint32_t size, int64_t from, uint32_t fld, const char *file,
                                            uint32_t line) {

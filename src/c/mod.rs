@@ -2585,7 +2585,9 @@ fn program_main(data: &Data, main: u32) -> Result<(u32, String), Refusal> {
         {
             Ok((
                 main,
-                format!("{{ loft_ref loft_main_args = loft_arguments(); {name}(loft_main_args); loft_free_ref(loft_main_args); }}"),
+                format!(
+                    "{{ loft_ref loft_main_args = loft_arguments(); {name}(loft_main_args); loft_free_ref(loft_main_args); }}"
+                ),
             ))
         }
         _ => Err(Refusal {

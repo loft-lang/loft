@@ -19,6 +19,7 @@ mod keyed;
 mod loop_record;
 mod misc;
 mod par;
+mod peel;
 pub(super) mod transient;
 mod value;
 mod version;
@@ -256,6 +257,8 @@ pub(crate) struct FnWriter<'a> {
     /// facts of an innermost counted one (`None` for any other loop).
     vf: Option<std::rc::Rc<crate::opt::version::Leaf>>,
     versions: Vec<Option<version::VLoop>>,
+    /// `@FR-R-Peel` — the constants the statements just before a loop gave its counters.
+    peel_seeds: Vec<(u16, i64)>,
     /// `@FR-R-Transient`'s work clause: the `&text` parameter a `__wr` twin answers (its result
     /// is the caller's buffer), and the call a transient body sends to such a twin.
     work_ret: Option<u16>,
@@ -714,6 +717,7 @@ impl<'a> FnWriter<'a> {
             plain_chains: Vec::new(),
             vf: None,
             versions: Vec::new(),
+            peel_seeds: Vec::new(),
             work_ret: None,
             wr_call: None,
             chain_guards: 0,
@@ -2379,6 +2383,26 @@ impl<'a> FnWriter<'a> {
             })
     }
 
+    /// The reader of a field at a known address (`loft_pa_*`) for a store getter: a narrow
+    /// read's encoding is decoded by the reader its store getter uses, the null address
+    /// answering null.
+    fn pa_reader(name: &str) -> Option<(&'static str, K)> {
+        Some(match name {
+            "OpGetInt" => ("loft_pa_i64", K::Int),
+            "OpGetFloat" => ("loft_pa_f64", K::Float),
+            "OpGetSingle" => ("loft_pa_f32", K::Single),
+            "OpGetEnum" => ("loft_pa_enum", K::Enum),
+            "OpGetInt4" => ("loft_pa_int4", K::Int),
+            "OpGetInt4Raw" => ("loft_pa_int4_raw", K::Int),
+            "OpGetInt4Full" => ("loft_pa_int4_full", K::Int),
+            "OpGetByte" => ("loft_pa_byte", K::Int),
+            "OpGetByteNullable" => ("loft_pa_byte_nullable", K::Int),
+            "OpGetShort" => ("loft_pa_short", K::Int),
+            "OpGetShortRaw" | "OpGetShortFull" => ("loft_pa_short_raw", K::Int),
+            _ => return None,
+        })
+    }
+
     /// An element access of a held vector: `OpGetVector(v, size, i)` itself, or a scalar read
     /// or in-place write of a field of one — through the held base.  `None` for any other.
     #[expect(
@@ -2455,6 +2479,42 @@ impl<'a> FnWriter<'a> {
                     ),
                     k,
                 )))
+            }
+            // A narrow field of a held element (`u8`, `i32`, a `single`, an enum): its address
+            // through the held base — null outside the vector — decoded as a record pointer's
+            // field is (`pa_reader`), with no store lookup per read.
+            (
+                "OpGetSingle" | "OpGetEnum" | "OpGetInt4" | "OpGetInt4Raw" | "OpGetInt4Full",
+                [inner, fld],
+            )
+            | (
+                "OpGetByte" | "OpGetByteNullable" | "OpGetShort" | "OpGetShortRaw"
+                | "OpGetShortFull",
+                [inner, fld, _],
+            ) => {
+                let Some((vec, size, idx, report)) = elem(inner) else {
+                    return Ok(None);
+                };
+                let Some(held) = self.held_vector(&vec) else {
+                    return Ok(None);
+                };
+                let Some((f, k)) = Self::pa_reader(name) else {
+                    return Ok(None);
+                };
+                let size = Self::literal(&size, "element size")?;
+                let fld = Self::literal(fld, "field")?;
+                let index = as_int(self.expr(&idx, ind)?)?;
+                let proof = self.held_proof(&vec, &held);
+                let (at, tail) = at(report);
+                let addr = format!("loft_vh_addr{at}({held}, {size}, {index}{tail})");
+                let call = if let [_, _, min] = args {
+                    let min = c_long(Self::literal(min, "minimum")?);
+                    format!("{f}({addr}, {fld}, {min})")
+                } else {
+                    format!("{f}({addr}, {fld})")
+                };
+                crate::rewrite_census::fired("R-Header/narrow", 1);
+                Ok(Some(E::new(format!("({proof}, {call})"), k)))
             }
             ("OpSetInt" | "OpSetFloat", [inner, fld, val]) => {
                 let Some((vec, size, idx, report)) = elem(inner) else {
@@ -2684,6 +2744,7 @@ impl<'a> FnWriter<'a> {
                 i = last + 1;
                 continue;
             }
+            self.peel_seeds = peel::seeds(ops, i);
             self.stmt(&ops[i], ind)?;
             self.bind_record_ptr(ops, i, ind);
             self.bind_view_header(ops, i, ind);
@@ -3218,20 +3279,7 @@ impl<'a> FnWriter<'a> {
             return Ok(None);
         };
         if getter {
-            // A narrow read's encoding is decoded by the reader its store getter uses.
-            let (f, k) = match name {
-                "OpGetInt" => ("loft_pa_i64", K::Int),
-                "OpGetFloat" => ("loft_pa_f64", K::Float),
-                "OpGetSingle" => ("loft_pa_f32", K::Single),
-                "OpGetEnum" => ("loft_pa_enum", K::Enum),
-                "OpGetInt4" => ("loft_pa_int4", K::Int),
-                "OpGetInt4Raw" => ("loft_pa_int4_raw", K::Int),
-                "OpGetInt4Full" => ("loft_pa_int4_full", K::Int),
-                "OpGetByte" => ("loft_pa_byte", K::Int),
-                "OpGetByteNullable" => ("loft_pa_byte_nullable", K::Int),
-                "OpGetShort" => ("loft_pa_short", K::Int),
-                _ => ("loft_pa_short_raw", K::Int),
-            };
+            let (f, k) = Self::pa_reader(name).ok_or("a read with no address reader")?;
             if args.len() == 3 {
                 let min = c_long(Self::literal(&args[2], "minimum")?);
                 return Ok(Some(E::new(format!("{f}({pa}, {off}, {min})"), k)));
@@ -4249,6 +4297,9 @@ impl<'a> FnWriter<'a> {
         self.loops.push(l);
         if let Some(walk) = self.char_walks.get(&b.scope).cloned() {
             self.char_walk_loop(b, &walk, ind)?;
+        } else if let Some(plan) = self.peel_plan(b) {
+            self.loops.pop();
+            return self.peel_loop(b, &plan, ind);
         } else {
             self.line(ind, "for (;;) {");
             self.block_stmt(b, ind + 1)?;

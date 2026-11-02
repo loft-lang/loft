@@ -510,7 +510,23 @@ fn write_twin(cx: &Cx, key: TrKey, name: &str) -> Result<(String, String, Option
     if args.len() != def.attributes().len() || args.len() > 63 {
         return Err("parameters that do not match their arguments".into());
     }
+    // `@FR-R-ValueRecord` holds a record result as a struct already, and the twin's body is the
+    // ordinary writer's: its value-record locals and pointer parameters keep their shapes.
+    if cx.value_records().fns.contains_key(&key.d) {
+        return Err("a value-record result".into());
+    }
     let mut shapes = crate::c::variable_shapes(cx, vars, &args, data.body_width32(key.d))?;
+    let vr_locals = cx.vr_locals(key.d);
+    let mut vr_sorted: Vec<(u16, u16)> = vr_locals.iter().map(|(v, k)| (*v, *k)).collect();
+    vr_sorted.sort_unstable();
+    for (v, k) in vr_sorted {
+        if let Some(c) = cx.vr_ctype(k)
+            && (v as usize) < shapes.len()
+        {
+            shapes[v as usize] = c;
+        }
+    }
+    let vr_ptr = cx.vr_ptr_params(key.d);
     let mut tf = TrFn {
         builds: true,
         ..TrFn::default()
@@ -570,6 +586,9 @@ fn write_twin(cx: &Cx, key: TrKey, name: &str) -> Result<(String, String, Option
             tf.vars.insert(v, tv);
         }
     }
+    if let Some(v) = tf.vars.keys().find(|v| vr_locals.contains_key(v)) {
+        return Err(format!("`{}` a value record", vars.name(*v)));
+    }
     for (v, tv) in &tf.vars {
         shapes[*v as usize] = tv.ctype();
     }
@@ -609,11 +628,15 @@ fn write_twin(cx: &Cx, key: TrKey, name: &str) -> Result<(String, String, Option
         .iter()
         .enumerate()
         .filter(|(i, _)| phantom_at != Some(*i))
-        .map(|(_, &a)| {
+        .map(|(i, &a)| {
             let c = shapes[a as usize];
             let n = var_name(vars.name(a), a);
-            if matches!(vars.tp(a).base(), Type::RefVar(_)) {
+            if vars.is_store_text_link(a) {
+                format!("loft_ref {n}")
+            } else if matches!(vars.tp(a).base(), Type::RefVar(_)) {
                 format!("{} *{n}", held(c))
+            } else if vr_ptr.contains(&i) {
+                format!("const {} *{n}", passed(c))
             } else {
                 format!("{} {n}", passed(c))
             }

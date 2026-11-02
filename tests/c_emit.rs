@@ -538,6 +538,62 @@ fn main() {
     }
 }
 
+/// A `main` that takes `vector<text>` gets the program's arguments, as the interpreter's does:
+/// "alpha" and "b c" are two arguments of 5 + 3 characters, the last "b c"; with none the
+/// vector is empty and its last element null.  Hand-computed; the interpreter answers the same.
+#[test]
+fn a_main_taking_texts_gets_the_programs_arguments() {
+    if !have_cc() {
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("main-args");
+    let file = dir.join("m.loft");
+    fa::write(
+        &file,
+        "fn main(args: vector<text>) {\n  n = 0;\n  for a in args { n += len(a); }\n  \
+         println(\"{len(args)} {n} {args[len(args) - 1]}\");\n}\n",
+    )
+    .expect("write program");
+    let c = dir.join("m.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "a main with arguments is carried: {}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let exe = dir.join("m");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O1", "-pedantic", "-Werror"])
+        .arg(&c)
+        .args(unit_links(&c))
+        .arg("-o")
+        .arg(&exe)
+        .args(["-lm", "-ldl", "-pthread"])
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc rejected the C:\n{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    for (args, want) in [
+        (&["alpha", "b c"][..], "2 8 b c\n"),
+        (&[][..], "0 0 null\n"),
+    ] {
+        let out = loft::platform::process::harness_command(&exe)
+            .args(args)
+            .output()
+            .expect("run the C program");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), want, "{args:?}");
+    }
+}
+
 /// Generators as C (`src/c/body/generator.rs`): a generator of texts over a text parameter ended
 /// early by `break`, one of integers through nested loops with a `continue`, and one stepped by
 /// hand and abandoned before its end.  Each value is computed by hand; the interpreter and the C

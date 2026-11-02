@@ -92,7 +92,7 @@ fn main() {
 "#;
 
 /// The lines the program prints, fixed by the server's answers.
-const WANT: [&str; 12] = [
+const WANT: [&str; 13] = [
     "BIN 200 5 65 0 255 66 10",
     "HDR true",
     "POST 200 POST hello v1",
