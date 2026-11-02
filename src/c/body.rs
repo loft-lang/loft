@@ -6244,6 +6244,11 @@ impl<'a> FnWriter<'a> {
         if let Some(e) = self.keyed_native(route, args, ind)? {
             return Ok(e);
         }
+        if def.native() == "n_swap_world"
+            && let Some(e) = self.swap_world_call(args, ind)?
+        {
+            return Ok(e);
+        }
         if let Some(e) = self.par_native(route, args, ind)? {
             return Ok(e);
         }

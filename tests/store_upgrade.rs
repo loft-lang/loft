@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // The compiled leg of every cell is the C backend (`--native-c`), whose runtime converts as the
-// interpreter does (`src/c/loft_upgrade.h`); `swap_world`'s cell alone runs the Rust writer.
+// interpreter does (`src/c/loft_upgrade.h`).
 //
 // @PLN196 — the store upgrade: a changed definition converts its data, or says why not.
 //
@@ -1231,9 +1231,7 @@ fn cell_swap_world_restores_and_converts_a_world_with_a_reference() {
     let dir = write_store("swap_world_restore", writer);
     loft::file_access::write(dir.join("b.loft"), reader).unwrap();
     let lib = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("lib");
-    // The C does not carry engine_host's build swap (@PLN203 C5): it refuses `swap_world` by
-    // name, so the compiled leg of this one cell is the Rust writer's.
-    for mode in ["--interpret", "--native-rust"] {
+    for mode in ["--interpret", "--native-c"] {
         let out = loft::platform::process::harness_command(loft_bin())
             .env_remove("LOFT_NATIVE_BACKEND")
             .args([mode, "--lib"])

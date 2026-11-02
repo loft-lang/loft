@@ -625,14 +625,21 @@ compiled into `libloft_net` by `src/c/component.rs`), which a C unit calls throu
 ABI as it calls any prebuilt library (`tests/web_natives.rs`, `tests/server_natives.rs`,
 `tests/ssh_natives.rs` the guards; § The SSH client).  `loft_engine.h` carries `lib/engine_host`'s kernel: the listener and
 the connector over WebSockets, the UDP state-sync channel, the events, ticks and `post`, the
-`D!:` debug channel answering as a build with no live tier, and `http_fetch` on a worker thread
-over the runtime's HTTP client (above).  Not carried, so refused by name: the
-build swap and the background rebuild (`swap_world`, `swap_start`, `rebuild_*`).  The live tier
-— a flip, a live edit, a breakpoint's eval — runs the interpreter inside the program, which a C
-build has not got: a C program's swap step serves and `live_flip` answers false, and the edit
-loop runs interpreted.  All of it on every host with sockets (`loft_sock.h`: POSIX and
-Windows); a Windows listener does not share its port, as `platform::bind_tcp_handover` binds
-there.  The kernel closes its sockets at exit, as the Rust kernel's drop does: Windows resets a
+`D!:` debug channel, and `http_fetch` on a worker thread over the runtime's HTTP client
+(above).  It carries the build swap and the background rebuild too (`swap_world`, `swap_start`,
+`rebuild_*`, and the channel's `rebuild`, `rebuild?` and `swap`), on POSIX hosts:
+`rebuild_start` runs the driver's `--check --native-c` as a child, its output in files, and
+`rebuild_status` reads the artifact off its `ok` line (requeued when the source moved during
+the build); the swap step writes the world as a store image (`loft_image_write`, or JSON for a
+world that shares its store), boots the new build in a session of its own with `LOFT_RESUME`
+and `LOFT_SWAP_READY`, keeps mechanics alive while meaning waits, and retires once the new
+build touches the ready file — or rolls back.  `swap_world` restores a handed-over image
+through `store_load`, so a changed layout converts (`loft_upgrade.h`); its call site supplies
+the world type's sidecar and JSON render (`swap_world_call`).  The live tier — a flip, a live
+edit, a breakpoint's eval — runs the interpreter inside the program, which a C build has not
+got: `live_flip` answers false, and the edit loop runs interpreted.  All of it on every host
+with sockets (`loft_sock.h`: POSIX and Windows), the swap and the rebuild on POSIX only; a
+Windows listener does not share its port, as `platform::bind_tcp_handover` binds there.  The kernel closes its sockets at exit, as the Rust kernel's drop does: Windows resets a
 socket a process leaves open, discarding what the peer had not read
 (`tests/c_emit.rs` `an_engine_host_seat_talks_to_its_listener_on_the_c_and_the_interpreter`).
 
@@ -714,7 +721,8 @@ path is not removed while a **port** row is open.  The store rows are also numbe
 | store log, tags, allocation report (`LOFT_STORE_LOG`, `LOFT_STORE_TAG`, `LOFT_ALLOC_REPORT`) | O | `LOFT_ALLOC_TRACE`, `LOFT_NATIVE_LEAK_CHECK` | **drop** (proposed): the allocation trace and the leak report, sites included, answer what these were read for | — |
 | allocator policy switches — the allocator's own (`LOFT_NO_PARK`, `NO_LAZY_FREE`, `NO_TOMBSTONE`, `NO_FREE_FOOTER`, `NO_WILD_BUMP`, `NO_CARVE_IN_PLACE`, `NO_WILDERNESS`) | E | `-DLOFT_NO_PARK` … `-DLOFT_NO_WILDERNESS` in `loft_store.h`, each the policy turned off as `Store` turns it off | **ported**, all seven: the allocator differential runs once per switch with `Store` under the variable and the C under the define, byte for byte (`NO_WILD_BUMP` lays out the same bytes by construction — a fast path to the block the best fit takes); `NO_WILDERNESS` keeps the tail in the tree and a fresh store untracked, its first claim the chain walk (`loft_claim_scan`), as `Store` does.  The runtime's other `LOFT_NO_*` policies (exact copy claim, compaction on load, clear release, prefill image, inline hash, …) are their own rows when a C defect needs them | `tests/c_emit.rs` `a_store_allocator_switch_answers_alike_on_both_runtimes` |
 | the live debugger (`loft debug`, `--rpc`) | O | the C debug tier's `#line` markers: the loft file and line of every C line in the binary's debug information, for gdb, lldb, a profiler and a backtrace (`emit_program_with_source_lines`, DEBUG.md § A C build in gdb or lldb) | **covered** (owner, decided): the full debugger is the interpreter's, for development, as live editing is; a bug only the C build shows is debugged on its binary by loft line | `tests/c_emit.rs` `the_c_debug_build_names_loft_lines_in_its_line_table` |
-| live reload / live dispatch (`LOFT_LIVE_RELOAD`, `LOFT_LIVE_FLIP`, the engine host's `flip` / `rebuild` / `swap`) | E | — the C engine host answers `flip false` and refuses `rebuild` and `swap` | **covered** (owner, decided): changing a running program needs the interpreter, so live editing is the interpreter's — development runs with it around, as the full debugger already does, with the libraries running as C inside it (P4); a shipped C build carries none of it and stays compact | — |
+| live reload / live dispatch (`LOFT_LIVE_RELOAD`, `LOFT_LIVE_FLIP`, the engine host's `flip`) | E | — the C engine host answers `flip false` | **covered** (owner, decided): changing a running program needs the interpreter, so live editing is the interpreter's — development runs with it around, as the full debugger already does, with the libraries running as C inside it (P4) | — |
+| the live build swap and background rebuild (`swap_world`, `swap_start`, `rebuild_*`, the channel's `rebuild` / `swap`) | E | carried on POSIX hosts (`loft_engine.h`), every incarnation a C build | **carried** (owner, asked for) — `tests/engine_host_kernel.rs` `s5_c_*`, the listener, connector and local roles | — |
 | the profilers (`make profile`, `LOFT_NATIVE_CHECKPOINTS`) | E | `c_profile` | covered for time; open for heap by line | `make profile-corpus` on C |
 | wasm and browser targets (`--native-wasm`, `--html`, built through rustc) | — | C to wasm through clang (@PLN203) | covered by @PLN203 | @PLN203's browser lane |
 | the ship and lean tiers (`--ship`, `--lean`) | E | the `cship` lane | covered | the perf portal's `cship` column |

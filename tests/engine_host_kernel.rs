@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @PLN203 rust-writer: the live tier (flips, live edits, swaps) runs the interpreter inside a Rust-writer build; the C kernel is c_emit's and c_https's — every loft it spawns runs without LOFT_NATIVE_BACKEND.
+// @PLN203 rust-writer: the live tier (flips, live edits) runs the interpreter inside a Rust-writer build, so those cells run without LOFT_NATIVE_BACKEND; the build swap is also run on the C (`s5_c_*`), and the rest of the C kernel is c_emit's and c_https's.
 
 // The kernel lifecycle suite is unix-only v1: the swap machinery rides
 // SO_REUSEPORT + process groups (killpg cleans the --native grandchildren),
@@ -745,6 +745,269 @@ fn main() {{
     let _ = fa::remove_file(&err_path);
 }
 
+/// @PLN18 08-S5 on the C backend — the same swap under a running world, every build a C one: the
+/// serving build rebuilds its edited source in the background through the driver
+/// (`--check --native-c`), boots the new C build detached with the world's store image, and
+/// retires once it serves; the new build restores the world through the store converter (`bonus`
+/// is an added field with a computed default).  The live tier's function flips have no C form, so
+/// the dispatch assertions of the Rust-writer twin are not here.
+#[test]
+fn s5_c_swap_under_running_world() {
+    if !fa::exists(loft_bin()) {
+        eprintln!("skipping: release loft not built");
+        return;
+    }
+    // Both stems carry a PORT, and the two ports are not the same one: a prior run's orphan
+    // sits on this checkout's CANONICAL port (`test_port`, pure), while our own child lands on
+    // whatever `bind_port` could actually take — which differs exactly when an orphan already
+    // holds the canonical one, the case the sweep exists for.
+    s5_kill_stale(&format!(
+        "/.loft/cache/eh_s5cb_{}-",
+        common::test_port(18150)
+    )); // a stale orphan from a prior run shares the port
+    std::thread::sleep(Duration::from_millis(200));
+    let port = common::bind_port(18150);
+    reap_port(port); // reap a leaked swap-child orphan the stem pgrep misses (flake guard)
+    let _hygiene = S5Hygiene(format!("/.loft/cache/eh_s5cb_{port}-"), Some(port)); // OUR swap child dies at exit
+    // A test-OWNED always-fails binary: /bin/false varies across platforms
+    // and runners (macOS CI refused it — forensics pending); a temp script
+    // is deterministic everywhere this unix-only suite runs.
+    let bad_bin = test_tmp().join(format!("eh_s5cb_false_{port}.sh"));
+    fa::write(&bad_bin, "#!/bin/sh\nexit 1\n").unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fa::set_permissions(&bad_bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let bad_bin = bad_bin.to_string_lossy().into_owned();
+    // v2 also GROWS the world (@PLN196 step 8): `bonus` is added with a default computed
+    // from the record, so the swap must carry the world through the converter — the old
+    // JSON snapshot left a field it did not have at null.
+    let fixture = |ver: &str| {
+        let (bonus_field, bonus_reply) = if ver == "v2" {
+            (
+                ", bonus: integer = $.events * 10",
+                "if ev.payload == \"bonus\" { engine_host::send(ev.cid, \"bonus:{w.bonus}\"); return; }",
+            )
+        } else {
+            ("", "")
+        };
+        format!(
+            r#"
+use engine_host;
+struct W {{ events: integer not null, ticks: integer not null{bonus_field} }}
+fn bump_events(w: W) -> integer {{
+  w.events = w.events + 1;
+  w.events
+}}
+fn main() {{
+  w = W {{ events: 0, ticks: 0 }};
+  resumed = engine_host::swap_world(w);
+  engine_host::run({port}, 10000,
+    fn(ev: engine_host::Event) {{
+      if ev.kind != 1 {{ return; }}
+      n = bump_events(w);
+      if ev.payload == "rebuild" {{
+        engine_host::send(ev.cid, "rebuild:{{engine_host::rebuild_start()}}");
+        return;
+      }}
+      if ev.payload == "status" {{
+        engine_host::send(ev.cid, "status:{{engine_host::rebuild_status()}}");
+        return;
+      }}
+      if ev.payload == "swap" {{
+        engine_host::send(ev.cid, "swap:{{engine_host::swap_start(engine_host::rebuild_artifact())}}");
+        return;
+      }}
+      if ev.payload == "badpath" {{
+        engine_host::send(ev.cid, "badpath:{{engine_host::swap_start("/nonexistent/binary")}}");
+        return;
+      }}
+      if ev.payload == "badswap" {{
+        engine_host::send(ev.cid, "badswap:{{engine_host::swap_start("{bad_bin}")}}");
+        return;
+      }}
+      {bonus_reply}
+      engine_host::send(ev.cid, "{ver}:{{ev.payload}}#{{n}}t{{w.ticks}}");
+    }},
+    fn() {{ w.ticks = w.ticks + 1; }});
+}}
+"#
+        )
+    };
+    let prog = test_tmp().join(format!("eh_s5cb_{port}.loft"));
+    fa::write(&prog, fixture("v1")).unwrap();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let err_path = test_tmp().join(format!("eh_s5cb_{port}.err"));
+    let err_file = fa::create(&err_path).unwrap();
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
+    cmd.env_remove("LOFT_NATIVE_BACKEND");
+    cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
+    cmd.process_group(0);
+    let child = cmd
+        .arg("--no-warnings")
+        .arg("--native-c")
+        .arg("--lib")
+        .arg(root.join("lib"))
+        .arg(&prog)
+        .current_dir(&root)
+        .stdout(Stdio::null())
+        .stderr(Stdio::from(err_file))
+        .spawn()
+        .expect("spawn kernel");
+    let _guard = Guard(Some(child));
+
+    let stderr_now = || fa::read_to_string(&err_path).unwrap_or_default();
+    let mut count = 0i64; // every event bumps the world counter
+    let ws = ws_connect(port);
+    let ask = |ws: &TcpStream, msg: &str, count: &mut i64| -> String {
+        ws_send(ws, msg);
+        *count += 1;
+        ws_recv(ws)
+    };
+    // The flipped baseline serves (S2 still alive under this fixture).
+    let r = ask(&ws, "a", &mut count);
+    assert_eq!(
+        r,
+        format!("v1:a#{count}t")
+            .rsplit_once('t')
+            .unwrap()
+            .0
+            .to_string()
+            + "t"
+            + r.rsplit_once('t').unwrap().1,
+        "shape — first-ask flake probe: raw={r:?} count={count}; subprocess stderr:\n{}",
+        stderr_now()
+    );
+    assert!(r.starts_with(&format!("v1:a#{count}t")), "baseline: {r}");
+
+    // Rollback leg 1: a missing artifact is refused outright (no freeze).
+    assert_eq!(ask(&ws, "badpath", &mut count), "badpath:false");
+    // Rollback leg 2: a build that dies before serving.  The freeze defers
+    // the next replies; they drain after the rollback (recv timeout rides
+    // it).  The world must keep counting and the old build keep serving.
+    let badswap = ask(&ws, "badswap", &mut count);
+    assert_eq!(
+        badswap,
+        "badswap:true",
+        "swap_start must accept the test's false-binary; server stderr:\n{}",
+        fa::read_to_string(&err_path).unwrap_or_default()
+    );
+    let r = ask(&ws, "b", &mut count);
+    assert!(
+        r.starts_with(&format!("v1:b#{count}t")),
+        "post-rollback: {r}"
+    );
+    assert!(
+        stderr_now().contains("rolled back"),
+        "the dead build must roll back:\n{}",
+        stderr_now()
+    );
+
+    // S3+S4: live edit, then background rebuild to ready.
+    fa::write(&prog, fixture("v2")).unwrap();
+    assert_eq!(ask(&ws, "rebuild", &mut count), "rebuild:true");
+    let deadline = vm_deadline(300);
+    loop {
+        let st = ask(&ws, "status", &mut count);
+        if st == "status:2" {
+            break;
+        }
+        assert!(Instant::now() < deadline, "rebuild never ready");
+        std::thread::sleep(Duration::from_millis(300));
+    }
+
+    // THE SWAP.  The ack arrives before the freeze; the world counter and
+    // tick stamp in the LAST pre-swap reply are the continuity anchors.
+    let r = ask(&ws, "c", &mut count);
+    assert!(r.starts_with(&format!("v1:c#{count}t")), "pre-swap: {r}");
+    let t_pre: i64 = r.rsplit_once('t').unwrap().1.parse().unwrap();
+    assert_eq!(ask(&ws, "swap", &mut count), "swap:true");
+    // The world is frozen after the swap event: its counter is `count` from here.
+    let frozen = count;
+
+    // Wait for the handover: the old process closes this connection.
+    ws.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+    let gap_start = Instant::now();
+    while ws_try_recv(&ws).is_some() {}
+    // Reconnect into the NEW build (seat-reconnect semantics; measure it).
+    // Full-attempt retry: a dial in the dual-bind overlap can land on the
+    // dying process and drop mid-upgrade.
+    let reconnect_deadline = vm_deadline(10);
+    let new_ws = loop {
+        if let Some(ws) = ws_try_connect(port) {
+            break ws;
+        }
+        if Instant::now() >= reconnect_deadline {
+            // Diagnostics: who exists, who listens, what the server said.
+            let ps = loft::platform::process::harness_command("pgrep")
+                .args(["-af", "eh_s5cb_18150"])
+                .output();
+            let ss = loft::platform::process::harness_command("ss")
+                .args(["-tlnp"])
+                .output();
+            panic!(
+                "never reconnected into the new build\n--- pgrep:\n{}\n--- ss -tlnp:\n{}\n--- server stderr tail:\n{}",
+                String::from_utf8_lossy(&ps.map(|o| o.stdout).unwrap_or_default()),
+                String::from_utf8_lossy(&ss.map(|o| o.stdout).unwrap_or_default())
+                    .lines()
+                    .filter(|l| l.contains("18150"))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                stderr_now()
+                    .lines()
+                    .rev()
+                    .take(8)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            );
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    let gap = gap_start.elapsed();
+    eprintln!("S5 swap gap (close -> serving reconnect): {gap:?}");
+    assert!(
+        gap < Duration::from_secs(3),
+        "the swap gap must stay under the keepalive timeout: {gap:?}"
+    );
+
+    // Continuity: the new build serves v2 meaning over the SAME world —
+    // counter exactly +1 (nothing lost, nothing duplicated), ticks never
+    // reset.
+    let marker = stderr_now();
+    let r = ask(&new_ws, "d", &mut count);
+    assert!(
+        r.starts_with(&format!("v2:d#{count}t")),
+        "the new build must serve the new meaning over the OLD world: {r}"
+    );
+    let t_post: i64 = r.rsplit_once('t').unwrap().1.parse().unwrap();
+    // The added field took its default from the converted record: the counter at the freeze.
+    assert_eq!(
+        ask(&new_ws, "bonus", &mut count),
+        format!("bonus:{}", frozen * 10),
+        "the grown world's added field holds its computed default:\n{}",
+        stderr_now()
+    );
+    assert!(
+        t_post >= t_pre,
+        "tick stamp must cross the swap monotonically ({t_pre} -> {t_post})"
+    );
+    assert!(
+        marker.contains("loft-swap: world restored from"),
+        "the new build must restore the snapshot:\n{marker}"
+    );
+    assert!(
+        stderr_now().contains("loft-swap: handing over"),
+        "the old build must hand over:\n{}",
+        stderr_now()
+    );
+    drop(_guard);
+    let _ = fa::remove_file(&prog);
+    let _ = fa::remove_file(&err_path);
+}
+
 /// @PLN18 08-S5 (connector half) — swap a CLIENT process under its running
 /// world.  Driven over the client's own control endpoint: rebuild (a cache
 /// hit — the self-swap) then swap; the retiring client signals the new
@@ -832,6 +1095,190 @@ fn main() {{
     ccmd.process_group(0);
     let client = ccmd
         .arg("--no-warnings")
+        .arg("--lib")
+        .arg(root.join("lib"))
+        .arg(&cli_prog)
+        .current_dir(&root)
+        .stdout(Stdio::from(fa::create(&out_path).unwrap()))
+        .stderr(Stdio::from(fa::create(&err_path).unwrap()))
+        .spawn()
+        .expect("spawn client");
+    let mut cguard = Guard(Some(client));
+
+    // Scrape the FIRST control endpoint.
+    let deadline = vm_deadline(120);
+    let ctl_port: u16 = loop {
+        let out = fa::read_to_string(&out_path).unwrap_or_default();
+        if let Some(rest) = out.split("debug control on 127.0.0.1:").nth(1) {
+            break rest
+                .split_whitespace()
+                .next()
+                .and_then(|p| p.trim().parse().ok())
+                .expect("port parse");
+        }
+        assert!(Instant::now() < deadline, "client never announced: {out}");
+        std::thread::sleep(Duration::from_millis(200));
+    };
+
+    // Drive the self-swap over the channel.
+    let ctl = ws_connect(ctl_port);
+    std::thread::sleep(Duration::from_millis(300)); // let some ticks land
+    ws_send(&ctl, "D!:rebuild");
+    assert_eq!(ws_recv(&ctl), "D:rebuild started");
+    let deadline = vm_deadline(300);
+    loop {
+        std::thread::sleep(Duration::from_millis(200));
+        ws_send(&ctl, "D!:rebuild?");
+        let st = ws_recv(&ctl);
+        if st == "D:rebuild 2" {
+            break;
+        }
+        assert!(st == "D:rebuild 1", "rebuild status: {st}");
+        assert!(Instant::now() < deadline, "rebuild never ready");
+    }
+    ws_send(&ctl, "D!:swap auto");
+    assert_eq!(ws_recv(&ctl), "D:swap true");
+
+    // The OLD driver chain exits (run_client returns 2 -> main ends).
+    let deadline = vm_deadline(30);
+    loop {
+        if let Some(child) = cguard.0.as_mut()
+            && child.try_wait().ok().flatten().is_some()
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "old client never retired");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    // Evidence: retirement printed; the NEW process resumed the world (a
+    // scalar tick counter restores fully -> it resumed counting from a
+    // positive value) and announced its own endpoint.
+    let deadline = vm_deadline(30);
+    let (resumed_ticks, ctl2_port): (i64, u16) = loop {
+        let out = fa::read_to_string(&out_path).unwrap_or_default();
+        let announce2 = out.match_indices("debug control on 127.0.0.1:").nth(1);
+        if let (Some(rest), Some((idx, _))) =
+            (out.split("client: resumed ticks=").nth(1), announce2)
+        {
+            let ticks = rest
+                .split_whitespace()
+                .next()
+                .and_then(|t| t.parse().ok())
+                .expect("ticks parse");
+            let port = out[idx + "debug control on 127.0.0.1:".len()..]
+                .split_whitespace()
+                .next()
+                .and_then(|p| p.parse().ok())
+                .expect("ctl2 parse");
+            break (ticks, port);
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the new build never resumed/announced: {out}"
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    };
+    assert!(
+        resumed_ticks > 0,
+        "the world must cross the swap (resumed ticks={resumed_ticks})"
+    );
+    let out = fa::read_to_string(&out_path).unwrap_or_default();
+    assert!(
+        out.contains("client: retired"),
+        "swap_retired must fire: {out}"
+    );
+
+    // The new build is debuggable: quit it over ITS endpoint.
+    let ctl2 = ws_connect(ctl2_port);
+    ws_send(&ctl2, "D!:quit");
+    assert_eq!(ws_recv(&ctl2), "D:quitting");
+    let _ = fa::remove_file(&srv_prog);
+    let _ = fa::remove_file(&cli_prog);
+    let _ = fa::remove_file(&out_path);
+    let _ = fa::remove_file(&err_path);
+}
+
+/// @PLN18 08-S5, connector half, on the C backend: the client is a C build, rebuilt through the
+/// driver (`--check --native-c`) and swapped over its own debug endpoint, as its Rust-writer twin
+/// above is.
+#[test]
+fn s5_c_client_swap_under_running_world() {
+    if !fa::exists(loft_bin()) {
+        eprintln!("skipping: release loft not built");
+        return;
+    }
+    let port = common::bind_port(18151);
+    const STEM: &str = "/.loft/cache/eh_s5cc_";
+    s5_kill_stale(STEM);
+    let _hygiene = S5Hygiene(STEM.to_string(), Some(port));
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+    let srv_prog = test_tmp().join(format!("eh_s5cc_srv_{port}.loft"));
+    fa::write(
+        &srv_prog,
+        format!(
+            r#"
+use engine_host;
+struct W {{ t: integer not null }}
+fn main() {{
+  w = W {{ t: 0 }};
+  engine_host::run({port}, 10000,
+    fn(ev: engine_host::Event) {{ }},
+    fn() {{ w.t = w.t + 1; }});
+}}
+"#
+        ),
+    )
+    .unwrap();
+    let mut scmd = loft::platform::process::harness_command(loft_bin());
+    scmd.env_remove("LOFT_NATIVE_BACKEND");
+    scmd.process_group(0);
+    let server = scmd
+        .arg("--interpret")
+        .arg("--no-warnings")
+        .arg("--lib")
+        .arg(root.join("lib"))
+        .arg(&srv_prog)
+        .current_dir(&root)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn server");
+    let _sguard = Guard(Some(server));
+
+    let cli_prog = test_tmp().join(format!("eh_s5cc_cli_{port}.loft"));
+    fa::write(
+        &cli_prog,
+        format!(
+            r#"
+use engine_host;
+struct C {{ ticks: integer not null }}
+fn main() {{
+  c = C {{ ticks: 0 }};
+  resumed = engine_host::swap_world(c);
+  if resumed {{ println("client: resumed ticks={{c.ticks}}"); }}
+  engine_host::run_client(engine_host::default_host(), {port}, 5000,
+    fn(ev: engine_host::Event) {{ }},
+    fn() {{
+      c.ticks = c.ticks + 1;
+      if c.ticks > 12000 {{ engine_host::client_stop(); }}
+    }});
+  if engine_host::swap_retired() {{ println("client: retired"); }}
+}}
+"#
+        ),
+    )
+    .unwrap();
+    let out_path = test_tmp().join(format!("eh_s5cc_cli_{port}.out"));
+    let err_path = test_tmp().join(format!("eh_s5cc_cli_{port}.err"));
+    let mut ccmd = loft::platform::process::harness_command(loft_bin());
+    ccmd.env_remove("LOFT_NATIVE_BACKEND");
+    ccmd.env("LOFT_DEBUG_CONTROL", "1");
+    ccmd.process_group(0);
+    let client = ccmd
+        .arg("--no-warnings")
+        .arg("--native-c")
         .arg("--lib")
         .arg(root.join("lib"))
         .arg(&cli_prog)
@@ -2043,6 +2490,78 @@ fn main() {
         .env_remove("LOFT_NATIVE_BACKEND")
         .env("LOFT_OFFLINE", "1")
         .arg("--no-warnings")
+        .arg("--lib")
+        .arg(root.join("lib"))
+        .arg(&prog)
+        .current_dir(&root)
+        .output()
+        .expect("run local swap cycle");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stdout.contains("RESUMED"),
+        "the new incarnation must restore the world (#352).\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("exited gen=1 retired=true"),
+        "the OLD local loop must observe the handover (#352).\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("exited gen=2 retired=false"),
+        "the resumed incarnation must run on and exit by itself.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let _ = fa::remove_file(&prog);
+}
+
+/// @PLN18 08-S5, LOCAL role, on the C backend: the same cycle as its twin above with every
+/// incarnation a C build.  The loop runs 400 ticks rather than 100: the rebuild parses (its
+/// world check is the parser's) and writes the whole C unit for its cache key, which takes about
+/// a second on a dev driver, close to the twin's two-second window.
+#[test]
+fn s5_c_local_swap_hands_over() {
+    if !fa::exists(loft_bin()) {
+        eprintln!("skipping: release loft not built");
+        return;
+    }
+    let _hygiene = S5Hygiene("eh_s5clocal".to_string(), None);
+    let fixture = r#"use engine_host;
+
+struct World { ticks: integer, gen: integer }
+
+fn main() {
+    w = World { ticks: 0, gen: 1 };
+    resumed = engine_host::swap_world(w);
+    if resumed {
+        println("RESUMED ticks={w.ticks}");
+        w.gen += 1;
+    }
+    started = false;
+    swapped = false;
+    engine_host::run_local(20000,
+        fn(ev: engine_host::Event) {},
+        fn() {
+            w.ticks += 1;
+            if w.ticks == 5 && !started && w.gen == 1 {
+                started = engine_host::rebuild_start();
+            }
+            if started && !swapped && engine_host::rebuild_status() == 2 {
+                swapped = engine_host::swap_start(engine_host::rebuild_artifact());
+            }
+            if w.ticks >= 400 {
+                engine_host::client_stop();
+            }
+        });
+    println("exited gen={w.gen} retired={engine_host::swap_retired()}");
+}
+"#;
+    let prog = std::env::temp_dir().join(format!("eh_s5clocal_{}.loft", std::process::id()));
+    fa::write(&prog, fixture).unwrap();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out = loft::platform::process::harness_command(loft_bin())
+        .env_remove("LOFT_NATIVE_BACKEND")
+        .env("LOFT_OFFLINE", "1")
+        .arg("--no-warnings")
+        .arg("--native-c")
         .arg("--lib")
         .arg(root.join("lib"))
         .arg(&prog)

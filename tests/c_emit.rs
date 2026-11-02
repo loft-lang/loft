@@ -211,19 +211,19 @@ fn a_scalar_program_written_as_c_answers_what_the_interpreter_answers() {
 #[test]
 fn a_construct_outside_the_scalar_subset_is_refused_by_name() {
     // A native the C runtime has not ported is refused by its name, never written as C that
-    // answers differently.  Every native a program can call from the standard library has a C
-    // port, so the subject is one of loft's own binary that the runtime does not carry:
-    // `lib/engine_host`'s build swap (`in_binary_native`).
+    // answers differently.  Every native a program can call from the standard library or a
+    // library of loft's own binary has a C port, so the subject is a native of the binary's
+    // table (`native::FUNCTIONS`) that no declaration reaches: an internal destination twin.
     let p = parsed(
-        "fn swap_start(artifact: text) -> boolean;\n#native\n\
-         fn up() -> integer { if swap_start(\"x\") { 1 } else { 0 } }\n",
+        "fn store_memory_dest() -> integer;\n#native\n\
+         fn up() -> integer { store_memory_dest() }\n",
     );
     let d = p.data.def_nr("n_up");
     let refusal = loft::c::emit_unit(&p.data, &p.database, &[d])
         .expect_err("a native without a C port is not carried");
-    assert_eq!(refusal.function, "swap_start");
+    assert_eq!(refusal.function, "store_memory_dest");
     assert!(
-        refusal.why.contains("native swap_start"),
+        refusal.why.contains("native store_memory_dest"),
         "names the construct: {refusal}"
     );
 }
@@ -6234,10 +6234,10 @@ fn a_halted_c_test_releases_the_texts_its_frames_hold() {
 /// does not.  `lib/process`'s `process_run` is carried (`loft_process.h`): the values below are
 /// computed by hand — a run's code and both streams, a signal as 128 + n, a program that cannot
 /// start, a timeout's -2, a cursor's lines — and the interpreter must give the same lines.
-/// `engine_host`'s `rebuild_status` is not carried: the C must refuse the unit naming it, never
-/// emit the "not loaded" stub, which the interpreter cannot give for a native of its own binary.
+/// `engine_host`'s `rebuild_status` runs on both: a program the driver did not start has no build
+/// in flight, so both answer idle (0) rather than the "not loaded" stub.
 #[test]
-fn in_binary_natives_run_on_the_c_or_refuse_by_name() {
+fn in_binary_natives_run_on_the_c_as_on_the_interpreter() {
     if !have_cc() || !loft::platform::c_runtime_posix_host() {
         eprintln!("skipped: no cc on PATH, or not a POSIX host");
         return;
@@ -6284,20 +6284,22 @@ fn in_binary_natives_run_on_the_c_or_refuse_by_name() {
         "use engine_host;\nfn main() { println(\"{engine_host::rebuild_status()}\"); }\n",
     )
     .expect("write program");
-    let out = loft::platform::process::harness_command(loft)
-        .args(["--emit-c"])
-        .arg(dir.join("h.c"))
-        .arg("--lib")
-        .arg(&lib)
-        .arg(&host)
-        .output()
-        .expect("run loft --emit-c");
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(2), "a refusal: {err}");
-    assert!(
-        err.contains("rebuild_status") && err.contains("the C runtime does not carry it"),
-        "the refusal names the native: {err}"
-    );
+    for backend in ["--native-c", "--interpret"] {
+        let out = loft::platform::process::harness_command(loft)
+            .arg(backend)
+            .arg("--lib")
+            .arg(&lib)
+            .arg(&host)
+            .env("LOFT_TIMEOUT", "120")
+            .output()
+            .expect("run loft");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "0\n",
+            "{backend}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
 }
 
 /// @PLN203 C5 — `lib/engine_host`'s kernel on the C (`loft_engine.h`) and on the interpreter,

@@ -252,6 +252,9 @@ pub(crate) struct Cx<'a> {
     /// The store root types a whole-image load converts from another layout (@PLN196,
     /// `loft_upgrade.h`): each one's sidecar carries the program's own description.
     upgrades: std::cell::RefCell<std::collections::BTreeSet<u16>>,
+    /// The world types a `swap_world` call names (`loft_engine.h`): each gets the JSON render
+    /// a world that shares its store goes over as (`loft_swap_show<tp>`).
+    pub(crate) swap_worlds: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// The unit reaches `stack_trace()`: every function keeps a frame (`loft_frame_push`).
     pub(crate) frames: std::cell::Cell<bool>,
     /// The unit binds a collection to a lazy source (`store_bind_lazy`): every keyed lookup
@@ -400,6 +403,7 @@ impl<'a> Cx<'a> {
             loop_callees: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             parse_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             upgrades: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            swap_worlds: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             frames: std::cell::Cell::new(false),
             lazy: std::cell::Cell::new(false),
             ffi_libs: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -1317,6 +1321,13 @@ impl<'a> Cx<'a> {
             );
         }
         out.push_str(&self.show_code());
+        for &tp in self.swap_worlds.borrow().iter() {
+            let call = self.show_top_call(tp, "s", "r", "2");
+            let _ = writeln!(
+                out,
+                "static void loft_swap_show{tp}(loft_text *s, loft_ref r) {{ {call}; }}"
+            );
+        }
         out.push_str(&self.deliver_code());
         out.push_str(&self.eq_code());
         out.push_str(&self.ser_code());
@@ -2381,7 +2392,10 @@ fn unit_defines(
         out.push_str("#define LOFT_PROCESS 1\n");
     }
     if runtimes.iter().any(|r| {
-        r.starts_with("loft_kernel_") || matches!(*r, "loft_live_flip" | "loft_swap_retired")
+        r.starts_with("loft_kernel_")
+            || r.starts_with("loft_swap_")
+            || r.starts_with("loft_rebuild_")
+            || *r == "loft_live_flip"
     }) {
         out.push_str("#define LOFT_ENGINE 1\n");
     }
@@ -3385,8 +3399,14 @@ fn in_binary_native(native: &str) -> Option<&'static str> {
     match native {
         "n_process_run" => Some("loft_process_run"),
         "n_git_query" => Some("loft_git_query"),
-        // `lib/engine_host`'s kernel (`loft_engine.h`).  Its build swap and background rebuild
-        // (`swap_world`, `swap_start`, `rebuild_*`) are not carried: a unit that calls one refuses.
+        // `lib/engine_host`'s kernel (`loft_engine.h`), its build swap and background rebuild
+        // included.  A `swap_world` call whose world type is known is written at its call site
+        // (`swap_world_call`); this forwarded one has no layout and restores no image.
+        "n_swap_world" => Some("loft_swap_world_untyped"),
+        "n_swap_start" => Some("loft_swap_start"),
+        "n_rebuild_start" => Some("loft_rebuild_start"),
+        "n_rebuild_status" => Some("loft_rebuild_status"),
+        "n_kernel_rebuild_artifact" => Some("loft_kernel_rebuild_artifact"),
         "n_kernel_listen" => Some("loft_kernel_listen"),
         "n_kernel_pump" => Some("loft_kernel_pump"),
         "n_kernel_next_event" => Some("loft_kernel_next_event"),
