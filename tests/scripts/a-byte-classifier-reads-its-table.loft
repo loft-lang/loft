@@ -1,0 +1,82 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-Tabulate` — a function of one integer answering an integer, whose body the compiler
+// can evaluate for every byte, answers a byte argument from the table of those evaluations and
+// runs its body for every other argument.  An evaluation that overflows, answers null or meets
+// a node the evaluator does not model declines the whole function, so its body answers
+// everywhere and no fault moves to compile time.
+//
+// The C writer applies it; the interpreter applies nothing and is the oracle.  Every value is
+// hand-computed: `b64v` over 0..300 is the 66 class bytes (A-Z 0..25 = 325, a-z 26..51 = 1001,
+// 0-9 52..61 = 565, `+ -` 62 = 124, `/ _` 63 = 126; 2141) and 234 others at -1; `hexv` over
+// 0..256 is 45 + 75 + 75 for its 22 digits, 16 for `x` and `X`, and -1 for the 232 others;
+// `scale` overflows from 185 up, so it declines and keeps answering null there.
+//
+// @falsified-at: d9d106cb2 — by hand on the C writer (`falsify.sh` scores the interpreter and
+//   native, where nothing is tabulated, so both read INERT): the table's entry for `A` planted
+//   one high fails `b64v`'s boundary cells and its sum (c_sweep: differ), the table read
+//   without its range test (`tab[c & 255]`) fails the out-of-range cells, and a table built
+//   for `scale` (the overflow decline struck) answers a wrapped product where the body answers
+//   null at 200 — each one alone: 1 differ.
+
+fn b64v(c: integer) -> integer {
+  if c >= 65 && c <= 90 { return c - 65; }
+  if c >= 97 && c <= 122 { return c - 97 + 26; }
+  if c >= 48 && c <= 57 { return c - 48 + 52; }
+  if c == 43 || c == 45 { return 62; }
+  if c == 47 || c == 95 { return 63; }
+  -1
+}
+
+fn hexv(c: integer) -> integer {
+  d = c - 48;
+  if d >= 0 && d <= 9 { return d; }
+  l = c - 97;
+  if l >= 0 && l <= 5 { return l + 10; }
+  u = c - 65;
+  if u >= 0 && u <= 5 { return u + 10; }
+  if c == 120 || c == 88 { return 16; }
+  -1
+}
+
+fn scale(x: integer) -> integer {
+  if x == 1 { return 11; }
+  if x == 2 { return 22; }
+  if x == 3 { return 33; }
+  if x == 4 { return 44; }
+  if x == 5 { return 55; }
+  if x == 6 { return 66; }
+  if x == 7 { return 77; }
+  if x == 8 { return 88; }
+  x * 50000000000000000
+}
+
+fn main() {
+  // The class boundaries, inside the table's range.
+  assert(b64v(65) == 0 && b64v(90) == 25, "A and Z");
+  assert(b64v(64) == -1 && b64v(91) == -1, "around A-Z");
+  assert(b64v(97) == 26 && b64v(122) == 51, "a and z");
+  assert(b64v(48) == 52 && b64v(57) == 61, "0 and 9");
+  assert(b64v(43) == 62 && b64v(45) == 62, "+ and -");
+  assert(b64v(47) == 63 && b64v(95) == 63, "/ and _");
+  assert(b64v(0) == -1 && b64v(255) == -1, "the range's ends");
+  // Outside the range the body answers.
+  assert(b64v(256) == -1 && b64v(-1) == -1 && b64v(321) == -1, "past either end");
+  s = 0;
+  for i in 0..300 { s += b64v(i); }
+  assert(s == 1907, "b64v over 0..300: {s}");
+  n = 0;
+  for i in -5..0 { n += b64v(i); }
+  assert(n == -5, "b64v over -5..0: {n}");
+  h = 0;
+  for i in 0..256 { h += hexv(i); }
+  assert(h == -5, "hexv over 0..256: {h}");
+  assert(hexv(102) == 15 && hexv(70) == 15 && hexv(57) == 9 && hexv(88) == 16, "f, F, 9 and X");
+  // An evaluation that overflows declines the table: the body keeps answering.
+  assert(scale(2) == 22 && scale(8) == 88, "scale(2), scale(8)");
+  assert(scale(100) == 5000000000000000000, "scale(100)");
+  assert(!scale(200), "scale(200) overflows to null");
+  assert((scale(200) ?? -9) == -9, "and ?? sees the null");
+  println("{s} {n} {h}");
+}

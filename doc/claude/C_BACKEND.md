@@ -314,7 +314,15 @@ nothing else in the body naming it or writing a store, no exit but the loop's ow
 reservation: a push that does not fit takes the growth arm.  Native builds its deep window on
 a held push header, so it opens fewer; the soundness question is the analysis's, and the C
 answers it the same.  `LOFT_NO_DEEP_WINDOW=1` keeps the counted windows only.  `[x; n]` fills
-as the Rust runtime does: one exact resize, the template copied in doubling blocks.
+as the Rust runtime does: one exact resize, the template copied in doubling blocks.  A counted
+loop that is ONE fill over a held vector (`hoist::fill_loop`, `@FR-R-Fill`, its guarded clause
+included) is one range test and one store run through the header (`loft_vh_fill_*`), the loop
+its fallback and the counters left as the loop leaves them; `LOFT_NO_FILL_HOIST=1` and
+`LOFT_NO_GUARDED_FILL=1` turn it off, as on native.  A record copy of a type that owns no heap,
+its source kept (`hoist::flat_copy`, `@FR-R-FlatCopy`), is `loft_copy_flat`: its bytes, a null
+end and a parse result's root taking the general copy.  A function of one integer the compiler
+can evaluate for every byte (`opt::tabulate`, `@FR-R-Tabulate`) answers a byte argument from a
+function-local table of those evaluations; `LOFT_NO_TABULATE=1` keeps the body.
 
 **Held file cursors.**  A loop that reads one `File` through fixed-width integer reads, where
 nothing else in it can see the record (`lower::file_hold::held_file`, `@FR-R-FileHold`), keeps

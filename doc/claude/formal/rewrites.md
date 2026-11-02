@@ -3752,7 +3752,8 @@ second statement keep the loop.  Switch `LOFT_NO_FILL_HOIST`; falsifier
 loop.  The guarded clause's span floor is a measurement, not a rule: every span through the
 fill made graphics' `fill_triangle` slower (an empty one pays the fill's setup and then the
 loop), spans from eight took it −27 %.  Switch `LOFT_NO_GUARDED_FILL`.  Sites:
-`hoist::fill_loop`, `Output::fill_fast_path`, `Stores::fill_hoisted`.
+`hoist::fill_loop`, `Output::fill_fast_path`, `Stores::fill_hoisted`; on the C writer
+`FnWriter::fill_head` / `fill_tail` and `loft_vh_fill_*`, with the same switches.
 
 ### A nest whose arithmetic cannot fault runs plain
 
@@ -4829,7 +4830,8 @@ the hand price), which is `insert_text`'s `np += [p]` per piece
 (`bench/portal/analysis/over-9x.md`).  Same switch.  Cells
 `tests/scripts/a-record-that-owns-no-heap-is-copied-as-its-bytes.loft`.  Sites:
 `hoist::flat_copy` (the admission), `hoist::copy_serves_view`, `ref_ops::emit_flat_copy`,
-`Stores::copy_flat_record`.
+`Stores::copy_flat_record`; on the C writer `loft_copy_flat`, the bytes from one record to the
+other, a null end and a parse result's root taking `loft_copy_record`.
 
 ### A result is built where it will live, moved at its last use, and written over a place
 
@@ -6022,6 +6024,36 @@ fault inside the body keeps its exact position and loses only the leaf's frame, 
 body's lines, runs `open_world` and keeps the call.  It reaches the stdlib too (`clamp`,
 `approx` inline their `min`/`max`).  `LOFT_NO_INLINE_LEAF=1`; `LOFT_TRACE_INLINE_LEAF=1` names
 each inlined call, each decline and each reduction below.
+
+### A branchy classifier of a byte is a table
+
+```
+  (R-Tabulate)   a loft function of ONE integer parameter answering an integer, whose body
+                 the compiler can EVALUATE — literals, the parameter, `if`, blocks, `return`,
+                 the integer comparisons, `+ - *` and negation with their checks, the bit
+                 operators — answers from a 256-entry table for an argument in [0, 256) and
+                 runs its body for every other argument, when for EVERY argument in that
+                 range the evaluation answers a value that is not the null sentinel, with no
+                 overflow on the way, and the body takes at least eight branches.  The
+                 table is the evaluation's answers; the body is unchanged.  APPLIED BY the C
+                 writer; the interpreter is the oracle.
+```
+
+**In words.**  @PLN210 P9.  crypto's `b64_value` is a chain of range tests over a byte, and on
+random base64 every test is a data-dependent branch: 36 M mispredictions per `request` run
+where a table lookup has none (hand price: `request` 5.2× → 3.5× its twin).  The evaluation
+replays the body in the compiler with loft's checked arithmetic, so an entry is exactly what
+the body answers for that argument, and an argument whose evaluation would overflow, answer
+null or reach anything the evaluator does not model declines the whole rewrite — no fault
+moves from a call to compile time (@C120), and none is lost.  The domain is the byte because
+the shape is a byte classifier: a lexer's character class, a hex or base64 digit, a table of
+escapes.  The floor of eight branches is measured: the hex libraries' five- and six-branch
+direction maps (`corner_k`, `between_k`, gridmesh's `axial_dq`) are called from loops that
+walk the six directions in order, where the chain is predicted and the table's range test and
+load are extra work — hex_field `trace` +7 % on gcc with them tabulated, the same as untouched
+at eight.  `b64_value`'s ten branches on random input are not predicted: `request` −35 % (gcc),
+−49 % (clang).  Switch `LOFT_NO_TABULATE`; `LOFT_TRACE_TABULATE=1` names each admitted function and
+each decline.  Site: `opt::tabulate::table`.
 
 ### A self-call in tail position is a jump
 

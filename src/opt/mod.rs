@@ -30,6 +30,7 @@ pub mod push_window;
 pub mod range;
 pub mod ret_adopt;
 pub mod store_text_borrow;
+pub mod tabulate;
 pub mod tail_self;
 pub mod text_borrow;
 pub mod value_records;

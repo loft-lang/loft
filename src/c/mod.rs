@@ -2931,6 +2931,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
             .write()?,
     };
     let (body, statements) = body;
+    let body = tabulated(cx, d, ret, &params, body);
     // `@FR-R-Inline`: a small function is declared `inline`, its frame wrapper with it.
     let inline = small_function(statements) || hot_twin(mask, statements);
     let helper = !inline && hot_helper_size(mask, statements);
@@ -3999,6 +4000,31 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
 /// A function as the unit writes it: its body becomes `<name>__fr`, and the function
 /// pushes its frame (`cr_call_push`'s name and file), calls the body and pops the frame, so
 /// every return of the body leaves the frame stack as it found it.
+/// `@FR-R-Tabulate` — a classifier of a byte reads its answer from the table the compiler
+/// evaluated (`opt::tabulate::table`) when its one parameter is in the table's range, and runs
+/// its body otherwise.  Only where the parameter and the result are the 64-bit integers the
+/// table holds.
+fn tabulated(cx: &Cx, d: u32, ret: CType, params: &str, body: String) -> String {
+    let [param] = params.split(", ").collect::<Vec<_>>()[..] else {
+        return body;
+    };
+    let Some(p) = param.strip_prefix("int64_t ") else {
+        return body;
+    };
+    if held(ret) != "int64_t" {
+        return body;
+    }
+    let Some(tab) = crate::opt::tabulate::table(cx.data, d) else {
+        return body;
+    };
+    let entries: Vec<String> = tab.iter().map(|v| format!("INT64_C({v})")).collect();
+    format!(
+        "    static const int64_t loft_tab[{n}] = {{ {} }}; /* @FR-R-Tabulate */\n    if ((uint64_t) {p} < {n}) return loft_tab[{p}];\n{body}",
+        entries.join(", "),
+        n = crate::opt::tabulate::DOMAIN,
+    )
+}
+
 fn framed(
     cx: &Cx,
     d: u32,
