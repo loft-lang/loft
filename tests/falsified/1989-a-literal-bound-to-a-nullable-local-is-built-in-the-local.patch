@@ -15,3 +15,22 @@ index e2acebffe..dba6c28af 100644
                  self.convert_store(
                      code,
                      &Type::Null,
+diff --git a/src/variables/mod.rs b/src/variables/mod.rs
+index 758083d91..05321e0f1 100644
+--- a/src/variables/mod.rs
++++ b/src/variables/mod.rs
+@@ -2157,13 +2157,7 @@ impl Function {
+         // leaked record per walk, both backends (loft#2017).  Not owning, such a local takes
+         // the work-reference road a foreign dep (`x = p.inner`) already takes, which frees at
+         // scope exit (@FR-O-Owner: a view is never owned; @FR-N-Road: the dense twin's road).
+-        d.is_empty()
+-            || (d.len() == 1
+-                && d[0] == var_nr
+-                && !matches!(
+-                    self.variables[var_nr as usize].type_def.base(),
+-                    Type::Reference(_, _) | Type::Enum(_, true, _)
+-                ))
++        d.is_empty() || (d.len() == 1 && d[0] == var_nr)
+     }
+ 
+     /// Remove a lifetime dependency for this variable.
