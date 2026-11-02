@@ -1803,7 +1803,7 @@ fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
   // parameter — the caller may hand one store twice), is computed into a `__ref_N` before the
   // record is made; a collection or nested-literal field is built in place and never staged.
   staged: vector<ir::Node> = [];
-  if !e.first_pass && !(starts_with(el_vars::name_of(vars, v), "_") && !vars.vars[v].user_named) {
+  if !e.first_pass && !el_vars::is_compiler_generated(vars, v) {
     viewers = store_viewers(vars, v) + [v];
     for op in ops {
       if op#index < 2 {
@@ -1848,12 +1848,42 @@ fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
 }
 
 // The literal's build into record local `v`: nulled, given a record of the struct's store type,
-// each written field set in literal order and — on the second pass — each omitted field its
-// type's default, in declaration order (`object_init`).  Null when a field is refused.
+// then its fields (`fields_at`).  Null when a field is refused.
 fn object_fields(e: el::El, vars: el_vars::Vars, v: integer, d: integer, fields: vector<integer>) -> vector<ir::Node>? {
-  def = el::def(e, d);
   r = ir::NdVar { n: v };
-  list: vector<ir::Node> = [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpDatabase", [r, ir::NdInt { n: def.known_type }])];
+  body = fields_at(e, vars, v, r, d, fields);
+  if body == null {
+    return null;
+  }
+  [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpDatabase", [r, ir::NdInt { n: el::def(e, d).known_type }])] + body!
+}
+
+// `Parser::nested_literal_place` (`@FR-R-InPlaceLiteral`): the struct a field's value is a literal
+// of, when that literal is built straight into the field — an embedded struct field (not a
+// `reference<T>` pointer, not `τ?`) whose value is a plain literal of the field's own struct,
+// inside a record the program cannot read yet (its local is one the parser made).  -1 keeps
+// the ordinary road: the literal built apart and copied in.
+fn nested_literal(e: el::El, vars: el_vars::Vars, v: integer, at: ir::TypeT, fe: integer) -> integer {
+  if e.first_pass || !el_vars::is_compiler_generated(vars, v) {
+    return -1;
+  }
+  match at {
+    TyReference { n: fd, dep } => {
+      if dep.contains(el_types::MARKER) || el::def(e, fd).def_type != el::DT_STRUCT || struct_literal_def(e, fe) != fd {
+        return -1;
+      }
+      fd
+    },
+    _ => -1
+  }
+}
+
+// A literal's fields written into the record at `r` (the local `v`, or a place inside it): each
+// written vector field's handle zeroed, each written field set in literal order, and — on the
+// second pass — each omitted field its type's default, in declaration order (`object_init`).
+fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer, fields: vector<integer>) -> vector<ir::Node>? {
+  def = el::def(e, d);
+  list: vector<ir::Node> = [];
   // `parse_object_field`'s header prime: each WRITTEN vector field's handle zeroed right after
   // the record is made, in literal order.
   for fi in fields {
@@ -1883,7 +1913,7 @@ fn object_fields(e: el::El, vars: el_vars::Vars, v: integer, d: integer, fields:
               el::refuse(e, "a vector field written from something other than a literal");
               return null;
             }
-            built = field_vector(e, vars, v, d, fname, inner, fe!);
+            built = field_vector(e, vars, v, r, d, fname, inner, fe!);
             if built == null {
               return null;
             }
@@ -1895,6 +1925,22 @@ fn object_fields(e: el::El, vars: el_vars::Vars, v: integer, d: integer, fields:
             continue;
           },
           _ => {}
+        }
+        fd = nested_literal(e, vars, v, at, fe!);
+        if fd >= 0 {
+          place = el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: field_position(e, d, fname) }, ir::NdInt { n: el::def(e, fd).known_type }]);
+          sub: vector<integer> = [];
+          match e.p.nodes[fe!] {
+            SStructLit { fields: fs } => { sub = fs; },
+            _ => {}
+          }
+          built = fields_at(e, vars, v, place, fd, sub);
+          if built == null {
+            return null;
+          }
+          list += built!;
+          found += [fname];
+          continue;
         }
         x = expression(e, vars, fe!);
         fc = stored(e, vars, x, at);
@@ -1998,10 +2044,10 @@ fn contains_struct(e: el::El, d: integer, host: integer, depth: integer) -> bool
   false
 }
 
-// A vector field written from a literal, built into the field (`parse_vector_inner` with
-// `is_field`): no room made first; a scalar item pushed onto the field's place, a text item a
+// A vector field written from a literal, built into the field of the record at `r` (the local
+// `v`, or a place inside it) — `parse_vector_inner` with `is_field`: no room made first; a scalar item pushed onto the field's place, a text item a
 // record made through the owning struct's field (`OpNewRecord(r, struct, field)`).
-fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, d: integer, fname: text, inner: ir::TypeT, n: integer) -> vector<ir::Node>? {
+fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer, fname: text, inner: ir::TypeT, n: integer) -> vector<ir::Node>? {
   items: vector<integer> = [];
   match e.p.nodes[n] {
     SVecLit { items: its } => { items = its; },
@@ -2009,7 +2055,14 @@ fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, d: integer, fname: t
   }
   elm = -1;
   if len(items) > 0 {
-    elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
+    // `unique_elm_var`: the element borrows what the record's place borrows — the local when
+    // the place is one, nothing for a place inside it.  An inline ref that borrows nothing is
+    // nulled where it is first used (`parse_code`'s inline-ref preamble).
+    dep: vector<integer> = if r is NdVar { [v] } else { [] };
+    elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: dep });
+    if len(dep) == 0 {
+      vars.inline_refs += [elm];
+    }
   }
   out: vector<ir::Node> = [];
   def = el::def(e, d);
@@ -2018,7 +2071,6 @@ fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, d: integer, fname: t
   vk = el_schema::schema_type(e, "vector<{el_types::elem_name(e, inner)}>");
   fnr = el_schema::field_nr(e, kt, fname);
   push = push_op(inner);
-  r = ir::NdVar { n: v };
   if e.first_pass && elm >= 0 {
     vars.allocs += [v];
   }

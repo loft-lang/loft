@@ -7,6 +7,10 @@ use ir;
 use syntax::*;
 use el;
 
+// The `Deps` entry that names no variable: a `reference<T>` field's pointer marker, a share
+// marker (`Deps::is_pointer_marker`).
+pub const MARKER = 65535;
+
 // `Type::base`: the type behind a nullability marker.
 pub fn base(t: ir::TypeT) -> ir::TypeT {
   match t {
@@ -202,7 +206,7 @@ pub fn deps(t: ir::TypeT) -> vector<integer> {
     },
     _ => []
   };
-  [for d in r if d != 65535 { d }]
+  [for d in r if d != MARKER { d }]
 }
 
 

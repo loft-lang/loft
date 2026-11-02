@@ -246,6 +246,12 @@ pub fn mark_user_named(v: Vars, nr: integer) {
   v.vars[nr].user_named = true;
 }
 
+// `Function::is_compiler_generated`: a local the parser made (`__ref_p2_1`, `_elm_1`), which the
+// program cannot name and so cannot read.
+pub fn is_compiler_generated(v: Vars, nr: integer) -> boolean {
+  name_of(v, nr).starts_with("_") && !v.vars[nr].user_named
+}
+
 // `Function::change_var_type`, the cases a plain binding meets: a local still untyped takes the
 // value's type, and one already of that type keeps it.  False for any other change, which the
 // caller refuses by name.
