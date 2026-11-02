@@ -2216,6 +2216,19 @@ impl Output<'_> {
     /// this (#305).
     #[must_use]
     pub fn fn_ident(&self, def: &crate::data::Definition) -> String {
+        // The program's ENTRY keeps the bare `n_main`: every bootstrap template calls it by
+        // that name.  A library the program uses may declare a `main` of its own (a demo, a
+        // fixture run on its own); the two then share a name, and disambiguating BOTH renamed
+        // the entry too, so the bootstrap's `n_main(&cell)` named nothing (rustc E0425 under
+        // `loft --tests --native`).  The other `main` keeps its file-hashed identifier.
+        let entry = self.data.def_nr("n_main");
+        if def.name() == "n_main" && entry != u32::MAX && std::ptr::eq(def, self.data.def(entry)) {
+            return if self.dv_renames(def) {
+                "n_main__dv".to_string()
+            } else {
+                "n_main".to_string()
+            };
+        }
         let id = disambiguated_fn_ident(&self.dup_fn_names, def);
         if self.dv_renames(def) {
             format!("{id}__dv")
