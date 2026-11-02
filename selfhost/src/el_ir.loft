@@ -95,6 +95,15 @@ pub fn last(ops: vector<ir::Node>) -> ir::Node {
   if len(ops) == 0 { ir::NdNull } else { ops[-1] }
 }
 
+// `n` with the node under its spans replaced by `by`: a rewrite of a statement that keeps the
+// statement's source position, as a Rust rewrite that descends through `Value::Span` does.
+pub fn respan(n: ir::Node, by: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: respan(inner, by) },
+    _ => by
+  }
+}
+
 pub fn unspan(n: ir::Node) -> ir::Node {
   match n {
     NdSpan { inner } => unspan(inner),

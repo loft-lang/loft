@@ -46,6 +46,11 @@ pub struct Vars {
   pub work_text: integer,
   // The record locals a struct literal has built in place on this pass.
   pub built: vector<integer>,
+  // The record locals bound from a call that delivers into a hidden buffer: like a built one,
+  // such a local owns its record, so it may take the return buffer (`RetPromotion::Rename`).
+  pub adopted: vector<integer>,
+  // The visible parameters a mid-body `return` hands back as they are (`mid_return_param_deps`).
+  pub mid_params: vector<integer>,
   // `Function::unique`: the counters `create_unique` names `_<name>_<n>` locals by, one per
   // name, per pass
   pub unique: hash<UniqueCount[name]>,
@@ -83,7 +88,7 @@ pub struct Vars {
 }
 
 pub fn new_vars(name: text, file: text) -> Vars {
-  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [] }
+  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], adopted: [], mid_params: [], unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [] }
 }
 
 pub fn name_of(v: Vars, nr: integer) -> text {
@@ -231,6 +236,29 @@ pub fn was_built(v: Vars, nr: integer) -> boolean {
   false
 }
 
+// Does the local own a record it took from a buffered call?
+pub fn was_adopted(v: Vars, nr: integer) -> boolean {
+  v.adopted.contains(nr)
+}
+
+pub fn mark_adopted(v: Vars, nr: integer) {
+  if !v.adopted.contains(nr) {
+    v.adopted += [nr];
+  }
+}
+
+// `Function::unregister_work_ref`: a work ref substituted out by the return buffer gets no null
+// at the head.
+pub fn unregister_work_ref(v: Vars, nr: integer) {
+  kept: vector<integer> = [];
+  for w in v.work_refs {
+    if w != nr {
+      kept += [w];
+    }
+  }
+  v.work_refs = kept;
+}
+
 pub fn mark_built(v: Vars, nr: integer) {
   v.built += [nr];
 }
@@ -303,6 +331,8 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   v.work_text = 0;
   v.work_texts = [];
   v.built = [];
+  v.adopted = [];
+  v.mid_params = [];
   v.allocs = [];
   v.inline_refs = [];
   v.unique = [];

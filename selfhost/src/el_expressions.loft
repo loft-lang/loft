@@ -84,6 +84,9 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       code = delivered!;
     } else if !e.first_pass {
       built = build_into_buffer(e, vars, code, rb, result);
+      if built == null && buffer_bound(e) {
+        built = bind_tail_call(e, vars, code, rb);
+      }
       kind = tail_kind(e, vars, code);
       // A tail already refused is no second refusal.
       if built != null {
@@ -102,6 +105,15 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
           built = object_into_buffer(e, vars, bl.operators[-1], cb, result);
           if built != null {
             bl.operators[-1] = built!;
+          }
+        }
+        // A tail call is handed the buffer an earlier exit renamed (`RetPromotion::Bind`).
+        buf = return_buffer(e, vars);
+        bound = if buf >= 0 { bind_tail_call(e, vars, ir::NdBlock { block: [bl] }, buf) } else { null };
+        if bound != null {
+          match bound! {
+            NdBlock { block: bb } => { bl = bb[0]; },
+            _ => {}
           }
         }
         bl.result = [el_types::with_deps(el_types::without_deps(result), [rb])];
@@ -439,7 +451,7 @@ fn hidden_param(e: el::El, vars: el_vars::Vars, v: integer) -> boolean {
 // literal outside any loop, or a call's hidden `__ref_N` buffer; the rest stays a literal
 // build (`BuildIntoBuffer`) or is refused there.
 fn rename_ret_buffer(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer) {
-  if attr_nr(el::def(e, e.context), "__retbuf") < 0 {
+  if attr_nr(el::def(e, e.context), "__retbuf") < 0 || buffer_bound(e) {
     return;
   }
   tail = ir::NdNull;
@@ -458,13 +470,20 @@ fn rename_ret_buffer(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
   }
 }
 
+// `bound_already`: an earlier exit delivered into the unrenamed `__retbuf` (the result's deps
+// name it), so no later one may rename it — that would retire the variable those exits use.
+fn buffer_bound(e: el::El) -> boolean {
+  ba = attr_nr(el::def(e, e.context), "__retbuf");
+  ba >= 0 && el_types::deps(el::def(e, e.context).returned[0]).contains(ba)
+}
+
 // The variable a returned value `x` hands the return buffer to, or -1: a plain local struct
-// record bound once by a literal (`SkipReassigned` counts the records made through it in
-// `code`), or — on the first pass — a call's hidden `__ref_N` buffer.
+// record bound by a literal or from a buffered call (`SkipReassigned` counts the records made
+// through it in `code`), or — on the first pass — a call's hidden `__ref_N` buffer.
 fn rename_candidate(e: el::El, vars: el_vars::Vars, code: ir::Node, x: ir::Node) -> integer {
   match x {
     NdVar { n } => {
-      if !vars.vars[n].argument && !starts_with(el_vars::name_of(vars, n), "_") && len(el_types::deps(el_vars::tp(vars, n))) == 0 && el_vars::was_built(vars, n) && child_allocs(e, vars, code, n) < 2 {
+      if !vars.vars[n].argument && !starts_with(el_vars::name_of(vars, n), "_") && len(el_types::deps(el_vars::tp(vars, n))) == 0 && (el_vars::was_built(vars, n) || el_vars::was_adopted(vars, n)) && child_allocs(e, vars, code, n) < 2 {
         return n;
       }
     },
@@ -514,7 +533,9 @@ fn var_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer) -> ir
   bl = match code { NdBlock { block } => block[0], _ => return null };
   v = match el_ir::unspan(el_ir::last(bl.operators)) { NdVar { n } => n, _ => return null };
   ret = el::def(e, d).returned[0];
-  td = match el_types::base(ret) { TyReference { n } => n, _ => return null };
+  if !(el_types::base(ret) is TyReference) {
+    return null;
+  }
   dep = el_types::deps(ret);
   a = attr_nr(el::def(e, d), el_vars::name_of(vars, v));
   if a >= 0 {
@@ -547,14 +568,12 @@ fn var_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer) -> ir
   if e.first_pass {
     return code;
   }
-  kt = ir::NdInt { n: el::def(e, td).known_type };
-  owned = el_types::with_deps(el_types::without_deps(el_types::base(ret)), [rb]);
-  copy = el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: rb }, kt]), el_ir::cl(e, "OpCopyRecord", [el_ir::last(bl.operators), ir::NdVar { n: rb }, kt]), ir::NdVar { n: rb }], owned, "materialized_view_return");
-  if record_may_be_absent(vars, v, []) {
-    copy = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: v }]), el_ir::cl(e, "OpNullRefSentinel", []), copy);
+  copy = copy_into_buffer(e, vars, el_ir::last(bl.operators), v, rb, ret);
+  if copy == null {
+    return null;
   }
-  bl.operators[-1] = copy;
-  bl.result = [owned];
+  bl.operators[-1] = copy!;
+  bl.result = [el_types::with_deps(el_types::without_deps(el_types::base(ret)), [rb])];
   ir::NdBlock { block: [bl] }
 }
 
@@ -1522,6 +1541,14 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
     }
   }
   el_vars::drop_use(vars, v);
+  match el_ir::unspan(x.code) {
+    NdCall { args } => {
+      if el_types::base(x.tp) is TyReference && len(el_types::deps(x.tp)) == 0 && hidden_ref_arg(vars, args) >= 0 {
+        el_vars::mark_adopted(vars, v);
+      }
+    },
+    _ => {}
+  }
   if !e.first_pass && el_types::base(el_vars::tp(vars, v)) is TyText && x.code is NdIf {
     arms = text_arms_into(v, x.code);
     if arms != null {
@@ -2026,10 +2053,9 @@ fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer
             if built == null {
               return null;
             }
-            // `handle_field` pushes the literal's build as one value (an insert).
-            if len(built!) > 0 {
-              list += [ir::NdInsert { items: built! }];
-            }
+            // `handle_field` pushes the literal's build as one value (an insert) — an empty one
+            // too, which a build in place in a local splices away.
+            list += [ir::NdInsert { items: built! }];
             found += [fname];
             continue;
           },
@@ -4380,10 +4406,22 @@ fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -> Ex
     },
     _ => {}
   }
-  if w >= 0 && e.first_pass && unrenamed && rename_candidate(e, vars, v.code, x) == w {
+  if w >= 0 && e.first_pass && unrenamed && !buffer_bound(e) && rename_candidate(e, vars, v.code, x) == w {
     rename_onto(e, vars, rb, w);
   }
   a = if w >= 0 { attr_nr(el::def(e, d), el_vars::name_of(vars, w)) } else { -1 };
+  // `MergeAttr` of a visible parameter: handed back as it is.  The tail's prune keeps such a
+  // borrow in the signature only when two parameters are returned so (`mid_return_param_deps`),
+  // which is not carried yet: a second one is refused by name.
+  if a >= 0 && !chain && !el::def(e, d).attributes[a].hidden {
+    if !vars.mid_params.contains(w) {
+      vars.mid_params += [w];
+    }
+    if len(vars.mid_params) > 1 {
+      el::refuse(e, "a function that returns two of its parameters by `return`");
+    }
+    return ex(ir::NdReturn { inner: x }, ir::TyNever);
+  }
   if a >= 0 && el::def(e, d).attributes[a].hidden {
     ret = el::def(e, d).returned[0];
     dep = el_types::deps(ret);
@@ -4391,16 +4429,110 @@ fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -> Ex
       e.b.data.definitions[d].returned = [el_types::with_deps(ret, dep + [a])];
     }
     if chain {
-      own = el_types::with_deps(el_types::without_deps(el_types::base(result)), [w]);
-      return ex(ir::NdReturn { inner: el_ir::v_block([el_ir::v_set(w, x), ir::NdVar { n: w }], own, "one_buffer_chain") }, ir::TyNever);
+      return ex(ir::NdReturn { inner: buffer_chain(x, w, result) }, ir::TyNever);
     }
     return ex(ir::NdReturn { inner: x }, ir::TyNever);
+  }
+  // `RetPromotion::Bind`: no rename took this value (an earlier exit renamed or bound the buffer,
+  // or the local cannot be the buffer), so it is delivered into the buffer — a call by handing
+  // it the buffer in place of its own work ref, a named local by a copy.
+  buf = return_buffer(e, vars);
+  if buf >= 0 && w >= 0 && w != buf {
+    bound = bind_into_buffer(e, vars, x, w, buf, chain);
+    if bound != null {
+      return ex(ir::NdReturn { inner: bound! }, ir::TyNever);
+    }
   }
   if e.first_pass {
     return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
   }
   refuse_known(e, v.tp, "a `return` of a record that is not a literal: {tail_kind(e, vars, el_ir::v_block([v.code], v.tp, ""))}");
   ex(ir::NdNull, ir::TyNever)
+}
+
+// `chain_site_set_shape`: a call that delivers into buffer `w`, made to answer it —
+// `{ w = call; w }`.
+fn buffer_chain(call: ir::Node, w: integer, result: ir::TypeT) -> ir::Node {
+  own = el_types::with_deps(el_types::without_deps(el_types::base(result)), [w]);
+  el_ir::v_block([el_ir::v_set(w, call), ir::NdVar { n: w }], own, "one_buffer_chain")
+}
+
+// `RetPromotion::Bind` of a body whose tail is a call that takes a hidden record buffer: the
+// call is handed `buf` in place of its own work ref and answers it.  Null for any other tail.
+fn bind_tail_call(e: el::El, vars: el_vars::Vars, code: ir::Node, buf: integer) -> ir::Node? {
+  bl = match code { NdBlock { block } => block[0], _ => return null };
+  if len(bl.operators) == 0 {
+    return null;
+  }
+  t = el_ir::unspan(bl.operators[-1]);
+  match t {
+    NdCall { def_nr, args } => {
+      w = hidden_ref_arg(vars, args);
+      if w < 0 || w == buf || returns_argument_view(el::def(e, def_nr)) {
+        return null;
+      }
+      bound = bind_into_buffer(e, vars, t, w, buf, true);
+      if bound == null {
+        return null;
+      }
+      bl.operators[-1] = el_ir::respan(bl.operators[-1], bound!);
+      ir::NdBlock { block: [bl] }
+    },
+    _ => null
+  }
+}
+
+// `Parser::return_buffer`: the variable of the function's hidden record return buffer, by
+// whatever name a rename gave it, or -1.
+fn return_buffer(e: el::El, vars: el_vars::Vars) -> integer {
+  for a in el::def(e, e.context).attributes {
+    if a.hidden && !a.work_buffer && heap_def(a.typedef[0]) >= 0 {
+      return el_vars::var(vars, a.name);
+    }
+  }
+  -1
+}
+
+// `RetPromotion::Bind` into the return buffer `buf`, for a value `x` that names `w`: a call's
+// work ref is substituted by the buffer and the call made the chain that answers it
+// (`substitute`); a named local is copied into the buffer (`materialize_return_into`), the
+// null sentinel answered where it may be absent.  The result's deps name the buffer.  Null on
+// the first pass for a copy (the code is the second pass's), and where `buf` is no attribute.
+fn bind_into_buffer(e: el::El, vars: el_vars::Vars, x: ir::Node, w: integer, buf: integer, call: boolean) -> ir::Node? {
+  d = e.context;
+  a = attr_nr(el::def(e, d), el_vars::name_of(vars, buf));
+  if a < 0 {
+    return null;
+  }
+  ret = el::def(e, d).returned[0];
+  if !el_types::deps(ret).contains(a) {
+    e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [a])];
+  }
+  if call {
+    el_vars::unregister_work_ref(vars, w);
+    return buffer_chain(rename_var(x, w, buf), buf, ret);
+  }
+  if e.first_pass {
+    return x;
+  }
+  copy_into_buffer(e, vars, x, w, buf, ret)
+}
+
+// `materialize_return_into` for a record local `v`: `{ buf = null; OpDatabase(buf, tp);
+// OpCopyRecord(x, buf, tp); buf }`, behind a null test where the local may be absent.
+fn copy_into_buffer(e: el::El, vars: el_vars::Vars, x: ir::Node, v: integer, buf: integer, ret: ir::TypeT) -> ir::Node? {
+  td = heap_def(ret);
+  if td < 0 {
+    return null;
+  }
+  kt = ir::NdInt { n: el::def(e, td).known_type };
+  b = ir::NdVar { n: buf };
+  owned = el_types::with_deps(el_types::without_deps(el_types::base(ret)), [buf]);
+  copy = el_ir::v_block([el_ir::v_set(buf, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [x, b, kt]), b], owned, "materialized_view_return");
+  if record_may_be_absent(vars, v, []) {
+    copy = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: v }]), el_ir::cl(e, "OpNullRefSentinel", []), copy);
+  }
+  copy
 }
 
 // `Parser::chain_return_buffer_var` (@PLN164 B2): the buffer only chain exits renamed — a hidden
