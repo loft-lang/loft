@@ -1552,7 +1552,9 @@ fn n_store_warns_on_a_non_null_tuple_element_1284() {
     let (stdout, diag, _code) = run_with_warnings("nstore_tuple_1284", NSTORE_TUPLE_1284);
     // THREE non-null destinations and two nullable ones.  The count is the assertion: a bare
     // `contains` would pass while the nullable rows were also being flagged.
-    let hits = diag.matches("the tuple element").count();
+    // Counted by the warning's own wording: the advice may name "the tuple element" again
+    // (`… or declare the tuple element `integer?``), which is no second warning.
+    let hits = diag.matches("stored into the tuple element").count();
     assert_eq!(
         hits, 3,
         "expected (N-Store) on the three NON-NULL element destinations and on neither \
