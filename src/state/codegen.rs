@@ -1862,14 +1862,10 @@ impl State {
             }
         } else {
             // A borrowed Reference before its first bind holds the null sentinel, as native
-            // and C hold `DbRef::NULL`: a liveness test on it (`OpConvBoolFromRef`,
-            // `OpStoreLive`) answers null on every backend.  It used to be a stack-frame
-            // DbRef pointing into dep's slot — no data-store pointer, overwritten before any
-            // field access — which those tests read as a record: the scope pass's cascade
-            // after a displaced fn-field record's null pre-init ran on stack bytes and
-            // released the store they named, on the interpreter only (loft#2354).  Measured
-            // before the change: over the corpus and the language suite (3078 programs)
-            // no outcome depended on the stack-frame value.
+            // and C hold `DbRef::NULL`, so a liveness test on it (`OpConvBoolFromRef`,
+            // `OpStoreLive`) answers null on every backend.  A stack-frame DbRef into dep's
+            // slot would read to those tests as a live record, and a cascade guarded by one
+            // would release whatever store its bytes named (loft#2354).
             stack.add_op("OpInitRefSentinel", self);
             self.code_add(slot_offset);
         }
