@@ -2294,6 +2294,9 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
   if op == "+=" && e.p.nodes[rhs] is SVecLit && el_types::is_collection(p.tp) {
     return field_append(e, vars, p, rhs);
   }
+  if op == "=" && e.p.nodes[rhs] is SStructLit && !(p.tp is TyOptional) && struct_ref(e, el_types::base(p.tp)) >= 0 {
+    return literal_into_place(e, vars, el_ir::unspan(p.code), struct_ref(e, el_types::base(p.tp)), rhs);
+  }
   x = expression(e, vars, rhs);
   pt = p.tp;
   if op != "=" {
@@ -2315,7 +2318,7 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
     return vector_field_bind(e, vars, el_ir::unspan(p.code), pt, x);
   }
   if op == "=" && struct_ref(e, el_types::base(pt)) >= 0 {
-    return record_place_write(e, el_ir::unspan(p.code), el_types::base(pt), rhs, x);
+    return record_place_write(e, el_ir::unspan(p.code), el_types::base(pt), x);
   }
   v = stored(e, vars, x, pt);
   if v == null {
@@ -2333,14 +2336,9 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
 // `Parser::copy_ref` for a whole record written into a record field or a vector element
 // (`w.p = v`, `xs[i] = mk(9)`): the value copied into the place (`OpCopyRecord`), the source's
 // store freed after when the value is a call that gives it away (`call_gives_away_its_store`).
-// A record literal is built in the place itself, which is not carried yet; a `null`, another
-// record's value and a record holding a closure are refused by name.
-fn record_place_write(e: el::El, place: ir::Node, pt: ir::TypeT, rhs: integer, x: Ex) -> Ex {
+// Another record's value and a record holding a closure are refused by name.
+fn record_place_write(e: el::El, place: ir::Node, pt: ir::TypeT, x: Ex) -> Ex {
   rd = struct_ref(e, pt);
-  if e.p.nodes[rhs] is SStructLit {
-    el::refuse(e, "a record literal written into a field or an element");
-    return ex(ir::NdNull, ir::TyVoid);
-  }
   if !(place is NdCall) || !(calls(e, place, "OpGetField") || calls(e, place, "OpGetVector")) {
     el::refuse(e, "an assignment to a place that is not a plain local: {place_read(e, place)}");
     return ex(ir::NdNull, ir::TyVoid);
@@ -2366,6 +2364,91 @@ fn record_place_write(e: el::El, place: ir::Node, pt: ir::TypeT, rhs: integer, x
     _ => {}
   }
   ex(el_ir::cl(e, "OpCopyRecord", [x.code, place, ir::NdInt { n: kt + bit }]), ir::TyVoid)
+}
+
+// `@FR-R-InPlaceLiteral` for a record literal written into a field or a vector element
+// (`w.p = Pt { … }`, `rs[0] = A { … }`): `parse_object` writes its fields straight into the
+// place — an element only where `builds_into_element` admits it (a base it can name again, an
+// index that is a literal or a variable).  Carried for a struct of plain scalars whose
+// initialisers read nothing of the place's root; the staging clause, the per-literal declines
+// and any other field type are refused by name.
+fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: integer, rhs: integer) -> Ex {
+  fields: vector<integer> = [];
+  match e.p.nodes[rhs] {
+    SStructLit { member, fields: fs, base } => {
+      if member != "" || base != null {
+        el::refuse(e, "a qualified struct literal or an update");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      fields = fs;
+    },
+    _ => {}
+  }
+  if struct_literal_def(e, rhs) != rd {
+    el::refuse(e, "a record place given a value of another type: a literal");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  for a in el::def(e, rd).attributes {
+    if !el_convert::plain_scalar(a.typedef[0] ?? ir::TyVoid) {
+      el::refuse(e, "a record literal written into a field or an element: a field that is no plain scalar");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+  }
+  root = place_root(e, place);
+  element = calls(e, place, "OpGetVector");
+  index_ok = match el_ir::unspan(el_ir::last(match place { NdCall { args } => args, _ => [] })) {
+    NdInt { n: _ } => true,
+    NdVar { n: _ } => true,
+    _ => false
+  };
+  if root < 0 || !(calls(e, place, "OpGetField") || element) || (element && !index_ok) {
+    el::refuse(e, "a record literal written into a field or an element: a place it is built apart for");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  if e.first_pass {
+    first_pass_fields(e, vars, rd, fields);
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  ops = fields_at(e, vars, root, place, rd, fields);
+  if ops == null {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  viewers = store_viewers(vars, root) + [root];
+  for op in ops! {
+    match op {
+      NdCall { args } => {
+        for w in viewers {
+          if len(args) > 0 && el_ir::reads_var(args[-1] ?? ir::NdNull, w) {
+            el::refuse(e, "a record literal written into a field or an element: an initialiser that reads the place");
+            return ex(ir::NdNull, ir::TyVoid);
+          }
+        }
+      },
+      _ => {}
+    }
+  }
+  ex(ir::NdInsert { items: ops! }, ir::TyVoid)
+}
+
+// The variable a projection place reads into (`w` of `w.a[i].p`), through repeatable
+// projections only (`is_repeatable_place`), or -1.
+fn place_root(e: el::El, n: ir::Node) -> integer {
+  at = el_ir::unspan(n);
+  root = -2;
+  while root == -2 {
+    match at {
+      NdVar { n: v } => { root = v; },
+      NdCall { def_nr, args } => {
+        if projection_op(el::def(e, def_nr).name) && len(args) > 0 {
+          at = el_ir::unspan(args[0]);
+        } else {
+          root = -1;
+        }
+      },
+      _ => { root = -1; }
+    }
+  }
+  root
 }
 
 // Does record `rd` hold a closure, itself or in a record field it holds inline
