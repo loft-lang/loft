@@ -1,8 +1,8 @@
 diff --git a/src/parser/control.rs b/src/parser/control.rs
-index 76e655ca7..977cf6538 100644
+index 6af4be7f9..2621145db 100644
 --- a/src/parser/control.rs
 +++ b/src/parser/control.rs
-@@ -5372,34 +5372,12 @@ impl Parser {
+@@ -5675,34 +5675,12 @@ impl Parser {
      /// and is exactly what `(E-Truthy)` licenses.  Read through `Type::peel_optional`, the
      /// `@FR-N-Shape` home, because a bare `matches!(tp, Type::Optional(_))` is what
      /// `ir_walker_audit.py optional` counts as an OPAQUE site.
@@ -38,7 +38,7 @@ index 76e655ca7..977cf6538 100644
          let (base, nullable) = tp.peel_optional();
          if nullable {
              return;
-@@ -5434,10 +5412,7 @@ impl Parser {
+@@ -5737,10 +5715,7 @@ impl Parser {
          ) {
              return;
          }
@@ -50,7 +50,7 @@ index 76e655ca7..977cf6538 100644
          diagnostic_at!(
              self.lexer,
              at,
-@@ -5631,7 +5606,7 @@ impl Parser {
+@@ -5937,7 +5912,7 @@ impl Parser {
          let cond_fact = std::mem::take(&mut self.operand_fact);
          self.check_subject(&cond_fact, "branching on it"); // @PLN187
          self.in_control_head = outer_head;
@@ -60,7 +60,7 @@ index 76e655ca7..977cf6538 100644
          // the arms below, and an `else if` chain's own conditions, are past the pair.
          self.fit_in_condition = false;
 diff --git a/src/parser/convert.rs b/src/parser/convert.rs
-index 8ff36bae7..cf0e0187f 100644
+index b3fcb15c4..d2a09dc51 100644
 --- a/src/parser/convert.rs
 +++ b/src/parser/convert.rs
 @@ -64,32 +64,6 @@ impl Parser {
@@ -110,20 +110,11 @@ index 8ff36bae7..cf0e0187f 100644
      /// The STORE face of [`convert`](Parser::convert) — @FR-N-Store's home for every store
      /// that converts: `what` names the slot for the diagnostic ("the field", "parameter 2 of
      /// `f`", "the return value"), `at` anchors it (a block tail reports at the tail, not the
-@@ -273,7 +240,7 @@ impl Parser {
-     /// Is every VALUE position of `code` a vector slice — the `Value::Iter` a range
-     /// subscript builds (its step a block), reached through the arms of an `if` and the
-     /// tail of a block?  The shape [`Parser::iterator_as_vector`] materialises.
--    pub(crate) fn slice_shaped(code: &Value) -> bool {
-+    fn slice_shaped(code: &Value) -> bool {
-         match code.unspan() {
-             Value::Iter(_, _, n, _) => matches!(n.as_ref(), Value::Block(_)),
-             Value::If(_, a, b) => Self::slice_shaped(a) && Self::slice_shaped(b),
 diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
-index 475ce7e30..d878a7114 100644
+index 48320da8a..04ea0909f 100644
 --- a/src/parser/vectors.rs
 +++ b/src/parser/vectors.rs
-@@ -504,14 +504,9 @@ impl Parser {
+@@ -514,14 +514,9 @@ impl Parser {
          precedence: usize,
          is_or: bool,
      ) {
@@ -140,10 +131,10 @@ index 475ce7e30..d878a7114 100644
 +        if !self.convert_admitting(code, tp, &Type::Boolean) && !self.first_pass {
              self.can_convert(tp, &Type::Boolean);
          }
-         let mut second_code = Value::Null;
-@@ -524,7 +519,9 @@ impl Parser {
-             precedence + 1,
-         );
+         // `@FR-N-Guard` — the right operand runs only where the left one decided it: `a && b`
+@@ -584,7 +579,9 @@ impl Parser {
+         self.variant_proven.truncate(bases.4);
+         self.index_bounded.truncate(bases.5);
          self.known_var_or_type(&second_code, &second_pos);
 -        if !self.convert_condition(&mut second_code, &second_type) && !self.first_pass {
 +        if !self.convert_admitting(&mut second_code, &second_type, &Type::Boolean)
@@ -152,7 +143,7 @@ index 475ce7e30..d878a7114 100644
              self.can_convert(&second_type, &Type::Boolean);
          }
          // `&&`/`||` do not route through `call_op_as`, so its deferral counter cannot see an
-@@ -716,13 +713,8 @@ impl Parser {
+@@ -776,13 +773,8 @@ impl Parser {
              // non-boolean: *"is x null?"*.  A heap handle has no `Not` operator, so
              // without this the documented spelling was refused — `!v` on a vector read
              // *"No matching operator Not on vector<integer>"* while `if v` compiled.

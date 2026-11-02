@@ -1,8 +1,8 @@
 diff --git a/src/parser/control.rs b/src/parser/control.rs
-index 0fbf8978a..8928b03a0 100644
+index 6af4be7f9..e69fc6097 100644
 --- a/src/parser/control.rs
 +++ b/src/parser/control.rs
-@@ -6446,26 +6446,10 @@
+@@ -6930,26 +6930,10 @@ impl Parser {
                  );
                  has_wildcard = exhaustive;
                  arms.extend(struct_arms);
@@ -30,7 +30,7 @@ index 0fbf8978a..8928b03a0 100644
                  continue;
              }
  
-@@ -7522,16 +7506,7 @@
+@@ -8129,17 +8113,7 @@ impl Parser {
                      let field_val = self.get_field(e_nr, attr_idx, subject_val.clone());
                      let field_type = self.data.attr_type(e_nr, attr_idx);
                      if self.lexer.has_token(":") {
@@ -43,12 +43,13 @@ index 0fbf8978a..8928b03a0 100644
 -                            let bound =
 -                                self.pattern_field_value(e_nr, attr_idx, subject_val.clone());
 -                            binds.push(v_set(v, bound));
+-                            self.mark_field_capture_view(v, &field_type, subject_val);
 -                        } else if let Some(cond) = self.parse_field_sub_pattern(
 +                        if let Some(cond) = self.parse_field_sub_pattern(
                              field_val,
                              &field_type,
                              binds,
-@@ -7587,20 +7562,8 @@
+@@ -8196,20 +8170,8 @@ impl Parser {
              &mut first_binds,
              &mut field_conditions,
          );
@@ -68,6 +69,6 @@ index 0fbf8978a..8928b03a0 100644
 -        );
 +        let _ = first_names;
 +        let alternatives: Vec<(Vec<Value>, Vec<Value>)> = Vec::new();
-         self.expect_match_arm_arrow();
-         let mut arm_code = Value::Null;
-         let arm_expected = self.match_arm_expected(result_type);
+         // @FR-P-Guard — `S { x } if x > 0 =>`: the guard reads the pattern's bindings and is
+         // ANDed onto the pattern's own tests below, so a false guard fails the arm and
+         // selection moves on, exactly as on an enum arm.

@@ -1,10 +1,10 @@
 diff --git a/src/database/format.rs b/src/database/format.rs
-index 6be7b2e61..ba3a4097c 100644
+index cc5f79f89..896785e9c 100644
 --- a/src/database/format.rs
 +++ b/src/database/format.rs
-@@ -502,6 +502,7 @@ impl Stores {
-         self.read_into(&mut rd, &mut failed, value_at, tp, tp, u16::MAX, result, 0)
-             .and_then(|()| rd.finish())
+@@ -747,6 +747,7 @@ impl Stores {
+         READ_REFS.with(|c| c.borrow_mut().take());
+         read.and_then(|()| rd.finish())
              .map_err(|(_, at)| TextErr::Malformed(format_walk_err(text, at, &[])))?;
 +        failed.truncate(1);
          if failed.is_empty() {

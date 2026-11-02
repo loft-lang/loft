@@ -1,24 +1,35 @@
-diff --git b/src/parser/control.rs a/src/parser/control.rs
-index d1aff3aef..686db32f4 100644
---- b/src/parser/control.rs
-+++ a/src/parser/control.rs
-@@ -6348,10 +6348,15 @@ impl Parser {
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index 6af4be7f9..26cd75b4b 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -6979,10 +6979,8 @@ impl Parser {
                          self.data.def(e_nr).name()
                      );
                  }
 -                // Skip this arm gracefully: its `{ … }` field pattern whole, whatever tokens
 -                // it holds — a loop consuming only names and commas never advanced past
--                // anything else (`=>`, `:`, a literal), and hung the parser.
--                self.skip_braced();
-+                // Skip this arm gracefully.
-+                if self.lexer.peek_token("{") {
-+                    self.lexer.token("{");
-+                    while !self.lexer.peek_token("}") && !self.lexer.peek_token(";") {
-+                        self.lexer.has_identifier();
-+                        self.lexer.has_token(",");
+-                // anything else (`=>`, `:`, a literal), and hung the parser.  A subject whose
+-                // enum pass 1 cannot see yet still binds its captures for the body.
++                // Skip this arm gracefully.  A subject whose enum pass 1 cannot see yet still
++                // binds its captures for the body.
+                 let forward = if self.first_pass && e_nr == u32::MAX {
+                     self.bind_forward_capture_list()
+                 } else {
+@@ -6990,7 +6988,16 @@ impl Parser {
+                 };
+                 match forward {
+                     Some(mut aliases) => self.pattern_binds_pending.append(&mut aliases),
+-                    None => self.skip_braced(),
++                    None => {
++                        if self.lexer.peek_token("{") {
++                            self.lexer.token("{");
++                            while !self.lexer.peek_token("}") && !self.lexer.peek_token(";") {
++                                self.lexer.has_identifier();
++                                self.lexer.has_token(",");
++                            }
++                            self.lexer.token("}");
++                        }
 +                    }
-+                    self.lexer.token("}");
-+                }
+                 }
                  self.expect_match_arm_arrow();
                  let mut arm_code = Value::Null;
-                 self.expression(&mut arm_code);

@@ -1,8 +1,8 @@
 diff --git a/src/parser/objects.rs b/src/parser/objects.rs
-index 01be01afe..4e07cf2d5 100644
+index 060035ce6..eb69a9baa 100644
 --- a/src/parser/objects.rs
 +++ b/src/parser/objects.rs
-@@ -4545,22 +4545,7 @@ impl Parser {
+@@ -4564,24 +4564,9 @@ impl Parser {
          // (`u8`, `i16`, `u32`, …) stops after its type's maximum, where `i64::MAX` ran the
          // counter past every value the loop variable's type holds.  A computed `integer`
          // keeps `i64::MAX`: its spec's `max` describes a value, not the type's storage.
@@ -17,6 +17,8 @@ index 01be01afe..4e07cf2d5 100644
 -                open_end_tp = Some(in_type.base().clone());
 -            }
 -        }
+         // Where the end bound was WRITTEN, for a diagnostic about it; an open end has none.
+         let mut till_at: Option<Position> = None;
 -        let mut till_tp = if let Some(tp) = open_end_tp {
 -            tp
 -        } else if till != Value::Null {

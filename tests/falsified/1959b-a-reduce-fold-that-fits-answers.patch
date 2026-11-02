@@ -1,8 +1,8 @@
 diff --git a/src/parser/collections.rs b/src/parser/collections.rs
-index 14d006db6..c2564b32d 100644
+index f9832e51f..ddcf2584f 100644
 --- a/src/parser/collections.rs
 +++ b/src/parser/collections.rs
-@@ -7535,9 +7535,8 @@ use #count instead"
+@@ -7532,9 +7532,8 @@ use #count instead"
              return true;
          };
          // The special form calls a function it names at compile time (`Value::Int(d)`); a
@@ -15,10 +15,10 @@ index 14d006db6..c2564b32d 100644
          if !constant_fn && self.builtin_selected(source, "reduce", types).is_some() {
              return false;
 diff --git a/src/parser/control.rs b/src/parser/control.rs
-index 76e655ca7..7d250fe55 100644
+index 6af4be7f9..d3862b1e6 100644
 --- a/src/parser/control.rs
 +++ b/src/parser/control.rs
-@@ -21908,58 +21908,6 @@ impl Parser {
+@@ -23438,58 +23438,6 @@ impl Parser {
      // - Worker's first parameter must be a reference to T (type checked by name).
      // - Return type must be a primitive: integer, long, float, or boolean.
      // - Extra arg count must match the worker's extra parameters (args[1..]).
@@ -77,7 +77,7 @@ index 76e655ca7..7d250fe55 100644
      /// Compiler special-case for `reduce(v: vector<T>, init: U, f: fn(U, T) -> U) -> U`.
      /// Generates inline bytecode equivalent to a left-fold over the vector.
      /// Does a value of this type live in a STORE (or a text buffer) rather than in the
-@@ -21985,14 +21933,7 @@ impl Parser {
+@@ -23515,14 +23463,7 @@ impl Parser {
      #[expect(clippy::too_many_lines, reason = "inherited")]
      pub(crate) fn parse_reduce(&mut self, val: &mut Value, list: &[Value], types: &[Type]) -> Type {
          if self.first_pass {
@@ -93,7 +93,7 @@ index 76e655ca7..7d250fe55 100644
              if types.len() >= 2 {
                  return types[1].clone();
              }
-@@ -22006,7 +21947,7 @@ impl Parser {
+@@ -23536,7 +23477,7 @@ impl Parser {
              );
              return Type::Unknown(0);
          }
@@ -102,7 +102,7 @@ index 76e655ca7..7d250fe55 100644
              *elm.clone()
          } else {
              diagnostic!(
-@@ -22016,7 +21957,7 @@ impl Parser {
+@@ -23546,7 +23487,7 @@ impl Parser {
              );
              return Type::Unknown(0);
          };
@@ -111,7 +111,7 @@ index 76e655ca7..7d250fe55 100644
              (params.clone(), *ret.clone())
          } else {
              diagnostic!(
-@@ -22086,24 +22027,6 @@ impl Parser {
+@@ -23616,24 +23557,6 @@ impl Parser {
              *val = v_block(list.to_vec(), carried, Self::TV_REDUCE);
              return acc_type;
          }
@@ -136,7 +136,7 @@ index 76e655ca7..7d250fe55 100644
          if Self::is_heap_storage(&acc_type) && !matches!(acc_type.base(), Type::Text(_)) {
              diagnostic!(
                  self.lexer,
-@@ -22130,23 +22053,17 @@ impl Parser {
+@@ -23660,23 +23583,17 @@ impl Parser {
              );
              return Type::Unknown(0);
          }
@@ -165,7 +165,7 @@ index 76e655ca7..7d250fe55 100644
  
          // loft#951 — a TEXT accumulator is minted as a WORK BUFFER, which puts it at
          // FUNCTION scope rather than inside the `reduce` block.  The block's tail is the
-@@ -22248,7 +22165,7 @@ impl Parser {
+@@ -23778,7 +23695,7 @@ impl Parser {
  
          *val = v_block(
              vec![
@@ -174,25 +174,3 @@ index 76e655ca7..7d250fe55 100644
                  v_set(vec_copy_var, list[0].clone()),
                  create_iter_code,
                  v_loop(loop_body, "reduce loop"),
-diff --git a/src/parser/convert.rs b/src/parser/convert.rs
-index 8ff36bae7..6a87fe321 100644
---- a/src/parser/convert.rs
-+++ b/src/parser/convert.rs
-@@ -319,7 +319,7 @@ impl Parser {
-     /// caller owns the diagnostic.
-     #[track_caller]
-     #[expect(clippy::too_many_lines, reason = "inherited")]
--    pub(crate) fn convert(&mut self, code: &mut Value, is_type: &Type, should: &Type) -> bool {
-+    fn convert(&mut self, code: &mut Value, is_type: &Type, should: &Type) -> bool {
-         // @FR-N-Reserve (loft#1796) — a CONSTANT stored into a NULLABLE narrow slot must lie in
-         // its usable range: one code at the edge is the slot's null, so `255` into a `u8?`, or
-         // `300`, could only ever be stored as null.  Asked at the top because a literal that
-@@ -1423,7 +1423,7 @@ impl Parser {
-     }
- 
-     /// Validate that two types are equal
--    pub(crate) fn can_convert(&mut self, test_type: &Type, should: &Type) -> bool {
-+    fn can_convert(&mut self, test_type: &Type, should: &Type) -> bool {
-         if *test_type != *should && !test_type.is_unknown() {
-             // `(Slice-Value)` — a vector slice is a value wherever a vector is expected
-             // (`Parser::convert` materialises it); a keyed slice is refused at its own site.

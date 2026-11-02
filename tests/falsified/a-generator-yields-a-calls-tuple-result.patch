@@ -1,8 +1,8 @@
-diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
-index 1ce68cba0..a820c2c58 100644
---- b/src/parser/expressions.rs
-+++ a/src/parser/expressions.rs
-@@ -1462,12 +1462,6 @@ impl Parser {
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index e2acebffe..2c4c030cb 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -1577,12 +1577,6 @@ impl Parser {
                  // came out as 300 (`@FR-I-Narrow`), into `iterator<float>` as the integer's
                  // bits read as a float, a `null` or a `text` crashed the interpreter and broke
                  // the native build, and a nullable ended the loop early on `--native` only.
@@ -14,10 +14,10 @@ index 1ce68cba0..a820c2c58 100644
 -                let mut v_tp = v_tp;
                  if let Type::Iterator(elem_tp, _) = r_type.base() {
                      let elem = (**elem_tp).clone();
-                     if v_tp == Type::Null {
-@@ -1475,8 +1469,6 @@ impl Parser {
-                         v = self.null_value(&elem);
-                     } else if !self.convert_store_dense(&mut v, &v_tp, &elem, "the yielded value") {
+                     let value_at = Some(&expr_start.position);
+@@ -1597,8 +1591,6 @@ impl Parser {
+                         value_at,
+                     ) {
                          self.validate_convert("yield", &v_tp, &elem, &expr_start.position);
 -                    } else if matches!(elem.base(), Type::Tuple(_)) {
 -                        v_tp = elem;
