@@ -88,6 +88,17 @@ both compilers, and (d) the C corpus sweep (`scripts/c_sweep.py`) and the C test
 | P14 | **`(R-PushFill)`'s run clause for a text target**: a character-vector range turned into text in one pass | extension | `flow_layout_full` 2.14 → 1.94 | open |
 | P15 | **the callee half beside `(R-RebindBuffer)`**: `cur = apply_op(cur, op)` — the callee answers inside the document being replaced, so its buffer is not copied | NEW | `invert` 2.57 → 2.33 | open |
 
+**The cross-call facts these phases rest on** ([`formal/facts.md`](../../formal/facts.md),
+[#2351](https://github.com/loft-lang/loft/issues/2351)) — built before P5, P9 and P11–P15, so no
+phase writes its own callee walk:
+
+| # | what | closes | validated by |
+|---|---|---|---|
+| F1 | the routine `facts(kind, reach)` with the `writes`, `mints`, `observable`, `fault` kinds; the eleven analyses moved onto it one at a time | D-fact-1 | `make rewrite-census` unchanged per move; `LOFT_FACT_VERIFY=1` on the corpus |
+| F2 | the `entry` kind's interval domain, read by both writers: `(R-RangedCall)` on the C | D-fact-2 | the census gains `R-RangedCall` rows on the C; `draw_quads` step 1 |
+| F3 | one twin key `(function, assumptions)` and one registry; `__nn`, `__rg`, `__inv`, `__kh`, `__ap`, `__d` re-keyed | D-fact-3 | the emitted C and Rust byte-identical before and after |
+| F4 | `(R-InlineLeaf)`'s accessor clause (`Fact-Relational`): a leaf reading a record parameter's fields and one vector element is inlined | — | P5's versioning then works inside one body |
+
 Made redundant by a larger step on the same routine (priced, not needed there): `(R-TextBorrow)`
 for fn-ref call arguments and a returned work text as the caller's buffer (`flow_layout_full`,
 both under P4b); the match-binding clause of `(R-TextBorrow)` and `pa_get` answering a field
