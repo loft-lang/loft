@@ -168,7 +168,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       _ => {}
     }
   }
-  if !e.first_pass && work_buffer_candidate(e, vars) {
+  if !e.first_pass && work_buffer_candidate(e, vars, code) {
     el::refuse(e, "a vector local the work-buffer pass may hand to its caller");
   }
   finish_body(e, vars, code)
@@ -178,7 +178,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
 // meet (`work_buffer_def_decline`): a plain local `v: vector<scalar>` viewing one `__vdb_N`, in
 // a function a caller hands arguments.  The promotion itself (src/parser/work_buffer.rs, after
 // pass 2) is not ported, so a body it may rewrite is refused rather than answered unpromoted.
-fn work_buffer_candidate(e: el::El, vars: el_vars::Vars) -> boolean {
+fn work_buffer_candidate(e: el::El, vars: el_vars::Vars, code: ir::Node) -> boolean {
   d = el::def(e, e.context);
   if d.name == "n_main" || starts_with(d.name, "n___lambda_") {
     return false;
@@ -198,7 +198,7 @@ fn work_buffer_candidate(e: el::El, vars: el_vars::Vars) -> boolean {
     }
     match v.type_def[0] {
       TyVector { inner, dep } => {
-        if len(dep) == 1 && is_scalar(inner) && starts_with(el_vars::name_of(vars, dep[0]), "__vdb_") {
+        if len(dep) == 1 && is_scalar(inner) && starts_with(el_vars::name_of(vars, dep[0]), "__vdb_") && work_buffer_admits(e, code, v#index, dep[0]) {
           return true;
         }
       },
@@ -206,6 +206,165 @@ fn work_buffer_candidate(e: el::El, vars: el_vars::Vars) -> boolean {
     }
   }
   false
+}
+
+// `admit`'s first declines, read off the body before `finish_body` adds the backing's `= null`:
+// the local declared once as a vector (`trio_sites`, the backing's mint, the bind, the length
+// zeroed) and not inside a loop, assigned once, and its backing named by that declaration alone.
+// A candidate past them may still be declined by the use walk — refused, conservatively.
+fn work_buffer_admits(e: el::El, code: ir::Node, v: integer, db: integer) -> boolean {
+  if trios(e, code, v, db, false) != 1 || trios(e, code, v, db, true) > 0 {
+    return false;
+  }
+  sets(code, v) == 1 && sets(code, db) == 0 && el_ir::mentions(code, db) == 3 && !bare_mention(code, v) && !copied_whole(e, code, v)
+}
+
+// The walk's "copied whole into another place": the local as the source (operand 1) of an
+// `OpAppendVector` / `OpReplaceVector` into something else (`copied_from_at_1`).
+fn copied_whole(e: el::El, n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if (nm == "OpAppendVector" || nm == "OpReplaceVector") && len(args) > 1 && el_ir::unspan(args[1]) == ir::NdVar { n: v } && !(el_ir::unspan(args[0]) == ir::NdVar { n: v }) {
+        return true;
+      }
+      for a in args {
+        if copied_whole(e, a, v) {
+          return true;
+        }
+      }
+      false
+    },
+    NdSpan { inner } => copied_whole(e, inner, v),
+    NdSet { inner } => copied_whole(e, inner, v),
+    NdBlock { block } => any_copied(e, block[0].operators, v),
+    NdLoop { block } => any_copied(e, block[0].operators, v),
+    NdInsert { items } => any_copied(e, items, v),
+    NdIf { cond, t, f } => copied_whole(e, cond, v) || copied_whole(e, t, v) || copied_whole(e, f, v),
+    NdReturn { inner } => copied_whole(e, inner, v),
+    _ => false
+  }
+}
+
+fn any_copied(e: el::El, l: vector<ir::Node>, v: integer) -> boolean {
+  for x in l {
+    if copied_whole(e, x, v) {
+      return true;
+    }
+  }
+  false
+}
+
+// The use walk's first decline (`Walk::node`, `Pos::Other`): the local read anywhere but as a
+// call's operand — a bare tail, a `return`, an arm's value.  An alias bind (`x = v`) is the
+// walk's to follow, so it declines nothing here.
+fn bare_mention(n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdVar { n: x } => x == v,
+    NdSpan { inner } => bare_mention(inner, v),
+    NdCall { args } => {
+      for a in args {
+        if !(el_ir::unspan(a) == ir::NdVar { n: v }) && bare_mention(a, v) {
+          return true;
+        }
+      }
+      false
+    },
+    NdSet { inner } => !(el_ir::unspan(inner) == ir::NdVar { n: v }) && bare_mention(inner, v),
+    NdBlock { block } => any_bare(block[0].operators, v),
+    NdLoop { block } => any_bare(block[0].operators, v),
+    NdInsert { items } => any_bare(items, v),
+    NdIf { cond, t, f } => bare_mention(cond, v) || bare_mention(t, v) || bare_mention(f, v),
+    NdReturn { inner } => bare_mention(inner, v),
+    _ => false
+  }
+}
+
+fn any_bare(l: vector<ir::Node>, v: integer) -> boolean {
+  for x in l {
+    if bare_mention(x, v) {
+      return true;
+    }
+  }
+  false
+}
+
+// The blocks of `n` that hold the declaration trio of `v` over `db` (`is_trio`); with `looped`,
+// only those inside a loop.
+fn trios(e: el::El, n: ir::Node, v: integer, db: integer, looped: boolean) -> integer {
+  c = 0;
+  match n {
+    NdBlock { block } => {
+      if !looped {
+        c += trio_count(e, block[0].operators, v, db);
+      }
+      for o in block[0].operators {
+        c += trios(e, o, v, db, looped);
+      }
+    },
+    NdLoop { block } => {
+      c += trio_count(e, block[0].operators, v, db);
+      for o in block[0].operators {
+        c += trios(e, o, v, db, false);
+      }
+    },
+    NdSpan { inner } => { c += trios(e, inner, v, db, looped); },
+    NdInsert { items } => { for o in items { c += trios(e, o, v, db, looped); } },
+    NdIf { cond, t, f } => { c += trios(e, cond, v, db, looped) + trios(e, t, v, db, looped) + trios(e, f, v, db, looped); },
+    NdSet { inner } => { c += trios(e, inner, v, db, looped); },
+    _ => {}
+  }
+  c
+}
+
+fn trio_count(e: el::El, ops: vector<ir::Node>, v: integer, db: integer) -> integer {
+  c = 0;
+  for o in ops {
+    i = o#index;
+    if i + 2 < len(ops) && op_on(e, ops[i]!, "OpDatabase", db) && set_of(e, ops[i + 1]!, v, db) && op_on(e, ops[i + 2]!, "OpSetInt4", db) {
+      c += 1;
+    }
+  }
+  c
+}
+
+// A call of `name` whose first argument is the variable `x`.
+fn op_on(e: el::El, n: ir::Node, name: text, x: integer) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => el::def(e, def_nr).name == name && len(args) > 0 && el_ir::unspan(args[0]) == ir::NdVar { n: x },
+    _ => false
+  }
+}
+
+// `v = OpGetField(db, …)`: the local bound as a view of its backing.
+fn set_of(e: el::El, n: ir::Node, v: integer, db: integer) -> boolean {
+  match el_ir::unspan(n) {
+    NdSet { var, inner } => var == v && op_on(e, inner, "OpGetField", db),
+    _ => false
+  }
+}
+
+// How many `Set`s target `x` (`set_counts`).
+fn sets(n: ir::Node, x: integer) -> integer {
+  match n {
+    NdSet { var, inner } => (if var == x { 1 } else { 0 }) + sets(inner, x),
+    NdSpan { inner } => sets(inner, x),
+    NdBlock { block } => sets_in(block[0].operators, x),
+    NdLoop { block } => sets_in(block[0].operators, x),
+    NdInsert { items } => sets_in(items, x),
+    NdIf { cond, t, f } => sets(cond, x) + sets(t, x) + sets(f, x),
+    NdCall { args } => sets_in(args, x),
+    NdReturn { inner } => sets(inner, x),
+    _ => 0
+  }
+}
+
+fn sets_in(l: vector<ir::Node>, x: integer) -> integer {
+  c = 0;
+  for o in l {
+    c += sets(o, x);
+  }
+  c
 }
 
 // `data::is_scalar`.

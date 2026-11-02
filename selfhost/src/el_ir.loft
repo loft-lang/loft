@@ -47,46 +47,57 @@ pub fn is_line(n: ir::Node) -> boolean {
 // `Value::reads_var`: does any node of the tree name variable `v` (a read, a `Set`'s target, a
 // tuple member, a call through a fn-ref, an iterator, a fn-ref)?
 pub fn reads_var(n: ir::Node, v: integer) -> boolean {
-  names(n, v, true)
+  count(n, v, true, 1) > 0
 }
 
 // `Parser::names_outside_a_chain`: `reads_var`, the inside of a `one_buffer_chain` block left
 // out — a chain names its buffer only to answer through it.
 pub fn names_outside_chain(n: ir::Node, v: integer) -> boolean {
-  names(n, v, false)
+  count(n, v, false, 1) > 0
 }
 
-fn names(n: ir::Node, v: integer, chains: boolean) -> boolean {
+// How many `Var(v)` reads the tree holds (`var_mentions`).
+pub fn mentions(n: ir::Node, v: integer) -> integer {
+  count(n, v, true, -1)
+}
+
+// The nodes of the tree naming `v`, counted up to `limit` (-1: all); `chains` false leaves the
+// inside of a `one_buffer_chain` out.  One walk for the three questions above: `mentions` asks
+// it of `Var` reads only, as `var_mentions` does, so a `Set` target or a fn-ref is no mention.
+fn count(n: ir::Node, v: integer, chains: boolean, limit: integer) -> integer {
+  all = limit < 0;
   match n {
-    NdVar { n: x } => x == v,
-    NdSet { var, inner } => var == v || names(inner, v, chains),
-    NdSpan { inner } => names(inner, v, chains),
-    NdCall { args } => any_names(args, v, chains),
-    NdCallRef { var, args } => var == v || any_names(args, v, chains),
-    NdBlock { block } => (chains || block[0].name != "one_buffer_chain") && any_names(block[0].operators, v, chains),
-    NdLoop { block } => any_names(block[0].operators, v, chains),
-    NdInsert { items } => any_names(items, v, chains),
-    NdTuple { items } => any_names(items, v, chains),
-    NdReturn { inner } => names(inner, v, chains),
-    NdDrop { inner } => names(inner, v, chains),
-    NdYield { inner } => names(inner, v, chains),
-    NdIf { cond, t, f } => names(cond, v, chains) || names(t, v, chains) || names(f, v, chains),
-    NdIter { var, create, next, init } => var == v || names(create, v, chains) || names(next, v, chains) || names(init, v, chains),
-    NdTupleGet { var } => var == v,
-    NdTuplePut { var, inner } => var == v || names(inner, v, chains),
-    NdFnRef { var } => var == v,
-    NdParallel { arms } => any_names(arms, v, chains),
-    _ => false
+    NdVar { n: x } => if x == v { 1 } else { 0 },
+    NdSet { var, inner } => (if var == v && !all { 1 } else { 0 }) + count(inner, v, chains, limit),
+    NdSpan { inner } => count(inner, v, chains, limit),
+    NdCall { args } => count_in(args, v, chains, limit),
+    NdCallRef { var, args } => (if var == v && !all { 1 } else { 0 }) + count_in(args, v, chains, limit),
+    NdBlock { block } => if chains || block[0].name != "one_buffer_chain" { count_in(block[0].operators, v, chains, limit) } else { 0 },
+    NdLoop { block } => count_in(block[0].operators, v, chains, limit),
+    NdInsert { items } => count_in(items, v, chains, limit),
+    NdTuple { items } => count_in(items, v, chains, limit),
+    NdReturn { inner } => count(inner, v, chains, limit),
+    NdDrop { inner } => count(inner, v, chains, limit),
+    NdYield { inner } => count(inner, v, chains, limit),
+    NdIf { cond, t, f } => count_in([cond, t, f], v, chains, limit),
+    NdIter { var, create, next, init } => (if var == v && !all { 1 } else { 0 }) + count_in([create, next, init], v, chains, limit),
+    NdTupleGet { var } => if var == v && !all { 1 } else { 0 },
+    NdTuplePut { var, inner } => (if var == v && !all { 1 } else { 0 }) + count(inner, v, chains, limit),
+    NdFnRef { var } => if var == v && !all { 1 } else { 0 },
+    NdParallel { arms } => count_in(arms, v, chains, limit),
+    _ => 0
   }
 }
 
-fn any_names(l: vector<ir::Node>, v: integer, chains: boolean) -> boolean {
+fn count_in(l: vector<ir::Node>, v: integer, chains: boolean, limit: integer) -> integer {
+  c = 0;
   for x in l {
-    if names(x, v, chains) {
-      return true;
+    c += count(x, v, chains, limit);
+    if limit >= 0 && c >= limit {
+      return c;
     }
   }
-  false
+  c
 }
 
 // `Value::unspan`.
