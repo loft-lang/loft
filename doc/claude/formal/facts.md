@@ -205,35 +205,37 @@ the routine.  Inlining the accessor makes the tests intraprocedural, where loop 
 `(R-Range)` already reason, and it composes with every other intraprocedural rule (`(R-Fill)`
 then sees a per-pixel `set_pixel` loop as a fill).  The routine stays non-relational.
 
-## The analyses today as instances
+## The kinds
 
-What each existing cross-call analysis is, in this chapter's terms — the target of D-fact-1.
+Each kind and how the routine answers it.  Every kind of the routine treats a call through a
+function value as top (FNREFS `opaque`) and a native by its declaration.
 
-| analysis | kind | reach it uses | cycles | where |
+| kind | data | cycles | memo policy | where |
 |---|---|---|---|---|
-| header verdict's callee check | `writes` | all | an active set: a call back into a body under check is assumed in-place | `opt::body_writes::callee_writes`, `in_place_only_writer` |
-| allowances of a callee's ops | `writes` (transfer) | own | — | `opt::writes::callee_allowance` |
-| tested borrow's callee | `writes` ⊆ {buffer} | all | assumed yes while under check | `opt::store_text_borrow::callee_writes_only_its_buffer` |
-| stream walk's written params | `writes` | the signature only | — | `lower::stream_walk::written_params` |
-| buffer re-initialisation | `writes` (the buffer's store cleared) | own | — | `opt::ret_adopt::callee_reinits_buffer` |
-| pure reuse | `writes` + `observable` | all | greatest fixpoint of effect-free | `pure_reuse::effect_free` |
-| shared call | `fault` (totality) | all | least fixpoint: a recursive function is never total | `shared_call::total` |
-| non-sentinel parameters | `entry` (non-sentinel) + `value` | all | greatest fixpoint | `opt::non_sentinel` |
-| ranged calls | `entry` (interval) | three deep | — | `generation::ranged_call` (native only) |
-| callee inputs | `reads` | all | cached per function | `opt::hoist::callee_inputs` |
-| view returns, destinations | `provenance` | own (the callee calls no user function) | — | `lower::view_return::callee`, `lower::destination` |
+| `StoresWritten` | may write a store (bool) | `cut`, the writes scope: yes | a no always; a yes only with the emitter's context | `opt::writes` |
+| `InPlaceOnly` | writes only in place (bool) | `cut`, the writes scope: no | a body's yes always, its no only with context; never a native's or a cycle's | `opt::writes` |
+| `Writes` | what a call writes (`WriteSet`) | `cut`, the writes scope: none | every answer, counted by the census (`R-Callee`) | `opt::body_writes` |
+| `Inputs` | the invariant inputs a call reads | `cut`, its own scope: none | every answer | `opt::hoist` |
+| `BufferOnly` | every write lands in the handed buffer (bool) | `cut`, its own scope: yes | nothing kept | `opt::store_text_borrow` |
+| effect-free | the functions whose only effect is their result | `solve`, greatest | — | `pure_reuse::effect_free` |
+| total | effect-free and unable to report a fault | `solve`, least | — | `shared_call::total` |
+| non-sentinel entry | per (function, parameter) | `solve`, greatest | — | `opt::non_sentinel` |
 
-Every row treats a call through a function value as top (`CallRef`), which is FNREFS `opaque`.
+Outside the routine (D-fact-1, D-fact-2): `view_return::callee` (whether a call answers a view
+— its own body only, memoised privately by native's writer), `ret_adopt::callee_reinits_buffer`
+(its own body only), `stream_walk::written_params` (the signature only), and the interval
+`entry` facts of `generation::ranged_call` (native only).
 
 ## Deviations
 
-### D-fact-1 (OPEN, @PLN210) — a callee fact is derived in eleven places ([#2351](https://github.com/loft-lang/loft/issues/2351))
-- **Violates:** `Fact-One`, `Fact-Engine`
-- **Where:** the rows of § The analyses today
-- **Effect:** the same question answered under different cycle rules (an active set, a greatest
-  fixpoint, a least fixpoint, "yes while under check"); a new rewrite writes a twelfth walk.
-- **Removal:** the routine with the kinds of § The expected data; each analysis moved onto it
-  with the rewrite census unchanged, one at a time.
+### D-fact-1 (OPEN, @PLN210) — three callee facts keep their own walk or memo ([#2351](https://github.com/loft-lang/loft/issues/2351))
+- **Violates:** `Fact-One`
+- **Where:** `lower::view_return::callee` (native's `vr_memo`), `opt::ret_adopt::callee_reinits_buffer`,
+  `lower::stream_walk::written_params`
+- **Effect:** none of them looks past the callee's own body, so no answer depends on a cycle
+  rule; a memo of a callee fact still lives outside the handle.
+- **Removal:** one long-lived handle per writer (today a writer builds a handle per question
+  over the memos it keeps), the three as kinds of reach `own` on it.
 
 ### D-fact-2 (OPEN, @PLN210) — interval entry facts exist only in native's writer ([#2351](https://github.com/loft-lang/loft/issues/2351))
 - **Violates:** `Fact-Engine` (every writer reads the same answers)

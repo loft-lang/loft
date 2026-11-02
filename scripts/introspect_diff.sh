@@ -55,6 +55,8 @@ one() {
   # A library bench builds from its package root, where its `loft.toml` and `src/` resolve.
   if [ "$(basename "$dir")" = bench ] && [ -f "$dir/../loft.toml" ]; then dir="$dir/.."; name="bench/$name"; fi
   if [ "$cmode" = 1 ]; then
+    # A refused program writes no unit: an empty one stands for it, and its stderr compares.
+    : > "$out"
     ( cd "$dir" && env LOFT_NO_CACHE=1 ${envs[@]+"${envs[@]}"} LOFT_TIMEOUT=120 "$bin" --path "$root" --emit-c "$out" "$name" >/dev/null 2>"$out.err"
       env LOFT_NO_CACHE=1 LOFT_RELEASE_PASS_PROBE=1 ${envs[@]+"${envs[@]}"} LOFT_TIMEOUT=120 "$bin" --path "$root" --emit-c "$out.ship" "$name" >/dev/null 2>>"$out.err"
       [ -f "$out.ship" ] && cat "$out.ship" >> "$out"; rm -f "$out.ship"; true )
@@ -77,8 +79,12 @@ while IFS= read -r f; do
   one "$f" "$before" "$work/$key.a" &
   one "$f" "$after" "$work/$key.b"
   wait
-  if cmp -s "$work/$key.a" "$work/$key.b" && cmp -s "$work/$key.a.err" "$work/$key.b.err"; then n=$((n+1)); else k=$((k+1)); echo "DIFF $f"; fi
   [ -s "$work/$key.a" ] || e=$((e+1))
+  # An identical pair is dropped at once: the C units of a whole corpus run to gigabytes, and
+  # the work directory is usually a RAM tmpfs.  A differing pair is kept for the reader.
+  if cmp -s "$work/$key.a" "$work/$key.b" && cmp -s "$work/$key.a.err" "$work/$key.b.err"; then
+    n=$((n+1)); rm -f "$work/$key.a" "$work/$key.b" "$work/$key.a.err" "$work/$key.b.err"
+  else k=$((k+1)); echo "DIFF $f"; fi
 done < "$work/files"
 # Two binaries that introspect NOTHING agree on every file — a missing stdlib under --root
 # (both fail to load `default/`) read as IDENTICAL.  A refusal file has no stdout either, so

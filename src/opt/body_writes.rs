@@ -10,7 +10,7 @@
 use crate::data::{Block, Data, Type, Value};
 use crate::database::{Parts, Stores};
 use crate::ir_shape::call_named;
-use crate::opt::facts::Facts;
+use crate::opt::facts::{Facts, Kind, Origin, Scope};
 use crate::opt::loop_records::{IN_PLACE_SET_OPS, is_scalar};
 use crate::opt::writes::{
     FUSABLE_PUSHES, HoistOwned, RECORD_FREE_OPS, call_writes_store, discharge_buffer_set,
@@ -689,20 +689,53 @@ pub(crate) fn callee_writes(
     fx: &mut Facts,
     owned: Option<&HoistOwned>,
 ) -> Option<Rc<WriteSet>> {
-    if let Some(known) = fx.writes.get(&d_nr) {
-        return known.clone();
+    fx.ask(&Writes { stores }, data, d_nr, owned)
+}
+
+/// `@FR-Fact-Kind` — what a call of the function can write (MAY, the writes scope).  A
+/// native and a function met while its own verdict is still open answer `None`, and every
+/// answer is kept: a `None` reached on a recursive edge only ever withholds a hoist.
+pub(crate) struct Writes<'s> {
+    pub(crate) stores: &'s Stores,
+}
+
+impl Kind for Writes<'_> {
+    type Fact = Option<Rc<WriteSet>>;
+    type Ctx = HoistOwned;
+    const SCOPE: Scope = Scope::Writes;
+    fn memo<'a>(&self, fx: &'a mut Facts<'_>) -> &'a mut HashMap<u32, Self::Fact> {
+        &mut fx.writes
     }
-    let def = data.def(d_nr);
-    let answer = if matches!(def.code(), Value::Null) || !fx.active.insert(d_nr) {
+    fn unknown(&self) -> Self::Fact {
         None
-    } else {
+    }
+    fn native(&self, _def: &crate::data::Definition) -> Self::Fact {
+        None
+    }
+    fn on_cycle(&self) -> Self::Fact {
+        None
+    }
+    fn keep(&self, _origin: Origin, _fact: &Self::Fact, _owned: Option<&HoistOwned>) -> bool {
+        true
+    }
+    fn observe(&self, answer: &Self::Fact) {
+        crate::rewrite_census::fired("R-Callee", usize::from(answer.is_some()));
+    }
+    fn body(
+        &self,
+        fx: &mut Facts,
+        data: &Data,
+        d_nr: u32,
+        owned: Option<&HoistOwned>,
+    ) -> Self::Fact {
+        let def = data.def(d_nr);
         let inner = if in_place_only_writer(d_nr, data, fx, owned) {
             // A callee's body: its own emitter-owned mints are not this frame's, so none
             // is admitted here (the conservative side — an untyped mint declines).
             body_writes(
                 def.code(),
                 data,
-                stores,
+                self.stores,
                 def.variables(),
                 fx,
                 &mut HashSet::new(),
@@ -720,13 +753,8 @@ pub(crate) fn callee_writes(
         } else {
             None
         };
-        fx.active.remove(&d_nr);
         inner.map(Rc::new)
-    };
-    // A `None` reached on a recursive edge is memoised too: it only ever withholds a hoist.
-    crate::rewrite_census::fired("R-Callee", usize::from(answer.is_some()));
-    fx.writes.insert(d_nr, answer.clone());
-    answer
+    }
 }
 
 pub fn is_element_address(data: &Data, d_nr: u32) -> bool {

@@ -18,11 +18,6 @@ use crate::opt::writes::{
     call_writes_store, in_place_only_writer, native_op_is_store_free, text_stack_ref,
 };
 
-thread_local! {
-    static BUFFER_WRITERS_OPEN: std::cell::RefCell<HashSet<u32>> =
-        std::cell::RefCell::new(HashSet::new());
-}
-
 /// What [`borrowed_store_texts`] admits: the discharge temps and the statement-bound text
 /// locals that borrow a text read out of a PARAMETER's store.
 #[derive(Default)]
@@ -873,20 +868,53 @@ fn callee_writes_only_its_buffer(
     if !matches!(args.get(attr).map(Value::unspan), Some(Value::Var(x)) if minted.contains(x)) {
         return false;
     }
-    let Some(rb) = retbuf_var(data, d) else {
+    if retbuf_var(data, d).is_none() {
         return false;
-    };
-    // A recursive call answers yes while its own body is being checked: the property is
-    // that every write lands in the buffer handed in, so a write that breaks it is in a
-    // body this walk reads (the greatest fixpoint, as `in_place_only_writer` assumes none).
-    if !BUFFER_WRITERS_OPEN.with(|o| o.borrow_mut().insert(d)) {
-        return true;
     }
-    let cvars = def.variables();
-    let inner = frame_minted_locals(data, cvars, def.code(), &[rb]);
-    let clean = foreign_store_writer(def.code(), data, &inner, fx, Some(cvars)).is_none();
-    BUFFER_WRITERS_OPEN.with(|o| o.borrow_mut().remove(&d));
-    clean
+    fx.ask(&BufferOnly, data, d, None)
+}
+
+/// `@FR-Fact-Kind` — does every write of the function land in the hidden return buffer it is
+/// handed (MUST, its own cycle scope; nothing kept).  A recursive call answers yes while its
+/// own body is being checked: the property is that every write lands in the buffer handed
+/// in, so a write that breaks it is in a body this walk reads (the greatest fixpoint, as
+/// `in_place_only_writer` assumes none).
+struct BufferOnly;
+
+impl crate::opt::facts::Kind for BufferOnly {
+    type Fact = bool;
+    type Ctx = ();
+    const SCOPE: crate::opt::facts::Scope = crate::opt::facts::Scope::BufferOnly;
+    fn memo<'a>(&self, fx: &'a mut crate::opt::facts::Facts<'_>) -> &'a mut HashMap<u32, bool> {
+        &mut fx.buffer_only
+    }
+    fn unknown(&self) -> bool {
+        false
+    }
+    fn native(&self, _def: &crate::data::Definition) -> bool {
+        false
+    }
+    fn on_cycle(&self) -> bool {
+        true
+    }
+    fn keep(&self, _origin: crate::opt::facts::Origin, _clean: &bool, _ctx: Option<&()>) -> bool {
+        false
+    }
+    fn body(
+        &self,
+        fx: &mut crate::opt::facts::Facts,
+        data: &Data,
+        d: u32,
+        _ctx: Option<&()>,
+    ) -> bool {
+        let def = data.def(d);
+        let Some(rb) = retbuf_var(data, d) else {
+            return false;
+        };
+        let cvars = def.variables();
+        let inner = frame_minted_locals(data, cvars, def.code(), &[rb]);
+        foreign_store_writer(def.code(), data, &inner, fx, Some(cvars)).is_none()
+    }
 }
 
 /// The first reason running `node` might grow, free or rewrite a text block of a store the

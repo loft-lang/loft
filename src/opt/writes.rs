@@ -9,7 +9,7 @@
 
 use crate::data::{Data, DefType, Type, Value};
 use crate::database::Stores;
-use crate::opt::facts::Facts;
+use crate::opt::facts::{Facts, Kind, Origin, Scope};
 use crate::opt::loop_records::{IN_PLACE_SET_OPS, all_scalar_record, is_scalar};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -1058,16 +1058,37 @@ pub(crate) fn call_writes_store(
     fx: &mut Facts,
     owned: Option<&HoistOwned>,
 ) -> bool {
-    if (d_nr as usize) >= data.definitions.len() {
-        return true;
+    fx.ask(&StoresWritten, data, d_nr, owned)
+}
+
+/// `@FR-Fact-Kind` — can a call of the function write a store (MAY, the writes scope).  A
+/// recursion cycle answers yes: the conservative answer rather than a fixed point.
+pub(crate) struct StoresWritten;
+
+impl Kind for StoresWritten {
+    type Fact = bool;
+    type Ctx = HoistOwned;
+    const SCOPE: Scope = Scope::Writes;
+    fn memo<'a>(&self, fx: &'a mut Facts<'_>) -> &'a mut HashMap<u32, bool> {
+        &mut fx.stores_written
     }
-    if let Some(known) = fx.stores_written.get(&d_nr) {
-        return *known;
+    fn unknown(&self) -> bool {
+        true
     }
-    let def = data.def(d_nr);
-    let writes = if matches!(def.code(), Value::Null) {
+    fn native(&self, def: &crate::data::Definition) -> bool {
         !native_op_is_store_free(def)
-    } else if fx.active.insert(d_nr) {
+    }
+    fn on_cycle(&self) -> bool {
+        true
+    }
+    /// A `false` is final however it was reached (a cycle contributes `true`, so none comes
+    /// from that branch); a `true` reached WITHOUT the emitter's facts (no dead buffer
+    /// exempt) may be pessimistic and is not memoised, so a later ask with them can answer.
+    fn keep(&self, _origin: Origin, writes: &bool, owned: Option<&HoistOwned>) -> bool {
+        !*writes || owned.is_some()
+    }
+    fn body(&self, fx: &mut Facts, data: &Data, d_nr: u32, owned: Option<&HoistOwned>) -> bool {
+        let def = data.def(d_nr);
         // The callee's OWN dead buffers are exempt in its walk (`(R-ValueRecord)`: a tuple
         // answer's buffer is never minted), read off the program-wide table.
         let callee_owned = owned.map(|o| o.for_callee(d_nr));
@@ -1080,21 +1101,10 @@ pub(crate) fn call_writes_store(
         );
         // @PLN157 § V-c — a body whose only writes land in its own scalar return
         // buffer moves no header a caller could have hoisted.
-        let inner = inner
-            && !(crate::keys::retbuf_hoist_enabled()
-                && retbuf_only_writer(d_nr, data, fx, callee_owned.as_ref()));
-        fx.active.remove(&d_nr);
         inner
-    } else {
-        true // recursion — the conservative answer rather than a fixed point
-    };
-    // A `false` is final however it was reached (a cycle contributes `true`, so none comes
-    // from that branch); a `true` reached WITHOUT the emitter's facts (no dead buffer
-    // exempt) may be pessimistic and is not memoised, so a later ask with them can answer.
-    if !writes || owned.is_some() {
-        fx.stores_written.insert(d_nr, writes);
+            && !(crate::keys::retbuf_hoist_enabled()
+                && retbuf_only_writer(d_nr, data, fx, callee_owned.as_ref()))
     }
-    writes
 }
 
 /// Enforces `@FR-R-Callee` (the in-place-only half).
@@ -1104,43 +1114,63 @@ pub(crate) fn in_place_only_writer(
     fx: &mut Facts,
     owned: Option<&HoistOwned>,
 ) -> bool {
-    let key = d_nr | IN_PLACE_KEY;
-    if let Some(known) = fx.stores_written.get(&key) {
-        return *known;
+    fx.ask(&InPlaceOnly, data, d_nr, owned)
+}
+
+/// `@FR-Fact-Kind` — does a call of the function write only in place (MUST, the writes scope,
+/// its answers beside `StoresWritten`'s under `IN_PLACE_KEY`).  A native and a function on
+/// a cycle answer no, and neither answer is kept.
+pub(crate) struct InPlaceOnly;
+
+impl Kind for InPlaceOnly {
+    type Fact = bool;
+    type Ctx = HoistOwned;
+    const SCOPE: Scope = Scope::Writes;
+    fn memo<'a>(&self, fx: &'a mut Facts<'_>) -> &'a mut HashMap<u32, bool> {
+        &mut fx.stores_written
     }
-    let def = data.def(d_nr);
-    if matches!(def.code(), Value::Null) || !fx.active.insert(d_nr) {
-        return false;
+    fn key(&self, d: u32) -> u32 {
+        d | IN_PLACE_KEY
     }
-    let only_in_place = !def.code().any_node(&mut |n| match n {
-        Value::Call(op, args) => {
-            if (*op as usize) >= data.definitions.len() {
-                return true;
+    fn unknown(&self) -> bool {
+        false
+    }
+    fn native(&self, _def: &crate::data::Definition) -> bool {
+        false
+    }
+    fn on_cycle(&self) -> bool {
+        false
+    }
+    /// A verdict reached while a cycle was open is `false` on the recursive edge only, which
+    /// never admits a hoist.  A `false` reached WITHOUT the emitter's facts (no dead buffer
+    /// exempt) may be pessimistic and is not memoised; a `true`, or any verdict with them, is.
+    fn keep(&self, origin: Origin, only: &bool, owned: Option<&HoistOwned>) -> bool {
+        origin == Origin::Body && (*only || owned.is_some())
+    }
+    fn body(&self, fx: &mut Facts, data: &Data, d_nr: u32, owned: Option<&HoistOwned>) -> bool {
+        let def = data.def(d_nr);
+        !def.code().any_node(&mut |n| match n {
+            Value::Call(op, args) => {
+                if (*op as usize) >= data.definitions.len() {
+                    return true;
+                }
+                let callee = data.def(*op);
+                if matches!(callee.code(), Value::Null) {
+                    !(native_op_is_store_free(callee)
+                        || IN_PLACE_SET_OPS.contains(&callee.name())
+                        || scalar_file_read(data, callee.name(), args, Some(def.variables()))
+                        || scalar_stack_ref(callee.name(), args, Some(def.variables()))
+                        || callee_allowance(callee.name(), args, def.variables(), data, owned))
+                } else {
+                    let inner = owned.map(|o| o.for_callee(*op));
+                    call_writes_store(*op, data, fx, inner.as_ref())
+                        && !in_place_only_writer(*op, data, fx, inner.as_ref())
+                }
             }
-            let callee = data.def(*op);
-            if matches!(callee.code(), Value::Null) {
-                !(native_op_is_store_free(callee)
-                    || IN_PLACE_SET_OPS.contains(&callee.name())
-                    || scalar_file_read(data, callee.name(), args, Some(def.variables()))
-                    || scalar_stack_ref(callee.name(), args, Some(def.variables()))
-                    || callee_allowance(callee.name(), args, def.variables(), data, owned))
-            } else {
-                let inner = owned.map(|o| o.for_callee(*op));
-                call_writes_store(*op, data, fx, inner.as_ref())
-                    && !in_place_only_writer(*op, data, fx, inner.as_ref())
-            }
-        }
-        Value::CallRef(_, _) | Value::Parallel(_) | Value::Yield(_) => true,
-        _ => false,
-    });
-    fx.active.remove(&d_nr);
-    // A verdict reached while a cycle was open is `false` on the recursive edge only, which
-    // never admits a hoist.  A `false` reached WITHOUT the emitter's facts (no dead buffer
-    // exempt) may be pessimistic and is not memoised; a `true`, or any verdict with them, is.
-    if only_in_place || owned.is_some() {
-        fx.stores_written.insert(key, only_in_place);
+            Value::CallRef(_, _) | Value::Parallel(_) | Value::Yield(_) => true,
+            _ => false,
+        })
     }
-    only_in_place
 }
 
 /// @PLN157 § V-c — does this def write nothing but fixed-width scalars into its own

@@ -222,20 +222,9 @@ fn body_ok(data: &Data, f: u32, free: &HashSet<u32>, cands: &HashSet<u32>) -> bo
 pub fn effect_free(data: &Data) -> HashSet<u32> {
     let cands: Vec<u32> = candidates(data);
     let all: HashSet<u32> = cands.iter().copied().collect();
-    let mut free = all.clone();
-    loop {
-        let drop: Vec<u32> = cands
-            .iter()
-            .copied()
-            .filter(|f| free.contains(f) && !body_ok(data, *f, &free, &all))
-            .collect();
-        if drop.is_empty() {
-            return free;
-        }
-        for f in drop {
-            free.remove(&f);
-        }
-    }
+    crate::opt::facts::solve(&cands, crate::opt::facts::Fixpoint::Greatest, |f, free| {
+        body_ok(data, f, free, &all)
+    })
 }
 
 /// What a wrapper's call is: a read of one call of `inner`.

@@ -11,6 +11,7 @@
 //! starts with an empty memo.  Either way the scope of every memo is the scope it had before
 //! the handle existed; `doc/claude/plans/210-c-worst-to-2x/facts-engine.md` § The order.
 
+use crate::data::{Data, Definition, Value};
 use crate::opt::hoist::{InputCache, WriteCache};
 use std::collections::{HashMap, HashSet};
 use std::ops::{Deref, DerefMut};
@@ -51,6 +52,61 @@ pub struct Facts<'m> {
     /// The writes family's cycle guard: the functions whose answer is being worked out.  A
     /// question about one of them answers the kind's cycle answer.
     pub(crate) active: HashSet<u32>,
+    /// The callee-inputs kind's own cycle guard.
+    inputs_guard: HashSet<u32>,
+    /// The buffer-only kind's cycle guard, and its memo, which its policy keeps empty.
+    buffer_guard: HashSet<u32>,
+    pub(crate) buffer_only: HashMap<u32, bool>,
+}
+
+/// Where an answer came from — what a kind's memo policy may tell apart.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Origin {
+    /// A function with no loft body, answered from its declaration.
+    Native,
+    /// A function already under evaluation in the kind's cycle scope.
+    Cycle,
+    /// The kind's walk of the body.
+    Body,
+}
+
+/// The cycle guard a kind's questions share (`@FR-Fact-Kind` (g)).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Scope {
+    /// `call_writes_store`, `in_place_only_writer`, `callee_writes`: one guard, so a question
+    /// about a function another of them is evaluating gets the cycle answer.
+    Writes,
+    /// `callee_inputs`, alone.
+    Inputs,
+    /// `callee_writes_only_its_buffer`, alone.
+    BufferOnly,
+}
+
+/// One kind of fact about a call (`@FR-Fact-Kind`): what it answers and how; [`Facts::ask`]
+/// does the rest.  A kind's `body` is its walk of the function, every question about a callee
+/// in it asked through `ask` again.
+pub(crate) trait Kind {
+    type Fact: Clone;
+    /// What a question carries beside the function (the emitter's owned buffers, re-aimed at
+    /// each callee by the body that asks).
+    type Ctx: ?Sized;
+    const SCOPE: Scope;
+    /// The memo the kind keeps its answers in, and the key a function's answer has there.
+    fn memo<'a>(&self, fx: &'a mut Facts<'_>) -> &'a mut HashMap<u32, Self::Fact>;
+    fn key(&self, d: u32) -> u32 {
+        d
+    }
+    /// A number that names no definition.
+    fn unknown(&self) -> Self::Fact;
+    /// A function with no loft body (NATIVES `declared`).
+    fn native(&self, def: &Definition) -> Self::Fact;
+    /// A function already under evaluation in the kind's scope (CYCLES `cut`).
+    fn on_cycle(&self) -> Self::Fact;
+    /// The memo policy: whether this answer, from `origin`, asked with `ctx`, is kept.
+    fn keep(&self, origin: Origin, fact: &Self::Fact, ctx: Option<&Self::Ctx>) -> bool;
+    fn body(&self, fx: &mut Facts, data: &Data, d: u32, ctx: Option<&Self::Ctx>) -> Self::Fact;
+    /// Every answer computed (not one read from the memo): the rewrite census counts here.
+    fn observe(&self, _fact: &Self::Fact) {}
 }
 
 impl<'m> Facts<'m> {
@@ -62,6 +118,9 @@ impl<'m> Facts<'m> {
             writes: Memo::Own(WriteCache::default()),
             inputs: None,
             active: HashSet::new(),
+            inputs_guard: HashSet::new(),
+            buffer_guard: HashSet::new(),
+            buffer_only: HashMap::new(),
         }
     }
 
@@ -72,6 +131,9 @@ impl<'m> Facts<'m> {
             writes: Memo::Own(WriteCache::default()),
             inputs: None,
             active: HashSet::new(),
+            inputs_guard: HashSet::new(),
+            buffer_guard: HashSet::new(),
+            buffer_only: HashMap::new(),
         }
     }
 
@@ -86,6 +148,50 @@ impl<'m> Facts<'m> {
             writes: Memo::Borrowed(writes),
             inputs: inputs.map(Memo::Borrowed),
             active: HashSet::new(),
+            inputs_guard: HashSet::new(),
+            buffer_guard: HashSet::new(),
+            buffer_only: HashMap::new(),
+        }
+    }
+
+    /// `@FR-Fact-Engine` — kind `k`'s answer for function `d`: the memo's when it has one;
+    /// otherwise the kind's unknown, native or cycle answer, or its walk of the body under the
+    /// kind's cycle guard — counted (`Kind::observe`) and kept as the kind's policy says.
+    pub(crate) fn ask<K: Kind>(
+        &mut self,
+        k: &K,
+        data: &Data,
+        d: u32,
+        ctx: Option<&K::Ctx>,
+    ) -> K::Fact {
+        if (d as usize) >= data.definitions.len() {
+            return k.unknown();
+        }
+        if let Some(f) = k.memo(self).get(&k.key(d)) {
+            return f.clone();
+        }
+        let def = data.def(d);
+        let (origin, fact) = if matches!(def.code(), Value::Null) {
+            (Origin::Native, k.native(def))
+        } else if !self.guard(K::SCOPE).insert(d) {
+            (Origin::Cycle, k.on_cycle())
+        } else {
+            let f = k.body(self, data, d, ctx);
+            self.guard(K::SCOPE).remove(&d);
+            (Origin::Body, f)
+        };
+        k.observe(&fact);
+        if k.keep(origin, &fact, ctx) {
+            k.memo(self).insert(k.key(d), fact.clone());
+        }
+        fact
+    }
+
+    fn guard(&mut self, s: Scope) -> &mut HashSet<u32> {
+        match s {
+            Scope::Writes => &mut self.active,
+            Scope::Inputs => &mut self.inputs_guard,
+            Scope::BufferOnly => &mut self.buffer_guard,
         }
     }
 
@@ -104,5 +210,55 @@ impl<'m> Facts<'m> {
         let r = f(self);
         self.active = saved;
         r
+    }
+}
+
+/// The direction of a [`solve`] (`@FR-Fact-Reach` CYCLES `solve`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Fixpoint {
+    /// A MUST fact, or the complement of a MAY one: every candidate assumed, each round
+    /// dropping those that do not hold against the assumption, until none drops.
+    Greatest,
+    /// Every candidate left out, each round adding those that hold against what is in,
+    /// until none is added — so a candidate that holds only by assuming itself never joins.
+    Least,
+}
+
+/// `@FR-Fact-Reach` CYCLES `solve` — the whole-program fixpoint of a fact over `cands`.  Each
+/// round asks `holds` of every candidate still to decide against the set as the ROUND found
+/// it, in `cands`' order, and applies the changes together, so a round's answer does not
+/// depend on the order inside it.  `holds` may see the same set several times in a row: a
+/// round's set is the previous round's with that round's changes applied.
+pub(crate) fn solve<K, S>(
+    cands: &[K],
+    dir: Fixpoint,
+    mut holds: impl FnMut(K, &HashSet<K, S>) -> bool,
+) -> HashSet<K, S>
+where
+    K: Copy + Eq + std::hash::Hash,
+    S: std::hash::BuildHasher + Default,
+{
+    let mut set: HashSet<K, S> = match dir {
+        Fixpoint::Greatest => cands.iter().copied().collect(),
+        Fixpoint::Least => HashSet::with_hasher(S::default()),
+    };
+    loop {
+        let flip: Vec<K> = cands
+            .iter()
+            .copied()
+            .filter(|k| match dir {
+                Fixpoint::Greatest => set.contains(k) && !holds(*k, &set),
+                Fixpoint::Least => !set.contains(k) && holds(*k, &set),
+            })
+            .collect();
+        if flip.is_empty() {
+            return set;
+        }
+        for k in flip {
+            match dir {
+                Fixpoint::Greatest => set.remove(&k),
+                Fixpoint::Least => set.insert(k),
+            };
+        }
     }
 }

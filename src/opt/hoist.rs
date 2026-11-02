@@ -1424,21 +1424,51 @@ pub struct InputCache {
 /// a view the rest of its block indexes, is a header input.  A callee this body passes `p` on
 /// to contributes ITS inputs re-spelled over `p` — transitively, and a cycle contributes
 /// nothing — filtered by this body's write set, which already carries what that callee
-/// writes.  Memoised per definition; the memo is seeded `None` while the walk is open, so a
-/// recursive edge sees no inputs and only ever withholds a twin.
+/// writes.  Memoised per definition (the [`Inputs`] kind); a recursive edge sees no inputs
+/// and only ever withholds a twin.
 pub fn callee_inputs(
     d_nr: u32,
     data: &Data,
     stores: &Stores,
     fx: &mut Facts,
 ) -> Option<Rc<CalleeInputs>> {
-    if let Some(known) = fx.inputs().memo.get(&d_nr) {
-        return known.clone();
+    fx.ask(&Inputs { stores }, data, d_nr, None)
+}
+
+/// `@FR-Fact-Kind` — the invariant inputs a call of the function reads (MAY, its own cycle
+/// scope).  A native, an unknown number and a function on a cycle have none; every answer is
+/// kept, the cycle's `None` until the walk that met it answers.
+pub(crate) struct Inputs<'s> {
+    pub(crate) stores: &'s Stores,
+}
+
+impl crate::opt::facts::Kind for Inputs<'_> {
+    type Fact = Option<Rc<CalleeInputs>>;
+    type Ctx = ();
+    const SCOPE: crate::opt::facts::Scope = crate::opt::facts::Scope::Inputs;
+    fn memo<'a>(&self, fx: &'a mut Facts<'_>) -> &'a mut HashMap<u32, Self::Fact> {
+        &mut fx.inputs().memo
     }
-    fx.inputs().memo.insert(d_nr, None);
-    let answer = callee_inputs_inner(d_nr, data, stores, fx).map(Rc::new);
-    fx.inputs().memo.insert(d_nr, answer.clone());
-    answer
+    fn unknown(&self) -> Self::Fact {
+        None
+    }
+    fn native(&self, _def: &crate::data::Definition) -> Self::Fact {
+        None
+    }
+    fn on_cycle(&self) -> Self::Fact {
+        None
+    }
+    fn keep(
+        &self,
+        _origin: crate::opt::facts::Origin,
+        _fact: &Self::Fact,
+        _ctx: Option<&()>,
+    ) -> bool {
+        true
+    }
+    fn body(&self, fx: &mut Facts, data: &Data, d_nr: u32, _ctx: Option<&()>) -> Self::Fact {
+        callee_inputs_inner(d_nr, data, self.stores, fx).map(Rc::new)
+    }
 }
 
 #[expect(clippy::too_many_lines, reason = "inherited")]

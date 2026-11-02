@@ -92,6 +92,15 @@ recursive question turned into an `ask`.  A whole-program kind (`effect_free`, `
 
 Each step is its own commit, gated as above.
 
+**State.**  S1–S6 built: the writes family, `inputs` and `buffer_only` are kinds asked through
+`Facts::ask`; `effect_free`, `total` and the non-sentinel parameters are `solve` fixpoints.
+Gated from the binary before S1: the interpreter and native over 2,938 programs and the C
+over 2,976 (the corpus and the 38 library benches, checked and ship units), byte-identical;
+the rewrite census identical, rises included.  S7 is not taken as written: a writer builds a
+handle per question over the memos it keeps, so a kind whose memo lives on the writer
+(`view_return::callee`'s `vr_memo`) has nowhere to keep it; it waits for one long-lived handle
+per writer (D-fact-1).
+
 ## Found while reading, for after the move
 
 These are the disagreements the move makes visible.  Each is a separate change, measured by
