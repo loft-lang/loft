@@ -11,6 +11,41 @@ use super::{
     callee_param_rebinds_owned, diagnostic_format, find_written_vars, v_block, v_if, v_set,
 };
 
+/// loft#2284 — wrap the releases of a replaced fn-field record: when the record is one an
+/// earlier build of this frame made (a record local of the same type as `w_var`'s, compared by
+/// identity), empty that local and release nothing — the frame's own conditional release is the
+/// one.  Any other record gives up what it held as before.
+fn own_build_keeps_its_captures(
+    p: &mut Parser,
+    w_var: u16,
+    old: &Value,
+    releases: Vec<Value>,
+) -> Vec<Value> {
+    if releases.is_empty() {
+        return releases;
+    }
+    let Type::Reference(record, _) = p.vars.tp(w_var).base().clone() else {
+        return releases;
+    };
+    let earlier: Vec<u16> = (0..p.vars.count())
+        .filter(|&k| {
+            k != w_var
+                && p.vars.name(k).starts_with("___clos_")
+                && matches!(p.vars.tp(k).base(), Type::Reference(r, _) if *r == record)
+        })
+        .collect();
+    if earlier.is_empty() {
+        return releases;
+    }
+    let null = p.data.def_nr("OpNullRefSentinel");
+    let release_all = Value::Insert(releases);
+    let guarded = earlier.into_iter().fold(release_all, |rest, k| {
+        let same = p.cl("OpEqRef", &[old.clone(), Value::Var(k)]);
+        v_if(same, v_set(k, Value::Call(null, Vec::new())), rest)
+    });
+    vec![guarded]
+}
+
 /// loft#1874 — for a lambda whose closure record is a fn field's UNION, the releases of the
 /// old record's capture slots this lambda's build does NOT write — `if old is live and the
 /// slot holds a store { free it }` — and those slots' positions, which the new record must
@@ -172,6 +207,13 @@ pub(super) fn emit_fn_ref_field_write(
                     // gives up what it held whichever lambda that was.
                     let (releases, unwritten) =
                         displaced_union_captures(p, lambda_d as u32, &ops, w_var, &old);
+                    // loft#2284, `@FR-L-CapOwn` — where the record this build replaces is one an
+                    // EARLIER build of this frame made (a `___clos_k` of the same union record,
+                    // by identity), the frame still owns what it captured and releases it at
+                    // its end, conditional on that record local
+                    // (`capture_builds::captures_of_displaced_records`); the local is emptied
+                    // instead, which is what tells that release it is the one.
+                    let releases = own_build_keeps_its_captures(p, w_var, &old, releases);
                     let n = releases.len();
                     for (i, r) in releases.into_iter().enumerate() {
                         ops.insert(at + i, r);

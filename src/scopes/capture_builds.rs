@@ -323,6 +323,7 @@ pub(crate) fn capture_build_backings(
     captures_built_in_a_loop(code, set_dbref, false, &mut out.rebuilt_in_loop);
     out.pass_confined = pass_confined_records(data, function, code);
     captures_built_conditionally(code, set_dbref, false, &mut out.built_conditionally);
+    captures_of_displaced_records(function, code, set_dbref, &mut out.built_conditionally);
     let mut built: HashSet<u16> = HashSet::default();
     // Capture vars already resolved at their enclosing statement, waiting for the walk to
     // reach the build node itself.  See the `Value::Set` arm.
@@ -984,6 +985,64 @@ fn captures_built_conditionally(
             );
         }),
     }
+}
+
+/// loft#2284, `@FR-L-CapOwn` — the captures of a closure record this frame builds into a fn
+/// FIELD that the frame also overwrites.  The overwrite displaces the record
+/// (`fn_ref_field_reset` binds it as `___oldrec_N`) while the frame may still use what it
+/// captured, so whether the record is there at the frame's end is a fact of the run — the
+/// same fact as a build in a branch.  The reset nulls the record local when the record it
+/// displaces is that one (`capture_adoption::ReleaseOps::patch`), and the frame's release,
+/// made conditional on the record local, is then the one.
+///
+/// Keyed on the record TYPE a displaced-record local holds, or that two of this frame's builds
+/// share (a capturing overwrite rebuilds in the slot itself, `parser::closures`): a build of
+/// another type is never displaced by this frame.
+fn captures_of_displaced_records(
+    function: &Function,
+    code: &Value,
+    set_dbref: u32,
+    out: &mut HashSet<u16>,
+) {
+    let record_of = |t: u16| match function.tp(t).base() {
+        Type::Reference(r, _) => Some(*r),
+        _ => None,
+    };
+    let mut displaced: Vec<u32> = (0..function.count())
+        .filter(|&t| {
+            function
+                .name(t)
+                .trim_start_matches('_')
+                .starts_with("oldrec")
+        })
+        .filter_map(record_of)
+        .collect();
+    // A CAPTURING overwrite builds the new record in the field's own slot, with no
+    // displaced-record local: two builds of one record type (a fn field's union) are the sign.
+    let builds: Vec<u32> = (0..function.count())
+        .filter(|&w| is_record_local(function, w))
+        .filter_map(record_of)
+        .collect();
+    for (i, r) in builds.iter().enumerate() {
+        if builds[i + 1..].contains(r) && !displaced.contains(r) {
+            displaced.push(*r);
+        }
+    }
+    if displaced.is_empty() {
+        return;
+    }
+    code.walk(&mut |n| {
+        if let Value::Call(d, args) = n.unspan()
+            && *d == set_dbref
+            && let Some(Value::Var(rec)) = args.first().map(Value::unspan)
+            && let Some(Value::Var(c)) = args.get(2).map(Value::unspan)
+            && *rec < function.count()
+            && is_record_local(function, *rec)
+            && matches!(function.tp(*rec).base(), Type::Reference(r, _) if displaced.contains(r))
+        {
+            out.insert(*c);
+        }
+    });
 }
 
 /// Does `node` contain a `return` anywhere within it?
