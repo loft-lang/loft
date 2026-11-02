@@ -3000,6 +3000,10 @@ impl Stores {
     /// its field by name and read into it, a key the type does not have is read and
     /// dropped, the last of a repeated key stands, and a field no member named
     /// takes its absent value.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the member loop with its `@FR-F-Read-Ref` arms ($refs, a reference field)"
+    )]
     fn read_struct(
         &mut self,
         rd: &mut crate::json::JParser,
@@ -3231,19 +3235,15 @@ impl Stores {
             },
             _ => None,
         };
-        Ok(match pointer {
-            Some(p) => {
-                with_read_refs(|r| r.pending.push((slot, p, target)));
-                true
-            }
-            None => {
-                failed.push(WalkErr {
-                    at: key_at,
-                    path: vec![name],
-                });
-                true
-            }
-        })
+        if let Some(p) = pointer {
+            with_read_refs(|r| r.pending.push((slot, p, target)));
+        } else {
+            failed.push(WalkErr {
+                at: key_at,
+                path: vec![name],
+            });
+        }
+        Ok(true)
     }
 
     /// The fields of record type `tp`; none for a type that is not a record.

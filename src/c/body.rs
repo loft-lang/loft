@@ -7301,15 +7301,13 @@ impl<'a> FnWriter<'a> {
         let val = self.expr(val, ind)?;
         let t = self.temp(CType::Text);
         self.line(ind, &format!("loft_text_free(&{t});"));
-        self.line(
-            ind,
-            &format!(
-                "{}(&{t}, {}, {}, 0);",
-                super::Cx::show_fn(tp),
-                as_ref(val)?,
-                2 | pretty
-            ),
+        let call = self.cx.show_top_call(
+            tp,
+            &format!("&{t}"),
+            &as_ref(val)?,
+            &(2 | pretty).to_string(),
         );
+        self.line(ind, &format!("{call};"));
         Ok(Some(self.held(t, CType::Text)))
     }
 
@@ -7324,11 +7322,8 @@ impl<'a> FnWriter<'a> {
         self.cx.show_type(tp)?;
         let val = self.expr(val, ind)?;
         Ok(E::new(
-            format!(
-                "{}(&{dest}, {}, {fmt}, 0)",
-                super::Cx::show_fn(tp),
-                as_ref(val)?
-            ),
+            self.cx
+                .show_top_call(tp, &format!("&{dest}"), &as_ref(val)?, &fmt.to_string()),
             K::Void,
         ))
     }

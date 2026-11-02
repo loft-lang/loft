@@ -346,7 +346,10 @@ static void loft_show_refs(loft_text *s, const loft_ref *e, uint32_t n, int fmt,
             loft_push_char(s, ',');
             if (pretty) { if (struct_elem) loft_nl(s, ind + 1); else loft_push_char(s, ' '); }
         }
+        /* `@FR-F-Render-Ref` — a keyed element's segment is its POSITION in this list. */
+        loft_rr_push_index(i);
         f(s, e[i], fmt, ind + 1);
+        loft_rr_pop();
     }
     if (pretty) loft_push_char(s, ' ');
     loft_push_char(s, ']');

@@ -28,8 +28,16 @@ impl Cx<'_> {
                 .iter()
                 .filter(|(v, _)| *v != u16::MAX)
                 .try_for_each(|(v, _)| self.show_type(*v)),
+            // `@FR-F-Render-Refs` — a reference field's TARGET type is rendered too: a target the
+            // value does not reach is written under `$refs` as a record of that type.
             Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
-                fields.iter().try_for_each(|f| self.show_type(f.content))
+                fields.iter().try_for_each(|f| {
+                    self.show_type(f.content)?;
+                    if self.is_reference_field(f) {
+                        self.show_type(f.target)?;
+                    }
+                    Ok(())
+                })
             }
             Parts::Vector(elem) => self.show_type(*elem),
             // `@FR-L-OutOfLine` — an out-of-line field renders as its content.
@@ -66,6 +74,28 @@ impl Cx<'_> {
             self.show_types.borrow_mut().remove(&tp);
         }
         r
+    }
+
+    /// A stored `reference<T>` field whose target type is known — the field `loft_show_top`
+    /// writes as a pointer (`@FR-F-Render-Ref`).
+    fn is_reference_field(&self, f: &Field) -> bool {
+        matches!(
+            self.stores.types.get(f.content as usize).map(|t| &t.parts),
+            Some(Parts::DbRef)
+        ) && (f.target as usize) < self.stores.types.len()
+            && f.target > 6
+    }
+
+    /// The call that renders a value of type `tp` held at `r` into `s` at the TOP of a render —
+    /// through `loft_show_top` when the type can reach a stored reference
+    /// (`@FR-F-Render-Ref`), so references become pointers and `$refs`; directly otherwise,
+    /// which keeps every other render's output and code as they were.
+    pub(crate) fn show_top_call(&self, tp: u16, s: &str, r: &str, fmt: &str) -> String {
+        if self.stores.reaches_reference(tp, &mut Vec::new()) {
+            format!("loft_show_top({s}, {}, {r}, {fmt})", Self::show_fn(tp))
+        } else {
+            format!("{}({s}, {r}, {fmt}, 0)", Self::show_fn(tp))
+        }
     }
 
     /// The C function that renders a value of type `tp`.
@@ -126,6 +156,13 @@ impl Cx<'_> {
                 "static void {body}(loft_text *s, loft_ref r, int fmt, int ind) {{"
             );
             out.push_str("    if (r.rec == 0) { loft_push(s, \"null\", 4); return; }\n");
+            // `@FR-F-Render-Ref` — a record's pointer is the path the walk wrote it at.
+            if matches!(
+                self.stores.types[tp as usize].parts,
+                Parts::Struct(_) | Parts::EnumValue(..) | Parts::Enum(_)
+            ) {
+                out.push_str("    loft_rr_record(r);\n");
+            }
             self.show_body(&mut out, tp, chains);
             out.push_str("}\n");
         }
@@ -158,7 +195,11 @@ impl Cx<'_> {
                 out.push_str("    loft_show_sep(s, fmt, ind, c);\n");
             }
             let _ = writeln!(out, "    loft_show_name(s, fmt, {});", c_string(&f.name));
-            // The last field's child is the tail of a chain, left for the loop.
+            // `@FR-F-Render-Ref` — the field's name is its segment of the reference-render path
+            // (a no-op outside `loft_show_top`).
+            let _ = writeln!(out, "    loft_rr_push({});", c_string(&f.name));
+            // The last field's child is the tail of a chain, left for the loop (which takes
+            // the path along and pops it).
             if chains
                 && i + 1 == shown.len()
                 && let Parts::ChildRec(c) = self.stores.types[f.content as usize].parts
@@ -171,12 +212,22 @@ impl Cx<'_> {
                 );
                 continue;
             }
-            let _ = writeln!(
-                out,
-                "    {}(s, loft_field(r, {}), fmt, ind + 1);",
-                Self::show_fn(f.content),
-                f.position
-            );
+            if self.is_reference_field(f) {
+                let _ = writeln!(
+                    out,
+                    "    loft_show_ref_field(s, loft_field(r, {}), fmt, ind + 1, {});",
+                    f.position,
+                    Self::show_fn(f.target)
+                );
+            } else {
+                let _ = writeln!(
+                    out,
+                    "    {}(s, loft_field(r, {}), fmt, ind + 1);",
+                    Self::show_fn(f.content),
+                    f.position
+                );
+            }
+            out.push_str("    loft_rr_pop();\n");
         }
         let _ = writeln!(
             out,

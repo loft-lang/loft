@@ -94,8 +94,9 @@ fn json_pointer(path: &[String]) -> String {
 
 impl Stores {
     /// Can a value of type `tp` hold a stored reference anywhere inside it?  The render pays
-    /// for paths only where one can.
-    fn reaches_reference(&self, tp: u16, seen: &mut Vec<u16>) -> bool {
+    /// for paths only where one can.  The C backend asks the same question per format site
+    /// (`c::show::show_top_call`), so both runtimes track references for exactly these types.
+    pub(crate) fn reaches_reference(&self, tp: u16, seen: &mut Vec<u16>) -> bool {
         if (tp as usize) >= self.types.len() || seen.contains(&tp) {
             return false;
         }

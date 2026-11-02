@@ -5095,22 +5095,38 @@ static void loft_show_brace(loft_text *s) {
     else loft_push_char(s, '}');
 }
 
-/* The last field's child: left for the loop of the nearest loft_show_run, or `null`. */
+/* The reference-render path of a chain (`loft_show_top`, below). */
+static LOFT_TLS int loft_rr_on;
+static void loft_rr_pop(void);
+static void loft_rr_tail_save(void);
+static void loft_rr_tail_take(void);
+typedef struct { char *p; size_t len; size_t *marks; size_t n; } loft_rr_saved;
+static loft_rr_saved loft_rr_save(void);
+static void loft_rr_restore(loft_rr_saved *k);
+
+/* The last field's child: left for the loop of the nearest loft_show_run, or `null`.  The
+ * field's name is on the reference-render path; a child left for the loop takes it along. */
 static void loft_show_tail(loft_text *s, loft_show1_fn f, loft_ref r, int ind) {
-    if (r.rec == 0) { loft_push(s, "null", 4); return; }
+    if (r.rec == 0) { loft_push(s, "null", 4); loft_rr_pop(); return; }
     loft_tail_fn = f;
     loft_tail_ref = r;
     loft_tail_ind = ind;
+    loft_rr_tail_save();
 }
 
 static void loft_show_run(loft_text *s, loft_show1_fn f, loft_ref r, int fmt, int ind) {
     size_t mark = loft_nclosers;
+    loft_rr_saved saved = { 0, 0, 0, 0 };
+    int track = loft_rr_on;
+    if (track) saved = loft_rr_save();
     f(s, r, fmt, ind);
     while (loft_tail_fn) {
         loft_show1_fn g = loft_tail_fn;
         loft_tail_fn = 0;
+        loft_rr_tail_take();
         g(s, loft_tail_ref, fmt, loft_tail_ind);
     }
+    if (track) loft_rr_restore(&saved);
     while (loft_nclosers > mark) {
         loft_show_closer k = loft_closers[--loft_nclosers];
         if (k.brace) loft_push_char(s, '}');
@@ -5133,6 +5149,10 @@ static void loft_show_name(loft_text *s, int fmt, const char *name) {
     if (fmt & 1) loft_push_char(s, ' ');
 }
 
+/* The reference-render path (`loft_show_top`, below): an element's position is its segment. */
+static void loft_rr_push_index(uint32_t i);
+static void loft_rr_pop(void);
+
 /* write_list for a vector: its elements of `size` bytes, each rendered by `f`. */
 static void loft_show_list(loft_text *s, loft_ref r, int fmt, int ind, uint32_t size,
                            int complex_elem, int struct_elem, loft_show_fn f) {
@@ -5149,10 +5169,302 @@ static void loft_show_list(loft_text *s, loft_ref r, int fmt, int ind, uint32_t 
             if (pretty) { if (struct_elem) loft_nl(s, ind + 1); else loft_push_char(s, ' '); }
         }
         loft_ref e = { r.store_nr, vr, 8 + i * size };
+        loft_rr_push_index(i);
         f(s, e, fmt, ind + 1);
+        loft_rr_pop();
     }
     if (pretty) loft_push_char(s, ' ');
     loft_push_char(s, ']');
+}
+
+/* `@FR-F-Render-Ref` / `@FR-F-Render-Refs` (Stores::render_top, database/format.rs) — a top-level
+ * render of a type that can reach a stored reference writes every reference as an RFC 6901
+ * pointer to its target, `{"$ref":"#/leaves/1"}`, and brings the targets the value does not reach
+ * along under `$refs`.  The context is per render: the path the walk is at, the pointer of every
+ * record it has written (first one wins), and the target of every reference it met — a
+ * reference leaves a marker the end of the render patches once every pointer is known.
+ * (`loft_rr_on`, the flag every helper asks first, is declared beside the chain loop.) */
+static LOFT_TLS loft_text loft_rr_path;           /* "/leaves/1": the pointer without its '#' */
+static LOFT_TLS size_t *loft_rr_marks;             /* the path's length before each push */
+static LOFT_TLS size_t loft_rr_nmarks, loft_rr_cmarks;
+typedef struct { uint16_t nr; uint32_t rec, pos; size_t at, len; } loft_rr_place;
+static LOFT_TLS loft_rr_place *loft_rr_at;         /* a record's pointer, in loft_rr_pool */
+static LOFT_TLS size_t loft_rr_nat, loft_rr_cat;
+static LOFT_TLS size_t *loft_rr_tab;               /* open-addressed index into loft_rr_at */
+static LOFT_TLS size_t loft_rr_ctab;
+static LOFT_TLS loft_text loft_rr_pool;
+typedef struct { uint16_t nr; uint32_t rec, pos; loft_show_fn f; } loft_rr_target;
+static LOFT_TLS loft_rr_target *loft_rr_t;
+static LOFT_TLS size_t loft_rr_nt, loft_rr_ct;
+/* The path an out-of-line child is written at (ShowDb::write's tail_path). */
+static LOFT_TLS loft_text loft_rr_tail_path;
+static LOFT_TLS size_t *loft_rr_tail_marks;
+static LOFT_TLS size_t loft_rr_tail_nmarks;
+static LOFT_TLS int loft_rr_tail_set;
+
+#define LOFT_RR_MARK_OPEN "\001\002R"
+#define LOFT_RR_MARK_CLOSE '\002'
+
+static void loft_rr_push_raw(const char *seg, size_t n) {
+    if (!loft_rr_on) return;
+    if (loft_rr_nmarks == loft_rr_cmarks) {
+        loft_rr_cmarks = loft_rr_cmarks ? loft_rr_cmarks * 2 : 32;
+        loft_rr_marks = (size_t *) realloc(loft_rr_marks, loft_rr_cmarks * sizeof(size_t));
+        if (!loft_rr_marks) abort();
+    }
+    loft_rr_marks[loft_rr_nmarks++] = loft_rr_path.len;
+    loft_push_char(&loft_rr_path, '/');
+    /* RFC 6901: `~` is `~0` and `/` is `~1` inside a segment. */
+    for (size_t i = 0; i < n; i++) {
+        if (seg[i] == '~') loft_push(&loft_rr_path, "~0", 2);
+        else if (seg[i] == '/') loft_push(&loft_rr_path, "~1", 2);
+        else loft_push_char(&loft_rr_path, seg[i]);
+    }
+}
+
+static void loft_rr_push(const char *name) {
+    if (loft_rr_on) loft_rr_push_raw(name, strlen(name));
+}
+
+static void loft_rr_push_index(uint32_t i) {
+    if (!loft_rr_on) return;
+    char b[16];
+    int n = snprintf(b, sizeof b, "%u", (unsigned) i);
+    loft_rr_push_raw(b, (size_t) n);
+}
+
+static void loft_rr_pop(void) {
+    if (loft_rr_on && loft_rr_nmarks) loft_rr_path.len = loft_rr_marks[--loft_rr_nmarks];
+}
+
+static size_t loft_rr_hash(uint16_t nr, uint32_t rec, uint32_t pos) {
+    uint64_t h = ((uint64_t) nr << 48) ^ ((uint64_t) rec << 16) ^ pos;
+    h ^= h >> 33;
+    h *= 0xff51afd7ed558ccdULL;
+    h ^= h >> 33;
+    return (size_t) h;
+}
+
+/* The pointer recorded for a record, or NULL. */
+static const loft_rr_place *loft_rr_find(uint16_t nr, uint32_t rec, uint32_t pos) {
+    if (!loft_rr_ctab) return 0;
+    size_t m = loft_rr_ctab - 1;
+    for (size_t i = loft_rr_hash(nr, rec, pos) & m;; i = (i + 1) & m) {
+        size_t k = loft_rr_tab[i];
+        if (k == 0) return 0;
+        const loft_rr_place *p = &loft_rr_at[k - 1];
+        if (p->nr == nr && p->rec == rec && p->pos == pos) return p;
+    }
+}
+
+/* Record `r`'s pointer as the path the walk is at, unless it has one: first one wins. */
+static void loft_rr_place_at(uint16_t nr, uint32_t rec, uint32_t pos, const char *p, size_t n) {
+    if (loft_rr_find(nr, rec, pos)) return;
+    if (loft_rr_nat == loft_rr_cat) {
+        loft_rr_cat = loft_rr_cat ? loft_rr_cat * 2 : 64;
+        loft_rr_at = (loft_rr_place *) realloc(loft_rr_at, loft_rr_cat * sizeof(loft_rr_place));
+        if (!loft_rr_at) abort();
+    }
+    if (2 * (loft_rr_nat + 1) > loft_rr_ctab) {
+        size_t c = loft_rr_ctab ? loft_rr_ctab * 2 : 128;
+        free(loft_rr_tab);
+        loft_rr_tab = (size_t *) calloc(c, sizeof(size_t));
+        if (!loft_rr_tab) abort();
+        loft_rr_ctab = c;
+        for (size_t k = 0; k < loft_rr_nat; k++) {
+            size_t i = loft_rr_hash(loft_rr_at[k].nr, loft_rr_at[k].rec, loft_rr_at[k].pos) & (c - 1);
+            while (loft_rr_tab[i]) i = (i + 1) & (c - 1);
+            loft_rr_tab[i] = k + 1;
+        }
+    }
+    loft_rr_place e = { nr, rec, pos, loft_rr_pool.len, n };
+    if (n) loft_push(&loft_rr_pool, p, n);
+    loft_rr_at[loft_rr_nat++] = e;
+    size_t i = loft_rr_hash(nr, rec, pos) & (loft_rr_ctab - 1);
+    while (loft_rr_tab[i]) i = (i + 1) & (loft_rr_ctab - 1);
+    loft_rr_tab[i] = loft_rr_nat;
+}
+
+/* A record of struct or enum type is being written: its pointer is where the walk is. */
+static void loft_rr_record(loft_ref r) {
+    if (loft_rr_on) loft_rr_place_at(r.store_nr, r.rec, r.pos, loft_rr_path.p, loft_rr_path.len);
+}
+
+/* An out-of-line child left for the chain loop is written at the path its field had. */
+static void loft_rr_tail_save(void) {
+    if (!loft_rr_on) return;
+    loft_rr_tail_path.len = 0;
+    if (loft_rr_path.len) loft_push(&loft_rr_tail_path, loft_rr_path.p, loft_rr_path.len);
+    loft_rr_tail_marks = (size_t *) realloc(loft_rr_tail_marks, (loft_rr_nmarks + 1) * sizeof(size_t));
+    if (!loft_rr_tail_marks) abort();
+    if (loft_rr_nmarks) memcpy(loft_rr_tail_marks, loft_rr_marks, loft_rr_nmarks * sizeof(size_t));
+    loft_rr_tail_nmarks = loft_rr_nmarks;
+    loft_rr_tail_set = 1;
+    loft_rr_pop();
+}
+
+/* The whole path, for a chain loop to put back once its children are written. */
+static loft_rr_saved loft_rr_save(void) {
+    loft_rr_saved k = { 0, loft_rr_path.len, 0, loft_rr_nmarks };
+    if (loft_rr_path.len) {
+        k.p = (char *) malloc(loft_rr_path.len);
+        if (!k.p) abort();
+        memcpy(k.p, loft_rr_path.p, loft_rr_path.len);
+    }
+    if (loft_rr_nmarks) {
+        k.marks = (size_t *) malloc(loft_rr_nmarks * sizeof(size_t));
+        if (!k.marks) abort();
+        memcpy(k.marks, loft_rr_marks, loft_rr_nmarks * sizeof(size_t));
+    }
+    return k;
+}
+
+static void loft_rr_restore(loft_rr_saved *k) {
+    loft_rr_path.len = 0;
+    if (k->len) loft_push(&loft_rr_path, k->p, k->len);
+    if (k->n > loft_rr_cmarks) {
+        loft_rr_cmarks = k->n;
+        loft_rr_marks = (size_t *) realloc(loft_rr_marks, loft_rr_cmarks * sizeof(size_t));
+        if (!loft_rr_marks) abort();
+    }
+    if (k->n) memcpy(loft_rr_marks, k->marks, k->n * sizeof(size_t));
+    loft_rr_nmarks = k->n;
+    free(k->p);
+    free(k->marks);
+}
+
+static void loft_rr_tail_take(void) {
+    if (!loft_rr_on || !loft_rr_tail_set) return;
+    loft_rr_tail_set = 0;
+    loft_rr_path.len = 0;
+    if (loft_rr_tail_path.len) loft_push(&loft_rr_path, loft_rr_tail_path.p, loft_rr_tail_path.len);
+    if (loft_rr_tail_nmarks > loft_rr_cmarks) {
+        loft_rr_cmarks = loft_rr_tail_nmarks;
+        loft_rr_marks = (size_t *) realloc(loft_rr_marks, loft_rr_cmarks * sizeof(size_t));
+        if (!loft_rr_marks) abort();
+    }
+    if (loft_rr_tail_nmarks) memcpy(loft_rr_marks, loft_rr_tail_marks, loft_rr_tail_nmarks * sizeof(size_t));
+    loft_rr_nmarks = loft_rr_tail_nmarks;
+}
+
+/* A stored reference FIELD (ShowDb::write_reference_marker): under a tracking render a live
+ * reference leaves a marker naming its target, written by `f` (the render of the type the
+ * field names); a null or removed reference and a generator handle render as the plain slot. */
+static void loft_show_ref_field(loft_text *s, loft_ref r, int fmt, int ind, loft_show_fn f) {
+    uint32_t w[3];
+    memcpy(w, loft_at(loft_store_of(r), r.rec, r.pos), 12);
+    uint16_t nr = (uint16_t) w[0];
+    if (!loft_rr_on || w[1] == 0 || nr == 0xFFFF || nr == 0xFFFE
+        || (nr < loft_nstores && loft_st_is_removed(&loft_stores[nr], w[1]))) {
+        (void) fmt; (void) ind;
+        loft_show_dbref(s, r);
+        return;
+    }
+    if (loft_rr_nt == loft_rr_ct) {
+        loft_rr_ct = loft_rr_ct ? loft_rr_ct * 2 : 16;
+        loft_rr_t = (loft_rr_target *) realloc(loft_rr_t, loft_rr_ct * sizeof(loft_rr_target));
+        if (!loft_rr_t) abort();
+    }
+    loft_rr_target t = { nr, w[1], w[2], f };
+    loft_rr_t[loft_rr_nt] = t;
+    loft_push(s, LOFT_RR_MARK_OPEN, 3);
+    loft_push_i64(s, (int64_t) loft_rr_nt);
+    loft_push_char(s, LOFT_RR_MARK_CLOSE);
+    loft_rr_nt++;
+}
+
+static void loft_rr_reset(void) {
+    loft_rr_path.len = 0;
+    loft_rr_nmarks = 0;
+    loft_rr_nat = 0;
+    loft_rr_nt = 0;
+    loft_rr_pool.len = 0;
+    loft_rr_tail_set = 0;
+    if (loft_rr_ctab) memset(loft_rr_tab, 0, loft_rr_ctab * sizeof(size_t));
+}
+
+/* Stores::render_top: render `r` by `f` into `s`, references as pointers, the targets the value
+ * does not reach under `$refs` (an object gains it as its last member, any other value is
+ * wrapped as `{"$value": …, "$refs": […]}`).  A render inside a render writes as before. */
+static void loft_show_top(loft_text *s, loft_show_fn f, loft_ref r, int fmt) {
+    if (loft_rr_on) { f(s, r, fmt, 0); return; }
+    loft_rr_reset();
+    loft_rr_on = 1;
+    int pretty = fmt & 1;
+    loft_text body = { 0, 0, 0 };
+    f(&body, r, fmt, 0);
+    loft_text list = { 0, 0, 0 };
+    size_t nrefs = 0;
+    for (size_t k = 0; k < loft_rr_nt; k++) {
+        loft_rr_target t = loft_rr_t[k];
+        if (!t.f || loft_rr_find(t.nr, t.rec, t.pos)) continue;
+        loft_rr_path.len = 0;
+        loft_rr_nmarks = 0;
+        char seg[16];
+        int n = snprintf(seg, sizeof seg, "%u", (unsigned) nrefs);
+        loft_rr_push_raw("$refs", 5);
+        loft_rr_push_raw(seg, (size_t) n);
+        loft_rr_place_at(t.nr, t.rec, t.pos, loft_rr_path.p, loft_rr_path.len);
+        if (nrefs) loft_push_char(&list, ',');
+        loft_ref tr = { t.nr, t.rec, t.pos };
+        t.f(&list, tr, fmt, 1);
+        nrefs++;
+    }
+    loft_rr_on = 0;
+    int wrapped = 0;
+    if (nrefs) {
+        loft_text b2 = { 0, 0, 0 };
+        size_t end = body.len;
+        while (end && (body.p[end - 1] == ' ' || body.p[end - 1] == '\n' || body.p[end - 1] == '\t' || body.p[end - 1] == '\r')) end--;
+        if (end && body.p[end - 1] == '}') {
+            size_t open = end - 1;
+            while (open && (body.p[open - 1] == ' ' || body.p[open - 1] == '\n' || body.p[open - 1] == '\t' || body.p[open - 1] == '\r')) open--;
+            if (open) loft_push(&b2, body.p, open);
+            if (!(open && body.p[open - 1] == '{')) loft_push_char(&b2, ',');
+            if (pretty) loft_push(&b2, "\n  ", 3);
+            loft_push_cstr(&b2, pretty ? "\"$refs\": [" : "\"$refs\":[");
+            if (list.len) loft_push(&b2, list.p, list.len);
+            loft_push_char(&b2, ']');
+            if (pretty) loft_push_char(&b2, '\n');
+            loft_push_char(&b2, '}');
+        } else {
+            wrapped = 1;
+            loft_push_cstr(&b2, pretty ? "{\"$value\": " : "{\"$value\":");
+            if (body.len) loft_push(&b2, body.p, body.len);
+            loft_push_cstr(&b2, pretty ? ",\"$refs\": [" : ",\"$refs\":[");
+            if (list.len) loft_push(&b2, list.p, list.len);
+            loft_push_cstr(&b2, "]}");
+        }
+        loft_text_free(&body);
+        body = b2;
+    }
+    loft_text_free(&list);
+    /* Patch every marker with its target's pointer. */
+    size_t i = 0;
+    while (i < body.len) {
+        const char *at = 0;
+        for (size_t j = i; j + 2 < body.len; j++)
+            if (body.p[j] == '\001' && body.p[j + 1] == '\002' && body.p[j + 2] == 'R') { at = body.p + j; break; }
+        if (!at) break;
+        size_t j = (size_t) (at - body.p);
+        loft_push(s, body.p + i, j - i);
+        size_t k = 0, e = j + 3;
+        while (e < body.len && body.p[e] != LOFT_RR_MARK_CLOSE) k = k * 10 + (size_t) (body.p[e++] - '0');
+        const loft_rr_place *p = k < loft_rr_nt ? loft_rr_find(loft_rr_t[k].nr, loft_rr_t[k].rec, loft_rr_t[k].pos) : 0;
+        if (!p) {
+            loft_push(s, "null", 4);
+        } else {
+            const char *pp = p->len ? loft_rr_pool.p + p->at : "";
+            int in_refs = p->len >= 7 && memcmp(pp, "/$refs/", 7) == 0;
+            loft_push_cstr(s, "{\"$ref\":\"#");
+            if (wrapped && !in_refs) loft_push(s, "/$value", 7);
+            if (p->len) loft_push(s, pp, p->len);
+            loft_push_cstr(s, "\"}");
+        }
+        i = e < body.len ? e + 1 : body.len;
+    }
+    if (body.len > i) loft_push(s, body.p + i, body.len - i);
+    loft_text_free(&body);
 }
 
 /* ── The host: arguments and the clock ─────────────────────────────────────────────────── */
