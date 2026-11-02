@@ -1310,12 +1310,85 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SAs { at, e: ae, tp: at_tp, checked } => cast_expr(e, vars, ae, at_tp),
     SParen { e: pe } => if pe == null { ex(ir::NdNull, ir::TyUnknown { n: 0 }) } else { expression(e, vars, pe!) },
     SSizeof { kind, tp: st } => sizeof_expr(e, vars, kind, st),
+    STupleLit { elems } => tuple_lit(e, vars, elems),
+    STupleGet { e: te, index } => tuple_get(e, vars, te, index),
     SIs { e: ie, variant, caps, has_caps } => is_expr(e, vars, ie, variant, len(caps) > 0 || has_caps),
     _ => {
       el::refuse(e, "an expression form: {syn_kind(e, n)}");
       ex(ir::NdNull, ir::TyUnknown { n: 0 })
     }
   }
+}
+
+// A tuple literal whose members are scalars or texts (`(T-Cons)`): a stack tuple, typed by its
+// members.  A member that is a record, a collection, nullable or null — the shapes Rust rewrites
+// into a `__tuple<…>` record or types otherwise — is refused by name.
+fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
+  items: vector<ir::Node> = [];
+  tps: vector<ir::TypeT> = [];
+  for n in elems {
+    x = expression(e, vars, n);
+    if el_types::is_unknown(x.tp) {
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    if !(is_scalar(x.tp) || x.tp is TyText) {
+      el::refuse(e, "a tuple with a member of this type: {type_kind(x.tp)}");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    // `tuple_member_copy`: a text member that reads a local is copied into a work text of the
+    // tuple's own (the second pass), so the tuple does not borrow the local.  A literal and a
+    // parameter stand as they are; any other text member is refused by name.
+    if x.tp is TyText {
+      match el_ir::unspan(x.code) {
+        NdText { s: _ } => {},
+        NdVar { n: tv } => {
+          if !vars.vars[tv].argument && !e.first_pass {
+            w = el_vars::work_text_p2(vars);
+            owned = ir::TyText { dep: [w] };
+            x = ex(el_ir::v_block([el_ir::v_set(w, x.code), ir::NdVar { n: w }], owned, "tuple_member_copy"), owned);
+          }
+        },
+        _ => {
+          el::refuse(e, "a tuple with a text member that is no literal or variable");
+          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+      }
+    }
+    items += [x.code];
+    tps += [x.tp];
+  }
+  ex(ir::NdTuple { items: items }, ir::TyTuple { elems: tps })
+}
+
+// `t.N` of a stack-tuple local: the member (`TupleGet`), typed as it is, a text member
+// borrowing the tuple's local.  Any other subject is refused by name.
+fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -> Ex {
+  if te == null {
+    el::refuse(e, "a tuple member with no subject");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  x = expression(e, vars, te!);
+  match el_ir::unspan(x.code) {
+    NdVar { n: tv } => {
+      match x.tp {
+        TyTuple { elems } => {
+          if index < 0 || index >= len(elems) {
+            el::refuse(e, "a tuple member past the tuple's end");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          t = elems[index]!;
+          if t is TyText {
+            t = ir::TyText { dep: [tv] };
+          }
+          return ex(ir::NdTupleGet { var: tv, idx: index }, t);
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  refuse_known(e, x.tp, "a tuple member of this subject: {type_kind(x.tp)}");
+  ex(ir::NdNull, ir::TyUnknown { n: 0 })
 }
 
 // `Parser::parse_size` for `sizeof(<struct>)`: the packed size of the struct's store type, a
