@@ -119,7 +119,15 @@ impl FnWriter<'_> {
     pub(super) fn peel_loop(&mut self, b: &Block, p: &Peel, ind: usize) -> Result<(), String> {
         let (idx, var) = (self.var(p.index), self.var(p.loop_var));
         let next = p.next.map(|n| self.var(n));
+        // Each copy is written as the loop body is: from the binding state the loop starts
+        // with.  `bound` says which variables a statement written so far has bound, so a
+        // `Set` in copy two onward read as a REBIND and took a displacing free the loop body
+        // never has — of a value that borrows a call's buffer (a join of two calls, a view),
+        // the store that buffer still names (157-join-witness under poison).  The body's own
+        // frees are per trip already.
+        let bound_at_entry = self.bound.clone();
         for &k in &p.values {
+            self.bound.clone_from(&bound_at_entry);
             self.line(ind, "{");
             let set = match &next {
                 Some(n) => format!(
