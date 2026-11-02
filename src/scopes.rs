@@ -99,6 +99,7 @@ mod join_rewrite;
 mod last_use;
 mod leak_check;
 mod move_elide;
+mod owner_handover;
 mod par_safety;
 mod par_writes;
 mod phase;
@@ -907,6 +908,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     // loft#2357, `@FR-L-CapKeep` — a capture whose local the loop re-assigns is released by the
     // last of its names to let go, decided by store identity at each let-go point.
     rebound_captures::release_rebound_captures(data);
+    // loft#2363, `@FR-L-CapOne` — a record that owns a capture through its owner slot passes
+    // that ownership to another record holding the same store when it is released first.
+    owner_handover::hand_over_owned_captures(data);
     crate::ownership_cfg::oracle_free_checks(data);
     // #682 — record which closure captures the record ADOPTS, now that every dep
     // rewrite above has settled.  Must run after the loop, not inside it: the
