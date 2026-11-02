@@ -5,6 +5,7 @@
 5 src/main.rs
 4 src/native_utils.rs
 1 src/self_update.rs
+1 tests/c_emit.rs
 2 tests/common/mod.rs
 3 tests/common/timing.rs
 1 tests/crash_report_file.rs

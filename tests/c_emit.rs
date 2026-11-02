@@ -7820,6 +7820,7 @@ fn a_return_inside_a_loop_frees_the_texts_a_later_statement_declares() {
 /// Linux only, where it is measured: each compiler warns its own set, so another host's `cc`
 /// is no evidence about this one's.
 #[test]
+// approved exemption: a compiler's lint set is its own, so another host's `cc` warning list is no evidence about gcc's; Windows substitute: the nightly MSVC and MinGW C sweeps compile every corpus program, and `scripts/c_lint_census.py` runs under any LOFT_CC
 #[cfg(target_os = "linux")]
 fn the_written_c_compiles_without_a_lint_warning() {
     if !have_cc() {

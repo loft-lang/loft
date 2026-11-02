@@ -43,9 +43,6 @@ enum Dialect {
     Msvc,
 }
 
-
-/// The main-thread stack a compiled C program gets on Windows: the 8 MiB a Linux one has.
-const C_MAIN_STACK: u32 = 8 << 20;
 fn dialect(cc: &str) -> Dialect {
     if loft::platform::c_compiler_is_msvc(cc) {
         Dialect::Msvc
@@ -586,17 +583,13 @@ fn compile_command(
             cmd.push_args(link_args);
             cmd.push_arg("-lm");
             cmd.push_args(loft::platform::c_system_link_libs());
-            // A program's main thread gets the stack a Linux one has (8 MiB), as the rustc
-            // writer's does (`platform::main_stack_link_args`): Windows defaults to 1 MiB, and
-            // the same recursion must not overflow on one platform only.
-            if cfg!(windows) {
-                cmd.push_arg(format!("-Wl,--stack,{}", C_MAIN_STACK));
-            }
+            // A program's main thread gets the stack a Linux one has (8 MiB): Windows defaults
+            // to 1 MiB, and the same recursion must not overflow on one platform only.
+            cmd.push_args(loft::platform::c_main_stack_args(false));
         }
         Dialect::Msvc => {
             cmd.push_arg("/nologo").push_args(msvc_args(flags));
-            // `cl /F<bytes>`: the main thread's stack, 8 MiB (see the Gnu arm).
-            cmd.push_arg(format!("/F{C_MAIN_STACK}"));
+            cmd.push_args(loft::platform::c_main_stack_args(true));
             cmd.push_arg(src);
             cmd.push_arg(format!("/Fe:{}", binary.display()));
             cmd.push_arg(format!("/Fo:{}", obj.display()));

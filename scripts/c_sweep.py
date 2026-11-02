@@ -108,7 +108,7 @@ def msvc_args(gnu: list[str]) -> list[str]:
 
 def host_build(flags: list[str], c: str, exe: str, links: list[str]) -> list[str]:
     """The host compiler's command for `c` into `exe`."""
-    # The main thread's stack the driver gives a program on Windows (`c_driver::C_MAIN_STACK`,
+    # The main thread's stack the driver gives a program on Windows (`platform::c_main_stack_args`,
     # 8 MiB as on Linux): `cl` takes `/F<bytes>`, MinGW's linker `--stack`.
     if MSVC:
         return [HOST_CC, "/nologo", f"/F{8 << 20}"] + msvc_args(CC[1:] + flags) + \

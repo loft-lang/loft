@@ -2302,6 +2302,20 @@ pub fn cdylib_build_env() -> &'static [(&'static str, &'static str)] {
     }
 }
 
+/// The C compiler arguments that give a compiled C program's main thread the stack a Linux one
+/// has (8 MiB), as [`main_stack_link_args`] does for the rustc writer: `cl /F<bytes>`, MinGW's
+/// linker `--stack`.  Empty off Windows, where the main thread already has it.
+#[must_use]
+pub fn c_main_stack_args(msvc: bool) -> Vec<String> {
+    if !cfg!(windows) {
+        Vec::new()
+    } else if msvc {
+        vec![format!("/F{}", 8 << 20)]
+    } else {
+        vec![format!("-Wl,--stack,{}", 8 << 20)]
+    }
+}
+
 /// The `rustc` arguments that give a native PROGRAM's main thread the stack a Linux one has
 /// (8 MiB): Windows defaults to 1 MiB, and the same recursion must not overflow on one
 /// platform only.  Empty off Windows, where the main thread already has it.
