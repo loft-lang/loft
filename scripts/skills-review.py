@@ -97,7 +97,7 @@ PATH_RE = re.compile(r"(?<![\w./-])((?:doc|scripts|src|tests|default|editors|ind
 # `make <target>` where it STARTS a command: a span's or a line's start, after a `;` / `&&` /
 # `|` / `(` or a shell prompt, with any `VAR=value` assignments in front.  Prose inside a
 # quoted message (`… — make it \`Node?\``) is not a command.
-MAKE_RE = re.compile(r"(?:^|[;&|(]\s*|\$\s+)(?:[A-Z_][A-Z0-9_]*=\S*\s+)*make ([a-z][a-z0-9_-]+)", re.M)
+MAKE_RE = re.compile(r"(?:^\s*|[;&|(]\s*|\$\s+)(?:[A-Z_][A-Z0-9_]*=\S*\s+)*make ([a-z][a-z0-9_-]+)", re.M)
 ENV_RE = re.compile(r"\b(LOFT_[A-Z][A-Z0-9_]+)\b")
 
 # A path segment that is a stand-in, not a file: `src/my_lib.loft`, `tests/scripts/NN`.

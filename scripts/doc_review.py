@@ -70,6 +70,10 @@ CORPORA = [
 ]
 
 CODE_SPAN = re.compile(r"`([^`]+)`")
+# `make <target>` where it STARTS a command — a span's or a line's start, after ; && | ( or a
+# shell prompt, VAR=value assignments allowed — so prose quoted inside a span ("… — make it
+# `Node?`") is not taken for a target (the same reading as scripts/skills-review.py).
+MAKE_CMD = re.compile(r"(?:^\s*|[;&|(]\s*|\$\s+)(?:[A-Z_][A-Z0-9_]*=\S*\s+)*make ([a-z][\w-]+)")
 
 # Fault / limitation claims — "loft can't do X". These rot the worst: a fix lands
 # elsewhere and the claim never dies, because nothing local triggers its update.
@@ -124,7 +128,7 @@ def code_refs(lines):
             fenced = not fenced
             continue
         for span in ([l] if fenced else CODE_SPAN.findall(l)):
-            targets |= set(re.findall(r"\bmake ([a-z][\w-]+)", span))
+            targets |= set(MAKE_CMD.findall(span))
             flags |= set(re.findall(r"(--[a-z][\w-]+)", span))
     return targets, flags
 
