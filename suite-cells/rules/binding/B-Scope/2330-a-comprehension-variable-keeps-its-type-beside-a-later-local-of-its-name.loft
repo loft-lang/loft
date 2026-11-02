@@ -1,0 +1,110 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-B-Scope` — a comprehension's loop variable ends with the comprehension, so a LATER
+// local spelled like it is a new binding with its own type.  The comprehension variable
+// took that later binding's type instead: a later `c = cs[end]` (a `character?`, an
+// element read) re-typed the comprehension's `c` to `character?`, and `@FR-N-Store` then
+// warned that a nullable `character?` "is stored into the comprehension element of the
+// non-null type `character`" — a warning, the tier that gates a library's CI, about a
+// value that is never null (loft#2330).
+//
+// Armed with `LOFT_DENY_WARNINGS=1`, so the spurious warning fails the cell; each function
+// asserts its hand-computed answer too, so a variable that stopped warning while reading
+// the wrong binding fails as well.  The axes: where the later local sits (a `while` body,
+// the function's own block, a `for` body, BEFORE the comprehension in an ended block),
+// the later local's type (the same nullable, `integer?`, `text`), a filtered comprehension,
+// and two comprehensions spelling one name.
+//
+// @ARMED: LOFT_DENY_WARNINGS=1
+// @falsified-at: 0e95172cd (loft#2330) — interpret and native-c: three unexpected warnings
+// (`later_in_while`, `filtered`, `two_comprehensions`), the cell refused under deny-warnings.
+
+// The filed shape: the later local in a `while` body.  "a(b": cs = [a,(,b]; end 0 -> 1,
+// end 1 '(' -> 3; 3 < 3 stops.
+fn later_in_while(t: text) -> integer {
+  cs: vector<character> = [for c in t { c }];
+  end = 0;
+  while end < len(cs) {
+    c = cs[end];
+    if c == '(' { end += 1; }
+    end += 1;
+  }
+  end
+}
+
+// The later local in the function's own block.  cs[1] is 'x' -> 10.
+fn later_at_top(t: text) -> integer {
+  cs: vector<character> = [for c in t { c }];
+  c = cs[1];
+  if c == 'x' { 10 } else { len(cs) }
+}
+
+// Over a vector<integer>, the later local an `integer?`.  [2, 4, 6] sums to 12.
+fn later_integer(v: vector<integer>) -> integer {
+  ds: vector<integer> = [for c in v { c * 2 }];
+  s = 0;
+  for i in 0..len(ds) {
+    c = ds[i];
+    if c != null { s += c; }
+  }
+  s
+}
+
+// The later local of another type.  "ax" and "bx": 2 + 2.
+fn later_text(t: text) -> integer {
+  cs: vector<character> = [for c in t { c }];
+  n = 0;
+  for k in 0..len(cs) {
+    c = "{cs[k]}x";
+    n += len(c);
+  }
+  n
+}
+
+// The nullable local BEFORE the comprehension, in a block that has ended.  t[1] is 'b' ->
+// 100, plus three characters.
+fn earlier_ended(t: text) -> integer {
+  n = 0;
+  if len(t) > 1 {
+    c = t[1];
+    if c == 'b' { n += 100; }
+  }
+  cs: vector<character> = [for c in t { c }];
+  n + len(cs)
+}
+
+// A filtered comprehension.  "abz" keeps [b, z]; m 0 -> 1, m 1 'z' -> 2 + 5 = 7.
+fn filtered(t: text) -> integer {
+  cs: vector<character> = [for c in t if c != 'a' { c }];
+  m = 0;
+  while m < len(cs) {
+    c = cs[m];
+    m += 1;
+    if c == 'z' { m += 5; }
+  }
+  m
+}
+
+// Two comprehensions spelling one name.  "pq": k 0 'p' -> 1, k 1 'q' -> 12; 12 + 2 = 14.
+fn two_comprehensions(t: text) -> integer {
+  a: vector<character> = [for c in t { c }];
+  b: vector<character> = [for c in t { c }];
+  k = 0;
+  while k < len(b) {
+    c = a[k];
+    if c == 'q' { k += 10; }
+    k += 1;
+  }
+  k + len(a)
+}
+
+fn main() {
+  assert(later_in_while("a(b") == 3, "later_in_while {later_in_while("a(b")}");
+  assert(later_at_top("axb") == 10, "later_at_top {later_at_top("axb")}");
+  assert(later_integer([1, 2, 3]) == 12, "later_integer {later_integer([1, 2, 3])}");
+  assert(later_text("ab") == 4, "later_text {later_text("ab")}");
+  assert(earlier_ended("abc") == 103, "earlier_ended {earlier_ended("abc")}");
+  assert(filtered("abz") == 7, "filtered {filtered("abz")}");
+  assert(two_comprehensions("pq") == 14, "two_comprehensions {two_comprehensions("pq")}");
+}
