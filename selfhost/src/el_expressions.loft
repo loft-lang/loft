@@ -3239,23 +3239,14 @@ fn is_op_name(n: text) -> boolean {
 
 // `store_text_view`: a text read out of a store — `OpGetText`, or a slice of one.
 fn store_text_view(e: el::El, v: ir::Node) -> boolean {
-  x = el_ir::unspan(v);
-  while true {
-    match x {
-      NdCall { def_nr, args } => {
-        nm = el::def(e, def_nr).name;
-        if nm == "OpGetText" {
-          return true;
-        }
-        if nm != "OpGetTextSub" || len(args) == 0 {
-          return false;
-        }
-        x = el_ir::unspan(args[0]);
-      },
-      _ => { return false; }
-    }
+  match v {
+    NdSpan { inner } => store_text_view(e, inner),
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      nm == "OpGetText" || (nm == "OpGetTextSub" && len(args) > 0 && store_text_view(e, args[0]))
+    },
+    _ => false
   }
-  false
 }
 
 // `convert`'s cases that need no conversion op: the same type, or a vector of any element into
@@ -4861,35 +4852,15 @@ fn unsettled(t: ir::TypeT) -> boolean {
 
 // `branch_yields_null`: a written null, or a null literal call, at a branch's end.
 fn branch_yields_null(e: el::El, v: ir::Node) -> boolean {
-  x = el_ir::unspan(v);
-  while true {
-    match x {
-      NdNull => { return true; },
-      NdBlock { block } => {
-        if len(block[0].operators) == 0 {
-          return false;
-        }
-        x = el_ir::unspan(block[0].operators[-1]);
-      },
-      NdInsert { items } => {
-        if len(items) == 0 {
-          return false;
-        }
-        x = el_ir::unspan(items[-1]);
-      },
-      NdIf { cond: _, t, f } => {
-        if branch_yields_null(e, t) {
-          return true;
-        }
-        x = el_ir::unspan(f);
-      },
-      NdCall { def_nr, args } => {
-        return len(args) == 0 && starts_with(el::def(e, def_nr).name, "OpConv") && ends_with(el::def(e, def_nr).name, "FromNull");
-      },
-      _ => { return false; }
-    }
+  match v {
+    NdSpan { inner } => branch_yields_null(e, inner),
+    NdNull => true,
+    NdBlock { block } => len(block[0].operators) > 0 && branch_yields_null(e, block[0].operators[-1]),
+    NdInsert { items } => len(items) > 0 && branch_yields_null(e, items[-1]),
+    NdIf { cond: _, t, f } => branch_yields_null(e, t) || branch_yields_null(e, f),
+    NdCall { def_nr, args } => len(args) == 0 && starts_with(el::def(e, def_nr).name, "OpConv") && ends_with(el::def(e, def_nr).name, "FromNull"),
+    _ => false
   }
-  false
 }
 
 // `parse_match_arm_body`: a block read as a "match_arm" block, or an expression converted to the

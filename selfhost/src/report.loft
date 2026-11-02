@@ -448,24 +448,15 @@ fn indent(o: &text, n: integer) {
 }
 
 // `Data::show_code`.  A span is transparent and hands `start` on, so each span level writes the
-// indent again, as the Rust recursion does; unwrapped here in a loop.
+// indent again, as the Rust recursion does.
 fn show_code(b: ir::Bundle, f: ir::Function, n: ir::Node, ind: integer, start: boolean, o: &text) {
   if start {
     indent(o, ind);
   }
-  at = n;
-  while true {
-    match at {
-      NdSpan { pos: _, inner } => {
-        if start {
-          indent(o, ind);
-        }
-        at = inner;
-      }
-      _ => { break; }
-    }
+  match n {
+    NdSpan { pos: _, inner } => show_code(b, f, inner, ind, start, o),
+    _ => show_node(b, f, n, ind, o)
   }
-  show_node(b, f, at, ind, o);
 }
 
 fn show_node(b: ir::Bundle, f: ir::Function, n: ir::Node, ind: integer, o: &text) {
