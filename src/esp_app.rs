@@ -36,7 +36,7 @@ locfd,    data, fat,     0xC20000, 3968K,
 
 /// The configuration: the Tanmatsu's board (P4 revision 1, 16 MB QIO flash, PSRAM at 200 MHz,
 /// the console on the USB serial port, the RTC memory the launcher reads which app to start
-/// from), then speed: `-O2`, a 1 kHz scheduler tick so a
+/// from, no test of all 32 MB of PSRAM at every start), then speed: `-O2`, a 1 kHz scheduler tick so a
 /// `poll(15)` waits 15 ms, a main task stack for loft's recursion, and no task watchdog to stop
 /// a long computation.  No radio: an app that uses none starts faster and is smaller.
 const SDKCONFIG: &str = "\
@@ -52,6 +52,7 @@ CONFIG_SPIRAM=y
 CONFIG_SPIRAM_SPEED_200M=y
 CONFIG_IDF_EXPERIMENTAL_FEATURES=y
 CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=65536
+CONFIG_SPIRAM_MEMTEST=n
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_LCD_DSI_ISR_CACHE_SAFE=y
 CONFIG_SPI_FLASH_SUPPORT_WINBOND_CHIP=y
@@ -266,7 +267,7 @@ pub(crate) fn write_project(app: &EspApp<'_>, out: &Path) -> Result<usize, Strin
         main.join("CMakeLists.txt"),
         &format!(
             "idf_component_register(\n    SRCS {srcs}\n    INCLUDE_DIRS {dirs}\n    \
-             PRIV_REQUIRES badge-bsp vfs nvs_flash esp_timer esp_lcd\n)\n\
+             PRIV_REQUIRES badge-bsp vfs nvs_flash esp_timer esp_lcd esp_driver_gpio heap\n)\n\
              # The program's C and its libraries' are loft's, not the app author's: they are built\n\
              # without warnings, as every C target builds them.\n\
              target_compile_options(${{COMPONENT_LIB}} PRIVATE -w{tier})\n"

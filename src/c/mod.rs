@@ -2677,7 +2677,7 @@ pub fn emit_esp_program(data: &Data, stores: &Stores) -> Result<String, Refusal>
         out,
         "{ESP_ENTRY}\n    loft_esp_note(\"app\", -1);\n    loft_esp_nvs();\n    \
          loft_esp_board();\n    loft_esp_assets();\n    loft_bind_tables();\n    \
-         loft_start(0, 0);\n    {}\n    loft_esp_note(\"main\", -1);\n    {call}\n    \
+         loft_start(0, 0);\n    {}\n    loft_esp_note(\"main\", -1);\n    loft_esp_release();\n    {call}\n    \
          loft_leak_report();\n    loft_esp_end(loft_had_fatal);\n}}\n",
         anchor(stores),
     );
