@@ -289,6 +289,29 @@ def previous_tag(version: str) -> str:
     return tags[0] if tags else ""
 
 
+def check_release_notes(version: str):
+    """The release's description, `releases/<cycle>/release-notes.md`: a short readable text
+    for a person deciding whether to download, which `release.yml` puts on the draft.  The
+    owner asked for readable text, not a full list: the generated list of every pull request
+    is what a reader cannot use, so a text that is mostly list lines does not pass.
+    """
+    path = os.path.join(os.path.dirname(state_path(version)), "release-notes.md")
+    rel = os.path.relpath(path, ROOT)
+    if not os.path.isfile(path):
+        return FAIL, f"no {rel} — write a short readable description of this release"
+    text = open(path, encoding="utf-8").read()
+    words = len(text.split())
+    lines = [l for l in text.splitlines() if l.strip()]
+    listed = sum(1 for l in lines if l.lstrip().startswith(("- ", "* ", "+ ")))
+    if words < 80:
+        return FAIL, f"{rel} is {words} words — too short to say what this release brings"
+    if words > 600:
+        return FAIL, f"{rel} is {words} words — a description, not the changelog; link CHANGELOG.md"
+    if listed > len(lines) // 3:
+        return FAIL, f"{rel} is mostly a list ({listed} of {len(lines)} lines) — write it as text"
+    return OK, f"{rel}: {words} words"
+
+
 def check_changelog(version: str, path: str, label: str, heading: bool):
     """Did this file gain this release's entries?
 
@@ -1324,6 +1347,13 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             cadence="pre",
         ),
         Item(
+            "A-release-notes",
+            "The release has a short readable description (it becomes the release's text)",
+            f"write {os.path.relpath(os.path.join(os.path.dirname(state_path(version)), 'release-notes.md'), ROOT)}",
+            check=lambda: check_release_notes(version),
+            cadence="pre",
+        ),
+        Item(
             "A-changelog-tech",
             "CHANGELOG_TECHNICAL.md gained this cycle's entries",
             "write it",
@@ -1673,7 +1703,7 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
     # `A-main` and `A-clean` first: the squash merge keeps the gate's evidence only when the
     # branch already holds main and nothing uncommitted — then merged tree == gated tree.
     pr_prereqs = ("A-main", "A-clean",
-                  "A-changelog", "M-changelog-read", "A-pdf", "A-pdf-version", "A-pdf-content",
+                  "A-changelog", "A-release-notes", "M-changelog-read", "A-pdf", "A-pdf-version", "A-pdf-content",
                   "A-reference-review", "A-skills-review", "A-docs-lint", "M-doc-validation",
                   "M-ndb", "M-wasm", "A-ci", "A-release-gate")
 
@@ -1767,9 +1797,11 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
         ),
         Item(
             "M-publish",
-            "Click Publish on the reviewed draft",
-            f"gh release view v{version} --web",
-            "the click FREEZES the assets — nothing can be added afterwards",
+            "Publish THE draft release.yml made — the one carrying the assets",
+            f"gh release edit v{version} --draft=false",
+            "the release's page shows every asset and the description from release-notes.md.  "
+            "Never create a release by hand from the tag page: that is a second, EMPTY release, "
+            "and publishing it while deleting the draft shipped 2026.11.0 with no downloads",
         ),
     ]
 

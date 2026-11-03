@@ -326,6 +326,23 @@ jobs:
             --published "$(git log -1 --format=%cI HEAD)" \
             --out "artifacts/loft-$version-registry-entry.json"
 
+      # The release's description is a short readable text written for this release,
+      # committed as doc/claude/releases/<cycle>/release-notes.md before the tag — not the
+      # generated list of every pull request.  Missing, the draft is not made: a release
+      # with an empty or machine-made description is the one a reader cannot use.
+      - name: Find the release description
+        id: notes
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          major="${version%%.*}"; rest="${version#*.}"; minor="${rest%%.*}"
+          notes=$(printf 'doc/claude/releases/%s-%02d/release-notes.md' "$major" "$((10#$minor))")
+          if [ ! -s "$notes" ]; then
+            echo "::error title=No release description::$notes is missing — write a short readable description of this release (RELEASE_PUBLISH.md § The release description)"
+            exit 1
+          fi
+          echo "path=$notes" >> "$GITHUB_OUTPUT"
+
       - name: Create draft release with binaries
         uses: softprops/action-gh-release@v2
         with:
@@ -333,7 +350,7 @@ jobs:
           # draft (RELEASE.md § No Automated Releases).
           draft: true
           files: artifacts/*
-          generate_release_notes: true
+          body_path: ${{ steps.notes.outputs.path }}
           # Fail loudly if the glob matches nothing (a build produced no bundle)
           # rather than silently creating an assetless draft.
           fail_on_unmatched_files: true

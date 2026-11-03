@@ -12,7 +12,8 @@ proves about the artifacts it ships.  Whether a release may be cut at all is
 behind these rules are in [RELEASE-history.md](RELEASE-history.md).
 
 ## Contents
-- [Tag & publish — the mechanics](#tag--publish--the-mechanics-draft-first-under-immutable-releases)
+- [Tag & publish — the mechanics](#tag--publish--the-mechanics-draft-first)
+- [The release description](#the-release-description)
 - [The bundles and the registry entry](#the-bundles-and-the-registry-entry)
 - [Library artifacts](#library-artifacts)
 - [What the tag pipeline proves about the artifacts](#what-the-tag-pipeline-proves-about-the-artifacts)
@@ -22,25 +23,26 @@ behind these rules are in [RELEASE-history.md](RELEASE-history.md).
 - [Reproducible builds](#reproducible-builds)
 - [Release artifacts](#release-artifacts)
 
-## Tag & publish — the mechanics (draft-first, under immutable releases)
+## Tag & publish — the mechanics (draft-first)
 
-The org enforces **immutable releases**: a release's assets freeze the moment it is
-published.  So the four platform bundles are attached while the release is still a
-**draft**, and the owner never publishes an empty release and waits for binaries.  **Never
-create and publish a release in one step:** publishing creates the tag and freezes the
-release before anything is built, and the upload is then rejected.
+The bundles are attached while the release is still a **draft**, and the release that goes
+public is THAT draft.  Immutable releases are off for this repository
+(`gh api repos/loft-lang/loft/immutable-releases`), so assets can still be added after
+publishing — but a release that is public with no assets is a release users download nothing
+from.  **Never create a release by hand from the tag page:** it is a second, empty release
+beside the draft, and publishing it instead of the draft ships no downloads.
 
 1. **Push the annotated tag** — `git tag -a vX.Y.Z -m "…" && git push origin vX.Y.Z`.  The
    tag push, not a published release, triggers `release.yml`.
 2. **Let CI build the draft.**  `release.yml` builds the four targets, smoke-runs each bundle
    ([below](#what-the-tag-pipeline-proves-about-the-artifacts)), and creates the release as a
-   **draft** with every bundle and `.sha256` attached and notes generated.  The draft job also
+   **draft** with every bundle and `.sha256` attached and [the release
+   description](#the-release-description) as its text.  The draft job also
    attaches `loft-<v>-src.zip` (the source archive the registry entry names) and
    `loft-<v>-registry-entry.json`.  If any build leg fails, no draft appears — investigate;
    never ship a partial release.
-3. **Review, then publish.**  Open the draft, confirm the four bundles are present, edit the
-   title or body if wanted, then click **Publish**.  Only this click freezes the release, and
-   by then the binaries are attached.  Publishing an existing-tag draft does not rebuild.
+3. **Review, then publish THE draft** (`gh release edit vX.Y.Z --draft=false`).  Confirm every
+   bundle is present first.  Publishing an existing-tag draft does not rebuild.
 4. **Submit the registry entry** (`M-registry-splice`).  Splice
    `loft-<v>-registry-entry.json` from the published release into `loft-lang/registry`'s
    `index.json` under `packages.loft`, and re-sign (`scripts/registry-sign.sh`,
@@ -85,6 +87,15 @@ leaves `self-update` saying "no releases published to compare against", which pa
   (`scripts/check-release-published.py`).  It gates that PR only; red on every PR during the
   publish-to-merge window would teach everyone to merge past it.  A release with no
   `loft-<v>-src.zip` predates the mechanism and is exempt, derived from its assets.
+
+## The release description
+
+A release's text on GitHub is a short readable description, written for the person deciding
+whether to download: what the release brings, in a few paragraphs, with a link to
+`CHANGELOG.md` for the whole list — not the generated list of every pull request.  It is
+written before the tag as `doc/claude/releases/<cycle>/release-notes.md`; `release.yml`
+puts it on the draft and makes no draft without it, and the checklist's `A-release-notes`
+row checks it is there, 80–600 words, and text rather than a list.
 
 ## The bundles and the registry entry
 
