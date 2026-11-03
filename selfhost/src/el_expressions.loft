@@ -2505,6 +2505,32 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
   if op == "=" && e.p.nodes[rhs] is SStructLit && !(p.tp is TyOptional) && struct_ref(e, el_types::base(p.tp)) >= 0 {
     return literal_into_place(e, vars, el_ir::unspan(p.code), struct_ref(e, el_types::base(p.tp)), rhs);
   }
+  // `assign_var_nr`'s text arm: `o.s += t` appends to a `_field_N` local that takes the
+  // field's text, and the local is written back whole — made before the value is read, as there.
+  // The text is appended as it is, a formatted one too (no local append's flattening); any other
+  // value is refused by name.
+  if op == "+=" && p.tp is TyText {
+    f = el_vars::create_unique(vars, "field", ir::TyText { dep: [] });
+    x = expression(e, vars, rhs);
+    if e.first_pass {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    if !(el_types::base(x.tp) is TyText) {
+      refuse_known(e, x.tp, "a text field appended a value of this type: {type_kind(x.tp)}");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    place = el_ir::unspan(p.code);
+    w = place_write(e, place, ir::NdVar { n: f });
+    if w == null {
+      el::refuse(e, "an assignment to a place that is not a plain local: {place_read(e, place)}");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    return ex(ir::NdInsert { items: [
+      el_ir::v_set(f, p.code),
+      el_ir::cl(e, "OpAppendText", [ir::NdVar { n: f }, x.code]),
+      w!
+    ] }, ir::TyVoid);
+  }
   x = expression(e, vars, rhs);
   pt = p.tp;
   if op != "=" {
@@ -4663,6 +4689,21 @@ pub fn type_def_nr(e: el::El, t: ir::TypeT) -> integer {
   }
 }
 
+// A parameter default the call site can take as it is: it names none of the callee's `n`
+// parameters (`substitute_param_refs` would have to rewrite them), and a call in it supplies
+// every parameter of its own (`add_defaults` fills a default call's hidden slots, loft#699).
+fn default_in_place(e: el::El, dv: ir::Node, n: integer) -> boolean {
+  for k in 0..n {
+    if el_ir::reads_var(dv, k) {
+      return false;
+    }
+  }
+  match el_ir::unspan(dv) {
+    NdCall { def_nr, args } => len(args) == len(el::def(e, def_nr).attributes),
+    _ => true
+  }
+}
+
 // `Data::method_receives`: the method's first parameter takes this receiver's definition.
 fn receives(e: el::El, m: integer, tn: integer) -> boolean {
   d = el::def(e, m);
@@ -4710,6 +4751,28 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
       }
     }
     // One re-entry with every default filled in: an ordinary call on purpose, never deep.
+    filled = call_args(e, vars, d, g2, t2);
+    return filled;
+  }
+  // `add_defaults`' general arm: a parameter the call leaves out takes its declared default,
+  // or null where it is nullable and declares none.  A default that reads another parameter, a
+  // call that needs hidden parameters of its own, a link and a hidden buffer stay refused.
+  if n > len(given) && !retbuf {
+    g2 = given;
+    t2 = types;
+    for a in def.attributes {
+      if a#index >= len(given) {
+        dv = a.value[0] ?? ir::NdNull;
+        pt = a.typedef[0] ?? ir::TyUnknown { n: 0 };
+        if a.hidden || pt is TyRefVar || !default_in_place(e, dv, n) || (el_ir::is_null(dv) && !(pt is TyOptional)) {
+          el::refuse(e, "a call with defaulted or hidden parameters: {def.name}");
+          return null;
+        }
+        g2 += [dv];
+        t2 += [pt];
+      }
+    }
+    // One re-entry with every default filled in, as the text buffers above.
     filled = call_args(e, vars, d, g2, t2);
     return filled;
   }
