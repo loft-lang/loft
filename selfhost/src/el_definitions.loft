@@ -37,8 +37,8 @@ fn top_item(e: el::El, it: integer) {
     SEnum { at, name, tvars, variants } => { parse_enum(e, at, name, tvars, variants); },
     SInterface { at, name, members, end } => { parse_interface(e, at, name, members, end); },
     SFn { at, is_op, name, tvars, params, ret, ret_const, cap, body, annots } => {
-      parse_function(e, at, is_op, name, tvars, params, ret, ret_const, cap, body, annots);
-      if e.first_pass && el::def_nr(e, "n_{name}") < 0 {
+      key = parse_function(e, at, is_op, name, tvars, params, ret, ret_const, cap, body, annots);
+      if e.first_pass && (key == "" || el::def_nr(e, key) < 0) {
         e.declined += [name];
       }
     },
@@ -294,12 +294,14 @@ struct Argument {
 }
 
 // `fn name(params) (-> type)? (; / block)`                    Parser::parse_function
-// The plain path: no type variables, no operator form, no capability, no annotation, no `self`.
-fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vector<integer>, params: vector<integer>, ret: integer?, ret_const: boolean, cap: integer?, body: integer?, annots: vector<integer>) {
+// The plain path: no type variables, no operator form, no capability, no annotation, no `both`.
+// A first `self` parameter makes it a method, keyed by its receiver (`Data::fn_key`).  Answers
+// the definition's key, or "" where the declaration was refused before one was known.
+fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vector<integer>, params: vector<integer>, ret: integer?, ret_const: boolean, cap: integer?, body: integer?, annots: vector<integer>) -> text {
   if is_op || len(tvars) > 0 || cap != null || len(annots) > 0 || ret_const {
     kind = if is_op { "an operator form" } else if len(tvars) > 0 { "type variables" } else if cap != null { "a capability" } else if len(annots) > 0 { "annotations" } else { "`-> const`" };
     el::refuse(e, "a function with an operator form, type variables, a capability, annotations or `-> const`: {kind}");
-    return;
+    return "";
   }
   vars = el_vars::new_vars(name, e.file);
   arguments: vector<Argument> = [];
@@ -309,29 +311,33 @@ fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vec
         if init != null || pcap != null || tp == null {
           kind = if init != null { "a default" } else if pcap != null { "a capability" } else { "no type" };
           el::refuse(e, "a parameter with a default, a capability or no type: {kind}");
-          return;
+          return "";
         }
         t = el_types::parse_type(e, tp ?? 0);
         if t == null {
-          return;
+          return "";
         }
         // `Parser::ref_var_type`: a `&T` parameter is a link to the caller's `T`.  A tuple's
         // record form is not carried.
         if amp {
           if t! is TyTuple {
             el::refuse(e, "a `&` parameter of a tuple");
-            return;
+            return "";
           }
           t = ir::TyRefVar { inner: t! };
         }
-        if an == "self" || an == "both" {
-          el::refuse(e, "a method");
-          return;
+        if an == "both" || (an == "self" && pn#index > 0) {
+          el::refuse(e, "a method: {an}");
+          return "";
         }
         arguments += [Argument { name: an, typedef: t!, constant: fixed }];
       },
       _ => {}
     }
+  }
+  key = fn_key(e, name, arguments);
+  if key == "" {
+    return "";
   }
   // Where the Rust lexer stands after `)`: on the `->`, the body's `{` or the `;`.
   after = at;
@@ -346,7 +352,7 @@ fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vec
     }
     t = el_types::parse_type(e, ret ?? 0);
     if t == null {
-      return;
+      return "";
     }
     rt = t!;
   } else if body != null {
@@ -356,16 +362,16 @@ fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vec
     }
   }
   if e.first_pass {
-    if el::def_nr(e, "n_{name}") >= 0 {
+    if el::def_nr(e, key) >= 0 {
       el::refuse(e, "a function over an existing name");
-      return;
+      return "";
     }
-    e.context = add_fn(e, name, arguments, el::pos_at(e, after));
+    e.context = add_fn(e, key, name, arguments, el::pos_at(e, after));
   } else {
-    e.context = el::def_nr(e, "n_{name}");
+    e.context = el::def_nr(e, key);
   }
   if e.context < 0 {
-    return;
+    return "";
   }
   el_vars::take_over(vars, el::def(e, e.context).variables);
   if e.first_pass {
@@ -401,6 +407,7 @@ fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vec
   }
   e.b.data.definitions[e.context].variables = el_vars::stored(vars);
   e.context = -1;
+  key
 }
 
 // `Type::takes_ret_buffer`: a struct record, a struct-enum or a vector.
@@ -414,11 +421,66 @@ fn takes_ret_buffer(e: el::El, t: ir::TypeT) -> boolean {
 }
 
 // `Data::add_fn`, a plain function: `n_<name>`, its parameters as attributes.
-fn add_fn(e: el::El, name: text, arguments: vector<Argument>, pos: ir::Position) -> integer {
-  d = el::add_def(e, "n_{name}", pos, el::DT_FUNCTION);
+// `Data::fn_key`: a function's definition key — `n_<name>`, or for a method (a first `self`
+// parameter) `t_<LEN><receiver>_<name>`, the receiver spelled `T?` when it is nullable.  A
+// receiver that is a variant, a generic instance or a bound holder is refused by name ("").
+fn fn_key(e: el::El, name: text, arguments: vector<Argument>) -> text {
+  if len(arguments) == 0 || arguments[0].name != "self" {
+    return "n_{name}";
+  }
+  // An operator method (`OpAdd`, the `OpDrop` / `OpCopy` hooks and their cascades) is its own
+  // port.
+  if starts_with(name, "Op") {
+    el::refuse(e, "a method named as an operator: {name}");
+    return "";
+  }
+  t = arguments[0].typedef;
+  tn = el_expressions::type_def_nr(e, match t { TyRefVar { inner } => inner, _ => t });
+  if tn < 0 {
+    return "";
+  }
+  td = el::def(e, tn);
+  if td.def_type == el::DT_ENUM_VALUE || td.instance_of >= 0 {
+    el::refuse(e, "a method receiver that is a variant or a generic instance");
+    return "";
+  }
+  // The standard library's types come with the image, their members included.
+  if td.source != e.source {
+    el::refuse(e, "a method on a type the program does not declare");
+    return "";
+  }
+  sig = if t is TyOptional { "{td.name}?" } else { td.name };
+  "t_{len(sig)}{sig}_{name}"
+}
+
+// `Data::add_fn` for a key no definition holds yet.
+// A method also takes a constant `Routine` member of its name on the receiver type — the
+// membership `x.name(…)` resolves through.  A receiver that already carries a member of that
+// name (a field, the nullable twin of a method) is refused by name.
+fn add_fn(e: el::El, key: text, name: text, arguments: vector<Argument>, pos: ir::Position) -> integer {
+  tn = -1;
+  if len(arguments) > 0 && arguments[0].name == "self" {
+    t = arguments[0].typedef;
+    tn = el_expressions::type_def_nr(e, match t { TyRefVar { inner } => inner, _ => t });
+    if tn >= 0 {
+      for a in el::def(e, tn).attributes {
+        if a.name == name {
+          el::refuse(e, "a method whose name its receiver already carries: {name}");
+          return -1;
+        }
+      }
+    }
+  }
+  d = el::add_def(e, key, pos, el::DT_FUNCTION);
   for a in arguments {
     e.b.data.definitions[d].attributes += [el::attribute(a.name, a.typedef)];
     e.b.data.definitions[d].attributes[a#index].value_const = a.constant;
+  }
+  if tn >= 0 {
+    m = el::attribute(name, ir::TyRoutine { n: d });
+    m.mutable = false;
+    m.constant = true;
+    e.b.data.definitions[tn].attributes += [m];
   }
   d
 }

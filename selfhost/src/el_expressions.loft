@@ -10,6 +10,7 @@ use syntax::*;
 use lex;
 use el;
 use el_ir;
+use fold;
 use el_vars;
 use el_types;
 use el_schema;
@@ -1816,7 +1817,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SBool { b } => ex(ir::NdBoolean { b: b }, ir::TyBoolean),
     SNull => ex(ir::NdNull, ir::TyNull),
     SName { name, member } => name_expression(e, vars, name, member),
-    SAssign { fixed, op, target, e: rhs } => assignment(e, vars, fixed, op, target, rhs),
+    SAssign { at, fixed, op, target, e: rhs } => assignment(e, vars, at, fixed, op, target, rhs),
     SLet { fixed, name, amp, tfixed, tp, e: rhs } => declaration(e, vars, fixed || amp || tfixed, name, tp, rhs),
     SCall { at, f, args } => call_expression(e, vars, at, f, args),
     SString { parts } => string_expression(e, vars, parts),
@@ -2148,7 +2149,7 @@ fn copies_as(e: el::El, dst: integer, src: integer) -> boolean {
 // `Parser::parse_assign` for a plain `name = value`: the left side names a local — created on
 // the first pass, found again on the second — the right side is read, the local takes the
 // value's type (`change_var`) and the statement is the `Set` (`towards_set`), typed void.
-fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: integer, rhs: integer?) -> Ex {
+fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: text, target: integer, rhs: integer?) -> Ex {
   if fixed || rhs == null {
     el::refuse(e, "a const binding");
     return ex(ir::NdNull, ir::TyVoid);
@@ -2415,6 +2416,20 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
   if !promoted_text && !el_vars::change_var_type(e, vars, v, bound_tp) {
     el::refuse(e, "a local that changes type");
   }
+  // `Parser::change_var_type`'s mint: a local bound for the first time to a vector registers
+  // `vector<T>` where the bind's right side ends (a no-op where a literal made it already).
+  if !el_vars::was_defined(vars, v) {
+    match bound_tp {
+      TyVector { inner } => {
+        nm = el_types::elem_name(e, inner);
+        if nm != "" && el::def_nr(e, "main_vector<{nm}>") < 0 {
+          el_schema::vector_store_type(e, inner, nm);
+          el_schema::make_vector_def(e, inner, nm, el::pos_at(e, statement_end(e, at)), true);
+        }
+      },
+      _ => {}
+    }
+  }
   // `parse_assign`: a local bound from a read a length local made trusted is what this pass
   // typed it, not the `τ?` the first pass gave it — when nothing else assigns it.
   if !e.first_pass && read_through_length && element_read(e, x.code) && !vars.vars[v].argument {
@@ -2436,9 +2451,10 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
     },
     _ => {}
   }
-  // `try_branch_text_bind`: a text branch is delivered per arm into the local — unless it reads
-  // the local, which then takes the self-reference arm below.
-  if !e.first_pass && el_types::base(el_vars::tp(vars, v)) is TyText && !el_ir::reads_var(x.code, v) {
+  // `try_branch_text_bind`: a text branch is delivered per arm into the local — a promoted
+  // `&text` result buffer as well — unless it reads the local, which then takes the
+  // self-reference arm below.
+  if !e.first_pass && (el_types::base(el_vars::tp(vars, v)) is TyText || promoted_text) && !el_ir::reads_var(x.code, v) {
     arms = text_branch_into(v, x.code);
     if arms != null {
       return ex(ir::NdInsert { items: [el_ir::v_set(v, ir::NdText { s: "" }), arms!] }, ir::TyVoid);
@@ -2905,6 +2921,12 @@ fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
       el::refuse(e, "a vector item of another type than the field's");
       return ex(ir::NdNull, ir::TyVoid);
     }
+    // An item handing the record's own local to a function is evaluated before the append
+    // (`parse_append_vector`'s staging into a `__ref_N`, minted on both passes) — not carried.
+    if hands_to_call(e, x.code, rec) {
+      el::refuse(e, "a field append whose item hands its record to a call");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
     if e.first_pass {
       continue;
     }
@@ -3172,6 +3194,12 @@ fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
   };
   if !matches || el_vars::was_built(vars, v) {
     el::refuse(e, "a struct literal rebinding a local");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  // A local the first pass found borrowing another (`s = me(t)` later) is not built into:
+  // `parse_object` builds its literal in a `__ref_p2_N` instead — not carried.
+  if !e.first_pass && !vars.vars[v].argument && len(el_types::deps(vt)) > 0 {
+    el::refuse(e, "a struct literal bound to a local that borrows another");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   el_vars::mark_built(vars, v);
@@ -3542,6 +3570,24 @@ fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: inte
     }
   }
   out
+}
+
+// Does `n` call a function the program declares with an argument that reads local `v`?
+fn hands_to_call(e: el::El, n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdSpan { inner } => hands_to_call(e, inner, v),
+    NdCall { def_nr, args } => {
+      user = !starts_with(el::def(e, def_nr).name, "Op") && el::def(e, def_nr).source == e.source;
+      for a in args {
+        if (user && el_ir::reads_var(a, v)) || hands_to_call(e, a, v) {
+          return true;
+        }
+      }
+      false
+    },
+    NdIf { cond, t, f } => hands_to_call(e, cond, v) || hands_to_call(e, t, v) || hands_to_call(e, f, v),
+    _ => false
+  }
 }
 
 // `Parser::parse_object`'s fresh-record arm, a literal that is a value rather than a bind: on the
@@ -3935,12 +3981,9 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
   c = r!;
   // Phase 3.5 elision (`math_arg_in_domain`): a domain-partial math function whose argument
   // is provably in its domain cannot answer null, so the `τ?` its declaration carries is peeled.
-  if c.tp is TyOptional {
-    cargs = match el_ir::unspan(c.code) { NdCall { args } => args, _ => [] };
-    if in_domain(e, name, cargs) {
-      c.tp = match c.tp { TyOptional { inner } => inner, _ => c.tp };
-    }
-  }
+  // Bound once: `c.tp = inner` writes a field from a view into its own old value (loft#2391).
+  peel = c.tp is TyOptional && in_domain(e, name, match el_ir::unspan(c.code) { NdCall { args } => args, _ => [] });
+  ct = if peel { el_types::base(c.tp) } else { c.tp };
   // `wrap_null_transparent`: a nullable argument into one of the functions that propagate
   // null (`is_null_transparent`) with a non-null scalar result makes the call `τ?` — each such
   // argument held in a `__ntp_N`, the call made only where all are present.
@@ -3951,32 +3994,39 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
       nullable_arg = true;
     }
   }
-  wrap = transparent && nullable_arg && el_convert::plain_scalar(c.tp);
+  wrap = transparent && nullable_arg && el_convert::plain_scalar(ct);
   if e.first_pass {
-    return if wrap { ex(c.code, ir::TyOptional { inner: c.tp }) } else { c };
+    return ex(c.code, if wrap { ir::TyOptional { inner: ct } } else { ct });
   }
   // A call with no arguments returns before `parse_call`'s position wrap.
   code = if len(args) == 0 { c.code } else { ir::NdSpan { pos: el::pos_at(e, after_paren(e, at)), inner: c.code } };
   if wrap {
-    return null_transparent(e, vars, c.code, types, c.tp, code);
+    return null_transparent(e, vars, c.code, types, ct, code);
   }
-  ex(code, c.tp)
+  ex(code, ct)
 }
 
 // The constant argument a domain check reads, or null.
-fn const_float(n: ir::Node) -> float? {
+// `Parser::const_f64`: a literal's value, or the value `const_eval` folds the expression to.
+fn const_float(e: el::El, n: ir::Node) -> float? {
   match el_ir::unspan(n) {
     NdFloat { f } => f,
     NdSingle { f } => f as float,
     NdInt { n } => n as float,
     NdLong { n } => if n == null { -9223372036854775808.0 } else { n! as float },
-    _ => null
+    _ => match fold::fold(e.b, n) {
+      VFloat { f } => f,
+      VSingle { f } => f as float?,
+      VInt { n: i } => i as float,
+      VLong { n: l } => if l == null { -9223372036854775808.0 } else { l! as float },
+      _ => null
+    }
   }
 }
 
 fn in_domain(e: el::El, name: text, args: vector<ir::Node>) -> boolean {
-  a0 = if len(args) > 0 { const_float(args[0]) } else { null };
-  a1 = if len(args) > 1 { const_float(args[1]) } else { null };
+  a0 = if len(args) > 0 { const_float(e, args[0]) } else { null };
+  a1 = if len(args) > 1 { const_float(e, args[1]) } else { null };
   const_ok = if name == "sqrt" {
     a0 != null && a0 >= 0.0
   } else if name == "asin" || name == "acos" {
@@ -4020,7 +4070,7 @@ SIGN_POS = 2;
 // `domain_sign`: is a pure float expression provably > 0, >= 0, or unknown.  The flow-guard
 // licence (`math_sign_proven`) is not carried: a guarded variable reads unknown.
 fn domain_sign(e: el::El, n: ir::Node) -> integer {
-  f = const_float(n);
+  f = const_float(e, n);
   if f != null {
     return if f > 0.0 { SIGN_POS } else if f == 0.0 { SIGN_NONNEG } else { SIGN_UNKNOWN };
   }
@@ -4067,7 +4117,7 @@ struct Bounds {
 // `pm_bounds`: a provable interval for the two-sided `asin`/`acos` domain.
 fn pm_bounds(e: el::El, n: ir::Node) -> Bounds {
   open = Bounds { lo: -1.0e308 * 10.0, hi: 1.0e308 * 10.0 };
-  f = const_float(n);
+  f = const_float(e, n);
   if f != null {
     return Bounds { lo: f, hi: f };
   }
@@ -4475,7 +4525,7 @@ fn elem_stride(e: el::El, t: ir::TypeT) -> integer {
 }
 
 // `Data::type_def_nr` for the scalar and record types: the definition a type is named by.
-fn type_def_nr(e: el::El, t: ir::TypeT) -> integer {
+pub fn type_def_nr(e: el::El, t: ir::TypeT) -> integer {
   match t {
     TyOptional { inner } => type_def_nr(e, inner),
     TyRewritten { inner } => type_def_nr(e, inner),
@@ -7651,6 +7701,25 @@ fn vector_def(e: el::El, t: ir::TypeT, nm: text, lit: integer, declared: boolean
 }
 
 // The token closing the `[` at token `lit`.
+// The `;` or `}` that ends the statement holding token `from`: the parser's peek once the
+// statement's expression is read.
+fn statement_end(e: el::El, from: integer) -> integer {
+  at = from;
+  depth = 0;
+  while at < len(e.p.src) {
+    t = e.p.src[at];
+    if t is LBracket || t is LParen || t is LBrace {
+      depth += 1;
+    } else if t is RBracket || t is RParen || (t is RBrace && depth > 0) {
+      depth -= 1;
+    } else if depth == 0 && (t is Semi || t is RBrace) {
+      return at;
+    }
+    at += 1;
+  }
+  at
+}
+
 fn closing_bracket(e: el::El, lit: integer) -> integer {
   at = lit;
   depth = 0;

@@ -9,18 +9,12 @@ use ir;
 // The 32-bit integer the IR's `Int` wraps at.
 pub MIN_I32 = -2147483648;
 
-fn unspan(n: ir::Node) -> ir::Node {
-  match n {
-    NdSpan { inner } => unspan(inner),
-    _ => n
-  }
-}
-
 // A folded literal (`const_eval`'s `Value`): an `Int` is the IR's 32-bit integer, wrapping as
 // the Rust fold wraps; a `Long` the full width.
 pub enum Folded {
   VInt { pub n: integer },
-  VLong { pub n: integer },
+  // `integer?`: the IR's `Long` spells `i64::MIN` as its null (`NdLong.n`).
+  VLong { pub n: integer? },
   // A float may be NaN (`0.0 / 0.0` folds to it), which loft reads as null.
   VFloat { pub f: float? },
   VSingle { pub f: single? },
@@ -40,18 +34,13 @@ pub fn op_name(b: ir::Bundle, d: integer) -> text {
 // `const_eval`: a literal, or a call of a foldable operator over foldable arguments, or a
 // conditional over a folded boolean; null for anything known only at run time.
 pub fn fold(b: ir::Bundle, n: ir::Node) -> Folded? {
-  at = unspan(n);
-  // A conditional folds to the arm its folded condition picks.
-  while at is NdIf {
-    match at {
-      NdIf { cond, t, f } => match fold(b, cond) {
-        VBool { b: c } => { at = unspan(if c { t } else { f }); }
-        _ => { return null; }
-      },
-      _ => {}
-    }
-  }
-  match at {
+  match n {
+    NdSpan { inner } => fold(b, inner),
+    // A conditional folds to the arm its folded condition picks.
+    NdIf { cond, t, f } => match fold(b, cond) {
+      VBool { b: c } => if c { fold(b, t) } else { fold(b, f) },
+      _ => null
+    },
     NdInt { n: v } => VInt { n: v },
     NdLong { n: v } => VLong { n: v },
     NdFloat { f } => VFloat { f: f },

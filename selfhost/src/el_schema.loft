@@ -92,7 +92,8 @@ fn keyed_content_known(e: el::El, t: ir::TypeT) -> boolean {
 
 // `Data::vector_def`: the `vector<T>` definition where it is missing, and the `main_vector<T>`
 // wrapper struct a vector local's store is (one field, `vector`), both at `pos`; `typed` gives
-// the wrapper its record type, as a construct does (the schema's own pass leaves it unknown).
+// the wrapper its record type, as a construct does (the schema's own pass leaves it unknown,
+// and makes the `vector<T>` store type at once instead — `vector_store_type`).
 pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typed: boolean) {
   vt = ir::TyVector { inner: t, dep: [] };
   if el::def_nr(e, "vector<{nm}>") < 0 {
@@ -114,15 +115,8 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
     },
     _ => {}
   }
-  // The schema's own pass makes the `vector<T>` store type at once where `T` has one already.
   if !typed {
-    kt = match t {
-      TyReference { n } => el::def(e, n).known_type,
-      _ => known(e, nm)
-    };
-    if kt >= 0 && kt != NO_TYPE {
-      vector_type(e, kt);
-    }
+    vector_store_type(e, t, nm);
   }
   md = el::add_def(e, "main_vector<{nm}>", pos, el::DT_STRUCT);
   e.b.data.definitions[md].source = 0;
@@ -130,6 +124,17 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
     e.b.data.definitions[md].returned = [ir::TyReference { n: md, dep: [] }];
   }
   e.b.data.definitions[md].attributes += [el::attribute("vector", vt)];
+}
+
+// The `vector<T>` store type, made at once where `T` has a store type already.
+pub fn vector_store_type(e: el::El, t: ir::TypeT, nm: text) {
+  kt = match t {
+    TyReference { n } => el::def(e, n).known_type,
+    _ => known(e, nm)
+  };
+  if kt >= 0 && kt != NO_TYPE {
+    vector_type(e, kt);
+  }
 }
 
 fn register_enum(e: el::El, d: integer) {
