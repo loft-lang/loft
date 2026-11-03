@@ -17,6 +17,14 @@ All notable changes to the loft language and interpreter.
   rule).  A C clause that stops firing fails the gate on its C row; before this no C admission
   reached a baseline.  `--writer rust|c` runs one writer; a four-column row reads as Rust's.
 
+### `(R-PushFill)`'s fill form runs in the IR (@PLN211 arc C)
+
+- `for _ in a..b { v += [c] }` with `c` a simple invariant and `v` a vector variable is one
+  push and an `OpAppendCopy` on BOTH backends (`src/opt/fill_loop.rs`, in `close_program`),
+  the loop as written its fallback for every range the fill declines.  rustc's fill is gone and
+  the C gains the rule; the interpreter runs 71.8 % fewer instructions on a 16-element fill.
+  `LOFT_NO_FILL_LOOP` switches the clause off alone; `LOFT_NO_PUSH_FILL` still the rule.
+
 ### `(R-Wrapper)` runs in the IR (@PLN211 arc C)
 
 - A call to a stdlib one-op wrapper (`len(v)`, `sqrt(x)`, `v.clear()`) with leaf or pure-path

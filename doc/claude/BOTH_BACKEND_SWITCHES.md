@@ -334,6 +334,11 @@ was a buffer reset, three appends and three element reads through the store) —
 first bisect step for a wrong value, order or count out of a loop over a literal of scalars.
 `LOFT_REWRITE_CENSUS` counts its admissions as `R-LiteralWalk`.
 
+**`LOFT_NO_FILL_LOOP=1`** (`@FR-R-PushFill`'s fill form, default-ON, IR phase, BOTH backends)
+keeps `for _ in a..b { v += [c] }` a loop instead of one push and an `OpAppendCopy` — the
+writers' reservation and window clauses then take it; `LOFT_NO_PUSH_FILL=1` turns the whole
+rule off.  `LOFT_TRACE_IR_FILL=1` names each loop taken.
+
 **`LOFT_NO_WRAPPER_INLINE=1`** (`@FR-R-Wrapper`, default-ON, scope pass, BOTH backends) keeps
 a call to a stdlib one-op wrapper (`len(v)`, `sqrt(x)`, `v.clear()`) a CALL instead of its op —
 the bisect step for a wrong length or libm value; it also keeps `(R-SplitTable)` from reading

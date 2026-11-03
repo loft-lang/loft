@@ -16,7 +16,7 @@ writers and the interpreter's generator; every rule reports to it or says why no
 table `bench/portal/rule_phases.tsv` is measured and gated, and `rewrites.md` § Applied by is
 rendered from it); B1 and B2 are done: weights in [b1-weights.md](b1-weights.md),
 a verdict per rule in § Verdicts.  Arc C has moved `(R-SliceArg)`'s
-range clause and `(R-Wrapper)` (§ Arc C's moves).  It was to start once
+range clause, `(R-Wrapper)` and `(R-PushFill)`'s fill form (§ Arc C's moves).  It was to start once
 #1743 (every routine within 3×) and #2351 (the facts routine) were fixed; #1743 is fixed on
 `laptop-c-perf`, and on 2026-11-03 the owner asked to concentrate on this plan, so #2351's
 three deviations (D-fact-1 … 3) became part of it rather than a precondition.  Four arcs: **A** keeps the register honest about where
@@ -233,6 +233,28 @@ per inlined call (`non_sentinel` reruns after each); on the C `(R-Inline)`, `(R-
 `(R-NonSentinelParam)` lose the wrappers themselves, which nothing calls any more.  On the
 interpreter: 921 → 479 instructions a pass of the probe, −48.0 %.
 
+**`(R-PushFill)`'s fill form — moved.**  `src/opt/fill_loop.rs`, in `compile::close_program`
+after `discharge_into` (the shape is `opt::push_window::push_loop`'s, which the scope pass, a
+layer below `opt`, cannot ask); `if 0 < n { the push; OpAppendCopy(v, n, tp) } else { the loop
+as written }`, so every range the fill declines runs the loop exactly; admitted onto a
+non-nullable vector VARIABLE only (a field path's owner may be absent).  Switches: the rule's
+`LOFT_NO_PUSH_FILL` (every backend) and the clause's `LOFT_NO_FILL_LOOP`; trace
+`LOFT_TRACE_IR_FILL`.  rustc's fill (`push_fast_path`, which counted under no census name) is
+deleted; the C gains the fill.  The protocol's evidence: switch_ab.sh over 2912 programs, 0
+defects; c_sweep over 2948 programs, 2579 match, the one differ main's own; the cells
+`a-counted-loop-pushing-one-value-is-one-fill.loft` on the interpreter, the C and rustc, the rule
+on and off, falsified by a trip count one short (f1, both backends); `tests/push_fill.rs`
+re-pinned on the IR form; c_emit 71/71; decline_census, enum_record, emission_audit,
+iteration_base.  Declines recorded rather than closed, each measured on the C ship lane with
+the clause off and on: zttext's `char_styles` loses the outer loop's push window (`R-PushFill`
+−2, `R-RecPtr` −2/−1) — zttext's routines 1.48× → 1.43× median; hex_terrain's
+`terrain_surface_at` keeps `wm` in the store instead of apart (`R-Apart/vector` −1) — the
+routine 1.51× → 1.50×, `terrain_hydrology` 1.32× → 1.17×; hex_draw's `footprint` loses one
+`R-ValueLocal` — `surface_fitted_spread` 1.34× → 1.32×.  So the writers' forms bought nothing
+over the fill there, and teaching their analyses `OpAppendCopy` waits for a case that does.
+The fill declines a `single` value (`simple_invariant` lists no single literal, as before):
+arc D.  On the interpreter: 9 847 → 2 776 instructions a pass of the probe, −71.8 %.
+
 ## Phase ordering
 
 A0 → A1 → A2 → A3 (the table first, so every later move is a blessed change of it) · B1 →
@@ -277,7 +299,7 @@ function before and not after.
 | rule | decidable on the IR | expressible | weight | probe (before → after) | verdict |
 |---|---|---|--:|---|---|
 | `(R-Wrapper)` | yes — `ir_shape::one_op_wrapper` | `Call(op, operands)` | 40.9 | `wrapper`: 920 → 308, **−66.5 %** (upper bound: the operator itself is left out); moved: 921 → 479, **−48.0 %** | **MOVED** (`wrapper_inline::rewrite`, arc C's second) |
-| `(R-PushFill)` fill form | yes — IR facts | `OpPush` + `OpAppendCopy`, as `[c; n]` lowers | 17.2 | `push_fill`: 10 580 → 3 017, **−71.5 %** | MOVE.  The C admits this shape too (the census, not "rustc only") |
+| `(R-PushFill)` fill form | yes — IR facts | `OpPush` + `OpAppendCopy`, as `[c; n]` lowers | 17.2 | `push_fill`: 10 580 → 3 017, **−71.5 %**; moved: 9 847 → 2 776, **−71.8 %** | **MOVED** (`opt::fill_loop`, arc C's third).  The C's admission on the probe was its window clause, and rustc's fill had no census name |
 | `(R-ElemFirst)` | yes — `opt::hoist::element_first` | existing operators | 1.0 | `elem_first`: 9 666 → 7 299, **−24.5 %** | MOVE |
 | `(R-SliceArg)` range | yes — IR facts | `text_from_byte_range` | 0.5 | `slice_arg`: 7 771 → 3 351, **−56.9 %** (the hand form skips the slice's bound normalisation); moved: 7 779 → 5 385, **−30.8 %** | **MOVED** (`slice_text::rewrite`, arc C's first) |
 | `(R-LoopBuffer)` | yes — `opt::hoist::loop_buffers` | `OpClearVector` on a held store | 0.6 | `loop_buffer`: 7 803 → 6 508, **−16.6 %** | MOVE |

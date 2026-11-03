@@ -252,7 +252,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Prefill)` | not counted — runtime: admitted per TYPE at its first mint |
 | `(R-PureReuse)` | `R-PureReuse` ir |
 | `(R-Push)` | `R-Push` c, native · `/sole` c |
-| `(R-PushFill)` | `R-PushFill` c, native · `/hash` c, native · `/record` native · `/run` c, native · `/run-header` c |
+| `(R-PushFill)` | `R-PushFill` c, native · `/fill` ir · `/hash` c, native · `/record` native · `/run` c, native · `/run-header` c |
 | `(R-PushRec)` | `R-PushRec` c, native · `/apart` c, native |
 | `(R-Range)` | `R-Range` c, native |
 | `(R-RangedCall)` | `R-RangedCall` native |
@@ -580,13 +580,12 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  once before it runs, over the push header the loop holds, and
                  re-derives that header (the reserve may move the record).  Observably
                  nothing: a reservation is capacity, and the pushes write as before.
-                 When the body is that one push of a SIMPLE INVARIANT and nothing
-                 else, the loop is ONE fill of the vector's tail — the room reserved,
-                 the elements written with one bounds check at each end, the length
-                 bumped once — guarded so that a range the fill declines (empty,
-                 negative, an absent owner, an element width not the value's) runs the
-                 per-element loop instead, and the counters are left as that loop
-                 would leave them (`R-Fill`'s own tail).  The trip count is the range's
+                 When the body is that one push of a SIMPLE INVARIANT onto a vector
+                 VARIABLE (non-nullable) and nothing else, the loop is ONE fill of the
+                 vector's tail, decided and applied in the IR (`opt::fill_loop`, both
+                 backends): `if 0 < n { the push; OpAppendCopy(v, n, tp) } else { the
+                 loop }`, `n` the trip count read at entry — so an empty, negative or
+                 null-ended range runs the loop as written.  The trip count is the range's
                  end less its start — the `next` counter's current value or `#index +
                  1` — plus one for an inclusive range, taken at loop entry.  The loop
                  is read in EITHER spelling — the statement `for i in a..b { v += [e] }`

@@ -19,13 +19,15 @@
 //! loop's push does not.
 //!
 //! `LOFT_NO_PUSH_FILL=1` turns the rule off on every backend (the writers' reservation and
-//! window clauses with it); `LOFT_TRACE_IR_FILL=1` names each loop taken.
+//! window clauses with it); `LOFT_NO_FILL_LOOP=1` this clause alone, the loops then left to
+//! the writers' reservation; `LOFT_TRACE_IR_FILL=1` names each loop taken.
 use crate::data::{Data, DefType, Type, Value, v_block, v_if};
 use crate::database::Stores;
 use crate::opt::push_window::{push_loop, push_loop_body};
 
 fn enabled() -> bool {
     crate::keys::push_fill_enabled()
+        && !crate::env_once!(std::env::var("LOFT_NO_FILL_LOOP").is_ok_and(|v| v != "0"))
 }
 
 fn trace() -> bool {

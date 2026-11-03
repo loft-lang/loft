@@ -446,8 +446,9 @@ cannot hoist, or a carried local no struct field can hold.
 makes a counted push loop grow per push again — with it off, `for i in a..b { v += [x, y] }`
 reserves two elements times its trip count once before it runs, and `for _ in a..b
 { v += [c] }` with `c` invariant is ONE fill of the vector's tail with the per-element
-loop as its fallback (the resample's plane prefill: −2 % on the row) — and is the first
-bisect step for a wrong element or length out of a counted push loop on native.  A body
+loop as its fallback — that clause on every backend, decided in the IR
+(BOTH_BACKEND_SWITCHES.md, `LOFT_NO_FILL_LOOP`) — and is the first bisect step for a
+wrong element or length out of a counted push loop.  A body
 that can `break`, `return` or loop again, a push under a branch, another write to the
 path, or a range end that is not a simple invariant declines the loop.
 `LOFT_TRACE_PUSH_FILL=1` names each decline; `LOFT_HOIST_VERIFY=1` re-derives the push
