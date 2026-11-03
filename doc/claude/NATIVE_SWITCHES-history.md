@@ -75,3 +75,8 @@ resolution it removes costs more than the arithmetic it saves.
 
 An address derived from the element's `DbRef` instead of the index measured +46 % SLOWER, so
 the clause derives it from the index; the `DbRef` form is not what ships.
+
+## `LOFT_NO_VALUE_RECORD` — the first measurement (moved 2026-11-04)
+
+Returning a no-heap record's fields in registers measured 1.65× on the call, `smooth` −25 %
+standalone and `lock_curved` −3 %.

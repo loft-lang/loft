@@ -708,8 +708,7 @@ templates (null semantics, not fault protection), and every rewrite still runs u
 function whose result is a plain no-heap record of ≤6 scalar fields return it through
 the buffer again — with it off, such a function whose every call site reads fields off
 it and whose body builds it with `Object` blocks returns those fields in REGISTERS with
-the call site reading tuple elements (measured: 1.65× on the call, `smooth` −25 %
-standalone, `lock_curved` −3 %) — and is the bisect step for a wrong field out of a
+the call site reading tuple elements — and is the bisect step for a wrong field out of a
 record-returning call on native.  Every arm of the `match` a `CallRef` emits shares one
 return type, so the call-site gate declines every fn-ref DISPATCH arm, reading the arm set
 from `fnref::dispatch_arms`, the emitter's own home for that question; a mixed-arm branch
@@ -842,8 +841,9 @@ callee starts as `[c; n]`.  Read where the literal is emitted.
 keep its temp-store build and deep copy again — with it off, a local vector consumed
 exactly once by one append is built INSIDE the appended element (minted at the temp's
 declaration, invisible until the finish's length bump) — and is the bisect step for a
-wrong vector field of an appended record on native, or for a wrong value read through an
-element view between such a local's declaration and its append.  The declaration must be the local's only
+wrong vector field of an appended record (every backend for a literal-built local: the IR
+applies it, `LOFT_NO_IR_ELEM_FIRST=1` hands it back to the writers), or for a wrong value
+read through an element view between such a local's declaration and its append.  The declaration must be the local's only
 binding (a local declared `[]` and rebound under an `if` would leave the element empty).
 **`LOFT_NO_ELEMENT_PLACE=1`** (@PLN164 E-2, `@FR-R-ElemFirst`, default-ON, generation time,
 `--native` only) keeps that build to local vectors and literal-built locals again — with it

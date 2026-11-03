@@ -16,7 +16,7 @@ writers and the interpreter's generator; every rule reports to it or says why no
 table `bench/portal/rule_phases.tsv` is measured and gated, and `rewrites.md` § Applied by is
 rendered from it); B1 and B2 are done: weights in [b1-weights.md](b1-weights.md),
 a verdict per rule in § Verdicts.  Arc C has moved `(R-SliceArg)`'s
-range clause, `(R-Wrapper)`, `(R-PushFill)`'s fill form and `(R-KeyedEntry)` (§ Arc C's moves).  It was to start once
+range clause, `(R-Wrapper)`, `(R-PushFill)`'s fill form, `(R-KeyedEntry)` and `(R-ElemFirst)`'s literal-built temp (§ Arc C's moves).  It was to start once
 #1743 (every routine within 3×) and #2351 (the facts routine) were fixed; #1743 is fixed on
 `laptop-c-perf`, and on 2026-11-03 the owner asked to concentrate on this plan, so #2351's
 three deviations (D-fact-1 … 3) became part of it rather than a precondition.  Four arcs: **A** keeps the register honest about where
@@ -280,6 +280,33 @@ C and rustc, rule on and off; c_emit 71/71; `tests/mint_window.rs` re-pinned (m7
 reference takes the view clause's address); gridmesh's bench rows agree interpreter / C.
 On the interpreter: 15 550 → 2 073 instructions a pass of the probe, −86.7 %.
 
+**`(R-ElemFirst)`'s literal-built temp — moved.**  `src/opt/elem_first.rs`, last in
+`compile::close_program`: `opt::hoist::element_first`'s pairs (asked without a view plan, which
+only the writers build) whose every temp is literal-built and whose append stands once.  At the
+first temp's declaration: the reservation, `elm = OpNewRecord(out, tp, fld)` and a zero per
+paired vector handle (a fresh C slot is not zeroed, so the zero is the IR's on every backend);
+each declaration becomes `t = OpGetField(elm, off, ftp)`; the append keeps its scalar sets and
+finish.  Still the writers': the call-filled temp (@PLN164 E-2), the joined arms (E-2b), the
+comprehension row and a function whose exits copy a temp — each asks the same analysis of the IR
+it receives, which no longer shows a pair the pass took.  The writers' clauses stay for them,
+so this move deletes no writer code; the C's clause now admits nothing on the benches.
+Switches: the rule's `LOFT_NO_ELEMENT_FIRST` (every backend), the clause's
+`LOFT_NO_IR_ELEM_FIRST`; trace `LOFT_TRACE_IR_ELEM_FIRST` (one line per pair and its
+destination, which `tests/element_first.rs` now counts beside rustc's mint comments).  The
+protocol's evidence: switch_ab.sh over 2913 programs, 0 defects; c_sweep 2949 programs, 2580
+match, the one differ main's own; the suite's four cells, `164-element-place.loft` and the V-z
+cell file on the interpreter, the C and rustc, the clause on and off (the pass takes the five
+V-z pairs the pin predicts, and none of 164's, which are call-filled or need the view plan);
+`tests/element_first.rs` 3/3.  The census's declines sit in drawing's `fronds` and
+`lock_ribbons` (rustc `R-Scalar` −27, `R-Mint` −17, `R-CompleteWrite` −12, `R-PushRec` −4,
+`R-RangedCall` −5; C `R-CompleteWrite` −12): the IR now shows the temp's pushes growing the
+destination's store, where the writer applied the rule after its analyses had read a temp with
+a store of its own.  Timed on drawing's 14 routines, the clause off and on: the C ship lane
+level or better (`fronds` 64 650 → 62 280 ns); rustc native `fronds` 50 626 → 64 134 ns
+(1.35× → 1.71×), every other routine level.  rustc native is outside the perf targets; the
+follow-up is `R-Scalar`'s decline in `fronds`' build loops.  On the interpreter: 8 252 → 5 886
+instructions a pass of the probe, −28.7 %.
+
 ## Phase ordering
 
 A0 → A1 → A2 → A3 (the table first, so every later move is a blessed change of it) · B1 →
@@ -325,7 +352,7 @@ function before and not after.
 |---|---|---|--:|---|---|
 | `(R-Wrapper)` | yes — `ir_shape::one_op_wrapper` | `Call(op, operands)` | 40.9 | `wrapper`: 920 → 308, **−66.5 %** (upper bound: the operator itself is left out); moved: 921 → 479, **−48.0 %** | **MOVED** (`wrapper_inline::rewrite`, arc C's second) |
 | `(R-PushFill)` fill form | yes — IR facts | `OpPush` + `OpAppendCopy`, as `[c; n]` lowers | 17.2 | `push_fill`: 10 580 → 3 017, **−71.5 %**; moved: 9 847 → 2 776, **−71.8 %** | **MOVED** (`opt::fill_loop`, arc C's third).  The C's admission on the probe was its window clause, and rustc's fill had no census name |
-| `(R-ElemFirst)` | yes — `opt::hoist::element_first` | existing operators | 1.0 | `elem_first`: 9 666 → 7 299, **−24.5 %** | MOVE |
+| `(R-ElemFirst)` | yes — `opt::hoist::element_first` | existing operators | 1.0 | `elem_first`: 9 666 → 7 299, **−24.5 %**; moved: 8 252 → 5 886, **−28.7 %** | **MOVED, the literal-built temp** (`opt::elem_first`, arc C's fifth); the other forms are still the writers' |
 | `(R-SliceArg)` range | yes — IR facts | `text_from_byte_range` | 0.5 | `slice_arg`: 7 771 → 3 351, **−56.9 %** (the hand form skips the slice's bound normalisation); moved: 7 779 → 5 385, **−30.8 %** | **MOVED** (`slice_text::rewrite`, arc C's first) |
 | `(R-LoopBuffer)` | yes — `opt::hoist::loop_buffers` | `OpClearVector` on a held store | 0.6 | `loop_buffer`: 7 803 → 6 508, **−16.6 %** | MOVE |
 | `(R-LoopRecord)` | yes — `opt::loop_records` | the record's null to the prelude, one free after the loop | 0.1 | `loop_record`: 3 150 → 1 545, **−51.0 %** | MOVE (light) |

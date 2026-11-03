@@ -193,7 +193,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-DischargeInto)` | `R-DischargeInto` parse |
 | `(R-DispatchPublish)` | not counted — executor: the lean loop publishes one position per op |
 | `(R-DispatchStop)` | not counted — executor: the lean loop tests one flag per op |
-| `(R-ElemFirst)` | `R-ElemFirst` c, native |
+| `(R-ElemFirst)` | `R-ElemFirst` ir, native |
 | `(R-ElementPath)` | not counted — executor: the interpreter's element read operator |
 | `(R-Escape)` | not counted — meta: the contract every rewrite keeps |
 | `(R-ExitVector)` | `R-ExitVector` ir · `/record` ir |
@@ -4723,8 +4723,14 @@ line in `Output::output_function`'s prelude.
                  early mint, and it needs `(R-Place)`'s callee condition — a
                  callee that FILLS its buffer and never mints into it — and its
                  argument condition — no other argument names `out`.  A value the
-                 list does not declare keeps its copy into the early element.  The interpreter keeps the
-                 temp-store build and is the oracle.
+                 list does not declare keeps its copy into the early element.  The
+                 LITERAL-built temp appended once (no joined arms, no comprehension
+                 row) is applied in the IR, for every backend (`opt::elem_first`):
+                 the mint, the vector-handle zero and `t = OpGetField(elm, off, ftp)`
+                 at the declaration, the append keeping its scalar sets and finish.
+                 The call-filled temp, the joined arms, the comprehension row and a
+                 function whose exits copy a temp (the view plan) are still the
+                 writers' (`LOFT_NO_IR_ELEM_FIRST=1` hands them the literal case too).
                  THE COMPREHENSION CLAUSE: a row built by a comprehension and appended
                  as a WHOLE element of a local vector of vectors (`[for y { [for x {
                  … }] }]`) is the same build with a third declaration shape and a

@@ -17,6 +17,13 @@ All notable changes to the loft language and interpreter.
   rule).  A C clause that stops firing fails the gate on its C row; before this no C admission
   reached a baseline.  `--writer rust|c` runs one writer; a four-column row reads as Rust's.
 
+### `(R-ElemFirst)`'s literal-built temp runs in the IR (@PLN211 arc C)
+
+- `t = []; …t += …; out += [R { f: t, … }]` builds `t` inside the appended element on every
+  backend (`src/opt/elem_first.rs`); the interpreter runs 28.7 % fewer instructions on such a
+  loop.  The call-filled temp, the joined arms and the comprehension row are still applied by
+  the writers.  `LOFT_NO_IR_ELEM_FIRST` switches the IR clause off alone.
+
 ### `(R-KeyedEntry)` runs in the IR (@PLN211 arc C)
 
 - `h += [T{k: key, …}]` over a hash the rule admits is its values staged, ONE probe for the

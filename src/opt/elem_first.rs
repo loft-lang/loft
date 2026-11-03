@@ -20,16 +20,17 @@
 //! exits copy a temp (`@FR-O-ViewField`) are still the writers' (they ask the same analysis of
 //! the IR they receive, which no longer shows a pair this pass took).
 //!
-//! `LOFT_IR_ELEM_FIRST=1` turns it on while it is compared with the writers' clauses;
-//! `LOFT_NO_ELEMENT_FIRST=1` turns the rule off; `LOFT_TRACE_IR_ELEM_FIRST=1` names each pair.
+//! `LOFT_NO_ELEMENT_FIRST=1` turns the rule off on every backend; `LOFT_NO_IR_ELEM_FIRST=1`
+//! this clause alone, its pairs then left to the writers; `LOFT_TRACE_IR_ELEM_FIRST=1` names
+//! each pair and its destination.
 use crate::data::{Data, DefType, Value};
 use crate::database::Stores;
 use crate::opt::hoist::{ElemFirst, element_first};
 use std::collections::HashMap;
 
 fn enabled() -> bool {
-    crate::env_once!(std::env::var("LOFT_IR_ELEM_FIRST").is_ok_and(|v| v != "0"))
-        && !crate::env_once!(std::env::var("LOFT_NO_ELEMENT_FIRST").is_ok_and(|v| v != "0"))
+    !crate::env_once!(std::env::var("LOFT_NO_ELEMENT_FIRST").is_ok_and(|v| v != "0"))
+        && !crate::env_once!(std::env::var("LOFT_NO_IR_ELEM_FIRST").is_ok_and(|v| v != "0"))
 }
 
 fn trace() -> bool {
@@ -140,10 +141,12 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         crate::scopes::compute_function_intervals(data, d);
         crate::scopes::assign_function_slots(data, d);
         if trace() {
-            eprintln!(
-                "[ir-elem-first] fn={} {n} element(s) built in place",
-                data.def(d).name()
-            );
+            // One line per pair, naming its destination: the vector itself, or a record's
+            // collection field (the emission pins count them so).
+            for p in &pairs {
+                let dest = if p.out_fld == 65535 { "local" } else { "field" };
+                eprintln!("[ir-elem-first] fn={} pair {dest}", data.def(d).name());
+            }
         }
         crate::rewrite_census::fired("R-ElemFirst", n);
         total += n;
