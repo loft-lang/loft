@@ -2231,6 +2231,20 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
       _ => {}
     }
   }
+  // `@FR-N-Decl` (`declared_nullable_write`): a local the author declared, or a parameter,
+  // written a `τ?` keeps its type, the value stored into it as `convert_store` stores — on
+  // both passes, so the first never retypes it.
+  author_declared = vars.annotated.contains(v) || (vars.vars[v].argument && !hidden_param(e, vars, v));
+  if author_declared && x.tp is TyOptional {
+    slot = el_vars::tp(vars, v);
+    if !(slot is TyOptional) && !(slot is TyRefVar) && !el_types::is_unknown(slot) && el_types::is_equal(e, slot, el_types::base(x.tp)) {
+      c = el_convert::convert_store(e, vars, x.code, x.tp, slot);
+      if c != null {
+        x.code = c!;
+        x.tp = slot;
+      }
+    }
+  }
   // `Parser::change_var`: a record local never borrows itself — `d = step(d, k)` answers a
   // borrow of `d`, and that dep is left out of `d`'s own type.
   bound_tp = x.tp;
