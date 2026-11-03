@@ -1758,6 +1758,26 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
   if !e.first_pass && context == "return from block" && len(l) > 0 && el_types::base(result) is TyInteger && !el_convert::null_source(e, l[-1]) {
     l = l[..-1] + [el_convert::guard_range(e, l[-1], result, t, result is TyOptional)];
   }
+  // P236 (`unify_if_branches_work_refs`): a body's `if` tail over a heap result whose arm
+  // terminals are all work references delivers through one of them, wrapped in a `return`.
+  // Arms ending in two or more different work references are renamed onto the first — not
+  // carried: refused by name.
+  if !e.first_pass && context == "return from block" && len(l) > 0 && dbref_type(el_types::base(result)) && el_ir::unspan(l[-1]) is NdIf {
+    terms: vector<integer> = [];
+    branch_terminals(el_ir::unspan(l[-1]), terms);
+    work = len(terms) > 0;
+    for v in terms {
+      nm = el_vars::name_of(vars, v);
+      if !nm.starts_with("__ref_") && !nm.starts_with("__rref_") {
+        work = false;
+      }
+    }
+    if work && len(terms) > 1 {
+      el::refuse(e, "an `if` tail whose arms end in different work references");
+    } else if work {
+      l[-1] = ir::NdReturn { inner: l[-1] ?? ir::NdNull };
+    }
+  }
   // A value block whose tail is a text local the block defines answers a borrow of that local,
   // not of what the local borrows (`{ r = R {…}; s = r.name; s }` is `text["s"]`).
   if context != "return from block" && len(l) > 0 && el_types::base(t) is TyText {
@@ -1772,6 +1792,47 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
     }
   }
   ex(el_ir::v_block(l, t, "block"), t)
+}
+
+// `data::is_dbref`: a value held as a store reference.
+fn dbref_type(t: ir::TypeT) -> boolean {
+  match t {
+    TyReference { n: _ } => true,
+    TyVector { inner: _ } => true,
+    TyEnum { is_ref } => is_ref,
+    _ => keyed_kind(t)
+  }
+}
+
+// `collect_branch_terminal_vars`: the variable each arm of an `if` chain ends in, once each.
+fn branch_terminals(n: ir::Node, out: vector<integer>) {
+  match n {
+    NdSpan { inner } => branch_terminals(inner, out),
+    NdVar { n: v } => {
+      if !out.contains(v) {
+        out += [v];
+      }
+    },
+    NdBlock { block } => {
+      for o in block[0].operators {
+        if o#index == len(block[0].operators) - 1 {
+          branch_terminals(o, out);
+        }
+      }
+    },
+    NdInsert { items } => {
+      for o in items {
+        if o#index == len(items) - 1 {
+          branch_terminals(o, out);
+        }
+      }
+    },
+    NdIf { t, f } => {
+      branch_terminals(t, out);
+      branch_terminals(f, out);
+    },
+    _ => {}
+  }
 }
 
 // A value meeting a declared slot (a local's annotation, a field, a return): as it is where its
@@ -5520,7 +5581,7 @@ fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::TypeT
     }
   }
   if textual || record {
-    why2 = text_instance_carried(e, tmpl, f, code_of(tmpl), h, textual);
+    why2 = text_instance_carried(e, g, tmpl, f, code_of(tmpl), h, textual);
     if why2 != "" {
       el::refuse(e, "a generic instance at {if textual { "text" } else { "a record" }} whose body holds {why2}");
       return false;
@@ -5596,11 +5657,16 @@ fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::TypeT
   if (textual && rt is TyText) || (record && rt is TyReference) {
     tail = el_ir::unspan(el_ir::last(match code { NdBlock { block } => block[0].operators, _ => [] }));
     root = view_root(e, f, tail);
-    if root >= 0 {
-      a = attr_nr(el::def(e, d), f.variables[root]!.name);
+    roots: vector<integer> = if root >= 0 { [root] } else if record { answer_borrows(e, f, code, [d, g]) } else { [] };
+    attrs: vector<integer> = [];
+    for r in roots {
+      a = attr_nr(el::def(e, d), f.variables[r]!.name);
       if a >= 0 {
-        e.b.data.definitions[d].returned = [el_types::with_deps(el::def(e, d).returned[0] ?? ir::TyVoid, [a])];
+        attrs += [a];
       }
+    }
+    if len(attrs) > 0 {
+      e.b.data.definitions[d].returned = [el_types::with_deps(el::def(e, d).returned[0] ?? ir::TyVoid, attrs)];
     }
   }
   true
@@ -5704,6 +5770,221 @@ fn retarget_all(ns: vector<ir::Node>, from: integer, to: integer) -> vector<ir::
   r
 }
 
+// A local's definition: what it is set from.
+struct VarSet { v: integer, rhs: ir::Node }
+
+fn collect_sets(n: ir::Node, out: vector<VarSet>) {
+  match n {
+    NdSet { var, inner } => { out += [VarSet { v: var, rhs: inner }]; },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    collect_sets(c, out);
+  }
+}
+
+// `use_analysis::projection_container_var`: the variable a projection chain reads out of, or -1.
+fn chain_var(e: el::El, n: ir::Node) -> integer {
+  match n {
+    NdSpan { inner } => chain_var(e, inner),
+    NdVar { n: v } => v,
+    NdCall { def_nr, args } => if projection_op(el::def(e, def_nr).name) && len(args) > 0 { chain_var(e, args[0]) } else { -1 },
+    _ => -1
+  }
+}
+
+struct ViewCtx { sets: vector<VarSet>, xs: vector<integer>, selfs: vector<integer> }
+
+fn copy_of(l: vector<integer>) -> vector<integer> {
+  r: vector<integer> = [];
+  for x in l {
+    r += [x];
+  }
+  r
+}
+
+// `ViewWalk::local_views`: local `y`, through projections and self calls alone, still views one
+// of `xs`; `seen` is the cycle guard (a local reached twice answers no).
+fn local_views(e: el::El, w: ViewCtx, y: integer, seen: vector<integer>) -> boolean {
+  if w.xs.contains(y) {
+    return true;
+  }
+  if seen.contains(y) {
+    return false;
+  }
+  seen += [y];
+  any = false;
+  for st in w.sets {
+    if st.v != y || el_ir::unspan(st.rhs) is NdNull {
+      continue;
+    }
+    if self_call_views(e, w, st.rhs, seen) || forwarded_views(e, w, st.rhs, seen) {
+      any = true;
+      continue;
+    }
+    base = chain_var(e, st.rhs);
+    if base < 0 || !local_views(e, w, base, copy_of(seen)) {
+      return false;
+    }
+    any = true;
+  }
+  any
+}
+
+// `ViewWalk::self_call_views`: a self call handed, in each position of `xs`, a view of one of them.
+fn self_call_views(e: el::El, w: ViewCtx, rhs: ir::Node, seen: vector<integer>) -> boolean {
+  match el_ir::unspan(rhs) {
+    NdCall { def_nr, args } => {
+      if !w.selfs.contains(def_nr) {
+        return false;
+      }
+      for x in w.xs {
+        base = chain_var(e, args[x] ?? ir::NdNull);
+        if base < 0 || !local_views(e, w, base, copy_of(seen)) {
+          return false;
+        }
+      }
+      true
+    },
+    _ => false
+  }
+}
+
+// `ViewWalk::forwarded_call_views`: another function's call whose result borrows its arguments,
+// handed views of `xs` at every position it borrows.
+fn forwarded_views(e: el::El, w: ViewCtx, rhs: ir::Node, seen: vector<integer>) -> boolean {
+  match el_ir::unspan(rhs) {
+    NdCall { def_nr, args } => {
+      if w.selfs.contains(def_nr) {
+        return false;
+      }
+      cd = el::def(e, def_nr);
+      borrowed = el_types::deps(cd.returned[0] ?? ir::TyVoid);
+      if len(borrowed) == 0 {
+        return false;
+      }
+      for i in borrowed {
+        if i >= len(cd.attributes) || cd.attributes[i]!.hidden {
+          return false;
+        }
+        base = chain_var(e, args[i] ?? ir::NdNull);
+        if base < 0 || !local_views(e, w, base, copy_of(seen)) {
+          return false;
+        }
+      }
+      true
+    },
+    _ => false
+  }
+}
+
+fn leaf_views(e: el::El, w: ViewCtx, leaf: ir::Node) -> boolean {
+  if self_call_views(e, w, leaf, []) || forwarded_views(e, w, leaf, []) {
+    return true;
+  }
+  base = chain_var(e, leaf);
+  base >= 0 && local_views(e, w, base, [])
+}
+
+struct Leaves { found: boolean, all: boolean }
+
+// `ViewWalk::walk`: every return leaf — the tail, a `return` anywhere — through `if` arms and
+// block tails; a `null` tail names nothing.
+fn walk_leaves(e: el::El, w: ViewCtx, n: ir::Node, tail: boolean, acc: Leaves) {
+  match n {
+    NdSpan { inner } => walk_leaves(e, w, inner, tail, acc),
+    NdReturn { inner } => walk_leaves(e, w, inner, true, acc),
+    NdIf { t, f } => {
+      walk_leaves(e, w, t, tail, acc);
+      walk_leaves(e, w, f, tail, acc);
+    },
+    NdBlock { block } => {
+      for o in block[0].operators {
+        walk_leaves(e, w, o, tail && o#index == len(block[0].operators) - 1, acc);
+      }
+    },
+    NdLoop { block } => {
+      for o in block[0].operators {
+        walk_leaves(e, w, o, tail && o#index == len(block[0].operators) - 1, acc);
+      }
+    },
+    NdInsert { items } => {
+      for o in items {
+        walk_leaves(e, w, o, tail && o#index == len(items) - 1, acc);
+      }
+    },
+    NdNull => {},
+    _ => {
+      if tail {
+        acc.found = true;
+        if !leaf_views(e, w, n) {
+          acc.all = false;
+        }
+      }
+    }
+  }
+}
+
+// `every_return_leaf_views_one_of`: every return leaf of the body views one of `xs`.
+fn leaves_view(e: el::El, code: ir::Node, xs: vector<integer>, selfs: vector<integer>) -> boolean {
+  sets: vector<VarSet> = [];
+  collect_sets(code, sets);
+  w = ViewCtx { sets: sets, xs: xs, selfs: selfs };
+  acc = Leaves { found: false, all: true };
+  walk_leaves(e, w, code, true, acc);
+  acc.found && acc.all
+}
+
+// `derive_monomorph_return_deps` for a record answer: the one heap parameter every return leaf
+// views (`Own::Borrowed { base }`), else the set of them (`monomorph_views_of_params`), else none.
+fn answer_borrows(e: el::El, f: ir::Function, code: ir::Node, selfs: vector<integer>) -> vector<integer> {
+  params: vector<integer> = [];
+  for v in f.variables {
+    t = el_types::base(v.type_def[0] ?? ir::TyVoid);
+    if v.argument && !v.name.starts_with("__") && (t is TyText || dbref_type(t)) {
+      params += [v#index];
+    }
+  }
+  for p in params {
+    if leaves_view(e, code, [p], selfs) {
+      return [p];
+    }
+  }
+  if len(params) > 1 && leaves_view(e, code, params, selfs) {
+    return params;
+  }
+  []
+}
+
+// A value branch with a bare parameter leaf is bound into a `__ret_join` temp per instance
+// (`bind_monomorph_join_return`): not carried.
+fn branch_join_answer(f: ir::Function, code: ir::Node) -> text {
+  ops = match code { NdBlock { block } => block[0].operators, _ => [] };
+  tail = el_ir::unspan(el_ir::last(ops));
+  inner = match tail { NdReturn { inner: i } => el_ir::unspan(i), _ => tail };
+  if inner is NdIf && bare_param_leaf(f, inner) {
+    return "a branch answer with a bare parameter arm";
+  }
+  ""
+}
+
+fn bare_param_leaf(f: ir::Function, n: ir::Node) -> boolean {
+  match n {
+    NdSpan { inner } => bare_param_leaf(f, inner),
+    NdVar { n: v } => f.variables[v]!.argument,
+    NdIf { t, f: el } => bare_param_leaf(f, t) || bare_param_leaf(f, el),
+    NdBlock { block } => {
+      for o in block[0].operators {
+        if o#index == len(block[0].operators) - 1 && bare_param_leaf(f, o) {
+          return true;
+        }
+      }
+      false
+    },
+    _ => false
+  }
+}
+
 fn code_of(d: ir::Definition) -> ir::Node {
   d.code[0] ?? ir::NdNull
 }
@@ -5714,10 +5995,22 @@ fn code_of(d: ir::Definition) -> ir::Node {
 // `bind_monomorph_join_return`); for a text, an assignment to a parameter that became text
 // (`promote_assigned_text_params`) or a variable that became text set from a value reading it
 // (`stage_text_self_reads`).
-fn text_instance_carried(e: el::El, tmpl: ir::Definition, f: ir::Function, code: ir::Node, h: integer, textual: boolean) -> text {
+fn text_instance_carried(e: el::El, g: integer, tmpl: ir::Definition, f: ir::Function, code: ir::Node, h: integer, textual: boolean) -> text {
   if el_types::base(tmpl.returned[0] ?? ir::TyVoid) is TyReference && type_var(e, el_types::base(tmpl.returned[0] ?? ir::TyVoid)) == h {
     tail = el_ir::unspan(el_ir::last(match code { NdBlock { block } => block[0].operators, _ => [] }));
     tv = view_root(e, f, tail);
+    // A record answer may be any shape whose every leaf views the parameters, by induction
+    // over self calls (`every_return_leaf_views_one_of`); a text one only a bare view.
+    if !textual && tv < 0 {
+      why = branch_join_answer(f, code);
+      if why != "" {
+        return why;
+      }
+      if len(answer_borrows(e, f, code, [g])) == 0 {
+        return "an answer whose leaves do not all view a parameter";
+      }
+      return "";
+    }
     if tv < 0 || has_return(code) {
       return "an answer other than a parameter or a view into one";
     }
