@@ -1649,8 +1649,9 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
         ),
     ]
 
-    # The ONE release PR, opened last: a branch carries every change the release needs, the
-    # rows above are finished on it, the release gate runs green on it, then this PR — whose
+    # The release-day PR — ONE that day, opened last.  The cycle merges its daily PRs as usual;
+    # on release day a branch carries every change the release still needs, the rows above are
+    # finished on it, the release gate runs green on it, then this PR — whose
     # squash merge is the same tree, so the gate's run still counts (`same_tree_gate_runs`).  A
     # commit after it is another PR and another gate.  Resolved after the rows above it, so it
     # reads their states.
@@ -1669,7 +1670,7 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
     release_pr = [
         Item(
             "A-release-pr",
-            "Open THE release PR once — the branch is complete and its release gate green",
+            "Open the release-day PR — ONE that day, the branch complete and its gate green",
             "gh pr create … && gh pr merge --auto --squash   # ONCE; after it only the tag and "
             "the release window, which change no file",
             check=check_release_pr_ready,
