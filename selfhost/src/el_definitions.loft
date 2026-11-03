@@ -297,7 +297,8 @@ struct Argument {
 // The plain path: no type variables, no operator form, no capability, no annotation, no `self`.
 fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vector<integer>, params: vector<integer>, ret: integer?, ret_const: boolean, cap: integer?, body: integer?, annots: vector<integer>) {
   if is_op || len(tvars) > 0 || cap != null || len(annots) > 0 || ret_const {
-    el::refuse(e, "a function with an operator form, type variables, a capability, annotations or `-> const`");
+    kind = if is_op { "an operator form" } else if len(tvars) > 0 { "type variables" } else if cap != null { "a capability" } else if len(annots) > 0 { "annotations" } else { "`-> const`" };
+    el::refuse(e, "a function with an operator form, type variables, a capability, annotations or `-> const`: {kind}");
     return;
   }
   vars = el_vars::new_vars(name, e.file);
