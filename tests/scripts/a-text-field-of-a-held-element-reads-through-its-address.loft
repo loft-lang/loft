@@ -19,6 +19,9 @@
 // @falsified-by: tests/falsified/a-text-field-of-a-held-element-reads-through-its-address.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected: the rewrite is the native emitter's)
 //   CHANNEL: the VALUE channel on native — the patch reads every text field at offset 0, so
 //   t1's search compares the wrong bytes and finds nothing it should (`t1 -1,-1,1,-1`).
+// @falsified-at: f4f9d2760 — by hand on the C writer (`loft_pa_text`), each plant alone failing
+//   t1: the field read at offset 0 (`t1 -1,-1,1,-1`), and a `for` element's address taken one
+//   element early (`t1 3,0,2,-1`).
 
 struct Opt { long: text, n: integer, short: text }
 struct Args { options: vector<Opt>, hits: integer, extra: vector<Opt> }
