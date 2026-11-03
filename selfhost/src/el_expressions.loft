@@ -2924,6 +2924,20 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
       return ex(ir::NdInsert { items: list }, ir::TyVoid);
     }
   }
+  // A declared vector whose value is an `if`: its definitions are made where the right side
+  // starts, after the `=` — before either arm's literal is read.
+  if e.p.nodes[rhs!] is SIf {
+    match declared! {
+      TyVector { inner } => {
+        nm = el_types::elem_name(e, inner);
+        iat = match e.p.nodes[rhs!] { SIf { at } => at, _ => 0 };
+        if nm != "" && iat > 0 && el::def_nr(e, "main_vector<{nm}>") < 0 {
+          el_schema::make_vector_def(e, inner, nm, el::pos_at(e, iat - 1), true);
+        }
+      },
+      _ => {}
+    }
+  }
   outer_slice = vars.slice_node;
   vars.slice_node = if declared! is TyVector { slice_target(e, rhs!) } else { -1 };
   x = expression(e, vars, rhs!);
@@ -5558,6 +5572,23 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
     }
     return ex(joined, jt);
   }
+  // `merge_dependencies` for a vector join: the `if` borrows what either arm's vector does —
+  // each arm's own `__vdb_N` included.
+  if el_types::base(t.tp) is TyVector && !(t.tp is TyOptional) && !(f.tp is TyOptional) {
+    // An arm answering a vector variable is copied into the bound local per arm — not
+    // carried yet.
+    if arm_answers_var(t.code) || arm_answers_var(f.code) {
+      el::refuse(e, "a vector `if` an arm of which answers a variable");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    ds = el_types::deps(t.tp);
+    for x in el_types::deps(f.tp) {
+      if !ds.contains(x) {
+        ds += [x];
+      }
+    }
+    return ex(el_ir::v_if(c.code, t.code, f.code), el_types::with_deps(t.tp, ds));
+  }
   ex(el_ir::v_if(c.code, t.code, f.code), t.tp)
 }
 
@@ -5589,6 +5620,18 @@ fn own_join_arm(e: el::El, vars: el_vars::Vars, arm: ir::Node, tp: ir::TypeT) ->
       el_ir::v_block([el_ir::v_set(buf, arm), ir::NdVar { n: buf }], tp, "join-arm-owner")
     },
     _ => arm
+  }
+}
+
+// Does an `if` arm's value (a block's tail, through nested arms) end in a bare variable?
+fn arm_answers_var(arm: ir::Node) -> boolean {
+  match arm {
+    NdSpan { inner } => arm_answers_var(inner),
+    NdVar { n: _ } => true,
+    // The arm's own block only: a literal's `Vector` block inside it ends in its `_vec_N`.
+    NdBlock { block } => len(block[0].operators) > 0 && el_ir::unspan(block[0].operators[-1] ?? ir::NdNull) is NdVar,
+    NdIf { cond: _, t, f } => arm_answers_var(t) || arm_answers_var(f),
+    _ => false
   }
 }
 
@@ -7537,10 +7580,20 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   }
   // A vector parameter holds the caller's store (`vector_may_own_db`): a literal bound into it
   // clears and refills it.
+  // A literal rebinding a local that has a store takes a fresh one, as its first bind did —
+  // unless an item reads the local, which Rust stages through `_build_val_N` first.
   has_store = len(el_types::deps(el_vars::tp(vars, v))) > 0 || vars.vars[v].argument;
-  if has_store != append && !value && !vars.vars[v].argument {
-    el::refuse(e, if append { "a vector append to a local with no store yet" } else { "a vector literal into a local that has a store" });
+  if append && !has_store && !value && !vars.vars[v].argument {
+    el::refuse(e, "a vector append to a local with no store yet");
     return refused_build();
+  }
+  if !append && has_store && !value && !vars.vars[v].argument {
+    for x in xs {
+      if el_ir::reads_var(x.code, v) {
+        el::refuse(e, "a vector literal rebinding a local it reads");
+        return refused_build();
+      }
+    }
   }
   r = rows!;
   w = ir::NdVar { n: v };
