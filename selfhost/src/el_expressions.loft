@@ -5427,11 +5427,15 @@ fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex {
       }
     }
     // `null_test`'s struct arm: a nullable struct reference holds the store sentinel, which
-    // `OpRefIsNull` reads (`OpEqRef`'s `rec` test stays for a bare reference).
+    // `OpRefIsNull` reads (`OpEqRef`'s `rec` test stays for a bare reference).  Only `==`
+    // asks it; `x != null` is `OpNeRef` against the null reference.
     sd = struct_ref(e, vb);
     if v.tp is TyOptional && sd >= 0 && !starts_with(el::def(e, sd).name, "__tuple<") {
-      isn = el_ir::cl(e, "OpRefIsNull", [v.code]);
-      return ex(if op == "!=" { el_ir::cl(e, "OpNot", [isn]) } else { isn }, ir::TyBoolean);
+      if op == "==" {
+        return ex(el_ir::cl(e, "OpRefIsNull", [v.code]), ir::TyBoolean);
+      }
+      nl = el_ir::cl(e, "OpNullRefSentinel", []);
+      return ex(el_ir::cl(e, "OpNeRef", if b.tp is TyNull { [v.code, nl] } else { [nl, v.code] }), ir::TyBoolean);
     }
   }
   if op == ">" {
