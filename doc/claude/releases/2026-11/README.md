@@ -115,3 +115,11 @@ batches (which only make routines faster), so an upper bound — gcc median 1.42
 Re-measured on the build with those batches, the worst is 3.08x (`wall_chain_walk`, clang).
 Committed numbers: `doc/claude/plans/210-c-worst-to-2x/handoff-2026-11-03.md` § The numbers on
 `laptop-c-perf`.  The rustc-native lane was not re-measured this cycle.
+
+**D-fact-1..3 ship open** (owner, 2026-11-03: "ship with them, I am very much tasking the perf
+agent right now to harmonize a lot of optimizations across the project, this will be part of
+it").  `A-deviations` reads red on them by design: each is a fact computed apart from the one
+routine `facts(kind, reach)` (`formal/facts.md`), so no program answers differently — a callee
+fact with its own walk (D-fact-1), interval entry facts only in the rustc writer (D-fact-2, an
+index check the C keeps), each twin kind keyed by hand (D-fact-3).  Their removal is loft#2351,
+in the perf agent's harmonisation work after the tag.
