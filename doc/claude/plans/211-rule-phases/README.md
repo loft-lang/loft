@@ -297,7 +297,8 @@ protocol's evidence: switch_ab.sh over 2913 programs, 0 defects; c_sweep 2949 pr
 match, the one differ main's own; the suite's four cells, `164-element-place.loft` and the V-z
 cell file on the interpreter, the C and rustc, the clause on and off (the pass takes the five
 V-z pairs the pin predicts, and none of 164's, which are call-filled or need the view plan);
-`tests/element_first.rs` 3/3.  The census's declines sit in drawing's `fronds` and
+`tests/element_first.rs` 3/3; falsified by the append's paired copy kept (the suite's
+`157-element-first.loft` fails on the interpreter and the C).  The census's declines sit in drawing's `fronds` and
 `lock_ribbons` (rustc `R-Scalar` −27, `R-Mint` −17, `R-CompleteWrite` −12, `R-PushRec` −4,
 `R-RangedCall` −5; C `R-CompleteWrite` −12): the IR now shows the temp's pushes growing the
 destination's store, where the writer applied the rule after its analyses had read a temp with
