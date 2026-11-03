@@ -149,7 +149,11 @@ One phase per rule, in B1's weight order.  Each is a parallel run:
    the IR clause admitted MORE (each such site read by hand).  The interpreter: the
    rule's guard cells on both backends, the switch A/B against hand-computed values, the
    C sweep and the language suite on both backends, and the instruction count of the
-   probe routine.
+   probe routine.  An IR clause changes what EVERY writer receives, rustc's included, so the
+   cells also run on `--native` with `LOFT_NATIVE_BACKEND` unset, and `find_problems.sh
+   --subject codegen` runs once with it unset: rustc's own pins (`apart_value`,
+   `decode_view`, `mint_window`, …) and its declaration-at-first-assignment are what the C
+   checks cannot see (a moved assignment declared inside a block was an E0425 there).
 3. **Then deleted.**  The writer clause is removed, its switch becomes the IR clause's, the
    rule's applied-by changes in the table (A1's bless), and the rewrite census shows no
    drop on the C side.
