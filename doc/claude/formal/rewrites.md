@@ -91,8 +91,14 @@ assumption.  A site enforcing a rule cites its `@FR-R-…` tag
                  the oracle, INTERPRETER CLAUSE).  One FACT may be applied by two
                  phases — native's generator and the interpreter's generator each
                  dropping a reservation the append repeats — and is then one rule with
-                 a clause per phase, never two rules.  A rule moved from a generator
-                 into the IR phase keeps its name and changes its applied-by line.
+                 a clause per phase, never two rules.  The applied-by is MEASURED: the
+                 census credits each admission to its phase (`parse`, `ir`, `interp`,
+                 `c`, `native`), and `bench/portal/rule_phases.tsv` holds, per census
+                 name, the phases that applied it over the benches
+                 (`scripts/rule_phases.py`, which also derives where the rule is
+                 decided).  `make rewrite-census` fails when that set changes.  A rule
+                 moved from a generator into the IR phase keeps its name; the move is
+                 the table's change, blessed in its own commit.
   (R-Escape)     the contract is SEMANTICS — what a program computes and can observe —
                  never a representation: how many stores or copies a value takes, or
                  where it lives, is the compiler's to change wherever the rule's

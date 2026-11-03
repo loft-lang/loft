@@ -135,7 +135,8 @@ make rewrite-census                      # which REWRITES still fire where they 
                                          #   and per compiled writer (Rust, C), the admissions of
                                          #   each R- rule against a committed baseline — a DROP (a
                                          #   fix tightened a condition) fails, named by rule, bench
-                                         #   and writer; seconds, exact, in `make ci`
+                                         #   and writer, and so does a rule applied by another set of
+                                         #   phases (`scripts/rule_phases.py`); seconds, exact, in `make ci`
                                          #   and on the PR.  `-bless` records a deliberate decline
 make decline-census                      # HOW FAR EACH REWRITE REACHES: per R- rule, the sites it
                                          #   admitted against the sites it REFUSED, the refusals

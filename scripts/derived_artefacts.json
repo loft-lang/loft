@@ -73,7 +73,8 @@
     {
       "name": "rewrite-census",
       "paths": [
-        "bench/portal/rewrite_census.tsv"
+        "bench/portal/rewrite_census.tsv",
+        "bench/portal/rule_phases.tsv"
       ],
       "inputs": [
         "src/",
@@ -84,7 +85,7 @@
       "regen": [
         "cargo build -q --bin loft --profile probe --target-dir target/probe && LOFT_BIN=target/probe/probe/loft python3 scripts/rewrite_census.py --bless-unless-drop"
       ],
-      "cure": "a DROP is a rewrite that stopped firing on the union: find the condition that tightened, or bless it by hand as a deliberate decline",
+      "cure": "a DROP is a rewrite that stopped firing on the union: find the condition that tightened, or bless it by hand as a deliberate decline; a PHASE change is a rewrite applied by other phases (scripts/rule_phases.py): a deliberate move is blessed in its own commit, anything else is found like a drop",
       "regen_checks": true
     },
     {

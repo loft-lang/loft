@@ -17,6 +17,17 @@ All notable changes to the loft language and interpreter.
   rule).  A C clause that stops firing fails the gate on its C row; before this no C admission
   reached a baseline.  `--writer rust|c` runs one writer; a four-column row reads as Rust's.
 
+### The phase table: which phase applies each rewrite, measured (@PLN211 A1)
+
+- `scripts/rewrite_census.py` records the phase split of every admission in the run it already
+  makes and keeps `bench/portal/rule_phases.tsv`: per census name, the phases that applied it
+  over the benches and the admissions per phase.  A name whose set of phases changes fails the
+  gate like a drop; `--bless` rewrites the table (a full run only).  `scripts/rule_phases.py`
+  reads it, with where each rule is decided derived from the code's `@FR-` citations.
+- Each writer's whole unit is a census scope, so an admission a writer makes outside a function
+  body (a signature, a unit's analysis) is that writer's, no longer `parse`'s.  With it the
+  shared phases (`parse`, `ir`, `interp`) report the same counts whichever writer runs.
+
 ### Every rewrite rule reports to the census or says why not (@PLN211 A2)
 
 - `scripts/rule_tags.py phases --check` (in `make rewrite-census`, `make ci` and CI's census
