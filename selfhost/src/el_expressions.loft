@@ -15,6 +15,7 @@ use el_vars;
 use el_types;
 use el_schema;
 use el_convert;
+use frame;
 use el_length;
 
 // An expression's IR and type.
@@ -4237,12 +4238,14 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
     if name == "exhausted" {
       return ex(el_ir::cl(e, "OpCoroutineExhausted", [list[0]]), ir::TyBoolean);
     }
-    vs = coroutine_value_size(step);
-    if vs < 0 {
+    ops = next_operands(step);
+    // A tuple's advance is followed by the generator's own state (Rust's `next_tuple` block,
+    // an exhausted advance answering a tuple of nulls): not carried.
+    if len(ops) == 0 || step is TyTuple {
       el::refuse(e, "a `next` of a generator of this element type: {type_kind(step)}");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
-    return ex(el_ir::cl(e, "OpCoroutineNext", [list[0], ir::NdInt { n: vs }]), step);
+    return ex(el_ir::cl(e, "OpCoroutineNext", [list[0]] + ops), step);
   }
   d = find_fn(e, name, first);
   if d < 0 {
@@ -7188,7 +7191,7 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
     return keyed_for(e, vars, src_id, id, x, body!, filter);
   }
   if x.tp is TyIterator && (el_ir::unspan(x.code) is NdCall || el_ir::unspan(x.code) is NdVar) {
-    return generator_for(e, vars, src_id, id, x, body!, filter);
+    return generator_for(e, vars, binds, src_id, id, x, body!, filter);
   }
   if x.tp is TyText {
     return text_for(e, vars, src_id, id, x, body!, filter);
@@ -7239,41 +7242,16 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
   lv = loop_var(vars, src_id, id, var_tp);
   vars.active_loops += [lv];
   vars.active_values += [x.code];
-  // The named members, made before the body is read so it resolves them.
-  bound: vector<integer> = [];
-  for nm in binds {
-    if destructure {
-      // A `_` member is bound too, to a fresh `___N`.
-      // Each a binding of this loop (`loop_binding`): a sibling loop's same name is another.
-      mt = el_types::without_deps(members[nm#index] ?? ir::TyUnknown { n: 0 });
-      // A spelling an earlier plain binding holds is renamed by Rust's block-scope rebinding
-      // (`rebind_after_block`), which is not carried: refused by name.
-      // A member is marked by a `<name>#member` entry, which the stored table keeps across the
-      // passes as it keeps `#bind`.
-      held = vars.names[nm];
-      if nm != "_" && held != null && vars.names["{el_vars::name_of(vars, held!.nr)}#member"] == null {
-        el::refuse(e, "a destructured member reusing an earlier binding's name: {nm}");
-        return ex(ir::NdNull, ir::TyVoid);
-      }
-      mv = loop_var(vars, nm, if nm == "_" { "_" } else { el_vars::loop_binding(vars, nm) }, mt);
-      el_vars::set_name(vars, "{el_vars::name_of(vars, mv)}#member", mv);
-      bound += [mv];
-    }
+  bound = destructure_members(e, vars, binds, members);
+  if len(bound) < len(members) {
+    return ex(ir::NdNull, ir::TyVoid);
   }
   fc = loop_filter(e, vars, filter);
   b = parse_block(e, vars, body, "for", ir::TyVoid);
   heads: vector<ir::Node> = if destructure && !e.first_pass { destructure_head(e, lv, members, bound) } else { [] };
-  // Without a filter the members are read at the head of the body; with one, before its test.
-  if fc == null && len(heads) > 0 {
-    match b.code {
-      NdBlock { block } => {
-        bl = block[0];
-        bl.operators = heads + bl.operators;
-        b.code = ir::NdBlock { block: [bl] };
-        heads = [];
-      },
-      _ => {}
-    }
+  b = head_or_filter(b, heads, fc != null);
+  if fc == null {
+    heads = [];
   }
   vars.active_loops = vars.active_loops[..-1];
   vars.active_values = vars.active_values[..-1];
@@ -7300,30 +7278,64 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
   ex(el_ir::v_block([el_ir::v_set(vec, x.code), el_ir::v_set(idx, ir::NdInt { n: -1 }), lp], ir::TyVoid, "For block"), ir::TyVoid)
 }
 
+// `coroutine_layout::next_operands` for an element this port carries: the packed size — the
+// element's argument-slot size (`variables::size`), its channel tag above it (a tuple 1, float
+// 3, single 4, the rest 0) — then a tuple's member kinds (`YieldSlot::code`).  Empty for any
+// other element.
+fn next_operands(step: ir::TypeT) -> vector<ir::Node> {
+  if !el_types::carried_step(step) {
+    return [];
+  }
+  tag = if step is TyTuple { 1 } else if step is TyFloat { 3 } else if step is TySingle { 4 } else { 0 };
+  r: vector<ir::Node> = [ir::NdInt { n: tag * 256 + frame::width(step, true) }];
+  match step {
+    TyTuple { elems } => {
+      for m in elems {
+        r += [ir::NdInt { n: yield_slot(m) }];
+      }
+    },
+    _ => {}
+  }
+  r
+}
+
+// `YieldSlot::classify(..).code()` for a tuple member this port carries.
+fn yield_slot(t: ir::TypeT) -> integer {
+  match t {
+    TyCharacter => 1,
+    TyBoolean => 2,
+    TyFloat => 3,
+    TySingle => 4,
+    TyText { dep: _ } => 7,
+    TyReference { n: _ } => 6,
+    _ => 0
+  }
+}
+
 // `parse_for` over a generator (`Type::Iterator` of a call): the coroutine held in a `___gen_N`,
 // each turn its next value (`OpCoroutineNext`, the element's size), the loop left once it is
 // exhausted (`OpCoroutineExhausted`).
-// `coroutine_layout::next_operands`'s packed size for an element this port carries: the
-// element's argument-slot size (a text 16 bytes, a record its 12-byte reference), its channel
-// tag above it (float 3, single 4, the rest 0); -1 for any other element.
-fn coroutine_value_size(step: ir::TypeT) -> integer {
-  size = if step is TyText { 16 } else if step is TyReference { 12 } else if step is TyTuple { -1 } else { elem_size(step) };
-  if size < 0 {
-    return -1;
-  }
-  tag = if step is TyFloat { 3 } else if step is TySingle { 4 } else { 0 };
-  tag * 256 + size
-}
-
 // A handle already in a local is used in place (a second owner of one coroutine's store would
 // free it under the local): the block's setup is then `null`.
-fn generator_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, x: Ex, body: integer, filter: integer?) -> Ex {
+fn generator_for(e: el::El, vars: el_vars::Vars, binds: vector<text>, src_id: text, id: text, x: Ex, body: integer, filter: integer?) -> Ex {
   step = match x.tp { TyIterator { step: st } => st, _ => ir::TyVoid };
   held = match el_ir::unspan(x.code) { NdVar { n } => n, _ => -1 };
   g = if held >= 0 { held } else { el_vars::create_unique(vars, "__gen", el_types::without_deps(x.tp)) };
+  members: vector<ir::TypeT> = [];
+  if len(binds) > 1 {
+    members = match step { TyTuple { elems } => elems, _ => [] };
+    if len(members) != len(binds) {
+      el::refuse(e, "a `for` destructuring something other than a tuple of its arity");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+  }
   lv = loop_var(vars, src_id, id, step);
   vars.active_loops += [lv];
   vars.active_values += [x.code];
+  bound = destructure_members(e, vars, binds, members);
+  if len(bound) < len(members) {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
   fc = loop_filter(e, vars, filter);
   b = parse_block(e, vars, body, "for", ir::TyVoid);
   vars.active_loops = vars.active_loops[..-1];
@@ -7331,23 +7343,74 @@ fn generator_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, x: Ex, 
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
-  vs = coroutine_value_size(step);
-  if vs < 0 {
+  ops = next_operands(step);
+  if len(ops) == 0 {
     el::refuse(e, "a `for` over a generator of this element type: {type_kind(step)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
+  // A generator's tuple is a tuple local: each member read with `.i` (`TupleGet`).
+  heads: vector<ir::Node> = [];
+  for mv in bound {
+    if mv >= 0 {
+      heads += [el_ir::v_set(mv, ir::NdTupleGet { var: lv, idx: mv#index })];
+    }
+  }
+  b = head_or_filter(b, heads, fc != null);
   gv = ir::NdVar { n: g };
   brk = el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break");
   steps: vector<ir::Node> = [
-    el_ir::v_set(lv, el_ir::cl(e, "OpCoroutineNext", [gv, ir::NdInt { n: vs }])),
+    el_ir::v_set(lv, el_ir::cl(e, "OpCoroutineNext", [gv] + ops)),
     el_ir::v_if(el_ir::cl(e, "OpCoroutineExhausted", [gv]), brk, ir::NdNull)
   ];
   if fc != null {
+    steps += heads;
     steps += [fc!];
   }
   steps += [b.code];
   setup = if held >= 0 { ir::NdNull } else { el_ir::v_set(g, x.code) };
   ex(el_ir::v_block([setup, el_ir::v_loop(steps, "For loop")], ir::TyVoid, "For block"), ir::TyVoid)
+}
+
+// A destructuring `for`'s named members, made before the body is read so it resolves them —
+// each a binding of this loop (`loop_binding`: a sibling loop's same name is another), a `_`
+// member bound too, to a fresh `___N`.  Fewer than the members when one is refused.
+fn destructure_members(e: el::El, vars: el_vars::Vars, binds: vector<text>, members: vector<ir::TypeT>) -> vector<integer> {
+  bound: vector<integer> = [];
+  if len(members) == 0 {
+    return bound;
+  }
+  for nm in binds {
+    mt = el_types::without_deps(members[nm#index] ?? ir::TyUnknown { n: 0 });
+    // A spelling an earlier plain binding holds is renamed by Rust's block-scope rebinding
+    // (`rebind_after_block`), which is not carried: refused by name.  A member is marked by a
+    // `<name>#member` entry, which the stored table keeps across the passes as it keeps `#bind`.
+    held = vars.names[nm];
+    if nm != "_" && held != null && vars.names["{el_vars::name_of(vars, held!.nr)}#member"] == null {
+      el::refuse(e, "a destructured member reusing an earlier binding's name: {nm}");
+      return [];
+    }
+    mv = loop_var(vars, nm, if nm == "_" { "_" } else { el_vars::loop_binding(vars, nm) }, mt);
+    el_vars::set_name(vars, "{el_vars::name_of(vars, mv)}#member", mv);
+    bound += [mv];
+  }
+  bound
+}
+
+// Where a destructuring `for` reads its members: at the head of the body without a filter;
+// with one, before its test (the caller places them there).
+fn head_or_filter(b: Ex, heads: vector<ir::Node>, filtered: boolean) -> Ex {
+  if filtered || len(heads) == 0 {
+    return b;
+  }
+  match b.code {
+    NdBlock { block } => {
+      bl = block[0];
+      bl.operators = heads + bl.operators;
+      b.code = ir::NdBlock { block: [bl] };
+    },
+    _ => {}
+  }
+  b
 }
 
 // The destructured members' binds (`Set(name_i, loop_var._i)`), each read out of the loop's
@@ -7454,14 +7517,14 @@ fn yield_from(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   el_vars::set_defined(vars, sv);
   iv = el_vars::create_unique(vars, "__yf_item", elem);
   el_vars::set_defined(vars, iv);
-  vs = coroutine_value_size(elem);
-  if vs < 0 {
+  ops = next_operands(elem);
+  if len(ops) == 0 {
     el::refuse(e, "a `yield from` a generator of this element type: {type_kind(elem)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
   s = ir::NdVar { n: sv };
   lp: vector<ir::Node> = [
-    el_ir::v_set(iv, el_ir::cl(e, "OpCoroutineNext", [s, ir::NdInt { n: vs }])),
+    el_ir::v_set(iv, el_ir::cl(e, "OpCoroutineNext", [s] + ops)),
     el_ir::v_if(el_ir::cl(e, "OpCoroutineExhausted", [s]), el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break"), ir::NdNull),
     ir::NdYield { inner: ir::NdVar { n: iv } }
   ];

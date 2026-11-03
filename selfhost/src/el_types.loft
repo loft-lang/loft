@@ -299,8 +299,8 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
         if step == null {
           return null;
         }
-        if !plain_step(step!) {
-          el::refuse(e, "an iterator of an element other than a plain scalar, a text or a record");
+        if !carried_step(step!) {
+          el::refuse(e, "an iterator of an element other than a plain scalar, a text, a record or a tuple of those");
           return null;
         }
         return ir::TyIterator { step: step!, inner: ir::TyNull };
@@ -434,9 +434,18 @@ pub fn tuple_def_of(e: el::El, elems: vector<ir::TypeT>) -> integer {
   if sp == "" { -1 } else { el::def_nr(e, "__tuple<{sp}>") }
 }
 
-// An iterator element this port carries: a plain scalar (no narrow width), a text, a record.
-fn plain_step(t: ir::TypeT) -> boolean {
+// An iterator element this port carries: a plain scalar (no narrow width), a text, a record, or
+// a tuple of plain scalars and texts.
+pub fn carried_step(t: ir::TypeT) -> boolean {
   match t {
+    TyTuple { elems } => {
+      for m in elems {
+        if tuple_member(m) == "" {
+          return false;
+        }
+      }
+      len(elems) > 0
+    },
     TyText { dep: _ } => true,
     TyReference { n: _ } => true,
     TyInteger { spec } => narrow_width(spec) == 0 && spec.forced_size == 0,

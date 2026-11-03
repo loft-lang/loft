@@ -401,11 +401,6 @@ fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vec
       },
       _ => {}
     }
-    t = el_types::parse_type(e, ret ?? 0);
-    if t == null {
-      return "";
-    }
-    rt = t!;
   } else if body != null {
     match e.p.nodes[body ?? 0] {
       SBlock { at: bat } => { after = bat; },
@@ -423,6 +418,16 @@ fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vec
   }
   if e.context < 0 {
     return "";
+  }
+  // The result type is read once the function exists (`parse_function` reads `->` after
+  // `add_fn`), so a definition it makes — a tuple's record, a vector's — follows the function's.
+  if ret != null {
+    t = el_types::parse_type(e, ret ?? 0);
+    if t == null {
+      e.context = -1;
+      return "";
+    }
+    rt = t!;
   }
   el_vars::take_over(vars, el::def(e, e.context).variables);
   if e.first_pass {
