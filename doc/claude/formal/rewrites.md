@@ -1645,7 +1645,14 @@ the lock flag taken only where the block writes through the view.  An enum, byte
 so the two reads cannot disagree; a value record copied into an inline sub-record of the view
 is written at the address plus the sub-record's offset, and counts as a use of it; the
 last-use clause is what binds a minted element, whose field writes precede the finish (`enum_match` −11 % under both compilers, `mesh_emit` −33 %
-under Clang); trace `LOFT_TRACE_RECPTR=1` there too.  The C's APART-CALL clause
+under Clang); trace `LOFT_TRACE_RECPTR=1` there too, each decline naming whether the bind
+was a held element and the remainder read a text field.  The C's text clause
+(`FnWriter::rec_ptr_text`, `loft_pa_text`): an address taken under the held-element clause —
+the bind `p = v[i]`, a `for p in v` iterator's `{ i = i + 1; v[i] }` (the read is the block's
+last operation, so the index after it is the one read), or the `?` discharge — reads a text
+field as the string record one load at it, resolved in the element's store; `extra_use` enters
+the verdict as on native, and the same `LOFT_NO_TEXT_FIELD` turns it off (`arguments/parse`
+3.04× → 2.46× its twin under Clang, 2.08× → 2.02× under GCC).  The C's APART-CALL clause
 (`apart_calls`, applied to the remainder before the verdict): a call to a loft function whose
 every store-naming argument is proven apart from the view's store (`StoreFacts::distinct`) —
 the view itself not among them, a scalar field read of any record passing a number — is
