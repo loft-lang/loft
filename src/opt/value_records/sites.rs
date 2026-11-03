@@ -687,7 +687,7 @@ pub struct ValueLeaves {
 ///   the bind dominates the reads and a stale value from a previous loop iteration is
 ///   never read (a read before the bind in a loop body would be exactly that);
 /// * no statement from the bind to the last read DISTURBS the place, in this frame or
-///   through anything it calls ([`crate::scopes::places_disturbed_by`]).
+///   through anything it calls ([`namings_avoid_place`]).
 ///
 /// A place the call's argument does not resolve to declines the function: the site cannot
 /// then say what it must keep undisturbed.  A null-view leaf (an exit that writes the field

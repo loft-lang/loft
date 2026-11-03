@@ -712,53 +712,6 @@ fn record_param(
     }
 }
 
-/// @PLN164 C5 — the places `code` DISTURBS in the frame of `def_nr`: what its own ops grow or
-/// remove from, plus what anything it CALLS grows or removes from, mapped back onto the
-/// arguments this frame passed.
-///
-/// One composer for a consumer outside the scope pass — generation's view-leaf gate asks
-/// *"is the place my leaf views disturbed between this call and the last read of it?"*, which
-/// is [`ViewWalk::disturb`]'s question asked over a statement span instead of a binding, and it
-/// has to be answered off the same producers or the two can disagree about what a disturbance
-/// is.  `disturbed` is [`disturbed_params_map`]'s answer for the whole program; `None` leaves
-/// only this frame's own half, which is the pre-C3 reach and never more.
-///
-/// The answer is a LOWER bound in exactly the ways its producers are — a container named by
-/// something other than a variable or a projection chain is not collected — so a caller that
-/// must be conservative has to treat an unresolvable place as disturbed itself.  What it never
-/// does is report a disturbance that did not happen: every place here comes from a growth, a
-/// removal or a re-establishment the code spells.
-#[must_use]
-pub fn places_disturbed_by(
-    code: &Value,
-    data: &Data,
-    def_nr: u32,
-    database: Option<&crate::database::Stores>,
-    disturbed: Option<&DisturbedParams>,
-) -> HashSet<ParamPlace> {
-    let function = &data.def(def_nr).variables;
-    // Every depth, as the root place: this consumer must be conservative, and a growth of a
-    // container inside an element is still a disturbance of a place rooted where it is.
-    let mut out: HashSet<ParamPlace> = grown_containers(code, data, function, database)
-        .into_keys()
-        .collect();
-    out.extend(reshaped_containers(code, data, function).into_keys());
-    if let Some(map) = disturbed {
-        code.walk(&mut |v| {
-            let Value::Call(d, args) = v else { return };
-            let Some(places) = map.get(d) else { return };
-            for (&(slot, inner), pd) in places {
-                if let Some(arg) = args.get(usize::from(slot))
-                    && let Some((base, base_at)) = call_arg_at(arg, data)
-                {
-                    out.insert(compose_param_at(base, base_at, inner, pd.at).0);
-                }
-            }
-        });
-    }
-    out
-}
-
 /// The parameter places `d_nr`'s OWN body disturbs — the direct answer [`disturbed_params_map`]
 /// closes over the call graph.
 ///

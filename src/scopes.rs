@@ -123,7 +123,7 @@ pub(crate) use capture_builds::CaptureBuilds;
 use closure_keep::ClosureKeep;
 use confinement::{relocate_null_init, rest_store_oracle, store_confinement, store_lifetime_guard};
 use disturbance::Disturbance;
-pub use disturbance::{DisturbedParams, ViewCause, disturbed_params_map, places_disturbed_by};
+pub use disturbance::{DisturbedParams, ViewCause, disturbed_params_map};
 pub(crate) use handles::handle_rhs_kinds;
 use handles::retain_shared_handles;
 pub(crate) use handoff::{
