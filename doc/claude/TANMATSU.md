@@ -257,6 +257,48 @@ between them (about half a second, the state carried in a file), and behaviour h
 Not measured yet: how long entering an area takes (decoding its sheets and sounds), and how much
 PSRAM one area needs.
 
+## Games for the Tanmatsu
+
+The Tanmatsu suits games that are decided by thought rather than reflexes: its full keyboard
+is a roguelike's and a strategy game's input, and a game with time to spare per move or tick can
+spend it on software rendering.  The three larger loft games, as their trees stand:
+
+| Game | What it is | How it draws | On the Tanmatsu |
+|---|---|---|---|
+| dryopea | a sci-fi tower defence on a fixed tick (`fixstep`), a strategy game by its design | `graphics::Canvas`, the library's software rasteriser in loft; GL only to put the canvas on the screen | closest: Canvas compiles for the C backend, so only the frame's way to the screen (`screen`) and the keys (`input`) need the Tanmatsu path.  Open: whether Canvas, drawing per pixel in loft, is fast enough on the P4 |
+| crawler | a ZAngband-style hex roguelike; time advances with the distance travelled, turning is free | a 2D egocentric view, a character map (`ovmap`), and first-person 3D through GL shaders | the game fits; its 3D needs a renderer for a machine without a GPU (below).  4.9 MB of sprites: the asset inspection takes what is named, and a larger set goes per area |
+| moros | an RPG whose game world is still to be built; the tree holds its tabletop rules and cards and the lavition hex-world editor | the editor through GL shaders and voxel meshes | the RPG, once it exists, fits as crawler does and shares crawler's world model (`moros_map`, `moros_render`); the editor stays a desktop tool |
+
+**One world, drawn at more than one fidelity.**  A game keeps its world in packages that draw
+nothing, and each machine draws that world with the renderer it can afford: the views over one
+state, and the drawing-budget tier a game asks for, that
+[@PLN209](plans/209-platform-agnostic-games/README.md) sets out.  For the hex worlds of crawler
+and moros the world description is the hex field itself (cells, heights, walls, floors and
+ceilings, materials, the things standing in it), and the renderers over it differ in fidelity,
+not in what they show:
+
+| Fidelity | Renderer | Where |
+|---|---|---|
+| high | GPU meshes with the game's shaders (@PLN209's tier G) | desktop, browser |
+| low | a column renderer in C: walls as vertical spans and floors through a precomputed division table, so perspective-correct texturing needs no division per pixel (the method tinygpus' DMC-1 uses on the MCH2022 badge's iCE40), drawn at 400x240 or below and scaled up | the Tanmatsu's CPU, later its FPGA |
+| lowest | the character map | any terminal |
+
+A hex world is the case the column renderer is good at: its walls are vertical and its floors and
+ceilings flat.  It also suits the panel: a column of the landscape picture is a row of the
+portrait panel, the direction `screen` already writes.  The renderer's span list is what an FPGA
+would take over, so a board that adds one keeps the game, the API and the low-fidelity renderer's
+front half.
+
+A shader written once (@PLN209's shading subset of loft) has a C build that runs on the CPU; for
+the low tier the game names a small set of materials (textured, vertex colour, lit, lightmapped)
+that both renderers implement, rather than a shader the low tier cannot afford.
+
+**The order.**  dryopea first, as the cheapest real game to bring over (its Canvas through
+`screen`, its keys through `input`, its frame time measured on the device); then crawler's column
+renderer behind the graphics API, walls and floors first; then moros' game world on the same
+renderer.  The games are their own agents' to change: this stream builds the libraries and the
+renderer and checks them on a library's testbed.
+
 ## What runs there
 
 **The language.**
