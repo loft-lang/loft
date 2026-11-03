@@ -292,6 +292,12 @@ def main() -> int:
         if whole:
             rule_phases.write_table(phases)
             print(f"wrote {rule_phases.TABLE.relative_to(ROOT)}")
+            # The register's `## Applied by` is the table rendered: kept in the same step.
+            doc = rule_phases.DOC.read_text()
+            rendered = rule_phases.doc_with(doc, rule_phases.render(rule_phases.read_table()))
+            if rendered is not None and rendered != doc:
+                rule_phases.DOC.write_text(rendered)
+                print(f"wrote {rule_phases.DOC.relative_to(ROOT)} § Applied by")
         else:
             print(f"  {rule_phases.TABLE.relative_to(ROOT)} left as it is: a partial run")
         return 0

@@ -17,6 +17,17 @@ All notable changes to the loft language and interpreter.
   rule).  A C clause that stops firing fails the gate on its C row; before this no C admission
   reached a baseline.  `--writer rust|c` runs one writer; a four-column row reads as Rust's.
 
+### The register states each rule's phase from the measurement (@PLN211 A3)
+
+- `formal/rewrites.md` § Applied by is rendered from `bench/portal/rule_phases.tsv`
+  (`scripts/rule_phases.py --render`; a census `--bless` re-renders it): every register entry
+  with its census names' applying phases, or why the census does not count it.
+  `scripts/check_doc_drift.sh` fails when the section and the table disagree.
+- The 42 prose "Applied by" lines of the chapter lose their phase claim and keep their sites
+  (`Sites: …`); `(R-InlineLeaf)` is no longer called proposed (it applies at parse time).
+- The index shows three counted rules no bench program reaches: `(R-DecodeView)`,
+  `(R-DeferredCopy)`, `(R-TextRun)`.
+
 ### The phase table: which phase applies each rewrite, measured (@PLN211 A1)
 
 - `scripts/rewrite_census.py` records the phase split of every admission in the run it already
