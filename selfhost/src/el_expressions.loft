@@ -5535,17 +5535,31 @@ fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::TypeT
   }
   if (textual && rt is TyText) || (record && rt is TyReference) {
     tail = el_ir::unspan(el_ir::last(match code { NdBlock { block } => block[0].operators, _ => [] }));
-    match tail {
-      NdVar { n } => {
-        a = attr_nr(el::def(e, d), f.variables[n]!.name);
-        if a >= 0 {
-          e.b.data.definitions[d].returned = [el_types::with_deps(el::def(e, d).returned[0] ?? ir::TyVoid, [a])];
-        }
-      },
-      _ => {}
+    root = view_root(e, f, tail);
+    if root >= 0 {
+      a = attr_nr(el::def(e, d), f.variables[root]!.name);
+      if a >= 0 {
+        e.b.data.definitions[d].returned = [el_types::with_deps(el::def(e, d).returned[0] ?? ir::TyVoid, [a])];
+      }
     }
   }
   true
+}
+
+// `use_analysis::return_ownership`'s `Borrowed { base }` for one return leaf: the parameter a
+// bare read of it, or a projection chain into it (`v[0]`, `p.f`, an element's value read),
+// hands back a view of — or -1.
+fn view_root(e: el::El, f: ir::Function, n: ir::Node) -> integer {
+  match n {
+    NdSpan { inner } => view_root(e, f, inner),
+    NdVar { n: v } => if f.variables[v]!.argument && !f.variables[v]!.name.starts_with("__") { v } else { -1 },
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      // The chain's subject is its first argument.
+      if (projection_op(nm) || nm == "OpGetText") && len(args) > 0 { view_root(e, f, args[0]) } else { -1 }
+    },
+    _ => -1
+  }
 }
 
 fn code_of(d: ir::Definition) -> ir::Node {
@@ -5561,9 +5575,12 @@ fn code_of(d: ir::Definition) -> ir::Node {
 fn text_instance_carried(e: el::El, tmpl: ir::Definition, f: ir::Function, code: ir::Node, h: integer, textual: boolean) -> text {
   if el_types::base(tmpl.returned[0] ?? ir::TyVoid) is TyReference && type_var(e, el_types::base(tmpl.returned[0] ?? ir::TyVoid)) == h {
     tail = el_ir::unspan(el_ir::last(match code { NdBlock { block } => block[0].operators, _ => [] }));
-    tv = match tail { NdVar { n } => if f.variables[n].argument { n } else { -1 }, _ => -1 };
+    tv = view_root(e, f, tail);
     if tv < 0 || has_return(code) {
-      return "an answer other than a bare parameter";
+      return "an answer other than a parameter or a view into one";
+    }
+    if !(tail is NdVar) && sets_var(code, tv) {
+      return "an answer viewing a parameter the body reassigns";
     }
     // A text parameter the body reassigns takes an owned shadow (`promote_assigned_text_params`);
     // a record one is copied out at the tail (`fill_instance`).
