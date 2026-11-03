@@ -9338,6 +9338,12 @@ fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
       };
       return ex(el_ir::cl(e, if linked { "OpVarRef" } else { "OpCreateStack" }, [a.code]), ir::TyRefVar { inner: a.tp });
     }
+    // A link to a record local or parameter (`g = &e`) is its slot (`OpCreateStack`), typed as
+    // a link to the record borrowing that local alone.  A link to a link is not carried.
+    if a.code is NdVar && !(a.tp is TyOptional) && !(a.tp is TyRefVar) && struct_ref(e, el_types::base(a.tp)) >= 0 {
+      lv = match a.code { NdVar { n: x } => x, _ => -1 };
+      return ex(el_ir::cl(e, "OpCreateStack", [a.code]), ir::TyRefVar { inner: el_types::with_deps(el_types::without_deps(el_types::base(a.tp)), [lv]) });
+    }
     // A link to a vector is the vector's view itself — a local or a field of one, typed as
     // borrowing it — where a bare bind would copy (`@FR-B-Copy`).
     if a.tp is TyVector && (a.code is NdVar || calls(e, a.code, "OpGetField")) && len(el_types::deps(a.tp)) > 0 {
