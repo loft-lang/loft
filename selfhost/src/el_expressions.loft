@@ -46,6 +46,12 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       }
     }
   }
+  // A `[…]` answered where the declared result is KEYED is built as a keyed literal (`__kvb_N`,
+  // `parse_vector`'s keyed arm), which is not carried: refused by name rather than built as the
+  // vector it reads as.
+  if !e.first_pass && keyed_kind(el_types::base(result)) && el_types::base(b.tp) is TyVector {
+    el::refuse(e, "a vector literal answered as a keyed collection");
+  }
   // A text local at the tail is what the body answers: the result borrows that local.
   tt = b.tp;
   match b.code {
@@ -4125,7 +4131,12 @@ fn hinted_literal(e: el::El, d: integer, args: vector<integer>, first: integer) 
           SVecLit { items } => {
             at = el::def(e, d).attributes[a#index + first];
             if len(items) > 0 && at != null {
-              match at!.typedef[0] ?? ir::TyVoid {
+              pt = at!.typedef[0] ?? ir::TyVoid;
+              if keyed_kind(el_types::base(pt)) {
+                el::refuse(e, "a vector literal argument built as its parameter's keyed collection");
+                return true;
+              }
+              match pt {
                 TyVector { inner } => {
                   if inner is TySingle || (inner is TyInteger && el_convert::narrowing_int(ir::TyInteger { spec: i32_spec() }, inner)) {
                     el::refuse(e, "a vector literal argument built at its parameter's element type");
@@ -4597,10 +4608,28 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
     tt = ir::TyText { dep: ds };
     return ex(ir::NdCall { def_nr: d, args: list }, if ret is TyOptional { ir::TyOptional { inner: tt } } else { tt });
   }
-  // A native answering a record (or `record?`) with no buffer and no borrows — the store
-  // builtins, reflection's `type_named` — is the call as it is, typed as declared.
-  if el_types::base(ret) is TyReference && len(el_types::deps(ret)) == 0 && el_ir::is_null(def.code[0] ?? ir::NdNull) {
-    return ex(ir::NdCall { def_nr: d, args: list }, ret);
+  // `call_dependencies` for a record, struct-enum, vector or keyed result with no buffer — a
+  // callee answering a borrow of an argument, a native answering a store of its own: each
+  // declared dep, an attribute number, names what that argument's type borrows
+  // (`resolve_deps`); a record's hidden attributes are left out.  A `τ?` is peeled and put back.
+  rb = el_types::base(ret);
+  ref_enum = match rb { TyEnum { is_ref } => is_ref, _ => false };
+  record = rb is TyReference || ref_enum;
+  if record || rb is TyVector || keyed_kind(rb) {
+    ds: vector<integer> = [];
+    for i in el_types::deps(rb) {
+      at = def.attributes[i];
+      if record && at != null && at!.hidden {
+        continue;
+      }
+      for x in el_types::deps(types[i] ?? ir::TyVoid) {
+        if !ds.contains(x) {
+          ds += [x];
+        }
+      }
+    }
+    rt = el_types::with_deps(rb, ds);
+    return ex(ir::NdCall { def_nr: d, args: list }, if ret is TyOptional { ir::TyOptional { inner: rt } } else { rt });
   }
   if !scalar(el_types::base(ret)) {
     el::refuse(e, "a call returning a heap value: {type_kind(el_types::base(ret))}");
