@@ -11,8 +11,8 @@ Supersedes [handoff-2026-11-03.md](handoff-2026-11-03.md) (the morning one).
 
 1. **The release ruling stands** (owner, via loft3): `tuxedo-release-2026-11` takes nothing more
    from `laptop-c-perf` but a FIX to code already on it.  Everything here waits for the release to
-   merge, then goes to main.  The one candidate for the release is the `mesh_to_floats` note
-   below — the clause it is about is on the release; it is a measured trade, not a defect.
+   merge, then goes to main — the `mesh_to_floats` note below included (loft3: the release run
+   is frozen to fixes for its own reds).
 2. **Every routine is under 2.7× on both compilers** (the full table below).  #2379, #2380,
    #2381 and #1743 carry `Fixes` on this branch.  What is left is the 2× aim: the routines at
    2.3–2.7× are listed below, each with what the profile says.
@@ -92,7 +92,9 @@ step is that derivation plus a look at what clang still keeps.
    is the next real lever.  `forms_upto` on gcc — P21 (the candidate `ef` built outside the
    store).  The 2.5–2.7× rows above have no design yet: profile each, hand-price first.
 2. `mesh_to_floats`' held vertex bind (above) — the derivation from the reference is the
-   candidate; it touches a clause on the release, so ask loft3 whether it goes there.
+   candidate.  Settled with loft3: it does NOT go to the release (the release run is frozen to
+   fixes for its own reds; this is a measured trade with right values); it goes in the
+   post-release batch for main.
 3. #2351 (facts S7, D-fact-2, D-fact-3), then @PLN211.
 
 ## Traps met
