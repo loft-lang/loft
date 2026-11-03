@@ -740,6 +740,35 @@ impl Scopes<'_> {
         }
     }
 
+    /// [`Self::arm_bind`] for a CALL tail: the temp its record answer takes, if it needs one.
+    fn call_arm_bind(&self, d: u32, tail: &Value, bound: u16, data: &Data) -> Option<ArmBind> {
+        let def = data.def(d);
+        if !def.is_loft_defined() {
+            return None;
+        }
+        let (returned, opt) = def.returned().peel_optional();
+        let tp = match returned {
+            Type::Reference(r, _) => Type::Reference(*r, Deps::none()),
+            Type::Enum(r, true, _) => Type::Enum(*r, true, Deps::none()),
+            _ => return None,
+        };
+        match crate::use_analysis::ownership_of(data, self.d_nr, tail) {
+            // An OWNED tail of a call ARGUMENT's branch (`bound == u16::MAX`): no binding adopts
+            // it there, so it takes a temp, as the call alone would (loft#2386).
+            crate::use_analysis::Own::Owned if bound == u16::MAX => {
+                Some(ArmBind::Bind(Self::reopt(opt, tp)))
+            }
+            // @PLN155 phase 2 — `None` means "no bind needed", the answer for a tail that owns.
+            // Declining on `Unknown` would BIND a temp on a shape the oracle cannot read, which
+            // adds a store rather than withholding a free; the safe direction here is not
+            // obviously the conservative one.
+            crate::use_analysis::Own::Owned | crate::use_analysis::Own::Unknown => None,
+            crate::use_analysis::Own::Borrowed { .. } | crate::use_analysis::Own::Join { .. } => {
+                Some(ArmBind::Bind(Self::reopt(opt, tp)))
+            }
+        }
+    }
+
     /// What gives this arm tail a binding of its own, or `None` where the arm keeps the value
     /// it has.  The answer is what the SINGLE bind `t = <tail>` would leave `t` holding, and
     /// the temp is bound by that single bind's own lowering — nothing here re-derives a copy:
@@ -826,29 +855,7 @@ impl Scopes<'_> {
                     _ => None,
                 }
             }
-            Value::Call(d, _) => {
-                let def = data.def(*d);
-                if !def.is_loft_defined() {
-                    return None;
-                }
-                let (returned, opt) = def.returned().peel_optional();
-                let tp = match returned {
-                    Type::Reference(r, _) => Type::Reference(*r, Deps::none()),
-                    Type::Enum(r, true, _) => Type::Enum(*r, true, Deps::none()),
-                    _ => return None,
-                };
-                match crate::use_analysis::ownership_of(data, self.d_nr, tail) {
-                    // @PLN155 phase 2 — `None` means "no bind needed", the answer for a tail
-                    // that owns.  Declining on `Unknown` would BIND a temp on a shape the
-                    // oracle cannot read, which adds a store rather than withholding a free;
-                    // the safe direction here is not obviously the conservative one.
-                    crate::use_analysis::Own::Owned | crate::use_analysis::Own::Unknown => None,
-                    crate::use_analysis::Own::Borrowed { .. }
-                    | crate::use_analysis::Own::Join { .. } => {
-                        Some(ArmBind::Bind(Self::reopt(opt, tp)))
-                    }
-                }
-            }
+            Value::Call(d, _) => self.call_arm_bind(*d, tail, bound, data),
             Value::Var(x) => {
                 // A branch consumed as a call ARGUMENT binds nothing: the argument ALIASES
                 // the caller's variable (calls.md F-ParamHeap), and a callee that hands its
