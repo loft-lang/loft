@@ -15,7 +15,8 @@ removal of the facts routine's three deviations); arc A is built (the census rea
 writers and the interpreter's generator; every rule reports to it or says why not; the phase
 table `bench/portal/rule_phases.tsv` is measured and gated, and `rewrites.md` § Applied by is
 rendered from it); B1 and B2 are done: weights in [b1-weights.md](b1-weights.md),
-a verdict per rule in § Verdicts.  Next is arc C.  It was to start once
+a verdict per rule in § Verdicts.  Arc C has moved its first rule,
+`(R-SliceArg)`'s range clause (§ Arc C's moves).  It was to start once
 #1743 (every routine within 3×) and #2351 (the facts routine) were fixed; #1743 is fixed on
 `laptop-c-perf`, and on 2026-11-03 the owner asked to concentrate on this plan, so #2351's
 three deviations (D-fact-1 … 3) became part of it rather than a precondition.  Four arcs: **A** keeps the register honest about where
@@ -190,6 +191,26 @@ Seeds measured 2026-11-02 (to be ranked by D1):
 | `(R-Transient)` | a producer that pushes into its own vector field ("OpPushInt of a transient value"), roots whose lives overlap | the producers its trace declines across the library benches |
 | `(R-Peel)` | a trip count from a parameter known at every call site | loops over `0..halo_k` and similar |
 
+## Arc C's moves
+
+**`(R-SliceArg)`'s range clause — moved.**  `src/slice_text.rs`, in the scope pass after
+`vec_copy`; switch `LOFT_NO_SLICE_TEXT` (the writer's, now both backends'), trace
+`LOFT_TRACE_SLICE_TEXT`.  It rewrites the STATEMENT that holds the call — an assignment, or an
+append into a plain variable (the parser's text build) — because a text call as a block's bare
+value has no destination to be written into: the first form, a block whose value was the range
+call, answered `0` for `1365` on its probe (the WIP that showed it was kept opt-in until fixed).
+The protocol's evidence: the C writer, left on, admitted nothing the IR clause took; every
+bench's C with the IR clause on and the writer's off is byte-identical except cbor and
+pluginabi, where one check-tier `loft_frame_site(260)` moves within line 260; the corpus switch
+A/B (`switch_ab.sh`, 2910 programs, the clause firing in 8): 0 defects; the C sweep of those 8:
+8 match; the guard cells on both backends, the clause on and off, under `LOFT_STRICT_STORES` and
+`LOFT_POISON`, two new cells (a source with an effect runs once; the append host); falsified by
+swapping the range call's bounds (t1 fails on both backends).  The census blessed: the phase
+table's `R-SliceArg/range` is `ir`; the C rows count sites rather than emitted copies (cbor 2 → 1,
+pluginabi 3 → 1), and `(R-CompleteWrite)` loses the slice temporaries' own groups, one per
+emitted copy (cbor −2 C / −3 rustc, pluginabi −3 each) — their store no longer exists.
+On the interpreter: 7 779 → 5 385 instructions per pass of the probe, −30.8 %.
+
 ## Phase ordering
 
 A0 → A1 → A2 → A3 (the table first, so every later move is a blessed change of it) · B1 →
@@ -236,7 +257,7 @@ function before and not after.
 | `(R-Wrapper)` | yes — `ir_shape::one_op_wrapper` | `Call(op, operands)` | 40.9 | `wrapper`: 920 → 308, **−66.5 %** (upper bound: the operator itself is left out) | MOVE.  The interpreter calls `t_6vector_len` every pass; `(R-InlineLeaf)` does not take stdlib wrappers |
 | `(R-PushFill)` fill form | yes — IR facts | `OpPush` + `OpAppendCopy`, as `[c; n]` lowers | 17.2 | `push_fill`: 10 580 → 3 017, **−71.5 %** | MOVE.  The C admits this shape too (the census, not "rustc only") |
 | `(R-ElemFirst)` | yes — `opt::hoist::element_first` | existing operators | 1.0 | `elem_first`: 9 666 → 7 299, **−24.5 %** | MOVE |
-| `(R-SliceArg)` range | yes — IR facts | `text_from_byte_range` | 0.5 | `slice_arg`: 7 771 → 3 351, **−56.9 %** | MOVE — the first move (the protocol's proof) |
+| `(R-SliceArg)` range | yes — IR facts | `text_from_byte_range` | 0.5 | `slice_arg`: 7 771 → 3 351, **−56.9 %** (the hand form skips the slice's bound normalisation); moved: 7 779 → 5 385, **−30.8 %** | **MOVED** (`slice_text::rewrite`, arc C's first) |
 | `(R-LoopBuffer)` | yes — `opt::hoist::loop_buffers` | `OpClearVector` on a held store | 0.6 | `loop_buffer`: 7 803 → 6 508, **−16.6 %** | MOVE |
 | `(R-LoopRecord)` | yes — `opt::loop_records` | the record's null to the prelude, one free after the loop | 0.1 | `loop_record`: 3 150 → 1 545, **−51.0 %** | MOVE (light) |
 | `(R-SliceInto)` | yes — IR facts | `OpSliceVector` onto the place | 0.5 | no hand form ([probes/slice_into/NOTE.md](probes/slice_into/NOTE.md)): a field place is not spellable; a LOCAL place `p += v[a..b]` already compiles to one `OpSliceVector` | MOVE, as that parser path widened to field places; measured on arc C's beside build |

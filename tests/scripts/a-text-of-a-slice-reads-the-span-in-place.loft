@@ -6,17 +6,18 @@
 // What can go wrong is the clamping — a negative bound, one past either end, an empty or
 // reversed span — a span that splits a character, a foreign (file-mapped) source, a source
 // written after the text was read, and a text read inside a value a decoder builds outside the
-// store (`@FR-R-Transient`).  Every cell answers what the interpreter answers; values
-// hand-computed in each cell's comment, the text AND its length.
+// store (`@FR-R-Transient`).  Values hand-computed in each cell's comment, the text AND its
+// length.
 //
-// The C writer applies it (`FnWriter::call`, through `FnWriter::slice_fill`); the interpreter
-// and rustc-native build the slice and are the oracle.
+// The scope pass applies it (`slice_text::rewrite`), so every backend runs the rewritten IR and
+// none is the other's oracle: the oracle is these hand-computed values, and
+// `LOFT_NO_SLICE_TEXT=1`, which builds the slice, is the second answer.
 //
-// @falsified-at: none — by hand on the C writer (the interpreter and native build apply nothing,
-//   so `falsify.sh` reads them INERT), planted in the emitted C's range read: ending one byte
-//   early fails t1 ("é/2" for "él/3"), starting one byte late fails t1 ("/0").
+// @falsified-at: none — by hand on the IR clause, the range call's bounds swapped
+//   (`text_from_byte_range(v, hi, lo)`): t1 fails on the interpreter and on the C ("/0" for
+//   "él/3").
 //   CHANNEL: an assertion.
-// HOLDS: the interpreter's and rustc-native's answers, which no plant on the C writer reaches.
+// HOLDS: the hand-computed values, on both backends, the clause on and off.
 
 enum Piece { PB { b: vector<u8> }, PT { t: text }, PN }
 
@@ -43,6 +44,12 @@ fn cut_text(v: const vector<u8>, a: integer, b: integer) -> Cut {
   return Cut { piece: PT { t: text_from_bytes(v[a..b]) }, at: a };
 }
 fn text_of(p: Piece) -> text { match p { PT { t } => "{t}/{size(t)}", _ => "none" } }
+
+// A source with an effect: the range read names the source again, so it must not run twice.
+fn counted(n: &integer) -> vector<u8> {
+  n += 1;
+  hello()
+}
 
 fn main() {
   h = hello();
@@ -76,5 +83,14 @@ fn main() {
   assert(read(h, 0, 1) == "H/1", "t8 source {read(h, 0, 1)}");
   // t9: inside a value built outside the store, a decoder's text: 6..12 is ", worl"
   assert(text_of(cut_text(h, 6, 12).piece) == ", worl/6", "t9 {text_of(cut_text(h, 6, 12).piece)}");
+  // t10: the source is a call with an effect — read once: bytes 8..12 (w o r l) are "worl"
+  calls = 0;
+  t10 = text_from_bytes(counted(calls)[8..12]);
+  assert(t10 == "worl" && calls == 1, "t10 {t10} {calls}");
+  // t11: the text appended inside a `+` build (the append host), with a growing bound:
+  //   0..1 "H", 0..2 "Hé" — one byte short of é's two bytes, an empty decode — 0..3 "Hé"
+  acc = "";
+  for k in 1..4 { acc += text_from_bytes(h[0..k]) + "|"; }
+  assert(acc == "H||Hé|", "t11 {acc}");
   println("ok");
 }

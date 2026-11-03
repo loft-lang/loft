@@ -17,6 +17,14 @@ All notable changes to the loft language and interpreter.
   rule).  A C clause that stops firing fails the gate on its C row; before this no C admission
   reached a baseline.  `--writer rust|c` runs one writer; a four-column row reads as Rust's.
 
+### `(R-SliceArg)`'s range clause runs in the IR (@PLN211 arc C)
+
+- `text_from_bytes(v[lo..hi])`, assigned or appended to a variable, is the slice's bound
+  statements and `text_from_byte_range(v, lo, hi)` on BOTH backends, decided in the scope pass
+  (`src/slice_text.rs`); the C writer's clause is gone.  The interpreter stops building the
+  slice's store: −30.8 % of the instructions of a loop reading a 32-byte text out of a byte
+  vector.  `LOFT_NO_SLICE_TEXT` is now a both-backend switch (BOTH_BACKEND_SWITCHES.md).
+
 ### Every rule's verdict (@PLN211 B2)
 
 - The plan's README § Verdicts holds a verdict per work and rustc-only rule, each with its
