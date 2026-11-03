@@ -8782,6 +8782,20 @@ fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vector<
     el::refuse(e, "an index that is a range, a key list or a limit");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
+  // `parse_text_index`: one integer index into a text reads the character there
+  // (`OpTextCharacter`); a nullable text takes the vector road's refusal below.
+  if x.tp is TyText {
+    i = expression(e, vars, keys[0]);
+    if !el_types::is_unknown(i.tp) && !(i.tp is TyInteger) {
+      el::refuse(e, "an index that is not an integer: {type_kind(i.tp)}");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    code = el_ir::cl(e, "OpTextCharacter", [x.code, i.code]);
+    if !e.first_pass {
+      code = ir::NdSpan { pos: el::pos_at(e, at), inner: code };
+    }
+    return ex(code, ir::TyCharacter);
+  }
   inner = ir::TyUnknown { n: 0 };
   match el_types::base(x.tp) {
     TyVector { inner: i } => { inner = i; },
