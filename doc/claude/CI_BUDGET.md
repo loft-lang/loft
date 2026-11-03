@@ -836,9 +836,9 @@ What `ci.yml` does since:
 
 **The other workflows follow the same rule.** Every cache step is a `restore` plus a
 `save` that runs on `main` only and not after an exact hit, so a nightly refreshes its
-cache and a PR, a tag or a probe branch reads it without writing. `branch-gates`
-(never on main), `api-compat` (PR only) and the nightly `index-hygiene` in `miri.yml`
-restore ci.yml's `test` cache read-only instead. The measured offenders were the
+cache and a PR, a tag or a probe branch reads it without writing. `api-compat` (PR only)
+and the nightly `index-hygiene` in `miri.yml` restore ci.yml's `test` cache read-only
+instead. The measured offenders were the
 nightly hygiene cache (3.3 GB), `macOS-v2-cargo` (6.1 GB from a branch push) and one
 357 MB `branchgate` entry per pushed branch. Two exceptions: `ci-probe.yml` measures
 a cold→warm pair on its own `probe-*` namespace and still saves from its branch, and
