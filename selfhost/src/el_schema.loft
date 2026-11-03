@@ -126,86 +126,6 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
   e.b.data.definitions[md].attributes += [el::attribute("vector", vt)];
 }
 
-// A tuple member's stored spelling and width, for the members this port carries: a plain
-// scalar or a text (`Data::tuple_member_stored`, `element_stack_size`/`_align`); "" otherwise.
-pub fn tuple_member(t: ir::TypeT) -> text {
-  match t {
-    TyInteger { spec } => if el_types::narrow_width(spec) == 0 && spec.forced_size == 0 { "integer" } else { "" },
-    TyFloat => "float",
-    TySingle => "single",
-    TyBoolean => "boolean",
-    TyCharacter => "character",
-    TyText { dep: _ } => "text",
-    _ => ""
-  }
-}
-
-fn tuple_member_width(t: ir::TypeT) -> integer {
-  match t {
-    TyInteger { spec: _ } => 8,
-    TyFloat => 8,
-    TyBoolean => 1,
-    _ => 4
-  }
-}
-
-// The members' spellings joined as a tuple names them (`integer,text`), or "" for a member
-// this port does not carry.
-pub fn tuple_spelling(elems: vector<ir::TypeT>, sep: text) -> text {
-  r = "";
-  for t in elems {
-    m = tuple_member(t);
-    if m == "" {
-      return "";
-    }
-    r = if t#index == 0 { m } else { "{r}{sep}{m}" };
-  }
-  r
-}
-
-// `Data::tuple_def` (P189): the synthetic struct a tuple shape is stored as, `__tuple<…>` with
-// members `_0`, `_1`, … in element order — registered in the standard library's source so
-// every file shares it, its members not-null, its one Tuple field group covering them all.
-// The existing definition where the shape has one; -1 for a member this port does not carry.
-pub fn tuple_def(e: el::El, elems: vector<ir::TypeT>, pos: ir::Position) -> integer {
-  sp = tuple_spelling(elems, ",");
-  if sp == "" {
-    return -1;
-  }
-  nm = "__tuple<{sp}>";
-  d = el::def_nr(e, nm);
-  if d >= 0 {
-    return d;
-  }
-  d = el::add_def(e, nm, pos, el::DT_STRUCT);
-  e.b.data.definitions[d].source = el::STD_SOURCE;
-  e.b.data.definitions[d].returned = [ir::TyReference { n: d, dep: [] }];
-  idx: vector<integer> = [];
-  size = 0;
-  align = 1;
-  for t in elems {
-    a = el::attribute("_{t#index}", t);
-    a.nullable = false;
-    e.b.data.definitions[d].attributes += [a];
-    idx += [t#index];
-    w = tuple_member_width(t);
-    // Each member at its natural alignment (`LinkedFieldGroup::group_size`); `w` is never 0.
-    q = (size + w - 1) / w;
-    size = (q ?? 0) * w + w;
-    if w > align {
-      align = w;
-    }
-  }
-  e.b.data.definitions[d].field_groups += [ir::LinkedFieldGroup { kind: 0, instance: 0, field_indices: idx, alignment: align, size: size }];
-  d
-}
-
-// The definition a tuple type is stored as, or -1 where none is made yet.
-pub fn tuple_def_of(e: el::El, elems: vector<ir::TypeT>) -> integer {
-  sp = tuple_spelling(elems, ",");
-  if sp == "" { -1 } else { el::def_nr(e, "__tuple<{sp}>") }
-}
-
 // The `vector<T>` store type, made at once where `T` has a store type already.
 pub fn vector_store_type(e: el::El, t: ir::TypeT, nm: text) {
   kt = match t {
@@ -303,7 +223,7 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
     },
     TyText { dep: _ } => known(e, "text"),
     TyTuple { elems } => {
-      td = tuple_def_of(e, elems);
+      td = el_types::tuple_def_of(e, elems);
       if td < 0 || el::def(e, td).known_type == NO_TYPE { -1 } else { el::def(e, td).known_type }
     },
     TyBoolean => known(e, "boolean"),

@@ -57,6 +57,10 @@ fn program(image: text, f: text, std_image: text) {
       exit(2);
     }
     types_upto = el::type_count(std!);
+    // The standard library's definitions are those an empty program's image holds: a
+    // synthetic definition the program registers first (a tuple's `__tuple<…>`, in the library's
+    // source) is the program's, not the library's, though its source says 0.
+    upto = el::std_count(std!);
   }
   el::load_base(e, base!, upto, types_upto);
   e.source = el::MAIN_SOURCE;

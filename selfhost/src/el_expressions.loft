@@ -7188,7 +7188,7 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
   members: vector<ir::TypeT> = [];
   if destructure {
     members = match elem { TyTuple { elems } => elems, _ => [] };
-    td = el_schema::tuple_def_of(e, members);
+    td = el_types::tuple_def_of(e, members);
     if len(members) != len(binds) || td < 0 {
       if !e.first_pass || !el_types::is_unknown(elem) {
         el::refuse(e, "a `for` destructuring something other than a tuple of its arity");
@@ -7210,15 +7210,15 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
       mt = el_types::without_deps(members[nm#index] ?? ir::TyUnknown { n: 0 });
       // A spelling an earlier plain binding holds is renamed by Rust's block-scope rebinding
       // (`rebind_after_block`), which is not carried: refused by name.
+      // A member is marked by a `<name>#member` entry, which the stored table keeps across the
+      // passes as it keeps `#bind`.
       held = vars.names[nm];
-      if nm != "_" && held != null && !vars.destructured.contains(held!.nr) {
+      if nm != "_" && held != null && vars.names["{el_vars::name_of(vars, held!.nr)}#member"] == null {
         el::refuse(e, "a destructured member reusing an earlier binding's name: {nm}");
         return ex(ir::NdNull, ir::TyVoid);
       }
       mv = loop_var(vars, nm, if nm == "_" { "_" } else { el_vars::loop_binding(vars, nm) }, mt);
-      if !vars.destructured.contains(mv) {
-        vars.destructured += [mv];
-      }
+      el_vars::set_name(vars, "{el_vars::name_of(vars, mv)}#member", mv);
       bound += [mv];
     }
   }
@@ -7265,7 +7265,7 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
 // The destructured members' binds (`Set(name_i, loop_var._i)`), each read out of the loop's
 // record at its offset.
 fn destructure_head(e: el::El, lv: integer, members: vector<ir::TypeT>, bound: vector<integer>) -> vector<ir::Node> {
-  td = el_schema::tuple_def_of(e, members);
+  td = el_types::tuple_def_of(e, members);
   fs = el_schema::struct_fields(e, el::def(e, td).known_type);
   sets: vector<ir::Node> = [];
   for v in bound {
@@ -7299,7 +7299,7 @@ fn vector_step(e: el::El, vec: integer, idx: integer, elem: ir::TypeT) -> ir::No
     get = elem_read(e, elem, get);
   }
   // A tuple element is read as its record.
-  st = match elem { TyTuple { elems } => ir::TyReference { n: el_schema::tuple_def_of(e, elems), dep: [] }, _ => el_types::without_deps(elem) };
+  st = match elem { TyTuple { elems } => ir::TyReference { n: el_types::tuple_def_of(e, elems), dep: [] }, _ => el_types::without_deps(elem) };
   el_ir::v_block([el_ir::v_set(idx, el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: 1 }])), get], st, "iter next")
 }
 
@@ -8225,7 +8225,7 @@ pub struct VecRows {
 
 fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> VecRows? {
   if t is TyTuple {
-    return tuple_vector_rows(e, t, lit);
+    return tuple_vector_rows(e, t, lit, declared);
   }
   nm = el_types::elem_name(e, t);
   if nm == "" {
@@ -8257,16 +8257,19 @@ fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> VecR
 // literal's `]`, the `__tuple<…>` struct, `vector<(…)>` owned by it and the `main_vector<(…)>`
 // wrapper; on the second pass, once the rows are laid out, `check_vector`'s
 // `vector<__tuple<…>>` under the row's own name, at the same place.
-fn tuple_vector_rows(e: el::El, t: ir::TypeT, lit: integer) -> VecRows? {
+fn tuple_vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> VecRows? {
   elems = match t { TyTuple { elems: es } => es, _ => [] };
-  sp = el_schema::tuple_spelling(elems, ", ");
+  sp = el_types::tuple_spelling(elems, ", ");
   if sp == "" {
     el::refuse(e, "a vector of tuples with a member of this kind");
     return null;
   }
   tok = match e.p.nodes[lit] { SVecLit { at } => at, SComprehension { at } => at, _ => 0 };
-  pos = el::pos_at(e, closing_bracket(e, tok));
-  td = el_schema::tuple_def(e, elems, pos);
+  // `vector_def`'s position: the `]`, or — for a declared element or an empty `[]` — the token
+  // before the `[`, read before the literal is.
+  cb = closing_bracket(e, tok);
+  pos = el::pos_at(e, if cb == tok + 1 || declared { tok - 1 } else { cb });
+  td = el_types::tuple_def(e, elems, pos);
   nm = "({sp})";
   if el::def_nr(e, "main_vector<{nm}>") < 0 {
     el_schema::make_vector_def(e, t, nm, pos, true);
@@ -8350,7 +8353,7 @@ fn closing_bracket(e: el::El, lit: integer) -> integer {
 fn record_size(e: el::El, t: ir::TypeT) -> integer {
   match t {
     TyTuple { elems } => {
-      td = el_schema::tuple_def_of(e, elems);
+      td = el_types::tuple_def_of(e, elems);
       k = if td < 0 { el_schema::NO_TYPE } else { el::def(e, td).known_type };
       if k == el_schema::NO_TYPE { -1 } else { e.b.types[k]!.size }
     },
@@ -8792,7 +8795,7 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   // member set at its offset in the `__tuple<…>` record.
   if in_t is TyTuple && len(xs) > 0 {
     elems = match in_t { TyTuple { elems: es } => es, _ => [] };
-    td = el_schema::tuple_def_of(e, elems);
+    td = el_types::tuple_def_of(e, elems);
     fs = el_schema::struct_fields(e, el::def(e, td).known_type);
     at = ir::NdVar { n: elm };
     for x in xs {

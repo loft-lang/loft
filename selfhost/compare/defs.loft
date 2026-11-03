@@ -17,14 +17,19 @@ fn main() {
     eprintln("no image at {a[0] ?? ""}");
     exit(2);
   }
+  // With the standard library's image, the program starts where that image's definitions end
+  // (a synthetic definition the program registers first is the program's — `elab`'s rule).
   from = if a[1] == "program" { el::std_count(b!) } else { (a[1] ?? "0") as integer ?? 0 };
+  std = if len(a) > 2 { load::load(a[2] ?? "") } else { null };
+  if len(a) > 2 && std == null {
+    eprintln("no image at {a[2] ?? ""}");
+    exit(2);
+  }
+  if std != null && a[1] == "program" {
+    from = el::std_count(std!);
+  }
   print(report::defs_report(b!, from));
-  if len(a) > 2 {
-    std = load::load(a[2] ?? "");
-    if std == null {
-      eprintln("no image at {a[2] ?? ""}");
-      exit(2);
-    }
+  if std != null {
     print(report::schema_from(b!, el::type_count(std!)));
   }
 }
