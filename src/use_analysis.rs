@@ -6507,9 +6507,9 @@ fn copied_record_name(data: &Data, tp: &Value) -> String {
 /// loft#1397 — a `match` / `is` PAYLOAD binding whose subject's PLACE is overwritten with a
 /// DIFFERENT variant while the binding is still read.
 ///
-/// `formal/binding.md` `(B-Disturb)` is explicit that overwriting a place is NOT disturbing
-/// it — *"`o.inner = Box{…}` writes INTO the place `o.inner` already occupies, so a view of
-/// it survives"* — so the binding still names the payload slot and reads what is there now.
+/// `formal/binding.md` `(B-Disturb)` keeps an overwritten place — *"a view OF it names the
+/// slot and re-reads the new value"*; only what the old value owned out of line ends — so an
+/// inline payload binding still names its slot and reads what is there now.
 /// Both backends agree, and the VALUE is what the rules give.  Nothing here is a lifetime
 /// defect, and the rules do not change to match the code.
 ///

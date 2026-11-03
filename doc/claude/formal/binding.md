@@ -246,26 +246,32 @@ rule `C-Ref` in [types.md](types.md): a `&τ` is accepted wherever a `τ` is.)
                   vector and `a`, which names the outer element SLOT, reads the repointed
                   handle (`85-store-lifetime-reference-default-views.loft` cell A, and this
                   is the only realloc it measures).  The realloc of the container the view
-                  DOES name ends the place instead, and is B-Disturb's fourth event.
+                  DOES name ends the place instead: B-Disturb's GROWING event.
                   Also guarded by `294-vector-element-view-semantics.loft`.
                   A TUPLE element is not reached: a tuple is a value (tuples.md `(T-Cons)`),
                   its whole read is the tuple of its member reads, and `t = v[i]` copies as
                   `t = k.p` does (D-tup-18, D-tup-19) — while `v[i].k` is a place.
-  (B-Disturb)     four events END the place a reference names, and they are the same
-                  four for every rule below: REMOVING from the container (`v.remove(i)`
+  (B-Disturb)     five events END the place a reference names, and they are the same
+                  five for every rule below: REMOVING from the container (`v.remove(i)`
                   renumbers every later position — collections.md Col-Remove),
                   GROWING it (an append, an insert or a keyed add: a container that
                   outgrows its allocation is copied into a larger record and every
                   element moves), RE-KEYING an element (writing a key field: the record
-                  moves, or becomes reachable by no key), and REASSIGNING the container
-                  itself (`bx = T{…}` leaves the place with nothing to point at).
-                  Overwriting a place is NOT disturbing it: `o.inner = Box{…}` writes
-                  INTO the place `o.inner` already occupies, so a view of it survives.
-                  A COLLECTION field given a new value (`sc.els = [x]`, `w.a = f()`) is
-                  its container REASSIGNED: the places INSIDE it end, while a view OF the
-                  field (`c = sc.els`) names the slot and re-reads it.  The literal and
-                  the call spelling answer alike: `w.a = f()` leaves the old elements
-                  freed, so a view into them cannot survive one spelling and not the other.
+                  moves, or becomes reachable by no key), REASSIGNING the container
+                  itself (`bx = T{…}` leaves the place with nothing to point at), and
+                  OVERWRITING a record that holds the place (`o.inner = other`,
+                  `v[0] = r`, `t.left = T{…}`, a `sort` writing each element): the new
+                  value is copied INTO the place, and what the OLD value owned — its
+                  vectors, its children, their elements — is released.
+                  The overwritten place itself does not end: a view OF it (`c = o.inner`,
+                  `e = v[0]`) names the slot and re-reads the new value.  The places
+                  INSIDE it end, at any depth (`x = o.inner.v[0]`, `g = t.left.left`); a
+                  view of a SIBLING field is untouched.  A COLLECTION field given a new
+                  value (`sc.els = [x]`, `w.a = f()`) is the same event on the field: a
+                  view OF the field (`c = sc.els`) re-reads it, a view into its elements
+                  ends.  The literal and the call spelling answer alike: `w.a = f()`
+                  leaves the old elements freed, so a view into them cannot survive one
+                  spelling and not the other.
                   ANY growth disturbs, not only one that provably crosses the capacity:
                   whether it reallocates is an allocator fact the author cannot see, and
                   a rule that answered differently on either side of it would give one
@@ -277,7 +283,7 @@ rule `C-Ref` in [types.md](types.md): a `&τ` is accepted wherever a `τ` is.)
                   `e = sc.els[0]?; grow(sc); e.a` that answers `3` with the append written
                   inline read `4294967401` with it one frame down, on both backends, until
                   @PLN164 C3 gave the walk the callee's half of the question.  Which side
-                  of a call a statement sits on is not one of the four events.
+                  of a call a statement sits on is not one of the five events.
   (B-Ref-Reshape) DISTURBING a container while a `&` reference into it is still LIVE is
                   a COMPILE-TIME ERROR.  These are the shapes where B-Ref-Alias could
                   not hold, and declining them is what makes B-Ref-Alias unconditional
@@ -314,7 +320,7 @@ COLLECTION projection off an OWNED base — which is exactly `OWNERSHIP_MODEL §
 on both backends.  Ask it rather than re-deriving: the cells existed before, scattered across four
 files, and no single one said what the rule was.
 
-Both kinds of alias last exactly as long as the place they name, and the four things
+Both kinds of alias last exactly as long as the place they name, and the five things
 that end a place are the same for both (B-Disturb). What differs is the answer. A plain
 view gets a **copy** and is told so: it already meant value semantics, so losing
 write-through is consistent. A `&` gets an **error**, because it did not — the author
@@ -326,7 +332,10 @@ program rather than quietly changing what it means.
 view lives as long as its VARIABLE, not as long as the block the binding was written in: a
 re-bind of an outer local inside an `if` or a loop body still names a place that the code after
 the block can read. And a LOOP body's own disturbances precede every use on the NEXT turn, so
-the back edge is a second disturbance a single forward reading cannot see. Both halves of that
+the back edge is a second disturbance a single forward reading cannot see.  It is not one
+for a use AFTER the loop: the exit leaves from the head without running the body again, so a
+view read there is copied only where some path through the body disturbs its container after
+binding it. Both halves of that
 are what `a = w.inner` inside `for … { w = Outer{inner: a}; a = w.inner }` needs: the container
 is reassigned around a live view, so B-View materialises it and says so. Pinned by
 `loft-suite/rules/binding/B-View/1184-a-view-assigned-back-onto-its-own-source.loft`, whose last two cells are the
@@ -338,8 +347,9 @@ control — an UNDISTURBED view still aliases and still writes through, on both 
   (B-OutOfLine) an out-of-line field (layout.md `L-OutOfLine`) binds as an inline field does.
               A read `h.f` is a view of the child with the host's store attached (B-View).  A
               write `h.f = v` copies v into the host's store: into a present child IN PLACE —
-              the child keeps its record, so a view of it reads the new value — and into a
-              fresh record where the field was absent.  The value is read before the old
+              the child keeps its record, so a view of it reads the new value, while what the
+              old child owned is released, so a view deeper than the child ends (B-Disturb's
+              OVERWRITING event) — and into a fresh record where the field was absent.  The value is read before the old
               content is released, so `h.f = h.f.g` and `h.f = h` are defined.  A write of null
               releases the child all the way down and DISTURBS the field (B-Disturb): a view of
               the child live across a write that may be null is copied out at its bind, and a

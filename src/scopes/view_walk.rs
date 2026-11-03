@@ -705,7 +705,7 @@ impl ViewWalk<'_> {
         );
         // A REBUILD (`w.a = [..]`, `w.a = f()`: an `OpClearVector` on the field, then the
         // appends or the callee filling it) gives the container a new value.  The view OF the
-        // field survives it — `(B-Disturb)`: overwriting a place is not disturbing it — and
+        // field survives it — `(B-Disturb)`: an overwritten place stays — and
         // the views INTO its elements do not, because every element they named is gone.  Read
         // as an overwrite whole before, so `d = w.a[0]; w.a = [S{901}]` read the new vector's
         // element and a write through `d` landed in it, and `w.a = f()` read the freed block
