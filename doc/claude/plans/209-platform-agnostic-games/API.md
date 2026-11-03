@@ -3,7 +3,7 @@ Copyright (c) 2026 Jurjen Stellingwerff
 SPDX-License-Identifier: LGPL-3.0-or-later
 -->
 
-# 209 — the game API, frame tier
+# 209 — the game API, 2D tier
 
 The loft surface arc F builds ([README.md](README.md)): what a game writes against so it runs on
 the Tanmatsu, in a page and on a desktop without knowing which.  A design, not yet built; every
@@ -22,9 +22,11 @@ signature here is a proposal the F-phases check.
    cached by `#memo` where it is worth it.  No cache object, no handle into a cache, no "load once
    then look up" API: a game calls the function again and only gets faster.
 3. **Ask, never detect.**  The machine is described by what it has (`Caps`), never by a name.
-4. **The game sees its frame, not the display.**  Pointer and touch arrive in frame pixels; the
-   screen scales, letterboxes, rotates and masks.  A game that draws 208×160 never learns that
-   the panel is 480×800 portrait.
+4. **The game sees its view, not the display.**  It draws and is pointed at in units of its own
+   choosing (208×160 for a game of 16×16 tiles); the screen maps those onto the display's own
+   pixels — scaled, letterboxed, rotated, masked — and every primitive is rasterised there, at
+   the display's resolution (§ Drawing at the machine's resolution).  A game that draws in a
+   208×160 view never learns that the panel is 480×800 portrait or the page 1900×1000.
 5. **One thread.**  An object is used from the thread that opened it; another thread is refused
    with a message, as graphics' `Window` is.
 6. **Optimise freely per platform, invisibly.**  Each platform's section may take every shortcut
@@ -37,27 +39,54 @@ signature here is a proposal the F-phases check.
    each is supported well enough to use, and whether a game uses it is the game's decision.
    Nothing here makes that choice for it — and making it is cheap: the defaults already cover
    the common case (`bindings_for` maps keys, a gamepad and touch zones to the same actions;
-   `frame_for` fits any display), so a game that does nothing still plays everywhere, and taking
+   `view_for` fits any display), so a game that does nothing still plays everywhere, and taking
    up a capability is a few lines, not a subsystem.
 
-## Pixels: RGBA everywhere, packed per destination
+## Drawing at the machine's resolution
 
-A game sees one pixel format: 32-bit RGBA — PNG RGBA assets, `Canvas`, and every frame it shows.
-What a destination wants is produced behind the API, at two points:
+There is no frame of a fixed small size.  A game draws **primitives** onto a **surface**, and
+each surface rasterises them at its own resolution: a page at the canvas's device pixels, the
+Tanmatsu at its 800×480 panel, a desktop at the window's size, an image at the size it is asked
+for.  A 16×16 picture is source art, not a unit of the screen: a sprite is placed between
+pixels, turned and stretched, and lands on the display's pixels exactly where its transform puts
+it.
 
-- **Assets, when the game is built for a target.**  A packer turns the RGBA sources into the
-  target's format — RGB565 for the Tanmatsu, dithered once there; untouched on a desktop or a
-  page.  A pure function of the source and the target, so its output is kept by key.
-- **Frames, when `show` presents.**  The screen converts, scales and rotates in one pass — on
-  the Tanmatsu by the ESP32-P4's pixel accelerator where it does the conversion, with a fixed
-  ordered dither so nothing shimmers between frames.
+- **The view.**  The game chooses a coordinate space (`View`: its width and height in units, for
+  tile-world 208×160, one unit per source pixel).  Positions, sizes and pivots are fractional —
+  fixed point, 1/256 of a unit — so a figure glides, hops and leans smoothly at any resolution.
+  The screen maps the view onto the surface with one transform (the largest fit, letterboxed;
+  the Tanmatsu's panel rotation in it); the game never sees that transform.
+- **The primitives.**  Each is a pure description, drawn in call order:
+  - `sprite(sheet, tile, at, pivot, turn, scale_x, scale_y, flips, shade, ghost)`: one tile of a
+    sheet as a textured quad, turned by any angle about its pivot and stretched along its axes;
+  - `quad(sheet, tile, corners, shades)`: the general textured quad, four corners anywhere and a
+    shade at each (a ground tile bent to its corner lifts and lit by its corners: what
+    `draw_ground` does at whole pixels today); a sprite is a quad;
+  - `fill` and `outline` of a rectangle or a quad in one colour, and `text` from a font sheet.
+- **How a pixel is coloured.**  A surface pixel shows the source texel its centre maps back to
+  (nearest), so pixel art stays crisp at every scale and angle and a turned figure is a true
+  rotation of its texels; transparency is the texel's, and a shade or the ghost's checkerboard is
+  applied per texel, so they turn and stretch with the sprite.
+- **Backends, one per kind of machine**, each implementing every primitive (rule 6):
+  - **the CPU rasteriser**, in a library's C: the reference.  It draws a desktop window, an
+    image, an off-screen test surface and the Tanmatsu's panel.  The Tanmatsu rasterises at its
+    panel's own pixels too: a view of 208×160 shown about three times larger places and turns
+    a figure in steps of a third of a unit, not of a whole one.  A machine may take a simpler
+    route where its CPU needs it — simpler arithmetic (fixed-point steps along a span), never a
+    coarser resolution — checked against the reference within a stated tolerance;
+  - **WebGL**, in a page: the sheets as textures, each primitive a quad drawn at the canvas's
+    resolution, nearest-sampled, the shade and the ghost in its shader;
+  - later a GPU backend on a desktop, and the P4's pixel accelerator for what it can do (fills,
+    copies, conversion; it turns by quarter turns only).
+- **What stays exact.**  For one surface size the reference's pixels are a pure function of the
+  primitives, so tests compare them byte for byte; a GPU backend is compared with the reference
+  at the same size, pixel by pixel, within a tolerance measured once (where a texel edge falls
+  on a pixel centre).  What is the same on every machine is the drawing, not the pixels.
 
-So a game's frame is byte-identical on every machine before it is presented: only the presenter
-differs, which is what the F-phases compare.  RGBA is stored packed, four bytes a pixel
-(`vector<u32>`) — not one loft `integer` per pixel, as `Canvas` keeps it today.  `tiles` may keep
-RGB565 internally on the Tanmatsu (rule 6); its API takes and answers RGBA.  Palette effects
-(colour cycling) are an explicit `tiles` feature — an indexed sheet and a palette object — not a
-pixel format.
+**Pixels.**  Sources are 32-bit RGBA (PNG).  A packer turns them into what a target draws from —
+RGB565 sheets for the Tanmatsu, dithered once; untouched for a page or a desktop — a pure
+function of the source and the target, kept by key.  Palette effects (colour cycling) are an
+explicit `tiles` feature — an indexed sheet and a palette object — not a pixel format.
 
 ## Assets: declared once, reworked by the ship build
 
@@ -80,7 +109,7 @@ changes:
 |---|---|
 | the Tanmatsu | RGB565, dithered once; sheets packed into atlases; scaled down to what its tier draws |
 | a page | the source, or a smaller lossless encoding; atlases |
-| a desktop, frame tier | the source |
+| a desktop, 2D tier | the source |
 | a GPU target (arc G) | mipmaps, and the GPU's compressed format where `quality` allows (BC on a desktop, ASTC / ETC2 on a phone or console) |
 
 **Meshes** are reworked the same way, for the GPU targets only (the Tanmatsu draws no 3D): a
@@ -104,8 +133,8 @@ over it with the asset's path and the measured difference.
 | `machine` | `Caps`, `Event`, the `KEY_*` names, `Saves`, `Clock` | nothing |
 | `geom` | the math types (`vec2` … `Mat4`) and pure geometry, moved from `graphics` (F10) | nothing |
 | `canvas` | `Canvas` (RGBA) and its drawing, moved from `graphics` (F10) | `geom` |
-| `tiles` | tile sheets, maps and sprites drawn into a `Canvas`; sheets and maps as objects, not integer handles (exists, re-shaped) | `canvas` |
-| `screen` | `Screen`: shows a frame, answers its events | `machine` |
+| `tiles` | tile sheets, maps and the 2D primitives (sprites, quads, fills, text) drawn on a `Surface` at its own resolution, by the CPU rasteriser or a GPU backend; sheets and maps as objects, not integer handles (exists, re-shaped) | `canvas` |
+| `screen` | `Screen`: a view on a display, drawn at the display's resolution, and its events | `machine` |
 | `input` | `Bindings`, `Actions`: events to actions | `machine` (no longer `graphics`) |
 | `audio` | `Audio`, `Clip`, `Voice` (exists, re-shaped) | `machine` |
 
@@ -191,42 +220,44 @@ pub fn clock(hz: integer) -> Clock;
 pub fn due(self: Clock) -> integer;     // ticks to run since the last call (0 or more)
 ```
 
-## `screen` — one frame on one display
+## `screen` — a view on one display
 
 ```loft
-pub enum Fit { Pixel, Smooth }   // Pixel: a whole-number scale, letterboxed; Smooth: fill, keep aspect
+pub enum Fit { Pixel, Smooth }   // Pixel: whole display pixels per unit, letterboxed; Smooth: fill, keep aspect
 
-pub struct Frame {
-  pub width: integer,
+pub struct View {
+  pub width: integer,             // the game's units across and down
   pub height: integer,
   pub fit: Fit,
 }
 
-// The frame a game asks for, adjusted to `d`: the largest whole-number scale of `want_w` x
-// `want_h` that fits, its orientation turned to the display's, and on a round display the
-// largest frame inside the circle.  A pure function of its arguments.
-pub fn frame_for(d: const Display, want_w: integer, want_h: integer) -> Frame;
+// The view a game asks for, adjusted to `d`: `want_w` x `want_h` units, its orientation turned to
+// the display's, and on a round display the largest view inside the circle.  A pure function of
+// its arguments.
+pub fn view_for(d: const Display, want_w: integer, want_h: integer) -> View;
 
 pub struct Screen { handle: integer }
 fn OpDrop(self: Screen) { … }      // closes the window or releases the panel
 
-// Show frames of `f` on display `d`.  On a desktop a window titled `title`, sized to the frame
-// scaled; on a device the whole display; in a page the canvas.  Null where it cannot open.
-pub fn open_screen(d: const Display, f: const Frame, title: text = "loft") -> Screen?;
+// Draw views of `v` on display `d`, at the display's resolution.  On a desktop a window titled
+// `title`; on a device the whole display; in a page the canvas.  Null where it cannot open.
+pub fn open_screen(d: const Display, v: const View, title: text = "loft") -> Screen?;
 
-// A screen of no display: frames are kept in memory, for tests and headless runs.
-pub fn offscreen(f: const Frame) -> Screen;
+// A screen of no display, `w` x `h` pixels kept in memory: for tests and headless runs.
+pub fn offscreen(v: const View, w: integer, h: integer) -> Screen;
 
 pub fn poll(self: const Screen, wait_ms: integer = 0) -> boolean;   // false once closed
 pub fn events(self: const Screen) -> vector<Event>;                  // since the last call
-pub fn show(self: const Screen, c: const Canvas);                    // the frame, RGBA
-pub fn frame(self: const Screen) -> Frame;
-pub fn refit(self: Screen, f: const Frame);        // after a Resize: the game picks a new frame
-pub fn capture(self: const Screen) -> Canvas;      // what was last shown, at frame size
+pub fn begin(self: Screen) -> Surface;             // a new picture, the view's units mapped on
+pub fn present(self: Screen);                      // what was drawn since `begin`, on the display
+pub fn view(self: const Screen) -> View;
+pub fn refit(self: Screen, v: const View);         // after a Resize: the game picks a new view
+pub fn capture(self: const Screen) -> Canvas;      // what was last presented, at its own pixels
 ```
 
-`show` converts the frame to the display's pixel format, scales it and presents it.  It runs
-every frame, so it is not cached: the work is the conversion, and it is cheap at frame size.
+A `Surface` is what `tiles`' primitives draw on (§ Drawing at the machine's resolution): a
+screen's, or an image's (`tiles::image_surface(view, w, h)`, read back as RGBA).  `present`
+hands the picture to the display; on a page it is the GPU's frame, on the Tanmatsu the panel's.
 
 ## `input` — events to actions
 
@@ -299,20 +330,19 @@ use tiles;
 fn main() {
   c = machine::caps();
   d = c.displays[0] ?? return;
-  f = screen::frame_for(d, 208, 160);
-  s = screen::open_screen(d, f, "tile world") ?? return;
+  v = screen::view_for(d, 208, 160);
+  s = screen::open_screen(d, v, "tile world") ?? return;
   a = audio::open_audio();                    // may be null: then the game is silent
   b = input::bindings_for(c, ["left", "right", "jump", "menu"]);
   act = input::actions();
   saves = machine::open_saves("tile-world");
   world = load_world(saves);                  // the game's logic package: draws nothing
-  view = canvas::canvas(f.width, f.height, 0);
   t = machine::clock(60);
   while s.poll(1) {
     act.feed(s.events(), b);
     for i in 0..t.due() { world.step(act); }
-    draw_world(world, view, c.tier);          // the game's frame-tier view
-    s.show(view);
+    draw_world(world, s.begin(), c.tier);     // sprites and quads in the view's units
+    s.present();
   }
   store_world(saves, world);
 }                                             // the screen, the audio and the saves end here
