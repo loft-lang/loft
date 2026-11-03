@@ -345,8 +345,10 @@ not yet published), where the pixel-by-pixel path took 63 ms.
 
 **Open:**
 
-- `tile-world-game`'s game has not run on the device: it opens its frame at scale 4, wider than
-  the panel (scale 3 fits), and its frame time, sound and area switch are unmeasured.
+- `tile-world-game`'s game has not run on the device.  It draws at the panel's own 800x480
+  through `tiles`' camera (zoom 3) and prints `@t frame` lines with its draw, copy and show
+  times; on a PC the rasteriser takes 1.7 ms for such a frame, and the device's time, sound and
+  area switch are unmeasured.
 - The I2S output task (`audio`) has not run on the device.
 - From reset to the app's start the panel shows blue, before any of the app's code runs.
 - The P4's pixel accelerator (PPA) can scale and rotate a frame in hardware, which `screen`
