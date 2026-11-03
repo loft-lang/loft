@@ -15,7 +15,7 @@
 // IR and none is the other's oracle: the oracle is these values, and the switch is the second
 // answer.
 //
-// @falsified-at: none — by hand on the IR clause, its operands reversed: w6 fails on the
+// @falsified-at: none — by hand on the IR clause, `pow`'s two operands reversed: w6 fails on the
 //   interpreter and on the C (`pow(x, 10.0)` answers 10^2 = 100 for 2^10 = 1024).
 //   CHANNEL: an assertion.
 // HOLDS: the hand-computed values, on both backends, the clause on and off.

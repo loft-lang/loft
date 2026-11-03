@@ -138,7 +138,8 @@ pub fn unary(data: &Data, x: &Value) -> Option<(&'static str, u16)> {
     {
         return match op_name(data, *d) {
             "OpLengthVector" | "t_6vector_len" => Some(("len", v)),
-            "t_6vector_clear" => Some(("clear", v)),
+            // The call, or the op `@FR-R-Wrapper` makes of it in the IR.
+            "t_6vector_clear" | "OpClearVector" => Some(("clear", v)),
             "OpFreeRef" => Some(("free", v)),
             _ => None,
         };

@@ -100,7 +100,7 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
         });
     }
     data.definitions[d_nr as usize].code = code;
-    crate::rewrite_census::fired(RULE, fired);
+    crate::rewrite_census::fired("R-Wrapper", fired);
 }
 
 /// A variable, a literal, or constant field projections over a variable: a value that reads

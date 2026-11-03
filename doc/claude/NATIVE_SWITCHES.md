@@ -48,9 +48,8 @@ scalar in a loop over a record; `LOFT_HOIST_VERIFY=1` re-reads each hoisted scal
 panics on a stale one.  **`LOFT_NO_VIEW_HOIST=1`** (@PLN157 § V-n) makes a `&`-bound vector
 view (`d = &cv.data`) derive no header at its binding — with it on, the rest of the block
 reads `d[i]` through one header derived once — and is the bisect step for a wrong element
-read through a view outside a loop.  **`LOFT_NO_WRAPPER_INLINE=1`** (@PLN157 § V-o) emits a
-call to a stdlib one-op wrapper (`len(v)`, `sqrt(x)`) as the CALL again instead of as its
-op — the bisect step for a wrong length or libm value on native.  **`LOFT_NO_CALLEE_INPUTS=1`**
+read through a view outside a loop.  `LOFT_NO_WRAPPER_INLINE=1` is a
+both-backend switch (BOTH_BACKEND_SWITCHES.md).  **`LOFT_NO_CALLEE_INPUTS=1`**
 (@PLN157 § V-p, § V-ac) emits no callee TWIN — with it on, a callee that reads a record
 parameter's scalar fields, views or indexes its vector fields, or indexes a plain VECTOR
 parameter gets a `<fn>__inv` twin taking those as extra parameters, and a loop that hoisted

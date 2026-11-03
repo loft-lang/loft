@@ -161,7 +161,7 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
         });
     }
     data.definitions[d_nr as usize].code = code;
-    crate::rewrite_census::fired(RULE, fired);
+    crate::rewrite_census::fired("R-SliceArg/range", fired);
 }
 
 /// A statement that holds the call where nothing is evaluated before it: the assignment

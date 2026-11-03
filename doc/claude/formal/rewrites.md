@@ -303,7 +303,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-WorkPark)` | `R-WorkPark` c |
 | `(R-WorkView)` | not counted — unbuilt: no code; the C's (R-TextBorrow) format clause covers the shape |
 | `(R-WorkerLean)` | not counted — executor: par workers on the lean loop |
-| `(R-Wrapper)` | `R-Wrapper` native |
+| `(R-Wrapper)` | `R-Wrapper` ir |
 | `(R-ZeroCount)` | `R-ZeroCount` parse |
 
 <!-- END applied-by -->
@@ -1970,23 +1970,29 @@ Guard `tests/scripts/an-element-at-a-range-counter-is-read-in-range.loft` (r7, r
 
 ```
   (R-Wrapper)    a call to a STDLIB function whose whole body is one native op over
-                 its own parameters and constants, with leaf arguments (a variable,
-                 a literal) or a PURE VECTOR PATH (constant field projections over a
-                 variable) the pre-evaluation holds no binding for, and no text
-                 operand or result, is emitted as that op with the arguments in the
-                 operand positions.  A USER function's call is observable — the live
-                 tier may flip it to the interpreter, and its frame is on the shadow
-                 call stack — and stays a call.
+                 its own parameters and constants, with leaf arguments (a variable —
+                 a reference variable too — or a literal) or a PURE VECTOR PATH
+                 (constant field projections over a variable), no text operand or
+                 result, and an op that answers the wrapper's kind of value, IS that
+                 op with the arguments in the operand positions: decided and applied
+                 in the scope pass, so both backends run it.  A USER function's call
+                 is observable — the live tier may flip it to the interpreter, and its
+                 frame is on the shadow call stack — and stays a call.
 ```
 
-**In words.** @PLN157 § V-o.  The wrapper's compiled Rust body IS the op's template,
-so for a frameless, unflippable stdlib method the op is the call; `len(d)` after a
-view binding then reads the header.  Leaf arguments, because the op's operands are
-emitted from a fresh list the pre-evaluation map (keyed on node addresses) cannot see —
-and a pure vector path too: side-effect free and
-never bound by the pre-evaluation, its clone emits what the original would, and as the
-op's operand it is what a held header serves.  Switch `LOFT_NO_WRAPPER_INLINE`; pin `tests/wrapper_op.rs`.
-Sites: `hoist::one_op_wrapper`, `Output::wrapper_op`.
+**In words.** @PLN157 § V-o.  The wrapper's body IS the op, so for a frameless, unflippable
+stdlib method the op is the call; `len(d)` after a view binding then reads the header.  Leaf
+arguments, because the op may name a parameter twice or in another order, and a leaf reads the
+same however often and in whatever order it is read — a pure vector path too, side-effect free,
+and as the op's operand it is what a held header serves.  The same kind of answer, because the
+code generator reads the call's type.  The pass runs LAST in the scope pass, so the rewrites
+before it see the call; the analyses after it that recognise a length or a clear by name read
+both spellings (`opt::range`, `lower::hand_over`'s rotate clause, `lower::apart_vector`, the
+C's transient length, the lost-write lint's length set).  On the interpreter the call goes: a
+loop adding `len(v)` runs 921 → 479 instructions a pass.  Switch `LOFT_NO_WRAPPER_INLINE`
+(both backends); trace `LOFT_TRACE_WRAPPER`; cells
+`tests/scripts/a-stdlib-one-op-wrapper-is-its-op.loft`, pin `tests/wrapper_op.rs`.  Sites:
+`ir_shape::one_op_wrapper`, `wrapper_inline::rewrite`.
 
 ### A callee's invariant inputs cross the call
 

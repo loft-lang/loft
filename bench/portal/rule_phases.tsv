@@ -14,7 +14,7 @@ R-AppendTwin/loop-window	c	2	0	0	0	2	0
 R-AppendTwin/mint	c	2	0	0	0	4	0
 R-Base	c,native	58	0	0	0	861	5477
 R-Base/counter	c	44	0	0	0	216	0
-R-Base/grid	c	2	0	0	0	61	0
+R-Base/grid	c	2	0	0	0	69	0
 R-BoundAppend	parse	2	2	0	0	0	0
 R-BoundedNest	native	4	0	0	0	0	20
 R-BoundedNest/kernel	ir	58	0	58	0	0	0
@@ -27,7 +27,7 @@ R-CompleteWrite	c,native	58	0	0	0	1098	2362
 R-Const	ir	2	0	3	0	0	0
 R-Const/fn	parse	2	3	0	0	0	0
 R-CopyView	ir	4	0	8	0	0	0
-R-Counter	ir,c,native	58	0	1078	0	10960	8928
+R-Counter	ir,c,native	58	0	1046	0	10957	8928
 R-CtorLiteral	parse	3	11	0	0	0	0
 R-Destination	c,native	2	0	0	0	12	30
 R-DischargeInto	parse	58	101	0	0	0	0
@@ -52,7 +52,7 @@ R-ForwardResult	ir	2	0	6	0	0	0
 R-ForwardWalk	parse	44	172	0	0	0	0
 R-Fuse	interp	58	0	0	12349	0	0
 R-Fuse/field	interp	42	0	0	748	0	0
-R-Fuse/jump	interp	58	0	0	9260	0	0
+R-Fuse/jump	interp	58	0	0	9264	0	0
 R-Fuse/tag	interp	9	0	0	122	0	0
 R-Fuse/text	interp	58	0	0	1913	0	0
 R-GroupPush	native	6	0	0	0	0	59
@@ -74,16 +74,16 @@ R-Header/rebind	c	5	0	0	0	14	0
 R-Header/text	c,native	1	0	0	0	3	5
 R-InPlaceLiteral	parse	11	57	0	0	0	0
 R-InRange	parse	10	63	0	0	0	0
-R-Inline	c	58	0	0	0	681	0
+R-Inline	c	58	0	0	0	594	0
 R-Inline/helper	c	37	0	0	0	218	0
-R-InlineLeaf	parse	58	2587	0	0	0	0
+R-InlineLeaf	parse	58	2373	0	0	0	0
 R-Inputs	c,native	37	0	0	0	852	7874
 R-Invariant	c,native	36	0	0	0	246	3624
 R-KeyedEntry	c,native	9	0	0	0	12	23
 R-KeyedEntry/subscript	c,native	1	0	0	0	3	3
 R-LazySplit	c,native	3	0	0	0	8	6
-R-Leaf	native	58	0	0	0	0	8717
-R-LeafChain	native	58	0	0	0	0	6184
+R-Leaf	native	58	0	0	0	0	9579
+R-LeafChain	native	58	0	0	0	0	5322
 R-LitDiv	native	52	0	0	0	0	2361
 R-LitHoist	native	1	0	0	0	0	1
 R-LiteralAppend	ir	1	0	1	0	0	0
@@ -99,7 +99,7 @@ R-MoveLast	ir	3	0	9	0	0	0
 R-MoveLast/host	ir	1	0	1	0	0	0
 R-MoveLast/local	ir	1	0	2	0	0	0
 R-NoLocks	c	52	0	0	0	52	0
-R-NonSentinelParam	c	58	0	0	0	1319	0
+R-NonSentinelParam	c	58	0	0	0	1315	0
 R-NonSentinelParam/twin	c	16	0	0	0	77	0
 R-Peel	c	25	0	0	0	85	0
 R-Place	ir	3	0	7	0	0	0
@@ -113,7 +113,7 @@ R-PushFill/run	c,native	24	0	0	0	59	24
 R-PushFill/run-header	c	18	0	0	0	39	0
 R-PushRec	c,native	22	0	0	0	59	166
 R-PushRec/apart	c,native	5	0	0	0	28	76
-R-Range	c,native	58	0	0	0	3048	10619
+R-Range	c,native	58	0	0	0	3049	10619
 R-RangedCall	native	47	0	0	0	0	990
 R-Rebind	ir	3	0	5	0	0	0
 R-RebindBuffer	native	1	0	0	0	0	1
@@ -124,7 +124,7 @@ R-RecPtr/index	native	7	0	0	0	0	44
 R-RecPtr/nested	native	25	0	0	0	0	195
 R-RecPtr/param	c	42	0	0	0	238	0
 R-RecPtr/text	c	4	0	0	0	38	0
-R-RefParam	c	58	0	0	0	4851	0
+R-RefParam	c	51	0	0	0	4683	0
 R-RefillBuffer	native	38	0	0	0	0	288
 R-RefillText	native	4	0	0	0	0	9
 R-Refresh	native	4	0	0	0	0	16
@@ -166,5 +166,5 @@ R-WorkBuffer	parse	38	238	0	0	0	0
 R-WorkBuffer/onward	parse	25	524	0	0	0	0
 R-WorkBuffer/result	parse	11	31	0	0	0	0
 R-WorkPark	c	58	0	0	0	711	0
-R-Wrapper	native	58	0	0	0	0	2744
+R-Wrapper	ir	58	0	1989	0	0	0
 R-ZeroCount	parse	58	508	0	0	0	0

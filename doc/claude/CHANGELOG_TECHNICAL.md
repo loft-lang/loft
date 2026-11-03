@@ -17,6 +17,16 @@ All notable changes to the loft language and interpreter.
   rule).  A C clause that stops firing fails the gate on its C row; before this no C admission
   reached a baseline.  `--writer rust|c` runs one writer; a four-column row reads as Rust's.
 
+### `(R-Wrapper)` runs in the IR (@PLN211 arc C)
+
+- A call to a stdlib one-op wrapper (`len(v)`, `sqrt(x)`, `v.clear()`) with leaf or pure-path
+  arguments is its op on BOTH backends, decided in the scope pass (`src/wrapper_inline.rs`);
+  the rustc writer's clause is gone and the C gains the rule.  The interpreter stops making the
+  call: −48 % of the instructions of a loop adding `len(v)`.  `LOFT_NO_WRAPPER_INLINE` is a
+  both-backend switch.  The lost-write lint counts the collection length operators as it
+  counts `len`, and the analyses that recognise a length or a clear by name read both
+  spellings.
+
 ### `(R-SliceArg)`'s range clause runs in the IR (@PLN211 arc C)
 
 - `text_from_bytes(v[lo..hi])`, assigned or appended to a variable, is the slice's bound

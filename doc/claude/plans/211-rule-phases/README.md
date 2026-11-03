@@ -15,8 +15,8 @@ removal of the facts routine's three deviations); arc A is built (the census rea
 writers and the interpreter's generator; every rule reports to it or says why not; the phase
 table `bench/portal/rule_phases.tsv` is measured and gated, and `rewrites.md` § Applied by is
 rendered from it); B1 and B2 are done: weights in [b1-weights.md](b1-weights.md),
-a verdict per rule in § Verdicts.  Arc C has moved its first rule,
-`(R-SliceArg)`'s range clause (§ Arc C's moves).  It was to start once
+a verdict per rule in § Verdicts.  Arc C has moved `(R-SliceArg)`'s
+range clause and `(R-Wrapper)` (§ Arc C's moves).  It was to start once
 #1743 (every routine within 3×) and #2351 (the facts routine) were fixed; #1743 is fixed on
 `laptop-c-perf`, and on 2026-11-03 the owner asked to concentrate on this plan, so #2351's
 three deviations (D-fact-1 … 3) became part of it rather than a precondition.  Four arcs: **A** keeps the register honest about where
@@ -211,6 +211,28 @@ pluginabi 3 → 1), and `(R-CompleteWrite)` loses the slice temporaries' own gro
 emitted copy (cbor −2 C / −3 rustc, pluginabi −3 each) — their store no longer exists.
 On the interpreter: 7 779 → 5 385 instructions per pass of the probe, −30.8 %.
 
+**`(R-Wrapper)` — moved.**  `src/wrapper_inline.rs`, LAST in the scope pass, so every rewrite
+before it sees the call it saw; switch `LOFT_NO_WRAPPER_INLINE` (the rustc writer's, now both
+backends'), trace `LOFT_TRACE_WRAPPER`.  A rustc-only rule, so the C gains it too.  The
+protocol's evidence: the rustc writer, left on, admitted nothing the IR clause took (its 2744
+emitted copies against the IR's 1989 sites; residual 0 once a reference variable counts as a
+leaf — first excluded, measured unneeded on the guard's w4 and benches 17 and 18); the corpus
+switch A/B found two defects, both the lost-write lint's: it counts a collection length as no
+read of the elements but matched only the method's name, `t_*_len` — it now names the length
+operators too, and with the clause off no corpus program and no bench changes a diagnostic;
+rerun: 0 defects in 2911 programs; the C sweep: 2578 match, one differ that is `main`'s own
+(below); the guard's cells on the interpreter, the C and rustc, the clause on and off; the pin
+`tests/wrapper_op.rs`; falsified by reversing `pow`'s operands (w6 fails on both backends).  The
+analyses after the scope pass that recognised a length or a clear by the call's name read both
+spellings now — `lower::apart_vector`'s clear (`R-Apart/vector` had fallen 30 → 0 on hex_body),
+`lower::hand_over`'s rotate length (`R-HandOver/rotate` had fallen to nothing), the C's
+transient length.  The census blessed: `R-Wrapper` applied by `ir`; `(R-InlineLeaf)` loses the
+stdlib `cos`/`sin` calls this pass takes first (same op, without the argument locals), so
+`(R-Leaf)` gains what `(R-LeafChain)` loses; `(R-Counter)`'s small drops are its count repeated
+per inlined call (`non_sentinel` reruns after each); on the C `(R-Inline)`, `(R-RefParam)` and
+`(R-NonSentinelParam)` lose the wrappers themselves, which nothing calls any more.  On the
+interpreter: 921 → 479 instructions a pass of the probe, −48.0 %.
+
 ## Phase ordering
 
 A0 → A1 → A2 → A3 (the table first, so every later move is a blessed change of it) · B1 →
@@ -254,7 +276,7 @@ function before and not after.
 
 | rule | decidable on the IR | expressible | weight | probe (before → after) | verdict |
 |---|---|---|--:|---|---|
-| `(R-Wrapper)` | yes — `ir_shape::one_op_wrapper` | `Call(op, operands)` | 40.9 | `wrapper`: 920 → 308, **−66.5 %** (upper bound: the operator itself is left out) | MOVE.  The interpreter calls `t_6vector_len` every pass; `(R-InlineLeaf)` does not take stdlib wrappers |
+| `(R-Wrapper)` | yes — `ir_shape::one_op_wrapper` | `Call(op, operands)` | 40.9 | `wrapper`: 920 → 308, **−66.5 %** (upper bound: the operator itself is left out); moved: 921 → 479, **−48.0 %** | **MOVED** (`wrapper_inline::rewrite`, arc C's second) |
 | `(R-PushFill)` fill form | yes — IR facts | `OpPush` + `OpAppendCopy`, as `[c; n]` lowers | 17.2 | `push_fill`: 10 580 → 3 017, **−71.5 %** | MOVE.  The C admits this shape too (the census, not "rustc only") |
 | `(R-ElemFirst)` | yes — `opt::hoist::element_first` | existing operators | 1.0 | `elem_first`: 9 666 → 7 299, **−24.5 %** | MOVE |
 | `(R-SliceArg)` range | yes — IR facts | `text_from_byte_range` | 0.5 | `slice_arg`: 7 771 → 3 351, **−56.9 %** (the hand form skips the slice's bound normalisation); moved: 7 779 → 5 385, **−30.8 %** | **MOVED** (`slice_text::rewrite`, arc C's first) |

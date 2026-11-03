@@ -334,6 +334,11 @@ was a buffer reset, three appends and three element reads through the store) —
 first bisect step for a wrong value, order or count out of a loop over a literal of scalars.
 `LOFT_REWRITE_CENSUS` counts its admissions as `R-LiteralWalk`.
 
+**`LOFT_NO_WRAPPER_INLINE=1`** (`@FR-R-Wrapper`, default-ON, scope pass, BOTH backends) keeps
+a call to a stdlib one-op wrapper (`len(v)`, `sqrt(x)`, `v.clear()`) a CALL instead of its op —
+the bisect step for a wrong length or libm value; it also keeps `(R-SplitTable)` from reading
+`len` as its count.  `LOFT_TRACE_WRAPPER=1` names each call taken and each kept with why.
+
 **`LOFT_NO_SLICE_TEXT=1`** (`@FR-R-SliceArg`'s range clause, default-ON, scope pass, BOTH
 backends) keeps `text_from_bytes(v[lo..hi])` as a slice built in a store of its own and then
 converted — with it off, the bytes are read where they lie, `text_from_byte_range(v, lo, hi)`
