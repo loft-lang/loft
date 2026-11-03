@@ -3860,7 +3860,12 @@ impl<'a> FnWriter<'a> {
         let Value::Var(root) = base.unspan() else {
             return Ok(None);
         };
-        let Some((_, pa, _)) = self.rec_ptrs.iter().rev().find(|(v, _, _)| v == root).cloned()
+        let Some((_, pa, _)) = self
+            .rec_ptrs
+            .iter()
+            .rev()
+            .find(|(v, _, _)| v == root)
+            .cloned()
         else {
             return Ok(None);
         };

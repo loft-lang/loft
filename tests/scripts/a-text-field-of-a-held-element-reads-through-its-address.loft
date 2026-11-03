@@ -22,6 +22,9 @@
 // @falsified-at: f4f9d2760 — by hand on the C writer (`loft_pa_text`), each plant alone failing
 //   t1: the field read at offset 0 (`t1 -1,-1,1,-1`), and a `for` element's address taken one
 //   element early (`t1 3,0,2,-1`).
+//   CHANNEL: the VALUE channel on C — the search compares the wrong bytes (an offset, or an
+//   element) and answers indexes it should not.
+// HOLDS: the interpreter's answers, which no plant on either emitter reaches.
 
 struct Opt { long: text, n: integer, short: text }
 struct Args { options: vector<Opt>, hits: integer, extra: vector<Opt> }
