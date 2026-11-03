@@ -7986,14 +7986,14 @@ fn read_op(t: ir::TypeT) -> text {
 // another type, a repetition, a local that already has a store and an empty literal with no type
 // are refused by name.
 fn vector_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT) -> Ex {
-  vector_build(e, vars, v, n, declared, false, false).x
+  vector_build(e, vars, v, n, declared).x
 }
 
 // A literal in value position (`parse_vector_inner` with no destination, `block`): built the
 // same way into a `_vec_N` of its own, the build a "Vector" block answering it.
 fn vector_value(e: el::El, vars: el_vars::Vars, n: integer) -> Built {
   v = el_vars::create_unique(vars, "vec", ir::TyVector { inner: ir::TyUnknown { n: 0 }, dep: [] });
-  vector_build(e, vars, v, n, ir::TyUnknown { n: 0 }, false, true)
+  vector_build(e, vars, v, n, ir::TyUnknown { n: 0 }, value: true)
 }
 
 // `w += [items]` on a vector local that already has its store: the same build appended to it —
@@ -8014,7 +8014,7 @@ fn vector_append(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
       _ => {}
     }
   }
-  vector_build(e, vars, v, n, inner, true, false).x
+  vector_build(e, vars, v, n, inner, append: true).x
 }
 
 // A literal's build, the items' code and the element type, for a `for` that may walk the items
@@ -8084,7 +8084,9 @@ fn refused_build() -> Built {
   Built { x: ex(ir::NdNull, ir::TyUnknown { n: 0 }), items: [], elem: ir::TyUnknown { n: 0 } }
 }
 
-fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT, append: boolean, value: boolean) -> Built {
+// The one build behind the three literal forms: into a local (`vector_into`), in value position
+// (`value`, `vector_value`) and appended to a local that has its store (`append`, `vector_append`).
+fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT, append: boolean = false, value: boolean = false) -> Built {
   items: vector<integer> = [];
   match e.p.nodes[n] {
     SVecLit { items: its } => { items = its; },
