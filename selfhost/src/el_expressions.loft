@@ -5458,7 +5458,37 @@ fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::TypeT
   e.b.data.definitions[d].code = [code];
   // `derive_monomorph_return_deps`: a text or record result every return of which is a bare
   // parameter borrows that parameter, by its attribute number (`-> text["x"]`, `-> P["x"]`).
-  if (textual && el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid) is TyText) || (record && el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid) is TyReference) {
+  rt = el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid);
+  // `copy_param_returns_of_fresh_instance`: a record parameter the body reassigns is no view
+  // of the argument, so the result borrows nothing and the tail hands back a copy,
+  // `{ ___ret_param_N = p; ___ret_param_N }`.
+  if record && rt is TyReference {
+    ops = match code { NdBlock { block } => block[0].operators, _ => [] };
+    tp = match el_ir::unspan(el_ir::last(ops)) { NdVar { n } => n, _ => -1 };
+    if tp >= 0 && sets_var(code, tp) {
+      k = 1;
+      for v in f.variables {
+        if v.name.starts_with("___ret_param_") {
+          k += 1;
+        }
+      }
+      tmp = len(f.variables);
+      f.variables += [el_vars::fresh_variable("___ret_param_{k}", el::def(e, d).returned[0] ?? ir::TyVoid)];
+      f.names += [ir::NameNr { name: "___ret_param_{k}", nr: tmp }];
+      copy = ir::NdInsert { items: [el_ir::v_set(tmp, ir::NdVar { n: tp }), ir::NdVar { n: tmp }] };
+      match code {
+        NdBlock { block } => {
+          bl = block[0];
+          bl.operators[-1] = el_ir::respan(bl.operators[-1] ?? ir::NdNull, copy);
+          e.b.data.definitions[d].code = [ir::NdBlock { block: [bl] }];
+        },
+        _ => {}
+      }
+      e.b.data.definitions[d].variables = f;
+      return true;
+    }
+  }
+  if (textual && rt is TyText) || (record && rt is TyReference) {
     tail = el_ir::unspan(el_ir::last(match code { NdBlock { block } => block[0].operators, _ => [] }));
     match tail {
       NdVar { n } => {
@@ -5490,9 +5520,9 @@ fn text_instance_carried(e: el::El, tmpl: ir::Definition, f: ir::Function, code:
     if tv < 0 || has_return(code) {
       return "an answer other than a bare parameter";
     }
-    // A parameter the body reassigns is no view of the argument: its record is copied out
-    // (`copy_param_returns_of_fresh_instance`'s `___ret_param_N`).
-    if sets_var(code, tv) {
+    // A text parameter the body reassigns takes an owned shadow (`promote_assigned_text_params`);
+    // a record one is copied out at the tail (`fill_instance`).
+    if textual && sets_var(code, tv) {
       return "an answer that is a parameter the body reassigns";
     }
   }

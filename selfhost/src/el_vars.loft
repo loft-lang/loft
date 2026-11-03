@@ -129,7 +129,14 @@ pub fn new_var(v: Vars, name: text, tp: ir::TypeT) -> integer {
   if v.names[name] == null {
     v.names += [VarName { name: name, nr: nr }];
   }
-  v.vars += [ir::Variable {
+  v.vars += [fresh_variable(name, tp)];
+  v.defined += [false];
+  nr
+}
+
+// A new variable's record: used once, no slot, no flags (`Variable::new`).
+pub fn fresh_variable(name: text, tp: ir::TypeT) -> ir::Variable {
+  ir::Variable {
     name: name,
     type_def: [tp],
     stack_pos: 65535,
@@ -152,9 +159,7 @@ pub fn new_var(v: Vars, name: text, tp: ir::TypeT) -> integer {
     owner_witness: 65535,
     rebind_orig: 65535,
     scope: 65535
-  }];
-  v.defined += [false];
-  nr
+  }
 }
 
 // `Function::add_variable`: the variable `name` already names (its type settled when it was
