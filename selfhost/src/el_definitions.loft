@@ -30,7 +30,13 @@ pub fn elab_file(e: el::El, file: integer) {
 
 fn top_item(e: el::El, it: integer) {
   match e.p.nodes[it] {
-    SDirective { at } => {},
+    // `#width 32` narrows every integer operation of the file (`OpNarrow32`) and its integer
+    // fields — not carried; the other directives leave the code as it is.
+    SDirective { at, name, arg } => {
+      if name == "width" && arg != "64" {
+        el::refuse(e, "a `#width {arg}` file");
+      }
+    },
     SUse { at } => { el::refuse(e, "use"); },
     SCapability { at } => {},
     SAlias { at, name, tp, size } => { parse_typedef(e, at, name, tp, size); },

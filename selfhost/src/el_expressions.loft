@@ -4702,6 +4702,89 @@ pub fn type_def_nr(e: el::El, t: ir::TypeT) -> integer {
   }
 }
 
+// `Data::is_type_var_placeholder`: the definition a type variable reads as — a struct with no
+// fields that is its own type — or -1.
+fn type_var(e: el::El, t: ir::TypeT) -> integer {
+  match t {
+    TyReference { n } => {
+      d = el::def(e, n);
+      own = match d.returned[0] ?? ir::TyVoid { TyReference { n: r } => r == n, _ => false };
+      if d.def_type == el::DT_STRUCT && len(d.attributes) == 0 && own { n } else { -1 }
+    },
+    _ => -1
+  }
+}
+
+struct Binding { vars: vector<integer>, types: vector<ir::TypeT>, ok: boolean }
+
+// Each type variable of `p` bound to the part of `a` it stands for, in the order the variables
+// first appear; a second meeting must agree, and a shape the two do not share fails the bind.
+fn bind_type_vars(e: el::El, p: ir::TypeT, a: ir::TypeT, b: Binding) {
+  tv = type_var(e, el_types::base(p));
+  if tv >= 0 {
+    at = if p is TyOptional { el_types::base(a) } else { a };
+    for v in b.vars {
+      if v == tv {
+        if !el_types::is_equal(e, b.types[v#index] ?? ir::TyVoid, at) {
+          b.ok = false;
+        }
+        return;
+      }
+    }
+    b.vars += [tv];
+    b.types += [at];
+    return;
+  }
+  // The parts are the parameters' own, so the recursion is a jump.
+  match p {
+    TyVector { inner: pi } => {
+      match a {
+        TyVector { inner: ai } => bind_type_vars(e, pi, ai, b),
+        _ => { b.ok = false; }
+      }
+    },
+    _ => {}
+  }
+}
+
+// `Data::identity_spelling` for the bound types a key is made of here: a plain scalar, a text,
+// a struct; "" for any other, which no instance is looked up for.
+fn identity_spelling(e: el::El, t: ir::TypeT) -> text {
+  match t {
+    TyInteger { spec } => if el_types::narrow_width(spec) == 0 && spec.forced_size == 0 { "integer" } else { "" },
+    TyFloat => "float",
+    TySingle => "single",
+    TyBoolean => "boolean",
+    TyCharacter => "character",
+    TyText { dep: _ } => "text",
+    TyReference { n } => if type_var(e, t) < 0 && el::def(e, n).def_type == el::DT_STRUCT { el::def(e, n).name } else { "" },
+    _ => ""
+  }
+}
+
+// The instance of generic `d` the argument types bind (`Data::mangle_instance`:
+// `i_<LEN><spelling>_<template>`, the bound types joined by `#`), or -1.
+fn generic_instance(e: el::El, d: integer, types: vector<ir::TypeT>) -> integer {
+  b = Binding { vars: [], types: [], ok: true };
+  for a in el::def(e, d).attributes {
+    if a#index < len(types) {
+      bind_type_vars(e, a.typedef[0], types[a#index] ?? ir::TyUnknown { n: 0 }, b);
+    }
+  }
+  if !b.ok || len(b.vars) == 0 {
+    return -1;
+  }
+  spelling = "";
+  for t in b.types {
+    sp = identity_spelling(e, t);
+    if sp == "" {
+      return -1;
+    }
+    spelling = if t#index == 0 { sp } else { "{spelling}#{sp}" };
+  }
+  el::def_nr(e, "i_{len(spelling)}{spelling}_{el::def(e, d).name}")
+}
+
 // A parameter default the call site can take as it is: it names none of the callee's `n`
 // parameters (`substitute_param_refs` would have to rewrite them), and a call in it supplies
 // every parameter of its own (`add_defaults` fills a default call's hidden slots, loft#699).
@@ -4732,6 +4815,19 @@ fn receives(e: el::El, m: integer, tn: integer) -> boolean {
 // its declared result.  Defaults, hidden buffers, conversions and heap results are refused.
 fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex? {
   def = el::def(e, d);
+  // A generic is called through its instance for the argument types (`@FR-G-Key`): one the
+  // image already holds — making one is monomorphisation, not carried.  The first pass, which
+  // may not know an argument's type yet, takes the template as it is.
+  if def.def_type == el::DT_GENERIC {
+    inst = generic_instance(e, d, types);
+    if inst >= 0 {
+      return call_args(e, vars, inst, given, types);
+    }
+    if !e.first_pass {
+      el::refuse(e, "a call of a generic function with no instance made yet: {def.name}");
+      return null;
+    }
+  }
   // `synth_upgrade_drain` (@PLN196): every store load is wrapped in a synthesised
   // `__upgrade_drain(…)` after the parse, with the fill functions it calls — not carried.
   if def.name == "n_store_load" || def.name == "n_store_load_untrusted" || def.name == "n_store_load_url" || def.name == "n_store_load_url_trusted" || def.name == "n_swap_world" {
@@ -7135,6 +7231,10 @@ fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) ->
     el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
     el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
   ];
+  // `try_const_unroll_comprehension`: a constant empty range builds the empty vector, no loop.
+  if ranged && rw!.empty {
+    return ex(ir::NdInsert { items: items }, ir::TyVoid);
+  }
   items += if ranged { range_init(rw!) } else if sliced { match ss!.init { NdInsert { items: si } => si, _ => [] } } else { [el_ir::v_set(vec, x.code), el_ir::v_set(idx, ir::NdInt { n: -1 })] };
   items += [el_ir::v_loop(steps, "For comprehension")];
   ex(ir::NdInsert { items: items }, ir::TyVoid)
@@ -7718,14 +7818,16 @@ fn walkable_scalar(t: ir::TypeT) -> boolean {
 
 // The parts of a range walk the loop around it assembles: the hoisted bounds and their null
 // guard, the "Iter range" step, the index's start (`counter`) and, for a start that is no
-// literal, `_next_N`'s first value.  `constant`: both bounds fold.
+// literal, `_next_N`'s first value.  `constant`: both bounds fold; `empty`: to an exclusive
+// range whose start is not below its end.
 struct RangeWalk {
   prelude: vector<ir::Node>,
   steps: vector<ir::Node>,
   counter: ir::Node,
   next_init: vector<ir::Node>,
   idx: integer,
-  constant: boolean
+  constant: boolean,
+  empty: boolean
 }
 
 // `parse_in_range_body` for `lo..hi` with a literal start of zero or more and an exclusive end:
@@ -7808,7 +7910,7 @@ fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer) -> Rang
     ls += [el_ir::v_set(idx, n_v), el_ir::v_set(nx, el_ir::cl(e, "OpAddInt", [n_v, ir::NdInt { n: 1 }]))];
   }
   ls += [i];
-  RangeWalk { prelude: prelude, steps: ls, counter: counter, next_init: if next_init == null { [] } else { [next_init!] }, idx: idx, constant: lc != null && hc != null }
+  RangeWalk { prelude: prelude, steps: ls, counter: counter, next_init: if next_init == null { [] } else { [next_init!] }, idx: idx, constant: lc != null && hc != null, empty: !incl && lc != null && hc != null && lc! >= hc! }
 }
 
 // The statements that start a range walk: the hoisted bounds, `_next_N`'s first value, the index.
