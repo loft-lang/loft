@@ -2456,6 +2456,7 @@ impl<'a> FnWriter<'a> {
             "OpGetByteNullable" => ("loft_pa_byte_nullable", K::Int),
             "OpGetShort" => ("loft_pa_short", K::Int),
             "OpGetShortRaw" | "OpGetShortFull" => ("loft_pa_short_raw", K::Int),
+            "OpGetBoolean" => ("loft_pa_bool", K::Bool),
             _ => return None,
         })
     }
@@ -2574,11 +2575,12 @@ impl<'a> FnWriter<'a> {
                     k,
                 )))
             }
-            // A narrow field of a held element (`u8`, `i32`, a `single`, an enum): its address
+            // A narrow field of a held element (`u8`, `i32`, a `single`, an enum, a `boolean`): its address
             // through the held base — null outside the vector — decoded as a record pointer's
             // field is (`pa_reader`), with no store lookup per read.
             (
-                "OpGetSingle" | "OpGetEnum" | "OpGetInt4" | "OpGetInt4Raw" | "OpGetInt4Full",
+                "OpGetSingle" | "OpGetEnum" | "OpGetInt4" | "OpGetInt4Raw" | "OpGetInt4Full"
+                | "OpGetBoolean",
                 [inner, fld],
             )
             | (
