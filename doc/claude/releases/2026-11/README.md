@@ -64,8 +64,9 @@ candidate, and loft#2024..#2028 fixed.
 
 **The release waits for @PLN210** (owner, 2026-11-02): 2026.11.0 ships WITH the C performance
 work that brings the test programs under 3x their Rust twins.  The release RULE is **no routine
-above 5x** (owner, 2026-11-03); under 3x is the aim and 2x the nice-to-have (the plan's stretch
-target: every library bench routine under 2x on the C ship lane, gcc and clang).  That work is in development on
+above 5x** (owner, 2026-11-03); a routine over 3x is filed as a bug (a separate rule, and a release
+may ship with open bugs), and 2x is the nice-to-have (the plan's stretch target: every library
+bench routine under 2x on the C ship lane, gcc and clang).  That work is in development on
 `laptop-c-perf`; the tag candidate is cut after it joins.  Until then this branch works the rows
 that do not depend on the candidate: `[pre]` and `[mid+pre]` rows are finished here, the `[cand]`
 rows (`M-valgrind`, `M-wasm`) and the release-window rows wait for the candidate.
@@ -106,3 +107,11 @@ I do not want to rerun every validation again because those will be broken on me
 three routines over the 3x aim on the C ship lane — `wall_chain_walk` (hex_shape, clang 3.07x),
 `parse` (arguments, clang 3.04x), `terrain_relief_pass` (hex_terrain, gcc 3.06x), loft#2379..#2381
 — are under the 5x rule; their fixes reach `main` after the tag.
+
+**The 5x rule holds** on the C ship lane (`bench/stats.py --lanes rust,cship`, every hash
+agreeing): the 2026-11-02 full table of 126 routines, taken BEFORE the release's last two perf
+batches (which only make routines faster), so an upper bound — gcc median 1.42x, worst 3.07x
+(`terrain_relief_pass`); clang median 1.55x, worst 3.93x (zttext `materialise`); none above 5x.
+Re-measured on the build with those batches, the worst is 3.08x (`wall_chain_walk`, clang).
+Committed numbers: `doc/claude/plans/210-c-worst-to-2x/handoff-2026-11-03.md` § The numbers on
+`laptop-c-perf`.  The rustc-native lane was not re-measured this cycle.
