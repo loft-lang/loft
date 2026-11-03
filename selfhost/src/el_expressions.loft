@@ -160,6 +160,11 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       _ => {}
     }
   }
+  // A keyed result is delivered into the caller's collection (`OpReplaceKeyed` at the call),
+  // its body typed without a borrow — not carried: refused by name.
+  if !e.first_pass && keyed_kind(el_types::base(result)) {
+    el::refuse(e, "a function returning a keyed collection");
+  }
   // A vector result has its own delivery; the record delivery below does not apply to it.
   if rb >= 0 && el_types::base(result) is TyVector {
     code = vector_return(e, vars, code, rb, result);
@@ -2263,6 +2268,22 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
     TyRefVar { inner } => !(inner is TyText),
     _ => false
   };
+  // `@FR-B-Ref-Repoint`: `r = &q` re-points a link — the slot of the place it names, the link
+  // borrowing that place from here on — where any other value writes through it.
+  re_point = match e.p.nodes[rhs!] { SUnary { op } => op == "&", _ => false };
+  if link && re_point {
+    x = expression(e, vars, rhs!);
+    cur = match el_vars::tp(vars, v) { TyRefVar { inner } => inner, _ => ir::TyVoid };
+    to = match x.tp { TyRefVar { inner } => inner, _ => ir::TyVoid };
+    if !e.first_pass && !el_types::is_equal(e, el_types::without_deps(cur), el_types::without_deps(to)) {
+      refuse_known(e, x.tp, "a link re-pointed at a place of another type: {type_kind(x.tp)}");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    if x.tp is TyRefVar {
+      el_vars::set_var_type(vars, v, x.tp);
+    }
+    return ex(el_ir::v_set(v, x.code), ir::TyVoid);
+  }
   if link && !scalar_link(vars, v) {
     el::refuse(e, "a whole value written through a `&` link");
     return ex(ir::NdNull, ir::TyVoid);
