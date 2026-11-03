@@ -36,17 +36,12 @@ jobs:
             container: quay.io/pypa/manylinux_2_28_x86_64:2026.10.16-1@sha256:1e7b8460ad8fb3fb0fbe1cd818845159ac896b4fd17452d56e892c291f3b97a8
             glibc: '2.28'
             artifacts: true
-          - target: x86_64-apple-darwin
-            # macos-15 is Apple Silicon, so this leg CROSS-builds and the bundle it
-            # produces cannot run natively on the runner that made it.  Declared here
-            # rather than discovered in the smoke step: which legs can run their own
-            # artifact is a fact about the matrix, and a skip nobody chose is the kind
-            # that goes unnoticed.
-            os: macos-15
-            cross: rosetta
           # `artifacts`: the leg builds the published libraries' compiled artifacts with the
-          # binary it ships (@PLN199 G2c).  Only a leg that can RUN that binary: the
-          # x86_64-apple-darwin leg cross-builds.
+          # binary it ships (@PLN199 G2c).
+          #
+          # No Intel Mac leg: GitHub has no Intel macOS runner that will outlive the next
+          # releases, and a bundle cross-built on Apple Silicon is never run before it
+          # ships.  What cannot be validated is not shipped.
           - target: aarch64-apple-darwin
             os: macos-latest
             artifacts: true
@@ -150,23 +145,12 @@ jobs:
           # `make-release.sh` names the bundle from Cargo.toml while the tag names this
           # variable, so a version bump that never reached the manifest lands here as a
           # missing file.  `gen-toolchain-entry.py` catches the same mismatch, but only
-          # after all four legs have built; saying it plainly here is the cheaper half.
+          # after every leg has built; saying it plainly here is the cheaper half.
           if [ ! -f "dist/$name.zip" ]; then
             echo "no dist/$name.zip — the tag says $version, but the bundle is named" >&2
             echo "from Cargo.toml, which says $(grep -m1 '^version = ' Cargo.toml)." >&2
             ls dist/ >&2
             exit 1
-          fi
-
-          # A leg that cross-builds cannot run its own artifact without an emulator.
-          # Reported loudly and skipped rather than failed: no release should be
-          # blocked because a runner image dropped Rosetta.  The manual per-release
-          # checklist carries the bundle this leaves unproven — `make release-checklist`.
-          if [ "${{ matrix.cross }}" = "rosetta" ] && ! arch -x86_64 /usr/bin/true 2>/dev/null; then
-            echo "::warning title=Bundle smoke skipped::${{ matrix.target }} is cross-built on an arm64 runner and Rosetta 2 is unavailable — this bundle was NOT executed.  Run it by hand before publishing."
-            echo "### :warning: Bundle smoke SKIPPED — ${{ matrix.target }}" >> "$GITHUB_STEP_SUMMARY"
-            echo "Cross-built on an arm64 runner with no Rosetta 2.  **This bundle has not been run.**  Smoke it by hand on an Intel Mac before publishing the draft." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
           fi
 
           rm -rf smoke && mkdir smoke
@@ -290,7 +274,7 @@ jobs:
             target
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
-  # Assemble the release as a DRAFT with all four platform bundles attached, then
+  # Assemble the release as a DRAFT with every platform bundle attached, then
   # STOP.  The owner reviews the draft and clicks Publish — and only that click
   # freezes the release (immutable releases lock assets at publish time).  The old
   # flow published FIRST (publishing the UI draft created the tag, which triggered
@@ -320,7 +304,7 @@ jobs:
           merge-multiple: true
 
       # The artifact the registry entry names for the version ITSELF.  Built here
-      # rather than in the build matrix because all four legs would otherwise emit the
+      # rather than in the build matrix because every leg would otherwise emit the
       # same `-src.zip` and whichever uploaded last would silently win.
       - name: Build the source archive
         shell: bash

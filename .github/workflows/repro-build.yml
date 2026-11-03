@@ -128,14 +128,6 @@ jobs:
             target: aarch64-apple-darwin
           # Every triple release.yml PUBLISHES, verified — otherwise we ship a binary
           # nobody ever rebuilds.  Pinned by `repro_matrix_covers_every_published_triple`.
-          #
-          # There is no Intel macOS image any more (`macos-13` is gone), so release.yml
-          # CROSS-builds this triple on Apple Silicon and this row reproduces it the same
-          # way, on the same runner class.  `--target` below makes the script check the
-          # pairing: an arm64 host may verify its own triple and this one, nothing else —
-          # a job that rebuilt the wrong triple under this name once read as verified.
-          - os: macos-15
-            target: x86_64-apple-darwin
           - os: windows-latest
             target: x86_64-pc-windows-msvc
 

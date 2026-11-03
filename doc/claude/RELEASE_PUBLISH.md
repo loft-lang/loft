@@ -92,9 +92,11 @@ The registry ([PKG_REGISTRY.md](PKG_REGISTRY.md)) is the trusted distribution po
 toolchain ships through it — signed, with checksums a user can verify offline.
 
 - **One bundle per supported target**, built by `release.yml` through
-  `scripts/make-release.sh`: `x86_64-unknown-linux-gnu`, `x86_64-apple-darwin`,
-  `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`.  An `aarch64-unknown-linux-*` target is a
-  matrix row to add when it is needed.
+  `scripts/make-release.sh`: `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`,
+  `x86_64-pc-windows-msvc`.  A target is shipped only when its CI leg can RUN the bundle
+  it built, so there is no Intel Mac target: GitHub has no lasting Intel macOS runner, and
+  a bundle cross-built on Apple Silicon is never executed.  An `aarch64-unknown-linux-*`
+  target is a matrix row to add when it is needed.
 - **The Linux bundle is dynamically linked and built against glibc 2.28**, inside the
   manylinux image `release.yml` pins by digest.  Dynamic, because a static binary cannot
   load a library's native code; glibc 2.28, the version RHEL 8 and Debian 10
@@ -134,8 +136,7 @@ the published libraries' artifacts itself, with the binary it ships, and the rel
 in the registry names them.
 
 - **Which legs.**  A leg builds them when its matrix row says `artifacts: true`:
-  `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin` and `x86_64-pc-windows-msvc`.  The
-  `x86_64-apple-darwin` leg cross-builds and cannot run its own binary.  The Linux leg
+  `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin` and `x86_64-pc-windows-msvc`.  The Linux leg
   builds them inside the manylinux image, so they link against the same glibc 2.28 as the
   binary that loads them.
 - **How.**  `scripts/release-lib-artifacts.sh --loft <bin> --out <dir>` installs every
@@ -178,9 +179,6 @@ so the tag run is the only place they can be checked.
   `examples/*.loft` under `--interpret` with **empty stderr**, not just exit 0: a loft program
   that cannot write its output prints `… — write skipped` and exits 0.  This per-bundle smoke is
   the cross-platform walkthrough; `A-smoke` reads it.
-- **One leg cannot always run its artifact:** `x86_64-apple-darwin` is cross-built on an arm64
-  runner and needs Rosetta 2.  It reports a loud skip, and `make release-checklist` turns that
-  into the manual `M-rosetta` item instead of a silence.
 - **The consumers, at the tag's commit.**  `release.yml` calls `consumer-main-health.yml`,
   which runs every package of the programs built with loft (moros, dryopea, crawler, the
   private economy model) on both backends — the same file that answers "main, tonight" on the

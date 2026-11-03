@@ -12,6 +12,16 @@ invariants, internal phase numbers)?  See
 
 ---
 
+## 2026-12
+
+### May need a change in your setup
+
+**No Intel Mac download any more.**  The release ships bundles for Windows, Apple Silicon Macs
+and Linux.  GitHub no longer offers a lasting Intel macOS machine, so an Intel Mac bundle could
+only be cross-built and never run before it shipped, and loft ships only what its CI has run.
+On an Intel Mac, build loft from a source checkout (`make install-user`), or keep 2026.11.0,
+the last release with an Intel Mac bundle.
+
 ## 2026-11
 
 ### May need a change in your code

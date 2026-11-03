@@ -1014,11 +1014,11 @@ def check_consumers(version: str, network: bool):
 
 
 def check_smoke_ran(version: str, network: bool):
-    """Did the bundle smoke actually RUN on all four legs, or did one skip?
+    """Did the bundle smoke actually RUN on every leg, or did one skip?
 
-    The Rosetta skip exits 0 -- correctly, since no release should be blocked by a runner
-    image -- so the leg's conclusion is `success` either way.  The distinction lives in
-    the warning annotation, which is why this reads annotations rather than conclusions.
+    Every leg runs its own bundle (a target CI cannot run is not shipped), so a skip is a
+    failure.  A skip would exit 0 with a warning annotation, which is why this reads
+    annotations rather than conclusions.
     """
     if not network:
         return UNKNOWN, "skipped (--no-network)"
@@ -1080,7 +1080,7 @@ def check_smoke_ran(version: str, network: bool):
     if skipped:
         return FAIL, (
             "smoke SKIPPED on " + ", ".join(skipped)
-            + " — those bundles were never executed; smoke them by hand (M-rosetta)"
+            + " — those bundles were never executed, and a release ships only what CI ran"
         )
     return OK, f"bundle smoke ran and passed on all {len(ran)} legs"
 
@@ -1306,10 +1306,8 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
     ]
     editor_touched = changed_since_last_tag(version, prev_tag_paths_editor)
     debug_touched = changed_since_last_tag(version, prev_tag_paths_debug)
-    # The bundle smoke is read ONCE: `A-smoke` reports it, and `M-rosetta` exists only
-    # for a leg it reports as skipped (with no network it cannot say, so the row stays).
+    # The bundle smoke is read ONCE, by `A-smoke`.
     smoke = check_smoke_ran(version, network)
-    smoke_skipped = smoke[0] != OK
 
     before = [
         Item(
@@ -1738,15 +1736,6 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "Every consumer passes at the tag's commit — every package, both backends",
             f"gh run list --workflow release.yml --branch v{version}   # the consumer-main-health.yml legs",
             check=lambda: check_consumers(version, network),
-        ),
-        Item(
-            "M-rosetta",
-            "Any bundle the smoke SKIPPED, run by hand",
-            "unzip the bundle A-smoke names, then: bin/loft --version && "
-            "bin/loft verify-self && bin/loft --interpret examples/*.loft",
-            "listed only while A-smoke reports a skip (or cannot read the run); an "
-            "unexecuted bundle is the one least likely to work",
-            applies=smoke_skipped,
         ),
     ]
 
