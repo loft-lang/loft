@@ -2683,6 +2683,12 @@ null decl in `Output::emit_null_dbref`, the header exclusion in
                  place; and no fn-ref call, parallel arm or yield runs.  A writer
                  that names no store, or takes an operand of any other kind,
                  declines.
+                 LOCAL-ROOT CLAUSE (the C writer's): the `?` / `??` temp of such a
+                 read whose R is a frame LOCAL (`texts[si] ?? ""`, `f.names[i] ?? d`)
+                 borrows on the stricter condition that over the same block NO store
+                 writer runs at all — a frame-minted store counts as foreign here,
+                 since the local names one — and the local is not rebound there; such
+                 a temp is no source of a borrowing local.
                  FORMAT CLAUSE: a text LOCAL whose each binding is a text literal
                  or a format string `"…{x}…"` whose work text is that format's OWN
                  — named nowhere else in the body but its declaration and its
@@ -2785,6 +2791,20 @@ bind in `Output::output_set`.  Guard
 `tests/scripts/a-match-binding-borrows-its-text-while-the-stores-differ.loft` (falsified under
 `LOFT_POISON=1` by a plant that drops the writer test: t3 reads the scribble), pin
 `tests/tested_text_borrow.rs`.  On the C the local is a `loft_str` view with a backing text of its own (`loft_own<v>`): the bind tests each root parameter's store against the buffer's and copies into the backing text when they match (`borrowed_assign` in `src/c/body.rs`; cbor `encode_bytes` −16 % on the C ship lane).  No source shape found so far hands such a function a buffer in its parameter's store — every route to one is declined earlier — so on both backends the run-time test is the second line, not the one a cell falsifies.  `LOFT_NO_C_TESTED_BORROW=1` copies again.
+
+**The local-root clause, in words.**  hex_recover's `forms_upto` keeps the texts it has seen
+in a local `vector<text>` and tests each new one with `(texts[si] ?? "") == ct`; the temp of
+that `??` copied each stored text (`loft_text_own`), the `??` arm copied it again, and both
+were freed after one comparison.  Nothing in that expression writes a store, so the temp reads
+the text where `texts` holds it: `forms_upto` 2.59× → 2.27× its twin on GCC, 1.60× → 1.37× on
+Clang, hash unchanged.  A local's store is the frame's own, so the store-read clause's
+condition (writers name only minted stores) would admit a write to it; this clause admits no
+writer at all.  It is the analysis's own condition and not the only one: the C writer also
+copies an operand a later operand may write, so either alone keeps a read held across a
+growth from dangling (the guard's d4 fails only with both removed).  C only
+(`borrowed_store_texts`' `local_roots`; native passes `false`).  Switch
+`LOFT_NO_LOCAL_TEXT_BORROW`.  Site: `opt::store_text_borrow::local_root`.  Guard
+`tests/scripts/a-text-discharge-of-a-local-borrows-where-nothing-writes.loft`.
 
 **The versioned clause, in words.**  `arguments`' `classify` walks `argv`, a parameter, and
 appends a token per word to its result, which a caller could hand in sharing `argv`'s store;
