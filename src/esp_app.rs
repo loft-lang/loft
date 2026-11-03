@@ -72,6 +72,8 @@ pub(crate) struct EspApp<'a> {
     pub c: &'a str,
     pub shims: &'a [String],
     pub program_dir: &'a Path,
+    /// What to pack, relative to `program_dir`: files, and directories taken whole.
+    pub assets: &'a [String],
     pub ship: bool,
 }
 
@@ -148,11 +150,28 @@ fn files_under(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) {
     out.sort();
 }
 
-/// `loft_assets.c`: each file of the program's `assets/` as a byte array, and the table
-/// `loft_esp.h` serves them from by path.  Answers the C and the packed byte count.
-fn assets_c(program_dir: &Path) -> Result<(String, usize), String> {
+/// `loft_assets.c`: each file `assets` names (a directory: every file under it) as a byte
+/// array, and the table `loft_esp.h` serves them from by their path relative to the program.
+/// Answers the C and the packed byte count.
+///
+/// # Errors
+/// A named asset that does not exist, or one that cannot be read.
+fn assets_c(program_dir: &Path, assets: &[String]) -> Result<(String, usize), String> {
     let mut files = Vec::new();
-    files_under(program_dir, &program_dir.join("assets"), &mut files);
+    for a in assets {
+        let p = program_dir.join(a);
+        if fa::is_dir(&p) {
+            files_under(program_dir, &p, &mut files);
+        } else if fa::is_file(&p) {
+            files.push((a.trim_start_matches("./").replace('\\', "/"), p));
+        } else if a != "assets" {
+            return Err(format!(
+                "--assets: `{a}` is not a file or directory beside the program"
+            ));
+        }
+    }
+    files.sort();
+    files.dedup();
     let mut c = String::from(
         "/* The program's assets, packed by `loft --native-esp`: served read-only by loft_esp.h. */\n\
          #include <stddef.h>\n\nstruct loft_asset { const char *path; const unsigned char *data; size_t size; };\n",
@@ -227,7 +246,7 @@ pub(crate) fn write_project(app: &EspApp<'_>, out: &Path) -> Result<usize, Strin
         ),
     )?;
     put(main.join("loft_app.c"), app.c)?;
-    let (assets, packed) = assets_c(app.program_dir)?;
+    let (assets, packed) = assets_c(app.program_dir, app.assets)?;
     put(main.join("loft_assets.c"), &assets)?;
     let mut srcs = String::from("\"loft_app.c\" \"loft_assets.c\"");
     let mut dirs = String::from("\".\"");
