@@ -18,8 +18,9 @@
 //! reads).  Anything else keeps the call.
 //!
 //! The pass runs last in the scope pass, so every rewrite before it sees the IR it saw before.
-//! `LOFT_IR_WRAPPER=1` turns it on (opt-in while it is compared with the rustc writer's
-//! clause); `LOFT_TRACE_WRAPPER=1` names each call taken, and each kept with why.
+//! `LOFT_NO_WRAPPER_INLINE=1` keeps every call (on both backends; the rustc writer's clause
+//! this replaces had the same switch); `LOFT_TRACE_WRAPPER=1` names each call taken, and each
+//! kept with why.
 use crate::data::{Data, DefType, Type, Value};
 use crate::ir_shape::{WrapperOperand, one_op_wrapper};
 use std::collections::HashMap;
@@ -27,8 +28,7 @@ use std::collections::HashMap;
 const RULE: &str = "R-Wrapper";
 
 fn enabled() -> bool {
-    crate::env_once!(std::env::var("LOFT_IR_WRAPPER").is_ok_and(|v| v != "0"))
-        && !crate::env_once!(std::env::var("LOFT_NO_IR_WRAPPER").is_ok_and(|v| v != "0"))
+    !crate::env_once!(std::env::var("LOFT_NO_WRAPPER_INLINE").is_ok_and(|v| v != "0"))
 }
 
 fn trace() -> bool {

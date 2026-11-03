@@ -660,8 +660,6 @@ pub struct Output<'a> {
     /// Per-callee memo of what an admitted writing callee reaches (@PLN157 P4c), shared
     /// across every loop in the program.
     pub scalar_write_cache: hoist::WriteCache,
-    /// Per-definition memo of [`hoist::one_op_wrapper`].
-    wrapper_cache: HashMap<u32, Option<(u32, Vec<hoist::WrapperOperand>)>>,
     /// @PLN157 § V-q — the push headers of the enclosing loops, innermost last: path → the
     /// Rust local holding its [`crate::vector::PushHeader`] (`__ph_N`); the same path is in
     /// [`Self::vec_headers`] as `__ph_N.h` for every read.  Pushed and popped beside them.
@@ -1878,7 +1876,6 @@ impl<'a> Output<'a> {
             scalar_hoists: Vec::new(),
             scalar_write_cache: HashMap::new(),
             invariant_hoists: Vec::new(),
-            wrapper_cache: HashMap::new(),
             input_cache: hoist::InputCache::default(),
             kept_cache: kept::KeptCache::default(),
             kh_twin: None,
@@ -4871,57 +4868,6 @@ impl Output<'_> {
         self.vec_bases.push(bases);
         crate::rewrite_census::fired("R-View", 1);
         Ok(true)
-    }
-
-    /// @PLN157 § V-o — the op a call to `def_nr` stands for, with the caller's `vals` put in
-    /// the op's operand positions, when `def_nr` is a stdlib one-op wrapper and the switch
-    /// is on; `None` otherwise.
-    /// Emits `@FR-R-Wrapper`.
-    pub(super) fn wrapper_op(&mut self, def_nr: u32, vals: &[Value]) -> Option<(u32, Vec<Value>)> {
-        if self.switches.wrapper_inline_disabled {
-            return None;
-        }
-        // LEAF arguments, or a PURE VECTOR PATH (`m.chunks`: constant `OpGetField`s over a
-        // variable) the pre-evaluation map does not hold: the op's operands are emitted from
-        // a fresh list, and that map keys on the original nodes' addresses — a cloned block
-        // or call argument it holds would miss its `_pre_N` binding and be emitted raw (a
-        // `let` inside an expression) or run a second time.  A pure path is side-effect
-        // free and carries no binding of its own, so its clone emits what the original
-        // would; and as the op's operand it is what a held header serves — `len(m.chunks)`
-        // as a loop's bound then reads `__vh_N.len` instead of resolving the store through
-        // a call per iteration (88 loops in the corpus and the libraries are bounded that
-        // way).  Every other argument shape keeps the call.
-        if !vals.iter().all(|v| {
-            matches!(
-                v.unspan(),
-                Value::Var(_)
-                    | Value::Int(_)
-                    | Value::Long(_)
-                    | Value::Float(_)
-                    | Value::Single(_)
-                    | Value::Boolean(_)
-            ) || (hoist::vector_path(self.data, v).is_some_and(|p| !p.1.is_empty())
-                && !self
-                    .active_pre_eval
-                    .contains_key(&(std::ptr::from_ref(v) as usize)))
-        }) {
-            return None;
-        }
-        let data = self.data;
-        let (op, operands) = self
-            .wrapper_cache
-            .entry(def_nr)
-            .or_insert_with(|| hoist::one_op_wrapper(data, def_nr))
-            .as_ref()?;
-        let mut args = Vec::with_capacity(operands.len());
-        for o in operands {
-            match o {
-                hoist::WrapperOperand::Param(i) => args.push(vals.get(*i as usize)?.clone()),
-                hoist::WrapperOperand::Const(c) => args.push(c.clone()),
-            }
-        }
-        crate::rewrite_census::fired("R-Wrapper", 1);
-        Some((*op, args))
     }
 
     /// @PLN157 § V-p — the invariant inputs of `def_nr` (`@FR-R-Inputs`), or `None` when it

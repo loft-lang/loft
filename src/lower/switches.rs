@@ -95,11 +95,6 @@ pub struct Switches {
     /// again, as before @PLN157 § V-n.  The bisect step for a wrong element read through
     /// such a view outside a loop; `LOFT_HOIST_VERIFY=1` is the falsifier.
     pub view_hoist_disabled: bool,
-    /// `LOFT_NO_WRAPPER_INLINE=1` — a call to a stdlib one-op wrapper (`len(v)`, `sqrt(x)`)
-    /// is emitted as the CALL again, as before @PLN157 § V-o, instead of as its op; the
-    /// bisect step for a wrong length or libm value on native, and the before-half of the
-    /// A/B.  See [`hoist::one_op_wrapper`].
-    pub wrapper_inline_disabled: bool,
     /// `LOFT_NO_PUSH_HOIST=1` — a loop that pushes to a vector hoists nothing, as before
     /// @PLN157 § V-q (`@FR-R-Push`); the bisect step for a wrong element or length out of a
     /// loop that appends.  `LOFT_HOIST_VERIFY=1` is the falsifier.
@@ -302,8 +297,6 @@ impl Switches {
                 .is_ok_and(|v| v != "0"),
             fill_hoist_disabled: !crate::keys::fill_hoist_enabled(),
             view_hoist_disabled: std::env::var("LOFT_NO_VIEW_HOIST").is_ok_and(|v| v != "0"),
-            wrapper_inline_disabled: std::env::var("LOFT_NO_WRAPPER_INLINE")
-                .is_ok_and(|v| v != "0"),
             push_hoist_disabled: std::env::var("LOFT_NO_PUSH_HOIST").is_ok_and(|v| v != "0"),
             mint_hoist_disabled: std::env::var("LOFT_NO_MINT_HOIST").is_ok_and(|v| v != "0"),
             record_push_disabled: std::env::var("LOFT_NO_RECORD_PUSH").is_ok_and(|v| v != "0"),

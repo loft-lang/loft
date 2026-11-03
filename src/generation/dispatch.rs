@@ -2854,13 +2854,6 @@ impl Output<'_> {
             };
             return crate::generation::ops::emit_op(&mut ctx, &name_owned, vals);
         }
-        // @PLN157 § V-o — a stdlib one-op wrapper is emitted as its op, with the caller's
-        // arguments in the op's operand positions, so a header-aware emitter can serve it.
-        if def_fn.rust().is_empty()
-            && let Some((op, args)) = self.wrapper_op(def_nr, vals)
-        {
-            return self.output_call_inner(w, op, &args);
-        }
         if def_fn.rust().is_empty() {
             // A USER call is deliberately NOT a checkpoint site.  Wrapping it would make
             // its ticks INCLUSIVE of every operator in the callee, so one table would mix
