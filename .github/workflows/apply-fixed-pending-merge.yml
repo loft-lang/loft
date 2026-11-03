@@ -1,9 +1,12 @@
-# Stub: opt loft into the org-wide reusable apply workflow (logic lives once in
-# loft-lang/.github). On a push to a non-main branch it labels every issue a
-# commit says it Fixes/Closes/Resolves with `fixed-pending-merge`, and warns on
-# bare `(#N)` mentions. See loft-lang/.github README.
+# On a push to a non-main branch, label every issue a commit says it Fixes/Closes/Resolves
+# with `fixed-pending-merge`, and set the `contract:` label from the `Contract:` trailer.
 #
-# The second job is loft's own, and deliberately not in the org workflow: the
+# The `label` job is the org's reusable `apply-fixed-pending-merge.yml` (loft-lang/.github)
+# without its `lint-bare-refs` job: loft's `commit-msg` hook (`make hooks`) gives that warning
+# before the commit exists, so on every push it only cost a runner.  Keep this job's script in
+# step with the org copy.
+#
+# The `contract` job is loft's own, and deliberately not in the org workflow: the
 # `contract:` axis is this repo's convergence gate on `doc/claude/formal/`, and
 # the two labels exist nowhere else in the org. It rides the same event so a
 # fix's two verdicts — WHICH issue it closes, and whether closing it MOVED the
@@ -20,8 +23,50 @@ env:
   PYTHONUTF8: '1'
 
 jobs:
-  apply:
-    uses: loft-lang/.github/.github/workflows/apply-fixed-pending-merge.yml@main
+  label:
+    # @windows-exempt: platform-free — sets issue labels
+    runs-on: ubuntu-latest
+    steps:
+      # The whole branch, not the push event's `.commits` list: GitHub caps that list at 20
+      # commits, so a rebase, a force-push or a join that carried more never labelled the
+      # issues its older commits fix.  Treeless, so the history costs commits only.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          filter: tree:0
+      - name: Label closed-by issues as fixed-pending-merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          DEFAULT: ${{ github.event.repository.default_branch }}
+        run: |
+          set -uo pipefail
+          # Issue numbers the branch's own commits (those not on the default branch) say they
+          # FIX, each with the commit that says it.  A keyword is required: a bare `(#N)`
+          # reference is intentionally NOT matched (it does not auto-close on merge either —
+          # the lint job warns about it).  Re-reading the whole branch on every push is safe:
+          # an issue already labelled is skipped below.
+          declare -A fixer=()
+          for c in $(git rev-list "origin/$DEFAULT..$SHA" 2>/dev/null || true); do
+            for n in $(git log -1 --format=%B "$c" \
+                | grep -oiE '(close[sd]?|fix(es|ed)?|resolve[sd]?) +#[0-9]+' \
+                | grep -oE '[0-9]+' | sort -u || true); do
+              [ -n "${fixer[$n]:-}" ] || fixer[$n]=$c
+            done
+          done
+          for n in "${!fixer[@]}"; do
+            fix_sha=${fixer[$n]}
+            # One call per issue: the whole branch is re-read on every push, so most are
+            # already labelled and answer `OPEN true` here.
+            seen=$(gh issue view "$n" --repo "$REPO" --json state,labels \
+              -q '"\(.state) \([.labels[].name] | index("fixed-pending-merge") != null)"' 2>/dev/null) || continue
+            [ "$seen" = "OPEN false" ] || continue
+            gh issue edit "$n" --repo "$REPO" --add-label fixed-pending-merge
+            gh issue comment "$n" --repo "$REPO" --body \
+              "🔧 Fix pushed on branch \`$BRANCH\` (commit \`$fix_sha\`), not yet merged to \`main\` — labeled \`fixed-pending-merge\`. The \`Fixes #$n\` trailer closes this on merge; the author adds the verification / regression-test note."
+          done
 
   contract:
     # @windows-exempt: platform-free — sets issue labels
