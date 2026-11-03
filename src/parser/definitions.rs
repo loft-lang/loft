@@ -1714,6 +1714,11 @@ impl Parser {
         };
         let scalar_or_text =
             |tp: &Type| -> bool { !self.type_owns_heap(tp) && !matches!(tp.base(), Type::Void) };
+        // Per callee, which parameters its body WRITES (`callee_param_writes`, field writes and
+        // forwarded writes included): a call that writes one of its other arguments is no
+        // reader of the intermediate — `work_ref(v, tp(v, p))` adds a variable to `v` on every
+        // call, so answering `tp(v, p)` once would not turn three calls into one.
+        let mut writes_cache = crate::fxhash::FxHashMap::default();
         let mut found: Option<(u32, u16)> = None;
         let mut visit = |n: &Value| {
             if found.is_some() {
@@ -1728,8 +1733,23 @@ impl Parser {
             let scalar_call = (name.starts_with("n_") || name.starts_with("t_"))
                 && data.def(*op).is_loft_defined()
                 && scalar_or_text(data.def(*op).returned());
+            let writes = if scalar_call {
+                super::closures::callee_param_writes(*op, data, &mut writes_cache)
+            } else {
+                Vec::new()
+            };
             for (i, a) in args.iter().enumerate() {
                 if !((projection && i == 0) || scalar_call) {
+                    continue;
+                }
+                // A hidden parameter is the compiler's (a text result's buffer), not the author's.
+                let attrs = data.def(*op).attributes();
+                if scalar_call
+                    && writes
+                        .iter()
+                        .enumerate()
+                        .any(|(j, w)| *w && j != i && attrs.get(j).is_some_and(|at| !at.hidden))
+                {
                     continue;
                 }
                 if let Value::Call(g, g_args) = a.unspan()
