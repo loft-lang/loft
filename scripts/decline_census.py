@@ -51,7 +51,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 RECORD = ROOT / "bench" / "portal" / "decline_census.tsv"
 sys.path.insert(0, str(ROOT / "scripts"))
-from rewrite_census import programs, warm_dependencies  # noqa: E402
+from rewrite_census import programs, rust_writer_env, warm_dependencies  # noqa: E402
 
 # The rules whose declines the compiler reports (`rewrite_census::declined` call sites).
 # A rule absent here with admissions present is shown as `not reported`.
@@ -79,7 +79,9 @@ def census(loft, prog):
         proc = subprocess.run(
             [loft, "--native-emit", str(out), "--lean", *argv],
             cwd=cwd, capture_output=True, text=True, timeout=300,
-            env={**os.environ, "LOFT_NO_NATIVE_LIBS": "1",
+            # `--native-emit` must write Rust whatever `LOFT_NATIVE_BACKEND` says (`make ci`
+            # exports it as `c`): the same environment as the rewrite census's runs.
+            env={**rust_writer_env(), "LOFT_NO_NATIVE_LIBS": "1",
                  "LOFT_REWRITE_CENSUS": str(adm), "LOFT_DECLINE_CENSUS": str(dec)},
         )
         if proc.returncode != 0 or not adm.exists():

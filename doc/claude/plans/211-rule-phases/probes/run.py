@@ -60,6 +60,12 @@ def instructions(src, n):
     return count, p.stdout.strip(), p.returncode
 
 
+def writer_env():
+    """The environment minus `LOFT_NATIVE_BACKEND`: each emission names its writer by its flag,
+    and that variable (which `make ci` exports) turns `--native-emit` into the C writer."""
+    return {k: v for k, v in os.environ.items() if k != "LOFT_NATIVE_BACKEND"}
+
+
 def admitted(src, rule, fn):
     """{writer: admissions of `rule` (its name exactly) in function `fn` when `src` is emitted}."""
     out = {}
@@ -69,7 +75,7 @@ def admitted(src, rule, fn):
             target = Path(tmp) / ("o.c" if writer == "c" else "o.rs")
             extra = [] if writer == "c" else ["--lean"]
             subprocess.run([LOFT, *flags, str(target), *extra, str(src)], capture_output=True,
-                           timeout=300, env={**os.environ, "LOFT_REWRITE_CENSUS_FN": str(tsv)})
+                           timeout=300, env={**writer_env(), "LOFT_REWRITE_CENSUS_FN": str(tsv)})
             rows = [line.split("\t") for line in tsv.read_text().splitlines()] if tsv.exists() else []
             out[writer] = sum(int(n) for _phase, f, r, n in rows if r == rule and f == fn)
     return out

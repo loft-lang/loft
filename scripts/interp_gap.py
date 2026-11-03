@@ -84,7 +84,7 @@ FAMILIES = [
 FAMILY_RE = [(f, re.compile(r)) for f, r in FAMILIES]
 FAMILY_ORDER = ["frame", "store", "records", "control", "compute"]
 sys.path.insert(0, str(ROOT / "scripts"))
-from rewrite_census import WRITERS  # noqa: E402  (each writer's emission flags)
+from rewrite_census import WRITERS, rust_writer_env  # noqa: E402  (each writer's flags; its env)
 import rule_phases  # noqa: E402  (the measured applied-by of each rule)
 # `--writer` → its census phase, its stats.py lane and its name in the report.
 WRITER = {"native": ("native", "native", "native"), "c": ("c", "c", "C")}
@@ -222,8 +222,12 @@ def rewrite_census(loft, prog, timeout, writer="native"):
     ext, flags = WRITERS["rust" if writer == "native" else writer]
     with tempfile.TemporaryDirectory() as tmp:
         tsv = Path(tmp) / "rw.tsv"
-        p = run([loft, *flags(Path(tmp) / f"out{ext}"), *argv], cwd,
-                {"LOFT_REWRITE_CENSUS_FN": str(tsv), "LOFT_NO_NATIVE_LIBS": "1"}, timeout)
+        # Not `run`: the writer is named by its flag, so `LOFT_NATIVE_BACKEND` (which `make ci`
+        # exports) must not reach the emission — it turns `--native-emit` into the C writer.
+        p = subprocess.run([loft, *flags(Path(tmp) / f"out{ext}"), *argv], cwd=cwd,
+                           env={**rust_writer_env(), "LOFT_REWRITE_CENSUS_FN": str(tsv),
+                                "LOFT_NO_NATIVE_LIBS": "1"},
+                           capture_output=True, text=True, timeout=timeout)
         if p.returncode != 0 or not tsv.exists():
             return None, (p.stderr or p.stdout).strip().splitlines()[-1:] or ["no rewrite census written"]
         out = {}
