@@ -276,7 +276,7 @@ impl FnWriter<'_> {
                 self.line(ind, &format!("{ct} = {v};"));
                 let (kd, nk) = self.cx.keys_of(tp);
                 let text = name == "n_keyed_entry_text";
-                let parts = usize::try_from(nk).unwrap_or(0).clamp(1, keys.len());
+                let parts = nk.clamp(1, keys.len());
                 let mut codes = Vec::with_capacity(parts);
                 for k in &keys[..parts] {
                     let e = self.expr(k, ind)?;

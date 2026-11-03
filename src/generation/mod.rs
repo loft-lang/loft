@@ -6942,7 +6942,7 @@ impl Output<'_> {
                 let name = callee.name();
                 let loft_bodied = matches!(callee.code(), Value::Block(_));
                 let free = name.starts_with("n_") || callee.is_free_overload();
-                if is_store_bracket(name) {
+                if is_store_bracket(name) || crate::opt::frame_calls::is_store_entry(name) {
                     return false;
                 }
                 if free && !loft_bodied {

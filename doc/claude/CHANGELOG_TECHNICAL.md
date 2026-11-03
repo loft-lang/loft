@@ -17,6 +17,15 @@ All notable changes to the loft language and interpreter.
   rule).  A C clause that stops firing fails the gate on its C row; before this no C admission
   reached a baseline.  `--writer rust|c` runs one writer; a four-column row reads as Rust's.
 
+### `(R-KeyedEntry)` runs in the IR (@PLN211 arc C)
+
+- `h += [T{k: key, …}]` over a hash the rule admits is its values staged, ONE probe for the
+  entry under the key (`keyed_entry_ints` / `keyed_entry_text`, new private stdlib
+  declarations), and the other fields written into it — on every backend; the interpreter runs
+  86.7 % fewer instructions on an overwriting insert.  The writers' insert clauses are gone;
+  `LOFT_NO_KEYED_ENTRY` still turns the rule off, `LOFT_TRACE_KEYED_ENTRY=1` names each
+  function rewritten.
+
 ### `(R-PushFill)`'s fill form runs in the IR (@PLN211 arc C)
 
 - `for _ in a..b { v += [c] }` with `c` a simple invariant and `v` a vector variable is one

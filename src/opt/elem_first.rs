@@ -55,6 +55,10 @@ struct Plan {
 }
 
 /// Rewrite every admitted pair of the program; answers how many.
+///
+/// # Panics
+/// When the analysis paired an append whose temp's declaration the rewrite does not find — a
+/// defect of this pass, reported with the switch that keeps the copy.
 pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
     if !enabled() {
         return 0;
@@ -179,126 +183,151 @@ fn rewrite(v: &mut Value, pairs: &[&ElemFirst], plan: &Plan, ops: &Ops, minted: 
 #[allow(clippy::too_many_arguments)]
 fn statement(
     stmts: &[Value],
-    i: usize,
+    at: usize,
     pairs: &[&ElemFirst],
     plan: &Plan,
     ops: &Ops,
     minted: &mut [bool],
     out: &mut Vec<Value>,
 ) -> usize {
-    let s = &stmts[i];
-    match s.unspan() {
-        // A temp's declaration: `OpDatabase(vdb, …) · t = OpGetField(vdb, 0, ftp) ·
-        // OpSetInt4(vdb, 0, 0)` — the element's mint (first temp), then the field-slot bind.
-        Value::Call(c, a) if *c == ops.database => {
-            let Some(&(pi, bi)) = var_of(a.first()).and_then(|vdb| plan.decl.get(&vdb)) else {
-                out.push(s.clone());
-                return 1;
-            };
-            let p = pairs[pi];
-            let b = &p.binds[bi];
-            let vdb = b.vdb;
-            let Some(Value::Set(tmp, bind)) = stmts.get(i + 1).map(Value::unspan) else {
-                out.push(s.clone());
-                return 1;
-            };
-            let Value::Call(gf, gargs) = bind.unspan() else {
-                out.push(s.clone());
-                return 1;
-            };
-            if *gf != ops.get_field || var_of(gargs.first()) != Some(vdb) || *tmp != b.tmp {
-                out.push(s.clone());
-                return 1;
-            }
-            let ftp = gargs.get(2).cloned().unwrap_or(Value::Int(0));
-            if b.first {
-                if p.out_fld == 65535 {
-                    out.push(Value::Call(
-                        ops.pre_alloc,
-                        vec![Value::Var(p.out), Value::Int(1), Value::Int(p.prealloc_size)],
-                    ));
-                }
-                out.push(Value::Set(
-                    p.elm,
-                    Box::new(Value::Call(
-                        ops.new_record,
-                        vec![Value::Var(p.out), Value::Int(p.out_tp), Value::Int(p.out_fld)],
-                    )),
-                ));
-                for pb in &p.binds {
-                    out.push(Value::Call(
-                        ops.set_int4,
-                        vec![Value::Var(p.elm), Value::Int(pb.field_off), Value::Int(0)],
-                    ));
-                }
-                minted[pi] = true;
-            }
-            out.push(Value::Set(
-                b.tmp,
-                Box::new(Value::Call(
-                    ops.get_field,
-                    vec![Value::Var(p.elm), Value::Int(b.field_off), ftp],
-                )),
-            ));
-            // The declaration's length reset on the witness goes with it.
-            let reset = stmts.get(i + 2).is_some_and(|r| {
-                matches!(r.unspan(), Value::Call(c, ra) if *c == ops.set_int4
-                    && var_of(ra.first()) == Some(vdb))
-            });
-            if reset { 3 } else { 2 }
+    let stmt = &stmts[at];
+    match stmt.unspan() {
+        // A temp's declaration.
+        Value::Call(op, args) if *op == ops.database => {
+            declaration(stmts, at, args, pairs, plan, ops, minted, out)
         }
-        // The append's reservation, when the next statement is a paired mint.
-        Value::Call(c, a) if *c == ops.pre_alloc && int_of(a.get(1)) == Some(1) => {
-            let next = stmts[i + 1..]
+        // The append's reservation, when the next statement is args paired mint.
+        Value::Call(op, args) if *op == ops.pre_alloc && int_of(args.get(1)) == Some(1) => {
+            let next = stmts[at + 1..]
                 .iter()
                 .find(|o| !matches!(o.unspan(), Value::Line(_)));
             let paired = next.is_some_and(|n| {
-                matches!(n.unspan(), Value::Set(e, m) if plan.elm.contains_key(e)
-                    && matches!(m.unspan(), Value::Call(md, ma) if *md == ops.new_record
-                        && var_of(ma.first()) == var_of(a.first())))
+                matches!(n.unspan(), Value::Set(elm_var, mint) if plan.elm.contains_key(elm_var)
+                    && matches!(mint.unspan(), Value::Call(md, ma) if *md == ops.new_record
+                        && var_of(ma.first()) == var_of(args.first())))
             });
             if !paired {
-                out.push(s.clone());
+                out.push(stmt.clone());
             }
             1
         }
         // The append's mint, and an element's null pre-init (it would reset the element the
         // declaration minted).
-        Value::Set(e, m)
-            if plan.elm.contains_key(e)
-                && (matches!(m.unspan(), Value::Null)
-                    || matches!(m.unspan(), Value::Call(md, _) if *md == ops.new_record)) =>
+        Value::Set(elm_var, mint)
+            if plan.elm.contains_key(elm_var)
+                && (matches!(mint.unspan(), Value::Null)
+                    || matches!(mint.unspan(), Value::Call(md, _) if *md == ops.new_record)) =>
         {
             1
         }
         // The paired zeros on the element.
-        Value::Call(c, a)
-            if *c == ops.set_int4
-                && var_of(a.first())
-                    .and_then(|e| plan.elm.get(&e))
+        Value::Call(op, args)
+            if *op == ops.set_int4
+                && var_of(args.first())
+                    .and_then(|elm_var| plan.elm.get(&elm_var))
                     .is_some_and(|&pi| {
-                        int_of(a.get(1))
+                        int_of(args.get(1))
                             .is_some_and(|off| pairs[pi].binds.iter().any(|b| b.field_off == off))
                     }) =>
         {
             1
         }
         // The paired copies into the element's field.
-        Value::Call(c, a)
-            if *c == ops.append_vector
-                && matches!(a.first().map(Value::unspan), Some(Value::Call(gd, ga))
-                    if *gd == ops.get_field
-                        && var_of(ga.first())
-                            .and_then(|e| plan.elm.get(&e))
-                            .is_some_and(|&pi| int_of(ga.get(1)).is_some_and(|off| {
-                                pairs[pi].binds.iter().any(|b| b.field_off == off)
-                            }))) =>
+        Value::Call(op, args)
+            if *op == ops.append_vector
+                && matches!(args.first().map(Value::unspan), Some(Value::Call(gd, ga))
+                if *gd == ops.get_field
+                    && var_of(ga.first())
+                        .and_then(|elm_var| plan.elm.get(&elm_var))
+                        .is_some_and(|&pi| int_of(ga.get(1)).is_some_and(|off| {
+                            pairs[pi].binds.iter().any(|b| b.field_off == off)
+                        }))) =>
         {
             1
         }
         _ => {
-            out.push(s.clone());
+            out.push(stmt.clone());
             1
         }
     }
+}
+
+/// A temp's declaration, `OpDatabase(vdb, …) · t = OpGetField(vdb, 0, ftp) · OpSetInt4(vdb, 0,
+/// 0)` with `stmt` its `OpDatabase`: the element's mint (the first temp), then the field-slot
+/// bind.  Answers how many statements it consumed.
+#[allow(clippy::too_many_arguments)]
+fn declaration(
+    stmts: &[Value],
+    at: usize,
+    args: &[Value],
+    pairs: &[&ElemFirst],
+    plan: &Plan,
+    ops: &Ops,
+    minted: &mut [bool],
+    out: &mut Vec<Value>,
+) -> usize {
+    let stmt = &stmts[at];
+    let Some(&(pi, bi)) = var_of(args.first()).and_then(|vdb| plan.decl.get(&vdb)) else {
+        out.push(stmt.clone());
+        return 1;
+    };
+    let p = pairs[pi];
+    let b = &p.binds[bi];
+    let vdb = b.vdb;
+    let Some(Value::Set(tmp, bind)) = stmts.get(at + 1).map(Value::unspan) else {
+        out.push(stmt.clone());
+        return 1;
+    };
+    let Value::Call(gf, gargs) = bind.unspan() else {
+        out.push(stmt.clone());
+        return 1;
+    };
+    if *gf != ops.get_field || var_of(gargs.first()) != Some(vdb) || *tmp != b.tmp {
+        out.push(stmt.clone());
+        return 1;
+    }
+    let ftp = gargs.get(2).cloned().unwrap_or(Value::Int(0));
+    if b.first {
+        if p.out_fld == 65535 {
+            out.push(Value::Call(
+                ops.pre_alloc,
+                vec![
+                    Value::Var(p.out),
+                    Value::Int(1),
+                    Value::Int(p.prealloc_size),
+                ],
+            ));
+        }
+        out.push(Value::Set(
+            p.elm,
+            Box::new(Value::Call(
+                ops.new_record,
+                vec![
+                    Value::Var(p.out),
+                    Value::Int(p.out_tp),
+                    Value::Int(p.out_fld),
+                ],
+            )),
+        ));
+        for pb in &p.binds {
+            out.push(Value::Call(
+                ops.set_int4,
+                vec![Value::Var(p.elm), Value::Int(pb.field_off), Value::Int(0)],
+            ));
+        }
+        minted[pi] = true;
+    }
+    out.push(Value::Set(
+        b.tmp,
+        Box::new(Value::Call(
+            ops.get_field,
+            vec![Value::Var(p.elm), Value::Int(b.field_off), ftp],
+        )),
+    ));
+    // The declaration's length reset on the witness goes with it.
+    let reset = stmts.get(at + 2).is_some_and(|r| {
+        matches!(r.unspan(), Value::Call(op, ra) if *op == ops.set_int4
+            && var_of(ra.first()) == Some(vdb))
+    });
+    if reset { 3 } else { 2 }
 }

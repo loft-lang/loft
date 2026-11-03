@@ -226,7 +226,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Inputs)` | `R-Inputs` c, native |
 | `(R-Invariant)` | `R-Invariant` c, native |
 | `(R-KeyList)` | not counted — executor: key descriptors derived once per type |
-| `(R-KeyedEntry)` | `R-KeyedEntry` c, native · `/subscript` c, native |
+| `(R-KeyedEntry)` | `R-KeyedEntry` ir · `/subscript` c, native |
 | `(R-LazySplit)` | `R-LazySplit` c, native |
 | `(R-Leaf)` | `R-Leaf` native |
 | `(R-LeafChain)` | `R-LeafChain` native |

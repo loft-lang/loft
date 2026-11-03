@@ -554,7 +554,10 @@ fn replacement(
         };
         if !ok {
             if trace() {
-                eprintln!("[keyed-entry] fn={} declined: a text key read late", data.def(d).name());
+                eprintln!(
+                    "[keyed-entry] fn={} declined: a text key read late",
+                    data.def(d).name()
+                );
             }
             return None;
         }

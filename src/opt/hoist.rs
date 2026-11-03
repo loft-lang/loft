@@ -3977,7 +3977,15 @@ pub fn hash_fill_loop<'a>(
         let Value::Call(d, args) = n.unspan() else {
             return None;
         };
-        if (*d as usize) >= data.definitions.len() || data.def(*d).name() != "OpNewRecord" {
+        // The claim of a record the insert files, or `@FR-R-KeyedEntry`'s probe for the entry
+        // (`keyed_entry_ints` / `_text`, the IR's form of the same insert): either names the
+        // hash and its type first.
+        if (*d as usize) >= data.definitions.len()
+            || !matches!(
+                data.def(*d).name(),
+                "OpNewRecord" | "n_keyed_entry_ints" | "n_keyed_entry_text"
+            )
+        {
             return None;
         }
         let (Some(Value::Var(h)), Some(Value::Int(tp))) = (

@@ -22,6 +22,14 @@ pub fn is_store_bracket(name: &str) -> bool {
     )
 }
 
+/// `@FR-R-KeyedEntry`'s probe (`keyed_entry_ints` / `_text`), the IR's form of a keyed
+/// insert: a store call that finds or files one entry and calls no loft code — no FRAME, as
+/// the claim and file it replaces were none.
+#[must_use]
+pub fn is_store_entry(name: &str) -> bool {
+    matches!(name, "n_keyed_entry_ints" | "n_keyed_entry_text")
+}
+
 /// Does `code` make a call that can enter a frame — a user function, a method or free
 /// overload with a loft body, a fn-ref, `parallel` or a `yield`?
 ///
@@ -34,7 +42,7 @@ pub fn calls_a_frame(data: &Data, code: &Value) -> bool {
         Value::Call(d, _) => {
             let callee = data.def(*d);
             let name = callee.name();
-            if is_store_bracket(name) {
+            if is_store_bracket(name) || is_store_entry(name) {
                 return false;
             }
             // A free overload member (`f_…`) is a free function in all but its key.

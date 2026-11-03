@@ -16,7 +16,7 @@ writers and the interpreter's generator; every rule reports to it or says why no
 table `bench/portal/rule_phases.tsv` is measured and gated, and `rewrites.md` § Applied by is
 rendered from it); B1 and B2 are done: weights in [b1-weights.md](b1-weights.md),
 a verdict per rule in § Verdicts.  Arc C has moved `(R-SliceArg)`'s
-range clause, `(R-Wrapper)` and `(R-PushFill)`'s fill form (§ Arc C's moves).  It was to start once
+range clause, `(R-Wrapper)`, `(R-PushFill)`'s fill form and `(R-KeyedEntry)` (§ Arc C's moves).  It was to start once
 #1743 (every routine within 3×) and #2351 (the facts routine) were fixed; #1743 is fixed on
 `laptop-c-perf`, and on 2026-11-03 the owner asked to concentrate on this plan, so #2351's
 three deviations (D-fact-1 … 3) became part of it rather than a precondition.  Four arcs: **A** keeps the register honest about where
@@ -255,6 +255,31 @@ over the fill there, and teaching their analyses `OpAppendCopy` waits for a case
 The fill declines a `single` value (`simple_invariant` lists no single literal, as before):
 arc D.  On the interpreter: 9 847 → 2 776 instructions a pass of the probe, −71.8 %.
 
+**`(R-KeyedEntry)` — moved.**  The analysis (`site`) moved from `lower` to `src/opt/keyed_entry.rs`
+(the interpreter's `close_program` may not name `lower`), its buffer test counting the
+buffer's bindings instead of comparing nodes, so it answers the same on the copy the pass
+rewrites.  The pass stages every value that is not a constant into a fresh temporary, typed by
+its setter's value parameter, in program order; then `B = keyed_entry_ints(c, tp, fld, k₁…k₄)`
+or `keyed_entry_text(c, tp, fld, key)`; then the other fields written into `B`.  A text key is
+read at the probe, so it is admitted as a literal or a variable no later value rebinds;
+generators are skipped.  The two functions are stdlib declarations (`default/01_code.loft`):
+one `OpStaticCall` on the interpreter (`native::n_keyed_entry_*` → `Stores::keyed_entry` /
+`keyed_entry_text`), `KeyedEntryEmitter` on rustc (`keyed_entry_long_at`'s inline walk for one
+part, the offsets resolved at generation), the C's `keyed_native` case
+(`loft_keyed_entry_ints` / `_text`).  Both writers' insert clauses are deleted; the subscript
+clause stays theirs.  Three things the move had to carry, found by the census: the hash
+reservation (`hoist::hash_fill_loop`) and the leaf rules (`frame_calls::is_store_entry`) read
+the entry call as they read the claim; `R-CompleteWrite` falls at every keyed site because the
+claim it trimmed is gone (a miss claims inside the store call), and the writers' own count fell
+from emitted copies (a guarded loop's two, the C's `__fr` twin) to the IR's source sites.  The
+protocol's evidence: switch_ab.sh over 2913 programs, 0 defects; c_sweep 2949 programs, 2580
+match, the one differ main's own; the cells — the suite's three, the four in `tests/scripts`
+and `a-keyed-insert-stages-its-values-before-the-entry-is-found.loft` (s1–s7, falsified by the
+values unstaged: s2's effect order fails on the interpreter and the C) — on the interpreter, the
+C and rustc, rule on and off; c_emit 71/71; `tests/mint_window.rs` re-pinned (m7's entry
+reference takes the view clause's address); gridmesh's bench rows agree interpreter / C.
+On the interpreter: 15 550 → 2 073 instructions a pass of the probe, −86.7 %.
+
 ## Phase ordering
 
 A0 → A1 → A2 → A3 (the table first, so every later move is a blessed change of it) · B1 →
@@ -311,7 +336,7 @@ function before and not after.
 
 | rule | the new piece | weight | evidence | verdict |
 |---|---|--:|---|---|
-| `(R-KeyedEntry)` | find-or-insert answering a reference, a stdlib function through one `OpStaticCall` | 4.2 | `keyed_entry`: an overwriting append of a present key 16 068–16 835 → 1 790 instructions, **−89 %** over two runs (the before form moves with the hash seed; the hand form looks up, then writes or inserts) | MOVE |
+| `(R-KeyedEntry)` | find-or-insert answering a reference, a stdlib function through one `OpStaticCall` | 4.2 | `keyed_entry`: an overwriting append of a present key 16 068–16 835 → 1 790 instructions, **−89 %** over two runs (the before form moves with the hash seed; the hand form looks up, then writes or inserts); moved: 15 550 → 2 073, **−86.7 %** | **MOVED** (`opt::keyed_entry`, arc C's fourth) |
 | `(R-RefillText)` | the refill twin | 0.6 | not a DROP: with `LOFT_NO_REFILL_TEXT=1` the rustc build of game_protocol runs **+148.6 %** instructions (`msg_ping`, same hash), so `(R-Reuse)`'s pool reset does not take its cost.  The C takes that cost another way: `ping_op` calls `n_msg_ping__tr0r`, an `(R-Transient)` twin.  No hand form for the interpreter | MOVE (twin), after wave 1; measured on arc C's beside build |
 | `(R-RefillBuffer)` | a REFILL bit on `OpDatabase` | 4.4 | its switch A/B on the rustc build: bench 17 **+0.0 %**, game_protocol **−0.2 %** instructions — it saves nothing measurable where it fires most | STAYS — no flag for a rule with no measured effect; whether to drop it is the owner's call |
 | `(R-FoldCompare)` | `fold_compare`, a stdlib function | 0.0 | admitted in no function a bench routine runs | DEFER until a consumer reaches it |

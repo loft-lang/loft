@@ -1618,6 +1618,10 @@ pub(crate) fn runtime_name(data: &Data, d: u32) -> &str {
 
 /// The C runtime function that implements native `name` (a stored `n_…` name), if any.  Asked of
 /// a definition, the name is its [`runtime_name`].
+#[expect(
+    clippy::too_many_lines,
+    reason = "a routing table, one row per native the C runtime carries"
+)]
 pub(crate) fn native_c(name: &str) -> Option<&'static str> {
     match name {
         "n_assert" => Some("loft_assert"),
