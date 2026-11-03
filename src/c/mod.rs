@@ -2723,6 +2723,14 @@ pub(crate) fn variable_shapes(
             shapes.push(CType::Int);
             continue;
         }
+        // `(C-Never)` — a local bound to a value that never arrives: the parser keeps the
+        // diverging value as the statement and nothing after it, so no operator names the local
+        // (loft#2388).  It takes the integer shape the null-only local takes, and `tidy` drops
+        // the unused declaration.
+        if matches!(tp, Type::Never) && !args.contains(&v) {
+            shapes.push(CType::Int);
+            continue;
+        }
         let shape = if args.contains(&v) {
             cx.ctype(tp)
         } else {

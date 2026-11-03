@@ -1043,6 +1043,10 @@ impl Parser {
         // Whether a statement of THIS block left it unconditionally — `terminated` is cleared
         // once its warning is out, and this is the fact that outlives the warning.
         let mut diverged = false;
+        // `(C-Never)` — a statement whose value never arrives (`x = if c { return 1 } else {
+        // return 2 }`) ends the block's reachable part: the statements after it are parsed for
+        // their diagnostics and kept out of the IR, which no run reaches (loft#2388).
+        let mut unreachable_rest = false;
         // @PLN25/#585 guard-clause flow-narrowing: a `narrowed_non_null` push made INSIDE this
         // block (by a fall-through guard, below) holds only for the rest of THIS block, so record
         // the entry depth and restore it before returning. Without the restore the proof leaks to
@@ -1291,6 +1295,34 @@ impl Parser {
             if self.lexer.peek_token("else") {
                 self.parse_store_else(&mut n);
                 t = Type::Void;
+            }
+            if unreachable_rest {
+                // Behind a value that never arrives: parsed, not kept.
+                self.lexer.has_token(";");
+                if self.lexer.peek_token("}") {
+                    break;
+                }
+                continue;
+            }
+            // `(C-Never)` — a local bound to a value that never arrives has no value to hold:
+            // the statement is the diverging value itself.  Its local is typed `Never`, which
+            // the slot allocator gives no slot, so the store into it was dropped with its
+            // `return`s (a text local: the function answered the code after it) or its read
+            // was an internal error (an integer).  An error's poison is a `Never` local too —
+            // reported already, in a program that will not run — so a parse with an error
+            // leaves the statement as it was: rewritten there, the parse lost its footing and
+            // added an "Expect token ;" to a program's own two errors.
+            if !self.first_pass
+                && self.lexer.diagnostics().error_count() == 0
+                && let Value::Set(v, rhs) = n.unspan()
+                && matches!(self.vars.tp(*v), Type::Never)
+                && !matches!(rhs.unspan(), Value::Null)
+            {
+                n = (**rhs).clone();
+                t = Type::Never;
+                unreachable_rest = true;
+                terminated = Some("a value that never arrives");
+                self.lexer.has_token(";");
             }
             self.block_tail_null_literal = matches!(&last_expr_peek.has, LexItem::Token(tok) if *tok == "null")
                 && matches!(n.unspan(), Value::Null);
@@ -1599,6 +1631,9 @@ impl Parser {
         self.lexer.token("}");
         if matches!(l.last(), Some(Value::Line(_))) {
             l.pop();
+        }
+        if unreachable_rest {
+            t = Type::Never;
         }
         // A function body that RETURNED before its last statement cannot fall off its end:
         // the statements after the `return` are the `unreachable-code` warning's, and the
