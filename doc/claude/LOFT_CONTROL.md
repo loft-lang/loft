@@ -388,7 +388,8 @@ variant's fields are only needed inside a block, `if n is Pair { l, r } { … }`
 `name:` before an arm's pattern binds the matched value itself, beside the pattern's own names —
 `whole: Rect { w, h } => w * h + area(whole)` — and `other: _ => area(other)` is the catch-all that
 binds it.  The name is a view of the subject, not a copy: a write through it reaches the subject.
-A bare lowercase name at the arm root is not a binding; it is refused as a misspelled variant.
+A bare lowercase name at the arm root is not a binding; it is refused as a misspelled variant,
+and the error names the `name: _` spelling.
 
 Whether a destructured field is a **view of the subject** or a **copy** depends on the
 field's type:

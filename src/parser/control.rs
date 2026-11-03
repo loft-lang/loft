@@ -6690,6 +6690,9 @@ impl Parser {
         let mut arms: Vec<EnumArm> = Vec::new();
         let mut covered: HashSet<u32> = HashSet::new();
         let mut has_wildcard = false;
+        // An arm read as a catch-all only to recover from a bare lowercase name: it covers the
+        // rest for the exhaustiveness check, but arms after it are not reported unreachable.
+        let mut recovered_catch_all = false;
         let mut result_type = Type::Void;
         // L2: field bindings in conditional arms are hoisted before the if-chain
         // to avoid codegen stack-layout issues with text operations inside branches.
@@ -6846,6 +6849,44 @@ impl Parser {
                 first_ident.clone()
             };
 
+            // A bare lowercase name at the arm root binds nothing: the catch-all that binds the
+            // subject is spelled `other: _` (`@FR-P-Cap`).  Say so, and parse the arm as that
+            // catch-all, so its body and the match's exhaustiveness do not report the same
+            // mistake twice more ("Unknown variable", "not exhaustive").
+            let recovering = root_capture.is_none()
+                && pattern_name == first_ident
+                && Self::is_binding_name(&pattern_name)
+                && e_nr != u32::MAX
+                && self.data.variant_of(e_nr, &pattern_name) == u32::MAX
+                && self.data.def_nr(&pattern_name) == u32::MAX
+                && (self.lexer.peek_token("=>") || self.lexer.peek_token("if"));
+            let pattern_name = if recovering {
+                if !self.first_pass {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "'{pattern_name}' is not a variant of {} — to bind the matched value, \
+                         write `{pattern_name}: _`",
+                        self.data.def(e_nr).name()
+                    );
+                }
+                // A name that is already a local keeps meaning that local in the body; a new
+                // one is bound, and counted read, so the recovery adds no lint of its own.
+                if !self.vars.name_exists(&pattern_name)
+                    && let Some(v) = self.bind_root_capture(
+                        &pattern_name,
+                        &subject_val,
+                        &subject_type,
+                        &mut hoisted_bindings,
+                    )
+                {
+                    self.vars.in_use(v, true);
+                }
+                "_".to_string()
+            } else {
+                pattern_name
+            };
+
             if pattern_name == "_" {
                 // loft#1682 / loft#1793 — a result the wildcard can still widen: an open tuple
                 // member, or a numeric type a wider arm joins past.
@@ -6853,6 +6894,8 @@ impl Parser {
                     || matches!(result_type.base(), Type::Integer(_) | Type::Single))
                 .then(|| result_type.clone());
                 let (arm, is_exhaustive) = self.parse_match_wildcard_arm(&mut result_type);
+                recovered_catch_all |= recovering;
+                let is_exhaustive = is_exhaustive && !recovering;
                 if before.is_some_and(|b| !b.is_equal(&result_type)) {
                     // The wildcard arm named the member or widened the join; the earlier arms
                     // follow.
@@ -7487,7 +7530,7 @@ impl Parser {
         // (an unguarded arm only), so the two halves of the totality judgment share one fact.
         //
         // Exhaustiveness check (second pass only, when no wildcard, when subject is a known enum).
-        if !self.first_pass && !has_wildcard && valid_enum {
+        if !self.first_pass && !has_wildcard && !recovered_catch_all && valid_enum {
             let missing: Vec<String> = self
                 .data
                 .definitions
@@ -8069,7 +8112,18 @@ impl Parser {
         }
         self.lexer.has_identifier();
         self.lexer.token(":");
-        let v = self.pattern_binding(&name, subject_type);
+        self.bind_root_capture(&name, subject_val, subject_type, hoisted)
+    }
+
+    /// Binds `name` to the matched subject itself — the binding half of [`Self::root_capture`].
+    fn bind_root_capture(
+        &mut self,
+        name: &str,
+        subject_val: &Value,
+        subject_type: &Type,
+        hoisted: &mut Vec<Value>,
+    ) -> Option<u16> {
+        let v = self.pattern_binding(name, subject_type);
         if v != u16::MAX {
             self.vars.defined(v);
             // A record subject is bound through the projection node a view is spelled as

@@ -3293,6 +3293,34 @@ fn alternation_capture_type_mismatch() {
         .error("alternation capture 'n' is text in one branch but integer in another at alternation_capture_type_mismatch:2:69");
 }
 
+// A bare lowercase name at an arm root binds nothing (`@FR-P-Cap` spells the catch-all
+// `other: _`).  It is reported once, with that spelling: the arm is read as the catch-all, so
+// its body's use of the name and the match's exhaustiveness add nothing.
+#[test]
+fn a_bare_lowercase_arm_name_names_the_binding_spelling() {
+    code!(
+        "enum N { Leaf { v: integer }, Ret { inner: N } }\n\
+         fn f(n: N) -> integer { match n { Leaf { v } => v, other => f(other) } }"
+    )
+    .error(
+        "'other' is not a variant of N — to bind the matched value, write `other: _` \
+         at a_bare_lowercase_arm_name_names_the_binding_spelling:2:60",
+    );
+}
+
+// Arms after the recovered one are not reported unreachable: the `_` was never written.
+#[test]
+fn arms_after_a_bare_lowercase_arm_name_are_not_unreachable() {
+    code!(
+        "enum Colour { Red, Green, Blue }\n\
+         fn f(c: Colour) -> integer { match c { Red => 1, rest => 2, Green => 3 } }"
+    )
+    .error(
+        "'rest' is not a variant of Colour — to bind the matched value, write `rest: _` \
+         at arms_after_a_bare_lowercase_arm_name_are_not_unreachable:2:57",
+    );
+}
+
 // An unknown variant in an alternation branch is a clean error (no panic).
 #[test]
 fn alternation_bad_variant() {
