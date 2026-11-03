@@ -29,7 +29,11 @@
       }
       const out = document.getElementById('out');
       if (out) {
-        out.style.display = '';
+        // The page's output shows while nothing else is on the page; once the program opened
+        // the canvas (which hides it), its text stays in the element and the console, and the
+        // canvas keeps the page.
+        const canvas = document.getElementById('c');
+        if (!canvas || canvas.style.display === 'none') out.style.display = '';
         out.textContent += text;
       }
       // A write that is only the line's end (wasi-libc writes a message's last `\n` apart) is
