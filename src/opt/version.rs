@@ -469,7 +469,7 @@ pub fn leaf(data: &Data, d: u32, inputs: &Inputs) -> Option<Leaf> {
     }
     let def = data.def(d);
     let vars = def.variables();
-    // A parameter the body assigns is no longer its argument.
+    // A parameter the body assigns does not hold its argument after that assignment.
     let mut rebound = HashSet::new();
     assigned(def.code(), &mut rebound);
     let params: HashSet<u16> = vars

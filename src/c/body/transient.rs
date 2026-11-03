@@ -660,8 +660,8 @@ fn write_twin(cx: &Cx, key: TrKey, name: &str) -> Result<(String, String, Option
         .write()?;
     // A twin that holds texts for a halt (`LOFT_HOLD`) gives them back on its way out, as the
     // ordinary function's wrapper does (`LOFT_HOLD_MARK` / `LOFT_HOLD_BACK`): left on the held
-    // list, a halt after the twin returned freed texts in a frame that no longer exists (a
-    // stack-use-after-scope under ASan, the halted-test C cell).
+    // list, a halt after the twin returns frees texts in a frame that has ended — a stack use
+    // after scope.
     if body.contains("LOFT_HOLD(") {
         let inner = format!("{name}__in");
         let call = format!("{inner}({})", call_args.join(", "));

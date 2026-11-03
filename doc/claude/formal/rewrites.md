@@ -2938,7 +2938,7 @@ gcc (4.51× → 2.74×), 6.83 → 4.01 ms on clang (4.50× → 2.76×); same has
 declined, with the reason.  Sites: `c::body::transient`; guards
 `tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft`,
 `tests/scripts/a-transient-twin-writes-only-what-it-built.loft`.  Priced by hand on
-`read_value` (2026-10-30): with texts as views of the frame and the arrays in the site's arena,
+`read_value`: with texts as views of the frame and the arrays in the site's arena,
 0.087× on gcc.  The design and the steps: `bench/portal/analysis/transient.md`.
 
 ### A slice handed to a `const` parameter needs no store of its own

@@ -3001,8 +3001,8 @@ mod zeroed_table {
 
     /// `@C154`: a table made in a block that held other bytes leaves no byte of them past its
     /// header — slots and entry area alike — because an image copies the whole record.  The
-    /// block is poisoned and freed first, so its next claim hands back `0xDEADBEEF` words; the
-    /// slots alone used to be zeroed, and the entries' stride padding kept the poison.
+    /// block is poisoned and freed first, so its next claim hands back `0xDEADBEEF` words;
+    /// zeroing the slots alone would leave that poison in every entry's stride padding.
     #[test]
     fn a_new_inline_table_holds_no_byte_it_did_not_write() {
         let mut s = Store::new(64);
