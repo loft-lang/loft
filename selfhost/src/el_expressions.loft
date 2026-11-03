@@ -136,12 +136,16 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   rb = el_vars::var(vars, "__retbuf");
   // A call at a record tail goes through `ref_return`'s `Bind`, which recomputes the result's
   // borrows: the one parameter a mid-body `return` merged is dropped again.  A parameter or a
-  // literal at the tail leaves them as they are (`pick`, R-Rebind against #1888's cell).
+  // literal at the tail leaves them as they are (`pick`, R-Rebind against #1888's cell).  A
+  // buffer the first pass RENAMED onto the tail call's work ref keeps the parameter in Rust,
+  // in the signature and in the body's type — not carried: refused by name.
   if rb >= 0 && len(vars.mid_params) == 1 && el_types::base(result) is TyReference {
     match code {
       NdBlock { block } => {
         t = if len(block[0].operators) > 0 { el_ir::unspan(block[0].operators[-1]) } else { ir::NdNull };
-        if t is NdCall {
+        if t is NdCall && !e.first_pass && attr_nr(el::def(e, e.context), "__retbuf") < 0 {
+          el::refuse(e, "a mid-body `return` of a parameter beside a tail call the return buffer was renamed onto");
+        } else if t is NdCall {
           pa = attr_nr(el::def(e, e.context), el_vars::name_of(vars, vars.mid_params[0]));
           r0 = el::def(e, e.context).returned[0];
           kept: vector<integer> = [];
@@ -1489,13 +1493,18 @@ fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
         }
         bl.operators = ops;
       }
-      // `work_references`, each set to null at the head, after the work texts in the same way —
-      // a promoted return buffer is an argument and takes none.
+      // `work_references`, each set at the head, after the work texts in the same way
+      // (`work_ref_takes_preamble`): a promoted return buffer is an argument and takes none, nor
+      // does one that borrows (a caller's hidden buffer and an `__ncc_` temp still do); a text
+      // takes the empty text, anything else null.
       for wr in vars.work_refs {
-        if vars.vars[wr].argument || vars.inline_refs.contains(wr) {
+        wt = el_vars::tp(vars, wr);
+        borrows = len(el_types::deps(wt)) > 0 && !vars.vars[wr].caller_hidden_buf && !starts_with(vars.vars[wr].name, "__ncc_");
+        if vars.vars[wr].argument || vars.inline_refs.contains(wr) || borrows {
           continue;
         }
-        ops: vector<ir::Node> = [el_ir::v_set(wr, ir::NdNull)];
+        init = if el_types::base(wt) is TyText { ir::NdText { s: "" } } else { ir::NdNull };
+        ops: vector<ir::Node> = [el_ir::v_set(wr, init)];
         for op in bl.operators {
           ops += [op];
         }
@@ -3368,7 +3377,11 @@ fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
               }
             }
             if reads {
-              tp = el::def(e, def_nr).attributes[len(args) - 1]!.typedef[0];
+              // Typed as the value it holds (`exp_tp`): a block declares it, borrows included.
+              tp = match el_ir::unspan(args[-1]) {
+                NdBlock { block } => block[0].result[0] ?? el::def(e, def_nr).attributes[len(args) - 1]!.typedef[0],
+                _ => el::def(e, def_nr).attributes[len(args) - 1]!.typedef[0]
+              };
               tmp = el_vars::work_ref(vars, tp);
               staged += [el_ir::v_set(tmp, args[-1])];
               ops[op#index] = ir::NdCall { def_nr: def_nr, args: args[..-1] + [ir::NdVar { n: tmp }] };
@@ -5006,6 +5019,7 @@ fn string_expression(e: el::El, vars: el_vars::Vars, parts: vector<integer>) -> 
           tp = ir::TyNever;
         }
         stack = el_vars::tp(vars, var) is TyRefVar;
+        vector_row_def(e, tp, string_end(e, last));
         append_spec(e, list, var, x.code, tp, stack, f!);
         after = if h#index + 1 < len(parts) - 1 { (parts[h#index + 1] ?? 1) - 1 } else { last };
         s = text_part(e, after);
@@ -5159,6 +5173,49 @@ fn radix_for(id: text) -> integer? {
     10
   } else {
     null
+  }
+}
+
+// A string literal's last token — its final text segment's — where the lexer stands once the
+// literal is read (`pos_at` gives a token's end).
+fn string_end(e: el::El, last: integer) -> integer {
+  match e.p.nodes[last] {
+    SText { at } => at,
+    _ => 0
+  }
+}
+
+// `format_vector_row`'s `check_vector`: a vector formatted before anything made its `vector<T>`
+// definition makes it here — the definition alone (no `main_vector<T>` wrapper), parented on the
+// element's, at the end of the string, where the lexer stands when the hole is formatted.
+fn vector_row_def(e: el::El, tp: ir::TypeT, at: integer) {
+  match el_types::base(tp) {
+    TyVector { inner } => {
+      nm = el_types::elem_name(e, inner);
+      if nm == "" || el::def_nr(e, "vector<{nm}>") >= 0 {
+        return;
+      }
+      narrow = match inner {
+        TyInteger { spec } => spec.forced_size == 4,
+        _ => false
+      };
+      if narrow {
+        return;
+      }
+      // `database.vector(…)` makes the row where it is missing, as on the first pass.
+      vk = vector_store(e, inner, nm);
+      if vk < 0 {
+        el_schema::vector_store_type(e, inner, nm);
+        vk = vector_store(e, inner, nm);
+      }
+      if vk < 0 {
+        return;
+      }
+      vd = el::add_def(e, "vector<{nm}>", el::pos_at(e, at), el::DT_VECTOR);
+      e.b.data.definitions[vd].parent = type_def_nr(e, inner);
+      e.b.data.definitions[vd].known_type = vk;
+    },
+    _ => {}
   }
 }
 
