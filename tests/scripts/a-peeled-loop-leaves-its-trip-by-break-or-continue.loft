@@ -10,6 +10,10 @@
 // each cell's comment.  Peeled: every loop of a constant range below nine trips here (the
 // outer loops of e7, e8 run 0..20 and are written as loops).
 //
+// @falsified-at: efbdcc591 — by hand on the C writer (the interpreter and native build run every
+//   loop as written, so `falsify.sh` reads them INERT), each plant alone failing a cell: a
+//   `continue` landing past the last copy (e1: 123 → 0), and a `break` landing at the end of its
+//   own copy, so the next trip runs (e4: 7 → 207).
 // HOLDS: the interpreter's and rustc-native's answers, which no plant on the C writer reaches.
 fn keep(s: integer) -> integer {
   if s == 1 { return 0; }

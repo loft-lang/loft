@@ -6216,11 +6216,13 @@ Guard `tests/scripts/a-leaf-bounds-test-is-taken-once-per-loop.loft`.
 ```
   (R-Peel)       A counted loop `for t in a..b` whose `a` the statements just before it
                  seed with a constant, whose `b` is a constant, with 1 ≤ b − a ≤ 8 and a
-                 body (times the trips) of at most 1200 IR nodes holding no `break`,
-                 `continue`, yield or `par` and assigning no counter, is written as b − a
-                 blocks, block k setting the counters to a + k and running the body; after
-                 the blocks the counters are as the range leaves them.  APPLIED BY the C
-                 writer.
+                 body (times the trips) of at most 1200 IR nodes holding no yield or `par`
+                 and assigning no counter, is written as b − a blocks, block k setting the
+                 counters to a + k and running the body; a `continue` of the loop ends its
+                 block, a `break` of it leaves after the last block, an exit of an
+                 enclosing loop leaves as from the loop; after the blocks the counters are
+                 as the range leaves them, after a `break` as its trip set them.  APPLIED BY
+                 the C writer.
 ```
 
 **In words.**  hex_field's `edgeset_count` walks the three canonical edge slots of each cell
@@ -6229,12 +6231,17 @@ Guard `tests/scripts/a-leaf-bounds-test-is-taken-once-per-loop.loft`.
 constant the search folds to the one direction that matches; clang unrolls and folds such loops
 itself, gcc unrolls them only after the passes that fold, so the comparisons survive
 (`#pragma GCC unroll` measured −15 % of the instructions, the peel −43 %).  The copies are the
-loop's own statements in order, so what each trip reads and writes is unchanged; a body that
-leaves its trip early (`break`, `continue`, a filter) keeps its loop, since a copy has no loop
-to name, and a `return` from a copy returns as from the loop.  Measured with the narrow clause
+loop's own statements in order, so what each trip reads and writes is unchanged.  A body that
+leaves its trip early (`break`, `continue`, a filter) is peeled too: each block is a loop of its
+own to the jumps it holds — a `continue` lands at its end, a `break` past the last block — so no
+trip runs a statement the loop would have skipped, and a `return` from a block returns as from
+the loop.  hex_shape's `chain_marks` skips a direction with a `continue`; peeled, its direction
+is a constant and the six-way search in `eg_dir_from` folds (`wall_chain_walk` 120.3M → 44.1M
+instructions per op on clang, 75.6M → 59.8M on gcc, the twin 30.9M).  Measured with the narrow clause
 of (R-Header) below (gcc / clang): `edgeset_count` 3.75× → 2.47× / 1.26× its twin.  Switch
-`LOFT_NO_PEEL`.  Site: `c::body::peel`.  Guard
-`tests/scripts/a-short-counted-loop-is-written-once-per-trip.loft`.
+`LOFT_NO_PEEL`.  Site: `c::body::peel`.  Guards
+`tests/scripts/a-short-counted-loop-is-written-once-per-trip.loft`,
+`tests/scripts/a-peeled-loop-leaves-its-trip-by-break-or-continue.loft`.
 
 **The narrow clause of (R-Header).**  A `u8`, `i32`, `single` or enum element of a held vector,
 or such a field of a held vector's element, is read at its address through the held base —

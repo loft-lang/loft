@@ -345,7 +345,8 @@ and last values; the call is then `vg ? f__inv__vf(…) : f__inv(…)`, the `__v
 tested arithmetic plain.  Fewer than eight counter values left: not versioned.
 `LOFT_NO_VERSION=1` turns it off, `LOFT_TRACE_VERSION=1` names each leaf and call.  A counted
 loop of at most eight trips with constant bounds is written once per trip, its counters set to
-the trip's constant (`c::body::peel`, `@FR-R-Peel`); `LOFT_NO_PEEL=1` writes every loop.  A record
+the trip's constant (`c::body::peel`, `@FR-R-Peel`), each copy its own label for a `break` or
+`continue` in the body; `LOFT_NO_PEEL=1` writes every loop.  A record
 value built by a producer, read and dropped (`c::body::transient`, `@FR-R-Transient`) is built in
 a per-thread arena instead of a store: the producer's twin `f__tr…` holds its records as
 `lt_<group>` structs, the site takes an arena mark where it binds the value and gives it back

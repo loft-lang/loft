@@ -3,12 +3,13 @@
 //
 // `@FR-R-Peel` — a counted loop of at most eight trips with constant bounds is written once
 // per trip, its counters set to that trip's value, so the C compiler folds what the counter
-// decides.  A loop it does not admit (nine trips, none, a filter's `continue`) runs as written;
-// every cell answers what the interpreter answers.
+// decides.  A loop it does not admit (nine trips, none) runs as written; every cell answers what
+// the interpreter answers.  A body that leaves its trip early (p8's filter) is the exit clause's,
+// guarded in a-peeled-loop-leaves-its-trip-by-break-or-continue.loft.
 //
 // The C writer applies it; the interpreter applies nothing and is the oracle.  Hand-computed in
-// each cell's comment.  Peeled: p1 p2 p3 p4 p9 p10, the eight-trip and one-trip loops of p6
-// and p7, one level of p5; not peeled: the nine-trip loop of p6, the empty one of p7, p8.
+// each cell's comment.  Peeled: p1 p2 p3 p4 p8 p9 p10, the eight-trip and one-trip loops of p6
+// and p7, one level of p5; not peeled: the nine-trip loop of p6, the empty one of p7.
 //
 // @falsified-at: 061c4cab8 — by hand on the C writer (the interpreter and native build run every
 //   loop as written, so `falsify.sh` reads them INERT), each plant alone failing a cell: the
