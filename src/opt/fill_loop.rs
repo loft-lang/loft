@@ -132,8 +132,12 @@ fn fill_of(
         return None;
     };
     let vars = data.def(d).variables();
-    let Type::Vector(elem, _) = vars.tp(*v) else {
-        return None;
+    let elem = match vars.tp(*v) {
+        Type::Vector(elem, _) => elem,
+        // `@FR-N-Shape`: a `vector<T>?` local is declined on purpose, not missed — the fill
+        // would read a vector the loop's push may first have to create (the header above).
+        Type::Optional(_) => return None,
+        _ => return None,
     };
     // The element type `[c; n]`'s lowering names: the element, or the vector itself when the
     // element is under four bytes (`Parser`'s `known_tp`).

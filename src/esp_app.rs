@@ -97,9 +97,7 @@ fn idf_paths() -> Option<(PathBuf, Option<PathBuf>)> {
                 .into_iter()
                 .map(|p| p.os_spelling())
                 .filter(|p| {
-                    p.file_name()
-                        .and_then(|n| n.to_str())
-                        .is_some_and(|n| n.starts_with('v'))
+                    fa::file_name(p).is_some_and(|n| n.starts_with('v'))
                         && fa::is_file(p.join("esp-idf").join("export.sh"))
                 })
                 .map(|p| p.join("esp-idf"))
@@ -178,9 +176,7 @@ fn board_parts(shims: &[String]) -> (Vec<(&'static str, String)>, Vec<&'static s
         .iter()
         .map(|s| {
             let p = Path::new(s);
-            let name = p
-                .file_name()
-                .map_or_else(|| s.clone(), |n| n.to_string_lossy().into_owned());
+            let name = fa::file_name(p).unwrap_or_else(|| s.clone());
             (name, with_includes(p, &mut Vec::new()))
         })
         .collect();

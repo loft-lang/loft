@@ -17,7 +17,7 @@ pub(crate) fn files_under(root: &Path, dir: &Path, out: &mut Vec<(String, PathBu
     };
     for e in entries {
         let p = e.os_spelling();
-        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let name = fa::file_name(&p).unwrap_or_default();
         if name.starts_with('.') {
             continue;
         }

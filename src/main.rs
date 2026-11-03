@@ -8058,7 +8058,7 @@ fn main() {
             native_esp = Some(
                 if argv
                     .get(i)
-                    .is_some_and(|s| !s.ends_with(".loft") && !s.starts_with('-'))
+                    .is_some_and(|s| !fa::has_extension(s.as_str(), "loft") && !s.starts_with('-'))
                 {
                     let p = argv[i].clone();
                     i += 1;
