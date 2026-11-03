@@ -204,6 +204,22 @@ impl Parser {
         );
     }
 
+    /// May the destination `orig_var` of a concatenation ADOPT its first operand `code` (of
+    /// type `tp`) — take that operand's store as its own and append the rest into it, with no
+    /// copy?  `@FR-Col-Concat`: `a + b` is a NEW vector and neither operand changes, so the
+    /// adopt is sound only when nothing else can see the store and the write replaces the
+    /// destination.  Three ways it is not (loft#2399):
+    ///
+    /// - the operand is not fresh — a view of a vector something else holds (`h[i]`, `g.v`,
+    ///   a borrowing call): adopting it appends into that vector;
+    /// - the destination is an element slot, which never owns a store (loft#664's marker):
+    ///   adopting re-points the slot's handle and leaves the element itself empty;
+    /// - the write is a `+=`: adopting REPLACES what the destination already held.
+    fn concat_may_adopt(&self, code: &Value, tp: &Type, orig_var: u16) -> bool {
+        let appending = orig_var == self.assign_target && !self.assign_replaces;
+        !self.vars.is_inline_ref(orig_var) && !appending && self.value_is_fresh(code, tp)
+    }
+
     pub(crate) fn parse_append_vector(
         &mut self,
         code: &mut Value,
@@ -300,6 +316,18 @@ impl Parser {
             // `Set(v, Var(v))` below so create_vector's self_ref / in-place path
             // still fires; a fresh-storage temp (Call/Block, not a Var) also
             // keeps `Set` so v adopts the temp's store with no extra copy.
+            ls.push(self.cl(
+                "OpAppendVector",
+                &[Value::Var(orig_var), code.clone(), Value::Int(rec_tp)],
+            ));
+            orig_var
+        } else if !matches!(code.unspan(), Value::Var(x) if *x == orig_var)
+            && !self.concat_may_adopt(code, tp, orig_var)
+        {
+            // @FR-Col-Concat — `a + b` is a NEW vector and neither operand changes.  A first
+            // operand the destination may not adopt (a view of a vector something else holds,
+            // or a destination that must keep its own store) is deep-COPIED in, exactly as a
+            // named local is above (loft#2399).
             ls.push(self.cl(
                 "OpAppendVector",
                 &[Value::Var(orig_var), code.clone(), Value::Int(rec_tp)],
@@ -8493,7 +8521,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             }
             return;
         }
-        if self.yield_is_fresh(val, tp) {
+        if self.value_is_fresh(val, tp) {
             return;
         }
         let rec = tp.heap_def_nr();
@@ -8572,12 +8600,14 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         );
     }
 
-    /// Is the value a `yield` hands over FRESH — held by nothing of the generator's but the
-    /// compiler temp it was built in?  A record built in place ends in such a temp, and a call
-    /// result is fresh unless its type views one of the generator's own variables or
-    /// parameters.  Anything the author named — a local, a parameter, a member read, a view —
-    /// is an existing value (see [`Self::yield_owned_value`]).
-    fn yield_is_fresh(&self, val: &Value, tp: &Type) -> bool {
+    /// Is the value FRESH — held by nothing of the function's but the compiler temp it was
+    /// built in?  A record built in place ends in such a temp, and a call result is fresh
+    /// unless its type views one of the function's own variables or parameters.  Anything the
+    /// author named — a local, a parameter, a member read, a view — is an existing value.
+    /// Two readers: what a `yield` may hand over without a copy
+    /// ([`Self::yield_owned_value`]), and what a concatenation's destination may adopt
+    /// ([`Self::concat_may_adopt`]).
+    fn value_is_fresh(&self, val: &Value, tp: &Type) -> bool {
         let named = |v: u16| {
             v < self.vars.count()
                 && (self.vars.is_argument(v) || !self.vars.is_compiler_generated(v))
