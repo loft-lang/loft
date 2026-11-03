@@ -3416,7 +3416,7 @@ impl<'a> FnWriter<'a> {
         self.in_range.push((rc.loop_var, h));
     }
 
-    /// The variables the function sets in one place only (`grid_bind` trusts their values).
+    /// The variables the function sets in more than one place (`grid_bind` trusts the others).
     fn set_once(&mut self) -> std::rc::Rc<std::collections::HashSet<u16>> {
         if let Some(s) = &self.set_once {
             return s.clone();
@@ -3429,7 +3429,9 @@ impl<'a> FnWriter<'a> {
         });
         let once: std::collections::HashSet<u16> = count
             .into_iter()
-            .filter(|(_, c)| *c == 1)
+            // Set more than once: what a binding over it cannot trust.  A parameter (never
+            // set) and a local set in one place can be trusted.
+            .filter(|(_, c)| *c > 1)
             .map(|(v, _)| v)
             .collect();
         let once = std::rc::Rc::new(once);
@@ -3440,14 +3442,14 @@ impl<'a> FnWriter<'a> {
     /// `@FR-R-Base`'s grid clause: an integer local set in one place from variables each set
     /// in one place is its expression wherever the block that binds it encloses the read.
     fn grid_bind(&mut self, var: u16, x: &Value) {
-        let once = self.set_once();
-        if !once.contains(&var) {
+        let many = self.set_once();
+        if many.contains(&var) {
             return;
         }
         let mut operands_once = true;
         x.walk(&mut |n| {
             if let Value::Var(v) = n {
-                operands_once &= once.contains(v);
+                operands_once &= !many.contains(v);
             }
         });
         if operands_once {
