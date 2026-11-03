@@ -17,6 +17,7 @@
 //   index 12 read raw, 192 → not 192), the lower bound not required (g5: index -1 read raw, not
 //   from the end, 78 → not 78), and an index set twice trusted as its first expression (g7: the
 //   raw read at 12, 177 → not 177).
+// HOLDS: the interpreter's and rustc-native's answers, which no plant on the C writer reaches.
 //
 // Values 1..n, so a cell's value names its index.
 fn grid(n: integer) -> vector<integer> {
