@@ -589,7 +589,10 @@ fn a_main_taking_texts_gets_the_programs_arguments() {
         .args(unit_links(&c))
         .arg("-o")
         .arg(&exe)
-        .args(["-lm", "-ldl", "-pthread"])
+        .arg("-lm")
+        // The host's thread and loader libraries, as the driver names them: none on Windows,
+        // whose C runtime carries both (MinGW has no `-ldl`).
+        .args(loft::platform::c_thread_link_args())
         .output()
         .expect("run cc");
     assert!(
