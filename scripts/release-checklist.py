@@ -402,6 +402,23 @@ def check_reference_pdf():
     pdf = os.path.join(ROOT, PDF)
     if not os.path.isfile(pdf):
         return FAIL, f"no {PDF} — every bundle ships without a reference"
+    # On a committed tree the question is answered by COMMITS: was the PDF committed after the
+    # last commit that touched what decides its content?  A file's mtime is not that — a test
+    # run rewrites inputs (untracked ones among them) with the same bytes, and the row read red
+    # on a release candidate whose PDF had not changed, asking for a commit after the release PR.
+    code, dirty = sh("git", "status", "--porcelain", "--untracked-files=no", "--", PDF, *PDF_INPUTS)
+    if code == 0 and not dirty.strip():
+        c1, pdf_ct = sh("git", "log", "-1", "--format=%ct", "--", PDF)
+        c2, src_ct = sh("git", "log", "-1", "--format=%ct", "--", *PDF_INPUTS)
+        if c1 == 0 and c2 == 0 and pdf_ct.strip() and src_ct.strip():
+            when = datetime.datetime.fromtimestamp(int(pdf_ct)).strftime("%Y-%m-%d %H:%M")
+            if int(src_ct) > int(pdf_ct):
+                _, who = sh("git", "log", "-1", "--format=%h %s", "--", *PDF_INPUTS)
+                return FAIL, (
+                    f"committed {when}, but `{who.strip()[:70]}` changed its inputs after it — "
+                    f"run `cargo run --bin gendoc && make pdf` and commit it"
+                )
+            return OK, f"committed {when}, after every commit that changed its inputs"
     pdf_at = os.path.getmtime(pdf)
     when = datetime.datetime.fromtimestamp(pdf_at).strftime("%Y-%m-%d %H:%M")
     src_at, who = newest_mtime(PDF_INPUTS)
@@ -1672,7 +1689,8 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "A-release-pr",
             "Open the release-day PR — ONE that day, the branch complete and its gate green",
             "gh pr create … && gh pr merge --auto --squash   # ONCE; after it only the tag and "
-            "the release window, which change no file",
+            "the release window, which change no file — the window's manual ticks are committed "
+            "with the next cycle's first PR, never a PR of their own",
             check=check_release_pr_ready,
             cadence="pre",
         )
