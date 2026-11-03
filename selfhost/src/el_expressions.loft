@@ -5176,7 +5176,8 @@ fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
   }
   h = b!.vars[0] ?? -1;
   bound = b!.types[0] ?? ir::TyVoid;
-  if !scalar_type(bound) || bound is TyEnum || bound is TyOptional || identity_spelling(e, bound) == "" {
+  textual = bound is TyText;
+  if !(scalar_type(bound) || textual) || bound is TyEnum || bound is TyOptional || identity_spelling(e, bound) == "" {
     el::refuse(e, "a generic instance at this type: {type_kind(bound)}");
     return -1;
   }
@@ -5231,6 +5232,21 @@ fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
     f.names += [ir::NameNr { name: n.name, nr: n.nr }];
   }
   drop_scalar_deps(f);
+  // A match payload binding a `T` field was decided a view of the subject; bound to `text` it
+  // is the owned copy its twin's is.
+  for v in f.variables {
+    if v.name.starts_with("_mv_") && el_types::base(v.type_def[0] ?? ir::TyVoid) is TyText && v.skip_free {
+      f.variables[v#index].skip_free = false;
+      f.variables[v#index].type_def = [el_types::without_deps(v.type_def[0] ?? ir::TyVoid)];
+    }
+  }
+  if textual {
+    why2 = text_instance_carried(e, tmpl, f, code_of(tmpl), h);
+    if why2 != "" {
+      el::refuse(e, "a generic instance at text whose body holds {why2}");
+      return -1;
+    }
+  }
   el_schema::vector_type(e, el::def(e, type_def_nr(e, bound)).known_type);
   code = substitute_code(tmpl.code[0] ?? ir::NdNull, h, bound);
   // `strip_scalar_instance_rebinds`: a parameter the template rebinds keeps an entry witness of
@@ -5246,7 +5262,79 @@ fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
   }
   e.b.data.definitions[d].variables = f;
   e.b.data.definitions[d].code = [code];
+  // `derive_monomorph_return_deps`: a text result every return of which is a bare parameter
+  // borrows that parameter, by its attribute number (`-> text["x"]`).
+  if textual && el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid) is TyText {
+    tail = el_ir::unspan(el_ir::last(match code { NdBlock { block } => block[0].operators, _ => [] }));
+    match tail {
+      NdVar { n } => {
+        a = attr_nr(el::def(e, d), f.variables[n]!.name);
+        if a >= 0 {
+          e.b.data.definitions[d].returned = [el_types::with_deps(el::def(e, d).returned[0] ?? ir::TyVoid, [a])];
+        }
+      },
+      _ => {}
+    }
+  }
   d
+}
+
+fn code_of(d: ir::Definition) -> ir::Node {
+  d.code[0] ?? ir::NdNull
+}
+
+// What a text instance's later passes would rewrite, or "": a text tail other than a bare
+// parameter (`promote_monomorph_text_return`) or any `return` beside it, an assignment to a
+// parameter that became text (`promote_assigned_text_params`), a variable that became text set
+// from a value reading it (`stage_text_self_reads`).
+fn text_instance_carried(e: el::El, tmpl: ir::Definition, f: ir::Function, code: ir::Node, h: integer) -> text {
+  if el_types::base(tmpl.returned[0] ?? ir::TyVoid) is TyReference && type_var(e, el_types::base(tmpl.returned[0] ?? ir::TyVoid)) == h {
+    tail = el_ir::unspan(el_ir::last(match code { NdBlock { block } => block[0].operators, _ => [] }));
+    ok = match tail { NdVar { n } => f.variables[n].argument, _ => false };
+    if !ok || has_return(code) {
+      return "a text answer other than a bare parameter";
+    }
+  }
+  became: vector<integer> = [];
+  for v in tmpl.variables.variables {
+    if type_var(e, el_types::base(v.type_def[0] ?? ir::TyVoid)) == h {
+      became += [v#index];
+    }
+  }
+  text_sets(f, code, became)
+}
+
+fn has_return(n: ir::Node) -> boolean {
+  if n is NdReturn {
+    return true;
+  }
+  for c in el_ir::children(n) {
+    if has_return(c) {
+      return true;
+    }
+  }
+  false
+}
+
+fn text_sets(f: ir::Function, n: ir::Node, became: vector<integer>) -> text {
+  match n {
+    NdSet { var, inner } => {
+      if became.contains(var) && f.variables[var].argument {
+        return "an assignment to a parameter that became text";
+      }
+      if became.contains(var) && el_ir::reads_var(inner, var) {
+        return "a text set from a value reading it";
+      }
+    },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    w = text_sets(f, c, became);
+    if w != "" {
+      return w;
+    }
+  }
+  ""
 }
 
 // Is `o` one of parameter `p`'s rebind witness operations — its stash into the witness `orig`
