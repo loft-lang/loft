@@ -382,6 +382,7 @@ pub mod shared_call;
 pub mod single_use;
 pub mod siphash;
 pub mod slice_text;
+pub mod wrapper_inline;
 pub mod slot_alias;
 pub mod tail_frame;
 pub mod take_local;

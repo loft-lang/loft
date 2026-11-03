@@ -1,0 +1,72 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+//
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-Wrapper` — a call to a standard-library function whose whole body is one native op
+// (`len(v)` is `OpLengthVector(v)`, `sqrt(x)` is `OpMathFuncFloat(9, x)`) is that op, with the
+// caller's arguments in the operand positions, when every argument is a leaf (a variable, a
+// literal) or a pure vector path (`b.items`).  What can go wrong is an operand put in the wrong
+// position, an argument evaluated where the call would not have, or a reference read as its
+// address: so the cells cover each argument kind the clause admits and each it declines (an
+// element path, a reference parameter, a nested call), each answer kind (an integer, a float,
+// nothing), and a constant operand.  Values hand-computed in each cell's comment.
+//
+// The scope pass applies it (`wrapper_inline::rewrite`), so every backend runs the rewritten
+// IR and none is the other's oracle: the oracle is these values, and the switch is the second
+// answer.
+//
+// @falsified-at: none — by hand on the IR clause, its operands reversed: w6 fails on the
+//   interpreter and on the C (`pow(x, 10.0)` answers 10^2 = 100 for 2^10 = 1024).
+//   CHANNEL: an assertion.
+// HOLDS: the hand-computed values, on both backends, the clause on and off.
+
+struct Tag { name: text, n: integer }
+
+struct Bag { items: vector<integer>, tags: hash<Tag[name]> }
+
+// A reference parameter: the call reads through it; the clause keeps the call.
+fn grow(v: &vector<integer>) -> integer {
+  v += [0];
+  len(v)
+}
+
+fn main() {
+  // w1: a variable — 5 elements
+  v = [3, 1, 4, 1, 5];
+  assert(len(v) == 5, "w1 {len(v)}");
+  // w2: a pure vector path — b.items holds 3
+  b = Bag { items: [1, 2, 3], tags: [] };
+  assert(len(b.items) == 3, "w2 {len(b.items)}");
+  // w3: an element's field (declined: not a pure path) — bs[1].items holds 3
+  bs = [Bag { items: [1, 2], tags: [] }, Bag { items: [7, 8, 9], tags: [] }];
+  assert(len(bs[1].items) == 3, "w3 {len(bs[1].items)}");
+  // w4: a reference parameter (declined) — [1, 2] grown by one is 3, and the caller sees it
+  r = [1, 2];
+  assert(grow(r) == 3 && len(r) == 3, "w4 {len(r)}");
+  // w5: an op that answers nothing — cleared through a variable and through a path
+  w = [1, 2, 3];
+  w.clear();
+  b.items.clear();
+  assert(len(w) == 0 && len(b.items) == 0, "w5 {len(w)} {len(b.items)}");
+  // w6: two parameters in order, and a literal — 2^10 = 1024, sqrt(16) = 4
+  x = 2.0;
+  assert(pow(x, 10.0) == 1024.0 && sqrt(16.0) == 4.0, "w6 {pow(x, 10.0)} {sqrt(16.0)}");
+  // w7: a constant operand beside the parameter — round(2.4) = 2, round(-2.6) = -3
+  assert(round(2.4) == 2.0 && round(-2.6) == -3.0, "w7 {round(2.4)} {round(-2.6)}");
+  // w8: integer and float abs — 7 and 2.5
+  k = -7;
+  f = -2.5;
+  assert(abs(k) == 7 && abs(f) == 2.5, "w8 {abs(k)} {abs(f)}");
+  // w9: a hash's length — two tags under two names
+  b.tags += [Tag { name: "a", n: 1 }, Tag { name: "b", n: 2 }];
+  assert(len(b.tags) == 2, "w9 {len(b.tags)}");
+  // w10: a loop bound — 3 + 1 + 4 + 1 + 5 = 14
+  s = 0;
+  for i in 0..len(v) { s += v[i]; }
+  assert(s == 14, "w10 {s}");
+  // w11: a wrapper inside another's argument — the inner taken, the outer kept:
+  //   sqrt(5) = 2.2360679…, so 1000 times it is 2236
+  root = sqrt(len(v) as float);
+  assert((((root * 1000.0) as integer?) ?? 0) == 2236, "w11 {root}");
+  println("ok");
+}

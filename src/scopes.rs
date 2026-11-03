@@ -853,6 +853,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         // `@FR-R-SliceArg`'s range clause — `text_from_bytes(v[lo..hi])` reads the span in place:
         // decided on the same settled IR, so neither backend builds the slice.
         crate::slice_text::rewrite(data, d_nr);
+        // `@FR-R-Wrapper` — a stdlib one-op wrapper's call is its op: decided last, so every
+        // rewrite above sees the IR it saw before, and both backends skip the call.
+        crate::wrapper_inline::rewrite(data, d_nr);
         // Plan-57 store-identity gate (Phase 2.5): rewrite store ops to verifying
         // variants (gated; no-op in normal builds).
         if tag_mode {
