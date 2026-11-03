@@ -84,6 +84,14 @@ it.
     resolution, nearest-sampled, the shade and the ghost in its shader;
   - later a GPU backend on a desktop, and the P4's pixel accelerator for what it can do (fills,
     copies, conversion; it turns by quarter turns only).
+- **One call, as precise as the machine allows.**  A loft call means the same drawing
+  everywhere; how exactly it is rasterised is the backend's choice.  A GL-capable machine draws
+  the exact rotation, at its full resolution; a slow one may move pixels a cheaper way (whole
+  rows and columns sheared, texels in blocks) where that keeps its frame rate, and says so in
+  its tolerance.  The game never asks which it got.
+- **Simple assets, a capable engine.**  The show comes from the engine — native resolution,
+  true rotation, smooth sub-unit motion, a camera that zooms, light and effects on the GPU —
+  over small, limited art (16×16 tiles), never from asking the art for more.
 - **What stays exact.**  For one surface size the reference's pixels are a pure function of the
   primitives, so tests compare them byte for byte; a GPU backend is compared with the reference
   at the same size, pixel by pixel, within a tolerance measured once (where a texel edge falls
