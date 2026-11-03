@@ -7659,6 +7659,8 @@ fn main() {
     let mut native_wasm: Option<String> = None;
     // @PLN204 — `--native-esp [dir]`: the program as an ESP-IDF app for the Tanmatsu, through the C.
     let mut native_esp: Option<String> = None;
+    // `--assets a,b`: what the app packs, beside the program (default its `assets/`).
+    let mut esp_assets: Vec<String> = vec!["assets".to_string()];
     let mut native_android: Option<String> = None;
     // Plan-07 phase 2: --errors=compact|pretty CLI flag (overrides
     // LOFT_ERRORS env var).  None = use env-or-default (Pretty).
@@ -8040,6 +8042,15 @@ fn main() {
             } else {
                 String::new() // sentinel: compute default from file_name later
             });
+        } else if a == "--assets" {
+            if let Some(v) = argv.get(i) {
+                esp_assets = v
+                    .split(',')
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect();
+                i += 1;
+            }
         } else if a == "--native-esp" {
             // The project directory is optional, as `--native-wasm`'s output is.
             native_esp = Some(
@@ -10762,6 +10773,7 @@ fn main() {
             c: &c,
             shims: &shims,
             program_dir: &program_dir,
+            assets: &esp_assets,
             // An app ships optimised; `--native-debug` keeps the call chain a fault names.
             ship: ship_build || !native_debug,
         };
