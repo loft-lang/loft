@@ -136,6 +136,28 @@ badgelink.sh start <slug>
 A started app boots with the port back in debugging mode, so its console is the P4's serial
 port again while it runs.
 
+## Reading an app's log
+
+An app's console is the P4's USB serial port, and that port goes away and comes back on every
+restart into an app.  `scripts/tanmatsu_log.py` follows both chips' ports by their serial
+numbers, opens each again as soon as it is back, and appends every line, with the PC's time in
+front, to `~/.cache/loft/tanmatsu/<serial>.log` (the serial is the chip's MAC):
+
+```sh
+scripts/tanmatsu_log.py                  # follow the ports until Ctrl-C
+scripts/tanmatsu_log.py --install        # the same as a systemd user service, from now on
+scripts/tanmatsu_log.py --tail           # the last lines of each chip's log
+```
+
+**ModemManager** opens every new port that looks like a modem and reads from it, taking lines
+before the logger has them.  Keep it away from Espressif's ports once per machine:
+`echo 'ATTRS{idVendor}=="303a", ATTRS{idProduct}=="1001", ENV{ID_MM_DEVICE_IGNORE}="1"' |
+sudo tee /etc/udev/rules.d/61-esp-usb-jtag.rules && sudo udevadm control --reload-rules &&
+sudo udevadm trigger`.
+
+A loft app holds its start-up lines (`@boot`) until the program starts, so a reader that opens
+the port while the board starts still gets them.
+
 ## A loft program as an app
 
 `loft --native-esp <dir> prog.loft` writes an ESP-IDF project into `<dir>` and builds

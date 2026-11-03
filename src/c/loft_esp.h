@@ -21,8 +21,28 @@
 #include "esp_vfs.h"
 #include "esp_vfs_ops.h"
 #include "nvs_flash.h"
+#include "driver/gpio.h"
+#include "esp_heap_caps.h"
 #include "bsp/device.h"
 #include "bsp/display.h"
+
+/* The BSP's own start-up steps, in the order `bsp_device_initialize` runs them (badge-bsp
+ * 1.6.4, the version the project pins): run here one by one, so each step's time is on the
+ * console and the screen is black as soon as the display can show it. */
+esp_err_t bsp_i2c_primary_bus_initialize(void);
+esp_err_t bsp_device_initialize_custom(void);
+esp_err_t bsp_display_initialize(const bsp_display_configuration_t *configuration);
+esp_err_t bsp_input_initialize(void);
+void bsp_input_hooks_initialize(void);
+esp_err_t bsp_power_initialize(void);
+esp_err_t bsp_rtc_initialize(void);
+esp_err_t bsp_audio_initialize(void);
+esp_err_t bsp_led_initialize(void);
+esp_err_t bsp_storage_initialize(void);
+esp_err_t bsp_orientation_initialize(void);
+esp_err_t bsp_sensor_initialize(void);
+esp_err_t bsp_catt_initialize(void);
+esp_err_t bsp_sao_initialize(void);
 
 struct loft_asset {
     const char *path;
@@ -204,9 +224,32 @@ static const esp_vfs_fs_ops_t loft_asset_fs = {
 #endif
 };
 
+/* The start-up's `@boot` lines are held until the program starts: they are written within a
+ * second of the reset, while the PC is still connecting the USB port again, and a line the
+ * port takes before a reader has it open is lost.  `loft_esp_release` prints them. */
+static char loft_esp_held[2048];
+static size_t loft_esp_held_len = 0;
+static int loft_esp_holding = 1;
+
 static void loft_esp_note(const char *step, long long value) {
-    if (value >= 0) printf("@boot %lld %s %lld\n", (long long) esp_timer_get_time(), step, value);
-    else printf("@boot %lld %s\n", (long long) esp_timer_get_time(), step);
+    char line[128];
+    int n = value >= 0 ? snprintf(line, sizeof line, "@boot %lld %s %lld\n", (long long) esp_timer_get_time(), step, value)
+                       : snprintf(line, sizeof line, "@boot %lld %s\n", (long long) esp_timer_get_time(), step);
+    if (n <= 0) return;
+    if ((size_t) n >= sizeof line) n = (int) sizeof line - 1;
+    if (loft_esp_holding && loft_esp_held_len + (size_t) n < sizeof loft_esp_held) {
+        memcpy(loft_esp_held + loft_esp_held_len, line, (size_t) n);
+        loft_esp_held_len += (size_t) n;
+    } else {
+        fwrite(line, 1, (size_t) n, stdout);
+    }
+}
+
+static void loft_esp_release(void) {
+    loft_esp_holding = 0;
+    fwrite(loft_esp_held, 1, loft_esp_held_len, stdout);
+    loft_esp_held_len = 0;
+    fflush(stdout);
 }
 
 /* NVS, which the BSP and the radio read their settings from; a full or older partition is
@@ -219,14 +262,53 @@ static void loft_esp_nvs(void) {
     loft_esp_note("nvs", (long long) e);
 }
 
-/* The board: display (RGB565, one frame buffer — what `screen` writes), keys, audio.  A
- * board the BSP does not start still runs the program, which then finds no screen. */
+/* The whole panel black.  Until the first frame the panel shows what it shows without a
+ * picture (blue), through every slower step after the display's own. */
+static void loft_esp_black(void) {
+    size_t h = 0, v = 0;
+    bsp_display_color_format_t fmt;
+    bsp_display_endianness_t endian;
+    void *black;
+    if (bsp_display_get_parameters(&h, &v, &fmt, &endian) != ESP_OK || h == 0 || v == 0) return;
+    black = heap_caps_calloc(h * v, fmt == BSP_DISPLAY_COLOR_FORMAT_16_565RGB ? 2 : 3, MALLOC_CAP_SPIRAM);
+    if (!black) return;
+    bsp_display_blit(0, 0, h, v, black);
+    bsp_display_wait(100);
+    heap_caps_free(black);
+    loft_esp_note("black", -1);
+}
+
+/* The board: display (RGB565, one frame buffer — what `screen` writes), keys, audio and the
+ * rest, as `bsp_device_initialize` starts them.  A step that fails is reported and the next
+ * runs, as there; a board the BSP does not start still runs the program, which then finds no
+ * screen. */
 static void loft_esp_board(void) {
-    bsp_configuration_t cfg;
-    memset(&cfg, 0, sizeof cfg);
-    cfg.display.requested_color_format = BSP_DISPLAY_COLOR_FORMAT_16_565RGB;
-    cfg.display.num_fbs = 1;
-    loft_esp_note("bsp", (long long) bsp_device_initialize(&cfg));
+    bsp_display_configuration_t display;
+    memset(&display, 0, sizeof display);
+    display.requested_color_format = BSP_DISPLAY_COLOR_FORMAT_16_565RGB;
+    display.num_fbs = 1;
+    gpio_install_isr_service(0);
+    loft_esp_note("i2c", (long long) bsp_i2c_primary_bus_initialize());
+    loft_esp_note("coprocessor", (long long) bsp_device_initialize_custom());
+    {
+        esp_err_t e = bsp_display_initialize(&display);
+        loft_esp_note("display", (long long) e);
+        if (e == ESP_OK) loft_esp_black();
+    }
+    {
+        esp_err_t e = bsp_input_initialize();
+        if (e == ESP_OK) bsp_input_hooks_initialize();
+        loft_esp_note("input", (long long) e);
+    }
+    loft_esp_note("power", (long long) bsp_power_initialize());
+    loft_esp_note("rtc", (long long) bsp_rtc_initialize());
+    loft_esp_note("audio", (long long) bsp_audio_initialize());
+    loft_esp_note("led", (long long) bsp_led_initialize());
+    loft_esp_note("storage", (long long) bsp_storage_initialize());
+    loft_esp_note("orientation", (long long) bsp_orientation_initialize());
+    loft_esp_note("sensor", (long long) bsp_sensor_initialize());
+    loft_esp_note("catt", (long long) bsp_catt_initialize());
+    loft_esp_note("sao", (long long) bsp_sao_initialize());
 }
 
 static void loft_esp_assets(void) {
@@ -234,11 +316,15 @@ static void loft_esp_assets(void) {
     loft_esp_note(e == ESP_OK ? "assets" : "assets-failed", e == ESP_OK ? (long long) loft_asset_count : (long long) e);
 }
 
-/* After the program: its exit line, the console flushed, then the launcher. */
+/* After the program: its exit line, the console flushed, then the launcher.  The backlight
+ * goes off first: the keyboard's coprocessor drives it and keeps it through the reset, while
+ * the panel, with no picture, shows blue until the launcher draws.  The launcher sets the
+ * backlight from its settings once it has started. */
 static void loft_esp_end(int failed) {
     printf("@loft exit %d\n", failed);
     fflush(stdout);
     fflush(stderr);
+    bsp_display_set_backlight_brightness(0);
     loft_esp_note("launcher", -1);
     fflush(stdout);
     bsp_device_restart_to_launcher();
